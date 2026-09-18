@@ -55,9 +55,8 @@ EasyCode 需要以单二进制形式提供本地 coding agent，同时处理双 
 - `internal/context/cache_plan_test.go` 验证缓存稳定前缀。
 - `internal/provider/transport/client_test.go` 验证 Resty SSE 与 Sonic request body。
 - `internal/tui/model_test.go` 验证 Bubble Tea projection。
-- 全工程执行 `go vet ./...`、`go test ./...` 和 `go test -race ./...`。
+- 全工程执行 `make verify`，覆盖 gofmt、go vet、固定版本 Staticcheck、普通测试和 race test。
 
 ## 回滚或替代方案
 
 如果 Resty v3 的 SSE 无法满足协议精确性，可以在 `provider/transport` 内使用 Resty 的 raw response body 实现独立 SSE frame parser，但 HTTP transport 仍保持 Resty v3，且不得改变上层 Provider Kernel。
-

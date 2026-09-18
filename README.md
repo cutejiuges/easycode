@@ -32,6 +32,10 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 
 完整阶段和验收标准见[产品 Roadmap](docs/roadmap/product-roadmap.md)。
 
+### 首版 Provider Wire 范围
+
+首版优先实现并支持 OpenAI Responses，同时支持 Anthropic Messages；首版不隐式支持 OpenAI Chat Completions。因此，只实现 Chat Completions 的国产生态、本地模型和第三方兼容网关在 v1 中不可用；`base_url + api_key` 只说明连接方式，不代表 endpoint 支持所有 OpenAI wire。未来的 Chat Completions 降级模式必须单独实现、单独探测并单独验证，详见 [ADR-0004](docs/architecture/adr/0004-openai-responses-first-wire-scope.md)。
+
 ## 技术栈
 
 - Go 1.24+
@@ -130,6 +134,8 @@ Anthropic   OpenAI
 
 Provider-native item 是恢复会话和构建下次请求的事实依据，RuntimeEvent 只用于 UI、日志及宿主投影，二者不能相互替代。
 
+共享层需要读取历史时使用 Provider 提供的单向 `HistoryProjector` 和 `SemanticHistoryView`，用于 token 估算、resume 渲染、Hook 文本和 Subagent completion；该视图不可反向生成 Provider 请求。
+
 更完整的设计见[总体架构文档](docs/architecture/overall-architecture.md)。
 
 ## 工程结构
@@ -172,6 +178,9 @@ make verify
 make test
 make test-race
 
+# 执行固定版本 Staticcheck
+make lint
+
 # 删除本地构建产物
 make clean
 ```
@@ -188,8 +197,9 @@ make install-hooks
 
 1. `gofmt -l .`
 2. `go vet ./...`
-3. `go test ./...`
-4. `go test -race ./...`
+3. `go tool staticcheck ./...`
+4. `go test ./...`
+5. `go test -race ./...`
 
 ## 缓存与 Provider 原生语义
 
@@ -221,6 +231,9 @@ make install-hooks
 - [文档索引](docs/README.md)
 - [总体架构设计](docs/architecture/overall-architecture.md)
 - [技术栈 ADR](docs/architecture/adr/0001-use-go-resty-sonic-and-bubble-tea.md)
+- [Provider 原生历史与语义投影 ADR](docs/architecture/adr/0002-provider-native-history-and-semantic-projection.md)
+- [Session 线程树 ADR](docs/architecture/adr/0003-session-thread-tree.md)
+- [首版 OpenAI Responses Wire ADR](docs/architecture/adr/0004-openai-responses-first-wire-scope.md)
 - [产品 Roadmap](docs/roadmap/product-roadmap.md)
 - [踩坑记录](docs/roadmap/pitfall-log.md)
 - [工程与模型约束](AGENTS.md)
@@ -237,7 +250,8 @@ make install-hooks
 - API key、Authorization、Cookie 和敏感 Header 不得进入日志、Session、测试快照或错误消息。
 - 每次实现完成后必须执行 `make verify` 并完成架构自检。
 
+契约变更统一使用 OpenSpec：`explore -> propose -> review/confirm -> apply -> verify -> archive`。Provider wire、RuntimeEvent、Tool schema、Session schema、缓存口径、权限/sandbox、扩展 manifest、Subagent thread 和跨包公共接口等变更，必须先创建 OpenSpec change，再开始实现。详细约束和命令见 [AGENTS.md](AGENTS.md)。
+
 ## 安全说明
 
 不要把真实 API key 写入代码、配置样例、命令历史、测试 fixture 或版本控制。若发现安全问题，请不要在公开 Issue 中披露密钥、用户代码、完整请求或其他敏感数据。
-

@@ -28,7 +28,7 @@
 3. Provider、context、tool schema 或 skill/plugin catalog 的变化必须检查缓存稳定性。
 4. API key、Authorization、cookie 和敏感 header 不出现在日志、错误、snapshot 和 fixture 中。
 5. 无未解释的 dead code、占位兼容分支和永久 TODO。
-6. 所有已有测试通过，格式化和 lint 无警告。
+6. 所有已有测试通过，格式化和 lint 无警告；本地统一执行 `make verify`。
 7. 新踩坑更新到 [`pitfall-log.md`](pitfall-log.md)，重要决策补充 ADR。
 
 建议阶段门命令：
@@ -37,12 +37,14 @@
 make verify
 ```
 
+当前 `make verify` 覆盖 `gofmt -l .`、`go vet ./...`、`go test ./...`、`go test -race ./...` 和固定版本的 `staticcheck`。如果新增 lint 规则，必须同步更新 Makefile、pre-commit 和本文。
+
 ## 3. 阶段总览
 
 | 阶段 | 主题 | 用户结果 | 核心架构结果 |
 |---|---|---|---|
 | P0 | 工程与协议基线 | 可构建、可测试的空壳 CLI | Go module、依赖边界、事件协议、cache fingerprint 基线 |
-| P1 | 双 Provider Kernel | 两种 provider 都能可靠流式对话 | 原生 item、StreamReducer、RequestCompiler、CachePlanner |
+| P1 | 双 Provider Kernel | 两种 provider 都能可靠流式对话 | Responses-first wire、原生 item、StreamReducer、RequestCompiler、CachePlanner、HistoryProjector |
 | P2 | Session 与 Headless Agent Loop | `--print/--json` 可完成多轮会话 | turn 模板、JSONL、context、resume、错误恢复 |
 | P3 | Coding Tools 与安全执行 | 能读取、搜索、修改文件并执行命令 | Tool 分层、权限、sandbox、并发、幂等、patch decoder |
 | P4 | 缓存与上下文强化 | 长会话成本和延迟稳定可控 | segment cache plan、compaction、指标、跨 provider fork |
@@ -113,33 +115,41 @@ make verify
 
 ### 5.1 目标
 
-让 Anthropic Messages 和 OpenAI Responses 都能完成无工具的流式对话，并无损保留各自原生 item、推理数据、usage 和缓存字段。
+优先让 OpenAI Responses 完成无工具的流式对话，再接入 Anthropic Messages；两者最终都必须无损保留各自原生 item、推理数据、usage 和缓存字段。首版 OpenAI wire 只支持 Responses；Chat Completions 降级模式不属于 P1 的隐式兼容范围。
 
 ### 5.2 架构选择
 
 - 基于 Resty v3 封装小而强类型的 HTTP/SSE transport，避免官方模型 SDK 限制任意 `base_url`。
 - 每个 provider 拥有独立 RequestCompiler、StreamReducer、NativeHistory、UsageParser 和 CachePlanner。
+- 每个 provider 还拥有独立 HistoryProjector，将 native history 单向投影为共享只读语义视图；token、resume、Hook 和 Subagent 不得各自解析 native item。
 - 共享层只接收 RuntimeEvent，不解析 provider wire。
 - Resty SSESource 与 provider reducer 分离；Resty 负责 SSE frame，provider 只处理 Anthropic/OpenAI event 状态。
 - Provider capabilities 明确配置，unsupported 能力显式降级。
 
 ### 5.3 工作内容
 
-#### Anthropic
+#### 第一项交付：Resty SSE transport spike
 
-- Messages request、system、tools 占位和 headers。
-- content block start/delta/stop 状态机。
-- text、thinking、signature、redacted thinking。
-- message delta、stop reason、usage、stream idle timeout。
-- `cache_control` plan 的基本编译。
+- 先使用 Resty v3 `SSESource` 建立最小 transport contract，不先实现完整 RequestCompiler/Reducer。
+- 使用 httptest/mock server 验证随机 chunk boundary、空行、半包、跨 UTF-8、多个 event、取消、idle timeout 和断线行为。
+- 验证 SSE frame 层与 Provider event reducer 层的职责分离，并记录逐帧回调、背压和错误语义。
+- 如果 RC 的逐帧消费不满足要求，立即在 `internal/provider/transport` 内切换到 Resty raw body + 自研 frame parser；不得等 Provider Kernel 中段再推迟决策。
 
-#### OpenAI
+#### OpenAI Responses（首要 Provider）
 
 - Responses request、instructions、input 和 headers。
 - output item added/done、text delta、completed。
 - reasoning summary、section、raw/encrypted content。
 - commentary/final phase。
 - response ID、usage、prompt cache key。
+
+#### Anthropic Messages
+
+- Messages request、system、tools 占位和 headers。
+- content block start/delta/stop 状态机。
+- text、thinking、signature、redacted thinking。
+- message delta、stop reason、usage、stream idle timeout。
+- `cache_control` plan 的基本编译。
 
 #### 共享基础设施
 
@@ -150,6 +160,7 @@ make verify
 
 ### 5.4 交付物
 
+- 通过随机切块、取消、超时和断线 fixture 验证的 SSE transport contract，以及继续使用 SSESource 或切换 raw body parser 的明确结论。
 - `anthropic.Provider` 和 `openai.Provider`，共同满足小型 `provider.Kernel` 接口。
 - 两套 typed native item 和 stream reducer。
 - request/response golden fixture 集。
@@ -164,11 +175,14 @@ make verify
 - 相同请求输入产生相同 canonical request 和稳定 cache fingerprint。
 - Anthropic cache marker 和 OpenAI prompt cache key 有 golden test。
 - API key、完整 Authorization header 不进入任何测试 snapshot。
+- P1 第一阶段的 SSE transport gate 先于 RequestCompiler/StreamReducer 开工通过；失败时只能进入 raw body parser 方案，不能带着未知 SSE 风险继续堆 Provider 逻辑。
+- Anthropic/OpenAI native history 均能通过各自 HistoryProjector 产生语义视图；token、resume、Hook 和 Subagent fixture 不导入 Provider wire 类型。
 
 ### 5.6 已知踩坑与规避
 
 - **把 Anthropic block 映射成 OpenAI item 再处理**：两边 reducer 完全独立。
 - **把 Resty SSE event 直接当成 provider 完成项**：Resty 只负责 frame，仍需独立 provider reducer 处理 item/block 生命周期。
+- **把 SSE 风险推迟到 Provider 中段**：transport spike 和随机切块 fixture 是 P1 第一项交付及第一道退出检查。
 - **收到部分文本后盲目重试**：已有输出重试必须防止重复 item 和未来工具副作用。
 - **丢弃 opaque 字段**：signature/encrypted content 进入强类型 native envelope。
 - **兼容服务不返回标准 usage**：usage 字段可 unknown，不用 0 伪装。
@@ -191,12 +205,13 @@ make verify
 - RuntimeEvent 同时驱动 headless output 和 session projection。
 - 高频 text delta 默认不持久化，item/turn boundary 持久化。
 - ContextPlanner 输出有来源和稳定性标记的 segment，而不是直接拼 prompt。
+- token 估算和历史可读语义统一消费 `HistoryProjector` 输出，不能让 ContextPlanner 或 resume 各自解析 native item。
 
 ### 6.3 工作内容
 
 - 实现 user input -> sample -> assistant output -> stop 的 turn loop。
 - 支持 queued/steered input 的基础语义。
-- 实现 context source、稳定排序、token 估算接口。
+- 实现 context source、稳定排序和基于 SemanticHistoryView 的 token 估算接口。
 - 实现 JSONL SessionMeta、native item、turn boundary 和 usage。
 - 实现单 writer、flush、尾部半行修复和 schema version。
 - 实现 SQLite session/thread/project 索引和重建。
@@ -214,6 +229,7 @@ make verify
 ### 6.5 验收标准
 
 - 进程重启后可恢复两种 provider 的原生历史并继续对话。
+- resume 可通过 HistoryProjector 重建用户可见历史，但续写请求仍只使用 native history。
 - JSONL 尾部被截断时能保留此前合法记录并报告修复。
 - 删除 SQLite 后可以从 JSONL 重建 session 列表和 thread metadata。
 - `--json` 不混入人类可读日志，stdout/stderr 职责清晰。
@@ -254,7 +270,7 @@ make verify
 - 实现 exec/write_stdin、后台进程、输出截断和取消。
 - 实现 workspace root、路径规范化、symlink 和目录穿越检查。
 - 实现 allow/ask/deny 权限策略和 approval event。
-- 引入平台 sandbox 抽象，先完成当前开发平台实现和其他平台 fallback。
+- 引入 sandbox capability flag，P3 只完成当前开发平台的最小实现和安全 fallback；完整 macOS/Linux/Windows sandbox 与兼容矩阵延后 P8。
 - 实现工具 schema 编译和稳定排序。
 - 实现 Anthropic JSON Edit decoder 和 OpenAI freeform patch decoder。
 - 实现 PatchDraftUpdated、ToolProgress 和有序 result collection。
@@ -365,6 +381,7 @@ make verify
 - message cell 按语义类型渲染，provider 差异在 event metadata 中表达。
 - 高频文本按帧合并，边界事件即时刷新。
 - overlay、composer、history viewport 和 status 独立组件。
+- live 模式消费 RuntimeEvent，resume/history replay 消费 HistoryProjector 的语义视图；两条路径必须产生等价的可见 cell。
 
 ### 9.3 工作内容
 
@@ -393,6 +410,7 @@ make verify
 - permission overlay 期间输入不会误发给模型。
 - 异常退出、panic hook 或 Ctrl+C 后终端模式得到恢复。
 - 固定终端尺寸 snapshot 覆盖核心 cell 和 overlay。
+- 相同 native fixture 的 live stream 与 resume replay snapshot 在可见语义上等价。
 - 主题、窗口尺寸和 UI 配置不影响 provider request/cache fingerprint。
 
 ### 9.6 已知踩坑与规避
@@ -417,6 +435,7 @@ make verify
 ### 10.2 架构选择
 
 - HookEngine 使用强类型 request/outcome，外部 wire 可兼容 Claude。
+- Stop hook 需要的 assistant 文本来自 HistoryProjector，不解析或拼接 Provider-native item。
 - Skill catalog 只注入 metadata，正文按需加载。
 - 每个 skill/resource 绑定 authority 和 source。
 - Plugin 内部归一化为 PluginContribution；Claude/Codex manifest 只作为 importer。
@@ -425,6 +444,7 @@ make verify
 ### 10.3 工作内容
 
 - 实现首批 hooks、matcher、timeout、async、block/rewrite/context/result。
+- 实现受限 Hook 语义上下文，其中 last assistant message 由 HistoryProjector 提供。
 - 实现 project/plugin hook trust review。
 - 实现 system/user/project/plugin skills discovery 和 precedence。
 - 实现 `$skill`、Skill tool、path activation、allowed-tools、fork context。
@@ -476,6 +496,7 @@ hook、skill、MCP、plugin 的信任、热加载、失败隔离和缓存回归�
 - `none/full/last_n_turns` 显式决定上下文继承。
 - parent-child 只通过 mailbox/command-event 通信，不共享可变 history。
 - 并发、深度、token/time 预算由 root 统一控制。
+- Completion envelope 的用户可见正文只从 child 的 HistoryProjector 输出提取，不解析 child Provider wire。
 
 ### 11.3 工作内容
 
@@ -483,6 +504,7 @@ hook、skill、MCP、plugin 的信任、热加载、失败隔离和缓存回归�
 - 实现 spawn、foreground/background、list、wait、interrupt、follow-up。
 - 实现 model/provider/effort/tool/permission/max-turns 继承与覆盖。
 - 实现 fork history 截断、parent metadata 和 completion envelope。
+- 实现基于 HistoryProjector 的 completion 正文抽取，并保留 child thread/native history 的独立性。
 - 实现后台完成通知和 task artifact。
 - 实现 subagent hooks、usage/cost 归属和 session resume。
 - 为未来 worktree/team mailbox 预留协议，但不提前实现空壳层。
@@ -528,10 +550,12 @@ hook、skill、MCP、plugin 的信任、热加载、失败隔离和缓存回归�
 - session/protocol schema 采用向前可迁移的版本。
 - 性能优化必须基于 benchmark、pprof 和结构化指标，不引入不可解释缓存。
 - release artifact 为单二进制，平台特定 sandbox/PTY 能力显式报告。
+- P8 完成多平台 sandbox 强化；P3 capability flag 和安全 fallback 不等于所有平台都已沙箱化。
 
 ### 12.3 工作内容
 
-- macOS/Linux/Windows 进程、路径、PTY、权限和终端验证。
+- macOS/Linux/Windows 进程、路径、PTY、权限、sandbox 和终端验证。
+- 在发布兼容矩阵记录 Sonic 在非 amd64/arm64 架构使用 fallback 实现的正确性与性能基准。
 - 大 session、长输出、大仓库、慢 MCP 和多 subagent 压测。
 - provider 故障注入：限流、5xx、半流、乱序、缺 usage、格式扩展。
 - session migration、备份、repair 和 archive。
@@ -632,7 +656,7 @@ Turn 1 建立稳定前缀
 ## 15. Roadmap 变更规则
 
 - 阶段目标或退出条件改变时，必须说明原因和架构影响。
-- Provider/cache/session 协议发生破坏性变化时，需要 ADR 和 migration 计划。
+- Provider/cache/session 协议发生破坏性变化时，必须先创建 OpenSpec change，并补充 ADR 和 migration 计划。
 - 新功能先归属现有边界；如果必须新建模块，要证明其职责和依赖方向。
 - 不以“后续重构”为理由合入已知反模式。
 - 已完成阶段发现回归时，相关阶段重新进入未通过状态，修复并补充回归测试后再关闭。

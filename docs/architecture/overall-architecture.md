@@ -84,7 +84,7 @@ EasyCode 是一个本地优先的 coding agent。产品体验主要参考 Claude
 
 - API key 默认从环境变量读取，日志必须脱敏。
 - 项目级 hooks/plugins 首次启用需要信任确认。
-- 有副作用工具必须经过权限策略和 sandbox。
+- 有副作用工具必须经过权限策略和 sandbox capability。P3 只要求 capability flag 和当前开发平台的最小实现，其他平台可以安全降级并明确报告；完整跨平台 sandbox 放到 P8 发布强化。
 - 网络流重试不得导致工具重复执行。
 
 ## 4. 总体架构
@@ -197,9 +197,11 @@ cmd     -> app
 
 Resty v3 当前使用 `resty.dev/v3` 导入路径；在项目初始化时最新可用版本为 `v3.0.0-rc.4`，升级到稳定版前必须重新运行 provider/SSE 契约测试。Sonic 与 Resty 的自动 JSON 行为不得混用：EasyCode 使用 `sonic.ConfigStd` 的 map key 排序、字符串校验和标准兼容行为产生确定请求字节，再交给 Resty 发送；响应也由 provider wire 层显式调用 Sonic 解码。
 
+Sonic 在 amd64/arm64 之外会使用 fallback 实现。单二进制发布仍以兼容性矩阵和跨平台 golden/test 为准，不得假设所有架构都拥有相同的 SIMD 性能；P8 发布强化必须记录该差异及基准结果。
+
 Provider HTTP 层不直接依赖官方模型 SDK。原因是 EasyCode 需要支持任意兼容 `base_url`、自定义 header、精确 SSE 状态机、opaque 字段保留和请求字节稳定性。若未来使用官方 SDK，只能将其封装在 provider 边界内，并通过同一套 golden/cache 测试证明行为等价。
 
-首版 CLI、TUI 和 runtime 在同一进程内通过 channel/trait 通信。只有 IDE、远程工作区或多客户端需求实际出现后，才引入 app-server/JSON-RPC，届时复用现有 protocol，而不是重新定义业务模型。
+首版 CLI、TUI 和 runtime 在同一进程内通过 channel/接口通信。只有 IDE、远程工作区或多客户端需求实际出现后，才引入 app-server/JSON-RPC，届时复用现有 protocol，而不是重新定义业务模型。
 
 ## 5. Provider Kernel
 
@@ -217,7 +219,7 @@ Provider HTTP 层不直接依赖官方模型 SDK。原因是 EasyCode 需要支�
 8. 根据 stop/tool/end-turn 状态决定继续采样或结束。
 9. 执行 stop hook，持久化 turn boundary 和 usage。
 
-Provider Kernel 不是单个庞大 trait，而是以下策略的组合：
+Provider Kernel 不是单个庞大 interface，而是以下策略的组合：
 
 ```text
 ProviderKernel
@@ -229,6 +231,7 @@ ProviderKernel
   CachePlanner
   CompactionCodec
   UsageParser
+  HistoryProjector
 ```
 
 Go 中通过小接口与组合实现，`runtime.TurnRuntime` 只依赖 `provider.Kernel`。运行时装配具体实现：
@@ -259,16 +262,16 @@ openai.Provider
 - remote compaction
 - usage/cached token reporting
 
-默认能力按 wire 提供，用户配置可以覆盖。运行时遇到服务端不支持时要产生可诊断的 capability downgrade，而不是静默丢失数据。
+默认能力按 wire 提供，用户配置可以覆盖。运行时遇到服务端不支持时要产生可诊断的 capability downgrade，而不是静默丢失数据。`UsageParser` 还必须将不同 Provider 的 usage 语义归一化为 `input_uncached`、`cache_read`、`cache_write` 三元组，并保留原始字段和 unknown 状态。
 
 ### 5.3 Wire 范围
 
-首版完整支持：
+首版完整支持，且 P1 实现顺序优先 OpenAI Responses：
 
 - `family = "anthropic", wire = "messages"`
 - `family = "openai", wire = "responses"`
 
-可在后续提供 `wire = "chat_completions"` 的降级模式，但不得将其宣传为与 Responses 等价。Chat Completions 很难完整表达 reasoning item、message phase、encrypted content、freeform patch 和部分缓存信息。
+首版不支持 `wire = "chat_completions"`。因此，只有 Chat Completions 的国产生态、本地模型和第三方兼容网关在 v1 中不可用；`base_url + api_key` 只表示连接方式，不代表 endpoint 支持任意 OpenAI wire。未来增加 Chat Completions 时必须拥有独立 RequestCompiler、StreamReducer、NativeHistory、ToolWireCodec、UsageParser、HistoryProjector 和 fixture，不得由 Responses adapter 隐式降级。详见 [ADR-0004](adr/0004-openai-responses-first-wire-scope.md)。
 
 ### 5.4 跨 Provider 恢复
 
@@ -276,6 +279,30 @@ openai.Provider
 - 同 family 切换模型：通过 capability 和 compaction compatibility 检查后恢复。
 - Anthropic 与 OpenAI 互切：创建新 fork，将旧上下文压缩为中立摘要，再由新 provider 建立原生历史。
 - 禁止伪造 Anthropic signature 或 OpenAI encrypted reasoning。
+
+### 5.5 HistoryProjector 与语义视图
+
+双轨历史需要一个明确的共享接缝，但不能退回统一消息模型。每个 Provider 实现自己的 `HistoryProjector`，将 native history 单向投影为只读的 `SemanticHistoryView`：
+
+```text
+Provider-native history
+          |
+   HistoryProjector
+          |
+  SemanticHistoryView
+   |      |      |      |
+ token  resume  hooks  subagent
+ estimate render text   result
+```
+
+投影视图可以表达用户/assistant 文本、可展示的 reasoning summary、工具调用与结果摘要、phase 和完成状态；不得包含可用于伪造续写的 signature、encrypted content 或 Provider wire 请求字段。以下共享消费者必须使用它：
+
+- token 预算和估算器；
+- resume/history UI 回放；
+- Stop hook 所需的最后 assistant 文本；
+- Subagent completion envelope 的正文抽取。
+
+RequestCompiler、NativeHistory、Session 事实源和 Provider resume 只能使用 native history，不能从语义视图反向构建请求。投影视图允许有损，按 Provider 各自实现并通过 golden fixture 保证 live stream 与 replay 的可见语义一致。详细决策见 [ADR-0002](adr/0002-provider-native-history-and-semantic-projection.md)。
 
 ## 6. 缓存架构
 
@@ -367,20 +394,21 @@ OpenAI CachePlanner 负责：
 - cache plan version。
 - 各 segment fingerprint 的短摘要，不记录正文。
 - 与上次请求相比首个变化 segment。
-- input/output/cached/cache-write token。
+- provider 原始 usage 摘要和归一化后的 `input_uncached/cache_read/cache_write` token。
 - cacheable prefix token 估算。
 - previous response 是否复用及回退原因。
 
 核心指标：
 
 ```text
-cache_read_ratio       = cached_input_tokens / input_tokens
-cache_write_ratio      = cache_write_input_tokens / input_tokens
+normalized_input_total = input_uncached + cache_read + cache_write
+cache_read_ratio       = cache_read / normalized_input_total
+cache_write_ratio      = cache_write / normalized_input_total
 stable_prefix_reuse    = repeated stable fingerprint requests / eligible requests
 prefix_churn_by_source = invalidations grouped by segment/source
 ```
 
-第三方兼容服务可能不返回 cached token，此时指标标为 unknown，不能误报为 0 命中。
+Anthropic 的 `input_tokens` 通常表示未命中缓存的输入，`cache_read_input_tokens` 与 `cache_creation_input_tokens` 是额外字段；OpenAI 的 `prompt_tokens` 通常已经包含 `cached_tokens` 子集。因此不能直接用两家原始字段做同一个分母。`UsageParser` 必须先输出归一化三元组：Anthropic 的 `normalized_input_total` 为三者之和，OpenAI 则从 `prompt_tokens` 和 cached 子集推导未缓存输入。字段状态需要区分 known、unknown 和 not-applicable；只有 Provider 契约明确“不适用”时才归一化为已知 0，预期字段缺失时相关 ratio 必须标记为 unknown。分母为 0 时 ratio 也保持 unknown。
 
 ### 6.8 缓存测试门槛
 
@@ -540,6 +568,15 @@ ContextPlanner 必须明确每一项的来源、优先级、稳定性、token �
 
 ## 10. Session 与存储
 
+### 10.0 术语
+
+- `session`：一个逻辑会话和持久化命名空间，拥有一棵线程树，不等同于单条消息历史。
+- `root thread`：Session 创建时的根线程，承载默认用户交互历史。
+- `thread`：Session 内一条线性的 turn/native history；Subagent、fork 和 compaction 可以创建 child thread。
+- `turn`：Thread 内一次用户输入到模型停止/工具循环结束的完整生命周期。
+
+`session_id` 用于定位逻辑会话，`thread_id` 用于定位具体执行链；EventEnvelope 同时携带二者，不能只用其中一个替代另一个。线程树决策见 [ADR-0003](adr/0003-session-thread-tree.md)。
+
 ### 10.1 目录
 
 ```text
@@ -672,7 +709,7 @@ manifest adapter 可以统一扩展描述，但不能用于统一 provider 对�
 
 ### 13.1 技术方案
 
-采用 Bubble Tea。TUI 的 Model/Update/View 只消费 RuntimeEvent 和 SessionService command，不直接调用 provider 或工具 executor；耗时 I/O 通过 `tea.Cmd` 转换为消息返回更新循环。
+采用 Bubble Tea。TUI 的 Model/Update/View 只消费 RuntimeEvent 和 SessionService command，不直接调用 provider 或工具 executor；耗时 I/O 通过 `tea.Cmd` 转换为消息返回更新循环。历史回放消费 `HistoryProjector` 生成的语义视图，不直接解析 Provider-native item。
 
 ### 13.2 主要视图
 
@@ -781,10 +818,7 @@ session -> turn -> sampling attempt -> provider request
 逻辑变更必须补充匹配层级的测试；bug 修复必须包含回归测试。实现完成后至少执行：
 
 ```text
-gofmt -l .
-go vet ./...
-go test ./...
-go test -race ./...
+make verify
 ```
 
 涉及 provider、context 或缓存时还必须执行对应 golden/cache regression suite。
@@ -793,7 +827,7 @@ go test -race ./...
 
 推荐模式：
 
-- Template Method：共享 turn lifecycle。
+- Template Method：共享 turn lifecycle；Go 中只允许“骨架持有策略接口”的组合形态，禁止依赖 struct embed 后覆写方法模拟动态分派。Go 的方法 shadow 不会让基类方法内的 self-call 分派到外层类型，编译通过但运行时可能静默失效。
 - Strategy：provider request、stream、cache、compaction 策略。
 - State：SSE reducer 和 turn 状态机。
 - Command：runtime command 和 tool invocation。
@@ -810,18 +844,19 @@ go test -race ./...
 
 1. Provider 原生 item 不通过通用扁平消息反向重建。
 2. UI 不依赖 Anthropic/OpenAI wire 类型。
-3. ToolExecutor 不包含 UI 渲染代码。
-4. 缓存相关集合必须稳定排序、稳定序列化。
-5. 工具调用必须有唯一 call ID 和幂等 ledger。
-6. JSONL 是 session 事实源，SQLite 可重建。
-7. API key 和敏感 header 不得进入日志、错误或 session。
-8. domain/protocol 层不包含网络、数据库和终端副作用。
-9. 禁止上帝类、上帝包、循环依赖和跨层捷径。
-10. 每次逻辑变更都需要测试、自检并保持全量测试通过。
+3. HistoryProjector 是 native history 到 SemanticHistoryView 的单向只读投影，不能反向构建请求。
+4. ToolExecutor 不包含 UI 渲染代码。
+5. 缓存相关集合必须稳定排序、稳定序列化。
+6. 工具调用必须有唯一 call ID 和幂等 ledger。
+7. JSONL 是 session 事实源，SQLite 可重建。
+8. API key 和敏感 header 不得进入日志、错误或 session。
+9. domain/protocol 层不包含网络、数据库和终端副作用。
+10. 禁止上帝类、上帝包、循环依赖和跨层捷径。
+11. 每次逻辑变更都需要测试、自检并保持全量测试通过。
 
 ## 19. 架构决策和踩坑记录
 
-重要选择应记录为 ADR，至少包含：
+需求、契约和实施工作统一由 OpenSpec change 管理；任何契约变更必须先完成 `explore -> propose -> review/confirm -> apply -> verify -> archive`。ADR 不承担任务管理，只记录已经接受且需要长期保留理由的重要架构选择，至少包含：
 
 ```text
 背景
@@ -834,4 +869,4 @@ go test -race ./...
 验证和回归测试
 ```
 
-ADR 存放在 `docs/architecture/adr/`，模板见该目录的 `README.md`。实际开发中遇到的 provider 兼容、缓存失效、流式边界、工具幂等、终端渲染和 session 恢复问题，统一记录到 `docs/roadmap/pitfall-log.md`，并关联修复提交、测试和 ADR。
+ADR 存放在 `docs/architecture/adr/`，模板见该目录的 `README.md`，并与产生该决策的 OpenSpec change 双向引用。实际开发中遇到的 provider 兼容、缓存失效、流式边界、工具幂等、终端渲染和 session 恢复问题，统一记录到 `docs/roadmap/pitfall-log.md`，并关联 OpenSpec change、修复提交、测试和 ADR。

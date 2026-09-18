@@ -4,6 +4,9 @@
 
 - [总体架构设计](architecture/overall-architecture.md)
 - [架构决策记录与模板](architecture/adr/README.md)
+- [Provider 原生历史与语义投影](architecture/adr/0002-provider-native-history-and-semantic-projection.md)
+- [Session 线程树](architecture/adr/0003-session-thread-tree.md)
+- [首版 OpenAI Responses Wire 范围](architecture/adr/0004-openai-responses-first-wire-scope.md)
 
 ## 规划与经验
 

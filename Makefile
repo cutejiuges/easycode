@@ -10,7 +10,7 @@ BIN_DIR ?= bin
 BIN_PATH := $(BIN_DIR)/$(APP_NAME)
 PACKAGES := ./...
 
-.PHONY: build clean fmt-check vet test test-race verify install-hooks
+.PHONY: build clean fmt-check vet lint test test-race verify install-hooks
 
 build:
 	@mkdir -p "$(BIN_DIR)"
@@ -27,13 +27,16 @@ fmt-check:
 vet:
 	$(GO) vet $(PACKAGES)
 
+lint:
+	$(GO) tool staticcheck $(PACKAGES)
+
 test:
 	$(GO) test $(PACKAGES)
 
 test-race:
 	$(GO) test -race $(PACKAGES)
 
-verify: fmt-check vet test test-race
+verify: fmt-check vet lint test test-race
 
 install-hooks:
 	@if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
