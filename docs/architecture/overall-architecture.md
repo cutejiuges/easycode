@@ -732,26 +732,20 @@ manifest adapter 可以统一扩展描述，但不能用于统一 provider 对�
 
 ## 14. 配置与密钥
 
-示例：
+当前首个可用配置格式为用户级 JSON，默认路径为 `~/.config/easycode/config.json`，也可通过 `--config` 指定其他路径：
 
-```toml
-[providers.anthropic]
-family = "anthropic"
-wire = "messages"
-base_url = "https://example.com"
-api_key_env = "ANTHROPIC_API_KEY"
-model = "..."
-
-[providers.openai]
-family = "openai"
-wire = "responses"
-base_url = "https://example.com/v1"
-api_key_env = "OPENAI_API_KEY"
-model = "..."
+```json
+{
+  "provider": "openai",
+  "base_url": "https://example.com/v1",
+  "api_key": "...",
+  "model": "..."
+}
 ```
 
-- 默认只保存环境变量名称，不保存明文 key。
-- 如未来支持配置文件内 token，必须使用 secret type、限制文件权限并在所有 String/GoString/slog/JSON diagnostic 中脱敏。
+- JSON 提供基础值，非空 `EASYCODE_*` 环境变量逐字段覆盖；默认文件不存在时允许纯环境变量启动。
+- 包含明文 API key 的 Unix 配置文件必须使用用户私有权限，例如 `0600`；读取后立即包装为 secret type，并在 String/GoString/slog/JSON diagnostic 中脱敏。
+- 配置文件路径、JSON 正文和 key 不进入 Provider 请求错误或 TUI snapshot；显式配置文件缺失时不得静默回退。
 - base URL、额外 header 和 query 参数需要校验，错误信息不能回显 secret。
 - 不实现账号登录、设备码、OAuth 或订阅系统。
 
