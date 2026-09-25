@@ -17,7 +17,7 @@ func main() {
 	defer stop()
 
 	showVersion := flag.Bool("version", false, "print version and exit")
-	headless := flag.Bool("print", false, "run in non-interactive scaffold mode")
+	headless := flag.Bool("print", false, "print mode (not implemented yet)")
 	flag.Parse()
 
 	err := app.Run(ctx, app.Options{

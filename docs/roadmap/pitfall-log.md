@@ -118,6 +118,21 @@
 - 关联 ADR/Issue/PR：ADR-0001、P1 Roadmap。
 - 后续行动：SSE gate 通过前不开始完整 RequestCompiler/Reducer。
 
+### [P1][2026-09-19] Streaming 使用 raw body 与内部有界 SSE parser
+
+- 状态：已解决
+- 影响版本或提交：OpenAI Responses text chat 纵向切片
+- 现象：Resty v3 RC 的 `SSESource` 默认 event buffer 和 frame/lifecycle 行为不足以固定 4 MiB event 上限、CRLF/EOF、任意 chunk、取消与 idle timeout 契约。
+- 触发条件：直接依赖 `SSESource` 回调和默认 buffer 作为 Provider stream 的事实边界。
+- 根因：HTTP client 的便利 API 与项目所需的 SSE 协议、资源 owner 和终态语义并不等价。
+- 架构影响：Resty 只负责 HTTP 请求和 raw response body；`internal/provider/transport` 独立解析 frame，OpenAI reducer 只解析 Responses JSON event。
+- 缓存影响：稳定 JSON bytes 在请求前生成；parser 不接触 request fingerprint，避免 transport 行为污染缓存输入。
+- 修复方案：使用有界 parser 和 supervisor，覆盖 LF/CRLF、comment、多行 data、随机 chunk、UTF-8、EOF、取消、idle timeout 和 body/reader 清理。
+- 未采用方案及原因：未围绕 `SSESource` 增加兼容补丁，因为其隐含上限和关闭语义仍会泄漏到 Provider。
+- 回归测试：`internal/provider/transport/client_test.go`、`internal/provider/openai/integration_test.go`。
+- 关联 ADR/Issue/PR：OpenSpec `openai-responses-text-chat-slice`。
+- 后续行动：升级 Resty 或调整 event 上限时重跑 transport golden、race 和双轮集成测试。
+
 ### [P1][2026-09-18] Go struct embed 不提供 Template Method 动态分派
 
 - 状态：已解决设计口径
@@ -168,7 +183,20 @@
 
 ## 8. P5 Claude 风格 TUI
 
-暂无实际记录。
+### [P5][2026-09-19] 先交付 text-only Chat 薄切片，不提前扩张完整 TUI
+
+- 状态：已采用
+- 影响版本或提交：OpenAI Responses text chat 纵向切片
+- 现象：等待完整 P5 才验证 RuntimeEvent 会延迟发现 terminal、取消、会话隔离和 UI 投影边界问题。
+- 触发条件：把最基础的真实流式 Chat 与 Markdown、diff、permission、session picker 一次性实施。
+- 根因：完整交互面过大，不适合作为首个 Provider 纵向验收入口。
+- 架构影响：当前只增加 ChatSession facade、单行 draft、内存 transcript 和 typed text/failure projection；TUI 不依赖 Provider 或 transport。
+- 缓存影响：无；TUI transcript 和 RuntimeEvent 不得反向构造 Provider 请求。
+- 修复方案：以两天量级薄切片验证双轮、流式、取消和失败恢复，并把复杂 UI 能力留给 P5。
+- 未采用方案及原因：未新增 textarea/Markdown/工具 cell 等依赖，避免掩盖当前协议边界问题。
+- 回归测试：`internal/tui/model_test.go`、`internal/tui/snapshot_test.go`。
+- 关联 ADR/Issue/PR：OpenSpec `openai-responses-text-chat-slice`。
+- 后续行动：后续 P5 继续实现多行 composer、reasoning/tool/diff、permission 和 session picker；P2 负责 JSONL/resume 与 headless loop。
 
 重点关注：高频重绘、终端恢复、按键歧义、overlay 输入泄漏和 snapshot 非确定性。
 

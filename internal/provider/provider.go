@@ -37,14 +37,38 @@ type NativeItem interface {
 
 // StreamEvent 同时携带共享语义事件和可选原生完成项。
 type StreamEvent struct {
+	Kind   StreamEventKind
 	Event  protocol.Event
 	Native NativeItem
 	Err    error
 }
 
-// Kernel 是 Runtime 依赖的最小 provider 接口。
-type Kernel interface {
+// StreamEventKind 区分普通流事件与恰好一次的终态事件。
+type StreamEventKind string
+
+const (
+	StreamEventSemantic  StreamEventKind = "semantic"
+	StreamEventNative    StreamEventKind = "native_item"
+	StreamEventCompleted StreamEventKind = "completed"
+	StreamEventFailed    StreamEventKind = "failed"
+	StreamEventCancelled StreamEventKind = "cancelled"
+)
+
+// Terminal 判断事件是否结束当前 provider stream。
+func (kind StreamEventKind) Terminal() bool {
+	return kind == StreamEventCompleted || kind == StreamEventFailed || kind == StreamEventCancelled
+}
+
+// Conversation 是 Runtime 依赖的会话级 provider 接口。
+type Conversation interface {
 	Family() domain.ProviderFamily
 	Capabilities() Capabilities
 	Stream(context.Context, TurnInput) (<-chan StreamEvent, error)
+}
+
+// Factory 创建相互隔离的会话级 Provider Conversation。
+type Factory interface {
+	Family() domain.ProviderFamily
+	Capabilities() Capabilities
+	NewConversation() Conversation
 }

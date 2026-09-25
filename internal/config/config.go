@@ -45,9 +45,12 @@ func (config Config) ValidateProvider() error {
 	if config.Provider.BaseURL == "" {
 		return fault.New(fault.CodeInvalidConfiguration, "base URL is required")
 	}
-	parsedURL, err := url.ParseRequestURI(config.Provider.BaseURL)
-	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
+	parsedURL, err := url.Parse(config.Provider.BaseURL)
+	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" || parsedURL.Hostname() == "" {
 		return fault.Wrap(fault.CodeInvalidConfiguration, "base URL is invalid", err)
+	}
+	if parsedURL.User != nil || parsedURL.RawQuery != "" || parsedURL.Fragment != "" {
+		return fault.New(fault.CodeInvalidConfiguration, "base URL must not contain userinfo, query, or fragment")
 	}
 	if config.Provider.APIKey.Empty() {
 		return fault.New(fault.CodeInvalidConfiguration, "API key is required")

@@ -1,7 +1,10 @@
 // Package fault 定义稳定的英文错误码和对外错误结构。
 package fault
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // Code 是可供 CLI、JSON 客户端和未来 app-server 解析的英文错误码。
 type Code string
@@ -9,7 +12,11 @@ type Code string
 const (
 	CodeInvalidConfiguration Code = "invalid_configuration"
 	CodeProviderUnavailable  Code = "provider_unavailable"
+	CodeProviderRequest      Code = "provider_request_failed"
 	CodeNotImplemented       Code = "not_implemented"
+	CodeStreamProtocol       Code = "stream_protocol_error"
+	CodeStreamIdleTimeout    Code = "stream_idle_timeout"
+	CodeUserCancelled        Code = "user_cancelled"
 	CodeTurnFailed           Code = "turn_failed"
 )
 
@@ -37,6 +44,18 @@ func (err *Error) Unwrap() error {
 		return nil
 	}
 	return err.Cause
+}
+
+// Is 支持按稳定错误码或底层 cause 使用 errors.Is 判断。
+func (err *Error) Is(target error) bool {
+	if err == nil || target == nil {
+		return false
+	}
+	var targetFault *Error
+	if errors.As(target, &targetFault) && targetFault.Code != "" {
+		return err.Code == targetFault.Code
+	}
+	return errors.Is(err.Cause, target)
 }
 
 // New 创建不带底层原因的对外错误。

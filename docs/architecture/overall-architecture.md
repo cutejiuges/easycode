@@ -33,7 +33,7 @@ EasyCode 是一个本地优先的 coding agent。产品体验主要参考 Claude
 
 参考目录：`../codex`
 
-- 当前参考提交为 `4701aa4b4`。
+- 当前参考提交为 `7498521d2`。
 - 主要用于参考 Rust workspace、Responses API、事件协议、工具执行、权限与 sandbox、session rollout、subagent control、Ratatui 和可观测性设计。
 - Codex 当前只支持 Responses wire，不能直接作为 Anthropic provider 抽象。
 
@@ -183,7 +183,7 @@ cmd     -> app
 | 领域 | 首选方案 | 选择原因 |
 |---|---|---|
 | 语言与运行时 | Go 1.24+、goroutine、channel、context | 单二进制、并发模型直接、跨平台工具链成熟 |
-| HTTP/SSE | `resty.dev/v3` | 同一包覆盖 HTTP 和 SSE，支持自定义 base URL、header、重试与流式回调 |
+| HTTP/SSE | `resty.dev/v3` + 内部 SSE frame parser | Resty 负责 HTTP 与 raw body，内部 parser 固定 frame 上限、chunk、取消和 idle 语义 |
 | 序列化 | `github.com/bytedance/sonic` | 高性能 JSON，统一 request、wire、JSONL 和 canonical 编码入口 |
 | Schema | 强类型 ToolSchema + 稳定 canonicalizer | 控制工具 schema 顺序和缓存字节，避免反射输出漂移 |
 | CLI | 标准库 `flag` 起步，复杂子命令出现后再评估 Cobra | 首版减少依赖和空壳命令层 |
@@ -195,7 +195,7 @@ cmd     -> app
 | 文件监听 | `fsnotify` | skills/plugins/hooks 热加载 |
 | Golden/Snapshot | 标准库 testing + `testdata` golden files | 避免测试依赖过重，便于审阅 wire 差异 |
 
-Resty v3 当前使用 `resty.dev/v3` 导入路径；在项目初始化时最新可用版本为 `v3.0.0-rc.4`，升级到稳定版前必须重新运行 provider/SSE 契约测试。Sonic 与 Resty 的自动 JSON 行为不得混用：EasyCode 使用 `sonic.ConfigStd` 的 map key 排序、字符串校验和标准兼容行为产生确定请求字节，再交给 Resty 发送；响应也由 provider wire 层显式调用 Sonic 解码。
+Resty v3 当前使用 `resty.dev/v3` 导入路径；在项目初始化时最新可用版本为 `v3.0.0-rc.4`，升级到稳定版前必须重新运行 provider/SSE 契约测试。Streaming 请求使用 Resty raw body，不使用 RC `SSESource` 作为工程契约；`internal/provider/transport` 自行处理 LF/CRLF、任意 chunk、UTF-8 边界、4 MiB 默认 event 上限、取消和 idle watchdog。Sonic 与 Resty 的自动 JSON 行为不得混用：EasyCode 使用 `sonic.ConfigStd` 的 map key 排序、字符串校验和标准兼容行为产生确定请求字节，再交给 Resty 发送；响应也由 provider wire 层显式调用 Sonic 解码。
 
 Sonic 在 amd64/arm64 之外会使用 fallback 实现。单二进制发布仍以兼容性矩阵和跨平台 golden/test 为准，不得假设所有架构都拥有相同的 SIMD 性能；P8 发布强化必须记录该差异及基准结果。
 
@@ -234,7 +234,7 @@ ProviderKernel
   HistoryProjector
 ```
 
-Go 中通过小接口与组合实现，`runtime.TurnRuntime` 只依赖 `provider.Kernel`。运行时装配具体实现：
+Go 中通过小接口与组合实现。Provider 持有不可变配置和 transport，并通过 `provider.Factory` 创建会话级 `provider.Conversation`；`runtime.Runtime` 只依赖 Conversation，避免多个 Session 共享可变 native history。运行时装配具体实现：
 
 ```text
 anthropic.Provider
