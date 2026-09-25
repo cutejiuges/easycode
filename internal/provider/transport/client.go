@@ -9,29 +9,51 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 
 	"resty.dev/v3"
 
 	"easycode/internal/codec"
 )
 
-// Client 统一持有 Resty HTTP 客户端和规范化 base URL。
+const (
+	// DefaultMaxEventBytes 限制单个 SSE event 占用的最大字节数。
+	DefaultMaxEventBytes = 4 << 20
+	// DefaultIdleTimeout 限制已经建立的流长时间没有任何数据或心跳。
+	DefaultIdleTimeout = 5 * time.Minute
+)
+
+// Client 统一持有 Resty HTTP 客户端和经过校验的 base URL。
 type Client struct {
-	baseURL string
+	baseURL *url.URL
 	http    *resty.Client
 }
 
-// NewClient 创建 Resty v3 客户端。
-func NewClient(baseURL string) *Client {
-	normalizedBaseURL := strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	httpClient := resty.New()
-	if normalizedBaseURL != "" {
-		httpClient.SetBaseURL(normalizedBaseURL)
+// SSERequest 描述一条返回 SSE raw body 的 HTTP 请求。
+type SSERequest struct {
+	Method  string
+	Path    string
+	Headers map[string]string
+	Body    any
+}
+
+// StreamOptions 控制 SSE frame 大小和空闲超时。
+type StreamOptions struct {
+	MaxEventBytes int
+	IdleTimeout   time.Duration
+}
+
+// NewClient 创建 Resty v3 客户端并校验 base URL。
+func NewClient(baseURL string) (*Client, error) {
+	parsedBaseURL, err := parseBaseURL(baseURL)
+	if err != nil {
+		return nil, err
 	}
+	httpClient := resty.New().SetRetryCount(0)
 	return &Client{
-		baseURL: normalizedBaseURL,
+		baseURL: parsedBaseURL,
 		http:    httpClient,
-	}
+	}, nil
 }
 
 // HTTP 返回只供 provider transport 边界使用的 Resty 客户端。
@@ -44,30 +66,12 @@ func (client *Client) Close() error {
 	return client.http.Close()
 }
 
-// SSERequest 描述一条由 Resty SSESource 发起的流式请求。
-type SSERequest struct {
-	Method  string
-	Path    string
-	Headers map[string]string
-	Body    any
-}
-
-// SSEEvent 是与 Resty 具体回调类型解耦后的原始事件。
-type SSEEvent struct {
-	ID   string
-	Name string
-	Data string
-}
-
-// NewSSESource 创建使用同一 Resty transport 的 SSE source。
-func (client *Client) NewSSESource(
+// StreamSSE 发起流式请求并返回单一 owner 管理的有序消息 channel。
+func (client *Client) StreamSSE(
 	ctx context.Context,
 	request SSERequest,
-	onEvent func(SSEEvent),
-) (*resty.SSESource, error) {
-	if onEvent == nil {
-		return nil, fmt.Errorf("SSE event handler is required")
-	}
+	options StreamOptions,
+) (<-chan SSEMessage, error) {
 	resolvedURL, err := client.resolveURL(request.Path)
 	if err != nil {
 		return nil, err
@@ -77,11 +81,16 @@ func (client *Client) NewSSESource(
 	if method == "" {
 		method = http.MethodPost
 	}
-	source := resty.NewSSESource().
-		SetURL(resolvedURL).
-		SetMethod(method).
+	body, err := codec.MarshalStable(request.Body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal streaming request body: %w", err)
+	}
+
+	restyRequest := client.http.R().
 		SetContext(ctx).
-		SetTransport(client.http.Transport())
+		SetResponseDoNotParse(true).
+		SetRetryCount(0).
+		SetBody(bytes.NewReader(body))
 
 	headerNames := make([]string, 0, len(request.Headers))
 	for name := range request.Headers {
@@ -89,42 +98,74 @@ func (client *Client) NewSSESource(
 	}
 	sort.Strings(headerNames)
 	for _, name := range headerNames {
-		source.SetHeader(name, request.Headers[name])
+		restyRequest.SetHeader(name, request.Headers[name])
+	}
+	if restyRequest.Header.Get("Content-Type") == "" {
+		restyRequest.SetHeader("Content-Type", "application/json")
+	}
+	if restyRequest.Header.Get("Accept") == "" {
+		restyRequest.SetHeader("Accept", "text/event-stream")
 	}
 
-	if request.Body != nil {
-		body, marshalErr := codec.MarshalStable(request.Body)
-		if marshalErr != nil {
-			return nil, fmt.Errorf("marshal SSE request body: %w", marshalErr)
-		}
-		source.SetHeader("Content-Type", "application/json")
-		source.SetBody(bytes.NewReader(body))
+	response, err := restyRequest.Execute(method, resolvedURL)
+	if err != nil {
+		return nil, fmt.Errorf("open streaming request: %w", err)
+	}
+	if response.RawResponse == nil || response.RawResponse.Body == nil {
+		return nil, fmt.Errorf("open streaming request: response body is unavailable")
+	}
+	if response.StatusCode() < http.StatusOK || response.StatusCode() >= http.StatusMultipleChoices {
+		_ = response.RawResponse.Body.Close()
+		return nil, fmt.Errorf("streaming request failed with HTTP status %d", response.StatusCode())
 	}
 
-	source.OnMessage(func(value any) {
-		event, ok := value.(*resty.SSE)
-		if !ok || event == nil {
-			return
-		}
-		onEvent(SSEEvent{ID: event.ID, Name: event.Name, Data: event.Data})
-	}, nil)
-	return source, nil
+	return superviseSSE(ctx, response.RawResponse.Body, normalizeOptions(options)), nil
 }
 
-func (client *Client) resolveURL(path string) (string, error) {
-	parsedPath, err := url.Parse(path)
-	if err != nil {
-		return "", fmt.Errorf("invalid request URL: %w", err)
+func parseBaseURL(rawURL string) (*url.URL, error) {
+	trimmed := strings.TrimSpace(rawURL)
+	parsedURL, err := url.Parse(trimmed)
+	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" || parsedURL.Hostname() == "" {
+		return nil, fmt.Errorf("base URL is invalid")
 	}
-	if parsedPath.IsAbs() {
-		return parsedPath.String(), nil
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return nil, fmt.Errorf("base URL scheme must be http or https")
 	}
-	if client.baseURL == "" {
-		return "", fmt.Errorf("base URL is required for relative request path")
+	if parsedURL.User != nil || parsedURL.RawQuery != "" || parsedURL.Fragment != "" {
+		return nil, fmt.Errorf("base URL must not include user info, query, or fragment")
 	}
-	parsedBaseURL, err := url.Parse(client.baseURL + "/")
-	if err != nil {
-		return "", fmt.Errorf("invalid base URL: %w", err)
+	parsedURL.Path = strings.TrimRight(parsedURL.Path, "/")
+	parsedURL.RawPath = strings.TrimRight(parsedURL.RawPath, "/")
+	return parsedURL, nil
+}
+
+func (client *Client) resolveURL(endpoint string) (string, error) {
+	trimmedEndpoint := strings.TrimSpace(endpoint)
+	parsedEndpoint, err := url.Parse(trimmedEndpoint)
+	if err != nil || parsedEndpoint.IsAbs() || parsedEndpoint.Host != "" {
+		return "", fmt.Errorf("request endpoint must be a relative path")
 	}
-	return parsedBaseURL.ResolveReference(parsedPath).String(), nil
+	if parsedEndpoint.RawQuery != "" || parsedEndpoint.Fragment != "" {
+		return "", fmt.Errorf("request endpoint must not include query or fragment")
+	}
+	endpointPath := strings.Trim(parsedEndpoint.Path, "/")
+	if endpointPath == "" {
+		return "", fmt.Errorf("request endpoint is required")
+	}
+
+	resolved := *client.baseURL
+	basePath := strings.TrimRight(resolved.Path, "/")
+	resolved.Path = basePath + "/" + endpointPath
+	resolved.RawPath = ""
+	return resolved.String(), nil
+}
+
+func normalizeOptions(options StreamOptions) StreamOptions {
+	if options.MaxEventBytes <= 0 {
+		options.MaxEventBytes = DefaultMaxEventBytes
+	}
+	if options.IdleTimeout <= 0 {
+		options.IdleTimeout = DefaultIdleTimeout
+	}
+	return options
 }

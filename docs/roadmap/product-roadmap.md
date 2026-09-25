@@ -123,7 +123,7 @@ make verify
 - 每个 provider 拥有独立 RequestCompiler、StreamReducer、NativeHistory、UsageParser 和 CachePlanner。
 - 每个 provider 还拥有独立 HistoryProjector，将 native history 单向投影为共享只读语义视图；token、resume、Hook 和 Subagent 不得各自解析 native item。
 - 共享层只接收 RuntimeEvent，不解析 provider wire。
-- Resty SSESource 与 provider reducer 分离；Resty 负责 SSE frame，provider 只处理 Anthropic/OpenAI event 状态。
+- Resty raw body、内部 SSE frame parser 与 provider reducer 分离；transport 负责 frame，provider 只处理 Anthropic/OpenAI event 状态。
 - Provider capabilities 明确配置，unsupported 能力显式降级。
 
 ### 5.3 工作内容
@@ -134,6 +134,13 @@ make verify
 - 使用 httptest/mock server 验证随机 chunk boundary、空行、半包、跨 UTF-8、多个 event、取消、idle timeout 和断线行为。
 - 验证 SSE frame 层与 Provider event reducer 层的职责分离，并记录逐帧回调、背压和错误语义。
 - 如果 RC 的逐帧消费不满足要求，立即在 `internal/provider/transport` 内切换到 Resty raw body + 自研 frame parser；不得等 Provider Kernel 中段再推迟决策。
+
+#### 2026-09-19 纵向切片进展
+
+- Transport spike 已确认采用 Resty raw body + 内部 SSE frame parser；`SSESource` 的默认 event buffer 和 frame/lifecycle 语义不作为项目契约。
+- 已完成 OpenAI Responses text-only request、stream reducer、会话级 native history、事务提交、显式 terminal、两种 API prefix 的双轮回归，以及最基础的单行 TUI Chat。
+- 当前切片只声明 streaming 与 encrypted reasoning 原生保留能力；tools、usage/cache UI、prompt cache key、`previous_response_id`、reasoning 展示、Anthropic Messages、JSONL/resume、`--print/--json` 和自动重试继续留在对应后续阶段。
+- TUI 只消费 typed RuntimeEvent 和 ChatSession facade；本次不提前实现 Markdown、多行 composer、slash command、diff、permission overlay 或 session picker。
 
 #### OpenAI Responses（首要 Provider）
 
@@ -161,7 +168,7 @@ make verify
 ### 5.4 交付物
 
 - 通过随机切块、取消、超时和断线 fixture 验证的 SSE transport contract，以及继续使用 SSESource 或切换 raw body parser 的明确结论。
-- `anthropic.Provider` 和 `openai.Provider`，共同满足小型 `provider.Kernel` 接口。
+- `anthropic.Provider` 和 `openai.Provider`，通过 Provider Factory 创建满足小型 `provider.Conversation` 接口的会话实例。
 - 两套 typed native item 和 stream reducer。
 - request/response golden fixture 集。
 - 最小 `easycode provider probe` 或 doctor provider 检查能力。
@@ -182,6 +189,7 @@ make verify
 
 - **把 Anthropic block 映射成 OpenAI item 再处理**：两边 reducer 完全独立。
 - **把 Resty SSE event 直接当成 provider 完成项**：Resty 只负责 frame，仍需独立 provider reducer 处理 item/block 生命周期。
+- **把 RC `SSESource` 当成稳定 frame 契约**：streaming 统一走 raw body 和内部有界 parser，升级 Resty 时必须重跑 chunk、取消、timeout 和 EOF fixture。
 - **把 SSE 风险推迟到 Provider 中段**：transport spike 和随机切块 fixture 是 P1 第一项交付及第一道退出检查。
 - **收到部分文本后盲目重试**：已有输出重试必须防止重复 item 和未来工具副作用。
 - **丢弃 opaque 字段**：signature/encrypted content 进入强类型 native envelope。
@@ -384,6 +392,8 @@ make verify
 - live 模式消费 RuntimeEvent，resume/history replay 消费 HistoryProjector 的语义视图；两条路径必须产生等价的可见 cell。
 
 ### 9.3 工作内容
+
+2026-09-19 已先交付验证 RuntimeEvent 边界的薄切片：单行 draft、顺序文本 delta、内存多轮、失败恢复、Esc/Ctrl+C 中断和固定尺寸 snapshot。它不改变 P5 的完整范围，复杂 composer、Markdown、工具/diff、permission、reasoning 和 session picker 仍按本节后续实施。
 
 - composer、多行输入、paste 保护、历史、补全和 slash command。
 - assistant commentary/final、thinking/reasoning 折叠。
