@@ -26,6 +26,7 @@ const shutdownTimeout = 5 * time.Second
 type Options struct {
 	ShowVersion bool
 	Headless    bool
+	ConfigPath  string
 	Input       io.Reader
 	Output      io.Writer
 }
@@ -50,7 +51,11 @@ func Run(ctx context.Context, options Options) error {
 		return fault.New(fault.CodeNotImplemented, "--print is not implemented")
 	}
 
-	resources, err := newChatResources(config.LoadFromEnv())
+	applicationConfig, err := config.Load(options.ConfigPath)
+	if err != nil {
+		return err
+	}
+	resources, err := newChatResources(applicationConfig)
 	if err != nil {
 		return err
 	}

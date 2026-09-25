@@ -4,4 +4,6 @@
 *.out
 *.test
 .easycode/
+/.config/easycode/config.json
+/config.json
 .idea

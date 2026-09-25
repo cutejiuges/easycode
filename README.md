@@ -67,11 +67,10 @@ make
 bin/easycode
 ```
 
-检查当前版本或运行无交互骨架：
+检查当前版本：
 
 ```bash
 ./bin/easycode --version
-./bin/easycode --print
 ```
 
 直接运行 TUI：
@@ -82,7 +81,44 @@ bin/easycode
 
 ## Provider 配置
 
-配置模块使用以下环境变量：
+### JSON 配置文件
+
+EasyCode 默认读取：
+
+```text
+~/.config/easycode/config.json
+```
+
+可参考仓库中的 `config.example.json`：
+
+```json
+{
+  "provider": "openai",
+  "base_url": "https://api.openai.com/v1",
+  "api_key": "your-api-key",
+  "model": "your-model"
+}
+```
+
+创建用户配置并限制权限：
+
+```bash
+mkdir -p ~/.config/easycode
+cp config.example.json ~/.config/easycode/config.json
+chmod 600 ~/.config/easycode/config.json
+```
+
+然后编辑 `api_key` 和 `model`。也可以指定其他文件：
+
+```bash
+./bin/easycode --config /path/to/config.json
+```
+
+显式指定的文件不存在、不可读或 JSON 无效时会直接报错。默认文件不存在时，仍可仅使用环境变量启动。包含非空 `api_key` 的配置文件在 Unix 系统上必须是用户私有权限，例如 `0600`；配置路径和 API key 不会进入错误或配置摘要。
+
+### 环境变量
+
+以下非空环境变量会逐字段覆盖 JSON 配置：
 
 | 环境变量 | 说明 | 示例 |
 |---|---|---|
@@ -100,7 +136,9 @@ export EASYCODE_API_KEY=your-api-key
 export EASYCODE_MODEL=your-model
 ```
 
-当前 P0 入口不会发起真实模型请求。这组配置将在双 Provider Kernel 阶段接入 CLI 和 Runtime。
+配置优先级为：JSON 文件提供基础值，非空 `EASYCODE_*` 环境变量覆盖对应字段，最后统一校验。`base_url` 是 API 路径前缀，不会自动补 `/v1`，且不能包含 userinfo、query 或 fragment。
+
+当前交互模式支持 OpenAI Responses 文本对话；Anthropic、`--print`、JSON event 和 resume 尚未实现。
 
 ## 架构概览
 
