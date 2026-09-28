@@ -9,13 +9,19 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"easycode/internal/config"
 	"easycode/internal/domain"
 	"easycode/internal/fault"
+	"easycode/internal/protocol"
+	"easycode/internal/provider"
+	chatRuntime "easycode/internal/runtime"
 	"easycode/internal/secret"
+	"easycode/internal/session"
 )
 
 func TestRunPrintModeRemainsUnimplemented(t *testing.T) {
@@ -77,7 +83,7 @@ func TestRunRejectsInvalidConfigurationWithoutLeakingSecret(t *testing.T) {
 }
 
 func TestNewChatResourcesRejectsMissingConfiguration(t *testing.T) {
-	_, err := newChatResources(config.Config{})
+	_, err := newTestChatResources(t, config.Config{})
 	if !errors.Is(err, &fault.Error{Code: fault.CodeInvalidConfiguration}) {
 		t.Fatalf("missing configuration error: %v", err)
 	}
@@ -90,7 +96,7 @@ func TestNewChatResourcesRejectsUnknownProviderWithoutNetwork(t *testing.T) {
 	}))
 	defer server.Close()
 
-	resources, err := newChatResources(config.Config{Provider: config.Provider{
+	resources, err := newTestChatResources(t, config.Config{Provider: config.Provider{
 		Family:  domain.ProviderFamily("unknown"),
 		BaseURL: server.URL,
 		APIKey:  secret.New("top-secret"),
@@ -115,7 +121,7 @@ func clearProviderEnvironment(t *testing.T) {
 }
 
 func TestNewChatResourcesBuildsAnthropicConversationWithoutNetwork(t *testing.T) {
-	resources, err := newChatResources(config.Config{Provider: config.Provider{
+	resources, err := newTestChatResources(t, config.Config{Provider: config.Provider{
 		Family:  domain.ProviderAnthropic,
 		BaseURL: "https://example.com/v1",
 		APIKey:  secret.New("top-secret"),
@@ -134,7 +140,7 @@ func TestNewChatResourcesBuildsAnthropicConversationWithoutNetwork(t *testing.T)
 func TestNewChatResourcesBuildsOpenAIConversationWithoutNetwork(t *testing.T) {
 	for _, baseURL := range []string{"https://example.com", "https://example.com/openai/v1"} {
 		t.Run(baseURL, func(t *testing.T) {
-			resources, err := newChatResources(config.Config{Provider: config.Provider{
+			resources, err := newTestChatResources(t, config.Config{Provider: config.Provider{
 				Family:  domain.ProviderOpenAI,
 				BaseURL: baseURL,
 				APIKey:  secret.New("test-key"),
@@ -163,7 +169,7 @@ func TestLoadedConfigurationStaysTypedAcrossAppBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load configuration: %v", err)
 	}
-	resources, err := newChatResources(loaded)
+	resources, err := newTestChatResources(t, loaded)
 	if err != nil {
 		t.Fatalf("new chat resources: %v", err)
 	}
@@ -232,6 +238,7 @@ func TestRunStartsTUIFromSupportedConfigurationSourcesWithoutNetwork(t *testing.
 		t.Run(test.name, func(t *testing.T) {
 			clearProviderEnvironment(t)
 			options := test.configure(t, test.baseURL)
+			options.SessionDataRoot = filepath.Join(t.TempDir(), "sessions")
 			var output bytes.Buffer
 			options.Input = strings.NewReader("\x03")
 			options.Output = &output
@@ -266,12 +273,230 @@ func TestRunCanRecoverAfterConfigurationError(t *testing.T) {
 	writeAppConfigAt(t, path, domain.ProviderOpenAI, "https://example.com/v1")
 	output.Reset()
 	if err := Run(context.Background(), Options{
-		ConfigPath: path,
-		Input:      strings.NewReader("\x03"),
-		Output:     &output,
+		ConfigPath:      path,
+		SessionDataRoot: filepath.Join(t.TempDir(), "sessions"),
+		Input:           strings.NewReader("\x03"),
+		Output:          &output,
 	}); err != nil {
 		t.Fatalf("run after configuration repair: %v", err)
 	}
+}
+
+func TestChatResourcesCloseOrdersSessionJournalAndProvider(t *testing.T) {
+	t.Parallel()
+	var mu sync.Mutex
+	var timeline []string
+	add := func(value string) {
+		mu.Lock()
+		timeline = append(timeline, value)
+		mu.Unlock()
+	}
+	journal := &orderedManagedJournal{add: add}
+	conversation := &orderedConversation{add: add}
+	runtimeInstance, err := chatRuntime.New(conversation, chatRuntime.Config{
+		SessionID: runtimeSessionIDForApp, ThreadID: runtimeThreadIDForApp, Journal: journal,
+		NewTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chat := chatRuntime.NewChatSession(runtimeInstance)
+	events, err := chat.Submit("hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event := <-events; event.Kind != protocol.EventTurnStarted {
+		t.Fatalf("first event = %s", event.Kind)
+	}
+	providerResource := &orderedProviderResource{factory: fakeProviderFactory{family: domain.ProviderOpenAI}, add: add}
+	resources := &chatResources{provider: providerResource, writer: journal, session: chat}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := resources.close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for range events {
+	}
+	mu.Lock()
+	got := append([]string(nil), timeline...)
+	mu.Unlock()
+	want := []string{"append:turn_started", "provider:stream", "append:turn_failed", "journal:close", "provider:close"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("close timeline = %#v, want %#v", got, want)
+	}
+}
+
+func TestChatResourcesWriterCloseFailureStillClosesProvider(t *testing.T) {
+	t.Parallel()
+	var mu sync.Mutex
+	var timeline []string
+	add := func(value string) {
+		mu.Lock()
+		timeline = append(timeline, value)
+		mu.Unlock()
+	}
+	journal := &orderedManagedJournal{add: add, closeErr: errors.New("fixture sync failure")}
+	providerResource := &orderedProviderResource{factory: fakeProviderFactory{family: domain.ProviderOpenAI}, add: add}
+	resources := &chatResources{
+		provider: providerResource, writer: journal,
+		session: chatRuntime.NewChatSession(mustIdleAppRuntime(t, journal)),
+	}
+	err := resources.close(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "fixture sync failure") {
+		t.Fatalf("close error = %v", err)
+	}
+	mu.Lock()
+	got := strings.Join(timeline, ",")
+	mu.Unlock()
+	if got != "journal:close,provider:close" {
+		t.Fatalf("close timeline = %q", got)
+	}
+}
+
+func TestChatResourcesShutdownTimeoutDoesNotCloseDependenciesEarly(t *testing.T) {
+	t.Parallel()
+	release := make(chan struct{})
+	conversation := &orderedConversation{release: release}
+	journal := &orderedManagedJournal{}
+	runtimeInstance, err := chatRuntime.New(conversation, chatRuntime.Config{
+		SessionID: runtimeSessionIDForApp, ThreadID: runtimeThreadIDForApp, Journal: journal,
+		NewTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chat := chatRuntime.NewChatSession(runtimeInstance)
+	events, err := chat.Submit("hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-events
+	providerResource := &orderedProviderResource{factory: fakeProviderFactory{family: domain.ProviderOpenAI}}
+	resources := &chatResources{provider: providerResource, writer: journal, session: chat}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := resources.close(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("close timeout error = %v", err)
+	}
+	if journal.closeCalls.Load() != 0 || providerResource.closeCalls.Load() != 0 {
+		t.Fatalf("dependencies closed early: journal=%d provider=%d", journal.closeCalls.Load(), providerResource.closeCalls.Load())
+	}
+	close(release)
+	if err := resources.close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for range events {
+	}
+}
+
+const (
+	runtimeSessionIDForApp = domain.SessionID("00000000-0020-7000-8000-000000000020")
+	runtimeThreadIDForApp  = domain.ThreadID("00000000-0021-7000-8000-000000000021")
+	runtimeTurnIDForApp    = domain.TurnID("00000000-0022-7000-8000-000000000022")
+)
+
+type orderedManagedJournal struct {
+	add        func(string)
+	closeErr   error
+	closeCalls atomic.Int32
+}
+
+func (journal *orderedManagedJournal) AppendBatch(_ context.Context, drafts []session.RecordDraft) ([]session.Record, error) {
+	if journal.add != nil {
+		journal.add("append:" + string(drafts[0].EventKind))
+	}
+	return make([]session.Record, len(drafts)), nil
+}
+
+func (*orderedManagedJournal) Poisoned() bool { return false }
+
+func (journal *orderedManagedJournal) Close(context.Context) error {
+	journal.closeCalls.Add(1)
+	if journal.add != nil {
+		journal.add("journal:close")
+	}
+	return journal.closeErr
+}
+
+type orderedConversation struct {
+	add     func(string)
+	release <-chan struct{}
+}
+
+func (*orderedConversation) Family() domain.ProviderFamily { return domain.ProviderOpenAI }
+
+func (*orderedConversation) Capabilities() provider.Capabilities {
+	return provider.Capabilities{Streaming: true}
+}
+
+func (*orderedConversation) ProjectHistory() domain.SemanticHistoryView {
+	return domain.SemanticHistoryView{Provider: domain.ProviderOpenAI, Turns: []domain.SemanticTurn{}}
+}
+
+func (conversation *orderedConversation) Stream(ctx context.Context, _ provider.TurnInput) (<-chan provider.StreamEvent, error) {
+	if conversation.add != nil {
+		conversation.add("provider:stream")
+	}
+	stream := make(chan provider.StreamEvent, 1)
+	go func() {
+		<-ctx.Done()
+		if conversation.release != nil {
+			<-conversation.release
+		}
+		stream <- provider.StreamEvent{Kind: provider.StreamEventCancelled, Err: context.Canceled}
+		close(stream)
+	}()
+	return stream, nil
+}
+
+type orderedProviderResource struct {
+	factory    fakeProviderFactory
+	add        func(string)
+	closeCalls atomic.Int32
+}
+
+func (resource *orderedProviderResource) Family() domain.ProviderFamily {
+	return resource.factory.Family()
+}
+
+func (resource *orderedProviderResource) Capabilities() provider.Capabilities {
+	return resource.factory.Capabilities()
+}
+
+func (resource *orderedProviderResource) NewConversation() provider.Conversation {
+	return resource.factory.NewConversation()
+}
+
+func (resource *orderedProviderResource) RestoreConversation(commits []provider.NativeCommitEnvelope) (provider.Conversation, error) {
+	return resource.factory.RestoreConversation(commits)
+}
+
+func (resource *orderedProviderResource) Close() error {
+	resource.closeCalls.Add(1)
+	if resource.add != nil {
+		resource.add("provider:close")
+	}
+	return nil
+}
+
+func mustIdleAppRuntime(t *testing.T, journal chatRuntime.Journal) *chatRuntime.Runtime {
+	t.Helper()
+	runtimeInstance, err := chatRuntime.New(&orderedConversation{}, chatRuntime.Config{
+		SessionID: runtimeSessionIDForApp, ThreadID: runtimeThreadIDForApp, Journal: journal,
+		NewTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return runtimeInstance
+}
+
+func newTestChatResources(t *testing.T, applicationConfig config.Config) (*chatResources, error) {
+	t.Helper()
+	return newChatResources(
+		context.Background(), applicationConfig,
+		filepath.Join(t.TempDir(), "sessions"), "", t.TempDir(),
+	)
 }
 
 func writeAppConfig(t *testing.T, directory string, family domain.ProviderFamily, baseURL string) string {

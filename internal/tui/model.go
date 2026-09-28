@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
 )
@@ -62,9 +63,19 @@ type Model struct {
 	interruptNext bool
 }
 
-// NewModel 创建初始 Bubble Tea 模型。
-func NewModel(version string, session ChatSession) Model {
-	return Model{version: version, session: session, assistantItem: -1}
+// NewModel 创建初始 Bubble Tea 模型，并投影可选的已恢复语义历史。
+func NewModel(version string, session ChatSession, initialHistory ...domain.SemanticHistoryView) Model {
+	model := Model{version: version, session: session, assistantItem: -1}
+	if len(initialHistory) == 0 {
+		return model
+	}
+	for _, turn := range initialHistory[0].Turns {
+		model.transcript = append(model.transcript,
+			transcriptMessage{role: "User", text: turn.UserText},
+			transcriptMessage{role: "Assistant", text: turn.AssistantText},
+		)
+	}
+	return model
 }
 
 // Init 返回初始命令。
@@ -214,6 +225,8 @@ func (model Model) View() string {
 	view.WriteString("\n")
 	if model.state == stateStreaming {
 		view.WriteString("> [streaming — Esc/Ctrl+C to cancel]\n")
+	} else if len(model.draft) == 0 {
+		view.WriteString(">\n")
 	} else {
 		_, _ = fmt.Fprintf(&view, "> %s\n", string(model.draft))
 	}

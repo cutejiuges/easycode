@@ -165,7 +165,50 @@
 
 ## 5. P2 Session 与 Headless Agent Loop
 
-暂无实际记录。
+### [P2][2026-09-28] JSONL 不能只复制 Claude Code 或 Codex 的表面报文
+
+- 状态：已解决当前文本切片
+- 影响版本或提交：OpenSpec `add-jsonl-session-resume`
+- 现象：Claude Code 的 transcript 会混合用户/assistant/tool/progress 等消息，Codex rollout 则记录 response item、event 和上下文；二者都包含工具相关事实，但记录边界、恢复来源和宿主事件并不相同。直接照搬任一 JSONL 形状会把 Provider wire、运行时展示和副作用事实耦合。
+- 触发条件：在工具尚未实现时先设计 Session schema，并要求未来无损承接 thinking、tool use 和 MCP call。
+- 根因：把“JSONL 是容器”误当成“所有事件共享同一语义”。Provider native history、工具幂等 ledger 和 RuntimeEvent 实际具有不同提交时机与恢复责任。
+- 架构影响：公共 envelope 只负责版本、顺序、批次、归属与完整性；`provider_native_commit` payload 由对应 Provider 私有解码。当前 required v1 只有 session/thread metadata、turn start/user input、native commit/turn complete；未来 tool、permission、hook、subagent、usage/cache 使用独立版本化 kind，optional 展示事实不得阻断恢复。
+- 缓存影响：Session envelope 和动态路径不参与 Provider 请求 canonical bytes；恢复后的请求字节必须与未退出进程的下一轮一致。
+- 修复方案：OpenAI 保存 user input item 与有序 output items，Anthropic 保存 user/assistant message、metadata 与 usage presence；共享层只传递 opaque envelope。未来 tool result 在副作用 durable 后作为下一次请求的 input-only native 增量提交，不重复 assistant tool call；MCP call 复用工具事实边界，但其 manifest/capability 另行版本化。
+- 未采用方案及原因：未将 tool/thinking/MCP 预先塞入通用 `map[string]any`，也未以 UI transcript 反向构造 Provider 请求；这些做法无法保证类型、幂等和 opaque reasoning 无损。
+- 回归测试：`internal/provider/openai/commit_test.go`、`internal/provider/anthropic/commit_test.go`、`internal/app/session_e2e_test.go`。
+- 关联 ADR/Issue/PR：ADR-0002、ADR-0003；OpenSpec `add-jsonl-session-resume`。
+- 后续行动：P3 增加 tool call/result ledger 时更新 OpenSpec schema、golden 和恢复 fixture；MCP、subagent、compaction 分别在对应阶段扩展，不修改既有 v1 payload。
+
+### [P2][2026-09-28] 恢复正确性需要 envelope、batch、语义三层校验
+
+- 状态：已解决当前 schema
+- 影响版本或提交：OpenSpec `add-jsonl-session-resume`
+- 现象：只校验每行 JSON 可解析，仍可能接受换序、跨线程混写、未知 required 记录、半个成功提交或完整 JSON 但未写完的尾批次。
+- 触发条件：进程在多行 commit 中途退出、文件尾部半行、人工修改、磁盘错误或错误版本的 reader 打开新 schema。
+- 根因：单行 checksum 不能表达多记录原子边界，也不能判断一组记录能否形成可恢复的 Provider 历史。
+- 架构影响：Loader 第一层严格验证 schema/payload version、required/optional、canonical UUIDv7/UTC、checksum、文件归属和单调 seq；第二层只向 ReplayPlanner 暴露完整连续 batch；第三层由 Provider 事务式解码全部 native commits，任一错误都不返回部分历史。
+- 缓存影响：阻止损坏历史生成看似合法但字节不同的续写请求。
+- 修复方案：只允许修复 EOF 尾部半行和最后一个未完成 batch，修复后截断并 `Sync`；中段损坏、完整但校验失败的末行、未知 required 版本全部硬失败。若完整日志以未闭合 turn 结束，恢复先追加 `turn_interrupted` 补偿记录，再开始新 turn。
+- 未采用方案及原因：不跳过坏行继续扫描，不自动猜测未知 required payload，也不把尾批次中的部分 native commit 交给 Provider。
+- 回归测试：`internal/session/loader_test.go`、`internal/session/replay_test.go`、`internal/app/session_e2e_test.go`。
+- 关联 ADR/Issue/PR：ADR-0003；OpenSpec `add-jsonl-session-resume`。
+- 后续行动：schema migration 必须增加跨版本 fixture；SQLite 重建只能消费相同 ReplayPlanner 输出。
+
+### [P2][2026-09-28] Provider 内存提交必须晚于 durable batch
+
+- 状态：已解决
+- 影响版本或提交：OpenSpec `add-jsonl-session-resume`
+- 现象：若 Provider 在收到成功终态时立即把输出写入内存，而 JSONL 随后写盘失败，当前进程能继续携带一段重启后不存在的历史；反过来先发布成功再持久化也会让 UI 与恢复状态分叉。
+- 触发条件：成功 stream 终态之后发生短写、`Sync` 失败、取消与 completed 竞态，或 finalizer 被重复调用。
+- 根因：Provider reducer、Session writer 和 Runtime terminal 缺少明确提交接缝。
+- 架构影响：Provider 只生成 opaque `NativeCommitEnvelope` 和一次性 `PreparedSample`；Runtime 按“写入 native commit + turn complete 的完整 batch并 `Sync` -> finalize Provider memory -> 发布成功 terminal”排序。持久化结果不确定时 Runtime poison，禁止同实例继续采样。
+- 缓存影响：同一 committed history 在 live 与 resume 路径产生相同下一请求 bytes/fingerprint。
+- 修复方案：finalizer 使用 once 语义，Provider restore 先在临时历史事务式验证，再整体替换。取消/失败不生成 native commit；completed 已形成 prepared result 时，晚到取消不能撤销 durable 提交。
+- 未采用方案及原因：不使用异步 best-effort writer，也不允许从 RuntimeEvent 回放 Provider history。
+- 回归测试：`internal/runtime/runtime_test.go`、双 Provider `commit_test.go`、`internal/app/session_e2e_test.go`。
+- 关联 ADR/Issue/PR：ADR-0002、ADR-0003；OpenSpec `add-jsonl-session-resume`。
+- 后续行动：tool result 和其他副作用沿用同一 durable-before-memory 原则；compaction/fork 未来只能 append checkpoint/cursor 与 child metadata，不得重写原日志。该能力当前尚未实现。
 
 重点关注：JSONL 尾部损坏、事件顺序、取消时 flush、SQLite 重建和 native history 恢复。
 

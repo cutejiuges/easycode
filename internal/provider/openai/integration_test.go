@@ -126,6 +126,12 @@ func TestConversationProjectionMatchesLiveTextAndHidesActiveTurn(t *testing.T) {
 			if event.Kind != provider.StreamEventCompleted {
 				t.Fatalf("terminal: %#v", event)
 			}
+			if event.Prepared == nil {
+				t.Fatal("completed terminal is missing prepared sample")
+			}
+			if err := event.Prepared.Finalize(); err != nil {
+				t.Fatalf("finalize sample: %v", err)
+			}
 		}
 	}
 	if terminalCount != 1 {
@@ -161,6 +167,12 @@ func runCompletedTurn(t *testing.T, conversation provider.Conversation, text str
 			terminalCount++
 			if event.Kind != provider.StreamEventCompleted || event.Err != nil {
 				t.Fatalf("turn %q terminal: %#v", text, event)
+			}
+			if event.Prepared == nil {
+				t.Fatalf("turn %q completed without prepared sample", text)
+			}
+			if err := event.Prepared.Finalize(); err != nil {
+				t.Fatalf("turn %q finalize: %v", text, err)
 			}
 		}
 	}

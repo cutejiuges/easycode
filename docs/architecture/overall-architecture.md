@@ -1,7 +1,7 @@
 # EasyCode 总体架构设计
 
-> 状态：初始基线  
-> 更新时间：2026-09-18  
+> 状态：持续演进
+> 更新时间：2026-09-28
 > 适用范围：EasyCode CLI、Agent Runtime、Provider、工具、扩展系统、会话存储和 TUI
 
 ## 1. 背景与目标
@@ -304,6 +304,12 @@ Provider-native history
 
 RequestCompiler、NativeHistory、Session 事实源和 Provider resume 只能使用 native history，不能从语义视图反向构建请求。投影视图允许有损，按 Provider 各自实现并通过 golden fixture 保证 live stream 与 replay 的可见语义一致。详细决策见 [ADR-0002](adr/0002-provider-native-history-and-semantic-projection.md)。
 
+### 5.6 Durable native commit 接缝
+
+当前文本会话使用两阶段提交。Provider 在成功终态只生成 `PreparedSample` 与 opaque `NativeCommitEnvelope`，不立即修改 committed native history。Runtime 先将同一 native 增量与 `turn_completed` 作为 JSONL batch 写入并执行 `Sync`，随后调用一次性 finalizer，最后才发布成功终态。持久化失败会 poison 当前 Runtime，未 finalize 的 staging 不得进入下一请求。
+
+OpenAI payload v1 保存用户 Responses item 与有序 output items；Anthropic payload v1 保存 user/assistant message、最终 metadata 和 usage 的 known/unknown 状态。恢复时对应 Provider 先事务式解码全部 commits，任一错误都不返回部分历史。共享 Session、Runtime 和 TUI 只复制公共 envelope，不解析具体 wire。
+
 ## 6. 缓存架构
 
 ### 6.1 目标
@@ -471,7 +477,7 @@ OpenAI reducer 负责处理：
 - 原始网络 delta 可以高频进入 reducer。
 - TUI projection 按 16-33ms 合并纯文本刷新，降低闪烁和 CPU 占用。
 - 工具边界、权限请求、错误和 item 完成事件不得被合并丢失。
-- 慢 session writer 不应阻塞网络流；持久化队列必须有容量限制和明确降级策略。
+- 高频 delta 不进入 session writer；成功终态和副作用边界必须等待 durable batch，不能为降低延迟而越过 `Sync` 确认。
 
 ## 8. Tool 系统
 
@@ -595,6 +601,8 @@ ContextPlanner 必须明确每一项的来源、优先级、稳定性、token �
 ```text
 EventEnvelope
   schema_version
+  payload_version
+  replay_requirement
   seq
   timestamp
   session_id
@@ -602,15 +610,22 @@ EventEnvelope
   parent_thread_id
   turn_id
   event_kind
+  batch_id
+  batch_index
+  batch_size
   payload
+  checksum
 ```
 
-持久化内容包括：
+当前 v1 必需记录包括：
 
-- SessionMeta 和配置快照。
-- provider-native 完成 item。
-- user/tool/compact/permission/hook/subagent/turn boundary。
-- usage、cache 指标和迁移版本。
+- `session_meta` 与 `thread_meta`；
+- `turn_started` 与 `user_input`；
+- `provider_native_commit` 与 `turn_completed`。
+
+`schema_version` 约束公共 envelope，`payload_version` 约束 event payload，`replay_requirement` 明确 required/optional。required 的未知 kind、版本或损坏必须拒绝恢复；optional 记录允许跳过，便于未来加入诊断或展示事实而不破坏旧 Loader。
+
+Provider native commit 只记录 Provider 已验证的原生增量。未来 tool use/tool result、permission、hook、subagent、usage/cache 与 compaction checkpoint 仍需按各自恢复语义增加版本化记录；不能把 RuntimeEvent 或 UI transcript 当作 native history。尤其 tool result 必须在副作用完成且 durable 后，以 Provider 下一次请求所需的 input-only 增量提交，不能重复提交此前 assistant tool call。
 
 默认不持久化每个文本 delta、spinner 或窗口状态；在 item 完成时持久化最终值。需要崩溃恢复时，可以增加有节制的 checkpoint，而不是把所有 UI delta 写入日志。
 
@@ -627,9 +642,13 @@ SQLite 可以从 JSONL 重建。数据库损坏不应导致 transcript 永久丢
 
 ### 10.4 写入与权限
 
-- JSONL append-only，单 writer 保证 seq 单调。
+- JSONL append-only，单 writer 保证 seq 单调；每个 durable batch 连续编号，并在整批写入后执行 `Sync`。
 - 文件使用用户私有权限，Unix 下目标为文件 `0600`、目录 `0700`。
-- 支持 flush、尾部半行修复和 schema migration。
+- Loader 严格校验 canonical UUIDv7、UTC 时间、checksum、ID 归属、序号和 batch 完整性；只允许截去 EOF 尾部半行或未完成尾批次，不允许跳过中段损坏。
+- ReplayPlanner 只重放完整 batch。存在未闭合 turn 时，恢复会先追加可审计的 `turn_interrupted` 补偿事实，再允许新 turn。
+- 当前 `--resume <thread-id>` 通过日期编码的 UUIDv7 定位文件，恢复 native history 和只读语义视图；不恢复旧 API key、base URL、cwd 或其他动态 world state。
+- SQLite 投影、session picker、`--continue`、tool ledger/artifact、schema migration 尚未实现。
+- 未来 compaction/fork 只能追加 checkpoint/cursor 和 child-thread 元数据，原始 JSONL 继续保留；不得重写、截短或把 summary 伪装成原生历史。该能力目前仅有约束，尚未实现。
 - artifact 文件路径必须防止目录穿越。
 
 ## 11. Subagent

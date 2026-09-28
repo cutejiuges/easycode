@@ -141,7 +141,7 @@ make verify
 - 已完成 OpenAI Responses text-only request、stream reducer、会话级 native history、事务提交、显式 terminal、两种 API prefix 的双轮回归，以及最基础的单行 TUI Chat。
 - 已完成 Anthropic Messages text-only request、indexed content-block reducer、会话级 native history、thinking/signature/redacted thinking 无损回放、显式 `message_stop` terminal、两种 API prefix 的双轮回归，并接入同一基础 TUI Chat。
 - 已完成双 Provider 的 committed-only 文本 `HistoryProjector`：投影保留 turn 边界和可见文本，但不暴露 thinking/signature、redacted thinking、reasoning summary、encrypted content、phase、usage 或未知扩展，也不参与后续请求编译。
-- Anthropic 当前只声明 streaming 与 thinking-signature 原生保留能力，OpenAI 当前只声明 streaming 与 encrypted reasoning 原生保留能力；reasoning/tool projection、token estimator、tools、完整 Provider UsageParser/CachePlanner、usage/cache UI、prompt cache key、`previous_response_id`、reasoning 展示、JSONL/Session/resume、`--print/--json` 和自动重试继续留在对应后续阶段。
+- Anthropic 当前只声明 streaming 与 thinking-signature 原生保留能力，OpenAI 当前只声明 streaming 与 encrypted reasoning 原生保留能力；P2 首个切片已经落地文本回合的 JSONL/Session/`--resume`，reasoning/tool projection、token estimator、tools、完整 Provider UsageParser/CachePlanner、usage/cache UI、prompt cache key、`previous_response_id`、`--print/--json` 和自动重试仍留在对应后续阶段。
 - TUI 只消费 typed RuntimeEvent 和 ChatSession facade；本次不提前实现 Markdown、多行 composer、slash command、diff、permission overlay 或 session picker。
 
 #### OpenAI Responses（首要 Provider）
@@ -204,6 +204,12 @@ make verify
 
 ## 6. P2：Session 与 Headless Agent Loop
 
+### 6.0 当前进度（2026-09-28）
+
+已完成文本回合的 append-only JSONL 事实源、UUIDv7 定位、单 writer/`Sync`、完整 batch、尾部修复、双 Provider opaque native commit、durable-before-memory 两阶段提交、进程重启恢复、`--resume` 和历史 TUI 投影。API key、base URL、cwd 等动态配置不进入 Session，恢复时继续使用当前配置。
+
+P2 尚未完成：SQLite 可重建索引、session picker、`--continue`、`--print/--json`、queued/steered input、ContextPlanner/token estimator、完整 usage/cache 事实、tool ledger/result/artifact、fork/subagent 线程树、compaction checkpoint 和 schema migration。当前进度不能视为 P2 退出。
+
 ### 6.1 目标
 
 建立共享 turn 模板、上下文规划和 append-only session。用户可以用 `--print` 或 `--json` 完成多轮对话、停止进程并恢复。
@@ -219,22 +225,22 @@ make verify
 
 ### 6.3 工作内容
 
-- 实现 user input -> sample -> assistant output -> stop 的 turn loop。
+- 已实现 text-only user input -> sample -> assistant output -> stop 的 turn loop；工具循环仍待 P3 接入。
 - 支持 queued/steered input 的基础语义。
 - 实现 context source、稳定排序和基于 SemanticHistoryView 的 token 估算接口。
-- 实现 JSONL SessionMeta、native item、turn boundary 和 usage。
-- 实现单 writer、flush、尾部半行修复和 schema version。
+- 已实现 JSONL SessionMeta、native commit 和文本 turn boundary；完整 usage/cache 记录仍待实现。
+- 已实现单 writer、`Sync`、尾部半行/未完成尾批修复和 v1 envelope/payload version；schema migration 仍待实现。
 - 实现 SQLite session/thread/project 索引和重建。
-- 实现 `--print`、`--json`、`--resume`、`--continue`。
-- 实现用户中断和优雅 shutdown。
+- 已实现 `--resume <thread-id>`；`--print`、`--json`、`--continue` 仍待实现。
+- 已实现当前文本 Chat 的用户中断、依赖有序 shutdown 和中断 turn 补偿；后台任务的完整 shutdown 随对应能力补充。
 - 提供 transcript/debug log 分离。
 
 ### 6.4 交付物
 
 - 可多轮运行的 headless coding chat。
-- session JSONL 和 `state.sqlite`。
-- session list/resume/continue CLI。
-- 稳定 JSON event 输出协议。
+- 已交付 session JSONL；`state.sqlite` 尚未交付。
+- 已交付显式 resume CLI；session list/continue 尚未交付。
+- 稳定 JSON event 输出协议尚未交付。
 
 ### 6.5 验收标准
 
@@ -258,7 +264,7 @@ make verify
 
 ### 6.7 退出条件
 
-两种 provider 的多轮、重启恢复、取消、JSONL 修复和 SQLite 重建测试通过。
+两种 provider 的多轮、重启恢复、取消和 JSONL 修复测试已通过；SQLite 重建与 headless 输出协议测试通过后，P2 才满足退出条件。
 
 ## 7. P3：Coding Tools 与安全执行
 

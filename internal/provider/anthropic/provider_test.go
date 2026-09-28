@@ -86,6 +86,95 @@ func TestNewProviderValidatesAndNormalizesConfiguration(t *testing.T) {
 	}
 }
 
+func TestConversationIgnoresRepeatedCompletedTerminal(t *testing.T) {
+	t.Parallel()
+	conversation := &Conversation{}
+	stream := make(chan transport.SSEMessage, 5)
+	stream <- anthropicEvent(`{"type":"message_start","message":{"id":"msg-1","model":"claude-test"}}`)
+	stream <- anthropicEvent(`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":"answer"}}`)
+	stream <- anthropicEvent(`{"type":"content_block_stop","index":0}`)
+	stream <- anthropicEvent(`{"type":"message_stop"}`)
+	stream <- anthropicEvent(`{"type":"message_stop"}`)
+	close(stream)
+	output := make(chan provider.StreamEvent, 16)
+	conversation.consumeStream(context.Background(), func() {}, newUserMessage("question"), stream, output)
+	terminalCount := 0
+	for event := range output {
+		if !event.Kind.Terminal() {
+			continue
+		}
+		terminalCount++
+		if event.Kind != provider.StreamEventCompleted || event.Prepared == nil {
+			t.Fatalf("terminal = %#v", event)
+		}
+		if len(conversation.historySnapshot()) != 0 {
+			t.Fatal("sample committed before finalization")
+		}
+		if err := event.Prepared.Finalize(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if terminalCount != 1 || len(conversation.historySnapshot()) != 1 {
+		t.Fatalf("terminal count/history = %d/%#v", terminalCount, conversation.historySnapshot())
+	}
+}
+
+func TestConversationCancelCompletedRaceHasOneTerminal(t *testing.T) {
+	for iteration := 0; iteration < 32; iteration++ {
+		conversation := &Conversation{}
+		ctx, cancel := context.WithCancel(context.Background())
+		stream := make(chan transport.SSEMessage, 5)
+		stream <- anthropicEvent(`{"type":"message_start","message":{"id":"msg-race","model":"claude-test"}}`)
+		stream <- anthropicEvent(`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":"answer"}}`)
+		stream <- anthropicEvent(`{"type":"content_block_stop","index":0}`)
+		var senders sync.WaitGroup
+		senders.Add(2)
+		go func() {
+			defer senders.Done()
+			stream <- anthropicEvent(`{"type":"message_stop"}`)
+		}()
+		go func() {
+			defer senders.Done()
+			cancel()
+			stream <- transport.SSEMessage{Err: context.Canceled}
+		}()
+		senders.Wait()
+		close(stream)
+		output := make(chan provider.StreamEvent, 16)
+		conversation.consumeStream(ctx, func() {}, newUserMessage("question"), stream, output)
+		terminalCount := 0
+		for event := range output {
+			if !event.Kind.Terminal() {
+				continue
+			}
+			terminalCount++
+			switch event.Kind {
+			case provider.StreamEventCompleted:
+				if event.Prepared == nil {
+					t.Fatal("completed race terminal has no prepared sample")
+				}
+				if err := event.Prepared.Finalize(); err != nil {
+					t.Fatal(err)
+				}
+			case provider.StreamEventCancelled:
+				if event.Prepared != nil {
+					t.Fatal("cancelled race terminal carried a prepared sample")
+				}
+			default:
+				t.Fatalf("race terminal = %#v", event)
+			}
+		}
+		if terminalCount != 1 {
+			t.Fatalf("iteration %d terminal count = %d", iteration, terminalCount)
+		}
+	}
+}
+
+func anthropicEvent(data string) transport.SSEMessage {
+	event := transport.SSEEvent{Data: data}
+	return transport.SSEMessage{Event: &event}
+}
+
 func validTestConfig() Config {
 	return Config{
 		BaseURL: "https://example.com/v1",
