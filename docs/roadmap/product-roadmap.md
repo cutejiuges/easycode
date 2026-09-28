@@ -206,9 +206,9 @@ make verify
 
 ### 6.0 当前进度（2026-09-28）
 
-已完成文本回合的 append-only JSONL 事实源、UUIDv7 定位、单 writer/`Sync`、完整 batch、尾部修复、双 Provider opaque native commit、durable-before-memory 两阶段提交、进程重启恢复、`--resume` 和历史 TUI 投影。API key、base URL、cwd 等动态配置不进入 Session，恢复时继续使用当前配置。
+已完成文本回合的 append-only JSONL 事实源、UUIDv7 定位、跨 Repository/跨进程 exclusive journal lease、单 writer/`Sync`、完整 batch、尾部修复、双 Provider opaque native commit、durable-before-memory 两阶段提交、进程重启恢复、`--resume`、不可变 v1 compatibility fixture 和历史 TUI 投影。API key、base URL、cwd 等动态配置不进入 Session，恢复时继续使用当前配置。
 
-P2 尚未完成：SQLite 可重建索引、session picker、`--continue`、`--print/--json`、queued/steered input、ContextPlanner/token estimator、完整 usage/cache 事实、tool ledger/result/artifact、fork/subagent 线程树、compaction checkpoint 和 schema migration。当前进度不能视为 P2 退出。
+P2 尚未完成：SQLite 可重建索引、session picker、`--continue`、`--print/--json`、queued/steered input、ContextPlanner/token estimator、完整 usage/cache 事实、tool ledger/result/artifact、fork/subagent 线程树、compaction checkpoint，以及未来 schema/payload revision 的版本专属转换。v1 compatibility fixture 已建立不代表通用 migration 已实现；当前进度不能视为 P2 退出。
 
 ### 6.1 目标
 
@@ -229,7 +229,7 @@ P2 尚未完成：SQLite 可重建索引、session picker、`--continue`、`--pr
 - 支持 queued/steered input 的基础语义。
 - 实现 context source、稳定排序和基于 SemanticHistoryView 的 token 估算接口。
 - 已实现 JSONL SessionMeta、native commit 和文本 turn boundary；完整 usage/cache 记录仍待实现。
-- 已实现单 writer、`Sync`、尾部半行/未完成尾批修复和 v1 envelope/payload version；schema migration 仍待实现。
+- 已实现由同一 exclusive lease 覆盖 load/repair、Provider 恢复、续写和最终关闭的跨进程单 writer，及 `Sync`、尾部半行/未完成尾批修复、v1 envelope/payload version 与不可变 v1 compatibility fixture；未来版本转换仍待真实 revision 出现时按版本实现。
 - 实现 SQLite session/thread/project 索引和重建。
 - 已实现 `--resume <thread-id>`；`--print`、`--json`、`--continue` 仍待实现。
 - 已实现当前文本 Chat 的用户中断、依赖有序 shutdown 和中断 turn 补偿；后台任务的完整 shutdown 随对应能力补充。
@@ -258,7 +258,7 @@ P2 尚未完成：SQLite 可重建索引、session picker、`--continue`、`--pr
 - **把 RuntimeEvent 全量写入 JSONL**：只记录恢复所需事实，避免 delta 膨胀。
 - **SQLite 成为唯一事实源**：任何索引都必须可重建。
 - **resume 时通过 UI message 重建 provider history**：使用 native item。
-- **写入顺序与事件顺序不一致**：单 writer 分配单调 seq。
+- **写入顺序与事件顺序不一致**：跨进程 lease 保护的单 writer 分配单调 seq；advisory lock 不能约束旧版或非协作进程，禁止新旧二进制同时写同一 thread。
 - **context source 每轮全量重排**：稳定层固定，动态 world state 放尾部或 diff。
 - **取消导致最后一个完成 item 丢失**：item 完成先入 durable queue，再发布 terminal event。
 

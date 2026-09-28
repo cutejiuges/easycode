@@ -56,8 +56,8 @@ func (repository *Repository) JournalPath(threadID domain.ThreadID) (string, err
 	return filepath.Join(repository.rootPath, filepath.FromSlash(relative)), nil
 }
 
-// Create 创建新的私有 thread journal，并同步其父目录项。
-func (repository *Repository) Create(ctx context.Context, threadID domain.ThreadID) (*os.File, error) {
+// Create 创建新的私有 thread journal，取得独占 lease，并同步其父目录项。
+func (repository *Repository) Create(ctx context.Context, threadID domain.ThreadID) (*JournalLease, error) {
 	if err := contextError(ctx); err != nil {
 		return nil, err
 	}
@@ -77,22 +77,26 @@ func (repository *Repository) Create(ctx context.Context, threadID domain.Thread
 		_ = file.Close()
 		return nil, err
 	}
+	lease, err := acquireJournalLease(file, threadID)
+	if err != nil {
+		return nil, err
+	}
 	parent, err := repository.root.Open(directory)
 	if err != nil {
-		_ = file.Close()
+		_ = lease.Close()
 		return nil, fmt.Errorf("open session journal directory: %w", err)
 	}
 	syncErr := parent.Sync()
 	closeErr := parent.Close()
 	if syncErr != nil || closeErr != nil {
-		_ = file.Close()
+		_ = lease.Close()
 		return nil, fmt.Errorf("sync session journal directory: %w", errors.Join(syncErr, closeErr))
 	}
-	return file, nil
+	return lease, nil
 }
 
-// Open 打开已有私有普通 journal，供 Loader 修复或 writer 续写。
-func (repository *Repository) Open(ctx context.Context, threadID domain.ThreadID) (*os.File, error) {
+// Open 打开已有私有普通 journal，并在读取或修复前取得独占 lease。
+func (repository *Repository) Open(ctx context.Context, threadID domain.ThreadID) (*JournalLease, error) {
 	if err := contextError(ctx); err != nil {
 		return nil, err
 	}
@@ -111,7 +115,18 @@ func (repository *Repository) Open(ctx context.Context, threadID domain.ThreadID
 		_ = file.Close()
 		return nil, err
 	}
-	return file, nil
+	return acquireJournalLease(file, threadID)
+}
+
+func acquireJournalLease(file *os.File, threadID domain.ThreadID) (*JournalLease, error) {
+	if err := tryLockJournal(file); err != nil {
+		_ = file.Close()
+		if IsJournalBusy(err) {
+			return nil, errJournalBusy
+		}
+		return nil, fmt.Errorf("lock session journal: %w", err)
+	}
+	return newJournalLease(file, threadID), nil
 }
 
 // Close 释放受限 filesystem root。

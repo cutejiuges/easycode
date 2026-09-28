@@ -69,14 +69,13 @@ func CreateRootJournal(
 	if config.CreatedAt.IsZero() {
 		createdAt = time.Now().UTC()
 	}
-	file, err := repository.Create(ctx, identity.ThreadID)
+	lease, err := repository.Create(ctx, identity.ThreadID)
 	if err != nil {
 		return nil, nil, err
 	}
-	writer, err := NewJournalWriter(file, identity, 1)
+	writer, err := StartJournalWriter(lease, identity, 1)
 	if err != nil {
-		_ = file.Close()
-		return nil, nil, err
+		return nil, nil, errors.Join(err, lease.Close())
 	}
 	records, err := writer.AppendBatch(ctx, []RecordDraft{
 		{
@@ -94,28 +93,4 @@ func CreateRootJournal(
 		return nil, nil, errors.Join(err, closeErr)
 	}
 	return writer, records, nil
-}
-
-// ReopenJournalWriter 从 Loader 已确认的下一序号继续追加同一 thread。
-func ReopenJournalWriter(
-	ctx context.Context,
-	repository *Repository,
-	loaded LoadResult,
-) (*JournalWriter, error) {
-	if repository == nil {
-		return nil, fmt.Errorf("session repository is required")
-	}
-	if !loaded.Identity.SessionID.Valid() || !loaded.Identity.ThreadID.Valid() || loaded.NextSequence == 0 {
-		return nil, fmt.Errorf("loaded session identity is invalid")
-	}
-	file, err := repository.Open(ctx, loaded.Identity.ThreadID)
-	if err != nil {
-		return nil, err
-	}
-	writer, err := NewJournalWriter(file, loaded.Identity, loaded.NextSequence)
-	if err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-	return writer, nil
 }

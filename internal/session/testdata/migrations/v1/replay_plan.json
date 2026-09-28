@@ -1,0 +1,29 @@
+{
+  "session_id": "00000000-0000-7000-8000-000000000001",
+  "thread_id": "00000000-0001-7000-8000-000000000002",
+  "provider": "openai",
+  "provider_wire": "responses",
+  "model": "fixture-model",
+  "schema_revision": 1,
+  "creation_cwd": "/workspace/easycode",
+  "turns": [
+    {
+      "turn_id": "00000000-0002-7000-8000-000000000003",
+      "state": "failed"
+    },
+    {
+      "turn_id": "00000000-0005-7000-8000-000000000006",
+      "state": "completed"
+    }
+  ],
+  "native_commits": [
+    {
+      "sequence": 6,
+      "turn_id": "00000000-0005-7000-8000-000000000006",
+      "provider": "openai",
+      "wire": "responses",
+      "payload_version": 1
+    }
+  ],
+  "next_sequence": 8
+}

@@ -248,18 +248,27 @@ func encodeTestRecord(
 	return encoded
 }
 
-func writeRawJournal(t *testing.T, content []byte) (*Loader, *Repository) {
+type testJournalLoader struct {
+	loader *Loader
+	lease  *JournalLease
+}
+
+func (loader *testJournalLoader) Load(ctx context.Context, _ domain.ThreadID) (LoadResult, error) {
+	return loader.loader.Load(ctx, loader.lease)
+}
+
+func writeRawJournal(t *testing.T, content []byte) (*testJournalLoader, *Repository) {
 	t.Helper()
 	repository, err := NewRepository(filepath.Join(t.TempDir(), "sessions"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	file, err := repository.Create(context.Background(), testThreadID)
+	lease, err := repository.Create(context.Background(), testThreadID)
 	if err != nil {
 		_ = repository.Close()
 		t.Fatal(err)
 	}
-	if err := file.Close(); err != nil {
+	if err := lease.Close(); err != nil {
 		_ = repository.Close()
 		t.Fatal(err)
 	}
@@ -272,10 +281,11 @@ func writeRawJournal(t *testing.T, content []byte) (*Loader, *Repository) {
 		_ = repository.Close()
 		t.Fatal(err)
 	}
-	loader, err := NewLoader(repository)
+	lease, err = repository.Open(context.Background(), testThreadID)
 	if err != nil {
 		_ = repository.Close()
 		t.Fatal(err)
 	}
-	return loader, repository
+	t.Cleanup(func() { _ = lease.Close() })
+	return &testJournalLoader{loader: NewLoader(), lease: lease}, repository
 }

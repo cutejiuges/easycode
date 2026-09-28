@@ -49,11 +49,11 @@ func TestCreateAndReopenRootJournal(t *testing.T) {
 		t.Fatalf("CreateRootJournal changed cwd from %q to %q", beforeCWD, afterCWD)
 	}
 
-	loader, err := NewLoader(repository)
+	lease, err := repository.Open(context.Background(), testThreadID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := loader.Load(context.Background(), testThreadID)
+	loaded, err := NewLoader().Load(context.Background(), lease)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestCreateAndReopenRootJournal(t *testing.T) {
 		t.Fatalf("creation cwd = %q, want %q", plan.SessionMetadata.CreationCWD, filepath.Clean(wantCWD))
 	}
 
-	writer, err = ReopenJournalWriter(context.Background(), repository, loaded)
+	writer, err = StartJournalWriter(lease, loaded.Identity, loaded.NextSequence)
 	if err != nil {
 		t.Fatal(err)
 	}
