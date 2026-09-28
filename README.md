@@ -4,7 +4,7 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 
 用户只需要提供 `base_url`、`api_key` 和模型名称即可连接服务，不需要账号登录、OAuth、设备码或订阅鉴权。
 
-> 项目当前处于 P0 工程与协议基线阶段。应用入口、核心协议、Provider 边界、缓存规划、HTTP/SSE 传输、扩展边界和 TUI 骨架已经建立；真实模型对话、coding tools 和持久化 Session 将按照 Roadmap 分阶段实现。
+> 项目当前正在推进 P1 双 Provider Kernel。Anthropic Messages 与 OpenAI Responses 已能通过基础 TUI 完成内存文本多轮对话；coding tools、持久化 Session 和完整缓存/推理界面将按照 Roadmap 分阶段实现。
 
 ## 设计目标
 
@@ -19,8 +19,8 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 
 | 领域 | 当前状态 |
 |---|---|
-| CLI/TUI 入口 | 已建立 Bubble Tea 应用入口和 headless 骨架 |
-| 双 Provider | 已定义 Kernel、能力模型及 Anthropic/OpenAI 原生数据边界 |
+| CLI/TUI 入口 | 已实现 Bubble Tea 基础文本 Chat 和 headless 骨架 |
+| 双 Provider | Anthropic Messages 与 OpenAI Responses 已支持流式文本多轮及各自原生历史 |
 | HTTP/SSE | 已建立基于 Resty v3 的公共传输层 |
 | JSON 与缓存 | 已建立 Sonic 稳定序列化和 cache segment fingerprint |
 | Runtime | 已建立共享 turn 生命周期和 RuntimeEvent 骨架 |
@@ -136,9 +136,11 @@ export EASYCODE_API_KEY=your-api-key
 export EASYCODE_MODEL=your-model
 ```
 
+使用 Anthropic Messages 时，将 `EASYCODE_PROVIDER` 改为 `anthropic`，并把 `EASYCODE_BASE_URL` 设置为 Messages API 前缀。EasyCode 会在该前缀后追加 `messages`；OpenAI 模式则追加 `responses`。两种模式都不会隐式补充 `/v1`。
+
 配置优先级为：JSON 文件提供基础值，非空 `EASYCODE_*` 环境变量覆盖对应字段，最后统一校验。`base_url` 是 API 路径前缀，不会自动补 `/v1`，且不能包含 userinfo、query 或 fragment。
 
-当前交互模式支持 OpenAI Responses 文本对话；Anthropic、`--print`、JSON event 和 resume 尚未实现。
+当前交互模式支持 Anthropic Messages 和 OpenAI Responses 的流式文本多轮对话。Anthropic thinking/signature/redacted thinking 与 OpenAI encrypted reasoning 会保留在各自原生历史中，但基础 TUI 不展示推理内容。tools、持久化 Session/resume、`--print`、JSON event、prompt cache 控制、主动 thinking 配置和高级 reasoning UI 尚未实现。
 
 ## 架构概览
 

@@ -13,6 +13,7 @@ import (
 	"easycode/internal/config"
 	"easycode/internal/domain"
 	"easycode/internal/fault"
+	"easycode/internal/provider/anthropic"
 	"easycode/internal/provider/openai"
 	chatRuntime "easycode/internal/runtime"
 	"easycode/internal/tui"
@@ -31,8 +32,12 @@ type Options struct {
 	Output      io.Writer
 }
 
+type resourceCloser interface {
+	Close() error
+}
+
 type chatResources struct {
-	provider *openai.Provider
+	resource resourceCloser
 	session  *chatRuntime.ChatSession
 }
 
@@ -83,22 +88,36 @@ func newChatResources(applicationConfig config.Config) (*chatResources, error) {
 	if err := applicationConfig.ValidateProvider(); err != nil {
 		return nil, err
 	}
-	if applicationConfig.Provider.Family != domain.ProviderOpenAI {
-		return nil, fault.New(fault.CodeProviderUnavailable, "interactive chat only supports OpenAI Responses")
+	var resource resourceCloser
+	var runtimeInstance *chatRuntime.Runtime
+	switch applicationConfig.Provider.Family {
+	case domain.ProviderOpenAI:
+		providerInstance, err := openai.New(openai.Config{
+			BaseURL: applicationConfig.Provider.BaseURL,
+			APIKey:  applicationConfig.Provider.APIKey,
+			Model:   applicationConfig.Provider.Model,
+		})
+		if err != nil {
+			return nil, err
+		}
+		resource = providerInstance
+		runtimeInstance = chatRuntime.New(providerInstance.NewConversation())
+	case domain.ProviderAnthropic:
+		providerInstance, err := anthropic.New(anthropic.Config{
+			BaseURL: applicationConfig.Provider.BaseURL,
+			APIKey:  applicationConfig.Provider.APIKey,
+			Model:   applicationConfig.Provider.Model,
+		})
+		if err != nil {
+			return nil, err
+		}
+		resource = providerInstance
+		runtimeInstance = chatRuntime.New(providerInstance.NewConversation())
+	default:
+		return nil, fault.New(fault.CodeProviderUnavailable, "provider is unavailable")
 	}
-
-	providerInstance, err := openai.New(openai.Config{
-		BaseURL: applicationConfig.Provider.BaseURL,
-		APIKey:  applicationConfig.Provider.APIKey,
-		Model:   applicationConfig.Provider.Model,
-	})
-	if err != nil {
-		return nil, err
-	}
-	conversation := providerInstance.NewConversation()
-	runtimeInstance := chatRuntime.New(conversation)
 	return &chatResources{
-		provider: providerInstance,
+		resource: resource,
 		session:  chatRuntime.NewChatSession(runtimeInstance),
 	}, nil
 }
@@ -111,9 +130,9 @@ func (resources *chatResources) close(ctx context.Context) error {
 	if resources.session != nil {
 		shutdownErr = resources.session.Shutdown(ctx)
 	}
-	var providerErr error
-	if resources.provider != nil {
-		providerErr = resources.provider.Close()
+	var resourceErr error
+	if resources.resource != nil {
+		resourceErr = resources.resource.Close()
 	}
-	return errors.Join(shutdownErr, providerErr)
+	return errors.Join(shutdownErr, resourceErr)
 }

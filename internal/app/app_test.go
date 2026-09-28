@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -81,6 +83,30 @@ func TestNewChatResourcesRejectsMissingConfiguration(t *testing.T) {
 	}
 }
 
+func TestNewChatResourcesRejectsUnknownProviderWithoutNetwork(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests++
+	}))
+	defer server.Close()
+
+	resources, err := newChatResources(config.Config{Provider: config.Provider{
+		Family:  domain.ProviderFamily("unknown"),
+		BaseURL: server.URL,
+		APIKey:  secret.New("top-secret"),
+		Model:   "unknown-model",
+	}})
+	if resources != nil || !errors.Is(err, &fault.Error{Code: fault.CodeInvalidConfiguration}) {
+		t.Fatalf("unknown provider resources=%#v error=%v", resources, err)
+	}
+	if requests != 0 {
+		t.Fatalf("unknown provider made network requests: %d", requests)
+	}
+	if strings.Contains(err.Error(), "top-secret") {
+		t.Fatalf("unknown provider error leaked API key: %v", err)
+	}
+}
+
 func clearProviderEnvironment(t *testing.T) {
 	t.Helper()
 	for _, name := range []string{"EASYCODE_PROVIDER", "EASYCODE_BASE_URL", "EASYCODE_API_KEY", "EASYCODE_MODEL"} {
@@ -88,18 +114,20 @@ func clearProviderEnvironment(t *testing.T) {
 	}
 }
 
-func TestNewChatResourcesRejectsAnthropicWithoutLeakingSecret(t *testing.T) {
+func TestNewChatResourcesBuildsAnthropicConversationWithoutNetwork(t *testing.T) {
 	resources, err := newChatResources(config.Config{Provider: config.Provider{
 		Family:  domain.ProviderAnthropic,
 		BaseURL: "https://example.com/v1",
 		APIKey:  secret.New("top-secret"),
 		Model:   "claude-test",
 	}})
-	if resources != nil || !errors.Is(err, &fault.Error{Code: fault.CodeProviderUnavailable}) {
-		t.Fatalf("anthropic resources=%#v error=%v", resources, err)
+	if err != nil {
+		t.Fatalf("new Anthropic resources: %v", err)
 	}
-	if strings.Contains(err.Error(), "top-secret") {
-		t.Fatalf("error leaked API key: %v", err)
+	shutdownContext, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := resources.close(shutdownContext); err != nil {
+		t.Fatalf("close Anthropic resources: %v", err)
 	}
 }
 
@@ -152,44 +180,49 @@ func TestLoadedConfigurationStaysTypedAcrossAppBoundary(t *testing.T) {
 func TestRunStartsTUIFromSupportedConfigurationSourcesWithoutNetwork(t *testing.T) {
 	tests := []struct {
 		name      string
+		family    domain.ProviderFamily
 		baseURL   string
 		configure func(*testing.T, string) Options
 	}{
 		{
-			name:    "explicit host-only file",
+			name:    "explicit OpenAI host-only file",
+			family:  domain.ProviderOpenAI,
 			baseURL: "https://example.com",
 			configure: func(t *testing.T, baseURL string) Options {
-				path := writeAppConfig(t, t.TempDir(), baseURL)
+				path := writeAppConfig(t, t.TempDir(), domain.ProviderOpenAI, baseURL)
 				return Options{ConfigPath: path}
 			},
 		},
 		{
-			name:    "explicit path-prefix file",
-			baseURL: "https://example.com/openai/v1",
+			name:    "explicit Anthropic path-prefix file",
+			family:  domain.ProviderAnthropic,
+			baseURL: "https://example.com/anthropic/v1",
 			configure: func(t *testing.T, baseURL string) Options {
-				path := writeAppConfig(t, t.TempDir(), baseURL)
+				path := writeAppConfig(t, t.TempDir(), domain.ProviderAnthropic, baseURL)
 				return Options{ConfigPath: path}
 			},
 		},
 		{
-			name:    "default file",
+			name:    "default Anthropic file",
+			family:  domain.ProviderAnthropic,
 			baseURL: "https://example.com/v1",
 			configure: func(t *testing.T, baseURL string) Options {
 				home := t.TempDir()
 				t.Setenv("HOME", home)
-				writeAppConfigAt(t, filepath.Join(home, ".config", "easycode", "config.json"), baseURL)
+				writeAppConfigAt(t, filepath.Join(home, ".config", "easycode", "config.json"), domain.ProviderAnthropic, baseURL)
 				return Options{}
 			},
 		},
 		{
-			name:    "environment only",
+			name:    "Anthropic environment only",
+			family:  domain.ProviderAnthropic,
 			baseURL: "https://example.com/v1",
 			configure: func(t *testing.T, baseURL string) Options {
 				t.Setenv("HOME", t.TempDir())
-				t.Setenv("EASYCODE_PROVIDER", "openai")
+				t.Setenv("EASYCODE_PROVIDER", "anthropic")
 				t.Setenv("EASYCODE_BASE_URL", baseURL)
 				t.Setenv("EASYCODE_API_KEY", "environment-secret")
-				t.Setenv("EASYCODE_MODEL", "gpt-test")
+				t.Setenv("EASYCODE_MODEL", "claude-test")
 				return Options{}
 			},
 		},
@@ -208,7 +241,10 @@ func TestRunStartsTUIFromSupportedConfigurationSourcesWithoutNetwork(t *testing.
 			if !strings.Contains(output.String(), "Status: idle") {
 				t.Fatalf("TUI did not enter idle state: %q", output.String())
 			}
-			if strings.Contains(output.String(), "file-secret") || strings.Contains(output.String(), "environment-secret") {
+			if strings.Contains(output.String(), "file-secret") ||
+				strings.Contains(output.String(), "environment-secret") ||
+				strings.Contains(strings.ToLower(output.String()), "x-api-key") ||
+				strings.Contains(strings.ToLower(output.String()), "anthropic-version") {
 				t.Fatalf("TUI output leaked API key: %q", output.String())
 			}
 		})
@@ -227,7 +263,7 @@ func TestRunCanRecoverAfterConfigurationError(t *testing.T) {
 		t.Fatalf("invalid configuration error: %v", err)
 	}
 
-	writeAppConfigAt(t, path, "https://example.com/v1")
+	writeAppConfigAt(t, path, domain.ProviderOpenAI, "https://example.com/v1")
 	output.Reset()
 	if err := Run(context.Background(), Options{
 		ConfigPath: path,
@@ -238,19 +274,23 @@ func TestRunCanRecoverAfterConfigurationError(t *testing.T) {
 	}
 }
 
-func writeAppConfig(t *testing.T, directory string, baseURL string) string {
+func writeAppConfig(t *testing.T, directory string, family domain.ProviderFamily, baseURL string) string {
 	t.Helper()
 	path := filepath.Join(directory, "config.json")
-	writeAppConfigAt(t, path, baseURL)
+	writeAppConfigAt(t, path, family, baseURL)
 	return path
 }
 
-func writeAppConfigAt(t *testing.T, path string, baseURL string) {
+func writeAppConfigAt(t *testing.T, path string, family domain.ProviderFamily, baseURL string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatalf("create configuration directory: %v", err)
 	}
-	content := `{"provider":"openai","base_url":"` + baseURL + `","api_key":"file-secret","model":"gpt-test"}`
+	model := "gpt-test"
+	if family == domain.ProviderAnthropic {
+		model = "claude-test"
+	}
+	content := `{"provider":"` + string(family) + `","base_url":"` + baseURL + `","api_key":"file-secret","model":"` + model + `"}`
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("write configuration: %v", err)
 	}
