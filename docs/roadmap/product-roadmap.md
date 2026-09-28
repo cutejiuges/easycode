@@ -135,11 +135,12 @@ make verify
 - 验证 SSE frame 层与 Provider event reducer 层的职责分离，并记录逐帧回调、背压和错误语义。
 - 如果 RC 的逐帧消费不满足要求，立即在 `internal/provider/transport` 内切换到 Resty raw body + 自研 frame parser；不得等 Provider Kernel 中段再推迟决策。
 
-#### 2026-09-19 纵向切片进展
+#### 2026-09-28 纵向切片进展
 
 - Transport spike 已确认采用 Resty raw body + 内部 SSE frame parser；`SSESource` 的默认 event buffer 和 frame/lifecycle 语义不作为项目契约。
 - 已完成 OpenAI Responses text-only request、stream reducer、会话级 native history、事务提交、显式 terminal、两种 API prefix 的双轮回归，以及最基础的单行 TUI Chat。
-- 当前切片只声明 streaming 与 encrypted reasoning 原生保留能力；tools、usage/cache UI、prompt cache key、`previous_response_id`、reasoning 展示、Anthropic Messages、JSONL/resume、`--print/--json` 和自动重试继续留在对应后续阶段。
+- 已完成 Anthropic Messages text-only request、indexed content-block reducer、会话级 native history、thinking/signature/redacted thinking 无损回放、显式 `message_stop` terminal、两种 API prefix 的双轮回归，并接入同一基础 TUI Chat。
+- Anthropic 当前只声明 streaming 与 thinking-signature 原生保留能力，OpenAI 当前只声明 streaming 与 encrypted reasoning 原生保留能力；tools、完整 UsageParser/CachePlanner/HistoryProjector、usage/cache UI、prompt cache key、`previous_response_id`、reasoning 展示、JSONL/resume、`--print/--json` 和自动重试继续留在对应后续阶段。
 - TUI 只消费 typed RuntimeEvent 和 ChatSession facade；本次不提前实现 Markdown、多行 composer、slash command、diff、permission overlay 或 session picker。
 
 #### OpenAI Responses（首要 Provider）
