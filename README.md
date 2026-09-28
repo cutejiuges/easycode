@@ -20,7 +20,7 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 | 领域 | 当前状态 |
 |---|---|
 | CLI/TUI 入口 | 已实现 Bubble Tea 基础文本 Chat 和 headless 骨架 |
-| 双 Provider | Anthropic Messages 与 OpenAI Responses 已支持流式文本多轮及各自原生历史 |
+| 双 Provider | Anthropic Messages 与 OpenAI Responses 已支持流式文本多轮、各自原生历史及 committed-only 文本历史投影 |
 | HTTP/SSE | 已建立基于 Resty v3 的公共传输层 |
 | JSON 与缓存 | 已建立 Sonic 稳定序列化和 cache segment fingerprint |
 | Runtime | 已建立共享 turn 生命周期和 RuntimeEvent 骨架 |
@@ -140,7 +140,7 @@ export EASYCODE_MODEL=your-model
 
 配置优先级为：JSON 文件提供基础值，非空 `EASYCODE_*` 环境变量覆盖对应字段，最后统一校验。`base_url` 是 API 路径前缀，不会自动补 `/v1`，且不能包含 userinfo、query 或 fragment。
 
-当前交互模式支持 Anthropic Messages 和 OpenAI Responses 的流式文本多轮对话。Anthropic thinking/signature/redacted thinking 与 OpenAI encrypted reasoning 会保留在各自原生历史中，但基础 TUI 不展示推理内容。tools、持久化 Session/resume、`--print`、JSON event、prompt cache 控制、主动 thinking 配置和高级 reasoning UI 尚未实现。
+当前交互模式支持 Anthropic Messages 和 OpenAI Responses 的流式文本多轮对话。两家 Provider 均可将成功提交的原生历史投影为只读文本 `SemanticHistoryView`，但尚未接入 token estimator、Session/resume、Hook 或 Subagent。Anthropic thinking/signature/redacted thinking 与 OpenAI encrypted reasoning 会保留在各自原生历史中，不进入当前文本投影，基础 TUI 也不展示推理内容。reasoning/tool projection、Provider UsageParser/CachePlanner、tools、持久化 Session/resume、`--print`、JSON event、prompt cache 控制、主动 thinking 配置和高级 reasoning UI 尚未实现。
 
 ## 架构概览
 
@@ -174,7 +174,7 @@ Anthropic   OpenAI
 
 Provider-native item 是恢复会话和构建下次请求的事实依据，RuntimeEvent 只用于 UI、日志及宿主投影，二者不能相互替代。
 
-共享层需要读取历史时使用 Provider 提供的单向 `HistoryProjector` 和 `SemanticHistoryView`，用于 token 估算、resume 渲染、Hook 文本和 Subagent completion；该视图不可反向生成 Provider 请求。
+共享层需要读取历史时使用 Provider 提供的单向 `HistoryProjector` 和 `SemanticHistoryView`。当前已实现 committed-only 文本投影；token 估算、resume 渲染、Hook 文本和 Subagent completion 等消费者将在后续阶段接入。该视图不可反向生成 Provider 请求。
 
 更完整的设计见[总体架构文档](docs/architecture/overall-architecture.md)。
 

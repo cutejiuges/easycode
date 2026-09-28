@@ -41,8 +41,10 @@ type Conversation struct {
 
 type nativeHistory struct {
 	mu    sync.RWMutex
-	items []NativeItem
+	turns []nativeTurn
 }
+
+var _ provider.Conversation = (*Conversation)(nil)
 
 // New 创建 OpenAI Provider。
 func New(config Config) (*Provider, error) {
@@ -211,25 +213,26 @@ func mapTransportTerminal(ctx context.Context, err error) (provider.StreamEventK
 	return provider.StreamEventFailed, fault.Wrap(fault.CodeStreamProtocol, "provider stream failed", err)
 }
 
-func (history *nativeHistory) snapshot() []NativeItem {
+func (history *nativeHistory) snapshot() []nativeTurn {
 	history.mu.RLock()
 	defer history.mu.RUnlock()
-	items := make([]NativeItem, 0, len(history.items))
-	for _, item := range history.items {
-		items = append(items, item.clone())
+	turns := make([]nativeTurn, 0, len(history.turns))
+	for _, turn := range history.turns {
+		turns = append(turns, turn.clone())
 	}
-	return items
+	return turns
 }
 
 func (history *nativeHistory) commit(userItem NativeItem, outputItems []NativeItem) {
 	history.mu.Lock()
 	defer history.mu.Unlock()
-	history.items = append(history.items, userItem.clone())
+	turn := nativeTurn{User: userItem.clone(), Outputs: make([]NativeItem, 0, len(outputItems))}
 	for _, item := range outputItems {
-		history.items = append(history.items, item.clone())
+		turn.Outputs = append(turn.Outputs, item.clone())
 	}
+	history.turns = append(history.turns, turn)
 }
 
-func (conversation *Conversation) historySnapshot() []NativeItem {
+func (conversation *Conversation) historySnapshot() []nativeTurn {
 	return conversation.history.snapshot()
 }

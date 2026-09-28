@@ -59,8 +59,14 @@ func (kind StreamEventKind) Terminal() bool {
 	return kind == StreamEventCompleted || kind == StreamEventFailed || kind == StreamEventCancelled
 }
 
+// HistoryProjector 将 Provider 原生历史单向投影为只读语义快照。
+type HistoryProjector interface {
+	ProjectHistory() domain.SemanticHistoryView
+}
+
 // Conversation 是 Runtime 依赖的会话级 provider 接口。
 type Conversation interface {
+	HistoryProjector
 	Family() domain.ProviderFamily
 	Capabilities() Capabilities
 	Stream(context.Context, TurnInput) (<-chan StreamEvent, error)

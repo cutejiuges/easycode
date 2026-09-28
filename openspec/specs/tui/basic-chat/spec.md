@@ -2,18 +2,23 @@
 
 ## Purpose
 
-定义首个可用的 Bubble Tea 文本 Chat/REPL 交互，使用户能够通过已配置的 OpenAI Responses 服务连续提交输入、观察流式回复、取消当前 turn 并从错误中恢复。
+定义首个可用的 Bubble Tea 文本 Chat/REPL 交互，使用户能够通过已配置的 OpenAI Responses 或 Anthropic Messages 服务连续提交输入、观察流式回复、取消当前 turn 并从错误中恢复。
 
 ## Requirements
 
 ### Requirement: TUI starts with a validated OpenAI conversation
 
-交互模式 SHALL 在进入可提交状态前加载并校验 provider family、`base_url`、API key 和 model。当前切片仅支持 OpenAI Responses；无效配置或选择未实现的 provider MUST 在网络请求前返回明确错误。
+交互模式 SHALL 在进入可提交状态前加载并校验 provider family、`base_url`、API key 和 model。选择 `openai` 时 SHALL 创建 OpenAI Responses conversation；选择 `anthropic` 时 SHALL 创建 Anthropic Messages conversation。无效配置或未知 provider MUST 在网络请求前返回明确错误，应用不得静默切换 wire 或回退到另一 Provider。
 
 #### Scenario: Start with valid OpenAI configuration
 
 - **WHEN** 用户提供有效的 OpenAI family、API prefix、API key 和 model
-- **THEN** TUI 进入空闲且可输入状态
+- **THEN** TUI 使用 OpenAI Responses conversation 进入空闲且可输入状态
+
+#### Scenario: Start with valid Anthropic configuration
+
+- **WHEN** 用户提供有效的 Anthropic family、API prefix、API key 和 model
+- **THEN** TUI 使用 Anthropic Messages conversation 进入空闲且可输入状态
 
 #### Scenario: Reject incomplete configuration
 
@@ -23,9 +28,9 @@
 
 #### Scenario: Reject unsupported provider in this slice
 
-- **WHEN** 用户配置 Anthropic 或其他尚未实现的 provider
-- **THEN** 应用返回明确的 unsupported/provider unavailable 错误
-- **THEN** 应用不静默切换 wire 或 provider
+- **WHEN** 配置包含 Anthropic 和 OpenAI 以外的 provider family
+- **THEN** 应用在网络请求前返回明确的配置或 provider unavailable 错误
+- **THEN** 应用不静默选择 OpenAI、Anthropic 或其他 wire
 
 ### Requirement: User can submit and observe a streaming text turn
 
@@ -55,18 +60,35 @@
 
 ### Requirement: Conversation continues in memory
 
-一次成功 turn 结束后，TUI SHALL 返回可输入状态并允许提交下一轮。后续 turn SHALL 使用同一个会话级 Runtime 和 OpenAI 原生历史，但本阶段不要求跨进程持久化或 resume。
+一次成功 turn 结束后，TUI SHALL 返回可输入状态并允许提交下一轮。后续 turn SHALL 使用同一个会话级 Runtime 和启动时所选 Provider 的原生历史；Anthropic 与 OpenAI 历史不得互相转换或共享。本阶段不要求跨进程持久化、resume 或运行中切换 Provider。
 
 #### Scenario: Submit a second turn
 
-- **WHEN** 第一轮 completed 后用户提交第二条输入
+- **WHEN** 任一已支持 Provider 的第一轮 completed 后用户提交第二条输入
 - **THEN** TUI 启动下一轮并继续在同一 transcript 中显示消息
-- **THEN** Provider 使用第一轮已提交的原生历史构建请求
+- **THEN** 所选 Provider 使用第一轮已提交的自身原生历史构建请求
+
+#### Scenario: Submit a second OpenAI turn
+
+- **WHEN** 使用 OpenAI conversation 的第一轮 completed 后用户提交第二条输入
+- **THEN** TUI 启动下一轮并继续在同一 transcript 中显示消息
+- **THEN** OpenAI Provider 使用第一轮已提交的 Responses 原生历史构建请求
+
+#### Scenario: Submit a second Anthropic turn
+
+- **WHEN** 使用 Anthropic conversation 的第一轮 completed 后用户提交第二条输入
+- **THEN** TUI 启动下一轮并继续在同一 transcript 中显示消息
+- **THEN** Anthropic Provider 使用第一轮已提交的 Messages 原生历史构建请求
 
 #### Scenario: Restart the process
 
 - **WHEN** 用户退出并重新启动 EasyCode
 - **THEN** 本切片不承诺恢复上一次内存会话
+
+#### Scenario: Keep the selected provider fixed for a conversation
+
+- **WHEN** 一个内存 conversation 已按某个 Provider 创建
+- **THEN** 后续 turn 继续使用该 Provider，且应用不会把另一 Provider 的原生历史注入当前请求
 
 ### Requirement: Cancel and quit behavior is unambiguous
 

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"easycode/internal/codec"
+	"easycode/internal/protocol"
 	"easycode/internal/provider"
 	"easycode/internal/secret"
 )
@@ -79,6 +80,73 @@ func TestConversationUsesNativeHistoryAcrossTwoTurnsAndBaseURLForms(t *testing.T
 			}
 		})
 	}
+}
+
+func TestConversationProjectionMatchesLiveTextAndHidesActiveTurn(t *testing.T) {
+	firstDeltaWritten := make(chan struct{})
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello \"}\n\n")
+		if flusher, ok := writer.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		close(firstDeltaWritten)
+		<-release
+		_, _ = io.WriteString(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"world\"}\n\n")
+		_, _ = io.WriteString(writer, "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"reasoning\",\"id\":\"reasoning-live\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"private\"}],\"encrypted_content\":\"opaque\"}}\n\n")
+		_, _ = io.WriteString(writer, "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"id\":\"msg-live\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hello world\"}]}}\n\n")
+		_, _ = io.WriteString(writer, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-live\"}}\n\n")
+	}))
+	defer server.Close()
+
+	instance, err := New(Config{BaseURL: server.URL, APIKey: secret.New("test-key"), Model: "gpt-test"})
+	if err != nil {
+		t.Fatalf("new provider: %v", err)
+	}
+	defer closeProvider(t, instance)
+	conversation := instance.NewConversation().(*Conversation)
+	stream, err := conversation.Stream(context.Background(), provider.TurnInput{Text: "question"})
+	if err != nil {
+		t.Fatalf("start stream: %v", err)
+	}
+	<-firstDeltaWritten
+
+	firstEvent := <-stream
+	liveText := decodeOpenAILiveText(t, firstEvent)
+	if projection := conversation.ProjectHistory(); len(projection.Turns) != 0 {
+		t.Fatalf("active turn projected: %#v", projection)
+	}
+	close(release)
+	terminalCount := 0
+	for event := range stream {
+		liveText += decodeOpenAILiveText(t, event)
+		if event.Kind.Terminal() {
+			terminalCount++
+			if event.Kind != provider.StreamEventCompleted {
+				t.Fatalf("terminal: %#v", event)
+			}
+		}
+	}
+	if terminalCount != 1 {
+		t.Fatalf("terminal count: %d", terminalCount)
+	}
+	projection := conversation.ProjectHistory()
+	if len(projection.Turns) != 1 || projection.Turns[0].UserText != "question" || projection.Turns[0].AssistantText != liveText || liveText != "hello world" {
+		t.Fatalf("live text %q projection %#v", liveText, projection)
+	}
+}
+
+func decodeOpenAILiveText(t *testing.T, event provider.StreamEvent) string {
+	t.Helper()
+	if event.Kind != provider.StreamEventSemantic {
+		return ""
+	}
+	payload, err := protocol.DecodeAssistantTextDelta(event.Event)
+	if err != nil {
+		t.Fatalf("decode assistant text delta: %v", err)
+	}
+	return payload.Text
 }
 
 func runCompletedTurn(t *testing.T, conversation provider.Conversation, text string) {

@@ -37,7 +37,7 @@ func TestCompileResponsesRequestIncludesNativeHistoryAndStableFingerprint(t *tes
 			Text: "first answer",
 		}},
 	}
-	history := []NativeItem{NewUserItem("first"), assistant}
+	history := []nativeTurn{{User: NewUserItem("first"), Outputs: []NativeItem{assistant}}}
 	request := compileResponsesRequest("gpt-test", history, NewUserItem("second"))
 	if len(request.Input) != 3 || request.Input[1].ID != "msg-1" || request.Input[2].Content[0].Text != "second" {
 		t.Fatalf("unexpected request input: %#v", request.Input)

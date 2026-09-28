@@ -121,6 +121,12 @@ func TestProviderCreatesIsolatedConversations(t *testing.T) {
 	if len(second.historySnapshot()) != 0 {
 		t.Fatalf("second conversation shared history: %#v", second.historySnapshot())
 	}
+	if got := first.ProjectHistory(); len(got.Turns) != 1 || got.Turns[0].UserText != "first" || got.Turns[0].AssistantText != "answer" {
+		t.Fatalf("first projection: %#v", got)
+	}
+	if got := second.ProjectHistory(); got.Turns == nil || len(got.Turns) != 0 {
+		t.Fatalf("second conversation shared projection: %#v", got)
+	}
 }
 
 func TestProviderCapabilitiesReflectImplementedSlice(t *testing.T) {
@@ -259,6 +265,9 @@ func TestConversationDiscardsFailedStagingBeforeNextTurn(t *testing.T) {
 	if len(conversation.historySnapshot()) != 0 {
 		t.Fatalf("failed turn committed: %#v", conversation.historySnapshot())
 	}
+	if projection := conversation.ProjectHistory(); len(projection.Turns) != 0 {
+		t.Fatalf("failed turn projected: %#v", projection)
+	}
 
 	runCompletedAnthropicTurn(t, conversation, "second")
 	mu.Lock()
@@ -319,6 +328,9 @@ func TestConversationMapsStreamFailuresWithoutCommitting(t *testing.T) {
 			if len(conversation.historySnapshot()) != 0 {
 				t.Fatalf("failed stream committed history: %#v", conversation.historySnapshot())
 			}
+			if projection := conversation.ProjectHistory(); len(projection.Turns) != 0 {
+				t.Fatalf("failed stream projected history: %#v", projection)
+			}
 		})
 	}
 }
@@ -356,7 +368,8 @@ func TestConversationCancelAndIdleTimeoutCleanUpRequest(t *testing.T) {
 			}
 			defer closeAnthropicProvider(t, instance)
 			ctx, cancel := context.WithCancel(context.Background())
-			stream, err := instance.NewConversation().Stream(ctx, provider.TurnInput{Text: "hello"})
+			conversation := instance.NewConversation().(*Conversation)
+			stream, err := conversation.Stream(ctx, provider.TurnInput{Text: "hello"})
 			if err != nil {
 				t.Fatalf("start stream: %v", err)
 			}
@@ -370,6 +383,9 @@ func TestConversationCancelAndIdleTimeoutCleanUpRequest(t *testing.T) {
 				t.Fatalf("terminal: %#v", terminal)
 			}
 			assertFaultCode(t, terminal.Err, test.wantCode)
+			if projection := conversation.ProjectHistory(); len(projection.Turns) != 0 {
+				t.Fatalf("cancelled or timed out turn projected: %#v", projection)
+			}
 			select {
 			case <-requestDone:
 			case <-time.After(time.Second):

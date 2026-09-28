@@ -55,3 +55,23 @@ func TestNewUserItemUsesResponsesInputText(t *testing.T) {
 		t.Fatalf("user item: got %s want %s", encoded, want)
 	}
 }
+
+func TestNativeTurnCloneDoesNotShareOpaqueData(t *testing.T) {
+	turn := nativeTurn{
+		User: NewUserItem("hello"),
+		Outputs: []NativeItem{{
+			Type:             "reasoning",
+			ReasoningSummary: []ReasoningSummaryPart{{Type: "summary_text", Text: "private"}},
+			EncryptedContent: "opaque-encrypted",
+			Raw:              []byte(`{"type":"reasoning","encrypted_content":"opaque-encrypted"}`),
+		}},
+	}
+	cloned := turn.clone()
+	turn.User.Content[0].Text = "changed"
+	turn.Outputs[0].ReasoningSummary[0].Text = "changed"
+	turn.Outputs[0].Raw[0] = '['
+
+	if cloned.User.Content[0].Text != "hello" || cloned.Outputs[0].ReasoningSummary[0].Text != "private" || cloned.Outputs[0].Raw[0] != '{' {
+		t.Fatalf("native turn clone shares mutable data: %#v", cloned)
+	}
+}
