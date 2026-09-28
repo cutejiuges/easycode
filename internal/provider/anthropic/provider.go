@@ -4,6 +4,7 @@ package anthropic
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -44,6 +45,7 @@ type Conversation struct {
 	provider *Provider
 	history  nativeHistory
 	active   atomic.Bool
+	pending  atomic.Bool
 }
 
 type nativeHistory struct {
@@ -52,6 +54,7 @@ type nativeHistory struct {
 }
 
 var _ provider.Conversation = (*Conversation)(nil)
+var _ provider.Factory = (*Provider)(nil)
 
 // New 创建 Anthropic Provider。
 func New(config Config) (*Provider, error) {
@@ -93,6 +96,19 @@ func (instance *Provider) NewConversation() provider.Conversation {
 	return &Conversation{provider: instance}
 }
 
+// RestoreConversation 先事务式校验全部 commits，再构造可调用 Conversation。
+func (instance *Provider) RestoreConversation(commits []provider.NativeCommitEnvelope) (provider.Conversation, error) {
+	turns := make([]nativeTurn, 0, len(commits))
+	for index, commit := range commits {
+		turn, err := decodeNativeCommit(commit)
+		if err != nil {
+			return nil, fmt.Errorf("restore Anthropic native commit %d: %w", index+1, err)
+		}
+		turns = append(turns, turn.clone())
+	}
+	return &Conversation{provider: instance, history: nativeHistory{turns: turns}}, nil
+}
+
 // Close 释放 HTTP transport 资源。
 func (instance *Provider) Close() error {
 	return instance.transport.Close()
@@ -119,6 +135,10 @@ func (conversation *Conversation) Stream(
 	}
 	if !conversation.active.CompareAndSwap(false, true) {
 		return nil, fault.New(fault.CodeTurnFailed, "conversation already has an active turn")
+	}
+	if conversation.pending.Load() {
+		conversation.active.Store(false)
+		return nil, fault.New(fault.CodeTurnFailed, "conversation has an unfinalized sample")
 	}
 
 	userMessage := newUserMessage(text)
@@ -171,8 +191,8 @@ func (conversation *Conversation) consumeStream(
 		for range stream {
 		}
 	}
-	sendTerminal := func(kind provider.StreamEventKind, err error) {
-		output <- provider.StreamEvent{Kind: kind, Err: err}
+	sendTerminal := func(kind provider.StreamEventKind, prepared *provider.PreparedSample, err error) {
+		output <- provider.StreamEvent{Kind: kind, Prepared: prepared, Err: err}
 	}
 
 	for message := range stream {
@@ -180,7 +200,7 @@ func (conversation *Conversation) consumeStream(
 			result, err := reducer.reduce(*message.Event)
 			if err != nil {
 				stopTransport()
-				sendTerminal(provider.StreamEventFailed, err)
+				sendTerminal(provider.StreamEventFailed, nil, err)
 				return
 			}
 			if result.semantic != nil {
@@ -191,12 +211,27 @@ func (conversation *Conversation) consumeStream(
 			}
 			if result.complete {
 				stopTransport()
-				conversation.history.commit(nativeTurn{
+				turn := nativeTurn{
 					User:      userMessage,
 					Assistant: reducer.assistantMessage(),
 					Metadata:  reducer.messageMetadata(),
+				}
+				envelope, encodeErr := encodeNativeCommit(turn)
+				if encodeErr != nil {
+					sendTerminal(provider.StreamEventFailed, nil, fault.Wrap(fault.CodeStreamProtocol, "Anthropic completed sample is invalid", encodeErr))
+					return
+				}
+				conversation.pending.Store(true)
+				prepared, prepareErr := provider.NewPreparedSample(envelope, func() {
+					conversation.history.commit(turn)
+					conversation.pending.Store(false)
 				})
-				sendTerminal(provider.StreamEventCompleted, nil)
+				if prepareErr != nil {
+					conversation.pending.Store(false)
+					sendTerminal(provider.StreamEventFailed, nil, fault.Wrap(fault.CodeStreamProtocol, "Anthropic completed sample cannot be prepared", prepareErr))
+					return
+				}
+				sendTerminal(provider.StreamEventCompleted, prepared, nil)
 				return
 			}
 			continue
@@ -204,16 +239,16 @@ func (conversation *Conversation) consumeStream(
 
 		if message.Err != nil {
 			kind, terminalErr := mapTransportTerminal(ctx, message.Err)
-			sendTerminal(kind, terminalErr)
+			sendTerminal(kind, nil, terminalErr)
 			return
 		}
 	}
 
 	if ctx.Err() != nil {
-		sendTerminal(provider.StreamEventCancelled, fault.Wrap(fault.CodeUserCancelled, "turn was cancelled", context.Canceled))
+		sendTerminal(provider.StreamEventCancelled, nil, fault.Wrap(fault.CodeUserCancelled, "turn was cancelled", context.Canceled))
 		return
 	}
-	sendTerminal(provider.StreamEventFailed, fault.New(fault.CodeStreamProtocol, "provider stream closed before message_stop"))
+	sendTerminal(provider.StreamEventFailed, nil, fault.New(fault.CodeStreamProtocol, "provider stream closed before message_stop"))
 }
 
 func mapTransportTerminal(ctx context.Context, err error) (provider.StreamEventKind, error) {

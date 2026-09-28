@@ -153,6 +153,12 @@ func TestConversationProjectionMatchesLiveTextAndHidesActiveTurn(t *testing.T) {
 			if event.Kind != provider.StreamEventCompleted {
 				t.Fatalf("terminal: %#v", event)
 			}
+			if event.Prepared == nil {
+				t.Fatal("completed terminal is missing prepared sample")
+			}
+			if err := event.Prepared.Finalize(); err != nil {
+				t.Fatalf("finalize sample: %v", err)
+			}
 		}
 	}
 	if terminalCount != 1 {
@@ -193,6 +199,7 @@ func writeSuccessfulAnthropicTurn(writer io.Writer) {
 
 func runCompletedAnthropicTurn(t *testing.T, conversation provider.Conversation, text string) []provider.StreamEvent {
 	t.Helper()
+	committedBefore := len(conversation.ProjectHistory().Turns)
 	stream, err := conversation.Stream(context.Background(), provider.TurnInput{Text: text})
 	if err != nil {
 		t.Fatalf("start turn %q: %v", text, err)
@@ -206,10 +213,22 @@ func runCompletedAnthropicTurn(t *testing.T, conversation provider.Conversation,
 			if event.Kind != provider.StreamEventCompleted || event.Err != nil {
 				t.Fatalf("turn %q terminal: %#v", text, event)
 			}
+			if event.Prepared == nil {
+				t.Fatalf("turn %q completed without prepared sample", text)
+			}
+			if got := len(conversation.ProjectHistory().Turns); got != committedBefore {
+				t.Fatalf("turn %q committed before finalization: %d", text, got)
+			}
+			if err := event.Prepared.Finalize(); err != nil {
+				t.Fatalf("turn %q finalize: %v", text, err)
+			}
 		}
 	}
 	if terminalCount != 1 {
 		t.Fatalf("turn %q terminal count: %d", text, terminalCount)
+	}
+	if got := len(conversation.ProjectHistory().Turns); got != committedBefore+1 {
+		t.Fatalf("turn %q committed turns: %d", text, got)
 	}
 	return events
 }

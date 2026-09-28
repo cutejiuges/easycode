@@ -7,11 +7,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"easycode/internal/fault"
 	"easycode/internal/provider"
+	"easycode/internal/provider/transport"
 	"easycode/internal/secret"
 )
 
@@ -38,6 +40,88 @@ func TestProviderCreatesIsolatedConversations(t *testing.T) {
 	if got := second.ProjectHistory(); got.Turns == nil || len(got.Turns) != 0 {
 		t.Fatalf("second conversation shared projection: %#v", got)
 	}
+}
+
+func TestConversationIgnoresRepeatedCompletedTerminal(t *testing.T) {
+	t.Parallel()
+	conversation := &Conversation{}
+	stream := make(chan transport.SSEMessage, 3)
+	stream <- responseEvent(`{"type":"response.output_item.done","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]}}`)
+	stream <- responseEvent(`{"type":"response.completed","response":{"id":"resp-1"}}`)
+	stream <- responseEvent(`{"type":"response.completed","response":{"id":"resp-2"}}`)
+	close(stream)
+	output := make(chan provider.StreamEvent, 16)
+	conversation.consumeStream(context.Background(), func() {}, NewUserItem("question"), stream, output)
+	terminalCount := 0
+	for event := range output {
+		if !event.Kind.Terminal() {
+			continue
+		}
+		terminalCount++
+		if event.Kind != provider.StreamEventCompleted || event.Prepared == nil {
+			t.Fatalf("terminal = %#v", event)
+		}
+		if err := event.Prepared.Finalize(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if terminalCount != 1 || len(conversation.historySnapshot()) != 1 {
+		t.Fatalf("terminal count/history = %d/%#v", terminalCount, conversation.historySnapshot())
+	}
+}
+
+func TestConversationCancelCompletedRaceHasOneTerminal(t *testing.T) {
+	for iteration := 0; iteration < 32; iteration++ {
+		conversation := &Conversation{}
+		ctx, cancel := context.WithCancel(context.Background())
+		stream := make(chan transport.SSEMessage, 4)
+		stream <- responseEvent(`{"type":"response.output_item.done","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]}}`)
+		var senders sync.WaitGroup
+		senders.Add(2)
+		go func() {
+			defer senders.Done()
+			stream <- responseEvent(`{"type":"response.completed","response":{"id":"resp-race"}}`)
+		}()
+		go func() {
+			defer senders.Done()
+			cancel()
+			stream <- transport.SSEMessage{Err: context.Canceled}
+		}()
+		senders.Wait()
+		close(stream)
+		output := make(chan provider.StreamEvent, 16)
+		conversation.consumeStream(ctx, func() {}, NewUserItem("question"), stream, output)
+		terminalCount := 0
+		for event := range output {
+			if !event.Kind.Terminal() {
+				continue
+			}
+			terminalCount++
+			switch event.Kind {
+			case provider.StreamEventCompleted:
+				if event.Prepared == nil {
+					t.Fatal("completed race terminal has no prepared sample")
+				}
+				if err := event.Prepared.Finalize(); err != nil {
+					t.Fatal(err)
+				}
+			case provider.StreamEventCancelled:
+				if event.Prepared != nil {
+					t.Fatal("cancelled race terminal carried a prepared sample")
+				}
+			default:
+				t.Fatalf("race terminal = %#v", event)
+			}
+		}
+		if terminalCount != 1 {
+			t.Fatalf("iteration %d terminal count = %d", iteration, terminalCount)
+		}
+	}
+}
+
+func responseEvent(data string) transport.SSEMessage {
+	event := transport.SSEEvent{Data: data}
+	return transport.SSEMessage{Event: &event}
 }
 
 func TestProviderCapabilitiesReflectImplementedSlice(t *testing.T) {
@@ -79,8 +163,12 @@ func TestConversationStreamsAndCommitsOnlyOnCompleted(t *testing.T) {
 		t.Fatalf("start stream: %v", err)
 	}
 	var kinds []provider.StreamEventKind
+	var prepared *provider.PreparedSample
 	for event := range stream {
 		kinds = append(kinds, event.Kind)
+		if event.Kind == provider.StreamEventCompleted {
+			prepared = event.Prepared
+		}
 	}
 	want := []provider.StreamEventKind{provider.StreamEventSemantic, provider.StreamEventNative, provider.StreamEventCompleted}
 	if len(kinds) != len(want) {
@@ -93,6 +181,18 @@ func TestConversationStreamsAndCommitsOnlyOnCompleted(t *testing.T) {
 	}
 	if got := <-authorization; got != "Bearer test-key" {
 		t.Fatalf("authorization: %q", got)
+	}
+	if history := conversation.historySnapshot(); len(history) != 0 {
+		t.Fatalf("history committed before durable finalization: %#v", history)
+	}
+	if prepared == nil {
+		t.Fatal("completed terminal did not carry a prepared sample")
+	}
+	if err := prepared.Finalize(); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepared.Finalize(); err == nil {
+		t.Fatal("prepared sample finalized twice")
 	}
 	if history := conversation.historySnapshot(); len(history) != 1 || history[0].User.Content[0].Text != "hello" || history[0].Outputs[0].ID != "msg-1" {
 		t.Fatalf("committed history: %#v", history)

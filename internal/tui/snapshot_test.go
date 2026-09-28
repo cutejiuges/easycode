@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
 )
@@ -20,6 +21,7 @@ func TestModelSnapshotsAtFixedTerminalSize(t *testing.T) {
 		"completed": snapshotCompletedModel(t),
 		"cancelled": snapshotCancelledModel(t),
 		"failed":    snapshotFailedModel(t),
+		"resumed":   snapshotResumedModel(t),
 	}
 
 	var allSnapshots strings.Builder
@@ -44,6 +46,17 @@ func TestModelSnapshotsAtFixedTerminalSize(t *testing.T) {
 			t.Fatalf("snapshot contains sensitive request data %q", forbidden)
 		}
 	}
+}
+
+func snapshotResumedModel(t *testing.T) Model {
+	t.Helper()
+	return NewModel("test", &fakeChatSession{}, domain.SemanticHistoryView{
+		Provider: domain.ProviderOpenAI,
+		Turns: []domain.SemanticTurn{
+			{UserText: "first question", AssistantText: "first answer"},
+			{UserText: "second question", AssistantText: "second answer"},
+		},
+	})
 }
 
 func snapshotIdleModel(t *testing.T) Model {

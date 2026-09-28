@@ -32,6 +32,7 @@ func run(
 	flags.SetOutput(errorOutput)
 	showVersion := flags.Bool("version", false, "print version and exit")
 	headless := flags.Bool("print", false, "print mode (not implemented yet)")
+	resumeThreadID := flags.String("resume", "", "resume an existing root thread selected by --resume UUIDv7")
 	configPath := flags.String(
 		"config",
 		"",
@@ -45,11 +46,12 @@ func run(
 	}
 
 	err := app.Run(ctx, app.Options{
-		ShowVersion: *showVersion,
-		Headless:    *headless,
-		ConfigPath:  *configPath,
-		Input:       input,
-		Output:      output,
+		ShowVersion:    *showVersion,
+		Headless:       *headless,
+		ConfigPath:     *configPath,
+		ResumeThreadID: *resumeThreadID,
+		Input:          input,
+		Output:         output,
 	})
 	if err != nil {
 		_, _ = fmt.Fprintf(errorOutput, "error: %s\n", err)
