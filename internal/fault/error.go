@@ -22,6 +22,7 @@ const (
 	CodeSessionCorruption    Code = "session_corruption"
 	CodeSessionIncompatible  Code = "session_incompatible"
 	CodeSessionNotFound      Code = "session_not_found"
+	CodeSessionBusy          Code = "session_busy"
 )
 
 // Error 保存稳定错误码、英文消息和可选底层原因。

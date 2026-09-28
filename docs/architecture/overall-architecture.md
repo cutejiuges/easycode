@@ -620,8 +620,9 @@ EventEnvelope
 当前 v1 必需记录包括：
 
 - `session_meta` 与 `thread_meta`；
-- `turn_started` 与 `user_input`；
-- `provider_native_commit` 与 `turn_completed`。
+- `turn_started`；
+- `provider_native_commit` 与 `turn_completed`；
+- `turn_failed`。
 
 `schema_version` 约束公共 envelope，`payload_version` 约束 event payload，`replay_requirement` 明确 required/optional。required 的未知 kind、版本或损坏必须拒绝恢复；optional 记录允许跳过，便于未来加入诊断或展示事实而不破坏旧 Loader。
 
@@ -642,12 +643,14 @@ SQLite 可以从 JSONL 重建。数据库损坏不应导致 transcript 永久丢
 
 ### 10.4 写入与权限
 
-- JSONL append-only，单 writer 保证 seq 单调；每个 durable batch 连续编号，并在整批写入后执行 `Sync`。
+- JSONL append-only；每个活动 thread 通过绑定 journal handle 的跨进程 exclusive lease 保证只有一个 writer。新建 metadata 或对既有 journal 执行 load/repair 前必须先取得 lease，并连续保持到 writer 完成最终 `Sync` 和关闭 handle；每个 durable batch 连续编号。
 - 文件使用用户私有权限，Unix 下目标为文件 `0600`、目录 `0700`。
 - Loader 严格校验 canonical UUIDv7、UTC 时间、checksum、ID 归属、序号和 batch 完整性；只允许截去 EOF 尾部半行或未完成尾批次，不允许跳过中段损坏。
-- ReplayPlanner 只重放完整 batch。存在未闭合 turn 时，恢复会先追加可审计的 `turn_interrupted` 补偿事实，再允许新 turn。
+- ReplayPlanner 只重放完整 batch。存在未闭合 turn 时，恢复会先追加 `turn_failed`，其 payload 使用稳定 code `session_interrupted`，再允许新 turn。
 - 当前 `--resume <thread-id>` 通过日期编码的 UUIDv7 定位文件，恢复 native history 和只读语义视图；不恢复旧 API key、base URL、cwd 或其他动态 world state。
-- SQLite 投影、session picker、`--continue`、tool ledger/artifact、schema migration 尚未实现。
+- 仓库已建立不可变 v1 compatibility fixture，用于验证当前 Loader/ReplayPlanner 的读取、续写 prefix 不变和双 Provider 恢复等价性；未来 schema/payload revision 的版本专属转换仍未实现，不在 resume 时原地改写既有 records。
+- exclusive lease 是协作进程间的 advisory lock，不能阻止旧版 EasyCode 或非协作进程绕过锁直接写文件；混合版本运行前必须确保目标 thread 没有其他 owner，绕过锁产生的损坏继续由 checksum、seq 和完整回放校验发现。
+- SQLite 投影、session picker、`--continue`、tool ledger/artifact 和未来 schema 转换尚未实现。
 - 未来 compaction/fork 只能追加 checkpoint/cursor 和 child-thread 元数据，原始 JSONL 继续保留；不得重写、截短或把 summary 伪装成原生历史。该能力目前仅有约束，尚未实现。
 - artifact 文件路径必须防止目录穿越。
 

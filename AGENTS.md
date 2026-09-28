@@ -86,6 +86,7 @@ explore -> propose -> review/confirm -> apply -> verify -> archive
 
 - 所有代码注释、文档注释和 TODO/FIXME 说明使用中文；导出标识符名称可以保留英文，但解释正文必须是中文。
 - 对外错误码、错误消息和机器可读错误字段必须使用英文。
+- 执行 Git commit 或 PR 操作时，除非用户或项目另有明确说明，commit 标题与说明、PR 标题与描述必须同时提供语义一致的中文和英文版本。
 - 命名表达业务意图，函数保持单一抽象层级；禁止用字符串匹配驱动核心控制流。
 - `context.Context` 是可取消/超时操作的第一个参数，不保存到长期结构体。
 - 每个 goroutine 必须有 owner、退出条件和等待/清理路径；channel 由创建者关闭。

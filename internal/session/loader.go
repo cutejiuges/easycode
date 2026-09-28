@@ -38,36 +38,26 @@ type LoadResult struct {
 }
 
 // Loader 负责有界结构加载，不解释 turn 或 Provider 语义。
-type Loader struct {
-	repository *Repository
+type Loader struct{}
+
+// NewLoader 创建无外部副作用的 Loader。
+func NewLoader() *Loader {
+	return &Loader{}
 }
 
-// NewLoader 创建绑定受限 Repository 的 Loader。
-func NewLoader(repository *Repository) (*Loader, error) {
-	if repository == nil {
-		return nil, fmt.Errorf("session repository is required")
-	}
-	return &Loader{repository: repository}, nil
-}
-
-// Load 完整校验 journal，并仅修复文件末尾的半行或未闭合 batch。
-func (loader *Loader) Load(ctx context.Context, threadID domain.ThreadID) (LoadResult, error) {
+// Load 借用 lease 的同一 handle 完整校验 journal，并仅修复文件末尾的半行或未闭合 batch。
+func (loader *Loader) Load(ctx context.Context, lease *JournalLease) (LoadResult, error) {
 	if err := contextError(ctx); err != nil {
 		return LoadResult{}, err
 	}
-	file, err := loader.repository.Open(ctx, threadID)
+	if loader == nil {
+		return LoadResult{}, fmt.Errorf("session loader is required")
+	}
+	file, threadID, err := lease.borrow()
 	if err != nil {
 		return LoadResult{}, err
 	}
-	result, loadErr := loadJournal(ctx, file, threadID)
-	closeErr := file.Close()
-	if loadErr != nil {
-		return LoadResult{}, loadErr
-	}
-	if closeErr != nil {
-		return LoadResult{}, fmt.Errorf("close session journal after load: %w", closeErr)
-	}
-	return result, nil
+	return loadJournal(ctx, file, threadID)
 }
 
 func loadJournal(ctx context.Context, file *os.File, expectedThreadID domain.ThreadID) (LoadResult, error) {

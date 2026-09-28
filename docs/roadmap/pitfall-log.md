@@ -172,11 +172,11 @@
 - 现象：Claude Code 的 transcript 会混合用户/assistant/tool/progress 等消息，Codex rollout 则记录 response item、event 和上下文；二者都包含工具相关事实，但记录边界、恢复来源和宿主事件并不相同。直接照搬任一 JSONL 形状会把 Provider wire、运行时展示和副作用事实耦合。
 - 触发条件：在工具尚未实现时先设计 Session schema，并要求未来无损承接 thinking、tool use 和 MCP call。
 - 根因：把“JSONL 是容器”误当成“所有事件共享同一语义”。Provider native history、工具幂等 ledger 和 RuntimeEvent 实际具有不同提交时机与恢复责任。
-- 架构影响：公共 envelope 只负责版本、顺序、批次、归属与完整性；`provider_native_commit` payload 由对应 Provider 私有解码。当前 required v1 只有 session/thread metadata、turn start/user input、native commit/turn complete；未来 tool、permission、hook、subagent、usage/cache 使用独立版本化 kind，optional 展示事实不得阻断恢复。
+- 架构影响：公共 envelope 只负责版本、顺序、批次、归属与完整性；`provider_native_commit` payload 由对应 Provider 私有解码。当前 required v1 只有 `session_meta`、`thread_meta`、`turn_started`、`provider_native_commit`、`turn_completed` 和 `turn_failed`；未来 tool、permission、hook、subagent、usage/cache 使用独立版本化 kind，optional 展示事实不得阻断恢复。
 - 缓存影响：Session envelope 和动态路径不参与 Provider 请求 canonical bytes；恢复后的请求字节必须与未退出进程的下一轮一致。
 - 修复方案：OpenAI 保存 user input item 与有序 output items，Anthropic 保存 user/assistant message、metadata 与 usage presence；共享层只传递 opaque envelope。未来 tool result 在副作用 durable 后作为下一次请求的 input-only native 增量提交，不重复 assistant tool call；MCP call 复用工具事实边界，但其 manifest/capability 另行版本化。
 - 未采用方案及原因：未将 tool/thinking/MCP 预先塞入通用 `map[string]any`，也未以 UI transcript 反向构造 Provider 请求；这些做法无法保证类型、幂等和 opaque reasoning 无损。
-- 回归测试：`internal/provider/openai/commit_test.go`、`internal/provider/anthropic/commit_test.go`、`internal/app/session_e2e_test.go`。
+- 回归测试：`internal/provider/openai/commit_test.go`、`internal/provider/anthropic/commit_test.go`、`internal/app/resume_e2e_test.go`。
 - 关联 ADR/Issue/PR：ADR-0002、ADR-0003；OpenSpec `add-jsonl-session-resume`。
 - 后续行动：P3 增加 tool call/result ledger 时更新 OpenSpec schema、golden 和恢复 fixture；MCP、subagent、compaction 分别在对应阶段扩展，不修改既有 v1 payload。
 
@@ -189,11 +189,26 @@
 - 根因：单行 checksum 不能表达多记录原子边界，也不能判断一组记录能否形成可恢复的 Provider 历史。
 - 架构影响：Loader 第一层严格验证 schema/payload version、required/optional、canonical UUIDv7/UTC、checksum、文件归属和单调 seq；第二层只向 ReplayPlanner 暴露完整连续 batch；第三层由 Provider 事务式解码全部 native commits，任一错误都不返回部分历史。
 - 缓存影响：阻止损坏历史生成看似合法但字节不同的续写请求。
-- 修复方案：只允许修复 EOF 尾部半行和最后一个未完成 batch，修复后截断并 `Sync`；中段损坏、完整但校验失败的末行、未知 required 版本全部硬失败。若完整日志以未闭合 turn 结束，恢复先追加 `turn_interrupted` 补偿记录，再开始新 turn。
+- 修复方案：只允许修复 EOF 尾部半行和最后一个未完成 batch，修复后截断并 `Sync`；中段损坏、完整但校验失败的末行、未知 required 版本全部硬失败。若完整日志以未闭合 turn 结束，恢复先追加 `turn_failed(code=session_interrupted)` 补偿记录，再开始新 turn。
 - 未采用方案及原因：不跳过坏行继续扫描，不自动猜测未知 required payload，也不把尾批次中的部分 native commit 交给 Provider。
-- 回归测试：`internal/session/loader_test.go`、`internal/session/replay_test.go`、`internal/app/session_e2e_test.go`。
+- 回归测试：`internal/session/loader_test.go`、`internal/session/replay_test.go`、`internal/session/migration_v1_test.go`、`internal/app/resume_e2e_test.go`。
 - 关联 ADR/Issue/PR：ADR-0003；OpenSpec `add-jsonl-session-resume`。
-- 后续行动：schema migration 必须增加跨版本 fixture；SQLite 重建只能消费相同 ReplayPlanner 输出。
+- 后续行动：首次引入新 schema/payload revision 时必须增加从不可变历史 fixture 到当前 replay model 的版本专属 regression；SQLite 重建只能消费相同 ReplayPlanner 输出。
+
+### [P2][2026-09-28] 进程内 writer 串行化不能替代 journal 跨进程所有权
+
+- 状态：已解决当前协作进程边界
+- 影响版本或提交：OpenSpec `harden-session-journal-ownership`
+- 现象：旧实现只在单个 `JournalWriter` 实例内串行化 append，Loader 在 load/repair 后关闭文件，再重新打开续写；两个 Repository 或进程可能从相同 seq 写入，活动 writer 存在时另一个进程也可能截断 torn tail。
+- 触发条件：两个 EasyCode 进程同时 resume 同一 thread，或第二个进程在第一个 writer 活跃期间打开带损坏尾部的 journal。
+- 根因：把 goroutine 级 actor 顺序误当成 thread journal 的完整所有权，且 load/repair 与 writer 启动之间存在无锁窗口。
+- 架构影响：Repository 的可写入口只返回绑定实际 journal handle 的 exclusive lease；同一 lease 从首个 record 读取前覆盖 repair、ReplayPlanner、配置校验、Provider 事务式恢复、interrupted-tail 补偿和 writer 最终 `Sync`/关闭。busy 使用稳定 `session_busy`，在读取、Provider 恢复、TUI 或 journal 修改前快速失败。
+- 缓存影响：lease、路径、PID 和时间状态不进入 Provider 请求；双 Provider 回归继续保证 uninterrupted 与 restored 请求的 canonical bytes、native 顺序和 fingerprint 等价。
+- 修复方案：Darwin/Linux/Windows 使用非阻塞 OS file lock，Loader 借用、writer 单向接管同一 lease；append admission 使用有界非阻塞队列，Close 先线性化 closing 后继续 drain。真实子进程通过 pipe ready/control 握手验证竞争、正常关闭和异常退出释放，不用 sleep 猜测锁状态。
+- 未采用方案及原因：不使用 PID lockfile、TTL 清理或进程级全局 mutex；它们不能绑定当前 journal handle，且会引入 stale metadata 或无法保护其他进程。
+- 回归测试：`internal/session/lease_test.go`、`internal/session/writer_test.go`、`internal/session/migration_v1_test.go`、`internal/app/session_process_test.go`、`internal/app/session_service_test.go`。
+- 关联 ADR/Issue/PR：OpenSpec `harden-session-journal-ownership`。
+- 后续行动：OS file lock 是 advisory lock，只约束当前协作版本；旧版或非协作进程仍可绕过。发布或回滚时禁止新旧二进制同时写同一 thread，绕过锁的修改继续依靠 checksum、seq 和完整回放校验判损。
 
 ### [P2][2026-09-28] Provider 内存提交必须晚于 durable batch
 
@@ -206,7 +221,7 @@
 - 缓存影响：同一 committed history 在 live 与 resume 路径产生相同下一请求 bytes/fingerprint。
 - 修复方案：finalizer 使用 once 语义，Provider restore 先在临时历史事务式验证，再整体替换。取消/失败不生成 native commit；completed 已形成 prepared result 时，晚到取消不能撤销 durable 提交。
 - 未采用方案及原因：不使用异步 best-effort writer，也不允许从 RuntimeEvent 回放 Provider history。
-- 回归测试：`internal/runtime/runtime_test.go`、双 Provider `commit_test.go`、`internal/app/session_e2e_test.go`。
+- 回归测试：`internal/runtime/runtime_test.go`、双 Provider `commit_test.go`、`internal/app/resume_e2e_test.go`。
 - 关联 ADR/Issue/PR：ADR-0002、ADR-0003；OpenSpec `add-jsonl-session-resume`。
 - 后续行动：tool result 和其他副作用沿用同一 durable-before-memory 原则；compaction/fork 未来只能 append checkpoint/cursor 与 child metadata，不得重写原日志。该能力当前尚未实现。
 

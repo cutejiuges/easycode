@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -40,6 +39,8 @@ type preparedDraft struct {
 	payload        json.RawMessage
 }
 
+const journalRequestCapacity = 64
+
 // JournalWriter 由单 goroutine 串行拥有文件和下一序号。
 type JournalWriter struct {
 	file     journalFile
@@ -55,9 +56,16 @@ type JournalWriter struct {
 	poisoned atomic.Bool
 }
 
-// NewJournalWriter 接管文件所有权，并从 nextSequence 继续追加。
-func NewJournalWriter(file *os.File, identity Identity, nextSequence uint64) (*JournalWriter, error) {
-	return newJournalWriter(file, identity, nextSequence, time.Now)
+// StartJournalWriter 接管 lease，并从 nextSequence 继续追加。
+func StartJournalWriter(lease *JournalLease, identity Identity, nextSequence uint64) (*JournalWriter, error) {
+	if err := validateJournalWriter(identity, nextSequence, time.Now, journalRequestCapacity); err != nil {
+		return nil, err
+	}
+	file, err := lease.transfer()
+	if err != nil {
+		return nil, err
+	}
+	return startOwnedJournalWriter(file, identity, nextSequence, time.Now, journalRequestCapacity), nil
 }
 
 func newJournalWriter(
@@ -66,25 +74,60 @@ func newJournalWriter(
 	nextSequence uint64,
 	clock func() time.Time,
 ) (*JournalWriter, error) {
+	return newJournalWriterWithCapacity(file, identity, nextSequence, clock, journalRequestCapacity)
+}
+
+func newJournalWriterWithCapacity(
+	file journalFile,
+	identity Identity,
+	nextSequence uint64,
+	clock func() time.Time,
+	requestCapacity int,
+) (*JournalWriter, error) {
 	if file == nil {
 		return nil, fmt.Errorf("session journal file is required")
 	}
+	if err := validateJournalWriter(identity, nextSequence, clock, requestCapacity); err != nil {
+		return nil, err
+	}
+	return startOwnedJournalWriter(file, identity, nextSequence, clock, requestCapacity), nil
+}
+
+func validateJournalWriter(
+	identity Identity,
+	nextSequence uint64,
+	clock func() time.Time,
+	requestCapacity int,
+) error {
 	if !identity.SessionID.Valid() || !identity.ThreadID.Valid() {
-		return nil, fmt.Errorf("session writer identity is invalid")
+		return fmt.Errorf("session writer identity is invalid")
 	}
 	if nextSequence == 0 {
-		return nil, fmt.Errorf("session writer next sequence is invalid")
+		return fmt.Errorf("session writer next sequence is invalid")
 	}
 	if clock == nil {
-		return nil, fmt.Errorf("session writer clock is required")
+		return fmt.Errorf("session writer clock is required")
 	}
+	if requestCapacity <= 0 {
+		return fmt.Errorf("session writer request capacity is invalid")
+	}
+	return nil
+}
+
+func startOwnedJournalWriter(
+	file journalFile,
+	identity Identity,
+	nextSequence uint64,
+	clock func() time.Time,
+	requestCapacity int,
+) *JournalWriter {
 	writer := &JournalWriter{
 		file: file, identity: identity, clock: clock,
-		requests: make(chan writerRequest, 64), closeReq: make(chan struct{}, 1),
+		requests: make(chan writerRequest, requestCapacity), closeReq: make(chan struct{}),
 		done: make(chan struct{}),
 	}
 	go writer.run(nextSequence)
-	return writer, nil
+	return writer
 }
 
 // AppendBatch 编码并 durable 追加一个全有或全无恢复语义的 batch。
@@ -103,6 +146,9 @@ func (writer *JournalWriter) AppendBatch(ctx context.Context, drafts []RecordDra
 		}
 		prepared = append(prepared, value)
 	}
+	if err := contextError(ctx); err != nil {
+		return nil, err
+	}
 
 	request := writerRequest{drafts: prepared, response: make(chan appendResponse, 1)}
 	writer.mu.Lock()
@@ -114,12 +160,16 @@ func (writer *JournalWriter) AppendBatch(ctx context.Context, drafts []RecordDra
 		writer.mu.Unlock()
 		return nil, fmt.Errorf("session writer is poisoned")
 	}
+	if err := ctx.Err(); err != nil {
+		writer.mu.Unlock()
+		return nil, fmt.Errorf("session append cancelled: %w", err)
+	}
 	select {
 	case writer.requests <- request:
 		writer.mu.Unlock()
-	case <-ctx.Done():
+	default:
 		writer.mu.Unlock()
-		return nil, fmt.Errorf("session append cancelled: %w", ctx.Err())
+		return nil, fmt.Errorf("session writer queue is full")
 	}
 	response := <-request.response
 	return response.records, response.err
@@ -135,13 +185,13 @@ func (writer *JournalWriter) Close(ctx context.Context) error {
 	if writer == nil {
 		return nil
 	}
-	if err := contextError(ctx); err != nil {
-		return err
+	if ctx == nil {
+		return fmt.Errorf("session context is required")
 	}
 	writer.mu.Lock()
 	if !writer.closing {
 		writer.closing = true
-		writer.closeReq <- struct{}{}
+		close(writer.closeReq)
 	}
 	done := writer.done
 	writer.mu.Unlock()

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,10 +12,12 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"easycode/internal/config"
 	"easycode/internal/domain"
+	"easycode/internal/fault"
 	"easycode/internal/protocol"
 	"easycode/internal/secret"
 	"easycode/internal/session"
@@ -118,9 +121,15 @@ func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			loader, _ := session.NewLoader(repository)
-			loaded, err := loader.Load(context.Background(), threadID)
+			lease, err := repository.Open(context.Background(), threadID)
 			if err != nil {
+				t.Fatal(err)
+			}
+			loaded, err := session.NewLoader().Load(context.Background(), lease)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := lease.Close(); err != nil {
 				t.Fatal(err)
 			}
 			_ = repository.Close()
@@ -147,6 +156,118 @@ func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestOpenAIV1CompatibilityFixtureRestoresVisibleHistoryWithoutNetwork(t *testing.T) {
+	fixture, err := os.ReadFile(filepath.Join("..", "session", "testdata", "migrations", "v1", "root.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataRoot := filepath.Join(t.TempDir(), "sessions")
+	repository, err := session.NewRepository(dataRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	threadID := domain.ThreadID("00000000-0001-7000-8000-000000000002")
+	lease, err := repository.Create(context.Background(), threadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.Close(); err != nil {
+		t.Fatal(err)
+	}
+	path, err := repository.JournalPath(threadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, fixture, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var networkCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		networkCalls.Add(1)
+	}))
+	defer server.Close()
+	applicationConfig := config.Config{Provider: config.Provider{
+		Family: domain.ProviderOpenAI, BaseURL: server.URL,
+		APIKey: secret.New("fixture-key"), Model: "fixture-model",
+	}}
+	resources, err := newChatResources(
+		context.Background(), applicationConfig, dataRoot, string(threadID), t.TempDir(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if networkCalls.Load() != 0 {
+		t.Fatalf("v1 fixture restore made %d network calls", networkCalls.Load())
+	}
+	if len(resources.history.Turns) != 1 ||
+		resources.history.Turns[0].UserText != "fixture question" ||
+		resources.history.Turns[0].AssistantText != "fixture answer" {
+		t.Fatalf("v1 fixture history = %#v", resources.history)
+	}
+	view := tui.NewModel("test", resources.session, resources.history).View()
+	if !strings.Contains(view, "User: fixture question") || !strings.Contains(view, "Assistant: fixture answer") {
+		t.Fatalf("v1 fixture transcript = %s", view)
+	}
+	if err := resources.close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBusyResumeDoesNotExposeChatResourcesOrCallProvider(t *testing.T) {
+	var networkCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		networkCalls.Add(1)
+	}))
+	defer server.Close()
+	dataRoot := filepath.Join(t.TempDir(), "sessions")
+	applicationConfig := config.Config{Provider: config.Provider{
+		Family: domain.ProviderOpenAI, BaseURL: server.URL,
+		APIKey: secret.New("fixture-key"), Model: "gpt-test",
+	}}
+	created, err := newChatResources(context.Background(), applicationConfig, dataRoot, "", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := session.NewRepository(dataRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := repository.JournalPath(created.identity.ThreadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := newChatResources(
+		context.Background(), applicationConfig, dataRoot, string(created.identity.ThreadID), t.TempDir(),
+	)
+	if resumed != nil || !errors.Is(err, &fault.Error{Code: fault.CodeSessionBusy}) {
+		t.Fatalf("busy resources = %#v, %v", resumed, err)
+	}
+	if networkCalls.Load() != 0 {
+		t.Fatalf("busy resume made %d network calls", networkCalls.Load())
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("busy resource assembly modified journal bytes")
+	}
+	if err := created.close(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }
 

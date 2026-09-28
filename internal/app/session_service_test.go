@@ -16,6 +16,7 @@ import (
 
 type fakeProviderFactory struct {
 	family       domain.ProviderFamily
+	restoreErr   error
 	newCalls     atomic.Int32
 	restoreCalls atomic.Int32
 	networkCalls atomic.Int32
@@ -35,6 +36,9 @@ func (factory *fakeProviderFactory) NewConversation() provider.Conversation {
 
 func (factory *fakeProviderFactory) RestoreConversation(commits []provider.NativeCommitEnvelope) (provider.Conversation, error) {
 	factory.restoreCalls.Add(1)
+	if factory.restoreErr != nil {
+		return nil, factory.restoreErr
+	}
 	factory.restored = make([]provider.NativeCommitEnvelope, len(commits))
 	for index, commit := range commits {
 		factory.restored[index] = commit.Clone()
@@ -163,6 +167,170 @@ func TestSessionServiceMismatchDoesNotModifyJournalOrRestoreProvider(t *testing.
 	}
 }
 
+func TestSessionServiceBusyFailsBeforeRestoreAndKeepsBytes(t *testing.T) {
+	owner := newTestSessionService(t)
+	defer owner.close()
+	factory := &fakeProviderFactory{family: domain.ProviderOpenAI}
+	created, err := owner.create(context.Background(), factory, "responses", "gpt-test", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := owner.repository.JournalPath(created.identity.ThreadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	competitor, err := newSessionService(owner.repository.RootPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer competitor.close()
+	restorer := &fakeProviderFactory{family: domain.ProviderOpenAI}
+	resumed, err := competitor.resume(
+		context.Background(), restorer, "responses", "gpt-test", created.identity.ThreadID,
+	)
+	if !errors.Is(err, &fault.Error{Code: fault.CodeSessionBusy}) || resumed.writer != nil {
+		t.Fatalf("busy resume = %#v, %v", resumed, err)
+	}
+	if restorer.restoreCalls.Load() != 0 || restorer.networkCalls.Load() != 0 {
+		t.Fatalf("busy provider calls restore/network = %d/%d", restorer.restoreCalls.Load(), restorer.networkCalls.Load())
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("busy resume modified journal bytes")
+	}
+	if err := created.writer.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err = competitor.resume(
+		context.Background(), restorer, "responses", "gpt-test", created.identity.ThreadID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := resumed.writer.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSessionServiceRejectsNewerRequiredFixtureBeforeProviderRestore(t *testing.T) {
+	service := newTestSessionService(t)
+	defer service.close()
+	rootFixture, err := os.ReadFile(filepath.Join("..", "session", "testdata", "migrations", "v1", "root.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	newer, err := os.ReadFile(filepath.Join("..", "session", "testdata", "migrations", "v1", "newer_required.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := append(append([]byte(nil), rootFixture...), newer...)
+	threadID := domain.ThreadID("00000000-0001-7000-8000-000000000002")
+	lease, err := service.repository.Create(context.Background(), threadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.Close(); err != nil {
+		t.Fatal(err)
+	}
+	path, err := service.repository.JournalPath(threadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	factory := &fakeProviderFactory{family: domain.ProviderOpenAI}
+	if _, err := service.resume(context.Background(), factory, "responses", "fixture-model", threadID); !errors.Is(err, &fault.Error{Code: fault.CodeSessionCorruption}) {
+		t.Fatalf("newer required resume error = %v", err)
+	}
+	if factory.restoreCalls.Load() != 0 || factory.networkCalls.Load() != 0 {
+		t.Fatalf("provider calls restore/network = %d/%d", factory.restoreCalls.Load(), factory.networkCalls.Load())
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(content) {
+		t.Fatal("newer required resume modified fixture bytes")
+	}
+	assertSessionLeaseAvailable(t, service, threadID)
+}
+
+func TestSessionServiceOwnershipFailuresReleaseTheCurrentOwner(t *testing.T) {
+	t.Run("replay planner", func(t *testing.T) {
+		service, identity := createClosedTestSession(t, domain.ProviderOpenAI, "responses", "gpt-test")
+		defer service.close()
+		service.plan = func(session.LoadResult) (session.ReplayPlan, error) {
+			return session.ReplayPlan{}, errors.New("fixture replay failure")
+		}
+		factory := &fakeProviderFactory{family: domain.ProviderOpenAI}
+		if _, err := service.resume(context.Background(), factory, "responses", "gpt-test", identity.ThreadID); !errors.Is(err, &fault.Error{Code: fault.CodeSessionCorruption}) {
+			t.Fatalf("resume error = %v", err)
+		}
+		if factory.restoreCalls.Load() != 0 {
+			t.Fatalf("restore calls = %d", factory.restoreCalls.Load())
+		}
+		assertSessionLeaseAvailable(t, service, identity.ThreadID)
+	})
+
+	t.Run("non root", func(t *testing.T) {
+		service, identity := createClosedTestSession(t, domain.ProviderOpenAI, "responses", "gpt-test")
+		defer service.close()
+		planner := session.NewReplayPlanner()
+		service.plan = func(loaded session.LoadResult) (session.ReplayPlan, error) {
+			plan, err := planner.Plan(loaded)
+			plan.ThreadMetadata.Root = false
+			return plan, err
+		}
+		factory := &fakeProviderFactory{family: domain.ProviderOpenAI}
+		if _, err := service.resume(context.Background(), factory, "responses", "gpt-test", identity.ThreadID); !errors.Is(err, &fault.Error{Code: fault.CodeSessionIncompatible}) {
+			t.Fatalf("resume error = %v", err)
+		}
+		if factory.restoreCalls.Load() != 0 {
+			t.Fatalf("restore calls = %d", factory.restoreCalls.Load())
+		}
+		assertSessionLeaseAvailable(t, service, identity.ThreadID)
+	})
+
+	t.Run("provider restore", func(t *testing.T) {
+		service, identity := createClosedTestSession(t, domain.ProviderOpenAI, "responses", "gpt-test")
+		defer service.close()
+		factory := &fakeProviderFactory{
+			family: domain.ProviderOpenAI, restoreErr: errors.New("fixture restore failure"),
+		}
+		if _, err := service.resume(context.Background(), factory, "responses", "gpt-test", identity.ThreadID); !errors.Is(err, &fault.Error{Code: fault.CodeSessionCorruption}) {
+			t.Fatalf("resume error = %v", err)
+		}
+		if factory.restoreCalls.Load() != 1 || factory.networkCalls.Load() != 0 {
+			t.Fatalf("provider calls restore/network = %d/%d", factory.restoreCalls.Load(), factory.networkCalls.Load())
+		}
+		assertSessionLeaseAvailable(t, service, identity.ThreadID)
+	})
+
+	t.Run("writer start", func(t *testing.T) {
+		service, identity := createClosedTestSession(t, domain.ProviderOpenAI, "responses", "gpt-test")
+		defer service.close()
+		service.start = func(*session.JournalLease, session.Identity, uint64) (journalStartResult, error) {
+			return journalStartResult{}, errors.New("fixture writer start failure")
+		}
+		factory := &fakeProviderFactory{family: domain.ProviderOpenAI}
+		if _, err := service.resume(context.Background(), factory, "responses", "gpt-test", identity.ThreadID); !errors.Is(err, &fault.Error{Code: fault.CodeSessionWrite}) {
+			t.Fatalf("resume error = %v", err)
+		}
+		if factory.restoreCalls.Load() != 1 || factory.networkCalls.Load() != 0 {
+			t.Fatalf("provider calls restore/network = %d/%d", factory.restoreCalls.Load(), factory.networkCalls.Load())
+		}
+		assertSessionLeaseAvailable(t, service, identity.ThreadID)
+	})
+}
+
 func TestSessionServiceClosesInterruptedTailBeforeReturning(t *testing.T) {
 	t.Parallel()
 	service := newTestSessionService(t)
@@ -227,8 +395,8 @@ func TestSessionServiceInterruptedCompensationFailureDoesNotBecomeUsable(t *test
 		t.Fatal(err)
 	}
 	failing := &failingManagedJournal{}
-	service.reopen = func(context.Context, *session.Repository, session.LoadResult) (managedJournal, error) {
-		return failing, nil
+	service.start = func(*session.JournalLease, session.Identity, uint64) (journalStartResult, error) {
+		return journalStartResult{writer: failing}, nil
 	}
 	restorer := &fakeProviderFactory{family: domain.ProviderOpenAI}
 	resumed, err := service.resume(context.Background(), restorer, "responses", "gpt-test", created.identity.ThreadID)
@@ -238,6 +406,73 @@ func TestSessionServiceInterruptedCompensationFailureDoesNotBecomeUsable(t *test
 	if failing.appendCalls.Load() != 1 || failing.closeCalls.Load() != 1 || restorer.networkCalls.Load() != 0 {
 		t.Fatalf("append/close/network = %d/%d/%d", failing.appendCalls.Load(), failing.closeCalls.Load(), restorer.networkCalls.Load())
 	}
+	assertSessionLeaseAvailable(t, service, created.identity.ThreadID)
+}
+
+func TestSessionServiceInterruptedAppendFailureReleasesLease(t *testing.T) {
+	service := newTestSessionService(t)
+	defer service.close()
+	created, err := service.create(
+		context.Background(), &fakeProviderFactory{family: domain.ProviderOpenAI},
+		"responses", "gpt-test", t.TempDir(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	turnID, err := domain.NewTurnID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := created.writer.AppendBatch(context.Background(), []session.RecordDraft{{
+		EventKind: session.EventTurnStarted, TurnID: turnID, Payload: session.TurnStartedPayload{},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := created.writer.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	failing := &failingManagedJournal{appendErr: errors.New("fixture append failure")}
+	service.start = func(*session.JournalLease, session.Identity, uint64) (journalStartResult, error) {
+		return journalStartResult{writer: failing}, nil
+	}
+	factory := &fakeProviderFactory{family: domain.ProviderOpenAI}
+	if _, err := service.resume(context.Background(), factory, "responses", "gpt-test", created.identity.ThreadID); !errors.Is(err, &fault.Error{Code: fault.CodeSessionWrite}) {
+		t.Fatalf("resume error = %v", err)
+	}
+	if failing.appendCalls.Load() != 1 || failing.closeCalls.Load() != 1 || factory.networkCalls.Load() != 0 {
+		t.Fatalf("append/close/network = %d/%d/%d", failing.appendCalls.Load(), failing.closeCalls.Load(), factory.networkCalls.Load())
+	}
+	assertSessionLeaseAvailable(t, service, created.identity.ThreadID)
+}
+
+func TestSessionServiceCorruptionIsNotBusyOrWriteFailure(t *testing.T) {
+	service, identity := createClosedTestSession(t, domain.ProviderOpenAI, "responses", "gpt-test")
+	defer service.close()
+	path, err := service.repository.JournalPath(identity.ThreadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString("{invalid json}\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	factory := &fakeProviderFactory{family: domain.ProviderOpenAI}
+	_, err = service.resume(context.Background(), factory, "responses", "gpt-test", identity.ThreadID)
+	if !errors.Is(err, &fault.Error{Code: fault.CodeSessionCorruption}) ||
+		errors.Is(err, &fault.Error{Code: fault.CodeSessionBusy}) ||
+		errors.Is(err, &fault.Error{Code: fault.CodeSessionWrite}) {
+		t.Fatalf("corrupt resume error = %v", err)
+	}
+	if factory.restoreCalls.Load() != 0 || factory.networkCalls.Load() != 0 {
+		t.Fatalf("provider calls restore/network = %d/%d", factory.restoreCalls.Load(), factory.networkCalls.Load())
+	}
+	assertSessionLeaseAvailable(t, service, identity.ThreadID)
 }
 
 func TestSessionServiceRejectsUnknownThreadWithoutCreatingReplacement(t *testing.T) {
@@ -267,10 +502,14 @@ func TestSessionServiceRejectsUnknownThreadWithoutCreatingReplacement(t *testing
 type failingManagedJournal struct {
 	appendCalls atomic.Int32
 	closeCalls  atomic.Int32
+	appendErr   error
 }
 
 func (journal *failingManagedJournal) AppendBatch(context.Context, []session.RecordDraft) ([]session.Record, error) {
 	journal.appendCalls.Add(1)
+	if journal.appendErr != nil {
+		return nil, journal.appendErr
+	}
 	return nil, errors.New("fixture sync failure")
 }
 
@@ -290,14 +529,50 @@ func newTestSessionService(t *testing.T) *sessionService {
 	return service
 }
 
+func createClosedTestSession(
+	t *testing.T,
+	family domain.ProviderFamily,
+	wire string,
+	model string,
+) (*sessionService, session.Identity) {
+	t.Helper()
+	service := newTestSessionService(t)
+	created, err := service.create(
+		context.Background(), &fakeProviderFactory{family: family}, wire, model, t.TempDir(),
+	)
+	if err != nil {
+		_ = service.close()
+		t.Fatal(err)
+	}
+	if err := created.writer.Close(context.Background()); err != nil {
+		_ = service.close()
+		t.Fatal(err)
+	}
+	return service, created.identity
+}
+
+func assertSessionLeaseAvailable(t *testing.T, service *sessionService, threadID domain.ThreadID) {
+	t.Helper()
+	lease, err := service.repository.Open(context.Background(), threadID)
+	if err != nil {
+		t.Fatalf("journal lease was not released: %v", err)
+	}
+	if err := lease.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func loadAppPlan(t *testing.T, service *sessionService, threadID domain.ThreadID) (session.LoadResult, session.ReplayPlan) {
 	t.Helper()
-	loader, err := session.NewLoader(service.repository)
+	lease, err := service.repository.Open(context.Background(), threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := loader.Load(context.Background(), threadID)
+	loaded, err := session.NewLoader().Load(context.Background(), lease)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.Close(); err != nil {
 		t.Fatal(err)
 	}
 	plan, err := session.NewReplayPlanner().Plan(loaded)

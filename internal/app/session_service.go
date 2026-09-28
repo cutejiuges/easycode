@@ -14,7 +14,14 @@ import (
 
 type sessionService struct {
 	repository *session.Repository
-	reopen     func(context.Context, *session.Repository, session.LoadResult) (managedJournal, error)
+	load       func(context.Context, *session.JournalLease) (session.LoadResult, error)
+	plan       func(session.LoadResult) (session.ReplayPlan, error)
+	start      func(*session.JournalLease, session.Identity, uint64) (journalStartResult, error)
+}
+
+type journalStartResult struct {
+	writer      managedJournal
+	transferred bool
 }
 
 type managedJournal interface {
@@ -42,8 +49,14 @@ func newSessionService(dataRoot string) (*sessionService, error) {
 	}
 	return &sessionService{
 		repository: repository,
-		reopen: func(ctx context.Context, repository *session.Repository, loaded session.LoadResult) (managedJournal, error) {
-			return session.ReopenJournalWriter(ctx, repository, loaded)
+		load:       session.NewLoader().Load,
+		plan:       session.NewReplayPlanner().Plan,
+		start: func(lease *session.JournalLease, identity session.Identity, nextSequence uint64) (journalStartResult, error) {
+			writer, startErr := session.StartJournalWriter(lease, identity, nextSequence)
+			if startErr != nil {
+				return journalStartResult{}, startErr
+			}
+			return journalStartResult{writer: writer, transferred: true}, nil
 		},
 	}, nil
 }
@@ -79,19 +92,27 @@ func (service *sessionService) resume(
 	wire string,
 	model string,
 	threadID domain.ThreadID,
-) (assembledSession, error) {
-	loader, err := session.NewLoader(service.repository)
+) (assembled assembledSession, resultErr error) {
+	lease, err := service.repository.Open(ctx, threadID)
 	if err != nil {
-		return assembledSession{}, err
-	}
-	loaded, err := loader.Load(ctx, threadID)
-	if err != nil {
+		if session.IsJournalBusy(err) {
+			return assembledSession{}, fault.New(fault.CodeSessionBusy, "session thread is already active")
+		}
 		if errors.Is(err, fs.ErrNotExist) {
 			return assembledSession{}, fault.New(fault.CodeSessionNotFound, "session thread was not found")
 		}
+		return assembledSession{}, fault.Wrap(fault.CodeSessionCorruption, "open session journal failed", err)
+	}
+	defer func() {
+		if lease != nil {
+			resultErr = errors.Join(resultErr, lease.Close())
+		}
+	}()
+	loaded, err := service.load(ctx, lease)
+	if err != nil {
 		return assembledSession{}, fault.Wrap(fault.CodeSessionCorruption, "load session journal failed", err)
 	}
-	plan, err := session.NewReplayPlanner().Plan(loaded)
+	plan, err := service.plan(loaded)
 	if err != nil {
 		return assembledSession{}, fault.Wrap(fault.CodeSessionCorruption, "validate session replay failed", err)
 	}
@@ -117,9 +138,16 @@ func (service *sessionService) resume(
 	if err != nil {
 		return assembledSession{}, fault.Wrap(fault.CodeSessionCorruption, "restore provider native history failed", err)
 	}
-	writer, err := service.reopen(ctx, service.repository, loaded)
+	started, err := service.start(lease, loaded.Identity, loaded.NextSequence)
 	if err != nil {
-		return assembledSession{}, fault.Wrap(fault.CodeSessionWrite, "reopen session journal failed", err)
+		return assembledSession{}, fault.Wrap(fault.CodeSessionWrite, "start session journal writer failed", err)
+	}
+	writer := started.writer
+	if writer == nil {
+		return assembledSession{}, fault.New(fault.CodeSessionWrite, "start session journal writer failed")
+	}
+	if started.transferred {
+		lease = nil
 	}
 	if plan.InterruptedTail != nil {
 		_, appendErr := writer.AppendBatch(ctx, []session.RecordDraft{{
@@ -136,6 +164,12 @@ func (service *sessionService) resume(
 				errors.Join(appendErr, closeErr),
 			)
 		}
+	}
+	if !started.transferred {
+		closeErr := writer.Close(context.Background())
+		return assembledSession{}, fault.Wrap(
+			fault.CodeSessionWrite, "session journal ownership was not transferred", closeErr,
+		)
 	}
 	return assembledSession{
 		identity: plan.Identity, conversation: conversation, writer: writer,
