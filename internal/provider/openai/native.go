@@ -109,3 +109,20 @@ func (item NativeItem) clone() NativeItem {
 	item.Raw = append(json.RawMessage(nil), item.Raw...)
 	return item
 }
+
+// nativeTurn 是一次已成功提交 user item 与 response output items 的原子快照。
+type nativeTurn struct {
+	User    NativeItem
+	Outputs []NativeItem
+}
+
+func (turn nativeTurn) clone() nativeTurn {
+	cloned := nativeTurn{
+		User:    turn.User.clone(),
+		Outputs: make([]NativeItem, 0, len(turn.Outputs)),
+	}
+	for _, item := range turn.Outputs {
+		cloned.Outputs = append(cloned.Outputs, item.clone())
+	}
+	return cloned
+}

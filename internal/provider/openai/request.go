@@ -9,10 +9,17 @@ type responsesRequest struct {
 	Include []string     `json:"include"`
 }
 
-func compileResponsesRequest(model string, history []NativeItem, user NativeItem) responsesRequest {
-	input := make([]NativeItem, 0, len(history)+1)
-	for _, item := range history {
-		input = append(input, item.clone())
+func compileResponsesRequest(model string, history []nativeTurn, user NativeItem) responsesRequest {
+	itemCount := 1
+	for _, turn := range history {
+		itemCount += 1 + len(turn.Outputs)
+	}
+	input := make([]NativeItem, 0, itemCount)
+	for _, turn := range history {
+		input = append(input, turn.User.clone())
+		for _, item := range turn.Outputs {
+			input = append(input, item.clone())
+		}
 	}
 	input = append(input, user.clone())
 	return responsesRequest{

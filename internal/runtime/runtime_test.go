@@ -26,6 +26,10 @@ func (fakeConversation) Capabilities() provider.Capabilities {
 	return provider.Capabilities{Streaming: true}
 }
 
+func (fakeConversation) ProjectHistory() domain.SemanticHistoryView {
+	return domain.SemanticHistoryView{Provider: domain.ProviderOpenAI, Turns: make([]domain.SemanticTurn, 0)}
+}
+
 func (conversation fakeConversation) Stream(ctx context.Context, input provider.TurnInput) (<-chan provider.StreamEvent, error) {
 	return conversation.stream(ctx, input)
 }

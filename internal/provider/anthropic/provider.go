@@ -51,6 +51,8 @@ type nativeHistory struct {
 	turns []nativeTurn
 }
 
+var _ provider.Conversation = (*Conversation)(nil)
+
 // New 创建 Anthropic Provider。
 func New(config Config) (*Provider, error) {
 	config.Model = strings.TrimSpace(config.Model)
