@@ -16,15 +16,13 @@ import (
 func TestLoaderLoadsValidBatches(t *testing.T) {
 	t.Parallel()
 	content := append(
-		encodeTestBatch(t, 1, []RecordDraft{{
-			EventKind: EventTurnStarted, TurnID: testTurnID, Payload: TurnStartedPayload{},
-		}}),
+		encodeTestBatch(t, 1, []RecordDraft{mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{})}),
 		encodeTestBatch(t, 2, []RecordDraft{
-			{EventKind: EventProviderNativeCommit, TurnID: testTurnID, Payload: NativeCommitPayload{
+			mustDraft(t, EventProviderNativeCommit, testTurnID, NativeCommitPayload{
 				Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 1,
 				Payload: json.RawMessage(`{"shape":"text_sample"}`),
-			}},
-			{EventKind: EventTurnCompleted, TurnID: testTurnID, Payload: TurnCompletedPayload{}},
+			}),
+			mustDraft(t, EventTurnCompleted, testTurnID, TurnCompletedPayload{}),
 		})...,
 	)
 	loader, repository := writeRawJournal(t, content)
@@ -45,9 +43,7 @@ func TestLoaderLoadsValidBatches(t *testing.T) {
 
 func TestLoaderRepairsTruncatedFinalLineIdempotently(t *testing.T) {
 	t.Parallel()
-	committed := encodeTestBatch(t, 1, []RecordDraft{{
-		EventKind: EventTurnStarted, TurnID: testTurnID, Payload: TurnStartedPayload{},
-	}})
+	committed := encodeTestBatch(t, 1, []RecordDraft{mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{})})
 	content := append(append([]byte(nil), committed...), []byte(`{"schema_version":1,"payload_version"`)...)
 	loader, repository := writeRawJournal(t, content)
 	defer repository.Close()
@@ -70,13 +66,11 @@ func TestLoaderRepairsTruncatedFinalLineIdempotently(t *testing.T) {
 
 func TestLoaderRepairsWholeTrailingIncompleteBatch(t *testing.T) {
 	t.Parallel()
-	committed := encodeTestBatch(t, 1, []RecordDraft{{
-		EventKind: EventTurnStarted, TurnID: testTurnID, Payload: TurnStartedPayload{},
-	}})
-	firstOfTwo := encodeTestRecord(t, 2, 2, 0, 2, RecordDraft{
-		EventKind: EventProviderNativeCommit, TurnID: testTurnID,
-		Payload: NativeCommitPayload{Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 1, Payload: json.RawMessage(`{}`)},
-	})
+	committed := encodeTestBatch(t, 1, []RecordDraft{mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{})})
+	firstOfTwo := encodeTestRecord(t, 2, 2, 0, 2, mustDraft(
+		t, EventProviderNativeCommit, testTurnID,
+		NativeCommitPayload{Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 1, Payload: json.RawMessage(`{}`)},
+	))
 	content := append(append([]byte(nil), committed...), firstOfTwo...)
 	content = append(content, '\n')
 	loader, repository := writeRawJournal(t, content)
@@ -100,9 +94,7 @@ func TestLoaderRepairsWholeTrailingIncompleteBatch(t *testing.T) {
 
 func TestLoaderKeepsCommittedTurnStarted(t *testing.T) {
 	t.Parallel()
-	content := encodeTestBatch(t, 1, []RecordDraft{{
-		EventKind: EventTurnStarted, TurnID: testTurnID, Payload: TurnStartedPayload{},
-	}})
+	content := encodeTestBatch(t, 1, []RecordDraft{mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{})})
 	loader, repository := writeRawJournal(t, content)
 	defer repository.Close()
 	result, err := loader.Load(context.Background(), testThreadID)
@@ -116,9 +108,9 @@ func TestLoaderKeepsCommittedTurnStarted(t *testing.T) {
 
 func TestLoaderRejectsAmbiguousEnvelopeAndMiddleCorruption(t *testing.T) {
 	t.Parallel()
-	valid := bytes.TrimSuffix(encodeTestBatch(t, 1, []RecordDraft{{
-		EventKind: EventTurnStarted, TurnID: testTurnID, Payload: TurnStartedPayload{},
-	}}), []byte{'\n'})
+	valid := bytes.TrimSuffix(encodeTestBatch(t, 1, []RecordDraft{
+		mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}),
+	}), []byte{'\n'})
 	fixtures := map[string][]byte{
 		"duplicate":     bytes.Replace(valid, []byte(`"seq":1`), []byte(`"seq":1,"seq":1`), 1),
 		"unknown":       bytes.Replace(valid, []byte(`,"checksum"`), []byte(`,"future":true,"checksum"`), 1),
@@ -138,12 +130,12 @@ func TestLoaderRejectsAmbiguousEnvelopeAndMiddleCorruption(t *testing.T) {
 		})
 	}
 
-	middle := append(encodeTestBatch(t, 1, []RecordDraft{{
-		EventKind: EventTurnStarted, TurnID: testTurnID, Payload: TurnStartedPayload{},
-	}}), []byte("{bad json}\n")...)
-	middle = append(middle, encodeTestBatch(t, 2, []RecordDraft{{
-		EventKind: EventTurnFailed, TurnID: testTurnID, Payload: TurnFailedPayload{Code: "failed"},
-	}})...)
+	middle := append(encodeTestBatch(t, 1, []RecordDraft{
+		mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}),
+	}), []byte("{bad json}\n")...)
+	middle = append(middle, encodeTestBatch(t, 2, []RecordDraft{
+		mustDraft(t, EventTurnFailed, testTurnID, TurnFailedPayload{Code: "failed"}),
+	})...)
 	loader, repository := writeRawJournal(t, middle)
 	defer repository.Close()
 	if _, err := loader.Load(context.Background(), testThreadID); err == nil || !strings.Contains(err.Error(), "corrupted") {
@@ -259,7 +251,7 @@ func (loader *testJournalLoader) Load(ctx context.Context, _ domain.ThreadID) (L
 
 func writeRawJournal(t *testing.T, content []byte) (*testJournalLoader, *Repository) {
 	t.Helper()
-	repository, err := NewRepository(filepath.Join(t.TempDir(), "sessions"))
+	repository, err := OpenOrCreateRepository(filepath.Join(t.TempDir(), "sessions"))
 	if err != nil {
 		t.Fatal(err)
 	}

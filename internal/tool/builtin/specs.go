@@ -7,6 +7,8 @@ import (
 	"easycode/internal/tool"
 )
 
+// TODO(P3): 内置工具 facade 清单仅为稳定 schema 设计预留，当前不得对模型暴露；由后续 OpenSpec 同时提供真实消费者、验证与测试时启用，否则删除。
+
 // Specs 返回按稳定顺序排列的内置工具 facade 基线。
 func Specs() []tool.Spec {
 	objectSchema := json.RawMessage(`{"type":"object","additionalProperties":false}`)

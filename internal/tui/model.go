@@ -2,6 +2,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -14,7 +15,7 @@ import (
 
 // ChatSession 是 TUI 使用的最小会话接口。
 type ChatSession interface {
-	Submit(string) (<-chan protocol.Event, error)
+	Submit(context.Context, string) (<-chan protocol.Event, error)
 	Interrupt()
 }
 
@@ -52,6 +53,7 @@ type Model struct {
 	width   int
 	height  int
 	session ChatSession
+	submit  func(ChatSession, string) tea.Cmd
 
 	draft         []rune
 	transcript    []transcriptMessage
@@ -63,8 +65,18 @@ type Model struct {
 }
 
 // NewModel 创建初始 Bubble Tea 模型，并投影可选的已恢复语义历史。
-func NewModel(version string, session ChatSession, initialHistory ...domain.SemanticHistoryView) Model {
-	model := Model{version: version, session: session, assistantItem: -1}
+func NewModel(
+	submitContext context.Context,
+	version string,
+	session ChatSession,
+	initialHistory ...domain.SemanticHistoryView,
+) Model {
+	model := Model{
+		version: version, session: session, assistantItem: -1,
+		submit: func(target ChatSession, prompt string) tea.Cmd {
+			return submitTurn(submitContext, target, prompt)
+		},
+	}
 	if len(initialHistory) == 0 {
 		return model
 	}
@@ -149,7 +161,7 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		model.state = stateStreaming
 		model.assistantItem = -1
 		model.errorSummary = ""
-		return model, submitTurn(model.session, prompt)
+		return model, model.submit(model.session, prompt)
 	case tea.KeyBackspace, tea.KeyDelete:
 		if len(model.draft) > 0 {
 			model.draft = model.draft[:len(model.draft)-1]
@@ -232,9 +244,9 @@ func (model Model) View() string {
 	return view.String()
 }
 
-func submitTurn(session ChatSession, prompt string) tea.Cmd {
+func submitTurn(ctx context.Context, session ChatSession, prompt string) tea.Cmd {
 	return func() tea.Msg {
-		events, err := session.Submit(prompt)
+		events, err := session.Submit(ctx, prompt)
 		if err != nil {
 			return ErrorMsg{Err: err}
 		}

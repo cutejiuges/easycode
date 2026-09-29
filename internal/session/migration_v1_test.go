@@ -84,6 +84,39 @@ func TestV1CompatibilityFixtureReplay(t *testing.T) {
 	}
 }
 
+func TestV1CompatibilityFixtureCanonicalBytesStayStable(t *testing.T) {
+	fixture := bytes.TrimSuffix(readV1Fixture(t, "root.jsonl"), []byte{'\n'})
+	lines := bytes.Split(fixture, []byte{'\n'})
+	wantKinds := []EventKind{
+		EventSessionMeta,
+		EventThreadMeta,
+		EventTurnStarted,
+		EventTurnFailed,
+		EventTurnStarted,
+		EventProviderNativeCommit,
+		EventTurnCompleted,
+	}
+	if len(lines) != len(wantKinds) {
+		t.Fatalf("v1 fixture line count = %d, want %d", len(lines), len(wantKinds))
+	}
+	for index, line := range lines {
+		record, err := DecodeRecord(line)
+		if err != nil {
+			t.Fatalf("decode v1 line %d: %v", index+1, err)
+		}
+		if record.EventKind != wantKinds[index] {
+			t.Fatalf("v1 line %d kind = %q, want %q", index+1, record.EventKind, wantKinds[index])
+		}
+		sealed, encoded, err := EncodeRecord(record)
+		if err != nil {
+			t.Fatalf("encode v1 line %d: %v", index+1, err)
+		}
+		if !bytes.Equal(encoded, line) || sealed.Checksum != record.Checksum {
+			t.Fatalf("v1 line %d canonical bytes or checksum changed\n got: %s\nwant: %s", index+1, encoded, line)
+		}
+	}
+}
+
 func TestV1CompatibilityFixtureContinuesWithoutRewrite(t *testing.T) {
 	prefix := readV1Fixture(t, "root.jsonl")
 	repository, lease := installV1Fixture(t, prefix)
@@ -95,11 +128,9 @@ func TestV1CompatibilityFixtureContinuesWithoutRewrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	records, err := writer.AppendBatch(context.Background(), []RecordDraft{{
-		EventKind: EventTurnStarted,
-		TurnID:    domain.TurnID("00000000-0007-7000-8000-000000000008"),
-		Payload:   TurnStartedPayload{},
-	}})
+	records, err := writer.AppendBatch(context.Background(), []RecordDraft{
+		mustDraft(t, EventTurnStarted, domain.TurnID("00000000-0007-7000-8000-000000000008"), TurnStartedPayload{}),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +198,7 @@ func TestV1CompatibilityFixtureRejectsNewerRequiredReadOnly(t *testing.T) {
 
 func installV1Fixture(t *testing.T, content []byte) (*Repository, *JournalLease) {
 	t.Helper()
-	repository, err := NewRepository(filepath.Join(t.TempDir(), "sessions"))
+	repository, err := OpenOrCreateRepository(filepath.Join(t.TempDir(), "sessions"))
 	if err != nil {
 		t.Fatal(err)
 	}

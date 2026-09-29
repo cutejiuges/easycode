@@ -6,7 +6,6 @@ import (
 	stdjson "encoding/json"
 	"fmt"
 	"io"
-	"reflect"
 	"strconv"
 	"time"
 	"unicode/utf8"
@@ -42,14 +41,10 @@ func BuildRecord(
 	batchIndex uint32,
 	batchSize uint32,
 ) (Record, error) {
-	descriptor, err := descriptorForDraft(draft)
-	if err != nil {
+	if err := draft.validate(); err != nil {
 		return Record{}, err
 	}
-	payload, err := codec.MarshalStable(draft.Payload)
-	if err != nil {
-		return Record{}, fmt.Errorf("marshal session payload: %w", err)
-	}
+	descriptor := draft.descriptor
 	return Record{
 		SchemaVersion:     EnvelopeVersion,
 		PayloadVersion:    descriptor.Version,
@@ -58,13 +53,13 @@ func BuildRecord(
 		Timestamp:         timestamp.UTC(),
 		SessionID:         identity.SessionID,
 		ThreadID:          identity.ThreadID,
-		ParentThreadID:    draft.ParentThreadID,
-		TurnID:            draft.TurnID,
-		EventKind:         draft.EventKind,
+		ParentThreadID:    draft.parentThreadID,
+		TurnID:            draft.turnID,
+		EventKind:         descriptor.Kind,
 		BatchID:           batchID,
 		BatchIndex:        batchIndex,
 		BatchSize:         batchSize,
-		Payload:           payload,
+		Payload:           draft.PayloadBytes(),
 	}, nil
 }
 
@@ -129,25 +124,6 @@ func DecodeRecord(line []byte) (Record, error) {
 		return Record{}, fmt.Errorf("session record checksum mismatch")
 	}
 	return cloneRecord(record), nil
-}
-
-// DecodePayload 将已知记录解码到其 registry 声明的强类型 payload。
-func DecodePayload(record Record) (any, error) {
-	descriptor, exact := LookupDescriptor(record.EventKind, record.PayloadVersion)
-	if !exact {
-		return nil, fmt.Errorf("session payload revision is unsupported")
-	}
-	target := reflect.New(descriptor.payloadType).Interface()
-	decoder := stdjson.NewDecoder(bytes.NewReader(record.Payload))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return nil, fmt.Errorf("decode session payload: %w", err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return nil, fmt.Errorf("session payload contains trailing JSON")
-	}
-	return reflect.ValueOf(target).Elem().Interface(), nil
 }
 
 func scanEnvelope(line []byte) (map[string]stdjson.RawMessage, error) {

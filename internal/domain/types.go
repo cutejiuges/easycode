@@ -10,6 +10,7 @@ type ThreadID string
 // TurnID 标识一次用户输入到最终结束的 turn。
 type TurnID string
 
+// TODO(P3): ItemID 与 CallID 仅为工具幂等账本及结果配对保留；由后续 OpenSpec 同时提供真实消费者、验证与测试时启用，否则删除。
 // ItemID 标识模型原生 item 或共享语义 item。
 type ItemID string
 

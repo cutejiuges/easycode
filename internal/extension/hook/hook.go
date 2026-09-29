@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 )
 
+// TODO(P6): Hook 契约仅为扩展系统阶段保留，当前不得注册或执行；由后续 OpenSpec 同时提供真实消费者、验证与测试时启用，否则删除。
+
 // EventName 是与 Claude 兼容的 Hook 事件名称。
 type EventName string
 

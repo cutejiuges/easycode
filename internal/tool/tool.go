@@ -8,6 +8,8 @@ import (
 	"easycode/internal/domain"
 )
 
+// TODO(P3): Tool 契约仅为 Coding Tools 与安全执行阶段保留，当前不得接入 Provider 或 Runtime；由后续 OpenSpec 同时提供真实消费者、验证与测试时启用，否则删除。
+
 // Capability 是与 provider tool 名称解耦的共享能力标识。
 type Capability string
 

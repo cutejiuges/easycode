@@ -109,7 +109,7 @@ func TestRunTurnDurableSuccessOrderingAndIdentity(t *testing.T) {
 		)(context.Background(), provider.TurnInput{})
 	}}
 	journal := &fakeJournal{hook: func(drafts []session.RecordDraft) {
-		addTimeline("append:" + string(drafts[0].EventKind))
+		addTimeline("append:" + string(drafts[0].EventKind()))
 	}}
 	runtime := newTestRuntime(t, conversation, journal)
 	events, runErr := collectTurn(runtime, context.Background(), func(event protocol.Event) {
@@ -133,11 +133,17 @@ func TestRunTurnDurableSuccessOrderingAndIdentity(t *testing.T) {
 	}
 	batches := journal.snapshot()
 	if len(batches) != 2 || len(batches[0]) != 1 || len(batches[1]) != 2 ||
-		batches[1][0].EventKind != session.EventProviderNativeCommit ||
-		batches[1][1].EventKind != session.EventTurnCompleted {
+		batches[1][0].EventKind() != session.EventProviderNativeCommit ||
+		batches[1][1].EventKind() != session.EventTurnCompleted {
 		t.Fatalf("journal batches = %#v", batches)
 	}
-	commit := batches[1][0].Payload.(session.NativeCommitPayload)
+	commit, err := session.DecodeNativeCommitPayload(session.Record{
+		PayloadVersion: 1, ReplayRequirement: session.ReplayRequired,
+		EventKind: batches[1][0].EventKind(), Payload: batches[1][0].PayloadBytes(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if commit.Provider != domain.ProviderOpenAI || commit.Wire != "responses" || string(commit.Payload) != `{"shape":"text_sample"}` {
 		t.Fatalf("native commit = %#v", commit)
 	}
@@ -188,6 +194,45 @@ func TestRunTurnCompletionWriteFailureDoesNotFinalizeAndPoisons(t *testing.T) {
 	}
 }
 
+func TestRunTurnRejectsInvalidPreparedSamplesBeforeNativeCommit(t *testing.T) {
+	t.Parallel()
+	finalized := atomic.Int32{}
+	alreadyFinalized := newPreparedSample(t, func() { finalized.Add(1) })
+	if err := alreadyFinalized.Finalize(); err != nil {
+		t.Fatal(err)
+	}
+	fixtures := []struct {
+		name   string
+		sample *provider.PreparedSample
+	}{
+		{name: "nil sample"},
+		{name: "zero-value sample", sample: &provider.PreparedSample{}},
+		{name: "already finalized sample", sample: alreadyFinalized},
+	}
+	for _, fixture := range fixtures {
+		fixture := fixture
+		t.Run(fixture.name, func(t *testing.T) {
+			t.Parallel()
+			journal := &fakeJournal{}
+			runtime := newTestRuntime(t, &fakeConversation{stream: fixedStream(provider.StreamEvent{
+				Kind: provider.StreamEventCompleted, Prepared: fixture.sample,
+			})}, journal)
+			events, err := collectTurn(runtime, context.Background(), nil)
+			if !errors.Is(err, &fault.Error{Code: fault.CodeStreamProtocol}) {
+				t.Fatalf("RunTurn() error = %v", err)
+			}
+			assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnFailed)
+			batches := journal.snapshot()
+			if len(batches) != 2 || len(batches[1]) != 1 || batches[1][0].EventKind() != session.EventTurnFailed {
+				t.Fatalf("invalid sample persisted non-failure records: %#v", batches)
+			}
+		})
+	}
+	if finalized.Load() != 1 {
+		t.Fatalf("runtime called finalized sample finalizer again: %d", finalized.Load())
+	}
+}
+
 func TestRunTurnPersistsProviderFailureCancellationAndEarlyEOF(t *testing.T) {
 	t.Parallel()
 	fixtures := []struct {
@@ -213,10 +258,16 @@ func TestRunTurnPersistsProviderFailureCancellationAndEarlyEOF(t *testing.T) {
 			}
 			assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnFailed)
 			batches := journal.snapshot()
-			if len(batches) != 2 || batches[1][0].EventKind != session.EventTurnFailed {
+			if len(batches) != 2 || batches[1][0].EventKind() != session.EventTurnFailed {
 				t.Fatalf("journal batches = %#v", batches)
 			}
-			failure := batches[1][0].Payload.(session.TurnFailedPayload)
+			failure, decodeErr := session.DecodeTurnFailedPayload(session.Record{
+				PayloadVersion: 1, ReplayRequirement: session.ReplayRequired,
+				EventKind: batches[1][0].EventKind(), Payload: batches[1][0].PayloadBytes(),
+			})
+			if decodeErr != nil {
+				t.Fatal(decodeErr)
+			}
 			if failure.Code != string(fixture.code) {
 				t.Fatalf("failure payload = %#v", failure)
 			}
@@ -335,7 +386,7 @@ func newTestRuntime(t *testing.T, conversation provider.Conversation, journal Jo
 	t.Helper()
 	runtime, err := New(conversation, Config{
 		SessionID: runtimeSessionID, ThreadID: runtimeThreadID, Journal: journal,
-		NewTurnID: func() (domain.TurnID, error) { return runtimeTurnID, nil },
+		GenerateTurnID: func() (domain.TurnID, error) { return runtimeTurnID, nil },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -404,7 +455,7 @@ func TestChatSessionInterruptAndShutdownLifecycle(t *testing.T) {
 		return stream, nil
 	}}
 	sessionFacade := NewChatSession(newTestRuntime(t, conversation, &fakeJournal{}))
-	events, err := sessionFacade.Submit("hello")
+	events, err := sessionFacade.Submit(context.Background(), "hello")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,8 +480,72 @@ func TestChatSessionInterruptAndShutdownLifecycle(t *testing.T) {
 	if err := sessionFacade.Shutdown(shutdownContext); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sessionFacade.Submit("after close"); !errors.Is(err, &fault.Error{Code: fault.CodeTurnFailed}) {
+	if _, err := sessionFacade.Submit(context.Background(), "after close"); !errors.Is(err, &fault.Error{Code: fault.CodeTurnFailed}) {
 		t.Fatalf("Submit(after close) error = %v", err)
+	}
+}
+
+func TestChatSessionSubmitRequiresLiveContextBeforeAdmission(t *testing.T) {
+	t.Parallel()
+	conversation := &fakeConversation{stream: fixedStream()}
+	sessionFacade := NewChatSession(newTestRuntime(t, conversation, &fakeJournal{}))
+	var nilContext context.Context
+	if _, err := sessionFacade.Submit(nilContext, "nil"); !errors.Is(err, &fault.Error{Code: fault.CodeTurnFailed}) {
+		t.Fatalf("Submit(nil) error = %v", err)
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := sessionFacade.Submit(cancelled, "cancelled"); !errors.Is(err, &fault.Error{Code: fault.CodeUserCancelled}) {
+		t.Fatalf("Submit(cancelled) error = %v", err)
+	}
+	if conversation.calls.Load() != 0 {
+		t.Fatalf("rejected context made %d provider calls", conversation.calls.Load())
+	}
+	if err := sessionFacade.Shutdown(nilContext); !errors.Is(err, &fault.Error{Code: fault.CodeTurnFailed}) {
+		t.Fatalf("Shutdown(nil) error = %v", err)
+	}
+}
+
+func TestChatSessionPropagatesSubmitContextAndRejectsConcurrentTurn(t *testing.T) {
+	t.Parallel()
+	providerStarted := make(chan struct{})
+	conversation := &fakeConversation{stream: func(ctx context.Context, _ provider.TurnInput) (<-chan provider.StreamEvent, error) {
+		stream := make(chan provider.StreamEvent, 1)
+		close(providerStarted)
+		go func() {
+			<-ctx.Done()
+			stream <- provider.StreamEvent{Kind: provider.StreamEventCancelled, Err: ctx.Err()}
+			close(stream)
+		}()
+		return stream, nil
+	}}
+	sessionFacade := NewChatSession(newTestRuntime(t, conversation, &fakeJournal{}))
+	ctx, cancel := context.WithCancel(context.Background())
+	events, err := sessionFacade.Submit(ctx, "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event := <-events; event.Kind != protocol.EventTurnStarted {
+		t.Fatalf("first event = %s", event.Kind)
+	}
+	<-providerStarted
+	if _, err := sessionFacade.Submit(context.Background(), "concurrent"); !errors.Is(err, &fault.Error{Code: fault.CodeTurnFailed}) {
+		t.Fatalf("concurrent Submit() error = %v", err)
+	}
+	cancel()
+	var terminal protocol.Event
+	for event := range events {
+		terminal = event
+	}
+	if terminal.Kind != protocol.EventTurnFailed {
+		t.Fatalf("terminal = %#v", terminal)
+	}
+	payload, err := protocol.DecodeTurnFailed(terminal)
+	if err != nil || !payload.Cancelled {
+		t.Fatalf("cancel payload = %#v, %v", payload, err)
+	}
+	if err := sessionFacade.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -440,7 +555,7 @@ func TestChatSessionShutdownWaitsForDurableFailure(t *testing.T) {
 	release := make(chan struct{})
 	var blockOnce sync.Once
 	journal := &fakeJournal{hook: func(drafts []session.RecordDraft) {
-		if drafts[0].EventKind != session.EventTurnFailed {
+		if drafts[0].EventKind() != session.EventTurnFailed {
 			return
 		}
 		blockOnce.Do(func() { close(blocked) })
@@ -456,7 +571,7 @@ func TestChatSessionShutdownWaitsForDurableFailure(t *testing.T) {
 		return stream, nil
 	}}
 	sessionFacade := NewChatSession(newTestRuntime(t, conversation, journal))
-	events, err := sessionFacade.Submit("hello")
+	events, err := sessionFacade.Submit(context.Background(), "hello")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -465,13 +580,13 @@ func TestChatSessionShutdownWaitsForDurableFailure(t *testing.T) {
 	}
 	sessionFacade.Interrupt()
 	<-blocked
+	waitContext, cancelWait := context.WithCancel(context.Background())
+	cancelWait()
+	if err := sessionFacade.Shutdown(waitContext); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled Shutdown() error = %v", err)
+	}
 	shutdownDone := make(chan error, 1)
 	go func() { shutdownDone <- sessionFacade.Shutdown(context.Background()) }()
-	select {
-	case err := <-shutdownDone:
-		t.Fatalf("Shutdown returned before journal completion: %v", err)
-	case <-time.After(20 * time.Millisecond):
-	}
 	close(release)
 	if err := <-shutdownDone; err != nil {
 		t.Fatal(err)
@@ -491,7 +606,7 @@ func TestChatSessionConcurrentInterruptAndShutdown(t *testing.T) {
 		return stream, nil
 	}}
 	sessionFacade := NewChatSession(newTestRuntime(t, conversation, &fakeJournal{}))
-	events, err := sessionFacade.Submit("hello")
+	events, err := sessionFacade.Submit(context.Background(), "hello")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -520,7 +635,7 @@ func TestChatSessionConcurrentInterruptAndShutdown(t *testing.T) {
 	wait.Wait()
 	for range events {
 	}
-	if _, err := sessionFacade.Submit("closed"); !errors.Is(err, &fault.Error{Code: fault.CodeTurnFailed}) {
+	if _, err := sessionFacade.Submit(context.Background(), "closed"); !errors.Is(err, &fault.Error{Code: fault.CodeTurnFailed}) {
 		t.Fatalf("Submit(closed) error = %v", err)
 	}
 }

@@ -132,15 +132,11 @@ func (envelope NativeCommitEnvelope) Payload() json.RawMessage {
 	return append(json.RawMessage(nil), envelope.payload...)
 }
 
-// Clone 返回不共享可变 payload buffer 的 envelope。
-func (envelope NativeCommitEnvelope) Clone() NativeCommitEnvelope {
-	cloned, err := NewNativeCommitEnvelope(
+// Clone 校验当前状态并返回不共享可变 payload buffer 的 envelope。
+func (envelope NativeCommitEnvelope) Clone() (NativeCommitEnvelope, error) {
+	return NewNativeCommitEnvelope(
 		envelope.family, envelope.wire, envelope.payloadVersion, envelope.payload,
 	)
-	if err != nil {
-		return NativeCommitEnvelope{}
-	}
-	return cloned
 }
 
 // PreparedSample 封装一次已校验增量及其恰好一次的纯内存 finalizer。
@@ -152,23 +148,25 @@ type PreparedSample struct {
 
 // NewPreparedSample 创建尚未进入 Conversation committed history 的 sample。
 func NewPreparedSample(envelope NativeCommitEnvelope, finalize func()) (*PreparedSample, error) {
-	if _, err := NewNativeCommitEnvelope(
-		envelope.Family(), envelope.Wire(), envelope.PayloadVersion(), envelope.Payload(),
-	); err != nil {
+	cloned, err := envelope.Clone()
+	if err != nil {
 		return nil, err
 	}
 	if finalize == nil {
 		return nil, fmt.Errorf("prepared sample finalizer is required")
 	}
-	return &PreparedSample{envelope: envelope.Clone(), finalize: finalize}, nil
+	return &PreparedSample{envelope: cloned, finalize: finalize}, nil
 }
 
 // Envelope 返回待持久化原生增量的独立副本。
 func (sample *PreparedSample) Envelope() (NativeCommitEnvelope, error) {
-	if sample == nil {
-		return NativeCommitEnvelope{}, fmt.Errorf("prepared sample is required")
+	if sample == nil || sample.finalize == nil {
+		return NativeCommitEnvelope{}, fmt.Errorf("prepared sample is invalid")
 	}
-	return sample.envelope.Clone(), nil
+	if sample.state.Load() != 0 {
+		return NativeCommitEnvelope{}, fmt.Errorf("prepared sample is already finalized")
+	}
+	return sample.envelope.Clone()
 }
 
 // Finalize 在 durable success 后恰好一次提交纯内存历史。

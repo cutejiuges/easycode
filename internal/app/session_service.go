@@ -42,8 +42,8 @@ type assembledSession struct {
 	repair       session.RepairReport
 }
 
-func newSessionService(dataRoot string) (*sessionService, error) {
-	repository, err := session.NewRepository(dataRoot)
+func openSessionService(dataRoot string) (*sessionService, error) {
+	repository, err := session.OpenOrCreateRepository(dataRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +68,7 @@ func (service *sessionService) create(
 	model string,
 	creationCWD string,
 ) (assembledSession, error) {
-	identity, err := session.NewRootIdentity()
+	identity, err := session.GenerateRootIdentity()
 	if err != nil {
 		return assembledSession{}, fault.Wrap(fault.CodeSessionWrite, "create session identity failed", err)
 	}
@@ -150,13 +150,17 @@ func (service *sessionService) resume(
 		lease = nil
 	}
 	if plan.InterruptedTail != nil {
-		_, appendErr := writer.AppendBatch(ctx, []session.RecordDraft{{
-			EventKind: session.EventTurnFailed,
-			TurnID:    plan.InterruptedTail.TurnID,
-			Payload: session.TurnFailedPayload{
-				Code: "session_interrupted", Message: "session turn was interrupted",
-			},
-		}})
+		failureDraft, draftErr := session.NewTurnFailedDraft(plan.InterruptedTail.TurnID, session.TurnFailedPayload{
+			Code: "session_interrupted", Message: "session turn was interrupted",
+		})
+		if draftErr != nil {
+			closeErr := writer.Close(context.Background())
+			return assembledSession{}, fault.Wrap(
+				fault.CodeSessionWrite, "build interrupted session turn failed",
+				errors.Join(draftErr, closeErr),
+			)
+		}
+		_, appendErr := writer.AppendBatch(ctx, []session.RecordDraft{failureDraft})
 		if appendErr != nil {
 			closeErr := writer.Close(context.Background())
 			return assembledSession{}, fault.Wrap(

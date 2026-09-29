@@ -1,6 +1,7 @@
 package anthropic
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -27,6 +28,7 @@ func TestConversationUsesNativeHistoryAcrossTwoTurnsAndBaseURLForms(t *testing.T
 		t.Run(test.name, func(t *testing.T) {
 			var mu sync.Mutex
 			var requests []messagesRequest
+			var rawRequests [][]byte
 			var methods []string
 			var headers []http.Header
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -45,6 +47,7 @@ func TestConversationUsesNativeHistoryAcrossTwoTurnsAndBaseURLForms(t *testing.T
 				}
 				mu.Lock()
 				requests = append(requests, decoded)
+				rawRequests = append(rawRequests, append([]byte(nil), body...))
 				methods = append(methods, request.Method)
 				headers = append(headers, request.Header.Clone())
 				mu.Unlock()
@@ -72,6 +75,24 @@ func TestConversationUsesNativeHistoryAcrossTwoTurnsAndBaseURLForms(t *testing.T
 			defer mu.Unlock()
 			if len(requests) != 2 {
 				t.Fatalf("request count: %d", len(requests))
+			}
+			firstCompiled, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, nil, newUserMessage("first"))
+			if err != nil {
+				t.Fatalf("compile first expected request: %v", err)
+			}
+			secondCompiled, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, []nativeTurn{{
+				User: newUserMessage("first"),
+				Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{
+					{Type: blockTypeThinking, Thinking: "private", Signature: "opaque-signature"},
+					{Type: blockTypeRedactedThinking, RedactedData: "opaque-data"},
+					{Type: blockTypeText, Text: "answer"},
+				}},
+			}}, newUserMessage("second"))
+			if err != nil {
+				t.Fatalf("compile second expected request: %v", err)
+			}
+			if !bytes.Equal(rawRequests[0], firstCompiled.Bytes()) || !bytes.Equal(rawRequests[1], secondCompiled.Bytes()) {
+				t.Fatalf("HTTP body differs from compiler output:\nfirst=%s\nsecond=%s", rawRequests[0], rawRequests[1])
 			}
 			for index := range requests {
 				if methods[index] != http.MethodPost {

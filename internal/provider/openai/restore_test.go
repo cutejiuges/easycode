@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"easycode/internal/codec"
 	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
 	"easycode/internal/provider"
@@ -61,16 +60,16 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 	restoredView.Turns[0].UserText = "mutated projection"
 
 	next := NewUserItem("third")
-	uninterruptedRequest := compileResponsesRequest(instance.config.Model, uninterrupted.historySnapshot(), next)
-	restoredRequest := compileResponsesRequest(instance.config.Model, restored.historySnapshot(), next)
-	uninterruptedBytes, err := codec.MarshalStable(uninterruptedRequest)
+	uninterruptedRequest, err := compileResponsesRequest(instance.config.Model, uninterrupted.historySnapshot(), next)
 	if err != nil {
 		t.Fatal(err)
 	}
-	restoredBytes, err := codec.MarshalStable(restoredRequest)
+	restoredRequest, err := compileResponsesRequest(instance.config.Model, restored.historySnapshot(), next)
 	if err != nil {
 		t.Fatal(err)
 	}
+	uninterruptedBytes := uninterruptedRequest.Bytes()
+	restoredBytes := restoredRequest.Bytes()
 	if !bytes.Equal(restoredBytes, uninterruptedBytes) {
 		t.Fatalf("restored request differs:\n%s\n%s", restoredBytes, uninterruptedBytes)
 	}
@@ -82,8 +81,9 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Fingerprint != second.Fingerprint || len(restoredRequest.Input) != 6 || restoredRequest.Input[4].Type != "future_item" {
-		t.Fatalf("fingerprints/order differ: %q %q %#v", first.Fingerprint, second.Fingerprint, restoredRequest.Input)
+	restoredShape := buildResponsesRequest(instance.config.Model, restored.historySnapshot(), next)
+	if first.Fingerprint() != second.Fingerprint() || len(restoredShape.Input) != 6 || restoredShape.Input[4].Type != "future_item" {
+		t.Fatalf("fingerprints/order differ: %q %q %#v", first.Fingerprint(), second.Fingerprint(), restoredShape.Input)
 	}
 }
 

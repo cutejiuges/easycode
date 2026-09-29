@@ -22,13 +22,14 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 | CLI/TUI 入口 | 已实现 Bubble Tea 基础文本 Chat、历史回放、显式 `--resume`，以及单 turn `--print` 最终文本和 `--json` JSONL v1 输出 |
 | 双 Provider | Anthropic Messages 与 OpenAI Responses 已支持流式文本多轮、各自原生历史及 committed-only 文本历史投影 |
 | HTTP/SSE | 已建立基于 Resty v3 的公共传输层 |
-| JSON 与缓存 | 已建立 Sonic 稳定序列化和 cache segment fingerprint |
+| JSON 与缓存 | 已建立不可变 canonical JSON、Provider request compiler 和 cache segment fingerprint；完整 Provider CachePlanner 尚未接入 |
 | Runtime | 已实现共享文本 turn 生命周期、稳定身份、durable-before-memory 提交及 typed text/failure event |
-| 安全配置 | 已实现 JSON 配置、环境变量逐字段覆盖、统一校验和 API key 脱敏值对象 |
-| Tools | 尚未实现可执行工具；现有包边界不代表已经暴露工具能力 |
-| Session | 已实现 append-only JSONL、UUIDv7、跨进程 lease、`Sync`、尾部修复、v1 fixture 和显式恢复；SQLite/`--continue` 尚未实现 |
-| 扩展系统 | 已预留 Hooks、Plugins、Skills 和 MCP 包边界，尚未形成运行时能力 |
-| Subagent | 已预留控制协议包边界，调度和生命周期尚未实现 |
+| 安全配置 | 已实现 JSON 配置、环境变量覆盖、API key 脱敏，以及 macOS/Linux 上绑定实际句柄的 no-follow 校验；其他平台当前安全失败关闭 |
+| Tools | P3 目标；当前只有经批准的 TODO 占位，不对模型暴露 schema，也没有执行器或生产消费者 |
+| Session | 已实现 append-only JSONL、强类型 v1 draft/decoder、UUIDv7、跨进程 lease、同句柄 load/repair/write、`Sync`、尾部修复、fixture 和显式恢复；SQLite/`--continue` 尚未实现 |
+| 扩展系统 | P6 目标；Hooks、Plugins、Skills 和 MCP 目前仅为经批准的 TODO 占位，未接入 Runtime/app |
+| Subagent | P7 目标；当前仅为经批准的 TODO 控制边界，调度、线程树和生命周期尚未实现 |
+| Telemetry | P8 目标；当前 logger 仅为经批准的 TODO 占位，未接入请求正文、Session 或运行时链路 |
 
 完整阶段和验收标准见[产品 Roadmap](docs/roadmap/product-roadmap.md)。
 
@@ -147,7 +148,7 @@ chmod 600 ~/.config/easycode/config.json
 ./bin/easycode --config /path/to/config.json
 ```
 
-显式指定的文件不存在、不可读或 JSON 无效时会直接报错。默认文件不存在时，仍可仅使用环境变量启动。包含非空 `api_key` 的配置文件在 Unix 系统上必须是用户私有权限，例如 `0600`；配置路径和 API key 不会进入错误或配置摘要。
+显式指定的文件不存在、不可读或 JSON 无效时会直接报错。默认文件不存在时，仍可仅使用环境变量启动。包含非空 `api_key` 的配置文件在 macOS/Linux 上必须是用户私有权限，例如 `0600`；文件通过 no-follow 打开，并从同一实际句柄校验类型、大小和权限后读取。Windows 等尚未提供等价安全 opener 的平台当前会明确失败关闭，不会退回 `Lstat` 后再 `Open`；配置路径和 API key 不会进入错误或配置摘要。
 
 ### 环境变量
 
@@ -182,21 +183,21 @@ EasyCode 使用“共享生命周期模板 + Provider 原生内核”的双层�
 ```text
 CLI / TUI / Headless
          |
-   Runtime Command
+    app lifecycle
          |
-    Turn Runtime
+ ChatSession / Turn Runtime
       /      \
 Anthropic   OpenAI
  Kernel      Kernel
       \      /
     Runtime Event
-      /      \
- TUI View   Session
-         |
- Tool Policy / Executor
+      /       |       \
+ TUI View  Headless  Session JSONL
+
+P3+ 目标：Tool Policy / Executor、扩展系统与 Subagent
 ```
 
-共享层负责 turn 生命周期、工具调度、权限、Hooks、Session 和 UI 事件；每个 Provider 独立负责：
+当前共享层负责文本 turn 生命周期、Session 和宿主事件；工具调度、权限、Hooks 与 Subagent 是后续阶段目标。每个 Provider 当前独立负责原生请求、流归并、原生历史和语义投影；下列其他策略按 Roadmap 分阶段补齐：
 
 - 原生请求编译与 Header 策略。
 - SSE 事件归并和状态机。
@@ -222,16 +223,16 @@ Provider-native item 是恢复会话和构建下次请求的事实依据，Runti
 │   ├── config/                配置加载与校验
 │   ├── context/               上下文和缓存规划
 │   ├── domain/                核心值对象与领域语义
-│   ├── extension/             Hooks、Plugins、Skills、MCP
+│   ├── extension/             P6 批准占位：Hooks、Plugins、Skills、MCP
 │   ├── headless/              prompt 解析、最终文本与 JSONL v1 宿主
 │   ├── protocol/              Command 与 RuntimeEvent 协议
 │   ├── provider/              Provider Kernel 与 HTTP/SSE 传输
 │   ├── runtime/               共享 turn 编排
 │   ├── secret/                敏感值脱敏
 │   ├── session/               JSONL 事实源、lease、修复与恢复规划
-│   ├── subagent/              子代理控制边界
-│   ├── telemetry/             结构化日志与诊断
-│   ├── tool/                  工具能力与执行边界
+│   ├── subagent/              P7 批准占位：子代理控制边界
+│   ├── telemetry/             P8 批准占位：结构化日志边界
+│   ├── tool/                  P3 批准占位：工具能力与执行边界
 │   └── tui/                   Bubble Tea 交互层
 ├── docs/                      架构、ADR、Roadmap 与踩坑记录
 ├── .githooks/                 可版本化 Git Hooks
@@ -259,21 +260,37 @@ make lint
 make clean
 ```
 
-## 提交前质量门
+## 分支命名与提交前质量门
 
-项目提供可版本化的 `pre-commit` hook。首次克隆或初始化仓库后执行：
+普通开发分支必须匹配：
+
+```text
+^(feat|fix|refactor|docs|test|ci|build|perf|chore|revert)/[a-z0-9]+(-[a-z0-9]+)*$
+```
+
+新增功能使用 `feat/...`，Bug、安全缺陷或契约违规修复使用 `fix/...`；例如 `feat/add-session-picker`、`fix/session-symlink-race`。`main`、`master`、detached HEAD、`codex/...`、用户名/工具前缀、下划线和只有 ticket 编号的后缀都会被拒绝。可单独运行：
+
+```bash
+make branch-check
+make branch-policy-test
+```
+
+项目提供可版本化的 `pre-commit` 与 `pre-push` hook。首次克隆或初始化仓库后执行：
 
 ```bash
 make install-hooks
 ```
 
-该命令将当前仓库的 `core.hooksPath` 设置为 `.githooks`。此后每次正常提交前都会执行 `make verify`，以下任意检查失败都会中止提交：
+该命令将当前仓库的 `core.hooksPath` 设置为 `.githooks`。两个 hook 共用同一个分支校验脚本；pre-commit 还会执行 `make verify`。以下任意检查失败都会中止提交：
 
-1. `gofmt -l .`
-2. `go vet ./...`
-3. `go tool staticcheck ./...`
-4. `go test ./...`
-5. `go test -race ./...`
+1. 分支策略回归。
+2. `gofmt -l .`。
+3. `go vet ./...`。
+4. `go tool staticcheck ./...`。
+5. `go test ./...`。
+6. `go test -race ./...`。
+
+仓库 workflow 提供 `branch-governance` 和 `verify` 两个 job。管理员仍须在 GitHub 的 `main` branch ruleset 中把二者设为 required checks，并禁止 direct push；提交仓库文件本身不会自动启用托管平台保护。
 
 ## 缓存与 Provider 原生语义
 
@@ -284,7 +301,7 @@ make install-hooks
 - System/developer instructions、tool schema、Skills、Plugins 与 MCP catalog 的稳定顺序。
 - 动态工作区状态和实时信息对稳定前缀的隔离。
 
-跨 Provider 恢复不会伪造或转换 opaque reasoning 数据，而是创建经过压缩的会话分支，再由目标 Provider 建立新的原生历史。
+当前仅支持同一 Provider/wire 的原生恢复。跨 Provider 时禁止伪造或转换 opaque reasoning；“创建 compacted fork，再由目标 Provider 建立新原生历史”是 P4 计划，尚未实现。
 
 ## Roadmap
 

@@ -27,7 +27,13 @@ func NewChatSession(runtime *Runtime) *ChatSession {
 }
 
 // Submit 启动一个 turn，并返回按顺序关闭的 RuntimeEvent stream。
-func (session *ChatSession) Submit(text string) (<-chan protocol.Event, error) {
+func (session *ChatSession) Submit(ctx context.Context, text string) (<-chan protocol.Event, error) {
+	if ctx == nil {
+		return nil, fault.New(fault.CodeTurnFailed, "turn context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, fault.Wrap(fault.CodeUserCancelled, "turn was cancelled", err)
+	}
 	session.mu.Lock()
 	if session.closed {
 		session.mu.Unlock()
@@ -42,7 +48,7 @@ func (session *ChatSession) Submit(text string) (<-chan protocol.Event, error) {
 		return nil, fault.New(fault.CodeProviderUnavailable, "runtime is not configured")
 	}
 
-	turnContext, cancel := context.WithCancel(context.Background())
+	turnContext, cancel := context.WithCancel(ctx)
 	events := make(chan protocol.Event)
 	done := make(chan struct{})
 	session.active = true
@@ -105,6 +111,9 @@ func (session *ChatSession) Interrupt() {
 
 // Shutdown 拒绝新 turn、取消活动 turn，并等待清理结束。
 func (session *ChatSession) Shutdown(ctx context.Context) error {
+	if ctx == nil {
+		return fault.New(fault.CodeTurnFailed, "shutdown context is required")
+	}
 	session.mu.Lock()
 	if !session.closed {
 		session.closed = true

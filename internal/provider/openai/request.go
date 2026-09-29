@@ -1,5 +1,9 @@
 package openai
 
+import "easycode/internal/codec"
+
+const maxResponsesRequestBytes = 16 << 20
+
 // responsesRequest 是当前文本切片发送给 Responses API 的稳定请求。
 type responsesRequest struct {
 	Model   string       `json:"model"`
@@ -9,7 +13,7 @@ type responsesRequest struct {
 	Include []string     `json:"include"`
 }
 
-func compileResponsesRequest(model string, history []nativeTurn, user NativeItem) responsesRequest {
+func buildResponsesRequest(model string, history []nativeTurn, user NativeItem) responsesRequest {
 	itemCount := 1
 	for _, turn := range history {
 		itemCount += 1 + len(turn.Outputs)
@@ -29,4 +33,8 @@ func compileResponsesRequest(model string, history []nativeTurn, user NativeItem
 		Store:   false,
 		Include: []string{"reasoning.encrypted_content"},
 	}
+}
+
+func compileResponsesRequest(model string, history []nativeTurn, user NativeItem) (codec.CanonicalJSON, error) {
+	return codec.MarshalCanonical(buildResponsesRequest(model, history, user), maxResponsesRequestBytes)
 }

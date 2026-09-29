@@ -13,7 +13,7 @@ import (
 
 func TestCreateAndReopenRootJournal(t *testing.T) {
 	t.Parallel()
-	repository, err := NewRepository(filepath.Join(t.TempDir(), "sessions"))
+	repository, err := OpenOrCreateRepository(filepath.Join(t.TempDir(), "sessions"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,9 +73,9 @@ func TestCreateAndReopenRootJournal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	appended, err := writer.AppendBatch(context.Background(), []RecordDraft{{
-		EventKind: EventTurnStarted, TurnID: testTurnID, Payload: TurnStartedPayload{},
-	}})
+	appended, err := writer.AppendBatch(context.Background(), []RecordDraft{
+		mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestRootJournalDoesNotPersistConnectionSecrets(t *testing.T) {
 		cookie     = "session=fixture-cookie"
 		configPath = "/private/config/easycode.json"
 	)
-	repository, err := NewRepository(filepath.Join(t.TempDir(), "sessions"))
+	repository, err := OpenOrCreateRepository(filepath.Join(t.TempDir(), "sessions"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,13 +149,13 @@ func TestNormalizeCreationCWDRejectsEmptyAndDoesNotResolveSymlink(t *testing.T) 
 	}
 }
 
-func TestNewRootIdentityProducesIndependentUUIDv7Values(t *testing.T) {
+func TestGenerateRootIdentityProducesIndependentUUIDv7Values(t *testing.T) {
 	t.Parallel()
-	identity, err := NewRootIdentity()
+	identity, err := GenerateRootIdentity()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !identity.SessionID.Valid() || !identity.ThreadID.Valid() || string(identity.SessionID) == string(identity.ThreadID) {
-		t.Fatalf("NewRootIdentity() = %#v", identity)
+		t.Fatalf("GenerateRootIdentity() = %#v", identity)
 	}
 }

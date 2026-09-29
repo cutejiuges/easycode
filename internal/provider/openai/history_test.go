@@ -175,7 +175,10 @@ func TestProjectHistoryIsIndependentAndDoesNotChangeRequest(t *testing.T) {
 		{Type: "message", ID: "msg-1", Role: "assistant", Content: []ContentPart{{Type: "output_text", Text: "answer"}}},
 	})
 
-	before := compileResponsesRequest("gpt-test", conversation.history.snapshot(), NewUserItem("second"))
+	before, err := compileResponsesRequest("gpt-test", conversation.history.snapshot(), NewUserItem("second"))
+	if err != nil {
+		t.Fatalf("compile request before projection: %v", err)
+	}
 	beforeSegment, err := contextplan.NewSegment("openai-responses-request", contextplan.StabilityTurnStable, "v1", before)
 	if err != nil {
 		t.Fatalf("fingerprint request before projection: %v", err)
@@ -190,16 +193,20 @@ func TestProjectHistoryIsIndependentAndDoesNotChangeRequest(t *testing.T) {
 	afterView := conversation.ProjectHistory()
 	wantView := domain.SemanticHistoryView{Provider: domain.ProviderOpenAI, Turns: []domain.SemanticTurn{{UserText: "first", AssistantText: "answer"}}}
 	assertSemanticHistory(t, afterView, wantView)
-	after := compileResponsesRequest("gpt-test", conversation.history.snapshot(), NewUserItem("second"))
+	after, err := compileResponsesRequest("gpt-test", conversation.history.snapshot(), NewUserItem("second"))
+	if err != nil {
+		t.Fatalf("compile request after projection: %v", err)
+	}
 	afterSegment, err := contextplan.NewSegment("openai-responses-request", contextplan.StabilityTurnStable, "v1", after)
 	if err != nil {
 		t.Fatalf("fingerprint request after projection: %v", err)
 	}
-	if beforeSegment.Fingerprint != afterSegment.Fingerprint || string(beforeSegment.CanonicalJSON) != string(afterSegment.CanonicalJSON) {
-		t.Fatalf("projection changed request:\n before: %s\n after: %s", beforeSegment.CanonicalJSON, afterSegment.CanonicalJSON)
+	if beforeSegment.Fingerprint() != afterSegment.Fingerprint() || string(beforeSegment.CanonicalJSON()) != string(afterSegment.CanonicalJSON()) {
+		t.Fatalf("projection changed request:\n before: %s\n after: %s", beforeSegment.CanonicalJSON(), afterSegment.CanonicalJSON())
 	}
-	if len(after.Input) != 4 || after.Input[1].EncryptedContent != "opaque-encrypted" || string(after.Input[1].Raw) != string(reasoningRaw) {
-		t.Fatalf("projection changed reasoning replay: %#v", after.Input)
+	afterRequest := buildResponsesRequest("gpt-test", conversation.history.snapshot(), NewUserItem("second"))
+	if len(afterRequest.Input) != 4 || afterRequest.Input[1].EncryptedContent != "opaque-encrypted" || string(afterRequest.Input[1].Raw) != string(reasoningRaw) {
+		t.Fatalf("projection changed reasoning replay: %#v", afterRequest.Input)
 	}
 }
 

@@ -7,6 +7,8 @@ import (
 	"easycode/internal/domain"
 )
 
+// TODO(P7): Subagent 控制边界仅为线程树和任务管理阶段保留，当前不得创建子线程；由后续 OpenSpec 同时提供真实消费者、验证与测试时启用，否则删除。
+
 // ForkMode 描述子代理继承父历史的方式。
 type ForkMode string
 

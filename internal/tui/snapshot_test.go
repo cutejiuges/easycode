@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,7 +51,7 @@ func TestModelSnapshotsAtFixedTerminalSize(t *testing.T) {
 
 func snapshotResumedModel(t *testing.T) Model {
 	t.Helper()
-	return NewModel("test", &fakeChatSession{}, domain.SemanticHistoryView{
+	return NewModel(context.Background(), "test", &fakeChatSession{}, domain.SemanticHistoryView{
 		Provider: domain.ProviderOpenAI,
 		Turns: []domain.SemanticTurn{
 			{UserText: "first question", AssistantText: "first answer"},
@@ -61,7 +62,7 @@ func snapshotResumedModel(t *testing.T) Model {
 
 func snapshotIdleModel(t *testing.T) Model {
 	t.Helper()
-	return NewModel("test", &fakeChatSession{})
+	return NewModel(context.Background(), "test", &fakeChatSession{})
 }
 
 func snapshotDraftModel(t *testing.T) Model {

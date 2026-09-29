@@ -10,7 +10,7 @@ BIN_DIR ?= bin
 BIN_PATH := $(BIN_DIR)/$(APP_NAME)
 PACKAGES := ./...
 
-.PHONY: build clean fmt-check vet lint test test-race verify install-hooks
+.PHONY: build clean branch-check branch-policy-test fmt-check vet lint test test-race verify install-hooks
 
 build:
 	@mkdir -p "$(BIN_DIR)"
@@ -36,7 +36,13 @@ test:
 test-race:
 	$(GO) test -race $(PACKAGES)
 
-verify: fmt-check vet lint test test-race
+branch-check:
+	@./scripts/check-branch-name.sh
+
+branch-policy-test:
+	@./scripts/check-branch-name_test.sh
+
+verify: branch-policy-test fmt-check vet lint test test-race
 
 install-hooks:
 	@if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
@@ -44,7 +50,7 @@ install-hooks:
 		exit 1; \
 	fi
 	@git config core.hooksPath .githooks
-	@chmod +x .githooks/pre-commit
+	@chmod +x .githooks/pre-commit .githooks/pre-push scripts/check-branch-name.sh scripts/check-branch-name_test.sh
 	@printf '%s\n' 'Git hooks installed from .githooks.'
 
 clean:

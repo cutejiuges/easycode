@@ -31,7 +31,7 @@ type Config struct {
 	SessionID       domain.SessionID
 	ThreadID        domain.ThreadID
 	Journal         Journal
-	NewTurnID       TurnIDGenerator
+	GenerateTurnID  TurnIDGenerator
 	InterruptedTail bool
 }
 
@@ -60,12 +60,12 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 	if config.InterruptedTail {
 		return nil, fault.New(fault.CodeSessionCorruption, "interrupted session turn must be closed before runtime starts")
 	}
-	if config.NewTurnID == nil {
-		config.NewTurnID = domain.NewTurnID
+	if config.GenerateTurnID == nil {
+		config.GenerateTurnID = domain.GenerateTurnID
 	}
 	return &Runtime{
 		conversation: conversation, journal: config.Journal,
-		sessionID: config.SessionID, threadID: config.ThreadID, newTurnID: config.NewTurnID,
+		sessionID: config.SessionID, threadID: config.ThreadID, newTurnID: config.GenerateTurnID,
 	}, nil
 }
 
@@ -101,9 +101,13 @@ func (runtime *Runtime) RunTurn(
 		runtime.emitFailure(emit, turnID, failure)
 		return failure
 	}
-	if _, err := runtime.journal.AppendBatch(ctx, []session.RecordDraft{{
-		EventKind: session.EventTurnStarted, TurnID: turnID, Payload: session.TurnStartedPayload{},
-	}}); err != nil {
+	startedDraft, err := session.NewTurnStartedDraft(turnID)
+	if err != nil {
+		failure := fault.Wrap(fault.CodeTurnFailed, "build turn start failed", err)
+		runtime.emitFailure(emit, turnID, failure)
+		return failure
+	}
+	if _, err := runtime.journal.AppendBatch(ctx, []session.RecordDraft{startedDraft}); err != nil {
 		failure := fault.Wrap(fault.CodeSessionWrite, "persist turn start failed", err)
 		runtime.poisoned.Store(true)
 		runtime.emitFailure(emit, turnID, failure)
@@ -155,16 +159,25 @@ func (runtime *Runtime) RunTurn(
 			err = fault.Wrap(fault.CodeStreamProtocol, "provider prepared sample is invalid", envelopeErr)
 			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, err)
 		}
-		_, err = runtime.journal.AppendBatch(context.WithoutCancel(ctx), []session.RecordDraft{
-			{
-				EventKind: session.EventProviderNativeCommit, TurnID: turnID,
-				Payload: session.NativeCommitPayload{
-					Provider: envelope.Family(), Wire: envelope.Wire(),
-					PayloadVersion: envelope.PayloadVersion(), Payload: envelope.Payload(),
-				},
-			},
-			{EventKind: session.EventTurnCompleted, TurnID: turnID, Payload: session.TurnCompletedPayload{}},
+		envelope, envelopeErr = envelope.Clone()
+		if envelopeErr != nil {
+			err = fault.Wrap(fault.CodeStreamProtocol, "provider prepared sample is invalid", envelopeErr)
+			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, err)
+		}
+		commitDraft, draftErr := session.NewProviderNativeCommitDraft(turnID, session.NativeCommitPayload{
+			Provider: envelope.Family(), Wire: envelope.Wire(),
+			PayloadVersion: envelope.PayloadVersion(), Payload: envelope.Payload(),
 		})
+		if draftErr != nil {
+			err = fault.Wrap(fault.CodeStreamProtocol, "provider native commit is invalid", draftErr)
+			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, err)
+		}
+		completedDraft, draftErr := session.NewTurnCompletedDraft(turnID)
+		if draftErr != nil {
+			err = fault.Wrap(fault.CodeStreamProtocol, "turn completion is invalid", draftErr)
+			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, err)
+		}
+		_, err = runtime.journal.AppendBatch(context.WithoutCancel(ctx), []session.RecordDraft{commitDraft, completedDraft})
 		if err != nil {
 			failure := fault.Wrap(fault.CodeSessionWrite, "persist completed turn failed", err)
 			runtime.poisoned.Store(true)
@@ -200,10 +213,16 @@ func (runtime *Runtime) RunTurn(
 func (runtime *Runtime) failTurn(ctx context.Context, emit Emitter, turnID domain.TurnID, cause error) error {
 	code, message, cancelled := failureSummary(cause)
 	if !runtime.poisoned.Load() && !runtime.journal.Poisoned() {
-		_, err := runtime.journal.AppendBatch(ctx, []session.RecordDraft{{
-			EventKind: session.EventTurnFailed, TurnID: turnID,
-			Payload: session.TurnFailedPayload{Code: string(code), Message: message, Cancelled: cancelled},
-		}})
+		failureDraft, draftErr := session.NewTurnFailedDraft(turnID, session.TurnFailedPayload{
+			Code: string(code), Message: message, Cancelled: cancelled,
+		})
+		if draftErr != nil {
+			failure := fault.Wrap(fault.CodeSessionWrite, "build turn failure failed", draftErr)
+			runtime.poisoned.Store(true)
+			runtime.emitFailure(emit, turnID, failure)
+			return failure
+		}
+		_, err := runtime.journal.AppendBatch(ctx, []session.RecordDraft{failureDraft})
 		if err != nil {
 			failure := fault.Wrap(fault.CodeSessionWrite, "persist turn failure failed", err)
 			runtime.poisoned.Store(true)

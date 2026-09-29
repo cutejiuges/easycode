@@ -11,11 +11,19 @@ import (
 )
 
 var (
-	// ErrEventTooLarge 表示单个 SSE event 超过配置上限。
-	ErrEventTooLarge = errors.New("SSE event exceeds maximum size")
-	// ErrIdleTimeout 表示已建立的 SSE 流长时间没有任何数据或心跳。
-	ErrIdleTimeout = errors.New("idle timeout waiting for SSE data")
+	errEventTooLarge = errors.New("SSE event exceeds maximum size")
+	errIdleTimeout   = errors.New("idle timeout waiting for SSE data")
 )
+
+// IsEventTooLarge 判断错误是否表示单个 SSE event 超过配置上限。
+func IsEventTooLarge(err error) bool {
+	return errors.Is(err, errEventTooLarge)
+}
+
+// IsIdleTimeout 判断错误是否表示已建立的 SSE 流长时间没有任何数据或心跳。
+func IsIdleTimeout(err error) bool {
+	return errors.Is(err, errIdleTimeout)
+}
 
 // SSEEvent 是与具体 HTTP client 解耦后的原始事件。
 type SSEEvent struct {
@@ -92,7 +100,7 @@ func superviseSSE(
 				return
 			case <-timer.C:
 				finishReader()
-				sendFinal(ErrIdleTimeout)
+				sendFinal(errIdleTimeout)
 				return
 			case <-activity:
 				resetTimer()
@@ -162,7 +170,7 @@ func parseSSE(
 		}
 		eventBytes += len(line) + 1
 		if eventBytes > maxEventBytes {
-			return ErrEventTooLarge
+			return errEventTooLarge
 		}
 
 		if len(line) == 0 {
@@ -204,7 +212,7 @@ func readSSELine(
 	activity chan<- struct{},
 ) ([]byte, bool, error) {
 	if remaining <= 0 {
-		return nil, false, ErrEventTooLarge
+		return nil, false, errEventTooLarge
 	}
 	line := make([]byte, 0, min(remaining, 4096))
 	for {
@@ -215,7 +223,7 @@ func readSSELine(
 			default:
 			}
 			if len(line)+len(fragment) > remaining {
-				return nil, false, ErrEventTooLarge
+				return nil, false, errEventTooLarge
 			}
 			line = append(line, fragment...)
 		}

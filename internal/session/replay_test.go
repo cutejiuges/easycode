@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"easycode/internal/codec"
 	"easycode/internal/domain"
 )
 
@@ -16,12 +17,12 @@ func TestReplayPlannerBuildsValidTextPlanAndSkipsOptional(t *testing.T) {
 	t.Parallel()
 	fixture := newReplayFixture(t)
 	fixture.appendMetadata()
-	fixture.appendBatch(RecordDraft{EventKind: EventTurnStarted, TurnID: testTurnID, Payload: TurnStartedPayload{}})
-	fixture.appendBatch(RecordDraft{EventKind: EventTurnFailed, TurnID: testTurnID, Payload: TurnFailedPayload{Code: "user_cancelled"}})
-	fixture.appendBatch(RecordDraft{EventKind: EventTurnStarted, TurnID: secondTurnID, Payload: TurnStartedPayload{}})
+	fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+	fixture.appendBatch(mustDraft(t, EventTurnFailed, testTurnID, TurnFailedPayload{Code: "user_cancelled"}))
+	fixture.appendBatch(mustDraft(t, EventTurnStarted, secondTurnID, TurnStartedPayload{}))
 	fixture.appendBatch(
-		RecordDraft{EventKind: EventProviderNativeCommit, TurnID: secondTurnID, Payload: validNativeCommit()},
-		RecordDraft{EventKind: EventTurnCompleted, TurnID: secondTurnID, Payload: TurnCompletedPayload{}},
+		mustDraft(t, EventProviderNativeCommit, secondTurnID, validNativeCommit()),
+		mustDraft(t, EventTurnCompleted, secondTurnID, TurnCompletedPayload{}),
 	)
 	fixture.appendUnknown(ReplayOptional)
 
@@ -46,7 +47,7 @@ func TestReplayPlannerReportsCommittedInterruptedTail(t *testing.T) {
 	t.Parallel()
 	fixture := newReplayFixture(t)
 	fixture.appendMetadata()
-	fixture.appendBatch(RecordDraft{EventKind: EventTurnStarted, TurnID: testTurnID, Payload: TurnStartedPayload{}})
+	fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
 	plan, err := NewReplayPlanner().Plan(fixture.loaded())
 	if err != nil {
 		t.Fatal(err)
@@ -70,29 +71,29 @@ func TestReplayPlannerRejectsIllegalLifecycleTransitions(t *testing.T) {
 	t.Parallel()
 	fixtures := map[string]func(*replayFixture){
 		"duplicate metadata": func(fixture *replayFixture) {
-			fixture.appendBatch(RecordDraft{EventKind: EventSessionMeta, Payload: fixture.sessionMetadata()})
+			fixture.appendBatch(mustDraft(t, EventSessionMeta, "", fixture.sessionMetadata()))
 		},
 		"commit outside turn": func(fixture *replayFixture) {
 			fixture.appendBatch(
-				RecordDraft{EventKind: EventProviderNativeCommit, TurnID: testTurnID, Payload: validNativeCommit()},
-				RecordDraft{EventKind: EventTurnCompleted, TurnID: testTurnID, Payload: TurnCompletedPayload{}},
+				mustDraft(t, EventProviderNativeCommit, testTurnID, validNativeCommit()),
+				mustDraft(t, EventTurnCompleted, testTurnID, TurnCompletedPayload{}),
 			)
 		},
 		"duplicate terminal": func(fixture *replayFixture) {
-			fixture.appendBatch(RecordDraft{EventKind: EventTurnStarted, TurnID: testTurnID, Payload: TurnStartedPayload{}})
-			fixture.appendBatch(RecordDraft{EventKind: EventTurnFailed, TurnID: testTurnID, Payload: TurnFailedPayload{Code: "failed"}})
-			fixture.appendBatch(RecordDraft{EventKind: EventTurnFailed, TurnID: testTurnID, Payload: TurnFailedPayload{Code: "failed_again"}})
+			fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+			fixture.appendBatch(mustDraft(t, EventTurnFailed, testTurnID, TurnFailedPayload{Code: "failed"}))
+			fixture.appendBatch(mustDraft(t, EventTurnFailed, testTurnID, TurnFailedPayload{Code: "failed_again"}))
 		},
 		"completion missing terminal": func(fixture *replayFixture) {
-			fixture.appendBatch(RecordDraft{EventKind: EventTurnStarted, TurnID: testTurnID, Payload: TurnStartedPayload{}})
-			fixture.appendBatch(RecordDraft{EventKind: EventProviderNativeCommit, TurnID: testTurnID, Payload: validNativeCommit()})
+			fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+			fixture.appendBatch(mustDraft(t, EventProviderNativeCommit, testTurnID, validNativeCommit()))
 		},
 		"new turn covers active": func(fixture *replayFixture) {
-			fixture.appendBatch(RecordDraft{EventKind: EventTurnStarted, TurnID: testTurnID, Payload: TurnStartedPayload{}})
-			fixture.appendBatch(RecordDraft{EventKind: EventTurnStarted, TurnID: secondTurnID, Payload: TurnStartedPayload{}})
+			fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+			fixture.appendBatch(mustDraft(t, EventTurnStarted, secondTurnID, TurnStartedPayload{}))
 		},
 		"optional follows active turn": func(fixture *replayFixture) {
-			fixture.appendBatch(RecordDraft{EventKind: EventTurnStarted, TurnID: testTurnID, Payload: TurnStartedPayload{}})
+			fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
 			fixture.appendUnknown(ReplayOptional)
 		},
 	}
@@ -121,16 +122,14 @@ func TestReplayPlannerRejectsInvalidMetadataAndKnownPayload(t *testing.T) {
 
 	fixture = newReplayFixture(t)
 	fixture.appendMetadata()
-	metadata, _ := decodeAs[SessionMetaPayload](fixture.records[0])
+	metadata, _ := DecodeSessionMetaPayload(fixture.records[0])
 	metadata.CreationCWD = "relative/path"
-	replacement, err := BuildRecord(
-		Identity{SessionID: testSessionID, ThreadID: testThreadID},
-		RecordDraft{EventKind: EventSessionMeta, Payload: metadata},
-		1, time.Unix(0, 0).UTC(), 1, 0, 2,
-	)
+	replacement := fixture.records[0]
+	encodedPayload, err := codec.MarshalStable(metadata)
 	if err != nil {
 		t.Fatal(err)
 	}
+	replacement.Payload = encodedPayload
 	fixture.records[0], _, err = EncodeRecord(replacement)
 	if err != nil {
 		t.Fatal(err)
@@ -155,8 +154,8 @@ func newReplayFixture(t *testing.T) *replayFixture {
 func (fixture *replayFixture) appendMetadata() {
 	fixture.t.Helper()
 	fixture.appendBatch(
-		RecordDraft{EventKind: EventSessionMeta, Payload: fixture.sessionMetadata()},
-		RecordDraft{EventKind: EventThreadMeta, Payload: ThreadMetaPayload{Root: true}},
+		mustDraft(fixture.t, EventSessionMeta, "", fixture.sessionMetadata()),
+		mustDraft(fixture.t, EventThreadMeta, "", ThreadMetaPayload{Root: true}),
 	)
 }
 

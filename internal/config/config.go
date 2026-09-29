@@ -52,6 +52,16 @@ type fileConfigWire struct {
 	Model    string `json:"model"`
 }
 
+type configFileOpener interface {
+	Open(string) (*os.File, error)
+}
+
+type platformConfigFileOpener struct{}
+
+func (platformConfigFileOpener) Open(path string) (*os.File, error) {
+	return openConfigFileNoFollow(path)
+}
+
 // Load 从默认或显式 JSON 文件读取配置，再使用非空环境变量逐字段覆盖。
 func Load(path string) (Config, error) {
 	resolvedPath, explicit, err := resolvePath(path)
@@ -113,15 +123,24 @@ func resolvePath(path string) (string, bool, error) {
 }
 
 func loadFile(path string, explicit bool) (fileConfig, bool, error) {
-	info, err := os.Lstat(path)
+	return loadFileWithOpener(path, explicit, platformConfigFileOpener{})
+}
+
+func loadFileWithOpener(path string, explicit bool, opener configFileOpener) (fileConfig, bool, error) {
+	if opener == nil {
+		return fileConfig{}, false, fault.New(fault.CodeInvalidConfiguration, "configuration file opener is unavailable")
+	}
+	file, err := opener.Open(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) && !explicit {
 			return fileConfig{}, false, nil
 		}
 		return fileConfig{}, false, fault.New(fault.CodeInvalidConfiguration, "configuration file is unavailable")
 	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return fileConfig{}, false, fault.New(fault.CodeInvalidConfiguration, "configuration file must not be a symbolic link")
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil {
+		return fileConfig{}, false, fault.New(fault.CodeInvalidConfiguration, "configuration file is unreadable")
 	}
 	if !info.Mode().IsRegular() {
 		return fileConfig{}, false, fault.New(fault.CodeInvalidConfiguration, "configuration file must be a regular file")
@@ -129,12 +148,6 @@ func loadFile(path string, explicit bool) (fileConfig, bool, error) {
 	if info.Size() > maxConfigBytes {
 		return fileConfig{}, false, fault.New(fault.CodeInvalidConfiguration, "configuration file is too large")
 	}
-
-	file, err := os.Open(path)
-	if err != nil {
-		return fileConfig{}, false, fault.New(fault.CodeInvalidConfiguration, "configuration file is unreadable")
-	}
-	defer func() { _ = file.Close() }()
 	content, err := io.ReadAll(io.LimitReader(file, maxConfigBytes+1))
 	if err != nil {
 		return fileConfig{}, false, fault.New(fault.CodeInvalidConfiguration, "configuration file is unreadable")

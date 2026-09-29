@@ -321,13 +321,13 @@ func TestChatResourcesCloseOrdersSessionJournalAndProvider(t *testing.T) {
 	conversation := &orderedConversation{add: add}
 	runtimeInstance, err := chatRuntime.New(conversation, chatRuntime.Config{
 		SessionID: runtimeSessionIDForApp, ThreadID: runtimeThreadIDForApp, Journal: journal,
-		NewTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
+		GenerateTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	chat := chatRuntime.NewChatSession(runtimeInstance)
-	events, err := chat.Submit("hello")
+	events, err := chat.Submit(context.Background(), "hello")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,13 +387,13 @@ func TestChatResourcesShutdownTimeoutEscalatesAndClosesDependencies(t *testing.T
 	journal := &orderedManagedJournal{}
 	runtimeInstance, err := chatRuntime.New(conversation, chatRuntime.Config{
 		SessionID: runtimeSessionIDForApp, ThreadID: runtimeThreadIDForApp, Journal: journal,
-		NewTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
+		GenerateTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	chat := chatRuntime.NewChatSession(runtimeInstance)
-	events, err := chat.Submit("hello")
+	events, err := chat.Submit(context.Background(), "hello")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -433,7 +433,7 @@ type orderedManagedJournal struct {
 
 func (journal *orderedManagedJournal) AppendBatch(_ context.Context, drafts []session.RecordDraft) ([]session.Record, error) {
 	if journal.add != nil {
-		journal.add("append:" + string(drafts[0].EventKind))
+		journal.add("append:" + string(drafts[0].EventKind()))
 	}
 	return make([]session.Record, len(drafts)), nil
 }
@@ -521,7 +521,7 @@ func mustIdleAppRuntime(t *testing.T, journal chatRuntime.Journal) *chatRuntime.
 	t.Helper()
 	runtimeInstance, err := chatRuntime.New(&orderedConversation{}, chatRuntime.Config{
 		SessionID: runtimeSessionIDForApp, ThreadID: runtimeThreadIDForApp, Journal: journal,
-		NewTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
+		GenerateTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -531,7 +531,7 @@ func mustIdleAppRuntime(t *testing.T, journal chatRuntime.Journal) *chatRuntime.
 
 func newTestChatResources(t *testing.T, applicationConfig config.Config) (*chatResources, error) {
 	t.Helper()
-	return newChatResources(
+	return openChatResources(
 		context.Background(), applicationConfig,
 		filepath.Join(t.TempDir(), "sessions"), "", t.TempDir(),
 	)
