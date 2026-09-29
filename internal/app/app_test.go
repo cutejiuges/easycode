@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"easycode/internal/config"
 	"easycode/internal/domain"
 	"easycode/internal/fault"
+	"easycode/internal/headless"
 	"easycode/internal/protocol"
 	"easycode/internal/provider"
 	chatRuntime "easycode/internal/runtime"
@@ -24,44 +26,68 @@ import (
 	"easycode/internal/session"
 )
 
-func TestRunPrintModeRemainsUnimplemented(t *testing.T) {
+func TestRunPrintModeUsesExistingChatResources(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		writeOpenAIAppTurn(writer, 1)
+	}))
+	defer server.Close()
 	var output bytes.Buffer
-	err := Run(context.Background(), Options{Headless: true, Output: &output})
-	if !errors.Is(err, &fault.Error{Code: fault.CodeNotImplemented}) {
-		t.Fatalf("print mode error: %v", err)
+	outcome := Run(context.Background(), Options{
+		Mode: headless.ModeText, Prompt: "hello",
+		ConfigPath:      writeAppConfig(t, t.TempDir(), domain.ProviderOpenAI, server.URL),
+		SessionDataRoot: filepath.Join(t.TempDir(), "sessions"), Output: &output,
+	})
+	if outcome.ExitCode() != 0 {
+		t.Fatalf("print mode outcome: %#v", outcome)
 	}
-	if strings.Contains(output.String(), "scaffold") {
-		t.Fatalf("legacy scaffold output remains: %q", output.String())
+	if output.String() != "answer-1\n" {
+		t.Fatalf("print output = %q", output.String())
 	}
 }
 
 func TestRunVersionDoesNotReadConfiguration(t *testing.T) {
 	var output bytes.Buffer
-	err := Run(context.Background(), Options{
+	outcome := Run(context.Background(), Options{
 		ShowVersion: true,
 		ConfigPath:  filepath.Join(t.TempDir(), "missing.json"),
 		Output:      &output,
 	})
-	if err != nil {
-		t.Fatalf("run version: %v", err)
+	if outcome.ExitCode() != 0 {
+		t.Fatalf("run version: %#v", outcome)
 	}
 	if !strings.Contains(output.String(), Version) {
 		t.Fatalf("version output: %q", output.String())
 	}
 }
 
+func TestRunRejectsInvalidResolvedPromptBeforeConfigurationOrSession(t *testing.T) {
+	dataRoot := filepath.Join(t.TempDir(), "sessions")
+	outcome := Run(context.Background(), Options{
+		Mode: headless.ModeText, Prompt: " \n\t",
+		ConfigPath:      filepath.Join(t.TempDir(), "missing.json"),
+		SessionDataRoot: dataRoot, Output: io.Discard,
+	})
+	if outcome.ExitCode() != 2 || outcome.Failure.Code != fault.CodeInvalidInput {
+		t.Fatalf("invalid prompt outcome = %#v", outcome)
+	}
+	if _, err := os.Stat(dataRoot); !os.IsNotExist(err) {
+		t.Fatalf("invalid prompt created session root: %v", err)
+	}
+}
+
 func TestRunRejectsMissingExplicitConfiguration(t *testing.T) {
 	var output bytes.Buffer
 	missingPath := filepath.Join(t.TempDir(), "private-path-secret", "missing.json")
-	err := Run(context.Background(), Options{
+	outcome := Run(context.Background(), Options{
 		ConfigPath: missingPath,
 		Output:     &output,
 	})
-	if !errors.Is(err, &fault.Error{Code: fault.CodeInvalidConfiguration}) {
-		t.Fatalf("missing configuration error: %v", err)
+	if outcome.Failure.Code != fault.CodeInvalidConfiguration {
+		t.Fatalf("missing configuration outcome: %#v", outcome)
 	}
-	if strings.Contains(err.Error(), missingPath) || strings.Contains(err.Error(), "private-path-secret") {
-		t.Fatalf("configuration error leaked path: %v", err)
+	if strings.Contains(outcome.Failure.Message, missingPath) || strings.Contains(outcome.Failure.Message, "private-path-secret") {
+		t.Fatalf("configuration error leaked path: %#v", outcome)
 	}
 }
 
@@ -73,12 +99,12 @@ func TestRunRejectsInvalidConfigurationWithoutLeakingSecret(t *testing.T) {
 		t.Fatalf("write configuration: %v", err)
 	}
 	var output bytes.Buffer
-	err := Run(context.Background(), Options{ConfigPath: path, Output: &output})
-	if !errors.Is(err, &fault.Error{Code: fault.CodeInvalidConfiguration}) {
-		t.Fatalf("invalid configuration error: %v", err)
+	outcome := Run(context.Background(), Options{ConfigPath: path, Output: &output})
+	if outcome.Failure.Code != fault.CodeInvalidConfiguration {
+		t.Fatalf("invalid configuration outcome: %#v", outcome)
 	}
-	if strings.Contains(err.Error(), "top-secret") || strings.Contains(output.String(), "top-secret") {
-		t.Fatalf("configuration error leaked API key: %v", err)
+	if strings.Contains(outcome.Failure.Message, "top-secret") || strings.Contains(output.String(), "top-secret") {
+		t.Fatalf("configuration error leaked API key: %#v", outcome)
 	}
 }
 
@@ -242,8 +268,8 @@ func TestRunStartsTUIFromSupportedConfigurationSourcesWithoutNetwork(t *testing.
 			var output bytes.Buffer
 			options.Input = strings.NewReader("\x03")
 			options.Output = &output
-			if err := Run(context.Background(), options); err != nil {
-				t.Fatalf("run TUI: %v", err)
+			if outcome := Run(context.Background(), options); outcome.ExitCode() != 0 {
+				t.Fatalf("run TUI: %#v", outcome)
 			}
 			if !strings.Contains(output.String(), "Status: idle") {
 				t.Fatalf("TUI did not enter idle state: %q", output.String())
@@ -266,19 +292,19 @@ func TestRunCanRecoverAfterConfigurationError(t *testing.T) {
 		t.Fatalf("write invalid configuration: %v", err)
 	}
 	var output bytes.Buffer
-	if err := Run(context.Background(), Options{ConfigPath: path, Output: &output}); !errors.Is(err, &fault.Error{Code: fault.CodeInvalidConfiguration}) {
-		t.Fatalf("invalid configuration error: %v", err)
+	if outcome := Run(context.Background(), Options{ConfigPath: path, Output: &output}); outcome.Failure.Code != fault.CodeInvalidConfiguration {
+		t.Fatalf("invalid configuration outcome: %#v", outcome)
 	}
 
 	writeAppConfigAt(t, path, domain.ProviderOpenAI, "https://example.com/v1")
 	output.Reset()
-	if err := Run(context.Background(), Options{
+	if outcome := Run(context.Background(), Options{
 		ConfigPath:      path,
 		SessionDataRoot: filepath.Join(t.TempDir(), "sessions"),
 		Input:           strings.NewReader("\x03"),
 		Output:          &output,
-	}); err != nil {
-		t.Fatalf("run after configuration repair: %v", err)
+	}); outcome.ExitCode() != 0 {
+		t.Fatalf("run after configuration repair: %#v", outcome)
 	}
 }
 
@@ -353,10 +379,11 @@ func TestChatResourcesWriterCloseFailureStillClosesProvider(t *testing.T) {
 	}
 }
 
-func TestChatResourcesShutdownTimeoutDoesNotCloseDependenciesEarly(t *testing.T) {
+func TestChatResourcesShutdownTimeoutEscalatesAndClosesDependencies(t *testing.T) {
 	t.Parallel()
+	streamStarted := make(chan struct{})
 	release := make(chan struct{})
-	conversation := &orderedConversation{release: release}
+	conversation := &orderedConversation{release: release, started: streamStarted}
 	journal := &orderedManagedJournal{}
 	runtimeInstance, err := chatRuntime.New(conversation, chatRuntime.Config{
 		SessionID: runtimeSessionIDForApp, ThreadID: runtimeThreadIDForApp, Journal: journal,
@@ -371,19 +398,22 @@ func TestChatResourcesShutdownTimeoutDoesNotCloseDependenciesEarly(t *testing.T)
 		t.Fatal(err)
 	}
 	<-events
-	providerResource := &orderedProviderResource{factory: fakeProviderFactory{family: domain.ProviderOpenAI}}
+	<-streamStarted
+	var releaseOnce sync.Once
+	providerResource := &orderedProviderResource{
+		factory: fakeProviderFactory{family: domain.ProviderOpenAI},
+		force:   func() { releaseOnce.Do(func() { close(release) }) },
+	}
 	resources := &chatResources{provider: providerResource, writer: journal, session: chat}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-	if err := resources.close(ctx); !errors.Is(err, context.DeadlineExceeded) {
+	ctx, cancel := context.WithCancel(context.Background())
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- resources.close(ctx) }()
+	cancel()
+	if err := <-closeDone; !errors.Is(err, context.Canceled) {
 		t.Fatalf("close timeout error = %v", err)
 	}
-	if journal.closeCalls.Load() != 0 || providerResource.closeCalls.Load() != 0 {
-		t.Fatalf("dependencies closed early: journal=%d provider=%d", journal.closeCalls.Load(), providerResource.closeCalls.Load())
-	}
-	close(release)
-	if err := resources.close(context.Background()); err != nil {
-		t.Fatal(err)
+	if journal.closeCalls.Load() != 1 || providerResource.closeCalls.Load() != 1 {
+		t.Fatalf("dependencies not closed after escalation: journal=%d provider=%d", journal.closeCalls.Load(), providerResource.closeCalls.Load())
 	}
 	for range events {
 	}
@@ -421,6 +451,7 @@ func (journal *orderedManagedJournal) Close(context.Context) error {
 type orderedConversation struct {
 	add     func(string)
 	release <-chan struct{}
+	started chan<- struct{}
 }
 
 func (*orderedConversation) Family() domain.ProviderFamily { return domain.ProviderOpenAI }
@@ -437,6 +468,9 @@ func (conversation *orderedConversation) Stream(ctx context.Context, _ provider.
 	if conversation.add != nil {
 		conversation.add("provider:stream")
 	}
+	if conversation.started != nil {
+		close(conversation.started)
+	}
 	stream := make(chan provider.StreamEvent, 1)
 	go func() {
 		<-ctx.Done()
@@ -452,6 +486,7 @@ func (conversation *orderedConversation) Stream(ctx context.Context, _ provider.
 type orderedProviderResource struct {
 	factory    fakeProviderFactory
 	add        func(string)
+	force      func()
 	closeCalls atomic.Int32
 }
 
@@ -473,6 +508,9 @@ func (resource *orderedProviderResource) RestoreConversation(commits []provider.
 
 func (resource *orderedProviderResource) Close() error {
 	resource.closeCalls.Add(1)
+	if resource.force != nil {
+		resource.force()
+	}
 	if resource.add != nil {
 		resource.add("provider:close")
 	}

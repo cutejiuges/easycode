@@ -109,7 +109,7 @@ func (runtime *Runtime) RunTurn(
 		runtime.emitFailure(emit, turnID, failure)
 		return failure
 	}
-	emit(runtime.decorate(protocol.NewEvent(protocol.EventTurnStarted), turnID))
+	emit(runtime.decorate(protocol.NewTurnStarted(), turnID))
 
 	stream, err := runtime.conversation.Stream(ctx, input)
 	if err != nil {
@@ -177,7 +177,7 @@ func (runtime *Runtime) RunTurn(
 			runtime.emitFailure(emit, turnID, failure)
 			return failure
 		}
-		emit(runtime.decorate(protocol.NewEvent(protocol.EventTurnCompleted), turnID))
+		emit(runtime.decorate(protocol.NewTurnCompleted(), turnID))
 		return nil
 	case provider.StreamEventCancelled:
 		err = terminal.Err
@@ -232,12 +232,6 @@ func (runtime *Runtime) emitFailure(emit Emitter, turnID domain.TurnID, err erro
 }
 
 func failureSummary(err error) (fault.Code, string, bool) {
-	if errors.Is(err, context.Canceled) {
-		return fault.CodeUserCancelled, "turn was cancelled", true
-	}
-	var faultError *fault.Error
-	if errors.As(err, &faultError) {
-		return faultError.Code, faultError.Message, faultError.Code == fault.CodeUserCancelled
-	}
-	return fault.CodeTurnFailed, "turn failed", false
+	summary := fault.Project(err)
+	return summary.Code, summary.Message, summary.Cancelled
 }

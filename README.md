@@ -4,7 +4,7 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 
 用户只需要提供 `base_url`、`api_key` 和模型名称即可连接服务，不需要账号登录、OAuth、设备码或订阅鉴权。
 
-> 项目当前正在推进 P1 双 Provider Kernel。Anthropic Messages 与 OpenAI Responses 已能通过基础 TUI 完成内存文本多轮对话；coding tools、持久化 Session 和完整缓存/推理界面将按照 Roadmap 分阶段实现。
+> 项目当前正在推进 P2 Session 与 Headless Agent Loop。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、多轮文本 Session、显式 `--resume`，以及单 turn `--print`/`--json` headless 输出。SQLite 索引、coding tools 和完整缓存/推理界面仍将按照 Roadmap 分阶段实现。
 
 ## 设计目标
 
@@ -13,22 +13,22 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 - 原样保留 Anthropic thinking signature、redacted thinking，以及 OpenAI reasoning summary、encrypted reasoning 和 message phase。
 - 将缓存命中率作为一级架构目标，保证稳定前缀、工具定义、上下文顺序和序列化结果可预测、可回归。
 - 通过小接口、单向依赖和事件协议保持内核纯净，避免上帝包、循环依赖及 UI 与 Provider 相互侵入。
-- 保持本地优先、单二进制和可测试，为未来的 headless、IDE 或 app-server 宿主保留演进空间。
+- 保持本地优先、单二进制和可测试，让 TUI 与 headless 共享 Runtime，并为未来 IDE 或 app-server 宿主保留演进空间。
 
 ## 当前能力
 
 | 领域 | 当前状态 |
 |---|---|
-| CLI/TUI 入口 | 已实现 Bubble Tea 基础文本 Chat 和 headless 骨架 |
+| CLI/TUI 入口 | 已实现 Bubble Tea 基础文本 Chat、历史回放、显式 `--resume`，以及单 turn `--print` 最终文本和 `--json` JSONL v1 输出 |
 | 双 Provider | Anthropic Messages 与 OpenAI Responses 已支持流式文本多轮、各自原生历史及 committed-only 文本历史投影 |
 | HTTP/SSE | 已建立基于 Resty v3 的公共传输层 |
 | JSON 与缓存 | 已建立 Sonic 稳定序列化和 cache segment fingerprint |
-| Runtime | 已建立共享 turn 生命周期和 RuntimeEvent 骨架 |
-| 安全配置 | 已实现环境变量配置、校验和 API key 脱敏值对象 |
-| Tools | 已定义能力、执行器及内置工具描述边界，尚未实现真实执行 |
-| Session | 已定义存储契约，JSONL/SQLite 持久化尚未实现 |
-| 扩展系统 | 已建立 Hooks、Plugins、Skills 和 MCP 包边界 |
-| Subagent | 已建立控制协议边界，调度和生命周期尚未实现 |
+| Runtime | 已实现共享文本 turn 生命周期、稳定身份、durable-before-memory 提交及 typed text/failure event |
+| 安全配置 | 已实现 JSON 配置、环境变量逐字段覆盖、统一校验和 API key 脱敏值对象 |
+| Tools | 尚未实现可执行工具；现有包边界不代表已经暴露工具能力 |
+| Session | 已实现 append-only JSONL、UUIDv7、跨进程 lease、`Sync`、尾部修复、v1 fixture 和显式恢复；SQLite/`--continue` 尚未实现 |
+| 扩展系统 | 已预留 Hooks、Plugins、Skills 和 MCP 包边界，尚未形成运行时能力 |
+| Subagent | 已预留控制协议包边界，调度和生命周期尚未实现 |
 
 完整阶段和验收标准见[产品 Roadmap](docs/roadmap/product-roadmap.md)。
 
@@ -77,6 +77,39 @@ bin/easycode
 
 ```bash
 ./bin/easycode
+```
+
+未指定恢复参数时，每次启动都会创建新的 root Session。使用已有 thread ID 显式恢复：
+
+```bash
+./bin/easycode --resume <thread-id>
+```
+
+只输出本次 turn 的最终文本：
+
+```bash
+./bin/easycode --print "summarize this repository"
+```
+
+逐行输出版本化 JSON 事件：
+
+```bash
+./bin/easycode --json "explain the current architecture"
+```
+
+prompt 也可以来自 stdin；显式 prompt 与管道同时存在时，管道内容会作为带 `<stdin>` 边界的附加上下文：
+
+```bash
+cat README.md | ./bin/easycode --print "summarize"
+cat README.md | ./bin/easycode --json -
+```
+
+headless 输入必须是合法 UTF-8、非空且不超过 4 MiB。`--print` 仅在 turn durable 完成后发布最终文本；`--json` 的 stdout 只包含 JSONL v1，当前事件为 `thread.started`、`turn.started`、`assistant.text.delta`、`turn.completed`、`turn.failed` 和 `error`。退出码 `0` 表示结果已完整交付，`1` 表示运行、取消、输出或清理失败，`2` 表示参数或 prompt 用法错误。
+
+两个 headless 模式都可与显式恢复组合，并且只输出本次新 turn，不回放旧 transcript：
+
+```bash
+./bin/easycode --json --resume <thread-id> "continue"
 ```
 
 ## Provider 配置
@@ -140,7 +173,7 @@ export EASYCODE_MODEL=your-model
 
 配置优先级为：JSON 文件提供基础值，非空 `EASYCODE_*` 环境变量覆盖对应字段，最后统一校验。`base_url` 是 API 路径前缀，不会自动补 `/v1`，且不能包含 userinfo、query 或 fragment。
 
-当前交互模式支持 Anthropic Messages 和 OpenAI Responses 的流式文本多轮对话。两家 Provider 均可将成功提交的原生历史投影为只读文本 `SemanticHistoryView`，但尚未接入 token estimator、Session/resume、Hook 或 Subagent。Anthropic thinking/signature/redacted thinking 与 OpenAI encrypted reasoning 会保留在各自原生历史中，不进入当前文本投影，基础 TUI 也不展示推理内容。reasoning/tool projection、Provider UsageParser/CachePlanner、tools、持久化 Session/resume、`--print`、JSON event、prompt cache 控制、主动 thinking 配置和高级 reasoning UI 尚未实现。
+当前 TUI 和 headless 模式都支持 Anthropic Messages 与 OpenAI Responses 的文本会话。成功文本回合会写入权限受控的 append-only JSONL；显式 `--resume <thread-id>` 在连续 exclusive lease 下恢复同一 Provider 的原生历史。TUI 通过只读 `SemanticHistoryView` 重建可见 transcript，headless 则不消费或回放旧 transcript。Anthropic thinking/signature/redacted thinking 与 OpenAI encrypted reasoning 会保留在各自原生历史中，不进入当前文本投影。stdin JSON/双向控制、usage/reasoning/tool JSON 事件、token estimator、完整 Provider UsageParser/CachePlanner、tools、SQLite 索引、`--continue`、prompt cache 控制、主动 thinking 配置和高级 reasoning UI 尚未实现。
 
 ## 架构概览
 
@@ -174,7 +207,7 @@ Anthropic   OpenAI
 
 Provider-native item 是恢复会话和构建下次请求的事实依据，RuntimeEvent 只用于 UI、日志及宿主投影，二者不能相互替代。
 
-共享层需要读取历史时使用 Provider 提供的单向 `HistoryProjector` 和 `SemanticHistoryView`。当前已实现 committed-only 文本投影；token 估算、resume 渲染、Hook 文本和 Subagent completion 等消费者将在后续阶段接入。该视图不可反向生成 Provider 请求。
+共享层需要读取历史时使用 Provider 提供的单向 `HistoryProjector` 和 `SemanticHistoryView`。当前已实现 committed-only 文本投影和 resume 后的 TUI 历史回放；token 估算、Hook 文本和 Subagent completion 等消费者将在后续阶段接入。该视图不可反向生成 Provider 请求。
 
 更完整的设计见[总体架构文档](docs/architecture/overall-architecture.md)。
 
@@ -190,11 +223,12 @@ Provider-native item 是恢复会话和构建下次请求的事实依据，Runti
 │   ├── context/               上下文和缓存规划
 │   ├── domain/                核心值对象与领域语义
 │   ├── extension/             Hooks、Plugins、Skills、MCP
+│   ├── headless/              prompt 解析、最终文本与 JSONL v1 宿主
 │   ├── protocol/              Command 与 RuntimeEvent 协议
 │   ├── provider/              Provider Kernel 与 HTTP/SSE 传输
 │   ├── runtime/               共享 turn 编排
 │   ├── secret/                敏感值脱敏
-│   ├── session/               Session 存储契约
+│   ├── session/               JSONL 事实源、lease、修复与恢复规划
 │   ├── subagent/              子代理控制边界
 │   ├── telemetry/             结构化日志与诊断
 │   ├── tool/                  工具能力与执行边界

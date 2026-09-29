@@ -1,7 +1,7 @@
 # EasyCode 总体架构设计
 
 > 状态：持续演进
-> 更新时间：2026-09-28
+> 更新时间：2026-09-29
 > 适用范围：EasyCode CLI、Agent Runtime、Provider、工具、扩展系统、会话存储和 TUI
 
 ## 1. 背景与目标
@@ -33,7 +33,7 @@ EasyCode 是一个本地优先的 coding agent。产品体验主要参考 Claude
 
 参考目录：`../codex`
 
-- 当前参考提交为 `7498521d2`。
+- 当前参考提交为 `c248f6d48b`。
 - 主要用于参考 Rust workspace、Responses API、事件协议、工具执行、权限与 sandbox、session rollout、subagent control、Ratatui 和可观测性设计。
 - Codex 当前只支持 Responses wire，不能直接作为 Anthropic provider 抽象。
 
@@ -90,37 +90,24 @@ EasyCode 是一个本地优先的 coding agent。产品体验主要参考 Claude
 ## 4. 总体架构
 
 ```text
-                     CLI / TUI / --print / JSON
-                               |
-                         SessionService
-                               |
-        HookEngine -> ContextPlanner -> TurnRuntime
-                                          |
-                 +------------------------+------------------------+
-                 |                                                 |
-       AnthropicProviderKernel                          OpenAIProviderKernel
-       - Messages request                              - Responses request
-       - content-block reducer                         - response-item reducer
-       - thinking/signature                            - summary/encrypted reasoning
-       - JSON tool input                               - function/freeform input
-       - cache_control                                 - prompt_cache_key/incremental
-                 |                                                 |
-                 +------------------------+------------------------+
-                                          |
-                                    RuntimeEvent
-                           +--------------+--------------+
-                           |                             |
-                      UI Projection               Session Recorder
-                           |                             |
-                   Bubble Tea views            append-only JSONL
-                                          |
-                                 ToolScheduler / Policy
-                                          |
-                               Hooks -> Executor -> Result
-                                          |
-                              Provider ToolResult Encoder
-                                          |
-                                      next sample
+                     CLI / app lifecycle
+                              |
+                       SessionService
+                              |
+                    ChatSession / TurnRuntime
+                     /        |          \
+                    /         |           \
+       Anthropic Kernel   RuntimeEvent   OpenAI Kernel
+       Messages/native        |          Responses/native
+                              |
+                    +---------+----------+
+                    |                    |
+              TUI Projection      Headless Projection
+                    |                    |
+            Bubble Tea views      text / JSONL v1
+
+TurnRuntime -- durable records --> append-only Session JSONL
+TurnRuntime -- future tool loop --> ToolScheduler / Policy / Executor
 ```
 
 ### 4.1 建议的 Go Module 结构
@@ -130,8 +117,9 @@ cmd/
   easycode/                 可执行程序入口
 internal/
   app/                      依赖装配和应用生命周期
+  headless/                 prompt 解析、最终文本与 JSONL v1 投影
   domain/                   核心 ID、值对象、错误和领域语义
-  protocol/                 Command、RuntimeEvent、可版本化外部协议
+  protocol/                 进程内 Command 与 RuntimeEvent
   runtime/                  session、turn loop、队列、取消和恢复协调
   provider/                 ProviderKernel 契约和能力模型
     transport/              Resty HTTP/SSE 公共基础设施
@@ -162,10 +150,11 @@ domain <- session
 domain <- extension
 domain <- subagent
 
-runtime -> protocol + providers + tools + context + session + extensions + subagents
-tui     -> protocol + SessionService interface
-app     -> runtime + tui
-cmd     -> app
+runtime  -> protocol + providers + tools + context + session + extensions + subagents
+tui      -> protocol + ChatSession interface
+headless -> domain + fault + protocol + ChatSession interface
+app      -> runtime + tui + headless
+cmd      -> app
 ```
 
 禁止：
@@ -428,32 +417,26 @@ Anthropic 的 `input_tokens` 通常表示未命中缓存的输入，`cache_read_
 
 ## 7. RuntimeEvent 与流式归并
 
-### 7.1 RuntimeEvent 示例
+### 7.1 RuntimeEvent 当前范围
 
 ```text
-SessionStarted
 TurnStarted
-AssistantItemStarted
-AssistantTextDelta { item_id, phase, text }
-ReasoningStarted { presentation_kind }
-ReasoningDelta
-ReasoningSectionBreak
-ToolCallStarted
-ToolInputDelta
-ToolCallReady
-PatchDraftUpdated
-ToolExecutionStarted
-ToolProgress
-ToolExecutionCompleted
-UsageUpdated
-ContextCompacted
+AssistantTextDelta { text }
 TurnCompleted
 TurnFailed
 ```
 
-Event 必须带有足够的 `session_id/thread_id/turn_id/item_id/call_id`，使 UI 和 session projection 可以独立消费。
+当前进程内 RuntimeEvent 只声明已有真实 producer、consumer 和 validator 的四种文本事件，并携带匹配的 `session_id/thread_id/turn_id`。reasoning、usage、tool、patch 和 compaction kind 尚未实现；未来必须随 producer、consumer、typed payload 和测试在同一变更中加入，不能提前保留空枚举。
 
-### 7.2 Provider StreamReducer
+### 7.2 Headless JSONL v1
+
+`internal/headless` 与 TUI 平级，只依赖最小 `ChatSession` 接口。它不会直接序列化 RuntimeEvent，而是严格校验 version、身份、顺序和 typed payload 后，单向投影为 `thread.started`、`turn.started`、`assistant.text.delta`、`turn.completed`、`turn.failed` 或 stream-level `error`。stdout 由单 writer 顺序写入，每行一个完整 JSON object；日志和人类诊断不得进入 JSON stdout。
+
+`--print` 在内存中聚合文本，仅在 Runtime 已 durable 发布 `turn_completed` 且事件流正常闭合后输出最终值。`--json` 可实时输出 delta，但同样不从 channel close 或已见文本推断成功。取消、短写和断管会触发幂等 Interrupt 并 drain Runtime；已 durable 完成后的输出失败只改变进程交付状态，不回滚 Session。
+
+headless prompt 在应用装配前解析：无位置参数或显式 `-` 时读取 stdin；显式 prompt 与非终端 stdin 同时存在时使用稳定 `<stdin>` 边界追加；组合内容必须是合法 UTF-8、非空且不超过 4 MiB。当前不支持 stdin JSON、双向控制、同进程多 turn、usage/reasoning/tool 事件或 `--continue`。
+
+### 7.3 Provider StreamReducer
 
 Anthropic reducer 负责处理：
 
@@ -472,7 +455,7 @@ OpenAI reducer 负责处理：
 
 只在完整 tool call 已得到可靠参数后执行副作用。可以在整个模型流尚未结束时启动已经完成的工具 block，但不能根据不完整参数提前执行。
 
-### 7.3 背压与渲染节流
+### 7.4 背压与渲染节流
 
 - 原始网络 delta 可以高频进入 reducer。
 - TUI projection 按 16-33ms 合并纯文本刷新，降低闪烁和 CPU 占用。
@@ -627,6 +610,8 @@ EventEnvelope
 `schema_version` 约束公共 envelope，`payload_version` 约束 event payload，`replay_requirement` 明确 required/optional。required 的未知 kind、版本或损坏必须拒绝恢复；optional 记录允许跳过，便于未来加入诊断或展示事实而不破坏旧 Loader。
 
 Provider native commit 只记录 Provider 已验证的原生增量。未来 tool use/tool result、permission、hook、subagent、usage/cache 与 compaction checkpoint 仍需按各自恢复语义增加版本化记录；不能把 RuntimeEvent 或 UI transcript 当作 native history。尤其 tool result 必须在副作用完成且 durable 后，以 Provider 下一次请求所需的 input-only 增量提交，不能重复提交此前 assistant tool call。
+
+Headless JSONL v1 是 stdout 外部协议，不是 Session record：不得写入 journal，也不得在 resume 时回放。headless resume 只复用连续 lease 下恢复出的 Provider-native history，并只发布本次新 turn；`SemanticHistoryView` 仍只供 TUI 等只读消费者使用。
 
 默认不持久化每个文本 delta、spinner 或窗口状态；在 item 完成时持久化最终值。需要崩溃恢复时，可以增加有节制的 checkpoint，而不是把所有 UI delta 写入日志。
 

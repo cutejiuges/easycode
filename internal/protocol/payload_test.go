@@ -46,3 +46,49 @@ func TestTurnFailedPayloadRoundTrip(t *testing.T) {
 		t.Fatalf("unexpected payload: %#v", payload)
 	}
 }
+
+func TestTurnFailedRejectsWhitespaceSummary(t *testing.T) {
+	if _, err := NewTurnFailed(" ", "turn failed", false); err == nil {
+		t.Fatal("expected whitespace code error")
+	}
+	if _, err := NewTurnFailed("turn_failed", "\t", false); err == nil {
+		t.Fatal("expected whitespace message error")
+	}
+}
+
+func TestPayloadDecodersRejectWrongVersionAndUnknownFields(t *testing.T) {
+	delta, err := NewAssistantTextDelta("hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	delta.Version++
+	if _, err := DecodeAssistantTextDelta(delta); err == nil {
+		t.Fatal("expected delta version error")
+	}
+
+	failure := newEvent(EventTurnFailed)
+	failure.Payload = []byte(`{"code":"failed","message":"failed","unknown":true}`)
+	if _, err := DecodeTurnFailed(failure); err == nil {
+		t.Fatal("expected failure unknown field error")
+	}
+}
+
+func TestPayloadlessEventsAreTypedAndStrict(t *testing.T) {
+	started := NewTurnStarted()
+	if err := ValidateTurnStarted(started); err != nil {
+		t.Fatal(err)
+	}
+	started.Payload = []byte(`{}`)
+	if err := ValidateTurnStarted(started); err == nil {
+		t.Fatal("expected turn started payload error")
+	}
+
+	completed := NewTurnCompleted()
+	if err := ValidateTurnCompleted(completed); err != nil {
+		t.Fatal(err)
+	}
+	completed.Kind = EventTurnFailed
+	if err := ValidateTurnCompleted(completed); err == nil {
+		t.Fatal("expected turn completed kind error")
+	}
+}

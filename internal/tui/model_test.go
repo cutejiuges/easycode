@@ -59,7 +59,7 @@ func TestModelSubmitsAndProjectsOrderedDeltas(t *testing.T) {
 	model, command = updateModelWithCommand(t, model, command())
 	session.events <- second
 	model, command = updateModelWithCommand(t, model, command())
-	session.events <- protocol.NewEvent(protocol.EventTurnCompleted)
+	session.events <- protocol.NewTurnCompleted()
 	model, command = updateModelWithCommand(t, model, command())
 
 	if command != nil || model.state != stateIdle {
@@ -117,7 +117,7 @@ func TestModelInputAndCancellationKeys(t *testing.T) {
 
 func TestModelQueuesInterruptUntilSubmitIsReady(t *testing.T) {
 	session := &fakeChatSession{events: make(chan protocol.Event, 1)}
-	session.events <- protocol.NewEvent(protocol.EventTurnStarted)
+	session.events <- protocol.NewTurnStarted()
 	model := NewModel("test", session)
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello")})
 	updated, submitCommand := model.Update(tea.KeyMsg{Type: tea.KeyEnter})

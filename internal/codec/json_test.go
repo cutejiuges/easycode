@@ -19,3 +19,12 @@ func TestMarshalStableSortsMapKeys(t *testing.T) {
 		t.Fatalf("stable JSON differs: %s != %s", firstJSON, secondJSON)
 	}
 }
+
+func TestUnmarshalStrictRejectsUnknownFields(t *testing.T) {
+	var target struct {
+		Value string `json:"value"`
+	}
+	if err := UnmarshalStrict([]byte(`{"value":"ok","extra":true}`), &target); err == nil {
+		t.Fatal("expected unknown field error")
+	}
+}

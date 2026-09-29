@@ -15,6 +15,7 @@ import (
 	"easycode/internal/config"
 	"easycode/internal/domain"
 	"easycode/internal/fault"
+	"easycode/internal/headless"
 	"easycode/internal/provider"
 	"easycode/internal/provider/anthropic"
 	"easycode/internal/provider/openai"
@@ -27,10 +28,13 @@ const Version = "0.0.0-dev"
 
 const shutdownTimeout = 5 * time.Second
 
+var _ headless.ChatSession = (*chatRuntime.ChatSession)(nil)
+
 // Options 描述应用入口参数，避免入口层直接依赖具体实现细节。
 type Options struct {
 	ShowVersion     bool
-	Headless        bool
+	Mode            headless.Mode
+	Prompt          string
 	ConfigPath      string
 	ResumeThreadID  string
 	SessionDataRoot string
@@ -53,50 +57,91 @@ type chatResources struct {
 	repair   session.RepairReport
 }
 
-// Run 根据入口参数启动 Bubble Tea 交互界面。
-func Run(ctx context.Context, options Options) error {
+// Run 根据入口参数运行交互或 headless 宿主并返回稳定结果。
+func Run(ctx context.Context, options Options) Outcome {
 	if options.Output == nil {
-		return fmt.Errorf("output is required")
+		return runtimeFailure(fault.New(fault.CodeTurnFailed, "output is required"))
 	}
 	if options.ShowVersion {
 		_, err := fmt.Fprintf(options.Output, "easycode %s\n", Version)
-		return err
+		if err != nil {
+			return runtimeFailure(fault.New(fault.CodeTurnFailed, "write version output failed"))
+		}
+		return Outcome{Class: ExitSuccess}
 	}
-	if options.Headless {
-		return fault.New(fault.CodeNotImplemented, "--print is not implemented")
+	if options.Mode != headless.ModeInteractive && options.Mode != headless.ModeText && options.Mode != headless.ModeJSON {
+		return runtimeFailure(fault.New(fault.CodeTurnFailed, "application mode is invalid"))
+	}
+	if options.Mode != headless.ModeInteractive {
+		if err := headless.ValidateResolvedPrompt(options.Prompt); err != nil {
+			return usageFailure(err.Error())
+		}
 	}
 	applicationConfig, err := config.Load(options.ConfigPath)
 	if err != nil {
-		return err
+		return runtimeFailure(err)
 	}
 	dataRoot, err := resolveSessionDataRoot(options.SessionDataRoot)
 	if err != nil {
-		return err
+		return runtimeFailure(err)
 	}
 	creationCWD, err := os.Getwd()
 	if err != nil {
-		return fault.New(fault.CodeSessionWrite, "current working directory is unavailable")
+		return runtimeFailure(fault.New(fault.CodeSessionWrite, "current working directory is unavailable"))
 	}
 	resources, err := newChatResources(
 		ctx, applicationConfig, dataRoot, options.ResumeThreadID, creationCWD,
 	)
 	if err != nil {
-		return err
+		return runtimeFailure(err)
 	}
 
+	var outcome Outcome
+	if options.Mode == headless.ModeInteractive {
+		outcome = runTUI(ctx, options, resources)
+	} else {
+		result := headless.Run(ctx, resources.session, headless.RunConfig{
+			Mode: options.Mode, Prompt: options.Prompt,
+			SessionID: resources.identity.SessionID, ThreadID: resources.identity.ThreadID,
+			Resumed: options.ResumeThreadID != "", Output: options.Output,
+		})
+		outcome = outcomeFromHeadless(result)
+	}
+	shutdownContext, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	closeErr := resources.close(shutdownContext)
+	if closeErr != nil {
+		if outcome.Class != ExitSuccess && outcome.Report == ReportOutputUnavailable {
+			return outcome
+		}
+		return runtimeFailure(closeErr)
+	}
+	return outcome
+}
+
+func runTUI(ctx context.Context, options Options, resources *chatResources) Outcome {
 	model := tui.NewModel(Version, resources.session, resources.history)
 	programOptions := []tea.ProgramOption{tea.WithContext(ctx), tea.WithOutput(options.Output)}
 	if options.Input != nil {
 		programOptions = append(programOptions, tea.WithInput(options.Input))
 	}
-	_, runErr := tea.NewProgram(model, programOptions...).Run()
-	shutdownContext, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	defer cancel()
-	closeErr := resources.close(shutdownContext)
-	if runErr != nil {
-		runErr = fmt.Errorf("run TUI: %w", runErr)
+	if _, err := tea.NewProgram(model, programOptions...).Run(); err != nil {
+		return runtimeFailure(fault.Wrap(fault.CodeTurnFailed, "run TUI failed", err))
 	}
-	return errors.Join(runErr, closeErr)
+	return Outcome{Class: ExitSuccess}
+}
+
+func outcomeFromHeadless(result headless.Result) Outcome {
+	if result.Completed {
+		return Outcome{Class: ExitSuccess}
+	}
+	report := ReportPending
+	if result.OutputUnavailable {
+		report = ReportOutputUnavailable
+	} else if result.Reported {
+		report = ReportComplete
+	}
+	return Outcome{Class: ExitRuntimeFailure, Report: report, Failure: result.Failure}
 }
 
 func newChatResources(
@@ -196,22 +241,34 @@ func (resources *chatResources) close(ctx context.Context) error {
 	if resources == nil {
 		return nil
 	}
+	var shutdownErr error
+	providerClosed := false
 	if resources.session != nil {
-		if err := resources.session.Shutdown(ctx); err != nil {
-			return err
+		shutdownErr = resources.session.Shutdown(ctx)
+		if shutdownErr != nil {
+			// 超时后先关闭 transport 迫使阻塞流退出，再等待 Runtime 持久化唯一终态。
+			if resources.provider != nil {
+				shutdownErr = errors.Join(shutdownErr, resources.provider.Close())
+				providerClosed = true
+			}
+			shutdownErr = errors.Join(shutdownErr, resources.session.Shutdown(context.Background()))
 		}
+	}
+	closeContext := ctx
+	if ctx.Err() != nil {
+		closeContext = context.Background()
 	}
 	var writerErr error
 	if resources.writer != nil {
-		writerErr = resources.writer.Close(ctx)
+		writerErr = resources.writer.Close(closeContext)
 	}
 	var repositoryErr error
 	if resources.service != nil {
 		repositoryErr = resources.service.close()
 	}
 	var providerErr error
-	if resources.provider != nil {
+	if resources.provider != nil && !providerClosed {
 		providerErr = resources.provider.Close()
 	}
-	return errors.Join(writerErr, repositoryErr, providerErr)
+	return errors.Join(shutdownErr, writerErr, repositoryErr, providerErr)
 }

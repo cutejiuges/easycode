@@ -2,7 +2,6 @@
 package tui
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
@@ -263,12 +262,6 @@ func interruptSession(session ChatSession) tea.Cmd {
 }
 
 func safeErrorSummary(err error) string {
-	if err == nil {
-		return "turn_failed: turn failed"
-	}
-	var typed *fault.Error
-	if errors.As(err, &typed) {
-		return string(typed.Code) + ": " + typed.Message
-	}
-	return "turn_failed: turn failed"
+	summary := fault.Project(err)
+	return string(summary.Code) + ": " + summary.Message
 }

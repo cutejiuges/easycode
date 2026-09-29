@@ -1,0 +1,6 @@
+{"version":1,"type":"thread.started","session_id":"00000000-0010-7000-8000-000000000010","thread_id":"00000000-0011-7000-8000-000000000011","resumed":true}
+{"version":1,"type":"turn.started","session_id":"00000000-0010-7000-8000-000000000010","thread_id":"00000000-0011-7000-8000-000000000011","turn_id":"00000000-0012-7000-8000-000000000012"}
+{"version":1,"type":"assistant.text.delta","session_id":"00000000-0010-7000-8000-000000000010","thread_id":"00000000-0011-7000-8000-000000000011","turn_id":"00000000-0012-7000-8000-000000000012","text":"hello"}
+{"version":1,"type":"turn.completed","session_id":"00000000-0010-7000-8000-000000000010","thread_id":"00000000-0011-7000-8000-000000000011","turn_id":"00000000-0012-7000-8000-000000000012"}
+{"version":1,"type":"turn.failed","session_id":"00000000-0010-7000-8000-000000000010","thread_id":"00000000-0011-7000-8000-000000000011","turn_id":"00000000-0012-7000-8000-000000000012","error":{"code":"provider_request_failed","message":"provider request failed","cancelled":false}}
+{"version":1,"type":"error","error":{"code":"stream_protocol_error","message":"runtime event stream is invalid","cancelled":false}}
