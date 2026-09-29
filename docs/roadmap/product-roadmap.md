@@ -1,7 +1,7 @@
 # EasyCode 产品与工程 Roadmap
 
-> 状态：初始规划  
-> 更新时间：2026-09-18  
+> 状态：持续演进（P2 进行中）
+> 更新时间：2026-09-29
 > 依赖设计：[`../architecture/overall-architecture.md`](../architecture/overall-architecture.md)
 
 ## 1. Roadmap 使用方式
@@ -141,7 +141,7 @@ make verify
 - 已完成 OpenAI Responses text-only request、stream reducer、会话级 native history、事务提交、显式 terminal、两种 API prefix 的双轮回归，以及最基础的单行 TUI Chat。
 - 已完成 Anthropic Messages text-only request、indexed content-block reducer、会话级 native history、thinking/signature/redacted thinking 无损回放、显式 `message_stop` terminal、两种 API prefix 的双轮回归，并接入同一基础 TUI Chat。
 - 已完成双 Provider 的 committed-only 文本 `HistoryProjector`：投影保留 turn 边界和可见文本，但不暴露 thinking/signature、redacted thinking、reasoning summary、encrypted content、phase、usage 或未知扩展，也不参与后续请求编译。
-- Anthropic 当前只声明 streaming 与 thinking-signature 原生保留能力，OpenAI 当前只声明 streaming 与 encrypted reasoning 原生保留能力；P2 首个切片已经落地文本回合的 JSONL/Session/`--resume`，reasoning/tool projection、token estimator、tools、完整 Provider UsageParser/CachePlanner、usage/cache UI、prompt cache key、`previous_response_id`、`--print/--json` 和自动重试仍留在对应后续阶段。
+- Anthropic 当前只声明 streaming 与 thinking-signature 原生保留能力，OpenAI 当前只声明 streaming 与 encrypted reasoning 原生保留能力；P2 已落地文本回合的 JSONL Session、`--resume` 和单 turn `--print/--json`，reasoning/tool projection、token estimator、tools、完整 Provider UsageParser/CachePlanner、usage/cache UI、prompt cache key、`previous_response_id` 和自动重试仍留在对应后续阶段。
 - TUI 只消费 typed RuntimeEvent 和 ChatSession facade；本次不提前实现 Markdown、多行 composer、slash command、diff、permission overlay 或 session picker。
 
 #### OpenAI Responses（首要 Provider）
@@ -204,11 +204,11 @@ make verify
 
 ## 6. P2：Session 与 Headless Agent Loop
 
-### 6.0 当前进度（2026-09-28）
+### 6.0 当前进度（2026-09-29）
 
-已完成文本回合的 append-only JSONL 事实源、UUIDv7 定位、跨 Repository/跨进程 exclusive journal lease、单 writer/`Sync`、完整 batch、尾部修复、双 Provider opaque native commit、durable-before-memory 两阶段提交、进程重启恢复、`--resume`、不可变 v1 compatibility fixture 和历史 TUI 投影。API key、base URL、cwd 等动态配置不进入 Session，恢复时继续使用当前配置。
+已完成文本回合的 append-only JSONL 事实源、UUIDv7 定位、跨 Repository/跨进程 exclusive journal lease、单 writer/`Sync`、完整 batch、尾部修复、双 Provider opaque native commit、durable-before-memory 两阶段提交、进程重启恢复、`--resume`、不可变 v1 compatibility fixture 和历史 TUI 投影。单 turn headless 已提供 `--print` 最终文本与独立 JSONL v1 `--json`，支持位置参数/stdin、4 MiB 有界 UTF-8 输入、显式 resume、取消、断管清理和稳定 `0/1/2` 退出码；旧 transcript 不进入当前 headless 输出。API key、base URL、cwd 等动态配置不进入 Session，恢复时继续使用当前配置。
 
-P2 尚未完成：SQLite 可重建索引、session picker、`--continue`、`--print/--json`、queued/steered input、ContextPlanner/token estimator、完整 usage/cache 事实、tool ledger/result/artifact、fork/subagent 线程树、compaction checkpoint，以及未来 schema/payload revision 的版本专属转换。v1 compatibility fixture 已建立不代表通用 migration 已实现；当前进度不能视为 P2 退出。
+P2 尚未完成：SQLite 可重建索引、session picker、`--continue`、stdin JSON/双向控制、queued/steered input、ContextPlanner/token estimator、完整 usage/cache 事实与 headless 事件、tool ledger/result/artifact、fork/subagent 线程树、compaction checkpoint，以及未来 schema/payload revision 的版本专属转换。v1 compatibility fixture 已建立不代表通用 migration 已实现；当前进度不能视为 P2 退出。
 
 ### 6.1 目标
 
@@ -218,7 +218,7 @@ P2 尚未完成：SQLite 可重建索引、session picker、`--continue`、`--pr
 
 - `TurnRuntime<P>` 只模板化生命周期，不统一 provider-native history。
 - JSONL 作为事实源，SQLite 只做可重建索引。
-- RuntimeEvent 同时驱动 headless output 和 session projection。
+- RuntimeEvent 驱动 TUI 与 headless 的只读投影；Session 事实由 Runtime 在发布 durable terminal 前独立提交，外部 JSONL 不反向写入 Session。
 - 高频 text delta 默认不持久化，item/turn boundary 持久化。
 - ContextPlanner 输出有来源和稳定性标记的 segment，而不是直接拼 prompt。
 - token 估算和历史可读语义统一消费 `HistoryProjector` 输出，不能让 ContextPlanner 或 resume 各自解析 native item。
@@ -226,21 +226,21 @@ P2 尚未完成：SQLite 可重建索引、session picker、`--continue`、`--pr
 ### 6.3 工作内容
 
 - 已实现 text-only user input -> sample -> assistant output -> stop 的 turn loop；工具循环仍待 P3 接入。
-- 支持 queued/steered input 的基础语义。
-- 实现 context source、稳定排序和基于 SemanticHistoryView 的 token 估算接口。
+- queued/steered input 的基础语义仍待实现。
+- context source、稳定排序和基于 SemanticHistoryView 的 token 估算接口仍待实现。
 - 已实现 JSONL SessionMeta、native commit 和文本 turn boundary；完整 usage/cache 记录仍待实现。
 - 已实现由同一 exclusive lease 覆盖 load/repair、Provider 恢复、续写和最终关闭的跨进程单 writer，及 `Sync`、尾部半行/未完成尾批修复、v1 envelope/payload version 与不可变 v1 compatibility fixture；未来版本转换仍待真实 revision 出现时按版本实现。
 - 实现 SQLite session/thread/project 索引和重建。
-- 已实现 `--resume <thread-id>`；`--print`、`--json`、`--continue` 仍待实现。
+- 已实现 `--resume <thread-id>`、单 turn `--print` 与 JSONL v1 `--json`；`--continue` 和同一进程多次输入仍待实现。
 - 已实现当前文本 Chat 的用户中断、依赖有序 shutdown 和中断 turn 补偿；后台任务的完整 shutdown 随对应能力补充。
 - 提供 transcript/debug log 分离。
 
 ### 6.4 交付物
 
-- 可多轮运行的 headless coding chat。
+- 已交付可通过显式 resume 跨进程续写的单 turn headless 文本 chat；coding tools 与同进程 agent loop 尚未交付。
 - 已交付 session JSONL；`state.sqlite` 尚未交付。
 - 已交付显式 resume CLI；session list/continue 尚未交付。
-- 稳定 JSON event 输出协议尚未交付。
+- 已交付只包含 thread/turn/text/failure 的 JSONL v1；usage、reasoning、tool 与双向控制事件尚未交付。
 
 ### 6.5 验收标准
 
@@ -264,7 +264,7 @@ P2 尚未完成：SQLite 可重建索引、session picker、`--continue`、`--pr
 
 ### 6.7 退出条件
 
-两种 provider 的多轮、重启恢复、取消和 JSONL 修复测试已通过；SQLite 重建与 headless 输出协议测试通过后，P2 才满足退出条件。
+两种 provider 的多轮、重启恢复、取消、JSONL 修复和 headless 输出协议测试已通过；SQLite 重建及本阶段剩余 context/usage 能力通过后，P2 才满足退出条件。
 
 ## 7. P3：Coding Tools 与安全执行
 

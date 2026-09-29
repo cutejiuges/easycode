@@ -15,20 +15,6 @@ import (
 	"easycode/internal/domain"
 )
 
-var envelopeFields = map[string]bool{
-	"schema_version": true, "payload_version": true, "replay_requirement": true,
-	"seq": true, "timestamp": true, "session_id": true, "thread_id": true,
-	"parent_thread_id": true, "turn_id": true, "event_kind": true,
-	"batch_id": true, "batch_index": true, "batch_size": true,
-	"payload": true, "checksum": true,
-}
-
-var requiredEnvelopeFields = []string{
-	"schema_version", "payload_version", "replay_requirement", "seq", "timestamp",
-	"session_id", "thread_id", "event_kind", "batch_id", "batch_index",
-	"batch_size", "payload", "checksum",
-}
-
 type checksumEnvelope struct {
 	SchemaVersion     int                `json:"schema_version"`
 	PayloadVersion    int                `json:"payload_version"`
@@ -115,7 +101,12 @@ func DecodeRecord(line []byte) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
-	for _, field := range requiredEnvelopeFields {
+	requiredFields := [...]string{
+		"schema_version", "payload_version", "replay_requirement", "seq", "timestamp",
+		"session_id", "thread_id", "event_kind", "batch_id", "batch_index",
+		"batch_size", "payload", "checksum",
+	}
+	for _, field := range requiredFields {
 		if _, exists := members[field]; !exists {
 			return Record{}, fmt.Errorf("session record is missing required field")
 		}
@@ -168,14 +159,14 @@ func scanEnvelope(line []byte) (map[string]stdjson.RawMessage, error) {
 	if delimiter, ok := token.(stdjson.Delim); !ok || delimiter != '{' {
 		return nil, fmt.Errorf("session envelope must be an object")
 	}
-	members := make(map[string]stdjson.RawMessage, len(envelopeFields))
+	members := make(map[string]stdjson.RawMessage, 15)
 	for decoder.More() {
 		token, err = decoder.Token()
 		if err != nil {
 			return nil, fmt.Errorf("decode session envelope member: %w", err)
 		}
 		name, ok := token.(string)
-		if !ok || !envelopeFields[name] {
+		if !ok || !knownEnvelopeField(name) {
 			return nil, fmt.Errorf("session envelope contains an unknown field")
 		}
 		if _, duplicate := members[name]; duplicate {
@@ -195,6 +186,17 @@ func scanEnvelope(line []byte) (map[string]stdjson.RawMessage, error) {
 		return nil, fmt.Errorf("session envelope contains trailing JSON")
 	}
 	return members, nil
+}
+
+func knownEnvelopeField(name string) bool {
+	switch name {
+	case "schema_version", "payload_version", "replay_requirement", "seq", "timestamp",
+		"session_id", "thread_id", "parent_thread_id", "turn_id", "event_kind",
+		"batch_id", "batch_index", "batch_size", "payload", "checksum":
+		return true
+	default:
+		return false
+	}
 }
 
 func validateRecord(record Record, requireChecksum bool) error {

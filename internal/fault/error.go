@@ -11,13 +11,15 @@ type Code string
 
 const (
 	CodeInvalidConfiguration Code = "invalid_configuration"
+	CodeInvalidInput         Code = "invalid_input"
+	CodeInputRead            Code = "input_read_failed"
 	CodeProviderUnavailable  Code = "provider_unavailable"
 	CodeProviderRequest      Code = "provider_request_failed"
-	CodeNotImplemented       Code = "not_implemented"
 	CodeStreamProtocol       Code = "stream_protocol_error"
 	CodeStreamIdleTimeout    Code = "stream_idle_timeout"
 	CodeUserCancelled        Code = "user_cancelled"
 	CodeTurnFailed           Code = "turn_failed"
+	CodeOutput               Code = "output_failed"
 	CodeSessionWrite         Code = "session_write_failed"
 	CodeSessionCorruption    Code = "session_corruption"
 	CodeSessionIncompatible  Code = "session_incompatible"

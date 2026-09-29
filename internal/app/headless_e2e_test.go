@@ -1,0 +1,284 @@
+package app
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+
+	"easycode/internal/codec"
+	"easycode/internal/config"
+	"easycode/internal/domain"
+	"easycode/internal/fault"
+	"easycode/internal/headless"
+	"easycode/internal/secret"
+	"easycode/internal/session"
+)
+
+func TestHeadlessProvidersPreserveResumeRequestAndOutputBoundaries(t *testing.T) {
+	fixtures := []struct {
+		name        string
+		family      domain.ProviderFamily
+		model       string
+		serveTurn   func(io.Writer, int)
+		assertThird func(*testing.T, []byte)
+	}{
+		{name: "OpenAI Responses", family: domain.ProviderOpenAI, model: "gpt-test", serveTurn: writeOpenAIAppTurn, assertThird: assertOpenAIThirdRequest},
+		{name: "Anthropic Messages", family: domain.ProviderAnthropic, model: "claude-test", serveTurn: writeAnthropicAppTurn, assertThird: assertAnthropicThirdRequest},
+	}
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var requests [][]byte
+			logicalTurns := []int{1, 2, 1, 2, 3}
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				body, err := io.ReadAll(request.Body)
+				if err != nil {
+					t.Errorf("read request: %v", err)
+					return
+				}
+				mu.Lock()
+				requestIndex := len(requests)
+				requests = append(requests, append([]byte(nil), body...))
+				mu.Unlock()
+				writer.Header().Set("Content-Type", "text/event-stream")
+				fixture.serveTurn(writer, logicalTurns[requestIndex])
+			}))
+			defer server.Close()
+
+			providerConfig := config.Config{Provider: config.Provider{
+				Family: fixture.family, BaseURL: server.URL,
+				APIKey: secret.New("headless-e2e-secret"), Model: fixture.model,
+			}}
+			live, err := newChatResources(
+				context.Background(), providerConfig, filepath.Join(t.TempDir(), "live"), "", t.TempDir(),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			submitAppTurn(t, live, "first")
+			submitAppTurn(t, live, "second")
+			if err := live.close(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+
+			dataRoot := filepath.Join(t.TempDir(), "headless")
+			configPath := writeAppConfig(t, t.TempDir(), fixture.family, server.URL)
+			var firstOutput bytes.Buffer
+			first := Run(context.Background(), Options{
+				Mode: headless.ModeJSON, Prompt: "first", ConfigPath: configPath,
+				SessionDataRoot: dataRoot, Output: &firstOutput,
+			})
+			if first.ExitCode() != 0 {
+				t.Fatalf("first headless outcome = %#v", first)
+			}
+			started := decodeThreadStarted(t, firstOutput.String())
+			if started.Resumed || !started.SessionID.Valid() || !started.ThreadID.Valid() {
+				t.Fatalf("first thread.started = %#v", started)
+			}
+
+			var resumedOutput bytes.Buffer
+			resumed := Run(context.Background(), Options{
+				Mode: headless.ModeJSON, Prompt: "second", ConfigPath: configPath,
+				ResumeThreadID: string(started.ThreadID), SessionDataRoot: dataRoot, Output: &resumedOutput,
+			})
+			if resumed.ExitCode() != 0 {
+				t.Fatalf("resumed JSON outcome = %#v", resumed)
+			}
+			resumedStarted := decodeThreadStarted(t, resumedOutput.String())
+			if !resumedStarted.Resumed || resumedStarted.SessionID != started.SessionID || resumedStarted.ThreadID != started.ThreadID {
+				t.Fatalf("resumed thread.started = %#v, first = %#v", resumedStarted, started)
+			}
+			if strings.Contains(resumedOutput.String(), "answer-1") || !strings.Contains(resumedOutput.String(), "answer-2") {
+				t.Fatalf("resumed JSON replayed or omitted text: %s", resumedOutput.String())
+			}
+
+			var textOutput bytes.Buffer
+			third := Run(context.Background(), Options{
+				Mode: headless.ModeText, Prompt: "third", ConfigPath: configPath,
+				ResumeThreadID: string(started.ThreadID), SessionDataRoot: dataRoot, Output: &textOutput,
+			})
+			if third.ExitCode() != 0 || textOutput.String() != "answer-3\n" {
+				t.Fatalf("third outcome/output = %#v/%q", third, textOutput.String())
+			}
+
+			mu.Lock()
+			captured := make([][]byte, len(requests))
+			for index := range requests {
+				captured[index] = append([]byte(nil), requests[index]...)
+			}
+			mu.Unlock()
+			if len(captured) != 5 {
+				t.Fatalf("request count = %d", len(captured))
+			}
+			if !bytes.Equal(captured[1], captured[3]) {
+				t.Fatalf("uninterrupted and restored request bytes differ\nlive: %s\nrestored: %s", captured[1], captured[3])
+			}
+			fixture.assertThird(t, captured[4])
+
+			loaded := loadHeadlessJournal(t, dataRoot, started.ThreadID)
+			if len(loaded.Records) != 11 || loaded.NextSequence != 12 {
+				t.Fatalf("records/next = %d/%d", len(loaded.Records), loaded.NextSequence)
+			}
+			for index, record := range loaded.Records {
+				if record.Sequence != uint64(index+1) || strings.Contains(string(record.EventKind), ".") {
+					t.Fatalf("record[%d] = %#v", index, record)
+				}
+			}
+		})
+	}
+}
+
+func TestHeadlessJSONBrokenPipeCancelsAndReleasesLease(t *testing.T) {
+	requestStarted := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n")
+		if flusher, ok := writer.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		close(requestStarted)
+		<-request.Context().Done()
+	}))
+	defer server.Close()
+
+	dataRoot := filepath.Join(t.TempDir(), "sessions")
+	configPath := writeAppConfig(t, t.TempDir(), domain.ProviderOpenAI, server.URL)
+	writer := &failOnHeadlessWrite{failCall: 3}
+	outcome := Run(context.Background(), Options{
+		Mode: headless.ModeJSON, Prompt: "hello", ConfigPath: configPath,
+		SessionDataRoot: dataRoot, Output: writer,
+	})
+	<-requestStarted
+	if outcome.ExitCode() != 1 || outcome.Report != ReportOutputUnavailable || outcome.Failure.Code != fault.CodeOutput {
+		t.Fatalf("broken pipe outcome = %#v", outcome)
+	}
+	started := decodeThreadStarted(t, writer.buffer.String())
+	loaded := loadHeadlessJournal(t, dataRoot, started.ThreadID)
+	if len(loaded.Records) != 4 || loaded.Records[len(loaded.Records)-1].EventKind != session.EventTurnFailed {
+		t.Fatalf("broken pipe records = %#v", loaded.Records)
+	}
+	for _, record := range loaded.Records {
+		if record.EventKind == session.EventProviderNativeCommit || record.EventKind == session.EventTurnCompleted {
+			t.Fatalf("broken pipe committed success: %#v", record)
+		}
+	}
+}
+
+func TestHeadlessProviderFailureDoesNotPublishPartialText(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		http.Error(writer, "provider-private-body", http.StatusBadGateway)
+	}))
+	defer server.Close()
+	var output bytes.Buffer
+	outcome := Run(context.Background(), Options{
+		Mode: headless.ModeText, Prompt: "hello",
+		ConfigPath:      writeAppConfig(t, t.TempDir(), domain.ProviderOpenAI, server.URL),
+		SessionDataRoot: filepath.Join(t.TempDir(), "sessions"), Output: &output,
+	})
+	if outcome.ExitCode() != 1 || output.Len() != 0 || outcome.Failure.Code != fault.CodeProviderRequest {
+		t.Fatalf("provider failure outcome/output = %#v/%q", outcome, output.String())
+	}
+	if strings.Contains(outcome.Failure.Message, "provider-private-body") {
+		t.Fatalf("provider failure leaked body: %#v", outcome)
+	}
+}
+
+func TestHeadlessCancellationWaitsForDurableFailureAndReleasesLease(t *testing.T) {
+	requestStarted := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		if flusher, ok := writer.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		close(requestStarted)
+		<-request.Context().Done()
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	dataRoot := filepath.Join(t.TempDir(), "sessions")
+	configPath := writeAppConfig(t, t.TempDir(), domain.ProviderOpenAI, server.URL)
+	var output bytes.Buffer
+	result := make(chan Outcome, 1)
+	go func() {
+		result <- Run(ctx, Options{
+			Mode: headless.ModeJSON, Prompt: "cancel me",
+			ConfigPath:      configPath,
+			SessionDataRoot: dataRoot, Output: &output,
+		})
+	}()
+	<-requestStarted
+	cancel()
+	outcome := <-result
+	if outcome.ExitCode() != 1 || outcome.Report != ReportComplete ||
+		outcome.Failure.Code != fault.CodeUserCancelled || !outcome.Failure.Cancelled {
+		t.Fatalf("cancel outcome = %#v", outcome)
+	}
+	if strings.Count(output.String(), `"type":"turn.failed"`) != 1 ||
+		!strings.Contains(output.String(), `"code":"user_cancelled"`) ||
+		!strings.Contains(output.String(), `"cancelled":true`) {
+		t.Fatalf("cancel JSONL = %s", output.String())
+	}
+	started := decodeThreadStarted(t, output.String())
+	loaded := loadHeadlessJournal(t, dataRoot, started.ThreadID)
+	if loaded.Records[len(loaded.Records)-1].EventKind != session.EventTurnFailed {
+		t.Fatalf("cancel records = %#v", loaded.Records)
+	}
+}
+
+func decodeThreadStarted(t *testing.T, output string) headless.ThreadStartedEvent {
+	t.Helper()
+	line, _, _ := strings.Cut(output, "\n")
+	var event headless.ThreadStartedEvent
+	if err := codec.UnmarshalStrict([]byte(line), &event); err != nil {
+		t.Fatalf("decode thread.started from %q: %v", output, err)
+	}
+	if event.Version != 1 || event.Type != "thread.started" {
+		t.Fatalf("first event = %#v", event)
+	}
+	return event
+}
+
+func loadHeadlessJournal(t *testing.T, dataRoot string, threadID domain.ThreadID) session.LoadResult {
+	t.Helper()
+	repository, err := session.NewRepository(dataRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := repository.Open(context.Background(), threadID)
+	if err != nil {
+		t.Fatalf("open released headless lease: %v", err)
+	}
+	loaded, err := session.NewLoader().Load(context.Background(), lease)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return loaded
+}
+
+type failOnHeadlessWrite struct {
+	buffer   bytes.Buffer
+	calls    int
+	failCall int
+}
+
+func (writer *failOnHeadlessWrite) Write(content []byte) (int, error) {
+	writer.calls++
+	if writer.calls == writer.failCall {
+		return 0, errors.New("fixture broken pipe secret")
+	}
+	return writer.buffer.Write(content)
+}

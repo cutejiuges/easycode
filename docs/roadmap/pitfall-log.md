@@ -225,6 +225,21 @@
 - 关联 ADR/Issue/PR：ADR-0002、ADR-0003；OpenSpec `add-jsonl-session-resume`。
 - 后续行动：tool result 和其他副作用沿用同一 durable-before-memory 原则；compaction/fork 未来只能 append checkpoint/cursor 与 child metadata，不得重写原日志。该能力当前尚未实现。
 
+### [P2][2026-09-29] 机器 stdout 不能直接复用内部 RuntimeEvent
+
+- 状态：已解决当前文本 headless 切片
+- 影响版本或提交：OpenSpec `add-headless-text-output`
+- 现象：直接输出 RuntimeEvent 会暴露 timestamp、opaque payload 和未实现 kind；文本 delta 边到边写又会让失败的 shell 命令留下看似成功的部分结果。stdout 写失败后若继续输出错误对象，还会形成不可解析的混合或半行协议。
+- 触发条件：为 `--print/--json` 复用 TUI event envelope、从 transcript 提取最终答案，或让多个 goroutine 直接写 stdout。
+- 根因：进程内宿主协议、Session 事实源和外部机器协议具有不同兼容性、提交时机与清理责任，不能因都使用 JSON 就合并。
+- 架构影响：`internal/headless` 与 TUI 平级，只消费最小 `ChatSession`；JSONL v1 使用独立封闭 event union、严格身份/顺序校验和单 writer 背压。文本结果晚于 durable `turn_completed` 与 stream 闭合；app outcome 区分已报告终态和 stdout 失效，避免 cmd 重复输出。
+- 缓存影响：headless 不读取 `SemanticHistoryView` 构造请求，也不把输出事件写入 Session；双 Provider 回归证明 uninterrupted 与 restored 的下一请求 canonical bytes 和 fingerprint 等价。
+- 修复方案：在装配前完成 4 MiB 有界 UTF-8 prompt 解析；JSON encoder 先生成完整单行 object 再处理短写，首次失败后永久停用 stdout；取消和断管都执行一次 Interrupt 并 drain Runtime，再按唯一 owner 顺序释放 journal lease 和 Provider。
+- 未采用方案及原因：不直接 marshal RuntimeEvent，不抓取 TUI transcript，不安装全局 stdout guard，也不提前声明 usage/reasoning/tool 机器事件；这些方案会固化内部字段、污染 stdout 或暴露没有完整 producer/persistence 的能力。
+- 回归测试：`internal/headless/*_test.go`、`internal/app/headless_e2e_test.go`、`cmd/easycode/main_test.go`、双 Provider restore/fingerprint tests。
+- 关联 ADR/Issue/PR：OpenSpec `add-headless-text-output`。
+- 后续行动：新增外部事件必须通过 OpenSpec 演进 JSONL version/fixture；stdin JSON、双向控制、usage/reasoning/tool 事件和 `--continue` 仍未实现。
+
 重点关注：JSONL 尾部损坏、事件顺序、取消时 flush、SQLite 重建和 native history 恢复。
 
 ## 6. P3 Coding Tools 与安全执行

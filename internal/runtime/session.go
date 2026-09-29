@@ -17,8 +17,8 @@ type ChatSession struct {
 	active bool
 	closed bool
 	cancel context.CancelFunc
+	done   chan struct{}
 	stop   chan struct{}
-	wait   sync.WaitGroup
 }
 
 // NewChatSession 创建会话 facade。
@@ -44,12 +44,13 @@ func (session *ChatSession) Submit(text string) (<-chan protocol.Event, error) {
 
 	turnContext, cancel := context.WithCancel(context.Background())
 	events := make(chan protocol.Event)
+	done := make(chan struct{})
 	session.active = true
 	session.cancel = cancel
-	session.wait.Add(1)
+	session.done = done
 	session.mu.Unlock()
 
-	go session.runTurn(turnContext, text, events)
+	go session.runTurn(turnContext, text, events, done)
 	return events, nil
 }
 
@@ -57,9 +58,19 @@ func (session *ChatSession) runTurn(
 	ctx context.Context,
 	text string,
 	events chan<- protocol.Event,
+	done chan struct{},
 ) {
-	defer close(events)
-	defer session.wait.Done()
+	defer func() {
+		session.mu.Lock()
+		session.active = false
+		session.cancel = nil
+		if session.done == done {
+			session.done = nil
+		}
+		session.mu.Unlock()
+		close(events)
+		close(done)
+	}()
 
 	var terminal *protocol.Event
 	_ = session.runtime.RunTurn(ctx, provider.TurnInput{Text: text}, func(event protocol.Event) {
@@ -73,11 +84,6 @@ func (session *ChatSession) runTurn(
 		case <-session.stop:
 		}
 	})
-
-	session.mu.Lock()
-	session.active = false
-	session.cancel = nil
-	session.mu.Unlock()
 
 	if terminal != nil {
 		select {
@@ -105,18 +111,17 @@ func (session *ChatSession) Shutdown(ctx context.Context) error {
 		close(session.stop)
 	}
 	cancel := session.cancel
+	done := session.done
 	session.mu.Unlock()
 
 	if cancel != nil {
 		cancel()
 	}
-	waitDone := make(chan struct{})
-	go func() {
-		session.wait.Wait()
-		close(waitDone)
-	}()
+	if done == nil {
+		return nil
+	}
 	select {
-	case <-waitDone:
+	case <-done:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()

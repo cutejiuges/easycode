@@ -14,27 +14,13 @@ const CurrentVersion = 1
 type EventKind string
 
 const (
-	EventSessionStarted         EventKind = "session_started"
-	EventTurnStarted            EventKind = "turn_started"
-	EventAssistantItemStarted   EventKind = "assistant_item_started"
-	EventAssistantTextDelta     EventKind = "assistant_text_delta"
-	EventReasoningStarted       EventKind = "reasoning_started"
-	EventReasoningDelta         EventKind = "reasoning_delta"
-	EventReasoningSectionBreak  EventKind = "reasoning_section_break"
-	EventToolCallStarted        EventKind = "tool_call_started"
-	EventToolInputDelta         EventKind = "tool_input_delta"
-	EventToolCallReady          EventKind = "tool_call_ready"
-	EventPatchDraftUpdated      EventKind = "patch_draft_updated"
-	EventToolExecutionStarted   EventKind = "tool_execution_started"
-	EventToolProgress           EventKind = "tool_progress"
-	EventToolExecutionCompleted EventKind = "tool_execution_completed"
-	EventUsageUpdated           EventKind = "usage_updated"
-	EventContextCompacted       EventKind = "context_compacted"
-	EventTurnCompleted          EventKind = "turn_completed"
-	EventTurnFailed             EventKind = "turn_failed"
+	EventTurnStarted        EventKind = "turn_started"
+	EventAssistantTextDelta EventKind = "assistant_text_delta"
+	EventTurnCompleted      EventKind = "turn_completed"
+	EventTurnFailed         EventKind = "turn_failed"
 )
 
-// Event 是 TUI、headless、Session 和 telemetry 共同消费的语义事件信封。
+// Event 是 TUI、headless 和其他宿主共同消费的进程内语义事件信封。
 type Event struct {
 	Version   int              `json:"version"`
 	Kind      EventKind        `json:"kind"`
@@ -47,8 +33,7 @@ type Event struct {
 	Payload   json.RawMessage  `json:"payload,omitempty"`
 }
 
-// NewEvent 创建带当前协议版本和 UTC 时间的事件。
-func NewEvent(kind EventKind) Event {
+func newEvent(kind EventKind) Event {
 	return Event{
 		Version:   CurrentVersion,
 		Kind:      kind,
