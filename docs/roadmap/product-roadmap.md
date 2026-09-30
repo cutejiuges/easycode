@@ -1,7 +1,7 @@
 # EasyCode 产品与工程 Roadmap
 
 > 状态：持续演进（P2 进行中）
-> 更新时间：2026-09-29
+> 更新时间：2026-09-30
 > 依赖设计：[`../architecture/overall-architecture.md`](../architecture/overall-architecture.md)
 
 ## 1. Roadmap 使用方式
@@ -204,11 +204,13 @@ make verify
 
 ## 6. P2：Session 与 Headless Agent Loop
 
-### 6.0 当前进度（2026-09-29）
+### 6.0 当前进度（2026-09-30）
 
-已完成文本回合的 append-only JSONL 事实源、sealed typed v1 draft/strict decoder、UUIDv7 定位、跨 Repository/跨进程 exclusive journal lease、macOS/Linux descriptor-relative secure path walker、单 writer/`Sync`、完整 batch、尾部修复、双 Provider opaque native commit、durable-before-memory 两阶段提交及提交前 sample 重验、进程重启恢复、`--resume`、不可变 v1 compatibility fixture 和历史 TUI 投影。Provider request 由各自 compiler 生成不可变 canonical JSON，transport 不再二次序列化；OpenAI stream 绑定 `response.created` identity。单 turn headless 已提供 `--print` 最终文本与独立 JSONL v1 `--json`，支持位置参数/stdin、4 MiB 有界 UTF-8 输入、显式 resume、取消、断管清理和稳定 `0/1/2` 退出码；旧 transcript 不进入当前 headless 输出。API key、base URL、cwd 等动态配置不进入 Session，恢复时继续使用当前配置。
+已完成文本回合的 append-only JSONL 事实源、sealed typed v1 draft/strict decoder、UUIDv7 定位、跨 Repository/跨进程 exclusive journal lease、macOS/Linux descriptor-relative secure path walker、单 writer/`Sync`、完整 batch、尾部修复、双 Provider opaque native commit、durable-before-memory 两阶段提交及提交前 sample 重验、进程重启恢复、`--resume`、不可变 v1 compatibility fixture 和历史 TUI 投影。Provider request 由各自 compiler 生成不可变 canonical JSON，transport 不再二次序列化；OpenAI stream 绑定 `response.created` identity。单 turn headless 已提供 `--print` 最终文本与独立 JSONL v1 `--json`，支持位置参数/stdin、4 MiB 有界 UTF-8 输入、显式 resume、`--continue`、取消、断管清理和稳定 `0/1/2` 退出码；旧 transcript 不进入当前 headless 输出。API key、base URL、cwd 等动态配置不进入 Session，恢复时继续使用当前配置。
 
-P2 尚未完成：SQLite 可重建索引、session picker、`--continue`、stdin JSON/双向控制、queued/steered input、ContextPlanner/token estimator、完整 usage/cache 事实与 headless 事件、tool ledger/result/artifact、fork/subagent 线程树、compaction checkpoint，以及未来 schema/payload revision 的版本专属转换。v1 compatibility fixture 已建立不代表通用 migration 已实现；当前进度不能视为 P2 退出。
+可重建 SQLite Catalog v1 已交付：前台 reconciliation 通过 descriptor-relative journal 枚举、逐条 exclusive lease、Loader/ReplayPlanner/Projector 和短 SQLite transaction 重建最小 thread metadata；缺失、损坏或不兼容的 `state.sqlite` 可从 JSONL 原子重建。`--continue` 只选择当前 cwd、Provider family/wire 与 model 完全匹配的最近 root Session，随后仍由既有 resume 路径重新取得 lease并验证事实源。Catalog 不保存 prompt、response、native payload、API key、base URL 或 Authorization。
+
+P2 尚未完成：session picker、worktree/project catalog、title/tag/search、实时索引、stdin JSON/双向控制、queued/steered input、ContextPlanner/token estimator、完整 usage/cache 事实与 headless 事件、tool ledger/result/artifact、fork/subagent 线程树、compaction checkpoint，以及未来 schema/payload revision 的版本专属转换。v1 compatibility fixture 已建立不代表通用 migration 已实现；当前进度不能视为 P2 退出。
 
 本次 P2 基础契约强化还加入语义分支脚本、本地 hooks、GitHub Actions jobs 和集中式架构守卫。GitHub `main` ruleset 的 required checks 与 direct-push 禁止仍须管理员在仓库外启用。secure config/session opener 当前只在 macOS/Linux 提供等价语义；Windows 等目标可以编译，但相关运行路径明确失败关闭，平台实现与兼容矩阵留在 P8。
 
@@ -232,8 +234,8 @@ P2 尚未完成：SQLite 可重建索引、session picker、`--continue`、stdin
 - context source、稳定排序和基于 SemanticHistoryView 的 token 估算接口仍待实现。
 - 已实现 JSONL SessionMeta、native commit 和文本 turn boundary；完整 usage/cache 记录仍待实现。
 - 已实现由同一 exclusive lease 覆盖 load/repair、Provider 恢复、续写和最终关闭的跨进程单 writer，及 `Sync`、尾部半行/未完成尾批修复、v1 envelope/payload version 与不可变 v1 compatibility fixture；未来版本转换仍待真实 revision 出现时按版本实现。
-- 实现 SQLite session/thread/project 索引和重建。
-- 已实现 `--resume <thread-id>`、单 turn `--print` 与 JSONL v1 `--json`；`--continue` 和同一进程多次输入仍待实现。
+- 已实现 SQLite Catalog v1 的 root thread 最小索引、全量前台 reconciliation 与损坏/不兼容数据库重建；project/worktree、title/tag/search、实时索引和 thread graph 仍待实现。
+- 已实现 `--resume <thread-id>`、`--continue`、单 turn `--print` 与 JSONL v1 `--json`；同一进程多次输入仍待实现。
 - 已实现当前文本 Chat 的用户中断、依赖有序 shutdown 和中断 turn 补偿；后台任务的完整 shutdown 随对应能力补充。
 - 提供 transcript/debug log 分离。
 - 已将 Tool/extension/Subagent/telemetry 与未来 RuntimeCommand/ItemID/CallID 明确标记为 P2/P3/P6/P7/P8 临时 TODO allowlist；除列表外禁止新增占位，且这些包当前不得接入 Runtime/app。
@@ -241,8 +243,8 @@ P2 尚未完成：SQLite 可重建索引、session picker、`--continue`、stdin
 ### 6.4 交付物
 
 - 已交付可通过显式 resume 跨进程续写的单 turn headless 文本 chat；coding tools 与同进程 agent loop 尚未交付。
-- 已交付 session JSONL；`state.sqlite` 尚未交付。
-- 已交付显式 resume CLI；session list/continue 尚未交付。
+- 已交付 session JSONL 与可从 JSONL 重建的 `state.sqlite` Catalog v1。
+- 已交付显式 resume 与兼容性精确匹配的 `--continue`；可视化 session picker/list 尚未交付。
 - 已交付只包含 thread/turn/text/failure 的 JSONL v1；usage、reasoning、tool 与双向控制事件尚未交付。
 
 ### 6.5 验收标准
@@ -267,7 +269,7 @@ P2 尚未完成：SQLite 可重建索引、session picker、`--continue`、stdin
 
 ### 6.7 退出条件
 
-两种 provider 的多轮、重启恢复、取消、JSONL 修复和 headless 输出协议测试已通过；SQLite 重建及本阶段剩余 context/usage 能力通过后，P2 才满足退出条件。
+两种 provider 的多轮、重启恢复、取消、JSONL 修复、SQLite 重建、`--continue` 和 headless 输出协议测试已通过；本阶段剩余 context/usage 等能力通过后，P2 才满足退出条件。
 
 ## 7. P3：Coding Tools 与安全执行
 

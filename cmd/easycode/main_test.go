@@ -26,8 +26,20 @@ func TestRunHelpShowsConfigDefault(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "--config") || !strings.Contains(output.String(), "~/.config/easycode/config.json") ||
 		!strings.Contains(output.String(), "--resume") || !strings.Contains(output.String(), "-json") ||
-		strings.Contains(output.String(), "--continue") {
+		!strings.Contains(output.String(), "-continue") {
 		t.Fatalf("help output: %q", output.String())
+	}
+}
+
+func TestRunRejectsConflictingSessionSelectorsBeforeConfigurationAndPrompt(t *testing.T) {
+	var output bytes.Buffer
+	var errorOutput bytes.Buffer
+	exitCode := run(
+		context.Background(), []string{"--print", "--resume", "thread", "--continue"},
+		strings.NewReader("prompt-that-must-not-be-read"), &output, &errorOutput, false,
+	)
+	if exitCode != 2 || output.Len() != 0 || !strings.Contains(errorOutput.String(), "mutually exclusive") {
+		t.Fatalf("conflict exit=%d output=%q error=%q", exitCode, output.String(), errorOutput.String())
 	}
 }
 
@@ -93,6 +105,42 @@ func TestRunInvalidResumeDoesNotCreateReplacementJournal(t *testing.T) {
 	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err == nil && entry != nil && !entry.IsDir() && strings.HasSuffix(entry.Name(), ".jsonl") {
 			t.Fatalf("invalid resume created replacement journal %q", path)
+		}
+		return nil
+	})
+}
+
+func TestRunContinueWithoutCandidateReturnsNotFoundWithoutJournal(t *testing.T) {
+	clearCLIEnvironment(t)
+	home := t.TempDir()
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	home, err := filepath.EvalSymlinks(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("EASYCODE_PROVIDER", "openai")
+	t.Setenv("EASYCODE_BASE_URL", "https://example.invalid/v1")
+	t.Setenv("EASYCODE_API_KEY", "continue-secret")
+	t.Setenv("EASYCODE_MODEL", "gpt-test")
+	var output bytes.Buffer
+	var errorOutput bytes.Buffer
+	exitCode := run(
+		context.Background(), []string{"--print", "--continue", "hello"}, strings.NewReader(""),
+		&output, &errorOutput, true,
+	)
+	if exitCode != 1 || output.Len() != 0 || !strings.Contains(errorOutput.String(), "session_not_found") {
+		t.Fatalf("continue exit=%d output=%q error=%q", exitCode, output.String(), errorOutput.String())
+	}
+	if strings.Contains(errorOutput.String(), "continue-secret") {
+		t.Fatalf("continue leaked secret: %q", errorOutput.String())
+	}
+	root := filepath.Join(home, ".easycode", "sessions")
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err == nil && entry != nil && !entry.IsDir() && strings.HasSuffix(entry.Name(), ".jsonl") {
+			t.Fatalf("continue without candidate created journal %q", path)
 		}
 		return nil
 	})

@@ -130,7 +130,8 @@ internal/
   tool/                     P3 目标：ToolSpec、Executor、Policy、Scheduler
     builtin/                P3 目标：read/edit/write/grep/glob/bash/patch/plan 等
   context/                  上下文分层、token budget、compact、cache plan
-  session/                  JSONL、artifact、resume/fork、SQLite projection
+  session/                  JSONL、artifact、resume/fork
+    catalog/                可重建 SQLite Catalog 与前台 reconciliation
   extension/                P6 目标：hooks、skills、plugins、MCP
   subagent/                 P7 目标：thread tree、mailbox、后台任务和限流
   tui/                      Bubble Tea、输入、消息 view、overlay 和 diff
@@ -181,7 +182,7 @@ cmd      -> app
 | Schema | 强类型 ToolSchema + 稳定 canonicalizer | 控制工具 schema 顺序和缓存字节，避免反射输出漂移 |
 | CLI | 标准库 `flag` 起步，复杂子命令出现后再评估 Cobra | 首版减少依赖和空壳命令层 |
 | TUI | `github.com/charmbracelet/bubbletea` | Elm 风格状态更新适合 RuntimeEvent projection 和可测试交互 |
-| 数据库 | `database/sql` + pure-Go SQLite driver | JSONL 事实源之上的本地索引，保持跨平台单二进制 |
+| 数据库 | `github.com/ncruces/go-sqlite3 v0.32.0` | JSONL 事实源之上的本地索引；纯 Go、无 CGO，并由独立 adapter 固定安全打开与事务语义 |
 | 日志 | 标准库 `log/slog` | 结构化字段、分组、handler 和敏感字段过滤 |
 | ID | UUID v7 实现 | 全局唯一且大致按时间有序 |
 | Secret | 自定义不可打印值对象 | 防止 String/GoString/日志意外泄漏 |
@@ -440,7 +441,7 @@ TurnFailed
 
 `--print` 在内存中聚合文本，仅在 Runtime 已 durable 发布 `turn_completed` 且事件流正常闭合后输出最终值。`--json` 可实时输出 delta，但同样不从 channel close 或已见文本推断成功。取消、短写和断管会触发幂等 Interrupt 并 drain Runtime；已 durable 完成后的输出失败只改变进程交付状态，不回滚 Session。
 
-headless prompt 在应用装配前解析：无位置参数或显式 `-` 时读取 stdin；显式 prompt 与非终端 stdin 同时存在时使用稳定 `<stdin>` 边界追加；组合内容必须是合法 UTF-8、非空且不超过 4 MiB。当前不支持 stdin JSON、双向控制、同进程多 turn、usage/reasoning/tool 事件或 `--continue`。
+headless prompt 在应用装配前解析：无位置参数或显式 `-` 时读取 stdin；显式 prompt 与非终端 stdin 同时存在时使用稳定 `<stdin>` 边界追加；组合内容必须是合法 UTF-8、非空且不超过 4 MiB。`--continue` 会在当前 cwd、Provider family/wire 和 model 完全匹配时恢复最近 root Session，并与 `--resume` 互斥。当前仍不支持 stdin JSON、双向控制、同进程多 turn 或 usage/reasoning/tool 事件。
 
 ### 7.3 Provider StreamReducer
 
@@ -627,14 +628,27 @@ Headless JSONL v1 是 stdout 外部协议，不是 Session record：不得写入
 
 ### 10.3 SQLite projection
 
-SQLite 不是模型历史的唯一事实源，只负责：
+`internal/session/catalog` 是 JSONL 事实源之上的可重建投影边界。当前 schema v1 只包含 `threads` 表及 continue 组合索引，保存 root thread 的 session/thread identity、journal 相对定位、创建 cwd、Provider family/wire、model、最后 committed record 的 timestamp/seq/checksum；不保存 prompt、response、native payload、title、tag、worktree 或全文搜索内容。
 
-- session/thread 元数据索引。
-- project、cwd、title、tag、时间和 provider 检索。
-- parent-child agent graph。
-- 可选的日志索引和全文搜索。
+Catalog 只在 `--continue` 路径按以下顺序工作：
 
-SQLite 可以从 JSONL 重建。数据库损坏不应导致 transcript 永久丢失。
+```text
+Open Catalog lock
+  -> descriptor-safe enumerate journals
+  -> 对每个候选依次取得一个 Repository lease
+  -> Loader / ReplayPlanner / Projector
+  -> 释放该 lease
+  -> 单次短 SQLite transaction 做 upsert/delete
+  -> latest-compatible 精确选择
+  -> Close Catalog
+  -> 使用选中的 thread ID 进入既有 sessionService.resume
+```
+
+全部 journal 文件 I/O 在 SQLite transaction 外完成；协调过程不启动后台 goroutine，也不会同时持有多个 journal lease。busy 的已索引行保持原值，未索引 busy thread 会阻止自动选择，避免静默跳到更旧会话。真正缺失或无效 journal 的旧行会删除；可修复尾部只能在 exclusive lease 下 truncate 并 `Sync`。
+
+`state.sqlite.lock` 为 schema、重建和 reconciliation 提供跨进程唯一 owner。Unix adapter 从实际打开的 handle 校验私有 data home、数据库、rollback journal 与 sidecar 的普通文件类型和 `0600` 权限，并使用 no-follow 打开；无法提供等价语义的平台失败关闭。数据库缺失、损坏或 schema 不兼容时，在同一 Catalog 锁下从 JSONL 构建临时数据库，`Sync` 后原子替换。
+
+选择结果不是恢复事实：Catalog 关闭后，app 仍通过既有 `sessionService.resume` 重新取得 journal lease并完整执行 load、repair、ReplayPlanner、Provider-native restore 与兼容性校验。选择和恢复之间发生占用、替换、损坏或配置不兼容时直接失败，不回退旧 thread。session picker、worktree/project catalog、title/tag、全文搜索、实时索引和 thread graph 仍属后续能力。
 
 ### 10.4 写入与权限
 
@@ -646,7 +660,7 @@ SQLite 可以从 JSONL 重建。数据库损坏不应导致 transcript 永久丢
 - 当前 `--resume <thread-id>` 通过日期编码的 UUIDv7 定位文件，恢复 native history 和只读语义视图；不恢复旧 API key、base URL、cwd 或其他动态 world state。
 - 仓库已建立不可变 v1 compatibility fixture，用于验证当前 Loader/ReplayPlanner 的读取、续写 prefix 不变和双 Provider 恢复等价性；未来 schema/payload revision 的版本专属转换仍未实现，不在 resume 时原地改写既有 records。
 - exclusive lease 是协作进程间的 advisory lock，不能阻止旧版 EasyCode 或非协作进程绕过锁直接写文件；混合版本运行前必须确保目标 thread 没有其他 owner，绕过锁产生的损坏继续由 checksum、seq 和完整回放校验发现。
-- SQLite 投影、session picker、`--continue`、tool ledger/artifact 和未来 schema 转换尚未实现。
+- SQLite Catalog v1 与 `--continue` 已实现；session picker、worktree/project catalog、title/tag、搜索、实时索引、tool ledger/artifact 和未来 schema 转换尚未实现。
 - 未来 compaction/fork 只能追加 checkpoint/cursor 和 child-thread 元数据，原始 JSONL 继续保留；不得重写、截短或把 summary 伪装成原生历史。该能力目前仅有约束，尚未实现。
 - artifact 文件路径必须防止目录穿越。
 
@@ -824,7 +838,7 @@ session -> turn -> sampling attempt -> provider request
 - hooks、skills、plugins、MCP 生命周期。
 - subagent 并发、限制和取消传播。
 
-以上条目按对应 Roadmap 阶段启用。当前已落地双 Provider 文本 stream、Session/restore/headless、descriptor-bound 配置与 journal 安全、迁移 fixture，以及架构静态门禁；不得把未来条目视作现有测试覆盖。
+以上条目按对应 Roadmap 阶段启用。当前已落地双 Provider 文本 stream、Session/restore/headless、可重建 SQLite Catalog 与 `--continue`、descriptor-bound 配置与 journal 安全、迁移 fixture，以及架构静态门禁；不得把未来条目视作现有测试覆盖。
 
 ### 16.4 TUI 测试
 

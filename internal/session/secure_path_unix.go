@@ -3,13 +3,19 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
 
+	"easycode/internal/domain"
 	"golang.org/x/sys/unix"
 )
 
@@ -155,6 +161,165 @@ func (root *secureRoot) openJournal(
 	file := os.NewFile(uintptr(fd), name)
 	callSecurePathHook(root.hooks.afterOpenJournal, relative)
 	return file, nil
+}
+
+func (root *secureRoot) enumerateJournals(ctx context.Context) ([]JournalLocation, error) {
+	years, err := readDirectoryNames(root.file)
+	if err != nil {
+		return nil, fmt.Errorf("read session data root: %w", err)
+	}
+	locations := make([]JournalLocation, 0)
+	for _, year := range years {
+		yearMatches, yearValid := classifyDecimalComponent(year, 4, 1, 9999)
+		if !yearMatches {
+			continue
+		}
+		if !yearValid {
+			return nil, fmt.Errorf("session year directory is invalid")
+		}
+		yearDirectory, openErr := root.openDirectory(year, false)
+		if openErr != nil {
+			return nil, openErr
+		}
+		months, readErr := readDirectoryNames(yearDirectory)
+		_ = yearDirectory.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("read session year directory: %w", readErr)
+		}
+		for _, month := range months {
+			monthMatches, monthValid := classifyDecimalComponent(month, 2, 1, 12)
+			if !monthMatches {
+				continue
+			}
+			if !monthValid {
+				return nil, fmt.Errorf("session month directory is invalid")
+			}
+			yearMonth := path.Join(year, month)
+			monthDirectory, monthErr := root.openDirectory(yearMonth, false)
+			if monthErr != nil {
+				return nil, monthErr
+			}
+			days, dayReadErr := readDirectoryNames(monthDirectory)
+			_ = monthDirectory.Close()
+			if dayReadErr != nil {
+				return nil, fmt.Errorf("read session month directory: %w", dayReadErr)
+			}
+			for _, day := range days {
+				dayMatches, _ := classifyDecimalComponent(day, 2, 1, 31)
+				if !dayMatches {
+					continue
+				}
+				if !validDateComponents(year, month, day) {
+					return nil, fmt.Errorf("session day directory is invalid")
+				}
+				yearMonthDay := path.Join(yearMonth, day)
+				dayDirectory, dayErr := root.openDirectory(yearMonthDay, false)
+				if dayErr != nil {
+					return nil, dayErr
+				}
+				journals, journalReadErr := readDirectoryNames(dayDirectory)
+				if journalReadErr != nil {
+					_ = dayDirectory.Close()
+					return nil, fmt.Errorf("read session day directory: %w", journalReadErr)
+				}
+				for _, journal := range journals {
+					if err := contextError(ctx); err != nil {
+						_ = dayDirectory.Close()
+						return nil, err
+					}
+					threadID, candidate, candidateErr := parseJournalCandidate(journal, year, month, day)
+					if candidateErr != nil {
+						_ = dayDirectory.Close()
+						return nil, candidateErr
+					}
+					if !candidate {
+						continue
+					}
+					file, fileErr := root.openJournal(dayDirectory, journal, os.O_RDWR, 0)
+					if fileErr != nil {
+						_ = dayDirectory.Close()
+						return nil, fileErr
+					}
+					validationErr := validatePrivateFile(file)
+					closeErr := file.Close()
+					if validationErr != nil {
+						_ = dayDirectory.Close()
+						return nil, validationErr
+					}
+					if closeErr != nil {
+						_ = dayDirectory.Close()
+						return nil, fmt.Errorf("close enumerated session journal: %w", closeErr)
+					}
+					locations = append(locations, JournalLocation{
+						ThreadID: threadID, RelativePath: path.Join(yearMonthDay, journal),
+					})
+				}
+				if closeErr := dayDirectory.Close(); closeErr != nil {
+					return nil, fmt.Errorf("close session day directory: %w", closeErr)
+				}
+			}
+		}
+	}
+	return locations, nil
+}
+
+func readDirectoryNames(directory *os.File) ([]string, error) {
+	if directory == nil {
+		return nil, fmt.Errorf("session directory is required")
+	}
+	if _, err := directory.Seek(0, 0); err != nil {
+		return nil, err
+	}
+	entries, err := directory.ReadDir(-1)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+func classifyDecimalComponent(value string, width int, minimum int, maximum int) (bool, bool) {
+	if len(value) != width {
+		return false, false
+	}
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			return false, false
+		}
+	}
+	parsed, err := strconv.Atoi(value)
+	return true, err == nil && parsed >= minimum && parsed <= maximum
+}
+
+func validDateComponents(year string, month string, day string) bool {
+	_, validDay := classifyDecimalComponent(day, 2, 1, 31)
+	if !validDay {
+		return false
+	}
+	yearValue, _ := strconv.Atoi(year)
+	monthValue, _ := strconv.Atoi(month)
+	dayValue, _ := strconv.Atoi(day)
+	value := time.Date(yearValue, time.Month(monthValue), dayValue, 0, 0, 0, 0, time.UTC)
+	return value.Year() == yearValue && int(value.Month()) == monthValue && value.Day() == dayValue
+}
+
+func parseJournalCandidate(name string, year string, month string, day string) (domain.ThreadID, bool, error) {
+	if !strings.HasSuffix(name, ".jsonl") {
+		return "", false, nil
+	}
+	threadID, err := domain.ParseThreadID(strings.TrimSuffix(name, ".jsonl"))
+	if err != nil {
+		return "", false, fmt.Errorf("session journal name is invalid")
+	}
+	timestamp, err := threadID.Time()
+	if err != nil || timestamp.Format("2006") != year || timestamp.Format("01") != month || timestamp.Format("02") != day {
+		return "", false, fmt.Errorf("session journal date does not match its identity")
+	}
+	return threadID, true, nil
 }
 
 func (root *secureRoot) Close() error {
