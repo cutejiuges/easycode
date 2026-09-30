@@ -24,11 +24,21 @@ func TestNativeCommitEnvelopeDeepCopiesOpaquePayload(t *testing.T) {
 	if !bytes.Equal(second, []byte(`{"shape":"text_sample"}`)) {
 		t.Fatalf("payload shares mutable bytes: %s", second)
 	}
-	clone := envelope.Clone()
+	clone, err := envelope.Clone()
+	if err != nil {
+		t.Fatal(err)
+	}
 	clonePayload := clone.Payload()
 	clonePayload[0] = '['
 	if !bytes.Equal(envelope.Payload(), []byte(`{"shape":"text_sample"}`)) {
 		t.Fatal("Clone() shares mutable payload bytes")
+	}
+}
+
+func TestNativeCommitEnvelopeCloneRejectsZeroValue(t *testing.T) {
+	t.Parallel()
+	if _, err := (NativeCommitEnvelope{}).Clone(); err == nil {
+		t.Fatal("zero-value envelope unexpectedly cloned")
 	}
 }
 
@@ -64,6 +74,13 @@ func TestPreparedSampleFinalizesExactlyOnceConcurrently(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	copy, err := sample.Envelope()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if copy.Family() != domain.ProviderOpenAI || copy.Wire() != "responses" || copy.PayloadVersion() != 1 {
+		t.Fatalf("Envelope() = %#v", copy)
+	}
 	const count = 32
 	var successes atomic.Int32
 	var wait sync.WaitGroup
@@ -80,11 +97,35 @@ func TestPreparedSampleFinalizesExactlyOnceConcurrently(t *testing.T) {
 	if successes.Load() != 1 || calls.Load() != 1 || !sample.Finalized() {
 		t.Fatalf("successes=%d calls=%d finalized=%t", successes.Load(), calls.Load(), sample.Finalized())
 	}
-	copy, err := sample.Envelope()
+	if _, err := sample.Envelope(); err == nil {
+		t.Fatal("finalized sample unexpectedly returned an envelope")
+	}
+}
+
+func TestPreparedSampleRejectsInvalidConstructionAndZeroValue(t *testing.T) {
+	t.Parallel()
+	envelope, err := NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", 1, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if copy.Family() != domain.ProviderOpenAI || copy.Wire() != "responses" || copy.PayloadVersion() != 1 {
-		t.Fatalf("Envelope() = %#v", copy)
+	if _, err := NewPreparedSample(NativeCommitEnvelope{}, func() {}); err == nil {
+		t.Fatal("zero-value envelope unexpectedly prepared")
+	}
+	if _, err := NewPreparedSample(envelope, nil); err == nil {
+		t.Fatal("nil finalizer unexpectedly accepted")
+	}
+	var zero PreparedSample
+	if _, err := zero.Envelope(); err == nil {
+		t.Fatal("zero-value sample unexpectedly returned an envelope")
+	}
+	if err := zero.Finalize(); err == nil {
+		t.Fatal("zero-value sample unexpectedly finalized")
+	}
+	var nilSample *PreparedSample
+	if _, err := nilSample.Envelope(); err == nil {
+		t.Fatal("nil sample unexpectedly returned an envelope")
+	}
+	if err := nilSample.Finalize(); err == nil {
+		t.Fatal("nil sample unexpectedly finalized")
 	}
 }

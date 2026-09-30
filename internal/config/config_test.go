@@ -146,6 +146,74 @@ func TestLoadRejectsUnsafeFileTypes(t *testing.T) {
 	assertInvalidConfiguration(t, err)
 }
 
+func TestLoadTOCTOUUsesOpenedHandleAcrossDeterministicPathSwap(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("secure opener is unavailable on this platform")
+	}
+	clearEnvironment(t)
+	directory := t.TempDir()
+	path := writeConfig(t, directory, validFile, 0o600)
+	replacement := filepath.Join(directory, "replacement.json")
+	writeFile(t, replacement, strings.ReplaceAll(validFile, "file-model", "replacement-model"), 0o600)
+	opener := configFileOpenerFunc(func(openPath string) (*os.File, error) {
+		file, err := openConfigFileNoFollow(openPath)
+		if err != nil {
+			return nil, err
+		}
+		if err := os.Rename(replacement, openPath); err != nil {
+			_ = file.Close()
+			return nil, err
+		}
+		return file, nil
+	})
+
+	loaded, found, err := loadFileWithOpener(path, true, opener)
+	if err != nil {
+		t.Fatalf("load opened configuration handle: %v", err)
+	}
+	if !found || loaded.model != "file-model" {
+		t.Fatalf("loaded replacement path instead of opened handle: %#v", loaded)
+	}
+}
+
+func TestLoadTOCTOUFailsClosedWhenPathBecomesSymlinkBeforeOpen(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("secure opener is unavailable on this platform")
+	}
+	clearEnvironment(t)
+	directory := t.TempDir()
+	path := writeConfig(t, directory, validFile, 0o600)
+	outside := writeConfig(t, t.TempDir(), strings.ReplaceAll(validFile, "file-model", "outside-model"), 0o600)
+	opener := configFileOpenerFunc(func(openPath string) (*os.File, error) {
+		if err := os.Remove(openPath); err != nil {
+			return nil, err
+		}
+		if err := os.Symlink(outside, openPath); err != nil {
+			return nil, err
+		}
+		return openConfigFileNoFollow(openPath)
+	})
+
+	_, _, err := loadFileWithOpener(path, true, opener)
+	assertInvalidConfiguration(t, err)
+}
+
+func TestLoadValidatesTypeAndPermissionsFromOpenedHandle(t *testing.T) {
+	clearEnvironment(t)
+	directory := t.TempDir()
+	_, _, err := loadFileWithOpener("ignored", true, configFileOpenerFunc(func(string) (*os.File, error) {
+		return os.Open(directory)
+	}))
+	assertInvalidConfiguration(t, err)
+
+	if runtime.GOOS == "windows" {
+		return
+	}
+	path := writeConfig(t, t.TempDir(), validFile, 0o644)
+	_, _, err = loadFileWithOpener(path, true, configFileOpenerFunc(os.Open))
+	assertInvalidConfiguration(t, err)
+}
+
 func TestLoadChecksSecretFilePermissions(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows does not expose Unix permission bits")
@@ -267,4 +335,10 @@ func assertInvalidConfiguration(t *testing.T, err error) {
 	if !errors.Is(err, &fault.Error{Code: fault.CodeInvalidConfiguration}) {
 		t.Fatalf("configuration error: %v", err)
 	}
+}
+
+type configFileOpenerFunc func(string) (*os.File, error)
+
+func (open configFileOpenerFunc) Open(path string) (*os.File, error) {
+	return open(path)
 }

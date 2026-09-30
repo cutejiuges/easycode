@@ -45,7 +45,8 @@ func TestProviderCreatesIsolatedConversations(t *testing.T) {
 func TestConversationIgnoresRepeatedCompletedTerminal(t *testing.T) {
 	t.Parallel()
 	conversation := &Conversation{}
-	stream := make(chan transport.SSEMessage, 3)
+	stream := make(chan transport.SSEMessage, 4)
+	stream <- responseEvent(`{"type":"response.created","response":{"id":"resp-1"}}`)
 	stream <- responseEvent(`{"type":"response.output_item.done","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]}}`)
 	stream <- responseEvent(`{"type":"response.completed","response":{"id":"resp-1"}}`)
 	stream <- responseEvent(`{"type":"response.completed","response":{"id":"resp-2"}}`)
@@ -75,6 +76,7 @@ func TestConversationCancelCompletedRaceHasOneTerminal(t *testing.T) {
 		conversation := &Conversation{}
 		ctx, cancel := context.WithCancel(context.Background())
 		stream := make(chan transport.SSEMessage, 4)
+		stream <- responseEvent(`{"type":"response.created","response":{"id":"resp-race"}}`)
 		stream <- responseEvent(`{"type":"response.output_item.done","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]}}`)
 		var senders sync.WaitGroup
 		senders.Add(2)
@@ -145,6 +147,7 @@ func TestConversationStreamsAndCommitsOnlyOnCompleted(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		authorization <- request.Header.Get("Authorization")
 		writer.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(writer, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-1\"}}\n\n")
 		_, _ = io.WriteString(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n")
 		_, _ = io.WriteString(writer, "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"id\":\"msg-1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hello\"}]}}\n\n")
 		_, _ = io.WriteString(writer, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-1\"}}\n\n")
@@ -202,6 +205,7 @@ func TestConversationStreamsAndCommitsOnlyOnCompleted(t *testing.T) {
 func TestConversationRejectsEOFBeforeCompletedWithoutCommitting(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(writer, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-1\"}}\n\n")
 		_, _ = io.WriteString(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n")
 	}))
 	defer server.Close()
@@ -284,6 +288,7 @@ func TestConversationFailureAndIdleTimeoutDoNotProjectTurn(t *testing.T) {
 		{
 			name: "failed response",
 			writeStream: func(writer http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(writer, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-failed\"}}\n\n")
 				_, _ = io.WriteString(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n")
 				_, _ = io.WriteString(writer, "data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp-failed\",\"error\":{\"code\":\"rate_limit_exceeded\"}}}\n\n")
 			},

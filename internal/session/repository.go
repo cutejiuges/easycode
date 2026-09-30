@@ -2,7 +2,6 @@ package session
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -16,27 +15,56 @@ import (
 // Repository 将 thread UUIDv7 安全映射到受限数据根内的 journal。
 type Repository struct {
 	rootPath string
-	root     *os.Root
+	root     *secureRoot
+	hooks    securePathHooks
 }
 
-// NewRepository 打开或创建用户私有 Session 数据根。
+type securePathHooks struct {
+	beforeOpenRoot      func(string)
+	afterOpenRoot       func(string)
+	beforeOpenComponent func(string)
+	afterOpenComponent  func(string)
+	beforeOpenJournal   func(string)
+	afterOpenJournal    func(string)
+}
+
+// NewRepository 创建纯内存 Repository 配置，不打开或创建外部资源。
 func NewRepository(rootPath string) (*Repository, error) {
 	if rootPath == "" {
 		return nil, fmt.Errorf("session data root is required")
 	}
-	absolute, err := filepath.Abs(rootPath)
-	if err != nil {
-		return nil, fmt.Errorf("resolve session data root: %w", err)
+	if !filepath.IsAbs(rootPath) {
+		return nil, fmt.Errorf("session data root must be absolute")
 	}
-	absolute = filepath.Clean(absolute)
-	if err := ensureDataRoot(absolute); err != nil {
+	return &Repository{rootPath: filepath.Clean(rootPath)}, nil
+}
+
+// OpenOrCreateRepository 构造 Repository 并显式打开或创建私有数据根。
+func OpenOrCreateRepository(rootPath string) (*Repository, error) {
+	repository, err := NewRepository(rootPath)
+	if err != nil {
 		return nil, err
 	}
-	root, err := os.OpenRoot(absolute)
-	if err != nil {
-		return nil, fmt.Errorf("open session data root: %w", err)
+	if err := repository.OpenOrCreate(); err != nil {
+		return nil, err
 	}
-	return &Repository{rootPath: absolute, root: root}, nil
+	return repository, nil
+}
+
+// OpenOrCreate 获取 descriptor-bound 数据根；重复调用不会替换现有 owner。
+func (repository *Repository) OpenOrCreate() error {
+	if repository == nil {
+		return fmt.Errorf("session repository is required")
+	}
+	if repository.root != nil {
+		return nil
+	}
+	root, err := openOrCreateSecureRoot(repository.rootPath, repository.hooks)
+	if err != nil {
+		return err
+	}
+	repository.root = root
+	return nil
 }
 
 // RootPath 返回装配时固定的绝对数据根，仅供索引和诊断使用。
@@ -49,6 +77,9 @@ func (repository *Repository) RootPath() string {
 
 // JournalPath 返回 thread journal 的绝对定位结果，但不打开文件。
 func (repository *Repository) JournalPath(threadID domain.ThreadID) (string, error) {
+	if repository == nil {
+		return "", fmt.Errorf("session repository is required")
+	}
 	relative, err := journalRelativePath(threadID)
 	if err != nil {
 		return "", err
@@ -61,17 +92,23 @@ func (repository *Repository) Create(ctx context.Context, threadID domain.Thread
 	if err := contextError(ctx); err != nil {
 		return nil, err
 	}
+	root, err := repository.openedRoot()
+	if err != nil {
+		return nil, err
+	}
 	relative, err := journalRelativePath(threadID)
 	if err != nil {
 		return nil, err
 	}
-	directory := path.Dir(relative)
-	if err := repository.ensurePrivateDirectories(directory); err != nil {
+	directoryName := path.Dir(relative)
+	directory, err := root.openDirectory(directoryName, true)
+	if err != nil {
 		return nil, err
 	}
-	file, err := repository.root.OpenFile(relative, os.O_CREATE|os.O_EXCL|os.O_RDWR|os.O_APPEND, 0o600)
+	defer func() { _ = directory.Close() }()
+	file, err := root.openJournal(directory, path.Base(relative), os.O_CREATE|os.O_EXCL|os.O_RDWR|os.O_APPEND, 0o600)
 	if err != nil {
-		return nil, fmt.Errorf("create session journal: %w", err)
+		return nil, err
 	}
 	if err := validatePrivateFile(file); err != nil {
 		_ = file.Close()
@@ -81,16 +118,9 @@ func (repository *Repository) Create(ctx context.Context, threadID domain.Thread
 	if err != nil {
 		return nil, err
 	}
-	parent, err := repository.root.Open(directory)
-	if err != nil {
+	if err := directory.Sync(); err != nil {
 		_ = lease.Close()
-		return nil, fmt.Errorf("open session journal directory: %w", err)
-	}
-	syncErr := parent.Sync()
-	closeErr := parent.Close()
-	if syncErr != nil || closeErr != nil {
-		_ = lease.Close()
-		return nil, fmt.Errorf("sync session journal directory: %w", errors.Join(syncErr, closeErr))
+		return nil, fmt.Errorf("sync session journal directory: %w", err)
 	}
 	return lease, nil
 }
@@ -100,22 +130,35 @@ func (repository *Repository) Open(ctx context.Context, threadID domain.ThreadID
 	if err := contextError(ctx); err != nil {
 		return nil, err
 	}
+	root, err := repository.openedRoot()
+	if err != nil {
+		return nil, err
+	}
 	relative, err := journalRelativePath(threadID)
 	if err != nil {
 		return nil, err
 	}
-	if err := repository.validateExistingPath(relative); err != nil {
+	directory, err := root.openDirectory(path.Dir(relative), false)
+	if err != nil {
 		return nil, err
 	}
-	file, err := repository.root.OpenFile(relative, os.O_RDWR|os.O_APPEND, 0)
+	defer func() { _ = directory.Close() }()
+	file, err := root.openJournal(directory, path.Base(relative), os.O_RDWR|os.O_APPEND, 0)
 	if err != nil {
-		return nil, fmt.Errorf("open session journal: %w", err)
+		return nil, err
 	}
 	if err := validatePrivateFile(file); err != nil {
 		_ = file.Close()
 		return nil, err
 	}
 	return acquireJournalLease(file, threadID)
+}
+
+func (repository *Repository) openedRoot() (*secureRoot, error) {
+	if repository == nil || repository.root == nil {
+		return nil, fmt.Errorf("session repository is not open")
+	}
+	return repository.root, nil
 }
 
 func acquireJournalLease(file *os.File, threadID domain.ThreadID) (*JournalLease, error) {
@@ -129,94 +172,14 @@ func acquireJournalLease(file *os.File, threadID domain.ThreadID) (*JournalLease
 	return newJournalLease(file, threadID), nil
 }
 
-// Close 释放受限 filesystem root。
+// Close 释放数据根句柄；尚未 OpenOrCreate 的纯配置可直接关闭。
 func (repository *Repository) Close() error {
 	if repository == nil || repository.root == nil {
 		return nil
 	}
-	return repository.root.Close()
-}
-
-func ensureDataRoot(rootPath string) error {
-	info, err := os.Lstat(rootPath)
-	if errors.Is(err, fs.ErrNotExist) {
-		if err := os.MkdirAll(rootPath, 0o700); err != nil {
-			return fmt.Errorf("create session data root: %w", err)
-		}
-		info, err = os.Lstat(rootPath)
-	}
-	if err != nil {
-		return fmt.Errorf("inspect session data root: %w", err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return fmt.Errorf("session data root must be a real directory")
-	}
-	if err := validatePrivatePermissions(info, 0o700, "session data root"); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (repository *Repository) ensurePrivateDirectories(relative string) error {
-	current := ""
-	for _, component := range splitPath(relative) {
-		if current == "" {
-			current = component
-		} else {
-			current = path.Join(current, component)
-		}
-		if err := repository.ensurePrivateDirectory(current); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (repository *Repository) ensurePrivateDirectory(relative string) error {
-	info, err := repository.root.Lstat(relative)
-	if errors.Is(err, fs.ErrNotExist) {
-		if err := repository.root.Mkdir(relative, 0o700); err != nil {
-			return fmt.Errorf("create session directory: %w", err)
-		}
-		info, err = repository.root.Lstat(relative)
-	}
-	if err != nil {
-		return fmt.Errorf("inspect session directory: %w", err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return fmt.Errorf("session directory must be a real directory")
-	}
-	return validatePrivatePermissions(info, 0o700, "session directory")
-}
-
-func (repository *Repository) validateExistingPath(relative string) error {
-	directory := path.Dir(relative)
-	current := ""
-	for _, component := range splitPath(directory) {
-		if current == "" {
-			current = component
-		} else {
-			current = path.Join(current, component)
-		}
-		info, err := repository.root.Lstat(current)
-		if err != nil {
-			return fmt.Errorf("inspect session directory: %w", err)
-		}
-		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-			return fmt.Errorf("session directory must be a real directory")
-		}
-		if err := validatePrivatePermissions(info, 0o700, "session directory"); err != nil {
-			return err
-		}
-	}
-	info, err := repository.root.Lstat(relative)
-	if err != nil {
-		return fmt.Errorf("inspect session journal: %w", err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return fmt.Errorf("session journal must be a regular file")
-	}
-	return validatePrivatePermissions(info, 0o600, "session journal")
+	root := repository.root
+	repository.root = nil
+	return root.Close()
 }
 
 func validatePrivateFile(file *os.File) error {

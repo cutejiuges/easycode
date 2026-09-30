@@ -28,9 +28,10 @@ type Event struct {
 	SessionID domain.SessionID `json:"session_id,omitempty"`
 	ThreadID  domain.ThreadID  `json:"thread_id,omitempty"`
 	TurnID    domain.TurnID    `json:"turn_id,omitempty"`
-	ItemID    domain.ItemID    `json:"item_id,omitempty"`
-	CallID    domain.CallID    `json:"call_id,omitempty"`
-	Payload   json.RawMessage  `json:"payload,omitempty"`
+	// TODO(P3): ItemID 与 CallID 仅为工具调用及结果配对保留；由后续 OpenSpec 同时提供真实消费者、验证与测试时启用，否则删除。
+	ItemID  domain.ItemID   `json:"item_id,omitempty"`
+	CallID  domain.CallID   `json:"call_id,omitempty"`
+	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
 func newEvent(kind EventKind) Event {

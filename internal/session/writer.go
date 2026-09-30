@@ -3,7 +3,6 @@ package session
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,9 +10,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"easycode/internal/codec"
-	"easycode/internal/domain"
 )
 
 type journalFile interface {
@@ -23,20 +19,13 @@ type journalFile interface {
 }
 
 type writerRequest struct {
-	drafts   []preparedDraft
+	drafts   []RecordDraft
 	response chan appendResponse
 }
 
 type appendResponse struct {
 	records []Record
 	err     error
-}
-
-type preparedDraft struct {
-	descriptor     Descriptor
-	parentThreadID string
-	turnID         string
-	payload        json.RawMessage
 }
 
 const journalRequestCapacity = 64
@@ -68,16 +57,16 @@ func StartJournalWriter(lease *JournalLease, identity Identity, nextSequence uin
 	return startOwnedJournalWriter(file, identity, nextSequence, time.Now, journalRequestCapacity), nil
 }
 
-func newJournalWriter(
+func startJournalWriter(
 	file journalFile,
 	identity Identity,
 	nextSequence uint64,
 	clock func() time.Time,
 ) (*JournalWriter, error) {
-	return newJournalWriterWithCapacity(file, identity, nextSequence, clock, journalRequestCapacity)
+	return startJournalWriterWithCapacity(file, identity, nextSequence, clock, journalRequestCapacity)
 }
 
-func newJournalWriterWithCapacity(
+func startJournalWriterWithCapacity(
 	file journalFile,
 	identity Identity,
 	nextSequence uint64,
@@ -138,13 +127,12 @@ func (writer *JournalWriter) AppendBatch(ctx context.Context, drafts []RecordDra
 	if len(drafts) == 0 || len(drafts) > math.MaxUint32 {
 		return nil, fmt.Errorf("session batch size is invalid")
 	}
-	prepared := make([]preparedDraft, 0, len(drafts))
+	prepared := make([]RecordDraft, 0, len(drafts))
 	for _, draft := range drafts {
-		value, err := prepareDraft(draft)
-		if err != nil {
+		if err := draft.validate(); err != nil {
 			return nil, err
 		}
-		prepared = append(prepared, value)
+		prepared = append(prepared, draft.clone())
 	}
 	if err := contextError(ctx); err != nil {
 		return nil, err
@@ -245,7 +233,7 @@ func (writer *JournalWriter) run(nextSequence uint64) {
 	}
 }
 
-func (writer *JournalWriter) append(nextSequence uint64, drafts []preparedDraft) ([]Record, error) {
+func (writer *JournalWriter) append(nextSequence uint64, drafts []RecordDraft) ([]Record, error) {
 	batchSize := uint32(len(drafts))
 	batchID := nextSequence
 	var buffer bytes.Buffer
@@ -255,10 +243,10 @@ func (writer *JournalWriter) append(nextSequence uint64, drafts []preparedDraft)
 			SchemaVersion: EnvelopeVersion, PayloadVersion: draft.descriptor.Version,
 			ReplayRequirement: draft.descriptor.Requirement, Sequence: nextSequence + uint64(index),
 			Timestamp: writer.clock().UTC(), SessionID: writer.identity.SessionID,
-			ThreadID: writer.identity.ThreadID, ParentThreadID: domain.ThreadID(draft.parentThreadID),
-			TurnID: domain.TurnID(draft.turnID), EventKind: draft.descriptor.Kind,
+			ThreadID: writer.identity.ThreadID, ParentThreadID: draft.parentThreadID,
+			TurnID: draft.turnID, EventKind: draft.descriptor.Kind,
 			BatchID: batchID, BatchIndex: uint32(index), BatchSize: batchSize,
-			Payload: append(json.RawMessage(nil), draft.payload...),
+			Payload: draft.PayloadBytes(),
 		}
 		sealed, encoded, err := EncodeRecord(record)
 		if err != nil {
@@ -294,24 +282,6 @@ func (writer *JournalWriter) finish() error {
 		return fmt.Errorf("close session writer: %w", errors.Join(syncErr, closeErr))
 	}
 	return nil
-}
-
-func prepareDraft(draft RecordDraft) (preparedDraft, error) {
-	descriptor, err := descriptorForDraft(draft)
-	if err != nil {
-		return preparedDraft{}, err
-	}
-	payload, err := codec.MarshalStable(draft.Payload)
-	if err != nil {
-		return preparedDraft{}, fmt.Errorf("marshal session payload: %w", err)
-	}
-	if len(payload) > MaxRecordBytes {
-		return preparedDraft{}, fmt.Errorf("session payload exceeds size limit")
-	}
-	return preparedDraft{
-		descriptor: descriptor, parentThreadID: string(draft.ParentThreadID),
-		turnID: string(draft.TurnID), payload: append(json.RawMessage(nil), payload...),
-	}, nil
 }
 
 func cloneRecords(records []Record) []Record {

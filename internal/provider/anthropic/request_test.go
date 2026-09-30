@@ -5,16 +5,15 @@ import (
 	"strings"
 	"testing"
 
-	"easycode/internal/codec"
 	contextplan "easycode/internal/context"
 )
 
 func TestCompileMessagesRequestMatchesGolden(t *testing.T) {
-	request := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, nil, newUserMessage("hello"))
-	encoded, err := codec.MarshalStable(request)
+	request, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, nil, newUserMessage("hello"))
 	if err != nil {
-		t.Fatalf("marshal request: %v", err)
+		t.Fatalf("compile request: %v", err)
 	}
+	encoded := request.Bytes()
 	want, err := os.ReadFile("testdata/messages_request.golden.json")
 	if err != nil {
 		t.Fatalf("read golden: %v", err)
@@ -38,7 +37,7 @@ func TestCompileMessagesRequestKeepsNativeMessageOrder(t *testing.T) {
 			{Type: blockTypeText, Text: "answer"},
 		}},
 	}}
-	request := compileMessagesRequest("claude-test", 8192, history, newUserMessage("second"))
+	request := buildMessagesRequest("claude-test", 8192, history, newUserMessage("second"))
 	if request.MaxTokens != 8192 || len(request.Messages) != 3 {
 		t.Fatalf("request shape: %#v", request)
 	}
@@ -52,7 +51,10 @@ func TestCompileMessagesRequestKeepsNativeMessageOrder(t *testing.T) {
 }
 
 func TestMessagesRequestFingerprintIsStableAndSecretFree(t *testing.T) {
-	request := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, nil, newUserMessage("hello"))
+	request, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, nil, newUserMessage("hello"))
+	if err != nil {
+		t.Fatalf("compile request: %v", err)
+	}
 	first, err := contextplan.NewSegment("anthropic-messages-request", contextplan.StabilityTurnStable, "v1", request)
 	if err != nil {
 		t.Fatalf("create first fingerprint: %v", err)
@@ -61,10 +63,10 @@ func TestMessagesRequestFingerprintIsStableAndSecretFree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create second fingerprint: %v", err)
 	}
-	if first.Fingerprint != second.Fingerprint || !stringSlicesEqual(first.CanonicalJSON, second.CanonicalJSON) {
+	if first.Fingerprint() != second.Fingerprint() || !stringSlicesEqual(first.CanonicalJSON(), second.CanonicalJSON()) {
 		t.Fatalf("request fingerprint is unstable: %#v %#v", first, second)
 	}
-	canonical := string(first.CanonicalJSON)
+	canonical := string(first.CanonicalJSON())
 	for _, dynamic := range []string{"top-secret", "x-api-key", "timestamp", "random_id", "working_directory"} {
 		if strings.Contains(canonical, dynamic) {
 			t.Fatalf("dynamic or secret input entered fingerprint: %s", canonical)

@@ -1,5 +1,9 @@
 package anthropic
 
+import "easycode/internal/codec"
+
+const maxMessagesRequestBytes = 16 << 20
+
 // messagesRequest 是当前文本切片发送给 Messages API 的稳定请求。
 type messagesRequest struct {
 	Model     string          `json:"model"`
@@ -8,7 +12,7 @@ type messagesRequest struct {
 	Stream    bool            `json:"stream"`
 }
 
-func compileMessagesRequest(
+func buildMessagesRequest(
 	model string,
 	maxTokens int,
 	history []nativeTurn,
@@ -25,4 +29,16 @@ func compileMessagesRequest(
 		MaxTokens: maxTokens,
 		Stream:    true,
 	}
+}
+
+func compileMessagesRequest(
+	model string,
+	maxTokens int,
+	history []nativeTurn,
+	user nativeMessage,
+) (codec.CanonicalJSON, error) {
+	return codec.MarshalCanonical(
+		buildMessagesRequest(model, maxTokens, history, user),
+		maxMessagesRequestBytes,
+	)
 }

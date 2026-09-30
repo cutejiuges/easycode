@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"testing"
@@ -17,11 +18,13 @@ type fakeChatSession struct {
 	events     chan protocol.Event
 	submitErr  error
 	interrupts int
+	contexts   []context.Context
 }
 
-func (session *fakeChatSession) Submit(text string) (<-chan protocol.Event, error) {
+func (session *fakeChatSession) Submit(ctx context.Context, text string) (<-chan protocol.Event, error) {
 	session.mu.Lock()
 	defer session.mu.Unlock()
+	session.contexts = append(session.contexts, ctx)
 	session.submits = append(session.submits, text)
 	if session.submitErr != nil {
 		return nil, session.submitErr
@@ -40,7 +43,9 @@ func (session *fakeChatSession) Interrupt() {
 
 func TestModelSubmitsAndProjectsOrderedDeltas(t *testing.T) {
 	session := &fakeChatSession{}
-	model := NewModel("test", session)
+	type contextKey struct{}
+	submitContext := context.WithValue(context.Background(), contextKey{}, "operation")
+	model := NewModel(submitContext, "test", session)
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello")})
 	updated, command := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	model = updated.(Model)
@@ -71,17 +76,20 @@ func TestModelSubmitsAndProjectsOrderedDeltas(t *testing.T) {
 	if len(session.submits) != 1 || session.submits[0] != "hello" {
 		t.Fatalf("submits: %#v", session.submits)
 	}
+	if len(session.contexts) != 1 || session.contexts[0] != submitContext {
+		t.Fatalf("submit contexts: %#v", session.contexts)
+	}
 }
 
 func TestModelInputAndCancellationKeys(t *testing.T) {
 	session := &fakeChatSession{}
-	model := NewModel("test", session)
+	model := NewModel(context.Background(), "test", session)
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	if string(model.draft) != "q" {
 		t.Fatalf("q is not draft input: %q", string(model.draft))
 	}
 
-	empty := NewModel("test", session)
+	empty := NewModel(context.Background(), "test", session)
 	updated, command := empty.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if command != nil || len(updated.(Model).transcript) != 0 {
 		t.Fatal("empty input was submitted")
@@ -105,7 +113,7 @@ func TestModelInputAndCancellationKeys(t *testing.T) {
 		t.Fatalf("interrupt count: %d", session.interrupts)
 	}
 
-	idle := NewModel("test", session)
+	idle := NewModel(context.Background(), "test", session)
 	_, command = idle.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	if command == nil {
 		t.Fatal("idle empty Ctrl+C did not quit")
@@ -118,7 +126,7 @@ func TestModelInputAndCancellationKeys(t *testing.T) {
 func TestModelQueuesInterruptUntilSubmitIsReady(t *testing.T) {
 	session := &fakeChatSession{events: make(chan protocol.Event, 1)}
 	session.events <- protocol.NewTurnStarted()
-	model := NewModel("test", session)
+	model := NewModel(context.Background(), "test", session)
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello")})
 	updated, submitCommand := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	model = updated.(Model)
@@ -153,7 +161,7 @@ func TestModelFailureAndCancellationRemainRecoverable(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			session := &fakeChatSession{}
-			model := NewModel("test", session)
+			model := NewModel(context.Background(), "test", session)
 			model.transcript = []transcriptMessage{{role: "User", text: "old"}, {role: "Assistant", text: "kept"}}
 			model.state = stateStreaming
 			model.assistantItem = 1
@@ -176,7 +184,7 @@ func TestModelFailureAndCancellationRemainRecoverable(t *testing.T) {
 
 func TestModelSubmitErrorIsSanitized(t *testing.T) {
 	session := &fakeChatSession{submitErr: fault.New(fault.CodeProviderRequest, "provider request failed")}
-	model := NewModel("test", session)
+	model := NewModel(context.Background(), "test", session)
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello")})
 	updated, command := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	model = updated.(Model)

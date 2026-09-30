@@ -12,7 +12,7 @@ import (
 
 // ChatSession 是 headless 宿主使用的最小会话接口。
 type ChatSession interface {
-	Submit(string) (<-chan protocol.Event, error)
+	Submit(context.Context, string) (<-chan protocol.Event, error)
 	Interrupt()
 }
 
@@ -37,7 +37,7 @@ type Result struct {
 // Run 提交一个 turn，并等待 RuntimeEvent 流形成唯一终态。
 func Run(ctx context.Context, session ChatSession, config RunConfig) Result {
 	if ctx == nil {
-		ctx = context.Background()
+		return failedResult(fault.New(fault.CodeTurnFailed, "headless context is required"))
 	}
 	if session == nil || (config.Mode != ModeText && config.Mode != ModeJSON) ||
 		strings.TrimSpace(config.Prompt) == "" || config.Output == nil {
@@ -59,7 +59,7 @@ func Run(ctx context.Context, session ChatSession, config RunConfig) Result {
 		}
 	}
 
-	events, err := session.Submit(config.Prompt)
+	events, err := session.Submit(ctx, config.Prompt)
 	if err != nil {
 		return reportStreamError(encoder, fault.Project(err))
 	}

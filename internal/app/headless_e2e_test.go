@@ -56,7 +56,7 @@ func TestHeadlessProvidersPreserveResumeRequestAndOutputBoundaries(t *testing.T)
 				Family: fixture.family, BaseURL: server.URL,
 				APIKey: secret.New("headless-e2e-secret"), Model: fixture.model,
 			}}
-			live, err := newChatResources(
+			live, err := openChatResources(
 				context.Background(), providerConfig, filepath.Join(t.TempDir(), "live"), "", t.TempDir(),
 			)
 			if err != nil {
@@ -139,6 +139,7 @@ func TestHeadlessJSONBrokenPipeCancelsAndReleasesLease(t *testing.T) {
 	requestStarted := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(writer, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-partial\"}}\n\n")
 		_, _ = io.WriteString(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n")
 		if flusher, ok := writer.(http.Flusher); ok {
 			flusher.Flush()
@@ -248,7 +249,7 @@ func decodeThreadStarted(t *testing.T, output string) headless.ThreadStartedEven
 
 func loadHeadlessJournal(t *testing.T, dataRoot string, threadID domain.ThreadID) session.LoadResult {
 	t.Helper()
-	repository, err := session.NewRepository(dataRoot)
+	repository, err := session.OpenOrCreateRepository(dataRoot)
 	if err != nil {
 		t.Fatal(err)
 	}

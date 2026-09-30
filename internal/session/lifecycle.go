@@ -20,13 +20,13 @@ type RootJournalConfig struct {
 	CreatedAt    time.Time
 }
 
-// NewRootIdentity 生成彼此独立的 UUIDv7 Session 与 root Thread 标识。
-func NewRootIdentity() (Identity, error) {
-	sessionID, err := domain.NewSessionID()
+// GenerateRootIdentity 生成彼此独立的 UUIDv7 Session 与 root Thread 标识。
+func GenerateRootIdentity() (Identity, error) {
+	sessionID, err := domain.GenerateSessionID()
 	if err != nil {
 		return Identity{}, err
 	}
-	threadID, err := domain.NewThreadID()
+	threadID, err := domain.GenerateThreadID()
 	if err != nil {
 		return Identity{}, err
 	}
@@ -77,17 +77,21 @@ func CreateRootJournal(
 	if err != nil {
 		return nil, nil, errors.Join(err, lease.Close())
 	}
-	records, err := writer.AppendBatch(ctx, []RecordDraft{
-		{
-			EventKind: EventSessionMeta,
-			Payload: SessionMetaPayload{
-				RootThreadID: identity.ThreadID, CreatedAt: createdAt,
-				Provider: config.Provider, ProviderWire: config.ProviderWire,
-				Model: config.Model, SchemaRevision: EnvelopeVersion, CreationCWD: creationCWD,
-			},
-		},
-		{EventKind: EventThreadMeta, Payload: ThreadMetaPayload{Root: true}},
+	sessionDraft, err := NewSessionMetaDraft(SessionMetaPayload{
+		RootThreadID: identity.ThreadID, CreatedAt: createdAt,
+		Provider: config.Provider, ProviderWire: config.ProviderWire,
+		Model: config.Model, SchemaRevision: EnvelopeVersion, CreationCWD: creationCWD,
 	})
+	if err != nil {
+		closeErr := writer.Close(context.Background())
+		return nil, nil, errors.Join(err, closeErr)
+	}
+	threadDraft, err := NewThreadMetaDraft(ThreadMetaPayload{Root: true})
+	if err != nil {
+		closeErr := writer.Close(context.Background())
+		return nil, nil, errors.Join(err, closeErr)
+	}
+	records, err := writer.AppendBatch(ctx, []RecordDraft{sessionDraft, threadDraft})
 	if err != nil {
 		closeErr := writer.Close(context.Background())
 		return nil, nil, errors.Join(err, closeErr)

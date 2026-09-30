@@ -20,9 +20,9 @@ func TestRecordCanonicalGolden(t *testing.T) {
 	t.Parallel()
 	record, err := BuildRecord(
 		Identity{SessionID: testSessionID, ThreadID: testThreadID},
-		RecordDraft{EventKind: EventTurnFailed, TurnID: testTurnID, Payload: TurnFailedPayload{
+		mustDraft(t, EventTurnFailed, testTurnID, TurnFailedPayload{
 			Code: "user_cancelled", Message: "turn was cancelled", Cancelled: true,
-		}},
+		}),
 		3,
 		time.Date(2026, time.September, 28, 12, 34, 56, 123_000_000, time.UTC),
 		3,
@@ -65,9 +65,11 @@ func TestRegistryRejectsDeclarationDriftAndWrongPayload(t *testing.T) {
 	if _, _, err := EncodeRecord(record); err == nil || !strings.Contains(err.Error(), "registry") {
 		t.Fatalf("EncodeRecord() error = %v", err)
 	}
+	mismatched := mustDraft(t, EventTurnFailed, testTurnID, TurnFailedPayload{Code: "failed"})
+	mismatched.descriptor, _ = descriptorByKind(EventTurnStarted)
 	if _, err := BuildRecord(
 		Identity{SessionID: testSessionID, ThreadID: testThreadID},
-		RecordDraft{EventKind: EventTurnStarted, TurnID: testTurnID, Payload: TurnCompletedPayload{}},
+		mismatched,
 		1, time.Unix(0, 0).UTC(), 1, 0, 1,
 	); err == nil {
 		t.Fatal("BuildRecord() with a mismatched payload unexpectedly succeeded")
@@ -132,7 +134,7 @@ func mustRecord(t *testing.T, kind EventKind, payload any) []byte {
 	t.Helper()
 	record, err := BuildRecord(
 		Identity{SessionID: testSessionID, ThreadID: testThreadID},
-		RecordDraft{EventKind: kind, TurnID: testTurnID, Payload: payload},
+		mustDraft(t, kind, testTurnID, payload),
 		1, time.Unix(0, 0).UTC(), 1, 0, 1,
 	)
 	if err != nil {

@@ -89,7 +89,7 @@ func Run(ctx context.Context, options Options) Outcome {
 	if err != nil {
 		return runtimeFailure(fault.New(fault.CodeSessionWrite, "current working directory is unavailable"))
 	}
-	resources, err := newChatResources(
+	resources, err := openChatResources(
 		ctx, applicationConfig, dataRoot, options.ResumeThreadID, creationCWD,
 	)
 	if err != nil {
@@ -120,7 +120,7 @@ func Run(ctx context.Context, options Options) Outcome {
 }
 
 func runTUI(ctx context.Context, options Options, resources *chatResources) Outcome {
-	model := tui.NewModel(Version, resources.session, resources.history)
+	model := tui.NewModel(ctx, Version, resources.session, resources.history)
 	programOptions := []tea.ProgramOption{tea.WithContext(ctx), tea.WithOutput(options.Output)}
 	if options.Input != nil {
 		programOptions = append(programOptions, tea.WithInput(options.Input))
@@ -144,7 +144,7 @@ func outcomeFromHeadless(result headless.Result) Outcome {
 	return Outcome{Class: ExitRuntimeFailure, Report: report, Failure: result.Failure}
 }
 
-func newChatResources(
+func openChatResources(
 	ctx context.Context,
 	applicationConfig config.Config,
 	dataRoot string,
@@ -158,7 +158,7 @@ func newChatResources(
 	if err != nil {
 		return nil, err
 	}
-	service, err := newSessionService(dataRoot)
+	service, err := openSessionService(dataRoot)
 	if err != nil {
 		_ = providerInstance.Close()
 		return nil, err

@@ -27,7 +27,7 @@
 2. 新逻辑有单元测试；跨模块行为有集成测试；bug 修复有回归测试。
 3. Provider、context、tool schema 或 skill/plugin catalog 的变化必须检查缓存稳定性。
 4. API key、Authorization、cookie 和敏感 header 不出现在日志、错误、snapshot 和 fixture 中。
-5. 无未解释的 dead code、占位兼容分支和永久 TODO。
+5. 无未解释的 dead code、占位兼容分支和永久 TODO；唯一临时占位必须位于 `AGENTS.md` exact allowlist，并带阶段、保留原因和后续 OpenSpec 启用或删除条件。
 6. 所有已有测试通过，格式化和 lint 无警告；本地统一执行 `make verify`。
 7. 新踩坑更新到 [`pitfall-log.md`](pitfall-log.md)，重要决策补充 ADR。
 
@@ -37,7 +37,7 @@
 make verify
 ```
 
-当前 `make verify` 覆盖 `gofmt -l .`、`go vet ./...`、`go test ./...`、`go test -race ./...` 和固定版本的 `staticcheck`。如果新增 lint 规则，必须同步更新 Makefile、pre-commit 和本文。
+当前 `make verify` 覆盖分支策略回归、`gofmt -l .`、`go vet ./...`、`go test ./...`、`go test -race ./...` 和固定版本的 `staticcheck`；其中全量测试包含 AST/import graph 架构守卫。如果新增 lint 规则，必须同步更新 Makefile、pre-commit 和本文。
 
 ## 3. 阶段总览
 
@@ -206,9 +206,11 @@ make verify
 
 ### 6.0 当前进度（2026-09-29）
 
-已完成文本回合的 append-only JSONL 事实源、UUIDv7 定位、跨 Repository/跨进程 exclusive journal lease、单 writer/`Sync`、完整 batch、尾部修复、双 Provider opaque native commit、durable-before-memory 两阶段提交、进程重启恢复、`--resume`、不可变 v1 compatibility fixture 和历史 TUI 投影。单 turn headless 已提供 `--print` 最终文本与独立 JSONL v1 `--json`，支持位置参数/stdin、4 MiB 有界 UTF-8 输入、显式 resume、取消、断管清理和稳定 `0/1/2` 退出码；旧 transcript 不进入当前 headless 输出。API key、base URL、cwd 等动态配置不进入 Session，恢复时继续使用当前配置。
+已完成文本回合的 append-only JSONL 事实源、sealed typed v1 draft/strict decoder、UUIDv7 定位、跨 Repository/跨进程 exclusive journal lease、macOS/Linux descriptor-relative secure path walker、单 writer/`Sync`、完整 batch、尾部修复、双 Provider opaque native commit、durable-before-memory 两阶段提交及提交前 sample 重验、进程重启恢复、`--resume`、不可变 v1 compatibility fixture 和历史 TUI 投影。Provider request 由各自 compiler 生成不可变 canonical JSON，transport 不再二次序列化；OpenAI stream 绑定 `response.created` identity。单 turn headless 已提供 `--print` 最终文本与独立 JSONL v1 `--json`，支持位置参数/stdin、4 MiB 有界 UTF-8 输入、显式 resume、取消、断管清理和稳定 `0/1/2` 退出码；旧 transcript 不进入当前 headless 输出。API key、base URL、cwd 等动态配置不进入 Session，恢复时继续使用当前配置。
 
 P2 尚未完成：SQLite 可重建索引、session picker、`--continue`、stdin JSON/双向控制、queued/steered input、ContextPlanner/token estimator、完整 usage/cache 事实与 headless 事件、tool ledger/result/artifact、fork/subagent 线程树、compaction checkpoint，以及未来 schema/payload revision 的版本专属转换。v1 compatibility fixture 已建立不代表通用 migration 已实现；当前进度不能视为 P2 退出。
+
+本次 P2 基础契约强化还加入语义分支脚本、本地 hooks、GitHub Actions jobs 和集中式架构守卫。GitHub `main` ruleset 的 required checks 与 direct-push 禁止仍须管理员在仓库外启用。secure config/session opener 当前只在 macOS/Linux 提供等价语义；Windows 等目标可以编译，但相关运行路径明确失败关闭，平台实现与兼容矩阵留在 P8。
 
 ### 6.1 目标
 
@@ -234,6 +236,7 @@ P2 尚未完成：SQLite 可重建索引、session picker、`--continue`、stdin
 - 已实现 `--resume <thread-id>`、单 turn `--print` 与 JSONL v1 `--json`；`--continue` 和同一进程多次输入仍待实现。
 - 已实现当前文本 Chat 的用户中断、依赖有序 shutdown 和中断 turn 补偿；后台任务的完整 shutdown 随对应能力补充。
 - 提供 transcript/debug log 分离。
+- 已将 Tool/extension/Subagent/telemetry 与未来 RuntimeCommand/ItemID/CallID 明确标记为 P2/P3/P6/P7/P8 临时 TODO allowlist；除列表外禁止新增占位，且这些包当前不得接入 Runtime/app。
 
 ### 6.4 交付物
 
@@ -337,6 +340,8 @@ P2 尚未完成：SQLite 可重建索引、session picker、`--continue`、stdin
 - Anthropic 和 OpenAI 各自决定 cache marker/key/incremental request。
 - compaction 替换模型窗口但不删除原始 transcript。
 - 跨 provider 切换通过 compacted fork，而不是强行转换 thinking/reasoning。
+
+上述 compacted cross-provider fork 是 P4 计划，当前尚未实现；现有 resume 只允许同一 Provider/wire 的原生恢复。
 
 ### 8.3 工作内容
 
@@ -581,6 +586,7 @@ hook、skill、MCP、plugin 的信任、热加载、失败隔离和缓存回归�
 - binary packaging、版本信息、changelog 和升级说明。
 - 性能基准：启动时间、TTFT 开销、TUI FPS、内存、session append、cache planning。
 - 安全审查：命令注入、路径穿越、symlink、hook/plugin trust、secret 泄漏。
+- 为 Windows 等当前失败关闭的平台实现与 Unix descriptor/handle-bound opener 等价的配置与 Session 安全语义，并加入真实平台回归；在此之前不得回退到路径先检查后打开。
 
 ### 12.4 交付物
 

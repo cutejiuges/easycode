@@ -41,7 +41,11 @@ func (factory *fakeProviderFactory) RestoreConversation(commits []provider.Nativ
 	}
 	factory.restored = make([]provider.NativeCommitEnvelope, len(commits))
 	for index, commit := range commits {
-		factory.restored[index] = commit.Clone()
+		cloned, err := commit.Clone()
+		if err != nil {
+			return nil, err
+		}
+		factory.restored[index] = cloned
 	}
 	return &fakeAppConversation{family: factory.family, networkCalls: &factory.networkCalls}, nil
 }
@@ -183,7 +187,7 @@ func TestSessionServiceBusyFailsBeforeRestoreAndKeepsBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	competitor, err := newSessionService(owner.repository.RootPath())
+	competitor, err := openSessionService(owner.repository.RootPath())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,13 +344,15 @@ func TestSessionServiceClosesInterruptedTailBeforeReturning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	turnID, err := domain.NewTurnID()
+	turnID, err := domain.GenerateTurnID()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := created.writer.AppendBatch(context.Background(), []session.RecordDraft{{
-		EventKind: session.EventTurnStarted, TurnID: turnID, Payload: session.TurnStartedPayload{},
-	}}); err != nil {
+	startedDraft, err := session.NewTurnStartedDraft(turnID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := created.writer.AppendBatch(context.Background(), []session.RecordDraft{startedDraft}); err != nil {
 		t.Fatal(err)
 	}
 	if err := created.writer.Close(context.Background()); err != nil {
@@ -368,11 +374,10 @@ func TestSessionServiceClosesInterruptedTailBeforeReturning(t *testing.T) {
 		t.Fatalf("compensated plan = %#v next=%d", plan, loaded.NextSequence)
 	}
 	last := loaded.Records[len(loaded.Records)-1]
-	payload, err := session.DecodePayload(last)
+	failure, err := session.DecodeTurnFailedPayload(last)
 	if err != nil {
 		t.Fatal(err)
 	}
-	failure := payload.(session.TurnFailedPayload)
 	if last.TurnID != turnID || failure.Code != "session_interrupted" {
 		t.Fatalf("compensation = %#v %#v", last, failure)
 	}
@@ -387,10 +392,12 @@ func TestSessionServiceInterruptedCompensationFailureDoesNotBecomeUsable(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	turnID, _ := domain.NewTurnID()
-	_, _ = created.writer.AppendBatch(context.Background(), []session.RecordDraft{{
-		EventKind: session.EventTurnStarted, TurnID: turnID, Payload: session.TurnStartedPayload{},
-	}})
+	turnID, _ := domain.GenerateTurnID()
+	startedDraft, err := session.NewTurnStartedDraft(turnID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = created.writer.AppendBatch(context.Background(), []session.RecordDraft{startedDraft})
 	if err := created.writer.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -419,13 +426,15 @@ func TestSessionServiceInterruptedAppendFailureReleasesLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	turnID, err := domain.NewTurnID()
+	turnID, err := domain.GenerateTurnID()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := created.writer.AppendBatch(context.Background(), []session.RecordDraft{{
-		EventKind: session.EventTurnStarted, TurnID: turnID, Payload: session.TurnStartedPayload{},
-	}}); err != nil {
+	startedDraft, err := session.NewTurnStartedDraft(turnID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := created.writer.AppendBatch(context.Background(), []session.RecordDraft{startedDraft}); err != nil {
 		t.Fatal(err)
 	}
 	if err := created.writer.Close(context.Background()); err != nil {
@@ -479,7 +488,7 @@ func TestSessionServiceRejectsUnknownThreadWithoutCreatingReplacement(t *testing
 	t.Parallel()
 	service := newTestSessionService(t)
 	defer service.close()
-	unknown, err := domain.NewThreadID()
+	unknown, err := domain.GenerateThreadID()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -522,7 +531,7 @@ func (journal *failingManagedJournal) Close(context.Context) error {
 
 func newTestSessionService(t *testing.T) *sessionService {
 	t.Helper()
-	service, err := newSessionService(filepath.Join(t.TempDir(), "sessions"))
+	service, err := openSessionService(filepath.Join(t.TempDir(), "sessions"))
 	if err != nil {
 		t.Fatal(err)
 	}

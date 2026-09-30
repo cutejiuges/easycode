@@ -68,7 +68,7 @@ func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
 				Family: fixture.family, BaseURL: server.URL,
 				APIKey: secret.New("e2e-secret"), Model: fixture.model,
 			}}
-			created, err := newChatResources(context.Background(), providerConfig, dataRoot, "", creationCWD)
+			created, err := openChatResources(context.Background(), providerConfig, dataRoot, "", creationCWD)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -79,7 +79,7 @@ func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			resumed, err := newChatResources(
+			resumed, err := openChatResources(
 				context.Background(), providerConfig, dataRoot, string(threadID), t.TempDir(),
 			)
 			if err != nil {
@@ -90,7 +90,7 @@ func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
 				resumed.history.Turns[1].UserText != "second" || resumed.history.Turns[1].AssistantText != "answer-2" {
 				t.Fatalf("resumed history = %#v", resumed.history)
 			}
-			view := tui.NewModel("test", resumed.session, resumed.history).View()
+			view := tui.NewModel(context.Background(), "test", resumed.session, resumed.history).View()
 			for _, visible := range []string{"User: first", "Assistant: answer-1", "User: second", "Assistant: answer-2"} {
 				if !strings.Contains(view, visible) {
 					t.Fatalf("resumed transcript missing %q: %s", visible, view)
@@ -117,7 +117,7 @@ func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
 				}
 			}
 
-			repository, err := session.NewRepository(dataRoot)
+			repository, err := session.OpenOrCreateRepository(dataRoot)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -145,7 +145,7 @@ func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
 				}
 			}
 
-			fresh, err := newChatResources(context.Background(), providerConfig, dataRoot, "", t.TempDir())
+			fresh, err := openChatResources(context.Background(), providerConfig, dataRoot, "", t.TempDir())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -165,7 +165,7 @@ func TestOpenAIV1CompatibilityFixtureRestoresVisibleHistoryWithoutNetwork(t *tes
 		t.Fatal(err)
 	}
 	dataRoot := filepath.Join(t.TempDir(), "sessions")
-	repository, err := session.NewRepository(dataRoot)
+	repository, err := session.OpenOrCreateRepository(dataRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +197,7 @@ func TestOpenAIV1CompatibilityFixtureRestoresVisibleHistoryWithoutNetwork(t *tes
 		Family: domain.ProviderOpenAI, BaseURL: server.URL,
 		APIKey: secret.New("fixture-key"), Model: "fixture-model",
 	}}
-	resources, err := newChatResources(
+	resources, err := openChatResources(
 		context.Background(), applicationConfig, dataRoot, string(threadID), t.TempDir(),
 	)
 	if err != nil {
@@ -211,7 +211,7 @@ func TestOpenAIV1CompatibilityFixtureRestoresVisibleHistoryWithoutNetwork(t *tes
 		resources.history.Turns[0].AssistantText != "fixture answer" {
 		t.Fatalf("v1 fixture history = %#v", resources.history)
 	}
-	view := tui.NewModel("test", resources.session, resources.history).View()
+	view := tui.NewModel(context.Background(), "test", resources.session, resources.history).View()
 	if !strings.Contains(view, "User: fixture question") || !strings.Contains(view, "Assistant: fixture answer") {
 		t.Fatalf("v1 fixture transcript = %s", view)
 	}
@@ -231,11 +231,11 @@ func TestBusyResumeDoesNotExposeChatResourcesOrCallProvider(t *testing.T) {
 		Family: domain.ProviderOpenAI, BaseURL: server.URL,
 		APIKey: secret.New("fixture-key"), Model: "gpt-test",
 	}}
-	created, err := newChatResources(context.Background(), applicationConfig, dataRoot, "", t.TempDir())
+	created, err := openChatResources(context.Background(), applicationConfig, dataRoot, "", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	repository, err := session.NewRepository(dataRoot)
+	repository, err := session.OpenOrCreateRepository(dataRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +250,7 @@ func TestBusyResumeDoesNotExposeChatResourcesOrCallProvider(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resumed, err := newChatResources(
+	resumed, err := openChatResources(
 		context.Background(), applicationConfig, dataRoot, string(created.identity.ThreadID), t.TempDir(),
 	)
 	if resumed != nil || !errors.Is(err, &fault.Error{Code: fault.CodeSessionBusy}) {
@@ -273,7 +273,7 @@ func TestBusyResumeDoesNotExposeChatResourcesOrCallProvider(t *testing.T) {
 
 func submitAppTurn(t *testing.T, resources *chatResources, text string) {
 	t.Helper()
-	events, err := resources.session.Submit(text)
+	events, err := resources.session.Submit(context.Background(), text)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,6 +294,7 @@ func submitAppTurn(t *testing.T, resources *chatResources, text string) {
 
 func writeOpenAIAppTurn(writer io.Writer, turn int) {
 	answer := fmt.Sprintf("answer-%d", turn)
+	_, _ = fmt.Fprintf(writer, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-%d\"}}\n\n", turn)
 	_, _ = fmt.Fprintf(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":%q}\n\n", answer)
 	_, _ = fmt.Fprintf(writer, "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"id\":\"msg-%d\",\"role\":\"assistant\",\"phase\":\"final\",\"content\":[{\"type\":\"output_text\",\"text\":%q}]}}\n\n", turn, answer)
 	_, _ = fmt.Fprintf(writer, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-%d\"}}\n\n", turn)
@@ -360,7 +361,7 @@ func TestResumeWithDifferentCWDAndRefreshedConnectionDoesNotChangeProcessCWD(t *
 		Family: domain.ProviderOpenAI, BaseURL: firstServer.URL,
 		APIKey: secret.New("old-key"), Model: "gpt-test",
 	}}
-	created, err := newChatResources(context.Background(), firstConfig, dataRoot, "", t.TempDir())
+	created, err := openChatResources(context.Background(), firstConfig, dataRoot, "", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,7 +386,7 @@ func TestResumeWithDifferentCWDAndRefreshedConnectionDoesNotChangeProcessCWD(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	resumed, err := newChatResources(context.Background(), secondConfig, dataRoot, string(threadID), filepath.Join(t.TempDir(), "different"))
+	resumed, err := openChatResources(context.Background(), secondConfig, dataRoot, string(threadID), filepath.Join(t.TempDir(), "different"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -420,11 +421,11 @@ func TestCancelledTurnDoesNotEnterHistoryAfterResume(t *testing.T) {
 		Family: domain.ProviderOpenAI, BaseURL: cancelServer.URL,
 		APIKey: secret.New("cancel-key"), Model: "gpt-test",
 	}}
-	created, err := newChatResources(context.Background(), applicationConfig, dataRoot, "", t.TempDir())
+	created, err := openChatResources(context.Background(), applicationConfig, dataRoot, "", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	events, err := created.session.Submit("cancelled prompt")
+	events, err := created.session.Submit(context.Background(), "cancelled prompt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,7 +458,7 @@ func TestCancelledTurnDoesNotEnterHistoryAfterResume(t *testing.T) {
 	defer resumeServer.Close()
 	applicationConfig.Provider.BaseURL = resumeServer.URL
 	applicationConfig.Provider.APIKey = secret.New("refreshed-key")
-	resumed, err := newChatResources(context.Background(), applicationConfig, dataRoot, string(threadID), t.TempDir())
+	resumed, err := openChatResources(context.Background(), applicationConfig, dataRoot, string(threadID), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -486,7 +487,7 @@ func TestResumeRepairsHalfLineOnceAndKeepsCommittedHistory(t *testing.T) {
 		Family: domain.ProviderOpenAI, BaseURL: server.URL,
 		APIKey: secret.New("repair-key"), Model: "gpt-test",
 	}}
-	created, err := newChatResources(context.Background(), applicationConfig, dataRoot, "", t.TempDir())
+	created, err := openChatResources(context.Background(), applicationConfig, dataRoot, "", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -495,7 +496,7 @@ func TestResumeRepairsHalfLineOnceAndKeepsCommittedHistory(t *testing.T) {
 	if err := created.close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	repository, err := session.NewRepository(dataRoot)
+	repository, err := session.OpenOrCreateRepository(dataRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -516,7 +517,7 @@ func TestResumeRepairsHalfLineOnceAndKeepsCommittedHistory(t *testing.T) {
 	}
 	_ = file.Close()
 
-	resumed, err := newChatResources(context.Background(), applicationConfig, dataRoot, string(threadID), t.TempDir())
+	resumed, err := openChatResources(context.Background(), applicationConfig, dataRoot, string(threadID), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -526,7 +527,7 @@ func TestResumeRepairsHalfLineOnceAndKeepsCommittedHistory(t *testing.T) {
 	if err := resumed.close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	second, err := newChatResources(context.Background(), applicationConfig, dataRoot, string(threadID), t.TempDir())
+	second, err := openChatResources(context.Background(), applicationConfig, dataRoot, string(threadID), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,21 +10,21 @@ import (
 
 const maxUUIDv7UnixMilli = int64(1<<48 - 1)
 
-// NewSessionID 生成以当前 UTC 毫秒为时间字段的 UUIDv7 Session 标识。
-func NewSessionID() (SessionID, error) {
-	value, err := newUUIDv7(time.Now(), rand.Reader)
+// GenerateSessionID 生成以当前 UTC 毫秒为时间字段的 UUIDv7 Session 标识。
+func GenerateSessionID() (SessionID, error) {
+	value, err := generateUUIDv7(time.Now(), rand.Reader)
 	return SessionID(value), err
 }
 
-// NewThreadID 生成以当前 UTC 毫秒为时间字段的 UUIDv7 Thread 标识。
-func NewThreadID() (ThreadID, error) {
-	value, err := newUUIDv7(time.Now(), rand.Reader)
+// GenerateThreadID 生成以当前 UTC 毫秒为时间字段的 UUIDv7 Thread 标识。
+func GenerateThreadID() (ThreadID, error) {
+	value, err := generateUUIDv7(time.Now(), rand.Reader)
 	return ThreadID(value), err
 }
 
-// NewTurnID 生成以当前 UTC 毫秒为时间字段的 UUIDv7 Turn 标识。
-func NewTurnID() (TurnID, error) {
-	value, err := newUUIDv7(time.Now(), rand.Reader)
+// GenerateTurnID 生成以当前 UTC 毫秒为时间字段的 UUIDv7 Turn 标识。
+func GenerateTurnID() (TurnID, error) {
+	value, err := generateUUIDv7(time.Now(), rand.Reader)
 	return TurnID(value), err
 }
 
@@ -85,7 +85,7 @@ func (id TurnID) Time() (time.Time, error) {
 	return uuidv7Time(string(id), "turn")
 }
 
-func newUUIDv7(now time.Time, random io.Reader) (string, error) {
+func generateUUIDv7(now time.Time, random io.Reader) (string, error) {
 	milliseconds := now.UnixMilli()
 	if milliseconds < 0 || milliseconds > maxUUIDv7UnixMilli {
 		return "", fmt.Errorf("UUIDv7 timestamp is out of range")

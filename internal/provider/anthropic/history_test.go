@@ -167,7 +167,10 @@ func TestProjectHistoryIsIndependentAndDoesNotChangeRequest(t *testing.T) {
 		}},
 	})
 
-	before := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, conversation.history.snapshot(), newUserMessage("second"))
+	before, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, conversation.history.snapshot(), newUserMessage("second"))
+	if err != nil {
+		t.Fatalf("compile request before projection: %v", err)
+	}
 	beforeSegment, err := contextplan.NewSegment("anthropic-messages-request", contextplan.StabilityTurnStable, "v1", before)
 	if err != nil {
 		t.Fatalf("fingerprint request before projection: %v", err)
@@ -182,16 +185,20 @@ func TestProjectHistoryIsIndependentAndDoesNotChangeRequest(t *testing.T) {
 	afterView := conversation.ProjectHistory()
 	wantView := domain.SemanticHistoryView{Provider: domain.ProviderAnthropic, Turns: []domain.SemanticTurn{{UserText: "first", AssistantText: "answer"}}}
 	assertSemanticHistory(t, afterView, wantView)
-	after := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, conversation.history.snapshot(), newUserMessage("second"))
+	after, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, conversation.history.snapshot(), newUserMessage("second"))
+	if err != nil {
+		t.Fatalf("compile request after projection: %v", err)
+	}
 	afterSegment, err := contextplan.NewSegment("anthropic-messages-request", contextplan.StabilityTurnStable, "v1", after)
 	if err != nil {
 		t.Fatalf("fingerprint request after projection: %v", err)
 	}
-	if beforeSegment.Fingerprint != afterSegment.Fingerprint || string(beforeSegment.CanonicalJSON) != string(afterSegment.CanonicalJSON) {
-		t.Fatalf("projection changed request:\n before: %s\n after: %s", beforeSegment.CanonicalJSON, afterSegment.CanonicalJSON)
+	if beforeSegment.Fingerprint() != afterSegment.Fingerprint() || string(beforeSegment.CanonicalJSON()) != string(afterSegment.CanonicalJSON()) {
+		t.Fatalf("projection changed request:\n before: %s\n after: %s", beforeSegment.CanonicalJSON(), afterSegment.CanonicalJSON())
 	}
-	if after.Messages[1].Content[0].Signature != "signature" || after.Messages[1].Content[1].Text != "answer" {
-		t.Fatalf("projection changed native history: %#v", after.Messages)
+	afterRequest := buildMessagesRequest("claude-test", DefaultMaxOutputTokens, conversation.history.snapshot(), newUserMessage("second"))
+	if afterRequest.Messages[1].Content[0].Signature != "signature" || afterRequest.Messages[1].Content[1].Text != "answer" {
+		t.Fatalf("projection changed native history: %#v", afterRequest.Messages)
 	}
 }
 

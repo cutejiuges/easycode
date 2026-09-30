@@ -58,10 +58,24 @@ type Record struct {
 
 // RecordDraft 是尚未由单 writer 分配顺序和 batch 边界的强类型记录。
 type RecordDraft struct {
-	EventKind      EventKind
-	ParentThreadID domain.ThreadID
-	TurnID         domain.TurnID
-	Payload        any
+	descriptor     Descriptor
+	parentThreadID domain.ThreadID
+	turnID         domain.TurnID
+	payload        json.RawMessage
+}
+
+// EventKind 返回 draft 的已校验事件种类。
+func (draft RecordDraft) EventKind() EventKind { return draft.descriptor.Kind }
+
+// ParentThreadID 返回 draft 的父 thread 标识。
+func (draft RecordDraft) ParentThreadID() domain.ThreadID { return draft.parentThreadID }
+
+// TurnID 返回 draft 的 turn 标识。
+func (draft RecordDraft) TurnID() domain.TurnID { return draft.turnID }
+
+// PayloadBytes 返回 draft 已编码 payload 的独立副本。
+func (draft RecordDraft) PayloadBytes() json.RawMessage {
+	return append(json.RawMessage(nil), draft.payload...)
 }
 
 // Identity 固定一个 thread journal 的不可变身份。

@@ -17,6 +17,8 @@ import (
 )
 
 const (
+	// DefaultMaxRequestBytes 限制单个已编译 JSON 请求正文的最大字节数。
+	DefaultMaxRequestBytes = 16 << 20
 	// DefaultMaxEventBytes 限制单个 SSE event 占用的最大字节数。
 	DefaultMaxEventBytes = 4 << 20
 	// DefaultIdleTimeout 限制已经建立的流长时间没有任何数据或心跳。
@@ -34,7 +36,7 @@ type SSERequest struct {
 	Method  string
 	Path    string
 	Headers map[string]string
-	Body    any
+	Body    codec.CanonicalJSON
 }
 
 // StreamOptions 控制 SSE frame 大小和空闲超时。
@@ -81,10 +83,10 @@ func (client *Client) StreamSSE(
 	if method == "" {
 		method = http.MethodPost
 	}
-	body, err := codec.MarshalStable(request.Body)
-	if err != nil {
-		return nil, fmt.Errorf("marshal streaming request body: %w", err)
+	if err := request.Body.Validate(DefaultMaxRequestBytes); err != nil {
+		return nil, fmt.Errorf("streaming request body is invalid: %w", err)
 	}
+	body := request.Body.Bytes()
 
 	restyRequest := client.http.R().
 		SetContext(ctx).

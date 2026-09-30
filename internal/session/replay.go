@@ -69,16 +69,14 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 	if err := validateInitialBatch(batches[0]); err != nil {
 		return ReplayPlan{}, err
 	}
-	sessionMetadataValue, err := DecodePayload(batches[0][0])
+	sessionMetadata, err := DecodeSessionMetaPayload(batches[0][0])
 	if err != nil {
-		return ReplayPlan{}, replayCorrupt("session metadata payload is invalid")
+		return ReplayPlan{}, replayCorrupt("session metadata payload is invalid: " + err.Error())
 	}
-	threadMetadataValue, err := DecodePayload(batches[0][1])
+	threadMetadata, err := DecodeThreadMetaPayload(batches[0][1])
 	if err != nil {
 		return ReplayPlan{}, replayCorrupt("thread metadata payload is invalid")
 	}
-	sessionMetadata := sessionMetadataValue.(SessionMetaPayload)
-	threadMetadata := threadMetadataValue.(ThreadMetaPayload)
 	identity := Identity{SessionID: batches[0][0].SessionID, ThreadID: batches[0][0].ThreadID}
 	if err := validateMetadata(identity, sessionMetadata, threadMetadata, batches[0]); err != nil {
 		return ReplayPlan{}, err
@@ -113,7 +111,7 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 			if active != nil || len(known) != 1 || known[0].TurnID == "" {
 				return ReplayPlan{}, replayCorrupt("turn_started placement is invalid")
 			}
-			if _, decodeErr := decodeAs[TurnStartedPayload](known[0]); decodeErr != nil {
+			if _, decodeErr := DecodeTurnStartedPayload(known[0]); decodeErr != nil {
 				return ReplayPlan{}, replayCorrupt("turn_started payload is invalid")
 			}
 			active = &InterruptedTail{TurnID: known[0].TurnID, Sequence: known[0].Sequence}
@@ -122,12 +120,11 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 				known[0].TurnID != active.TurnID || known[1].TurnID != active.TurnID {
 				return ReplayPlan{}, replayCorrupt("completed turn batch is invalid")
 			}
-			commit, decodeErr := decodeAs[NativeCommitPayload](known[0])
-			if decodeErr != nil || !commit.Provider.Valid() || strings.TrimSpace(commit.Wire) == "" ||
-				commit.PayloadVersion <= 0 || len(commit.Payload) == 0 {
+			commit, decodeErr := DecodeNativeCommitPayload(known[0])
+			if decodeErr != nil {
 				return ReplayPlan{}, replayCorrupt("provider native commit payload is invalid")
 			}
-			if _, decodeErr := decodeAs[TurnCompletedPayload](known[1]); decodeErr != nil {
+			if _, decodeErr := DecodeTurnCompletedPayload(known[1]); decodeErr != nil {
 				return ReplayPlan{}, replayCorrupt("turn_completed payload is invalid")
 			}
 			plan.NativeCommits = append(plan.NativeCommits, NativeCommitRecord{
@@ -139,8 +136,8 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 			if active == nil || len(known) != 1 || known[0].TurnID != active.TurnID {
 				return ReplayPlan{}, replayCorrupt("turn_failed placement is invalid")
 			}
-			failure, decodeErr := decodeAs[TurnFailedPayload](known[0])
-			if decodeErr != nil || strings.TrimSpace(failure.Code) == "" {
+			_, decodeErr := DecodeTurnFailedPayload(known[0])
+			if decodeErr != nil {
 				return ReplayPlan{}, replayCorrupt("turn_failed payload is invalid")
 			}
 			plan.Turns = append(plan.Turns, ReplayedTurn{TurnID: active.TurnID, State: ReplayedTurnFailed})
@@ -235,19 +232,6 @@ func replayBatches(records []Record) ([][]Record, error) {
 		index += size
 	}
 	return batches, nil
-}
-
-func decodeAs[T any](record Record) (T, error) {
-	var zero T
-	value, err := DecodePayload(record)
-	if err != nil {
-		return zero, err
-	}
-	typed, ok := value.(T)
-	if !ok {
-		return zero, fmt.Errorf("session payload type is invalid")
-	}
-	return typed, nil
 }
 
 func cloneNativeCommit(commit NativeCommitPayload) NativeCommitPayload {

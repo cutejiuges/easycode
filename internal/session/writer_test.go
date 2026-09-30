@@ -22,7 +22,7 @@ func TestJournalWriterSerializesConcurrentAppends(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writer, err := newJournalWriter(
+	writer, err := startJournalWriter(
 		file,
 		Identity{SessionID: testSessionID, ThreadID: testThreadID},
 		1,
@@ -38,9 +38,9 @@ func TestJournalWriterSerializesConcurrentAppends(t *testing.T) {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			records, appendErr := writer.AppendBatch(context.Background(), []RecordDraft{{
-				EventKind: EventTurnStarted, TurnID: testTurnID, Payload: TurnStartedPayload{},
-			}})
+			records, appendErr := writer.AppendBatch(context.Background(), []RecordDraft{
+				mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}),
+			})
 			if appendErr != nil {
 				t.Errorf("AppendBatch() error = %v", appendErr)
 				return
@@ -96,7 +96,7 @@ func TestJournalWriterSerializesConcurrentAppends(t *testing.T) {
 func TestJournalWriterAssignsBatchBoundaryAndResumeSequence(t *testing.T) {
 	t.Parallel()
 	file := &memoryJournalFile{}
-	writer, err := newJournalWriter(
+	writer, err := startJournalWriter(
 		file,
 		Identity{SessionID: testSessionID, ThreadID: testThreadID},
 		7,
@@ -106,10 +106,10 @@ func TestJournalWriterAssignsBatchBoundaryAndResumeSequence(t *testing.T) {
 		t.Fatal(err)
 	}
 	records, err := writer.AppendBatch(context.Background(), []RecordDraft{
-		{EventKind: EventProviderNativeCommit, TurnID: testTurnID, Payload: NativeCommitPayload{
+		mustDraft(t, EventProviderNativeCommit, testTurnID, NativeCommitPayload{
 			Provider: "openai", Wire: "responses", PayloadVersion: 1, Payload: []byte(`{"shape":"text_sample"}`),
-		}},
-		{EventKind: EventTurnCompleted, TurnID: testTurnID, Payload: TurnCompletedPayload{}},
+		}),
+		mustDraft(t, EventTurnCompleted, testTurnID, TurnCompletedPayload{}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +134,7 @@ func TestJournalWriterPoisonsAfterShortWrite(t *testing.T) {
 	t.Parallel()
 	file := &memoryJournalFile{shortWrite: true}
 	writer := mustTestWriter(t, file)
-	draft := []RecordDraft{{EventKind: EventTurnStarted, TurnID: testTurnID, Payload: TurnStartedPayload{}}}
+	draft := []RecordDraft{mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{})}
 	if _, err := writer.AppendBatch(context.Background(), draft); err == nil || !strings.Contains(err.Error(), "short write") {
 		t.Fatalf("first AppendBatch() error = %v", err)
 	}
@@ -162,9 +162,9 @@ func TestJournalWriterPoisonsAfterSyncFailure(t *testing.T) {
 	t.Parallel()
 	file := &memoryJournalFile{syncErr: errors.New("fixture sync failure")}
 	writer := mustTestWriter(t, file)
-	_, err := writer.AppendBatch(context.Background(), []RecordDraft{{
-		EventKind: EventTurnStarted, TurnID: testTurnID, Payload: TurnStartedPayload{},
-	}})
+	_, err := writer.AppendBatch(context.Background(), []RecordDraft{
+		mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}),
+	})
 	if err == nil || !strings.Contains(err.Error(), "sync session batch") {
 		t.Fatalf("AppendBatch() error = %v", err)
 	}
@@ -176,29 +176,29 @@ func TestJournalWriterPoisonsAfterSyncFailure(t *testing.T) {
 
 func TestJournalWriterRejectsInvalidConstructionAndClosedAppend(t *testing.T) {
 	t.Parallel()
-	if _, err := newJournalWriter(nil, Identity{}, 0, nil); err == nil {
-		t.Fatal("newJournalWriter(nil) unexpectedly succeeded")
+	if _, err := startJournalWriter(nil, Identity{}, 0, nil); err == nil {
+		t.Fatal("startJournalWriter(nil) unexpectedly succeeded")
 	}
 	file := &memoryJournalFile{}
 	writer := mustTestWriter(t, file)
 	if err := writer.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := writer.AppendBatch(context.Background(), []RecordDraft{{
-		EventKind: EventTurnStarted, TurnID: testTurnID, Payload: TurnStartedPayload{},
-	}}); err == nil || !strings.Contains(err.Error(), "closed") {
+	if _, err := writer.AppendBatch(context.Background(), []RecordDraft{
+		mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}),
+	}); err == nil || !strings.Contains(err.Error(), "closed") {
 		t.Fatalf("AppendBatch() error = %v", err)
 	}
 }
 
 func TestStartJournalWriterTransfersLeaseOnlyAfterValidation(t *testing.T) {
 	dataRoot := filepath.Join(t.TempDir(), "sessions")
-	owner, err := NewRepository(dataRoot)
+	owner, err := OpenOrCreateRepository(dataRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer owner.Close()
-	competitor, err := NewRepository(dataRoot)
+	competitor, err := OpenOrCreateRepository(dataRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +245,7 @@ func TestStartJournalWriterTransfersLeaseOnlyAfterValidation(t *testing.T) {
 
 func TestJournalWriterRejectsQueueFullBeforeAllocatingSequence(t *testing.T) {
 	file := newBlockingJournalFile()
-	writer, err := newJournalWriterWithCapacity(
+	writer, err := startJournalWriterWithCapacity(
 		file,
 		Identity{SessionID: testSessionID, ThreadID: testThreadID},
 		1,
@@ -255,7 +255,7 @@ func TestJournalWriterRejectsQueueFullBeforeAllocatingSequence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	draft := []RecordDraft{{EventKind: EventTurnStarted, TurnID: testTurnID, Payload: TurnStartedPayload{}}}
+	draft := []RecordDraft{mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{})}
 	firstResult := make(chan appendResponse, 1)
 	go func() {
 		records, appendErr := writer.AppendBatch(context.Background(), draft)
@@ -263,12 +263,8 @@ func TestJournalWriterRejectsQueueFullBeforeAllocatingSequence(t *testing.T) {
 	}()
 	<-file.started
 
-	prepared, err := prepareDraft(draft[0])
-	if err != nil {
-		t.Fatal(err)
-	}
 	queuedResponse := make(chan appendResponse, 1)
-	writer.requests <- writerRequest{drafts: []preparedDraft{prepared}, response: queuedResponse}
+	writer.requests <- writerRequest{drafts: []RecordDraft{draft[0].clone()}, response: queuedResponse}
 	if _, err := writer.AppendBatch(context.Background(), draft); err == nil || !strings.Contains(err.Error(), "queue is full") {
 		t.Fatalf("queue-full AppendBatch() error = %v", err)
 	}
@@ -297,9 +293,9 @@ func TestJournalWriterCancellationLinearizesAtAdmission(t *testing.T) {
 		writer := mustTestWriter(t, file)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		if _, err := writer.AppendBatch(ctx, []RecordDraft{{
-			EventKind: EventTurnStarted, TurnID: testTurnID, Payload: TurnStartedPayload{},
-		}}); err == nil || !strings.Contains(err.Error(), "cancelled") {
+		if _, err := writer.AppendBatch(ctx, []RecordDraft{
+			mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}),
+		}); err == nil || !strings.Contains(err.Error(), "cancelled") {
 			t.Fatalf("cancelled AppendBatch() error = %v", err)
 		}
 		if file.writeCount != 0 {
@@ -316,9 +312,9 @@ func TestJournalWriterCancellationLinearizesAtAdmission(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		result := make(chan appendResponse, 1)
 		go func() {
-			records, appendErr := writer.AppendBatch(ctx, []RecordDraft{{
-				EventKind: EventTurnStarted, TurnID: testTurnID, Payload: TurnStartedPayload{},
-			}})
+			records, appendErr := writer.AppendBatch(ctx, []RecordDraft{
+				mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}),
+			})
 			result <- appendResponse{records: records, err: appendErr}
 		}()
 		<-file.started
@@ -339,9 +335,9 @@ func TestJournalWriterCancelledCloseStillDrainsAndCloses(t *testing.T) {
 	writer := mustTestWriter(t, file)
 	appendResult := make(chan error, 1)
 	go func() {
-		_, err := writer.AppendBatch(context.Background(), []RecordDraft{{
-			EventKind: EventTurnStarted, TurnID: testTurnID, Payload: TurnStartedPayload{},
-		}})
+		_, err := writer.AppendBatch(context.Background(), []RecordDraft{
+			mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}),
+		})
 		appendResult <- err
 	}()
 	<-file.started
@@ -350,9 +346,9 @@ func TestJournalWriterCancelledCloseStillDrainsAndCloses(t *testing.T) {
 	if err := writer.Close(ctx); err == nil || !strings.Contains(err.Error(), "cancelled") {
 		t.Fatalf("cancelled Close() error = %v", err)
 	}
-	if _, err := writer.AppendBatch(context.Background(), []RecordDraft{{
-		EventKind: EventTurnStarted, TurnID: testTurnID, Payload: TurnStartedPayload{},
-	}}); err == nil || !strings.Contains(err.Error(), "closed") {
+	if _, err := writer.AppendBatch(context.Background(), []RecordDraft{
+		mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}),
+	}); err == nil || !strings.Contains(err.Error(), "closed") {
 		t.Fatalf("AppendBatch() after closing error = %v", err)
 	}
 	close(file.release)
@@ -372,7 +368,7 @@ func TestJournalWriterCancelledCloseStillDrainsAndCloses(t *testing.T) {
 
 func mustTestWriter(t *testing.T, file journalFile) *JournalWriter {
 	t.Helper()
-	writer, err := newJournalWriter(
+	writer, err := startJournalWriter(
 		file,
 		Identity{SessionID: testSessionID, ThreadID: testThreadID},
 		1,

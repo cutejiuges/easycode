@@ -3,6 +3,8 @@ package skill
 
 import "context"
 
+// TODO(P6): Skill 发现与按需读取边界仅为扩展系统阶段保留，当前不得注入模型上下文；由后续 OpenSpec 同时提供真实消费者、验证与测试时启用，否则删除。
+
 // Authority 标识 Skill 资源所属的读取权限域。
 type Authority struct {
 	Kind string

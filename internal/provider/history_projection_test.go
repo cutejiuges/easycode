@@ -32,6 +32,7 @@ func TestProviderHistoryProjectorsProduceEquivalentTextSemantics(t *testing.T) {
 
 	openAIServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(writer, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"response-private-id\"}}\n\n")
 		_, _ = io.WriteString(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"shared answer\"}\n\n")
 		_, _ = io.WriteString(writer, "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"reasoning\",\"id\":\"openai-private-id\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"openai-private-summary\"}],\"encrypted_content\":\"openai-opaque-encrypted\"}}\n\n")
 		_, _ = io.WriteString(writer, "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"id\":\"openai-message-id\",\"role\":\"assistant\",\"phase\":\"final\",\"content\":[{\"type\":\"output_text\",\"text\":\"shared answer\"}]}}\n\n")

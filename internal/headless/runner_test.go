@@ -142,6 +142,24 @@ func TestRunCancellationUsesRuntimeTerminalAndInterruptsOnce(t *testing.T) {
 	}
 }
 
+func TestRunPassesContextAndRejectsNilContext(t *testing.T) {
+	type contextKey struct{}
+	wantContext := context.WithValue(context.Background(), contextKey{}, "operation")
+	session := fixedSession(runtimeStarted(), runtimeCompleted())
+	var output bytes.Buffer
+	result := Run(wantContext, session, textConfig(&output))
+	if !result.Completed || len(session.contexts) != 1 || session.contexts[0] != wantContext {
+		t.Fatalf("result/contexts = %#v/%#v", result, session.contexts)
+	}
+
+	nilSession := fixedSession(runtimeStarted(), runtimeCompleted())
+	var nilContext context.Context
+	result = Run(nilContext, nilSession, textConfig(&output))
+	if result.Failure.Code != fault.CodeTurnFailed || len(nilSession.contexts) != 0 {
+		t.Fatalf("nil context result/contexts = %#v/%#v", result, nilSession.contexts)
+	}
+}
+
 func TestRunCompletionWinsCancellationRace(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -177,9 +195,11 @@ type fakeSession struct {
 	interrupt  func()
 	interrupts atomic.Int32
 	prompts    []string
+	contexts   []context.Context
 }
 
-func (session *fakeSession) Submit(prompt string) (<-chan protocol.Event, error) {
+func (session *fakeSession) Submit(ctx context.Context, prompt string) (<-chan protocol.Event, error) {
+	session.contexts = append(session.contexts, ctx)
 	session.prompts = append(session.prompts, prompt)
 	return session.events, session.submitErr
 }

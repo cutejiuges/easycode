@@ -128,11 +128,15 @@ func (conversation *Conversation) Stream(
 	}
 
 	userItem := NewUserItem(text)
-	request := compileResponsesRequest(
+	request, err := compileResponsesRequest(
 		conversation.provider.config.Model,
 		conversation.history.snapshot(),
 		userItem,
 	)
+	if err != nil {
+		conversation.active.Store(false)
+		return nil, fault.Wrap(fault.CodeProviderRequest, "compile provider request failed", err)
+	}
 	streamContext, cancelStream := context.WithCancel(ctx)
 	stream, err := conversation.provider.transport.StreamSSE(streamContext, transport.SSERequest{
 		Method: http.MethodPost,
@@ -169,7 +173,7 @@ func (conversation *Conversation) consumeStream(
 	defer conversation.active.Store(false)
 	defer cancelStream()
 
-	stagedItems := make([]NativeItem, 0)
+	reducer := newResponsesStreamReducer()
 	stopTransport := func() {
 		cancelStream()
 		for range stream {
@@ -181,7 +185,7 @@ func (conversation *Conversation) consumeStream(
 
 	for message := range stream {
 		if message.Event != nil {
-			result, err := reduceResponsesEvent(*message.Event)
+			result, err := reducer.reduce(*message.Event)
 			if err != nil {
 				stopTransport()
 				sendTerminal(provider.StreamEventFailed, nil, err)
@@ -192,12 +196,11 @@ func (conversation *Conversation) consumeStream(
 			}
 			if result.native != nil {
 				item := result.native.clone()
-				stagedItems = append(stagedItems, item)
 				output <- provider.StreamEvent{Kind: provider.StreamEventNative, Native: item}
 			}
 			if result.completed {
 				stopTransport()
-				turn := nativeTurn{User: userItem.clone(), Outputs: cloneNativeItems(stagedItems)}
+				turn := nativeTurn{User: userItem.clone(), Outputs: reducer.outputItems()}
 				envelope, encodeErr := encodeNativeCommit(turn)
 				if encodeErr != nil {
 					sendTerminal(provider.StreamEventFailed, nil, fault.Wrap(fault.CodeStreamProtocol, "OpenAI completed sample is invalid", encodeErr))
@@ -237,13 +240,13 @@ func mapTransportTerminal(ctx context.Context, err error) (provider.StreamEventK
 	if ctx.Err() != nil || errors.Is(err, context.Canceled) {
 		return provider.StreamEventCancelled, fault.Wrap(fault.CodeUserCancelled, "turn was cancelled", context.Canceled)
 	}
-	if errors.Is(err, transport.ErrIdleTimeout) {
+	if transport.IsIdleTimeout(err) {
 		return provider.StreamEventFailed, fault.Wrap(fault.CodeStreamIdleTimeout, "provider stream idle timeout", err)
 	}
 	if errors.Is(err, io.EOF) {
 		return provider.StreamEventFailed, fault.New(fault.CodeStreamProtocol, "provider stream closed before response.completed")
 	}
-	if errors.Is(err, transport.ErrEventTooLarge) {
+	if transport.IsEventTooLarge(err) {
 		return provider.StreamEventFailed, fault.Wrap(fault.CodeStreamProtocol, "provider stream event is too large", err)
 	}
 	return provider.StreamEventFailed, fault.Wrap(fault.CodeStreamProtocol, "provider stream failed", err)

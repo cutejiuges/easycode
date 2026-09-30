@@ -19,7 +19,7 @@ import (
 const journalLeaseHelperEnv = "EASYCODE_TEST_JOURNAL_LEASE_HELPER"
 
 func TestJournalLockDistinguishesBusyFromSystemError(t *testing.T) {
-	repository, err := NewRepository(filepath.Join(t.TempDir(), "sessions"))
+	repository, err := OpenOrCreateRepository(filepath.Join(t.TempDir(), "sessions"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestJournalLockDistinguishesBusyFromSystemError(t *testing.T) {
 	}
 	defer owner.Close()
 
-	competitor, err := NewRepository(repository.RootPath())
+	competitor, err := OpenOrCreateRepository(repository.RootPath())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,12 +53,12 @@ func TestJournalLockDistinguishesBusyFromSystemError(t *testing.T) {
 
 func TestJournalLeaseStateTransitionsAndIndependentRepositories(t *testing.T) {
 	dataRoot := filepath.Join(t.TempDir(), "sessions")
-	first, err := NewRepository(dataRoot)
+	first, err := OpenOrCreateRepository(dataRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer first.Close()
-	second, err := NewRepository(dataRoot)
+	second, err := OpenOrCreateRepository(dataRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestJournalLeaseStateTransitionsAndIndependentRepositories(t *testing.T) {
 }
 
 func TestJournalLeaseRejectsIllegalTransfer(t *testing.T) {
-	repository, err := NewRepository(filepath.Join(t.TempDir(), "sessions"))
+	repository, err := OpenOrCreateRepository(filepath.Join(t.TempDir(), "sessions"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestJournalLeaseRejectsIllegalTransfer(t *testing.T) {
 
 func TestJournalLeaseProcessOwnershipAndCrashRelease(t *testing.T) {
 	dataRoot := createLeaseProcessJournal(t, []byte("fixed-prefix\n"))
-	competitor, err := NewRepository(dataRoot)
+	competitor, err := OpenOrCreateRepository(dataRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,12 +178,12 @@ func TestJournalLeaseProcessOwnershipAndCrashRelease(t *testing.T) {
 }
 
 func TestLoaderDoesNotRepairWhileHelperOwnsLease(t *testing.T) {
-	committed := encodeTestBatch(t, 1, []RecordDraft{{
-		EventKind: EventTurnStarted, TurnID: testTurnID, Payload: TurnStartedPayload{},
-	}})
+	committed := encodeTestBatch(t, 1, []RecordDraft{
+		mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}),
+	})
 	torn := append(append([]byte(nil), committed...), []byte(`{"schema_version":1,"payload_version"`)...)
 	dataRoot := createLeaseProcessJournal(t, torn)
-	repository, err := NewRepository(dataRoot)
+	repository, err := OpenOrCreateRepository(dataRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,12 +230,12 @@ func TestLoaderDoesNotRepairWhileHelperOwnsLease(t *testing.T) {
 
 func TestLoaderErrorLeavesLeaseWithCaller(t *testing.T) {
 	dataRoot := createLeaseProcessJournal(t, []byte("{invalid json}\n"))
-	owner, err := NewRepository(dataRoot)
+	owner, err := OpenOrCreateRepository(dataRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer owner.Close()
-	competitor, err := NewRepository(dataRoot)
+	competitor, err := OpenOrCreateRepository(dataRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +272,7 @@ func TestJournalLeaseHelperProcess(t *testing.T) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	repository, err := NewRepository(dataRoot)
+	repository, err := OpenOrCreateRepository(dataRoot)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -360,7 +360,7 @@ func (helper *journalLeaseHelper) kill(t *testing.T) {
 func createLeaseProcessJournal(t *testing.T, content []byte) string {
 	t.Helper()
 	dataRoot := filepath.Join(t.TempDir(), "sessions")
-	repository, err := NewRepository(dataRoot)
+	repository, err := OpenOrCreateRepository(dataRoot)
 	if err != nil {
 		t.Fatal(err)
 	}

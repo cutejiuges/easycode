@@ -8,8 +8,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"easycode/internal/codec"
 )
 
 func TestResolveURLPreservesBasePrefix(t *testing.T) {
@@ -100,10 +103,11 @@ func TestStreamSSEUsesStableJSONAndHeaders(t *testing.T) {
 	}
 	defer closeClient(t, client)
 
+	body := mustCanonical(t, map[string]any{"z": 1, "a": 2}, DefaultMaxRequestBytes)
 	stream, err := client.StreamSSE(context.Background(), SSERequest{
 		Path:    "responses",
 		Headers: map[string]string{"Authorization": "Bearer test-key"},
-		Body:    map[string]any{"z": 1, "a": 2},
+		Body:    body,
 	}, StreamOptions{IdleTimeout: time.Second})
 	if err != nil {
 		t.Fatalf("stream SSE: %v", err)
@@ -133,10 +137,11 @@ func TestStreamSSEHTTPErrorDoesNotLeakSecret(t *testing.T) {
 	}
 	defer closeClient(t, client)
 
+	body := mustCanonical(t, map[string]string{"secret": "top-secret"}, DefaultMaxRequestBytes)
 	_, err = client.StreamSSE(context.Background(), SSERequest{
 		Path:    "responses",
 		Headers: map[string]string{"Authorization": "Bearer top-secret"},
-		Body:    map[string]string{"secret": "top-secret"},
+		Body:    body,
 	}, StreamOptions{})
 	if err == nil {
 		t.Fatal("expected HTTP error")
@@ -204,7 +209,7 @@ func TestParseSSERandomChunkBoundaries(t *testing.T) {
 
 func TestParseSSERejectsOversizedEvent(t *testing.T) {
 	_, err := collectParsedEvents(context.Background(), strings.NewReader("data: 123456789\n\n"), 8)
-	if !errors.Is(err, ErrEventTooLarge) {
+	if !IsEventTooLarge(err) {
 		t.Fatalf("error: got %v want event too large", err)
 	}
 }
@@ -228,7 +233,8 @@ func TestStreamSSECanBeCancelled(t *testing.T) {
 	defer closeClient(t, client)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	stream, err := client.StreamSSE(ctx, SSERequest{Path: "responses", Body: struct{}{}}, StreamOptions{IdleTimeout: time.Second})
+	body := mustCanonical(t, struct{}{}, DefaultMaxRequestBytes)
+	stream, err := client.StreamSSE(ctx, SSERequest{Path: "responses", Body: body}, StreamOptions{IdleTimeout: time.Second})
 	if err != nil {
 		t.Fatalf("stream SSE: %v", err)
 	}
@@ -261,7 +267,8 @@ func TestStreamSSEIdleTimeout(t *testing.T) {
 	}
 	defer closeClient(t, client)
 
-	stream, err := client.StreamSSE(context.Background(), SSERequest{Path: "responses", Body: struct{}{}}, StreamOptions{IdleTimeout: 20 * time.Millisecond})
+	body := mustCanonical(t, struct{}{}, DefaultMaxRequestBytes)
+	stream, err := client.StreamSSE(context.Background(), SSERequest{Path: "responses", Body: body}, StreamOptions{IdleTimeout: 20 * time.Millisecond})
 	if err != nil {
 		t.Fatalf("stream SSE: %v", err)
 	}
@@ -273,6 +280,69 @@ func TestStreamSSEIdleTimeout(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("idle stream did not time out")
+	}
+}
+
+func TestStreamSSERejectsEmptyAndOversizedBodyBeforeNetwork(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests.Add(1)
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	defer closeClient(t, client)
+
+	_, err = client.StreamSSE(context.Background(), SSERequest{Path: "responses"}, StreamOptions{})
+	if err == nil || !strings.Contains(err.Error(), "body is invalid") {
+		t.Fatalf("empty body error: %v", err)
+	}
+
+	oversized := mustCanonical(t, strings.Repeat("x", DefaultMaxRequestBytes), codec.DefaultMaxCanonicalJSONBytes)
+	_, err = client.StreamSSE(context.Background(), SSERequest{Path: "responses", Body: oversized}, StreamOptions{})
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized body error: %v", err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("invalid body produced %d network requests", got)
+	}
+}
+
+func TestStreamSSESendsCanonicalSnapshotAfterInputMutation(t *testing.T) {
+	raw := []byte(`{"a":2,"z":1}`)
+	body, err := codec.ParseCanonical(raw, DefaultMaxRequestBytes)
+	if err != nil {
+		t.Fatalf("parse canonical body: %v", err)
+	}
+	raw[2] = 'x'
+
+	received := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requestBody, readErr := io.ReadAll(request.Body)
+		if readErr != nil {
+			t.Errorf("read body: %v", readErr)
+		}
+		received <- requestBody
+		writer.Header().Set("Content-Type", "text/event-stream")
+		_, _ = writer.Write([]byte("data: done\n\n"))
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	defer closeClient(t, client)
+
+	stream, err := client.StreamSSE(context.Background(), SSERequest{Path: "responses", Body: body}, StreamOptions{})
+	if err != nil {
+		t.Fatalf("stream SSE: %v", err)
+	}
+	for range stream {
+	}
+	if got := string(<-received); got != `{"a":2,"z":1}` {
+		t.Fatalf("sent body changed through caller input: %s", got)
 	}
 }
 
@@ -311,4 +381,13 @@ func closeClient(t *testing.T, client *Client) {
 	if err := client.Close(); err != nil {
 		t.Errorf("close client: %v", err)
 	}
+}
+
+func mustCanonical(t *testing.T, value any, maxBytes int) codec.CanonicalJSON {
+	t.Helper()
+	canonical, err := codec.MarshalCanonical(value, maxBytes)
+	if err != nil {
+		t.Fatalf("marshal canonical JSON: %v", err)
+	}
+	return canonical
 }

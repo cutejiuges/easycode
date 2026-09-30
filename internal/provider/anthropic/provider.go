@@ -142,12 +142,16 @@ func (conversation *Conversation) Stream(
 	}
 
 	userMessage := newUserMessage(text)
-	request := compileMessagesRequest(
+	request, err := compileMessagesRequest(
 		conversation.provider.config.Model,
 		conversation.provider.config.MaxOutputTokens,
 		conversation.history.snapshot(),
 		userMessage,
 	)
+	if err != nil {
+		conversation.active.Store(false)
+		return nil, fault.Wrap(fault.CodeProviderRequest, "compile provider request failed", err)
+	}
 	streamContext, cancelStream := context.WithCancel(ctx)
 	stream, err := conversation.provider.transport.StreamSSE(streamContext, transport.SSERequest{
 		Method: http.MethodPost,
@@ -255,13 +259,13 @@ func mapTransportTerminal(ctx context.Context, err error) (provider.StreamEventK
 	if ctx.Err() != nil || errors.Is(err, context.Canceled) {
 		return provider.StreamEventCancelled, fault.Wrap(fault.CodeUserCancelled, "turn was cancelled", context.Canceled)
 	}
-	if errors.Is(err, transport.ErrIdleTimeout) {
+	if transport.IsIdleTimeout(err) {
 		return provider.StreamEventFailed, fault.Wrap(fault.CodeStreamIdleTimeout, "provider stream idle timeout", err)
 	}
 	if errors.Is(err, io.EOF) {
 		return provider.StreamEventFailed, fault.New(fault.CodeStreamProtocol, "provider stream closed before message_stop")
 	}
-	if errors.Is(err, transport.ErrEventTooLarge) {
+	if transport.IsEventTooLarge(err) {
 		return provider.StreamEventFailed, fault.Wrap(fault.CodeStreamProtocol, "provider stream event is too large", err)
 	}
 	return provider.StreamEventFailed, fault.Wrap(fault.CodeStreamProtocol, "provider stream failed", err)

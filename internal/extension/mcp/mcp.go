@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 )
 
+// TODO(P6): MCP 客户端边界仅为扩展系统阶段保留，当前不得启动进程或连接远端；由后续 OpenSpec 同时提供真实消费者、验证与测试时启用，否则删除。
+
 // ServerConfig 描述 MCP server 的本地启动或远程连接配置。
 type ServerConfig struct {
 	Name      string

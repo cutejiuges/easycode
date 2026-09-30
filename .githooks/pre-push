@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+./scripts/check-branch-name.sh
+printf '%s\n' 'Running pre-push verification...'
+exec make verify

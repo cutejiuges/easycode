@@ -112,6 +112,8 @@ TurnRuntime -- future tool loop --> ToolScheduler / Policy / Executor
 
 ### 4.1 建议的 Go Module 结构
 
+下列结构同时包含当前实现与目标边界。`tool`、`extension`、`subagent`、`telemetry` 目前只保留经批准的结构化 TODO 占位，分别等待 P3/P6/P7/P8 的 OpenSpec 提供真实消费者、验证与测试；不得从目录存在推断能力已经可用。
+
 ```text
 cmd/
   easycode/                 可执行程序入口
@@ -125,14 +127,14 @@ internal/
     transport/              Resty HTTP/SSE 公共基础设施
     anthropic/              Anthropic Messages 实现
     openai/                 OpenAI Responses 实现
-  tool/                     ToolSpec、Executor、Policy、Scheduler
-    builtin/                read/edit/write/grep/glob/bash/patch/plan 等
+  tool/                     P3 目标：ToolSpec、Executor、Policy、Scheduler
+    builtin/                P3 目标：read/edit/write/grep/glob/bash/patch/plan 等
   context/                  上下文分层、token budget、compact、cache plan
   session/                  JSONL、artifact、resume/fork、SQLite projection
-  extension/                hooks、skills、plugins、MCP
-  subagent/                 thread tree、mailbox、后台任务和限流
+  extension/                P6 目标：hooks、skills、plugins、MCP
+  subagent/                 P7 目标：thread tree、mailbox、后台任务和限流
   tui/                      Bubble Tea、输入、消息 view、overlay 和 diff
-  telemetry/                slog、redaction、metrics 和 diagnostics
+  telemetry/                P8 目标：slog、redaction、metrics 和 diagnostics
 pkg/                        仅放需要对外稳定复用的 API，默认保持为空
 ```
 
@@ -156,6 +158,8 @@ headless -> domain + fault + protocol + ChatSession interface
 app      -> runtime + tui + headless
 cmd      -> app
 ```
+
+上图是长期目标；当前 P2 运行路径为 `domain/protocol <- provider|session <- runtime <- app/tui/headless/cmd`。`context` 已有独立的 canonical segment/plan 契约但尚未接入 Runtime；Tool、extension、Subagent 和 telemetry 仍不可从 Runtime/app 到达。
 
 禁止：
 
@@ -269,6 +273,8 @@ openai.Provider
 - Anthropic 与 OpenAI 互切：创建新 fork，将旧上下文压缩为中立摘要，再由新 provider 建立原生历史。
 - 禁止伪造 Anthropic signature 或 OpenAI encrypted reasoning。
 
+当前只实现第一项。模型兼容性检查与 compacted cross-provider fork 均属于 P4 计划，现阶段不得自动切换或把 opaque reasoning 转换到另一协议。
+
 ### 5.5 HistoryProjector 与语义视图
 
 双轨历史需要一个明确的共享接缝，但不能退回统一消息模型。每个 Provider 实现自己的 `HistoryProjector`，将 native history 单向投影为只读的 `SemanticHistoryView`：
@@ -313,7 +319,7 @@ OpenAI payload v1 保存用户 Responses item 与有序 output items；Anthropic
 
 ### 6.2 上下文分段
 
-ContextPlanner 输出有序 `CachePlan`，而不是直接拼接字符串：
+当前已实现不可变、强类型且可验证的 `CachePlan` 值对象和 stable-prefix fingerprint；ContextPlanner 及其 Runtime/Provider 消费仍属于 P2/P4 后续工作。目标输出如下，而不是直接拼接字符串：
 
 ```text
 CachePlan
@@ -445,7 +451,7 @@ Anthropic reducer 负责处理：
 - text/thinking/signature/input_json delta
 - stop reason、usage、异常 block 顺序和中断恢复
 
-OpenAI reducer 负责处理：
+OpenAI 当前 text-only reducer 负责处理 `response.created`、文本 delta、完成 output item，以及 identity 匹配的 completed/failed/incomplete；每条 stream 使用独立状态机，要求 created 恰好一次、所有支持事件位于 active 状态且 terminal 唯一。下列 reasoning/tool/usage 归并仍是后续目标：
 
 - response/item created/added/done/completed
 - output text delta
@@ -463,6 +469,8 @@ OpenAI reducer 负责处理：
 - 高频 delta 不进入 session writer；成功终态和副作用边界必须等待 durable batch，不能为降低延迟而越过 `Sync` 确认。
 
 ## 8. Tool 系统
+
+本章描述 P3 目标架构。当前 `internal/tool` 与 `internal/tool/builtin` 仅是经批准的 TODO 占位，没有可执行 schema、Provider wire、权限策略、执行器或 Runtime/app 消费者。
 
 ### 8.1 分层
 
@@ -522,6 +530,8 @@ fs.patch
 - MCP tools
 
 ## 9. Context 与 Compaction
+
+本章描述 P2/P4 目标架构。当前只有 canonical segment/plan 与 fingerprint 契约；ContextPlanner、token budget、compaction 以及跨 Provider fork 尚未实现。
 
 ### 9.1 上下文来源
 
@@ -629,6 +639,7 @@ SQLite 可以从 JSONL 重建。数据库损坏不应导致 transcript 永久丢
 ### 10.4 写入与权限
 
 - JSONL append-only；每个活动 thread 通过绑定 journal handle 的跨进程 exclusive lease 保证只有一个 writer。新建 metadata 或对既有 journal 执行 load/repair 前必须先取得 lease，并连续保持到 writer 完成最终 `Sync` 和关闭 handle；每个 durable batch 连续编号。
+- macOS/Linux 从已打开数据根使用 no-follow、descriptor-relative walker 逐级创建/打开日期目录与 journal，并从实际 handle 校验类型和权限；lease、Loader、repair 与 writer transfer 复用最终 journal handle。Windows 等尚未提供等价语义的平台当前明确失败关闭，跨平台实现与真实平台验证留在 P8。
 - 文件使用用户私有权限，Unix 下目标为文件 `0600`、目录 `0700`。
 - Loader 严格校验 canonical UUIDv7、UTC 时间、checksum、ID 归属、序号和 batch 完整性；只允许截去 EOF 尾部半行或未完成尾批次，不允许跳过中段损坏。
 - ReplayPlanner 只重放完整 batch。存在未闭合 turn 时，恢复会先追加 `turn_failed`，其 payload 使用稳定 code `session_interrupted`，再允许新 turn。
@@ -640,6 +651,8 @@ SQLite 可以从 JSONL 重建。数据库损坏不应导致 transcript 永久丢
 - artifact 文件路径必须防止目录穿越。
 
 ## 11. Subagent
+
+本章描述 P7 目标架构。当前仅保留经批准的 TODO 控制边界，没有生产消费者、thread tree、调度或 completion envelope。
 
 ### 11.1 模型
 
@@ -659,6 +672,8 @@ SQLite 可以从 JSONL 重建。数据库损坏不应导致 transcript 永久丢
 团队 mailbox、worktree isolation 和 swarm coordination 放到后续阶段，但 thread/session 模型需要预留扩展空间。
 
 ## 12. Hooks、Skills、Plugins 与 MCP
+
+本章描述 P6 目标架构。当前相关 package 仅保留经批准的 TODO 边界，未被 Runtime/app 导入，不执行 Hook、不发现或加载 Skill/Plugin，也不启动 MCP server。
 
 ### 12.1 Hooks
 
@@ -752,6 +767,7 @@ manifest adapter 可以统一扩展描述，但不能用于统一 provider 对�
 
 - JSON 提供基础值，非空 `EASYCODE_*` 环境变量逐字段覆盖；默认文件不存在时允许纯环境变量启动。
 - 包含明文 API key 的 Unix 配置文件必须使用用户私有权限，例如 `0600`；读取后立即包装为 secret type，并在 String/GoString/slog/JSON diagnostic 中脱敏。
+- macOS/Linux 配置文件使用 no-follow opener，并从同一实际 handle 校验普通文件类型、大小和权限后读取；Windows 等未实现等价 secure opener 的平台当前明确失败关闭，不回退到 `Lstat` 后再 `Open`。
 - 配置文件路径、JSON 正文和 key 不进入 Provider 请求错误或 TUI snapshot；显式配置文件缺失时不得静默回退。
 - base URL、额外 header 和 query 参数需要校验，错误信息不能回显 secret。
 - 不实现账号登录、设备码、OAuth 或订阅系统。
@@ -764,7 +780,7 @@ manifest adapter 可以统一扩展描述，但不能用于统一 provider 对�
 2. Diagnostic log：调试 runtime/provider/tool 问题。
 3. Telemetry：可选 metrics/traces，不参与恢复。
 
-使用 `log/slog` 建立结构化日志上下文；需要跨进程 trace 时，在 telemetry 边界接入 OpenTelemetry：
+P8 目标是使用 `log/slog` 建立结构化日志上下文，并在需要跨进程 trace 时从 telemetry 边界接入 OpenTelemetry。当前 telemetry logger 仅为经批准的 TODO 占位，尚未接入生产运行路径：
 
 ```text
 session -> turn -> sampling attempt -> provider request
@@ -807,6 +823,8 @@ session -> turn -> sampling attempt -> provider request
 - JSONL 写入、崩溃尾部修复、resume/fork/compact。
 - hooks、skills、plugins、MCP 生命周期。
 - subagent 并发、限制和取消传播。
+
+以上条目按对应 Roadmap 阶段启用。当前已落地双 Provider 文本 stream、Session/restore/headless、descriptor-bound 配置与 journal 安全、迁移 fixture，以及架构静态门禁；不得把未来条目视作现有测试覆盖。
 
 ### 16.4 TUI 测试
 
@@ -854,6 +872,10 @@ make verify
 9. domain/protocol 层不包含网络、数据库和终端副作用。
 10. 禁止上帝类、上帝包、循环依赖和跨层捷径。
 11. 每次逻辑变更都需要测试、自检并保持全量测试通过。
+12. Provider request canonical bytes 由 Provider compiler 唯一生成，transport 只发送不可变快照。
+13. Session v1 draft/decoder 强类型且按 kind/revision 校验，不通过 `any` 或反射 registry 传播核心 payload。
+14. 配置与 Session 的类型、权限和 symlink 安全判断绑定实际打开句柄；无法提供等价语义的平台必须失败关闭。
+15. 生产包级 `var` 只允许私有 sentinel error 和编译期接口断言；依赖方向、核心动态类型与占位 reachability 由 `internal/architecture` 的 AST/import graph 回归守卫。
 
 ## 19. 架构决策和踩坑记录
 

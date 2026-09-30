@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"easycode/internal/codec"
 	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
 	"easycode/internal/provider"
@@ -65,20 +64,20 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 	}
 	restoredView.Turns[0].UserText = "mutated projection"
 	next := newUserMessage("third")
-	uninterruptedRequest := compileMessagesRequest(
+	uninterruptedRequest, err := compileMessagesRequest(
 		instance.config.Model, instance.config.MaxOutputTokens, uninterrupted.historySnapshot(), next,
 	)
-	restoredRequest := compileMessagesRequest(
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoredRequest, err := compileMessagesRequest(
 		instance.config.Model, instance.config.MaxOutputTokens, restored.historySnapshot(), next,
 	)
-	uninterruptedBytes, err := codec.MarshalStable(uninterruptedRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	restoredBytes, err := codec.MarshalStable(restoredRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
+	uninterruptedBytes := uninterruptedRequest.Bytes()
+	restoredBytes := restoredRequest.Bytes()
 	if !bytes.Equal(restoredBytes, uninterruptedBytes) {
 		t.Fatalf("restored request differs:\n%s\n%s", restoredBytes, uninterruptedBytes)
 	}
@@ -90,9 +89,10 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Fingerprint != second.Fingerprint || len(restoredRequest.Messages) != 5 ||
-		restoredRequest.Messages[3].Content[0].Type != "future_block" {
-		t.Fatalf("fingerprints/order differ: %q %q %#v", first.Fingerprint, second.Fingerprint, restoredRequest.Messages)
+	restoredShape := buildMessagesRequest(instance.config.Model, instance.config.MaxOutputTokens, restored.historySnapshot(), next)
+	if first.Fingerprint() != second.Fingerprint() || len(restoredShape.Messages) != 5 ||
+		restoredShape.Messages[3].Content[0].Type != "future_block" {
+		t.Fatalf("fingerprints/order differ: %q %q %#v", first.Fingerprint(), second.Fingerprint(), restoredShape.Messages)
 	}
 }
 

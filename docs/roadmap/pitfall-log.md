@@ -84,6 +84,21 @@
 - 关联 ADR/Issue/PR：ADR-0002。
 - 后续行动：P1 先定义接口和最小视图，P2/P5/P6/P7 接入消费者。
 
+### [P0][2026-09-29] 分支语义不能只依赖评审者记忆
+
+- 状态：已解决仓库内门禁
+- 影响版本或提交：OpenSpec `harden-architecture-contract-compliance`
+- 现象：分支可以使用工具名、用户名或无语义前缀，新增功能与缺陷修复无法从名称识别，也没有一致的本地和 CI 判定入口。
+- 触发条件：开发者直接创建任意分支，或 CI 在 detached merge ref 上误判当前 ref。
+- 根因：分支约定只存在于文字说明，hook 与 workflow 没有共享 validator。
+- 架构影响：单一 POSIX 脚本按显式参数、可信 CI source branch、本地 symbolic ref 的顺序解析；pre-commit、pre-push 和 GitHub Actions 复用同一规则。
+- 缓存影响：无。
+- 修复方案：普通分支强制匹配语义前缀与 kebab-case，并通过表驱动 shell regression 覆盖 detached、merge ref 和非法名称。
+- 未采用方案及原因：未复制 regex 到多个 hook/workflow，也未通过 commit message 猜测意图，因为两者都会产生漂移或歧义。
+- 回归测试：`scripts/check-branch-name_test.sh`、`make branch-policy-test`、`.github/workflows/verify.yml`。
+- 关联 ADR/Issue/PR：OpenSpec `harden-architecture-contract-compliance`；属于工程治理落实，不新增 ADR。
+- 后续行动：管理员仍须把 `branch-governance` 与 `verify` 配为 `main` required checks 并禁止 direct push；仓库文件本身不会自动启用 ruleset。
+
 ## 4. P1 双 Provider Kernel
 
 ### [P1][2026-09-18] Resty v3 当前仍是 RC 版本
@@ -163,6 +178,36 @@
 - 关联 ADR/Issue/PR：ADR-0002、ADR-0004。
 - 后续行动：新增 Provider 时必须在 OpenSpec proposal 中说明三类差异归属。
 
+### [P1][2026-09-29] Provider compiler 必须唯一拥有 canonical request bytes
+
+- 状态：已解决当前双 Provider 文本请求
+- 影响版本或提交：OpenSpec `harden-architecture-contract-compliance`
+- 现象：golden/fingerprint 可以基于一份序列化结果，而 transport 又对 `Body any` 二次 marshal，真实 HTTP bytes 存在漂移入口。
+- 触发条件：JSON codec 选项、字段默认值或调用方对象在编译后发生变化。
+- 根因：request serialization 有 Provider 与 transport 两个 owner，缓存比较的对象不一定等于实际发送正文。
+- 架构影响：OpenAI/Anthropic 各自使用 typed builder 和 compiler 生成不可变 canonical JSON；transport 只校验并发送深拷贝快照。
+- 缓存影响：request golden、stable fingerprint、uninterrupted/restored 比较与真实 HTTP body 现在使用同一份 compiler 产物。
+- 修复方案：移除 transport marshal，将 canonical 值对象的合法性、大小和不可变性固定在构造边界。
+- 未采用方案及原因：未继续向 transport 传 typed request，因为那会保留第二个序列化点；也未暴露共享可变 `[]byte`。
+- 回归测试：`internal/codec/json_test.go`、`internal/provider/transport/client_test.go`、双 Provider `request_test.go`、`integration_test.go`、`restore_test.go`。
+- 关联 ADR/Issue/PR：OpenSpec `harden-architecture-contract-compliance`；落实现有缓存与 Provider 边界，不新增 ADR。
+- 后续行动：任何新 Provider/compiler 都必须证明网络正文与 golden bytes 逐字节一致。
+
+### [P1][2026-09-29] OpenAI Responses 终态必须绑定 created identity
+
+- 状态：已解决
+- 影响版本或提交：OpenSpec `harden-architecture-contract-compliance`
+- 现象：无状态 reducer 只看 event type，会接受缺少 `response.created`、冲突 response ID 或不合法顺序的终态。
+- 触发条件：兼容网关串流、乱序、重复 created/terminal，或不同 response 的 terminal 被混入同一连接。
+- 根因：response identity 与事件状态分散在 Provider loop，reducer 没有 sample 级 owner。
+- 架构影响：每条 stream 创建独立 reducer，固定 created ID、active 状态、有序 item 与唯一 terminal；failed/incomplete 也必须匹配 identity。
+- 缓存影响：拒绝把错误 response 的输出提交进 native history，防止后续请求与恢复 fingerprint 分叉。
+- 修复方案：非法顺序或 ID 冲突返回稳定 stream protocol fault；仅 active、non-terminal 状态下忽略未知 well-formed event。
+- 未采用方案及原因：未只在 Provider loop 保存一个字符串，因为这会把状态转换和验证拆给两个 owner；也未兼容缺失 created 的非标准网关。
+- 回归测试：`internal/provider/openai/reducer_test.go`、`provider_test.go`、`integration_test.go`。
+- 关联 ADR/Issue/PR：OpenSpec `harden-architecture-contract-compliance`；未改变 wire 能力范围，不新增 ADR。
+- 后续行动：新增 Responses event 时先扩展同一状态机和 fixture，不绕过 identity 校验。
+
 ## 5. P2 Session 与 Headless Agent Loop
 
 ### [P2][2026-09-28] JSONL 不能只复制 Claude Code 或 Codex 的表面报文
@@ -239,6 +284,51 @@
 - 回归测试：`internal/headless/*_test.go`、`internal/app/headless_e2e_test.go`、`cmd/easycode/main_test.go`、双 Provider restore/fingerprint tests。
 - 关联 ADR/Issue/PR：OpenSpec `add-headless-text-output`。
 - 后续行动：新增外部事件必须通过 OpenSpec 演进 JSONL version/fixture；stdin JSON、双向控制、usage/reasoning/tool 事件和 `--continue` 仍未实现。
+
+### [P2][2026-09-29] 路径预检不能代替绑定实际句柄的安全判断
+
+- 状态：已解决 macOS/Linux；其他平台失败关闭
+- 影响版本或提交：OpenSpec `harden-architecture-contract-compliance`
+- 现象：先 `Lstat` 再 `Open` 时，攻击者可在两步之间把配置、日期目录或 journal 替换为 symlink/其他对象。
+- 触发条件：路径组件在检查与打开之间发生确定性交换，尤其是 load/repair 与 writer 接管边界。
+- 根因：安全判断绑定路径名的旧时快照，而后续读写绑定另一个实际对象。
+- 架构影响：配置使用 no-follow opener；Session 从已打开父目录以 `openat/mkdirat` 逐级取得 handle，lease、load、repair 和 writer 复用最终 journal handle。
+- 缓存影响：无直接影响；阻止数据根外内容被读入 Session 后污染恢复请求。
+- 修复方案：从同一实际 handle 校验类型、权限和大小，使用真实 symlink 与故障注入交换点做确定性回归；不支持的平台明确失败关闭。
+- 未采用方案及原因：未保留 `Lstat` + `Open` 或仅做字符串 containment，因为都不能证明检查对象就是使用对象。
+- 回归测试：`internal/config/config_test.go`、`internal/session/repository_security_test.go`、`internal/session/lease_test.go`、`internal/app/session_service_test.go`。
+- 关联 ADR/Issue/PR：OpenSpec `harden-architecture-contract-compliance`；落实既有安全硬约束，不新增 ADR。
+- 后续行动：P8 为 Windows 等平台实现等价 handle-relative 语义并运行真实平台测试；此前不得安全降级。
+
+### [P2][2026-09-29] Session 核心 payload 不能通过 any 与反射 registry 传播
+
+- 状态：已解决 v1 六种记录
+- 影响版本或提交：OpenSpec `harden-architecture-contract-compliance`
+- 现象：导出的 `RecordDraft.Payload any` 与 `DecodePayload() any` 允许调用方拼出 kind/payload mismatch，错误只能在写入或 replay 时通过 type assertion 暴露。
+- 触发条件：Runtime/app 直接构造 draft，或 registry 用 reflect 分配 payload 后遗漏 revision-specific 语义校验。
+- 根因：异构记录为了复用一个动态入口而牺牲了构造合法性与协议边界。
+- 架构影响：`RecordDraft` 成为 sealed 值类型；六种 v1 kind 各有 typed constructor、strict decoder 和 validator，registry 只返回常量元数据。
+- 缓存影响：保持 JSONL v1 canonical bytes、checksum 与恢复后 Provider request bytes 不变。
+- 修复方案：constructor 立即验证并编码独立 `json.RawMessage`，ReplayPlanner 通过显式 switch 调用目标 decoder。
+- 未采用方案及原因：未把动态类型转移到 callback interface 或泛型 registry，因为仍会隐藏 kind/revision 契约；也未修改已发布 v1 wire。
+- 回归测试：`internal/session/draft_test.go`、`codec_test.go`、`replay_test.go`、`migration_v1_test.go`。
+- 关联 ADR/Issue/PR：ADR-0003；OpenSpec `harden-architecture-contract-compliance`，不新增长期决策。
+- 后续行动：未来 revision 必须同时增加 typed constructor、strict decoder、validator 和不可变 migration fixture。
+
+### [P2][2026-09-29] Durable append 前必须重新验证 PreparedSample
+
+- 状态：已解决
+- 影响版本或提交：OpenSpec `harden-architecture-contract-compliance`
+- 现象：导出类型的零值或非法复制可能让 Runtime 在 Provider constructor 之外收到无效 sample，并退化成空 envelope 或错误 finalizer 顺序。
+- 触发条件：错误/恶意 Conversation 返回 nil、零值、已 finalize 或内部 payload 非法的完成样本。
+- 根因：Runtime 只信任 Provider 创建路径，没有在不可逆 durable append 前守住自己的输入边界。
+- 架构影响：envelope clone/validate 显式返回 error；Runtime 在构造 typed draft 和写盘前重新复制验证，并只在成功 `Sync` 后调用一次 finalizer。
+- 缓存影响：无效样本不能进入 native history，避免 live memory、JSONL 和 restored request bytes 分叉。
+- 修复方案：无效完成样本只 durable 收口 `turn_failed`，不得写 native commit/turn completed，也不得运行 finalizer。
+- 未采用方案及原因：未依赖“正常 Provider 不会返回非法值”的假设，因为 Go 导出类型始终可构造零值，Runtime 必须独立防御。
+- 回归测试：`internal/provider/provider_test.go`、`internal/runtime/runtime_test.go`、双 Provider commit/restore tests。
+- 关联 ADR/Issue/PR：ADR-0002、ADR-0003；OpenSpec `harden-architecture-contract-compliance`，不新增 ADR。
+- 后续行动：未来工具副作用或其他 prepared commit 复用同一重验与 durable-before-memory 边界。
 
 重点关注：JSONL 尾部损坏、事件顺序、取消时 flush、SQLite 重建和 native history 恢复。
 

@@ -14,7 +14,7 @@ import (
 func TestRepositoryCreatesPrivateJournalAtUUIDv7Date(t *testing.T) {
 	t.Parallel()
 	dataRoot := filepath.Join(t.TempDir(), "sessions")
-	repository, err := NewRepository(dataRoot)
+	repository, err := OpenOrCreateRepository(dataRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestRepositoryCreatesPrivateJournalAtUUIDv7Date(t *testing.T) {
 
 func TestRepositoryRejectsInvalidIDAndCancelledContext(t *testing.T) {
 	t.Parallel()
-	repository, err := NewRepository(filepath.Join(t.TempDir(), "sessions"))
+	repository, err := OpenOrCreateRepository(filepath.Join(t.TempDir(), "sessions"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestRepositoryRejectsSymlinksAndNonRegularTargets(t *testing.T) {
 		t.Skip("symlink fixture requires Unix permissions")
 	}
 	dataRoot := filepath.Join(t.TempDir(), "sessions")
-	repository, err := NewRepository(dataRoot)
+	repository, err := OpenOrCreateRepository(dataRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestRepositoryRejectsSymlinksAndNonRegularTargets(t *testing.T) {
 	_ = repository.Close()
 
 	otherRoot := filepath.Join(t.TempDir(), "sessions")
-	other, err := NewRepository(otherRoot)
+	other, err := OpenOrCreateRepository(otherRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,12 +115,12 @@ func TestRepositoryRejectsUnsafeExistingPermissions(t *testing.T) {
 	if err := os.Mkdir(unsafeRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewRepository(unsafeRoot); err == nil || !strings.Contains(err.Error(), "permissions") {
-		t.Fatalf("NewRepository() error = %v", err)
+	if _, err := OpenOrCreateRepository(unsafeRoot); err == nil || !strings.Contains(err.Error(), "permissions") {
+		t.Fatalf("OpenOrCreateRepository() error = %v", err)
 	}
 
 	dataRoot := filepath.Join(parent, "sessions")
-	repository, err := NewRepository(dataRoot)
+	repository, err := OpenOrCreateRepository(dataRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,8 +149,32 @@ func TestRepositoryRejectsSymlinkDataRoot(t *testing.T) {
 	if err := os.Symlink(outside, rootLink); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewRepository(rootLink); err == nil || !strings.Contains(err.Error(), "real directory") {
-		t.Fatalf("NewRepository(symlink) error = %v", err)
+	if _, err := OpenOrCreateRepository(rootLink); err == nil || !strings.Contains(err.Error(), "real directory") {
+		t.Fatalf("OpenOrCreateRepository(symlink) error = %v", err)
+	}
+}
+
+func TestNewRepositoryIsPureUntilOpenOrCreate(t *testing.T) {
+	dataRoot := filepath.Join(t.TempDir(), "not-created", "sessions")
+	repository, err := NewRepository(dataRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repository.root != nil {
+		t.Fatal("NewRepository opened a data root")
+	}
+	if _, err := os.Stat(dataRoot); !os.IsNotExist(err) {
+		t.Fatalf("NewRepository created external resources: %v", err)
+	}
+	if _, err := repository.Create(context.Background(), testThreadID); err == nil || !strings.Contains(err.Error(), "not open") {
+		t.Fatalf("unopened Create() error = %v", err)
+	}
+	if err := repository.OpenOrCreate(); err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	if info, err := os.Stat(dataRoot); err != nil || !info.IsDir() {
+		t.Fatalf("OpenOrCreate did not create data root: %#v, %v", info, err)
 	}
 }
 

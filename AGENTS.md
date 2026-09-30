@@ -49,6 +49,21 @@ explore -> propose -> review/confirm -> apply -> verify -> archive
 - 未实现能力不得提前暴露可执行 schema、event kind、空 facade 或占位策略；新增能力必须在同一 change 中具备真实消费者、验证和测试。
 - 不得保留无用代码、注释掉的实现、失效 feature flag、永久兼容分支或无删除条件的临时代码。
 
+以下是经 OpenSpec `harden-architecture-contract-compliance` 批准的唯一临时占位 allowlist；文件必须保留带 Roadmap 阶段和退出条件的结构化 TODO，不得接入 Runtime/app。新增或扩大例外必须先更新 OpenSpec：
+
+- `internal/protocol/command.go`
+- `internal/protocol/event.go` 中未来的 `ItemID`/`CallID` 字段
+- `internal/domain/types.go` 中未来的 `ItemID`/`CallID`
+- `internal/tool/tool.go`
+- `internal/tool/builtin/specs.go`
+- `internal/extension/extension.go`
+- `internal/extension/hook/hook.go`
+- `internal/extension/mcp/mcp.go`
+- `internal/extension/plugin/plugin.go`
+- `internal/extension/skill/skill.go`
+- `internal/subagent/control.go`
+- `internal/telemetry/logger.go`
+
 ## 4. Provider 与缓存
 
 - Provider-native history 是请求续写、resume 和 Session 恢复的事实依据；不得先压成统一扁平 Message 再反向构造请求。

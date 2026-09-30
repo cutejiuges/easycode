@@ -18,9 +18,9 @@ func TestUUIDv7RoundTripAcrossDates(t *testing.T) {
 		fixture := fixture
 		t.Run(fixture.String(), func(t *testing.T) {
 			random := bytes.NewReader(bytes.Repeat([]byte{0xab}, 10))
-			value, err := newUUIDv7(fixture, random)
+			value, err := generateUUIDv7(fixture, random)
 			if err != nil {
-				t.Fatalf("newUUIDv7() error = %v", err)
+				t.Fatalf("generateUUIDv7() error = %v", err)
 			}
 			threadID, err := ParseThreadID(value)
 			if err != nil {
@@ -43,7 +43,7 @@ func TestUUIDv7RoundTripAcrossDates(t *testing.T) {
 
 func TestUUIDv7RejectsInvalidCanonicalForms(t *testing.T) {
 	t.Parallel()
-	valid, err := newUUIDv7(time.UnixMilli(1), bytes.NewReader(make([]byte, 10)))
+	valid, err := generateUUIDv7(time.UnixMilli(1), bytes.NewReader(make([]byte, 10)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,29 +79,29 @@ func TestUUIDv7RejectsAbnormalGenerationInputs(t *testing.T) {
 	}
 	for _, fixture := range fixtures {
 		t.Run(fixture.name, func(t *testing.T) {
-			if _, err := newUUIDv7(fixture.now, fixture.random); err == nil {
-				t.Fatal("newUUIDv7() unexpectedly succeeded")
+			if _, err := generateUUIDv7(fixture.now, fixture.random); err == nil {
+				t.Fatal("generateUUIDv7() unexpectedly succeeded")
 			}
 		})
 	}
-	if _, err := newUUIDv7(time.UnixMilli(1), nil); err == nil {
-		t.Fatal("newUUIDv7() with nil random source unexpectedly succeeded")
+	if _, err := generateUUIDv7(time.UnixMilli(1), nil); err == nil {
+		t.Fatal("generateUUIDv7() with nil random source unexpectedly succeeded")
 	}
 }
 
 func TestPublicUUIDv7Generators(t *testing.T) {
 	t.Parallel()
-	sessionID, err := NewSessionID()
+	sessionID, err := GenerateSessionID()
 	if err != nil || !sessionID.Valid() {
-		t.Fatalf("NewSessionID() = %q, %v", sessionID, err)
+		t.Fatalf("GenerateSessionID() = %q, %v", sessionID, err)
 	}
-	threadID, err := NewThreadID()
+	threadID, err := GenerateThreadID()
 	if err != nil || !threadID.Valid() {
-		t.Fatalf("NewThreadID() = %q, %v", threadID, err)
+		t.Fatalf("GenerateThreadID() = %q, %v", threadID, err)
 	}
-	turnID, err := NewTurnID()
+	turnID, err := GenerateTurnID()
 	if err != nil || !turnID.Valid() {
-		t.Fatalf("NewTurnID() = %q, %v", turnID, err)
+		t.Fatalf("GenerateTurnID() = %q, %v", turnID, err)
 	}
 	if _, err := SessionID("invalid").Time(); err == nil {
 		t.Fatal("invalid SessionID.Time() unexpectedly succeeded")
@@ -112,8 +112,8 @@ func TestPublicUUIDv7Generators(t *testing.T) {
 	if _, err := TurnID("invalid").Time(); err == nil {
 		t.Fatal("invalid TurnID.Time() unexpectedly succeeded")
 	}
-	if _, err := newUUIDv7(time.Now(), errorReader{}); err == nil {
-		t.Fatal("newUUIDv7() with failing source unexpectedly succeeded")
+	if _, err := generateUUIDv7(time.Now(), errorReader{}); err == nil {
+		t.Fatal("generateUUIDv7() with failing source unexpectedly succeeded")
 	}
 }
 

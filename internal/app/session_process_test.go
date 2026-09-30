@@ -40,7 +40,7 @@ func TestSessionServiceResumeAcrossProcesses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	competitor, err := newSessionService(owner.repository.RootPath())
+	competitor, err := openSessionService(owner.repository.RootPath())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,13 +69,15 @@ func TestSessionServiceResumeAcrossProcesses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	turnID, err := domain.NewTurnID()
+	turnID, err := domain.GenerateTurnID()
 	if err != nil {
 		t.Fatal(err)
 	}
-	records, err := resumed.writer.AppendBatch(context.Background(), []session.RecordDraft{{
-		EventKind: session.EventTurnStarted, TurnID: turnID, Payload: session.TurnStartedPayload{},
-	}})
+	startedDraft, err := session.NewTurnStartedDraft(turnID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	records, err := resumed.writer.AppendBatch(context.Background(), []session.RecordDraft{startedDraft})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +102,7 @@ func TestAppSessionHelperProcess(t *testing.T) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	service, err := newSessionService(os.Getenv("EASYCODE_TEST_APP_SESSION_ROOT"))
+	service, err := openSessionService(os.Getenv("EASYCODE_TEST_APP_SESSION_ROOT"))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
