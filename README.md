@@ -4,7 +4,7 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 
 用户只需要提供 `base_url`、`api_key` 和模型名称即可连接服务，不需要账号登录、OAuth、设备码或订阅鉴权。
 
-> 项目当前正在推进 P2 Session 与 Headless Agent Loop。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、多轮文本 Session、显式 `--resume`，以及单 turn `--print`/`--json` headless 输出。SQLite 索引、coding tools 和完整缓存/推理界面仍将按照 Roadmap 分阶段实现。
+> 项目当前正在推进 P2 Session 与 Headless Agent Loop。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、多轮文本 Session、显式 `--resume`、兼容会话 `--continue`，以及单 turn `--print`/`--json` headless 输出。可重建 SQLite Catalog v1 已交付；session picker、coding tools 和完整缓存/推理界面仍将按照 Roadmap 分阶段实现。
 
 ## 设计目标
 
@@ -26,7 +26,7 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 | Runtime | 已实现共享文本 turn 生命周期、稳定身份、durable-before-memory 提交及 typed text/failure event |
 | 安全配置 | 已实现 JSON 配置、环境变量覆盖、API key 脱敏，以及 macOS/Linux 上绑定实际句柄的 no-follow 校验；其他平台当前安全失败关闭 |
 | Tools | P3 目标；当前只有经批准的 TODO 占位，不对模型暴露 schema，也没有执行器或生产消费者 |
-| Session | 已实现 append-only JSONL、强类型 v1 draft/decoder、UUIDv7、跨进程 lease、同句柄 load/repair/write、`Sync`、尾部修复、fixture 和显式恢复；SQLite/`--continue` 尚未实现 |
+| Session | 已实现 append-only JSONL、强类型 v1 draft/decoder、UUIDv7、跨进程 lease、同句柄 load/repair/write、`Sync`、尾部修复、fixture、显式恢复，以及可从 JSONL 重建的 SQLite Catalog v1 与 `--continue`；session picker/search 尚未实现 |
 | 扩展系统 | P6 目标；Hooks、Plugins、Skills 和 MCP 目前仅为经批准的 TODO 占位，未接入 Runtime/app |
 | Subagent | P7 目标；当前仅为经批准的 TODO 控制边界，调度、线程树和生命周期尚未实现 |
 | Telemetry | P8 目标；当前 logger 仅为经批准的 TODO 占位，未接入请求正文、Session 或运行时链路 |
@@ -174,7 +174,7 @@ export EASYCODE_MODEL=your-model
 
 配置优先级为：JSON 文件提供基础值，非空 `EASYCODE_*` 环境变量覆盖对应字段，最后统一校验。`base_url` 是 API 路径前缀，不会自动补 `/v1`，且不能包含 userinfo、query 或 fragment。
 
-当前 TUI 和 headless 模式都支持 Anthropic Messages 与 OpenAI Responses 的文本会话。成功文本回合会写入权限受控的 append-only JSONL；显式 `--resume <thread-id>` 在连续 exclusive lease 下恢复同一 Provider 的原生历史。TUI 通过只读 `SemanticHistoryView` 重建可见 transcript，headless 则不消费或回放旧 transcript。Anthropic thinking/signature/redacted thinking 与 OpenAI encrypted reasoning 会保留在各自原生历史中，不进入当前文本投影。stdin JSON/双向控制、usage/reasoning/tool JSON 事件、token estimator、完整 Provider UsageParser/CachePlanner、tools、SQLite 索引、`--continue`、prompt cache 控制、主动 thinking 配置和高级 reasoning UI 尚未实现。
+当前 TUI 和 headless 模式都支持 Anthropic Messages 与 OpenAI Responses 的文本会话。成功文本回合会写入权限受控的 append-only JSONL；显式 `--resume <thread-id>` 在连续 exclusive lease 下恢复同一 Provider 的原生历史，`--continue` 则通过可重建 SQLite Catalog 选择当前 cwd 与 Provider 配置完全兼容的最近 root Session，再进入同一恢复路径。TUI 通过只读 `SemanticHistoryView` 重建可见 transcript，headless 则不消费或回放旧 transcript。Anthropic thinking/signature/redacted thinking 与 OpenAI encrypted reasoning 会保留在各自原生历史中，不进入当前文本投影。stdin JSON/双向控制、usage/reasoning/tool JSON 事件、token estimator、完整 Provider UsageParser/CachePlanner、tools、session picker/search、prompt cache 控制、主动 thinking 配置和高级 reasoning UI 尚未实现。
 
 ## 架构概览
 

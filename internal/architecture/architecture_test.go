@@ -287,6 +287,10 @@ func dependencyViolations(packages map[string]*sourcePackage) []string {
 }
 
 func forbiddenDependencyReason(packagePath string, imported string) string {
+	if packagePath == "easycode/internal/session/catalog" && strings.HasPrefix(imported, "easycode/internal/") &&
+		imported != "easycode/internal/session" && imported != "easycode/internal/domain" {
+		return "session/catalog 只能依赖 session/domain"
+	}
 	if imported == "easycode/internal/app" || strings.HasPrefix(imported, "easycode/cmd/") {
 		if packagePath != "easycode/cmd/easycode" {
 			return "下层包不得依赖 app/cmd"

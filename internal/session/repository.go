@@ -8,6 +8,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"sort"
 
 	"easycode/internal/domain"
 )
@@ -17,6 +18,12 @@ type Repository struct {
 	rootPath string
 	root     *secureRoot
 	hooks    securePathHooks
+}
+
+// JournalLocation 是通过安全枚举验证的 canonical journal 定位。
+type JournalLocation struct {
+	ThreadID     domain.ThreadID
+	RelativePath string
 }
 
 type securePathHooks struct {
@@ -152,6 +159,25 @@ func (repository *Repository) Open(ctx context.Context, threadID domain.ThreadID
 		return nil, err
 	}
 	return acquireJournalLease(file, threadID)
+}
+
+// EnumerateJournals 按固定日期层级安全枚举 canonical root journal 候选。
+func (repository *Repository) EnumerateJournals(ctx context.Context) ([]JournalLocation, error) {
+	if err := contextError(ctx); err != nil {
+		return nil, err
+	}
+	root, err := repository.openedRoot()
+	if err != nil {
+		return nil, err
+	}
+	locations, err := root.enumerateJournals(ctx)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(locations, func(left int, right int) bool {
+		return locations[left].RelativePath < locations[right].RelativePath
+	})
+	return locations, nil
 }
 
 func (repository *Repository) openedRoot() (*secureRoot, error) {

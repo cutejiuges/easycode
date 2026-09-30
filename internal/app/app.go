@@ -21,6 +21,7 @@ import (
 	"easycode/internal/provider/openai"
 	chatRuntime "easycode/internal/runtime"
 	"easycode/internal/session"
+	"easycode/internal/session/catalog"
 	"easycode/internal/tui"
 )
 
@@ -32,14 +33,25 @@ var _ headless.ChatSession = (*chatRuntime.ChatSession)(nil)
 
 // Options 描述应用入口参数，避免入口层直接依赖具体实现细节。
 type Options struct {
-	ShowVersion     bool
-	Mode            headless.Mode
-	Prompt          string
-	ConfigPath      string
-	ResumeThreadID  string
-	SessionDataRoot string
-	Input           io.Reader
-	Output          io.Writer
+	ShowVersion        bool
+	Mode               headless.Mode
+	Prompt             string
+	ConfigPath         string
+	ResumeThreadID     string
+	ContinueSession    bool
+	SessionDataRoot    string
+	SessionCatalogPath string
+	Input              io.Reader
+	Output             io.Writer
+}
+
+type dataPaths struct {
+	sessionRoot string
+	catalogPath string
+}
+
+type chatResourceHooks struct {
+	afterContinueSelection func(domain.ThreadID)
 }
 
 type providerResource interface {
@@ -55,6 +67,7 @@ type chatResources struct {
 	session  *chatRuntime.ChatSession
 	history  domain.SemanticHistoryView
 	repair   session.RepairReport
+	resumed  bool
 }
 
 // Run 根据入口参数运行交互或 headless 宿主并返回稳定结果。
@@ -69,6 +82,9 @@ func Run(ctx context.Context, options Options) Outcome {
 		}
 		return Outcome{Class: ExitSuccess}
 	}
+	if options.ContinueSession && options.ResumeThreadID != "" {
+		return usageFailure("--resume and --continue are mutually exclusive")
+	}
 	if options.Mode != headless.ModeInteractive && options.Mode != headless.ModeText && options.Mode != headless.ModeJSON {
 		return runtimeFailure(fault.New(fault.CodeTurnFailed, "application mode is invalid"))
 	}
@@ -81,7 +97,7 @@ func Run(ctx context.Context, options Options) Outcome {
 	if err != nil {
 		return runtimeFailure(err)
 	}
-	dataRoot, err := resolveSessionDataRoot(options.SessionDataRoot)
+	paths, err := resolveDataPaths(options.SessionDataRoot, options.SessionCatalogPath)
 	if err != nil {
 		return runtimeFailure(err)
 	}
@@ -89,8 +105,8 @@ func Run(ctx context.Context, options Options) Outcome {
 	if err != nil {
 		return runtimeFailure(fault.New(fault.CodeSessionWrite, "current working directory is unavailable"))
 	}
-	resources, err := openChatResources(
-		ctx, applicationConfig, dataRoot, options.ResumeThreadID, creationCWD,
+	resources, err := openChatResourcesWithSelection(
+		ctx, applicationConfig, paths, options.ResumeThreadID, options.ContinueSession, creationCWD,
 	)
 	if err != nil {
 		return runtimeFailure(err)
@@ -103,7 +119,7 @@ func Run(ctx context.Context, options Options) Outcome {
 		result := headless.Run(ctx, resources.session, headless.RunConfig{
 			Mode: options.Mode, Prompt: options.Prompt,
 			SessionID: resources.identity.SessionID, ThreadID: resources.identity.ThreadID,
-			Resumed: options.ResumeThreadID != "", Output: options.Output,
+			Resumed: resources.resumed, Output: options.Output,
 		})
 		outcome = outcomeFromHeadless(result)
 	}
@@ -151,16 +167,60 @@ func openChatResources(
 	resumeThreadID string,
 	creationCWD string,
 ) (*chatResources, error) {
+	return openChatResourcesWithSelection(
+		ctx, applicationConfig, dataPaths{sessionRoot: dataRoot}, resumeThreadID, false, creationCWD,
+	)
+}
+
+func openChatResourcesWithSelection(
+	ctx context.Context,
+	applicationConfig config.Config,
+	paths dataPaths,
+	resumeThreadID string,
+	continueSession bool,
+	creationCWD string,
+) (*chatResources, error) {
+	return openChatResourcesWithHooks(
+		ctx, applicationConfig, paths, resumeThreadID, continueSession, creationCWD, chatResourceHooks{},
+	)
+}
+
+func openChatResourcesWithHooks(
+	ctx context.Context,
+	applicationConfig config.Config,
+	paths dataPaths,
+	resumeThreadID string,
+	continueSession bool,
+	creationCWD string,
+	hooks chatResourceHooks,
+) (*chatResources, error) {
 	if err := applicationConfig.ValidateProvider(); err != nil {
 		return nil, err
 	}
-	providerInstance, wire, err := newProviderResource(applicationConfig)
+	wire, err := providerWire(applicationConfig.Provider.Family)
 	if err != nil {
 		return nil, err
 	}
-	service, err := openSessionService(dataRoot)
+	service, err := openSessionService(paths.sessionRoot)
 	if err != nil {
-		_ = providerInstance.Close()
+		return nil, err
+	}
+	if continueSession {
+		threadID, selectErr := selectContinueThread(
+			ctx, paths, service.repository, applicationConfig, wire, creationCWD,
+		)
+		if selectErr != nil {
+			_ = service.close()
+			return nil, selectErr
+		}
+		resumeThreadID = string(threadID)
+		if hooks.afterContinueSelection != nil {
+			hooks.afterContinueSelection(threadID)
+		}
+	}
+	providerInstance, _, err := newProviderResource(applicationConfig)
+	if err != nil {
+		_ = service.close()
 		return nil, err
 	}
 	var assembled assembledSession
@@ -197,8 +257,53 @@ func openChatResources(
 		identity: assembled.identity,
 		provider: providerInstance, service: service, writer: assembled.writer,
 		session: chatRuntime.NewChatSession(runtimeInstance), history: assembled.history,
-		repair: assembled.repair,
+		repair: assembled.repair, resumed: resumeThreadID != "",
 	}, nil
+}
+
+func selectContinueThread(
+	ctx context.Context,
+	paths dataPaths,
+	repository *session.Repository,
+	applicationConfig config.Config,
+	wire string,
+	creationCWD string,
+) (domain.ThreadID, error) {
+	normalizedCWD, err := session.NormalizeCreationCWD(creationCWD)
+	if err != nil {
+		return "", fault.New(fault.CodeSessionCatalog, "session catalog selector is invalid")
+	}
+	instance, err := catalog.New(catalog.Config{
+		DatabasePath: paths.catalogPath, SessionRoot: paths.sessionRoot,
+	})
+	if err != nil {
+		return "", fault.New(fault.CodeSessionCatalog, "session catalog configuration is invalid")
+	}
+	if err := instance.Open(ctx); err != nil {
+		return "", fault.New(fault.CodeSessionCatalog, "session catalog is unavailable")
+	}
+	defer func() { _ = instance.Close() }()
+	report, err := instance.Reconcile(ctx, repository)
+	if err != nil {
+		return "", fault.New(fault.CodeSessionCatalog, "session catalog reconciliation failed")
+	}
+	if report.BusyUnindexed {
+		return "", fault.New(fault.CodeSessionBusy, "session catalog contains an active unindexed thread")
+	}
+	entry, found, err := instance.LatestCompatible(ctx, catalog.Selector{
+		CreationCWD: normalizedCWD, ProviderFamily: applicationConfig.Provider.Family,
+		ProviderWire: wire, Model: applicationConfig.Provider.Model,
+	})
+	if err != nil {
+		return "", fault.New(fault.CodeSessionCatalog, "session catalog query failed")
+	}
+	if !found {
+		return "", fault.New(fault.CodeSessionNotFound, "compatible session thread was not found")
+	}
+	if err := instance.Close(); err != nil {
+		return "", fault.New(fault.CodeSessionCatalog, "close session catalog failed")
+	}
+	return entry.ThreadID, nil
 }
 
 func newProviderResource(applicationConfig config.Config) (providerResource, string, error) {
@@ -222,19 +327,50 @@ func newProviderResource(applicationConfig config.Config) (providerResource, str
 	}
 }
 
-func resolveSessionDataRoot(explicit string) (string, error) {
-	if explicit != "" {
-		absolute, err := filepath.Abs(explicit)
+func providerWire(family domain.ProviderFamily) (string, error) {
+	switch family {
+	case domain.ProviderOpenAI:
+		return "responses", nil
+	case domain.ProviderAnthropic:
+		return "messages", nil
+	default:
+		return "", fault.New(fault.CodeProviderUnavailable, "provider is unavailable")
+	}
+}
+
+func resolveDataPaths(sessionRoot string, catalogPath string) (dataPaths, error) {
+	if sessionRoot != "" {
+		absolute, err := filepath.Abs(sessionRoot)
 		if err != nil {
-			return "", fault.New(fault.CodeSessionWrite, "session data root is invalid")
+			return dataPaths{}, fault.New(fault.CodeSessionWrite, "session data root is invalid")
 		}
-		return filepath.Clean(absolute), nil
+		sessionRoot = filepath.Clean(absolute)
+	}
+	if catalogPath != "" {
+		absolute, err := filepath.Abs(catalogPath)
+		if err != nil {
+			return dataPaths{}, fault.New(fault.CodeSessionCatalog, "session catalog path is invalid")
+		}
+		catalogPath = filepath.Clean(absolute)
+	}
+	if sessionRoot != "" && catalogPath != "" {
+		return dataPaths{sessionRoot: sessionRoot, catalogPath: catalogPath}, nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
-		return "", fault.New(fault.CodeSessionWrite, "user home directory is unavailable")
+		if sessionRoot == "" {
+			return dataPaths{}, fault.New(fault.CodeSessionWrite, "user home directory is unavailable")
+		}
+		return dataPaths{}, fault.New(fault.CodeSessionCatalog, "user home directory is unavailable")
 	}
-	return filepath.Join(home, ".easycode", "sessions"), nil
+	dataHome := filepath.Join(home, ".easycode")
+	if sessionRoot == "" {
+		sessionRoot = filepath.Join(dataHome, "sessions")
+	}
+	if catalogPath == "" {
+		catalogPath = filepath.Join(dataHome, "state.sqlite")
+	}
+	return dataPaths{sessionRoot: sessionRoot, catalogPath: catalogPath}, nil
 }
 
 func (resources *chatResources) close(ctx context.Context) error {

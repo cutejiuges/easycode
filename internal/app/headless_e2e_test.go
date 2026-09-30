@@ -7,13 +7,16 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"easycode/internal/codec"
 	"easycode/internal/config"
+	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/headless"
@@ -36,7 +39,7 @@ func TestHeadlessProvidersPreserveResumeRequestAndOutputBoundaries(t *testing.T)
 		t.Run(fixture.name, func(t *testing.T) {
 			var mu sync.Mutex
 			var requests [][]byte
-			logicalTurns := []int{1, 2, 1, 2, 3}
+			logicalTurns := []int{1, 2, 3, 1, 2, 3}
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 				body, err := io.ReadAll(request.Body)
 				if err != nil {
@@ -64,19 +67,29 @@ func TestHeadlessProvidersPreserveResumeRequestAndOutputBoundaries(t *testing.T)
 			}
 			submitAppTurn(t, live, "first")
 			submitAppTurn(t, live, "second")
+			submitAppTurn(t, live, "third")
 			if err := live.close(context.Background()); err != nil {
 				t.Fatal(err)
 			}
 
-			dataRoot := filepath.Join(t.TempDir(), "headless")
+			dataHome := privateAppTempDir(t)
+			dataRoot := filepath.Join(dataHome, "sessions")
+			catalogPath := filepath.Join(dataHome, "state.sqlite")
 			configPath := writeAppConfig(t, t.TempDir(), fixture.family, server.URL)
 			var firstOutput bytes.Buffer
 			first := Run(context.Background(), Options{
 				Mode: headless.ModeJSON, Prompt: "first", ConfigPath: configPath,
-				SessionDataRoot: dataRoot, Output: &firstOutput,
+				SessionDataRoot: dataRoot, SessionCatalogPath: catalogPath, Output: &firstOutput,
 			})
 			if first.ExitCode() != 0 {
 				t.Fatalf("first headless outcome = %#v", first)
+			}
+			if _, err := os.Stat(catalogPath); !os.IsNotExist(err) {
+				t.Fatalf("ordinary startup created catalog: %v", err)
+			}
+			corruptCatalog := []byte("corrupt-catalog-fixture")
+			if err := os.WriteFile(catalogPath, corruptCatalog, 0o600); err != nil {
+				t.Fatal(err)
 			}
 			started := decodeThreadStarted(t, firstOutput.String())
 			if started.Resumed || !started.SessionID.Valid() || !started.ThreadID.Valid() {
@@ -86,7 +99,8 @@ func TestHeadlessProvidersPreserveResumeRequestAndOutputBoundaries(t *testing.T)
 			var resumedOutput bytes.Buffer
 			resumed := Run(context.Background(), Options{
 				Mode: headless.ModeJSON, Prompt: "second", ConfigPath: configPath,
-				ResumeThreadID: string(started.ThreadID), SessionDataRoot: dataRoot, Output: &resumedOutput,
+				ResumeThreadID: string(started.ThreadID), SessionDataRoot: dataRoot,
+				SessionCatalogPath: catalogPath, Output: &resumedOutput,
 			})
 			if resumed.ExitCode() != 0 {
 				t.Fatalf("resumed JSON outcome = %#v", resumed)
@@ -98,11 +112,16 @@ func TestHeadlessProvidersPreserveResumeRequestAndOutputBoundaries(t *testing.T)
 			if strings.Contains(resumedOutput.String(), "answer-1") || !strings.Contains(resumedOutput.String(), "answer-2") {
 				t.Fatalf("resumed JSON replayed or omitted text: %s", resumedOutput.String())
 			}
+			preservedCatalog, err := os.ReadFile(catalogPath)
+			if err != nil || !bytes.Equal(preservedCatalog, corruptCatalog) {
+				t.Fatalf("explicit resume touched catalog: %q, %v", preservedCatalog, err)
+			}
 
 			var textOutput bytes.Buffer
 			third := Run(context.Background(), Options{
 				Mode: headless.ModeText, Prompt: "third", ConfigPath: configPath,
-				ResumeThreadID: string(started.ThreadID), SessionDataRoot: dataRoot, Output: &textOutput,
+				ContinueSession: true, SessionDataRoot: dataRoot, SessionCatalogPath: catalogPath,
+				Output: &textOutput,
 			})
 			if third.ExitCode() != 0 || textOutput.String() != "answer-3\n" {
 				t.Fatalf("third outcome/output = %#v/%q", third, textOutput.String())
@@ -114,13 +133,18 @@ func TestHeadlessProvidersPreserveResumeRequestAndOutputBoundaries(t *testing.T)
 				captured[index] = append([]byte(nil), requests[index]...)
 			}
 			mu.Unlock()
-			if len(captured) != 5 {
+			if len(captured) != 6 {
 				t.Fatalf("request count = %d", len(captured))
 			}
-			if !bytes.Equal(captured[1], captured[3]) {
-				t.Fatalf("uninterrupted and restored request bytes differ\nlive: %s\nrestored: %s", captured[1], captured[3])
+			if !bytes.Equal(captured[1], captured[4]) {
+				t.Fatalf("uninterrupted and explicit-resume request bytes differ\nlive: %s\nrestored: %s", captured[1], captured[4])
 			}
-			fixture.assertThird(t, captured[4])
+			if !bytes.Equal(captured[2], captured[5]) {
+				t.Fatalf("uninterrupted and continue request bytes differ\nlive: %s\ncontinued: %s", captured[2], captured[5])
+			}
+			assertRequestFingerprintEqual(t, captured[1], captured[4])
+			assertRequestFingerprintEqual(t, captured[2], captured[5])
+			fixture.assertThird(t, captured[5])
 
 			loaded := loadHeadlessJournal(t, dataRoot, started.ThreadID)
 			if len(loaded.Records) != 11 || loaded.NextSequence != 12 {
@@ -131,8 +155,85 @@ func TestHeadlessProvidersPreserveResumeRequestAndOutputBoundaries(t *testing.T)
 					t.Fatalf("record[%d] = %#v", index, record)
 				}
 			}
+			for _, forbidden := range []string{
+				catalogPath, dataRoot, string(started.SessionID), string(started.ThreadID),
+				loaded.Records[len(loaded.Records)-1].Timestamp.Format(time.RFC3339Nano),
+			} {
+				if strings.Contains(string(captured[5]), forbidden) {
+					t.Fatalf("continue request contains catalog/session metadata %q", forbidden)
+				}
+			}
+			assertCatalogFilesExclude(t, dataHome, []string{
+				"file-secret", server.URL, "first", "second", "third",
+				"answer-1", "answer-2", "answer-3", "Authorization",
+			})
 		})
 	}
+}
+
+func assertRequestFingerprintEqual(t *testing.T, left []byte, right []byte) {
+	t.Helper()
+	leftJSON := canonicalizeCapturedRequest(t, left)
+	rightJSON := canonicalizeCapturedRequest(t, right)
+	leftSegment, err := contextplan.NewSegment("provider-request", contextplan.StabilityTurnStable, "v1", leftJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightSegment, err := contextplan.NewSegment("provider-request", contextplan.StabilityTurnStable, "v1", rightJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if leftSegment.Fingerprint() != rightSegment.Fingerprint() {
+		t.Fatalf("request fingerprints differ: %s != %s", leftSegment.Fingerprint(), rightSegment.Fingerprint())
+	}
+}
+
+func canonicalizeCapturedRequest(t *testing.T, data []byte) codec.CanonicalJSON {
+	t.Helper()
+	var value any
+	if err := codec.Unmarshal(data, &value); err != nil {
+		t.Fatalf("decode captured request: %v", err)
+	}
+	canonical, err := codec.MarshalCanonical(value, contextplan.MaxSegmentBytes)
+	if err != nil {
+		t.Fatalf("canonicalize captured request: %v", err)
+	}
+	return canonical
+}
+
+func assertCatalogFilesExclude(t *testing.T, dataHome string, forbidden []string) {
+	t.Helper()
+	entries, err := os.ReadDir(dataHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), "state.sqlite") {
+			continue
+		}
+		content, err := os.ReadFile(filepath.Join(dataHome, entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, value := range forbidden {
+			if value != "" && bytes.Contains(content, []byte(value)) {
+				t.Fatalf("catalog file %s contains forbidden value %q", entry.Name(), value)
+			}
+		}
+	}
+}
+
+func privateAppTempDir(t *testing.T) string {
+	t.Helper()
+	directory := t.TempDir()
+	if err := os.Chmod(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := filepath.EvalSymlinks(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
 }
 
 func TestHeadlessJSONBrokenPipeCancelsAndReleasesLease(t *testing.T) {

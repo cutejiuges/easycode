@@ -25,6 +25,7 @@ const (
 	CodeSessionIncompatible  Code = "session_incompatible"
 	CodeSessionNotFound      Code = "session_not_found"
 	CodeSessionBusy          Code = "session_busy"
+	CodeSessionCatalog       Code = "session_catalog_failed"
 )
 
 // Error 保存稳定错误码、英文消息和可选底层原因。

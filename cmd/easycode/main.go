@@ -39,6 +39,7 @@ func run(
 	printMode := flags.Bool("print", false, "print only the final assistant text")
 	jsonMode := flags.Bool("json", false, "stream versioned JSONL events")
 	resumeThreadID := flags.String("resume", "", "resume an existing root thread selected by --resume UUIDv7")
+	continueSession := flags.Bool("continue", false, "continue the latest compatible session in the current directory")
 	configPath := flags.String(
 		"config",
 		"",
@@ -60,6 +61,10 @@ func run(
 	}
 	if *printMode && *jsonMode {
 		_, _ = fmt.Fprintln(errorOutput, "error: --print and --json are mutually exclusive")
+		return 2
+	}
+	if *continueSession && *resumeThreadID != "" {
+		_, _ = fmt.Fprintln(errorOutput, "error: --resume and --continue are mutually exclusive")
 		return 2
 	}
 	if *printMode {
@@ -84,13 +89,14 @@ func run(
 	}
 
 	return renderOutcome(app.Run(ctx, app.Options{
-		ShowVersion:    *showVersion,
-		Mode:           mode,
-		Prompt:         prompt,
-		ConfigPath:     *configPath,
-		ResumeThreadID: *resumeThreadID,
-		Input:          input,
-		Output:         output,
+		ShowVersion:     *showVersion,
+		Mode:            mode,
+		Prompt:          prompt,
+		ConfigPath:      *configPath,
+		ResumeThreadID:  *resumeThreadID,
+		ContinueSession: *continueSession,
+		Input:           input,
+		Output:          output,
 	}), mode, output, errorOutput)
 }
 

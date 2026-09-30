@@ -283,7 +283,7 @@
 - 未采用方案及原因：不直接 marshal RuntimeEvent，不抓取 TUI transcript，不安装全局 stdout guard，也不提前声明 usage/reasoning/tool 机器事件；这些方案会固化内部字段、污染 stdout 或暴露没有完整 producer/persistence 的能力。
 - 回归测试：`internal/headless/*_test.go`、`internal/app/headless_e2e_test.go`、`cmd/easycode/main_test.go`、双 Provider restore/fingerprint tests。
 - 关联 ADR/Issue/PR：OpenSpec `add-headless-text-output`。
-- 后续行动：新增外部事件必须通过 OpenSpec 演进 JSONL version/fixture；stdin JSON、双向控制、usage/reasoning/tool 事件和 `--continue` 仍未实现。
+- 后续行动：新增外部事件必须通过 OpenSpec 演进 JSONL version/fixture；stdin JSON、双向控制和 usage/reasoning/tool 事件仍未实现。`--continue` 已通过独立 Catalog 选择后复用同一 resume/headless 投影路径。
 
 ### [P2][2026-09-29] 路径预检不能代替绑定实际句柄的安全判断
 
@@ -329,6 +329,21 @@
 - 回归测试：`internal/provider/provider_test.go`、`internal/runtime/runtime_test.go`、双 Provider commit/restore tests。
 - 关联 ADR/Issue/PR：ADR-0002、ADR-0003；OpenSpec `harden-architecture-contract-compliance`，不新增 ADR。
 - 后续行动：未来工具副作用或其他 prepared commit 复用同一重验与 durable-before-memory 边界。
+
+### [P2][2026-09-30] 会话发现不能把文件属性或派生数据库当作事实
+
+- 状态：已解决当前 Catalog v1 与 `--continue` 切片
+- 影响版本或提交：OpenSpec `add-rebuildable-session-catalog`
+- 现象：若直接按 journal mtime 排序、字符串读取 head/tail 提取 metadata，或把 SQLite row 当成可恢复历史，外部触碰文件、半写 batch、未知 required revision 和陈旧索引都可能让应用选择错误会话。
+- 触发条件：实现最近会话发现、删除后索引重建、活动 writer 协调或选择后恢复时绕过 Loader/ReplayPlanner。
+- 根因：文件系统属性、轻量文本扫描和派生索引都无法证明 envelope、checksum、batch、lifecycle 与 Provider-native payload 已完整验证。
+- 架构影响：JSONL 保持唯一事实源；Catalog 通过 descriptor-relative 枚举、逐 journal exclusive lease、Loader、ReplayPlanner 和纯 Projector 生成最小 SQLite 投影。`--continue` 只从精确兼容 row 选择 thread ID，关闭 Catalog 后仍进入既有 `sessionService.resume` 重新校验并取得连续 writer lease。
+- 缓存影响：Catalog path、record timestamp、session/thread identity 和 SQLite metadata 不进入 Provider request；双 Provider e2e 比较 uninterrupted、显式 resume 与 continue 的实际 request bytes、native item 顺序和 fingerprint。
+- 修复方案：recency 使用最后 committed record timestamp，并以 canonical thread ID 降序打破平局；reconciliation 在 transaction 外完成全部文件 I/O且任一时刻只持有一个 journal lease，短 transaction 只应用已验证投影。数据库缺失、损坏或 schema 不兼容时从 JSONL 原子重建。
+- 未采用方案及原因：不采用 mtime 排序，因为它可被外部修改；不采用字符串 head/tail，因为它会形成绕过 strict decoder 的第二套解析器；不采用 DB-as-truth 或 DB-first 快路径，因为当前没有可靠实时索引维护，陈旧 row 不能替代恢复事实。
+- 回归测试：`internal/session/catalog/*_test.go`、`internal/session/repository_enumeration_test.go`、`internal/app/continue_test.go`、`internal/app/headless_e2e_test.go`、`cmd/easycode/main_test.go`。
+- 关联 ADR/Issue/PR：ADR-0003；OpenSpec `add-rebuildable-session-catalog`，未引入新的长期事实源决策。
+- 后续行动：session picker、worktree/project catalog、title/tag/search 和实时索引仍延期；引入可靠增量维护前继续执行前台全量 reconciliation。2026-09-30 在 Darwin/arm64 Apple M1 Pro 上对 25 个 journal 的一次开发基准为约 5.55 ms、4.94 MB、14934 allocs/op，仅作为后续优化对照，不作为跨平台阈值。
 
 重点关注：JSONL 尾部损坏、事件顺序、取消时 flush、SQLite 重建和 native history 恢复。
 
