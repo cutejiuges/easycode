@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
 )
@@ -64,7 +65,7 @@ func TestModelSubmitsAndProjectsOrderedDeltas(t *testing.T) {
 	model, command = updateModelWithCommand(t, model, command())
 	session.events <- second
 	model, command = updateModelWithCommand(t, model, command())
-	session.events <- protocol.NewTurnCompleted()
+	session.events <- mustRuntimeCompleted(t)
 	model, command = updateModelWithCommand(t, model, command())
 
 	if command != nil || model.state != stateIdle {
@@ -79,6 +80,25 @@ func TestModelSubmitsAndProjectsOrderedDeltas(t *testing.T) {
 	if len(session.contexts) != 1 || session.contexts[0] != submitContext {
 		t.Fatalf("submit contexts: %#v", session.contexts)
 	}
+}
+
+func mustRuntimeCompleted(t *testing.T) protocol.Event {
+	t.Helper()
+	usage, err := domain.NewSampleUsage(
+		domain.KnownUsageMetric(8),
+		domain.KnownUsageMetric(2),
+		domain.UnknownUsageMetric(),
+		domain.KnownUsageMetric(5),
+		domain.NotApplicableUsageMetric(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, err := protocol.NewTurnCompleted(usage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return event
 }
 
 func TestModelInputAndCancellationKeys(t *testing.T) {

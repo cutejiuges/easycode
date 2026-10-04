@@ -1,9 +1,11 @@
 package protocol
 
 import (
+	"encoding/json"
 	"testing"
 
 	"easycode/internal/codec"
+	"easycode/internal/domain"
 )
 
 func TestAssistantTextDeltaPayloadRoundTrip(t *testing.T) {
@@ -73,7 +75,7 @@ func TestPayloadDecodersRejectWrongVersionAndUnknownFields(t *testing.T) {
 	}
 }
 
-func TestPayloadlessEventsAreTypedAndStrict(t *testing.T) {
+func TestPayloadlessTurnStartedIsTypedAndStrict(t *testing.T) {
 	started := NewTurnStarted()
 	if err := ValidateTurnStarted(started); err != nil {
 		t.Fatal(err)
@@ -82,13 +84,73 @@ func TestPayloadlessEventsAreTypedAndStrict(t *testing.T) {
 	if err := ValidateTurnStarted(started); err == nil {
 		t.Fatal("expected turn started payload error")
 	}
+}
 
-	completed := NewTurnCompleted()
-	if err := ValidateTurnCompleted(completed); err != nil {
+func TestTurnCompletedUsageRoundTripPreservesMetricStates(t *testing.T) {
+	usage := protocolTestUsage(t)
+	completed, err := NewTurnCompleted(usage)
+	if err != nil {
 		t.Fatal(err)
 	}
-	completed.Kind = EventTurnFailed
-	if err := ValidateTurnCompleted(completed); err == nil {
+	payload, err := DecodeTurnCompleted(completed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := payload.Usage.Domain()
+	if err != nil || decoded != usage {
+		t.Fatalf("decoded usage = %#v, %v", decoded, err)
+	}
+	if payload.Usage.InputUncached.Value == nil || *payload.Usage.InputUncached.Value != 0 ||
+		payload.Usage.CacheRead.Value != nil || payload.Usage.CacheWrite.Value != nil {
+		t.Fatalf("metric state/value encoding = %#v", payload.Usage)
+	}
+	var wire map[string]json.RawMessage
+	if err := codec.Unmarshal(completed.Payload, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := wire["usage"]; !ok {
+		t.Fatalf("completion payload = %s", completed.Payload)
+	}
+}
+
+func TestTurnCompletedRejectsMissingInvalidAndUnknownUsage(t *testing.T) {
+	if _, err := NewTurnCompleted(domain.SampleUsage{}); err == nil {
+		t.Fatal("expected zero usage error")
+	}
+	fixtures := []string{
+		`{}`,
+		`{"usage":{"input_uncached":{"state":"known"},"cache_read":{"state":"unknown"},"cache_write":{"state":"not_applicable"},"output":{"state":"known","value":1},"reasoning_output":{"state":"unknown"}}}`,
+		`{"usage":{"input_uncached":{"state":"known","value":0},"cache_read":{"state":"unknown","value":0},"cache_write":{"state":"not_applicable"},"output":{"state":"known","value":1},"reasoning_output":{"state":"unknown"}}}`,
+		`{"usage":{"input_uncached":{"state":"known","value":0},"cache_read":{"state":"unknown"},"cache_write":{"state":"not_applicable"},"output":{"state":"known","value":1},"reasoning_output":{"state":"unknown"}},"extra":true}`,
+	}
+	for _, fixture := range fixtures {
+		event := newEvent(EventTurnCompleted)
+		event.Payload = []byte(fixture)
+		if _, err := DecodeTurnCompleted(event); err == nil {
+			t.Fatalf("DecodeTurnCompleted(%s) unexpectedly succeeded", fixture)
+		}
+	}
+	event, err := NewTurnCompleted(protocolTestUsage(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	event.Kind = EventTurnFailed
+	if _, err := DecodeTurnCompleted(event); err == nil {
 		t.Fatal("expected turn completed kind error")
 	}
+}
+
+func protocolTestUsage(t *testing.T) domain.SampleUsage {
+	t.Helper()
+	usage, err := domain.NewSampleUsage(
+		domain.KnownUsageMetric(0),
+		domain.UnknownUsageMetric(),
+		domain.NotApplicableUsageMetric(),
+		domain.KnownUsageMetric(4),
+		domain.UnknownUsageMetric(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return usage
 }

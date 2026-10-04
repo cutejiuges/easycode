@@ -38,7 +38,7 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 			}}},
 			Metadata: messageMetadata{
 				ID: "msg-2", Model: "claude-test",
-				Usage: rawUsage{InputTokens: optionalInt{Known: true, Value: 9}},
+				Usage: rawUsage{InputTokens: optionalUint{Known: true, Value: 9}},
 			},
 		},
 	}

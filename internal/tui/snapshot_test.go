@@ -85,7 +85,7 @@ func snapshotCompletedModel(t *testing.T) Model {
 		t.Fatalf("new delta: %v", err)
 	}
 	model = updateModel(t, model, RuntimeEventMsg{Event: delta})
-	return updateModel(t, model, RuntimeEventMsg{Event: protocol.NewTurnCompleted()})
+	return updateModel(t, model, RuntimeEventMsg{Event: mustRuntimeCompleted(t)})
 }
 
 func snapshotCancelledModel(t *testing.T) Model {

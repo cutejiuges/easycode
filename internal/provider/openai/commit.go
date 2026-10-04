@@ -18,9 +18,23 @@ const (
 )
 
 type textSampleCommit struct {
-	Shape       string       `json:"shape"`
-	User        NativeItem   `json:"user"`
-	OutputItems []NativeItem `json:"output_items"`
+	Shape       string          `json:"shape"`
+	User        NativeItem      `json:"user"`
+	OutputItems []NativeItem    `json:"output_items"`
+	Usage       *rawUsageCommit `json:"usage"`
+}
+
+type optionalUintCommit struct {
+	Known bool    `json:"known"`
+	Value *uint64 `json:"value,omitempty"`
+}
+
+type rawUsageCommit struct {
+	InputTokens           optionalUintCommit `json:"input_tokens"`
+	CachedInputTokens     optionalUintCommit `json:"cached_input_tokens"`
+	CacheWriteTokens      optionalUintCommit `json:"cache_write_tokens"`
+	OutputTokens          optionalUintCommit `json:"output_tokens"`
+	ReasoningOutputTokens optionalUintCommit `json:"reasoning_output_tokens"`
 }
 
 func encodeNativeCommit(turn nativeTurn) (provider.NativeCommitEnvelope, error) {
@@ -30,6 +44,7 @@ func encodeNativeCommit(turn nativeTurn) (provider.NativeCommitEnvelope, error) 
 	}
 	payload, err := codec.MarshalStable(textSampleCommit{
 		Shape: nativeCommitShapeTextSample, User: cloned.User, OutputItems: cloned.Outputs,
+		Usage: encodeRawUsage(cloned.Usage),
 	})
 	if err != nil {
 		return provider.NativeCommitEnvelope{}, fmt.Errorf("encode OpenAI native commit: %w", err)
@@ -64,7 +79,11 @@ func decodeNativeCommit(envelope provider.NativeCommitEnvelope) (nativeTurn, err
 	if commit.Shape != nativeCommitShapeTextSample {
 		return nativeTurn{}, fmt.Errorf("OpenAI native commit shape is unsupported")
 	}
-	turn := nativeTurn{User: commit.User.clone(), Outputs: cloneNativeItems(commit.OutputItems)}
+	usage, err := decodeRawUsage(commit.Usage)
+	if err != nil {
+		return nativeTurn{}, err
+	}
+	turn := nativeTurn{User: commit.User.clone(), Outputs: cloneNativeItems(commit.OutputItems), Usage: usage}
 	if err := validateNativeTurn(turn); err != nil {
 		return nativeTurn{}, err
 	}
@@ -94,7 +113,62 @@ func validateNativeTurn(turn nativeTurn) error {
 			return fmt.Errorf("OpenAI native commit message role is invalid")
 		}
 	}
+	if _, err := turn.Usage.normalized(); err != nil {
+		return fmt.Errorf("OpenAI native commit usage is invalid: %w", err)
+	}
 	return nil
+}
+
+func encodeRawUsage(usage rawUsage) *rawUsageCommit {
+	return &rawUsageCommit{
+		InputTokens:           encodeOptionalUint(usage.InputTokens),
+		CachedInputTokens:     encodeOptionalUint(usage.CachedInputTokens),
+		CacheWriteTokens:      encodeOptionalUint(usage.CacheWriteTokens),
+		OutputTokens:          encodeOptionalUint(usage.OutputTokens),
+		ReasoningOutputTokens: encodeOptionalUint(usage.ReasoningOutputTokens),
+	}
+}
+
+func decodeRawUsage(commit *rawUsageCommit) (rawUsage, error) {
+	if commit == nil {
+		return rawUsage{}, fmt.Errorf("OpenAI native commit usage is required")
+	}
+	fields := [...]optionalUintCommit{
+		commit.InputTokens, commit.CachedInputTokens, commit.CacheWriteTokens,
+		commit.OutputTokens, commit.ReasoningOutputTokens,
+	}
+	for _, field := range fields {
+		if field.Known != (field.Value != nil) {
+			return rawUsage{}, fmt.Errorf("OpenAI native commit usage state is invalid")
+		}
+	}
+	usage := rawUsage{
+		InputTokens:           decodeOptionalUint(commit.InputTokens),
+		CachedInputTokens:     decodeOptionalUint(commit.CachedInputTokens),
+		CacheWriteTokens:      decodeOptionalUint(commit.CacheWriteTokens),
+		OutputTokens:          decodeOptionalUint(commit.OutputTokens),
+		ReasoningOutputTokens: decodeOptionalUint(commit.ReasoningOutputTokens),
+	}
+	if _, err := usage.normalized(); err != nil {
+		return rawUsage{}, fmt.Errorf("OpenAI native commit usage is invalid: %w", err)
+	}
+	return usage, nil
+}
+
+func encodeOptionalUint(value optionalUint) optionalUintCommit {
+	encoded := optionalUintCommit{Known: value.Known}
+	if value.Known {
+		copy := value.Value
+		encoded.Value = &copy
+	}
+	return encoded
+}
+
+func decodeOptionalUint(value optionalUintCommit) optionalUint {
+	if !value.Known || value.Value == nil {
+		return optionalUint{Known: value.Known}
+	}
+	return optionalUint{Known: true, Value: *value.Value}
 }
 
 func cloneNativeItems(items []NativeItem) []NativeItem {

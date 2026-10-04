@@ -28,6 +28,45 @@ func TestSessionServiceResumeAcrossProcesses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	completedTurnID, err := domain.GenerateTurnID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	startedDraft, err := session.NewTurnStartedDraft(completedTurnID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := created.writer.AppendBatch(context.Background(), []session.RecordDraft{startedDraft}); err != nil {
+		t.Fatal(err)
+	}
+	usage, err := domain.NewSampleUsage(
+		domain.KnownUsageMetric(1), domain.UnknownUsageMetric(),
+		domain.NotApplicableUsageMetric(), domain.KnownUsageMetric(2),
+		domain.NotApplicableUsageMetric(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitDraft, err := session.NewProviderNativeCommitDraft(completedTurnID, session.NativeCommitPayload{
+		Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 1,
+		Payload: []byte(`{"shape":"fixture"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	usageDraft, err := session.NewSampleUsageDraft(completedTurnID, usage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	completedDraft, err := session.NewTurnCompletedDraft(completedTurnID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := created.writer.AppendBatch(context.Background(), []session.RecordDraft{
+		commitDraft, usageDraft, completedDraft,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if err := created.writer.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +112,7 @@ func TestSessionServiceResumeAcrossProcesses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	startedDraft, err := session.NewTurnStartedDraft(turnID)
+	startedDraft, err = session.NewTurnStartedDraft(turnID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,14 +120,15 @@ func TestSessionServiceResumeAcrossProcesses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(records) != 1 || records[0].Sequence != 3 {
+	if len(records) != 1 || records[0].Sequence != 7 {
 		t.Fatalf("resumed append records = %#v", records)
 	}
 	if err := resumed.writer.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	loaded, _ := loadAppPlan(t, competitor, created.identity.ThreadID)
-	if loaded.NextSequence != 4 || loaded.Records[len(loaded.Records)-1].Sequence != 3 {
+	if loaded.NextSequence != 8 || loaded.Records[len(loaded.Records)-1].Sequence != 7 ||
+		len(factory.restored) != 1 {
 		t.Fatalf("resumed journal next/last = %d/%d", loaded.NextSequence, loaded.Records[len(loaded.Records)-1].Sequence)
 	}
 }

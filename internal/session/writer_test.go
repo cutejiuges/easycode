@@ -109,14 +109,15 @@ func TestJournalWriterAssignsBatchBoundaryAndResumeSequence(t *testing.T) {
 		mustDraft(t, EventProviderNativeCommit, testTurnID, NativeCommitPayload{
 			Provider: "openai", Wire: "responses", PayloadVersion: 1, Payload: []byte(`{"shape":"text_sample"}`),
 		}),
+		mustDraft(t, EventSampleUsage, testTurnID, testSampleUsage(t)),
 		mustDraft(t, EventTurnCompleted, testTurnID, TurnCompletedPayload{}),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(records) != 2 || records[0].Sequence != 7 || records[1].Sequence != 8 ||
-		records[0].BatchID != 7 || records[1].BatchID != 7 ||
-		records[0].BatchIndex != 0 || records[1].BatchIndex != 1 || records[0].BatchSize != 2 {
+	if len(records) != 3 || records[0].Sequence != 7 || records[1].Sequence != 8 || records[2].Sequence != 9 ||
+		records[0].BatchID != 7 || records[1].BatchID != 7 || records[2].BatchID != 7 ||
+		records[0].BatchIndex != 0 || records[1].BatchIndex != 1 || records[2].BatchIndex != 2 || records[0].BatchSize != 3 {
 		t.Fatalf("records = %#v", records)
 	}
 	if file.syncCount != 1 {

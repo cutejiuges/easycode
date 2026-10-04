@@ -44,6 +44,18 @@ func NewProviderNativeCommitDraft(turnID domain.TurnID, payload NativeCommitPayl
 	return encodeDraft(EventProviderNativeCommit, "", turnID, payload)
 }
 
+// NewSampleUsageDraft 创建已验证并编码的 sample_usage v1 draft。
+func NewSampleUsageDraft(turnID domain.TurnID, usage domain.SampleUsage) (RecordDraft, error) {
+	if err := validateTurnID(turnID); err != nil {
+		return RecordDraft{}, err
+	}
+	payload, err := NewSampleUsagePayload(usage)
+	if err != nil {
+		return RecordDraft{}, err
+	}
+	return encodeDraft(EventSampleUsage, "", turnID, payload)
+}
+
 // NewTurnCompletedDraft 创建已验证并编码的 turn_completed v1 draft。
 func NewTurnCompletedDraft(turnID domain.TurnID) (RecordDraft, error) {
 	if err := validateTurnID(turnID); err != nil {
@@ -115,7 +127,7 @@ func validateDraftPlacement(draft RecordDraft) error {
 		if draft.turnID != "" {
 			return fmt.Errorf("thread metadata draft placement is invalid")
 		}
-	case EventTurnStarted, EventProviderNativeCommit, EventTurnCompleted, EventTurnFailed:
+	case EventTurnStarted, EventProviderNativeCommit, EventSampleUsage, EventTurnCompleted, EventTurnFailed:
 		if draft.parentThreadID != "" || !draft.turnID.Valid() {
 			return fmt.Errorf("turn draft placement is invalid")
 		}
@@ -145,6 +157,9 @@ func validateDraftPayload(draft RecordDraft) error {
 		return err
 	case EventProviderNativeCommit:
 		_, err := DecodeNativeCommitPayload(record)
+		return err
+	case EventSampleUsage:
+		_, err := DecodeSampleUsagePayload(record)
 		return err
 	case EventTurnCompleted:
 		_, err := DecodeTurnCompletedPayload(record)

@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"easycode/internal/codec"
+	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
 	"easycode/internal/provider/transport"
@@ -46,10 +47,10 @@ type messageDeltaWire struct {
 }
 
 type usageEventWire struct {
-	InputTokens              *int `json:"input_tokens,omitempty"`
-	CacheCreationInputTokens *int `json:"cache_creation_input_tokens,omitempty"`
-	CacheReadInputTokens     *int `json:"cache_read_input_tokens,omitempty"`
-	OutputTokens             *int `json:"output_tokens,omitempty"`
+	InputTokens              *uint64 `json:"input_tokens,omitempty"`
+	CacheCreationInputTokens *uint64 `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     *uint64 `json:"cache_read_input_tokens,omitempty"`
+	OutputTokens             *uint64 `json:"output_tokens,omitempty"`
 }
 
 type blockState struct {
@@ -257,6 +258,9 @@ func (reducer *streamReducer) reduceMessageStop() (reducerResult, error) {
 			return reducerResult{}, protocolError("Anthropic message_stop received with an active content block")
 		}
 	}
+	if _, err := reducer.metadata.Usage.normalized(); err != nil {
+		return reducerResult{}, protocolError("Anthropic message usage is invalid")
+	}
 	reducer.completed = true
 	return reducerResult{complete: true}, nil
 }
@@ -293,6 +297,13 @@ func (reducer *streamReducer) messageMetadata() messageMetadata {
 	return reducer.metadata.clone()
 }
 
+func (reducer *streamReducer) sampleUsage() (domain.SampleUsage, error) {
+	if reducer == nil || !reducer.completed {
+		return domain.SampleUsage{}, protocolError("Anthropic sample usage is unavailable")
+	}
+	return reducer.metadata.Usage.normalized()
+}
+
 func requireBlockIndex(index *int) (int, error) {
 	if index == nil || *index < 0 {
 		return 0, protocolError("Anthropic content block index is invalid")
@@ -314,15 +325,15 @@ func mergeDeltaUsage(target *rawUsage, wire usageEventWire) {
 	setKnownInt(&target.OutputTokens, wire.OutputTokens)
 }
 
-func setKnownInt(target *optionalInt, value *int) {
+func setKnownInt(target *optionalUint, value *uint64) {
 	if value != nil {
-		*target = optionalInt{Value: *value, Known: true}
+		*target = optionalUint{Value: *value, Known: true}
 	}
 }
 
-func setPositiveInt(target *optionalInt, value *int) {
+func setPositiveInt(target *optionalUint, value *uint64) {
 	if value != nil && *value > 0 {
-		*target = optionalInt{Value: *value, Known: true}
+		*target = optionalUint{Value: *value, Known: true}
 	}
 }
 

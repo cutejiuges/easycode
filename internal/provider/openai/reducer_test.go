@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
 	"easycode/internal/provider/transport"
@@ -39,6 +40,84 @@ func TestResponsesStreamReducerAcceptsOrderedSample(t *testing.T) {
 	items[0].ID = "mutated"
 	if reducer.outputItems()[0].ID != "msg-1" {
 		t.Fatal("reducer output item getter shares mutable state")
+	}
+}
+
+func TestResponsesStreamReducerNormalizesCompletedUsage(t *testing.T) {
+	reducer := newResponsesStreamReducer()
+	reduceOpenAIEvent(t, reducer, `{"type":"response.created","response":{"id":"resp-1"}}`)
+	result := reduceOpenAIEvent(t, reducer, `{"type":"response.completed","response":{"id":"resp-1","usage":{"input_tokens":120,"input_tokens_details":{"cached_tokens":40},"cache_write_tokens":5,"output_tokens":30,"output_tokens_details":{"reasoning_tokens":10}}}}`)
+	if !result.completed {
+		t.Fatal("completion was not accepted")
+	}
+	usage, err := reducer.sampleUsage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertOpenAIMetric(t, usage.InputUncached(), domain.UsageMetricKnown, 80, true)
+	assertOpenAIMetric(t, usage.CacheRead(), domain.UsageMetricKnown, 40, true)
+	assertOpenAIMetric(t, usage.CacheWrite(), domain.UsageMetricKnown, 5, true)
+	assertOpenAIMetric(t, usage.Output(), domain.UsageMetricKnown, 30, true)
+	assertOpenAIMetric(t, usage.ReasoningOutput(), domain.UsageMetricKnown, 10, true)
+}
+
+func TestResponsesStreamReducerPreservesMissingAndExplicitZeroUsage(t *testing.T) {
+	missing := newResponsesStreamReducer()
+	reduceOpenAIEvent(t, missing, `{"type":"response.created","response":{"id":"resp-1"}}`)
+	reduceOpenAIEvent(t, missing, `{"type":"response.completed","response":{"id":"resp-1"}}`)
+	missingUsage, err := missing.sampleUsage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, metric := range []domain.UsageMetric{
+		missingUsage.InputUncached(), missingUsage.CacheRead(), missingUsage.CacheWrite(),
+		missingUsage.Output(), missingUsage.ReasoningOutput(),
+	} {
+		assertOpenAIMetric(t, metric, domain.UsageMetricUnknown, 0, false)
+	}
+
+	zero := newResponsesStreamReducer()
+	reduceOpenAIEvent(t, zero, `{"type":"response.created","response":{"id":"resp-2"}}`)
+	reduceOpenAIEvent(t, zero, `{"type":"response.completed","response":{"id":"resp-2","usage":{"input_tokens":0,"input_tokens_details":{"cached_tokens":0},"cache_write_tokens":0,"output_tokens":0,"output_tokens_details":{"reasoning_tokens":0}}}}`)
+	zeroUsage, err := zero.sampleUsage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, metric := range []domain.UsageMetric{
+		zeroUsage.InputUncached(), zeroUsage.CacheRead(), zeroUsage.CacheWrite(),
+		zeroUsage.Output(), zeroUsage.ReasoningOutput(),
+	} {
+		assertOpenAIMetric(t, metric, domain.UsageMetricKnown, 0, true)
+	}
+}
+
+func TestResponsesStreamReducerRejectsInvalidUsage(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		usage string
+	}{
+		{name: "negative", usage: `{"input_tokens":-1}`},
+		{name: "overflow", usage: `{"input_tokens":18446744073709551616}`},
+		{name: "cached above input", usage: `{"input_tokens":2,"input_tokens_details":{"cached_tokens":3}}`},
+		{name: "reasoning above output", usage: `{"output_tokens":2,"output_tokens_details":{"reasoning_tokens":3}}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			reducer := newResponsesStreamReducer()
+			reduceOpenAIEvent(t, reducer, `{"type":"response.created","response":{"id":"resp-1"}}`)
+			_, err := reducer.reduce(transport.SSEEvent{Data: `{"type":"response.completed","response":{"id":"resp-1","usage":` + test.usage + `}}`})
+			var faultError *fault.Error
+			if !errors.As(err, &faultError) || faultError.Code != fault.CodeStreamProtocol || reducer.terminal {
+				t.Fatalf("error/state = %v/%#v", err, reducer)
+			}
+		})
+	}
+}
+
+func assertOpenAIMetric(t *testing.T, metric domain.UsageMetric, state domain.UsageMetricState, value uint64, hasValue bool) {
+	t.Helper()
+	got, ok := metric.Value()
+	if metric.State() != state || got != value || ok != hasValue {
+		t.Fatalf("metric = state %q value %d ok %t, want state %q value %d ok %t", metric.State(), got, ok, state, value, hasValue)
 	}
 }
 

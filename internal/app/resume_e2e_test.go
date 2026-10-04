@@ -133,7 +133,7 @@ func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = repository.Close()
-			if len(loaded.Records) != 11 || loaded.NextSequence != 12 {
+			if len(loaded.Records) != 14 || loaded.NextSequence != 15 {
 				t.Fatalf("journal record count/next = %d/%d", len(loaded.Records), loaded.NextSequence)
 			}
 			for index, record := range loaded.Records {
@@ -142,6 +142,11 @@ func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
 				}
 				if strings.Contains(string(record.Payload), "e2e-secret") || strings.Contains(string(record.Payload), server.URL) {
 					t.Fatal("journal contains connection secret")
+				}
+			}
+			for _, index := range []int{4, 8, 12} {
+				if loaded.Records[index].EventKind != session.EventSampleUsage {
+					t.Fatalf("record[%d] kind = %s", index, loaded.Records[index].EventKind)
 				}
 			}
 

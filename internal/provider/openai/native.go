@@ -33,6 +33,51 @@ type NativeItem struct {
 	Raw              json.RawMessage        `json:"-"`
 }
 
+// optionalUint 区分服务端明确给出的零值与缺失字段。
+type optionalUint struct {
+	Value uint64
+	Known bool
+}
+
+// rawUsage 原样保存当前文本切片支持的 Responses usage 字段。
+type rawUsage struct {
+	InputTokens           optionalUint
+	CachedInputTokens     optionalUint
+	CacheWriteTokens      optionalUint
+	OutputTokens          optionalUint
+	ReasoningOutputTokens optionalUint
+}
+
+func (usage rawUsage) clone() rawUsage { return usage }
+
+func (usage rawUsage) normalized() (domain.SampleUsage, error) {
+	inputUncached := domain.UnknownUsageMetric()
+	if usage.InputTokens.Known && usage.CachedInputTokens.Known {
+		if usage.CachedInputTokens.Value > usage.InputTokens.Value {
+			return domain.SampleUsage{}, fmt.Errorf("OpenAI cached input exceeds total input")
+		}
+		inputUncached = domain.KnownUsageMetric(usage.InputTokens.Value - usage.CachedInputTokens.Value)
+	}
+	if usage.OutputTokens.Known && usage.ReasoningOutputTokens.Known &&
+		usage.ReasoningOutputTokens.Value > usage.OutputTokens.Value {
+		return domain.SampleUsage{}, fmt.Errorf("OpenAI reasoning output exceeds total output")
+	}
+	return domain.NewSampleUsage(
+		inputUncached,
+		openAIUsageMetric(usage.CachedInputTokens),
+		openAIUsageMetric(usage.CacheWriteTokens),
+		openAIUsageMetric(usage.OutputTokens),
+		openAIUsageMetric(usage.ReasoningOutputTokens),
+	)
+}
+
+func openAIUsageMetric(value optionalUint) domain.UsageMetric {
+	if !value.Known {
+		return domain.UnknownUsageMetric()
+	}
+	return domain.KnownUsageMetric(value.Value)
+}
+
 type nativeItemWire struct {
 	Type             string                 `json:"type"`
 	ID               string                 `json:"id,omitempty"`
@@ -114,12 +159,14 @@ func (item NativeItem) clone() NativeItem {
 type nativeTurn struct {
 	User    NativeItem
 	Outputs []NativeItem
+	Usage   rawUsage
 }
 
 func (turn nativeTurn) clone() nativeTurn {
 	cloned := nativeTurn{
 		User:    turn.User.clone(),
 		Outputs: make([]NativeItem, 0, len(turn.Outputs)),
+		Usage:   turn.Usage.clone(),
 	}
 	for _, item := range turn.Outputs {
 		cloned.Outputs = append(cloned.Outputs, item.clone())

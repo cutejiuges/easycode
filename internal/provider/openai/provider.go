@@ -200,15 +200,20 @@ func (conversation *Conversation) consumeStream(
 			}
 			if result.completed {
 				stopTransport()
-				turn := nativeTurn{User: userItem.clone(), Outputs: reducer.outputItems()}
+				usage, usageErr := reducer.sampleUsage()
+				if usageErr != nil {
+					sendTerminal(provider.StreamEventFailed, nil, fault.Wrap(fault.CodeStreamProtocol, "OpenAI completed sample usage is invalid", usageErr))
+					return
+				}
+				turn := nativeTurn{User: userItem.clone(), Outputs: reducer.outputItems(), Usage: reducer.rawUsage()}
 				envelope, encodeErr := encodeNativeCommit(turn)
 				if encodeErr != nil {
 					sendTerminal(provider.StreamEventFailed, nil, fault.Wrap(fault.CodeStreamProtocol, "OpenAI completed sample is invalid", encodeErr))
 					return
 				}
 				conversation.pending.Store(true)
-				prepared, prepareErr := provider.NewPreparedSample(envelope, func() {
-					conversation.history.commit(turn.User, turn.Outputs)
+				prepared, prepareErr := provider.NewPreparedSample(envelope, usage, func() {
+					conversation.history.commit(turn)
 					conversation.pending.Store(false)
 				})
 				if prepareErr != nil {
@@ -262,14 +267,10 @@ func (history *nativeHistory) snapshot() []nativeTurn {
 	return turns
 }
 
-func (history *nativeHistory) commit(userItem NativeItem, outputItems []NativeItem) {
+func (history *nativeHistory) commit(turn nativeTurn) {
 	history.mu.Lock()
 	defer history.mu.Unlock()
-	turn := nativeTurn{User: userItem.clone(), Outputs: make([]NativeItem, 0, len(outputItems))}
-	for _, item := range outputItems {
-		turn.Outputs = append(turn.Outputs, item.clone())
-	}
-	history.turns = append(history.turns, turn)
+	history.turns = append(history.turns, turn.clone())
 }
 
 func (conversation *Conversation) historySnapshot() []nativeTurn {

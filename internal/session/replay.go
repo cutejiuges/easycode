@@ -16,6 +16,13 @@ type NativeCommitRecord struct {
 	Commit   NativeCommitPayload
 }
 
+// SampleUsageRecord 将通过 lifecycle 校验的 normalized usage 与顺序绑定。
+type SampleUsageRecord struct {
+	Sequence uint64
+	TurnID   domain.TurnID
+	Usage    domain.SampleUsage
+}
+
 // ReplayedTurnState 是语义回放后的 current text turn 终态。
 type ReplayedTurnState string
 
@@ -42,6 +49,7 @@ type ReplayPlan struct {
 	SessionMetadata SessionMetaPayload
 	ThreadMetadata  ThreadMetaPayload
 	NativeCommits   []NativeCommitRecord
+	SampleUsages    []SampleUsageRecord
 	Turns           []ReplayedTurn
 	OptionalRecords []Record
 	InterruptedTail *InterruptedTail
@@ -84,7 +92,8 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 
 	plan := ReplayPlan{
 		Identity: identity, SessionMetadata: sessionMetadata, ThreadMetadata: threadMetadata,
-		NativeCommits: make([]NativeCommitRecord, 0), Turns: make([]ReplayedTurn, 0),
+		NativeCommits: make([]NativeCommitRecord, 0), SampleUsages: make([]SampleUsageRecord, 0),
+		Turns:           make([]ReplayedTurn, 0),
 		OptionalRecords: make([]Record, 0), NextSequence: loaded.NextSequence, Repair: loaded.Repair,
 	}
 	var active *InterruptedTail
@@ -116,19 +125,32 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 			}
 			active = &InterruptedTail{TurnID: known[0].TurnID, Sequence: known[0].Sequence}
 		case EventProviderNativeCommit:
-			if active == nil || len(known) != 2 || known[1].EventKind != EventTurnCompleted ||
-				known[0].TurnID != active.TurnID || known[1].TurnID != active.TurnID {
+			if active == nil || len(known) != 3 || known[1].EventKind != EventSampleUsage ||
+				known[2].EventKind != EventTurnCompleted || known[0].TurnID != active.TurnID ||
+				known[1].TurnID != active.TurnID || known[2].TurnID != active.TurnID ||
+				known[0].Sequence+1 != known[1].Sequence || known[1].Sequence+1 != known[2].Sequence {
 				return ReplayPlan{}, replayCorrupt("completed turn batch is invalid")
 			}
 			commit, decodeErr := DecodeNativeCommitPayload(known[0])
 			if decodeErr != nil {
 				return ReplayPlan{}, replayCorrupt("provider native commit payload is invalid")
 			}
-			if _, decodeErr := DecodeTurnCompletedPayload(known[1]); decodeErr != nil {
+			usagePayload, decodeErr := DecodeSampleUsagePayload(known[1])
+			if decodeErr != nil {
+				return ReplayPlan{}, replayCorrupt("sample_usage payload is invalid")
+			}
+			usage, decodeErr := usagePayload.Domain()
+			if decodeErr != nil {
+				return ReplayPlan{}, replayCorrupt("sample_usage payload is invalid")
+			}
+			if _, decodeErr := DecodeTurnCompletedPayload(known[2]); decodeErr != nil {
 				return ReplayPlan{}, replayCorrupt("turn_completed payload is invalid")
 			}
 			plan.NativeCommits = append(plan.NativeCommits, NativeCommitRecord{
 				Sequence: known[0].Sequence, TurnID: active.TurnID, Commit: cloneNativeCommit(commit),
+			})
+			plan.SampleUsages = append(plan.SampleUsages, SampleUsageRecord{
+				Sequence: known[1].Sequence, TurnID: active.TurnID, Usage: usage,
 			})
 			plan.Turns = append(plan.Turns, ReplayedTurn{TurnID: active.TurnID, State: ReplayedTurnCompleted})
 			active = nil

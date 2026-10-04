@@ -69,11 +69,16 @@ func (projector *projector) project(event protocol.Event) (projection, error) {
 		if err := projector.validateActiveTurn(event); err != nil {
 			return projection{}, err
 		}
-		if err := protocol.ValidateTurnCompleted(event); err != nil {
+		payload, err := protocol.DecodeTurnCompleted(event)
+		if err != nil {
+			return projection{}, err
+		}
+		usage, err := payload.Usage.Domain()
+		if err != nil {
 			return projection{}, err
 		}
 		projector.terminal = true
-		external, err := NewTurnCompletedEvent(event.SessionID, event.ThreadID, event.TurnID)
+		external, err := NewTurnCompletedEvent(event.SessionID, event.ThreadID, event.TurnID, usage)
 		return projection{event: external, terminal: true, completed: true}, err
 	case protocol.EventTurnFailed:
 		if err := projector.validateActiveTurn(event); err != nil {

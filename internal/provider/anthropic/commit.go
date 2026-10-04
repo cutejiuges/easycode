@@ -36,16 +36,16 @@ type optionalStringCommit struct {
 	Value string `json:"value,omitempty"`
 }
 
-type optionalIntCommit struct {
-	Known bool `json:"known"`
-	Value int  `json:"value,omitempty"`
+type optionalUintCommit struct {
+	Known bool    `json:"known"`
+	Value *uint64 `json:"value,omitempty"`
 }
 
 type rawUsageCommit struct {
-	InputTokens              optionalIntCommit `json:"input_tokens"`
-	CacheCreationInputTokens optionalIntCommit `json:"cache_creation_input_tokens"`
-	CacheReadInputTokens     optionalIntCommit `json:"cache_read_input_tokens"`
-	OutputTokens             optionalIntCommit `json:"output_tokens"`
+	InputTokens              optionalUintCommit `json:"input_tokens"`
+	CacheCreationInputTokens optionalUintCommit `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     optionalUintCommit `json:"cache_read_input_tokens"`
+	OutputTokens             optionalUintCommit `json:"output_tokens"`
 }
 
 func encodeNativeCommit(turn nativeTurn) (provider.NativeCommitEnvelope, error) {
@@ -90,6 +90,9 @@ func decodeNativeCommit(envelope provider.NativeCommitEnvelope) (nativeTurn, err
 	if commit.Shape != nativeCommitShapeTextSample {
 		return nativeTurn{}, fmt.Errorf("anthropic native commit shape is unsupported")
 	}
+	if err := validateRawUsageCommit(commit.Metadata.Usage); err != nil {
+		return nativeTurn{}, err
+	}
 	turn := nativeTurn{
 		User: commit.User.clone(), Assistant: commit.Assistant.clone(),
 		Metadata: decodeMetadata(commit.Metadata),
@@ -98,6 +101,18 @@ func decodeNativeCommit(envelope provider.NativeCommitEnvelope) (nativeTurn, err
 		return nativeTurn{}, err
 	}
 	return turn.clone(), nil
+}
+
+func validateRawUsageCommit(usage rawUsageCommit) error {
+	fields := [...]optionalUintCommit{
+		usage.InputTokens, usage.CacheCreationInputTokens, usage.CacheReadInputTokens, usage.OutputTokens,
+	}
+	for _, field := range fields {
+		if field.Known != (field.Value != nil) {
+			return fmt.Errorf("anthropic native commit usage state is invalid")
+		}
+	}
+	return nil
 }
 
 func validateNativeTurn(turn nativeTurn) error {
@@ -126,6 +141,9 @@ func validateNativeTurn(turn nativeTurn) error {
 	}
 	if turn.Metadata.ID == "" || turn.Metadata.Model == "" {
 		return fmt.Errorf("anthropic native commit message metadata is invalid")
+	}
+	if _, err := turn.Metadata.Usage.normalized(); err != nil {
+		return fmt.Errorf("anthropic native commit usage is invalid: %w", err)
 	}
 	return nil
 }
@@ -156,10 +174,18 @@ func decodeMetadata(metadata messageMetadataCommit) messageMetadata {
 	}
 }
 
-func encodeOptionalInt(value optionalInt) optionalIntCommit {
-	return optionalIntCommit{Known: value.Known, Value: value.Value}
+func encodeOptionalInt(value optionalUint) optionalUintCommit {
+	encoded := optionalUintCommit{Known: value.Known}
+	if value.Known {
+		copy := value.Value
+		encoded.Value = &copy
+	}
+	return encoded
 }
 
-func decodeOptionalInt(value optionalIntCommit) optionalInt {
-	return optionalInt{Known: value.Known, Value: value.Value}
+func decodeOptionalInt(value optionalUintCommit) optionalUint {
+	if !value.Known || value.Value == nil {
+		return optionalUint{Known: value.Known}
+	}
+	return optionalUint{Known: true, Value: *value.Value}
 }

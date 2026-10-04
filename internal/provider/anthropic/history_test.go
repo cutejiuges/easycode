@@ -38,7 +38,7 @@ func TestProjectHistory(t *testing.T) {
 						{Type: blockTypeText, Text: "one"},
 						{Type: "future_block", Raw: []byte(`{"type":"future_block","secret":"opaque"}`)},
 					}},
-					Metadata: messageMetadata{ID: "msg-private", Usage: rawUsage{InputTokens: optionalInt{Value: 7, Known: true}}},
+					Metadata: messageMetadata{ID: "msg-private", Usage: rawUsage{InputTokens: optionalUint{Value: 7, Known: true}}},
 				},
 				{
 					User:      newUserMessage("second"),
@@ -132,7 +132,7 @@ func TestProjectHistoryMatchesGoldenAndOmitsOpaqueData(t *testing.T) {
 			{Type: blockTypeText, Text: "visible answer"},
 			{Type: "future_block", Raw: []byte(`{"type":"future_block","secret":"opaque-extension"}`)},
 		}},
-		Metadata: messageMetadata{ID: "msg-secret", Model: "claude-test", Usage: rawUsage{OutputTokens: optionalInt{Value: 9, Known: true}}},
+		Metadata: messageMetadata{ID: "msg-secret", Model: "claude-test", Usage: rawUsage{OutputTokens: optionalUint{Value: 9, Known: true}}},
 	})
 
 	first, err := codec.MarshalStable(conversation.ProjectHistory())

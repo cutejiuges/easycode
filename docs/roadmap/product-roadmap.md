@@ -141,7 +141,7 @@ make verify
 - 已完成 OpenAI Responses text-only request、stream reducer、会话级 native history、事务提交、显式 terminal、两种 API prefix 的双轮回归，以及最基础的单行 TUI Chat。
 - 已完成 Anthropic Messages text-only request、indexed content-block reducer、会话级 native history、thinking/signature/redacted thinking 无损回放、显式 `message_stop` terminal、两种 API prefix 的双轮回归，并接入同一基础 TUI Chat。
 - 已完成双 Provider 的 committed-only 文本 `HistoryProjector`：投影保留 turn 边界和可见文本，但不暴露 thinking/signature、redacted thinking、reasoning summary、encrypted content、phase、usage 或未知扩展，也不参与后续请求编译。
-- Anthropic 当前只声明 streaming 与 thinking-signature 原生保留能力，OpenAI 当前只声明 streaming 与 encrypted reasoning 原生保留能力；P2 已落地文本回合的 JSONL Session、`--resume` 和单 turn `--print/--json`，reasoning/tool projection、token estimator、tools、完整 Provider UsageParser/CachePlanner、usage/cache UI、prompt cache key、`previous_response_id` 和自动重试仍留在对应后续阶段。
+- Anthropic 当前声明 streaming 与 thinking-signature 原生保留能力，OpenAI 当前声明 streaming 与 encrypted reasoning 原生保留能力；两者的 completed-sample raw/normalized usage 已在 P2 落地。P2 也已实现文本回合的 JSONL Session、`--resume` 和单 turn `--print/--json`；reasoning/tool projection、token estimator、tools、CachePlanner、usage 成本/TUI、prompt cache key、`previous_response_id` 和自动重试仍留在对应后续阶段。
 - TUI 只消费 typed RuntimeEvent 和 ChatSession facade；本次不提前实现 Markdown、多行 composer、slash command、diff、permission overlay 或 session picker。
 
 #### OpenAI Responses（首要 Provider）
@@ -204,13 +204,15 @@ make verify
 
 ## 6. P2：Session 与 Headless Agent Loop
 
-### 6.0 当前进度（2026-09-30）
+### 6.0 当前进度（2026-10-04）
 
-已完成文本回合的 append-only JSONL 事实源、sealed typed v1 draft/strict decoder、UUIDv7 定位、跨 Repository/跨进程 exclusive journal lease、macOS/Linux descriptor-relative secure path walker、单 writer/`Sync`、完整 batch、尾部修复、双 Provider opaque native commit、durable-before-memory 两阶段提交及提交前 sample 重验、进程重启恢复、`--resume`、不可变 v1 compatibility fixture 和历史 TUI 投影。Provider request 由各自 compiler 生成不可变 canonical JSON，transport 不再二次序列化；OpenAI stream 绑定 `response.created` identity。单 turn headless 已提供 `--print` 最终文本与独立 JSONL v1 `--json`，支持位置参数/stdin、4 MiB 有界 UTF-8 输入、显式 resume、`--continue`、取消、断管清理和稳定 `0/1/2` 退出码；旧 transcript 不进入当前 headless 输出。API key、base URL、cwd 等动态配置不进入 Session，恢复时继续使用当前配置。
+已完成文本回合的 append-only JSONL 事实源、sealed typed v1 draft/strict decoder、UUIDv7 定位、跨 Repository/跨进程 exclusive journal lease、macOS/Linux descriptor-relative secure path walker、单 writer/`Sync`、完整 batch、尾部修复、双 Provider opaque native commit、durable-before-memory 两阶段提交及提交前 sample 重验、进程重启恢复、`--resume`、不可变 v1 compatibility fixture 和历史 TUI 投影。双 Provider completed sample 现同时保留 raw usage 与五项三态 normalized usage；成功路径以 `[provider_native_commit(v1), sample_usage(v1), turn_completed(v1)]` 原子 Sync，随后 finalize 并发布携带聚合 usage 的 RuntimeEvent。Provider request 由各自 compiler 生成不可变 canonical JSON，usage 不进入 request 或 cache fingerprint。
+
+单 turn headless 已提供 `--print` 最终文本与独立 JSONL v1 `--json`，支持位置参数/stdin、4 MiB 有界 UTF-8 输入、显式 resume、`--continue`、取消、断管清理和稳定 `0/1/2` 退出码；`turn.completed` v1 现在必含五项三态 usage，`--print` 输出保持不变，旧 transcript 不进入当前 headless 输出。API key、base URL、cwd 等动态配置不进入 Session，恢复时继续使用当前配置。
 
 可重建 SQLite Catalog v1 已交付：前台 reconciliation 通过 descriptor-relative journal 枚举、逐条 exclusive lease、Loader/ReplayPlanner/Projector 和短 SQLite transaction 重建最小 thread metadata；缺失、损坏或不兼容的 `state.sqlite` 可从 JSONL 原子重建。`--continue` 只选择当前 cwd、Provider family/wire 与 model 完全匹配的最近 root Session，随后仍由既有 resume 路径重新取得 lease并验证事实源。Catalog 不保存 prompt、response、native payload、API key、base URL 或 Authorization。
 
-P2 尚未完成：session picker、worktree/project catalog、title/tag/search、实时索引、stdin JSON/双向控制、queued/steered input、ContextPlanner/token estimator、完整 usage/cache 事实与 headless 事件、tool ledger/result/artifact、fork/subagent 线程树、compaction checkpoint，以及未来 schema/payload revision 的版本专属转换。v1 compatibility fixture 已建立不代表通用 migration 已实现；当前进度不能视为 P2 退出。
+P2 尚未完成：session picker、worktree/project catalog、title/tag/search、实时索引、stdin JSON/双向控制、queued/steered input、ContextPlanner/token estimator、usage 成本/配额与 TUI 展示、真实 cache request 策略和观测指标、tool ledger/result/artifact、fork/subagent 线程树、compaction checkpoint，以及未来真实 schema/payload revision 的版本专属转换。v1 compatibility fixture 已建立不代表通用 migration 已实现；当前进度不能视为 P2 退出。
 
 本次 P2 基础契约强化还加入语义分支脚本、本地 hooks、GitHub Actions jobs 和集中式架构守卫。GitHub `main` ruleset 的 required checks 与 direct-push 禁止仍须管理员在仓库外启用。secure config/session opener 当前只在 macOS/Linux 提供等价语义；Windows 等目标可以编译，但相关运行路径明确失败关闭，平台实现与兼容矩阵留在 P8。
 
@@ -232,7 +234,7 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 - 已实现 text-only user input -> sample -> assistant output -> stop 的 turn loop；工具循环仍待 P3 接入。
 - queued/steered input 的基础语义仍待实现。
 - context source、稳定排序和基于 SemanticHistoryView 的 token 估算接口仍待实现。
-- 已实现 JSONL SessionMeta、native commit 和文本 turn boundary；完整 usage/cache 记录仍待实现。
+- 已实现 JSONL SessionMeta、native commit、`sample_usage` 和文本 turn boundary；成本、缓存失效原因与累计指标仍待实现。
 - 已实现由同一 exclusive lease 覆盖 load/repair、Provider 恢复、续写和最终关闭的跨进程单 writer，及 `Sync`、尾部半行/未完成尾批修复、v1 envelope/payload version 与不可变 v1 compatibility fixture；未来版本转换仍待真实 revision 出现时按版本实现。
 - 已实现 SQLite Catalog v1 的 root thread 最小索引、全量前台 reconciliation 与损坏/不兼容数据库重建；project/worktree、title/tag/search、实时索引和 thread graph 仍待实现。
 - 已实现 `--resume <thread-id>`、`--continue`、单 turn `--print` 与 JSONL v1 `--json`；同一进程多次输入仍待实现。
@@ -245,7 +247,7 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 - 已交付可通过显式 resume 跨进程续写的单 turn headless 文本 chat；coding tools 与同进程 agent loop 尚未交付。
 - 已交付 session JSONL 与可从 JSONL 重建的 `state.sqlite` Catalog v1。
 - 已交付显式 resume 与兼容性精确匹配的 `--continue`；可视化 session picker/list 尚未交付。
-- 已交付只包含 thread/turn/text/failure 的 JSONL v1；usage、reasoning、tool 与双向控制事件尚未交付。
+- 已交付 thread/turn/text/failure 的 JSONL v1，成功 `turn.completed` 必含 normalized usage；独立 usage 更新、reasoning、tool 与双向控制事件尚未交付。
 
 ### 6.5 验收标准
 
@@ -254,6 +256,7 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 - JSONL 尾部被截断时能保留此前合法记录并报告修复。
 - 删除 SQLite 后可以从 JSONL 重建 session 列表和 thread metadata。
 - `--json` 不混入人类可读日志，stdout/stderr 职责清晰。
+- completed sample 的 raw usage 可随 native history 无损恢复，normalized usage 与 native commit 同 batch durable，headless completion 与该事实一致。
 - session 文件不包含 API key 或 Authorization header。
 - 连续 turn 的稳定 segment fingerprint 不因 timestamp、session path 或日志配置改变。
 - Ctrl+C/取消能结束当前 turn，flush 已完成 item，并且不损坏 session。
@@ -269,7 +272,7 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 
 ### 6.7 退出条件
 
-两种 provider 的多轮、重启恢复、取消、JSONL 修复、SQLite 重建、`--continue` 和 headless 输出协议测试已通过；本阶段剩余 context/usage 等能力通过后，P2 才满足退出条件。
+两种 provider 的多轮、重启恢复、取消、JSONL 修复、SQLite 重建、`--continue`、durable usage 和 headless 输出协议测试已通过；本阶段剩余 context planning、token estimator、成本/cache 策略等能力通过后，P2 才满足退出条件。
 
 ## 7. P3：Coding Tools 与安全执行
 

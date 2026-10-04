@@ -70,7 +70,7 @@ func TestPreparedSampleFinalizesExactlyOnceConcurrently(t *testing.T) {
 		t.Fatal(err)
 	}
 	var calls atomic.Int32
-	sample, err := NewPreparedSample(envelope, func() { calls.Add(1) })
+	sample, err := NewPreparedSample(envelope, testSampleUsage(t), func() { calls.Add(1) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,6 +80,10 @@ func TestPreparedSampleFinalizesExactlyOnceConcurrently(t *testing.T) {
 	}
 	if copy.Family() != domain.ProviderOpenAI || copy.Wire() != "responses" || copy.PayloadVersion() != 1 {
 		t.Fatalf("Envelope() = %#v", copy)
+	}
+	usage, err := sample.Usage()
+	if err != nil || usage.Validate() != nil {
+		t.Fatalf("Usage() = %#v, %v", usage, err)
 	}
 	const count = 32
 	var successes atomic.Int32
@@ -100,6 +104,9 @@ func TestPreparedSampleFinalizesExactlyOnceConcurrently(t *testing.T) {
 	if _, err := sample.Envelope(); err == nil {
 		t.Fatal("finalized sample unexpectedly returned an envelope")
 	}
+	if _, err := sample.Usage(); err == nil {
+		t.Fatal("finalized sample unexpectedly returned usage")
+	}
 }
 
 func TestPreparedSampleRejectsInvalidConstructionAndZeroValue(t *testing.T) {
@@ -108,15 +115,22 @@ func TestPreparedSampleRejectsInvalidConstructionAndZeroValue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewPreparedSample(NativeCommitEnvelope{}, func() {}); err == nil {
+	usage := testSampleUsage(t)
+	if _, err := NewPreparedSample(NativeCommitEnvelope{}, usage, func() {}); err == nil {
 		t.Fatal("zero-value envelope unexpectedly prepared")
 	}
-	if _, err := NewPreparedSample(envelope, nil); err == nil {
+	if _, err := NewPreparedSample(envelope, domain.SampleUsage{}, func() {}); err == nil {
+		t.Fatal("zero-value usage unexpectedly prepared")
+	}
+	if _, err := NewPreparedSample(envelope, usage, nil); err == nil {
 		t.Fatal("nil finalizer unexpectedly accepted")
 	}
 	var zero PreparedSample
 	if _, err := zero.Envelope(); err == nil {
 		t.Fatal("zero-value sample unexpectedly returned an envelope")
+	}
+	if _, err := zero.Usage(); err == nil {
+		t.Fatal("zero-value sample unexpectedly returned usage")
 	}
 	if err := zero.Finalize(); err == nil {
 		t.Fatal("zero-value sample unexpectedly finalized")
@@ -125,7 +139,23 @@ func TestPreparedSampleRejectsInvalidConstructionAndZeroValue(t *testing.T) {
 	if _, err := nilSample.Envelope(); err == nil {
 		t.Fatal("nil sample unexpectedly returned an envelope")
 	}
+	if _, err := nilSample.Usage(); err == nil {
+		t.Fatal("nil sample unexpectedly returned usage")
+	}
 	if err := nilSample.Finalize(); err == nil {
 		t.Fatal("nil sample unexpectedly finalized")
 	}
+}
+
+func testSampleUsage(t *testing.T) domain.SampleUsage {
+	t.Helper()
+	usage, err := domain.NewSampleUsage(
+		domain.KnownUsageMetric(1), domain.UnknownUsageMetric(),
+		domain.NotApplicableUsageMetric(), domain.KnownUsageMetric(2),
+		domain.NotApplicableUsageMetric(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return usage
 }

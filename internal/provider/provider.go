@@ -142,20 +142,28 @@ func (envelope NativeCommitEnvelope) Clone() (NativeCommitEnvelope, error) {
 // PreparedSample 封装一次已校验增量及其恰好一次的纯内存 finalizer。
 type PreparedSample struct {
 	envelope NativeCommitEnvelope
+	usage    domain.SampleUsage
 	finalize func()
 	state    atomic.Uint32
 }
 
 // NewPreparedSample 创建尚未进入 Conversation committed history 的 sample。
-func NewPreparedSample(envelope NativeCommitEnvelope, finalize func()) (*PreparedSample, error) {
+func NewPreparedSample(
+	envelope NativeCommitEnvelope,
+	usage domain.SampleUsage,
+	finalize func(),
+) (*PreparedSample, error) {
 	cloned, err := envelope.Clone()
 	if err != nil {
 		return nil, err
 	}
+	if err := usage.Validate(); err != nil {
+		return nil, fmt.Errorf("prepared sample usage is invalid: %w", err)
+	}
 	if finalize == nil {
 		return nil, fmt.Errorf("prepared sample finalizer is required")
 	}
-	return &PreparedSample{envelope: cloned, finalize: finalize}, nil
+	return &PreparedSample{envelope: cloned, usage: usage, finalize: finalize}, nil
 }
 
 // Envelope 返回待持久化原生增量的独立副本。
@@ -167,6 +175,20 @@ func (sample *PreparedSample) Envelope() (NativeCommitEnvelope, error) {
 		return NativeCommitEnvelope{}, fmt.Errorf("prepared sample is already finalized")
 	}
 	return sample.envelope.Clone()
+}
+
+// Usage 返回待持久化 normalized usage 的值拷贝。
+func (sample *PreparedSample) Usage() (domain.SampleUsage, error) {
+	if sample == nil || sample.finalize == nil {
+		return domain.SampleUsage{}, fmt.Errorf("prepared sample is invalid")
+	}
+	if sample.state.Load() != 0 {
+		return domain.SampleUsage{}, fmt.Errorf("prepared sample is already finalized")
+	}
+	if err := sample.usage.Validate(); err != nil {
+		return domain.SampleUsage{}, fmt.Errorf("prepared sample usage is invalid: %w", err)
+	}
+	return sample.usage, nil
 }
 
 // Finalize 在 durable success 后恰好一次提交纯内存历史。

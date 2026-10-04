@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
 	"easycode/internal/provider/transport"
@@ -110,6 +111,63 @@ func TestStreamReducerMergesCumulativeUsageWithoutInventingMissingValues(t *test
 	}
 	if unknown.messageMetadata().Usage.InputTokens.Known {
 		t.Fatalf("missing usage became known: %#v", unknown.messageMetadata().Usage)
+	}
+}
+
+func TestStreamReducerProducesNormalizedUsage(t *testing.T) {
+	reducer := newStreamReducer()
+	for _, data := range []string{
+		`{"type":"message_start","message":{"id":"msg-1","model":"claude-test","usage":{"input_tokens":0,"cache_creation_input_tokens":3,"cache_read_input_tokens":7}}}`,
+		textBlockStartEvent(0),
+		`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"answer"}}`,
+		`{"type":"content_block_stop","index":0}`,
+		`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":0}}`,
+		`{"type":"message_stop"}`,
+	} {
+		if _, err := reduceAnthropicTestEvent(reducer, data); err != nil {
+			t.Fatalf("reduce %s: %v", data, err)
+		}
+	}
+	usage, err := reducer.sampleUsage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertAnthropicMetric(t, usage.InputUncached(), domain.UsageMetricKnown, 0, true)
+	assertAnthropicMetric(t, usage.CacheRead(), domain.UsageMetricKnown, 7, true)
+	assertAnthropicMetric(t, usage.CacheWrite(), domain.UsageMetricKnown, 3, true)
+	assertAnthropicMetric(t, usage.Output(), domain.UsageMetricKnown, 0, true)
+	assertAnthropicMetric(t, usage.ReasoningOutput(), domain.UsageMetricNotApplicable, 0, false)
+}
+
+func TestStreamReducerRejectsInvalidUsageNumbers(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		events []string
+	}{
+		{name: "negative start", events: []string{`{"type":"message_start","message":{"id":"msg-1","model":"claude-test","usage":{"input_tokens":-1}}}`}},
+		{name: "overflow start", events: []string{`{"type":"message_start","message":{"id":"msg-1","model":"claude-test","usage":{"input_tokens":18446744073709551616}}}`}},
+		{name: "negative delta", events: []string{messageStartEvent(), `{"type":"message_delta","usage":{"output_tokens":-1}}`}},
+		{name: "overflow delta", events: []string{messageStartEvent(), `{"type":"message_delta","usage":{"output_tokens":18446744073709551616}}`}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			reducer := newStreamReducer()
+			var err error
+			for _, event := range test.events {
+				_, err = reduceAnthropicTestEvent(reducer, event)
+				if err != nil {
+					break
+				}
+			}
+			assertFaultCode(t, err, fault.CodeStreamProtocol)
+		})
+	}
+}
+
+func assertAnthropicMetric(t *testing.T, metric domain.UsageMetric, state domain.UsageMetricState, value uint64, hasValue bool) {
+	t.Helper()
+	got, ok := metric.Value()
+	if metric.State() != state || got != value || ok != hasValue {
+		t.Fatalf("metric = state %q value %d ok %t, want state %q value %d ok %t", metric.State(), got, ok, state, value, hasValue)
 	}
 }
 

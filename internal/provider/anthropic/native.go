@@ -124,9 +124,9 @@ func (message nativeMessage) clone() nativeMessage {
 	return cloned
 }
 
-// optionalInt 区分服务端明确给出的零值与缺失字段。
-type optionalInt struct {
-	Value int
+// optionalUint 区分服务端明确给出的零值与缺失字段。
+type optionalUint struct {
+	Value uint64
 	Known bool
 }
 
@@ -138,14 +138,31 @@ type optionalString struct {
 
 // rawUsage 原样保存当前文本切片关心的 Anthropic usage 字段。
 type rawUsage struct {
-	InputTokens              optionalInt
-	CacheCreationInputTokens optionalInt
-	CacheReadInputTokens     optionalInt
-	OutputTokens             optionalInt
+	InputTokens              optionalUint
+	CacheCreationInputTokens optionalUint
+	CacheReadInputTokens     optionalUint
+	OutputTokens             optionalUint
 }
 
 func (usage rawUsage) clone() rawUsage {
 	return usage
+}
+
+func (usage rawUsage) normalized() (domain.SampleUsage, error) {
+	return domain.NewSampleUsage(
+		anthropicUsageMetric(usage.InputTokens),
+		anthropicUsageMetric(usage.CacheReadInputTokens),
+		anthropicUsageMetric(usage.CacheCreationInputTokens),
+		anthropicUsageMetric(usage.OutputTokens),
+		domain.NotApplicableUsageMetric(),
+	)
+}
+
+func anthropicUsageMetric(value optionalUint) domain.UsageMetric {
+	if !value.Known {
+		return domain.UnknownUsageMetric()
+	}
+	return domain.KnownUsageMetric(value.Value)
 }
 
 // messageMetadata 保存 response message 自身的信息，不参与下一轮 content 编译。

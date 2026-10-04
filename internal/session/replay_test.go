@@ -22,6 +22,7 @@ func TestReplayPlannerBuildsValidTextPlanAndSkipsOptional(t *testing.T) {
 	fixture.appendBatch(mustDraft(t, EventTurnStarted, secondTurnID, TurnStartedPayload{}))
 	fixture.appendBatch(
 		mustDraft(t, EventProviderNativeCommit, secondTurnID, validNativeCommit()),
+		mustDraft(t, EventSampleUsage, secondTurnID, testSampleUsage(t)),
 		mustDraft(t, EventTurnCompleted, secondTurnID, TurnCompletedPayload{}),
 	)
 	fixture.appendUnknown(ReplayOptional)
@@ -32,6 +33,7 @@ func TestReplayPlannerBuildsValidTextPlanAndSkipsOptional(t *testing.T) {
 	}
 	if plan.Identity.SessionID != testSessionID || plan.Identity.ThreadID != testThreadID ||
 		len(plan.NativeCommits) != 1 || plan.NativeCommits[0].TurnID != secondTurnID ||
+		len(plan.SampleUsages) != 1 || plan.SampleUsages[0].TurnID != secondTurnID ||
 		len(plan.Turns) != 2 || plan.Turns[0].State != ReplayedTurnFailed ||
 		plan.Turns[1].State != ReplayedTurnCompleted || len(plan.OptionalRecords) != 1 ||
 		plan.InterruptedTail != nil {
@@ -75,6 +77,22 @@ func TestReplayPlannerRejectsIllegalLifecycleTransitions(t *testing.T) {
 		},
 		"commit outside turn": func(fixture *replayFixture) {
 			fixture.appendBatch(
+				mustDraft(t, EventProviderNativeCommit, testTurnID, validNativeCommit()),
+				mustDraft(t, EventSampleUsage, testTurnID, testSampleUsage(t)),
+				mustDraft(t, EventTurnCompleted, testTurnID, TurnCompletedPayload{}),
+			)
+		},
+		"legacy completion without usage": func(fixture *replayFixture) {
+			fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+			fixture.appendBatch(
+				mustDraft(t, EventProviderNativeCommit, testTurnID, validNativeCommit()),
+				mustDraft(t, EventTurnCompleted, testTurnID, TurnCompletedPayload{}),
+			)
+		},
+		"usage before commit": func(fixture *replayFixture) {
+			fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+			fixture.appendBatch(
+				mustDraft(t, EventSampleUsage, testTurnID, testSampleUsage(t)),
 				mustDraft(t, EventProviderNativeCommit, testTurnID, validNativeCommit()),
 				mustDraft(t, EventTurnCompleted, testTurnID, TurnCompletedPayload{}),
 			)

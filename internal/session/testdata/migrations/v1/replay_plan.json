@@ -25,5 +25,18 @@
       "payload_version": 1
     }
   ],
-  "next_sequence": 8
+  "sample_usages": [
+    {
+      "sequence": 7,
+      "turn_id": "00000000-0005-7000-8000-000000000006",
+      "usage": {
+        "input_uncached": {"state": "known", "value": 8},
+        "cache_read": {"state": "known", "value": 4},
+        "cache_write": {"state": "unknown"},
+        "output": {"state": "known", "value": 7},
+        "reasoning_output": {"state": "known", "value": 3}
+      }
+    }
+  ],
+  "next_sequence": 9
 }

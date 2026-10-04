@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"easycode/internal/codec"
+	"easycode/internal/domain"
 )
 
 // AssistantTextDeltaPayload 保存一次 assistant 文本增量。
@@ -17,6 +18,11 @@ type TurnFailedPayload struct {
 	Code      string `json:"code"`
 	Message   string `json:"message"`
 	Cancelled bool   `json:"cancelled,omitempty"`
+}
+
+// TurnCompletedPayload 保存成功 turn 的归一化 usage。
+type TurnCompletedPayload struct {
+	Usage UsagePayload `json:"usage"`
 }
 
 func newEventWithPayload(kind EventKind, payload any) (Event, error) {
@@ -98,14 +104,31 @@ func DecodeTurnFailed(event Event) (TurnFailedPayload, error) {
 	return payload, nil
 }
 
-// NewTurnCompleted 创建 turn 成功完成事件。
-func NewTurnCompleted() Event {
-	return newEvent(EventTurnCompleted)
+// NewTurnCompleted 创建携带 turn usage 的成功完成事件。
+func NewTurnCompleted(usage domain.SampleUsage) (Event, error) {
+	payload, err := newUsagePayload(usage)
+	if err != nil {
+		return Event{}, err
+	}
+	return newEventWithPayload(EventTurnCompleted, TurnCompletedPayload{Usage: payload})
 }
 
-// ValidateTurnCompleted 严格校验 turn 成功完成事件。
-func ValidateTurnCompleted(event Event) error {
-	return validatePayloadlessEvent(event, EventTurnCompleted)
+// DecodeTurnCompleted 解码并校验 turn 成功完成事件。
+func DecodeTurnCompleted(event Event) (TurnCompletedPayload, error) {
+	if event.Kind != EventTurnCompleted {
+		return TurnCompletedPayload{}, fmt.Errorf("event kind is not turn_completed")
+	}
+	if event.Version != CurrentVersion {
+		return TurnCompletedPayload{}, fmt.Errorf("turn completion version is invalid")
+	}
+	var payload TurnCompletedPayload
+	if err := codec.UnmarshalStrict(event.Payload, &payload); err != nil {
+		return TurnCompletedPayload{}, fmt.Errorf("decode turn completion: %w", err)
+	}
+	if _, err := payload.Usage.Domain(); err != nil {
+		return TurnCompletedPayload{}, fmt.Errorf("turn completion usage is invalid: %w", err)
+	}
+	return payload, nil
 }
 
 func validatePayloadlessEvent(event Event, kind EventKind) error {

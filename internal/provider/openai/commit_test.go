@@ -29,6 +29,12 @@ func TestNativeCommitRoundTripPreservesPrivateResponsesItems(t *testing.T) {
 				Raw: json.RawMessage(`{"type":"future_item","id":"future-1","extension":{"enabled":true}}`),
 			},
 		},
+		Usage: rawUsage{
+			InputTokens:           optionalUint{Known: true, Value: 12},
+			CachedInputTokens:     optionalUint{Known: true, Value: 4},
+			OutputTokens:          optionalUint{Known: true, Value: 7},
+			ReasoningOutputTokens: optionalUint{Known: true, Value: 3},
+		},
 	}
 	envelope, err := encodeNativeCommit(turn)
 	if err != nil {
@@ -43,6 +49,11 @@ func TestNativeCommitRoundTripPreservesPrivateResponsesItems(t *testing.T) {
 		decoded.Outputs[1].Phase != "final" || decoded.Outputs[1].Content[0].Text != "answer" ||
 		!bytes.Equal(decoded.Outputs[2].Raw, turn.Outputs[2].Raw) {
 		t.Fatalf("decoded turn = %#v", decoded)
+	}
+	if !decoded.Usage.InputTokens.Known || decoded.Usage.InputTokens.Value != 12 ||
+		!decoded.Usage.CachedInputTokens.Known || decoded.Usage.CachedInputTokens.Value != 4 ||
+		decoded.Usage.CacheWriteTokens.Known || decoded.Usage.ReasoningOutputTokens.Value != 3 {
+		t.Fatalf("decoded usage = %#v", decoded.Usage)
 	}
 	decoded.Outputs[2].Raw[0] = '['
 	if turn.Outputs[2].Raw[0] != '{' || envelope.Payload()[0] != '{' {
@@ -62,7 +73,7 @@ func TestNativeCommitCanonicalGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `{"shape":"text_sample","user":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},"output_items":[{"type":"message","id":"msg-1","role":"assistant","phase":"final","content":[{"type":"output_text","text":"world"}]}]}`
+	const want = `{"shape":"text_sample","user":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},"output_items":[{"type":"message","id":"msg-1","role":"assistant","phase":"final","content":[{"type":"output_text","text":"world"}]}],"usage":{"input_tokens":{"known":false},"cached_input_tokens":{"known":false},"cache_write_tokens":{"known":false},"output_tokens":{"known":false},"reasoning_output_tokens":{"known":false}}}`
 	if got := string(envelope.Payload()); got != want {
 		t.Fatalf("OpenAI native commit golden changed:\n%s", got)
 	}
@@ -96,6 +107,18 @@ func TestNativeCommitRejectsIncompatibleAndCorruptPayloads(t *testing.T) {
 				t.Fatalf("decodeNativeCommit() error = %v", err)
 			}
 		})
+	}
+}
+
+func TestNativeCommitRejectsLegacyPayloadWithoutUsage(t *testing.T) {
+	t.Parallel()
+	payload := json.RawMessage(`{"shape":"text_sample","user":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},"output_items":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"world"}]}]}`)
+	envelope, err := provider.NewNativeCommitEnvelope(domain.ProviderOpenAI, responsesWire, nativeCommitPayloadV1, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeNativeCommit(envelope); err == nil {
+		t.Fatal("legacy payload without usage unexpectedly decoded")
 	}
 }
 

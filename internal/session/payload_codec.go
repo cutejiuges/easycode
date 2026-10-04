@@ -52,6 +52,18 @@ func DecodeNativeCommitPayload(record Record) (NativeCommitPayload, error) {
 	return payload, nil
 }
 
+// DecodeSampleUsagePayload 严格解码并验证 sample_usage v1 payload。
+func DecodeSampleUsagePayload(record Record) (SampleUsagePayload, error) {
+	payload, err := decodeKnownPayload[SampleUsagePayload](record, EventSampleUsage)
+	if err != nil {
+		return SampleUsagePayload{}, err
+	}
+	if _, err := payload.Domain(); err != nil {
+		return SampleUsagePayload{}, err
+	}
+	return payload, nil
+}
+
 // DecodeTurnCompletedPayload 严格解码并验证 turn_completed v1 payload。
 func DecodeTurnCompletedPayload(record Record) (TurnCompletedPayload, error) {
 	return decodeKnownPayload[TurnCompletedPayload](record, EventTurnCompleted)

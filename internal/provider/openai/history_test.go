@@ -94,10 +94,10 @@ func TestProjectHistoryConcurrentCommitReturnsCompleteSnapshots(t *testing.T) {
 		defer close(done)
 		<-start
 		for index := 0; index < 200; index++ {
-			conversation.history.commit(
-				NewUserItem(fmt.Sprintf("user-%d", index)),
-				[]NativeItem{{Type: "message", Role: "assistant", Content: []ContentPart{{Type: "output_text", Text: fmt.Sprintf("assistant-%d", index)}}}},
-			)
+			conversation.history.commit(nativeTurn{
+				User:    NewUserItem(fmt.Sprintf("user-%d", index)),
+				Outputs: []NativeItem{{Type: "message", Role: "assistant", Content: []ContentPart{{Type: "output_text", Text: fmt.Sprintf("assistant-%d", index)}}}},
+			})
 			runtime.Gosched()
 		}
 	}()
@@ -133,7 +133,7 @@ func assertCompleteOpenAIProjection(t *testing.T, projection domain.SemanticHist
 
 func TestProjectHistoryMatchesGoldenAndOmitsOpaqueData(t *testing.T) {
 	conversation := &Conversation{}
-	conversation.history.commit(NewUserItem("hello\nworld"), []NativeItem{
+	conversation.history.commit(nativeTurn{User: NewUserItem("hello\nworld"), Outputs: []NativeItem{
 		{
 			Type:             "reasoning",
 			ID:               "reasoning-secret",
@@ -143,7 +143,7 @@ func TestProjectHistoryMatchesGoldenAndOmitsOpaqueData(t *testing.T) {
 		},
 		{Type: "future_item", Raw: []byte(`{"type":"future_item","secret":"opaque-extension"}`)},
 		{Type: "message", ID: "msg-secret", Role: "assistant", Phase: "final", Content: []ContentPart{{Type: "output_text", Text: "visible answer"}}},
-	})
+	}})
 
 	first, err := codec.MarshalStable(conversation.ProjectHistory())
 	if err != nil {
@@ -170,10 +170,10 @@ func TestProjectHistoryMatchesGoldenAndOmitsOpaqueData(t *testing.T) {
 func TestProjectHistoryIsIndependentAndDoesNotChangeRequest(t *testing.T) {
 	conversation := &Conversation{}
 	reasoningRaw := []byte(`{"type":"reasoning","id":"reasoning-1","summary":[{"type":"summary_text","text":"private"}],"encrypted_content":"opaque-encrypted"}`)
-	conversation.history.commit(NewUserItem("first"), []NativeItem{
+	conversation.history.commit(nativeTurn{User: NewUserItem("first"), Outputs: []NativeItem{
 		{Type: "reasoning", ID: "reasoning-1", EncryptedContent: "opaque-encrypted", Raw: reasoningRaw},
 		{Type: "message", ID: "msg-1", Role: "assistant", Content: []ContentPart{{Type: "output_text", Text: "answer"}}},
-	})
+	}})
 
 	before, err := compileResponsesRequest("gpt-test", conversation.history.snapshot(), NewUserItem("second"))
 	if err != nil {
