@@ -258,7 +258,7 @@ func TestHeadlessProcessExitCodesAndJSONStdout(t *testing.T) {
 		_, _ = io.WriteString(writer, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-1\"}}\n\n")
 		_, _ = io.WriteString(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"answer\"}\n\n")
 		_, _ = io.WriteString(writer, "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"id\":\"msg-1\",\"role\":\"assistant\",\"phase\":\"final\",\"content\":[{\"type\":\"output_text\",\"text\":\"answer\"}]}}\n\n")
-		_, _ = io.WriteString(writer, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-1\"}}\n\n")
+		_, _ = io.WriteString(writer, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-1\",\"usage\":{\"input_tokens\":10,\"input_tokens_details\":{\"cached_tokens\":2},\"cache_write_tokens\":0,\"output_tokens\":5,\"output_tokens_details\":{\"reasoning_tokens\":0}}}}\n\n")
 	}))
 	defer successServer.Close()
 	failureServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
@@ -314,12 +314,53 @@ func TestHeadlessProcessExitCodesAndJSONStdout(t *testing.T) {
 						t.Fatalf("invalid JSONL line: %q", line)
 					}
 				}
+				if test.mode == "success" {
+					assertCLICompletionUsage(t, stdout.String())
+				}
 			}
 			if test.wantStderr != "" && (stdout.Len() != 0 || !strings.Contains(stderr.String(), test.wantStderr)) {
 				t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
 			}
 		})
 	}
+}
+
+func assertCLICompletionUsage(t *testing.T, output string) {
+	t.Helper()
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		var event struct {
+			Type  string `json:"type"`
+			Usage struct {
+				InputUncached struct {
+					State string  `json:"state"`
+					Value *uint64 `json:"value,omitempty"`
+				} `json:"input_uncached"`
+				CacheWrite struct {
+					State string  `json:"state"`
+					Value *uint64 `json:"value,omitempty"`
+				} `json:"cache_write"`
+				ReasoningOutput struct {
+					State string  `json:"state"`
+					Value *uint64 `json:"value,omitempty"`
+				} `json:"reasoning_output"`
+			} `json:"usage"`
+		}
+		if err := codec.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.Type != "turn.completed" {
+			continue
+		}
+		if event.Usage.InputUncached.State != "known" || event.Usage.InputUncached.Value == nil ||
+			*event.Usage.InputUncached.Value != 8 || event.Usage.CacheWrite.State != "known" ||
+			event.Usage.CacheWrite.Value == nil || *event.Usage.CacheWrite.Value != 0 ||
+			event.Usage.ReasoningOutput.State != "known" || event.Usage.ReasoningOutput.Value == nil ||
+			*event.Usage.ReasoningOutput.Value != 0 {
+			t.Fatalf("turn.completed usage = %#v", event.Usage)
+		}
+		return
+	}
+	t.Fatal("turn.completed event is missing")
 }
 
 func TestCLIHeadlessHelperProcess(t *testing.T) {

@@ -164,6 +164,16 @@ func (runtime *Runtime) RunTurn(
 			err = fault.Wrap(fault.CodeStreamProtocol, "provider prepared sample is invalid", envelopeErr)
 			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, err)
 		}
+		usage, usageErr := terminal.Prepared.Usage()
+		if usageErr != nil {
+			err = fault.Wrap(fault.CodeStreamProtocol, "provider prepared usage is invalid", usageErr)
+			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, err)
+		}
+		turnUsage, aggregateErr := domain.AggregateSampleUsage([]domain.SampleUsage{usage})
+		if aggregateErr != nil {
+			err = fault.Wrap(fault.CodeStreamProtocol, "turn usage is invalid", aggregateErr)
+			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, err)
+		}
 		commitDraft, draftErr := session.NewProviderNativeCommitDraft(turnID, session.NativeCommitPayload{
 			Provider: envelope.Family(), Wire: envelope.Wire(),
 			PayloadVersion: envelope.PayloadVersion(), Payload: envelope.Payload(),
@@ -172,12 +182,22 @@ func (runtime *Runtime) RunTurn(
 			err = fault.Wrap(fault.CodeStreamProtocol, "provider native commit is invalid", draftErr)
 			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, err)
 		}
+		usageDraft, draftErr := session.NewSampleUsageDraft(turnID, usage)
+		if draftErr != nil {
+			err = fault.Wrap(fault.CodeStreamProtocol, "sample usage is invalid", draftErr)
+			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, err)
+		}
 		completedDraft, draftErr := session.NewTurnCompletedDraft(turnID)
 		if draftErr != nil {
 			err = fault.Wrap(fault.CodeStreamProtocol, "turn completion is invalid", draftErr)
 			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, err)
 		}
-		_, err = runtime.journal.AppendBatch(context.WithoutCancel(ctx), []session.RecordDraft{commitDraft, completedDraft})
+		completedEvent, eventErr := protocol.NewTurnCompleted(turnUsage)
+		if eventErr != nil {
+			err = fault.Wrap(fault.CodeStreamProtocol, "turn completion is invalid", eventErr)
+			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, err)
+		}
+		_, err = runtime.journal.AppendBatch(context.WithoutCancel(ctx), []session.RecordDraft{commitDraft, usageDraft, completedDraft})
 		if err != nil {
 			failure := fault.Wrap(fault.CodeSessionWrite, "persist completed turn failed", err)
 			runtime.poisoned.Store(true)
@@ -190,7 +210,7 @@ func (runtime *Runtime) RunTurn(
 			runtime.emitFailure(emit, turnID, failure)
 			return failure
 		}
-		emit(runtime.decorate(protocol.NewTurnCompleted(), turnID))
+		emit(runtime.decorate(completedEvent, turnID))
 		return nil
 	case provider.StreamEventCancelled:
 		err = terminal.Err

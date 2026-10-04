@@ -72,7 +72,7 @@ func TestNativeTurnCloneDoesNotShareOpaqueData(t *testing.T) {
 			Raw:  []byte(`{"type":"redacted_thinking","data":"opaque"}`),
 		}}},
 		Metadata: messageMetadata{Usage: rawUsage{
-			InputTokens: optionalInt{Value: 3, Known: true},
+			InputTokens: optionalUint{Value: 3, Known: true},
 		}},
 	}
 	cloned := turn.clone()

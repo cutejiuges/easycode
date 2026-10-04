@@ -215,6 +215,11 @@ func (conversation *Conversation) consumeStream(
 			}
 			if result.complete {
 				stopTransport()
+				usage, usageErr := reducer.sampleUsage()
+				if usageErr != nil {
+					sendTerminal(provider.StreamEventFailed, nil, fault.Wrap(fault.CodeStreamProtocol, "Anthropic completed sample usage is invalid", usageErr))
+					return
+				}
 				turn := nativeTurn{
 					User:      userMessage,
 					Assistant: reducer.assistantMessage(),
@@ -226,7 +231,7 @@ func (conversation *Conversation) consumeStream(
 					return
 				}
 				conversation.pending.Store(true)
-				prepared, prepareErr := provider.NewPreparedSample(envelope, func() {
+				prepared, prepareErr := provider.NewPreparedSample(envelope, usage, func() {
 					conversation.history.commit(turn)
 					conversation.pending.Store(false)
 				})

@@ -132,9 +132,10 @@ func TestRunTurnDurableSuccessOrderingAndIdentity(t *testing.T) {
 		t.Fatalf("timeline = %#v, want %#v", timeline, wantTimeline)
 	}
 	batches := journal.snapshot()
-	if len(batches) != 2 || len(batches[0]) != 1 || len(batches[1]) != 2 ||
+	if len(batches) != 2 || len(batches[0]) != 1 || len(batches[1]) != 3 ||
 		batches[1][0].EventKind() != session.EventProviderNativeCommit ||
-		batches[1][1].EventKind() != session.EventTurnCompleted {
+		batches[1][1].EventKind() != session.EventSampleUsage ||
+		batches[1][2].EventKind() != session.EventTurnCompleted {
 		t.Fatalf("journal batches = %#v", batches)
 	}
 	commit, err := session.DecodeNativeCommitPayload(session.Record{
@@ -146,6 +147,26 @@ func TestRunTurnDurableSuccessOrderingAndIdentity(t *testing.T) {
 	}
 	if commit.Provider != domain.ProviderOpenAI || commit.Wire != "responses" || string(commit.Payload) != `{"shape":"text_sample"}` {
 		t.Fatalf("native commit = %#v", commit)
+	}
+	usageRecord, err := session.DecodeSampleUsagePayload(session.Record{
+		PayloadVersion: 1, ReplayRequirement: session.ReplayRequired,
+		EventKind: batches[1][1].EventKind(), Payload: batches[1][1].PayloadBytes(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantUsage := testRuntimeUsage(t)
+	gotUsage, err := usageRecord.Domain()
+	if err != nil || gotUsage != wantUsage {
+		t.Fatalf("sample usage = %#v, %v", gotUsage, err)
+	}
+	completed, err := protocol.DecodeTurnCompleted(events[len(events)-1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	completedUsage, err := completed.Usage.Domain()
+	if err != nil || completedUsage != wantUsage {
+		t.Fatalf("completed usage = %#v, %v", completedUsage, err)
 	}
 }
 
@@ -188,6 +209,40 @@ func TestRunTurnCompletionWriteFailureDoesNotFinalizeAndPoisons(t *testing.T) {
 	}
 	if journal.calls != 2 {
 		t.Fatalf("journal calls = %d, failure path retried poisoned writer", journal.calls)
+	}
+	if _, err := collectTurn(runtime, context.Background(), nil); !errors.Is(err, &fault.Error{Code: fault.CodeSessionWrite}) {
+		t.Fatalf("next RunTurn() error = %v", err)
+	}
+}
+
+func TestRunTurnFinalizerConflictAfterDurableSuccessPoisonsWithoutPublishingUsage(t *testing.T) {
+	t.Parallel()
+	var finalized atomic.Int32
+	prepared := newPreparedSample(t, func() { finalized.Add(1) })
+	journal := &fakeJournal{hook: func(drafts []session.RecordDraft) {
+		if len(drafts) == 3 && drafts[0].EventKind() == session.EventProviderNativeCommit {
+			if err := prepared.Finalize(); err != nil {
+				t.Errorf("fixture finalize: %v", err)
+			}
+		}
+	}}
+	runtime := newTestRuntime(t, &fakeConversation{stream: fixedStream(provider.StreamEvent{
+		Kind: provider.StreamEventCompleted, Prepared: prepared,
+	})}, journal)
+	events, err := collectTurn(runtime, context.Background(), nil)
+	if !errors.Is(err, &fault.Error{Code: fault.CodeStreamProtocol}) {
+		t.Fatalf("RunTurn() error = %v", err)
+	}
+	assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnFailed)
+	if finalized.Load() != 1 {
+		t.Fatalf("finalizer calls = %d", finalized.Load())
+	}
+	batches := journal.snapshot()
+	if len(batches) != 2 || len(batches[1]) != 3 ||
+		batches[1][0].EventKind() != session.EventProviderNativeCommit ||
+		batches[1][1].EventKind() != session.EventSampleUsage ||
+		batches[1][2].EventKind() != session.EventTurnCompleted {
+		t.Fatalf("durable batches = %#v", batches)
 	}
 	if _, err := collectTurn(runtime, context.Background(), nil); !errors.Is(err, &fault.Error{Code: fault.CodeSessionWrite}) {
 		t.Fatalf("next RunTurn() error = %v", err)
@@ -402,11 +457,26 @@ func newPreparedSample(t *testing.T, finalize func()) *provider.PreparedSample {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := provider.NewPreparedSample(envelope, finalize)
+	prepared, err := provider.NewPreparedSample(envelope, testRuntimeUsage(t), finalize)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return prepared
+}
+
+func testRuntimeUsage(t *testing.T) domain.SampleUsage {
+	t.Helper()
+	usage, err := domain.NewSampleUsage(
+		domain.KnownUsageMetric(8),
+		domain.KnownUsageMetric(2),
+		domain.UnknownUsageMetric(),
+		domain.KnownUsageMetric(5),
+		domain.NotApplicableUsageMetric(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return usage
 }
 
 func fixedStream(events ...provider.StreamEvent) func(context.Context, provider.TurnInput) (<-chan provider.StreamEvent, error) {

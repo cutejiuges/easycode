@@ -35,12 +35,17 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 			Outputs: []NativeItem{{
 				Type: "future_item", Raw: json.RawMessage(`{"type":"future_item","id":"future-2","opaque":{"value":2}}`),
 			}},
+			Usage: rawUsage{
+				InputTokens:       optionalUint{Known: true, Value: 12},
+				CachedInputTokens: optionalUint{Known: true, Value: 4},
+				OutputTokens:      optionalUint{Known: true, Value: 7},
+			},
 		},
 	}
 	uninterrupted := &Conversation{provider: instance}
 	commits := make([]provider.NativeCommitEnvelope, 0, len(turns))
 	for _, turn := range turns {
-		uninterrupted.history.commit(turn.User, turn.Outputs)
+		uninterrupted.history.commit(turn)
 		commit, encodeErr := encodeNativeCommit(turn)
 		if encodeErr != nil {
 			t.Fatal(encodeErr)

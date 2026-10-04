@@ -35,6 +35,9 @@ func TestTypedDraftConstructorsSealKindAndPayload(t *testing.T) {
 				Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 1, Payload: nativeBytes,
 			})
 		}},
+		{name: "sample usage", kind: EventSampleUsage, make: func() (RecordDraft, error) {
+			return NewSampleUsageDraft(testTurnID, testSampleUsage(t))
+		}},
 		{name: "turn completed", kind: EventTurnCompleted, make: func() (RecordDraft, error) {
 			return NewTurnCompletedDraft(testTurnID)
 		}},
@@ -98,6 +101,10 @@ func TestTypedDraftConstructorsRejectSemanticInvalidValues(t *testing.T) {
 			_, err := NewProviderNativeCommitDraft(testTurnID, NativeCommitPayload{})
 			return err
 		}},
+		{name: "sample usage", make: func() error {
+			_, err := NewSampleUsageDraft(testTurnID, domain.SampleUsage{})
+			return err
+		}},
 		{name: "turn completed", make: func() error {
 			_, err := NewTurnCompletedDraft("")
 			return err
@@ -129,6 +136,7 @@ func TestRevisionSpecificDecodersAreStrict(t *testing.T) {
 			Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 1,
 			Payload: json.RawMessage(`{"shape":"text_sample"}`),
 		}),
+		mustDraft(t, EventSampleUsage, testTurnID, testSampleUsage(t)),
 		mustDraft(t, EventTurnCompleted, testTurnID, TurnCompletedPayload{}),
 		mustDraft(t, EventTurnFailed, testTurnID, TurnFailedPayload{Code: "failed"}),
 	}
@@ -181,6 +189,9 @@ func decodeKnownRecord(record Record) error {
 	case EventProviderNativeCommit:
 		_, err := DecodeNativeCommitPayload(record)
 		return err
+	case EventSampleUsage:
+		_, err := DecodeSampleUsagePayload(record)
+		return err
 	case EventTurnCompleted:
 		_, err := DecodeTurnCompletedPayload(record)
 		return err
@@ -207,6 +218,8 @@ func mustDraft(t testing.TB, kind EventKind, turnID domain.TurnID, payload any) 
 		draft, err = NewTurnStartedDraft(turnID)
 	case EventProviderNativeCommit:
 		draft, err = NewProviderNativeCommitDraft(turnID, payload.(NativeCommitPayload))
+	case EventSampleUsage:
+		draft, err = NewSampleUsageDraft(turnID, payload.(domain.SampleUsage))
 	case EventTurnCompleted:
 		draft, err = NewTurnCompletedDraft(turnID)
 	case EventTurnFailed:
@@ -218,4 +231,39 @@ func mustDraft(t testing.TB, kind EventKind, turnID domain.TurnID, payload any) 
 		t.Fatalf("create %s draft: %v", kind, err)
 	}
 	return draft
+}
+
+func testSampleUsage(t testing.TB) domain.SampleUsage {
+	t.Helper()
+	usage, err := domain.NewSampleUsage(
+		domain.KnownUsageMetric(0), domain.KnownUsageMetric(2),
+		domain.UnknownUsageMetric(), domain.KnownUsageMetric(3),
+		domain.NotApplicableUsageMetric(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return usage
+}
+
+func TestSampleUsagePayloadPreservesStateAndValuePresence(t *testing.T) {
+	t.Parallel()
+	payload, err := NewSampleUsagePayload(testSampleUsage(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"input_uncached":{"state":"known","value":0},"cache_read":{"state":"known","value":2},"cache_write":{"state":"unknown"},"output":{"state":"known","value":3},"reasoning_output":{"state":"not_applicable"}}`
+	if string(encoded) != want {
+		t.Fatalf("sample usage payload = %s", encoded)
+	}
+	invalid := payload
+	zero := uint64(0)
+	invalid.CacheWrite.Value = &zero
+	if _, err := invalid.Domain(); err == nil {
+		t.Fatal("unknown metric with value unexpectedly accepted")
+	}
 }

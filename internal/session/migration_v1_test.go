@@ -23,6 +23,7 @@ type v1ReplaySummary struct {
 	CreationCWD    string                `json:"creation_cwd"`
 	Turns          []v1TurnSummary       `json:"turns"`
 	NativeCommits  []v1NativeSummary     `json:"native_commits"`
+	SampleUsages   []v1UsageSummary      `json:"sample_usages"`
 	NextSequence   uint64                `json:"next_sequence"`
 }
 
@@ -37,6 +38,12 @@ type v1NativeSummary struct {
 	Provider       domain.ProviderFamily `json:"provider"`
 	Wire           string                `json:"wire"`
 	PayloadVersion int                   `json:"payload_version"`
+}
+
+type v1UsageSummary struct {
+	Sequence uint64             `json:"sequence"`
+	TurnID   domain.TurnID      `json:"turn_id"`
+	Usage    SampleUsagePayload `json:"usage"`
 }
 
 func TestV1CompatibilityFixtureReplay(t *testing.T) {
@@ -59,7 +66,7 @@ func TestV1CompatibilityFixtureReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := readV1ReplaySummary(t)
-	got := summarizeV1Replay(plan)
+	got := summarizeV1Replay(t, plan)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("v1 ReplayPlan summary = %#v, want %#v", got, want)
 	}
@@ -70,7 +77,7 @@ func TestV1CompatibilityFixtureReplay(t *testing.T) {
 	}
 	for _, kind := range []EventKind{
 		EventSessionMeta, EventThreadMeta, EventTurnStarted,
-		EventProviderNativeCommit, EventTurnCompleted, EventTurnFailed,
+		EventProviderNativeCommit, EventSampleUsage, EventTurnCompleted, EventTurnFailed,
 	} {
 		if !kinds[kind] {
 			t.Fatalf("v1 fixture does not cover %q", kind)
@@ -94,6 +101,7 @@ func TestV1CompatibilityFixtureCanonicalBytesStayStable(t *testing.T) {
 		EventTurnFailed,
 		EventTurnStarted,
 		EventProviderNativeCommit,
+		EventSampleUsage,
 		EventTurnCompleted,
 	}
 	if len(lines) != len(wantKinds) {
@@ -134,7 +142,7 @@ func TestV1CompatibilityFixtureContinuesWithoutRewrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(records) != 1 || records[0].Sequence != 8 {
+	if len(records) != 1 || records[0].Sequence != 9 {
 		t.Fatalf("continued records = %#v", records)
 	}
 	if err := writer.Close(context.Background()); err != nil {
@@ -150,6 +158,35 @@ func TestV1CompatibilityFixtureContinuesWithoutRewrite(t *testing.T) {
 	}
 	if len(content) <= len(prefix) || !bytes.Equal(content[:len(prefix)], prefix) {
 		t.Fatal("continuing the v1 fixture rewrote its historical prefix")
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLegacyV1CompletionWithoutUsageFailsClosed(t *testing.T) {
+	fixture := readV1Fixture(t, "legacy_without_usage.jsonl")
+	repository, lease := installV1Fixture(t, fixture)
+	loaded, err := NewLoader().Load(context.Background(), lease)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewReplayPlanner().Plan(loaded); err == nil || !strings.Contains(err.Error(), "completed turn batch") {
+		t.Fatalf("legacy fixture replay error = %v", err)
+	}
+	if err := lease.Close(); err != nil {
+		t.Fatal(err)
+	}
+	path, err := repository.JournalPath(testThreadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, fixture) {
+		t.Fatal("rejecting legacy v1 completion modified journal bytes")
 	}
 	if err := repository.Close(); err != nil {
 		t.Fatal(err)
@@ -247,7 +284,8 @@ func readV1ReplaySummary(t *testing.T) v1ReplaySummary {
 	return summary
 }
 
-func summarizeV1Replay(plan ReplayPlan) v1ReplaySummary {
+func summarizeV1Replay(t *testing.T, plan ReplayPlan) v1ReplaySummary {
+	t.Helper()
 	summary := v1ReplaySummary{
 		SessionID: plan.Identity.SessionID, ThreadID: plan.Identity.ThreadID,
 		Provider: plan.SessionMetadata.Provider, ProviderWire: plan.SessionMetadata.ProviderWire,
@@ -255,6 +293,7 @@ func summarizeV1Replay(plan ReplayPlan) v1ReplaySummary {
 		CreationCWD: plan.SessionMetadata.CreationCWD, NextSequence: plan.NextSequence,
 		Turns:         make([]v1TurnSummary, 0, len(plan.Turns)),
 		NativeCommits: make([]v1NativeSummary, 0, len(plan.NativeCommits)),
+		SampleUsages:  make([]v1UsageSummary, 0, len(plan.SampleUsages)),
 	}
 	for _, turn := range plan.Turns {
 		summary.Turns = append(summary.Turns, v1TurnSummary(turn))
@@ -263,6 +302,15 @@ func summarizeV1Replay(plan ReplayPlan) v1ReplaySummary {
 		summary.NativeCommits = append(summary.NativeCommits, v1NativeSummary{
 			Sequence: commit.Sequence, TurnID: commit.TurnID, Provider: commit.Commit.Provider,
 			Wire: commit.Commit.Wire, PayloadVersion: commit.Commit.PayloadVersion,
+		})
+	}
+	for _, usage := range plan.SampleUsages {
+		payload, err := NewSampleUsagePayload(usage.Usage)
+		if err != nil {
+			t.Fatal(err)
+		}
+		summary.SampleUsages = append(summary.SampleUsages, v1UsageSummary{
+			Sequence: usage.Sequence, TurnID: usage.TurnID, Usage: payload,
 		})
 	}
 	return summary

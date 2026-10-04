@@ -33,6 +33,7 @@ const (
 	EventThreadMeta           EventKind = "thread_meta"
 	EventTurnStarted          EventKind = "turn_started"
 	EventProviderNativeCommit EventKind = "provider_native_commit"
+	EventSampleUsage          EventKind = "sample_usage"
 	EventTurnCompleted        EventKind = "turn_completed"
 	EventTurnFailed           EventKind = "turn_failed"
 )

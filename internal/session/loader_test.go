@@ -22,6 +22,7 @@ func TestLoaderLoadsValidBatches(t *testing.T) {
 				Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 1,
 				Payload: json.RawMessage(`{"shape":"text_sample"}`),
 			}),
+			mustDraft(t, EventSampleUsage, testTurnID, testSampleUsage(t)),
 			mustDraft(t, EventTurnCompleted, testTurnID, TurnCompletedPayload{}),
 		})...,
 	)
@@ -31,7 +32,7 @@ func TestLoaderLoadsValidBatches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Records) != 3 || result.NextSequence != 4 || result.Repair.Repaired {
+	if len(result.Records) != 4 || result.NextSequence != 5 || result.Repair.Repaired {
 		t.Fatalf("Load() = %#v", result)
 	}
 	for index, record := range result.Records {

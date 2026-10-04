@@ -174,7 +174,7 @@ export EASYCODE_MODEL=your-model
 
 配置优先级为：JSON 文件提供基础值，非空 `EASYCODE_*` 环境变量覆盖对应字段，最后统一校验。`base_url` 是 API 路径前缀，不会自动补 `/v1`，且不能包含 userinfo、query 或 fragment。
 
-当前 TUI 和 headless 模式都支持 Anthropic Messages 与 OpenAI Responses 的文本会话。成功文本回合会写入权限受控的 append-only JSONL；显式 `--resume <thread-id>` 在连续 exclusive lease 下恢复同一 Provider 的原生历史，`--continue` 则通过可重建 SQLite Catalog 选择当前 cwd 与 Provider 配置完全兼容的最近 root Session，再进入同一恢复路径。TUI 通过只读 `SemanticHistoryView` 重建可见 transcript，headless 则不消费或回放旧 transcript。Anthropic thinking/signature/redacted thinking 与 OpenAI encrypted reasoning 会保留在各自原生历史中，不进入当前文本投影。stdin JSON/双向控制、usage/reasoning/tool JSON 事件、token estimator、完整 Provider UsageParser/CachePlanner、tools、session picker/search、prompt cache 控制、主动 thinking 配置和高级 reasoning UI 尚未实现。
+当前 TUI 和 headless 模式都支持 Anthropic Messages 与 OpenAI Responses 的文本会话。成功文本回合会把 Provider-native commit、五项三态 normalized sample usage 和完成边界作为同一 batch 写入权限受控的 append-only JSONL；`--json` 的 `turn.completed` v1 同步输出该 usage，`--print` 仍只输出最终文本。显式 `--resume <thread-id>` 在连续 exclusive lease 下恢复同一 Provider 的原生历史，`--continue` 则通过可重建 SQLite Catalog 选择当前 cwd 与 Provider 配置完全兼容的最近 root Session，再进入同一恢复路径。TUI 通过只读 `SemanticHistoryView` 重建可见 transcript，headless 则不消费或回放旧 transcript。Anthropic thinking/signature/redacted thinking 与 OpenAI encrypted reasoning 会保留在各自原生历史中，不进入当前文本投影。stdin JSON/双向控制、独立 usage 更新、usage 成本与 TUI 展示、reasoning/tool JSON 事件、token estimator、完整 CachePlanner、tools、session picker/search、prompt cache 控制、主动 thinking 配置和高级 reasoning UI 尚未实现。
 
 ## 架构概览
 

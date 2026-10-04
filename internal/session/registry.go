@@ -59,6 +59,11 @@ func descriptorByKind(kind EventKind) (Descriptor, bool) {
 			Kind: EventProviderNativeCommit, Version: 1, Requirement: ReplayRequired,
 			Cardinality: CardinalityMany, Placement: PlacementActiveTurn,
 		}, true
+	case EventSampleUsage:
+		return Descriptor{
+			Kind: EventSampleUsage, Version: 1, Requirement: ReplayRequired,
+			Cardinality: CardinalityMany, Placement: PlacementActiveTurn,
+		}, true
 	case EventTurnCompleted:
 		return Descriptor{
 			Kind: EventTurnCompleted, Version: 1, Requirement: ReplayRequired,

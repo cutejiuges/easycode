@@ -76,7 +76,7 @@ func TestRegistryRejectsDeclarationDriftAndWrongPayload(t *testing.T) {
 	}
 	for _, kind := range []EventKind{
 		EventSessionMeta, EventThreadMeta, EventTurnStarted,
-		EventProviderNativeCommit, EventTurnCompleted, EventTurnFailed,
+		EventProviderNativeCommit, EventSampleUsage, EventTurnCompleted, EventTurnFailed,
 	} {
 		descriptor, ok := LookupDescriptor(kind, 1)
 		if !ok || descriptor.Requirement != ReplayRequired {

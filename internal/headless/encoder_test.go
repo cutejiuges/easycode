@@ -89,7 +89,7 @@ func TestEncoderHandlesShortWritesAndStopsAfterFailure(t *testing.T) {
 }
 
 func TestEncoderRejectsMutatedTypedEventBeforeWriting(t *testing.T) {
-	event, err := NewTurnCompletedEvent(testSessionID, testThreadID, testTurnID)
+	event, err := NewTurnCompletedEvent(testSessionID, testThreadID, testTurnID, testHeadlessUsage(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,6 +101,60 @@ func TestEncoderRejectsMutatedTypedEventBeforeWriting(t *testing.T) {
 	if output.Len() != 0 {
 		t.Fatalf("invalid event was written: %q", output.String())
 	}
+}
+
+func TestTurnCompletedV1ContractRequiresUsageAndAllowsUnknownFields(t *testing.T) {
+	missingUsage := []byte(`{"version":1,"type":"turn.completed","session_id":"00000000-0010-7000-8000-000000000010","thread_id":"00000000-0011-7000-8000-000000000011","turn_id":"00000000-0012-7000-8000-000000000012"}`)
+	if _, err := decodeV1EventForContractTest(missingUsage); err == nil {
+		t.Fatal("completion without usage unexpectedly matched v1 contract")
+	}
+
+	valid, err := codec.MarshalStable(mustTurnCompleted(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	withUnknown := append(valid[:len(valid)-1], []byte(`,"future_field":true}`)...)
+	event, err := decodeV1EventForContractTest(withUnknown)
+	if err != nil {
+		t.Fatalf("known event rejected unknown field: %v", err)
+	}
+	completed, ok := event.(TurnCompletedEvent)
+	if !ok || completed.Usage.InputUncached.Value == nil || *completed.Usage.InputUncached.Value != 0 {
+		t.Fatalf("decoded completion = %#v", event)
+	}
+
+	unknownType := []byte(`{"version":1,"type":"turn.unknown"}`)
+	if _, err := decodeV1EventForContractTest(unknownType); err == nil {
+		t.Fatal("unknown event type unexpectedly matched v1 contract")
+	}
+}
+
+func decodeV1EventForContractTest(content []byte) (Event, error) {
+	var envelope struct {
+		Version int    `json:"version"`
+		Type    string `json:"type"`
+	}
+	if err := codec.Unmarshal(content, &envelope); err != nil {
+		return nil, err
+	}
+	if envelope.Version != eventVersion {
+		return nil, errors.New("event version is invalid")
+	}
+	var event Event
+	switch envelope.Type {
+	case "turn.completed":
+		var completed TurnCompletedEvent
+		if err := codec.Unmarshal(content, &completed); err != nil {
+			return nil, err
+		}
+		event = completed
+	default:
+		return nil, errors.New("event type is unsupported")
+	}
+	if err := validateEvent(event); err != nil {
+		return nil, err
+	}
+	return event, nil
 }
 
 type chunkWriter struct {
@@ -161,11 +215,26 @@ func mustTextDelta(t *testing.T, text string) Event {
 
 func mustTurnCompleted(t *testing.T) Event {
 	t.Helper()
-	event, err := NewTurnCompletedEvent(testSessionID, testThreadID, testTurnID)
+	event, err := NewTurnCompletedEvent(testSessionID, testThreadID, testTurnID, testHeadlessUsage(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return event
+}
+
+func testHeadlessUsage(t *testing.T) domain.SampleUsage {
+	t.Helper()
+	usage, err := domain.NewSampleUsage(
+		domain.KnownUsageMetric(0),
+		domain.UnknownUsageMetric(),
+		domain.NotApplicableUsageMetric(),
+		domain.KnownUsageMetric(5),
+		domain.KnownUsageMetric(2),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return usage
 }
 
 func mustTurnFailed(t *testing.T, failure fault.Summary) Event {

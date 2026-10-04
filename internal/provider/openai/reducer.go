@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"easycode/internal/codec"
+	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
 	"easycode/internal/provider/transport"
@@ -20,6 +21,27 @@ type responseReference struct {
 	ID string `json:"id"`
 }
 
+type responseCompletedWire struct {
+	ID    string              `json:"id"`
+	Usage *responsesUsageWire `json:"usage,omitempty"`
+}
+
+type responsesUsageWire struct {
+	InputTokens         *uint64                  `json:"input_tokens,omitempty"`
+	InputTokensDetails  *inputTokensDetailsWire  `json:"input_tokens_details,omitempty"`
+	CacheWriteTokens    *uint64                  `json:"cache_write_tokens,omitempty"`
+	OutputTokens        *uint64                  `json:"output_tokens,omitempty"`
+	OutputTokensDetails *outputTokensDetailsWire `json:"output_tokens_details,omitempty"`
+}
+
+type inputTokensDetailsWire struct {
+	CachedTokens *uint64 `json:"cached_tokens,omitempty"`
+}
+
+type outputTokensDetailsWire struct {
+	ReasoningTokens *uint64 `json:"reasoning_tokens,omitempty"`
+}
+
 type reducerResult struct {
 	semantic  *protocol.Event
 	native    *NativeItem
@@ -31,6 +53,7 @@ type responsesStreamReducer struct {
 	responseID string
 	terminal   bool
 	items      []NativeItem
+	usage      rawUsage
 }
 
 func newResponsesStreamReducer() *responsesStreamReducer {
@@ -93,7 +116,7 @@ func (reducer *responsesStreamReducer) reduce(event transport.SSEEvent) (reducer
 		reducer.items = append(reducer.items, item)
 		return reducerResult{native: &item}, nil
 	case "response.completed":
-		if err := reducer.acceptTerminal(envelope.Response); err != nil {
+		if err := reducer.acceptCompleted(envelope.Response); err != nil {
 			return reducerResult{}, err
 		}
 		return reducerResult{completed: true}, nil
@@ -110,6 +133,26 @@ func (reducer *responsesStreamReducer) reduce(event transport.SSEEvent) (reducer
 	default:
 		return reducerResult{}, nil
 	}
+}
+
+func (reducer *responsesStreamReducer) acceptCompleted(raw json.RawMessage) error {
+	if len(raw) == 0 || string(raw) == "null" {
+		return fault.New(fault.CodeStreamProtocol, "Responses response metadata is required")
+	}
+	var response responseCompletedWire
+	if err := codec.Unmarshal(raw, &response); err != nil {
+		return fault.Wrap(fault.CodeStreamProtocol, "Responses response metadata is invalid", err)
+	}
+	if response.ID == "" || response.ID != reducer.responseID {
+		return fault.New(fault.CodeStreamProtocol, "Responses terminal response ID does not match response.created")
+	}
+	usage := decodeResponsesUsage(response.Usage)
+	if _, err := usage.normalized(); err != nil {
+		return fault.Wrap(fault.CodeStreamProtocol, "Responses usage is invalid", err)
+	}
+	reducer.usage = usage
+	reducer.terminal = true
+	return nil
 }
 
 func (reducer *responsesStreamReducer) acceptTerminal(raw json.RawMessage) error {
@@ -136,6 +179,45 @@ func (reducer *responsesStreamReducer) outputItems() []NativeItem {
 		return nil
 	}
 	return cloneNativeItems(reducer.items)
+}
+
+func (reducer *responsesStreamReducer) rawUsage() rawUsage {
+	if reducer == nil {
+		return rawUsage{}
+	}
+	return reducer.usage.clone()
+}
+
+func (reducer *responsesStreamReducer) sampleUsage() (domain.SampleUsage, error) {
+	if reducer == nil || !reducer.terminal {
+		return domain.SampleUsage{}, fault.New(fault.CodeStreamProtocol, "Responses sample usage is unavailable")
+	}
+	return reducer.usage.normalized()
+}
+
+func decodeResponsesUsage(wire *responsesUsageWire) rawUsage {
+	if wire == nil {
+		return rawUsage{}
+	}
+	usage := rawUsage{
+		InputTokens:      optionalUintFromPointer(wire.InputTokens),
+		CacheWriteTokens: optionalUintFromPointer(wire.CacheWriteTokens),
+		OutputTokens:     optionalUintFromPointer(wire.OutputTokens),
+	}
+	if wire.InputTokensDetails != nil {
+		usage.CachedInputTokens = optionalUintFromPointer(wire.InputTokensDetails.CachedTokens)
+	}
+	if wire.OutputTokensDetails != nil {
+		usage.ReasoningOutputTokens = optionalUintFromPointer(wire.OutputTokensDetails.ReasoningTokens)
+	}
+	return usage
+}
+
+func optionalUintFromPointer(value *uint64) optionalUint {
+	if value == nil {
+		return optionalUint{}
+	}
+	return optionalUint{Known: true, Value: *value}
 }
 
 func decodeResponseReference(raw json.RawMessage) (responseReference, error) {

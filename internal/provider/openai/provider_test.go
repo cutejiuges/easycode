@@ -26,7 +26,7 @@ func TestProviderCreatesIsolatedConversations(t *testing.T) {
 
 	first := instance.NewConversation().(*Conversation)
 	second := instance.NewConversation().(*Conversation)
-	first.history.commit(NewUserItem("first"), []NativeItem{{Type: "message", ID: "msg-1", Role: "assistant"}})
+	first.history.commit(nativeTurn{User: NewUserItem("first"), Outputs: []NativeItem{{Type: "message", ID: "msg-1", Role: "assistant"}}})
 
 	if history := first.historySnapshot(); len(history) != 1 || history[0].User.Content[0].Text != "first" || history[0].Outputs[0].ID != "msg-1" {
 		t.Fatalf("first history: %#v", first.historySnapshot())

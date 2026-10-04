@@ -256,7 +256,7 @@ openai.Provider
 - remote compaction
 - usage/cached token reporting
 
-默认能力按 wire 提供，用户配置可以覆盖。运行时遇到服务端不支持时要产生可诊断的 capability downgrade，而不是静默丢失数据。`UsageParser` 还必须将不同 Provider 的 usage 语义归一化为 `input_uncached`、`cache_read`、`cache_write` 三元组，并保留原始字段和 unknown 状态。
+默认能力按 wire 提供，用户配置可以覆盖。运行时遇到服务端不支持时要产生可诊断的 capability downgrade，而不是静默丢失数据。当前两个 Provider reducer 已把完成响应的原始 usage 保存在各自 native payload 中，并投影为共享的 `input_uncached`、`cache_read`、`cache_write`、`output`、`reasoning_output` 五项三态指标；缺失字段保持 unknown，Provider 不存在的独立概念才使用 not-applicable。
 
 ### 5.3 Wire 范围
 
@@ -302,9 +302,9 @@ RequestCompiler、NativeHistory、Session 事实源和 Provider resume 只能使
 
 ### 5.6 Durable native commit 接缝
 
-当前文本会话使用两阶段提交。Provider 在成功终态只生成 `PreparedSample` 与 opaque `NativeCommitEnvelope`，不立即修改 committed native history。Runtime 先将同一 native 增量与 `turn_completed` 作为 JSONL batch 写入并执行 `Sync`，随后调用一次性 finalizer，最后才发布成功终态。持久化失败会 poison 当前 Runtime，未 finalize 的 staging 不得进入下一请求。
+当前文本会话使用两阶段提交。Provider 在成功终态生成同时携带 opaque `NativeCommitEnvelope` 与 normalized `SampleUsage` 的 `PreparedSample`，不立即修改 committed native history。Runtime 重新验证两者，将 `[provider_native_commit(v1), sample_usage(v1), turn_completed(v1)]` 作为同一 JSONL batch 写入并执行 `Sync`，随后调用一次性 finalizer，最后才发布携带聚合 turn usage 的成功终态。持久化失败会 poison 当前 Runtime，未 finalize 的 staging 不得进入下一请求。
 
-OpenAI payload v1 保存用户 Responses item 与有序 output items；Anthropic payload v1 保存 user/assistant message、最终 metadata 和 usage 的 known/unknown 状态。恢复时对应 Provider 先事务式解码全部 commits，任一错误都不返回部分历史。共享 Session、Runtime 和 TUI 只复制公共 envelope，不解析具体 wire。
+OpenAI payload v1 保存用户 Responses item、有序 output items 和原始 usage；Anthropic payload v1 保存 user/assistant message、最终 metadata 和原始 usage。两者都显式保留 known/unknown 状态，归一化结果由独立 `sample_usage` 保存。恢复时对应 Provider 先事务式解码全部 commits，任一错误都不返回部分历史。共享 Session、Runtime 和 TUI 不解析具体 Provider wire。
 
 ## 6. 缓存架构
 
@@ -410,7 +410,7 @@ stable_prefix_reuse    = repeated stable fingerprint requests / eligible request
 prefix_churn_by_source = invalidations grouped by segment/source
 ```
 
-Anthropic 的 `input_tokens` 通常表示未命中缓存的输入，`cache_read_input_tokens` 与 `cache_creation_input_tokens` 是额外字段；OpenAI 的 `prompt_tokens` 通常已经包含 `cached_tokens` 子集。因此不能直接用两家原始字段做同一个分母。`UsageParser` 必须先输出归一化三元组：Anthropic 的 `normalized_input_total` 为三者之和，OpenAI 则从 `prompt_tokens` 和 cached 子集推导未缓存输入。字段状态需要区分 known、unknown 和 not-applicable；只有 Provider 契约明确“不适用”时才归一化为已知 0，预期字段缺失时相关 ratio 必须标记为 unknown。分母为 0 时 ratio 也保持 unknown。
+Anthropic 的 `input_tokens` 表示未命中缓存的输入，`cache_read_input_tokens` 与 `cache_creation_input_tokens` 是额外字段；OpenAI 的总 input 包含 cached input 子集。因此不能直接用两家原始字段做同一个分母。当前 normalized usage 已按 Provider 语义保存五项指标：Anthropic 直接映射三类输入，OpenAI 仅在 total 与 cached 同时 known 时相减得到 uncached，并拒绝 cached 大于 total。字段状态区分 known、unknown 和 not-applicable，`known:0` 不等于缺失。缓存比例、成本和 telemetry 仍属后续能力；实现时只能读取 normalized usage，分母未知或为零时 ratio 保持 unknown。
 
 ### 6.8 缓存测试门槛
 
@@ -429,19 +429,19 @@ Anthropic 的 `input_tokens` 通常表示未命中缓存的输入，`cache_read_
 ```text
 TurnStarted
 AssistantTextDelta { text }
-TurnCompleted
+TurnCompleted { usage }
 TurnFailed
 ```
 
-当前进程内 RuntimeEvent 只声明已有真实 producer、consumer 和 validator 的四种文本事件，并携带匹配的 `session_id/thread_id/turn_id`。reasoning、usage、tool、patch 和 compaction kind 尚未实现；未来必须随 producer、consumer、typed payload 和测试在同一变更中加入，不能提前保留空枚举。
+当前进程内 RuntimeEvent 只声明已有真实 producer、consumer 和 validator 的四种文本事件，并携带匹配的 `session_id/thread_id/turn_id`。`turn_completed(v1)` 必须携带五项三态 turn usage；当前单 sample turn 与 durable `sample_usage` 相同。独立 usage 更新、reasoning、tool、patch 和 compaction kind 尚未实现；未来必须随 producer、consumer、typed payload 和测试在同一变更中加入，不能提前保留空枚举。
 
 ### 7.2 Headless JSONL v1
 
-`internal/headless` 与 TUI 平级，只依赖最小 `ChatSession` 接口。它不会直接序列化 RuntimeEvent，而是严格校验 version、身份、顺序和 typed payload 后，单向投影为 `thread.started`、`turn.started`、`assistant.text.delta`、`turn.completed`、`turn.failed` 或 stream-level `error`。stdout 由单 writer 顺序写入，每行一个完整 JSON object；日志和人类诊断不得进入 JSON stdout。
+`internal/headless` 与 TUI 平级，只依赖最小 `ChatSession` 接口。它不会直接序列化 RuntimeEvent，而是严格校验 version、身份、顺序和 typed payload 后，单向投影为 `thread.started`、`turn.started`、`assistant.text.delta`、`turn.completed`、`turn.failed` 或 stream-level `error`。外部 `turn.completed` v1 的 `usage` 为 required，使用 headless 自有强类型 DTO，不泄露 Provider raw 字段。stdout 由单 writer 顺序写入，每行一个完整 JSON object；日志和人类诊断不得进入 JSON stdout。
 
 `--print` 在内存中聚合文本，仅在 Runtime 已 durable 发布 `turn_completed` 且事件流正常闭合后输出最终值。`--json` 可实时输出 delta，但同样不从 channel close 或已见文本推断成功。取消、短写和断管会触发幂等 Interrupt 并 drain Runtime；已 durable 完成后的输出失败只改变进程交付状态，不回滚 Session。
 
-headless prompt 在应用装配前解析：无位置参数或显式 `-` 时读取 stdin；显式 prompt 与非终端 stdin 同时存在时使用稳定 `<stdin>` 边界追加；组合内容必须是合法 UTF-8、非空且不超过 4 MiB。`--continue` 会在当前 cwd、Provider family/wire 和 model 完全匹配时恢复最近 root Session，并与 `--resume` 互斥。当前仍不支持 stdin JSON、双向控制、同进程多 turn 或 usage/reasoning/tool 事件。
+headless prompt 在应用装配前解析：无位置参数或显式 `-` 时读取 stdin；显式 prompt 与非终端 stdin 同时存在时使用稳定 `<stdin>` 边界追加；组合内容必须是合法 UTF-8、非空且不超过 4 MiB。`--continue` 会在当前 cwd、Provider family/wire 和 model 完全匹配时恢复最近 root Session，并与 `--resume` 互斥。当前仍不支持 stdin JSON、双向控制、同进程多 turn、独立 usage 更新或 reasoning/tool 事件。
 
 ### 7.3 Provider StreamReducer
 
@@ -452,7 +452,7 @@ Anthropic reducer 负责处理：
 - text/thinking/signature/input_json delta
 - stop reason、usage、异常 block 顺序和中断恢复
 
-OpenAI 当前 text-only reducer 负责处理 `response.created`、文本 delta、完成 output item，以及 identity 匹配的 completed/failed/incomplete；每条 stream 使用独立状态机，要求 created 恰好一次、所有支持事件位于 active 状态且 terminal 唯一。下列 reasoning/tool/usage 归并仍是后续目标：
+OpenAI 当前 text-only reducer 负责处理 `response.created`、文本 delta、完成 output item，以及 identity 匹配的 completed/failed/incomplete；completed usage 会在活动 response ID 校验后严格解析并保留 raw/normalized 两层表示。每条 stream 使用独立状态机，要求 created 恰好一次、所有支持事件位于 active 状态且 terminal 唯一。下列 reasoning/tool item 归并仍是后续目标：
 
 - response/item created/added/done/completed
 - output text delta
@@ -615,12 +615,14 @@ EventEnvelope
 
 - `session_meta` 与 `thread_meta`；
 - `turn_started`；
-- `provider_native_commit` 与 `turn_completed`；
+- `provider_native_commit`、`sample_usage` 与 `turn_completed`；
 - `turn_failed`。
 
 `schema_version` 约束公共 envelope，`payload_version` 约束 event payload，`replay_requirement` 明确 required/optional。required 的未知 kind、版本或损坏必须拒绝恢复；optional 记录允许跳过，便于未来加入诊断或展示事实而不破坏旧 Loader。
 
-Provider native commit 只记录 Provider 已验证的原生增量。未来 tool use/tool result、permission、hook、subagent、usage/cache 与 compaction checkpoint 仍需按各自恢复语义增加版本化记录；不能把 RuntimeEvent 或 UI transcript 当作 native history。尤其 tool result 必须在副作用完成且 durable 后，以 Provider 下一次请求所需的 input-only 增量提交，不能重复提交此前 assistant tool call。
+Provider native commit 只记录 Provider 已验证的原生增量和 raw usage；紧邻的 `sample_usage` 记录共享五项三态指标。合法成功 batch 只有 `[provider_native_commit(v1), sample_usage(v1), turn_completed(v1)]`，三条记录具有相同 turn/batch identity 和连续 seq；缺失 usage 的旧开发期两记录形状 fail closed。未来 tool use/tool result、permission、hook、subagent、cache 与 compaction checkpoint 仍需按各自恢复语义增加版本化记录；不能把 RuntimeEvent 或 UI transcript 当作 native history。
+
+当前 envelope、payload、RuntimeEvent 和 headless JSONL 都保持单一 v1。稳定发布前的契约补全直接重写 v1 fixture，不保留双 reader；只有契约已冻结、变化无法加法表达、旧数据或客户端又必须并存时，才引入新 revision，并同时定义兼容窗口与退出条件。
 
 Headless JSONL v1 是 stdout 外部协议，不是 Session record：不得写入 journal，也不得在 resume 时回放。headless resume 只复用连续 lease 下恢复出的 Provider-native history，并只发布本次新 turn；`SemanticHistoryView` 仍只供 TUI 等只读消费者使用。
 

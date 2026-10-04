@@ -193,6 +193,14 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 		}
 		model.transcript[model.assistantItem].text += payload.Text
 	case protocol.EventTurnCompleted:
+		if _, err := protocol.DecodeTurnCompleted(event); err != nil {
+			model.state = stateIdle
+			model.events = nil
+			model.assistantItem = -1
+			model.interruptNext = false
+			model.errorSummary = "stream_protocol_error: invalid turn completion event"
+			return model, nil
+		}
 		model.state = stateIdle
 		model.assistantItem = -1
 		model.events = nil

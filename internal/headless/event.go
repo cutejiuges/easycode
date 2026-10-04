@@ -50,6 +50,7 @@ type TurnCompletedEvent struct {
 	SessionID domain.SessionID `json:"session_id"`
 	ThreadID  domain.ThreadID  `json:"thread_id"`
 	TurnID    domain.TurnID    `json:"turn_id"`
+	Usage     Usage            `json:"usage"`
 }
 
 // TurnFailedEvent 表示本次 turn 已 durable 失败。
@@ -118,13 +119,22 @@ func NewAssistantTextDeltaEvent(
 }
 
 // NewTurnCompletedEvent 创建 turn.completed 事件。
-func NewTurnCompletedEvent(sessionID domain.SessionID, threadID domain.ThreadID, turnID domain.TurnID) (TurnCompletedEvent, error) {
+func NewTurnCompletedEvent(
+	sessionID domain.SessionID,
+	threadID domain.ThreadID,
+	turnID domain.TurnID,
+	turnUsage domain.SampleUsage,
+) (TurnCompletedEvent, error) {
 	if err := validateTurnIdentity(sessionID, threadID, turnID); err != nil {
+		return TurnCompletedEvent{}, err
+	}
+	usage, err := newUsage(turnUsage)
+	if err != nil {
 		return TurnCompletedEvent{}, err
 	}
 	return TurnCompletedEvent{
 		Version: eventVersion, Type: "turn.completed",
-		SessionID: sessionID, ThreadID: threadID, TurnID: turnID,
+		SessionID: sessionID, ThreadID: threadID, TurnID: turnID, Usage: usage,
 	}, nil
 }
 
@@ -200,7 +210,11 @@ func validateEvent(event Event) error {
 		if value.Version != eventVersion || value.Type != "turn.completed" {
 			return fmt.Errorf("turn.completed envelope is invalid")
 		}
-		return validateTurnIdentity(value.SessionID, value.ThreadID, value.TurnID)
+		if err := validateTurnIdentity(value.SessionID, value.ThreadID, value.TurnID); err != nil {
+			return err
+		}
+		_, err := value.Usage.Domain()
+		return err
 	case TurnFailedEvent:
 		if value.Version != eventVersion || value.Type != "turn.failed" {
 			return fmt.Errorf("turn.failed envelope is invalid")

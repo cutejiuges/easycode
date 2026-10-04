@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"easycode/internal/codec"
+	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
 )
@@ -270,7 +271,21 @@ func runtimeDelta(t *testing.T, text string) protocol.Event {
 }
 
 func runtimeCompleted() protocol.Event {
-	return decorateRuntime(protocol.NewTurnCompleted())
+	usage, err := domain.NewSampleUsage(
+		domain.KnownUsageMetric(8),
+		domain.KnownUsageMetric(2),
+		domain.UnknownUsageMetric(),
+		domain.KnownUsageMetric(5),
+		domain.NotApplicableUsageMetric(),
+	)
+	if err != nil {
+		panic(err)
+	}
+	event, err := protocol.NewTurnCompleted(usage)
+	if err != nil {
+		panic(err)
+	}
+	return decorateRuntime(event)
 }
 
 func runtimeFailure(t *testing.T, failure fault.Summary) protocol.Event {

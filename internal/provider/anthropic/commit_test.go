@@ -23,8 +23,8 @@ func TestNativeCommitRoundTripPreservesThinkingRawAndUsageKnowledge(t *testing.T
 		Metadata: messageMetadata{
 			ID: "msg-1", Model: "claude-test", StopReason: optionalString{Known: true, Value: "end_turn"},
 			Usage: rawUsage{
-				InputTokens:  optionalInt{Known: true, Value: 0},
-				OutputTokens: optionalInt{Known: true, Value: 7},
+				InputTokens:  optionalUint{Known: true, Value: 0},
+				OutputTokens: optionalUint{Known: true, Value: 7},
 			},
 		},
 	}
@@ -61,7 +61,7 @@ func TestNativeCommitCanonicalGolden(t *testing.T) {
 		Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeText, Text: "world"}}},
 		Metadata: messageMetadata{
 			ID: "msg-1", Model: "claude-test", StopReason: optionalString{Known: true, Value: "end_turn"},
-			Usage: rawUsage{InputTokens: optionalInt{Known: true, Value: 3}},
+			Usage: rawUsage{InputTokens: optionalUint{Known: true, Value: 3}},
 		},
 	})
 	if err != nil {

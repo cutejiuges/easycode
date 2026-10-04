@@ -147,12 +147,17 @@ func TestHeadlessProvidersPreserveResumeRequestAndOutputBoundaries(t *testing.T)
 			fixture.assertThird(t, captured[5])
 
 			loaded := loadHeadlessJournal(t, dataRoot, started.ThreadID)
-			if len(loaded.Records) != 11 || loaded.NextSequence != 12 {
+			if len(loaded.Records) != 14 || loaded.NextSequence != 15 {
 				t.Fatalf("records/next = %d/%d", len(loaded.Records), loaded.NextSequence)
 			}
 			for index, record := range loaded.Records {
 				if record.Sequence != uint64(index+1) || strings.Contains(string(record.EventKind), ".") {
 					t.Fatalf("record[%d] = %#v", index, record)
+				}
+			}
+			for _, index := range []int{4, 8, 12} {
+				if loaded.Records[index].EventKind != session.EventSampleUsage {
+					t.Fatalf("record[%d] kind = %s", index, loaded.Records[index].EventKind)
 				}
 			}
 			for _, forbidden := range []string{

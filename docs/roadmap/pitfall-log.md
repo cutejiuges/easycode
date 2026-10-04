@@ -56,8 +56,8 @@
 
 ### [P0][2026-09-18] Provider usage 原始字段不能直接计算缓存比例
 
-- 状态：已解决设计口径
-- 影响版本或提交：P0 架构基线
+- 状态：已解决并落地 completed-sample 基线
+- 影响版本或提交：P0 架构基线；OpenSpec `add-durable-sample-usage`
 - 现象：如果使用 `cached_input_tokens / input_tokens` 作为统一公式，Anthropic 可能出现大于 1 的比例，而 OpenAI 的比例通常不大于 1。
 - 触发条件：Anthropic 的 `input_tokens` 是未命中缓存的输入，cache read/write 是独立字段；OpenAI 的 `prompt_tokens` 已包含 `cached_tokens` 子集。
 - 根因：两家 Provider usage 字段的分母语义不对称。
@@ -65,9 +65,9 @@
 - 缓存影响：错误口径会产生不可比、甚至大于 1 的命中率，误导缓存优化和成本诊断。
 - 修复方案：归一化总输入为 `input_uncached + cache_read + cache_write`；Anthropic 按三者之和作为分母，OpenAI 从 prompt_tokens 与 cached_tokens 子集推导未缓存输入。字段区分 known、unknown 和 not-applicable，只有明确不适用才使用已知 0，缺失或零分母输出 unknown。
 - 未采用方案及原因：不将两家原始字段强行命名为同一含义，也不把缺失值当 0。
-- 回归测试：P1 UsageParser golden、Anthropic/OpenAI usage fixture 和 cache metrics regression。
+- 回归测试：`internal/domain/usage_test.go`、Anthropic/OpenAI reducer/commit/restore tests；cache metrics regression 随后续观测能力补充。
 - 关联 ADR/Issue/PR：ADR-0002、ADR-0004。
-- 后续行动：P0 先固定领域结构，P1 Provider wire 接入时补全字段映射。
+- 后续行动：成本、比例和 telemetry 只消费已落地的 normalized usage；不得重新读取 raw Provider 字段建立第二套口径。
 
 ### [P0][2026-09-18] 双轨历史需要显式 HistoryProjector
 
@@ -217,7 +217,7 @@
 - 现象：Claude Code 的 transcript 会混合用户/assistant/tool/progress 等消息，Codex rollout 则记录 response item、event 和上下文；二者都包含工具相关事实，但记录边界、恢复来源和宿主事件并不相同。直接照搬任一 JSONL 形状会把 Provider wire、运行时展示和副作用事实耦合。
 - 触发条件：在工具尚未实现时先设计 Session schema，并要求未来无损承接 thinking、tool use 和 MCP call。
 - 根因：把“JSONL 是容器”误当成“所有事件共享同一语义”。Provider native history、工具幂等 ledger 和 RuntimeEvent 实际具有不同提交时机与恢复责任。
-- 架构影响：公共 envelope 只负责版本、顺序、批次、归属与完整性；`provider_native_commit` payload 由对应 Provider 私有解码。当前 required v1 只有 `session_meta`、`thread_meta`、`turn_started`、`provider_native_commit`、`turn_completed` 和 `turn_failed`；未来 tool、permission、hook、subagent、usage/cache 使用独立版本化 kind，optional 展示事实不得阻断恢复。
+- 架构影响：公共 envelope 只负责版本、顺序、批次、归属与完整性；`provider_native_commit` payload 由对应 Provider 私有解码。当前 required v1 包含 `session_meta`、`thread_meta`、`turn_started`、`provider_native_commit`、`sample_usage`、`turn_completed` 和 `turn_failed`；未来 tool、permission、hook、subagent、cache 使用独立强类型 kind，optional 展示事实不得阻断恢复。
 - 缓存影响：Session envelope 和动态路径不参与 Provider 请求 canonical bytes；恢复后的请求字节必须与未退出进程的下一轮一致。
 - 修复方案：OpenAI 保存 user input item 与有序 output items，Anthropic 保存 user/assistant message、metadata 与 usage presence；共享层只传递 opaque envelope。未来 tool result 在副作用 durable 后作为下一次请求的 input-only native 增量提交，不重复 assistant tool call；MCP call 复用工具事实边界，但其 manifest/capability 另行版本化。
 - 未采用方案及原因：未将 tool/thinking/MCP 预先塞入通用 `map[string]any`，也未以 UI transcript 反向构造 Provider 请求；这些做法无法保证类型、幂等和 opaque reasoning 无损。
@@ -283,7 +283,7 @@
 - 未采用方案及原因：不直接 marshal RuntimeEvent，不抓取 TUI transcript，不安装全局 stdout guard，也不提前声明 usage/reasoning/tool 机器事件；这些方案会固化内部字段、污染 stdout 或暴露没有完整 producer/persistence 的能力。
 - 回归测试：`internal/headless/*_test.go`、`internal/app/headless_e2e_test.go`、`cmd/easycode/main_test.go`、双 Provider restore/fingerprint tests。
 - 关联 ADR/Issue/PR：OpenSpec `add-headless-text-output`。
-- 后续行动：新增外部事件必须通过 OpenSpec 演进 JSONL version/fixture；stdin JSON、双向控制和 usage/reasoning/tool 事件仍未实现。`--continue` 已通过独立 Catalog 选择后复用同一 resume/headless 投影路径。
+- 后续行动：新增外部事件必须通过 OpenSpec 演进 JSONL fixture；stdin JSON、双向控制、独立 usage 更新和 reasoning/tool 事件仍未实现。`turn.completed` v1 已通过 `add-durable-sample-usage` 增加 required usage；`--continue` 复用同一 resume/headless 投影路径。
 
 ### [P2][2026-09-29] 路径预检不能代替绑定实际句柄的安全判断
 
@@ -344,6 +344,21 @@
 - 回归测试：`internal/session/catalog/*_test.go`、`internal/session/repository_enumeration_test.go`、`internal/app/continue_test.go`、`internal/app/headless_e2e_test.go`、`cmd/easycode/main_test.go`。
 - 关联 ADR/Issue/PR：ADR-0003；OpenSpec `add-rebuildable-session-catalog`，未引入新的长期事实源决策。
 - 后续行动：session picker、worktree/project catalog、title/tag/search 和实时索引仍延期；引入可靠增量维护前继续执行前台全量 reconciliation。2026-09-30 在 Darwin/arm64 Apple M1 Pro 上对 25 个 journal 的一次开发基准为约 5.55 ms、4.94 MB、14934 allocs/op，仅作为后续优化对照，不作为跨平台阈值。
+
+### [P2][2026-10-04] Usage 必须与 Provider sample 共享 durable 边界
+
+- 状态：已解决当前文本 sample 切片
+- 影响版本或提交：OpenSpec `add-durable-sample-usage`
+- 现象：只在完成事件中临时计算 usage 会在崩溃恢复后丢失事实；只保存 turn 累计量又无法与 Provider 原始响应审计对应。把缺失字段当成零还会制造虚假的精确数据。
+- 触发条件：Provider completed response 包含完整、部分或显式为零的 usage，随后发生 Session 写入失败、进程恢复或 headless 投影。
+- 根因：raw Provider 观测、共享 normalized sample 事实和 turn/宿主投影属于不同所有权层，但此前没有同一个 prepared/durable 边界。
+- 架构影响：`PreparedSample` 原子携带 native envelope 与不可变 `SampleUsage`；Runtime 将 `provider_native_commit`、`sample_usage` 和 `turn_completed` 作为唯一 v1 成功 batch Sync，再 finalize 并发布带 usage 的完成事件。Session、protocol 和 headless 各自拥有强类型 wire DTO。
+- 缓存影响：raw/normalized usage 不进入 RequestCompiler 或 fingerprint；后续缓存比例只能读取 normalized 三态指标，不能直接混用两家原始字段。
+- 修复方案：五项指标显式区分 known、unknown、not-applicable，保留 `known:0`；两家 Provider 保留 raw usage 并投影 normalized usage，恢复与不中断请求的 canonical bytes/fingerprint 保持一致。
+- 未采用方案及原因：不新增 v2 或双 reader，因为当前契约尚未稳定发布，保留错误开发基线只会制造永久兼容分支；不把 normalized usage 塞进 opaque native payload，因为 Session 不应解释 Provider wire。
+- 回归测试：`internal/domain/usage_test.go`、双 Provider reducer/commit/restore tests、`internal/session/*_test.go`、`internal/runtime/runtime_test.go`、`internal/headless/*_test.go`、`cmd/easycode/main_test.go` 和双 Provider app e2e。
+- 关联 ADR/Issue/PR：ADR-0002、ADR-0003；OpenSpec `add-durable-sample-usage`，不新增 ADR。
+- 后续行动：成本、配额、ContextPlanner/token estimator、TUI usage 展示、缓存请求策略和多 sample 工具回合仍需独立 change；只有冻结契约无法加法演进且旧消费者必须并存时才新增 revision。
 
 重点关注：JSONL 尾部损坏、事件顺序、取消时 flush、SQLite 重建和 native history 恢复。
 
