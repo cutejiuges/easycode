@@ -42,8 +42,9 @@ type Conversation struct {
 }
 
 type nativeHistory struct {
-	mu    sync.RWMutex
-	turns []nativeTurn
+	mu       sync.RWMutex
+	turns    []nativeTurn
+	revision uint64
 }
 
 var _ provider.Conversation = (*Conversation)(nil)
@@ -92,7 +93,7 @@ func (instance *Provider) RestoreConversation(commits []provider.NativeCommitEnv
 		}
 		turns = append(turns, turn.clone())
 	}
-	return &Conversation{provider: instance, history: nativeHistory{turns: turns}}, nil
+	return &Conversation{provider: instance, history: nativeHistory{turns: turns, revision: uint64(len(turns))}}, nil
 }
 
 // Close 释放 HTTP transport 资源。
@@ -258,19 +259,27 @@ func mapTransportTerminal(ctx context.Context, err error) (provider.StreamEventK
 }
 
 func (history *nativeHistory) snapshot() []nativeTurn {
+	turns, _ := history.snapshotWithRevision()
+	return turns
+}
+
+func (history *nativeHistory) snapshotWithRevision() ([]nativeTurn, uint64) {
 	history.mu.RLock()
 	defer history.mu.RUnlock()
 	turns := make([]nativeTurn, 0, len(history.turns))
 	for _, turn := range history.turns {
 		turns = append(turns, turn.clone())
 	}
-	return turns
+	return turns, history.revision
 }
 
 func (history *nativeHistory) commit(turn nativeTurn) {
 	history.mu.Lock()
 	defer history.mu.Unlock()
 	history.turns = append(history.turns, turn.clone())
+	if history.revision < ^uint64(0) {
+		history.revision++
+	}
 }
 
 func (conversation *Conversation) historySnapshot() []nativeTurn {

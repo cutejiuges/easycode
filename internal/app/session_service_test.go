@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"easycode/internal/context/estimate"
 	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/provider"
@@ -65,6 +66,11 @@ func (*fakeAppConversation) Capabilities() provider.Capabilities {
 func (conversation *fakeAppConversation) ProjectHistory() domain.SemanticHistoryView {
 	turns := append([]domain.SemanticTurn(nil), conversation.history.Turns...)
 	return domain.SemanticHistoryView{Provider: conversation.family, Turns: turns}
+}
+
+func (conversation *fakeAppConversation) HistoryFootprint() (domain.NativeHistoryFootprint, error) {
+	estimated, _ := domain.NewEstimatedTokenEstimate(estimate.MethodByteHeuristicV1, 0)
+	return domain.NewNativeHistoryFootprint(conversation.family, 0, estimated)
 }
 
 func (conversation *fakeAppConversation) Stream(context.Context, provider.TurnInput) (<-chan provider.StreamEvent, error) {

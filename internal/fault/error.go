@@ -13,6 +13,7 @@ const (
 	CodeInvalidConfiguration Code = "invalid_configuration"
 	CodeInvalidInput         Code = "invalid_input"
 	CodeInputRead            Code = "input_read_failed"
+	CodeContextLimitExceeded Code = "context_limit_exceeded"
 	CodeProviderUnavailable  Code = "provider_unavailable"
 	CodeProviderRequest      Code = "provider_request_failed"
 	CodeStreamProtocol       Code = "stream_protocol_error"

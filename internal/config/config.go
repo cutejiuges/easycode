@@ -11,9 +11,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"easycode/internal/codec"
+	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/secret"
@@ -35,7 +37,8 @@ type Provider struct {
 
 // Config 是应用运行所需的顶层配置。
 type Config struct {
-	Provider Provider
+	Provider      Provider
+	ContextBudget contextplan.Budget
 }
 
 type fileConfig struct {
@@ -43,13 +46,12 @@ type fileConfig struct {
 	baseURL  string
 	apiKey   string
 	model    string
+	budget   contextplan.Budget
 }
 
-type fileConfigWire struct {
-	Provider string `json:"provider"`
-	BaseURL  string `json:"base_url"`
-	APIKey   string `json:"api_key"`
-	Model    string `json:"model"`
+type optionalUint64 struct {
+	value   uint64
+	present bool
 }
 
 type configFileOpener interface {
@@ -180,7 +182,9 @@ func decodeFile(content []byte) (fileConfig, error) {
 	}
 
 	fieldCount := 0
-	seen := make(map[string]struct{}, 4)
+	seen := make(map[string]struct{}, 7)
+	decoded := fileConfig{}
+	var window, reservedOutput, safetyMargin optionalUint64
 	for decoder.More() {
 		keyToken, tokenErr := decoder.Token()
 		if tokenErr != nil {
@@ -197,16 +201,28 @@ func decodeFile(content []byte) (fileConfig, error) {
 
 		var rawValue json.RawMessage
 		if err := decoder.Decode(&rawValue); err != nil {
-			return fileConfig{}, fault.New(fault.CodeInvalidConfiguration, "configuration file field must be a string")
-		}
-		trimmedValue := bytes.TrimSpace(rawValue)
-		if len(trimmedValue) < 2 || trimmedValue[0] != '"' {
-			return fileConfig{}, fault.New(fault.CodeInvalidConfiguration, "configuration file field must be a string")
+			return fileConfig{}, invalidFileError()
 		}
 		switch key {
-		case "provider", "base_url", "api_key", "model":
+		case "provider":
+			decoded.provider, err = decodeStringField(rawValue)
+		case "base_url":
+			decoded.baseURL, err = decodeStringField(rawValue)
+		case "api_key":
+			decoded.apiKey, err = decodeStringField(rawValue)
+		case "model":
+			decoded.model, err = decodeStringField(rawValue)
+		case "context_window_tokens":
+			window, err = decodeUint64Field(rawValue)
+		case "reserved_output_tokens":
+			reservedOutput, err = decodeUint64Field(rawValue)
+		case "context_safety_margin_tokens":
+			safetyMargin, err = decodeUint64Field(rawValue)
 		default:
 			return fileConfig{}, fault.New(fault.CodeInvalidConfiguration, "configuration file contains an unknown field")
+		}
+		if err != nil {
+			return fileConfig{}, err
 		}
 		fieldCount++
 	}
@@ -220,16 +236,55 @@ func decodeFile(content []byte) (fileConfig, error) {
 	if token, err := decoder.Token(); err != io.EOF || token != nil {
 		return fileConfig{}, invalidFileError()
 	}
-	var wire fileConfigWire
-	if err := codec.Unmarshal(content, &wire); err != nil {
-		return fileConfig{}, invalidFileError()
+	budget, err := decodeContextBudget(window, reservedOutput, safetyMargin)
+	if err != nil {
+		return fileConfig{}, err
 	}
-	return fileConfig{
-		provider: wire.Provider,
-		baseURL:  wire.BaseURL,
-		apiKey:   wire.APIKey,
-		model:    wire.Model,
-	}, nil
+	decoded.budget = budget
+	return decoded, nil
+}
+
+func decodeStringField(rawValue json.RawMessage) (string, error) {
+	trimmed := bytes.TrimSpace(rawValue)
+	if len(trimmed) < 2 || trimmed[0] != '"' {
+		return "", fault.New(fault.CodeInvalidConfiguration, "configuration file string field is invalid")
+	}
+	var value string
+	if err := codec.Unmarshal(trimmed, &value); err != nil {
+		return "", fault.New(fault.CodeInvalidConfiguration, "configuration file string field is invalid")
+	}
+	return value, nil
+}
+
+func decodeUint64Field(rawValue json.RawMessage) (optionalUint64, error) {
+	trimmed := strings.TrimSpace(string(rawValue))
+	if trimmed == "" {
+		return optionalUint64{}, fault.New(fault.CodeInvalidConfiguration, "configuration file token budget field is invalid")
+	}
+	for _, character := range trimmed {
+		if character < '0' || character > '9' {
+			return optionalUint64{}, fault.New(fault.CodeInvalidConfiguration, "configuration file token budget field must be an unsigned integer")
+		}
+	}
+	value, err := strconv.ParseUint(trimmed, 10, 64)
+	if err != nil {
+		return optionalUint64{}, fault.New(fault.CodeInvalidConfiguration, "configuration file token budget field is out of range")
+	}
+	return optionalUint64{value: value, present: true}, nil
+}
+
+func decodeContextBudget(window, reservedOutput, safetyMargin optionalUint64) (contextplan.Budget, error) {
+	if !window.present {
+		if reservedOutput.present || safetyMargin.present {
+			return contextplan.Budget{}, fault.New(fault.CodeInvalidConfiguration, "context token reserves require a context window")
+		}
+		return contextplan.DisabledBudget(), nil
+	}
+	budget, err := contextplan.NewBudget(window.value, reservedOutput.value, safetyMargin.value)
+	if err != nil {
+		return contextplan.Budget{}, fault.New(fault.CodeInvalidConfiguration, "context token budget is invalid")
+	}
+	return budget, nil
 }
 
 func invalidFileError() error {
@@ -242,7 +297,7 @@ func (values fileConfig) toConfig() Config {
 		BaseURL: strings.TrimSpace(values.baseURL),
 		APIKey:  secret.New(strings.TrimSpace(values.apiKey)),
 		Model:   strings.TrimSpace(values.model),
-	}}
+	}, ContextBudget: values.budget}
 }
 
 func mergeEnvironment(base Config) Config {
@@ -263,6 +318,9 @@ func mergeEnvironment(base Config) Config {
 
 // ValidateProvider 校验启动真实模型请求前必须具备的字段。
 func (config Config) ValidateProvider() error {
+	if err := config.ContextBudget.Validate(); err != nil {
+		return fault.New(fault.CodeInvalidConfiguration, "context token budget is invalid")
+	}
 	if !config.Provider.Family.Valid() {
 		return fault.New(fault.CodeInvalidConfiguration, "provider must be anthropic or openai")
 	}
@@ -287,12 +345,15 @@ func (config Config) ValidateProvider() error {
 
 // String 返回可安全输出的配置摘要。
 func (config Config) String() string {
+	window, enabled := config.ContextBudget.EffectiveInputLimit()
 	return fmt.Sprintf(
-		"provider=%s base_url=%s api_key=%s model=%s",
+		"provider=%s base_url=%s api_key=%s model=%s context_budget_enabled=%t effective_input_limit=%d",
 		config.Provider.Family,
 		safeBaseURL(config.Provider.BaseURL),
 		config.Provider.APIKey,
 		config.Provider.Model,
+		enabled,
+		window,
 	)
 }
 

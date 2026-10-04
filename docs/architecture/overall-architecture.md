@@ -1,7 +1,7 @@
 # EasyCode 总体架构设计
 
 > 状态：持续演进
-> 更新时间：2026-09-29
+> 更新时间：2026-10-04
 > 适用范围：EasyCode CLI、Agent Runtime、Provider、工具、扩展系统、会话存储和 TUI
 
 ## 1. 背景与目标
@@ -160,7 +160,7 @@ app      -> runtime + tui + headless
 cmd      -> app
 ```
 
-上图是长期目标；当前 P2 运行路径为 `domain/protocol <- provider|session <- runtime <- app/tui/headless/cmd`。`context` 已有独立的 canonical segment/plan 契约但尚未接入 Runtime；Tool、extension、Subagent 和 telemetry 仍不可从 Runtime/app 到达。
+上图是长期目标；当前 P2 运行路径为 `domain/protocol <- provider|context|session <- runtime <- app/tui/headless/cmd`。`context` 已通过纯内存 ContextPlanner 接入 Runtime，Provider 只向共享层暴露不含原生正文的 HistoryFootprint；Tool、extension、Subagent 和 telemetry 仍不可从 Runtime/app 到达。
 
 禁止：
 
@@ -320,7 +320,7 @@ OpenAI payload v1 保存用户 Responses item、有序 output items 和原始 us
 
 ### 6.2 上下文分段
 
-当前已实现不可变、强类型且可验证的 `CachePlan` 值对象和 stable-prefix fingerprint；ContextPlanner 及其 Runtime/Provider 消费仍属于 P2/P4 后续工作。目标输出如下，而不是直接拼接字符串：
+当前已实现不可变、强类型且可验证的 `CachePlan`、stable-prefix fingerprint 和最小 ContextPlanner。当前计划固定输出 `provider_profile`、`committed_history`、`current_input` 三段；只有 profile 进入稳定前缀，history 为 turn-stable，当前输入为 volatile。下列完整分段仍是 P3/P4/P6 随真实消费者逐项扩展的目标，不能从目录或设计推断为已实现：
 
 ```text
 CachePlan
@@ -353,6 +353,10 @@ provider_cache_policy
 - 不把时间戳、随机 ID、绝对临时路径、实时 git 状态写入稳定前缀。
 - 工具描述、system prompt 和 catalog 的变更必须显式提高 revision 或改变 fingerprint。
 - Provider request golden test 应覆盖最终 wire JSON，而不仅是中间领域对象。
+
+当前 ContextPlanner 的 `provider_profile` 只包含 family、model 和固定 schema revision，不包含 API key、base URL、预算、cwd、Session identity 或其他动态状态。`committed_history` 的 source revision 来自 Provider committed native revision，而不是语义 turn 数；Provider footprint 与语义历史估算是包含关系，使用 `max(semantic_visible, provider_native)` 合并，禁止相加造成可见文本重复计数。
+
+token 估算当前使用版本化本地 `byte_heuristic_v1`，明确标记 `estimated` 或 `unknown`。显式 JSON 配置可以提供 context window、输出预留和安全余量；未配置窗口或估算 unknown 时不执行硬拒绝，也不根据模型名猜测窗口。明确超限只在 durable `turn_started` 后、Provider stream 前以既有 `turn_failed` 收口，计划本身不写 Session、不新增 RuntimeEvent。
 
 ### 6.4 Anthropic 缓存策略
 
@@ -532,9 +536,17 @@ fs.patch
 
 ## 9. Context 与 Compaction
 
-本章描述 P2/P4 目标架构。当前只有 canonical segment/plan 与 fingerprint 契约；ContextPlanner、token budget、compaction 以及跨 Provider fork 尚未实现。
+本章同时描述当前 P2 基线和 P4 目标。当前已实现三来源 ContextPlanner、本地 token estimate、Provider-private HistoryFootprint、可选显式 token budget 和请求前超限守卫；项目指令、工具/skill 来源、真实 Provider cache policy、compaction 以及跨 Provider fork 尚未实现。
 
 ### 9.1 上下文来源
+
+当前已接入 Runtime 的来源只有：
+
+- `provider_profile`：family、model、schema revision，`replace + stable`。
+- `committed_history`：`SemanticHistoryView` 与不含 opaque 正文的 Provider footprint，`append + turn-stable`。
+- `current_input`：本轮用户文本，`replace + volatile`。
+
+后续阶段将在存在真实消费者、验证和测试时逐项增加以下来源：
 
 - base/developer instructions
 - 项目级 AGENTS/CLAUDE 类指令
@@ -547,7 +559,7 @@ fs.patch
 - cwd、workspace roots、git 和权限 world state
 - 当前用户输入与排队消息
 
-ContextPlanner 必须明确每一项的来源、优先级、稳定性、token 估算和生命周期。
+ContextPlanner 必须明确每一项的来源、优先级、稳定性、token 估算和生命周期；来源生命周期与 cache stability 是两个正交强类型概念，不能复用一个字符串表达。
 
 ### 9.2 历史不变量
 

@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"easycode/internal/config"
+	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/headless"
@@ -243,9 +244,19 @@ func openChatResourcesWithHooks(
 		_ = providerInstance.Close()
 		return nil, err
 	}
+	contextProfile, err := contextplan.NewProviderProfile(
+		applicationConfig.Provider.Family, applicationConfig.Provider.Model,
+	)
+	if err != nil {
+		_ = assembled.writer.Close(context.Background())
+		_ = service.close()
+		_ = providerInstance.Close()
+		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "context profile is invalid", err)
+	}
 	runtimeInstance, err := chatRuntime.New(assembled.conversation, chatRuntime.Config{
 		SessionID: assembled.identity.SessionID, ThreadID: assembled.identity.ThreadID,
-		Journal: assembled.writer,
+		Journal: assembled.writer, ContextProfile: contextProfile,
+		ContextBudget: applicationConfig.ContextBudget, ContextPlanner: contextplan.NewPlanner(),
 	})
 	if err != nil {
 		_ = assembled.writer.Close(context.Background())

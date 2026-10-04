@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"easycode/internal/config"
+	contextplan "easycode/internal/context"
+	"easycode/internal/context/estimate"
 	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/headless"
@@ -105,6 +107,53 @@ func TestRunRejectsInvalidConfigurationWithoutLeakingSecret(t *testing.T) {
 	}
 	if strings.Contains(outcome.Failure.Message, "top-secret") || strings.Contains(output.String(), "top-secret") {
 		t.Fatalf("configuration error leaked API key: %#v", outcome)
+	}
+}
+
+func TestRunRejectsInvalidContextBudgetBeforeSessionOrProviderRequest(t *testing.T) {
+	clearProviderEnvironment(t)
+	dataRoot := filepath.Join(t.TempDir(), "sessions")
+	path := filepath.Join(t.TempDir(), "config.json")
+	content := `{"provider":"openai","base_url":"https://example.com/v1","api_key":"top-secret","model":"gpt-test","reserved_output_tokens":1}`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outcome := Run(context.Background(), Options{
+		ConfigPath: path, SessionDataRoot: dataRoot, Output: io.Discard,
+	})
+	if outcome.Failure.Code != fault.CodeInvalidConfiguration {
+		t.Fatalf("invalid context budget outcome = %#v", outcome)
+	}
+	if strings.Contains(outcome.Failure.Message, "top-secret") {
+		t.Fatalf("context budget error leaked secret: %#v", outcome)
+	}
+	if _, err := os.Stat(dataRoot); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("invalid context budget created session data: %v", err)
+	}
+}
+
+func TestRunAcceptsExplicitContextBudgetDuringApplicationAssembly(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		writeOpenAIAppTurn(writer, 1)
+	}))
+	defer server.Close()
+	path := writeAppConfig(t, t.TempDir(), domain.ProviderOpenAI, server.URL)
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withBudget := strings.TrimSuffix(string(content), "}") + `,"context_window_tokens":200000,"reserved_output_tokens":20000,"context_safety_margin_tokens":4096}`
+	if err := os.WriteFile(path, []byte(withBudget), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	outcome := Run(context.Background(), Options{
+		Mode: headless.ModeText, Prompt: "hello", ConfigPath: path,
+		SessionDataRoot: filepath.Join(t.TempDir(), "sessions"), Output: &output,
+	})
+	if outcome.ExitCode() != 0 || output.String() != "answer-1\n" {
+		t.Fatalf("budgeted application outcome=%#v output=%q", outcome, output.String())
 	}
 }
 
@@ -322,6 +371,8 @@ func TestChatResourcesCloseOrdersSessionJournalAndProvider(t *testing.T) {
 	runtimeInstance, err := chatRuntime.New(conversation, chatRuntime.Config{
 		SessionID: runtimeSessionIDForApp, ThreadID: runtimeThreadIDForApp, Journal: journal,
 		GenerateTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
+		ContextProfile: mustAppContextProfile(t), ContextBudget: contextplan.DisabledBudget(),
+		ContextPlanner: contextplan.NewPlanner(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -388,6 +439,8 @@ func TestChatResourcesShutdownTimeoutEscalatesAndClosesDependencies(t *testing.T
 	runtimeInstance, err := chatRuntime.New(conversation, chatRuntime.Config{
 		SessionID: runtimeSessionIDForApp, ThreadID: runtimeThreadIDForApp, Journal: journal,
 		GenerateTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
+		ContextProfile: mustAppContextProfile(t), ContextBudget: contextplan.DisabledBudget(),
+		ContextPlanner: contextplan.NewPlanner(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -464,6 +517,11 @@ func (*orderedConversation) ProjectHistory() domain.SemanticHistoryView {
 	return domain.SemanticHistoryView{Provider: domain.ProviderOpenAI, Turns: []domain.SemanticTurn{}}
 }
 
+func (*orderedConversation) HistoryFootprint() (domain.NativeHistoryFootprint, error) {
+	estimated, _ := domain.NewEstimatedTokenEstimate(estimate.MethodByteHeuristicV1, 0)
+	return domain.NewNativeHistoryFootprint(domain.ProviderOpenAI, 0, estimated)
+}
+
 func (conversation *orderedConversation) Stream(ctx context.Context, _ provider.TurnInput) (<-chan provider.StreamEvent, error) {
 	if conversation.add != nil {
 		conversation.add("provider:stream")
@@ -522,11 +580,22 @@ func mustIdleAppRuntime(t *testing.T, journal chatRuntime.Journal) *chatRuntime.
 	runtimeInstance, err := chatRuntime.New(&orderedConversation{}, chatRuntime.Config{
 		SessionID: runtimeSessionIDForApp, ThreadID: runtimeThreadIDForApp, Journal: journal,
 		GenerateTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
+		ContextProfile: mustAppContextProfile(t), ContextBudget: contextplan.DisabledBudget(),
+		ContextPlanner: contextplan.NewPlanner(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return runtimeInstance
+}
+
+func mustAppContextProfile(t *testing.T) contextplan.ProviderProfile {
+	t.Helper()
+	profile, err := contextplan.NewProviderProfile(domain.ProviderOpenAI, "gpt-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return profile
 }
 
 func newTestChatResources(t *testing.T, applicationConfig config.Config) (*chatResources, error) {
