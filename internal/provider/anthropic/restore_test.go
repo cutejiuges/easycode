@@ -57,6 +57,17 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	restored := restoredValue.(*Conversation)
+	uninterruptedFootprint, err := uninterrupted.HistoryFootprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoredFootprint, err := restored.HistoryFootprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restoredFootprint != uninterruptedFootprint {
+		t.Fatalf("restored footprint differs: %#v %#v", restoredFootprint, uninterruptedFootprint)
+	}
 	uninterruptedView := uninterrupted.ProjectHistory()
 	restoredView := restored.ProjectHistory()
 	if !reflect.DeepEqual(restoredView, uninterruptedView) {

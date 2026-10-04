@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"easycode/internal/config"
+	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
@@ -45,6 +46,10 @@ func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
 	for _, fixture := range fixtures {
 		fixture := fixture
 		t.Run(fixture.name, func(t *testing.T) {
+			budget, err := contextplan.NewBudget(200000, 20000, 4096)
+			if err != nil {
+				t.Fatal(err)
+			}
 			var mu sync.Mutex
 			var requests [][]byte
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -67,7 +72,7 @@ func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
 			providerConfig := config.Config{Provider: config.Provider{
 				Family: fixture.family, BaseURL: server.URL,
 				APIKey: secret.New("e2e-secret"), Model: fixture.model,
-			}}
+			}, ContextBudget: budget}
 			created, err := openChatResources(context.Background(), providerConfig, dataRoot, "", creationCWD)
 			if err != nil {
 				t.Fatal(err)
@@ -111,6 +116,54 @@ func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
 				t.Fatalf("request count = %d", len(captured))
 			}
 			fixture.assertThird(t, captured[2])
+
+			var comparisonMu sync.Mutex
+			var comparisonRequests [][]byte
+			comparisonServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				body, readErr := io.ReadAll(request.Body)
+				if readErr != nil {
+					t.Errorf("read uninterrupted request: %v", readErr)
+					return
+				}
+				comparisonMu.Lock()
+				comparisonRequests = append(comparisonRequests, append([]byte(nil), body...))
+				turn := len(comparisonRequests)
+				comparisonMu.Unlock()
+				writer.Header().Set("Content-Type", "text/event-stream")
+				fixture.serveTurn(writer, turn)
+			}))
+			comparisonConfig := config.Config{Provider: config.Provider{
+				Family: fixture.family, BaseURL: comparisonServer.URL,
+				APIKey: secret.New("comparison-secret"), Model: fixture.model,
+			}, ContextBudget: budget}
+			uninterrupted, openErr := openChatResources(
+				context.Background(), comparisonConfig, filepath.Join(t.TempDir(), "sessions"), "", t.TempDir(),
+			)
+			if openErr != nil {
+				comparisonServer.Close()
+				t.Fatal(openErr)
+			}
+			for _, prompt := range []string{"first", "second", "third"} {
+				submitAppTurn(t, uninterrupted, prompt)
+			}
+			if closeErr := uninterrupted.close(context.Background()); closeErr != nil {
+				comparisonServer.Close()
+				t.Fatal(closeErr)
+			}
+			comparisonServer.Close()
+			comparisonMu.Lock()
+			comparisonCount := len(comparisonRequests)
+			comparisonThird := ""
+			if comparisonCount == 3 {
+				comparisonThird = string(comparisonRequests[2])
+			}
+			comparisonMu.Unlock()
+			if comparisonCount != 3 || comparisonThird != string(captured[2]) {
+				t.Fatalf(
+					"restored and uninterrupted third requests differ: count=%d\n%s\n%s",
+					comparisonCount, captured[2], comparisonThird,
+				)
+			}
 			for _, dynamic := range []string{string(threadID), dataRoot, creationCWD, "e2e-secret"} {
 				if strings.Contains(string(captured[2]), dynamic) {
 					t.Fatalf("request contains dynamic/session input %q", dynamic)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
@@ -26,6 +27,11 @@ type Journal interface {
 // TurnIDGenerator 为每个被接受的 turn 分配稳定 UUIDv7 标识。
 type TurnIDGenerator func() (domain.TurnID, error)
 
+// ContextPlanner 是 Runtime 在 Provider 副作用前使用的纯内存规划能力。
+type ContextPlanner interface {
+	Plan(contextplan.PlanningInput) (contextplan.ContextPlan, error)
+}
+
 // Config 固定一个 Session-bound Runtime 的身份与 durable 边界。
 type Config struct {
 	SessionID       domain.SessionID
@@ -33,6 +39,9 @@ type Config struct {
 	Journal         Journal
 	GenerateTurnID  TurnIDGenerator
 	InterruptedTail bool
+	ContextProfile  contextplan.ProviderProfile
+	ContextBudget   contextplan.Budget
+	ContextPlanner  ContextPlanner
 }
 
 // Runtime 持有一条会话级 Provider Conversation 和同一 thread journal。
@@ -42,6 +51,9 @@ type Runtime struct {
 	sessionID    domain.SessionID
 	threadID     domain.ThreadID
 	newTurnID    TurnIDGenerator
+	profile      contextplan.ProviderProfile
+	budget       contextplan.Budget
+	planner      ContextPlanner
 	active       atomic.Bool
 	poisoned     atomic.Bool
 }
@@ -60,12 +72,25 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 	if config.InterruptedTail {
 		return nil, fault.New(fault.CodeSessionCorruption, "interrupted session turn must be closed before runtime starts")
 	}
+	if err := config.ContextProfile.Validate(); err != nil {
+		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "runtime context profile is invalid", err)
+	}
+	if config.ContextProfile.Family() != conversation.Family() {
+		return nil, fault.New(fault.CodeInvalidConfiguration, "runtime context profile provider does not match conversation")
+	}
+	if err := config.ContextBudget.Validate(); err != nil {
+		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "runtime context budget is invalid", err)
+	}
+	if config.ContextPlanner == nil {
+		return nil, fault.New(fault.CodeInvalidConfiguration, "runtime context planner is not configured")
+	}
 	if config.GenerateTurnID == nil {
 		config.GenerateTurnID = domain.GenerateTurnID
 	}
 	return &Runtime{
 		conversation: conversation, journal: config.Journal,
 		sessionID: config.SessionID, threadID: config.ThreadID, newTurnID: config.GenerateTurnID,
+		profile: config.ContextProfile, budget: config.ContextBudget, planner: config.ContextPlanner,
 	}, nil
 }
 
@@ -114,6 +139,25 @@ func (runtime *Runtime) RunTurn(
 		return failure
 	}
 	emit(runtime.decorate(protocol.NewTurnStarted(), turnID))
+	planInput, err := runtime.contextPlanningInput(input)
+	if err != nil {
+		failure := fault.New(fault.CodeTurnFailed, "context planning input is invalid")
+		return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, failure)
+	}
+	plan, err := runtime.planner.Plan(planInput)
+	if err != nil {
+		failure := fault.New(fault.CodeTurnFailed, "context planning failed")
+		return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, failure)
+	}
+	if plan.Decision().State() == contextplan.BudgetOverLimit {
+		total, _ := plan.TotalEstimate().Tokens()
+		limit, _ := plan.Decision().EffectiveLimit()
+		failure := fault.New(
+			fault.CodeContextLimitExceeded,
+			fmt.Sprintf("estimated context tokens %d exceed effective input limit %d", total, limit),
+		)
+		return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, failure)
+	}
 
 	stream, err := runtime.conversation.Stream(ctx, input)
 	if err != nil {
@@ -228,6 +272,15 @@ func (runtime *Runtime) RunTurn(
 		err = fault.New(fault.CodeStreamProtocol, "provider terminal is invalid")
 		return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, err)
 	}
+}
+
+func (runtime *Runtime) contextPlanningInput(input provider.TurnInput) (contextplan.PlanningInput, error) {
+	history := runtime.conversation.ProjectHistory()
+	footprint, err := runtime.conversation.HistoryFootprint()
+	if err != nil {
+		return contextplan.PlanningInput{}, err
+	}
+	return contextplan.NewPlanningInput(runtime.profile, history, footprint, input.Text, runtime.budget)
 }
 
 func (runtime *Runtime) failTurn(ctx context.Context, emit Emitter, turnID domain.TurnID, cause error) error {

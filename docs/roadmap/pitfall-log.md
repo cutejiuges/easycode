@@ -358,7 +358,22 @@
 - 未采用方案及原因：不新增 v2 或双 reader，因为当前契约尚未稳定发布，保留错误开发基线只会制造永久兼容分支；不把 normalized usage 塞进 opaque native payload，因为 Session 不应解释 Provider wire。
 - 回归测试：`internal/domain/usage_test.go`、双 Provider reducer/commit/restore tests、`internal/session/*_test.go`、`internal/runtime/runtime_test.go`、`internal/headless/*_test.go`、`cmd/easycode/main_test.go` 和双 Provider app e2e。
 - 关联 ADR/Issue/PR：ADR-0002、ADR-0003；OpenSpec `add-durable-sample-usage`，不新增 ADR。
-- 后续行动：成本、配额、ContextPlanner/token estimator、TUI usage 展示、缓存请求策略和多 sample 工具回合仍需独立 change；只有冻结契约无法加法演进且旧消费者必须并存时才新增 revision。
+- 后续行动：成本、配额、TUI usage 展示、缓存请求策略和多 sample 工具回合仍需独立 change；ContextPlanner/token estimator 已由 `add-deterministic-context-planning` 落地。只有冻结契约无法加法演进且旧消费者必须并存时才新增 revision。
+
+### [P2][2026-10-04] 上下文占用不能由累计 usage 或单一语义视图推断
+
+- 状态：已解决确定性规划基线
+- 影响版本或提交：OpenSpec `add-deterministic-context-planning`
+- 现象：累计每轮 normalized usage 会重复计算不断增长的历史前缀；只估算 `SemanticHistoryView` 又会漏掉 thinking、signature、redacted thinking 和 encrypted reasoning；把两种估算相加还会再次计算可见文本。根据 model 字符串维护窗口表则可能对自定义 `base_url` 做出错误硬拒绝。
+- 触发条件：请求前估算下一轮上下文、恢复包含 opaque reasoning 的会话，或对用户配置的 context window 执行本地准入判断。
+- 根因：Provider sample usage、可见语义投影、下一请求实际重放的 native history 和模型窗口属于不同事实边界，不能互相替代。
+- 架构影响：ContextPlanner 只组合强类型快照；共享层从 `SemanticHistoryView` 估算可见文本，每个 Provider 从 committed native history 生成只含 family/revision/method/state/tokens 的 footprint。Runtime 在 durable `turn_started` 后、Provider stream 前完成规划。
+- 缓存影响：semantic estimate 与 native footprint 使用 `max` 覆盖合并而不是相加；normalized usage 不进入 context occupancy、request compiler 或 cache fingerprint。只有 `provider_profile` 进入当前稳定前缀，history 与 input 保持尾部稳定级别。
+- 修复方案：使用版本化本地 `byte_heuristic_v1` 和饱和运算，显式保留 `estimated/unknown`；窗口、输出预留和安全余量只接受用户 JSON 配置，不根据 model 名称推断。只有配置存在、估算完整且总量严格超过有效上限时返回 `context_limit_exceeded`。
+- 未采用方案及原因：不调用远程 token count，避免规划引入网络副作用；不从 normalized usage 累计上下文，不从语义历史重建 Provider 请求；不把 prompt、opaque bytes 或完整计划写入 Session/Event/日志。
+- 回归测试：`internal/domain/context_estimate_test.go`、`internal/context/estimate/*_test.go`、`internal/context/planning_test.go`、双 Provider `footprint_test.go`/restore tests、`internal/runtime/runtime_test.go`、`internal/config/config_test.go` 和 `internal/app/resume_e2e_test.go`。
+- 关联 ADR/Issue/PR：ADR-0002；OpenSpec `add-deterministic-context-planning`，不新增 ADR。
+- 后续行动：精确 tokenizer、远程计数、项目指令、tool/skill sources、实际 Provider cache policy、compaction 和 context UI 必须分别通过后续 change 接入现有来源/方法契约。
 
 重点关注：JSONL 尾部损坏、事件顺序、取消时 flush、SQLite 重建和 native history 恢复。
 

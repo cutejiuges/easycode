@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	contextplan "easycode/internal/context"
+	"easycode/internal/context/estimate"
 	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
@@ -24,8 +27,16 @@ const (
 )
 
 type fakeConversation struct {
-	stream func(context.Context, provider.TurnInput) (<-chan provider.StreamEvent, error)
-	calls  atomic.Int32
+	stream    func(context.Context, provider.TurnInput) (<-chan provider.StreamEvent, error)
+	footprint func() (domain.NativeHistoryFootprint, error)
+	history   domain.SemanticHistoryView
+	calls     atomic.Int32
+}
+
+type contextPlannerFunc func(contextplan.PlanningInput) (contextplan.ContextPlan, error)
+
+func (plan contextPlannerFunc) Plan(input contextplan.PlanningInput) (contextplan.ContextPlan, error) {
+	return plan(input)
 }
 
 func (*fakeConversation) Family() domain.ProviderFamily { return domain.ProviderOpenAI }
@@ -34,8 +45,21 @@ func (*fakeConversation) Capabilities() provider.Capabilities {
 	return provider.Capabilities{Streaming: true}
 }
 
-func (*fakeConversation) ProjectHistory() domain.SemanticHistoryView {
+func (conversation *fakeConversation) ProjectHistory() domain.SemanticHistoryView {
+	if conversation.history.Provider.Valid() {
+		turns := make([]domain.SemanticTurn, len(conversation.history.Turns))
+		copy(turns, conversation.history.Turns)
+		return domain.SemanticHistoryView{Provider: conversation.history.Provider, Turns: turns}
+	}
 	return domain.SemanticHistoryView{Provider: domain.ProviderOpenAI, Turns: make([]domain.SemanticTurn, 0)}
+}
+
+func (conversation *fakeConversation) HistoryFootprint() (domain.NativeHistoryFootprint, error) {
+	if conversation.footprint != nil {
+		return conversation.footprint()
+	}
+	estimated, _ := domain.NewEstimatedTokenEstimate(estimate.MethodByteHeuristicV1, 0)
+	return domain.NewNativeHistoryFootprint(domain.ProviderOpenAI, 0, estimated)
 }
 
 func (conversation *fakeConversation) Stream(ctx context.Context, input provider.TurnInput) (<-chan provider.StreamEvent, error) {
@@ -187,6 +211,116 @@ func TestRunTurnStartWriteFailureMakesZeroProviderCalls(t *testing.T) {
 	}
 	if journal.calls != 1 {
 		t.Fatalf("journal calls = %d", journal.calls)
+	}
+}
+
+func TestRunTurnStopsConfirmedContextOverageBeforeProviderStream(t *testing.T) {
+	t.Parallel()
+	var timelineMu sync.Mutex
+	var timeline []string
+	add := func(value string) {
+		timelineMu.Lock()
+		timeline = append(timeline, value)
+		timelineMu.Unlock()
+	}
+	conversation := &fakeConversation{stream: func(context.Context, provider.TurnInput) (<-chan provider.StreamEvent, error) {
+		add("provider:stream")
+		return fixedStream()(context.Background(), provider.TurnInput{})
+	}}
+	journal := &fakeJournal{hook: func(drafts []session.RecordDraft) {
+		add("append:" + string(drafts[0].EventKind()))
+	}}
+	config := testRuntimeConfig(t, journal)
+	budget, err := contextplan.NewBudget(1, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.ContextBudget = budget
+	config.GenerateTurnID = func() (domain.TurnID, error) { return runtimeTurnID, nil }
+	runtime, err := New(conversation, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, runErr := collectTurn(runtime, context.Background(), func(event protocol.Event) {
+		add("emit:" + string(event.Kind))
+	})
+	if !errors.Is(runErr, &fault.Error{Code: fault.CodeContextLimitExceeded}) {
+		t.Fatalf("RunTurn() error = %v", runErr)
+	}
+	if strings.Contains(runErr.Error(), "hello") {
+		t.Fatalf("over-limit error leaked input: %v", runErr)
+	}
+	assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnFailed)
+	if conversation.calls.Load() != 0 {
+		t.Fatalf("provider calls = %d", conversation.calls.Load())
+	}
+	want := []string{"append:turn_started", "emit:turn_started", "append:turn_failed", "emit:turn_failed"}
+	if fmt.Sprint(timeline) != fmt.Sprint(want) {
+		t.Fatalf("timeline = %#v, want %#v", timeline, want)
+	}
+	batches := journal.snapshot()
+	if len(batches) != 2 || batches[0][0].EventKind() != session.EventTurnStarted || batches[1][0].EventKind() != session.EventTurnFailed {
+		t.Fatalf("journal batches = %#v", batches)
+	}
+}
+
+func TestRunTurnPlanningFailureDoesNotStartProvider(t *testing.T) {
+	t.Parallel()
+	conversation := &fakeConversation{stream: fixedStream()}
+	journal := &fakeJournal{}
+	config := testRuntimeConfig(t, journal)
+	config.ContextPlanner = contextPlannerFunc(func(contextplan.PlanningInput) (contextplan.ContextPlan, error) {
+		return contextplan.ContextPlan{}, errors.New("fixture planning failure")
+	})
+	config.GenerateTurnID = func() (domain.TurnID, error) { return runtimeTurnID, nil }
+	runtime, err := New(conversation, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, runErr := collectTurn(runtime, context.Background(), nil)
+	if !errors.Is(runErr, &fault.Error{Code: fault.CodeTurnFailed}) || conversation.calls.Load() != 0 {
+		t.Fatalf("planning failure = %v provider calls=%d", runErr, conversation.calls.Load())
+	}
+	assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnFailed)
+}
+
+func TestRunTurnContinuesForNonBlockingBudgetStates(t *testing.T) {
+	t.Parallel()
+	budget, err := contextplan.NewBudget(100, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknownEstimate, _ := domain.NewUnknownTokenEstimate(estimate.MethodByteHeuristicV1)
+	unknownFootprint, _ := domain.NewNativeHistoryFootprint(domain.ProviderOpenAI, 0, unknownEstimate)
+	tests := []struct {
+		name      string
+		budget    contextplan.Budget
+		footprint func() (domain.NativeHistoryFootprint, error)
+	}{
+		{name: "not enforced", budget: contextplan.DisabledBudget()},
+		{name: "within limit", budget: budget},
+		{name: "indeterminate", budget: budget, footprint: func() (domain.NativeHistoryFootprint, error) { return unknownFootprint, nil }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			prepared := newPreparedSample(t, func() {})
+			conversation := &fakeConversation{
+				stream:    fixedStream(provider.StreamEvent{Kind: provider.StreamEventCompleted, Prepared: prepared}),
+				footprint: test.footprint,
+			}
+			config := testRuntimeConfig(t, &fakeJournal{})
+			config.ContextBudget = test.budget
+			config.GenerateTurnID = func() (domain.TurnID, error) { return runtimeTurnID, nil }
+			runtime, err := New(conversation, config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			events, runErr := collectTurn(runtime, context.Background(), nil)
+			if runErr != nil || conversation.calls.Load() != 1 {
+				t.Fatalf("RunTurn() error=%v calls=%d", runErr, conversation.calls.Load())
+			}
+			assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnCompleted)
+		})
 	}
 }
 
@@ -421,7 +555,7 @@ func TestRunTurnCancelCompletionRacePublishesOneTerminal(t *testing.T) {
 func TestNewRejectsInterruptedOrInvalidRuntimeState(t *testing.T) {
 	t.Parallel()
 	conversation := &fakeConversation{stream: fixedStream()}
-	valid := Config{SessionID: runtimeSessionID, ThreadID: runtimeThreadID, Journal: &fakeJournal{}}
+	valid := testRuntimeConfig(t, &fakeJournal{})
 	fixtures := []Config{
 		{ThreadID: runtimeThreadID, Journal: &fakeJournal{}},
 		{SessionID: runtimeSessionID, ThreadID: runtimeThreadID},
@@ -435,18 +569,44 @@ func TestNewRejectsInterruptedOrInvalidRuntimeState(t *testing.T) {
 	if _, err := New(conversation, valid); err != nil {
 		t.Fatalf("New(valid) error = %v", err)
 	}
+	missingPlanner := valid
+	missingPlanner.ContextPlanner = nil
+	if _, err := New(conversation, missingPlanner); err == nil {
+		t.Fatal("missing context planner unexpectedly accepted")
+	}
+	wrongProfile, err := contextplan.NewProviderProfile(domain.ProviderAnthropic, "claude-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mismatched := valid
+	mismatched.ContextProfile = wrongProfile
+	if _, err := New(conversation, mismatched); err == nil {
+		t.Fatal("mismatched context profile unexpectedly accepted")
+	}
 }
 
 func newTestRuntime(t *testing.T, conversation provider.Conversation, journal Journal) *Runtime {
 	t.Helper()
-	runtime, err := New(conversation, Config{
-		SessionID: runtimeSessionID, ThreadID: runtimeThreadID, Journal: journal,
-		GenerateTurnID: func() (domain.TurnID, error) { return runtimeTurnID, nil },
-	})
+	config := testRuntimeConfig(t, journal)
+	config.GenerateTurnID = func() (domain.TurnID, error) { return runtimeTurnID, nil }
+	runtime, err := New(conversation, config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return runtime
+}
+
+func testRuntimeConfig(t *testing.T, journal Journal) Config {
+	t.Helper()
+	profile, err := contextplan.NewProviderProfile(domain.ProviderOpenAI, "gpt-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return Config{
+		SessionID: runtimeSessionID, ThreadID: runtimeThreadID, Journal: journal,
+		ContextProfile: profile, ContextBudget: contextplan.DisabledBudget(),
+		ContextPlanner: contextplan.NewPlanner(),
+	}
 }
 
 func newPreparedSample(t *testing.T, finalize func()) *provider.PreparedSample {

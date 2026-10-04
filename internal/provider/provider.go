@@ -71,9 +71,15 @@ type HistoryProjector interface {
 	ProjectHistory() domain.SemanticHistoryView
 }
 
+// HistoryFootprinter 返回 Provider 已提交原生历史的不透明数值摘要。
+type HistoryFootprinter interface {
+	HistoryFootprint() (domain.NativeHistoryFootprint, error)
+}
+
 // Conversation 是 Runtime 依赖的会话级 provider 接口。
 type Conversation interface {
 	HistoryProjector
+	HistoryFootprinter
 	Family() domain.ProviderFamily
 	Capabilities() Capabilities
 	Stream(context.Context, TurnInput) (<-chan StreamEvent, error)

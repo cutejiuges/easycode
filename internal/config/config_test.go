@@ -37,6 +37,80 @@ func TestLoadExplicitJSONConfiguration(t *testing.T) {
 	}
 }
 
+func TestLoadExplicitContextTokenBudget(t *testing.T) {
+	clearEnvironment(t)
+	content := strings.TrimSuffix(validFile, "\n}") + `,
+  "context_window_tokens": 200000,
+  "reserved_output_tokens": 20000,
+  "context_safety_margin_tokens": 4096
+}`
+	loaded, err := Load(writeConfig(t, t.TempDir(), content, 0o600))
+	if err != nil {
+		t.Fatalf("load context token budget: %v", err)
+	}
+	if !loaded.ContextBudget.Enabled() || loaded.ContextBudget.Window() != 200000 ||
+		loaded.ContextBudget.ReservedOutput() != 20000 || loaded.ContextBudget.SafetyMargin() != 4096 {
+		t.Fatalf("context budget = %#v", loaded.ContextBudget)
+	}
+	if limit, ok := loaded.ContextBudget.EffectiveInputLimit(); !ok || limit != 175904 {
+		t.Fatalf("effective input limit = %d ok %t", limit, ok)
+	}
+}
+
+func TestLoadContextTokenBudgetDefaultsReservesAndIgnoresEnvironment(t *testing.T) {
+	clearEnvironment(t)
+	t.Setenv("EASYCODE_CONTEXT_WINDOW_TOKENS", "1")
+	content := strings.TrimSuffix(validFile, "\n}") + `,
+  "context_window_tokens": 8192
+}`
+	loaded, err := Load(writeConfig(t, t.TempDir(), content, 0o600))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ContextBudget.Window() != 8192 || loaded.ContextBudget.ReservedOutput() != 0 || loaded.ContextBudget.SafetyMargin() != 0 {
+		t.Fatalf("context budget = %#v", loaded.ContextBudget)
+	}
+
+	environmentOnly := LoadFromEnv()
+	if environmentOnly.ContextBudget.Enabled() {
+		t.Fatal("environment-only configuration enabled a context budget")
+	}
+}
+
+func TestLoadRejectsInvalidContextTokenBudgetsWithoutLeakingContent(t *testing.T) {
+	clearEnvironment(t)
+	tests := []struct {
+		name   string
+		fields string
+	}{
+		{name: "zero window", fields: `"context_window_tokens":0`},
+		{name: "negative window", fields: `"context_window_tokens":-1`},
+		{name: "fractional window", fields: `"context_window_tokens":1.5`},
+		{name: "string window", fields: `"context_window_tokens":"secret-budget"`},
+		{name: "null window", fields: `"context_window_tokens":null`},
+		{name: "exponent window", fields: `"context_window_tokens":1e4`},
+		{name: "overflowing window", fields: `"context_window_tokens":18446744073709551616`},
+		{name: "reserve without window", fields: `"reserved_output_tokens":1`},
+		{name: "margin without window", fields: `"context_safety_margin_tokens":1`},
+		{name: "reserves equal window", fields: `"context_window_tokens":10,"reserved_output_tokens":5,"context_safety_margin_tokens":5`},
+		{name: "reserves exceed window", fields: `"context_window_tokens":10,"reserved_output_tokens":9,"context_safety_margin_tokens":2`},
+		{name: "reserves overflow", fields: `"context_window_tokens":18446744073709551615,"reserved_output_tokens":18446744073709551615,"context_safety_margin_tokens":1`},
+	}
+	base := strings.TrimSuffix(validFile, "\n}")
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := writeConfig(t, t.TempDir(), base+","+test.fields+"}", 0o600)
+			_, err := Load(path)
+			assertInvalidConfiguration(t, err)
+			for _, forbidden := range []string{"file-secret", "secret-budget", test.fields} {
+				if strings.Contains(err.Error(), forbidden) {
+					t.Fatalf("budget error leaked %q: %v", forbidden, err)
+				}
+			}
+		})
+	}
+}
+
 func TestLoadRejectsInvalidJSONShapesWithoutLeakingContent(t *testing.T) {
 	clearEnvironment(t)
 	tests := []struct {
