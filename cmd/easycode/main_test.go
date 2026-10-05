@@ -55,6 +55,59 @@ func TestRunRejectsConflictingHeadlessModesBeforeConfiguration(t *testing.T) {
 	}
 }
 
+func TestRunValidatesStreamJSONMatrixBeforeApplicationSideEffects(t *testing.T) {
+	tests := []struct {
+		name      string
+		arguments []string
+		terminal  bool
+	}{
+		{name: "requires json", arguments: []string{"--input-format", "stream-json"}},
+		{name: "rejects print", arguments: []string{"--print", "--input-format", "stream-json"}},
+		{name: "rejects prompt", arguments: []string{"--json", "--input-format", "stream-json", "hello"}},
+		{name: "rejects dash", arguments: []string{"--json", "--input-format", "stream-json", "-"}},
+		{name: "rejects terminal", arguments: []string{"--json", "--input-format", "stream-json"}, terminal: true},
+		{name: "rejects unknown format", arguments: []string{"--json", "--input-format", "future"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			var output bytes.Buffer
+			var errorOutput bytes.Buffer
+			exitCode := run(
+				context.Background(), test.arguments, strings.NewReader("must-not-be-read"),
+				&output, &errorOutput, test.terminal,
+			)
+			if exitCode != 2 || output.Len() != 0 || errorOutput.Len() == 0 {
+				t.Fatalf("exit=%d output=%q error=%q", exitCode, output.String(), errorOutput.String())
+			}
+			if _, err := os.Stat(filepath.Join(home, ".easycode", "sessions")); !os.IsNotExist(err) {
+				t.Fatalf("invalid matrix created session state: %v", err)
+			}
+		})
+	}
+}
+
+func TestRunAcceptsStreamJSONWithSessionSelectors(t *testing.T) {
+	for _, selector := range [][]string{{"--resume", "not-a-thread"}, {"--continue"}} {
+		var output cliWriteCloser
+		var errorOutput bytes.Buffer
+		arguments := []string{"--json", "--input-format", "stream-json", "--config", filepath.Join(t.TempDir(), "missing.json")}
+		arguments = append(arguments, selector...)
+		exitCode := run(
+			context.Background(), arguments, io.NopCloser(strings.NewReader("")),
+			&output, &errorOutput, false,
+		)
+		if exitCode != 1 || strings.Contains(errorOutput.String(), "input-format") || strings.Contains(errorOutput.String(), "prompt") {
+			t.Fatalf("selector=%v exit=%d output=%q error=%q", selector, exitCode, output.String(), errorOutput.String())
+		}
+	}
+}
+
+type cliWriteCloser struct{ bytes.Buffer }
+
+func (*cliWriteCloser) Close() error { return nil }
+
 func TestRunRejectsMissingTerminalPromptWithoutCreatingSession(t *testing.T) {
 	clearCLIEnvironment(t)
 	home := t.TempDir()
@@ -276,6 +329,10 @@ func TestHeadlessProcessExitCodesAndJSONStdout(t *testing.T) {
 	}{
 		{name: "success", mode: "success", configPath: writeCLIConfig(t, successServer.URL), wantType: `"type":"turn.completed"`},
 		{name: "runtime failure", mode: "failure", configPath: writeCLIConfig(t, failureServer.URL), wantExit: 1, wantType: `"type":"turn.failed"`},
+		{name: "stream success", mode: "stream-success", configPath: writeCLIConfig(t, successServer.URL), wantType: `"type":"turn.completed"`},
+		{name: "stream turn failure is reported", mode: "stream-failure", configPath: writeCLIConfig(t, failureServer.URL), wantType: `"type":"turn.failed"`},
+		{name: "stream malformed input", mode: "stream-malformed", configPath: writeCLIConfig(t, successServer.URL), wantExit: 1, wantType: `"type":"error"`},
+		{name: "stream explicit shutdown", mode: "stream-shutdown", configPath: writeCLIConfig(t, successServer.URL), wantType: `"type":"control.response"`},
 		{name: "usage failure", mode: "usage", wantExit: 2, wantStderr: "mutually exclusive"},
 	}
 	for _, test := range tests {
@@ -293,6 +350,14 @@ func TestHeadlessProcessExitCodesAndJSONStdout(t *testing.T) {
 			var stderr bytes.Buffer
 			command.Stdout = &stdout
 			command.Stderr = &stderr
+			switch test.mode {
+			case "stream-success", "stream-failure":
+				command.Stdin = strings.NewReader(`{"version":1,"type":"input.submit","request_id":"process-input","text":"hello"}` + "\n")
+			case "stream-malformed":
+				command.Stdin = strings.NewReader(`{"version":1,"type":"input.submit","request_id":"process-input","text":"private","unknown":true}` + "\n")
+			case "stream-shutdown":
+				command.Stdin = strings.NewReader(`{"version":1,"type":"session.shutdown","request_id":"process-shutdown"}`)
+			}
 			err := command.Run()
 			exitCode := 0
 			if err != nil {
@@ -369,10 +434,16 @@ func TestCLIHeadlessHelperProcess(t *testing.T) {
 	}
 	mode := os.Getenv("EASYCODE_TEST_CLI_HEADLESS_MODE")
 	arguments := []string{"--json", "--config", os.Getenv("EASYCODE_TEST_CLI_HEADLESS_CONFIG"), "hello"}
+	input := io.Reader(strings.NewReader(""))
+	stdinIsTerminal := true
 	if mode == "usage" {
 		arguments = []string{"--print", "--json", "hello"}
+	} else if strings.HasPrefix(mode, "stream-") {
+		arguments = []string{"--json", "--input-format", "stream-json", "--config", os.Getenv("EASYCODE_TEST_CLI_HEADLESS_CONFIG")}
+		input = os.Stdin
+		stdinIsTerminal = false
 	}
-	exitCode := run(context.Background(), arguments, strings.NewReader(""), os.Stdout, os.Stderr, true)
+	exitCode := run(context.Background(), arguments, input, os.Stdout, os.Stderr, stdinIsTerminal)
 	os.Exit(exitCode)
 }
 

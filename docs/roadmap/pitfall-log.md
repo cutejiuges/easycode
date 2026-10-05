@@ -283,7 +283,22 @@
 - 未采用方案及原因：不直接 marshal RuntimeEvent，不抓取 TUI transcript，不安装全局 stdout guard，也不提前声明 usage/reasoning/tool 机器事件；这些方案会固化内部字段、污染 stdout 或暴露没有完整 producer/persistence 的能力。
 - 回归测试：`internal/headless/*_test.go`、`internal/app/headless_e2e_test.go`、`cmd/easycode/main_test.go`、双 Provider restore/fingerprint tests。
 - 关联 ADR/Issue/PR：OpenSpec `add-headless-text-output`。
-- 后续行动：新增外部事件必须通过 OpenSpec 演进 JSONL fixture；stdin JSON、双向控制、独立 usage 更新和 reasoning/tool 事件仍未实现。`turn.completed` v1 已通过 `add-durable-sample-usage` 增加 required usage；`--continue` 复用同一 resume/headless 投影路径。
+- 后续行动：新增外部事件必须通过 OpenSpec 演进 JSONL fixture；stdin JSON 与双向控制已由独立 streaming DTO/fixture 交付，不扩宽一次性协议；独立 usage 更新和 reasoning/tool 事件仍未实现。`turn.completed` v1 已通过 `add-durable-sample-usage` 增加 required usage；`--continue` 复用同一 resume/headless 投影路径。
+
+### [P2][2026-10-05] Follow-up queue 不能伪装成 same-turn steer 或 durable acceptance
+
+- 状态：已解决当前同进程多 turn 切片
+- 影响版本或提交：OpenSpec `add-runtime-input-control-loop`
+- 现象：活动 turn 期间收到的新输入容易被直接注入当前 prompt、与其他输入拼接，或仅凭 `queued` response 被调用方误认为已经写入 Session；stdin EOF 也容易被错误实现为取消当前工作。
+- 触发条件：长期 headless 进程同时处理 submit、interrupt、EOF/shutdown 和 Provider terminal，且当前 turn 只有一次 sampling、没有 Tool Loop safe point。
+- 根因：把 admission obligation、durable turn start 和模型内部 steer 混为同一语义，并让 reader/worker 分别读写共享 active/queue 状态。
+- 架构影响：Session-bound AgentLoop 成为唯一 admission owner；活动期输入只进入有界 FIFO，每项形成后续独立 turn。command result 先输出，只有 `turn.started` 表示 durable；request identity、queue 与 control output 不进入 Session 或 Provider history。stdout 仍由唯一 writer 投影独立 streaming DTO。
+- 缓存影响：control metadata 不参与 Provider request canonical bytes、ContextPlan segment 或 fingerprint；双 Provider 同进程回归与直接 facade 请求 bytes/fingerprint 等价。
+- 修复方案：EOF 进入 draining 并执行全部已接受输入；显式 shutdown 进入 closing、取消活动 turn并发布 queue discard。interrupt 必须匹配活动 `turn_id`。caller context 只参与无缓冲 handoff，owner 接受后不再保存或观察该 context。
+- 未采用方案及原因：未实现 Claude Code 风格全局 priority queue、`now/next/later` 或 same-turn injection，因为当前没有能维持 Provider-native history 与工具配对的安全插入点；这些能力留待 P3 Tool Loop。
+- 回归测试：`internal/protocol/command_test.go`、`internal/runtime/agent_loop_test.go`、`internal/headless/stream_*_test.go`、`internal/app/headless_e2e_test.go`、`cmd/easycode/main_test.go`。
+- 关联 ADR/Issue/PR：OpenSpec `add-runtime-input-control-loop`。
+- 后续行动：P3 定义 tool result 后的 sampling safe point，再单独设计 same-turn steer；TUI 需要 queue 交互时迁移到 AgentLoop 并删除旧 ChatSession facade。
 
 ### [P2][2026-09-29] 路径预检不能代替绑定实际句柄的安全判断
 
