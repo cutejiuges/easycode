@@ -121,6 +121,26 @@ func TestAgentLoopConstructionAndExplicitLifecycle(t *testing.T) {
 	}
 }
 
+func TestAgentLoopAcceptedCommandResultWinsClosedDone(t *testing.T) {
+	command, err := protocol.NewShutdownCommand("shutdown-result-race")
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := protocol.NewAcceptedCommandResult(command, protocol.CommandDispositionClosing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := make(chan loopCommandResponse, 1)
+	done := make(chan struct{})
+	results <- loopCommandResponse{result: accepted}
+	close(done)
+
+	result, err := waitLoopCommandResponse(results, done)
+	if err != nil || result.Disposition() != protocol.CommandDispositionClosing {
+		t.Fatalf("waitLoopCommandResponse() = %#v, %v", result, err)
+	}
+}
+
 func TestAgentLoopFIFOQueueCapacityDedupeAndDrain(t *testing.T) {
 	conversation := newControlledConversation()
 	config := testRuntimeConfig(t, &fakeJournal{})

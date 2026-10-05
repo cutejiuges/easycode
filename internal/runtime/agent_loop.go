@@ -117,11 +117,25 @@ func (loop *AgentLoop) Submit(ctx context.Context, command protocol.Command) (pr
 	case <-loop.done:
 		return protocol.CommandResult{}, fault.New(fault.CodeTurnFailed, "agent loop is closed")
 	}
+	return waitLoopCommandResponse(request.result, loop.done)
+}
+
+func waitLoopCommandResponse(results <-chan loopCommandResponse, done <-chan struct{}) (protocol.CommandResult, error) {
 	select {
-	case response := <-request.result:
+	case response := <-results:
 		return response.result, response.err
-	case <-loop.done:
-		return protocol.CommandResult{}, fault.New(fault.CodeTurnFailed, "agent loop closed before command result")
+	default:
+	}
+	select {
+	case response := <-results:
+		return response.result, response.err
+	case <-done:
+		select {
+		case response := <-results:
+			return response.result, response.err
+		default:
+			return protocol.CommandResult{}, fault.New(fault.CodeTurnFailed, "agent loop closed before command result")
+		}
 	}
 }
 
