@@ -38,6 +38,7 @@ func run(
 	showVersion := flags.Bool("version", false, "print version and exit")
 	printMode := flags.Bool("print", false, "print only the final assistant text")
 	jsonMode := flags.Bool("json", false, "stream versioned JSONL events")
+	inputFormat := flags.String("input-format", "text", "input format: text or stream-json")
 	resumeThreadID := flags.String("resume", "", "resume an existing root thread selected by --resume UUIDv7")
 	continueSession := flags.Bool("continue", false, "continue the latest compatible session in the current directory")
 	configPath := flags.String(
@@ -67,14 +68,33 @@ func run(
 		_, _ = fmt.Fprintln(errorOutput, "error: --resume and --continue are mutually exclusive")
 		return 2
 	}
+	if *inputFormat != "text" && *inputFormat != "stream-json" {
+		_, _ = fmt.Fprintln(errorOutput, "error: --input-format must be text or stream-json")
+		return 2
+	}
+	if *inputFormat == "stream-json" {
+		if !*jsonMode || *printMode {
+			_, _ = fmt.Fprintln(errorOutput, "error: stream-json input requires --json and cannot use --print")
+			return 2
+		}
+		if len(flags.Args()) != 0 {
+			_, _ = fmt.Fprintln(errorOutput, "error: stream-json mode does not accept a prompt or -")
+			return 2
+		}
+		if stdinIsTerminal {
+			_, _ = fmt.Fprintln(errorOutput, "error: stream-json mode requires non-terminal stdin")
+			return 2
+		}
+		mode = headless.ModeStreamJSON
+	}
 	if *printMode {
 		mode = headless.ModeText
-	} else if *jsonMode {
+	} else if *jsonMode && *inputFormat == "text" {
 		mode = headless.ModeJSON
 	}
 
 	prompt := ""
-	if mode != headless.ModeInteractive {
+	if mode == headless.ModeText || mode == headless.ModeJSON {
 		resolved, err := headless.ResolvePrompt(flags.Args(), input, stdinIsTerminal)
 		if err != nil {
 			var inputError *headless.InputError
@@ -104,7 +124,7 @@ func renderOutcome(outcome app.Outcome, mode headless.Mode, output io.Writer, er
 	if outcome.Class == app.ExitSuccess {
 		return 0
 	}
-	if outcome.Report == app.ReportPending && mode == headless.ModeJSON {
+	if outcome.Report == app.ReportPending && (mode == headless.ModeJSON || mode == headless.ModeStreamJSON) {
 		if err := headless.WriteError(output, outcome.Failure); err == nil {
 			return outcome.ExitCode()
 		}

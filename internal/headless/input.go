@@ -1,4 +1,4 @@
-// Package headless 实现单 turn 非交互宿主及其稳定输出协议。
+// Package headless 实现一次性与长期非交互宿主及其稳定输出协议。
 package headless
 
 import (
@@ -22,6 +22,7 @@ const (
 	ModeInteractive Mode = iota
 	ModeText
 	ModeJSON
+	ModeStreamJSON
 )
 
 // InputErrorKind 区分用法错误和底层 stdin 读取失败。

@@ -472,6 +472,110 @@ func TestChatResourcesShutdownTimeoutEscalatesAndClosesDependencies(t *testing.T
 	}
 }
 
+func TestStreamEscalationClosesProviderBeforeLoopAndJournal(t *testing.T) {
+	var mu sync.Mutex
+	var timeline []string
+	add := func(value string) {
+		mu.Lock()
+		timeline = append(timeline, value)
+		mu.Unlock()
+	}
+	release := make(chan struct{})
+	loop := newEscalationStreamLoop(release, add)
+	inputReader, inputWriter := io.Pipe()
+	defer inputWriter.Close()
+	output := &appWriteCloser{}
+	runner, err := headless.NewStreamRunner(loop, headless.StreamRunConfig{
+		SessionID: runtimeSessionIDForApp, ThreadID: runtimeThreadIDForApp,
+		Input: inputReader, Output: output, OutputCloser: output,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	providerResource := &orderedProviderResource{
+		factory: fakeProviderFactory{family: domain.ProviderOpenAI},
+		force: func() {
+			add("provider:close")
+			close(release)
+		},
+	}
+	journal := &orderedManagedJournal{add: add}
+	resources := &chatResources{
+		provider: providerResource, writer: journal,
+		session: chatRuntime.NewChatSession(mustIdleAppRuntime(t, journal)),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	resultDone := make(chan struct {
+		result headless.Result
+		err    error
+	}, 1)
+	go func() {
+		result, runErr := runStreamWithEscalation(ctx, runner, resources, 0)
+		resultDone <- struct {
+			result headless.Result
+			err    error
+		}{result: result, err: runErr}
+	}()
+	<-loop.ready
+	cancel()
+	response := <-resultDone
+	if response.err != nil || response.result.Failure.Code == "" {
+		t.Fatalf("stream escalation result=%#v error=%v", response.result, response.err)
+	}
+	if err := resources.close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	got := strings.Join(timeline, ",")
+	mu.Unlock()
+	if got != "provider:close,loop:done,journal:close" {
+		t.Fatalf("stream escalation timeline = %q", got)
+	}
+	if providerResource.closeCalls.Load() != 1 || journal.closeCalls.Load() != 1 {
+		t.Fatalf("close calls provider=%d journal=%d", providerResource.closeCalls.Load(), journal.closeCalls.Load())
+	}
+}
+
+type escalationStreamLoop struct {
+	ready   chan struct{}
+	done    chan struct{}
+	outputs chan protocol.ControlItem
+	release <-chan struct{}
+	add     func(string)
+}
+
+func newEscalationStreamLoop(release <-chan struct{}, add func(string)) *escalationStreamLoop {
+	return &escalationStreamLoop{
+		ready: make(chan struct{}), done: make(chan struct{}), outputs: make(chan protocol.ControlItem),
+		release: release, add: add,
+	}
+}
+
+func (loop *escalationStreamLoop) Run(context.Context) error {
+	close(loop.ready)
+	<-loop.release
+	if loop.add != nil {
+		loop.add("loop:done")
+	}
+	close(loop.outputs)
+	close(loop.done)
+	return nil
+}
+
+func (loop *escalationStreamLoop) Ready() <-chan struct{} { return loop.ready }
+func (loop *escalationStreamLoop) Done() <-chan struct{}  { return loop.done }
+func (loop *escalationStreamLoop) Outputs() <-chan protocol.ControlItem {
+	return loop.outputs
+}
+func (*escalationStreamLoop) Submit(context.Context, protocol.Command) (protocol.CommandResult, error) {
+	return protocol.CommandResult{}, fault.New(fault.CodeTurnFailed, "stream loop is closing")
+}
+func (*escalationStreamLoop) CloseInput(context.Context) error { return nil }
+func (loop *escalationStreamLoop) Stop(context.Context) error {
+	<-loop.done
+	return nil
+}
+
 const (
 	runtimeSessionIDForApp = domain.SessionID("00000000-0020-7000-8000-000000000020")
 	runtimeThreadIDForApp  = domain.ThreadID("00000000-0021-7000-8000-000000000021")

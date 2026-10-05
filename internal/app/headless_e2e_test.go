@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -176,6 +178,248 @@ func TestHeadlessProvidersPreserveResumeRequestAndOutputBoundaries(t *testing.T)
 	}
 }
 
+func TestStreamJSONProvidersPreserveSameProcessNativeHistory(t *testing.T) {
+	fixtures := []struct {
+		name      string
+		family    domain.ProviderFamily
+		model     string
+		serveTurn func(io.Writer, int)
+	}{
+		{name: "OpenAI Responses", family: domain.ProviderOpenAI, model: "gpt-test", serveTurn: writeOpenAIAppTurn},
+		{name: "Anthropic Messages", family: domain.ProviderAnthropic, model: "claude-test", serveTurn: writeAnthropicAppTurn},
+	}
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var requests [][]byte
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				body, err := io.ReadAll(request.Body)
+				if err != nil {
+					t.Errorf("read request: %v", err)
+					return
+				}
+				mu.Lock()
+				index := len(requests)
+				requests = append(requests, append([]byte(nil), body...))
+				mu.Unlock()
+				writer.Header().Set("Content-Type", "text/event-stream")
+				fixture.serveTurn(writer, index%2+1)
+			}))
+			defer server.Close()
+
+			dataRoot := filepath.Join(privateAppTempDir(t), "sessions")
+			configPath := writeAppConfig(t, t.TempDir(), fixture.family, server.URL)
+			input := io.NopCloser(strings.NewReader(
+				`{"version":1,"type":"input.submit","request_id":"stream-input-1","text":"first"}` + "\n" +
+					`{"version":1,"type":"input.submit","request_id":"stream-input-2","text":"second"}` + "\n",
+			))
+			output := &appWriteCloser{}
+			outcome := Run(context.Background(), Options{
+				Mode: headless.ModeStreamJSON, ConfigPath: configPath,
+				SessionDataRoot: dataRoot, Input: input, Output: output,
+			})
+			if outcome.ExitCode() != 0 {
+				t.Fatalf("stream outcome = %#v, output=%s", outcome, output.String())
+			}
+			if strings.Count(output.String(), `"type":"control.response"`) != 2 ||
+				strings.Count(output.String(), `"type":"turn.completed"`) != 2 {
+				t.Fatalf("stream output = %s", output.String())
+			}
+			started := decodeThreadStarted(t, output.String())
+			loaded := loadHeadlessJournal(t, dataRoot, started.ThreadID)
+			if len(loaded.Records) != 10 || loaded.NextSequence != 11 {
+				t.Fatalf("stream records/next = %d/%d", len(loaded.Records), loaded.NextSequence)
+			}
+
+			providerConfig := config.Config{Provider: config.Provider{
+				Family: fixture.family, BaseURL: server.URL,
+				APIKey: secret.New("stream-e2e-secret"), Model: fixture.model,
+			}}
+			direct, err := openChatResources(
+				context.Background(), providerConfig, filepath.Join(privateAppTempDir(t), "direct"), "", t.TempDir(),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			submitAppTurn(t, direct, "first")
+			submitAppTurn(t, direct, "second")
+			if err := direct.close(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+
+			mu.Lock()
+			captured := append([][]byte(nil), requests...)
+			mu.Unlock()
+			if len(captured) != 4 {
+				t.Fatalf("request count = %d", len(captured))
+			}
+			if !bytes.Equal(captured[0], captured[2]) || !bytes.Equal(captured[1], captured[3]) {
+				t.Fatalf("AgentLoop changed Provider request bytes\nstream: %s\ndirect: %s", captured[1], captured[3])
+			}
+			assertRequestFingerprintEqual(t, captured[1], captured[3])
+			for _, metadata := range []string{"stream-input-1", "stream-input-2", "control.response", "input_id"} {
+				if bytes.Contains(captured[1], []byte(metadata)) {
+					t.Fatalf("Provider request contains control metadata %q: %s", metadata, captured[1])
+				}
+			}
+		})
+	}
+}
+
+func TestStreamJSONResumeAndContinue(t *testing.T) {
+	var turn atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		writeOpenAIAppTurn(writer, int(turn.Add(1)))
+	}))
+	defer server.Close()
+	dataHome := privateAppTempDir(t)
+	dataRoot := filepath.Join(dataHome, "sessions")
+	catalogPath := filepath.Join(dataHome, "state.sqlite")
+	configPath := writeAppConfig(t, t.TempDir(), domain.ProviderOpenAI, server.URL)
+
+	firstOutput := runStreamAppInput(t, Options{
+		Mode: headless.ModeStreamJSON, ConfigPath: configPath,
+		SessionDataRoot: dataRoot, SessionCatalogPath: catalogPath,
+	}, "resume-first")
+	started := decodeThreadStarted(t, firstOutput)
+	if started.Resumed {
+		t.Fatalf("new stream started as resumed: %#v", started)
+	}
+	resumedOutput := runStreamAppInput(t, Options{
+		Mode: headless.ModeStreamJSON, ConfigPath: configPath,
+		ResumeThreadID:  string(started.ThreadID),
+		SessionDataRoot: dataRoot, SessionCatalogPath: catalogPath,
+	}, "resume-second")
+	resumed := decodeThreadStarted(t, resumedOutput)
+	if !resumed.Resumed || resumed.ThreadID != started.ThreadID {
+		t.Fatalf("resumed thread.started = %#v", resumed)
+	}
+	continuedOutput := runStreamAppInput(t, Options{
+		Mode: headless.ModeStreamJSON, ConfigPath: configPath, ContinueSession: true,
+		SessionDataRoot: dataRoot, SessionCatalogPath: catalogPath,
+	}, "continue-third")
+	continued := decodeThreadStarted(t, continuedOutput)
+	if !continued.Resumed || continued.ThreadID != started.ThreadID {
+		t.Fatalf("continued thread.started = %#v", continued)
+	}
+	if turn.Load() != 3 {
+		t.Fatalf("Provider turn count = %d", turn.Load())
+	}
+}
+
+func TestStreamJSONQueueFullAndShutdownAreReported(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		if flusher, ok := writer.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		<-request.Context().Done()
+	}))
+	defer server.Close()
+	var commands strings.Builder
+	for index := 0; index < 66; index++ {
+		_, _ = fmt.Fprintf(
+			&commands,
+			"{\"version\":1,\"type\":\"input.submit\",\"request_id\":\"queue-%02d\",\"text\":\"input-%02d\"}\n",
+			index, index,
+		)
+	}
+	commands.WriteString(`{"version":1,"type":"session.shutdown","request_id":"queue-shutdown"}` + "\n")
+	output := &appWriteCloser{}
+	outcome := Run(context.Background(), Options{
+		Mode:            headless.ModeStreamJSON,
+		ConfigPath:      writeAppConfig(t, t.TempDir(), domain.ProviderOpenAI, server.URL),
+		SessionDataRoot: filepath.Join(privateAppTempDir(t), "sessions"),
+		Input:           io.NopCloser(strings.NewReader(commands.String())), Output: output,
+	})
+	if outcome.ExitCode() != 0 {
+		t.Fatalf("queue stream outcome = %#v output=%s", outcome, output.String())
+	}
+	if !strings.Contains(output.String(), `"code":"input_queue_full"`) ||
+		!strings.Contains(output.String(), `"request_id":"queue-shutdown"`) ||
+		strings.Count(output.String(), `"type":"input.discarded"`) != 64 {
+		t.Fatalf("queue full/shutdown output = %s", output.String())
+	}
+}
+
+func runStreamAppInput(t *testing.T, options Options, text string) string {
+	t.Helper()
+	options.Input = io.NopCloser(strings.NewReader(
+		`{"version":1,"type":"input.submit","request_id":"` + text + `","text":"` + text + `"}` + "\n",
+	))
+	output := &appWriteCloser{}
+	options.Output = output
+	outcome := Run(context.Background(), options)
+	if outcome.ExitCode() != 0 {
+		t.Fatalf("stream Run(%s) outcome = %#v output=%s", text, outcome, output.String())
+	}
+	return output.String()
+}
+
+func TestStreamJSONFailedInputDoesNotEnterNextProviderHistory(t *testing.T) {
+	fixtures := []struct {
+		name      string
+		family    domain.ProviderFamily
+		model     string
+		serveTurn func(io.Writer, int)
+	}{
+		{name: "OpenAI Responses", family: domain.ProviderOpenAI, model: "gpt-test", serveTurn: writeOpenAIAppTurn},
+		{name: "Anthropic Messages", family: domain.ProviderAnthropic, model: "claude-test", serveTurn: writeAnthropicAppTurn},
+	}
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var requests [][]byte
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				body, _ := io.ReadAll(request.Body)
+				mu.Lock()
+				index := len(requests)
+				requests = append(requests, append([]byte(nil), body...))
+				mu.Unlock()
+				if index == 0 {
+					http.Error(writer, "provider-private-body", http.StatusBadGateway)
+					return
+				}
+				writer.Header().Set("Content-Type", "text/event-stream")
+				fixture.serveTurn(writer, 1)
+			}))
+			defer server.Close()
+
+			input := io.NopCloser(strings.NewReader(
+				`{"version":1,"type":"input.submit","request_id":"failed-input","text":"first-must-not-commit"}` + "\n" +
+					`{"version":1,"type":"input.submit","request_id":"success-input","text":"second"}` + "\n",
+			))
+			output := &appWriteCloser{}
+			outcome := Run(context.Background(), Options{
+				Mode:            headless.ModeStreamJSON,
+				ConfigPath:      writeAppConfig(t, t.TempDir(), fixture.family, server.URL),
+				SessionDataRoot: filepath.Join(privateAppTempDir(t), "sessions"),
+				Input:           input, Output: output,
+			})
+			if outcome.ExitCode() != 0 {
+				t.Fatalf("stream outcome = %#v, output=%s", outcome, output.String())
+			}
+			if strings.Count(output.String(), `"type":"turn.failed"`) != 1 ||
+				strings.Count(output.String(), `"type":"turn.completed"`) != 1 ||
+				strings.Contains(output.String(), "provider-private-body") {
+				t.Fatalf("stream failure output = %s", output.String())
+			}
+			mu.Lock()
+			captured := append([][]byte(nil), requests...)
+			mu.Unlock()
+			if len(captured) != 2 || bytes.Contains(captured[1], []byte("first-must-not-commit")) ||
+				!bytes.Contains(captured[1], []byte("second")) {
+				t.Fatalf("failed input entered next history: %#v", captured)
+			}
+		})
+	}
+}
+
+type appWriteCloser struct{ bytes.Buffer }
+
+func (*appWriteCloser) Close() error { return nil }
+
 func assertRequestFingerprintEqual(t *testing.T, left []byte, right []byte) {
 	t.Helper()
 	leftJSON := canonicalizeCapturedRequest(t, left)
@@ -274,6 +518,46 @@ func TestHeadlessJSONBrokenPipeCancelsAndReleasesLease(t *testing.T) {
 	for _, record := range loaded.Records {
 		if record.EventKind == session.EventProviderNativeCommit || record.EventKind == session.EventTurnCompleted {
 			t.Fatalf("broken pipe committed success: %#v", record)
+		}
+	}
+}
+
+func TestStreamJSONBrokenOutputCancelsAgentLoopAndReleasesLease(t *testing.T) {
+	requestStarted := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(writer, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-partial\"}}\n\n")
+		_, _ = io.WriteString(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n")
+		if flusher, ok := writer.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		close(requestStarted)
+		<-request.Context().Done()
+	}))
+	defer server.Close()
+
+	dataRoot := filepath.Join(privateAppTempDir(t), "sessions")
+	output := &failOnHeadlessWrite{failCall: 4}
+	input := io.NopCloser(strings.NewReader(
+		`{"version":1,"type":"input.submit","request_id":"broken-output-input","text":"hello"}` + "\n",
+	))
+	outcome := Run(context.Background(), Options{
+		Mode:            headless.ModeStreamJSON,
+		ConfigPath:      writeAppConfig(t, t.TempDir(), domain.ProviderOpenAI, server.URL),
+		SessionDataRoot: dataRoot, Input: input, Output: output,
+	})
+	<-requestStarted
+	if outcome.ExitCode() != 1 || outcome.Report != ReportOutputUnavailable || outcome.Failure.Code != fault.CodeOutput {
+		t.Fatalf("broken stream output outcome = %#v", outcome)
+	}
+	started := decodeThreadStarted(t, output.buffer.String())
+	loaded := loadHeadlessJournal(t, dataRoot, started.ThreadID)
+	if loaded.Records[len(loaded.Records)-1].EventKind != session.EventTurnFailed {
+		t.Fatalf("broken stream output records = %#v", loaded.Records)
+	}
+	for _, record := range loaded.Records {
+		if record.EventKind == session.EventProviderNativeCommit || record.EventKind == session.EventTurnCompleted {
+			t.Fatalf("broken stream output committed success: %#v", record)
 		}
 	}
 }
@@ -389,3 +673,5 @@ func (writer *failOnHeadlessWrite) Write(content []byte) (int, error) {
 	}
 	return writer.buffer.Write(content)
 }
+
+func (*failOnHeadlessWrite) Close() error { return nil }

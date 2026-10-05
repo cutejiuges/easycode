@@ -31,6 +31,7 @@ const Version = "0.0.0-dev"
 const shutdownTimeout = 5 * time.Second
 
 var _ headless.ChatSession = (*chatRuntime.ChatSession)(nil)
+var _ headless.StreamControlLoop = (*chatRuntime.AgentLoop)(nil)
 
 // Options 描述应用入口参数，避免入口层直接依赖具体实现细节。
 type Options struct {
@@ -61,14 +62,16 @@ type providerResource interface {
 }
 
 type chatResources struct {
-	identity session.Identity
-	provider providerResource
-	service  *sessionService
-	writer   managedJournal
-	session  *chatRuntime.ChatSession
-	history  domain.SemanticHistoryView
-	repair   session.RepairReport
-	resumed  bool
+	identity       session.Identity
+	provider       providerResource
+	service        *sessionService
+	writer         managedJournal
+	runtime        *chatRuntime.Runtime
+	session        *chatRuntime.ChatSession
+	history        domain.SemanticHistoryView
+	repair         session.RepairReport
+	resumed        bool
+	providerClosed bool
 }
 
 // Run 根据入口参数运行交互或 headless 宿主并返回稳定结果。
@@ -86,12 +89,24 @@ func Run(ctx context.Context, options Options) Outcome {
 	if options.ContinueSession && options.ResumeThreadID != "" {
 		return usageFailure("--resume and --continue are mutually exclusive")
 	}
-	if options.Mode != headless.ModeInteractive && options.Mode != headless.ModeText && options.Mode != headless.ModeJSON {
+	if options.Mode != headless.ModeInteractive && options.Mode != headless.ModeText &&
+		options.Mode != headless.ModeJSON && options.Mode != headless.ModeStreamJSON {
 		return runtimeFailure(fault.New(fault.CodeTurnFailed, "application mode is invalid"))
 	}
-	if options.Mode != headless.ModeInteractive {
+	if options.Mode == headless.ModeText || options.Mode == headless.ModeJSON {
 		if err := headless.ValidateResolvedPrompt(options.Prompt); err != nil {
 			return usageFailure(err.Error())
+		}
+	}
+	if options.Mode == headless.ModeStreamJSON {
+		if options.Prompt != "" {
+			return usageFailure("stream-json mode does not accept a prompt")
+		}
+		if _, ok := options.Input.(io.ReadCloser); !ok {
+			return usageFailure("stream-json input must be closable")
+		}
+		if _, ok := options.Output.(io.Closer); !ok {
+			return usageFailure("stream-json output must be closable")
 		}
 	}
 	applicationConfig, err := config.Load(options.ConfigPath)
@@ -116,6 +131,8 @@ func Run(ctx context.Context, options Options) Outcome {
 	var outcome Outcome
 	if options.Mode == headless.ModeInteractive {
 		outcome = runTUI(ctx, options, resources)
+	} else if options.Mode == headless.ModeStreamJSON {
+		outcome = runStreamJSON(ctx, options, resources)
 	} else {
 		result := headless.Run(ctx, resources.session, headless.RunConfig{
 			Mode: options.Mode, Prompt: options.Prompt,
@@ -134,6 +151,55 @@ func Run(ctx context.Context, options Options) Outcome {
 		return runtimeFailure(closeErr)
 	}
 	return outcome
+}
+
+func runStreamJSON(ctx context.Context, options Options, resources *chatResources) Outcome {
+	input, inputOK := options.Input.(io.ReadCloser)
+	outputCloser, outputOK := options.Output.(io.Closer)
+	if !inputOK || !outputOK || resources == nil || resources.runtime == nil {
+		return runtimeFailure(fault.New(fault.CodeTurnFailed, "stream transport is not configured"))
+	}
+	loop, err := chatRuntime.NewAgentLoop(resources.runtime, chatRuntime.DefaultAgentLoopConfig())
+	if err != nil {
+		return runtimeFailure(err)
+	}
+	runner, err := headless.NewStreamRunner(loop, headless.StreamRunConfig{
+		SessionID: resources.identity.SessionID, ThreadID: resources.identity.ThreadID,
+		Resumed: resources.resumed, Input: input, Output: options.Output, OutputCloser: outputCloser,
+	})
+	if err != nil {
+		return runtimeFailure(fault.New(fault.CodeTurnFailed, "stream runner is not configured"))
+	}
+	result, escalationErr := runStreamWithEscalation(ctx, runner, resources, shutdownTimeout)
+	if escalationErr != nil {
+		return runtimeFailure(escalationErr)
+	}
+	return outcomeFromHeadless(result)
+}
+
+func runStreamWithEscalation(
+	ctx context.Context,
+	runner *headless.StreamRunner,
+	resources *chatResources,
+	timeout time.Duration,
+) (headless.Result, error) {
+	resultDone := make(chan headless.Result, 1)
+	go func() { resultDone <- runner.Run(ctx) }()
+	select {
+	case result := <-resultDone:
+		return result, nil
+	case <-ctx.Done():
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case result := <-resultDone:
+		return result, nil
+	case <-timer.C:
+		closeErr := resources.forceCloseProvider()
+		result := <-resultDone
+		return result, closeErr
+	}
 }
 
 func runTUI(ctx context.Context, options Options, resources *chatResources) Outcome {
@@ -267,7 +333,7 @@ func openChatResourcesWithHooks(
 	return &chatResources{
 		identity: assembled.identity,
 		provider: providerInstance, service: service, writer: assembled.writer,
-		session: chatRuntime.NewChatSession(runtimeInstance), history: assembled.history,
+		runtime: runtimeInstance, session: chatRuntime.NewChatSession(runtimeInstance), history: assembled.history,
 		repair: assembled.repair, resumed: resumeThreadID != "",
 	}, nil
 }
@@ -389,7 +455,7 @@ func (resources *chatResources) close(ctx context.Context) error {
 		return nil
 	}
 	var shutdownErr error
-	providerClosed := false
+	providerClosed := resources.providerClosed
 	if resources.session != nil {
 		shutdownErr = resources.session.Shutdown(ctx)
 		if shutdownErr != nil {
@@ -418,4 +484,12 @@ func (resources *chatResources) close(ctx context.Context) error {
 		providerErr = resources.provider.Close()
 	}
 	return errors.Join(shutdownErr, writerErr, repositoryErr, providerErr)
+}
+
+func (resources *chatResources) forceCloseProvider() error {
+	if resources == nil || resources.provider == nil || resources.providerClosed {
+		return nil
+	}
+	resources.providerClosed = true
+	return resources.provider.Close()
 }

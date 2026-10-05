@@ -16,7 +16,6 @@ import (
 const modulePath = "easycode"
 
 var placeholderFiles = map[string]string{
-	"internal/protocol/command.go":        "P2",
 	"internal/protocol/event.go":          "P3",
 	"internal/domain/types.go":            "P3",
 	"internal/tool/tool.go":               "P3",
@@ -82,6 +81,36 @@ func TestCoreExportedAPIsRejectDynamicTypes(t *testing.T) {
 			continue
 		}
 		violations = append(violations, exportedDynamicTypeViolations(repository.packages[packagePath])...)
+	}
+	assertNoViolations(t, violations)
+}
+
+func TestProtocolConstructorsDoNotStartGoroutinesOrAccessIO(t *testing.T) {
+	repository := loadRepositorySource(t)
+	current := repository.packages["easycode/internal/protocol"]
+	if current == nil {
+		t.Fatal("protocol 包不存在")
+	}
+	var violations []string
+	for relative, file := range current.files {
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || !strings.HasPrefix(function.Name.Name, "New") || function.Body == nil {
+				continue
+			}
+			ast.Inspect(function.Body, func(node ast.Node) bool {
+				switch typed := node.(type) {
+				case *ast.GoStmt:
+					violations = append(violations, relative+":"+function.Name.Name+" 启动 goroutine")
+				case *ast.SelectorExpr:
+					identifier, ok := typed.X.(*ast.Ident)
+					if ok && (identifier.Name == "os" || identifier.Name == "net" || identifier.Name == "http") {
+						violations = append(violations, relative+":"+function.Name.Name+" 访问 I/O 包 "+identifier.Name)
+					}
+				}
+				return true
+			})
+		}
 	}
 	assertNoViolations(t, violations)
 }

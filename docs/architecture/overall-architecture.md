@@ -94,7 +94,7 @@ EasyCode 是一个本地优先的 coding agent。产品体验主要参考 Claude
                               |
                        SessionService
                               |
-                    ChatSession / TurnRuntime
+               ChatSession / AgentLoop / TurnRuntime
                      /        |          \
                     /         |           \
        Anthropic Kernel   RuntimeEvent   OpenAI Kernel
@@ -119,7 +119,7 @@ cmd/
   easycode/                 可执行程序入口
 internal/
   app/                      依赖装配和应用生命周期
-  headless/                 prompt 解析、最终文本与 JSONL v1 投影
+  headless/                 prompt 解析、一次性/流式 JSONL v1 投影与 stream transport
   domain/                   核心 ID、值对象、错误和领域语义
   protocol/                 进程内 Command 与 RuntimeEvent
   runtime/                  session、turn loop、队列、取消和恢复协调
@@ -441,11 +441,19 @@ TurnFailed
 
 ### 7.2 Headless JSONL v1
 
-`internal/headless` 与 TUI 平级，只依赖最小 `ChatSession` 接口。它不会直接序列化 RuntimeEvent，而是严格校验 version、身份、顺序和 typed payload 后，单向投影为 `thread.started`、`turn.started`、`assistant.text.delta`、`turn.completed`、`turn.failed` 或 stream-level `error`。外部 `turn.completed` v1 的 `usage` 为 required，使用 headless 自有强类型 DTO，不泄露 Provider raw 字段。stdout 由单 writer 顺序写入，每行一个完整 JSON object；日志和人类诊断不得进入 JSON stdout。
+`internal/headless` 与 TUI 平级。一次性模式只依赖最小 `ChatSession` 接口；流式模式只依赖最小 `StreamControlLoop` 接口。两者都不会直接序列化 RuntimeEvent，而是严格校验 version、身份、顺序和 typed payload 后，单向投影为各自 sealed wire DTO。一次性 v1 保持 `thread.started`、`turn.started`、`assistant.text.delta`、`turn.completed`、`turn.failed` 与 stream-level `error`；`--json --input-format stream-json` 另行增加 `control.response`、携带 `input_id` 的 turn 事件和 `input.discarded`。外部 `turn.completed` v1 的 `usage` 为 required，使用 headless 自有强类型 DTO，不泄露 Provider raw 字段。stdout 由单 writer 顺序写入，每行一个完整 JSON object；日志和人类诊断不得进入 JSON stdout。
 
 `--print` 在内存中聚合文本，仅在 Runtime 已 durable 发布 `turn_completed` 且事件流正常闭合后输出最终值。`--json` 可实时输出 delta，但同样不从 channel close 或已见文本推断成功。取消、短写和断管会触发幂等 Interrupt 并 drain Runtime；已 durable 完成后的输出失败只改变进程交付状态，不回滚 Session。
 
-headless prompt 在应用装配前解析：无位置参数或显式 `-` 时读取 stdin；显式 prompt 与非终端 stdin 同时存在时使用稳定 `<stdin>` 边界追加；组合内容必须是合法 UTF-8、非空且不超过 4 MiB。`--continue` 会在当前 cwd、Provider family/wire 和 model 完全匹配时恢复最近 root Session，并与 `--resume` 互斥。当前仍不支持 stdin JSON、双向控制、同进程多 turn、独立 usage 更新或 reasoning/tool 事件。
+一次性 headless prompt 在应用装配前解析：无位置参数或显式 `-` 时读取 stdin；显式 prompt 与非终端 stdin 同时存在时使用稳定 `<stdin>` 边界追加；组合内容必须是合法 UTF-8、非空且不超过 4 MiB。流式模式只由 `--json --input-format stream-json` 显式启用，要求可关闭的非终端 stdin/stdout transport，以不超过 32 MiB 的单行 NDJSON 接收 `input.submit`、定向 `turn.interrupt` 和 `session.shutdown`。`--continue` 会在当前 cwd、Provider family/wire 和 model 完全匹配时恢复最近 root Session，并与 `--resume` 互斥。当前仍不支持独立 usage 更新或 reasoning/tool 事件。
+
+### 7.3 AgentLoop 输入控制
+
+`runtime.AgentLoop` 位于单 turn `Runtime.RunTurn` 之上，是 Session 实例级的唯一 admission owner。空闲 submit 得到 `starting`，活动期间的 submit 进入同时受条数和 UTF-8 字节约束的 FIFO，并得到 `queued`；每条输入仍独立形成一个 durable turn，绝不拼接、并行或注入当前 Provider stream。command result 只确认进程内 obligation，只有关联的 `turn.started` 表示 `turn_started(v1)` 已成功 `Sync`。外部 request identity、queue 状态与 control metadata 都不写 Session，也不进入 Provider request/cache fingerprint。
+
+queue 是有界、非 durable 的进程内状态。stdin EOF 只停止新 admission，并按 FIFO 排空已经接受的输入；显式 shutdown 则停止 admission、取消活动 turn、为所有尚未开始的输入发布 `session_shutdown` discard，并等待 Runtime durable terminal 与 worker cleanup。interrupt 必须携带当前活动 `turn_id`，过期目标不得误取消下一 turn。普通 Provider failure 后 loop 可以继续；journal poisoned 或 durable 结果不确定时停止所有后续 Provider 副作用。
+
+本能力是跨 turn 的 follow-up control loop，不是 same-turn steer。当前一个 turn 只有一次 Provider sampling，没有 tool result 边界可安全插入用户输入；真正的 steer 仍留待 P3 Tool Loop 定义 sampling safe point。TUI 在本次变更中继续使用 `ChatSession`，待需要 queue 交互时再迁移到同一控制器并删除重复 facade。
 
 ### 7.3 Provider StreamReducer
 
