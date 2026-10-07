@@ -3,6 +3,7 @@ package protocol
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"easycode/internal/codec"
 	"easycode/internal/domain"
@@ -83,6 +84,50 @@ func TestPayloadlessTurnStartedIsTypedAndStrict(t *testing.T) {
 	started.Payload = []byte(`{}`)
 	if err := ValidateTurnStarted(started); err == nil {
 		t.Fatal("expected turn started payload error")
+	}
+}
+
+func TestEventValidateDispatchesKnownKinds(t *testing.T) {
+	t.Parallel()
+	mustBuild := func(event Event, err error) Event {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return event
+	}
+	events := []Event{
+		NewTurnStarted(),
+		mustBuild(NewAssistantTextDelta("hello")),
+		mustBuild(NewTurnCompleted(protocolTestUsage(t))),
+		mustBuild(NewTurnFailed("turn_failed", "turn failed", false)),
+	}
+	for _, event := range events {
+		if err := event.Validate(); err != nil {
+			t.Fatalf("Validate(%s): %v", event.Kind, err)
+		}
+	}
+}
+
+func TestEventValidateRejectsInvalidEnvelopeAndPayload(t *testing.T) {
+	t.Parallel()
+	delta, err := NewAssistantTextDelta("hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixtures := []Event{
+		{},
+		{Version: CurrentVersion, Kind: "unknown"},
+		func() Event { event := delta; event.Version++; return event }(),
+		func() Event { event := delta; event.Payload = []byte(`{"text":""}`); return event }(),
+		func() Event { event := delta; event.Timestamp = time.Time{}; return event }(),
+		func() Event { event := delta; event.SessionID = "invalid"; return event }(),
+		func() Event { event := delta; event.ItemID = "reserved"; return event }(),
+	}
+	for _, event := range fixtures {
+		if err := event.Validate(); err == nil {
+			t.Fatalf("Validate(%#v) unexpectedly succeeded", event)
+		}
 	}
 }
 

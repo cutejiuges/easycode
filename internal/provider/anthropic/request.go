@@ -1,6 +1,11 @@
 package anthropic
 
-import "easycode/internal/codec"
+import (
+	"fmt"
+
+	"easycode/internal/codec"
+	"easycode/internal/domain"
+)
 
 const maxMessagesRequestBytes = 16 << 20
 
@@ -16,9 +21,17 @@ func buildMessagesRequest(
 	model string,
 	maxTokens int,
 	history []nativeTurn,
+	projectInstructions *domain.ProjectInstructionsSnapshot,
 	user nativeMessage,
 ) messagesRequest {
-	messages := make([]nativeMessage, 0, len(history)*2+1)
+	messageCount := len(history)*2 + 1
+	if projectInstructions != nil && projectInstructions.HasDocuments() {
+		messageCount++
+	}
+	messages := make([]nativeMessage, 0, messageCount)
+	if projectInstructions != nil && projectInstructions.HasDocuments() {
+		messages = append(messages, newUserMessage(projectInstructions.RenderedText()))
+	}
 	for _, turn := range history {
 		messages = append(messages, turn.User.clone(), turn.Assistant.clone())
 	}
@@ -35,10 +48,16 @@ func compileMessagesRequest(
 	model string,
 	maxTokens int,
 	history []nativeTurn,
+	projectInstructions *domain.ProjectInstructionsSnapshot,
 	user nativeMessage,
 ) (codec.CanonicalJSON, error) {
+	if projectInstructions != nil {
+		if err := projectInstructions.Validate(); err != nil {
+			return codec.CanonicalJSON{}, fmt.Errorf("project instructions snapshot is invalid: %w", err)
+		}
+	}
 	return codec.MarshalCanonical(
-		buildMessagesRequest(model, maxTokens, history, user),
+		buildMessagesRequest(model, maxTokens, history, projectInstructions, user),
 		maxMessagesRequestBytes,
 	)
 }

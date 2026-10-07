@@ -86,15 +86,15 @@ func completeTurnAndProject(t *testing.T, conversation provider.Conversation, te
 	}
 	terminalCount := 0
 	for event := range stream {
-		if event.Kind.Terminal() {
+		if event.Kind().Terminal() {
 			terminalCount++
-			if event.Kind != provider.StreamEventCompleted || event.Err != nil {
+			if event.Kind() != provider.StreamEventCompleted || event.Error() != nil {
 				t.Fatalf("turn terminal: %#v", event)
 			}
-			if event.Prepared == nil {
+			if event.PreparedSample() == nil {
 				t.Fatal("completed terminal is missing prepared sample")
 			}
-			if err := event.Prepared.Finalize(); err != nil {
+			if err := event.PreparedSample().Finalize(); err != nil {
 				t.Fatalf("finalize sample: %v", err)
 			}
 		}

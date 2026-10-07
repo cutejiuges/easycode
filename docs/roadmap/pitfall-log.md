@@ -208,6 +208,21 @@
 - 关联 ADR/Issue/PR：OpenSpec `harden-architecture-contract-compliance`；未改变 wire 能力范围，不新增 ADR。
 - 后续行动：新增 Responses event 时先扩展同一状态机和 fixture，不绕过 identity 校验。
 
+### [P1][2026-10-07] 消费端协议失败不能提前放弃 Provider channel
+
+- 状态：已解决双 Provider 文本流生命周期
+- 影响版本或提交：OpenSpec `harden-provider-stream-lifecycle`
+- 现象：Runtime 收到零值事件、重复 terminal 或 terminal 后事件时立即返回，会停止读取有界输出 channel，使 Provider producer 阻塞在后续发送，Conversation 长期保持 active，并污染下一 turn 与 shutdown。
+- 触发条件：Provider 或测试 fake 违反唯一 terminal 契约，或调用取消与 terminal/transport 清理并发发生。
+- 根因：terminal 既被当作业务结果，又被误当作 producer 已退出的完成信号；消费 owner 没有在提前失败后继续承担排空职责。
+- 架构影响：`StreamEvent` 改为五类封闭 typed constructor 与只读 accessor；Runtime 为每次 stream 派生 context，验证并保留首错，取消后同步排空到 producer 关闭。Provider 创建者仍唯一关闭 channel，channel close 才表示 transport、active 状态和 goroutine 清理完成。
+- 缓存影响：不改变 request bytes、native history、Session records、usage 或 fingerprint；失败 sample 不 finalize，也不进入下一请求。
+- 修复方案：首次消费协议错误立即取消派生 context，停止向宿主转发但继续读取；terminal 后任何事件都转为 `stream_protocol_error`，等待 channel close 后再 durable 写入唯一失败边界。AgentLoop 和 shutdown 复用同一完成信号，不增加 watchdog 或无 owner waiter。
+- 未采用方案及原因：不启动后台 drainer，因为这会让 RunTurn 在清理未完成时返回；不让消费方关闭 Provider channel，因为 channel 仍由 producer 创建并拥有；不增加超时 goroutine，因为超时返回不能转移资源 ownership。
+- 回归测试：`internal/provider/provider_test.go`、双 Provider `provider_test.go`/`integration_test.go`、`internal/runtime/runtime_test.go`、`internal/runtime/agent_loop_test.go`、`internal/headless/stream_runner_test.go`。
+- 关联 ADR/Issue/PR：OpenSpec `harden-provider-stream-lifecycle`；沿用现有 Provider/Runtime ownership，不新增 ADR。
+- 后续行动：P3 Tool Loop 的多 sample stream 必须复用唯一 terminal、派生 context与同步排空契约，不得为工具边界引入第二个 channel owner。
+
 ## 5. P2 Session 与 Headless Agent Loop
 
 ### [P2][2026-09-28] JSONL 不能只复制 Claude Code 或 Codex 的表面报文
@@ -389,6 +404,21 @@
 - 回归测试：`internal/domain/context_estimate_test.go`、`internal/context/estimate/*_test.go`、`internal/context/planning_test.go`、双 Provider `footprint_test.go`/restore tests、`internal/runtime/runtime_test.go`、`internal/config/config_test.go` 和 `internal/app/resume_e2e_test.go`。
 - 关联 ADR/Issue/PR：ADR-0002；OpenSpec `add-deterministic-context-planning`，不新增 ADR。
 - 后续行动：精确 tokenizer、远程计数、项目指令、tool/skill sources、实际 Provider cache policy、compaction 和 context UI 必须分别通过后续 change 接入现有来源/方法契约。
+
+### [P2][2026-10-07] 项目指令发现与会话恢复必须是两个独立事实边界
+
+- 状态：已解决层级项目指令切片
+- 影响版本或提交：OpenSpec `add-hierarchical-project-instructions`
+- 现象：若 resume 从 Session `creation_cwd` 重读旧规则，或把项目指令提交为普通 user history，新进程会使用过期上下文，连续轮次还会重复叠加规则并污染 native history。
+- 触发条件：项目文件在进程运行期间变化、从不同绝对目录恢复同一 thread，或 RequestCompiler 与 finalizer 共用同一个 user item。
+- 根因：启动环境上下文、Provider-native 对话事实和 Session 恢复事实具有不同生命周期；把三者合并会让热更新、缓存 revision 和历史重放互相污染。
+- 架构影响：应用在 Session/Catalog/Provider 打开前只发现一次不可变快照；Runtime 构造期深拷贝并覆盖宿主逐轮附着值；Provider RequestCompiler 单独生成临时 context，consumer/finalizer 只持有真实 user item。
+- 缓存影响：快照 canonical bytes 只包含 renderer/schema revision、项目根相对来源、正文、截断状态和预算；mtime、inode、绝对 cwd 与 Session identity 不参与 `project_stable` fingerprint。空快照不改变既有请求 bytes。
+- 修复方案：Darwin/Linux 使用目录 fd、`openat`/`fstatat`、`O_NOFOLLOW` 和打开后 `fstat` 绑定检查与读取；拒绝 symlink/特殊文件/非法 UTF-8，按 root-to-cwd 顺序在包含 framing 的默认 32 KiB 总预算内截断。Loader 与领域快照共享 4 MiB 硬上限，极大参数在读取和预分配前拒绝；canonical bytes 统一由 `internal/codec` 生成。resume 使用当前启动目录重新发现，既有 journal 和 native commits 保持不变。
+- 未采用方案及原因：不采用 `Lstat` 后按路径 `ReadFile`，因为存在 TOCTOU；不采用 lossy UTF-8 或跟随 symlink，避免隐藏来源变化；不把快照写入 Session，因为它不是对话事实；不实现文件 watcher，避免活动会话中途改变请求前缀。
+- 回归测试：`internal/context/projectinstructions/*_test.go`、`internal/domain/project_instructions_test.go`、`internal/context/planning_test.go`、双 Provider request/integration/restore tests、`internal/runtime/runtime_test.go`、`internal/app/project_instructions_test.go` 和双 Provider app e2e。
+- 关联 ADR/Issue/PR：ADR-0002、ADR-0003；OpenSpec `add-hierarchical-project-instructions`，不新增长期 ADR。
+- 后续行动：全局用户指令、includes、`.claude/rules`、权限 world state 与 tool/skill context 需独立 change，并继续保持来源、生命周期与缓存稳定性正交。
 
 重点关注：JSONL 尾部损坏、事件顺序、取消时 flush、SQLite 重建和 native history 恢复。
 

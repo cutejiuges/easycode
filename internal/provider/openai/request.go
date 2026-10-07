@@ -1,6 +1,11 @@
 package openai
 
-import "easycode/internal/codec"
+import (
+	"fmt"
+
+	"easycode/internal/codec"
+	"easycode/internal/domain"
+)
 
 const maxResponsesRequestBytes = 16 << 20
 
@@ -13,12 +18,23 @@ type responsesRequest struct {
 	Include []string     `json:"include"`
 }
 
-func buildResponsesRequest(model string, history []nativeTurn, user NativeItem) responsesRequest {
+func buildResponsesRequest(
+	model string,
+	history []nativeTurn,
+	projectInstructions *domain.ProjectInstructionsSnapshot,
+	user NativeItem,
+) responsesRequest {
 	itemCount := 1
+	if projectInstructions != nil && projectInstructions.HasDocuments() {
+		itemCount++
+	}
 	for _, turn := range history {
 		itemCount += 1 + len(turn.Outputs)
 	}
 	input := make([]NativeItem, 0, itemCount)
+	if projectInstructions != nil && projectInstructions.HasDocuments() {
+		input = append(input, NewUserItem(projectInstructions.RenderedText()))
+	}
 	for _, turn := range history {
 		input = append(input, turn.User.clone())
 		for _, item := range turn.Outputs {
@@ -35,6 +51,19 @@ func buildResponsesRequest(model string, history []nativeTurn, user NativeItem) 
 	}
 }
 
-func compileResponsesRequest(model string, history []nativeTurn, user NativeItem) (codec.CanonicalJSON, error) {
-	return codec.MarshalCanonical(buildResponsesRequest(model, history, user), maxResponsesRequestBytes)
+func compileResponsesRequest(
+	model string,
+	history []nativeTurn,
+	projectInstructions *domain.ProjectInstructionsSnapshot,
+	user NativeItem,
+) (codec.CanonicalJSON, error) {
+	if projectInstructions != nil {
+		if err := projectInstructions.Validate(); err != nil {
+			return codec.CanonicalJSON{}, fmt.Errorf("project instructions snapshot is invalid: %w", err)
+		}
+	}
+	return codec.MarshalCanonical(
+		buildResponsesRequest(model, history, projectInstructions, user),
+		maxResponsesRequestBytes,
+	)
 }

@@ -8,24 +8,33 @@
 
 ### Requirement: Turn lifecycle requires an explicit provider terminal
 
-Runtime SHALL 在请求 provider 前产生一次 `turn_started`。Runtime MUST 仅在收到 provider 的显式 completed 终态后产生一次 `turn_completed`；provider channel 关闭本身 MUST NOT 被解释为成功。
+Runtime SHALL 在请求 provider 前产生一次 `turn_started`。Runtime MUST 为每次 Provider stream 创建派生 context，逐项验证事件，记录唯一 terminal，并持续消费直到生产者关闭 channel；只有 channel 关闭且此前恰好收到一个合法 completed terminal，Runtime 才能产生一次 `turn_completed`。provider channel 关闭本身 MUST NOT 被解释为成功。
+
+零值或非法事件、channel 在 terminal 前关闭、多个 terminal，以及 terminal 后任何事件均 MUST 作为 stream protocol failure。Runtime MUST 在首次发现协议错误时立即取消派生 context，保留首个协议错误作为最终结果，停止转发后续语义事件，并同步排空 channel 直到生产者清理完成；后续 terminal 不得覆盖首个协议错误或恢复成功。
 
 #### Scenario: Complete a successful turn
 
-- **WHEN** provider 产生文本事件并最终产生 completed 终态
+- **WHEN** provider 产生文本事件和唯一合法 completed terminal，随后完成清理并关闭 channel
 - **THEN** Runtime 按顺序输出 `turn_started`、中间语义事件和一次 `turn_completed`
+- **THEN** `turn_completed` 只在 channel 关闭证明生产者退出后发布
 
 #### Scenario: Fail when stream closes before terminal
 
-- **WHEN** provider channel 在 completed 或 failed 终态之前关闭
+- **WHEN** provider channel 在 completed、failed 或 cancelled 终态之前关闭
 - **THEN** Runtime 输出一次 `turn_failed`
 - **THEN** RunTurn 返回 `stream_protocol_error`
 
 #### Scenario: Propagate provider failure
 
-- **WHEN** provider 产生 failed 终态
+- **WHEN** provider 产生唯一合法 failed 终态并随后关闭 channel
 - **THEN** Runtime 输出一次 `turn_failed` 并返回对应错误
 - **THEN** Runtime 不再输出 `turn_completed`
+
+#### Scenario: Drain after an invalid stream event
+
+- **WHEN** provider 发布非法事件、重复 terminal 或 terminal 后事件
+- **THEN** Runtime 立即取消该 stream 的派生 context并停止转发新的语义事件
+- **THEN** Runtime 排空至 channel 关闭后输出一次 `turn_failed`，并返回首个 `stream_protocol_error`
 
 ### Requirement: Assistant text uses a typed semantic payload
 
@@ -44,19 +53,27 @@ RuntimeEvent SHALL 为 assistant 文本增量定义稳定的强类型 payload，
 
 ### Requirement: Cancellation has a single observable outcome
 
-Runtime SHALL 将调用 context 的取消传播到 provider stream，并等待该 stream 的清理路径退出。用户取消 MUST 产生一次 `turn_failed` 或专用 cancellation 语义，但 MUST NOT 同时产生 completed；对外错误 SHALL 可由 `errors.Is(..., context.Canceled)` 或稳定错误码识别。
+Runtime SHALL 将调用 context 的取消传播到每次 Provider stream 的派生 context，并等待该 stream 的输出 channel 关闭。用户取消、消费端协议错误或其他需要提前停止消费的失败 MUST 先请求取消，再由同一消费 owner 同步排空 channel 直到 Provider 清理路径退出；Runtime MUST NOT 通过停止读取遗留阻塞的生产 goroutine。
+
+用户取消 MUST 产生一次 `turn_failed` 或专用 cancellation 语义，但 MUST NOT 同时产生 completed；对外错误 SHALL 可由 `errors.Is(..., context.Canceled)` 或稳定错误码识别。取消与 Provider terminal 竞态时，Runtime MUST 根据已验证的唯一 terminal、调用 context 和首个消费错误得出一个确定结果，并只发布一个 durable terminal。
 
 #### Scenario: Cancel an active turn
 
 - **WHEN** 用户在 provider stream 活跃时取消 turn context
-- **THEN** Runtime 停止继续转发新的文本增量
-- **THEN** Runtime 产生一次可识别的取消结果并等待 provider 清理完成
+- **THEN** Runtime 停止继续转发新的文本增量，取消派生 stream context并排空 channel
+- **THEN** Runtime 在 Provider 清理完成后产生一次可识别的取消结果
 
 #### Scenario: Cancel races with provider completion
 
 - **WHEN** context 取消与 provider completed 几乎同时发生
-- **THEN** Runtime 只发布一个最终终态
+- **THEN** Runtime 消费到 channel 关闭并只发布一个最终终态
 - **THEN** 不会同时发布 `turn_completed` 和 `turn_failed`
+
+#### Scenario: Protocol failure cancels the producer
+
+- **WHEN** Runtime 在消费中发现非法事件且 Provider 正等待继续发送
+- **THEN** Runtime 取消派生 context以解除生产者发送或 transport 阻塞，并继续读取直到 channel 关闭
+- **THEN** RunTurn 返回前生产 goroutine 已退出，下一 turn 不会收到残留事件
 
 ### Requirement: Only one active turn mutates a conversation
 
@@ -199,36 +216,38 @@ Runtime SHALL 在构造 Session drafts 前同时复制并重新验证 prepared s
 
 ### Requirement: Runtime plans context before Provider side effects
 
-Runtime SHALL 在当前 `turn_started` 已 durable append 并发布、但调用 Provider stream 之前，以当前 Conversation 已提交历史和本轮输入生成上下文计划。规划失败或预算状态为明确 `over_limit` 时，Runtime MUST durable append 当前 turn 的唯一失败边界并发布既有 `turn_failed`，且 MUST NOT 建立 Provider stream 或修改 Provider native history。
+Runtime SHALL 在当前 `turn_started` 已 durable append 并发布、但调用 Provider stream 之前，以进程启动时的不可变项目指令快照、当前 Conversation 已提交历史和本轮输入生成上下文计划。Runtime MUST 将同一项目指令快照与本轮输入分别传给 Provider 请求编译，且不得从 cache segment、语义历史或渲染后的诊断信息反向重建项目指令。
 
-明确超限 SHALL 返回稳定英文错误码 `context_limit_exceeded`，错误消息只可包含预算数值和估算状态，不得包含用户输入、历史正文、opaque Provider data、API key 或其他 secret。`not_enforced`、`within_limit` 和 `indeterminate` 预算状态 SHALL 允许既有 Provider 生命周期继续；本变更不得为计划新增 RuntimeEvent kind、Session record 或 headless JSONL 字段。
+规划失败或预算状态为明确 `over_limit` 时，Runtime MUST durable append 当前 turn 的唯一失败边界并发布既有 `turn_failed`，且 MUST NOT 建立 Provider stream 或修改 Provider native history。明确超限 SHALL 返回稳定英文错误码 `context_limit_exceeded`，错误消息只可包含预算数值和估算状态，不得包含用户输入、项目指令、来源绝对路径、历史正文、opaque Provider data、API key 或其他 secret。
+
+`not_enforced`、`within_limit` 和 `indeterminate` 预算状态 SHALL 允许既有 Provider 生命周期继续；本变更不得为项目指令或计划新增 RuntimeEvent kind、Session record 或 headless JSONL 字段。项目指令注入只属于请求编译，不得被 Runtime 当作新的用户 turn 或 durable fact。
 
 #### Scenario: Stop a confirmed over-limit turn before networking
 
-- **WHEN** `turn_started` 已 durable 且上下文计划得到 `over_limit`
+- **WHEN** `turn_started` 已 durable 且包含项目指令的上下文计划得到 `over_limit`
 - **THEN** Runtime durable 记录一次失败边界并发布一次携带 `context_limit_exceeded` 的 `turn_failed`
 - **THEN** Provider 不收到 Stream 调用且 Conversation native history 保持不变
 
 #### Scenario: Continue when no window is configured
 
 - **WHEN** 计划完整生成但预算状态为 `not_enforced`
-- **THEN** Runtime 使用既有本轮输入启动 Provider stream
-- **THEN** 请求继续由 Provider 的原生历史编译，而不是由上下文计划或语义视图重建
+- **THEN** Runtime 使用同一项目指令快照和既有本轮输入启动 Provider stream
+- **THEN** 请求继续由 Provider 原生历史编译，而不是由上下文计划或语义视图重建
 
 #### Scenario: Continue with an indeterminate estimate
 
 - **WHEN** 用户配置了窗口但计划因为必需估算 unknown 而标识 `indeterminate`
 - **THEN** Runtime 不把不确定性转换为 `context_limit_exceeded`
-- **THEN** Provider 生命周期按既有规则继续
+- **THEN** Provider 生命周期按既有规则继续并使用同一项目指令快照
 
 #### Scenario: Close a planning failure durably
 
-- **WHEN** 已 durable 开始的 turn 因非法 footprint、family 不匹配或计划构造错误而失败
+- **WHEN** 已 durable 开始的 turn 因非法项目指令快照、非法 footprint、family 不匹配或计划构造错误而失败
 - **THEN** Runtime durable 记录唯一 `turn_failed` 边界且不建立 Provider stream
 - **THEN** Session append 失败仍遵守既有 poisoned journal 语义
 
 #### Scenario: Keep public event and journal vocabularies unchanged
 
-- **WHEN** 任一计划结果完成或失败
+- **WHEN** 任一含项目指令的计划结果完成或失败
 - **THEN** Runtime 只使用既有 `turn_started`、`turn_failed` 及正常 Provider 生命周期事件
-- **THEN** journal 不写入 context plan、prompt 正文或新的 record kind
+- **THEN** journal 不写入 context plan、项目指令、prompt 正文或新的 record kind

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"easycode/internal/codec"
 	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
 	"easycode/internal/provider"
@@ -76,11 +77,12 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 	restoredView.Turns[0].UserText = "mutated projection"
 
 	next := NewUserItem("third")
-	uninterruptedRequest, err := compileResponsesRequest(instance.config.Model, uninterrupted.historySnapshot(), next)
+	projectInstructions := testOpenAIProjectInstructions(t, "AGENTS.md", "same-startup-snapshot")
+	uninterruptedRequest, err := compileResponsesRequest(instance.config.Model, uninterrupted.historySnapshot(), &projectInstructions, next)
 	if err != nil {
 		t.Fatal(err)
 	}
-	restoredRequest, err := compileResponsesRequest(instance.config.Model, restored.historySnapshot(), next)
+	restoredRequest, err := compileResponsesRequest(instance.config.Model, restored.historySnapshot(), &projectInstructions, next)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,9 +99,58 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restoredShape := buildResponsesRequest(instance.config.Model, restored.historySnapshot(), next)
-	if first.Fingerprint() != second.Fingerprint() || len(restoredShape.Input) != 6 || restoredShape.Input[4].Type != "future_item" {
+	restoredShape := buildResponsesRequest(instance.config.Model, restored.historySnapshot(), &projectInstructions, next)
+	if first.Fingerprint() != second.Fingerprint() || len(restoredShape.Input) != 7 ||
+		restoredShape.Input[0].Content[0].Text != projectInstructions.RenderedText() || restoredShape.Input[5].Type != "future_item" {
 		t.Fatalf("fingerprints/order differ: %q %q %#v", first.Fingerprint(), second.Fingerprint(), restoredShape.Input)
+	}
+
+	changedProjectInstructions := testOpenAIProjectInstructions(t, "AGENTS.md", "changed-startup-snapshot")
+	changedRequest, err := compileResponsesRequest(
+		instance.config.Model, restored.historySnapshot(), &changedProjectInstructions, next,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedShape := buildResponsesRequest(
+		instance.config.Model, restored.historySnapshot(), &changedProjectInstructions, next,
+	)
+	if bytes.Equal(changedRequest.Bytes(), restoredRequest.Bytes()) ||
+		!reflect.DeepEqual(changedShape.Input[1:], restoredShape.Input[1:]) ||
+		changedShape.Input[0].Content[0].Text == restoredShape.Input[0].Content[0].Text {
+		t.Fatalf("changed project instructions modified native history: %#v %#v", restoredShape.Input, changedShape.Input)
+	}
+	changedFootprint, err := restored.HistoryFootprint()
+	if err != nil || changedFootprint != restoredFootprint {
+		t.Fatalf("project instruction change modified footprint: %#v, %v", changedFootprint, err)
+	}
+	originalProjectJSON, err := codec.MarshalCanonical(json.RawMessage(projectInstructions.CanonicalJSON()), contextplan.MaxSegmentBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalProjectSegment, err := contextplan.NewSegment(
+		"project_instructions", contextplan.StabilityProjectStable, projectInstructions.Revision(), originalProjectJSON,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedProjectJSON, err := codec.MarshalCanonical(json.RawMessage(changedProjectInstructions.CanonicalJSON()), contextplan.MaxSegmentBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedProjectSegment, err := contextplan.NewSegment(
+		"project_instructions", contextplan.StabilityProjectStable, changedProjectInstructions.Revision(), changedProjectJSON,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if originalProjectSegment.Fingerprint() == changedProjectSegment.Fingerprint() {
+		t.Fatal("changed project instructions did not change the project-stable fingerprint")
+	}
+	for _, commit := range commits {
+		if bytes.Contains(commit.Payload(), []byte("startup-snapshot")) {
+			t.Fatalf("native commit contains project instructions: %s", commit.Payload())
+		}
 	}
 }
 

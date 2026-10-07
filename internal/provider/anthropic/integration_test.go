@@ -76,7 +76,7 @@ func TestConversationUsesNativeHistoryAcrossTwoTurnsAndBaseURLForms(t *testing.T
 			if len(requests) != 2 {
 				t.Fatalf("request count: %d", len(requests))
 			}
-			firstCompiled, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, nil, newUserMessage("first"))
+			firstCompiled, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, nil, nil, newUserMessage("first"))
 			if err != nil {
 				t.Fatalf("compile first expected request: %v", err)
 			}
@@ -87,7 +87,7 @@ func TestConversationUsesNativeHistoryAcrossTwoTurnsAndBaseURLForms(t *testing.T
 					{Type: blockTypeRedactedThinking, RedactedData: "opaque-data"},
 					{Type: blockTypeText, Text: "answer"},
 				}},
-			}}, newUserMessage("second"))
+			}}, nil, newUserMessage("second"))
 			if err != nil {
 				t.Fatalf("compile second expected request: %v", err)
 			}
@@ -126,6 +126,86 @@ func TestConversationUsesNativeHistoryAcrossTwoTurnsAndBaseURLForms(t *testing.T
 				t.Fatalf("assistant block order: %#v", assistant.Content)
 			}
 		})
+	}
+}
+
+func TestConversationKeepsProjectInstructionsOutOfNativeHistory(t *testing.T) {
+	const projectMarker = "project-only-marker"
+	var mu sync.Mutex
+	var requests []messagesRequest
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Errorf("read request: %v", err)
+			return
+		}
+		var decoded messagesRequest
+		if err := codec.Unmarshal(body, &decoded); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		mu.Lock()
+		requests = append(requests, decoded)
+		mu.Unlock()
+		writer.Header().Set("Content-Type", "text/event-stream")
+		writeSuccessfulAnthropicTurn(writer)
+	}))
+	defer server.Close()
+
+	instance, err := New(Config{BaseURL: server.URL, APIKey: secret.New("test-key"), Model: "claude-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeAnthropicProvider(t, instance)
+	conversation := instance.NewConversation().(*Conversation)
+	snapshot := testAnthropicProjectInstructions(t, "AGENTS.md", projectMarker)
+	for _, text := range []string{"first", "second"} {
+		input, attachErr := (provider.TurnInput{Text: text}).WithProjectInstructions(snapshot)
+		if attachErr != nil {
+			t.Fatal(attachErr)
+		}
+		stream, streamErr := conversation.Stream(context.Background(), input)
+		if streamErr != nil {
+			t.Fatal(streamErr)
+		}
+		for event := range stream {
+			if event.Kind() != provider.StreamEventCompleted {
+				continue
+			}
+			envelope, envelopeErr := event.PreparedSample().Envelope()
+			if envelopeErr != nil {
+				t.Fatal(envelopeErr)
+			}
+			if bytes.Contains(envelope.Payload(), []byte(projectMarker)) {
+				t.Fatalf("native commit contains project instructions: %s", envelope.Payload())
+			}
+			if finalizeErr := event.PreparedSample().Finalize(); finalizeErr != nil {
+				t.Fatal(finalizeErr)
+			}
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(requests) != 2 || len(requests[0].Messages) != 2 || len(requests[1].Messages) != 4 {
+		t.Fatalf("request messages: %#v", requests)
+	}
+	for index, request := range requests {
+		encoded, err := codec.MarshalCanonical(request, maxMessagesRequestBytes)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Count(encoded.Bytes(), []byte(projectMarker)) != 1 {
+			t.Fatalf("request %d does not contain exactly one project context: %s", index, encoded.Bytes())
+		}
+	}
+	history := conversation.historySnapshot()
+	projection := conversation.ProjectHistory()
+	if len(history) != 2 || history[0].User.Content[0].Text != "first" || history[1].User.Content[0].Text != "second" {
+		t.Fatalf("native history contains unexpected users: %#v", history)
+	}
+	if len(projection.Turns) != 2 || strings.Contains(projection.Turns[0].UserText, projectMarker) || strings.Contains(projection.Turns[1].UserText, projectMarker) {
+		t.Fatalf("semantic history contains project instructions: %#v", projection)
 	}
 }
 
@@ -169,15 +249,15 @@ func TestConversationProjectionMatchesLiveTextAndHidesActiveTurn(t *testing.T) {
 	terminalCount := 0
 	for event := range stream {
 		liveText += decodeAnthropicLiveText(t, event)
-		if event.Kind.Terminal() {
+		if event.Kind().Terminal() {
 			terminalCount++
-			if event.Kind != provider.StreamEventCompleted {
+			if event.Kind() != provider.StreamEventCompleted {
 				t.Fatalf("terminal: %#v", event)
 			}
-			if event.Prepared == nil {
+			if event.PreparedSample() == nil {
 				t.Fatal("completed terminal is missing prepared sample")
 			}
-			if err := event.Prepared.Finalize(); err != nil {
+			if err := event.PreparedSample().Finalize(); err != nil {
 				t.Fatalf("finalize sample: %v", err)
 			}
 		}
@@ -193,10 +273,10 @@ func TestConversationProjectionMatchesLiveTextAndHidesActiveTurn(t *testing.T) {
 
 func decodeAnthropicLiveText(t *testing.T, event provider.StreamEvent) string {
 	t.Helper()
-	if event.Kind != provider.StreamEventSemantic {
+	if event.Kind() != provider.StreamEventSemantic {
 		return ""
 	}
-	payload, err := protocol.DecodeAssistantTextDelta(event.Event)
+	payload, err := protocol.DecodeAssistantTextDelta(event.Semantic())
 	if err != nil {
 		t.Fatalf("decode assistant text delta: %v", err)
 	}
@@ -227,26 +307,37 @@ func runCompletedAnthropicTurn(t *testing.T, conversation provider.Conversation,
 	}
 	var events []provider.StreamEvent
 	terminalCount := 0
+	terminalSeen := false
 	for event := range stream {
+		if err := event.Validate(); err != nil {
+			t.Fatalf("turn %q invalid event: %v", text, err)
+		}
+		if terminalSeen {
+			t.Fatalf("turn %q event after terminal: %s", text, event.Kind())
+		}
 		events = append(events, event)
-		if event.Kind.Terminal() {
+		if event.Kind().Terminal() {
 			terminalCount++
-			if event.Kind != provider.StreamEventCompleted || event.Err != nil {
+			terminalSeen = true
+			if event.Kind() != provider.StreamEventCompleted || event.Error() != nil {
 				t.Fatalf("turn %q terminal: %#v", text, event)
 			}
-			if event.Prepared == nil {
+			if event.PreparedSample() == nil {
 				t.Fatalf("turn %q completed without prepared sample", text)
 			}
 			if got := len(conversation.ProjectHistory().Turns); got != committedBefore {
 				t.Fatalf("turn %q committed before finalization: %d", text, got)
 			}
-			if err := event.Prepared.Finalize(); err != nil {
+			if err := event.PreparedSample().Finalize(); err != nil {
 				t.Fatalf("turn %q finalize: %v", text, err)
 			}
 		}
 	}
 	if terminalCount != 1 {
 		t.Fatalf("turn %q terminal count: %d", text, terminalCount)
+	}
+	if concrete, ok := conversation.(*Conversation); ok && concrete.active.Load() {
+		t.Fatalf("turn %q channel closed before conversation became inactive", text)
 	}
 	if got := len(conversation.ProjectHistory().Turns); got != committedBefore+1 {
 		t.Fatalf("turn %q committed turns: %d", text, got)

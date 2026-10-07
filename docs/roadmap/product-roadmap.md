@@ -1,7 +1,7 @@
 # EasyCode 产品与工程 Roadmap
 
 > 状态：持续演进（P2 进行中）
-> 更新时间：2026-09-30
+> 更新时间：2026-10-07
 > 依赖设计：[`../architecture/overall-architecture.md`](../architecture/overall-architecture.md)
 
 ## 1. Roadmap 使用方式
@@ -140,8 +140,9 @@ make verify
 - Transport spike 已确认采用 Resty raw body + 内部 SSE frame parser；`SSESource` 的默认 event buffer 和 frame/lifecycle 语义不作为项目契约。
 - 已完成 OpenAI Responses text-only request、stream reducer、会话级 native history、事务提交、显式 terminal、两种 API prefix 的双轮回归，以及最基础的单行 TUI Chat。
 - 已完成 Anthropic Messages text-only request、indexed content-block reducer、会话级 native history、thinking/signature/redacted thinking 无损回放、显式 `message_stop` terminal、两种 API prefix 的双轮回归，并接入同一基础 TUI Chat。
+- 已完成双 Provider 共享 `StreamEvent` 的封闭构造与纯内存验证；Runtime 在消费端协议错误时取消派生 context并同步排空到 producer 关闭，AgentLoop 只在前一 stream 清理完成后启动下一 turn。
 - 已完成双 Provider 的 committed-only 文本 `HistoryProjector`：投影保留 turn 边界和可见文本，但不暴露 thinking/signature、redacted thinking、reasoning summary、encrypted content、phase、usage 或未知扩展，也不参与后续请求编译。
-- Anthropic 当前声明 streaming 与 thinking-signature 原生保留能力，OpenAI 当前声明 streaming 与 encrypted reasoning 原生保留能力；两者的 completed-sample raw/normalized usage、原生历史 footprint 和本地 token estimator 已在 P2 落地。P2 也已实现文本回合的 JSONL Session、`--resume`、单 turn `--print/--json` 和三来源 ContextPlanner；reasoning/tool projection、tools、完整 CachePlanner、usage 成本/TUI、prompt cache key、`previous_response_id` 和自动重试仍留在对应后续阶段。
+- Anthropic 当前声明 streaming 与 thinking-signature 原生保留能力，OpenAI 当前声明 streaming 与 encrypted reasoning 原生保留能力；两者的 completed-sample raw/normalized usage、原生历史 footprint 和本地 token estimator 已在 P2 落地。P2 也已实现文本回合的 JSONL Session、`--resume`、单 turn `--print/--json` 和带可选项目指令的 ContextPlanner；reasoning/tool projection、tools、完整 CachePlanner、usage 成本/TUI、prompt cache key、`previous_response_id` 和自动重试仍留在对应后续阶段。
 - TUI 只消费 typed RuntimeEvent 和 ChatSession facade；本次不提前实现 Markdown、多行 composer、slash command、diff、permission overlay 或 session picker。
 
 #### OpenAI Responses（首要 Provider）
@@ -204,7 +205,7 @@ make verify
 
 ## 6. P2：Session 与 Headless Agent Loop
 
-### 6.0 当前进度（2026-10-04）
+### 6.0 当前进度（2026-10-07）
 
 已完成文本回合的 append-only JSONL 事实源、sealed typed v1 draft/strict decoder、UUIDv7 定位、跨 Repository/跨进程 exclusive journal lease、macOS/Linux descriptor-relative secure path walker、单 writer/`Sync`、完整 batch、尾部修复、双 Provider opaque native commit、durable-before-memory 两阶段提交及提交前 sample 重验、进程重启恢复、`--resume`、不可变 v1 compatibility fixture 和历史 TUI 投影。双 Provider completed sample 现同时保留 raw usage 与五项三态 normalized usage；成功路径以 `[provider_native_commit(v1), sample_usage(v1), turn_completed(v1)]` 原子 Sync，随后 finalize 并发布携带聚合 usage 的 RuntimeEvent。Provider request 由各自 compiler 生成不可变 canonical JSON，usage 不进入 request 或 cache fingerprint。
 
@@ -212,9 +213,9 @@ make verify
 
 可重建 SQLite Catalog v1 已交付：前台 reconciliation 通过 descriptor-relative journal 枚举、逐条 exclusive lease、Loader/ReplayPlanner/Projector 和短 SQLite transaction 重建最小 thread metadata；缺失、损坏或不兼容的 `state.sqlite` 可从 JSONL 原子重建。`--continue` 只选择当前 cwd、Provider family/wire 与 model 完全匹配的最近 root Session，随后仍由既有 resume 路径重新取得 lease并验证事实源。Catalog 不保存 prompt、response、native payload、API key、base URL 或 Authorization。
 
-确定性上下文规划基线已交付：Runtime 在 durable `turn_started` 与 Provider stream 之间构造 `provider_profile -> committed_history -> current_input`，输出不可变来源、CachePlan、stable-prefix fingerprint、本地 `byte_heuristic_v1` 估算和预算判定。双 Provider 从 committed native history 提供只含 family/revision/method/state/tokens 的 footprint，opaque reasoning 不进入共享视图；语义估算与 native footprint 取覆盖值而不是相加。用户可显式配置 context window、输出预留和安全余量；未配置或估算 unknown 时不硬拒绝，明确超限以 `context_limit_exceeded` 在网络前 durable 失败。
+确定性上下文规划基线已交付：Runtime 在 durable `turn_started` 与 Provider stream 之间构造 `provider_profile -> [project_instructions] -> committed_history -> current_input`，输出不可变来源、CachePlan、stable-prefix fingerprint、本地 `byte_heuristic_v1` 估算和预算判定。应用在资源打开前从当前启动目录安全发现一次层级 `AGENTS.md`/`CLAUDE.md`，形成默认 32 KiB、硬上限 4 MiB、只含项目根相对来源的不可变快照；活动进程不热更新，resume/continue 在新进程当前目录重新发现。双 Provider 每轮把非空快照作为单一临时 user context 置于 native history 前，但不提交到 native history、Session、RuntimeEvent 或语义投影。双 Provider 从 committed native history 提供只含 family/revision/method/state/tokens 的 footprint，opaque reasoning 不进入共享视图；语义估算与 native footprint 取覆盖值而不是相加。用户可显式配置 context window、输出预留和安全余量；未配置或估算 unknown 时不硬拒绝，明确超限以 `context_limit_exceeded` 在网络前 durable 失败。
 
-P2 尚未完成：session picker、worktree/project catalog、title/tag/search、实时索引、same-turn steered input、usage 成本/配额与 TUI 展示、真实 cache request 策略和观测指标、项目指令与工具/skill context sources、tool ledger/result/artifact、fork/subagent 线程树、compaction checkpoint，以及未来真实 schema/payload revision 的版本专属转换。已交付的 FIFO follow-up queue 只在进程内存在，`queued` 不是 durable 确认；真正 steer 必须等 P3 Tool Loop 提供安全 sampling 边界。v1 compatibility fixture 已建立不代表通用 migration 已实现；当前进度不能视为 P2 退出。
+P2 尚未完成：session picker、worktree/project catalog、title/tag/search、实时索引、same-turn steered input、usage 成本/配额与 TUI 展示、真实 cache request 策略和观测指标、工具/skill context sources、tool ledger/result/artifact、fork/subagent 线程树、compaction checkpoint，以及未来真实 schema/payload revision 的版本专属转换。已交付的 FIFO follow-up queue 只在进程内存在，`queued` 不是 durable 确认；真正 steer 必须等 P3 Tool Loop 提供安全 sampling 边界。v1 compatibility fixture 已建立不代表通用 migration 已实现；当前进度不能视为 P2 退出。
 
 本次 P2 基础契约强化还加入语义分支脚本、本地 hooks、GitHub Actions jobs 和集中式架构守卫。GitHub `main` ruleset 的 required checks 与 direct-push 禁止仍须管理员在仓库外启用。secure config/session opener 当前只在 macOS/Linux 提供等价语义；Windows 等目标可以编译，但相关运行路径明确失败关闭，平台实现与兼容矩阵留在 P8。
 
@@ -235,7 +236,7 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 
 - 已实现 text-only user input -> sample -> assistant output -> stop 的 turn loop；工具循环仍待 P3 接入。
 - 已实现有界 FIFO queued follow-up、request identity 去重、定向 interrupt、EOF drain 与显式 shutdown；same-turn steer 仍待 P3 safe point。
-- 已实现 `provider_profile`、`committed_history`、`current_input` 的固定顺序、正交 lifecycle/cache stability、canonical segments、stable prefix、SemanticHistoryView 可见估算与 Provider-native footprint 覆盖合并；后续来源必须随真实消费者独立落地。
+- 已实现 `provider_profile`、可选 `project_instructions`、`committed_history`、`current_input` 的固定顺序、正交 lifecycle/cache stability、canonical segments、stable prefix、SemanticHistoryView 可见估算与 Provider-native footprint 覆盖合并；后续来源必须随真实消费者独立落地。
 - 已实现 JSONL SessionMeta、native commit、`sample_usage` 和文本 turn boundary；成本、缓存失效原因与累计指标仍待实现。
 - 已实现由同一 exclusive lease 覆盖 load/repair、Provider 恢复、续写和最终关闭的跨进程单 writer，及 `Sync`、尾部半行/未完成尾批修复、v1 envelope/payload version 与不可变 v1 compatibility fixture；未来版本转换仍待真实 revision 出现时按版本实现。
 - 已实现 SQLite Catalog v1 的 root thread 最小索引、全量前台 reconciliation 与损坏/不兼容数据库重建；project/worktree、title/tag/search、实时索引和 thread graph 仍待实现。
@@ -251,6 +252,7 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 - 已交付显式 resume 与兼容性精确匹配的 `--continue`；可视化 session picker/list 尚未交付。
 - 已交付一次性 thread/turn/text/failure JSONL v1 与独立 streaming control v1，成功 `turn.completed` 必含 normalized usage；独立 usage 更新、reasoning 与 tool 事件尚未交付。
 - 已交付不新增 Session/RuntimeEvent vocabulary 的请求前 ContextPlan 和显式预算守卫；远程 token count、自动压缩、Provider cache marker/key 和 context UI 尚未交付。
+- 已交付启动时层级项目指令发现、descriptor-bound 安全读取、确定性预算截断、双 Provider 临时注入和恢复隔离；规则热重载、全局用户指令、includes 与 `.claude/rules` 尚未交付。
 
 ### 6.5 验收标准
 
@@ -262,6 +264,7 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 - completed sample 的 raw usage 可随 native history 无损恢复，normalized usage 与 native commit 同 batch durable，headless completion 与该事实一致。
 - session 文件不包含 API key 或 Authorization header。
 - 连续 turn 的稳定 segment fingerprint 不因 timestamp、session path 或日志配置改变。
+- 相同规范化项目指令在不同绝对 cwd 下产生相同快照和请求；修改项目指令只影响新进程的临时上下文与 project-stable fingerprint，不改写既有 Session/native history。
 - 显式配置且完整已知的估算超过有效输入上限时，Runtime 在 Provider 网络副作用前 durable 失败；未配置窗口或 unknown 估算不伪装成超限。
 - Ctrl+C/取消能结束当前 turn，flush 已完成 item，并且不损坏 session。
 
@@ -272,11 +275,12 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 - **resume 时通过 UI message 重建 provider history**：使用 native item。
 - **写入顺序与事件顺序不一致**：跨进程 lease 保护的单 writer 分配单调 seq；advisory lock 不能约束旧版或非协作进程，禁止新旧二进制同时写同一 thread。
 - **context source 每轮全量重排**：稳定层固定，动态 world state 放尾部或 diff。
+- **把项目指令写入 history 或 Session**：每轮从 Runtime 启动快照生成临时 Provider context，prepared commit 与恢复 codec 只处理真实用户项。
 - **取消导致最后一个完成 item 丢失**：item 完成先入 durable queue，再发布 terminal event。
 
 ### 6.7 退出条件
 
-两种 provider 的同进程 FIFO 多轮、重启恢复、取消、JSONL 修复、SQLite 重建、`--continue`、durable usage、确定性 context planning/token estimator 和两套 headless 输出协议测试已通过；本阶段剩余 same-turn steer、项目/工具上下文来源、成本/cache 策略等能力通过后，P2 才满足退出条件。
+两种 provider 的同进程 FIFO 多轮、重启恢复、取消、JSONL 修复、SQLite 重建、`--continue`、durable usage、层级项目指令、确定性 context planning/token estimator 和两套 headless 输出协议测试已通过；本阶段剩余 same-turn steer、工具上下文来源、成本/cache 策略等能力通过后，P2 才满足退出条件。
 
 ## 7. P3：Coding Tools 与安全执行
 

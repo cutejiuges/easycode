@@ -14,6 +14,7 @@ import (
 
 	"easycode/internal/config"
 	contextplan "easycode/internal/context"
+	"easycode/internal/context/projectinstructions"
 	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/headless"
@@ -261,6 +262,30 @@ func openChatResourcesWithHooks(
 	creationCWD string,
 	hooks chatResourceHooks,
 ) (*chatResources, error) {
+	loader, err := projectinstructions.NewLoader(projectinstructions.DefaultMaxBytes)
+	if err != nil {
+		return nil, fault.New(fault.CodeProjectInstructionsRead, "project instruction loader is invalid")
+	}
+	projectInstructions, err := loader.Load(creationCWD)
+	if err != nil {
+		return nil, err
+	}
+	return openChatResourcesWithSnapshot(
+		ctx, applicationConfig, paths, resumeThreadID, continueSession, creationCWD,
+		projectInstructions, hooks,
+	)
+}
+
+func openChatResourcesWithSnapshot(
+	ctx context.Context,
+	applicationConfig config.Config,
+	paths dataPaths,
+	resumeThreadID string,
+	continueSession bool,
+	creationCWD string,
+	projectInstructions domain.ProjectInstructionsSnapshot,
+	hooks chatResourceHooks,
+) (*chatResources, error) {
 	if err := applicationConfig.ValidateProvider(); err != nil {
 		return nil, err
 	}
@@ -285,7 +310,7 @@ func openChatResourcesWithHooks(
 			hooks.afterContinueSelection(threadID)
 		}
 	}
-	providerInstance, _, err := newProviderResource(applicationConfig)
+	providerInstance, err := newProviderResource(applicationConfig)
 	if err != nil {
 		_ = service.close()
 		return nil, err
@@ -322,7 +347,8 @@ func openChatResourcesWithHooks(
 	runtimeInstance, err := chatRuntime.New(assembled.conversation, chatRuntime.Config{
 		SessionID: assembled.identity.SessionID, ThreadID: assembled.identity.ThreadID,
 		Journal: assembled.writer, ContextProfile: contextProfile,
-		ContextBudget: applicationConfig.ContextBudget, ContextPlanner: contextplan.NewPlanner(),
+		ProjectInstructions: projectInstructions,
+		ContextBudget:       applicationConfig.ContextBudget, ContextPlanner: contextplan.NewPlanner(),
 	})
 	if err != nil {
 		_ = assembled.writer.Close(context.Background())
@@ -383,7 +409,7 @@ func selectContinueThread(
 	return entry.ThreadID, nil
 }
 
-func newProviderResource(applicationConfig config.Config) (providerResource, string, error) {
+func newProviderResource(applicationConfig config.Config) (providerResource, error) {
 	switch applicationConfig.Provider.Family {
 	case domain.ProviderOpenAI:
 		instance, err := openai.New(openai.Config{
@@ -391,16 +417,16 @@ func newProviderResource(applicationConfig config.Config) (providerResource, str
 			APIKey:  applicationConfig.Provider.APIKey,
 			Model:   applicationConfig.Provider.Model,
 		})
-		return instance, "responses", err
+		return instance, err
 	case domain.ProviderAnthropic:
 		instance, err := anthropic.New(anthropic.Config{
 			BaseURL: applicationConfig.Provider.BaseURL,
 			APIKey:  applicationConfig.Provider.APIKey,
 			Model:   applicationConfig.Provider.Model,
 		})
-		return instance, "messages", err
+		return instance, err
 	default:
-		return nil, "", fault.New(fault.CodeProviderUnavailable, "provider is unavailable")
+		return nil, fault.New(fault.CodeProviderUnavailable, "provider is unavailable")
 	}
 }
 

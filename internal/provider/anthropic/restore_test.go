@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"easycode/internal/codec"
 	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
 	"easycode/internal/provider"
@@ -75,14 +76,15 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 	}
 	restoredView.Turns[0].UserText = "mutated projection"
 	next := newUserMessage("third")
+	projectInstructions := testAnthropicProjectInstructions(t, "AGENTS.md", "same-startup-snapshot")
 	uninterruptedRequest, err := compileMessagesRequest(
-		instance.config.Model, instance.config.MaxOutputTokens, uninterrupted.historySnapshot(), next,
+		instance.config.Model, instance.config.MaxOutputTokens, uninterrupted.historySnapshot(), &projectInstructions, next,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	restoredRequest, err := compileMessagesRequest(
-		instance.config.Model, instance.config.MaxOutputTokens, restored.historySnapshot(), next,
+		instance.config.Model, instance.config.MaxOutputTokens, restored.historySnapshot(), &projectInstructions, next,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -100,10 +102,59 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restoredShape := buildMessagesRequest(instance.config.Model, instance.config.MaxOutputTokens, restored.historySnapshot(), next)
-	if first.Fingerprint() != second.Fingerprint() || len(restoredShape.Messages) != 5 ||
-		restoredShape.Messages[3].Content[0].Type != "future_block" {
+	restoredShape := buildMessagesRequest(instance.config.Model, instance.config.MaxOutputTokens, restored.historySnapshot(), &projectInstructions, next)
+	if first.Fingerprint() != second.Fingerprint() || len(restoredShape.Messages) != 6 ||
+		restoredShape.Messages[0].Content[0].Text != projectInstructions.RenderedText() ||
+		restoredShape.Messages[4].Content[0].Type != "future_block" {
 		t.Fatalf("fingerprints/order differ: %q %q %#v", first.Fingerprint(), second.Fingerprint(), restoredShape.Messages)
+	}
+
+	changedProjectInstructions := testAnthropicProjectInstructions(t, "AGENTS.md", "changed-startup-snapshot")
+	changedRequest, err := compileMessagesRequest(
+		instance.config.Model, instance.config.MaxOutputTokens, restored.historySnapshot(), &changedProjectInstructions, next,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedShape := buildMessagesRequest(
+		instance.config.Model, instance.config.MaxOutputTokens, restored.historySnapshot(), &changedProjectInstructions, next,
+	)
+	if bytes.Equal(changedRequest.Bytes(), restoredRequest.Bytes()) ||
+		!reflect.DeepEqual(changedShape.Messages[1:], restoredShape.Messages[1:]) ||
+		changedShape.Messages[0].Content[0].Text == restoredShape.Messages[0].Content[0].Text {
+		t.Fatalf("changed project instructions modified native history: %#v %#v", restoredShape.Messages, changedShape.Messages)
+	}
+	changedFootprint, err := restored.HistoryFootprint()
+	if err != nil || changedFootprint != restoredFootprint {
+		t.Fatalf("project instruction change modified footprint: %#v, %v", changedFootprint, err)
+	}
+	originalProjectJSON, err := codec.MarshalCanonical(json.RawMessage(projectInstructions.CanonicalJSON()), contextplan.MaxSegmentBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalProjectSegment, err := contextplan.NewSegment(
+		"project_instructions", contextplan.StabilityProjectStable, projectInstructions.Revision(), originalProjectJSON,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedProjectJSON, err := codec.MarshalCanonical(json.RawMessage(changedProjectInstructions.CanonicalJSON()), contextplan.MaxSegmentBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedProjectSegment, err := contextplan.NewSegment(
+		"project_instructions", contextplan.StabilityProjectStable, changedProjectInstructions.Revision(), changedProjectJSON,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if originalProjectSegment.Fingerprint() == changedProjectSegment.Fingerprint() {
+		t.Fatal("changed project instructions did not change the project-stable fingerprint")
+	}
+	for _, commit := range commits {
+		if bytes.Contains(commit.Payload(), []byte("startup-snapshot")) {
+			t.Fatalf("native commit contains project instructions: %s", commit.Payload())
+		}
 	}
 }
 

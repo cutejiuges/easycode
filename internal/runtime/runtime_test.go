@@ -128,8 +128,8 @@ func TestRunTurnDurableSuccessOrderingAndIdentity(t *testing.T) {
 	conversation := &fakeConversation{stream: func(context.Context, provider.TurnInput) (<-chan provider.StreamEvent, error) {
 		addTimeline("provider")
 		return fixedStream(
-			provider.StreamEvent{Kind: provider.StreamEventSemantic, Event: delta},
-			provider.StreamEvent{Kind: provider.StreamEventCompleted, Prepared: prepared},
+			semanticProviderEvent(t, delta),
+			completedProviderEventWithSample(t, prepared),
 		)(context.Background(), provider.TurnInput{})
 	}}
 	journal := &fakeJournal{hook: func(drafts []session.RecordDraft) {
@@ -284,6 +284,70 @@ func TestRunTurnPlanningFailureDoesNotStartProvider(t *testing.T) {
 	assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnFailed)
 }
 
+func TestRunTurnUsesRuntimeProjectInstructionsForPlanAndProvider(t *testing.T) {
+	t.Parallel()
+	const projectMarker = "runtime-project-only-marker"
+	startupSnapshot := testRuntimeProjectInstructions(t, "AGENTS.md", projectMarker)
+	callerSnapshot := testRuntimeProjectInstructions(t, "AGENTS.md", "caller-supplied-marker")
+	var planned contextplan.ContextPlan
+	var providerSnapshot domain.ProjectInstructionsSnapshot
+	conversation := &fakeConversation{stream: func(_ context.Context, input provider.TurnInput) (<-chan provider.StreamEvent, error) {
+		var exists bool
+		var err error
+		providerSnapshot, exists, err = input.ProjectInstructions()
+		if err != nil || !exists {
+			t.Fatalf("provider project instructions = exists %t, err %v", exists, err)
+		}
+		return fixedStream(completedProviderEventWithSample(t, newPreparedSample(t, func() {})))(context.Background(), input)
+	}}
+	journal := &fakeJournal{}
+	config := testRuntimeConfig(t, journal)
+	config.ProjectInstructions = startupSnapshot
+	config.ContextPlanner = contextPlannerFunc(func(input contextplan.PlanningInput) (contextplan.ContextPlan, error) {
+		var err error
+		planned, err = contextplan.NewPlanner().Plan(input)
+		return planned, err
+	})
+	config.GenerateTurnID = func() (domain.TurnID, error) { return runtimeTurnID, nil }
+	runtimeValue, err := New(conversation, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	callerInput, err := (provider.TurnInput{Text: "hello"}).WithProjectInstructions(callerSnapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []protocol.Event
+	if err := runtimeValue.RunTurn(context.Background(), callerInput, func(event protocol.Event) {
+		events = append(events, event)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if providerSnapshot.Revision() != startupSnapshot.Revision() || providerSnapshot.Revision() == callerSnapshot.Revision() {
+		t.Fatalf("provider snapshot revision = %q", providerSnapshot.Revision())
+	}
+	sources := planned.Sources()
+	if len(sources) != 4 || sources[1].Kind() != contextplan.SourceProjectInstructions || sources[1].Revision() != startupSnapshot.Revision() {
+		t.Fatalf("planned sources = %#v", sources)
+	}
+	for _, event := range events {
+		encoded, marshalErr := json.Marshal(event)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		if strings.Contains(string(encoded), projectMarker) {
+			t.Fatalf("runtime event contains project instructions: %s", encoded)
+		}
+	}
+	for _, batch := range journal.snapshot() {
+		for _, draft := range batch {
+			if strings.Contains(string(draft.PayloadBytes()), projectMarker) {
+				t.Fatalf("journal draft contains project instructions: %s", draft.PayloadBytes())
+			}
+		}
+	}
+}
+
 func TestRunTurnContinuesForNonBlockingBudgetStates(t *testing.T) {
 	t.Parallel()
 	budget, err := contextplan.NewBudget(100, 0, 0)
@@ -305,7 +369,7 @@ func TestRunTurnContinuesForNonBlockingBudgetStates(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			prepared := newPreparedSample(t, func() {})
 			conversation := &fakeConversation{
-				stream:    fixedStream(provider.StreamEvent{Kind: provider.StreamEventCompleted, Prepared: prepared}),
+				stream:    fixedStream(completedProviderEventWithSample(t, prepared)),
 				footprint: test.footprint,
 			}
 			config := testRuntimeConfig(t, &fakeJournal{})
@@ -328,9 +392,7 @@ func TestRunTurnCompletionWriteFailureDoesNotFinalizeAndPoisons(t *testing.T) {
 	t.Parallel()
 	var finalized atomic.Int32
 	prepared := newPreparedSample(t, func() { finalized.Add(1) })
-	conversation := &fakeConversation{stream: fixedStream(provider.StreamEvent{
-		Kind: provider.StreamEventCompleted, Prepared: prepared,
-	})}
+	conversation := &fakeConversation{stream: fixedStream(completedProviderEventWithSample(t, prepared))}
 	journal := &fakeJournal{failAt: 2}
 	runtime := newTestRuntime(t, conversation, journal)
 	events, err := collectTurn(runtime, context.Background(), nil)
@@ -360,9 +422,7 @@ func TestRunTurnFinalizerConflictAfterDurableSuccessPoisonsWithoutPublishingUsag
 			}
 		}
 	}}
-	runtime := newTestRuntime(t, &fakeConversation{stream: fixedStream(provider.StreamEvent{
-		Kind: provider.StreamEventCompleted, Prepared: prepared,
-	})}, journal)
+	runtime := newTestRuntime(t, &fakeConversation{stream: fixedStream(completedProviderEventWithSample(t, prepared))}, journal)
 	events, err := collectTurn(runtime, context.Background(), nil)
 	if !errors.Is(err, &fault.Error{Code: fault.CodeStreamProtocol}) {
 		t.Fatalf("RunTurn() error = %v", err)
@@ -383,39 +443,24 @@ func TestRunTurnFinalizerConflictAfterDurableSuccessPoisonsWithoutPublishingUsag
 	}
 }
 
-func TestRunTurnRejectsInvalidPreparedSamplesBeforeNativeCommit(t *testing.T) {
+func TestRunTurnRevalidatesPreparedSampleBeforeNativeCommit(t *testing.T) {
 	t.Parallel()
 	finalized := atomic.Int32{}
-	alreadyFinalized := newPreparedSample(t, func() { finalized.Add(1) })
-	if err := alreadyFinalized.Finalize(); err != nil {
+	sample := newPreparedSample(t, func() { finalized.Add(1) })
+	completed := completedProviderEventWithSample(t, sample)
+	if err := sample.Finalize(); err != nil {
 		t.Fatal(err)
 	}
-	fixtures := []struct {
-		name   string
-		sample *provider.PreparedSample
-	}{
-		{name: "nil sample"},
-		{name: "zero-value sample", sample: &provider.PreparedSample{}},
-		{name: "already finalized sample", sample: alreadyFinalized},
+	journal := &fakeJournal{}
+	runtime := newTestRuntime(t, &fakeConversation{stream: fixedStream(completed)}, journal)
+	events, err := collectTurn(runtime, context.Background(), nil)
+	if !errors.Is(err, &fault.Error{Code: fault.CodeStreamProtocol}) {
+		t.Fatalf("RunTurn() error = %v", err)
 	}
-	for _, fixture := range fixtures {
-		fixture := fixture
-		t.Run(fixture.name, func(t *testing.T) {
-			t.Parallel()
-			journal := &fakeJournal{}
-			runtime := newTestRuntime(t, &fakeConversation{stream: fixedStream(provider.StreamEvent{
-				Kind: provider.StreamEventCompleted, Prepared: fixture.sample,
-			})}, journal)
-			events, err := collectTurn(runtime, context.Background(), nil)
-			if !errors.Is(err, &fault.Error{Code: fault.CodeStreamProtocol}) {
-				t.Fatalf("RunTurn() error = %v", err)
-			}
-			assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnFailed)
-			batches := journal.snapshot()
-			if len(batches) != 2 || len(batches[1]) != 1 || batches[1][0].EventKind() != session.EventTurnFailed {
-				t.Fatalf("invalid sample persisted non-failure records: %#v", batches)
-			}
-		})
+	assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnFailed)
+	batches := journal.snapshot()
+	if len(batches) != 2 || len(batches[1]) != 1 || batches[1][0].EventKind() != session.EventTurnFailed {
+		t.Fatalf("invalid sample persisted non-failure records: %#v", batches)
 	}
 	if finalized.Load() != 1 {
 		t.Fatalf("runtime called finalized sample finalizer again: %d", finalized.Load())
@@ -429,8 +474,8 @@ func TestRunTurnPersistsProviderFailureCancellationAndEarlyEOF(t *testing.T) {
 		stream func(context.Context, provider.TurnInput) (<-chan provider.StreamEvent, error)
 		code   fault.Code
 	}{
-		{name: "provider failure", stream: fixedStream(provider.StreamEvent{Kind: provider.StreamEventFailed, Err: fault.New(fault.CodeProviderRequest, "provider request failed")}), code: fault.CodeProviderRequest},
-		{name: "cancelled", stream: fixedStream(provider.StreamEvent{Kind: provider.StreamEventCancelled, Err: context.Canceled}), code: fault.CodeUserCancelled},
+		{name: "provider failure", stream: fixedStream(failedProviderEvent(t, fault.New(fault.CodeProviderRequest, "provider request failed"))), code: fault.CodeProviderRequest},
+		{name: "cancelled", stream: fixedStream(cancelledProviderEvent(t, context.Canceled)), code: fault.CodeUserCancelled},
 		{name: "early EOF", stream: fixedStream(), code: fault.CodeStreamProtocol},
 		{name: "stream start failure", stream: func(context.Context, provider.TurnInput) (<-chan provider.StreamEvent, error) {
 			return nil, fault.New(fault.CodeStreamIdleTimeout, "provider stream idle timeout")
@@ -471,8 +516,8 @@ func TestRunTurnRejectsEventAfterTerminalWithoutFinalizing(t *testing.T) {
 	delta, _ := protocol.NewAssistantTextDelta("late")
 	journal := &fakeJournal{}
 	runtime := newTestRuntime(t, &fakeConversation{stream: fixedStream(
-		provider.StreamEvent{Kind: provider.StreamEventCompleted, Prepared: prepared},
-		provider.StreamEvent{Kind: provider.StreamEventSemantic, Event: delta},
+		completedProviderEventWithSample(t, prepared),
+		semanticProviderEvent(t, delta),
 	)}, journal)
 	events, err := collectTurn(runtime, context.Background(), nil)
 	if !errors.Is(err, &fault.Error{Code: fault.CodeStreamProtocol}) {
@@ -482,6 +527,180 @@ func TestRunTurnRejectsEventAfterTerminalWithoutFinalizing(t *testing.T) {
 	if finalized.Load() != 0 || len(journal.snapshot()) != 2 {
 		t.Fatalf("finalized/batches = %d/%#v", finalized.Load(), journal.snapshot())
 	}
+}
+
+func TestRunTurnCancelsAndDrainsAfterInvalidEvent(t *testing.T) {
+	t.Parallel()
+	cancelObserved := make(chan struct{})
+	producerDone := make(chan struct{})
+	delta, err := protocol.NewAssistantTextDelta("drained")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tail := semanticProviderEvent(t, delta)
+	conversation := &fakeConversation{stream: func(ctx context.Context, _ provider.TurnInput) (<-chan provider.StreamEvent, error) {
+		stream := make(chan provider.StreamEvent)
+		go func() {
+			defer close(producerDone)
+			defer close(stream)
+			stream <- provider.StreamEvent{}
+			<-ctx.Done()
+			close(cancelObserved)
+			stream <- tail
+		}()
+		return stream, nil
+	}}
+	journal := &fakeJournal{}
+	runtime := newTestRuntime(t, conversation, journal)
+	events, runErr := collectTurn(runtime, context.Background(), nil)
+	if !errors.Is(runErr, &fault.Error{Code: fault.CodeStreamProtocol}) {
+		t.Fatalf("RunTurn() error = %v", runErr)
+	}
+	<-cancelObserved
+	<-producerDone
+	assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnFailed)
+	batches := journal.snapshot()
+	if len(batches) != 2 || len(batches[1]) != 1 || batches[1][0].EventKind() != session.EventTurnFailed {
+		t.Fatalf("durable batches = %#v", batches)
+	}
+}
+
+type runtimeTestNativeItem struct{}
+
+func (runtimeTestNativeItem) ProviderFamily() domain.ProviderFamily { return domain.ProviderOpenAI }
+func (runtimeTestNativeItem) ItemKind() string                      { return "message" }
+
+func TestRunTurnRejectsEveryEventKindAfterTerminalAndDrains(t *testing.T) {
+	t.Parallel()
+	delta, err := protocol.NewAssistantTextDelta("late")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nativeTail, err := provider.NewNativeStreamEvent(runtimeTestNativeItem{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixtures := []struct {
+		name string
+		tail func(*testing.T) provider.StreamEvent
+	}{
+		{name: "semantic", tail: func(t *testing.T) provider.StreamEvent { return semanticProviderEvent(t, delta) }},
+		{name: "native", tail: func(*testing.T) provider.StreamEvent { return nativeTail }},
+		{name: "terminal", tail: func(t *testing.T) provider.StreamEvent {
+			return failedProviderEvent(t, fault.New(fault.CodeProviderRequest, "late failure"))
+		}},
+	}
+	for _, fixture := range fixtures {
+		fixture := fixture
+		t.Run(fixture.name, func(t *testing.T) {
+			var finalized atomic.Int32
+			prepared := newPreparedSample(t, func() { finalized.Add(1) })
+			producerDone := make(chan struct{})
+			cancelObserved := make(chan struct{})
+			conversation := &fakeConversation{stream: func(ctx context.Context, _ provider.TurnInput) (<-chan provider.StreamEvent, error) {
+				stream := make(chan provider.StreamEvent)
+				go func() {
+					defer close(producerDone)
+					defer close(stream)
+					stream <- completedProviderEventWithSample(t, prepared)
+					stream <- fixture.tail(t)
+					<-ctx.Done()
+					close(cancelObserved)
+				}()
+				return stream, nil
+			}}
+			journal := &fakeJournal{}
+			runtime := newTestRuntime(t, conversation, journal)
+			events, runErr := collectTurn(runtime, context.Background(), nil)
+			if !errors.Is(runErr, &fault.Error{Code: fault.CodeStreamProtocol}) {
+				t.Fatalf("RunTurn() error = %v", runErr)
+			}
+			<-cancelObserved
+			<-producerDone
+			assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnFailed)
+			if finalized.Load() != 0 {
+				t.Fatalf("finalizer calls = %d", finalized.Load())
+			}
+		})
+	}
+}
+
+func TestRunTurnCancellationAndCompletionHaveDeterministicOwners(t *testing.T) {
+	t.Run("cancellation wins before terminal", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancelObserved := make(chan struct{})
+		releaseCleanup := make(chan struct{})
+		producerDone := make(chan struct{})
+		conversation := &fakeConversation{stream: func(streamCtx context.Context, _ provider.TurnInput) (<-chan provider.StreamEvent, error) {
+			stream := make(chan provider.StreamEvent)
+			go func() {
+				defer close(producerDone)
+				defer close(stream)
+				<-streamCtx.Done()
+				close(cancelObserved)
+				stream <- cancelledProviderEvent(t, streamCtx.Err())
+				<-releaseCleanup
+			}()
+			return stream, nil
+		}}
+		runtime := newTestRuntime(t, conversation, &fakeJournal{})
+		runDone := make(chan error, 1)
+		go func() {
+			runDone <- runtime.RunTurn(ctx, provider.TurnInput{Text: "hello"}, func(protocol.Event) {})
+		}()
+		cancel()
+		<-cancelObserved
+		select {
+		case err := <-runDone:
+			t.Fatalf("RunTurn returned before producer cleanup: %v", err)
+		default:
+		}
+		close(releaseCleanup)
+		if err := <-runDone; !errors.Is(err, context.Canceled) {
+			t.Fatalf("RunTurn() error = %v", err)
+		}
+		<-producerDone
+	})
+
+	t.Run("completion wins before cancellation", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		terminalSent := make(chan struct{})
+		releaseCleanup := make(chan struct{})
+		producerDone := make(chan struct{})
+		var finalized atomic.Int32
+		prepared := newPreparedSample(t, func() { finalized.Add(1) })
+		conversation := &fakeConversation{stream: func(context.Context, provider.TurnInput) (<-chan provider.StreamEvent, error) {
+			stream := make(chan provider.StreamEvent)
+			go func() {
+				defer close(producerDone)
+				defer close(stream)
+				stream <- completedProviderEventWithSample(t, prepared)
+				close(terminalSent)
+				<-releaseCleanup
+			}()
+			return stream, nil
+		}}
+		runtime := newTestRuntime(t, conversation, &fakeJournal{})
+		runDone := make(chan error, 1)
+		go func() {
+			runDone <- runtime.RunTurn(ctx, provider.TurnInput{Text: "hello"}, func(protocol.Event) {})
+		}()
+		<-terminalSent
+		cancel()
+		select {
+		case err := <-runDone:
+			t.Fatalf("RunTurn returned before producer cleanup: %v", err)
+		default:
+		}
+		close(releaseCleanup)
+		if err := <-runDone; err != nil {
+			t.Fatalf("RunTurn() error = %v", err)
+		}
+		<-producerDone
+		if finalized.Load() != 1 {
+			t.Fatalf("finalizer calls = %d", finalized.Load())
+		}
+	})
 }
 
 func TestRunTurnRejectsConcurrentTurn(t *testing.T) {
@@ -494,7 +713,7 @@ func TestRunTurnRejectsConcurrentTurn(t *testing.T) {
 		close(started)
 		go func() {
 			<-release
-			stream <- provider.StreamEvent{Kind: provider.StreamEventCompleted, Prepared: prepared}
+			stream <- completedProviderEventWithSample(t, prepared)
 			close(stream)
 		}()
 		return stream, nil
@@ -524,9 +743,9 @@ func TestRunTurnCancelCompletionRacePublishesOneTerminal(t *testing.T) {
 			go func() {
 				select {
 				case <-ctx.Done():
-					stream <- provider.StreamEvent{Kind: provider.StreamEventCancelled, Err: context.Canceled}
+					stream <- cancelledProviderEvent(t, context.Canceled)
 				default:
-					stream <- provider.StreamEvent{Kind: provider.StreamEventCompleted, Prepared: prepared}
+					stream <- completedProviderEventWithSample(t, prepared)
 				}
 				close(stream)
 			}()
@@ -574,6 +793,11 @@ func TestNewRejectsInterruptedOrInvalidRuntimeState(t *testing.T) {
 	if _, err := New(conversation, missingPlanner); err == nil {
 		t.Fatal("missing context planner unexpectedly accepted")
 	}
+	invalidProjectInstructions := valid
+	invalidProjectInstructions.ProjectInstructions = domain.ProjectInstructionsSnapshot{}
+	if _, err := New(conversation, invalidProjectInstructions); err == nil {
+		t.Fatal("invalid project instructions unexpectedly accepted")
+	}
 	wrongProfile, err := contextplan.NewProviderProfile(domain.ProviderAnthropic, "claude-test")
 	if err != nil {
 		t.Fatal(err)
@@ -602,11 +826,29 @@ func testRuntimeConfig(t *testing.T, journal Journal) Config {
 	if err != nil {
 		t.Fatal(err)
 	}
+	projectInstructions, err := domain.NewEmptyProjectInstructionsSnapshot(32 << 10)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return Config{
 		SessionID: runtimeSessionID, ThreadID: runtimeThreadID, Journal: journal,
-		ContextProfile: profile, ContextBudget: contextplan.DisabledBudget(),
+		ContextProfile: profile, ProjectInstructions: projectInstructions,
+		ContextBudget:  contextplan.DisabledBudget(),
 		ContextPlanner: contextplan.NewPlanner(),
 	}
+}
+
+func testRuntimeProjectInstructions(t *testing.T, source string, content string) domain.ProjectInstructionsSnapshot {
+	t.Helper()
+	document, err := domain.NewProjectInstructionDocument(source, content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := domain.NewProjectInstructionsSnapshot([]domain.ProjectInstructionDocument{document}, 32<<10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return snapshot
 }
 
 func newPreparedSample(t *testing.T, finalize func()) *provider.PreparedSample {
@@ -650,6 +892,42 @@ func fixedStream(events ...provider.StreamEvent) func(context.Context, provider.
 	}
 }
 
+func semanticProviderEvent(t *testing.T, event protocol.Event) provider.StreamEvent {
+	t.Helper()
+	streamEvent, err := provider.NewSemanticStreamEvent(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return streamEvent
+}
+
+func completedProviderEventWithSample(t *testing.T, sample *provider.PreparedSample) provider.StreamEvent {
+	t.Helper()
+	event, err := provider.NewCompletedStreamEvent(sample)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return event
+}
+
+func failedProviderEvent(t *testing.T, failure error) provider.StreamEvent {
+	t.Helper()
+	event, err := provider.NewFailedStreamEvent(failure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return event
+}
+
+func cancelledProviderEvent(t *testing.T, failure error) provider.StreamEvent {
+	t.Helper()
+	event, err := provider.NewCancelledStreamEvent(failure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return event
+}
+
 func collectTurn(runtime *Runtime, ctx context.Context, observe Emitter) ([]protocol.Event, error) {
 	var events []protocol.Event
 	err := runtime.RunTurn(ctx, provider.TurnInput{Text: "hello"}, func(event protocol.Event) {
@@ -679,7 +957,7 @@ func TestChatSessionInterruptAndShutdownLifecycle(t *testing.T) {
 		stream := make(chan provider.StreamEvent, 1)
 		go func() {
 			<-ctx.Done()
-			stream <- provider.StreamEvent{Kind: provider.StreamEventCancelled, Err: context.Canceled}
+			stream <- cancelledProviderEvent(t, context.Canceled)
 			close(stream)
 		}()
 		return stream, nil
@@ -744,7 +1022,7 @@ func TestChatSessionPropagatesSubmitContextAndRejectsConcurrentTurn(t *testing.T
 		close(providerStarted)
 		go func() {
 			<-ctx.Done()
-			stream <- provider.StreamEvent{Kind: provider.StreamEventCancelled, Err: ctx.Err()}
+			stream <- cancelledProviderEvent(t, ctx.Err())
 			close(stream)
 		}()
 		return stream, nil
@@ -795,7 +1073,7 @@ func TestChatSessionShutdownWaitsForDurableFailure(t *testing.T) {
 		stream := make(chan provider.StreamEvent, 1)
 		go func() {
 			<-ctx.Done()
-			stream <- provider.StreamEvent{Kind: provider.StreamEventCancelled, Err: context.Canceled}
+			stream <- cancelledProviderEvent(t, context.Canceled)
 			close(stream)
 		}()
 		return stream, nil
@@ -830,7 +1108,7 @@ func TestChatSessionConcurrentInterruptAndShutdown(t *testing.T) {
 		stream := make(chan provider.StreamEvent, 1)
 		go func() {
 			<-ctx.Done()
-			stream <- provider.StreamEvent{Kind: provider.StreamEventCancelled, Err: context.Canceled}
+			stream <- cancelledProviderEvent(t, context.Canceled)
 			close(stream)
 		}()
 		return stream, nil
