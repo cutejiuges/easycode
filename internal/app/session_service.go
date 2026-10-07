@@ -40,6 +40,7 @@ type assembledSession struct {
 	writer       managedJournal
 	history      domain.SemanticHistoryView
 	repair       session.RepairReport
+	toolRecovery *session.ToolRecoveryPlan
 }
 
 func openSessionService(dataRoot string) (*sessionService, error) {
@@ -175,9 +176,14 @@ func (service *sessionService) resume(
 			fault.CodeSessionWrite, "session journal ownership was not transferred", closeErr,
 		)
 	}
+	var toolRecovery *session.ToolRecoveryPlan
+	if plan.ToolRecovery != nil {
+		cloned := plan.ToolRecovery.Clone()
+		toolRecovery = &cloned
+	}
 	return assembledSession{
 		identity: plan.Identity, conversation: conversation, writer: writer,
-		history: conversation.ProjectHistory(), repair: plan.Repair,
+		history: conversation.ProjectHistory(), repair: plan.Repair, toolRecovery: toolRecovery,
 	}, nil
 }
 

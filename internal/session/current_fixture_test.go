@@ -13,26 +13,26 @@ import (
 	"easycode/internal/domain"
 )
 
-type v1ReplaySummary struct {
-	SessionID      domain.SessionID      `json:"session_id"`
-	ThreadID       domain.ThreadID       `json:"thread_id"`
-	Provider       domain.ProviderFamily `json:"provider"`
-	ProviderWire   string                `json:"provider_wire"`
-	Model          string                `json:"model"`
-	SchemaRevision int                   `json:"schema_revision"`
-	CreationCWD    string                `json:"creation_cwd"`
-	Turns          []v1TurnSummary       `json:"turns"`
-	NativeCommits  []v1NativeSummary     `json:"native_commits"`
-	SampleUsages   []v1UsageSummary      `json:"sample_usages"`
-	NextSequence   uint64                `json:"next_sequence"`
+type currentReplaySummary struct {
+	SessionID      domain.SessionID       `json:"session_id"`
+	ThreadID       domain.ThreadID        `json:"thread_id"`
+	Provider       domain.ProviderFamily  `json:"provider"`
+	ProviderWire   string                 `json:"provider_wire"`
+	Model          string                 `json:"model"`
+	SchemaRevision int                    `json:"schema_revision"`
+	CreationCWD    string                 `json:"creation_cwd"`
+	Turns          []currentTurnSummary   `json:"turns"`
+	NativeCommits  []currentNativeSummary `json:"native_commits"`
+	SampleUsages   []currentUsageSummary  `json:"sample_usages"`
+	NextSequence   uint64                 `json:"next_sequence"`
 }
 
-type v1TurnSummary struct {
+type currentTurnSummary struct {
 	TurnID domain.TurnID     `json:"turn_id"`
 	State  ReplayedTurnState `json:"state"`
 }
 
-type v1NativeSummary struct {
+type currentNativeSummary struct {
 	Sequence       uint64                `json:"sequence"`
 	TurnID         domain.TurnID         `json:"turn_id"`
 	Provider       domain.ProviderFamily `json:"provider"`
@@ -40,23 +40,23 @@ type v1NativeSummary struct {
 	PayloadVersion int                   `json:"payload_version"`
 }
 
-type v1UsageSummary struct {
+type currentUsageSummary struct {
 	Sequence uint64             `json:"sequence"`
 	TurnID   domain.TurnID      `json:"turn_id"`
 	Usage    SampleUsagePayload `json:"usage"`
 }
 
-func TestV1CompatibilityFixtureReplay(t *testing.T) {
-	fixture := readV1Fixture(t, "root.jsonl")
+func TestCurrentFixtureReplay(t *testing.T) {
+	fixture := readCurrentFixture(t, "root.jsonl")
 	for _, forbidden := range []string{
 		"sk-", "authorization", "cookie", "http://", "https://", "/Users/", `C:\\Users\\`,
 	} {
 		if strings.Contains(strings.ToLower(string(fixture)), strings.ToLower(forbidden)) {
-			t.Fatalf("v1 fixture contains forbidden material %q", forbidden)
+			t.Fatalf("current fixture contains forbidden material %q", forbidden)
 		}
 	}
 
-	repository, lease := installV1Fixture(t, fixture)
+	repository, lease := installCurrentFixture(t, fixture)
 	loaded, err := NewLoader().Load(context.Background(), lease)
 	if err != nil {
 		t.Fatal(err)
@@ -65,10 +65,10 @@ func TestV1CompatibilityFixtureReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := readV1ReplaySummary(t)
-	got := summarizeV1Replay(t, plan)
+	want := readCurrentReplaySummary(t)
+	got := summarizeCurrentReplay(t, plan)
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("v1 ReplayPlan summary = %#v, want %#v", got, want)
+		t.Fatalf("current ReplayPlan summary = %#v, want %#v", got, want)
 	}
 
 	kinds := make(map[EventKind]bool)
@@ -80,7 +80,7 @@ func TestV1CompatibilityFixtureReplay(t *testing.T) {
 		EventProviderNativeCommit, EventSampleUsage, EventTurnCompleted, EventTurnFailed,
 	} {
 		if !kinds[kind] {
-			t.Fatalf("v1 fixture does not cover %q", kind)
+			t.Fatalf("current fixture does not cover %q", kind)
 		}
 	}
 	if err := lease.Close(); err != nil {
@@ -91,8 +91,8 @@ func TestV1CompatibilityFixtureReplay(t *testing.T) {
 	}
 }
 
-func TestV1CompatibilityFixtureCanonicalBytesStayStable(t *testing.T) {
-	fixture := bytes.TrimSuffix(readV1Fixture(t, "root.jsonl"), []byte{'\n'})
+func TestCurrentFixtureCanonicalBytesStayStable(t *testing.T) {
+	fixture := bytes.TrimSuffix(readCurrentFixture(t, "root.jsonl"), []byte{'\n'})
 	lines := bytes.Split(fixture, []byte{'\n'})
 	wantKinds := []EventKind{
 		EventSessionMeta,
@@ -105,29 +105,85 @@ func TestV1CompatibilityFixtureCanonicalBytesStayStable(t *testing.T) {
 		EventTurnCompleted,
 	}
 	if len(lines) != len(wantKinds) {
-		t.Fatalf("v1 fixture line count = %d, want %d", len(lines), len(wantKinds))
+		t.Fatalf("current fixture line count = %d, want %d", len(lines), len(wantKinds))
 	}
 	for index, line := range lines {
 		record, err := DecodeRecord(line)
 		if err != nil {
-			t.Fatalf("decode v1 line %d: %v", index+1, err)
+			t.Fatalf("decode current line %d: %v", index+1, err)
 		}
 		if record.EventKind != wantKinds[index] {
-			t.Fatalf("v1 line %d kind = %q, want %q", index+1, record.EventKind, wantKinds[index])
+			t.Fatalf("current line %d kind = %q, want %q", index+1, record.EventKind, wantKinds[index])
 		}
 		sealed, encoded, err := EncodeRecord(record)
 		if err != nil {
-			t.Fatalf("encode v1 line %d: %v", index+1, err)
+			t.Fatalf("encode current line %d: %v", index+1, err)
 		}
 		if !bytes.Equal(encoded, line) || sealed.Checksum != record.Checksum {
-			t.Fatalf("v1 line %d canonical bytes or checksum changed\n got: %s\nwant: %s", index+1, encoded, line)
+			t.Fatalf("current line %d canonical bytes or checksum changed\n got: %s\nwant: %s", index+1, encoded, line)
 		}
 	}
 }
 
-func TestV1CompatibilityFixtureContinuesWithoutRewrite(t *testing.T) {
-	prefix := readV1Fixture(t, "root.jsonl")
-	repository, lease := installV1Fixture(t, prefix)
+func TestCurrentToolLoopFixtureReplay(t *testing.T) {
+	fixture := bytes.TrimSuffix(readCurrentFixture(t, "tool_loop.jsonl"), []byte{'\n'})
+	wantKinds := []EventKind{
+		EventSessionMeta, EventThreadMeta, EventTurnStarted,
+		EventProviderNativeCommit, EventSampleUsage, EventToolCallReady,
+		EventToolExecutionStarted, EventToolCallResult,
+		EventProviderNativeCommit, EventTurnFailed,
+	}
+	lines := bytes.Split(fixture, []byte{'\n'})
+	if len(lines) != len(wantKinds) {
+		t.Fatalf("tool loop fixture line count = %d, want %d", len(lines), len(wantKinds))
+	}
+	for index, line := range lines {
+		record, err := DecodeRecord(line)
+		if err != nil {
+			t.Fatalf("decode tool loop line %d: %v", index+1, err)
+		}
+		if record.EventKind != wantKinds[index] {
+			t.Fatalf("tool loop line %d kind = %q, want %q", index+1, record.EventKind, wantKinds[index])
+		}
+		_, encoded, err := EncodeRecord(record)
+		if err != nil {
+			t.Fatalf("encode tool loop line %d: %v", index+1, err)
+		}
+		if !bytes.Equal(encoded, line) {
+			t.Fatalf("tool loop line %d canonical bytes changed", index+1)
+		}
+	}
+
+	repository, lease := installCurrentFixture(t, append(fixture, '\n'))
+	loaded, err := NewLoader().Load(context.Background(), lease)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := NewReplayPlanner().Plan(loaded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.ToolRecovery != nil || plan.InterruptedTail != nil {
+		t.Fatalf("closed tool loop retained recovery state: %#v", plan)
+	}
+	var want currentReplaySummary
+	if err := json.Unmarshal(readCurrentFixture(t, "tool_loop_replay_plan.json"), &want); err != nil {
+		t.Fatal(err)
+	}
+	if got := summarizeCurrentReplay(t, plan); !reflect.DeepEqual(got, want) {
+		t.Fatalf("tool loop ReplayPlan summary = %#v, want %#v", got, want)
+	}
+	if err := lease.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCurrentFixtureContinuesWithoutRewrite(t *testing.T) {
+	prefix := readCurrentFixture(t, "root.jsonl")
+	repository, lease := installCurrentFixture(t, prefix)
 	loaded, err := NewLoader().Load(context.Background(), lease)
 	if err != nil {
 		t.Fatal(err)
@@ -157,22 +213,22 @@ func TestV1CompatibilityFixtureContinuesWithoutRewrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(content) <= len(prefix) || !bytes.Equal(content[:len(prefix)], prefix) {
-		t.Fatal("continuing the v1 fixture rewrote its historical prefix")
+		t.Fatal("continuing the current fixture rewrote its historical prefix")
 	}
 	if err := repository.Close(); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestLegacyV1CompletionWithoutUsageFailsClosed(t *testing.T) {
-	fixture := readV1Fixture(t, "legacy_without_usage.jsonl")
-	repository, lease := installV1Fixture(t, fixture)
+func TestCurrentCompletionWithoutSampleUsageFailsClosed(t *testing.T) {
+	fixture := readCurrentFixture(t, "rejected_without_usage.jsonl")
+	repository, lease := installCurrentFixture(t, fixture)
 	loaded, err := NewLoader().Load(context.Background(), lease)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewReplayPlanner().Plan(loaded); err == nil || !strings.Contains(err.Error(), "completed turn batch") {
-		t.Fatalf("legacy fixture replay error = %v", err)
+	if _, err := NewReplayPlanner().Plan(loaded); err == nil || !strings.Contains(err.Error(), "sample batch") {
+		t.Fatalf("current fixture replay error = %v", err)
 	}
 	if err := lease.Close(); err != nil {
 		t.Fatal(err)
@@ -186,16 +242,16 @@ func TestLegacyV1CompletionWithoutUsageFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(after, fixture) {
-		t.Fatal("rejecting legacy v1 completion modified journal bytes")
+		t.Fatal("rejecting completion without usage modified journal bytes")
 	}
 	if err := repository.Close(); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestV1CompatibilityFixtureRejectsNewerRequiredReadOnly(t *testing.T) {
-	baseline := readV1Fixture(t, "root.jsonl")
-	newerRequired := readV1Fixture(t, "newer_required.jsonl")
+func TestCurrentFixtureRejectsNewerRequiredReadOnly(t *testing.T) {
+	baseline := readCurrentFixture(t, "root.jsonl")
+	newerRequired := readCurrentFixture(t, "newer_required.jsonl")
 	fixtures := map[string][]byte{
 		"schema revision":  bytes.Replace(baseline, []byte(`"schema_version":1`), []byte(`"schema_version":2`), 1),
 		"payload revision": append(append([]byte(nil), baseline...), newerRequired...),
@@ -203,7 +259,7 @@ func TestV1CompatibilityFixtureRejectsNewerRequiredReadOnly(t *testing.T) {
 	for name, content := range fixtures {
 		name, content := name, content
 		t.Run(name, func(t *testing.T) {
-			repository, lease := installV1Fixture(t, content)
+			repository, lease := installCurrentFixture(t, content)
 			loaded, loadErr := NewLoader().Load(context.Background(), lease)
 			if loadErr == nil {
 				_, loadErr = NewReplayPlanner().Plan(loaded)
@@ -233,7 +289,7 @@ func TestV1CompatibilityFixtureRejectsNewerRequiredReadOnly(t *testing.T) {
 	}
 }
 
-func installV1Fixture(t *testing.T, content []byte) (*Repository, *JournalLease) {
+func installCurrentFixture(t *testing.T, content []byte) (*Repository, *JournalLease) {
 	t.Helper()
 	repository, err := OpenOrCreateRepository(filepath.Join(t.TempDir(), "sessions"))
 	if err != nil {
@@ -265,41 +321,41 @@ func installV1Fixture(t *testing.T, content []byte) (*Repository, *JournalLease)
 	return repository, lease
 }
 
-func readV1Fixture(t *testing.T, name string) []byte {
+func readCurrentFixture(t *testing.T, name string) []byte {
 	t.Helper()
-	content, err := os.ReadFile(filepath.Join("testdata", "migrations", "v1", name))
+	content, err := os.ReadFile(filepath.Join("testdata", "current", name))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return content
 }
 
-func readV1ReplaySummary(t *testing.T) v1ReplaySummary {
+func readCurrentReplaySummary(t *testing.T) currentReplaySummary {
 	t.Helper()
-	content := readV1Fixture(t, "replay_plan.json")
-	var summary v1ReplaySummary
+	content := readCurrentFixture(t, "replay_plan.json")
+	var summary currentReplaySummary
 	if err := json.Unmarshal(content, &summary); err != nil {
 		t.Fatal(err)
 	}
 	return summary
 }
 
-func summarizeV1Replay(t *testing.T, plan ReplayPlan) v1ReplaySummary {
+func summarizeCurrentReplay(t *testing.T, plan ReplayPlan) currentReplaySummary {
 	t.Helper()
-	summary := v1ReplaySummary{
+	summary := currentReplaySummary{
 		SessionID: plan.Identity.SessionID, ThreadID: plan.Identity.ThreadID,
 		Provider: plan.SessionMetadata.Provider, ProviderWire: plan.SessionMetadata.ProviderWire,
 		Model: plan.SessionMetadata.Model, SchemaRevision: plan.SessionMetadata.SchemaRevision,
 		CreationCWD: plan.SessionMetadata.CreationCWD, NextSequence: plan.NextSequence,
-		Turns:         make([]v1TurnSummary, 0, len(plan.Turns)),
-		NativeCommits: make([]v1NativeSummary, 0, len(plan.NativeCommits)),
-		SampleUsages:  make([]v1UsageSummary, 0, len(plan.SampleUsages)),
+		Turns:         make([]currentTurnSummary, 0, len(plan.Turns)),
+		NativeCommits: make([]currentNativeSummary, 0, len(plan.NativeCommits)),
+		SampleUsages:  make([]currentUsageSummary, 0, len(plan.SampleUsages)),
 	}
 	for _, turn := range plan.Turns {
-		summary.Turns = append(summary.Turns, v1TurnSummary(turn))
+		summary.Turns = append(summary.Turns, currentTurnSummary(turn))
 	}
 	for _, commit := range plan.NativeCommits {
-		summary.NativeCommits = append(summary.NativeCommits, v1NativeSummary{
+		summary.NativeCommits = append(summary.NativeCommits, currentNativeSummary{
 			Sequence: commit.Sequence, TurnID: commit.TurnID, Provider: commit.Commit.Provider,
 			Wire: commit.Commit.Wire, PayloadVersion: commit.Commit.PayloadVersion,
 		})
@@ -309,7 +365,7 @@ func summarizeV1Replay(t *testing.T, plan ReplayPlan) v1ReplaySummary {
 		if err != nil {
 			t.Fatal(err)
 		}
-		summary.SampleUsages = append(summary.SampleUsages, v1UsageSummary{
+		summary.SampleUsages = append(summary.SampleUsages, currentUsageSummary{
 			Sequence: usage.Sequence, TurnID: usage.TurnID, Usage: payload,
 		})
 	}

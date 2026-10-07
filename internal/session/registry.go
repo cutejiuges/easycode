@@ -64,6 +64,21 @@ func descriptorByKind(kind EventKind) (Descriptor, bool) {
 			Kind: EventSampleUsage, Version: 1, Requirement: ReplayRequired,
 			Cardinality: CardinalityMany, Placement: PlacementActiveTurn,
 		}, true
+	case EventToolCallReady:
+		return Descriptor{
+			Kind: EventToolCallReady, Version: 1, Requirement: ReplayRequired,
+			Cardinality: CardinalityMany, Placement: PlacementActiveTurn,
+		}, true
+	case EventToolExecutionStarted:
+		return Descriptor{
+			Kind: EventToolExecutionStarted, Version: 1, Requirement: ReplayRequired,
+			Cardinality: CardinalityMany, Placement: PlacementActiveTurn,
+		}, true
+	case EventToolCallResult:
+		return Descriptor{
+			Kind: EventToolCallResult, Version: 1, Requirement: ReplayRequired,
+			Cardinality: CardinalityMany, Placement: PlacementActiveTurn,
+		}, true
 	case EventTurnCompleted:
 		return Descriptor{
 			Kind: EventTurnCompleted, Version: 1, Requirement: ReplayRequired,

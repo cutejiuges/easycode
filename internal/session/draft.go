@@ -6,9 +6,10 @@ import (
 
 	"easycode/internal/codec"
 	"easycode/internal/domain"
+	"easycode/internal/tool"
 )
 
-// NewSessionMetaDraft 创建已验证并编码的 session_meta v1 draft。
+// NewSessionMetaDraft 创建已验证并编码的当前 session_meta draft。
 func NewSessionMetaDraft(payload SessionMetaPayload) (RecordDraft, error) {
 	if err := validateSessionMetaPayload(payload); err != nil {
 		return RecordDraft{}, err
@@ -16,7 +17,7 @@ func NewSessionMetaDraft(payload SessionMetaPayload) (RecordDraft, error) {
 	return encodeDraft(EventSessionMeta, "", "", payload)
 }
 
-// NewThreadMetaDraft 创建已验证并编码的 thread_meta v1 draft。
+// NewThreadMetaDraft 创建已验证并编码的当前 thread_meta draft。
 func NewThreadMetaDraft(payload ThreadMetaPayload) (RecordDraft, error) {
 	if err := validateThreadMetaPayload(payload); err != nil {
 		return RecordDraft{}, err
@@ -24,7 +25,7 @@ func NewThreadMetaDraft(payload ThreadMetaPayload) (RecordDraft, error) {
 	return encodeDraft(EventThreadMeta, payload.ParentThreadID, "", payload)
 }
 
-// NewTurnStartedDraft 创建已验证并编码的 turn_started v1 draft。
+// NewTurnStartedDraft 创建已验证并编码的当前 turn_started draft。
 func NewTurnStartedDraft(turnID domain.TurnID) (RecordDraft, error) {
 	if err := validateTurnID(turnID); err != nil {
 		return RecordDraft{}, err
@@ -32,7 +33,7 @@ func NewTurnStartedDraft(turnID domain.TurnID) (RecordDraft, error) {
 	return encodeDraft(EventTurnStarted, "", turnID, TurnStartedPayload{})
 }
 
-// NewProviderNativeCommitDraft 创建已验证并编码的 provider_native_commit v1 draft。
+// NewProviderNativeCommitDraft 创建已验证并编码的当前 provider_native_commit draft。
 func NewProviderNativeCommitDraft(turnID domain.TurnID, payload NativeCommitPayload) (RecordDraft, error) {
 	if err := validateTurnID(turnID); err != nil {
 		return RecordDraft{}, err
@@ -44,7 +45,7 @@ func NewProviderNativeCommitDraft(turnID domain.TurnID, payload NativeCommitPayl
 	return encodeDraft(EventProviderNativeCommit, "", turnID, payload)
 }
 
-// NewSampleUsageDraft 创建已验证并编码的 sample_usage v1 draft。
+// NewSampleUsageDraft 创建已验证并编码的当前 sample_usage draft。
 func NewSampleUsageDraft(turnID domain.TurnID, usage domain.SampleUsage) (RecordDraft, error) {
 	if err := validateTurnID(turnID); err != nil {
 		return RecordDraft{}, err
@@ -56,7 +57,65 @@ func NewSampleUsageDraft(turnID domain.TurnID, usage domain.SampleUsage) (Record
 	return encodeDraft(EventSampleUsage, "", turnID, payload)
 }
 
-// NewTurnCompletedDraft 创建已验证并编码的 turn_completed v1 draft。
+// NewToolCallReadyDraft 创建完整参数已经durable前待写入的调用事实。
+func NewToolCallReadyDraft(turnID domain.TurnID, invocation tool.ReadInvocation, sampleIndex uint32, callIndex uint32) (RecordDraft, error) {
+	if err := validateTurnID(turnID); err != nil {
+		return RecordDraft{}, err
+	}
+	if err := invocation.Validate(); err != nil {
+		return RecordDraft{}, fmt.Errorf("tool invocation is invalid: %w", err)
+	}
+	input := invocation.Input()
+	payload := ToolCallReadyPayload{
+		InvocationID: invocation.InvocationID(), ProviderCallID: invocation.ProviderCallID(),
+		SampleIndex: sampleIndex, CallIndex: callIndex, Capability: tool.CapabilityRead,
+		InputRevision: tool.ReadInputRevision,
+		Input:         ReadInputPayload{FilePath: input.FilePath(), Offset: input.Offset(), Limit: input.Limit()},
+	}
+	if _, err := payload.Domain(); err != nil {
+		return RecordDraft{}, err
+	}
+	return encodeDraft(EventToolCallReady, "", turnID, payload)
+}
+
+// NewToolExecutionStartedDraft 创建executor接收前必须单独Sync的事实。
+func NewToolExecutionStartedDraft(turnID domain.TurnID, invocationID tool.InvocationID) (RecordDraft, error) {
+	if err := validateTurnID(turnID); err != nil {
+		return RecordDraft{}, err
+	}
+	payload := ToolExecutionStartedPayload{InvocationID: invocationID}
+	if err := validateToolExecutionStartedPayload(payload); err != nil {
+		return RecordDraft{}, err
+	}
+	return encodeDraft(EventToolExecutionStarted, "", turnID, payload)
+}
+
+// NewToolCallResultDraft 创建冻结模型输出的工具终态事实。
+func NewToolCallResultDraft(turnID domain.TurnID, result tool.InvocationResult) (RecordDraft, error) {
+	if err := validateTurnID(turnID); err != nil {
+		return RecordDraft{}, err
+	}
+	if err := result.Validate(); err != nil {
+		return RecordDraft{}, fmt.Errorf("tool result is invalid: %w", err)
+	}
+	metadata := result.Metadata()
+	payload := ToolCallResultPayload{
+		InvocationID: result.InvocationID(), Status: result.Status(), Code: result.Code(),
+		ResultCodecRevision: result.ResultCodecRevision(), Preview: result.Preview().Text(),
+		Metadata: ReadResultMetadataPayload{
+			RelativePath: metadata.RelativePath(), RequestedOffset: metadata.RequestedOffset(),
+			RequestedLimit: metadata.RequestedLimit(), StartLine: metadata.StartLine(), EndLine: metadata.EndLine(),
+			ReachedEOF: metadata.ReachedEOF(), LongLineTruncated: metadata.LongLineTruncated(),
+			OutputTruncated: metadata.OutputTruncated(),
+		},
+	}
+	if err := validateToolCallResultPayload(payload); err != nil {
+		return RecordDraft{}, err
+	}
+	return encodeDraft(EventToolCallResult, "", turnID, payload)
+}
+
+// NewTurnCompletedDraft 创建已验证并编码的当前 turn_completed draft。
 func NewTurnCompletedDraft(turnID domain.TurnID) (RecordDraft, error) {
 	if err := validateTurnID(turnID); err != nil {
 		return RecordDraft{}, err
@@ -64,7 +123,7 @@ func NewTurnCompletedDraft(turnID domain.TurnID) (RecordDraft, error) {
 	return encodeDraft(EventTurnCompleted, "", turnID, TurnCompletedPayload{})
 }
 
-// NewTurnFailedDraft 创建已验证并编码的 turn_failed v1 draft。
+// NewTurnFailedDraft 创建已验证并编码的当前 turn_failed draft。
 func NewTurnFailedDraft(turnID domain.TurnID, payload TurnFailedPayload) (RecordDraft, error) {
 	if err := validateTurnID(turnID); err != nil {
 		return RecordDraft{}, err
@@ -75,11 +134,11 @@ func NewTurnFailedDraft(turnID domain.TurnID, payload TurnFailedPayload) (Record
 	return encodeDraft(EventTurnFailed, "", turnID, payload)
 }
 
-func encodeDraft(
+func encodeDraft[T recordPayload](
 	kind EventKind,
 	parentThreadID domain.ThreadID,
 	turnID domain.TurnID,
-	payload any,
+	payload T,
 ) (RecordDraft, error) {
 	descriptor, exists := descriptorByKind(kind)
 	if !exists {
@@ -127,7 +186,8 @@ func validateDraftPlacement(draft RecordDraft) error {
 		if draft.turnID != "" {
 			return fmt.Errorf("thread metadata draft placement is invalid")
 		}
-	case EventTurnStarted, EventProviderNativeCommit, EventSampleUsage, EventTurnCompleted, EventTurnFailed:
+	case EventTurnStarted, EventProviderNativeCommit, EventSampleUsage, EventToolCallReady,
+		EventToolExecutionStarted, EventToolCallResult, EventTurnCompleted, EventTurnFailed:
 		if draft.parentThreadID != "" || !draft.turnID.Valid() {
 			return fmt.Errorf("turn draft placement is invalid")
 		}
@@ -160,6 +220,15 @@ func validateDraftPayload(draft RecordDraft) error {
 		return err
 	case EventSampleUsage:
 		_, err := DecodeSampleUsagePayload(record)
+		return err
+	case EventToolCallReady:
+		_, err := DecodeToolCallReadyPayload(record)
+		return err
+	case EventToolExecutionStarted:
+		_, err := DecodeToolExecutionStartedPayload(record)
+		return err
+	case EventToolCallResult:
+		_, err := DecodeToolCallResultPayload(record)
 		return err
 	case EventTurnCompleted:
 		_, err := DecodeTurnCompletedPayload(record)

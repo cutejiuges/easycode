@@ -9,7 +9,10 @@ import (
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
 	"easycode/internal/provider/transport"
+	"easycode/internal/tool"
 )
+
+const maxToolInputBytes = 1 << 20
 
 type messagesEventEnvelope struct {
 	Type         string          `json:"type"`
@@ -28,18 +31,22 @@ type messageStartWire struct {
 }
 
 type contentBlockWire struct {
-	Type      string `json:"type"`
-	Text      string `json:"text,omitempty"`
-	Thinking  string `json:"thinking,omitempty"`
-	Signature string `json:"signature,omitempty"`
-	Data      string `json:"data,omitempty"`
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	Thinking  string          `json:"thinking,omitempty"`
+	Signature string          `json:"signature,omitempty"`
+	Data      string          `json:"data,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
 }
 
 type contentDeltaWire struct {
-	Type      string `json:"type"`
-	Text      string `json:"text,omitempty"`
-	Thinking  string `json:"thinking,omitempty"`
-	Signature string `json:"signature,omitempty"`
+	Type        string `json:"type"`
+	Text        string `json:"text,omitempty"`
+	Thinking    string `json:"thinking,omitempty"`
+	Signature   string `json:"signature,omitempty"`
+	PartialJSON string `json:"partial_json,omitempty"`
 }
 
 type messageDeltaWire struct {
@@ -54,8 +61,10 @@ type usageEventWire struct {
 }
 
 type blockState struct {
-	item    NativeItem
-	stopped bool
+	item      NativeItem
+	toolInput string
+	ready     *tool.ReadyCall
+	stopped   bool
 }
 
 type reducerResult struct {
@@ -70,10 +79,15 @@ type streamReducer struct {
 	completed      bool
 	blocks         map[int]*blockState
 	metadata       messageMetadata
+	catalog        tool.CatalogSnapshot
 }
 
-func newStreamReducer() *streamReducer {
-	return &streamReducer{blocks: make(map[int]*blockState)}
+func newStreamReducer(catalog ...tool.CatalogSnapshot) *streamReducer {
+	reducer := &streamReducer{blocks: make(map[int]*blockState)}
+	if len(catalog) == 1 {
+		reducer.catalog = catalog[0].Clone()
+	}
+	return reducer
 }
 
 func (reducer *streamReducer) reduce(event transport.SSEEvent) (reducerResult, error) {
@@ -162,6 +176,17 @@ func (reducer *streamReducer) reduceBlockStart(index *int, raw json.RawMessage) 
 	case blockTypeRedactedThinking:
 		item.RedactedData = wire.Data
 		item.Raw = append(json.RawMessage(nil), raw...)
+	case blockTypeToolUse:
+		if wire.ID == "" || wire.Name == "" {
+			return reducerResult{}, protocolError("Anthropic tool use identity is invalid")
+		}
+		for _, state := range reducer.blocks {
+			if state.item.Type == blockTypeToolUse && state.item.ID == wire.ID {
+				return reducerResult{}, protocolError("Anthropic tool use ID is duplicated")
+			}
+		}
+		item.ID = wire.ID
+		item.Name = wire.Name
 	default:
 		return reducerResult{}, protocolError("Anthropic content block type is unsupported")
 	}
@@ -208,6 +233,13 @@ func (reducer *streamReducer) reduceBlockDelta(index *int, raw json.RawMessage) 
 		}
 		state.item.Signature = delta.Signature
 		return reducerResult{}, nil
+	case "input_json_delta":
+		if state.item.Type != blockTypeToolUse || delta.PartialJSON == "" ||
+			len(state.toolInput)+len(delta.PartialJSON) > maxToolInputBytes {
+			return reducerResult{}, protocolError("Anthropic tool input delta is invalid")
+		}
+		state.toolInput += delta.PartialJSON
+		return reducerResult{}, nil
 	default:
 		return reducerResult{}, protocolError("Anthropic content block delta type is unsupported")
 	}
@@ -217,6 +249,25 @@ func (reducer *streamReducer) reduceBlockStop(index *int) (reducerResult, error)
 	_, state, err := reducer.activeBlock(index)
 	if err != nil {
 		return reducerResult{}, err
+	}
+	if state.item.Type == blockTypeToolUse {
+		if state.toolInput == "" || !json.Valid([]byte(state.toolInput)) {
+			return reducerResult{}, protocolError("Anthropic tool input is incomplete")
+		}
+		input, decodeErr := reducer.catalog.DecodeRead(domain.ProviderAnthropic, state.item.Name, []byte(state.toolInput))
+		if decodeErr != nil {
+			return reducerResult{}, protocolError("Anthropic tool input is invalid")
+		}
+		callID, callErr := tool.ParseProviderCallID(state.item.ID)
+		if callErr != nil {
+			return reducerResult{}, protocolError("Anthropic tool use ID is invalid")
+		}
+		ready, readyErr := tool.NewReadyCall(callID, input)
+		if readyErr != nil {
+			return reducerResult{}, protocolError("Anthropic ready call is invalid")
+		}
+		state.item.Input = append(json.RawMessage(nil), state.toolInput...)
+		state.ready = &ready
 	}
 	state.stopped = true
 	item := state.item.clone()
@@ -291,6 +342,21 @@ func (reducer *streamReducer) assistantMessage() nativeMessage {
 		message.Content = append(message.Content, reducer.blocks[index].item.clone())
 	}
 	return message
+}
+
+func (reducer *streamReducer) readyCalls() []tool.ReadyCall {
+	indexes := make([]int, 0, len(reducer.blocks))
+	for index, state := range reducer.blocks {
+		if state.ready != nil {
+			indexes = append(indexes, index)
+		}
+	}
+	sort.Ints(indexes)
+	ready := make([]tool.ReadyCall, 0, len(indexes))
+	for _, index := range indexes {
+		ready = append(ready, reducer.blocks[index].ready.Clone())
+	}
+	return ready
 }
 
 func (reducer *streamReducer) messageMetadata() messageMetadata {

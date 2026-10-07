@@ -232,13 +232,13 @@
 - 现象：Claude Code 的 transcript 会混合用户/assistant/tool/progress 等消息，Codex rollout 则记录 response item、event 和上下文；二者都包含工具相关事实，但记录边界、恢复来源和宿主事件并不相同。直接照搬任一 JSONL 形状会把 Provider wire、运行时展示和副作用事实耦合。
 - 触发条件：在工具尚未实现时先设计 Session schema，并要求未来无损承接 thinking、tool use 和 MCP call。
 - 根因：把“JSONL 是容器”误当成“所有事件共享同一语义”。Provider native history、工具幂等 ledger 和 RuntimeEvent 实际具有不同提交时机与恢复责任。
-- 架构影响：公共 envelope 只负责版本、顺序、批次、归属与完整性；`provider_native_commit` payload 由对应 Provider 私有解码。当前 required v1 包含 `session_meta`、`thread_meta`、`turn_started`、`provider_native_commit`、`sample_usage`、`turn_completed` 和 `turn_failed`；未来 tool、permission、hook、subagent、cache 使用独立强类型 kind，optional 展示事实不得阻断恢复。
+- 架构影响：公共 envelope 只负责版本、顺序、批次、归属与完整性；`provider_native_commit` payload 由对应 Provider 私有解码。当前 required kinds 除会话与文本回合事实外，已包含 `tool_call_ready`、`tool_execution_started` 和 `tool_call_result`；未来 permission、hook、subagent、cache 使用独立强类型 kind，optional 展示事实不得阻断恢复。
 - 缓存影响：Session envelope 和动态路径不参与 Provider 请求 canonical bytes；恢复后的请求字节必须与未退出进程的下一轮一致。
-- 修复方案：OpenAI 保存 user input item 与有序 output items，Anthropic 保存 user/assistant message、metadata 与 usage presence；共享层只传递 opaque envelope。未来 tool result 在副作用 durable 后作为下一次请求的 input-only native 增量提交，不重复 assistant tool call；MCP call 复用工具事实边界，但其 manifest/capability 另行版本化。
+- 修复方案：OpenAI 保存 user input item 与有序 output items，Anthropic 保存 user/assistant message、metadata 与 usage presence；共享层只传递 opaque envelope。Read tool result 已在副作用 durable 后作为下一次请求的 input-only native 增量提交，不重复 assistant tool call；MCP call 未来复用工具事实边界，但其 manifest/capability 另行版本化。
 - 未采用方案及原因：未将 tool/thinking/MCP 预先塞入通用 `map[string]any`，也未以 UI transcript 反向构造 Provider 请求；这些做法无法保证类型、幂等和 opaque reasoning 无损。
 - 回归测试：`internal/provider/openai/commit_test.go`、`internal/provider/anthropic/commit_test.go`、`internal/app/resume_e2e_test.go`。
 - 关联 ADR/Issue/PR：ADR-0002、ADR-0003；OpenSpec `add-jsonl-session-resume`。
-- 后续行动：P3 增加 tool call/result ledger 时更新 OpenSpec schema、golden 和恢复 fixture；MCP、subagent、compaction 分别在对应阶段扩展，不修改既有 v1 payload。
+- 后续行动：Read 的 tool call/result ledger、golden 和恢复 fixture 已由 `add-read-tool-loop` 补齐；MCP、subagent、compaction 分别在对应阶段扩展，不修改既有 payload。
 
 ### [P2][2026-09-28] 恢复正确性需要 envelope、batch、语义三层校验
 
@@ -251,7 +251,7 @@
 - 缓存影响：阻止损坏历史生成看似合法但字节不同的续写请求。
 - 修复方案：只允许修复 EOF 尾部半行和最后一个未完成 batch，修复后截断并 `Sync`；中段损坏、完整但校验失败的末行、未知 required 版本全部硬失败。若完整日志以未闭合 turn 结束，恢复先追加 `turn_failed(code=session_interrupted)` 补偿记录，再开始新 turn。
 - 未采用方案及原因：不跳过坏行继续扫描，不自动猜测未知 required payload，也不把尾批次中的部分 native commit 交给 Provider。
-- 回归测试：`internal/session/loader_test.go`、`internal/session/replay_test.go`、`internal/session/migration_v1_test.go`、`internal/app/resume_e2e_test.go`。
+- 回归测试：`internal/session/loader_test.go`、`internal/session/replay_test.go`、`internal/session/current_fixture_test.go`、`internal/app/resume_e2e_test.go`。
 - 关联 ADR/Issue/PR：ADR-0003；OpenSpec `add-jsonl-session-resume`。
 - 后续行动：首次引入新 schema/payload revision 时必须增加从不可变历史 fixture 到当前 replay model 的版本专属 regression；SQLite 重建只能消费相同 ReplayPlanner 输出。
 
@@ -266,7 +266,7 @@
 - 缓存影响：lease、路径、PID 和时间状态不进入 Provider 请求；双 Provider 回归继续保证 uninterrupted 与 restored 请求的 canonical bytes、native 顺序和 fingerprint 等价。
 - 修复方案：Darwin/Linux/Windows 使用非阻塞 OS file lock，Loader 借用、writer 单向接管同一 lease；append admission 使用有界非阻塞队列，Close 先线性化 closing 后继续 drain。真实子进程通过 pipe ready/control 握手验证竞争、正常关闭和异常退出释放，不用 sleep 猜测锁状态。
 - 未采用方案及原因：不使用 PID lockfile、TTL 清理或进程级全局 mutex；它们不能绑定当前 journal handle，且会引入 stale metadata 或无法保护其他进程。
-- 回归测试：`internal/session/lease_test.go`、`internal/session/writer_test.go`、`internal/session/migration_v1_test.go`、`internal/app/session_process_test.go`、`internal/app/session_service_test.go`。
+- 回归测试：`internal/session/lease_test.go`、`internal/session/writer_test.go`、`internal/session/current_fixture_test.go`、`internal/app/session_process_test.go`、`internal/app/session_service_test.go`。
 - 关联 ADR/Issue/PR：OpenSpec `harden-session-journal-ownership`。
 - 后续行动：OS file lock 是 advisory lock，只约束当前协作版本；旧版或非协作进程仍可绕过。发布或回滚时禁止新旧二进制同时写同一 thread，绕过锁的修改继续依靠 checksum、seq 和完整回放校验判损。
 
@@ -283,7 +283,7 @@
 - 未采用方案及原因：不使用异步 best-effort writer，也不允许从 RuntimeEvent 回放 Provider history。
 - 回归测试：`internal/runtime/runtime_test.go`、双 Provider `commit_test.go`、`internal/app/resume_e2e_test.go`。
 - 关联 ADR/Issue/PR：ADR-0002、ADR-0003；OpenSpec `add-jsonl-session-resume`。
-- 后续行动：tool result 和其他副作用沿用同一 durable-before-memory 原则；compaction/fork 未来只能 append checkpoint/cursor 与 child metadata，不得重写原日志。该能力当前尚未实现。
+- 后续行动：Read tool result 已沿用同一 durable-before-memory 原则；其他副作用继续复用该边界。compaction/fork 未来只能 append checkpoint/cursor 与 child metadata，不得重写原日志。
 
 ### [P2][2026-09-29] 机器 stdout 不能直接复用内部 RuntimeEvent
 
@@ -341,7 +341,7 @@
 - 缓存影响：保持 JSONL v1 canonical bytes、checksum 与恢复后 Provider request bytes 不变。
 - 修复方案：constructor 立即验证并编码独立 `json.RawMessage`，ReplayPlanner 通过显式 switch 调用目标 decoder。
 - 未采用方案及原因：未把动态类型转移到 callback interface 或泛型 registry，因为仍会隐藏 kind/revision 契约；也未修改已发布 v1 wire。
-- 回归测试：`internal/session/draft_test.go`、`codec_test.go`、`replay_test.go`、`migration_v1_test.go`。
+- 回归测试：`internal/session/draft_test.go`、`codec_test.go`、`replay_test.go`、`current_fixture_test.go`。
 - 关联 ADR/Issue/PR：ADR-0003；OpenSpec `harden-architecture-contract-compliance`，不新增长期决策。
 - 后续行动：未来 revision 必须同时增加 typed constructor、strict decoder、validator 和不可变 migration fixture。
 
@@ -424,7 +424,98 @@
 
 ## 6. P3 Coding Tools 与安全执行
 
-暂无实际记录。
+以下条目包含 2026-10-07 对 Claude Code 与 Codex 参考实现的设计调查，以及 `add-read-tool-loop` 实现期间验证过的具体风险。尚未落地的条目保持“发现”；已由实现与回归测试闭环的条目标记为“已解决”。
+
+### [P3][2026-10-07] Call ID 不能把任意外部副作用变成 exactly-once
+
+- 状态：发现（设计阶段）
+- 影响版本或提交：P3 Tool 架构探索，尚未进入实现 change
+- 现象：若把 call ID 去重描述为“保证不重复副作用”，进程可能在外部写入成功后、结果 durable 前崩溃；恢复器无法判断副作用是否发生，自动重试可能造成第二次写入或命令执行。
+- 触发条件：`execution_started` 后执行文件、进程或网络副作用，随后在结果成功 `Sync` 前崩溃。
+- 根因：本地 ledger 只能证明 EasyCode 是否已经接收调用，不能与所有外部系统建立原子提交。
+- 架构影响：ledger 的统一承诺限定为自动执行至多一次；`execution_started_durable` 是接收线性化点，开始后无确定结果恢复为 `outcome_uncertain` 并禁止自动重跑。只有 executor 提供可靠 idempotency key 或可验证提交协议时，具体 capability 才能声明更强语义。
+- 缓存影响：不确定状态和 ledger identity 不进入稳定 prompt 前缀；补偿 output 必须保持 Provider-native call/output 配对。
+- 修复方案：先 durable ready 和 execution start，再执行；结果成功后单独 durable。恢复器对 started-without-result 失败关闭并要求显式处置。
+- 未采用方案及原因：不使用参数哈希推断“相同调用”，因为相同参数可能是用户有意重复；不把未知结果当失败自动重试，因为会扩大副作用。
+- 回归测试：规划随首个副作用工具 change 增加确定性崩溃点、重复 invocation、结果 `Sync` 失败、恢复不重跑和补偿 output fixture。
+- 关联 ADR/Issue/PR：[Tool 系统架构设计](../architecture/tool-system.md)；后续对应 OpenSpec change。
+- 后续行动：所有 Tool UI 和文档统一使用“至多一次自动执行”和“不确定结果”，禁止笼统宣传 exactly-once。
+
+### [P3][2026-10-07] Provider sample 未 durable 前执行工具会制造不可恢复历史
+
+- 状态：发现（设计阶段）
+- 影响版本或提交：P3 Tool 架构探索，尚未进入实现 change
+- 现象：Claude Code 可在模型流尚未结束时执行已完成的 tool block；如果直接复制该低延迟行为，工具可能已产生副作用，但包含该 call 的 Provider-native sample 尚未写入 Session，崩溃后无法合法恢复调用来源和结果配对。
+- 触发条件：完整 tool block 先于 response terminal 到达，Runtime 立即执行，随后 stream、validation 或 Session append 失败。
+- 根因：把 UI 可展示的流式完成、Provider sample 完成和副作用 durable 前置事实混为一个边界。
+- 架构影响：P3 首版必须等待完整 `PreparedSample`，将 native commit、sample usage 和全部 ready calls 作为一个 batch 成功 `Sync` 后才能执行。流内提前执行只能由未来独立 change 重新证明协议。
+- 缓存影响：只有 durable native history 能进入下一次请求；draft、delta 和未提交 sample 不参与 fingerprint 或续写。
+- 修复方案：Runtime 统一拥有 `sample -> validate -> durable -> execute -> durable outputs -> next sample` 生命周期；draft 只投影给宿主。
+- 未采用方案及原因：不为了首版 latency 复制推测执行，也不把 RuntimeEvent 当成崩溃恢复事实，因为两者都无法保证原生历史完整。
+- 回归测试：规划在 `add-read-tool-loop` 覆盖 stream terminal 失败、durable batch 失败时零 executor 调用、成功 `Sync` 后才调用，以及 uninterrupted/restored 下一请求等价。
+- 关联 ADR/Issue/PR：[Tool 系统架构设计](../architecture/tool-system.md)；推荐 OpenSpec `add-read-tool-loop`。
+- 后续行动：首个 Read 闭环先证明该边界，再评估是否存在值得单独优化的流内执行延迟。
+
+### [P3][2026-10-07] 每个 Tool Call 都必须得到合法 Output 才能继续采样
+
+- 状态：发现（设计阶段）
+- 影响版本或提交：P3 Tool 架构探索，尚未进入实现 change
+- 现象：验证失败、权限拒绝、取消或崩溃恢复如果只发布 `turn_failed`，Provider-native history 会留下 call 而没有匹配 output；下一次采样可能被 Provider 拒绝，或让恢复与不中断路径产生不同请求。
+- 触发条件：tool call 已进入 durable native history，但执行没有正常成功结果。
+- 根因：把 Runtime turn 终态误当成 Provider call/output 配对修复机制。
+- 架构影响：成功、验证失败、拒绝、取消、executor 失败和 `outcome_uncertain` 都必须生成与原 call 类型及 ID 匹配的 Provider-native output，再决定是否继续或终止 turn。
+- 缓存影响：补偿 output 是 native history 的一部分；其内容和顺序必须确定，恢复与不中断 fingerprint 必须等价。
+- 修复方案：由 Provider `ToolResultCodec` 编码强类型结果，Runtime 按原 call index 收集并 durable；Session replay 只依据原生 item 与 ledger，不从展示事件猜测。
+- 未采用方案及原因：不删除已提交 call，也不把所有错误压成宿主日志，因为这会破坏 append-only 历史或 Provider 协议。
+- 回归测试：规划覆盖双 Provider 的拒绝、取消、验证失败、部分并发失败、崩溃补偿和 resume request golden。
+- 关联 ADR/Issue/PR：[Tool 系统架构设计](../architecture/tool-system.md)；后续 Tool Loop OpenSpec changes。
+- 后续行动：任何新增 Provider tool wire 必须同时提供所有非成功终态的 output fixture。
+
+### [P3][2026-10-07] Resume 不能成为隐式工具执行或 Provider 请求入口
+
+- 状态：已解决（`add-read-tool-loop`）
+- 影响版本或提交：P3 Read Tool Loop
+- 现象：旧设计曾把ready-without-started定义为resume后继续执行，并把output-committed定义为自动继续sampling。这会让一个看似只读的恢复命令在用户没有新输入时访问文件或网络；未来替换为写工具后还会放大成隐式副作用。
+- 触发条件：进程在ready、started、result或tool-output任一durable点退出，随后用户执行resume/continue。
+- 根因：混淆“补齐Provider call/output pairing”与“继续完成旧用户请求”，并把Read低风险误当成通用恢复语义。
+- 参考实现证据：Claude Code的streaming tool executor会为排队取消的调用直接合成paired `tool_result`，query取消路径会排空剩余调用以生成结果，消息修复对缺失结果只合成占位而不重执行；Codex在调度前先持久化call item，取消dispatch后返回 `aborted by user` output，history normalization对缺失output插入 `aborted`。两者都优先恢复配对，而不是在resume时重放工具副作用。
+- 架构影响：正常路径保持 `ready -> started -> result`；只有started接受前的取消允许 `ready -> cancelled result`。resume将ready关闭为 `session_interrupted_before_execution`，将started-without-result关闭为 `outcome_uncertain`，复用已有preview补交output，并以唯一 `turn_failed`关闭旧turn。
+- 缓存影响：本地补偿后的native history是下一次用户请求的唯一事实源；恢复本身不生成请求。相同reconciled history在当前进程和再次重启后的下一请求canonical bytes必须一致。
+- 修复方案：ReplayPlanner只输出sealed typed recovery plan；Runtime提供显式local reconciliation生命周期；app在宿主暴露前执行它，全程禁止executor和Provider stream。
+- 未采用方案及原因：不因Read只读而重试，因为该特例无法安全推广到Write/Exec；不自动继续sampling，因为用户没有授权新的网络动作；不删除call，因为会破坏append-only与Provider原生历史。
+- 回归测试：双Provider分别覆盖ready、started、result和output四个截断点，恢复时替换workspace文件证明零重读，断言零Provider请求，并逐字节比较直接继续与再次重启后的下一请求。
+- 关联 ADR/Issue/PR：[Tool 系统架构设计](../architecture/tool-system.md)；OpenSpec `add-read-tool-loop`。
+- 后续行动：后续所有工具change复用该恢复生命周期；若某capability需要可靠重试，必须单独提出幂等协议和用户可见语义。
+
+### [P3][2026-10-07] 用户批准不能替代 Sandbox 强制边界
+
+- 状态：发现（设计阶段）
+- 影响版本或提交：P3 Tool 架构探索，尚未进入实现 change
+- 现象：若 approval 直接决定 executor 能做什么，用户批准一条命令可能意外开放 workspace 外写入、网络、敏感环境变量或平台无法安全支持的能力。
+- 触发条件：Policy 返回 allow/用户点击批准后，executor 未再受独立 SandboxPlan 限制；或用户编辑命令后复用旧批准。
+- 根因：把产品层的意图确认和内核层的 capability enforcement 合并成一个布尔值。
+- 架构影响：Policy 只输出 allow/ask/deny 与批准事实；SandboxPlanner 独立生成实际执行边界。修改后的输入必须重新 decode、validate、policy 和 sandbox plan，批准不能覆盖失败关闭的平台能力。
+- 缓存影响：临时 approval 状态和易变 sandbox world state 不进入稳定工具 schema；只有必要的确定结果进入 native output。
+- 修复方案：权限协议和平台 sandbox 分 change 落地，但执行入口要求两者都满足；headless 遇到 ask 默认拒绝。
+- 未采用方案及原因：不以 prompt 警告或用户确认替代 OS/handle 级约束，也不在无交互环境隐式批准。
+- 回归测试：规划覆盖拒绝零副作用、批准仍禁止越界、修改输入触发重验、无交互 ask 失败关闭及不支持平台 fallback。
+- 关联 ADR/Issue/PR：[Tool 系统架构设计](../architecture/tool-system.md)；推荐 OpenSpec `add-tool-approval-protocol` 及后续 sandbox change。
+- 后续行动：P3 change 必须列出实际支持的平台 capability matrix，不得用一个 `sandbox=true` 空 flag 表示完成。
+
+### [P3][2026-10-07] 大结果恢复时重新截断会改变模型所见历史
+
+- 状态：发现（设计阶段）
+- 影响版本或提交：P3 Tool 架构探索，尚未进入实现 change
+- 现象：如果 Session 只保存完整 artifact descriptor，resume 时再按当前预算生成 preview，配置或算法 revision 变化会让模型看到与不中断执行不同的 tool output。
+- 触发条件：工具结果超限、预算配置或截断算法升级后恢复旧会话。
+- 根因：没有区分完整结果、模型预览、artifact 和 UI 摘要，也没有把“模型实际收到的字节”视为 Provider history 事实。
+- 架构影响：结果归一化必须冻结模型预览字节、预算 revision、artifact descriptor 和完整性信息；Provider ResultCodec 只编码冻结预览，resume 不重新计算。
+- 缓存影响：不同 preview 会直接改变下一请求 canonical bytes 和 fingerprint，因此必须与原生 output 一起持久化。
+- 修复方案：每个 capability 定义确定性预算策略；完整结果可进入权限受控 artifact，模型 preview 与替换原因进入 durable fact。
+- 未采用方案及原因：不使用单一全局尾部截断，也不依赖 artifact 在恢复时仍可读后重新渲染，因为两者都无法保证历史字节稳定。
+- 回归测试：规划覆盖预算边界、artifact 写入失败、算法/config 变化后恢复、secret redaction 和 uninterrupted/restored request byte equivalence。
+- 关联 ADR/Issue/PR：[Tool 系统架构设计](../architecture/tool-system.md)；推荐 OpenSpec `add-tool-result-budget`。
+- 后续行动：首个工具先提供最小确定性 preview；统一预算 change 再扩展 capability-specific 策略，不重写既有 records。
 
 重点关注：重复副作用、路径穿越、symlink、并发结果顺序、patch 增量解析和输出截断。
 

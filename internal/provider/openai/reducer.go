@@ -8,13 +8,19 @@ import (
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
 	"easycode/internal/provider/transport"
+	"easycode/internal/tool"
 )
 
+const maxFunctionArgumentsBytes = 1 << 20
+
 type responsesEventEnvelope struct {
-	Type     string          `json:"type"`
-	Delta    *string         `json:"delta,omitempty"`
-	Item     json.RawMessage `json:"item,omitempty"`
-	Response json.RawMessage `json:"response,omitempty"`
+	Type        string          `json:"type"`
+	Delta       *string         `json:"delta,omitempty"`
+	Arguments   *string         `json:"arguments,omitempty"`
+	ItemID      string          `json:"item_id,omitempty"`
+	OutputIndex *int            `json:"output_index,omitempty"`
+	Item        json.RawMessage `json:"item,omitempty"`
+	Response    json.RawMessage `json:"response,omitempty"`
 }
 
 type responseReference struct {
@@ -49,15 +55,36 @@ type reducerResult struct {
 }
 
 type responsesStreamReducer struct {
-	created    bool
-	responseID string
-	terminal   bool
-	items      []NativeItem
-	usage      rawUsage
+	created                 bool
+	responseID              string
+	terminal                bool
+	items                   []NativeItem
+	functions               map[string]*functionCallState
+	ready                   []tool.ReadyCall
+	catalog                 tool.CatalogSnapshot
+	usage                   rawUsage
+	lastFunctionOutputIndex int
 }
 
-func newResponsesStreamReducer() *responsesStreamReducer {
-	return &responsesStreamReducer{items: make([]NativeItem, 0)}
+type functionCallState struct {
+	itemID        string
+	callID        string
+	name          string
+	arguments     string
+	outputIndex   int
+	argumentsDone bool
+	itemDone      bool
+}
+
+func newResponsesStreamReducer(catalog ...tool.CatalogSnapshot) *responsesStreamReducer {
+	reducer := &responsesStreamReducer{
+		items: make([]NativeItem, 0), functions: make(map[string]*functionCallState),
+		ready: make([]tool.ReadyCall, 0), lastFunctionOutputIndex: -1,
+	}
+	if len(catalog) == 1 {
+		reducer.catalog = catalog[0].Clone()
+	}
+	return reducer
 }
 
 func (reducer *responsesStreamReducer) reduce(event transport.SSEEvent) (reducerResult, error) {
@@ -104,6 +131,12 @@ func (reducer *responsesStreamReducer) reduce(event transport.SSEEvent) (reducer
 			return reducerResult{}, fault.Wrap(fault.CodeStreamProtocol, "Responses text delta is invalid", err)
 		}
 		return reducerResult{semantic: &semantic}, nil
+	case "response.output_item.added":
+		return reducer.reduceOutputItemAdded(envelope.OutputIndex, envelope.Item)
+	case "response.function_call_arguments.delta":
+		return reducer.reduceFunctionArgumentsDelta(envelope.ItemID, envelope.OutputIndex, envelope.Delta)
+	case "response.function_call_arguments.done":
+		return reducer.reduceFunctionArgumentsDone(envelope.ItemID, envelope.OutputIndex, envelope.Arguments)
 	case "response.output_item.done":
 		if len(envelope.Item) == 0 || string(envelope.Item) == "null" {
 			return reducerResult{}, fault.New(fault.CodeStreamProtocol, "Responses output item is required")
@@ -113,6 +146,14 @@ func (reducer *responsesStreamReducer) reduce(event transport.SSEEvent) (reducer
 			return reducerResult{}, fault.Wrap(fault.CodeStreamProtocol, "Responses output item is invalid", err)
 		}
 		item = item.clone()
+		if item.Type == "function_call" {
+			ready, err := reducer.completeFunctionCall(envelope.OutputIndex, item)
+			if err != nil {
+				return reducerResult{}, err
+			}
+			item.Arguments = reducer.functions[item.ID].arguments
+			reducer.ready = append(reducer.ready, ready)
+		}
 		reducer.items = append(reducer.items, item)
 		return reducerResult{native: &item}, nil
 	case "response.completed":
@@ -146,6 +187,11 @@ func (reducer *responsesStreamReducer) acceptCompleted(raw json.RawMessage) erro
 	if response.ID == "" || response.ID != reducer.responseID {
 		return fault.New(fault.CodeStreamProtocol, "Responses terminal response ID does not match response.created")
 	}
+	for _, state := range reducer.functions {
+		if !state.argumentsDone || !state.itemDone {
+			return fault.New(fault.CodeStreamProtocol, "Responses function call is incomplete")
+		}
+	}
 	usage := decodeResponsesUsage(response.Usage)
 	if _, err := usage.normalized(); err != nil {
 		return fault.Wrap(fault.CodeStreamProtocol, "Responses usage is invalid", err)
@@ -153,6 +199,99 @@ func (reducer *responsesStreamReducer) acceptCompleted(raw json.RawMessage) erro
 	reducer.usage = usage
 	reducer.terminal = true
 	return nil
+}
+
+func (reducer *responsesStreamReducer) reduceOutputItemAdded(index *int, raw json.RawMessage) (reducerResult, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return reducerResult{}, fault.New(fault.CodeStreamProtocol, "Responses output item is required")
+	}
+	var item NativeItem
+	if err := codec.Unmarshal(raw, &item); err != nil {
+		return reducerResult{}, fault.Wrap(fault.CodeStreamProtocol, "Responses output item is invalid", err)
+	}
+	if item.Type != "function_call" {
+		return reducerResult{}, nil
+	}
+	if index == nil || *index < 0 || item.ID == "" || item.CallID == "" || item.Name == "" {
+		return reducerResult{}, fault.New(fault.CodeStreamProtocol, "Responses function call identity is invalid")
+	}
+	if _, exists := reducer.functions[item.ID]; exists {
+		return reducerResult{}, fault.New(fault.CodeStreamProtocol, "Responses function call item is duplicated")
+	}
+	for _, state := range reducer.functions {
+		if state.callID == item.CallID || state.outputIndex == *index {
+			return reducerResult{}, fault.New(fault.CodeStreamProtocol, "Responses function call identity conflicts")
+		}
+	}
+	reducer.functions[item.ID] = &functionCallState{
+		itemID: item.ID, callID: item.CallID, name: item.Name, arguments: item.Arguments, outputIndex: *index,
+	}
+	return reducerResult{}, nil
+}
+
+func (reducer *responsesStreamReducer) reduceFunctionArgumentsDelta(itemID string, index *int, delta *string) (reducerResult, error) {
+	state, err := reducer.functionState(itemID, index)
+	if err != nil {
+		return reducerResult{}, err
+	}
+	if delta == nil || state.argumentsDone || len(state.arguments)+len(*delta) > maxFunctionArgumentsBytes {
+		return reducerResult{}, fault.New(fault.CodeStreamProtocol, "Responses function arguments delta is invalid")
+	}
+	state.arguments += *delta
+	return reducerResult{}, nil
+}
+
+func (reducer *responsesStreamReducer) reduceFunctionArgumentsDone(itemID string, index *int, arguments *string) (reducerResult, error) {
+	state, err := reducer.functionState(itemID, index)
+	if err != nil {
+		return reducerResult{}, err
+	}
+	if arguments == nil || state.argumentsDone || len(*arguments) > maxFunctionArgumentsBytes {
+		return reducerResult{}, fault.New(fault.CodeStreamProtocol, "Responses completed function arguments are invalid")
+	}
+	if state.arguments != "" && state.arguments != *arguments {
+		return reducerResult{}, fault.New(fault.CodeStreamProtocol, "Responses function arguments conflict")
+	}
+	state.arguments = *arguments
+	state.argumentsDone = true
+	return reducerResult{}, nil
+}
+
+func (reducer *responsesStreamReducer) completeFunctionCall(index *int, item NativeItem) (tool.ReadyCall, error) {
+	state, err := reducer.functionState(item.ID, index)
+	if err != nil {
+		return tool.ReadyCall{}, err
+	}
+	if state.itemDone || !state.argumentsDone || item.CallID != state.callID || item.Name != state.name ||
+		item.Arguments != state.arguments || state.outputIndex <= reducer.lastFunctionOutputIndex {
+		return tool.ReadyCall{}, fault.New(fault.CodeStreamProtocol, "Responses completed function call is invalid")
+	}
+	input, err := reducer.catalog.DecodeRead(domain.ProviderOpenAI, state.name, []byte(state.arguments))
+	if err != nil {
+		return tool.ReadyCall{}, fault.New(fault.CodeStreamProtocol, "Responses function arguments are invalid")
+	}
+	callID, err := tool.ParseProviderCallID(state.callID)
+	if err != nil {
+		return tool.ReadyCall{}, fault.New(fault.CodeStreamProtocol, "Responses function call ID is invalid")
+	}
+	ready, err := tool.NewReadyCall(callID, input)
+	if err != nil {
+		return tool.ReadyCall{}, fault.Wrap(fault.CodeStreamProtocol, "Responses ready call is invalid", err)
+	}
+	state.itemDone = true
+	reducer.lastFunctionOutputIndex = state.outputIndex
+	return ready, nil
+}
+
+func (reducer *responsesStreamReducer) functionState(itemID string, index *int) (*functionCallState, error) {
+	if itemID == "" || index == nil || *index < 0 {
+		return nil, fault.New(fault.CodeStreamProtocol, "Responses function call reference is invalid")
+	}
+	state, exists := reducer.functions[itemID]
+	if !exists || state.outputIndex != *index {
+		return nil, fault.New(fault.CodeStreamProtocol, "Responses function call reference is unknown")
+	}
+	return state, nil
 }
 
 func (reducer *responsesStreamReducer) acceptTerminal(raw json.RawMessage) error {
@@ -179,6 +318,17 @@ func (reducer *responsesStreamReducer) outputItems() []NativeItem {
 		return nil
 	}
 	return cloneNativeItems(reducer.items)
+}
+
+func (reducer *responsesStreamReducer) readyCalls() []tool.ReadyCall {
+	if reducer == nil {
+		return nil
+	}
+	ready := make([]tool.ReadyCall, len(reducer.ready))
+	for index, call := range reducer.ready {
+		ready[index] = call.Clone()
+	}
+	return ready
 }
 
 func (reducer *responsesStreamReducer) rawUsage() rawUsage {

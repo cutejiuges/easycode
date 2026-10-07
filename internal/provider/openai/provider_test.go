@@ -26,9 +26,9 @@ func TestProviderCreatesIsolatedConversations(t *testing.T) {
 
 	first := instance.NewConversation().(*Conversation)
 	second := instance.NewConversation().(*Conversation)
-	first.history.commit(nativeTurn{User: NewUserItem("first"), Outputs: []NativeItem{{Type: "message", ID: "msg-1", Role: "assistant"}}})
+	first.history.commit(testSampleEntry(NewUserItem("first"), []NativeItem{{Type: "message", ID: "msg-1", Role: "assistant"}}))
 
-	if history := first.historySnapshot(); len(history) != 1 || history[0].User.Content[0].Text != "first" || history[0].Outputs[0].ID != "msg-1" {
+	if history := first.historySnapshot(); len(history) != 1 || history[0].Input.Content[0].Text != "first" || history[0].Outputs[0].ID != "msg-1" {
 		t.Fatalf("first history: %#v", first.historySnapshot())
 	}
 	if len(second.historySnapshot()) != 0 {
@@ -52,7 +52,7 @@ func TestConversationIgnoresRepeatedCompletedTerminal(t *testing.T) {
 	stream <- responseEvent(`{"type":"response.completed","response":{"id":"resp-2"}}`)
 	close(stream)
 	output := make(chan provider.StreamEvent, 16)
-	conversation.consumeStream(context.Background(), func() {}, NewUserItem("question"), stream, output)
+	conversation.consumeStream(context.Background(), func() {}, nativeItemPointer(NewUserItem("question")), testOpenAIToolCatalog(t), stream, output)
 	terminalCount := 0
 	for event := range output {
 		if !event.Kind().Terminal() {
@@ -92,7 +92,7 @@ func TestConversationCancelCompletedRaceHasOneTerminal(t *testing.T) {
 		senders.Wait()
 		close(stream)
 		output := make(chan provider.StreamEvent, 16)
-		conversation.consumeStream(ctx, func() {}, NewUserItem("question"), stream, output)
+		conversation.consumeStream(ctx, func() {}, nativeItemPointer(NewUserItem("question")), testOpenAIToolCatalog(t), stream, output)
 		terminalCount := 0
 		for event := range output {
 			if !event.Kind().Terminal() {
@@ -137,7 +137,7 @@ func TestProviderCapabilitiesReflectImplementedSlice(t *testing.T) {
 	if !capabilities.Streaming || !capabilities.EncryptedReasoning {
 		t.Fatalf("implemented capabilities missing: %#v", capabilities)
 	}
-	if capabilities.FunctionTools || capabilities.ParallelToolCalls || capabilities.PromptCacheKey || capabilities.PreviousResponse || capabilities.ReasoningSummary {
+	if !capabilities.FunctionTools || capabilities.ParallelToolCalls || capabilities.PromptCacheKey || capabilities.PreviousResponse || capabilities.ReasoningSummary {
 		t.Fatalf("unimplemented capabilities advertised: %#v", capabilities)
 	}
 }
@@ -161,7 +161,7 @@ func TestConversationStreamsAndCommitsOnlyOnCompleted(t *testing.T) {
 	defer closeProvider(t, instance)
 	conversation := instance.NewConversation().(*Conversation)
 
-	stream, err := conversation.Stream(context.Background(), provider.TurnInput{Text: "hello"})
+	stream, err := conversation.Stream(context.Background(), testOpenAITurnInput(t, "hello"))
 	if err != nil {
 		t.Fatalf("start stream: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestConversationStreamsAndCommitsOnlyOnCompleted(t *testing.T) {
 	if err := prepared.Finalize(); err == nil {
 		t.Fatal("prepared sample finalized twice")
 	}
-	if history := conversation.historySnapshot(); len(history) != 1 || history[0].User.Content[0].Text != "hello" || history[0].Outputs[0].ID != "msg-1" {
+	if history := conversation.historySnapshot(); len(history) != 1 || history[0].Input.Content[0].Text != "hello" || history[0].Outputs[0].ID != "msg-1" {
 		t.Fatalf("committed history: %#v", history)
 	}
 }
@@ -217,7 +217,7 @@ func TestConversationRejectsEOFBeforeCompletedWithoutCommitting(t *testing.T) {
 	defer closeProvider(t, instance)
 	conversation := instance.NewConversation().(*Conversation)
 
-	stream, err := conversation.Stream(context.Background(), provider.TurnInput{Text: "hello"})
+	stream, err := conversation.Stream(context.Background(), testOpenAITurnInput(t, "hello"))
 	if err != nil {
 		t.Fatalf("start stream: %v", err)
 	}
@@ -272,7 +272,7 @@ func TestConversationCancelProducesCancelledTerminal(t *testing.T) {
 	}
 	nextContext, cancelNext := context.WithCancel(context.Background())
 	cancelNext()
-	if next, nextErr := conversation.Stream(nextContext, provider.TurnInput{Text: "next"}); next != nil || !errors.Is(nextErr, context.Canceled) {
+	if next, nextErr := conversation.Stream(nextContext, testOpenAITurnInput(t, "next")); next != nil || !errors.Is(nextErr, context.Canceled) {
 		t.Fatalf("next stream after cleanup = %#v, %v", next, nextErr)
 	}
 }
@@ -352,6 +352,10 @@ func testOpenAITurnInputWithProject(t *testing.T, text string) provider.TurnInpu
 	if err != nil {
 		t.Fatal(err)
 	}
+	input, err = input.WithToolCatalog(testOpenAIToolCatalog(t))
+	if err != nil {
+		t.Fatal(err)
+	}
 	return input
 }
 
@@ -366,7 +370,7 @@ func TestProviderRequestErrorDoesNotExposeAPIKey(t *testing.T) {
 		t.Fatalf("new provider: %v", err)
 	}
 	defer closeProvider(t, instance)
-	_, err = instance.NewConversation().Stream(context.Background(), provider.TurnInput{Text: "hello"})
+	_, err = instance.NewConversation().Stream(context.Background(), testOpenAITurnInput(t, "hello"))
 	if err == nil || strings.Contains(err.Error(), "top-secret") {
 		t.Fatalf("unsafe provider error: %v", err)
 	}

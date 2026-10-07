@@ -11,6 +11,7 @@ import (
 
 	"easycode/internal/domain"
 	"easycode/internal/protocol"
+	"easycode/internal/tool"
 )
 
 const MaxNativeCommitBytes = 16 << 20
@@ -36,6 +37,31 @@ type TurnInput struct {
 
 	projectInstructions    domain.ProjectInstructionsSnapshot
 	hasProjectInstructions bool
+	toolCatalog            tool.CatalogSnapshot
+	hasToolCatalog         bool
+	continuation           bool
+}
+
+// NewToolContinuationInput 创建只从已提交工具结果继续采样的输入。
+func NewToolContinuationInput() TurnInput {
+	return TurnInput{continuation: true}
+}
+
+// IsToolContinuation 判断本次采样是否不应追加新的用户文本。
+func (input TurnInput) IsToolContinuation() bool { return input.continuation }
+
+// Validate 校验用户输入与工具继续采样的封闭组合。
+func (input TurnInput) Validate() error {
+	if input.continuation {
+		if input.Text != "" {
+			return fmt.Errorf("tool continuation must not contain user text")
+		}
+		return nil
+	}
+	if strings.TrimSpace(input.Text) == "" {
+		return fmt.Errorf("turn input is required")
+	}
+	return nil
 }
 
 // WithProjectInstructions 返回附着了项目指令快照的输入副本。
@@ -59,6 +85,28 @@ func (input TurnInput) ProjectInstructions() (domain.ProjectInstructionsSnapshot
 	clone, err := input.projectInstructions.Clone()
 	if err != nil {
 		return domain.ProjectInstructionsSnapshot{}, false, fmt.Errorf("project instructions snapshot is invalid: %w", err)
+	}
+	return clone, true, nil
+}
+
+// WithToolCatalog 返回绑定不可变工具目录快照的输入副本。
+func (input TurnInput) WithToolCatalog(snapshot tool.CatalogSnapshot) (TurnInput, error) {
+	if err := snapshot.Validate(); err != nil {
+		return TurnInput{}, fmt.Errorf("tool catalog snapshot is invalid: %w", err)
+	}
+	input.toolCatalog = snapshot.Clone()
+	input.hasToolCatalog = true
+	return input, nil
+}
+
+// ToolCatalog 返回不共享可变内存的工具目录快照。
+func (input TurnInput) ToolCatalog() (tool.CatalogSnapshot, bool, error) {
+	if !input.hasToolCatalog {
+		return tool.CatalogSnapshot{}, false, nil
+	}
+	clone := input.toolCatalog.Clone()
+	if err := clone.Validate(); err != nil {
+		return tool.CatalogSnapshot{}, false, fmt.Errorf("tool catalog snapshot is invalid: %w", err)
 	}
 	return clone, true, nil
 }
@@ -207,6 +255,9 @@ func (event StreamEvent) Validate() error {
 		if _, err := event.prepared.Usage(); err != nil {
 			return fmt.Errorf("completed stream event sample is invalid: %w", err)
 		}
+		if _, err := event.prepared.ReadyCalls(); err != nil {
+			return fmt.Errorf("completed stream event sample is invalid: %w", err)
+		}
 	case StreamEventFailed, StreamEventCancelled:
 		if !protocolEventEmpty(event.semantic) || !nativeItemNil(event.native) || event.prepared != nil || streamErrorNil(event.err) {
 			return fmt.Errorf("terminal stream event payload is invalid")
@@ -277,6 +328,11 @@ type Conversation interface {
 	Stream(context.Context, TurnInput) (<-chan StreamEvent, error)
 }
 
+// ToolResultPreparer 由具体 Provider 在纯内存中完成原生结果配对和编码。
+type ToolResultPreparer interface {
+	PrepareToolOutputs([]tool.InvocationResult) (*PreparedToolOutputs, error)
+}
+
 // NativeCommitEnvelope 是共享层可复制但不可解释的 Provider 原生历史增量。
 type NativeCommitEnvelope struct {
 	family         domain.ProviderFamily
@@ -341,7 +397,9 @@ func (envelope NativeCommitEnvelope) Clone() (NativeCommitEnvelope, error) {
 type PreparedSample struct {
 	envelope NativeCommitEnvelope
 	usage    domain.SampleUsage
+	ready    []tool.ReadyCall
 	finalize func()
+	discard  func()
 	state    atomic.Uint32
 }
 
@@ -350,6 +408,28 @@ func NewPreparedSample(
 	envelope NativeCommitEnvelope,
 	usage domain.SampleUsage,
 	finalize func(),
+	ready ...tool.ReadyCall,
+) (*PreparedSample, error) {
+	return newPreparedSample(envelope, usage, finalize, func() {}, ready...)
+}
+
+// NewPreparedSampleWithDiscard 创建同时具有durable成功提交和未提交丢弃路径的sample。
+func NewPreparedSampleWithDiscard(
+	envelope NativeCommitEnvelope,
+	usage domain.SampleUsage,
+	finalize func(),
+	discard func(),
+	ready ...tool.ReadyCall,
+) (*PreparedSample, error) {
+	return newPreparedSample(envelope, usage, finalize, discard, ready...)
+}
+
+func newPreparedSample(
+	envelope NativeCommitEnvelope,
+	usage domain.SampleUsage,
+	finalize func(),
+	discard func(),
+	ready ...tool.ReadyCall,
 ) (*PreparedSample, error) {
 	cloned, err := envelope.Clone()
 	if err != nil {
@@ -358,10 +438,25 @@ func NewPreparedSample(
 	if err := usage.Validate(); err != nil {
 		return nil, fmt.Errorf("prepared sample usage is invalid: %w", err)
 	}
-	if finalize == nil {
-		return nil, fmt.Errorf("prepared sample finalizer is required")
+	if finalize == nil || discard == nil {
+		return nil, fmt.Errorf("prepared sample lifecycle callbacks are required")
 	}
-	return &PreparedSample{envelope: cloned, usage: usage, finalize: finalize}, nil
+	clonedReady, err := cloneReadyCalls(ready)
+	if err != nil {
+		return nil, err
+	}
+	return &PreparedSample{envelope: cloned, usage: usage, ready: clonedReady, finalize: finalize, discard: discard}, nil
+}
+
+// ReadyCalls 返回按模型 item 顺序排列的独立 typed 调用切片。
+func (sample *PreparedSample) ReadyCalls() ([]tool.ReadyCall, error) {
+	if sample == nil || sample.finalize == nil {
+		return nil, fmt.Errorf("prepared sample is invalid")
+	}
+	if sample.state.Load() != 0 {
+		return nil, fmt.Errorf("prepared sample is already finalized")
+	}
+	return cloneReadyCalls(sample.ready)
 }
 
 // Envelope 返回待持久化原生增量的独立副本。
@@ -403,7 +498,104 @@ func (sample *PreparedSample) Finalize() error {
 
 // Finalized 判断 sample 是否已经提交到内存历史。
 func (sample *PreparedSample) Finalized() bool {
-	return sample != nil && sample.state.Load() != 0
+	return sample != nil && sample.state.Load() == 1
+}
+
+// Discard 在native commit尚未durable时恰好一次释放Provider staging。
+func (sample *PreparedSample) Discard() error {
+	if sample == nil || sample.discard == nil {
+		return fmt.Errorf("prepared sample is invalid")
+	}
+	if !sample.state.CompareAndSwap(0, 2) {
+		return fmt.Errorf("prepared sample is already resolved")
+	}
+	sample.discard()
+	return nil
+}
+
+func cloneReadyCalls(calls []tool.ReadyCall) ([]tool.ReadyCall, error) {
+	cloned := make([]tool.ReadyCall, len(calls))
+	seen := make(map[tool.ProviderCallID]struct{}, len(calls))
+	for index, call := range calls {
+		if err := call.Validate(); err != nil {
+			return nil, fmt.Errorf("prepared sample ready call %d is invalid: %w", index, err)
+		}
+		if _, duplicate := seen[call.ProviderCallID()]; duplicate {
+			return nil, fmt.Errorf("prepared sample contains duplicate provider call ID")
+		}
+		seen[call.ProviderCallID()] = struct{}{}
+		cloned[index] = call.Clone()
+	}
+	return cloned, nil
+}
+
+// PreparedToolOutputs 封装不携带 usage 的 Provider-native 工具结果增量。
+type PreparedToolOutputs struct {
+	envelope NativeCommitEnvelope
+	finalize func()
+	discard  func()
+	state    atomic.Uint32
+}
+
+// NewPreparedToolOutputs 创建尚未进入 Conversation history 的工具结果提交。
+func NewPreparedToolOutputs(envelope NativeCommitEnvelope, finalize func()) (*PreparedToolOutputs, error) {
+	return newPreparedToolOutputs(envelope, finalize, func() {})
+}
+
+// NewPreparedToolOutputsWithDiscard 创建同时具有提交和丢弃路径的工具结果entry。
+func NewPreparedToolOutputsWithDiscard(envelope NativeCommitEnvelope, finalize func(), discard func()) (*PreparedToolOutputs, error) {
+	return newPreparedToolOutputs(envelope, finalize, discard)
+}
+
+func newPreparedToolOutputs(envelope NativeCommitEnvelope, finalize func(), discard func()) (*PreparedToolOutputs, error) {
+	cloned, err := envelope.Clone()
+	if err != nil {
+		return nil, err
+	}
+	if finalize == nil || discard == nil {
+		return nil, fmt.Errorf("prepared tool outputs lifecycle callbacks are required")
+	}
+	return &PreparedToolOutputs{envelope: cloned, finalize: finalize, discard: discard}, nil
+}
+
+// Envelope 返回待持久化原生增量的独立副本。
+func (commit *PreparedToolOutputs) Envelope() (NativeCommitEnvelope, error) {
+	if commit == nil || commit.finalize == nil {
+		return NativeCommitEnvelope{}, fmt.Errorf("prepared tool outputs are invalid")
+	}
+	if commit.state.Load() != 0 {
+		return NativeCommitEnvelope{}, fmt.Errorf("prepared tool outputs are already finalized")
+	}
+	return commit.envelope.Clone()
+}
+
+// Finalize 在 durable success 后恰好一次提交工具结果历史。
+func (commit *PreparedToolOutputs) Finalize() error {
+	if commit == nil || commit.finalize == nil {
+		return fmt.Errorf("prepared tool outputs are invalid")
+	}
+	if !commit.state.CompareAndSwap(0, 1) {
+		return fmt.Errorf("prepared tool outputs are already finalized")
+	}
+	commit.finalize()
+	return nil
+}
+
+// Discard 在native commit尚未durable时恰好一次释放Provider staging。
+func (commit *PreparedToolOutputs) Discard() error {
+	if commit == nil || commit.discard == nil {
+		return fmt.Errorf("prepared tool outputs are invalid")
+	}
+	if !commit.state.CompareAndSwap(0, 2) {
+		return fmt.Errorf("prepared tool outputs are already resolved")
+	}
+	commit.discard()
+	return nil
+}
+
+// Finalized 判断工具结果提交是否已进入内存历史。
+func (commit *PreparedToolOutputs) Finalized() bool {
+	return commit != nil && commit.state.Load() == 1
 }
 
 // Factory 创建相互隔离的会话级 Provider Conversation。

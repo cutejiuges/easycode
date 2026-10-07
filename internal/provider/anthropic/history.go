@@ -11,13 +11,20 @@ func (conversation *Conversation) ProjectHistory() domain.SemanticHistoryView {
 	return projectHistory(conversation.history.snapshot())
 }
 
-func projectHistory(history []nativeTurn) domain.SemanticHistoryView {
+func projectHistory(history []nativeHistoryEntry) domain.SemanticHistoryView {
 	turns := make([]domain.SemanticTurn, 0, len(history))
-	for _, turn := range history {
-		turns = append(turns, domain.SemanticTurn{
-			UserText:      projectMessageText(turn.User, roleUser),
-			AssistantText: projectMessageText(turn.Assistant, roleAssistant),
-		})
+	for _, entry := range history {
+		if entry.Kind != nativeHistorySample {
+			continue
+		}
+		assistantText := projectMessageText(entry.Assistant, roleAssistant)
+		if entry.Input != nil {
+			turns = append(turns, domain.SemanticTurn{
+				UserText: projectMessageText(*entry.Input, roleUser), AssistantText: assistantText,
+			})
+		} else if len(turns) > 0 {
+			turns[len(turns)-1].AssistantText += assistantText
+		}
 	}
 	return domain.SemanticHistoryView{Provider: domain.ProviderAnthropic, Turns: turns}
 }

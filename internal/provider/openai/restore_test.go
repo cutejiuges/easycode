@@ -23,16 +23,16 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer instance.Close()
-	turns := []nativeTurn{
+	entries := []nativeHistoryEntry{
 		{
-			User: NewUserItem("first"),
+			Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("first")),
 			Outputs: []NativeItem{
 				{Type: "reasoning", ID: "reason-1", EncryptedContent: "opaque-1"},
 				{Type: "message", ID: "message-1", Role: "assistant", Phase: "final", Content: []ContentPart{{Type: "output_text", Text: "answer-1"}}},
 			},
 		},
 		{
-			User: NewUserItem("second"),
+			Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("second")),
 			Outputs: []NativeItem{{
 				Type: "future_item", Raw: json.RawMessage(`{"type":"future_item","id":"future-2","opaque":{"value":2}}`),
 			}},
@@ -44,10 +44,10 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 		},
 	}
 	uninterrupted := &Conversation{provider: instance}
-	commits := make([]provider.NativeCommitEnvelope, 0, len(turns))
-	for _, turn := range turns {
-		uninterrupted.history.commit(turn)
-		commit, encodeErr := encodeNativeCommit(turn)
+	commits := make([]provider.NativeCommitEnvelope, 0, len(entries))
+	for _, entry := range entries {
+		uninterrupted.history.commit(entry)
+		commit, encodeErr := encodeNativeCommit(entry)
 		if encodeErr != nil {
 			t.Fatal(encodeErr)
 		}
@@ -78,11 +78,11 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 
 	next := NewUserItem("third")
 	projectInstructions := testOpenAIProjectInstructions(t, "AGENTS.md", "same-startup-snapshot")
-	uninterruptedRequest, err := compileResponsesRequest(instance.config.Model, uninterrupted.historySnapshot(), &projectInstructions, next)
+	uninterruptedRequest, err := compileResponsesRequest(instance.config.Model, uninterrupted.historySnapshot(), &projectInstructions, nativeItemPointer(next), testOpenAIToolView(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	restoredRequest, err := compileResponsesRequest(instance.config.Model, restored.historySnapshot(), &projectInstructions, next)
+	restoredRequest, err := compileResponsesRequest(instance.config.Model, restored.historySnapshot(), &projectInstructions, nativeItemPointer(next), testOpenAIToolView(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restoredShape := buildResponsesRequest(instance.config.Model, restored.historySnapshot(), &projectInstructions, next)
+	restoredShape := buildResponsesRequest(instance.config.Model, restored.historySnapshot(), &projectInstructions, nativeItemPointer(next), testOpenAIToolView(t))
 	if first.Fingerprint() != second.Fingerprint() || len(restoredShape.Input) != 7 ||
 		restoredShape.Input[0].Content[0].Text != projectInstructions.RenderedText() || restoredShape.Input[5].Type != "future_item" {
 		t.Fatalf("fingerprints/order differ: %q %q %#v", first.Fingerprint(), second.Fingerprint(), restoredShape.Input)
@@ -107,13 +107,13 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 
 	changedProjectInstructions := testOpenAIProjectInstructions(t, "AGENTS.md", "changed-startup-snapshot")
 	changedRequest, err := compileResponsesRequest(
-		instance.config.Model, restored.historySnapshot(), &changedProjectInstructions, next,
+		instance.config.Model, restored.historySnapshot(), &changedProjectInstructions, nativeItemPointer(next), testOpenAIToolView(t),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	changedShape := buildResponsesRequest(
-		instance.config.Model, restored.historySnapshot(), &changedProjectInstructions, next,
+		instance.config.Model, restored.historySnapshot(), &changedProjectInstructions, nativeItemPointer(next), testOpenAIToolView(t),
 	)
 	if bytes.Equal(changedRequest.Bytes(), restoredRequest.Bytes()) ||
 		!reflect.DeepEqual(changedShape.Input[1:], restoredShape.Input[1:]) ||
@@ -163,8 +163,8 @@ func TestRestoreConversationRejectsEntireHistoryOnOneBadCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer instance.Close()
-	valid, err := encodeNativeCommit(nativeTurn{
-		User:    NewUserItem("first"),
+	valid, err := encodeNativeCommit(nativeHistoryEntry{
+		Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("first")),
 		Outputs: []NativeItem{{Type: "message", Role: "assistant", Content: []ContentPart{{Type: "output_text", Text: "answer"}}}},
 	})
 	if err != nil {
@@ -172,7 +172,7 @@ func TestRestoreConversationRejectsEntireHistoryOnOneBadCommit(t *testing.T) {
 	}
 	bad, err := provider.NewNativeCommitEnvelope(
 		domain.ProviderOpenAI, responsesWire, 1,
-		json.RawMessage(`{"shape":"text_sample","user":{"type":"message","role":"assistant"},"output_items":[]}`),
+		json.RawMessage(`{"kind":"sample","input":{"type":"message","role":"assistant"},"outputs":[]}`),
 	)
 	if err != nil {
 		t.Fatal(err)

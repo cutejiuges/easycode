@@ -8,137 +8,126 @@
 
 ### Requirement: Compile a deterministic text-only Messages request
 
-系统 SHALL 向解析后的相对 `messages` endpoint 发送 Anthropic Messages 请求，并保留 `base_url` 已有路径前缀。请求 SHALL 使用 `x-api-key` 鉴权、`anthropic-version: 2023-06-01`、JSON content type 和 SSE accept header；正文 MUST 包含配置的 model、正整数 `max_tokens`、可选的临时项目指令上下文 message、按原顺序排列的 Anthropic 原生历史 messages、当前用户 message，以及 `stream=true`。
+系统 SHALL向解析后的相对 `messages` endpoint发送Anthropic Messages请求并保留 `base_url`路径前缀。请求 SHALL使用既有鉴权/version/JSON/SSE headers；正文 MUST包含model、正整数 `max_tokens`、可选临时项目指令、按原顺序排列的Anthropic native history、`stream=true`和当前Tool Catalog编译出的稳定tools数组。首个sample或新用户turn必须追加真实当前用户输入；tool outputs后的continuation sample不得追加合成user文本或空message。
 
-存在项目指令文档时，RequestCompiler SHALL 把规范化快照编码为一个 Anthropic 原生 user context message，并将它置于全部已提交原生历史和当前用户 message 之前。该 message MUST 与真实用户输入保持独立，使用确定的来源边界，并在每轮从同一快照重新生成；它不得进入 Conversation native history、prepared sample 或 semantic history。不存在项目指令文档时，编译结果 MUST 与既有请求完全相同且不得生成空 context message。
-
-当前切片 SHALL 将用户文本编码为 user text content block，MUST NOT 声明 tools、system、thinking 配置或 `cache_control`。API key、项目指令正文和绝对来源路径 MUST NOT 进入错误、日志、fixture 或 snapshot；项目指令只可出现在专门验证请求编译的脱敏 golden 中。
+存在项目指令时，其user context message SHALL位于已提交history和真实当前输入之前，并保持独立且不进入native history。Read facade SHALL编译为名称 `Read`、稳定description和strict JSON input schema；tools顺序与schema bytes MUST来自本次不可变catalog snapshot。请求不得声明未实现工具、system、thinking配置或 `cache_control`。secret、项目指令正文、workspace绝对路径和动态调用identity MUST NOT进入错误、日志或普通fixture。
 
 #### Scenario: Compile the first Anthropic turn
-
-- **WHEN** 空会话在存在项目指令文档时收到第一条非空用户文本
-- **THEN** 请求发送到 `messages` endpoint，messages 先包含项目指令 user context message，再包含真实用户 message
-- **THEN** 请求包含确定的 model、`max_tokens` 和 `stream=true`，且不包含延期字段
+- **WHEN** 空会话收到用户文本且catalog只包含Read
+- **THEN** 请求包含用户message和恰好一个Read tool schema，并保持model、max_tokens和stream字段确定
 
 #### Scenario: Compile the first Anthropic turn without project instructions
-
-- **WHEN** 空会话使用无文档项目指令快照收到第一条非空用户文本
-- **THEN** messages 只包含该用户文本对应的 user message
-- **THEN** 请求 canonical bytes 与本变更前的相同输入 fixture 完全一致
+- **WHEN** 无项目指令快照但启用相同Read catalog
+- **THEN** messages不生成空context message，tools保持存在且顺序稳定
 
 #### Scenario: Preserve an Anthropic API path prefix
-
-- **WHEN** `base_url` 为带路径的 API 前缀并提交一轮文本输入
-- **THEN** 系统在该前缀后追加 `messages`，不会回退到 host 根路径或隐式补充其他 wire 路径
+- **WHEN** `base_url`包含路径前缀
+- **THEN** 系统在该前缀后追加 `messages`而不回退host根路径
 
 #### Scenario: Send Anthropic authentication and version headers
-
-- **WHEN** 系统建立 Messages SSE 请求
-- **THEN** 请求使用配置的 secret 作为 `x-api-key` 并发送 `anthropic-version: 2023-06-01`
-- **THEN** secret 不出现在请求错误、诊断摘要或测试快照中
+- **WHEN** 系统建立Messages SSE请求
+- **THEN** 使用配置secret和 `anthropic-version: 2023-06-01`，且secret不进入错误或snapshot
 
 #### Scenario: Compile a later Anthropic turn from native history
-
-- **WHEN** 已完成一轮 Anthropic 对话后使用同一项目指令快照提交下一条用户文本
-- **THEN** messages 按项目指令 context message、已提交原生 messages、新用户 message 的顺序排列
-- **THEN** 项目指令 context message 不作为已提交历史被重复或叠加
+- **WHEN** 已完成文本或工具回合后使用相同外部snapshots提交下一输入
+- **THEN** messages按项目指令、已提交原生messages和当前输入顺序排列，且不从共享事件重建
 
 #### Scenario: Produce stable request bytes
+- **WHEN** model、catalog、项目指令、native history和当前输入相同
+- **THEN** canonical request bytes和fingerprint完全相同，cwd、Session identity和invocation ID不参与
 
-- **WHEN** model、输出 token 上限、项目指令快照、原生历史和当前输入完全相同
-- **THEN** 请求的 canonical JSON bytes 和对应 fingerprint 完全相同
-- **THEN** API key、项目根绝对路径、cwd、时间戳、随机 ID、TUI 状态和其他动态宿主数据不参与 fingerprint
+#### Scenario: Compile a continuation after tool results
+- **WHEN** 原生history已提交assistant `tool_use`及匹配的user `tool_result`
+- **THEN** 下一请求按原顺序回放call/output并直接继续sampling，不再追加新的user message
 
 ### Requirement: Reduce Anthropic content blocks with an indexed state machine
 
-系统 SHALL 独立处理 `message_start`、`content_block_start`、`content_block_delta`、`content_block_stop`、`message_delta` 和 `message_stop`，并按 block index 与 wire 顺序归并 content blocks。`text_delta` SHALL 产生 typed assistant text delta；`thinking_delta` 与 `signature_delta` SHALL 只更新匹配的 thinking block；`redacted_thinking` SHALL 作为不可解释的原生 block 保存。
+系统 SHALL独立处理既有Messages事件并按block index与wire顺序归并content blocks。text/thinking/signature/redacted-thinking行为保持既有契约；`tool_use` block MUST包含非空id与已暴露名称，`input_json_delta.partial_json`只可追加到对应活动tool block。只有block stop后完整JSON通过strict facade decoder，且 `message_stop`在全部blocks停止后到达，tool call才可进入completed prepared sample。
 
-已开始 block 的重复 index、未开始 block 的 delta/stop、delta 与 block 类型不匹配、损坏 JSON 或在未完成 block 存在时收到 `message_stop` MUST 终止为 stream protocol error。格式正确但当前切片未知的 event SHALL 被安全忽略且不得伪造文本、native item 或成功终态；未知扩展不得传播为无约束的共享 map。
+重复index、未开始block的delta/stop、delta类型不匹配、重复call ID、未知tool、损坏/超限JSON、未完成block上的 `message_stop` MUST终止为stream protocol error。参数delta不得产生executor I/O或durable ready fact。
 
 #### Scenario: Stream ordered assistant text
-
-- **WHEN** text block 依次收到多个 `text_delta` 并正常停止
-- **THEN** 系统按接收顺序产生对应的 assistant text delta
-- **THEN** 完成的原生 text block 只包含一次最终文本，不因 start 与 delta 数据重复而重复内容
+- **WHEN** text block依次收到text deltas并停止
+- **THEN** 系统按顺序投影文本且原生block只保存最终文本一次
 
 #### Scenario: Preserve thinking and its signature
-
-- **WHEN** thinking block 收到一个或多个 `thinking_delta`、有效 `signature_delta` 并正常停止
-- **THEN** 系统按原顺序保存 thinking 文本和最终 opaque signature
-- **THEN** signature 不作为 assistant 可见文本或 token 增量投影到 TUI
+- **WHEN** thinking/signature或redacted block合法完成
+- **THEN** thinking与signature按既有规则保存在原生history且不作为可见文本
 
 #### Scenario: Preserve redacted thinking
-
-- **WHEN** `content_block_start` 携带 `redacted_thinking` block 并随后正常停止
-- **THEN** 系统不解析、不改写其 opaque data，并将该 block 保留在 Anthropic 原生项中
+- **WHEN** redacted thinking block合法完成
+- **THEN** opaque data不被解释或改写并保留在Anthropic原生item中
 
 #### Scenario: Reject a mismatched delta
-
-- **WHEN** text block 收到 `thinking_delta`，或 delta 引用尚未开始的 block index
-- **THEN** Provider 产生稳定的 stream protocol failure，且不提交本轮暂存历史
+- **WHEN** text block收到thinking delta或tool block收到不匹配的delta类型
+- **THEN** Provider产生stream protocol failure且不提交sample staging
 
 #### Scenario: Ignore an unknown well-formed event
+- **WHEN** 服务端发送当前切片未知但格式正确的event type
+- **THEN** Provider不panic、不伪造call或输出并继续等待受支持事件或终态
 
-- **WHEN** 服务端发送当前切片未知但 JSON 格式正确的 event type
-- **THEN** Provider 不 panic、不产生伪造输出，并继续等待后续受支持事件或显式终态
+#### Scenario: Complete a Read tool_use block
+- **WHEN** `tool_use` block收到多个partial JSON deltas并以合法Read参数停止
+- **THEN** 原生block无损保存call ID/name/input，prepared sample产生一个typed ready call
+
+#### Scenario: Reject incomplete tool input
+- **WHEN** tool block在JSON不完整、schema非法或名称未暴露时停止
+- **THEN** Provider产生stream protocol failure且不提交sample或ready call
 
 ### Requirement: Native Messages history commits transactionally
 
-系统 SHALL 在会话级 Anthropic 原生历史中保持 user/assistant message 边界、content block 顺序和已支持的原生字段。当前用户 message、已完成 assistant blocks、message metadata、stop reason 和原始 usage SHALL 先进入 turn staging，并仅在所有 blocks 完成且收到合法 `message_stop` 后一次性提交。
+系统 SHALL在Anthropic native history中保持message边界、content block顺序和原生字段。可选当前输入、完成assistant blocks、metadata、raw usage和ready calls SHALL先进入sample staging，仅在合法 `message_stop` 后形成prepared sample。首个sample必须暂存真实user message；tool outputs后的continuation sample不得暂存或提交新的user message。失败、取消、timeout、协议错误或EOF MUST丢弃整个staging。
 
-后续请求 SHALL 从已提交的 Anthropic 原生历史直接编译，不得从 RuntimeEvent、TUI transcript、SemanticHistoryView 或 OpenAI item 反向构造。失败、取消、idle timeout、协议错误或 `message_stop` 前 EOF MUST 丢弃整个 staging。
+Read results SHALL由Anthropic result codec编码为一个user message中的有序 `tool_result` blocks；每个block必须匹配前一assistant message中尚未闭合的 `tool_use.id`，并保存冻结模型preview与error状态。该tool-output entry只有在Session commit durable后才能进入Conversation history。
 
 #### Scenario: Commit a successful Anthropic turn
-
-- **WHEN** 一轮包含用户输入、一个或多个完成的 assistant blocks，并以合法 `message_stop` 结束
-- **THEN** user message 和 assistant message 按 wire 顺序一次性进入原生历史
-- **THEN** Provider 在成功 terminal 前按顺序发布完成的 native blocks
+- **WHEN** assistant message包含文本和一个合法Read `tool_use`
+- **THEN** user输入、完整assistant blocks、metadata和usage一次性进入sample native commit
 
 #### Scenario: Compile a later turn from native history
-
-- **WHEN** 已成功完成一轮后提交第二条用户文本
-- **THEN** 第二轮请求依次包含首轮 user message、首轮 assistant 原生 blocks 和新的 user message
-- **THEN** thinking signature 与 redacted thinking 在合法请求位置原样回放
+- **WHEN** 已提交文本或tool call/result原生entries后开始下一sample
+- **THEN** Provider直接按原生顺序编译history并保留thinking及call/output pairing
 
 #### Scenario: Discard a partial failed turn
-
-- **WHEN** 已产生文本 delta 或完成 content block 后发生失败、取消、timeout 或提前 EOF
-- **THEN** 本轮 user message 和所有 staged assistant blocks 均不进入已提交历史
-- **THEN** 下一轮请求不包含该失败轮次的部分原生数据
+- **WHEN** 已产生文本或tool delta后sample失败
+- **THEN** 本sample输入、assistant blocks和calls均不进入已提交history
 
 #### Scenario: Preserve final message metadata without inventing usage
+- **WHEN** message start/delta提供部分stop metadata或usage
+- **THEN** Provider保存最终原始值并将缺失字段保持unknown而不是伪装为零
 
-- **WHEN** `message_start` 和 `message_delta` 提供 stop reason 或 usage 字段
-- **THEN** Provider 保存服务端给出的最终原始值，并将缺失字段保持为 unknown 而不是伪装为零
+#### Scenario: Commit matching tool results
+- **WHEN** 对应Read result已durable
+- **THEN** result codec生成匹配call ID的 `tool_result` user block并在durable finalizer后进入history
+
+#### Scenario: Commit a continuation without a synthetic user message
+- **WHEN** tool-output entry已提交且下一Anthropic sample完成最终assistant message
+- **THEN** sample entry只提交assistant message、metadata和usage，不复制tool results或构造空user message
+
+#### Scenario: Reject mismatched tool results
+- **WHEN** result缺少call ID、重复ID或与未闭合calls数量/顺序不匹配
+- **THEN** tool-output entry构造或恢复失败且不修改history
 
 ### Requirement: Completion and capabilities match implemented Anthropic behavior
 
-Anthropic Provider MUST 仅在合法 `message_stop` 后产生且仅产生一次 completed terminal。服务端 error event、取消、idle timeout、oversized frame、解析失败、非法事件序列或 completed 前 EOF SHALL 映射为恰好一次 failed/cancelled terminal，并 MUST NOT 由 Provider 或 transport 自动重放请求。
-
-Provider SHALL 只声明本切片实际实现并通过测试的 streaming 与 thinking-signature 保留能力；tools、并行工具、prompt cache control、prompt cache key、previous response 和未实现的 reasoning 展示能力 MUST 保持 false 或 unsupported。
+Anthropic Provider MUST仅在合法 `message_stop` 后产生一次completed terminal；失败、取消、timeout、oversized frame、非法序列或EOF继续遵守唯一terminal和不自动重放契约。Provider只有在Read request编译、tool reducer、native codec/restore、result codec和golden全部通过后才声明function tools可用；parallel tools、custom/freeform tools、prompt cache control/key、previous response和未实现reasoning展示 MUST保持unsupported。
 
 #### Scenario: Complete only on message_stop
-
-- **WHEN** 所有 content blocks 已正常停止并收到合法 `message_stop`
-- **THEN** Provider 产生一次 completed terminal，随后关闭其拥有的输出 channel
+- **WHEN** 全部blocks停止且收到合法 `message_stop`
+- **THEN** Provider产生一次携带native commit、usage和ready calls的completed terminal并关闭channel
 
 #### Scenario: Reject EOF before message_stop
-
-- **WHEN** HTTP SSE body 在 `message_stop` 前结束
-- **THEN** Provider 产生 stream protocol failure，不把 channel 关闭解释为成功
-- **THEN** 本轮原生 staging 被丢弃且请求不被自动重放
+- **WHEN** SSE在 `message_stop`前结束
+- **THEN** Provider失败且不提交staging或自动重放
 
 #### Scenario: Cancel or time out an Anthropic stream
-
-- **WHEN** turn context 被取消或已建立流超过 idle timeout
-- **THEN** Provider 关闭流资源、等待清理完成并产生一次可识别的 cancelled 或 timeout failure
-- **THEN** 不遗留继续读取或发送事件的 goroutine
+- **WHEN** sample context取消或流超过idle timeout
+- **THEN** Provider关闭资源、等待清理并产生一次可识别失败或取消terminal
 
 #### Scenario: Inspect Anthropic capabilities
-
-- **WHEN** Runtime 查询 Anthropic Provider capabilities
-- **THEN** streaming 与 thinking-signature 保留能力被准确报告
-- **THEN** 本切片延期的 tools、cache 和增量 continuation 能力未被声明为可用
+- **WHEN** Runtime查询capabilities
+- **THEN** streaming、thinking-signature和function tools准确为可用
+- **THEN** parallel/custom tools及延期cache能力未被声明
 
 ### Requirement: Anthropic usage reduces to a validated sample fact
 

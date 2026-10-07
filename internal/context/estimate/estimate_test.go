@@ -24,7 +24,7 @@ func TestByteCountRoundsUpDeterministically(t *testing.T) {
 func TestStringCountsUTF8Bytes(t *testing.T) {
 	t.Parallel()
 	estimate := String("你a")
-	if tokens, ok := estimate.Tokens(); !ok || tokens != 1 || estimate.Method() != MethodByteHeuristicV1 {
+	if tokens, ok := estimate.Tokens(); !ok || tokens != 1 || estimate.Method() != MethodByteHeuristic {
 		t.Fatalf("estimate = method %q tokens %d ok %t", estimate.Method(), tokens, ok)
 	}
 }

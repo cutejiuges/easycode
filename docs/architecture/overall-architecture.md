@@ -458,7 +458,7 @@ TurnFailed
 
 queue 是有界、非 durable 的进程内状态。stdin EOF 只停止新 admission，并按 FIFO 排空已经接受的输入；显式 shutdown 则停止 admission、取消活动 turn、为所有尚未开始的输入发布 `session_shutdown` discard，并等待 Runtime durable terminal 与 worker cleanup。interrupt 必须携带当前活动 `turn_id`，过期目标不得误取消下一 turn。普通 Provider failure 后 loop 可以继续；journal poisoned 或 durable 结果不确定时停止所有后续 Provider 副作用。
 
-本能力是跨 turn 的 follow-up control loop，不是 same-turn steer。当前一个 turn 只有一次 Provider sampling，没有 tool result 边界可安全插入用户输入；真正的 steer 仍留待 P3 Tool Loop 定义 sampling safe point。TUI 在本次变更中继续使用 `ChatSession`，待需要 queue 交互时再迁移到同一控制器并删除重复 facade。
+本能力是跨 turn 的 follow-up control loop，不是 same-turn steer。当前 Read Tool Loop 已允许一个 turn 内发生多个顺序 Provider sample，并在 durable tool output 后形成明确边界；但该边界尚未接入排队用户输入，真正的 same-turn steer 仍需独立变更定义 admission、缓存与历史语义。TUI 继续使用 `ChatSession`，待需要 queue 交互时再迁移到同一控制器并删除重复 facade。
 
 ### 7.4 Provider StreamReducer
 
@@ -469,7 +469,7 @@ Anthropic reducer 负责处理：
 - text/thinking/signature/input_json delta
 - stop reason、usage、异常 block 顺序和中断恢复
 
-OpenAI 当前 text-only reducer 负责处理 `response.created`、文本 delta、完成 output item，以及 identity 匹配的 completed/failed/incomplete；completed usage 会在活动 response ID 校验后严格解析并保留 raw/normalized 两层表示。每条 stream 使用独立状态机，要求 created 恰好一次、所有支持事件位于 active 状态且 terminal 唯一。下列 reasoning/tool item 归并仍是后续目标：
+OpenAI reducer 负责处理 `response.created`、文本 delta、function call item/arguments delta/done、完成 output item，以及 identity 匹配的 completed/failed/incomplete；Anthropic reducer相应归并 `tool_use` 与 `input_json_delta`。两家都只在参数完整、strict decode 和调用身份一致后产出有序 typed ready calls。completed usage 会在活动 response identity 校验后严格解析并保留 raw/normalized 两层表示。每条 stream 使用独立状态机，要求起始事件恰好一次、所有支持事件位于 active 状态且 terminal 唯一。reasoning 的宿主事件投影和未交付的其他工具类型仍是后续目标。
 
 共享 `provider.StreamEvent` 使用私有字段和 semantic、native item、completed、failed、cancelled 五类 typed constructor，零值、冲突 payload、nil terminal error、非法 native item 与失效 prepared sample 均不能进入正常路径。Provider 生产者是输出 channel 的唯一关闭者，且必须在 transport 排空、Conversation active 状态释放后关闭 channel；channel close 是生产 goroutine 的清理完成信号，不代表业务成功。
 
@@ -492,13 +492,17 @@ Runtime 为每次 Provider stream 创建派生 context，逐项验证事件并�
 
 ## 8. Tool 系统
 
-本章描述 P3 目标架构。当前 `internal/tool` 与 `internal/tool/builtin` 仅是经批准的 TODO 占位，没有可执行 schema、Provider wire、权限策略、执行器或 Runtime/app 消费者。
+完整设计、参考工程取舍、恢复语义和分 change 推进顺序见 [Tool 系统架构设计](tool-system.md)。本章只保留总体架构必须遵守的边界。
+
+本章描述 P3 目标架构。当前 `internal/tool` 与 `internal/tool/builtin` 仅是经批准的 TODO 占位，没有可执行 schema、Provider wire、权限策略、执行器或 Runtime/app 消费者；下列内容不表示能力已经实现。
 
 ### 8.1 分层
 
 ```text
 ToolCapability    共享能力标识，例如 fs.read、fs.patch、shell.exec
 ToolFacade        provider/model 可见的名称、描述和 schema
+CatalogSnapshot   单次 sampling 使用的不可变、有序 schema 与路由快照
+InputDecoder      归并 provider-native delta，完整后产生 typed input
 ToolExecutor      实际执行，不感知 UI 和 provider
 ToolPolicy        权限、sandbox、路径和网络规则
 ToolScheduler     并发、独占、取消和有序结果
@@ -526,30 +530,32 @@ fs.patch
 
 两者都可以产生共享 `PatchDraftUpdated`，但不得共享错误的解析假设。
 
-### 8.3 调度与幂等
+只有参数完整、strict decode 和语义验证全部通过后才能形成 `ToolCallReady`。参数 delta 和 diff draft 只用于展示，不得产生副作用。
 
+### 8.3 Durable 边界、调度与幂等
+
+- 当前 Provider sample 的 native commit、usage 和 ready calls 必须先作为一个 durable batch 成功 `Sync`，之后才能开始副作用。
 - 并发安全的只读工具可并行。
 - 非并发安全或写工具获得独占门。
 - 结果按模型调用顺序提交，避免破坏 tool call/result pairing。
-- 每次调用以 `call_id` 建立 execution ledger。
-- 网络重试、session replay 和 UI 重连不能重复执行已有副作用。
-- 取消必须区分“终止工具”和“等待工具完成后丢弃/保留结果”。
+- 每次调用以唯一 invocation ID 建立 execution ledger，并保留 Provider call ID 用于原生配对。
+- ledger 保证 EasyCode 自动执行至多一次，不宣称任意外部副作用 exactly-once；已 durable 开始但结果未知的调用恢复为 `outcome_uncertain`，默认不得自动重试。
+- 每个 call 最终都必须得到成功、拒绝、取消、失败或恢复补偿 output，不能留下悬空 Provider 配对。
+- 取消必须以 durable `execution_started` append是否被接受为线性化点：接受前直接记录cancelled且零工具I/O，接受后恰好调用一次executor并传入取消context。
+- resume只做本地配对补偿：ready关闭为 `session_interrupted_before_execution`，started-without-result关闭为 `outcome_uncertain`，已有result复用持久化preview；恢复阶段禁止executor和Provider网络调用，并以唯一 `turn_failed`结束旧turn。
 
-### 8.4 首批内置工具
+### 8.4 权限与结果
 
-- Read
-- Glob
-- Grep
-- Edit
-- Write
-- apply_patch
-- Bash/exec + write_stdin
-- ViewImage
-- Todo/Plan
-- AskUser/RequestUserInput
-- Skill
-- Agent
-- MCP tools
+- Approval 只表达用户意图，SandboxPlan 负责实际强制边界；批准不能自动放开 workspace、网络、环境变量或平台不支持能力。
+- 文件 containment、类型、权限和 symlink 判断必须绑定实际打开的 handle，不能依赖字符串前缀或 `Lstat` 后再次按路径打开。
+- 完整结果、模型预览、artifact 和 UI 摘要是四种表示；模型实际收到的预览字节必须持久化，resume 时不得按新配置重新截断。
+- Presenter 只消费 RuntimeEvent 与受控 metadata，Executor 不依赖 Provider wire、Session 或 TUI。
+
+### 8.5 能力分期
+
+P3 只实现 Read、Glob/Grep、Edit/apply_patch、Write、exec/write_stdin，以及它们真实需要的 Tool Loop、权限、sandbox、ledger、有序调度和结果预算。推荐先用 Read 建立双 Provider、多 sample、durable 与恢复的最小纵向闭环，再逐项增加不可逆能力。
+
+Skill 与 hooks/plugins 属于 P6；MCP 和 Agent/Subagent 属于 P7；完整跨平台 sandbox 矩阵属于 P8。未到对应阶段前不得提前暴露空 schema、event kind、facade 或 capability flag。
 
 ## 9. Context 与 Compaction
 
@@ -640,16 +646,17 @@ EventEnvelope
   checksum
 ```
 
-当前 v1 必需记录包括：
+当前必需记录包括：
 
 - `session_meta` 与 `thread_meta`；
 - `turn_started`；
 - `provider_native_commit`、`sample_usage` 与 `turn_completed`；
+- `tool_call_ready`、`tool_execution_started` 与 `tool_call_result`；
 - `turn_failed`。
 
 `schema_version` 约束公共 envelope，`payload_version` 约束 event payload，`replay_requirement` 明确 required/optional。required 的未知 kind、版本或损坏必须拒绝恢复；optional 记录允许跳过，便于未来加入诊断或展示事实而不破坏旧 Loader。
 
-Provider native commit 只记录 Provider 已验证的原生增量和 raw usage；紧邻的 `sample_usage` 记录共享五项三态指标。合法成功 batch 只有 `[provider_native_commit(v1), sample_usage(v1), turn_completed(v1)]`，三条记录具有相同 turn/batch identity 和连续 seq；缺失 usage 的旧开发期两记录形状 fail closed。未来 tool use/tool result、permission、hook、subagent、cache 与 compaction checkpoint 仍需按各自恢复语义增加版本化记录；不能把 RuntimeEvent 或 UI transcript 当作 native history。
+Provider native commit 只记录 Provider 已验证的原生增量和 raw usage；紧邻的 `sample_usage` 记录共享五项三态指标。无工具的成功 sample 仍以 native commit、usage 与 terminal 原子提交；带调用的 sample 则把有序 ready facts 放入同一 durable batch，随后单独提交 started、result 和 Provider 原生 tool outputs。缺失 usage、错序、遗漏配对或重复调用身份一律 fail closed。permission、hook、subagent、cache 与 compaction checkpoint 仍需按各自恢复语义增加版本化记录；不能把 RuntimeEvent 或 UI transcript 当作 native history。
 
 当前 envelope、payload、RuntimeEvent 和 headless JSONL 都保持单一 v1。稳定发布前的契约补全直接重写 v1 fixture，不保留双 reader；只有契约已冻结、变化无法加法表达、旧数据或客户端又必须并存时，才引入新 revision，并同时定义兼容窗口与退出条件。
 
@@ -687,11 +694,11 @@ Open Catalog lock
 - macOS/Linux 从已打开数据根使用 no-follow、descriptor-relative walker 逐级创建/打开日期目录与 journal，并从实际 handle 校验类型和权限；lease、Loader、repair 与 writer transfer 复用最终 journal handle。Windows 等尚未提供等价语义的平台当前明确失败关闭，跨平台实现与真实平台验证留在 P8。
 - 文件使用用户私有权限，Unix 下目标为文件 `0600`、目录 `0700`。
 - Loader 严格校验 canonical UUIDv7、UTC 时间、checksum、ID 归属、序号和 batch 完整性；只允许截去 EOF 尾部半行或未完成尾批次，不允许跳过中段损坏。
-- ReplayPlanner 只重放完整 batch。存在未闭合 turn 时，恢复会先追加 `turn_failed`，其 payload 使用稳定 code `session_interrupted`，再允许新 turn。
+- ReplayPlanner 只重放完整 batch。普通文本turn尾部直接追加 `turn_failed(code=session_interrupted)`；工具turn先按ledger在本地补齐cancelled/outcome-uncertain result与缺失Provider output，再追加唯一失败终态。两类恢复都不自动发起Provider请求。
 - 当前 `--resume <thread-id>` 通过日期编码的 UUIDv7 定位文件，恢复 native history 和只读语义视图；不恢复旧 API key、base URL、cwd 或其他动态 world state。
-- 仓库已建立不可变 v1 compatibility fixture，用于验证当前 Loader/ReplayPlanner 的读取、续写 prefix 不变和双 Provider 恢复等价性；未来 schema/payload revision 的版本专属转换仍未实现，不在 resume 时原地改写既有 records。
+- 仓库已建立不可变的当前文本与 Tool Loop fixture，用于验证 Loader/ReplayPlanner 的读取、续写 prefix 不变、账本顺序和双 Provider 恢复等价性；项目没有线上历史格式，因此开发期旧 fixture 与旧 reader 已删除。未来真实 schema/payload revision 的版本专属转换仍未实现，也不得在 resume 时原地改写既有 records。
 - exclusive lease 是协作进程间的 advisory lock，不能阻止旧版 EasyCode 或非协作进程绕过锁直接写文件；混合版本运行前必须确保目标 thread 没有其他 owner，绕过锁产生的损坏继续由 checksum、seq 和完整回放校验发现。
-- SQLite Catalog v1 与 `--continue` 已实现；session picker、worktree/project catalog、title/tag、搜索、实时索引、tool ledger/artifact 和未来 schema 转换尚未实现。
+- SQLite Catalog v1 与 `--continue` 已实现；session picker、worktree/project catalog、title/tag、搜索、实时索引、artifact 和未来 schema 转换尚未实现。
 - 未来 compaction/fork 只能追加 checkpoint/cursor 和 child-thread 元数据，原始 JSONL 继续保留；不得重写、截短或把 summary 伪装成原生历史。该能力目前仅有约束，尚未实现。
 - artifact 文件路径必须防止目录穿越。
 

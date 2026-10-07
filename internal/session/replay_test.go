@@ -9,6 +9,7 @@ import (
 
 	"easycode/internal/codec"
 	"easycode/internal/domain"
+	"easycode/internal/tool"
 )
 
 const secondTurnID = domain.TurnID("00000000-0005-7000-8000-000000000006")
@@ -82,7 +83,7 @@ func TestReplayPlannerRejectsIllegalLifecycleTransitions(t *testing.T) {
 				mustDraft(t, EventTurnCompleted, testTurnID, TurnCompletedPayload{}),
 			)
 		},
-		"legacy completion without usage": func(fixture *replayFixture) {
+		"completion without usage": func(fixture *replayFixture) {
 			fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
 			fixture.appendBatch(
 				mustDraft(t, EventProviderNativeCommit, testTurnID, validNativeCommit()),
@@ -127,6 +128,256 @@ func TestReplayPlannerRejectsIllegalLifecycleTransitions(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestReplayPlannerBuildsCompletedToolLoop(t *testing.T) {
+	fixture := newReplayFixture(t)
+	fixture.appendMetadata()
+	fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+	invocation := testReplayInvocation(t, "01890f3e-7bcd-7abc-8abc-0123456789ab", "call-1")
+	fixture.appendBatch(
+		mustDraft(t, EventProviderNativeCommit, testTurnID, validNativeCommit()),
+		mustDraft(t, EventSampleUsage, testTurnID, testSampleUsage(t)),
+		mustReadyDraftForReplay(t, invocation, 0, 0),
+	)
+	fixture.appendBatch(mustStartedDraftForReplay(t, invocation))
+	fixture.appendBatch(mustResultDraftForReplay(t, invocation))
+	fixture.appendBatch(mustDraft(t, EventProviderNativeCommit, testTurnID, validToolOutputsCommit()))
+	fixture.appendBatch(
+		mustDraft(t, EventProviderNativeCommit, testTurnID, validNativeCommit()),
+		mustDraft(t, EventSampleUsage, testTurnID, testSampleUsage(t)),
+		mustDraft(t, EventTurnCompleted, testTurnID, TurnCompletedPayload{}),
+	)
+
+	plan, err := NewReplayPlanner().Plan(fixture.loaded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.NativeCommits) != 3 || len(plan.SampleUsages) != 2 || len(plan.Turns) != 1 ||
+		plan.Turns[0].State != ReplayedTurnCompleted || plan.ToolRecovery != nil || plan.InterruptedTail != nil {
+		t.Fatalf("tool loop replay plan = %#v", plan)
+	}
+}
+
+func TestReplayPlannerReportsToolRecoveryStates(t *testing.T) {
+	for _, test := range []struct {
+		name             string
+		appendTail       func(*replayFixture, tool.ReadInvocation)
+		wantState        ReplayedToolCallState
+		outputsCommitted bool
+		wantCalls        int
+	}{
+		{name: "ready", wantState: ReplayedToolCallReady, wantCalls: 1},
+		{name: "started", wantState: ReplayedToolCallStarted, wantCalls: 1, appendTail: func(f *replayFixture, invocation tool.ReadInvocation) {
+			f.appendBatch(mustStartedDraftForReplay(t, invocation))
+		}},
+		{name: "result", wantState: ReplayedToolCallResult, wantCalls: 1, appendTail: func(f *replayFixture, invocation tool.ReadInvocation) {
+			f.appendBatch(mustStartedDraftForReplay(t, invocation))
+			f.appendBatch(mustResultDraftForReplay(t, invocation))
+		}},
+		{name: "outputs committed", outputsCommitted: true, appendTail: func(f *replayFixture, invocation tool.ReadInvocation) {
+			f.appendBatch(mustStartedDraftForReplay(t, invocation))
+			f.appendBatch(mustResultDraftForReplay(t, invocation))
+			f.appendBatch(mustDraft(t, EventProviderNativeCommit, testTurnID, validToolOutputsCommit()))
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newReplayFixture(t)
+			fixture.appendMetadata()
+			fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+			invocation := testReplayInvocation(t, "01890f3e-7bcd-7abc-8abc-0123456789ab", "call-1")
+			fixture.appendBatch(
+				mustDraft(t, EventProviderNativeCommit, testTurnID, validNativeCommit()),
+				mustDraft(t, EventSampleUsage, testTurnID, testSampleUsage(t)),
+				mustReadyDraftForReplay(t, invocation, 0, 0),
+			)
+			if test.appendTail != nil {
+				test.appendTail(fixture, invocation)
+			}
+			plan, err := NewReplayPlanner().Plan(fixture.loaded())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if plan.ToolRecovery == nil || plan.ToolRecovery.TurnID() != testTurnID ||
+				plan.ToolRecovery.NextSampleIndex() != 1 || plan.ToolRecovery.ToolOutputsCommitted() != test.outputsCommitted ||
+				len(plan.ToolRecovery.Calls()) != test.wantCalls {
+				t.Fatalf("tool recovery = %#v", plan.ToolRecovery)
+			}
+			calls := plan.ToolRecovery.Calls()
+			if test.wantCalls == 1 && calls[0].State != test.wantState {
+				t.Fatalf("tool recovery call = %#v", calls[0])
+			}
+		})
+	}
+}
+
+func TestReplayPlannerAcceptsCancellationBeforeExecutorStart(t *testing.T) {
+	fixture := newReplayFixture(t)
+	fixture.appendMetadata()
+	fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+	invocation := testReplayInvocation(t, "01890f3e-7bcd-7abc-8abc-0123456789ab", "call-1")
+	appendReplayCallSample(t, fixture, invocation)
+	cancelled := tool.NewReadErrorResult(invocation, tool.ResultCancelled, "cancelled", "Read cancelled", ".")
+	draft, err := NewToolCallResultDraft(testTurnID, cancelled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.appendBatch(draft)
+
+	plan, err := NewReplayPlanner().Plan(fixture.loaded())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.ToolRecovery == nil {
+		t.Fatal("tool recovery is missing")
+	}
+	calls := plan.ToolRecovery.Calls()
+	if len(calls) != 1 ||
+		calls[0].State != ReplayedToolCallResult ||
+		calls[0].Result.Status() != tool.ResultCancelled {
+		t.Fatalf("tool recovery = %#v", plan.ToolRecovery)
+	}
+}
+
+func TestToolRecoveryPlanOwnsAndValidatesCalls(t *testing.T) {
+	invocation := testReplayInvocation(t, "01890f3e-7bcd-7abc-8abc-0123456789ab", "call-1")
+	calls := []ReplayedToolCall{{
+		ReadySequence: 4, SampleIndex: 0, CallIndex: 0,
+		Invocation: invocation, State: ReplayedToolCallReady,
+	}}
+	plan, err := NewToolRecoveryPlan(testTurnID, 1, calls, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls[0].State = ReplayedToolCallStarted
+	got := plan.Calls()
+	got[0].State = ReplayedToolCallResult
+	if plan.Calls()[0].State != ReplayedToolCallReady {
+		t.Fatal("tool recovery plan shares caller-owned calls")
+	}
+	if plan.Clone().Calls()[0].Invocation.InvocationID() != invocation.InvocationID() {
+		t.Fatal("tool recovery clone changed invocation identity")
+	}
+
+	invalid := []struct {
+		name      string
+		calls     []ReplayedToolCall
+		committed bool
+	}{
+		{name: "missing calls"},
+		{name: "committed with calls", calls: calls, committed: true},
+		{name: "started without sequence", calls: []ReplayedToolCall{{
+			ReadySequence: 4, SampleIndex: 0, CallIndex: 0,
+			Invocation: invocation, State: ReplayedToolCallStarted,
+		}}},
+	}
+	for _, test := range invalid {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := NewToolRecoveryPlan(testTurnID, 1, test.calls, test.committed); err == nil {
+				t.Fatal("invalid recovery plan was accepted")
+			}
+		})
+	}
+}
+
+func TestReplayPlannerRejectsIllegalToolLedgerTransitions(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*replayFixture, tool.ReadInvocation)
+	}{
+		{name: "started before ready", mutate: func(f *replayFixture, invocation tool.ReadInvocation) {
+			f.appendBatch(mustStartedDraftForReplay(t, invocation))
+		}},
+		{name: "result before started", mutate: func(f *replayFixture, invocation tool.ReadInvocation) {
+			appendReplayCallSample(t, f, invocation)
+			f.appendBatch(mustResultDraftForReplay(t, invocation))
+		}},
+		{name: "output before result", mutate: func(f *replayFixture, invocation tool.ReadInvocation) {
+			appendReplayCallSample(t, f, invocation)
+			f.appendBatch(mustDraft(t, EventProviderNativeCommit, testTurnID, validToolOutputsCommit()))
+		}},
+		{name: "next sample before output", mutate: func(f *replayFixture, invocation tool.ReadInvocation) {
+			appendReplayCallSample(t, f, invocation)
+			f.appendBatch(mustStartedDraftForReplay(t, invocation))
+			f.appendBatch(mustResultDraftForReplay(t, invocation))
+			f.appendBatch(
+				mustDraft(t, EventProviderNativeCommit, testTurnID, validNativeCommit()),
+				mustDraft(t, EventSampleUsage, testTurnID, testSampleUsage(t)),
+				mustDraft(t, EventTurnCompleted, testTurnID, TurnCompletedPayload{}),
+			)
+		}},
+		{name: "terminal with pending calls", mutate: func(f *replayFixture, invocation tool.ReadInvocation) {
+			appendReplayCallSample(t, f, invocation)
+			f.appendBatch(mustDraft(t, EventTurnFailed, testTurnID, TurnFailedPayload{Code: "failed"}))
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newReplayFixture(t)
+			fixture.appendMetadata()
+			fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+			invocation := testReplayInvocation(t, "01890f3e-7bcd-7abc-8abc-0123456789ab", "call-1")
+			test.mutate(fixture, invocation)
+			if _, err := NewReplayPlanner().Plan(fixture.loaded()); err == nil || !strings.Contains(err.Error(), "corrupted") {
+				t.Fatalf("Plan() error = %v", err)
+			}
+		})
+	}
+}
+
+func appendReplayCallSample(t *testing.T, fixture *replayFixture, invocation tool.ReadInvocation) {
+	t.Helper()
+	fixture.appendBatch(
+		mustDraft(t, EventProviderNativeCommit, testTurnID, validNativeCommit()),
+		mustDraft(t, EventSampleUsage, testTurnID, testSampleUsage(t)),
+		mustReadyDraftForReplay(t, invocation, 0, 0),
+	)
+}
+
+func testReplayInvocation(t *testing.T, invocationValue string, callValue string) tool.ReadInvocation {
+	t.Helper()
+	invocationID, err := tool.ParseInvocationID(invocationValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	callID, err := tool.ParseProviderCallID(callValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, _ := tool.NewReadInput("README.md", 1, 20)
+	ready, _ := tool.NewReadyCall(callID, input)
+	invocation, err := tool.NewReadInvocation(invocationID, ready)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return invocation
+}
+
+func mustReadyDraftForReplay(t *testing.T, invocation tool.ReadInvocation, sampleIndex uint32, callIndex uint32) RecordDraft {
+	t.Helper()
+	draft, err := NewToolCallReadyDraft(testTurnID, invocation, sampleIndex, callIndex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return draft
+}
+
+func mustStartedDraftForReplay(t *testing.T, invocation tool.ReadInvocation) RecordDraft {
+	t.Helper()
+	draft, err := NewToolExecutionStartedDraft(testTurnID, invocation.InvocationID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return draft
+}
+
+func mustResultDraftForReplay(t *testing.T, invocation tool.ReadInvocation) RecordDraft {
+	t.Helper()
+	result := tool.RenderReadSuccess(invocation, "README.md", []string{"content"}, 1)
+	draft, err := NewToolCallResultDraft(testTurnID, result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return draft
 }
 
 func TestReplayPlannerRejectsInvalidMetadataAndKnownPayload(t *testing.T) {
@@ -231,6 +482,13 @@ func (fixture *replayFixture) loaded() LoadResult {
 func validNativeCommit() NativeCommitPayload {
 	return NativeCommitPayload{
 		Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 1,
-		Payload: json.RawMessage(`{"shape":"text_sample"}`),
+		Payload: json.RawMessage(`{"kind":"sample"}`),
+	}
+}
+
+func validToolOutputsCommit() NativeCommitPayload {
+	return NativeCommitPayload{
+		Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 1,
+		Payload: json.RawMessage(`{"kind":"tool_outputs"}`),
 	}
 }

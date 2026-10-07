@@ -11,6 +11,7 @@ import (
 
 	"easycode/internal/domain"
 	"easycode/internal/protocol"
+	"easycode/internal/tool"
 )
 
 func TestTurnInputProjectInstructionsAreOptionalAndImmutable(t *testing.T) {
@@ -200,6 +201,79 @@ func TestPreparedSampleRejectsInvalidConstructionAndZeroValue(t *testing.T) {
 	}
 }
 
+func TestPreparedSampleOwnsValidatedOrderedReadyCalls(t *testing.T) {
+	t.Parallel()
+	envelope, err := NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", 1, json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := providerReadyCall(t, "call-1", "a.go")
+	second := providerReadyCall(t, "call-2", "b.go")
+	calls := []tool.ReadyCall{first, second}
+	sample, err := NewPreparedSample(envelope, testSampleUsage(t), func() {}, calls...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls[0] = tool.ReadyCall{}
+	got, err := sample.ReadyCalls()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].ProviderCallID() != "call-1" || got[1].ProviderCallID() != "call-2" {
+		t.Fatalf("ready call 顺序或深拷贝错误: %#v", got)
+	}
+	got[0] = tool.ReadyCall{}
+	again, _ := sample.ReadyCalls()
+	if again[0].ProviderCallID() != "call-1" {
+		t.Fatal("ReadyCalls getter 与 sample 共享可变 slice")
+	}
+	if _, err := NewPreparedSample(envelope, testSampleUsage(t), func() {}, tool.ReadyCall{}); err == nil {
+		t.Fatal("非法 ready call 被接受")
+	}
+	if _, err := NewPreparedSample(envelope, testSampleUsage(t), func() {}, first, first); err == nil {
+		t.Fatal("重复 Provider call ID 被接受")
+	}
+}
+
+func TestPreparedToolOutputsFinalizesExactlyOnce(t *testing.T) {
+	t.Parallel()
+	envelope, err := NewNativeCommitEnvelope(domain.ProviderAnthropic, "messages", 1, json.RawMessage(`{"kind":"tool_outputs"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	commit, err := NewPreparedToolOutputs(envelope, func() { calls.Add(1) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	copy, err := commit.Envelope()
+	if err != nil || copy.PayloadVersion() != 1 {
+		t.Fatalf("tool outputs envelope = %#v, %v", copy, err)
+	}
+	if err := commit.Finalize(); err != nil {
+		t.Fatal(err)
+	}
+	if err := commit.Finalize(); err == nil || calls.Load() != 1 || !commit.Finalized() {
+		t.Fatalf("tool outputs finalizer 不满足恰好一次: calls=%d", calls.Load())
+	}
+	if _, err := commit.Envelope(); err == nil {
+		t.Fatal("已 finalize tool outputs 仍返回 envelope")
+	}
+	if _, err := NewPreparedToolOutputs(NativeCommitEnvelope{}, func() {}); err == nil {
+		t.Fatal("零值 envelope 被接受")
+	}
+	if _, err := NewPreparedToolOutputs(envelope, nil); err == nil {
+		t.Fatal("nil finalizer 被接受")
+	}
+	var zero PreparedToolOutputs
+	if _, err := zero.Envelope(); err == nil {
+		t.Fatal("零值 tool outputs 返回 envelope")
+	}
+	if err := zero.Finalize(); err == nil {
+		t.Fatal("零值 tool outputs 可 finalize")
+	}
+}
+
 type testNativeItem struct {
 	family domain.ProviderFamily
 	kind   string
@@ -380,4 +454,21 @@ func testSampleUsage(t *testing.T) domain.SampleUsage {
 		t.Fatal(err)
 	}
 	return usage
+}
+
+func providerReadyCall(t *testing.T, callID string, path string) tool.ReadyCall {
+	t.Helper()
+	input, err := tool.NewReadInput(path, 1, 2000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := tool.ParseProviderCallID(callID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call, err := tool.NewReadyCall(id, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return call
 }

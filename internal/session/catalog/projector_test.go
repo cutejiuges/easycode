@@ -1,12 +1,15 @@
 package catalog
 
 import (
+	"encoding/json"
 	"path"
+	"strings"
 	"testing"
 	"time"
 
 	"easycode/internal/domain"
 	"easycode/internal/session"
+	"easycode/internal/tool"
 )
 
 func TestProjectorUsesCommittedTail(t *testing.T) {
@@ -113,6 +116,70 @@ func TestProjectorPreservesFailedAndInterruptedTailsForBothProviders(t *testing.
 				t.Fatalf("entry = %#v", entry)
 			}
 		})
+	}
+}
+
+func TestProjectorUsesToolTailRecencyWithoutCopyingLedgerDetails(t *testing.T) {
+	identity := catalogTestIdentity(t)
+	turnID, err := domain.GenerateTurnID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	invocationID, err := tool.ParseInvocationID("01890f3e-7bcd-7abc-8abc-0123456789ab")
+	if err != nil {
+		t.Fatal(err)
+	}
+	callID, _ := tool.ParseProviderCallID("sensitive-call-id")
+	input, _ := tool.NewReadInput("private/source.go", 1, 20)
+	ready, _ := tool.NewReadyCall(callID, input)
+	invocation, err := tool.NewReadInvocation(invocationID, ready)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovery, err := session.NewToolRecoveryPlan(turnID, 1, []session.ReplayedToolCall{{
+		ReadySequence: 3, SampleIndex: 0, CallIndex: 0,
+		Invocation: invocation, State: session.ReplayedToolCallReady,
+	}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdAt := time.Unix(100, 0).UTC()
+	updatedAt := time.Unix(300, 0).UTC()
+	loaded := session.LoadResult{
+		Identity: identity,
+		Records: []session.Record{
+			{Sequence: 1, Timestamp: createdAt, SessionID: identity.SessionID, ThreadID: identity.ThreadID, Checksum: "first"},
+			{Sequence: 2, Timestamp: createdAt, SessionID: identity.SessionID, ThreadID: identity.ThreadID, Checksum: "metadata"},
+			{
+				Sequence: 3, Timestamp: updatedAt, SessionID: identity.SessionID, ThreadID: identity.ThreadID,
+				EventKind: session.EventToolCallReady, Checksum: "tool-tail",
+				Payload: []byte(`{"file_path":"private/source.go","call_id":"sensitive-call-id"}`),
+			},
+		},
+		NextSequence: 4,
+	}
+	plan := session.ReplayPlan{
+		Identity: identity,
+		SessionMetadata: session.SessionMetaPayload{
+			RootThreadID: identity.ThreadID, CreatedAt: createdAt,
+			Provider: domain.ProviderOpenAI, ProviderWire: "responses", Model: "gpt-test",
+			CreationCWD: t.TempDir(),
+		},
+		ThreadMetadata: session.ThreadMetaPayload{Root: true},
+		ToolRecovery:   &recovery,
+		NextSequence:   4,
+	}
+	entry, err := NewProjector().Project(catalogTestJournalPath(t, identity.ThreadID), loaded, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.LastSequence != 3 || entry.LastChecksum != "tool-tail" || !entry.UpdatedAt.Equal(updatedAt) ||
+		strings.Contains(string(encoded), "private/source.go") || strings.Contains(string(encoded), "sensitive-call-id") {
+		t.Fatalf("tool tail catalog entry = %s", encoded)
 	}
 }
 

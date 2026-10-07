@@ -157,7 +157,7 @@ func scanEnvelope(line []byte) (map[string]stdjson.RawMessage, error) {
 	if _, err := decoder.Token(); err != nil {
 		return nil, fmt.Errorf("decode session envelope end: %w", err)
 	}
-	var trailing any
+	var trailing stdjson.RawMessage
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		return nil, fmt.Errorf("session envelope contains trailing JSON")
 	}

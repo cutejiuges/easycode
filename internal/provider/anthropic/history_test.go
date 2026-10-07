@@ -15,7 +15,7 @@ import (
 func TestProjectHistory(t *testing.T) {
 	tests := []struct {
 		name    string
-		history []nativeTurn
+		history []nativeHistoryEntry
 		want    domain.SemanticHistoryView
 	}{
 		{
@@ -24,13 +24,13 @@ func TestProjectHistory(t *testing.T) {
 		},
 		{
 			name: "ordered text and opaque blocks",
-			history: []nativeTurn{
+			history: []nativeHistoryEntry{
 				{
-					User: nativeMessage{Role: roleUser, Content: []NativeItem{
+					Kind: nativeHistorySample, Input: nativeMessagePointer(nativeMessage{Role: roleUser, Content: []NativeItem{
 						{Type: blockTypeText, Text: "first\n"},
 						{Type: blockTypeThinking, Thinking: "private-user"},
 						{Type: blockTypeText, Text: "question"},
-					}},
+					}}),
 					Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{
 						{Type: blockTypeThinking, Thinking: "private", Signature: "opaque-signature"},
 						{Type: blockTypeText, Text: "answer "},
@@ -41,7 +41,7 @@ func TestProjectHistory(t *testing.T) {
 					Metadata: messageMetadata{ID: "msg-private", Usage: rawUsage{InputTokens: optionalUint{Value: 7, Known: true}}},
 				},
 				{
-					User:      newUserMessage("second"),
+					Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("second")),
 					Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeText, Text: "answer two"}}},
 				},
 			},
@@ -52,13 +52,13 @@ func TestProjectHistory(t *testing.T) {
 		},
 		{
 			name: "empty assistant text and mismatched roles",
-			history: []nativeTurn{
+			history: []nativeHistoryEntry{
 				{
-					User:      newUserMessage("visible"),
+					Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("visible")),
 					Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeThinking, Thinking: "hidden"}}},
 				},
 				{
-					User:      nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeText, Text: "wrong user role"}}},
+					Kind: nativeHistorySample, Input: nativeMessagePointer(nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeText, Text: "wrong user role"}}}),
 					Assistant: nativeMessage{Role: roleUser, Content: []NativeItem{{Type: blockTypeText, Text: "wrong assistant role"}}},
 				},
 			},
@@ -85,8 +85,8 @@ func TestProjectHistoryConcurrentCommitReturnsCompleteSnapshots(t *testing.T) {
 		defer close(done)
 		<-start
 		for index := 0; index < 200; index++ {
-			conversation.history.commit(nativeTurn{
-				User:      newUserMessage(fmt.Sprintf("user-%d", index)),
+			conversation.history.commit(nativeHistoryEntry{
+				Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage(fmt.Sprintf("user-%d", index))),
 				Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeText, Text: fmt.Sprintf("assistant-%d", index)}}},
 			})
 			runtime.Gosched()
@@ -124,8 +124,8 @@ func assertCompleteAnthropicProjection(t *testing.T, projection domain.SemanticH
 
 func TestProjectHistoryMatchesGoldenAndOmitsOpaqueData(t *testing.T) {
 	conversation := &Conversation{}
-	conversation.history.commit(nativeTurn{
-		User: newUserMessage("hello\nworld"),
+	conversation.history.commit(nativeHistoryEntry{
+		Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("hello\nworld")),
 		Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{
 			{Type: blockTypeThinking, Thinking: "private-thought", Signature: "opaque-signature"},
 			{Type: blockTypeRedactedThinking, RedactedData: "opaque-data"},
@@ -159,15 +159,15 @@ func TestProjectHistoryMatchesGoldenAndOmitsOpaqueData(t *testing.T) {
 
 func TestProjectHistoryIsIndependentAndDoesNotChangeRequest(t *testing.T) {
 	conversation := &Conversation{}
-	conversation.history.commit(nativeTurn{
-		User: newUserMessage("first"),
+	conversation.history.commit(nativeHistoryEntry{
+		Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("first")),
 		Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{
 			{Type: blockTypeThinking, Thinking: "private", Signature: "signature"},
 			{Type: blockTypeText, Text: "answer"},
 		}},
 	})
 
-	before, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, conversation.history.snapshot(), nil, newUserMessage("second"))
+	before, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, conversation.history.snapshot(), nil, nativeMessagePointer(newUserMessage("second")), testAnthropicToolView(t))
 	if err != nil {
 		t.Fatalf("compile request before projection: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestProjectHistoryIsIndependentAndDoesNotChangeRequest(t *testing.T) {
 	afterView := conversation.ProjectHistory()
 	wantView := domain.SemanticHistoryView{Provider: domain.ProviderAnthropic, Turns: []domain.SemanticTurn{{UserText: "first", AssistantText: "answer"}}}
 	assertSemanticHistory(t, afterView, wantView)
-	after, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, conversation.history.snapshot(), nil, newUserMessage("second"))
+	after, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, conversation.history.snapshot(), nil, nativeMessagePointer(newUserMessage("second")), testAnthropicToolView(t))
 	if err != nil {
 		t.Fatalf("compile request after projection: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestProjectHistoryIsIndependentAndDoesNotChangeRequest(t *testing.T) {
 	if beforeSegment.Fingerprint() != afterSegment.Fingerprint() || string(beforeSegment.CanonicalJSON()) != string(afterSegment.CanonicalJSON()) {
 		t.Fatalf("projection changed request:\n before: %s\n after: %s", beforeSegment.CanonicalJSON(), afterSegment.CanonicalJSON())
 	}
-	afterRequest := buildMessagesRequest("claude-test", DefaultMaxOutputTokens, conversation.history.snapshot(), nil, newUserMessage("second"))
+	afterRequest := buildMessagesRequest("claude-test", DefaultMaxOutputTokens, conversation.history.snapshot(), nil, nativeMessagePointer(newUserMessage("second")), testAnthropicToolView(t))
 	if afterRequest.Messages[1].Content[0].Signature != "signature" || afterRequest.Messages[1].Content[1].Text != "answer" {
 		t.Fatalf("projection changed native history: %#v", afterRequest.Messages)
 	}

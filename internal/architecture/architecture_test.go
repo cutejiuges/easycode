@@ -20,8 +20,6 @@ const sonicImportPath = "github.com/bytedance/sonic"
 var placeholderFiles = map[string]string{
 	"internal/protocol/event.go":          "P3",
 	"internal/domain/types.go":            "P3",
-	"internal/tool/tool.go":               "P3",
-	"internal/tool/builtin/specs.go":      "P3",
 	"internal/extension/extension.go":     "P6",
 	"internal/extension/hook/hook.go":     "P6",
 	"internal/extension/mcp/mcp.go":       "P6",
@@ -32,8 +30,6 @@ var placeholderFiles = map[string]string{
 }
 
 var placeholderOnlyPackages = map[string]struct{}{
-	"easycode/internal/tool":             {},
-	"easycode/internal/tool/builtin":     {},
 	"easycode/internal/extension":        {},
 	"easycode/internal/extension/hook":   {},
 	"easycode/internal/extension/mcp":    {},

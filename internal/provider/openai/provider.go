@@ -17,6 +17,7 @@ import (
 	"easycode/internal/provider"
 	"easycode/internal/provider/transport"
 	"easycode/internal/secret"
+	"easycode/internal/tool"
 )
 
 // Config 描述 OpenAI Responses 连接信息。
@@ -43,11 +44,12 @@ type Conversation struct {
 
 type nativeHistory struct {
 	mu       sync.RWMutex
-	turns    []nativeTurn
+	entries  []nativeHistoryEntry
 	revision uint64
 }
 
 var _ provider.Conversation = (*Conversation)(nil)
+var _ provider.ToolResultPreparer = (*Conversation)(nil)
 var _ provider.Factory = (*Provider)(nil)
 
 // New 创建 OpenAI Provider。
@@ -75,6 +77,7 @@ func (*Provider) Capabilities() provider.Capabilities {
 	return provider.Capabilities{
 		Streaming:          true,
 		EncryptedReasoning: true,
+		FunctionTools:      true,
 	}
 }
 
@@ -85,15 +88,18 @@ func (instance *Provider) NewConversation() provider.Conversation {
 
 // RestoreConversation 先事务式校验全部 commits，再构造可调用 Conversation。
 func (instance *Provider) RestoreConversation(commits []provider.NativeCommitEnvelope) (provider.Conversation, error) {
-	turns := make([]nativeTurn, 0, len(commits))
+	entries := make([]nativeHistoryEntry, 0, len(commits))
 	for index, commit := range commits {
-		turn, err := decodeNativeCommit(commit)
+		entry, err := decodeNativeCommit(commit)
 		if err != nil {
 			return nil, fmt.Errorf("restore OpenAI native commit %d: %w", index+1, err)
 		}
-		turns = append(turns, turn.clone())
+		entries = append(entries, entry.clone())
 	}
-	return &Conversation{provider: instance, history: nativeHistory{turns: turns, revision: uint64(len(turns))}}, nil
+	if err := validateNativeHistory(entries); err != nil {
+		return nil, fmt.Errorf("restore OpenAI native history: %w", err)
+	}
+	return &Conversation{provider: instance, history: nativeHistory{entries: entries, revision: uint64(len(entries))}}, nil
 }
 
 // Close 释放 HTTP transport 资源。
@@ -116,9 +122,8 @@ func (conversation *Conversation) Stream(
 	ctx context.Context,
 	input provider.TurnInput,
 ) (<-chan provider.StreamEvent, error) {
-	text := strings.TrimSpace(input.Text)
-	if text == "" {
-		return nil, fault.New(fault.CodeTurnFailed, "turn input is required")
+	if err := input.Validate(); err != nil {
+		return nil, fault.Wrap(fault.CodeTurnFailed, "turn input is invalid", err)
 	}
 	if !conversation.active.CompareAndSwap(false, true) {
 		return nil, fault.New(fault.CodeTurnFailed, "conversation already has an active turn")
@@ -128,7 +133,16 @@ func (conversation *Conversation) Stream(
 		return nil, fault.New(fault.CodeTurnFailed, "conversation has an unfinalized sample")
 	}
 
-	userItem := NewUserItem(text)
+	expectsContinuation := conversation.history.expectsContinuation()
+	if input.IsToolContinuation() && !expectsContinuation {
+		conversation.active.Store(false)
+		return nil, fault.New(fault.CodeTurnFailed, "turn input does not match native history state")
+	}
+	var userItem *NativeItem
+	if !input.IsToolContinuation() {
+		item := NewUserItem(strings.TrimSpace(input.Text))
+		userItem = &item
+	}
 	projectInstructions, hasProjectInstructions, err := input.ProjectInstructions()
 	if err != nil {
 		conversation.active.Store(false)
@@ -138,11 +152,22 @@ func (conversation *Conversation) Stream(
 	if hasProjectInstructions {
 		projectInstructionsPointer = &projectInstructions
 	}
+	catalog, hasCatalog, err := input.ToolCatalog()
+	if err != nil || !hasCatalog {
+		conversation.active.Store(false)
+		return nil, fault.New(fault.CodeProviderRequest, "tool catalog is required")
+	}
+	toolView, err := catalog.View(domain.ProviderOpenAI)
+	if err != nil {
+		conversation.active.Store(false)
+		return nil, fault.Wrap(fault.CodeProviderRequest, "compile tool catalog failed", err)
+	}
 	request, err := compileResponsesRequest(
 		conversation.provider.config.Model,
 		conversation.history.snapshot(),
 		projectInstructionsPointer,
 		userItem,
+		toolView,
 	)
 	if err != nil {
 		conversation.active.Store(false)
@@ -169,14 +194,15 @@ func (conversation *Conversation) Stream(
 	}
 
 	output := make(chan provider.StreamEvent, 16)
-	go conversation.consumeStream(ctx, cancelStream, userItem, stream, output)
+	go conversation.consumeStream(ctx, cancelStream, userItem, catalog, stream, output)
 	return output, nil
 }
 
 func (conversation *Conversation) consumeStream(
 	ctx context.Context,
 	cancelStream context.CancelFunc,
-	userItem NativeItem,
+	userItem *NativeItem,
+	catalog tool.CatalogSnapshot,
 	stream <-chan transport.SSEMessage,
 	output chan<- provider.StreamEvent,
 ) {
@@ -184,7 +210,7 @@ func (conversation *Conversation) consumeStream(
 	defer conversation.active.Store(false)
 	defer cancelStream()
 
-	reducer := newResponsesStreamReducer()
+	reducer := newResponsesStreamReducer(catalog)
 	stopTransport := func() {
 		cancelStream()
 		for range stream {
@@ -241,17 +267,21 @@ func (conversation *Conversation) consumeStream(
 					sendTerminal(provider.StreamEventFailed, nil, fault.Wrap(fault.CodeStreamProtocol, "OpenAI completed sample usage is invalid", usageErr))
 					return
 				}
-				turn := nativeTurn{User: userItem.clone(), Outputs: reducer.outputItems(), Usage: reducer.rawUsage()}
-				envelope, encodeErr := encodeNativeCommit(turn)
+				entry := nativeHistoryEntry{Kind: nativeHistorySample, Outputs: reducer.outputItems(), Usage: reducer.rawUsage()}
+				if userItem != nil {
+					inputItem := userItem.clone()
+					entry.Input = &inputItem
+				}
+				envelope, encodeErr := encodeNativeCommit(entry)
 				if encodeErr != nil {
 					sendTerminal(provider.StreamEventFailed, nil, fault.Wrap(fault.CodeStreamProtocol, "OpenAI completed sample is invalid", encodeErr))
 					return
 				}
 				conversation.pending.Store(true)
-				prepared, prepareErr := provider.NewPreparedSample(envelope, usage, func() {
-					conversation.history.commit(turn)
+				prepared, prepareErr := provider.NewPreparedSampleWithDiscard(envelope, usage, func() {
+					conversation.history.commit(entry)
 					conversation.pending.Store(false)
-				})
+				}, func() { conversation.pending.Store(false) }, reducer.readyCalls()...)
 				if prepareErr != nil {
 					conversation.pending.Store(false)
 					sendTerminal(provider.StreamEventFailed, nil, fault.Wrap(fault.CodeStreamProtocol, "OpenAI completed sample cannot be prepared", prepareErr))
@@ -293,30 +323,69 @@ func mapTransportTerminal(ctx context.Context, err error) (provider.StreamEventK
 	return provider.StreamEventFailed, fault.Wrap(fault.CodeStreamProtocol, "provider stream failed", err)
 }
 
-func (history *nativeHistory) snapshot() []nativeTurn {
-	turns, _ := history.snapshotWithRevision()
-	return turns
+func (history *nativeHistory) snapshot() []nativeHistoryEntry {
+	entries, _ := history.snapshotWithRevision()
+	return entries
 }
 
-func (history *nativeHistory) snapshotWithRevision() ([]nativeTurn, uint64) {
+func (history *nativeHistory) snapshotWithRevision() ([]nativeHistoryEntry, uint64) {
 	history.mu.RLock()
 	defer history.mu.RUnlock()
-	turns := make([]nativeTurn, 0, len(history.turns))
-	for _, turn := range history.turns {
-		turns = append(turns, turn.clone())
+	entries := make([]nativeHistoryEntry, 0, len(history.entries))
+	for _, entry := range history.entries {
+		entries = append(entries, entry.clone())
 	}
-	return turns, history.revision
+	return entries, history.revision
 }
 
-func (history *nativeHistory) commit(turn nativeTurn) {
+func (history *nativeHistory) commit(entry nativeHistoryEntry) {
 	history.mu.Lock()
 	defer history.mu.Unlock()
-	history.turns = append(history.turns, turn.clone())
+	history.entries = append(history.entries, entry.clone())
 	if history.revision < ^uint64(0) {
 		history.revision++
 	}
 }
 
-func (conversation *Conversation) historySnapshot() []nativeTurn {
+func (history *nativeHistory) expectsContinuation() bool {
+	history.mu.RLock()
+	defer history.mu.RUnlock()
+	return len(history.entries) > 0 && history.entries[len(history.entries)-1].Kind == nativeHistoryToolOutputs
+}
+
+func (conversation *Conversation) historySnapshot() []nativeHistoryEntry {
 	return conversation.history.snapshot()
+}
+
+// PrepareToolOutputs 在纯内存中编码与最后一组function calls配对的结果。
+func (conversation *Conversation) PrepareToolOutputs(results []tool.InvocationResult) (*provider.PreparedToolOutputs, error) {
+	if conversation == nil || conversation.active.Load() {
+		return nil, fmt.Errorf("OpenAI conversation cannot prepare tool outputs while active")
+	}
+	if !conversation.pending.CompareAndSwap(false, true) {
+		return nil, fmt.Errorf("OpenAI conversation has an unfinalized native entry")
+	}
+	resetPending := true
+	defer func() {
+		if resetPending {
+			conversation.pending.Store(false)
+		}
+	}()
+	entry, err := prepareToolOutputsEntry(conversation.history.snapshot(), results)
+	if err != nil {
+		return nil, err
+	}
+	envelope, err := encodeNativeCommit(entry)
+	if err != nil {
+		return nil, err
+	}
+	prepared, err := provider.NewPreparedToolOutputsWithDiscard(envelope, func() {
+		conversation.history.commit(entry)
+		conversation.pending.Store(false)
+	}, func() { conversation.pending.Store(false) })
+	if err != nil {
+		return nil, err
+	}
+	resetPending = false
+	return prepared, nil
 }

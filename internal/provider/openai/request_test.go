@@ -10,7 +10,7 @@ import (
 )
 
 func TestCompileResponsesRequestMatchesGolden(t *testing.T) {
-	request, err := compileResponsesRequest("gpt-test", nil, nil, NewUserItem("hello"))
+	request, err := compileResponsesRequest("gpt-test", nil, nil, nativeItemPointer(NewUserItem("hello")), testOpenAIToolView(t))
 	if err != nil {
 		t.Fatalf("compile request: %v", err)
 	}
@@ -22,14 +22,14 @@ func TestCompileResponsesRequestMatchesGolden(t *testing.T) {
 	if string(encoded) != strings.TrimSpace(string(want)) {
 		t.Fatalf("request golden mismatch:\n got: %s\nwant: %s", encoded, want)
 	}
-	if strings.Contains(string(encoded), "previous_response_id") || strings.Contains(string(encoded), `"tools"`) || strings.Contains(string(encoded), "prompt_cache_key") {
+	if strings.Contains(string(encoded), "previous_response_id") || !strings.Contains(string(encoded), `"tools"`) || strings.Contains(string(encoded), "prompt_cache_key") {
 		t.Fatalf("request contains deferred fields: %s", encoded)
 	}
 }
 
 func TestCompileResponsesRequestWithProjectInstructionsMatchesGolden(t *testing.T) {
 	snapshot := testOpenAIProjectInstructions(t, "AGENTS.md", "Use make verify.")
-	request, err := compileResponsesRequest("gpt-test", nil, &snapshot, NewUserItem("hello"))
+	request, err := compileResponsesRequest("gpt-test", nil, &snapshot, nativeItemPointer(NewUserItem("hello")), testOpenAIToolView(t))
 	if err != nil {
 		t.Fatalf("compile request: %v", err)
 	}
@@ -56,12 +56,12 @@ func TestCompileResponsesRequestIncludesNativeHistoryAndStableFingerprint(t *tes
 			Text: "first answer",
 		}},
 	}
-	history := []nativeTurn{{User: NewUserItem("first"), Outputs: []NativeItem{assistant}}}
-	request := buildResponsesRequest("gpt-test", history, nil, NewUserItem("second"))
+	history := []nativeHistoryEntry{testSampleEntry(NewUserItem("first"), []NativeItem{assistant})}
+	request := buildResponsesRequest("gpt-test", history, nil, nativeItemPointer(NewUserItem("second")), testOpenAIToolView(t))
 	if len(request.Input) != 3 || request.Input[1].ID != "msg-1" || request.Input[2].Content[0].Text != "second" {
 		t.Fatalf("unexpected request input: %#v", request.Input)
 	}
-	compiled, err := compileResponsesRequest("gpt-test", history, nil, NewUserItem("second"))
+	compiled, err := compileResponsesRequest("gpt-test", history, nil, nativeItemPointer(NewUserItem("second")), testOpenAIToolView(t))
 	if err != nil {
 		t.Fatalf("compile request: %v", err)
 	}

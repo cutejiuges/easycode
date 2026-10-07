@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"easycode/internal/domain"
+	"easycode/internal/tool"
 )
 
 const (
@@ -34,6 +35,9 @@ const (
 	EventTurnStarted          EventKind = "turn_started"
 	EventProviderNativeCommit EventKind = "provider_native_commit"
 	EventSampleUsage          EventKind = "sample_usage"
+	EventToolCallReady        EventKind = "tool_call_ready"
+	EventToolExecutionStarted EventKind = "tool_execution_started"
+	EventToolCallResult       EventKind = "tool_call_result"
 	EventTurnCompleted        EventKind = "turn_completed"
 	EventTurnFailed           EventKind = "turn_failed"
 )
@@ -113,6 +117,51 @@ type NativeCommitPayload struct {
 	Payload        json.RawMessage       `json:"payload"`
 }
 
+// ReadInputPayload 保存可严格恢复的Read输入。
+type ReadInputPayload struct {
+	FilePath string `json:"file_path"`
+	Offset   int    `json:"offset"`
+	Limit    int    `json:"limit"`
+}
+
+// ToolCallReadyPayload 保存执行前已经durable的完整调用事实。
+type ToolCallReadyPayload struct {
+	InvocationID   tool.InvocationID   `json:"invocation_id"`
+	ProviderCallID tool.ProviderCallID `json:"provider_call_id"`
+	SampleIndex    uint32              `json:"sample_index"`
+	CallIndex      uint32              `json:"call_index"`
+	Capability     tool.CapabilityID   `json:"capability"`
+	InputRevision  string              `json:"input_revision"`
+	Input          ReadInputPayload    `json:"input"`
+}
+
+// ToolExecutionStartedPayload 标记executor接收调用的线性化点。
+type ToolExecutionStartedPayload struct {
+	InvocationID tool.InvocationID `json:"invocation_id"`
+}
+
+// ReadResultMetadataPayload 保存不含绝对路径和文件正文的Read结果元数据。
+type ReadResultMetadataPayload struct {
+	RelativePath      string `json:"relative_path"`
+	RequestedOffset   int    `json:"requested_offset"`
+	RequestedLimit    int    `json:"requested_limit"`
+	StartLine         int    `json:"start_line"`
+	EndLine           int    `json:"end_line"`
+	ReachedEOF        bool   `json:"reached_eof"`
+	LongLineTruncated bool   `json:"long_line_truncated"`
+	OutputTruncated   bool   `json:"output_truncated"`
+}
+
+// ToolCallResultPayload 保存无需重新执行即可恢复的冻结结果。
+type ToolCallResultPayload struct {
+	InvocationID        tool.InvocationID         `json:"invocation_id"`
+	Status              tool.ResultStatus         `json:"status"`
+	Code                string                    `json:"code"`
+	ResultCodecRevision string                    `json:"result_codec_revision"`
+	Preview             string                    `json:"preview"`
+	Metadata            ReadResultMetadataPayload `json:"metadata"`
+}
+
 // TurnCompletedPayload 表示当前文本 turn 已 durable 成功结束。
 type TurnCompletedPayload struct{}
 
@@ -121,4 +170,10 @@ type TurnFailedPayload struct {
 	Code      string `json:"code"`
 	Message   string `json:"message,omitempty"`
 	Cancelled bool   `json:"cancelled,omitempty"`
+}
+
+type recordPayload interface {
+	SessionMetaPayload | ThreadMetaPayload | TurnStartedPayload | NativeCommitPayload |
+		SampleUsagePayload | ToolCallReadyPayload | ToolExecutionStartedPayload |
+		ToolCallResultPayload | TurnCompletedPayload | TurnFailedPayload
 }

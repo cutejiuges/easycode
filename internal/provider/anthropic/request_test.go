@@ -10,7 +10,7 @@ import (
 )
 
 func TestCompileMessagesRequestMatchesGolden(t *testing.T) {
-	request, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, nil, nil, newUserMessage("hello"))
+	request, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, nil, nil, nativeMessagePointer(newUserMessage("hello")), testAnthropicToolView(t))
 	if err != nil {
 		t.Fatalf("compile request: %v", err)
 	}
@@ -22,7 +22,7 @@ func TestCompileMessagesRequestMatchesGolden(t *testing.T) {
 	if string(encoded) != strings.TrimSpace(string(want)) {
 		t.Fatalf("request golden mismatch:\n got: %s\nwant: %s", encoded, want)
 	}
-	for _, deferred := range []string{`"tools"`, `"system"`, `"thinking"`, `"temperature"`, `"beta"`, `"cache_control"`} {
+	for _, deferred := range []string{`"system"`, `"thinking"`, `"temperature"`, `"beta"`, `"cache_control"`} {
 		if strings.Contains(string(encoded), deferred) {
 			t.Fatalf("request contains deferred field %s: %s", deferred, encoded)
 		}
@@ -32,7 +32,7 @@ func TestCompileMessagesRequestMatchesGolden(t *testing.T) {
 func TestCompileMessagesRequestWithProjectInstructionsMatchesGolden(t *testing.T) {
 	snapshot := testAnthropicProjectInstructions(t, "AGENTS.md", "Use make verify.")
 	request, err := compileMessagesRequest(
-		"claude-test", DefaultMaxOutputTokens, nil, &snapshot, newUserMessage("hello"),
+		"claude-test", DefaultMaxOutputTokens, nil, &snapshot, nativeMessagePointer(newUserMessage("hello")), testAnthropicToolView(t),
 	)
 	if err != nil {
 		t.Fatalf("compile request: %v", err)
@@ -45,7 +45,7 @@ func TestCompileMessagesRequestWithProjectInstructionsMatchesGolden(t *testing.T
 	if string(encoded) != strings.TrimSpace(string(want)) {
 		t.Fatalf("request golden mismatch:\n got: %s\nwant: %s", encoded, want)
 	}
-	for _, forbidden := range []string{`"system"`, `"tools"`, `"thinking"`, `"cache_control"`, "/Users/"} {
+	for _, forbidden := range []string{`"system"`, `"thinking"`, `"cache_control"`, "/Users/"} {
 		if strings.Contains(string(encoded), forbidden) {
 			t.Fatalf("request contains forbidden field %s: %s", forbidden, encoded)
 		}
@@ -53,15 +53,15 @@ func TestCompileMessagesRequestWithProjectInstructionsMatchesGolden(t *testing.T
 }
 
 func TestCompileMessagesRequestKeepsNativeMessageOrder(t *testing.T) {
-	history := []nativeTurn{{
-		User: newUserMessage("first"),
+	history := []nativeHistoryEntry{{
+		Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("first")),
 		Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{
 			{Type: blockTypeThinking, Thinking: "reason", Signature: "opaque-signature"},
 			{Type: blockTypeRedactedThinking, RedactedData: "opaque-redacted"},
 			{Type: blockTypeText, Text: "answer"},
 		}},
 	}}
-	request := buildMessagesRequest("claude-test", 8192, history, nil, newUserMessage("second"))
+	request := buildMessagesRequest("claude-test", 8192, history, nil, nativeMessagePointer(newUserMessage("second")), testAnthropicToolView(t))
 	if request.MaxTokens != 8192 || len(request.Messages) != 3 {
 		t.Fatalf("request shape: %#v", request)
 	}
@@ -74,8 +74,30 @@ func TestCompileMessagesRequestKeepsNativeMessageOrder(t *testing.T) {
 	}
 }
 
+func TestBuildMessagesRequestContinuesAfterToolResultsWithoutSyntheticUser(t *testing.T) {
+	history := []nativeHistoryEntry{
+		{
+			Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("read it")),
+			Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{
+				Type: blockTypeToolUse, ID: "toolu-1", Name: "Read", Input: []byte(`{"file_path":"README.md"}`),
+			}}},
+		},
+		{
+			Kind: nativeHistoryToolOutputs,
+			ToolOutputs: nativeMessage{Role: roleUser, Content: []NativeItem{{
+				Type: blockTypeToolResult, ToolUseID: "toolu-1", Content: "1\tcontent\n",
+			}}},
+		},
+	}
+	request := buildMessagesRequest("claude-test", 4096, history, nil, nil, testAnthropicToolView(t))
+	if len(request.Messages) != 3 || request.Messages[0].Content[0].Text != "read it" ||
+		request.Messages[1].Content[0].Type != blockTypeToolUse || request.Messages[2].Content[0].Type != blockTypeToolResult {
+		t.Fatalf("continuation messages = %#v", request.Messages)
+	}
+}
+
 func TestMessagesRequestFingerprintIsStableAndSecretFree(t *testing.T) {
-	request, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, nil, nil, newUserMessage("hello"))
+	request, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, nil, nil, nativeMessagePointer(newUserMessage("hello")), testAnthropicToolView(t))
 	if err != nil {
 		t.Fatalf("compile request: %v", err)
 	}

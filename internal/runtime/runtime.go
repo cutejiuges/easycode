@@ -13,6 +13,12 @@ import (
 	"easycode/internal/protocol"
 	"easycode/internal/provider"
 	"easycode/internal/session"
+	"easycode/internal/tool"
+)
+
+const (
+	maxSamplesPerTurn   = 16
+	maxToolCallsPerTurn = 64
 )
 
 // Emitter 接收 Runtime 产生的共享语义事件。
@@ -27,6 +33,9 @@ type Journal interface {
 // TurnIDGenerator 为每个被接受的 turn 分配稳定 UUIDv7 标识。
 type TurnIDGenerator func() (domain.TurnID, error)
 
+// InvocationIDGenerator 为durable ready call分配UUIDv7身份。
+type InvocationIDGenerator func() (tool.InvocationID, error)
+
 // ContextPlanner 是 Runtime 在 Provider 副作用前使用的纯内存规划能力。
 type ContextPlanner interface {
 	Plan(contextplan.PlanningInput) (contextplan.ContextPlan, error)
@@ -34,15 +43,18 @@ type ContextPlanner interface {
 
 // Config 固定一个 Session-bound Runtime 的身份与 durable 边界。
 type Config struct {
-	SessionID           domain.SessionID
-	ThreadID            domain.ThreadID
-	Journal             Journal
-	GenerateTurnID      TurnIDGenerator
-	InterruptedTail     bool
-	ContextProfile      contextplan.ProviderProfile
-	ProjectInstructions domain.ProjectInstructionsSnapshot
-	ContextBudget       contextplan.Budget
-	ContextPlanner      ContextPlanner
+	SessionID            domain.SessionID
+	ThreadID             domain.ThreadID
+	Journal              Journal
+	GenerateTurnID       TurnIDGenerator
+	GenerateInvocationID InvocationIDGenerator
+	InterruptedTail      bool
+	ContextProfile       contextplan.ProviderProfile
+	ToolCatalog          tool.CatalogSnapshot
+	ReadExecutor         tool.ReadExecutor
+	ProjectInstructions  domain.ProjectInstructionsSnapshot
+	ContextBudget        contextplan.Budget
+	ContextPlanner       ContextPlanner
 }
 
 // Runtime 持有一条会话级 Provider Conversation 和同一 thread journal。
@@ -52,7 +64,11 @@ type Runtime struct {
 	sessionID           domain.SessionID
 	threadID            domain.ThreadID
 	newTurnID           TurnIDGenerator
+	newInvocationID     InvocationIDGenerator
 	profile             contextplan.ProviderProfile
+	toolCatalog         tool.CatalogSnapshot
+	readExecutor        tool.ReadExecutor
+	toolPolicy          tool.ReadOnlyPolicy
 	projectInstructions domain.ProjectInstructionsSnapshot
 	budget              contextplan.Budget
 	planner             ContextPlanner
@@ -80,6 +96,15 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 	if config.ContextProfile.Family() != conversation.Family() {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "runtime context profile provider does not match conversation")
 	}
+	if err := config.ToolCatalog.Validate(); err != nil {
+		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "runtime tool catalog is invalid", err)
+	}
+	if _, err := config.ToolCatalog.View(conversation.Family()); err != nil {
+		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "runtime tool catalog Provider view is invalid", err)
+	}
+	if config.ReadExecutor == nil {
+		return nil, fault.New(fault.CodeInvalidConfiguration, "runtime Read executor is not configured")
+	}
 	projectInstructions, err := config.ProjectInstructions.Clone()
 	if err != nil {
 		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "runtime project instructions are invalid", err)
@@ -93,10 +118,15 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 	if config.GenerateTurnID == nil {
 		config.GenerateTurnID = domain.GenerateTurnID
 	}
+	if config.GenerateInvocationID == nil {
+		config.GenerateInvocationID = tool.GenerateInvocationID
+	}
 	return &Runtime{
 		conversation: conversation, journal: config.Journal,
 		sessionID: config.SessionID, threadID: config.ThreadID, newTurnID: config.GenerateTurnID,
-		profile: config.ContextProfile, projectInstructions: projectInstructions,
+		newInvocationID: config.GenerateInvocationID,
+		profile:         config.ContextProfile, toolCatalog: config.ToolCatalog.Clone(), readExecutor: config.ReadExecutor,
+		toolPolicy: tool.NewReadOnlyPolicy(), projectInstructions: projectInstructions,
 		budget: config.ContextBudget, planner: config.ContextPlanner,
 	}, nil
 }
@@ -119,29 +149,142 @@ func (runtime *Runtime) RunTurn(
 	if err != nil {
 		return err
 	}
-	providerInput, err := runtime.planTurnInput(input)
-	if err != nil {
-		return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, err)
+	currentInput := input
+	usages := make([]domain.SampleUsage, 0, maxSamplesPerTurn)
+	totalCalls := 0
+	seenInvocationIDs := make(map[tool.InvocationID]struct{})
+	for sampleIndex := 0; ; sampleIndex++ {
+		if sampleIndex >= maxSamplesPerTurn {
+			failure := fault.New(fault.CodeTurnFailed, "tool_loop_limit_exceeded")
+			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, failure)
+		}
+		terminal, sampleErr := runtime.runProviderSample(ctx, emit, turnID, currentInput)
+		if sampleErr != nil {
+			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, sampleErr)
+		}
+		if terminal.Kind() != provider.StreamEventCompleted {
+			return runtime.finishFailedProviderStream(ctx, emit, turnID, terminal)
+		}
+		sample := terminal.PreparedSample()
+		ready, usage, inspectErr := inspectPreparedSample(sample)
+		if inspectErr != nil {
+			discardPreparedSample(sample)
+			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, inspectErr)
+		}
+		if len(ready) == 0 {
+			usages = append(usages, usage)
+			return runtime.commitFinalSample(ctx, emit, turnID, sample, usages)
+		}
+		if totalCalls+len(ready) > maxToolCallsPerTurn {
+			discardPreparedSample(sample)
+			failure := fault.New(fault.CodeTurnFailed, "tool_loop_limit_exceeded")
+			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, failure)
+		}
+		invocations, commitErr := runtime.commitCallSample(
+			ctx, turnID, uint32(sampleIndex), sample, ready, usage, seenInvocationIDs,
+		)
+		if commitErr != nil {
+			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, commitErr)
+		}
+		usages = append(usages, usage)
+		totalCalls += len(invocations)
+		results, executeErr := runtime.executeToolCalls(ctx, turnID, invocations)
+		if executeErr != nil {
+			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, executeErr)
+		}
+		if outputErr := runtime.commitToolOutputs(ctx, turnID, results); outputErr != nil {
+			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, outputErr)
+		}
+		if ctx.Err() != nil {
+			cancelled := fault.Wrap(fault.CodeUserCancelled, "turn was cancelled", context.Canceled)
+			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, cancelled)
+		}
+		currentInput = provider.NewToolContinuationInput()
 	}
+}
 
-	streamContext, cancelStream := context.WithCancel(ctx)
-	stream, err := runtime.conversation.Stream(streamContext, providerInput)
-	if err != nil {
-		cancelStream()
-		return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, err)
+// ReconcileToolTurn 在宿主接收新输入前，以本地durable事实关闭未完成工具turn。
+func (runtime *Runtime) ReconcileToolTurn(ctx context.Context, plan session.ToolRecoveryPlan) error {
+	if ctx == nil {
+		return fault.New(fault.CodeSessionCorruption, "tool recovery context is required")
 	}
-	if stream == nil {
-		cancelStream()
-		failure := fault.New(fault.CodeStreamProtocol, "provider returned a nil stream")
-		return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, failure)
+	if runtime == nil || runtime.conversation == nil || runtime.journal == nil {
+		return fault.New(fault.CodeSessionCorruption, "tool recovery runtime is not configured")
 	}
+	if err := plan.Validate(); err != nil {
+		return fault.Wrap(fault.CodeSessionCorruption, "tool recovery plan is invalid", err)
+	}
+	if runtime.poisoned.Load() || runtime.journal.Poisoned() {
+		return fault.New(fault.CodeSessionWrite, "session journal is poisoned")
+	}
+	if !runtime.active.CompareAndSwap(false, true) {
+		return fault.New(fault.CodeTurnFailed, "conversation already has an active turn")
+	}
+	defer runtime.active.Store(false)
 
-	terminal, err := runtime.consumeProviderStream(ctx, cancelStream, stream, emit, turnID)
-	cancelStream()
-	if err != nil {
-		return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, err)
+	reconcileContext := context.WithoutCancel(ctx)
+	calls := plan.Calls()
+	results := make([]tool.InvocationResult, 0, len(calls))
+	outcomeUncertain := false
+	for _, call := range calls {
+		var result tool.InvocationResult
+		switch call.State {
+		case session.ReplayedToolCallReady:
+			result = tool.NewReadErrorResult(
+				call.Invocation, tool.ResultCancelled, "session_interrupted_before_execution",
+				"Read cancelled: session interrupted before execution", ".",
+			)
+			if err := runtime.persistToolResult(reconcileContext, plan.TurnID(), result); err != nil {
+				return err
+			}
+		case session.ReplayedToolCallStarted:
+			result = tool.NewReadErrorResult(
+				call.Invocation, tool.ResultOutcomeUncertain, "outcome_uncertain",
+				"Read failed: execution outcome is uncertain", ".",
+			)
+			if err := runtime.persistToolResult(reconcileContext, plan.TurnID(), result); err != nil {
+				return err
+			}
+			outcomeUncertain = true
+		case session.ReplayedToolCallResult:
+			result = call.Result
+			outcomeUncertain = outcomeUncertain || result.Status() == tool.ResultOutcomeUncertain
+		default:
+			return fault.New(fault.CodeSessionCorruption, "tool recovery call state is invalid")
+		}
+		results = append(results, result)
 	}
-	return runtime.finishProviderStream(ctx, emit, turnID, terminal)
+	if !plan.ToolOutputsCommitted() {
+		if err := runtime.commitToolOutputs(reconcileContext, plan.TurnID(), results); err != nil {
+			return err
+		}
+	}
+	return runtime.closeReconciledToolTurn(reconcileContext, plan.TurnID(), outcomeUncertain)
+}
+
+func (runtime *Runtime) closeReconciledToolTurn(
+	ctx context.Context,
+	turnID domain.TurnID,
+	outcomeUncertain bool,
+) error {
+	code := "session_interrupted"
+	message := "session tool turn was interrupted"
+	if outcomeUncertain {
+		code = "outcome_uncertain"
+		message = "tool execution outcome is uncertain"
+	}
+	draft, err := session.NewTurnFailedDraft(turnID, session.TurnFailedPayload{
+		Code: code, Message: message,
+	})
+	if err != nil {
+		runtime.poisoned.Store(true)
+		return fault.Wrap(fault.CodeSessionWrite, "build reconciled tool turn failure failed", err)
+	}
+	if _, err := runtime.journal.AppendBatch(ctx, []session.RecordDraft{draft}); err != nil {
+		runtime.poisoned.Store(true)
+		return fault.Wrap(fault.CodeSessionWrite, "persist reconciled tool turn failure failed", err)
+	}
+	return nil
 }
 
 func (runtime *Runtime) validateTurnRequest(ctx context.Context, emit Emitter) error {
@@ -203,9 +346,17 @@ func (runtime *Runtime) planTurnInput(input provider.TurnInput) (provider.TurnIn
 			fmt.Sprintf("estimated context tokens %d exceed effective input limit %d", total, limit),
 		)
 	}
-	providerInput, err := (provider.TurnInput{Text: input.Text}).WithProjectInstructions(runtime.projectInstructions)
+	providerInput := provider.TurnInput{Text: input.Text}
+	if input.IsToolContinuation() {
+		providerInput = provider.NewToolContinuationInput()
+	}
+	providerInput, err = providerInput.WithProjectInstructions(runtime.projectInstructions)
 	if err != nil {
 		return provider.TurnInput{}, fault.New(fault.CodeTurnFailed, "provider input is invalid")
+	}
+	providerInput, err = providerInput.WithToolCatalog(runtime.toolCatalog)
+	if err != nil {
+		return provider.TurnInput{}, fault.New(fault.CodeTurnFailed, "provider tool catalog is invalid")
 	}
 	return providerInput, nil
 }
@@ -259,15 +410,35 @@ func (runtime *Runtime) consumeProviderStream(
 	return terminal, nil
 }
 
-func (runtime *Runtime) finishProviderStream(
+func (runtime *Runtime) runProviderSample(
 	ctx context.Context,
 	emit Emitter,
 	turnID domain.TurnID,
-	terminal provider.StreamEvent,
+	input provider.TurnInput,
+) (provider.StreamEvent, error) {
+	providerInput, err := runtime.planTurnInput(input)
+	if err != nil {
+		return provider.StreamEvent{}, err
+	}
+	streamContext, cancelStream := context.WithCancel(ctx)
+	stream, err := runtime.conversation.Stream(streamContext, providerInput)
+	if err != nil {
+		cancelStream()
+		return provider.StreamEvent{}, err
+	}
+	if stream == nil {
+		cancelStream()
+		return provider.StreamEvent{}, fault.New(fault.CodeStreamProtocol, "provider returned a nil stream")
+	}
+	terminal, err := runtime.consumeProviderStream(ctx, cancelStream, stream, emit, turnID)
+	cancelStream()
+	return terminal, err
+}
+
+func (runtime *Runtime) finishFailedProviderStream(
+	ctx context.Context, emit Emitter, turnID domain.TurnID, terminal provider.StreamEvent,
 ) error {
 	switch terminal.Kind() {
-	case provider.StreamEventCompleted:
-		return runtime.commitCompletedTurn(ctx, emit, turnID, terminal.PreparedSample())
 	case provider.StreamEventCancelled:
 		err := terminal.Error()
 		if err == nil || errors.Is(err, context.Canceled) {
@@ -286,16 +457,28 @@ func (runtime *Runtime) finishProviderStream(
 	}
 }
 
-func (runtime *Runtime) commitCompletedTurn(
+func inspectPreparedSample(sample *provider.PreparedSample) ([]tool.ReadyCall, domain.SampleUsage, error) {
+	if sample == nil || sample.Finalized() {
+		return nil, domain.SampleUsage{}, fault.New(fault.CodeStreamProtocol, "provider completed without a fresh prepared sample")
+	}
+	ready, err := sample.ReadyCalls()
+	if err != nil {
+		return nil, domain.SampleUsage{}, fault.Wrap(fault.CodeStreamProtocol, "provider prepared calls are invalid", err)
+	}
+	usage, err := sample.Usage()
+	if err != nil {
+		return nil, domain.SampleUsage{}, fault.Wrap(fault.CodeStreamProtocol, "provider prepared usage is invalid", err)
+	}
+	return ready, usage, nil
+}
+
+func (runtime *Runtime) commitFinalSample(
 	ctx context.Context,
 	emit Emitter,
 	turnID domain.TurnID,
 	sample *provider.PreparedSample,
+	usages []domain.SampleUsage,
 ) error {
-	if sample == nil || sample.Finalized() {
-		failure := fault.New(fault.CodeStreamProtocol, "provider completed without a fresh prepared sample")
-		return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, failure)
-	}
 	envelope, err := sample.Envelope()
 	if err != nil {
 		failure := fault.Wrap(fault.CodeStreamProtocol, "provider prepared sample is invalid", err)
@@ -311,7 +494,7 @@ func (runtime *Runtime) commitCompletedTurn(
 		failure := fault.Wrap(fault.CodeStreamProtocol, "provider prepared usage is invalid", err)
 		return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, failure)
 	}
-	turnUsage, err := domain.AggregateSampleUsage([]domain.SampleUsage{usage})
+	turnUsage, err := domain.AggregateSampleUsage(usages)
 	if err != nil {
 		failure := fault.Wrap(fault.CodeStreamProtocol, "turn usage is invalid", err)
 		return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, failure)
@@ -340,6 +523,7 @@ func (runtime *Runtime) commitCompletedTurn(
 		return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, failure)
 	}
 	if _, err := runtime.journal.AppendBatch(context.WithoutCancel(ctx), []session.RecordDraft{commitDraft, usageDraft, completedDraft}); err != nil {
+		discardPreparedSample(sample)
 		failure := fault.Wrap(fault.CodeSessionWrite, "persist completed turn failed", err)
 		runtime.poisoned.Store(true)
 		runtime.emitFailure(emit, turnID, failure)
@@ -355,14 +539,186 @@ func (runtime *Runtime) commitCompletedTurn(
 	return nil
 }
 
+func (runtime *Runtime) commitCallSample(
+	ctx context.Context,
+	turnID domain.TurnID,
+	sampleIndex uint32,
+	sample *provider.PreparedSample,
+	ready []tool.ReadyCall,
+	usage domain.SampleUsage,
+	seenInvocationIDs map[tool.InvocationID]struct{},
+) ([]tool.ReadInvocation, error) {
+	envelope, err := sample.Envelope()
+	if err != nil {
+		discardPreparedSample(sample)
+		return nil, fault.Wrap(fault.CodeStreamProtocol, "provider prepared sample is invalid", err)
+	}
+	commitDraft, err := session.NewProviderNativeCommitDraft(turnID, session.NativeCommitPayload{
+		Provider: envelope.Family(), Wire: envelope.Wire(), PayloadVersion: envelope.PayloadVersion(), Payload: envelope.Payload(),
+	})
+	if err != nil {
+		discardPreparedSample(sample)
+		return nil, fault.Wrap(fault.CodeStreamProtocol, "provider native commit is invalid", err)
+	}
+	usageDraft, err := session.NewSampleUsageDraft(turnID, usage)
+	if err != nil {
+		discardPreparedSample(sample)
+		return nil, fault.Wrap(fault.CodeStreamProtocol, "sample usage is invalid", err)
+	}
+	invocations := make([]tool.ReadInvocation, len(ready))
+	drafts := make([]session.RecordDraft, 0, len(ready)+2)
+	drafts = append(drafts, commitDraft, usageDraft)
+	for index, call := range ready {
+		if runtime.toolPolicy.Decide(call) != tool.PolicyAllow {
+			discardPreparedSample(sample)
+			return nil, fault.New(fault.CodeTurnFailed, "tool call is denied")
+		}
+		invocationID, generateErr := runtime.newInvocationID()
+		if generateErr != nil || !invocationID.Valid() {
+			discardPreparedSample(sample)
+			return nil, fault.New(fault.CodeTurnFailed, "tool invocation identity generation failed")
+		}
+		if _, duplicate := seenInvocationIDs[invocationID]; duplicate {
+			discardPreparedSample(sample)
+			return nil, fault.New(fault.CodeTurnFailed, "tool invocation identity is duplicated")
+		}
+		seenInvocationIDs[invocationID] = struct{}{}
+		invocation, invocationErr := tool.NewReadInvocation(invocationID, call)
+		if invocationErr != nil {
+			discardPreparedSample(sample)
+			return nil, fault.New(fault.CodeStreamProtocol, "provider ready call is invalid")
+		}
+		readyDraft, draftErr := session.NewToolCallReadyDraft(turnID, invocation, sampleIndex, uint32(index))
+		if draftErr != nil {
+			discardPreparedSample(sample)
+			return nil, fault.Wrap(fault.CodeStreamProtocol, "tool ready fact is invalid", draftErr)
+		}
+		invocations[index] = invocation
+		drafts = append(drafts, readyDraft)
+	}
+	if _, err := runtime.journal.AppendBatch(context.WithoutCancel(ctx), drafts); err != nil {
+		discardPreparedSample(sample)
+		runtime.poisoned.Store(true)
+		return nil, fault.Wrap(fault.CodeSessionWrite, "persist tool call sample failed", err)
+	}
+	if err := sample.Finalize(); err != nil {
+		runtime.poisoned.Store(true)
+		return nil, fault.Wrap(fault.CodeStreamProtocol, "finalize prepared sample failed", err)
+	}
+	return invocations, nil
+}
+
+func (runtime *Runtime) executeToolCalls(ctx context.Context, turnID domain.TurnID, invocations []tool.ReadInvocation) ([]tool.InvocationResult, error) {
+	results := make([]tool.InvocationResult, 0, len(invocations))
+	for _, invocation := range invocations {
+		if ctx.Err() != nil {
+			result := tool.NewReadErrorResult(invocation, tool.ResultCancelled, "cancelled", "Read cancelled", ".")
+			if err := runtime.persistToolResult(ctx, turnID, result); err != nil {
+				return nil, err
+			}
+			results = append(results, result)
+			continue
+		}
+		startedDraft, err := session.NewToolExecutionStartedDraft(turnID, invocation.InvocationID())
+		if err != nil {
+			return nil, fault.Wrap(fault.CodeStreamProtocol, "tool execution start is invalid", err)
+		}
+		if _, err := runtime.journal.AppendBatch(ctx, []session.RecordDraft{startedDraft}); err != nil {
+			if errors.Is(err, context.Canceled) && !runtime.journal.Poisoned() {
+				result := tool.NewReadErrorResult(invocation, tool.ResultCancelled, "cancelled", "Read cancelled", ".")
+				if persistErr := runtime.persistToolResult(ctx, turnID, result); persistErr != nil {
+					return nil, persistErr
+				}
+				results = append(results, result)
+				continue
+			}
+			runtime.poisoned.Store(true)
+			return nil, fault.Wrap(fault.CodeSessionWrite, "persist tool execution start failed", err)
+		}
+		result := runtime.readExecutor.Execute(ctx, invocation)
+		if result.Validate() != nil || result.InvocationID() != invocation.InvocationID() || result.ProviderCallID() != invocation.ProviderCallID() {
+			result = tool.NewReadErrorResult(
+				invocation, tool.ResultError, "invalid_tool_result",
+				"Read failed: executor returned an invalid result", ".",
+			)
+		}
+		if err := runtime.persistToolResult(ctx, turnID, result); err != nil {
+			return nil, err
+		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
+func (runtime *Runtime) persistToolResult(ctx context.Context, turnID domain.TurnID, result tool.InvocationResult) error {
+	draft, err := session.NewToolCallResultDraft(turnID, result)
+	if err != nil {
+		runtime.poisoned.Store(true)
+		return fault.Wrap(fault.CodeStreamProtocol, "tool result is invalid", err)
+	}
+	if _, err := runtime.journal.AppendBatch(context.WithoutCancel(ctx), []session.RecordDraft{draft}); err != nil {
+		runtime.poisoned.Store(true)
+		return fault.Wrap(fault.CodeSessionWrite, "persist tool result failed", err)
+	}
+	return nil
+}
+
+func (runtime *Runtime) commitToolOutputs(ctx context.Context, turnID domain.TurnID, results []tool.InvocationResult) error {
+	preparer, ok := runtime.conversation.(provider.ToolResultPreparer)
+	if !ok {
+		runtime.poisoned.Store(true)
+		return fault.New(fault.CodeStreamProtocol, "provider does not support tool result preparation")
+	}
+	prepared, err := preparer.PrepareToolOutputs(results)
+	if err != nil {
+		runtime.poisoned.Store(true)
+		return fault.Wrap(fault.CodeStreamProtocol, "prepare provider tool outputs failed", err)
+	}
+	envelope, err := prepared.Envelope()
+	if err != nil {
+		_ = prepared.Discard()
+		runtime.poisoned.Store(true)
+		return fault.Wrap(fault.CodeStreamProtocol, "provider tool outputs are invalid", err)
+	}
+	draft, err := session.NewProviderNativeCommitDraft(turnID, session.NativeCommitPayload{
+		Provider: envelope.Family(), Wire: envelope.Wire(), PayloadVersion: envelope.PayloadVersion(), Payload: envelope.Payload(),
+	})
+	if err != nil {
+		_ = prepared.Discard()
+		runtime.poisoned.Store(true)
+		return fault.Wrap(fault.CodeStreamProtocol, "provider tool outputs are invalid", err)
+	}
+	if _, err := runtime.journal.AppendBatch(context.WithoutCancel(ctx), []session.RecordDraft{draft}); err != nil {
+		_ = prepared.Discard()
+		runtime.poisoned.Store(true)
+		return fault.Wrap(fault.CodeSessionWrite, "persist provider tool outputs failed", err)
+	}
+	if err := prepared.Finalize(); err != nil {
+		runtime.poisoned.Store(true)
+		return fault.Wrap(fault.CodeStreamProtocol, "finalize provider tool outputs failed", err)
+	}
+	return nil
+}
+
+func discardPreparedSample(sample *provider.PreparedSample) {
+	if sample != nil && !sample.Finalized() {
+		_ = sample.Discard()
+	}
+}
+
 func (runtime *Runtime) contextPlanningInput(input provider.TurnInput) (contextplan.PlanningInput, error) {
 	history := runtime.conversation.ProjectHistory()
 	footprint, err := runtime.conversation.HistoryFootprint()
 	if err != nil {
 		return contextplan.PlanningInput{}, err
 	}
+	currentInput := contextplan.NewUserTextInput(input.Text)
+	if input.IsToolContinuation() {
+		currentInput = contextplan.NewToolContinuationInput()
+	}
 	return contextplan.NewPlanningInput(
-		runtime.profile, runtime.projectInstructions, history, footprint, input.Text, runtime.budget,
+		runtime.profile, runtime.toolCatalog, runtime.projectInstructions, history, footprint,
+		currentInput, runtime.budget,
 	)
 }
 

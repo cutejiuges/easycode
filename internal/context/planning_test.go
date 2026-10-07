@@ -1,13 +1,21 @@
 package context
 
 import (
+	stdcontext "context"
 	"math"
 	"strings"
 	"testing"
 
 	"easycode/internal/context/estimate"
 	"easycode/internal/domain"
+	"easycode/internal/tool"
 )
+
+type planningReadExecutor struct{}
+
+func (planningReadExecutor) Execute(stdcontext.Context, tool.ReadInvocation) tool.InvocationResult {
+	return tool.InvocationResult{}
+}
 
 func TestPlannerProducesDeterministicOrderedImmutablePlan(t *testing.T) {
 	t.Parallel()
@@ -22,7 +30,7 @@ func TestPlannerProducesDeterministicOrderedImmutablePlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantKinds := []SourceKind{SourceProviderProfile, SourceCommittedHistory, SourceCurrentInput}
+	wantKinds := []SourceKind{SourceProviderProfile, SourceToolCatalog, SourceCommittedHistory, SourceCurrentInput}
 	for index, source := range first.Sources() {
 		if source.Kind() != wantKinds[index] {
 			t.Fatalf("source %d = %q", index, source.Kind())
@@ -53,7 +61,7 @@ func TestPlannerUsesMaxForVisibleAndNativeHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	historyTokens, ok := plan.Sources()[1].Estimate().Tokens()
+	historyTokens, ok := plan.Sources()[2].Estimate().Tokens()
 	if !ok || historyTokens != 140 {
 		t.Fatalf("history estimate = %d ok %t", historyTokens, ok)
 	}
@@ -65,7 +73,7 @@ func TestPlannerPropagatesUnknownAndBudgetStates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	unknown, _ := domain.NewUnknownTokenEstimate(estimate.MethodByteHeuristicV1)
+	unknown, _ := domain.NewUnknownTokenEstimate(estimate.MethodByteHeuristic)
 	footprint, _ := domain.NewNativeHistoryFootprint(domain.ProviderOpenAI, 0, unknown)
 	unknownPlan, err := NewPlanner().Plan(mustPlanningInput(t, emptyHistory(domain.ProviderOpenAI), footprint, "large enough", budget))
 	if err != nil {
@@ -86,7 +94,12 @@ func TestPlannerPropagatesUnknownAndBudgetStates(t *testing.T) {
 
 func TestPlannerBudgetBoundaryAndOverLimit(t *testing.T) {
 	t.Parallel()
-	budget, err := NewBudget(10, 1, 1)
+	base, err := NewPlanner().Plan(mustPlanningInput(t, emptyHistory(domain.ProviderOpenAI), estimatedFootprint(t, domain.ProviderOpenAI, 0, 0), "", DisabledBudget()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseTokens, _ := base.TotalEstimate().Tokens()
+	budget, err := NewBudget(baseTokens+10, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,8 +128,9 @@ func TestPlannerCacheFingerprintIgnoresVolatileInputAndSecrets(t *testing.T) {
 	history := emptyHistory(domain.ProviderAnthropic)
 	footprint := estimatedFootprint(t, domain.ProviderAnthropic, 0, 0)
 	empty := emptyProjectInstructions(t)
-	firstInput, _ := NewPlanningInput(profile, empty, history, footprint, "first secret-input", DisabledBudget())
-	secondInput, _ := NewPlanningInput(profile, empty, history, footprint, "second secret-input", DisabledBudget())
+	catalog := testToolCatalog(t)
+	firstInput, _ := NewPlanningInput(profile, catalog, empty, history, footprint, NewUserTextInput("first secret-input"), DisabledBudget())
+	secondInput, _ := NewPlanningInput(profile, catalog, empty, history, footprint, NewUserTextInput("second secret-input"), DisabledBudget())
 	first, _ := NewPlanner().Plan(firstInput)
 	second, _ := NewPlanner().Plan(secondInput)
 	firstFingerprint, _ := first.CachePlan().StablePrefixFingerprint()
@@ -132,17 +146,69 @@ func TestPlannerCacheFingerprintIgnoresVolatileInputAndSecrets(t *testing.T) {
 	}
 }
 
+func TestPlannerToolContinuationHasZeroCurrentInputEstimate(t *testing.T) {
+	t.Parallel()
+	profile, _ := NewProviderProfile(domain.ProviderOpenAI, "gpt-test")
+	input, err := NewPlanningInput(
+		profile, testToolCatalog(t), emptyProjectInstructions(t), emptyHistory(domain.ProviderOpenAI),
+		estimatedFootprint(t, domain.ProviderOpenAI, 1, 12), NewToolContinuationInput(), DisabledBudget(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := NewPlanner().Plan(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sources := plan.Sources()
+	current := sources[len(sources)-1]
+	if current.Kind() != SourceCurrentInput {
+		t.Fatalf("末尾来源 = %q", current.Kind())
+	}
+	if tokens, known := current.Estimate().Tokens(); !known || tokens != 0 {
+		t.Fatalf("continuation current input estimate = %d known=%t", tokens, known)
+	}
+	invalid := CurrentInput{kind: CurrentInputToolContinuation, text: "forged"}
+	if _, err := NewPlanningInput(
+		profile, testToolCatalog(t), emptyProjectInstructions(t), emptyHistory(domain.ProviderOpenAI),
+		estimatedFootprint(t, domain.ProviderOpenAI, 1, 12), invalid, DisabledBudget(),
+	); err == nil {
+		t.Fatal("带用户文本的 tool continuation 被接受")
+	}
+}
+
+func TestPlannerToolCatalogSegmentIsStableAndPathSafe(t *testing.T) {
+	t.Parallel()
+	first := mustPlanningInput(t, emptyHistory(domain.ProviderOpenAI), estimatedFootprint(t, domain.ProviderOpenAI, 0, 0), "first", DisabledBudget())
+	second := mustPlanningInput(t, emptyHistory(domain.ProviderOpenAI), estimatedFootprint(t, domain.ProviderOpenAI, 0, 0), "second", DisabledBudget())
+	firstPlan, _ := NewPlanner().Plan(first)
+	secondPlan, _ := NewPlanner().Plan(second)
+	firstSegment := firstPlan.CachePlan().Segments()[1]
+	secondSegment := secondPlan.CachePlan().Segments()[1]
+	if firstSegment.ID() != string(SourceToolCatalog) || firstSegment.Stability() != StabilityStable ||
+		firstSegment.Fingerprint() != secondSegment.Fingerprint() {
+		t.Fatal("tool catalog 未映射为稳定 cache segment")
+	}
+	encoded := string(firstSegment.CanonicalJSON())
+	for _, forbidden := range []string{"api-key", "Authorization", "/absolute/workspace", "invocation", "session"} {
+		if strings.Contains(encoded, forbidden) {
+			t.Fatalf("tool catalog segment 泄漏动态或敏感值 %q", forbidden)
+		}
+	}
+}
+
 func TestPlanningInputRejectsProviderAndMethodMismatch(t *testing.T) {
 	t.Parallel()
 	profile, _ := NewProviderProfile(domain.ProviderOpenAI, "gpt-test")
+	catalog := testToolCatalog(t)
 	wrongFamily := estimatedFootprint(t, domain.ProviderAnthropic, 0, 0)
 	empty := emptyProjectInstructions(t)
-	if _, err := NewPlanningInput(profile, empty, emptyHistory(domain.ProviderOpenAI), wrongFamily, "x", DisabledBudget()); err == nil {
+	if _, err := NewPlanningInput(profile, catalog, empty, emptyHistory(domain.ProviderOpenAI), wrongFamily, NewUserTextInput("x"), DisabledBudget()); err == nil {
 		t.Fatal("family mismatch unexpectedly accepted")
 	}
 	other, _ := domain.NewEstimatedTokenEstimate("future", 1)
 	footprint, _ := domain.NewNativeHistoryFootprint(domain.ProviderOpenAI, 0, other)
-	if _, err := NewPlanningInput(profile, empty, emptyHistory(domain.ProviderOpenAI), footprint, "x", DisabledBudget()); err == nil {
+	if _, err := NewPlanningInput(profile, catalog, empty, emptyHistory(domain.ProviderOpenAI), footprint, NewUserTextInput("x"), DisabledBudget()); err == nil {
 		t.Fatal("method mismatch unexpectedly accepted")
 	}
 }
@@ -174,8 +240,8 @@ func TestPlannerIncludesProjectInstructionsAsProjectStableSource(t *testing.T) {
 	snapshot := projectInstructions(t, "nested/AGENTS.md", "use make verify")
 	profile, _ := NewProviderProfile(domain.ProviderOpenAI, "gpt-test")
 	input, err := NewPlanningInput(
-		profile, snapshot, emptyHistory(domain.ProviderOpenAI),
-		estimatedFootprint(t, domain.ProviderOpenAI, 0, 0), "next", DisabledBudget(),
+		profile, testToolCatalog(t), snapshot, emptyHistory(domain.ProviderOpenAI),
+		estimatedFootprint(t, domain.ProviderOpenAI, 0, 0), NewUserTextInput("next"), DisabledBudget(),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -185,14 +251,14 @@ func TestPlannerIncludesProjectInstructionsAsProjectStableSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantKinds := []SourceKind{
-		SourceProviderProfile, SourceProjectInstructions, SourceCommittedHistory, SourceCurrentInput,
+		SourceProviderProfile, SourceToolCatalog, SourceProjectInstructions, SourceCommittedHistory, SourceCurrentInput,
 	}
 	for index, source := range plan.Sources() {
 		if source.Kind() != wantKinds[index] {
 			t.Fatalf("source %d = %q, want %q", index, source.Kind(), wantKinds[index])
 		}
 	}
-	projectSource := plan.Sources()[1]
+	projectSource := plan.Sources()[2]
 	if projectSource.Lifecycle() != SourceLifecycleReplace || projectSource.Revision() != snapshot.Revision() {
 		t.Fatalf("project source = %#v", projectSource)
 	}
@@ -202,8 +268,8 @@ func TestPlannerIncludesProjectInstructionsAsProjectStableSource(t *testing.T) {
 		t.Fatalf("project tokens = %d known=%t, want %d", gotTokens, known, wantTokens)
 	}
 	segments := plan.CachePlan().Segments()
-	if len(segments) != 4 || segments[1].ID() != string(SourceProjectInstructions) ||
-		segments[1].Stability() != StabilityProjectStable || segments[1].Revision() != snapshot.Revision() {
+	if len(segments) != 5 || segments[2].ID() != string(SourceProjectInstructions) ||
+		segments[2].Stability() != StabilityProjectStable || segments[2].Revision() != snapshot.Revision() {
 		t.Fatalf("project cache segment = %#v", segments)
 	}
 }
@@ -235,11 +301,12 @@ func TestPlannerProjectInstructionFingerprintUsesContentAndRelativeSource(t *tes
 func TestPlannerProjectInstructionsParticipateInBudgetDecisions(t *testing.T) {
 	t.Parallel()
 	snapshot := projectInstructions(t, "AGENTS.md", strings.Repeat("rule ", 20))
-	projectTokens, _ := estimate.String(snapshot.RenderedText()).Tokens()
-	if projectTokens < 2 {
-		t.Fatalf("project token setup is too small: %d", projectTokens)
+	baseline := planWithProjectInstructions(t, snapshot, "", DisabledBudget())
+	totalTokens, _ := baseline.TotalEstimate().Tokens()
+	if totalTokens < 2 {
+		t.Fatalf("planning token setup is too small: %d", totalTokens)
 	}
-	exactBudget, err := NewBudget(projectTokens+2, 1, 1)
+	exactBudget, err := NewBudget(totalTokens+2, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +314,7 @@ func TestPlannerProjectInstructionsParticipateInBudgetDecisions(t *testing.T) {
 	if exact.Decision().State() != BudgetWithinLimit {
 		t.Fatalf("exact budget decision = %q", exact.Decision().State())
 	}
-	overBudget, err := NewBudget(projectTokens+1, 1, 1)
+	overBudget, err := NewBudget(totalTokens+1, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,10 +323,10 @@ func TestPlannerProjectInstructionsParticipateInBudgetDecisions(t *testing.T) {
 		t.Fatalf("over budget decision = %q", over.Decision().State())
 	}
 
-	unknown, _ := domain.NewUnknownTokenEstimate(estimate.MethodByteHeuristicV1)
+	unknown, _ := domain.NewUnknownTokenEstimate(estimate.MethodByteHeuristic)
 	footprint, _ := domain.NewNativeHistoryFootprint(domain.ProviderOpenAI, 0, unknown)
 	profile, _ := NewProviderProfile(domain.ProviderOpenAI, "gpt-test")
-	input, err := NewPlanningInput(profile, snapshot, emptyHistory(domain.ProviderOpenAI), footprint, "", exactBudget)
+	input, err := NewPlanningInput(profile, testToolCatalog(t), snapshot, emptyHistory(domain.ProviderOpenAI), footprint, NewUserTextInput(""), exactBudget)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +365,7 @@ func mustPlanningInput(t *testing.T, history domain.SemanticHistoryView, footpri
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := NewPlanningInput(profile, emptyProjectInstructions(t), history, footprint, current, budget)
+	input, err := NewPlanningInput(profile, testToolCatalog(t), emptyProjectInstructions(t), history, footprint, NewUserTextInput(current), budget)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,8 +403,8 @@ func planWithProjectInstructions(
 	t.Helper()
 	profile, _ := NewProviderProfile(domain.ProviderOpenAI, "gpt-test")
 	input, err := NewPlanningInput(
-		profile, snapshot, emptyHistory(domain.ProviderOpenAI),
-		estimatedFootprint(t, domain.ProviderOpenAI, 0, 0), current, budget,
+		profile, testToolCatalog(t), snapshot, emptyHistory(domain.ProviderOpenAI),
+		estimatedFootprint(t, domain.ProviderOpenAI, 0, 0), NewUserTextInput(current), budget,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -351,7 +418,7 @@ func planWithProjectInstructions(
 
 func estimatedFootprint(t *testing.T, family domain.ProviderFamily, revision, tokens uint64) domain.NativeHistoryFootprint {
 	t.Helper()
-	value, err := domain.NewEstimatedTokenEstimate(estimate.MethodByteHeuristicV1, tokens)
+	value, err := domain.NewEstimatedTokenEstimate(estimate.MethodByteHeuristic, tokens)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,4 +431,13 @@ func estimatedFootprint(t *testing.T, family domain.ProviderFamily, revision, to
 
 func emptyHistory(family domain.ProviderFamily) domain.SemanticHistoryView {
 	return domain.SemanticHistoryView{Provider: family, Turns: make([]domain.SemanticTurn, 0)}
+}
+
+func testToolCatalog(t *testing.T) tool.CatalogSnapshot {
+	t.Helper()
+	catalog, err := tool.NewReadCatalogSnapshot(planningReadExecutor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return catalog
 }

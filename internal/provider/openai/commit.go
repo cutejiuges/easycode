@@ -13,15 +13,15 @@ import (
 
 const (
 	responsesWire               = "responses"
-	nativeCommitPayloadV1       = 1
-	nativeCommitShapeTextSample = "text_sample"
+	nativeCommitPayloadRevision = 1
 )
 
-type textSampleCommit struct {
-	Shape       string          `json:"shape"`
-	User        NativeItem      `json:"user"`
-	OutputItems []NativeItem    `json:"output_items"`
-	Usage       *rawUsageCommit `json:"usage"`
+type nativeHistoryCommit struct {
+	Kind        nativeHistoryEntryKind `json:"kind"`
+	Input       *NativeItem            `json:"input,omitempty"`
+	Outputs     []NativeItem           `json:"outputs,omitempty"`
+	ToolOutputs []NativeItem           `json:"tool_outputs,omitempty"`
+	Usage       *rawUsageCommit        `json:"usage,omitempty"`
 }
 
 type optionalUintCommit struct {
@@ -37,15 +37,19 @@ type rawUsageCommit struct {
 	ReasoningOutputTokens optionalUintCommit `json:"reasoning_output_tokens"`
 }
 
-func encodeNativeCommit(turn nativeTurn) (provider.NativeCommitEnvelope, error) {
-	cloned := turn.clone()
-	if err := validateNativeTurn(cloned); err != nil {
+func encodeNativeCommit(entry nativeHistoryEntry) (provider.NativeCommitEnvelope, error) {
+	cloned := entry.clone()
+	if err := validateNativeHistoryEntry(cloned); err != nil {
 		return provider.NativeCommitEnvelope{}, err
 	}
-	payload, err := codec.MarshalStable(textSampleCommit{
-		Shape: nativeCommitShapeTextSample, User: cloned.User, OutputItems: cloned.Outputs,
-		Usage: encodeRawUsage(cloned.Usage),
-	})
+	commit := nativeHistoryCommit{
+		Kind: cloned.Kind, Input: cloned.Input, Outputs: cloned.Outputs,
+		ToolOutputs: cloned.ToolOutputs,
+	}
+	if cloned.Kind == nativeHistorySample {
+		commit.Usage = encodeRawUsage(cloned.Usage)
+	}
+	payload, err := codec.MarshalStable(commit)
 	if err != nil {
 		return provider.NativeCommitEnvelope{}, fmt.Errorf("encode OpenAI native commit: %w", err)
 	}
@@ -53,68 +57,119 @@ func encodeNativeCommit(turn nativeTurn) (provider.NativeCommitEnvelope, error) 
 		return provider.NativeCommitEnvelope{}, fmt.Errorf("OpenAI native commit exceeds size limit")
 	}
 	return provider.NewNativeCommitEnvelope(
-		domain.ProviderOpenAI, responsesWire, nativeCommitPayloadV1, payload,
+		domain.ProviderOpenAI, responsesWire, nativeCommitPayloadRevision, payload,
 	)
 }
 
-func decodeNativeCommit(envelope provider.NativeCommitEnvelope) (nativeTurn, error) {
+func decodeNativeCommit(envelope provider.NativeCommitEnvelope) (nativeHistoryEntry, error) {
 	if envelope.Family() != domain.ProviderOpenAI || envelope.Wire() != responsesWire ||
-		envelope.PayloadVersion() != nativeCommitPayloadV1 {
-		return nativeTurn{}, fmt.Errorf("OpenAI native commit boundary is incompatible")
+		envelope.PayloadVersion() != nativeCommitPayloadRevision {
+		return nativeHistoryEntry{}, fmt.Errorf("OpenAI native commit boundary is incompatible")
 	}
 	payload := envelope.Payload()
 	if len(payload) == 0 || len(payload) > provider.MaxNativeCommitBytes {
-		return nativeTurn{}, fmt.Errorf("OpenAI native commit size is invalid")
+		return nativeHistoryEntry{}, fmt.Errorf("OpenAI native commit size is invalid")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
-	var commit textSampleCommit
+	var commit nativeHistoryCommit
 	if err := decoder.Decode(&commit); err != nil {
-		return nativeTurn{}, fmt.Errorf("decode OpenAI native commit: %w", err)
+		return nativeHistoryEntry{}, fmt.Errorf("decode OpenAI native commit: %w", err)
 	}
-	var trailing any
+	var trailing json.RawMessage
 	if err := decoder.Decode(&trailing); err != io.EOF {
-		return nativeTurn{}, fmt.Errorf("OpenAI native commit contains trailing JSON")
+		return nativeHistoryEntry{}, fmt.Errorf("OpenAI native commit contains trailing JSON")
 	}
-	if commit.Shape != nativeCommitShapeTextSample {
-		return nativeTurn{}, fmt.Errorf("OpenAI native commit shape is unsupported")
+	entry := nativeHistoryEntry{
+		Kind: commit.Kind, Outputs: cloneNativeItems(commit.Outputs),
+		ToolOutputs: cloneNativeItems(commit.ToolOutputs),
 	}
-	usage, err := decodeRawUsage(commit.Usage)
-	if err != nil {
-		return nativeTurn{}, err
+	if commit.Input != nil {
+		input := commit.Input.clone()
+		entry.Input = &input
 	}
-	turn := nativeTurn{User: commit.User.clone(), Outputs: cloneNativeItems(commit.OutputItems), Usage: usage}
-	if err := validateNativeTurn(turn); err != nil {
-		return nativeTurn{}, err
+	if commit.Kind == nativeHistorySample {
+		usage, err := decodeRawUsage(commit.Usage)
+		if err != nil {
+			return nativeHistoryEntry{}, err
+		}
+		entry.Usage = usage
+	} else if commit.Usage != nil {
+		return nativeHistoryEntry{}, fmt.Errorf("OpenAI tool outputs must not contain usage")
 	}
-	return turn.clone(), nil
+	if err := validateNativeHistoryEntry(entry); err != nil {
+		return nativeHistoryEntry{}, err
+	}
+	return entry.clone(), nil
 }
 
-func validateNativeTurn(turn nativeTurn) error {
-	if turn.User.Type != "message" || turn.User.Role != "user" || len(turn.User.Content) == 0 {
+func validateNativeHistoryEntry(entry nativeHistoryEntry) error {
+	switch entry.Kind {
+	case nativeHistorySample:
+		if len(entry.Outputs) == 0 || len(entry.ToolOutputs) != 0 {
+			return fmt.Errorf("OpenAI sample entry fields are invalid")
+		}
+		if entry.Input != nil {
+			if err := validateUserItem(*entry.Input); err != nil {
+				return err
+			}
+		}
+		seenCallIDs := make(map[string]struct{})
+		for _, item := range entry.Outputs {
+			if err := validateOutputItem(item); err != nil {
+				return err
+			}
+			if item.Type == "function_call" {
+				if _, exists := seenCallIDs[item.CallID]; exists {
+					return fmt.Errorf("OpenAI function call ID is duplicated")
+				}
+				seenCallIDs[item.CallID] = struct{}{}
+			}
+		}
+		if _, err := entry.Usage.normalized(); err != nil {
+			return fmt.Errorf("OpenAI native commit usage is invalid: %w", err)
+		}
+	case nativeHistoryToolOutputs:
+		if entry.Input != nil || len(entry.Outputs) != 0 || len(entry.ToolOutputs) == 0 {
+			return fmt.Errorf("OpenAI tool outputs entry fields are invalid")
+		}
+		for _, item := range entry.ToolOutputs {
+			if item.Type != "function_call_output" || item.CallID == "" || !json.Valid([]byte(item.Output)) {
+				return fmt.Errorf("OpenAI function call output item is invalid")
+			}
+		}
+	default:
+		return fmt.Errorf("OpenAI native commit kind is unsupported")
+	}
+	return nil
+}
+
+func validateUserItem(item NativeItem) error {
+	if item.Type != "message" || item.Role != "user" || len(item.Content) == 0 {
 		return fmt.Errorf("OpenAI native commit user item is invalid")
 	}
-	for _, part := range turn.User.Content {
+	for _, part := range item.Content {
 		if part.Type != "input_text" {
 			return fmt.Errorf("OpenAI native commit user content is invalid")
 		}
 	}
-	if len(turn.Outputs) == 0 {
-		return fmt.Errorf("OpenAI native commit output items are required")
+	return nil
+}
+
+func validateOutputItem(item NativeItem) error {
+	if item.Type == "" {
+		return fmt.Errorf("OpenAI native commit output item type is required")
 	}
-	for _, item := range turn.Outputs {
-		if item.Type == "" {
-			return fmt.Errorf("OpenAI native commit output item type is required")
-		}
-		if len(item.Raw) > 0 && !json.Valid(item.Raw) {
-			return fmt.Errorf("OpenAI native commit output item raw JSON is invalid")
-		}
-		if item.Type == "message" && item.Role != "assistant" {
-			return fmt.Errorf("OpenAI native commit message role is invalid")
-		}
+	if len(item.Raw) > 0 && !json.Valid(item.Raw) {
+		return fmt.Errorf("OpenAI native commit output item raw JSON is invalid")
 	}
-	if _, err := turn.Usage.normalized(); err != nil {
-		return fmt.Errorf("OpenAI native commit usage is invalid: %w", err)
+	if item.Type == "message" && item.Role != "assistant" {
+		return fmt.Errorf("OpenAI native commit message role is invalid")
+	}
+	if item.Type == "function_call" {
+		if item.CallID == "" || item.Name == "" || item.Arguments == "" || !json.Valid([]byte(item.Arguments)) {
+			return fmt.Errorf("OpenAI function call item is invalid")
+		}
 	}
 	return nil
 }

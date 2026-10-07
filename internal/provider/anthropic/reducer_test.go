@@ -8,6 +8,7 @@ import (
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
 	"easycode/internal/provider/transport"
+	"easycode/internal/tool"
 )
 
 func TestStreamReducerBuildsOrderedTextWithoutDuplicatingStart(t *testing.T) {
@@ -80,6 +81,48 @@ func TestStreamReducerPreservesThinkingSignatureAndRedactedData(t *testing.T) {
 	}
 	if blocks[1].RedactedData != "opaque-data" || len(blocks[1].Raw) == 0 {
 		t.Fatalf("redacted block: %#v", blocks[1])
+	}
+}
+
+func TestStreamReducerProducesReadyReadCall(t *testing.T) {
+	reducer := newStreamReducer(testAnthropicToolCatalog(t))
+	events := []string{
+		`{"type":"message_start","message":{"id":"msg-tool","model":"claude-test"}}`,
+		`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu-1","name":"Read","input":{}}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"file_path\":\"README.md\",\"offset\":2,\"limit\":3}"}}`,
+		`{"type":"content_block_stop","index":0}`,
+		`{"type":"message_stop"}`,
+	}
+	for _, event := range events {
+		if _, err := reduceAnthropicTestEvent(reducer, event); err != nil {
+			t.Fatalf("reduce %s: %v", event, err)
+		}
+	}
+	ready := reducer.readyCalls()
+	assistant := reducer.assistantMessage()
+	if len(ready) != 1 || ready[0].ProviderCallID() != tool.ProviderCallID("toolu-1") ||
+		ready[0].ReadInput().FilePath() != "README.md" || ready[0].ReadInput().Offset() != 2 || ready[0].ReadInput().Limit() != 3 {
+		t.Fatalf("ready calls = %#v", ready)
+	}
+	if len(assistant.Content) != 1 || string(assistant.Content[0].Input) != `{"file_path":"README.md","offset":2,"limit":3}` {
+		t.Fatalf("assistant tool use = %#v", assistant)
+	}
+}
+
+func TestStreamReducerRejectsIncompleteToolInput(t *testing.T) {
+	reducer := newStreamReducer(testAnthropicToolCatalog(t))
+	for _, event := range []string{
+		`{"type":"message_start","message":{"id":"msg-tool","model":"claude-test"}}`,
+		`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu-1","name":"Read","input":{}}}`,
+	} {
+		if _, err := reduceAnthropicTestEvent(reducer, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err := reduceAnthropicTestEvent(reducer, `{"type":"content_block_stop","index":0}`)
+	assertFaultCode(t, err, fault.CodeStreamProtocol)
+	if len(reducer.readyCalls()) != 0 {
+		t.Fatalf("incomplete tool input produced ready calls: %#v", reducer.readyCalls())
 	}
 }
 

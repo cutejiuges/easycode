@@ -70,7 +70,7 @@ func TestConversationStreamIdentityIntegration(t *testing.T) {
 			}
 			defer closeProvider(t, instance)
 			conversation := instance.NewConversation().(*Conversation)
-			stream, err := conversation.Stream(context.Background(), provider.TurnInput{Text: "question"})
+			stream, err := conversation.Stream(context.Background(), testOpenAITurnInput(t, "question"))
 			if err != nil {
 				t.Fatalf("start stream: %v", err)
 			}
@@ -162,17 +162,17 @@ func TestConversationUsesNativeHistoryAcrossTwoTurnsAndBaseURLForms(t *testing.T
 			if len(requests) != 2 {
 				t.Fatalf("request count: %d", len(requests))
 			}
-			firstCompiled, err := compileResponsesRequest("gpt-test", nil, nil, NewUserItem("first"))
+			firstCompiled, err := compileResponsesRequest("gpt-test", nil, nil, nativeItemPointer(NewUserItem("first")), testOpenAIToolView(t))
 			if err != nil {
 				t.Fatalf("compile first expected request: %v", err)
 			}
-			secondCompiled, err := compileResponsesRequest("gpt-test", []nativeTurn{{
-				User: NewUserItem("first"),
+			secondCompiled, err := compileResponsesRequest("gpt-test", []nativeHistoryEntry{{
+				Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("first")),
 				Outputs: []NativeItem{{
 					Type: "message", ID: "msg-1", Role: "assistant",
 					Content: []ContentPart{{Type: "output_text", Text: "answer"}},
 				}},
-			}}, nil, NewUserItem("second"))
+			}}, nil, nativeItemPointer(NewUserItem("second")), testOpenAIToolView(t))
 			if err != nil {
 				t.Fatalf("compile second expected request: %v", err)
 			}
@@ -228,6 +228,10 @@ func TestConversationKeepsProjectInstructionsOutOfNativeHistory(t *testing.T) {
 		if attachErr != nil {
 			t.Fatal(attachErr)
 		}
+		input, attachErr = input.WithToolCatalog(testOpenAIToolCatalog(t))
+		if attachErr != nil {
+			t.Fatal(attachErr)
+		}
 		stream, streamErr := conversation.Stream(context.Background(), input)
 		if streamErr != nil {
 			t.Fatal(streamErr)
@@ -265,7 +269,7 @@ func TestConversationKeepsProjectInstructionsOutOfNativeHistory(t *testing.T) {
 	}
 	history := conversation.historySnapshot()
 	projection := conversation.ProjectHistory()
-	if len(history) != 2 || history[0].User.Content[0].Text != "first" || history[1].User.Content[0].Text != "second" {
+	if len(history) != 2 || history[0].Input.Content[0].Text != "first" || history[1].Input.Content[0].Text != "second" {
 		t.Fatalf("native history contains unexpected users: %#v", history)
 	}
 	if len(projection.Turns) != 2 || strings.Contains(projection.Turns[0].UserText, projectMarker) || strings.Contains(projection.Turns[1].UserText, projectMarker) {
@@ -298,7 +302,7 @@ func TestConversationProjectionMatchesLiveTextAndHidesActiveTurn(t *testing.T) {
 	}
 	defer closeProvider(t, instance)
 	conversation := instance.NewConversation().(*Conversation)
-	stream, err := conversation.Stream(context.Background(), provider.TurnInput{Text: "question"})
+	stream, err := conversation.Stream(context.Background(), testOpenAITurnInput(t, "question"))
 	if err != nil {
 		t.Fatalf("start stream: %v", err)
 	}
@@ -363,7 +367,8 @@ func decodeOpenAILiveText(t *testing.T, event provider.StreamEvent) string {
 
 func runCompletedTurn(t *testing.T, conversation provider.Conversation, text string) {
 	t.Helper()
-	stream, err := conversation.Stream(context.Background(), provider.TurnInput{Text: text})
+	input := testOpenAITurnInput(t, text)
+	stream, err := conversation.Stream(context.Background(), input)
 	if err != nil {
 		t.Fatalf("start turn %q: %v", text, err)
 	}
