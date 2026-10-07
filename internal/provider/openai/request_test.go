@@ -6,10 +6,11 @@ import (
 	"testing"
 
 	contextplan "easycode/internal/context"
+	"easycode/internal/domain"
 )
 
 func TestCompileResponsesRequestMatchesGolden(t *testing.T) {
-	request, err := compileResponsesRequest("gpt-test", nil, NewUserItem("hello"))
+	request, err := compileResponsesRequest("gpt-test", nil, nil, NewUserItem("hello"))
 	if err != nil {
 		t.Fatalf("compile request: %v", err)
 	}
@@ -26,6 +27,25 @@ func TestCompileResponsesRequestMatchesGolden(t *testing.T) {
 	}
 }
 
+func TestCompileResponsesRequestWithProjectInstructionsMatchesGolden(t *testing.T) {
+	snapshot := testOpenAIProjectInstructions(t, "AGENTS.md", "Use make verify.")
+	request, err := compileResponsesRequest("gpt-test", nil, &snapshot, NewUserItem("hello"))
+	if err != nil {
+		t.Fatalf("compile request: %v", err)
+	}
+	encoded := request.Bytes()
+	want, err := os.ReadFile("testdata/responses_request_with_project_instructions.golden.json")
+	if err != nil {
+		t.Fatalf("read golden: %v", err)
+	}
+	if string(encoded) != strings.TrimSpace(string(want)) {
+		t.Fatalf("request golden mismatch:\n got: %s\nwant: %s", encoded, want)
+	}
+	if strings.Contains(string(encoded), "/Users/") || strings.Contains(string(encoded), "previous_response_id") {
+		t.Fatalf("request contains an absolute path or deferred field: %s", encoded)
+	}
+}
+
 func TestCompileResponsesRequestIncludesNativeHistoryAndStableFingerprint(t *testing.T) {
 	assistant := NativeItem{
 		Type: "message",
@@ -37,11 +57,11 @@ func TestCompileResponsesRequestIncludesNativeHistoryAndStableFingerprint(t *tes
 		}},
 	}
 	history := []nativeTurn{{User: NewUserItem("first"), Outputs: []NativeItem{assistant}}}
-	request := buildResponsesRequest("gpt-test", history, NewUserItem("second"))
+	request := buildResponsesRequest("gpt-test", history, nil, NewUserItem("second"))
 	if len(request.Input) != 3 || request.Input[1].ID != "msg-1" || request.Input[2].Content[0].Text != "second" {
 		t.Fatalf("unexpected request input: %#v", request.Input)
 	}
-	compiled, err := compileResponsesRequest("gpt-test", history, NewUserItem("second"))
+	compiled, err := compileResponsesRequest("gpt-test", history, nil, NewUserItem("second"))
 	if err != nil {
 		t.Fatalf("compile request: %v", err)
 	}
@@ -57,4 +77,17 @@ func TestCompileResponsesRequestIncludesNativeHistoryAndStableFingerprint(t *tes
 	if first.Fingerprint() != second.Fingerprint() || string(first.CanonicalJSON()) != string(second.CanonicalJSON()) {
 		t.Fatalf("request fingerprint is unstable: %#v %#v", first, second)
 	}
+}
+
+func testOpenAIProjectInstructions(t *testing.T, source string, content string) domain.ProjectInstructionsSnapshot {
+	t.Helper()
+	document, err := domain.NewProjectInstructionDocument(source, content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := domain.NewProjectInstructionsSnapshot([]domain.ProjectInstructionDocument{document}, 32<<10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return snapshot
 }

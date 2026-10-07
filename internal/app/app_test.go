@@ -188,6 +188,44 @@ func TestNewChatResourcesRejectsUnknownProviderWithoutNetwork(t *testing.T) {
 	}
 }
 
+func TestProviderResourceCreationAndWireMapping(t *testing.T) {
+	t.Parallel()
+	fixtures := []struct {
+		name   string
+		family domain.ProviderFamily
+		wire   string
+	}{
+		{name: "OpenAI", family: domain.ProviderOpenAI, wire: "responses"},
+		{name: "Anthropic", family: domain.ProviderAnthropic, wire: "messages"},
+	}
+	for _, fixture := range fixtures {
+		fixture := fixture
+		t.Run(fixture.name, func(t *testing.T) {
+			t.Parallel()
+			applicationConfig := config.Config{Provider: config.Provider{
+				Family: fixture.family, BaseURL: "https://example.com", APIKey: secret.New("test-key"), Model: "test-model",
+			}}
+			resource, err := newProviderResource(applicationConfig)
+			if err != nil || resource == nil {
+				t.Fatalf("newProviderResource() = %#v, %v", resource, err)
+			}
+			t.Cleanup(func() { _ = resource.Close() })
+			wire, err := providerWire(fixture.family)
+			if err != nil || wire != fixture.wire {
+				t.Fatalf("providerWire(%s) = %q, %v", fixture.family, wire, err)
+			}
+		})
+	}
+
+	unknown := domain.ProviderFamily("unknown")
+	if resource, err := newProviderResource(config.Config{Provider: config.Provider{Family: unknown}}); resource != nil || !errors.Is(err, &fault.Error{Code: fault.CodeProviderUnavailable}) {
+		t.Fatalf("newProviderResource(unknown) = %#v, %v", resource, err)
+	}
+	if wire, err := providerWire(unknown); wire != "" || !errors.Is(err, &fault.Error{Code: fault.CodeProviderUnavailable}) {
+		t.Fatalf("providerWire(unknown) = %q, %v", wire, err)
+	}
+}
+
 func clearProviderEnvironment(t *testing.T) {
 	t.Helper()
 	for _, name := range []string{"EASYCODE_PROVIDER", "EASYCODE_BASE_URL", "EASYCODE_API_KEY", "EASYCODE_MODEL"} {
@@ -371,7 +409,8 @@ func TestChatResourcesCloseOrdersSessionJournalAndProvider(t *testing.T) {
 	runtimeInstance, err := chatRuntime.New(conversation, chatRuntime.Config{
 		SessionID: runtimeSessionIDForApp, ThreadID: runtimeThreadIDForApp, Journal: journal,
 		GenerateTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
-		ContextProfile: mustAppContextProfile(t), ContextBudget: contextplan.DisabledBudget(),
+		ContextProfile: mustAppContextProfile(t), ProjectInstructions: mustEmptyAppProjectInstructions(t),
+		ContextBudget:  contextplan.DisabledBudget(),
 		ContextPlanner: contextplan.NewPlanner(),
 	})
 	if err != nil {
@@ -439,7 +478,8 @@ func TestChatResourcesShutdownTimeoutEscalatesAndClosesDependencies(t *testing.T
 	runtimeInstance, err := chatRuntime.New(conversation, chatRuntime.Config{
 		SessionID: runtimeSessionIDForApp, ThreadID: runtimeThreadIDForApp, Journal: journal,
 		GenerateTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
-		ContextProfile: mustAppContextProfile(t), ContextBudget: contextplan.DisabledBudget(),
+		ContextProfile: mustAppContextProfile(t), ProjectInstructions: mustEmptyAppProjectInstructions(t),
+		ContextBudget:  contextplan.DisabledBudget(),
 		ContextPlanner: contextplan.NewPlanner(),
 	})
 	if err != nil {
@@ -639,7 +679,10 @@ func (conversation *orderedConversation) Stream(ctx context.Context, _ provider.
 		if conversation.release != nil {
 			<-conversation.release
 		}
-		stream <- provider.StreamEvent{Kind: provider.StreamEventCancelled, Err: context.Canceled}
+		event, err := provider.NewCancelledStreamEvent(context.Canceled)
+		if err == nil {
+			stream <- event
+		}
 		close(stream)
 	}()
 	return stream, nil
@@ -684,7 +727,8 @@ func mustIdleAppRuntime(t *testing.T, journal chatRuntime.Journal) *chatRuntime.
 	runtimeInstance, err := chatRuntime.New(&orderedConversation{}, chatRuntime.Config{
 		SessionID: runtimeSessionIDForApp, ThreadID: runtimeThreadIDForApp, Journal: journal,
 		GenerateTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
-		ContextProfile: mustAppContextProfile(t), ContextBudget: contextplan.DisabledBudget(),
+		ContextProfile: mustAppContextProfile(t), ProjectInstructions: mustEmptyAppProjectInstructions(t),
+		ContextBudget:  contextplan.DisabledBudget(),
 		ContextPlanner: contextplan.NewPlanner(),
 	})
 	if err != nil {
@@ -700,6 +744,15 @@ func mustAppContextProfile(t *testing.T) contextplan.ProviderProfile {
 		t.Fatal(err)
 	}
 	return profile
+}
+
+func mustEmptyAppProjectInstructions(t *testing.T) domain.ProjectInstructionsSnapshot {
+	t.Helper()
+	snapshot, err := domain.NewEmptyProjectInstructionsSnapshot(32 << 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return snapshot
 }
 
 func newTestChatResources(t *testing.T, applicationConfig config.Config) (*chatResources, error) {

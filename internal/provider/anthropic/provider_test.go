@@ -100,17 +100,17 @@ func TestConversationIgnoresRepeatedCompletedTerminal(t *testing.T) {
 	conversation.consumeStream(context.Background(), func() {}, newUserMessage("question"), stream, output)
 	terminalCount := 0
 	for event := range output {
-		if !event.Kind.Terminal() {
+		if !event.Kind().Terminal() {
 			continue
 		}
 		terminalCount++
-		if event.Kind != provider.StreamEventCompleted || event.Prepared == nil {
+		if event.Kind() != provider.StreamEventCompleted || event.PreparedSample() == nil {
 			t.Fatalf("terminal = %#v", event)
 		}
 		if len(conversation.historySnapshot()) != 0 {
 			t.Fatal("sample committed before finalization")
 		}
-		if err := event.Prepared.Finalize(); err != nil {
+		if err := event.PreparedSample().Finalize(); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -144,20 +144,20 @@ func TestConversationCancelCompletedRaceHasOneTerminal(t *testing.T) {
 		conversation.consumeStream(ctx, func() {}, newUserMessage("question"), stream, output)
 		terminalCount := 0
 		for event := range output {
-			if !event.Kind.Terminal() {
+			if !event.Kind().Terminal() {
 				continue
 			}
 			terminalCount++
-			switch event.Kind {
+			switch event.Kind() {
 			case provider.StreamEventCompleted:
-				if event.Prepared == nil {
+				if event.PreparedSample() == nil {
 					t.Fatal("completed race terminal has no prepared sample")
 				}
-				if err := event.Prepared.Finalize(); err != nil {
+				if err := event.PreparedSample().Finalize(); err != nil {
 					t.Fatal(err)
 				}
 			case provider.StreamEventCancelled:
-				if event.Prepared != nil {
+				if event.PreparedSample() != nil {
 					t.Fatal("cancelled race terminal carried a prepared sample")
 				}
 			default:
@@ -248,7 +248,7 @@ func TestConversationAllowsOnlyOneActiveTurn(t *testing.T) {
 		t.Fatalf("new provider: %v", err)
 	}
 	defer closeAnthropicProvider(t, instance)
-	conversation := instance.NewConversation()
+	conversation := instance.NewConversation().(*Conversation)
 	ctx, cancel := context.WithCancel(context.Background())
 	stream, err := conversation.Stream(ctx, provider.TurnInput{Text: "first"})
 	if err != nil {
@@ -263,9 +263,14 @@ func TestConversationAllowsOnlyOneActiveTurn(t *testing.T) {
 	assertFaultCode(t, err, fault.CodeTurnFailed)
 
 	cancel()
-	terminal := readAnthropicTerminal(t, stream)
-	if terminal.Kind != provider.StreamEventCancelled || !errors.Is(terminal.Err, context.Canceled) {
+	terminal := readAnthropicTerminal(t, conversation, stream)
+	if terminal.Kind() != provider.StreamEventCancelled || !errors.Is(terminal.Error(), context.Canceled) {
 		t.Fatalf("cancel terminal: %#v", terminal)
+	}
+	nextContext, cancelNext := context.WithCancel(context.Background())
+	cancelNext()
+	if next, nextErr := conversation.Stream(nextContext, provider.TurnInput{Text: "next"}); next != nil || !errors.Is(nextErr, context.Canceled) {
+		t.Fatalf("next stream after cleanup = %#v, %v", next, nextErr)
 	}
 }
 
@@ -293,8 +298,8 @@ func TestConversationPublishesOrderedEventsAndCommitsOnMessageStop(t *testing.T)
 		t.Fatalf("events: %#v", events)
 	}
 	for index, kind := range wantKinds {
-		if events[index].Kind != kind {
-			t.Fatalf("event %d: got %s want %s", index, events[index].Kind, kind)
+		if events[index].Kind() != kind {
+			t.Fatalf("event %d: got %s want %s", index, events[index].Kind(), kind)
 		}
 	}
 	history := conversation.historySnapshot()
@@ -346,11 +351,11 @@ func TestConversationDiscardsFailedStagingBeforeNextTurn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start failed turn: %v", err)
 	}
-	failedTerminal := readAnthropicTerminal(t, failedStream)
-	if failedTerminal.Kind != provider.StreamEventFailed {
+	failedTerminal := readAnthropicTerminal(t, conversation, failedStream)
+	if failedTerminal.Kind() != provider.StreamEventFailed {
 		t.Fatalf("failed terminal: %#v", failedTerminal)
 	}
-	assertFaultCode(t, failedTerminal.Err, fault.CodeStreamProtocol)
+	assertFaultCode(t, failedTerminal.Error(), fault.CodeStreamProtocol)
 	if len(conversation.historySnapshot()) != 0 {
 		t.Fatalf("failed turn committed: %#v", conversation.historySnapshot())
 	}
@@ -402,17 +407,17 @@ func TestConversationMapsStreamFailuresWithoutCommitting(t *testing.T) {
 			}
 			defer closeAnthropicProvider(t, instance)
 			conversation := instance.NewConversation().(*Conversation)
-			stream, err := conversation.Stream(context.Background(), provider.TurnInput{Text: "hello"})
+			stream, err := conversation.Stream(context.Background(), testAnthropicTurnInputWithProject(t, "hello"))
 			if err != nil {
 				t.Fatalf("start stream: %v", err)
 			}
-			terminal := readAnthropicTerminal(t, stream)
-			if terminal.Kind != provider.StreamEventFailed {
+			terminal := readAnthropicTerminal(t, conversation, stream)
+			if terminal.Kind() != provider.StreamEventFailed {
 				t.Fatalf("terminal: %#v", terminal)
 			}
-			assertFaultCode(t, terminal.Err, test.wantCode)
-			if strings.Contains(terminal.Err.Error(), "sensitive response") {
-				t.Fatalf("terminal leaked provider body: %v", terminal.Err)
+			assertFaultCode(t, terminal.Error(), test.wantCode)
+			if strings.Contains(terminal.Error().Error(), "sensitive response") {
+				t.Fatalf("terminal leaked provider body: %v", terminal.Error())
 			}
 			if len(conversation.historySnapshot()) != 0 {
 				t.Fatalf("failed stream committed history: %#v", conversation.historySnapshot())
@@ -458,7 +463,7 @@ func TestConversationCancelAndIdleTimeoutCleanUpRequest(t *testing.T) {
 			defer closeAnthropicProvider(t, instance)
 			ctx, cancel := context.WithCancel(context.Background())
 			conversation := instance.NewConversation().(*Conversation)
-			stream, err := conversation.Stream(ctx, provider.TurnInput{Text: "hello"})
+			stream, err := conversation.Stream(ctx, testAnthropicTurnInputWithProject(t, "hello"))
 			if err != nil {
 				t.Fatalf("start stream: %v", err)
 			}
@@ -467,13 +472,16 @@ func TestConversationCancelAndIdleTimeoutCleanUpRequest(t *testing.T) {
 			} else {
 				defer cancel()
 			}
-			terminal := readAnthropicTerminal(t, stream)
-			if terminal.Kind != test.wantKind {
+			terminal := readAnthropicTerminal(t, conversation, stream)
+			if terminal.Kind() != test.wantKind {
 				t.Fatalf("terminal: %#v", terminal)
 			}
-			assertFaultCode(t, terminal.Err, test.wantCode)
+			assertFaultCode(t, terminal.Error(), test.wantCode)
 			if projection := conversation.ProjectHistory(); len(projection.Turns) != 0 {
 				t.Fatalf("cancelled or timed out turn projected: %#v", projection)
+			}
+			if len(conversation.historySnapshot()) != 0 {
+				t.Fatalf("cancelled or timed out turn committed: %#v", conversation.historySnapshot())
 			}
 			select {
 			case <-requestDone:
@@ -482,6 +490,16 @@ func TestConversationCancelAndIdleTimeoutCleanUpRequest(t *testing.T) {
 			}
 		})
 	}
+}
+
+func testAnthropicTurnInputWithProject(t *testing.T, text string) provider.TurnInput {
+	t.Helper()
+	snapshot := testAnthropicProjectInstructions(t, "AGENTS.md", "project-only-marker")
+	input, err := (provider.TurnInput{Text: text}).WithProjectInstructions(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return input
 }
 
 func TestConversationRejectsOversizedEvent(t *testing.T) {
@@ -502,28 +520,37 @@ func TestConversationRejectsOversizedEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start stream: %v", err)
 	}
-	terminal := readAnthropicTerminal(t, stream)
-	if terminal.Kind != provider.StreamEventFailed {
+	terminal := readAnthropicTerminal(t, conversation, stream)
+	if terminal.Kind() != provider.StreamEventFailed {
 		t.Fatalf("terminal: %#v", terminal)
 	}
-	assertFaultCode(t, terminal.Err, fault.CodeStreamProtocol)
+	assertFaultCode(t, terminal.Error(), fault.CodeStreamProtocol)
 	if len(conversation.historySnapshot()) != 0 {
 		t.Fatalf("oversized event committed history: %#v", conversation.historySnapshot())
 	}
 }
 
-func readAnthropicTerminal(t *testing.T, stream <-chan provider.StreamEvent) provider.StreamEvent {
+func readAnthropicTerminal(t *testing.T, conversation *Conversation, stream <-chan provider.StreamEvent) provider.StreamEvent {
 	t.Helper()
 	var terminal provider.StreamEvent
-	count := 0
+	terminalSeen := false
 	for event := range stream {
-		if event.Kind.Terminal() {
+		if err := event.Validate(); err != nil {
+			t.Fatalf("invalid stream event: %v", err)
+		}
+		if terminalSeen {
+			t.Fatalf("event after terminal: %s", event.Kind())
+		}
+		if event.Kind().Terminal() {
 			terminal = event
-			count++
+			terminalSeen = true
 		}
 	}
-	if count != 1 {
-		t.Fatalf("terminal count: %d", count)
+	if !terminalSeen {
+		t.Fatal("stream closed without terminal")
+	}
+	if conversation.active.Load() {
+		t.Fatal("stream channel closed before conversation became inactive")
 	}
 	return terminal
 }

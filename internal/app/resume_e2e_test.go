@@ -380,9 +380,16 @@ func assertOpenAIThirdRequest(t *testing.T, body []byte) {
 	if err := json.Unmarshal(body, &request); err != nil {
 		t.Fatal(err)
 	}
-	if len(request.Input) != 5 || request.Input[0].Content[0].Text != "first" ||
-		request.Input[1].Content[0].Text != "answer-1" || request.Input[2].Content[0].Text != "second" ||
-		request.Input[3].Content[0].Text != "answer-2" || request.Input[4].Content[0].Text != "third" {
+	input := request.Input
+	if len(input) == 6 {
+		if !strings.HasPrefix(input[0].Content[0].Text, "# Project instructions") {
+			t.Fatalf("third OpenAI request context = %s", body)
+		}
+		input = input[1:]
+	}
+	if len(input) != 5 || input[0].Content[0].Text != "first" ||
+		input[1].Content[0].Text != "answer-1" || input[2].Content[0].Text != "second" ||
+		input[3].Content[0].Text != "answer-2" || input[4].Content[0].Text != "third" {
 		t.Fatalf("third OpenAI request = %s", body)
 	}
 }
@@ -400,9 +407,16 @@ func assertAnthropicThirdRequest(t *testing.T, body []byte) {
 	if err := json.Unmarshal(body, &request); err != nil {
 		t.Fatal(err)
 	}
-	if len(request.Messages) != 5 || request.Messages[0].Content[0].Text != "first" ||
-		request.Messages[1].Content[0].Text != "answer-1" || request.Messages[2].Content[0].Text != "second" ||
-		request.Messages[3].Content[0].Text != "answer-2" || request.Messages[4].Content[0].Text != "third" {
+	messages := request.Messages
+	if len(messages) == 6 {
+		if !strings.HasPrefix(messages[0].Content[0].Text, "# Project instructions") {
+			t.Fatalf("third Anthropic request context = %s", body)
+		}
+		messages = messages[1:]
+	}
+	if len(messages) != 5 || messages[0].Content[0].Text != "first" ||
+		messages[1].Content[0].Text != "answer-1" || messages[2].Content[0].Text != "second" ||
+		messages[3].Content[0].Text != "answer-2" || messages[4].Content[0].Text != "third" {
 		t.Fatalf("third Anthropic request = %s", body)
 	}
 }
@@ -444,7 +458,11 @@ func TestResumeWithDifferentCWDAndRefreshedConnectionDoesNotChangeProcessCWD(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	resumed, err := openChatResources(context.Background(), secondConfig, dataRoot, string(threadID), filepath.Join(t.TempDir(), "different"))
+	secondCWD := filepath.Join(t.TempDir(), "different")
+	if err := os.Mkdir(secondCWD, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := openChatResources(context.Background(), secondConfig, dataRoot, string(threadID), secondCWD)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -161,6 +161,35 @@ type blockingWriteCloser struct {
 	once    sync.Once
 }
 
+type earlyFailureStreamLoop struct {
+	ready   chan struct{}
+	done    chan struct{}
+	outputs chan protocol.ControlItem
+}
+
+func newEarlyFailureStreamLoop() *earlyFailureStreamLoop {
+	return &earlyFailureStreamLoop{
+		ready: make(chan struct{}), done: make(chan struct{}), outputs: make(chan protocol.ControlItem),
+	}
+}
+
+func (loop *earlyFailureStreamLoop) Run(context.Context) error {
+	close(loop.outputs)
+	close(loop.done)
+	return fault.New(fault.CodeTurnFailed, "stream loop failed before ready")
+}
+
+func (loop *earlyFailureStreamLoop) Ready() <-chan struct{} { return loop.ready }
+func (loop *earlyFailureStreamLoop) Done() <-chan struct{}  { return loop.done }
+func (loop *earlyFailureStreamLoop) Outputs() <-chan protocol.ControlItem {
+	return loop.outputs
+}
+func (*earlyFailureStreamLoop) Submit(context.Context, protocol.Command) (protocol.CommandResult, error) {
+	return protocol.CommandResult{}, fault.New(fault.CodeTurnFailed, "stream loop is unavailable")
+}
+func (*earlyFailureStreamLoop) CloseInput(context.Context) error { return nil }
+func (*earlyFailureStreamLoop) Stop(context.Context) error       { return nil }
+
 func (writer *blockingWriteCloser) Write([]byte) (int, error) {
 	writer.once.Do(func() { close(writer.started) })
 	<-writer.closed
@@ -315,6 +344,36 @@ func TestStreamRunnerCancellationUnblocksInitialOutputAndStdin(t *testing.T) {
 		}
 		<-loop.Done()
 	})
+}
+
+func TestStreamRunnerHandlesLoopFailureBeforeReady(t *testing.T) {
+	t.Parallel()
+	input := io.NopCloser(strings.NewReader(""))
+	output := newBufferWriteCloser()
+	loop := newEarlyFailureStreamLoop()
+	runner := newTestStreamRunner(t, loop, input, output, output)
+	result := runner.Run(context.Background())
+	if result.Failure.Code != fault.CodeTurnFailed || !result.Reported || result.OutputUnavailable {
+		t.Fatalf("Run() result = %#v", result)
+	}
+	if !strings.Contains(output.String(), `"type":"error"`) {
+		t.Fatalf("stream output = %s", output.String())
+	}
+	<-loop.Done()
+}
+
+func TestStreamRunnerRunStateKeepsFirstFailure(t *testing.T) {
+	t.Parallel()
+	state := &streamRunnerRunState{loopFinished: true, readerFinished: true}
+	first := fault.Summary{Code: fault.CodeStreamProtocol, Message: "first failure"}
+	state.setFailure(first)
+	state.setFailure(fault.Summary{Code: fault.CodeOutput, Message: "later failure"})
+	if state.pendingFailure == nil || *state.pendingFailure != first {
+		t.Fatalf("pending failure = %#v", state.pendingFailure)
+	}
+	if state.running() {
+		t.Fatal("completed run state is still running")
+	}
 }
 
 func newTestStreamRunner(

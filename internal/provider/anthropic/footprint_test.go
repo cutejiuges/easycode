@@ -74,7 +74,7 @@ func TestHistoryFootprintDoesNotChangeNextMessagesRequest(t *testing.T) {
 	conversation := &Conversation{}
 	conversation.history.commit(validFootprintTurn())
 	next := newUserMessage("next")
-	before, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, conversation.history.snapshot(), next)
+	before, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, conversation.history.snapshot(), nil, next)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestHistoryFootprintDoesNotChangeNextMessagesRequest(t *testing.T) {
 	if _, err := conversation.HistoryFootprint(); err != nil {
 		t.Fatal(err)
 	}
-	after, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, conversation.history.snapshot(), next)
+	after, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, conversation.history.snapshot(), nil, next)
 	if err != nil {
 		t.Fatal(err)
 	}

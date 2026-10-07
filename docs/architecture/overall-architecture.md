@@ -1,7 +1,7 @@
 # EasyCode 总体架构设计
 
 > 状态：持续演进
-> 更新时间：2026-10-04
+> 更新时间：2026-10-07
 > 适用范围：EasyCode CLI、Agent Runtime、Provider、工具、扩展系统、会话存储和 TUI
 
 ## 1. 背景与目标
@@ -110,6 +110,10 @@ TurnRuntime -- durable records --> append-only Session JSONL
 TurnRuntime -- future tool loop --> ToolScheduler / Policy / Executor
 ```
 
+应用在取得启动工作目录后、打开 Session/Catalog/Provider 资源前，通过 `context/projectinstructions` 执行一次 descriptor-bound 发现。Loader 以最近 `.git` 为边界，从项目根到启动目录逐层选择 `AGENTS.md`，仅在同层主文件不存在时回退 `CLAUDE.md`，并生成只含项目根相对来源的有界不可变快照。应用默认模型可见预算为 32 KiB，构造器硬上限为 4 MiB；零值、负值和超限配置均在文件读取与预分配前拒绝。活动进程不热更新；resume/continue 使用新进程当前启动目录重新发现的快照，不读取 Session `creation_cwd` 中的旧规则。
+
+Runtime 构造时深拷贝该快照，并在每轮把同一值分别交给 ContextPlanner 与 Provider RequestCompiler。两家 Provider 都在全部 committed native history 和当前真实用户输入之前生成一个临时 user context item/message；它不进入 `PreparedSample`、native history、`SemanticHistoryView`、RuntimeEvent 或 Session JSONL。
+
 ### 4.1 建议的 Go Module 结构
 
 下列结构同时包含当前实现与目标边界。`tool`、`extension`、`subagent`、`telemetry` 目前只保留经批准的结构化 TODO 占位，分别等待 P3/P6/P7/P8 的 OpenSpec 提供真实消费者、验证与测试；不得从目录存在推断能力已经可用。
@@ -119,6 +123,7 @@ cmd/
   easycode/                 可执行程序入口
 internal/
   app/                      依赖装配和应用生命周期
+  codec/                    无内部依赖的统一 JSON/canonical 编解码基础设施
   headless/                 prompt 解析、一次性/流式 JSONL v1 投影与 stream transport
   domain/                   核心 ID、值对象、错误和领域语义
   protocol/                 进程内 Command 与 RuntimeEvent
@@ -189,7 +194,7 @@ cmd      -> app
 | 文件监听 | `fsnotify` | skills/plugins/hooks 热加载 |
 | Golden/Snapshot | 标准库 testing + `testdata` golden files | 避免测试依赖过重，便于审阅 wire 差异 |
 
-Resty v3 当前使用 `resty.dev/v3` 导入路径；在项目初始化时最新可用版本为 `v3.0.0-rc.4`，升级到稳定版前必须重新运行 provider/SSE 契约测试。Streaming 请求使用 Resty raw body，不使用 RC `SSESource` 作为工程契约；`internal/provider/transport` 自行处理 LF/CRLF、任意 chunk、UTF-8 边界、4 MiB 默认 event 上限、取消和 idle watchdog。Sonic 与 Resty 的自动 JSON 行为不得混用：EasyCode 使用 `sonic.ConfigStd` 的 map key 排序、字符串校验和标准兼容行为产生确定请求字节，再交给 Resty 发送；响应也由 provider wire 层显式调用 Sonic 解码。
+Resty v3 当前使用 `resty.dev/v3` 导入路径；在项目初始化时最新可用版本为 `v3.0.0-rc.4`，升级到稳定版前必须重新运行 provider/SSE 契约测试。Streaming 请求使用 Resty raw body，不使用 RC `SSESource` 作为工程契约；`internal/provider/transport` 自行处理 LF/CRLF、任意 chunk、UTF-8 边界、4 MiB 默认 event 上限、取消和 idle watchdog。Sonic 与 Resty 的自动 JSON 行为不得混用：只有无内部依赖的 `internal/codec` 可以直接导入 Sonic，并由其统一提供 map key 排序、字符串校验、严格解码与 canonical JSON；domain/protocol 可依赖该基础设施包，Provider 与 Session 通过它生成确定字节后再交给 Resty 或存储边界。
 
 Sonic 在 amd64/arm64 之外会使用 fallback 实现。单二进制发布仍以兼容性矩阵和跨平台 golden/test 为准，不得假设所有架构都拥有相同的 SIMD 性能；P8 发布强化必须记录该差异及基准结果。
 
@@ -320,7 +325,7 @@ OpenAI payload v1 保存用户 Responses item、有序 output items 和原始 us
 
 ### 6.2 上下文分段
 
-当前已实现不可变、强类型且可验证的 `CachePlan`、stable-prefix fingerprint 和最小 ContextPlanner。当前计划固定输出 `provider_profile`、`committed_history`、`current_input` 三段；只有 profile 进入稳定前缀，history 为 turn-stable，当前输入为 volatile。下列完整分段仍是 P3/P4/P6 随真实消费者逐项扩展的目标，不能从目录或设计推断为已实现：
+当前已实现不可变、强类型且可验证的 `CachePlan`、stable-prefix fingerprint 和最小 ContextPlanner。当前计划固定输出 `provider_profile`、可选 `project_instructions`、`committed_history`、`current_input`；项目快照非空时以 `replace + project-stable` 进入稳定前缀，空快照保持既有三段 canonical bytes 不变，history 为 turn-stable，当前输入为 volatile。下列其余分段仍是 P3/P4/P6 随真实消费者逐项扩展的目标，不能从目录或设计推断为已实现：
 
 ```text
 CachePlan
@@ -354,7 +359,7 @@ provider_cache_policy
 - 工具描述、system prompt 和 catalog 的变更必须显式提高 revision 或改变 fingerprint。
 - Provider request golden test 应覆盖最终 wire JSON，而不仅是中间领域对象。
 
-当前 ContextPlanner 的 `provider_profile` 只包含 family、model 和固定 schema revision，不包含 API key、base URL、预算、cwd、Session identity 或其他动态状态。`committed_history` 的 source revision 来自 Provider committed native revision，而不是语义 turn 数；Provider footprint 与语义历史估算是包含关系，使用 `max(semantic_visible, provider_native)` 合并，禁止相加造成可见文本重复计数。
+当前 ContextPlanner 的 `provider_profile` 只包含 family、model 和固定 schema revision，不包含 API key、base URL、预算、cwd、Session identity 或其他动态状态。`project_instructions` 使用结构化快照的内容派生 revision 和 canonical bytes，不包含绝对项目根、mtime、inode 或 Session identity；正文或项目根相对来源变化才改变该 segment。`committed_history` 的 source revision 来自 Provider committed native revision，而不是语义 turn 数；Provider footprint 与语义历史估算是包含关系，使用 `max(semantic_visible, provider_native)` 合并，禁止相加造成可见文本重复计数。
 
 token 估算当前使用版本化本地 `byte_heuristic_v1`，明确标记 `estimated` 或 `unknown`。显式 JSON 配置可以提供 context window、输出预留和安全余量；未配置窗口或估算 unknown 时不执行硬拒绝，也不根据模型名猜测窗口。明确超限只在 durable `turn_started` 后、Provider stream 前以既有 `turn_failed` 收口，计划本身不写 Session、不新增 RuntimeEvent。
 
@@ -455,7 +460,7 @@ queue 是有界、非 durable 的进程内状态。stdin EOF 只停止新 admiss
 
 本能力是跨 turn 的 follow-up control loop，不是 same-turn steer。当前一个 turn 只有一次 Provider sampling，没有 tool result 边界可安全插入用户输入；真正的 steer 仍留待 P3 Tool Loop 定义 sampling safe point。TUI 在本次变更中继续使用 `ChatSession`，待需要 queue 交互时再迁移到同一控制器并删除重复 facade。
 
-### 7.3 Provider StreamReducer
+### 7.4 Provider StreamReducer
 
 Anthropic reducer 负责处理：
 
@@ -466,6 +471,10 @@ Anthropic reducer 负责处理：
 
 OpenAI 当前 text-only reducer 负责处理 `response.created`、文本 delta、完成 output item，以及 identity 匹配的 completed/failed/incomplete；completed usage 会在活动 response ID 校验后严格解析并保留 raw/normalized 两层表示。每条 stream 使用独立状态机，要求 created 恰好一次、所有支持事件位于 active 状态且 terminal 唯一。下列 reasoning/tool item 归并仍是后续目标：
 
+共享 `provider.StreamEvent` 使用私有字段和 semantic、native item、completed、failed、cancelled 五类 typed constructor，零值、冲突 payload、nil terminal error、非法 native item 与失效 prepared sample 均不能进入正常路径。Provider 生产者是输出 channel 的唯一关闭者，且必须在 transport 排空、Conversation active 状态释放后关闭 channel；channel close 是生产 goroutine 的清理完成信号，不代表业务成功。
+
+Runtime 为每次 Provider stream 创建派生 context，逐项验证事件并记录唯一 terminal，但仍持续读取到 channel 关闭。非法事件、重复 terminal 或 terminal 后事件会保留首个 protocol error、立即取消派生 context、停止向宿主转发并由同一 owner 同步排空；只有生产者退出后才 durable 收口失败或允许 AgentLoop 启动下一 turn。应用 shutdown 超时继续由既有 Provider transport 强制关闭路径解除阻塞，不创建失去 owner 的后台 waiter。
+
 - response/item created/added/done/completed
 - output text delta
 - reasoning summary/raw delta 和 section break
@@ -474,7 +483,7 @@ OpenAI 当前 text-only reducer 负责处理 `response.created`、文本 delta�
 
 只在完整 tool call 已得到可靠参数后执行副作用。可以在整个模型流尚未结束时启动已经完成的工具 block，但不能根据不完整参数提前执行。
 
-### 7.4 背压与渲染节流
+### 7.5 背压与渲染节流
 
 - 原始网络 delta 可以高频进入 reducer。
 - TUI projection 按 16-33ms 合并纯文本刷新，降低闪烁和 CPU 占用。
@@ -544,20 +553,20 @@ fs.patch
 
 ## 9. Context 与 Compaction
 
-本章同时描述当前 P2 基线和 P4 目标。当前已实现三来源 ContextPlanner、本地 token estimate、Provider-private HistoryFootprint、可选显式 token budget 和请求前超限守卫；项目指令、工具/skill 来源、真实 Provider cache policy、compaction 以及跨 Provider fork 尚未实现。
+本章同时描述当前 P2 基线和 P4 目标。当前已实现带可选项目指令的四来源 ContextPlanner、本地 token estimate、Provider-private HistoryFootprint、可选显式 token budget 和请求前超限守卫；工具/skill 来源、真实 Provider cache policy、compaction 以及跨 Provider fork 尚未实现。
 
 ### 9.1 上下文来源
 
 当前已接入 Runtime 的来源只有：
 
 - `provider_profile`：family、model、schema revision，`replace + stable`。
+- `project_instructions`：启动时发现的有界结构化快照，存在文档时为 `replace + project-stable`，空快照省略。
 - `committed_history`：`SemanticHistoryView` 与不含 opaque 正文的 Provider footprint，`append + turn-stable`。
 - `current_input`：本轮用户文本，`replace + volatile`。
 
 后续阶段将在存在真实消费者、验证和测试时逐项增加以下来源：
 
 - base/developer instructions
-- 项目级 AGENTS/CLAUDE 类指令
 - provider/model/collaboration mode
 - tool schemas
 - plugin/skill catalog
@@ -912,6 +921,7 @@ make verify
 13. Session v1 draft/decoder 强类型且按 kind/revision 校验，不通过 `any` 或反射 registry 传播核心 payload。
 14. 配置与 Session 的类型、权限和 symlink 安全判断绑定实际打开句柄；无法提供等价语义的平台必须失败关闭。
 15. 生产包级 `var` 只允许私有 sentinel error 和编译期接口断言；依赖方向、核心动态类型与占位 reachability 由 `internal/architecture` 的 AST/import graph 回归守卫。
+16. 项目指令只由当前进程启动目录的一次安全发现产生；它可以进入 ContextPlan 与 Provider 临时请求上下文，但不得进入 native commit、Session、RuntimeEvent 或语义历史。
 
 ## 19. 架构决策和踩坑记录
 

@@ -282,19 +282,5 @@ func validateRuntimeEvent(event Event) error {
 	if event.Version != CurrentVersion || !event.SessionID.Valid() || !event.ThreadID.Valid() || !event.TurnID.Valid() {
 		return fmt.Errorf("runtime event identity is invalid")
 	}
-	switch event.Kind {
-	case EventTurnStarted:
-		return validatePayloadlessEvent(event, EventTurnStarted)
-	case EventAssistantTextDelta:
-		_, err := DecodeAssistantTextDelta(event)
-		return err
-	case EventTurnCompleted:
-		_, err := DecodeTurnCompleted(event)
-		return err
-	case EventTurnFailed:
-		_, err := DecodeTurnFailed(event)
-		return err
-	default:
-		return fmt.Errorf("runtime event kind is invalid")
-	}
+	return event.Validate()
 }

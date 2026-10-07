@@ -59,6 +59,123 @@ type streamTransportRequest struct {
 	done        chan struct{}
 }
 
+type streamRunnerRunState struct {
+	runner                   *StreamRunner
+	ctx                      context.Context
+	encoder                  *StreamEncoder
+	projector                *StreamProjector
+	transportRequests        chan<- streamTransportRequest
+	transportDone            <-chan struct{}
+	outputs                  <-chan protocol.ControlItem
+	readerDone               <-chan streamReaderResult
+	loopDone                 <-chan error
+	stopDone                 <-chan error
+	pendingFailure           *fault.Summary
+	loopFinished             bool
+	readerFinished           bool
+	stopStarted              bool
+	outputUnavailable        bool
+	transportContextObserved bool
+}
+
+func (state *streamRunnerRunState) requestTransport(closeInput bool, closeOutput bool) {
+	request := streamTransportRequest{closeInput: closeInput, closeOutput: closeOutput, done: make(chan struct{})}
+	select {
+	case state.transportRequests <- request:
+		<-request.done
+	case <-state.transportDone:
+	}
+}
+
+func (state *streamRunnerRunState) requestStop() {
+	if state.stopStarted || state.loopFinished {
+		return
+	}
+	state.stopStarted = true
+	stopDone := make(chan error, 1)
+	state.stopDone = stopDone
+	go func() { stopDone <- state.runner.loop.Stop(context.Background()) }()
+}
+
+func (state *streamRunnerRunState) setFailure(summary fault.Summary) {
+	if state.pendingFailure == nil {
+		copy := summary
+		state.pendingFailure = &copy
+	}
+}
+
+func (state *streamRunnerRunState) handleOutput(item protocol.ControlItem, open bool) {
+	if !open {
+		state.outputs = nil
+		return
+	}
+	if state.outputUnavailable || (state.pendingFailure != nil && state.pendingFailure.Code == fault.CodeStreamProtocol) {
+		return
+	}
+	wire, err := state.projector.Project(item)
+	if err != nil {
+		state.setFailure(fault.Summary{Code: fault.CodeStreamProtocol, Message: "stream control output is invalid"})
+		state.requestTransport(true, false)
+		state.requestStop()
+		return
+	}
+	if err := state.encoder.Write(wire); err != nil {
+		state.outputUnavailable = true
+		state.setFailure(fault.Summary{Code: fault.CodeOutput, Message: "write headless output failed"})
+		state.requestTransport(true, true)
+		state.requestStop()
+	}
+}
+
+func (state *streamRunnerRunState) handleReader(result streamReaderResult) {
+	state.readerDone = nil
+	state.readerFinished = true
+	if result.err == nil {
+		return
+	}
+	if state.ctx.Err() != nil {
+		state.setFailure(fault.Summary{Code: fault.CodeUserCancelled, Message: "stream control was cancelled", Cancelled: true})
+	} else {
+		state.setFailure(fault.Summary{Code: fault.CodeStreamProtocol, Message: "stream input is invalid"})
+	}
+	state.requestTransport(true, false)
+	state.requestStop()
+}
+
+func (state *streamRunnerRunState) handleLoop(err error) {
+	state.loopDone = nil
+	state.loopFinished = true
+	state.requestTransport(true, false)
+	if err == nil || state.pendingFailure != nil {
+		return
+	}
+	if errors.Is(err, context.Canceled) {
+		state.setFailure(fault.Summary{Code: fault.CodeUserCancelled, Message: "stream control was cancelled", Cancelled: true})
+	} else {
+		state.setFailure(fault.Project(err))
+	}
+}
+
+func (state *streamRunnerRunState) handleStop(err error) {
+	state.stopDone = nil
+	if err != nil && state.pendingFailure == nil {
+		state.setFailure(fault.Project(err))
+	}
+}
+
+func (state *streamRunnerRunState) handleTransportCancelled() {
+	if state.transportContextObserved {
+		return
+	}
+	state.transportContextObserved = true
+	state.setFailure(fault.Summary{Code: fault.CodeUserCancelled, Message: "stream control was cancelled", Cancelled: true})
+	state.requestStop()
+}
+
+func (state *streamRunnerRunState) running() bool {
+	return !state.loopFinished || state.outputs != nil || !state.readerFinished || (state.stopStarted && state.stopDone != nil)
+}
+
 // Run 在当前 goroutine 中成为 stdout 的唯一 writer，并等待全部角色清理完成。
 func (runner *StreamRunner) Run(ctx context.Context) Result {
 	if ctx == nil {
@@ -99,6 +216,7 @@ func (runner *StreamRunner) Run(ctx context.Context) Result {
 	go func() { loopDone <- runner.loop.Run(runContext) }()
 
 	loopFinished := false
+	transportWasCancelled := false
 	var loopErr error
 	select {
 	case <-runner.loop.Ready():
@@ -107,6 +225,7 @@ func (runner *StreamRunner) Run(ctx context.Context) Result {
 		loopDone = nil
 	case <-transportCancelled:
 		loopErr = ctx.Err()
+		transportWasCancelled = true
 	}
 
 	readerFinished := loopFinished
@@ -118,117 +237,52 @@ func (runner *StreamRunner) Run(ctx context.Context) Result {
 		}()
 	}
 
-	outputs := runner.loop.Outputs()
-	var pendingFailure *fault.Summary
-	outputUnavailable := false
-	stopStarted := false
-	var stopDone chan error
-	transportContextObserved := false
-
-	requestTransport := func(closeInput bool, closeOutput bool) {
-		request := streamTransportRequest{closeInput: closeInput, closeOutput: closeOutput, done: make(chan struct{})}
-		select {
-		case transportRequests <- request:
-			<-request.done
-		case <-transportDone:
-		}
-	}
-	requestStop := func() {
-		if stopStarted || loopFinished {
-			return
-		}
-		stopStarted = true
-		stopDone = make(chan error, 1)
-		go func() { stopDone <- runner.loop.Stop(context.Background()) }()
-	}
-	setFailure := func(summary fault.Summary) {
-		if pendingFailure == nil {
-			copy := summary
-			pendingFailure = &copy
-		}
+	state := &streamRunnerRunState{
+		runner: runner, ctx: ctx, encoder: encoder, projector: projectorValue,
+		transportRequests: transportRequests, transportDone: transportDone,
+		outputs: runner.loop.Outputs(), readerDone: readerDone, loopDone: loopDone,
+		loopFinished: loopFinished, readerFinished: readerFinished,
 	}
 
 	if loopFinished && loopErr != nil {
-		setFailure(fault.Project(loopErr))
-		requestTransport(true, false)
+		state.setFailure(fault.Project(loopErr))
+		state.requestTransport(true, false)
+	}
+	if transportWasCancelled {
+		state.handleTransportCancelled()
 	}
 
-	for !loopFinished || outputs != nil || !readerFinished || (stopStarted && stopDone != nil) {
+	for state.running() {
 		select {
-		case item, open := <-outputs:
-			if !open {
-				outputs = nil
-				continue
-			}
-			if outputUnavailable || (pendingFailure != nil && pendingFailure.Code == fault.CodeStreamProtocol) {
-				continue
-			}
-			wire, projectErr := projectorValue.Project(item)
-			if projectErr != nil {
-				setFailure(fault.Summary{Code: fault.CodeStreamProtocol, Message: "stream control output is invalid"})
-				requestTransport(true, false)
-				requestStop()
-				continue
-			}
-			if err := encoder.Write(wire); err != nil {
-				outputUnavailable = true
-				setFailure(fault.Summary{Code: fault.CodeOutput, Message: "write headless output failed"})
-				requestTransport(true, true)
-				requestStop()
-			}
+		case item, open := <-state.outputs:
+			state.handleOutput(item, open)
 
-		case result := <-readerDone:
-			readerDone = nil
-			readerFinished = true
-			if result.err != nil {
-				if ctx.Err() != nil {
-					setFailure(fault.Summary{Code: fault.CodeUserCancelled, Message: "stream control was cancelled", Cancelled: true})
-				} else {
-					setFailure(fault.Summary{Code: fault.CodeStreamProtocol, Message: "stream input is invalid"})
-				}
-				requestTransport(true, false)
-				requestStop()
-			}
+		case result := <-state.readerDone:
+			state.handleReader(result)
 
-		case loopErr = <-loopDone:
-			loopDone = nil
-			loopFinished = true
-			requestTransport(true, false)
-			if loopErr != nil && pendingFailure == nil {
-				if errors.Is(loopErr, context.Canceled) {
-					setFailure(fault.Summary{Code: fault.CodeUserCancelled, Message: "stream control was cancelled", Cancelled: true})
-				} else {
-					setFailure(fault.Project(loopErr))
-				}
-			}
+		case loopErr = <-state.loopDone:
+			state.handleLoop(loopErr)
 
-		case stopErr := <-stopDone:
-			stopDone = nil
-			if stopErr != nil && pendingFailure == nil {
-				setFailure(fault.Project(stopErr))
-			}
+		case stopErr := <-state.stopDone:
+			state.handleStop(stopErr)
 
 		case <-transportCancelled:
-			if !transportContextObserved {
-				transportContextObserved = true
-				setFailure(fault.Summary{Code: fault.CodeUserCancelled, Message: "stream control was cancelled", Cancelled: true})
-				requestStop()
-			}
+			state.handleTransportCancelled()
 		}
 	}
 
 	stopTransportOwner()
-	if pendingFailure == nil {
+	if state.pendingFailure == nil {
 		return Result{Completed: true}
 	}
-	if outputUnavailable {
-		return Result{Failure: *pendingFailure, OutputUnavailable: true}
+	if state.outputUnavailable {
+		return Result{Failure: *state.pendingFailure, OutputUnavailable: true}
 	}
-	terminal, err := NewStreamErrorEvent(*pendingFailure)
+	terminal, err := NewStreamErrorEvent(*state.pendingFailure)
 	if err != nil || encoder.Write(terminal) != nil {
 		return outputFailure()
 	}
-	return Result{Failure: *pendingFailure, Reported: true}
+	return Result{Failure: *state.pendingFailure, Reported: true}
 }
 
 func readStreamCommands(ctx context.Context, input io.Reader, loop StreamControlLoop) error {

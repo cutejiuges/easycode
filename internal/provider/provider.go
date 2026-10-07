@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync/atomic"
 
@@ -32,6 +33,34 @@ type Capabilities struct {
 // TurnInput 是共享 turn 模板交给 Provider Kernel 的最小输入。
 type TurnInput struct {
 	Text string
+
+	projectInstructions    domain.ProjectInstructionsSnapshot
+	hasProjectInstructions bool
+}
+
+// WithProjectInstructions 返回附着了项目指令快照的输入副本。
+func (input TurnInput) WithProjectInstructions(
+	snapshot domain.ProjectInstructionsSnapshot,
+) (TurnInput, error) {
+	clone, err := snapshot.Clone()
+	if err != nil {
+		return TurnInput{}, fmt.Errorf("project instructions snapshot is invalid: %w", err)
+	}
+	input.projectInstructions = clone
+	input.hasProjectInstructions = true
+	return input, nil
+}
+
+// ProjectInstructions 返回不与输入共享可变内存的项目指令快照。
+func (input TurnInput) ProjectInstructions() (domain.ProjectInstructionsSnapshot, bool, error) {
+	if !input.hasProjectInstructions {
+		return domain.ProjectInstructionsSnapshot{}, false, nil
+	}
+	clone, err := input.projectInstructions.Clone()
+	if err != nil {
+		return domain.ProjectInstructionsSnapshot{}, false, fmt.Errorf("project instructions snapshot is invalid: %w", err)
+	}
+	return clone, true, nil
 }
 
 // NativeItem 是 provider 原生 item 的只读领域边界。
@@ -41,13 +70,13 @@ type NativeItem interface {
 	ItemKind() string
 }
 
-// StreamEvent 同时携带共享语义事件和可选原生完成项。
+// StreamEvent 是 Provider 流中封闭构造的只读事件。
 type StreamEvent struct {
-	Kind     StreamEventKind
-	Event    protocol.Event
-	Native   NativeItem
-	Prepared *PreparedSample
-	Err      error
+	kind     StreamEventKind
+	semantic protocol.Event
+	native   NativeItem
+	prepared *PreparedSample
+	err      error
 }
 
 // StreamEventKind 区分普通流事件与恰好一次的终态事件。
@@ -64,6 +93,169 @@ const (
 // Terminal 判断事件是否结束当前 provider stream。
 func (kind StreamEventKind) Terminal() bool {
 	return kind == StreamEventCompleted || kind == StreamEventFailed || kind == StreamEventCancelled
+}
+
+// NewSemanticStreamEvent 创建 Provider 可发布的共享语义事件。
+func NewSemanticStreamEvent(event protocol.Event) (StreamEvent, error) {
+	streamEvent := StreamEvent{kind: StreamEventSemantic, semantic: cloneProtocolEvent(event)}
+	if err := streamEvent.Validate(); err != nil {
+		return StreamEvent{}, err
+	}
+	return streamEvent, nil
+}
+
+// NewNativeStreamEvent 创建 Provider 原生 item 事件。
+func NewNativeStreamEvent(item NativeItem) (StreamEvent, error) {
+	streamEvent := StreamEvent{kind: StreamEventNative, native: item}
+	if err := streamEvent.Validate(); err != nil {
+		return StreamEvent{}, err
+	}
+	return streamEvent, nil
+}
+
+// NewCompletedStreamEvent 创建携带待 durable 提交 sample 的成功终态。
+func NewCompletedStreamEvent(sample *PreparedSample) (StreamEvent, error) {
+	streamEvent := StreamEvent{kind: StreamEventCompleted, prepared: sample}
+	if err := streamEvent.Validate(); err != nil {
+		return StreamEvent{}, err
+	}
+	return streamEvent, nil
+}
+
+// NewFailedStreamEvent 创建失败终态。
+func NewFailedStreamEvent(err error) (StreamEvent, error) {
+	streamEvent := StreamEvent{kind: StreamEventFailed, err: err}
+	if validateErr := streamEvent.Validate(); validateErr != nil {
+		return StreamEvent{}, validateErr
+	}
+	return streamEvent, nil
+}
+
+// NewCancelledStreamEvent 创建取消终态。
+func NewCancelledStreamEvent(err error) (StreamEvent, error) {
+	streamEvent := StreamEvent{kind: StreamEventCancelled, err: err}
+	if validateErr := streamEvent.Validate(); validateErr != nil {
+		return StreamEvent{}, validateErr
+	}
+	return streamEvent, nil
+}
+
+// Kind 返回事件类型。
+func (event StreamEvent) Kind() StreamEventKind {
+	return event.kind
+}
+
+// Semantic 返回语义事件的独立副本，其他 kind 返回零值。
+func (event StreamEvent) Semantic() protocol.Event {
+	if event.kind != StreamEventSemantic {
+		return protocol.Event{}
+	}
+	return cloneProtocolEvent(event.semantic)
+}
+
+// NativeItem 返回原生 item，其他 kind 返回 nil。
+func (event StreamEvent) NativeItem() NativeItem {
+	if event.kind != StreamEventNative {
+		return nil
+	}
+	return event.native
+}
+
+// PreparedSample 返回成功终态携带的待提交 sample，其他 kind 返回 nil。
+func (event StreamEvent) PreparedSample() *PreparedSample {
+	if event.kind != StreamEventCompleted {
+		return nil
+	}
+	return event.prepared
+}
+
+// Error 返回失败或取消终态携带的错误，其他 kind 返回 nil。
+func (event StreamEvent) Error() error {
+	if event.kind != StreamEventFailed && event.kind != StreamEventCancelled {
+		return nil
+	}
+	return event.err
+}
+
+// Validate 校验事件 kind 与 payload 的唯一合法组合。
+func (event StreamEvent) Validate() error {
+	switch event.kind {
+	case StreamEventSemantic:
+		if eventHasNoSemantic(event) || protocolEventEmpty(event.semantic) {
+			return fmt.Errorf("semantic stream event payload is invalid")
+		}
+		if event.semantic.Kind != protocol.EventAssistantTextDelta {
+			return fmt.Errorf("semantic stream event kind is invalid")
+		}
+		if err := event.semantic.Validate(); err != nil {
+			return fmt.Errorf("semantic stream event is invalid: %w", err)
+		}
+	case StreamEventNative:
+		if !protocolEventEmpty(event.semantic) || event.prepared != nil || event.err != nil || nativeItemNil(event.native) {
+			return fmt.Errorf("native stream event payload is invalid")
+		}
+		if !event.native.ProviderFamily().Valid() || strings.TrimSpace(event.native.ItemKind()) == "" {
+			return fmt.Errorf("native stream event item is invalid")
+		}
+	case StreamEventCompleted:
+		if !protocolEventEmpty(event.semantic) || !nativeItemNil(event.native) || event.prepared == nil || event.err != nil {
+			return fmt.Errorf("completed stream event payload is invalid")
+		}
+		if _, err := event.prepared.Envelope(); err != nil {
+			return fmt.Errorf("completed stream event sample is invalid: %w", err)
+		}
+		if _, err := event.prepared.Usage(); err != nil {
+			return fmt.Errorf("completed stream event sample is invalid: %w", err)
+		}
+	case StreamEventFailed, StreamEventCancelled:
+		if !protocolEventEmpty(event.semantic) || !nativeItemNil(event.native) || event.prepared != nil || streamErrorNil(event.err) {
+			return fmt.Errorf("terminal stream event payload is invalid")
+		}
+	default:
+		return fmt.Errorf("stream event kind is invalid")
+	}
+	return nil
+}
+
+func eventHasNoSemantic(event StreamEvent) bool {
+	return !nativeItemNil(event.native) || event.prepared != nil || event.err != nil
+}
+
+func protocolEventEmpty(event protocol.Event) bool {
+	return event.Version == 0 && event.Kind == "" && event.Timestamp.IsZero() &&
+		event.SessionID == "" && event.ThreadID == "" && event.TurnID == "" &&
+		event.ItemID == "" && event.CallID == "" && len(event.Payload) == 0
+}
+
+func cloneProtocolEvent(event protocol.Event) protocol.Event {
+	event.Payload = append(json.RawMessage(nil), event.Payload...)
+	return event
+}
+
+func nativeItemNil(item NativeItem) bool {
+	if item == nil {
+		return true
+	}
+	value := reflect.ValueOf(item)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
+}
+
+func streamErrorNil(err error) bool {
+	if err == nil {
+		return true
+	}
+	value := reflect.ValueOf(err)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
 }
 
 // HistoryProjector 将 Provider 原生历史单向投影为只读语义快照。

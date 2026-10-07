@@ -55,14 +55,14 @@ func TestConversationIgnoresRepeatedCompletedTerminal(t *testing.T) {
 	conversation.consumeStream(context.Background(), func() {}, NewUserItem("question"), stream, output)
 	terminalCount := 0
 	for event := range output {
-		if !event.Kind.Terminal() {
+		if !event.Kind().Terminal() {
 			continue
 		}
 		terminalCount++
-		if event.Kind != provider.StreamEventCompleted || event.Prepared == nil {
+		if event.Kind() != provider.StreamEventCompleted || event.PreparedSample() == nil {
 			t.Fatalf("terminal = %#v", event)
 		}
-		if err := event.Prepared.Finalize(); err != nil {
+		if err := event.PreparedSample().Finalize(); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -95,20 +95,20 @@ func TestConversationCancelCompletedRaceHasOneTerminal(t *testing.T) {
 		conversation.consumeStream(ctx, func() {}, NewUserItem("question"), stream, output)
 		terminalCount := 0
 		for event := range output {
-			if !event.Kind.Terminal() {
+			if !event.Kind().Terminal() {
 				continue
 			}
 			terminalCount++
-			switch event.Kind {
+			switch event.Kind() {
 			case provider.StreamEventCompleted:
-				if event.Prepared == nil {
+				if event.PreparedSample() == nil {
 					t.Fatal("completed race terminal has no prepared sample")
 				}
-				if err := event.Prepared.Finalize(); err != nil {
+				if err := event.PreparedSample().Finalize(); err != nil {
 					t.Fatal(err)
 				}
 			case provider.StreamEventCancelled:
-				if event.Prepared != nil {
+				if event.PreparedSample() != nil {
 					t.Fatal("cancelled race terminal carried a prepared sample")
 				}
 			default:
@@ -168,9 +168,9 @@ func TestConversationStreamsAndCommitsOnlyOnCompleted(t *testing.T) {
 	var kinds []provider.StreamEventKind
 	var prepared *provider.PreparedSample
 	for event := range stream {
-		kinds = append(kinds, event.Kind)
-		if event.Kind == provider.StreamEventCompleted {
-			prepared = event.Prepared
+		kinds = append(kinds, event.Kind())
+		if event.Kind() == provider.StreamEventCompleted {
+			prepared = event.PreparedSample()
 		}
 	}
 	want := []provider.StreamEventKind{provider.StreamEventSemantic, provider.StreamEventNative, provider.StreamEventCompleted}
@@ -221,18 +221,13 @@ func TestConversationRejectsEOFBeforeCompletedWithoutCommitting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start stream: %v", err)
 	}
-	var terminal provider.StreamEvent
-	for event := range stream {
-		if event.Kind.Terminal() {
-			terminal = event
-		}
-	}
-	if terminal.Kind != provider.StreamEventFailed {
+	terminal := readOpenAITerminal(t, conversation, stream)
+	if terminal.Kind() != provider.StreamEventFailed {
 		t.Fatalf("terminal: %#v", terminal)
 	}
 	var faultError *fault.Error
-	if !errors.As(terminal.Err, &faultError) || faultError.Code != fault.CodeStreamProtocol {
-		t.Fatalf("terminal error: %v", terminal.Err)
+	if !errors.As(terminal.Error(), &faultError) || faultError.Code != fault.CodeStreamProtocol {
+		t.Fatalf("terminal error: %v", terminal.Error())
 	}
 	if len(conversation.historySnapshot()) != 0 {
 		t.Fatalf("partial turn committed: %#v", conversation.historySnapshot())
@@ -259,23 +254,26 @@ func TestConversationCancelProducesCancelledTerminal(t *testing.T) {
 	defer closeProvider(t, instance)
 	conversation := instance.NewConversation().(*Conversation)
 	ctx, cancel := context.WithCancel(context.Background())
-	stream, err := conversation.Stream(ctx, provider.TurnInput{Text: "hello"})
+	stream, err := conversation.Stream(ctx, testOpenAITurnInputWithProject(t, "hello"))
 	if err != nil {
 		t.Fatalf("start stream: %v", err)
 	}
 	cancel()
 
-	var terminal provider.StreamEvent
-	for event := range stream {
-		if event.Kind.Terminal() {
-			terminal = event
-		}
-	}
-	if terminal.Kind != provider.StreamEventCancelled || !errors.Is(terminal.Err, context.Canceled) {
+	terminal := readOpenAITerminal(t, conversation, stream)
+	if terminal.Kind() != provider.StreamEventCancelled || !errors.Is(terminal.Error(), context.Canceled) {
 		t.Fatalf("terminal: %#v", terminal)
 	}
 	if projection := conversation.ProjectHistory(); len(projection.Turns) != 0 {
 		t.Fatalf("cancelled turn projected: %#v", projection)
+	}
+	if len(conversation.historySnapshot()) != 0 {
+		t.Fatalf("cancelled turn committed: %#v", conversation.historySnapshot())
+	}
+	nextContext, cancelNext := context.WithCancel(context.Background())
+	cancelNext()
+	if next, nextErr := conversation.Stream(nextContext, provider.TurnInput{Text: "next"}); next != nil || !errors.Is(nextErr, context.Canceled) {
+		t.Fatalf("next stream after cleanup = %#v, %v", next, nextErr)
 	}
 }
 
@@ -325,28 +323,36 @@ func TestConversationFailureAndIdleTimeoutDoNotProjectTurn(t *testing.T) {
 			}
 			defer closeProvider(t, instance)
 			conversation := instance.NewConversation().(*Conversation)
-			stream, err := conversation.Stream(context.Background(), provider.TurnInput{Text: "hello"})
+			stream, err := conversation.Stream(context.Background(), testOpenAITurnInputWithProject(t, "hello"))
 			if err != nil {
 				t.Fatalf("start stream: %v", err)
 			}
-			var terminal provider.StreamEvent
-			for event := range stream {
-				if event.Kind.Terminal() {
-					terminal = event
-				}
-			}
-			if terminal.Kind != provider.StreamEventFailed {
+			terminal := readOpenAITerminal(t, conversation, stream)
+			if terminal.Kind() != provider.StreamEventFailed {
 				t.Fatalf("terminal: %#v", terminal)
 			}
 			var faultError *fault.Error
-			if !errors.As(terminal.Err, &faultError) || faultError.Code != test.wantCode {
-				t.Fatalf("terminal error: got %v want code %s", terminal.Err, test.wantCode)
+			if !errors.As(terminal.Error(), &faultError) || faultError.Code != test.wantCode {
+				t.Fatalf("terminal error: got %v want code %s", terminal.Error(), test.wantCode)
 			}
 			if projection := conversation.ProjectHistory(); len(projection.Turns) != 0 {
 				t.Fatalf("failed turn projected: %#v", projection)
 			}
+			if len(conversation.historySnapshot()) != 0 {
+				t.Fatalf("failed turn committed: %#v", conversation.historySnapshot())
+			}
 		})
 	}
+}
+
+func testOpenAITurnInputWithProject(t *testing.T, text string) provider.TurnInput {
+	t.Helper()
+	snapshot := testOpenAIProjectInstructions(t, "AGENTS.md", "project-only-marker")
+	input, err := (provider.TurnInput{Text: text}).WithProjectInstructions(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return input
 }
 
 func TestProviderRequestErrorDoesNotExposeAPIKey(t *testing.T) {
@@ -371,4 +377,29 @@ func closeProvider(t *testing.T, instance *Provider) {
 	if err := instance.Close(); err != nil {
 		t.Errorf("close provider: %v", err)
 	}
+}
+
+func readOpenAITerminal(t *testing.T, conversation *Conversation, stream <-chan provider.StreamEvent) provider.StreamEvent {
+	t.Helper()
+	var terminal provider.StreamEvent
+	terminalSeen := false
+	for event := range stream {
+		if err := event.Validate(); err != nil {
+			t.Fatalf("invalid stream event: %v", err)
+		}
+		if terminalSeen {
+			t.Fatalf("event after terminal: %s", event.Kind())
+		}
+		if event.Kind().Terminal() {
+			terminal = event
+			terminalSeen = true
+		}
+	}
+	if !terminalSeen {
+		t.Fatal("stream closed without terminal")
+	}
+	if conversation.active.Load() {
+		t.Fatal("stream channel closed before conversation became inactive")
+	}
+	return terminal
 }

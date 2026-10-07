@@ -74,7 +74,10 @@ func (conversation *controlledConversation) Stream(ctx context.Context, input pr
 			if conversation.cancelRelease != nil {
 				<-conversation.cancelRelease
 			}
-			stream <- provider.StreamEvent{Kind: provider.StreamEventCancelled, Err: ctx.Err()}
+			event, err := provider.NewCancelledStreamEvent(ctx.Err())
+			if err == nil {
+				stream <- event
+			}
 		}
 		close(stream)
 	}()
@@ -289,7 +292,7 @@ func TestAgentLoopContinuesAfterOrdinaryFailureAndStopsWhenPoisoned(t *testing.T
 		if err := loop.CloseInput(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		first.release <- provider.StreamEvent{Kind: provider.StreamEventFailed, Err: fault.New(fault.CodeProviderRequest, "provider request failed")}
+		first.release <- failedProviderEvent(t, fault.New(fault.CodeProviderRequest, "provider request failed"))
 		second := receiveInvocation(t, conversation.calls)
 		second.release <- completedProviderEvent(t)
 		if err := <-runDone; err != nil {
@@ -398,7 +401,7 @@ func TestAgentLoopShutdownDiscardsQueueAndRetainsCleanupOwner(t *testing.T) {
 			<-ctx.Done()
 			cancelOnce.Do(func() { close(providerCancelled) })
 			<-releaseCleanup
-			stream <- provider.StreamEvent{Kind: provider.StreamEventCancelled, Err: ctx.Err()}
+			stream <- cancelledProviderEvent(t, ctx.Err())
 			close(stream)
 		}()
 		return stream, nil
@@ -440,6 +443,118 @@ func TestAgentLoopShutdownDiscardsQueueAndRetainsCleanupOwner(t *testing.T) {
 	}
 	if terminalCount(items, "shutdown-input-1") != 1 || conversation.calls.Load() != 1 {
 		t.Fatalf("shutdown terminal/calls = %d/%d", terminalCount(items, "shutdown-input-1"), conversation.calls.Load())
+	}
+}
+
+func TestAgentLoopRunStateOwnsQueueLedgerAndClosingTransitions(t *testing.T) {
+	t.Parallel()
+	loop := &AgentLoop{
+		config:  AgentLoopConfig{MaxQueuedInputs: 2, MaxQueuedBytes: 16, RecentRequests: 4},
+		outputs: make(chan protocol.ControlItem, 4),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	state := newAgentLoopRunState(loop, ctx)
+	state.queue = append(state.queue,
+		queuedInput{requestID: "queued-1", text: "one"},
+		queuedInput{requestID: "queued-2", text: "two"},
+	)
+	state.queuedBytes = 6
+	state.outstanding["queued-1"] = struct{}{}
+	state.outstanding["queued-2"] = struct{}{}
+	state.discardQueue(protocol.ControlErrorSessionShutdown)
+	if len(state.queue) != 0 || state.queuedBytes != 0 || len(state.outstanding) != 0 ||
+		!state.recent.contains("queued-1") || !state.recent.contains("queued-2") || len(loop.outputs) != 2 {
+		t.Fatalf("discarded state = queue %#v, bytes %d, outstanding %#v, recent %#v, outputs %d", state.queue, state.queuedBytes, state.outstanding, state.recent, len(loop.outputs))
+	}
+
+	activeContext, activeCancel := context.WithCancel(context.Background())
+	state.active = &activeLoopTurn{cancel: activeCancel}
+	accepted := make(chan struct{})
+	state.handleLifecycle(loopLifecycleRequest{kind: loopLifecycleStop, accepted: accepted})
+	if state.mode != loopModeClosing || !state.active.cancelRequested {
+		t.Fatalf("closing state = mode %d, active %#v", state.mode, state.active)
+	}
+	select {
+	case <-accepted:
+	default:
+		t.Fatal("lifecycle request was not acknowledged")
+	}
+	select {
+	case <-activeContext.Done():
+	default:
+		t.Fatal("active turn was not cancelled")
+	}
+}
+
+func TestAgentLoopWaitsForProviderChannelCloseBeforeFollowUp(t *testing.T) {
+	t.Parallel()
+	firstStarted := make(chan struct{})
+	firstCancelled := make(chan struct{})
+	releaseFirstCleanup := make(chan struct{})
+	firstDone := make(chan struct{})
+	secondStarted := make(chan struct{})
+	var calls atomic.Int32
+	conversation := &fakeConversation{stream: func(ctx context.Context, _ provider.TurnInput) (<-chan provider.StreamEvent, error) {
+		stream := make(chan provider.StreamEvent)
+		switch calls.Add(1) {
+		case 1:
+			close(firstStarted)
+			go func() {
+				defer close(firstDone)
+				defer close(stream)
+				stream <- provider.StreamEvent{}
+				<-ctx.Done()
+				close(firstCancelled)
+				<-releaseFirstCleanup
+			}()
+		case 2:
+			close(secondStarted)
+			completed := completedProviderEvent(t)
+			go func() {
+				stream <- completed
+				close(stream)
+			}()
+		default:
+			close(stream)
+		}
+		return stream, nil
+	}}
+	loop, err := NewAgentLoop(newTestRuntime(t, conversation, &fakeJournal{}), DefaultAgentLoopConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runDone := make(chan error, 1)
+	go func() { runDone <- loop.Run(context.Background()) }()
+	<-loop.Ready()
+
+	firstCommand, _ := protocol.NewSubmitInputCommand("cleanup-first", "first")
+	firstResult, err := loop.Submit(context.Background(), firstCommand)
+	if err != nil || firstResult.Disposition() != protocol.CommandDispositionStarting {
+		t.Fatalf("first submit = %#v, %v", firstResult, err)
+	}
+	<-firstStarted
+	secondCommand, _ := protocol.NewSubmitInputCommand("cleanup-second", "second")
+	secondResult, err := loop.Submit(context.Background(), secondCommand)
+	if err != nil || secondResult.Disposition() != protocol.CommandDispositionQueued {
+		t.Fatalf("second submit = %#v, %v", secondResult, err)
+	}
+	<-firstCancelled
+	select {
+	case <-secondStarted:
+		t.Fatal("follow-up started before provider channel closed")
+	default:
+	}
+	close(releaseFirstCleanup)
+	<-firstDone
+	<-secondStarted
+	if err := loop.CloseInput(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for range loop.Outputs() {
+	}
+	if err := <-runDone; err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -508,7 +623,7 @@ func receiveInvocation(t *testing.T, calls <-chan controlledInvocation) controll
 
 func completedProviderEvent(t *testing.T) provider.StreamEvent {
 	t.Helper()
-	return provider.StreamEvent{Kind: provider.StreamEventCompleted, Prepared: newPreparedSample(t, func() {})}
+	return completedProviderEventWithSample(t, newPreparedSample(t, func() {}))
 }
 
 func receiveTurnEvent(t *testing.T, outputs <-chan protocol.ControlItem, requestID protocol.RequestID, kind protocol.EventKind) protocol.Event {

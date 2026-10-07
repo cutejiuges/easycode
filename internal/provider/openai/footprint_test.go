@@ -78,7 +78,7 @@ func TestHistoryFootprintDoesNotChangeNextResponsesRequest(t *testing.T) {
 	conversation := &Conversation{}
 	conversation.history.commit(validFootprintTurn())
 	next := NewUserItem("next")
-	before, err := compileResponsesRequest("gpt-test", conversation.history.snapshot(), next)
+	before, err := compileResponsesRequest("gpt-test", conversation.history.snapshot(), nil, next)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestHistoryFootprintDoesNotChangeNextResponsesRequest(t *testing.T) {
 	if _, err := conversation.HistoryFootprint(); err != nil {
 		t.Fatal(err)
 	}
-	after, err := compileResponsesRequest("gpt-test", conversation.history.snapshot(), next)
+	after, err := compileResponsesRequest("gpt-test", conversation.history.snapshot(), nil, next)
 	if err != nil {
 		t.Fatal(err)
 	}

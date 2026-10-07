@@ -265,6 +265,246 @@ func (ledger *recentRequestLedger) add(requestID protocol.RequestID) {
 	ledger.entries[requestID] = struct{}{}
 }
 
+type agentLoopRunState struct {
+	loop           *AgentLoop
+	ctx            context.Context
+	mode           loopMode
+	queue          []queuedInput
+	queuedBytes    int
+	outstanding    map[protocol.RequestID]struct{}
+	recent         recentRequestLedger
+	active         *activeLoopTurn
+	runErr         error
+	runContextDone <-chan struct{}
+}
+
+func newAgentLoopRunState(loop *AgentLoop, ctx context.Context) *agentLoopRunState {
+	return &agentLoopRunState{
+		loop: loop, ctx: ctx, mode: loopModeAccepting,
+		queue:       make([]queuedInput, 0, loop.config.MaxQueuedInputs),
+		outstanding: make(map[protocol.RequestID]struct{}, loop.config.MaxQueuedInputs+1),
+		recent:      newRecentRequestLedger(loop.config.RecentRequests), runContextDone: ctx.Done(),
+	}
+}
+
+func (state *agentLoopRunState) completeRequest(requestID protocol.RequestID) {
+	delete(state.outstanding, requestID)
+	state.recent.add(requestID)
+}
+
+func (state *agentLoopRunState) emitResult(request loopCommandRequest, result protocol.CommandResult) {
+	item, err := protocol.NewCommandResultItem(result)
+	if err != nil {
+		request.result <- loopCommandResponse{err: fault.New(fault.CodeTurnFailed, "command result is invalid")}
+		return
+	}
+	state.loop.outputs <- item
+	request.result <- loopCommandResponse{result: result}
+}
+
+func (state *agentLoopRunState) reject(request loopCommandRequest, code protocol.ControlErrorCode, complete bool) {
+	result, err := protocol.NewRejectedCommandResult(request.command, code)
+	if err != nil {
+		request.result <- loopCommandResponse{err: fault.New(fault.CodeTurnFailed, "command rejection is invalid")}
+		return
+	}
+	state.emitResult(request, result)
+	if complete {
+		state.completeRequest(request.command.RequestID())
+	}
+}
+
+func (state *agentLoopRunState) discardQueue(code protocol.ControlErrorCode) {
+	for _, input := range state.queue {
+		item, err := protocol.NewInputDiscardItem(input.requestID, code)
+		if err == nil {
+			state.loop.outputs <- item
+		}
+		state.completeRequest(input.requestID)
+	}
+	state.queue = state.queue[:0]
+	state.queuedBytes = 0
+}
+
+func (state *agentLoopRunState) startTurn(input queuedInput) *activeLoopTurn {
+	turnContext, cancel := context.WithCancel(state.ctx)
+	events := make(chan protocol.Event)
+	finished := make(chan error, 1)
+	go func() {
+		err := state.loop.runtime.RunTurn(turnContext, provider.TurnInput{Text: input.text}, func(event protocol.Event) {
+			events <- event
+		})
+		close(events)
+		finished <- err
+		close(finished)
+	}()
+	return &activeLoopTurn{input: input, cancel: cancel, events: events, finished: finished}
+}
+
+func (state *agentLoopRunState) startNext() {
+	if state.active != nil || len(state.queue) == 0 || state.mode == loopModeClosing {
+		return
+	}
+	next := state.queue[0]
+	copy(state.queue, state.queue[1:])
+	state.queue = state.queue[:len(state.queue)-1]
+	state.queuedBytes -= len(next.text)
+	state.active = state.startTurn(next)
+}
+
+func (state *agentLoopRunState) shouldExit() bool {
+	return state.active == nil && (state.mode == loopModeClosing || (state.mode == loopModeDraining && len(state.queue) == 0))
+}
+
+func (state *agentLoopRunState) activeChannels() (<-chan protocol.Event, <-chan error) {
+	if state.active == nil {
+		return nil, nil
+	}
+	return state.active.events, state.active.finished
+}
+
+func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
+	requestID := request.command.RequestID()
+	if _, duplicate := state.outstanding[requestID]; duplicate || state.recent.contains(requestID) {
+		state.reject(request, protocol.ControlErrorDuplicateRequest, false)
+		return
+	}
+	state.outstanding[requestID] = struct{}{}
+
+	if state.mode == loopModeClosing {
+		if request.command.Kind() == protocol.CommandShutdown {
+			result, _ := protocol.NewAcceptedCommandResult(request.command, protocol.CommandDispositionClosing)
+			state.emitResult(request, result)
+			state.completeRequest(requestID)
+		} else {
+			state.reject(request, protocol.ControlErrorSessionClosing, true)
+		}
+		return
+	}
+	if state.mode == loopModeDraining {
+		state.reject(request, protocol.ControlErrorSessionClosing, true)
+		return
+	}
+
+	switch request.command.Kind() {
+	case protocol.CommandSubmitInput:
+		input := queuedInput{requestID: requestID, text: request.command.Text()}
+		if state.active == nil && len(state.queue) == 0 {
+			result, _ := protocol.NewAcceptedCommandResult(request.command, protocol.CommandDispositionStarting)
+			state.emitResult(request, result)
+			state.active = state.startTurn(input)
+			return
+		}
+		if len(state.queue) >= state.loop.config.MaxQueuedInputs || state.queuedBytes+len(input.text) > state.loop.config.MaxQueuedBytes {
+			state.reject(request, protocol.ControlErrorInputQueueFull, true)
+			return
+		}
+		state.queue = append(state.queue, input)
+		state.queuedBytes += len(input.text)
+		result, _ := protocol.NewAcceptedCommandResult(request.command, protocol.CommandDispositionQueued)
+		state.emitResult(request, result)
+	case protocol.CommandInterrupt:
+		if state.active == nil || state.active.turnID == "" {
+			state.reject(request, protocol.ControlErrorNoActiveTurn, true)
+			return
+		}
+		if request.command.ExpectedTurnID() != state.active.turnID {
+			state.reject(request, protocol.ControlErrorTurnMismatch, true)
+			return
+		}
+		result, _ := protocol.NewAcceptedCommandResult(request.command, protocol.CommandDispositionInterrupting)
+		state.emitResult(request, result)
+		state.completeRequest(requestID)
+		if !state.active.cancelRequested {
+			state.active.cancelRequested = true
+			state.active.cancel()
+		}
+	case protocol.CommandShutdown:
+		result, _ := protocol.NewAcceptedCommandResult(request.command, protocol.CommandDispositionClosing)
+		state.emitResult(request, result)
+		state.completeRequest(requestID)
+		state.mode = loopModeClosing
+		state.discardQueue(protocol.ControlErrorSessionShutdown)
+		state.cancelActive()
+	}
+}
+
+func (state *agentLoopRunState) cancelActive() {
+	if state.active != nil && !state.active.cancelRequested {
+		state.active.cancelRequested = true
+		state.active.cancel()
+	}
+}
+
+func (state *agentLoopRunState) handleLifecycle(lifecycle loopLifecycleRequest) {
+	switch lifecycle.kind {
+	case loopLifecycleDrain:
+		if state.mode == loopModeAccepting {
+			state.mode = loopModeDraining
+		}
+	case loopLifecycleStop:
+		if state.mode != loopModeClosing {
+			state.mode = loopModeClosing
+			state.discardQueue(protocol.ControlErrorSessionShutdown)
+		}
+		state.cancelActive()
+	}
+	close(lifecycle.accepted)
+}
+
+func (state *agentLoopRunState) handleTurnEvent(event protocol.Event, open bool) {
+	if !open {
+		state.active.events = nil
+		return
+	}
+	item, err := protocol.NewCorrelatedTurnItem(state.active.input.requestID, event)
+	if err != nil {
+		state.runErr = fault.New(fault.CodeTurnFailed, "runtime emitted an invalid control event")
+		state.mode = loopModeClosing
+		state.discardQueue(protocol.ControlErrorSessionFailed)
+		state.cancelActive()
+		return
+	}
+	if event.Kind == protocol.EventTurnStarted {
+		state.active.turnID = event.TurnID
+	}
+	if event.Kind == protocol.EventTurnCompleted || event.Kind == protocol.EventTurnFailed {
+		state.active.terminalSeen = true
+	}
+	state.loop.outputs <- item
+}
+
+func (state *agentLoopRunState) handleTurnFinished(workerErr error, open bool) {
+	if !open {
+		state.active.finished = nil
+		return
+	}
+	state.active.finished = nil
+	state.active.cancel()
+	if !state.active.terminalSeen && state.runErr == nil {
+		state.runErr = fault.New(fault.CodeTurnFailed, "runtime turn ended without a terminal event")
+		state.mode = loopModeClosing
+		state.discardQueue(protocol.ControlErrorSessionFailed)
+	}
+	if workerErr != nil && (state.loop.runtime.poisoned.Load() || state.loop.runtime.journal.Poisoned()) {
+		if state.runErr == nil {
+			state.runErr = fault.New(fault.CodeSessionWrite, "session cannot continue")
+		}
+		state.mode = loopModeClosing
+		state.discardQueue(protocol.ControlErrorSessionFailed)
+	}
+	state.completeRequest(state.active.input.requestID)
+	state.active = nil
+}
+
+func (state *agentLoopRunState) handleContextDone() {
+	state.runErr = state.ctx.Err()
+	state.runContextDone = nil
+	state.mode = loopModeClosing
+	state.discardQueue(protocol.ControlErrorSessionShutdown)
+	state.cancelActive()
+}
+
 // Run 在当前 goroutine 中成为唯一状态 owner，并只为活动 turn 创建一个 worker。
 func (loop *AgentLoop) Run(ctx context.Context) error {
 	if ctx == nil {
@@ -282,233 +522,32 @@ func (loop *AgentLoop) Run(ctx context.Context) error {
 		close(loop.outputs)
 		close(loop.done)
 	}()
-
-	mode := loopModeAccepting
-	queue := make([]queuedInput, 0, loop.config.MaxQueuedInputs)
-	queuedBytes := 0
-	outstanding := make(map[protocol.RequestID]struct{}, loop.config.MaxQueuedInputs+1)
-	recent := newRecentRequestLedger(loop.config.RecentRequests)
-	var active *activeLoopTurn
-	var runErr error
-	runContextDone := ctx.Done()
-
-	completeRequest := func(requestID protocol.RequestID) {
-		delete(outstanding, requestID)
-		recent.add(requestID)
-	}
-	emitResult := func(request loopCommandRequest, result protocol.CommandResult) {
-		item, err := protocol.NewCommandResultItem(result)
-		if err != nil {
-			request.result <- loopCommandResponse{err: fault.New(fault.CodeTurnFailed, "command result is invalid")}
-			return
-		}
-		loop.outputs <- item
-		request.result <- loopCommandResponse{result: result}
-	}
-	reject := func(request loopCommandRequest, code protocol.ControlErrorCode, complete bool) {
-		result, err := protocol.NewRejectedCommandResult(request.command, code)
-		if err != nil {
-			request.result <- loopCommandResponse{err: fault.New(fault.CodeTurnFailed, "command rejection is invalid")}
-			return
-		}
-		emitResult(request, result)
-		if complete {
-			completeRequest(request.command.RequestID())
-		}
-	}
-	discardQueue := func(code protocol.ControlErrorCode) {
-		for _, input := range queue {
-			item, err := protocol.NewInputDiscardItem(input.requestID, code)
-			if err == nil {
-				loop.outputs <- item
-			}
-			completeRequest(input.requestID)
-		}
-		queue = queue[:0]
-		queuedBytes = 0
-	}
-	startTurn := func(input queuedInput) *activeLoopTurn {
-		turnContext, cancel := context.WithCancel(ctx)
-		events := make(chan protocol.Event)
-		finished := make(chan error, 1)
-		go func() {
-			err := loop.runtime.RunTurn(turnContext, provider.TurnInput{Text: input.text}, func(event protocol.Event) {
-				events <- event
-			})
-			close(events)
-			finished <- err
-			close(finished)
-		}()
-		return &activeLoopTurn{input: input, cancel: cancel, events: events, finished: finished}
-	}
-	startNext := func() {
-		if active != nil || len(queue) == 0 || mode == loopModeClosing {
-			return
-		}
-		next := queue[0]
-		copy(queue, queue[1:])
-		queue = queue[:len(queue)-1]
-		queuedBytes -= len(next.text)
-		active = startTurn(next)
-	}
+	state := newAgentLoopRunState(loop, ctx)
 
 	for {
-		if active == nil {
-			if mode == loopModeClosing || (mode == loopModeDraining && len(queue) == 0) {
-				return runErr
+		if state.active == nil {
+			if state.shouldExit() {
+				return state.runErr
 			}
-			startNext()
+			state.startNext()
 		}
-
-		var eventChannel <-chan protocol.Event
-		var finishedChannel <-chan error
-		if active != nil {
-			eventChannel = active.events
-			finishedChannel = active.finished
-		}
+		eventChannel, finishedChannel := state.activeChannels()
 
 		select {
 		case request := <-loop.requests:
-			requestID := request.command.RequestID()
-			if _, duplicate := outstanding[requestID]; duplicate || recent.contains(requestID) {
-				reject(request, protocol.ControlErrorDuplicateRequest, false)
-				continue
-			}
-			outstanding[requestID] = struct{}{}
-
-			if mode == loopModeClosing {
-				if request.command.Kind() == protocol.CommandShutdown {
-					result, _ := protocol.NewAcceptedCommandResult(request.command, protocol.CommandDispositionClosing)
-					emitResult(request, result)
-					completeRequest(requestID)
-				} else {
-					reject(request, protocol.ControlErrorSessionClosing, true)
-				}
-				continue
-			}
-			if mode == loopModeDraining {
-				reject(request, protocol.ControlErrorSessionClosing, true)
-				continue
-			}
-
-			switch request.command.Kind() {
-			case protocol.CommandSubmitInput:
-				input := queuedInput{requestID: requestID, text: request.command.Text()}
-				if active == nil && len(queue) == 0 {
-					result, _ := protocol.NewAcceptedCommandResult(request.command, protocol.CommandDispositionStarting)
-					emitResult(request, result)
-					active = startTurn(input)
-					continue
-				}
-				if len(queue) >= loop.config.MaxQueuedInputs || queuedBytes+len(input.text) > loop.config.MaxQueuedBytes {
-					reject(request, protocol.ControlErrorInputQueueFull, true)
-					continue
-				}
-				queue = append(queue, input)
-				queuedBytes += len(input.text)
-				result, _ := protocol.NewAcceptedCommandResult(request.command, protocol.CommandDispositionQueued)
-				emitResult(request, result)
-			case protocol.CommandInterrupt:
-				if active == nil || active.turnID == "" {
-					reject(request, protocol.ControlErrorNoActiveTurn, true)
-					continue
-				}
-				if request.command.ExpectedTurnID() != active.turnID {
-					reject(request, protocol.ControlErrorTurnMismatch, true)
-					continue
-				}
-				result, _ := protocol.NewAcceptedCommandResult(request.command, protocol.CommandDispositionInterrupting)
-				emitResult(request, result)
-				completeRequest(requestID)
-				if !active.cancelRequested {
-					active.cancelRequested = true
-					active.cancel()
-				}
-			case protocol.CommandShutdown:
-				result, _ := protocol.NewAcceptedCommandResult(request.command, protocol.CommandDispositionClosing)
-				emitResult(request, result)
-				completeRequest(requestID)
-				mode = loopModeClosing
-				discardQueue(protocol.ControlErrorSessionShutdown)
-				if active != nil && !active.cancelRequested {
-					active.cancelRequested = true
-					active.cancel()
-				}
-			}
+			state.handleCommand(request)
 
 		case lifecycle := <-loop.lifecycle:
-			switch lifecycle.kind {
-			case loopLifecycleDrain:
-				if mode == loopModeAccepting {
-					mode = loopModeDraining
-				}
-			case loopLifecycleStop:
-				if mode != loopModeClosing {
-					mode = loopModeClosing
-					discardQueue(protocol.ControlErrorSessionShutdown)
-				}
-				if active != nil && !active.cancelRequested {
-					active.cancelRequested = true
-					active.cancel()
-				}
-			}
-			close(lifecycle.accepted)
+			state.handleLifecycle(lifecycle)
 
 		case event, open := <-eventChannel:
-			if !open {
-				active.events = nil
-				continue
-			}
-			item, err := protocol.NewCorrelatedTurnItem(active.input.requestID, event)
-			if err != nil {
-				runErr = fault.New(fault.CodeTurnFailed, "runtime emitted an invalid control event")
-				mode = loopModeClosing
-				discardQueue(protocol.ControlErrorSessionFailed)
-				if !active.cancelRequested {
-					active.cancelRequested = true
-					active.cancel()
-				}
-				continue
-			}
-			if event.Kind == protocol.EventTurnStarted {
-				active.turnID = event.TurnID
-			}
-			if event.Kind == protocol.EventTurnCompleted || event.Kind == protocol.EventTurnFailed {
-				active.terminalSeen = true
-			}
-			loop.outputs <- item
+			state.handleTurnEvent(event, open)
 
 		case workerErr, open := <-finishedChannel:
-			if !open {
-				active.finished = nil
-				continue
-			}
-			active.finished = nil
-			active.cancel()
-			if !active.terminalSeen && runErr == nil {
-				runErr = fault.New(fault.CodeTurnFailed, "runtime turn ended without a terminal event")
-				mode = loopModeClosing
-				discardQueue(protocol.ControlErrorSessionFailed)
-			}
-			if workerErr != nil && (loop.runtime.poisoned.Load() || loop.runtime.journal.Poisoned()) {
-				if runErr == nil {
-					runErr = fault.New(fault.CodeSessionWrite, "session cannot continue")
-				}
-				mode = loopModeClosing
-				discardQueue(protocol.ControlErrorSessionFailed)
-			}
-			completeRequest(active.input.requestID)
-			active = nil
+			state.handleTurnFinished(workerErr, open)
 
-		case <-runContextDone:
-			runErr = ctx.Err()
-			runContextDone = nil
-			mode = loopModeClosing
-			discardQueue(protocol.ControlErrorSessionShutdown)
-			if active != nil && !active.cancelRequested {
-				active.cancelRequested = true
-				active.cancel()
-			}
+		case <-state.runContextDone:
+			state.handleContextDone()
 		}
 	}
 }

@@ -39,6 +39,8 @@ func TestHeadlessProvidersPreserveResumeRequestAndOutputBoundaries(t *testing.T)
 	}
 	for _, fixture := range fixtures {
 		t.Run(fixture.name, func(t *testing.T) {
+			startupCWD := t.TempDir()
+			t.Chdir(startupCWD)
 			var mu sync.Mutex
 			var requests [][]byte
 			logicalTurns := []int{1, 2, 3, 1, 2, 3}
@@ -62,7 +64,7 @@ func TestHeadlessProvidersPreserveResumeRequestAndOutputBoundaries(t *testing.T)
 				APIKey: secret.New("headless-e2e-secret"), Model: fixture.model,
 			}}
 			live, err := openChatResources(
-				context.Background(), providerConfig, filepath.Join(t.TempDir(), "live"), "", t.TempDir(),
+				context.Background(), providerConfig, filepath.Join(t.TempDir(), "live"), "", startupCWD,
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -190,6 +192,8 @@ func TestStreamJSONProvidersPreserveSameProcessNativeHistory(t *testing.T) {
 	}
 	for _, fixture := range fixtures {
 		t.Run(fixture.name, func(t *testing.T) {
+			startupCWD := t.TempDir()
+			t.Chdir(startupCWD)
 			var mu sync.Mutex
 			var requests [][]byte
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -236,7 +240,7 @@ func TestStreamJSONProvidersPreserveSameProcessNativeHistory(t *testing.T) {
 				APIKey: secret.New("stream-e2e-secret"), Model: fixture.model,
 			}}
 			direct, err := openChatResources(
-				context.Background(), providerConfig, filepath.Join(privateAppTempDir(t), "direct"), "", t.TempDir(),
+				context.Background(), providerConfig, filepath.Join(privateAppTempDir(t), "direct"), "", startupCWD,
 			)
 			if err != nil {
 				t.Fatal(err)

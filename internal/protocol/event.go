@@ -3,6 +3,7 @@ package protocol
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"easycode/internal/domain"
@@ -32,6 +33,36 @@ type Event struct {
 	ItemID  domain.ItemID   `json:"item_id,omitempty"`
 	CallID  domain.CallID   `json:"call_id,omitempty"`
 	Payload json.RawMessage `json:"payload,omitempty"`
+}
+
+// Validate 按当前协议版本校验事件 kind 与强类型 payload。
+// Provider 阶段的语义事件尚未绑定 Session identity，因此 identity 由宿主边界另行校验。
+func (event Event) Validate() error {
+	if event.Timestamp.IsZero() {
+		return fmt.Errorf("runtime event timestamp is invalid")
+	}
+	if event.ItemID != "" || event.CallID != "" {
+		return fmt.Errorf("runtime event reserved identity is invalid")
+	}
+	hasIdentity := event.SessionID != "" || event.ThreadID != "" || event.TurnID != ""
+	if hasIdentity && (!event.SessionID.Valid() || !event.ThreadID.Valid() || !event.TurnID.Valid()) {
+		return fmt.Errorf("runtime event identity is invalid")
+	}
+	switch event.Kind {
+	case EventTurnStarted:
+		return ValidateTurnStarted(event)
+	case EventAssistantTextDelta:
+		_, err := DecodeAssistantTextDelta(event)
+		return err
+	case EventTurnCompleted:
+		_, err := DecodeTurnCompleted(event)
+		return err
+	case EventTurnFailed:
+		_, err := DecodeTurnFailed(event)
+		return err
+	default:
+		return fmt.Errorf("runtime event kind is invalid")
+	}
 }
 
 func newEvent(kind EventKind) Event {

@@ -129,9 +129,19 @@ func (conversation *Conversation) Stream(
 	}
 
 	userItem := NewUserItem(text)
+	projectInstructions, hasProjectInstructions, err := input.ProjectInstructions()
+	if err != nil {
+		conversation.active.Store(false)
+		return nil, fault.Wrap(fault.CodeProviderRequest, "read project instructions failed", err)
+	}
+	var projectInstructionsPointer *domain.ProjectInstructionsSnapshot
+	if hasProjectInstructions {
+		projectInstructionsPointer = &projectInstructions
+	}
 	request, err := compileResponsesRequest(
 		conversation.provider.config.Model,
 		conversation.history.snapshot(),
+		projectInstructionsPointer,
 		userItem,
 	)
 	if err != nil {
@@ -181,7 +191,20 @@ func (conversation *Conversation) consumeStream(
 		}
 	}
 	sendTerminal := func(kind provider.StreamEventKind, prepared *provider.PreparedSample, err error) {
-		output <- provider.StreamEvent{Kind: kind, Prepared: prepared, Err: err}
+		var event provider.StreamEvent
+		var buildErr error
+		switch kind {
+		case provider.StreamEventCompleted:
+			event, buildErr = provider.NewCompletedStreamEvent(prepared)
+		case provider.StreamEventCancelled:
+			event, buildErr = provider.NewCancelledStreamEvent(err)
+		default:
+			event, buildErr = provider.NewFailedStreamEvent(err)
+		}
+		if buildErr != nil {
+			event, _ = provider.NewFailedStreamEvent(fault.Wrap(fault.CodeStreamProtocol, "OpenAI terminal event is invalid", buildErr))
+		}
+		output <- event
 	}
 
 	for message := range stream {
@@ -193,11 +216,23 @@ func (conversation *Conversation) consumeStream(
 				return
 			}
 			if result.semantic != nil {
-				output <- provider.StreamEvent{Kind: provider.StreamEventSemantic, Event: *result.semantic}
+				event, eventErr := provider.NewSemanticStreamEvent(*result.semantic)
+				if eventErr != nil {
+					stopTransport()
+					sendTerminal(provider.StreamEventFailed, nil, fault.Wrap(fault.CodeStreamProtocol, "OpenAI semantic event is invalid", eventErr))
+					return
+				}
+				output <- event
 			}
 			if result.native != nil {
 				item := result.native.clone()
-				output <- provider.StreamEvent{Kind: provider.StreamEventNative, Native: item}
+				event, eventErr := provider.NewNativeStreamEvent(item)
+				if eventErr != nil {
+					stopTransport()
+					sendTerminal(provider.StreamEventFailed, nil, fault.Wrap(fault.CodeStreamProtocol, "OpenAI native event is invalid", eventErr))
+					return
+				}
+				output <- event
 			}
 			if result.completed {
 				stopTransport()

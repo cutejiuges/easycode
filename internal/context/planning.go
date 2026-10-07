@@ -1,6 +1,7 @@
 package context
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -12,7 +13,7 @@ import (
 )
 
 const (
-	CurrentContextPlanVersion = 1
+	CurrentContextPlanVersion = 2
 	providerProfileRevision   = "provider-profile-v1"
 	turnInputRevision         = "turn-input-v1"
 )
@@ -21,9 +22,10 @@ const (
 type SourceKind string
 
 const (
-	SourceProviderProfile  SourceKind = "provider_profile"
-	SourceCommittedHistory SourceKind = "committed_history"
-	SourceCurrentInput     SourceKind = "current_input"
+	SourceProviderProfile     SourceKind = "provider_profile"
+	SourceProjectInstructions SourceKind = "project_instructions"
+	SourceCommittedHistory    SourceKind = "committed_history"
+	SourceCurrentInput        SourceKind = "current_input"
 )
 
 // SourceLifecycle 描述来源在后续计划中的更新方式。
@@ -138,25 +140,32 @@ func (profile ProviderProfile) Validate() error {
 
 // PlanningInput 是纯内存 planner 所需的完整强类型输入快照。
 type PlanningInput struct {
-	profile      ProviderProfile
-	history      domain.SemanticHistoryView
-	footprint    domain.NativeHistoryFootprint
-	currentInput string
-	budget       Budget
+	profile             ProviderProfile
+	projectInstructions domain.ProjectInstructionsSnapshot
+	history             domain.SemanticHistoryView
+	footprint           domain.NativeHistoryFootprint
+	currentInput        string
+	budget              Budget
 }
 
 // NewPlanningInput 校验并深拷贝上下文规划输入。
 func NewPlanningInput(
 	profile ProviderProfile,
+	projectInstructions domain.ProjectInstructionsSnapshot,
 	history domain.SemanticHistoryView,
 	footprint domain.NativeHistoryFootprint,
 	currentInput string,
 	budget Budget,
 ) (PlanningInput, error) {
 	input := PlanningInput{
-		profile: profile, history: cloneSemanticHistory(history), footprint: footprint,
+		profile: profile, projectInstructions: projectInstructions, history: cloneSemanticHistory(history), footprint: footprint,
 		currentInput: currentInput, budget: budget,
 	}
+	cloned, err := projectInstructions.Clone()
+	if err != nil {
+		return PlanningInput{}, fmt.Errorf("project instructions are invalid: %w", err)
+	}
+	input.projectInstructions = cloned
 	if err := input.Validate(); err != nil {
 		return PlanningInput{}, err
 	}
@@ -167,6 +176,9 @@ func NewPlanningInput(
 func (input PlanningInput) Validate() error {
 	if err := input.profile.Validate(); err != nil {
 		return err
+	}
+	if err := input.projectInstructions.Validate(); err != nil {
+		return fmt.Errorf("project instructions are invalid: %w", err)
 	}
 	if !input.history.Provider.Valid() || input.history.Provider != input.profile.family {
 		return fmt.Errorf("semantic history provider family does not match profile")
@@ -271,11 +283,18 @@ func (plan ContextPlan) Validate() error {
 	if plan.version != CurrentContextPlanVersion {
 		return fmt.Errorf("unsupported context plan version %d", plan.version)
 	}
-	if len(plan.sources) != 3 {
-		return fmt.Errorf("context plan must contain three sources")
+	var wantKinds []SourceKind
+	var wantLifecycles []SourceLifecycle
+	switch len(plan.sources) {
+	case 3:
+		wantKinds = []SourceKind{SourceProviderProfile, SourceCommittedHistory, SourceCurrentInput}
+		wantLifecycles = []SourceLifecycle{SourceLifecycleReplace, SourceLifecycleAppend, SourceLifecycleReplace}
+	case 4:
+		wantKinds = []SourceKind{SourceProviderProfile, SourceProjectInstructions, SourceCommittedHistory, SourceCurrentInput}
+		wantLifecycles = []SourceLifecycle{SourceLifecycleReplace, SourceLifecycleReplace, SourceLifecycleAppend, SourceLifecycleReplace}
+	default:
+		return fmt.Errorf("context plan source count is invalid")
 	}
-	wantKinds := [...]SourceKind{SourceProviderProfile, SourceCommittedHistory, SourceCurrentInput}
-	wantLifecycles := [...]SourceLifecycle{SourceLifecycleReplace, SourceLifecycleAppend, SourceLifecycleReplace}
 	seen := make(map[SourceKind]struct{}, len(plan.sources))
 	for index, source := range plan.sources {
 		if err := source.validate(); err != nil {
@@ -329,13 +348,25 @@ func (*Planner) Plan(input PlanningInput) (ContextPlan, error) {
 		return ContextPlan{}, err
 	}
 	currentEstimate := estimate.String(input.currentInput)
-	totalEstimate := sumEstimates(profileEstimate, historyEstimate, currentEstimate)
+	projectEstimate := mustEstimated(0)
+	if input.projectInstructions.HasDocuments() {
+		projectEstimate = estimate.String(input.projectInstructions.RenderedText())
+	}
+	totalEstimate := sumEstimates(profileEstimate, projectEstimate, historyEstimate, currentEstimate)
 
 	sources := []PlannedSource{
 		{kind: SourceProviderProfile, lifecycle: SourceLifecycleReplace, revision: providerProfileRevision, estimate: profileEstimate},
-		{kind: SourceCommittedHistory, lifecycle: SourceLifecycleAppend, revision: strconv.FormatUint(input.footprint.Revision(), 10), estimate: historyEstimate},
-		{kind: SourceCurrentInput, lifecycle: SourceLifecycleReplace, revision: turnInputRevision, estimate: currentEstimate},
 	}
+	if input.projectInstructions.HasDocuments() {
+		sources = append(sources, PlannedSource{
+			kind: SourceProjectInstructions, lifecycle: SourceLifecycleReplace,
+			revision: input.projectInstructions.Revision(), estimate: projectEstimate,
+		})
+	}
+	sources = append(sources,
+		PlannedSource{kind: SourceCommittedHistory, lifecycle: SourceLifecycleAppend, revision: strconv.FormatUint(input.footprint.Revision(), 10), estimate: historyEstimate},
+		PlannedSource{kind: SourceCurrentInput, lifecycle: SourceLifecycleReplace, revision: turnInputRevision, estimate: currentEstimate},
+	)
 	cachePlan, err := buildCachePlan(input)
 	if err != nil {
 		return ContextPlan{}, err
@@ -386,6 +417,23 @@ func buildCachePlan(input PlanningInput) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
+	segments := []Segment{profile}
+	if input.projectInstructions.HasDocuments() {
+		projectJSON, marshalErr := codec.MarshalCanonical(
+			json.RawMessage(input.projectInstructions.CanonicalJSON()), MaxSegmentBytes,
+		)
+		if marshalErr != nil {
+			return Plan{}, fmt.Errorf("project instruction cache segment is invalid: %w", marshalErr)
+		}
+		project, projectErr := NewSegment(
+			string(SourceProjectInstructions), StabilityProjectStable,
+			input.projectInstructions.Revision(), projectJSON,
+		)
+		if projectErr != nil {
+			return Plan{}, projectErr
+		}
+		segments = append(segments, project)
+	}
 	history, err := NewSegment(string(SourceCommittedHistory), StabilityTurnStable, strconv.FormatUint(input.footprint.Revision(), 10), historyJSON)
 	if err != nil {
 		return Plan{}, err
@@ -394,7 +442,8 @@ func buildCachePlan(input PlanningInput) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	return NewPlan(profile, history, current)
+	segments = append(segments, history, current)
+	return NewPlan(segments...)
 }
 
 func estimateSemanticHistory(history domain.SemanticHistoryView) domain.TokenEstimate {
@@ -475,7 +524,8 @@ func hasTokenValue(value domain.TokenEstimate) bool {
 }
 
 func knownSourceKind(kind SourceKind) bool {
-	return kind == SourceProviderProfile || kind == SourceCommittedHistory || kind == SourceCurrentInput
+	return kind == SourceProviderProfile || kind == SourceProjectInstructions ||
+		kind == SourceCommittedHistory || kind == SourceCurrentInput
 }
 
 func knownSourceLifecycle(lifecycle SourceLifecycle) bool {

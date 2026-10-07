@@ -15,6 +15,8 @@ import (
 
 const modulePath = "easycode"
 
+const sonicImportPath = "github.com/bytedance/sonic"
+
 var placeholderFiles = map[string]string{
 	"internal/protocol/event.go":          "P3",
 	"internal/domain/types.go":            "P3",
@@ -61,6 +63,32 @@ func TestDependencyDirections(t *testing.T) {
 	repository := loadRepositorySource(t)
 	violations := dependencyViolations(repository.packages)
 	violations = append(violations, importCycleViolations(repository.packages)...)
+	assertNoViolations(t, violations)
+}
+
+func TestJSONCodecOwnership(t *testing.T) {
+	repository := loadRepositorySource(t)
+	var violations []string
+	for _, packagePath := range sortedPackagePaths(repository.packages) {
+		current := repository.packages[packagePath]
+		if packagePath == "easycode/internal/codec" {
+			for imported := range current.imports {
+				violations = append(violations, packagePath+" -> "+imported+": codec 不得依赖其他内部包")
+			}
+		}
+		for relative, file := range current.files {
+			for _, imported := range file.Imports {
+				value, err := strconv.Unquote(imported.Path.Value)
+				if err != nil {
+					violations = append(violations, relative+": import 路径无效")
+					continue
+				}
+				if value == sonicImportPath && packagePath != "easycode/internal/codec" {
+					violations = append(violations, relative+": 只有 internal/codec 可以直接导入 Sonic")
+				}
+			}
+		}
+	}
 	assertNoViolations(t, violations)
 }
 
@@ -325,8 +353,9 @@ func forbiddenDependencyReason(packagePath string, imported string) string {
 			return "下层包不得依赖 app/cmd"
 		}
 	}
-	if packagePath == "easycode/internal/domain" && strings.HasPrefix(imported, "easycode/internal/") {
-		return "domain 不得依赖其他内部包"
+	if packagePath == "easycode/internal/domain" && strings.HasPrefix(imported, "easycode/internal/") &&
+		imported != "easycode/internal/codec" {
+		return "domain 只能依赖 codec"
 	}
 	if packagePath == "easycode/internal/protocol" && imported != "easycode/internal/domain" && imported != "easycode/internal/codec" {
 		if strings.HasPrefix(imported, "easycode/internal/") {
