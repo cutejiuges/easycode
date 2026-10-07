@@ -8,33 +8,29 @@
 
 ### Requirement: Turn lifecycle requires an explicit provider terminal
 
-Runtime SHALL 在请求 provider 前产生一次 `turn_started`。Runtime MUST 为每次 Provider stream 创建派生 context，逐项验证事件，记录唯一 terminal，并持续消费直到生产者关闭 channel；只有 channel 关闭且此前恰好收到一个合法 completed terminal，Runtime 才能产生一次 `turn_completed`。provider channel 关闭本身 MUST NOT 被解释为成功。
+Runtime SHALL 在用户 turn 的首次 Provider 请求前产生一次 `turn_started`。对该 turn 的每个 Provider sample，Runtime MUST 创建独立派生 context，逐项验证事件，记录唯一 terminal，并持续消费直到生产者关闭 channel；channel 关闭且此前恰好收到一个合法 completed terminal时，该 sample 才成功。provider channel 关闭本身 MUST NOT 被解释为 sample 或 turn 成功。
 
-零值或非法事件、channel 在 terminal 前关闭、多个 terminal，以及 terminal 后任何事件均 MUST 作为 stream protocol failure。Runtime MUST 在首次发现协议错误时立即取消派生 context，保留首个协议错误作为最终结果，停止转发后续语义事件，并同步排空 channel 直到生产者清理完成；后续 terminal 不得覆盖首个协议错误或恢复成功。
+成功 sample 含 ready calls 时，Runtime SHALL 在工具处理和原生 outputs durable 后开始下一 sample；成功 sample 不含 calls 时才能产生一次 `turn_completed`。任一 sample 的零值/非法事件、terminal 前关闭、多个 terminal或terminal 后事件 MUST 作为 stream protocol failure，并由同一 owner 取消、排空、等待生产者清理后收口。一个 turn 无论包含多少 samples 都只能产生一个成功或失败终态。
 
 #### Scenario: Complete a successful turn
-
-- **WHEN** provider 产生文本事件和唯一合法 completed terminal，随后完成清理并关闭 channel
-- **THEN** Runtime 按顺序输出 `turn_started`、中间语义事件和一次 `turn_completed`
-- **THEN** `turn_completed` 只在 channel 关闭证明生产者退出后发布
+- **WHEN** 首个 sample 产生文本和唯一合法 completed terminal且不含 tool calls
+- **THEN** Runtime 输出一次 `turn_started`、中间文本和一次 `turn_completed`
 
 #### Scenario: Fail when stream closes before terminal
-
-- **WHEN** provider channel 在 completed、failed 或 cancelled 终态之前关闭
-- **THEN** Runtime 输出一次 `turn_failed`
-- **THEN** RunTurn 返回 `stream_protocol_error`
+- **WHEN** 任一 Provider channel 在 completed、failed 或 cancelled 之前关闭
+- **THEN** Runtime 输出一次 `turn_failed`并返回 `stream_protocol_error`
 
 #### Scenario: Propagate provider failure
-
-- **WHEN** provider 产生唯一合法 failed 终态并随后关闭 channel
-- **THEN** Runtime 输出一次 `turn_failed` 并返回对应错误
-- **THEN** Runtime 不再输出 `turn_completed`
+- **WHEN** 任一sample产生唯一合法failed terminal并完成清理
+- **THEN** Runtime输出一次 `turn_failed`并且不输出 `turn_completed`
 
 #### Scenario: Drain after an invalid stream event
+- **WHEN** 任一 sample 发布非法事件、重复 terminal或terminal 后事件
+- **THEN** Runtime 立即取消并排空该 sample至 channel关闭，随后只输出一次 `turn_failed`
 
-- **WHEN** provider 发布非法事件、重复 terminal 或 terminal 后事件
-- **THEN** Runtime 立即取消该 stream 的派生 context并停止转发新的语义事件
-- **THEN** Runtime 排空至 channel 关闭后输出一次 `turn_failed`，并返回首个 `stream_protocol_error`
+#### Scenario: Complete a tool turn
+- **WHEN** 首个 sample 请求 Read，结果提交后第二个 sample 返回最终文本且不含 calls
+- **THEN** Runtime 在两个 Provider channel均完成清理后只发布一个 `turn_completed`
 
 ### Requirement: Assistant text uses a typed semantic payload
 
@@ -107,31 +103,35 @@ Session-bound Runtime SHALL 在接受 turn 前获得有效的 `session_id` 与 `
 
 ### Requirement: Durable facts precede Provider side effects and completion
 
-Runtime SHALL 在发起 Provider 请求前 durable append 当前 `turn_started` 事实；该写入失败时 MUST NOT 建立网络流。Provider 收到显式成功 terminal 后，对应 `provider_native_commit`、`sample_usage` 和 turn 完成边界 MUST 按规定顺序通过同一 Session batch append/Sync，再进入 Conversation 已提交 native history；携带 turn usage 的 `turn_completed` RuntimeEvent 只有在该 lifecycle boundary 已 durable 且 Provider finalizer 成功后才能发布。
+Runtime SHALL 在首次 Provider 请求前 durable append 当前 `turn_started`；失败时不得建立网络流。每个 completed sample 的 `provider_native_commit`、`sample_usage` 和全部 ready-call facts MUST 在同一 batch append/Sync 后 finalize，随后才允许 executor I/O。每个 invocation 的 execution-start fact MUST 在 executor 接收前单独 durable。
 
-Provider 失败、取消、timeout、提前 EOF 或 completed sample usage 非法 SHALL 丢弃 sample staging，并记录不进入 native history的失败边界。任何 append/Sync 错误 MUST 产生一次 `turn_failed` 且不得同时产生 `turn_completed`；durability 状态不确定的 Session MUST 拒绝继续提交新 turn，直到进程重新加载并校验 journal。
+全部 result facts durable 后，匹配的 Provider-native tool outputs MUST 在下一 Provider sample前 append/Sync并 finalize。最终无 calls sample 的 native commit、sample usage和 `turn_completed` SHALL 在同一 batch durable；携带聚合 usage 的 `turn_completed` RuntimeEvent 只有在 finalizer 成功后才能发布。
+
+Provider/工具失败、取消、协议错误或 append/Sync 失败 MUST 通过合法 result/output配对与唯一 `turn_failed` 收口。任何 durability 状态不确定的 Session MUST poisoned并拒绝新 turn或新副作用，直到重新加载验证。
 
 #### Scenario: Persist before starting a Provider request
-
 - **WHEN** Session 无法 durable append `turn_started`
-- **THEN** Runtime 返回 session 错误且 Provider 不收到请求
+- **THEN** Runtime 返回 Session 错误且 Provider和Read均不被调用
 
 #### Scenario: Complete a durably committed sample
-
-- **WHEN** Provider 产生有效 completed terminal 且 Session 成功 Sync 原生 commit、sample usage 与完成边界
-- **THEN** Conversation 提交相同 native sample，随后 Runtime 产生一次携带相同 turn usage 的 `turn_completed`
+- **WHEN** 最终sample不含calls且其native commit、usage和completion成功Sync
+- **THEN** Conversation finalize该sample，随后Runtime发布一次带聚合usage的完成事件
 
 #### Scenario: Fail while persisting a completed sample
-
-- **WHEN** Provider sample 已完整归并但 Session append 或 Sync 失败
-- **THEN** Runtime 产生一次 session 类 `turn_failed`，不产生 `turn_completed`，且当前进程拒绝下一 turn
-- **THEN** Provider staging 不被当作当前进程中可继续使用的已提交历史，sample usage 也不得单独发布
+- **WHEN** sample已完整归并但 ready batch append或Sync失败
+- **THEN** Runtime 不finalize sample、不调用Read并将当前进程Session poisoned
 
 #### Scenario: Cancel before Provider commit
+- **WHEN** 首个sample在成功terminal前取消
+- **THEN** Runtime不写入native commit或sample usage，并以唯一失败边界收口
 
-- **WHEN** turn 在 Provider 成功 terminal 前取消
-- **THEN** Runtime durable 记录失败边界，但不写入 `provider_native_commit` 或 `sample_usage`
-- **THEN** 下一次请求不包含该 turn 的用户输入或部分 assistant 输出
+#### Scenario: Persist a call before Read
+- **WHEN** Provider完成合法 Read call sample
+- **THEN** native commit、usage和ready fact先成功 Sync，execution-start再成功 Sync，之后Read才可接收调用
+
+#### Scenario: Continue only after durable outputs
+- **WHEN** Read results已生成但tool-output native commit尚未Sync
+- **THEN** Runtime不得建立下一Provider stream
 
 ### Requirement: Host submission carries an explicit operation context
 
@@ -185,24 +185,25 @@ Runtime SHALL 在写入 `provider_native_commit` 和 `turn_completed` 前验证 
 
 ### Requirement: Turn completion exposes typed aggregated usage
 
-成功 `turn_completed` RuntimeEvent SHALL 携带强类型的 normalized turn usage；payload 必须遵守统一指标状态和聚合规则，不得包含 Provider wire、raw usage、价格或上下文占用。当前单 sample 文本 turn 的 payload MUST 等于该 durable `sample_usage`；未来同一 turn 的多个 sample MUST 按 sample 顺序聚合后发布。
+成功 `turn_completed` RuntimeEvent SHALL 携带强类型 normalized turn usage；payload 必须遵守统一指标状态和聚合规则，不得包含 Provider wire、raw usage、价格或上下文占用。单 sample turn的payload MUST等于该sample usage；多 sample Tool Loop MUST按durable sample顺序聚合所有usage。
 
-失败或取消终态 MUST NOT 携带伪造的成功 turn usage。已经 durable 保存的 sample usage 即使发生在未来 turn 的后续工具失败之前，也不得被删除或改写；失败事件是否展示部分 turn usage必须由后续 change 单独定义，本变更不在 `turn_failed` 中暴露它。
+失败或取消终态 MUST NOT 携带伪造的成功 turn usage。已经 durable 保存的 sample usage 即使发生在后续工具或 Provider 失败之前，也不得删除或改写；当前 `turn_failed` 仍不暴露部分 usage。
 
 #### Scenario: Publish current text turn usage
-
-- **WHEN** 当前单 sample 文本 turn durable 完成
-- **THEN** `turn_completed` payload 包含与已提交 `sample_usage` 相同的 normalized usage
+- **WHEN** 单sample文本turn durable完成
+- **THEN** `turn_completed` payload与该sample usage完全相同
 
 #### Scenario: Do not publish usage before durability
-
-- **WHEN** Provider 已完成但包含 usage 的 Session batch 尚未成功 Sync
-- **THEN** Runtime 不发布 `turn_completed` 或任何成功 usage 投影
+- **WHEN** 最终完成batch尚未成功Sync
+- **THEN** Runtime不发布 `turn_completed`或任何成功聚合usage
 
 #### Scenario: Keep failed terminal shape unchanged
+- **WHEN** turn在已有中间sample后失败或取消
+- **THEN** Runtime只发布既有强类型 `turn_failed`，同时Session保留已提交sample usage
 
-- **WHEN** 当前 turn 在成功 sample durable 提交前失败或取消
-- **THEN** Runtime 只发布既有强类型 `turn_failed`，不附加全零或估算 usage
+#### Scenario: Publish aggregated tool-turn usage
+- **WHEN** 一个成功Read turn包含三个durable samples
+- **THEN** `turn_completed` payload等于按顺序聚合三个sample usage的结果
 
 ### Requirement: Runtime revalidates complete prepared sample facts
 
@@ -216,38 +217,34 @@ Runtime SHALL 在构造 Session drafts 前同时复制并重新验证 prepared s
 
 ### Requirement: Runtime plans context before Provider side effects
 
-Runtime SHALL 在当前 `turn_started` 已 durable append 并发布、但调用 Provider stream 之前，以进程启动时的不可变项目指令快照、当前 Conversation 已提交历史和本轮输入生成上下文计划。Runtime MUST 将同一项目指令快照与本轮输入分别传给 Provider 请求编译，且不得从 cache segment、语义历史或渲染后的诊断信息反向重建项目指令。
+Runtime SHALL 在 `turn_started` 已 durable、每次 Provider stream之前，使用同一不可变项目指令与Tool Catalog snapshots、当前已提交Conversation history以及本轮输入状态生成上下文计划。首次sample包含真实用户输入；后续sample只从已提交Provider-native tool outputs继续，不得把result、RuntimeEvent或SemanticHistoryView伪造成新的共享user文本。
 
-规划失败或预算状态为明确 `over_limit` 时，Runtime MUST durable append 当前 turn 的唯一失败边界并发布既有 `turn_failed`，且 MUST NOT 建立 Provider stream 或修改 Provider native history。明确超限 SHALL 返回稳定英文错误码 `context_limit_exceeded`，错误消息只可包含预算数值和估算状态，不得包含用户输入、项目指令、来源绝对路径、历史正文、opaque Provider data、API key 或其他 secret。
-
-`not_enforced`、`within_limit` 和 `indeterminate` 预算状态 SHALL 允许既有 Provider 生命周期继续；本变更不得为项目指令或计划新增 RuntimeEvent kind、Session record 或 headless JSONL 字段。项目指令注入只属于请求编译，不得被 Runtime 当作新的用户 turn 或 durable fact。
+规划失败或预算明确 `over_limit` 时，Runtime MUST durable收口当前turn且不得建立该Provider stream。Tool Catalog segment必须参与stable-prefix fingerprint和估算，但catalog、workspace绝对路径、invocation identity、ledger和结果正文不得新增RuntimeEvent或独立prompt文本。
 
 #### Scenario: Stop a confirmed over-limit turn before networking
-
-- **WHEN** `turn_started` 已 durable 且包含项目指令的上下文计划得到 `over_limit`
-- **THEN** Runtime durable 记录一次失败边界并发布一次携带 `context_limit_exceeded` 的 `turn_failed`
-- **THEN** Provider 不收到 Stream 调用且 Conversation native history 保持不变
+- **WHEN** tool outputs加入history后下一sample规划明确over-limit
+- **THEN** Runtime不发起网络请求并以 `context_limit_exceeded` durable收口turn
 
 #### Scenario: Continue when no window is configured
-
-- **WHEN** 计划完整生成但预算状态为 `not_enforced`
-- **THEN** Runtime 使用同一项目指令快照和既有本轮输入启动 Provider stream
-- **THEN** 请求继续由 Provider 原生历史编译，而不是由上下文计划或语义视图重建
+- **WHEN** 任一sample计划的预算状态为 `not_enforced`
+- **THEN** Runtime使用相同snapshots和原生history启动Provider stream
 
 #### Scenario: Continue with an indeterminate estimate
-
-- **WHEN** 用户配置了窗口但计划因为必需估算 unknown 而标识 `indeterminate`
-- **THEN** Runtime 不把不确定性转换为 `context_limit_exceeded`
-- **THEN** Provider 生命周期按既有规则继续并使用同一项目指令快照
+- **WHEN** 已配置窗口但计划因必需估算unknown而为 `indeterminate`
+- **THEN** Runtime不把不确定性转换为明确超限并继续既有生命周期
 
 #### Scenario: Close a planning failure durably
-
-- **WHEN** 已 durable 开始的 turn 因非法项目指令快照、非法 footprint、family 不匹配或计划构造错误而失败
-- **THEN** Runtime durable 记录唯一 `turn_failed` 边界且不建立 Provider stream
-- **THEN** Session append 失败仍遵守既有 poisoned journal 语义
+- **WHEN** 已durable开始的turn在任一sample规划中失败
+- **THEN** Runtime写入唯一失败边界且不建立该Provider stream
 
 #### Scenario: Keep public event and journal vocabularies unchanged
+- **WHEN** Tool Catalog规划成功或失败
+- **THEN** Runtime不为ContextPlan本身新增RuntimeEvent或Session record，并且不持久化prompt正文
 
-- **WHEN** 任一含项目指令的计划结果完成或失败
-- **THEN** Runtime 只使用既有 `turn_started`、`turn_failed` 及正常 Provider 生命周期事件
-- **THEN** journal 不写入 context plan、项目指令、prompt 正文或新的 record kind
+#### Scenario: Plan the first tool sample
+- **WHEN** 一个新turn开始
+- **THEN** 计划按固定顺序包含Provider profile、Tool Catalog、可选项目指令、历史和当前输入
+
+#### Scenario: Plan after tool outputs
+- **WHEN** Read outputs已durable并finalize到原生history
+- **THEN** 下一sample从更新后的Provider history编译，且不把同一tool result再作为共享user输入附加

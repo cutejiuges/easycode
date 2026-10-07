@@ -8,9 +8,9 @@ import (
 )
 
 const (
-	// MethodByteHeuristicV1 标识当前每四个字节约一个 token 的估算版本。
-	MethodByteHeuristicV1 = "byte_heuristic_v1"
-	bytesPerToken         = uint64(4)
+	// MethodByteHeuristic 标识当前每四个字节约一个 token 的估算算法。
+	MethodByteHeuristic = "byte_heuristic_v1"
+	bytesPerToken       = uint64(4)
 )
 
 // ByteCount 将字节数向上取整为 token 数。
@@ -29,7 +29,7 @@ func StructuredByteCount(contentBytes, framingBytes uint64) uint64 {
 
 // Bytes 返回字节切片的本地 token 估算。
 func Bytes(value []byte) domain.TokenEstimate {
-	estimate, _ := domain.NewEstimatedTokenEstimate(MethodByteHeuristicV1, ByteCount(uint64(len(value))))
+	estimate, _ := domain.NewEstimatedTokenEstimate(MethodByteHeuristic, ByteCount(uint64(len(value))))
 	return estimate
 }
 

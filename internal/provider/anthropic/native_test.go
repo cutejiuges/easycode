@@ -64,9 +64,9 @@ func TestNativeItemKeepsRequiredEmptyFields(t *testing.T) {
 	}
 }
 
-func TestNativeTurnCloneDoesNotShareOpaqueData(t *testing.T) {
-	turn := nativeTurn{
-		User: newUserMessage("hello"),
+func TestNativeHistoryEntryCloneDoesNotShareOpaqueData(t *testing.T) {
+	entry := nativeHistoryEntry{
+		Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("hello")),
 		Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{
 			Type: blockTypeRedactedThinking,
 			Raw:  []byte(`{"type":"redacted_thinking","data":"opaque"}`),
@@ -75,9 +75,9 @@ func TestNativeTurnCloneDoesNotShareOpaqueData(t *testing.T) {
 			InputTokens: optionalUint{Value: 3, Known: true},
 		}},
 	}
-	cloned := turn.clone()
-	turn.Assistant.Content[0].Raw[0] = '['
-	turn.Assistant.Content[0].RedactedData = "changed"
+	cloned := entry.clone()
+	entry.Assistant.Content[0].Raw[0] = '['
+	entry.Assistant.Content[0].RedactedData = "changed"
 
 	if cloned.Assistant.Content[0].Raw[0] != '{' {
 		t.Fatalf("clone shares raw bytes: %s", cloned.Assistant.Content[0].Raw)

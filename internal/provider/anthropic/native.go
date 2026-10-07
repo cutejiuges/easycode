@@ -12,6 +12,8 @@ const (
 	blockTypeText             = "text"
 	blockTypeThinking         = "thinking"
 	blockTypeRedactedThinking = "redacted_thinking"
+	blockTypeToolUse          = "tool_use"
+	blockTypeToolResult       = "tool_result"
 
 	roleUser      = "user"
 	roleAssistant = "assistant"
@@ -25,15 +27,27 @@ type NativeItem struct {
 	Thinking     string          `json:"-"`
 	Signature    string          `json:"-"`
 	RedactedData string          `json:"-"`
+	ID           string          `json:"-"`
+	Name         string          `json:"-"`
+	Input        json.RawMessage `json:"-"`
+	ToolUseID    string          `json:"-"`
+	Content      string          `json:"-"`
+	IsError      bool            `json:"-"`
 	Raw          json.RawMessage `json:"-"`
 }
 
 type nativeItemWire struct {
-	Type      string `json:"type"`
-	Text      string `json:"text,omitempty"`
-	Thinking  string `json:"thinking,omitempty"`
-	Signature string `json:"signature,omitempty"`
-	Data      string `json:"data,omitempty"`
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	Thinking  string          `json:"thinking,omitempty"`
+	Signature string          `json:"signature,omitempty"`
+	Data      string          `json:"data,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+	ToolUseID string          `json:"tool_use_id,omitempty"`
+	Content   string          `json:"content,omitempty"`
+	IsError   bool            `json:"is_error,omitempty"`
 }
 
 // ProviderFamily 返回原生项所属协议家族。
@@ -68,6 +82,20 @@ func (item NativeItem) MarshalJSON() ([]byte, error) {
 			Type string `json:"type"`
 			Data string `json:"data"`
 		}{Type: item.Type, Data: item.RedactedData})
+	case blockTypeToolUse:
+		return codec.MarshalStable(struct {
+			Type  string          `json:"type"`
+			ID    string          `json:"id"`
+			Name  string          `json:"name"`
+			Input json.RawMessage `json:"input"`
+		}{Type: item.Type, ID: item.ID, Name: item.Name, Input: append(json.RawMessage(nil), item.Input...)})
+	case blockTypeToolResult:
+		return codec.MarshalStable(struct {
+			Type      string `json:"type"`
+			ToolUseID string `json:"tool_use_id"`
+			Content   string `json:"content"`
+			IsError   bool   `json:"is_error,omitempty"`
+		}{Type: item.Type, ToolUseID: item.ToolUseID, Content: item.Content, IsError: item.IsError})
 	case "":
 		return nil, fmt.Errorf("anthropic content block type is required")
 	default:
@@ -90,12 +118,19 @@ func (item *NativeItem) UnmarshalJSON(data []byte) error {
 		Thinking:     wire.Thinking,
 		Signature:    wire.Signature,
 		RedactedData: wire.Data,
+		ID:           wire.ID,
+		Name:         wire.Name,
+		Input:        append(json.RawMessage(nil), wire.Input...),
+		ToolUseID:    wire.ToolUseID,
+		Content:      wire.Content,
+		IsError:      wire.IsError,
 		Raw:          append(json.RawMessage(nil), data...),
 	}
 	return nil
 }
 
 func (item NativeItem) clone() NativeItem {
+	item.Input = append(json.RawMessage(nil), item.Input...)
 	item.Raw = append(json.RawMessage(nil), item.Raw...)
 	return item
 }
@@ -178,17 +213,30 @@ func (metadata messageMetadata) clone() messageMetadata {
 	return metadata
 }
 
-// nativeTurn 是一次已提交 user/assistant 消息及最终 metadata 的原子快照。
-type nativeTurn struct {
-	User      nativeMessage
-	Assistant nativeMessage
-	Metadata  messageMetadata
+type nativeHistoryEntryKind string
+
+const (
+	nativeHistorySample      nativeHistoryEntryKind = "sample"
+	nativeHistoryToolOutputs nativeHistoryEntryKind = "tool_outputs"
+)
+
+// nativeHistoryEntry 是 Messages 原生历史唯一的当前内存模型。
+type nativeHistoryEntry struct {
+	Kind        nativeHistoryEntryKind
+	Input       *nativeMessage
+	Assistant   nativeMessage
+	ToolOutputs nativeMessage
+	Metadata    messageMetadata
 }
 
-func (turn nativeTurn) clone() nativeTurn {
-	return nativeTurn{
-		User:      turn.User.clone(),
-		Assistant: turn.Assistant.clone(),
-		Metadata:  turn.Metadata.clone(),
+func (entry nativeHistoryEntry) clone() nativeHistoryEntry {
+	cloned := nativeHistoryEntry{
+		Kind: entry.Kind, Assistant: entry.Assistant.clone(),
+		ToolOutputs: entry.ToolOutputs.clone(), Metadata: entry.Metadata.clone(),
 	}
+	if entry.Input != nil {
+		input := entry.Input.clone()
+		cloned.Input = &input
+	}
+	return cloned
 }

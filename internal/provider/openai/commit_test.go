@@ -12,8 +12,8 @@ import (
 
 func TestNativeCommitRoundTripPreservesPrivateResponsesItems(t *testing.T) {
 	t.Parallel()
-	turn := nativeTurn{
-		User: NewUserItem("question"),
+	entry := nativeHistoryEntry{
+		Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("question")),
 		Outputs: []NativeItem{
 			{
 				Type: "reasoning", ID: "reason-1", Phase: "analysis",
@@ -36,7 +36,7 @@ func TestNativeCommitRoundTripPreservesPrivateResponsesItems(t *testing.T) {
 			ReasoningOutputTokens: optionalUint{Known: true, Value: 3},
 		},
 	}
-	envelope, err := encodeNativeCommit(turn)
+	envelope, err := encodeNativeCommit(entry)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,10 +44,10 @@ func TestNativeCommitRoundTripPreservesPrivateResponsesItems(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.User.Content[0].Text != "question" || len(decoded.Outputs) != 3 ||
+	if decoded.Input.Content[0].Text != "question" || len(decoded.Outputs) != 3 ||
 		decoded.Outputs[0].Phase != "analysis" || decoded.Outputs[0].EncryptedContent != "opaque-encrypted" ||
 		decoded.Outputs[1].Phase != "final" || decoded.Outputs[1].Content[0].Text != "answer" ||
-		!bytes.Equal(decoded.Outputs[2].Raw, turn.Outputs[2].Raw) {
+		!bytes.Equal(decoded.Outputs[2].Raw, entry.Outputs[2].Raw) {
 		t.Fatalf("decoded turn = %#v", decoded)
 	}
 	if !decoded.Usage.InputTokens.Known || decoded.Usage.InputTokens.Value != 12 ||
@@ -56,15 +56,15 @@ func TestNativeCommitRoundTripPreservesPrivateResponsesItems(t *testing.T) {
 		t.Fatalf("decoded usage = %#v", decoded.Usage)
 	}
 	decoded.Outputs[2].Raw[0] = '['
-	if turn.Outputs[2].Raw[0] != '{' || envelope.Payload()[0] != '{' {
+	if entry.Outputs[2].Raw[0] != '{' || envelope.Payload()[0] != '{' {
 		t.Fatal("round trip shares mutable opaque buffers")
 	}
 }
 
 func TestNativeCommitCanonicalGolden(t *testing.T) {
 	t.Parallel()
-	envelope, err := encodeNativeCommit(nativeTurn{
-		User: NewUserItem("hello"),
+	envelope, err := encodeNativeCommit(nativeHistoryEntry{
+		Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("hello")),
 		Outputs: []NativeItem{{
 			Type: "message", ID: "msg-1", Role: "assistant", Phase: "final",
 			Content: []ContentPart{{Type: "output_text", Text: "world"}},
@@ -73,7 +73,7 @@ func TestNativeCommitCanonicalGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `{"shape":"text_sample","user":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},"output_items":[{"type":"message","id":"msg-1","role":"assistant","phase":"final","content":[{"type":"output_text","text":"world"}]}],"usage":{"input_tokens":{"known":false},"cached_input_tokens":{"known":false},"cache_write_tokens":{"known":false},"output_tokens":{"known":false},"reasoning_output_tokens":{"known":false}}}`
+	const want = `{"kind":"sample","input":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},"outputs":[{"type":"message","id":"msg-1","role":"assistant","phase":"final","content":[{"type":"output_text","text":"world"}]}],"usage":{"input_tokens":{"known":false},"cached_input_tokens":{"known":false},"cache_write_tokens":{"known":false},"output_tokens":{"known":false},"reasoning_output_tokens":{"known":false}}}`
 	if got := string(envelope.Payload()); got != want {
 		t.Fatalf("OpenAI native commit golden changed:\n%s", got)
 	}
@@ -81,7 +81,7 @@ func TestNativeCommitCanonicalGolden(t *testing.T) {
 
 func TestNativeCommitRejectsIncompatibleAndCorruptPayloads(t *testing.T) {
 	t.Parallel()
-	validPayload := json.RawMessage(`{"shape":"text_sample","user":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},"output_items":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"world"}]}]}`)
+	validPayload := json.RawMessage(`{"kind":"sample","input":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},"outputs":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"world"}]}],"usage":{"input_tokens":{"known":false},"cached_input_tokens":{"known":false},"cache_write_tokens":{"known":false},"output_tokens":{"known":false},"reasoning_output_tokens":{"known":false}}}`)
 	fixtures := []struct {
 		name    string
 		family  domain.ProviderFamily
@@ -92,9 +92,9 @@ func TestNativeCommitRejectsIncompatibleAndCorruptPayloads(t *testing.T) {
 		{name: "family", family: domain.ProviderAnthropic, wire: responsesWire, version: 1, payload: validPayload},
 		{name: "wire", family: domain.ProviderOpenAI, wire: "chat_completions", version: 1, payload: validPayload},
 		{name: "revision", family: domain.ProviderOpenAI, wire: responsesWire, version: 2, payload: validPayload},
-		{name: "shape", family: domain.ProviderOpenAI, wire: responsesWire, version: 1, payload: json.RawMessage(`{"shape":"future","user":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},"output_items":[{"type":"message","role":"assistant"}]}`)},
-		{name: "missing outputs", family: domain.ProviderOpenAI, wire: responsesWire, version: 1, payload: json.RawMessage(`{"shape":"text_sample","user":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},"output_items":[]}`)},
-		{name: "unknown outer", family: domain.ProviderOpenAI, wire: responsesWire, version: 1, payload: json.RawMessage(`{"shape":"text_sample","user":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},"output_items":[{"type":"message","role":"assistant"}],"future":true}`)},
+		{name: "kind", family: domain.ProviderOpenAI, wire: responsesWire, version: 1, payload: json.RawMessage(`{"kind":"future","input":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},"outputs":[{"type":"message","role":"assistant"}]}`)},
+		{name: "missing outputs", family: domain.ProviderOpenAI, wire: responsesWire, version: 1, payload: json.RawMessage(`{"kind":"sample","input":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},"outputs":[],"usage":{"input_tokens":{"known":false},"cached_input_tokens":{"known":false},"cache_write_tokens":{"known":false},"output_tokens":{"known":false},"reasoning_output_tokens":{"known":false}}}`)},
+		{name: "unknown outer", family: domain.ProviderOpenAI, wire: responsesWire, version: 1, payload: json.RawMessage(`{"kind":"sample","input":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},"outputs":[{"type":"message","role":"assistant"}],"future":true}`)},
 	}
 	for _, fixture := range fixtures {
 		fixture := fixture
@@ -110,28 +110,28 @@ func TestNativeCommitRejectsIncompatibleAndCorruptPayloads(t *testing.T) {
 	}
 }
 
-func TestNativeCommitRejectsLegacyPayloadWithoutUsage(t *testing.T) {
+func TestNativeCommitRejectsSampleWithoutUsage(t *testing.T) {
 	t.Parallel()
-	payload := json.RawMessage(`{"shape":"text_sample","user":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},"output_items":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"world"}]}]}`)
-	envelope, err := provider.NewNativeCommitEnvelope(domain.ProviderOpenAI, responsesWire, nativeCommitPayloadV1, payload)
+	payload := json.RawMessage(`{"kind":"sample","input":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},"outputs":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"world"}]}]}`)
+	envelope, err := provider.NewNativeCommitEnvelope(domain.ProviderOpenAI, responsesWire, nativeCommitPayloadRevision, payload)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := decodeNativeCommit(envelope); err == nil {
-		t.Fatal("legacy payload without usage unexpectedly decoded")
+		t.Fatal("sample payload without usage unexpectedly decoded")
 	}
 }
 
 func TestNativeCommitRejectsOversizedPayload(t *testing.T) {
 	t.Parallel()
-	turn := nativeTurn{
-		User: NewUserItem("hello"),
+	entry := nativeHistoryEntry{
+		Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("hello")),
 		Outputs: []NativeItem{{
 			Type: "future_item",
 			Raw:  append(append(json.RawMessage(`{"type":"future_item","data":"`), bytes.Repeat([]byte{'x'}, provider.MaxNativeCommitBytes)...), []byte(`"}`)...),
 		}},
 	}
-	if _, err := encodeNativeCommit(turn); err == nil || !strings.Contains(err.Error(), "size") {
+	if _, err := encodeNativeCommit(entry); err == nil || !strings.Contains(err.Error(), "size") {
 		t.Fatalf("encodeNativeCommit() error = %v", err)
 	}
 }

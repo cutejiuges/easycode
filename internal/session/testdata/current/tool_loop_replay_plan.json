@@ -1,0 +1,45 @@
+{
+  "session_id": "00000000-0000-7000-8000-000000000001",
+  "thread_id": "00000000-0001-7000-8000-000000000002",
+  "provider": "openai",
+  "provider_wire": "responses",
+  "model": "fixture-model",
+  "schema_revision": 1,
+  "creation_cwd": "/workspace",
+  "turns": [
+    {
+      "turn_id": "00000000-0002-7000-8000-000000000003",
+      "state": "failed"
+    }
+  ],
+  "native_commits": [
+    {
+      "sequence": 4,
+      "turn_id": "00000000-0002-7000-8000-000000000003",
+      "provider": "openai",
+      "wire": "responses",
+      "payload_version": 1
+    },
+    {
+      "sequence": 9,
+      "turn_id": "00000000-0002-7000-8000-000000000003",
+      "provider": "openai",
+      "wire": "responses",
+      "payload_version": 1
+    }
+  ],
+  "sample_usages": [
+    {
+      "sequence": 5,
+      "turn_id": "00000000-0002-7000-8000-000000000003",
+      "usage": {
+        "input_uncached": {"state": "known", "value": 0},
+        "cache_read": {"state": "known", "value": 2},
+        "cache_write": {"state": "unknown"},
+        "output": {"state": "known", "value": 3},
+        "reasoning_output": {"state": "not_applicable"}
+      }
+    }
+  ],
+  "next_sequence": 11
+}

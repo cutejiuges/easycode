@@ -25,6 +25,10 @@ type ReasoningSummaryPart struct {
 type NativeItem struct {
 	Type             string                 `json:"type"`
 	ID               string                 `json:"id,omitempty"`
+	CallID           string                 `json:"call_id,omitempty"`
+	Name             string                 `json:"name,omitempty"`
+	Arguments        string                 `json:"arguments,omitempty"`
+	Output           string                 `json:"output,omitempty"`
 	Role             string                 `json:"role,omitempty"`
 	Phase            string                 `json:"phase,omitempty"`
 	Content          []ContentPart          `json:"content,omitempty"`
@@ -81,6 +85,10 @@ func openAIUsageMetric(value optionalUint) domain.UsageMetric {
 type nativeItemWire struct {
 	Type             string                 `json:"type"`
 	ID               string                 `json:"id,omitempty"`
+	CallID           string                 `json:"call_id,omitempty"`
+	Name             string                 `json:"name,omitempty"`
+	Arguments        string                 `json:"arguments,omitempty"`
+	Output           string                 `json:"output,omitempty"`
 	Role             string                 `json:"role,omitempty"`
 	Phase            string                 `json:"phase,omitempty"`
 	Content          []ContentPart          `json:"content,omitempty"`
@@ -118,6 +126,10 @@ func (item NativeItem) MarshalJSON() ([]byte, error) {
 	return codec.MarshalStable(nativeItemWire{
 		Type:             item.Type,
 		ID:               item.ID,
+		CallID:           item.CallID,
+		Name:             item.Name,
+		Arguments:        item.Arguments,
+		Output:           item.Output,
 		Role:             item.Role,
 		Phase:            item.Phase,
 		Content:          item.Content,
@@ -138,6 +150,10 @@ func (item *NativeItem) UnmarshalJSON(data []byte) error {
 	*item = NativeItem{
 		Type:             wire.Type,
 		ID:               wire.ID,
+		CallID:           wire.CallID,
+		Name:             wire.Name,
+		Arguments:        wire.Arguments,
+		Output:           wire.Output,
 		Role:             wire.Role,
 		Phase:            wire.Phase,
 		Content:          append([]ContentPart(nil), wire.Content...),
@@ -155,21 +171,30 @@ func (item NativeItem) clone() NativeItem {
 	return item
 }
 
-// nativeTurn 是一次已成功提交 user item 与 response output items 的原子快照。
-type nativeTurn struct {
-	User    NativeItem
-	Outputs []NativeItem
-	Usage   rawUsage
+type nativeHistoryEntryKind string
+
+const (
+	nativeHistorySample      nativeHistoryEntryKind = "sample"
+	nativeHistoryToolOutputs nativeHistoryEntryKind = "tool_outputs"
+)
+
+// nativeHistoryEntry 是 Responses 原生历史唯一的当前内存模型。
+type nativeHistoryEntry struct {
+	Kind        nativeHistoryEntryKind
+	Input       *NativeItem
+	Outputs     []NativeItem
+	ToolOutputs []NativeItem
+	Usage       rawUsage
 }
 
-func (turn nativeTurn) clone() nativeTurn {
-	cloned := nativeTurn{
-		User:    turn.User.clone(),
-		Outputs: make([]NativeItem, 0, len(turn.Outputs)),
-		Usage:   turn.Usage.clone(),
+func (entry nativeHistoryEntry) clone() nativeHistoryEntry {
+	cloned := nativeHistoryEntry{
+		Kind: entry.Kind, Outputs: cloneNativeItems(entry.Outputs),
+		ToolOutputs: cloneNativeItems(entry.ToolOutputs), Usage: entry.Usage.clone(),
 	}
-	for _, item := range turn.Outputs {
-		cloned.Outputs = append(cloned.Outputs, item.clone())
+	if entry.Input != nil {
+		input := entry.Input.clone()
+		cloned.Input = &input
 	}
 	return cloned
 }

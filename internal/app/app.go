@@ -24,6 +24,7 @@ import (
 	chatRuntime "easycode/internal/runtime"
 	"easycode/internal/session"
 	"easycode/internal/session/catalog"
+	"easycode/internal/tool/builtin"
 	"easycode/internal/tui"
 )
 
@@ -65,6 +66,7 @@ type providerResource interface {
 type chatResources struct {
 	identity       session.Identity
 	provider       providerResource
+	workspace      *builtin.Workspace
 	service        *sessionService
 	writer         managedJournal
 	runtime        *chatRuntime.Runtime
@@ -73,6 +75,28 @@ type chatResources struct {
 	repair         session.RepairReport
 	resumed        bool
 	providerClosed bool
+}
+
+// resourceCleanup 在应用装配成功前按取得顺序持有资源，并按严格逆序释放。
+type resourceCleanup struct {
+	actions []func() error
+}
+
+func (cleanup *resourceCleanup) add(action func() error) {
+	cleanup.actions = append(cleanup.actions, action)
+}
+
+func (cleanup *resourceCleanup) close() error {
+	var result error
+	for index := len(cleanup.actions) - 1; index >= 0; index-- {
+		result = errors.Join(result, cleanup.actions[index]())
+	}
+	cleanup.actions = nil
+	return result
+}
+
+func (cleanup *resourceCleanup) release() {
+	cleanup.actions = nil
 }
 
 // Run 根据入口参数运行交互或 headless 宿主并返回稳定结果。
@@ -285,7 +309,13 @@ func openChatResourcesWithSnapshot(
 	creationCWD string,
 	projectInstructions domain.ProjectInstructionsSnapshot,
 	hooks chatResourceHooks,
-) (*chatResources, error) {
+) (resources *chatResources, resultErr error) {
+	cleanup := &resourceCleanup{}
+	defer func() {
+		if resultErr != nil {
+			resultErr = errors.Join(resultErr, cleanup.close())
+		}
+	}()
 	if err := applicationConfig.ValidateProvider(); err != nil {
 		return nil, err
 	}
@@ -297,12 +327,25 @@ func openChatResourcesWithSnapshot(
 	if err != nil {
 		return nil, err
 	}
+	cleanup.add(service.close)
+	workspace, err := builtin.OpenWorkspace(creationCWD)
+	if err != nil {
+		return nil, fault.New(fault.CodeInvalidConfiguration, "workspace is unavailable")
+	}
+	cleanup.add(workspace.Close)
+	readExecutor, err := builtin.NewReadExecutor(workspace)
+	if err != nil {
+		return nil, fault.New(fault.CodeInvalidConfiguration, "Read executor is unavailable")
+	}
+	toolCatalog, err := builtin.NewCatalog(readExecutor)
+	if err != nil {
+		return nil, fault.New(fault.CodeInvalidConfiguration, "tool catalog is invalid")
+	}
 	if continueSession {
 		threadID, selectErr := selectContinueThread(
 			ctx, paths, service.repository, applicationConfig, wire, creationCWD,
 		)
 		if selectErr != nil {
-			_ = service.close()
 			return nil, selectErr
 		}
 		resumeThreadID = string(threadID)
@@ -312,9 +355,9 @@ func openChatResourcesWithSnapshot(
 	}
 	providerInstance, err := newProviderResource(applicationConfig)
 	if err != nil {
-		_ = service.close()
 		return nil, err
 	}
+	cleanup.add(providerInstance.Close)
 	var assembled assembledSession
 	if resumeThreadID == "" {
 		assembled, err = service.create(
@@ -331,37 +374,40 @@ func openChatResourcesWithSnapshot(
 		}
 	}
 	if err != nil {
-		_ = service.close()
-		_ = providerInstance.Close()
 		return nil, err
 	}
+	cleanup.add(func() error { return assembled.writer.Close(context.Background()) })
 	contextProfile, err := contextplan.NewProviderProfile(
 		applicationConfig.Provider.Family, applicationConfig.Provider.Model,
 	)
 	if err != nil {
-		_ = assembled.writer.Close(context.Background())
-		_ = service.close()
-		_ = providerInstance.Close()
 		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "context profile is invalid", err)
 	}
 	runtimeInstance, err := chatRuntime.New(assembled.conversation, chatRuntime.Config{
 		SessionID: assembled.identity.SessionID, ThreadID: assembled.identity.ThreadID,
 		Journal: assembled.writer, ContextProfile: contextProfile,
+		ToolCatalog:         toolCatalog,
+		ReadExecutor:        readExecutor,
 		ProjectInstructions: projectInstructions,
 		ContextBudget:       applicationConfig.ContextBudget, ContextPlanner: contextplan.NewPlanner(),
 	})
 	if err != nil {
-		_ = assembled.writer.Close(context.Background())
-		_ = service.close()
-		_ = providerInstance.Close()
 		return nil, err
 	}
-	return &chatResources{
+	if assembled.toolRecovery != nil {
+		if err := runtimeInstance.ReconcileToolTurn(ctx, assembled.toolRecovery.Clone()); err != nil {
+			return nil, err
+		}
+		assembled.history = assembled.conversation.ProjectHistory()
+	}
+	resources = &chatResources{
 		identity: assembled.identity,
-		provider: providerInstance, service: service, writer: assembled.writer,
+		provider: providerInstance, workspace: workspace, service: service, writer: assembled.writer,
 		runtime: runtimeInstance, session: chatRuntime.NewChatSession(runtimeInstance), history: assembled.history,
 		repair: assembled.repair, resumed: resumeThreadID != "",
-	}, nil
+	}
+	cleanup.release()
+	return resources, nil
 }
 
 func selectContinueThread(
@@ -501,15 +547,19 @@ func (resources *chatResources) close(ctx context.Context) error {
 	if resources.writer != nil {
 		writerErr = resources.writer.Close(closeContext)
 	}
-	var repositoryErr error
-	if resources.service != nil {
-		repositoryErr = resources.service.close()
-	}
 	var providerErr error
 	if resources.provider != nil && !providerClosed {
 		providerErr = resources.provider.Close()
 	}
-	return errors.Join(shutdownErr, writerErr, repositoryErr, providerErr)
+	var workspaceErr error
+	if resources.workspace != nil {
+		workspaceErr = resources.workspace.Close()
+	}
+	var repositoryErr error
+	if resources.service != nil {
+		repositoryErr = resources.service.close()
+	}
+	return errors.Join(shutdownErr, writerErr, providerErr, workspaceErr, repositoryErr)
 }
 
 func (resources *chatResources) forceCloseProvider() error {

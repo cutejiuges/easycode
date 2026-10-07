@@ -1,23 +1,9 @@
-// Package builtin 定义首批内置工具的稳定能力清单。
+// Package builtin 组合当前唯一可执行的内置 Read 能力。
 package builtin
 
-import (
-	"encoding/json"
+import "easycode/internal/tool"
 
-	"easycode/internal/tool"
-)
-
-// TODO(P3): 内置工具 facade 清单仅为稳定 schema 设计预留，当前不得对模型暴露；由后续 OpenSpec 同时提供真实消费者、验证与测试时启用，否则删除。
-
-// Specs 返回按稳定顺序排列的内置工具 facade 基线。
-func Specs() []tool.Spec {
-	objectSchema := json.RawMessage(`{"type":"object","additionalProperties":false}`)
-	return []tool.Spec{
-		{Name: "Read", Description: "Read a file", Capability: tool.CapabilityReadFile, InputSchema: objectSchema},
-		{Name: "Glob", Description: "Find files by pattern", Capability: tool.CapabilitySearch, InputSchema: objectSchema},
-		{Name: "Grep", Description: "Search file contents", Capability: tool.CapabilitySearch, InputSchema: objectSchema},
-		{Name: "Edit", Description: "Edit a file", Capability: tool.CapabilityPatchFile, InputSchema: objectSchema},
-		{Name: "Write", Description: "Write a file", Capability: tool.CapabilityWriteFile, InputSchema: objectSchema},
-		{Name: "Bash", Description: "Run a shell command", Capability: tool.CapabilityExec, InputSchema: objectSchema},
-	}
+// NewCatalog 创建只暴露 Read 的确定性目录快照。
+func NewCatalog(executor tool.ReadExecutor) (tool.CatalogSnapshot, error) {
+	return tool.NewReadCatalogSnapshot(executor)
 }

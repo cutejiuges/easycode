@@ -8,43 +8,35 @@
 
 ### Requirement: Session records use a versioned extensible envelope
 
-每条 JSONL 记录 SHALL 使用强类型、版本化的 envelope，至少包含 `schema_version`、`payload_version`、`replay_requirement`、单调 `seq`、UTC `timestamp`、`session_id`、`thread_id`、`event_kind`、完整性校验值和受控 JSON `payload`；与记录语义相关时 SHALL 同时包含 `parent_thread_id` 与 `turn_id`。同一 thread 文件中的 session/thread 标识 MUST 保持一致，未知 payload 只能作为有边界的 opaque JSON 传递，不得展开为跨层 `map[string]any`。
+每条JSONL记录 SHALL使用既有强类型、版本化envelope，至少包含schema/payload revision、replay requirement、单调seq、UTC timestamp、session/thread/turn identity、event kind、batch边界、checksum和受控payload。未知payload只可作为有界opaque JSON传递，不得展开为跨层 `map[string]any`。
 
-`replay_requirement` v1 只能是 `required` 或 `optional`。影响 Provider 原生历史、turn lifecycle、usage 归属、权限、工具副作用、幂等或恢复决策的记录 MUST 标记为 `required`；只影响索引、展示或可丢失统计且被省略不会改变后续副作用、Provider request 或已发布用量事实的记录才可标记为 `optional`。七种已知记录的当前 revision 全部 SHALL 标记为 `required`。已知 kind/revision 的 requirement、cardinality、顺序约束和 payload codec SHALL 由强类型语义 registry 唯一声明，记录中的声明与 registry 不一致时 MUST 拒绝恢复。
+影响Provider原生历史、turn lifecycle、usage、权限、工具副作用、幂等或恢复决策的记录 MUST标记 `required`。本变更 SHALL在当前记录词汇中新增 `tool_call_ready`、`tool_execution_started` 和 `tool_call_result`，三者全部为required并具有专属typed constructor、strict decoder与validator。数值payload revision只存在于record envelope，不进入Go业务类型或构造器名称。
 
-本切片 SHALL 定义 `session_meta`、`thread_meta`、`turn_started`、`provider_native_commit`、`sample_usage`、`turn_completed` 和 `turn_failed` 的已知 payload。`provider_native_commit` 表示一个由对应 Provider codec 定义的有序 native history 增量；`sample_usage` 表示紧邻的同一 completed sample 的 normalized usage。当前首版 native 增量是一次成功文本 sample 的输入与输出，不得把该形状或“一个 turn 只有一次 commit”固化到公共 envelope。
+`tool_call_ready` SHALL保存invocation ID、Provider call ID、sample/call index、capability及input revision和完整typed Read input；`tool_execution_started` SHALL引用同一invocation并表示executor接收线性化点；`tool_call_result` SHALL保存终态status、稳定code、result codec revision、完整有界模型preview与非敏感结果metadata。共享ledger不得嵌入Provider wire item，Provider call/output仍保存在 `provider_native_commit`。
 
-未来 Provider wire 中出现的 `tool_use`、`tool_result`、reasoning 或 MCP tool block SHALL 作为相应 sample 的 Provider 原生内容保留在 `provider_native_commit`；权限决策、工具副作用、幂等 ledger、MCP progress 和大结果 artifact 等共享执行事实不得伪装成 Provider 原生 payload，必须由后续 change 定义独立记录种类与持久化策略。
+completed sample的Provider entry仍作为native commit并紧邻配对 `sample_usage`。tool results编码为tool-output native commit时不生成sample usage。高频参数delta、进度、UI状态和文件系统瞬时信息 MUST NOT进入JSONL。
 
 #### Scenario: Encode the initial record vocabulary
-
-- **WHEN** 一个 root thread 完成一次文本 turn
-- **THEN** JSONL 使用同一 envelope 记录 session/thread 元数据、turn 边界、该次 Provider sample 的原生提交和 normalized usage
-- **THEN** 每条记录都包含可独立校验的 schema 与 payload revision
-- **THEN** 七种已知记录的当前 revision 均标记为 `required`
+- **WHEN** 一个root thread完成一次Read Tool Loop
+- **THEN** JSONL复用同一envelope记录metadata、turn边界、sample commits/usages、三类ledger records和tool-output commit
+- **THEN** 每个已知kind/revision均可独立校验且标记为required
 
 #### Scenario: Preserve an unknown optional record
-
-- **WHEN** 当前程序读取一个 envelope 版本受支持、结构和 checksum 合法但 kind/revision 未知且标记为 `optional` 的记录
-- **THEN** loader 有界保留其 opaque payload 并报告 kind/revision，resume 可忽略该记录继续
-- **THEN** 未知 payload 不进入日志、错误或语义投影
+- **WHEN** 程序读取结构和checksum合法但未知且标记optional的记录
+- **THEN** loader有界保留opaque payload并允许恢复消费者忽略，且payload不进入日志或错误
 
 #### Scenario: Represent multiple samples in one future turn
-
-- **WHEN** 后续工具循环需要在同一个 turn 下记录多次 Provider sample
-- **THEN** 每次 completed sample 可按 seq 追加配对的 `provider_native_commit` 和 `sample_usage`，无需改变既有 envelope 或把原有文本 turn 改写为新形状
+- **WHEN** Tool Loop在同一turn记录多次Provider samples
+- **THEN** 每个sample按seq追加配对native commit和sample usage，无需改变envelope或改写既有records
 
 #### Scenario: Commit a future tool result before the next sample
-
-- **WHEN** 后续工具循环已经 durable 完成工具结果，但下一次 Provider sample 尚未发起或完成
-- **THEN** 后续 change 必须定义独立、强类型的 input-only native history commit shape；只有无法在已冻结 v1 中加法表达且必须兼容既有数据时才可引入新的 payload revision
-- **THEN** input-only commit 不伪造 `sample_usage`，恢复不需要重复工具副作用，也不需要等待下一次模型输出才能保留 Provider 原生 tool result
+- **WHEN** tool results已durable且下一sample尚未发起
+- **THEN** tool-output native commit单独持久化且不伪造sample usage
+- **THEN** 恢复无需重复工具I/O即可继续
 
 #### Scenario: Preserve a future native tool pair without conflating execution state
-
-- **WHEN** 后续工具循环的 Provider sample 包含原生 tool call 或 tool result item
-- **THEN** Provider codec 在相应的强类型 commit shape 中无损保存该原生内容，而 JSONL envelope 和写入机制保持不变；新增 revision 必须满足冻结契约不兼容且需要并存的版本门槛
-- **THEN** 权限、执行、幂等和 artifact 事实使用独立 record kind，不从 Provider 原生内容反推
+- **WHEN** sample native commit包含原生tool calls
+- **THEN** Provider codec保留原生内容，而ready/started/result状态只由独立ledger records表达
 
 ### Requirement: A single writer assigns order and durably appends batches
 
@@ -127,25 +119,43 @@ loader MUST 将结构完整但上层未知的记录保持为有界 opaque payloa
 
 ### Requirement: Replay validation enforces record state transitions
 
-在 loader 完成字节、envelope 和 batch 校验后，恢复消费者 SHALL 在创建可调用 Provider Conversation 前对已知 required records 执行强类型语义回放。首个 committed batch MUST 恰好建立唯一的 `session_meta` 与 root `thread_meta`；后续 metadata 不得重复。root thread 同一时刻最多有一个活动 turn，`provider_native_commit`、`sample_usage` 和 terminal 必须引用当前活动 turn，terminal 关闭该 turn 后才能开始下一 turn。
+Loader完成字节、envelope和batch校验后，ReplayPlanner SHALL在创建Provider Conversation前对全部known required records执行强类型语义回放。首个batch MUST恰好建立唯一 `session_meta`与root `thread_meta`；同一root thread最多有一个活动turn。
 
-当前 v1 的唯一合法完成路径 SHALL 为独立 committed `turn_started(v1)`，随后是同一 batch 中严格按顺序出现的 `[provider_native_commit(v1), sample_usage(v1), turn_completed(v1)]`；`sample_usage` 与前一 native commit 配对，不能缺失、重复或脱离 completed sample。本变更前的 `[provider_native_commit(v1), turn_completed(v1)]` 开发期结构不再是合法回放路径，loader MUST 在 repair、append 或 Provider 请求前 fail closed，且不得补写 usage 或把它作为同版本的历史变体继续运行。合法失败路径 SHALL 为 `turn_started` 后的唯一 `turn_failed` 且不包含当前 turn 的成功 sample facts。只有位于 committed journal 末尾且尚无后续记录的单个未闭合 `turn_started` 可被识别为 interrupted-tail replay state；它是需要显式收口的业务状态，不是可由 loader 截断的文件损坏。未来工具循环 MAY 通过新的 required kind 扩展状态转换；只有冻结后的 v1 无法加法表达且旧数据必须并存时才可新增 revision。
+文本turn仍允许 `turn_started` 后以 `[provider_native_commit, sample_usage, turn_completed]` 完成，或以单个 `turn_failed` 失败。Tool Loop中，一个含calls的sample batch MUST严格为 `[provider_native_commit, sample_usage, tool_call_ready...]`，ready records的sample/call index连续且call identity唯一；正常执行按 `ready -> execution_started -> tool_call_result` 单向转换。取消在Executor接受前线性化时，唯一允许的旁路是 `ready -> tool_call_result(status=cancelled)`；ready直接进入success、error或outcome-uncertain result MUST被拒绝。全部results存在后，恰好一个tool-output `provider_native_commit`关闭该call组，之后才可出现下一sample或turn failure。最终无calls sample必须以 `[provider_native_commit, sample_usage, turn_completed]` 收口。
+
+ReplayPlanner MUST拒绝孤立/重复result、started早于ready、call index乱序、ready后直接开始下一sample、outputs数量不匹配、sample usage缺失/重复、tool-output commit携带usage、terminal后records或新turn覆盖活动turn。只有journal末尾的已承诺活动状态可作为显式reconciliation计划返回；它不是可由Loader截断的文件损坏。
 
 #### Scenario: Build a valid text replay plan
-
-- **WHEN** journal 包含唯一 metadata batch、一个失败文本 turn，以及一个当前 v1 三记录完成 batch
-- **THEN** replay validator 按 seq 生成包含 committed native commits、sample usage 和 terminal 状态的完整计划
-- **THEN** Provider 只接收计划中通过语义校验的 native commits
+- **WHEN** journal包含metadata、一个失败文本turn和一个三记录完成文本turn
+- **THEN** ReplayPlanner产生当前schema定义的native commits、usage和terminal投影
 
 #### Scenario: Reject a checksum-valid illegal transition
-
-- **WHEN** journal 的 JSON、seq、batch 和 checksum 均合法，但 v1 completion 缺少配对 usage、usage 顺序错误、存在重复 usage、commit 位于 turn 之外、重复 terminal 或新 turn 覆盖未结束 turn
-- **THEN** resume 以稳定英文 session corruption 错误失败且不创建可调用 Conversation
+- **WHEN** JSON、seq、batch和checksum合法但usage配对、ledger顺序、call index或terminal placement非法
+- **THEN** resume以稳定Session corruption错误失败且不创建Conversation或调用executor
 
 #### Scenario: Report a committed interrupted tail
+- **WHEN** 文本journal以完整committed `turn_started`结束且没有后续事实
+- **THEN** ReplayPlanner保留该record并返回既有interrupted-tail状态而不截断
 
-- **WHEN** journal 以完整 committed `turn_started` 结束且没有该 turn 的 native commit、sample usage 或 terminal
-- **THEN** replay validator 返回显式 interrupted-tail 状态而不截断该记录、不补造成功历史或 usage
+#### Scenario: Build a valid tool replay plan
+- **WHEN** journal包含call sample、两个顺序invocations、tool outputs和最终sample completion
+- **THEN** ReplayPlanner按seq返回native commits、sample usages、ledger状态和completed turn
+
+#### Scenario: Report a reconcilable ready tail
+- **WHEN** journal在合法ready batch后结束且没有started
+- **THEN** ReplayPlanner保留committed records并返回待本地取消补偿的ready状态，不截断或补造result
+
+#### Scenario: Accept cancellation before executor start
+- **WHEN** journal包含ready后直接追加的matching cancelled result
+- **THEN** ReplayPlanner接受该终态，并拒绝同一invocation后续出现started或第二个result
+
+#### Scenario: Reject non-cancelled result before executor start
+- **WHEN** journal包含ready后直接追加的success、error或outcome-uncertain result
+- **THEN** ReplayPlanner以稳定Session corruption错误失败
+
+#### Scenario: Report an uncertain execution tail
+- **WHEN** journal在合法execution-start后结束且没有result
+- **THEN** ReplayPlanner返回必须补偿的uncertain状态且不得把调用重新归类为ready
 
 ### Requirement: Tail repair never rewrites committed history
 
@@ -245,29 +255,37 @@ JSONL 事实源 SHALL 持久化恢复、幂等和审计所需的业务边界，�
 - **THEN** Session 不逐条持久化这些瞬态更新
 - **THEN** 后续定义的最终工具结果、幂等状态和必要 artifact 引用仍按 durable 事实记录
 
-### Requirement: Known record revisions expose typed construction and decoding
+### Requirement: Current record schema exposes typed construction and decoding
 
-每个已知 Session `event_kind`/`payload_version` 组合 SHALL 具有专属的强类型 draft constructor、严格 decoder 和语义 validator。公共 record draft、writer、replay 与生命周期接口 MUST NOT 接受或返回无约束动态值；未知扩展只允许作为有大小边界的 opaque JSON 保留。构造和解码都 SHALL 拒绝字段缺失、未知字段、尾随 JSON 和不满足该 revision 语义不变量的 payload。
+每个当前已知Session `event_kind`/`payload_version`组合 SHALL具有专属强类型draft constructor、strict decoder和validator。公共record draft、writer、replay和lifecycle接口 MUST NOT接受或返回无约束动态值；未知扩展只允许作为有大小边界的opaque JSON保留。构造和解码都 SHALL拒绝字段缺失、未知字段、尾随JSON和不满足revision语义的payload。业务类型和构造器不得用版本后缀复制当前schema。
 
-新增 `sample_usage(v1)` MUST 使用专属 typed codec；`turn_completed` 保持 payload v1，并由 v1 ReplayPlanner 校验其配对 usage。七种当前 payload 的 canonical JSON、envelope 和 checksum SHALL 通过重写后的单一 v1 fixture 固定；实现不得保留旧两记录完成结构的 decoder/replay 成功分支，也不得为本能力引入 v2 codec。
+当前十种record codec SHALL深拷贝preview/input等可变bytes，并验证identity、index、status与大小边界。由于当前没有线上用户，本变更 SHALL一次性重写仓库开发期fixture，以一套当前fixture固定canonical JSON、envelope、checksum和ReplayPlan；实现不得保留旧Provider payload reader、旧fixture兼容分支或混合revision恢复路径。
 
-#### Scenario: Construct every v1 record through a typed API
+#### Scenario: Construct every tool record through a typed API
+- **WHEN** 调用方创建ready、execution-started或result draft
+- **THEN** constructor只接收该kind/revision的强类型值且立即验证
+- **THEN** draft不能被改造成kind、revision与payload不匹配的记录
 
-- **WHEN** 调用方创建 `session_meta`、`thread_meta`、`turn_started`、`provider_native_commit`、`sample_usage`、`turn_completed` 或 `turn_failed` 的受支持 draft
-- **THEN** 对应 constructor 只接收该 kind/revision 的强类型字段或 payload
-- **THEN** draft 不能被调用方改造成 kind、revision 与 payload 不匹配的记录
+#### Scenario: Construct every current record through a typed API
+- **WHEN** 调用方创建任一当前required record
+- **THEN** 对应constructor只接收该kind的强类型字段且立即验证当前revision
+
+#### Scenario: Strictly decode a tool result
+- **WHEN** checksum合法的result payload包含未知字段、非法status、超限preview或尾随JSON
+- **THEN** decoder在replay前拒绝记录且错误不回显preview正文
 
 #### Scenario: Strictly decode a known payload revision
+- **WHEN** 任一checksum合法的known payload包含未知字段、尾随JSON或非法语义
+- **THEN** revision专属decoder在replay前拒绝且错误不包含payload正文
 
-- **WHEN** checksum 合法的已知 record payload 含未知字段、尾随 JSON 或非法 usage 语义值
-- **THEN** 该 kind/revision 的 decoder 在 replay 前拒绝记录
-- **THEN** 错误不包含 opaque payload 正文
+#### Scenario: Replay the current immutable tool fixture
+- **WHEN** 当前实现加载仓库内固定的Tool Loop fixture
+- **THEN** 生产Loader、registry、codec和ReplayPlanner产生预期ledger及native commit摘要
+- **THEN** fixture不是测试运行时由当前encoder生成
 
-#### Scenario: Preserve historical v1 bytes
-
-- **WHEN** 当前实现加载本变更重写并冻结的 v1 fixture，并以相同固定 identity、时间和 batch 参数编码等价记录
-- **THEN** 解码后的 typed replay model 与当前 v1 期望一致
-- **THEN** canonical record bytes 和 checksum 与重写后 fixture 完全一致
+#### Scenario: Reject a superseded development fixture
+- **WHEN** Loader读取已被本变更替换的旧Provider payload shape或revision
+- **THEN** 恢复在repair、append、executor或Provider网络调用前失败，不进入兼容分支
 
 ### Requirement: Repository lifecycle and path safety are explicit
 
@@ -294,24 +312,27 @@ Session Repository 的纯内存配置与外部资源获取 SHALL 分离。任何
 
 ### Requirement: Sample usage is committed atomically with its sample
 
-当前 v1 成功文本 sample SHALL 在一个 durable batch 中依次写入 `provider_native_commit(v1)`、`sample_usage(v1)` 和 `turn_completed(v1)`。三条记录 MUST 使用相同 session/thread/turn 与 batch identity并获得连续 seq；只有整个 batch 成功 Sync 后才能确认任一事实。`sample_usage` payload MUST 完整包含五个 normalized metrics 及合法状态，不得包含 Provider raw usage、价格或请求正文。
+每个成功Provider sample SHALL在一个durable batch中依次写入 `provider_native_commit`、`sample_usage`以及该sample的后续边界。无tool call的最终sample后续边界为 `turn_completed`；含tool calls的sample后续边界为一个或多个 `tool_call_ready`。同一batch MUST使用相同session/thread/turn和batch identity并获得连续seq；只有整个batch成功Sync后才能确认任一事实。
 
-本变更前的 `[provider_native_commit(v1), turn_completed(v1)]` 开发期 batch SHALL 被拒绝为不兼容的旧基线，不得继续回放、补写全零 `sample_usage`、原地升级或恢复后追加新 turn。原 journal bytes MUST 保持不变并可供人工检查。
+tool-output native commit MUST在全部对应result facts durable后单独提交且不得带 `sample_usage`。`sample_usage` payload继续完整包含五个normalized metrics，不得包含Provider raw usage、价格、请求正文或tool result。
 
 #### Scenario: Commit a new sample usage batch
-
-- **WHEN** 当前 writer 收到合法 prepared sample 并完成文本 turn
-- **THEN** journal 以连续顺序原子追加三个 v1 record：native commit、normalized sample usage 和 completion
-- **THEN** durable success 只在三条记录均 Sync 后返回
+- **WHEN** completed sample不含tool calls
+- **THEN** journal原子追加native commit、sample usage和turn completion
 
 #### Scenario: Fail closed on the superseded development baseline
-
-- **WHEN** loader 读取本变更前生成的 v1 两记录完成 batch
-- **THEN** resume 在 repair、append 或 Provider 请求前以稳定英文不兼容错误失败
-- **THEN** journal bytes 不被修改且不生成全零 usage或兼容 replay plan
+- **WHEN** Loader读取缺少sample usage或使用旧Provider payload shape的开发期fixture
+- **THEN** resume在repair、append、executor或Provider调用前失败，不保留兼容reader或原地改写journal
 
 #### Scenario: Fail an incomplete new usage batch
+- **WHEN** 尾部sample batch缺少usage、ready或completion中的任一必需记录
+- **THEN** Loader按既有batch repair规则移除整个未完成batch，不恢复部分history、usage或call
 
-- **WHEN** 尾部新 completion batch 只写入 native commit 或 native commit 加 sample usage而未完整提交
-- **THEN** loader 按既有 batch repair 规则移除整个未完成 batch
-- **THEN** 不恢复部分 native history 或孤立 usage
+#### Scenario: Commit a call sample
+- **WHEN** completed sample按顺序包含两个Read calls
+- **THEN** journal原子追加native commit、sample usage和两个ready records
+- **THEN** executor只在整个batch Sync后才可接收调用
+
+#### Scenario: Reject usage on a tool-output commit
+- **WHEN** journal把tool-output commit与sample usage配对
+- **THEN** ReplayPlanner拒绝该状态而不是把output误计为Provider sample

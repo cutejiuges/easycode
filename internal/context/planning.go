@@ -10,12 +10,13 @@ import (
 	"easycode/internal/codec"
 	"easycode/internal/context/estimate"
 	"easycode/internal/domain"
+	"easycode/internal/tool"
 )
 
 const (
-	CurrentContextPlanVersion = 2
+	CurrentContextPlanVersion = 3
 	providerProfileRevision   = "provider-profile-v1"
-	turnInputRevision         = "turn-input-v1"
+	currentInputRevision      = "current-input-v2"
 )
 
 // SourceKind 标识当前上下文计划中的来源类型。
@@ -23,6 +24,7 @@ type SourceKind string
 
 const (
 	SourceProviderProfile     SourceKind = "provider_profile"
+	SourceToolCatalog         SourceKind = "tool_catalog"
 	SourceProjectInstructions SourceKind = "project_instructions"
 	SourceCommittedHistory    SourceKind = "committed_history"
 	SourceCurrentInput        SourceKind = "current_input"
@@ -112,6 +114,51 @@ type ProviderProfile struct {
 	model  string
 }
 
+// CurrentInputKind 区分首个用户 sample 与工具结果后的继续采样。
+type CurrentInputKind string
+
+const (
+	CurrentInputUserText         CurrentInputKind = "user_text"
+	CurrentInputToolContinuation CurrentInputKind = "tool_continuation"
+)
+
+// CurrentInput 是上下文计划使用的封闭当前输入值。
+type CurrentInput struct {
+	kind CurrentInputKind
+	text string
+}
+
+// NewUserTextInput 创建首个 sample 的用户文本输入。
+func NewUserTextInput(text string) CurrentInput {
+	return CurrentInput{kind: CurrentInputUserText, text: text}
+}
+
+// NewToolContinuationInput 创建不附加共享用户文本的工具继续采样输入。
+func NewToolContinuationInput() CurrentInput {
+	return CurrentInput{kind: CurrentInputToolContinuation}
+}
+
+// Kind 返回 current input variant。
+func (input CurrentInput) Kind() CurrentInputKind { return input.kind }
+
+// Text 返回用户输入；tool continuation 固定为空。
+func (input CurrentInput) Text() string { return input.text }
+
+// Validate 拒绝未知 variant 和带伪造文本的 continuation。
+func (input CurrentInput) Validate() error {
+	switch input.kind {
+	case CurrentInputUserText:
+		return nil
+	case CurrentInputToolContinuation:
+		if input.text != "" {
+			return fmt.Errorf("tool continuation must not contain user text")
+		}
+		return nil
+	default:
+		return fmt.Errorf("current input kind is invalid")
+	}
+}
+
 // NewProviderProfile 创建不包含连接凭据的 Provider profile。
 func NewProviderProfile(family domain.ProviderFamily, model string) (ProviderProfile, error) {
 	profile := ProviderProfile{family: family, model: strings.TrimSpace(model)}
@@ -141,24 +188,26 @@ func (profile ProviderProfile) Validate() error {
 // PlanningInput 是纯内存 planner 所需的完整强类型输入快照。
 type PlanningInput struct {
 	profile             ProviderProfile
+	toolCatalog         tool.CatalogSnapshot
 	projectInstructions domain.ProjectInstructionsSnapshot
 	history             domain.SemanticHistoryView
 	footprint           domain.NativeHistoryFootprint
-	currentInput        string
+	currentInput        CurrentInput
 	budget              Budget
 }
 
 // NewPlanningInput 校验并深拷贝上下文规划输入。
 func NewPlanningInput(
 	profile ProviderProfile,
+	toolCatalog tool.CatalogSnapshot,
 	projectInstructions domain.ProjectInstructionsSnapshot,
 	history domain.SemanticHistoryView,
 	footprint domain.NativeHistoryFootprint,
-	currentInput string,
+	currentInput CurrentInput,
 	budget Budget,
 ) (PlanningInput, error) {
 	input := PlanningInput{
-		profile: profile, projectInstructions: projectInstructions, history: cloneSemanticHistory(history), footprint: footprint,
+		profile: profile, toolCatalog: toolCatalog.Clone(), projectInstructions: projectInstructions, history: cloneSemanticHistory(history), footprint: footprint,
 		currentInput: currentInput, budget: budget,
 	}
 	cloned, err := projectInstructions.Clone()
@@ -177,6 +226,15 @@ func (input PlanningInput) Validate() error {
 	if err := input.profile.Validate(); err != nil {
 		return err
 	}
+	if err := input.toolCatalog.Validate(); err != nil {
+		return fmt.Errorf("tool catalog is invalid: %w", err)
+	}
+	if _, err := input.toolCatalog.View(input.profile.family); err != nil {
+		return fmt.Errorf("tool catalog Provider view is invalid: %w", err)
+	}
+	if err := input.currentInput.Validate(); err != nil {
+		return err
+	}
 	if err := input.projectInstructions.Validate(); err != nil {
 		return fmt.Errorf("project instructions are invalid: %w", err)
 	}
@@ -192,7 +250,7 @@ func (input PlanningInput) Validate() error {
 	if input.footprint.Family() != input.profile.family {
 		return fmt.Errorf("native history footprint provider family does not match profile")
 	}
-	if input.footprint.Estimate().Method() != estimate.MethodByteHeuristicV1 {
+	if input.footprint.Estimate().Method() != estimate.MethodByteHeuristic {
 		return fmt.Errorf("native history footprint estimator method is unsupported")
 	}
 	if err := input.budget.Validate(); err != nil {
@@ -286,12 +344,12 @@ func (plan ContextPlan) Validate() error {
 	var wantKinds []SourceKind
 	var wantLifecycles []SourceLifecycle
 	switch len(plan.sources) {
-	case 3:
-		wantKinds = []SourceKind{SourceProviderProfile, SourceCommittedHistory, SourceCurrentInput}
-		wantLifecycles = []SourceLifecycle{SourceLifecycleReplace, SourceLifecycleAppend, SourceLifecycleReplace}
 	case 4:
-		wantKinds = []SourceKind{SourceProviderProfile, SourceProjectInstructions, SourceCommittedHistory, SourceCurrentInput}
+		wantKinds = []SourceKind{SourceProviderProfile, SourceToolCatalog, SourceCommittedHistory, SourceCurrentInput}
 		wantLifecycles = []SourceLifecycle{SourceLifecycleReplace, SourceLifecycleReplace, SourceLifecycleAppend, SourceLifecycleReplace}
+	case 5:
+		wantKinds = []SourceKind{SourceProviderProfile, SourceToolCatalog, SourceProjectInstructions, SourceCommittedHistory, SourceCurrentInput}
+		wantLifecycles = []SourceLifecycle{SourceLifecycleReplace, SourceLifecycleReplace, SourceLifecycleReplace, SourceLifecycleAppend, SourceLifecycleReplace}
 	default:
 		return fmt.Errorf("context plan source count is invalid")
 	}
@@ -342,20 +400,29 @@ func (*Planner) Plan(input PlanningInput) (ContextPlan, error) {
 	}
 
 	profileEstimate := mustEstimated(0)
+	toolView, err := input.toolCatalog.View(input.profile.family)
+	if err != nil {
+		return ContextPlan{}, err
+	}
+	toolEstimate := estimate.String(string(toolView.CanonicalJSON()))
 	visibleEstimate := estimateSemanticHistory(input.history)
 	historyEstimate, err := coverEstimates(visibleEstimate, input.footprint.Estimate())
 	if err != nil {
 		return ContextPlan{}, err
 	}
-	currentEstimate := estimate.String(input.currentInput)
+	currentEstimate := mustEstimated(0)
+	if input.currentInput.kind == CurrentInputUserText {
+		currentEstimate = estimate.String(input.currentInput.text)
+	}
 	projectEstimate := mustEstimated(0)
 	if input.projectInstructions.HasDocuments() {
 		projectEstimate = estimate.String(input.projectInstructions.RenderedText())
 	}
-	totalEstimate := sumEstimates(profileEstimate, projectEstimate, historyEstimate, currentEstimate)
+	totalEstimate := sumEstimates(profileEstimate, toolEstimate, projectEstimate, historyEstimate, currentEstimate)
 
 	sources := []PlannedSource{
 		{kind: SourceProviderProfile, lifecycle: SourceLifecycleReplace, revision: providerProfileRevision, estimate: profileEstimate},
+		{kind: SourceToolCatalog, lifecycle: SourceLifecycleReplace, revision: toolView.Fingerprint(), estimate: toolEstimate},
 	}
 	if input.projectInstructions.HasDocuments() {
 		sources = append(sources, PlannedSource{
@@ -365,7 +432,7 @@ func (*Planner) Plan(input PlanningInput) (ContextPlan, error) {
 	}
 	sources = append(sources,
 		PlannedSource{kind: SourceCommittedHistory, lifecycle: SourceLifecycleAppend, revision: strconv.FormatUint(input.footprint.Revision(), 10), estimate: historyEstimate},
-		PlannedSource{kind: SourceCurrentInput, lifecycle: SourceLifecycleReplace, revision: turnInputRevision, estimate: currentEstimate},
+		PlannedSource{kind: SourceCurrentInput, lifecycle: SourceLifecycleReplace, revision: currentInputRevision, estimate: currentEstimate},
 	)
 	cachePlan, err := buildCachePlan(input)
 	if err != nil {
@@ -391,6 +458,20 @@ func buildCachePlan(input PlanningInput) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
+	toolView, err := input.toolCatalog.View(input.profile.family)
+	if err != nil {
+		return Plan{}, err
+	}
+	toolJSON, err := codec.MarshalCanonical(struct {
+		CatalogRevision string          `json:"catalog_revision"`
+		Facade          json.RawMessage `json:"facade"`
+		Fingerprint     string          `json:"fingerprint"`
+	}{
+		CatalogRevision: input.toolCatalog.Revision(), Facade: json.RawMessage(toolView.CanonicalJSON()), Fingerprint: toolView.Fingerprint(),
+	}, MaxSegmentBytes)
+	if err != nil {
+		return Plan{}, err
+	}
 	historyJSON, err := codec.MarshalCanonical(struct {
 		History   domain.SemanticHistoryView `json:"history"`
 		Revision  uint64                     `json:"native_revision"`
@@ -407,9 +488,10 @@ func buildCachePlan(input PlanningInput) (Plan, error) {
 		return Plan{}, err
 	}
 	inputJSON, err := codec.MarshalCanonical(struct {
-		Text           string `json:"text"`
-		SchemaRevision string `json:"schema_revision"`
-	}{input.currentInput, turnInputRevision}, MaxSegmentBytes)
+		Kind           CurrentInputKind `json:"kind"`
+		Text           string           `json:"text,omitempty"`
+		SchemaRevision string           `json:"schema_revision"`
+	}{input.currentInput.kind, input.currentInput.text, currentInputRevision}, MaxSegmentBytes)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -417,7 +499,11 @@ func buildCachePlan(input PlanningInput) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	segments := []Segment{profile}
+	toolSegment, err := NewSegment(string(SourceToolCatalog), StabilityStable, toolView.Fingerprint(), toolJSON)
+	if err != nil {
+		return Plan{}, err
+	}
+	segments := []Segment{profile, toolSegment}
 	if input.projectInstructions.HasDocuments() {
 		projectJSON, marshalErr := codec.MarshalCanonical(
 			json.RawMessage(input.projectInstructions.CanonicalJSON()), MaxSegmentBytes,
@@ -438,7 +524,7 @@ func buildCachePlan(input PlanningInput) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	current, err := NewSegment(string(SourceCurrentInput), StabilityVolatile, turnInputRevision, inputJSON)
+	current, err := NewSegment(string(SourceCurrentInput), StabilityVolatile, currentInputRevision, inputJSON)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -476,7 +562,7 @@ func sumEstimates(values ...domain.TokenEstimate) domain.TokenEstimate {
 	for _, value := range values {
 		tokens, known := value.Tokens()
 		if !known {
-			unknown, _ := domain.NewUnknownTokenEstimate(estimate.MethodByteHeuristicV1)
+			unknown, _ := domain.NewUnknownTokenEstimate(estimate.MethodByteHeuristic)
 			return unknown
 		}
 		total = estimate.SaturatingAdd(total, tokens)
@@ -500,7 +586,7 @@ func decideBudget(budget Budget, total domain.TokenEstimate) BudgetDecision {
 }
 
 func mustEstimated(tokens uint64) domain.TokenEstimate {
-	value, _ := domain.NewEstimatedTokenEstimate(estimate.MethodByteHeuristicV1, tokens)
+	value, _ := domain.NewEstimatedTokenEstimate(estimate.MethodByteHeuristic, tokens)
 	return value
 }
 
@@ -524,7 +610,7 @@ func hasTokenValue(value domain.TokenEstimate) bool {
 }
 
 func knownSourceKind(kind SourceKind) bool {
-	return kind == SourceProviderProfile || kind == SourceProjectInstructions ||
+	return kind == SourceProviderProfile || kind == SourceToolCatalog || kind == SourceProjectInstructions ||
 		kind == SourceCommittedHistory || kind == SourceCurrentInput
 }
 

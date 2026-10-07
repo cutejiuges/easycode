@@ -13,6 +13,7 @@ import (
 	"easycode/internal/fault"
 	"easycode/internal/provider"
 	"easycode/internal/session"
+	"easycode/internal/tool"
 )
 
 type fakeProviderFactory struct {
@@ -69,7 +70,7 @@ func (conversation *fakeAppConversation) ProjectHistory() domain.SemanticHistory
 }
 
 func (conversation *fakeAppConversation) HistoryFootprint() (domain.NativeHistoryFootprint, error) {
-	estimated, _ := domain.NewEstimatedTokenEstimate(estimate.MethodByteHeuristicV1, 0)
+	estimated, _ := domain.NewEstimatedTokenEstimate(estimate.MethodByteHeuristic, 0)
 	return domain.NewNativeHistoryFootprint(conversation.family, 0, estimated)
 }
 
@@ -232,11 +233,11 @@ func TestSessionServiceBusyFailsBeforeRestoreAndKeepsBytes(t *testing.T) {
 func TestSessionServiceRejectsNewerRequiredFixtureBeforeProviderRestore(t *testing.T) {
 	service := newTestSessionService(t)
 	defer service.close()
-	rootFixture, err := os.ReadFile(filepath.Join("..", "session", "testdata", "migrations", "v1", "root.jsonl"))
+	rootFixture, err := os.ReadFile(filepath.Join("..", "session", "testdata", "current", "root.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	newer, err := os.ReadFile(filepath.Join("..", "session", "testdata", "migrations", "v1", "newer_required.jsonl"))
+	newer, err := os.ReadFile(filepath.Join("..", "session", "testdata", "current", "newer_required.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,6 +387,90 @@ func TestSessionServiceClosesInterruptedTailBeforeReturning(t *testing.T) {
 	}
 	if last.TurnID != turnID || failure.Code != "session_interrupted" {
 		t.Fatalf("compensation = %#v %#v", last, failure)
+	}
+}
+
+func TestSessionServiceReturnsSealedToolRecoveryWithoutExternalCalls(t *testing.T) {
+	t.Parallel()
+	service := newTestSessionService(t)
+	defer service.close()
+	created, err := service.create(
+		context.Background(), &fakeProviderFactory{family: domain.ProviderOpenAI},
+		"responses", "gpt-test", t.TempDir(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	turnID, err := domain.GenerateTurnID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, err := session.NewTurnStartedDraft(turnID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := created.writer.AppendBatch(context.Background(), []session.RecordDraft{started}); err != nil {
+		t.Fatal(err)
+	}
+	invocationID, err := tool.ParseInvocationID("01890f3e-7bcd-7abc-8abc-0123456789ab")
+	if err != nil {
+		t.Fatal(err)
+	}
+	callID, _ := tool.ParseProviderCallID("call-resume")
+	input, _ := tool.NewReadInput("README.md", 1, 20)
+	ready, _ := tool.NewReadyCall(callID, input)
+	invocation, err := tool.NewReadInvocation(invocationID, ready)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit, err := session.NewProviderNativeCommitDraft(turnID, session.NativeCommitPayload{
+		Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 1,
+		Payload: []byte(`{"shape":"call_sample"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage, err := domain.NewSampleUsage(
+		domain.KnownUsageMetric(1), domain.NotApplicableUsageMetric(), domain.NotApplicableUsageMetric(),
+		domain.KnownUsageMetric(1), domain.NotApplicableUsageMetric(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usageDraft, err := session.NewSampleUsageDraft(turnID, usage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readyDraft, err := session.NewToolCallReadyDraft(turnID, invocation, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := created.writer.AppendBatch(
+		context.Background(), []session.RecordDraft{commit, usageDraft, readyDraft},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := created.writer.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	factory := &fakeProviderFactory{family: domain.ProviderOpenAI}
+	resumed, err := service.resume(
+		context.Background(), factory, "responses", "gpt-test", created.identity.ThreadID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.toolRecovery == nil || resumed.toolRecovery.TurnID() != turnID ||
+		len(resumed.toolRecovery.Calls()) != 1 || factory.networkCalls.Load() != 0 {
+		t.Fatalf("tool recovery/network = %#v/%d", resumed.toolRecovery, factory.networkCalls.Load())
+	}
+	if err := resumed.writer.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_, plan := loadAppPlan(t, service, created.identity.ThreadID)
+	if plan.ToolRecovery == nil || plan.ToolRecovery.TurnID() != turnID {
+		t.Fatalf("session service mutated recovery tail: %#v", plan.ToolRecovery)
 	}
 }
 

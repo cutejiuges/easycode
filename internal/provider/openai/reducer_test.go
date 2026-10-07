@@ -8,6 +8,7 @@ import (
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
 	"easycode/internal/provider/transport"
+	"easycode/internal/tool"
 )
 
 func TestResponsesStreamReducerAcceptsOrderedSample(t *testing.T) {
@@ -59,6 +60,35 @@ func TestResponsesStreamReducerNormalizesCompletedUsage(t *testing.T) {
 	assertOpenAIMetric(t, usage.CacheWrite(), domain.UsageMetricKnown, 5, true)
 	assertOpenAIMetric(t, usage.Output(), domain.UsageMetricKnown, 30, true)
 	assertOpenAIMetric(t, usage.ReasoningOutput(), domain.UsageMetricKnown, 10, true)
+}
+
+func TestResponsesStreamReducerProducesReadyReadCall(t *testing.T) {
+	reducer := newResponsesStreamReducer(testOpenAIToolCatalog(t))
+	reduceOpenAIEvent(t, reducer, `{"type":"response.created","response":{"id":"resp-tool"}}`)
+	reduceOpenAIEvent(t, reducer, `{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc-1","call_id":"call-1","name":"Read"}}`)
+	reduceOpenAIEvent(t, reducer, `{"type":"response.function_call_arguments.delta","item_id":"fc-1","output_index":0,"delta":"{\"file_path\":\"README.md\",\"offset\":2,\"limit\":3}"}`)
+	reduceOpenAIEvent(t, reducer, `{"type":"response.function_call_arguments.done","item_id":"fc-1","output_index":0,"arguments":"{\"file_path\":\"README.md\",\"offset\":2,\"limit\":3}"}`)
+	result := reduceOpenAIEvent(t, reducer, `{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc-1","call_id":"call-1","name":"Read","arguments":"{\"file_path\":\"README.md\",\"offset\":2,\"limit\":3}"}}`)
+	if result.native == nil || result.native.CallID != "call-1" {
+		t.Fatalf("native function call = %#v", result.native)
+	}
+	reduceOpenAIEvent(t, reducer, `{"type":"response.completed","response":{"id":"resp-tool"}}`)
+	ready := reducer.readyCalls()
+	if len(ready) != 1 || ready[0].ProviderCallID() != tool.ProviderCallID("call-1") ||
+		ready[0].ReadInput().FilePath() != "README.md" || ready[0].ReadInput().Offset() != 2 || ready[0].ReadInput().Limit() != 3 {
+		t.Fatalf("ready calls = %#v", ready)
+	}
+}
+
+func TestResponsesStreamReducerRejectsIncompleteReadArguments(t *testing.T) {
+	reducer := newResponsesStreamReducer(testOpenAIToolCatalog(t))
+	reduceOpenAIEvent(t, reducer, `{"type":"response.created","response":{"id":"resp-tool"}}`)
+	reduceOpenAIEvent(t, reducer, `{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc-1","call_id":"call-1","name":"Read"}}`)
+	_, err := reducer.reduce(transport.SSEEvent{Data: `{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc-1","call_id":"call-1","name":"Read","arguments":"{}"}}`})
+	var faultError *fault.Error
+	if !errors.As(err, &faultError) || faultError.Code != fault.CodeStreamProtocol || len(reducer.readyCalls()) != 0 {
+		t.Fatalf("incomplete arguments error/state = %v/%#v", err, reducer.readyCalls())
+	}
 }
 
 func TestResponsesStreamReducerPreservesMissingAndExplicitZeroUsage(t *testing.T) {

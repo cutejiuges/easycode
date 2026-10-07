@@ -26,6 +26,7 @@ import (
 	chatRuntime "easycode/internal/runtime"
 	"easycode/internal/secret"
 	"easycode/internal/session"
+	"easycode/internal/tool"
 )
 
 func TestRunPrintModeUsesExistingChatResources(t *testing.T) {
@@ -410,6 +411,7 @@ func TestChatResourcesCloseOrdersSessionJournalAndProvider(t *testing.T) {
 		SessionID: runtimeSessionIDForApp, ThreadID: runtimeThreadIDForApp, Journal: journal,
 		GenerateTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
 		ContextProfile: mustAppContextProfile(t), ProjectInstructions: mustEmptyAppProjectInstructions(t),
+		ToolCatalog: mustAppToolCatalog(t), ReadExecutor: appReadExecutor{},
 		ContextBudget:  contextplan.DisabledBudget(),
 		ContextPlanner: contextplan.NewPlanner(),
 	})
@@ -469,6 +471,54 @@ func TestChatResourcesWriterCloseFailureStillClosesProvider(t *testing.T) {
 	}
 }
 
+func TestResourceCleanupClosesInReverseOrderAndJoinsErrors(t *testing.T) {
+	t.Parallel()
+	var timeline []string
+	cleanup := &resourceCleanup{}
+	cleanup.add(func() error {
+		timeline = append(timeline, "repository")
+		return errors.New("repository close failed")
+	})
+	cleanup.add(func() error {
+		timeline = append(timeline, "workspace")
+		return nil
+	})
+	cleanup.add(func() error {
+		timeline = append(timeline, "provider")
+		return errors.New("provider close failed")
+	})
+	cleanup.add(func() error {
+		timeline = append(timeline, "journal")
+		return nil
+	})
+
+	err := cleanup.close()
+	if got := strings.Join(timeline, ","); got != "journal,provider,workspace,repository" {
+		t.Fatalf("cleanup order = %q", got)
+	}
+	if err == nil || !strings.Contains(err.Error(), "provider close failed") ||
+		!strings.Contains(err.Error(), "repository close failed") {
+		t.Fatalf("cleanup error = %v", err)
+	}
+	if err := cleanup.close(); err != nil {
+		t.Fatalf("second cleanup = %v", err)
+	}
+}
+
+func TestResourceCleanupReleaseTransfersOwnership(t *testing.T) {
+	t.Parallel()
+	closed := false
+	cleanup := &resourceCleanup{}
+	cleanup.add(func() error {
+		closed = true
+		return nil
+	})
+	cleanup.release()
+	if err := cleanup.close(); err != nil || closed {
+		t.Fatalf("released cleanup closed transferred resource: closed=%t error=%v", closed, err)
+	}
+}
+
 func TestChatResourcesShutdownTimeoutEscalatesAndClosesDependencies(t *testing.T) {
 	t.Parallel()
 	streamStarted := make(chan struct{})
@@ -479,6 +529,7 @@ func TestChatResourcesShutdownTimeoutEscalatesAndClosesDependencies(t *testing.T
 		SessionID: runtimeSessionIDForApp, ThreadID: runtimeThreadIDForApp, Journal: journal,
 		GenerateTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
 		ContextProfile: mustAppContextProfile(t), ProjectInstructions: mustEmptyAppProjectInstructions(t),
+		ToolCatalog: mustAppToolCatalog(t), ReadExecutor: appReadExecutor{},
 		ContextBudget:  contextplan.DisabledBudget(),
 		ContextPlanner: contextplan.NewPlanner(),
 	})
@@ -662,7 +713,7 @@ func (*orderedConversation) ProjectHistory() domain.SemanticHistoryView {
 }
 
 func (*orderedConversation) HistoryFootprint() (domain.NativeHistoryFootprint, error) {
-	estimated, _ := domain.NewEstimatedTokenEstimate(estimate.MethodByteHeuristicV1, 0)
+	estimated, _ := domain.NewEstimatedTokenEstimate(estimate.MethodByteHeuristic, 0)
 	return domain.NewNativeHistoryFootprint(domain.ProviderOpenAI, 0, estimated)
 }
 
@@ -728,6 +779,7 @@ func mustIdleAppRuntime(t *testing.T, journal chatRuntime.Journal) *chatRuntime.
 		SessionID: runtimeSessionIDForApp, ThreadID: runtimeThreadIDForApp, Journal: journal,
 		GenerateTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
 		ContextProfile: mustAppContextProfile(t), ProjectInstructions: mustEmptyAppProjectInstructions(t),
+		ToolCatalog: mustAppToolCatalog(t), ReadExecutor: appReadExecutor{},
 		ContextBudget:  contextplan.DisabledBudget(),
 		ContextPlanner: contextplan.NewPlanner(),
 	})
@@ -744,6 +796,21 @@ func mustAppContextProfile(t *testing.T) contextplan.ProviderProfile {
 		t.Fatal(err)
 	}
 	return profile
+}
+
+type appReadExecutor struct{}
+
+func (appReadExecutor) Execute(context.Context, tool.ReadInvocation) tool.InvocationResult {
+	return tool.InvocationResult{}
+}
+
+func mustAppToolCatalog(t *testing.T) tool.CatalogSnapshot {
+	t.Helper()
+	catalog, err := tool.NewReadCatalogSnapshot(appReadExecutor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return catalog
 }
 
 func mustEmptyAppProjectInstructions(t *testing.T) domain.ProjectInstructionsSnapshot {

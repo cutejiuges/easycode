@@ -8,115 +8,110 @@
 
 ### Requirement: Compile a text-only Responses request
 
-系统 SHALL 向解析后的 `responses` endpoint 发送 OpenAI Responses 请求。请求 MUST 包含配置的 model、可选的临时项目指令上下文 item、完整会话原生 input 和当前用户输入，并 MUST 设置 `stream=true` 与 `store=false`。
+系统 SHALL向解析后的 `responses` endpoint发送OpenAI Responses请求。请求 MUST包含model、可选临时项目指令context item、完整native input、`stream=true`、`store=false`以及当前Tool Catalog编译出的稳定tools数组。首个sample或新用户turn必须追加真实当前用户input item；tool outputs后的continuation sample不得追加合成user item或空input。
 
-存在项目指令文档时，RequestCompiler SHALL 把规范化快照编码为一个 OpenAI 原生 user context item，并将它置于全部已提交原生历史和当前用户 item 之前。该 item MUST 与真实用户输入保持独立，使用确定的来源边界，并在每轮从同一快照重新生成；它不得进入 Conversation native history、prepared sample 或 semantic history。不存在项目指令文档时，编译结果 MUST 与既有请求完全相同且不得生成空 context item。
-
-本阶段请求 MUST NOT 使用 `previous_response_id`，MUST NOT 声明工具，并 SHALL 请求保留服务端返回的 encrypted reasoning 内容。Authorization SHALL 使用配置的 secret，且该 secret、项目指令正文和绝对来源路径 MUST NOT 进入错误、日志、fixture 或 snapshot；项目指令只可出现在专门验证请求编译的脱敏 golden 中。
+项目指令context item SHALL位于native history和真实当前输入之前，保持独立且不进入native history。Read facade SHALL编译为strict function tool，名称、description和parameters来自不可变catalog snapshot。请求 MUST NOT使用 `previous_response_id`或声明未实现custom/parallel tools，并继续请求保留encrypted reasoning。Authorization secret、项目指令正文、workspace绝对路径和动态调用identity MUST NOT进入错误、日志或普通fixture。
 
 #### Scenario: Compile the first turn
-
-- **WHEN** 空会话在存在项目指令文档时收到第一条非空用户文本
-- **THEN** 请求 input 先包含一个项目指令 user context item，再包含该用户输入对应的独立 OpenAI 原生 item
-- **THEN** 请求启用 stream、禁用 store 且不包含 `previous_response_id`
+- **WHEN** 空会话收到用户输入且catalog只包含Read
+- **THEN** 请求input包含真实用户item，tools包含恰好一个strict Read function，并启用stream、禁用store
 
 #### Scenario: Compile the first turn without project instructions
-
-- **WHEN** 空会话使用无文档项目指令快照收到第一条非空用户文本
-- **THEN** 请求 input 只包含该用户输入对应的 OpenAI 原生 item
-- **THEN** 请求 canonical bytes 与本变更前的相同输入 fixture 完全一致
+- **WHEN** 项目指令为空
+- **THEN** input不生成空context item，Read tool仍按稳定schema声明
 
 #### Scenario: Compile a later turn from native history
-
-- **WHEN** 已完成一轮对话后使用同一项目指令快照提交下一条用户文本
-- **THEN** 请求 input 按项目指令 context item、已提交用户 item、assistant 原生 output items、新用户 item 的顺序排列
-- **THEN** 请求不是从 RuntimeEvent、TUI transcript 或扁平共享 Message 反向构造
+- **WHEN** native history包含function call及匹配function call output
+- **THEN** 下一请求按原顺序回放这些items并直接继续sampling，不从RuntimeEvent、扁平Message或合成user item重建
 
 #### Scenario: Deterministic request compilation
-
-- **WHEN** model、项目指令快照、原生历史和当前输入完全相同
-- **THEN** 编译结果的稳定 JSON bytes 完全相同
-- **THEN** 项目根绝对路径、cwd、mtime 和 Session metadata 不参与请求编译
+- **WHEN** model、catalog、项目指令、native history和当前输入相同
+- **THEN** canonical bytes和fingerprint完全相同，cwd、mtime、Session和invocation identity不参与
 
 ### Requirement: Reduce supported Responses stream events
 
-系统 SHALL 以单个 Responses sample 状态机归并事件：有效的 `response.created` 必须先建立唯一的非空 response ID；`response.output_text.delta` SHALL 投影为 assistant 文本增量；`response.output_item.done` SHALL 按到达顺序保存完成的原生 item；仅有 ID 与 created ID 一致且首次出现的 `response.completed` 才是成功终态。
+系统 SHALL以单个Responses sample状态机归并事件：有效 `response.created`先建立唯一response ID；text delta继续投影文本；完成的output items按wire顺序保存；只有identity匹配的首次 `response.completed`为成功terminal。
 
-系统 SHALL 将与当前 response ID 一致的 `response.failed` 和 `response.incomplete` 视为失败终态。重复 created、终态前缺少 created、response ID 冲突、重复终态和终态后的任何事件 MUST 作为 stream protocol failure；未知但格式正确且位于活动 sample 内的 event MUST NOT 导致 panic，系统 SHALL 可诊断地忽略当前切片不消费的事件，同时不得把未知事件伪装成已支持能力。
+function call SHALL从Responses原生function-call item及arguments delta/done事件归并，保留非空call ID、名称和完整arguments。只有item完成、arguments完整且通过当前Read facade strict decoder后才能产生typed ready call。partial arguments不得产生executor I/O。重复call ID、未知tool、冲突item identity、非法/超限arguments、重复terminal、terminal后事件或identity冲突 MUST作为stream protocol failure。
 
 #### Scenario: Establish one response identity
-
-- **WHEN** 服务端首先发送包含非空 ID 的 `response.created`
-- **THEN** reducer 将该 ID 固定为当前 sample identity
-- **THEN** 相同或不同 ID 的第二个 `response.created` 都被拒绝为协议错误
+- **WHEN** 服务端首先发送非空ID的 `response.created`
+- **THEN** reducer固定唯一sample identity并拒绝第二个created
 
 #### Scenario: Stream assistant text
-
-- **WHEN** 活动 response 依次发送多个 `response.output_text.delta`
-- **THEN** 系统按接收顺序产生对应的 assistant 文本增量事件
+- **WHEN** 活动response发送多个output text deltas
+- **THEN** 系统按接收顺序投影文本
 
 #### Scenario: Preserve completed native items
-
-- **WHEN** 活动 response 发送 `response.output_item.done`
-- **THEN** 系统按 wire 顺序保存该 item 的已知强类型字段
-- **THEN** 未识别扩展仅保留在 OpenAI 包内受控的 opaque envelope 中
+- **WHEN** response完成message、reasoning或function-call item
+- **THEN** 已知字段和受控opaque扩展按wire顺序保留在OpenAI包内
 
 #### Scenario: Complete only on response.completed
-
-- **WHEN** 服务端发送 response ID 与 created ID 相同的首个合法 `response.completed`
-- **THEN** provider 产生且仅产生一次 completed 终态
+- **WHEN** 首个identity匹配且全部function arguments完整的 `response.completed`到达
+- **THEN** Provider产生且只产生一次completed terminal
 
 #### Scenario: Reject a conflicting completion identity
-
-- **WHEN** `response.completed`、`response.failed` 或 `response.incomplete` 的 response ID 缺失或不同于 created ID
-- **THEN** provider 产生 stream protocol failure，不提交 staged native history
+- **WHEN** completed/failed/incomplete identity缺失或与created冲突
+- **THEN** Provider产生stream protocol failure且不提交staging
 
 #### Scenario: Reject illegal event order
-
-- **WHEN** 服务端在 `response.created` 前发送受支持的 sample event，或在任一终态后继续发送事件
-- **THEN** reducer 返回 stream protocol failure且不产生第二终态
+- **WHEN** 受支持事件在created前或任一terminal后到达
+- **THEN** reducer返回stream protocol failure且不产生第二terminal
 
 #### Scenario: Surface failed and incomplete responses
-
-- **WHEN** 活动 response 发送 ID 匹配的 `response.failed` 或 `response.incomplete`
-- **THEN** provider 产生失败终态和稳定英文错误码
-- **THEN** 失败信息不包含请求正文或敏感 header
+- **WHEN** identity匹配的 `response.failed`或 `response.incomplete`到达
+- **THEN** Provider产生唯一失败terminal且错误不含请求正文或敏感header
 
 #### Scenario: Ignore unknown well-formed event
+- **WHEN** 活动response发送当前切片未知但格式正确的event
+- **THEN** Provider不panic、不伪造call或完成事件并继续等待terminal
 
-- **WHEN** 活动 response 发送当前切片未识别但 JSON 格式正确的 event type
-- **THEN** provider 不 panic、不产生伪造的文本或完成事件，并继续等待后续受支持事件
+#### Scenario: Complete a Read function call
+- **WHEN** function call arguments跨多个delta到达并以完整合法Read输入完成
+- **THEN** output item按wire顺序保留且prepared sample产生匹配typed ready call
+
+#### Scenario: Reject partial function arguments
+- **WHEN** `response.completed`到达时function arguments仍不完整或schema非法
+- **THEN** Provider以协议错误失败且不提交native sample或ready call
 
 ### Requirement: Native history commits transactionally
 
-系统 SHALL 将当前用户 item 和本轮完成的 output items 暂存在 turn staging 中，并仅在收到 `response.completed` 后按 wire 顺序提交到会话级原生历史。失败、取消、idle timeout 或 completed 前 EOF MUST NOT 将部分 assistant output 提交为可续写历史。
+系统 SHALL将可选当前用户item、本sample完成output items、raw usage和ready calls暂存在sample staging，仅在合法 `response.completed` 后形成prepared sample。首个sample必须暂存真实user item；tool outputs后的continuation sample不得暂存或提交新的user item。失败、取消、timeout或EOF不得把部分item提交为history。
+
+Read results SHALL由OpenAI result codec编码为按call index排列的function call output items；每项必须匹配前一sample尚未闭合的call ID并包含冻结模型preview。该tool-output entry只有在Session commit durable后才能进入Conversation history。
 
 #### Scenario: Commit a successful turn
-
-- **WHEN** 一轮包含用户输入、一个或多个完成 output item 并以 `response.completed` 结束
-- **THEN** 用户 item 和 output items 以确定顺序一次性提交到原生历史
+- **WHEN** response完成一个或多个Read function calls
+- **THEN** 用户item、全部output items和usage按wire顺序进入sample native commit
 
 #### Scenario: Discard a partial failed turn
-
-- **WHEN** 已收到文本 delta 或 output item 后发生失败、取消、timeout 或提前 EOF
-- **THEN** 本轮 staging 不进入已提交原生历史
-- **THEN** 下一轮请求不会包含该部分 assistant output
+- **WHEN** 已收到文本、arguments delta或output item后sample失败
+- **THEN** 当前sample staging不进入history且下一请求不包含部分输出
 
 #### Scenario: Preserve reasoning data without rendering it
+- **WHEN** completed原生items包含reasoning summary或encrypted content
+- **THEN** Provider无损保留opaque reasoning且TUI展示选择不改变后续请求
 
-- **WHEN** 完成的原生 item 包含 reasoning summary、raw reasoning 标识或 encrypted content
-- **THEN** 系统在原生历史中无损保留本切片支持的字段
-- **THEN** TUI 是否展示 reasoning 不影响后续请求中的原生历史
+#### Scenario: Commit matching function outputs
+- **WHEN** Read results已durable
+- **THEN** result codec生成匹配call IDs的output items并在durable finalizer后进入history
+
+#### Scenario: Commit a continuation without a synthetic user item
+- **WHEN** tool-output entry已提交且下一Responses sample完成最终output items
+- **THEN** sample entry只提交原生outputs和usage，不复制tool outputs或构造空user item
+
+#### Scenario: Reject mismatched function outputs
+- **WHEN** output call ID缺失、重复或与未闭合calls不匹配
+- **THEN** tool-output entry构造或恢复失败且history不被部分修改
 
 ### Requirement: Advertised capabilities match implemented behavior
 
-OpenAI Provider SHALL 只声明已经由本变更实现并通过测试的能力。工具、并行工具、prompt cache key、`previous_response_id` 和未实现的 reasoning 展示能力 MUST NOT 被声明为可用。
+OpenAI Provider SHALL只声明已经完整实现并通过测试的能力。Read function request编译、stream归并、native persistence/restore和result codec全部存在后，function tools SHALL报告可用；custom tools、parallel tool calls、prompt cache key、`previous_response_id`和未实现reasoning展示 MUST保持unsupported。
 
 #### Scenario: Inspect capabilities after initialization
-
-- **WHEN** Runtime 查询 OpenAI Provider capabilities
-- **THEN** streaming 和本变更实际支持的原生保留能力被准确报告
-- **THEN** 未实现能力被报告为 false 或 unsupported
+- **WHEN** Runtime查询OpenAI capabilities
+- **THEN** streaming、原生保留和function tools准确报告可用
+- **THEN** custom/parallel tools及其他延期能力保持false或unsupported
 
 ### Requirement: Responses completion preserves and normalizes usage
 

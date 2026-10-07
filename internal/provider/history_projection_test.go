@@ -13,7 +13,14 @@ import (
 	"easycode/internal/provider/anthropic"
 	"easycode/internal/provider/openai"
 	"easycode/internal/secret"
+	"easycode/internal/tool"
 )
+
+type inertReadExecutor struct{}
+
+func (inertReadExecutor) Execute(context.Context, tool.ReadInvocation) tool.InvocationResult {
+	return tool.InvocationResult{}
+}
 
 func TestProviderHistoryProjectorsProduceEquivalentTextSemantics(t *testing.T) {
 	anthropicServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
@@ -80,7 +87,15 @@ func TestProviderHistoryProjectorsProduceEquivalentTextSemantics(t *testing.T) {
 
 func completeTurnAndProject(t *testing.T, conversation provider.Conversation, text string) domain.SemanticHistoryView {
 	t.Helper()
-	stream, err := conversation.Stream(context.Background(), provider.TurnInput{Text: text})
+	catalog, err := tool.NewReadCatalogSnapshot(inertReadExecutor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := (provider.TurnInput{Text: text}).WithToolCatalog(catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream, err := conversation.Stream(context.Background(), input)
 	if err != nil {
 		t.Fatalf("start turn: %v", err)
 	}

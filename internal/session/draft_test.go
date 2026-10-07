@@ -1,12 +1,14 @@
 package session
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
 	"easycode/internal/domain"
+	"easycode/internal/tool"
 )
 
 func TestTypedDraftConstructorsSealKindAndPayload(t *testing.T) {
@@ -37,6 +39,15 @@ func TestTypedDraftConstructorsSealKindAndPayload(t *testing.T) {
 		}},
 		{name: "sample usage", kind: EventSampleUsage, make: func() (RecordDraft, error) {
 			return NewSampleUsageDraft(testTurnID, testSampleUsage(t))
+		}},
+		{name: "tool call ready", kind: EventToolCallReady, make: func() (RecordDraft, error) {
+			return NewToolCallReadyDraft(testTurnID, testReadInvocation(t), 0, 0)
+		}},
+		{name: "tool execution started", kind: EventToolExecutionStarted, make: func() (RecordDraft, error) {
+			return NewToolExecutionStartedDraft(testTurnID, testReadInvocation(t).InvocationID())
+		}},
+		{name: "tool call result", kind: EventToolCallResult, make: func() (RecordDraft, error) {
+			return NewToolCallResultDraft(testTurnID, testReadResult(t))
 		}},
 		{name: "turn completed", kind: EventTurnCompleted, make: func() (RecordDraft, error) {
 			return NewTurnCompletedDraft(testTurnID)
@@ -105,6 +116,18 @@ func TestTypedDraftConstructorsRejectSemanticInvalidValues(t *testing.T) {
 			_, err := NewSampleUsageDraft(testTurnID, domain.SampleUsage{})
 			return err
 		}},
+		{name: "tool call ready index", make: func() error {
+			_, err := NewToolCallReadyDraft(testTurnID, testReadInvocation(t), 16, 0)
+			return err
+		}},
+		{name: "tool execution started", make: func() error {
+			_, err := NewToolExecutionStartedDraft(testTurnID, "")
+			return err
+		}},
+		{name: "tool call result", make: func() error {
+			_, err := NewToolCallResultDraft(testTurnID, tool.InvocationResult{})
+			return err
+		}},
 		{name: "turn completed", make: func() error {
 			_, err := NewTurnCompletedDraft("")
 			return err
@@ -137,6 +160,9 @@ func TestRevisionSpecificDecodersAreStrict(t *testing.T) {
 			Payload: json.RawMessage(`{"shape":"text_sample"}`),
 		}),
 		mustDraft(t, EventSampleUsage, testTurnID, testSampleUsage(t)),
+		mustToolReadyDraft(t),
+		mustToolStartedDraft(t),
+		mustToolResultDraft(t),
 		mustDraft(t, EventTurnCompleted, testTurnID, TurnCompletedPayload{}),
 		mustDraft(t, EventTurnFailed, testTurnID, TurnFailedPayload{Code: "failed"}),
 	}
@@ -175,6 +201,61 @@ func TestRevisionSpecificDecodersAreStrict(t *testing.T) {
 	}
 }
 
+func TestToolLedgerPayloadsRoundTripAndRejectMalformedValues(t *testing.T) {
+	readyRecord := Record{
+		PayloadVersion: 1, ReplayRequirement: ReplayRequired, EventKind: EventToolCallReady,
+		Payload: mustToolReadyDraft(t).PayloadBytes(),
+	}
+	readyPayload, err := DecodeToolCallReadyPayload(readyRecord)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invocation, err := readyPayload.Domain()
+	if err != nil || invocation.InvocationID() != testReadInvocation(t).InvocationID() || invocation.Input().FilePath() != "README.md" {
+		t.Fatalf("ready payload domain = %#v, %v", invocation, err)
+	}
+
+	resultRecord := Record{
+		PayloadVersion: 1, ReplayRequirement: ReplayRequired, EventKind: EventToolCallResult,
+		Payload: mustToolResultDraft(t).PayloadBytes(),
+	}
+	resultPayload, err := DecodeToolCallResultPayload(resultRecord)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := resultPayload.Domain(invocation)
+	if err != nil || result.Preview().Text() != "2\thello\n" || result.ProviderCallID() != invocation.ProviderCallID() {
+		t.Fatalf("result payload domain = %#v, %v", result, err)
+	}
+
+	readyDuplicate := readyRecord
+	readyDuplicate.Payload = bytes.Replace(readyRecord.Payload, []byte(`"sample_index":0`), []byte(`"sample_index":0,"sample_index":0`), 1)
+	if _, err := DecodeToolCallReadyPayload(readyDuplicate); err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("duplicate ready field error = %v", err)
+	}
+	resultDuplicate := resultRecord
+	resultDuplicate.Payload = bytes.Replace(resultRecord.Payload, []byte(`"preview":`), []byte(`"preview":"duplicate","preview":`), 1)
+	if _, err := DecodeToolCallResultPayload(resultDuplicate); err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("duplicate result field error = %v", err)
+	}
+
+	invalidStatus := resultRecord
+	invalidStatus.Payload = bytes.Replace(resultRecord.Payload, []byte(`"status":"success"`), []byte(`"status":"future"`), 1)
+	if _, err := DecodeToolCallResultPayload(invalidStatus); err == nil {
+		t.Fatal("invalid result status unexpectedly decoded")
+	}
+	oversized := resultRecord
+	var payload ToolCallResultPayload
+	if err := json.Unmarshal(resultRecord.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	payload.Preview = string(bytes.Repeat([]byte{'x'}, tool.MaxModelPreviewBytes+1))
+	oversized.Payload, _ = json.Marshal(payload)
+	if _, err := DecodeToolCallResultPayload(oversized); err == nil {
+		t.Fatal("oversized result preview unexpectedly decoded")
+	}
+}
+
 func decodeKnownRecord(record Record) error {
 	switch record.EventKind {
 	case EventSessionMeta:
@@ -192,6 +273,15 @@ func decodeKnownRecord(record Record) error {
 	case EventSampleUsage:
 		_, err := DecodeSampleUsagePayload(record)
 		return err
+	case EventToolCallReady:
+		_, err := DecodeToolCallReadyPayload(record)
+		return err
+	case EventToolExecutionStarted:
+		_, err := DecodeToolExecutionStartedPayload(record)
+		return err
+	case EventToolCallResult:
+		_, err := DecodeToolCallResultPayload(record)
+		return err
 	case EventTurnCompleted:
 		_, err := DecodeTurnCompletedPayload(record)
 		return err
@@ -201,6 +291,63 @@ func decodeKnownRecord(record Record) error {
 	default:
 		return nil
 	}
+}
+
+func testReadInvocation(t testing.TB) tool.ReadInvocation {
+	t.Helper()
+	invocationID, err := tool.ParseInvocationID("01890f3e-7bcd-7abc-8abc-0123456789ab")
+	if err != nil {
+		t.Fatal(err)
+	}
+	callID, err := tool.ParseProviderCallID("call-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := tool.NewReadInput("README.md", 2, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready, err := tool.NewReadyCall(callID, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invocation, err := tool.NewReadInvocation(invocationID, ready)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return invocation
+}
+
+func testReadResult(t testing.TB) tool.InvocationResult {
+	t.Helper()
+	return tool.RenderReadSuccess(testReadInvocation(t), "README.md", []string{"hello"}, 1)
+}
+
+func mustToolReadyDraft(t testing.TB) RecordDraft {
+	t.Helper()
+	draft, err := NewToolCallReadyDraft(testTurnID, testReadInvocation(t), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return draft
+}
+
+func mustToolStartedDraft(t testing.TB) RecordDraft {
+	t.Helper()
+	draft, err := NewToolExecutionStartedDraft(testTurnID, testReadInvocation(t).InvocationID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return draft
+}
+
+func mustToolResultDraft(t testing.TB) RecordDraft {
+	t.Helper()
+	draft, err := NewToolCallResultDraft(testTurnID, testReadResult(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return draft
 }
 
 func mustDraft(t testing.TB, kind EventKind, turnID domain.TurnID, payload any) RecordDraft {

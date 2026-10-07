@@ -97,7 +97,7 @@ func TestConversationIgnoresRepeatedCompletedTerminal(t *testing.T) {
 	stream <- anthropicEvent(`{"type":"message_stop"}`)
 	close(stream)
 	output := make(chan provider.StreamEvent, 16)
-	conversation.consumeStream(context.Background(), func() {}, newUserMessage("question"), stream, output)
+	conversation.consumeStream(context.Background(), func() {}, nativeMessagePointer(newUserMessage("question")), testAnthropicToolCatalog(t), stream, output)
 	terminalCount := 0
 	for event := range output {
 		if !event.Kind().Terminal() {
@@ -141,7 +141,7 @@ func TestConversationCancelCompletedRaceHasOneTerminal(t *testing.T) {
 		senders.Wait()
 		close(stream)
 		output := make(chan provider.StreamEvent, 16)
-		conversation.consumeStream(ctx, func() {}, newUserMessage("question"), stream, output)
+		conversation.consumeStream(ctx, func() {}, nativeMessagePointer(newUserMessage("question")), testAnthropicToolCatalog(t), stream, output)
 		terminalCount := 0
 		for event := range output {
 			if !event.Kind().Terminal() {
@@ -199,8 +199,8 @@ func TestProviderCreatesIsolatedConversations(t *testing.T) {
 
 	first := instance.NewConversation().(*Conversation)
 	second := instance.NewConversation().(*Conversation)
-	first.history.commit(nativeTurn{
-		User:      newUserMessage("first"),
+	first.history.commit(nativeHistoryEntry{
+		Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("first")),
 		Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeText, Text: "answer"}}},
 	})
 
@@ -225,7 +225,7 @@ func TestProviderCapabilitiesReflectImplementedSlice(t *testing.T) {
 	}
 	defer closeAnthropicProvider(t, instance)
 
-	want := provider.Capabilities{Streaming: true, ThinkingSignature: true}
+	want := provider.Capabilities{Streaming: true, ThinkingSignature: true, FunctionTools: true}
 	if got := instance.Capabilities(); got != want {
 		t.Fatalf("capabilities: got %#v want %#v", got, want)
 	}
@@ -250,13 +250,13 @@ func TestConversationAllowsOnlyOneActiveTurn(t *testing.T) {
 	defer closeAnthropicProvider(t, instance)
 	conversation := instance.NewConversation().(*Conversation)
 	ctx, cancel := context.WithCancel(context.Background())
-	stream, err := conversation.Stream(ctx, provider.TurnInput{Text: "first"})
+	stream, err := conversation.Stream(ctx, testAnthropicTurnInput(t, "first"))
 	if err != nil {
 		t.Fatalf("start first turn: %v", err)
 	}
 	<-requestStarted
 
-	second, err := conversation.Stream(context.Background(), provider.TurnInput{Text: "second"})
+	second, err := conversation.Stream(context.Background(), testAnthropicTurnInput(t, "second"))
 	if second != nil {
 		t.Fatalf("concurrent turn returned stream: %#v", second)
 	}
@@ -269,7 +269,7 @@ func TestConversationAllowsOnlyOneActiveTurn(t *testing.T) {
 	}
 	nextContext, cancelNext := context.WithCancel(context.Background())
 	cancelNext()
-	if next, nextErr := conversation.Stream(nextContext, provider.TurnInput{Text: "next"}); next != nil || !errors.Is(nextErr, context.Canceled) {
+	if next, nextErr := conversation.Stream(nextContext, testAnthropicTurnInput(t, "next")); next != nil || !errors.Is(nextErr, context.Canceled) {
 		t.Fatalf("next stream after cleanup = %#v, %v", next, nextErr)
 	}
 }
@@ -303,7 +303,7 @@ func TestConversationPublishesOrderedEventsAndCommitsOnMessageStop(t *testing.T)
 		}
 	}
 	history := conversation.historySnapshot()
-	if len(history) != 1 || history[0].User.Content[0].Text != "hello" || history[0].Assistant.Content[0].Text != "hello" {
+	if len(history) != 1 || history[0].Input.Content[0].Text != "hello" || history[0].Assistant.Content[0].Text != "hello" {
 		t.Fatalf("committed history: %#v", history)
 	}
 	if history[0].Metadata.ID != "msg-1" || history[0].Metadata.StopReason.Value != "end_turn" || history[0].Metadata.Usage.OutputTokens.Value != 2 {
@@ -347,7 +347,7 @@ func TestConversationDiscardsFailedStagingBeforeNextTurn(t *testing.T) {
 	}
 	defer closeAnthropicProvider(t, instance)
 	conversation := instance.NewConversation().(*Conversation)
-	failedStream, err := conversation.Stream(context.Background(), provider.TurnInput{Text: "failed user"})
+	failedStream, err := conversation.Stream(context.Background(), testAnthropicTurnInput(t, "failed user"))
 	if err != nil {
 		t.Fatalf("start failed turn: %v", err)
 	}
@@ -499,6 +499,10 @@ func testAnthropicTurnInputWithProject(t *testing.T, text string) provider.TurnI
 	if err != nil {
 		t.Fatal(err)
 	}
+	input, err = input.WithToolCatalog(testAnthropicToolCatalog(t))
+	if err != nil {
+		t.Fatal(err)
+	}
 	return input
 }
 
@@ -516,7 +520,7 @@ func TestConversationRejectsOversizedEvent(t *testing.T) {
 	}
 	defer closeAnthropicProvider(t, instance)
 	conversation := instance.NewConversation().(*Conversation)
-	stream, err := conversation.Stream(context.Background(), provider.TurnInput{Text: "hello"})
+	stream, err := conversation.Stream(context.Background(), testAnthropicTurnInput(t, "hello"))
 	if err != nil {
 		t.Fatalf("start stream: %v", err)
 	}

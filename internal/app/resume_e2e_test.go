@@ -217,8 +217,8 @@ func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
 	}
 }
 
-func TestOpenAIV1CompatibilityFixtureRestoresVisibleHistoryWithoutNetwork(t *testing.T) {
-	fixture, err := os.ReadFile(filepath.Join("..", "session", "testdata", "migrations", "v1", "root.jsonl"))
+func TestCurrentSessionFixtureRestoresVisibleHistoryWithoutNetwork(t *testing.T) {
+	fixture, err := os.ReadFile(filepath.Join("..", "session", "testdata", "current", "root.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,16 +262,16 @@ func TestOpenAIV1CompatibilityFixtureRestoresVisibleHistoryWithoutNetwork(t *tes
 		t.Fatal(err)
 	}
 	if networkCalls.Load() != 0 {
-		t.Fatalf("v1 fixture restore made %d network calls", networkCalls.Load())
+		t.Fatalf("session fixture restore made %d network calls", networkCalls.Load())
 	}
 	if len(resources.history.Turns) != 1 ||
 		resources.history.Turns[0].UserText != "fixture question" ||
 		resources.history.Turns[0].AssistantText != "fixture answer" {
-		t.Fatalf("v1 fixture history = %#v", resources.history)
+		t.Fatalf("session fixture history = %#v", resources.history)
 	}
 	view := tui.NewModel(context.Background(), "test", resources.session, resources.history).View()
 	if !strings.Contains(view, "User: fixture question") || !strings.Contains(view, "Assistant: fixture answer") {
-		t.Fatalf("v1 fixture transcript = %s", view)
+		t.Fatalf("session fixture transcript = %s", view)
 	}
 	if err := resources.close(context.Background()); err != nil {
 		t.Fatal(err)
