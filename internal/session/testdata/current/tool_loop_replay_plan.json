@@ -4,7 +4,6 @@
   "provider": "openai",
   "provider_wire": "responses",
   "model": "fixture-model",
-  "schema_revision": 1,
   "creation_cwd": "/workspace",
   "turns": [
     {
@@ -21,7 +20,7 @@
       "payload_version": 1
     },
     {
-      "sequence": 9,
+      "sequence": 15,
       "turn_id": "00000000-0002-7000-8000-000000000003",
       "provider": "openai",
       "wire": "responses",
@@ -41,5 +40,5 @@
       }
     }
   ],
-  "next_sequence": 11
+  "next_sequence": 17
 }

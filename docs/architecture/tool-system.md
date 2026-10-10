@@ -1,7 +1,7 @@
 # EasyCode Tool 系统架构设计
 
-> 状态：P3 目标架构，尚未实现
-> 更新时间：2026-10-07
+> 状态：P3 增量实现中；Read、Glob、Grep 与有序只读并行已实现
+> 更新时间：2026-10-10
 > 适用范围：Tool Catalog、Provider Tool Wire、Agent Tool Loop、权限与 sandbox、执行调度、结果预算、Session 恢复和宿主展示
 > 前置阅读：[总体架构设计](overall-architecture.md)、[产品阶段路线图](../roadmap/product-roadmap.md)、[踩坑与经验记录](../roadmap/pitfall-log.md)
 
@@ -9,7 +9,7 @@
 
 本文固定 Tool 系统的完整大图、长期边界和分阶段实现顺序，避免多个长周期 change 各自发明一套调用、权限、恢复或结果协议。
 
-本文不是“能力已实现”的声明。当前 `internal/tool` 与 `internal/tool/builtin` 仍是经批准的 TODO 占位；任何 Tool schema、Session record、Runtime command/event、权限协议或跨包接口落地前，仍必须建立独立 OpenSpec change，经过 `propose -> review/confirm -> apply -> verify -> archive`。
+本文同时记录已实现基线与后续目标。当前 `internal/tool` 与 `internal/tool/builtin` 已提供 Read、Glob、Grep 的强类型输入/结果、Unix handle-relative executor、双 Provider facade 和有序并行调度；Edit/Write/Exec、approval、artifact、Tool UI 与 Windows 等价安全实现仍未落地。任何新增 Tool schema、Session record、权限协议或跨包接口仍必须建立独立 OpenSpec change，经过 `propose -> review/confirm -> apply -> verify -> archive`。
 
 参考工程的使用原则如下：
 
@@ -107,7 +107,7 @@ Tool 是当前最适合推进的能力模块，原因不是 Roadmap 顺序本身
 
 Capability 必须声明：
 
-- 输入和输出的内部 revision。
+- 当前强类型输入、结果与 validator。
 - 副作用分类与调度分类。
 - 所需 sandbox capability。
 - 默认结果预算类别。
@@ -128,13 +128,13 @@ Facade 不执行工具，也不自行放宽 Capability 的安全约束。
 
 ### 5.3 Catalog 与 CatalogSnapshot
 
-`ToolCatalog` 在应用启动或显式刷新时组合 built-in 与未来扩展工具，并生成不可变 snapshot。每个 sampling 只绑定一个 snapshot revision，至少包含：
+`ToolCatalog` 在应用启动或显式刷新时组合 built-in 与未来扩展工具，并生成不可变 snapshot。每个 sampling 只绑定一个内容 fingerprint，至少包含：
 
 - 稳定排序后的可见 Facade。
 - Capability 与 executor route 的封闭映射。
 - schema canonical bytes 与 fingerprint。
 - policy/sandbox 所需的静态 metadata。
-- 来源 revision，但不包含密钥、绝对临时路径和易变 world state。
+- 由稳定 facade 名称、描述和 canonical schema bytes 派生的 fingerprint，不包含密钥、绝对临时路径和易变 world state。
 
 模型只能调用本次 snapshot 中可见的工具。动态刷新只能在 sampling safe point 切换 snapshot；已经收到的调用继续使用其原 snapshot 路由，避免同名工具被静默替换。
 
@@ -142,7 +142,7 @@ Facade 不执行工具，也不自行放宽 Capability 的安全约束。
 
 `ToolInputStreamDecoder` 归并 Provider-native delta，仅产生无副作用 draft。完整 item 到达后，strict decoder 生成 typed input，再由 Validator 检查语义、边界、大小和组合约束。
 
-禁止导出的核心构造器接受 `any` 或无约束 `map[string]any`。每个 capability/revision 必须具有 typed constructor、strict decoder 和 validator。
+禁止导出的核心构造器接受 `any` 或无约束 `map[string]any`。每个当前 capability 必须具有 typed constructor、strict decoder 和 validator。
 
 ### 5.5 ToolPolicy 与 Approval
 
@@ -305,14 +305,14 @@ headless 无交互宿主遇到 `ask` 时默认失败关闭。未来若支持预�
 - Exec 可保留头尾窗口、退出码和 stderr 摘要。
 - Patch/Write 返回确定性 diff/摘要，不回显整个文件。
 
-当完整结果超限时：
+未来 artifact change 落地后，完整结果超限时的目标流程是：
 
 1. 先把完整结果按策略保存为权限受控 artifact。
 2. 生成确定性的模型预览和替换原因。
-3. 将“模型实际收到的预览字节 + artifact descriptor + 预算 revision”写入 durable fact。
+3. 将“模型实际收到的预览字节 + artifact descriptor + 截断元数据”写入 durable fact。
 4. 恢复时复用已保存预览，不根据新预算重新截断。
 
-artifact 不是 Session 事实源。JSONL 保存 descriptor、摘要和完整性信息；SQLite 只做可重建索引。敏感结果可以选择不落 artifact，此时必须生成明确的不可恢复说明。
+当前 Read/Glob/Grep 尚不创建 artifact：搜索工具只持久化最多 64 KiB 的确定性模型预览、typed metadata、省略计数和不完整原因，恢复复用这些冻结字节且不重搜 workspace。artifact 不是 Session 事实源；后续实现时 JSONL 只保存 descriptor、摘要和完整性信息，SQLite 仍只做可重建索引。
 
 ## 11. Session 事实与 RuntimeEvent
 
@@ -325,10 +325,10 @@ artifact 不是 Session 事实源。JSONL 保存 descriptor、摘要和完整性
 | 结果/拒绝/取消/不确定 | 是 | 是 | 保证 call/output 配对 |
 | 高频参数 delta | 否 | 可节流发布 | 不作为恢复事实 |
 | 高频 stdout/stderr chunk | 默认否 | 可节流发布 | 完整内容按 artifact 策略处理 |
-| 模型预览字节与预算 revision | 是 | 可投影 | 恢复必须精确复用 |
+| 模型预览字节与截断元数据 | 是 | 可投影 | 恢复必须精确复用 |
 | UI 展开、焦点、spinner | 否 | 本地状态 | 不进入协议与缓存 |
 
-未来引入任何 record kind/revision 时，必须同时提交 typed constructor、strict decoder、validator、不可变历史 fixture 和 replay migration test。既有 append-only records 不得在 resume 时原地改写。
+稳定发布前新增或修改 record kind 时，直接替换唯一 current fixture，并让旧开发 shape fail closed。稳定发布后若引入真实 revision，必须同时提交 typed constructor、strict decoder、validator、不可变历史 fixture、兼容窗口和 replay migration test；既有 append-only records 不得在 resume 时原地改写。
 
 ## 12. 配对修复与恢复
 
@@ -347,13 +347,12 @@ artifact 不是 Session 事实源。JSONL 保存 descriptor、摘要和完整性
 
 ### 13.1 P3 核心能力
 
-- Read：已由 `add-read-tool-loop` 实现；当前仅支持顺序执行和固定只读策略。
-- Glob 与 Grep。
+- Read、Glob、Grep：已实现强类型输入/结果、双 Provider facade、Unix 安全 executor、固定只读策略和最多 8 路有序并行。
 - Edit/structured patch 与 OpenAI `apply_patch` freeform facade。
 - Write。
 - exec 与 `write_stdin`，随后补后台进程控制。
 - allow/ask/deny、approval、sandbox plan。
-- ledger 与配对恢复：Read 已实现；有序并发、通用结果预算和 artifact 仍未实现。
+- ledger 与配对恢复：Read/Glob/Grep 已实现；通用结果预算和 artifact 仍未实现。
 - 工具回合后的 sampling safe point，以及建立在该 safe point 上的 same-turn steer。
 
 ### 13.2 后续阶段能力
@@ -366,12 +365,12 @@ artifact 不是 Session 事实源。JSONL 保存 descriptor、摘要和完整性
 
 ## 14. 推荐的 OpenSpec 纵向切片
 
-下列名称是推荐 change 名称，不代表目录已经创建。每个 change 必须只在前一项归档或其契约稳定后再提出，避免长线 change 同时修改 Provider、Session、Runtime、Tool 和 UI。
+下列名称是纵向 change 顺序；前两项已经实现，后续项仍必须在前置契约稳定后单独提出。
 
 | 顺序 | 推荐 change | 主要闭环 | 明确排除 |
 | --- | --- | --- | --- |
-| 1 | `add-read-tool-loop` | 单个 Read 的 catalog、双 Provider wire、durable ready/result、ledger、一个多 sample 回合 | 并发、写入、shell、通用动态 registry |
-| 2 | `add-search-tools-and-ordered-parallelism` | Glob/Grep、连续只读并发、按调用顺序提交 | 写工具和复杂调度 DAG |
+| 1（已实现） | `add-read-tool-loop` | 单个 Read 的 catalog、双 Provider wire、durable ready/result、ledger、一个多 sample 回合 | 并发、写入、shell、通用动态 registry |
+| 2（已实现） | `add-search-tools-and-ordered-parallelism` | Glob/Grep、连续只读并发、按调用顺序提交 | 写工具和复杂调度 DAG |
 | 3 | `add-tool-approval-protocol` | allow/ask/deny、headless 失败关闭、输入修改后重验、approval event/fact | 平台 sandbox 具体实现 |
 | 4 | `add-file-patch-tools` | Anthropic structured Edit、OpenAI freeform apply_patch、base evidence、diff artifact | 任意文件写入 facade |
 | 5 | `add-file-write-tool` | 新文件/整文件写入、原子替换、权限与冲突策略 | 命令执行 |
@@ -408,10 +407,9 @@ artifact 不是 Session 事实源。JSONL 保存 descriptor、摘要和完整性
 
 ## 16. 尚需由具体 Change 冻结的参数
 
-本文只固定边界，不提前固定没有实现证据的数值。以下参数由首次消费者所在 change 给出默认值、配置面和测试：
+当前已冻结每 turn 最多 16 个 sample、64 个 tool call、最多 8 路只读并行，以及搜索 64 KiB preview、walker 深度 64/目录项 200,000、Grep 50,000 文件/256 MiB 累计扫描预算。以下尚未实现的参数由首次消费者所在 change 给出默认值、配置面和测试：
 
-- 每 turn 最大 sample 数与 tool call 数。
-- 每个 capability 的输入、模型预览、artifact 和累计上下文预算。
+- 写工具和进程工具的输入、模型预览、artifact 和累计上下文预算。
 - approval 规则的持久范围和过期方式。
 - P3 支持平台及各平台 sandbox capability matrix。
 - Read/Patch/Write 的编码、换行、权限保留、冲突和二进制文件策略。

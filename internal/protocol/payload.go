@@ -58,9 +58,6 @@ func DecodeAssistantTextDelta(event Event) (AssistantTextDeltaPayload, error) {
 	if event.Kind != EventAssistantTextDelta {
 		return AssistantTextDeltaPayload{}, fmt.Errorf("event kind is not assistant_text_delta")
 	}
-	if event.Version != CurrentVersion {
-		return AssistantTextDeltaPayload{}, fmt.Errorf("assistant text delta version is invalid")
-	}
 	var payload AssistantTextDeltaPayload
 	if err := codec.UnmarshalStrict(event.Payload, &payload); err != nil {
 		return AssistantTextDeltaPayload{}, fmt.Errorf("decode assistant text delta: %w", err)
@@ -91,9 +88,6 @@ func DecodeTurnFailed(event Event) (TurnFailedPayload, error) {
 	if event.Kind != EventTurnFailed {
 		return TurnFailedPayload{}, fmt.Errorf("event kind is not turn_failed")
 	}
-	if event.Version != CurrentVersion {
-		return TurnFailedPayload{}, fmt.Errorf("turn failure version is invalid")
-	}
 	var payload TurnFailedPayload
 	if err := codec.UnmarshalStrict(event.Payload, &payload); err != nil {
 		return TurnFailedPayload{}, fmt.Errorf("decode turn failure: %w", err)
@@ -118,9 +112,6 @@ func DecodeTurnCompleted(event Event) (TurnCompletedPayload, error) {
 	if event.Kind != EventTurnCompleted {
 		return TurnCompletedPayload{}, fmt.Errorf("event kind is not turn_completed")
 	}
-	if event.Version != CurrentVersion {
-		return TurnCompletedPayload{}, fmt.Errorf("turn completion version is invalid")
-	}
 	var payload TurnCompletedPayload
 	if err := codec.UnmarshalStrict(event.Payload, &payload); err != nil {
 		return TurnCompletedPayload{}, fmt.Errorf("decode turn completion: %w", err)
@@ -134,9 +125,6 @@ func DecodeTurnCompleted(event Event) (TurnCompletedPayload, error) {
 func validatePayloadlessEvent(event Event, kind EventKind) error {
 	if event.Kind != kind {
 		return fmt.Errorf("event kind is not %s", kind)
-	}
-	if event.Version != CurrentVersion {
-		return fmt.Errorf("event version is invalid")
 	}
 	if len(event.Payload) != 0 {
 		return fmt.Errorf("%s payload must be empty", kind)

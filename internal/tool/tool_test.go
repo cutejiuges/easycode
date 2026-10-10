@@ -15,6 +15,18 @@ func (inertReadExecutor) Execute(context.Context, ReadInvocation) InvocationResu
 	return InvocationResult{}
 }
 
+type inertGlobExecutor struct{}
+
+func (inertGlobExecutor) Execute(context.Context, GlobInvocation) InvocationResult {
+	return InvocationResult{}
+}
+
+type inertGrepExecutor struct{}
+
+func (inertGrepExecutor) Execute(context.Context, GrepInvocation) InvocationResult {
+	return InvocationResult{}
+}
+
 func TestReadInputStrictDecodeAndBounds(t *testing.T) {
 	t.Parallel()
 
@@ -55,15 +67,15 @@ func TestReadInputStrictDecodeAndBounds(t *testing.T) {
 func TestCatalogIsDeterministicImmutableAndReadOnly(t *testing.T) {
 	t.Parallel()
 
-	first, err := NewReadCatalogSnapshot(inertReadExecutor{})
+	first, err := NewReadOnlyCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, inertGrepExecutor{})
 	if err != nil {
 		t.Fatalf("创建目录: %v", err)
 	}
-	second, err := newCatalogSnapshot(CatalogRevision, reverseFacades(first.Facades()))
+	second, err := newCatalogSnapshot(reverseFacades(first.Facades()))
 	if err != nil {
 		t.Fatalf("以反向注册顺序创建目录: %v", err)
 	}
-	if first.Revision() == "" || first.Fingerprint() != second.Fingerprint() || string(first.CanonicalJSON()) != string(second.CanonicalJSON()) {
+	if first.Fingerprint() == "" || first.Fingerprint() != second.Fingerprint() || string(first.CanonicalJSON()) != string(second.CanonicalJSON()) {
 		t.Fatal("目录不随注册顺序保持稳定")
 	}
 	for _, family := range []domain.ProviderFamily{domain.ProviderAnthropic, domain.ProviderOpenAI} {
@@ -71,8 +83,15 @@ func TestCatalogIsDeterministicImmutableAndReadOnly(t *testing.T) {
 		if viewErr != nil {
 			t.Fatalf("读取 %s view: %v", family, viewErr)
 		}
-		if len(view.Facades()) != 1 || view.Facades()[0].Name() != "Read" {
-			t.Fatalf("%s 未只暴露 Read", family)
+		if len(view.Facades()) != 3 {
+			t.Fatalf("%s 未完整暴露三工具", family)
+		}
+		names := map[string]bool{}
+		for _, facade := range view.Facades() {
+			names[facade.Name()] = true
+		}
+		if !names["Read"] || !names["Glob"] || !names["Grep"] {
+			t.Fatalf("%s facade 不完整: %#v", family, names)
 		}
 		bytes := view.CanonicalJSON()
 		bytes[0] = '['
@@ -88,24 +107,26 @@ func TestCatalogIsDeterministicImmutableAndReadOnly(t *testing.T) {
 	if err := first.Validate(); err != nil {
 		t.Fatalf("调用方修改 getter 污染目录: %v", err)
 	}
-	if _, err := NewReadCatalogSnapshot(nil); err == nil {
-		t.Fatal("未绑定 executor 的目录应被拒绝")
+	if _, err := NewReadOnlyCatalogSnapshot(nil, inertGlobExecutor{}, inertGrepExecutor{}); err == nil {
+		t.Fatal("缺少 Read executor 的目录应被拒绝")
+	}
+	if _, err := NewReadOnlyCatalogSnapshot(inertReadExecutor{}, nil, inertGrepExecutor{}); err == nil {
+		t.Fatal("缺少 Glob executor 的目录应被拒绝")
+	}
+	if _, err := NewReadOnlyCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, nil); err == nil {
+		t.Fatal("缺少 Grep executor 的目录应被拒绝")
 	}
 	changedFacades := first.Facades()
 	changedFacades[0].description += " Changed."
-	changedSchema, err := newCatalogSnapshot(CatalogRevision, changedFacades)
+	changedSchema, err := newCatalogSnapshot(changedFacades)
 	if err != nil {
 		t.Fatal(err)
 	}
-	changedRevision, err := newCatalogSnapshot("tool-catalog.v2", first.Facades())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if changedSchema.Fingerprint() == first.Fingerprint() || changedRevision.Fingerprint() == first.Fingerprint() {
-		t.Fatal("schema 或 catalog revision 变化未使 fingerprint 失效")
+	if changedSchema.Fingerprint() == first.Fingerprint() {
+		t.Fatal("schema/description 变化未使 fingerprint 失效")
 	}
 	text := string(first.CanonicalJSON())
-	for _, absent := range []string{"Glob", "Grep", "Edit", "Write", "Bash", "Skill", "MCP", "Agent", "/absolute/", "secret"} {
+	for _, absent := range []string{"Edit", "Write", "Bash", "Skill", "MCP", "Agent", "/absolute/", "secret", "input_revision", "result_codec_revision"} {
 		if strings.Contains(text, absent) {
 			t.Fatalf("未实现或动态内容进入目录: %q", absent)
 		}
@@ -120,7 +141,7 @@ func TestReadyCallInvocationAndPolicyRejectZeroValues(t *testing.T) {
 	}
 	input, _ := NewReadInput("README.md", 1, 20)
 	providerID, _ := ParseProviderCallID("call-1")
-	call, err := NewReadyCall(providerID, input)
+	call, err := NewReadReadyCall(providerID, input)
 	if err != nil {
 		t.Fatalf("创建 ready call: %v", err)
 	}
@@ -141,6 +162,65 @@ func TestReadyCallInvocationAndPolicyRejectZeroValues(t *testing.T) {
 	}
 }
 
+func TestReadyCallAndInvocationRejectCapabilityPayloadMismatch(t *testing.T) {
+	t.Parallel()
+	callID, _ := ParseProviderCallID("call-search")
+	readInput, _ := NewReadInput("README.md", 1, 20)
+	globInput, _ := NewGlobInput("**/*.go", "", 10)
+	grepInput, _ := NewGrepInput("TODO", "", "*.go", GrepOutputContent, false, 0, 0, 10)
+	readCall, err := NewReadReadyCall(callID, readInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	globCall, err := NewGlobReadyCall(callID, globInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grepCall, err := NewGrepReadyCall(callID, grepInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readCall.Capability() != CapabilityRead || globCall.Capability() != CapabilityGlob || grepCall.Capability() != CapabilityGrep {
+		t.Fatal("ready call capability 标签错误")
+	}
+	invocationID, _ := ParseInvocationID("018f1d8a-7b5c-7def-8123-456789abcdef")
+	if _, err := NewReadInvocation(invocationID, globCall); err == nil {
+		t.Fatal("Glob payload 被 Read invocation 接受")
+	}
+	if _, err := NewGlobInvocation(invocationID, grepCall); err == nil {
+		t.Fatal("Grep payload 被 Glob invocation 接受")
+	}
+	if _, err := NewGrepInvocation(invocationID, readCall); err == nil {
+		t.Fatal("Read payload 被 Grep invocation 接受")
+	}
+	if (GlobInvocation{}).Validate() == nil || (GrepInvocation{}).Validate() == nil {
+		t.Fatal("搜索 invocation 零值必须失败关闭")
+	}
+}
+
+func TestSearchResultUnionRejectsMismatchedMetadata(t *testing.T) {
+	t.Parallel()
+	callID, _ := ParseProviderCallID("call-search")
+	invocationID, _ := ParseInvocationID("018f1d8a-7b5c-7def-8123-456789abcdef")
+	globInput, _ := NewGlobInput("**/*.go", "", 10)
+	globCall, _ := NewGlobReadyCall(callID, globInput)
+	globInvocation, _ := NewGlobInvocation(invocationID, globCall)
+	metadata, err := NewGlobResultMetadata([]string{"internal/tool/tool.go"}, false, 0, 1, SearchComplete, SearchSkipCounts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, _ := NewModelPreview("internal/tool/tool.go\n")
+	result, err := NewGlobInvocationResult(globInvocation, ResultSuccess, "ok", preview, metadata)
+	if err != nil || result.Capability() != CapabilityGlob || len(result.GlobMetadata().Matches()) != 1 {
+		t.Fatalf("合法 Glob result 错误: %#v %v", result, err)
+	}
+	broken := result
+	broken.capability = CapabilityGrep
+	if broken.Validate() == nil {
+		t.Fatal("capability 与 metadata 错配未被拒绝")
+	}
+}
+
 func TestReadRendererIsDeterministicBoundedAndUTF8Safe(t *testing.T) {
 	t.Parallel()
 
@@ -153,13 +233,13 @@ func TestReadRendererIsDeterministicBoundedAndUTF8Safe(t *testing.T) {
 	if first.Preview().Text() != "3\talpha\n4\tbeta\n" || first.Preview().Text() != second.Preview().Text() {
 		t.Fatalf("行号或确定性错误: %q", first.Preview().Text())
 	}
-	if first.Metadata().ReachedEOF() || first.Metadata().StartLine() != 3 || first.Metadata().EndLine() != 4 {
-		t.Fatalf("范围元数据错误: %#v", first.Metadata())
+	if first.ReadMetadata().ReachedEOF() || first.ReadMetadata().StartLine() != 3 || first.ReadMetadata().EndLine() != 4 {
+		t.Fatalf("范围元数据错误: %#v", first.ReadMetadata())
 	}
 
 	longInvocation := testInvocation(t, "unicode.txt", 1, 2000)
 	long := RenderReadSuccess(longInvocation, "unicode.txt", []string{strings.Repeat("界", 2001)}, 1)
-	if !long.Metadata().LongLineTruncated() || !utf8.ValidString(long.Preview().Text()) || !strings.Contains(long.Preview().Text(), "… [line truncated]") {
+	if !long.ReadMetadata().LongLineTruncated() || !utf8.ValidString(long.Preview().Text()) || !strings.Contains(long.Preview().Text(), "… [line truncated]") {
 		t.Fatal("长行未在 Unicode code point 边界稳定截断")
 	}
 	lines := make([]string, 2000)
@@ -167,7 +247,7 @@ func TestReadRendererIsDeterministicBoundedAndUTF8Safe(t *testing.T) {
 		lines[index] = strings.Repeat("界", 2000)
 	}
 	bounded := RenderReadSuccess(longInvocation, "unicode.txt", lines, 4000)
-	if len(bounded.Preview().Text()) > MaxModelPreviewBytes || !utf8.ValidString(bounded.Preview().Text()) || !bounded.Metadata().OutputTruncated() {
+	if len(bounded.Preview().Text()) > MaxModelPreviewBytes || !utf8.ValidString(bounded.Preview().Text()) || !bounded.ReadMetadata().OutputTruncated() {
 		t.Fatal("总 preview 预算未生效")
 	}
 }
@@ -187,7 +267,7 @@ func testInvocation(t *testing.T, path string, offset int, limit int) ReadInvoca
 		t.Fatal(err)
 	}
 	callID, _ := ParseProviderCallID("call-read")
-	call, _ := NewReadyCall(callID, input)
+	call, _ := NewReadReadyCall(callID, input)
 	invocationID, err := ParseInvocationID("018f1d8a-7b5c-7def-8123-456789abcdef")
 	if err != nil {
 		t.Fatal(err)

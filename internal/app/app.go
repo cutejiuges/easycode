@@ -337,7 +337,15 @@ func openChatResourcesWithSnapshot(
 	if err != nil {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "Read executor is unavailable")
 	}
-	toolCatalog, err := builtin.NewCatalog(readExecutor)
+	globExecutor, err := builtin.NewGlobExecutor(workspace)
+	if err != nil {
+		return nil, fault.New(fault.CodeInvalidConfiguration, "Glob executor is unavailable")
+	}
+	grepExecutor, err := builtin.NewGrepExecutor(workspace)
+	if err != nil {
+		return nil, fault.New(fault.CodeInvalidConfiguration, "Grep executor is unavailable")
+	}
+	toolCatalog, err := builtin.NewCatalog(readExecutor, globExecutor, grepExecutor)
 	if err != nil {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "tool catalog is invalid")
 	}
@@ -388,6 +396,8 @@ func openChatResourcesWithSnapshot(
 		Journal: assembled.writer, ContextProfile: contextProfile,
 		ToolCatalog:         toolCatalog,
 		ReadExecutor:        readExecutor,
+		GlobExecutor:        globExecutor,
+		GrepExecutor:        grepExecutor,
 		ProjectInstructions: projectInstructions,
 		ContextBudget:       applicationConfig.ContextBudget, ContextPlanner: contextplan.NewPlanner(),
 	})

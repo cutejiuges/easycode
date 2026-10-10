@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 
 	contextplan "easycode/internal/context"
@@ -17,8 +18,9 @@ import (
 )
 
 const (
-	maxSamplesPerTurn   = 16
-	maxToolCallsPerTurn = 64
+	maxSamplesPerTurn      = 16
+	maxToolCallsPerTurn    = 64
+	maxParallelReadWorkers = 8
 )
 
 // Emitter 接收 Runtime 产生的共享语义事件。
@@ -52,6 +54,8 @@ type Config struct {
 	ContextProfile       contextplan.ProviderProfile
 	ToolCatalog          tool.CatalogSnapshot
 	ReadExecutor         tool.ReadExecutor
+	GlobExecutor         tool.GlobExecutor
+	GrepExecutor         tool.GrepExecutor
 	ProjectInstructions  domain.ProjectInstructionsSnapshot
 	ContextBudget        contextplan.Budget
 	ContextPlanner       ContextPlanner
@@ -68,6 +72,8 @@ type Runtime struct {
 	profile             contextplan.ProviderProfile
 	toolCatalog         tool.CatalogSnapshot
 	readExecutor        tool.ReadExecutor
+	globExecutor        tool.GlobExecutor
+	grepExecutor        tool.GrepExecutor
 	toolPolicy          tool.ReadOnlyPolicy
 	projectInstructions domain.ProjectInstructionsSnapshot
 	budget              contextplan.Budget
@@ -102,8 +108,8 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 	if _, err := config.ToolCatalog.View(conversation.Family()); err != nil {
 		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "runtime tool catalog Provider view is invalid", err)
 	}
-	if config.ReadExecutor == nil {
-		return nil, fault.New(fault.CodeInvalidConfiguration, "runtime Read executor is not configured")
+	if config.ReadExecutor == nil || config.GlobExecutor == nil || config.GrepExecutor == nil {
+		return nil, fault.New(fault.CodeInvalidConfiguration, "runtime read-only executors are not configured")
 	}
 	projectInstructions, err := config.ProjectInstructions.Clone()
 	if err != nil {
@@ -125,7 +131,8 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 		conversation: conversation, journal: config.Journal,
 		sessionID: config.SessionID, threadID: config.ThreadID, newTurnID: config.GenerateTurnID,
 		newInvocationID: config.GenerateInvocationID,
-		profile:         config.ContextProfile, toolCatalog: config.ToolCatalog.Clone(), readExecutor: config.ReadExecutor,
+		profile:         config.ContextProfile, toolCatalog: config.ToolCatalog.Clone(),
+		readExecutor: config.ReadExecutor, globExecutor: config.GlobExecutor, grepExecutor: config.GrepExecutor,
 		toolPolicy: tool.NewReadOnlyPolicy(), projectInstructions: projectInstructions,
 		budget: config.ContextBudget, planner: config.ContextPlanner,
 	}, nil
@@ -230,17 +237,17 @@ func (runtime *Runtime) ReconcileToolTurn(ctx context.Context, plan session.Tool
 		var result tool.InvocationResult
 		switch call.State {
 		case session.ReplayedToolCallReady:
-			result = tool.NewReadErrorResult(
+			result = tool.NewInvocationErrorResult(
 				call.Invocation, tool.ResultCancelled, "session_interrupted_before_execution",
-				"Read cancelled: session interrupted before execution", ".",
+				"Tool cancelled: session interrupted before execution",
 			)
 			if err := runtime.persistToolResult(reconcileContext, plan.TurnID(), result); err != nil {
 				return err
 			}
 		case session.ReplayedToolCallStarted:
-			result = tool.NewReadErrorResult(
+			result = tool.NewInvocationErrorResult(
 				call.Invocation, tool.ResultOutcomeUncertain, "outcome_uncertain",
-				"Read failed: execution outcome is uncertain", ".",
+				"Tool failed: execution outcome is uncertain",
 			)
 			if err := runtime.persistToolResult(reconcileContext, plan.TurnID(), result); err != nil {
 				return err
@@ -547,7 +554,7 @@ func (runtime *Runtime) commitCallSample(
 	ready []tool.ReadyCall,
 	usage domain.SampleUsage,
 	seenInvocationIDs map[tool.InvocationID]struct{},
-) ([]tool.ReadInvocation, error) {
+) ([]tool.Invocation, error) {
 	envelope, err := sample.Envelope()
 	if err != nil {
 		discardPreparedSample(sample)
@@ -565,7 +572,7 @@ func (runtime *Runtime) commitCallSample(
 		discardPreparedSample(sample)
 		return nil, fault.Wrap(fault.CodeStreamProtocol, "sample usage is invalid", err)
 	}
-	invocations := make([]tool.ReadInvocation, len(ready))
+	invocations := make([]tool.Invocation, len(ready))
 	drafts := make([]session.RecordDraft, 0, len(ready)+2)
 	drafts = append(drafts, commitDraft, usageDraft)
 	for index, call := range ready {
@@ -583,7 +590,7 @@ func (runtime *Runtime) commitCallSample(
 			return nil, fault.New(fault.CodeTurnFailed, "tool invocation identity is duplicated")
 		}
 		seenInvocationIDs[invocationID] = struct{}{}
-		invocation, invocationErr := tool.NewReadInvocation(invocationID, call)
+		invocation, invocationErr := tool.NewInvocation(invocationID, call)
 		if invocationErr != nil {
 			discardPreparedSample(sample)
 			return nil, fault.New(fault.CodeStreamProtocol, "provider ready call is invalid")
@@ -608,15 +615,16 @@ func (runtime *Runtime) commitCallSample(
 	return invocations, nil
 }
 
-func (runtime *Runtime) executeToolCalls(ctx context.Context, turnID domain.TurnID, invocations []tool.ReadInvocation) ([]tool.InvocationResult, error) {
-	results := make([]tool.InvocationResult, 0, len(invocations))
-	for _, invocation := range invocations {
+func (runtime *Runtime) executeToolCalls(ctx context.Context, turnID domain.TurnID, invocations []tool.Invocation) ([]tool.InvocationResult, error) {
+	type job struct{ index int }
+	results := make([]tool.InvocationResult, len(invocations))
+	started := make([]bool, len(invocations))
+	persistCount := len(invocations)
+	var admissionErr error
+	startedCount := 0
+	for index, invocation := range invocations {
 		if ctx.Err() != nil {
-			result := tool.NewReadErrorResult(invocation, tool.ResultCancelled, "cancelled", "Read cancelled", ".")
-			if err := runtime.persistToolResult(ctx, turnID, result); err != nil {
-				return nil, err
-			}
-			results = append(results, result)
+			results[index] = tool.NewInvocationErrorResult(invocation, tool.ResultCancelled, "cancelled", "Tool cancelled")
 			continue
 		}
 		startedDraft, err := session.NewToolExecutionStartedDraft(turnID, invocation.InvocationID())
@@ -625,29 +633,77 @@ func (runtime *Runtime) executeToolCalls(ctx context.Context, turnID domain.Turn
 		}
 		if _, err := runtime.journal.AppendBatch(ctx, []session.RecordDraft{startedDraft}); err != nil {
 			if errors.Is(err, context.Canceled) && !runtime.journal.Poisoned() {
-				result := tool.NewReadErrorResult(invocation, tool.ResultCancelled, "cancelled", "Read cancelled", ".")
-				if persistErr := runtime.persistToolResult(ctx, turnID, result); persistErr != nil {
-					return nil, persistErr
-				}
-				results = append(results, result)
+				results[index] = tool.NewInvocationErrorResult(invocation, tool.ResultCancelled, "cancelled", "Tool cancelled")
 				continue
 			}
-			runtime.poisoned.Store(true)
-			return nil, fault.Wrap(fault.CodeSessionWrite, "persist tool execution start failed", err)
+			if runtime.journal.Poisoned() {
+				runtime.poisoned.Store(true)
+			}
+			persistCount = index
+			admissionErr = fault.Wrap(fault.CodeSessionWrite, "persist tool execution start failed", err)
+			break
 		}
-		result := runtime.readExecutor.Execute(ctx, invocation)
-		if result.Validate() != nil || result.InvocationID() != invocation.InvocationID() || result.ProviderCallID() != invocation.ProviderCallID() {
-			result = tool.NewReadErrorResult(
-				invocation, tool.ResultError, "invalid_tool_result",
-				"Read failed: executor returned an invalid result", ".",
-			)
+		started[index] = true
+		startedCount++
+	}
+	jobs := make(chan job)
+	var workers sync.WaitGroup
+	workerCount := startedCount
+	if workerCount > maxParallelReadWorkers {
+		workerCount = maxParallelReadWorkers
+	}
+	for range workerCount {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for current := range jobs {
+				invocation := invocations[current.index]
+				result := runtime.executeInvocation(ctx, invocation)
+				if result.Validate() != nil || result.InvocationID() != invocation.InvocationID() ||
+					result.ProviderCallID() != invocation.ProviderCallID() || result.Capability() != invocation.Capability() {
+					result = tool.NewInvocationErrorResult(invocation, tool.ResultError, "invalid_tool_result", "Tool failed: executor returned an invalid result")
+				}
+				results[current.index] = result
+			}
+		}()
+	}
+	for index := range invocations {
+		if started[index] {
+			jobs <- job{index: index}
+		}
+	}
+	close(jobs)
+	workers.Wait()
+	for index := 0; index < persistCount; index++ {
+		result := results[index]
+		if result.Validate() != nil {
+			return nil, fault.New(fault.CodeStreamProtocol, "tool result slot is invalid")
 		}
 		if err := runtime.persistToolResult(ctx, turnID, result); err != nil {
 			return nil, err
 		}
-		results = append(results, result)
+		results[index] = result
+	}
+	if admissionErr != nil {
+		return nil, admissionErr
 	}
 	return results, nil
+}
+
+func (runtime *Runtime) executeInvocation(ctx context.Context, invocation tool.Invocation) tool.InvocationResult {
+	switch invocation.Capability() {
+	case tool.CapabilityRead:
+		value, _ := invocation.Read()
+		return runtime.readExecutor.Execute(ctx, value)
+	case tool.CapabilityGlob:
+		value, _ := invocation.Glob()
+		return runtime.globExecutor.Execute(ctx, value)
+	case tool.CapabilityGrep:
+		value, _ := invocation.Grep()
+		return runtime.grepExecutor.Execute(ctx, value)
+	default:
+		return tool.InvocationResult{}
+	}
 }
 
 func (runtime *Runtime) persistToolResult(ctx context.Context, turnID domain.TurnID, result tool.InvocationResult) error {

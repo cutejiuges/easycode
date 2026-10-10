@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -33,6 +34,35 @@ type Workspace struct {
 type workspaceHooks struct {
 	beforeOpenComponent func(string)
 	afterOpenComponent  func(string)
+}
+
+type workspaceNodeKind uint8
+
+const (
+	workspaceNodeUnsupported workspaceNodeKind = iota
+	workspaceNodeDirectory
+	workspaceNodeRegular
+)
+
+// workspaceHandle 和子 handle 只暴露相对已验证目录描述符的操作。
+type workspaceHandle interface {
+	openFile(string, workspaceHooks) (*os.File, error)
+	openDirectory(string, workspaceHooks) (workspaceDirectory, error)
+	close() error
+}
+
+type workspaceDirectory interface {
+	readEntryNames() ([]string, error)
+	openChild(string, workspaceHooks) (workspaceChild, error)
+	close() error
+}
+
+type workspaceChild interface {
+	kind() workspaceNodeKind
+	size() int64
+	file() *os.File
+	directory() workspaceDirectory
+	close() error
 }
 
 // OpenWorkspace 冻结并打开启动工作区；调用方负责 Close。

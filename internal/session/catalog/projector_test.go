@@ -131,8 +131,8 @@ func TestProjectorUsesToolTailRecencyWithoutCopyingLedgerDetails(t *testing.T) {
 	}
 	callID, _ := tool.ParseProviderCallID("sensitive-call-id")
 	input, _ := tool.NewReadInput("private/source.go", 1, 20)
-	ready, _ := tool.NewReadyCall(callID, input)
-	invocation, err := tool.NewReadInvocation(invocationID, ready)
+	ready, _ := tool.NewReadReadyCall(callID, input)
+	invocation, err := tool.NewInvocation(invocationID, ready)
 	if err != nil {
 		t.Fatal(err)
 	}

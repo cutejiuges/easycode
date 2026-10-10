@@ -32,9 +32,6 @@ func (projector *projector) project(event protocol.Event) (projection, error) {
 	if projector.terminal {
 		return projection{}, fmt.Errorf("runtime event followed terminal")
 	}
-	if event.Version != protocol.CurrentVersion {
-		return projection{}, fmt.Errorf("runtime event version is invalid")
-	}
 	if event.SessionID != projector.sessionID || event.ThreadID != projector.threadID ||
 		!event.SessionID.Valid() || !event.ThreadID.Valid() {
 		return projection{}, fmt.Errorf("runtime event thread identity is invalid")

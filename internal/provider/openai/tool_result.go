@@ -29,6 +29,9 @@ func prepareToolOutputsEntry(history []nativeHistoryEntry, results []tool.Invoca
 		if string(result.ProviderCallID()) != calls[index].CallID {
 			return nativeHistoryEntry{}, fmt.Errorf("OpenAI tool result order does not match pending calls")
 		}
+		if result.Capability() != openAICapabilityForName(calls[index].Name) {
+			return nativeHistoryEntry{}, fmt.Errorf("OpenAI tool result capability does not match pending call")
+		}
 		payload, err := codec.MarshalStable(functionOutputPayload{
 			Status: result.Status(), Code: result.Code(), Content: result.Preview().Text(),
 		})
@@ -44,6 +47,19 @@ func prepareToolOutputsEntry(history []nativeHistoryEntry, results []tool.Invoca
 		return nativeHistoryEntry{}, err
 	}
 	return entry, nil
+}
+
+func openAICapabilityForName(name string) tool.CapabilityID {
+	switch name {
+	case "Read":
+		return tool.CapabilityRead
+	case "Glob":
+		return tool.CapabilityGlob
+	case "Grep":
+		return tool.CapabilityGrep
+	default:
+		return ""
+	}
 }
 
 func validateNativeHistory(entries []nativeHistoryEntry) error {

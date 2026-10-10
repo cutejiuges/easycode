@@ -101,17 +101,20 @@ func (metadata ReadResultMetadata) OutputTruncated() bool   { return metadata.ou
 type InvocationResult struct {
 	invocationID   InvocationID
 	providerCallID ProviderCallID
+	capability     CapabilityID
 	status         ResultStatus
 	code           string
 	preview        ModelPreview
-	metadata       ReadResultMetadata
+	readMetadata   ReadResultMetadata
+	globMetadata   GlobResultMetadata
+	grepMetadata   GrepResultMetadata
 }
 
-// NewInvocationResult 构造完整工具结果。
-func NewInvocationResult(invocation ReadInvocation, status ResultStatus, code string, preview ModelPreview, metadata ReadResultMetadata) (InvocationResult, error) {
+// NewReadInvocationResult 构造完整 Read 结果。
+func NewReadInvocationResult(invocation ReadInvocation, status ResultStatus, code string, preview ModelPreview, metadata ReadResultMetadata) (InvocationResult, error) {
 	result := InvocationResult{
 		invocationID: invocation.invocationID, providerCallID: invocation.providerCallID,
-		status: status, code: code, preview: preview, metadata: metadata,
+		capability: CapabilityRead, status: status, code: code, preview: preview, readMetadata: metadata,
 	}
 	if err := result.Validate(); err != nil {
 		return InvocationResult{}, err
@@ -119,13 +122,39 @@ func NewInvocationResult(invocation ReadInvocation, status ResultStatus, code st
 	return result, nil
 }
 
-func (result InvocationResult) InvocationID() InvocationID     { return result.invocationID }
-func (result InvocationResult) ProviderCallID() ProviderCallID { return result.providerCallID }
-func (result InvocationResult) Status() ResultStatus           { return result.status }
-func (result InvocationResult) Code() string                   { return result.code }
-func (result InvocationResult) Preview() ModelPreview          { return result.preview }
-func (result InvocationResult) Metadata() ReadResultMetadata   { return result.metadata }
-func (result InvocationResult) ResultCodecRevision() string    { return ReadResultCodecRevision }
+// NewGlobInvocationResult 构造完整 Glob 结果。
+func NewGlobInvocationResult(invocation GlobInvocation, status ResultStatus, code string, preview ModelPreview, metadata GlobResultMetadata) (InvocationResult, error) {
+	result := InvocationResult{
+		invocationID: invocation.invocationID, providerCallID: invocation.providerCallID,
+		capability: CapabilityGlob, status: status, code: code, preview: preview, globMetadata: metadata,
+	}
+	if err := result.Validate(); err != nil {
+		return InvocationResult{}, err
+	}
+	return result, nil
+}
+
+// NewGrepInvocationResult 构造完整 Grep 结果。
+func NewGrepInvocationResult(invocation GrepInvocation, status ResultStatus, code string, preview ModelPreview, metadata GrepResultMetadata) (InvocationResult, error) {
+	result := InvocationResult{
+		invocationID: invocation.invocationID, providerCallID: invocation.providerCallID,
+		capability: CapabilityGrep, status: status, code: code, preview: preview, grepMetadata: metadata,
+	}
+	if err := result.Validate(); err != nil {
+		return InvocationResult{}, err
+	}
+	return result, nil
+}
+
+func (result InvocationResult) InvocationID() InvocationID       { return result.invocationID }
+func (result InvocationResult) ProviderCallID() ProviderCallID   { return result.providerCallID }
+func (result InvocationResult) Capability() CapabilityID         { return result.capability }
+func (result InvocationResult) Status() ResultStatus             { return result.status }
+func (result InvocationResult) Code() string                     { return result.code }
+func (result InvocationResult) Preview() ModelPreview            { return result.preview }
+func (result InvocationResult) ReadMetadata() ReadResultMetadata { return result.readMetadata }
+func (result InvocationResult) GlobMetadata() GlobResultMetadata { return result.globMetadata }
+func (result InvocationResult) GrepMetadata() GrepResultMetadata { return result.grepMetadata }
 
 // Validate 验证结果身份、状态、错误码、preview 和元数据。
 func (result InvocationResult) Validate() error {
@@ -144,7 +173,25 @@ func (result InvocationResult) Validate() error {
 	if err := result.preview.Validate(); err != nil {
 		return err
 	}
-	return result.metadata.Validate()
+	switch result.capability {
+	case CapabilityRead:
+		if !result.globMetadata.zero() || !result.grepMetadata.zero() {
+			return errors.New("Read result contains mismatched metadata")
+		}
+		return result.readMetadata.Validate()
+	case CapabilityGlob:
+		if result.readMetadata != (ReadResultMetadata{}) || !result.grepMetadata.zero() || len(result.preview.text) > MaxSearchPreviewBytes {
+			return errors.New("Glob result contains mismatched metadata")
+		}
+		return result.globMetadata.Validate()
+	case CapabilityGrep:
+		if result.readMetadata != (ReadResultMetadata{}) || !result.globMetadata.zero() || len(result.preview.text) > MaxSearchPreviewBytes {
+			return errors.New("Grep result contains mismatched metadata")
+		}
+		return result.grepMetadata.Validate()
+	default:
+		return errors.New("tool result capability is invalid")
+	}
 }
 
 func validResultCode(code string) bool {
@@ -197,7 +244,7 @@ func RenderReadSuccess(invocation ReadInvocation, relativePath string, lines []s
 	if metadataErr != nil {
 		return invalidInternalResult(invocation, relativePath)
 	}
-	result, resultErr := NewInvocationResult(invocation, ResultSuccess, "ok", preview, metadata)
+	result, resultErr := NewReadInvocationResult(invocation, ResultSuccess, "ok", preview, metadata)
 	if resultErr != nil {
 		return invalidInternalResult(invocation, relativePath)
 	}
@@ -214,11 +261,37 @@ func NewReadErrorResult(invocation ReadInvocation, status ResultStatus, code str
 	if previewErr != nil || metadataErr != nil {
 		return invalidInternalResult(invocation, ".")
 	}
-	result, err := NewInvocationResult(invocation, status, code, preview, metadata)
+	result, err := NewReadInvocationResult(invocation, status, code, preview, metadata)
 	if err != nil {
 		return invalidInternalResult(invocation, ".")
 	}
 	return result
+}
+
+// NewInvocationErrorResult 为三种能力生成不泄漏底层 cause 的确定错误结果。
+func NewInvocationErrorResult(invocation Invocation, status ResultStatus, code string, message string) InvocationResult {
+	switch invocation.Capability() {
+	case CapabilityRead:
+		value, _ := invocation.Read()
+		return NewReadErrorResult(value, status, code, message, ".")
+	case CapabilityGlob:
+		value, _ := invocation.Glob()
+		preview, _ := NewModelPreview(message)
+		metadata, _ := NewGlobResultMetadata([]string{}, false, 0, 0, SearchComplete, SearchSkipCounts{})
+		result, err := NewGlobInvocationResult(value, status, code, preview, metadata)
+		if err == nil {
+			return result
+		}
+	case CapabilityGrep:
+		value, _ := invocation.Grep()
+		preview, _ := NewModelPreview(message)
+		metadata, _ := NewGrepResultMetadata(value.Input().OutputMode(), []GrepMatch{}, 0, false, 0, 0, 0, 0, SearchComplete, SearchSkipCounts{})
+		result, err := NewGrepInvocationResult(value, status, code, preview, metadata)
+		if err == nil {
+			return result
+		}
+	}
+	return InvocationResult{}
 }
 
 func invalidInternalResult(invocation ReadInvocation, relativePath string) InvocationResult {
@@ -229,7 +302,7 @@ func invalidInternalResult(invocation ReadInvocation, relativePath string) Invoc
 	metadata := ReadResultMetadata{relativePath: relativePath, requestedOffset: invocation.input.offset, requestedLimit: invocation.input.limit}
 	return InvocationResult{
 		invocationID: invocation.invocationID, providerCallID: invocation.providerCallID,
-		status: ResultError, code: "internal_error", preview: preview, metadata: metadata,
+		capability: CapabilityRead, status: ResultError, code: "internal_error", preview: preview, readMetadata: metadata,
 	}
 }
 

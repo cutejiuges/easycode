@@ -60,7 +60,7 @@ type ReplayedToolCall struct {
 	ResultSequence  uint64
 	SampleIndex     uint32
 	CallIndex       uint32
-	Invocation      tool.ReadInvocation
+	Invocation      tool.Invocation
 	State           ReplayedToolCallState
 	Result          tool.InvocationResult
 }
@@ -137,35 +137,47 @@ func (plan ToolRecoveryPlan) Validate() error {
 		}
 		lastReadySequence = call.ReadySequence
 	}
-	lifecycleSequence := lastReadySequence
-	pendingSeen := false
+	lastStartedSequence := lastReadySequence
+	maxStartedSequence := lastReadySequence
+	for _, call := range plan.calls {
+		if call.StartedSequence == 0 {
+			continue
+		}
+		if call.StartedSequence <= lastStartedSequence {
+			return fmt.Errorf("tool recovery started sequence is invalid")
+		}
+		lastStartedSequence = call.StartedSequence
+		maxStartedSequence = call.StartedSequence
+	}
+	lastResultSequence := maxStartedSequence
+	resultGapSeen := false
 	for _, call := range plan.calls {
 		switch call.State {
 		case ReplayedToolCallReady:
-			pendingSeen = true
 			if call.StartedSequence != 0 || call.ResultSequence != 0 {
 				return fmt.Errorf("ready tool recovery call has later facts")
 			}
+			resultGapSeen = true
 		case ReplayedToolCallStarted:
-			if pendingSeen || call.StartedSequence <= lifecycleSequence || call.ResultSequence != 0 {
+			if call.StartedSequence == 0 || call.ResultSequence != 0 {
 				return fmt.Errorf("started tool recovery call sequence is invalid")
 			}
-			pendingSeen = true
-			lifecycleSequence = call.StartedSequence
+			resultGapSeen = true
 		case ReplayedToolCallResult:
-			if pendingSeen || call.ResultSequence <= lifecycleSequence || call.Result.Validate() != nil ||
+			if resultGapSeen || call.ResultSequence <= lastResultSequence || call.Result.Validate() != nil ||
 				call.Result.InvocationID() != call.Invocation.InvocationID() ||
-				call.Result.ProviderCallID() != call.Invocation.ProviderCallID() {
+				call.Result.ProviderCallID() != call.Invocation.ProviderCallID() ||
+				call.Result.Capability() != call.Invocation.Capability() {
 				return fmt.Errorf("result tool recovery call is invalid")
 			}
 			if call.StartedSequence == 0 {
 				if call.Result.Status() != tool.ResultCancelled {
 					return fmt.Errorf("tool result before execution start is not cancelled")
 				}
-			} else if call.StartedSequence <= lifecycleSequence || call.ResultSequence <= call.StartedSequence {
+			} else if call.ResultSequence <= call.StartedSequence {
 				return fmt.Errorf("result tool recovery call sequence is invalid")
 			}
-			lifecycleSequence = call.ResultSequence
+			lastResultSequence = call.ResultSequence
 		default:
 			return fmt.Errorf("tool recovery call state is invalid")
 		}
@@ -181,7 +193,6 @@ type ReplayPlan struct {
 	NativeCommits   []NativeCommitRecord
 	SampleUsages    []SampleUsageRecord
 	Turns           []ReplayedTurn
-	OptionalRecords []Record
 	InterruptedTail *InterruptedTail
 	ToolRecovery    *ToolRecoveryPlan
 	NextSequence    uint64
@@ -224,21 +235,12 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 	plan := ReplayPlan{
 		Identity: identity, SessionMetadata: sessionMetadata, ThreadMetadata: threadMetadata,
 		NativeCommits: make([]NativeCommitRecord, 0), SampleUsages: make([]SampleUsageRecord, 0),
-		Turns:           make([]ReplayedTurn, 0),
-		OptionalRecords: make([]Record, 0), NextSequence: loaded.NextSequence, Repair: loaded.Repair,
+		Turns: make([]ReplayedTurn, 0), NextSequence: loaded.NextSequence, Repair: loaded.Repair,
 	}
 	var active *activeReplayTurn
 	seenInvocations := make(map[tool.InvocationID]struct{})
 	for _, batch := range batches[1:] {
-		known, optional, filterErr := filterReplayBatch(batch)
-		if filterErr != nil {
-			return ReplayPlan{}, filterErr
-		}
-		plan.OptionalRecords = append(plan.OptionalRecords, optional...)
-		if len(known) == 0 {
-			continue
-		}
-		for _, record := range known {
+		for _, record := range batch {
 			if record.ParentThreadID != "" {
 				return ReplayPlan{}, replayCorrupt("root thread record contains a parent thread")
 			}
@@ -247,29 +249,29 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 			}
 		}
 
-		switch known[0].EventKind {
+		switch batch[0].EventKind {
 		case EventTurnStarted:
-			if active != nil || len(known) != 1 || known[0].TurnID == "" {
+			if active != nil || len(batch) != 1 || batch[0].TurnID == "" {
 				return ReplayPlan{}, replayCorrupt("turn_started placement is invalid")
 			}
-			if _, decodeErr := DecodeTurnStartedPayload(known[0]); decodeErr != nil {
+			if _, decodeErr := DecodeTurnStartedPayload(batch[0]); decodeErr != nil {
 				return ReplayPlan{}, replayCorrupt("turn_started payload is invalid")
 			}
 			active = &activeReplayTurn{
-				turnID: known[0].TurnID, startSequence: known[0].Sequence, lastSequence: known[0].Sequence,
+				turnID: batch[0].TurnID, startSequence: batch[0].Sequence, lastSequence: batch[0].Sequence,
 				providerCallIDs: make(map[tool.ProviderCallID]struct{}),
 			}
 		case EventProviderNativeCommit:
-			if active == nil || !batchHasTurn(known, active.turnID) {
+			if active == nil || !batchHasTurn(batch, active.turnID) {
 				return ReplayPlan{}, replayCorrupt("provider native commit placement is invalid")
 			}
-			if len(known) == 1 {
-				if err := acceptToolOutputs(&plan, active, known[0]); err != nil {
+			if len(batch) == 1 {
+				if err := acceptToolOutputs(&plan, active, batch[0]); err != nil {
 					return ReplayPlan{}, err
 				}
 				break
 			}
-			completed, err := acceptSampleBatch(&plan, active, known, seenInvocations)
+			completed, err := acceptSampleBatch(&plan, active, batch, seenInvocations)
 			if err != nil {
 				return ReplayPlan{}, err
 			}
@@ -278,24 +280,24 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 				active = nil
 			}
 		case EventToolExecutionStarted:
-			if active == nil || len(known) != 1 || known[0].TurnID != active.turnID {
+			if active == nil || len(batch) != 1 || batch[0].TurnID != active.turnID {
 				return ReplayPlan{}, replayCorrupt("tool_execution_started placement is invalid")
 			}
-			if err := active.acceptStarted(known[0]); err != nil {
+			if err := active.acceptStarted(batch[0]); err != nil {
 				return ReplayPlan{}, err
 			}
 		case EventToolCallResult:
-			if active == nil || len(known) != 1 || known[0].TurnID != active.turnID {
+			if active == nil || len(batch) != 1 || batch[0].TurnID != active.turnID {
 				return ReplayPlan{}, replayCorrupt("tool_call_result placement is invalid")
 			}
-			if err := active.acceptResult(known[0]); err != nil {
+			if err := active.acceptResult(batch[0]); err != nil {
 				return ReplayPlan{}, err
 			}
 		case EventTurnFailed:
-			if active == nil || len(known) != 1 || known[0].TurnID != active.turnID || active.pendingCalls != nil {
+			if active == nil || len(batch) != 1 || batch[0].TurnID != active.turnID || active.pendingCalls != nil {
 				return ReplayPlan{}, replayCorrupt("turn_failed placement is invalid")
 			}
-			_, decodeErr := DecodeTurnFailedPayload(known[0])
+			_, decodeErr := DecodeTurnFailedPayload(batch[0])
 			if decodeErr != nil {
 				return ReplayPlan{}, replayCorrupt("turn_failed payload is invalid")
 			}
@@ -320,7 +322,6 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 		}
 	}
 	plan.NativeCommits = cloneNativeCommitRecords(plan.NativeCommits)
-	plan.OptionalRecords = cloneRecords(plan.OptionalRecords)
 	return plan, nil
 }
 
@@ -430,8 +431,11 @@ func (active *activeReplayTurn) acceptStarted(record Record) error {
 	}
 	for index := range active.pendingCalls {
 		call := &active.pendingCalls[index]
-		if call.State == ReplayedToolCallResult {
+		if call.State == ReplayedToolCallStarted {
 			continue
+		}
+		if call.State == ReplayedToolCallResult {
+			return replayCorrupt("tool execution order is invalid")
 		}
 		if call.State != ReplayedToolCallReady || call.Invocation.InvocationID() != payload.InvocationID {
 			return replayCorrupt("tool execution order is invalid")
@@ -510,12 +514,6 @@ func validateInitialBatch(batch []Record) error {
 		batch[0].ParentThreadID != "" || batch[1].ParentThreadID != "" {
 		return replayCorrupt("initial metadata batch is invalid")
 	}
-	for _, record := range batch {
-		if _, exact := LookupDescriptor(record.EventKind, record.PayloadVersion); !exact ||
-			record.ReplayRequirement != ReplayRequired {
-			return replayCorrupt("initial metadata revision is unsupported")
-		}
-	}
 	return nil
 }
 
@@ -529,7 +527,7 @@ func validateMetadata(
 		batch[1].SessionID != identity.SessionID || batch[1].ThreadID != identity.ThreadID ||
 		sessionMetadata.RootThreadID != identity.ThreadID || !sessionMetadata.Provider.Valid() ||
 		strings.TrimSpace(sessionMetadata.ProviderWire) == "" || strings.TrimSpace(sessionMetadata.Model) == "" ||
-		sessionMetadata.SchemaRevision <= 0 || sessionMetadata.CreatedAt.IsZero() ||
+		sessionMetadata.CreatedAt.IsZero() ||
 		sessionMetadata.CreatedAt.Location() != time.UTC {
 		return replayCorrupt("session metadata is invalid")
 	}
@@ -540,22 +538,6 @@ func validateMetadata(
 		return replayCorrupt("root thread metadata is invalid")
 	}
 	return nil
-}
-
-func filterReplayBatch(batch []Record) ([]Record, []Record, error) {
-	known := make([]Record, 0, len(batch))
-	optional := make([]Record, 0)
-	for _, record := range batch {
-		if _, exact := LookupDescriptor(record.EventKind, record.PayloadVersion); exact {
-			known = append(known, record)
-			continue
-		}
-		if record.ReplayRequirement == ReplayRequired {
-			return nil, nil, replayCorrupt("required session payload revision is unsupported")
-		}
-		optional = append(optional, cloneRecord(record))
-	}
-	return known, optional, nil
 }
 
 func replayBatches(records []Record) ([][]Record, error) {

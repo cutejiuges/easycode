@@ -553,13 +553,13 @@ fs.patch
 
 ### 8.5 能力分期
 
-P3 只实现 Read、Glob/Grep、Edit/apply_patch、Write、exec/write_stdin，以及它们真实需要的 Tool Loop、权限、sandbox、ledger、有序调度和结果预算。推荐先用 Read 建立双 Provider、多 sample、durable 与恢复的最小纵向闭环，再逐项增加不可逆能力。
+P3 当前已实现 Read、Glob、Grep、双 Provider Tool Loop、durable ledger、最多 8 路只读并发、有序结果提交和本地恢复补偿。Edit/apply_patch、Write、exec/write_stdin、approval、artifact 和跨平台 sandbox 仍按独立 change 逐项增加，不得由现有只读能力推断为已完成。
 
 Skill 与 hooks/plugins 属于 P6；MCP 和 Agent/Subagent 属于 P7；完整跨平台 sandbox 矩阵属于 P8。未到对应阶段前不得提前暴露空 schema、event kind、facade 或 capability flag。
 
 ## 9. Context 与 Compaction
 
-本章同时描述当前 P2 基线和 P4 目标。当前已实现带可选项目指令的四来源 ContextPlanner、本地 token estimate、Provider-private HistoryFootprint、可选显式 token budget 和请求前超限守卫；工具/skill 来源、真实 Provider cache policy、compaction 以及跨 Provider fork 尚未实现。
+本章同时描述当前 P2 基线和 P4 目标。当前已实现包含 Tool Catalog 的确定性 ContextPlanner、可选项目指令、本地 token estimate、Provider-private HistoryFootprint、可选显式 token budget 和请求前超限守卫；动态扩展/skill 来源、真实 Provider cache policy、compaction 以及跨 Provider fork 尚未实现。
 
 ### 9.1 上下文来源
 
@@ -631,7 +631,6 @@ ContextPlanner 必须明确每一项的来源、优先级、稳定性、token �
 EventEnvelope
   schema_version
   payload_version
-  replay_requirement
   seq
   timestamp
   session_id
@@ -654,11 +653,11 @@ EventEnvelope
 - `tool_call_ready`、`tool_execution_started` 与 `tool_call_result`；
 - `turn_failed`。
 
-`schema_version` 约束公共 envelope，`payload_version` 约束 event payload，`replay_requirement` 明确 required/optional。required 的未知 kind、版本或损坏必须拒绝恢复；optional 记录允许跳过，便于未来加入诊断或展示事实而不破坏旧 Loader。
+`schema_version` 与 `payload_version` 是单一当前 canary，decoder 在 canary 校验后只按 `event_kind` 选择唯一 strict decoder。所有当前记录都参与恢复；未知 kind、未知字段、旧/新 canary 或损坏必须在 repair、Provider 恢复和 append 前失败关闭，不存在 optional record 或多版本 decoder registry。
 
 Provider native commit 只记录 Provider 已验证的原生增量和 raw usage；紧邻的 `sample_usage` 记录共享五项三态指标。无工具的成功 sample 仍以 native commit、usage 与 terminal 原子提交；带调用的 sample 则把有序 ready facts 放入同一 durable batch，随后单独提交 started、result 和 Provider 原生 tool outputs。缺失 usage、错序、遗漏配对或重复调用身份一律 fail closed。permission、hook、subagent、cache 与 compaction checkpoint 仍需按各自恢复语义增加版本化记录；不能把 RuntimeEvent 或 UI transcript 当作 native history。
 
-当前 envelope、payload、RuntimeEvent 和 headless JSONL 都保持单一 v1。稳定发布前的契约补全直接重写 v1 fixture，不保留双 reader；只有契约已冻结、变化无法加法表达、旧数据或客户端又必须并存时，才引入新 revision，并同时定义兼容窗口与退出条件。
+当前 Session envelope/payload 使用唯一 canary，进程内 RuntimeEvent 不携带固定版本；headless JSONL v1 是独立外部 wire。稳定发布前的契约补全直接替换唯一 current fixture，不保留双 reader；只有契约已冻结、变化无法加法表达且已发布数据或客户端必须并存时，才引入新 revision，并同时定义兼容窗口与退出条件。
 
 Headless JSONL v1 是 stdout 外部协议，不是 Session record：不得写入 journal，也不得在 resume 时回放。headless resume 只复用连续 lease 下恢复出的 Provider-native history，并只发布本次新 turn；`SemanticHistoryView` 仍只供 TUI 等只读消费者使用。
 

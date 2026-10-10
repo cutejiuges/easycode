@@ -79,21 +79,49 @@ func DecodeToolCallReadyPayload(record Record) (ToolCallReadyPayload, error) {
 	return payload, nil
 }
 
-// Domain 重建已经分配identity的typed Read invocation。
-func (payload ToolCallReadyPayload) Domain() (tool.ReadInvocation, error) {
-	if !payload.InvocationID.Valid() || !payload.ProviderCallID.Valid() || payload.SampleIndex >= 16 || payload.CallIndex >= 64 ||
-		payload.Capability != tool.CapabilityRead || payload.InputRevision != tool.ReadInputRevision {
-		return tool.ReadInvocation{}, fmt.Errorf("tool call ready payload is invalid")
+// Domain 重建已经分配 identity 的三工具 typed invocation。
+func (payload ToolCallReadyPayload) Domain() (tool.Invocation, error) {
+	if !payload.InvocationID.Valid() || !payload.ProviderCallID.Valid() || payload.SampleIndex >= 16 || payload.CallIndex >= 64 {
+		return tool.Invocation{}, fmt.Errorf("tool call ready payload is invalid")
 	}
-	input, err := tool.NewReadInput(payload.Input.FilePath, payload.Input.Offset, payload.Input.Limit)
+	var ready tool.ReadyCall
+	var err error
+	switch payload.Capability {
+	case tool.CapabilityRead:
+		if payload.ReadInput == nil || payload.GlobInput != nil || payload.GrepInput != nil {
+			return tool.Invocation{}, fmt.Errorf("tool call ready payload does not match Read capability")
+		}
+		input, inputErr := tool.NewReadInput(payload.ReadInput.FilePath, payload.ReadInput.Offset, payload.ReadInput.Limit)
+		if inputErr != nil {
+			return tool.Invocation{}, fmt.Errorf("tool call ready Read input is invalid: %w", inputErr)
+		}
+		ready, err = tool.NewReadReadyCall(payload.ProviderCallID, input)
+	case tool.CapabilityGlob:
+		if payload.GlobInput == nil || payload.ReadInput != nil || payload.GrepInput != nil {
+			return tool.Invocation{}, fmt.Errorf("tool call ready payload does not match Glob capability")
+		}
+		input, inputErr := tool.NewGlobInput(payload.GlobInput.Pattern, payload.GlobInput.Path, payload.GlobInput.Limit)
+		if inputErr != nil {
+			return tool.Invocation{}, fmt.Errorf("tool call ready Glob input is invalid: %w", inputErr)
+		}
+		ready, err = tool.NewGlobReadyCall(payload.ProviderCallID, input)
+	case tool.CapabilityGrep:
+		if payload.GrepInput == nil || payload.ReadInput != nil || payload.GlobInput != nil {
+			return tool.Invocation{}, fmt.Errorf("tool call ready payload does not match Grep capability")
+		}
+		value := payload.GrepInput
+		input, inputErr := tool.NewGrepInput(value.Pattern, value.Path, value.Glob, value.OutputMode, value.CaseInsensitive, value.BeforeContext, value.AfterContext, value.Limit)
+		if inputErr != nil {
+			return tool.Invocation{}, fmt.Errorf("tool call ready Grep input is invalid: %w", inputErr)
+		}
+		ready, err = tool.NewGrepReadyCall(payload.ProviderCallID, input)
+	default:
+		return tool.Invocation{}, fmt.Errorf("tool call ready capability is invalid")
+	}
 	if err != nil {
-		return tool.ReadInvocation{}, fmt.Errorf("tool call ready input is invalid: %w", err)
+		return tool.Invocation{}, fmt.Errorf("tool call ready identity is invalid: %w", err)
 	}
-	ready, err := tool.NewReadyCall(payload.ProviderCallID, input)
-	if err != nil {
-		return tool.ReadInvocation{}, fmt.Errorf("tool call ready identity is invalid: %w", err)
-	}
-	return tool.NewReadInvocation(payload.InvocationID, ready)
+	return tool.NewInvocation(payload.InvocationID, ready)
 }
 
 // DecodeToolExecutionStartedPayload 严格解码并验证tool_execution_started payload。
@@ -128,48 +156,207 @@ func DecodeToolCallResultPayload(record Record) (ToolCallResultPayload, error) {
 }
 
 func validateToolCallResultPayload(payload ToolCallResultPayload) error {
-	if !payload.InvocationID.Valid() || !payload.Status.Valid() || payload.Code == "" ||
-		payload.ResultCodecRevision != tool.ReadResultCodecRevision || !utf8.ValidString(payload.Preview) {
+	if !payload.InvocationID.Valid() || !payload.Capability.Valid() || !payload.Status.Valid() || payload.Code == "" || !utf8.ValidString(payload.Preview) {
 		return fmt.Errorf("tool call result payload is invalid")
 	}
-	input, err := tool.NewReadInput(".", payload.Metadata.RequestedOffset, payload.Metadata.RequestedLimit)
+	invocation, err := validationInvocation(payload)
 	if err != nil {
-		return fmt.Errorf("tool call result metadata is invalid: %w", err)
+		return err
 	}
-	callID, _ := tool.ParseProviderCallID("payload-validation")
-	ready, _ := tool.NewReadyCall(callID, input)
-	invocation, _ := tool.NewReadInvocation(payload.InvocationID, ready)
 	_, err = payload.Domain(invocation)
 	return err
 }
 
 // Domain 使用对应ready invocation重建冻结工具结果。
-func (payload ToolCallResultPayload) Domain(invocation tool.ReadInvocation) (tool.InvocationResult, error) {
-	if err := invocation.Validate(); err != nil || invocation.InvocationID() != payload.InvocationID ||
-		payload.ResultCodecRevision != tool.ReadResultCodecRevision {
+func (payload ToolCallResultPayload) Domain(invocation tool.Invocation) (tool.InvocationResult, error) {
+	if err := invocation.Validate(); err != nil || invocation.InvocationID() != payload.InvocationID || invocation.Capability() != payload.Capability {
 		return tool.InvocationResult{}, fmt.Errorf("tool call result invocation is invalid")
-	}
-	input := invocation.Input()
-	if input.Offset() != payload.Metadata.RequestedOffset || input.Limit() != payload.Metadata.RequestedLimit {
-		return tool.InvocationResult{}, fmt.Errorf("tool call result request metadata does not match invocation")
 	}
 	preview, err := tool.NewModelPreview(payload.Preview)
 	if err != nil {
 		return tool.InvocationResult{}, fmt.Errorf("tool call result preview is invalid: %w", err)
 	}
-	metadata, err := tool.NewReadResultMetadata(
-		payload.Metadata.RelativePath, input,
-		payload.Metadata.StartLine, payload.Metadata.EndLine, payload.Metadata.ReachedEOF,
-		payload.Metadata.LongLineTruncated, payload.Metadata.OutputTruncated,
-	)
-	if err != nil {
-		return tool.InvocationResult{}, fmt.Errorf("tool call result metadata is invalid: %w", err)
+	var result tool.InvocationResult
+	switch payload.Capability {
+	case tool.CapabilityRead:
+		result, err = decodeReadResult(payload, invocation, preview)
+	case tool.CapabilityGlob:
+		result, err = decodeGlobResult(payload, invocation, preview)
+	case tool.CapabilityGrep:
+		result, err = decodeGrepResult(payload, invocation, preview)
+	default:
+		return tool.InvocationResult{}, fmt.Errorf("tool call result capability is invalid")
 	}
-	result, err := tool.NewInvocationResult(invocation, payload.Status, payload.Code, preview, metadata)
 	if err != nil {
 		return tool.InvocationResult{}, fmt.Errorf("tool call result payload is invalid: %w", err)
 	}
 	return result, nil
+}
+
+func validationInvocation(payload ToolCallResultPayload) (tool.Invocation, error) {
+	callID, _ := tool.ParseProviderCallID("payload-validation")
+	var ready tool.ReadyCall
+	var err error
+	switch payload.Capability {
+	case tool.CapabilityRead:
+		if payload.ReadMetadata == nil || payload.GlobMetadata != nil || payload.GrepMetadata != nil {
+			return tool.Invocation{}, fmt.Errorf("tool call result metadata does not match Read capability")
+		}
+		input, inputErr := tool.NewReadInput(".", payload.ReadMetadata.RequestedOffset, payload.ReadMetadata.RequestedLimit)
+		if inputErr != nil {
+			return tool.Invocation{}, fmt.Errorf("tool call result Read metadata is invalid: %w", inputErr)
+		}
+		ready, err = tool.NewReadReadyCall(callID, input)
+	case tool.CapabilityGlob:
+		if payload.GlobMetadata == nil || payload.ReadMetadata != nil || payload.GrepMetadata != nil {
+			return tool.Invocation{}, fmt.Errorf("tool call result metadata does not match Glob capability")
+		}
+		input, _ := tool.NewGlobInput("**", "", 1)
+		ready, err = tool.NewGlobReadyCall(callID, input)
+	case tool.CapabilityGrep:
+		if payload.GrepMetadata == nil || payload.ReadMetadata != nil || payload.GlobMetadata != nil {
+			return tool.Invocation{}, fmt.Errorf("tool call result metadata does not match Grep capability")
+		}
+		input, inputErr := tool.NewGrepInput("x", "", "", payload.GrepMetadata.Mode, false, 0, 0, 1)
+		if inputErr != nil {
+			return tool.Invocation{}, fmt.Errorf("tool call result Grep metadata is invalid: %w", inputErr)
+		}
+		ready, err = tool.NewGrepReadyCall(callID, input)
+	default:
+		return tool.Invocation{}, fmt.Errorf("tool call result capability is invalid")
+	}
+	if err != nil {
+		return tool.Invocation{}, err
+	}
+	return tool.NewInvocation(payload.InvocationID, ready)
+}
+
+func decodeReadResult(payload ToolCallResultPayload, invocation tool.Invocation, preview tool.ModelPreview) (tool.InvocationResult, error) {
+	if payload.ReadMetadata == nil || payload.GlobMetadata != nil || payload.GrepMetadata != nil {
+		return tool.InvocationResult{}, fmt.Errorf("read metadata union is invalid")
+	}
+	value, ok := invocation.Read()
+	if !ok {
+		return tool.InvocationResult{}, fmt.Errorf("read invocation is required")
+	}
+	input := value.Input()
+	metadataPayload := payload.ReadMetadata
+	if input.Offset() != metadataPayload.RequestedOffset || input.Limit() != metadataPayload.RequestedLimit {
+		return tool.InvocationResult{}, fmt.Errorf("read request metadata does not match invocation")
+	}
+	metadata, err := tool.NewReadResultMetadata(
+		metadataPayload.RelativePath, input, metadataPayload.StartLine, metadataPayload.EndLine,
+		metadataPayload.ReachedEOF, metadataPayload.LongLineTruncated, metadataPayload.OutputTruncated,
+	)
+	if err != nil {
+		return tool.InvocationResult{}, err
+	}
+	return tool.NewReadInvocationResult(value, payload.Status, payload.Code, preview, metadata)
+}
+
+func decodeGlobResult(payload ToolCallResultPayload, invocation tool.Invocation, preview tool.ModelPreview) (tool.InvocationResult, error) {
+	if payload.GlobMetadata == nil || payload.ReadMetadata != nil || payload.GrepMetadata != nil {
+		return tool.InvocationResult{}, fmt.Errorf("glob metadata union is invalid")
+	}
+	value, ok := invocation.Glob()
+	if !ok {
+		return tool.InvocationResult{}, fmt.Errorf("glob invocation is required")
+	}
+	metadataPayload := payload.GlobMetadata
+	skipped, err := decodeSkipCounts(metadataPayload.Skipped)
+	if err != nil {
+		return tool.InvocationResult{}, err
+	}
+	metadata, err := tool.NewGlobResultMetadata(
+		metadataPayload.Matches, metadataPayload.Truncated, metadataPayload.OmittedMatches,
+		metadataPayload.VisitedEntries, metadataPayload.IncompleteReason, skipped,
+	)
+	if err != nil {
+		return tool.InvocationResult{}, err
+	}
+	return tool.NewGlobInvocationResult(value, payload.Status, payload.Code, preview, metadata)
+}
+
+func decodeGrepResult(payload ToolCallResultPayload, invocation tool.Invocation, preview tool.ModelPreview) (tool.InvocationResult, error) {
+	if payload.GrepMetadata == nil || payload.ReadMetadata != nil || payload.GlobMetadata != nil {
+		return tool.InvocationResult{}, fmt.Errorf("grep metadata union is invalid")
+	}
+	value, ok := invocation.Grep()
+	if !ok {
+		return tool.InvocationResult{}, fmt.Errorf("grep invocation is required")
+	}
+	metadataPayload := payload.GrepMetadata
+	skipped, err := decodeSkipCounts(metadataPayload.Skipped)
+	if err != nil {
+		return tool.InvocationResult{}, err
+	}
+	matches := make([]tool.GrepMatch, len(metadataPayload.Matches))
+	for index, match := range metadataPayload.Matches {
+		switch metadataPayload.Mode {
+		case tool.GrepOutputContent:
+			matches[index], err = tool.NewGrepContentMatch(match.RelativePath, match.Line, match.Text, match.MatchingLine)
+		case tool.GrepOutputFilesWithMatches:
+			if match.Line != 0 || match.Text != "" || match.MatchingLine || match.Count != 0 {
+				err = fmt.Errorf("grep file match payload is invalid")
+			} else {
+				matches[index], err = tool.NewGrepFileMatch(match.RelativePath)
+			}
+		case tool.GrepOutputCount:
+			if match.Line != 0 || match.Text != "" || match.MatchingLine {
+				err = fmt.Errorf("grep count match payload is invalid")
+			} else {
+				matches[index], err = tool.NewGrepCountMatch(match.RelativePath, match.Count)
+			}
+		default:
+			err = fmt.Errorf("grep output mode is invalid")
+		}
+		if err != nil {
+			return tool.InvocationResult{}, err
+		}
+	}
+	metadata, err := tool.NewGrepResultMetadata(
+		metadataPayload.Mode, matches, metadataPayload.MatchingLines, metadataPayload.Truncated,
+		metadataPayload.OmittedMatches, metadataPayload.VisitedEntries, metadataPayload.ScannedFiles,
+		metadataPayload.ScannedBytes, metadataPayload.IncompleteReason, skipped,
+	)
+	if err != nil {
+		return tool.InvocationResult{}, err
+	}
+	return tool.NewGrepInvocationResult(value, payload.Status, payload.Code, preview, metadata)
+}
+
+func decodeSkipCounts(payload SearchSkipCountsPayload) (tool.SearchSkipCounts, error) {
+	return tool.NewSearchSkipCounts(payload.Binary, payload.InvalidUTF8, payload.TooLarge, payload.Unreadable, payload.Unsupported, payload.Disappeared)
+}
+
+func encodeSkipCounts(counts tool.SearchSkipCounts) SearchSkipCountsPayload {
+	return SearchSkipCountsPayload{
+		Binary: counts.Binary(), InvalidUTF8: counts.InvalidUTF8(), TooLarge: counts.TooLarge(),
+		Unreadable: counts.Unreadable(), Unsupported: counts.Unsupported(), Disappeared: counts.Disappeared(),
+	}
+}
+
+func encodeGlobMetadata(metadata tool.GlobResultMetadata) *GlobResultMetadataPayload {
+	return &GlobResultMetadataPayload{
+		Matches: metadata.Matches(), Truncated: metadata.Truncated(), OmittedMatches: metadata.OmittedMatches(),
+		VisitedEntries: metadata.VisitedEntries(), IncompleteReason: metadata.IncompleteReason(), Skipped: encodeSkipCounts(metadata.Skipped()),
+	}
+}
+
+func encodeGrepMetadata(metadata tool.GrepResultMetadata) *GrepResultMetadataPayload {
+	matches := metadata.Matches()
+	payloadMatches := make([]GrepMatchPayload, len(matches))
+	for index, match := range matches {
+		payloadMatches[index] = GrepMatchPayload{
+			RelativePath: match.RelativePath(), Line: match.Line(), Text: match.Text(), MatchingLine: match.MatchingLine(), Count: match.Count(),
+		}
+	}
+	return &GrepResultMetadataPayload{
+		Mode: metadata.Mode(), Matches: payloadMatches, MatchingLines: metadata.MatchingLines(),
+		Truncated: metadata.Truncated(), OmittedMatches: metadata.OmittedMatches(), VisitedEntries: metadata.VisitedEntries(),
+		ScannedFiles: metadata.ScannedFiles(), ScannedBytes: metadata.ScannedBytes(),
+		IncompleteReason: metadata.IncompleteReason(), Skipped: encodeSkipCounts(metadata.Skipped()),
+	}
 }
 
 // DecodeTurnCompletedPayload 严格解码并验证 turn_completed v1 payload。
@@ -191,9 +378,8 @@ func DecodeTurnFailedPayload(record Record) (TurnFailedPayload, error) {
 
 func decodeKnownPayload[T recordPayload](record Record, kind EventKind) (T, error) {
 	var zero T
-	descriptor, exists := descriptorByKind(kind)
-	if !exists || record.EventKind != kind || record.PayloadVersion != descriptor.Version ||
-		record.ReplayRequirement != descriptor.Requirement {
+	_, exists := descriptorByKind(kind)
+	if !exists || record.EventKind != kind || record.PayloadVersion != EnvelopeVersion {
 		return zero, fmt.Errorf("session payload declaration is invalid")
 	}
 	if err := rejectDuplicateJSONFields(record.Payload); err != nil {
@@ -272,8 +458,7 @@ func rejectDuplicateJSONFields(data []byte) error {
 
 func validateSessionMetaPayload(payload SessionMetaPayload) error {
 	if !payload.RootThreadID.Valid() || payload.CreatedAt.IsZero() || payload.CreatedAt.Location() != time.UTC ||
-		!payload.Provider.Valid() || strings.TrimSpace(payload.ProviderWire) == "" || strings.TrimSpace(payload.Model) == "" ||
-		payload.SchemaRevision <= 0 {
+		!payload.Provider.Valid() || strings.TrimSpace(payload.ProviderWire) == "" || strings.TrimSpace(payload.Model) == "" {
 		return fmt.Errorf("session metadata payload is invalid")
 	}
 	if !filepath.IsAbs(payload.CreationCWD) || filepath.Clean(payload.CreationCWD) != payload.CreationCWD {

@@ -22,6 +22,18 @@ func (inertReadExecutor) Execute(context.Context, tool.ReadInvocation) tool.Invo
 	return tool.InvocationResult{}
 }
 
+type inertGlobExecutor struct{}
+
+func (inertGlobExecutor) Execute(context.Context, tool.GlobInvocation) tool.InvocationResult {
+	return tool.InvocationResult{}
+}
+
+type inertGrepExecutor struct{}
+
+func (inertGrepExecutor) Execute(context.Context, tool.GrepInvocation) tool.InvocationResult {
+	return tool.InvocationResult{}
+}
+
 func TestProviderHistoryProjectorsProduceEquivalentTextSemantics(t *testing.T) {
 	anthropicServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "text/event-stream")
@@ -87,7 +99,7 @@ func TestProviderHistoryProjectorsProduceEquivalentTextSemantics(t *testing.T) {
 
 func completeTurnAndProject(t *testing.T, conversation provider.Conversation, text string) domain.SemanticHistoryView {
 	t.Helper()
-	catalog, err := tool.NewReadCatalogSnapshot(inertReadExecutor{})
+	catalog, err := tool.NewReadOnlyCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, inertGrepExecutor{})
 	if err != nil {
 		t.Fatal(err)
 	}

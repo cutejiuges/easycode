@@ -311,7 +311,6 @@ func withWrongThread(event protocol.Event) protocol.Event {
 
 func malformedDelta() protocol.Event {
 	event := decorateRuntime(protocol.Event{
-		Version: protocol.CurrentVersion,
 		Kind:    protocol.EventAssistantTextDelta,
 		Payload: []byte(`{"text":"hello","unknown":true}`),
 	})

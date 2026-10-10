@@ -2,6 +2,7 @@ package openai
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"easycode/internal/domain"
@@ -77,6 +78,32 @@ func TestResponsesStreamReducerProducesReadyReadCall(t *testing.T) {
 	if len(ready) != 1 || ready[0].ProviderCallID() != tool.ProviderCallID("call-1") ||
 		ready[0].ReadInput().FilePath() != "README.md" || ready[0].ReadInput().Offset() != 2 || ready[0].ReadInput().Limit() != 3 {
 		t.Fatalf("ready calls = %#v", ready)
+	}
+}
+
+func TestResponsesStreamReducerProducesOrderedHeterogeneousReadyCalls(t *testing.T) {
+	reducer := newResponsesStreamReducer(testOpenAIToolCatalog(t))
+	reduceOpenAIEvent(t, reducer, `{"type":"response.created","response":{"id":"resp-tools"}}`)
+	calls := []struct {
+		index     int
+		itemID    string
+		callID    string
+		name      string
+		arguments string
+	}{
+		{0, "fc-0", "call-0", "Glob", `{"pattern":"**/*.go"}`},
+		{1, "fc-1", "call-1", "Grep", `{"pattern":"TODO","glob":"**/*.go"}`},
+		{2, "fc-2", "call-2", "Read", `{"file_path":"README.md"}`},
+	}
+	for _, call := range calls {
+		reduceOpenAIEvent(t, reducer, fmt.Sprintf(`{"type":"response.output_item.added","output_index":%d,"item":{"type":"function_call","id":"%s","call_id":"%s","name":"%s"}}`, call.index, call.itemID, call.callID, call.name))
+		reduceOpenAIEvent(t, reducer, fmt.Sprintf(`{"type":"response.function_call_arguments.done","item_id":"%s","output_index":%d,"arguments":%q}`, call.itemID, call.index, call.arguments))
+		reduceOpenAIEvent(t, reducer, fmt.Sprintf(`{"type":"response.output_item.done","output_index":%d,"item":{"type":"function_call","id":"%s","call_id":"%s","name":"%s","arguments":%q}}`, call.index, call.itemID, call.callID, call.name, call.arguments))
+	}
+	reduceOpenAIEvent(t, reducer, `{"type":"response.completed","response":{"id":"resp-tools"}}`)
+	ready := reducer.readyCalls()
+	if len(ready) != 3 || ready[0].Capability() != tool.CapabilityGlob || ready[1].Capability() != tool.CapabilityGrep || ready[2].Capability() != tool.CapabilityRead {
+		t.Fatalf("异构 ready calls = %#v", ready)
 	}
 }
 

@@ -17,6 +17,18 @@ func (planningReadExecutor) Execute(stdcontext.Context, tool.ReadInvocation) too
 	return tool.InvocationResult{}
 }
 
+type planningGlobExecutor struct{}
+
+func (planningGlobExecutor) Execute(stdcontext.Context, tool.GlobInvocation) tool.InvocationResult {
+	return tool.InvocationResult{}
+}
+
+type planningGrepExecutor struct{}
+
+func (planningGrepExecutor) Execute(stdcontext.Context, tool.GrepInvocation) tool.InvocationResult {
+	return tool.InvocationResult{}
+}
+
 func TestPlannerProducesDeterministicOrderedImmutablePlan(t *testing.T) {
 	t.Parallel()
 	history := domain.SemanticHistoryView{Provider: domain.ProviderOpenAI, Turns: []domain.SemanticTurn{{UserText: "hello", AssistantText: "world"}}}
@@ -435,7 +447,7 @@ func emptyHistory(family domain.ProviderFamily) domain.SemanticHistoryView {
 
 func testToolCatalog(t *testing.T) tool.CatalogSnapshot {
 	t.Helper()
-	catalog, err := tool.NewReadCatalogSnapshot(planningReadExecutor{})
+	catalog, err := tool.NewReadOnlyCatalogSnapshot(planningReadExecutor{}, planningGlobExecutor{}, planningGrepExecutor{})
 	if err != nil {
 		t.Fatal(err)
 	}

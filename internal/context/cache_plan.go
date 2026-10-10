@@ -12,7 +12,6 @@ import (
 )
 
 const (
-	CurrentPlanVersion = 1
 	// MaxSegmentBytes 限制单个缓存分段持有的 canonical JSON 大小。
 	MaxSegmentBytes = 16 << 20
 )
@@ -104,17 +103,12 @@ func (segment Segment) validate() error {
 
 // Plan 是 Provider CachePlanner 的有序输入。
 type Plan struct {
-	version  int
 	segments []Segment
 }
 
-// NewPlan 创建当前版本的缓存计划并复制输入切片。
+// NewPlan 创建缓存计划并复制输入切片。
 func NewPlan(segments ...Segment) (Plan, error) {
-	return newPlan(CurrentPlanVersion, segments)
-}
-
-func newPlan(version int, segments []Segment) (Plan, error) {
-	plan := Plan{version: version, segments: cloneSegments(segments)}
+	plan := Plan{segments: cloneSegments(segments)}
 	if err := plan.Validate(); err != nil {
 		return Plan{}, err
 	}
@@ -123,9 +117,6 @@ func newPlan(version int, segments []Segment) (Plan, error) {
 
 // Validate 检查分段唯一性和稳定前缀顺序。
 func (plan Plan) Validate() error {
-	if plan.version != CurrentPlanVersion {
-		return fmt.Errorf("unsupported cache plan version %d", plan.version)
-	}
 	seen := make(map[string]struct{}, len(plan.segments))
 	volatileSeen := false
 	for _, segment := range plan.segments {
@@ -146,9 +137,6 @@ func (plan Plan) Validate() error {
 	}
 	return nil
 }
-
-// Version 返回缓存计划版本。
-func (plan Plan) Version() int { return plan.version }
 
 // Segments 返回不与计划共享可变数据的有序分段副本。
 func (plan Plan) Segments() []Segment { return cloneSegments(plan.segments) }

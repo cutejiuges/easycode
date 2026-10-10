@@ -18,14 +18,6 @@ const (
 	MaxBatchBytes = 64 << 20
 )
 
-// ReplayRequirement 声明未知消费者能否安全跳过一条记录。
-type ReplayRequirement string
-
-const (
-	ReplayRequired ReplayRequirement = "required"
-	ReplayOptional ReplayRequirement = "optional"
-)
-
 // EventKind 标识 Session 事实记录种类。
 type EventKind string
 
@@ -44,21 +36,20 @@ const (
 
 // Record 是一行可独立校验的 JSONL v1 信封。
 type Record struct {
-	SchemaVersion     int               `json:"schema_version"`
-	PayloadVersion    int               `json:"payload_version"`
-	ReplayRequirement ReplayRequirement `json:"replay_requirement"`
-	Sequence          uint64            `json:"seq"`
-	Timestamp         time.Time         `json:"timestamp"`
-	SessionID         domain.SessionID  `json:"session_id"`
-	ThreadID          domain.ThreadID   `json:"thread_id"`
-	ParentThreadID    domain.ThreadID   `json:"parent_thread_id,omitempty"`
-	TurnID            domain.TurnID     `json:"turn_id,omitempty"`
-	EventKind         EventKind         `json:"event_kind"`
-	BatchID           uint64            `json:"batch_id"`
-	BatchIndex        uint32            `json:"batch_index"`
-	BatchSize         uint32            `json:"batch_size"`
-	Payload           json.RawMessage   `json:"payload"`
-	Checksum          string            `json:"checksum"`
+	SchemaVersion  int              `json:"schema_version"`
+	PayloadVersion int              `json:"payload_version"`
+	Sequence       uint64           `json:"seq"`
+	Timestamp      time.Time        `json:"timestamp"`
+	SessionID      domain.SessionID `json:"session_id"`
+	ThreadID       domain.ThreadID  `json:"thread_id"`
+	ParentThreadID domain.ThreadID  `json:"parent_thread_id,omitempty"`
+	TurnID         domain.TurnID    `json:"turn_id,omitempty"`
+	EventKind      EventKind        `json:"event_kind"`
+	BatchID        uint64           `json:"batch_id"`
+	BatchIndex     uint32           `json:"batch_index"`
+	BatchSize      uint32           `json:"batch_size"`
+	Payload        json.RawMessage  `json:"payload"`
+	Checksum       string           `json:"checksum"`
 }
 
 // RecordDraft 是尚未由单 writer 分配顺序和 batch 边界的强类型记录。
@@ -91,13 +82,12 @@ type Identity struct {
 
 // SessionMetaPayload 保存恢复所需的非敏感根 Session 元数据。
 type SessionMetaPayload struct {
-	RootThreadID   domain.ThreadID       `json:"root_thread_id"`
-	CreatedAt      time.Time             `json:"created_at"`
-	Provider       domain.ProviderFamily `json:"provider"`
-	ProviderWire   string                `json:"provider_wire"`
-	Model          string                `json:"model"`
-	SchemaRevision int                   `json:"schema_revision"`
-	CreationCWD    string                `json:"creation_cwd"`
+	RootThreadID domain.ThreadID       `json:"root_thread_id"`
+	CreatedAt    time.Time             `json:"created_at"`
+	Provider     domain.ProviderFamily `json:"provider"`
+	ProviderWire string                `json:"provider_wire"`
+	Model        string                `json:"model"`
+	CreationCWD  string                `json:"creation_cwd"`
 }
 
 // ThreadMetaPayload 保存 thread 与父级的稳定关系。
@@ -124,6 +114,25 @@ type ReadInputPayload struct {
 	Limit    int    `json:"limit"`
 }
 
+// GlobInputPayload 保存可严格恢复的 Glob 输入。
+type GlobInputPayload struct {
+	Pattern string `json:"pattern"`
+	Path    string `json:"path"`
+	Limit   int    `json:"limit"`
+}
+
+// GrepInputPayload 保存可严格恢复的 Grep 输入。
+type GrepInputPayload struct {
+	Pattern         string              `json:"pattern"`
+	Path            string              `json:"path"`
+	Glob            string              `json:"glob"`
+	OutputMode      tool.GrepOutputMode `json:"output_mode"`
+	CaseInsensitive bool                `json:"case_insensitive"`
+	BeforeContext   int                 `json:"before_context"`
+	AfterContext    int                 `json:"after_context"`
+	Limit           int                 `json:"limit"`
+}
+
 // ToolCallReadyPayload 保存执行前已经durable的完整调用事实。
 type ToolCallReadyPayload struct {
 	InvocationID   tool.InvocationID   `json:"invocation_id"`
@@ -131,8 +140,9 @@ type ToolCallReadyPayload struct {
 	SampleIndex    uint32              `json:"sample_index"`
 	CallIndex      uint32              `json:"call_index"`
 	Capability     tool.CapabilityID   `json:"capability"`
-	InputRevision  string              `json:"input_revision"`
-	Input          ReadInputPayload    `json:"input"`
+	ReadInput      *ReadInputPayload   `json:"read_input,omitempty"`
+	GlobInput      *GlobInputPayload   `json:"glob_input,omitempty"`
+	GrepInput      *GrepInputPayload   `json:"grep_input,omitempty"`
 }
 
 // ToolExecutionStartedPayload 标记executor接收调用的线性化点。
@@ -152,14 +162,55 @@ type ReadResultMetadataPayload struct {
 	OutputTruncated   bool   `json:"output_truncated"`
 }
 
+type SearchSkipCountsPayload struct {
+	Binary      int `json:"binary"`
+	InvalidUTF8 int `json:"invalid_utf8"`
+	TooLarge    int `json:"too_large"`
+	Unreadable  int `json:"unreadable"`
+	Unsupported int `json:"unsupported"`
+	Disappeared int `json:"disappeared"`
+}
+
+type GlobResultMetadataPayload struct {
+	Matches          []string                    `json:"matches"`
+	Truncated        bool                        `json:"truncated"`
+	OmittedMatches   int                         `json:"omitted_matches"`
+	VisitedEntries   int                         `json:"visited_entries"`
+	IncompleteReason tool.SearchIncompleteReason `json:"incomplete_reason"`
+	Skipped          SearchSkipCountsPayload     `json:"skipped"`
+}
+
+type GrepMatchPayload struct {
+	RelativePath string `json:"relative_path"`
+	Line         int    `json:"line"`
+	Text         string `json:"text"`
+	MatchingLine bool   `json:"matching_line"`
+	Count        int    `json:"count"`
+}
+
+type GrepResultMetadataPayload struct {
+	Mode             tool.GrepOutputMode         `json:"mode"`
+	Matches          []GrepMatchPayload          `json:"matches"`
+	MatchingLines    int                         `json:"matching_lines"`
+	Truncated        bool                        `json:"truncated"`
+	OmittedMatches   int                         `json:"omitted_matches"`
+	VisitedEntries   int                         `json:"visited_entries"`
+	ScannedFiles     int                         `json:"scanned_files"`
+	ScannedBytes     int64                       `json:"scanned_bytes"`
+	IncompleteReason tool.SearchIncompleteReason `json:"incomplete_reason"`
+	Skipped          SearchSkipCountsPayload     `json:"skipped"`
+}
+
 // ToolCallResultPayload 保存无需重新执行即可恢复的冻结结果。
 type ToolCallResultPayload struct {
-	InvocationID        tool.InvocationID         `json:"invocation_id"`
-	Status              tool.ResultStatus         `json:"status"`
-	Code                string                    `json:"code"`
-	ResultCodecRevision string                    `json:"result_codec_revision"`
-	Preview             string                    `json:"preview"`
-	Metadata            ReadResultMetadataPayload `json:"metadata"`
+	InvocationID tool.InvocationID          `json:"invocation_id"`
+	Capability   tool.CapabilityID          `json:"capability"`
+	Status       tool.ResultStatus          `json:"status"`
+	Code         string                     `json:"code"`
+	Preview      string                     `json:"preview"`
+	ReadMetadata *ReadResultMetadataPayload `json:"read_metadata,omitempty"`
+	GlobMetadata *GlobResultMetadataPayload `json:"glob_metadata,omitempty"`
+	GrepMetadata *GrepResultMetadataPayload `json:"grep_metadata,omitempty"`
 }
 
 // TurnCompletedPayload 表示当前文本 turn 已 durable 成功结束。

@@ -273,7 +273,7 @@ func eventHasNoSemantic(event StreamEvent) bool {
 }
 
 func protocolEventEmpty(event protocol.Event) bool {
-	return event.Version == 0 && event.Kind == "" && event.Timestamp.IsZero() &&
+	return event.Kind == "" && event.Timestamp.IsZero() &&
 		event.SessionID == "" && event.ThreadID == "" && event.TurnID == "" &&
 		event.ItemID == "" && event.CallID == "" && len(event.Payload) == 0
 }
