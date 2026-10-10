@@ -18,7 +18,7 @@ func TestAssistantTextDeltaPayloadRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode text delta: %v", err)
 	}
-	if payload.Text != "hello" || event.Version != CurrentVersion {
+	if payload.Text != "hello" {
 		t.Fatalf("unexpected event: %#v payload=%#v", event, payload)
 	}
 	encoded, err := codec.MarshalStable(payload)
@@ -59,16 +59,7 @@ func TestTurnFailedRejectsWhitespaceSummary(t *testing.T) {
 	}
 }
 
-func TestPayloadDecodersRejectWrongVersionAndUnknownFields(t *testing.T) {
-	delta, err := NewAssistantTextDelta("hello")
-	if err != nil {
-		t.Fatal(err)
-	}
-	delta.Version++
-	if _, err := DecodeAssistantTextDelta(delta); err == nil {
-		t.Fatal("expected delta version error")
-	}
-
+func TestPayloadDecodersRejectUnknownFields(t *testing.T) {
 	failure := newEvent(EventTurnFailed)
 	failure.Payload = []byte(`{"code":"failed","message":"failed","unknown":true}`)
 	if _, err := DecodeTurnFailed(failure); err == nil {
@@ -117,8 +108,7 @@ func TestEventValidateRejectsInvalidEnvelopeAndPayload(t *testing.T) {
 	}
 	fixtures := []Event{
 		{},
-		{Version: CurrentVersion, Kind: "unknown"},
-		func() Event { event := delta; event.Version++; return event }(),
+		{Kind: "unknown"},
 		func() Event { event := delta; event.Payload = []byte(`{"text":""}`); return event }(),
 		func() Event { event := delta; event.Timestamp = time.Time{}; return event }(),
 		func() Event { event := delta; event.SessionID = "invalid"; return event }(),

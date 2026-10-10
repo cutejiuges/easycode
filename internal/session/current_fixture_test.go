@@ -11,20 +11,20 @@ import (
 	"testing"
 
 	"easycode/internal/domain"
+	"easycode/internal/tool"
 )
 
 type currentReplaySummary struct {
-	SessionID      domain.SessionID       `json:"session_id"`
-	ThreadID       domain.ThreadID        `json:"thread_id"`
-	Provider       domain.ProviderFamily  `json:"provider"`
-	ProviderWire   string                 `json:"provider_wire"`
-	Model          string                 `json:"model"`
-	SchemaRevision int                    `json:"schema_revision"`
-	CreationCWD    string                 `json:"creation_cwd"`
-	Turns          []currentTurnSummary   `json:"turns"`
-	NativeCommits  []currentNativeSummary `json:"native_commits"`
-	SampleUsages   []currentUsageSummary  `json:"sample_usages"`
-	NextSequence   uint64                 `json:"next_sequence"`
+	SessionID     domain.SessionID       `json:"session_id"`
+	ThreadID      domain.ThreadID        `json:"thread_id"`
+	Provider      domain.ProviderFamily  `json:"provider"`
+	ProviderWire  string                 `json:"provider_wire"`
+	Model         string                 `json:"model"`
+	CreationCWD   string                 `json:"creation_cwd"`
+	Turns         []currentTurnSummary   `json:"turns"`
+	NativeCommits []currentNativeSummary `json:"native_commits"`
+	SampleUsages  []currentUsageSummary  `json:"sample_usages"`
+	NextSequence  uint64                 `json:"next_sequence"`
 }
 
 type currentTurnSummary struct {
@@ -129,8 +129,10 @@ func TestCurrentToolLoopFixtureReplay(t *testing.T) {
 	fixture := bytes.TrimSuffix(readCurrentFixture(t, "tool_loop.jsonl"), []byte{'\n'})
 	wantKinds := []EventKind{
 		EventSessionMeta, EventThreadMeta, EventTurnStarted,
-		EventProviderNativeCommit, EventSampleUsage, EventToolCallReady,
-		EventToolExecutionStarted, EventToolCallResult,
+		EventProviderNativeCommit, EventSampleUsage,
+		EventToolCallReady, EventToolCallReady, EventToolCallReady,
+		EventToolExecutionStarted, EventToolExecutionStarted, EventToolExecutionStarted,
+		EventToolCallResult, EventToolCallResult, EventToolCallResult,
 		EventProviderNativeCommit, EventTurnFailed,
 	}
 	lines := bytes.Split(fixture, []byte{'\n'})
@@ -249,12 +251,12 @@ func TestCurrentCompletionWithoutSampleUsageFailsClosed(t *testing.T) {
 	}
 }
 
-func TestCurrentFixtureRejectsNewerRequiredReadOnly(t *testing.T) {
+func TestCurrentFixtureRejectsUnsupportedShapeReadOnly(t *testing.T) {
 	baseline := readCurrentFixture(t, "root.jsonl")
-	newerRequired := readCurrentFixture(t, "newer_required.jsonl")
+	superseded := readCurrentFixture(t, "superseded_envelope.jsonl")
 	fixtures := map[string][]byte{
-		"schema revision":  bytes.Replace(baseline, []byte(`"schema_version":1`), []byte(`"schema_version":2`), 1),
-		"payload revision": append(append([]byte(nil), baseline...), newerRequired...),
+		"schema revision":     bytes.Replace(baseline, []byte(`"schema_version":1`), []byte(`"schema_version":2`), 1),
+		"superseded envelope": append(append([]byte(nil), baseline...), superseded...),
 	}
 	for name, content := range fixtures {
 		name, content := name, content
@@ -265,8 +267,8 @@ func TestCurrentFixtureRejectsNewerRequiredReadOnly(t *testing.T) {
 				_, loadErr = NewReplayPlanner().Plan(loaded)
 			}
 			if loadErr == nil || (!strings.Contains(loadErr.Error(), "unsupported") &&
-				!strings.Contains(loadErr.Error(), "required")) {
-				t.Fatalf("newer required fixture error = %v", loadErr)
+				!strings.Contains(loadErr.Error(), "unknown")) {
+				t.Fatalf("unsupported fixture error = %v", loadErr)
 			}
 			if err := lease.Close(); err != nil {
 				t.Fatal(err)
@@ -280,11 +282,48 @@ func TestCurrentFixtureRejectsNewerRequiredReadOnly(t *testing.T) {
 				t.Fatal(err)
 			}
 			if !bytes.Equal(after, content) {
-				t.Fatal("rejecting a newer required revision modified journal bytes")
+				t.Fatal("rejecting an unsupported shape modified journal bytes")
 			}
 			if err := repository.Close(); err != nil {
 				t.Fatal(err)
 			}
+		})
+	}
+}
+
+func TestCurrentToolTailFixturesExposeRecoveryStates(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name      string
+		wantState ReplayedToolCallState
+	}{
+		{name: "ready_tail.jsonl", wantState: ReplayedToolCallReady},
+		{name: "started_tail.jsonl", wantState: ReplayedToolCallStarted},
+		{name: "results_no_output.jsonl", wantState: ReplayedToolCallResult},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			repository, lease := installCurrentFixture(t, readCurrentFixture(t, test.name))
+			loaded, err := NewLoader().Load(context.Background(), lease)
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan, err := NewReplayPlanner().Plan(loaded)
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls := plan.ToolRecovery.Calls()
+			if len(calls) != 3 {
+				t.Fatalf("recovery calls = %#v", calls)
+			}
+			wantCapabilities := []tool.CapabilityID{tool.CapabilityGlob, tool.CapabilityGrep, tool.CapabilityRead}
+			for index, call := range calls {
+				if call.CallIndex != uint32(index) || call.State != test.wantState || call.Invocation.Capability() != wantCapabilities[index] {
+					t.Fatalf("call %d = %#v", index, call)
+				}
+			}
+			_ = lease.Close()
+			_ = repository.Close()
 		})
 	}
 }
@@ -345,7 +384,7 @@ func summarizeCurrentReplay(t *testing.T, plan ReplayPlan) currentReplaySummary 
 	summary := currentReplaySummary{
 		SessionID: plan.Identity.SessionID, ThreadID: plan.Identity.ThreadID,
 		Provider: plan.SessionMetadata.Provider, ProviderWire: plan.SessionMetadata.ProviderWire,
-		Model: plan.SessionMetadata.Model, SchemaRevision: plan.SessionMetadata.SchemaRevision,
+		Model:       plan.SessionMetadata.Model,
 		CreationCWD: plan.SessionMetadata.CreationCWD, NextSequence: plan.NextSequence,
 		Turns:         make([]currentTurnSummary, 0, len(plan.Turns)),
 		NativeCommits: make([]currentNativeSummary, 0, len(plan.NativeCommits)),

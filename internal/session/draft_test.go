@@ -15,7 +15,7 @@ func TestTypedDraftConstructorsSealKindAndPayload(t *testing.T) {
 	sessionPayload := SessionMetaPayload{
 		RootThreadID: testThreadID, CreatedAt: time.Unix(1, 0).UTC(),
 		Provider: domain.ProviderOpenAI, ProviderWire: "responses", Model: "gpt-test",
-		SchemaRevision: 1, CreationCWD: t.TempDir(),
+		CreationCWD: t.TempDir(),
 	}
 	nativeBytes := json.RawMessage(`{"shape":"text_sample"}`)
 	tests := []struct {
@@ -63,7 +63,7 @@ func TestTypedDraftConstructorsSealKindAndPayload(t *testing.T) {
 			if err != nil {
 				t.Fatalf("create draft: %v", err)
 			}
-			if draft.EventKind() != test.kind || draft.descriptor.Version != 1 || draft.descriptor.Requirement != ReplayRequired {
+			if draft.EventKind() != test.kind || draft.descriptor.Kind != test.kind {
 				t.Fatalf("draft declaration = %#v", draft)
 			}
 			first := draft.PayloadBytes()
@@ -146,12 +146,12 @@ func TestTypedDraftConstructorsRejectSemanticInvalidValues(t *testing.T) {
 	}
 }
 
-func TestRevisionSpecificDecodersAreStrict(t *testing.T) {
+func TestCurrentDecodersAreStrict(t *testing.T) {
 	validDrafts := []RecordDraft{
 		mustDraft(t, EventSessionMeta, "", SessionMetaPayload{
 			RootThreadID: testThreadID, CreatedAt: time.Unix(1, 0).UTC(),
 			Provider: domain.ProviderOpenAI, ProviderWire: "responses", Model: "gpt-test",
-			SchemaRevision: 1, CreationCWD: t.TempDir(),
+			CreationCWD: t.TempDir(),
 		}),
 		mustDraft(t, EventThreadMeta, "", ThreadMetaPayload{Root: true}),
 		mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}),
@@ -169,8 +169,8 @@ func TestRevisionSpecificDecodersAreStrict(t *testing.T) {
 
 	for _, draft := range validDrafts {
 		record := Record{
-			PayloadVersion: draft.descriptor.Version, ReplayRequirement: draft.descriptor.Requirement,
-			EventKind: draft.EventKind(), Payload: draft.PayloadBytes(),
+			PayloadVersion: EnvelopeVersion,
+			EventKind:      draft.EventKind(), Payload: draft.PayloadBytes(),
 		}
 		t.Run(string(draft.EventKind()), func(t *testing.T) {
 			if err := decodeKnownRecord(record); err != nil {
@@ -192,18 +192,13 @@ func TestRevisionSpecificDecodersAreStrict(t *testing.T) {
 			if err := decodeKnownRecord(wrongRevision); err == nil || !strings.Contains(err.Error(), "declaration") {
 				t.Fatalf("revision error = %v", err)
 			}
-			wrongRequirement := record
-			wrongRequirement.ReplayRequirement = ReplayOptional
-			if err := decodeKnownRecord(wrongRequirement); err == nil || !strings.Contains(err.Error(), "declaration") {
-				t.Fatalf("requirement error = %v", err)
-			}
 		})
 	}
 }
 
 func TestToolLedgerPayloadsRoundTripAndRejectMalformedValues(t *testing.T) {
 	readyRecord := Record{
-		PayloadVersion: 1, ReplayRequirement: ReplayRequired, EventKind: EventToolCallReady,
+		PayloadVersion: 1, EventKind: EventToolCallReady,
 		Payload: mustToolReadyDraft(t).PayloadBytes(),
 	}
 	readyPayload, err := DecodeToolCallReadyPayload(readyRecord)
@@ -211,12 +206,13 @@ func TestToolLedgerPayloadsRoundTripAndRejectMalformedValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	invocation, err := readyPayload.Domain()
-	if err != nil || invocation.InvocationID() != testReadInvocation(t).InvocationID() || invocation.Input().FilePath() != "README.md" {
+	readInvocation, isRead := invocation.Read()
+	if err != nil || invocation.InvocationID() != testReadInvocation(t).InvocationID() || !isRead || readInvocation.Input().FilePath() != "README.md" {
 		t.Fatalf("ready payload domain = %#v, %v", invocation, err)
 	}
 
 	resultRecord := Record{
-		PayloadVersion: 1, ReplayRequirement: ReplayRequired, EventKind: EventToolCallResult,
+		PayloadVersion: 1, EventKind: EventToolCallResult,
 		Payload: mustToolResultDraft(t).PayloadBytes(),
 	}
 	resultPayload, err := DecodeToolCallResultPayload(resultRecord)
@@ -253,6 +249,51 @@ func TestToolLedgerPayloadsRoundTripAndRejectMalformedValues(t *testing.T) {
 	oversized.Payload, _ = json.Marshal(payload)
 	if _, err := DecodeToolCallResultPayload(oversized); err == nil {
 		t.Fatal("oversized result preview unexpectedly decoded")
+	}
+}
+
+func TestSearchToolLedgerPayloadsRoundTripAndRejectCapabilityMismatch(t *testing.T) {
+	t.Parallel()
+	for _, fixture := range []struct {
+		name       string
+		invocation tool.Invocation
+		result     tool.InvocationResult
+	}{
+		{name: "Glob", invocation: testGlobInvocation(t), result: testGlobResult(t)},
+		{name: "Grep", invocation: testGrepInvocation(t), result: testGrepResult(t)},
+	} {
+		fixture := fixture
+		t.Run(fixture.name, func(t *testing.T) {
+			readyDraft, err := NewToolCallReadyDraft(testTurnID, fixture.invocation, 1, 2)
+			if err != nil {
+				t.Fatal(err)
+			}
+			readyPayload, err := DecodeToolCallReadyPayload(Record{PayloadVersion: EnvelopeVersion, EventKind: EventToolCallReady, Payload: readyDraft.PayloadBytes()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			restoredInvocation, err := readyPayload.Domain()
+			if err != nil || restoredInvocation.Capability() != fixture.invocation.Capability() {
+				t.Fatalf("restored invocation = %#v, %v", restoredInvocation, err)
+			}
+			resultDraft, err := NewToolCallResultDraft(testTurnID, fixture.result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resultPayload, err := DecodeToolCallResultPayload(Record{PayloadVersion: EnvelopeVersion, EventKind: EventToolCallResult, Payload: resultDraft.PayloadBytes()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			restoredResult, err := resultPayload.Domain(restoredInvocation)
+			if err != nil || restoredResult.Capability() != fixture.result.Capability() || restoredResult.Preview().Text() != fixture.result.Preview().Text() {
+				t.Fatalf("restored result = %#v, %v", restoredResult, err)
+			}
+			mismatched := resultPayload
+			mismatched.Capability = tool.CapabilityRead
+			if _, err := mismatched.Domain(restoredInvocation); err == nil {
+				t.Fatal("capability/result union 错配未被拒绝")
+			}
+		})
 	}
 }
 
@@ -293,7 +334,7 @@ func decodeKnownRecord(record Record) error {
 	}
 }
 
-func testReadInvocation(t testing.TB) tool.ReadInvocation {
+func testReadInvocation(t testing.TB) tool.Invocation {
 	t.Helper()
 	invocationID, err := tool.ParseInvocationID("01890f3e-7bcd-7abc-8abc-0123456789ab")
 	if err != nil {
@@ -307,11 +348,11 @@ func testReadInvocation(t testing.TB) tool.ReadInvocation {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ready, err := tool.NewReadyCall(callID, input)
+	ready, err := tool.NewReadReadyCall(callID, input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	invocation, err := tool.NewReadInvocation(invocationID, ready)
+	invocation, err := tool.NewInvocation(invocationID, ready)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +361,59 @@ func testReadInvocation(t testing.TB) tool.ReadInvocation {
 
 func testReadResult(t testing.TB) tool.InvocationResult {
 	t.Helper()
-	return tool.RenderReadSuccess(testReadInvocation(t), "README.md", []string{"hello"}, 1)
+	invocation, _ := testReadInvocation(t).Read()
+	return tool.RenderReadSuccess(invocation, "README.md", []string{"hello"}, 1)
+}
+
+func testGlobInvocation(t testing.TB) tool.Invocation {
+	t.Helper()
+	invocationID, _ := tool.ParseInvocationID("01890f3e-7bcd-7abc-8abc-0123456789ac")
+	callID, _ := tool.ParseProviderCallID("call-glob")
+	input, _ := tool.NewGlobInput("**/*.go", "internal", 100)
+	ready, _ := tool.NewGlobReadyCall(callID, input)
+	invocation, err := tool.NewInvocation(invocationID, ready)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return invocation
+}
+
+func testGlobResult(t testing.TB) tool.InvocationResult {
+	t.Helper()
+	invocation, _ := testGlobInvocation(t).Glob()
+	metadata, _ := tool.NewGlobResultMetadata([]string{"internal/main.go"}, false, 0, 4, tool.SearchComplete, tool.SearchSkipCounts{})
+	preview, _ := tool.NewModelPreview("internal/main.go\n")
+	result, err := tool.NewGlobInvocationResult(invocation, tool.ResultSuccess, "ok", preview, metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func testGrepInvocation(t testing.TB) tool.Invocation {
+	t.Helper()
+	invocationID, _ := tool.ParseInvocationID("01890f3e-7bcd-7abc-8abc-0123456789ad")
+	callID, _ := tool.ParseProviderCallID("call-grep")
+	input, _ := tool.NewGrepInput("TODO", "internal", "**/*.go", tool.GrepOutputContent, true, 1, 2, 250)
+	ready, _ := tool.NewGrepReadyCall(callID, input)
+	invocation, err := tool.NewInvocation(invocationID, ready)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return invocation
+}
+
+func testGrepResult(t testing.TB) tool.InvocationResult {
+	t.Helper()
+	invocation, _ := testGrepInvocation(t).Grep()
+	match, _ := tool.NewGrepContentMatch("internal/main.go", 7, "// TODO", true)
+	metadata, _ := tool.NewGrepResultMetadata(tool.GrepOutputContent, []tool.GrepMatch{match}, 1, false, 0, 4, 1, 100, tool.SearchComplete, tool.SearchSkipCounts{})
+	preview, _ := tool.NewModelPreview("internal/main.go:7:// TODO\n")
+	result, err := tool.NewGrepInvocationResult(invocation, tool.ResultSuccess, "ok", preview, metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
 }
 
 func mustToolReadyDraft(t testing.TB) RecordDraft {

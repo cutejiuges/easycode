@@ -17,6 +17,9 @@ func (handle *inertWorkspaceHandle) openFile(string, workspaceHooks) (*os.File, 
 	handle.opened++
 	return nil, errors.New("not used")
 }
+func (*inertWorkspaceHandle) openDirectory(string, workspaceHooks) (workspaceDirectory, error) {
+	return nil, errors.New("not used")
+}
 func (*inertWorkspaceHandle) close() error { return nil }
 
 func TestNewReadExecutorDoesNotAccessFilesystem(t *testing.T) {
@@ -46,10 +49,10 @@ func TestReadWorkspaceTextAndRange(t *testing.T) {
 	if result.Status() != tool.ResultSuccess || result.Code() != "ok" {
 		t.Fatalf("Read 失败: %s %s", result.Status(), result.Code())
 	}
-	if result.Preview().Text() != "2\ttwo\n3\tthree\n" || result.Metadata().RelativePath() != "src/main.go" {
-		t.Fatalf("范围或路径错误: %q %#v", result.Preview().Text(), result.Metadata())
+	if result.Preview().Text() != "2\ttwo\n3\tthree\n" || result.ReadMetadata().RelativePath() != "src/main.go" {
+		t.Fatalf("范围或路径错误: %q %#v", result.Preview().Text(), result.ReadMetadata())
 	}
-	if result.Metadata().ReachedEOF() {
+	if result.ReadMetadata().ReachedEOF() {
 		t.Fatal("读取中间范围不应到达 EOF")
 	}
 	if err := workspace.Close(); err != nil {
@@ -71,16 +74,16 @@ func TestReadEmptyMissingNewlineAndPastEOF(t *testing.T) {
 	}
 	executor, _ := openTestExecutor(t, root)
 	empty := executor.Execute(context.Background(), invocationFor(t, "empty", 1, 2000))
-	if empty.Preview().Text() != "" || !empty.Metadata().ReachedEOF() {
-		t.Fatalf("空文件结果错误: %q %#v", empty.Preview().Text(), empty.Metadata())
+	if empty.Preview().Text() != "" || !empty.ReadMetadata().ReachedEOF() {
+		t.Fatalf("空文件结果错误: %q %#v", empty.Preview().Text(), empty.ReadMetadata())
 	}
 	tail := executor.Execute(context.Background(), invocationFor(t, "tail", 2, 1))
-	if tail.Preview().Text() != "2\tb\n" || !tail.Metadata().ReachedEOF() {
-		t.Fatalf("无末尾换行结果错误: %q %#v", tail.Preview().Text(), tail.Metadata())
+	if tail.Preview().Text() != "2\tb\n" || !tail.ReadMetadata().ReachedEOF() {
+		t.Fatalf("无末尾换行结果错误: %q %#v", tail.Preview().Text(), tail.ReadMetadata())
 	}
 	past := executor.Execute(context.Background(), invocationFor(t, "tail", 9, 1))
-	if past.Preview().Text() != "" || !past.Metadata().ReachedEOF() {
-		t.Fatalf("超出 EOF 结果错误: %q %#v", past.Preview().Text(), past.Metadata())
+	if past.Preview().Text() != "" || !past.ReadMetadata().ReachedEOF() {
+		t.Fatalf("超出 EOF 结果错误: %q %#v", past.Preview().Text(), past.ReadMetadata())
 	}
 }
 
@@ -129,7 +132,7 @@ func TestReadRejectsTraversalSymlinkBinaryAndOversize(t *testing.T) {
 		if result.Status() != tool.ResultError || result.Code() != test.code {
 			t.Fatalf("%q = %s/%s", test.path, result.Status(), result.Code())
 		}
-		combined := result.Preview().Text() + result.Metadata().RelativePath()
+		combined := result.Preview().Text() + result.ReadMetadata().RelativePath()
 		if strings.Contains(combined, root) || strings.Contains(combined, outside) || strings.Contains(combined, secret) {
 			t.Fatalf("安全错误泄漏绝对路径或正文: %q", combined)
 		}
@@ -172,7 +175,7 @@ func invocationFor(t *testing.T, path string, offset int, limit int) tool.ReadIn
 		t.Fatal(err)
 	}
 	callID, _ := tool.ParseProviderCallID("call-read")
-	call, _ := tool.NewReadyCall(callID, input)
+	call, _ := tool.NewReadReadyCall(callID, input)
 	invocationID, err := tool.ParseInvocationID("018f1d8a-7b5c-7def-8123-456789abcdef")
 	if err != nil {
 		t.Fatal(err)

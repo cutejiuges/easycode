@@ -40,16 +40,127 @@ func (runtimeReadExecutor) Execute(context.Context, tool.ReadInvocation) tool.In
 	return tool.InvocationResult{}
 }
 
+type runtimeGlobExecutor struct{}
+
+func (runtimeGlobExecutor) Execute(context.Context, tool.GlobInvocation) tool.InvocationResult {
+	return tool.InvocationResult{}
+}
+
+type runtimeGrepExecutor struct{}
+
+func (runtimeGrepExecutor) Execute(context.Context, tool.GrepInvocation) tool.InvocationResult {
+	return tool.InvocationResult{}
+}
+
+type mixedReadExecutor struct{ calls atomic.Int32 }
+
+func (executor *mixedReadExecutor) Execute(_ context.Context, invocation tool.ReadInvocation) tool.InvocationResult {
+	executor.calls.Add(1)
+	if invocation.ProviderCallID() == "call-1" {
+		return tool.NewReadErrorResult(invocation, tool.ResultError, "not_found", "Read failed: file not found", "README.md")
+	}
+	return tool.RenderReadSuccess(invocation, "README.md", []string{"content"}, 1)
+}
+
 type recordingReadExecutor struct {
+	mu           sync.Mutex
 	calls        atomic.Int32
 	cancelledCtx atomic.Bool
 	invocations  []tool.ProviderCallID
 	onExecute    func(tool.ReadInvocation)
 }
 
+type gatedReadExecutor struct {
+	started   chan tool.ProviderCallID
+	release   <-chan struct{}
+	active    atomic.Int32
+	peak      atomic.Int32
+	calls     atomic.Int32
+	completed sync.Mutex
+	order     []tool.ProviderCallID
+}
+
+func (executor *gatedReadExecutor) Execute(_ context.Context, invocation tool.ReadInvocation) tool.InvocationResult {
+	executor.calls.Add(1)
+	active := executor.active.Add(1)
+	for {
+		peak := executor.peak.Load()
+		if active <= peak || executor.peak.CompareAndSwap(peak, active) {
+			break
+		}
+	}
+	executor.started <- invocation.ProviderCallID()
+	<-executor.release
+	executor.active.Add(-1)
+	executor.completed.Lock()
+	executor.order = append(executor.order, invocation.ProviderCallID())
+	executor.completed.Unlock()
+	return tool.RenderReadSuccess(invocation, "README.md", []string{"content"}, 1)
+}
+
+type indexedGateReadExecutor struct {
+	started   chan tool.ProviderCallID
+	completed chan tool.ProviderCallID
+	gates     map[tool.ProviderCallID]<-chan struct{}
+	mu        sync.Mutex
+	order     []tool.ProviderCallID
+}
+
+func (executor *indexedGateReadExecutor) Execute(_ context.Context, invocation tool.ReadInvocation) tool.InvocationResult {
+	executor.started <- invocation.ProviderCallID()
+	<-executor.gates[invocation.ProviderCallID()]
+	executor.mu.Lock()
+	executor.order = append(executor.order, invocation.ProviderCallID())
+	executor.mu.Unlock()
+	executor.completed <- invocation.ProviderCallID()
+	return tool.RenderReadSuccess(invocation, "README.md", []string{string(invocation.ProviderCallID())}, 1)
+}
+
+type startedFailureJournal struct {
+	mu              sync.Mutex
+	calls           int
+	failAt          int
+	poisoned        bool
+	poisonOnFailure bool
+	batches         [][]session.RecordDraft
+}
+
+func (journal *startedFailureJournal) AppendBatch(_ context.Context, drafts []session.RecordDraft) ([]session.Record, error) {
+	journal.mu.Lock()
+	defer journal.mu.Unlock()
+	if journal.poisoned {
+		return nil, errors.New("fixture journal is poisoned")
+	}
+	journal.calls++
+	if journal.calls == journal.failAt {
+		journal.poisoned = journal.poisonOnFailure
+		return nil, errors.New("fixture started append failure")
+	}
+	journal.batches = append(journal.batches, append([]session.RecordDraft(nil), drafts...))
+	return make([]session.Record, len(drafts)), nil
+}
+
+func (journal *startedFailureJournal) Poisoned() bool {
+	journal.mu.Lock()
+	defer journal.mu.Unlock()
+	return journal.poisoned
+}
+
+func (journal *startedFailureJournal) snapshot() [][]session.RecordDraft {
+	journal.mu.Lock()
+	defer journal.mu.Unlock()
+	result := make([][]session.RecordDraft, len(journal.batches))
+	for index := range journal.batches {
+		result[index] = append([]session.RecordDraft(nil), journal.batches[index]...)
+	}
+	return result
+}
+
 func (executor *recordingReadExecutor) Execute(ctx context.Context, invocation tool.ReadInvocation) tool.InvocationResult {
 	executor.calls.Add(1)
+	executor.mu.Lock()
 	executor.invocations = append(executor.invocations, invocation.ProviderCallID())
+	executor.mu.Unlock()
 	if executor.onExecute != nil {
 		executor.onExecute(invocation)
 	}
@@ -58,6 +169,12 @@ func (executor *recordingReadExecutor) Execute(ctx context.Context, invocation t
 		return tool.NewReadErrorResult(invocation, tool.ResultCancelled, "cancelled", "Read cancelled", ".")
 	}
 	return tool.RenderReadSuccess(invocation, "README.md", []string{"content"}, 1)
+}
+
+func (executor *recordingReadExecutor) invocationSnapshot() []tool.ProviderCallID {
+	executor.mu.Lock()
+	defer executor.mu.Unlock()
+	return append([]tool.ProviderCallID(nil), executor.invocations...)
 }
 
 type fakeToolConversation struct {
@@ -216,8 +333,8 @@ func TestRunTurnDurableSuccessOrderingAndIdentity(t *testing.T) {
 		t.Fatalf("journal batches = %#v", batches)
 	}
 	commit, err := session.DecodeNativeCommitPayload(session.Record{
-		PayloadVersion: 1, ReplayRequirement: session.ReplayRequired,
-		EventKind: batches[1][0].EventKind(), Payload: batches[1][0].PayloadBytes(),
+		PayloadVersion: 1,
+		EventKind:      batches[1][0].EventKind(), Payload: batches[1][0].PayloadBytes(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -226,8 +343,8 @@ func TestRunTurnDurableSuccessOrderingAndIdentity(t *testing.T) {
 		t.Fatalf("native commit = %#v", commit)
 	}
 	usageRecord, err := session.DecodeSampleUsagePayload(session.Record{
-		PayloadVersion: 1, ReplayRequirement: session.ReplayRequired,
-		EventKind: batches[1][1].EventKind(), Payload: batches[1][1].PayloadBytes(),
+		PayloadVersion: 1,
+		EventKind:      batches[1][1].EventKind(), Payload: batches[1][1].PayloadBytes(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -321,9 +438,7 @@ func TestRunTurnCancellationUsesStartedAcceptanceAsExecutorBoundary(t *testing.T
 func TestRunTurnCompletesOrderedMultiSampleToolLoop(t *testing.T) {
 	var timeline []string
 	appendTimeline := func(value string) { timeline = append(timeline, value) }
-	executor := &recordingReadExecutor{onExecute: func(invocation tool.ReadInvocation) {
-		appendTimeline("execute:" + string(invocation.ProviderCallID()))
-	}}
+	executor := &recordingReadExecutor{}
 	first := newPreparedSampleWithReady(
 		t, testRuntimeReadyCall(t, "call-1"), testRuntimeReadyCall(t, "call-2"),
 	)
@@ -372,12 +487,11 @@ func TestRunTurnCompletesOrderedMultiSampleToolLoop(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnCompleted)
-	if base.calls.Load() != 2 || executor.calls.Load() != 2 ||
-		fmt.Sprint(executor.invocations) != fmt.Sprint([]tool.ProviderCallID{"call-1", "call-2"}) ||
-		len(conversation.results) != 2 {
+	if base.calls.Load() != 2 || executor.calls.Load() != 2 || len(conversation.results) != 2 ||
+		conversation.results[0].ProviderCallID() != "call-1" || conversation.results[1].ProviderCallID() != "call-2" {
 		t.Fatalf(
-			"stream/executor/order/results = %d/%d/%#v/%d",
-			base.calls.Load(), executor.calls.Load(), executor.invocations, len(conversation.results),
+			"stream/executor/results = %d/%d/%#v",
+			base.calls.Load(), executor.calls.Load(), conversation.results,
 		)
 	}
 	batches := journal.snapshot()
@@ -385,8 +499,8 @@ func TestRunTurnCompletesOrderedMultiSampleToolLoop(t *testing.T) {
 		{session.EventTurnStarted},
 		{session.EventProviderNativeCommit, session.EventSampleUsage, session.EventToolCallReady, session.EventToolCallReady},
 		{session.EventToolExecutionStarted},
-		{session.EventToolCallResult},
 		{session.EventToolExecutionStarted},
+		{session.EventToolCallResult},
 		{session.EventToolCallResult},
 		{session.EventProviderNativeCommit},
 		{session.EventProviderNativeCommit, session.EventSampleUsage, session.EventTurnCompleted},
@@ -405,8 +519,7 @@ func TestRunTurnCompletesOrderedMultiSampleToolLoop(t *testing.T) {
 		}
 	}
 	wantTimeline := []string{
-		"first_stream", "execute:call-1", "execute:call-2",
-		"tool_outputs_sync", "tool_outputs_finalize", "second_stream", "final_sample_finalize",
+		"first_stream", "tool_outputs_sync", "tool_outputs_finalize", "second_stream", "final_sample_finalize",
 	}
 	if fmt.Sprint(timeline) != fmt.Sprint(wantTimeline) {
 		t.Fatalf("timeline = %#v, want %#v", timeline, wantTimeline)
@@ -422,6 +535,191 @@ func TestRunTurnCompletesOrderedMultiSampleToolLoop(t *testing.T) {
 	wantUsage, err := domain.AggregateSampleUsage([]domain.SampleUsage{testRuntimeUsage(t), testRuntimeUsage(t)})
 	if err != nil || usage != wantUsage {
 		t.Fatalf("turn usage = %#v, want %#v, error=%v", usage, wantUsage, err)
+	}
+}
+
+func TestParallelToolSchedulerBoundsConcurrency(t *testing.T) {
+	for _, callCount := range []int{1, 8, 9} {
+		t.Run(fmt.Sprintf("calls_%d", callCount), func(t *testing.T) {
+			release := make(chan struct{})
+			var releaseOnce sync.Once
+			t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+			executor := &gatedReadExecutor{started: make(chan tool.ProviderCallID, callCount), release: release}
+			runtime := newRuntimeWithReadExecutor(t, &fakeJournal{}, executor)
+			invocations := testRuntimeInvocations(t, callCount)
+			type outcome struct {
+				results []tool.InvocationResult
+				err     error
+			}
+			done := make(chan outcome, 1)
+			go func() {
+				results, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, invocations)
+				done <- outcome{results: results, err: err}
+			}()
+			initial := callCount
+			if initial > maxParallelReadWorkers {
+				initial = maxParallelReadWorkers
+			}
+			for range initial {
+				<-executor.started
+			}
+			if callCount > maxParallelReadWorkers {
+				select {
+				case unexpected := <-executor.started:
+					t.Fatalf("worker 上限释放前启动了额外调用 %s", unexpected)
+				default:
+				}
+			}
+			releaseOnce.Do(func() { close(release) })
+			result := <-done
+			if result.err != nil || len(result.results) != callCount {
+				t.Fatalf("executeToolCalls() results/error = %d/%v", len(result.results), result.err)
+			}
+			if executor.calls.Load() != int32(callCount) || executor.peak.Load() != int32(initial) || executor.active.Load() != 0 {
+				t.Fatalf("calls/peak/active = %d/%d/%d", executor.calls.Load(), executor.peak.Load(), executor.active.Load())
+			}
+		})
+	}
+}
+
+func TestParallelToolSchedulerPersistsCallOrderAfterOutOfOrderCompletion(t *testing.T) {
+	gates := map[tool.ProviderCallID]chan struct{}{
+		"call-0": make(chan struct{}),
+		"call-1": make(chan struct{}),
+		"call-2": make(chan struct{}),
+	}
+	executor := &indexedGateReadExecutor{
+		started: make(chan tool.ProviderCallID, 3), completed: make(chan tool.ProviderCallID, 3),
+		gates: map[tool.ProviderCallID]<-chan struct{}{
+			"call-0": gates["call-0"], "call-1": gates["call-1"], "call-2": gates["call-2"],
+		},
+	}
+	journal := &fakeJournal{}
+	runtime := newRuntimeWithReadExecutor(t, journal, executor)
+	invocations := testRuntimeInvocations(t, 3)
+	type outcome struct {
+		results []tool.InvocationResult
+		err     error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		results, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, invocations)
+		done <- outcome{results: results, err: err}
+	}()
+	for range 3 {
+		<-executor.started
+	}
+	for _, callID := range []tool.ProviderCallID{"call-2", "call-0", "call-1"} {
+		close(gates[callID])
+		if completed := <-executor.completed; completed != callID {
+			t.Fatalf("completion = %s, want %s", completed, callID)
+		}
+	}
+	result := <-done
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	for index, invocationResult := range result.results {
+		want := tool.ProviderCallID(fmt.Sprintf("call-%d", index))
+		if invocationResult.ProviderCallID() != want {
+			t.Fatalf("result[%d] call ID = %s", index, invocationResult.ProviderCallID())
+		}
+	}
+	batches := journal.snapshot()
+	if len(batches) != 6 {
+		t.Fatalf("scheduler batches = %d", len(batches))
+	}
+	for index := range 3 {
+		if batches[index][0].EventKind() != session.EventToolExecutionStarted ||
+			batches[index+3][0].EventKind() != session.EventToolCallResult {
+			t.Fatalf("scheduler batch order = %#v", batches)
+		}
+		persisted := decodeRuntimeResultDraft(t, batches[index+3][0], invocations[index])
+		if persisted.ProviderCallID() != tool.ProviderCallID(fmt.Sprintf("call-%d", index)) {
+			t.Fatalf("persisted result[%d] = %s", index, persisted.ProviderCallID())
+		}
+	}
+}
+
+func TestParallelToolSchedulerDoesNotCancelSiblingsOnToolError(t *testing.T) {
+	executor := &mixedReadExecutor{}
+	journal := &fakeJournal{}
+	runtime := newRuntimeWithReadExecutor(t, journal, executor)
+	results, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, testRuntimeInvocations(t, 3))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if executor.calls.Load() != 3 || len(results) != 3 ||
+		results[0].Status() != tool.ResultSuccess || results[1].Status() != tool.ResultError || results[2].Status() != tool.ResultSuccess {
+		t.Fatalf("calls/results = %d/%#v", executor.calls.Load(), results)
+	}
+	batches := journal.snapshot()
+	if len(batches) != 6 {
+		t.Fatalf("scheduler batches = %d", len(batches))
+	}
+}
+
+func TestStartedAppendFailureWaitsAcceptedCallsAndStopsLaterCalls(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		poisoned bool
+	}{
+		{name: "definite"},
+		{name: "uncertain", poisoned: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			calls := []tool.ReadyCall{
+				testRuntimeReadyCall(t, "call-0"), testRuntimeReadyCall(t, "call-1"), testRuntimeReadyCall(t, "call-2"),
+			}
+			sample := newPreparedSampleWithReady(t, calls...)
+			executor := &recordingReadExecutor{}
+			conversation := &fakeToolConversation{fakeConversation: &fakeConversation{
+				stream: fixedStream(completedProviderEventWithSample(t, sample)),
+			}}
+			journal := &startedFailureJournal{failAt: 4, poisonOnFailure: test.poisoned}
+			config := testRuntimeConfig(t, journal)
+			config.ReadExecutor = executor
+			config.ToolCatalog = mustRuntimeToolCatalogWithExecutor(t, executor)
+			config.GenerateTurnID = func() (domain.TurnID, error) { return runtimeTurnID, nil }
+			invocationIDs := testRuntimeInvocationIDs(t, 3)
+			var invocationIndex int
+			config.GenerateInvocationID = func() (tool.InvocationID, error) {
+				value := invocationIDs[invocationIndex]
+				invocationIndex++
+				return value, nil
+			}
+			runtime, err := New(conversation, config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			events, runErr := collectTurn(runtime, context.Background(), nil)
+			if !errors.Is(runErr, &fault.Error{Code: fault.CodeSessionWrite}) {
+				t.Fatalf("RunTurn() error = %v", runErr)
+			}
+			assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnFailed)
+			if executor.calls.Load() != 1 || fmt.Sprint(executor.invocationSnapshot()) != fmt.Sprint([]tool.ProviderCallID{"call-0"}) ||
+				conversation.calls.Load() != 1 || conversation.prepareCalls.Load() != 0 {
+				t.Fatalf("executor calls/order, streams, prepare = %d/%#v/%d/%d", executor.calls.Load(), executor.invocationSnapshot(), conversation.calls.Load(), conversation.prepareCalls.Load())
+			}
+			batches := journal.snapshot()
+			resultCount := 0
+			failureCount := 0
+			for _, batch := range batches {
+				if batch[0].EventKind() == session.EventToolCallResult {
+					resultCount++
+				}
+				if batch[0].EventKind() == session.EventTurnFailed {
+					failureCount++
+				}
+			}
+			if test.poisoned {
+				if resultCount != 0 || failureCount != 0 || !journal.Poisoned() {
+					t.Fatalf("uncertain result/failure/poisoned = %d/%d/%t", resultCount, failureCount, journal.Poisoned())
+				}
+			} else if resultCount != 1 || failureCount != 1 || journal.Poisoned() {
+				t.Fatalf("definite result/failure/poisoned = %d/%d/%t", resultCount, failureCount, journal.Poisoned())
+			}
+		})
 	}
 }
 
@@ -647,7 +945,8 @@ func TestRunTurnSampleLimitStopsBeforeAdditionalProviderOrToolSideEffects(t *tes
 
 func TestReconcileToolTurnClosesCrashPointsWithoutExternalCalls(t *testing.T) {
 	invocation := testRuntimeInvocation(t, "01890f3e-7bcd-7abc-8abc-0123456789ab", "call-recovery")
-	durableResult := tool.RenderReadSuccess(invocation, "README.md", []string{"persisted"}, 1)
+	readInvocation, _ := invocation.Read()
+	durableResult := tool.RenderReadSuccess(readInvocation, "README.md", []string{"persisted"}, 1)
 	for _, test := range []struct {
 		name             string
 		calls            []session.ReplayedToolCall
@@ -1040,8 +1339,8 @@ func TestRunTurnPersistsProviderFailureCancellationAndEarlyEOF(t *testing.T) {
 				t.Fatalf("journal batches = %#v", batches)
 			}
 			failure, decodeErr := session.DecodeTurnFailedPayload(session.Record{
-				PayloadVersion: 1, ReplayRequirement: session.ReplayRequired,
-				EventKind: batches[1][0].EventKind(), Payload: batches[1][0].PayloadBytes(),
+				PayloadVersion: 1,
+				EventKind:      batches[1][0].EventKind(), Payload: batches[1][0].PayloadBytes(),
 			})
 			if decodeErr != nil {
 				t.Fatal(decodeErr)
@@ -1377,7 +1676,7 @@ func testRuntimeConfig(t *testing.T, journal Journal) Config {
 	return Config{
 		SessionID: runtimeSessionID, ThreadID: runtimeThreadID, Journal: journal,
 		ContextProfile: profile, ToolCatalog: mustRuntimeToolCatalog(t), ProjectInstructions: projectInstructions,
-		ReadExecutor:   runtimeReadExecutor{},
+		ReadExecutor: runtimeReadExecutor{}, GlobExecutor: runtimeGlobExecutor{}, GrepExecutor: runtimeGrepExecutor{},
 		ContextBudget:  contextplan.DisabledBudget(),
 		ContextPlanner: contextplan.NewPlanner(),
 	}
@@ -1390,11 +1689,55 @@ func mustRuntimeToolCatalog(t *testing.T) tool.CatalogSnapshot {
 
 func mustRuntimeToolCatalogWithExecutor(t *testing.T, executor tool.ReadExecutor) tool.CatalogSnapshot {
 	t.Helper()
-	catalog, err := tool.NewReadCatalogSnapshot(executor)
+	catalog, err := tool.NewReadOnlyCatalogSnapshot(executor, runtimeGlobExecutor{}, runtimeGrepExecutor{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return catalog
+}
+
+func newRuntimeWithReadExecutor(t *testing.T, journal Journal, executor tool.ReadExecutor) *Runtime {
+	t.Helper()
+	conversation := &fakeConversation{
+		stream: func(context.Context, provider.TurnInput) (<-chan provider.StreamEvent, error) {
+			return nil, errors.New("unexpected Provider stream")
+		},
+	}
+	config := testRuntimeConfig(t, journal)
+	config.ReadExecutor = executor
+	config.ToolCatalog = mustRuntimeToolCatalogWithExecutor(t, executor)
+	runtime, err := New(conversation, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return runtime
+}
+
+func testRuntimeInvocationIDs(t *testing.T, count int) []tool.InvocationID {
+	t.Helper()
+	result := make([]tool.InvocationID, count)
+	for index := range count {
+		value, err := tool.ParseInvocationID(fmt.Sprintf("01890f3e-7bcd-7abc-8abc-%012x", index+1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		result[index] = value
+	}
+	return result
+}
+
+func testRuntimeInvocations(t *testing.T, count int) []tool.Invocation {
+	t.Helper()
+	identities := testRuntimeInvocationIDs(t, count)
+	result := make([]tool.Invocation, count)
+	for index := range count {
+		invocation, err := tool.NewInvocation(identities[index], testRuntimeReadyCall(t, fmt.Sprintf("call-%d", index)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		result[index] = invocation
+	}
+	return result
 }
 
 func testRuntimeReadyCall(t *testing.T, callValue string) tool.ReadyCall {
@@ -1407,20 +1750,20 @@ func testRuntimeReadyCall(t *testing.T, callValue string) tool.ReadyCall {
 	if err != nil {
 		t.Fatal(err)
 	}
-	call, err := tool.NewReadyCall(callID, input)
+	call, err := tool.NewReadReadyCall(callID, input)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return call
 }
 
-func testRuntimeInvocation(t *testing.T, invocationValue string, callValue string) tool.ReadInvocation {
+func testRuntimeInvocation(t *testing.T, invocationValue string, callValue string) tool.Invocation {
 	t.Helper()
 	invocationID, err := tool.ParseInvocationID(invocationValue)
 	if err != nil {
 		t.Fatal(err)
 	}
-	invocation, err := tool.NewReadInvocation(invocationID, testRuntimeReadyCall(t, callValue))
+	invocation, err := tool.NewInvocation(invocationID, testRuntimeReadyCall(t, callValue))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1473,12 +1816,12 @@ func newPreparedSampleWithReady(t *testing.T, ready ...tool.ReadyCall) *provider
 func decodeRuntimeResultDraft(
 	t *testing.T,
 	draft session.RecordDraft,
-	invocation tool.ReadInvocation,
+	invocation tool.Invocation,
 ) tool.InvocationResult {
 	t.Helper()
 	payload, err := session.DecodeToolCallResultPayload(session.Record{
-		PayloadVersion: 1, ReplayRequirement: session.ReplayRequired,
-		EventKind: draft.EventKind(), Payload: draft.PayloadBytes(),
+		PayloadVersion: 1,
+		EventKind:      draft.EventKind(), Payload: draft.PayloadBytes(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1493,8 +1836,8 @@ func decodeRuntimeResultDraft(
 func decodeRuntimeFailureDraft(t *testing.T, draft session.RecordDraft) session.TurnFailedPayload {
 	t.Helper()
 	payload, err := session.DecodeTurnFailedPayload(session.Record{
-		PayloadVersion: 1, ReplayRequirement: session.ReplayRequired,
-		EventKind: draft.EventKind(), Payload: draft.PayloadBytes(),
+		PayloadVersion: 1,
+		EventKind:      draft.EventKind(), Payload: draft.PayloadBytes(),
 	})
 	if err != nil {
 		t.Fatal(err)

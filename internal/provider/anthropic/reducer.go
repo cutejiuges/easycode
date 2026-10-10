@@ -254,15 +254,11 @@ func (reducer *streamReducer) reduceBlockStop(index *int) (reducerResult, error)
 		if state.toolInput == "" || !json.Valid([]byte(state.toolInput)) {
 			return reducerResult{}, protocolError("Anthropic tool input is incomplete")
 		}
-		input, decodeErr := reducer.catalog.DecodeRead(domain.ProviderAnthropic, state.item.Name, []byte(state.toolInput))
-		if decodeErr != nil {
-			return reducerResult{}, protocolError("Anthropic tool input is invalid")
-		}
 		callID, callErr := tool.ParseProviderCallID(state.item.ID)
 		if callErr != nil {
 			return reducerResult{}, protocolError("Anthropic tool use ID is invalid")
 		}
-		ready, readyErr := tool.NewReadyCall(callID, input)
+		ready, readyErr := reducer.catalog.DecodeReadyCall(domain.ProviderAnthropic, state.item.Name, callID, []byte(state.toolInput))
 		if readyErr != nil {
 			return reducerResult{}, protocolError("Anthropic ready call is invalid")
 		}

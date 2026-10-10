@@ -15,20 +15,19 @@ import (
 )
 
 type checksumEnvelope struct {
-	SchemaVersion     int                `json:"schema_version"`
-	PayloadVersion    int                `json:"payload_version"`
-	ReplayRequirement ReplayRequirement  `json:"replay_requirement"`
-	Sequence          uint64             `json:"seq"`
-	Timestamp         time.Time          `json:"timestamp"`
-	SessionID         domain.SessionID   `json:"session_id"`
-	ThreadID          domain.ThreadID    `json:"thread_id"`
-	ParentThreadID    domain.ThreadID    `json:"parent_thread_id,omitempty"`
-	TurnID            domain.TurnID      `json:"turn_id,omitempty"`
-	EventKind         EventKind          `json:"event_kind"`
-	BatchID           uint64             `json:"batch_id"`
-	BatchIndex        uint32             `json:"batch_index"`
-	BatchSize         uint32             `json:"batch_size"`
-	Payload           stdjson.RawMessage `json:"payload"`
+	SchemaVersion  int                `json:"schema_version"`
+	PayloadVersion int                `json:"payload_version"`
+	Sequence       uint64             `json:"seq"`
+	Timestamp      time.Time          `json:"timestamp"`
+	SessionID      domain.SessionID   `json:"session_id"`
+	ThreadID       domain.ThreadID    `json:"thread_id"`
+	ParentThreadID domain.ThreadID    `json:"parent_thread_id,omitempty"`
+	TurnID         domain.TurnID      `json:"turn_id,omitempty"`
+	EventKind      EventKind          `json:"event_kind"`
+	BatchID        uint64             `json:"batch_id"`
+	BatchIndex     uint32             `json:"batch_index"`
+	BatchSize      uint32             `json:"batch_size"`
+	Payload        stdjson.RawMessage `json:"payload"`
 }
 
 // BuildRecord 根据 registry 编码 draft，并填充尚未签名的完整信封。
@@ -46,20 +45,19 @@ func BuildRecord(
 	}
 	descriptor := draft.descriptor
 	return Record{
-		SchemaVersion:     EnvelopeVersion,
-		PayloadVersion:    descriptor.Version,
-		ReplayRequirement: descriptor.Requirement,
-		Sequence:          sequence,
-		Timestamp:         timestamp.UTC(),
-		SessionID:         identity.SessionID,
-		ThreadID:          identity.ThreadID,
-		ParentThreadID:    draft.parentThreadID,
-		TurnID:            draft.turnID,
-		EventKind:         descriptor.Kind,
-		BatchID:           batchID,
-		BatchIndex:        batchIndex,
-		BatchSize:         batchSize,
-		Payload:           draft.PayloadBytes(),
+		SchemaVersion:  EnvelopeVersion,
+		PayloadVersion: EnvelopeVersion,
+		Sequence:       sequence,
+		Timestamp:      timestamp.UTC(),
+		SessionID:      identity.SessionID,
+		ThreadID:       identity.ThreadID,
+		ParentThreadID: draft.parentThreadID,
+		TurnID:         draft.turnID,
+		EventKind:      descriptor.Kind,
+		BatchID:        batchID,
+		BatchIndex:     batchIndex,
+		BatchSize:      batchSize,
+		Payload:        draft.PayloadBytes(),
 	}, nil
 }
 
@@ -97,7 +95,7 @@ func DecodeRecord(line []byte) (Record, error) {
 		return Record{}, err
 	}
 	requiredFields := [...]string{
-		"schema_version", "payload_version", "replay_requirement", "seq", "timestamp",
+		"schema_version", "payload_version", "seq", "timestamp",
 		"session_id", "thread_id", "event_kind", "batch_id", "batch_index",
 		"batch_size", "payload", "checksum",
 	}
@@ -135,7 +133,7 @@ func scanEnvelope(line []byte) (map[string]stdjson.RawMessage, error) {
 	if delimiter, ok := token.(stdjson.Delim); !ok || delimiter != '{' {
 		return nil, fmt.Errorf("session envelope must be an object")
 	}
-	members := make(map[string]stdjson.RawMessage, 15)
+	members := make(map[string]stdjson.RawMessage, 14)
 	for decoder.More() {
 		token, err = decoder.Token()
 		if err != nil {
@@ -166,7 +164,7 @@ func scanEnvelope(line []byte) (map[string]stdjson.RawMessage, error) {
 
 func knownEnvelopeField(name string) bool {
 	switch name {
-	case "schema_version", "payload_version", "replay_requirement", "seq", "timestamp",
+	case "schema_version", "payload_version", "seq", "timestamp",
 		"session_id", "thread_id", "parent_thread_id", "turn_id", "event_kind",
 		"batch_id", "batch_index", "batch_size", "payload", "checksum":
 		return true
@@ -179,11 +177,8 @@ func validateRecord(record Record, requireChecksum bool) error {
 	if record.SchemaVersion != EnvelopeVersion {
 		return fmt.Errorf("session envelope version is unsupported")
 	}
-	if record.PayloadVersion <= 0 {
-		return fmt.Errorf("session payload version is invalid")
-	}
-	if record.ReplayRequirement != ReplayRequired && record.ReplayRequirement != ReplayOptional {
-		return fmt.Errorf("session replay requirement is invalid")
+	if record.PayloadVersion != EnvelopeVersion {
+		return fmt.Errorf("session payload canary is unsupported")
 	}
 	if record.Sequence == 0 || record.BatchID == 0 || record.BatchSize == 0 || record.BatchIndex >= record.BatchSize {
 		return fmt.Errorf("session sequence or batch boundary is invalid")
@@ -203,8 +198,8 @@ func validateRecord(record Record, requireChecksum bool) error {
 	if record.EventKind == "" || !codec.Valid(record.Payload) || len(record.Payload) == 0 || len(record.Payload) > MaxRecordBytes {
 		return fmt.Errorf("session event kind or payload is invalid")
 	}
-	if err := validateKnownDeclaration(record); err != nil {
-		return err
+	if _, exists := descriptorByKind(record.EventKind); !exists {
+		return fmt.Errorf("session event kind is unsupported")
 	}
 	if requireChecksum {
 		if len(record.Checksum) != sha256.Size*2 {
@@ -222,7 +217,7 @@ func validateRecord(record Record, requireChecksum bool) error {
 func recordChecksum(record Record) (string, error) {
 	encoded, err := codec.MarshalStable(checksumEnvelope{
 		SchemaVersion: record.SchemaVersion, PayloadVersion: record.PayloadVersion,
-		ReplayRequirement: record.ReplayRequirement, Sequence: record.Sequence,
+		Sequence:  record.Sequence,
 		Timestamp: record.Timestamp, SessionID: record.SessionID, ThreadID: record.ThreadID,
 		ParentThreadID: record.ParentThreadID, TurnID: record.TurnID, EventKind: record.EventKind,
 		BatchID: record.BatchID, BatchIndex: record.BatchIndex, BatchSize: record.BatchSize,

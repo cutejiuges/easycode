@@ -36,7 +36,7 @@ func TestRecordCanonicalGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `{"schema_version":1,"payload_version":1,"replay_requirement":"required","seq":3,"timestamp":"2026-09-28T12:34:56.123Z","session_id":"00000000-0000-7000-8000-000000000001","thread_id":"00000000-0001-7000-8000-000000000002","turn_id":"00000000-0002-7000-8000-000000000003","event_kind":"turn_failed","batch_id":3,"batch_index":0,"batch_size":1,"payload":{"code":"user_cancelled","message":"turn was cancelled","cancelled":true},"checksum":"58b16e35d86a71a72e38f172687d9076a98304a4812293059e625c5cea8a3c3c"}`
+	const want = `{"schema_version":1,"payload_version":1,"seq":3,"timestamp":"2026-09-28T12:34:56.123Z","session_id":"00000000-0000-7000-8000-000000000001","thread_id":"00000000-0001-7000-8000-000000000002","turn_id":"00000000-0002-7000-8000-000000000003","event_kind":"turn_failed","batch_id":3,"batch_index":0,"batch_size":1,"payload":{"code":"user_cancelled","message":"turn was cancelled","cancelled":true},"checksum":"e059e910dcaa06d1d85c60e619bf09271c31a215f831ecb2e18775835efa9da8"}`
 	if string(encoded) != want {
 		t.Fatalf("canonical record changed:\n%s", encoded)
 	}
@@ -58,12 +58,17 @@ func TestRecordRejectsChecksumTampering(t *testing.T) {
 	}
 }
 
-func TestRegistryRejectsDeclarationDriftAndWrongPayload(t *testing.T) {
+func TestCurrentSchemaRejectsCanaryKindAndWrongPayload(t *testing.T) {
 	t.Parallel()
 	record := mustDecodedRecord(t, EventTurnStarted, TurnStartedPayload{})
-	record.ReplayRequirement = ReplayOptional
-	if _, _, err := EncodeRecord(record); err == nil || !strings.Contains(err.Error(), "registry") {
+	record.PayloadVersion++
+	if _, _, err := EncodeRecord(record); err == nil || !strings.Contains(err.Error(), "canary") {
 		t.Fatalf("EncodeRecord() error = %v", err)
+	}
+	record = mustDecodedRecord(t, EventTurnStarted, TurnStartedPayload{})
+	record.EventKind = "future_event"
+	if _, _, err := EncodeRecord(record); err == nil || !strings.Contains(err.Error(), "kind") {
+		t.Fatalf("EncodeRecord() unknown kind error = %v", err)
 	}
 	mismatched := mustDraft(t, EventTurnFailed, testTurnID, TurnFailedPayload{Code: "failed"})
 	mismatched.descriptor, _ = descriptorByKind(EventTurnStarted)
@@ -79,37 +84,23 @@ func TestRegistryRejectsDeclarationDriftAndWrongPayload(t *testing.T) {
 		EventProviderNativeCommit, EventSampleUsage, EventToolCallReady,
 		EventToolExecutionStarted, EventToolCallResult, EventTurnCompleted, EventTurnFailed,
 	} {
-		descriptor, ok := LookupDescriptor(kind, 1)
-		if !ok || descriptor.Requirement != ReplayRequired {
+		descriptor, ok := descriptorByKind(kind)
+		if !ok || descriptor.Kind != kind {
 			t.Fatalf("descriptor %q = %#v, %v", kind, descriptor, ok)
 		}
 	}
 }
 
-func TestUnknownRevisionRequirementIsPreserved(t *testing.T) {
+func TestUnknownRecordShapeIsRejected(t *testing.T) {
 	t.Parallel()
-	for _, requirement := range []ReplayRequirement{ReplayRequired, ReplayOptional} {
-		record := Record{
-			SchemaVersion: EnvelopeVersion, PayloadVersion: 99,
-			ReplayRequirement: requirement, Sequence: 1,
-			Timestamp: time.Unix(0, 0).UTC(), SessionID: testSessionID,
-			ThreadID: testThreadID, EventKind: "future_event", BatchID: 1,
-			BatchIndex: 0, BatchSize: 1, Payload: json.RawMessage(`{"opaque":"bounded"}`),
-		}
-		_, encoded, err := EncodeRecord(record)
-		if err != nil {
-			t.Fatalf("EncodeRecord(%q) error = %v", requirement, err)
-		}
-		decoded, err := DecodeRecord(encoded)
-		if err != nil {
-			t.Fatalf("DecodeRecord(%q) error = %v", requirement, err)
-		}
-		if decoded.ReplayRequirement != requirement || string(decoded.Payload) != `{"opaque":"bounded"}` {
-			t.Fatalf("decoded = %#v", decoded)
-		}
-		if _, known := LookupDescriptor(decoded.EventKind, decoded.PayloadVersion); known {
-			t.Fatal("future revision unexpectedly became known")
-		}
+	current := mustRecord(t, EventTurnFailed, TurnFailedPayload{Code: "failed"})
+	legacy := bytes.Replace(current, []byte(`"payload_version":1`), []byte(`"payload_version":99`), 1)
+	if _, err := DecodeRecord(legacy); err == nil {
+		t.Fatal("unknown payload canary unexpectedly decoded")
+	}
+	withOptional := bytes.Replace(current, []byte(`"payload_version":1,`), []byte(`"payload_version":1,"replay_requirement":"optional",`), 1)
+	if _, err := DecodeRecord(withOptional); err == nil || !strings.Contains(err.Error(), "unknown") {
+		t.Fatalf("legacy optional envelope error = %v", err)
 	}
 }
 
@@ -117,9 +108,9 @@ func TestRecordSizeLimits(t *testing.T) {
 	t.Parallel()
 	oversized := Record{
 		SchemaVersion: EnvelopeVersion, PayloadVersion: 1,
-		ReplayRequirement: ReplayOptional, Sequence: 1,
+		Sequence:  1,
 		Timestamp: time.Unix(0, 0).UTC(), SessionID: testSessionID,
-		ThreadID: testThreadID, EventKind: "future", BatchID: 1,
+		ThreadID: testThreadID, EventKind: EventTurnFailed, BatchID: 1,
 		BatchIndex: 0, BatchSize: 1,
 		Payload: append(append(json.RawMessage(`"`), bytes.Repeat([]byte{'x'}, MaxRecordBytes)...), '"'),
 	}

@@ -42,6 +42,22 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 				OutputTokens:      optionalUint{Known: true, Value: 7},
 			},
 		},
+		{
+			Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("search")),
+			Outputs: []NativeItem{
+				{Type: "function_call", ID: "fc-glob", CallID: "call-glob", Name: "Glob", Arguments: `{"pattern":"**/*.go"}`},
+				{Type: "function_call", ID: "fc-grep", CallID: "call-grep", Name: "Grep", Arguments: `{"pattern":"TODO"}`},
+				{Type: "function_call", ID: "fc-read", CallID: "call-read", Name: "Read", Arguments: `{"file_path":"README.md"}`},
+			},
+		},
+		{
+			Kind: nativeHistoryToolOutputs,
+			ToolOutputs: []NativeItem{
+				{Type: "function_call_output", CallID: "call-glob", Output: `{"status":"success","code":"ok","content":"frozen glob"}`},
+				{Type: "function_call_output", CallID: "call-grep", Output: `{"status":"success","code":"ok","content":"frozen grep"}`},
+				{Type: "function_call_output", CallID: "call-read", Output: `{"status":"success","code":"ok","content":"frozen read"}`},
+			},
+		},
 	}
 	uninterrupted := &Conversation{provider: instance}
 	commits := make([]provider.NativeCommitEnvelope, 0, len(entries))
@@ -78,11 +94,16 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 
 	next := NewUserItem("third")
 	projectInstructions := testOpenAIProjectInstructions(t, "AGENTS.md", "same-startup-snapshot")
-	uninterruptedRequest, err := compileResponsesRequest(instance.config.Model, uninterrupted.historySnapshot(), &projectInstructions, nativeItemPointer(next), testOpenAIToolView(t))
+	uninterruptedToolView := testOpenAIToolView(t)
+	restoredToolView := testOpenAIToolView(t)
+	if uninterruptedToolView.Fingerprint() != restoredToolView.Fingerprint() {
+		t.Fatal("restored tool catalog fingerprint differs")
+	}
+	uninterruptedRequest, err := compileResponsesRequest(instance.config.Model, uninterrupted.historySnapshot(), &projectInstructions, nativeItemPointer(next), uninterruptedToolView)
 	if err != nil {
 		t.Fatal(err)
 	}
-	restoredRequest, err := compileResponsesRequest(instance.config.Model, restored.historySnapshot(), &projectInstructions, nativeItemPointer(next), testOpenAIToolView(t))
+	restoredRequest, err := compileResponsesRequest(instance.config.Model, restored.historySnapshot(), &projectInstructions, nativeItemPointer(next), restoredToolView)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,9 +120,13 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restoredShape := buildResponsesRequest(instance.config.Model, restored.historySnapshot(), &projectInstructions, nativeItemPointer(next), testOpenAIToolView(t))
-	if first.Fingerprint() != second.Fingerprint() || len(restoredShape.Input) != 7 ||
-		restoredShape.Input[0].Content[0].Text != projectInstructions.RenderedText() || restoredShape.Input[5].Type != "future_item" {
+	restoredShape := buildResponsesRequest(instance.config.Model, restored.historySnapshot(), &projectInstructions, nativeItemPointer(next), restoredToolView)
+	if first.Fingerprint() != second.Fingerprint() || len(restoredShape.Input) != 14 ||
+		restoredShape.Input[0].Content[0].Text != projectInstructions.RenderedText() || restoredShape.Input[5].Type != "future_item" ||
+		restoredShape.Input[7].CallID != "call-glob" || restoredShape.Input[8].CallID != "call-grep" || restoredShape.Input[9].CallID != "call-read" ||
+		restoredShape.Input[10].CallID != "call-glob" || restoredShape.Input[11].CallID != "call-grep" || restoredShape.Input[12].CallID != "call-read" ||
+		!strings.Contains(restoredShape.Input[10].Output, "frozen glob") || !strings.Contains(restoredShape.Input[11].Output, "frozen grep") ||
+		!strings.Contains(restoredShape.Input[12].Output, "frozen read") {
 		t.Fatalf("fingerprints/order differ: %q %q %#v", first.Fingerprint(), second.Fingerprint(), restoredShape.Input)
 	}
 

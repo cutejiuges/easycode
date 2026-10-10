@@ -15,9 +15,21 @@ func (inertReadExecutor) Execute(context.Context, tool.ReadInvocation) tool.Invo
 	return tool.InvocationResult{}
 }
 
+type inertGlobExecutor struct{}
+
+func (inertGlobExecutor) Execute(context.Context, tool.GlobInvocation) tool.InvocationResult {
+	return tool.InvocationResult{}
+}
+
+type inertGrepExecutor struct{}
+
+func (inertGrepExecutor) Execute(context.Context, tool.GrepInvocation) tool.InvocationResult {
+	return tool.InvocationResult{}
+}
+
 func testOpenAIToolCatalog(t *testing.T) tool.CatalogSnapshot {
 	t.Helper()
-	catalog, err := tool.NewReadCatalogSnapshot(inertReadExecutor{})
+	catalog, err := tool.NewReadOnlyCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, inertGrepExecutor{})
 	if err != nil {
 		t.Fatal(err)
 	}

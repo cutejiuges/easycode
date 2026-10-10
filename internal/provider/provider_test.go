@@ -466,7 +466,7 @@ func providerReadyCall(t *testing.T, callID string, path string) tool.ReadyCall 
 	if err != nil {
 		t.Fatal(err)
 	}
-	call, err := tool.NewReadyCall(id, input)
+	call, err := tool.NewReadReadyCall(id, input)
 	if err != nil {
 		t.Fatal(err)
 	}

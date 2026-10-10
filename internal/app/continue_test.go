@@ -375,7 +375,7 @@ func writeContinueMatrixJournal(
 	sessionDraft, err := session.NewSessionMetaDraft(session.SessionMetaPayload{
 		RootThreadID: identity.ThreadID, CreatedAt: updatedAt.Add(-time.Hour),
 		Provider: family, ProviderWire: wire, Model: model,
-		SchemaRevision: session.EnvelopeVersion, CreationCWD: cwd,
+		CreationCWD: cwd,
 	})
 	if err != nil {
 		t.Fatal(err)

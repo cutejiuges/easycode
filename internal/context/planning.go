@@ -14,9 +14,8 @@ import (
 )
 
 const (
-	CurrentContextPlanVersion = 3
-	providerProfileRevision   = "provider-profile-v1"
-	currentInputRevision      = "current-input-v2"
+	providerProfileRevision = "provider-profile-v1"
+	currentInputRevision    = "current-input-v2"
 )
 
 // SourceKind 标识当前上下文计划中的来源类型。
@@ -310,15 +309,11 @@ func (decision BudgetDecision) EffectiveLimit() (uint64, bool) {
 
 // ContextPlan 保存一次请求前的不可变上下文规划结果。
 type ContextPlan struct {
-	version   int
 	sources   []PlannedSource
 	cachePlan Plan
 	total     domain.TokenEstimate
 	decision  BudgetDecision
 }
-
-// Version 返回上下文计划版本。
-func (plan ContextPlan) Version() int { return plan.version }
 
 // Sources 返回有序来源的独立切片。
 func (plan ContextPlan) Sources() []PlannedSource {
@@ -327,7 +322,7 @@ func (plan ContextPlan) Sources() []PlannedSource {
 
 // CachePlan 返回不共享分段切片的缓存计划。
 func (plan ContextPlan) CachePlan() Plan {
-	return Plan{version: plan.cachePlan.version, segments: cloneSegments(plan.cachePlan.segments)}
+	return Plan{segments: cloneSegments(plan.cachePlan.segments)}
 }
 
 // TotalEstimate 返回全部来源合并后的估算。
@@ -336,11 +331,8 @@ func (plan ContextPlan) TotalEstimate() domain.TokenEstimate { return plan.total
 // Decision 返回预算判定。
 func (plan ContextPlan) Decision() BudgetDecision { return plan.decision }
 
-// Validate 校验计划版本、来源顺序、cache plan 和判定状态。
+// Validate 校验来源顺序、cache plan 和判定状态。
 func (plan ContextPlan) Validate() error {
-	if plan.version != CurrentContextPlanVersion {
-		return fmt.Errorf("unsupported context plan version %d", plan.version)
-	}
 	var wantKinds []SourceKind
 	var wantLifecycles []SourceLifecycle
 	switch len(plan.sources) {
@@ -440,7 +432,7 @@ func (*Planner) Plan(input PlanningInput) (ContextPlan, error) {
 	}
 	decision := decideBudget(input.budget, totalEstimate)
 	plan := ContextPlan{
-		version: CurrentContextPlanVersion, sources: append([]PlannedSource(nil), sources...),
+		sources:   append([]PlannedSource(nil), sources...),
 		cachePlan: cachePlan, total: totalEstimate, decision: decision,
 	}
 	if err := plan.Validate(); err != nil {
@@ -463,11 +455,10 @@ func buildCachePlan(input PlanningInput) (Plan, error) {
 		return Plan{}, err
 	}
 	toolJSON, err := codec.MarshalCanonical(struct {
-		CatalogRevision string          `json:"catalog_revision"`
-		Facade          json.RawMessage `json:"facade"`
-		Fingerprint     string          `json:"fingerprint"`
+		Facade      json.RawMessage `json:"facade"`
+		Fingerprint string          `json:"fingerprint"`
 	}{
-		CatalogRevision: input.toolCatalog.Revision(), Facade: json.RawMessage(toolView.CanonicalJSON()), Fingerprint: toolView.Fingerprint(),
+		Facade: json.RawMessage(toolView.CanonicalJSON()), Fingerprint: toolView.Fingerprint(),
 	}, MaxSegmentBytes)
 	if err != nil {
 		return Plan{}, err

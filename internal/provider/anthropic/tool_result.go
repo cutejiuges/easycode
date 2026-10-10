@@ -22,6 +22,9 @@ func prepareToolOutputsEntry(history []nativeHistoryEntry, results []tool.Invoca
 		if string(result.ProviderCallID()) != calls[index].ID {
 			return nativeHistoryEntry{}, fmt.Errorf("anthropic tool result order does not match pending calls")
 		}
+		if result.Capability() != anthropicCapabilityForName(calls[index].Name) {
+			return nativeHistoryEntry{}, fmt.Errorf("anthropic tool result capability does not match pending call")
+		}
 		blocks[index] = NativeItem{
 			Type: blockTypeToolResult, ToolUseID: calls[index].ID,
 			Content: result.Preview().Text(), IsError: result.Status() != tool.ResultSuccess,
@@ -35,6 +38,19 @@ func prepareToolOutputsEntry(history []nativeHistoryEntry, results []tool.Invoca
 		return nativeHistoryEntry{}, err
 	}
 	return entry, nil
+}
+
+func anthropicCapabilityForName(name string) tool.CapabilityID {
+	switch name {
+	case "Read":
+		return tool.CapabilityRead
+	case "Glob":
+		return tool.CapabilityGlob
+	case "Grep":
+		return tool.CapabilityGrep
+	default:
+		return ""
+	}
 }
 
 func validateNativeHistory(entries []nativeHistoryEntry) error {

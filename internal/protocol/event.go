@@ -1,4 +1,4 @@
-// Package protocol 定义 Runtime 与宿主之间可版本化的 command/event 协议。
+// Package protocol 定义 Runtime 与宿主之间的强类型 command/event 协议。
 package protocol
 
 import (
@@ -8,8 +8,6 @@ import (
 
 	"easycode/internal/domain"
 )
-
-const CurrentVersion = 1
 
 // EventKind 描述共享语义事件类型，不包含 provider wire 细节。
 type EventKind string
@@ -23,7 +21,6 @@ const (
 
 // Event 是 TUI、headless 和其他宿主共同消费的进程内语义事件信封。
 type Event struct {
-	Version   int              `json:"version"`
 	Kind      EventKind        `json:"kind"`
 	Timestamp time.Time        `json:"timestamp"`
 	SessionID domain.SessionID `json:"session_id,omitempty"`
@@ -67,7 +64,6 @@ func (event Event) Validate() error {
 
 func newEvent(kind EventKind) Event {
 	return Event{
-		Version:   CurrentVersion,
 		Kind:      kind,
 		Timestamp: time.Now().UTC(),
 	}

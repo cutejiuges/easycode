@@ -190,7 +190,7 @@ func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
 				t.Fatalf("journal record count/next = %d/%d", len(loaded.Records), loaded.NextSequence)
 			}
 			for index, record := range loaded.Records {
-				if record.Sequence != uint64(index+1) || record.ReplayRequirement != session.ReplayRequired {
+				if record.Sequence != uint64(index+1) {
 					t.Fatalf("record[%d] = %#v", index, record)
 				}
 				if strings.Contains(string(record.Payload), "e2e-secret") || strings.Contains(string(record.Payload), server.URL) {

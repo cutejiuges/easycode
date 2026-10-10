@@ -412,6 +412,7 @@ func TestChatResourcesCloseOrdersSessionJournalAndProvider(t *testing.T) {
 		GenerateTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
 		ContextProfile: mustAppContextProfile(t), ProjectInstructions: mustEmptyAppProjectInstructions(t),
 		ToolCatalog: mustAppToolCatalog(t), ReadExecutor: appReadExecutor{},
+		GlobExecutor: appGlobExecutor{}, GrepExecutor: appGrepExecutor{},
 		ContextBudget:  contextplan.DisabledBudget(),
 		ContextPlanner: contextplan.NewPlanner(),
 	})
@@ -530,6 +531,7 @@ func TestChatResourcesShutdownTimeoutEscalatesAndClosesDependencies(t *testing.T
 		GenerateTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
 		ContextProfile: mustAppContextProfile(t), ProjectInstructions: mustEmptyAppProjectInstructions(t),
 		ToolCatalog: mustAppToolCatalog(t), ReadExecutor: appReadExecutor{},
+		GlobExecutor: appGlobExecutor{}, GrepExecutor: appGrepExecutor{},
 		ContextBudget:  contextplan.DisabledBudget(),
 		ContextPlanner: contextplan.NewPlanner(),
 	})
@@ -780,6 +782,7 @@ func mustIdleAppRuntime(t *testing.T, journal chatRuntime.Journal) *chatRuntime.
 		GenerateTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
 		ContextProfile: mustAppContextProfile(t), ProjectInstructions: mustEmptyAppProjectInstructions(t),
 		ToolCatalog: mustAppToolCatalog(t), ReadExecutor: appReadExecutor{},
+		GlobExecutor: appGlobExecutor{}, GrepExecutor: appGrepExecutor{},
 		ContextBudget:  contextplan.DisabledBudget(),
 		ContextPlanner: contextplan.NewPlanner(),
 	})
@@ -804,9 +807,21 @@ func (appReadExecutor) Execute(context.Context, tool.ReadInvocation) tool.Invoca
 	return tool.InvocationResult{}
 }
 
+type appGlobExecutor struct{}
+
+func (appGlobExecutor) Execute(context.Context, tool.GlobInvocation) tool.InvocationResult {
+	return tool.InvocationResult{}
+}
+
+type appGrepExecutor struct{}
+
+func (appGrepExecutor) Execute(context.Context, tool.GrepInvocation) tool.InvocationResult {
+	return tool.InvocationResult{}
+}
+
 func mustAppToolCatalog(t *testing.T) tool.CatalogSnapshot {
 	t.Helper()
-	catalog, err := tool.NewReadCatalogSnapshot(appReadExecutor{})
+	catalog, err := tool.NewReadOnlyCatalogSnapshot(appReadExecutor{}, appGlobExecutor{}, appGrepExecutor{})
 	if err != nil {
 		t.Fatal(err)
 	}

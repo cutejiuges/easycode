@@ -96,7 +96,7 @@ func compileResponsesRequest(
 			return codec.CanonicalJSON{}, fmt.Errorf("project instructions snapshot is invalid: %w", err)
 		}
 	}
-	if toolView.Family() != domain.ProviderOpenAI || len(toolView.Facades()) != 1 {
+	if toolView.Family() != domain.ProviderOpenAI || len(toolView.Facades()) != 3 {
 		return codec.CanonicalJSON{}, fmt.Errorf("OpenAI tool catalog view is invalid")
 	}
 	return codec.MarshalCanonical(

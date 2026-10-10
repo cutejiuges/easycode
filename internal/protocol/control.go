@@ -279,7 +279,7 @@ func controlErrorMessage(code ControlErrorCode) (string, bool) {
 }
 
 func validateRuntimeEvent(event Event) error {
-	if event.Version != CurrentVersion || !event.SessionID.Valid() || !event.ThreadID.Valid() || !event.TurnID.Valid() {
+	if !event.SessionID.Valid() || !event.ThreadID.Valid() || !event.TurnID.Valid() {
 		return fmt.Errorf("runtime event identity is invalid")
 	}
 	return event.Validate()

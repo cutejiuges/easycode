@@ -80,7 +80,7 @@ func CreateRootJournal(
 	sessionDraft, err := NewSessionMetaDraft(SessionMetaPayload{
 		RootThreadID: identity.ThreadID, CreatedAt: createdAt,
 		Provider: config.Provider, ProviderWire: config.ProviderWire,
-		Model: config.Model, SchemaRevision: EnvelopeVersion, CreationCWD: creationCWD,
+		Model: config.Model, CreationCWD: creationCWD,
 	})
 	if err != nil {
 		closeErr := writer.Close(context.Background())

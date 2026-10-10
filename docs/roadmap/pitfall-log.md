@@ -232,7 +232,7 @@
 - 现象：Claude Code 的 transcript 会混合用户/assistant/tool/progress 等消息，Codex rollout 则记录 response item、event 和上下文；二者都包含工具相关事实，但记录边界、恢复来源和宿主事件并不相同。直接照搬任一 JSONL 形状会把 Provider wire、运行时展示和副作用事实耦合。
 - 触发条件：在工具尚未实现时先设计 Session schema，并要求未来无损承接 thinking、tool use 和 MCP call。
 - 根因：把“JSONL 是容器”误当成“所有事件共享同一语义”。Provider native history、工具幂等 ledger 和 RuntimeEvent 实际具有不同提交时机与恢复责任。
-- 架构影响：公共 envelope 只负责版本、顺序、批次、归属与完整性；`provider_native_commit` payload 由对应 Provider 私有解码。当前 required kinds 除会话与文本回合事实外，已包含 `tool_call_ready`、`tool_execution_started` 和 `tool_call_result`；未来 permission、hook、subagent、cache 使用独立强类型 kind，optional 展示事实不得阻断恢复。
+- 架构影响：公共 envelope 只负责当前 canary、顺序、批次、归属与完整性；`provider_native_commit` payload 由对应 Provider 私有解码。当前 kinds 除会话与文本回合事实外，已包含 `tool_call_ready`、`tool_execution_started` 和 `tool_call_result`；未来 permission、hook、subagent、cache 使用独立强类型 kind，展示事实不得通过 optional record 绕过完整恢复校验。
 - 缓存影响：Session envelope 和动态路径不参与 Provider 请求 canonical bytes；恢复后的请求字节必须与未退出进程的下一轮一致。
 - 修复方案：OpenAI 保存 user input item 与有序 output items，Anthropic 保存 user/assistant message、metadata 与 usage presence；共享层只传递 opaque envelope。Read tool result 已在副作用 durable 后作为下一次请求的 input-only native 增量提交，不重复 assistant tool call；MCP call 未来复用工具事实边界，但其 manifest/capability 另行版本化。
 - 未采用方案及原因：未将 tool/thinking/MCP 预先塞入通用 `map[string]any`，也未以 UI transcript 反向构造 Provider 请求；这些做法无法保证类型、幂等和 opaque reasoning 无损。
@@ -247,13 +247,13 @@
 - 现象：只校验每行 JSON 可解析，仍可能接受换序、跨线程混写、未知 required 记录、半个成功提交或完整 JSON 但未写完的尾批次。
 - 触发条件：进程在多行 commit 中途退出、文件尾部半行、人工修改、磁盘错误或错误版本的 reader 打开新 schema。
 - 根因：单行 checksum 不能表达多记录原子边界，也不能判断一组记录能否形成可恢复的 Provider 历史。
-- 架构影响：Loader 第一层严格验证 schema/payload version、required/optional、canonical UUIDv7/UTC、checksum、文件归属和单调 seq；第二层只向 ReplayPlanner 暴露完整连续 batch；第三层由 Provider 事务式解码全部 native commits，任一错误都不返回部分历史。
+- 架构影响：Loader 第一层严格验证单一当前 schema/payload canary、canonical UUIDv7/UTC、checksum、文件归属和单调 seq；第二层只向 ReplayPlanner 暴露完整连续 batch；第三层由 Provider 事务式解码全部 native commits，任一错误都不返回部分历史。
 - 缓存影响：阻止损坏历史生成看似合法但字节不同的续写请求。
 - 修复方案：只允许修复 EOF 尾部半行和最后一个未完成 batch，修复后截断并 `Sync`；中段损坏、完整但校验失败的末行、未知 required 版本全部硬失败。若完整日志以未闭合 turn 结束，恢复先追加 `turn_failed(code=session_interrupted)` 补偿记录，再开始新 turn。
 - 未采用方案及原因：不跳过坏行继续扫描，不自动猜测未知 required payload，也不把尾批次中的部分 native commit 交给 Provider。
 - 回归测试：`internal/session/loader_test.go`、`internal/session/replay_test.go`、`internal/session/current_fixture_test.go`、`internal/app/resume_e2e_test.go`。
 - 关联 ADR/Issue/PR：ADR-0003；OpenSpec `add-jsonl-session-resume`。
-- 后续行动：首次引入新 schema/payload revision 时必须增加从不可变历史 fixture 到当前 replay model 的版本专属 regression；SQLite 重建只能消费相同 ReplayPlanner 输出。
+- 后续行动：稳定发布后首次引入真实 schema/payload revision 时必须先批准兼容窗口，并增加从不可变历史 fixture 到当前 replay model 的版本专属 regression；SQLite 重建只能消费相同 ReplayPlanner 输出。
 
 ### [P2][2026-09-28] 进程内 writer 串行化不能替代 journal 跨进程所有权
 
@@ -332,18 +332,18 @@
 
 ### [P2][2026-09-29] Session 核心 payload 不能通过 any 与反射 registry 传播
 
-- 状态：已解决 v1 六种记录
+- 状态：已解决当前强类型记录集合
 - 影响版本或提交：OpenSpec `harden-architecture-contract-compliance`
 - 现象：导出的 `RecordDraft.Payload any` 与 `DecodePayload() any` 允许调用方拼出 kind/payload mismatch，错误只能在写入或 replay 时通过 type assertion 暴露。
 - 触发条件：Runtime/app 直接构造 draft，或 registry 用 reflect 分配 payload 后遗漏 revision-specific 语义校验。
 - 根因：异构记录为了复用一个动态入口而牺牲了构造合法性与协议边界。
-- 架构影响：`RecordDraft` 成为 sealed 值类型；六种 v1 kind 各有 typed constructor、strict decoder 和 validator，registry 只返回常量元数据。
-- 缓存影响：保持 JSONL v1 canonical bytes、checksum 与恢复后 Provider request bytes 不变。
+- 架构影响：`RecordDraft` 成为 sealed 值类型；每个当前 kind 各有 typed constructor、strict decoder 和 validator，descriptor 只返回常量元数据。
+- 缓存影响：保持当前 JSONL canonical bytes、checksum 与恢复后 Provider request bytes 确定。
 - 修复方案：constructor 立即验证并编码独立 `json.RawMessage`，ReplayPlanner 通过显式 switch 调用目标 decoder。
-- 未采用方案及原因：未把动态类型转移到 callback interface 或泛型 registry，因为仍会隐藏 kind/revision 契约；也未修改已发布 v1 wire。
+- 未采用方案及原因：未把动态类型转移到 callback interface 或泛型 registry，因为仍会隐藏 kind 契约；产品尚未稳定发布，因此不保留旧开发 wire reader。
 - 回归测试：`internal/session/draft_test.go`、`codec_test.go`、`replay_test.go`、`current_fixture_test.go`。
 - 关联 ADR/Issue/PR：ADR-0003；OpenSpec `harden-architecture-contract-compliance`，不新增长期决策。
-- 后续行动：未来 revision 必须同时增加 typed constructor、strict decoder、validator 和不可变 migration fixture。
+- 后续行动：稳定发布后若引入真实 revision，必须同时增加 typed constructor、strict decoder、validator、不可变 migration fixture、兼容窗口和删除条件。
 
 ### [P2][2026-09-29] Durable append 前必须重新验证 PreparedSample
 
@@ -419,6 +419,21 @@
 - 回归测试：`internal/context/projectinstructions/*_test.go`、`internal/domain/project_instructions_test.go`、`internal/context/planning_test.go`、双 Provider request/integration/restore tests、`internal/runtime/runtime_test.go`、`internal/app/project_instructions_test.go` 和双 Provider app e2e。
 - 关联 ADR/Issue/PR：ADR-0002、ADR-0003；OpenSpec `add-hierarchical-project-instructions`，不新增长期 ADR。
 - 后续行动：全局用户指令、includes、`.claude/rules`、权限 world state 与 tool/skill context 需独立 change，并继续保持来源、生命周期与缓存稳定性正交。
+
+### [P2][2026-10-10] 未上线阶段保留多版本 reader 会把开发形状固化成产品债务
+
+- 状态：已解决（`add-search-tools-and-ordered-parallelism`）
+- 影响版本或提交：内部 protocol/context、Tool catalog/result、Session envelope
+- 现象：固定 `Version()`、Tool input/result revision、Session required/optional registry 和按版本 fixture 同时存在时，每次契约调整都要求维护并未发布的旧 reader，调用方也会开始按版本分支。
+- 触发条件：把尚无用户的开发 fixture 当成已发布兼容承诺，或把内容 fingerprint、外部 wire version 与进程内固定版本混为一谈。
+- 根因：没有区分发布边界的 canary/外部协议和进程内单一当前强类型值，也没有为兼容代码设定进入条件与退出条件。
+- 架构影响：进程内 Command/Event/ContextPlan 不携带固定版本；Tool catalog 只使用内容 fingerprint；Session 只保留唯一当前 canary 与按 kind 的唯一 decoder。Provider native payload、headless JSONL v1 和 SQLite `user_version` 仍是明确边界，不受此规则误伤。
+- 缓存影响：删除虚构 revision 后，Tool segment 只由排序后的 facade 名称、描述与 canonical schema bytes 失效，动态 Session/cwd/time 不进入稳定前缀。
+- 修复方案：直接替换 `testdata/current`，旧开发 shape 在 repair/恢复前失败关闭，并增加 AST/fixture 目录架构守卫禁止 V1/V2/Legacy、optional API 和 version 参数 registry 回流。
+- 未采用方案及原因：不保留旧 reader、migration graph 或 feature flag，因为当前没有已发布数据需要兼容；也不删除 Provider/Session/headless/SQLite 的真实边界 canary。
+- 回归测试：`internal/architecture/architecture_test.go`、`internal/session/current_fixture_test.go`、`internal/headless/*_test.go`、双 Provider restore tests。
+- 关联 ADR/Issue/PR：OpenSpec `add-search-tools-and-ordered-parallelism`；这是发布前演进规则，不新增长期 ADR。
+- 后续行动：稳定发布后首次需要破坏性 revision 时，必须先通过 OpenSpec 明确不可变历史 fixture、兼容窗口、迁移方向和删除条件。
 
 重点关注：JSONL 尾部损坏、事件顺序、取消时 flush、SQLite 重建和 native history 恢复。
 
@@ -506,16 +521,31 @@
 
 - 状态：发现（设计阶段）
 - 影响版本或提交：P3 Tool 架构探索，尚未进入实现 change
-- 现象：如果 Session 只保存完整 artifact descriptor，resume 时再按当前预算生成 preview，配置或算法 revision 变化会让模型看到与不中断执行不同的 tool output。
+- 现象：如果 Session 只保存完整 artifact descriptor，resume 时再按当前预算生成 preview，配置或算法变化会让模型看到与不中断执行不同的 tool output。
 - 触发条件：工具结果超限、预算配置或截断算法升级后恢复旧会话。
 - 根因：没有区分完整结果、模型预览、artifact 和 UI 摘要，也没有把“模型实际收到的字节”视为 Provider history 事实。
-- 架构影响：结果归一化必须冻结模型预览字节、预算 revision、artifact descriptor 和完整性信息；Provider ResultCodec 只编码冻结预览，resume 不重新计算。
+- 架构影响：结果归一化必须冻结模型预览字节、截断元数据、artifact descriptor 和完整性信息；Provider ResultCodec 只编码冻结预览，resume 不重新计算。
 - 缓存影响：不同 preview 会直接改变下一请求 canonical bytes 和 fingerprint，因此必须与原生 output 一起持久化。
 - 修复方案：每个 capability 定义确定性预算策略；完整结果可进入权限受控 artifact，模型 preview 与替换原因进入 durable fact。
 - 未采用方案及原因：不使用单一全局尾部截断，也不依赖 artifact 在恢复时仍可读后重新渲染，因为两者都无法保证历史字节稳定。
 - 回归测试：规划覆盖预算边界、artifact 写入失败、算法/config 变化后恢复、secret redaction 和 uninterrupted/restored request byte equivalence。
 - 关联 ADR/Issue/PR：[Tool 系统架构设计](../architecture/tool-system.md)；推荐 OpenSpec `add-tool-result-budget`。
 - 后续行动：首个工具先提供最小确定性 preview；统一预算 change 再扩展 capability-specific 策略，不重写既有 records。
+
+### [P3][2026-10-10] 并行完成顺序不能成为 durable 或模型顺序
+
+- 状态：已解决（`add-search-tools-and-ordered-parallelism`）
+- 影响版本或提交：P3 Read/Glob/Grep 有序只读并行
+- 现象：如果 worker 完成后直接 append result，较快的后序调用会先进入 Session 和 Provider output，破坏原始 call/output pairing；第 k 个 started 写入失败时直接返回，还会遗留已经接受但未执行的早期调用。
+- 触发条件：同一 sample 包含多个只读调用、执行时长不同，或 started append 在批次中途确定失败/进入 poisoned 状态。
+- 根因：把 worker completion 当成提交 owner，并在 admission 与执行之间缺少固定 call slot 和明确的失败边界。
+- 架构影响：Runtime owner 先完整 durable ready batch，再按 call index 逐个 durable started；最多 8 个 worker 只写独占 slot，owner 等待全部已接受调用后按 call index durable result 和单个 native output commit。第 k 项 admission 失败时，只有更早 accepted 的调用恰好执行并被等待。
+- 缓存影响：完成时序和 goroutine 调度不得改变 Provider native item 顺序、下一请求 canonical bytes、Catalog fingerprint 或冻结 preview。
+- 修复方案：使用 owner 创建并关闭的 jobs channel、固定结果 slice 和有界 worker group；确定失败允许前序结果收口后写唯一 `turn_failed`，无法确认的写入使 Session poisoned 并阻止下一 sample。
+- 未采用方案及原因：不让 worker 直接写 Session，不在普通 sibling error 时取消整组，也不把所有 started 合并为一个无法定位第 k 项接受状态的 batch。
+- 回归测试：`internal/runtime/runtime_test.go` 用 channel gates 强制 2/0/1 完成顺序，覆盖 1/8/9 并发峰值、取消线性化点、sibling error、第 k 项确定/不确定失败及 race；`internal/app/tool_loop_e2e_test.go` 覆盖双 Provider 异构 Glob/Grep/Read 配对。
+- 关联 ADR/Issue/PR：[Tool 系统架构设计](../architecture/tool-system.md)；OpenSpec `add-search-tools-and-ordered-parallelism`。
+- 后续行动：写工具加入后必须在同一 owner 中实现 exclusive 屏障，不能复用只读 worker 语义推断写入安全。
 
 重点关注：重复副作用、路径穿越、symlink、并发结果顺序、patch 增量解析和输出截断。
 

@@ -58,19 +58,33 @@ func NewSampleUsageDraft(turnID domain.TurnID, usage domain.SampleUsage) (Record
 }
 
 // NewToolCallReadyDraft 创建完整参数已经durable前待写入的调用事实。
-func NewToolCallReadyDraft(turnID domain.TurnID, invocation tool.ReadInvocation, sampleIndex uint32, callIndex uint32) (RecordDraft, error) {
+func NewToolCallReadyDraft(turnID domain.TurnID, invocation tool.Invocation, sampleIndex uint32, callIndex uint32) (RecordDraft, error) {
 	if err := validateTurnID(turnID); err != nil {
 		return RecordDraft{}, err
 	}
 	if err := invocation.Validate(); err != nil {
 		return RecordDraft{}, fmt.Errorf("tool invocation is invalid: %w", err)
 	}
-	input := invocation.Input()
 	payload := ToolCallReadyPayload{
 		InvocationID: invocation.InvocationID(), ProviderCallID: invocation.ProviderCallID(),
-		SampleIndex: sampleIndex, CallIndex: callIndex, Capability: tool.CapabilityRead,
-		InputRevision: tool.ReadInputRevision,
-		Input:         ReadInputPayload{FilePath: input.FilePath(), Offset: input.Offset(), Limit: input.Limit()},
+		SampleIndex: sampleIndex, CallIndex: callIndex, Capability: invocation.Capability(),
+	}
+	switch invocation.Capability() {
+	case tool.CapabilityRead:
+		value, _ := invocation.Read()
+		input := value.Input()
+		payload.ReadInput = &ReadInputPayload{FilePath: input.FilePath(), Offset: input.Offset(), Limit: input.Limit()}
+	case tool.CapabilityGlob:
+		value, _ := invocation.Glob()
+		input := value.Input()
+		payload.GlobInput = &GlobInputPayload{Pattern: input.Pattern(), Path: input.Path(), Limit: input.Limit()}
+	case tool.CapabilityGrep:
+		value, _ := invocation.Grep()
+		input := value.Input()
+		payload.GrepInput = &GrepInputPayload{
+			Pattern: input.Pattern(), Path: input.Path(), Glob: input.Glob(), OutputMode: input.OutputMode(),
+			CaseInsensitive: input.CaseInsensitive(), BeforeContext: input.BeforeContext(), AfterContext: input.AfterContext(), Limit: input.Limit(),
+		}
 	}
 	if _, err := payload.Domain(); err != nil {
 		return RecordDraft{}, err
@@ -98,16 +112,24 @@ func NewToolCallResultDraft(turnID domain.TurnID, result tool.InvocationResult) 
 	if err := result.Validate(); err != nil {
 		return RecordDraft{}, fmt.Errorf("tool result is invalid: %w", err)
 	}
-	metadata := result.Metadata()
 	payload := ToolCallResultPayload{
-		InvocationID: result.InvocationID(), Status: result.Status(), Code: result.Code(),
-		ResultCodecRevision: result.ResultCodecRevision(), Preview: result.Preview().Text(),
-		Metadata: ReadResultMetadataPayload{
+		InvocationID: result.InvocationID(), Capability: result.Capability(), Status: result.Status(), Code: result.Code(), Preview: result.Preview().Text(),
+	}
+	switch result.Capability() {
+	case tool.CapabilityRead:
+		metadata := result.ReadMetadata()
+		payload.ReadMetadata = &ReadResultMetadataPayload{
 			RelativePath: metadata.RelativePath(), RequestedOffset: metadata.RequestedOffset(),
 			RequestedLimit: metadata.RequestedLimit(), StartLine: metadata.StartLine(), EndLine: metadata.EndLine(),
 			ReachedEOF: metadata.ReachedEOF(), LongLineTruncated: metadata.LongLineTruncated(),
 			OutputTruncated: metadata.OutputTruncated(),
-		},
+		}
+	case tool.CapabilityGlob:
+		metadata := result.GlobMetadata()
+		payload.GlobMetadata = encodeGlobMetadata(metadata)
+	case tool.CapabilityGrep:
+		metadata := result.GrepMetadata()
+		payload.GrepMetadata = encodeGrepMetadata(metadata)
 	}
 	if err := validateToolCallResultPayload(payload); err != nil {
 		return RecordDraft{}, err
@@ -199,8 +221,8 @@ func validateDraftPlacement(draft RecordDraft) error {
 
 func validateDraftPayload(draft RecordDraft) error {
 	record := Record{
-		PayloadVersion: draft.descriptor.Version, ReplayRequirement: draft.descriptor.Requirement,
-		EventKind: draft.descriptor.Kind, Payload: draft.PayloadBytes(),
+		PayloadVersion: EnvelopeVersion,
+		EventKind:      draft.descriptor.Kind, Payload: draft.PayloadBytes(),
 	}
 	switch draft.descriptor.Kind {
 	case EventSessionMeta:

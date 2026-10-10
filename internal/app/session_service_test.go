@@ -230,14 +230,14 @@ func TestSessionServiceBusyFailsBeforeRestoreAndKeepsBytes(t *testing.T) {
 	}
 }
 
-func TestSessionServiceRejectsNewerRequiredFixtureBeforeProviderRestore(t *testing.T) {
+func TestSessionServiceRejectsSupersededEnvelopeBeforeProviderRestore(t *testing.T) {
 	service := newTestSessionService(t)
 	defer service.close()
 	rootFixture, err := os.ReadFile(filepath.Join("..", "session", "testdata", "current", "root.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	newer, err := os.ReadFile(filepath.Join("..", "session", "testdata", "current", "newer_required.jsonl"))
+	newer, err := os.ReadFile(filepath.Join("..", "session", "testdata", "current", "superseded_envelope.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -418,8 +418,8 @@ func TestSessionServiceReturnsSealedToolRecoveryWithoutExternalCalls(t *testing.
 	}
 	callID, _ := tool.ParseProviderCallID("call-resume")
 	input, _ := tool.NewReadInput("README.md", 1, 20)
-	ready, _ := tool.NewReadyCall(callID, input)
-	invocation, err := tool.NewReadInvocation(invocationID, ready)
+	ready, _ := tool.NewReadReadyCall(callID, input)
+	invocation, err := tool.NewInvocation(invocationID, ready)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -106,6 +107,12 @@ func TestCoreExportedAPIsRejectDynamicTypes(t *testing.T) {
 		}
 		violations = append(violations, exportedDynamicTypeViolations(repository.packages[packagePath])...)
 	}
+	assertNoViolations(t, violations)
+}
+
+func TestSingleCurrentContract(t *testing.T) {
+	repository := loadRepositorySource(t)
+	violations := singleCurrentContractViolations(repository)
 	assertNoViolations(t, violations)
 }
 
@@ -248,6 +255,11 @@ func TestArchitectureGuardRejectsViolationFixtures(t *testing.T) {
 			file:  "testdata/violations/exported_any.go.txt",
 			check: exportedDynamicTypeViolations,
 		},
+		{
+			name:  "multiple current contracts",
+			file:  "testdata/violations/multiple_current_contracts.go.txt",
+			check: singleCurrentDeclarationViolations,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -268,6 +280,97 @@ func TestArchitectureGuardRejectsViolationFixtures(t *testing.T) {
 	if violations := dependencyViolations(graph); len(violations) == 0 {
 		t.Fatal("反向依赖 fixture 未被架构守卫拒绝")
 	}
+}
+
+func singleCurrentContractViolations(repository repositorySource) []string {
+	var violations []string
+	for _, packagePath := range []string{
+		"easycode/internal/app", "easycode/internal/context", "easycode/internal/domain",
+		"easycode/internal/protocol", "easycode/internal/provider", "easycode/internal/provider/anthropic",
+		"easycode/internal/provider/openai", "easycode/internal/runtime", "easycode/internal/session",
+		"easycode/internal/tool", "easycode/internal/tool/builtin",
+	} {
+		if current := repository.packages[packagePath]; current != nil {
+			violations = append(violations, singleCurrentDeclarationViolations(current)...)
+		}
+	}
+	err := filepath.WalkDir(filepath.Join(repository.root, "internal"), func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !entry.IsDir() || (entry.Name() != "testdata" && !strings.Contains(filepath.ToSlash(path), "/testdata/")) {
+			return nil
+		}
+		if regexp.MustCompile(`(?i)^(v[0-9]+|legacy)$`).MatchString(entry.Name()) {
+			relative, relErr := filepath.Rel(repository.root, path)
+			if relErr != nil {
+				return relErr
+			}
+			violations = append(violations, filepath.ToSlash(relative)+": 禁止按版本并存 fixture 目录")
+		}
+		return nil
+	})
+	if err != nil {
+		violations = append(violations, "扫描 fixture 目录失败: "+err.Error())
+	}
+	return violations
+}
+
+func singleCurrentDeclarationViolations(current *sourcePackage) []string {
+	forbidden := map[string]struct{}{
+		"ReplayRequirement": {}, "ReplayRequired": {}, "ReplayOptional": {}, "OptionalRecords": {},
+		"CatalogRevision": {}, "ReadInputRevision": {}, "ReadResultCodecRevision": {},
+		"ReadRendererRevision": {}, "InputRevision": {}, "ResultCodecRevision": {}, "RendererRevision": {},
+	}
+	versionedName := regexp.MustCompile(`Legacy|(^|_)V[0-9]+($|_)|V[0-9]+$`)
+	var violations []string
+	for relative, file := range current.files {
+		ast.Inspect(file, func(node ast.Node) bool {
+			switch declaration := node.(type) {
+			case *ast.TypeSpec:
+				if _, found := forbidden[declaration.Name.Name]; found {
+					violations = append(violations, relative+": 禁止多版本契约声明 "+declaration.Name.Name)
+				}
+				if versionedName.MatchString(declaration.Name.Name) {
+					violations = append(violations, relative+": 禁止 V1/V2/Legacy 当前业务类型 "+declaration.Name.Name)
+				}
+				if structure, ok := declaration.Type.(*ast.StructType); ok &&
+					(declaration.Name.Name == "Plan" || declaration.Name.Name == "ContextPlan" || declaration.Name.Name == "Command" || declaration.Name.Name == "Event") {
+					for _, field := range structure.Fields.List {
+						for _, name := range field.Names {
+							if name.Name == "Version" {
+								violations = append(violations, relative+": 核心进程内值不得含固定 Version 字段 "+declaration.Name.Name)
+							}
+						}
+					}
+				}
+			case *ast.FuncDecl:
+				if _, found := forbidden[declaration.Name.Name]; found || versionedName.MatchString(declaration.Name.Name) {
+					violations = append(violations, relative+": 禁止多版本函数 "+declaration.Name.Name)
+				}
+				lowerName := strings.ToLower(declaration.Name.Name)
+				if current.path == "easycode/internal/session" &&
+					(strings.Contains(lowerName, "decode") || strings.Contains(lowerName, "descriptor") || strings.Contains(lowerName, "registry")) {
+					for _, field := range declaration.Type.Params.List {
+						for _, name := range field.Names {
+							parameter := strings.ToLower(name.Name)
+							if parameter == "version" || parameter == "payloadversion" || parameter == "schemaversion" {
+								violations = append(violations, relative+": Session decoder/registry 禁止 version 路由参数 "+declaration.Name.Name)
+							}
+						}
+					}
+				}
+			case *ast.ValueSpec:
+				for _, name := range declaration.Names {
+					if _, found := forbidden[name.Name]; found || versionedName.MatchString(name.Name) {
+						violations = append(violations, relative+": 禁止多版本值 "+name.Name)
+					}
+				}
+			}
+			return true
+		})
+	}
+	return violations
 }
 
 func loadRepositorySource(t *testing.T) repositorySource {

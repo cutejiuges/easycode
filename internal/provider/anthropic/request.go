@@ -86,7 +86,7 @@ func compileMessagesRequest(
 			return codec.CanonicalJSON{}, fmt.Errorf("project instructions snapshot is invalid: %w", err)
 		}
 	}
-	if toolView.Family() != domain.ProviderAnthropic || len(toolView.Facades()) != 1 {
+	if toolView.Family() != domain.ProviderAnthropic || len(toolView.Facades()) != 3 {
 		return codec.CanonicalJSON{}, fmt.Errorf("anthropic tool catalog view is invalid")
 	}
 	return codec.MarshalCanonical(

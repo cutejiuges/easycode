@@ -42,6 +42,23 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 				Usage: rawUsage{InputTokens: optionalUint{Known: true, Value: 9}},
 			},
 		},
+		{
+			Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("search")),
+			Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{
+				{Type: blockTypeToolUse, ID: "toolu-glob", Name: "Glob", Input: json.RawMessage(`{"pattern":"**/*.go"}`)},
+				{Type: blockTypeToolUse, ID: "toolu-grep", Name: "Grep", Input: json.RawMessage(`{"pattern":"TODO"}`)},
+				{Type: blockTypeToolUse, ID: "toolu-read", Name: "Read", Input: json.RawMessage(`{"file_path":"README.md"}`)},
+			}},
+			Metadata: messageMetadata{ID: "msg-search", Model: "claude-test"},
+		},
+		{
+			Kind: nativeHistoryToolOutputs,
+			ToolOutputs: nativeMessage{Role: roleUser, Content: []NativeItem{
+				{Type: blockTypeToolResult, ToolUseID: "toolu-glob", Content: "frozen glob"},
+				{Type: blockTypeToolResult, ToolUseID: "toolu-grep", Content: "frozen grep"},
+				{Type: blockTypeToolResult, ToolUseID: "toolu-read", Content: "frozen read"},
+			}},
+		},
 	}
 	uninterrupted := &Conversation{provider: instance}
 	commits := make([]provider.NativeCommitEnvelope, 0, len(entries))
@@ -77,14 +94,19 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 	restoredView.Turns[0].UserText = "mutated projection"
 	next := newUserMessage("third")
 	projectInstructions := testAnthropicProjectInstructions(t, "AGENTS.md", "same-startup-snapshot")
+	uninterruptedToolView := testAnthropicToolView(t)
+	restoredToolView := testAnthropicToolView(t)
+	if uninterruptedToolView.Fingerprint() != restoredToolView.Fingerprint() {
+		t.Fatal("restored tool catalog fingerprint differs")
+	}
 	uninterruptedRequest, err := compileMessagesRequest(
-		instance.config.Model, instance.config.MaxOutputTokens, uninterrupted.historySnapshot(), &projectInstructions, nativeMessagePointer(next), testAnthropicToolView(t),
+		instance.config.Model, instance.config.MaxOutputTokens, uninterrupted.historySnapshot(), &projectInstructions, nativeMessagePointer(next), uninterruptedToolView,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	restoredRequest, err := compileMessagesRequest(
-		instance.config.Model, instance.config.MaxOutputTokens, restored.historySnapshot(), &projectInstructions, nativeMessagePointer(next), testAnthropicToolView(t),
+		instance.config.Model, instance.config.MaxOutputTokens, restored.historySnapshot(), &projectInstructions, nativeMessagePointer(next), restoredToolView,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -102,10 +124,15 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restoredShape := buildMessagesRequest(instance.config.Model, instance.config.MaxOutputTokens, restored.historySnapshot(), &projectInstructions, nativeMessagePointer(next), testAnthropicToolView(t))
-	if first.Fingerprint() != second.Fingerprint() || len(restoredShape.Messages) != 6 ||
+	restoredShape := buildMessagesRequest(instance.config.Model, instance.config.MaxOutputTokens, restored.historySnapshot(), &projectInstructions, nativeMessagePointer(next), restoredToolView)
+	if first.Fingerprint() != second.Fingerprint() || len(restoredShape.Messages) != 9 ||
 		restoredShape.Messages[0].Content[0].Text != projectInstructions.RenderedText() ||
-		restoredShape.Messages[4].Content[0].Type != "future_block" {
+		restoredShape.Messages[4].Content[0].Type != "future_block" ||
+		restoredShape.Messages[6].Content[0].ID != "toolu-glob" || restoredShape.Messages[6].Content[1].ID != "toolu-grep" ||
+		restoredShape.Messages[6].Content[2].ID != "toolu-read" || restoredShape.Messages[7].Content[0].ToolUseID != "toolu-glob" ||
+		restoredShape.Messages[7].Content[1].ToolUseID != "toolu-grep" || restoredShape.Messages[7].Content[2].ToolUseID != "toolu-read" ||
+		restoredShape.Messages[7].Content[0].Content != "frozen glob" || restoredShape.Messages[7].Content[1].Content != "frozen grep" ||
+		restoredShape.Messages[7].Content[2].Content != "frozen read" {
 		t.Fatalf("fingerprints/order differ: %q %q %#v", first.Fingerprint(), second.Fingerprint(), restoredShape.Messages)
 	}
 

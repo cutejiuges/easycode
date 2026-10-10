@@ -266,15 +266,11 @@ func (reducer *responsesStreamReducer) completeFunctionCall(index *int, item Nat
 		item.Arguments != state.arguments || state.outputIndex <= reducer.lastFunctionOutputIndex {
 		return tool.ReadyCall{}, fault.New(fault.CodeStreamProtocol, "Responses completed function call is invalid")
 	}
-	input, err := reducer.catalog.DecodeRead(domain.ProviderOpenAI, state.name, []byte(state.arguments))
-	if err != nil {
-		return tool.ReadyCall{}, fault.New(fault.CodeStreamProtocol, "Responses function arguments are invalid")
-	}
 	callID, err := tool.ParseProviderCallID(state.callID)
 	if err != nil {
 		return tool.ReadyCall{}, fault.New(fault.CodeStreamProtocol, "Responses function call ID is invalid")
 	}
-	ready, err := tool.NewReadyCall(callID, input)
+	ready, err := reducer.catalog.DecodeReadyCall(domain.ProviderOpenAI, state.name, callID, []byte(state.arguments))
 	if err != nil {
 		return tool.ReadyCall{}, fault.Wrap(fault.CodeStreamProtocol, "Responses ready call is invalid", err)
 	}

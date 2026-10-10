@@ -65,8 +65,8 @@ func TestSegmentAndPlanAreImmutableSnapshots(t *testing.T) {
 	gotSegments[0] = Segment{}
 
 	actual := plan.Segments()
-	if plan.Version() != CurrentPlanVersion || len(actual) != 1 || actual[0].ID() != "base" {
-		t.Fatalf("plan changed through caller-owned data: version=%d segments=%#v", plan.Version(), actual)
+	if len(actual) != 1 || actual[0].ID() != "base" {
+		t.Fatalf("plan changed through caller-owned data: segments=%#v", actual)
 	}
 	if got := string(actual[0].CanonicalJSON()); got != `{"a":2,"z":1}` {
 		t.Fatalf("segment bytes changed: %s", got)
@@ -91,17 +91,15 @@ func TestPlanRejectsInvalidMetadataOrderingAndFingerprint(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		version  int
 		segments []Segment
 	}{
-		{name: "unknown version", version: CurrentPlanVersion + 1, segments: []Segment{stable}},
-		{name: "duplicate ID", version: CurrentPlanVersion, segments: []Segment{stable, stable}},
-		{name: "stable after volatile", version: CurrentPlanVersion, segments: []Segment{volatile, stable}},
-		{name: "fingerprint mismatch", version: CurrentPlanVersion, segments: []Segment{withFingerprint(stable, "wrong")}},
+		{name: "duplicate ID", segments: []Segment{stable, stable}},
+		{name: "stable after volatile", segments: []Segment{volatile, stable}},
+		{name: "fingerprint mismatch", segments: []Segment{withFingerprint(stable, "wrong")}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := newPlan(test.version, test.segments); err == nil {
+			if _, err := NewPlan(test.segments...); err == nil {
 				t.Fatal("expected invalid cache plan")
 			}
 		})

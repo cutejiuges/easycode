@@ -109,6 +109,32 @@ func TestStreamReducerProducesReadyReadCall(t *testing.T) {
 	}
 }
 
+func TestStreamReducerProducesOrderedHeterogeneousReadyCalls(t *testing.T) {
+	reducer := newStreamReducer(testAnthropicToolCatalog(t))
+	events := []string{
+		`{"type":"message_start","message":{"id":"msg-tools","model":"claude-test"}}`,
+		`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu-0","name":"Glob","input":{}}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"pattern\":\"**/*.go\"}"}}`,
+		`{"type":"content_block_stop","index":0}`,
+		`{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu-1","name":"Grep","input":{}}}`,
+		`{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"pattern\":\"TODO\"}"}}`,
+		`{"type":"content_block_stop","index":1}`,
+		`{"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu-2","name":"Read","input":{}}}`,
+		`{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"file_path\":\"README.md\"}"}}`,
+		`{"type":"content_block_stop","index":2}`,
+		`{"type":"message_stop"}`,
+	}
+	for _, event := range events {
+		if _, err := reduceAnthropicTestEvent(reducer, event); err != nil {
+			t.Fatalf("reduce %s: %v", event, err)
+		}
+	}
+	ready := reducer.readyCalls()
+	if len(ready) != 3 || ready[0].Capability() != tool.CapabilityGlob || ready[1].Capability() != tool.CapabilityGrep || ready[2].Capability() != tool.CapabilityRead {
+		t.Fatalf("异构 ready calls = %#v", ready)
+	}
+}
+
 func TestStreamReducerRejectsIncompleteToolInput(t *testing.T) {
 	reducer := newStreamReducer(testAnthropicToolCatalog(t))
 	for _, event := range []string{
