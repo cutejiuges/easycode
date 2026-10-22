@@ -11,7 +11,7 @@ import (
 
 const (
 	// EnvelopeVersion 是当前公共 JSONL 信封版本。
-	EnvelopeVersion = 1
+	EnvelopeVersion = 2
 	// MaxRecordBytes 限制单条 canonical JSON 记录大小。
 	MaxRecordBytes = 16 << 20
 	// MaxBatchBytes 限制单个逻辑 batch 的总大小。
@@ -28,13 +28,14 @@ const (
 	EventProviderNativeCommit EventKind = "provider_native_commit"
 	EventSampleUsage          EventKind = "sample_usage"
 	EventToolCallReady        EventKind = "tool_call_ready"
+	EventToolApprovalDecided  EventKind = "tool_approval_decided"
 	EventToolExecutionStarted EventKind = "tool_execution_started"
 	EventToolCallResult       EventKind = "tool_call_result"
 	EventTurnCompleted        EventKind = "turn_completed"
 	EventTurnFailed           EventKind = "turn_failed"
 )
 
-// Record 是一行可独立校验的 JSONL v1 信封。
+// Record 是一行可独立校验的当前 JSONL 信封。
 type Record struct {
 	SchemaVersion  int              `json:"schema_version"`
 	PayloadVersion int              `json:"payload_version"`
@@ -133,16 +134,38 @@ type GrepInputPayload struct {
 	Limit           int                 `json:"limit"`
 }
 
+type PatchReplacementPayload struct {
+	OldText    string `json:"old_text"`
+	NewText    string `json:"new_text"`
+	ReplaceAll bool   `json:"replace_all"`
+	LineBased  bool   `json:"line_based"`
+}
+type PatchInputPayload struct {
+	FilePath     string                    `json:"file_path"`
+	Replacements []PatchReplacementPayload `json:"replacements"`
+}
+
 // ToolCallReadyPayload 保存执行前已经durable的完整调用事实。
 type ToolCallReadyPayload struct {
-	InvocationID   tool.InvocationID   `json:"invocation_id"`
-	ProviderCallID tool.ProviderCallID `json:"provider_call_id"`
-	SampleIndex    uint32              `json:"sample_index"`
-	CallIndex      uint32              `json:"call_index"`
-	Capability     tool.CapabilityID   `json:"capability"`
-	ReadInput      *ReadInputPayload   `json:"read_input,omitempty"`
-	GlobInput      *GlobInputPayload   `json:"glob_input,omitempty"`
-	GrepInput      *GrepInputPayload   `json:"grep_input,omitempty"`
+	InvocationID   tool.InvocationID     `json:"invocation_id"`
+	ProviderCallID tool.ProviderCallID   `json:"provider_call_id"`
+	SampleIndex    uint32                `json:"sample_index"`
+	CallIndex      uint32                `json:"call_index"`
+	Capability     tool.CapabilityID     `json:"capability"`
+	WireKind       tool.ProviderWireKind `json:"wire_kind"`
+	ReadInput      *ReadInputPayload     `json:"read_input,omitempty"`
+	GlobInput      *GlobInputPayload     `json:"glob_input,omitempty"`
+	GrepInput      *GrepInputPayload     `json:"grep_input,omitempty"`
+	PatchInput     *PatchInputPayload    `json:"patch_input,omitempty"`
+}
+
+// ToolApprovalDecidedPayload 保存批准决定的durable关联事实。
+type ToolApprovalDecidedPayload struct {
+	RequestID    tool.ApprovalRequestID    `json:"request_id"`
+	InvocationID tool.InvocationID         `json:"invocation_id"`
+	Fingerprint  tool.CandidateFingerprint `json:"fingerprint"`
+	Outcome      tool.ApprovalOutcome      `json:"outcome"`
+	Feedback     string                    `json:"feedback,omitempty"`
 }
 
 // ToolExecutionStartedPayload 标记executor接收调用的线性化点。
@@ -201,16 +224,25 @@ type GrepResultMetadataPayload struct {
 	Skipped          SearchSkipCountsPayload     `json:"skipped"`
 }
 
+type PatchResultMetadataPayload struct {
+	RelativePath     string `json:"relative_path"`
+	ReplacementCount int    `json:"replacement_count"`
+	AddedLines       int    `json:"added_lines"`
+	RemovedLines     int    `json:"removed_lines"`
+}
+
 // ToolCallResultPayload 保存无需重新执行即可恢复的冻结结果。
 type ToolCallResultPayload struct {
-	InvocationID tool.InvocationID          `json:"invocation_id"`
-	Capability   tool.CapabilityID          `json:"capability"`
-	Status       tool.ResultStatus          `json:"status"`
-	Code         string                     `json:"code"`
-	Preview      string                     `json:"preview"`
-	ReadMetadata *ReadResultMetadataPayload `json:"read_metadata,omitempty"`
-	GlobMetadata *GlobResultMetadataPayload `json:"glob_metadata,omitempty"`
-	GrepMetadata *GrepResultMetadataPayload `json:"grep_metadata,omitempty"`
+	InvocationID  tool.InvocationID           `json:"invocation_id"`
+	Capability    tool.CapabilityID           `json:"capability"`
+	WireKind      tool.ProviderWireKind       `json:"wire_kind"`
+	Status        tool.ResultStatus           `json:"status"`
+	Code          string                      `json:"code"`
+	Preview       string                      `json:"preview"`
+	ReadMetadata  *ReadResultMetadataPayload  `json:"read_metadata,omitempty"`
+	GlobMetadata  *GlobResultMetadataPayload  `json:"glob_metadata,omitempty"`
+	GrepMetadata  *GrepResultMetadataPayload  `json:"grep_metadata,omitempty"`
+	PatchMetadata *PatchResultMetadataPayload `json:"patch_metadata,omitempty"`
 }
 
 // TurnCompletedPayload 表示当前文本 turn 已 durable 成功结束。
@@ -226,5 +258,5 @@ type TurnFailedPayload struct {
 type recordPayload interface {
 	SessionMetaPayload | ThreadMetaPayload | TurnStartedPayload | NativeCommitPayload |
 		SampleUsagePayload | ToolCallReadyPayload | ToolExecutionStartedPayload |
-		ToolCallResultPayload | TurnCompletedPayload | TurnFailedPayload
+		ToolApprovalDecidedPayload | ToolCallResultPayload | TurnCompletedPayload | TurnFailedPayload
 }

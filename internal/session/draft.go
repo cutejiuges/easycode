@@ -67,7 +67,7 @@ func NewToolCallReadyDraft(turnID domain.TurnID, invocation tool.Invocation, sam
 	}
 	payload := ToolCallReadyPayload{
 		InvocationID: invocation.InvocationID(), ProviderCallID: invocation.ProviderCallID(),
-		SampleIndex: sampleIndex, CallIndex: callIndex, Capability: invocation.Capability(),
+		SampleIndex: sampleIndex, CallIndex: callIndex, Capability: invocation.Capability(), WireKind: invocation.WireKind(),
 	}
 	switch invocation.Capability() {
 	case tool.CapabilityRead:
@@ -85,11 +85,31 @@ func NewToolCallReadyDraft(turnID domain.TurnID, invocation tool.Invocation, sam
 			Pattern: input.Pattern(), Path: input.Path(), Glob: input.Glob(), OutputMode: input.OutputMode(),
 			CaseInsensitive: input.CaseInsensitive(), BeforeContext: input.BeforeContext(), AfterContext: input.AfterContext(), Limit: input.Limit(),
 		}
+	case tool.CapabilityPatch:
+		value, _ := invocation.Patch()
+		input := value.Input()
+		replacements := input.Replacements()
+		encoded := make([]PatchReplacementPayload, len(replacements))
+		for index, replacement := range replacements {
+			encoded[index] = PatchReplacementPayload{OldText: replacement.OldText(), NewText: replacement.NewText(), ReplaceAll: replacement.ReplaceAll(), LineBased: replacement.LineBased()}
+		}
+		payload.PatchInput = &PatchInputPayload{FilePath: input.FilePath(), Replacements: encoded}
 	}
 	if _, err := payload.Domain(); err != nil {
 		return RecordDraft{}, err
 	}
 	return encodeDraft(EventToolCallReady, "", turnID, payload)
+}
+
+// NewToolApprovalDecidedDraft 创建在任何Patch执行前必须Sync的批准事实。
+func NewToolApprovalDecidedDraft(turnID domain.TurnID, payload ToolApprovalDecidedPayload) (RecordDraft, error) {
+	if err := validateTurnID(turnID); err != nil {
+		return RecordDraft{}, err
+	}
+	if err := validateToolApprovalDecidedPayload(payload); err != nil {
+		return RecordDraft{}, err
+	}
+	return encodeDraft(EventToolApprovalDecided, "", turnID, payload)
 }
 
 // NewToolExecutionStartedDraft 创建executor接收前必须单独Sync的事实。
@@ -113,7 +133,7 @@ func NewToolCallResultDraft(turnID domain.TurnID, result tool.InvocationResult) 
 		return RecordDraft{}, fmt.Errorf("tool result is invalid: %w", err)
 	}
 	payload := ToolCallResultPayload{
-		InvocationID: result.InvocationID(), Capability: result.Capability(), Status: result.Status(), Code: result.Code(), Preview: result.Preview().Text(),
+		InvocationID: result.InvocationID(), Capability: result.Capability(), WireKind: result.WireKind(), Status: result.Status(), Code: result.Code(), Preview: result.Preview().Text(),
 	}
 	switch result.Capability() {
 	case tool.CapabilityRead:
@@ -130,6 +150,9 @@ func NewToolCallResultDraft(turnID domain.TurnID, result tool.InvocationResult) 
 	case tool.CapabilityGrep:
 		metadata := result.GrepMetadata()
 		payload.GrepMetadata = encodeGrepMetadata(metadata)
+	case tool.CapabilityPatch:
+		metadata := result.PatchMetadata()
+		payload.PatchMetadata = &PatchResultMetadataPayload{RelativePath: metadata.RelativePath(), ReplacementCount: metadata.ReplacementCount(), AddedLines: metadata.AddedLines(), RemovedLines: metadata.RemovedLines()}
 	}
 	if err := validateToolCallResultPayload(payload); err != nil {
 		return RecordDraft{}, err
@@ -209,7 +232,7 @@ func validateDraftPlacement(draft RecordDraft) error {
 			return fmt.Errorf("thread metadata draft placement is invalid")
 		}
 	case EventTurnStarted, EventProviderNativeCommit, EventSampleUsage, EventToolCallReady,
-		EventToolExecutionStarted, EventToolCallResult, EventTurnCompleted, EventTurnFailed:
+		EventToolApprovalDecided, EventToolExecutionStarted, EventToolCallResult, EventTurnCompleted, EventTurnFailed:
 		if draft.parentThreadID != "" || !draft.turnID.Valid() {
 			return fmt.Errorf("turn draft placement is invalid")
 		}
@@ -248,6 +271,9 @@ func validateDraftPayload(draft RecordDraft) error {
 		return err
 	case EventToolExecutionStarted:
 		_, err := DecodeToolExecutionStartedPayload(record)
+		return err
+	case EventToolApprovalDecided:
+		_, err := DecodeToolApprovalDecidedPayload(record)
 		return err
 	case EventToolCallResult:
 		_, err := DecodeToolCallResultPayload(record)

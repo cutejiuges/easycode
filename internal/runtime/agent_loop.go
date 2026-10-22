@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 
@@ -9,6 +10,7 @@ import (
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
 	"easycode/internal/provider"
+	"easycode/internal/tool"
 )
 
 const agentLoopOutputBuffer = 16
@@ -419,6 +421,39 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 			state.active.cancelRequested = true
 			state.active.cancel()
 		}
+	case protocol.CommandResolveToolApproval:
+		if state.active == nil || state.active.turnID == "" {
+			state.reject(request, protocol.ControlErrorNoActiveApproval, true)
+			return
+		}
+		if request.command.ExpectedTurnID() != state.active.turnID {
+			state.reject(request, protocol.ControlErrorTurnMismatch, true)
+			return
+		}
+		requestID, requestErr := tool.ParseApprovalRequestID(request.command.ApprovalRequestID())
+		invocationID, invocationErr := tool.ParseInvocationID(request.command.InvocationID())
+		fingerprint, fingerprintErr := tool.ParseCandidateFingerprint(request.command.Fingerprint())
+		decision := tool.ApprovalDecision(request.command.ApprovalDecision())
+		if requestErr != nil || invocationErr != nil || fingerprintErr != nil {
+			state.reject(request, protocol.ControlErrorApprovalMismatch, true)
+			return
+		}
+		response, responseErr := tool.NewApprovalResponse(requestID, state.active.turnID, invocationID, fingerprint, decision, request.command.Feedback())
+		if responseErr != nil {
+			state.reject(request, protocol.ControlErrorApprovalMismatch, true)
+			return
+		}
+		if resolveErr := state.loop.runtime.ResolveToolApproval(response); resolveErr != nil {
+			code := protocol.ControlErrorApprovalMismatch
+			if errors.Is(resolveErr, errNoActiveApproval) {
+				code = protocol.ControlErrorNoActiveApproval
+			}
+			state.reject(request, code, true)
+			return
+		}
+		result, _ := protocol.NewAcceptedCommandResult(request.command, protocol.CommandDispositionResolving)
+		state.emitResult(request, result)
+		state.completeRequest(request.command.RequestID())
 	case protocol.CommandShutdown:
 		result, _ := protocol.NewAcceptedCommandResult(request.command, protocol.CommandDispositionClosing)
 		state.emitResult(request, result)

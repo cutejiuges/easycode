@@ -48,6 +48,7 @@ const (
 type workspaceHandle interface {
 	openFile(string, workspaceHooks) (*os.File, error)
 	openDirectory(string, workspaceHooks) (workspaceDirectory, error)
+	openPatchFile(string, workspaceHooks) (patchFile, error)
 	close() error
 }
 

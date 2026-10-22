@@ -92,6 +92,7 @@ func (*Provider) Capabilities() provider.Capabilities {
 		Streaming:         true,
 		ThinkingSignature: true,
 		FunctionTools:     true,
+		FilePatch:         true,
 	}
 }
 

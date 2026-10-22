@@ -24,6 +24,7 @@ import (
 	chatRuntime "easycode/internal/runtime"
 	"easycode/internal/session"
 	"easycode/internal/session/catalog"
+	"easycode/internal/tool"
 	"easycode/internal/tool/builtin"
 	"easycode/internal/tui"
 )
@@ -56,6 +57,7 @@ type dataPaths struct {
 
 type chatResourceHooks struct {
 	afterContinueSelection func(domain.ThreadID)
+	interactiveApprovals   bool
 }
 
 type providerResource interface {
@@ -146,8 +148,9 @@ func Run(ctx context.Context, options Options) Outcome {
 	if err != nil {
 		return runtimeFailure(fault.New(fault.CodeSessionWrite, "current working directory is unavailable"))
 	}
-	resources, err := openChatResourcesWithSelection(
+	resources, err := openChatResourcesWithHooks(
 		ctx, applicationConfig, paths, options.ResumeThreadID, options.ContinueSession, creationCWD,
+		chatResourceHooks{interactiveApprovals: options.Mode == headless.ModeInteractive},
 	)
 	if err != nil {
 		return runtimeFailure(err)
@@ -228,7 +231,16 @@ func runStreamWithEscalation(
 }
 
 func runTUI(ctx context.Context, options Options, resources *chatResources) Outcome {
-	model := tui.NewModel(ctx, Version, resources.session, resources.history)
+	controlSession, err := startTUIControlSession(ctx, resources.runtime)
+	if err != nil {
+		return runtimeFailure(err)
+	}
+	defer func() {
+		shutdownContext, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		_ = controlSession.stop(shutdownContext)
+	}()
+	model := tui.NewModel(ctx, Version, controlSession, resources.history)
 	programOptions := []tea.ProgramOption{tea.WithContext(ctx), tea.WithOutput(options.Output)}
 	if options.Input != nil {
 		programOptions = append(programOptions, tea.WithInput(options.Input))
@@ -345,7 +357,18 @@ func openChatResourcesWithSnapshot(
 	if err != nil {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "Grep executor is unavailable")
 	}
-	toolCatalog, err := builtin.NewCatalog(readExecutor, globExecutor, grepExecutor)
+	patchPreparer, err := builtin.NewPatchPreparer(workspace)
+	if err != nil {
+		return nil, fault.New(fault.CodeInvalidConfiguration, "Patch preparer is unavailable")
+	}
+	patchExecutor, err := builtin.NewPatchExecutor(workspace)
+	if err != nil {
+		return nil, fault.New(fault.CodeInvalidConfiguration, "Patch executor is unavailable")
+	}
+	toolPolicy := tool.NewApprovalPolicy()
+	toolCatalog, err := builtin.NewCatalog(
+		readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, toolPolicy,
+	)
 	if err != nil {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "tool catalog is invalid")
 	}
@@ -394,12 +417,16 @@ func openChatResourcesWithSnapshot(
 	runtimeInstance, err := chatRuntime.New(assembled.conversation, chatRuntime.Config{
 		SessionID: assembled.identity.SessionID, ThreadID: assembled.identity.ThreadID,
 		Journal: assembled.writer, ContextProfile: contextProfile,
-		ToolCatalog:         toolCatalog,
-		ReadExecutor:        readExecutor,
-		GlobExecutor:        globExecutor,
-		GrepExecutor:        grepExecutor,
-		ProjectInstructions: projectInstructions,
-		ContextBudget:       applicationConfig.ContextBudget, ContextPlanner: contextplan.NewPlanner(),
+		ToolCatalog:          toolCatalog,
+		ReadExecutor:         readExecutor,
+		GlobExecutor:         globExecutor,
+		GrepExecutor:         grepExecutor,
+		PatchPreparer:        patchPreparer,
+		PatchExecutor:        patchExecutor,
+		ToolPolicy:           toolPolicy,
+		InteractiveApprovals: hooks.interactiveApprovals,
+		ProjectInstructions:  projectInstructions,
+		ContextBudget:        applicationConfig.ContextBudget, ContextPlanner: contextplan.NewPlanner(),
 	})
 	if err != nil {
 		return nil, err

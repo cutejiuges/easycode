@@ -13,10 +13,12 @@ import (
 type EventKind string
 
 const (
-	EventTurnStarted        EventKind = "turn_started"
-	EventAssistantTextDelta EventKind = "assistant_text_delta"
-	EventTurnCompleted      EventKind = "turn_completed"
-	EventTurnFailed         EventKind = "turn_failed"
+	EventTurnStarted           EventKind = "turn_started"
+	EventAssistantTextDelta    EventKind = "assistant_text_delta"
+	EventTurnCompleted         EventKind = "turn_completed"
+	EventTurnFailed            EventKind = "turn_failed"
+	EventToolApprovalRequested EventKind = "tool_approval_requested"
+	EventToolApprovalResolved  EventKind = "tool_approval_resolved"
 )
 
 // Event 是 TUI、headless 和其他宿主共同消费的进程内语义事件信封。
@@ -56,6 +58,12 @@ func (event Event) Validate() error {
 		return err
 	case EventTurnFailed:
 		_, err := DecodeTurnFailed(event)
+		return err
+	case EventToolApprovalRequested:
+		_, err := DecodeToolApprovalRequested(event)
+		return err
+	case EventToolApprovalResolved:
+		_, err := DecodeToolApprovalResolved(event)
 		return err
 	default:
 		return fmt.Errorf("runtime event kind is invalid")

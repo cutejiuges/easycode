@@ -38,9 +38,11 @@ func prepareToolOutputsEntry(history []nativeHistoryEntry, results []tool.Invoca
 		if err != nil {
 			return nativeHistoryEntry{}, fmt.Errorf("encode OpenAI tool result: %w", err)
 		}
-		outputs[index] = NativeItem{
-			Type: "function_call_output", CallID: calls[index].CallID, Output: string(payload),
+		outputType := "function_call_output"
+		if calls[index].Type == "custom_tool_call" {
+			outputType = "custom_tool_call_output"
 		}
+		outputs[index] = NativeItem{Type: outputType, CallID: calls[index].CallID, Output: string(payload)}
 	}
 	entry := nativeHistoryEntry{Kind: nativeHistoryToolOutputs, ToolOutputs: outputs}
 	if err := validateNativeHistoryEntry(entry); err != nil {
@@ -57,6 +59,8 @@ func openAICapabilityForName(name string) tool.CapabilityID {
 		return tool.CapabilityGlob
 	case "Grep":
 		return tool.CapabilityGrep
+	case "apply_patch":
+		return tool.CapabilityPatch
 	default:
 		return ""
 	}
@@ -72,7 +76,7 @@ func validateNativeHistory(entries []nativeHistoryEntry) error {
 		switch entry.Kind {
 		case nativeHistorySample:
 			if len(pending) != 0 {
-				return fmt.Errorf("OpenAI sample appears before pending function calls are closed")
+				return fmt.Errorf("OpenAI sample appears before pending tool calls are closed")
 			}
 			if expectContinuation {
 				expectContinuation = false
@@ -82,7 +86,7 @@ func validateNativeHistory(entries []nativeHistoryEntry) error {
 			pending = functionCalls(entry.Outputs)
 		case nativeHistoryToolOutputs:
 			if len(pending) == 0 {
-				return fmt.Errorf("OpenAI tool outputs have no pending function calls")
+				return fmt.Errorf("OpenAI tool outputs have no pending tool calls")
 			}
 			if err := matchFunctionOutputs(pending, entry.ToolOutputs); err != nil {
 				return err
@@ -99,11 +103,11 @@ func pendingFunctionCalls(history []nativeHistoryEntry) ([]NativeItem, error) {
 		return nil, err
 	}
 	if len(history) == 0 || history[len(history)-1].Kind != nativeHistorySample {
-		return nil, fmt.Errorf("OpenAI native history has no pending function calls")
+		return nil, fmt.Errorf("OpenAI native history has no pending tool calls")
 	}
 	calls := functionCalls(history[len(history)-1].Outputs)
 	if len(calls) == 0 {
-		return nil, fmt.Errorf("OpenAI native history has no pending function calls")
+		return nil, fmt.Errorf("OpenAI native history has no pending tool calls")
 	}
 	return calls, nil
 }
@@ -111,7 +115,7 @@ func pendingFunctionCalls(history []nativeHistoryEntry) ([]NativeItem, error) {
 func functionCalls(items []NativeItem) []NativeItem {
 	calls := make([]NativeItem, 0)
 	for _, item := range items {
-		if item.Type == "function_call" {
+		if item.Type == "function_call" || item.Type == "custom_tool_call" {
 			calls = append(calls, item.clone())
 		}
 	}
@@ -124,8 +128,12 @@ func matchFunctionOutputs(calls []NativeItem, outputs []NativeItem) error {
 	}
 	seen := make(map[string]struct{}, len(outputs))
 	for index, output := range outputs {
-		if output.Type != "function_call_output" || output.CallID != calls[index].CallID {
-			return fmt.Errorf("OpenAI function output order does not match pending calls")
+		wantType := "function_call_output"
+		if calls[index].Type == "custom_tool_call" {
+			wantType = "custom_tool_call_output"
+		}
+		if output.Type != wantType || output.CallID != calls[index].CallID {
+			return fmt.Errorf("OpenAI tool output order does not match pending calls")
 		}
 		if _, exists := seen[output.CallID]; exists {
 			return fmt.Errorf("OpenAI function output call ID is duplicated")

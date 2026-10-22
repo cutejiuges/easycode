@@ -4,9 +4,11 @@ import (
 	"context"
 	"sync"
 
+	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
 	"easycode/internal/provider"
+	"easycode/internal/tool"
 )
 
 // ChatSession 为交互宿主提供顺序事件、取消和关闭能力。
@@ -107,6 +109,41 @@ func (session *ChatSession) Interrupt() {
 	if cancel != nil {
 		cancel()
 	}
+}
+
+// ResolveApproval 将TUI的强类型决定关联到当前Runtime批准请求。
+func (session *ChatSession) ResolveApproval(
+	ctx context.Context,
+	turnID domain.TurnID,
+	request protocol.ToolApprovalRequestedPayload,
+	decision protocol.ApprovalDecision,
+	feedback string,
+) error {
+	if ctx == nil {
+		return fault.New(fault.CodeTurnFailed, "approval context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return fault.Wrap(fault.CodeUserCancelled, "approval was cancelled", err)
+	}
+	if session == nil || session.runtime == nil {
+		return fault.New(fault.CodeTurnFailed, "chat session is not configured")
+	}
+	requestID, requestErr := tool.ParseApprovalRequestID(request.RequestID)
+	invocationID, invocationErr := tool.ParseInvocationID(request.InvocationID)
+	fingerprint, fingerprintErr := tool.ParseCandidateFingerprint(request.Fingerprint)
+	if !turnID.Valid() || requestErr != nil || invocationErr != nil || fingerprintErr != nil {
+		return fault.New(fault.CodeInvalidInput, "approval response is invalid")
+	}
+	response, err := tool.NewApprovalResponse(
+		requestID, turnID, invocationID, fingerprint, tool.ApprovalDecision(decision), feedback,
+	)
+	if err != nil {
+		return fault.New(fault.CodeInvalidInput, "approval response is invalid")
+	}
+	if err := session.runtime.ResolveToolApproval(response); err != nil {
+		return fault.New(fault.CodeInvalidInput, "approval response does not match the active request")
+	}
+	return nil
 }
 
 // Shutdown 拒绝新 turn、取消活动 turn，并等待清理结束。

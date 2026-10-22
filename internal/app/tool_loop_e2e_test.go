@@ -17,6 +17,7 @@ import (
 	"easycode/internal/config"
 	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
+	"easycode/internal/protocol"
 	"easycode/internal/secret"
 	"easycode/internal/session"
 )
@@ -152,6 +153,218 @@ func TestParallelSearchToolLoopCompletesEndToEndForBothProviders(t *testing.T) {
 			}
 			test.assert(t, captured[1])
 		})
+	}
+}
+
+func TestHeadlessPatchFailsClosedForBothProviders(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		family domain.ProviderFamily
+		model  string
+		serve  func(io.Writer, int)
+		wire   string
+	}{
+		{name: "OpenAI Responses", family: domain.ProviderOpenAI, model: "gpt-test", serve: writeOpenAIPatchSample, wire: "custom_tool_call_output"},
+		{name: "Anthropic Messages", family: domain.ProviderAnthropic, model: "claude-test", serve: writeAnthropicPatchSample, wire: "tool_result"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			path := filepath.Join(workspace, "main.go")
+			if err := os.WriteFile(path, []byte("old\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var mu sync.Mutex
+			var requests [][]byte
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				body, _ := io.ReadAll(request.Body)
+				mu.Lock()
+				requests = append(requests, append([]byte(nil), body...))
+				sample := len(requests)
+				mu.Unlock()
+				writer.Header().Set("Content-Type", "text/event-stream")
+				test.serve(writer, sample)
+			}))
+			defer server.Close()
+			resources, err := openChatResources(context.Background(), config.Config{Provider: config.Provider{
+				Family: test.family, BaseURL: server.URL, APIKey: secret.New("patch-secret"), Model: test.model,
+			}}, filepath.Join(t.TempDir(), "sessions"), "", workspace)
+			if err != nil {
+				t.Fatal(err)
+			}
+			submitAppTurn(t, resources, "Update main.go")
+			if err := resources.close(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			content, _ := os.ReadFile(path)
+			mu.Lock()
+			captured := append([][]byte(nil), requests...)
+			mu.Unlock()
+			if string(content) != "old\n" || len(captured) != 2 || !strings.Contains(string(captured[1]), test.wire) || !strings.Contains(string(captured[1]), "approval_required") || strings.Contains(string(captured[1]), workspace) {
+				t.Fatalf("content=%q requests=%d continuation=%s", content, len(captured), captured[len(captured)-1])
+			}
+		})
+	}
+}
+
+func TestInteractivePatchAllowOnceForBothProviders(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		family domain.ProviderFamily
+		model  string
+		serve  func(io.Writer, int)
+	}{
+		{name: "OpenAI Responses", family: domain.ProviderOpenAI, model: "gpt-test", serve: writeOpenAIPatchSample},
+		{name: "Anthropic Messages", family: domain.ProviderAnthropic, model: "claude-test", serve: writeAnthropicPatchSample},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			path := filepath.Join(workspace, "main.go")
+			if err := os.WriteFile(path, []byte("old\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var requestCount int
+			var requestMu sync.Mutex
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				requestMu.Lock()
+				requestCount++
+				sample := requestCount
+				requestMu.Unlock()
+				writer.Header().Set("Content-Type", "text/event-stream")
+				test.serve(writer, sample)
+			}))
+			defer server.Close()
+			resources, err := openChatResourcesWithHooks(
+				context.Background(), config.Config{Provider: config.Provider{
+					Family: test.family, BaseURL: server.URL, APIKey: secret.New("interactive-patch-secret"), Model: test.model,
+				}}, dataPaths{sessionRoot: filepath.Join(t.TempDir(), "sessions")}, "", false, workspace,
+				chatResourceHooks{interactiveApprovals: true},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			controlSession, err := startTUIControlSession(context.Background(), resources.runtime)
+			if err != nil {
+				t.Fatal(err)
+			}
+			events, err := controlSession.Submit(context.Background(), "Update main.go")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var approved bool
+			for event := range events {
+				if event.Kind != protocol.EventToolApprovalRequested {
+					continue
+				}
+				payload, decodeErr := protocol.DecodeToolApprovalRequested(event)
+				if decodeErr != nil {
+					t.Fatal(decodeErr)
+				}
+				if resolveErr := controlSession.ResolveApproval(context.Background(), event.TurnID, payload, protocol.ApprovalAllowOnce, ""); resolveErr != nil {
+					t.Fatal(resolveErr)
+				}
+				approved = true
+			}
+			if err := controlSession.stop(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if err := resources.close(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			content, _ := os.ReadFile(path)
+			if !approved || string(content) != "new\n" || requestCount != 2 {
+				t.Fatalf("approved=%v content=%q request count=%d", approved, content, requestCount)
+			}
+		})
+	}
+}
+
+func TestInteractivePatchDenyFeedbackAndConflictForBothProviders(t *testing.T) {
+	providers := []struct {
+		name   string
+		family domain.ProviderFamily
+		model  string
+		serve  func(io.Writer, int)
+	}{
+		{name: "OpenAI Responses", family: domain.ProviderOpenAI, model: "gpt-test", serve: writeOpenAIPatchSample},
+		{name: "Anthropic Messages", family: domain.ProviderAnthropic, model: "claude-test", serve: writeAnthropicPatchSample},
+	}
+	for _, providerCase := range providers {
+		for _, scenario := range []string{"deny feedback", "conflict"} {
+			t.Run(providerCase.name+"/"+scenario, func(t *testing.T) {
+				workspace := t.TempDir()
+				path := filepath.Join(workspace, "main.go")
+				if err := os.WriteFile(path, []byte("old\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				var mu sync.Mutex
+				var requests [][]byte
+				server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+					body, _ := io.ReadAll(request.Body)
+					mu.Lock()
+					requests = append(requests, append([]byte(nil), body...))
+					sample := len(requests)
+					mu.Unlock()
+					writer.Header().Set("Content-Type", "text/event-stream")
+					providerCase.serve(writer, sample)
+				}))
+				defer server.Close()
+				resources, err := openChatResourcesWithHooks(
+					context.Background(), config.Config{Provider: config.Provider{
+						Family: providerCase.family, BaseURL: server.URL, APIKey: secret.New("patch-scenario-secret"), Model: providerCase.model,
+					}}, dataPaths{sessionRoot: filepath.Join(t.TempDir(), "sessions")}, "", false, workspace,
+					chatResourceHooks{interactiveApprovals: true},
+				)
+				if err != nil {
+					t.Fatal(err)
+				}
+				controlSession, err := startTUIControlSession(context.Background(), resources.runtime)
+				if err != nil {
+					t.Fatal(err)
+				}
+				events, err := controlSession.Submit(context.Background(), "Update main.go")
+				if err != nil {
+					t.Fatal(err)
+				}
+				for event := range events {
+					if event.Kind != protocol.EventToolApprovalRequested {
+						continue
+					}
+					payload, decodeErr := protocol.DecodeToolApprovalRequested(event)
+					if decodeErr != nil {
+						t.Fatal(decodeErr)
+					}
+					decision := protocol.ApprovalDeny
+					feedback := "keep the old name"
+					if scenario == "conflict" {
+						if writeErr := os.WriteFile(path, []byte("external\n"), 0o600); writeErr != nil {
+							t.Fatal(writeErr)
+						}
+						decision = protocol.ApprovalAllowOnce
+						feedback = ""
+					}
+					if resolveErr := controlSession.ResolveApproval(context.Background(), event.TurnID, payload, decision, feedback); resolveErr != nil {
+						t.Fatal(resolveErr)
+					}
+				}
+				if err := controlSession.stop(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				if err := resources.close(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				content, _ := os.ReadFile(path)
+				mu.Lock()
+				captured := append([][]byte(nil), requests...)
+				mu.Unlock()
+				wantContent, wantOutput := "old\n", "keep the old name"
+				if scenario == "conflict" {
+					wantContent, wantOutput = "external\n", "patch_conflict"
+				}
+				if string(content) != wantContent || len(captured) != 2 || !strings.Contains(string(captured[1]), wantOutput) {
+					t.Fatalf("content=%q continuation=%s", content, captured[len(captured)-1])
+				}
+			})
+		}
 	}
 }
 
@@ -406,6 +619,31 @@ func writeAnthropicToolLoopSample(writer io.Writer, sample int) {
 	writeAnthropicAppTurn(writer, sample)
 }
 
+func writeOpenAIPatchSample(writer io.Writer, sample int) {
+	if sample != 1 {
+		writeOpenAIAppTurn(writer, sample)
+		return
+	}
+	patch := "*** Begin Patch\n*** Update File: main.go\n@@\n-old\n+new\n*** End Patch\n"
+	encoded, _ := json.Marshal(patch)
+	_, _ = io.WriteString(writer, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-patch\"}}\n\n")
+	_, _ = io.WriteString(writer, "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"custom_tool_call\",\"id\":\"ctc-1\",\"call_id\":\"call-patch\",\"name\":\"apply_patch\"}}\n\n")
+	_, _ = fmt.Fprintf(writer, "data: {\"type\":\"response.custom_tool_call_input.delta\",\"item_id\":\"ctc-1\",\"output_index\":0,\"delta\":%s}\n\n", encoded)
+	_, _ = fmt.Fprintf(writer, "data: {\"type\":\"response.custom_tool_call_input.done\",\"item_id\":\"ctc-1\",\"output_index\":0,\"input\":%s}\n\n", encoded)
+	_, _ = fmt.Fprintf(writer, "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"custom_tool_call\",\"id\":\"ctc-1\",\"call_id\":\"call-patch\",\"name\":\"apply_patch\",\"input\":%s}}\n\n", encoded)
+	_, _ = io.WriteString(writer, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-patch\"}}\n\n")
+}
+
+func writeAnthropicPatchSample(writer io.Writer, sample int) {
+	if sample != 1 {
+		writeAnthropicAppTurn(writer, sample)
+		return
+	}
+	_, _ = io.WriteString(writer, "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg-patch\",\"model\":\"claude-test\"}}\n\n")
+	writeAnthropicToolUse(writer, 0, "toolu-edit", "Edit", `{"file_path":"main.go","old_string":"old","new_string":"new"}`)
+	_, _ = io.WriteString(writer, "data: {\"type\":\"message_stop\"}\n\n")
+}
+
 func writeOpenAIParallelSearchSample(writer io.Writer, sample int) {
 	if sample != 1 {
 		writeOpenAIAppTurn(writer, sample)
@@ -527,9 +765,10 @@ func assertOpenAIToolContinuation(t *testing.T, body []byte) {
 	if err := json.Unmarshal(body, &request); err != nil {
 		t.Fatal(err)
 	}
-	if len(request.Tools) != 3 || request.Tools[0].Type != "function" || request.Tools[0].Name != "Glob" ||
+	if len(request.Tools) != 4 || request.Tools[0].Type != "function" || request.Tools[0].Name != "Glob" ||
 		request.Tools[1].Type != "function" || request.Tools[1].Name != "Grep" ||
-		request.Tools[2].Type != "function" || request.Tools[2].Name != "Read" ||
+		request.Tools[2].Type != "custom" || request.Tools[2].Name != "apply_patch" ||
+		request.Tools[3].Type != "function" || request.Tools[3].Name != "Read" ||
 		len(request.Input) != 3 {
 		t.Fatalf("OpenAI continuation shape = %s", body)
 	}
@@ -567,8 +806,8 @@ func assertAnthropicToolContinuation(t *testing.T, body []byte) {
 	if err := json.Unmarshal(body, &request); err != nil {
 		t.Fatal(err)
 	}
-	if len(request.Tools) != 3 || request.Tools[0].Name != "Glob" || request.Tools[1].Name != "Grep" ||
-		request.Tools[2].Name != "Read" || len(request.Messages) != 3 {
+	if len(request.Tools) != 4 || request.Tools[0].Name != "Glob" || request.Tools[1].Name != "Grep" ||
+		request.Tools[2].Name != "Edit" || request.Tools[3].Name != "Read" || len(request.Messages) != 3 {
 		t.Fatalf("Anthropic continuation shape = %s", body)
 	}
 	if request.Messages[0].Role != "user" || request.Messages[0].Content[0].Text != "Read README.md and summarize it" ||

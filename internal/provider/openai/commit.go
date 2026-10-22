@@ -9,6 +9,7 @@ import (
 	"easycode/internal/codec"
 	"easycode/internal/domain"
 	"easycode/internal/provider"
+	"easycode/internal/tool"
 )
 
 const (
@@ -119,7 +120,7 @@ func validateNativeHistoryEntry(entry nativeHistoryEntry) error {
 			if err := validateOutputItem(item); err != nil {
 				return err
 			}
-			if item.Type == "function_call" {
+			if item.Type == "function_call" || item.Type == "custom_tool_call" {
 				if _, exists := seenCallIDs[item.CallID]; exists {
 					return fmt.Errorf("OpenAI function call ID is duplicated")
 				}
@@ -134,8 +135,8 @@ func validateNativeHistoryEntry(entry nativeHistoryEntry) error {
 			return fmt.Errorf("OpenAI tool outputs entry fields are invalid")
 		}
 		for _, item := range entry.ToolOutputs {
-			if item.Type != "function_call_output" || item.CallID == "" || !json.Valid([]byte(item.Output)) {
-				return fmt.Errorf("OpenAI function call output item is invalid")
+			if (item.Type != "function_call_output" && item.Type != "custom_tool_call_output") || item.CallID == "" || !json.Valid([]byte(item.Output)) {
+				return fmt.Errorf("OpenAI tool call output item is invalid")
 			}
 		}
 	default:
@@ -169,6 +170,14 @@ func validateOutputItem(item NativeItem) error {
 	if item.Type == "function_call" {
 		if item.CallID == "" || item.Name == "" || item.Arguments == "" || !json.Valid([]byte(item.Arguments)) {
 			return fmt.Errorf("OpenAI function call item is invalid")
+		}
+	}
+	if item.Type == "custom_tool_call" {
+		if item.ID == "" || item.CallID == "" || item.Name != "apply_patch" || item.Input == "" || len(item.Input) > tool.MaxPatchInputBytes {
+			return fmt.Errorf("OpenAI custom tool call item is invalid")
+		}
+		if _, err := tool.ParseOpenAIApplyPatchInput([]byte(item.Input)); err != nil {
+			return fmt.Errorf("OpenAI custom tool call input is invalid")
 		}
 	}
 	return nil

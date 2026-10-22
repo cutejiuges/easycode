@@ -25,6 +25,7 @@ type Capabilities struct {
 	ThinkingSignature  bool
 	FunctionTools      bool
 	CustomTools        bool
+	FilePatch          bool
 	ParallelToolCalls  bool
 	PromptCacheControl bool
 	PromptCacheKey     bool

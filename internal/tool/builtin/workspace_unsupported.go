@@ -8,6 +8,10 @@ type unsupportedWorkspaceHandle struct{}
 type unsupportedWorkspaceDirectory struct{}
 type unsupportedWorkspaceChild struct{}
 
+func (unsupportedWorkspaceHandle) openPatchFile(string, workspaceHooks) (patchFile, error) {
+	return nil, errWorkspaceUnsupported
+}
+
 func openWorkspaceHandle(string) (workspaceHandle, error) { return nil, errWorkspaceUnsupported }
 func (unsupportedWorkspaceHandle) openFile(string, workspaceHooks) (*os.File, error) {
 	return nil, errWorkspaceUnsupported

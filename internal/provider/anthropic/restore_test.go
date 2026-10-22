@@ -59,6 +59,15 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 				{Type: blockTypeToolResult, ToolUseID: "toolu-read", Content: "frozen read"},
 			}},
 		},
+		{
+			Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("edit")),
+			Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{
+				{Type: blockTypeThinking, Thinking: "private-edit", Signature: "opaque-edit-signature"},
+				{Type: blockTypeToolUse, ID: "toolu-edit", Name: "Edit", Input: json.RawMessage(`{"file_path":"main.go","old_string":"old","new_string":"new"}`)},
+			}},
+			Metadata: messageMetadata{ID: "msg-edit", Model: "claude-test"},
+		},
+		{Kind: nativeHistoryToolOutputs, ToolOutputs: nativeMessage{Role: roleUser, Content: []NativeItem{{Type: blockTypeToolResult, ToolUseID: "toolu-edit", Content: "frozen patch"}}}},
 	}
 	uninterrupted := &Conversation{provider: instance}
 	commits := make([]provider.NativeCommitEnvelope, 0, len(entries))
@@ -125,14 +134,15 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	restoredShape := buildMessagesRequest(instance.config.Model, instance.config.MaxOutputTokens, restored.historySnapshot(), &projectInstructions, nativeMessagePointer(next), restoredToolView)
-	if first.Fingerprint() != second.Fingerprint() || len(restoredShape.Messages) != 9 ||
+	if first.Fingerprint() != second.Fingerprint() || len(restoredShape.Messages) != 12 ||
 		restoredShape.Messages[0].Content[0].Text != projectInstructions.RenderedText() ||
 		restoredShape.Messages[4].Content[0].Type != "future_block" ||
 		restoredShape.Messages[6].Content[0].ID != "toolu-glob" || restoredShape.Messages[6].Content[1].ID != "toolu-grep" ||
 		restoredShape.Messages[6].Content[2].ID != "toolu-read" || restoredShape.Messages[7].Content[0].ToolUseID != "toolu-glob" ||
 		restoredShape.Messages[7].Content[1].ToolUseID != "toolu-grep" || restoredShape.Messages[7].Content[2].ToolUseID != "toolu-read" ||
 		restoredShape.Messages[7].Content[0].Content != "frozen glob" || restoredShape.Messages[7].Content[1].Content != "frozen grep" ||
-		restoredShape.Messages[7].Content[2].Content != "frozen read" {
+		restoredShape.Messages[7].Content[2].Content != "frozen read" || restoredShape.Messages[9].Content[0].Signature != "opaque-edit-signature" ||
+		restoredShape.Messages[9].Content[1].Name != "Edit" || restoredShape.Messages[10].Content[0].ToolUseID != "toolu-edit" || restoredShape.Messages[10].Content[0].Content != "frozen patch" {
 		t.Fatalf("fingerprints/order differ: %q %q %#v", first.Fingerprint(), second.Fingerprint(), restoredShape.Messages)
 	}
 

@@ -255,7 +255,7 @@ func TestCurrentFixtureRejectsUnsupportedShapeReadOnly(t *testing.T) {
 	baseline := readCurrentFixture(t, "root.jsonl")
 	superseded := readCurrentFixture(t, "superseded_envelope.jsonl")
 	fixtures := map[string][]byte{
-		"schema revision":     bytes.Replace(baseline, []byte(`"schema_version":1`), []byte(`"schema_version":2`), 1),
+		"schema revision":     bytes.Replace(baseline, []byte(`"schema_version":2`), []byte(`"schema_version":99`), 1),
 		"superseded envelope": append(append([]byte(nil), baseline...), superseded...),
 	}
 	for name, content := range fixtures {
@@ -321,6 +321,49 @@ func TestCurrentToolTailFixturesExposeRecoveryStates(t *testing.T) {
 				if call.CallIndex != uint32(index) || call.State != test.wantState || call.Invocation.Capability() != wantCapabilities[index] {
 					t.Fatalf("call %d = %#v", index, call)
 				}
+			}
+			_ = lease.Close()
+			_ = repository.Close()
+		})
+	}
+}
+
+func TestCurrentPatchTailFixturesExposeApprovalRecoveryStates(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		wantState    ReplayedToolCallState
+		wantApproval tool.ApprovalOutcome
+	}{
+		{name: "patch_before_approval.jsonl", wantState: ReplayedToolCallReady},
+		{name: "patch_allowed_before_start.jsonl", wantState: ReplayedToolCallReady, wantApproval: tool.ApprovalOutcomeAllowOnce},
+		{name: "patch_started_tail.jsonl", wantState: ReplayedToolCallStarted, wantApproval: tool.ApprovalOutcomeAllowOnce},
+		{name: "patch_result_tail.jsonl", wantState: ReplayedToolCallResult, wantApproval: tool.ApprovalOutcomeAllowOnce},
+		{name: "patch_denied_tail.jsonl", wantState: ReplayedToolCallResult, wantApproval: tool.ApprovalOutcomeDeny},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := readCurrentFixture(t, test.name)
+			for index, line := range bytes.Split(bytes.TrimSuffix(fixture, []byte{'\n'}), []byte{'\n'}) {
+				record, err := DecodeRecord(line)
+				if err != nil {
+					t.Fatalf("decode line %d: %v", index+1, err)
+				}
+				_, canonical, err := EncodeRecord(record)
+				if err != nil || !bytes.Equal(canonical, line) {
+					t.Fatalf("fixture line %d is not fixed canonical bytes: %v", index+1, err)
+				}
+			}
+			repository, lease := installCurrentFixture(t, fixture)
+			loaded, err := NewLoader().Load(context.Background(), lease)
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan, err := NewReplayPlanner().Plan(loaded)
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls := plan.ToolRecovery.Calls()
+			if len(calls) != 1 || calls[0].Invocation.Capability() != tool.CapabilityPatch || calls[0].State != test.wantState || calls[0].ApprovalOutcome != test.wantApproval {
+				t.Fatalf("Patch recovery calls = %#v", calls)
 			}
 			_ = lease.Close()
 			_ = repository.Close()

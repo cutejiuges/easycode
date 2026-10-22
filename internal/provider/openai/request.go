@@ -15,18 +15,25 @@ const maxResponsesRequestBytes = 16 << 20
 type responsesRequest struct {
 	Model   string         `json:"model"`
 	Input   []NativeItem   `json:"input"`
-	Tools   []functionTool `json:"tools"`
+	Tools   []responseTool `json:"tools"`
 	Stream  bool           `json:"stream"`
 	Store   bool           `json:"store"`
 	Include []string       `json:"include"`
 }
 
-type functionTool struct {
-	Type        string          `json:"type"`
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Parameters  json.RawMessage `json:"parameters"`
-	Strict      bool            `json:"strict"`
+type responseTool struct {
+	Type        string            `json:"type"`
+	Name        string            `json:"name"`
+	Description string            `json:"description"`
+	Parameters  json.RawMessage   `json:"parameters,omitempty"`
+	Strict      bool              `json:"strict,omitempty"`
+	Format      *customToolFormat `json:"format,omitempty"`
+}
+
+type customToolFormat struct {
+	Type       string `json:"type"`
+	Syntax     string `json:"syntax"`
+	Definition string `json:"definition"`
 }
 
 func buildResponsesRequest(
@@ -67,12 +74,15 @@ func buildResponsesRequest(
 	if currentInput != nil {
 		input = append(input, currentInput.clone())
 	}
-	tools := make([]functionTool, 0, len(toolView.Facades()))
+	tools := make([]responseTool, 0, len(toolView.Facades()))
 	for _, facade := range toolView.Facades() {
-		tools = append(tools, functionTool{
-			Type: "function", Name: facade.Name(), Description: facade.Description(),
-			Parameters: json.RawMessage(facade.InputSchema()), Strict: true,
-		})
+		switch facade.WireKind() {
+		case tool.WireStructured:
+			tools = append(tools, responseTool{Type: "function", Name: facade.Name(), Description: facade.Description(), Parameters: json.RawMessage(facade.InputSchema()), Strict: true})
+		case tool.WireCustomFreeform:
+			format := facade.FreeformFormat()
+			tools = append(tools, responseTool{Type: "custom", Name: facade.Name(), Description: facade.Description(), Format: &customToolFormat{Type: format.Type(), Syntax: format.Syntax(), Definition: format.Definition()}})
+		}
 	}
 	return responsesRequest{
 		Model:   model,
@@ -96,7 +106,7 @@ func compileResponsesRequest(
 			return codec.CanonicalJSON{}, fmt.Errorf("project instructions snapshot is invalid: %w", err)
 		}
 	}
-	if toolView.Family() != domain.ProviderOpenAI || len(toolView.Facades()) != 3 {
+	if toolView.Family() != domain.ProviderOpenAI || (len(toolView.Facades()) != 3 && len(toolView.Facades()) != 4) {
 		return codec.CanonicalJSON{}, fmt.Errorf("OpenAI tool catalog view is invalid")
 	}
 	return codec.MarshalCanonical(

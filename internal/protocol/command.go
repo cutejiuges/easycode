@@ -20,9 +20,10 @@ const (
 type CommandKind string
 
 const (
-	CommandSubmitInput CommandKind = "submit_input"
-	CommandInterrupt   CommandKind = "interrupt"
-	CommandShutdown    CommandKind = "shutdown"
+	CommandSubmitInput         CommandKind = "submit_input"
+	CommandInterrupt           CommandKind = "interrupt"
+	CommandShutdown            CommandKind = "shutdown"
+	CommandResolveToolApproval CommandKind = "resolve_tool_approval"
 )
 
 // RequestID 是调用方提供的进程内命令关联标识。
@@ -49,10 +50,24 @@ func (id RequestID) Valid() bool {
 
 // Command 是封闭的 Runtime 输入命令值对象。
 type Command struct {
-	kind           CommandKind
-	requestID      RequestID
-	text           string
-	expectedTurnID domain.TurnID
+	kind              CommandKind
+	requestID         RequestID
+	text              string
+	expectedTurnID    domain.TurnID
+	approvalRequestID string
+	invocationID      string
+	fingerprint       string
+	decision          ApprovalDecision
+	feedback          string
+}
+
+// NewResolveToolApprovalCommand 创建与活动批准请求完整关联的响应命令。
+func NewResolveToolApprovalCommand(requestID RequestID, expectedTurnID domain.TurnID, approvalRequestID, invocationID, fingerprint string, decision ApprovalDecision, feedback string) (Command, error) {
+	command := Command{kind: CommandResolveToolApproval, requestID: requestID, expectedTurnID: expectedTurnID, approvalRequestID: approvalRequestID, invocationID: invocationID, fingerprint: fingerprint, decision: decision, feedback: strings.TrimSpace(feedback)}
+	if err := command.Validate(); err != nil {
+		return Command{}, err
+	}
+	return command, nil
 }
 
 // NewSubmitInputCommand 创建文本输入命令。
@@ -92,7 +107,12 @@ func (command Command) RequestID() RequestID { return command.requestID }
 func (command Command) Text() string { return command.text }
 
 // ExpectedTurnID 返回 interrupt 的目标；其他 kind 返回零值。
-func (command Command) ExpectedTurnID() domain.TurnID { return command.expectedTurnID }
+func (command Command) ExpectedTurnID() domain.TurnID      { return command.expectedTurnID }
+func (command Command) ApprovalRequestID() string          { return command.approvalRequestID }
+func (command Command) InvocationID() string               { return command.invocationID }
+func (command Command) Fingerprint() string                { return command.fingerprint }
+func (command Command) ApprovalDecision() ApprovalDecision { return command.decision }
+func (command Command) Feedback() string                   { return command.feedback }
 
 // Validate 验证命令 kind 和专属 payload。
 func (command Command) Validate() error {
@@ -101,19 +121,23 @@ func (command Command) Validate() error {
 	}
 	switch command.kind {
 	case CommandSubmitInput:
-		if command.expectedTurnID != "" {
+		if command.expectedTurnID != "" || command.approvalRequestID != "" || command.invocationID != "" || command.fingerprint != "" || command.decision != "" || command.feedback != "" {
 			return fmt.Errorf("submit command contains an interrupt target")
 		}
 		if err := validateInputText(command.text); err != nil {
 			return err
 		}
 	case CommandInterrupt:
-		if command.text != "" || !command.expectedTurnID.Valid() {
+		if command.text != "" || !command.expectedTurnID.Valid() || command.approvalRequestID != "" || command.invocationID != "" || command.fingerprint != "" || command.decision != "" || command.feedback != "" {
 			return fmt.Errorf("interrupt command payload is invalid")
 		}
 	case CommandShutdown:
-		if command.text != "" || command.expectedTurnID != "" {
+		if command.text != "" || command.expectedTurnID != "" || command.approvalRequestID != "" || command.invocationID != "" || command.fingerprint != "" || command.decision != "" || command.feedback != "" {
 			return fmt.Errorf("shutdown command contains a payload")
+		}
+	case CommandResolveToolApproval:
+		if command.text != "" || !command.expectedTurnID.Valid() || !validUUIDv7Text(command.approvalRequestID) || !validUUIDv7Text(command.invocationID) || !validFingerprint(command.fingerprint) || !command.decision.Valid() || len(command.feedback) > 16<<10 || !utf8.ValidString(command.feedback) || (command.decision != ApprovalDeny && command.feedback != "") {
+			return fmt.Errorf("approval command payload is invalid")
 		}
 	default:
 		return fmt.Errorf("command kind is invalid")

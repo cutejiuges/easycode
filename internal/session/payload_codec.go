@@ -81,14 +81,14 @@ func DecodeToolCallReadyPayload(record Record) (ToolCallReadyPayload, error) {
 
 // Domain 重建已经分配 identity 的三工具 typed invocation。
 func (payload ToolCallReadyPayload) Domain() (tool.Invocation, error) {
-	if !payload.InvocationID.Valid() || !payload.ProviderCallID.Valid() || payload.SampleIndex >= 16 || payload.CallIndex >= 64 {
+	if !payload.InvocationID.Valid() || !payload.ProviderCallID.Valid() || !payload.WireKind.Valid() || payload.SampleIndex >= 16 || payload.CallIndex >= 64 {
 		return tool.Invocation{}, fmt.Errorf("tool call ready payload is invalid")
 	}
 	var ready tool.ReadyCall
 	var err error
 	switch payload.Capability {
 	case tool.CapabilityRead:
-		if payload.ReadInput == nil || payload.GlobInput != nil || payload.GrepInput != nil {
+		if payload.WireKind != tool.WireStructured || payload.ReadInput == nil || payload.GlobInput != nil || payload.GrepInput != nil || payload.PatchInput != nil {
 			return tool.Invocation{}, fmt.Errorf("tool call ready payload does not match Read capability")
 		}
 		input, inputErr := tool.NewReadInput(payload.ReadInput.FilePath, payload.ReadInput.Offset, payload.ReadInput.Limit)
@@ -97,7 +97,7 @@ func (payload ToolCallReadyPayload) Domain() (tool.Invocation, error) {
 		}
 		ready, err = tool.NewReadReadyCall(payload.ProviderCallID, input)
 	case tool.CapabilityGlob:
-		if payload.GlobInput == nil || payload.ReadInput != nil || payload.GrepInput != nil {
+		if payload.WireKind != tool.WireStructured || payload.GlobInput == nil || payload.ReadInput != nil || payload.GrepInput != nil || payload.PatchInput != nil {
 			return tool.Invocation{}, fmt.Errorf("tool call ready payload does not match Glob capability")
 		}
 		input, inputErr := tool.NewGlobInput(payload.GlobInput.Pattern, payload.GlobInput.Path, payload.GlobInput.Limit)
@@ -106,7 +106,7 @@ func (payload ToolCallReadyPayload) Domain() (tool.Invocation, error) {
 		}
 		ready, err = tool.NewGlobReadyCall(payload.ProviderCallID, input)
 	case tool.CapabilityGrep:
-		if payload.GrepInput == nil || payload.ReadInput != nil || payload.GlobInput != nil {
+		if payload.WireKind != tool.WireStructured || payload.GrepInput == nil || payload.ReadInput != nil || payload.GlobInput != nil || payload.PatchInput != nil {
 			return tool.Invocation{}, fmt.Errorf("tool call ready payload does not match Grep capability")
 		}
 		value := payload.GrepInput
@@ -115,6 +115,37 @@ func (payload ToolCallReadyPayload) Domain() (tool.Invocation, error) {
 			return tool.Invocation{}, fmt.Errorf("tool call ready Grep input is invalid: %w", inputErr)
 		}
 		ready, err = tool.NewGrepReadyCall(payload.ProviderCallID, input)
+	case tool.CapabilityPatch:
+		if payload.PatchInput == nil || payload.ReadInput != nil || payload.GlobInput != nil || payload.GrepInput != nil {
+			return tool.Invocation{}, fmt.Errorf("tool call ready payload does not match Patch capability")
+		}
+		replacements := make([]tool.PatchReplacement, len(payload.PatchInput.Replacements))
+		for index, value := range payload.PatchInput.Replacements {
+			var replacement tool.PatchReplacement
+			var inputErr error
+			if value.LineBased {
+				oldLines := strings.Split(strings.TrimSuffix(value.OldText, "\n"), "\n")
+				var newLines []string
+				if value.NewText != "" {
+					newLines = strings.Split(strings.TrimSuffix(value.NewText, "\n"), "\n")
+				}
+				replacement, inputErr = tool.NewPatchLineReplacement(oldLines, newLines)
+				if value.ReplaceAll {
+					inputErr = fmt.Errorf("line replacement cannot replace all")
+				}
+			} else {
+				replacement, inputErr = tool.NewPatchReplacement(value.OldText, value.NewText, value.ReplaceAll)
+			}
+			if inputErr != nil {
+				return tool.Invocation{}, fmt.Errorf("tool call ready Patch replacement is invalid")
+			}
+			replacements[index] = replacement
+		}
+		input, inputErr := tool.NewPatchInput(payload.PatchInput.FilePath, replacements)
+		if inputErr != nil {
+			return tool.Invocation{}, fmt.Errorf("tool call ready Patch input is invalid")
+		}
+		ready, err = tool.NewPatchReadyCall(payload.ProviderCallID, payload.WireKind, input)
 	default:
 		return tool.Invocation{}, fmt.Errorf("tool call ready capability is invalid")
 	}
@@ -122,6 +153,24 @@ func (payload ToolCallReadyPayload) Domain() (tool.Invocation, error) {
 		return tool.Invocation{}, fmt.Errorf("tool call ready identity is invalid: %w", err)
 	}
 	return tool.NewInvocation(payload.InvocationID, ready)
+}
+
+// DecodeToolApprovalDecidedPayload 严格解码并验证批准事实。
+func DecodeToolApprovalDecidedPayload(record Record) (ToolApprovalDecidedPayload, error) {
+	payload, err := decodeKnownPayload[ToolApprovalDecidedPayload](record, EventToolApprovalDecided)
+	if err != nil {
+		return ToolApprovalDecidedPayload{}, err
+	}
+	if err := validateToolApprovalDecidedPayload(payload); err != nil {
+		return ToolApprovalDecidedPayload{}, err
+	}
+	return payload, nil
+}
+func validateToolApprovalDecidedPayload(payload ToolApprovalDecidedPayload) error {
+	if !payload.RequestID.Valid() || !payload.InvocationID.Valid() || !payload.Fingerprint.Valid() || !payload.Outcome.Valid() || len(payload.Feedback) > tool.MaxApprovalFeedbackBytes || !utf8.ValidString(payload.Feedback) || (payload.Outcome != tool.ApprovalOutcomeDeny && payload.Feedback != "") {
+		return fmt.Errorf("tool approval decided payload is invalid")
+	}
+	return nil
 }
 
 // DecodeToolExecutionStartedPayload 严格解码并验证tool_execution_started payload。
@@ -156,7 +205,7 @@ func DecodeToolCallResultPayload(record Record) (ToolCallResultPayload, error) {
 }
 
 func validateToolCallResultPayload(payload ToolCallResultPayload) error {
-	if !payload.InvocationID.Valid() || !payload.Capability.Valid() || !payload.Status.Valid() || payload.Code == "" || !utf8.ValidString(payload.Preview) {
+	if !payload.InvocationID.Valid() || !payload.Capability.Valid() || !payload.WireKind.Valid() || !payload.Status.Valid() || payload.Code == "" || !utf8.ValidString(payload.Preview) {
 		return fmt.Errorf("tool call result payload is invalid")
 	}
 	invocation, err := validationInvocation(payload)
@@ -184,6 +233,19 @@ func (payload ToolCallResultPayload) Domain(invocation tool.Invocation) (tool.In
 		result, err = decodeGlobResult(payload, invocation, preview)
 	case tool.CapabilityGrep:
 		result, err = decodeGrepResult(payload, invocation, preview)
+	case tool.CapabilityPatch:
+		if payload.PatchMetadata == nil || payload.ReadMetadata != nil || payload.GlobMetadata != nil || payload.GrepMetadata != nil {
+			return tool.InvocationResult{}, fmt.Errorf("patch metadata union is invalid")
+		}
+		metadata, metadataErr := tool.NewPatchResultMetadata(payload.PatchMetadata.RelativePath, payload.PatchMetadata.ReplacementCount, payload.PatchMetadata.AddedLines, payload.PatchMetadata.RemovedLines)
+		if metadataErr != nil {
+			return tool.InvocationResult{}, metadataErr
+		}
+		value, ok := invocation.Patch()
+		if !ok {
+			return tool.InvocationResult{}, fmt.Errorf("patch invocation is required")
+		}
+		result, err = tool.NewPatchInvocationResult(value, payload.Status, payload.Code, preview, metadata)
 	default:
 		return tool.InvocationResult{}, fmt.Errorf("tool call result capability is invalid")
 	}
@@ -199,7 +261,7 @@ func validationInvocation(payload ToolCallResultPayload) (tool.Invocation, error
 	var err error
 	switch payload.Capability {
 	case tool.CapabilityRead:
-		if payload.ReadMetadata == nil || payload.GlobMetadata != nil || payload.GrepMetadata != nil {
+		if payload.WireKind != tool.WireStructured || payload.ReadMetadata == nil || payload.GlobMetadata != nil || payload.GrepMetadata != nil || payload.PatchMetadata != nil {
 			return tool.Invocation{}, fmt.Errorf("tool call result metadata does not match Read capability")
 		}
 		input, inputErr := tool.NewReadInput(".", payload.ReadMetadata.RequestedOffset, payload.ReadMetadata.RequestedLimit)
@@ -208,13 +270,13 @@ func validationInvocation(payload ToolCallResultPayload) (tool.Invocation, error
 		}
 		ready, err = tool.NewReadReadyCall(callID, input)
 	case tool.CapabilityGlob:
-		if payload.GlobMetadata == nil || payload.ReadMetadata != nil || payload.GrepMetadata != nil {
+		if payload.WireKind != tool.WireStructured || payload.GlobMetadata == nil || payload.ReadMetadata != nil || payload.GrepMetadata != nil || payload.PatchMetadata != nil {
 			return tool.Invocation{}, fmt.Errorf("tool call result metadata does not match Glob capability")
 		}
 		input, _ := tool.NewGlobInput("**", "", 1)
 		ready, err = tool.NewGlobReadyCall(callID, input)
 	case tool.CapabilityGrep:
-		if payload.GrepMetadata == nil || payload.ReadMetadata != nil || payload.GlobMetadata != nil {
+		if payload.WireKind != tool.WireStructured || payload.GrepMetadata == nil || payload.ReadMetadata != nil || payload.GlobMetadata != nil || payload.PatchMetadata != nil {
 			return tool.Invocation{}, fmt.Errorf("tool call result metadata does not match Grep capability")
 		}
 		input, inputErr := tool.NewGrepInput("x", "", "", payload.GrepMetadata.Mode, false, 0, 0, 1)
@@ -222,6 +284,13 @@ func validationInvocation(payload ToolCallResultPayload) (tool.Invocation, error
 			return tool.Invocation{}, fmt.Errorf("tool call result Grep metadata is invalid: %w", inputErr)
 		}
 		ready, err = tool.NewGrepReadyCall(callID, input)
+	case tool.CapabilityPatch:
+		if payload.PatchMetadata == nil || payload.ReadMetadata != nil || payload.GlobMetadata != nil || payload.GrepMetadata != nil {
+			return tool.Invocation{}, fmt.Errorf("tool call result metadata does not match Patch capability")
+		}
+		replacement, _ := tool.NewPatchReplacement("validation-old", "validation-new", false)
+		input, _ := tool.NewPatchInput(payload.PatchMetadata.RelativePath, []tool.PatchReplacement{replacement})
+		ready, err = tool.NewPatchReadyCall(callID, payload.WireKind, input)
 	default:
 		return tool.Invocation{}, fmt.Errorf("tool call result capability is invalid")
 	}

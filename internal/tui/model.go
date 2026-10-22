@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -17,6 +18,10 @@ import (
 type ChatSession interface {
 	Submit(context.Context, string) (<-chan protocol.Event, error)
 	Interrupt()
+}
+
+type approvalSession interface {
+	ResolveApproval(context.Context, domain.TurnID, protocol.ToolApprovalRequestedPayload, protocol.ApprovalDecision, string) error
 }
 
 // RuntimeEventMsg 将 RuntimeEvent 送入 Bubble Tea update loop。
@@ -34,6 +39,7 @@ type streamReadyMsg struct {
 }
 
 type eventStreamClosedMsg struct{}
+type approvalSubmitErrorMsg struct{ err error }
 
 type transcriptMessage struct {
 	role string
@@ -62,6 +68,18 @@ type Model struct {
 	errorSummary  string
 	events        <-chan protocol.Event
 	interruptNext bool
+	approval      *approvalOverlay
+	activeTurnID  domain.TurnID
+}
+
+type approvalOverlay struct {
+	request   protocol.ToolApprovalRequestedPayload
+	turnID    domain.TurnID
+	selected  int
+	scroll    int
+	feedback  []rune
+	editing   bool
+	submitted bool
 }
 
 // NewModel 创建初始 Bubble Tea 模型，并投影可选的已恢复语义历史。
@@ -127,6 +145,12 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.interruptNext = false
 		model.errorSummary = safeErrorSummary(value.Err)
 		return model, nil
+	case approvalSubmitErrorMsg:
+		if model.approval != nil {
+			model.approval.submitted = false
+		}
+		model.errorSummary = safeErrorSummary(value.err)
+		return model, nil
 	case tea.KeyMsg:
 		return model.handleKey(value)
 	default:
@@ -135,6 +159,9 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if model.approval != nil {
+		return model.handleApprovalKey(key)
+	}
 	if model.state == stateStreaming {
 		if key.Type == tea.KeyEsc || key.Type == tea.KeyCtrlC {
 			if model.events == nil {
@@ -174,9 +201,105 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return model, nil
 }
 
+func (model Model) handleApprovalKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	overlay := model.approval
+	if overlay.submitted {
+		if key.Type == tea.KeyEsc || key.Type == tea.KeyCtrlC {
+			return model, interruptSession(model.session)
+		}
+		return model, nil
+	}
+	if overlay.editing {
+		switch key.Type {
+		case tea.KeyEsc:
+			overlay.editing = false
+			return model, nil
+		case tea.KeyBackspace, tea.KeyDelete:
+			if len(overlay.feedback) > 0 {
+				overlay.feedback = overlay.feedback[:len(overlay.feedback)-1]
+			}
+		case tea.KeyEnter:
+			return model, model.submitApproval()
+		case tea.KeyCtrlC:
+			overlay.submitted = true
+			return model, interruptSession(model.session)
+		case tea.KeySpace:
+			if len(string(overlay.feedback))+1 <= 16<<10 {
+				overlay.feedback = append(overlay.feedback, ' ')
+			}
+		case tea.KeyRunes:
+			for _, character := range key.Runes {
+				if len(string(overlay.feedback))+utf8.RuneLen(character) <= 16<<10 {
+					overlay.feedback = append(overlay.feedback, character)
+				}
+			}
+		}
+		return model, nil
+	}
+	switch key.Type {
+	case tea.KeyLeft, tea.KeyUp:
+		if overlay.selected > 0 {
+			overlay.selected--
+		}
+	case tea.KeyRight, tea.KeyDown:
+		if overlay.selected < 2 {
+			overlay.selected++
+		}
+	case tea.KeyPgUp:
+		overlay.scroll--
+	case tea.KeyPgDown:
+		overlay.scroll++
+	case tea.KeyTab:
+		if overlay.selected == 2 {
+			overlay.editing = true
+		}
+	case tea.KeyEnter:
+		return model, model.submitApproval()
+	case tea.KeyEsc, tea.KeyCtrlC:
+		overlay.submitted = true
+		return model, interruptSession(model.session)
+	}
+	return model, nil
+}
+
+func (model *Model) submitApproval() tea.Cmd {
+	overlay := model.approval
+	if overlay == nil {
+		return nil
+	}
+	target, ok := model.session.(approvalSession)
+	if !ok {
+		model.errorSummary = "approval_unavailable: interactive approval is unavailable"
+		return nil
+	}
+	decision := protocol.ApprovalDeny
+	switch overlay.selected {
+	case 0:
+		decision = protocol.ApprovalAllowOnce
+	case 1:
+		decision = protocol.ApprovalAllowSession
+	}
+	feedback := ""
+	if decision == protocol.ApprovalDeny {
+		feedback = strings.TrimSpace(string(overlay.feedback))
+	}
+	overlay.submitted = true
+	request := overlay.request
+	return func() tea.Msg {
+		if err := target.ResolveApproval(context.Background(), overlay.turnID, request, decision, feedback); err != nil {
+			return approvalSubmitErrorMsg{err: err}
+		}
+		return nil
+	}
+}
+
 func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd) {
 	terminal := false
 	switch event.Kind {
+	case protocol.EventTurnStarted:
+		if event.TurnID.Valid() {
+			model.activeTurnID = event.TurnID
+		}
 	case protocol.EventAssistantTextDelta:
 		payload, err := protocol.DecodeAssistantTextDelta(event)
 		if err != nil {
@@ -218,6 +341,27 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 		model.events = nil
 		model.interruptNext = false
 		terminal = true
+	case protocol.EventToolApprovalRequested:
+		payload, err := protocol.DecodeToolApprovalRequested(event)
+		if err != nil || !event.TurnID.Valid() || model.approval != nil ||
+			(model.activeTurnID != "" && model.activeTurnID != event.TurnID) {
+			model.errorSummary = "stream_protocol_error: invalid approval request event"
+			return model, interruptSession(model.session)
+		}
+		model.approval = &approvalOverlay{request: payload, turnID: event.TurnID, selected: 2}
+	case protocol.EventToolApprovalResolved:
+		payload, err := protocol.DecodeToolApprovalResolved(event)
+		if err != nil {
+			model.errorSummary = "stream_protocol_error: invalid approval resolution event"
+			return model, nil
+		}
+		if model.approval != nil && model.approval.request.RequestID == payload.RequestID {
+			model.approval = nil
+		}
+	}
+	if terminal {
+		model.approval = nil
+		model.activeTurnID = ""
 	}
 	if terminal || model.events == nil {
 		return model, nil
@@ -227,6 +371,9 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 
 // View 渲染确定性的单行 Chat 界面。
 func (model Model) View() string {
+	if model.approval != nil {
+		return model.renderApproval()
+	}
 	var view strings.Builder
 	_, _ = fmt.Fprintf(&view, "EasyCode %s\n", model.version)
 	if model.state == stateStreaming {
@@ -250,6 +397,103 @@ func (model Model) View() string {
 		_, _ = fmt.Fprintf(&view, "> %s\n", string(model.draft))
 	}
 	return view.String()
+}
+
+func (model Model) renderApproval() string {
+	overlay := model.approval
+	if overlay == nil {
+		return ""
+	}
+	width := model.width - 6
+	if width < 20 {
+		width = 20
+	}
+	if width > 92 {
+		width = 92
+	}
+	contentWidth := width - 4
+	height := model.height - 15
+	if height < 2 {
+		height = 2
+	}
+	lines := wrapApprovalDiff(overlay.request.Diff, contentWidth)
+	maxScroll := len(lines) - height
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	scroll := overlay.scroll
+	if scroll > maxScroll {
+		scroll = maxScroll
+	}
+	end := scroll + height
+	if end > len(lines) {
+		end = len(lines)
+	}
+	var output strings.Builder
+	left := max(0, (model.width-width-2)/2)
+	padding := strings.Repeat(" ", left)
+	output.WriteString(padding + "┌─ Approve file patch " + strings.Repeat("─", max(0, width-22)) + "┐\n")
+	fmt.Fprintf(&output, "%s│ Path: %-*s │\n", padding, contentWidth-6, truncateRunes(overlay.request.RelativePath, contentWidth-6))
+	fmt.Fprintf(&output, "%s│ Risk: %-*s │\n", padding, contentWidth-6, truncateRunes(overlay.request.Reason, contentWidth-6))
+	fmt.Fprintf(&output, "%s│ Diff %d-%d of %d%s│\n", padding, scroll+1, end, len(lines), strings.Repeat(" ", max(1, contentWidth-18-len(fmt.Sprintf("%d%d%d", scroll+1, end, len(lines))))))
+	for _, line := range lines[scroll:end] {
+		fmt.Fprintf(&output, "%s│ %-*s │\n", padding, contentWidth, line)
+	}
+	choices := []string{"Yes", "Yes, allow all edits during this session", "No"}
+	for index, choice := range choices {
+		marker := " "
+		if index == overlay.selected {
+			marker = ">"
+		}
+		fmt.Fprintf(&output, "%s│ %s %-*s │\n", padding, marker, contentWidth-2, truncateRunes(choice, contentWidth-2))
+	}
+	if overlay.editing {
+		feedback := "Feedback (what should EasyCode do instead?): " + string(overlay.feedback)
+		fmt.Fprintf(&output, "%s│ %-*s │\n", padding, contentWidth, truncateRunes(feedback, contentWidth))
+	} else if overlay.selected == 2 {
+		fmt.Fprintf(&output, "%s│ %-*s │\n", padding, contentWidth, truncateRunes("Tab: add feedback · Enter: deny · Esc: interrupt", contentWidth))
+	} else {
+		fmt.Fprintf(&output, "%s│ %-*s │\n", padding, contentWidth, "Enter: approve · Esc: interrupt")
+	}
+	if overlay.submitted {
+		fmt.Fprintf(&output, "%s│ %-*s │\n", padding, contentWidth, "Submitting decision…")
+	}
+	output.WriteString(padding + "└" + strings.Repeat("─", width) + "┘\n")
+	return output.String()
+}
+
+func wrapApprovalDiff(diff string, width int) []string {
+	if width < 1 {
+		width = 1
+	}
+	var wrapped []string
+	for _, line := range strings.Split(diff, "\n") {
+		runes := []rune(line)
+		if len(runes) == 0 {
+			wrapped = append(wrapped, "")
+			continue
+		}
+		for len(runes) > width {
+			wrapped = append(wrapped, string(runes[:width]))
+			runes = runes[width:]
+		}
+		wrapped = append(wrapped, string(runes))
+	}
+	return wrapped
+}
+
+func truncateRunes(value string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= width {
+		return value
+	}
+	if width == 1 {
+		return "…"
+	}
+	return string(runes[:width-1]) + "…"
 }
 
 func submitTurn(ctx context.Context, session ChatSession, prompt string) tea.Cmd {

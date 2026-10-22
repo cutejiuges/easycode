@@ -48,6 +48,28 @@ func TestPrepareToolOutputsPairsResultsInModelOrder(t *testing.T) {
 	}
 }
 
+func TestPrepareCustomPatchOutputPreservesWireKind(t *testing.T) {
+	replacement, _ := tool.NewPatchReplacement("old", "new", false)
+	input, _ := tool.NewPatchInput("main.go", []tool.PatchReplacement{replacement})
+	callID, _ := tool.ParseProviderCallID("call-patch")
+	ready, _ := tool.NewPatchReadyCall(callID, tool.WireCustomFreeform, input)
+	invocationID, _ := tool.GenerateInvocationID()
+	invocation, _ := tool.NewPatchInvocation(invocationID, ready)
+	result := tool.NewPatchErrorResult(invocation, tool.ResultDenied, "approval_required", "Patch denied: approval_required")
+	patch := "*** Begin Patch\n*** Update File: main.go\n@@\n-old\n+new\n*** End Patch\n"
+	history := []nativeHistoryEntry{{Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("edit it")), Outputs: []NativeItem{{Type: "custom_tool_call", ID: "ctc-1", CallID: "call-patch", Name: "apply_patch", Input: patch}}}}
+	entry, err := prepareToolOutputsEntry(history, []tool.InvocationResult{result})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entry.ToolOutputs) != 1 || entry.ToolOutputs[0].Type != "custom_tool_call_output" || entry.ToolOutputs[0].CallID != "call-patch" || !strings.Contains(entry.ToolOutputs[0].Output, `"status":"denied"`) {
+		t.Fatalf("output=%#v", entry.ToolOutputs)
+	}
+	if err := validateNativeHistory(append(history, entry)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPrepareToolOutputsRejectsMismatchedCallID(t *testing.T) {
 	input, _ := tool.NewReadInput("README.md", 1, 20)
 	callID, _ := tool.ParseProviderCallID("different-call")

@@ -198,7 +198,7 @@ func TestCurrentDecodersAreStrict(t *testing.T) {
 
 func TestToolLedgerPayloadsRoundTripAndRejectMalformedValues(t *testing.T) {
 	readyRecord := Record{
-		PayloadVersion: 1, EventKind: EventToolCallReady,
+		PayloadVersion: EnvelopeVersion, EventKind: EventToolCallReady,
 		Payload: mustToolReadyDraft(t).PayloadBytes(),
 	}
 	readyPayload, err := DecodeToolCallReadyPayload(readyRecord)
@@ -212,7 +212,7 @@ func TestToolLedgerPayloadsRoundTripAndRejectMalformedValues(t *testing.T) {
 	}
 
 	resultRecord := Record{
-		PayloadVersion: 1, EventKind: EventToolCallResult,
+		PayloadVersion: EnvelopeVersion, EventKind: EventToolCallResult,
 		Payload: mustToolResultDraft(t).PayloadBytes(),
 	}
 	resultPayload, err := DecodeToolCallResultPayload(resultRecord)

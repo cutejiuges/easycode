@@ -134,10 +134,10 @@ func TestProviderCapabilitiesReflectImplementedSlice(t *testing.T) {
 	defer closeProvider(t, instance)
 
 	capabilities := instance.Capabilities()
-	if !capabilities.Streaming || !capabilities.EncryptedReasoning {
+	if !capabilities.Streaming || !capabilities.EncryptedReasoning || !capabilities.FunctionTools || !capabilities.CustomTools || !capabilities.FilePatch {
 		t.Fatalf("implemented capabilities missing: %#v", capabilities)
 	}
-	if !capabilities.FunctionTools || capabilities.ParallelToolCalls || capabilities.PromptCacheKey || capabilities.PreviousResponse || capabilities.ReasoningSummary {
+	if capabilities.ParallelToolCalls || capabilities.PromptCacheKey || capabilities.PreviousResponse || capabilities.ReasoningSummary {
 		t.Fatalf("unimplemented capabilities advertised: %#v", capabilities)
 	}
 }

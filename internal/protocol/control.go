@@ -20,6 +20,7 @@ const (
 	CommandDispositionQueued       CommandDisposition = "queued"
 	CommandDispositionInterrupting CommandDisposition = "interrupting"
 	CommandDispositionClosing      CommandDisposition = "closing"
+	CommandDispositionResolving    CommandDisposition = "resolving"
 )
 
 // ControlErrorCode 是可以安全投影到宿主协议的稳定错误码。
@@ -32,6 +33,8 @@ const (
 	ControlErrorDuplicateRequest ControlErrorCode = "duplicate_request"
 	ControlErrorNoActiveTurn     ControlErrorCode = "no_active_turn"
 	ControlErrorTurnMismatch     ControlErrorCode = "turn_mismatch"
+	ControlErrorNoActiveApproval ControlErrorCode = "no_active_approval"
+	ControlErrorApprovalMismatch ControlErrorCode = "approval_mismatch"
 	ControlErrorSessionClosing   ControlErrorCode = "session_closing"
 	ControlErrorSessionShutdown  ControlErrorCode = "session_shutdown"
 	ControlErrorSessionFailed    ControlErrorCode = "session_failed"
@@ -237,7 +240,7 @@ func (item ControlItem) Validate() error {
 }
 
 func validCommandKind(kind CommandKind) bool {
-	return kind == CommandSubmitInput || kind == CommandInterrupt || kind == CommandShutdown
+	return kind == CommandSubmitInput || kind == CommandInterrupt || kind == CommandShutdown || kind == CommandResolveToolApproval
 }
 
 func dispositionMatches(kind CommandKind, disposition CommandDisposition) bool {
@@ -248,6 +251,8 @@ func dispositionMatches(kind CommandKind, disposition CommandDisposition) bool {
 		return disposition == CommandDispositionInterrupting
 	case CommandShutdown:
 		return disposition == CommandDispositionClosing
+	case CommandResolveToolApproval:
+		return disposition == CommandDispositionResolving
 	default:
 		return false
 	}
@@ -267,6 +272,10 @@ func controlErrorMessage(code ControlErrorCode) (string, bool) {
 		return "there is no active turn", true
 	case ControlErrorTurnMismatch:
 		return "active turn does not match the expected turn", true
+	case ControlErrorNoActiveApproval:
+		return "there is no active tool approval", true
+	case ControlErrorApprovalMismatch:
+		return "active tool approval does not match the response", true
 	case ControlErrorSessionClosing:
 		return "session is closing", true
 	case ControlErrorSessionShutdown:

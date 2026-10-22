@@ -25,6 +25,9 @@ func TestCompileResponsesRequestMatchesGolden(t *testing.T) {
 	if strings.Contains(string(encoded), "previous_response_id") || !strings.Contains(string(encoded), `"tools"`) || strings.Contains(string(encoded), "prompt_cache_key") {
 		t.Fatalf("request contains deferred fields: %s", encoded)
 	}
+	if !strings.Contains(string(encoded), `"type":"custom","name":"apply_patch"`) || strings.Contains(string(encoded), `"type":"function","name":"apply_patch"`) {
+		t.Fatalf("apply_patch wire kind错误: %s", encoded)
+	}
 }
 
 func TestCompileResponsesRequestWithProjectInstructionsMatchesGolden(t *testing.T) {

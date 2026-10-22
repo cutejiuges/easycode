@@ -22,6 +22,8 @@ const (
 	FacadeOpenAIGlob    FacadeID = "openai:Glob"
 	FacadeAnthropicGrep FacadeID = "anthropic:Grep"
 	FacadeOpenAIGrep    FacadeID = "openai:Grep"
+	FacadeAnthropicEdit FacadeID = "anthropic:Edit"
+	FacadeOpenAIPatch   FacadeID = "openai:apply_patch"
 )
 
 // FacadeID 唯一标识某个 Provider family 的模型可见 facade。
@@ -34,15 +36,29 @@ type Facade struct {
 	name        string
 	description string
 	capability  CapabilityID
+	wireKind    ProviderWireKind
 	schema      codec.CanonicalJSON
+	format      FreeformFormat
 }
 
-func (facade Facade) ID() FacadeID                  { return facade.id }
-func (facade Facade) Family() domain.ProviderFamily { return facade.family }
-func (facade Facade) Name() string                  { return facade.name }
-func (facade Facade) Description() string           { return facade.description }
-func (facade Facade) Capability() CapabilityID      { return facade.capability }
-func (facade Facade) InputSchema() []byte           { return facade.schema.Bytes() }
+// FreeformFormat 保存OpenAI custom tool的确定性grammar定义。
+type FreeformFormat struct{ kind, syntax, definition string }
+
+func (format FreeformFormat) Type() string       { return format.kind }
+func (format FreeformFormat) Syntax() string     { return format.syntax }
+func (format FreeformFormat) Definition() string { return format.definition }
+func (format FreeformFormat) zero() bool {
+	return format.kind == "" && format.syntax == "" && format.definition == ""
+}
+
+func (facade Facade) ID() FacadeID                   { return facade.id }
+func (facade Facade) Family() domain.ProviderFamily  { return facade.family }
+func (facade Facade) Name() string                   { return facade.name }
+func (facade Facade) Description() string            { return facade.description }
+func (facade Facade) Capability() CapabilityID       { return facade.capability }
+func (facade Facade) WireKind() ProviderWireKind     { return facade.wireKind }
+func (facade Facade) InputSchema() []byte            { return facade.schema.Bytes() }
+func (facade Facade) FreeformFormat() FreeformFormat { return facade.format }
 
 func (facade Facade) clone() Facade {
 	facade.schema = facade.schema.Clone()
@@ -50,14 +66,27 @@ func (facade Facade) clone() Facade {
 }
 
 func (facade Facade) validate() error {
-	if !facade.family.Valid() || facade.name == "" || facade.description == "" || !facade.capability.Valid() || facade.schema.Len() == 0 {
+	if !facade.family.Valid() || facade.name == "" || facade.description == "" || !facade.capability.Valid() || !facade.wireKind.Valid() {
 		return errors.New("invalid tool facade")
 	}
 	wantName, wantID := facadeIdentity(facade.family, facade.capability)
 	if facade.name != wantName || facade.id != wantID {
 		return errors.New("tool facade identity does not match capability")
 	}
-	return facade.schema.Validate(maxCatalogBytes)
+	switch facade.wireKind {
+	case WireStructured:
+		if !facade.format.zero() || facade.schema.Len() == 0 {
+			return errors.New("structured tool facade definition is invalid")
+		}
+		return facade.schema.Validate(maxCatalogBytes)
+	case WireCustomFreeform:
+		if facade.schema.Len() != 0 || facade.format.kind != "grammar" || facade.format.syntax != "lark" || facade.format.definition == "" || len(facade.format.definition) > maxCatalogBytes {
+			return errors.New("custom tool facade definition is invalid")
+		}
+		return nil
+	default:
+		return errors.New("tool facade wire kind is invalid")
+	}
 }
 
 func facadeIdentity(family domain.ProviderFamily, capability CapabilityID) (string, FacadeID) {
@@ -72,6 +101,11 @@ func facadeIdentity(family domain.ProviderFamily, capability CapabilityID) (stri
 		return "Glob", FacadeID(prefix + "Glob")
 	case CapabilityGrep:
 		return "Grep", FacadeID(prefix + "Grep")
+	case CapabilityPatch:
+		if family == domain.ProviderAnthropic {
+			return "Edit", FacadeAnthropicEdit
+		}
+		return "apply_patch", FacadeOpenAIPatch
 	default:
 		return "", ""
 	}
@@ -164,13 +198,35 @@ type grepInputSchemaProperties struct {
 	Limit           integerSchemaProperty `json:"limit"`
 }
 
+type editInputSchema struct {
+	Type                 string                    `json:"type"`
+	Properties           editInputSchemaProperties `json:"properties"`
+	Required             []string                  `json:"required"`
+	AdditionalProperties bool                      `json:"additionalProperties"`
+}
+
+type editInputSchemaProperties struct {
+	FilePath   stringSchemaProperty  `json:"file_path"`
+	OldString  stringSchemaProperty  `json:"old_string"`
+	NewString  stringSchemaProperty  `json:"new_string"`
+	ReplaceAll booleanSchemaProperty `json:"replace_all"`
+}
+
 type facadeCanonical struct {
-	ID          FacadeID              `json:"id"`
-	Family      domain.ProviderFamily `json:"family"`
-	Name        string                `json:"name"`
-	Description string                `json:"description"`
-	Capability  CapabilityID          `json:"capability"`
-	InputSchema json.RawMessage       `json:"input_schema"`
+	ID          FacadeID                 `json:"id"`
+	Family      domain.ProviderFamily    `json:"family"`
+	Name        string                   `json:"name"`
+	Description string                   `json:"description"`
+	Capability  CapabilityID             `json:"capability"`
+	WireKind    ProviderWireKind         `json:"wire_kind"`
+	InputSchema json.RawMessage          `json:"input_schema,omitempty"`
+	Format      *freeformFormatCanonical `json:"format,omitempty"`
+}
+
+type freeformFormatCanonical struct {
+	Type       string `json:"type"`
+	Syntax     string `json:"syntax"`
+	Definition string `json:"definition"`
 }
 
 type catalogCanonical struct {
@@ -204,10 +260,52 @@ func NewReadOnlyCatalogSnapshot(readExecutor ReadExecutor, globExecutor GlobExec
 	for _, capability := range []CapabilityID{CapabilityRead, CapabilityGlob, CapabilityGrep} {
 		for _, family := range []domain.ProviderFamily{domain.ProviderAnthropic, domain.ProviderOpenAI} {
 			name, id := facadeIdentity(family, capability)
-			facades = append(facades, Facade{id: id, family: family, name: name, description: descriptions[capability], capability: capability, schema: schemas[capability].Clone()})
+			facades = append(facades, Facade{id: id, family: family, name: name, description: descriptions[capability], capability: capability, wireKind: WireStructured, schema: schemas[capability].Clone()})
 		}
 	}
 	return newCatalogSnapshot(facades)
+}
+
+// NewPatchCatalogSnapshot 创建双Provider共享四能力的确定性目录。
+func NewPatchCatalogSnapshot(readExecutor ReadExecutor, globExecutor GlobExecutor, grepExecutor GrepExecutor, preparer PatchPreparer, patchExecutor PatchExecutor, policy Policy) (CatalogSnapshot, error) {
+	if readExecutor == nil || globExecutor == nil || grepExecutor == nil || preparer == nil || patchExecutor == nil || policy == nil {
+		return CatalogSnapshot{}, errors.New("all tool components are required")
+	}
+	readOnly, err := NewReadOnlyCatalogSnapshot(readExecutor, globExecutor, grepExecutor)
+	if err != nil {
+		return CatalogSnapshot{}, err
+	}
+	editSchema, err := buildEditSchema()
+	if err != nil {
+		return CatalogSnapshot{}, err
+	}
+	patchDescription := "Edits one existing UTF-8 workspace file after showing the exact diff for approval."
+	patchFacades := []Facade{
+		{id: FacadeAnthropicEdit, family: domain.ProviderAnthropic, name: "Edit", description: patchDescription, capability: CapabilityPatch, wireKind: WireStructured, schema: editSchema},
+		{id: FacadeOpenAIPatch, family: domain.ProviderOpenAI, name: "apply_patch", description: "The `apply_patch` tool edits one existing file. This is a FREEFORM tool, so do not wrap the patch in JSON.", capability: CapabilityPatch, wireKind: WireCustomFreeform, format: FreeformFormat{kind: "grammar", syntax: "lark", definition: applyPatchGrammar()}},
+	}
+	return newCatalogSnapshot(append(readOnly.Facades(), patchFacades...))
+}
+
+func buildEditSchema() (codec.CanonicalJSON, error) {
+	return codec.MarshalCanonical(editInputSchema{
+		Type: "object", Properties: editInputSchemaProperties{
+			FilePath:   stringSchemaProperty{Type: "string", Description: "Workspace-relative path to an existing UTF-8 file"},
+			OldString:  stringSchemaProperty{Type: "string", Description: "Non-empty exact text to replace"},
+			NewString:  stringSchemaProperty{Type: "string", Description: "Replacement text"},
+			ReplaceAll: booleanSchemaProperty{Type: "boolean", Description: "Replace every exact match instead of requiring exactly one"},
+		}, Required: []string{"file_path", "old_string", "new_string"}, AdditionalProperties: false,
+	}, maxCatalogBytes)
+}
+
+func applyPatchGrammar() string {
+	return "start: begin update hunk+ end LF?\n" +
+		"begin: \"*** Begin Patch\" LF\n" +
+		"update: \"*** Update File: \" path LF\n" +
+		"hunk: \"@@\" LF hunk_line+\n" +
+		"hunk_line: (\" \" | \"-\" | \"+\") line LF\n" +
+		"end: \"*** End Patch\"\n" +
+		"path: /[^\\r\\n]+/\nline: /[^\\r\\n]*/\nLF: \"\\n\""
 }
 
 func buildReadSchema() (codec.CanonicalJSON, error) {
@@ -246,8 +344,8 @@ func buildGrepSchema() (codec.CanonicalJSON, error) {
 }
 
 func newCatalogSnapshot(facades []Facade) (CatalogSnapshot, error) {
-	if len(facades) != 6 {
-		return CatalogSnapshot{}, errors.New("read-only catalog requires six Provider facades")
+	if len(facades) != 6 && len(facades) != 8 {
+		return CatalogSnapshot{}, errors.New("tool catalog requires a complete Provider facade set")
 	}
 	owned := cloneFacades(facades)
 	for index := range owned {
@@ -275,7 +373,10 @@ func encodeFacades(facades []Facade) (codec.CanonicalJSON, error) {
 	for index, facade := range facades {
 		canonicalFacades[index] = facadeCanonical{
 			ID: facade.id, Family: facade.family, Name: facade.name, Description: facade.description,
-			Capability: facade.capability, InputSchema: json.RawMessage(facade.schema.Bytes()),
+			Capability: facade.capability, WireKind: facade.wireKind, InputSchema: json.RawMessage(facade.schema.Bytes()),
+		}
+		if !facade.format.zero() {
+			canonicalFacades[index].Format = &freeformFormatCanonical{Type: facade.format.kind, Syntax: facade.format.syntax, Definition: facade.format.definition}
 		}
 	}
 	canonical, err := codec.MarshalCanonical(catalogCanonical{Facades: canonicalFacades}, maxCatalogBytes)
@@ -303,7 +404,7 @@ func (snapshot CatalogSnapshot) View(family domain.ProviderFamily) (FacadeView, 
 			selected = append(selected, facade.clone())
 		}
 	}
-	if len(selected) != 3 {
+	if len(selected) != 3 && len(selected) != 4 {
 		return FacadeView{}, errors.New("tool catalog has incomplete Provider facade set")
 	}
 	canonical, err := encodeFacades(selected)
@@ -349,6 +450,18 @@ func (snapshot CatalogSnapshot) DecodeReadyCall(family domain.ProviderFamily, na
 			return ReadyCall{}, decodeErr
 		}
 		return NewGrepReadyCall(callID, input)
+	case CapabilityPatch:
+		var input PatchInput
+		var decodeErr error
+		if selected.wireKind == WireStructured {
+			input, decodeErr = DecodeAnthropicEditInput(arguments)
+		} else {
+			input, decodeErr = ParseOpenAIApplyPatchInput(arguments)
+		}
+		if decodeErr != nil {
+			return ReadyCall{}, decodeErr
+		}
+		return NewPatchReadyCall(callID, selected.wireKind, input)
 	default:
 		return ReadyCall{}, errors.New("tool facade capability is unsupported")
 	}
@@ -356,7 +469,7 @@ func (snapshot CatalogSnapshot) DecodeReadyCall(family domain.ProviderFamily, na
 
 // Validate 重新计算 canonical bytes 与 fingerprint。
 func (snapshot CatalogSnapshot) Validate() error {
-	if len(snapshot.facades) != 6 || snapshot.fingerprint == "" {
+	if (len(snapshot.facades) != 6 && len(snapshot.facades) != 8) || snapshot.fingerprint == "" {
 		return errors.New("tool catalog snapshot is invalid")
 	}
 	rebuilt, err := newCatalogSnapshot(snapshot.facades)

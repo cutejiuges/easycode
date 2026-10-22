@@ -3,10 +3,48 @@ package protocol
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"easycode/internal/codec"
 	"easycode/internal/domain"
 )
+
+const maxApprovalDiffBytes = 256 << 10
+
+// ApprovalDecision 是宿主可提交的封闭批准决定。
+type ApprovalDecision string
+
+const (
+	ApprovalAllowOnce    ApprovalDecision = "allow_once"
+	ApprovalAllowSession ApprovalDecision = "allow_session"
+	ApprovalDeny         ApprovalDecision = "deny"
+	ApprovalAbort        ApprovalDecision = "abort"
+)
+
+func (decision ApprovalDecision) Valid() bool {
+	return decision == ApprovalAllowOnce || decision == ApprovalAllowSession || decision == ApprovalDeny || decision == ApprovalAbort
+}
+
+// ToolApprovalRequestedPayload 保存不含Provider wire与完整文件正文的批准视图。
+type ToolApprovalRequestedPayload struct {
+	RequestID      string             `json:"request_id"`
+	InvocationID   string             `json:"invocation_id"`
+	ProviderCallID string             `json:"provider_call_id"`
+	Capability     string             `json:"capability"`
+	Reason         string             `json:"reason"`
+	RelativePath   string             `json:"relative_path"`
+	Fingerprint    string             `json:"fingerprint"`
+	Diff           string             `json:"diff"`
+	Decisions      []ApprovalDecision `json:"decisions"`
+}
+
+// ToolApprovalResolvedPayload 通知宿主关闭匹配overlay。
+type ToolApprovalResolvedPayload struct {
+	RequestID    string           `json:"request_id"`
+	InvocationID string           `json:"invocation_id"`
+	Fingerprint  string           `json:"fingerprint"`
+	Decision     ApprovalDecision `json:"decision"`
+}
 
 // AssistantTextDeltaPayload 保存一次 assistant 文本增量。
 type AssistantTextDeltaPayload struct {
@@ -120,6 +158,94 @@ func DecodeTurnCompleted(event Event) (TurnCompletedPayload, error) {
 		return TurnCompletedPayload{}, fmt.Errorf("turn completion usage is invalid: %w", err)
 	}
 	return payload, nil
+}
+
+// NewToolApprovalRequested 创建绑定精确diff的批准请求事件。
+func NewToolApprovalRequested(payload ToolApprovalRequestedPayload) (Event, error) {
+	if err := validateApprovalRequested(payload); err != nil {
+		return Event{}, err
+	}
+	payload.Decisions = append([]ApprovalDecision(nil), payload.Decisions...)
+	return newEventWithPayload(EventToolApprovalRequested, payload)
+}
+func DecodeToolApprovalRequested(event Event) (ToolApprovalRequestedPayload, error) {
+	if event.Kind != EventToolApprovalRequested {
+		return ToolApprovalRequestedPayload{}, fmt.Errorf("event kind is not tool_approval_requested")
+	}
+	var payload ToolApprovalRequestedPayload
+	if err := codec.UnmarshalStrict(event.Payload, &payload); err != nil {
+		return ToolApprovalRequestedPayload{}, fmt.Errorf("decode tool approval request: %w", err)
+	}
+	if err := validateApprovalRequested(payload); err != nil {
+		return ToolApprovalRequestedPayload{}, err
+	}
+	payload.Decisions = append([]ApprovalDecision(nil), payload.Decisions...)
+	return payload, nil
+}
+
+func validateApprovalRequested(payload ToolApprovalRequestedPayload) error {
+	if !validUUIDv7Text(payload.RequestID) || !validUUIDv7Text(payload.InvocationID) || payload.ProviderCallID == "" || len(payload.ProviderCallID) > 256 || payload.Capability != "fs.patch" || strings.TrimSpace(payload.Reason) == "" || len(payload.Reason) > 1024 || !validApprovalPath(payload.RelativePath) || !validFingerprint(payload.Fingerprint) || payload.Diff == "" || len(payload.Diff) > maxApprovalDiffBytes || !utf8.ValidString(payload.Diff) {
+		return fmt.Errorf("tool approval request payload is invalid")
+	}
+	want := []ApprovalDecision{ApprovalAllowOnce, ApprovalAllowSession, ApprovalDeny}
+	if len(payload.Decisions) != len(want) {
+		return fmt.Errorf("tool approval decisions are invalid")
+	}
+	for i := range want {
+		if payload.Decisions[i] != want[i] {
+			return fmt.Errorf("tool approval decisions are invalid")
+		}
+	}
+	return nil
+}
+
+func validApprovalPath(value string) bool {
+	if value == "" || strings.HasPrefix(value, "/") || strings.ContainsAny(value, "\\\x00") {
+		return false
+	}
+	for _, component := range strings.Split(value, "/") {
+		if component == "" || component == "." || component == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+// NewToolApprovalResolved 创建批准请求终止事件。
+func NewToolApprovalResolved(payload ToolApprovalResolvedPayload) (Event, error) {
+	if err := validateApprovalResolved(payload); err != nil {
+		return Event{}, err
+	}
+	return newEventWithPayload(EventToolApprovalResolved, payload)
+}
+func DecodeToolApprovalResolved(event Event) (ToolApprovalResolvedPayload, error) {
+	if event.Kind != EventToolApprovalResolved {
+		return ToolApprovalResolvedPayload{}, fmt.Errorf("event kind is not tool_approval_resolved")
+	}
+	var payload ToolApprovalResolvedPayload
+	if err := codec.UnmarshalStrict(event.Payload, &payload); err != nil {
+		return ToolApprovalResolvedPayload{}, fmt.Errorf("decode tool approval resolution: %w", err)
+	}
+	return payload, validateApprovalResolved(payload)
+}
+func validateApprovalResolved(payload ToolApprovalResolvedPayload) error {
+	if !validUUIDv7Text(payload.RequestID) || !validUUIDv7Text(payload.InvocationID) || !validFingerprint(payload.Fingerprint) || !payload.Decision.Valid() {
+		return fmt.Errorf("tool approval resolution payload is invalid")
+	}
+	return nil
+}
+
+func validUUIDv7Text(value string) bool { _, err := domain.ParseTurnID(value); return err == nil }
+func validFingerprint(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, char := range value {
+		if !(char >= '0' && char <= '9' || char >= 'a' && char <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func validatePayloadlessEvent(event Event, kind EventKind) error {
