@@ -15,6 +15,8 @@ const (
 	CapabilityGlob CapabilityID = "fs.glob"
 	// CapabilityGrep 标识受工作区约束的文本搜索能力。
 	CapabilityGrep CapabilityID = "fs.grep"
+	// CapabilityPatch 标识需要批准的单文件文本Patch能力。
+	CapabilityPatch CapabilityID = "fs.patch"
 
 	// MaxModelPreviewBytes 限制单个 Read 模型可见工具结果。
 	MaxModelPreviewBytes = 256 << 10
@@ -37,7 +39,7 @@ func ParseCapabilityID(value string) (CapabilityID, error) {
 // Valid 判断能力是否由当前实现支持。
 func (id CapabilityID) Valid() bool {
 	switch id {
-	case CapabilityRead, CapabilityGlob, CapabilityGrep:
+	case CapabilityRead, CapabilityGlob, CapabilityGrep, CapabilityPatch:
 		return true
 	default:
 		return false
@@ -61,28 +63,35 @@ func (id ProviderCallID) Valid() bool {
 	return err == nil
 }
 
-// ReadyCall 是完整 sample 中已经严格解码、可持久化的三工具封闭联合。
+// ReadyCall 是完整sample中已经严格解码、可持久化的四工具封闭联合。
 type ReadyCall struct {
 	providerCallID ProviderCallID
 	capability     CapabilityID
+	wireKind       ProviderWireKind
 	readInput      ReadInput
 	globInput      GlobInput
 	grepInput      GrepInput
+	patchInput     PatchInput
 }
 
 // NewReadReadyCall 构造已经完整校验的 Read 调用。
 func NewReadReadyCall(providerCallID ProviderCallID, input ReadInput) (ReadyCall, error) {
-	return newReadyCall(ReadyCall{providerCallID: providerCallID, capability: CapabilityRead, readInput: input})
+	return newReadyCall(ReadyCall{providerCallID: providerCallID, capability: CapabilityRead, wireKind: WireStructured, readInput: input})
 }
 
 // NewGlobReadyCall 构造已经完整校验的 Glob 调用。
 func NewGlobReadyCall(providerCallID ProviderCallID, input GlobInput) (ReadyCall, error) {
-	return newReadyCall(ReadyCall{providerCallID: providerCallID, capability: CapabilityGlob, globInput: input})
+	return newReadyCall(ReadyCall{providerCallID: providerCallID, capability: CapabilityGlob, wireKind: WireStructured, globInput: input})
 }
 
 // NewGrepReadyCall 构造已经完整校验的 Grep 调用。
 func NewGrepReadyCall(providerCallID ProviderCallID, input GrepInput) (ReadyCall, error) {
-	return newReadyCall(ReadyCall{providerCallID: providerCallID, capability: CapabilityGrep, grepInput: input})
+	return newReadyCall(ReadyCall{providerCallID: providerCallID, capability: CapabilityGrep, wireKind: WireStructured, grepInput: input})
+}
+
+// NewPatchReadyCall 构造已经完整校验且保留原生wire kind的Patch调用。
+func NewPatchReadyCall(providerCallID ProviderCallID, wireKind ProviderWireKind, input PatchInput) (ReadyCall, error) {
+	return newReadyCall(ReadyCall{providerCallID: providerCallID, capability: CapabilityPatch, wireKind: wireKind, patchInput: input.Clone()})
 }
 
 func newReadyCall(call ReadyCall) (ReadyCall, error) {
@@ -94,28 +103,40 @@ func newReadyCall(call ReadyCall) (ReadyCall, error) {
 
 func (call ReadyCall) ProviderCallID() ProviderCallID { return call.providerCallID }
 func (call ReadyCall) Capability() CapabilityID       { return call.capability }
+func (call ReadyCall) WireKind() ProviderWireKind     { return call.wireKind }
 func (call ReadyCall) ReadInput() ReadInput           { return call.readInput }
 func (call ReadyCall) GlobInput() GlobInput           { return call.globInput }
 func (call ReadyCall) GrepInput() GrepInput           { return call.grepInput }
-func (call ReadyCall) Clone() ReadyCall               { return call }
+func (call ReadyCall) PatchInput() PatchInput         { return call.patchInput.Clone() }
+func (call ReadyCall) Clone() ReadyCall {
+	call.patchInput = call.patchInput.Clone()
+	return call
+}
 
 // Validate 验证调用身份、能力标签及唯一匹配的 typed input。
 func (call ReadyCall) Validate() error {
 	if !call.providerCallID.Valid() {
 		return errors.New("ready call has invalid provider call ID")
 	}
+	if !call.wireKind.Valid() {
+		return errors.New("ready call has invalid Provider wire kind")
+	}
 	switch call.capability {
 	case CapabilityRead:
-		if call.globInput != (GlobInput{}) || call.grepInput != (GrepInput{}) || call.readInput.Validate() != nil {
+		if call.wireKind != WireStructured || call.globInput != (GlobInput{}) || call.grepInput != (GrepInput{}) || !call.patchInput.zero() || call.readInput.Validate() != nil {
 			return errors.New("ready call has invalid Read payload")
 		}
 	case CapabilityGlob:
-		if call.readInput != (ReadInput{}) || call.grepInput != (GrepInput{}) || call.globInput.Validate() != nil {
+		if call.wireKind != WireStructured || call.readInput != (ReadInput{}) || call.grepInput != (GrepInput{}) || !call.patchInput.zero() || call.globInput.Validate() != nil {
 			return errors.New("ready call has invalid Glob payload")
 		}
 	case CapabilityGrep:
-		if call.readInput != (ReadInput{}) || call.globInput != (GlobInput{}) || call.grepInput.Validate() != nil {
+		if call.wireKind != WireStructured || call.readInput != (ReadInput{}) || call.globInput != (GlobInput{}) || !call.patchInput.zero() || call.grepInput.Validate() != nil {
 			return errors.New("ready call has invalid Grep payload")
+		}
+	case CapabilityPatch:
+		if call.readInput != (ReadInput{}) || call.globInput != (GlobInput{}) || call.grepInput != (GrepInput{}) || call.patchInput.Validate() != nil {
+			return errors.New("ready call has invalid Patch payload")
 		}
 	default:
 		return errors.New("ready call has unsupported capability")
@@ -144,12 +165,21 @@ type GrepInvocation struct {
 	input          GrepInput
 }
 
-// Invocation 是带全局 identity 的 Read/Glob/Grep 执行输入封闭联合。
+// PatchInvocation 是Runtime分配invocation identity后交给Patch流水线的值。
+type PatchInvocation struct {
+	invocationID   InvocationID
+	providerCallID ProviderCallID
+	wireKind       ProviderWireKind
+	input          PatchInput
+}
+
+// Invocation 是带全局identity的四能力执行输入封闭联合。
 type Invocation struct {
 	capability CapabilityID
 	read       ReadInvocation
 	glob       GlobInvocation
 	grep       GrepInvocation
+	patch      PatchInvocation
 }
 
 // NewInvocation 从 durable ready fact 构造匹配能力的执行输入。
@@ -173,6 +203,12 @@ func NewInvocation(invocationID InvocationID, call ReadyCall) (Invocation, error
 			return Invocation{}, err
 		}
 		return Invocation{capability: CapabilityGrep, grep: value}, nil
+	case CapabilityPatch:
+		value, err := NewPatchInvocation(invocationID, call)
+		if err != nil {
+			return Invocation{}, err
+		}
+		return Invocation{capability: CapabilityPatch, patch: value}, nil
 	default:
 		return Invocation{}, errors.New("tool invocation capability is unsupported")
 	}
@@ -187,6 +223,8 @@ func (invocation Invocation) InvocationID() InvocationID {
 		return invocation.glob.invocationID
 	case CapabilityGrep:
 		return invocation.grep.invocationID
+	case CapabilityPatch:
+		return invocation.patch.invocationID
 	default:
 		return ""
 	}
@@ -199,9 +237,22 @@ func (invocation Invocation) ProviderCallID() ProviderCallID {
 		return invocation.glob.providerCallID
 	case CapabilityGrep:
 		return invocation.grep.providerCallID
+	case CapabilityPatch:
+		return invocation.patch.providerCallID
 	default:
 		return ""
 	}
+}
+
+// WireKind 返回原Provider调用形态。
+func (invocation Invocation) WireKind() ProviderWireKind {
+	if invocation.capability == CapabilityPatch {
+		return invocation.patch.wireKind
+	}
+	if invocation.capability.Valid() {
+		return WireStructured
+	}
+	return ""
 }
 func (invocation Invocation) Read() (ReadInvocation, bool) {
 	return invocation.read, invocation.capability == CapabilityRead
@@ -212,25 +263,33 @@ func (invocation Invocation) Glob() (GlobInvocation, bool) {
 func (invocation Invocation) Grep() (GrepInvocation, bool) {
 	return invocation.grep, invocation.capability == CapabilityGrep
 }
+func (invocation Invocation) Patch() (PatchInvocation, bool) {
+	return invocation.patch.clone(), invocation.capability == CapabilityPatch
+}
 
 // Validate 验证 capability 标签与唯一 typed invocation 一致。
 func (invocation Invocation) Validate() error {
 	switch invocation.capability {
 	case CapabilityRead:
-		if invocation.glob != (GlobInvocation{}) || invocation.grep != (GrepInvocation{}) {
+		if invocation.glob != (GlobInvocation{}) || invocation.grep != (GrepInvocation{}) || !invocation.patch.zero() {
 			return errors.New("Read invocation contains mismatched payload")
 		}
 		return invocation.read.Validate()
 	case CapabilityGlob:
-		if invocation.read != (ReadInvocation{}) || invocation.grep != (GrepInvocation{}) {
+		if invocation.read != (ReadInvocation{}) || invocation.grep != (GrepInvocation{}) || !invocation.patch.zero() {
 			return errors.New("Glob invocation contains mismatched payload")
 		}
 		return invocation.glob.Validate()
 	case CapabilityGrep:
-		if invocation.read != (ReadInvocation{}) || invocation.glob != (GlobInvocation{}) {
+		if invocation.read != (ReadInvocation{}) || invocation.glob != (GlobInvocation{}) || !invocation.patch.zero() {
 			return errors.New("Grep invocation contains mismatched payload")
 		}
 		return invocation.grep.Validate()
+	case CapabilityPatch:
+		if invocation.read != (ReadInvocation{}) || invocation.glob != (GlobInvocation{}) || invocation.grep != (GrepInvocation{}) {
+			return errors.New("Patch invocation contains mismatched payload")
+		}
+		return invocation.patch.Validate()
 	default:
 		return errors.New("tool invocation capability is invalid")
 	}
@@ -263,15 +322,31 @@ func NewGrepInvocation(invocationID InvocationID, call ReadyCall) (GrepInvocatio
 	return invocation, nil
 }
 
-func (invocation ReadInvocation) InvocationID() InvocationID     { return invocation.invocationID }
-func (invocation ReadInvocation) ProviderCallID() ProviderCallID { return invocation.providerCallID }
-func (invocation ReadInvocation) Input() ReadInput               { return invocation.input }
-func (invocation GlobInvocation) InvocationID() InvocationID     { return invocation.invocationID }
-func (invocation GlobInvocation) ProviderCallID() ProviderCallID { return invocation.providerCallID }
-func (invocation GlobInvocation) Input() GlobInput               { return invocation.input }
-func (invocation GrepInvocation) InvocationID() InvocationID     { return invocation.invocationID }
-func (invocation GrepInvocation) ProviderCallID() ProviderCallID { return invocation.providerCallID }
-func (invocation GrepInvocation) Input() GrepInput               { return invocation.input }
+// NewPatchInvocation 从durable ready fact构造Patch执行输入。
+func NewPatchInvocation(invocationID InvocationID, call ReadyCall) (PatchInvocation, error) {
+	invocation := PatchInvocation{
+		invocationID: invocationID, providerCallID: call.providerCallID,
+		wireKind: call.wireKind, input: call.patchInput.Clone(),
+	}
+	if call.capability != CapabilityPatch || call.Validate() != nil || invocation.Validate() != nil {
+		return PatchInvocation{}, errors.New("patch invocation requires a valid Patch call")
+	}
+	return invocation, nil
+}
+
+func (invocation ReadInvocation) InvocationID() InvocationID      { return invocation.invocationID }
+func (invocation ReadInvocation) ProviderCallID() ProviderCallID  { return invocation.providerCallID }
+func (invocation ReadInvocation) Input() ReadInput                { return invocation.input }
+func (invocation GlobInvocation) InvocationID() InvocationID      { return invocation.invocationID }
+func (invocation GlobInvocation) ProviderCallID() ProviderCallID  { return invocation.providerCallID }
+func (invocation GlobInvocation) Input() GlobInput                { return invocation.input }
+func (invocation GrepInvocation) InvocationID() InvocationID      { return invocation.invocationID }
+func (invocation GrepInvocation) ProviderCallID() ProviderCallID  { return invocation.providerCallID }
+func (invocation GrepInvocation) Input() GrepInput                { return invocation.input }
+func (invocation PatchInvocation) InvocationID() InvocationID     { return invocation.invocationID }
+func (invocation PatchInvocation) ProviderCallID() ProviderCallID { return invocation.providerCallID }
+func (invocation PatchInvocation) WireKind() ProviderWireKind     { return invocation.wireKind }
+func (invocation PatchInvocation) Input() PatchInput              { return invocation.input.Clone() }
 
 func (invocation ReadInvocation) Validate() error {
 	call, err := NewReadReadyCall(invocation.providerCallID, invocation.input)
@@ -297,6 +372,23 @@ func (invocation GrepInvocation) Validate() error {
 	return nil
 }
 
+func (invocation PatchInvocation) Validate() error {
+	call, err := NewPatchReadyCall(invocation.providerCallID, invocation.wireKind, invocation.input)
+	if !invocation.invocationID.Valid() || err != nil || call.Validate() != nil {
+		return errors.New("patch invocation is invalid")
+	}
+	return nil
+}
+
+func (invocation PatchInvocation) clone() PatchInvocation {
+	invocation.input = invocation.input.Clone()
+	return invocation
+}
+
+func (invocation PatchInvocation) zero() bool {
+	return invocation.invocationID == "" && invocation.providerCallID == "" && invocation.wireKind == "" && invocation.input.zero()
+}
+
 // ReadExecutor 执行一个已经持久化并获准执行的 Read 调用。
 type ReadExecutor interface {
 	Execute(context.Context, ReadInvocation) InvocationResult
@@ -312,13 +404,39 @@ type GrepExecutor interface {
 	Execute(context.Context, GrepInvocation) InvocationResult
 }
 
+// PatchPreparer 在durable ready之后读取目标并生成零写入候选。
+type PatchPreparer interface {
+	Prepare(context.Context, PatchInvocation) (PatchCandidate, error)
+}
+
+// PatchExecutor 执行已经durable批准并完成执行准入的不可变候选。
+type PatchExecutor interface {
+	Execute(context.Context, PatchCandidate) InvocationResult
+}
+
 // PolicyDecision 是固定策略的封闭决策集合。
 type PolicyDecision string
 
 const (
 	PolicyAllow PolicyDecision = "allow"
+	PolicyAsk   PolicyDecision = "ask"
 	PolicyDeny  PolicyDecision = "deny"
 )
+
+// Valid 判断策略决定是否合法。
+func (decision PolicyDecision) Valid() bool {
+	switch decision {
+	case PolicyAllow, PolicyAsk, PolicyDeny:
+		return true
+	default:
+		return false
+	}
+}
+
+// Policy 对完整typed call给出封闭准入决定。
+type Policy interface {
+	Decide(ReadyCall) PolicyDecision
+}
 
 // ReadOnlyPolicy 只允许 catalog 中真实绑定的三种只读能力。
 type ReadOnlyPolicy struct{}
@@ -327,10 +445,31 @@ func NewReadOnlyPolicy() ReadOnlyPolicy { return ReadOnlyPolicy{} }
 
 // Decide 对完整 typed 调用做固定决策，不公开 ask 状态。
 func (ReadOnlyPolicy) Decide(call ReadyCall) PolicyDecision {
-	if call.Validate() == nil && call.Capability().Valid() {
+	if call.Validate() == nil && (call.Capability() == CapabilityRead || call.Capability() == CapabilityGlob || call.Capability() == CapabilityGrep) {
 		return PolicyAllow
 	}
 	return PolicyDeny
+}
+
+// ApprovalPolicy 自动允许只读调用，并要求Patch进入批准流程。
+type ApprovalPolicy struct{}
+
+// NewApprovalPolicy 创建无进程级grant的默认策略。
+func NewApprovalPolicy() ApprovalPolicy { return ApprovalPolicy{} }
+
+// Decide 对四能力执行默认安全策略。
+func (ApprovalPolicy) Decide(call ReadyCall) PolicyDecision {
+	if call.Validate() != nil {
+		return PolicyDeny
+	}
+	switch call.Capability() {
+	case CapabilityRead, CapabilityGlob, CapabilityGrep:
+		return PolicyAllow
+	case CapabilityPatch:
+		return PolicyAsk
+	default:
+		return PolicyDeny
+	}
 }
 
 // CapabilityMismatchError 返回不泄露输入正文的稳定错误。

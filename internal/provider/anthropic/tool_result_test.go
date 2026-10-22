@@ -34,6 +34,28 @@ func TestPrepareToolOutputsPairsResultsInModelOrder(t *testing.T) {
 	}
 }
 
+func TestPreparePatchToolOutputPreservesEditPairing(t *testing.T) {
+	replacement, _ := tool.NewPatchReplacement("old", "new", false)
+	input, _ := tool.NewPatchInput("main.go", []tool.PatchReplacement{replacement})
+	callID, _ := tool.ParseProviderCallID("toolu-edit")
+	ready, _ := tool.NewPatchReadyCall(callID, tool.WireStructured, input)
+	invocationID, _ := tool.GenerateInvocationID()
+	invocation, _ := tool.NewPatchInvocation(invocationID, ready)
+	result := tool.NewPatchErrorResult(invocation, tool.ResultDenied, "approval_required", "Patch denied: approval_required")
+	history := []nativeHistoryEntry{{Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("edit it")), Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeToolUse, ID: "toolu-edit", Name: "Edit", Input: []byte(`{"file_path":"main.go","old_string":"old","new_string":"new"}`)}}}, Metadata: messageMetadata{ID: "msg-edit", Model: "claude-test"}}}
+	entry, err := prepareToolOutputsEntry(history, []tool.InvocationResult{result})
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := entry.ToolOutputs.Content[0]
+	if block.Type != blockTypeToolResult || block.ToolUseID != "toolu-edit" || !block.IsError || block.Content != result.Preview().Text() {
+		t.Fatalf("patch output = %#v", block)
+	}
+	if err := validateNativeHistory(append(history, entry)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPrepareToolOutputsRejectsMismatchedCallID(t *testing.T) {
 	input, _ := tool.NewReadInput("README.md", 1, 20)
 	callID, _ := tool.ParseProviderCallID("different-call")

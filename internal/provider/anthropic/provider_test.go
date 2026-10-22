@@ -225,7 +225,7 @@ func TestProviderCapabilitiesReflectImplementedSlice(t *testing.T) {
 	}
 	defer closeAnthropicProvider(t, instance)
 
-	want := provider.Capabilities{Streaming: true, ThinkingSignature: true, FunctionTools: true}
+	want := provider.Capabilities{Streaming: true, ThinkingSignature: true, FunctionTools: true, FilePatch: true}
 	if got := instance.Capabilities(); got != want {
 		t.Fatalf("capabilities: got %#v want %#v", got, want)
 	}

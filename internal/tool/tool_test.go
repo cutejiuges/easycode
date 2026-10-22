@@ -2,6 +2,7 @@ package tool
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -153,12 +154,89 @@ func TestReadyCallInvocationAndPolicyRejectZeroValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建 invocation: %v", err)
 	}
-	if invocation.Input() != input || call.Clone() != call {
+	if invocation.Input() != input || !reflect.DeepEqual(call.Clone(), call) {
 		t.Fatal("typed 值 clone 后不等价")
 	}
 	policy := NewReadOnlyPolicy()
 	if policy.Decide(call) != PolicyAllow || policy.Decide(ReadyCall{}) != PolicyDeny {
 		t.Fatal("ReadOnlyPolicy 决策错误")
+	}
+}
+
+func TestPatchInputReadyCallAndInvocationAreClosedAndImmutable(t *testing.T) {
+	t.Parallel()
+
+	replacement, err := NewPatchReplacement("old\n", "new\n", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := []PatchReplacement{replacement}
+	input, err := NewPatchInput("internal/tool/tool.go", source)
+	if err != nil {
+		t.Fatalf("创建Patch input: %v", err)
+	}
+	source[0] = PatchReplacement{}
+	if input.Replacements()[0] != replacement {
+		t.Fatal("Patch input未深拷贝调用方slice")
+	}
+	copyOut := input.Replacements()
+	copyOut[0] = PatchReplacement{}
+	if input.Replacements()[0] != replacement {
+		t.Fatal("Patch input getter泄漏可变slice")
+	}
+
+	callID, _ := ParseProviderCallID("call-patch")
+	call, err := NewPatchReadyCall(callID, WireCustomFreeform, input)
+	if err != nil {
+		t.Fatalf("创建Patch ready call: %v", err)
+	}
+	if call.Capability() != CapabilityPatch || call.WireKind() != WireCustomFreeform || !call.PatchInput().Equal(input) {
+		t.Fatal("Patch ready call标签或payload错误")
+	}
+	invocationID, _ := ParseInvocationID("018f1d8a-7b5c-7def-8123-456789abcdef")
+	invocation, err := NewPatchInvocation(invocationID, call)
+	if err != nil || invocation.Validate() != nil || !invocation.Input().Equal(input) {
+		t.Fatalf("创建Patch invocation失败: %#v %v", invocation, err)
+	}
+	if _, err := NewPatchReadyCall(callID, ProviderWireKind("unknown"), input); err == nil {
+		t.Fatal("未知wire kind应被拒绝")
+	}
+	if _, err := NewReadInvocation(invocationID, call); err == nil {
+		t.Fatal("Patch payload被Read invocation接受")
+	}
+}
+
+func TestPatchInputRejectsInvalidPlans(t *testing.T) {
+	t.Parallel()
+
+	valid, _ := NewPatchReplacement("old", "new", false)
+	tests := []struct {
+		name         string
+		path         string
+		replacements []PatchReplacement
+	}{
+		{name: "空路径", path: "", replacements: []PatchReplacement{valid}},
+		{name: "绝对路径", path: "/tmp/a", replacements: []PatchReplacement{valid}},
+		{name: "路径穿越", path: "../a", replacements: []PatchReplacement{valid}},
+		{name: "空计划", path: "a.txt"},
+		{name: "重复replacement", path: "a.txt", replacements: []PatchReplacement{valid, valid}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := NewPatchInput(test.path, test.replacements); err == nil {
+				t.Fatal("期望拒绝非法Patch计划")
+			}
+		})
+	}
+	if _, err := NewPatchReplacement("", "new", false); err == nil {
+		t.Fatal("空old text应被拒绝")
+	}
+	if _, err := NewPatchReplacement("same", "same", false); err == nil {
+		t.Fatal("空变化应被拒绝")
+	}
+	large, _ := NewPatchReplacement("old", strings.Repeat("x", MaxPatchInputBytes), false)
+	if _, err := NewPatchInput("a.txt", []PatchReplacement{large}); err == nil {
+		t.Fatal("超限Patch输入应被拒绝")
 	}
 }
 
@@ -218,6 +296,45 @@ func TestSearchResultUnionRejectsMismatchedMetadata(t *testing.T) {
 	broken.capability = CapabilityGrep
 	if broken.Validate() == nil {
 		t.Fatal("capability 与 metadata 错配未被拒绝")
+	}
+}
+
+func TestPatchResultUnionCoversTerminalStatusesAndWireKind(t *testing.T) {
+	t.Parallel()
+
+	invocation := testPatchInvocation(t)
+	for _, test := range []struct {
+		status ResultStatus
+		code   string
+	}{
+		{status: ResultDenied, code: "approval_required"},
+		{status: ResultConflict, code: "patch_conflict"},
+		{status: ResultCancelled, code: "user_cancelled"},
+		{status: ResultError, code: "patch_failed"},
+		{status: ResultOutcomeUncertain, code: "outcome_uncertain"},
+	} {
+		result := NewPatchErrorResult(invocation, test.status, test.code, "Patch did not complete.")
+		if err := result.Validate(); err != nil {
+			t.Fatalf("验证%s结果: %v", test.status, err)
+		}
+		if result.Status() != test.status || result.Code() != test.code || result.WireKind() != WireCustomFreeform || result.Capability() != CapabilityPatch {
+			t.Fatalf("Patch结果标签错误: %#v", result)
+		}
+	}
+
+	base := []byte("old\n")
+	evidence, _ := NewPatchBaseEvidence(NewContentDigest(base), int64(len(base)), 0o644, 1, 2)
+	metadata, _ := NewPatchResultMetadata("main.go", 1, 1, 1)
+	fingerprint, _ := PatchFingerprint(invocation.Input(), evidence, []byte("new\n"))
+	candidate, _ := NewPatchCandidate(invocation, evidence, []byte("new\n"), "--- a/main.go\n+++ b/main.go\n-old\n+new\n", fingerprint, metadata)
+	success := NewPatchSuccessResult(candidate)
+	if err := success.Validate(); err != nil || success.Status() != ResultSuccess || success.Code() != "ok" || success.PatchMetadata() != metadata {
+		t.Fatalf("Patch成功结果错误: %#v %v", success, err)
+	}
+	broken := success
+	broken.wireKind = ProviderWireKind("unknown")
+	if broken.Validate() == nil {
+		t.Fatal("非法Patch result wire kind未被拒绝")
 	}
 }
 

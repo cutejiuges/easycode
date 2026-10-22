@@ -1,0 +1,15 @@
+  ┌─ Approve file patch ────────────────────────────────────────────────────┐
+  │ Path: src/main.go                                                      │
+  │ Risk: Patch modifies an existing workspace file.                       │
+  │ Diff 1-5 of 5                                                 │
+  │ --- a/src/main.go                                                      │
+  │ +++ b/src/main.go                                                      │
+  │ -old                                                                   │
+  │ +new                                                                   │
+  │                                                                        │
+  │   Yes                                                                  │
+  │   Yes, allow all edits during this session                             │
+  │ > No                                                                   │
+  │ Tab: add feedback · Enter: deny · Esc: interrupt                       │
+  │ Submitting decision…                                                   │
+  └──────────────────────────────────────────────────────────────────────────┘

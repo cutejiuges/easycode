@@ -62,6 +62,8 @@ func descriptorByKind(kind EventKind) (Descriptor, bool) {
 			Kind:        EventToolExecutionStarted,
 			Cardinality: CardinalityMany, Placement: PlacementActiveTurn,
 		}, true
+	case EventToolApprovalDecided:
+		return Descriptor{Kind: EventToolApprovalDecided, Cardinality: CardinalityMany, Placement: PlacementActiveTurn}, true
 	case EventToolCallResult:
 		return Descriptor{
 			Kind:        EventToolCallResult,

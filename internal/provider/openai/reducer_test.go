@@ -3,6 +3,7 @@ package openai
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"easycode/internal/domain"
@@ -78,6 +79,81 @@ func TestResponsesStreamReducerProducesReadyReadCall(t *testing.T) {
 	if len(ready) != 1 || ready[0].ProviderCallID() != tool.ProviderCallID("call-1") ||
 		ready[0].ReadInput().FilePath() != "README.md" || ready[0].ReadInput().Offset() != 2 || ready[0].ReadInput().Limit() != 3 {
 		t.Fatalf("ready calls = %#v", ready)
+	}
+}
+
+func TestResponsesStreamReducerProducesCustomPatchOnlyAfterDone(t *testing.T) {
+	reducer := newResponsesStreamReducer(testOpenAIToolCatalog(t))
+	patch := "*** Begin Patch\n*** Update File: main.go\n@@\n-old\n+新\n*** End Patch\n"
+	reduceOpenAIEvent(t, reducer, `{"type":"response.created","response":{"id":"resp-patch"}}`)
+	reduceOpenAIEvent(t, reducer, `{"type":"response.output_item.added","output_index":0,"item":{"type":"custom_tool_call","id":"ctc-1","call_id":"call-patch","name":"apply_patch"}}`)
+	for _, chunk := range []string{"*** Begin Patch\n", "*** Update File: main.go\n@@\n-old\n", "+新\n*** End Patch\n"} {
+		reduceOpenAIEvent(t, reducer, fmt.Sprintf(`{"type":"response.custom_tool_call_input.delta","item_id":"ctc-1","output_index":0,"delta":%q}`, chunk))
+		if len(reducer.readyCalls()) != 0 {
+			t.Fatal("partial custom input produced ready call")
+		}
+	}
+	reduceOpenAIEvent(t, reducer, fmt.Sprintf(`{"type":"response.custom_tool_call_input.done","item_id":"ctc-1","output_index":0,"input":%q}`, patch))
+	if len(reducer.readyCalls()) != 0 {
+		t.Fatal("input done before native item completion produced ready call")
+	}
+	result := reduceOpenAIEvent(t, reducer, fmt.Sprintf(`{"type":"response.output_item.done","output_index":0,"item":{"type":"custom_tool_call","id":"ctc-1","call_id":"call-patch","name":"apply_patch","input":%q}}`, patch))
+	if result.native == nil || result.native.Type != "custom_tool_call" || result.native.Input != patch {
+		t.Fatalf("native = %#v", result.native)
+	}
+	ready := reducer.readyCalls()
+	if len(ready) != 1 || ready[0].Capability() != tool.CapabilityPatch || ready[0].WireKind() != tool.WireCustomFreeform || ready[0].PatchInput().FilePath() != "main.go" {
+		t.Fatalf("ready = %#v", ready)
+	}
+	reduceOpenAIEvent(t, reducer, `{"type":"response.completed","response":{"id":"resp-patch"}}`)
+}
+
+func TestResponsesStreamReducerRejectsInvalidCustomCallStates(t *testing.T) {
+	validPatch := "*** Begin Patch\n*** Update File: main.go\n@@\n-old\n+new\n*** End Patch\n"
+	tests := []struct {
+		name   string
+		events []string
+	}{
+		{"delta-before-item", []string{fmt.Sprintf(`{"type":"response.custom_tool_call_input.delta","item_id":"ctc-1","output_index":0,"delta":%q}`, validPatch)}},
+		{"done-before-input-done", []string{`{"type":"response.output_item.added","output_index":0,"item":{"type":"custom_tool_call","id":"ctc-1","call_id":"call-1","name":"apply_patch"}}`, fmt.Sprintf(`{"type":"response.output_item.done","output_index":0,"item":{"type":"custom_tool_call","id":"ctc-1","call_id":"call-1","name":"apply_patch","input":%q}}`, validPatch)}},
+		{"conflicting-done", []string{`{"type":"response.output_item.added","output_index":0,"item":{"type":"custom_tool_call","id":"ctc-1","call_id":"call-1","name":"apply_patch"}}`, fmt.Sprintf(`{"type":"response.custom_tool_call_input.delta","item_id":"ctc-1","output_index":0,"delta":%q}`, validPatch), `{"type":"response.custom_tool_call_input.done","item_id":"ctc-1","output_index":0,"input":"different"}`}},
+		{"invalid-patch", []string{`{"type":"response.output_item.added","output_index":0,"item":{"type":"custom_tool_call","id":"ctc-1","call_id":"call-1","name":"apply_patch"}}`, `{"type":"response.custom_tool_call_input.done","item_id":"ctc-1","output_index":0,"input":"not a patch"}`, `{"type":"response.output_item.done","output_index":0,"item":{"type":"custom_tool_call","id":"ctc-1","call_id":"call-1","name":"apply_patch","input":"not a patch"}}`}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			reducer := newResponsesStreamReducer(testOpenAIToolCatalog(t))
+			reduceOpenAIEvent(t, reducer, `{"type":"response.created","response":{"id":"resp"}}`)
+			var err error
+			for _, event := range test.events {
+				_, err = reducer.reduce(transport.SSEEvent{Data: event})
+				if err != nil {
+					break
+				}
+			}
+			if err == nil || len(reducer.readyCalls()) != 0 {
+				t.Fatalf("error=%v ready=%#v", err, reducer.readyCalls())
+			}
+		})
+	}
+}
+
+func TestResponsesStreamReducerRejectsCustomIdentityConflictAndOversize(t *testing.T) {
+	reducer := newResponsesStreamReducer(testOpenAIToolCatalog(t))
+	reduceOpenAIEvent(t, reducer, `{"type":"response.created","response":{"id":"resp"}}`)
+	reduceOpenAIEvent(t, reducer, `{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc-1","call_id":"shared","name":"Read"}}`)
+	if _, err := reducer.reduce(transport.SSEEvent{Data: `{"type":"response.output_item.added","output_index":1,"item":{"type":"custom_tool_call","id":"ctc-1","call_id":"shared","name":"apply_patch"}}`}); err == nil {
+		t.Fatal("custom/function call ID冲突未被拒绝")
+	}
+
+	reducer = newResponsesStreamReducer(testOpenAIToolCatalog(t))
+	reduceOpenAIEvent(t, reducer, `{"type":"response.created","response":{"id":"resp"}}`)
+	reduceOpenAIEvent(t, reducer, `{"type":"response.output_item.added","output_index":0,"item":{"type":"custom_tool_call","id":"ctc-1","call_id":"call-1","name":"apply_patch"}}`)
+	oversize := strings.Repeat("x", tool.MaxPatchInputBytes+1)
+	if _, err := reducer.reduce(transport.SSEEvent{Data: fmt.Sprintf(`{"type":"response.custom_tool_call_input.delta","item_id":"ctc-1","output_index":0,"delta":%q}`, oversize)}); err == nil {
+		t.Fatal("超限custom input未被拒绝")
+	}
+	if len(reducer.readyCalls()) != 0 {
+		t.Fatal("超限custom input产生ready call")
 	}
 }
 

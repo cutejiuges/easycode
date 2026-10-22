@@ -1,7 +1,7 @@
 # EasyCode Tool 系统架构设计
 
-> 状态：P3 增量实现中；Read、Glob、Grep 与有序只读并行已实现
-> 更新时间：2026-10-10
+> 状态：P3 增量实现中；Read、Glob、Grep 与需批准的单文件 Patch 已实现
+> 更新时间：2026-10-11
 > 适用范围：Tool Catalog、Provider Tool Wire、Agent Tool Loop、权限与 sandbox、执行调度、结果预算、Session 恢复和宿主展示
 > 前置阅读：[总体架构设计](overall-architecture.md)、[产品阶段路线图](../roadmap/product-roadmap.md)、[踩坑与经验记录](../roadmap/pitfall-log.md)
 
@@ -9,7 +9,7 @@
 
 本文固定 Tool 系统的完整大图、长期边界和分阶段实现顺序，避免多个长周期 change 各自发明一套调用、权限、恢复或结果协议。
 
-本文同时记录已实现基线与后续目标。当前 `internal/tool` 与 `internal/tool/builtin` 已提供 Read、Glob、Grep 的强类型输入/结果、Unix handle-relative executor、双 Provider facade 和有序并行调度；Edit/Write/Exec、approval、artifact、Tool UI 与 Windows 等价安全实现仍未落地。任何新增 Tool schema、Session record、权限协议或跨包接口仍必须建立独立 OpenSpec change，经过 `propose -> review/confirm -> apply -> verify -> archive`。
+本文同时记录已实现基线与后续目标。当前 `internal/tool` 与 `internal/tool/builtin` 已提供 Read、Glob、Grep 以及单个已有 UTF-8 工作区文件 Patch 的强类型输入/结果、Unix descriptor-relative executor、双 Provider facade 和带 exclusive Patch 屏障的有序调度。Anthropic 使用 structured `Edit`，OpenAI 使用 custom freeform `apply_patch`；交互式 Patch 显示完整 diff 并默认聚焦 No，headless `ask` 以 `approval_required` 失败关闭。Write/Exec、artifact、通用 SandboxPlanner、完整 Tool UI 与 Windows 等价安全实现仍未落地。任何新增 Tool schema、Session record、权限协议或跨包接口仍必须建立独立 OpenSpec change，经过 `propose -> review/confirm -> apply -> verify -> archive`。
 
 参考工程的使用原则如下：
 

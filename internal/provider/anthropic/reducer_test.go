@@ -1,6 +1,7 @@
 package anthropic
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -107,6 +108,65 @@ func TestStreamReducerProducesReadyReadCall(t *testing.T) {
 	if len(assistant.Content) != 1 || string(assistant.Content[0].Input) != `{"file_path":"README.md","offset":2,"limit":3}` {
 		t.Fatalf("assistant tool use = %#v", assistant)
 	}
+}
+
+func TestStreamReducerProducesPatchOnlyAfterCompleteStrictEdit(t *testing.T) {
+	reducer := newStreamReducer(testAnthropicToolCatalog(t))
+	events := []string{
+		`{"type":"message_start","message":{"id":"msg-edit","model":"claude-test"}}`,
+		`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu-edit","name":"Edit","input":{}}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"file_path\":\"main.go\","}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"old_string\":\"旧\","}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"new_string\":\"新\"}"}}`,
+	}
+	for _, event := range events {
+		if _, err := reduceAnthropicTestEvent(reducer, event); err != nil {
+			t.Fatalf("reduce %s: %v", event, err)
+		}
+		if len(reducer.readyCalls()) != 0 {
+			t.Fatal("未完成Edit提前产生ready call")
+		}
+	}
+	if _, err := reduceAnthropicTestEvent(reducer, `{"type":"content_block_stop","index":0}`); err != nil {
+		t.Fatal(err)
+	}
+	ready := reducer.readyCalls()
+	if len(ready) != 1 || ready[0].Capability() != tool.CapabilityPatch || ready[0].WireKind() != tool.WireStructured || ready[0].PatchInput().FilePath() != "main.go" {
+		t.Fatalf("Edit ready call = %#v", ready)
+	}
+	if _, err := reduceAnthropicTestEvent(reducer, `{"type":"message_stop"}`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStreamReducerRejectsInvalidEditWithoutReadyCall(t *testing.T) {
+	for _, input := range []string{
+		`{"file_path":"main.go","old_string":"a","new_string":"b","unknown":true}`,
+		`{"file_path":"main.go","file_path":"other.go","old_string":"a","new_string":"b"}`,
+		`{"file_path":"main.go","old_string":"","new_string":"b"}`,
+	} {
+		reducer := newStreamReducer(testAnthropicToolCatalog(t))
+		for _, event := range []string{
+			`{"type":"message_start","message":{"id":"msg-edit","model":"claude-test"}}`,
+			`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu-edit","name":"Edit","input":{}}}`,
+			`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":` + quoteJSONTest(input) + `}}`,
+		} {
+			if _, err := reduceAnthropicTestEvent(reducer, event); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := reduceAnthropicTestEvent(reducer, `{"type":"content_block_stop","index":0}`); err == nil {
+			t.Fatalf("invalid Edit accepted: %s", input)
+		}
+		if len(reducer.readyCalls()) != 0 {
+			t.Fatal("invalid Edit produced ready call")
+		}
+	}
+}
+
+func quoteJSONTest(value string) string {
+	encoded, _ := json.Marshal(value)
+	return string(encoded)
 }
 
 func TestStreamReducerProducesOrderedHeterogeneousReadyCalls(t *testing.T) {

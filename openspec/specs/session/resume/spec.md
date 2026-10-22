@@ -263,56 +263,82 @@ resume SHALL 从已安全打开并校验的数据根开始，相对于父目录�
 
 在取得并持续持有目标 thread exclusive lease、完成当前 Loader/ReplayPlanner、Provider 配置兼容检查和事务式 native history 恢复后，resume SHALL 检查活动 tool turn 的完整有序 call group，并在向宿主暴露可用 Session 或接受新输入前完成确定性本地 reconciliation。
 
-- ready 但未 started 的 invocation SHALL 按 call index 使用原 invocation ID 追加 `cancelled/session_interrupted_before_execution` result。
-- result 已 durable 但对应 tool-output native entry 尚未 durable 时，系统 SHALL 从保存的 preview bytes 重建完整有序 output commit，不得重读或重新搜索文件。
-- execution started 但 result 缺失时，系统 MUST 按 call index 追加 `outcome_uncertain` result，禁止自动重试。
-- tool-output entry 已 durable 时，系统 MUST NOT 重复追加 output。
-- 所有缺失 output 补齐后，系统 MUST 以且仅以一个 `turn_failed` 关闭旧 turn。
-- 最终 sample 已 durable 完成时，resume 不得重新执行、追加 output 或重发 sample。
+- Patch ready但没有approval fact的invocation SHALL按call index使用原identity追加`cancelled/session_interrupted_before_approval` result。
+- approval allow已durable但execution未started的Patch SHALL追加`cancelled/session_interrupted_before_execution` result；不得恢复grant或复用批准。
+- ready但未started的自动允许Read/Glob/Grep SHALL追加`cancelled/session_interrupted_before_execution` result。
+- result已durable但对应tool-output native entry尚未durable时，系统 SHALL从保存的preview bytes和wire kind重建完整有序output commit，不得重读、重新搜索或修改文件。
+- execution started但result缺失时，系统 MUST按call index追加`outcome_uncertain` result，禁止自动重试；Patch不得根据当前文件内容猜测执行结果。
+- tool-output entry已durable时，系统 MUST NOT重复追加output。
+- 所有缺失output补齐后，系统 MUST以且仅以一个`turn_failed`关闭旧turn。
+- 最终sample已durable完成时，resume不得重新执行、重新询问、追加output或重发sample。
 
-reconciliation MUST 保持原 call index、capability 与 Provider call identity，只允许纯内存 Provider output 编码和 Session append/Sync；MUST NOT 调用 Read、Glob、Grep executor，MUST NOT 发起 Provider 请求，也 MUST NOT 自动继续下一 sample。每次 append/Sync 失败 MUST 使 resume 失败并阻止新 turn 副作用。旧开发 schema、未知 record/canary 或混合 revision journal MUST 在 reconciliation、repair 和 Provider 恢复前 fail closed，不得选择兼容 reader。
+reconciliation MUST保持原call index、capability、Provider call identity、wire kind和已durable candidate fingerprint，只允许纯内存Provider output编码和Session append/Sync；MUST NOT调用任一tool executor、候选准备器或approval presenter，MUST NOT访问Patch目标、恢复进程内session grant、发起Provider请求或自动继续下一sample。每次append/Sync失败 MUST使resume失败并阻止新turn副作用。旧开发schema、未知record/canary或混合revision journal MUST在reconciliation、repair和Provider恢复前fail closed，不得选择兼容reader。
+
+#### Scenario: Close a patch before approval
+- **WHEN** journal在Patch ready durable后、approval fact前结束
+- **THEN** resume持久化`session_interrupted_before_approval`结果与matching output并关闭旧turn
+- **THEN** approval presenter、候选准备器、Patch executor和Provider stream调用次数均为零
 
 #### Scenario: Locally cancel an ordered ready group
-- **WHEN** journal 在含 Glob、Grep、Read 的 ready batch 后结束且没有 started
-- **THEN** resume 以原 invocation 和 Provider call identity 按 call index 持久化三个 cancelled results 及 matching outputs
-- **THEN** 所有 executor 与 Provider stream 调用次数均为零
+- **WHEN** journal在含Glob、Grep、Read与Patch的ready batch后结束且没有任何started或approval
+- **THEN** resume按原call index持久化只读调用的`session_interrupted_before_execution`与Patch的`session_interrupted_before_approval`结果及matching outputs
+- **THEN** 所有executor、approval presenter与Provider stream调用次数均为零
 
 #### Scenario: Locally cancel a ready Read
-- **WHEN** journal 在单个 Read ready 后结束且没有 execution-start
-- **THEN** resume 使用原 identity 持久化 cancelled result 与 matching output，且 Read executor 调用次数为零
+- **WHEN** journal在单个Read ready后结束且没有execution-start
+- **THEN** resume使用原identity持久化`session_interrupted_before_execution` result与matching output，且Read executor调用次数为零
+
+#### Scenario: Close an approved patch before execution
+- **WHEN** journal包含matching allow fact但没有execution-started
+- **THEN** resume持久化`session_interrupted_before_execution`结果且不恢复session grant或修改目标文件
+
+#### Scenario: Fail closed on an uncertain patch
+- **WHEN** Patch execution-started已durable但result缺失
+- **THEN** resume追加`outcome_uncertain`结果与matching output，不读取目标或自动重试
+- **THEN** 旧turn以一个失败终态关闭
+
+#### Scenario: Resume a durable denied result
+- **WHEN** deny decision与denied result均已durable但tool-output commit缺失
+- **THEN** resume复用冻结preview和原wire kind生成逐字节相同的output
+- **THEN** 不重新显示approval也不访问workspace
+
+#### Scenario: Resume durable ordered results
+- **WHEN** 异构调用组的全部result facts已按call index durable但tool-output native commit缺失
+- **THEN** resume复用逐字节相同的有序模型previews提交output且所有executor调用次数不增加
+- **THEN** resume追加一个`turn_failed`且不发起Provider请求
 
 #### Scenario: Resume durable parallel results
-- **WHEN** 一个并行执行组的全部 result facts 已按 call index durable 但 tool-output native commit 缺失
-- **THEN** resume 复用逐字节相同的有序模型 previews 提交 output且所有 executor 调用次数不增加
-- **THEN** resume 追加一个 `turn_failed` 且不发起 Provider 请求
+- **WHEN** 一个并行只读组的全部result facts已按call index durable但tool-output native commit缺失
+- **THEN** resume复用逐字节相同的有序模型previews提交output且所有executor调用次数不增加
+- **THEN** resume追加一个`turn_failed`且不发起Provider请求
 
 #### Scenario: Resume a durable Read result
-- **WHEN** Read result 已 durable 但 tool-output native commit 缺失
-- **THEN** resume 复用逐字节相同的 preview 提交 output，且 Read executor 调用次数不增加
+- **WHEN** Read result已durable但tool-output native commit缺失
+- **THEN** resume复用逐字节相同的preview提交output，且Read executor调用次数不增加
 
 #### Scenario: Fail closed on uncertain searches
-- **WHEN** Glob 与 Grep 的 execution-start 已 durable 但 results 缺失
-- **THEN** resume 不调用搜索，按 call index durable 记录 `outcome_uncertain` 补偿并停止自动推进该 turn
+- **WHEN** Glob与Grep的execution-start已durable但results缺失
+- **THEN** resume不调用搜索，按call index durable记录`outcome_uncertain`补偿并停止自动推进该turn
 
 #### Scenario: Fail closed on an uncertain Read
-- **WHEN** Read execution-start 已 durable 但 result 缺失
-- **THEN** resume 不调用 Read，durable 记录 `outcome_uncertain` 并停止自动推进该 turn
+- **WHEN** Read execution-start已durable但result缺失
+- **THEN** resume不调用Read，durable记录`outcome_uncertain`并停止自动推进该turn
 
 #### Scenario: Do not duplicate a durable output commit
-- **WHEN** calls、results 和 tool-output entry 均完整 durable 但尚无 terminal
-- **THEN** resume 只追加一个 `turn_failed`，不重复 output且不启动下一 sample
+- **WHEN** calls、approval、results和tool-output entry均完整durable但尚无terminal
+- **THEN** resume只追加一个`turn_failed`，不重复output且不启动下一sample
 
 #### Scenario: Reject a superseded development journal
-- **WHEN** resume 目标使用本变更前的 Tool input/result revision shape 或 optional record envelope
-- **THEN** 系统在 repair、append、executor、Provider 网络或 SQLite 写入前失败
-- **THEN** journal bytes 保持不变且不加载旧 decoder
+- **WHEN** resume目标使用本变更前的Tool/approval/native payload shape或optional record envelope
+- **THEN** 系统在repair、append、executor、Provider网络或SQLite写入前失败
+- **THEN** journal bytes保持不变且不加载旧decoder
 
 #### Scenario: Continue on the next user input
-- **GIVEN** unfinished tool turn 已完成本地补偿
+- **GIVEN** unfinished tool turn已完成本地补偿
 - **WHEN** 用户提交下一次输入
-- **THEN** Provider 请求保持 tool call/output pairing 和原生 item 顺序
-- **THEN** canonical bytes 与 fingerprint 等于从同一 reconciled history 不经重启构造的请求
+- **THEN** Provider请求保持function/custom/tool-use call/output pairing和原生item顺序
+- **THEN** canonical bytes与fingerprint等于从同一reconciled history不经重启构造的请求
 
 #### Scenario: Preserve ownership during reconciliation
-- **WHEN** 另一个进程竞争同一 unfinished tool thread
-- **THEN** 只有持有连续 exclusive lease 的进程可以 reconcile，竞争者在读取后 repair、Session append 或任何外部副作用前以 `session_busy` 失败
+- **WHEN** 另一个进程竞争同一unfinished tool thread
+- **THEN** 只有持有连续exclusive lease的进程可以reconcile，竞争者在读取后repair、Session append或任何外部副作用前以`session_busy`失败

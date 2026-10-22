@@ -78,6 +78,8 @@ func (*Provider) Capabilities() provider.Capabilities {
 		Streaming:          true,
 		EncryptedReasoning: true,
 		FunctionTools:      true,
+		CustomTools:        true,
+		FilePatch:          true,
 	}
 }
 

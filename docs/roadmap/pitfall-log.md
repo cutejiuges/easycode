@@ -549,6 +549,21 @@
 
 重点关注：重复副作用、路径穿越、symlink、并发结果顺序、patch 增量解析和输出截断。
 
+### [P3/P5][2026-10-11] Patch 批准必须绑定确定候选并在 Session 中先行落盘
+
+- 状态：已解决（`add-approved-file-patch-flow`）
+- 影响版本或提交：P3 单文件 Patch 与 P5 diff approval 薄切片
+- 现象：若 UI 批准原始 patch 文本、批准后才读文件，或先执行再记录 allow，用户所见 diff、实际写入 bytes 与崩溃恢复事实可能分叉。
+- 触发条件：同一 sample 有前序工具、批准等待期文件变化、allow/interrupt 竞态，或在 approval/started/result/output 任一 durable 边界崩溃。
+- 根因：把交互提示当成执行授权，没有以 typed input、base evidence 与 final bytes 派生不可变 candidate fingerprint。
+- 架构影响：Runtime 只在 ready 和前序 results durable 后准备 candidate；`allow fact -> execution_started -> executor -> result` 分批 Sync，deny fact 与 denied result 同 batch；Patch 是两个连续只读批次之间的 exclusive 屏障。
+- 缓存影响：candidate/approval identity、cwd 和时间不进入 Catalog/request fingerprint；只有冻结原生 output 进入下一 Provider 请求。
+- 修复方案：Unix 上用 descriptor-relative 重验、同目录 `O_EXCL` 临时文件、完整写入、文件 Sync、`renameat` 和目录 Sync；rename 后不确定结果 poison Session。
+- 未采用方案及原因：不让 TUI 直接调 executor，不在 headless 隐式批准，不在 resume 重试 Patch，不以 `Lstat` 后 `Open` 的路径检查替代句柄级约束。
+- 回归测试：`internal/tool/builtin/patch_*_test.go`、`internal/runtime/patch_runtime_test.go`、`internal/session/patch_draft_test.go`、`internal/session/replay_test.go`、`internal/tui/model_test.go`、`internal/tui/snapshot_test.go` 和 `internal/app/tool_loop_e2e_test.go`。
+- 关联 ADR/Issue/PR：[Tool 系统架构设计](../architecture/tool-system.md)；OpenSpec `add-approved-file-patch-flow`。
+- 后续行动：Write、Exec 或多文件变更不得直接复用本能力的授权范围，必须各自定义 candidate、sandbox 与崩溃语义。
+
 ## 7. P4 缓存与上下文强化
 
 暂无实际记录。

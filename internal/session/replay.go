@@ -55,14 +55,17 @@ const (
 
 // ReplayedToolCall 保存恢复所需的typed调用、结果和事实顺序。
 type ReplayedToolCall struct {
-	ReadySequence   uint64
-	StartedSequence uint64
-	ResultSequence  uint64
-	SampleIndex     uint32
-	CallIndex       uint32
-	Invocation      tool.Invocation
-	State           ReplayedToolCallState
-	Result          tool.InvocationResult
+	ReadySequence        uint64
+	StartedSequence      uint64
+	ResultSequence       uint64
+	SampleIndex          uint32
+	CallIndex            uint32
+	Invocation           tool.Invocation
+	State                ReplayedToolCallState
+	Result               tool.InvocationResult
+	ApprovalSequence     uint64
+	ApprovalOutcome      tool.ApprovalOutcome
+	CandidateFingerprint tool.CandidateFingerprint
 }
 
 // ToolRecoveryPlan 描述活动Tool Loop尾部唯一允许的恢复动作输入。
@@ -136,6 +139,38 @@ func (plan ToolRecoveryPlan) Validate() error {
 			return fmt.Errorf("tool recovery ready sequence is invalid")
 		}
 		lastReadySequence = call.ReadySequence
+		if call.Invocation.Capability() != tool.CapabilityPatch {
+			if call.ApprovalSequence != 0 || call.ApprovalOutcome != "" || call.CandidateFingerprint != "" {
+				return fmt.Errorf("non-patch tool recovery call has approval facts")
+			}
+			continue
+		}
+		if call.ApprovalSequence == 0 {
+			if call.ApprovalOutcome != "" || call.CandidateFingerprint != "" || call.State == ReplayedToolCallStarted {
+				return fmt.Errorf("patch tool recovery approval facts are invalid")
+			}
+			continue
+		}
+		if call.ApprovalSequence <= call.ReadySequence ||
+			(call.StartedSequence != 0 && call.ApprovalSequence >= call.StartedSequence) ||
+			(call.ResultSequence != 0 && call.ApprovalSequence >= call.ResultSequence) {
+			return fmt.Errorf("patch tool recovery approval sequence is invalid")
+		}
+		if !call.CandidateFingerprint.Valid() ||
+			(call.ApprovalOutcome != tool.ApprovalOutcomeAllowOnce &&
+				call.ApprovalOutcome != tool.ApprovalOutcomeAllowSession &&
+				call.ApprovalOutcome != tool.ApprovalOutcomeAllowFromSession &&
+				call.ApprovalOutcome != tool.ApprovalOutcomeDeny &&
+				call.ApprovalOutcome != tool.ApprovalOutcomeAbort) {
+			return fmt.Errorf("patch tool recovery approval facts are invalid")
+		}
+		allowed := call.ApprovalOutcome == tool.ApprovalOutcomeAllowOnce || call.ApprovalOutcome == tool.ApprovalOutcomeAllowSession || call.ApprovalOutcome == tool.ApprovalOutcomeAllowFromSession
+		if allowed && call.State == ReplayedToolCallResult && call.StartedSequence == 0 {
+			return fmt.Errorf("allowed patch result has no execution start")
+		}
+		if (call.ApprovalOutcome == tool.ApprovalOutcomeDeny || call.ApprovalOutcome == tool.ApprovalOutcomeAbort) && call.State != ReplayedToolCallResult {
+			return fmt.Errorf("closed patch approval is missing its result")
+		}
 	}
 	lastStartedSequence := lastReadySequence
 	maxStartedSequence := lastReadySequence
@@ -171,7 +206,10 @@ func (plan ToolRecoveryPlan) Validate() error {
 				return fmt.Errorf("result tool recovery call is invalid")
 			}
 			if call.StartedSequence == 0 {
-				if call.Result.Status() != tool.ResultCancelled {
+				closedPatch := call.Invocation.Capability() == tool.CapabilityPatch &&
+					((call.ApprovalOutcome == tool.ApprovalOutcomeDeny && call.Result.Status() == tool.ResultDenied) ||
+						(call.ApprovalOutcome == tool.ApprovalOutcomeAbort && call.Result.Status() == tool.ResultCancelled))
+				if call.Result.Status() != tool.ResultCancelled && !closedPatch {
 					return fmt.Errorf("tool result before execution start is not cancelled")
 				}
 			} else if call.ResultSequence <= call.StartedSequence {
@@ -284,6 +322,13 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 				return ReplayPlan{}, replayCorrupt("tool_execution_started placement is invalid")
 			}
 			if err := active.acceptStarted(batch[0]); err != nil {
+				return ReplayPlan{}, err
+			}
+		case EventToolApprovalDecided:
+			if active == nil || !batchHasTurn(batch, active.turnID) || (len(batch) != 1 && len(batch) != 2) {
+				return ReplayPlan{}, replayCorrupt("tool approval placement is invalid")
+			}
+			if err := active.acceptApproval(batch); err != nil {
 				return ReplayPlan{}, err
 			}
 		case EventToolCallResult:
@@ -431,14 +476,31 @@ func (active *activeReplayTurn) acceptStarted(record Record) error {
 	}
 	for index := range active.pendingCalls {
 		call := &active.pendingCalls[index]
-		if call.State == ReplayedToolCallStarted {
+		if call.Invocation.InvocationID() != payload.InvocationID {
 			continue
 		}
-		if call.State == ReplayedToolCallResult {
+		if call.State != ReplayedToolCallReady {
 			return replayCorrupt("tool execution order is invalid")
 		}
-		if call.State != ReplayedToolCallReady || call.Invocation.InvocationID() != payload.InvocationID {
-			return replayCorrupt("tool execution order is invalid")
+		if call.Invocation.Capability() == tool.CapabilityPatch {
+			if call.ApprovalSequence == 0 || (call.ApprovalOutcome != tool.ApprovalOutcomeAllowOnce && call.ApprovalOutcome != tool.ApprovalOutcomeAllowSession && call.ApprovalOutcome != tool.ApprovalOutcomeAllowFromSession) {
+				return replayCorrupt("Patch execution started without approval")
+			}
+			for previous := 0; previous < index; previous++ {
+				if active.pendingCalls[previous].State != ReplayedToolCallResult {
+					return replayCorrupt("Patch execution crossed an unfinished call")
+				}
+			}
+		} else {
+			for previous := 0; previous < index; previous++ {
+				prior := active.pendingCalls[previous]
+				if prior.Invocation.Capability() == tool.CapabilityPatch && prior.State != ReplayedToolCallResult {
+					return replayCorrupt("read execution crossed an unfinished Patch")
+				}
+				if prior.Invocation.Capability() != tool.CapabilityPatch && prior.State == ReplayedToolCallReady {
+					return replayCorrupt("read execution order is invalid")
+				}
+			}
 		}
 		call.State = ReplayedToolCallStarted
 		call.StartedSequence = record.Sequence
@@ -446,6 +508,43 @@ func (active *activeReplayTurn) acceptStarted(record Record) error {
 		return nil
 	}
 	return replayCorrupt("tool_execution_started is duplicated")
+}
+
+func (active *activeReplayTurn) acceptApproval(batch []Record) error {
+	payload, err := DecodeToolApprovalDecidedPayload(batch[0])
+	if err != nil {
+		return replayCorrupt("tool approval payload is invalid")
+	}
+	for index := range active.pendingCalls {
+		call := &active.pendingCalls[index]
+		if call.Invocation.InvocationID() != payload.InvocationID {
+			continue
+		}
+		if call.Invocation.Capability() != tool.CapabilityPatch || call.State != ReplayedToolCallReady || call.ApprovalSequence != 0 {
+			return replayCorrupt("tool approval does not match a pending Patch")
+		}
+		for previous := 0; previous < index; previous++ {
+			if active.pendingCalls[previous].State != ReplayedToolCallResult {
+				return replayCorrupt("tool approval crossed an unfinished call")
+			}
+		}
+		call.ApprovalSequence = batch[0].Sequence
+		call.ApprovalOutcome = payload.Outcome
+		call.CandidateFingerprint = payload.Fingerprint
+		active.lastSequence = batch[len(batch)-1].Sequence
+		allowed := payload.Outcome == tool.ApprovalOutcomeAllowOnce || payload.Outcome == tool.ApprovalOutcomeAllowSession || payload.Outcome == tool.ApprovalOutcomeAllowFromSession
+		if allowed {
+			if len(batch) != 1 {
+				return replayCorrupt("allow approval batch is invalid")
+			}
+			return nil
+		}
+		if len(batch) != 2 || batch[1].EventKind != EventToolCallResult {
+			return replayCorrupt("denied approval must share its result batch")
+		}
+		return active.acceptResult(batch[1])
+	}
+	return replayCorrupt("tool approval invocation is unknown")
 }
 
 func (active *activeReplayTurn) acceptResult(record Record) error {
@@ -468,8 +567,23 @@ func (active *activeReplayTurn) acceptResult(record Record) error {
 		if decodeErr != nil {
 			return replayCorrupt("tool_call_result does not match ready call")
 		}
-		if call.State == ReplayedToolCallReady && result.Status() != tool.ResultCancelled {
-			return replayCorrupt("tool result before execution start is not cancelled")
+		if call.State == ReplayedToolCallReady {
+			if call.Invocation.Capability() == tool.CapabilityPatch {
+				if call.ApprovalSequence == 0 && result.Status() != tool.ResultError && result.Status() != tool.ResultCancelled {
+					return replayCorrupt("Patch result before approval is invalid")
+				}
+				if call.ApprovalSequence != 0 && (call.ApprovalOutcome == tool.ApprovalOutcomeAllowOnce || call.ApprovalOutcome == tool.ApprovalOutcomeAllowSession || call.ApprovalOutcome == tool.ApprovalOutcomeAllowFromSession) {
+					return replayCorrupt("allowed Patch result appears before execution start")
+				}
+				if call.ApprovalSequence != 0 && call.ApprovalOutcome == tool.ApprovalOutcomeDeny && result.Status() != tool.ResultDenied {
+					return replayCorrupt("denied Patch result is invalid")
+				}
+				if call.ApprovalSequence != 0 && call.ApprovalOutcome == tool.ApprovalOutcomeAbort && result.Status() != tool.ResultCancelled {
+					return replayCorrupt("aborted Patch result is invalid")
+				}
+			} else if result.Status() != tool.ResultCancelled {
+				return replayCorrupt("tool result before execution start is not cancelled")
+			}
 		}
 		if call.State != ReplayedToolCallReady && call.State != ReplayedToolCallStarted {
 			return replayCorrupt("tool result order is invalid")

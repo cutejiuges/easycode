@@ -17,6 +17,7 @@ type responsesEventEnvelope struct {
 	Type        string          `json:"type"`
 	Delta       *string         `json:"delta,omitempty"`
 	Arguments   *string         `json:"arguments,omitempty"`
+	Input       *string         `json:"input,omitempty"`
 	ItemID      string          `json:"item_id,omitempty"`
 	OutputIndex *int            `json:"output_index,omitempty"`
 	Item        json.RawMessage `json:"item,omitempty"`
@@ -55,15 +56,16 @@ type reducerResult struct {
 }
 
 type responsesStreamReducer struct {
-	created                 bool
-	responseID              string
-	terminal                bool
-	items                   []NativeItem
-	functions               map[string]*functionCallState
-	ready                   []tool.ReadyCall
-	catalog                 tool.CatalogSnapshot
-	usage                   rawUsage
-	lastFunctionOutputIndex int
+	created             bool
+	responseID          string
+	terminal            bool
+	items               []NativeItem
+	functions           map[string]*functionCallState
+	customs             map[string]*customCallState
+	ready               []tool.ReadyCall
+	catalog             tool.CatalogSnapshot
+	usage               rawUsage
+	lastToolOutputIndex int
 }
 
 type functionCallState struct {
@@ -76,10 +78,16 @@ type functionCallState struct {
 	itemDone      bool
 }
 
+type customCallState struct {
+	itemID, callID, name, input string
+	outputIndex                 int
+	inputDone, itemDone         bool
+}
+
 func newResponsesStreamReducer(catalog ...tool.CatalogSnapshot) *responsesStreamReducer {
 	reducer := &responsesStreamReducer{
-		items: make([]NativeItem, 0), functions: make(map[string]*functionCallState),
-		ready: make([]tool.ReadyCall, 0), lastFunctionOutputIndex: -1,
+		items: make([]NativeItem, 0), functions: make(map[string]*functionCallState), customs: make(map[string]*customCallState),
+		ready: make([]tool.ReadyCall, 0), lastToolOutputIndex: -1,
 	}
 	if len(catalog) == 1 {
 		reducer.catalog = catalog[0].Clone()
@@ -137,6 +145,10 @@ func (reducer *responsesStreamReducer) reduce(event transport.SSEEvent) (reducer
 		return reducer.reduceFunctionArgumentsDelta(envelope.ItemID, envelope.OutputIndex, envelope.Delta)
 	case "response.function_call_arguments.done":
 		return reducer.reduceFunctionArgumentsDone(envelope.ItemID, envelope.OutputIndex, envelope.Arguments)
+	case "response.custom_tool_call_input.delta":
+		return reducer.reduceCustomInputDelta(envelope.ItemID, envelope.OutputIndex, envelope.Delta)
+	case "response.custom_tool_call_input.done":
+		return reducer.reduceCustomInputDone(envelope.ItemID, envelope.OutputIndex, envelope.Input)
 	case "response.output_item.done":
 		if len(envelope.Item) == 0 || string(envelope.Item) == "null" {
 			return reducerResult{}, fault.New(fault.CodeStreamProtocol, "Responses output item is required")
@@ -152,6 +164,13 @@ func (reducer *responsesStreamReducer) reduce(event transport.SSEEvent) (reducer
 				return reducerResult{}, err
 			}
 			item.Arguments = reducer.functions[item.ID].arguments
+			reducer.ready = append(reducer.ready, ready)
+		} else if item.Type == "custom_tool_call" {
+			ready, err := reducer.completeCustomCall(envelope.OutputIndex, item)
+			if err != nil {
+				return reducerResult{}, err
+			}
+			item.Input = reducer.customs[item.ID].input
 			reducer.ready = append(reducer.ready, ready)
 		}
 		reducer.items = append(reducer.items, item)
@@ -192,6 +211,11 @@ func (reducer *responsesStreamReducer) acceptCompleted(raw json.RawMessage) erro
 			return fault.New(fault.CodeStreamProtocol, "Responses function call is incomplete")
 		}
 	}
+	for _, state := range reducer.customs {
+		if !state.inputDone || !state.itemDone {
+			return fault.New(fault.CodeStreamProtocol, "Responses custom tool call is incomplete")
+		}
+	}
 	usage := decodeResponsesUsage(response.Usage)
 	if _, err := usage.normalized(); err != nil {
 		return fault.Wrap(fault.CodeStreamProtocol, "Responses usage is invalid", err)
@@ -209,24 +233,43 @@ func (reducer *responsesStreamReducer) reduceOutputItemAdded(index *int, raw jso
 	if err := codec.Unmarshal(raw, &item); err != nil {
 		return reducerResult{}, fault.Wrap(fault.CodeStreamProtocol, "Responses output item is invalid", err)
 	}
-	if item.Type != "function_call" {
+	if item.Type != "function_call" && item.Type != "custom_tool_call" {
 		return reducerResult{}, nil
 	}
 	if index == nil || *index < 0 || item.ID == "" || item.CallID == "" || item.Name == "" {
-		return reducerResult{}, fault.New(fault.CodeStreamProtocol, "Responses function call identity is invalid")
+		return reducerResult{}, fault.New(fault.CodeStreamProtocol, "Responses tool call identity is invalid")
 	}
 	if _, exists := reducer.functions[item.ID]; exists {
-		return reducerResult{}, fault.New(fault.CodeStreamProtocol, "Responses function call item is duplicated")
+		return reducerResult{}, fault.New(fault.CodeStreamProtocol, "Responses tool call item is duplicated")
 	}
-	for _, state := range reducer.functions {
-		if state.callID == item.CallID || state.outputIndex == *index {
-			return reducerResult{}, fault.New(fault.CodeStreamProtocol, "Responses function call identity conflicts")
-		}
+	if _, exists := reducer.customs[item.ID]; exists {
+		return reducerResult{}, fault.New(fault.CodeStreamProtocol, "Responses tool call item is duplicated")
+	}
+	if reducer.toolIdentityConflicts(item.CallID, *index) {
+		return reducerResult{}, fault.New(fault.CodeStreamProtocol, "Responses tool call identity conflicts")
+	}
+	if item.Type == "custom_tool_call" {
+		reducer.customs[item.ID] = &customCallState{itemID: item.ID, callID: item.CallID, name: item.Name, input: item.Input, outputIndex: *index}
+		return reducerResult{}, nil
 	}
 	reducer.functions[item.ID] = &functionCallState{
 		itemID: item.ID, callID: item.CallID, name: item.Name, arguments: item.Arguments, outputIndex: *index,
 	}
 	return reducerResult{}, nil
+}
+
+func (reducer *responsesStreamReducer) toolIdentityConflicts(callID string, index int) bool {
+	for _, state := range reducer.functions {
+		if state.callID == callID || state.outputIndex == index {
+			return true
+		}
+	}
+	for _, state := range reducer.customs {
+		if state.callID == callID || state.outputIndex == index {
+			return true
+		}
+	}
+	return false
 }
 
 func (reducer *responsesStreamReducer) reduceFunctionArgumentsDelta(itemID string, index *int, delta *string) (reducerResult, error) {
@@ -263,7 +306,7 @@ func (reducer *responsesStreamReducer) completeFunctionCall(index *int, item Nat
 		return tool.ReadyCall{}, err
 	}
 	if state.itemDone || !state.argumentsDone || item.CallID != state.callID || item.Name != state.name ||
-		item.Arguments != state.arguments || state.outputIndex <= reducer.lastFunctionOutputIndex {
+		item.Arguments != state.arguments || state.outputIndex <= reducer.lastToolOutputIndex {
 		return tool.ReadyCall{}, fault.New(fault.CodeStreamProtocol, "Responses completed function call is invalid")
 	}
 	callID, err := tool.ParseProviderCallID(state.callID)
@@ -275,8 +318,68 @@ func (reducer *responsesStreamReducer) completeFunctionCall(index *int, item Nat
 		return tool.ReadyCall{}, fault.Wrap(fault.CodeStreamProtocol, "Responses ready call is invalid", err)
 	}
 	state.itemDone = true
-	reducer.lastFunctionOutputIndex = state.outputIndex
+	reducer.lastToolOutputIndex = state.outputIndex
 	return ready, nil
+}
+
+func (reducer *responsesStreamReducer) reduceCustomInputDelta(itemID string, index *int, delta *string) (reducerResult, error) {
+	state, err := reducer.customState(itemID, index)
+	if err != nil {
+		return reducerResult{}, err
+	}
+	if delta == nil || state.inputDone || len(state.input)+len(*delta) > tool.MaxPatchInputBytes {
+		return reducerResult{}, fault.New(fault.CodeStreamProtocol, "Responses custom tool input delta is invalid")
+	}
+	state.input += *delta
+	return reducerResult{}, nil
+}
+
+func (reducer *responsesStreamReducer) reduceCustomInputDone(itemID string, index *int, input *string) (reducerResult, error) {
+	state, err := reducer.customState(itemID, index)
+	if err != nil {
+		return reducerResult{}, err
+	}
+	if input == nil || state.inputDone || len(*input) > tool.MaxPatchInputBytes {
+		return reducerResult{}, fault.New(fault.CodeStreamProtocol, "Responses completed custom tool input is invalid")
+	}
+	if state.input != "" && state.input != *input {
+		return reducerResult{}, fault.New(fault.CodeStreamProtocol, "Responses custom tool input conflicts")
+	}
+	state.input = *input
+	state.inputDone = true
+	return reducerResult{}, nil
+}
+
+func (reducer *responsesStreamReducer) completeCustomCall(index *int, item NativeItem) (tool.ReadyCall, error) {
+	state, err := reducer.customState(item.ID, index)
+	if err != nil {
+		return tool.ReadyCall{}, err
+	}
+	if state.itemDone || !state.inputDone || item.CallID != state.callID || item.Name != state.name || item.Input != state.input || state.outputIndex <= reducer.lastToolOutputIndex {
+		return tool.ReadyCall{}, fault.New(fault.CodeStreamProtocol, "Responses completed custom tool call is invalid")
+	}
+	callID, err := tool.ParseProviderCallID(state.callID)
+	if err != nil {
+		return tool.ReadyCall{}, fault.New(fault.CodeStreamProtocol, "Responses custom tool call ID is invalid")
+	}
+	ready, err := reducer.catalog.DecodeReadyCall(domain.ProviderOpenAI, state.name, callID, []byte(state.input))
+	if err != nil {
+		return tool.ReadyCall{}, fault.Wrap(fault.CodeStreamProtocol, "Responses custom ready call is invalid", err)
+	}
+	state.itemDone = true
+	reducer.lastToolOutputIndex = state.outputIndex
+	return ready, nil
+}
+
+func (reducer *responsesStreamReducer) customState(itemID string, index *int) (*customCallState, error) {
+	if itemID == "" || index == nil || *index < 0 {
+		return nil, fault.New(fault.CodeStreamProtocol, "Responses custom tool call reference is invalid")
+	}
+	state, exists := reducer.customs[itemID]
+	if !exists || state.outputIndex != *index {
+		return nil, fault.New(fault.CodeStreamProtocol, "Responses custom tool call reference is unknown")
+	}
+	return state, nil
 }
 
 func (reducer *responsesStreamReducer) functionState(itemID string, index *int) (*functionCallState, error) {

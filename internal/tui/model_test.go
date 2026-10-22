@@ -20,6 +20,14 @@ type fakeChatSession struct {
 	submitErr  error
 	interrupts int
 	contexts   []context.Context
+	approvals  []capturedApproval
+}
+
+type capturedApproval struct {
+	turnID   domain.TurnID
+	request  protocol.ToolApprovalRequestedPayload
+	decision protocol.ApprovalDecision
+	feedback string
 }
 
 func (session *fakeChatSession) Submit(ctx context.Context, text string) (<-chan protocol.Event, error) {
@@ -40,6 +48,120 @@ func (session *fakeChatSession) Interrupt() {
 	session.mu.Lock()
 	session.interrupts++
 	session.mu.Unlock()
+}
+
+func (session *fakeChatSession) ResolveApproval(_ context.Context, turnID domain.TurnID, request protocol.ToolApprovalRequestedPayload, decision protocol.ApprovalDecision, feedback string) error {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	session.approvals = append(session.approvals, capturedApproval{turnID: turnID, request: request, decision: decision, feedback: feedback})
+	return nil
+}
+
+func TestApprovalOverlayPreservesDraftAndSubmitsCorrelatedDecision(t *testing.T) {
+	session := &fakeChatSession{}
+	model := NewModel(context.Background(), "test", session)
+	model.draft = []rune("kept draft")
+	event := mustApprovalRequested(t)
+	model = updateModel(t, model, RuntimeEventMsg{Event: event})
+	if model.approval == nil || model.approval.selected != 2 {
+		t.Fatalf("approval overlay = %#v", model.approval)
+	}
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("ignored")})
+	if string(model.draft) != "kept draft" {
+		t.Fatalf("draft changed under overlay: %q", string(model.draft))
+	}
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyUp})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyUp})
+	updated, command := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	if command == nil || !model.approval.submitted {
+		t.Fatal("approval was not submitted")
+	}
+	_ = command()
+	if len(session.approvals) != 1 || session.approvals[0].decision != protocol.ApprovalAllowOnce || session.approvals[0].turnID != event.TurnID || session.approvals[0].request.Fingerprint != strings.Repeat("a", 64) {
+		t.Fatalf("approval = %#v", session.approvals)
+	}
+	_, duplicate := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if duplicate != nil {
+		t.Fatal("submitted overlay accepted a duplicate decision")
+	}
+}
+
+func TestApprovalFeedbackEscapeAndResolutionLifecycle(t *testing.T) {
+	session := &fakeChatSession{}
+	model := NewModel(context.Background(), "test", session)
+	event := mustApprovalRequested(t)
+	model = updateModel(t, model, RuntimeEventMsg{Event: event})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyTab})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("请保留旧名")})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEsc})
+	if model.approval == nil || model.approval.editing || session.interrupts != 0 {
+		t.Fatal("首次 Esc 未只退出反馈编辑")
+	}
+	updated, command := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+	_ = command()
+	if len(session.approvals) != 1 || session.approvals[0].decision != protocol.ApprovalDeny || session.approvals[0].feedback != "请保留旧名" {
+		t.Fatalf("deny approval = %#v", session.approvals)
+	}
+	resolved, err := protocol.NewToolApprovalResolved(protocol.ToolApprovalResolvedPayload{RequestID: eventApprovalRequestID, InvocationID: eventApprovalInvocationID, Fingerprint: strings.Repeat("a", 64), Decision: protocol.ApprovalDeny})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved.TurnID = event.TurnID
+	model = updateModel(t, model, RuntimeEventMsg{Event: resolved})
+	if model.approval != nil {
+		t.Fatal("resolved event did not close overlay")
+	}
+}
+
+func TestApprovalScrollAndResizeKeepCandidateState(t *testing.T) {
+	model := NewModel(context.Background(), "test", &fakeChatSession{})
+	event := mustApprovalRequested(t)
+	payload, _ := protocol.DecodeToolApprovalRequested(event)
+	payload.Diff = strings.Repeat("-old line\n+new line\n", 30)
+	event, _ = protocol.NewToolApprovalRequested(payload)
+	event.TurnID, _ = domain.ParseTurnID("018f1d8a-7b5c-7def-8234-456789abcdef")
+	model = updateModel(t, model, RuntimeEventMsg{Event: event})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyTab})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("保留反馈")})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEsc})
+	for range 5 {
+		model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyPgDown})
+	}
+	before := *model.approval
+	model = updateModel(t, model, tea.WindowSizeMsg{Width: 32, Height: 10})
+	if model.approval.request.Fingerprint != before.request.Fingerprint || model.approval.selected != before.selected || string(model.approval.feedback) != string(before.feedback) || model.approval.scroll != before.scroll {
+		t.Fatalf("resize changed approval semantics: before=%#v after=%#v", before, model.approval)
+	}
+	view := model.View()
+	if !strings.Contains(view, "of 61") || !strings.Contains(view, "No") || strings.Contains(view, "kept draft") {
+		t.Fatalf("small approval view = %q", view)
+	}
+}
+
+const (
+	eventApprovalRequestID    = "018f1d8a-7b5c-7def-8123-456789abcdef"
+	eventApprovalInvocationID = "018f1d8a-7b5c-7def-8abc-456789abcdef"
+)
+
+func mustApprovalRequested(t *testing.T) protocol.Event {
+	t.Helper()
+	event, err := protocol.NewToolApprovalRequested(protocol.ToolApprovalRequestedPayload{
+		RequestID: eventApprovalRequestID, InvocationID: eventApprovalInvocationID,
+		ProviderCallID: "call-patch", Capability: "fs.patch", Reason: "Patch modifies an existing workspace file.",
+		RelativePath: "src/main.go", Fingerprint: strings.Repeat("a", 64),
+		Diff:      "--- a/src/main.go\n+++ b/src/main.go\n-old\n+new\n",
+		Decisions: []protocol.ApprovalDecision{protocol.ApprovalAllowOnce, protocol.ApprovalAllowSession, protocol.ApprovalDeny},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	event.TurnID, err = domain.ParseTurnID("018f1d8a-7b5c-7def-8234-456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return event
 }
 
 func TestModelSubmitsAndProjectsOrderedDeltas(t *testing.T) {

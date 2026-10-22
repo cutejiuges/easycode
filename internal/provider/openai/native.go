@@ -28,6 +28,7 @@ type NativeItem struct {
 	CallID           string                 `json:"call_id,omitempty"`
 	Name             string                 `json:"name,omitempty"`
 	Arguments        string                 `json:"arguments,omitempty"`
+	Input            string                 `json:"input,omitempty"`
 	Output           string                 `json:"output,omitempty"`
 	Role             string                 `json:"role,omitempty"`
 	Phase            string                 `json:"phase,omitempty"`
@@ -88,6 +89,7 @@ type nativeItemWire struct {
 	CallID           string                 `json:"call_id,omitempty"`
 	Name             string                 `json:"name,omitempty"`
 	Arguments        string                 `json:"arguments,omitempty"`
+	Input            string                 `json:"input,omitempty"`
 	Output           string                 `json:"output,omitempty"`
 	Role             string                 `json:"role,omitempty"`
 	Phase            string                 `json:"phase,omitempty"`
@@ -129,6 +131,7 @@ func (item NativeItem) MarshalJSON() ([]byte, error) {
 		CallID:           item.CallID,
 		Name:             item.Name,
 		Arguments:        item.Arguments,
+		Input:            item.Input,
 		Output:           item.Output,
 		Role:             item.Role,
 		Phase:            item.Phase,
@@ -153,6 +156,7 @@ func (item *NativeItem) UnmarshalJSON(data []byte) error {
 		CallID:           wire.CallID,
 		Name:             wire.Name,
 		Arguments:        wire.Arguments,
+		Input:            wire.Input,
 		Output:           wire.Output,
 		Role:             wire.Role,
 		Phase:            wire.Phase,

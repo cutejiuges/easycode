@@ -13,6 +13,7 @@ import (
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
 	"easycode/internal/provider"
+	"easycode/internal/tool"
 )
 
 type controlledInvocation struct {
@@ -485,6 +486,48 @@ func TestAgentLoopRunStateOwnsQueueLedgerAndClosingTransitions(t *testing.T) {
 	default:
 		t.Fatal("active turn was not cancelled")
 	}
+}
+
+func TestAgentLoopRoutesCorrelatedApprovalWithoutStartingTurn(t *testing.T) {
+	invocation, candidate := runtimePatchInvocation(t)
+	approvalID, _ := tool.ParseApprovalRequestID("018f1d8a-7b5c-7def-8abc-456789abcdef")
+	request, err := tool.NewApprovalRequest(
+		approvalID, runtimeSessionID, runtimeThreadID, runtimeTurnID, candidate,
+		"Patch modifies an existing workspace file.",
+		[]tool.ApprovalDecision{tool.ApprovalAllowOnce, tool.ApprovalAllowSession, tool.ApprovalDeny},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeValue := &Runtime{approval: &runtimeApproval{request: request, done: make(chan struct{})}}
+	loop := &AgentLoop{
+		runtime: runtimeValue, config: DefaultAgentLoopConfig(),
+		outputs: make(chan protocol.ControlItem, 4),
+	}
+	state := newAgentLoopRunState(loop, context.Background())
+	state.active = &activeLoopTurn{turnID: runtimeTurnID}
+	commandRequestID, _ := protocol.ParseRequestID("approval-command")
+	command, err := protocol.NewResolveToolApprovalCommand(
+		commandRequestID, runtimeTurnID, string(approvalID), string(invocation.InvocationID()),
+		string(candidate.Fingerprint()), protocol.ApprovalAllowOnce, "",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestSlot := loopCommandRequest{command: command, result: make(chan loopCommandResponse, 1)}
+	state.handleCommand(requestSlot)
+	response := <-requestSlot.result
+	if response.err != nil || response.result.Disposition() != protocol.CommandDispositionResolving || state.active.turnID != runtimeTurnID || len(state.queue) != 0 {
+		t.Fatalf("approval result=%#v error=%v state=%#v", response.result, response.err, state)
+	}
+	if runtimeValue.approval == nil || !runtimeValue.approval.resolved || runtimeValue.approval.response.Decision() != tool.ApprovalAllowOnce {
+		t.Fatalf("runtime approval=%#v", runtimeValue.approval)
+	}
+
+	duplicate := loopCommandRequest{command: command, result: make(chan loopCommandResponse, 1)}
+	state.handleCommand(duplicate)
+	duplicateResponse := <-duplicate.result
+	assertRejectedCode(t, duplicateResponse.result, protocol.ControlErrorDuplicateRequest)
 }
 
 func TestAgentLoopWaitsForProviderChannelCloseBeforeFollowUp(t *testing.T) {

@@ -15,6 +15,8 @@ type ResultStatus string
 
 const (
 	ResultSuccess          ResultStatus = "success"
+	ResultDenied           ResultStatus = "denied"
+	ResultConflict         ResultStatus = "conflict"
 	ResultError            ResultStatus = "error"
 	ResultCancelled        ResultStatus = "cancelled"
 	ResultOutcomeUncertain ResultStatus = "outcome_uncertain"
@@ -23,7 +25,7 @@ const (
 // Valid 判断结果状态是否受支持。
 func (status ResultStatus) Valid() bool {
 	switch status {
-	case ResultSuccess, ResultError, ResultCancelled, ResultOutcomeUncertain:
+	case ResultSuccess, ResultDenied, ResultConflict, ResultError, ResultCancelled, ResultOutcomeUncertain:
 		return true
 	default:
 		return false
@@ -102,19 +104,21 @@ type InvocationResult struct {
 	invocationID   InvocationID
 	providerCallID ProviderCallID
 	capability     CapabilityID
+	wireKind       ProviderWireKind
 	status         ResultStatus
 	code           string
 	preview        ModelPreview
 	readMetadata   ReadResultMetadata
 	globMetadata   GlobResultMetadata
 	grepMetadata   GrepResultMetadata
+	patchMetadata  PatchResultMetadata
 }
 
 // NewReadInvocationResult 构造完整 Read 结果。
 func NewReadInvocationResult(invocation ReadInvocation, status ResultStatus, code string, preview ModelPreview, metadata ReadResultMetadata) (InvocationResult, error) {
 	result := InvocationResult{
 		invocationID: invocation.invocationID, providerCallID: invocation.providerCallID,
-		capability: CapabilityRead, status: status, code: code, preview: preview, readMetadata: metadata,
+		capability: CapabilityRead, wireKind: WireStructured, status: status, code: code, preview: preview, readMetadata: metadata,
 	}
 	if err := result.Validate(); err != nil {
 		return InvocationResult{}, err
@@ -126,7 +130,7 @@ func NewReadInvocationResult(invocation ReadInvocation, status ResultStatus, cod
 func NewGlobInvocationResult(invocation GlobInvocation, status ResultStatus, code string, preview ModelPreview, metadata GlobResultMetadata) (InvocationResult, error) {
 	result := InvocationResult{
 		invocationID: invocation.invocationID, providerCallID: invocation.providerCallID,
-		capability: CapabilityGlob, status: status, code: code, preview: preview, globMetadata: metadata,
+		capability: CapabilityGlob, wireKind: WireStructured, status: status, code: code, preview: preview, globMetadata: metadata,
 	}
 	if err := result.Validate(); err != nil {
 		return InvocationResult{}, err
@@ -138,7 +142,19 @@ func NewGlobInvocationResult(invocation GlobInvocation, status ResultStatus, cod
 func NewGrepInvocationResult(invocation GrepInvocation, status ResultStatus, code string, preview ModelPreview, metadata GrepResultMetadata) (InvocationResult, error) {
 	result := InvocationResult{
 		invocationID: invocation.invocationID, providerCallID: invocation.providerCallID,
-		capability: CapabilityGrep, status: status, code: code, preview: preview, grepMetadata: metadata,
+		capability: CapabilityGrep, wireKind: WireStructured, status: status, code: code, preview: preview, grepMetadata: metadata,
+	}
+	if err := result.Validate(); err != nil {
+		return InvocationResult{}, err
+	}
+	return result, nil
+}
+
+// NewPatchInvocationResult 构造完整Patch结果并保留原生wire kind。
+func NewPatchInvocationResult(invocation PatchInvocation, status ResultStatus, code string, preview ModelPreview, metadata PatchResultMetadata) (InvocationResult, error) {
+	result := InvocationResult{
+		invocationID: invocation.invocationID, providerCallID: invocation.providerCallID,
+		capability: CapabilityPatch, wireKind: invocation.wireKind, status: status, code: code, preview: preview, patchMetadata: metadata,
 	}
 	if err := result.Validate(); err != nil {
 		return InvocationResult{}, err
@@ -149,12 +165,16 @@ func NewGrepInvocationResult(invocation GrepInvocation, status ResultStatus, cod
 func (result InvocationResult) InvocationID() InvocationID       { return result.invocationID }
 func (result InvocationResult) ProviderCallID() ProviderCallID   { return result.providerCallID }
 func (result InvocationResult) Capability() CapabilityID         { return result.capability }
+func (result InvocationResult) WireKind() ProviderWireKind       { return result.wireKind }
 func (result InvocationResult) Status() ResultStatus             { return result.status }
 func (result InvocationResult) Code() string                     { return result.code }
 func (result InvocationResult) Preview() ModelPreview            { return result.preview }
 func (result InvocationResult) ReadMetadata() ReadResultMetadata { return result.readMetadata }
 func (result InvocationResult) GlobMetadata() GlobResultMetadata { return result.globMetadata }
 func (result InvocationResult) GrepMetadata() GrepResultMetadata { return result.grepMetadata }
+func (result InvocationResult) PatchMetadata() PatchResultMetadata {
+	return result.patchMetadata
+}
 
 // Validate 验证结果身份、状态、错误码、preview 和元数据。
 func (result InvocationResult) Validate() error {
@@ -163,6 +183,9 @@ func (result InvocationResult) Validate() error {
 	}
 	if !result.status.Valid() {
 		return errors.New("tool result status is invalid")
+	}
+	if !result.wireKind.Valid() {
+		return errors.New("tool result wire kind is invalid")
 	}
 	if result.code == "" || !validResultCode(result.code) {
 		return errors.New("tool result code is invalid")
@@ -175,20 +198,25 @@ func (result InvocationResult) Validate() error {
 	}
 	switch result.capability {
 	case CapabilityRead:
-		if !result.globMetadata.zero() || !result.grepMetadata.zero() {
+		if result.wireKind != WireStructured || !result.globMetadata.zero() || !result.grepMetadata.zero() || !result.patchMetadata.zero() {
 			return errors.New("Read result contains mismatched metadata")
 		}
 		return result.readMetadata.Validate()
 	case CapabilityGlob:
-		if result.readMetadata != (ReadResultMetadata{}) || !result.grepMetadata.zero() || len(result.preview.text) > MaxSearchPreviewBytes {
+		if result.wireKind != WireStructured || result.readMetadata != (ReadResultMetadata{}) || !result.grepMetadata.zero() || !result.patchMetadata.zero() || len(result.preview.text) > MaxSearchPreviewBytes {
 			return errors.New("Glob result contains mismatched metadata")
 		}
 		return result.globMetadata.Validate()
 	case CapabilityGrep:
-		if result.readMetadata != (ReadResultMetadata{}) || !result.globMetadata.zero() || len(result.preview.text) > MaxSearchPreviewBytes {
+		if result.wireKind != WireStructured || result.readMetadata != (ReadResultMetadata{}) || !result.globMetadata.zero() || !result.patchMetadata.zero() || len(result.preview.text) > MaxSearchPreviewBytes {
 			return errors.New("Grep result contains mismatched metadata")
 		}
 		return result.grepMetadata.Validate()
+	case CapabilityPatch:
+		if result.readMetadata != (ReadResultMetadata{}) || !result.globMetadata.zero() || !result.grepMetadata.zero() {
+			return errors.New("Patch result contains mismatched metadata")
+		}
+		return result.patchMetadata.Validate()
 	default:
 		return errors.New("tool result capability is invalid")
 	}
@@ -268,7 +296,7 @@ func NewReadErrorResult(invocation ReadInvocation, status ResultStatus, code str
 	return result
 }
 
-// NewInvocationErrorResult 为三种能力生成不泄漏底层 cause 的确定错误结果。
+// NewInvocationErrorResult 为当前四种能力生成不泄漏底层cause的确定错误结果。
 func NewInvocationErrorResult(invocation Invocation, status ResultStatus, code string, message string) InvocationResult {
 	switch invocation.Capability() {
 	case CapabilityRead:
@@ -290,6 +318,9 @@ func NewInvocationErrorResult(invocation Invocation, status ResultStatus, code s
 		if err == nil {
 			return result
 		}
+	case CapabilityPatch:
+		value, _ := invocation.Patch()
+		return NewPatchErrorResult(value, status, code, message)
 	}
 	return InvocationResult{}
 }
@@ -302,7 +333,61 @@ func invalidInternalResult(invocation ReadInvocation, relativePath string) Invoc
 	metadata := ReadResultMetadata{relativePath: relativePath, requestedOffset: invocation.input.offset, requestedLimit: invocation.input.limit}
 	return InvocationResult{
 		invocationID: invocation.invocationID, providerCallID: invocation.providerCallID,
-		capability: CapabilityRead, status: ResultError, code: "internal_error", preview: preview, readMetadata: metadata,
+		capability: CapabilityRead, wireKind: WireStructured, status: ResultError, code: "internal_error", preview: preview, readMetadata: metadata,
+	}
+}
+
+// NewPatchSuccessResult 生成稳定且不包含文件正文的Patch成功结果。
+func NewPatchSuccessResult(candidate PatchCandidate) InvocationResult {
+	metadata := candidate.summary
+	message := fmt.Sprintf("Updated %s (%d replacements, +%d -%d lines)", metadata.relativePath, metadata.replacementCount, metadata.addedLines, metadata.removedLines)
+	preview, previewErr := NewModelPreview(message)
+	invocation := PatchInvocation{
+		invocationID: candidate.invocationID, providerCallID: candidate.providerCallID,
+		wireKind: candidate.wireKind, input: candidate.input.Clone(),
+	}
+	if previewErr != nil {
+		return invalidPatchInternalResult(invocation)
+	}
+	result, err := NewPatchInvocationResult(invocation, ResultSuccess, "ok", preview, metadata)
+	if err != nil {
+		return invalidPatchInternalResult(invocation)
+	}
+	return result
+}
+
+// NewPatchErrorResult 生成稳定Patch拒绝、冲突、取消或错误结果。
+func NewPatchErrorResult(invocation PatchInvocation, status ResultStatus, code string, message string) InvocationResult {
+	if status == ResultSuccess || !status.Valid() {
+		status = ResultError
+	}
+	preview, previewErr := NewModelPreview(message)
+	metadata, metadataErr := NewPatchResultMetadata(invocation.input.filePath, len(invocation.input.replacements), 0, 0)
+	if previewErr != nil || metadataErr != nil {
+		return invalidPatchInternalResult(invocation)
+	}
+	result, err := NewPatchInvocationResult(invocation, status, code, preview, metadata)
+	if err != nil {
+		return invalidPatchInternalResult(invocation)
+	}
+	return result
+}
+
+func invalidPatchInternalResult(invocation PatchInvocation) InvocationResult {
+	path := invocation.input.filePath
+	if path == "" || validateSearchPath(path) != nil {
+		path = ".internal"
+	}
+	count := len(invocation.input.replacements)
+	if count < 1 {
+		count = 1
+	}
+	preview := ModelPreview{text: "Patch failed: internal_error"}
+	metadata := PatchResultMetadata{relativePath: path, replacementCount: count}
+	return InvocationResult{
+		invocationID: invocation.invocationID, providerCallID: invocation.providerCallID,
+		capability: CapabilityPatch, wireKind: invocation.wireKind, status: ResultError,
+		code: "internal_error", preview: preview, patchMetadata: metadata,
 	}
 }
 

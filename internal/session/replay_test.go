@@ -255,6 +255,72 @@ func TestReplayPlannerReportsToolRecoveryStates(t *testing.T) {
 	}
 }
 
+func TestReplayPlannerReportsPatchCrashStates(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		appendTail   func(*replayFixture, tool.Invocation, tool.CandidateFingerprint)
+		wantState    ReplayedToolCallState
+		wantApproval tool.ApprovalOutcome
+	}{
+		{name: "before approval", wantState: ReplayedToolCallReady},
+		{name: "allow before start", wantState: ReplayedToolCallReady, wantApproval: tool.ApprovalOutcomeAllowOnce, appendTail: func(f *replayFixture, invocation tool.Invocation, fingerprint tool.CandidateFingerprint) {
+			f.appendBatch(mustPatchApprovalDraft(t, invocation, fingerprint, tool.ApprovalOutcomeAllowOnce))
+		}},
+		{name: "started before result", wantState: ReplayedToolCallStarted, wantApproval: tool.ApprovalOutcomeAllowOnce, appendTail: func(f *replayFixture, invocation tool.Invocation, fingerprint tool.CandidateFingerprint) {
+			f.appendBatch(mustPatchApprovalDraft(t, invocation, fingerprint, tool.ApprovalOutcomeAllowOnce))
+			f.appendBatch(mustStartedDraftForReplay(t, invocation))
+		}},
+		{name: "result before output", wantState: ReplayedToolCallResult, wantApproval: tool.ApprovalOutcomeAllowOnce, appendTail: func(f *replayFixture, invocation tool.Invocation, fingerprint tool.CandidateFingerprint) {
+			f.appendBatch(mustPatchApprovalDraft(t, invocation, fingerprint, tool.ApprovalOutcomeAllowOnce))
+			f.appendBatch(mustStartedDraftForReplay(t, invocation))
+			f.appendBatch(mustPatchResultDraft(t, invocation, tool.ResultSuccess, "ok"))
+		}},
+		{name: "denied", wantState: ReplayedToolCallResult, wantApproval: tool.ApprovalOutcomeDeny, appendTail: func(f *replayFixture, invocation tool.Invocation, fingerprint tool.CandidateFingerprint) {
+			f.appendBatch(
+				mustPatchApprovalDraft(t, invocation, fingerprint, tool.ApprovalOutcomeDeny),
+				mustPatchResultDraft(t, invocation, tool.ResultDenied, "approval_denied"),
+			)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newReplayFixture(t)
+			fixture.appendMetadata()
+			fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+			invocation := testReplayPatchInvocation(t)
+			appendReplayCallSample(t, fixture, invocation)
+			fingerprint := tool.NewCandidateFingerprint([]byte("candidate"))
+			if test.appendTail != nil {
+				test.appendTail(fixture, invocation, fingerprint)
+			}
+			plan, err := NewReplayPlanner().Plan(fixture.loaded())
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls := plan.ToolRecovery.Calls()
+			if len(calls) != 1 || calls[0].State != test.wantState || calls[0].ApprovalOutcome != test.wantApproval {
+				t.Fatalf("Patch recovery = %#v", calls)
+			}
+			if test.wantApproval != "" && calls[0].CandidateFingerprint != fingerprint {
+				t.Fatalf("Patch fingerprint = %q", calls[0].CandidateFingerprint)
+			}
+		})
+	}
+}
+
+func TestReplayPlannerRejectsAllowedPatchResultWithoutStart(t *testing.T) {
+	fixture := newReplayFixture(t)
+	fixture.appendMetadata()
+	fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+	invocation := testReplayPatchInvocation(t)
+	appendReplayCallSample(t, fixture, invocation)
+	fingerprint := tool.NewCandidateFingerprint([]byte("candidate"))
+	fixture.appendBatch(mustPatchApprovalDraft(t, invocation, fingerprint, tool.ApprovalOutcomeAllowOnce))
+	fixture.appendBatch(mustPatchResultDraft(t, invocation, tool.ResultSuccess, "ok"))
+	if _, err := NewReplayPlanner().Plan(fixture.loaded()); err == nil || !strings.Contains(err.Error(), "execution start") {
+		t.Fatalf("allowed Patch without start error = %v", err)
+	}
+}
+
 func TestReplayPlannerAcceptsCancellationBeforeExecutorStart(t *testing.T) {
 	fixture := newReplayFixture(t)
 	fixture.appendMetadata()
@@ -414,6 +480,50 @@ func testReplayGlobInvocation(t *testing.T, invocationValue string, callValue st
 		t.Fatal(err)
 	}
 	return invocation
+}
+
+func testReplayPatchInvocation(t *testing.T) tool.Invocation {
+	t.Helper()
+	replacement, _ := tool.NewPatchReplacement("old", "new", false)
+	input, _ := tool.NewPatchInput("main.go", []tool.PatchReplacement{replacement})
+	callID, _ := tool.ParseProviderCallID("call-patch")
+	ready, _ := tool.NewPatchReadyCall(callID, tool.WireCustomFreeform, input)
+	invocationID, _ := tool.ParseInvocationID("01890f3e-7bcd-7abc-8abc-0123456789ad")
+	invocation, err := tool.NewInvocation(invocationID, ready)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return invocation
+}
+
+func mustPatchApprovalDraft(t *testing.T, invocation tool.Invocation, fingerprint tool.CandidateFingerprint, outcome tool.ApprovalOutcome) RecordDraft {
+	t.Helper()
+	requestID, _ := tool.ParseApprovalRequestID("018f1d8a-7b5c-7def-8abc-456789abcdef")
+	draft, err := NewToolApprovalDecidedDraft(testTurnID, ToolApprovalDecidedPayload{
+		RequestID: requestID, InvocationID: invocation.InvocationID(), Fingerprint: fingerprint, Outcome: outcome,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return draft
+}
+
+func mustPatchResultDraft(t *testing.T, invocation tool.Invocation, status tool.ResultStatus, code string) RecordDraft {
+	t.Helper()
+	patch, _ := invocation.Patch()
+	var result tool.InvocationResult
+	if status == tool.ResultSuccess {
+		preview, _ := tool.NewModelPreview("Updated main.go (1 replacements, +1 -1 lines)")
+		metadata, _ := tool.NewPatchResultMetadata("main.go", 1, 1, 1)
+		result, _ = tool.NewPatchInvocationResult(patch, status, code, preview, metadata)
+	} else {
+		result = tool.NewPatchErrorResult(patch, status, code, "Patch denied: "+code)
+	}
+	draft, err := NewToolCallResultDraft(testTurnID, result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return draft
 }
 
 func mustReadyDraftForReplay(t *testing.T, invocation tool.Invocation, sampleIndex uint32, callIndex uint32) RecordDraft {

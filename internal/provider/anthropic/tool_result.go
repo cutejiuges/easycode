@@ -48,6 +48,8 @@ func anthropicCapabilityForName(name string) tool.CapabilityID {
 		return tool.CapabilityGlob
 	case "Grep":
 		return tool.CapabilityGrep
+	case "Edit":
+		return tool.CapabilityPatch
 	default:
 		return ""
 	}

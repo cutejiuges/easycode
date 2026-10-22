@@ -1,7 +1,7 @@
 # EasyCode 总体架构设计
 
 > 状态：持续演进
-> 更新时间：2026-10-07
+> 更新时间：2026-10-11
 > 适用范围：EasyCode CLI、Agent Runtime、Provider、工具、扩展系统、会话存储和 TUI
 
 ## 1. 背景与目标
@@ -107,7 +107,7 @@ EasyCode 是一个本地优先的 coding agent。产品体验主要参考 Claude
             Bubble Tea views      text / JSONL v1
 
 TurnRuntime -- durable records --> append-only Session JSONL
-TurnRuntime -- future tool loop --> ToolScheduler / Policy / Executor
+TurnRuntime -- durable tool loop --> ToolScheduler / Policy / Executor
 ```
 
 应用在取得启动工作目录后、打开 Session/Catalog/Provider 资源前，通过 `context/projectinstructions` 执行一次 descriptor-bound 发现。Loader 以最近 `.git` 为边界，从项目根到启动目录逐层选择 `AGENTS.md`，仅在同层主文件不存在时回退 `CLAUDE.md`，并生成只含项目根相对来源的有界不可变快照。应用默认模型可见预算为 32 KiB，构造器硬上限为 4 MiB；零值、负值和超限配置均在文件读取与预分配前拒绝。活动进程不热更新；resume/continue 使用新进程当前启动目录重新发现的快照，不读取 Session `creation_cwd` 中的旧规则。
@@ -165,7 +165,7 @@ app      -> runtime + tui + headless
 cmd      -> app
 ```
 
-上图是长期目标；当前 P2 运行路径为 `domain/protocol <- provider|context|session <- runtime <- app/tui/headless/cmd`。`context` 已通过纯内存 ContextPlanner 接入 Runtime，Provider 只向共享层暴露不含原生正文的 HistoryFootprint；Tool、extension、Subagent 和 telemetry 仍不可从 Runtime/app 到达。
+当前运行路径为 `domain/protocol <- provider|tool|context|session <- runtime <- app/tui/headless/cmd`。`context` 已通过纯内存 ContextPlanner 接入 Runtime，Provider 只向共享层暴露不含原生正文的 HistoryFootprint；Tool 已接入 Read/Glob/Grep 和需批准的单文件 Patch，extension、Subagent 和 telemetry 仍不可从 Runtime/app 到达。
 
 禁止：
 
@@ -494,7 +494,7 @@ Runtime 为每次 Provider stream 创建派生 context，逐项验证事件并�
 
 完整设计、参考工程取舍、恢复语义和分 change 推进顺序见 [Tool 系统架构设计](tool-system.md)。本章只保留总体架构必须遵守的边界。
 
-本章描述 P3 目标架构。当前 `internal/tool` 与 `internal/tool/builtin` 仅是经批准的 TODO 占位，没有可执行 schema、Provider wire、权限策略、执行器或 Runtime/app 消费者；下列内容不表示能力已经实现。
+本章同时描述已实现的 P3 基线与长期目标。当前 `internal/tool` 与 `internal/tool/builtin` 已由 Runtime/app 真实消费，提供 Read、Glob、Grep 和需批准的单文件 Patch；未在能力分期中明确标记已实现的其他内容仍是目标，不得由接口或文档描述推断为可用。
 
 ### 8.1 分层
 
@@ -553,7 +553,7 @@ fs.patch
 
 ### 8.5 能力分期
 
-P3 当前已实现 Read、Glob、Grep、双 Provider Tool Loop、durable ledger、最多 8 路只读并发、有序结果提交和本地恢复补偿。Edit/apply_patch、Write、exec/write_stdin、approval、artifact 和跨平台 sandbox 仍按独立 change 逐项增加，不得由现有只读能力推断为已完成。
+P3 当前已实现 Read、Glob、Grep、Anthropic structured Edit/OpenAI custom freeform apply_patch、双 Provider Tool Loop、durable approval/ledger、最多 8 路只读并发、exclusive Patch 屏障、有序结果提交和本地恢复补偿。Patch 限于一个已有 UTF-8 工作区常规文件，在 Unix 使用 descriptor-relative 重验与同目录原子替换；其他平台失败关闭。Write、exec/write_stdin、artifact、通用 sandbox 和跨平台等价实现仍按独立 change 逐项增加。
 
 Skill 与 hooks/plugins 属于 P6；MCP 和 Agent/Subagent 属于 P7；完整跨平台 sandbox 矩阵属于 P8。未到对应阶段前不得提前暴露空 schema、event kind、facade 或 capability flag。
 

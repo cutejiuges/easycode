@@ -49,6 +49,42 @@ func TestModelSnapshotsAtFixedTerminalSize(t *testing.T) {
 	}
 }
 
+func TestApprovalOverlaySnapshots(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		width  int
+		height int
+		mutate func(*Model)
+	}{
+		{name: "approval", width: 80, height: 24},
+		{name: "approval_small", width: 34, height: 12},
+		{name: "approval_feedback", width: 80, height: 24, mutate: func(model *Model) {
+			model.approval.editing = true
+			model.approval.feedback = []rune("请保留旧名")
+		}},
+		{name: "approval_submitted", width: 80, height: 24, mutate: func(model *Model) {
+			model.approval.submitted = true
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			model := snapshotStreamingModel(t)
+			model = updateModel(t, model, RuntimeEventMsg{Event: mustApprovalRequested(t)})
+			model = updateModel(t, model, tea.WindowSizeMsg{Width: test.width, Height: test.height})
+			if test.mutate != nil {
+				test.mutate(&model)
+			}
+			got := model.View()
+			want, err := os.ReadFile(filepath.Join("testdata", test.name+".golden"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != string(want) {
+				t.Fatalf("snapshot mismatch:\n--- got ---\n%s--- want ---\n%s", got, want)
+			}
+		})
+	}
+}
+
 func snapshotResumedModel(t *testing.T) Model {
 	t.Helper()
 	return NewModel(context.Background(), "test", &fakeChatSession{}, domain.SemanticHistoryView{

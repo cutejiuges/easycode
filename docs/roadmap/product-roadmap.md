@@ -143,8 +143,8 @@ make verify
 - 已完成 Anthropic Messages text-only request、indexed content-block reducer、会话级 native history、thinking/signature/redacted thinking 无损回放、显式 `message_stop` terminal、两种 API prefix 的双轮回归，并接入同一基础 TUI Chat。
 - 已完成双 Provider 共享 `StreamEvent` 的封闭构造与纯内存验证；Runtime 在消费端协议错误时取消派生 context并同步排空到 producer 关闭，AgentLoop 只在前一 stream 清理完成后启动下一 turn。
 - 已完成双 Provider 的 committed-only 文本 `HistoryProjector`：投影保留 turn 边界和可见文本，但不暴露 thinking/signature、redacted thinking、reasoning summary、encrypted content、phase、usage 或未知扩展，也不参与后续请求编译。
-- Anthropic 当前声明 streaming 与 thinking-signature 原生保留能力，OpenAI 当前声明 streaming 与 encrypted reasoning 原生保留能力；两者的 completed-sample raw/normalized usage、原生历史 footprint 和本地 token estimator 已在 P2 落地。P2 也已实现文本回合的 JSONL Session、`--resume`、单 turn `--print/--json` 和带可选项目指令的 ContextPlanner；此后 P3 已补充 Read/Glob/Grep Tool Loop，但 reasoning/tool UI projection、完整 CachePlanner、usage 成本/TUI、prompt cache key、`previous_response_id` 和自动重试仍留在对应后续阶段。
-- TUI 只消费 typed RuntimeEvent 和 ChatSession facade；本次不提前实现 Markdown、多行 composer、slash command、diff、permission overlay 或 session picker。
+- Anthropic 当前声明 streaming、thinking-signature 原生保留与 structured Edit 能力，OpenAI 当前声明 streaming、encrypted reasoning 原生保留与 custom freeform apply_patch 能力。P2 已落地 completed-sample usage、原生历史 footprint、JSONL Session、resume/headless 和 ContextPlanner；P3 已补充 Read/Glob/Grep/Patch Tool Loop 与 approval，但通用 tool UI、完整 CachePlanner、usage 成本/TUI、prompt cache key、`previous_response_id` 和自动重试仍留在后续阶段。
+- TUI 只消费 typed RuntimeEvent 和 ChatSession facade；已提供 Patch diff approval overlay，Markdown、多行 composer、slash command、通用 permission 面板和 session picker 仍未实现。
 
 #### OpenAI Responses（首要 Provider）
 
@@ -216,7 +216,7 @@ make verify
 
 确定性上下文规划基线已交付：Runtime 在 durable `turn_started` 与 Provider stream 之间构造 `provider_profile -> [project_instructions] -> committed_history -> current_input`，输出不可变来源、CachePlan、stable-prefix fingerprint、本地 `byte_heuristic_v1` 估算和预算判定。应用在资源打开前从当前启动目录安全发现一次层级 `AGENTS.md`/`CLAUDE.md`，形成默认 32 KiB、硬上限 4 MiB、只含项目根相对来源的不可变快照；活动进程不热更新，resume/continue 在新进程当前目录重新发现。双 Provider 每轮把非空快照作为单一临时 user context 置于 native history 前，但不提交到 native history、Session、RuntimeEvent 或语义投影。双 Provider 从 committed native history 提供只含 family/revision/method/state/tokens 的 footprint，opaque reasoning 不进入共享视图；语义估算与 native footprint 取覆盖值而不是相加。用户可显式配置 context window、输出预留和安全余量；未配置或估算 unknown 时不硬拒绝，明确超限以 `context_limit_exceeded` 在网络前 durable 失败。
 
-P2 尚未完成：session picker、worktree/project catalog、title/tag/search、实时索引、same-turn steered input、usage 成本/配额与 TUI 展示、真实 cache request 策略和观测指标、skill context sources、artifact、fork/subagent 线程树、compaction checkpoint，以及稳定发布后真实 schema/payload revision 的版本专属转换。Read/Glob/Grep Tool Loop 已交付 tool catalog source、ledger/result、durable output 与有序并行边界；已交付的 FIFO follow-up queue 仍只在进程内存在，`queued` 不是 durable 确认，same-turn steer 必须另行接入 tool output safe point。当前 fixture 是唯一当前格式，不代表通用 migration 已实现；当前进度不能视为 P2 退出。
+P2 尚未完成：session picker、worktree/project catalog、title/tag/search、实时索引、same-turn steered input、usage 成本/配额与 TUI 展示、真实 cache request 策略和观测指标、skill context sources、artifact、fork/subagent 线程树、compaction checkpoint，以及稳定发布后真实 schema/payload revision 的版本专属转换。Read/Glob/Grep/Patch Tool Loop 已交付 tool catalog source、approval/ledger/result、durable output、有序并行与 exclusive 屏障；已交付的 FIFO follow-up queue 仍只在进程内存在，`queued` 不是 durable 确认，same-turn steer 必须另行接入 tool output safe point。当前 fixture 是唯一当前格式，不代表通用 migration 已实现；当前进度不能视为 P2 退出。
 
 本次 P2 基础契约强化还加入语义分支脚本、本地 hooks、GitHub Actions jobs 和集中式架构守卫。GitHub `main` ruleset 的 required checks 与 direct-push 禁止仍须管理员在仓库外启用。secure config/session opener 当前只在 macOS/Linux 提供等价语义；Windows 等目标可以编译，但相关运行路径明确失败关闭，平台实现与兼容矩阵留在 P8。
 
@@ -235,7 +235,7 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 
 ### 6.3 工作内容
 
-- 已实现 text user input、Read/Glob/Grep 多 sample Tool Loop 与 final assistant output；写工具、命令、approval 和 same-turn steer 仍待后续 P3 change。
+- 已实现 text user input、Read/Glob/Grep/Patch 多 sample Tool Loop 与 final assistant output；Patch approval 已具备交互与 headless 失败关闭语义，整文件 Write、命令和 same-turn steer 仍待后续 P3 change。
 - 已实现有界 FIFO queued follow-up、request identity 去重、定向 interrupt、EOF drain 与显式 shutdown；same-turn steer 仍待 P3 safe point。
 - 已实现 `provider_profile`、可选 `project_instructions`、`committed_history`、`current_input` 的固定顺序、正交 lifecycle/cache stability、canonical segments、stable prefix、SemanticHistoryView 可见估算与 Provider-native footprint 覆盖合并；后续来源必须随真实消费者独立落地。
 - 已实现 JSONL SessionMeta、native commit、`sample_usage` 和文本 turn boundary；成本、缓存失效原因与累计指标仍待实现。
@@ -304,17 +304,16 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 
 P3 不采用一个覆盖全部工具的长线 change。以下名称是推荐顺序，不代表 change 已创建；每项仍需独立执行 `propose -> review/confirm -> apply -> verify -> archive`：
 
-当前状态：`add-read-tool-loop` 与 `add-search-tools-and-ordered-parallelism` 已实现，提供 Read/Glob/Grep、双 Provider 原生 wire、多 sample Runtime、最多 8 路只读并行、按 call index durable/提交、崩溃补偿和本地-only resume；approval、artifact、Tool UI、写工具与命令仍未实现。
+当前状态：`add-read-tool-loop`、`add-search-tools-and-ordered-parallelism` 与 `add-approved-file-patch-flow` 已实现，提供 Read/Glob/Grep/单文件 Patch、双 Provider 原生 wire、多 sample Runtime、最多 8 路只读并行、exclusive Patch 屏障、按 call index durable/提交、崩溃补偿和本地-only resume。Patch 已实现 allow/ask/deny、Runtime 局部 session grant、headless 失败关闭和 Claude 风格 diff approval overlay；artifact、整文件 Write、通用 Tool UI 和命令执行仍未实现。
 
 1. `add-read-tool-loop`（已实现）：以 Read 建立 catalog、双 Provider wire、多 sample Runtime、durable ready/result、ledger 和恢复的最小闭环。
 2. `add-search-tools-and-ordered-parallelism`（已实现）：增加 Glob/Grep、连续只读并发和按调用顺序提交。
-3. `add-tool-approval-protocol`：增加 allow/ask/deny、headless 失败关闭、输入修改后重验和 approval 事实。
-4. `add-file-patch-tools`：增加 Anthropic structured Edit、OpenAI freeform apply_patch、base evidence 和 diff artifact。
-5. `add-file-write-tool`：增加整文件写入、原子替换、权限保留与冲突策略。
-6. `add-command-execution`：增加 exec、进程 owner、取消、超时、输出预算和当前平台最小 sandbox。
-7. `add-background-process-control`：增加受控 process handle、write_stdin、最终 wait 和 shutdown 路径。
-8. `add-tool-result-budget`：统一工具特定预算、artifact、模型预览持久化和恢复等价。
-9. `add-same-turn-steering`：只在 tool outputs 后、下一 sample 前的 safe point 注入输入。
+3. `add-approved-file-patch-flow`（已实现）：同时落地 allow/ask/deny、headless 失败关闭、Anthropic structured Edit、OpenAI custom freeform apply_patch、base evidence、完整 diff、原子替换和 approval 崩溃恢复。
+4. `add-file-write-tool`：增加整文件写入、原子替换、权限保留与冲突策略。
+5. `add-command-execution`：增加 exec、进程 owner、取消、超时、输出预算和当前平台最小 sandbox。
+6. `add-background-process-control`：增加受控 process handle、write_stdin、最终 wait 和 shutdown 路径。
+7. `add-tool-result-budget`：统一工具特定预算、artifact、模型预览持久化和恢复等价。
+8. `add-same-turn-steering`：只在 tool outputs 后、下一 sample 前的 safe point 注入输入。
 
 首个切片选择 Read，是因为它能用最低副作用风险验证最关键的双 Provider、Session durable 和 call/output 配对边界，并让接口由真实消费者驱动；不先建立万能 registry、空 facade 或没有行为证据的完整框架。
 
@@ -448,7 +447,7 @@ Skill、hooks/plugins、MCP 和 Agent/Subagent 不属于 P3 内置工具清单�
 
 ### 9.3 工作内容
 
-2026-09-19 已先交付验证 RuntimeEvent 边界的薄切片：单行 draft、顺序文本 delta、内存多轮、失败恢复、Esc/Ctrl+C 中断和固定尺寸 snapshot。它不改变 P5 的完整范围，复杂 composer、Markdown、工具/diff、permission、reasoning 和 session picker 仍按本节后续实施。
+2026-09-19 已先交付验证 RuntimeEvent 边界的薄切片；2026-10-11 又交付了与 Patch candidate 精确关联的 diff approval overlay，包含默认 No、一次/本 Runtime session 允许、拒绝反馈、小窗口滚动、按键隔离和固定 snapshot。它不改变 P5 的完整范围，复杂 composer、Markdown、通用工具 cell、reasoning 和 session picker 仍按本节后续实施。
 
 - composer、多行输入、paste 保护、历史、补全和 slash command。
 - assistant commentary/final、thinking/reasoning 折叠。

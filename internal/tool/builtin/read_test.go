@@ -22,6 +22,11 @@ func (*inertWorkspaceHandle) openDirectory(string, workspaceHooks) (workspaceDir
 }
 func (*inertWorkspaceHandle) close() error { return nil }
 
+func (handle *inertWorkspaceHandle) openPatchFile(string, workspaceHooks) (patchFile, error) {
+	handle.opened++
+	return nil, errors.New("not used")
+}
+
 func TestNewReadExecutorDoesNotAccessFilesystem(t *testing.T) {
 	t.Parallel()
 	handle := &inertWorkspaceHandle{}

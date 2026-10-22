@@ -333,7 +333,7 @@ func TestRunTurnDurableSuccessOrderingAndIdentity(t *testing.T) {
 		t.Fatalf("journal batches = %#v", batches)
 	}
 	commit, err := session.DecodeNativeCommitPayload(session.Record{
-		PayloadVersion: 1,
+		PayloadVersion: session.EnvelopeVersion,
 		EventKind:      batches[1][0].EventKind(), Payload: batches[1][0].PayloadBytes(),
 	})
 	if err != nil {
@@ -343,7 +343,7 @@ func TestRunTurnDurableSuccessOrderingAndIdentity(t *testing.T) {
 		t.Fatalf("native commit = %#v", commit)
 	}
 	usageRecord, err := session.DecodeSampleUsagePayload(session.Record{
-		PayloadVersion: 1,
+		PayloadVersion: session.EnvelopeVersion,
 		EventKind:      batches[1][1].EventKind(), Payload: batches[1][1].PayloadBytes(),
 	})
 	if err != nil {
@@ -1339,7 +1339,7 @@ func TestRunTurnPersistsProviderFailureCancellationAndEarlyEOF(t *testing.T) {
 				t.Fatalf("journal batches = %#v", batches)
 			}
 			failure, decodeErr := session.DecodeTurnFailedPayload(session.Record{
-				PayloadVersion: 1,
+				PayloadVersion: session.EnvelopeVersion,
 				EventKind:      batches[1][0].EventKind(), Payload: batches[1][0].PayloadBytes(),
 			})
 			if decodeErr != nil {
@@ -1820,7 +1820,7 @@ func decodeRuntimeResultDraft(
 ) tool.InvocationResult {
 	t.Helper()
 	payload, err := session.DecodeToolCallResultPayload(session.Record{
-		PayloadVersion: 1,
+		PayloadVersion: session.EnvelopeVersion,
 		EventKind:      draft.EventKind(), Payload: draft.PayloadBytes(),
 	})
 	if err != nil {
@@ -1836,7 +1836,7 @@ func decodeRuntimeResultDraft(
 func decodeRuntimeFailureDraft(t *testing.T, draft session.RecordDraft) session.TurnFailedPayload {
 	t.Helper()
 	payload, err := session.DecodeTurnFailedPayload(session.Record{
-		PayloadVersion: 1,
+		PayloadVersion: session.EnvelopeVersion,
 		EventKind:      draft.EventKind(), Payload: draft.PayloadBytes(),
 	})
 	if err != nil {

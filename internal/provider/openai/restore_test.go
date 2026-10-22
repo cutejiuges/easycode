@@ -58,6 +58,14 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 				{Type: "function_call_output", CallID: "call-read", Output: `{"status":"success","code":"ok","content":"frozen read"}`},
 			},
 		},
+		{
+			Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("edit")),
+			Outputs: []NativeItem{
+				{Type: "reasoning", ID: "reason-edit", EncryptedContent: "opaque-edit"},
+				{Type: "custom_tool_call", ID: "ctc-edit", CallID: "call-edit", Name: "apply_patch", Input: "*** Begin Patch\n*** Update File: main.go\n@@\n-old\n+new\n*** End Patch\n"},
+			},
+		},
+		{Kind: nativeHistoryToolOutputs, ToolOutputs: []NativeItem{{Type: "custom_tool_call_output", CallID: "call-edit", Output: `{"status":"success","code":"ok","content":"frozen patch"}`}}},
 	}
 	uninterrupted := &Conversation{provider: instance}
 	commits := make([]provider.NativeCommitEnvelope, 0, len(entries))
@@ -121,12 +129,13 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	restoredShape := buildResponsesRequest(instance.config.Model, restored.historySnapshot(), &projectInstructions, nativeItemPointer(next), restoredToolView)
-	if first.Fingerprint() != second.Fingerprint() || len(restoredShape.Input) != 14 ||
+	if first.Fingerprint() != second.Fingerprint() || len(restoredShape.Input) != 18 ||
 		restoredShape.Input[0].Content[0].Text != projectInstructions.RenderedText() || restoredShape.Input[5].Type != "future_item" ||
 		restoredShape.Input[7].CallID != "call-glob" || restoredShape.Input[8].CallID != "call-grep" || restoredShape.Input[9].CallID != "call-read" ||
 		restoredShape.Input[10].CallID != "call-glob" || restoredShape.Input[11].CallID != "call-grep" || restoredShape.Input[12].CallID != "call-read" ||
 		!strings.Contains(restoredShape.Input[10].Output, "frozen glob") || !strings.Contains(restoredShape.Input[11].Output, "frozen grep") ||
-		!strings.Contains(restoredShape.Input[12].Output, "frozen read") {
+		!strings.Contains(restoredShape.Input[12].Output, "frozen read") || restoredShape.Input[15].Type != "custom_tool_call" || restoredShape.Input[15].Input == "" ||
+		restoredShape.Input[16].Type != "custom_tool_call_output" || !strings.Contains(restoredShape.Input[16].Output, "frozen patch") {
 		t.Fatalf("fingerprints/order differ: %q %q %#v", first.Fingerprint(), second.Fingerprint(), restoredShape.Input)
 	}
 

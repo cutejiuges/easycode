@@ -27,9 +27,21 @@ func (inertGrepExecutor) Execute(context.Context, tool.GrepInvocation) tool.Invo
 	return tool.InvocationResult{}
 }
 
+type inertPatchPreparer struct{}
+
+func (inertPatchPreparer) Prepare(context.Context, tool.PatchInvocation) (tool.PatchCandidate, error) {
+	return tool.PatchCandidate{}, nil
+}
+
+type inertPatchExecutor struct{}
+
+func (inertPatchExecutor) Execute(context.Context, tool.PatchCandidate) tool.InvocationResult {
+	return tool.InvocationResult{}
+}
+
 func testOpenAIToolCatalog(t *testing.T) tool.CatalogSnapshot {
 	t.Helper()
-	catalog, err := tool.NewReadOnlyCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, inertGrepExecutor{})
+	catalog, err := tool.NewPatchCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, inertGrepExecutor{}, inertPatchPreparer{}, inertPatchExecutor{}, tool.NewApprovalPolicy())
 	if err != nil {
 		t.Fatal(err)
 	}
