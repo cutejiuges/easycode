@@ -16,14 +16,16 @@ import (
 const (
 	maxCatalogBytes = 1 << 20
 
-	FacadeAnthropicRead FacadeID = "anthropic:Read"
-	FacadeOpenAIRead    FacadeID = "openai:Read"
-	FacadeAnthropicGlob FacadeID = "anthropic:Glob"
-	FacadeOpenAIGlob    FacadeID = "openai:Glob"
-	FacadeAnthropicGrep FacadeID = "anthropic:Grep"
-	FacadeOpenAIGrep    FacadeID = "openai:Grep"
-	FacadeAnthropicEdit FacadeID = "anthropic:Edit"
-	FacadeOpenAIPatch   FacadeID = "openai:apply_patch"
+	FacadeAnthropicRead  FacadeID = "anthropic:Read"
+	FacadeOpenAIRead     FacadeID = "openai:Read"
+	FacadeAnthropicGlob  FacadeID = "anthropic:Glob"
+	FacadeOpenAIGlob     FacadeID = "openai:Glob"
+	FacadeAnthropicGrep  FacadeID = "anthropic:Grep"
+	FacadeOpenAIGrep     FacadeID = "openai:Grep"
+	FacadeAnthropicEdit  FacadeID = "anthropic:Edit"
+	FacadeOpenAIPatch    FacadeID = "openai:apply_patch"
+	FacadeAnthropicWrite FacadeID = "anthropic:Write"
+	FacadeOpenAIWrite    FacadeID = "openai:Write"
 )
 
 // FacadeID 唯一标识某个 Provider family 的模型可见 facade。
@@ -101,6 +103,8 @@ func facadeIdentity(family domain.ProviderFamily, capability CapabilityID) (stri
 		return "Glob", FacadeID(prefix + "Glob")
 	case CapabilityGrep:
 		return "Grep", FacadeID(prefix + "Grep")
+	case CapabilityWrite:
+		return "Write", FacadeID(prefix + "Write")
 	case CapabilityPatch:
 		if family == domain.ProviderAnthropic {
 			return "Edit", FacadeAnthropicEdit
@@ -233,22 +237,19 @@ type catalogCanonical struct {
 	Facades []facadeCanonical `json:"facades"`
 }
 
-// NewReadOnlyCatalogSnapshot 创建同时供 Anthropic 与 OpenAI 使用的完整只读目录。
-func NewReadOnlyCatalogSnapshot(readExecutor ReadExecutor, globExecutor GlobExecutor, grepExecutor GrepExecutor) (CatalogSnapshot, error) {
-	if readExecutor == nil || globExecutor == nil || grepExecutor == nil {
-		return CatalogSnapshot{}, errors.New("all read-only executors are required")
-	}
+// buildReadFacades 只构造真实只读子集，不建立可执行的旧目录契约。
+func buildReadFacades() ([]Facade, error) {
 	readSchema, err := buildReadSchema()
 	if err != nil {
-		return CatalogSnapshot{}, err
+		return nil, err
 	}
 	globSchema, err := buildGlobSchema()
 	if err != nil {
-		return CatalogSnapshot{}, err
+		return nil, err
 	}
 	grepSchema, err := buildGrepSchema()
 	if err != nil {
-		return CatalogSnapshot{}, err
+		return nil, err
 	}
 	descriptions := map[CapabilityID]string{
 		CapabilityRead: "Reads a UTF-8 text file from the local workspace with stable 1-based line numbers.",
@@ -263,15 +264,15 @@ func NewReadOnlyCatalogSnapshot(readExecutor ReadExecutor, globExecutor GlobExec
 			facades = append(facades, Facade{id: id, family: family, name: name, description: descriptions[capability], capability: capability, wireKind: WireStructured, schema: schemas[capability].Clone()})
 		}
 	}
-	return newCatalogSnapshot(facades)
+	return facades, nil
 }
 
-// NewPatchCatalogSnapshot 创建双Provider共享四能力的确定性目录。
-func NewPatchCatalogSnapshot(readExecutor ReadExecutor, globExecutor GlobExecutor, grepExecutor GrepExecutor, preparer PatchPreparer, patchExecutor PatchExecutor, policy Policy) (CatalogSnapshot, error) {
-	if readExecutor == nil || globExecutor == nil || grepExecutor == nil || preparer == nil || patchExecutor == nil || policy == nil {
+// NewCatalogSnapshot 创建当前五能力唯一目录，要求所有消费者已显式装配。
+func NewCatalogSnapshot(readExecutor ReadExecutor, globExecutor GlobExecutor, grepExecutor GrepExecutor, preparer PatchPreparer, patchExecutor PatchExecutor, writePreparer WritePreparer, writeExecutor WriteExecutor, policy Policy) (CatalogSnapshot, error) {
+	if readExecutor == nil || globExecutor == nil || grepExecutor == nil || preparer == nil || patchExecutor == nil || writePreparer == nil || writeExecutor == nil || policy == nil {
 		return CatalogSnapshot{}, errors.New("all tool components are required")
 	}
-	readOnly, err := NewReadOnlyCatalogSnapshot(readExecutor, globExecutor, grepExecutor)
+	facades, err := buildReadFacades()
 	if err != nil {
 		return CatalogSnapshot{}, err
 	}
@@ -279,12 +280,33 @@ func NewPatchCatalogSnapshot(readExecutor ReadExecutor, globExecutor GlobExecuto
 	if err != nil {
 		return CatalogSnapshot{}, err
 	}
-	patchDescription := "Edits one existing UTF-8 workspace file after showing the exact diff for approval."
-	patchFacades := []Facade{
-		{id: FacadeAnthropicEdit, family: domain.ProviderAnthropic, name: "Edit", description: patchDescription, capability: CapabilityPatch, wireKind: WireStructured, schema: editSchema},
-		{id: FacadeOpenAIPatch, family: domain.ProviderOpenAI, name: "apply_patch", description: "The `apply_patch` tool edits one existing file. This is a FREEFORM tool, so do not wrap the patch in JSON.", capability: CapabilityPatch, wireKind: WireCustomFreeform, format: FreeformFormat{kind: "grammar", syntax: "lark", definition: applyPatchGrammar()}},
+	facades = append(facades,
+		Facade{id: FacadeAnthropicEdit, family: domain.ProviderAnthropic, name: "Edit", description: "Edits one existing UTF-8 workspace file after showing the exact diff for approval.", capability: CapabilityPatch, wireKind: WireStructured, schema: editSchema},
+		Facade{id: FacadeOpenAIPatch, family: domain.ProviderOpenAI, name: "apply_patch", description: "The `apply_patch` tool edits one existing file. This is a FREEFORM tool, so do not wrap the patch in JSON.", capability: CapabilityPatch, wireKind: WireCustomFreeform, format: FreeformFormat{kind: "grammar", syntax: "lark", definition: applyPatchGrammar()}},
+	)
+	writeSchema, err := buildWriteSchema()
+	if err != nil {
+		return CatalogSnapshot{}, err
 	}
-	return newCatalogSnapshot(append(readOnly.Facades(), patchFacades...))
+	for _, family := range []domain.ProviderFamily{domain.ProviderAnthropic, domain.ProviderOpenAI} {
+		name, id := facadeIdentity(family, CapabilityWrite)
+		facades = append(facades, Facade{id: id, family: family, name: name, description: "Creates or overwrites one UTF-8 workspace file with exact content after approval. Overwriting requires a complete Read delivered in an earlier sample; truncated or same-sample reads do not qualify. Missing parent directories are created atomically. Use Edit or apply_patch for partial changes.", capability: CapabilityWrite, wireKind: WireStructured, schema: writeSchema.Clone()})
+	}
+	return newCatalogSnapshot(facades)
+}
+
+func buildWriteSchema() (codec.CanonicalJSON, error) {
+	type properties struct {
+		FilePath stringSchemaProperty `json:"file_path"`
+		Content  stringSchemaProperty `json:"content"`
+	}
+	type schema struct {
+		Type                 string     `json:"type"`
+		Properties           properties `json:"properties"`
+		Required             []string   `json:"required"`
+		AdditionalProperties bool       `json:"additionalProperties"`
+	}
+	return codec.MarshalCanonical(schema{Type: "object", Properties: properties{FilePath: stringSchemaProperty{Type: "string", Description: "Canonical workspace-relative file path (at most 4096 bytes and 64 components)"}, Content: stringSchemaProperty{Type: "string", Description: "Exact UTF-8 file content; empty content is allowed. Input is limited to 1 MiB."}}, Required: []string{"file_path", "content"}, AdditionalProperties: false}, maxCatalogBytes)
 }
 
 func buildEditSchema() (codec.CanonicalJSON, error) {
@@ -344,7 +366,7 @@ func buildGrepSchema() (codec.CanonicalJSON, error) {
 }
 
 func newCatalogSnapshot(facades []Facade) (CatalogSnapshot, error) {
-	if len(facades) != 6 && len(facades) != 8 {
+	if len(facades) != 10 {
 		return CatalogSnapshot{}, errors.New("tool catalog requires a complete Provider facade set")
 	}
 	owned := cloneFacades(facades)
@@ -404,7 +426,7 @@ func (snapshot CatalogSnapshot) View(family domain.ProviderFamily) (FacadeView, 
 			selected = append(selected, facade.clone())
 		}
 	}
-	if len(selected) != 3 && len(selected) != 4 {
+	if len(selected) != 5 {
 		return FacadeView{}, errors.New("tool catalog has incomplete Provider facade set")
 	}
 	canonical, err := encodeFacades(selected)
@@ -450,6 +472,12 @@ func (snapshot CatalogSnapshot) DecodeReadyCall(family domain.ProviderFamily, na
 			return ReadyCall{}, decodeErr
 		}
 		return NewGrepReadyCall(callID, input)
+	case CapabilityWrite:
+		input, err := DecodeWriteInput(arguments)
+		if err != nil {
+			return ReadyCall{}, err
+		}
+		return NewWriteReadyCall(callID, input)
 	case CapabilityPatch:
 		var input PatchInput
 		var decodeErr error
@@ -469,7 +497,7 @@ func (snapshot CatalogSnapshot) DecodeReadyCall(family domain.ProviderFamily, na
 
 // Validate 重新计算 canonical bytes 与 fingerprint。
 func (snapshot CatalogSnapshot) Validate() error {
-	if (len(snapshot.facades) != 6 && len(snapshot.facades) != 8) || snapshot.fingerprint == "" {
+	if len(snapshot.facades) != 10 || snapshot.fingerprint == "" {
 		return errors.New("tool catalog snapshot is invalid")
 	}
 	rebuilt, err := newCatalogSnapshot(snapshot.facades)

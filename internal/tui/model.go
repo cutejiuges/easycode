@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"easycode/internal/domain"
 	"easycode/internal/fault"
@@ -411,12 +412,12 @@ func (model Model) renderApproval() string {
 	if width > 92 {
 		width = 92
 	}
-	contentWidth := width - 4
+	contentWidth := width - 2
 	height := model.height - 15
 	if height < 2 {
 		height = 2
 	}
-	lines := wrapApprovalDiff(overlay.request.Diff, contentWidth)
+	lines := wrapApprovalDiff(overlay.request.Presentation.Text(), contentWidth)
 	maxScroll := len(lines) - height
 	if maxScroll < 0 {
 		maxScroll = 0
@@ -432,68 +433,59 @@ func (model Model) renderApproval() string {
 	var output strings.Builder
 	left := max(0, (model.width-width-2)/2)
 	padding := strings.Repeat(" ", left)
-	output.WriteString(padding + "┌─ Approve file patch " + strings.Repeat("─", max(0, width-22)) + "┐\n")
-	fmt.Fprintf(&output, "%s│ Path: %-*s │\n", padding, contentWidth-6, truncateRunes(overlay.request.RelativePath, contentWidth-6))
-	fmt.Fprintf(&output, "%s│ Risk: %-*s │\n", padding, contentWidth-6, truncateRunes(overlay.request.Reason, contentWidth-6))
-	fmt.Fprintf(&output, "%s│ Diff %d-%d of %d%s│\n", padding, scroll+1, end, len(lines), strings.Repeat(" ", max(1, contentWidth-18-len(fmt.Sprintf("%d%d%d", scroll+1, end, len(lines))))))
+	title := "Approve file patch"
+	switch overlay.request.Presentation.Kind {
+	case protocol.PresentationWriteCreate:
+		title = "Create file"
+	case protocol.PresentationWriteOverwrite:
+		title = "Overwrite file"
+	}
+	output.WriteString(padding + "┌─ " + title + " " + strings.Repeat("─", max(0, width-ansi.StringWidth(title)-3)) + "┐\n")
+	row := func(value string) {
+		value = truncateRunes(value, contentWidth)
+		fmt.Fprintf(&output, "%s│ %s%s │\n", padding, value, strings.Repeat(" ", max(0, contentWidth-ansi.StringWidth(value))))
+	}
+	row("Path: " + protocol.VisibleApprovalText(overlay.request.RelativePath))
+	row("Risk: " + overlay.request.Reason)
+	row(fmt.Sprintf("Diff %d-%d of %d", scroll+1, end, len(lines)))
 	for _, line := range lines[scroll:end] {
-		fmt.Fprintf(&output, "%s│ %-*s │\n", padding, contentWidth, line)
+		row(line)
 	}
 	choices := []string{"Yes", "Yes, allow all edits during this session", "No"}
+	if overlay.request.Capability == "fs.write" {
+		choices[1] = "Yes, allow creating and overwriting files this session"
+	}
 	for index, choice := range choices {
 		marker := " "
 		if index == overlay.selected {
 			marker = ">"
 		}
-		fmt.Fprintf(&output, "%s│ %s %-*s │\n", padding, marker, contentWidth-2, truncateRunes(choice, contentWidth-2))
+		row(marker + " " + choice)
 	}
 	if overlay.editing {
 		feedback := "Feedback (what should EasyCode do instead?): " + string(overlay.feedback)
-		fmt.Fprintf(&output, "%s│ %-*s │\n", padding, contentWidth, truncateRunes(feedback, contentWidth))
+		row(feedback)
 	} else if overlay.selected == 2 {
-		fmt.Fprintf(&output, "%s│ %-*s │\n", padding, contentWidth, truncateRunes("Tab: add feedback · Enter: deny · Esc: interrupt", contentWidth))
+		row("Tab: add feedback · Enter: deny · Esc: interrupt")
 	} else {
-		fmt.Fprintf(&output, "%s│ %-*s │\n", padding, contentWidth, "Enter: approve · Esc: interrupt")
+		row("Enter: approve · Esc: interrupt")
 	}
 	if overlay.submitted {
-		fmt.Fprintf(&output, "%s│ %-*s │\n", padding, contentWidth, "Submitting decision…")
+		row("Submitting decision…")
 	}
 	output.WriteString(padding + "└" + strings.Repeat("─", width) + "┘\n")
 	return output.String()
 }
 
 func wrapApprovalDiff(diff string, width int) []string {
-	if width < 1 {
-		width = 1
-	}
-	var wrapped []string
-	for _, line := range strings.Split(diff, "\n") {
-		runes := []rune(line)
-		if len(runes) == 0 {
-			wrapped = append(wrapped, "")
-			continue
-		}
-		for len(runes) > width {
-			wrapped = append(wrapped, string(runes[:width]))
-			runes = runes[width:]
-		}
-		wrapped = append(wrapped, string(runes))
-	}
-	return wrapped
+	return strings.Split(ansi.Hardwrap(diff, max(1, width), true), "\n")
 }
 
 func truncateRunes(value string, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	runes := []rune(value)
-	if len(runes) <= width {
-		return value
-	}
-	if width == 1 {
-		return "…"
-	}
-	return string(runes[:width-1]) + "…"
+	return ansi.Truncate(value, width, "…")
 }
 
 func submitTurn(ctx context.Context, session ChatSession, prompt string) tea.Cmd {

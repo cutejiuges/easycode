@@ -13,8 +13,8 @@ import (
 
 type planningReadExecutor struct{}
 
-func (planningReadExecutor) Execute(stdcontext.Context, tool.ReadInvocation) tool.InvocationResult {
-	return tool.InvocationResult{}
+func (planningReadExecutor) Execute(stdcontext.Context, tool.ReadInvocation) tool.ReadExecution {
+	return tool.ReadExecution{}
 }
 
 type planningGlobExecutor struct{}
@@ -447,9 +447,35 @@ func emptyHistory(family domain.ProviderFamily) domain.SemanticHistoryView {
 
 func testToolCatalog(t *testing.T) tool.CatalogSnapshot {
 	t.Helper()
-	catalog, err := tool.NewReadOnlyCatalogSnapshot(planningReadExecutor{}, planningGlobExecutor{}, planningGrepExecutor{})
+	catalog, err := tool.NewCatalogSnapshot(planningReadExecutor{}, planningGlobExecutor{}, planningGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, tool.NewApprovalPolicy())
 	if err != nil {
 		t.Fatal(err)
 	}
 	return catalog
+}
+
+// catalogPatchPreparer 只用于验证目录装配，测试不会通过它访问文件系统。
+type catalogPatchPreparer struct{}
+
+func (catalogPatchPreparer) Prepare(stdcontext.Context, tool.PatchInvocation) (tool.PatchCandidate, error) {
+	return tool.PatchCandidate{}, nil
+}
+
+type catalogPatchExecutor struct{}
+
+func (catalogPatchExecutor) Execute(stdcontext.Context, tool.PatchCandidate) tool.InvocationResult {
+	return tool.InvocationResult{}
+}
+
+// catalogWritePreparer 只用于验证目录装配，测试不会通过它访问文件系统。
+type catalogWritePreparer struct{}
+
+func (catalogWritePreparer) Prepare(stdcontext.Context, tool.WriteInvocation, tool.ReadObservation) (tool.WriteCandidate, error) {
+	return tool.WriteCandidate{}, nil
+}
+
+type catalogWriteExecutor struct{}
+
+func (catalogWriteExecutor) Execute(stdcontext.Context, tool.WriteCandidate) tool.InvocationResult {
+	return tool.InvocationResult{}
 }

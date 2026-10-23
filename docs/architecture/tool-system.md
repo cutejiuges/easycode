@@ -1,7 +1,7 @@
 # EasyCode Tool 系统架构设计
 
-> 状态：P3 增量实现中；Read、Glob、Grep 与需批准的单文件 Patch 已实现
-> 更新时间：2026-10-11
+> 状态：P3 增量实现中；Read、Glob、Grep、需批准的单文件 Patch 与 Write 已实现
+> 更新时间：2026-10-24
 > 适用范围：Tool Catalog、Provider Tool Wire、Agent Tool Loop、权限与 sandbox、执行调度、结果预算、Session 恢复和宿主展示
 > 前置阅读：[总体架构设计](overall-architecture.md)、[产品阶段路线图](../roadmap/product-roadmap.md)、[踩坑与经验记录](../roadmap/pitfall-log.md)
 
@@ -9,12 +9,12 @@
 
 本文固定 Tool 系统的完整大图、长期边界和分阶段实现顺序，避免多个长周期 change 各自发明一套调用、权限、恢复或结果协议。
 
-本文同时记录已实现基线与后续目标。当前 `internal/tool` 与 `internal/tool/builtin` 已提供 Read、Glob、Grep 以及单个已有 UTF-8 工作区文件 Patch 的强类型输入/结果、Unix descriptor-relative executor、双 Provider facade 和带 exclusive Patch 屏障的有序调度。Anthropic 使用 structured `Edit`，OpenAI 使用 custom freeform `apply_patch`；交互式 Patch 显示完整 diff 并默认聚焦 No，headless `ask` 以 `approval_required` 失败关闭。Write/Exec、artifact、通用 SandboxPlanner、完整 Tool UI 与 Windows 等价安全实现仍未落地。任何新增 Tool schema、Session record、权限协议或跨包接口仍必须建立独立 OpenSpec change，经过 `propose -> review/confirm -> apply -> verify -> archive`。
+本文同时记录已实现基线与后续目标。当前 `internal/tool` 与 `internal/tool/builtin` 已提供 Read、Glob、Grep 以及单个已有 UTF-8 工作区文件 Patch 的强类型输入/结果、Unix descriptor-relative executor、双 Provider facade 和带 Patch/Write 独占屏障的有序调度。Anthropic 使用 structured `Edit`，OpenAI 使用 custom freeform `apply_patch`；两家另提供 structured `Write(file_path, content)`。交互式 Patch 显示完整 diff，Write 区分创建与覆盖，二者默认聚焦 No，headless `ask` 以 `approval_required` 失败关闭。Exec、artifact、通用 SandboxPlanner、完整 Tool UI 与 Windows 等价安全实现仍未落地。任何新增 Tool schema、Session record、权限协议或跨包接口仍必须建立独立 OpenSpec change，经过 `propose -> review/confirm -> apply -> verify -> archive`。
 
 参考工程的使用原则如下：
 
 - Claude Code `@anthropic-ai/claude-code@2.1.88` sourcemap 用于理解产品行为、工具展示、权限交互、工具并发和大结果体验。该目录不是官方完整源码，文件组织和内部实现不作为可复制契约。
-- Codex 参考提交 `c248f6d48b` 用于理解 Responses tool wire、工具路由、sandbox、进程生命周期、结果截断和 rollout 恢复。
+- Codex 的 Tool 初版参考提交 `c248f6d48b`，Write 切片另核对 `044da98b4` 用于理解 Responses tool wire、工具路由、sandbox、进程生命周期、结果截断和 rollout 恢复。
 - EasyCode 的产品体验优先对齐 Claude Code；内核边界选择可测试、可恢复、能支持双 Provider 的方案。两者存在冲突时，不以照搬任一参考工程为目标。
 
 ### 1.1 为什么当前选择 Tool 模块
@@ -314,15 +314,31 @@ headless 无交互宿主遇到 `ask` 时默认失败关闭。未来若支持预�
 
 当前 Read/Glob/Grep 尚不创建 artifact：搜索工具只持久化最多 64 KiB 的确定性模型预览、typed metadata、省略计数和不完整原因，恢复复用这些冻结字节且不重搜 workspace。artifact 不是 Session 事实源；后续实现时 JSONL 只保存 descriptor、摘要和完整性信息，SQLite 仍只做可重建索引。
 
+### 10.1 Write 已实现边界
+
+`WriteInput` 严格拒绝缺字段、null、重复键、未知字段、非法 Unicode 与尾随 JSON；原始及规范编码均限 1 MiB。`ReadExecution` 是 Read executor 唯一返回值，携带原有 preview 和完整/不可用观察联合。在同一安全 fd 上比较读取前后 identity、mode、size、mtime/ctime，摘要使用原始 bytes。offset=1、到 EOF 且未按行/总预算截断才可能产生证据；Read 仍限 2000 行、单行 2000 码点、preview 256 KiB、文件 16 MiB。
+
+Runtime 的观察表仅由 turn owner 操作，上限 1024，按输出提交顺序淘汰。worker 返回固定 call slot；result durable 不代表模型已见结果，只有全部 native outputs Sync 且 finalize 后才激活。同 sample Read 不能预授权 Write。Patch/Write started、Write conflict 与失败/截断 Read 使相应路径的当前和待生效观察失效；无法确定失败路径时清空观察。Patch 后的新 Read 可在 outputs 提交后生效。正常跨 turn 保留已生效证据，poison、关闭和恢复清空；不为未合入的 Exec 暴露占位接口。
+
+`WritePreparer` 只读，冻结 operation、基本权限、`FileBaseEvidence`、祖先目录 identity、最多 16 层待建目录、精确 final bytes、完整转义预览和 fingerprint。覆盖要求先前完整 Read、文件可读可写且无特殊权限位；同内容报 `write_no_changes`。审批用 `patch / write-create / write-overwrite` 强类型展示，控制字符可见转义后的完整展示不超过 256 KiB。Write 与 Patch grant 独立，Write allow fact 成功 Sync 后才安装 grant。
+
+`WriteExecutor` 在 fd 相对路径上重开并复验，私有 owner 写入完整暂存文件、设置权限、Sync。创建使用 Darwin `RenameatxNp(RENAME_EXCL)` / Linux `Renameat2(RENAME_NOREPLACE)`，绝不回退为普通 rename；已有目标覆盖使用最终基线复验后的同目录原子替换。缺失目录先准备私有树并从叶到根 Sync，再一次发布首个缺失组件。新文件 `0600`、目录 `0700`，覆盖只保留基本 `0777`，不承诺 owner/ACL/xattr 保留。
+
+发布前取消不改变正式目标；确定发布后忽略迟到取消，完成父目录 Sync/清理后返回 success。发布结果无法确认、目录 Sync 或 cleanup 失败返回 outcome_uncertain；Runtime 停止后续副作用，但健康 journal 仍保存冻结结果和配对 output。owner 仅清理 identity 匹配的自有项，不递归删除未知内容；SIGKILL 可留下私有暂存项，resume 不访问它们。
+
+当前 canary 为 3；`tool_call_ready` 保存必要 WriteInput，包括 content，`tool_call_result` 只保存冻结摘要与 operation/byte/line/created-directory metadata，不重复保存 base/final 文件或候选 diff。审批仍用 `tool_approval_decided`，执行仍用 `tool_execution_started`，不新增 Read observation record。恢复验证按连续只读组与独占屏障检查顺序，不能要求所有调用先 started 后 result。
+
+测试入口：`internal/tool/builtin/write_*_test.go`、`internal/runtime/write*_test.go`、`internal/runtime/read_observations_test.go`、`internal/session/write_fixture_test.go`、两家 Provider 的 `write_test.go`/`restore_test.go`、`internal/tui/write_test.go` 与 `internal/app/write*_test.go`。当前 macOS 已运行真实发布/竞争/进程崩溃测试；Linux 与 Windows 已交叉编译，当前环境无 Linux runner，Linux 文件系统运行验证仍是已记录限制，不能等同交叉编译通过。
+
 ## 11. Session 事实与 RuntimeEvent
 
 | 信息 | Session durable fact | RuntimeEvent | 说明 |
 | --- | --- | --- | --- |
 | Provider 原生 sample | 是 | 可投影摘要 | 下一请求与恢复事实 |
-| ToolCallReady | 是 | 是 | 副作用前置事实 |
-| 权限请求与决定 | 决定是；瞬时 UI 状态否 | 是 | 决定影响恢复，动画不影响 |
-| execution started | 是，且先于副作用 | 是 | ledger 线性化点 |
-| 结果/拒绝/取消/不确定 | 是 | 是 | 保证 call/output 配对 |
+| ToolCallReady | 是 | 当前无专属事件 | 副作用前置事实 |
+| 权限请求与决定 | 决定是；瞬时 UI 状态否 | 仅交互宿主 | 决定影响恢复，动画不影响 |
+| execution started | 是，且先于副作用 | 当前无专属事件 | ledger 线性化点 |
+| 结果/拒绝/取消/不确定 | 是 | 当前无专属事件 | 保证 call/output 配对 |
 | 高频参数 delta | 否 | 可节流发布 | 不作为恢复事实 |
 | 高频 stdout/stderr chunk | 默认否 | 可节流发布 | 完整内容按 artifact 策略处理 |
 | 模型预览字节与截断元数据 | 是 | 可投影 | 恢复必须精确复用 |
@@ -334,9 +350,9 @@ headless 无交互宿主遇到 `ask` 时默认失败关闭。未来若支持预�
 
 恢复器按 Provider-native history 和 ledger 判断：
 
-- `ready_durable` 且从未开始：本地写入 `cancelled/session_interrupted_before_execution`，不调用policy或executor。
+- `tool_call_ready` 已 durable 且无批准的 Patch/Write：补 `cancelled/session_interrupted_before_approval`；已允许但无 `tool_execution_started`：补 `cancelled/session_interrupted_before_execution`。不调用 policy/preparer/executor。
 - 已有确定结果：只重建 Provider-native output，不重复执行。
-- `execution_started_durable` 无确定结果：标记 `outcome_uncertain`，生成确定的补偿 output，禁止自动重跑。
+- `tool_execution_started` 已 durable 但无确定结果：标记 `outcome_uncertain`，生成确定的补偿 output，禁止自动重跑。
 - 权限拒绝、验证失败和取消：生成与 Provider call 类型匹配的错误 output。
 - output 已 durable 但旧turn没有terminal：不重复output，只补写失败终态。
 - 所有未完成工具turn在补齐call/output pairing后写入且只写入一个 `turn_failed`。
@@ -349,10 +365,10 @@ headless 无交互宿主遇到 `ask` 时默认失败关闭。未来若支持预�
 
 - Read、Glob、Grep：已实现强类型输入/结果、双 Provider facade、Unix 安全 executor、固定只读策略和最多 8 路有序并行。
 - Edit/structured patch 与 OpenAI `apply_patch` freeform facade。
-- Write。
+- Write：已实现新文件/空文件/缺失父目录链创建、完整 Read 后覆盖、独立批准与强类型 create/overwrite 结果。
 - exec 与 `write_stdin`，随后补后台进程控制。
 - allow/ask/deny、approval、sandbox plan。
-- ledger 与配对恢复：Read/Glob/Grep 已实现；通用结果预算和 artifact 仍未实现。
+- ledger 与配对恢复：Read/Glob/Grep/Patch/Write 已实现；通用结果预算和 artifact 仍未实现。
 - 工具回合后的 sampling safe point，以及建立在该 safe point 上的 same-turn steer。
 
 ### 13.2 后续阶段能力
@@ -407,12 +423,12 @@ headless 无交互宿主遇到 `ask` 时默认失败关闭。未来若支持预�
 
 ## 16. 尚需由具体 Change 冻结的参数
 
-当前已冻结每 turn 最多 16 个 sample、64 个 tool call、最多 8 路只读并行，以及搜索 64 KiB preview、walker 深度 64/目录项 200,000、Grep 50,000 文件/256 MiB 累计扫描预算。以下尚未实现的参数由首次消费者所在 change 给出默认值、配置面和测试：
+当前已冻结每 turn 最多 16 个 sample、64 个 tool call、最多 8 路只读并行，以及搜索 64 KiB preview、walker 深度 64/目录项 200,000、Grep 50,000 文件/256 MiB 累计扫描预算。Write 已冻结 1 MiB 输入、256 KiB 完整审批、64 组件路径、16 层缺失目录与 1024 项完整 Read 观察表；编码、换行、权限和冲突策略见 10.1。以下尚未实现的参数由首次消费者所在 change 给出默认值、配置面和测试：
 
-- 写工具和进程工具的输入、模型预览、artifact 和累计上下文预算。
+- 进程工具的输入、模型预览、artifact 和累计上下文预算。
 - approval 规则的持久范围和过期方式。
 - P3 支持平台及各平台 sandbox capability matrix。
-- Read/Patch/Write 的编码、换行、权限保留、冲突和二进制文件策略。
+- 超出基本文件权限范围的 ACL/xattr/owner 保留、二进制写入与跨平台等价策略。
 - exec 的 shell/argv 模式、环境变量白名单、网络与资源限制。
 - `outcome_uncertain` 的用户恢复命令与宿主交互。
 

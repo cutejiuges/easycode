@@ -7,7 +7,7 @@ import (
 
 // PatchFingerprint 对typed input、基线证据和final摘要进行有长度边界的稳定编码。
 // 调用/批准ID、时间、绝对cwd以及UI状态不参与fingerprint。
-func PatchFingerprint(input PatchInput, evidence PatchBaseEvidence, final []byte) (CandidateFingerprint, error) {
+func PatchFingerprint(input PatchInput, evidence FileBaseEvidence, final []byte) (CandidateFingerprint, error) {
 	if input.Validate() != nil || evidence.Validate() != nil {
 		return "", errors.New("invalid patch fingerprint input")
 	}

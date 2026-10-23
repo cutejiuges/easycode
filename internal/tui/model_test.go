@@ -119,7 +119,7 @@ func TestApprovalScrollAndResizeKeepCandidateState(t *testing.T) {
 	model := NewModel(context.Background(), "test", &fakeChatSession{})
 	event := mustApprovalRequested(t)
 	payload, _ := protocol.DecodeToolApprovalRequested(event)
-	payload.Diff = strings.Repeat("-old line\n+new line\n", 30)
+	payload.Presentation.Patch.Diff = strings.Repeat("-old line\n+new line\n", 30)
 	event, _ = protocol.NewToolApprovalRequested(payload)
 	event.TurnID, _ = domain.ParseTurnID("018f1d8a-7b5c-7def-8234-456789abcdef")
 	model = updateModel(t, model, RuntimeEventMsg{Event: event})
@@ -151,8 +151,8 @@ func mustApprovalRequested(t *testing.T) protocol.Event {
 		RequestID: eventApprovalRequestID, InvocationID: eventApprovalInvocationID,
 		ProviderCallID: "call-patch", Capability: "fs.patch", Reason: "Patch modifies an existing workspace file.",
 		RelativePath: "src/main.go", Fingerprint: strings.Repeat("a", 64),
-		Diff:      "--- a/src/main.go\n+++ b/src/main.go\n-old\n+new\n",
-		Decisions: []protocol.ApprovalDecision{protocol.ApprovalAllowOnce, protocol.ApprovalAllowSession, protocol.ApprovalDeny},
+		Presentation: protocol.ApprovalPresentation{Kind: protocol.PresentationPatch, Patch: &protocol.PatchApprovalPresentation{Diff: "--- a/src/main.go\n+++ b/src/main.go\n-old\n+new\n"}},
+		Decisions:    []protocol.ApprovalDecision{protocol.ApprovalAllowOnce, protocol.ApprovalAllowSession, protocol.ApprovalDeny},
 	})
 	if err != nil {
 		t.Fatal(err)

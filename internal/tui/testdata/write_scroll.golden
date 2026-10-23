@@ -1,0 +1,12 @@
+  ┌─ Create file ──────────────────────────────┐
+  │ Path: 新建/pkg/a.txt                       │
+  │ Risk: Write modifies workspace files.      │
+  │ Diff 2-4 of 44                             │
+  │ Create directory: 新建                     │
+  │ Create directory: 新建/pkg                 │
+  │ +完整内容中文                              │
+  │   Yes                                      │
+  │   Yes, allow creating and overwriting fil… │
+  │ > No                                       │
+  │ Tab: add feedback · Enter: deny · Esc: in… │
+  └────────────────────────────────────────────┘

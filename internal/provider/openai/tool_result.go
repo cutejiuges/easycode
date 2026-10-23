@@ -32,6 +32,13 @@ func prepareToolOutputsEntry(history []nativeHistoryEntry, results []tool.Invoca
 		if result.Capability() != openAICapabilityForName(calls[index].Name) {
 			return nativeHistoryEntry{}, fmt.Errorf("OpenAI tool result capability does not match pending call")
 		}
+		wantWire := tool.WireStructured
+		if calls[index].Type == "custom_tool_call" {
+			wantWire = tool.WireCustomFreeform
+		}
+		if result.WireKind() != wantWire {
+			return nativeHistoryEntry{}, fmt.Errorf("OpenAI result wire does not match call")
+		}
 		payload, err := codec.MarshalStable(functionOutputPayload{
 			Status: result.Status(), Code: result.Code(), Content: result.Preview().Text(),
 		})
@@ -57,6 +64,8 @@ func openAICapabilityForName(name string) tool.CapabilityID {
 		return tool.CapabilityRead
 	case "Glob":
 		return tool.CapabilityGlob
+	case "Write":
+		return tool.CapabilityWrite
 	case "Grep":
 		return tool.CapabilityGrep
 	case "apply_patch":

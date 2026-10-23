@@ -3,6 +3,8 @@ package anthropic
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -69,6 +71,10 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 		},
 		{Kind: nativeHistoryToolOutputs, ToolOutputs: nativeMessage{Role: roleUser, Content: []NativeItem{{Type: blockTypeToolResult, ToolUseID: "toolu-edit", Content: "frozen patch"}}}},
 	}
+	entries = append(entries,
+		nativeHistoryEntry{Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("write")), Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeToolUse, ID: "toolu-write", Name: "Write", Input: json.RawMessage(`{"file_path":"new/a","content":"中文\r\n"}`)}}}, Metadata: messageMetadata{ID: "msg-write", Model: "claude-test"}},
+		nativeHistoryEntry{Kind: nativeHistoryToolOutputs, ToolOutputs: nativeMessage{Role: roleUser, Content: []NativeItem{{Type: blockTypeToolResult, ToolUseID: "toolu-write", Content: "Created new/a (8 bytes, 1 lines, 1 directories created)"}}}},
+	)
 	uninterrupted := &Conversation{provider: instance}
 	commits := make([]provider.NativeCommitEnvelope, 0, len(entries))
 	for _, entry := range entries {
@@ -122,6 +128,15 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 	}
 	uninterruptedBytes := uninterruptedRequest.Bytes()
 	restoredBytes := restoredRequest.Bytes()
+
+	golden, err := os.ReadFile(filepath.Join("testdata", "write_continuation.golden.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(bytes.TrimSpace(golden), restoredBytes) {
+		t.Fatal("Write continuation golden changed")
+	}
+
 	if !bytes.Equal(restoredBytes, uninterruptedBytes) {
 		t.Fatalf("restored request differs:\n%s\n%s", restoredBytes, uninterruptedBytes)
 	}
@@ -134,7 +149,7 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	restoredShape := buildMessagesRequest(instance.config.Model, instance.config.MaxOutputTokens, restored.historySnapshot(), &projectInstructions, nativeMessagePointer(next), restoredToolView)
-	if first.Fingerprint() != second.Fingerprint() || len(restoredShape.Messages) != 12 ||
+	if first.Fingerprint() != second.Fingerprint() || len(restoredShape.Messages) != 15 ||
 		restoredShape.Messages[0].Content[0].Text != projectInstructions.RenderedText() ||
 		restoredShape.Messages[4].Content[0].Type != "future_block" ||
 		restoredShape.Messages[6].Content[0].ID != "toolu-glob" || restoredShape.Messages[6].Content[1].ID != "toolu-grep" ||
@@ -142,6 +157,7 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 		restoredShape.Messages[7].Content[1].ToolUseID != "toolu-grep" || restoredShape.Messages[7].Content[2].ToolUseID != "toolu-read" ||
 		restoredShape.Messages[7].Content[0].Content != "frozen glob" || restoredShape.Messages[7].Content[1].Content != "frozen grep" ||
 		restoredShape.Messages[7].Content[2].Content != "frozen read" || restoredShape.Messages[9].Content[0].Signature != "opaque-edit-signature" ||
+		restoredShape.Messages[12].Content[0].Name != "Write" || restoredShape.Messages[13].Content[0].ToolUseID != "toolu-write" ||
 		restoredShape.Messages[9].Content[1].Name != "Edit" || restoredShape.Messages[10].Content[0].ToolUseID != "toolu-edit" || restoredShape.Messages[10].Content[0].Content != "frozen patch" {
 		t.Fatalf("fingerprints/order differ: %q %q %#v", first.Fingerprint(), second.Fingerprint(), restoredShape.Messages)
 	}

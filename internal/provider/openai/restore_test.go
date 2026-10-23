@@ -3,6 +3,8 @@ package openai
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -67,6 +69,10 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 		},
 		{Kind: nativeHistoryToolOutputs, ToolOutputs: []NativeItem{{Type: "custom_tool_call_output", CallID: "call-edit", Output: `{"status":"success","code":"ok","content":"frozen patch"}`}}},
 	}
+	entries = append(entries,
+		nativeHistoryEntry{Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("write")), Outputs: []NativeItem{{Type: "function_call", ID: "fc-write", CallID: "call-write", Name: "Write", Arguments: `{"file_path":"new/a","content":"中文\r\n"}`}}},
+		nativeHistoryEntry{Kind: nativeHistoryToolOutputs, ToolOutputs: []NativeItem{{Type: "function_call_output", CallID: "call-write", Output: `{"status":"success","code":"ok","content":"Created new/a (8 bytes, 1 lines, 1 directories created)"}`}}},
+	)
 	uninterrupted := &Conversation{provider: instance}
 	commits := make([]provider.NativeCommitEnvelope, 0, len(entries))
 	for _, entry := range entries {
@@ -117,6 +123,15 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 	}
 	uninterruptedBytes := uninterruptedRequest.Bytes()
 	restoredBytes := restoredRequest.Bytes()
+
+	golden, err := os.ReadFile(filepath.Join("testdata", "write_continuation.golden.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(bytes.TrimSpace(golden), restoredBytes) {
+		t.Fatal("Write continuation golden changed")
+	}
+
 	if !bytes.Equal(restoredBytes, uninterruptedBytes) {
 		t.Fatalf("restored request differs:\n%s\n%s", restoredBytes, uninterruptedBytes)
 	}
@@ -129,12 +144,13 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	restoredShape := buildResponsesRequest(instance.config.Model, restored.historySnapshot(), &projectInstructions, nativeItemPointer(next), restoredToolView)
-	if first.Fingerprint() != second.Fingerprint() || len(restoredShape.Input) != 18 ||
+	if first.Fingerprint() != second.Fingerprint() || len(restoredShape.Input) != 21 ||
 		restoredShape.Input[0].Content[0].Text != projectInstructions.RenderedText() || restoredShape.Input[5].Type != "future_item" ||
 		restoredShape.Input[7].CallID != "call-glob" || restoredShape.Input[8].CallID != "call-grep" || restoredShape.Input[9].CallID != "call-read" ||
 		restoredShape.Input[10].CallID != "call-glob" || restoredShape.Input[11].CallID != "call-grep" || restoredShape.Input[12].CallID != "call-read" ||
 		!strings.Contains(restoredShape.Input[10].Output, "frozen glob") || !strings.Contains(restoredShape.Input[11].Output, "frozen grep") ||
 		!strings.Contains(restoredShape.Input[12].Output, "frozen read") || restoredShape.Input[15].Type != "custom_tool_call" || restoredShape.Input[15].Input == "" ||
+		restoredShape.Input[18].Name != "Write" || restoredShape.Input[19].CallID != "call-write" || !strings.Contains(restoredShape.Input[19].Output, "Created new/a") ||
 		restoredShape.Input[16].Type != "custom_tool_call_output" || !strings.Contains(restoredShape.Input[16].Output, "frozen patch") {
 		t.Fatalf("fingerprints/order differ: %q %q %#v", first.Fingerprint(), second.Fingerprint(), restoredShape.Input)
 	}

@@ -11,7 +11,7 @@ import (
 
 const (
 	// EnvelopeVersion 是当前公共 JSONL 信封版本。
-	EnvelopeVersion = 2
+	EnvelopeVersion = 3
 	// MaxRecordBytes 限制单条 canonical JSON 记录大小。
 	MaxRecordBytes = 16 << 20
 	// MaxBatchBytes 限制单个逻辑 batch 的总大小。
@@ -157,6 +157,7 @@ type ToolCallReadyPayload struct {
 	GlobInput      *GlobInputPayload     `json:"glob_input,omitempty"`
 	GrepInput      *GrepInputPayload     `json:"grep_input,omitempty"`
 	PatchInput     *PatchInputPayload    `json:"patch_input,omitempty"`
+	WriteInput     *WriteInputPayload    `json:"write_input,omitempty"`
 }
 
 // ToolApprovalDecidedPayload 保存批准决定的durable关联事实。
@@ -243,6 +244,7 @@ type ToolCallResultPayload struct {
 	GlobMetadata  *GlobResultMetadataPayload  `json:"glob_metadata,omitempty"`
 	GrepMetadata  *GrepResultMetadataPayload  `json:"grep_metadata,omitempty"`
 	PatchMetadata *PatchResultMetadataPayload `json:"patch_metadata,omitempty"`
+	WriteMetadata *WriteResultMetadataPayload `json:"write_metadata,omitempty"`
 }
 
 // TurnCompletedPayload 表示当前文本 turn 已 durable 成功结束。

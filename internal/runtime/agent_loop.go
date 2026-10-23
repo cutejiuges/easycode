@@ -553,6 +553,7 @@ func (loop *AgentLoop) Run(ctx context.Context) error {
 	}
 	close(loop.ready)
 	defer func() {
+		loop.runtime.clearFileState()
 		loop.state.Store(agentLoopClosed)
 		close(loop.outputs)
 		close(loop.done)

@@ -18,8 +18,8 @@ import (
 
 type inertReadExecutor struct{}
 
-func (inertReadExecutor) Execute(context.Context, tool.ReadInvocation) tool.InvocationResult {
-	return tool.InvocationResult{}
+func (inertReadExecutor) Execute(context.Context, tool.ReadInvocation) tool.ReadExecution {
+	return tool.ReadExecution{}
 }
 
 type inertGlobExecutor struct{}
@@ -99,7 +99,7 @@ func TestProviderHistoryProjectorsProduceEquivalentTextSemantics(t *testing.T) {
 
 func completeTurnAndProject(t *testing.T, conversation provider.Conversation, text string) domain.SemanticHistoryView {
 	t.Helper()
-	catalog, err := tool.NewReadOnlyCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, inertGrepExecutor{})
+	catalog, err := tool.NewCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, inertGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, tool.NewApprovalPolicy())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,4 +130,30 @@ func completeTurnAndProject(t *testing.T, conversation provider.Conversation, te
 		t.Fatalf("terminal count: %d", terminalCount)
 	}
 	return conversation.ProjectHistory()
+}
+
+// catalogPatchPreparer 只用于验证目录装配，测试不会通过它访问文件系统。
+type catalogPatchPreparer struct{}
+
+func (catalogPatchPreparer) Prepare(context.Context, tool.PatchInvocation) (tool.PatchCandidate, error) {
+	return tool.PatchCandidate{}, nil
+}
+
+type catalogPatchExecutor struct{}
+
+func (catalogPatchExecutor) Execute(context.Context, tool.PatchCandidate) tool.InvocationResult {
+	return tool.InvocationResult{}
+}
+
+// catalogWritePreparer 只用于验证目录装配，测试不会通过它访问文件系统。
+type catalogWritePreparer struct{}
+
+func (catalogWritePreparer) Prepare(context.Context, tool.WriteInvocation, tool.ReadObservation) (tool.WriteCandidate, error) {
+	return tool.WriteCandidate{}, nil
+}
+
+type catalogWriteExecutor struct{}
+
+func (catalogWriteExecutor) Execute(context.Context, tool.WriteCandidate) tool.InvocationResult {
+	return tool.InvocationResult{}
 }

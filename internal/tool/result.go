@@ -112,6 +112,7 @@ type InvocationResult struct {
 	globMetadata   GlobResultMetadata
 	grepMetadata   GrepResultMetadata
 	patchMetadata  PatchResultMetadata
+	writeMetadata  WriteResultMetadata
 }
 
 // NewReadInvocationResult 构造完整 Read 结果。
@@ -176,6 +177,8 @@ func (result InvocationResult) PatchMetadata() PatchResultMetadata {
 	return result.patchMetadata
 }
 
+func (result InvocationResult) WriteMetadata() WriteResultMetadata { return result.writeMetadata }
+
 // Validate 验证结果身份、状态、错误码、preview 和元数据。
 func (result InvocationResult) Validate() error {
 	if !result.invocationID.Valid() || !result.providerCallID.Valid() {
@@ -195,6 +198,9 @@ func (result InvocationResult) Validate() error {
 	}
 	if err := result.preview.Validate(); err != nil {
 		return err
+	}
+	if result.capability != CapabilityWrite && result.writeMetadata != (WriteResultMetadata{}) {
+		return errors.New("tool result contains mismatched Write metadata")
 	}
 	switch result.capability {
 	case CapabilityRead:
@@ -217,6 +223,11 @@ func (result InvocationResult) Validate() error {
 			return errors.New("Patch result contains mismatched metadata")
 		}
 		return result.patchMetadata.Validate()
+	case CapabilityWrite:
+		if result.wireKind != WireStructured || result.readMetadata != (ReadResultMetadata{}) || !result.globMetadata.zero() || !result.grepMetadata.zero() || !result.patchMetadata.zero() || (result.status == ResultSuccess && result.writeMetadata.operation == WriteOperationUnavailable) {
+			return errors.New("Write result contains mismatched metadata")
+		}
+		return result.writeMetadata.Validate()
 	default:
 		return errors.New("tool result capability is invalid")
 	}
@@ -318,6 +329,9 @@ func NewInvocationErrorResult(invocation Invocation, status ResultStatus, code s
 		if err == nil {
 			return result
 		}
+	case CapabilityWrite:
+		value, _ := invocation.Write()
+		return NewWriteErrorResult(value, status, code, message)
 	case CapabilityPatch:
 		value, _ := invocation.Patch()
 		return NewPatchErrorResult(value, status, code, message)

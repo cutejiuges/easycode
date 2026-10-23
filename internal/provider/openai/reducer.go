@@ -317,6 +317,9 @@ func (reducer *responsesStreamReducer) completeFunctionCall(index *int, item Nat
 	if err != nil {
 		return tool.ReadyCall{}, fault.Wrap(fault.CodeStreamProtocol, "Responses ready call is invalid", err)
 	}
+	if ready.WireKind() != tool.WireStructured {
+		return tool.ReadyCall{}, fault.New(fault.CodeStreamProtocol, "Responses function wire does not match facade")
+	}
 	state.itemDone = true
 	reducer.lastToolOutputIndex = state.outputIndex
 	return ready, nil
@@ -365,6 +368,9 @@ func (reducer *responsesStreamReducer) completeCustomCall(index *int, item Nativ
 	ready, err := reducer.catalog.DecodeReadyCall(domain.ProviderOpenAI, state.name, callID, []byte(state.input))
 	if err != nil {
 		return tool.ReadyCall{}, fault.Wrap(fault.CodeStreamProtocol, "Responses custom ready call is invalid", err)
+	}
+	if ready.WireKind() != tool.WireCustomFreeform {
+		return tool.ReadyCall{}, fault.New(fault.CodeStreamProtocol, "Responses custom wire does not match facade")
 	}
 	state.itemDone = true
 	reducer.lastToolOutputIndex = state.outputIndex

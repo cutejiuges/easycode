@@ -1,7 +1,7 @@
 # EasyCode 总体架构设计
 
 > 状态：持续演进
-> 更新时间：2026-10-11
+> 更新时间：2026-10-24
 > 适用范围：EasyCode CLI、Agent Runtime、Provider、工具、扩展系统、会话存储和 TUI
 
 ## 1. 背景与目标
@@ -165,7 +165,7 @@ app      -> runtime + tui + headless
 cmd      -> app
 ```
 
-当前运行路径为 `domain/protocol <- provider|tool|context|session <- runtime <- app/tui/headless/cmd`。`context` 已通过纯内存 ContextPlanner 接入 Runtime，Provider 只向共享层暴露不含原生正文的 HistoryFootprint；Tool 已接入 Read/Glob/Grep 和需批准的单文件 Patch，extension、Subagent 和 telemetry 仍不可从 Runtime/app 到达。
+当前运行路径为 `domain/protocol <- provider|tool|context|session <- runtime <- app/tui/headless/cmd`。`context` 已通过纯内存 ContextPlanner 接入 Runtime，Provider 只向共享层暴露不含原生正文的 HistoryFootprint；Tool 已接入 Read/Glob/Grep 和需批准的单文件 Patch/Write，extension、Subagent 和 telemetry 仍不可从 Runtime/app 到达。
 
 禁止：
 
@@ -494,7 +494,7 @@ Runtime 为每次 Provider stream 创建派生 context，逐项验证事件并�
 
 完整设计、参考工程取舍、恢复语义和分 change 推进顺序见 [Tool 系统架构设计](tool-system.md)。本章只保留总体架构必须遵守的边界。
 
-本章同时描述已实现的 P3 基线与长期目标。当前 `internal/tool` 与 `internal/tool/builtin` 已由 Runtime/app 真实消费，提供 Read、Glob、Grep 和需批准的单文件 Patch；未在能力分期中明确标记已实现的其他内容仍是目标，不得由接口或文档描述推断为可用。
+本章同时描述已实现的 P3 基线与长期目标。当前 `internal/tool` 与 `internal/tool/builtin` 已由 Runtime/app 真实消费，提供 Read、Glob、Grep 和需批准的单文件 Patch/Write；未在能力分期中明确标记已实现的其他内容仍是目标，不得由接口或文档描述推断为可用。
 
 ### 8.1 分层
 
@@ -553,7 +553,7 @@ fs.patch
 
 ### 8.5 能力分期
 
-P3 当前已实现 Read、Glob、Grep、Anthropic structured Edit/OpenAI custom freeform apply_patch、双 Provider Tool Loop、durable approval/ledger、最多 8 路只读并发、exclusive Patch 屏障、有序结果提交和本地恢复补偿。Patch 限于一个已有 UTF-8 工作区常规文件，在 Unix 使用 descriptor-relative 重验与同目录原子替换；其他平台失败关闭。Write、exec/write_stdin、artifact、通用 sandbox 和跨平台等价实现仍按独立 change 逐项增加。
+P3 当前已实现 Read、Glob、Grep、Anthropic structured Edit/OpenAI custom freeform apply_patch、双 Provider Tool Loop、durable approval/ledger、最多 8 路只读并发、Patch/Write 独占屏障、有序结果提交和本地恢复补偿。Patch 限于一个已有 UTF-8 工作区常规文件，在 Unix 使用 descriptor-relative 重验与同目录原子替换；其他平台失败关闭。Write 的 structured facade 支持原子创建/整文件覆盖：覆盖要求先前已回传的完整 Read，新目录链通过私有树和 no-replace 发布；审批展示区分 create/overwrite，独立 Write grant 不在 resume 恢复。详见 [Tool 已实现边界](tool-system.md#101-write-已实现边界)。exec/write_stdin、artifact、通用 sandbox 和跨平台等价实现仍按独立 change 逐项增加。
 
 Skill 与 hooks/plugins 属于 P6；MCP 和 Agent/Subagent 属于 P7；完整跨平台 sandbox 矩阵属于 P8。未到对应阶段前不得提前暴露空 schema、event kind、facade 或 capability flag。
 
@@ -657,7 +657,7 @@ EventEnvelope
 
 Provider native commit 只记录 Provider 已验证的原生增量和 raw usage；紧邻的 `sample_usage` 记录共享五项三态指标。无工具的成功 sample 仍以 native commit、usage 与 terminal 原子提交；带调用的 sample 则把有序 ready facts 放入同一 durable batch，随后单独提交 started、result 和 Provider 原生 tool outputs。缺失 usage、错序、遗漏配对或重复调用身份一律 fail closed。permission、hook、subagent、cache 与 compaction checkpoint 仍需按各自恢复语义增加版本化记录；不能把 RuntimeEvent 或 UI transcript 当作 native history。
 
-当前 Session envelope/payload 使用唯一 canary，进程内 RuntimeEvent 不携带固定版本；headless JSONL v1 是独立外部 wire。稳定发布前的契约补全直接替换唯一 current fixture，不保留双 reader；只有契约已冻结、变化无法加法表达且已发布数据或客户端必须并存时，才引入新 revision，并同时定义兼容窗口与退出条件。
+当前 Session envelope/payload 使用唯一 canary 3，进程内 RuntimeEvent 不携带固定版本；headless JSONL v1 是独立外部 wire。稳定发布前的契约补全直接替换唯一 current fixture，不保留双 reader；只有契约已冻结、变化无法加法表达且已发布数据或客户端必须并存时，才引入新 revision，并同时定义兼容窗口与退出条件。
 
 Headless JSONL v1 是 stdout 外部协议，不是 Session record：不得写入 journal，也不得在 resume 时回放。headless resume 只复用连续 lease 下恢复出的 Provider-native history，并只发布本次新 turn；`SemanticHistoryView` 仍只供 TUI 等只读消费者使用。
 
@@ -924,7 +924,7 @@ make verify
 10. 禁止上帝类、上帝包、循环依赖和跨层捷径。
 11. 每次逻辑变更都需要测试、自检并保持全量测试通过。
 12. Provider request canonical bytes 由 Provider compiler 唯一生成，transport 只发送不可变快照。
-13. Session v1 draft/decoder 强类型且按 kind/revision 校验，不通过 `any` 或反射 registry 传播核心 payload。
+13. Session 当前 draft/decoder 强类型且按 canary/kind 校验，不通过 `any` 或反射 registry 传播核心 payload。
 14. 配置与 Session 的类型、权限和 symlink 安全判断绑定实际打开句柄；无法提供等价语义的平台必须失败关闭。
 15. 生产包级 `var` 只允许私有 sentinel error 和编译期接口断言；依赖方向、核心动态类型与占位 reachability 由 `internal/architecture` 的 AST/import graph 回归守卫。
 16. 项目指令只由当前进程启动目录的一次安全发现产生；它可以进入 ContextPlan 与 Provider 临时请求上下文，但不得进入 native commit、Session、RuntimeEvent 或语义历史。

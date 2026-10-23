@@ -1,0 +1,11 @@
+  ┌─ Create file ──────────────┐
+  │ Path: 新建/pkg/a.txt       │
+  │ Risk: Write modifies work… │
+  │ Diff 1-2 of 6              │
+  │ 16 bytes, 2 lines          │
+  │ Create directory: 新建     │
+  │   Yes                      │
+  │   Yes, allow creating and… │
+  │ > No                       │
+  │ Tab: add feedback · Enter… │
+  └────────────────────────────┘

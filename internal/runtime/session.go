@@ -71,6 +71,9 @@ func (session *ChatSession) runTurn(
 	defer func() {
 		session.mu.Lock()
 		session.active = false
+		if session.closed {
+			session.runtime.clearFileState()
+		}
 		session.cancel = nil
 		if session.done == done {
 			session.done = nil
@@ -158,6 +161,9 @@ func (session *ChatSession) Shutdown(ctx context.Context) error {
 	}
 	cancel := session.cancel
 	done := session.done
+	if done == nil {
+		session.runtime.clearFileState()
+	}
 	session.mu.Unlock()
 
 	if cancel != nil {

@@ -84,6 +84,9 @@ func (payload ToolCallReadyPayload) Domain() (tool.Invocation, error) {
 	if !payload.InvocationID.Valid() || !payload.ProviderCallID.Valid() || !payload.WireKind.Valid() || payload.SampleIndex >= 16 || payload.CallIndex >= 64 {
 		return tool.Invocation{}, fmt.Errorf("tool call ready payload is invalid")
 	}
+	if payload.Capability != tool.CapabilityWrite && payload.WriteInput != nil {
+		return tool.Invocation{}, fmt.Errorf("unexpected Write input")
+	}
 	var ready tool.ReadyCall
 	var err error
 	switch payload.Capability {
@@ -146,6 +149,15 @@ func (payload ToolCallReadyPayload) Domain() (tool.Invocation, error) {
 			return tool.Invocation{}, fmt.Errorf("tool call ready Patch input is invalid")
 		}
 		ready, err = tool.NewPatchReadyCall(payload.ProviderCallID, payload.WireKind, input)
+	case tool.CapabilityWrite:
+		if payload.WireKind != tool.WireStructured || payload.WriteInput == nil || payload.ReadInput != nil || payload.GlobInput != nil || payload.GrepInput != nil || payload.PatchInput != nil {
+			return tool.Invocation{}, fmt.Errorf("invalid Write input union")
+		}
+		input, inputErr := tool.NewWriteInput(payload.WriteInput.FilePath, payload.WriteInput.Content)
+		if inputErr != nil {
+			return tool.Invocation{}, inputErr
+		}
+		ready, err = tool.NewWriteReadyCall(payload.ProviderCallID, input)
 	default:
 		return tool.Invocation{}, fmt.Errorf("tool call ready capability is invalid")
 	}
@@ -212,12 +224,29 @@ func validateToolCallResultPayload(payload ToolCallResultPayload) error {
 	if err != nil {
 		return err
 	}
-	_, err = payload.Domain(invocation)
+	_, err = decodeResultPayload(payload, invocation)
 	return err
 }
 
 // Domain 使用对应ready invocation重建冻结工具结果。
 func (payload ToolCallResultPayload) Domain(invocation tool.Invocation) (tool.InvocationResult, error) {
+	result, err := decodeResultPayload(payload, invocation)
+	if err != nil {
+		return tool.InvocationResult{}, err
+	}
+	if value, ok := invocation.Write(); ok && result.Status() == tool.ResultSuccess {
+		m := result.WriteMetadata()
+		if m.Bytes() != len(value.Input().Content()) || m.Lines() != tool.WriteLineCount(value.Input().Content()) {
+			return tool.InvocationResult{}, fmt.Errorf("write result counts do not match input")
+		}
+	}
+	return result, nil
+}
+
+func decodeResultPayload(payload ToolCallResultPayload, invocation tool.Invocation) (tool.InvocationResult, error) {
+	if payload.WireKind != invocation.WireKind() || (payload.Capability != tool.CapabilityWrite && payload.WriteMetadata != nil) {
+		return tool.InvocationResult{}, fmt.Errorf("result wire or metadata mismatch")
+	}
 	if err := invocation.Validate(); err != nil || invocation.InvocationID() != payload.InvocationID || invocation.Capability() != payload.Capability {
 		return tool.InvocationResult{}, fmt.Errorf("tool call result invocation is invalid")
 	}
@@ -233,6 +262,8 @@ func (payload ToolCallResultPayload) Domain(invocation tool.Invocation) (tool.In
 		result, err = decodeGlobResult(payload, invocation, preview)
 	case tool.CapabilityGrep:
 		result, err = decodeGrepResult(payload, invocation, preview)
+	case tool.CapabilityWrite:
+		return decodeWriteResult(payload, invocation, preview)
 	case tool.CapabilityPatch:
 		if payload.PatchMetadata == nil || payload.ReadMetadata != nil || payload.GlobMetadata != nil || payload.GrepMetadata != nil {
 			return tool.InvocationResult{}, fmt.Errorf("patch metadata union is invalid")
@@ -257,6 +288,9 @@ func (payload ToolCallResultPayload) Domain(invocation tool.Invocation) (tool.In
 
 func validationInvocation(payload ToolCallResultPayload) (tool.Invocation, error) {
 	callID, _ := tool.ParseProviderCallID("payload-validation")
+	if payload.Capability != tool.CapabilityWrite && payload.WriteMetadata != nil {
+		return tool.Invocation{}, fmt.Errorf("unexpected Write metadata")
+	}
 	var ready tool.ReadyCall
 	var err error
 	switch payload.Capability {
@@ -284,6 +318,15 @@ func validationInvocation(payload ToolCallResultPayload) (tool.Invocation, error
 			return tool.Invocation{}, fmt.Errorf("tool call result Grep metadata is invalid: %w", inputErr)
 		}
 		ready, err = tool.NewGrepReadyCall(callID, input)
+	case tool.CapabilityWrite:
+		if payload.WriteMetadata == nil || payload.WireKind != tool.WireStructured || payload.ReadMetadata != nil || payload.GlobMetadata != nil || payload.GrepMetadata != nil || payload.PatchMetadata != nil {
+			return tool.Invocation{}, fmt.Errorf("invalid Write metadata union")
+		}
+		input, inputErr := tool.NewWriteInput(payload.WriteMetadata.RelativePath, "")
+		if inputErr != nil {
+			return tool.Invocation{}, inputErr
+		}
+		ready, err = tool.NewWriteReadyCall(callID, input)
 	case tool.CapabilityPatch:
 		if payload.PatchMetadata == nil || payload.ReadMetadata != nil || payload.GlobMetadata != nil || payload.GrepMetadata != nil {
 			return tool.Invocation{}, fmt.Errorf("tool call result metadata does not match Patch capability")

@@ -3,7 +3,6 @@ package protocol
 import (
 	"fmt"
 	"strings"
-	"unicode/utf8"
 
 	"easycode/internal/codec"
 	"easycode/internal/domain"
@@ -27,15 +26,15 @@ func (decision ApprovalDecision) Valid() bool {
 
 // ToolApprovalRequestedPayload 保存不含Provider wire与完整文件正文的批准视图。
 type ToolApprovalRequestedPayload struct {
-	RequestID      string             `json:"request_id"`
-	InvocationID   string             `json:"invocation_id"`
-	ProviderCallID string             `json:"provider_call_id"`
-	Capability     string             `json:"capability"`
-	Reason         string             `json:"reason"`
-	RelativePath   string             `json:"relative_path"`
-	Fingerprint    string             `json:"fingerprint"`
-	Diff           string             `json:"diff"`
-	Decisions      []ApprovalDecision `json:"decisions"`
+	RequestID      string               `json:"request_id"`
+	InvocationID   string               `json:"invocation_id"`
+	ProviderCallID string               `json:"provider_call_id"`
+	Capability     string               `json:"capability"`
+	Reason         string               `json:"reason"`
+	RelativePath   string               `json:"relative_path"`
+	Fingerprint    string               `json:"fingerprint"`
+	Presentation   ApprovalPresentation `json:"presentation"`
+	Decisions      []ApprovalDecision   `json:"decisions"`
 }
 
 // ToolApprovalResolvedPayload 通知宿主关闭匹配overlay。
@@ -184,7 +183,7 @@ func DecodeToolApprovalRequested(event Event) (ToolApprovalRequestedPayload, err
 }
 
 func validateApprovalRequested(payload ToolApprovalRequestedPayload) error {
-	if !validUUIDv7Text(payload.RequestID) || !validUUIDv7Text(payload.InvocationID) || payload.ProviderCallID == "" || len(payload.ProviderCallID) > 256 || payload.Capability != "fs.patch" || strings.TrimSpace(payload.Reason) == "" || len(payload.Reason) > 1024 || !validApprovalPath(payload.RelativePath) || !validFingerprint(payload.Fingerprint) || payload.Diff == "" || len(payload.Diff) > maxApprovalDiffBytes || !utf8.ValidString(payload.Diff) {
+	if !validUUIDv7Text(payload.RequestID) || !validUUIDv7Text(payload.InvocationID) || payload.ProviderCallID == "" || len(payload.ProviderCallID) > 256 || payload.Capability != payload.Presentation.Capability() || strings.TrimSpace(payload.Reason) == "" || len(payload.Reason) > 1024 || !validApprovalPath(payload.RelativePath) || !validFingerprint(payload.Fingerprint) || payload.Presentation.Validate() != nil {
 		return fmt.Errorf("tool approval request payload is invalid")
 	}
 	want := []ApprovalDecision{ApprovalAllowOnce, ApprovalAllowSession, ApprovalDeny}

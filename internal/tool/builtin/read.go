@@ -49,6 +49,7 @@ type workspaceHandle interface {
 	openFile(string, workspaceHooks) (*os.File, error)
 	openDirectory(string, workspaceHooks) (workspaceDirectory, error)
 	openPatchFile(string, workspaceHooks) (patchFile, error)
+	openWritePath(string, workspaceHooks) (writePath, error)
 	close() error
 }
 
@@ -114,7 +115,10 @@ func (workspace *Workspace) relativePath(input string) (string, error) {
 }
 
 // ReadExecutor 是只依赖已打开 Workspace capability 的 Read 执行器。
-type ReadExecutor struct{ workspace *Workspace }
+type ReadExecutor struct {
+	workspace *Workspace
+	afterRead func(*os.File)
+}
 
 // NewReadExecutor 纯内存组合一个 Read executor，不访问文件系统。
 func NewReadExecutor(workspace *Workspace) (*ReadExecutor, error) {
@@ -125,7 +129,7 @@ func NewReadExecutor(workspace *Workspace) (*ReadExecutor, error) {
 }
 
 // Execute 读取 workspace 内经过 handle 约束的 UTF-8 普通文件。
-func (executor *ReadExecutor) Execute(ctx context.Context, invocation tool.ReadInvocation) tool.InvocationResult {
+func (executor *ReadExecutor) Execute(ctx context.Context, invocation tool.ReadInvocation) tool.ReadExecution {
 	if ctx == nil || ctx.Err() != nil {
 		return readError(invocation, tool.ResultCancelled, "cancelled", "Read cancelled", ".")
 	}
@@ -151,6 +155,7 @@ func (executor *ReadExecutor) Execute(ctx context.Context, invocation tool.ReadI
 		return readError(invocation, tool.ResultError, "file_unavailable", "Read failed: file is unavailable", relative)
 	}
 	defer func() { _ = file.Close() }()
+	before, beforeErr := readFileSnapshot(file)
 	data, code, message := readBounded(ctx, file)
 	if code != "" {
 		status := tool.ResultError
@@ -164,7 +169,17 @@ func (executor *ReadExecutor) Execute(ctx context.Context, invocation tool.ReadI
 	}
 	lines := splitTextLines(string(data))
 	selected := selectLines(lines, invocation.Input().Offset(), invocation.Input().Limit())
-	return tool.RenderReadSuccess(invocation, relative, selected, len(lines))
+	result := tool.RenderReadSuccess(invocation, relative, selected, len(lines))
+	if executor.afterRead != nil {
+		executor.afterRead(file)
+	}
+	after, afterErr := readFileSnapshot(file)
+	observation := tool.UnavailableReadObservation()
+	if beforeErr == nil && afterErr == nil {
+		observation = observeRead(result, before, after, data)
+	}
+	execution, _ := tool.NewReadExecution(result, observation)
+	return execution
 }
 
 func readBounded(ctx context.Context, file io.Reader) ([]byte, string, string) {
@@ -230,6 +245,7 @@ func safeRelative(value string) string {
 	return cleaned
 }
 
-func readError(invocation tool.ReadInvocation, status tool.ResultStatus, code string, message string, relative string) tool.InvocationResult {
-	return tool.NewReadErrorResult(invocation, status, code, message, relative)
+func readError(invocation tool.ReadInvocation, status tool.ResultStatus, code string, message string, relative string) tool.ReadExecution {
+	execution, _ := tool.NewReadExecution(tool.NewReadErrorResult(invocation, status, code, message, relative), tool.UnavailableReadObservation())
+	return execution
 }

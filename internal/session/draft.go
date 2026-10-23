@@ -85,6 +85,9 @@ func NewToolCallReadyDraft(turnID domain.TurnID, invocation tool.Invocation, sam
 			Pattern: input.Pattern(), Path: input.Path(), Glob: input.Glob(), OutputMode: input.OutputMode(),
 			CaseInsensitive: input.CaseInsensitive(), BeforeContext: input.BeforeContext(), AfterContext: input.AfterContext(), Limit: input.Limit(),
 		}
+	case tool.CapabilityWrite:
+		value, _ := invocation.Write()
+		payload.WriteInput = &WriteInputPayload{FilePath: value.Input().FilePath(), Content: value.Input().Content()}
 	case tool.CapabilityPatch:
 		value, _ := invocation.Patch()
 		input := value.Input()
@@ -150,6 +153,9 @@ func NewToolCallResultDraft(turnID domain.TurnID, result tool.InvocationResult) 
 	case tool.CapabilityGrep:
 		metadata := result.GrepMetadata()
 		payload.GrepMetadata = encodeGrepMetadata(metadata)
+	case tool.CapabilityWrite:
+		m := result.WriteMetadata()
+		payload.WriteMetadata = &WriteResultMetadataPayload{RelativePath: m.RelativePath(), Operation: m.Operation(), Bytes: m.Bytes(), Lines: m.Lines(), CreatedDirectories: m.CreatedDirectories()}
 	case tool.CapabilityPatch:
 		metadata := result.PatchMetadata()
 		payload.PatchMetadata = &PatchResultMetadataPayload{RelativePath: metadata.RelativePath(), ReplacementCount: metadata.ReplacementCount(), AddedLines: metadata.AddedLines(), RemovedLines: metadata.RemovedLines()}
