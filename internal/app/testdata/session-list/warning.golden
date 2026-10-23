@@ -1,0 +1,1 @@
+Warning: storage-wide scan found 2 busy and 1 invalid journals; indexed metadata may be stale and sessions may be missing.

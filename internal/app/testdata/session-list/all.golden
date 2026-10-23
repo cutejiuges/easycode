@@ -1,0 +1,9 @@
+Sessions across all directories (most recently updated first)
+
+019abcde-1234-7123-8123-123456789abc
+  Updated: 2026-10-23T08:30:00Z
+  Provider: openai / responses | Model: example-model
+  Directory: /workspace/easycode
+
+Resume: easycode --resume <thread-id>
+Use matching provider, wire and model settings. Resume uses your current directory.
