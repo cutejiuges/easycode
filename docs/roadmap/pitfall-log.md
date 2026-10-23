@@ -606,3 +606,16 @@
 暂无实际记录。
 
 重点关注：跨平台路径/PTY 差异、迁移、诊断脱敏、磁盘故障和隐式全局缓存。
+
+### [P2][2026-10-23] 会话列表不能把全局索引协调当作当前目录的完整事实
+
+- 状态：已解决
+- 影响变更：`add-session-list-command`
+- 现象：接入列表时发现现有 `ReconciliationReport` 的 busy/invalid 来自全存储枚举，忙碌的已索引会话只保留旧元数据，而未索引会话可能完全缺席。
+- 根因：目录筛选发生在协调后的查询阶段；索引是最后验证的投影，不是实时 owner 状态，也不能证明当前配置可恢复。
+- 架构影响：列表入口独立装配 Repository/Catalog，继续复用 lease 与安全协调，保留 `--continue` 对 busy-unindexed 的失败关闭语义。
+- 缓存影响：无，未修改 Provider request/native history/tool catalog。
+- 修复方案：明确标注 storage-wide 警告、完整 ID 与配置匹配恢复提示；存储 owner 关闭后才输出，不新增逐行状态猜测、弱 reader 或隐式模型调用。
+- 未采用方案及原因：不将 busy 全部视作列表失败，也不静默宣称结果完整；不把 limit 用作扫描中断条件。
+- 回归测试：`internal/app/session_list_test.go`、`internal/app/session_list_integration_test.go`、`internal/session/catalog/list_integration_test.go`。
+- 后续行动：worktree 聚合、标题与交互 picker 另立 change。
