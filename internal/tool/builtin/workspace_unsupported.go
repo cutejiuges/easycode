@@ -32,3 +32,7 @@ func (unsupportedWorkspaceChild) size() int64                   { return 0 }
 func (unsupportedWorkspaceChild) file() *os.File                { return nil }
 func (unsupportedWorkspaceChild) directory() workspaceDirectory { return nil }
 func (unsupportedWorkspaceChild) close() error                  { return nil }
+
+func (unsupportedWorkspaceHandle) openWritePath(string, workspaceHooks) (writePath, error) {
+	return nil, errWorkspaceUnsupported
+}

@@ -22,7 +22,7 @@ func prepareToolOutputsEntry(history []nativeHistoryEntry, results []tool.Invoca
 		if string(result.ProviderCallID()) != calls[index].ID {
 			return nativeHistoryEntry{}, fmt.Errorf("anthropic tool result order does not match pending calls")
 		}
-		if result.Capability() != anthropicCapabilityForName(calls[index].Name) {
+		if result.WireKind() != tool.WireStructured || result.Capability() != anthropicCapabilityForName(calls[index].Name) {
 			return nativeHistoryEntry{}, fmt.Errorf("anthropic tool result capability does not match pending call")
 		}
 		blocks[index] = NativeItem{
@@ -48,6 +48,8 @@ func anthropicCapabilityForName(name string) tool.CapabilityID {
 		return tool.CapabilityRead
 	case "Glob":
 		return tool.CapabilityGlob
+	case "Write":
+		return tool.CapabilityWrite
 	case "Grep":
 		return tool.CapabilityGrep
 	case "Edit":

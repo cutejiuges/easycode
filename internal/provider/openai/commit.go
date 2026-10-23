@@ -168,6 +168,11 @@ func validateOutputItem(item NativeItem) error {
 		return fmt.Errorf("OpenAI native commit message role is invalid")
 	}
 	if item.Type == "function_call" {
+		if item.Name == "Write" {
+			if _, err := tool.DecodeWriteInput([]byte(item.Arguments)); err != nil {
+				return fmt.Errorf("invalid native Write input")
+			}
+		}
 		if item.CallID == "" || item.Name == "" || item.Arguments == "" || !json.Valid([]byte(item.Arguments)) {
 			return fmt.Errorf("OpenAI function call item is invalid")
 		}

@@ -20,7 +20,7 @@ func mustExecApproval(t *testing.T) protocol.Event {
 		t.Fatal(err)
 	}
 	payload.Capability, payload.ProviderCallID = "process.exec", "call-exec"
-	payload.Diff, payload.Command = "", "printf hello"
+	payload.Presentation, payload.Command = nil, "printf hello"
 	payload.RelativePath, payload.TimeoutMillis = "src", 1000
 	payload.Reason = "Foreground only; detached processes may continue running."
 	payload.Decisions = []protocol.ApprovalDecision{protocol.ApprovalAllowOnce, protocol.ApprovalDeny, protocol.ApprovalAbort}

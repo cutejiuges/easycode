@@ -10,6 +10,7 @@ import (
 	"easycode/internal/codec"
 	"easycode/internal/domain"
 	"easycode/internal/provider"
+	"easycode/internal/tool"
 )
 
 const (
@@ -205,6 +206,11 @@ func validateAssistantBlock(block NativeItem) error {
 	case blockTypeText, blockTypeThinking, blockTypeRedactedThinking:
 		return nil
 	case blockTypeToolUse:
+		if block.Name == "Write" {
+			if _, err := tool.DecodeWriteInput(block.Input); err != nil {
+				return fmt.Errorf("invalid native Write input")
+			}
+		}
 		if block.ID == "" || block.Name == "" || len(block.Input) == 0 || !json.Valid(block.Input) {
 			return fmt.Errorf("anthropic tool use block is invalid")
 		}

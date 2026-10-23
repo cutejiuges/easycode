@@ -216,7 +216,7 @@ func TestExecConstructionFailureClosesWorkspaceBeforeReturning(t *testing.T) {
 	ready, _ := tool.NewReadReadyCall("probe", input)
 	id, _ := tool.ParseInvocationID("018f1d8a-7b5c-7def-8abc-456789abcdef")
 	invocation, _ := tool.NewReadInvocation(id, ready)
-	if result := reader.Execute(context.Background(), invocation); result.Status() == tool.ResultSuccess {
+	if result := reader.Execute(context.Background(), invocation); result.Result().Status() == tool.ResultSuccess {
 		t.Fatal("constructor failure leaked open workspace")
 	}
 	repository, err := session.OpenOrCreateRepository(root)

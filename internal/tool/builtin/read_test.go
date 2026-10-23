@@ -13,6 +13,11 @@ import (
 
 type inertWorkspaceHandle struct{ opened int }
 
+func (handle *inertWorkspaceHandle) openWritePath(string, workspaceHooks) (writePath, error) {
+	handle.opened++
+	return nil, errors.New("not used")
+}
+
 func (handle *inertWorkspaceHandle) openFile(string, workspaceHooks) (*os.File, error) {
 	handle.opened++
 	return nil, errors.New("not used")
@@ -50,7 +55,7 @@ func TestReadWorkspaceTextAndRange(t *testing.T) {
 		t.Fatal(err)
 	}
 	executor, workspace := openTestExecutor(t, root)
-	result := executor.Execute(context.Background(), invocationFor(t, filepath.Join(root, "src", "main.go"), 2, 2))
+	result := executor.Execute(context.Background(), invocationFor(t, filepath.Join(root, "src", "main.go"), 2, 2)).Result()
 	if result.Status() != tool.ResultSuccess || result.Code() != "ok" {
 		t.Fatalf("Read 失败: %s %s", result.Status(), result.Code())
 	}
@@ -78,15 +83,15 @@ func TestReadEmptyMissingNewlineAndPastEOF(t *testing.T) {
 		t.Fatal(err)
 	}
 	executor, _ := openTestExecutor(t, root)
-	empty := executor.Execute(context.Background(), invocationFor(t, "empty", 1, 2000))
+	empty := executor.Execute(context.Background(), invocationFor(t, "empty", 1, 2000)).Result()
 	if empty.Preview().Text() != "" || !empty.ReadMetadata().ReachedEOF() {
 		t.Fatalf("空文件结果错误: %q %#v", empty.Preview().Text(), empty.ReadMetadata())
 	}
-	tail := executor.Execute(context.Background(), invocationFor(t, "tail", 2, 1))
+	tail := executor.Execute(context.Background(), invocationFor(t, "tail", 2, 1)).Result()
 	if tail.Preview().Text() != "2\tb\n" || !tail.ReadMetadata().ReachedEOF() {
 		t.Fatalf("无末尾换行结果错误: %q %#v", tail.Preview().Text(), tail.ReadMetadata())
 	}
-	past := executor.Execute(context.Background(), invocationFor(t, "tail", 9, 1))
+	past := executor.Execute(context.Background(), invocationFor(t, "tail", 9, 1)).Result()
 	if past.Preview().Text() != "" || !past.ReadMetadata().ReachedEOF() {
 		t.Fatalf("超出 EOF 结果错误: %q %#v", past.Preview().Text(), past.ReadMetadata())
 	}
@@ -133,7 +138,7 @@ func TestReadRejectsTraversalSymlinkBinaryAndOversize(t *testing.T) {
 		{path: "large", code: "file_too_large"},
 	}
 	for _, test := range tests {
-		result := executor.Execute(context.Background(), invocationFor(t, test.path, 1, 20))
+		result := executor.Execute(context.Background(), invocationFor(t, test.path, 1, 20)).Result()
 		if result.Status() != tool.ResultError || result.Code() != test.code {
 			t.Fatalf("%q = %s/%s", test.path, result.Status(), result.Code())
 		}
@@ -153,7 +158,7 @@ func TestReadCancellationBeforeAdmissionDoesNotOpen(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	result := executor.Execute(ctx, invocationFor(t, "file", 1, 1))
+	result := executor.Execute(ctx, invocationFor(t, "file", 1, 1)).Result()
 	if result.Status() != tool.ResultCancelled || handle.opened != 0 {
 		t.Fatalf("取消前置仍执行 I/O: status=%s opens=%d", result.Status(), handle.opened)
 	}

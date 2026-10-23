@@ -164,6 +164,7 @@ type ToolCallReadyPayload struct {
 	GlobInput      *GlobInputPayload     `json:"glob_input,omitempty"`
 	GrepInput      *GrepInputPayload     `json:"grep_input,omitempty"`
 	PatchInput     *PatchInputPayload    `json:"patch_input,omitempty"`
+	WriteInput     *WriteInputPayload    `json:"write_input,omitempty"`
 	ExecInput      *ExecInputPayload     `json:"exec_input,omitempty"`
 }
 
@@ -253,6 +254,7 @@ type ToolCallResultPayload struct {
 	GlobMetadata  *GlobResultMetadataPayload  `json:"glob_metadata,omitempty"`
 	GrepMetadata  *GrepResultMetadataPayload  `json:"grep_metadata,omitempty"`
 	PatchMetadata *PatchResultMetadataPayload `json:"patch_metadata,omitempty"`
+	WriteMetadata *WriteResultMetadataPayload `json:"write_metadata,omitempty"`
 	ExecMetadata  *ExecResultMetadataPayload  `json:"exec_metadata,omitempty"`
 }
 

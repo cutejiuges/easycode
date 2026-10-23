@@ -141,20 +141,20 @@ func (plan ToolRecoveryPlan) Validate() error {
 		lastReadySequence = call.ReadySequence
 		if !call.Invocation.Capability().Exclusive() {
 			if call.ApprovalSequence != 0 || call.ApprovalOutcome != "" || call.CandidateFingerprint != "" {
-				return fmt.Errorf("non-patch tool recovery call has approval facts")
+				return fmt.Errorf("read-only tool recovery call has approval facts")
 			}
 			continue
 		}
 		if call.ApprovalSequence == 0 {
-			if call.ApprovalOutcome != "" || call.CandidateFingerprint != "" || call.State == ReplayedToolCallStarted {
-				return fmt.Errorf("patch tool recovery approval facts are invalid")
+			if call.ApprovalOutcome != "" || call.CandidateFingerprint != "" || call.StartedSequence != 0 || call.State == ReplayedToolCallStarted {
+				return fmt.Errorf("exclusive tool recovery approval facts are invalid")
 			}
 			continue
 		}
 		if call.ApprovalSequence <= call.ReadySequence ||
 			(call.StartedSequence != 0 && call.ApprovalSequence >= call.StartedSequence) ||
 			(call.ResultSequence != 0 && call.ApprovalSequence >= call.ResultSequence) {
-			return fmt.Errorf("patch tool recovery approval sequence is invalid")
+			return fmt.Errorf("exclusive tool recovery approval sequence is invalid")
 		}
 		if !call.CandidateFingerprint.Valid() ||
 			(call.ApprovalOutcome != tool.ApprovalOutcomeAllowOnce &&
@@ -162,7 +162,7 @@ func (plan ToolRecoveryPlan) Validate() error {
 				call.ApprovalOutcome != tool.ApprovalOutcomeAllowFromSession &&
 				call.ApprovalOutcome != tool.ApprovalOutcomeDeny &&
 				call.ApprovalOutcome != tool.ApprovalOutcomeAbort) {
-			return fmt.Errorf("patch tool recovery approval facts are invalid")
+			return fmt.Errorf("exclusive tool recovery approval facts are invalid")
 		}
 		allowed := call.ApprovalOutcome == tool.ApprovalOutcomeAllowOnce || call.ApprovalOutcome == tool.ApprovalOutcomeAllowSession || call.ApprovalOutcome == tool.ApprovalOutcomeAllowFromSession
 		if call.Invocation.Capability() == tool.CapabilityExec && (call.ApprovalOutcome == tool.ApprovalOutcomeAllowSession || call.ApprovalOutcome == tool.ApprovalOutcomeAllowFromSession) {
@@ -174,11 +174,10 @@ func (plan ToolRecoveryPlan) Validate() error {
 			}
 		}
 		if (call.ApprovalOutcome == tool.ApprovalOutcomeDeny || call.ApprovalOutcome == tool.ApprovalOutcomeAbort) && call.State != ReplayedToolCallResult {
-			return fmt.Errorf("closed patch approval is missing its result")
+			return fmt.Errorf("closed exclusive approval is missing its result")
 		}
 	}
 	lastStartedSequence := lastReadySequence
-	maxStartedSequence := lastReadySequence
 	for _, call := range plan.calls {
 		if call.StartedSequence == 0 {
 			continue
@@ -187,11 +186,27 @@ func (plan ToolRecoveryPlan) Validate() error {
 			return fmt.Errorf("tool recovery started sequence is invalid")
 		}
 		lastStartedSequence = call.StartedSequence
-		maxStartedSequence = call.StartedSequence
 	}
-	lastResultSequence := maxStartedSequence
+	lastResultSequence := lastReadySequence
 	resultGapSeen := false
-	for _, call := range plan.calls {
+	for index, call := range plan.calls {
+		// 独占调用之间的 result/started 可交错；只读组内部仍须先完成全部准入。
+		for previous := 0; previous < index; previous++ {
+			prior := plan.calls[previous]
+			if call.ApprovalSequence != 0 && (prior.ResultSequence == 0 || prior.ResultSequence >= call.ApprovalSequence) {
+				return fmt.Errorf("tool recovery approval crossed an unfinished call")
+			}
+			if call.StartedSequence != 0 && (call.Invocation.Capability().Exclusive() || prior.Invocation.Capability().Exclusive()) && (prior.ResultSequence == 0 || prior.ResultSequence >= call.StartedSequence) {
+				return fmt.Errorf("tool recovery start crossed an unfinished exclusive barrier")
+			}
+		}
+		if call.ResultSequence != 0 && !call.Invocation.Capability().Exclusive() {
+			for next := index + 1; next < len(plan.calls) && !plan.calls[next].Invocation.Capability().Exclusive(); next++ {
+				if plan.calls[next].StartedSequence >= call.ResultSequence {
+					return fmt.Errorf("read result preceded group admission")
+				}
+			}
+		}
 		switch call.State {
 		case ReplayedToolCallReady:
 			if call.StartedSequence != 0 || call.ResultSequence != 0 {
@@ -207,14 +222,15 @@ func (plan ToolRecoveryPlan) Validate() error {
 			if resultGapSeen || call.ResultSequence <= lastResultSequence || call.Result.Validate() != nil ||
 				call.Result.InvocationID() != call.Invocation.InvocationID() ||
 				call.Result.ProviderCallID() != call.Invocation.ProviderCallID() ||
-				call.Result.Capability() != call.Invocation.Capability() {
+				call.Result.Capability() != call.Invocation.Capability() || call.Result.WireKind() != call.Invocation.WireKind() {
 				return fmt.Errorf("result tool recovery call is invalid")
 			}
 			if call.StartedSequence == 0 {
-				closedPatch := call.Invocation.Capability().Exclusive() &&
+				closedExclusive := call.Invocation.Capability().Exclusive() &&
 					((call.ApprovalOutcome == tool.ApprovalOutcomeDeny && call.Result.Status() == tool.ResultDenied) ||
 						(call.ApprovalOutcome == tool.ApprovalOutcomeAbort && call.Result.Status() == tool.ResultCancelled))
-				if call.Result.Status() != tool.ResultCancelled && !closedPatch {
+				preparedFailure := call.Invocation.Capability().Exclusive() && call.ApprovalSequence == 0 && (call.Result.Status() == tool.ResultError || (call.Invocation.Capability() == tool.CapabilityWrite && call.Result.Status() == tool.ResultConflict))
+				if call.Result.Status() != tool.ResultCancelled && !closedExclusive && !preparedFailure {
 					return fmt.Errorf("tool result before execution start is not cancelled")
 				}
 			} else if call.ResultSequence <= call.StartedSequence {
@@ -489,18 +505,18 @@ func (active *activeReplayTurn) acceptStarted(record Record) error {
 		}
 		if call.Invocation.Capability().Exclusive() {
 			if call.ApprovalSequence == 0 || (call.ApprovalOutcome != tool.ApprovalOutcomeAllowOnce && call.ApprovalOutcome != tool.ApprovalOutcomeAllowSession && call.ApprovalOutcome != tool.ApprovalOutcomeAllowFromSession) {
-				return replayCorrupt("Patch execution started without approval")
+				return replayCorrupt("exclusive execution started without approval")
 			}
 			for previous := 0; previous < index; previous++ {
 				if active.pendingCalls[previous].State != ReplayedToolCallResult {
-					return replayCorrupt("Patch execution crossed an unfinished call")
+					return replayCorrupt("exclusive execution crossed an unfinished call")
 				}
 			}
 		} else {
 			for previous := 0; previous < index; previous++ {
 				prior := active.pendingCalls[previous]
 				if prior.Invocation.Capability().Exclusive() && prior.State != ReplayedToolCallResult {
-					return replayCorrupt("read execution crossed an unfinished Patch")
+					return replayCorrupt("read execution crossed an unfinished exclusive call")
 				}
 				if !prior.Invocation.Capability().Exclusive() && prior.State == ReplayedToolCallReady {
 					return replayCorrupt("read execution order is invalid")
@@ -526,7 +542,7 @@ func (active *activeReplayTurn) acceptApproval(batch []Record) error {
 			continue
 		}
 		if !call.Invocation.Capability().Exclusive() || call.State != ReplayedToolCallReady || call.ApprovalSequence != 0 {
-			return replayCorrupt("tool approval does not match a pending Patch")
+			return replayCorrupt("tool approval does not match a pending exclusive call")
 		}
 		metadata, metadataErr := NewApprovalMetadata(call.Invocation)
 		if metadataErr != nil || metadata != payload.Metadata {
@@ -584,8 +600,8 @@ func (active *activeReplayTurn) acceptResult(record Record) error {
 		}
 		if call.State == ReplayedToolCallReady {
 			if call.Invocation.Capability().Exclusive() {
-				if call.ApprovalSequence == 0 && result.Status() != tool.ResultError && result.Status() != tool.ResultCancelled {
-					return replayCorrupt("Patch result before approval is invalid")
+				if call.ApprovalSequence == 0 && result.Status() != tool.ResultError && result.Status() != tool.ResultCancelled && !(call.Invocation.Capability() == tool.CapabilityWrite && result.Status() == tool.ResultConflict) {
+					return replayCorrupt("exclusive result before approval is invalid")
 				}
 				if call.ApprovalSequence != 0 && (call.ApprovalOutcome == tool.ApprovalOutcomeAllowOnce || call.ApprovalOutcome == tool.ApprovalOutcomeAllowSession || call.ApprovalOutcome == tool.ApprovalOutcomeAllowFromSession) {
 					if !validAllowedBeforeStartResult(call.Invocation, result) {
@@ -593,10 +609,10 @@ func (active *activeReplayTurn) acceptResult(record Record) error {
 					}
 				}
 				if call.ApprovalSequence != 0 && call.ApprovalOutcome == tool.ApprovalOutcomeDeny && result.Status() != tool.ResultDenied {
-					return replayCorrupt("denied Patch result is invalid")
+					return replayCorrupt("denied exclusive result is invalid")
 				}
 				if call.ApprovalSequence != 0 && call.ApprovalOutcome == tool.ApprovalOutcomeAbort && result.Status() != tool.ResultCancelled {
-					return replayCorrupt("aborted Patch result is invalid")
+					return replayCorrupt("aborted exclusive result is invalid")
 				}
 			} else if result.Status() != tool.ResultCancelled {
 				return replayCorrupt("tool result before execution start is not cancelled")

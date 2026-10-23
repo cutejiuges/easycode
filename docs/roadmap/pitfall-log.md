@@ -564,6 +564,19 @@
 - 关联 ADR/Issue/PR：[Tool 系统架构设计](../architecture/tool-system.md)；OpenSpec `add-approved-file-patch-flow`。
 - 后续行动：Write、Exec 或多文件变更不得直接复用本能力的授权范围，必须各自定义 candidate、sandbox 与崩溃语义。
 
+### [P3][2026-10-24] Write 必须区分完整读取、原子发布和不确定提交
+
+- 状态：已解决；真实 Linux 文件系统验收仍待可用 runner，当前记录为验证限制。
+- 影响范围：`add-file-write-tool` 的 Read/Write、审批、Runtime、Session 与双 Provider 续写。
+- 触发条件：同 sample Read 后立即覆盖、旧 Read 被 Patch 失效、创建时目标被抢占、发布后取消/Sync 失败，或强制终止进程。
+- 根因：工具已经读到内容不代表模型已经见到完整内容；目标不存在检查不能代替原子 no-replace；rename 返回后的迟到取消不能证明文件未变。
+- 修复方案：Read 证据在 outputs Sync/finalize 后生效，以路径 generation 失效当前和待提交观察；冻结完整候选；创建采用平台 no-replace，缺失目录使用私有树一次发布；发布后继续 Sync，无法确认结果则 poison 并停止后续副作用，健康 journal 仍配对输出。
+- 生命周期：只清理 identity 匹配的自有暂存项；SIGKILL 的残留不在 resume 扫描。恢复只补 ready/allow/started/result 尾部，清空授权和观察。
+- 验收发现：原恢复计划要求全组 started 先于所有 result，不能表达 Read→Write→Patch 屏障；已改为分组检查并拒绝越过未完成独占调用。headless 曾接收 UI 专用 approval-resolved 导致投影失败，现只向交互宿主发送此事件。审批按终端显示宽度布局，避免中文路径边框错位。
+- 缓存影响：Read 观察、目录 evidence、授权和临时路径不进入 catalog fingerprint；只有真实 Write schema 增加稳定目录 segment，原生 history/opaque reasoning 与恢复 request bytes 保持等价。
+- 回归测试：`internal/tool/builtin/write_crash_unix_test.go` 使用管道定位发布前后并真实杀死子进程；`write_unix_test.go` / `write_prepare_test.go` 注入 Sync/Close/unlink/身份替换故障；`internal/session/write_fixture_test.go` 读取固定 bytes；`internal/runtime/write_schedule_test.go` 验证屏障；`internal/app/write_stream_test.go`、`write_headless_test.go`、`write_resume_test.go` 验证双 Provider 纵向链路；`internal/tui/write_test.go` 覆盖展示和输入。
+- 未采用方案：不拼接多段 Read 授权、不依赖单独 mtime、不回退直接写入、不恢复 grant、不把未知暂存目录递归删除。
+- 后续行动：在真实 Linux 支持/不支持 `RENAME_NOREPLACE` 的文件系统执行现有发布用例；交叉编译不替代该运行验证。Exec 合并时另按其批准契约处理观察失效，不提前暴露占位接口。
 ### [P3][2026-10-24] 提前 Wait 会让后续进程组清理命中复用编号
 
 - 状态：已解决（`add-command-execution`）

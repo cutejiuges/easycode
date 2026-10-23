@@ -366,6 +366,14 @@ func openChatResourcesWithSnapshot(
 	if err != nil {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "Patch executor is unavailable")
 	}
+	writePreparer, err := builtin.NewWritePreparer(workspace)
+	if err != nil {
+		return nil, fault.New(fault.CodeInvalidConfiguration, "Write preparer is unavailable")
+	}
+	writeExecutor, err := builtin.NewWriteExecutor(workspace)
+	if err != nil {
+		return nil, fault.New(fault.CodeInvalidConfiguration, "Write executor is unavailable")
+	}
 	toolPolicy := tool.NewApprovalPolicy()
 	execPreparer := builtin.NewExecPlanner()
 	var execExecutor tool.ExecExecutor
@@ -378,7 +386,7 @@ func openChatResourcesWithSnapshot(
 		return nil, fault.New(fault.CodeInvalidConfiguration, "Exec executor is unavailable")
 	}
 	toolCatalog, err := builtin.NewCatalog(
-		readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, execPreparer, execExecutor, tool.RenderExecOutput, toolPolicy,
+		readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, writePreparer, writeExecutor, execPreparer, execExecutor, tool.RenderExecOutput, toolPolicy,
 	)
 	if err != nil {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "tool catalog is invalid")
@@ -434,6 +442,8 @@ func openChatResourcesWithSnapshot(
 		GrepExecutor:         grepExecutor,
 		PatchPreparer:        patchPreparer,
 		PatchExecutor:        patchExecutor,
+		WritePreparer:        writePreparer,
+		WriteExecutor:        writeExecutor,
 		ExecPreparer:         execPreparer,
 		ExecExecutor:         execExecutor,
 		ToolPolicy:           toolPolicy,

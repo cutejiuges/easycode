@@ -143,8 +143,8 @@ make verify
 - 已完成 Anthropic Messages text-only request、indexed content-block reducer、会话级 native history、thinking/signature/redacted thinking 无损回放、显式 `message_stop` terminal、两种 API prefix 的双轮回归，并接入同一基础 TUI Chat。
 - 已完成双 Provider 共享 `StreamEvent` 的封闭构造与纯内存验证；Runtime 在消费端协议错误时取消派生 context并同步排空到 producer 关闭，AgentLoop 只在前一 stream 清理完成后启动下一 turn。
 - 已完成双 Provider 的 committed-only 文本 `HistoryProjector`：投影保留 turn 边界和可见文本，但不暴露 thinking/signature、redacted thinking、reasoning summary、encrypted content、phase、usage 或未知扩展，也不参与后续请求编译。
-- Anthropic 当前声明 streaming、thinking-signature 原生保留与 structured tools（含 Edit/Bash），OpenAI 当前声明 streaming、encrypted reasoning 原生保留、function tools（含 exec_command）与 custom freeform apply_patch。P2 已落地 completed-sample usage、原生历史 footprint、JSONL Session、resume/headless 和 ContextPlanner；P3 已补充 Read/Glob/Grep/Patch/Exec Tool Loop 与 approval，但通用 tool UI、完整 CachePlanner、usage 成本/TUI、prompt cache key、`previous_response_id` 和自动重试仍留在后续阶段。
-- TUI 只消费 typed RuntimeEvent 和 ChatSession facade；已提供 Patch diff/Exec approval overlay、命令进度和 Ctrl+O 可滚动详情，Markdown、多行 composer、slash command、通用 permission 面板和 session picker 仍未实现。
+- Anthropic 当前声明 streaming、thinking-signature 原生保留与 structured tools（含 Edit/Write/Bash），OpenAI 当前声明 streaming、encrypted reasoning 原生保留、function tools（含 Write/exec_command）与 custom freeform apply_patch。P2 已落地 completed-sample usage、原生历史 footprint、JSONL Session、resume/headless 和 ContextPlanner；P3 已补充 Read/Glob/Grep/Patch/Write/Exec Tool Loop 与 approval，但通用 tool UI、完整 CachePlanner、usage 成本/TUI、prompt cache key、`previous_response_id` 和自动重试仍留在后续阶段。
+- TUI 只消费 typed RuntimeEvent 和 ChatSession facade；已提供 Patch diff/Write、Exec approval overlay、命令进度和 Ctrl+O 可滚动详情，Markdown、多行 composer、slash command、通用 permission 面板和 session picker 仍未实现。
 
 #### OpenAI Responses（首要 Provider）
 
@@ -218,7 +218,7 @@ make verify
 
 2026-10-23 已交付独立 `sessions list [--all] [--limit N]`：默认当前规范化目录 20 条，最大 200 条，按 durable 更新时间及 thread ID 双降序；所有 Provider/model 可发现，完整 ID 可交给既有 `--resume`。入口无需模型配置、不访问网络、不读取 stdin、不进入聊天资源链。Catalog schema 和 Session vocabulary 不变，协调仍全量扫描并允许 lease 下尾修复，busy/invalid 以全局警告报告。固定文本 golden、双 Provider 列表后恢复、索引重建、跨进程占用和取消/输出失败验证覆盖该入口；此交付不包含 picker、标题搜索或 worktree 聚合。
 
-P2 尚未完成：session picker、worktree/project catalog、title/tag/search、实时索引、same-turn steered input、usage 成本/配额与 TUI 展示、真实 cache request 策略和观测指标、skill context sources、artifact、fork/subagent 线程树、compaction checkpoint，以及稳定发布后真实 schema/payload revision 的版本专属转换。Read/Glob/Grep/Patch/Exec Tool Loop 已交付 tool catalog source、approval/ledger/result、durable output、有序并行与 exclusive 屏障；已交付的 FIFO follow-up queue 仍只在进程内存在，`queued` 不是 durable 确认，same-turn steer 必须另行接入 tool output safe point。当前 fixture 是唯一当前格式，不代表通用 migration 已实现；当前进度不能视为 P2 退出。
+P2 尚未完成：session picker、worktree/project catalog、title/tag/search、实时索引、same-turn steered input、usage 成本/配额与 TUI 展示、真实 cache request 策略和观测指标、skill context sources、artifact、fork/subagent 线程树、compaction checkpoint，以及稳定发布后真实 schema/payload revision 的版本专属转换。Read/Glob/Grep/Patch/Write/Exec Tool Loop 已交付 tool catalog source、approval/ledger/result、durable output、有序并行与 exclusive 屏障；已交付的 FIFO follow-up queue 仍只在进程内存在，`queued` 不是 durable 确认，same-turn steer 必须另行接入 tool output safe point。当前 fixture 是唯一当前格式，不代表通用 migration 已实现；当前进度不能视为 P2 退出。
 
 本次 P2 基础契约强化还加入语义分支脚本、本地 hooks、GitHub Actions jobs 和集中式架构守卫。GitHub `main` ruleset 的 required checks 与 direct-push 禁止仍须管理员在仓库外启用。secure config/session opener 当前只在 macOS/Linux 提供等价语义；Windows 等目标可以编译，但相关运行路径明确失败关闭，平台实现与兼容矩阵留在 P8。
 
@@ -237,7 +237,7 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 
 ### 6.3 工作内容
 
-- 已实现 text user input、Read/Glob/Grep/Patch 多 sample Tool Loop 与 final assistant output；Patch approval 已具备交互与 headless 失败关闭语义，整文件 Write、命令和 same-turn steer 仍待后续 P3 change。
+- 已实现 text user input、Read/Glob/Grep/Patch/Write 多 sample Tool Loop 与 final assistant output；Patch approval 已具备交互与 headless 失败关闭语义，整文件 Write 已支持完整 Read 后批准覆盖及原子创建，命令和 same-turn steer 仍待后续 P3 change。
 - 已实现有界 FIFO queued follow-up、request identity 去重、定向 interrupt、EOF drain 与显式 shutdown；same-turn steer 仍待 P3 safe point。
 - 已实现 `provider_profile`、可选 `project_instructions`、`committed_history`、`current_input` 的固定顺序、正交 lifecycle/cache stability、canonical segments、stable prefix、SemanticHistoryView 可见估算与 Provider-native footprint 覆盖合并；后续来源必须随真实消费者独立落地。
 - 已实现 JSONL SessionMeta、native commit、`sample_usage` 和文本 turn boundary；成本、缓存失效原因与累计指标仍待实现。
@@ -250,7 +250,7 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 
 ### 6.4 交付物
 
-- 已交付可 resume/continue 的一次性 headless 文本 chat 与同进程 FIFO AgentLoop；coding tools 和 same-turn steer 尚未交付。
+- 已交付可 resume/continue 的一次性 headless 文本 chat 与同进程 FIFO AgentLoop；Read/Glob/Grep/Patch/Write 已交付，same-turn steer 和命令执行尚未交付。
 - 已交付 session JSONL 与可从 JSONL 重建的 `state.sqlite` Catalog v1。
 - 已交付显式 resume 与兼容性精确匹配的 `--continue`；离线 `sessions list` 已交付，可视化 session picker 尚未交付。
 - 已交付一次性 thread/turn/text/failure JSONL v1 与独立 streaming control v1，成功 `turn.completed` 必含 normalized usage；独立 usage 更新、reasoning 与 tool 事件尚未交付。
@@ -306,9 +306,9 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 
 P3 不采用一个覆盖全部工具的长线 change。以下名称是推荐顺序，不代表 change 已创建；每项仍需独立执行 `propose -> review/confirm -> apply -> verify -> archive`：
 
-当前状态：`add-read-tool-loop`、`add-search-tools-and-ordered-parallelism`、`add-approved-file-patch-flow` 和 `add-command-execution` 已实现，提供 Read/Glob/Grep/单文件 Patch/Darwin 前台 Exec、双 Provider 原生 wire、多 sample Runtime、最多 8 路只读并行、exclusive Patch/Exec 屏障、按 call index durable/提交、崩溃补偿和本地-only resume。Patch 支持 Runtime 局部 session grant，Exec 始终只允许单次批准；两者都在 headless 失败关闭。artifact、整文件 Write、通用 Tool UI、PTY 和后台进程控制仍未实现。
+当前状态：`add-read-tool-loop`、`add-search-tools-and-ordered-parallelism`、`add-approved-file-patch-flow`、`add-file-write-tool` 与 `add-command-execution` 已实现，提供 Read/Glob/Grep/单文件 Patch/Write/Darwin 前台 Exec、双 Provider 原生 wire、多 sample Runtime、最多 8 路只读并行、Patch/Write/Exec 独占屏障、按 call index durable/提交、崩溃补偿和本地-only resume。Patch 已实现 allow/ask/deny、Runtime 局部 session grant、headless 失败关闭和 Claude 风格 diff approval overlay；Write 已实现 create/overwrite 完整审批、独立 session grant、先前完整 Read 证据和私有目录树 no-replace 发布；Exec 始终只允许单次批准并在 headless 失败关闭。artifact、通用 Tool UI、PTY 和后台进程控制仍未实现。Linux adapter 已交叉编译，真实 Linux 文件系统测试因当前无 runner 尚未运行，详见 Tool 架构的验证范围。
 
-Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘要与展开详情决定交互；Codex `c248f6d48b` 的 unified_exec、Seatbelt 和进程生命周期分层决定内核边界。该切片先于 Write，是为了完成已有 Patch 后运行验证的闭环，同时保持 Anthropic Bash 与 OpenAI exec_command 的原生配对。当前固定 non-login `/bin/sh`、环境 allowlist、workspace 写入和禁用网络；非 Darwin 稳定返回 `unsupported_platform`。清理保证只覆盖原进程组，`setsid`/脱离组后代不属于后台控制能力；保留输出造成排空失败时返回不确定结果并 poison Runtime。Linux/Windows 已交叉构建，尚无原生运行验证，不代表 P8 跨平台支持已完成。
+Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘要与展开详情决定交互；Codex `c248f6d48b` 的 unified_exec、Seatbelt 和进程生命周期分层决定内核边界。当前固定 non-login `/bin/sh`、环境 allowlist、workspace 写入和禁用网络；非 Darwin 稳定返回 `unsupported_platform`。清理保证只覆盖原进程组，`setsid`/脱离组后代不属于后台控制能力；保留输出造成排空失败时返回不确定结果并 poison Runtime。Linux/Windows 已交叉构建，尚无原生运行验证，不代表 P8 跨平台支持已完成。
 
 1. `add-read-tool-loop`（已实现）：以 Read 建立 catalog、双 Provider wire、多 sample Runtime、durable ready/result、ledger 和恢复的最小闭环。
 2. `add-search-tools-and-ordered-parallelism`（已实现）：增加 Glob/Grep、连续只读并发和按调用顺序提交。
@@ -347,7 +347,7 @@ Skill、hooks/plugins、MCP 和 Agent/Subagent 不属于 P3 内置工具清单�
 - 权限拒绝时没有文件、进程或网络副作用。
 - 相同 invocation ID 被重放时不会重复执行写操作；Provider call ID 仍保持原生配对。
 - 已 durable `execution_started` 但没有确定结果的调用恢复为 `outcome_uncertain`，且不会自动重跑。
-- ready但未started的调用恢复为 `session_interrupted_before_execution` cancelled结果；恢复阶段零executor与Provider请求。
+- ready 但未批准的 Patch/Write 恢复为 `session_interrupted_before_approval`；已允许但未 started 的调用恢复为 `session_interrupted_before_execution`。恢复阶段零 preparer/executor 与 Provider 请求，不恢复 Read 观察或 grant，不清理私有暂存项。
 - 多个只读工具可并行，写工具独占，结果仍按模型调用顺序提交。
 - patch delta 可以逐步形成稳定 diff；不完整或非法 patch 不执行。
 - 大工具输出按 capability 策略生成权限受控 artifact 和确定性预览；resume 后模型获得完全相同的预览字节。

@@ -86,8 +86,8 @@ func ParseContentDigest(value string) (ContentDigest, error) {
 // Valid 判断内容摘要是否合法。
 func (digest ContentDigest) Valid() bool { return validSHA256Hex(string(digest)) }
 
-// PatchBaseEvidence 保存与实际打开文件句柄绑定的基线证据。
-type PatchBaseEvidence struct {
+// FileBaseEvidence 保存与实际打开文件句柄绑定的基线证据。
+type FileBaseEvidence struct {
 	contentDigest ContentDigest
 	size          int64
 	mode          uint32
@@ -95,23 +95,23 @@ type PatchBaseEvidence struct {
 	inode         uint64
 }
 
-// NewPatchBaseEvidence 构造文件基线证据。
-func NewPatchBaseEvidence(digest ContentDigest, size int64, mode uint32, device uint64, inode uint64) (PatchBaseEvidence, error) {
-	evidence := PatchBaseEvidence{contentDigest: digest, size: size, mode: mode, device: device, inode: inode}
+// NewFileBaseEvidence 构造文件基线证据。
+func NewFileBaseEvidence(digest ContentDigest, size int64, mode uint32, device uint64, inode uint64) (FileBaseEvidence, error) {
+	evidence := FileBaseEvidence{contentDigest: digest, size: size, mode: mode, device: device, inode: inode}
 	if err := evidence.Validate(); err != nil {
-		return PatchBaseEvidence{}, err
+		return FileBaseEvidence{}, err
 	}
 	return evidence, nil
 }
 
-func (evidence PatchBaseEvidence) ContentDigest() ContentDigest { return evidence.contentDigest }
-func (evidence PatchBaseEvidence) Size() int64                  { return evidence.size }
-func (evidence PatchBaseEvidence) Mode() uint32                 { return evidence.mode }
-func (evidence PatchBaseEvidence) Device() uint64               { return evidence.device }
-func (evidence PatchBaseEvidence) Inode() uint64                { return evidence.inode }
+func (evidence FileBaseEvidence) ContentDigest() ContentDigest { return evidence.contentDigest }
+func (evidence FileBaseEvidence) Size() int64                  { return evidence.size }
+func (evidence FileBaseEvidence) Mode() uint32                 { return evidence.mode }
+func (evidence FileBaseEvidence) Device() uint64               { return evidence.device }
+func (evidence FileBaseEvidence) Inode() uint64                { return evidence.inode }
 
 // Validate 验证基线证据字段。
-func (evidence PatchBaseEvidence) Validate() error {
+func (evidence FileBaseEvidence) Validate() error {
 	if !evidence.contentDigest.Valid() || evidence.size < 0 || evidence.size > maxPatchFileBytes || evidence.mode > 0o7777 || evidence.device == 0 || evidence.inode == 0 {
 		return errors.New("patch base evidence is invalid")
 	}
@@ -124,7 +124,7 @@ type PatchCandidate struct {
 	providerCallID ProviderCallID
 	wireKind       ProviderWireKind
 	input          PatchInput
-	evidence       PatchBaseEvidence
+	evidence       FileBaseEvidence
 	finalBytes     []byte
 	diff           string
 	fingerprint    CandidateFingerprint
@@ -132,7 +132,7 @@ type PatchCandidate struct {
 }
 
 // NewPatchCandidate 构造并深拷贝一个Patch候选。
-func NewPatchCandidate(invocation PatchInvocation, evidence PatchBaseEvidence, finalBytes []byte, diff string, fingerprint CandidateFingerprint, summary PatchResultMetadata) (PatchCandidate, error) {
+func NewPatchCandidate(invocation PatchInvocation, evidence FileBaseEvidence, finalBytes []byte, diff string, fingerprint CandidateFingerprint, summary PatchResultMetadata) (PatchCandidate, error) {
 	candidate := PatchCandidate{
 		invocationID: invocation.invocationID, providerCallID: invocation.providerCallID,
 		wireKind: invocation.wireKind, input: invocation.input.Clone(), evidence: evidence, finalBytes: append([]byte(nil), finalBytes...),
@@ -148,7 +148,7 @@ func (candidate PatchCandidate) InvocationID() InvocationID     { return candida
 func (candidate PatchCandidate) ProviderCallID() ProviderCallID { return candidate.providerCallID }
 func (candidate PatchCandidate) WireKind() ProviderWireKind     { return candidate.wireKind }
 func (candidate PatchCandidate) Input() PatchInput              { return candidate.input.Clone() }
-func (candidate PatchCandidate) Evidence() PatchBaseEvidence    { return candidate.evidence }
+func (candidate PatchCandidate) Evidence() FileBaseEvidence     { return candidate.evidence }
 func (candidate PatchCandidate) FinalBytes() []byte {
 	return append([]byte(nil), candidate.finalBytes...)
 }
@@ -231,6 +231,8 @@ type ApprovalRequest struct {
 	fingerprint    CandidateFingerprint
 	diff           string
 	decisions      []ApprovalDecision
+	writeMetadata  WriteResultMetadata
+	directories    []string
 	execInput      ExecInput
 }
 
@@ -295,6 +297,12 @@ func (request ApprovalRequest) Validate() error {
 	}
 	if request.relativePath == "" || validateSearchPath(request.relativePath) != nil || !validSafeText(request.reason, maxApprovalReasonBytes) || request.diff == "" || len(request.diff) > MaxApprovalDiffBytes || !utf8.ValidString(request.diff) {
 		return errors.New("approval request presentation is invalid")
+	}
+	if request.capability == CapabilityPatch && (request.writeMetadata != (WriteResultMetadata{}) || len(request.directories) != 0) {
+		return errors.New("Patch approval contains Write presentation")
+	}
+	if request.capability == CapabilityWrite && (request.writeMetadata.Validate() != nil || request.writeMetadata.operation == WriteOperationUnavailable || request.writeMetadata.relativePath != request.relativePath || request.writeMetadata.createdDirectories != len(request.directories)) {
+		return errors.New("invalid Write approval presentation")
 	}
 	want := []ApprovalDecision{ApprovalAllowOnce, ApprovalAllowSession, ApprovalDeny}
 	if len(request.decisions) != len(want) {

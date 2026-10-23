@@ -52,11 +52,12 @@ type timelineReadExecutor struct {
 	timeline *[]string
 }
 
-func (executor timelineReadExecutor) Execute(_ context.Context, invocation tool.ReadInvocation) tool.InvocationResult {
+func (executor timelineReadExecutor) Execute(_ context.Context, invocation tool.ReadInvocation) tool.ReadExecution {
 	executor.mu.Lock()
 	*executor.timeline = append(*executor.timeline, "read:"+string(invocation.ProviderCallID()))
 	executor.mu.Unlock()
-	return tool.RenderReadSuccess(invocation, "README.md", []string{"content"}, 1)
+	result, _ := tool.NewReadExecution(tool.RenderReadSuccess(invocation, "README.md", []string{"content"}, 1), tool.UnavailableReadObservation())
+	return result
 }
 
 func runtimePatchInvocation(t *testing.T) (tool.Invocation, tool.PatchCandidate) {
@@ -69,7 +70,7 @@ func runtimePatchInvocation(t *testing.T) (tool.Invocation, tool.PatchCandidate)
 	invocation, _ := tool.NewInvocation(invocationID, ready)
 	patch, _ := invocation.Patch()
 	base := []byte("old\n")
-	evidence, _ := tool.NewPatchBaseEvidence(tool.NewContentDigest(base), int64(len(base)), 0o644, 1, 2)
+	evidence, _ := tool.NewFileBaseEvidence(tool.NewContentDigest(base), int64(len(base)), 0o644, 1, 2)
 	metadata, _ := tool.NewPatchResultMetadata("main.go", 1, 1, 1)
 	final := []byte("new\n")
 	fingerprint, _ := tool.PatchFingerprint(input, evidence, final)

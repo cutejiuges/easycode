@@ -17,6 +17,8 @@ const (
 	CapabilityGrep CapabilityID = "fs.grep"
 	// CapabilityPatch 标识需要批准的单文件文本Patch能力。
 	CapabilityPatch CapabilityID = "fs.patch"
+	// CapabilityWrite 标识单文件创建与整文件覆盖能力。
+	CapabilityWrite CapabilityID = "fs.write"
 	// CapabilityExec 标识需要逐次批准的前台命令执行能力。
 	CapabilityExec CapabilityID = "process.exec"
 
@@ -41,7 +43,7 @@ func ParseCapabilityID(value string) (CapabilityID, error) {
 // Valid 判断能力是否由当前实现支持。
 func (id CapabilityID) Valid() bool {
 	switch id {
-	case CapabilityRead, CapabilityGlob, CapabilityGrep, CapabilityPatch, CapabilityExec:
+	case CapabilityRead, CapabilityGlob, CapabilityGrep, CapabilityPatch, CapabilityWrite, CapabilityExec:
 		return true
 	default:
 		return false
@@ -65,7 +67,7 @@ func (id ProviderCallID) Valid() bool {
 	return err == nil
 }
 
-// ReadyCall 是完整sample中已经严格解码、可持久化的四工具封闭联合。
+// ReadyCall 是完整sample中已经严格解码、可持久化的六工具封闭联合。
 type ReadyCall struct {
 	providerCallID ProviderCallID
 	capability     CapabilityID
@@ -74,6 +76,7 @@ type ReadyCall struct {
 	globInput      GlobInput
 	grepInput      GrepInput
 	patchInput     PatchInput
+	writeInput     WriteInput
 	execInput      ExecInput
 }
 
@@ -96,6 +99,12 @@ func NewGrepReadyCall(providerCallID ProviderCallID, input GrepInput) (ReadyCall
 func NewPatchReadyCall(providerCallID ProviderCallID, wireKind ProviderWireKind, input PatchInput) (ReadyCall, error) {
 	return newReadyCall(ReadyCall{providerCallID: providerCallID, capability: CapabilityPatch, wireKind: wireKind, patchInput: input.Clone()})
 }
+
+// NewWriteReadyCall 构造完整校验的 structured Write 调用。
+func NewWriteReadyCall(id ProviderCallID, input WriteInput) (ReadyCall, error) {
+	return newReadyCall(ReadyCall{providerCallID: id, capability: CapabilityWrite, wireKind: WireStructured, writeInput: input})
+}
+func (call ReadyCall) WriteInput() WriteInput { return call.writeInput }
 
 func newReadyCall(call ReadyCall) (ReadyCall, error) {
 	if err := call.Validate(); err != nil {
@@ -134,6 +143,9 @@ func (call ReadyCall) Validate() error {
 	if !call.wireKind.Valid() {
 		return errors.New("ready call has invalid Provider wire kind")
 	}
+	if call.capability != CapabilityWrite && call.writeInput != (WriteInput{}) {
+		return errors.New("ready call contains mismatched Write input")
+	}
 	switch call.capability {
 	case CapabilityExec:
 		if call.wireKind != WireStructured || call.readInput != (ReadInput{}) || call.globInput != (GlobInput{}) || call.grepInput != (GrepInput{}) || !call.patchInput.zero() || call.execInput.Validate() != nil {
@@ -154,6 +166,10 @@ func (call ReadyCall) Validate() error {
 	case CapabilityPatch:
 		if call.readInput != (ReadInput{}) || call.globInput != (GlobInput{}) || call.grepInput != (GrepInput{}) || call.patchInput.Validate() != nil {
 			return errors.New("ready call has invalid Patch payload")
+		}
+	case CapabilityWrite:
+		if call.wireKind != WireStructured || call.readInput != (ReadInput{}) || call.globInput != (GlobInput{}) || call.grepInput != (GrepInput{}) || !call.patchInput.zero() || call.writeInput.Validate() != nil {
+			return errors.New("ready call has invalid Write payload")
 		}
 	default:
 		return errors.New("ready call has unsupported capability")
@@ -190,13 +206,14 @@ type PatchInvocation struct {
 	input          PatchInput
 }
 
-// Invocation 是带全局identity的四能力执行输入封闭联合。
+// Invocation 是带全局identity的六能力执行输入封闭联合。
 type Invocation struct {
 	capability CapabilityID
 	read       ReadInvocation
 	glob       GlobInvocation
 	grep       GrepInvocation
 	patch      PatchInvocation
+	write      WriteInvocation
 	exec       ExecInvocation
 }
 
@@ -233,6 +250,12 @@ func NewInvocation(invocationID InvocationID, call ReadyCall) (Invocation, error
 			return Invocation{}, err
 		}
 		return Invocation{capability: CapabilityPatch, patch: value}, nil
+	case CapabilityWrite:
+		value, err := NewWriteInvocation(invocationID, call)
+		if err != nil {
+			return Invocation{}, err
+		}
+		return Invocation{capability: CapabilityWrite, write: value}, nil
 	default:
 		return Invocation{}, errors.New("tool invocation capability is unsupported")
 	}
@@ -251,6 +274,8 @@ func (invocation Invocation) InvocationID() InvocationID {
 		return invocation.grep.invocationID
 	case CapabilityPatch:
 		return invocation.patch.invocationID
+	case CapabilityWrite:
+		return invocation.write.invocationID
 	default:
 		return ""
 	}
@@ -267,6 +292,8 @@ func (invocation Invocation) ProviderCallID() ProviderCallID {
 		return invocation.grep.providerCallID
 	case CapabilityPatch:
 		return invocation.patch.providerCallID
+	case CapabilityWrite:
+		return invocation.write.providerCallID
 	default:
 		return ""
 	}
@@ -297,6 +324,9 @@ func (invocation Invocation) Patch() (PatchInvocation, bool) {
 
 // Validate 验证 capability 标签与唯一 typed invocation 一致。
 func (invocation Invocation) Validate() error {
+	if invocation.capability != CapabilityWrite && invocation.write != (WriteInvocation{}) {
+		return errors.New("invocation contains mismatched Write input")
+	}
 	if invocation.capability != CapabilityExec && invocation.exec != (ExecInvocation{}) {
 		return errors.New("invocation contains mismatched Exec payload")
 	}
@@ -326,6 +356,11 @@ func (invocation Invocation) Validate() error {
 			return errors.New("Patch invocation contains mismatched payload")
 		}
 		return invocation.patch.Validate()
+	case CapabilityWrite:
+		if invocation.read != (ReadInvocation{}) || invocation.glob != (GlobInvocation{}) || invocation.grep != (GrepInvocation{}) || !invocation.patch.zero() {
+			return errors.New("Write invocation contains mismatched payload")
+		}
+		return invocation.write.Validate()
 	default:
 		return errors.New("tool invocation capability is invalid")
 	}
@@ -427,7 +462,7 @@ func (invocation PatchInvocation) zero() bool {
 
 // ReadExecutor 执行一个已经持久化并获准执行的 Read 调用。
 type ReadExecutor interface {
-	Execute(context.Context, ReadInvocation) InvocationResult
+	Execute(context.Context, ReadInvocation) ReadExecution
 }
 
 // GlobExecutor 执行一个已经持久化并获准执行的 Glob 调用。
@@ -461,7 +496,9 @@ type ExecExecutor interface {
 }
 
 // Exclusive 标识需要等待前序调用完成的副作用能力。
-func (id CapabilityID) Exclusive() bool { return id == CapabilityPatch || id == CapabilityExec }
+func (id CapabilityID) Exclusive() bool {
+	return id == CapabilityPatch || id == CapabilityWrite || id == CapabilityExec
+}
 
 // PolicyDecision 是固定策略的封闭决策集合。
 type PolicyDecision string
@@ -506,7 +543,7 @@ type ApprovalPolicy struct{}
 // NewApprovalPolicy 创建无进程级grant的默认策略。
 func NewApprovalPolicy() ApprovalPolicy { return ApprovalPolicy{} }
 
-// Decide 对四能力执行默认安全策略。
+// Decide 对六能力执行默认安全策略。
 func (ApprovalPolicy) Decide(call ReadyCall) PolicyDecision {
 	if call.Validate() != nil {
 		return PolicyDeny
@@ -514,7 +551,7 @@ func (ApprovalPolicy) Decide(call ReadyCall) PolicyDecision {
 	switch call.Capability() {
 	case CapabilityRead, CapabilityGlob, CapabilityGrep:
 		return PolicyAllow
-	case CapabilityPatch, CapabilityExec:
+	case CapabilityPatch, CapabilityWrite, CapabilityExec:
 		return PolicyAsk
 	default:
 		return PolicyDeny

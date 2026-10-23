@@ -36,8 +36,8 @@ type fakeConversation struct {
 
 type runtimeReadExecutor struct{}
 
-func (runtimeReadExecutor) Execute(context.Context, tool.ReadInvocation) tool.InvocationResult {
-	return tool.InvocationResult{}
+func (runtimeReadExecutor) Execute(context.Context, tool.ReadInvocation) tool.ReadExecution {
+	return tool.ReadExecution{}
 }
 
 type runtimeGlobExecutor struct{}
@@ -54,12 +54,14 @@ func (runtimeGrepExecutor) Execute(context.Context, tool.GrepInvocation) tool.In
 
 type mixedReadExecutor struct{ calls atomic.Int32 }
 
-func (executor *mixedReadExecutor) Execute(_ context.Context, invocation tool.ReadInvocation) tool.InvocationResult {
+func (executor *mixedReadExecutor) Execute(_ context.Context, invocation tool.ReadInvocation) tool.ReadExecution {
 	executor.calls.Add(1)
 	if invocation.ProviderCallID() == "call-1" {
-		return tool.NewReadErrorResult(invocation, tool.ResultError, "not_found", "Read failed: file not found", "README.md")
+		result, _ := tool.NewReadExecution(tool.NewReadErrorResult(invocation, tool.ResultError, "not_found", "Read failed: file not found", "README.md"), tool.UnavailableReadObservation())
+		return result
 	}
-	return tool.RenderReadSuccess(invocation, "README.md", []string{"content"}, 1)
+	result, _ := tool.NewReadExecution(tool.RenderReadSuccess(invocation, "README.md", []string{"content"}, 1), tool.UnavailableReadObservation())
+	return result
 }
 
 type recordingReadExecutor struct {
@@ -80,7 +82,7 @@ type gatedReadExecutor struct {
 	order     []tool.ProviderCallID
 }
 
-func (executor *gatedReadExecutor) Execute(_ context.Context, invocation tool.ReadInvocation) tool.InvocationResult {
+func (executor *gatedReadExecutor) Execute(_ context.Context, invocation tool.ReadInvocation) tool.ReadExecution {
 	executor.calls.Add(1)
 	active := executor.active.Add(1)
 	for {
@@ -95,7 +97,8 @@ func (executor *gatedReadExecutor) Execute(_ context.Context, invocation tool.Re
 	executor.completed.Lock()
 	executor.order = append(executor.order, invocation.ProviderCallID())
 	executor.completed.Unlock()
-	return tool.RenderReadSuccess(invocation, "README.md", []string{"content"}, 1)
+	result, _ := tool.NewReadExecution(tool.RenderReadSuccess(invocation, "README.md", []string{"content"}, 1), tool.UnavailableReadObservation())
+	return result
 }
 
 type indexedGateReadExecutor struct {
@@ -106,14 +109,15 @@ type indexedGateReadExecutor struct {
 	order     []tool.ProviderCallID
 }
 
-func (executor *indexedGateReadExecutor) Execute(_ context.Context, invocation tool.ReadInvocation) tool.InvocationResult {
+func (executor *indexedGateReadExecutor) Execute(_ context.Context, invocation tool.ReadInvocation) tool.ReadExecution {
 	executor.started <- invocation.ProviderCallID()
 	<-executor.gates[invocation.ProviderCallID()]
 	executor.mu.Lock()
 	executor.order = append(executor.order, invocation.ProviderCallID())
 	executor.mu.Unlock()
 	executor.completed <- invocation.ProviderCallID()
-	return tool.RenderReadSuccess(invocation, "README.md", []string{string(invocation.ProviderCallID())}, 1)
+	result, _ := tool.NewReadExecution(tool.RenderReadSuccess(invocation, "README.md", []string{string(invocation.ProviderCallID())}, 1), tool.UnavailableReadObservation())
+	return result
 }
 
 type startedFailureJournal struct {
@@ -156,7 +160,7 @@ func (journal *startedFailureJournal) snapshot() [][]session.RecordDraft {
 	return result
 }
 
-func (executor *recordingReadExecutor) Execute(ctx context.Context, invocation tool.ReadInvocation) tool.InvocationResult {
+func (executor *recordingReadExecutor) Execute(ctx context.Context, invocation tool.ReadInvocation) tool.ReadExecution {
 	executor.calls.Add(1)
 	executor.mu.Lock()
 	executor.invocations = append(executor.invocations, invocation.ProviderCallID())
@@ -166,9 +170,11 @@ func (executor *recordingReadExecutor) Execute(ctx context.Context, invocation t
 	}
 	if ctx.Err() != nil {
 		executor.cancelledCtx.Store(true)
-		return tool.NewReadErrorResult(invocation, tool.ResultCancelled, "cancelled", "Read cancelled", ".")
+		result, _ := tool.NewReadExecution(tool.NewReadErrorResult(invocation, tool.ResultCancelled, "cancelled", "Read cancelled", "."), tool.UnavailableReadObservation())
+		return result
 	}
-	return tool.RenderReadSuccess(invocation, "README.md", []string{"content"}, 1)
+	result, _ := tool.NewReadExecution(tool.RenderReadSuccess(invocation, "README.md", []string{"content"}, 1), tool.UnavailableReadObservation())
+	return result
 }
 
 func (executor *recordingReadExecutor) invocationSnapshot() []tool.ProviderCallID {
@@ -1193,7 +1199,7 @@ func TestRunTurnUsesRuntimeProjectInstructionsForPlanAndProvider(t *testing.T) {
 
 func TestRunTurnContinuesForNonBlockingBudgetStates(t *testing.T) {
 	t.Parallel()
-	budget, err := contextplan.NewBudget(1000, 0, 0)
+	budget, err := contextplan.NewBudget(2000, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1677,7 +1683,7 @@ func testRuntimeConfig(t *testing.T, journal Journal) Config {
 		SessionID: runtimeSessionID, ThreadID: runtimeThreadID, Journal: journal,
 		ContextProfile: profile, ToolCatalog: mustRuntimeToolCatalog(t), ProjectInstructions: projectInstructions,
 		ReadExecutor: runtimeReadExecutor{}, GlobExecutor: runtimeGlobExecutor{}, GrepExecutor: runtimeGrepExecutor{},
-		PatchPreparer: catalogPatchFixture{}, PatchExecutor: catalogPatchFixture{}, ExecPreparer: catalogExecFixture{}, ExecExecutor: catalogExecFixture{}, ToolPolicy: tool.NewApprovalPolicy(),
+		PatchPreparer: catalogPatchPreparer{}, PatchExecutor: catalogPatchExecutor{}, WritePreparer: catalogWritePreparer{}, WriteExecutor: catalogWriteExecutor{}, ExecPreparer: catalogExecFixture{}, ExecExecutor: catalogExecFixture{}, ToolPolicy: tool.NewApprovalPolicy(),
 		ContextBudget:  contextplan.DisabledBudget(),
 		ContextPlanner: contextplan.NewPlanner(),
 	}
@@ -1690,7 +1696,7 @@ func mustRuntimeToolCatalog(t *testing.T) tool.CatalogSnapshot {
 
 func mustRuntimeToolCatalogWithExecutor(t *testing.T, executor tool.ReadExecutor) tool.CatalogSnapshot {
 	t.Helper()
-	catalog, err := tool.NewExecCatalogSnapshot(executor, runtimeGlobExecutor{}, runtimeGrepExecutor{}, catalogPatchFixture{}, catalogPatchFixture{}, catalogExecFixture{}, catalogExecFixture{}, tool.RenderExecOutput, tool.NewApprovalPolicy())
+	catalog, err := tool.NewCatalogSnapshot(executor, runtimeGlobExecutor{}, runtimeGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, tool.RenderExecOutput, tool.NewApprovalPolicy())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2126,4 +2132,30 @@ func TestChatSessionConcurrentInterruptAndShutdown(t *testing.T) {
 	if _, err := sessionFacade.Submit(context.Background(), "closed"); !errors.Is(err, &fault.Error{Code: fault.CodeTurnFailed}) {
 		t.Fatalf("Submit(closed) error = %v", err)
 	}
+}
+
+// catalogPatchPreparer 只用于验证目录装配，测试不会通过它访问文件系统。
+type catalogPatchPreparer struct{}
+
+func (catalogPatchPreparer) Prepare(context.Context, tool.PatchInvocation) (tool.PatchCandidate, error) {
+	return tool.PatchCandidate{}, nil
+}
+
+type catalogPatchExecutor struct{}
+
+func (catalogPatchExecutor) Execute(context.Context, tool.PatchCandidate) tool.InvocationResult {
+	return tool.InvocationResult{}
+}
+
+// catalogWritePreparer 只用于验证目录装配，测试不会通过它访问文件系统。
+type catalogWritePreparer struct{}
+
+func (catalogWritePreparer) Prepare(context.Context, tool.WriteInvocation, tool.ReadObservation) (tool.WriteCandidate, error) {
+	return tool.WriteCandidate{}, nil
+}
+
+type catalogWriteExecutor struct{}
+
+func (catalogWriteExecutor) Execute(context.Context, tool.WriteCandidate) tool.InvocationResult {
+	return tool.InvocationResult{}
 }

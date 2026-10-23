@@ -11,8 +11,8 @@ import (
 // patchFile 绑定已验证的父目录、实际目标句柄与唯一清理owner。
 type patchFile interface {
 	file() *os.File
-	evidence([]byte) (tool.PatchBaseEvidence, error)
-	replace(context.Context, tool.PatchBaseEvidence, []byte, patchHooks) (bool, error)
+	evidence([]byte) (tool.FileBaseEvidence, error)
+	replace(context.Context, tool.FileBaseEvidence, []byte, patchHooks) (bool, error)
 	close() error
 }
 

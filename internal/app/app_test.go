@@ -413,7 +413,7 @@ func TestChatResourcesCloseOrdersSessionJournalAndProvider(t *testing.T) {
 		ContextProfile: mustAppContextProfile(t), ProjectInstructions: mustEmptyAppProjectInstructions(t),
 		ToolCatalog: mustAppToolCatalog(t), ReadExecutor: appReadExecutor{},
 		GlobExecutor: appGlobExecutor{}, GrepExecutor: appGrepExecutor{},
-		PatchPreparer: catalogPatchFixture{}, PatchExecutor: catalogPatchFixture{}, ExecPreparer: catalogExecFixture{}, ExecExecutor: catalogExecFixture{}, ToolPolicy: tool.NewApprovalPolicy(),
+		PatchPreparer: catalogPatchPreparer{}, PatchExecutor: catalogPatchExecutor{}, WritePreparer: catalogWritePreparer{}, WriteExecutor: catalogWriteExecutor{}, ExecPreparer: catalogExecFixture{}, ExecExecutor: catalogExecFixture{}, ToolPolicy: tool.NewApprovalPolicy(),
 		ContextBudget:  contextplan.DisabledBudget(),
 		ContextPlanner: contextplan.NewPlanner(),
 	})
@@ -533,7 +533,7 @@ func TestChatResourcesShutdownTimeoutEscalatesAndClosesDependencies(t *testing.T
 		ContextProfile: mustAppContextProfile(t), ProjectInstructions: mustEmptyAppProjectInstructions(t),
 		ToolCatalog: mustAppToolCatalog(t), ReadExecutor: appReadExecutor{},
 		GlobExecutor: appGlobExecutor{}, GrepExecutor: appGrepExecutor{},
-		PatchPreparer: catalogPatchFixture{}, PatchExecutor: catalogPatchFixture{}, ExecPreparer: catalogExecFixture{}, ExecExecutor: catalogExecFixture{}, ToolPolicy: tool.NewApprovalPolicy(),
+		PatchPreparer: catalogPatchPreparer{}, PatchExecutor: catalogPatchExecutor{}, WritePreparer: catalogWritePreparer{}, WriteExecutor: catalogWriteExecutor{}, ExecPreparer: catalogExecFixture{}, ExecExecutor: catalogExecFixture{}, ToolPolicy: tool.NewApprovalPolicy(),
 		ContextBudget:  contextplan.DisabledBudget(),
 		ContextPlanner: contextplan.NewPlanner(),
 	})
@@ -785,7 +785,7 @@ func mustIdleAppRuntime(t *testing.T, journal chatRuntime.Journal) *chatRuntime.
 		ContextProfile: mustAppContextProfile(t), ProjectInstructions: mustEmptyAppProjectInstructions(t),
 		ToolCatalog: mustAppToolCatalog(t), ReadExecutor: appReadExecutor{},
 		GlobExecutor: appGlobExecutor{}, GrepExecutor: appGrepExecutor{},
-		PatchPreparer: catalogPatchFixture{}, PatchExecutor: catalogPatchFixture{}, ExecPreparer: catalogExecFixture{}, ExecExecutor: catalogExecFixture{}, ToolPolicy: tool.NewApprovalPolicy(),
+		PatchPreparer: catalogPatchPreparer{}, PatchExecutor: catalogPatchExecutor{}, WritePreparer: catalogWritePreparer{}, WriteExecutor: catalogWriteExecutor{}, ExecPreparer: catalogExecFixture{}, ExecExecutor: catalogExecFixture{}, ToolPolicy: tool.NewApprovalPolicy(),
 		ContextBudget:  contextplan.DisabledBudget(),
 		ContextPlanner: contextplan.NewPlanner(),
 	})
@@ -806,8 +806,8 @@ func mustAppContextProfile(t *testing.T) contextplan.ProviderProfile {
 
 type appReadExecutor struct{}
 
-func (appReadExecutor) Execute(context.Context, tool.ReadInvocation) tool.InvocationResult {
-	return tool.InvocationResult{}
+func (appReadExecutor) Execute(context.Context, tool.ReadInvocation) tool.ReadExecution {
+	return tool.ReadExecution{}
 }
 
 type appGlobExecutor struct{}
@@ -824,7 +824,7 @@ func (appGrepExecutor) Execute(context.Context, tool.GrepInvocation) tool.Invoca
 
 func mustAppToolCatalog(t *testing.T) tool.CatalogSnapshot {
 	t.Helper()
-	catalog, err := tool.NewExecCatalogSnapshot(appReadExecutor{}, appGlobExecutor{}, appGrepExecutor{}, catalogPatchFixture{}, catalogPatchFixture{}, catalogExecFixture{}, catalogExecFixture{}, tool.RenderExecOutput, tool.NewApprovalPolicy())
+	catalog, err := tool.NewCatalogSnapshot(appReadExecutor{}, appGlobExecutor{}, appGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, tool.RenderExecOutput, tool.NewApprovalPolicy())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -871,4 +871,30 @@ func writeAppConfigAt(t *testing.T, path string, family domain.ProviderFamily, b
 	if err := os.Chmod(path, 0o600); err != nil {
 		t.Fatalf("chmod configuration: %v", err)
 	}
+}
+
+// catalogPatchPreparer 只用于验证目录装配，测试不会通过它访问文件系统。
+type catalogPatchPreparer struct{}
+
+func (catalogPatchPreparer) Prepare(context.Context, tool.PatchInvocation) (tool.PatchCandidate, error) {
+	return tool.PatchCandidate{}, nil
+}
+
+type catalogPatchExecutor struct{}
+
+func (catalogPatchExecutor) Execute(context.Context, tool.PatchCandidate) tool.InvocationResult {
+	return tool.InvocationResult{}
+}
+
+// catalogWritePreparer 只用于验证目录装配，测试不会通过它访问文件系统。
+type catalogWritePreparer struct{}
+
+func (catalogWritePreparer) Prepare(context.Context, tool.WriteInvocation, tool.ReadObservation) (tool.WriteCandidate, error) {
+	return tool.WriteCandidate{}, nil
+}
+
+type catalogWriteExecutor struct{}
+
+func (catalogWriteExecutor) Execute(context.Context, tool.WriteCandidate) tool.InvocationResult {
+	return tool.InvocationResult{}
 }

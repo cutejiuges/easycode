@@ -12,7 +12,7 @@ func TestPatchCandidateAndApprovalValuesAreBoundedAndImmutable(t *testing.T) {
 
 	invocation := testPatchInvocation(t)
 	base := []byte("old\n")
-	evidence, err := NewPatchBaseEvidence(NewContentDigest(base), int64(len(base)), 0o644, 1, 2)
+	evidence, err := NewFileBaseEvidence(NewContentDigest(base), int64(len(base)), 0o644, 1, 2)
 	if err != nil {
 		t.Fatal(err)
 	}

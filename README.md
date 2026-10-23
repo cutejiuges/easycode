@@ -4,7 +4,7 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 
 用户只需要提供 `base_url`、`api_key` 和模型名称即可连接服务，不需要账号登录、OAuth、设备码或订阅鉴权。
 
-> 项目当前正在推进 P2 Session 与 Headless Agent Loop。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、多轮文本 Session、显式 `--resume`、兼容会话 `--continue`，以及单 turn `--print`/`--json` headless 输出。可重建 SQLite Catalog v1、离线 `sessions list` 和 Read/Glob/Grep/Patch 工具已交付；session picker、命令执行和完整缓存/推理界面仍将按照 Roadmap 分阶段实现。
+> 项目正在推进 P3 Coding Tools。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、原生多轮 Session、`--resume`/`--continue`、headless/FIFO 输入、离线 `sessions list`，以及 Read、Glob、Grep、需批准的单文件 Patch、整文件 Write 和 Darwin 前台命令执行。会话 picker、artifact、通用 Tool UI 和完整缓存/推理界面仍按 Roadmap 分阶段推进。
 
 ## 设计目标
 
@@ -25,8 +25,8 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 | JSON 与缓存 | 已建立不可变 canonical JSON、Provider request compiler 和 cache segment fingerprint；完整 Provider CachePlanner 尚未接入 |
 | Runtime | 已实现共享文本 turn 生命周期、稳定身份、durable-before-memory 提交及 typed text/failure event |
 | 安全配置 | 已实现 JSON 配置、环境变量覆盖、API key 脱敏，以及 macOS/Linux 上绑定实际句柄的 no-follow 校验；其他平台当前安全失败关闭 |
-| Tools | 已实现 Read/Glob/Grep/单文件 Patch、多 sample Tool Loop、有序并行和 Patch 审批；命令执行等 P3 能力继续推进 |
-| Session | 已实现 append-only JSONL、强类型当前 draft/decoder、UUIDv7、跨进程 lease、同句柄 load/repair/write、`Sync`、尾部修复、fixture、显式恢复，以及可从 JSONL 重建的 SQLite Catalog v1 与 `--continue`、离线 `sessions list`；session picker/search 尚未实现 |
+| Tools | 已实现 Read/Glob/Grep、Anthropic Edit / OpenAI custom apply_patch、双 Provider structured Write，以及 Darwin 前台 Exec（Anthropic Bash / OpenAI exec_command）；只读最多 8 路并行，Patch/Write/Exec 独占、有序提交并需批准 |
+| Session | 已实现 append-only JSONL、单一当前 canary 3 的强类型 draft/decoder、UUIDv7、跨进程 lease、同句柄 load/repair/write、`Sync`、尾部修复、fixture、显式恢复，以及可从 JSONL 重建的 SQLite Catalog v1、`--continue` 与离线 `sessions list`；session picker/search 尚未实现 |
 | 扩展系统 | P6 目标；Hooks、Plugins、Skills 和 MCP 目前仅为经批准的 TODO 占位，未接入 Runtime/app |
 | Subagent | P7 目标；当前仅为经批准的 TODO 控制边界，调度、线程树和生命周期尚未实现 |
 | Telemetry | P8 目标；当前 logger 仅为经批准的 TODO 占位，未接入请求正文、Session 或运行时链路 |
@@ -208,7 +208,7 @@ Anthropic   OpenAI
 P3+ 目标：Tool Policy / Executor、扩展系统与 Subagent
 ```
 
-当前共享层负责文本 turn 生命周期、Session 和宿主事件；工具调度、权限、Hooks 与 Subagent 是后续阶段目标。每个 Provider 当前独立负责原生请求、流归并、原生历史和语义投影；下列其他策略按 Roadmap 分阶段补齐：
+当前共享层负责多 sample Tool Loop、最多 8 路只读并行、独占写入屏障、批准/ledger、Session 和宿主事件；通用 sandbox、Hooks 与 Subagent 是后续阶段目标。每个 Provider 当前独立负责原生请求、流归并、原生历史和语义投影；下列其他策略按 Roadmap 分阶段补齐：
 
 - 原生请求编译与 Header 策略。
 - SSE 事件归并和状态机。
@@ -219,9 +219,19 @@ P3+ 目标：Tool Policy / Executor、扩展系统与 Subagent
 
 Provider-native item 是恢复会话和构建下次请求的事实依据，RuntimeEvent 只用于 UI、日志及宿主投影，二者不能相互替代。
 
-共享层需要读取历史时使用 Provider 提供的单向 `HistoryProjector` 和 `SemanticHistoryView`。当前已实现 committed-only 文本投影和 resume 后的 TUI 历史回放；token 估算、Hook 文本和 Subagent completion 等消费者将在后续阶段接入。该视图不可反向生成 Provider 请求。
+共享层需要读取历史时使用 Provider 提供的单向 `HistoryProjector` 和 `SemanticHistoryView`。当前已实现 committed-only 文本投影和 resume 后的 TUI 历史回放；ContextPlanner/token 估算已接入，Hook 文本和 Subagent completion 消费者将在后续阶段接入。该视图不可反向生成 Provider 请求。
 
 更完整的设计见[总体架构文档](docs/architecture/overall-architecture.md)。
+
+## 文件写入
+
+两家 Provider 均通过 `Write(file_path, content)` 创建或整文件覆盖 UTF-8 工作区文件；局部修改继续使用 Anthropic `Edit` 或 OpenAI 原生 custom `apply_patch`。交互显示 **Create file / Overwrite file**、完整转义内容或 diff、待建目录，默认选择 **No**，支持拒绝反馈和独立的 Write 会话授权。`--print`、`--json`、stream-json 中需要批准的写入返回 `approval_required`，不会创建目标或父目录。
+
+覆盖必须先有同一 Runtime 中已回传给模型的完整 Read；同 sample 的 Read、多片段拼读和截断 Read 不算完整读取。当前 Read 最多 2000 行、每行 2000 个码点、总预览 256 KiB，底层文件上限 16 MiB，因此不是所有 16 MiB 文件都能获得覆盖授权。相同内容返回 `write_no_changes`，不会询问或写入。Read 证据和 session grant 不从磁盘恢复。
+
+Write 输入（原始 JSON 与规范编码）上限 1 MiB，审批完整展示上限 256 KiB；路径只能相对工作区，最多 64 个组件，新建目录最多 16 层。保留内容原始字节（含 CRLF、BOM、无末尾换行），新文件为 `0600`、新目录为 `0700`，覆盖只保留基本 `0777` 权限，不承诺 owner/ACL/xattr 保留。拒绝 symlink、特殊文件、NUL/无效 UTF-8 及带特殊权限位的覆盖目标。
+
+创建使用禁止覆盖的原子发布，缺失目录链先在私有树中准备，再一次发布；审批后目标或祖先变化返回 conflict。发布后的目录 Sync 或清理失败报告不确定结果并停止后续工具。进程被强制杀死可能留下 `.easycode-write-*` 私有暂存项，resume 不扫描、不清理、不重放这些写入。macOS 文件系统与故障注入已验收；Linux adapter 已交叉编译，但当前开发环境无 Linux runner，真实 Linux 文件系统验证尚待补充；不支持安全发布的平台失败关闭。
 
 ## 工程结构
 

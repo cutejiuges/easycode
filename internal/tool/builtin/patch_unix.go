@@ -79,15 +79,15 @@ func (handle *unixWorkspaceHandle) openPatchFile(relative string, hooks workspac
 
 func (target *unixPatchFile) file() *os.File { return target.target }
 
-func (target *unixPatchFile) evidence(content []byte) (tool.PatchBaseEvidence, error) {
+func (target *unixPatchFile) evidence(content []byte) (tool.FileBaseEvidence, error) {
 	var current unix.Stat_t
 	if err := unix.Fstat(int(target.target.Fd()), &current); err != nil {
-		return tool.PatchBaseEvidence{}, err
+		return tool.FileBaseEvidence{}, err
 	}
 	if current.Dev != target.stat.Dev || current.Ino != target.stat.Ino || current.Mode != target.stat.Mode || current.Size != target.stat.Size || current.Size != int64(len(content)) {
-		return tool.PatchBaseEvidence{}, errors.New("patch base changed while reading")
+		return tool.FileBaseEvidence{}, errors.New("patch base changed while reading")
 	}
-	return tool.NewPatchBaseEvidence(tool.NewContentDigest(content), current.Size, uint32(current.Mode&0o777), uint64(current.Dev), uint64(current.Ino))
+	return tool.NewFileBaseEvidence(tool.NewContentDigest(content), current.Size, uint32(current.Mode&0o777), uint64(current.Dev), uint64(current.Ino))
 }
 
 func (target *unixPatchFile) close() error {
@@ -95,7 +95,7 @@ func (target *unixPatchFile) close() error {
 }
 
 // replace 的唯一临时文件owner持有父目录直到cleanup结束；rename是提交线性化点。
-func (target *unixPatchFile) replace(ctx context.Context, expected tool.PatchBaseEvidence, final []byte, hooks patchHooks) (committed bool, resultErr error) {
+func (target *unixPatchFile) replace(ctx context.Context, expected tool.FileBaseEvidence, final []byte, hooks patchHooks) (committed bool, resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -189,7 +189,7 @@ func (target *unixPatchFile) replace(ctx context.Context, expected tool.PatchBas
 	return true, nil
 }
 
-func (target *unixPatchFile) revalidateCurrent(ctx context.Context, expected tool.PatchBaseEvidence) error {
+func (target *unixPatchFile) revalidateCurrent(ctx context.Context, expected tool.FileBaseEvidence) error {
 	fd, err := unix.Openat(int(target.parent.handle.Fd()), target.name, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
 	if err != nil {
 		return errPatchConflict
@@ -211,7 +211,7 @@ func (target *unixPatchFile) revalidateCurrent(ctx context.Context, expected too
 	if code != "" {
 		return errPatchConflict
 	}
-	evidence, err := tool.NewPatchBaseEvidence(tool.NewContentDigest(content), stat.Size, uint32(stat.Mode&0o777), uint64(stat.Dev), uint64(stat.Ino))
+	evidence, err := tool.NewFileBaseEvidence(tool.NewContentDigest(content), stat.Size, uint32(stat.Mode&0o777), uint64(stat.Dev), uint64(stat.Ino))
 	if err != nil || evidence != expected {
 		return errPatchConflict
 	}

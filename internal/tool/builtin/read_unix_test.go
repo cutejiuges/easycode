@@ -23,10 +23,10 @@ func TestReadRejectsSpecialFileAndUnreadableMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	executor, _ := openTestExecutor(t, root)
-	if result := executor.Execute(context.Background(), invocationFor(t, "pipe", 1, 1)); result.Code() != "unsupported_file_type" {
+	if result := executor.Execute(context.Background(), invocationFor(t, "pipe", 1, 1)).Result(); result.Code() != "unsupported_file_type" {
 		t.Fatalf("FIFO code = %q", result.Code())
 	}
-	if result := executor.Execute(context.Background(), invocationFor(t, "denied", 1, 1)); result.Code() != "permission_denied" {
+	if result := executor.Execute(context.Background(), invocationFor(t, "denied", 1, 1)).Result(); result.Code() != "permission_denied" {
 		t.Fatalf("无可读 mode code = %q", result.Code())
 	}
 }
@@ -57,7 +57,7 @@ func TestReadTOCTOUStaysBoundToOpenedDirectory(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	result := executor.Execute(context.Background(), invocationFor(t, "dir/file", 1, 1))
+	result := executor.Execute(context.Background(), invocationFor(t, "dir/file", 1, 1)).Result()
 	if result.Status() != tool.ResultSuccess || !strings.Contains(result.Preview().Text(), "safe") {
 		t.Fatalf("已打开安全目录未继续读取: %s %q", result.Status(), result.Preview().Text())
 	}
@@ -74,7 +74,7 @@ func TestReadCancellationAfterAdmissionClosesFile(t *testing.T) {
 	executor, workspace := openTestExecutor(t, root)
 	ctx, cancel := context.WithCancel(context.Background())
 	workspace.hooks.afterOpenComponent = func(string) { cancel() }
-	result := executor.Execute(ctx, invocationFor(t, "file", 1, 1))
+	result := executor.Execute(ctx, invocationFor(t, "file", 1, 1)).Result()
 	if result.Status() != tool.ResultCancelled {
 		t.Fatalf("取消结果 = %s/%s", result.Status(), result.Code())
 	}

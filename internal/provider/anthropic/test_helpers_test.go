@@ -11,8 +11,8 @@ import (
 
 type inertReadExecutor struct{}
 
-func (inertReadExecutor) Execute(context.Context, tool.ReadInvocation) tool.InvocationResult {
-	return tool.InvocationResult{}
+func (inertReadExecutor) Execute(context.Context, tool.ReadInvocation) tool.ReadExecution {
+	return tool.ReadExecution{}
 }
 
 type inertGlobExecutor struct{}
@@ -41,7 +41,7 @@ func (inertPatchExecutor) Execute(context.Context, tool.PatchCandidate) tool.Inv
 
 func testAnthropicToolCatalog(t *testing.T) tool.CatalogSnapshot {
 	t.Helper()
-	catalog, err := tool.NewExecCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, inertGrepExecutor{}, inertPatchPreparer{}, inertPatchExecutor{}, inertExecComponents{}, inertExecComponents{}, tool.RenderExecOutput, tool.NewApprovalPolicy())
+	catalog, err := tool.NewCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, inertGrepExecutor{}, inertPatchPreparer{}, inertPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, inertExecComponents{}, inertExecComponents{}, tool.RenderExecOutput, tool.NewApprovalPolicy())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,4 +78,17 @@ func testAnthropicTurnInput(t *testing.T, text string) provider.TurnInput {
 func nativeMessagePointer(message nativeMessage) *nativeMessage {
 	owned := message.clone()
 	return &owned
+}
+
+// catalogWritePreparer 只用于验证目录装配，测试不会通过它访问文件系统。
+type catalogWritePreparer struct{}
+
+func (catalogWritePreparer) Prepare(context.Context, tool.WriteInvocation, tool.ReadObservation) (tool.WriteCandidate, error) {
+	return tool.WriteCandidate{}, nil
+}
+
+type catalogWriteExecutor struct{}
+
+func (catalogWriteExecutor) Execute(context.Context, tool.WriteCandidate) tool.InvocationResult {
+	return tool.InvocationResult{}
 }

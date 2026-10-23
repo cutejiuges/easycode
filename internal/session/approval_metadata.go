@@ -43,6 +43,8 @@ func NewApprovalMetadata(invocation tool.Invocation) (ApprovalMetadataPayload, e
 		metadata.RelativePath, metadata.TimeoutMillis = exec.Input().Workdir(), exec.Input().TimeoutMillis()
 	} else if patch, ok := invocation.Patch(); ok {
 		metadata.RelativePath = patch.Input().FilePath()
+	} else if write, ok := invocation.Write(); ok {
+		metadata.RelativePath = write.Input().FilePath()
 	}
 	if err := metadata.Validate(); err != nil {
 		return ApprovalMetadataPayload{}, err
@@ -62,6 +64,13 @@ func (metadata ApprovalMetadataPayload) Validate() error {
 		}
 		if _, err := tool.NewExecInput("validation", metadata.RelativePath, metadata.TimeoutMillis); err != nil {
 			return errors.New("exec approval metadata is invalid")
+		}
+	case tool.CapabilityWrite:
+		if metadata.TimeoutMillis != 0 {
+			return errors.New("write approval metadata is invalid")
+		}
+		if _, err := tool.NewWriteInput(metadata.RelativePath, ""); err != nil {
+			return errors.New("write approval metadata is invalid")
 		}
 	default:
 		return errors.New("approval metadata capability is invalid")
