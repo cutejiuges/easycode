@@ -4,7 +4,7 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 
 用户只需要提供 `base_url`、`api_key` 和模型名称即可连接服务，不需要账号登录、OAuth、设备码或订阅鉴权。
 
-> 项目当前正在推进 P2 Session 与 Headless Agent Loop。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、多轮文本 Session、显式 `--resume`、兼容会话 `--continue`，以及单 turn `--print`/`--json` headless 输出。可重建 SQLite Catalog v1 已交付；session picker、coding tools 和完整缓存/推理界面仍将按照 Roadmap 分阶段实现。
+> 项目当前正在推进 P2 Session 与 Headless Agent Loop。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、多轮文本 Session、显式 `--resume`、兼容会话 `--continue`，以及单 turn `--print`/`--json` headless 输出。可重建 SQLite Catalog v1、离线 `sessions list` 和 Read/Glob/Grep/Patch 工具已交付；session picker、命令执行和完整缓存/推理界面仍将按照 Roadmap 分阶段实现。
 
 ## 设计目标
 
@@ -25,8 +25,8 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 | JSON 与缓存 | 已建立不可变 canonical JSON、Provider request compiler 和 cache segment fingerprint；完整 Provider CachePlanner 尚未接入 |
 | Runtime | 已实现共享文本 turn 生命周期、稳定身份、durable-before-memory 提交及 typed text/failure event |
 | 安全配置 | 已实现 JSON 配置、环境变量覆盖、API key 脱敏，以及 macOS/Linux 上绑定实际句柄的 no-follow 校验；其他平台当前安全失败关闭 |
-| Tools | P3 目标；当前只有经批准的 TODO 占位，不对模型暴露 schema，也没有执行器或生产消费者 |
-| Session | 已实现 append-only JSONL、强类型 v1 draft/decoder、UUIDv7、跨进程 lease、同句柄 load/repair/write、`Sync`、尾部修复、fixture、显式恢复，以及可从 JSONL 重建的 SQLite Catalog v1 与 `--continue`；session picker/search 尚未实现 |
+| Tools | 已实现 Read/Glob/Grep/单文件 Patch、多 sample Tool Loop、有序并行和 Patch 审批；命令执行等 P3 能力继续推进 |
+| Session | 已实现 append-only JSONL、强类型当前 draft/decoder、UUIDv7、跨进程 lease、同句柄 load/repair/write、`Sync`、尾部修复、fixture、显式恢复，以及可从 JSONL 重建的 SQLite Catalog v1 与 `--continue`、离线 `sessions list`；session picker/search 尚未实现 |
 | 扩展系统 | P6 目标；Hooks、Plugins、Skills 和 MCP 目前仅为经批准的 TODO 占位，未接入 Runtime/app |
 | Subagent | P7 目标；当前仅为经批准的 TODO 控制边界，调度、线程树和生命周期尚未实现 |
 | Telemetry | P8 目标；当前 logger 仅为经批准的 TODO 占位，未接入请求正文、Session 或运行时链路 |
@@ -85,6 +85,17 @@ bin/easycode
 ```bash
 ./bin/easycode --resume <thread-id>
 ```
+
+无需配置模型或 API key 即可发现历史会话：
+
+```bash
+./bin/easycode sessions list
+./bin/easycode sessions list --all --limit 50
+```
+
+默认按最近提交活动列出当前目录的 20 个 root 会话，数量范围为 1–200；`--all` 显示所有创建目录。每项保留完整 thread ID、UTC 更新时间和 Provider/wire/model，可复制 ID 给 `--resume`。列表展示所有模型，但恢复仍需配置匹配，并使用恢复进程的当前目录，不会自动切换到创建目录。
+
+列表不会启动模型、读取 stdin 或创建新会话。它会全量协调本地索引，可能创建/重建 SQLite，并在取得 exclusive lease 后修复不完整 journal 尾部；`--limit` 只限制展示数量，不限制扫描工作量。被占用或无效的 journal 会产生 stderr 警告，旧索引可能过时或缺失；这是元数据列表，不是完整可恢复性保证。当前安全存储支持 macOS/Linux，其他平台失败关闭。
 
 只输出本次 turn 的最终文本：
 

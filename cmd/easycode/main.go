@@ -33,6 +33,9 @@ func run(
 	errorOutput io.Writer,
 	stdinIsTerminal bool,
 ) int {
+	if len(arguments) > 0 && arguments[0] == "sessions" {
+		return runSessions(ctx, arguments[1:], output, errorOutput)
+	}
 	flags := flag.NewFlagSet("easycode", flag.ContinueOnError)
 	flags.SetOutput(errorOutput)
 	showVersion := flags.Bool("version", false, "print version and exit")

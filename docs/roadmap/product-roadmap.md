@@ -216,6 +216,8 @@ make verify
 
 确定性上下文规划基线已交付：Runtime 在 durable `turn_started` 与 Provider stream 之间构造 `provider_profile -> [project_instructions] -> committed_history -> current_input`，输出不可变来源、CachePlan、stable-prefix fingerprint、本地 `byte_heuristic_v1` 估算和预算判定。应用在资源打开前从当前启动目录安全发现一次层级 `AGENTS.md`/`CLAUDE.md`，形成默认 32 KiB、硬上限 4 MiB、只含项目根相对来源的不可变快照；活动进程不热更新，resume/continue 在新进程当前目录重新发现。双 Provider 每轮把非空快照作为单一临时 user context 置于 native history 前，但不提交到 native history、Session、RuntimeEvent 或语义投影。双 Provider 从 committed native history 提供只含 family/revision/method/state/tokens 的 footprint，opaque reasoning 不进入共享视图；语义估算与 native footprint 取覆盖值而不是相加。用户可显式配置 context window、输出预留和安全余量；未配置或估算 unknown 时不硬拒绝，明确超限以 `context_limit_exceeded` 在网络前 durable 失败。
 
+2026-10-23 已交付独立 `sessions list [--all] [--limit N]`：默认当前规范化目录 20 条，最大 200 条，按 durable 更新时间及 thread ID 双降序；所有 Provider/model 可发现，完整 ID 可交给既有 `--resume`。入口无需模型配置、不访问网络、不读取 stdin、不进入聊天资源链。Catalog schema 和 Session vocabulary 不变，协调仍全量扫描并允许 lease 下尾修复，busy/invalid 以全局警告报告。固定文本 golden、双 Provider 列表后恢复、索引重建、跨进程占用和取消/输出失败验证覆盖该入口；此交付不包含 picker、标题搜索或 worktree 聚合。
+
 P2 尚未完成：session picker、worktree/project catalog、title/tag/search、实时索引、same-turn steered input、usage 成本/配额与 TUI 展示、真实 cache request 策略和观测指标、skill context sources、artifact、fork/subagent 线程树、compaction checkpoint，以及稳定发布后真实 schema/payload revision 的版本专属转换。Read/Glob/Grep/Patch Tool Loop 已交付 tool catalog source、approval/ledger/result、durable output、有序并行与 exclusive 屏障；已交付的 FIFO follow-up queue 仍只在进程内存在，`queued` 不是 durable 确认，same-turn steer 必须另行接入 tool output safe point。当前 fixture 是唯一当前格式，不代表通用 migration 已实现；当前进度不能视为 P2 退出。
 
 本次 P2 基础契约强化还加入语义分支脚本、本地 hooks、GitHub Actions jobs 和集中式架构守卫。GitHub `main` ruleset 的 required checks 与 direct-push 禁止仍须管理员在仓库外启用。secure config/session opener 当前只在 macOS/Linux 提供等价语义；Windows 等目标可以编译，但相关运行路径明确失败关闭，平台实现与兼容矩阵留在 P8。
@@ -250,7 +252,7 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 
 - 已交付可 resume/continue 的一次性 headless 文本 chat 与同进程 FIFO AgentLoop；coding tools 和 same-turn steer 尚未交付。
 - 已交付 session JSONL 与可从 JSONL 重建的 `state.sqlite` Catalog v1。
-- 已交付显式 resume 与兼容性精确匹配的 `--continue`；可视化 session picker/list 尚未交付。
+- 已交付显式 resume 与兼容性精确匹配的 `--continue`；离线 `sessions list` 已交付，可视化 session picker 尚未交付。
 - 已交付一次性 thread/turn/text/failure JSONL v1 与独立 streaming control v1，成功 `turn.completed` 必含 normalized usage；独立 usage 更新、reasoning 与 tool 事件尚未交付。
 - 已交付不新增 Session/RuntimeEvent vocabulary 的请求前 ContextPlan 和显式预算守卫；远程 token count、自动压缩、Provider cache marker/key 和 context UI 尚未交付。
 - 已交付启动时层级项目指令发现、descriptor-bound 安全读取、确定性预算截断、双 Provider 临时注入和恢复隔离；规则热重载、全局用户指令、includes 与 `.claude/rules` 尚未交付。
