@@ -70,6 +70,10 @@ func NewToolCallReadyDraft(turnID domain.TurnID, invocation tool.Invocation, sam
 		SampleIndex: sampleIndex, CallIndex: callIndex, Capability: invocation.Capability(), WireKind: invocation.WireKind(),
 	}
 	switch invocation.Capability() {
+	case tool.CapabilityExec:
+		value, _ := invocation.Exec()
+		input := value.Input()
+		payload.ExecInput = &ExecInputPayload{Command: input.Command(), Workdir: input.Workdir(), TimeoutMillis: input.TimeoutMillis()}
 	case tool.CapabilityRead:
 		value, _ := invocation.Read()
 		input := value.Input()
@@ -101,7 +105,7 @@ func NewToolCallReadyDraft(turnID domain.TurnID, invocation tool.Invocation, sam
 	return encodeDraft(EventToolCallReady, "", turnID, payload)
 }
 
-// NewToolApprovalDecidedDraft 创建在任何Patch执行前必须Sync的批准事实。
+// NewToolApprovalDecidedDraft 创建在任何Patch或Exec执行前必须Sync的批准事实。
 func NewToolApprovalDecidedDraft(turnID domain.TurnID, payload ToolApprovalDecidedPayload) (RecordDraft, error) {
 	if err := validateTurnID(turnID); err != nil {
 		return RecordDraft{}, err
@@ -136,6 +140,10 @@ func NewToolCallResultDraft(turnID domain.TurnID, result tool.InvocationResult) 
 		InvocationID: result.InvocationID(), Capability: result.Capability(), WireKind: result.WireKind(), Status: result.Status(), Code: result.Code(), Preview: result.Preview().Text(),
 	}
 	switch result.Capability() {
+	case tool.CapabilityExec:
+		m := result.ExecMetadata()
+		exit, known := m.ExitCode()
+		payload.ExecMetadata = &ExecResultMetadataPayload{Workdir: m.Workdir(), ExitCode: exit, ExitKnown: known, DurationMillis: m.DurationMillis(), StdoutObserved: m.Stdout().ObservedBytes(), StdoutRetained: m.Stdout().RetainedBytes(), StderrObserved: m.Stderr().ObservedBytes(), StderrRetained: m.Stderr().RetainedBytes(), TimedOut: m.TimedOut(), Cancelled: m.Cancelled(), Truncated: m.OutputTruncated()}
 	case tool.CapabilityRead:
 		metadata := result.ReadMetadata()
 		payload.ReadMetadata = &ReadResultMetadataPayload{

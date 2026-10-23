@@ -19,6 +19,9 @@ const (
 	EventTurnFailed            EventKind = "turn_failed"
 	EventToolApprovalRequested EventKind = "tool_approval_requested"
 	EventToolApprovalResolved  EventKind = "tool_approval_resolved"
+	EventCommandStarted        EventKind = "command_started"
+	EventCommandProgress       EventKind = "command_progress"
+	EventCommandTerminal       EventKind = "command_terminal"
 )
 
 // Event 是 TUI、headless 和其他宿主共同消费的进程内语义事件信封。
@@ -48,6 +51,12 @@ func (event Event) Validate() error {
 		return fmt.Errorf("runtime event identity is invalid")
 	}
 	switch event.Kind {
+	case EventCommandStarted, EventCommandProgress, EventCommandTerminal:
+		if !hasIdentity {
+			return fmt.Errorf("command event identity is required")
+		}
+		_, err := DecodeCommandActivity(event)
+		return err
 	case EventTurnStarted:
 		return ValidateTurnStarted(event)
 	case EventAssistantTextDelta:

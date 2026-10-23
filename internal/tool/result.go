@@ -112,6 +112,7 @@ type InvocationResult struct {
 	globMetadata   GlobResultMetadata
 	grepMetadata   GrepResultMetadata
 	patchMetadata  PatchResultMetadata
+	execMetadata   ExecResultMetadata
 }
 
 // NewReadInvocationResult 构造完整 Read 结果。
@@ -178,6 +179,9 @@ func (result InvocationResult) PatchMetadata() PatchResultMetadata {
 
 // Validate 验证结果身份、状态、错误码、preview 和元数据。
 func (result InvocationResult) Validate() error {
+	if result.capability != CapabilityExec && result.execMetadata != (ExecResultMetadata{}) {
+		return errors.New("tool result contains mismatched Exec metadata")
+	}
 	if !result.invocationID.Valid() || !result.providerCallID.Valid() {
 		return errors.New("tool result identity is invalid")
 	}
@@ -197,6 +201,8 @@ func (result InvocationResult) Validate() error {
 		return err
 	}
 	switch result.capability {
+	case CapabilityExec:
+		return result.validateExecResult()
 	case CapabilityRead:
 		if result.wireKind != WireStructured || !result.globMetadata.zero() || !result.grepMetadata.zero() || !result.patchMetadata.zero() {
 			return errors.New("Read result contains mismatched metadata")
@@ -299,6 +305,9 @@ func NewReadErrorResult(invocation ReadInvocation, status ResultStatus, code str
 // NewInvocationErrorResult 为当前四种能力生成不泄漏底层cause的确定错误结果。
 func NewInvocationErrorResult(invocation Invocation, status ResultStatus, code string, message string) InvocationResult {
 	switch invocation.Capability() {
+	case CapabilityExec:
+		value, _ := invocation.Exec()
+		return NewExecErrorResult(value, status, code, message)
 	case CapabilityRead:
 		value, _ := invocation.Read()
 		return NewReadErrorResult(value, status, code, message, ".")

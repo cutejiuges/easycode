@@ -20,25 +20,42 @@ func TestCatalogRequiresAndExposesAllRealComponents(t *testing.T) {
 	patchPreparer, _ := NewPatchPreparer(workspace)
 	patchExecutor, _ := NewPatchExecutor(workspace)
 	policy := tool.NewApprovalPolicy()
-	catalog, err := NewCatalog(readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, policy)
+	execPreparer := NewExecPlanner()
+	execExecutor, err := NewExecExecutor(workspace, OpenCommandEnvironment(), tool.RenderExecOutput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := NewCatalog(readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, execPreparer, execExecutor, tool.RenderExecOutput, policy)
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(catalog.CanonicalJSON())
-	for _, present := range []string{"Read", "Glob", "Grep", "Edit", "apply_patch", "custom_freeform"} {
+	for _, present := range []string{"Read", "Glob", "Grep", "Edit", "apply_patch", "custom_freeform", "Bash", "exec_command"} {
 		if !strings.Contains(text, present) {
 			t.Fatalf("catalog 缺少 %s", present)
 		}
 	}
-	for _, absent := range []string{"Write", "Bash", "MCP", "Skill", "Agent"} {
+	for _, absent := range []string{"Write", "write_stdin", "MCP", "Skill", "Agent"} {
 		if strings.Contains(text, absent) {
 			t.Fatalf("catalog 暴露未实现能力 %s", absent)
 		}
 	}
-	if _, err := NewCatalog(readExecutor, nil, grepExecutor, patchPreparer, patchExecutor, policy); err == nil {
+	if _, err := NewCatalog(readExecutor, nil, grepExecutor, patchPreparer, patchExecutor, execPreparer, execExecutor, tool.RenderExecOutput, policy); err == nil {
 		t.Fatal("缺少组件的 catalog 未失败关闭")
 	}
-	if _, err := NewCatalog(readExecutor, globExecutor, grepExecutor, nil, patchExecutor, policy); err == nil {
+	if _, err := NewCatalog(readExecutor, globExecutor, grepExecutor, nil, patchExecutor, execPreparer, execExecutor, tool.RenderExecOutput, policy); err == nil {
 		t.Fatal("缺少 Patch preparer 的 catalog 未失败关闭")
+	}
+	if _, err := NewCatalog(readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, nil, execExecutor, tool.RenderExecOutput, policy); err == nil {
+		t.Fatal("missing Exec planner accepted")
+	}
+	if _, err := NewCatalog(readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, execPreparer, nil, tool.RenderExecOutput, policy); err == nil {
+		t.Fatal("missing Exec executor accepted")
+	}
+	if _, err := NewCatalog(readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, execPreparer, execExecutor, nil, policy); err == nil {
+		t.Fatal("missing Exec renderer accepted")
+	}
+	if _, err := NewExecExecutor(workspace, OpenCommandEnvironment(), nil); err == nil {
+		t.Fatal("executor without renderer accepted")
 	}
 }

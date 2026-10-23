@@ -1677,6 +1677,7 @@ func testRuntimeConfig(t *testing.T, journal Journal) Config {
 		SessionID: runtimeSessionID, ThreadID: runtimeThreadID, Journal: journal,
 		ContextProfile: profile, ToolCatalog: mustRuntimeToolCatalog(t), ProjectInstructions: projectInstructions,
 		ReadExecutor: runtimeReadExecutor{}, GlobExecutor: runtimeGlobExecutor{}, GrepExecutor: runtimeGrepExecutor{},
+		PatchPreparer: catalogPatchFixture{}, PatchExecutor: catalogPatchFixture{}, ExecPreparer: catalogExecFixture{}, ExecExecutor: catalogExecFixture{}, ToolPolicy: tool.NewApprovalPolicy(),
 		ContextBudget:  contextplan.DisabledBudget(),
 		ContextPlanner: contextplan.NewPlanner(),
 	}
@@ -1689,7 +1690,7 @@ func mustRuntimeToolCatalog(t *testing.T) tool.CatalogSnapshot {
 
 func mustRuntimeToolCatalogWithExecutor(t *testing.T, executor tool.ReadExecutor) tool.CatalogSnapshot {
 	t.Helper()
-	catalog, err := tool.NewReadOnlyCatalogSnapshot(executor, runtimeGlobExecutor{}, runtimeGrepExecutor{})
+	catalog, err := tool.NewExecCatalogSnapshot(executor, runtimeGlobExecutor{}, runtimeGrepExecutor{}, catalogPatchFixture{}, catalogPatchFixture{}, catalogExecFixture{}, catalogExecFixture{}, tool.RenderExecOutput, tool.NewApprovalPolicy())
 	if err != nil {
 		t.Fatal(err)
 	}

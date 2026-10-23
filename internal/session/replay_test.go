@@ -498,9 +498,17 @@ func testReplayPatchInvocation(t *testing.T) tool.Invocation {
 
 func mustPatchApprovalDraft(t *testing.T, invocation tool.Invocation, fingerprint tool.CandidateFingerprint, outcome tool.ApprovalOutcome) RecordDraft {
 	t.Helper()
+	metadata, err := NewApprovalMetadata(invocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := ApprovalSourceInteractive
+	if outcome == tool.ApprovalOutcomeAllowFromSession {
+		source = ApprovalSourceSessionGrant
+	}
 	requestID, _ := tool.ParseApprovalRequestID("018f1d8a-7b5c-7def-8abc-456789abcdef")
 	draft, err := NewToolApprovalDecidedDraft(testTurnID, ToolApprovalDecidedPayload{
-		RequestID: requestID, InvocationID: invocation.InvocationID(), Fingerprint: fingerprint, Outcome: outcome,
+		RequestID: requestID, InvocationID: invocation.InvocationID(), Fingerprint: fingerprint, Outcome: outcome, Source: source, Metadata: metadata,
 	})
 	if err != nil {
 		t.Fatal(err)

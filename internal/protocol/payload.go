@@ -36,6 +36,8 @@ type ToolApprovalRequestedPayload struct {
 	Fingerprint    string             `json:"fingerprint"`
 	Diff           string             `json:"diff"`
 	Decisions      []ApprovalDecision `json:"decisions"`
+	Command        string             `json:"command,omitempty"`
+	TimeoutMillis  int                `json:"timeout_ms,omitempty"`
 }
 
 // ToolApprovalResolvedPayload 通知宿主关闭匹配overlay。
@@ -184,6 +186,15 @@ func DecodeToolApprovalRequested(event Event) (ToolApprovalRequestedPayload, err
 }
 
 func validateApprovalRequested(payload ToolApprovalRequestedPayload) error {
+	if payload.Capability == "process.exec" {
+		if !validUUIDv7Text(payload.RequestID) || !validUUIDv7Text(payload.InvocationID) || payload.ProviderCallID == "" || len(payload.ProviderCallID) > 256 || strings.TrimSpace(payload.Reason) == "" || len(payload.Reason) > 1024 || !utf8.ValidString(payload.Reason) || !validFingerprint(payload.Fingerprint) || payload.Diff != "" || payload.Command == "" || len(payload.Command) > 64<<10 || !utf8.ValidString(payload.Command) || strings.ContainsRune(payload.Command, 0) || payload.TimeoutMillis < 1000 || payload.TimeoutMillis > 600000 || (payload.RelativePath != "" && !validApprovalPath(payload.RelativePath)) || len(payload.Decisions) != 3 || payload.Decisions[0] != ApprovalAllowOnce || payload.Decisions[1] != ApprovalDeny || payload.Decisions[2] != ApprovalAbort {
+			return fmt.Errorf("invalid Exec approval payload")
+		}
+		return nil
+	}
+	if payload.Command != "" || payload.TimeoutMillis != 0 {
+		return fmt.Errorf("mismatched approval payload")
+	}
 	if !validUUIDv7Text(payload.RequestID) || !validUUIDv7Text(payload.InvocationID) || payload.ProviderCallID == "" || len(payload.ProviderCallID) > 256 || payload.Capability != "fs.patch" || strings.TrimSpace(payload.Reason) == "" || len(payload.Reason) > 1024 || !validApprovalPath(payload.RelativePath) || !validFingerprint(payload.Fingerprint) || payload.Diff == "" || len(payload.Diff) > maxApprovalDiffBytes || !utf8.ValidString(payload.Diff) {
 		return fmt.Errorf("tool approval request payload is invalid")
 	}

@@ -1,0 +1,14 @@
+Command details
+Running
+Workdir: src
+250 ms · 512 bytes
+Lines 1-7 of 7
+Command:
+printf 'full command first line'
+printf 'full command second line'
+
+Output:
+recent output
+last line
+PgUp/PgDn: scroll · Ctrl+O/Esc: close
+Ctrl+C: interrupt

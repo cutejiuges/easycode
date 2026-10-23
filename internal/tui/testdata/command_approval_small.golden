@@ -1,0 +1,20 @@
+  ┌────────────────────────────────────────┐
+  │ Approve command · Waiting            │
+  │ Workdir: src                         │
+  │ Timeout: 1000 ms                     │
+  │ Workspace writes; no network. Detach │
+  │ ed processes may survive.            │
+  │ Command 1-8 of 13                    │
+  │ printf 'long command line'           │
+  │ printf 'long command line'           │
+  │ printf 'long command line'           │
+  │ printf 'long command line'           │
+  │ printf 'long command line'           │
+  │ printf 'long command line'           │
+  │ printf 'long command line'           │
+  │ printf 'long command line'           │
+  │   Yes                                │
+  │ > No                                 │
+  │   Abort turn                         │
+  │ Enter: decide · Esc: interrupt       │
+  └────────────────────────────────────────┘

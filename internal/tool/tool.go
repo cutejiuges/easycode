@@ -17,6 +17,8 @@ const (
 	CapabilityGrep CapabilityID = "fs.grep"
 	// CapabilityPatch 标识需要批准的单文件文本Patch能力。
 	CapabilityPatch CapabilityID = "fs.patch"
+	// CapabilityExec 标识需要逐次批准的前台命令执行能力。
+	CapabilityExec CapabilityID = "process.exec"
 
 	// MaxModelPreviewBytes 限制单个 Read 模型可见工具结果。
 	MaxModelPreviewBytes = 256 << 10
@@ -39,7 +41,7 @@ func ParseCapabilityID(value string) (CapabilityID, error) {
 // Valid 判断能力是否由当前实现支持。
 func (id CapabilityID) Valid() bool {
 	switch id {
-	case CapabilityRead, CapabilityGlob, CapabilityGrep, CapabilityPatch:
+	case CapabilityRead, CapabilityGlob, CapabilityGrep, CapabilityPatch, CapabilityExec:
 		return true
 	default:
 		return false
@@ -72,6 +74,7 @@ type ReadyCall struct {
 	globInput      GlobInput
 	grepInput      GrepInput
 	patchInput     PatchInput
+	execInput      ExecInput
 }
 
 // NewReadReadyCall 构造已经完整校验的 Read 调用。
@@ -101,6 +104,13 @@ func newReadyCall(call ReadyCall) (ReadyCall, error) {
 	return call, nil
 }
 
+// NewExecReadyCall 构造已经完整校验的前台命令调用。
+func NewExecReadyCall(providerCallID ProviderCallID, input ExecInput) (ReadyCall, error) {
+	return newReadyCall(ReadyCall{providerCallID: providerCallID, capability: CapabilityExec, wireKind: WireStructured, execInput: input})
+}
+
+func (call ReadyCall) ExecInput() ExecInput { return call.execInput }
+
 func (call ReadyCall) ProviderCallID() ProviderCallID { return call.providerCallID }
 func (call ReadyCall) Capability() CapabilityID       { return call.capability }
 func (call ReadyCall) WireKind() ProviderWireKind     { return call.wireKind }
@@ -115,6 +125,9 @@ func (call ReadyCall) Clone() ReadyCall {
 
 // Validate 验证调用身份、能力标签及唯一匹配的 typed input。
 func (call ReadyCall) Validate() error {
+	if call.capability != CapabilityExec && !call.execInput.zero() {
+		return errors.New("ready call contains mismatched Exec payload")
+	}
 	if !call.providerCallID.Valid() {
 		return errors.New("ready call has invalid provider call ID")
 	}
@@ -122,6 +135,10 @@ func (call ReadyCall) Validate() error {
 		return errors.New("ready call has invalid Provider wire kind")
 	}
 	switch call.capability {
+	case CapabilityExec:
+		if call.wireKind != WireStructured || call.readInput != (ReadInput{}) || call.globInput != (GlobInput{}) || call.grepInput != (GrepInput{}) || !call.patchInput.zero() || call.execInput.Validate() != nil {
+			return errors.New("ready call has invalid Exec payload")
+		}
 	case CapabilityRead:
 		if call.wireKind != WireStructured || call.globInput != (GlobInput{}) || call.grepInput != (GrepInput{}) || !call.patchInput.zero() || call.readInput.Validate() != nil {
 			return errors.New("ready call has invalid Read payload")
@@ -180,11 +197,18 @@ type Invocation struct {
 	glob       GlobInvocation
 	grep       GrepInvocation
 	patch      PatchInvocation
+	exec       ExecInvocation
 }
 
 // NewInvocation 从 durable ready fact 构造匹配能力的执行输入。
 func NewInvocation(invocationID InvocationID, call ReadyCall) (Invocation, error) {
 	switch call.Capability() {
+	case CapabilityExec:
+		value, err := NewExecInvocation(invocationID, call)
+		if err != nil {
+			return Invocation{}, err
+		}
+		return Invocation{capability: CapabilityExec, exec: value}, nil
 	case CapabilityRead:
 		value, err := NewReadInvocation(invocationID, call)
 		if err != nil {
@@ -217,6 +241,8 @@ func NewInvocation(invocationID InvocationID, call ReadyCall) (Invocation, error
 func (invocation Invocation) Capability() CapabilityID { return invocation.capability }
 func (invocation Invocation) InvocationID() InvocationID {
 	switch invocation.capability {
+	case CapabilityExec:
+		return invocation.exec.invocationID
 	case CapabilityRead:
 		return invocation.read.invocationID
 	case CapabilityGlob:
@@ -231,6 +257,8 @@ func (invocation Invocation) InvocationID() InvocationID {
 }
 func (invocation Invocation) ProviderCallID() ProviderCallID {
 	switch invocation.capability {
+	case CapabilityExec:
+		return invocation.exec.providerCallID
 	case CapabilityRead:
 		return invocation.read.providerCallID
 	case CapabilityGlob:
@@ -269,7 +297,15 @@ func (invocation Invocation) Patch() (PatchInvocation, bool) {
 
 // Validate 验证 capability 标签与唯一 typed invocation 一致。
 func (invocation Invocation) Validate() error {
+	if invocation.capability != CapabilityExec && invocation.exec != (ExecInvocation{}) {
+		return errors.New("invocation contains mismatched Exec payload")
+	}
 	switch invocation.capability {
+	case CapabilityExec:
+		if invocation.read != (ReadInvocation{}) || invocation.glob != (GlobInvocation{}) || invocation.grep != (GrepInvocation{}) || !invocation.patch.zero() {
+			return errors.New("Exec invocation contains mismatched payload")
+		}
+		return invocation.exec.Validate()
 	case CapabilityRead:
 		if invocation.glob != (GlobInvocation{}) || invocation.grep != (GrepInvocation{}) || !invocation.patch.zero() {
 			return errors.New("Read invocation contains mismatched payload")
@@ -414,6 +450,19 @@ type PatchExecutor interface {
 	Execute(context.Context, PatchCandidate) InvocationResult
 }
 
+// ExecPreparer 纯内存冻结命令候选。
+type ExecPreparer interface {
+	Prepare(ExecInvocation) (ExecCandidate, error)
+}
+
+// ExecExecutor 执行已经批准的候选并发布有界瞬态进度。
+type ExecExecutor interface {
+	Execute(context.Context, ExecCandidate, func(ExecProgress)) InvocationResult
+}
+
+// Exclusive 标识需要等待前序调用完成的副作用能力。
+func (id CapabilityID) Exclusive() bool { return id == CapabilityPatch || id == CapabilityExec }
+
 // PolicyDecision 是固定策略的封闭决策集合。
 type PolicyDecision string
 
@@ -465,7 +514,7 @@ func (ApprovalPolicy) Decide(call ReadyCall) PolicyDecision {
 	switch call.Capability() {
 	case CapabilityRead, CapabilityGlob, CapabilityGrep:
 		return PolicyAllow
-	case CapabilityPatch:
+	case CapabilityPatch, CapabilityExec:
 		return PolicyAsk
 	default:
 		return PolicyDeny

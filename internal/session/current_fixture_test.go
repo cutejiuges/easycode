@@ -255,7 +255,7 @@ func TestCurrentFixtureRejectsUnsupportedShapeReadOnly(t *testing.T) {
 	baseline := readCurrentFixture(t, "root.jsonl")
 	superseded := readCurrentFixture(t, "superseded_envelope.jsonl")
 	fixtures := map[string][]byte{
-		"schema revision":     bytes.Replace(baseline, []byte(`"schema_version":2`), []byte(`"schema_version":99`), 1),
+		"schema revision":     bytes.Replace(baseline, []byte(`"schema_version":3`), []byte(`"schema_version":99`), 1),
 		"superseded envelope": append(append([]byte(nil), baseline...), superseded...),
 	}
 	for name, content := range fixtures {
@@ -367,6 +367,55 @@ func TestCurrentPatchTailFixturesExposeApprovalRecoveryStates(t *testing.T) {
 			}
 			_ = lease.Close()
 			_ = repository.Close()
+		})
+	}
+}
+
+func TestCurrentExecTailFixturesExposeApprovalRecoveryStates(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		state    ReplayedToolCallState
+		approval tool.ApprovalOutcome
+	}{
+		{"exec_before_approval.jsonl", ReplayedToolCallReady, ""},
+		{"exec_allowed_before_start.jsonl", ReplayedToolCallReady, tool.ApprovalOutcomeAllowOnce},
+		{"exec_started_tail.jsonl", ReplayedToolCallStarted, tool.ApprovalOutcomeAllowOnce},
+		{"exec_result_tail.jsonl", ReplayedToolCallResult, tool.ApprovalOutcomeAllowOnce},
+		{"exec_denied_tail.jsonl", ReplayedToolCallResult, tool.ApprovalOutcomeDeny},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := readCurrentFixture(t, test.name)
+			for _, line := range bytes.Split(bytes.TrimSuffix(fixture, []byte{'\n'}), []byte{'\n'}) {
+				record, err := DecodeRecord(line)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, canonical, err := EncodeRecord(record)
+				if err != nil || !bytes.Equal(canonical, line) {
+					t.Fatalf("Exec fixture is not canonical: %v", err)
+				}
+			}
+			repository, lease := installCurrentFixture(t, fixture)
+			defer func() { _ = lease.Close(); _ = repository.Close() }()
+			loaded, err := NewLoader().Load(context.Background(), lease)
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan, err := NewReplayPlanner().Plan(loaded)
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls := plan.ToolRecovery.Calls()
+			if len(calls) != 1 || calls[0].Invocation.Capability() != tool.CapabilityExec || calls[0].State != test.state || calls[0].ApprovalOutcome != test.approval {
+				t.Fatal("Exec fixture recovery changed")
+			}
+			invocation, ok := calls[0].Invocation.Exec()
+			if !ok || invocation.Input().Command() != "printf hello" || invocation.Input().Workdir() != "src" {
+				t.Fatal("Exec fixture input changed")
+			}
+			if test.state == ReplayedToolCallResult && calls[0].Result.Preview().Text() != "frozen Exec output" {
+				t.Fatal("Exec fixture preview changed")
+			}
 		})
 	}
 }

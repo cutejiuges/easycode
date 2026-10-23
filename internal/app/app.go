@@ -58,6 +58,7 @@ type dataPaths struct {
 type chatResourceHooks struct {
 	afterContinueSelection func(domain.ThreadID)
 	interactiveApprovals   bool
+	newExecExecutor        func(*builtin.Workspace, builtin.CommandEnvironment, tool.ExecOutputRenderer) (tool.ExecExecutor, error)
 }
 
 type providerResource interface {
@@ -366,8 +367,18 @@ func openChatResourcesWithSnapshot(
 		return nil, fault.New(fault.CodeInvalidConfiguration, "Patch executor is unavailable")
 	}
 	toolPolicy := tool.NewApprovalPolicy()
+	execPreparer := builtin.NewExecPlanner()
+	var execExecutor tool.ExecExecutor
+	if hooks.newExecExecutor != nil {
+		execExecutor, err = hooks.newExecExecutor(workspace, builtin.OpenCommandEnvironment(), tool.RenderExecOutput)
+	} else {
+		execExecutor, err = builtin.NewExecExecutor(workspace, builtin.OpenCommandEnvironment(), tool.RenderExecOutput)
+	}
+	if err != nil {
+		return nil, fault.New(fault.CodeInvalidConfiguration, "Exec executor is unavailable")
+	}
 	toolCatalog, err := builtin.NewCatalog(
-		readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, toolPolicy,
+		readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, execPreparer, execExecutor, tool.RenderExecOutput, toolPolicy,
 	)
 	if err != nil {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "tool catalog is invalid")
@@ -423,6 +434,8 @@ func openChatResourcesWithSnapshot(
 		GrepExecutor:         grepExecutor,
 		PatchPreparer:        patchPreparer,
 		PatchExecutor:        patchExecutor,
+		ExecPreparer:         execPreparer,
+		ExecExecutor:         execExecutor,
 		ToolPolicy:           toolPolicy,
 		InteractiveApprovals: hooks.interactiveApprovals,
 		ProjectInstructions:  projectInstructions,

@@ -59,6 +59,8 @@ type Config struct {
 	GrepExecutor              tool.GrepExecutor
 	PatchPreparer             tool.PatchPreparer
 	PatchExecutor             tool.PatchExecutor
+	ExecPreparer              tool.ExecPreparer
+	ExecExecutor              tool.ExecExecutor
 	ToolPolicy                tool.Policy
 	GenerateApprovalRequestID ApprovalRequestIDGenerator
 	InteractiveApprovals      bool
@@ -82,6 +84,8 @@ type Runtime struct {
 	grepExecutor         tool.GrepExecutor
 	patchPreparer        tool.PatchPreparer
 	patchExecutor        tool.PatchExecutor
+	execPreparer         tool.ExecPreparer
+	execExecutor         tool.ExecExecutor
 	toolPolicy           tool.Policy
 	newApprovalRequestID ApprovalRequestIDGenerator
 	interactiveApprovals bool
@@ -132,13 +136,11 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 	if config.ReadExecutor == nil || config.GlobExecutor == nil || config.GrepExecutor == nil {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "runtime read-only executors are not configured")
 	}
-	view, _ := config.ToolCatalog.View(conversation.Family())
-	patchEnabled := len(view.Facades()) == 4
-	if patchEnabled && (config.PatchPreparer == nil || config.PatchExecutor == nil || config.ToolPolicy == nil) {
-		return nil, fault.New(fault.CodeInvalidConfiguration, "runtime Patch components are not configured")
+	if config.ExecPreparer == nil || config.ExecExecutor == nil {
+		return nil, fault.New(fault.CodeInvalidConfiguration, "runtime Exec components are not configured")
 	}
-	if config.ToolPolicy == nil {
-		config.ToolPolicy = tool.NewReadOnlyPolicy()
+	if config.PatchPreparer == nil || config.PatchExecutor == nil || config.ToolPolicy == nil {
+		return nil, fault.New(fault.CodeInvalidConfiguration, "runtime Patch components are not configured")
 	}
 	if config.GenerateApprovalRequestID == nil {
 		config.GenerateApprovalRequestID = tool.GenerateApprovalRequestID
@@ -165,6 +167,7 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 		newInvocationID: config.GenerateInvocationID,
 		profile:         config.ContextProfile, toolCatalog: config.ToolCatalog.Clone(),
 		readExecutor: config.ReadExecutor, globExecutor: config.GlobExecutor, grepExecutor: config.GrepExecutor,
+		execPreparer: config.ExecPreparer, execExecutor: config.ExecExecutor,
 		patchPreparer: config.PatchPreparer, patchExecutor: config.PatchExecutor, toolPolicy: config.ToolPolicy, newApprovalRequestID: config.GenerateApprovalRequestID, interactiveApprovals: config.InteractiveApprovals, projectInstructions: projectInstructions,
 		budget: config.ContextBudget, planner: config.ContextPlanner,
 	}, nil
@@ -273,9 +276,12 @@ func (runtime *Runtime) ReconcileToolTurn(ctx context.Context, plan session.Tool
 		case session.ReplayedToolCallReady:
 			code := "session_interrupted_before_execution"
 			preview := "Tool cancelled: session interrupted before execution"
-			if call.Invocation.Capability() == tool.CapabilityPatch && call.ApprovalSequence == 0 {
+			if call.Invocation.Capability().Exclusive() && call.ApprovalSequence == 0 {
 				code = "session_interrupted_before_approval"
 				preview = "Patch cancelled: session interrupted before approval"
+				if call.Invocation.Capability() == tool.CapabilityExec {
+					preview = "Exec cancelled: session interrupted before approval"
+				}
 			}
 			result = tool.NewInvocationErrorResult(
 				call.Invocation, tool.ResultCancelled, code, preview,
@@ -661,8 +667,15 @@ func (runtime *Runtime) executeToolCalls(ctx context.Context, turnID domain.Turn
 	}
 	results := make([]tool.InvocationResult, len(invocations))
 	for index := 0; index < len(invocations); {
-		if invocations[index].Capability() == tool.CapabilityPatch {
-			result, aborted, err := runtime.executePatchCall(ctx, emit, turnID, invocations[index])
+		if invocations[index].Capability().Exclusive() {
+			var result tool.InvocationResult
+			var aborted bool
+			var err error
+			if invocations[index].Capability() == tool.CapabilityExec {
+				result, aborted, err = runtime.executeExecCall(ctx, emit, turnID, invocations[index])
+			} else {
+				result, aborted, err = runtime.executePatchCall(ctx, emit, turnID, invocations[index])
+			}
 			if err != nil {
 				if result.Validate() != nil {
 					return nil, err
@@ -679,7 +692,7 @@ func (runtime *Runtime) executeToolCalls(ctx context.Context, turnID domain.Turn
 			results[index] = result
 			if aborted {
 				for next := index + 1; next < len(invocations); next++ {
-					results[next] = tool.NewInvocationErrorResult(invocations[next], tool.ResultCancelled, "user_aborted", "Tool cancelled: user aborted Patch approval")
+					results[next] = tool.NewInvocationErrorResult(invocations[next], tool.ResultCancelled, "user_aborted", "Tool cancelled: user aborted tool approval")
 					if err := runtime.persistToolResult(context.WithoutCancel(ctx), turnID, results[next]); err != nil {
 						return nil, err
 					}
@@ -690,7 +703,7 @@ func (runtime *Runtime) executeToolCalls(ctx context.Context, turnID domain.Turn
 			continue
 		}
 		end := index + 1
-		for end < len(invocations) && invocations[end].Capability() != tool.CapabilityPatch {
+		for end < len(invocations) && !invocations[end].Capability().Exclusive() {
 			end++
 		}
 		batch, err := runtime.executeReadBatch(ctx, turnID, invocations[index:end])
@@ -824,11 +837,18 @@ func (runtime *Runtime) executePatchCall(ctx context.Context, emit Emitter, turn
 	outcome := tool.ApprovalOutcomeDeny
 	feedback := ""
 	decision := runtime.toolPolicy.Decide(callFromPatchInvocation(patch))
+	source := session.ApprovalSourcePolicy
+	if !runtime.interactiveApprovals {
+		source = session.ApprovalSourceHeadless
+	}
 	if runtime.patchGrant.Load() {
 		outcome = tool.ApprovalOutcomeAllowFromSession
+		source = session.ApprovalSourceSessionGrant
 	} else if decision == tool.PolicyAllow {
 		outcome = tool.ApprovalOutcomeAllowOnce
+		source = session.ApprovalSourcePolicy
 	} else if decision == tool.PolicyAsk && runtime.interactiveApprovals {
+		source = session.ApprovalSourceInteractive
 		response, waitErr := runtime.waitForApproval(ctx, emit, turnID, request)
 		if waitErr != nil {
 			return tool.InvocationResult{}, false, waitErr
@@ -846,7 +866,11 @@ func (runtime *Runtime) executePatchCall(ctx context.Context, emit Emitter, turn
 			outcome = tool.ApprovalOutcomeAbort
 		}
 	}
-	fact := session.ToolApprovalDecidedPayload{RequestID: requestID, InvocationID: invocation.InvocationID(), Fingerprint: candidate.Fingerprint(), Outcome: outcome, Feedback: feedback}
+	metadata, err := session.NewApprovalMetadata(invocation)
+	if err != nil {
+		return tool.InvocationResult{}, false, err
+	}
+	fact := session.ToolApprovalDecidedPayload{RequestID: requestID, InvocationID: invocation.InvocationID(), Fingerprint: candidate.Fingerprint(), Outcome: outcome, Feedback: feedback, Source: source, Metadata: metadata}
 	if outcome == tool.ApprovalOutcomeDeny || outcome == tool.ApprovalOutcomeAbort {
 		status, code, preview := tool.ResultDenied, "approval_denied", "Patch denied: approval_denied"
 		if outcome == tool.ApprovalOutcomeAbort {
@@ -930,6 +954,9 @@ func (runtime *Runtime) ResolveToolApproval(response tool.ApprovalResponse) erro
 		return errNoActiveApproval
 	}
 	request := active.request
+	if request.Capability() == tool.CapabilityExec && response.Decision() == tool.ApprovalAllowSession {
+		return errApprovalMismatch
+	}
 	if response.RequestID() != request.RequestID() || response.TurnID() != request.TurnID() || response.InvocationID() != request.InvocationID() || response.Fingerprint() != request.Fingerprint() || active.resolved {
 		return errApprovalMismatch
 	}
@@ -948,7 +975,11 @@ func (runtime *Runtime) waitForApproval(ctx context.Context, emit Emitter, turnI
 	}
 	runtime.approval = active
 	runtime.approvalMu.Unlock()
-	event, err := protocol.NewToolApprovalRequested(protocol.ToolApprovalRequestedPayload{RequestID: string(request.RequestID()), InvocationID: string(request.InvocationID()), ProviderCallID: string(request.ProviderCallID()), Capability: string(request.Capability()), Reason: request.Reason(), RelativePath: request.RelativePath(), Fingerprint: string(request.Fingerprint()), Diff: request.Diff(), Decisions: []protocol.ApprovalDecision{protocol.ApprovalAllowOnce, protocol.ApprovalAllowSession, protocol.ApprovalDeny}})
+	decisions := make([]protocol.ApprovalDecision, len(request.Decisions()))
+	for index, decision := range request.Decisions() {
+		decisions[index] = protocol.ApprovalDecision(decision)
+	}
+	event, err := protocol.NewToolApprovalRequested(protocol.ToolApprovalRequestedPayload{RequestID: string(request.RequestID()), InvocationID: string(request.InvocationID()), ProviderCallID: string(request.ProviderCallID()), Capability: string(request.Capability()), Reason: request.Reason(), RelativePath: request.RelativePath(), Fingerprint: string(request.Fingerprint()), Diff: request.Diff(), Decisions: decisions, Command: request.ExecInput().Command(), TimeoutMillis: request.ExecInput().TimeoutMillis()})
 	if err != nil {
 		runtime.approvalMu.Lock()
 		active.closed = true
@@ -983,6 +1014,10 @@ func (runtime *Runtime) waitForApproval(ctx context.Context, emit Emitter, turnI
 }
 
 func (runtime *Runtime) emitApprovalResolved(emit Emitter, turnID domain.TurnID, request tool.ApprovalRequest, outcome tool.ApprovalOutcome) {
+	// 非交互宿主只消费turn协议；没有展示过的审批不得产生UI收口事件。
+	if !runtime.interactiveApprovals {
+		return
+	}
 	decision := protocol.ApprovalDeny
 	switch outcome {
 	case tool.ApprovalOutcomeAllowOnce, tool.ApprovalOutcomeAllowFromSession:
