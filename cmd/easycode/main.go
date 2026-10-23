@@ -16,9 +16,17 @@ import (
 	"easycode/internal/config"
 	"easycode/internal/fault"
 	"easycode/internal/headless"
+	"easycode/internal/tool/builtin"
 )
 
 func main() {
+	if handled, err := builtin.RunCommandChild(os.Args[1:]); handled {
+		if err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, "command sandbox initialization failed")
+			os.Exit(125)
+		}
+		return
+	}
 	// 信号上下文统一负责交互界面和后台任务的优雅退出。
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -33,6 +41,9 @@ func run(
 	errorOutput io.Writer,
 	stdinIsTerminal bool,
 ) int {
+	if len(arguments) > 0 && arguments[0] == "sessions" {
+		return runSessions(ctx, arguments[1:], output, errorOutput)
+	}
 	flags := flag.NewFlagSet("easycode", flag.ContinueOnError)
 	flags.SetOutput(errorOutput)
 	showVersion := flags.Bool("version", false, "print version and exit")

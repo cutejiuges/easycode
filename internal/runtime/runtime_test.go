@@ -1199,7 +1199,7 @@ func TestRunTurnUsesRuntimeProjectInstructionsForPlanAndProvider(t *testing.T) {
 
 func TestRunTurnContinuesForNonBlockingBudgetStates(t *testing.T) {
 	t.Parallel()
-	budget, err := contextplan.NewBudget(1000, 0, 0)
+	budget, err := contextplan.NewBudget(2000, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1683,7 +1683,7 @@ func testRuntimeConfig(t *testing.T, journal Journal) Config {
 		SessionID: runtimeSessionID, ThreadID: runtimeThreadID, Journal: journal,
 		ContextProfile: profile, ToolCatalog: mustRuntimeToolCatalog(t), ProjectInstructions: projectInstructions,
 		ReadExecutor: runtimeReadExecutor{}, GlobExecutor: runtimeGlobExecutor{}, GrepExecutor: runtimeGrepExecutor{},
-		PatchPreparer: catalogPatchPreparer{}, PatchExecutor: catalogPatchExecutor{}, WritePreparer: catalogWritePreparer{}, WriteExecutor: catalogWriteExecutor{}, ToolPolicy: tool.NewApprovalPolicy(),
+		PatchPreparer: catalogPatchPreparer{}, PatchExecutor: catalogPatchExecutor{}, WritePreparer: catalogWritePreparer{}, WriteExecutor: catalogWriteExecutor{}, ExecPreparer: catalogExecFixture{}, ExecExecutor: catalogExecFixture{}, ToolPolicy: tool.NewApprovalPolicy(),
 		ContextBudget:  contextplan.DisabledBudget(),
 		ContextPlanner: contextplan.NewPlanner(),
 	}
@@ -1696,7 +1696,7 @@ func mustRuntimeToolCatalog(t *testing.T) tool.CatalogSnapshot {
 
 func mustRuntimeToolCatalogWithExecutor(t *testing.T, executor tool.ReadExecutor) tool.CatalogSnapshot {
 	t.Helper()
-	catalog, err := tool.NewCatalogSnapshot(executor, runtimeGlobExecutor{}, runtimeGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, tool.NewApprovalPolicy())
+	catalog, err := tool.NewCatalogSnapshot(executor, runtimeGlobExecutor{}, runtimeGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, tool.RenderExecOutput, tool.NewApprovalPolicy())
 	if err != nil {
 		t.Fatal(err)
 	}

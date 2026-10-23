@@ -82,7 +82,20 @@ func (runtime *Runtime) executeWriteCall(ctx context.Context, emit Emitter, turn
 			}
 		}
 	}
-	fact := session.ToolApprovalDecidedPayload{RequestID: id, InvocationID: v.InvocationID(), Fingerprint: candidate.Fingerprint(), Outcome: outcome, Feedback: feedback}
+	source := session.ApprovalSourceInteractive
+	if !runtime.interactiveApprovals {
+		source = session.ApprovalSourceHeadless
+	}
+	if outcome == tool.ApprovalOutcomeAbort {
+		source = session.ApprovalSourceInterruption
+	} else if outcome == tool.ApprovalOutcomeAllowFromSession {
+		source = session.ApprovalSourceSessionGrant
+	}
+	metadata, err := session.NewApprovalMetadata(invocation)
+	if err != nil {
+		return tool.InvocationResult{}, false, err
+	}
+	fact := session.ToolApprovalDecidedPayload{RequestID: id, InvocationID: v.InvocationID(), Fingerprint: candidate.Fingerprint(), Outcome: outcome, Feedback: feedback, Source: source, Metadata: metadata}
 	factDraft, err := session.NewToolApprovalDecidedDraft(turnID, fact)
 	if err != nil {
 		return tool.InvocationResult{}, false, err

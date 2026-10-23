@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -71,6 +72,13 @@ type Model struct {
 	interruptNext bool
 	approval      *approvalOverlay
 	activeTurnID  domain.TurnID
+	commandItems  map[string]int
+	commandClosed map[string]bool
+	commandViews  map[string]commandDetail
+	latestCommand string
+	detailOpen    bool
+	detailScroll  int
+	cancelling    bool
 }
 
 type approvalOverlay struct {
@@ -163,8 +171,17 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if model.approval != nil {
 		return model.handleApprovalKey(key)
 	}
+	if key.Type == tea.KeyCtrlO && model.latestCommand != "" {
+		model.detailOpen = !model.detailOpen
+		model.detailScroll = 0
+		return model, nil
+	}
+	if model.detailOpen {
+		return model.handleCommandDetailKey(key)
+	}
 	if model.state == stateStreaming {
 		if key.Type == tea.KeyEsc || key.Type == tea.KeyCtrlC {
+			model.cancelling = true
 			if model.events == nil {
 				model.interruptNext = true
 				return model, nil
@@ -239,11 +256,15 @@ func (model Model) handleApprovalKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch key.Type {
 	case tea.KeyLeft, tea.KeyUp:
-		if overlay.selected > 0 {
+		if overlay.request.Capability == "process.exec" {
+			overlay.selected = (overlay.selected + 2) % 3
+		} else if overlay.selected > 0 {
 			overlay.selected--
 		}
 	case tea.KeyRight, tea.KeyDown:
-		if overlay.selected < 2 {
+		if overlay.request.Capability == "process.exec" {
+			overlay.selected = (overlay.selected + 1) % 3
+		} else if overlay.selected < 2 {
 			overlay.selected++
 		}
 	case tea.KeyPgUp:
@@ -251,7 +272,7 @@ func (model Model) handleApprovalKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyPgDown:
 		overlay.scroll++
 	case tea.KeyTab:
-		if overlay.selected == 2 {
+		if overlay.request.Decisions[overlay.selected] == protocol.ApprovalDeny {
 			overlay.editing = true
 		}
 	case tea.KeyEnter:
@@ -273,13 +294,7 @@ func (model *Model) submitApproval() tea.Cmd {
 		model.errorSummary = "approval_unavailable: interactive approval is unavailable"
 		return nil
 	}
-	decision := protocol.ApprovalDeny
-	switch overlay.selected {
-	case 0:
-		decision = protocol.ApprovalAllowOnce
-	case 1:
-		decision = protocol.ApprovalAllowSession
-	}
+	decision := overlay.request.Decisions[overlay.selected]
 	feedback := ""
 	if decision == protocol.ApprovalDeny {
 		feedback = strings.TrimSpace(string(overlay.feedback))
@@ -297,6 +312,60 @@ func (model *Model) submitApproval() tea.Cmd {
 func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd) {
 	terminal := false
 	switch event.Kind {
+	case protocol.EventCommandStarted, protocol.EventCommandProgress, protocol.EventCommandTerminal:
+		payload, err := protocol.DecodeCommandActivity(event)
+		if err != nil || event.TurnID != model.activeTurnID || model.commandClosed[payload.InvocationID] {
+			model.errorSummary = "stream_protocol_error: invalid command activity"
+			return model, nil
+		}
+		if model.commandItems == nil {
+			model.commandItems = make(map[string]int)
+			model.commandClosed = make(map[string]bool)
+		}
+		index, exists := model.commandItems[payload.InvocationID]
+		if !exists {
+			if event.Kind != protocol.EventCommandStarted {
+				model.errorSummary = "stream_protocol_error: command has not started"
+				return model, nil
+			}
+			index = len(model.transcript)
+			model.commandItems[payload.InvocationID] = index
+			model.transcript = append(model.transcript, transcriptMessage{role: "Command"})
+		} else if event.Kind == protocol.EventCommandStarted {
+			model.errorSummary = "stream_protocol_error: duplicate command start"
+			return model, nil
+		}
+		state := "Running"
+		if event.Kind == protocol.EventCommandTerminal {
+			state = payload.Status + " (" + payload.Code + ")"
+			if payload.ExitKnown {
+				state += fmt.Sprintf(" exit=%d", payload.ExitCode)
+			}
+			model.commandClosed[payload.InvocationID] = true
+		}
+		text := fmt.Sprintf("%s\n  %s · %s · %d ms · %d bytes", commandSummary(payload.Command, model.width), state, commandDisplayText(payload.Workdir), payload.ElapsedMillis, payload.StdoutBytes+payload.StderrBytes)
+		if payload.Truncated {
+			text += " · truncated"
+		}
+		if payload.Recent != "" {
+			text += "\n" + commandDisplayText(payload.Recent)
+		}
+		model.transcript[index].text = text
+		if model.commandViews == nil {
+			model.commandViews = make(map[string]commandDetail)
+		}
+		detail := model.commandViews[payload.InvocationID]
+		detail.activity = payload
+		if event.Kind == protocol.EventCommandTerminal {
+			terminalPayload, _ := protocol.DecodeCommandTerminal(event)
+			detail.resultPreview = terminalPayload.ResultPreview
+			detail.terminal = true
+		}
+		model.commandViews[payload.InvocationID] = detail
+		if model.latestCommand != payload.InvocationID {
+			model.detailScroll = 0
+		}
+		model.latestCommand = payload.InvocationID
 	case protocol.EventTurnStarted:
 		if event.TurnID.Valid() {
 			model.activeTurnID = event.TurnID
@@ -350,6 +419,13 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 			return model, interruptSession(model.session)
 		}
 		model.approval = &approvalOverlay{request: payload, turnID: event.TurnID, selected: 2}
+		if payload.Capability == "process.exec" {
+			model.approval.selected = 1
+			if model.commandViews == nil {
+				model.commandViews = make(map[string]commandDetail)
+			}
+			model.commandViews[payload.InvocationID] = commandDetail{fullCommand: payload.Command}
+		}
 	case protocol.EventToolApprovalResolved:
 		payload, err := protocol.DecodeToolApprovalResolved(event)
 		if err != nil {
@@ -357,12 +433,18 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 			return model, nil
 		}
 		if model.approval != nil && model.approval.request.RequestID == payload.RequestID {
+			request := model.approval.request
+			if event.TurnID != model.approval.turnID || payload.InvocationID != request.InvocationID || payload.Fingerprint != request.Fingerprint {
+				model.errorSummary = "stream_protocol_error: approval resolution identity mismatch"
+				return model, nil
+			}
 			model.approval = nil
 		}
 	}
 	if terminal {
 		model.approval = nil
 		model.activeTurnID = ""
+		model.cancelling = false
 	}
 	if terminal || model.events == nil {
 		return model, nil
@@ -375,9 +457,14 @@ func (model Model) View() string {
 	if model.approval != nil {
 		return model.renderApproval()
 	}
+	if model.detailOpen {
+		return model.renderCommandDetail()
+	}
 	var view strings.Builder
 	_, _ = fmt.Fprintf(&view, "EasyCode %s\n", model.version)
-	if model.state == stateStreaming {
+	if model.state == stateStreaming && model.cancelling {
+		view.WriteString("Status: cancelling — waiting for cleanup\n")
+	} else if model.state == stateStreaming {
 		view.WriteString("Status: streaming\n")
 	} else {
 		view.WriteString("Status: idle\n")
@@ -405,6 +492,9 @@ func (model Model) renderApproval() string {
 	if overlay == nil {
 		return ""
 	}
+	if overlay.request.Capability == "process.exec" {
+		return model.renderCommandApproval()
+	}
 	width := model.width - 6
 	if width < 20 {
 		width = 20
@@ -423,6 +513,9 @@ func (model Model) renderApproval() string {
 		maxScroll = 0
 	}
 	scroll := overlay.scroll
+	if scroll < 0 {
+		scroll = 0
+	}
 	if scroll > maxScroll {
 		scroll = maxScroll
 	}
@@ -465,7 +558,7 @@ func (model Model) renderApproval() string {
 	if overlay.editing {
 		feedback := "Feedback (what should EasyCode do instead?): " + string(overlay.feedback)
 		row(feedback)
-	} else if overlay.selected == 2 {
+	} else if overlay.request.Decisions[overlay.selected] == protocol.ApprovalDeny {
 		row("Tab: add feedback · Enter: deny · Esc: interrupt")
 	} else {
 		row("Enter: approve · Esc: interrupt")
@@ -475,6 +568,19 @@ func (model Model) renderApproval() string {
 	}
 	output.WriteString(padding + "└" + strings.Repeat("─", width) + "┘\n")
 	return output.String()
+}
+
+// commandDisplayText 仅清理终端投影，保留原始候选和持久化结果的字节语义。
+func commandDisplayText(value string) string {
+	return strings.Map(func(character rune) rune {
+		if character == '\n' || character == '\t' {
+			return character
+		}
+		if unicode.IsControl(character) || unicode.Is(unicode.Cf, character) {
+			return '�'
+		}
+		return character
+	}, value)
 }
 
 func wrapApprovalDiff(diff string, width int) []string {

@@ -17,14 +17,19 @@ func TestCatalogWriteStateDoesNotChangeStableDefinition(t *testing.T) {
 	pp, _ := NewPatchPreparer(w)
 	pe, _ := NewPatchExecutor(w)
 	policy := tool.NewApprovalPolicy()
-	first, err := NewCatalog(r, g, s, pp, pe, p, e, policy)
+	execPreparer := NewExecPlanner()
+	execExecutor, err := NewExecExecutor(w, OpenCommandEnvironment(), tool.RenderExecOutput)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewCatalog(r, g, s, pp, pe, nil, e, policy); err == nil {
+	first, err := NewCatalog(r, g, s, pp, pe, p, e, execPreparer, execExecutor, tool.RenderExecOutput, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewCatalog(r, g, s, pp, pe, nil, e, execPreparer, execExecutor, tool.RenderExecOutput, policy); err == nil {
 		t.Fatal("nil Write preparer")
 	}
-	if _, err := NewCatalog(r, g, s, pp, pe, p, nil, policy); err == nil {
+	if _, err := NewCatalog(r, g, s, pp, pe, p, nil, execPreparer, execExecutor, tool.RenderExecOutput, policy); err == nil {
 		t.Fatal("nil Write executor")
 	}
 	c, err := p.Prepare(context.Background(), writeCall(t, "new/a", "content"), tool.UnavailableReadObservation())
@@ -35,7 +40,7 @@ func TestCatalogWriteStateDoesNotChangeStableDefinition(t *testing.T) {
 		t.Fatal(result.Code())
 	}
 	_ = readObservation(t, r, "new/a")
-	second, err := NewCatalog(r, g, s, pp, pe, p, e, policy)
+	second, err := NewCatalog(r, g, s, pp, pe, p, e, execPreparer, execExecutor, tool.RenderExecOutput, policy)
 	if err != nil {
 		t.Fatal(err)
 	}

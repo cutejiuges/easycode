@@ -10,13 +10,13 @@
 
 系统 SHALL向解析后的相对`messages` endpoint发送Anthropic Messages请求并保留`base_url`路径前缀。请求 SHALL使用既有鉴权/version/JSON/SSE headers；正文 MUST包含model、正整数`max_tokens`、可选临时项目指令、按原顺序排列的Anthropic native history、`stream=true`和当前Tool Catalog编译出的稳定tools数组。首个sample或新用户turn必须追加真实当前用户输入；tool outputs后的continuation sample不得追加合成user文本或空message。
 
-存在项目指令时，其user context message SHALL位于已提交history和真实当前输入之前，并保持独立且不进入native history。Read、Glob、Grep、Write facade与structured `Edit` facade SHALL编译为稳定名称、description和strict JSON input schema；tools顺序与schema bytes MUST来自本次不可变catalog snapshot。请求不得声明Bash、custom/freeform tool、system、thinking配置或`cache_control`。secret、项目指令正文、workspace绝对路径、candidate fingerprint和动态调用/approval identity MUST NOT进入错误、日志或普通fixture。
+存在项目指令时，其user context message SHALL位于已提交history和真实当前输入之前，并保持独立且不进入native history。Read、Glob、Grep、Write facade与structured `Edit`/`Bash` facade SHALL编译为稳定名称、description和strict JSON input schema；tools顺序与schema bytes MUST来自本次不可变catalog snapshot。请求不得声明custom/freeform tool、后台进程、write_stdin、system、thinking配置或`cache_control`。secret、项目指令正文、workspace绝对路径、candidate fingerprint、实际环境和动态调用/approval identity MUST NOT进入错误、日志或普通fixture。
 
-Write 的稳定 schema/description SHALL 来自同一不可变 catalog；文件存在性、Read 证据、候选内容、目录清单和批准状态不得注入稳定工具定义。
+Write 的稳定 schema/description SHALL 来自同一不可变 catalog；文件存在性、Read 证据、候选内容、目录清单、命令输入和批准状态不得注入稳定工具定义。
 
 #### Scenario: Compile the first Anthropic turn
-- **WHEN** 空会话收到用户文本且catalog包含当前五个Anthropic facades
-- **THEN** 请求包含用户message以及稳定排序的Read、Glob、Grep、Write和Edit schemas，并保持model、max_tokens和stream字段确定
+- **WHEN** 空会话收到用户文本且catalog包含当前六个Anthropic facades
+- **THEN** 请求包含用户message以及稳定排序的Read、Glob、Grep、Write、Edit和Bash schemas，并保持model、max_tokens和stream字段确定
 
 #### Scenario: Compile the first Anthropic turn without project instructions
 - **WHEN** 无项目指令快照但启用相同catalog
@@ -188,3 +188,17 @@ Anthropic reducer SHALL 分别消费 `message_start.message.usage` 与 `message_
 
 - **WHEN** start 或 delta usage 包含负 token 值
 - **THEN** Provider 产生 stream protocol failure 并丢弃当前 sample staging
+
+### Requirement: Anthropic Bash calls preserve native tool semantics
+
+Anthropic reducer SHALL按既有indexed content-block状态机归并`Bash`的`tool_use`与`input_json_delta`，仅在block完整、call ID唯一且完整输入通过当前catalog绑定的Exec strict decoder后产生typed ready call。partial、重复index/call ID、未知field、超限command或facade不匹配 MUST使sample失败且不得产生approval或进程I/O。
+
+完成Bash原生block及其与text/thinking/signature/redacted-thinking的顺序 MUST无损保存在Anthropic native history。每个durable Exec result SHALL编码为匹配原tool-use ID的user `tool_result`，内容使用冻结模型preview并准确表达成功、非零退出、拒绝、取消、timeout或`outcome_uncertain`；approval与progress不得成为native block。
+
+#### Scenario: Complete a streamed Bash call
+- **WHEN** Bash参数跨多个input JSON delta到达并以合法command完成
+- **THEN** reducer保留原生tool_use并产生一个匹配`process.exec`的typed ready call
+
+#### Scenario: Restore a Bash call and result
+- **WHEN** Session恢复包含Bash tool_use与匹配tool_result的native envelope
+- **THEN** 下一Messages请求逐字节等价回放原生顺序且不重新执行命令

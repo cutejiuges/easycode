@@ -165,8 +165,13 @@ func (plan ToolRecoveryPlan) Validate() error {
 			return fmt.Errorf("exclusive tool recovery approval facts are invalid")
 		}
 		allowed := call.ApprovalOutcome == tool.ApprovalOutcomeAllowOnce || call.ApprovalOutcome == tool.ApprovalOutcomeAllowSession || call.ApprovalOutcome == tool.ApprovalOutcomeAllowFromSession
-		if allowed && call.State == ReplayedToolCallResult && call.StartedSequence == 0 && call.Result.Status() != tool.ResultCancelled {
-			return fmt.Errorf("allowed exclusive result has no execution start")
+		if call.Invocation.Capability() == tool.CapabilityExec && (call.ApprovalOutcome == tool.ApprovalOutcomeAllowSession || call.ApprovalOutcome == tool.ApprovalOutcomeAllowFromSession) {
+			return fmt.Errorf("exec recovery cannot use a session grant")
+		}
+		if allowed && call.State == ReplayedToolCallResult && call.StartedSequence == 0 {
+			if !validAllowedBeforeStartResult(call.Invocation, call.Result) {
+				return fmt.Errorf("allowed tool result has no execution start")
+			}
 		}
 		if (call.ApprovalOutcome == tool.ApprovalOutcomeDeny || call.ApprovalOutcome == tool.ApprovalOutcomeAbort) && call.State != ReplayedToolCallResult {
 			return fmt.Errorf("closed exclusive approval is missing its result")
@@ -539,6 +544,16 @@ func (active *activeReplayTurn) acceptApproval(batch []Record) error {
 		if !call.Invocation.Capability().Exclusive() || call.State != ReplayedToolCallReady || call.ApprovalSequence != 0 {
 			return replayCorrupt("tool approval does not match a pending exclusive call")
 		}
+		metadata, metadataErr := NewApprovalMetadata(call.Invocation)
+		if metadataErr != nil || metadata != payload.Metadata {
+			return replayCorrupt("tool approval metadata does not match invocation")
+		}
+		if call.Invocation.Capability() == tool.CapabilityExec && (payload.Source == ApprovalSourcePolicy || payload.Source == ApprovalSourceSessionGrant) {
+			return replayCorrupt("Exec approval source is invalid")
+		}
+		if call.Invocation.Capability() == tool.CapabilityExec && (payload.Outcome == tool.ApprovalOutcomeAllowSession || payload.Outcome == tool.ApprovalOutcomeAllowFromSession) {
+			return replayCorrupt("Exec cannot use session approval")
+		}
 		for previous := 0; previous < index; previous++ {
 			if active.pendingCalls[previous].State != ReplayedToolCallResult {
 				return replayCorrupt("tool approval crossed an unfinished call")
@@ -588,8 +603,10 @@ func (active *activeReplayTurn) acceptResult(record Record) error {
 				if call.ApprovalSequence == 0 && result.Status() != tool.ResultError && result.Status() != tool.ResultCancelled && !(call.Invocation.Capability() == tool.CapabilityWrite && result.Status() == tool.ResultConflict) {
 					return replayCorrupt("exclusive result before approval is invalid")
 				}
-				if call.ApprovalSequence != 0 && (call.ApprovalOutcome == tool.ApprovalOutcomeAllowOnce || call.ApprovalOutcome == tool.ApprovalOutcomeAllowSession || call.ApprovalOutcome == tool.ApprovalOutcomeAllowFromSession) && result.Status() != tool.ResultCancelled {
-					return replayCorrupt("allowed exclusive result appears before execution start")
+				if call.ApprovalSequence != 0 && (call.ApprovalOutcome == tool.ApprovalOutcomeAllowOnce || call.ApprovalOutcome == tool.ApprovalOutcomeAllowSession || call.ApprovalOutcome == tool.ApprovalOutcomeAllowFromSession) {
+					if !validAllowedBeforeStartResult(call.Invocation, result) {
+						return replayCorrupt("allowed tool result appears before execution start")
+					}
 				}
 				if call.ApprovalSequence != 0 && call.ApprovalOutcome == tool.ApprovalOutcomeDeny && result.Status() != tool.ResultDenied {
 					return replayCorrupt("denied exclusive result is invalid")
@@ -617,6 +634,13 @@ func (active *activeReplayTurn) recoveryPlan() (ToolRecoveryPlan, error) {
 	return NewToolRecoveryPlan(
 		active.turnID, active.nextSampleIndex, active.pendingCalls, active.toolOutputsCommitted,
 	)
+}
+
+func validAllowedBeforeStartResult(invocation tool.Invocation, result tool.InvocationResult) bool {
+	if result.Status() != tool.ResultCancelled {
+		return false
+	}
+	return result.Code() == "session_interrupted_before_execution" || (invocation.Capability() == tool.CapabilityExec && result.Code() == "cancelled_before_execution")
 }
 
 func cloneReplayedToolCalls(calls []ReplayedToolCall) []ReplayedToolCall {

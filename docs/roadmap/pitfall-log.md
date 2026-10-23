@@ -577,6 +577,41 @@
 - 回归测试：`internal/tool/builtin/write_crash_unix_test.go` 使用管道定位发布前后并真实杀死子进程；`write_unix_test.go` / `write_prepare_test.go` 注入 Sync/Close/unlink/身份替换故障；`internal/session/write_fixture_test.go` 读取固定 bytes；`internal/runtime/write_schedule_test.go` 验证屏障；`internal/app/write_stream_test.go`、`write_headless_test.go`、`write_resume_test.go` 验证双 Provider 纵向链路；`internal/tui/write_test.go` 覆盖展示和输入。
 - 未采用方案：不拼接多段 Read 授权、不依赖单独 mtime、不回退直接写入、不恢复 grant、不把未知暂存目录递归删除。
 - 后续行动：在真实 Linux 支持/不支持 `RENAME_NOREPLACE` 的文件系统执行现有发布用例；交叉编译不替代该运行验证。Exec 合并时另按其批准契约处理观察失效，不提前暴露占位接口。
+### [P3][2026-10-24] 提前 Wait 会让后续进程组清理命中复用编号
+
+- 状态：已解决（`add-command-execution`）
+- 现象与根因：把直接子进程退出观察和最终回收合并，随后仍对旧 PGID 探测/发送信号，可能在编号复用后操作无关进程；快速退出还可能先于退出观察注册。
+- 修复方案：Darwin 启动屏障先建立 kqueue 非回收退出观察，再放行子进程。保留未回收 leader 身份直到原组 TERM/KILL、探测与有界收口结束，最后唯一 Wait；回收后禁止任何旧 PID/PGID 操作。Wait 未完成时仍保留唯一 owner、done 和 writer 生命周期，不因 shutdown timeout 放弃资源。
+- 未采用方案及原因：不通过定时扫描系统进程或重复启动 helper Wait 猜测存活，也不把已返回的 result 当作 cleanup 完成信号。
+- 回归测试：`internal/tool/builtin/process_execution_test.go`、`exec_wait_owner_test.go`、`exec_darwin_test.go` 和 `internal/runtime/exec_shutdown_test.go`；用确定性屏障覆盖观察竞态、编号复用、最终 Wait 阻塞与下一 turn admission。
+- 缓存与事实影响：PID/PGID 不离开 executor，不进入 Session、结果 metadata 或 fingerprint。
+- 后续行动：新平台必须证明相同身份保持与唯一回收语义，不能仅因可交叉构建而启用执行。
+
+### [P3][2026-10-24] 进程组清理不是任意后代进程 containment
+
+- 状态：限制已明确并有回归（`add-command-execution` 批准范围）
+- 现象与根因：后代通过 `setsid`/`setpgid` 脱离原组后，原 PGID 的 TERM/KILL 无法保证将其回收；若同时关闭 stdout/stderr，前台 owner 甚至不能根据管道检测其存在。系统 sandbox 限制文件/网络能力，但不是进程树容器。
+- 当前处置：产品只承诺前台命令和原进程组清理，审批明确不支持 daemon 化。保留管道的脱离进程造成输出排空超时，结果为 `outcome_uncertain/output_cleanup_incomplete` 并 poison Runtime；关闭管道的脱离进程不妨碍前台结束，但仍继承 sandbox。
+- 未采用方案及原因：不把 `kill(-pgid)` 宣称为整树终止，不遍历 PID 字符串进行不可靠补杀，不把任意脱离进程隐式登记成后台任务。
+- 回归测试：`internal/tool/builtin/exec_detached_darwin_test.go` 覆盖两种真实 setsid 情况及其子进程的越界写入/网络拒绝。测试用独立控制通道回收直接拥有的 fixture 并执行唯一 Wait，不以测试清理能力冒充产品 containment。
+- 后续行动：后台/PTY 或更强 containment 需要独立 OpenSpec，先定义长期身份、授权、取消传播与平台等价保证。
+
+### [P3][2026-10-24] Sandbox 初始化 stderr 不能混入命令输出
+
+- 状态：已解决（`add-command-execution`）
+- 现象与根因：wrapper 初始化失败时的 stderr 可能包含底层路径和诊断；若直接连接用户 stderr，即使最终错误已脱敏，先前 progress 仍会泄漏内容，普通退出码也不能证明 sandbox 成功启用。
+- 修复方案：wrapper stderr 与用户输出隔离；只有成功进入 sandbox 的 shell 才接入用户 stderr fd 并发送私有 ready 确认。初始化失败返回稳定 `sandbox_unavailable`，不发布原始诊断，不进行 unsandboxed retry。
+- 回归测试：`internal/tool/builtin/exec_darwin_test.go` 确定注入无效 profile，断言 terminal/每条 progress 均不含诊断 marker、输出计数为零，同时验证正常用户 stderr 保留。
+- 缓存与事实影响：底层 cause、绝对路径与宿主环境不进入 native output、Session 或 UI。
+- 后续行动：后续平台 wrapper 必须区分隔离初始化与用户命令输出，不能仅在最终 result 上脱敏。
+
+### [P3/P5][2026-10-24] 命令详情必须使用 durable 结果而不是重组进度
+
+- 状态：已解决（`add-command-execution`）
+- 现象与根因：容量 1 的进度通知会合并中间帧；把近期输出拼成“完整结果”既不可靠，也会使 UI 和模型看到不同字节。只有两行摘要则无法检查长命令与截断结果。
+- 修复方案：Ctrl+O 详情复用批准中的完整命令，运行时显示有界近期输出，终态只接收 result 成功 Sync 后的 typed preview（UTF-8、至多 256 KiB）。完整预览禁止出现在 started/progress；外部 headless JSONL 不新增命令事件。当前无 artifact，省略部分不可恢复，必须保留截断标记。
+- 回归测试：`internal/protocol/command_activity_test.go`、`internal/tui/command_detail_test.go`、`internal/app/exec_interactive_darwin_test.go`；覆盖事件 kind/预算、窄屏/滚动/resize、取消期间键盘路由和真实双 Provider 结果展示。
+- 后续行动：完整输出 artifact 必须另行定义存储、权限、清理与恢复语义；不能让 UI 展开操作触发磁盘读取或重跑命令。
 
 ## 7. P4 缓存与上下文强化
 
@@ -620,3 +655,16 @@
 暂无实际记录。
 
 重点关注：跨平台路径/PTY 差异、迁移、诊断脱敏、磁盘故障和隐式全局缓存。
+
+### [P2][2026-10-23] 会话列表不能把全局索引协调当作当前目录的完整事实
+
+- 状态：已解决
+- 影响变更：`add-session-list-command`
+- 现象：接入列表时发现现有 `ReconciliationReport` 的 busy/invalid 来自全存储枚举，忙碌的已索引会话只保留旧元数据，而未索引会话可能完全缺席。
+- 根因：目录筛选发生在协调后的查询阶段；索引是最后验证的投影，不是实时 owner 状态，也不能证明当前配置可恢复。
+- 架构影响：列表入口独立装配 Repository/Catalog，继续复用 lease 与安全协调，保留 `--continue` 对 busy-unindexed 的失败关闭语义。
+- 缓存影响：无，未修改 Provider request/native history/tool catalog。
+- 修复方案：明确标注 storage-wide 警告、完整 ID 与配置匹配恢复提示；存储 owner 关闭后才输出，不新增逐行状态猜测、弱 reader 或隐式模型调用。
+- 未采用方案及原因：不将 busy 全部视作列表失败，也不静默宣称结果完整；不把 limit 用作扫描中断条件。
+- 回归测试：`internal/app/session_list_test.go`、`internal/app/session_list_integration_test.go`、`internal/session/catalog/list_integration_test.go`。
+- 后续行动：worktree 聚合、标题与交互 picker 另立 change。

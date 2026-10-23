@@ -325,7 +325,7 @@ OpenAI payload v1 保存用户 Responses item、有序 output items 和原始 us
 
 ### 6.2 上下文分段
 
-当前已实现不可变、强类型且可验证的 `CachePlan`、stable-prefix fingerprint 和最小 ContextPlanner。当前计划固定输出 `provider_profile`、可选 `project_instructions`、`committed_history`、`current_input`；项目快照非空时以 `replace + project-stable` 进入稳定前缀，空快照保持既有三段 canonical bytes 不变，history 为 turn-stable，当前输入为 volatile。下列其余分段仍是 P3/P4/P6 随真实消费者逐项扩展的目标，不能从目录或设计推断为已实现：
+当前已实现不可变、强类型且可验证的 `CachePlan`、stable-prefix fingerprint 和 ContextPlanner。计划依次输出 `provider_profile`、`tool_catalog`、可选 `project_instructions`、`committed_history`、`current_input`；五项真实工具的稳定 facade/schema 进入 catalog segment、估算与 fingerprint，实际 command、workdir、approval 和宿主环境不得污染稳定前缀。项目快照非空时以 `replace + project-stable` 进入稳定前缀，history 为 turn-stable，当前输入为 volatile。下列其余分段仍是 P4/P6 随真实消费者逐项扩展的目标，不能从目录或设计推断为已实现：
 
 ```text
 CachePlan
@@ -440,9 +440,11 @@ TurnStarted
 AssistantTextDelta { text }
 TurnCompleted { usage }
 TurnFailed
+ToolApprovalRequested / ToolApprovalResolved
+CommandStarted / CommandProgress / CommandTerminal
 ```
 
-当前进程内 RuntimeEvent 只声明已有真实 producer、consumer 和 validator 的四种文本事件，并携带匹配的 `session_id/thread_id/turn_id`。`turn_completed(v1)` 必须携带五项三态 turn usage；当前单 sample turn 与 durable `sample_usage` 相同。独立 usage 更新、reasoning、tool、patch 和 compaction kind 尚未实现；未来必须随 producer、consumer、typed payload 和测试在同一变更中加入，不能提前保留空枚举。
+当前进程内 RuntimeEvent 声明上述九种具有 producer、consumer 和 validator 的事件，并携带匹配的 `session_id/thread_id/turn_id`。`turn_completed` 必须携带所有 sample 聚合的五项三态 turn usage。批准 payload 是 Patch/Exec 封闭联合；命令进度是有界瞬时快照，不写 Session，只有 terminal payload 携带 result durable 后的冻结 preview。TUI 复用完整批准命令和 terminal preview 展示 Ctrl+O 详情，取消中仍等待 owner 清理。独立 usage 更新、reasoning、通用 Tool/patch delta 和 compaction kind 尚未实现，不能提前保留空枚举。外部 headless JSONL 词汇不因这些内部事件扩张。
 
 ### 7.2 Headless JSONL v1
 
@@ -494,12 +496,12 @@ Runtime 为每次 Provider stream 创建派生 context，逐项验证事件并�
 
 完整设计、参考工程取舍、恢复语义和分 change 推进顺序见 [Tool 系统架构设计](tool-system.md)。本章只保留总体架构必须遵守的边界。
 
-本章同时描述已实现的 P3 基线与长期目标。当前 `internal/tool` 与 `internal/tool/builtin` 已由 Runtime/app 真实消费，提供 Read、Glob、Grep 和需批准的单文件 Patch/Write；未在能力分期中明确标记已实现的其他内容仍是目标，不得由接口或文档描述推断为可用。
+本章同时描述已实现的 P3 基线与长期目标。当前 `internal/tool` 与 `internal/tool/builtin` 已由 Runtime/app 真实消费，提供 Read、Glob、Grep、需批准的单文件 Patch/Write 和 Darwin 前台 Exec；未在能力分期中明确标记已实现的其他内容仍是目标，不得由接口或文档描述推断为可用。
 
 ### 8.1 分层
 
 ```text
-ToolCapability    共享能力标识，例如 fs.read、fs.patch、shell.exec
+ToolCapability    共享能力标识，例如 fs.read、fs.patch、process.exec
 ToolFacade        provider/model 可见的名称、描述和 schema
 CatalogSnapshot   单次 sampling 使用的不可变、有序 schema 与路由快照
 InputDecoder      归并 provider-native delta，完整后产生 typed input
@@ -553,7 +555,7 @@ fs.patch
 
 ### 8.5 能力分期
 
-P3 当前已实现 Read、Glob、Grep、Anthropic structured Edit/OpenAI custom freeform apply_patch、双 Provider Tool Loop、durable approval/ledger、最多 8 路只读并发、Patch/Write 独占屏障、有序结果提交和本地恢复补偿。Patch 限于一个已有 UTF-8 工作区常规文件，在 Unix 使用 descriptor-relative 重验与同目录原子替换；其他平台失败关闭。Write 的 structured facade 支持原子创建/整文件覆盖：覆盖要求先前已回传的完整 Read，新目录链通过私有树和 no-replace 发布；审批展示区分 create/overwrite，独立 Write grant 不在 resume 恢复。详见 [Tool 已实现边界](tool-system.md#101-write-已实现边界)。exec/write_stdin、artifact、通用 sandbox 和跨平台等价实现仍按独立 change 逐项增加。
+P3 当前已实现 Read、Glob、Grep、Anthropic structured Edit/OpenAI custom freeform apply_patch、Anthropic Bash/OpenAI exec_command、双 Provider structured Write、durable approval/ledger、最多 8 路只读并发、Patch/Write/Exec 独占屏障、有序结果提交和本地恢复补偿。Patch 限于一个已有 UTF-8 工作区常规文件，在 Unix 使用 descriptor-relative 重验与同目录原子替换；其他平台失败关闭。Write 的 structured facade 支持原子创建/整文件覆盖：覆盖要求先前已回传的完整 Read，新目录链通过私有树和 no-replace 发布；审批展示区分 create/overwrite，独立 Write grant 不在 resume 恢复。详见 [Tool 已实现边界](tool-system.md#101-write-已实现边界)。Exec 限于 Darwin 前台 non-login `/bin/sh`：每次单独批准、最小环境、workspace 写入、禁止网络、确定性头尾输出、原进程组清理与唯一最终 Wait；非 Darwin 返回 `unsupported_platform`，不降级。`setsid` 等脱离组后代不属于保证清理范围，但仍受继承的 sandbox 限制；输出收口不确定时 poison Runtime。详细预算与测试边界见 [Tool 系统架构](tool-system.md#93-进程工具)。write_stdin、PTY/后台进程控制、artifact、跨能力通用 sandbox 和跨平台等价执行仍按独立 change 增加。
 
 Skill 与 hooks/plugins 属于 P6；MCP 和 Agent/Subagent 属于 P7；完整跨平台 sandbox 矩阵属于 P8。未到对应阶段前不得提前暴露空 schema、event kind、facade 或 capability flag。
 
@@ -650,12 +652,12 @@ EventEnvelope
 - `session_meta` 与 `thread_meta`；
 - `turn_started`；
 - `provider_native_commit`、`sample_usage` 与 `turn_completed`；
-- `tool_call_ready`、`tool_execution_started` 与 `tool_call_result`；
+- `tool_call_ready`、`tool_approval_decided`、`tool_execution_started` 与 `tool_call_result`；
 - `turn_failed`。
 
 `schema_version` 与 `payload_version` 是单一当前 canary，decoder 在 canary 校验后只按 `event_kind` 选择唯一 strict decoder。所有当前记录都参与恢复；未知 kind、未知字段、旧/新 canary 或损坏必须在 repair、Provider 恢复和 append 前失败关闭，不存在 optional record 或多版本 decoder registry。
 
-Provider native commit 只记录 Provider 已验证的原生增量和 raw usage；紧邻的 `sample_usage` 记录共享五项三态指标。无工具的成功 sample 仍以 native commit、usage 与 terminal 原子提交；带调用的 sample 则把有序 ready facts 放入同一 durable batch，随后单独提交 started、result 和 Provider 原生 tool outputs。缺失 usage、错序、遗漏配对或重复调用身份一律 fail closed。permission、hook、subagent、cache 与 compaction checkpoint 仍需按各自恢复语义增加版本化记录；不能把 RuntimeEvent 或 UI transcript 当作 native history。
+Provider native commit 只记录 Provider 已验证的原生增量和 raw usage；紧邻的 `sample_usage` 记录共享五项三态指标。无工具的成功 sample 仍以 native commit、usage 与 terminal 原子提交；带调用的 sample 则把有序 ready facts 放入同一 durable batch，随后按需要 durable 批准决定，再提交 started、result 和 Provider 原生 tool outputs。当前 approval fact 保存 decision source、candidate fingerprint 与安全展示 metadata；Exec 不持久化 PID、宿主环境、输出 chunk 或底层 cause。缺失 usage、错序、遗漏配对或重复调用身份一律 fail closed。hook、subagent、cache 与 compaction checkpoint 仍需按各自恢复语义定义记录；不能把 RuntimeEvent 或 UI transcript 当作 native history。
 
 当前 Session envelope/payload 使用唯一 canary 3，进程内 RuntimeEvent 不携带固定版本；headless JSONL v1 是独立外部 wire。稳定发布前的契约补全直接替换唯一 current fixture，不保留双 reader；只有契约已冻结、变化无法加法表达且已发布数据或客户端必须并存时，才引入新 revision，并同时定义兼容窗口与退出条件。
 
@@ -667,7 +669,7 @@ Headless JSONL v1 是 stdout 外部协议，不是 Session record：不得写入
 
 `internal/session/catalog` 是 JSONL 事实源之上的可重建投影边界。当前 schema v1 只包含 `threads` 表及 continue 组合索引，保存 root thread 的 session/thread identity、journal 相对定位、创建 cwd、Provider family/wire、model、最后 committed record 的 timestamp/seq/checksum；不保存 prompt、response、native payload、title、tag、worktree 或全文搜索内容。
 
-Catalog 只在 `--continue` 路径按以下顺序工作：
+Catalog 在 `--continue` 路径按以下顺序工作：
 
 ```text
 Open Catalog lock
@@ -687,6 +689,10 @@ Open Catalog lock
 
 选择结果不是恢复事实：Catalog 关闭后，app 仍通过既有 `sessionService.resume` 重新取得 journal lease并完整执行 load、repair、ReplayPlanner、Provider-native restore 与兼容性校验。选择和恢复之间发生占用、替换、损坏或配置不兼容时直接失败，不回退旧 thread。session picker、worktree/project catalog、title/tag、全文搜索、实时索引和 thread graph 仍属后续能力。
 
+`sessions list` 新增独立发现入口：`cmd/easycode/sessions.go -> app.ListSessions -> catalog.Reconcile/List`，不进入聊天配置、项目指令、Provider 或 Runtime 装配。`ListQuery` 明确区分规范化创建目录和全部目录，使用原 schema 按 committed `updated_at`/thread ID 双降序、先筛选后 limit+1，返回至多 200 条及 HasMore。查询不依赖 Provider selector，`LatestCompatible` 仍保留原四字段精确匹配。
+
+列表沿用上述安全协调与允许尾修复，随后先关闭 Catalog/Repository，再格式化和输出。busy/invalid 是全存储扫描报告，stderr 明确提示元数据可能未刷新或会话缺席；列表不补偿未完成 turn，也不把可见条目当作恢复事实。CLI 采用紧凑文本、完整 ID、受限并转义的字段，不读取对话正文作标题。当前目录不等于项目/worktree，limit 不是扫描预算；这些扩展与交互 picker 仍需后续 change。
+
 ### 10.4 写入与权限
 
 - JSONL append-only；每个活动 thread 通过绑定 journal handle 的跨进程 exclusive lease 保证只有一个 writer。新建 metadata 或对既有 journal 执行 load/repair 前必须先取得 lease，并连续保持到 writer 完成最终 `Sync` 和关闭 handle；每个 durable batch 连续编号。
@@ -697,7 +703,7 @@ Open Catalog lock
 - 当前 `--resume <thread-id>` 通过日期编码的 UUIDv7 定位文件，恢复 native history 和只读语义视图；不恢复旧 API key、base URL、cwd 或其他动态 world state。
 - 仓库已建立不可变的当前文本与 Tool Loop fixture，用于验证 Loader/ReplayPlanner 的读取、续写 prefix 不变、账本顺序和双 Provider 恢复等价性；项目没有线上历史格式，因此开发期旧 fixture 与旧 reader 已删除。未来真实 schema/payload revision 的版本专属转换仍未实现，也不得在 resume 时原地改写既有 records。
 - exclusive lease 是协作进程间的 advisory lock，不能阻止旧版 EasyCode 或非协作进程绕过锁直接写文件；混合版本运行前必须确保目标 thread 没有其他 owner，绕过锁产生的损坏继续由 checksum、seq 和完整回放校验发现。
-- SQLite Catalog v1 与 `--continue` 已实现；session picker、worktree/project catalog、title/tag、搜索、实时索引、artifact 和未来 schema 转换尚未实现。
+- SQLite Catalog v1、`--continue` 与离线 `sessions list` 已实现；session picker、worktree/project catalog、title/tag、搜索、实时索引、artifact 和未来 schema 转换尚未实现。
 - 未来 compaction/fork 只能追加 checkpoint/cursor 和 child-thread 元数据，原始 JSONL 继续保留；不得重写、截短或把 summary 伪装成原生历史。该能力目前仅有约束，尚未实现。
 - artifact 文件路径必须防止目录穿越。
 

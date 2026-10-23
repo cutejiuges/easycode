@@ -151,7 +151,7 @@ func mustApprovalRequested(t *testing.T) protocol.Event {
 		RequestID: eventApprovalRequestID, InvocationID: eventApprovalInvocationID,
 		ProviderCallID: "call-patch", Capability: "fs.patch", Reason: "Patch modifies an existing workspace file.",
 		RelativePath: "src/main.go", Fingerprint: strings.Repeat("a", 64),
-		Presentation: protocol.ApprovalPresentation{Kind: protocol.PresentationPatch, Patch: &protocol.PatchApprovalPresentation{Diff: "--- a/src/main.go\n+++ b/src/main.go\n-old\n+new\n"}},
+		Presentation: &protocol.ApprovalPresentation{Kind: protocol.PresentationPatch, Patch: &protocol.PatchApprovalPresentation{Diff: "--- a/src/main.go\n+++ b/src/main.go\n-old\n+new\n"}},
 		Decisions:    []protocol.ApprovalDecision{protocol.ApprovalAllowOnce, protocol.ApprovalAllowSession, protocol.ApprovalDeny},
 	})
 	if err != nil {

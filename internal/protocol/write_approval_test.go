@@ -64,7 +64,7 @@ func TestWritePresentationStrictUnionAndFrozenDirectoryPlan(t *testing.T) {
 func TestWriteApprovalRequiresMatchingCapabilityAndDecisions(t *testing.T) {
 	p, _ := NewWriteCreateApprovalPresentation("empty file\n", 0, 0, nil)
 	request := ToolApprovalRequestedPayload{
-		RequestID: "018f1d8a-7b5c-7def-8123-456789abcdef", InvocationID: "018f1d8a-7b5c-7def-8abc-456789abcdef", ProviderCallID: "write-call", Capability: "fs.write", Reason: "Write creates a file.", RelativePath: "a", Fingerprint: strings.Repeat("a", 64), Presentation: p, Decisions: []ApprovalDecision{ApprovalAllowOnce, ApprovalAllowSession, ApprovalDeny},
+		RequestID: "018f1d8a-7b5c-7def-8123-456789abcdef", InvocationID: "018f1d8a-7b5c-7def-8abc-456789abcdef", ProviderCallID: "write-call", Capability: "fs.write", Reason: "Write creates a file.", RelativePath: "a", Fingerprint: strings.Repeat("a", 64), Presentation: &p, Decisions: []ApprovalDecision{ApprovalAllowOnce, ApprovalAllowSession, ApprovalDeny},
 	}
 	if _, err := NewToolApprovalRequested(request); err != nil {
 		t.Fatal(err)

@@ -1,0 +1,9 @@
+EasyCode test
+Status: streaming
+
+Command: printf 'full command first line' …
+  success (ok) exit=2 · src · 250 ms · 512 bytes
+recent output
+last line
+
+> [streaming — Esc/Ctrl+C to cancel]

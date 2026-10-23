@@ -145,6 +145,13 @@ type PatchInputPayload struct {
 	Replacements []PatchReplacementPayload `json:"replacements"`
 }
 
+// ExecInputPayload 保存默认化后的命令输入。
+type ExecInputPayload struct {
+	Command       string `json:"command"`
+	Workdir       string `json:"workdir"`
+	TimeoutMillis int    `json:"timeout_ms"`
+}
+
 // ToolCallReadyPayload 保存执行前已经durable的完整调用事实。
 type ToolCallReadyPayload struct {
 	InvocationID   tool.InvocationID     `json:"invocation_id"`
@@ -158,6 +165,7 @@ type ToolCallReadyPayload struct {
 	GrepInput      *GrepInputPayload     `json:"grep_input,omitempty"`
 	PatchInput     *PatchInputPayload    `json:"patch_input,omitempty"`
 	WriteInput     *WriteInputPayload    `json:"write_input,omitempty"`
+	ExecInput      *ExecInputPayload     `json:"exec_input,omitempty"`
 }
 
 // ToolApprovalDecidedPayload 保存批准决定的durable关联事实。
@@ -166,6 +174,8 @@ type ToolApprovalDecidedPayload struct {
 	InvocationID tool.InvocationID         `json:"invocation_id"`
 	Fingerprint  tool.CandidateFingerprint `json:"fingerprint"`
 	Outcome      tool.ApprovalOutcome      `json:"outcome"`
+	Source       ApprovalDecisionSource    `json:"decision_source"`
+	Metadata     ApprovalMetadataPayload   `json:"metadata"`
 	Feedback     string                    `json:"feedback,omitempty"`
 }
 
@@ -245,6 +255,22 @@ type ToolCallResultPayload struct {
 	GrepMetadata  *GrepResultMetadataPayload  `json:"grep_metadata,omitempty"`
 	PatchMetadata *PatchResultMetadataPayload `json:"patch_metadata,omitempty"`
 	WriteMetadata *WriteResultMetadataPayload `json:"write_metadata,omitempty"`
+	ExecMetadata  *ExecResultMetadataPayload  `json:"exec_metadata,omitempty"`
+}
+
+// ExecResultMetadataPayload 是命令的唯一当前持久化摘要，不包含进程标识。
+type ExecResultMetadataPayload struct {
+	Workdir        string `json:"workdir"`
+	ExitCode       int    `json:"exit_code"`
+	ExitKnown      bool   `json:"exit_known"`
+	DurationMillis int64  `json:"duration_ms"`
+	StdoutObserved int64  `json:"stdout_observed"`
+	StdoutRetained int64  `json:"stdout_retained"`
+	StderrObserved int64  `json:"stderr_observed"`
+	StderrRetained int64  `json:"stderr_retained"`
+	TimedOut       bool   `json:"timed_out"`
+	Cancelled      bool   `json:"cancelled"`
+	Truncated      bool   `json:"truncated"`
 }
 
 // TurnCompletedPayload 表示当前文本 turn 已 durable 成功结束。

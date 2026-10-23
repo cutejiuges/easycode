@@ -22,17 +22,19 @@ func writeApprovalEvent(t *testing.T, overwrite, empty bool, long bool) protocol
 	if long {
 		preview = strings.Repeat("+完整内容中文\n", 40)
 	}
+	var presentation protocol.ApprovalPresentation
 	var err error
 	if overwrite {
-		p.Presentation, err = protocol.NewWriteOverwriteApprovalPresentation("--- a/新建/pkg/a.txt\n+++ b/新建/pkg/a.txt\n-old\n+中文\n", 7, 1)
+		presentation, err = protocol.NewWriteOverwriteApprovalPresentation("--- a/新建/pkg/a.txt\n+++ b/新建/pkg/a.txt\n-old\n+中文\n", 7, 1)
 	} else if empty {
-		p.Presentation, err = protocol.NewWriteCreateApprovalPresentation("(empty file)\n", 0, 0, nil)
+		presentation, err = protocol.NewWriteCreateApprovalPresentation("(empty file)\n", 0, 0, nil)
 	} else {
-		p.Presentation, err = protocol.NewWriteCreateApprovalPresentation(preview, 16, 2, []string{"新建", "新建/pkg"})
+		presentation, err = protocol.NewWriteCreateApprovalPresentation(preview, 16, 2, []string{"新建", "新建/pkg"})
 	}
 	if err != nil {
 		t.Fatal(err)
 	}
+	p.Presentation = &presentation
 	event, err := protocol.NewToolApprovalRequested(p)
 	if err != nil {
 		t.Fatal(err)

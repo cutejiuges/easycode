@@ -233,6 +233,7 @@ type ApprovalRequest struct {
 	decisions      []ApprovalDecision
 	writeMetadata  WriteResultMetadata
 	directories    []string
+	execInput      ExecInput
 }
 
 // NewApprovalRequest 构造并深拷贝一个批准请求。
@@ -263,6 +264,19 @@ func (request ApprovalRequest) Reason() string                    { return reque
 func (request ApprovalRequest) RelativePath() string              { return request.relativePath }
 func (request ApprovalRequest) Fingerprint() CandidateFingerprint { return request.fingerprint }
 func (request ApprovalRequest) Diff() string                      { return request.diff }
+func (request ApprovalRequest) ExecInput() ExecInput              { return request.execInput }
+
+// NewExecApprovalRequest 构造仅允许单次批准的命令审批。
+func NewExecApprovalRequest(requestID ApprovalRequestID, sessionID domain.SessionID, threadID domain.ThreadID, turnID domain.TurnID, candidate ExecCandidate) (ApprovalRequest, error) {
+	if err := candidate.Validate(); err != nil {
+		return ApprovalRequest{}, err
+	}
+	request := ApprovalRequest{requestID: requestID, sessionID: sessionID, threadID: threadID, turnID: turnID, invocationID: candidate.Invocation().InvocationID(), providerCallID: candidate.Invocation().ProviderCallID(), capability: CapabilityExec, reason: "Runs a foreground command with workspace writes and no network. Detached processes may continue running.", relativePath: candidate.Invocation().Input().Workdir(), fingerprint: CandidateFingerprint(candidate.Fingerprint()), execInput: candidate.Invocation().Input(), decisions: []ApprovalDecision{ApprovalAllowOnce, ApprovalDeny, ApprovalAbort}}
+	if err := request.Validate(); err != nil {
+		return ApprovalRequest{}, err
+	}
+	return request, nil
+}
 func (request ApprovalRequest) Decisions() []ApprovalDecision {
 	return append([]ApprovalDecision(nil), request.decisions...)
 }
@@ -271,6 +285,15 @@ func (request ApprovalRequest) Decisions() []ApprovalDecision {
 func (request ApprovalRequest) Validate() error {
 	if !request.requestID.Valid() || !request.sessionID.Valid() || !request.threadID.Valid() || !request.turnID.Valid() || !request.invocationID.Valid() || !request.providerCallID.Valid() || !request.capability.Exclusive() || !request.fingerprint.Valid() {
 		return errors.New("approval request identity is invalid")
+	}
+	if request.capability == CapabilityExec {
+		if request.execInput.Validate() != nil || request.diff != "" || request.relativePath != request.execInput.Workdir() || !validSafeText(request.reason, maxApprovalReasonBytes) || len(request.decisions) != 3 || request.decisions[0] != ApprovalAllowOnce || request.decisions[1] != ApprovalDeny || request.decisions[2] != ApprovalAbort {
+			return errors.New("invalid Exec approval presentation")
+		}
+		return nil
+	}
+	if !request.execInput.zero() {
+		return errors.New("mismatched approval presentation")
 	}
 	if request.relativePath == "" || validateSearchPath(request.relativePath) != nil || !validSafeText(request.reason, maxApprovalReasonBytes) || request.diff == "" || len(request.diff) > MaxApprovalDiffBytes || !utf8.ValidString(request.diff) {
 		return errors.New("approval request presentation is invalid")

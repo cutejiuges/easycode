@@ -58,6 +58,7 @@ type dataPaths struct {
 type chatResourceHooks struct {
 	afterContinueSelection func(domain.ThreadID)
 	interactiveApprovals   bool
+	newExecExecutor        func(*builtin.Workspace, builtin.CommandEnvironment, tool.ExecOutputRenderer) (tool.ExecExecutor, error)
 }
 
 type providerResource interface {
@@ -374,8 +375,18 @@ func openChatResourcesWithSnapshot(
 		return nil, fault.New(fault.CodeInvalidConfiguration, "Write executor is unavailable")
 	}
 	toolPolicy := tool.NewApprovalPolicy()
+	execPreparer := builtin.NewExecPlanner()
+	var execExecutor tool.ExecExecutor
+	if hooks.newExecExecutor != nil {
+		execExecutor, err = hooks.newExecExecutor(workspace, builtin.OpenCommandEnvironment(), tool.RenderExecOutput)
+	} else {
+		execExecutor, err = builtin.NewExecExecutor(workspace, builtin.OpenCommandEnvironment(), tool.RenderExecOutput)
+	}
+	if err != nil {
+		return nil, fault.New(fault.CodeInvalidConfiguration, "Exec executor is unavailable")
+	}
 	toolCatalog, err := builtin.NewCatalog(
-		readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, writePreparer, writeExecutor, toolPolicy,
+		readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, writePreparer, writeExecutor, execPreparer, execExecutor, tool.RenderExecOutput, toolPolicy,
 	)
 	if err != nil {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "tool catalog is invalid")
@@ -425,13 +436,16 @@ func openChatResourcesWithSnapshot(
 	runtimeInstance, err := chatRuntime.New(assembled.conversation, chatRuntime.Config{
 		SessionID: assembled.identity.SessionID, ThreadID: assembled.identity.ThreadID,
 		Journal: assembled.writer, ContextProfile: contextProfile,
-		ToolCatalog:   toolCatalog,
-		ReadExecutor:  readExecutor,
-		GlobExecutor:  globExecutor,
-		GrepExecutor:  grepExecutor,
-		PatchPreparer: patchPreparer,
-		PatchExecutor: patchExecutor,
-		WritePreparer: writePreparer, WriteExecutor: writeExecutor,
+		ToolCatalog:          toolCatalog,
+		ReadExecutor:         readExecutor,
+		GlobExecutor:         globExecutor,
+		GrepExecutor:         grepExecutor,
+		PatchPreparer:        patchPreparer,
+		PatchExecutor:        patchExecutor,
+		WritePreparer:        writePreparer,
+		WriteExecutor:        writeExecutor,
+		ExecPreparer:         execPreparer,
+		ExecExecutor:         execExecutor,
 		ToolPolicy:           toolPolicy,
 		InteractiveApprovals: hooks.interactiveApprovals,
 		ProjectInstructions:  projectInstructions,

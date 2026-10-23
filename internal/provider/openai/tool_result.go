@@ -60,6 +60,8 @@ func prepareToolOutputsEntry(history []nativeHistoryEntry, results []tool.Invoca
 
 func openAICapabilityForName(name string) tool.CapabilityID {
 	switch name {
+	case "exec_command":
+		return tool.CapabilityExec
 	case "Read":
 		return tool.CapabilityRead
 	case "Glob":

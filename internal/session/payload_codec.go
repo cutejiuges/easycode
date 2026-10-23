@@ -81,6 +81,9 @@ func DecodeToolCallReadyPayload(record Record) (ToolCallReadyPayload, error) {
 
 // Domain 重建已经分配 identity 的三工具 typed invocation。
 func (payload ToolCallReadyPayload) Domain() (tool.Invocation, error) {
+	if payload.Capability != tool.CapabilityExec && payload.ExecInput != nil {
+		return tool.Invocation{}, fmt.Errorf("unexpected Exec input")
+	}
 	if !payload.InvocationID.Valid() || !payload.ProviderCallID.Valid() || !payload.WireKind.Valid() || payload.SampleIndex >= 16 || payload.CallIndex >= 64 {
 		return tool.Invocation{}, fmt.Errorf("tool call ready payload is invalid")
 	}
@@ -90,6 +93,15 @@ func (payload ToolCallReadyPayload) Domain() (tool.Invocation, error) {
 	var ready tool.ReadyCall
 	var err error
 	switch payload.Capability {
+	case tool.CapabilityExec:
+		if payload.WireKind != tool.WireStructured || payload.ExecInput == nil || payload.ReadInput != nil || payload.GlobInput != nil || payload.GrepInput != nil || payload.PatchInput != nil || payload.ExecInput.TimeoutMillis < tool.MinExecTimeoutMillis {
+			return tool.Invocation{}, fmt.Errorf("invalid Exec ready payload")
+		}
+		input, inputErr := tool.NewExecInput(payload.ExecInput.Command, payload.ExecInput.Workdir, payload.ExecInput.TimeoutMillis)
+		if inputErr != nil {
+			return tool.Invocation{}, inputErr
+		}
+		ready, err = tool.NewExecReadyCall(payload.ProviderCallID, input)
 	case tool.CapabilityRead:
 		if payload.WireKind != tool.WireStructured || payload.ReadInput == nil || payload.GlobInput != nil || payload.GrepInput != nil || payload.PatchInput != nil {
 			return tool.Invocation{}, fmt.Errorf("tool call ready payload does not match Read capability")
@@ -179,6 +191,12 @@ func DecodeToolApprovalDecidedPayload(record Record) (ToolApprovalDecidedPayload
 	return payload, nil
 }
 func validateToolApprovalDecidedPayload(payload ToolApprovalDecidedPayload) error {
+	if !payload.Source.Valid() || payload.Metadata.Validate() != nil ||
+		(payload.Source == ApprovalSourceHeadless && payload.Outcome != tool.ApprovalOutcomeDeny) ||
+		(payload.Source == ApprovalSourceInterruption && payload.Outcome != tool.ApprovalOutcomeAbort) ||
+		(payload.Source == ApprovalSourceSessionGrant && payload.Outcome != tool.ApprovalOutcomeAllowFromSession) {
+		return fmt.Errorf("tool approval source or metadata is invalid")
+	}
 	if !payload.RequestID.Valid() || !payload.InvocationID.Valid() || !payload.Fingerprint.Valid() || !payload.Outcome.Valid() || len(payload.Feedback) > tool.MaxApprovalFeedbackBytes || !utf8.ValidString(payload.Feedback) || (payload.Outcome != tool.ApprovalOutcomeDeny && payload.Feedback != "") {
 		return fmt.Errorf("tool approval decided payload is invalid")
 	}
@@ -244,7 +262,7 @@ func (payload ToolCallResultPayload) Domain(invocation tool.Invocation) (tool.In
 }
 
 func decodeResultPayload(payload ToolCallResultPayload, invocation tool.Invocation) (tool.InvocationResult, error) {
-	if payload.WireKind != invocation.WireKind() || (payload.Capability != tool.CapabilityWrite && payload.WriteMetadata != nil) {
+	if payload.WireKind != invocation.WireKind() || (payload.Capability != tool.CapabilityWrite && payload.WriteMetadata != nil) || (payload.Capability != tool.CapabilityExec && payload.ExecMetadata != nil) {
 		return tool.InvocationResult{}, fmt.Errorf("result wire or metadata mismatch")
 	}
 	if err := invocation.Validate(); err != nil || invocation.InvocationID() != payload.InvocationID || invocation.Capability() != payload.Capability {
@@ -256,6 +274,22 @@ func decodeResultPayload(payload ToolCallResultPayload, invocation tool.Invocati
 	}
 	var result tool.InvocationResult
 	switch payload.Capability {
+	case tool.CapabilityExec:
+		if payload.WireKind != tool.WireStructured || payload.ExecMetadata == nil || payload.ReadMetadata != nil || payload.GlobMetadata != nil || payload.GrepMetadata != nil || payload.PatchMetadata != nil {
+			return tool.InvocationResult{}, fmt.Errorf("invalid Exec result union")
+		}
+		m := payload.ExecMetadata
+		out, outErr := tool.NewExecStreamStats(m.StdoutObserved, m.StdoutRetained)
+		stderr, errErr := tool.NewExecStreamStats(m.StderrObserved, m.StderrRetained)
+		if outErr != nil || errErr != nil {
+			return tool.InvocationResult{}, fmt.Errorf("invalid Exec output statistics")
+		}
+		metadata, metadataErr := tool.NewExecResultMetadata(m.Workdir, m.ExitCode, m.ExitKnown, m.DurationMillis, out, stderr, m.TimedOut, m.Cancelled, m.Truncated)
+		if metadataErr != nil {
+			return tool.InvocationResult{}, metadataErr
+		}
+		value, _ := invocation.Exec()
+		result, err = tool.NewExecInvocationResult(value, payload.Status, payload.Code, preview, metadata)
 	case tool.CapabilityRead:
 		result, err = decodeReadResult(payload, invocation, preview)
 	case tool.CapabilityGlob:
@@ -294,6 +328,12 @@ func validationInvocation(payload ToolCallResultPayload) (tool.Invocation, error
 	var ready tool.ReadyCall
 	var err error
 	switch payload.Capability {
+	case tool.CapabilityExec:
+		if payload.ExecMetadata == nil {
+			return tool.Invocation{}, fmt.Errorf("missing Exec metadata")
+		}
+		input, _ := tool.NewExecInput("validation", payload.ExecMetadata.Workdir, tool.DefaultExecTimeoutMillis)
+		ready, err = tool.NewExecReadyCall(callID, input)
 	case tool.CapabilityRead:
 		if payload.WireKind != tool.WireStructured || payload.ReadMetadata == nil || payload.GlobMetadata != nil || payload.GrepMetadata != nil || payload.PatchMetadata != nil {
 			return tool.Invocation{}, fmt.Errorf("tool call result metadata does not match Read capability")
