@@ -92,3 +92,48 @@ func testPatchInvocation(t *testing.T) PatchInvocation {
 	}
 	return invocation
 }
+
+func TestExecApprovalIsCandidateBoundAndNeverSessionWide(t *testing.T) {
+	id, _ := ParseInvocationID("018f1d8a-7b5c-7def-8abc-456789abcdef")
+	invocation := execTestInvocation(t, "printf hello", id)
+	shell, _ := NewShellProfile("sh", "/bin/sh")
+	environment, _ := NewEnvironmentPolicy("minimal", []string{"PATH"})
+	sandbox, _ := NewSandboxProfile("workspace", false, true)
+	candidate, err := NewExecCandidate(invocation, shell, environment, sandbox)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := NewExecApprovalRequest(
+		ApprovalRequestID(id), domain.SessionID(id), domain.ThreadID(id), domain.TurnID(id), candidate,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.Capability() != CapabilityExec || request.ExecInput() != invocation.Input() || request.Diff() != "" || request.Fingerprint() != CandidateFingerprint(candidate.Fingerprint()) {
+		t.Fatal("approval lost candidate binding")
+	}
+	for index, want := range []ApprovalDecision{ApprovalAllowOnce, ApprovalDeny, ApprovalAbort} {
+		if request.Decisions()[index] != want {
+			t.Fatal("incorrect Exec decisions")
+		}
+	}
+	copy := request.Decisions()
+	copy[0] = ApprovalAllowSession
+	if request.Validate() != nil || request.Decisions()[0] != ApprovalAllowOnce {
+		t.Fatal("decision getter aliases request")
+	}
+	for _, mutate := range []func(*ApprovalRequest){
+		func(r *ApprovalRequest) {
+			r.decisions = []ApprovalDecision{ApprovalAllowOnce, ApprovalAllowSession, ApprovalDeny}
+		},
+		func(r *ApprovalRequest) { r.diff = "patch diff" },
+		func(r *ApprovalRequest) { r.relativePath = "other" },
+		func(r *ApprovalRequest) { r.capability = CapabilityPatch },
+	} {
+		invalid := request
+		mutate(&invalid)
+		if invalid.Validate() == nil {
+			t.Fatal("mismatched approval union accepted")
+		}
+	}
+}

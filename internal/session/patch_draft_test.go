@@ -53,7 +53,7 @@ func TestPatchReadyApprovalAndResultDraftRoundTrip(t *testing.T) {
 	}
 	requestID, _ := tool.ParseApprovalRequestID("018f1d8a-7b5c-7def-8abc-456789abcdef")
 	fingerprint := tool.NewCandidateFingerprint([]byte("candidate"))
-	approvalDraft, err := NewToolApprovalDecidedDraft(turnID, ToolApprovalDecidedPayload{RequestID: requestID, InvocationID: invocation.InvocationID(), Fingerprint: fingerprint, Outcome: tool.ApprovalOutcomeDeny, Feedback: "use another name"})
+	approvalDraft, err := NewToolApprovalDecidedDraft(turnID, ToolApprovalDecidedPayload{Source: ApprovalSourceInteractive, Metadata: ApprovalMetadataPayload{Capability: tool.CapabilityPatch, RelativePath: "main.go"}, RequestID: requestID, InvocationID: invocation.InvocationID(), Fingerprint: fingerprint, Outcome: tool.ApprovalOutcomeDeny, Feedback: "use another name"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,10 +92,10 @@ func TestPatchSessionPayloadsFailClosed(t *testing.T) {
 	}
 	requestID, _ := tool.ParseApprovalRequestID("018f1d8a-7b5c-7def-8abc-456789abcdef")
 	fingerprint := tool.NewCandidateFingerprint([]byte("candidate"))
-	if _, err := NewToolApprovalDecidedDraft(turnID, ToolApprovalDecidedPayload{RequestID: requestID, InvocationID: invocation.InvocationID(), Fingerprint: fingerprint, Outcome: tool.ApprovalOutcomeAllowOnce, Feedback: "not allowed"}); err == nil {
+	if _, err := NewToolApprovalDecidedDraft(turnID, ToolApprovalDecidedPayload{Source: ApprovalSourceInteractive, Metadata: ApprovalMetadataPayload{Capability: tool.CapabilityPatch, RelativePath: "main.go"}, RequestID: requestID, InvocationID: invocation.InvocationID(), Fingerprint: fingerprint, Outcome: tool.ApprovalOutcomeAllowOnce, Feedback: "not allowed"}); err == nil {
 		t.Fatal("allow approval携带反馈未被拒绝")
 	}
-	if _, err := NewToolApprovalDecidedDraft(turnID, ToolApprovalDecidedPayload{RequestID: requestID, InvocationID: invocation.InvocationID(), Fingerprint: fingerprint, Outcome: tool.ApprovalOutcomeDeny, Feedback: strings.Repeat("x", tool.MaxApprovalFeedbackBytes+1)}); err == nil {
+	if _, err := NewToolApprovalDecidedDraft(turnID, ToolApprovalDecidedPayload{Source: ApprovalSourceInteractive, Metadata: ApprovalMetadataPayload{Capability: tool.CapabilityPatch, RelativePath: "main.go"}, RequestID: requestID, InvocationID: invocation.InvocationID(), Fingerprint: fingerprint, Outcome: tool.ApprovalOutcomeDeny, Feedback: strings.Repeat("x", tool.MaxApprovalFeedbackBytes+1)}); err == nil {
 		t.Fatal("超限反馈未被拒绝")
 	}
 }

@@ -1,0 +1,14 @@
+Command details
+success (ok) exit=2 · truncated
+Workdir: src
+250 ms · 512 bytes
+Lines 5-11 of 11
+Output:
+stdout:
+head retained
+[... 128 bytes omitted ...]
+tail retained
+stderr:
+warning
+PgUp/PgDn: scroll · Ctrl+O/Esc: close
+Ctrl+C: interrupt

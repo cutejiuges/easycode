@@ -139,7 +139,7 @@ func (plan ToolRecoveryPlan) Validate() error {
 			return fmt.Errorf("tool recovery ready sequence is invalid")
 		}
 		lastReadySequence = call.ReadySequence
-		if call.Invocation.Capability() != tool.CapabilityPatch {
+		if !call.Invocation.Capability().Exclusive() {
 			if call.ApprovalSequence != 0 || call.ApprovalOutcome != "" || call.CandidateFingerprint != "" {
 				return fmt.Errorf("non-patch tool recovery call has approval facts")
 			}
@@ -165,8 +165,13 @@ func (plan ToolRecoveryPlan) Validate() error {
 			return fmt.Errorf("patch tool recovery approval facts are invalid")
 		}
 		allowed := call.ApprovalOutcome == tool.ApprovalOutcomeAllowOnce || call.ApprovalOutcome == tool.ApprovalOutcomeAllowSession || call.ApprovalOutcome == tool.ApprovalOutcomeAllowFromSession
+		if call.Invocation.Capability() == tool.CapabilityExec && (call.ApprovalOutcome == tool.ApprovalOutcomeAllowSession || call.ApprovalOutcome == tool.ApprovalOutcomeAllowFromSession) {
+			return fmt.Errorf("exec recovery cannot use a session grant")
+		}
 		if allowed && call.State == ReplayedToolCallResult && call.StartedSequence == 0 {
-			return fmt.Errorf("allowed patch result has no execution start")
+			if !validAllowedBeforeStartResult(call.Invocation, call.Result) {
+				return fmt.Errorf("allowed tool result has no execution start")
+			}
 		}
 		if (call.ApprovalOutcome == tool.ApprovalOutcomeDeny || call.ApprovalOutcome == tool.ApprovalOutcomeAbort) && call.State != ReplayedToolCallResult {
 			return fmt.Errorf("closed patch approval is missing its result")
@@ -206,7 +211,7 @@ func (plan ToolRecoveryPlan) Validate() error {
 				return fmt.Errorf("result tool recovery call is invalid")
 			}
 			if call.StartedSequence == 0 {
-				closedPatch := call.Invocation.Capability() == tool.CapabilityPatch &&
+				closedPatch := call.Invocation.Capability().Exclusive() &&
 					((call.ApprovalOutcome == tool.ApprovalOutcomeDeny && call.Result.Status() == tool.ResultDenied) ||
 						(call.ApprovalOutcome == tool.ApprovalOutcomeAbort && call.Result.Status() == tool.ResultCancelled))
 				if call.Result.Status() != tool.ResultCancelled && !closedPatch {
@@ -482,7 +487,7 @@ func (active *activeReplayTurn) acceptStarted(record Record) error {
 		if call.State != ReplayedToolCallReady {
 			return replayCorrupt("tool execution order is invalid")
 		}
-		if call.Invocation.Capability() == tool.CapabilityPatch {
+		if call.Invocation.Capability().Exclusive() {
 			if call.ApprovalSequence == 0 || (call.ApprovalOutcome != tool.ApprovalOutcomeAllowOnce && call.ApprovalOutcome != tool.ApprovalOutcomeAllowSession && call.ApprovalOutcome != tool.ApprovalOutcomeAllowFromSession) {
 				return replayCorrupt("Patch execution started without approval")
 			}
@@ -494,10 +499,10 @@ func (active *activeReplayTurn) acceptStarted(record Record) error {
 		} else {
 			for previous := 0; previous < index; previous++ {
 				prior := active.pendingCalls[previous]
-				if prior.Invocation.Capability() == tool.CapabilityPatch && prior.State != ReplayedToolCallResult {
+				if prior.Invocation.Capability().Exclusive() && prior.State != ReplayedToolCallResult {
 					return replayCorrupt("read execution crossed an unfinished Patch")
 				}
-				if prior.Invocation.Capability() != tool.CapabilityPatch && prior.State == ReplayedToolCallReady {
+				if !prior.Invocation.Capability().Exclusive() && prior.State == ReplayedToolCallReady {
 					return replayCorrupt("read execution order is invalid")
 				}
 			}
@@ -520,8 +525,18 @@ func (active *activeReplayTurn) acceptApproval(batch []Record) error {
 		if call.Invocation.InvocationID() != payload.InvocationID {
 			continue
 		}
-		if call.Invocation.Capability() != tool.CapabilityPatch || call.State != ReplayedToolCallReady || call.ApprovalSequence != 0 {
+		if !call.Invocation.Capability().Exclusive() || call.State != ReplayedToolCallReady || call.ApprovalSequence != 0 {
 			return replayCorrupt("tool approval does not match a pending Patch")
+		}
+		metadata, metadataErr := NewApprovalMetadata(call.Invocation)
+		if metadataErr != nil || metadata != payload.Metadata {
+			return replayCorrupt("tool approval metadata does not match invocation")
+		}
+		if call.Invocation.Capability() == tool.CapabilityExec && (payload.Source == ApprovalSourcePolicy || payload.Source == ApprovalSourceSessionGrant) {
+			return replayCorrupt("Exec approval source is invalid")
+		}
+		if call.Invocation.Capability() == tool.CapabilityExec && (payload.Outcome == tool.ApprovalOutcomeAllowSession || payload.Outcome == tool.ApprovalOutcomeAllowFromSession) {
+			return replayCorrupt("Exec cannot use session approval")
 		}
 		for previous := 0; previous < index; previous++ {
 			if active.pendingCalls[previous].State != ReplayedToolCallResult {
@@ -568,12 +583,14 @@ func (active *activeReplayTurn) acceptResult(record Record) error {
 			return replayCorrupt("tool_call_result does not match ready call")
 		}
 		if call.State == ReplayedToolCallReady {
-			if call.Invocation.Capability() == tool.CapabilityPatch {
+			if call.Invocation.Capability().Exclusive() {
 				if call.ApprovalSequence == 0 && result.Status() != tool.ResultError && result.Status() != tool.ResultCancelled {
 					return replayCorrupt("Patch result before approval is invalid")
 				}
 				if call.ApprovalSequence != 0 && (call.ApprovalOutcome == tool.ApprovalOutcomeAllowOnce || call.ApprovalOutcome == tool.ApprovalOutcomeAllowSession || call.ApprovalOutcome == tool.ApprovalOutcomeAllowFromSession) {
-					return replayCorrupt("allowed Patch result appears before execution start")
+					if !validAllowedBeforeStartResult(call.Invocation, result) {
+						return replayCorrupt("allowed tool result appears before execution start")
+					}
 				}
 				if call.ApprovalSequence != 0 && call.ApprovalOutcome == tool.ApprovalOutcomeDeny && result.Status() != tool.ResultDenied {
 					return replayCorrupt("denied Patch result is invalid")
@@ -601,6 +618,13 @@ func (active *activeReplayTurn) recoveryPlan() (ToolRecoveryPlan, error) {
 	return NewToolRecoveryPlan(
 		active.turnID, active.nextSampleIndex, active.pendingCalls, active.toolOutputsCommitted,
 	)
+}
+
+func validAllowedBeforeStartResult(invocation tool.Invocation, result tool.InvocationResult) bool {
+	if result.Status() != tool.ResultCancelled {
+		return false
+	}
+	return result.Code() == "session_interrupted_before_execution" || (invocation.Capability() == tool.CapabilityExec && result.Code() == "cancelled_before_execution")
 }
 
 func cloneReplayedToolCalls(calls []ReplayedToolCall) []ReplayedToolCall {

@@ -413,6 +413,7 @@ func TestChatResourcesCloseOrdersSessionJournalAndProvider(t *testing.T) {
 		ContextProfile: mustAppContextProfile(t), ProjectInstructions: mustEmptyAppProjectInstructions(t),
 		ToolCatalog: mustAppToolCatalog(t), ReadExecutor: appReadExecutor{},
 		GlobExecutor: appGlobExecutor{}, GrepExecutor: appGrepExecutor{},
+		PatchPreparer: catalogPatchFixture{}, PatchExecutor: catalogPatchFixture{}, ExecPreparer: catalogExecFixture{}, ExecExecutor: catalogExecFixture{}, ToolPolicy: tool.NewApprovalPolicy(),
 		ContextBudget:  contextplan.DisabledBudget(),
 		ContextPlanner: contextplan.NewPlanner(),
 	})
@@ -532,6 +533,7 @@ func TestChatResourcesShutdownTimeoutEscalatesAndClosesDependencies(t *testing.T
 		ContextProfile: mustAppContextProfile(t), ProjectInstructions: mustEmptyAppProjectInstructions(t),
 		ToolCatalog: mustAppToolCatalog(t), ReadExecutor: appReadExecutor{},
 		GlobExecutor: appGlobExecutor{}, GrepExecutor: appGrepExecutor{},
+		PatchPreparer: catalogPatchFixture{}, PatchExecutor: catalogPatchFixture{}, ExecPreparer: catalogExecFixture{}, ExecExecutor: catalogExecFixture{}, ToolPolicy: tool.NewApprovalPolicy(),
 		ContextBudget:  contextplan.DisabledBudget(),
 		ContextPlanner: contextplan.NewPlanner(),
 	})
@@ -783,6 +785,7 @@ func mustIdleAppRuntime(t *testing.T, journal chatRuntime.Journal) *chatRuntime.
 		ContextProfile: mustAppContextProfile(t), ProjectInstructions: mustEmptyAppProjectInstructions(t),
 		ToolCatalog: mustAppToolCatalog(t), ReadExecutor: appReadExecutor{},
 		GlobExecutor: appGlobExecutor{}, GrepExecutor: appGrepExecutor{},
+		PatchPreparer: catalogPatchFixture{}, PatchExecutor: catalogPatchFixture{}, ExecPreparer: catalogExecFixture{}, ExecExecutor: catalogExecFixture{}, ToolPolicy: tool.NewApprovalPolicy(),
 		ContextBudget:  contextplan.DisabledBudget(),
 		ContextPlanner: contextplan.NewPlanner(),
 	})
@@ -821,7 +824,7 @@ func (appGrepExecutor) Execute(context.Context, tool.GrepInvocation) tool.Invoca
 
 func mustAppToolCatalog(t *testing.T) tool.CatalogSnapshot {
 	t.Helper()
-	catalog, err := tool.NewReadOnlyCatalogSnapshot(appReadExecutor{}, appGlobExecutor{}, appGrepExecutor{})
+	catalog, err := tool.NewExecCatalogSnapshot(appReadExecutor{}, appGlobExecutor{}, appGrepExecutor{}, catalogPatchFixture{}, catalogPatchFixture{}, catalogExecFixture{}, catalogExecFixture{}, tool.RenderExecOutput, tool.NewApprovalPolicy())
 	if err != nil {
 		t.Fatal(err)
 	}

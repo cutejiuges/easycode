@@ -99,7 +99,7 @@ func TestProviderHistoryProjectorsProduceEquivalentTextSemantics(t *testing.T) {
 
 func completeTurnAndProject(t *testing.T, conversation provider.Conversation, text string) domain.SemanticHistoryView {
 	t.Helper()
-	catalog, err := tool.NewReadOnlyCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, inertGrepExecutor{})
+	catalog, err := tool.NewExecCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, inertGrepExecutor{}, catalogPatchFixture{}, catalogPatchFixture{}, catalogExecFixture{}, catalogExecFixture{}, tool.RenderExecOutput, tool.NewApprovalPolicy())
 	if err != nil {
 		t.Fatal(err)
 	}

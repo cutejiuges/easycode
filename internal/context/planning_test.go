@@ -447,7 +447,7 @@ func emptyHistory(family domain.ProviderFamily) domain.SemanticHistoryView {
 
 func testToolCatalog(t *testing.T) tool.CatalogSnapshot {
 	t.Helper()
-	catalog, err := tool.NewReadOnlyCatalogSnapshot(planningReadExecutor{}, planningGlobExecutor{}, planningGrepExecutor{})
+	catalog, err := tool.NewExecCatalogSnapshot(planningReadExecutor{}, planningGlobExecutor{}, planningGrepExecutor{}, catalogPatchFixture{}, catalogPatchFixture{}, catalogExecFixture{}, catalogExecFixture{}, tool.RenderExecOutput, tool.NewApprovalPolicy())
 	if err != nil {
 		t.Fatal(err)
 	}

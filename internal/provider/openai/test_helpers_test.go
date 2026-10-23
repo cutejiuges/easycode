@@ -41,11 +41,20 @@ func (inertPatchExecutor) Execute(context.Context, tool.PatchCandidate) tool.Inv
 
 func testOpenAIToolCatalog(t *testing.T) tool.CatalogSnapshot {
 	t.Helper()
-	catalog, err := tool.NewPatchCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, inertGrepExecutor{}, inertPatchPreparer{}, inertPatchExecutor{}, tool.NewApprovalPolicy())
+	catalog, err := tool.NewExecCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, inertGrepExecutor{}, inertPatchPreparer{}, inertPatchExecutor{}, inertExecComponents{}, inertExecComponents{}, tool.RenderExecOutput, tool.NewApprovalPolicy())
 	if err != nil {
 		t.Fatal(err)
 	}
 	return catalog
+}
+
+type inertExecComponents struct{}
+
+func (inertExecComponents) Prepare(tool.ExecInvocation) (tool.ExecCandidate, error) {
+	return tool.ExecCandidate{}, nil
+}
+func (inertExecComponents) Execute(context.Context, tool.ExecCandidate, func(tool.ExecProgress)) tool.InvocationResult {
+	return tool.InvocationResult{}
 }
 
 func testOpenAIToolView(t *testing.T) tool.FacadeView {

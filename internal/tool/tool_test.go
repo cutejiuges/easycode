@@ -2,6 +2,7 @@ package tool
 
 import (
 	"context"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -68,7 +69,7 @@ func TestReadInputStrictDecodeAndBounds(t *testing.T) {
 func TestCatalogIsDeterministicImmutableAndReadOnly(t *testing.T) {
 	t.Parallel()
 
-	first, err := NewReadOnlyCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, inertGrepExecutor{})
+	first, err := NewExecCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, inertGrepExecutor{}, catalogPatchFixture{}, catalogPatchFixture{}, catalogExecFixture{}, catalogExecFixture{}, RenderExecOutput, NewApprovalPolicy())
 	if err != nil {
 		t.Fatalf("创建目录: %v", err)
 	}
@@ -79,20 +80,37 @@ func TestCatalogIsDeterministicImmutableAndReadOnly(t *testing.T) {
 	if first.Fingerprint() == "" || first.Fingerprint() != second.Fingerprint() || string(first.CanonicalJSON()) != string(second.CanonicalJSON()) {
 		t.Fatal("目录不随注册顺序保持稳定")
 	}
+	golden, err := os.ReadFile("testdata/exec_catalog.golden.json")
+	if err != nil || string(golden) != string(first.CanonicalJSON())+"\n" {
+		t.Fatalf("catalog golden mismatch: %v; actual=%q", err, string(first.CanonicalJSON())+"\n")
+	}
 	for _, family := range []domain.ProviderFamily{domain.ProviderAnthropic, domain.ProviderOpenAI} {
 		view, viewErr := first.View(family)
 		if viewErr != nil {
 			t.Fatalf("读取 %s view: %v", family, viewErr)
 		}
-		if len(view.Facades()) != 3 {
-			t.Fatalf("%s 未完整暴露三工具", family)
+		if len(view.Facades()) != 5 {
+			t.Fatalf("%s 未完整暴露五工具", family)
 		}
 		names := map[string]bool{}
+		readOnly := 0
 		for _, facade := range view.Facades() {
 			names[facade.Name()] = true
+			if !facade.Capability().Exclusive() {
+				readOnly++
+			}
 		}
 		if !names["Read"] || !names["Glob"] || !names["Grep"] {
 			t.Fatalf("%s facade 不完整: %#v", family, names)
+		}
+		if readOnly != 3 {
+			t.Fatal("read-only projection changed")
+		}
+		if family == domain.ProviderAnthropic && (!names["Edit"] || !names["Bash"]) {
+			t.Fatal("Anthropic mutation facades missing")
+		}
+		if family == domain.ProviderOpenAI && (!names["apply_patch"] || !names["exec_command"]) {
+			t.Fatal("OpenAI mutation facades missing")
 		}
 		bytes := view.CanonicalJSON()
 		bytes[0] = '['
@@ -108,13 +126,13 @@ func TestCatalogIsDeterministicImmutableAndReadOnly(t *testing.T) {
 	if err := first.Validate(); err != nil {
 		t.Fatalf("调用方修改 getter 污染目录: %v", err)
 	}
-	if _, err := NewReadOnlyCatalogSnapshot(nil, inertGlobExecutor{}, inertGrepExecutor{}); err == nil {
+	if _, err := NewExecCatalogSnapshot(nil, inertGlobExecutor{}, inertGrepExecutor{}, catalogPatchFixture{}, catalogPatchFixture{}, catalogExecFixture{}, catalogExecFixture{}, RenderExecOutput, NewApprovalPolicy()); err == nil {
 		t.Fatal("缺少 Read executor 的目录应被拒绝")
 	}
-	if _, err := NewReadOnlyCatalogSnapshot(inertReadExecutor{}, nil, inertGrepExecutor{}); err == nil {
+	if _, err := NewExecCatalogSnapshot(inertReadExecutor{}, nil, inertGrepExecutor{}, catalogPatchFixture{}, catalogPatchFixture{}, catalogExecFixture{}, catalogExecFixture{}, RenderExecOutput, NewApprovalPolicy()); err == nil {
 		t.Fatal("缺少 Glob executor 的目录应被拒绝")
 	}
-	if _, err := NewReadOnlyCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, nil); err == nil {
+	if _, err := NewExecCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, nil, catalogPatchFixture{}, catalogPatchFixture{}, catalogExecFixture{}, catalogExecFixture{}, RenderExecOutput, NewApprovalPolicy()); err == nil {
 		t.Fatal("缺少 Grep executor 的目录应被拒绝")
 	}
 	changedFacades := first.Facades()
@@ -127,9 +145,14 @@ func TestCatalogIsDeterministicImmutableAndReadOnly(t *testing.T) {
 		t.Fatal("schema/description 变化未使 fingerprint 失效")
 	}
 	text := string(first.CanonicalJSON())
-	for _, absent := range []string{"Edit", "Write", "Bash", "Skill", "MCP", "Agent", "/absolute/", "secret", "input_revision", "result_codec_revision"} {
+	for _, absent := range []string{"Write", "write_stdin", "Skill", "MCP", "Agent", "/absolute/", "secret", "input_revision", "result_codec_revision"} {
 		if strings.Contains(text, absent) {
 			t.Fatalf("未实现或动态内容进入目录: %q", absent)
+		}
+	}
+	for _, size := range []int{6, 8} {
+		if _, err := newCatalogSnapshot(first.Facades()[:size]); err == nil {
+			t.Fatal("superseded catalog accepted")
 		}
 	}
 }

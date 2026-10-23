@@ -42,6 +42,8 @@ func prepareToolOutputsEntry(history []nativeHistoryEntry, results []tool.Invoca
 
 func anthropicCapabilityForName(name string) tool.CapabilityID {
 	switch name {
+	case "Bash":
+		return tool.CapabilityExec
 	case "Read":
 		return tool.CapabilityRead
 	case "Glob":
