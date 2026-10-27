@@ -9,6 +9,9 @@ import (
 
 // ValidateObjectFields 验证对象字段不重复且必需字段非 null；类型与未知字段由 typed decoder 验证。
 func ValidateObjectFields(data []byte, required ...string) error {
+	if err := ValidateJSON(data); err != nil {
+		return err
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	opening, err := decoder.Token()
 	if err != nil || opening != json.Delim('{') {

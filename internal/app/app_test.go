@@ -421,6 +421,10 @@ func TestChatResourcesCloseOrdersSessionJournalAndProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	chat := chatRuntime.NewChatSession(runtimeInstance)
+	if err := chat.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = chat.Shutdown(context.Background()) })
 	events, err := chat.Submit(context.Background(), "hello")
 	if err != nil {
 		t.Fatal(err)
@@ -541,6 +545,10 @@ func TestChatResourcesShutdownTimeoutEscalatesAndClosesDependencies(t *testing.T
 		t.Fatal(err)
 	}
 	chat := chatRuntime.NewChatSession(runtimeInstance)
+	if err := chat.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = chat.Shutdown(context.Background()) })
 	events, err := chat.Submit(context.Background(), "hello")
 	if err != nil {
 		t.Fatal(err)
@@ -614,7 +622,7 @@ func TestStreamEscalationClosesProviderBeforeLoopAndJournal(t *testing.T) {
 	<-loop.ready
 	cancel()
 	response := <-resultDone
-	if response.err != nil || response.result.Failure.Code == "" {
+	if !errors.Is(response.err, context.DeadlineExceeded) || response.result.Failure.Code == "" {
 		t.Fatalf("stream escalation result=%#v error=%v", response.result, response.err)
 	}
 	if err := resources.close(context.Background()); err != nil {

@@ -1,10 +1,9 @@
 package session
 
 import (
-	"bytes"
+	"easycode/internal/codec"
 	"encoding/json"
 	"fmt"
-	"io"
 	"path/filepath"
 	"strings"
 	"time"
@@ -13,7 +12,7 @@ import (
 	"easycode/internal/tool"
 )
 
-// DecodeSessionMetaPayload 严格解码并验证 session_meta v1 payload。
+// DecodeSessionMetaPayload 严格解码并验证 session_meta 当前 payload。
 func DecodeSessionMetaPayload(record Record) (SessionMetaPayload, error) {
 	payload, err := decodeKnownPayload[SessionMetaPayload](record, EventSessionMeta)
 	if err != nil {
@@ -25,7 +24,7 @@ func DecodeSessionMetaPayload(record Record) (SessionMetaPayload, error) {
 	return payload, nil
 }
 
-// DecodeThreadMetaPayload 严格解码并验证 thread_meta v1 payload。
+// DecodeThreadMetaPayload 严格解码并验证 thread_meta 当前 payload。
 func DecodeThreadMetaPayload(record Record) (ThreadMetaPayload, error) {
 	payload, err := decodeKnownPayload[ThreadMetaPayload](record, EventThreadMeta)
 	if err != nil {
@@ -37,12 +36,12 @@ func DecodeThreadMetaPayload(record Record) (ThreadMetaPayload, error) {
 	return payload, nil
 }
 
-// DecodeTurnStartedPayload 严格解码并验证 turn_started v1 payload。
+// DecodeTurnStartedPayload 严格解码并验证 turn_started 当前 payload。
 func DecodeTurnStartedPayload(record Record) (TurnStartedPayload, error) {
 	return decodeKnownPayload[TurnStartedPayload](record, EventTurnStarted)
 }
 
-// DecodeNativeCommitPayload 严格解码并验证 provider_native_commit v1 payload。
+// DecodeNativeCommitPayload 严格解码并验证 provider_native_commit 当前 payload。
 func DecodeNativeCommitPayload(record Record) (NativeCommitPayload, error) {
 	payload, err := decodeKnownPayload[NativeCommitPayload](record, EventProviderNativeCommit)
 	if err != nil {
@@ -55,7 +54,7 @@ func DecodeNativeCommitPayload(record Record) (NativeCommitPayload, error) {
 	return payload, nil
 }
 
-// DecodeSampleUsagePayload 严格解码并验证 sample_usage v1 payload。
+// DecodeSampleUsagePayload 严格解码并验证 sample_usage 当前 payload。
 func DecodeSampleUsagePayload(record Record) (SampleUsagePayload, error) {
 	payload, err := decodeKnownPayload[SampleUsagePayload](record, EventSampleUsage)
 	if err != nil {
@@ -511,12 +510,12 @@ func encodeGrepMetadata(metadata tool.GrepResultMetadata) *GrepResultMetadataPay
 	}
 }
 
-// DecodeTurnCompletedPayload 严格解码并验证 turn_completed v1 payload。
+// DecodeTurnCompletedPayload 严格解码并验证 turn_completed 当前 payload。
 func DecodeTurnCompletedPayload(record Record) (TurnCompletedPayload, error) {
 	return decodeKnownPayload[TurnCompletedPayload](record, EventTurnCompleted)
 }
 
-// DecodeTurnFailedPayload 严格解码并验证 turn_failed v1 payload。
+// DecodeTurnFailedPayload 严格解码并验证 turn_failed 当前 payload。
 func DecodeTurnFailedPayload(record Record) (TurnFailedPayload, error) {
 	payload, err := decodeKnownPayload[TurnFailedPayload](record, EventTurnFailed)
 	if err != nil {
@@ -534,78 +533,10 @@ func decodeKnownPayload[T recordPayload](record Record, kind EventKind) (T, erro
 	if !exists || record.EventKind != kind || record.PayloadVersion != EnvelopeVersion {
 		return zero, fmt.Errorf("session payload declaration is invalid")
 	}
-	if err := rejectDuplicateJSONFields(record.Payload); err != nil {
-		return zero, err
-	}
-	decoder := json.NewDecoder(bytes.NewReader(record.Payload))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&zero); err != nil {
+	if err := codec.UnmarshalRecord(record.Payload, &zero); err != nil {
 		return zero, fmt.Errorf("decode session payload: %w", err)
 	}
-	var trailing json.RawMessage
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return zero, fmt.Errorf("session payload contains trailing JSON")
-	}
 	return zero, nil
-}
-
-func rejectDuplicateJSONFields(data []byte) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	var walk func() error
-	walk = func() error {
-		token, err := decoder.Token()
-		if err != nil {
-			return fmt.Errorf("decode session payload: %w", err)
-		}
-		delimiter, composite := token.(json.Delim)
-		if !composite {
-			return nil
-		}
-		switch delimiter {
-		case '{':
-			seen := make(map[string]struct{})
-			for decoder.More() {
-				nameToken, nameErr := decoder.Token()
-				name, ok := nameToken.(string)
-				if nameErr != nil || !ok {
-					return fmt.Errorf("decode session payload object")
-				}
-				if _, exists := seen[name]; exists {
-					return fmt.Errorf("session payload contains duplicate field %q", name)
-				}
-				seen[name] = struct{}{}
-				if err := walk(); err != nil {
-					return err
-				}
-			}
-			closing, err := decoder.Token()
-			if err != nil || closing != json.Delim('}') {
-				return fmt.Errorf("decode session payload object")
-			}
-		case '[':
-			for decoder.More() {
-				if err := walk(); err != nil {
-					return err
-				}
-			}
-			closing, err := decoder.Token()
-			if err != nil || closing != json.Delim(']') {
-				return fmt.Errorf("decode session payload array")
-			}
-		default:
-			return fmt.Errorf("decode session payload delimiter")
-		}
-		return nil
-	}
-	if err := walk(); err != nil {
-		return err
-	}
-	var trailing json.RawMessage
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return fmt.Errorf("session payload contains trailing JSON")
-	}
-	return nil
 }
 
 func validateSessionMetaPayload(payload SessionMetaPayload) error {
@@ -634,7 +565,7 @@ func validateThreadMetaPayload(payload ThreadMetaPayload) error {
 
 func validateNativeCommitPayload(payload NativeCommitPayload) error {
 	if !payload.Provider.Valid() || strings.TrimSpace(payload.Wire) == "" || payload.PayloadVersion <= 0 ||
-		len(payload.Payload) == 0 || len(payload.Payload) > MaxRecordBytes || !json.Valid(payload.Payload) {
+		len(payload.Payload) == 0 || len(payload.Payload) > MaxRecordBytes || !codec.Valid(payload.Payload) {
 		return fmt.Errorf("provider native commit payload is invalid")
 	}
 	return nil
@@ -645,4 +576,44 @@ func validateTurnFailedPayload(payload TurnFailedPayload) error {
 		return fmt.Errorf("turn failure code is required")
 	}
 	return nil
+}
+
+func decodeKnownRecord(record Record) error {
+	switch record.EventKind {
+	case EventSessionMeta:
+		_, err := DecodeSessionMetaPayload(record)
+		return err
+	case EventThreadMeta:
+		_, err := DecodeThreadMetaPayload(record)
+		return err
+	case EventTurnStarted:
+		_, err := DecodeTurnStartedPayload(record)
+		return err
+	case EventProviderNativeCommit:
+		_, err := DecodeNativeCommitPayload(record)
+		return err
+	case EventSampleUsage:
+		_, err := DecodeSampleUsagePayload(record)
+		return err
+	case EventToolCallReady:
+		_, err := DecodeToolCallReadyPayload(record)
+		return err
+	case EventToolExecutionStarted:
+		_, err := DecodeToolExecutionStartedPayload(record)
+		return err
+	case EventToolApprovalDecided:
+		_, err := DecodeToolApprovalDecidedPayload(record)
+		return err
+	case EventToolCallResult:
+		_, err := DecodeToolCallResultPayload(record)
+		return err
+	case EventTurnCompleted:
+		_, err := DecodeTurnCompletedPayload(record)
+		return err
+	case EventTurnFailed:
+		_, err := DecodeTurnFailedPayload(record)
+		return err
+	default:
+		return fmt.Errorf("session event kind is unsupported")
+	}
 }

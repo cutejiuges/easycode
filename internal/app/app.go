@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -78,6 +79,9 @@ type chatResources struct {
 	repair         session.RepairReport
 	resumed        bool
 	providerClosed bool
+	closeMu        sync.Mutex
+	closeDone      chan struct{}
+	closeErr       error
 }
 
 // resourceCleanup 在应用装配成功前按取得顺序持有资源，并按严格逆序释放。
@@ -163,6 +167,10 @@ func Run(ctx context.Context, options Options) Outcome {
 	} else if options.Mode == headless.ModeStreamJSON {
 		outcome = runStreamJSON(ctx, options, resources)
 	} else {
+		if err := resources.session.Start(ctx); err != nil {
+			_ = resources.close(context.Background())
+			return runtimeFailure(err)
+		}
 		result := headless.Run(ctx, resources.session, headless.RunConfig{
 			Mode: options.Mode, Prompt: options.Prompt,
 			SessionID: resources.identity.SessionID, ThreadID: resources.identity.ThreadID,
@@ -199,6 +207,7 @@ func runStreamJSON(ctx context.Context, options Options, resources *chatResource
 	if err != nil {
 		return runtimeFailure(fault.New(fault.CodeTurnFailed, "stream runner is not configured"))
 	}
+	resources.session = nil
 	result, escalationErr := runStreamWithEscalation(ctx, runner, resources, shutdownTimeout)
 	if escalationErr != nil {
 		return runtimeFailure(escalationErr)
@@ -227,7 +236,7 @@ func runStreamWithEscalation(
 	case <-timer.C:
 		closeErr := resources.forceCloseProvider()
 		result := <-resultDone
-		return result, closeErr
+		return result, errors.Join(context.DeadlineExceeded, closeErr)
 	}
 }
 
@@ -236,11 +245,7 @@ func runTUI(ctx context.Context, options Options, resources *chatResources) Outc
 	if err != nil {
 		return runtimeFailure(err)
 	}
-	defer func() {
-		shutdownContext, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-		defer cancel()
-		_ = controlSession.stop(shutdownContext)
-	}()
+	resources.session = controlSession
 	model := tui.NewModel(ctx, Version, controlSession, resources.history)
 	programOptions := []tea.ProgramOption{tea.WithContext(ctx), tea.WithOutput(options.Output)}
 	if options.Input != nil {
@@ -586,6 +591,15 @@ func (resources *chatResources) close(ctx context.Context) error {
 	if resources == nil {
 		return nil
 	}
+	resources.closeMu.Lock()
+	if resources.closeDone != nil {
+		done := resources.closeDone
+		resources.closeMu.Unlock()
+		<-done
+		return resources.closeErr
+	}
+	resources.closeDone = make(chan struct{})
+	resources.closeMu.Unlock()
 	var shutdownErr error
 	providerClosed := resources.providerClosed
 	if resources.session != nil {
@@ -619,7 +633,9 @@ func (resources *chatResources) close(ctx context.Context) error {
 	if resources.service != nil {
 		repositoryErr = resources.service.close()
 	}
-	return errors.Join(shutdownErr, writerErr, providerErr, workspaceErr, repositoryErr)
+	resources.closeErr = errors.Join(shutdownErr, writerErr, providerErr, workspaceErr, repositoryErr)
+	close(resources.closeDone)
+	return resources.closeErr
 }
 
 func (resources *chatResources) forceCloseProvider() error {

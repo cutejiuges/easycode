@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 
 	"github.com/bytedance/sonic"
 )
@@ -80,16 +81,22 @@ func (value CanonicalJSON) Validate(maxBytes int) error {
 
 // MarshalStable 生成缓存和 wire 测试可复现的 JSON 字节。
 func MarshalStable(value any) ([]byte, error) {
-	return sonic.ConfigStd.Marshal(value)
+	return fixedConfig().Marshal(value)
 }
 
 // Unmarshal 使用统一 Sonic 配置解码强类型数据。
 func Unmarshal(data []byte, target any) error {
-	return sonic.ConfigStd.Unmarshal(data, target)
+	return fixedConfig().Unmarshal(data, target)
 }
 
 // UnmarshalStrict 解码强类型对象并拒绝未知字段。
 func UnmarshalStrict(data []byte, target any) error {
+	if err := ValidateJSON(data); err != nil {
+		return err
+	}
+	if err := validateRecordShape(data, reflect.TypeOf(target), false); err != nil {
+		return err
+	}
 	return sonic.Config{
 		EscapeHTML: true, SortMapKeys: true, CompactMarshaler: true,
 		CopyString: true, ValidateString: true, DisallowUnknownFields: true,
@@ -99,7 +106,7 @@ func UnmarshalStrict(data []byte, target any) error {
 
 // Valid 判断输入是否为合法 JSON。
 func Valid(data []byte) bool {
-	return sonic.ConfigStd.Valid(data)
+	return fixedConfig().Valid(data)
 }
 
 func requireJSONEOF(decoder *json.Decoder) error {
@@ -111,7 +118,7 @@ func requireJSONEOF(decoder *json.Decoder) error {
 	if err != nil {
 		return fmt.Errorf("canonical JSON has invalid trailing data: %w", err)
 	}
-	return errors.New("canonical JSON contains multiple values")
+	return errors.New("canonical JSON contains trailing JSON values")
 }
 
 func validateJSONBytes(data []byte, maxBytes int) error {
@@ -128,4 +135,9 @@ func validateJSONBytes(data []byte, maxBytes int) error {
 		return errors.New("canonical JSON is invalid")
 	}
 	return nil
+}
+
+// fixedConfig 每次从固定值构造配置，不读取可被第三方替换的包级变量。
+func fixedConfig() sonic.API {
+	return sonic.Config{EscapeHTML: true, SortMapKeys: true, CompactMarshaler: true, CopyString: true, ValidateString: true}.Froze()
 }

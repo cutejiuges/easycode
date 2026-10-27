@@ -280,7 +280,7 @@ func (conversation *Conversation) consumeStream(
 					return
 				}
 				conversation.pending.Store(true)
-				prepared, prepareErr := provider.NewPreparedSampleWithDiscard(envelope, usage, func() {
+				prepared, prepareErr := provider.NewPreparedSample(envelope, usage, func() {
 					conversation.history.commit(entry)
 					conversation.pending.Store(false)
 				}, func() { conversation.pending.Store(false) }, reducer.readyCalls()...)
@@ -381,7 +381,7 @@ func (conversation *Conversation) PrepareToolOutputs(results []tool.InvocationRe
 	if err != nil {
 		return nil, err
 	}
-	prepared, err := provider.NewPreparedToolOutputsWithDiscard(envelope, func() {
+	prepared, err := provider.NewPreparedToolOutputs(envelope, func() {
 		conversation.history.commit(entry)
 		conversation.pending.Store(false)
 	}, func() { conversation.pending.Store(false) })

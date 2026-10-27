@@ -64,7 +64,7 @@ func (runtime *Runtime) executeWriteCall(ctx context.Context, emit Emitter, turn
 	if decision == tool.PolicyAllow {
 		outcome = tool.ApprovalOutcomeAllowOnce
 	} else if decision == tool.PolicyAsk {
-		if runtime.writeGrant.Load() {
+		if runtime.approvals.writeGrant.Load() {
 			outcome = tool.ApprovalOutcomeAllowFromSession
 		} else if runtime.interactiveApprovals {
 			response, err := runtime.waitForApproval(ctx, emit, turnID, request)
@@ -82,9 +82,12 @@ func (runtime *Runtime) executeWriteCall(ctx context.Context, emit Emitter, turn
 			}
 		}
 	}
-	source := session.ApprovalSourceInteractive
-	if !runtime.interactiveApprovals {
+	source := session.ApprovalSourcePolicy
+	if decision == tool.PolicyAsk {
 		source = session.ApprovalSourceHeadless
+		if runtime.interactiveApprovals {
+			source = session.ApprovalSourceInteractive
+		}
 	}
 	if outcome == tool.ApprovalOutcomeAbort {
 		source = session.ApprovalSourceInterruption
@@ -104,7 +107,7 @@ func (runtime *Runtime) executeWriteCall(ctx context.Context, emit Emitter, turn
 		status, code, message := tool.ResultDenied, "approval_denied", "Write denied: approval_denied"
 		if outcome == tool.ApprovalOutcomeAbort {
 			status, code, message = tool.ResultCancelled, "user_aborted", "Write cancelled: user_aborted"
-		} else if !runtime.interactiveApprovals {
+		} else if decision == tool.PolicyAsk && !runtime.interactiveApprovals {
 			code, message = "approval_required", "Write denied: approval_required"
 		} else if feedback != "" {
 			message += "\nUser feedback: " + feedback
@@ -126,40 +129,17 @@ func (runtime *Runtime) executeWriteCall(ctx context.Context, emit Emitter, turn
 		return tool.InvocationResult{}, false, fault.Wrap(fault.CodeSessionWrite, "persist Write approval failed", err)
 	}
 	if outcome == tool.ApprovalOutcomeAllowSession {
-		runtime.writeGrant.Store(true)
+		runtime.approvals.writeGrant.Store(true)
 	}
 	runtime.emitApprovalResolved(emit, turnID, request, outcome)
-	if ctx.Err() != nil {
-		return finish(tool.NewWriteErrorResult(v, tool.ResultCancelled, "cancelled", "Write cancelled before execution"))
-	}
-	started, err := session.NewToolExecutionStartedDraft(turnID, v.InvocationID())
-	if err != nil {
-		return tool.InvocationResult{}, false, err
-	}
-	if _, err := runtime.journal.AppendBatch(ctx, []session.RecordDraft{started}); err != nil {
-		if errors.Is(err, context.Canceled) && !runtime.journal.Poisoned() {
-			return finish(tool.NewWriteErrorResult(v, tool.ResultCancelled, "cancelled", "Write cancelled before execution"))
-		}
-		runtime.poisoned.Store(true)
-		return tool.InvocationResult{}, false, fault.Wrap(fault.CodeSessionWrite, "persist Write execution start failed", err)
-	}
-	runtime.readObservations.invalidate(candidate.RelativePath())
-	result := runtime.writeExecutor.Execute(ctx, candidate)
-	if result.Validate() != nil || result.InvocationID() != v.InvocationID() || result.ProviderCallID() != v.ProviderCallID() || result.Capability() != tool.CapabilityWrite || result.WireKind() != tool.WireStructured || (result.Status() == tool.ResultSuccess && result.WriteMetadata() != candidate.ResultMetadata()) {
-		result = tool.NewWriteErrorResult(v, tool.ResultOutcomeUncertain, "invalid_tool_result", "Write failed: execution outcome is uncertain")
-	}
-	if result.Status() == tool.ResultOutcomeUncertain {
-		runtime.poisoned.Store(true)
-		runtime.readObservations.clear()
-	}
-	if result.Status() == tool.ResultConflict {
-		runtime.readObservations.invalidate(candidate.RelativePath())
-	}
-	if _, _, err := finish(result); err != nil {
-		return tool.InvocationResult{}, false, err
-	}
-	if result.Status() == tool.ResultOutcomeUncertain {
-		return result, false, fault.New(fault.CodeSessionWrite, "Write outcome is uncertain")
-	}
-	return result, false, nil
+	result, err := runtime.executeExclusive(ctx, turnID, invocation, exclusiveAction{
+		execute: func(ctx context.Context) tool.InvocationResult {
+			runtime.readObservations.invalidate(candidate.RelativePath())
+			return runtime.writeExecutor.Execute(ctx, candidate)
+		},
+		matches: func(result tool.InvocationResult) bool {
+			return result.Status() != tool.ResultSuccess || result.WriteMetadata() == candidate.ResultMetadata()
+		},
+	})
+	return result, false, err
 }

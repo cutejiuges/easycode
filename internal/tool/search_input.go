@@ -1,11 +1,9 @@
 package tool
 
 import (
-	"bytes"
-	"encoding/json"
+	"easycode/internal/codec"
 	"errors"
 	"fmt"
-	"io"
 	"path"
 	"regexp"
 	"strings"
@@ -63,49 +61,19 @@ func NewGlobInput(pattern string, searchPath string, limit int) (GlobInput, erro
 
 // DecodeGlobInput 严格解码 Glob JSON 对象并应用默认值。
 func DecodeGlobInput(data []byte) (GlobInput, error) {
-	if len(data) == 0 || len(data) > maxSearchInputBytes || !utf8.Valid(data) {
-		return GlobInput{}, errors.New("invalid Glob input")
+	if len(data) == 0 || len(data) > maxSearchInputBytes {
+		return GlobInput{}, errors.New("invalid GlobInput size")
 	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	opening, err := decoder.Token()
-	if err != nil || opening != json.Delim('{') {
-		return GlobInput{}, errors.New("glob input must be an object")
-	}
-	input := GlobInput{limit: defaultGlobLimit}
-	seen := make(map[string]struct{}, 3)
-	for decoder.More() {
-		name, fieldErr := nextSearchField(decoder, seen, "Glob")
-		if fieldErr != nil {
-			return GlobInput{}, fieldErr
-		}
-		switch name {
-		case "pattern":
-			if err := decoder.Decode(&input.pattern); err != nil {
-				return GlobInput{}, errors.New("invalid Glob pattern")
-			}
-		case "path":
-			if err := decoder.Decode(&input.path); err != nil {
-				return GlobInput{}, errors.New("invalid Glob path")
-			}
-		case "limit":
-			if err := decoder.Decode(&input.limit); err != nil {
-				return GlobInput{}, errors.New("invalid Glob limit")
-			}
-		default:
-			return GlobInput{}, fmt.Errorf("unknown Glob input field %q", name)
-		}
-	}
-	if err := closeSearchObject(decoder, "Glob"); err != nil {
+	wire := struct {
+		Pattern string `json:"pattern"`
+		Path    string `json:"path"`
+		Limit   int    `json:"limit"`
+	}{Limit: defaultGlobLimit}
+	if err := codec.DecodeObject(data, &wire, "pattern"); err != nil {
 		return GlobInput{}, err
 	}
-	if _, ok := seen["pattern"]; !ok {
-		return GlobInput{}, errors.New("glob pattern is required")
-	}
-	if err := input.Validate(); err != nil {
-		return GlobInput{}, err
-	}
-	return input, nil
+	input := GlobInput{pattern: wire.Pattern, path: wire.Path, limit: wire.Limit}
+	return input, input.Validate()
 }
 
 func (input GlobInput) Pattern() string { return input.pattern }
@@ -158,69 +126,24 @@ func NewGrepInput(pattern string, searchPath string, glob string, outputMode Gre
 
 // DecodeGrepInput 严格解码 Grep JSON 对象并应用默认值。
 func DecodeGrepInput(data []byte) (GrepInput, error) {
-	if len(data) == 0 || len(data) > maxSearchInputBytes || !utf8.Valid(data) {
-		return GrepInput{}, errors.New("invalid Grep input")
+	if len(data) == 0 || len(data) > maxSearchInputBytes {
+		return GrepInput{}, errors.New("invalid GrepInput size")
 	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	opening, err := decoder.Token()
-	if err != nil || opening != json.Delim('{') {
-		return GrepInput{}, errors.New("grep input must be an object")
-	}
-	input := GrepInput{outputMode: GrepOutputContent, limit: defaultGrepLimit}
-	seen := make(map[string]struct{}, 8)
-	for decoder.More() {
-		name, fieldErr := nextSearchField(decoder, seen, "Grep")
-		if fieldErr != nil {
-			return GrepInput{}, fieldErr
-		}
-		switch name {
-		case "pattern":
-			if err := decoder.Decode(&input.pattern); err != nil {
-				return GrepInput{}, errors.New("invalid Grep pattern")
-			}
-		case "path":
-			if err := decoder.Decode(&input.path); err != nil {
-				return GrepInput{}, errors.New("invalid Grep path")
-			}
-		case "glob":
-			if err := decoder.Decode(&input.glob); err != nil {
-				return GrepInput{}, errors.New("invalid Grep glob")
-			}
-		case "output_mode":
-			if err := decoder.Decode(&input.outputMode); err != nil {
-				return GrepInput{}, errors.New("invalid Grep output_mode")
-			}
-		case "case_insensitive":
-			if err := decoder.Decode(&input.caseInsensitive); err != nil {
-				return GrepInput{}, errors.New("invalid Grep case_insensitive")
-			}
-		case "before_context":
-			if err := decoder.Decode(&input.beforeContext); err != nil {
-				return GrepInput{}, errors.New("invalid Grep before_context")
-			}
-		case "after_context":
-			if err := decoder.Decode(&input.afterContext); err != nil {
-				return GrepInput{}, errors.New("invalid Grep after_context")
-			}
-		case "limit":
-			if err := decoder.Decode(&input.limit); err != nil {
-				return GrepInput{}, errors.New("invalid Grep limit")
-			}
-		default:
-			return GrepInput{}, fmt.Errorf("unknown Grep input field %q", name)
-		}
-	}
-	if err := closeSearchObject(decoder, "Grep"); err != nil {
+	wire := struct {
+		Pattern         string         `json:"pattern"`
+		Path            string         `json:"path"`
+		Glob            string         `json:"glob"`
+		OutputMode      GrepOutputMode `json:"output_mode"`
+		CaseInsensitive bool           `json:"case_insensitive"`
+		BeforeContext   int            `json:"before_context"`
+		AfterContext    int            `json:"after_context"`
+		Limit           int            `json:"limit"`
+	}{OutputMode: GrepOutputContent, Limit: defaultGrepLimit}
+	if err := codec.DecodeObject(data, &wire, "pattern"); err != nil {
 		return GrepInput{}, err
 	}
-	if _, ok := seen["pattern"]; !ok {
-		return GrepInput{}, errors.New("grep pattern is required")
-	}
-	if err := input.Validate(); err != nil {
-		return GrepInput{}, err
-	}
-	return input, nil
+	input := GrepInput{pattern: wire.Pattern, path: wire.Path, glob: wire.Glob, outputMode: wire.OutputMode, caseInsensitive: wire.CaseInsensitive, beforeContext: wire.BeforeContext, afterContext: wire.AfterContext, limit: wire.Limit}
+	return input, input.Validate()
 }
 
 func (input GrepInput) Pattern() string            { return input.pattern }
@@ -309,33 +232,4 @@ func validateGlobPattern(value string, optional bool) error {
 		}
 	}
 	return nil
-}
-
-func nextSearchField(decoder *json.Decoder, seen map[string]struct{}, capability string) (string, error) {
-	token, err := decoder.Token()
-	if err != nil {
-		return "", fmt.Errorf("invalid %s input", capability)
-	}
-	name, ok := token.(string)
-	if !ok {
-		return "", fmt.Errorf("invalid %s input field", capability)
-	}
-	if _, duplicate := seen[name]; duplicate {
-		return "", fmt.Errorf("duplicate %s input field %q", capability, name)
-	}
-	seen[name] = struct{}{}
-	return name, nil
-}
-
-func closeSearchObject(decoder *json.Decoder, capability string) error {
-	closing, err := decoder.Token()
-	if err != nil || closing != json.Delim('}') {
-		return fmt.Errorf("invalid %s input", capability)
-	}
-	var trailing json.RawMessage
-	err = decoder.Decode(&trailing)
-	if errors.Is(err, io.EOF) {
-		return nil
-	}
-	return fmt.Errorf("%s input has trailing JSON", strings.ToLower(capability))
 }

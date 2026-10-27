@@ -99,7 +99,7 @@ func DecodeAssistantTextDelta(event Event) (AssistantTextDeltaPayload, error) {
 		return AssistantTextDeltaPayload{}, fmt.Errorf("event kind is not assistant_text_delta")
 	}
 	var payload AssistantTextDeltaPayload
-	if err := codec.UnmarshalStrict(event.Payload, &payload); err != nil {
+	if err := codec.UnmarshalRecord(event.Payload, &payload); err != nil {
 		return AssistantTextDeltaPayload{}, fmt.Errorf("decode assistant text delta: %w", err)
 	}
 	if payload.Text == "" {
@@ -129,7 +129,7 @@ func DecodeTurnFailed(event Event) (TurnFailedPayload, error) {
 		return TurnFailedPayload{}, fmt.Errorf("event kind is not turn_failed")
 	}
 	var payload TurnFailedPayload
-	if err := codec.UnmarshalStrict(event.Payload, &payload); err != nil {
+	if err := codec.UnmarshalRecord(event.Payload, &payload); err != nil {
 		return TurnFailedPayload{}, fmt.Errorf("decode turn failure: %w", err)
 	}
 	if strings.TrimSpace(payload.Code) == "" || strings.TrimSpace(payload.Message) == "" {
@@ -153,7 +153,7 @@ func DecodeTurnCompleted(event Event) (TurnCompletedPayload, error) {
 		return TurnCompletedPayload{}, fmt.Errorf("event kind is not turn_completed")
 	}
 	var payload TurnCompletedPayload
-	if err := codec.UnmarshalStrict(event.Payload, &payload); err != nil {
+	if err := codec.UnmarshalRecord(event.Payload, &payload); err != nil {
 		return TurnCompletedPayload{}, fmt.Errorf("decode turn completion: %w", err)
 	}
 	if _, err := payload.Usage.Domain(); err != nil {
@@ -175,7 +175,7 @@ func DecodeToolApprovalRequested(event Event) (ToolApprovalRequestedPayload, err
 		return ToolApprovalRequestedPayload{}, fmt.Errorf("event kind is not tool_approval_requested")
 	}
 	var payload ToolApprovalRequestedPayload
-	if err := codec.UnmarshalStrict(event.Payload, &payload); err != nil {
+	if err := codec.UnmarshalRecord(event.Payload, &payload); err != nil {
 		return ToolApprovalRequestedPayload{}, fmt.Errorf("decode tool approval request: %w", err)
 	}
 	if err := validateApprovalRequested(payload); err != nil {
@@ -237,7 +237,7 @@ func DecodeToolApprovalResolved(event Event) (ToolApprovalResolvedPayload, error
 		return ToolApprovalResolvedPayload{}, fmt.Errorf("event kind is not tool_approval_resolved")
 	}
 	var payload ToolApprovalResolvedPayload
-	if err := codec.UnmarshalStrict(event.Payload, &payload); err != nil {
+	if err := codec.UnmarshalRecord(event.Payload, &payload); err != nil {
 		return ToolApprovalResolvedPayload{}, fmt.Errorf("decode tool approval resolution: %w", err)
 	}
 	return payload, validateApprovalResolved(payload)

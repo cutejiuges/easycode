@@ -35,6 +35,10 @@ func TestExecShutdownTimeoutRetainsTurnUntilExecutorCleanup(t *testing.T) {
 		<-release
 	}
 	facade := NewChatSession(runtime)
+	if err := facade.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = facade.Shutdown(context.Background()) })
 	events, err := facade.Submit(context.Background(), "run")
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +70,7 @@ func TestExecShutdownTimeoutRetainsTurnUntilExecutorCleanup(t *testing.T) {
 		t.Fatalf("shutdown deadline = %v", err)
 	}
 	facade.mu.Lock()
-	ownedDone, active := facade.done, facade.active
+	ownedDone, active := facade.done, facade.started
 	facade.mu.Unlock()
 	if !active || ownedDone == nil {
 		t.Fatal("timed-out shutdown abandoned command owner")

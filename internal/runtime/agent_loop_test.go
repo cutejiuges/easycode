@@ -499,7 +499,7 @@ func TestAgentLoopRoutesCorrelatedApprovalWithoutStartingTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtimeValue := &Runtime{approval: &runtimeApproval{request: request, done: make(chan struct{})}}
+	runtimeValue := &Runtime{approvals: approvalState{active: &runtimeApproval{request: request, done: make(chan struct{})}}}
 	loop := &AgentLoop{
 		runtime: runtimeValue, config: DefaultAgentLoopConfig(),
 		outputs: make(chan protocol.ControlItem, 4),
@@ -520,8 +520,8 @@ func TestAgentLoopRoutesCorrelatedApprovalWithoutStartingTurn(t *testing.T) {
 	if response.err != nil || response.result.Disposition() != protocol.CommandDispositionResolving || state.active.turnID != runtimeTurnID || len(state.queue) != 0 {
 		t.Fatalf("approval result=%#v error=%v state=%#v", response.result, response.err, state)
 	}
-	if runtimeValue.approval == nil || !runtimeValue.approval.resolved || runtimeValue.approval.response.Decision() != tool.ApprovalAllowOnce {
-		t.Fatalf("runtime approval=%#v", runtimeValue.approval)
+	if runtimeValue.approvals.active == nil || !runtimeValue.approvals.active.resolved || runtimeValue.approvals.active.response.Decision() != tool.ApprovalAllowOnce {
+		t.Fatalf("runtime approval=%#v", runtimeValue.approvals.active)
 	}
 
 	duplicate := loopCommandRequest{command: command, result: make(chan loopCommandResponse, 1)}

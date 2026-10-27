@@ -94,13 +94,17 @@ func TestWritePatchReadGrepBarriersPromoteOnlyFreshRead(t *testing.T) {
 			if runtime.readObservations.lookup("main.go").Kind() != want {
 				t.Fatal("正常跨 turn 丢失有效观察")
 			}
-			runtime.writeGrant.Store(true)
-			runtime.patchGrant.Store(true)
+			runtime.approvals.writeGrant.Store(true)
+			runtime.approvals.patchGrant.Store(true)
 			chat := NewChatSession(runtime)
+			if err := chat.Start(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = chat.Shutdown(context.Background()) })
 			if err := chat.Shutdown(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			if len(runtime.readObservations.current) != 0 || runtime.writeGrant.Load() || runtime.patchGrant.Load() {
+			if len(runtime.readObservations.current) != 0 || runtime.approvals.writeGrant.Load() || runtime.approvals.patchGrant.Load() {
 				t.Fatal("shutdown 保留文件状态")
 			}
 		})

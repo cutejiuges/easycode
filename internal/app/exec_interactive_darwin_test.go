@@ -103,7 +103,7 @@ func TestReadPatchExecApprovedLoopForBothProviders(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer control.stop(context.Background())
+			defer control.Shutdown(context.Background())
 			events, err := control.Submit(context.Background(), "Read, edit, run checks, and summarize")
 			if err != nil {
 				t.Fatal(err)
@@ -149,7 +149,7 @@ func TestReadPatchExecApprovedLoopForBothProviders(t *testing.T) {
 					t.Fatalf("turn failed: %s", event.Payload)
 				}
 			}
-			if err := control.stop(context.Background()); err != nil {
+			if err := control.Shutdown(context.Background()); err != nil {
 				t.Fatal(err)
 			}
 			if err := resources.close(context.Background()); err != nil {

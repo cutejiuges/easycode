@@ -220,6 +220,20 @@ func TestRestoreConversationRejectsEntireHistoryOnOneBadCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, replacement := range []string{`"known":null`, `"Known":false`, `"known":false,"known":true`} {
+		payload := strings.Replace(string(valid.Payload()), `"known":false`, replacement, 1)
+		invalid, err := provider.NewNativeCommitEnvelope(valid.Family(), valid.Wire(), valid.PayloadVersion(), []byte(payload))
+		if err != nil {
+			t.Fatal(err)
+		}
+		restored, err := instance.RestoreConversation([]provider.NativeCommitEnvelope{valid, invalid})
+		if err == nil || restored != nil {
+			t.Fatalf("accepted ambiguous nested usage: %s", replacement)
+		}
+		if string(invalid.Payload()) != payload {
+			t.Fatal("restore rewrote native payload")
+		}
+	}
 	bad, err := provider.NewNativeCommitEnvelope(
 		domain.ProviderOpenAI, responsesWire, 1,
 		json.RawMessage(`{"kind":"sample","input":{"type":"message","role":"assistant"},"outputs":[]}`),

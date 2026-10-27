@@ -122,7 +122,7 @@ func DecodeStreamCommand(line []byte) (protocol.Command, error) {
 		return protocol.Command{}, fmt.Errorf("stream command is invalid")
 	}
 	var envelope streamCommandEnvelope
-	if err := json.Unmarshal(line, &envelope); err != nil {
+	if err := codec.Unmarshal(line, &envelope); err != nil {
 		return protocol.Command{}, fmt.Errorf("stream command is invalid")
 	}
 	if envelope.Version != eventVersion {
@@ -135,7 +135,7 @@ func DecodeStreamCommand(line []byte) (protocol.Command, error) {
 	switch envelope.Type {
 	case "input.submit":
 		var wire streamSubmitCommand
-		if err := codec.UnmarshalStrict(line, &wire); err != nil {
+		if err := codec.DecodeObject(line, &wire, "version", "type", "request_id"); err != nil {
 			return protocol.Command{}, fmt.Errorf("input.submit command is invalid")
 		}
 		command, err := protocol.NewSubmitInputCommand(requestID, wire.Text)
@@ -145,7 +145,7 @@ func DecodeStreamCommand(line []byte) (protocol.Command, error) {
 		return command, nil
 	case "turn.interrupt":
 		var wire streamInterruptCommand
-		if err := codec.UnmarshalStrict(line, &wire); err != nil {
+		if err := codec.DecodeObject(line, &wire, "version", "type", "request_id"); err != nil {
 			return protocol.Command{}, fmt.Errorf("turn.interrupt command is invalid")
 		}
 		turnID, err := domain.ParseTurnID(wire.ExpectedTurnID)
@@ -155,7 +155,7 @@ func DecodeStreamCommand(line []byte) (protocol.Command, error) {
 		return protocol.NewInterruptCommand(requestID, turnID)
 	case "session.shutdown":
 		var wire streamShutdownCommand
-		if err := codec.UnmarshalStrict(line, &wire); err != nil {
+		if err := codec.DecodeObject(line, &wire, "version", "type", "request_id"); err != nil {
 			return protocol.Command{}, fmt.Errorf("session.shutdown command is invalid")
 		}
 		return protocol.NewShutdownCommand(requestID)
@@ -165,40 +165,5 @@ func DecodeStreamCommand(line []byte) (protocol.Command, error) {
 }
 
 func scanStreamMembers(line []byte) (map[string]json.RawMessage, error) {
-	decoder := json.NewDecoder(bytes.NewReader(line))
-	token, err := decoder.Token()
-	if err != nil {
-		return nil, err
-	}
-	delimiter, ok := token.(json.Delim)
-	if !ok || delimiter != '{' {
-		return nil, fmt.Errorf("command must be an object")
-	}
-	members := make(map[string]json.RawMessage, 5)
-	for decoder.More() {
-		token, err = decoder.Token()
-		if err != nil {
-			return nil, err
-		}
-		name, ok := token.(string)
-		if !ok {
-			return nil, fmt.Errorf("command field name is invalid")
-		}
-		if _, duplicate := members[name]; duplicate {
-			return nil, fmt.Errorf("command contains a duplicate field")
-		}
-		var raw json.RawMessage
-		if err := decoder.Decode(&raw); err != nil {
-			return nil, err
-		}
-		members[name] = append(json.RawMessage(nil), raw...)
-	}
-	if _, err := decoder.Token(); err != nil {
-		return nil, err
-	}
-	var trailing json.RawMessage
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return nil, fmt.Errorf("command contains trailing JSON")
-	}
-	return members, nil
+	return codec.ObjectMembers(line)
 }

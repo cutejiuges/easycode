@@ -48,6 +48,7 @@ func superviseSSE(
 	ctx context.Context,
 	body io.ReadCloser,
 	options StreamOptions,
+	finished func(),
 ) <-chan SSEMessage {
 	output := make(chan SSEMessage, 1)
 	readerContext, stopReader := context.WithCancel(ctx)
@@ -65,6 +66,7 @@ func superviseSSE(
 	}()
 
 	go func() {
+		defer finished()
 		defer close(output)
 		defer stopReader()
 		defer func() { _ = body.Close() }()

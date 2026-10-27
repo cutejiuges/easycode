@@ -251,7 +251,7 @@ func (reducer *streamReducer) reduceBlockStop(index *int) (reducerResult, error)
 		return reducerResult{}, err
 	}
 	if state.item.Type == blockTypeToolUse {
-		if state.toolInput == "" || !json.Valid([]byte(state.toolInput)) {
+		if state.toolInput == "" || !codec.Valid([]byte(state.toolInput)) {
 			return reducerResult{}, protocolError("Anthropic tool input is incomplete")
 		}
 		callID, callErr := tool.ParseProviderCallID(state.item.ID)

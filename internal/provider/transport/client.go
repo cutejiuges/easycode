@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"resty.dev/v3"
@@ -27,8 +28,13 @@ const (
 
 // Client 统一持有 Resty HTTP 客户端和经过校验的 base URL。
 type Client struct {
-	baseURL *url.URL
-	http    *resty.Client
+	baseURL   *url.URL
+	http      *resty.Client
+	mu        sync.Mutex
+	active    map[*streamLifetime]context.CancelFunc
+	closed    bool
+	closeDone chan struct{}
+	closeErr  error
 }
 
 // SSERequest 描述一条返回 SSE raw body 的 HTTP 请求。
@@ -55,6 +61,7 @@ func NewClient(baseURL string) (*Client, error) {
 	return &Client{
 		baseURL: parsedBaseURL,
 		http:    httpClient,
+		active:  make(map[*streamLifetime]context.CancelFunc), closeDone: make(chan struct{}),
 	}, nil
 }
 
@@ -63,9 +70,49 @@ func (client *Client) HTTP() *resty.Client {
 	return client.http
 }
 
-// Close 关闭 Resty 持有的空闲连接和资源。
+// streamLifetime 用实例身份登记活动请求，不保存长期 Context。
+type streamLifetime struct{ active bool }
+
+// Close 取消全部活动请求，使 SSE owner 关闭实际 body，再关闭空闲连接。
 func (client *Client) Close() error {
-	return client.http.Close()
+	client.mu.Lock()
+	if client.closed {
+		done := client.closeDone
+		client.mu.Unlock()
+		<-done
+		return client.closeErr
+	}
+	client.closed = true
+	cancels := make([]context.CancelFunc, 0, len(client.active))
+	for _, cancel := range client.active {
+		cancels = append(cancels, cancel)
+	}
+	client.mu.Unlock()
+	for _, cancel := range cancels {
+		cancel()
+	}
+	client.closeErr = client.http.Close()
+	close(client.closeDone)
+	return client.closeErr
+}
+
+func (client *Client) track(ctx context.Context) (context.Context, func(), error) {
+	ctx, cancel := context.WithCancel(ctx)
+	lifetime := &streamLifetime{active: true}
+	client.mu.Lock()
+	if client.closed {
+		client.mu.Unlock()
+		cancel()
+		return nil, nil, fmt.Errorf("transport is closed")
+	}
+	client.active[lifetime] = cancel
+	client.mu.Unlock()
+	return ctx, func() {
+		cancel()
+		client.mu.Lock()
+		delete(client.active, lifetime)
+		client.mu.Unlock()
+	}, nil
 }
 
 // StreamSSE 发起流式请求并返回单一 owner 管理的有序消息 channel。
@@ -88,6 +135,16 @@ func (client *Client) StreamSSE(
 	}
 	body := request.Body.Bytes()
 
+	ctx, finished, err := client.track(ctx)
+	if err != nil {
+		return nil, err
+	}
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			finished()
+		}
+	}()
 	restyRequest := client.http.R().
 		SetContext(ctx).
 		SetResponseDoNotParse(true).
@@ -121,7 +178,8 @@ func (client *Client) StreamSSE(
 		return nil, fmt.Errorf("streaming request failed with HTTP status %d", response.StatusCode())
 	}
 
-	return superviseSSE(ctx, response.RawResponse.Body, normalizeOptions(options)), nil
+	handedOff = true
+	return superviseSSE(ctx, response.RawResponse.Body, normalizeOptions(options), finished), nil
 }
 
 func parseBaseURL(rawURL string) (*url.URL, error) {

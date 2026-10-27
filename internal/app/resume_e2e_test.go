@@ -331,6 +331,12 @@ func TestBusyResumeDoesNotExposeChatResourcesOrCallProvider(t *testing.T) {
 
 func submitAppTurn(t *testing.T, resources *chatResources, text string) {
 	t.Helper()
+	if resources.session == nil {
+		t.Fatal("session missing")
+	}
+	if err := resources.session.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	events, err := resources.session.Submit(context.Background(), text)
 	if err != nil {
 		t.Fatal(err)
@@ -499,6 +505,9 @@ func TestCancelledTurnDoesNotEnterHistoryAfterResume(t *testing.T) {
 	}}
 	created, err := openChatResources(context.Background(), applicationConfig, dataRoot, "", t.TempDir())
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := created.session.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	events, err := created.session.Submit(context.Background(), "cancelled prompt")

@@ -1,10 +1,7 @@
 package tool
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
-	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -75,79 +72,16 @@ func validateWritePath(path string) error {
 
 // DecodeWriteInput 拒绝重复、缺失、未知、null 和有损 Unicode 参数。
 func DecodeWriteInput(data []byte) (WriteInput, error) {
-	if len(data) == 0 || len(data) > MaxWriteInputBytes || !utf8.Valid(data) || !losslessJSONUnicode(data) {
-		return WriteInput{}, errors.New("invalid Write input encoding or size")
+	if len(data) == 0 || len(data) > MaxWriteInputBytes {
+		return WriteInput{}, errors.New("invalid WriteInput size")
 	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	opening, err := decoder.Token()
-	if err != nil || opening != json.Delim('{') {
-		return WriteInput{}, errors.New("Write input must be an object")
+	wire := struct {
+		FilePath string `json:"file_path"`
+		Content  string `json:"content"`
+	}{}
+	if err := codec.DecodeObject(data, &wire, "file_path", "content"); err != nil {
+		return WriteInput{}, err
 	}
-	var input WriteInput
-	seen := make(map[string]bool, 2)
-	for decoder.More() {
-		token, err := decoder.Token()
-		name, ok := token.(string)
-		if err != nil || !ok || seen[name] {
-			return WriteInput{}, errors.New("invalid or duplicate Write field")
-		}
-		seen[name] = true
-		valueToken, err := decoder.Token()
-		value, ok := valueToken.(string)
-		if err != nil || !ok {
-			return WriteInput{}, errors.New("Write fields must be strings")
-		}
-		switch name {
-		case "file_path":
-			input.filePath = value
-		case "content":
-			input.content = value
-		default:
-			return WriteInput{}, errors.New("unknown Write field")
-		}
-	}
-	closing, err := decoder.Token()
-	if err != nil || closing != json.Delim('}') || requireJSONEOF(decoder) != nil || !seen["file_path"] || !seen["content"] {
-		return WriteInput{}, errors.New("incomplete Write input")
-	}
+	input := WriteInput{filePath: wire.FilePath, content: wire.Content}
 	return input, input.Validate()
-}
-
-// losslessJSONUnicode 在标准 JSON 解码前拒绝会被替换成 U+FFFD 的孤立代理项。
-func losslessJSONUnicode(data []byte) bool {
-	for i := 0; i < len(data); i++ {
-		if data[i] != '\\' {
-			continue
-		}
-		i++
-		if i >= len(data) {
-			return false
-		}
-		if data[i] != 'u' {
-			continue
-		}
-		if i+4 >= len(data) {
-			return false
-		}
-		n, err := strconv.ParseUint(string(data[i+1:i+5]), 16, 16)
-		if err != nil {
-			return false
-		}
-		i += 4
-		if n >= 0xdc00 && n <= 0xdfff {
-			return false
-		}
-		if n < 0xd800 || n > 0xdbff {
-			continue
-		}
-		if i+6 >= len(data) || data[i+1] != '\\' || data[i+2] != 'u' {
-			return false
-		}
-		low, err := strconv.ParseUint(string(data[i+3:i+7]), 16, 16)
-		if err != nil || low < 0xdc00 || low > 0xdfff {
-			return false
-		}
-		i += 6
-	}
-	return true
 }

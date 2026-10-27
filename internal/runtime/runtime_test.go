@@ -201,7 +201,7 @@ func (conversation *fakeToolConversation) PrepareToolOutputs(results []tool.Invo
 	if err != nil {
 		return nil, err
 	}
-	return provider.NewPreparedToolOutputsWithDiscard(envelope, func() {
+	return provider.NewPreparedToolOutputs(envelope, func() {
 		conversation.finalized.Add(1)
 		if conversation.onFinalize != nil {
 			conversation.onFinalize()
@@ -740,7 +740,7 @@ func TestRunTurnToolDurabilityFailuresPreventLaterSideEffects(t *testing.T) {
 		}
 		var finalized atomic.Int32
 		var discarded atomic.Int32
-		sample, err := provider.NewPreparedSampleWithDiscard(
+		sample, err := provider.NewPreparedSample(
 			envelope, testRuntimeUsage(t), func() { finalized.Add(1) }, func() { discarded.Add(1) }, ready,
 		)
 		if err != nil {
@@ -1798,7 +1798,7 @@ func newPreparedSample(t *testing.T, finalize func()) *provider.PreparedSample {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := provider.NewPreparedSample(envelope, testRuntimeUsage(t), finalize)
+	prepared, err := provider.NewPreparedSample(envelope, testRuntimeUsage(t), finalize, func() {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1813,7 +1813,7 @@ func newPreparedSampleWithReady(t *testing.T, ready ...tool.ReadyCall) *provider
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := provider.NewPreparedSample(envelope, testRuntimeUsage(t), func() {}, ready...)
+	prepared, err := provider.NewPreparedSample(envelope, testRuntimeUsage(t), func() {}, func() {}, ready...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1949,6 +1949,10 @@ func TestChatSessionInterruptAndShutdownLifecycle(t *testing.T) {
 		return stream, nil
 	}}
 	sessionFacade := NewChatSession(newTestRuntime(t, conversation, &fakeJournal{}))
+	if err := sessionFacade.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sessionFacade.Shutdown(context.Background()) })
 	events, err := sessionFacade.Submit(context.Background(), "hello")
 	if err != nil {
 		t.Fatal(err)
@@ -1983,6 +1987,10 @@ func TestChatSessionSubmitRequiresLiveContextBeforeAdmission(t *testing.T) {
 	t.Parallel()
 	conversation := &fakeConversation{stream: fixedStream()}
 	sessionFacade := NewChatSession(newTestRuntime(t, conversation, &fakeJournal{}))
+	if err := sessionFacade.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sessionFacade.Shutdown(context.Background()) })
 	var nilContext context.Context
 	if _, err := sessionFacade.Submit(nilContext, "nil"); !errors.Is(err, &fault.Error{Code: fault.CodeTurnFailed}) {
 		t.Fatalf("Submit(nil) error = %v", err)
@@ -2000,7 +2008,7 @@ func TestChatSessionSubmitRequiresLiveContextBeforeAdmission(t *testing.T) {
 	}
 }
 
-func TestChatSessionPropagatesSubmitContextAndRejectsConcurrentTurn(t *testing.T) {
+func TestChatSessionPropagatesOwnerContextAndRejectsConcurrentTurn(t *testing.T) {
 	t.Parallel()
 	providerStarted := make(chan struct{})
 	conversation := &fakeConversation{stream: func(ctx context.Context, _ provider.TurnInput) (<-chan provider.StreamEvent, error) {
@@ -2015,6 +2023,11 @@ func TestChatSessionPropagatesSubmitContextAndRejectsConcurrentTurn(t *testing.T
 	}}
 	sessionFacade := NewChatSession(newTestRuntime(t, conversation, &fakeJournal{}))
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := sessionFacade.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sessionFacade.Shutdown(context.Background()) })
 	events, err := sessionFacade.Submit(ctx, "hello")
 	if err != nil {
 		t.Fatal(err)
@@ -2065,6 +2078,10 @@ func TestChatSessionShutdownWaitsForDurableFailure(t *testing.T) {
 		return stream, nil
 	}}
 	sessionFacade := NewChatSession(newTestRuntime(t, conversation, journal))
+	if err := sessionFacade.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sessionFacade.Shutdown(context.Background()) })
 	events, err := sessionFacade.Submit(context.Background(), "hello")
 	if err != nil {
 		t.Fatal(err)
@@ -2100,6 +2117,10 @@ func TestChatSessionConcurrentInterruptAndShutdown(t *testing.T) {
 		return stream, nil
 	}}
 	sessionFacade := NewChatSession(newTestRuntime(t, conversation, &fakeJournal{}))
+	if err := sessionFacade.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sessionFacade.Shutdown(context.Background()) })
 	events, err := sessionFacade.Submit(context.Background(), "hello")
 	if err != nil {
 		t.Fatal(err)

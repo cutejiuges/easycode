@@ -171,38 +171,13 @@ func loadFileWithOpener(path string, explicit bool, opener configFileOpener) (fi
 }
 
 func decodeFile(content []byte) (fileConfig, error) {
-	decoder := json.NewDecoder(bytes.NewReader(content))
-	first, err := decoder.Token()
+	members, err := codec.ObjectMembers(content)
 	if err != nil {
 		return fileConfig{}, invalidFileError()
 	}
-	opening, ok := first.(json.Delim)
-	if !ok || opening != '{' {
-		return fileConfig{}, invalidFileError()
-	}
-
-	fieldCount := 0
-	seen := make(map[string]struct{}, 7)
 	decoded := fileConfig{}
 	var window, reservedOutput, safetyMargin optionalUint64
-	for decoder.More() {
-		keyToken, tokenErr := decoder.Token()
-		if tokenErr != nil {
-			return fileConfig{}, invalidFileError()
-		}
-		key, ok := keyToken.(string)
-		if !ok {
-			return fileConfig{}, invalidFileError()
-		}
-		if _, exists := seen[key]; exists {
-			return fileConfig{}, fault.New(fault.CodeInvalidConfiguration, "configuration file contains a duplicate field")
-		}
-		seen[key] = struct{}{}
-
-		var rawValue json.RawMessage
-		if err := decoder.Decode(&rawValue); err != nil {
-			return fileConfig{}, invalidFileError()
-		}
+	for key, rawValue := range members {
 		switch key {
 		case "provider":
 			decoded.provider, err = decodeStringField(rawValue)
@@ -224,18 +199,11 @@ func decodeFile(content []byte) (fileConfig, error) {
 		if err != nil {
 			return fileConfig{}, err
 		}
-		fieldCount++
 	}
-	closing, err := decoder.Token()
-	if err != nil || closing != json.Delim('}') {
-		return fileConfig{}, invalidFileError()
-	}
-	if fieldCount == 0 {
+	if len(members) == 0 {
 		return fileConfig{}, fault.New(fault.CodeInvalidConfiguration, "configuration file must not be empty")
 	}
-	if token, err := decoder.Token(); err != io.EOF || token != nil {
-		return fileConfig{}, invalidFileError()
-	}
+
 	budget, err := decodeContextBudget(window, reservedOutput, safetyMargin)
 	if err != nil {
 		return fileConfig{}, err

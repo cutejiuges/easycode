@@ -1,5 +1,7 @@
 # EasyCode 产品与工程 Roadmap
 
+当前契约治理变更 `unify-current-contract-lifecycle` 收敛了固定 codec、prepared commit、宿主 owner 与副作用 admission。TUI、一次性 headless、stream-json 共用 AgentLoop；关闭期间排空事件，活动 transport 可显式取消，journal lease 保留至清理完成。Patch/Write grant 仅在批准 Sync 后生效，三种副作用工具统一验证结果关联并以 uncertain 收口错配结果。本次未引入迁移或兼容 reader，后续 P4/P6/P7/P8 能力及占位退出条件保持原有范围。
+
 > 状态：持续演进（P2 进行中）
 > 更新时间：2026-10-24
 > 依赖设计：[`../architecture/overall-architecture.md`](../architecture/overall-architecture.md)
@@ -156,7 +158,7 @@ make verify
 
 #### Anthropic Messages
 
-- Messages request、system、tools 占位和 headers。
+- Messages request、system、当前 tools schema 和 headers。
 - content block start/delta/stop 状态机。
 - text、thinking、signature、redacted thinking。
 - message delta、stop reason、usage、stream idle timeout。
@@ -214,7 +216,7 @@ make verify
 
 可重建 SQLite Catalog v1 已交付：前台 reconciliation 通过 descriptor-relative journal 枚举、逐条 exclusive lease、Loader/ReplayPlanner/Projector 和短 SQLite transaction 重建最小 thread metadata；缺失、损坏或不兼容的 `state.sqlite` 可从 JSONL 原子重建。`--continue` 只选择当前 cwd、Provider family/wire 与 model 完全匹配的最近 root Session，随后仍由既有 resume 路径重新取得 lease并验证事实源。Catalog 不保存 prompt、response、native payload、API key、base URL 或 Authorization。
 
-确定性上下文规划基线已交付：Runtime 在 durable `turn_started` 与 Provider stream 之间构造 `provider_profile -> tool_catalog -> [project_instructions] -> committed_history -> current_input`，输出不可变来源、CachePlan、stable-prefix fingerprint、本地 `byte_heuristic_v1` 估算和预算判定。五项工具的稳定 schema 纳入估算与 fingerprint，具体 command、workdir、approval 和宿主环境不进入稳定前缀。应用在资源打开前从当前启动目录安全发现一次层级 `AGENTS.md`/`CLAUDE.md`，形成默认 32 KiB、硬上限 4 MiB、只含项目根相对来源的不可变快照；活动进程不热更新，resume/continue 在新进程当前目录重新发现。双 Provider 每轮把非空快照作为单一临时 user context 置于 native history 前，但不提交到 native history、Session、RuntimeEvent 或语义投影。双 Provider 从 committed native history 提供只含 family/revision/method/state/tokens 的 footprint，opaque reasoning 不进入共享视图；语义估算与 native footprint 取覆盖值而不是相加。用户可显式配置 context window、输出预留和安全余量；未配置或估算 unknown 时不硬拒绝，明确超限以 `context_limit_exceeded` 在网络前 durable 失败。
+确定性上下文规划基线已交付：Runtime 在 durable `turn_started` 与 Provider stream 之间构造 `provider_profile -> tool_catalog -> [project_instructions] -> committed_history -> current_input`，输出不可变来源、CachePlan、stable-prefix fingerprint、本地 `byte_heuristic_v1` 估算和预算判定。六项工具的稳定 schema 纳入估算与 fingerprint，具体 command、workdir、approval 和宿主环境不进入稳定前缀。应用在资源打开前从当前启动目录安全发现一次层级 `AGENTS.md`/`CLAUDE.md`，形成默认 32 KiB、硬上限 4 MiB、只含项目根相对来源的不可变快照；活动进程不热更新，resume/continue 在新进程当前目录重新发现。双 Provider 每轮把非空快照作为单一临时 user context 置于 native history 前，但不提交到 native history、Session、RuntimeEvent 或语义投影。双 Provider 从 committed native history 提供只含 family/revision/method/state/tokens 的 footprint，opaque reasoning 不进入共享视图；语义估算与 native footprint 取覆盖值而不是相加。用户可显式配置 context window、输出预留和安全余量；未配置或估算 unknown 时不硬拒绝，明确超限以 `context_limit_exceeded` 在网络前 durable 失败。
 
 2026-10-23 已交付独立 `sessions list [--all] [--limit N]`：默认当前规范化目录 20 条，最大 200 条，按 durable 更新时间及 thread ID 双降序；所有 Provider/model 可发现，完整 ID 可交给既有 `--resume`。入口无需模型配置、不访问网络、不读取 stdin、不进入聊天资源链。Catalog schema 和 Session vocabulary 不变，协调仍全量扫描并允许 lease 下尾修复，busy/invalid 以全局警告报告。固定文本 golden、双 Provider 列表后恢复、索引重建、跨进程占用和取消/输出失败验证覆盖该入口；此交付不包含 picker、标题搜索或 worktree 聚合。
 
@@ -246,7 +248,7 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 - 已实现 `--resume <thread-id>`、`--continue`、单 turn `--print`/JSONL v1 `--json`，以及独立 `stream-json` 双向控制模式的同进程多 turn。
 - 已实现当前文本 Chat 的用户中断、依赖有序 shutdown 和中断 turn 补偿；后台任务的完整 shutdown 随对应能力补充。
 - 提供 transcript/debug log 分离。
-- 已将 Tool/extension/Subagent/telemetry 与未来 ItemID/CallID 明确标记为 P3/P6/P7/P8 临时 TODO allowlist；RuntimeCommand 已由 AgentLoop 的真实消费者、validator 与测试启用。除列表外禁止新增占位，且其余占位包当前不得接入 Runtime/app。
+- Tool 六项能力与 RuntimeCommand 已具备真实消费者、validator 与测试。extension/Subagent/telemetry 及未来 ItemID/CallID 仍按 AGENTS.md 的精确临时 TODO allowlist 管理，保留后续阶段和退出条件；除列表外禁止新增占位，其余占位包不得接入 Runtime/app。
 
 ### 6.4 交付物
 

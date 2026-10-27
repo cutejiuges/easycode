@@ -2,7 +2,7 @@ package tool
 
 import (
 	"bytes"
-	"encoding/json"
+	"easycode/internal/codec"
 	"errors"
 	"fmt"
 	"strings"
@@ -43,65 +43,19 @@ func NewExecInput(command, workdir string, timeoutMillis int) (ExecInput, error)
 
 // DecodeExecInput 严格解码命令 JSON 对象并应用默认超时。
 func DecodeExecInput(data []byte) (ExecInput, error) {
-	if len(data) == 0 || len(data) > maxExecInputBytes || !utf8.Valid(data) {
-		return ExecInput{}, errors.New("invalid Exec input")
+	if len(data) == 0 || len(data) > maxExecInputBytes {
+		return ExecInput{}, errors.New("invalid ExecInput size")
 	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	opening, err := decoder.Token()
-	if err != nil || opening != json.Delim('{') {
-		return ExecInput{}, errors.New("Exec input must be an object")
-	}
-	input := ExecInput{timeoutMillis: DefaultExecTimeoutMillis}
-	seen := make(map[string]struct{}, 3)
-	for decoder.More() {
-		token, tokenErr := decoder.Token()
-		if tokenErr != nil {
-			return ExecInput{}, errors.New("invalid Exec input")
-		}
-		name, ok := token.(string)
-		if !ok {
-			return ExecInput{}, errors.New("invalid Exec input field")
-		}
-		if _, duplicate := seen[name]; duplicate {
-			return ExecInput{}, fmt.Errorf("duplicate Exec input field %q", name)
-		}
-		seen[name] = struct{}{}
-		var raw json.RawMessage
-		if err := decoder.Decode(&raw); err != nil || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-			return ExecInput{}, errors.New("invalid Exec input value")
-		}
-		switch name {
-		case "command":
-			if err := json.Unmarshal(raw, &input.command); err != nil {
-				return ExecInput{}, errors.New("invalid Exec command")
-			}
-		case "workdir":
-			if err := json.Unmarshal(raw, &input.workdir); err != nil {
-				return ExecInput{}, errors.New("invalid Exec workdir")
-			}
-		case "timeout_ms":
-			if err := json.Unmarshal(raw, &input.timeoutMillis); err != nil {
-				return ExecInput{}, errors.New("invalid Exec timeout_ms")
-			}
-		default:
-			return ExecInput{}, fmt.Errorf("unknown Exec input field %q", name)
-		}
-	}
-	closing, err := decoder.Token()
-	if err != nil || closing != json.Delim('}') {
-		return ExecInput{}, errors.New("invalid Exec input")
-	}
-	if err := requireJSONEOF(decoder); err != nil {
+	wire := struct {
+		Command       string `json:"command"`
+		Workdir       string `json:"workdir"`
+		TimeoutMillis int    `json:"timeout_ms"`
+	}{TimeoutMillis: DefaultExecTimeoutMillis}
+	if err := codec.DecodeObject(data, &wire, "command"); err != nil {
 		return ExecInput{}, err
 	}
-	if _, ok := seen["command"]; !ok {
-		return ExecInput{}, errors.New("Exec command is required")
-	}
-	if err := input.Validate(); err != nil {
-		return ExecInput{}, err
-	}
-	return input, nil
+	input := ExecInput{command: wire.Command, workdir: wire.Workdir, timeoutMillis: wire.TimeoutMillis}
+	return input, input.Validate()
 }
 
 // Command 返回完整命令文本。

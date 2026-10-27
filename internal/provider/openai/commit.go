@@ -1,10 +1,7 @@
 package openai
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
 
 	"easycode/internal/codec"
 	"easycode/internal/domain"
@@ -71,15 +68,9 @@ func decodeNativeCommit(envelope provider.NativeCommitEnvelope) (nativeHistoryEn
 	if len(payload) == 0 || len(payload) > provider.MaxNativeCommitBytes {
 		return nativeHistoryEntry{}, fmt.Errorf("OpenAI native commit size is invalid")
 	}
-	decoder := json.NewDecoder(bytes.NewReader(payload))
-	decoder.DisallowUnknownFields()
 	var commit nativeHistoryCommit
-	if err := decoder.Decode(&commit); err != nil {
-		return nativeHistoryEntry{}, fmt.Errorf("decode OpenAI native commit: %w", err)
-	}
-	var trailing json.RawMessage
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return nativeHistoryEntry{}, fmt.Errorf("OpenAI native commit contains trailing JSON")
+	if err := codec.UnmarshalRecord(payload, &commit); err != nil {
+		return nativeHistoryEntry{}, fmt.Errorf("decode native commit: %w", err)
 	}
 	entry := nativeHistoryEntry{
 		Kind: commit.Kind, Outputs: cloneNativeItems(commit.Outputs),
@@ -135,7 +126,7 @@ func validateNativeHistoryEntry(entry nativeHistoryEntry) error {
 			return fmt.Errorf("OpenAI tool outputs entry fields are invalid")
 		}
 		for _, item := range entry.ToolOutputs {
-			if (item.Type != "function_call_output" && item.Type != "custom_tool_call_output") || item.CallID == "" || !json.Valid([]byte(item.Output)) {
+			if (item.Type != "function_call_output" && item.Type != "custom_tool_call_output") || item.CallID == "" || !codec.Valid([]byte(item.Output)) {
 				return fmt.Errorf("OpenAI tool call output item is invalid")
 			}
 		}
@@ -161,7 +152,7 @@ func validateOutputItem(item NativeItem) error {
 	if item.Type == "" {
 		return fmt.Errorf("OpenAI native commit output item type is required")
 	}
-	if len(item.Raw) > 0 && !json.Valid(item.Raw) {
+	if len(item.Raw) > 0 && !codec.Valid(item.Raw) {
 		return fmt.Errorf("OpenAI native commit output item raw JSON is invalid")
 	}
 	if item.Type == "message" && item.Role != "assistant" {
@@ -173,7 +164,7 @@ func validateOutputItem(item NativeItem) error {
 				return fmt.Errorf("invalid native Write input")
 			}
 		}
-		if item.CallID == "" || item.Name == "" || item.Arguments == "" || !json.Valid([]byte(item.Arguments)) {
+		if item.CallID == "" || item.Name == "" || item.Arguments == "" || !codec.Valid([]byte(item.Arguments)) {
 			return fmt.Errorf("OpenAI function call item is invalid")
 		}
 	}

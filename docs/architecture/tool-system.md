@@ -1,5 +1,15 @@
 # EasyCode Tool 系统架构设计
 
+## 当前独占执行不变量
+
+六项工具的 JSON 输入统一经过 codec 检查。Read/Glob/Grep 的缺省字段保留默认值，显式 null、重复键与有损 Unicode 失败关闭；Patch 的 custom freeform 保留独立语法解析器。
+
+`runtime/exclusive.go` 持有 typed strategy，统一 Patch/Write/Exec 的 started admission、执行一次、关联验证与结果持久化。started 接收前取消不调用 executor；接收后等待确定提交结果，只有成功 Sync 后才执行。健康取消不 poison，无法确认 durable 结果才 poison。
+
+Patch/Write grant 仅满足各自 capability 的 ask，不覆盖 deny，且只在 allow_session fact 成功 Sync 后安装。Exec 保持每次单次 ask，不接收 grant。批准来源反映 policy、interactive、headless、session grant 或 interruption。
+
+执行结果必须匹配 invocation ID、Provider call ID、capability、wire kind 与候选 metadata。错配或非法结果保存为原调用的 outcome_uncertain/invalid_tool_result，停止后续副作用并按模型顺序取消剩余调用；健康 journal 仍完成 native output pairing 与唯一失败 terminal，不重试执行。
+
 > 状态：P3 增量实现中；Read、Glob、Grep、需批准的单文件 Patch/Write 与 Darwin 前台 Exec 已实现
 > 更新时间：2026-10-24
 > 适用范围：Tool Catalog、Provider Tool Wire、Agent Tool Loop、权限与 sandbox、执行调度、结果预算、Session 恢复和宿主展示

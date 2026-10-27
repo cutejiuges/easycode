@@ -84,7 +84,7 @@ func TestWriteRecoveryPairsEveryTailWithoutReplayingFilesOrGrants(t *testing.T) 
 			if !completed {
 				t.Fatal("seed turn incomplete")
 			}
-			if err := control.stop(context.Background()); err != nil {
+			if err := control.Shutdown(context.Background()); err != nil {
 				t.Fatal(err)
 			}
 			thread := resources.identity.ThreadID

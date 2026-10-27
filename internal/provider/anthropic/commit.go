@@ -1,10 +1,8 @@
 package anthropic
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"unicode/utf8"
 
 	"easycode/internal/codec"
@@ -84,15 +82,9 @@ func decodeNativeCommit(envelope provider.NativeCommitEnvelope) (nativeHistoryEn
 	if len(payload) == 0 || len(payload) > provider.MaxNativeCommitBytes {
 		return nativeHistoryEntry{}, fmt.Errorf("anthropic native commit size is invalid")
 	}
-	decoder := json.NewDecoder(bytes.NewReader(payload))
-	decoder.DisallowUnknownFields()
 	var commit nativeHistoryCommit
-	if err := decoder.Decode(&commit); err != nil {
-		return nativeHistoryEntry{}, fmt.Errorf("decode Anthropic native commit: %w", err)
-	}
-	var trailing json.RawMessage
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return nativeHistoryEntry{}, fmt.Errorf("anthropic native commit contains trailing JSON")
+	if err := codec.UnmarshalRecord(payload, &commit); err != nil {
+		return nativeHistoryEntry{}, fmt.Errorf("decode native commit: %w", err)
 	}
 	entry := nativeHistoryEntry{Kind: commit.Kind}
 	if commit.Input != nil {
@@ -199,7 +191,7 @@ func validateUserTextMessage(message nativeMessage) error {
 }
 
 func validateAssistantBlock(block NativeItem) error {
-	if len(block.Raw) > 0 && !json.Valid(block.Raw) {
+	if len(block.Raw) > 0 && !codec.Valid(block.Raw) {
 		return fmt.Errorf("anthropic native commit content block raw JSON is invalid")
 	}
 	switch block.Type {
@@ -211,11 +203,11 @@ func validateAssistantBlock(block NativeItem) error {
 				return fmt.Errorf("invalid native Write input")
 			}
 		}
-		if block.ID == "" || block.Name == "" || len(block.Input) == 0 || !json.Valid(block.Input) {
+		if block.ID == "" || block.Name == "" || len(block.Input) == 0 || !codec.Valid(block.Input) {
 			return fmt.Errorf("anthropic tool use block is invalid")
 		}
 		var object map[string]json.RawMessage
-		if err := json.Unmarshal(block.Input, &object); err != nil || object == nil {
+		if err := codec.Unmarshal(block.Input, &object); err != nil || object == nil {
 			return fmt.Errorf("anthropic tool use input must be an object")
 		}
 		return nil
