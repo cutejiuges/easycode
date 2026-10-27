@@ -36,7 +36,7 @@
 
 ## 验证范围
 
-2026-10-27 最终代码的 `make verify` 退出码为 0，完整普通测试与 race 均通过；四份增量规范已逐段同步主 specs，29 份主 specs 严格校验全部通过，本 change 严格校验通过。归档准备完成，变更保持活动状态供审阅，尚未执行独立归档。
+2026-10-27 最终代码的 `make verify` 退出码为 0，完整普通测试与 race 均通过；四份增量规范已逐段同步主 specs，29 份主 specs 严格校验全部通过，本 change 严格校验通过。归档核对完成，全部 25 项任务已完成；四份增量规范的 8 条需求与主 specs 一致。经用户确认，本变更于 2026-10-27 归档。
 
 质量门：`make verify`，包括格式、Go vet、Staticcheck、架构检查、全量测试和 race。规范检查：`openspec validate unify-current-contract-lifecycle --strict` 与 `openspec validate --specs --strict`。
 
