@@ -1,5 +1,14 @@
 # EasyCode 踩坑与经验记录
 
+### [P3][2026-10-27] 当前契约与宿主清理边界不一致
+
+- 状态：已解决。
+- 影响范围：上线前 codec、prepared commit、TUI/一次性 headless 与 Patch 执行链。
+- 根因：默认 Sonic codec 可被全局替换；分散 decoder 接受部分 null/重复字段；TUI 满 buffer 阻塞分发，资源关闭等待另一个空闲 facade；Patch 在批准 Sync 前安装 grant，started 绕过取消且非法结果被降级为普通 error。
+- 修复：固定 codec 配置并集中严格检查，删除 prepared 简化入口；宿主统一 AgentLoop，detach 后排空并 join，transport 取消活动流；独占工具共用 durable admission 和 uncertain 收口。
+- 架构与缓存影响：未新增兼容 reader 或持久化 shape，合法 canonical bytes、checksum 与 fingerprint 不变，真实 canary 和 native revision 分别保留。
+- 回归：`internal/codec/global_isolation_test.go`、`internal/codec/validation_test.go`、`internal/provider/prepared_lifecycle_test.go`、`internal/runtime/session_owner_test.go`、`internal/runtime/current_contract_test.go`、`internal/provider/transport/close_test.go`、`internal/app/host_lease_test.go`、`internal/architecture/current_contract_test.go`。
+
 > 本文记录实际开发中已经发生的问题、根因和防回归措施。  
 > Roadmap 中的“已知踩坑与规避”是预防清单；本文是事实日志。
 

@@ -274,7 +274,7 @@ func TestPatchAllowSessionGrantStaysRuntimeLocal(t *testing.T) {
 		t.Fatalf("executor calls=%d second events=%#v", executor.calls, secondEvents)
 	}
 	other := &Runtime{}
-	if other.patchGrant.Load() {
+	if other.approvals.patchGrant.Load() {
 		t.Fatal("Patch grant leaked to another Runtime")
 	}
 }

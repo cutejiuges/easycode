@@ -45,7 +45,7 @@ func TestHistoryFootprintAdvancesOnlyAfterPreparedFinalize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := provider.NewPreparedSample(envelope, footprintUsage(t), func() { conversation.history.commit(entry) })
+	prepared, err := provider.NewPreparedSample(envelope, footprintUsage(t), func() { conversation.history.commit(entry) }, func() {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,4 +116,39 @@ func footprintUsage(t *testing.T) domain.SampleUsage {
 		t.Fatal(err)
 	}
 	return usage
+}
+
+func TestDiscardedPreparedSamplePreservesNextRequest(t *testing.T) {
+	conversation := &Conversation{}
+	before, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, conversation.history.snapshot(), nil, nativeMessagePointer(newUserMessage("next")), testAnthropicToolView(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := validFootprintEntry()
+	envelope, err := encodeNativeCommit(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finalized, discarded := 0, 0
+	prepared, err := provider.NewPreparedSample(envelope, footprintUsage(t), func() { finalized++; conversation.history.commit(entry) }, func() { discarded++ })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := prepared.Discard(); err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Finalize() == nil || prepared.Discard() == nil || finalized != 0 || discarded != 1 {
+		t.Fatal("discard did not release exactly once")
+	}
+	footprint, err := conversation.HistoryFootprint()
+	if err != nil || footprint.Revision() != 0 {
+		t.Fatal("discard changed history revision")
+	}
+	after, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, conversation.history.snapshot(), nil, nativeMessagePointer(newUserMessage("next")), testAnthropicToolView(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before.Bytes(), after.Bytes()) {
+		t.Fatal("failed durable sample polluted next request")
+	}
 }

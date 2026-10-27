@@ -90,7 +90,7 @@ func TestExecFailurePathsEndToEndForBothProviders(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer control.stop(context.Background())
+				defer control.Shutdown(context.Background())
 				events, err := control.Submit(context.Background(), "run local check")
 				if err != nil {
 					t.Fatal(err)
@@ -133,7 +133,7 @@ func TestExecFailurePathsEndToEndForBothProviders(t *testing.T) {
 						turns++
 					}
 				}
-				if err := control.stop(context.Background()); err != nil {
+				if err := control.Shutdown(context.Background()); err != nil {
 					t.Fatal(err)
 				}
 				if err := resources.close(context.Background()); err != nil {

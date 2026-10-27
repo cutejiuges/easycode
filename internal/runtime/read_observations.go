@@ -99,6 +99,6 @@ func (runtime *Runtime) clearTurnObservations() {
 // clearFileState 在会话 owner 完全停止后清空瞬态证据和能力授权。
 func (runtime *Runtime) clearFileState() {
 	runtime.readObservations.clear()
-	runtime.writeGrant.Store(false)
-	runtime.patchGrant.Store(false)
+	runtime.approvals.writeGrant.Store(false)
+	runtime.approvals.patchGrant.Store(false)
 }

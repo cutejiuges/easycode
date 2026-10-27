@@ -99,7 +99,7 @@ func validateCommandTerminal(payload CommandTerminalPayload) error {
 // DecodeCommandTerminal 严格读取唯一当前终态契约，不接受缺失的冻结结果。
 func DecodeCommandTerminal(event Event) (CommandTerminalPayload, error) {
 	var payload CommandTerminalPayload
-	if event.Kind != EventCommandTerminal || codec.UnmarshalStrict(event.Payload, &payload) != nil {
+	if event.Kind != EventCommandTerminal || codec.UnmarshalRecord(event.Payload, &payload) != nil {
 		return CommandTerminalPayload{}, fmt.Errorf("invalid command terminal payload")
 	}
 	if err := validateCommandTerminal(payload); err != nil {
@@ -124,7 +124,7 @@ func DecodeCommandActivity(event Event) (CommandActivityPayload, error) {
 		return CommandActivityPayload{}, fmt.Errorf("not a command activity event")
 	}
 	var payload CommandActivityPayload
-	if err := codec.UnmarshalStrict(event.Payload, &payload); err != nil {
+	if err := codec.UnmarshalRecord(event.Payload, &payload); err != nil {
 		return CommandActivityPayload{}, fmt.Errorf("invalid command activity payload")
 	}
 	if err := validateCommandActivity(payload, event.Kind); err != nil {

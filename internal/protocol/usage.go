@@ -12,7 +12,7 @@ type UsageMetricPayload struct {
 	Value *uint64                 `json:"value,omitempty"`
 }
 
-// UsagePayload 是 turn_completed v1 对外发布的 turn usage。
+// UsagePayload 是当前 turn_completed 事件发布的 turn usage。
 type UsagePayload struct {
 	InputUncached   UsageMetricPayload `json:"input_uncached"`
 	CacheRead       UsageMetricPayload `json:"cache_read"`

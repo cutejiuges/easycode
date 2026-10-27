@@ -264,7 +264,7 @@ func TestInteractivePatchAllowOnceForBothProviders(t *testing.T) {
 				}
 				approved = true
 			}
-			if err := controlSession.stop(context.Background()); err != nil {
+			if err := controlSession.Shutdown(context.Background()); err != nil {
 				t.Fatal(err)
 			}
 			if err := resources.close(context.Background()); err != nil {
@@ -346,7 +346,7 @@ func TestInteractivePatchDenyFeedbackAndConflictForBothProviders(t *testing.T) {
 						t.Fatal(resolveErr)
 					}
 				}
-				if err := controlSession.stop(context.Background()); err != nil {
+				if err := controlSession.Shutdown(context.Background()); err != nil {
 					t.Fatal(err)
 				}
 				if err := resources.close(context.Background()); err != nil {

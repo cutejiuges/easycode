@@ -6,13 +6,13 @@ import (
 	"easycode/internal/domain"
 )
 
-// UsageMetricPayload 是 Session v1 中显式区分状态和值的指标 DTO。
+// UsageMetricPayload 是当前 Session 中显式区分状态和值的指标 DTO。
 type UsageMetricPayload struct {
 	State domain.UsageMetricState `json:"state"`
 	Value *uint64                 `json:"value,omitempty"`
 }
 
-// SampleUsagePayload 是 sample_usage v1 的强类型 payload。
+// SampleUsagePayload 是当前 sample_usage 的强类型 payload。
 type SampleUsagePayload struct {
 	InputUncached   UsageMetricPayload `json:"input_uncached"`
 	CacheRead       UsageMetricPayload `json:"cache_read"`

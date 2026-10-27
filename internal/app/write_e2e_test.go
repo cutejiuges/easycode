@@ -118,7 +118,7 @@ func TestWriteEndToEndCreateReadOverwriteAndVerify(t *testing.T) {
 					t.Errorf("Write 回合失败 %s", p.Message)
 				}
 			}
-			if err := control.stop(context.Background()); err != nil {
+			if err := control.Shutdown(context.Background()); err != nil {
 				t.Fatal(err)
 			}
 			if err := resources.close(context.Background()); err != nil {
@@ -233,7 +233,7 @@ func TestWriteEndToEndPreparationDenialAndConflict(t *testing.T) {
 						}
 					}
 				}
-				if err := control.stop(context.Background()); err != nil {
+				if err := control.Shutdown(context.Background()); err != nil {
 					t.Fatal(err)
 				}
 				if err := resources.close(context.Background()); err != nil {

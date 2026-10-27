@@ -25,13 +25,17 @@ func (p *fixedWritePreparer) Prepare(_ context.Context, _ tool.WriteInvocation, 
 }
 
 type fixedWriteExecutor struct {
-	calls     int
-	onExecute func(context.Context)
-	status    tool.ResultStatus
+	calls          int
+	onExecute      func(context.Context)
+	status         tool.ResultStatus
+	resultOverride func(tool.WriteCandidate) tool.InvocationResult
 }
 
 func (e *fixedWriteExecutor) Execute(ctx context.Context, c tool.WriteCandidate) tool.InvocationResult {
 	e.calls++
+	if e.resultOverride != nil {
+		return e.resultOverride(c)
+	}
 	if ctx.Err() != nil {
 		return tool.NewWriteCandidateResult(c, tool.ResultCancelled, "cancelled")
 	}
@@ -108,7 +112,7 @@ func TestWriteGrantAndExecutionRespectEveryDurableBoundary(t *testing.T) {
 			executor := &fixedWriteExecutor{}
 			runtime := writeTestRuntime(t, journal, c, executor)
 			journal.hook = func(batch []session.RecordDraft) {
-				if batch[0].EventKind() == session.EventToolApprovalDecided && runtime.writeGrant.Load() {
+				if batch[0].EventKind() == session.EventToolApprovalDecided && runtime.approvals.writeGrant.Load() {
 					t.Error("allow Sync 返回前安装 grant")
 				}
 			}
@@ -117,7 +121,7 @@ func TestWriteGrantAndExecutionRespectEveryDurableBoundary(t *testing.T) {
 				if len(batches) < 2 || batches[0][0].EventKind() != session.EventToolApprovalDecided || batches[1][0].EventKind() != session.EventToolExecutionStarted {
 					t.Error("执行早于批准和 started")
 				}
-				if !runtime.writeGrant.Load() || runtime.patchGrant.Load() {
+				if !runtime.approvals.writeGrant.Load() || runtime.approvals.patchGrant.Load() {
 					t.Error("Write grant 缺失或扩大到 Patch")
 				}
 			}
@@ -132,7 +136,7 @@ func TestWriteGrantAndExecutionRespectEveryDurableBoundary(t *testing.T) {
 			if executor.calls != wantCalls {
 				t.Fatal("执行次数错误", executor.calls)
 			}
-			if failAt == 1 && runtime.writeGrant.Load() {
+			if failAt == 1 && runtime.approvals.writeGrant.Load() {
 				t.Fatal("失败的 allow 安装了 grant")
 			}
 			if failAt == 0 && (len(results) != 1 || results[0].Status() != tool.ResultSuccess) {
@@ -146,7 +150,7 @@ func TestWriteGrantIsIndependentAndHeadlessFailsClosed(t *testing.T) {
 	invocation, c := runtimeWriteInvocation(t)
 	executor := &fixedWriteExecutor{}
 	runtime := writeTestRuntime(t, &fakeJournal{}, c, executor)
-	runtime.patchGrant.Store(true)
+	runtime.approvals.patchGrant.Store(true)
 	runtime.interactiveApprovals = false
 	results, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, []tool.Invocation{invocation})
 	if err != nil || results[0].Code() != "approval_required" || executor.calls != 0 {
@@ -267,7 +271,7 @@ func TestWriteRecoveryNeverCallsPreparerOrExecutor(t *testing.T) {
 				if err := runtime.ReconcileToolTurn(context.Background(), plan); err != nil {
 					t.Fatal(err)
 				}
-				if executor.calls != 0 || runtime.writePreparer.(*fixedWritePreparer).calls != 0 || runtime.writeGrant.Load() || len(runtime.readObservations.current) != 0 {
+				if executor.calls != 0 || runtime.writePreparer.(*fixedWritePreparer).calls != 0 || runtime.approvals.writeGrant.Load() || len(runtime.readObservations.current) != 0 {
 					t.Fatal("恢复访问工作区或恢复授权")
 				}
 				result := runtime.conversation.(*fakeToolConversation).results[0]

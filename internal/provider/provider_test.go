@@ -124,7 +124,7 @@ func TestPreparedSampleFinalizesExactlyOnceConcurrently(t *testing.T) {
 		t.Fatal(err)
 	}
 	var calls atomic.Int32
-	sample, err := NewPreparedSample(envelope, testSampleUsage(t), func() { calls.Add(1) })
+	sample, err := NewPreparedSample(envelope, testSampleUsage(t), func() { calls.Add(1) }, func() {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,13 +170,13 @@ func TestPreparedSampleRejectsInvalidConstructionAndZeroValue(t *testing.T) {
 		t.Fatal(err)
 	}
 	usage := testSampleUsage(t)
-	if _, err := NewPreparedSample(NativeCommitEnvelope{}, usage, func() {}); err == nil {
+	if _, err := NewPreparedSample(NativeCommitEnvelope{}, usage, func() {}, func() {}); err == nil {
 		t.Fatal("zero-value envelope unexpectedly prepared")
 	}
-	if _, err := NewPreparedSample(envelope, domain.SampleUsage{}, func() {}); err == nil {
+	if _, err := NewPreparedSample(envelope, domain.SampleUsage{}, func() {}, func() {}); err == nil {
 		t.Fatal("zero-value usage unexpectedly prepared")
 	}
-	if _, err := NewPreparedSample(envelope, usage, nil); err == nil {
+	if _, err := NewPreparedSample(envelope, usage, nil, func() {}); err == nil {
 		t.Fatal("nil finalizer unexpectedly accepted")
 	}
 	var zero PreparedSample
@@ -210,7 +210,7 @@ func TestPreparedSampleOwnsValidatedOrderedReadyCalls(t *testing.T) {
 	first := providerReadyCall(t, "call-1", "a.go")
 	second := providerReadyCall(t, "call-2", "b.go")
 	calls := []tool.ReadyCall{first, second}
-	sample, err := NewPreparedSample(envelope, testSampleUsage(t), func() {}, calls...)
+	sample, err := NewPreparedSample(envelope, testSampleUsage(t), func() {}, func() {}, calls...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,10 +227,10 @@ func TestPreparedSampleOwnsValidatedOrderedReadyCalls(t *testing.T) {
 	if again[0].ProviderCallID() != "call-1" {
 		t.Fatal("ReadyCalls getter 与 sample 共享可变 slice")
 	}
-	if _, err := NewPreparedSample(envelope, testSampleUsage(t), func() {}, tool.ReadyCall{}); err == nil {
+	if _, err := NewPreparedSample(envelope, testSampleUsage(t), func() {}, func() {}, tool.ReadyCall{}); err == nil {
 		t.Fatal("非法 ready call 被接受")
 	}
-	if _, err := NewPreparedSample(envelope, testSampleUsage(t), func() {}, first, first); err == nil {
+	if _, err := NewPreparedSample(envelope, testSampleUsage(t), func() {}, func() {}, first, first); err == nil {
 		t.Fatal("重复 Provider call ID 被接受")
 	}
 }
@@ -242,7 +242,7 @@ func TestPreparedToolOutputsFinalizesExactlyOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	var calls atomic.Int32
-	commit, err := NewPreparedToolOutputs(envelope, func() { calls.Add(1) })
+	commit, err := NewPreparedToolOutputs(envelope, func() { calls.Add(1) }, func() {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,10 +259,10 @@ func TestPreparedToolOutputsFinalizesExactlyOnce(t *testing.T) {
 	if _, err := commit.Envelope(); err == nil {
 		t.Fatal("已 finalize tool outputs 仍返回 envelope")
 	}
-	if _, err := NewPreparedToolOutputs(NativeCommitEnvelope{}, func() {}); err == nil {
+	if _, err := NewPreparedToolOutputs(NativeCommitEnvelope{}, func() {}, func() {}); err == nil {
 		t.Fatal("零值 envelope 被接受")
 	}
-	if _, err := NewPreparedToolOutputs(envelope, nil); err == nil {
+	if _, err := NewPreparedToolOutputs(envelope, nil, func() {}); err == nil {
 		t.Fatal("nil finalizer 被接受")
 	}
 	var zero PreparedToolOutputs
@@ -436,7 +436,7 @@ func newProviderTestSample(t *testing.T, finalize func()) *PreparedSample {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sample, err := NewPreparedSample(envelope, testSampleUsage(t), finalize)
+	sample, err := NewPreparedSample(envelope, testSampleUsage(t), finalize, func() {})
 	if err != nil {
 		t.Fatal(err)
 	}

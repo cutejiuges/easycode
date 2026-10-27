@@ -297,43 +297,6 @@ func TestSearchToolLedgerPayloadsRoundTripAndRejectCapabilityMismatch(t *testing
 	}
 }
 
-func decodeKnownRecord(record Record) error {
-	switch record.EventKind {
-	case EventSessionMeta:
-		_, err := DecodeSessionMetaPayload(record)
-		return err
-	case EventThreadMeta:
-		_, err := DecodeThreadMetaPayload(record)
-		return err
-	case EventTurnStarted:
-		_, err := DecodeTurnStartedPayload(record)
-		return err
-	case EventProviderNativeCommit:
-		_, err := DecodeNativeCommitPayload(record)
-		return err
-	case EventSampleUsage:
-		_, err := DecodeSampleUsagePayload(record)
-		return err
-	case EventToolCallReady:
-		_, err := DecodeToolCallReadyPayload(record)
-		return err
-	case EventToolExecutionStarted:
-		_, err := DecodeToolExecutionStartedPayload(record)
-		return err
-	case EventToolCallResult:
-		_, err := DecodeToolCallResultPayload(record)
-		return err
-	case EventTurnCompleted:
-		_, err := DecodeTurnCompletedPayload(record)
-		return err
-	case EventTurnFailed:
-		_, err := DecodeTurnFailedPayload(record)
-		return err
-	default:
-		return nil
-	}
-}
-
 func testReadInvocation(t testing.TB) tool.Invocation {
 	t.Helper()
 	invocationID, err := tool.ParseInvocationID("01890f3e-7bcd-7abc-8abc-0123456789ab")

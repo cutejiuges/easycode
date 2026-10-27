@@ -125,7 +125,7 @@ func TestWriteSSEChunksCancellationEOFAndLimitsPrecedeSideEffects(t *testing.T) 
 						failed++
 					}
 				}
-				if err := control.stop(context.Background()); err != nil {
+				if err := control.Shutdown(context.Background()); err != nil {
 					t.Fatal(err)
 				}
 				if err := resources.close(context.Background()); err != nil {

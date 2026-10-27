@@ -3,6 +3,7 @@ package provider
 
 import (
 	"context"
+	"easycode/internal/codec"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -358,7 +359,7 @@ func NewNativeCommitEnvelope(
 	if payloadVersion <= 0 {
 		return NativeCommitEnvelope{}, fmt.Errorf("native commit payload version is invalid")
 	}
-	if len(payload) == 0 || len(payload) > MaxNativeCommitBytes || !json.Valid(payload) {
+	if len(payload) == 0 || len(payload) > MaxNativeCommitBytes || !codec.Valid(payload) {
 		return NativeCommitEnvelope{}, fmt.Errorf("native commit payload is invalid")
 	}
 	return NativeCommitEnvelope{
@@ -402,30 +403,11 @@ type PreparedSample struct {
 	finalize func()
 	discard  func()
 	state    atomic.Uint32
+	resolved chan struct{}
 }
 
-// NewPreparedSample 创建尚未进入 Conversation committed history 的 sample。
+// NewPreparedSample 创建具有显式提交和丢弃路径的当前 sample。
 func NewPreparedSample(
-	envelope NativeCommitEnvelope,
-	usage domain.SampleUsage,
-	finalize func(),
-	ready ...tool.ReadyCall,
-) (*PreparedSample, error) {
-	return newPreparedSample(envelope, usage, finalize, func() {}, ready...)
-}
-
-// NewPreparedSampleWithDiscard 创建同时具有durable成功提交和未提交丢弃路径的sample。
-func NewPreparedSampleWithDiscard(
-	envelope NativeCommitEnvelope,
-	usage domain.SampleUsage,
-	finalize func(),
-	discard func(),
-	ready ...tool.ReadyCall,
-) (*PreparedSample, error) {
-	return newPreparedSample(envelope, usage, finalize, discard, ready...)
-}
-
-func newPreparedSample(
 	envelope NativeCommitEnvelope,
 	usage domain.SampleUsage,
 	finalize func(),
@@ -446,7 +428,7 @@ func newPreparedSample(
 	if err != nil {
 		return nil, err
 	}
-	return &PreparedSample{envelope: cloned, usage: usage, ready: clonedReady, finalize: finalize, discard: discard}, nil
+	return &PreparedSample{envelope: cloned, usage: usage, ready: clonedReady, finalize: finalize, discard: discard, resolved: make(chan struct{})}, nil
 }
 
 // ReadyCalls 返回按模型 item 顺序排列的独立 typed 调用切片。
@@ -490,10 +472,13 @@ func (sample *PreparedSample) Finalize() error {
 	if sample == nil || sample.finalize == nil {
 		return fmt.Errorf("prepared sample is invalid")
 	}
-	if !sample.state.CompareAndSwap(0, 1) {
+	if !sample.state.CompareAndSwap(0, 3) {
+		<-sample.resolved
 		return fmt.Errorf("prepared sample is already finalized")
 	}
 	sample.finalize()
+	sample.state.Store(1)
+	close(sample.resolved)
 	return nil
 }
 
@@ -507,10 +492,13 @@ func (sample *PreparedSample) Discard() error {
 	if sample == nil || sample.discard == nil {
 		return fmt.Errorf("prepared sample is invalid")
 	}
-	if !sample.state.CompareAndSwap(0, 2) {
+	if !sample.state.CompareAndSwap(0, 3) {
+		<-sample.resolved
 		return fmt.Errorf("prepared sample is already resolved")
 	}
 	sample.discard()
+	sample.state.Store(2)
+	close(sample.resolved)
 	return nil
 }
 
@@ -536,19 +524,11 @@ type PreparedToolOutputs struct {
 	finalize func()
 	discard  func()
 	state    atomic.Uint32
+	resolved chan struct{}
 }
 
-// NewPreparedToolOutputs 创建尚未进入 Conversation history 的工具结果提交。
-func NewPreparedToolOutputs(envelope NativeCommitEnvelope, finalize func()) (*PreparedToolOutputs, error) {
-	return newPreparedToolOutputs(envelope, finalize, func() {})
-}
-
-// NewPreparedToolOutputsWithDiscard 创建同时具有提交和丢弃路径的工具结果entry。
-func NewPreparedToolOutputsWithDiscard(envelope NativeCommitEnvelope, finalize func(), discard func()) (*PreparedToolOutputs, error) {
-	return newPreparedToolOutputs(envelope, finalize, discard)
-}
-
-func newPreparedToolOutputs(envelope NativeCommitEnvelope, finalize func(), discard func()) (*PreparedToolOutputs, error) {
+// NewPreparedToolOutputs 创建具有显式提交和丢弃路径的工具结果提交。
+func NewPreparedToolOutputs(envelope NativeCommitEnvelope, finalize func(), discard func()) (*PreparedToolOutputs, error) {
 	cloned, err := envelope.Clone()
 	if err != nil {
 		return nil, err
@@ -556,7 +536,7 @@ func newPreparedToolOutputs(envelope NativeCommitEnvelope, finalize func(), disc
 	if finalize == nil || discard == nil {
 		return nil, fmt.Errorf("prepared tool outputs lifecycle callbacks are required")
 	}
-	return &PreparedToolOutputs{envelope: cloned, finalize: finalize, discard: discard}, nil
+	return &PreparedToolOutputs{envelope: cloned, finalize: finalize, discard: discard, resolved: make(chan struct{})}, nil
 }
 
 // Envelope 返回待持久化原生增量的独立副本。
@@ -575,10 +555,13 @@ func (commit *PreparedToolOutputs) Finalize() error {
 	if commit == nil || commit.finalize == nil {
 		return fmt.Errorf("prepared tool outputs are invalid")
 	}
-	if !commit.state.CompareAndSwap(0, 1) {
+	if !commit.state.CompareAndSwap(0, 3) {
+		<-commit.resolved
 		return fmt.Errorf("prepared tool outputs are already finalized")
 	}
 	commit.finalize()
+	commit.state.Store(1)
+	close(commit.resolved)
 	return nil
 }
 
@@ -587,10 +570,13 @@ func (commit *PreparedToolOutputs) Discard() error {
 	if commit == nil || commit.discard == nil {
 		return fmt.Errorf("prepared tool outputs are invalid")
 	}
-	if !commit.state.CompareAndSwap(0, 2) {
+	if !commit.state.CompareAndSwap(0, 3) {
+		<-commit.resolved
 		return fmt.Errorf("prepared tool outputs are already resolved")
 	}
 	commit.discard()
+	commit.state.Store(2)
+	close(commit.resolved)
 	return nil
 }
 

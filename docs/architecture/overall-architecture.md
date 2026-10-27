@@ -1,5 +1,15 @@
 # EasyCode 总体架构设计
 
+## 当前契约与生命周期基线
+
+Session envelope/payload canary 为 `3`，双 Provider native payload revision 为 `1`，外部 headless JSONL version 为 `1`。这些标记属于不同边界，不构成并行兼容 reader。prepared sample/tool outputs 仅提供显式 finalize/discard 构造器，回调完成后才能报告 finalized。
+
+`internal/codec` 从固定 Sonic 配置值编码，不读取可替换的第三方默认 codec。封闭 JSON 对象拒绝重复键、大小写别名、未知字段、尾随内容和有损 Unicode。工具缺省参数保留默认值，显式 null 失败；持久化 record 按 json 标签要求非 omitempty 字段存在，标量与对象不接受 null，当前 nil 集合仍允许编码为 null。自定义联合 decoder 负责分支字段；Provider opaque 原生项保留独立扩展规则和原始字节。
+
+TUI 与一次性 headless 由显式 `ChatSession.Start` 启动 AgentLoop adapter；stream-json 由 StreamRunner 启动同一 AgentLoop 内核，在返回前完成 join。ChatSession 不再直接启动 RunTurn。宿主退出先停止投递、排空控制输出并等待 worker、loop、dispatcher，应用随后释放 writer、workspace、repository。等待超时保留错误，transport 取消登记的活动请求，由 SSE owner 关闭实际 body；lease 保留至最终清理完成。重复资源关闭等待同一个完成信号并保留最终错误。
+
+Runtime 的有序调度、实例审批状态和独占执行骨架分别位于 `tool_scheduler.go`、`approval.go`、`exclusive.go`。骨架持有强类型策略，统一 started 接收、结果关联验证与 durable 收口；各工具保留候选、安全和展示规则。架构守卫覆盖 tool 核心 API、codec 越界及构造器可解析调用链；动态接口与第三方实现另由边界生命周期测试验证。
+
 > 状态：持续演进
 > 更新时间：2026-10-24
 > 适用范围：EasyCode CLI、Agent Runtime、Provider、工具、扩展系统、会话存储和 TUI
@@ -116,7 +126,7 @@ Runtime 构造时深拷贝该快照，并在每轮把同一值分别交给 Conte
 
 ### 4.1 建议的 Go Module 结构
 
-下列结构同时包含当前实现与目标边界。`tool`、`extension`、`subagent`、`telemetry` 目前只保留经批准的结构化 TODO 占位，分别等待 P3/P6/P7/P8 的 OpenSpec 提供真实消费者、验证与测试；不得从目录存在推断能力已经可用。
+下列结构同时包含当前实现与目标边界。`tool` 已实现 Read、Glob、Grep、Patch、Write、Exec 六项能力；`extension`、`subagent`、`telemetry` 仍保留经批准的结构化 TODO 占位，分别等待 P6/P7/P8 的 OpenSpec 提供真实消费者、验证与测试；不得从目录存在推断能力已经可用。
 
 ```text
 cmd/
@@ -132,8 +142,8 @@ internal/
     transport/              Resty HTTP/SSE 公共基础设施
     anthropic/              Anthropic Messages 实现
     openai/                 OpenAI Responses 实现
-  tool/                     P3 目标：ToolSpec、Executor、Policy、Scheduler
-    builtin/                P3 目标：read/edit/write/grep/glob/bash/patch/plan 等
+  tool/                     当前强类型输入、Facade、Executor、Policy 与 ResultCodec
+    builtin/                当前 Read、Glob、Grep、Patch、Write、Exec 安全执行边界
   context/                  上下文分层、token budget、compact、cache plan
   session/                  JSONL、artifact、resume/fork
     catalog/                可重建 SQLite Catalog 与前台 reconciliation
@@ -325,7 +335,7 @@ OpenAI payload v1 保存用户 Responses item、有序 output items 和原始 us
 
 ### 6.2 上下文分段
 
-当前已实现不可变、强类型且可验证的 `CachePlan`、stable-prefix fingerprint 和 ContextPlanner。计划依次输出 `provider_profile`、`tool_catalog`、可选 `project_instructions`、`committed_history`、`current_input`；五项真实工具的稳定 facade/schema 进入 catalog segment、估算与 fingerprint，实际 command、workdir、approval 和宿主环境不得污染稳定前缀。项目快照非空时以 `replace + project-stable` 进入稳定前缀，history 为 turn-stable，当前输入为 volatile。下列其余分段仍是 P4/P6 随真实消费者逐项扩展的目标，不能从目录或设计推断为已实现：
+当前已实现不可变、强类型且可验证的 `CachePlan`、stable-prefix fingerprint 和 ContextPlanner。计划依次输出 `provider_profile`、`tool_catalog`、可选 `project_instructions`、`committed_history`、`current_input`；六项真实工具的稳定 facade/schema 进入 catalog segment、估算与 fingerprint，实际 command、workdir、approval 和宿主环境不得污染稳定前缀。项目快照非空时以 `replace + project-stable` 进入稳定前缀，history 为 turn-stable，当前输入为 volatile。下列其余分段仍是 P4/P6 随真实消费者逐项扩展的目标，不能从目录或设计推断为已实现：
 
 ```text
 CachePlan
@@ -444,7 +454,7 @@ ToolApprovalRequested / ToolApprovalResolved
 CommandStarted / CommandProgress / CommandTerminal
 ```
 
-当前进程内 RuntimeEvent 声明上述九种具有 producer、consumer 和 validator 的事件，并携带匹配的 `session_id/thread_id/turn_id`。`turn_completed` 必须携带所有 sample 聚合的五项三态 turn usage。批准 payload 是 Patch/Exec 封闭联合；命令进度是有界瞬时快照，不写 Session，只有 terminal payload 携带 result durable 后的冻结 preview。TUI 复用完整批准命令和 terminal preview 展示 Ctrl+O 详情，取消中仍等待 owner 清理。独立 usage 更新、reasoning、通用 Tool/patch delta 和 compaction kind 尚未实现，不能提前保留空枚举。外部 headless JSONL 词汇不因这些内部事件扩张。
+当前进程内 RuntimeEvent 声明上述九种具有 producer、consumer 和 validator 的事件，并携带匹配的 `session_id/thread_id/turn_id`。`turn_completed` 必须携带所有 sample 聚合的五项三态 turn usage。批准 payload 是 Patch/Write/Exec 封闭联合；命令进度是有界瞬时快照，不写 Session，只有 terminal payload 携带 result durable 后的冻结 preview。TUI 复用完整批准命令和 terminal preview 展示 Ctrl+O 详情，取消中仍等待 owner 清理。独立 usage 更新、reasoning、通用 Tool/patch delta 和 compaction kind 尚未实现，不能提前保留空枚举。外部 headless JSONL 词汇不因这些内部事件扩张。
 
 ### 7.2 Headless JSONL v1
 

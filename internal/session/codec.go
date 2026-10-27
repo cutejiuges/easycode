@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	stdjson "encoding/json"
 	"fmt"
-	"io"
 	"strconv"
 	"time"
 	"unicode/utf8"
@@ -121,43 +120,24 @@ func DecodeRecord(line []byte) (Record, error) {
 	if record.Checksum != want {
 		return Record{}, fmt.Errorf("session record checksum mismatch")
 	}
+	if err := decodeKnownRecord(record); err != nil {
+		return Record{}, err
+	}
 	return cloneRecord(record), nil
 }
 
 func scanEnvelope(line []byte) (map[string]stdjson.RawMessage, error) {
-	decoder := stdjson.NewDecoder(bytes.NewReader(line))
-	token, err := decoder.Token()
+	members, err := codec.ObjectMembers(line)
 	if err != nil {
-		return nil, fmt.Errorf("decode session envelope: %w", err)
+		return nil, err
 	}
-	if delimiter, ok := token.(stdjson.Delim); !ok || delimiter != '{' {
-		return nil, fmt.Errorf("session envelope must be an object")
-	}
-	members := make(map[string]stdjson.RawMessage, 14)
-	for decoder.More() {
-		token, err = decoder.Token()
-		if err != nil {
-			return nil, fmt.Errorf("decode session envelope member: %w", err)
-		}
-		name, ok := token.(string)
-		if !ok || !knownEnvelopeField(name) {
+	for name, raw := range members {
+		if !knownEnvelopeField(name) {
 			return nil, fmt.Errorf("session envelope contains an unknown field")
 		}
-		if _, duplicate := members[name]; duplicate {
-			return nil, fmt.Errorf("session envelope contains a duplicate field")
+		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			return nil, fmt.Errorf("session envelope field must not be null")
 		}
-		var raw stdjson.RawMessage
-		if err := decoder.Decode(&raw); err != nil {
-			return nil, fmt.Errorf("decode session envelope value: %w", err)
-		}
-		members[name] = append(stdjson.RawMessage(nil), raw...)
-	}
-	if _, err := decoder.Token(); err != nil {
-		return nil, fmt.Errorf("decode session envelope end: %w", err)
-	}
-	var trailing stdjson.RawMessage
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return nil, fmt.Errorf("session envelope contains trailing JSON")
 	}
 	return members, nil
 }

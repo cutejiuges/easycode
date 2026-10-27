@@ -671,6 +671,7 @@ func isCoreContractPackage(packagePath string) bool {
 		"easycode/internal/provider",
 		"easycode/internal/context",
 		"easycode/internal/session",
+		"easycode/internal/tool",
 	} {
 		if packagePath == prefix || strings.HasPrefix(packagePath, prefix+"/") {
 			return true
