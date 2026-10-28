@@ -814,6 +814,13 @@ manifest adapter 可以统一扩展描述，但不能用于统一 provider 对�
 
 ### 13.3 REPL 行为
 
+当前多行输入由 `internal/tui/composer.go`、`composer_input.go`、`composer_layout.go` 和 `composer_history.go` 组合实现。composer 拥有 UTF-8 正文与字素边界光标；同一不可变布局供视觉行移动、视口和无色光标渲染复用，普通移动与重复 View 不重建布局。历史以写时复制保留至多 100 条/8 MiB，直接消费 SemanticHistoryView，不执行 Session I/O。编辑和输入校验共享 `replace`，没有通用 editor registry 或新的宿主接口。
+
+Model 将审批、详情、提交等待/活动 turn、composer 依次路由。pending 快照冻结到 ChatSession.Submit 返回：拒绝恢复正文/光标/历史浏览状态，接收后才追加 transcript/recall 并清空输入。取消继续使用既有 owner 与 Interrupt，已接收后的失败不自动重提。布局与用户 transcript 的控制字符仅在显示副本转义，实际输入除 TUI 的 CRLF/CR → LF 外保真；双 Provider 不裁剪正文，headless 保留原换行。没有新增 RuntimeEvent、Session record 或外部 JSONL 版本。
+
+已实现多行、字素编辑、显式 decoded paste 与有界历史；原始终端缓冲/RuneError 的框架限制见 README。以下列表仍包含后续目标，补全与 slash command 尚未实现。
+
+
 - 多行输入、paste 保护、历史和补全。
 - Ctrl+C/Esc 中断当前 turn，不能误杀整个进程。
 - 支持 `/help`、`/clear`、`/compact`、`/resume`、`/fork`、`/model`、`/provider`、`/permissions`、`/skills`、`/plugins`、`/hooks`、`/agents`、`/cost`、`/doctor`。

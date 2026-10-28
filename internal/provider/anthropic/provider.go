@@ -155,7 +155,7 @@ func (conversation *Conversation) Stream(
 	}
 	var userMessage *nativeMessage
 	if !input.IsToolContinuation() {
-		message := newUserMessage(strings.TrimSpace(input.Text))
+		message := newUserMessage(input.Text)
 		userMessage = &message
 	}
 	projectInstructions, hasProjectInstructions, err := input.ProjectInstructions()

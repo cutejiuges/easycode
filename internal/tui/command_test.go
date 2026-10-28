@@ -45,14 +45,14 @@ func TestExecApprovalDefaultNoAndExactDecisionRouting(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			session := &fakeChatSession{}
 			model := NewModel(context.Background(), "test", session)
-			model.draft = []rune("keep draft")
+			model.composer = composerWithText(t, "keep draft")
 			event := mustExecApproval(t)
 			model = updateModel(t, model, RuntimeEventMsg{Event: event})
 			if model.approval == nil || model.approval.selected != 1 {
 				t.Fatal("Exec must default to No")
 			}
 			model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("ignored")})
-			if string(model.draft) != "keep draft" {
+			if model.composer.text != "keep draft" {
 				t.Fatal("modal changed composer")
 			}
 			model = updateModel(t, model, tea.KeyMsg{Type: test.key})

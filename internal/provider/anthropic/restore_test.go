@@ -27,7 +27,7 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 	defer instance.Close()
 	entries := []nativeHistoryEntry{
 		{
-			Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("first")),
+			Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("  中文\n\tcode  \n")),
 			Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{
 				{Type: blockTypeThinking, Thinking: "private", Signature: "opaque-signature"},
 				{Type: blockTypeText, Text: "answer-1"},

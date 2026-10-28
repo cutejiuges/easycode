@@ -60,15 +60,15 @@ func (session *fakeChatSession) ResolveApproval(_ context.Context, turnID domain
 func TestApprovalOverlayPreservesDraftAndSubmitsCorrelatedDecision(t *testing.T) {
 	session := &fakeChatSession{}
 	model := NewModel(context.Background(), "test", session)
-	model.draft = []rune("kept draft")
+	model.composer = composerWithText(t, "kept draft")
 	event := mustApprovalRequested(t)
 	model = updateModel(t, model, RuntimeEventMsg{Event: event})
 	if model.approval == nil || model.approval.selected != 2 {
 		t.Fatalf("approval overlay = %#v", model.approval)
 	}
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("ignored")})
-	if string(model.draft) != "kept draft" {
-		t.Fatalf("draft changed under overlay: %q", string(model.draft))
+	if model.composer.text != "kept draft" {
+		t.Fatalf("draft changed under overlay: %q", model.composer.text)
 	}
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyUp})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyUp})
@@ -172,7 +172,7 @@ func TestModelSubmitsAndProjectsOrderedDeltas(t *testing.T) {
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello")})
 	updated, command := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	model = updated.(Model)
-	if command == nil || model.state != stateStreaming || len(model.transcript) != 1 {
+	if command == nil || model.state != stateSubmitting || len(model.transcript) != 0 {
 		t.Fatalf("submit state: %#v", model)
 	}
 	ready := command()
@@ -227,8 +227,8 @@ func TestModelInputAndCancellationKeys(t *testing.T) {
 	session := &fakeChatSession{}
 	model := NewModel(context.Background(), "test", session)
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
-	if string(model.draft) != "q" {
-		t.Fatalf("q is not draft input: %q", string(model.draft))
+	if model.composer.text != "q" {
+		t.Fatalf("q is not draft input: %q", model.composer.text)
 	}
 
 	empty := NewModel(context.Background(), "test", session)
@@ -317,7 +317,7 @@ func TestModelFailureAndCancellationRemainRecoverable(t *testing.T) {
 			}
 			model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("retry")})
 			updated, command := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
-			if command == nil || updated.(Model).state != stateStreaming {
+			if command == nil || updated.(Model).state != stateSubmitting {
 				t.Fatal("model did not recover for retry")
 			}
 		})

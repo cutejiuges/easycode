@@ -677,3 +677,12 @@
 - 未采用方案及原因：不将 busy 全部视作列表失败，也不静默宣称结果完整；不把 limit 用作扫描中断条件。
 - 回归测试：`internal/app/session_list_test.go`、`internal/app/session_list_integration_test.go`、`internal/session/catalog/list_integration_test.go`。
 - 后续行动：worktree 聚合、标题与交互 picker 另立 change。
+
+### [P5][2026-10-28] 多行正文必须贯穿宿主与 Provider，粘贴边界不能靠 UI 上限推断
+
+- 状态：正文裁剪已解决；原始终端解码与缓冲限制明确保留。
+- 影响变更：`add-multiline-chat-composer`。
+- 根因：原双 Provider 在原生 user item 构造时 TrimSpace，即使 TUI 保留缩进，发送与持久化仍失真；Bubble Tea 在发出 paste 事件前独立累积字节并跳过 RuneError。
+- 修复方案：校验与正文构造分离，所有宿主有效输入原样进入 Provider；只有 TUI 规范化 CRLF/CR。输入、布局、历史按职责组合，接收前保留快照，拒绝恢复且不产生幽灵 transcript。不要使用第二个 stdin reader 或计时猜测粘贴。
+- 缓存影响：未裁剪正文将合法改变请求字节；固定多行 golden、原生顺序、恢复请求和 fingerprint 等价回归，Tool catalog 与稳定前缀不变。
+- 验证：`internal/tui/composer_terminal_test.go` 用真实 Bubble Tea Program 和受控 reader 验证分块输入；`internal/app/composer_e2e_test.go` 验证双 Provider、三种 headless 模式和恢复。原始终端未闭合 paste 内存上限、U+FFFD 保真和增强键盘协议须单独设计，不冒充已解决。

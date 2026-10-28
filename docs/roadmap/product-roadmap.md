@@ -141,12 +141,12 @@ make verify
 #### 2026-09-28 纵向切片进展
 
 - Transport spike 已确认采用 Resty raw body + 内部 SSE frame parser；`SSESource` 的默认 event buffer 和 frame/lifecycle 语义不作为项目契约。
-- 已完成 OpenAI Responses text-only request、stream reducer、会话级 native history、事务提交、显式 terminal、两种 API prefix 的双轮回归，以及最基础的单行 TUI Chat。
+- 已完成 OpenAI Responses text-only request、stream reducer、会话级 native history、事务提交、显式 terminal、两种 API prefix 的双轮回归，以及基础 TUI Chat（现已补充多行 composer）。
 - 已完成 Anthropic Messages text-only request、indexed content-block reducer、会话级 native history、thinking/signature/redacted thinking 无损回放、显式 `message_stop` terminal、两种 API prefix 的双轮回归，并接入同一基础 TUI Chat。
 - 已完成双 Provider 共享 `StreamEvent` 的封闭构造与纯内存验证；Runtime 在消费端协议错误时取消派生 context并同步排空到 producer 关闭，AgentLoop 只在前一 stream 清理完成后启动下一 turn。
 - 已完成双 Provider 的 committed-only 文本 `HistoryProjector`：投影保留 turn 边界和可见文本，但不暴露 thinking/signature、redacted thinking、reasoning summary、encrypted content、phase、usage 或未知扩展，也不参与后续请求编译。
 - Anthropic 当前声明 streaming、thinking-signature 原生保留与 structured tools（含 Edit/Write/Bash），OpenAI 当前声明 streaming、encrypted reasoning 原生保留、function tools（含 Write/exec_command）与 custom freeform apply_patch。P2 已落地 completed-sample usage、原生历史 footprint、JSONL Session、resume/headless 和 ContextPlanner；P3 已补充 Read/Glob/Grep/Patch/Write/Exec Tool Loop 与 approval，但通用 tool UI、完整 CachePlanner、usage 成本/TUI、prompt cache key、`previous_response_id` 和自动重试仍留在后续阶段。
-- TUI 只消费 typed RuntimeEvent 和 ChatSession facade；已提供 Patch diff/Write、Exec approval overlay、命令进度和 Ctrl+O 可滚动详情，Markdown、多行 composer、slash command、通用 permission 面板和 session picker 仍未实现。
+- TUI 只消费 typed RuntimeEvent 和 ChatSession facade；已提供 Patch diff/Write、Exec approval overlay、命令进度和 Ctrl+O 可滚动详情，多行 composer、字素编辑、显式 decoded paste 和有界历史；Markdown、slash command、通用 permission 面板和 session picker 仍未实现。
 
 #### OpenAI Responses（首要 Provider）
 
@@ -239,7 +239,7 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 
 ### 6.3 工作内容
 
-- 已实现 text user input、Read/Glob/Grep/Patch/Write 多 sample Tool Loop 与 final assistant output；Patch approval 已具备交互与 headless 失败关闭语义，整文件 Write 已支持完整 Read 后批准覆盖及原子创建，命令和 same-turn steer 仍待后续 P3 change。
+- 已实现 text user input、Read/Glob/Grep/Patch/Write 多 sample Tool Loop 与 final assistant output；Patch approval 已具备交互与 headless 失败关闭语义，整文件 Write 已支持完整 Read 后批准覆盖及原子创建，Darwin 前台命令已交付，same-turn steer 仍待后续 change。
 - 已实现有界 FIFO queued follow-up、request identity 去重、定向 interrupt、EOF drain 与显式 shutdown；same-turn steer 仍待 P3 safe point。
 - 已实现 `provider_profile`、可选 `project_instructions`、`committed_history`、`current_input` 的固定顺序、正交 lifecycle/cache stability、canonical segments、stable prefix、SemanticHistoryView 可见估算与 Provider-native footprint 覆盖合并；后续来源必须随真实消费者独立落地。
 - 已实现 JSONL SessionMeta、native commit、`sample_usage` 和文本 turn boundary；成本、缓存失效原因与累计指标仍待实现。
@@ -252,7 +252,7 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 
 ### 6.4 交付物
 
-- 已交付可 resume/continue 的一次性 headless 文本 chat 与同进程 FIFO AgentLoop；Read/Glob/Grep/Patch/Write 已交付，same-turn steer 和命令执行尚未交付。
+- 已交付可 resume/continue 的一次性 headless 文本 chat 与同进程 FIFO AgentLoop；Read/Glob/Grep/Patch/Write 已交付，Darwin 前台命令已交付，same-turn steer 尚未交付。
 - 已交付 session JSONL 与可从 JSONL 重建的 `state.sqlite` Catalog v1。
 - 已交付显式 resume 与兼容性精确匹配的 `--continue`；离线 `sessions list` 已交付，可视化 session picker 尚未交付。
 - 已交付一次性 thread/turn/text/failure JSONL v1 与独立 streaming control v1，成功 `turn.completed` 必含 normalized usage；独立 usage 更新、reasoning 与 tool 事件尚未交付。
@@ -371,7 +371,7 @@ Skill、hooks/plugins、MCP 和 Agent/Subagent 不属于 P3 内置工具清单�
 
 ### 7.8 退出条件
 
-基本 coding loop、安全策略、并发、有序结果、patch streaming、至多一次自动执行、不确定结果失败关闭和恢复等价测试全部通过。当前前台 Exec 闭环已补齐，但 Write、artifact、后台控制和其余 P3 交付仍未完成，不能据此宣布整个 P3 退出。
+基本 coding loop、安全策略、并发、有序结果、patch streaming、至多一次自动执行、不确定结果失败关闭和恢复等价测试全部通过。当前前台 Exec 闭环已补齐，但 artifact、后台控制和其余 P3 交付仍未完成，不能据此宣布整个 P3 退出。
 
 ## 8. P4：缓存与上下文强化
 
@@ -453,7 +453,7 @@ Skill、hooks/plugins、MCP 和 Agent/Subagent 不属于 P3 内置工具清单�
 
 ### 9.3 工作内容
 
-2026-09-19 已先交付验证 RuntimeEvent 边界的薄切片；2026-10-11 又交付了与 Patch candidate 精确关联的 diff approval overlay，包含默认 No、一次/本 Runtime session 允许、拒绝反馈、小窗口滚动、按键隔离和固定 snapshot。它不改变 P5 的完整范围，复杂 composer、Markdown、通用工具 cell、reasoning 和 session picker 仍按本节后续实施。
+2026-09-19 已先交付验证 RuntimeEvent 边界的薄切片；2026-10-11 又交付了与 Patch candidate 精确关联的 diff approval overlay，包含默认 No、一次/本 Runtime session 允许、拒绝反馈、小窗口滚动、按键隔离和固定 snapshot。它不改变 P5 的完整范围，2026-10-28 已补充多行 composer、字素编辑、显式 decoded paste、有界 recall 与提交拒绝恢复。补全、slash command、Markdown、通用工具 cell、reasoning 和 session picker 仍按本节后续实施。
 
 - composer、多行输入、paste 保护、历史、补全和 slash command。
 - assistant commentary/final、thinking/reasoning 折叠。

@@ -6,6 +6,16 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 
 > 项目正在推进 P3 Coding Tools。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、原生多轮 Session、`--resume`/`--continue`、headless/FIFO 输入、离线 `sessions list`，以及 Read、Glob、Grep、需批准的单文件 Patch、整文件 Write 和 Darwin 前台命令执行。会话 picker、artifact、通用 Tool UI 和完整缓存/推理界面仍按 Roadmap 分阶段推进。
 
+## 多行聊天输入
+
+Enter 提交；Alt+Enter、Ctrl+J 或光标前的反斜杠加 Enter 换行。左右键按字素移动，Backspace/Delete 删除前后字素；Home/End、Ctrl+A/E 到逻辑行首尾。上下键先移动视觉行，到顶部/底部后浏览当前会话输入历史，再向下越过最新记录恢复原草稿及光标。编辑召回内容后脱离历史浏览。手动 Tab 不插入，粘贴中的 Tab 保留。
+
+输入视口最多 8 行，按窗口大小缩放；草稿上限 4 MiB，超限整次拒绝。历史最多 100 条、8 MiB，折叠相邻重复，最旧优先淘汰；resume 由当前 thread 语义历史初始化。提交被会话接收后才清空草稿并记录历史；接收失败恢复草稿，已接收后的 turn 失败不自动重提。审批、命令详情、提交等待和执行期间保持独立焦点；Esc/Ctrl+C 中断活动任务并等待清理，空闲空草稿 Ctrl+C 退出。
+
+TUI 将 CRLF/CR 规范化为 LF，保留缩进、Tab、尾空格及尾换行；双 Provider 和 headless 不再裁剪有效正文，headless 不额外规范化换行。全空白输入仍被拒绝。控制字符在输入区和用户 transcript 中显示为可见转义，提交正文不因显示而改变。
+
+粘贴保证针对 Bubble Tea 已解码的 bracketed-paste 事件：一次原子插入，正文中的 Enter/Esc/Ctrl+C 不作为快捷键。当前 Bubble Tea v1.3.10 在结束标记前仍会累积原始缓冲，并可能跳过 RuneError（含字面 U+FFFD）；4 MiB 限额不覆盖该框架缓冲。无 bracketed paste 的终端不具备粘贴识别保证。Shift+Enter 取决于终端映射，请使用上述明确支持的换行键。
+
 ## 设计目标
 
 - 提供接近 Claude Code 的 REPL、流式输出、工具调用、权限确认、diff、Session、Hooks、Plugins、Skills 和 Subagent 体验。

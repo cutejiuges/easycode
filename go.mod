@@ -10,6 +10,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.10.1
 	github.com/charmbracelet/x/term v0.2.1
 	github.com/ncruces/go-sqlite3 v0.32.0
+	github.com/rivo/uniseg v0.4.7
 	golang.org/x/sys v0.41.0
 	resty.dev/v3 v3.0.0-rc.4
 )
@@ -33,7 +34,6 @@ require (
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/muesli/termenv v0.16.0 // indirect
 	github.com/ncruces/julianday v1.0.0 // indirect
-	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/tetratelabs/wazero v1.11.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect

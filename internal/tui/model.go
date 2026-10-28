@@ -31,14 +31,11 @@ type RuntimeEventMsg struct {
 	Event protocol.Event
 }
 
-// ErrorMsg 将异步命令错误送入 Bubble Tea update loop。
-type ErrorMsg struct {
-	Err error
-}
-
 type streamReadyMsg struct {
 	events <-chan protocol.Event
 }
+
+type submissionFailedMsg struct{ err error }
 
 type eventStreamClosedMsg struct{}
 type approvalSubmitErrorMsg struct{ err error }
@@ -52,6 +49,7 @@ type turnState uint8
 
 const (
 	stateIdle turnState = iota
+	stateSubmitting
 	stateStreaming
 )
 
@@ -63,7 +61,8 @@ type Model struct {
 	session ChatSession
 	submit  func(ChatSession, string) tea.Cmd
 
-	draft         []rune
+	composer      composer
+	pending       *composer
 	transcript    []transcriptMessage
 	state         turnState
 	assistantItem int
@@ -99,7 +98,7 @@ func NewModel(
 	initialHistory ...domain.SemanticHistoryView,
 ) Model {
 	model := Model{
-		version: version, session: session, assistantItem: -1,
+		version: version, session: session, assistantItem: -1, composer: newComposer(),
 		submit: func(target ChatSession, prompt string) tea.Cmd {
 			return submitTurn(submitContext, target, prompt)
 		},
@@ -108,6 +107,7 @@ func NewModel(
 		return model
 	}
 	for _, turn := range initialHistory[0].Turns {
+		model.composer.history.add(turn.UserText)
 		model.transcript = append(model.transcript,
 			transcriptMessage{role: "User", text: turn.UserText},
 			transcriptMessage{role: "Assistant", text: turn.AssistantText},
@@ -127,8 +127,18 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		model.width = value.Width
 		model.height = value.Height
+		model.composer.resize(value.Width, value.Height)
 		return model, nil
 	case streamReadyMsg:
+		if model.state != stateSubmitting || model.pending == nil {
+			return model, nil
+		}
+		prompt := model.pending.text
+		model.transcript = append(model.transcript, transcriptMessage{role: "User", text: prompt})
+		model.composer.history.add(prompt)
+		model.composer.clear()
+		model.pending = nil
+		model.state = stateStreaming
 		model.events = value.events
 		waitCommand := waitForEvent(value.events)
 		if !model.interruptNext {
@@ -147,12 +157,17 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return model, nil
 	case RuntimeEventMsg:
 		return model.projectRuntimeEvent(value.Event)
-	case ErrorMsg:
+	case submissionFailedMsg:
+		if model.state != stateSubmitting || model.pending == nil {
+			return model, nil
+		}
+		model.composer = *model.pending
+		model.composer.resize(model.widthOrDefault(), model.heightOrDefault())
+		model.pending = nil
 		model.state = stateIdle
-		model.assistantItem = -1
-		model.events = nil
 		model.interruptNext = false
-		model.errorSummary = safeErrorSummary(value.Err)
+		model.cancelling = false
+		model.errorSummary = safeErrorSummary(value.err)
 		return model, nil
 	case approvalSubmitErrorMsg:
 		if model.approval != nil {
@@ -168,6 +183,12 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if key.Paste && (model.approval != nil || model.detailOpen || model.state != stateIdle) {
+		if model.approval != nil && model.approval.editing && !model.approval.submitted {
+			return model.handleApprovalKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: key.Runes, Paste: true})
+		}
+		return model, nil
+	}
 	if model.approval != nil {
 		return model.handleApprovalKey(key)
 	}
@@ -179,7 +200,7 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if model.detailOpen {
 		return model.handleCommandDetailKey(key)
 	}
-	if model.state == stateStreaming {
+	if model.state != stateIdle {
 		if key.Type == tea.KeyEsc || key.Type == tea.KeyCtrlC {
 			model.cancelling = true
 			if model.events == nil {
@@ -191,32 +212,40 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return model, nil
 	}
 
-	switch key.Type {
-	case tea.KeyCtrlC:
-		if len(model.draft) == 0 {
-			return model, tea.Quit
-		}
-	case tea.KeyEnter:
-		prompt := strings.TrimSpace(string(model.draft))
-		if prompt == "" || model.session == nil {
+	intent, err := model.composer.input(key)
+	if err != nil {
+		model.errorSummary = "invalid_input: " + err.Error()
+		return model, nil
+	}
+	switch intent {
+	case composerQuit:
+		return model, tea.Quit
+	case composerSubmit:
+		if model.session == nil {
 			return model, nil
 		}
-		model.transcript = append(model.transcript, transcriptMessage{role: "User", text: prompt})
-		model.draft = nil
-		model.state = stateStreaming
+		snapshot := model.composer
+		model.pending = &snapshot
+		model.state = stateSubmitting
 		model.assistantItem = -1
 		model.errorSummary = ""
-		return model, model.submit(model.session, prompt)
-	case tea.KeyBackspace, tea.KeyDelete:
-		if len(model.draft) > 0 {
-			model.draft = model.draft[:len(model.draft)-1]
-		}
-	case tea.KeySpace:
-		model.draft = append(model.draft, ' ')
-	case tea.KeyRunes:
-		model.draft = append(model.draft, key.Runes...)
+		return model, model.submit(model.session, snapshot.text)
 	}
 	return model, nil
+}
+
+func (model Model) widthOrDefault() int {
+	if model.width <= 0 {
+		return 80
+	}
+	return model.width
+}
+
+func (model Model) heightOrDefault() int {
+	if model.height <= 0 {
+		return 24
+	}
+	return model.height
 }
 
 func (model Model) handleApprovalKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -452,7 +481,7 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 	return model, waitForEvent(model.events)
 }
 
-// View 渲染确定性的单行 Chat 界面。
+// View 渲染确定性的聊天投影和已准备的多行输入布局。
 func (model Model) View() string {
 	if model.approval != nil {
 		return model.renderApproval()
@@ -460,10 +489,15 @@ func (model Model) View() string {
 	if model.detailOpen {
 		return model.renderCommandDetail()
 	}
+	if model.composer.height < 5 && model.state == stateIdle {
+		return model.composer.view(true)
+	}
 	var view strings.Builder
 	_, _ = fmt.Fprintf(&view, "EasyCode %s\n", model.version)
-	if model.state == stateStreaming && model.cancelling {
+	if model.state != stateIdle && model.cancelling {
 		view.WriteString("Status: cancelling — waiting for cleanup\n")
+	} else if model.state == stateSubmitting {
+		view.WriteString("Status: submitting\n")
 	} else if model.state == stateStreaming {
 		view.WriteString("Status: streaming\n")
 	} else {
@@ -471,7 +505,11 @@ func (model Model) View() string {
 	}
 	view.WriteString("\n")
 	for _, message := range model.transcript {
-		_, _ = fmt.Fprintf(&view, "%s: %s\n", message.role, message.text)
+		text := message.text
+		if message.role == "User" {
+			text = safeComposerText(text)
+		}
+		_, _ = fmt.Fprintf(&view, "%s: %s\n", message.role, text)
 	}
 	if model.errorSummary != "" {
 		_, _ = fmt.Fprintf(&view, "Error: %s\n", model.errorSummary)
@@ -479,10 +517,8 @@ func (model Model) View() string {
 	view.WriteString("\n")
 	if model.state == stateStreaming {
 		view.WriteString("> [streaming — Esc/Ctrl+C to cancel]\n")
-	} else if len(model.draft) == 0 {
-		view.WriteString(">\n")
 	} else {
-		_, _ = fmt.Fprintf(&view, "> %s\n", string(model.draft))
+		view.WriteString(model.composer.view(model.state == stateIdle))
 	}
 	return view.String()
 }
@@ -598,7 +634,7 @@ func submitTurn(ctx context.Context, session ChatSession, prompt string) tea.Cmd
 	return func() tea.Msg {
 		events, err := session.Submit(ctx, prompt)
 		if err != nil {
-			return ErrorMsg{Err: err}
+			return submissionFailedMsg{err: err}
 		}
 		return streamReadyMsg{events: events}
 	}

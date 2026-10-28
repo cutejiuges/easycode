@@ -83,7 +83,7 @@ func TestWriteApprovalInputAndResolvedRemainSeparateFromExecution(t *testing.T) 
 	for _, overwrite := range []bool{false, true} {
 		session := &fakeChatSession{}
 		model := NewModel(context.Background(), "test", session)
-		model.draft = []rune("保留草稿")
+		model.composer = composerWithText(t, "保留草稿")
 		event := writeApprovalEvent(t, overwrite, false, false)
 		model = updateModel(t, model, RuntimeEventMsg{Event: event})
 		if model.approval.selected != 2 {
@@ -109,7 +109,7 @@ func TestWriteApprovalInputAndResolvedRemainSeparateFromExecution(t *testing.T) 
 		}
 		resolved.TurnID = event.TurnID
 		model = updateModel(t, model, RuntimeEventMsg{Event: resolved})
-		if model.approval != nil || string(model.draft) != "保留草稿" || strings.Contains(model.View(), "Created") || strings.Contains(model.View(), "success") {
+		if model.approval != nil || model.composer.text != "保留草稿" || strings.Contains(model.View(), "Created") || strings.Contains(model.View(), "success") {
 			t.Fatal("批准结束被误显示为写入成功或草稿丢失")
 		}
 		model = updateModel(t, model, RuntimeEventMsg{Event: event})
