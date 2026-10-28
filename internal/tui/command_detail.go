@@ -25,7 +25,7 @@ func (model Model) handleCommandDetailKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyPgDown, tea.KeyDown:
 		model.detailScroll++
 	case tea.KeyCtrlC:
-		if model.state == stateStreaming {
+		if model.state != stateIdle {
 			model.cancelling = true
 			if model.events == nil {
 				model.interruptNext = true
@@ -83,7 +83,7 @@ func (model Model) renderCommandDetail() string {
 	fmt.Fprintf(&view, "Lines %d-%d of %d\n", scroll+1, end, len(lines))
 	view.WriteString(strings.Join(lines[scroll:end], "\n") + "\n")
 	view.WriteString(truncateRunes("PgUp/PgDn: scroll · Ctrl+O/Esc: close", width) + "\n")
-	if model.state == stateStreaming {
+	if model.state != stateIdle {
 		view.WriteString("Ctrl+C: interrupt\n")
 	} else {
 		view.WriteString("\n")

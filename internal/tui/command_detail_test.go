@@ -30,7 +30,7 @@ func commandDetailModel(t *testing.T, terminal bool, status, code string, trunca
 	approval.TurnID = mustExecApproval(t).TurnID
 	model.activeTurnID, model.state = approval.TurnID, stateStreaming
 	model.events = make(chan protocol.Event)
-	model.draft = []rune("kept draft")
+	model.composer = composerWithText(t, "kept draft")
 	model = updateModel(t, model, RuntimeEventMsg{Event: approval})
 	resolved, err := protocol.NewToolApprovalResolved(protocol.ToolApprovalResolvedPayload{RequestID: request.RequestID, InvocationID: request.InvocationID, Fingerprint: request.Fingerprint, Decision: protocol.ApprovalAllowOnce})
 	if err != nil {
@@ -117,7 +117,7 @@ func TestCommandDetailPreservesCandidateDraftAndInterruptRouting(t *testing.T) {
 		model = updateModel(t, model, key)
 	}
 	model = updateModel(t, model, tea.WindowSizeMsg{Width: 42, Height: 14})
-	if model.commandViews[model.latestCommand] != stored || string(model.draft) != "kept draft" || len(session.submits) != 0 {
+	if model.commandViews[model.latestCommand] != stored || model.composer.text != "kept draft" || len(session.submits) != 0 {
 		t.Fatal("detail navigation changed candidate or composer")
 	}
 	updated, interrupt := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
@@ -165,7 +165,7 @@ func TestCommandInterruptKeepsDraftBlockedUntilTurnCleanupTerminal(t *testing.T)
 	for _, key := range []tea.KeyMsg{{Type: tea.KeyEnter}, {Type: tea.KeyRunes, Runes: []rune("ignored")}} {
 		model = updateModel(t, model, key)
 	}
-	if model.state != stateStreaming || string(model.draft) != "kept draft" || len(session.submits) != 0 || !strings.Contains(model.View(), "waiting for cleanup") {
+	if model.state != stateStreaming || model.composer.text != "kept draft" || len(session.submits) != 0 || !strings.Contains(model.View(), "waiting for cleanup") {
 		t.Fatal("cancellation released composer before cleanup")
 	}
 	detail := model.commandViews[model.latestCommand]
@@ -185,7 +185,7 @@ func TestCommandInterruptKeepsDraftBlockedUntilTurnCleanupTerminal(t *testing.T)
 	}
 	failure.TurnID = model.activeTurnID
 	model = updateModel(t, model, RuntimeEventMsg{Event: failure})
-	if model.state != stateIdle || model.cancelling || string(model.draft) != "kept draft" {
+	if model.state != stateIdle || model.cancelling || model.composer.text != "kept draft" {
 		t.Fatal("turn cleanup did not restore composer")
 	}
 	_, submit := model.Update(tea.KeyMsg{Type: tea.KeyEnter})

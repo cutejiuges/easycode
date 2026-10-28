@@ -6,4 +6,5 @@ Assistant: kept
 User: hello
 Error: provider_request_failed: provider request failed
 
->
+> |
+Enter: send | Alt+Enter/Ctrl+J: newline

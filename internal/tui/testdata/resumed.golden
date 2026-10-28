@@ -6,4 +6,5 @@ Assistant: first answer
 User: second question
 Assistant: second answer
 
->
+> |
+Enter: send | Alt+Enter/Ctrl+J: newline

@@ -109,8 +109,8 @@ func snapshotDraftModel(t *testing.T) Model {
 func snapshotStreamingModel(t *testing.T) Model {
 	t.Helper()
 	model := updateModel(t, snapshotIdleModel(t), tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello")})
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	return updated.(Model)
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	return updateModel(t, updated.(Model), cmd())
 }
 
 func snapshotCompletedModel(t *testing.T) Model {

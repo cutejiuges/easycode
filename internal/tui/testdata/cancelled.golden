@@ -5,4 +5,5 @@ User: hello
 Assistant: par
 Error: user_cancelled: turn was cancelled
 
->
+> |
+Enter: send | Alt+Enter/Ctrl+J: newline

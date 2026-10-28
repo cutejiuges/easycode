@@ -4,4 +4,5 @@ Status: idle
 User: hello
 Assistant: hi
 
->
+> |
+Enter: send | Alt+Enter/Ctrl+J: newline

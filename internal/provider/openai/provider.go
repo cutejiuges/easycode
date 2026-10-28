@@ -142,7 +142,7 @@ func (conversation *Conversation) Stream(
 	}
 	var userItem *NativeItem
 	if !input.IsToolContinuation() {
-		item := NewUserItem(strings.TrimSpace(input.Text))
+		item := NewUserItem(input.Text)
 		userItem = &item
 	}
 	projectInstructions, hasProjectInstructions, err := input.ProjectInstructions()
