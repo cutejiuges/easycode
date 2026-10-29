@@ -40,6 +40,8 @@ type ExecResultMetadata struct {
 	timedOut         bool
 	cancelled        bool
 	previewTruncated bool
+	stdoutSaving     ArtifactSaving
+	stderrSaving     ArtifactSaving
 }
 
 // NewExecResultMetadata 构造完整命令终态摘要；未知退出码必须使用零占位。
@@ -60,6 +62,45 @@ func (metadata ExecResultMetadata) Stdout() ExecStreamStats { return metadata.st
 func (metadata ExecResultMetadata) Stderr() ExecStreamStats { return metadata.stderr }
 func (metadata ExecResultMetadata) TimedOut() bool          { return metadata.timedOut }
 func (metadata ExecResultMetadata) Cancelled() bool         { return metadata.cancelled }
+
+// WithOutputSaving 在生成最终预览前冻结两个流的保存状态。
+func (metadata ExecResultMetadata) WithOutputSaving(stdout, stderr ArtifactSaving) (ExecResultMetadata, error) {
+	if stdout.Validate() != nil || stderr.Validate() != nil {
+		return ExecResultMetadata{}, errors.New("invalid Exec output saving")
+	}
+	if out, ok := stdout.Descriptor(); ok {
+		if other, exists := stderr.Descriptor(); exists && out.ID() == other.ID() {
+			return ExecResultMetadata{}, errors.New("duplicate Exec artifact identity")
+		}
+	}
+	for _, pair := range []struct {
+		s      ArtifactSaving
+		stream ArtifactStream
+		stats  ExecStreamStats
+	}{{stdout, ArtifactStdout, metadata.stdout}, {stderr, ArtifactStderr, metadata.stderr}} {
+		if d, ok := pair.s.Descriptor(); ok && (d.Stream() != pair.stream || d.ObservedBytes() != pair.stats.ObservedBytes()) {
+			return ExecResultMetadata{}, errors.New("Exec artifact stream mismatch")
+		}
+	}
+	metadata.stdoutSaving = stdout
+	metadata.stderrSaving = stderr
+	return metadata, metadata.Validate()
+}
+
+func (metadata ExecResultMetadata) StdoutSaving() ArtifactSaving {
+	if metadata.stdoutSaving.status == "" {
+		s, _ := NewArtifactSaving(ArtifactNotNeeded, "", ArtifactDescriptor{})
+		return s
+	}
+	return metadata.stdoutSaving
+}
+func (metadata ExecResultMetadata) StderrSaving() ArtifactSaving {
+	if metadata.stderrSaving.status == "" {
+		s, _ := NewArtifactSaving(ArtifactNotNeeded, "", ArtifactDescriptor{})
+		return s
+	}
+	return metadata.stderrSaving
+}
 func (metadata ExecResultMetadata) OutputTruncated() bool {
 	return metadata.previewTruncated || metadata.stdout.OmittedBytes() > 0 || metadata.stderr.OmittedBytes() > 0
 }
@@ -88,6 +129,14 @@ func (result InvocationResult) ExecMetadata() ExecResultMetadata { return result
 
 func (result InvocationResult) validateExecResult() error {
 	m := result.execMetadata
+	for _, saving := range []ArtifactSaving{m.StdoutSaving(), m.StderrSaving()} {
+		if saving.Validate() != nil {
+			return errors.New("invalid Exec saving state")
+		}
+		if d, ok := saving.Descriptor(); ok && d.InvocationID() != result.invocationID {
+			return errors.New("Exec artifact invocation mismatch")
+		}
+	}
 	if err := m.Validate(); err != nil {
 		return err
 	}

@@ -70,6 +70,10 @@ func NewToolCallReadyDraft(turnID domain.TurnID, invocation tool.Invocation, sam
 		SampleIndex: sampleIndex, CallIndex: callIndex, Capability: invocation.Capability(), WireKind: invocation.WireKind(),
 	}
 	switch invocation.Capability() {
+	case tool.CapabilityReadArtifact:
+		v, _ := invocation.ReadArtifact()
+		i := v.Input()
+		payload.ReadArtifactInput = &ReadArtifactInputPayload{ID: i.ID(), Offset: i.Offset(), Limit: i.Limit()}
 	case tool.CapabilityExec:
 		value, _ := invocation.Exec()
 		input := value.Input()
@@ -143,10 +147,19 @@ func NewToolCallResultDraft(turnID domain.TurnID, result tool.InvocationResult) 
 		InvocationID: result.InvocationID(), Capability: result.Capability(), WireKind: result.WireKind(), Status: result.Status(), Code: result.Code(), Preview: result.Preview().Text(),
 	}
 	switch result.Capability() {
+	case tool.CapabilityReadArtifact:
+		i := result.ReadArtifactInput()
+		m := &ReadArtifactResultPayload{Input: ReadArtifactInputPayload{ID: i.ID(), Offset: i.Offset(), Limit: i.Limit()}}
+		if page, ok := result.ArtifactPage(); ok {
+			m.Page = &page
+		}
+		payload.ReadArtifactMetadata = m
 	case tool.CapabilityExec:
 		m := result.ExecMetadata()
 		exit, known := m.ExitCode()
 		payload.ExecMetadata = &ExecResultMetadataPayload{Workdir: m.Workdir(), ExitCode: exit, ExitKnown: known, DurationMillis: m.DurationMillis(), StdoutObserved: m.Stdout().ObservedBytes(), StdoutRetained: m.Stdout().RetainedBytes(), StderrObserved: m.Stderr().ObservedBytes(), StderrRetained: m.Stderr().RetainedBytes(), TimedOut: m.TimedOut(), Cancelled: m.Cancelled(), Truncated: m.OutputTruncated()}
+		payload.ExecMetadata.StdoutSaving = m.StdoutSaving()
+		payload.ExecMetadata.StderrSaving = m.StderrSaving()
 	case tool.CapabilityRead:
 		metadata := result.ReadMetadata()
 		payload.ReadMetadata = &ReadResultMetadataPayload{

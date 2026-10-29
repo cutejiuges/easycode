@@ -134,7 +134,7 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(bytes.TrimSpace(golden), restoredBytes) {
-		t.Fatal("Write continuation golden changed")
+		t.Fatalf("Write continuation golden changed: %s", restoredBytes)
 	}
 
 	if !bytes.Equal(restoredBytes, uninterruptedBytes) {

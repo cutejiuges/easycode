@@ -11,7 +11,7 @@ import (
 
 const (
 	// EnvelopeVersion 是当前公共 JSONL 信封版本。
-	EnvelopeVersion = 3
+	EnvelopeVersion = 4
 	// MaxRecordBytes 限制单条 canonical JSON 记录大小。
 	MaxRecordBytes = 16 << 20
 	// MaxBatchBytes 限制单个逻辑 batch 的总大小。
@@ -154,18 +154,19 @@ type ExecInputPayload struct {
 
 // ToolCallReadyPayload 保存执行前已经durable的完整调用事实。
 type ToolCallReadyPayload struct {
-	InvocationID   tool.InvocationID     `json:"invocation_id"`
-	ProviderCallID tool.ProviderCallID   `json:"provider_call_id"`
-	SampleIndex    uint32                `json:"sample_index"`
-	CallIndex      uint32                `json:"call_index"`
-	Capability     tool.CapabilityID     `json:"capability"`
-	WireKind       tool.ProviderWireKind `json:"wire_kind"`
-	ReadInput      *ReadInputPayload     `json:"read_input,omitempty"`
-	GlobInput      *GlobInputPayload     `json:"glob_input,omitempty"`
-	GrepInput      *GrepInputPayload     `json:"grep_input,omitempty"`
-	PatchInput     *PatchInputPayload    `json:"patch_input,omitempty"`
-	WriteInput     *WriteInputPayload    `json:"write_input,omitempty"`
-	ExecInput      *ExecInputPayload     `json:"exec_input,omitempty"`
+	ReadArtifactInput *ReadArtifactInputPayload `json:"read_artifact_input,omitempty"`
+	InvocationID      tool.InvocationID         `json:"invocation_id"`
+	ProviderCallID    tool.ProviderCallID       `json:"provider_call_id"`
+	SampleIndex       uint32                    `json:"sample_index"`
+	CallIndex         uint32                    `json:"call_index"`
+	Capability        tool.CapabilityID         `json:"capability"`
+	WireKind          tool.ProviderWireKind     `json:"wire_kind"`
+	ReadInput         *ReadInputPayload         `json:"read_input,omitempty"`
+	GlobInput         *GlobInputPayload         `json:"glob_input,omitempty"`
+	GrepInput         *GrepInputPayload         `json:"grep_input,omitempty"`
+	PatchInput        *PatchInputPayload        `json:"patch_input,omitempty"`
+	WriteInput        *WriteInputPayload        `json:"write_input,omitempty"`
+	ExecInput         *ExecInputPayload         `json:"exec_input,omitempty"`
 }
 
 // ToolApprovalDecidedPayload 保存批准决定的durable关联事实。
@@ -244,33 +245,49 @@ type PatchResultMetadataPayload struct {
 
 // ToolCallResultPayload 保存无需重新执行即可恢复的冻结结果。
 type ToolCallResultPayload struct {
-	InvocationID  tool.InvocationID           `json:"invocation_id"`
-	Capability    tool.CapabilityID           `json:"capability"`
-	WireKind      tool.ProviderWireKind       `json:"wire_kind"`
-	Status        tool.ResultStatus           `json:"status"`
-	Code          string                      `json:"code"`
-	Preview       string                      `json:"preview"`
-	ReadMetadata  *ReadResultMetadataPayload  `json:"read_metadata,omitempty"`
-	GlobMetadata  *GlobResultMetadataPayload  `json:"glob_metadata,omitempty"`
-	GrepMetadata  *GrepResultMetadataPayload  `json:"grep_metadata,omitempty"`
-	PatchMetadata *PatchResultMetadataPayload `json:"patch_metadata,omitempty"`
-	WriteMetadata *WriteResultMetadataPayload `json:"write_metadata,omitempty"`
-	ExecMetadata  *ExecResultMetadataPayload  `json:"exec_metadata,omitempty"`
+	ReadArtifactMetadata *ReadArtifactResultPayload  `json:"read_artifact_metadata,omitempty"`
+	InvocationID         tool.InvocationID           `json:"invocation_id"`
+	Capability           tool.CapabilityID           `json:"capability"`
+	WireKind             tool.ProviderWireKind       `json:"wire_kind"`
+	Status               tool.ResultStatus           `json:"status"`
+	Code                 string                      `json:"code"`
+	Preview              string                      `json:"preview"`
+	ReadMetadata         *ReadResultMetadataPayload  `json:"read_metadata,omitempty"`
+	GlobMetadata         *GlobResultMetadataPayload  `json:"glob_metadata,omitempty"`
+	GrepMetadata         *GrepResultMetadataPayload  `json:"grep_metadata,omitempty"`
+	PatchMetadata        *PatchResultMetadataPayload `json:"patch_metadata,omitempty"`
+	WriteMetadata        *WriteResultMetadataPayload `json:"write_metadata,omitempty"`
+	ExecMetadata         *ExecResultMetadataPayload  `json:"exec_metadata,omitempty"`
+}
+
+// ReadArtifactInputPayload 保存完整默认化范围，不在恢复时重新应用默认值。
+type ReadArtifactInputPayload struct {
+	ID     tool.ArtifactID `json:"artifact_id"`
+	Offset uint64          `json:"offset"`
+	Limit  uint64          `json:"limit"`
+}
+
+// ReadArtifactResultPayload 的成功页与错误结果通过当前状态标签严格区分。
+type ReadArtifactResultPayload struct {
+	Input ReadArtifactInputPayload `json:"input"`
+	Page  *tool.ArtifactPage       `json:"page,omitempty"`
 }
 
 // ExecResultMetadataPayload 是命令的唯一当前持久化摘要，不包含进程标识。
 type ExecResultMetadataPayload struct {
-	Workdir        string `json:"workdir"`
-	ExitCode       int    `json:"exit_code"`
-	ExitKnown      bool   `json:"exit_known"`
-	DurationMillis int64  `json:"duration_ms"`
-	StdoutObserved int64  `json:"stdout_observed"`
-	StdoutRetained int64  `json:"stdout_retained"`
-	StderrObserved int64  `json:"stderr_observed"`
-	StderrRetained int64  `json:"stderr_retained"`
-	TimedOut       bool   `json:"timed_out"`
-	Cancelled      bool   `json:"cancelled"`
-	Truncated      bool   `json:"truncated"`
+	StdoutSaving   tool.ArtifactSaving `json:"stdout_saving"`
+	StderrSaving   tool.ArtifactSaving `json:"stderr_saving"`
+	Workdir        string              `json:"workdir"`
+	ExitCode       int                 `json:"exit_code"`
+	ExitKnown      bool                `json:"exit_known"`
+	DurationMillis int64               `json:"duration_ms"`
+	StdoutObserved int64               `json:"stdout_observed"`
+	StdoutRetained int64               `json:"stdout_retained"`
+	StderrObserved int64               `json:"stderr_observed"`
+	StderrRetained int64               `json:"stderr_retained"`
+	TimedOut       bool                `json:"timed_out"`
+	Cancelled      bool                `json:"cancelled"`
+	Truncated      bool                `json:"truncated"`
 }
 
 // TurnCompletedPayload 表示当前文本 turn 已 durable 成功结束。

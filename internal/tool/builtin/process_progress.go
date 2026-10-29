@@ -63,10 +63,14 @@ type processOutputWriter struct {
 	stderr   bool
 	clock    processClock
 	started  time.Time
+	save     func([]byte) (int, error)
 }
 
 func (writer *processOutputWriter) Write(data []byte) (int, error) {
 	count, err := writer.buffer.Write(data)
+	if writer.save != nil {
+		_, _ = writer.save(data)
+	}
 	writer.progress.update(data, writer.stderr, max(0, writer.clock.now().Sub(writer.started).Milliseconds()))
 	return count, err
 }

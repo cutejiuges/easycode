@@ -411,7 +411,7 @@ func TestChatResourcesCloseOrdersSessionJournalAndProvider(t *testing.T) {
 		SessionID: runtimeSessionIDForApp, ThreadID: runtimeThreadIDForApp, Journal: journal,
 		GenerateTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
 		ContextProfile: mustAppContextProfile(t), ProjectInstructions: mustEmptyAppProjectInstructions(t),
-		ToolCatalog: mustAppToolCatalog(t), ReadExecutor: appReadExecutor{},
+		ToolCatalog: mustAppToolCatalog(t), ReadArtifactExecutor: catalogArtifactExecutor{}, ReadExecutor: appReadExecutor{},
 		GlobExecutor: appGlobExecutor{}, GrepExecutor: appGrepExecutor{},
 		PatchPreparer: catalogPatchPreparer{}, PatchExecutor: catalogPatchExecutor{}, WritePreparer: catalogWritePreparer{}, WriteExecutor: catalogWriteExecutor{}, ExecPreparer: catalogExecFixture{}, ExecExecutor: catalogExecFixture{}, ToolPolicy: tool.NewApprovalPolicy(),
 		ContextBudget:  contextplan.DisabledBudget(),
@@ -535,7 +535,7 @@ func TestChatResourcesShutdownTimeoutEscalatesAndClosesDependencies(t *testing.T
 		SessionID: runtimeSessionIDForApp, ThreadID: runtimeThreadIDForApp, Journal: journal,
 		GenerateTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
 		ContextProfile: mustAppContextProfile(t), ProjectInstructions: mustEmptyAppProjectInstructions(t),
-		ToolCatalog: mustAppToolCatalog(t), ReadExecutor: appReadExecutor{},
+		ToolCatalog: mustAppToolCatalog(t), ReadArtifactExecutor: catalogArtifactExecutor{}, ReadExecutor: appReadExecutor{},
 		GlobExecutor: appGlobExecutor{}, GrepExecutor: appGrepExecutor{},
 		PatchPreparer: catalogPatchPreparer{}, PatchExecutor: catalogPatchExecutor{}, WritePreparer: catalogWritePreparer{}, WriteExecutor: catalogWriteExecutor{}, ExecPreparer: catalogExecFixture{}, ExecExecutor: catalogExecFixture{}, ToolPolicy: tool.NewApprovalPolicy(),
 		ContextBudget:  contextplan.DisabledBudget(),
@@ -791,7 +791,7 @@ func mustIdleAppRuntime(t *testing.T, journal chatRuntime.Journal) *chatRuntime.
 		SessionID: runtimeSessionIDForApp, ThreadID: runtimeThreadIDForApp, Journal: journal,
 		GenerateTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
 		ContextProfile: mustAppContextProfile(t), ProjectInstructions: mustEmptyAppProjectInstructions(t),
-		ToolCatalog: mustAppToolCatalog(t), ReadExecutor: appReadExecutor{},
+		ToolCatalog: mustAppToolCatalog(t), ReadArtifactExecutor: catalogArtifactExecutor{}, ReadExecutor: appReadExecutor{},
 		GlobExecutor: appGlobExecutor{}, GrepExecutor: appGrepExecutor{},
 		PatchPreparer: catalogPatchPreparer{}, PatchExecutor: catalogPatchExecutor{}, WritePreparer: catalogWritePreparer{}, WriteExecutor: catalogWriteExecutor{}, ExecPreparer: catalogExecFixture{}, ExecExecutor: catalogExecFixture{}, ToolPolicy: tool.NewApprovalPolicy(),
 		ContextBudget:  contextplan.DisabledBudget(),
@@ -832,7 +832,7 @@ func (appGrepExecutor) Execute(context.Context, tool.GrepInvocation) tool.Invoca
 
 func mustAppToolCatalog(t *testing.T) tool.CatalogSnapshot {
 	t.Helper()
-	catalog, err := tool.NewCatalogSnapshot(appReadExecutor{}, appGlobExecutor{}, appGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, tool.RenderExecOutput, tool.NewApprovalPolicy())
+	catalog, err := tool.NewCatalogSnapshot(appReadExecutor{}, appGlobExecutor{}, appGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, tool.RenderExecOutput, tool.NewApprovalPolicy(), catalogArtifactExecutor{})
 	if err != nil {
 		t.Fatal(err)
 	}

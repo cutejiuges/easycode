@@ -73,16 +73,17 @@ func (planner *ExecPlanner) Prepare(invocation tool.ExecInvocation) (tool.ExecCa
 
 // ExecExecutor 组合工作区、环境快照与平台启动边界。
 type ExecExecutor struct {
-	launcher processLauncher
-	renderer tool.ExecOutputRenderer
+	launcher    processLauncher
+	renderer    tool.ExecOutputRenderer
+	outputStore tool.CommandOutputStore
 }
 
 // NewExecExecutor 纯内存构造命令执行器。
-func NewExecExecutor(workspace *Workspace, environment CommandEnvironment, renderer tool.ExecOutputRenderer) (*ExecExecutor, error) {
-	if workspace == nil || workspace.handle == nil || len(environment.entries) == 0 || renderer == nil {
+func NewExecExecutor(workspace *Workspace, environment CommandEnvironment, renderer tool.ExecOutputRenderer, outputStore tool.CommandOutputStore) (*ExecExecutor, error) {
+	if workspace == nil || workspace.handle == nil || len(environment.entries) == 0 || renderer == nil || outputStore == nil {
 		return nil, errors.New("command workspace and environment are required")
 	}
-	return &ExecExecutor{launcher: newPlatformProcessLauncher(workspace, CommandEnvironment{entries: append([]string(nil), environment.entries...), executable: environment.executable}), renderer: renderer}, nil
+	return &ExecExecutor{launcher: newPlatformProcessLauncher(workspace, CommandEnvironment{entries: append([]string(nil), environment.entries...), executable: environment.executable}), renderer: renderer, outputStore: outputStore}, nil
 }
 
 // Execute 持有唯一执行owner直到最终清理；progress回调只在宿主路径调用。
@@ -91,6 +92,7 @@ func (executor *ExecExecutor) Execute(ctx context.Context, candidate tool.ExecCa
 	if err != nil {
 		return tool.NewExecErrorResult(candidate.Invocation(), tool.ResultError, "invalid_candidate", "Exec failed: invalid_candidate")
 	}
+	execution.outputStore = executor.outputStore
 	result := make(chan tool.InvocationResult, 1)
 	go func() { result <- execution.Run(ctx); close(result) }()
 	for range execution.Notifications() {

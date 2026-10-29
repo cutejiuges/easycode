@@ -46,6 +46,9 @@ type ContextPlanner interface {
 
 // Config 固定一个 Session-bound Runtime 的身份与 durable 边界。
 type Config struct {
+	CommandHistory            CommandHistoryObserver
+	ReadArtifactExecutor      tool.ReadArtifactExecutor
+	ArtifactReferences        *tool.ArtifactReferences
 	SessionID                 domain.SessionID
 	ThreadID                  domain.ThreadID
 	Journal                   Journal
@@ -73,6 +76,9 @@ type Config struct {
 
 // Runtime 持有一条会话级 Provider Conversation 和同一 thread journal。
 type Runtime struct {
+	commandHistory       CommandHistoryObserver
+	readArtifactExecutor tool.ReadArtifactExecutor
+	artifactReferences   *tool.ArtifactReferences
 	conversation         provider.Conversation
 	journal              Journal
 	sessionID            domain.SessionID
@@ -136,7 +142,7 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 	if _, err := config.ToolCatalog.View(conversation.Family()); err != nil {
 		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "runtime tool catalog Provider view is invalid", err)
 	}
-	if config.ReadExecutor == nil || config.GlobExecutor == nil || config.GrepExecutor == nil {
+	if config.ReadArtifactExecutor == nil || config.ReadExecutor == nil || config.GlobExecutor == nil || config.GrepExecutor == nil {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "runtime read-only executors are not configured")
 	}
 	if config.PatchPreparer == nil || config.PatchExecutor == nil || config.WritePreparer == nil || config.WriteExecutor == nil || config.ExecPreparer == nil || config.ExecExecutor == nil || config.ToolPolicy == nil {
@@ -161,8 +167,18 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 	if config.GenerateInvocationID == nil {
 		config.GenerateInvocationID = tool.GenerateInvocationID
 	}
+	if config.ArtifactReferences == nil {
+		var err error
+		config.ArtifactReferences, err = tool.NewArtifactReferences(config.ThreadID, nil)
+		if err != nil {
+			return nil, fault.New(fault.CodeInvalidConfiguration, "artifact references are invalid")
+		}
+	}
 	return &Runtime{
-		conversation: conversation, journal: config.Journal,
+		commandHistory:       config.CommandHistory,
+		readArtifactExecutor: config.ReadArtifactExecutor,
+		artifactReferences:   config.ArtifactReferences,
+		conversation:         conversation, journal: config.Journal,
 		sessionID: config.SessionID, threadID: config.ThreadID, newTurnID: config.GenerateTurnID,
 		newInvocationID: config.GenerateInvocationID,
 		profile:         config.ContextProfile, toolCatalog: config.ToolCatalog.Clone(),
@@ -650,10 +666,18 @@ func (runtime *Runtime) commitCallSample(
 		invocations[index] = invocation
 		drafts = append(drafts, readyDraft)
 	}
-	if _, err := runtime.journal.AppendBatch(context.WithoutCancel(ctx), drafts); err != nil {
+	records, err := runtime.journal.AppendBatch(context.WithoutCancel(ctx), drafts)
+	if err != nil {
 		discardPreparedSample(sample)
 		runtime.poisoned.Store(true)
 		return nil, fault.Wrap(fault.CodeSessionWrite, "persist tool call sample failed", err)
+	}
+	if runtime.commandHistory != nil {
+		for index, invocation := range invocations {
+			if invocation.Capability() == tool.CapabilityExec {
+				runtime.commandHistory.CommandReady(records[index+2].Sequence, invocation)
+			}
+		}
 	}
 	if err := sample.Finalize(); err != nil {
 		runtime.poisoned.Store(true)
@@ -747,6 +771,9 @@ func (runtime *Runtime) executeReadBatch(ctx context.Context, turnID domain.Turn
 
 func (runtime *Runtime) executeInvocation(ctx context.Context, invocation tool.Invocation) (tool.InvocationResult, tool.ReadObservation) {
 	switch invocation.Capability() {
+	case tool.CapabilityReadArtifact:
+		v, _ := invocation.ReadArtifact()
+		return runtime.readArtifactExecutor.Execute(ctx, v), tool.UnavailableReadObservation()
 	case tool.CapabilityRead:
 		value, _ := invocation.Read()
 		execution := runtime.readExecutor.Execute(ctx, value)
@@ -768,6 +795,26 @@ func (runtime *Runtime) executeInvocation(ctx context.Context, invocation tool.I
 // ResolveToolApproval 由AgentLoop owner恰好一次交付活动批准响应。
 
 func (runtime *Runtime) persistToolResult(ctx context.Context, turnID domain.TurnID, result tool.InvocationResult) error {
+	if page, ok := result.ArtifactPage(); ok {
+		d, exists := runtime.artifactReferences.Lookup(page.ID())
+		if !exists || d.ThreadID() != runtime.threadID || uint64(d.SavedBytes()) != page.SavedBytes() || d.Complete() != page.SourceComplete() {
+			runtime.poisoned.Store(true)
+			return fault.New(fault.CodeStreamProtocol, "artifact page has no matching committed reference")
+		}
+	}
+	if result.Capability() == tool.CapabilityExec {
+		if runtime.artifactReferences != nil && runtime.artifactReferences.ValidatePending(result) != nil {
+			runtime.poisoned.Store(true)
+			return fault.New(fault.CodeStreamProtocol, "invalid artifact references")
+		}
+		m := result.ExecMetadata()
+		for _, s := range []tool.ArtifactSaving{m.StdoutSaving(), m.StderrSaving()} {
+			if d, ok := s.Descriptor(); ok && (d.ThreadID() != runtime.threadID || runtime.artifactReferences == nil) {
+				runtime.poisoned.Store(true)
+				return fault.New(fault.CodeStreamProtocol, "artifact thread mismatch")
+			}
+		}
+	}
 	draft, err := session.NewToolCallResultDraft(turnID, result)
 	if err != nil {
 		runtime.poisoned.Store(true)
@@ -777,6 +824,16 @@ func (runtime *Runtime) persistToolResult(ctx context.Context, turnID domain.Tur
 		runtime.poisoned.Store(true)
 		return fault.Wrap(fault.CodeSessionWrite, "persist tool result failed", err)
 	}
+	if result.Capability() == tool.CapabilityExec && runtime.artifactReferences != nil {
+		if err := runtime.artifactReferences.AuthorizeCommitted(result); err != nil {
+			runtime.poisoned.Store(true)
+			return fault.New(fault.CodeSessionWrite, "artifact authorization failed")
+		}
+	}
+	if result.Capability() == tool.CapabilityExec && runtime.commandHistory != nil {
+		runtime.commandHistory.CommandResult(result)
+	}
+
 	return nil
 }
 

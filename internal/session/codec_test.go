@@ -36,7 +36,7 @@ func TestRecordCanonicalGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `{"schema_version":3,"payload_version":3,"seq":3,"timestamp":"2026-09-28T12:34:56.123Z","session_id":"00000000-0000-7000-8000-000000000001","thread_id":"00000000-0001-7000-8000-000000000002","turn_id":"00000000-0002-7000-8000-000000000003","event_kind":"turn_failed","batch_id":3,"batch_index":0,"batch_size":1,"payload":{"code":"user_cancelled","message":"turn was cancelled","cancelled":true},"checksum":"ff68c8553b08a2eadc0a5037b0135a8dce81620320252ab452b18e55190e647f"}`
+	const want = `{"schema_version":4,"payload_version":4,"seq":3,"timestamp":"2026-09-28T12:34:56.123Z","session_id":"00000000-0000-7000-8000-000000000001","thread_id":"00000000-0001-7000-8000-000000000002","turn_id":"00000000-0002-7000-8000-000000000003","event_kind":"turn_failed","batch_id":3,"batch_index":0,"batch_size":1,"payload":{"code":"user_cancelled","message":"turn was cancelled","cancelled":true},"checksum":"c9c5929e00ae054f0d1f337d2775b3ceb2f3931230f6f8fde770c9b1eeb9b799"}`
 	if string(encoded) != want {
 		t.Fatalf("canonical record changed:\n%s", encoded)
 	}
@@ -94,11 +94,11 @@ func TestCurrentSchemaRejectsCanaryKindAndWrongPayload(t *testing.T) {
 func TestUnknownRecordShapeIsRejected(t *testing.T) {
 	t.Parallel()
 	current := mustRecord(t, EventTurnFailed, TurnFailedPayload{Code: "failed"})
-	legacy := bytes.Replace(current, []byte(`"payload_version":3`), []byte(`"payload_version":99`), 1)
+	legacy := bytes.Replace(current, []byte(`"payload_version":4`), []byte(`"payload_version":99`), 1)
 	if _, err := DecodeRecord(legacy); err == nil {
 		t.Fatal("unknown payload canary unexpectedly decoded")
 	}
-	withOptional := bytes.Replace(current, []byte(`"payload_version":3,`), []byte(`"payload_version":3,"replay_requirement":"optional",`), 1)
+	withOptional := bytes.Replace(current, []byte(`"payload_version":4,`), []byte(`"payload_version":4,"replay_requirement":"optional",`), 1)
 	if _, err := DecodeRecord(withOptional); err == nil || !strings.Contains(err.Error(), "unknown") {
 		t.Fatalf("legacy optional envelope error = %v", err)
 	}

@@ -1,18 +1,16 @@
-Command details
-success (ok) exit=2 · truncated
-Workdir: src
-250 ms · 512 bytes
-Lines 1-11 of 11
+Command details · stdout
+success · exit=2 · 250 ms · src
+Output included in preview · preview truncated
 Command:
 printf 'full command first line'
 printf 'full command second line'
 
-Output:
+Frozen preview:
 stdout:
 head retained
 [... 128 bytes omitted ...]
 tail retained
 stderr:
 warning
-PgUp/PgDn: scroll · Ctrl+O/Esc: close
-Ctrl+C: interrupt
+Tab: stream · PgUp/PgDn: page · ↑/↓: scroll
+Esc: list · Ctrl+O: close · Ctrl+C: interrupt

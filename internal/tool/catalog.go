@@ -99,6 +99,8 @@ func facadeIdentity(family domain.ProviderFamily, capability CapabilityID) (stri
 		prefix = "anthropic:"
 	}
 	switch capability {
+	case CapabilityReadArtifact:
+		return "ReadArtifact", FacadeID(prefix + "ReadArtifact")
 	case CapabilityExec:
 		if family == domain.ProviderAnthropic {
 			return "Bash", FacadeAnthropicBash
@@ -135,7 +137,7 @@ func (view FacadeView) Facades() []Facade             { return cloneFacades(view
 func (view FacadeView) CanonicalJSON() []byte         { return view.canonical.Bytes() }
 func (view FacadeView) Fingerprint() string           { return view.fingerprint }
 
-// CatalogSnapshot 保存 Read、Glob、Grep、Patch、Write、Exec 六项真实能力的确定性目录。
+// CatalogSnapshot 保存 ReadArtifact、Read、Glob、Grep、Patch、Write、Exec 七项真实能力的确定性目录。
 type CatalogSnapshot struct {
 	facades     []Facade
 	canonical   codec.CanonicalJSON
@@ -300,9 +302,9 @@ func buildFileFacades() ([]Facade, error) {
 	return facades, nil
 }
 
-// NewCatalogSnapshot 创建当前六能力唯一目录，要求所有消费者已显式装配。
-func NewCatalogSnapshot(readExecutor ReadExecutor, globExecutor GlobExecutor, grepExecutor GrepExecutor, preparer PatchPreparer, patchExecutor PatchExecutor, writePreparer WritePreparer, writeExecutor WriteExecutor, execPreparer ExecPreparer, execExecutor ExecExecutor, renderer ExecOutputRenderer, policy Policy) (CatalogSnapshot, error) {
-	if readExecutor == nil || globExecutor == nil || grepExecutor == nil || preparer == nil || patchExecutor == nil || writePreparer == nil || writeExecutor == nil || execPreparer == nil || execExecutor == nil || renderer == nil || policy == nil {
+// NewCatalogSnapshot 创建当前七能力唯一目录，要求所有消费者已显式装配。
+func NewCatalogSnapshot(readExecutor ReadExecutor, globExecutor GlobExecutor, grepExecutor GrepExecutor, preparer PatchPreparer, patchExecutor PatchExecutor, writePreparer WritePreparer, writeExecutor WriteExecutor, execPreparer ExecPreparer, execExecutor ExecExecutor, renderer ExecOutputRenderer, policy Policy, artifactExecutor ReadArtifactExecutor) (CatalogSnapshot, error) {
+	if readExecutor == nil || globExecutor == nil || grepExecutor == nil || preparer == nil || patchExecutor == nil || writePreparer == nil || writeExecutor == nil || execPreparer == nil || execExecutor == nil || renderer == nil || policy == nil || artifactExecutor == nil {
 		return CatalogSnapshot{}, errors.New("all tool components are required")
 	}
 	facades, err := buildFileFacades()
@@ -317,7 +319,30 @@ func NewCatalogSnapshot(readExecutor ReadExecutor, globExecutor GlobExecutor, gr
 		name, id := facadeIdentity(family, CapabilityExec)
 		facades = append(facades, Facade{id: id, family: family, name: name, description: "Runs a foreground command after one-time approval, with workspace writes, no network, bounded output and timeout.", capability: CapabilityExec, wireKind: WireStructured, schema: execSchema.Clone()})
 	}
+	artifactSchema, err := buildArtifactSchema()
+	if err != nil {
+		return CatalogSnapshot{}, err
+	}
+	for _, family := range []domain.ProviderFamily{domain.ProviderAnthropic, domain.ProviderOpenAI} {
+		name, id := facadeIdentity(family, CapabilityReadArtifact)
+		facades = append(facades, Facade{id: id, family: family, name: name, description: "Reads a saved command-output prefix by artifact ID from the current thread. Offsets and limits count raw bytes; partial storage EOF does not mean complete command output.", capability: CapabilityReadArtifact, wireKind: WireStructured, schema: artifactSchema.Clone()})
+	}
 	return newCatalogSnapshot(facades)
+}
+
+func buildArtifactSchema() (codec.CanonicalJSON, error) {
+	type properties struct {
+		ID     stringSchemaProperty  `json:"artifact_id"`
+		Offset integerSchemaProperty `json:"offset"`
+		Limit  integerSchemaProperty `json:"limit"`
+	}
+	type schema struct {
+		Type       string     `json:"type"`
+		Properties properties `json:"properties"`
+		Required   []string   `json:"required"`
+		Additional bool       `json:"additionalProperties"`
+	}
+	return codec.MarshalCanonical(schema{Type: "object", Properties: properties{ID: stringSchemaProperty{Type: "string", Description: "Opaque saved-output ID from a committed command result"}, Offset: integerSchemaProperty{Type: "integer", Minimum: 0, Description: "Raw byte offset; defaults to 0"}, Limit: integerSchemaProperty{Type: "integer", Minimum: 1, Maximum: ArtifactPageBytes, Description: "Maximum raw bytes; defaults to 65536"}}, Required: []string{"artifact_id"}}, maxCatalogBytes)
 }
 
 func buildWriteSchema() (codec.CanonicalJSON, error) {
@@ -391,7 +416,7 @@ func buildGrepSchema() (codec.CanonicalJSON, error) {
 }
 
 func newCatalogSnapshot(facades []Facade) (CatalogSnapshot, error) {
-	if len(facades) != 12 {
+	if len(facades) != 14 {
 		return CatalogSnapshot{}, errors.New("tool catalog requires a complete Provider facade set")
 	}
 	owned := cloneFacades(facades)
@@ -451,7 +476,7 @@ func (snapshot CatalogSnapshot) View(family domain.ProviderFamily) (FacadeView, 
 			selected = append(selected, facade.clone())
 		}
 	}
-	if len(selected) != 6 {
+	if len(selected) != 7 {
 		return FacadeView{}, errors.New("tool catalog has incomplete Provider facade set")
 	}
 	canonical, err := encodeFacades(selected)
@@ -479,6 +504,12 @@ func (snapshot CatalogSnapshot) DecodeReadyCall(family domain.ProviderFamily, na
 		return ReadyCall{}, errors.New("tool facade is not advertised")
 	}
 	switch selected.capability {
+	case CapabilityReadArtifact:
+		input, err := DecodeReadArtifactInput(arguments)
+		if err != nil {
+			return ReadyCall{}, err
+		}
+		return NewReadArtifactReadyCall(callID, input)
 	case CapabilityExec:
 		input, decodeErr := DecodeExecInput(arguments)
 		if decodeErr != nil {
@@ -528,7 +559,7 @@ func (snapshot CatalogSnapshot) DecodeReadyCall(family domain.ProviderFamily, na
 
 // Validate 重新计算 canonical bytes 与 fingerprint。
 func (snapshot CatalogSnapshot) Validate() error {
-	if len(snapshot.facades) != 12 || snapshot.fingerprint == "" {
+	if len(snapshot.facades) != 14 || snapshot.fingerprint == "" {
 		return errors.New("tool catalog snapshot is invalid")
 	}
 	rebuilt, err := newCatalogSnapshot(snapshot.facades)

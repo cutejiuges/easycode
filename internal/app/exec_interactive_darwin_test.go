@@ -111,7 +111,7 @@ func TestReadPatchExecApprovedLoopForBothProviders(t *testing.T) {
 			var approvals []string
 			var commandStarted, commandTerminal, completed int
 			var completedUsage domain.SampleUsage
-			var ui tea.Model = tui.NewModel(context.Background(), "test", control)
+			var ui tea.Model = tui.NewModel(context.Background(), "test", control).WithCommandQueries(resources.identity.ThreadID, resources.commandQueries)
 			ui, _ = ui.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 			ui, _ = ui.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Read, edit, run checks, and summarize")})
 			ui, _ = ui.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -152,18 +152,24 @@ func TestReadPatchExecApprovedLoopForBothProviders(t *testing.T) {
 			if err := control.Shutdown(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			if err := resources.close(context.Background()); err != nil {
-				t.Fatal(err)
-			}
 			if strings.Join(approvals, ",") != "fs.patch,process.exec" || commandStarted != 1 || commandTerminal != 1 || completed != 1 {
 				t.Fatalf("approval/lifecycle = %v %d/%d/%d", approvals, commandStarted, commandTerminal, completed)
 			}
 			if !strings.Contains(ui.View(), "Status: idle") || !strings.Contains(ui.View(), "answer-4") || !strings.Contains(ui.View(), "exit=0") {
 				t.Fatalf("final TUI lost completed command: %s", ui.View())
 			}
-			ui, _ = ui.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+			var query tea.Cmd
+			ui, query = ui.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+			ui, _ = ui.Update(query())
+			ui, query = ui.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			if query != nil {
+				ui, _ = ui.Update(query())
+			}
 			if !strings.Contains(ui.View(), "checks-passed") || !strings.Contains(ui.View(), "command-environment") {
 				t.Fatal("TUI details lost full command or frozen result")
+			}
+			if err := resources.close(context.Background()); err != nil {
+				t.Fatal(err)
 			}
 			for name, want := range map[string]string{"main.go": "new\n", "exec-marker": "verified"} {
 				got, err := os.ReadFile(filepath.Join(workspace, name))
@@ -192,7 +198,7 @@ func TestReadPatchExecApprovedLoopForBothProviders(t *testing.T) {
 					t.Fatal("command state invalidated stable tool catalog")
 				}
 				var facades []json.RawMessage
-				if err := json.Unmarshal(request.Tools, &facades); err != nil || len(facades) != 6 {
+				if err := json.Unmarshal(request.Tools, &facades); err != nil || len(facades) != 7 {
 					t.Fatal("request catalog lost a real capability")
 				}
 			}

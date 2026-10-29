@@ -43,7 +43,7 @@ func ParseCapabilityID(value string) (CapabilityID, error) {
 // Valid 判断能力是否由当前实现支持。
 func (id CapabilityID) Valid() bool {
 	switch id {
-	case CapabilityRead, CapabilityGlob, CapabilityGrep, CapabilityPatch, CapabilityWrite, CapabilityExec:
+	case CapabilityRead, CapabilityGlob, CapabilityGrep, CapabilityPatch, CapabilityWrite, CapabilityExec, CapabilityReadArtifact:
 		return true
 	default:
 		return false
@@ -67,8 +67,9 @@ func (id ProviderCallID) Valid() bool {
 	return err == nil
 }
 
-// ReadyCall 是完整sample中已经严格解码、可持久化的六工具封闭联合。
+// ReadyCall 是完整sample中已经严格解码、可持久化的七工具封闭联合。
 type ReadyCall struct {
+	artifactInput  ReadArtifactInput
 	providerCallID ProviderCallID
 	capability     CapabilityID
 	wireKind       ProviderWireKind
@@ -134,6 +135,9 @@ func (call ReadyCall) Clone() ReadyCall {
 
 // Validate 验证调用身份、能力标签及唯一匹配的 typed input。
 func (call ReadyCall) Validate() error {
+	if call.capability != CapabilityReadArtifact && call.artifactInput != (ReadArtifactInput{}) {
+		return errors.New("mismatched artifact input")
+	}
 	if call.capability != CapabilityExec && !call.execInput.zero() {
 		return errors.New("ready call contains mismatched Exec payload")
 	}
@@ -147,6 +151,10 @@ func (call ReadyCall) Validate() error {
 		return errors.New("ready call contains mismatched Write input")
 	}
 	switch call.capability {
+	case CapabilityReadArtifact:
+		if call.wireKind != WireStructured || call.readInput != (ReadInput{}) || call.globInput != (GlobInput{}) || call.grepInput != (GrepInput{}) || !call.patchInput.zero() || call.artifactInput.Validate() != nil {
+			return errors.New("invalid ReadArtifact input")
+		}
 	case CapabilityExec:
 		if call.wireKind != WireStructured || call.readInput != (ReadInput{}) || call.globInput != (GlobInput{}) || call.grepInput != (GrepInput{}) || !call.patchInput.zero() || call.execInput.Validate() != nil {
 			return errors.New("ready call has invalid Exec payload")
@@ -206,8 +214,9 @@ type PatchInvocation struct {
 	input          PatchInput
 }
 
-// Invocation 是带全局identity的六能力执行输入封闭联合。
+// Invocation 是带全局identity的七能力执行输入封闭联合。
 type Invocation struct {
+	artifact   ReadArtifactInvocation
 	capability CapabilityID
 	read       ReadInvocation
 	glob       GlobInvocation
@@ -220,6 +229,12 @@ type Invocation struct {
 // NewInvocation 从 durable ready fact 构造匹配能力的执行输入。
 func NewInvocation(invocationID InvocationID, call ReadyCall) (Invocation, error) {
 	switch call.Capability() {
+	case CapabilityReadArtifact:
+		v, err := NewReadArtifactInvocation(invocationID, call)
+		if err != nil {
+			return Invocation{}, err
+		}
+		return Invocation{capability: CapabilityReadArtifact, artifact: v}, nil
 	case CapabilityExec:
 		value, err := NewExecInvocation(invocationID, call)
 		if err != nil {
@@ -264,6 +279,8 @@ func NewInvocation(invocationID InvocationID, call ReadyCall) (Invocation, error
 func (invocation Invocation) Capability() CapabilityID { return invocation.capability }
 func (invocation Invocation) InvocationID() InvocationID {
 	switch invocation.capability {
+	case CapabilityReadArtifact:
+		return invocation.artifact.id
 	case CapabilityExec:
 		return invocation.exec.invocationID
 	case CapabilityRead:
@@ -282,6 +299,8 @@ func (invocation Invocation) InvocationID() InvocationID {
 }
 func (invocation Invocation) ProviderCallID() ProviderCallID {
 	switch invocation.capability {
+	case CapabilityReadArtifact:
+		return invocation.artifact.call
 	case CapabilityExec:
 		return invocation.exec.providerCallID
 	case CapabilityRead:
@@ -324,6 +343,9 @@ func (invocation Invocation) Patch() (PatchInvocation, bool) {
 
 // Validate 验证 capability 标签与唯一 typed invocation 一致。
 func (invocation Invocation) Validate() error {
+	if invocation.capability != CapabilityReadArtifact && invocation.artifact != (ReadArtifactInvocation{}) {
+		return errors.New("mismatched artifact invocation")
+	}
 	if invocation.capability != CapabilityWrite && invocation.write != (WriteInvocation{}) {
 		return errors.New("invocation contains mismatched Write input")
 	}
@@ -331,6 +353,11 @@ func (invocation Invocation) Validate() error {
 		return errors.New("invocation contains mismatched Exec payload")
 	}
 	switch invocation.capability {
+	case CapabilityReadArtifact:
+		if invocation.read != (ReadInvocation{}) || invocation.glob != (GlobInvocation{}) || invocation.grep != (GrepInvocation{}) || !invocation.patch.zero() {
+			return errors.New("mismatched artifact invocation")
+		}
+		return invocation.artifact.Validate()
 	case CapabilityExec:
 		if invocation.read != (ReadInvocation{}) || invocation.glob != (GlobInvocation{}) || invocation.grep != (GrepInvocation{}) || !invocation.patch.zero() {
 			return errors.New("Exec invocation contains mismatched payload")
@@ -531,7 +558,7 @@ func NewReadOnlyPolicy() ReadOnlyPolicy { return ReadOnlyPolicy{} }
 
 // Decide 对完整 typed 调用做固定决策，不公开 ask 状态。
 func (ReadOnlyPolicy) Decide(call ReadyCall) PolicyDecision {
-	if call.Validate() == nil && (call.Capability() == CapabilityRead || call.Capability() == CapabilityGlob || call.Capability() == CapabilityGrep) {
+	if call.Validate() == nil && (call.Capability() == CapabilityRead || call.Capability() == CapabilityGlob || call.Capability() == CapabilityGrep || call.Capability() == CapabilityReadArtifact) {
 		return PolicyAllow
 	}
 	return PolicyDeny
@@ -543,13 +570,13 @@ type ApprovalPolicy struct{}
 // NewApprovalPolicy 创建无进程级grant的默认策略。
 func NewApprovalPolicy() ApprovalPolicy { return ApprovalPolicy{} }
 
-// Decide 对六能力执行默认安全策略。
+// Decide 对七能力执行默认安全策略。
 func (ApprovalPolicy) Decide(call ReadyCall) PolicyDecision {
 	if call.Validate() != nil {
 		return PolicyDeny
 	}
 	switch call.Capability() {
-	case CapabilityRead, CapabilityGlob, CapabilityGrep:
+	case CapabilityRead, CapabilityGlob, CapabilityGrep, CapabilityReadArtifact:
 		return PolicyAllow
 	case CapabilityPatch, CapabilityWrite, CapabilityExec:
 		return PolicyAsk

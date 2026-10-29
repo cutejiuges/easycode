@@ -18,18 +18,18 @@ func TestCatalogWriteStateDoesNotChangeStableDefinition(t *testing.T) {
 	pe, _ := NewPatchExecutor(w)
 	policy := tool.NewApprovalPolicy()
 	execPreparer := NewExecPlanner()
-	execExecutor, err := NewExecExecutor(w, OpenCommandEnvironment(), tool.RenderExecOutput)
+	execExecutor, err := NewExecExecutor(w, OpenCommandEnvironment(), tool.RenderExecOutput, testCommandOutputStore{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := NewCatalog(r, g, s, pp, pe, p, e, execPreparer, execExecutor, tool.RenderExecOutput, policy)
+	first, err := NewCatalog(r, g, s, pp, pe, p, e, execPreparer, execExecutor, tool.RenderExecOutput, policy, catalogArtifactExecutor{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewCatalog(r, g, s, pp, pe, nil, e, execPreparer, execExecutor, tool.RenderExecOutput, policy); err == nil {
+	if _, err := NewCatalog(r, g, s, pp, pe, nil, e, execPreparer, execExecutor, tool.RenderExecOutput, policy, catalogArtifactExecutor{}); err == nil {
 		t.Fatal("nil Write preparer")
 	}
-	if _, err := NewCatalog(r, g, s, pp, pe, p, nil, execPreparer, execExecutor, tool.RenderExecOutput, policy); err == nil {
+	if _, err := NewCatalog(r, g, s, pp, pe, p, nil, execPreparer, execExecutor, tool.RenderExecOutput, policy, catalogArtifactExecutor{}); err == nil {
 		t.Fatal("nil Write executor")
 	}
 	c, err := p.Prepare(context.Background(), writeCall(t, "new/a", "content"), tool.UnavailableReadObservation())
@@ -40,7 +40,7 @@ func TestCatalogWriteStateDoesNotChangeStableDefinition(t *testing.T) {
 		t.Fatal(result.Code())
 	}
 	_ = readObservation(t, r, "new/a")
-	second, err := NewCatalog(r, g, s, pp, pe, p, e, execPreparer, execExecutor, tool.RenderExecOutput, policy)
+	second, err := NewCatalog(r, g, s, pp, pe, p, e, execPreparer, execExecutor, tool.RenderExecOutput, policy, catalogArtifactExecutor{})
 	if err != nil {
 		t.Fatal(err)
 	}

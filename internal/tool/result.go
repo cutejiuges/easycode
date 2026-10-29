@@ -101,6 +101,8 @@ func (metadata ReadResultMetadata) OutputTruncated() bool   { return metadata.ou
 
 // InvocationResult 是可直接持久化并交给 Provider result codec 的冻结结果。
 type InvocationResult struct {
+	artifactInput  ReadArtifactInput
+	artifactPage   ArtifactPage
 	invocationID   InvocationID
 	providerCallID ProviderCallID
 	capability     CapabilityID
@@ -182,6 +184,9 @@ func (result InvocationResult) WriteMetadata() WriteResultMetadata { return resu
 
 // Validate 验证结果身份、状态、错误码、preview 和元数据。
 func (result InvocationResult) Validate() error {
+	if result.capability != CapabilityReadArtifact && (result.artifactInput != (ReadArtifactInput{}) || result.artifactPage != (ArtifactPage{})) {
+		return errors.New("mismatched artifact result")
+	}
 	if result.capability != CapabilityExec && result.execMetadata != (ExecResultMetadata{}) {
 		return errors.New("tool result contains mismatched Exec metadata")
 	}
@@ -207,6 +212,8 @@ func (result InvocationResult) Validate() error {
 		return errors.New("tool result contains mismatched Write metadata")
 	}
 	switch result.capability {
+	case CapabilityReadArtifact:
+		return result.validateArtifactResult()
 	case CapabilityExec:
 		return result.validateExecResult()
 	case CapabilityRead:
@@ -316,6 +323,11 @@ func NewReadErrorResult(invocation ReadInvocation, status ResultStatus, code str
 // NewInvocationErrorResult 为当前四种能力生成不泄漏底层cause的确定错误结果。
 func NewInvocationErrorResult(invocation Invocation, status ResultStatus, code string, message string) InvocationResult {
 	switch invocation.Capability() {
+	case CapabilityReadArtifact:
+		v, _ := invocation.ReadArtifact()
+		p, _ := NewModelPreview(message)
+		r, _ := NewReadArtifactInvocationResult(v, status, code, p, ArtifactPage{})
+		return r
 	case CapabilityExec:
 		value, _ := invocation.Exec()
 		return NewExecErrorResult(value, status, code, message)

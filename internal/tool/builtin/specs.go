@@ -16,8 +16,9 @@ func NewCatalog(
 	execExecutor tool.ExecExecutor,
 	renderer tool.ExecOutputRenderer,
 	policy tool.Policy,
+	artifactExecutor tool.ReadArtifactExecutor,
 ) (tool.CatalogSnapshot, error) {
 	return tool.NewCatalogSnapshot(
-		readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, writePreparer, writeExecutor, execPreparer, execExecutor, renderer, policy,
+		readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, writePreparer, writeExecutor, execPreparer, execExecutor, renderer, policy, artifactExecutor,
 	)
 }

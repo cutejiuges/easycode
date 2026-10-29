@@ -116,17 +116,22 @@ type ExecCandidate struct {
 }
 
 type execCandidateCanonical struct {
-	Capability          CapabilityID `json:"capability"`
-	Command             string       `json:"command"`
-	Workdir             string       `json:"workdir"`
-	TimeoutMillis       int          `json:"timeout_ms"`
-	ShellProfile        string       `json:"shell_profile"`
-	EnvironmentRevision string       `json:"environment_revision"`
-	SandboxRevision     string       `json:"sandbox_revision"`
-	NetworkAllowed      bool         `json:"network_allowed"`
-	WriteWorkspace      bool         `json:"write_workspace"`
-	CaptureBytes        int          `json:"capture_bytes"`
-	PreviewBytes        int          `json:"preview_bytes"`
+	Capability           CapabilityID `json:"capability"`
+	Command              string       `json:"command"`
+	Workdir              string       `json:"workdir"`
+	TimeoutMillis        int          `json:"timeout_ms"`
+	ShellProfile         string       `json:"shell_profile"`
+	EnvironmentRevision  string       `json:"environment_revision"`
+	SandboxRevision      string       `json:"sandbox_revision"`
+	NetworkAllowed       bool         `json:"network_allowed"`
+	WriteWorkspace       bool         `json:"write_workspace"`
+	CaptureBytes         int          `json:"capture_bytes"`
+	PreviewBytes         int          `json:"preview_bytes"`
+	SavingPolicy         string       `json:"saving_policy"`
+	SavedStreamBytes     int          `json:"saved_stream_bytes"`
+	SavedInvocationBytes int          `json:"saved_invocation_bytes"`
+	SavedThreadBytes     int          `json:"saved_thread_bytes"`
+	SavedRootBytes       int          `json:"saved_root_bytes"`
 }
 
 // NewExecCandidate 创建并fingerprint一个不可变命令候选。
@@ -186,6 +191,8 @@ func execCandidateFingerprint(invocation ExecInvocation, shell ShellProfile, env
 		Capability: CapabilityExec, Command: input.Command(), Workdir: input.Workdir(), TimeoutMillis: input.TimeoutMillis(), ShellProfile: shell.ID(),
 		EnvironmentRevision: environment.Revision(), SandboxRevision: sandbox.Revision(), NetworkAllowed: sandbox.NetworkAllowed(), WriteWorkspace: sandbox.WriteWorkspace(),
 		CaptureBytes: ExecCaptureBytesPerStream, PreviewBytes: ExecModelPreviewBytes,
+		SavingPolicy: "private-command-prefix", SavedStreamBytes: ArtifactStreamBytes,
+		SavedInvocationBytes: ArtifactInvocationBytes, SavedThreadBytes: ArtifactThreadBytes, SavedRootBytes: ArtifactRootBytes,
 	}, 256<<10)
 	if err != nil {
 		return "", err

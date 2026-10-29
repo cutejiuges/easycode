@@ -765,11 +765,11 @@ func assertOpenAIToolContinuation(t *testing.T, body []byte) {
 	if err := json.Unmarshal(body, &request); err != nil {
 		t.Fatal(err)
 	}
-	if len(request.Tools) != 6 || request.Tools[0].Type != "function" || request.Tools[0].Name != "Glob" ||
-		request.Tools[1].Type != "function" || request.Tools[1].Name != "Grep" ||
-		request.Tools[2].Type != "custom" || request.Tools[2].Name != "apply_patch" ||
-		request.Tools[3].Type != "function" || request.Tools[3].Name != "Read" || request.Tools[4].Name != "Write" ||
-		request.Tools[5].Type != "function" || request.Tools[5].Name != "exec_command" ||
+	if len(request.Tools) != 7 || request.Tools[0].Name != "ReadArtifact" || request.Tools[1].Type != "function" || request.Tools[1].Name != "Glob" ||
+		request.Tools[2].Type != "function" || request.Tools[2].Name != "Grep" ||
+		request.Tools[3].Type != "custom" || request.Tools[3].Name != "apply_patch" ||
+		request.Tools[4].Type != "function" || request.Tools[4].Name != "Read" || request.Tools[5].Name != "Write" ||
+		request.Tools[6].Type != "function" || request.Tools[6].Name != "exec_command" ||
 		len(request.Input) != 3 {
 		t.Fatalf("OpenAI continuation shape = %s", body)
 	}
@@ -807,9 +807,9 @@ func assertAnthropicToolContinuation(t *testing.T, body []byte) {
 	if err := json.Unmarshal(body, &request); err != nil {
 		t.Fatal(err)
 	}
-	if len(request.Tools) != 6 || request.Tools[0].Name != "Glob" || request.Tools[1].Name != "Grep" ||
-		request.Tools[2].Name != "Edit" || request.Tools[3].Name != "Read" || request.Tools[4].Name != "Write" ||
-		request.Tools[5].Name != "Bash" || len(request.Messages) != 3 {
+	if len(request.Tools) != 7 || request.Tools[0].Name != "ReadArtifact" || request.Tools[1].Name != "Glob" || request.Tools[2].Name != "Grep" ||
+		request.Tools[3].Name != "Edit" || request.Tools[4].Name != "Read" || request.Tools[5].Name != "Write" ||
+		request.Tools[6].Name != "Bash" || len(request.Messages) != 3 {
 		t.Fatalf("Anthropic continuation shape = %s", body)
 	}
 	if request.Messages[0].Role != "user" || request.Messages[0].Content[0].Text != "Read README.md and summarize it" ||

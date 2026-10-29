@@ -16,6 +16,7 @@ NNNN-short-decision-title.md
 - [ADR-0002：保留 Provider 原生历史并提供单向语义投影](0002-provider-native-history-and-semantic-projection.md)
 - [ADR-0003：使用 Session 线程树组织会话](0003-session-thread-tree.md)
 - [ADR-0004：首版 OpenAI Wire 仅支持 Responses](0004-openai-responses-first-wire-scope.md)
+- [ADR-0005：私有命令输出与独立宿主查询](0005-private-command-output-and-host-queries.md)
 
 ## 模板
 

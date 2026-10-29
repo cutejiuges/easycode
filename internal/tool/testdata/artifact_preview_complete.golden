@@ -1,0 +1,9 @@
+bytes=260385
+truncated=true
+sha256=0dd377088bb2d8977a37b62887bb804ecf1a22c2db1a217959ff6327b651cd64
+stdout=stdout saved_output: complete; artifact_id: 0123456789abcdef0123456789abcdef; saved_bytes: 600000; observed_bytes: 600000; reason: 
+Use ReadArtifact to read the saved prefix.
+
+stderr=stderr saved_output: complete; artifact_id: 1123456789abcdef0123456789abcdef; saved_bytes: 600000; observed_bytes: 600000; reason: 
+Use ReadArtifact to read the saved prefix.
+

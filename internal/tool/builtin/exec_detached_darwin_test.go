@@ -187,7 +187,7 @@ func TestDarwinLargeCommandOutputRetainsHeadTailAndBudgets(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer workspace.Close()
-	executor, err := NewExecExecutor(workspace, OpenCommandEnvironment(), tool.RenderExecOutput)
+	executor, err := NewExecExecutor(workspace, OpenCommandEnvironment(), tool.RenderExecOutput, testCommandOutputStore{})
 	if err != nil {
 		t.Fatal(err)
 	}

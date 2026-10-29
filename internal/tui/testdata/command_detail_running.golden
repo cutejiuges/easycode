@@ -1,14 +1,12 @@
-Command details
-Running
-Workdir: src
-250 ms · 512 bytes
-Lines 1-7 of 7
+Command details · stdout
+running · 250 ms · src
+Saving while command runs
 Command:
 printf 'full command first line'
 printf 'full command second line'
 
-Output:
+Recent output:
 recent output
 last line
-PgUp/PgDn: scroll · Ctrl+O/Esc: close
-Ctrl+C: interrupt
+Tab: stream · PgUp/PgDn: page · ↑/↓: scroll
+Esc: list · Ctrl+O: close · Ctrl+C: interrupt

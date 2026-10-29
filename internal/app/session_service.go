@@ -35,6 +35,7 @@ type chatRuntimeJournal interface {
 }
 
 type assembledSession struct {
+	commands     []session.CommandHistoryEntry
 	identity     session.Identity
 	conversation provider.Conversation
 	writer       managedJournal
@@ -183,7 +184,8 @@ func (service *sessionService) resume(
 	}
 	return assembledSession{
 		identity: plan.Identity, conversation: conversation, writer: writer,
-		history: conversation.ProjectHistory(), repair: plan.Repair, toolRecovery: toolRecovery,
+		commands: plan.Commands,
+		history:  conversation.ProjectHistory(), repair: plan.Repair, toolRecovery: toolRecovery,
 	}, nil
 }
 

@@ -10,7 +10,7 @@
 
 每条 JSONL record SHALL 使用唯一当前、强类型的 envelope，至少包含一个 schema canary、一个 payload canary、单调 seq、UTC timestamp、session/thread/turn identity、event kind、batch 边界、checksum 和受控 typed payload。所有当前 records 均为恢复必需事实；envelope MUST NOT 携带 `required`/`optional` 选择字段，也不得透传未知 kind 或未知 payload 为 opaque Session record。
 
-当前记录词汇中的 `tool_call_ready`、`tool_approval_decided`、`tool_execution_started` 和 `tool_call_result` SHALL 具有专属 typed constructor、strict decoder 与 validator。`tool_call_ready` SHALL 保存 invocation ID、Provider call ID、Provider wire kind、sample/call index、capability，以及与 `Read`、`Glob`、`Grep`、`Patch`、`Write` 或 `Exec` 匹配的完整 typed input；`tool_approval_decided` SHALL 保存 request/invocation identity、candidate fingerprint、typed outcome、decision source、仅适用于 deny 的有界反馈与不含绝对路径、正文、环境值或命令输出的安全 metadata；`tool_execution_started` SHALL 引用同一 invocation 并表示 executor 接收线性化点；`tool_call_result` SHALL 保存终态 status、稳定 code、完整有界模型 preview 与 capability 对应的非敏感 typed metadata。Exec metadata SHALL只包含相对workdir、exit/timeout/cancelled/truncated状态、duration及stdout/stderr计数，不得包含PID、绝对路径或环境。工具 records MUST NOT 保存 input revision、result codec revision、执行器额外采集的完整 base/final 文件快照、完整 diff、临时文件路径或可执行 Provider wire item。
+当前记录词汇中的 `tool_call_ready`、`tool_approval_decided`、`tool_execution_started` 和 `tool_call_result` SHALL 具有专属 typed constructor、strict decoder 与 validator。`tool_call_ready` SHALL 保存 invocation ID、Provider call ID、Provider wire kind、sample/call index、capability，以及与 `Read`、`Glob`、`Grep`、`Patch`、`Write`、`Exec` 或 `ReadArtifact` 匹配的完整 typed input；`tool_approval_decided` SHALL 保存 request/invocation identity、candidate fingerprint、typed outcome、decision source、仅适用于 deny 的有界反馈与不含绝对路径、正文、环境值或命令输出的安全 metadata；`tool_execution_started` SHALL 引用同一 invocation 并表示 executor 接收线性化点；`tool_call_result` SHALL 保存终态 status、稳定 code、完整有界模型 preview 与 capability 对应的非敏感 typed metadata。Exec metadata SHALL只包含相对workdir、exit/timeout/cancelled/truncated状态、duration、stdout/stderr计数及各流 typed 保存状态与 descriptor，不得包含PID、绝对路径或环境。工具 records MUST NOT 保存 input revision、result codec revision、执行器额外采集的完整 base/final 文件快照、完整 diff、临时文件路径或可执行 Provider wire item。
 
 schema/payload canary 只用于精确验证当前格式，不得选择历史 decoder。completed sample 的 Provider entry 仍作为 native commit 并紧邻配对 `sample_usage`；tool results 编码为 tool-output native commit 时不生成 sample usage。高频参数 delta、approval request/焦点/按键、命令输出progress、elapsed tick、UI 状态和文件系统瞬时信息 MUST NOT 进入 JSONL。
 
@@ -77,6 +77,12 @@ Write 的必要 typed input SHALL 保存 file_path/content，并与原生调用�
 - **WHEN** Write ready 与 result 写入当前 journal
 - **THEN** ready 包含完整必要参数，result 只含有界摘要与结果 metadata
 - **THEN** 不另写磁盘旧文件、Read observation、approval preview 或暂存资源名
+
+ReadArtifact result SHALL 保存冻结页 preview、artifact ID、实际 offset/next_offset、stored EOF 和 source_complete；不得保存宿主路径。Exec 保存状态 MUST 是必需当前字段，complete/partial 必须匹配合法 descriptor，not_needed/unavailable 不得伪造引用。
+
+#### Scenario: Reject inconsistent artifact metadata
+- **WHEN** checksum 合法但 descriptor 的 thread/invocation/stream、digest、长度或状态与结果不一致
+- **THEN** 当前 decoder/replay 拒绝记录，不访问 artifact 或修改 journal
 
 ### Requirement: A single writer assigns order and durably appends batches
 
@@ -298,7 +304,7 @@ Session records、错误、诊断和 fixture MUST NOT 包含 API key、Authoriza
 
 JSONL 事实源 SHALL 只持久化恢复、幂等和审计所需的业务边界，不得默认记录 assistant text delta、spinner、窗口尺寸、工具 progress 或其他 UI 瞬态。发布前新增 Tool、MCP、permission、usage、hook、compact 或 subagent 记录时，变更 SHALL 更新唯一当前强类型 event kind 集合并直接替换当前 fixture；不得预留未知 optional record、历史 payload decoder 或 migration fixture。
 
-大工具结果超过行大小边界时，后续已批准能力 SHALL 使用权限受控且具备完整性信息的 artifact，并在 JSONL 中保存有界 typed 引用，而不是放宽所有记录的上限。本变更的搜索结果只保存 64 KiB 内的冻结模型 preview 和有界 typed metadata，不引入通用 artifact。
+大工具结果超过行大小边界时，命令输出 SHALL 使用权限受控且具备完整性信息的 artifact，并在 JSONL 中保存有界 typed 引用，而不是放宽所有记录的上限。搜索结果仍只保存 64 KiB 内的冻结模型 preview 和有界 typed metadata，不引入通用 artifact。
 
 #### Scenario: Stream many text deltas
 - **WHEN** Provider 在一个 sample 中产生大量 assistant 文本增量后成功完成
@@ -322,6 +328,10 @@ JSONL 事实源 SHALL 只持久化恢复、幂等和审计所需的业务边界�
 - **WHEN** MCP 工具在一次执行中产生大量仅用于界面的 progress
 - **THEN** Session 不逐条持久化这些瞬态更新，只记录未来已批准的最终 typed fact
 
+#### Scenario: Keep output bodies outside records
+- **WHEN** Exec 产生大输出并发布 artifact
+- **THEN** journal 仅保存有界 preview/descriptor 与原有业务事实，不记录管道 chunk、页读取 UI 状态或整个文件
+
 ### Requirement: Current record schema exposes typed construction and decoding
 
 每个当前已知 Session `event_kind` SHALL 具有专属强类型 draft constructor、strict decoder 和 validator。公共 record draft、writer、replay 和 lifecycle 接口 MUST NOT 接受或返回无约束动态值；构造和解码都 SHALL 拒绝字段缺失、未知字段、尾随 JSON、canary 不匹配和不满足当前语义的 payload。业务类型和构造器不得用版本后缀复制当前 schema，decoder registry 不得以 payload version 选择实现。
@@ -331,7 +341,7 @@ JSONL 事实源 SHALL 只持久化恢复、幂等和审计所需的业务边界�
 当前固定 fixture SHALL 覆盖 Write 创建/覆盖成功、准备失败、拒绝、ready/allow/started/result 中断与混合 exclusive 顺序。新增 Write 使用唯一当前 input/result 联合并精确验证 canary；不得给旧 shape 增加 optional 分支。
 
 #### Scenario: Construct every tool record through a typed API
-- **WHEN** 调用方创建 Read、Glob、Grep、Patch、Write、Exec 的 ready、approval、execution-started 或 result draft
+- **WHEN** 调用方创建 Read、Glob、Grep、Patch、Write、Exec、ReadArtifact 的 ready、approval、execution-started 或 result draft
 - **THEN** constructor只接收与kind和capability匹配的当前强类型值并立即验证
 - **THEN** draft不能被改造成capability、wire kind与payload不匹配的record
 
@@ -377,6 +387,12 @@ JSONL 事实源 SHALL 只持久化恢复、幂等和审计所需的业务边界�
 - **WHEN** 测试读取仓库保存的 Write current fixtures
 - **THEN** 使用生产 loader/replay 验证预期调用、审批与结果；测试运行时不调用当前 encoder 生成 fixture
 
+本变更 SHALL 更新唯一当前 canary 并逐字节固定 Exec 保存状态与 ReadArtifact 的 current fixtures；缺少保存字段的旧开发 shape MUST 在 repair/append 前失败，不保留兼容 reader。
+
+#### Scenario: Load fixed artifact fixtures
+- **WHEN** 加载仓库内七工具、partial/unavailable 和恢复中断的固定 bytes
+- **THEN** 生产 decoder/replay 校验通过；测试运行时不使用当前 encoder 生成输入 fixture
+
 ### Requirement: Repository lifecycle and path safety are explicit
 
 Session Repository 的纯内存配置与外部资源获取 SHALL 分离。任何创建数据根、打开目录句柄、创建 journal、取得 lease 或启动 writer 的操作 MUST 使用 `Open`、`OpenOrCreate`、`Create` 或 `Start` 等显式生命周期入口；纯构造器不得访问文件系统或启动 goroutine。
@@ -402,7 +418,7 @@ Session Repository 的纯内存配置与外部资源获取 SHALL 分离。任何
 
 ### Requirement: Sample usage is committed atomically with its sample
 
-每个成功 Provider sample SHALL 在一个 durable batch 中依次写入 `provider_native_commit`、`sample_usage` 以及该 sample 的后续边界。无 tool call 的最终 sample 后续边界为 `turn_completed`；含 tool calls 的 sample 后续边界为一个或多个按 call index 排列的 `tool_call_ready`，输入联合覆盖Read、Glob、Grep、Patch与Write。同一 batch MUST 使用相同 session/thread/turn 和 batch identity并获得连续seq；只有整个batch成功Sync后才能确认任一事实或读取Patch目标。
+每个成功 Provider sample SHALL 在一个 durable batch 中依次写入 `provider_native_commit`、`sample_usage` 以及该 sample 的后续边界。无 tool call 的最终 sample 后续边界为 `turn_completed`；含 tool calls 的 sample 后续边界为一个或多个按 call index 排列的 `tool_call_ready`，输入联合覆盖Read、Glob、Grep、Patch、Write、Exec与ReadArtifact。同一 batch MUST 使用相同 session/thread/turn 和 batch identity并获得连续seq；只有整个batch成功Sync后才能确认任一事实或读取Patch目标。
 
 tool-output native commit MUST 在全部对应 result facts 已按 call index durable 后单独提交且不得带 `sample_usage`。`sample_usage` payload继续完整包含五个normalized metrics，不得包含Provider raw usage、价格、请求正文、tool result、approval或diff。
 

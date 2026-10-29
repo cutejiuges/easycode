@@ -89,6 +89,12 @@ func TestReplayExecCrashBoundariesAndInvalidTransitions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if len(plan.Commands) != 1 || plan.Commands[0].Invocation.InvocationID() != invocation.InvocationID() || plan.Commands[0].HasResult != test.result {
+				t.Fatal("command history lost interrupted or terminal facts")
+			}
+			if test.result && (plan.Commands[0].Result.Status() != test.status || plan.Commands[0].Result.Preview().Text() != "frozen Exec output") {
+				t.Fatal("command history changed frozen terminal state")
+			}
 			calls := plan.ToolRecovery.Calls()
 			want := ReplayedToolCallReady
 			if test.started {
