@@ -28,6 +28,14 @@ func TestCurrentHeterogeneousExecFixturesUseProductionReplay(t *testing.T) {
 			if len(loaded.Records) != 34 || plan.NextSequence != 35 || len(plan.NativeCommits) != 5 || len(plan.SampleUsages) != 3 || plan.SessionMetadata.Provider != family {
 				t.Fatal("heterogeneous fixture summary changed")
 			}
+			if len(plan.Commands) != 3 || !plan.Commands[0].HasResult || !plan.Commands[1].HasResult || plan.Commands[2].HasResult || plan.Commands[1].Result.Status() != tool.ResultDenied {
+				t.Fatal("full command history was reduced to recovery tail")
+			}
+			for i := 1; i < len(plan.Commands); i++ {
+				if plan.Commands[i-1].Sequence >= plan.Commands[i].Sequence {
+					t.Fatal("command history order changed")
+				}
+			}
 			calls := plan.ToolRecovery.Calls()
 			if len(calls) != 1 || calls[0].State != ReplayedToolCallStarted || calls[0].Invocation.ProviderCallID() != "call-interrupted" {
 				t.Fatal("interrupted Exec not preserved")

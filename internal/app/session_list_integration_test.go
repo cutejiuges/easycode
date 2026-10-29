@@ -33,7 +33,7 @@ func TestListThenResumeBothProviders(t *testing.T) {
 	} {
 		t.Run(string(fixture.family), func(t *testing.T) {
 			dir := privateAppTempDir(t)
-			root := filepath.Join(dir, "sessions")
+			root := filepath.Join(privateAppTempDir(t), "sessions")
 			var requests atomic.Int64
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "text/event-stream")

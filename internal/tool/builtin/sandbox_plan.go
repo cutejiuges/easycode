@@ -32,9 +32,14 @@ func (*SandboxPlanner) Plan(candidate tool.ExecCandidate, workspaceRoot string) 
 	return SandboxPlan{
 		root: workspaceRoot, workdir: candidate.Invocation().Input().Workdir(), temporary: workspaceRoot, cache: filepath.Join(workspaceRoot, ".cache", "go-build"),
 		revision: candidate.Sandbox().Revision(), candidateFingerprint: candidate.Fingerprint(),
-		readRoots:  []string{"/System", "/usr", "/bin", "/sbin", "/Library", "/Applications", "/opt/homebrew", "/private/etc", "/dev", workspaceRoot},
+		readRoots:  CommandReadRoots(workspaceRoot),
 		writeRoots: []string{workspaceRoot},
 	}, nil
+}
+
+// CommandReadRoots 返回当前命令策略的读取根；布局检查与实际 sandbox 共用此策略。
+func CommandReadRoots(workspaceRoot string) []string {
+	return []string{"/System", "/usr", "/bin", "/sbin", "/Library", "/Applications", "/opt/homebrew", "/private/etc", "/dev", workspaceRoot}
 }
 
 func (plan SandboxPlan) Workspace() string            { return plan.root }

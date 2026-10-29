@@ -238,7 +238,6 @@ func TestComposerSnapshotRestoredAfterOverlayClose(t *testing.T) {
 				resolved.TurnID = event.TurnID
 				m = updateModel(t, m, RuntimeEventMsg{Event: resolved})
 			} else {
-				m.latestCommand = "detail"
 				m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyCtrlO})
 				m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyEsc})
 			}

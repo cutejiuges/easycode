@@ -25,7 +25,7 @@ func TestDarwinExecSandboxAndOutput(t *testing.T) {
 	defer func() { _ = workspace.Close() }()
 	environment := filterCommandEnvironment([]string{"PATH=/usr/bin:/bin", "API_KEY=private-secret", "HTTPS_PROXY=private-proxy"})
 	environment.executable, _ = os.Executable()
-	executor, err := NewExecExecutor(workspace, environment, tool.RenderExecOutput)
+	executor, err := NewExecExecutor(workspace, environment, tool.RenderExecOutput, testCommandOutputStore{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestDarwinExecWorkdirDescriptorSurvivesSymlinkSwap(t *testing.T) {
 			} else {
 				workspace.hooks.beforeOpenComponent = swap
 			}
-			executor, err := NewExecExecutor(workspace, OpenCommandEnvironment(), tool.RenderExecOutput)
+			executor, err := NewExecExecutor(workspace, OpenCommandEnvironment(), tool.RenderExecOutput, testCommandOutputStore{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -227,7 +227,7 @@ func TestDarwinExecCancellationAfterOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = workspace.Close() }()
-	executor, err := NewExecExecutor(workspace, OpenCommandEnvironment(), tool.RenderExecOutput)
+	executor, err := NewExecExecutor(workspace, OpenCommandEnvironment(), tool.RenderExecOutput, testCommandOutputStore{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +295,7 @@ func TestDarwinSandboxDeniesOutsideWritesAndNetwork(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = workspace.Close() }()
-	executor, err := NewExecExecutor(workspace, OpenCommandEnvironment(), tool.RenderExecOutput)
+	executor, err := NewExecExecutor(workspace, OpenCommandEnvironment(), tool.RenderExecOutput, testCommandOutputStore{})
 	if err != nil {
 		t.Fatal(err)
 	}

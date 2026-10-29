@@ -1,8 +1,22 @@
 # EasyCode Tool 系统架构设计
 
+## 命令输出存储与查询
+
+`add-command-output-artifacts` 增加第七项能力 `artifact.read`，两家 facade 都命名为 `ReadArtifact`。输入为不透明 `artifact_id`、raw-byte `offset` 和 `limit`，单页最多 65,536 bytes；它不接受文件路径，不生成工作区 Read 证据。目录稳定排序与 schema 估算包括七项工具。
+
+`session/artifact` 在 Session 根的 `artifacts/<thread-id>/<invocation-id>/` 保存 stdout/stderr。每流最多 16 MiB 连续前缀，调用原子预留 32 MiB，thread/root 分别为 256 MiB/1 GiB。内存仍是每流 512 KiB 头尾，模型预览连同引用提示不超过 256 KiB。确认 EOF 的空流和完整内联小输出为 not_needed；其他结果分别记录 complete、partial、unavailable，不覆盖 exit/timeout/cancelled。
+
+发布顺序是文件 Sync → no-replace rename → 目录 Sync → result Sync → native output Sync。`ArtifactReferences` 在 result Sync 后授权；对象存在不等于可读。范围读取验证同一 FD 的长度和 SHA-256，UTF-8 不拆字符，无效 bytes 展示为 `\xHH`，stored EOF 与 source_complete 分开。持有 thread journal lease 并验证完整 replay 后才清理本线程 staging/孤儿；已引用对象不按年龄删除。
+
+app 在启动和 Exec 前拒绝存储根与 workspace 重合、互为祖先或落在 sandbox 其他读写根内的布局，错误为 `unsafe_storage_layout`。权限 0700/0600 不能替代这一隔离检查。Darwin/Linux 实现 FD 绑定存储；其他平台拒绝打开不具备安全保证的存储，不能据交叉编译宣称运行支持。
+
+TUI 的 Ctrl+O 打开历史列表，↑/↓ 选择、Enter 详情、Tab 切换双流、PgUp/PgDn 分页、Esc 返回列表再关闭。详情 ↑/↓ 滚动；Ctrl+C 保持定向中断，审批优先。app 查询 owner 负责取消和等待；protocol 不引用 tool/session。列表最多 50 条、缓存最多四页，换选择或 session 后用 generation 拒绝迟到回复。查询不修改 Provider、catalog 或 journal，文件缺失/损坏仍保留冻结预览。
+
+设计理由见 [ADR-0005](adr/0005-private-command-output-and-host-queries.md)。关键回归包括 `artifact_exec_darwin_test.go` 的双流省略回读、`artifact_resume_darwin_test.go` 的双 Provider 恢复等价和 `artifact_owner_test.go` 的阻塞 I/O 所有权。
+
 ## 当前独占执行不变量
 
-六项工具的 JSON 输入统一经过 codec 检查。Read/Glob/Grep 的缺省字段保留默认值，显式 null、重复键与有损 Unicode 失败关闭；Patch 的 custom freeform 保留独立语法解析器。
+七项工具的 JSON 输入统一经过 codec 检查。Read/Glob/Grep 的缺省字段保留默认值，显式 null、重复键与有损 Unicode 失败关闭；Patch 的 custom freeform 保留独立语法解析器。
 
 `runtime/exclusive.go` 持有 typed strategy，统一 Patch/Write/Exec 的 started admission、执行一次、关联验证与结果持久化。started 接收前取消不调用 executor；接收后等待确定提交结果，只有成功 Sync 后才执行。健康取消不 poison，无法确认 durable 结果才 poison。
 
@@ -19,7 +33,7 @@ Patch/Write grant 仅满足各自 capability 的 ask，不覆盖 deny，且只�
 
 本文固定 Tool 系统的完整大图、长期边界和分阶段实现顺序，避免多个长周期 change 各自发明一套调用、权限、恢复或结果协议。
 
-本文同时记录已实现基线与后续目标。当前 `internal/tool` 与 `internal/tool/builtin` 提供 Read、Glob、Grep、单个已有 UTF-8 工作区文件 Patch、structured `Write(file_path, content)`，以及 Darwin 前台 Exec。六项能力具有强类型输入/结果、双 Provider facade 和有序调度；Patch/Write/Exec 都是 exclusive 屏障。Anthropic 使用 structured `Edit`/`Write`/`Bash`，OpenAI 使用 custom freeform `apply_patch`、structured `Write` 与 function `exec_command`。交互式 Patch 显示完整 diff，Write 区分创建与覆盖，二者默认聚焦 No；Exec 始终只允许单次批准；headless `ask` 以 `approval_required` 失败关闭。非 Darwin 命令执行明确返回 `unsupported_platform`，不得无 sandbox 降级。PTY、后台进程控制、artifact、跨能力通用 SandboxPlanner 和完整 Tool UI 尚未实现。新增 Tool schema、Session record、权限协议或跨包接口仍须独立 OpenSpec change，经过 `propose -> review/confirm -> apply -> verify -> archive`。
+本文同时记录已实现基线与后续目标。当前 `internal/tool` 与 `internal/tool/builtin` 提供 Read、Glob、Grep、单个已有 UTF-8 工作区文件 Patch、structured `Write(file_path, content)`，以及 Darwin 前台 Exec 和 ReadArtifact。七项能力具有强类型输入/结果、双 Provider facade 和有序调度；Patch/Write/Exec 都是 exclusive 屏障。Anthropic 使用 structured `Edit`/`Write`/`Bash`，OpenAI 使用 custom freeform `apply_patch`、structured `Write` 与 function `exec_command`。交互式 Patch 显示完整 diff，Write 区分创建与覆盖，二者默认聚焦 No；Exec 始终只允许单次批准；headless `ask` 以 `approval_required` 失败关闭。非 Darwin 命令执行明确返回 `unsupported_platform`，不得无 sandbox 降级。PTY、后台进程控制、全工具 artifact、跨能力通用 SandboxPlanner 和完整 Tool UI 尚未实现。新增 Tool schema、Session record、权限协议或跨包接口仍须独立 OpenSpec change，经过 `propose -> review/confirm -> apply -> verify -> archive`。
 
 参考工程的使用原则如下：
 
@@ -314,8 +328,8 @@ headless 无交互宿主遇到 `ask` 时默认失败关闭。未来若支持预�
 - Sandbox：workdir 检查绑定实际 fd，系统只读资源与 workspace 可读，写入限定 workspace 和 `/dev/null`，网络禁用。系统 sandbox 不可用或初始化失败时失败关闭；初始化 stderr 不进入用户输出或 progress。
 - Owner：启动屏障保证退出观察建立后才运行命令；先非回收地观察 leader，再处理原进程组，最后唯一 `Wait`。取消/timeout 使用 TERM、250 ms 宽限、必要时 KILL、有界组收口及 1 s 输出排空；最终回收后不再向旧 PID/PGID 探测或发信号。阻塞的最终 Wait 仍由原 owner 持有，不能靠提前返回释放下一 turn。
 - 限制：保证原进程组清理，不承诺任意进程树或后台任务管理。`setsid`/脱离原组的后代可能继续存在，但仍继承 sandbox；保留输出管道导致排空超时则返回 `outcome_uncertain/output_cleanup_incomplete` 并 poison 当前 Runtime。关闭输出后脱离的进程不能据此检测，前台成功不等于任意后代已终止。
-- 输出：stdout/stderr 各保留 512 KiB 确定性头尾窗口，模型 preview 至多 256 KiB，固定 stdout 后 stderr 并保证 UTF-8；中间省略内容不另存 artifact。Session 冻结 preview/字节数/截断和退出 metadata，恢复不重新读取或截断。
-- TUI：普通命令摘要最多两行、160 code points；运行态只显示有界近期输出。`Ctrl+O` 打开可滚动详情，完整命令复用批准信息，终态预览来自 result durable 后的 typed terminal payload；进度不进 Session。`Ctrl+C` 定向中断后保持取消中，直到 cleanup 与 turn terminal 完成才恢复输入。
+- 输出：stdout/stderr 各保留 512 KiB 确定性头尾窗口，模型 preview 至多 256 KiB，固定 stdout 后 stderr 并保证 UTF-8；原始连续前缀按私有 artifact 策略保存。Session 冻结 preview/字节数/截断和退出 metadata，恢复不重新读取或截断。
+- TUI：普通命令摘要最多两行、160 code points；运行态只显示有界近期输出。`Ctrl+O` 打开历史列表，Enter 进入可分页详情，完整命令复用批准信息，终态预览来自 result durable 后的 typed terminal payload；进度不进 Session。`Ctrl+C` 定向中断后保持取消中，直到 cleanup 与 turn terminal 完成才恢复输入。
 
 该切片选择 Exec 优先于整文件 Write，是为了补齐已有“读取/搜索 → Patch → 执行验证 → 总结”的真实闭环。Claude Code 2.1.88 的 Bash 批准、默认 No、命令摘要/展开详情指导产品交互；Codex `c248f6d48b` 的 unified_exec、Seatbelt 与进程 owner 分层指导内核边界。两者均只读参考：不引入 Claude Code 的流内提前副作用，也不提前复制 Codex 的 PTY/后台句柄；当前保留双 Provider 原生 call/output 语义，并以 durable started 作为执行接收点。具体证据和范围取舍见 `add-command-execution` 的 proposal/design。
 
@@ -330,14 +344,14 @@ headless 无交互宿主遇到 `ask` 时默认失败关闭。未来若支持预�
 - Exec 可保留头尾窗口、退出码和 stderr 摘要。
 - Patch/Write 返回确定性 diff/摘要，不回显整个文件。
 
-未来 artifact change 落地后，完整结果超限时的目标流程是：
+命令输出 artifact 已按下述顺序落地；推广到其他工具仍需独立 change：
 
 1. 先把完整结果按策略保存为权限受控 artifact。
 2. 生成确定性的模型预览和替换原因。
 3. 将“模型实际收到的预览字节 + artifact descriptor + 截断元数据”写入 durable fact。
 4. 恢复时复用已保存预览，不根据新预算重新截断。
 
-当前工具均不创建 artifact：搜索工具持久化最多 64 KiB 的确定性模型预览，Exec 持久化最多 256 KiB 的预览及 typed metadata；恢复复用冻结字节而不重搜或重执行。省略内容当前不可恢复，UI 必须明确截断。artifact 后续须先定义受控存储、预算、清理所有权和失败语义；它不是 Session 事实源，JSONL 只保存 descriptor、摘要和完整性信息，SQLite 仍只做可重建索引。
+Exec 从首字节暂存双流，各保存最多 16 MiB 连续前缀；小输出完全内联时删除暂存。搜索工具仍只持久化最多 64 KiB 的确定性预览。Exec 冻结最多 256 KiB 预览和 complete/partial/unavailable/not_needed 保存状态，恢复不读对象、不重新截断。JSONL 是事实源，artifact 是按 descriptor 校验的私有数据，SQLite 仍只做可重建索引。详见 [命令输出存储与查询](#命令输出存储与查询)。
 
 ### 10.1 Write 已实现边界
 
@@ -351,7 +365,7 @@ Runtime 的观察表仅由 turn owner 操作，上限 1024，按输出提交顺�
 
 发布前取消不改变正式目标；确定发布后忽略迟到取消，完成父目录 Sync/清理后返回 success。发布结果无法确认、目录 Sync 或 cleanup 失败返回 outcome_uncertain；Runtime 停止后续副作用，但健康 journal 仍保存冻结结果和配对 output。owner 仅清理 identity 匹配的自有项，不递归删除未知内容；SIGKILL 可留下私有暂存项，resume 不访问它们。
 
-当前 canary 为 3；`tool_call_ready` 保存必要 WriteInput，包括 content，`tool_call_result` 只保存冻结摘要与 operation/byte/line/created-directory metadata，不重复保存 base/final 文件或候选 diff。审批仍用 `tool_approval_decided`，执行仍用 `tool_execution_started`，不新增 Read observation record。恢复验证按连续只读组与独占屏障检查顺序，不能要求所有调用先 started 后 result。
+当前 canary 为 4；`tool_call_ready` 保存必要 WriteInput，包括 content，`tool_call_result` 只保存冻结摘要与 operation/byte/line/created-directory metadata，不重复保存 base/final 文件或候选 diff。审批仍用 `tool_approval_decided`，执行仍用 `tool_execution_started`，不新增 Read observation record。恢复验证按连续只读组与独占屏障检查顺序，不能要求所有调用先 started 后 result。
 
 测试入口：`internal/tool/builtin/write_*_test.go`、`internal/runtime/write*_test.go`、`internal/runtime/read_observations_test.go`、`internal/session/write_fixture_test.go`、两家 Provider 的 `write_test.go`/`restore_test.go`、`internal/tui/write_test.go` 与 `internal/app/write*_test.go`。当前 macOS 已运行真实发布/竞争/进程崩溃测试；Linux 与 Windows 已交叉编译，当前环境无 Linux runner，Linux 文件系统运行验证仍是已记录限制，不能等同交叉编译通过。
 
@@ -369,7 +383,7 @@ Runtime 的观察表仅由 turn owner 操作，上限 1024，按输出提交顺�
 | 模型预览字节与截断元数据 | 是 | 可投影 | 恢复必须精确复用 |
 | UI 展开、焦点、spinner | 否 | 本地状态 | 不进入协议与缓存 |
 
-当前 Session envelope canary 为 `3`，仍只有一个 reader。`tool_approval_decided` 保存 typed `decision_source` 和安全展示 metadata（capability、相对目标、Exec timeout），不保存 PID、绝对路径、宿主环境、输出 chunk 或底层 cause。Exec 恢复时，未决定批准为 `session_interrupted_before_approval`，allow 但未 started 为 `session_interrupted_before_execution`，started 无结果为 `outcome_uncertain`；均不重试命令。
+当前 Session envelope canary 为 `4`，仍只有一个 reader。`tool_approval_decided` 保存 typed `decision_source` 和安全展示 metadata（capability、相对目标、Exec timeout），不保存 PID、绝对路径、宿主环境、输出 chunk 或底层 cause。Exec 恢复时，未决定批准为 `session_interrupted_before_approval`，allow 但未 started 为 `session_interrupted_before_execution`，started 无结果为 `outcome_uncertain`；均不重试命令。
 
 稳定发布前新增或修改 record kind 时，直接替换唯一 current fixture，并让旧开发 shape fail closed。稳定发布后若引入真实 revision，必须同时提交 typed constructor、strict decoder、validator、不可变历史 fixture、兼容窗口和 replay migration test；既有 append-only records 不得在 resume 时原地改写。
 
@@ -396,7 +410,7 @@ Runtime 的观察表仅由 turn owner 操作，上限 1024，按输出提交顺�
 - Exec：已实现 Darwin 前台执行、单次批准、sandbox、取消/timeout、输出预算、进度与详情；非 Darwin 失败关闭。
 - `write_stdin`、PTY、后台进程控制：待各自定义输入、授权和资源所有权后实现。
 - allow/ask/deny、approval：已实现 Patch/Write/Exec 闭环；SandboxPlan 当前只覆盖 Exec，不等于通用策略引擎。
-- ledger 与配对恢复：六项能力均已实现；通用结果预算和 artifact 仍未实现。
+- ledger 与配对恢复：七项能力均已实现；通用结果预算和非命令工具 artifact 仍未实现。
 - 工具输出后的 sampling safe point 已存在；same-turn steer 尚未接入。
 
 ### 13.2 后续阶段能力
@@ -418,9 +432,10 @@ Runtime 的观察表仅由 turn owner 操作，上限 1024，按输出提交顺�
 | 3–4（已实现） | `add-approved-file-patch-flow` | allow/ask/deny、headless 失败关闭、完整 diff、双 Provider Patch、base evidence、原子替换与恢复 | diff artifact、任意文件写入 facade |
 | 5 | `add-file-write-tool` | 新文件/整文件写入、原子替换、权限与冲突策略 | 命令执行 |
 | 6（已实现） | `add-command-execution` | Darwin 前台 exec、单次批准、进程 owner、取消、超时、输出预算、sandbox 与 TUI 详情 | PTY、后台控制、artifact、非 Darwin 执行 |
-| 7 | `add-background-process-control` | process handle、write_stdin、最终 wait 和 shutdown | 通用任务系统 |
-| 8 | `add-tool-result-budget` | 各工具预算、artifact、持久化模型预览、恢复等价 | 远程 artifact 服务 |
-| 9 | `add-same-turn-steering` | tool output 后 safe point 注入、缓存与历史语义 | 任意时刻抢占 Provider stream |
+| 7（已实现） | `add-command-output-artifacts` | 双流私有保存、ReadArtifact、独立历史与有界分页、恢复等价 | 全工具预算、自动过期 |
+| 8 | `add-background-process-control` | process handle、write_stdin、最终 wait 和 shutdown | 通用任务系统 |
+| 9 | `add-tool-result-budget` | 各工具预算、artifact、持久化模型预览、恢复等价 | 远程 artifact 服务 |
+| 10 | `add-same-turn-steering` | tool output 后 safe point 注入、缓存与历史语义 | 任意时刻抢占 Provider stream |
 
 首个 change 选择 Read，而不是先搭建“完整通用框架”，原因是：
 

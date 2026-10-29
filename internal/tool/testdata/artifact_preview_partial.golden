@@ -1,0 +1,9 @@
+bytes=260407
+truncated=true
+sha256=ae0a60d0a9a215b58b361ff4b683d7b2bdb5df9b219edd16809ccaec0e5cdd46
+stdout=stdout saved_output: partial; artifact_id: 0123456789abcdef0123456789abcdef; saved_bytes: 500000; observed_bytes: 600000; reason: write_failed
+Use ReadArtifact to read the saved prefix.
+
+stderr=stderr saved_output: partial; artifact_id: 1123456789abcdef0123456789abcdef; saved_bytes: 500000; observed_bytes: 600000; reason: write_failed
+Use ReadArtifact to read the saved prefix.
+

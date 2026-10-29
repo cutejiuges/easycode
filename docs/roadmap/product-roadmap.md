@@ -146,7 +146,7 @@ make verify
 - 已完成双 Provider 共享 `StreamEvent` 的封闭构造与纯内存验证；Runtime 在消费端协议错误时取消派生 context并同步排空到 producer 关闭，AgentLoop 只在前一 stream 清理完成后启动下一 turn。
 - 已完成双 Provider 的 committed-only 文本 `HistoryProjector`：投影保留 turn 边界和可见文本，但不暴露 thinking/signature、redacted thinking、reasoning summary、encrypted content、phase、usage 或未知扩展，也不参与后续请求编译。
 - Anthropic 当前声明 streaming、thinking-signature 原生保留与 structured tools（含 Edit/Write/Bash），OpenAI 当前声明 streaming、encrypted reasoning 原生保留、function tools（含 Write/exec_command）与 custom freeform apply_patch。P2 已落地 completed-sample usage、原生历史 footprint、JSONL Session、resume/headless 和 ContextPlanner；P3 已补充 Read/Glob/Grep/Patch/Write/Exec Tool Loop 与 approval，但通用 tool UI、完整 CachePlanner、usage 成本/TUI、prompt cache key、`previous_response_id` 和自动重试仍留在后续阶段。
-- TUI 只消费 typed RuntimeEvent 和 ChatSession facade；已提供 Patch diff/Write、Exec approval overlay、命令进度和 Ctrl+O 可滚动详情，多行 composer、字素编辑、显式 decoded paste 和有界历史；Markdown、slash command、通用 permission 面板和 session picker 仍未实现。
+- TUI 只消费 typed RuntimeEvent 和 ChatSession facade；已提供 Patch diff/Write、Exec approval overlay、命令进度和 Ctrl+O 历史列表与分页详情，多行 composer、字素编辑、显式 decoded paste 和有界历史；Markdown、slash command、通用 permission 面板和 session picker 仍未实现。
 
 #### OpenAI Responses（首要 Provider）
 
@@ -216,11 +216,11 @@ make verify
 
 可重建 SQLite Catalog v1 已交付：前台 reconciliation 通过 descriptor-relative journal 枚举、逐条 exclusive lease、Loader/ReplayPlanner/Projector 和短 SQLite transaction 重建最小 thread metadata；缺失、损坏或不兼容的 `state.sqlite` 可从 JSONL 原子重建。`--continue` 只选择当前 cwd、Provider family/wire 与 model 完全匹配的最近 root Session，随后仍由既有 resume 路径重新取得 lease并验证事实源。Catalog 不保存 prompt、response、native payload、API key、base URL 或 Authorization。
 
-确定性上下文规划基线已交付：Runtime 在 durable `turn_started` 与 Provider stream 之间构造 `provider_profile -> tool_catalog -> [project_instructions] -> committed_history -> current_input`，输出不可变来源、CachePlan、stable-prefix fingerprint、本地 `byte_heuristic_v1` 估算和预算判定。六项工具的稳定 schema 纳入估算与 fingerprint，具体 command、workdir、approval 和宿主环境不进入稳定前缀。应用在资源打开前从当前启动目录安全发现一次层级 `AGENTS.md`/`CLAUDE.md`，形成默认 32 KiB、硬上限 4 MiB、只含项目根相对来源的不可变快照；活动进程不热更新，resume/continue 在新进程当前目录重新发现。双 Provider 每轮把非空快照作为单一临时 user context 置于 native history 前，但不提交到 native history、Session、RuntimeEvent 或语义投影。双 Provider 从 committed native history 提供只含 family/revision/method/state/tokens 的 footprint，opaque reasoning 不进入共享视图；语义估算与 native footprint 取覆盖值而不是相加。用户可显式配置 context window、输出预留和安全余量；未配置或估算 unknown 时不硬拒绝，明确超限以 `context_limit_exceeded` 在网络前 durable 失败。
+确定性上下文规划基线已交付：Runtime 在 durable `turn_started` 与 Provider stream 之间构造 `provider_profile -> tool_catalog -> [project_instructions] -> committed_history -> current_input`，输出不可变来源、CachePlan、stable-prefix fingerprint、本地 `byte_heuristic_v1` 估算和预算判定。七项工具的稳定 schema 纳入估算与 fingerprint，具体 command、workdir、approval 和宿主环境不进入稳定前缀。应用在资源打开前从当前启动目录安全发现一次层级 `AGENTS.md`/`CLAUDE.md`，形成默认 32 KiB、硬上限 4 MiB、只含项目根相对来源的不可变快照；活动进程不热更新，resume/continue 在新进程当前目录重新发现。双 Provider 每轮把非空快照作为单一临时 user context 置于 native history 前，但不提交到 native history、Session、RuntimeEvent 或语义投影。双 Provider 从 committed native history 提供只含 family/revision/method/state/tokens 的 footprint，opaque reasoning 不进入共享视图；语义估算与 native footprint 取覆盖值而不是相加。用户可显式配置 context window、输出预留和安全余量；未配置或估算 unknown 时不硬拒绝，明确超限以 `context_limit_exceeded` 在网络前 durable 失败。
 
 2026-10-23 已交付独立 `sessions list [--all] [--limit N]`：默认当前规范化目录 20 条，最大 200 条，按 durable 更新时间及 thread ID 双降序；所有 Provider/model 可发现，完整 ID 可交给既有 `--resume`。入口无需模型配置、不访问网络、不读取 stdin、不进入聊天资源链。Catalog schema 和 Session vocabulary 不变，协调仍全量扫描并允许 lease 下尾修复，busy/invalid 以全局警告报告。固定文本 golden、双 Provider 列表后恢复、索引重建、跨进程占用和取消/输出失败验证覆盖该入口；此交付不包含 picker、标题搜索或 worktree 聚合。
 
-P2 尚未完成：session picker、worktree/project catalog、title/tag/search、实时索引、same-turn steered input、usage 成本/配额与 TUI 展示、真实 cache request 策略和观测指标、skill context sources、artifact、fork/subagent 线程树、compaction checkpoint，以及稳定发布后真实 schema/payload revision 的版本专属转换。Read/Glob/Grep/Patch/Write/Exec Tool Loop 已交付 tool catalog source、approval/ledger/result、durable output、有序并行与 exclusive 屏障；已交付的 FIFO follow-up queue 仍只在进程内存在，`queued` 不是 durable 确认，same-turn steer 必须另行接入 tool output safe point。当前 fixture 是唯一当前格式，不代表通用 migration 已实现；当前进度不能视为 P2 退出。
+P2 尚未完成：session picker、worktree/project catalog、title/tag/search、实时索引、same-turn steered input、usage 成本/配额与 TUI 展示、真实 cache request 策略和观测指标、skill context sources、全工具 artifact、fork/subagent 线程树、compaction checkpoint，以及稳定发布后真实 schema/payload revision 的版本专属转换。Read/Glob/Grep/Patch/Write/Exec Tool Loop 已交付 tool catalog source、approval/ledger/result、durable output、有序并行与 exclusive 屏障；已交付的 FIFO follow-up queue 仍只在进程内存在，`queued` 不是 durable 确认，same-turn steer 必须另行接入 tool output safe point。当前 fixture 是唯一当前格式，不代表通用 migration 已实现；当前进度不能视为 P2 退出。
 
 本次 P2 基础契约强化还加入语义分支脚本、本地 hooks、GitHub Actions jobs 和集中式架构守卫。GitHub `main` ruleset 的 required checks 与 direct-push 禁止仍须管理员在仓库外启用。secure config/session opener 当前只在 macOS/Linux 提供等价语义；Windows 等目标可以编译，但相关运行路径明确失败关闭，平台实现与兼容矩阵留在 P8。
 
@@ -248,7 +248,7 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 - 已实现 `--resume <thread-id>`、`--continue`、单 turn `--print`/JSONL v1 `--json`，以及独立 `stream-json` 双向控制模式的同进程多 turn。
 - 已实现当前文本 Chat 的用户中断、依赖有序 shutdown 和中断 turn 补偿；后台任务的完整 shutdown 随对应能力补充。
 - 提供 transcript/debug log 分离。
-- Tool 六项能力与 RuntimeCommand 已具备真实消费者、validator 与测试。extension/Subagent/telemetry 及未来 ItemID/CallID 仍按 AGENTS.md 的精确临时 TODO allowlist 管理，保留后续阶段和退出条件；除列表外禁止新增占位，其余占位包不得接入 Runtime/app。
+- Tool 七项能力与 RuntimeCommand 已具备真实消费者、validator 与测试。extension/Subagent/telemetry 及未来 ItemID/CallID 仍按 AGENTS.md 的精确临时 TODO allowlist 管理，保留后续阶段和退出条件；除列表外禁止新增占位，其余占位包不得接入 Runtime/app。
 
 ### 6.4 交付物
 
@@ -289,6 +289,8 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 
 ## 7. P3：Coding Tools 与安全执行
 
+命令输出切片 `add-command-output-artifacts` 已接入双流私有前缀存储、七工具 catalog 中的 ReadArtifact、durable descriptor 授权、完整命令历史和 Ctrl+O 列表/分页详情。默认预算为每流 16 MiB、调用预留 32 MiB、thread 256 MiB、root 1 GiB；模型预览仍最多 256 KiB，Session 当前 canary 为 4。该切片不代表全工具结果预算或 P3 已完成；PTY、后台命令、通用工具 UI、非 Darwin 命令执行和自动过期仍未实现。平台运行验证范围以 change 的最终验收记录为准。
+
 ### 7.1 目标
 
 形成最小可用 coding agent：读取、搜索、修改文件、应用 patch、执行命令，并具有权限、sandbox、并发和幂等保证。
@@ -308,7 +310,7 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 
 P3 不采用一个覆盖全部工具的长线 change。以下名称是推荐顺序，不代表 change 已创建；每项仍需独立执行 `propose -> review/confirm -> apply -> verify -> archive`：
 
-当前状态：`add-read-tool-loop`、`add-search-tools-and-ordered-parallelism`、`add-approved-file-patch-flow`、`add-file-write-tool` 与 `add-command-execution` 已实现，提供 Read/Glob/Grep/单文件 Patch/Write/Darwin 前台 Exec、双 Provider 原生 wire、多 sample Runtime、最多 8 路只读并行、Patch/Write/Exec 独占屏障、按 call index durable/提交、崩溃补偿和本地-only resume。Patch 已实现 allow/ask/deny、Runtime 局部 session grant、headless 失败关闭和 Claude 风格 diff approval overlay；Write 已实现 create/overwrite 完整审批、独立 session grant、先前完整 Read 证据和私有目录树 no-replace 发布；Exec 始终只允许单次批准并在 headless 失败关闭。artifact、通用 Tool UI、PTY 和后台进程控制仍未实现。Linux adapter 已交叉编译，真实 Linux 文件系统测试因当前无 runner 尚未运行，详见 Tool 架构的验证范围。
+当前状态：`add-read-tool-loop`、`add-search-tools-and-ordered-parallelism`、`add-approved-file-patch-flow`、`add-file-write-tool` 与 `add-command-execution` 已实现，提供 Read/Glob/Grep/单文件 Patch/Write/Darwin 前台 Exec、双 Provider 原生 wire、多 sample Runtime、最多 8 路只读并行、Patch/Write/Exec 独占屏障、按 call index durable/提交、崩溃补偿和本地-only resume。Patch 已实现 allow/ask/deny、Runtime 局部 session grant、headless 失败关闭和 Claude 风格 diff approval overlay；Write 已实现 create/overwrite 完整审批、独立 session grant、先前完整 Read 证据和私有目录树 no-replace 发布；Exec 始终只允许单次批准并在 headless 失败关闭。命令输出 artifact 与 ReadArtifact 已接入；全工具 artifact、通用 Tool UI、PTY 和后台进程控制仍未实现。Linux adapter 已交叉编译，真实 Linux 文件系统测试因当前无 runner 尚未运行，详见 Tool 架构的验证范围。
 
 Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘要与展开详情决定交互；Codex `c248f6d48b` 的 unified_exec、Seatbelt 和进程生命周期分层决定内核边界。当前固定 non-login `/bin/sh`、环境 allowlist、workspace 写入和禁用网络；非 Darwin 稳定返回 `unsupported_platform`。清理保证只覆盖原进程组，`setsid`/脱离组后代不属于后台控制能力；保留输出造成排空失败时返回不确定结果并 poison Runtime。Linux/Windows 已交叉构建，尚无原生运行验证，不代表 P8 跨平台支持已完成。
 
@@ -317,9 +319,10 @@ Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘�
 3. `add-approved-file-patch-flow`（已实现）：同时落地 allow/ask/deny、headless 失败关闭、Anthropic structured Edit、OpenAI custom freeform apply_patch、base evidence、完整 diff、原子替换和 approval 崩溃恢复。
 4. `add-file-write-tool`：增加整文件写入、原子替换、权限保留与冲突策略。
 5. `add-command-execution`（已实现）：Darwin 前台 exec、进程 owner、取消/timeout、确定性输出预算、sandbox、单次批准与命令详情；双 Provider 的 Read → Patch → Exec → 总结及拒绝/中断/崩溃恢复均有回归。
-6. `add-background-process-control`：先定义受控 process handle、PTY/stdin、后台 admission、超时与唯一 shutdown owner，再增加 write_stdin；不得把当前前台命令脱离原组视为实现。
-7. `add-tool-result-budget`：先定义受控 artifact 存储、预算、清理和失败语义，再统一结果预算；当前 Exec 仅保留每流 512 KiB 头尾窗口及最多 256 KiB 模型预览，省略内容没有完整副本。
-8. `add-same-turn-steering`：只在 tool outputs 后、下一 sample 前的 safe point 注入输入。
+6. `add-command-output-artifacts`（已实现）：命令输出保存、当前线程 ReadArtifact、完整历史查询与 Claude 风格列表/详情；保持冻结预览和原生恢复独立于对象存在性。
+7. `add-background-process-control`：先定义受控 process handle、PTY/stdin、后台 admission、超时与唯一 shutdown owner，再增加 write_stdin；不得把当前前台命令脱离原组视为实现。
+8. `add-tool-result-budget`：在命令输出 artifact 的真实存储边界上扩展其他工具预算；当前每流保存至多 16 MiB 连续前缀，通用累计预算和上下文替换仍未实现。
+9. `add-same-turn-steering`：只在 tool outputs 后、下一 sample 前的 safe point 注入输入。
 
 首个切片选择 Read，是因为它能用最低副作用风险验证最关键的双 Provider、Session durable 和 call/output 配对边界，并让接口由真实消费者驱动；不先建立万能 registry、空 facade 或没有行为证据的完整框架。
 
@@ -371,7 +374,7 @@ Skill、hooks/plugins、MCP 和 Agent/Subagent 不属于 P3 内置工具清单�
 
 ### 7.8 退出条件
 
-基本 coding loop、安全策略、并发、有序结果、patch streaming、至多一次自动执行、不确定结果失败关闭和恢复等价测试全部通过。当前前台 Exec 闭环已补齐，但 artifact、后台控制和其余 P3 交付仍未完成，不能据此宣布整个 P3 退出。
+基本 coding loop、安全策略、并发、有序结果、patch streaming、至多一次自动执行、不确定结果失败关闭和恢复等价测试全部通过。当前前台 Exec 与命令输出 artifact 闭环已补齐，但全工具输出预算、后台控制和其余 P3 交付仍未完成，不能据此宣布整个 P3 退出。
 
 ## 8. P4：缓存与上下文强化
 

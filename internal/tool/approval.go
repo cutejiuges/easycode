@@ -271,7 +271,7 @@ func NewExecApprovalRequest(requestID ApprovalRequestID, sessionID domain.Sessio
 	if err := candidate.Validate(); err != nil {
 		return ApprovalRequest{}, err
 	}
-	request := ApprovalRequest{requestID: requestID, sessionID: sessionID, threadID: threadID, turnID: turnID, invocationID: candidate.Invocation().InvocationID(), providerCallID: candidate.Invocation().ProviderCallID(), capability: CapabilityExec, reason: "Runs a foreground command with workspace writes and no network. Detached processes may continue running.", relativePath: candidate.Invocation().Input().Workdir(), fingerprint: CandidateFingerprint(candidate.Fingerprint()), execInput: candidate.Invocation().Input(), decisions: []ApprovalDecision{ApprovalAllowOnce, ApprovalDeny, ApprovalAbort}}
+	request := ApprovalRequest{requestID: requestID, sessionID: sessionID, threadID: threadID, turnID: turnID, invocationID: candidate.Invocation().InvocationID(), providerCallID: candidate.Invocation().ProviderCallID(), capability: CapabilityExec, reason: "Runs a foreground command with workspace writes and no network. Detached processes may continue running. Output is saved privately up to 16 MiB per stream, 32 MiB per command, 256 MiB per thread and 1 GiB total.", relativePath: candidate.Invocation().Input().Workdir(), fingerprint: CandidateFingerprint(candidate.Fingerprint()), execInput: candidate.Invocation().Input(), decisions: []ApprovalDecision{ApprovalAllowOnce, ApprovalDeny, ApprovalAbort}}
 	if err := request.Validate(); err != nil {
 		return ApprovalRequest{}, err
 	}

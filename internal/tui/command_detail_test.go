@@ -8,6 +8,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"easycode/internal/domain"
 	"easycode/internal/protocol"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -64,7 +65,36 @@ func commandDetailModel(t *testing.T, terminal bool, status, code string, trunca
 		completed.TurnID = approval.TurnID
 		model = updateModel(t, model, RuntimeEventMsg{Event: completed})
 	}
+	item := protocol.CommandHistoryItem{Sequence: 1, InvocationID: request.InvocationID, Command: request.Command, Workdir: activity.Workdir, Status: activity.Status, Code: activity.Code, Terminal: terminal, Truncated: activity.Truncated, ExitCode: activity.ExitCode, ExitKnown: activity.ExitKnown, DurationMillis: activity.ElapsedMillis}
+	if terminal {
+		item.Preview = "stdout:\nhead retained\n[... 128 bytes omitted ...]\ntail retained\nstderr:\nwarning"
+	}
+
+	if terminal {
+		item.Stdout.Status = "not_needed"
+		item.Stderr.Status = "not_needed"
+	}
+	model = model.WithCommandQueries(domain.ThreadID("018f1d8a-7b5c-7def-8123-456789abcdef"), snapshotCommandQueries{item})
 	return model, session
+}
+
+type snapshotCommandQueries struct{ item protocol.CommandHistoryItem }
+
+func (q snapshotCommandQueries) ListCommands(context.Context, protocol.CommandListQuery) (protocol.CommandListPage, error) {
+	return protocol.CommandListPage{Items: []protocol.CommandHistoryItem{q.item}}, nil
+}
+func (snapshotCommandQueries) ReadCommandOutput(context.Context, protocol.CommandOutputQuery) (protocol.CommandOutputPage, error) {
+	return protocol.CommandOutputPage{}, nil
+}
+func openSnapshotCommandDetail(t *testing.T, model Model) Model {
+	t.Helper()
+	model, cmd := browserKey(t, model, tea.KeyCtrlO)
+	model = updateModel(t, model, cmd())
+	model, cmd = browserKey(t, model, tea.KeyEnter)
+	if cmd != nil {
+		model = updateModel(t, model, cmd())
+	}
+	return model
 }
 
 func TestCommandTimelineAndDetailSnapshots(t *testing.T) {
@@ -86,10 +116,10 @@ func TestCommandTimelineAndDetailSnapshots(t *testing.T) {
 			model, _ := commandDetailModel(t, test.terminal, test.status, test.code, test.truncated)
 			model = updateModel(t, model, tea.WindowSizeMsg{Width: test.width, Height: test.height})
 			if test.detail {
-				model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyCtrlO})
+				model = openSnapshotCommandDetail(t, model)
 			}
 			for range test.scroll {
-				model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyPgDown})
+				model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 			}
 			got := model.View()
 			if test.detail && strings.Count(got, "\n") > test.height {
@@ -100,7 +130,7 @@ func TestCommandTimelineAndDetailSnapshots(t *testing.T) {
 				t.Fatalf("snapshot %s missing; actual=%q", test.name, got)
 			}
 			if got != string(want) {
-				t.Fatalf("snapshot mismatch:\n%s", got)
+				t.Fatalf("snapshot mismatch: actual=%q", got)
 			}
 		})
 	}
@@ -108,8 +138,8 @@ func TestCommandTimelineAndDetailSnapshots(t *testing.T) {
 
 func TestCommandDetailPreservesCandidateDraftAndInterruptRouting(t *testing.T) {
 	model, session := commandDetailModel(t, false, "", "", false)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyCtrlO})
-	stored := model.commandViews[model.latestCommand]
+	model = openSnapshotCommandDetail(t, model)
+	stored := model.commandViews[snapshotCommandID(model)]
 	if !strings.Contains(model.View(), "full command second line") || strings.Contains(model.View(), "head retained") {
 		t.Fatal("running details did not use approval command and recent output")
 	}
@@ -117,7 +147,7 @@ func TestCommandDetailPreservesCandidateDraftAndInterruptRouting(t *testing.T) {
 		model = updateModel(t, model, key)
 	}
 	model = updateModel(t, model, tea.WindowSizeMsg{Width: 42, Height: 14})
-	if model.commandViews[model.latestCommand] != stored || model.composer.text != "kept draft" || len(session.submits) != 0 {
+	if model.commandViews[snapshotCommandID(model)] != stored || model.composer.text != "kept draft" || len(session.submits) != 0 {
 		t.Fatal("detail navigation changed candidate or composer")
 	}
 	updated, interrupt := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
@@ -130,17 +160,25 @@ func TestCommandDetailPreservesCandidateDraftAndInterruptRouting(t *testing.T) {
 		t.Fatal("interrupt prematurely released turn")
 	}
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEsc})
+	if !model.detailOpen || model.browser.detail {
+		t.Fatal("Escape did not return to command list")
+	}
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEsc})
 	if model.detailOpen || session.interrupts != 1 {
 		t.Fatal("Escape did not only close details")
 	}
 	completed, _ := commandDetailModel(t, true, "success", "ok", true)
-	completed = updateModel(t, completed, tea.KeyMsg{Type: tea.KeyCtrlO})
+	completed = openSnapshotCommandDetail(t, completed)
 	if !strings.Contains(completed.View(), "head retained") || !strings.Contains(completed.View(), "tail retained") {
 		t.Fatal("completed detail did not use frozen preview")
 	}
-	frozen := completed.commandViews[completed.latestCommand]
+	frozen := completed.browser.items[completed.browser.selected]
 	completed = updateModel(t, completed, tea.KeyMsg{Type: tea.KeyCtrlO})
-	if completed.detailOpen || completed.commandViews[completed.latestCommand] != frozen {
+	if completed.detailOpen {
+		t.Fatal("closing details left overlay open")
+	}
+	completed = openSnapshotCommandDetail(t, completed)
+	if completed.browser.items[completed.browser.selected] != frozen || len(completed.commandViews) != 0 {
 		t.Fatal("closing details changed result")
 	}
 }
@@ -168,7 +206,7 @@ func TestCommandInterruptKeepsDraftBlockedUntilTurnCleanupTerminal(t *testing.T)
 	if model.state != stateStreaming || model.composer.text != "kept draft" || len(session.submits) != 0 || !strings.Contains(model.View(), "waiting for cleanup") {
 		t.Fatal("cancellation released composer before cleanup")
 	}
-	detail := model.commandViews[model.latestCommand]
+	detail := model.commandViews[snapshotCommandID(model)]
 	detail.activity.Status, detail.activity.Code = "cancelled", "cancelled"
 	terminal, err := protocol.NewCommandTerminal(protocol.CommandTerminalPayload{CommandActivityPayload: detail.activity, ResultPreview: "Exec cancelled"})
 	if err != nil {
@@ -196,4 +234,8 @@ func TestCommandInterruptKeepsDraftBlockedUntilTurnCleanupTerminal(t *testing.T)
 	if len(session.submits) != 1 || session.submits[0] != "kept draft" {
 		t.Fatal("completed cleanup lost draft")
 	}
+}
+
+func snapshotCommandID(model Model) string {
+	return model.browser.queries.(snapshotCommandQueries).item.InvocationID
 }

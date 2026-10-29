@@ -24,6 +24,7 @@ import (
 	"easycode/internal/provider/openai"
 	chatRuntime "easycode/internal/runtime"
 	"easycode/internal/session"
+	"easycode/internal/session/artifact"
 	"easycode/internal/session/catalog"
 	"easycode/internal/tool"
 	"easycode/internal/tool/builtin"
@@ -60,6 +61,7 @@ type chatResourceHooks struct {
 	afterContinueSelection func(domain.ThreadID)
 	interactiveApprovals   bool
 	newExecExecutor        func(*builtin.Workspace, builtin.CommandEnvironment, tool.ExecOutputRenderer) (tool.ExecExecutor, error)
+	wrapOutputStore        func(tool.CommandOutputStore) tool.CommandOutputStore
 }
 
 type providerResource interface {
@@ -72,6 +74,9 @@ type chatResources struct {
 	provider       providerResource
 	workspace      *builtin.Workspace
 	service        *sessionService
+	artifactLayout *artifact.Layout
+	artifactStore  *artifact.Store
+	commandQueries *commandQueries
 	writer         managedJournal
 	runtime        *chatRuntime.Runtime
 	session        *chatRuntime.ChatSession
@@ -246,7 +251,7 @@ func runTUI(ctx context.Context, options Options, resources *chatResources) Outc
 		return runtimeFailure(err)
 	}
 	resources.session = controlSession
-	model := tui.NewModel(ctx, Version, controlSession, resources.history)
+	model := tui.NewModel(ctx, Version, controlSession, resources.history).WithCommandQueries(resources.identity.ThreadID, resources.commandQueries)
 	programOptions := []tea.ProgramOption{tea.WithContext(ctx), tea.WithOutput(options.Output)}
 	if options.Input != nil {
 		programOptions = append(programOptions, tea.WithInput(options.Input))
@@ -346,6 +351,11 @@ func openChatResourcesWithSnapshot(
 		return nil, err
 	}
 	cleanup.add(service.close)
+	artifactLayout, err := openCommandArtifactBoundary(ctx, service.repository.RootPath(), creationCWD)
+	if err != nil {
+		return nil, err
+	}
+	cleanup.add(artifactLayout.Close)
 	workspace, err := builtin.OpenWorkspace(creationCWD)
 	if err != nil {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "workspace is unavailable")
@@ -381,21 +391,6 @@ func openChatResourcesWithSnapshot(
 	}
 	toolPolicy := tool.NewApprovalPolicy()
 	execPreparer := builtin.NewExecPlanner()
-	var execExecutor tool.ExecExecutor
-	if hooks.newExecExecutor != nil {
-		execExecutor, err = hooks.newExecExecutor(workspace, builtin.OpenCommandEnvironment(), tool.RenderExecOutput)
-	} else {
-		execExecutor, err = builtin.NewExecExecutor(workspace, builtin.OpenCommandEnvironment(), tool.RenderExecOutput)
-	}
-	if err != nil {
-		return nil, fault.New(fault.CodeInvalidConfiguration, "Exec executor is unavailable")
-	}
-	toolCatalog, err := builtin.NewCatalog(
-		readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, writePreparer, writeExecutor, execPreparer, execExecutor, tool.RenderExecOutput, toolPolicy,
-	)
-	if err != nil {
-		return nil, fault.New(fault.CodeInvalidConfiguration, "tool catalog is invalid")
-	}
 	if continueSession {
 		threadID, selectErr := selectContinueThread(
 			ctx, paths, service.repository, applicationConfig, wire, creationCWD,
@@ -432,17 +427,58 @@ func openChatResourcesWithSnapshot(
 		return nil, err
 	}
 	cleanup.add(func() error { return assembled.writer.Close(context.Background()) })
+	artifactStore, err := artifact.Open(ctx, artifactLayout, assembled.identity.ThreadID)
+	if err != nil {
+		return nil, fault.New(fault.CodeSessionWrite, "artifact storage is unavailable")
+	}
+	cleanup.add(artifactStore.Close)
+	artifactReferences, err := tool.NewArtifactReferences(assembled.identity.ThreadID, session.CommandArtifactReferences(assembled.commands))
+	if err != nil {
+		return nil, fault.New(fault.CodeSessionCorruption, "artifact references are invalid")
+	}
+	if err = artifactStore.Clean(ctx, session.CommandArtifactReferences(assembled.commands)); err != nil {
+		return nil, fault.New(fault.CodeSessionWrite, "artifact cleanup failed")
+	}
+	readArtifactExecutor, err := builtin.NewReadArtifactExecutor(artifactRangeReader{store: artifactStore, references: artifactReferences})
+	if err != nil {
+		return nil, err
+	}
+	var execExecutor tool.ExecExecutor
+	if hooks.newExecExecutor != nil {
+		execExecutor, err = hooks.newExecExecutor(workspace, builtin.OpenCommandEnvironment(), tool.RenderExecOutput)
+	} else {
+		var outputStore tool.CommandOutputStore = artifactOutputStore{store: artifactStore}
+		if hooks.wrapOutputStore != nil {
+			outputStore = hooks.wrapOutputStore(outputStore)
+		}
+		execExecutor, err = builtin.NewExecExecutor(workspace, builtin.OpenCommandEnvironment(), tool.RenderExecOutput, outputStore)
+	}
+	if err != nil {
+		return nil, fault.New(fault.CodeInvalidConfiguration, "Exec executor is unavailable")
+	}
+	execExecutor = &commandArtifactBoundary{layout: artifactLayout, executor: execExecutor}
+	toolCatalog, err := builtin.NewCatalog(
+		readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, writePreparer, writeExecutor, execPreparer, execExecutor, tool.RenderExecOutput, toolPolicy, readArtifactExecutor,
+	)
+	if err != nil {
+		return nil, fault.New(fault.CodeInvalidConfiguration, "tool catalog is invalid")
+	}
 	contextProfile, err := contextplan.NewProviderProfile(
 		applicationConfig.Provider.Family, applicationConfig.Provider.Model,
 	)
 	if err != nil {
 		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "context profile is invalid", err)
 	}
+	queries := newCommandQueries(assembled.identity.ThreadID, artifactRangeReader{store: artifactStore, references: artifactReferences}, assembled.commands)
+	cleanup.add(queries.Close)
 	runtimeInstance, err := chatRuntime.New(assembled.conversation, chatRuntime.Config{
-		SessionID: assembled.identity.SessionID, ThreadID: assembled.identity.ThreadID,
+		ArtifactReferences: artifactReferences,
+		CommandHistory:     queries,
+		SessionID:          assembled.identity.SessionID, ThreadID: assembled.identity.ThreadID,
 		Journal: assembled.writer, ContextProfile: contextProfile,
 		ToolCatalog:          toolCatalog,
 		ReadExecutor:         readExecutor,
+		ReadArtifactExecutor: readArtifactExecutor,
 		GlobExecutor:         globExecutor,
 		GrepExecutor:         grepExecutor,
 		PatchPreparer:        patchPreparer,
@@ -466,6 +502,7 @@ func openChatResourcesWithSnapshot(
 		assembled.history = assembled.conversation.ProjectHistory()
 	}
 	resources = &chatResources{
+		artifactLayout: artifactLayout, artifactStore: artifactStore, commandQueries: queries,
 		identity: assembled.identity,
 		provider: providerInstance, workspace: workspace, service: service, writer: assembled.writer,
 		runtime: runtimeInstance, session: chatRuntime.NewChatSession(runtimeInstance), history: assembled.history,
@@ -617,6 +654,13 @@ func (resources *chatResources) close(ctx context.Context) error {
 	if ctx.Err() != nil {
 		closeContext = context.Background()
 	}
+	if resources.commandQueries != nil {
+		_ = resources.commandQueries.Close()
+	}
+	var artifactErr error
+	if resources.artifactStore != nil {
+		artifactErr = resources.artifactStore.Close()
+	}
 	var writerErr error
 	if resources.writer != nil {
 		writerErr = resources.writer.Close(closeContext)
@@ -630,10 +674,13 @@ func (resources *chatResources) close(ctx context.Context) error {
 		workspaceErr = resources.workspace.Close()
 	}
 	var repositoryErr error
-	if resources.service != nil {
-		repositoryErr = resources.service.close()
+	if resources.artifactLayout != nil {
+		repositoryErr = resources.artifactLayout.Close()
 	}
-	resources.closeErr = errors.Join(shutdownErr, writerErr, providerErr, workspaceErr, repositoryErr)
+	if resources.service != nil {
+		repositoryErr = errors.Join(repositoryErr, resources.service.close())
+	}
+	resources.closeErr = errors.Join(shutdownErr, artifactErr, writerErr, providerErr, workspaceErr, repositoryErr)
 	close(resources.closeDone)
 	return resources.closeErr
 }

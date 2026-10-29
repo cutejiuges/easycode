@@ -255,7 +255,7 @@ func TestCurrentFixtureRejectsUnsupportedShapeReadOnly(t *testing.T) {
 	baseline := readCurrentFixture(t, "root.jsonl")
 	superseded := readCurrentFixture(t, "superseded_envelope.jsonl")
 	fixtures := map[string][]byte{
-		"schema revision":     bytes.Replace(baseline, []byte(`"schema_version":3`), []byte(`"schema_version":99`), 1),
+		"schema revision":     bytes.Replace(baseline, []byte(`"schema_version":4`), []byte(`"schema_version":99`), 1),
 		"superseded envelope": append(append([]byte(nil), baseline...), superseded...),
 	}
 	for name, content := range fixtures {

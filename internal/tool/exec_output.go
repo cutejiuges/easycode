@@ -72,13 +72,24 @@ func (buffer *ExecOutputBuffer) Snapshot() ExecOutputSnapshot {
 
 func (snapshot ExecOutputSnapshot) Stats() ExecStreamStats { return snapshot.stats }
 
+// ExecOutputNeedsSaving 在发布对象前判断原始输出是否能完整内联，不生成最终模型结果。
+func ExecOutputNeedsSaving(stdout, stderr ExecOutputSnapshot) bool {
+	const budget = (ExecModelPreviewBytes - 2048) / 2
+	for _, s := range []ExecOutputSnapshot{stdout, stderr} {
+		if s.stats.OmittedBytes() > 0 || len(s.head)+len(s.tail) > budget || !utf8.ValidString(s.head+s.tail) {
+			return true
+		}
+	}
+	return false
+}
+
 // RenderExecOutput 固定按stdout后stderr生成UTF-8预览，并为每个流预留独立预算。
 // 无效UTF-8以单字节问号修复，避免修复过程放大输出预算。
 func RenderExecOutput(stdout, stderr ExecOutputSnapshot, metadata ExecResultMetadata) (ModelPreview, bool, error) {
 	if err := metadata.Validate(); err != nil {
 		return ModelPreview{}, false, err
 	}
-	const streamBudget = (ExecModelPreviewBytes - 512) / 2
+	const streamBudget = (ExecModelPreviewBytes - 2048) / 2
 	out, outCut := stdout.render(streamBudget)
 	errout, errCut := stderr.render(streamBudget)
 	exit := "unknown"
@@ -86,8 +97,19 @@ func RenderExecOutput(stdout, stderr ExecOutputSnapshot, metadata ExecResultMeta
 		exit = fmt.Sprint(metadata.exitCode)
 	}
 	text := fmt.Sprintf("stdout:\n%s\nstderr:\n%s\nexit_code: %s; timed_out: %t; cancelled: %t\n", out, errout, exit, metadata.timedOut, metadata.cancelled)
+	text += renderArtifactSaving("stdout", metadata.StdoutSaving()) + renderArtifactSaving("stderr", metadata.StderrSaving())
 	preview, err := NewModelPreview(text)
 	return preview, outCut || errCut, err
+}
+
+func renderArtifactSaving(stream string, saving ArtifactSaving) string {
+	if saving.Status() == ArtifactNotNeeded {
+		return ""
+	}
+	if d, ok := saving.Descriptor(); ok {
+		return fmt.Sprintf("%s saved_output: %s; artifact_id: %s; saved_bytes: %d; observed_bytes: %d; reason: %s\nUse ReadArtifact to read the saved prefix.\n", stream, saving.Status(), d.ID(), d.SavedBytes(), d.ObservedBytes(), saving.Reason())
+	}
+	return fmt.Sprintf("%s saved_output: unavailable; reason: %s\n", stream, saving.Reason())
 }
 
 func (snapshot ExecOutputSnapshot) render(budget int) (string, bool) {

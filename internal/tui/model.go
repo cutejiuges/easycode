@@ -55,6 +55,7 @@ const (
 
 // Model 保存纯 UI 投影状态，不依赖 Provider 或 transport。
 type Model struct {
+	browser commandBrowser
 	version string
 	width   int
 	height  int
@@ -74,7 +75,6 @@ type Model struct {
 	commandItems  map[string]int
 	commandClosed map[string]bool
 	commandViews  map[string]commandDetail
-	latestCommand string
 	detailOpen    bool
 	detailScroll  int
 	cancelling    bool
@@ -124,6 +124,10 @@ func (Model) Init() tea.Cmd {
 // Update 更新纯 UI 状态，并把会话操作留给 tea.Cmd。
 func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch value := message.(type) {
+	case commandListReply:
+		return model.receiveCommandList(value)
+	case commandPageReply:
+		return model.receiveCommandPage(value)
 	case tea.WindowSizeMsg:
 		model.width = value.Width
 		model.height = value.Height
@@ -156,7 +160,13 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return model, nil
 	case RuntimeEventMsg:
-		return model.projectRuntimeEvent(value.Event)
+		next, cmd := model.projectRuntimeEvent(value.Event)
+		updated := next.(Model)
+		if value.Event.Kind == protocol.EventCommandTerminal && updated.detailOpen && updated.browser.queries != nil && updated.errorSummary == "" {
+			refreshed, query := updated.refreshCommandBrowser()
+			return refreshed, tea.Batch(cmd, query)
+		}
+		return next, cmd
 	case submissionFailedMsg:
 		if model.state != stateSubmitting || model.pending == nil {
 			return model, nil
@@ -192,13 +202,11 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if model.approval != nil {
 		return model.handleApprovalKey(key)
 	}
-	if key.Type == tea.KeyCtrlO && model.latestCommand != "" {
-		model.detailOpen = !model.detailOpen
-		model.detailScroll = 0
-		return model, nil
+	if key.Type == tea.KeyCtrlO {
+		return model.openCommandBrowser()
 	}
 	if model.detailOpen {
-		return model.handleCommandDetailKey(key)
+		return model.handleCommandBrowserKey(key)
 	}
 	if model.state != stateIdle {
 		if key.Type == tea.KeyEsc || key.Type == tea.KeyCtrlC {
@@ -383,18 +391,12 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 		if model.commandViews == nil {
 			model.commandViews = make(map[string]commandDetail)
 		}
-		detail := model.commandViews[payload.InvocationID]
-		detail.activity = payload
 		if event.Kind == protocol.EventCommandTerminal {
-			terminalPayload, _ := protocol.DecodeCommandTerminal(event)
-			detail.resultPreview = terminalPayload.ResultPreview
-			detail.terminal = true
+			delete(model.commandViews, payload.InvocationID)
+		} else {
+			model.commandViews[payload.InvocationID] = commandDetail{activity: payload}
 		}
-		model.commandViews[payload.InvocationID] = detail
-		if model.latestCommand != payload.InvocationID {
-			model.detailScroll = 0
-		}
-		model.latestCommand = payload.InvocationID
+
 	case protocol.EventTurnStarted:
 		if event.TurnID.Valid() {
 			model.activeTurnID = event.TurnID
@@ -450,10 +452,7 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 		model.approval = &approvalOverlay{request: payload, turnID: event.TurnID, selected: 2}
 		if payload.Capability == "process.exec" {
 			model.approval.selected = 1
-			if model.commandViews == nil {
-				model.commandViews = make(map[string]commandDetail)
-			}
-			model.commandViews[payload.InvocationID] = commandDetail{fullCommand: payload.Command}
+
 		}
 	case protocol.EventToolApprovalResolved:
 		payload, err := protocol.DecodeToolApprovalResolved(event)
@@ -487,7 +486,7 @@ func (model Model) View() string {
 		return model.renderApproval()
 	}
 	if model.detailOpen {
-		return model.renderCommandDetail()
+		return model.renderCommandBrowser()
 	}
 	if model.composer.height < 5 && model.state == stateIdle {
 		return model.composer.view(true)

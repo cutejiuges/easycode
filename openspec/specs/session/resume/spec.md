@@ -135,6 +135,12 @@ CLI SHALL 提供 `--resume <thread-id>` 选择已有 root thread。应用 MUST �
 - **THEN** Provider 使用恢复后的 native history 续写
 - **THEN** 新 Session records 追加到同一 thread 且 seq 延续既有最大值
 
+应用 SHALL 从经过完整 replay 验证的命令 facts 单独恢复命令历史投影和当前 thread 授权 descriptor 集合，不改变 HistoryProjector 或 native request。恢复不得为重建请求读取 artifact；文件缺失仅在按需查看时报告。
+
+#### Scenario: Resume command details without stored files
+- **WHEN** 包含历史 Exec 的 thread 恢复时对应输出文件缺失
+- **THEN** 历史命令、原 preview 和状态仍可展示，续写请求保持相同；按需读取显示 unavailable
+
 ### Requirement: Interrupted and failed turns cannot become fabricated history
 
 resume SHALL 只把 durable 且通过语义回放校验的 `provider_native_commit` 恢复为 Provider 历史。仅含 `turn_started`、`turn_failed`、未完成 batch 或部分流式文本的 turn MUST NOT 被补全为成功提交；当前文本切片不要求重放失败 turn 的完整 transcript。尾部修复结果 SHALL 可诊断地报告，但不得把修复内容或原生 payload 输出到 TUI 错误中。
@@ -265,7 +271,7 @@ resume SHALL 从已安全打开并校验的数据根开始，相对于父目录�
 
 - Patch ready但没有approval fact的invocation SHALL按call index使用原identity追加`cancelled/session_interrupted_before_approval` result。
 - approval allow已durable但execution未started的Patch SHALL追加`cancelled/session_interrupted_before_execution` result；不得恢复grant或复用批准。
-- ready但未started的自动允许Read/Glob/Grep SHALL追加`cancelled/session_interrupted_before_execution` result。
+- ready但未started的自动允许Read/Glob/Grep/ReadArtifact SHALL追加`cancelled/session_interrupted_before_execution` result。
 - result已durable但对应tool-output native entry尚未durable时，系统 SHALL从保存的preview bytes和wire kind重建完整有序output commit，不得重读、重新搜索或修改文件。
 - execution started但result缺失时，系统 MUST按call index追加`outcome_uncertain` result，禁止自动重试；Patch不得根据当前文件内容猜测执行结果。
 - tool-output entry已durable时，系统 MUST NOT重复追加output。
@@ -342,3 +348,7 @@ reconciliation MUST保持原call index、capability、Provider call identity、w
 #### Scenario: Preserve ownership during reconciliation
 - **WHEN** 另一个进程竞争同一unfinished tool thread
 - **THEN** 只有持有连续exclusive lease的进程可以reconcile，竞争者在读取后repair、Session append或任何外部副作用前以`session_busy`失败
+
+#### Scenario: Do not repeat interrupted artifact reading
+- **WHEN** ReadArtifact ready 或 started 后缺少 result
+- **THEN** 恢复沿既有取消/不确定规则补偿，不访问文件或自动重新执行

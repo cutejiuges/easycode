@@ -1,14 +1,12 @@
-Command details
-success (ok) exit=2 · truncated
-Workdir: src
-250 ms · 512 bytes
-Lines 5-11 of 11
-Output:
+Command details · stdout
+success · exit=2 · 250 ms · src
+Output included in preview · preview …
+Frozen preview:
 stdout:
 head retained
 [... 128 bytes omitted ...]
 tail retained
 stderr:
 warning
-PgUp/PgDn: scroll · Ctrl+O/Esc: close
-Ctrl+C: interrupt
+Tab: stream · PgUp/PgDn: page · ↑/↓: …
+Esc: list · Ctrl+O: close · Ctrl+C: i…

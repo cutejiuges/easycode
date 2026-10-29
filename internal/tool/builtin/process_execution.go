@@ -46,14 +46,15 @@ func (timer wallProcessTimer) stop()                     { timer.timerValue.Stop
 
 // ProcessExecution 是一次命令的唯一owner；Run串行执行且只能接收一次。
 type ProcessExecution struct {
-	launcher  processLauncher
-	clock     processClock
-	candidate tool.ExecCandidate
-	renderer  tool.ExecOutputRenderer
-	mu        sync.Mutex
-	accepted  bool
-	done      chan struct{}
-	progress  *processProgress
+	launcher    processLauncher
+	clock       processClock
+	candidate   tool.ExecCandidate
+	renderer    tool.ExecOutputRenderer
+	mu          sync.Mutex
+	accepted    bool
+	done        chan struct{}
+	progress    *processProgress
+	outputStore tool.CommandOutputStore
 }
 
 func newProcessExecution(launcher processLauncher, clock processClock, candidate tool.ExecCandidate, renderer tool.ExecOutputRenderer) (*ProcessExecution, error) {
@@ -99,6 +100,14 @@ func (execution *ProcessExecution) Run(ctx context.Context) tool.InvocationResul
 		return failed(tool.ResultCancelled, "cancelled")
 	}
 	started := execution.clock.now()
+	var capture tool.CommandOutputCapture
+	var captureErr error
+	if execution.outputStore != nil {
+		capture, captureErr = execution.outputStore.StartCapture(ctx, execution.candidate.Invocation().InvocationID())
+		if capture != nil {
+			defer func() { _ = capture.Close() }()
+		}
+	}
 	process, err := execution.launcher.start(ctx, execution.candidate)
 	if err != nil {
 		if errors.Is(err, errExecUnsupported) {
@@ -114,6 +123,13 @@ func (execution *ProcessExecution) Run(ctx context.Context) tool.InvocationResul
 	// reader只交付一次结果；channel由创建它的owner在接收后关闭。
 	read := func(source io.ReadCloser, target chan processReadResult, isStderr bool) {
 		writer := processOutputWriter{progress: execution.progress, stderr: isStderr, clock: execution.clock, started: started}
+		if capture != nil {
+			if isStderr {
+				writer.save = capture.WriteStderr
+			} else {
+				writer.save = capture.WriteStdout
+			}
+		}
 		_, readErr := io.Copy(&writer, source)
 		target <- processReadResult{output: writer.buffer.Snapshot(), err: readErr}
 	}
@@ -233,7 +249,24 @@ func (execution *ProcessExecution) Run(ctx context.Context) tool.InvocationResul
 	if err != nil {
 		return failed(tool.ResultOutcomeUncertain, "invalid_process_result")
 	}
-	preview, truncated, err := execution.renderer(outResult.output, errResult.output, metadata)
+	truncated := tool.ExecOutputNeedsSaving(outResult.output, errResult.output)
+	needsSaving := truncated || drainExpired || outResult.err != nil || errResult.err != nil
+	var preview tool.ModelPreview
+	if capture != nil {
+		outSaving, errSaving := capture.Finish(outResult.err == nil && !drainExpired, errResult.err == nil && !drainExpired, needsSaving)
+		metadata, err = metadata.WithOutputSaving(outSaving, errSaving)
+	} else if needsSaving && captureErr != nil {
+		reason := "storage_unavailable"
+		if errors.Is(captureErr, tool.ArtifactQuotaExceeded) {
+			reason = "quota_exceeded"
+		}
+		saving, _ := tool.NewArtifactSaving(tool.ArtifactUnavailable, reason, tool.ArtifactDescriptor{})
+		metadata, err = metadata.WithOutputSaving(saving, saving)
+	}
+	if err != nil {
+		return failed(tool.ResultOutcomeUncertain, "invalid_process_result")
+	}
+	preview, truncated, err = execution.renderer(outResult.output, errResult.output, metadata)
 	if err != nil {
 		return failed(tool.ResultOutcomeUncertain, "invalid_process_result")
 	}
@@ -241,7 +274,12 @@ func (execution *ProcessExecution) Run(ctx context.Context) tool.InvocationResul
 	if err != nil {
 		return failed(tool.ResultOutcomeUncertain, "invalid_process_result")
 	}
-	metadata, err = tool.NewExecResultMetadata(metadata.Workdir(), waited.exit, waited.err == nil, metadata.DurationMillis(), metadata.Stdout(), metadata.Stderr(), timedOut, cancelled, truncated)
+	updated, updateErr := tool.NewExecResultMetadata(metadata.Workdir(), waited.exit, waited.err == nil, metadata.DurationMillis(), metadata.Stdout(), metadata.Stderr(), timedOut, cancelled, truncated)
+	if updateErr == nil {
+		metadata, err = updated.WithOutputSaving(metadata.StdoutSaving(), metadata.StderrSaving())
+	} else {
+		err = updateErr
+	}
 	if err != nil {
 		return failed(tool.ResultOutcomeUncertain, "invalid_process_result")
 	}

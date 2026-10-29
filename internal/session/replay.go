@@ -246,6 +246,7 @@ func (plan ToolRecoveryPlan) Validate() error {
 
 // ReplayPlan 是创建 Provider Conversation 前的不可变语义恢复计划。
 type ReplayPlan struct {
+	Commands        []CommandHistoryEntry
 	Identity        Identity
 	SessionMetadata SessionMetaPayload
 	ThreadMetadata  ThreadMetaPayload
@@ -388,6 +389,13 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 		}
 	}
 	plan.NativeCommits = cloneNativeCommitRecords(plan.NativeCommits)
+	if err := validateArtifactHistory(loaded.Identity.ThreadID, loaded.Records); err != nil {
+		return ReplayPlan{}, err
+	}
+	plan.Commands, err = projectCommandHistory(loaded.Records)
+	if err != nil {
+		return ReplayPlan{}, err
+	}
 	return plan, nil
 }
 

@@ -1,5 +1,13 @@
 # EasyCode 踩坑与经验记录
 
+### [P3][2026-10-29] 私有权限不能隔离已获 workspace 权限的命令
+
+- 状态：已修复，随 `add-command-output-artifacts` 验证。
+- 根因：命令与宿主使用相同 OS 用户，0700/0600 不能阻止 sandbox 已授权路径内的读取或覆盖；将存储放入 workspace 或把 home 当 workspace 都可能暴露保存内容。
+- 修复：启动及每次执行前复用实际 SandboxPlan 的根范围，以目录 FD 身份检查祖先关系；私有 symlink 拒绝，仅显式规范化 macOS 系统别名。校验失败返回 `unsafe_storage_layout`，不静默停用保存。
+- 生命周期：同步保存可能阻塞，取消不代表资源释放；进程 owner 在写入/seal 解除阻塞并完成清理后才关闭 done。发布完成也不代表授权，必须等 result Sync。
+- 回归：`internal/app/artifact_boundary_test.go`、`internal/tool/builtin/artifact_isolation_darwin_test.go`、`internal/tool/builtin/artifact_owner_test.go`、`internal/runtime/artifact_commit_test.go`。两个 Provider 写死六工具的编译校验也已随七工具 catalog、request golden 和恢复回归一起更新。
+
 ### [P3][2026-10-27] 当前契约与宿主清理边界不一致
 
 - 状态：已解决。

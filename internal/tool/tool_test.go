@@ -69,7 +69,7 @@ func TestReadInputStrictDecodeAndBounds(t *testing.T) {
 func TestCatalogIsDeterministicImmutableAndReadOnly(t *testing.T) {
 	t.Parallel()
 
-	first, err := NewCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, inertGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, RenderExecOutput, NewApprovalPolicy())
+	first, err := NewCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, inertGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, RenderExecOutput, NewApprovalPolicy(), catalogArtifactExecutor{})
 	if err != nil {
 		t.Fatalf("创建目录: %v", err)
 	}
@@ -89,8 +89,8 @@ func TestCatalogIsDeterministicImmutableAndReadOnly(t *testing.T) {
 		if viewErr != nil {
 			t.Fatalf("读取 %s view: %v", family, viewErr)
 		}
-		if len(view.Facades()) != 6 {
-			t.Fatalf("%s 未完整暴露六工具", family)
+		if len(view.Facades()) != 7 {
+			t.Fatalf("%s 未完整暴露七工具", family)
 		}
 		names := map[string]bool{}
 		readOnly := 0
@@ -100,10 +100,10 @@ func TestCatalogIsDeterministicImmutableAndReadOnly(t *testing.T) {
 				readOnly++
 			}
 		}
-		if !names["Read"] || !names["Glob"] || !names["Grep"] || !names["Write"] || (family == domain.ProviderOpenAI && !names["apply_patch"]) || (family == domain.ProviderAnthropic && !names["Edit"]) {
+		if !names["ReadArtifact"] || !names["Read"] || !names["Glob"] || !names["Grep"] || !names["Write"] || (family == domain.ProviderOpenAI && !names["apply_patch"]) || (family == domain.ProviderAnthropic && !names["Edit"]) {
 			t.Fatalf("%s facade 不完整: %#v", family, names)
 		}
-		if readOnly != 3 {
+		if readOnly != 4 {
 			t.Fatal("read-only projection changed")
 		}
 		if family == domain.ProviderAnthropic && (!names["Edit"] || !names["Bash"]) {
@@ -126,13 +126,13 @@ func TestCatalogIsDeterministicImmutableAndReadOnly(t *testing.T) {
 	if err := first.Validate(); err != nil {
 		t.Fatalf("调用方修改 getter 污染目录: %v", err)
 	}
-	if _, err := NewCatalogSnapshot(nil, inertGlobExecutor{}, inertGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, RenderExecOutput, NewApprovalPolicy()); err == nil {
+	if _, err := NewCatalogSnapshot(nil, inertGlobExecutor{}, inertGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, RenderExecOutput, NewApprovalPolicy(), catalogArtifactExecutor{}); err == nil {
 		t.Fatal("缺少 Read executor 的目录应被拒绝")
 	}
-	if _, err := NewCatalogSnapshot(inertReadExecutor{}, nil, inertGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, RenderExecOutput, NewApprovalPolicy()); err == nil {
+	if _, err := NewCatalogSnapshot(inertReadExecutor{}, nil, inertGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, RenderExecOutput, NewApprovalPolicy(), catalogArtifactExecutor{}); err == nil {
 		t.Fatal("缺少 Glob executor 的目录应被拒绝")
 	}
-	if _, err := NewCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, nil, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, RenderExecOutput, NewApprovalPolicy()); err == nil {
+	if _, err := NewCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, nil, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, RenderExecOutput, NewApprovalPolicy(), catalogArtifactExecutor{}); err == nil {
 		t.Fatal("缺少 Grep executor 的目录应被拒绝")
 	}
 	changedFacades := first.Facades()
