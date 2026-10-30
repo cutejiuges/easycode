@@ -31,17 +31,34 @@ func TestArtifactQuotaChild(t *testing.T) {
 	defer func() { _ = s.Close() }()
 	s.rootBudget = tool.ArtifactInvocationBytes + 3
 	id, _ := tool.GenerateInvocationID()
-	c, err := s.Start(context.Background(), id)
-	if err != nil {
-		t.Fatal(err)
+	if os.Getenv("EASYCODE_ARTIFACT_TEST_SOURCE") == "search" {
+		c, err := s.StartText(context.Background(), id, tool.CapabilityGrep)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = c.Close() }()
+		if err = c.WriteText("abc"); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		c, err := s.Start(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = c.Close() }()
+		_, _ = c.WriteStdout([]byte("abc"))
 	}
-	defer func() { _ = c.Close() }()
-	_, _ = c.WriteStdout([]byte("abc"))
 	fmt.Println("reserved")
 	_, _ = io.Copy(io.Discard, os.Stdin)
 }
 
 func TestQuotaCoordinatesRealProcessAndCrash(t *testing.T) {
+	for _, source := range []string{"command", "search"} {
+		t.Run(source, func(t *testing.T) { testQuotaProcess(t, source) })
+	}
+}
+
+func testQuotaProcess(t *testing.T, source string) {
 	_, w, root := layoutDirectories(t)
 	l, err := OpenLayout(context.Background(), root, w, nil, nil)
 	if err != nil {
@@ -55,7 +72,7 @@ func TestQuotaCoordinatesRealProcessAndCrash(t *testing.T) {
 	defer func() { _ = s.Close() }()
 	s.rootBudget = tool.ArtifactInvocationBytes + 3
 	cmd := exec.Command(os.Args[0], "-test.run=^TestArtifactQuotaChild$")
-	cmd.Env = append(os.Environ(), "EASYCODE_ARTIFACT_TEST_CHILD=1", "EASYCODE_ARTIFACT_TEST_ROOT="+root, "EASYCODE_ARTIFACT_TEST_WORKSPACE="+w)
+	cmd.Env = append(os.Environ(), "EASYCODE_ARTIFACT_TEST_CHILD=1", "EASYCODE_ARTIFACT_TEST_SOURCE="+source, "EASYCODE_ARTIFACT_TEST_ROOT="+root, "EASYCODE_ARTIFACT_TEST_WORKSPACE="+w)
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)

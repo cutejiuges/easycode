@@ -1,10 +1,8 @@
 EasyCode test
-Status: streaming
 
-Command: printf 'full command first line' …
-  Running · src · 250 ms · 512 bytes
-recent output
-last line
+● Shell(printf 'full command first line' …) · running
+  recent output
+  last line
 
 > kept draft|
 Enter: send | Alt+Enter/Ctrl+J: newline

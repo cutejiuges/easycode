@@ -43,13 +43,14 @@ func (id ArtifactID) Valid() bool { _, err := ParseArtifactID(string(id)); retur
 type ArtifactStream string
 
 const (
-	ArtifactStdout ArtifactStream = "stdout"
-	ArtifactStderr ArtifactStream = "stderr"
+	ArtifactStdout       ArtifactStream = "stdout"
+	ArtifactStderr       ArtifactStream = "stderr"
+	ArtifactSearchResult ArtifactStream = "search_result"
 )
 
-// Valid 只接受两个进程输出流。
+// Valid 只接受进程双流与搜索文本来源。
 func (stream ArtifactStream) Valid() bool {
-	return stream == ArtifactStdout || stream == ArtifactStderr
+	return stream == ArtifactStdout || stream == ArtifactStderr || stream == ArtifactSearchResult
 }
 
 // ArtifactDescriptor 是已发布对象的不可变完整性与归属信息。
@@ -180,4 +181,16 @@ func (input ReadArtifactInput) Validate() error {
 		return errors.New("invalid ReadArtifact input")
 	}
 	return nil
+}
+
+// SupportsCapability 校验保存来源与真实执行能力的关系。
+func (stream ArtifactStream) SupportsCapability(capability CapabilityID) bool {
+	switch stream {
+	case ArtifactStdout, ArtifactStderr:
+		return capability == CapabilityExec
+	case ArtifactSearchResult:
+		return capability == CapabilityGlob || capability == CapabilityGrep
+	default:
+		return false
+	}
 }

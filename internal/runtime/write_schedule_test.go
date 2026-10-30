@@ -27,11 +27,13 @@ func (e observedTimelineRead) Execute(_ context.Context, v tool.ReadInvocation) 
 
 type timelineGrep struct{ append func(string) }
 
-func (e timelineGrep) Execute(_ context.Context, v tool.GrepInvocation) tool.InvocationResult {
+func (e timelineGrep) Execute(_ context.Context, v tool.GrepInvocation, _ tool.TextOutputCapture) tool.SearchExecution {
 	e.append("grep")
 	ready, _ := tool.NewGrepReadyCall(v.ProviderCallID(), v.Input())
 	invocation, _ := tool.NewInvocation(v.InvocationID(), ready)
-	return tool.NewInvocationErrorResult(invocation, tool.ResultError, "grep_failed", "Grep failed")
+	result := tool.NewInvocationErrorResult(invocation, tool.ResultError, "grep_failed", "Grep failed")
+	execution, _ := tool.NewSearchExecution(result, false)
+	return execution
 }
 
 func TestWritePatchReadGrepBarriersPromoteOnlyFreshRead(t *testing.T) {

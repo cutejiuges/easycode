@@ -549,3 +549,8 @@ type Factory interface {
 	NewConversation() Conversation
 	RestoreConversation([]RestoreRecord) (Conversation, error)
 }
+
+// TranscriptProjector 为宿主生成只读有序展示投影，不参与请求编译。
+type TranscriptProjector interface {
+	ProjectTranscript() (domain.TranscriptView, error)
+}

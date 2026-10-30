@@ -24,6 +24,7 @@ import (
 	"easycode/internal/secret"
 	"easycode/internal/session"
 	"easycode/internal/tui"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
@@ -96,7 +97,15 @@ func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
 				resumed.history.Turns[1].Messages[0].Text != "second" || resumed.history.Turns[1].Messages[1].Text != "answer-2" {
 				t.Fatalf("resumed history = %#v", resumed.history)
 			}
-			view := tui.NewModel(context.Background(), "test", resumed.session, resumed.history).View()
+			ui := tui.NewModel(context.Background(), "test", resumed.session).WithTranscriptQueries(resumed.identity.ThreadID, resumed.transcriptQueries)
+			initial := ui.Init()()
+			var restored tea.Model
+			if batch, ok := initial.(tea.BatchMsg); ok {
+				restored, _ = ui.Update(batch[len(batch)-1]())
+			} else {
+				restored, _ = ui.Update(initial)
+			}
+			view := restored.View()
 			for _, visible := range []string{"User: first", "Assistant: answer-1", "User: second", "Assistant: answer-2"} {
 				if !strings.Contains(view, visible) {
 					t.Fatalf("resumed transcript missing %q: %s", visible, view)
@@ -270,7 +279,15 @@ func TestCurrentSessionFixtureRestoresVisibleHistoryWithoutNetwork(t *testing.T)
 		resources.history.Turns[0].Messages[1].Text != "fixture answer" {
 		t.Fatalf("session fixture history = %#v", resources.history)
 	}
-	view := tui.NewModel(context.Background(), "test", resources.session, resources.history).View()
+	ui := tui.NewModel(context.Background(), "test", resources.session).WithTranscriptQueries(resources.identity.ThreadID, resources.transcriptQueries)
+	initial := ui.Init()()
+	var restored tea.Model
+	if batch, ok := initial.(tea.BatchMsg); ok {
+		restored, _ = ui.Update(batch[len(batch)-1]())
+	} else {
+		restored, _ = ui.Update(initial)
+	}
+	view := restored.View()
 	if !strings.Contains(view, "User: fixture question") || !strings.Contains(view, "Assistant: fixture answer") {
 		t.Fatalf("session fixture transcript = %s", view)
 	}

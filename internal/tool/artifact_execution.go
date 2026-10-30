@@ -18,5 +18,18 @@ type CommandOutputStore interface {
 
 // ArtifactRangeReader 只接收当前线程已授权引用的范围请求。
 type ArtifactRangeReader interface {
-	ReadArtifact(context.Context, ReadArtifactInput) (ArtifactPage, error)
+	ReadArtifact(context.Context, ReadArtifactInput) (ArtifactWindow, error)
+}
+
+// TextOutputCapture 是一个搜索调用的文本保存 owner；调用者在写入结束后依次 Finish、Close。
+// WriteText 只接收完整 UTF-8 文本，保存失败不阻止搜索继续统计。
+type TextOutputCapture interface {
+	WriteText(string) error
+	Finish(complete, needed bool) ArtifactSaving
+	Close() error
+}
+
+// TextOutputStore 在 started 持久化后按调用顺序获取搜索保存资源。
+type TextOutputStore interface {
+	StartTextCapture(context.Context, InvocationID, CapabilityID) (TextOutputCapture, error)
 }

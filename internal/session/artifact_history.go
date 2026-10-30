@@ -20,7 +20,9 @@ func validateArtifactHistory(thread domain.ThreadID, records []Record) error {
 		if err != nil {
 			return replayCorrupt("artifact result payload is invalid")
 		}
-		if payload.Capability != tool.CapabilityExec && payload.Capability != tool.CapabilityReadArtifact {
+		switch payload.Capability {
+		case tool.CapabilityExec, tool.CapabilityGlob, tool.CapabilityGrep, tool.CapabilityReadArtifact:
+		default:
 			continue
 		}
 		invocation, err := validationInvocation(payload)
@@ -31,7 +33,7 @@ func validateArtifactHistory(thread domain.ThreadID, records []Record) error {
 		if err != nil {
 			return replayCorrupt("artifact result is invalid")
 		}
-		if payload.Capability == tool.CapabilityExec {
+		if payload.Capability != tool.CapabilityReadArtifact {
 			if references.ValidatePending(result) != nil || references.AuthorizeCommitted(result) != nil {
 				return replayCorrupt("artifact references conflict")
 			}

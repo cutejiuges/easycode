@@ -251,11 +251,28 @@ func DecodeToolCallResultPayload(record Record) (ToolCallResultPayload, error) {
 			}
 		}
 	}
+	for _, metadata := range []*tool.ArtifactSaving{searchPayloadSaving(payload)} {
+		if metadata != nil {
+			if d, ok := metadata.Descriptor(); ok && record.ThreadID != "" && d.ThreadID() != record.ThreadID {
+				return ToolCallResultPayload{}, fmt.Errorf("artifact thread does not match result")
+			}
+		}
+	}
 	return payload, nil
 }
 
+func searchPayloadSaving(payload ToolCallResultPayload) *tool.ArtifactSaving {
+	if payload.GlobMetadata != nil {
+		return &payload.GlobMetadata.Saving
+	}
+	if payload.GrepMetadata != nil {
+		return &payload.GrepMetadata.Saving
+	}
+	return nil
+}
+
 func validateToolCallResultPayload(payload ToolCallResultPayload) error {
-	if !payload.InvocationID.Valid() || !payload.Capability.Valid() || !payload.WireKind.Valid() || !payload.Status.Valid() || payload.Code == "" || !utf8.ValidString(payload.Preview) {
+	if payload.Budget.Validate() != nil || !payload.InvocationID.Valid() || !payload.Capability.Valid() || !payload.WireKind.Valid() || !payload.Status.Valid() || payload.Code == "" || !utf8.ValidString(payload.Preview) {
 		return fmt.Errorf("tool call result payload is invalid")
 	}
 	invocation, err := validationInvocation(payload)
@@ -311,7 +328,7 @@ func decodeResultPayload(payload ToolCallResultPayload, invocation tool.Invocati
 		if m.Page != nil {
 			page = *m.Page
 		}
-		return tool.NewReadArtifactInvocationResult(v, payload.Status, payload.Code, preview, page)
+		result, err = tool.NewReadArtifactInvocationResult(v, payload.Status, payload.Code, preview, page)
 
 	case tool.CapabilityExec:
 		if payload.WireKind != tool.WireStructured || payload.ExecMetadata == nil || payload.ReadMetadata != nil || payload.GlobMetadata != nil || payload.GrepMetadata != nil || payload.PatchMetadata != nil {
@@ -340,7 +357,7 @@ func decodeResultPayload(payload ToolCallResultPayload, invocation tool.Invocati
 	case tool.CapabilityGrep:
 		result, err = decodeGrepResult(payload, invocation, preview)
 	case tool.CapabilityWrite:
-		return decodeWriteResult(payload, invocation, preview)
+		result, err = decodeWriteResult(payload, invocation, preview)
 	case tool.CapabilityPatch:
 		if payload.PatchMetadata == nil || payload.ReadMetadata != nil || payload.GlobMetadata != nil || payload.GrepMetadata != nil {
 			return tool.InvocationResult{}, fmt.Errorf("patch metadata union is invalid")
@@ -360,7 +377,11 @@ func decodeResultPayload(payload ToolCallResultPayload, invocation tool.Invocati
 	if err != nil {
 		return tool.InvocationResult{}, fmt.Errorf("tool call result payload is invalid: %w", err)
 	}
-	return result, nil
+	result, err = result.WithBudget(payload.Budget)
+	if err != nil {
+		return tool.InvocationResult{}, err
+	}
+	return result, tool.ValidateFrozenResult(result)
 }
 
 func validationInvocation(payload ToolCallResultPayload) (tool.Invocation, error) {
@@ -480,7 +501,15 @@ func decodeGlobResult(payload ToolCallResultPayload, invocation tool.Invocation,
 	if err != nil {
 		return tool.InvocationResult{}, err
 	}
-	return tool.NewGlobInvocationResult(value, payload.Status, payload.Code, preview, metadata)
+	metadata, err = metadata.WithModelOmissions(metadataPayload.ModelOmittedMatches)
+	if err != nil {
+		return tool.InvocationResult{}, err
+	}
+	result, err := tool.NewGlobInvocationResult(value, payload.Status, payload.Code, preview, metadata)
+	if err != nil {
+		return tool.InvocationResult{}, err
+	}
+	return result.WithSearchSaving(metadataPayload.Saving)
 }
 
 func decodeGrepResult(payload ToolCallResultPayload, invocation tool.Invocation, preview tool.ModelPreview) (tool.InvocationResult, error) {
@@ -528,7 +557,15 @@ func decodeGrepResult(payload ToolCallResultPayload, invocation tool.Invocation,
 	if err != nil {
 		return tool.InvocationResult{}, err
 	}
-	return tool.NewGrepInvocationResult(value, payload.Status, payload.Code, preview, metadata)
+	metadata, err = metadata.WithModelOmissions(metadataPayload.ModelOmittedMatches)
+	if err != nil {
+		return tool.InvocationResult{}, err
+	}
+	result, err := tool.NewGrepInvocationResult(value, payload.Status, payload.Code, preview, metadata)
+	if err != nil {
+		return tool.InvocationResult{}, err
+	}
+	return result.WithSearchSaving(metadataPayload.Saving)
 }
 
 func decodeSkipCounts(payload SearchSkipCountsPayload) (tool.SearchSkipCounts, error) {
@@ -543,7 +580,7 @@ func encodeSkipCounts(counts tool.SearchSkipCounts) SearchSkipCountsPayload {
 }
 
 func encodeGlobMetadata(metadata tool.GlobResultMetadata) *GlobResultMetadataPayload {
-	return &GlobResultMetadataPayload{
+	return &GlobResultMetadataPayload{ModelOmittedMatches: metadata.ModelOmittedMatches(),
 		Matches: metadata.Matches(), Truncated: metadata.Truncated(), OmittedMatches: metadata.OmittedMatches(),
 		VisitedEntries: metadata.VisitedEntries(), IncompleteReason: metadata.IncompleteReason(), Skipped: encodeSkipCounts(metadata.Skipped()),
 	}
@@ -557,7 +594,7 @@ func encodeGrepMetadata(metadata tool.GrepResultMetadata) *GrepResultMetadataPay
 			RelativePath: match.RelativePath(), Line: match.Line(), Text: match.Text(), MatchingLine: match.MatchingLine(), Count: match.Count(),
 		}
 	}
-	return &GrepResultMetadataPayload{
+	return &GrepResultMetadataPayload{ModelOmittedMatches: metadata.ModelOmittedMatches(),
 		Mode: metadata.Mode(), Matches: payloadMatches, MatchingLines: metadata.MatchingLines(),
 		Truncated: metadata.Truncated(), OmittedMatches: metadata.OmittedMatches(), VisitedEntries: metadata.VisitedEntries(),
 		ScannedFiles: metadata.ScannedFiles(), ScannedBytes: metadata.ScannedBytes(),

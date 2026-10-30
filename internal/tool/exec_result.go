@@ -119,10 +119,7 @@ func NewExecInvocationResult(invocation ExecInvocation, status ResultStatus, cod
 		return InvocationResult{}, err
 	}
 	result := InvocationResult{invocationID: invocation.invocationID, providerCallID: invocation.providerCallID, capability: CapabilityExec, wireKind: WireStructured, status: status, code: code, preview: preview, execMetadata: metadata}
-	if err := result.Validate(); err != nil {
-		return InvocationResult{}, err
-	}
-	return result, nil
+	return initializeResultBudget(result)
 }
 
 func (result InvocationResult) ExecMetadata() ExecResultMetadata { return result.execMetadata }
@@ -168,5 +165,6 @@ func NewExecErrorResult(invocation ExecInvocation, status ResultStatus, code str
 			return result
 		}
 	}
-	return InvocationResult{invocationID: invocation.invocationID, providerCallID: invocation.providerCallID, capability: CapabilityExec, wireKind: WireStructured, status: ResultError, code: "internal_error", preview: ModelPreview{text: "Exec failed: internal_error"}, execMetadata: ExecResultMetadata{workdir: invocation.input.workdir}}
+	result, _ := initializeResultBudget(InvocationResult{invocationID: invocation.invocationID, providerCallID: invocation.providerCallID, capability: CapabilityExec, wireKind: WireStructured, status: ResultError, code: "internal_error", preview: ModelPreview{text: "Exec failed: internal_error"}, execMetadata: ExecResultMetadata{workdir: invocation.input.workdir}})
+	return result
 }

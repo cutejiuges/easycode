@@ -37,6 +37,9 @@ func TestCleanupPreservesCommittedReferencesAndRejectsActiveCapture(t *testing.T
 	if err := os.WriteFile(otherPath, []byte("other thread"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(otherPath), "reservation"), []byte(commandReservation().wire), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	orphan := startCapture(t, s)
 	_, _ = orphan.WriteStdout([]byte("orphan"))
 	orphanPath := filepath.Join(root, string(s.threadID), string(orphan.invocation))

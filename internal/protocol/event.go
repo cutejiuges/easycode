@@ -13,6 +13,7 @@ import (
 type EventKind string
 
 const (
+	EventTranscriptCommitted   EventKind = "transcript_committed"
 	EventUserInputCommitted    EventKind = "user_input_committed"
 	EventTurnStarted           EventKind = "turn_started"
 	EventAssistantTextDelta    EventKind = "assistant_text_delta"
@@ -20,9 +21,10 @@ const (
 	EventTurnFailed            EventKind = "turn_failed"
 	EventToolApprovalRequested EventKind = "tool_approval_requested"
 	EventToolApprovalResolved  EventKind = "tool_approval_resolved"
-	EventCommandStarted        EventKind = "command_started"
-	EventCommandProgress       EventKind = "command_progress"
-	EventCommandTerminal       EventKind = "command_terminal"
+	EventToolReady             EventKind = "tool_ready"
+	EventToolStarted           EventKind = "tool_started"
+	EventToolProgress          EventKind = "tool_progress"
+	EventToolTerminal          EventKind = "tool_terminal"
 )
 
 // Event 是 TUI、headless 和其他宿主共同消费的进程内语义事件信封。
@@ -52,14 +54,20 @@ func (event Event) Validate() error {
 		return fmt.Errorf("runtime event identity is invalid")
 	}
 	switch event.Kind {
+	case EventTranscriptCommitted:
+		if !hasIdentity {
+			return fmt.Errorf("transcript event identity is required")
+		}
+		_, err := DecodeTranscriptCommitted(event)
+		return err
 	case EventUserInputCommitted:
 		_, err := DecodeUserInputCommitted(event)
 		return err
-	case EventCommandStarted, EventCommandProgress, EventCommandTerminal:
+	case EventToolReady, EventToolStarted, EventToolProgress, EventToolTerminal:
 		if !hasIdentity {
 			return fmt.Errorf("command event identity is required")
 		}
-		_, err := DecodeCommandActivity(event)
+		_, err := DecodeToolActivity(event)
 		return err
 	case EventTurnStarted:
 		return ValidateTurnStarted(event)

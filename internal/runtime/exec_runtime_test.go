@@ -112,25 +112,25 @@ func TestExecProgressIsTransientAndBoundToCurrentIdentity(t *testing.T) {
 		submit(progress)
 	}
 	var events []protocol.Event
-	_, _, err := runtime.executeExecCall(context.Background(), execApprovalEmitter(t, runtime, tool.ApprovalAllowOnce, &events), runtimeTurnID, invocation)
+	_, _, err := executeExecActivityTest(runtime, context.Background(), execApprovalEmitter(t, runtime, tool.ApprovalAllowOnce, &events), runtimeTurnID, invocation)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var kinds []protocol.EventKind
 	for _, event := range events {
-		if event.Kind != protocol.EventCommandStarted && event.Kind != protocol.EventCommandProgress && event.Kind != protocol.EventCommandTerminal {
+		if event.Kind != protocol.EventToolStarted && event.Kind != protocol.EventToolProgress && event.Kind != protocol.EventToolTerminal {
 			continue
 		}
 		if err := event.Validate(); err != nil {
 			t.Fatal(err)
 		}
-		payload, err := protocol.DecodeCommandActivity(event)
+		payload, err := protocol.DecodeToolActivity(event)
 		if err != nil || payload.InvocationID != string(invocation.InvocationID()) || event.SessionID != runtimeSessionID || event.ThreadID != runtimeThreadID || event.TurnID != runtimeTurnID {
 			t.Fatal("command identity escaped current turn")
 		}
 		kinds = append(kinds, event.Kind)
 	}
-	if len(kinds) != 3 || kinds[0] != protocol.EventCommandStarted || kinds[1] != protocol.EventCommandProgress || kinds[2] != protocol.EventCommandTerminal {
+	if len(kinds) != 3 || kinds[0] != protocol.EventToolStarted || kinds[1] != protocol.EventToolProgress || kinds[2] != protocol.EventToolTerminal {
 		t.Fatalf("command order = %v", kinds)
 	}
 	batches := journal.snapshot()
@@ -156,12 +156,12 @@ func TestExecApprovalAndAdmissionDurability(t *testing.T) {
 	var events []protocol.Event
 	approvalEmitter := execApprovalEmitter(t, runtime, tool.ApprovalAllowOnce, &events)
 	emit := func(event protocol.Event) {
-		if event.Kind == protocol.EventCommandTerminal && len(journal.snapshot()) != 3 {
+		if event.Kind == protocol.EventToolTerminal && len(journal.snapshot()) != 3 {
 			t.Fatal("terminal published before durable result")
 		}
 		approvalEmitter(event)
 	}
-	result, aborted, err := runtime.executeExecCall(context.Background(), emit, runtimeTurnID, invocation)
+	result, aborted, err := executeExecActivityTest(runtime, context.Background(), emit, runtimeTurnID, invocation)
 	if err != nil || aborted || result.Status() != tool.ResultSuccess || executor.calls != 1 {
 		t.Fatalf("Exec failed: %v", err)
 	}
@@ -173,10 +173,10 @@ func TestExecApprovalAndAdmissionDurability(t *testing.T) {
 	if err != nil || approval.Source != session.ApprovalSourceInteractive || approval.Metadata.Capability != tool.CapabilityExec || approval.Metadata.TimeoutMillis != 1000 {
 		t.Fatal("interactive approval source or metadata lost")
 	}
-	if len(events) != 4 || events[2].Kind != protocol.EventCommandStarted || events[3].Kind != protocol.EventCommandTerminal {
+	if len(events) != 4 || events[2].Kind != protocol.EventToolStarted || events[3].Kind != protocol.EventToolTerminal {
 		t.Fatal("Exec activity order changed")
 	}
-	terminal, err := protocol.DecodeCommandTerminal(events[3])
+	terminal, err := protocol.DecodeToolTerminal(events[3])
 	if err != nil || terminal.ResultPreview != result.Preview().Text() {
 		t.Fatal("terminal changed durable result bytes")
 	}
@@ -187,7 +187,7 @@ func TestExecDurableFailuresNeverRepeatSideEffects(t *testing.T) {
 		journal := &fakeJournal{failAt: failAt}
 		runtime, invocation, executor := runtimeExecFixture(t, journal)
 		var events []protocol.Event
-		_, _, err := runtime.executeExecCall(context.Background(), execApprovalEmitter(t, runtime, tool.ApprovalAllowOnce, &events), runtimeTurnID, invocation)
+		_, _, err := executeExecActivityTest(runtime, context.Background(), execApprovalEmitter(t, runtime, tool.ApprovalAllowOnce, &events), runtimeTurnID, invocation)
 		want := 0
 		if failAt == 3 {
 			want = 1
@@ -203,13 +203,13 @@ func TestExecHeadlessDenialHasNoExecution(t *testing.T) {
 	runtime, invocation, executor := runtimeExecFixture(t, journal)
 	runtime.interactiveApprovals = false
 	var events []protocol.Event
-	result, aborted, err := runtime.executeExecCall(context.Background(), func(event protocol.Event) { events = append(events, event) }, runtimeTurnID, invocation)
+	result, aborted, err := executeExecActivityTest(runtime, context.Background(), func(event protocol.Event) { events = append(events, event) }, runtimeTurnID, invocation)
 	if err != nil || aborted || result.Code() != "approval_required" || result.Status() != tool.ResultDenied || executor.calls != 0 {
 		t.Fatalf("headless execution admitted: %v", err)
 	}
 	for _, event := range events {
-		if event.Kind == protocol.EventCommandStarted || event.Kind == protocol.EventCommandProgress || event.Kind == protocol.EventCommandTerminal {
-			t.Fatal("headless command activity escaped")
+		if event.Kind == protocol.EventToolStarted || event.Kind == protocol.EventToolProgress {
+			t.Fatal("denied command emitted execution activity")
 		}
 	}
 	batches := journal.snapshot()
@@ -244,7 +244,7 @@ func TestExecAdmissionCancellationLinearization(t *testing.T) {
 		journal := &execAdmissionCancelJournal{cancel: cancel, accepted: accepted}
 		runtime, invocation, executor := runtimeExecFixture(t, journal)
 		var events []protocol.Event
-		result, _, err := runtime.executeExecCall(ctx, execApprovalEmitter(t, runtime, tool.ApprovalAllowOnce, &events), runtimeTurnID, invocation)
+		result, _, err := executeExecActivityTest(runtime, ctx, execApprovalEmitter(t, runtime, tool.ApprovalAllowOnce, &events), runtimeTurnID, invocation)
 		cancel()
 		if err != nil || runtime.poisoned.Load() {
 			t.Fatalf("known cancellation poisoned execution: %v", err)

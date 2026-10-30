@@ -88,7 +88,7 @@ func TestComposerProvidersPersistExactTextAcrossResizeAndResume(t *testing.T) {
 				if err := resources.session.StartInteractive(context.Background()); err != nil {
 					t.Fatal(err)
 				}
-				var model tea.Model = tui.NewModel(context.Background(), "test", resources.session, resources.history)
+				var model tea.Model = tui.NewModel(context.Background(), "test", resources.session)
 				model, _ = model.Update(tea.WindowSizeMsg{Width: width, Height: 10})
 				model, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("  中文\r\n\tcode  \r\n"), Paste: true})
 				model, _ = model.Update(tea.KeyMsg{Type: tea.KeyLeft})
@@ -97,9 +97,22 @@ func TestComposerProvidersPersistExactTextAcrossResizeAndResume(t *testing.T) {
 				model, cmd = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 				model, _ = model.Update(cmd())
 				cmd = model.Init()
-				for !strings.Contains(model.View(), "answer-1") || !strings.Contains(model.View(), "Status: idle") {
-					model, cmd = model.Update(cmd())
+
+				for {
+					message := cmd()
+					model, cmd = model.Update(message)
+					if item, ok := message.(protocol.ControlItem); ok {
+						if event, ok := item.TurnEvent(); ok {
+							if event.Kind == protocol.EventTurnFailed {
+								t.Fatalf("turn failed: %s", event.Payload)
+							}
+							if event.Kind == protocol.EventTurnCompleted {
+								break
+							}
+						}
+					}
 				}
+
 				if !strings.Contains(model.View(), "answer-1") {
 					t.Fatalf("turn failed: %s", model.View())
 				}

@@ -99,7 +99,7 @@ func TestExecHeadlessModesFailClosedForBothProviders(t *testing.T) {
 				if _, err := os.Stat(filepath.Join(workspace, "exec-marker")); !errors.Is(err, os.ErrNotExist) {
 					t.Fatal("headless command produced side effect")
 				}
-				for _, forbidden := range []string{"command_started", "command_progress", "command_terminal", workspace} {
+				for _, forbidden := range []string{"tool_started", "tool_progress", "tool_terminal", workspace} {
 					if strings.Contains(output.String(), forbidden) {
 						t.Fatalf("headless exposed %q", forbidden)
 					}

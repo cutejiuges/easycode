@@ -14,9 +14,9 @@ type artifactFailureReader struct {
 	calls int
 }
 
-func (r *artifactFailureReader) ReadArtifact(context.Context, tool.ReadArtifactInput) (tool.ArtifactPage, error) {
+func (r *artifactFailureReader) ReadArtifact(context.Context, tool.ReadArtifactInput) (tool.ArtifactWindow, error) {
 	r.calls++
-	return tool.ArtifactPage{}, r.err
+	return tool.ArtifactWindow{}, r.err
 }
 
 func TestReadArtifactErrorsAreSafeAndCancellationAvoidsIO(t *testing.T) {
@@ -33,7 +33,10 @@ func TestReadArtifactErrorsAreSafeAndCancellationAvoidsIO(t *testing.T) {
 	} {
 		reader := &artifactFailureReader{err: test.err}
 		executor, _ := NewReadArtifactExecutor(reader)
-		r := executor.Execute(context.Background(), v)
+		r, err := executor.Execute(context.Background(), v).Finalize(tool.MaxModelPreviewBytes)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if r.Validate() != nil || r.Code() != test.code || strings.Contains(r.Preview().Text(), "secret") || strings.Contains(r.Preview().Text(), "confidential") {
 			t.Fatal("unsafe artifact error")
 		}
@@ -43,7 +46,7 @@ func TestReadArtifactErrorsAreSafeAndCancellationAvoidsIO(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		before := reader.calls
-		if r := executor.Execute(ctx, v); r.Status() != tool.ResultCancelled || reader.calls != before {
+		if r, err := executor.Execute(ctx, v).Finalize(tool.MaxModelPreviewBytes); err != nil || r.Status() != tool.ResultCancelled || reader.calls != before {
 			t.Fatal("pre-cancelled read accessed storage")
 		}
 	}

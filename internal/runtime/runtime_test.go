@@ -42,14 +42,14 @@ func (runtimeReadExecutor) Execute(context.Context, tool.ReadInvocation) tool.Re
 
 type runtimeGlobExecutor struct{}
 
-func (runtimeGlobExecutor) Execute(context.Context, tool.GlobInvocation) tool.InvocationResult {
-	return tool.InvocationResult{}
+func (runtimeGlobExecutor) Execute(context.Context, tool.GlobInvocation, tool.TextOutputCapture) tool.SearchExecution {
+	return tool.SearchExecution{}
 }
 
 type runtimeGrepExecutor struct{}
 
-func (runtimeGrepExecutor) Execute(context.Context, tool.GrepInvocation) tool.InvocationResult {
-	return tool.InvocationResult{}
+func (runtimeGrepExecutor) Execute(context.Context, tool.GrepInvocation, tool.TextOutputCapture) tool.SearchExecution {
+	return tool.SearchExecution{}
 }
 
 type mixedReadExecutor struct{ calls atomic.Int32 }
@@ -1928,8 +1928,9 @@ func collectTurn(runtime *Runtime, ctx context.Context, observe Emitter) ([]prot
 
 func assertEventKinds(t *testing.T, events []protocol.Event, want ...protocol.EventKind) {
 	t.Helper()
+	events = validateToolActivitiesAndConversation(t, events)
 	if len(events) != len(want) {
-		t.Fatalf("event count: got %d want %d (%#v)", len(events), len(want), events)
+		t.Fatalf("event count: got %d want %d (%#v)", len(events), len(want), eventKindsForTest(events))
 	}
 	for index := range want {
 		if events[index].Kind != want[index] {

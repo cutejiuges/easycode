@@ -19,14 +19,14 @@ func (inertReadExecutor) Execute(context.Context, ReadInvocation) ReadExecution 
 
 type inertGlobExecutor struct{}
 
-func (inertGlobExecutor) Execute(context.Context, GlobInvocation) InvocationResult {
-	return InvocationResult{}
+func (inertGlobExecutor) Execute(context.Context, GlobInvocation, TextOutputCapture) SearchExecution {
+	return SearchExecution{}
 }
 
 type inertGrepExecutor struct{}
 
-func (inertGrepExecutor) Execute(context.Context, GrepInvocation) InvocationResult {
-	return InvocationResult{}
+func (inertGrepExecutor) Execute(context.Context, GrepInvocation, TextOutputCapture) SearchExecution {
+	return SearchExecution{}
 }
 
 func TestReadInputStrictDecodeAndBounds(t *testing.T) {

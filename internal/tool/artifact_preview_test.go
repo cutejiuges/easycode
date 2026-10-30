@@ -50,11 +50,11 @@ func TestArtifactPreviewFrozenGoldenAndSharedBudget(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			preview, truncated, err := RenderExecOutput(out.Snapshot(), stderr.Snapshot(), metadata)
+			preview, truncated, err := RenderExecOutput(out.Snapshot(), stderr.Snapshot(), metadata, ExecModelPreviewBytes)
 			if err != nil || len(preview.Text())+64 > ExecModelPreviewBytes || truncated != (state != ArtifactNotNeeded) {
 				t.Fatalf("shared preview budget: %v", err)
 			}
-			if ExecOutputNeedsSaving(out.Snapshot(), stderr.Snapshot()) != (state != ArtifactNotNeeded) {
+			if ExecOutputNeedsSaving(out.Snapshot(), stderr.Snapshot(), ExecModelPreviewBytes) != (state != ArtifactNotNeeded) {
 				t.Fatal("saving decision disagreed with preview omission")
 			}
 			digest := sha256.Sum256([]byte(preview.Text()))
@@ -64,5 +64,20 @@ func TestArtifactPreviewFrozenGoldenAndSharedBudget(t *testing.T) {
 				t.Fatalf("artifact preview golden: actual=%q", actual)
 			}
 		})
+	}
+}
+
+func TestSmallExecOutputNeedsSavingAtActualAllowance(t *testing.T) {
+	var out, stderr ExecOutputBuffer
+	_, _ = out.Write([]byte(strings.Repeat("hello", 2000)))
+	if ExecOutputNeedsSaving(out.Snapshot(), stderr.Snapshot(), ExecModelPreviewBytes) || !ExecOutputNeedsSaving(out.Snapshot(), stderr.Snapshot(), SafetyResultBytes) {
+		t.Fatal("saving decision ignored actual allowance")
+	}
+	metadata, _ := NewExecResultMetadata("", 7, true, 1, out.Snapshot().Stats(), stderr.Snapshot().Stats(), false, false, false)
+	unavailable, _ := NewArtifactSaving(ArtifactUnavailable, "quota_exceeded", ArtifactDescriptor{})
+	metadata, _ = metadata.WithOutputSaving(unavailable, unavailable)
+	preview, cut, err := RenderExecOutput(out.Snapshot(), stderr.Snapshot(), metadata, SafetyResultBytes)
+	if err != nil || !cut || len(preview.Text())+128 > SafetyResultBytes || !strings.Contains(preview.Text(), "exit_code: 7") || !strings.Contains(preview.Text(), "quota_exceeded") {
+		t.Fatalf("bounded outcome: %v", err)
 	}
 }

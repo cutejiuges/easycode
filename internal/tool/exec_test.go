@@ -207,3 +207,24 @@ func TestExecResultRejectsInvalidStatesAndOversizedPreview(t *testing.T) {
 		t.Fatal("exclusive scheduling classification changed")
 	}
 }
+
+func TestExecAllowanceChangesApprovalFingerprint(t *testing.T) {
+	id, _ := GenerateInvocationID()
+	invocation := execTestInvocation(t, "printf test", id)
+	shell, _ := NewShellProfile("sh", "/bin/sh")
+	environment, _ := NewEnvironmentPolicy("minimal", []string{"PATH"})
+	sandbox, _ := NewSandboxProfile("workspace", false, true)
+	original, err := NewExecCandidate(invocation, shell, environment, sandbox)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bounded, err := original.WithPreviewAllowance(SafetyResultBytes)
+	if err != nil || bounded.Fingerprint() == original.Fingerprint() || bounded.PreviewAllowance() != SafetyResultBytes || original.PreviewAllowance() != ExecModelPreviewBytes {
+		t.Fatal("allowance not bound to immutable approval")
+	}
+	tampered := bounded
+	tampered.fingerprint = original.fingerprint
+	if tampered.Validate() == nil {
+		t.Fatal("old approval fingerprint accepted for reduced allowance")
+	}
+}

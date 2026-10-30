@@ -1,12 +1,14 @@
-Command details · stdout
-success · exit=2 · 250 ms · src
-Output included in preview · preview …
-Frozen preview:
+Shell · success · exit=2
+Workdir: src
+Elapsed: 250 ms
+stdout: 512 bytes; stderr: 0 bytes
+Model saw a shortened result
+
 stdout:
 head retained
 [... 128 bytes omitted ...]
 tail retained
 stderr:
 warning
-Tab: stream · PgUp/PgDn: page · ↑/↓: …
-Esc: list · Ctrl+O: close · Ctrl+C: i…
+←/→: input/result/saved · PgUp/PgDn: …
+Esc: transcript · Ctrl+O: close

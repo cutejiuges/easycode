@@ -18,6 +18,8 @@ NNNN-short-decision-title.md
 - [ADR-0004：首版 OpenAI Wire 仅支持 Responses](0004-openai-responses-first-wire-scope.md)
 - [ADR-0005：私有命令输出与独立宿主查询](0005-private-command-output-and-host-queries.md)
 
+- [ADR-0006：统一工具记录与结果预算](0006-tool-transcript-and-result-budget.md)
+
 ## 模板
 
 ```text

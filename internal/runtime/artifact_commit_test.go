@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -39,7 +40,7 @@ func TestArtifactAuthorizationFollowsDurableResult(t *testing.T) {
 			journal.failAt = 1
 		}
 		runtime := &Runtime{threadID: thread, journal: journal, artifactReferences: refs}
-		err := runtime.persistToolResult(context.Background(), turn, result)
+		err := runtime.persistToolResult(context.Background(), turn, &result)
 		_, exists := refs.Lookup(d.ID())
 		if fail {
 			if err == nil || exists || !runtime.poisoned.Load() {
@@ -53,7 +54,7 @@ func TestArtifactAuthorizationFollowsDurableResult(t *testing.T) {
 	refs, _ := tool.NewArtifactReferences(wrongThread, nil)
 	journal := &fakeJournal{}
 	runtime := &Runtime{threadID: wrongThread, journal: journal, artifactReferences: refs}
-	if err := runtime.persistToolResult(context.Background(), turn, result); err == nil || len(journal.snapshot()) != 0 {
+	if err := runtime.persistToolResult(context.Background(), turn, &result); err == nil || len(journal.snapshot()) != 0 {
 		t.Fatal("foreign descriptor reached journal")
 	}
 }
@@ -92,13 +93,53 @@ func TestArtifactPageRequiresCommittedReferenceBeforeJournal(t *testing.T) {
 			}
 			journal := &fakeJournal{}
 			runtime := &Runtime{threadID: thread, journal: journal, artifactReferences: refs}
-			err = runtime.persistToolResult(context.Background(), turn, result)
+			err = runtime.persistToolResult(context.Background(), turn, &result)
 			if test.wantOK {
 				if err != nil || len(journal.snapshot()) != 1 {
 					t.Fatalf("committed page rejected: %v", err)
 				}
 			} else if err == nil || len(journal.snapshot()) != 0 || !runtime.poisoned.Load() {
 				t.Fatal("unauthorized page reached journal")
+			}
+		})
+	}
+}
+
+func TestSearchReferenceAuthorizedOnlyAfterResultSync(t *testing.T) {
+	thread := domain.ThreadID("018f1d8a-7b5c-7def-8123-456789abcdef")
+	id, _ := tool.GenerateInvocationID()
+	input, _ := tool.NewGlobInput("*.go", "", 10)
+	call, _ := tool.NewGlobReadyCall("glob", input)
+	inv, _ := tool.NewGlobInvocation(id, call)
+	metadata, _ := tool.NewGlobResultMetadata([]string{"a.go"}, false, 0, 1, tool.SearchComplete, tool.SearchSkipCounts{})
+	preview, _ := tool.NewModelPreview("a.go\n")
+	result, _ := tool.NewGlobInvocationResult(inv, tool.ResultSuccess, "ok", preview, metadata)
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprint(fail), func(t *testing.T) {
+			descriptor, _ := tool.NewArtifactDescriptor("0123456789abcdef0123456789abcdef", thread, id, tool.ArtifactSearchResult, 5, 5, strings.Repeat("a", 64), true)
+			saving, _ := tool.NewArtifactSaving(tool.ArtifactComplete, "", descriptor)
+			frozen, err := result.WithSearchSaving(saving)
+			if err != nil {
+				t.Fatal(err)
+			}
+			refs, _ := tool.NewArtifactReferences(thread, nil)
+			journal := &startedFailureJournal{}
+			if fail {
+				journal.failAt = 1
+			}
+			runtime := &Runtime{threadID: thread, journal: journal, artifactReferences: refs}
+			if _, ok := refs.Lookup(descriptor.ID()); ok {
+				t.Fatal("reference authorized before result")
+			}
+			err = runtime.persistToolResult(context.Background(), runtimeTurnID, &frozen)
+			_, authorized := refs.Lookup(descriptor.ID())
+			if (err != nil) != fail || authorized == fail {
+				t.Fatal("search authorization crossed Sync boundary")
+			}
+			wrong, _ := tool.NewArtifactDescriptor("0123456789abcdef0123456789abcdef", thread, id, tool.ArtifactStdout, 5, 5, strings.Repeat("a", 64), true)
+			saving, _ = tool.NewArtifactSaving(tool.ArtifactComplete, "", wrong)
+			if _, err := result.WithSearchSaving(saving); err == nil {
+				t.Fatal("search accepted command source")
 			}
 		})
 	}

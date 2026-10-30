@@ -108,11 +108,12 @@ func (profile SandboxProfile) Validate() error {
 
 // ExecCandidate 保存approval绑定的纯内存命令候选。
 type ExecCandidate struct {
-	invocation  ExecInvocation
-	shell       ShellProfile
-	environment EnvironmentPolicy
-	sandbox     SandboxProfile
-	fingerprint string
+	previewAllowance int
+	invocation       ExecInvocation
+	shell            ShellProfile
+	environment      EnvironmentPolicy
+	sandbox          SandboxProfile
+	fingerprint      string
 }
 
 type execCandidateCanonical struct {
@@ -148,11 +149,11 @@ func NewExecCandidate(invocation ExecInvocation, shell ShellProfile, environment
 	if err := sandbox.Validate(); err != nil {
 		return ExecCandidate{}, err
 	}
-	fingerprint, err := execCandidateFingerprint(invocation, shell, environment, sandbox)
+	fingerprint, err := execCandidateFingerprint(invocation, shell, environment, sandbox, ExecModelPreviewBytes)
 	if err != nil {
 		return ExecCandidate{}, err
 	}
-	candidate := ExecCandidate{invocation: invocation, shell: shell, environment: cloneEnvironmentPolicy(environment), sandbox: sandbox, fingerprint: fingerprint}
+	candidate := ExecCandidate{previewAllowance: ExecModelPreviewBytes, invocation: invocation, shell: shell, environment: cloneEnvironmentPolicy(environment), sandbox: sandbox, fingerprint: fingerprint}
 	if err := candidate.Validate(); err != nil {
 		return ExecCandidate{}, err
 	}
@@ -172,25 +173,28 @@ func cloneEnvironmentPolicy(policy EnvironmentPolicy) EnvironmentPolicy {
 }
 
 func (candidate ExecCandidate) Validate() error {
+	if candidate.previewAllowance < SafetyResultBytes || candidate.previewAllowance > ExecModelPreviewBytes {
+		return errors.New("invalid Exec preview allowance")
+	}
 	if err := candidate.invocation.Validate(); err != nil {
 		return errors.New("Exec candidate invocation is invalid")
 	}
 	if candidate.shell.Validate() != nil || candidate.environment.Validate() != nil || candidate.sandbox.Validate() != nil {
 		return errors.New("Exec candidate profile is invalid")
 	}
-	rebuilt, err := execCandidateFingerprint(candidate.invocation, candidate.shell, candidate.environment, candidate.sandbox)
+	rebuilt, err := execCandidateFingerprint(candidate.invocation, candidate.shell, candidate.environment, candidate.sandbox, candidate.previewAllowance)
 	if err != nil || candidate.fingerprint == "" || rebuilt != candidate.fingerprint {
 		return errors.New("Exec candidate fingerprint is invalid")
 	}
 	return nil
 }
 
-func execCandidateFingerprint(invocation ExecInvocation, shell ShellProfile, environment EnvironmentPolicy, sandbox SandboxProfile) (string, error) {
+func execCandidateFingerprint(invocation ExecInvocation, shell ShellProfile, environment EnvironmentPolicy, sandbox SandboxProfile, allowance int) (string, error) {
 	input := invocation.Input()
 	canonical, err := codec.MarshalCanonical(execCandidateCanonical{
 		Capability: CapabilityExec, Command: input.Command(), Workdir: input.Workdir(), TimeoutMillis: input.TimeoutMillis(), ShellProfile: shell.ID(),
 		EnvironmentRevision: environment.Revision(), SandboxRevision: sandbox.Revision(), NetworkAllowed: sandbox.NetworkAllowed(), WriteWorkspace: sandbox.WriteWorkspace(),
-		CaptureBytes: ExecCaptureBytesPerStream, PreviewBytes: ExecModelPreviewBytes,
+		CaptureBytes: ExecCaptureBytesPerStream, PreviewBytes: allowance,
 		SavingPolicy: "private-command-prefix", SavedStreamBytes: ArtifactStreamBytes,
 		SavedInvocationBytes: ArtifactInvocationBytes, SavedThreadBytes: ArtifactThreadBytes, SavedRootBytes: ArtifactRootBytes,
 	}, 256<<10)
@@ -199,4 +203,21 @@ func execCandidateFingerprint(invocation ExecInvocation, shell ShellProfile, env
 	}
 	sum := sha256.Sum256(canonical.Bytes())
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// PreviewAllowance 返回批准时冻结的最终预览额度。
+func (candidate ExecCandidate) PreviewAllowance() int { return candidate.previewAllowance }
+
+// WithPreviewAllowance 在审批前绑定本次实际额度，旧 fingerprint 不再授权新候选。
+func (candidate ExecCandidate) WithPreviewAllowance(allowance int) (ExecCandidate, error) {
+	if candidate.Validate() != nil || allowance < SafetyResultBytes || allowance > ExecModelPreviewBytes {
+		return ExecCandidate{}, errors.New("invalid Exec preview allowance")
+	}
+	candidate.previewAllowance = allowance
+	fingerprint, err := execCandidateFingerprint(candidate.invocation, candidate.shell, candidate.environment, candidate.sandbox, allowance)
+	if err != nil {
+		return ExecCandidate{}, err
+	}
+	candidate.fingerprint = fingerprint
+	return candidate, candidate.Validate()
 }

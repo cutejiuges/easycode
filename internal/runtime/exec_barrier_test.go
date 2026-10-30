@@ -13,12 +13,13 @@ import (
 
 type barrierGrepExecutor struct{ onExecute func() }
 
-func (executor barrierGrepExecutor) Execute(_ context.Context, invocation tool.GrepInvocation) tool.InvocationResult {
+func (executor barrierGrepExecutor) Execute(_ context.Context, invocation tool.GrepInvocation, _ tool.TextOutputCapture) tool.SearchExecution {
 	executor.onExecute()
 	metadata, _ := tool.NewGrepResultMetadata(invocation.Input().OutputMode(), nil, 0, false, 0, 0, 0, 0, tool.SearchComplete, tool.SearchSkipCounts{})
 	preview, _ := tool.NewModelPreview("No matches")
 	result, _ := tool.NewGrepInvocationResult(invocation, tool.ResultSuccess, "ok", preview, metadata)
-	return result
+	execution, _ := tool.NewSearchExecution(result, false)
+	return execution
 }
 
 func TestExecBarrierWaitsForPriorDurabilityAndPreservesResultOrder(t *testing.T) {

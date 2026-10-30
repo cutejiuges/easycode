@@ -86,7 +86,10 @@ func TestArtifactBlockingIOPreservesProcessCleanupOwner(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			capture := &blockedOutputCapture{mode: mode, entered: make(chan struct{}), release: make(chan struct{}), closed: make(chan struct{})}
 			process := &fakeOwnedProcess{out: io.NopCloser(strings.NewReader("output")), errout: io.NopCloser(strings.NewReader("")), waitResult: make(chan processWaitResult, 1)}
-			process.waitResult <- processWaitResult{exit: 0}
+			// seal 必须先观察退出；write 则由测试在取消准入后明确交付退出，避免随机 select 分支。
+			if mode == "seal" {
+				process.waitResult <- processWaitResult{exit: 0}
+			}
 			clock := &fakeProcessClock{timers: make(chan *fakeProcessTimer, 20)}
 			execution, err := newProcessExecution(&fakeProcessLauncher{process: process}, clock, processTestCandidate(t), tool.RenderExecOutput)
 			if err != nil {
@@ -99,6 +102,19 @@ func TestArtifactBlockingIOPreservesProcessCleanupOwner(t *testing.T) {
 			go func() { finished <- execution.Run(ctx) }()
 			<-capture.entered
 			cancel()
+			if mode == "write" {
+				timeout := <-clock.timers
+				if timeout.duration != time.Second {
+					t.Fatal("missing command timeout")
+				}
+				grace := <-clock.timers
+				if grace.duration != 250*time.Millisecond {
+					t.Fatal("missing cancellation grace")
+				}
+				// 假时钟只由测试推进，不能等待永远不会自动触发的宽限期。
+				process.waitResult <- processWaitResult{exit: 0}
+				grace.ticks <- time.Unix(1, 0)
+			}
 			select {
 			case <-execution.Done():
 				t.Fatal("blocked I/O abandoned owner")
@@ -116,6 +132,9 @@ func TestArtifactBlockingIOPreservesProcessCleanupOwner(t *testing.T) {
 			result := <-finished
 			if result.Validate() != nil {
 				t.Fatal("cleanup produced invalid result")
+			}
+			if mode == "write" && (result.Status() != tool.ResultCancelled || !result.ExecMetadata().Cancelled()) {
+				t.Fatal("blocked write lost cancellation")
 			}
 			<-execution.Done()
 			select {

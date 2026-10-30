@@ -184,6 +184,16 @@ Write 的目标/目录检查与候选读取 SHALL 遵循上述 Patch 的 ready d
 - **WHEN** 无 calls sample 已选择提交最终边界后输入到达
 - **THEN** 当前 turn 正常完成，输入保留 FIFO 等待新 turn
 
+Runtime SHALL 在同一 turn owner 持有 tool/result-budget 的纯内存账本，sample 512 KiB、turn 2 MiB，按调用 index 最终分配而非 worker 完成时间。每个当前及后续允许调用保留 1 KiB 安全结果空间，已冻结实际 preview bytes 扣账。steering 不重置额度；只读 worker 返回有界执行材料，由 owner 按序 finalization、result Sync 和 native outputs 提交；exclusive 屏障前不得延迟前序 result durable。
+
+#### Scenario: Do not replenish budget with steering
+- **WHEN** 同轮用户追加输入在 outputs 安全点提交
+- **THEN** 后续 sample 继续使用同一 turn 剩余额度，16/64 上限和权限不改变
+
+#### Scenario: Stop admission when turn body budget is exhausted
+- **WHEN** turn 除安全结果预留外已无正文额度
+- **THEN** 不再创建新审批或准入 executor；accepted 调用仍执行并清理一次，未 accepted ready 获得 result_budget_exceeded 配对；当前 outputs 完成后以 tool_result_budget_exceeded 失败收口且不领取 steer
+
 ### Requirement: Execution ledger provides at-most-once automatic execution
 
 自动允许调用的正常路径 SHALL 遵循`ready_durable -> execution_started_durable -> result_durable`；需要审批的调用 SHALL 遵循`ready_durable -> approval_decided_durable -> execution_started_durable -> result_durable`。拒绝路径 SHALL为`ready_durable -> [approval_decided(deny), result(denied)]_durable`且不得出现started。Runtime SHALL在启动任何worker前按调度顺序为每个仍可执行调用单独append/Sync`tool_execution_started`；该append被接受的成功点是该调用的执行接收线性化点。在它之前观察到取消的调用 SHALL被分类为cancelled且不得进入executor；在它之后Runtime MUST恰好调用一次匹配executor，即使turn context已取消。
@@ -273,6 +283,12 @@ Exec artifact 状态/引用与 ReadArtifact 页结果 SHALL 随 preview 一次�
 #### Scenario: Recover artifact outputs byte for byte
 - **WHEN** Exec 与 ReadArtifact results 已 durable，native output 未提交且文件已删除
 - **THEN** 恢复得到与不中断路径相同的 preview、native item 顺序、canonical request 与 fingerprint，不执行 artifact I/O
+
+预算不足、保存失败及恢复补偿 SHALL 同样获得有界 typed result 与匹配 output；预算元数据与最终 preview/保存决定在 result Sync 前冻结。已有 results 恢复时不重新分配预算或访问保存对象，补偿只为缺失 result 使用当前安全有界策略。七工具与 search_result 均遵守上述规则。
+
+#### Scenario: Recover a reduced search result
+- **WHEN** 搜索缩短结果与保存引用已 durable 而 native output 未提交，保存文件随后丢失
+- **THEN** 恢复只使用冻结 bytes，canonical request、native item 顺序与 fingerprint 与不中断路径等价
 
 ### Requirement: Command execution is an exclusive durable invocation
 

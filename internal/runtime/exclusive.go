@@ -31,7 +31,7 @@ func (action exclusiveAction) Matches(result tool.InvocationResult) bool {
 // executeExclusive 把 started 接收作为取消线性化点，返回前持久化唯一关联结果。
 func (runtime *Runtime) executeExclusive(ctx context.Context, turnID domain.TurnID, invocation tool.Invocation, strategy exclusiveStrategy) (tool.InvocationResult, error) {
 	finish := func(result tool.InvocationResult) (tool.InvocationResult, error) {
-		if err := runtime.persistToolResult(context.WithoutCancel(ctx), turnID, result); err != nil {
+		if err := runtime.persistToolResult(context.WithoutCancel(ctx), turnID, &result); err != nil {
 			return tool.InvocationResult{}, err
 		}
 		if result.Status() == tool.ResultOutcomeUncertain {
@@ -56,6 +56,7 @@ func (runtime *Runtime) executeExclusive(ctx context.Context, turnID domain.Turn
 		runtime.poisoned.Store(true)
 		return tool.InvocationResult{}, fault.Wrap(fault.CodeSessionWrite, "persist tool execution start failed", err)
 	}
+	runtime.emitToolStarted(turnID, invocation)
 	result := strategy.Execute(ctx)
 	if result.Validate() != nil || result.InvocationID() != invocation.InvocationID() || result.ProviderCallID() != invocation.ProviderCallID() || result.Capability() != invocation.Capability() || result.WireKind() != invocation.WireKind() || !strategy.Matches(result) {
 		result = tool.NewInvocationErrorResult(invocation, tool.ResultOutcomeUncertain, "invalid_tool_result", "Tool outcome is uncertain")
@@ -68,6 +69,11 @@ func (runtime *Runtime) executeExclusive(ctx context.Context, turnID domain.Turn
 }
 
 func (runtime *Runtime) executeApproved(ctx context.Context, emit Emitter, turnID domain.TurnID, invocation tool.Invocation) (tool.InvocationResult, bool, error) {
+	if runtime.resultBudget.BodyExhausted() {
+		result := tool.NewInvocationErrorResult(invocation, tool.ResultError, "result_budget_exceeded", "Tool not executed: turn result budget exhausted")
+		err := runtime.persistToolResult(context.WithoutCancel(ctx), turnID, &result)
+		return result, false, err
+	}
 	switch invocation.Capability() {
 	case tool.CapabilityPatch:
 		return runtime.executePatchCall(ctx, emit, turnID, invocation)

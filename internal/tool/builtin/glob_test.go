@@ -23,7 +23,7 @@ func TestGlobReturnsSortedRegularFilesAndMetadata(t *testing.T) {
 		}
 	}
 	executor, _ := openTestGlobExecutor(t, root)
-	result := executor.Execute(context.Background(), globInvocationFor(t, "internal/**/*.go", "", 2))
+	result := finalizeSearchForTest(t, executor.Execute(context.Background(), globInvocationFor(t, "internal/**/*.go", "", 2), nil))
 	if result.Status() != tool.ResultSuccess || result.Capability() != tool.CapabilityGlob {
 		t.Fatalf("Glob 失败: %s/%s", result.Status(), result.Code())
 	}
@@ -49,7 +49,7 @@ func TestGlobUsesSubdirectoryButReturnsWorkspaceRelativePaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	executor, _ := openTestGlobExecutor(t, root)
-	result := executor.Execute(context.Background(), globInvocationFor(t, "src/**/*.go", "src", 100))
+	result := finalizeSearchForTest(t, executor.Execute(context.Background(), globInvocationFor(t, "src/**/*.go", "src", 100), nil))
 	if got := result.GlobMetadata().Matches(); !reflect.DeepEqual(got, []string{"src/nested/main.go"}) {
 		t.Fatalf("matches = %#v", got)
 	}
@@ -60,7 +60,7 @@ func TestGlobCancellationBeforeTraversal(t *testing.T) {
 	executor, _ := openTestGlobExecutor(t, t.TempDir())
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	result := executor.Execute(ctx, globInvocationFor(t, "**", "", 100))
+	result := finalizeSearchForTest(t, executor.Execute(ctx, globInvocationFor(t, "**", "", 100), nil))
 	if result.Status() != tool.ResultCancelled || result.Code() != "cancelled" {
 		t.Fatalf("cancel = %s/%s", result.Status(), result.Code())
 	}

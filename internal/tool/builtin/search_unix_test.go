@@ -31,7 +31,7 @@ func TestGlobDirectoryReplacementStaysBoundToOpenedHandle(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	result := executor.Execute(context.Background(), globInvocationFor(t, "dir/**/*.go", "", 100))
+	result := finalizeSearchForTest(t, executor.Execute(context.Background(), globInvocationFor(t, "dir/**/*.go", "", 100), nil))
 	if result.Status() != tool.ResultSuccess || result.Preview().Text() != "dir/safe.go\n" {
 		t.Fatalf("安全目录 handle 未继续遍历: %s %q", result.Status(), result.Preview().Text())
 	}
@@ -59,7 +59,7 @@ func TestGrepEnumerationToOpenReplacementDoesNotReadOutside(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	result := executor.Execute(context.Background(), grepInvocationFor(t, "needle", "", "*.txt", tool.GrepOutputContent, false, 0, 0, 100))
+	result := finalizeSearchForTest(t, executor.Execute(context.Background(), grepInvocationFor(t, "needle", "", "*.txt", tool.GrepOutputContent, false, 0, 0, 100), nil))
 	if result.Status() != tool.ResultSuccess {
 		t.Fatalf("Grep 失败: %s/%s", result.Status(), result.Code())
 	}
@@ -88,7 +88,7 @@ func TestSearchSkipsPermissionDisappearanceAndSpecialFilesWithoutLeakingCause(t 
 		}
 	}
 	writeSearchFile(t, root, "gone.txt", "needle")
-	result := executor.Execute(context.Background(), grepInvocationFor(t, "needle", "", "", tool.GrepOutputContent, false, 0, 0, 100))
+	result := finalizeSearchForTest(t, executor.Execute(context.Background(), grepInvocationFor(t, "needle", "", "", tool.GrepOutputContent, false, 0, 0, 100), nil))
 	skipped := result.GrepMetadata().Skipped()
 	if skipped.Unreadable() == 0 || skipped.Unsupported() == 0 || skipped.Disappeared() == 0 {
 		t.Fatalf("故障跳过统计不完整: %#v", skipped)

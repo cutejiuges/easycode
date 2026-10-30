@@ -110,10 +110,10 @@ func TestExecFailurePathsEndToEndForBothProviders(t *testing.T) {
 						if err := control.ResolveApproval(context.Background(), event.TurnID, payload, decision, ""); err != nil {
 							t.Fatal(err)
 						}
-					case protocol.EventCommandStarted:
+					case protocol.EventToolStarted:
 						starts++
-					case protocol.EventCommandProgress:
-						payload, err := protocol.DecodeCommandActivity(event)
+					case protocol.EventToolProgress:
+						payload, err := protocol.DecodeToolActivity(event)
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -121,9 +121,9 @@ func TestExecFailurePathsEndToEndForBothProviders(t *testing.T) {
 							control.Interrupt()
 							interrupted = true
 						}
-					case protocol.EventCommandTerminal:
+					case protocol.EventToolTerminal:
 						terminals++
-						payload, err := protocol.DecodeCommandTerminal(event)
+						payload, err := protocol.DecodeToolTerminal(event)
 						if err != nil || payload.Code != wantCode {
 							t.Fatalf("terminal code = %s: %v", payload.Code, err)
 						}
@@ -141,7 +141,7 @@ func TestExecFailurePathsEndToEndForBothProviders(t *testing.T) {
 				if accepted {
 					wantActivities = 1
 				}
-				if starts != wantActivities || terminals != wantActivities || turns != 1 || requests.Load() != wantRequests {
+				if starts != wantActivities || terminals != 1 || turns != 1 || requests.Load() != wantRequests {
 					t.Fatalf("lifecycle = %d/%d/%d requests=%d", starts, terminals, turns, requests.Load())
 				}
 				if scenario == "interrupt" && !interrupted {
@@ -184,7 +184,7 @@ func TestExecFailurePathsEndToEndForBothProviders(t *testing.T) {
 				if err != nil || string(content) != "unchanged" {
 					t.Fatal("sandbox changed protected file")
 				}
-				if !strings.Contains(ui.View(), "Status: idle") {
+				if strings.Contains(ui.View(), "Cancelling") || strings.Contains(ui.View(), "Status:") {
 					t.Fatal("TUI stayed busy after cleanup")
 				}
 			})

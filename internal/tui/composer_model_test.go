@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"easycode/internal/domain"
 	"easycode/internal/protocol"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -75,14 +74,14 @@ func TestComposerRestoreRecallAfterRejectedAdmissionAndResize(t *testing.T) {
 }
 
 func TestComposerFocusRoutingAndResumeSeed(t *testing.T) {
-	seed := domain.SemanticHistoryView{Provider: domain.ProviderOpenAI, Turns: []domain.SemanticTurn{testSemanticTurn("  first\r\n", ""), testSemanticTurn(" \n", ""), testSemanticTurn(strings.Repeat("x", protocol.MaxInputBytes+1), ""), testSemanticTurn("last", "")}}
-	model := NewModel(context.Background(), "test", &fakeChatSession{}, seed)
+	model := NewModel(context.Background(), "test", &fakeChatSession{})
+	for _, text := range []string{"  first\r\n", " \n", strings.Repeat("x", protocol.MaxInputBytes+1), "last"} {
+		model.composer.history.add(text)
+	}
 	if !reflect.DeepEqual(model.composer.history.entries, []string{"  first\n", "last"}) {
 		t.Fatal("invalid recall seed")
 	}
-	if len(model.transcript) != 4 {
-		t.Fatal("recall filtering changed transcript")
-	}
+
 	model.composer = composerWithText(t, "draft\n中文")
 	model.composer.moveTo(2)
 	original := model.composer

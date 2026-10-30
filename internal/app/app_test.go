@@ -359,7 +359,7 @@ func TestRunStartsTUIFromSupportedConfigurationSourcesWithoutNetwork(t *testing.
 			if outcome := Run(context.Background(), options); outcome.ExitCode() != 0 {
 				t.Fatalf("run TUI: %#v", outcome)
 			}
-			if !strings.Contains(output.String(), "Status: idle") {
+			if !strings.Contains(output.String(), "EasyCode") || strings.Contains(output.String(), "Status:") {
 				t.Fatalf("TUI did not enter idle state: %q", output.String())
 			}
 			if strings.Contains(output.String(), "file-secret") ||
@@ -820,14 +820,14 @@ func (appReadExecutor) Execute(context.Context, tool.ReadInvocation) tool.ReadEx
 
 type appGlobExecutor struct{}
 
-func (appGlobExecutor) Execute(context.Context, tool.GlobInvocation) tool.InvocationResult {
-	return tool.InvocationResult{}
+func (appGlobExecutor) Execute(context.Context, tool.GlobInvocation, tool.TextOutputCapture) tool.SearchExecution {
+	return tool.SearchExecution{}
 }
 
 type appGrepExecutor struct{}
 
-func (appGrepExecutor) Execute(context.Context, tool.GrepInvocation) tool.InvocationResult {
-	return tool.InvocationResult{}
+func (appGrepExecutor) Execute(context.Context, tool.GrepInvocation, tool.TextOutputCapture) tool.SearchExecution {
+	return tool.SearchExecution{}
 }
 
 func mustAppToolCatalog(t *testing.T) tool.CatalogSnapshot {

@@ -46,7 +46,8 @@ type ContextPlanner interface {
 
 // Config 固定一个 Session-bound Runtime 的身份与 durable 边界。
 type Config struct {
-	CommandHistory            CommandHistoryObserver
+	TextOutputStore           tool.TextOutputStore
+	ToolHistory               ToolHistoryObserver
 	ReadArtifactExecutor      tool.ReadArtifactExecutor
 	ArtifactReferences        *tool.ArtifactReferences
 	SessionID                 domain.SessionID
@@ -76,7 +77,12 @@ type Config struct {
 
 // Runtime 持有一条会话级 Provider Conversation 和同一 thread journal。
 type Runtime struct {
-	commandHistory       CommandHistoryObserver
+	turnEmitter          Emitter
+	activityEmitter      Emitter
+	activityInvocations  map[tool.InvocationID]tool.Invocation
+	resultBudget         *tool.ResultBudget
+	textOutputStore      tool.TextOutputStore
+	toolHistory          ToolHistoryObserver
 	readArtifactExecutor tool.ReadArtifactExecutor
 	artifactReferences   *tool.ArtifactReferences
 	conversation         provider.Conversation
@@ -175,8 +181,9 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 		}
 	}
 	return &Runtime{
-		commandHistory:       config.CommandHistory,
+		toolHistory:          config.ToolHistory,
 		readArtifactExecutor: config.ReadArtifactExecutor,
+		textOutputStore:      config.TextOutputStore,
 		artifactReferences:   config.ArtifactReferences,
 		conversation:         conversation, journal: config.Journal,
 		sessionID: config.SessionID, threadID: config.ThreadID, newTurnID: config.GenerateTurnID,
@@ -201,7 +208,11 @@ func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, 
 		return fault.New(fault.CodeTurnFailed, "conversation already has an active turn")
 	}
 	defer runtime.active.Store(false)
+	runtime.turnEmitter = emit
+	defer func() { runtime.turnEmitter = nil }()
 	defer runtime.clearTurnObservations()
+	runtime.resultBudget = tool.NewResultBudget()
+	defer func() { runtime.resultBudget = nil }()
 
 	turnID, err := runtime.beginTurn(ctx, emit)
 	if err != nil {
@@ -255,6 +266,9 @@ func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, 
 			if outputErr := runtime.commitToolOutputs(ctx, turnID, results); outputErr != nil {
 				return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, outputErr)
 			}
+		}
+		if runtime.resultBudget.BodyExhausted() {
+			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, fault.New(fault.CodeToolResultBudgetExceeded, "tool result budget exhausted"))
 		}
 		if executeErr != nil {
 			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, executeErr)
@@ -320,7 +334,8 @@ func (runtime *Runtime) ReconcileToolTurn(ctx context.Context, plan session.Tool
 			result = tool.NewInvocationErrorResult(
 				call.Invocation, tool.ResultCancelled, code, preview,
 			)
-			if err := runtime.persistToolResult(reconcileContext, plan.TurnID(), result); err != nil {
+			result, _ = tool.FinalizeResult(result, tool.SafetyResultBytes, tool.BudgetRecovery)
+			if err := runtime.persistToolResult(reconcileContext, plan.TurnID(), &result); err != nil {
 				return err
 			}
 		case session.ReplayedToolCallStarted:
@@ -328,7 +343,8 @@ func (runtime *Runtime) ReconcileToolTurn(ctx context.Context, plan session.Tool
 				call.Invocation, tool.ResultOutcomeUncertain, "outcome_uncertain",
 				"Tool failed: execution outcome is uncertain",
 			)
-			if err := runtime.persistToolResult(reconcileContext, plan.TurnID(), result); err != nil {
+			result, _ = tool.FinalizeResult(result, tool.SafetyResultBytes, tool.BudgetRecovery)
+			if err := runtime.persistToolResult(reconcileContext, plan.TurnID(), &result); err != nil {
 				return err
 			}
 			outcomeUncertain = true
@@ -584,7 +600,8 @@ func (runtime *Runtime) commitFinalSample(
 		failure := fault.Wrap(fault.CodeStreamProtocol, "turn completion is invalid", err)
 		return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, failure)
 	}
-	if _, err := runtime.journal.AppendBatch(context.WithoutCancel(ctx), []session.RecordDraft{commitDraft, usageDraft, completedDraft}); err != nil {
+	records, err := runtime.journal.AppendBatch(context.WithoutCancel(ctx), []session.RecordDraft{commitDraft, usageDraft, completedDraft})
+	if err != nil {
 		discardPreparedSample(sample)
 		failure := fault.Wrap(fault.CodeSessionWrite, "persist completed turn failed", err)
 		runtime.poisoned.Store(true)
@@ -597,6 +614,15 @@ func (runtime *Runtime) commitFinalSample(
 		runtime.emitFailure(emit, turnID, failure)
 		return failure
 	}
+	if runtime.toolHistory != nil {
+		if err := runtime.toolHistory.NativeCommitted(records[0].Sequence, nil); err != nil {
+			runtime.poisoned.Store(true)
+			failure := fault.Wrap(fault.CodeStreamProtocol, "transcript projection failed", err)
+			runtime.emitFailure(emit, turnID, failure)
+			return failure
+		}
+	}
+	runtime.emitTranscriptCommit(turnID, records[0].Sequence)
 	emit(runtime.decorate(completedEvent, turnID))
 	return nil
 }
@@ -664,33 +690,70 @@ func (runtime *Runtime) commitCallSample(
 		runtime.poisoned.Store(true)
 		return nil, fault.Wrap(fault.CodeSessionWrite, "persist tool call sample failed", err)
 	}
-	if runtime.commandHistory != nil {
-		for index, invocation := range invocations {
-			if invocation.Capability() == tool.CapabilityExec {
-				runtime.commandHistory.CommandReady(records[index+2].Sequence, invocation)
-			}
-		}
-	}
 	if err := sample.Finalize(); err != nil {
 		runtime.poisoned.Store(true)
 		return nil, fault.Wrap(fault.CodeStreamProtocol, "finalize prepared sample failed", err)
 	}
+	if runtime.toolHistory != nil {
+		entries := make([]session.ToolHistoryEntry, len(invocations))
+		for index, invocation := range invocations {
+			entries[index] = session.ToolHistoryEntry{Sequence: records[index+2].Sequence, NativeSequence: records[0].Sequence, TurnID: turnID, SampleIndex: sampleIndex, CallIndex: uint32(index), Invocation: invocation}
+		}
+		if err := runtime.toolHistory.NativeCommitted(records[0].Sequence, entries); err != nil {
+			runtime.poisoned.Store(true)
+			return nil, err
+		}
+	}
+	runtime.emitTranscriptCommit(turnID, records[0].Sequence)
 	return invocations, nil
 }
 
 func (runtime *Runtime) executeToolCalls(ctx context.Context, turnID domain.TurnID, invocations []tool.Invocation, emitters ...Emitter) ([]tool.InvocationResult, error) {
+	if runtime.resultBudget == nil {
+		runtime.resultBudget = tool.NewResultBudget()
+	}
+	if err := runtime.resultBudget.BeginSample(len(invocations)); err != nil {
+		return nil, err
+	}
+	runtime.activityEmitter = func(protocol.Event) {}
+	if len(emitters) == 1 && emitters[0] != nil {
+		runtime.activityEmitter = emitters[0]
+	}
+	runtime.activityInvocations = make(map[tool.InvocationID]tool.Invocation, len(invocations))
+	defer func() { runtime.activityEmitter = nil; runtime.activityInvocations = nil }()
+	for _, invocation := range invocations {
+		runtime.activityInvocations[invocation.InvocationID()] = invocation
+		event, err := protocol.NewToolReady(activityForInvocation(invocation))
+		if err != nil {
+			return nil, err
+		}
+		runtime.activityEmitter(runtime.decorate(event, turnID))
+	}
 	return (orderedToolScheduler{operations: runtime, observations: &runtime.readObservations}).execute(ctx, turnID, invocations, emitters...)
 }
 
 func (runtime *Runtime) executeReadBatch(ctx context.Context, turnID domain.TurnID, invocations []tool.Invocation) ([]tool.InvocationResult, error) {
 	type job struct{ index int }
 	results := make([]tool.InvocationResult, len(invocations))
-	observations := make([]tool.ReadObservation, len(invocations))
+	materials := make([]tool.ReadonlyMaterial, len(invocations))
+	captures := make([]tool.TextOutputCapture, len(invocations))
+	savingReasons := make([]string, len(invocations))
+	defer func() {
+		for _, capture := range captures {
+			if capture != nil {
+				_ = capture.Close()
+			}
+		}
+	}()
 	started := make([]bool, len(invocations))
 	persistCount := len(invocations)
 	var admissionErr error
 	startedCount := 0
 	for index, invocation := range invocations {
+		if runtime.resultBudget.BodyExhausted() {
+			results[index] = tool.NewInvocationErrorResult(invocation, tool.ResultError, "result_budget_exceeded", "Tool not executed: turn result budget exhausted")
+			continue
+		}
 		if ctx.Err() != nil {
 			results[index] = tool.NewInvocationErrorResult(invocation, tool.ResultCancelled, "cancelled", "Tool cancelled")
 			continue
@@ -712,6 +775,18 @@ func (runtime *Runtime) executeReadBatch(ctx context.Context, turnID domain.Turn
 			break
 		}
 		started[index] = true
+		runtime.emitToolStarted(turnID, invocation)
+		if invocation.Capability() == tool.CapabilityGlob || invocation.Capability() == tool.CapabilityGrep {
+			savingReasons[index] = "storage_unavailable"
+			if runtime.textOutputStore != nil {
+				capture, err := runtime.textOutputStore.StartTextCapture(ctx, invocation.InvocationID(), invocation.Capability())
+				if err == nil {
+					captures[index] = capture
+				} else if errors.Is(err, tool.ArtifactQuotaExceeded) {
+					savingReasons[index] = "quota_exceeded"
+				}
+			}
+		}
 		startedCount++
 	}
 	jobs := make(chan job)
@@ -726,14 +801,12 @@ func (runtime *Runtime) executeReadBatch(ctx context.Context, turnID domain.Turn
 			defer workers.Done()
 			for current := range jobs {
 				invocation := invocations[current.index]
-				result, observation := runtime.executeInvocation(ctx, invocation)
-				if result.Validate() != nil || result.InvocationID() != invocation.InvocationID() ||
-					result.ProviderCallID() != invocation.ProviderCallID() || result.Capability() != invocation.Capability() {
-					result = tool.NewInvocationErrorResult(invocation, tool.ResultError, "invalid_tool_result", "Tool failed: executor returned an invalid result")
-					observation = tool.UnavailableReadObservation()
+				material, err := runtime.executeInvocation(ctx, invocation, captures[current.index])
+				if err != nil {
+					result := tool.NewInvocationErrorResult(invocation, tool.ResultError, "invalid_tool_result", "Tool failed: executor returned an invalid result")
+					material, _ = tool.NewReadonlyResultMaterial(result)
 				}
-				results[current.index] = result
-				observations[current.index] = observation
+				materials[current.index] = material
 			}
 		}()
 	}
@@ -746,14 +819,34 @@ func (runtime *Runtime) executeReadBatch(ctx context.Context, turnID domain.Turn
 	workers.Wait()
 	for index := 0; index < persistCount; index++ {
 		result := results[index]
+		observation := tool.UnavailableReadObservation()
+		if started[index] {
+			allowance, budgetErr := runtime.resultAllowance(invocations[index].Capability())
+			if budgetErr != nil {
+				return nil, budgetErr
+			}
+			var err error
+			saving, _ := tool.NewArtifactSaving(tool.ArtifactNotNeeded, "", tool.ArtifactDescriptor{})
+			needed := materials[index].SearchSavingNeeded(allowance)
+			if captures[index] != nil {
+				saving = captures[index].Finish(materials[index].SearchComplete(), needed)
+			} else if needed {
+				saving, _ = tool.NewArtifactSaving(tool.ArtifactUnavailable, savingReasons[index], tool.ArtifactDescriptor{})
+			}
+			result, observation, err = materials[index].Finalize(allowance, saving)
+			if err != nil || result.Validate() != nil || result.InvocationID() != invocations[index].InvocationID() || result.ProviderCallID() != invocations[index].ProviderCallID() || result.Capability() != invocations[index].Capability() {
+				result = tool.NewInvocationErrorResult(invocations[index], tool.ResultError, "invalid_tool_result", "Tool failed: executor returned an invalid result")
+				observation = tool.UnavailableReadObservation()
+			}
+		}
 		if result.Validate() != nil {
 			return nil, fault.New(fault.CodeStreamProtocol, "tool result slot is invalid")
 		}
-		if err := runtime.persistToolResult(ctx, turnID, result); err != nil {
+		if err := runtime.persistToolResult(ctx, turnID, &result); err != nil {
 			return nil, err
 		}
 		results[index] = result
-		runtime.readObservations.stage(result, observations[index])
+		runtime.readObservations.stage(result, observation)
 	}
 	if admissionErr != nil {
 		return nil, admissionErr
@@ -761,32 +854,33 @@ func (runtime *Runtime) executeReadBatch(ctx context.Context, turnID domain.Turn
 	return results, nil
 }
 
-func (runtime *Runtime) executeInvocation(ctx context.Context, invocation tool.Invocation) (tool.InvocationResult, tool.ReadObservation) {
+func (runtime *Runtime) executeInvocation(ctx context.Context, invocation tool.Invocation, capture tool.TextOutputCapture) (tool.ReadonlyMaterial, error) {
 	switch invocation.Capability() {
 	case tool.CapabilityReadArtifact:
 		v, _ := invocation.ReadArtifact()
-		return runtime.readArtifactExecutor.Execute(ctx, v), tool.UnavailableReadObservation()
+		return tool.NewArtifactMaterial(runtime.readArtifactExecutor.Execute(ctx, v))
 	case tool.CapabilityRead:
-		value, _ := invocation.Read()
-		execution := runtime.readExecutor.Execute(ctx, value)
-		if execution.Validate() != nil {
-			return tool.InvocationResult{}, tool.UnavailableReadObservation()
-		}
-		return execution.Result(), execution.Observation()
+		v, _ := invocation.Read()
+		return tool.NewReadMaterial(runtime.readExecutor.Execute(ctx, v))
 	case tool.CapabilityGlob:
-		value, _ := invocation.Glob()
-		return runtime.globExecutor.Execute(ctx, value), tool.UnavailableReadObservation()
+		v, _ := invocation.Glob()
+		return tool.NewSearchMaterial(runtime.globExecutor.Execute(ctx, v, capture))
 	case tool.CapabilityGrep:
-		value, _ := invocation.Grep()
-		return runtime.grepExecutor.Execute(ctx, value), tool.UnavailableReadObservation()
+		v, _ := invocation.Grep()
+		return tool.NewSearchMaterial(runtime.grepExecutor.Execute(ctx, v, capture))
 	default:
-		return tool.InvocationResult{}, tool.UnavailableReadObservation()
+		return tool.ReadonlyMaterial{}, errors.New("invalid readonly capability")
 	}
 }
 
 // ResolveToolApproval 由AgentLoop owner恰好一次交付活动批准响应。
 
-func (runtime *Runtime) persistToolResult(ctx context.Context, turnID domain.TurnID, result tool.InvocationResult) error {
+func (runtime *Runtime) persistToolResult(ctx context.Context, turnID domain.TurnID, target *tool.InvocationResult) error {
+	result, err := runtime.freezeResult(*target)
+	if err != nil {
+		return err
+	}
+	*target = result
 	if page, ok := result.ArtifactPage(); ok {
 		d, exists := runtime.artifactReferences.Lookup(page.ID())
 		if !exists || d.ThreadID() != runtime.threadID || uint64(d.SavedBytes()) != page.SavedBytes() || d.Complete() != page.SourceComplete() {
@@ -794,17 +888,14 @@ func (runtime *Runtime) persistToolResult(ctx context.Context, turnID domain.Tur
 			return fault.New(fault.CodeStreamProtocol, "artifact page has no matching committed reference")
 		}
 	}
-	if result.Capability() == tool.CapabilityExec {
-		if runtime.artifactReferences != nil && runtime.artifactReferences.ValidatePending(result) != nil {
+	if runtime.artifactReferences != nil && runtime.artifactReferences.ValidatePending(result) != nil {
+		runtime.poisoned.Store(true)
+		return fault.New(fault.CodeStreamProtocol, "invalid artifact references")
+	}
+	for _, d := range result.ArtifactDescriptors() {
+		if d.ThreadID() != runtime.threadID || runtime.artifactReferences == nil {
 			runtime.poisoned.Store(true)
-			return fault.New(fault.CodeStreamProtocol, "invalid artifact references")
-		}
-		m := result.ExecMetadata()
-		for _, s := range []tool.ArtifactSaving{m.StdoutSaving(), m.StderrSaving()} {
-			if d, ok := s.Descriptor(); ok && (d.ThreadID() != runtime.threadID || runtime.artifactReferences == nil) {
-				runtime.poisoned.Store(true)
-				return fault.New(fault.CodeStreamProtocol, "artifact thread mismatch")
-			}
+			return fault.New(fault.CodeStreamProtocol, "artifact thread mismatch")
 		}
 	}
 	draft, err := session.NewToolCallResultDraft(turnID, result)
@@ -816,15 +907,13 @@ func (runtime *Runtime) persistToolResult(ctx context.Context, turnID domain.Tur
 		runtime.poisoned.Store(true)
 		return fault.Wrap(fault.CodeSessionWrite, "persist tool result failed", err)
 	}
-	if result.Capability() == tool.CapabilityExec && runtime.artifactReferences != nil {
+	if runtime.artifactReferences != nil {
 		if err := runtime.artifactReferences.AuthorizeCommitted(result); err != nil {
 			runtime.poisoned.Store(true)
 			return fault.New(fault.CodeSessionWrite, "artifact authorization failed")
 		}
 	}
-	if result.Capability() == tool.CapabilityExec && runtime.commandHistory != nil {
-		runtime.commandHistory.CommandResult(result)
-	}
+	runtime.notifyToolResult(turnID, result)
 
 	return nil
 }
@@ -854,7 +943,8 @@ func (runtime *Runtime) commitToolOutputs(ctx context.Context, turnID domain.Tur
 		runtime.poisoned.Store(true)
 		return fault.Wrap(fault.CodeStreamProtocol, "provider tool outputs are invalid", err)
 	}
-	if _, err := runtime.journal.AppendBatch(context.WithoutCancel(ctx), []session.RecordDraft{draft}); err != nil {
+	records, err := runtime.journal.AppendBatch(context.WithoutCancel(ctx), []session.RecordDraft{draft})
+	if err != nil {
 		_ = prepared.Discard()
 		runtime.poisoned.Store(true)
 		return fault.Wrap(fault.CodeSessionWrite, "persist provider tool outputs failed", err)
@@ -863,6 +953,13 @@ func (runtime *Runtime) commitToolOutputs(ctx context.Context, turnID domain.Tur
 		runtime.poisoned.Store(true)
 		return fault.Wrap(fault.CodeStreamProtocol, "finalize provider tool outputs failed", err)
 	}
+	if runtime.toolHistory != nil {
+		if err := runtime.toolHistory.NativeCommitted(records[0].Sequence, nil); err != nil {
+			runtime.poisoned.Store(true)
+			return err
+		}
+	}
+	runtime.emitTranscriptCommit(turnID, records[0].Sequence)
 	if !runtime.poisoned.Load() {
 		runtime.readObservations.activate()
 	} else {

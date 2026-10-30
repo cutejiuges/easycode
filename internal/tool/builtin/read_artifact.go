@@ -19,8 +19,8 @@ func NewReadArtifactExecutor(reader tool.ArtifactRangeReader) (*ReadArtifactExec
 }
 
 // Execute 在完整 ready 后读取；错误不传播底层路径或正文。
-func (e *ReadArtifactExecutor) Execute(ctx context.Context, v tool.ReadArtifactInvocation) tool.InvocationResult {
-	var page tool.ArtifactPage
+func (e *ReadArtifactExecutor) Execute(ctx context.Context, v tool.ReadArtifactInvocation) tool.ReadArtifactExecution {
+	var window tool.ArtifactWindow
 	var err error
 	if ctx == nil {
 		err = context.Canceled
@@ -28,15 +28,12 @@ func (e *ReadArtifactExecutor) Execute(ctx context.Context, v tool.ReadArtifactI
 		err = ctx.Err()
 	}
 	if err == nil {
-		page, err = e.reader.ReadArtifact(ctx, v.Input())
+		window, err = e.reader.ReadArtifact(ctx, v.Input())
 	}
 	if err == nil {
-		preview, previewErr := page.Preview()
-		if previewErr == nil {
-			result, resultErr := tool.NewReadArtifactInvocationResult(v, tool.ResultSuccess, "ok", preview, page)
-			if resultErr == nil {
-				return result
-			}
+		execution, executionErr := tool.NewReadArtifactExecution(v, window)
+		if executionErr == nil {
+			return execution
 		}
 		err = tool.ArtifactReadCorrupt
 	}
@@ -57,5 +54,6 @@ func (e *ReadArtifactExecutor) Execute(ctx context.Context, v tool.ReadArtifactI
 	}
 	preview, _ := tool.NewModelPreview(message)
 	result, _ := tool.NewReadArtifactInvocationResult(v, status, code, preview, tool.ArtifactPage{})
-	return result
+	execution, _ := tool.NewReadArtifactFailure(result)
+	return execution
 }

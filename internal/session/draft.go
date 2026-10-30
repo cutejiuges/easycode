@@ -140,10 +140,11 @@ func NewToolCallResultDraft(turnID domain.TurnID, result tool.InvocationResult) 
 	if err := validateTurnID(turnID); err != nil {
 		return RecordDraft{}, err
 	}
-	if err := result.Validate(); err != nil {
+	if err := tool.ValidateFrozenResult(result); err != nil {
 		return RecordDraft{}, fmt.Errorf("tool result is invalid: %w", err)
 	}
 	payload := ToolCallResultPayload{
+		Budget:       result.Budget(),
 		InvocationID: result.InvocationID(), Capability: result.Capability(), WireKind: result.WireKind(), Status: result.Status(), Code: result.Code(), Preview: result.Preview().Text(),
 	}
 	switch result.Capability() {
@@ -171,9 +172,11 @@ func NewToolCallResultDraft(turnID domain.TurnID, result tool.InvocationResult) 
 	case tool.CapabilityGlob:
 		metadata := result.GlobMetadata()
 		payload.GlobMetadata = encodeGlobMetadata(metadata)
+		payload.GlobMetadata.Saving = result.SearchSaving()
 	case tool.CapabilityGrep:
 		metadata := result.GrepMetadata()
 		payload.GrepMetadata = encodeGrepMetadata(metadata)
+		payload.GrepMetadata.Saving = result.SearchSaving()
 	case tool.CapabilityWrite:
 		m := result.WriteMetadata()
 		payload.WriteMetadata = &WriteResultMetadataPayload{RelativePath: m.RelativePath(), Operation: m.Operation(), Bytes: m.Bytes(), Lines: m.Lines(), CreatedDirectories: m.CreatedDirectories()}

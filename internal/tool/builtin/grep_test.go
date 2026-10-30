@@ -17,7 +17,7 @@ func TestGrepContentOrdersMatchesAndDeduplicatesContext(t *testing.T) {
 	writeSearchFile(t, root, "b.go", "zero\nTODO one\ncontext\nTODO two\ntail")
 	writeSearchFile(t, root, "a.go", "TODO first\nafter")
 	executor := openTestGrepExecutor(t, root)
-	result := executor.Execute(context.Background(), grepInvocationFor(t, "TODO", "", "*.go", tool.GrepOutputContent, false, 1, 1, 250))
+	result := finalizeSearchForTest(t, executor.Execute(context.Background(), grepInvocationFor(t, "TODO", "", "*.go", tool.GrepOutputContent, false, 1, 1, 250), nil))
 	if result.Status() != tool.ResultSuccess {
 		t.Fatalf("Grep 失败: %s/%s", result.Status(), result.Code())
 	}
@@ -43,11 +43,11 @@ func TestGrepFilesCountCaseAndLineCountSemantics(t *testing.T) {
 	writeSearchFile(t, root, "a.txt", "todo TODO\nnone\nTODO")
 	writeSearchFile(t, root, "b.txt", "none")
 	executor := openTestGrepExecutor(t, root)
-	files := executor.Execute(context.Background(), grepInvocationFor(t, "todo", "", "*.txt", tool.GrepOutputFilesWithMatches, true, 0, 0, 250))
+	files := finalizeSearchForTest(t, executor.Execute(context.Background(), grepInvocationFor(t, "todo", "", "*.txt", tool.GrepOutputFilesWithMatches, true, 0, 0, 250), nil))
 	if got := files.Preview().Text(); got != "a.txt\n" {
 		t.Fatalf("files mode = %q", got)
 	}
-	count := executor.Execute(context.Background(), grepInvocationFor(t, "TODO", "", "*.txt", tool.GrepOutputCount, false, 0, 0, 250))
+	count := finalizeSearchForTest(t, executor.Execute(context.Background(), grepInvocationFor(t, "TODO", "", "*.txt", tool.GrepOutputCount, false, 0, 0, 250), nil))
 	if got := count.Preview().Text(); got != "a.txt:2\n" || count.GrepMetadata().MatchingLines() != 2 {
 		t.Fatalf("count mode = %q matching=%d", got, count.GrepMetadata().MatchingLines())
 	}
@@ -72,7 +72,7 @@ func TestGrepSkipsBinaryInvalidUTF8AndOversize(t *testing.T) {
 	}
 	_ = large.Close()
 	executor := openTestGrepExecutor(t, root)
-	result := executor.Execute(context.Background(), grepInvocationFor(t, "needle", "", "", tool.GrepOutputContent, false, 0, 0, 250))
+	result := finalizeSearchForTest(t, executor.Execute(context.Background(), grepInvocationFor(t, "needle", "", "", tool.GrepOutputContent, false, 0, 0, 250), nil))
 	skipped := result.GrepMetadata().Skipped()
 	if skipped.Binary() != 1 || skipped.InvalidUTF8() != 1 || skipped.TooLarge() != 1 {
 		t.Fatalf("skip counts = %#v", skipped)

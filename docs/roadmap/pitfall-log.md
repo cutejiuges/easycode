@@ -1,5 +1,13 @@
 # EasyCode 踩坑与经验记录
 
+### [P3][2026-10-30] 预览省略与记录位置混用
+
+- 状态：已修复，`add-tool-transcript-and-result-budget` 的 macOS 全量与 race 验收通过；Linux 原生矩阵因无 runner 未验收。
+- 根因：按事件到达顺序拼接正文不能证明其已提交；以搜索 omitted 总数推断采集覆盖会把模型预算裁剪误报为搜索未完成；只有四页游标栈不能支持任意反向浏览。
+- 修复：双 Provider 提供原生有序锚点，宿主连接 durable seq/ready 身份，界面以提交上界与 generation 替换 provisional；搜索分别记录模型省略数量和采集省略；正文与保存输出使用真实前后范围查询。
+- 回归：`internal/app/transcript_projection_test.go`、`internal/protocol/transcript_query_test.go`、`internal/runtime/result_budget_test.go`、`internal/tui/transcript_state_test.go`。测试不再依赖已移除的 Status 行判断 turn 完成，而消费 typed terminal。
+
+
 ### [P3][2026-10-29] 私有权限不能隔离已获 workspace 权限的命令
 
 - 状态：已修复，随 `add-command-output-artifacts` 验证。

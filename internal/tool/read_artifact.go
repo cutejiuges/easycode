@@ -43,7 +43,7 @@ func (v Invocation) ReadArtifact() (ReadArtifactInvocation, bool) {
 
 // ReadArtifactExecutor 执行授权范围读取，不产生工作区读取证据。
 type ReadArtifactExecutor interface {
-	Execute(context.Context, ReadArtifactInvocation) InvocationResult
+	Execute(context.Context, ReadArtifactInvocation) ReadArtifactExecution
 }
 
 // NewReadArtifactInvocationResult 冻结结果；错误结果不携带成功页。
@@ -52,7 +52,7 @@ func NewReadArtifactInvocationResult(v ReadArtifactInvocation, status ResultStat
 		return InvocationResult{}, errors.New("invalid ReadArtifact invocation")
 	}
 	r := InvocationResult{invocationID: v.id, providerCallID: v.call, capability: CapabilityReadArtifact, wireKind: WireStructured, status: status, code: code, preview: preview, artifactInput: v.input, artifactPage: page}
-	return r, r.Validate()
+	return initializeResultBudget(r)
 }
 func (r InvocationResult) ReadArtifactInput() ReadArtifactInput { return r.artifactInput }
 func (r InvocationResult) ArtifactPage() (ArtifactPage, bool) {

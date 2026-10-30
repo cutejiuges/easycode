@@ -116,27 +116,33 @@ func TestArtifactResumeKeepsNativeRequestAndReadOnlyHistory(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			list, err := resources.commandQueries.ListCommands(ctx, protocol.CommandListQuery{ThreadID: thread, Limit: 50})
-			if err != nil || len(list.Items) != 1 {
+			list, err := resources.transcriptQueries.ListTranscript(ctx, protocol.TranscriptListQuery{ThreadID: thread, Limit: 50})
+			if err != nil || len(list.Items) < 1 {
 				t.Fatalf("history: %v", err)
 			}
-			item := list.Items[0]
+			var item protocol.TranscriptListItem
+			for _, candidate := range list.Items {
+				if candidate.Activity.Tool == protocol.ToolShell {
+					item = candidate
+					break
+				}
+			}
 			if item.Stdout.Status != "partial" || item.Stdout.SavedBytes != tool.ArtifactStreamBytes || item.Stdout.ObservedBytes != 17000000 || item.Stderr.Status != "complete" {
 				t.Fatal("history lost separate storage states")
 			}
-			prefixEnd, err := resources.commandQueries.ReadCommandOutput(ctx, protocol.CommandOutputQuery{ThreadID: thread, InvocationID: item.InvocationID, Stream: protocol.CommandStdout, Offset: tool.ArtifactStreamBytes - 3, Limit: 65536})
+			prefixEnd, err := resources.transcriptQueries.ReadToolOutput(ctx, protocol.ToolOutputQuery{ThreadID: thread, InvocationID: item.Activity.InvocationID, Stream: protocol.ToolStdout, Offset: tool.ArtifactStreamBytes - 3, Limit: 65536})
 			if err != nil || !prefixEnd.StoredEOF || prefixEnd.SourceComplete || len(prefixEnd.Text) != 3 {
 				t.Fatal("partial saved EOF was reported as complete command output")
 			}
-			query := protocol.CommandOutputQuery{ThreadID: thread, InvocationID: item.InvocationID, Stream: protocol.CommandStderr, Limit: 65536}
-			page, err := resources.commandQueries.ReadCommandOutput(ctx, query)
+			query := protocol.ToolOutputQuery{ThreadID: thread, InvocationID: item.Activity.InvocationID, Stream: protocol.ToolStderr, Limit: 65536}
+			page, err := resources.transcriptQueries.ReadToolOutput(ctx, query)
 			if err != nil || page.Text != "warning" || !page.SourceComplete {
 				t.Fatalf("stderr: %+v %v", page, err)
 			}
 			if after, _ := os.ReadFile(journalPath); !bytes.Equal(after, baseline) || count.Load() != 3 {
 				t.Fatal("host query changed journal or invoked Provider")
 			}
-			invocationDir := filepath.Join(root, "artifacts", string(thread), item.InvocationID)
+			invocationDir := filepath.Join(root, "artifacts", string(thread), item.Activity.InvocationID)
 			objects, err := os.ReadDir(invocationDir)
 			if err != nil {
 				t.Fatal(err)
@@ -151,7 +157,7 @@ func TestArtifactResumeKeepsNativeRequestAndReadOnlyHistory(t *testing.T) {
 					if err := os.WriteFile(path, []byte("changed"), 0o600); err != nil {
 						t.Fatal(err)
 					}
-					if _, err := resources.commandQueries.ReadCommandOutput(ctx, query); err != tool.ArtifactReadCorrupt {
+					if _, err := resources.transcriptQueries.ReadToolOutput(ctx, query); err != tool.ArtifactReadCorrupt {
 						t.Fatalf("tampered output: %v", err)
 					}
 					if err := os.WriteFile(path, []byte("warning"), 0o600); err != nil {
@@ -209,11 +215,23 @@ func TestArtifactResumeKeepsNativeRequestAndReadOnlyHistory(t *testing.T) {
 			if _, err := os.Stat(orphan); !os.IsNotExist(err) {
 				t.Fatal("validated resume did not remove orphan")
 			}
-			list, err = resumed.commandQueries.ListCommands(ctx, protocol.CommandListQuery{ThreadID: thread, Limit: 50})
-			if err != nil || len(list.Items) != 1 || list.Items[0].Preview != item.Preview {
+			list, err = resumed.transcriptQueries.ListTranscript(ctx, protocol.TranscriptListQuery{ThreadID: thread, Limit: 50})
+			if err != nil || len(list.Items) < 1 {
 				t.Fatal("missing objects changed restored command history")
 			}
-			if _, err := resumed.commandQueries.ReadCommandOutput(ctx, query); err != tool.ArtifactReadUnavailable {
+			found := false
+			for _, candidate := range list.Items {
+				if candidate.Cursor == item.Cursor {
+					found = true
+					if candidate.Preview != item.Preview {
+						t.Fatal("restored preview changed")
+					}
+				}
+			}
+			if !found {
+				t.Fatal("restored call missing")
+			}
+			if _, err := resumed.transcriptQueries.ReadToolOutput(ctx, query); err != tool.ArtifactReadUnavailable {
 				t.Fatalf("missing object: %v", err)
 			}
 			if after, _ := os.ReadFile(journalPath); !bytes.Equal(after, baseline) || count.Load() != 4 {

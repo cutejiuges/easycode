@@ -59,12 +59,13 @@ func (counts SearchSkipCounts) Validate() error {
 
 // GlobResultMetadata 保存确定性匹配与有界扫描信息。
 type GlobResultMetadata struct {
-	matches          []string
-	truncated        bool
-	omittedMatches   int
-	visitedEntries   int
-	incompleteReason SearchIncompleteReason
-	skipped          SearchSkipCounts
+	matches             []string
+	truncated           bool
+	modelOmittedMatches int
+	omittedMatches      int
+	visitedEntries      int
+	incompleteReason    SearchIncompleteReason
+	skipped             SearchSkipCounts
 }
 
 func NewGlobResultMetadata(matches []string, truncated bool, omittedMatches int, visitedEntries int, incompleteReason SearchIncompleteReason, skipped SearchSkipCounts) (GlobResultMetadata, error) {
@@ -90,7 +91,7 @@ func (metadata GlobResultMetadata) IncompleteReason() SearchIncompleteReason {
 func (metadata GlobResultMetadata) Skipped() SearchSkipCounts { return metadata.skipped }
 
 func (metadata GlobResultMetadata) Validate() error {
-	if metadata.omittedMatches < 0 || metadata.visitedEntries < 0 || !metadata.incompleteReason.Valid() || metadata.skipped.Validate() != nil {
+	if metadata.modelOmittedMatches < 0 || metadata.modelOmittedMatches > metadata.omittedMatches || metadata.omittedMatches < 0 || metadata.visitedEntries < 0 || !metadata.incompleteReason.Valid() || metadata.skipped.Validate() != nil {
 		return errors.New("glob result metadata is invalid")
 	}
 	if metadata.truncated != (metadata.omittedMatches > 0 || metadata.incompleteReason != SearchComplete) {
@@ -103,7 +104,7 @@ func (metadata GlobResultMetadata) Validate() error {
 }
 
 func (metadata GlobResultMetadata) zero() bool {
-	return len(metadata.matches) == 0 && !metadata.truncated && metadata.omittedMatches == 0 && metadata.visitedEntries == 0 && metadata.incompleteReason == "" && metadata.skipped == (SearchSkipCounts{})
+	return len(metadata.matches) == 0 && !metadata.truncated && metadata.omittedMatches == 0 && metadata.modelOmittedMatches == 0 && metadata.visitedEntries == 0 && metadata.incompleteReason == "" && metadata.skipped == (SearchSkipCounts{})
 }
 
 // GrepMatch 保存一种输出 mode 下的单个规范化结果。
@@ -170,16 +171,17 @@ func (match GrepMatch) validateFor(mode GrepOutputMode) error {
 
 // GrepResultMetadata 保存规范化结果、匹配行计数与有界扫描信息。
 type GrepResultMetadata struct {
-	mode             GrepOutputMode
-	matches          []GrepMatch
-	matchingLines    int
-	truncated        bool
-	omittedMatches   int
-	visitedEntries   int
-	scannedFiles     int
-	scannedBytes     int64
-	incompleteReason SearchIncompleteReason
-	skipped          SearchSkipCounts
+	mode                GrepOutputMode
+	matches             []GrepMatch
+	matchingLines       int
+	truncated           bool
+	modelOmittedMatches int
+	omittedMatches      int
+	visitedEntries      int
+	scannedFiles        int
+	scannedBytes        int64
+	incompleteReason    SearchIncompleteReason
+	skipped             SearchSkipCounts
 }
 
 func NewGrepResultMetadata(mode GrepOutputMode, matches []GrepMatch, matchingLines int, truncated bool, omittedMatches int, visitedEntries int, scannedFiles int, scannedBytes int64, incompleteReason SearchIncompleteReason, skipped SearchSkipCounts) (GrepResultMetadata, error) {
@@ -210,7 +212,7 @@ func (metadata GrepResultMetadata) IncompleteReason() SearchIncompleteReason {
 func (metadata GrepResultMetadata) Skipped() SearchSkipCounts { return metadata.skipped }
 
 func (metadata GrepResultMetadata) Validate() error {
-	if !metadata.mode.Valid() || metadata.matchingLines < 0 || metadata.omittedMatches < 0 || metadata.visitedEntries < 0 || metadata.scannedFiles < 0 || metadata.scannedBytes < 0 || !metadata.incompleteReason.Valid() || metadata.skipped.Validate() != nil {
+	if metadata.modelOmittedMatches < 0 || metadata.modelOmittedMatches > metadata.omittedMatches || !metadata.mode.Valid() || metadata.matchingLines < 0 || metadata.omittedMatches < 0 || metadata.visitedEntries < 0 || metadata.scannedFiles < 0 || metadata.scannedBytes < 0 || !metadata.incompleteReason.Valid() || metadata.skipped.Validate() != nil {
 		return errors.New("grep result metadata is invalid")
 	}
 	if metadata.truncated != (metadata.omittedMatches > 0 || metadata.incompleteReason != SearchComplete) {
@@ -231,7 +233,7 @@ func (metadata GrepResultMetadata) Validate() error {
 }
 
 func (metadata GrepResultMetadata) zero() bool {
-	return metadata.mode == "" && len(metadata.matches) == 0 && metadata.matchingLines == 0 && !metadata.truncated && metadata.omittedMatches == 0 && metadata.visitedEntries == 0 && metadata.scannedFiles == 0 && metadata.scannedBytes == 0 && metadata.incompleteReason == "" && metadata.skipped == (SearchSkipCounts{})
+	return metadata.mode == "" && len(metadata.matches) == 0 && metadata.matchingLines == 0 && !metadata.truncated && metadata.omittedMatches == 0 && metadata.modelOmittedMatches == 0 && metadata.visitedEntries == 0 && metadata.scannedFiles == 0 && metadata.scannedBytes == 0 && metadata.incompleteReason == "" && metadata.skipped == (SearchSkipCounts{})
 }
 
 func sortedUniquePaths(paths []string) bool {
@@ -251,4 +253,18 @@ func validateResultRelativePath(value string) error {
 		return errors.New("relative path is invalid")
 	}
 	return validateSearchPath(value)
+}
+
+// ModelOmittedMatches 区分模型预览省略与搜索采集覆盖。
+func (m GlobResultMetadata) ModelOmittedMatches() int { return m.modelOmittedMatches }
+func (m GlobResultMetadata) WithModelOmissions(count int) (GlobResultMetadata, error) {
+	m.modelOmittedMatches = count
+	return m, m.Validate()
+}
+
+// ModelOmittedMatches 区分模型预览省略与搜索采集覆盖。
+func (m GrepResultMetadata) ModelOmittedMatches() int { return m.modelOmittedMatches }
+func (m GrepResultMetadata) WithModelOmissions(count int) (GrepResultMetadata, error) {
+	m.modelOmittedMatches = count
+	return m, m.Validate()
 }

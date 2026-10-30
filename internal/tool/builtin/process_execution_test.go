@@ -136,12 +136,12 @@ func TestProcessExecutionCompletesAndCannotRerun(t *testing.T) {
 	process.waitResult <- processWaitResult{exit: 2}
 	launcher := &fakeProcessLauncher{process: process}
 	renders := 0
-	renderer := func(stdout, stderr tool.ExecOutputSnapshot, metadata tool.ExecResultMetadata) (tool.ModelPreview, bool, error) {
+	renderer := func(stdout, stderr tool.ExecOutputSnapshot, metadata tool.ExecResultMetadata, allowance int) (tool.ModelPreview, bool, error) {
 		renders++
 		if stdout.Stats().ObservedBytes() != 5 || stderr.Stats().ObservedBytes() != 7 {
 			t.Fatal("renderer did not receive captured streams")
 		}
-		return tool.RenderExecOutput(stdout, stderr, metadata)
+		return tool.RenderExecOutput(stdout, stderr, metadata, allowance)
 	}
 	execution, err := newProcessExecution(launcher, wallProcessClock{}, processTestCandidate(t), renderer)
 	if err != nil || launcher.calls != 0 {
@@ -361,7 +361,7 @@ func TestProcessExecutionDrainsBothStreamsBeforeWait(t *testing.T) {
 		metadata := result.ExecMetadata()
 		var buffer tool.ExecOutputBuffer
 		buffer.Write([]byte(strings.Repeat("x", tool.ExecCaptureBytesPerStream+1024)))
-		preview, _, err := tool.RenderExecOutput(buffer.Snapshot(), buffer.Snapshot(), metadata)
+		preview, _, err := tool.RenderExecOutput(buffer.Snapshot(), buffer.Snapshot(), metadata, tool.ExecModelPreviewBytes)
 		if err != nil || result.Preview().Text() != "Exec outcome: success (ok)\n"+preview.Text() {
 			t.Fatal("stream scheduling changed durable preview")
 		}

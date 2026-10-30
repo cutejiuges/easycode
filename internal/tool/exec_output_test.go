@@ -44,7 +44,7 @@ func TestExecOutputPreviewBudgetsAndStreams(t *testing.T) {
 		_, _ = out.Write(bytes.Repeat([]byte("a"), size))
 		_, _ = errout.Write(bytes.Repeat([]byte("z"), size))
 		metadata := ExecResultMetadata{exitKnown: true, exitCode: 2}
-		preview, truncated, err := RenderExecOutput(out.Snapshot(), errout.Snapshot(), metadata)
+		preview, truncated, err := RenderExecOutput(out.Snapshot(), errout.Snapshot(), metadata, ExecModelPreviewBytes)
 		if err != nil || len(preview.Text()) > ExecModelPreviewBytes || !utf8.ValidString(preview.Text()) {
 			t.Fatalf("invalid preview for %d: %v", size, err)
 		}

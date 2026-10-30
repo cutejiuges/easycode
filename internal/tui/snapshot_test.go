@@ -89,13 +89,20 @@ func TestApprovalOverlaySnapshots(t *testing.T) {
 
 func snapshotResumedModel(t *testing.T) Model {
 	t.Helper()
-	return NewModel(context.Background(), "test", &fakeChatSession{}, domain.SemanticHistoryView{
-		Provider: domain.ProviderOpenAI,
-		Turns: []domain.SemanticTurn{
-			testSemanticTurn("first question", "first answer"),
-			testSemanticTurn("second question", "second answer"),
-		},
-	})
+
+	model := NewModel(context.Background(), "test", &fakeChatSession{})
+	turn := domain.TurnID("018f1d8a-7b5c-7def-8234-456789abcdef")
+	items := []protocol.TranscriptListItem{}
+	for i, text := range []string{"second answer", "second question", "first answer", "first question"} {
+		item := protocol.TranscriptListItem{Cursor: protocol.TranscriptCursor{Sequence: uint64(4 - i)}, Kind: domain.TranscriptAssistant, TurnID: turn, Text: text}
+		if i%2 == 1 {
+			item.Kind = domain.TranscriptUser
+			item.InputID = domain.InputID("01900000-0000-7000-8000-000000000001")
+		}
+		items = append(items, item)
+	}
+	return updateModel(t, model, mainTranscriptReply{page: protocol.TranscriptListPage{Items: items}})
+
 }
 
 func snapshotIdleModel(t *testing.T) Model {

@@ -13,7 +13,7 @@ import (
 type toolScheduleOperations interface {
 	executeApproved(context.Context, Emitter, domain.TurnID, tool.Invocation) (tool.InvocationResult, bool, error)
 	executeReadBatch(context.Context, domain.TurnID, []tool.Invocation) ([]tool.InvocationResult, error)
-	persistToolResult(context.Context, domain.TurnID, tool.InvocationResult) error
+	persistToolResult(context.Context, domain.TurnID, *tool.InvocationResult) error
 }
 
 type orderedToolScheduler struct {
@@ -39,7 +39,7 @@ func (scheduler orderedToolScheduler) execute(ctx context.Context, turnID domain
 				results[index] = result
 				for next := index + 1; next < len(invocations); next++ {
 					results[next] = tool.NewInvocationErrorResult(invocations[next], tool.ResultCancelled, "cancelled", "Tool cancelled")
-					if persistErr := operations.persistToolResult(context.WithoutCancel(ctx), turnID, results[next]); persistErr != nil {
+					if persistErr := operations.persistToolResult(context.WithoutCancel(ctx), turnID, &results[next]); persistErr != nil {
 						return nil, persistErr
 					}
 				}
@@ -49,7 +49,7 @@ func (scheduler orderedToolScheduler) execute(ctx context.Context, turnID domain
 			if aborted {
 				for next := index + 1; next < len(invocations); next++ {
 					results[next] = tool.NewInvocationErrorResult(invocations[next], tool.ResultCancelled, "user_aborted", "Tool cancelled: user aborted tool approval")
-					if err := operations.persistToolResult(context.WithoutCancel(ctx), turnID, results[next]); err != nil {
+					if err := operations.persistToolResult(context.WithoutCancel(ctx), turnID, &results[next]); err != nil {
 						return nil, err
 					}
 				}

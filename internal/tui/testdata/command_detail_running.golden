@@ -1,12 +1,11 @@
-Command details · stdout
-running · 250 ms · src
-Saving while command runs
-Command:
+Shell · running
+Workdir: src
+Elapsed: 250 ms
+stdout: 512 bytes; stderr: 0 bytes
 printf 'full command first line'
 printf 'full command second line'
 
-Recent output:
 recent output
 last line
-Tab: stream · PgUp/PgDn: page · ↑/↓: scroll
-Esc: list · Ctrl+O: close · Ctrl+C: interrupt
+←/→: input/result/saved · PgUp/PgDn: page
+Esc: transcript · Ctrl+O: close

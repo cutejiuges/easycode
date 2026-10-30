@@ -50,6 +50,8 @@ Facade description、schema canonical bytes、排序和 fingerprint MUST 确定�
 - **WHEN** 审批后保存策略或任一预算改变
 - **THEN** 原 candidate fingerprint 不再匹配，系统 MUST 拒绝用旧批准执行新候选
 
+Exec 独占候选 SHALL 在审批前取得本次实际 allowance，将其纳入模型预算与 fingerprint；审批后不可因其他调用预算重新分配而修改。预算不再允许新准入时 MUST 不创建审批或子进程。
+
 ### Requirement: Execution freezes shell, environment, workspace and sandbox
 
 执行准入前 SHALL 冻结非交互 shell profile、workspace 句柄、规范化相对 workdir、最小环境、timeout、输出预算和 sandbox plan。模型不得指定 shell 路径、login shell、任意环境变量、网络权限、sandbox override 或宿主绝对 cwd。子进程环境 MUST 默认排除 API key、Authorization、Cookie、Provider/base URL 凭据、Session 路径及 EasyCode 内部控制变量，并设置确定性的 non-interactive/no-color/pager-disabled 值。
@@ -147,15 +149,21 @@ stdout 与 stderr SHALL 独立计数并保留流 identity；TUI progress可按ow
 - **WHEN** 输出写入达到上限或发生磁盘错误而命令 exit 为 0
 - **THEN** 结果保留 exit 0，单独报告 partial 或 unavailable，继续排空且预览不超限
 
+256 KiB SHALL 仅是单调用硬上限，最终渲染使用候选中冻结的实际 allowance，头尾、省略说明和 artifact 引用一并计入。capture needed SHALL 按该实际额度决定，不得先以硬上限判定 not_needed 并删除输出，再因 sample/turn 聚合预算丢失内容。
+
+#### Scenario: Save output reduced by aggregate budget
+- **WHEN** 命令输出 32 KiB 而候选实际 allowance 为 8 KiB
+- **THEN** 最终 preview 不超 8 KiB，省略内容按保存策略发布，不因低于 256 KiB 宣称 not_needed
+
 ### Requirement: Command activity supports Claude-style host presentation
 
-Runtime SHALL 发布强类型、瞬态的 command queued、approval requested/resolved、started、progress 和 terminal 投影；除既有 approval/result durable facts外，高频 progress 不得写入 JSONL Session。progress MUST 绑定合法 session/thread/turn/invocation identity，携带规范化命令摘要、相对 workdir、elapsed time、累计行/字节、truncated 状态和有界近期输出，不得携带完整环境、绝对路径、PID、Provider wire 或未截断输出。
+Runtime SHALL 发布强类型的统一 tool ready/started/progress/terminal 活动投影及独立 approval requested/resolved 投影，替换旧命令专用活动事件；除既有 approval/result durable facts外，高频 progress 不得写入 JSONL Session。progress MUST 绑定合法 session/thread/turn/invocation identity，携带规范化命令摘要、相对 workdir、elapsed time、累计行/字节、truncated 状态和有界近期输出，不得携带完整环境、绝对路径、PID、Provider wire 或未截断输出。
 
-TUI SHALL 以 Claude Code 风格显示紧凑命令、Waiting/Running、相对工作目录、近期输出、耗时、输出规模和最终 exit/timeout/cancelled/truncated 状态；普通视图不得显示 ledger、sandbox 内部类型或 invocation ID。无交互headless SHALL按approval契约拒绝Exec；`--print`继续只在turn durable完成后输出最终assistant文本，JSONL模式不输出命令progress或内部RuntimeEvent。
+TUI SHALL 以 Claude Code 风格显示 Shell、紧凑命令、Waiting/Running、至多三行近期输出和最终 exit/timeout/cancelled/truncated 状态；完整命令、相对工作目录、耗时与精确输出规模可在详情查看；普通视图不得显示 ledger、sandbox 内部类型或 invocation ID。无交互headless SHALL按approval契约拒绝Exec；`--print`继续只在turn durable完成后输出最终assistant文本，JSONL模式不输出命令progress或内部RuntimeEvent。
 
 #### Scenario: Render an active command
 - **WHEN** 已批准命令正在输出内容
-- **THEN** TUI 显示命令摘要、Running、相对 workdir、elapsed time 和有界近期输出
+- **THEN** TUI 主线显示命令摘要、Running 和有界近期输出，详情展示相对 workdir、elapsed time 与精确规模
 - **THEN** composer 不允许开始并发 turn但定向取消仍可用
 
 #### Scenario: Keep print output clean
@@ -171,3 +179,5 @@ terminal SHALL 携带冻结的各流保存状态和授权 descriptor，不携带
 #### Scenario: Present saving separately
 - **WHEN** 命令完成且 stdout 仅保存前段
 - **THEN** 主线明确显示部分保存，详情展示保存长度；不把保存失败显示为命令执行失败
+
+progress SHALL 是仅对 Exec 合法的有界变体；ready/started/terminal 以对应 durable 事实为依据。显示名 Shell 不随 Provider facade 改变。完整 transcript 快捷键与七工具主线遵守 tui/tool-transcript，不维护旧命令浏览入口。

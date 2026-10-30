@@ -25,8 +25,8 @@ func TestQueuedRetractionPreservesDraftAndFreezesEdits(t *testing.T) {
 		t.Fatal("pending retraction allowed editing")
 	}
 	command()
-	model = updateModel(t, model, controlItemMsg{item: <-host.outputs})
-	model = updateModel(t, model, controlItemMsg{item: <-host.outputs})
+	model = updateModel(t, model, <-host.outputs)
+	model = updateModel(t, model, <-host.outputs)
 	if model.composer.text != " queued 中文\n\ndraft" || len(model.inputs) != 0 || model.retracting != nil || len(host.submits) != 0 {
 		t.Fatal("retraction lost input or executed it")
 	}

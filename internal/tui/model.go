@@ -33,16 +33,17 @@ type RuntimeEventMsg struct {
 	Event protocol.Event
 }
 
-type controlItemMsg struct{ item protocol.ControlItem }
-
 type submissionFailedMsg struct{ err error }
 
 type eventStreamClosedMsg struct{}
 type approvalSubmitErrorMsg struct{ err error }
 
 type transcriptMessage struct {
-	role string
-	text string
+	activity *protocol.ToolActivityPayload
+	preview  string
+	saving   string
+	role     string
+	text     string
 }
 
 type turnState uint8
@@ -55,32 +56,33 @@ const (
 
 // Model 保存纯 UI 投影状态，不依赖 Provider 或 transport。
 type Model struct {
-	browser commandBrowser
+	main    mainTranscript
+	browser transcriptBrowser
 	version string
 	width   int
 	height  int
 	session ChatSession
 	submit  func(ChatSession, string) tea.Cmd
 
-	composer      composer
-	pending       *composer
-	transcript    []transcriptMessage
-	state         turnState
-	assistantItem int
-	errorSummary  string
-	outputs       <-chan protocol.ControlItem
-	inputs        []inputPreview
-	retracting    *inputRetraction
-	submitContext context.Context
-	interruptNext bool
-	approval      *approvalOverlay
-	activeTurnID  domain.TurnID
-	commandItems  map[string]int
-	commandClosed map[string]bool
-	commandViews  map[string]commandDetail
-	detailOpen    bool
-	detailScroll  int
-	cancelling    bool
+	composer       composer
+	pending        *composer
+	transcript     []transcriptMessage
+	state          turnState
+	assistantItem  int
+	errorSummary   string
+	outputs        <-chan protocol.ControlItem
+	inputs         []inputPreview
+	retracting     *inputRetraction
+	submitContext  context.Context
+	interruptNext  bool
+	approval       *approvalOverlay
+	activeTurnID   domain.TurnID
+	toolItems      map[string]int
+	toolClosed     map[string]bool
+	toolActivities map[string]toolActivityState
+	detailOpen     bool
+	detailScroll   int
+	cancelling     bool
 }
 
 type approvalOverlay struct {
@@ -93,12 +95,11 @@ type approvalOverlay struct {
 	submitted bool
 }
 
-// NewModel 创建初始 Bubble Tea 模型，并投影可选的已恢复语义历史。
+// NewModel 创建纯内存模型；恢复正文由宿主查询显式加载。
 func NewModel(
 	submitContext context.Context,
 	version string,
 	session ChatSession,
-	initialHistory ...domain.SemanticHistoryView,
 ) Model {
 	model := Model{
 		version: version, session: session, submitContext: submitContext, assistantItem: -1, composer: newComposer(),
@@ -109,17 +110,16 @@ func NewModel(
 	if session != nil {
 		model.outputs = session.Outputs()
 	}
-	if len(initialHistory) == 0 {
-		return model
-	}
-	for _, turn := range initialHistory[0].Turns {
+	return model
+}
+
+// WithInputHistory 从已有语义视图初始化有界输入召回，不保留历史视图或参与 transcript 渲染。
+func (model Model) WithInputHistory(history domain.SemanticHistoryView) Model {
+	for _, turn := range history.Turns {
 		for _, message := range turn.Messages {
-			role := "Assistant"
 			if message.Role == domain.SemanticUser {
-				role = "User"
 				model.composer.history.add(message.Text)
 			}
-			model.transcript = append(model.transcript, transcriptMessage{role: role, text: message.Text})
 		}
 	}
 	return model
@@ -127,23 +127,23 @@ func NewModel(
 
 // Init 返回初始命令。
 func (model Model) Init() tea.Cmd {
-	return waitForControl(model.outputs)
+	return tea.Batch(waitForControl(model.outputs), model.initialTranscriptQuery())
 }
 
 // Update 更新纯 UI 状态，并把会话操作留给 tea.Cmd。
 func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch value := message.(type) {
-	case commandListReply:
-		return model.receiveCommandList(value)
-	case commandPageReply:
-		return model.receiveCommandPage(value)
+	case mainTranscriptReply:
+		return model.receiveMainTranscript(value)
+	case transcriptReply:
+		return model.receiveTranscriptPage(value)
 	case tea.WindowSizeMsg:
 		model.width = value.Width
 		model.height = value.Height
 		model.composer.resize(value.Width, value.Height)
 		return model, nil
-	case controlItemMsg:
-		next, cmd := model.projectControlItem(value.item)
+	case protocol.ControlItem:
+		next, cmd := model.projectControlItem(value)
 		return next, tea.Batch(cmd, waitForControl(model.outputs))
 	case eventStreamClosedMsg:
 		if model.state == stateStreaming {
@@ -157,8 +157,8 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case RuntimeEventMsg:
 		next, cmd := model.projectRuntimeEvent(value.Event)
 		updated := next.(Model)
-		if value.Event.Kind == protocol.EventCommandTerminal && updated.detailOpen && updated.browser.queries != nil && updated.errorSummary == "" {
-			refreshed, query := updated.refreshCommandBrowser()
+		if value.Event.Kind == protocol.EventToolTerminal && updated.detailOpen && updated.browser.queries != nil && updated.errorSummary == "" {
+			refreshed, query := updated.refreshTranscriptBrowser()
 			return refreshed, tea.Batch(cmd, query)
 		}
 		return next, cmd
@@ -202,10 +202,10 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return model.handleApprovalKey(key)
 	}
 	if key.Type == tea.KeyCtrlO {
-		return model.openCommandBrowser()
+		return model.openTranscriptBrowser()
 	}
 	if model.detailOpen {
-		return model.handleCommandBrowserKey(key)
+		return model.handleTranscriptBrowserKey(key)
 	}
 	if key.Type == tea.KeyCtrlC && model.activeTurnID.Valid() {
 		model.cancelling = true
@@ -372,52 +372,56 @@ func (model *Model) submitApproval() tea.Cmd {
 func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd) {
 	terminal := false
 	switch event.Kind {
-	case protocol.EventCommandStarted, protocol.EventCommandProgress, protocol.EventCommandTerminal:
-		payload, err := protocol.DecodeCommandActivity(event)
-		if err != nil || event.TurnID != model.activeTurnID || model.commandClosed[payload.InvocationID] {
+	case protocol.EventTranscriptCommitted:
+		payload, err := protocol.DecodeTranscriptCommitted(event)
+		if err != nil || event.TurnID != model.activeTurnID {
+			model.errorSummary = "stream_protocol_error: invalid transcript commit"
+			return model, nil
+		}
+		return model.commitMainTranscript(payload.Sequence)
+	case protocol.EventToolReady, protocol.EventToolStarted, protocol.EventToolProgress, protocol.EventToolTerminal:
+		payload, err := protocol.DecodeToolActivity(event)
+		if err != nil || event.TurnID != model.activeTurnID || model.toolClosed[payload.InvocationID] {
 			model.errorSummary = "stream_protocol_error: invalid command activity"
 			return model, nil
 		}
-		if model.commandItems == nil {
-			model.commandItems = make(map[string]int)
-			model.commandClosed = make(map[string]bool)
+		if model.toolItems == nil {
+			model.toolItems = make(map[string]int)
+			model.toolClosed = make(map[string]bool)
 		}
-		index, exists := model.commandItems[payload.InvocationID]
+		index, exists := model.toolItems[payload.InvocationID]
 		if !exists {
-			if event.Kind != protocol.EventCommandStarted {
+			if event.Kind != protocol.EventToolStarted && event.Kind != protocol.EventToolReady {
 				model.errorSummary = "stream_protocol_error: command has not started"
 				return model, nil
 			}
 			index = len(model.transcript)
-			model.commandItems[payload.InvocationID] = index
+			model.toolItems[payload.InvocationID] = index
 			model.transcript = append(model.transcript, transcriptMessage{role: "Command"})
-		} else if event.Kind == protocol.EventCommandStarted {
+		} else if event.Kind == protocol.EventToolReady || (event.Kind == protocol.EventToolStarted && model.toolActivities[payload.InvocationID].activity.Status != "waiting") {
 			model.errorSummary = "stream_protocol_error: duplicate command start"
 			return model, nil
 		}
-		state := "Running"
-		if event.Kind == protocol.EventCommandTerminal {
-			state = payload.Status + " (" + payload.Code + ")"
-			if payload.ExitKnown {
-				state += fmt.Sprintf(" exit=%d", payload.ExitCode)
+		if event.Kind == protocol.EventToolTerminal {
+			model.toolClosed[payload.InvocationID] = true
+		}
+		model.transcript[index].activity = &payload
+		if event.Kind == protocol.EventToolTerminal {
+			terminalPayload, decodeErr := protocol.DecodeToolTerminal(event)
+			if decodeErr != nil {
+				model.errorSummary = "stream_protocol_error: invalid tool terminal"
+				return model, nil
 			}
-			model.commandClosed[payload.InvocationID] = true
+			model.transcript[index].preview = terminalPayload.ResultPreview
+			model.transcript[index].saving = savingNotice(terminalPayload.Stdout.Summary, terminalPayload.Stderr.Summary, terminalPayload.Search.Summary)
 		}
-		text := fmt.Sprintf("%s\n  %s · %s · %d ms · %d bytes", commandSummary(payload.Command, model.width), state, commandDisplayText(payload.Workdir), payload.ElapsedMillis, payload.StdoutBytes+payload.StderrBytes)
-		if payload.Truncated {
-			text += " · truncated"
+		if model.toolActivities == nil {
+			model.toolActivities = make(map[string]toolActivityState)
 		}
-		if payload.Recent != "" {
-			text += "\n" + commandDisplayText(payload.Recent)
-		}
-		model.transcript[index].text = text
-		if model.commandViews == nil {
-			model.commandViews = make(map[string]commandDetail)
-		}
-		if event.Kind == protocol.EventCommandTerminal {
-			delete(model.commandViews, payload.InvocationID)
+		if event.Kind == protocol.EventToolTerminal {
+			delete(model.toolActivities, payload.InvocationID)
 		} else {
-			model.commandViews[payload.InvocationID] = commandDetail{activity: payload}
+			model.toolActivities[payload.InvocationID] = toolActivityState{activity: payload}
 		}
 
 	case protocol.EventUserInputCommitted:
@@ -451,7 +455,7 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 			model.transcript = append(model.transcript, transcriptMessage{role: "Assistant"})
 			model.assistantItem = len(model.transcript) - 1
 		}
-		model.transcript[model.assistantItem].text += payload.Text
+		model.transcript[model.assistantItem].text = appendProvisionalText(model.transcript[model.assistantItem].text, payload.Text)
 	case protocol.EventTurnCompleted:
 		if _, err := protocol.DecodeTurnCompleted(event); err != nil {
 			model.state = stateIdle
@@ -465,6 +469,9 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 		model.interruptNext = false
 		terminal = true
 	case protocol.EventTurnFailed:
+		if model.assistantItem >= 0 {
+			model.transcript[model.assistantItem].role = "Assistant (unfinished)"
+		}
 		payload, err := protocol.DecodeTurnFailed(event)
 		if err != nil {
 			model.errorSummary = "turn_failed: invalid failure event"
@@ -517,30 +524,28 @@ func (model Model) View() string {
 		return model.renderApproval()
 	}
 	if model.detailOpen {
-		return model.renderCommandBrowser()
+		return model.renderTranscriptBrowser()
 	}
 	if model.composer.height < 5 && model.state == stateIdle {
 		return model.composer.view(true)
 	}
 	var view strings.Builder
 	_, _ = fmt.Fprintf(&view, "EasyCode %s\n", model.version)
-	if model.state != stateIdle && model.cancelling {
-		view.WriteString("Status: cancelling — waiting for cleanup\n")
-	} else if model.state == stateSubmitting {
-		view.WriteString("Status: submitting\n")
-	} else if model.state == stateStreaming {
-		view.WriteString("Status: streaming\n")
-	} else {
-		view.WriteString("Status: idle\n")
+	if model.cancelling {
+		view.WriteString("Cancelling — waiting for cleanup\n")
 	}
 	view.WriteString("\n")
-	for _, message := range model.transcript {
-		text := message.text
-		if message.role == "User" {
-			text = safeComposerText(text)
-		}
-		_, _ = fmt.Fprintf(&view, "%s: %s\n", message.role, text)
+	messages := model.visibleTranscript()
+	lines := renderTranscript(messages, model.widthOrDefault())
+	available := max(1, model.heightOrDefault()-strings.Count(model.composer.view(true), "\n")-strings.Count(model.renderInputs(), "\n")-5)
+	if len(lines) > available {
+		lines = lines[len(lines)-available:]
 	}
+	view.WriteString(strings.Join(lines, "\n"))
+	if len(lines) > 0 {
+		view.WriteByte('\n')
+	}
+
 	if model.errorSummary != "" {
 		_, _ = fmt.Fprintf(&view, "Error: %s\n", model.errorSummary)
 	}
@@ -676,7 +681,7 @@ func waitForControl(outputs <-chan protocol.ControlItem) tea.Cmd {
 		if !open {
 			return eventStreamClosedMsg{}
 		}
-		return controlItemMsg{item: item}
+		return item
 	}
 }
 

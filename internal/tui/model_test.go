@@ -401,13 +401,6 @@ func updateModelWithCommand(t *testing.T, model Model, message tea.Msg) (Model, 
 	return updated.(Model), command
 }
 
-func testSemanticTurn(user, assistant string) domain.SemanticTurn {
-	messages := []domain.SemanticMessage{{Role: domain.SemanticUser, InputID: "01900000-0000-7000-8000-000000000001", Text: user}}
-	if assistant != "" {
-		messages = append(messages, domain.SemanticMessage{Role: domain.SemanticAssistant, Text: assistant})
-	}
-	return domain.SemanticTurn{TurnID: "018f1d8a-7b5c-7def-8234-456789abcdef", Messages: messages}
-}
 func testCommitAcceptedInput(t *testing.T, model Model) Model {
 	t.Helper()
 	input := model.inputs[0]
@@ -426,5 +419,5 @@ func testCommitAcceptedInput(t *testing.T, model Model) Model {
 	model = updateModel(t, model, RuntimeEventMsg{Event: event})
 	status, _ := protocol.NewInputStatus("ui-input", input.id, protocol.InputCommitted, model.activeTurnID, "")
 	item, _ := protocol.NewInputStatusItem(status)
-	return updateModel(t, model, controlItemMsg{item: item})
+	return updateModel(t, model, item)
 }

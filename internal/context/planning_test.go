@@ -20,14 +20,14 @@ func (planningReadExecutor) Execute(stdcontext.Context, tool.ReadInvocation) too
 
 type planningGlobExecutor struct{}
 
-func (planningGlobExecutor) Execute(stdcontext.Context, tool.GlobInvocation) tool.InvocationResult {
-	return tool.InvocationResult{}
+func (planningGlobExecutor) Execute(stdcontext.Context, tool.GlobInvocation, tool.TextOutputCapture) tool.SearchExecution {
+	return tool.SearchExecution{}
 }
 
 type planningGrepExecutor struct{}
 
-func (planningGrepExecutor) Execute(stdcontext.Context, tool.GrepInvocation) tool.InvocationResult {
-	return tool.InvocationResult{}
+func (planningGrepExecutor) Execute(stdcontext.Context, tool.GrepInvocation, tool.TextOutputCapture) tool.SearchExecution {
+	return tool.SearchExecution{}
 }
 
 func TestPlannerProducesDeterministicOrderedImmutablePlan(t *testing.T) {

@@ -64,7 +64,7 @@ Read SHALL 拒绝目录、设备、socket、FIFO 和其他非普通文件。实�
 
 成功结果 SHALL 包含 workspace 相对路径、请求 offset/limit、实际返回的起止行、是否到达 EOF、是否发生长行或总预算截断，以及稳定带行号文本。行号从原文件的 1-based 行号开始；每行最多保留 2000 个 Unicode code points，截断不得产生非法 UTF-8，并 MUST 以确定标记报告省略。整个模型 preview 的 UTF-8 bytes MUST 不超过 256 KiB；达到预算时 SHALL 在完整行边界前停止并报告尚有内容省略。
 
-相同文件 bytes、typed input 和 result codec revision MUST 产生逐字节相同的 preview。错误结果 SHALL 使用稳定英文 code/message，只包含 workspace 相对路径和安全边界信息，不得包含绝对 workspace、底层 OS 路径、文件正文、secret 或原始系统错误。
+相同文件 bytes、typed input、当前渲染规则和分配 allowance MUST 产生逐字节相同的 preview。错误结果 SHALL 使用稳定英文 code/message，只包含 workspace 相对路径和安全边界信息，不得包含绝对 workspace、底层 OS 路径、文件正文、secret 或原始系统错误。
 
 #### Scenario: Render selected lines
 - **WHEN** offset `3`、limit `2` 读取一个至少五行的文本文件
@@ -81,6 +81,12 @@ Read SHALL 拒绝目录、设备、socket、FIFO 和其他非普通文件。实�
 #### Scenario: Keep errors path-safe
 - **WHEN** Read 因权限、路径或读取错误失败
 - **THEN** 返回给模型和宿主的错误不包含绝对 workspace、底层 cause 或文件内容
+
+上述 256 KiB 是既有硬上限。原范围按该规则生成的结果若超过本次聚合预算分配 allowance，系统 MUST 返回有界 result_budget_exceeded，提示缩小 offset/limit，不得事后再默默裁短成功结果或自动转存。预算错误不得包含原正文。
+
+#### Scenario: Reject a range that does not fit its allowance
+- **WHEN** 既有合法 Read preview 为 32 KiB 但本次仅分配 8 KiB
+- **THEN** 返回不超 allowance 的预算错误和缩小范围建议，不生成 artifact 或成功的部分正文
 
 ### Requirement: Complete reads provide transient file observations
 
@@ -105,5 +111,11 @@ Read SHALL 拒绝目录、设备、socket、FIFO 和其他非普通文件。实�
 - **THEN** 不提供 complete observation，不能让后续 Write 使用混合或过期基线
 
 #### Scenario: Keep model bytes stable
-- **WHEN** 相同输入和文件从新 Read 执行路径返回
+- **WHEN** 相同输入和文件从新 Read 执行路径返回且 allowance 足以完整容纳原 preview
 - **THEN** Provider output preview 与既有 Read 字节完全相同，新增观察只在进程内返回
+
+complete observation SHALL 以最终模型结果完整成功为必要条件，只有配对 native outputs 成功 Sync/finalize 后才激活。聚合预算拒绝必须转为 unavailable 并失效对应旧观察，保存内容或宿主展开不构成模型已读证据。
+
+#### Scenario: Do not authorize Write after budget rejection
+- **WHEN** Read 执行材料完整但 finalization 因 allowance 不足返回预算错误
+- **THEN** 随后 Write 不能使用该观察或对应旧观察覆盖文件

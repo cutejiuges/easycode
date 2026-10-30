@@ -10,7 +10,7 @@
 
 每条 JSONL record SHALL 使用唯一当前、强类型的 envelope，至少包含一个 schema canary、一个 payload canary、单调 seq、UTC timestamp、session/thread/turn identity、event kind、batch 边界、checksum 和受控 typed payload。所有当前 records 均为恢复必需事实；envelope MUST NOT 携带 `required`/`optional` 选择字段，也不得透传未知 kind 或未知 payload 为 opaque Session record。
 
-当前记录词汇中的 `tool_call_ready`、`tool_approval_decided`、`tool_execution_started` 和 `tool_call_result` SHALL 具有专属 typed constructor、strict decoder 与 validator。`tool_call_ready` SHALL 保存 invocation ID、Provider call ID、Provider wire kind、sample/call index、capability，以及与 `Read`、`Glob`、`Grep`、`Patch`、`Write`、`Exec` 或 `ReadArtifact` 匹配的完整 typed input；`tool_approval_decided` SHALL 保存 request/invocation identity、candidate fingerprint、typed outcome、decision source、仅适用于 deny 的有界反馈与不含绝对路径、正文、环境值或命令输出的安全 metadata；`tool_execution_started` SHALL 引用同一 invocation 并表示 executor 接收线性化点；`tool_call_result` SHALL 保存终态 status、稳定 code、完整有界模型 preview 与 capability 对应的非敏感 typed metadata。Exec metadata SHALL只包含相对workdir、exit/timeout/cancelled/truncated状态、duration、stdout/stderr计数及各流 typed 保存状态与 descriptor，不得包含PID、绝对路径或环境。工具 records MUST NOT 保存 input revision、result codec revision、执行器额外采集的完整 base/final 文件快照、完整 diff、临时文件路径或可执行 Provider wire item。
+当前记录词汇中的 `tool_call_ready`、`tool_approval_decided`、`tool_execution_started` 和 `tool_call_result` SHALL 具有专属 typed constructor、strict decoder 与 validator。`tool_call_ready` SHALL 保存 invocation ID、Provider call ID、Provider wire kind、sample/call index、capability，以及与 `Read`、`Glob`、`Grep`、`Patch`、`Write`、`Exec` 或 `ReadArtifact` 匹配的完整 typed input；`tool_approval_decided` SHALL 保存 request/invocation identity、candidate fingerprint、typed outcome、decision source、仅适用于 deny 的有界反馈与不含绝对路径、正文、环境值或命令输出的安全 metadata；`tool_execution_started` SHALL 引用同一 invocation 并表示 executor 接收线性化点；`tool_call_result` SHALL 保存终态 status、稳定 code、完整有界模型 preview 与 capability 对应的非敏感 typed metadata。Exec metadata SHALL包含相对workdir、exit/timeout/cancelled/truncated状态、duration、stdout/stderr计数及各流 typed 保存状态与 descriptor 和必需预算元数据，不得包含PID、绝对路径或环境。工具 records MUST NOT 保存 input revision、result codec revision、执行器额外采集的完整 base/final 文件快照、完整 diff、临时文件路径或可执行 Provider wire item。
 
 schema/payload canary 只用于精确验证当前格式，不得选择历史 decoder。completed sample 的 Provider entry 仍作为 native commit 并紧邻配对 `sample_usage`；tool results 编码为 tool-output native commit 时不生成 sample usage。高频参数 delta、approval request/焦点/按键、命令输出progress、elapsed tick、UI 状态和文件系统瞬时信息 MUST NOT 进入 JSONL。
 
@@ -84,11 +84,17 @@ ReadArtifact result SHALL 保存冻结页 preview、artifact ID、实际 offset/
 - **WHEN** checksum 合法但 descriptor 的 thread/invocation/stream、digest、长度或状态与结果不一致
 - **THEN** 当前 decoder/replay 拒绝记录，不访问 artifact 或修改 journal
 
-Session 当前 canary SHALL 为 5，Provider native 当前 canary 为 2；只允许精确匹配，旧开发 shape 在 repair/append 前失败关闭，不保留兼容 reader。新增 turn_inputs_committed 必须使用强类型 payload，仅含 initial/steering placement、target_sample_index 与有序非重复 InputIDs；不含正文、RequestID 或 UI 状态。正文仅由同 batch native user_inputs 保存，输入 batch 不产生 sample_usage。
+Session 当前 canary SHALL 为 6，Provider native 当前 canary 为 2；只允许精确匹配，旧开发 shape 在 repair/append 前失败关闭，不保留兼容 reader。新增 turn_inputs_committed 必须使用强类型 payload，仅含 initial/steering placement、target_sample_index 与有序非重复 InputIDs；不含正文、RequestID 或 UI 状态。正文仅由同 batch native user_inputs 保存，输入 batch 不产生 sample_usage。
 
 #### Scenario: Persist input identity without duplicating text
 - **WHEN** 一组初始或中途用户输入提交
 - **THEN** journal 原子记录输入关联及 native 正文，纯接收/排队/claimed 状态不进入 Session
+
+每个 tool_call_result SHALL 保存必需 typed 预算元数据：分配上限、最终 preview UTF-8 bytes 与封闭处理原因；validator 核对实际 bytes、能力上限与保存归属。搜索 metadata SHALL 只保存有界模型所见 matches、统计/覆盖原因与 search_result 保存状态/引用，被预览省略的正文不得另藏于 metadata。旧 canary 5、缺失预算字段或旧 reservation shape MUST 失败关闭，不提供双 reader 或 resume 原地迁移。展示条目/分组/正文副本 MUST NOT 成为新 Session records；headless 外部 JSONL v1 保持独立且不变。
+
+#### Scenario: Reject inconsistent result budget
+- **WHEN** checksum 合法但记录实际 preview bytes 超过声明 allowance 或缺失预算字段
+- **THEN** strict decoder/replay 在恢复副作用前拒绝，不按新策略补齐字段或裁剪正文
 
 ### Requirement: A single writer assigns order and durably appends batches
 
@@ -486,3 +492,9 @@ ReplayPlanner SHALL只从Exec ready、approval、started、result和Provider-nat
 #### Scenario: Resume after a process crash
 - **WHEN** journal包含Exec started但没有result且进程已经退出或状态未知
 - **THEN** replay生成`outcome_uncertain`补偿而不查找PID、不连接进程、不重新执行命令
+
+以上约束 SHALL 扩展到七工具统一活动投影；ready、approval、started、result 与 native commits 是恢复依据，临时 sample 文本、工具进度、折叠组与浏览页不属于事实源。
+
+#### Scenario: Restore without presentation state
+- **WHEN** 进程曾显示搜索 running 或未提交文本后中断
+- **THEN** 恢复仅从已验证事实生成活动，不保留伪完成状态或未提交文本

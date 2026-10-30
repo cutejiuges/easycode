@@ -17,7 +17,7 @@ func (runtime *Runtime) executeExecCall(ctx context.Context, emit Emitter, turnI
 		return tool.InvocationResult{}, false, fault.New(fault.CodeTurnFailed, "Exec runtime is not configured")
 	}
 	finish := func(result tool.InvocationResult, aborted bool) (tool.InvocationResult, bool, error) {
-		if err := runtime.persistToolResult(context.WithoutCancel(ctx), turnID, result); err != nil {
+		if err := runtime.persistToolResult(context.WithoutCancel(ctx), turnID, &result); err != nil {
 			return tool.InvocationResult{}, false, err
 		}
 		return result, aborted, nil
@@ -31,6 +31,14 @@ func (runtime *Runtime) executeExecCall(ctx context.Context, emit Emitter, turnI
 	}
 	if candidate.Validate() != nil || candidate.Invocation() != execInvocation {
 		return tool.InvocationResult{}, false, fault.New(fault.CodeTurnFailed, "Exec candidate does not match invocation")
+	}
+	allowance, err := runtime.resultAllowance(tool.CapabilityExec)
+	if err != nil {
+		return tool.InvocationResult{}, false, err
+	}
+	candidate, err = candidate.WithPreviewAllowance(allowance)
+	if err != nil {
+		return tool.InvocationResult{}, false, err
 	}
 	requestID, err := runtime.newApprovalRequestID()
 	if err != nil {
@@ -84,6 +92,10 @@ func (runtime *Runtime) executeExecCall(ctx context.Context, emit Emitter, turnI
 			message += "\nUser feedback: " + feedback
 		}
 		result := tool.NewExecErrorResult(execInvocation, status, code, message)
+		result, freezeErr := runtime.freezeResult(result)
+		if freezeErr != nil {
+			return tool.InvocationResult{}, false, freezeErr
+		}
 		resultDraft, draftErr := session.NewToolCallResultDraft(turnID, result)
 		if draftErr != nil {
 			return tool.InvocationResult{}, false, draftErr
@@ -92,6 +104,7 @@ func (runtime *Runtime) executeExecCall(ctx context.Context, emit Emitter, turnI
 			runtime.poisoned.Store(true)
 			return tool.InvocationResult{}, false, fault.Wrap(fault.CodeSessionWrite, "persist Exec denial failed", err)
 		}
+		runtime.notifyToolResult(turnID, result)
 		runtime.emitApprovalResolved(emit, turnID, request, outcome)
 		return result, outcome == tool.ApprovalOutcomeAbort, nil
 	}
@@ -105,16 +118,11 @@ func (runtime *Runtime) executeExecCall(ctx context.Context, emit Emitter, turnI
 	if len(runes) > 160 {
 		summary = string(runes[:159]) + "…"
 	}
-	activity := protocol.CommandActivityPayload{InvocationID: string(invocation.InvocationID()), Command: summary, Workdir: execInvocation.Input().Workdir(), Status: "running"}
-	startedEvent, eventErr := protocol.NewCommandStarted(activity)
-	if eventErr != nil {
-		return tool.InvocationResult{}, false, eventErr
-	}
+	activity := protocol.ToolActivityPayload{Tool: protocol.ToolShell, InvocationID: string(invocation.InvocationID()), Summary: summary, Workdir: execInvocation.Input().Workdir(), Status: "running"}
 
 	runningActivity := activity
 	result, err := runtime.executeExclusive(ctx, turnID, invocation, exclusiveAction{
 		execute: func(ctx context.Context) tool.InvocationResult {
-			emit(runtime.decorate(startedEvent, turnID))
 			return executeWithProgress(ctx, runtime.execExecutor, candidate, func(progress tool.ExecProgress) {
 				activity.Recent = progress.Recent()
 				activity.StdoutLines = progress.StdoutLines()
@@ -127,7 +135,7 @@ func (runtime *Runtime) executeExecCall(ctx context.Context, emit Emitter, turnI
 				payload.StderrLines = progress.StderrLines()
 				payload.Recent = progress.Recent()
 				payload.Truncated = progress.Truncated()
-				if event, err := protocol.NewCommandProgress(payload); err == nil {
+				if event, err := protocol.NewToolProgress(payload); err == nil {
 					emit(runtime.decorate(event, turnID))
 				}
 			})
@@ -140,16 +148,5 @@ func (runtime *Runtime) executeExecCall(ctx context.Context, emit Emitter, turnI
 		return result, false, err
 	}
 
-	metadata := result.ExecMetadata()
-	activity.Status = string(result.Status())
-	activity.Code = result.Code()
-	activity.ElapsedMillis = metadata.DurationMillis()
-	activity.StdoutBytes = metadata.Stdout().ObservedBytes()
-	activity.StderrBytes = metadata.Stderr().ObservedBytes()
-	activity.ExitCode, activity.ExitKnown = metadata.ExitCode()
-	activity.Truncated = metadata.OutputTruncated()
-	if event, err := protocol.NewCommandTerminal(protocol.CommandTerminalPayload{CommandActivityPayload: activity, ResultPreview: result.Preview().Text()}); err == nil {
-		emit(runtime.decorate(event, turnID))
-	}
 	return result, false, err
 }

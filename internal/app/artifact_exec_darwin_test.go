@@ -74,15 +74,18 @@ func TestExecOmittedOutputCanBeReadByToolAndHost(t *testing.T) {
 	readReady, _ := tool.NewReadArtifactReadyCall("read-artifact", rangeInput)
 	readID, _ := tool.GenerateInvocationID()
 	readInvocation, _ := tool.NewReadArtifactInvocation(readID, readReady)
-	readResult := readExecutor.Execute(ctx, readInvocation)
+	readResult, err := readExecutor.Execute(ctx, readInvocation).Finalize(tool.MaxModelPreviewBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
 	page, ok := readResult.ArtifactPage()
 	if !ok || page.Text() != "01234567890123456789" {
 		t.Fatalf("omitted middle unavailable: %s", readResult.Preview().Text())
 	}
-	entry := session.CommandHistoryEntry{Sequence: 1, Invocation: invocation, Result: result, HasResult: true}
-	queries := newCommandQueries(thread, reader, []session.CommandHistoryEntry{entry})
+	entry := session.ToolHistoryEntry{Sequence: 1, Invocation: invocation, Result: result, HasResult: true}
+	queries := newTranscriptQueries(thread, reader, []session.ToolHistoryEntry{entry})
 	defer func() { _ = queries.Close() }()
-	hostPage, err := queries.ReadCommandOutput(ctx, protocol.CommandOutputQuery{ThreadID: thread, InvocationID: string(id), Stream: protocol.CommandStderr, Offset: 300000, Limit: 20})
+	hostPage, err := queries.ReadToolOutput(ctx, protocol.ToolOutputQuery{ThreadID: thread, InvocationID: string(id), Stream: protocol.ToolStderr, Offset: 300000, Limit: 20})
 	if err != nil || hostPage.Text != "abcdefghijabcdefghij" || !hostPage.SourceComplete {
 		t.Fatalf("stderr page: %+v %v", hostPage, err)
 	}
