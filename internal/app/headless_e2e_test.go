@@ -151,7 +151,7 @@ func TestHeadlessProvidersPreserveResumeRequestAndOutputBoundaries(t *testing.T)
 			fixture.assertThird(t, captured[5])
 
 			loaded := loadHeadlessJournal(t, dataRoot, started.ThreadID)
-			if len(loaded.Records) != 14 || loaded.NextSequence != 15 {
+			if len(loaded.Records) != 20 || loaded.NextSequence != 21 {
 				t.Fatalf("records/next = %d/%d", len(loaded.Records), loaded.NextSequence)
 			}
 			for index, record := range loaded.Records {
@@ -159,7 +159,7 @@ func TestHeadlessProvidersPreserveResumeRequestAndOutputBoundaries(t *testing.T)
 					t.Fatalf("record[%d] = %#v", index, record)
 				}
 			}
-			for _, index := range []int{4, 8, 12} {
+			for _, index := range []int{6, 12, 18} {
 				if loaded.Records[index].EventKind != session.EventSampleUsage {
 					t.Fatalf("record[%d] kind = %s", index, loaded.Records[index].EventKind)
 				}
@@ -231,7 +231,7 @@ func TestStreamJSONProvidersPreserveSameProcessNativeHistory(t *testing.T) {
 			}
 			started := decodeThreadStarted(t, output.String())
 			loaded := loadHeadlessJournal(t, dataRoot, started.ThreadID)
-			if len(loaded.Records) != 10 || loaded.NextSequence != 11 {
+			if len(loaded.Records) != 14 || loaded.NextSequence != 15 {
 				t.Fatalf("stream records/next = %d/%d", len(loaded.Records), loaded.NextSequence)
 			}
 
@@ -313,11 +313,13 @@ func TestStreamJSONResumeAndContinue(t *testing.T) {
 }
 
 func TestStreamJSONQueueFullAndShutdownAreReported(t *testing.T) {
+	requestStarted := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "text/event-stream")
 		if flusher, ok := writer.(http.Flusher); ok {
 			flusher.Flush()
 		}
+		close(requestStarted)
 		<-request.Context().Done()
 	}))
 	defer server.Close()
@@ -330,13 +332,29 @@ func TestStreamJSONQueueFullAndShutdownAreReported(t *testing.T) {
 		)
 	}
 	commands.WriteString(`{"version":1,"type":"session.shutdown","request_id":"queue-shutdown"}` + "\n")
+	input, writer := io.Pipe()
+	sent := make(chan error, 1)
+	go func() {
+		defer writer.Close()
+		first, rest, _ := strings.Cut(commands.String(), "\n")
+		if _, err := io.WriteString(writer, first+"\n"); err != nil {
+			sent <- err
+			return
+		}
+		<-requestStarted
+		_, err := io.WriteString(writer, rest)
+		sent <- err
+	}()
 	output := &appWriteCloser{}
 	outcome := Run(context.Background(), Options{
 		Mode:            headless.ModeStreamJSON,
 		ConfigPath:      writeAppConfig(t, t.TempDir(), domain.ProviderOpenAI, server.URL),
 		SessionDataRoot: filepath.Join(privateAppTempDir(t), "sessions"),
-		Input:           io.NopCloser(strings.NewReader(commands.String())), Output: output,
+		Input:           input, Output: output,
 	})
+	if err := <-sent; err != nil {
+		t.Fatal(err)
+	}
 	if outcome.ExitCode() != 0 {
 		t.Fatalf("queue stream outcome = %#v output=%s", outcome, output.String())
 	}
@@ -361,7 +379,7 @@ func runStreamAppInput(t *testing.T, options Options, text string) string {
 	return output.String()
 }
 
-func TestStreamJSONFailedInputDoesNotEnterNextProviderHistory(t *testing.T) {
+func TestStreamJSONFailedSampleRetainsCommittedInputInNextHistory(t *testing.T) {
 	fixtures := []struct {
 		name      string
 		family    domain.ProviderFamily
@@ -391,7 +409,7 @@ func TestStreamJSONFailedInputDoesNotEnterNextProviderHistory(t *testing.T) {
 			defer server.Close()
 
 			input := io.NopCloser(strings.NewReader(
-				`{"version":1,"type":"input.submit","request_id":"failed-input","text":"first-must-not-commit"}` + "\n" +
+				`{"version":1,"type":"input.submit","request_id":"failed-input","text":"first-retained-input"}` + "\n" +
 					`{"version":1,"type":"input.submit","request_id":"success-input","text":"second"}` + "\n",
 			))
 			output := &appWriteCloser{}
@@ -412,9 +430,9 @@ func TestStreamJSONFailedInputDoesNotEnterNextProviderHistory(t *testing.T) {
 			mu.Lock()
 			captured := append([][]byte(nil), requests...)
 			mu.Unlock()
-			if len(captured) != 2 || bytes.Contains(captured[1], []byte("first-must-not-commit")) ||
+			if len(captured) != 2 || !bytes.Contains(captured[1], []byte("first-retained-input")) ||
 				!bytes.Contains(captured[1], []byte("second")) {
-				t.Fatalf("failed input entered next history: %#v", captured)
+				t.Fatalf("committed input missing from next history: %#v", captured)
 			}
 		})
 	}
@@ -516,11 +534,11 @@ func TestHeadlessJSONBrokenPipeCancelsAndReleasesLease(t *testing.T) {
 	}
 	started := decodeThreadStarted(t, writer.buffer.String())
 	loaded := loadHeadlessJournal(t, dataRoot, started.ThreadID)
-	if len(loaded.Records) != 4 || loaded.Records[len(loaded.Records)-1].EventKind != session.EventTurnFailed {
+	if len(loaded.Records) != 6 || loaded.Records[len(loaded.Records)-1].EventKind != session.EventTurnFailed {
 		t.Fatalf("broken pipe records = %#v", loaded.Records)
 	}
 	for _, record := range loaded.Records {
-		if record.EventKind == session.EventProviderNativeCommit || record.EventKind == session.EventTurnCompleted {
+		if record.EventKind == session.EventSampleUsage || record.EventKind == session.EventTurnCompleted {
 			t.Fatalf("broken pipe committed success: %#v", record)
 		}
 	}
@@ -560,7 +578,7 @@ func TestStreamJSONBrokenOutputCancelsAgentLoopAndReleasesLease(t *testing.T) {
 		t.Fatalf("broken stream output records = %#v", loaded.Records)
 	}
 	for _, record := range loaded.Records {
-		if record.EventKind == session.EventProviderNativeCommit || record.EventKind == session.EventTurnCompleted {
+		if record.EventKind == session.EventSampleUsage || record.EventKind == session.EventTurnCompleted {
 			t.Fatalf("broken stream output committed success: %#v", record)
 		}
 	}

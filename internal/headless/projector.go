@@ -52,6 +52,12 @@ func (projector *projector) project(event protocol.Event) (projection, error) {
 		projector.turnID = event.TurnID
 		external, err := NewTurnStartedEvent(event.SessionID, event.ThreadID, event.TurnID)
 		return projection{event: external}, err
+	case protocol.EventUserInputCommitted:
+		if err := projector.validateActiveTurn(event); err != nil {
+			return projection{}, err
+		}
+		_, err := protocol.DecodeUserInputCommitted(event)
+		return projection{}, err
 	case protocol.EventAssistantTextDelta:
 		if err := projector.validateActiveTurn(event); err != nil {
 			return projection{}, err

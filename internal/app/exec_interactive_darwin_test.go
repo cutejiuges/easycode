@@ -104,7 +104,7 @@ func TestReadPatchExecApprovedLoopForBothProviders(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer control.Shutdown(context.Background())
-			events, err := control.Submit(context.Background(), "Read, edit, run checks, and summarize")
+			events, err := submitInteractiveFixture(t, control, context.Background(), "Read, edit, run checks, and summarize")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -113,8 +113,6 @@ func TestReadPatchExecApprovedLoopForBothProviders(t *testing.T) {
 			var completedUsage domain.SampleUsage
 			var ui tea.Model = tui.NewModel(context.Background(), "test", control).WithCommandQueries(resources.identity.ThreadID, resources.commandQueries)
 			ui, _ = ui.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
-			ui, _ = ui.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Read, edit, run checks, and summarize")})
-			ui, _ = ui.Update(tea.KeyMsg{Type: tea.KeyEnter})
 			for event := range events {
 				ui, _ = ui.Update(tui.RuntimeEventMsg{Event: event})
 				switch event.Kind {
@@ -225,7 +223,7 @@ func TestReadPatchExecApprovedLoopForBothProviders(t *testing.T) {
 					decisions++
 				}
 			}
-			if ready != 3 || started != 3 || results != 3 || decisions != 2 || plan.ToolRecovery != nil || len(plan.NativeCommits) != 7 || len(plan.SampleUsages) != 4 {
+			if ready != 3 || started != 3 || results != 3 || decisions != 2 || plan.ToolRecovery != nil || len(plan.NativeCommits) != 8 || len(plan.SampleUsages) != 4 {
 				t.Fatalf("ledger counts = %d/%d/%d/%d, commits=%d usage=%d", ready, started, results, decisions, len(plan.NativeCommits), len(plan.SampleUsages))
 			}
 			var usages []domain.SampleUsage

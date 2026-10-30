@@ -58,7 +58,7 @@ func TestNewUserItemUsesResponsesInputText(t *testing.T) {
 
 func TestNativeHistoryEntryCloneDoesNotShareOpaqueData(t *testing.T) {
 	entry := nativeHistoryEntry{
-		Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("hello")),
+		Kind: nativeHistorySample,
 		Outputs: []NativeItem{{
 			Type:             "reasoning",
 			ReasoningSummary: []ReasoningSummaryPart{{Type: "summary_text", Text: "private"}},
@@ -67,11 +67,13 @@ func TestNativeHistoryEntryCloneDoesNotShareOpaqueData(t *testing.T) {
 		}},
 	}
 	cloned := entry.clone()
-	entry.Input.Content[0].Text = "changed"
+	inputEntry := testInputEntry(t, NewUserItem("hello"))
+	inputClone := inputEntry.clone()
+	inputEntry.UserInputs[0].Content[0].Text = "changed"
 	entry.Outputs[0].ReasoningSummary[0].Text = "changed"
 	entry.Outputs[0].Raw[0] = '['
 
-	if cloned.Input.Content[0].Text != "hello" || cloned.Outputs[0].ReasoningSummary[0].Text != "private" || cloned.Outputs[0].Raw[0] != '{' {
+	if inputClone.UserInputs[0].Content[0].Text != "hello" || cloned.Outputs[0].ReasoningSummary[0].Text != "private" || cloned.Outputs[0].Raw[0] != '{' {
 		t.Fatalf("native history entry clone shares mutable data: %#v", cloned)
 	}
 }

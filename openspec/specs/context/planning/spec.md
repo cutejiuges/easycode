@@ -8,7 +8,7 @@
 
 ### Requirement: Context planning uses typed ordered sources
 
-上下文规划 SHALL 只接收强类型的 Provider profile、Tool Catalog snapshot、可选项目指令快照、已提交语义历史、Provider 原生历史 footprint、当前用户输入和可选预算。来源 MUST 按 `provider_profile`、`tool_catalog`、可选 `project_instructions`、`committed_history`、`current_input` 的固定顺序出现；无项目指令文档时 MUST 省略 `project_instructions`。规划不得隐式读取时间戳、随机 ID、cwd、环境变量、Session 路径、git 状态、文件系统或网络。
+上下文规划 SHALL 只接收强类型的 Provider profile、Tool Catalog snapshot、可选项目指令快照、已提交语义历史、Provider 原生历史 footprint、不携带额外正文的当前采样状态和可选预算。来源 MUST 按 `provider_profile`、`tool_catalog`、可选 `project_instructions`、`committed_history`、`current_input` 的固定顺序出现；无项目指令文档时 MUST 省略 `project_instructions`。规划不得隐式读取时间戳、随机 ID、cwd、环境变量、Session 路径、git 状态、文件系统或网络。
 
 `provider_profile` SHALL 只包含 Provider family、model 和显式 schema revision，不得包含 API key、base URL 凭据或其他 secret。`tool_catalog` SHALL 只包含 catalog revision、稳定排序的 facade schema canonical bytes 与内容派生 fingerprint，不得包含 executor、invocation/call identity、权限临时状态或 workspace 绝对路径。`project_instructions` SHALL 只包含经过发现契约验证的不可变快照、内容派生 revision、截断状态和项目根相对来源，不得包含绝对项目根或启动 cwd。规划 MUST 是纯内存操作，且不得修改输入快照或 Provider 原生历史。
 
@@ -30,6 +30,8 @@
 - **THEN** 计划保持 `provider_profile`、`tool_catalog`、`committed_history`、`current_input` 的固定顺序
 - **THEN** cache segments、stable prefix fingerprint 和预算结果不因空占位而改变
 
+输入提交前 SHALL 以已提交历史加 prepared inputs 的独立候选历史进行纯内存规划；候选语义视图仅用于估算，候选请求只能由 Provider 原生历史构造。实际网络采样前全部文本已经提交。current_input 保留为无额外正文的采样标记，不保留旧 Text/continuation 双 shape。
+
 ### Requirement: Context plans are immutable validated snapshots
 
 上下文计划 SHALL 使用唯一当前的强类型 shape，并深拷贝所有调用方可变输入；纯内存 plan MUST NOT 携带固定 format revision 或按 revision 选择 validator。计划 MUST 拒绝未知来源 kind、重复来源、非法顺序、空 source revision、非法 Tool Catalog、非法项目指令快照、非法估算状态、Provider family 不匹配及无效缓存计划。所有返回 slice、bytes 或嵌套值的读取操作 MUST 返回独立副本。
@@ -37,7 +39,7 @@
 计划 SHALL 把 `provider_profile` 与包含 Read、Glob、Grep、Patch、Write、Exec、ReadArtifact 的完整 `tool_catalog` 映射为 stable cache segments，把可选 `project_instructions` 映射为 project-stable cache segment，把 `committed_history` 映射为 turn-stable segment，把 `current_input` 映射为 volatile segment，并复用 `context/cache-plan` 的 canonical JSON、排序和 stable prefix fingerprint 契约。Tool Catalog 估算 SHALL 覆盖实际发送给对应 Provider 的全部 facade schema/description；Exec动态command、workdir、timeout、approval、sandbox临时状态与环境实际值不得进入catalog source。来源生命周期、source revision 与缓存稳定级别 MUST 保持为不同的强类型概念。
 
 #### Scenario: Mutate caller-owned planning inputs
-- **WHEN** 调用方在计划创建后修改原 Tool Catalog bytes、项目指令、语义 turn slice、当前输入 buffer 或 getter 返回的数据
+- **WHEN** 调用方在计划创建后修改原 Tool Catalog bytes、项目指令、语义 turn slice、有序消息 buffer 或 getter 返回的数据
 - **THEN** 计划中的来源、估算、canonical segments 和指纹保持不变
 
 #### Scenario: Reject a malformed source sequence
@@ -45,9 +47,9 @@
 - **THEN** 规划失败且不返回可供 Runtime 或 Provider 使用的部分计划
 
 #### Scenario: Change only the volatile input
-- **WHEN** 两次计划的 profile、Tool Catalog、项目指令和 committed history 相同但当前用户输入不同
-- **THEN** volatile segment 内容发生变化
-- **THEN** stable prefix fingerprint 保持一致
+- **WHEN** 调用方尝试仅替换 current_input 为携带新正文的旧开发 shape
+- **THEN** 当前 validator 拒绝旧 shape；合法追加必须先提交历史，不能通过 volatile input 绕过持久化
+- **THEN** 拒绝操作不改变已有计划的 stable prefix fingerprint
 
 #### Scenario: Change project instructions
 - **WHEN** 仅项目指令的规范化内容或项目根相对来源发生变化
@@ -73,11 +75,17 @@ artifact ID、保存状态、存储目录、实时配额与读取游标 MUST NOT
 - **WHEN** 同一 catalog 下创建、读取、删除输出对象或改变配额使用量
 - **THEN** catalog canonical bytes、source revision 和 stable prefix fingerprint 不变；估算包含 ReadArtifact 实际 facade schema
 
+committed_history 的 cache canonical 内容 SHALL 仅含有序角色/文本，不包含 InputID、turn ID 或展示状态；同内容不同关联身份必须得到相同内容 fingerprint。
+
+#### Scenario: Keep identity out of cache content
+- **WHEN** 仅改变输入和 turn 身份但原生可见内容及其顺序相同
+- **THEN** 请求与语义规划内容 fingerprint 相同，stable prefix 不变
+
 ### Requirement: Token estimates preserve method and uncertainty
 
 每个可计量来源和计划总量 SHALL 携带非空 estimator method、显式 `estimated` 或 `unknown` 状态以及无符号 token 数；unknown 状态不得伪装为已知零。当前切片 MUST 使用版本化、本地、确定性的启发式算法，不得调用远程 token-count API，也不得将 Provider 返回的 normalized usage 直接解释为当前上下文占用。
 
-共享层 SHALL 从 `SemanticHistoryView` 估算已提交可见文本，并从当前输入单独估算本轮新增文本。Provider 原生 footprint 表示已提交原生历史的总估算，已经包含其中可见和 opaque 内容；规划合并已提交历史时 MUST 使用能够覆盖共享可见估算与原生总估算的单一值，不得将两者直接相加造成重复计数。若任一覆盖输入 unknown，结果 MUST 保留不确定性而不是静默降低为较小的已知值。
+共享层 SHALL 从 `SemanticHistoryView` 估算已提交可见文本，按 turn 内有序消息计量每条文本一次；current_input 采样标记没有新增正文估算。Provider 原生 footprint 表示已提交原生历史的总估算，已经包含其中可见和 opaque 内容；规划合并已提交历史时 MUST 使用能够覆盖共享可见估算与原生总估算的单一值，不得将两者直接相加造成重复计数。若任一覆盖输入 unknown，结果 MUST 保留不确定性而不是静默降低为较小的已知值。
 
 所有加减法 MUST 检测溢出或使用饱和语义，不得因整数 wraparound 把超大上下文判为可用。
 
@@ -97,6 +105,10 @@ artifact ID、保存状态、存储目录、实时配额与读取游标 MUST NOT
 - **WHEN** Provider 无法为一个会在下一请求中重放的原生 item 产生受支持估算
 - **THEN** committed history 和计划总量标识为 unknown
 - **THEN** unknown 不会被展示或计算为零 token
+
+#### Scenario: Count steering once
+- **WHEN** 两条追加输入已经进入 native history 并参与下一 sample 规划
+- **THEN** 可见估算与 native footprint 使用覆盖值而不相加，追加文本不再次作为 current input 计量
 
 ### Requirement: Budget decisions require explicit configuration and complete evidence
 

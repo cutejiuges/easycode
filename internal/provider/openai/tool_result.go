@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"easycode/internal/domain"
 	"fmt"
 
 	"easycode/internal/codec"
@@ -51,7 +52,7 @@ func prepareToolOutputsEntry(history []nativeHistoryEntry, results []tool.Invoca
 		}
 		outputs[index] = NativeItem{Type: outputType, CallID: calls[index].CallID, Output: string(payload)}
 	}
-	entry := nativeHistoryEntry{Kind: nativeHistoryToolOutputs, ToolOutputs: outputs}
+	entry := nativeHistoryEntry{Kind: nativeHistoryToolOutputs, TurnID: history[len(history)-1].TurnID, ToolOutputs: outputs}
 	if err := validateNativeHistoryEntry(entry); err != nil {
 		return nativeHistoryEntry{}, err
 	}
@@ -81,31 +82,64 @@ func openAICapabilityForName(name string) tool.CapabilityID {
 
 func validateNativeHistory(entries []nativeHistoryEntry) error {
 	var pending []NativeItem
-	expectContinuation := false
+	var turnID domain.TurnID
+	var nextSample uint32
+	sampleAllowed := false
+	steeringAllowed := false
+	seenInputs := make(map[domain.InputID]struct{})
+	seenTurns := make(map[domain.TurnID]struct{})
 	for index, entry := range entries {
 		if err := validateNativeHistoryEntry(entry); err != nil {
 			return fmt.Errorf("entry %d is invalid: %w", index+1, err)
 		}
 		switch entry.Kind {
-		case nativeHistorySample:
+		case nativeHistoryUserInputs:
 			if len(pending) != 0 {
-				return fmt.Errorf("OpenAI sample appears before pending tool calls are closed")
+				return fmt.Errorf("user inputs precede pending tool outputs")
 			}
-			if expectContinuation {
-				expectContinuation = false
-			} else if entry.Input == nil {
-				return fmt.Errorf("OpenAI sample input is required at this history position")
+			a, err := entry.InputMetadata.Association()
+			if err != nil {
+				return err
 			}
+			if entry.TurnID != a.TurnID() {
+				return fmt.Errorf("input turn association mismatch")
+			}
+			if a.Placement() == domain.InputInitial {
+				if _, exists := seenTurns[a.TurnID()]; exists {
+					return fmt.Errorf("initial input is duplicated")
+				}
+				seenTurns[a.TurnID()] = struct{}{}
+				turnID = a.TurnID()
+				nextSample = 0
+			} else if !steeringAllowed || turnID != a.TurnID() || nextSample != a.SampleIndex() {
+				return fmt.Errorf("steering input position is invalid")
+			}
+			for _, id := range a.IDs() {
+				if _, exists := seenInputs[id]; exists {
+					return fmt.Errorf("input ID is duplicated")
+				}
+				seenInputs[id] = struct{}{}
+			}
+			sampleAllowed = true
+			steeringAllowed = false
+		case nativeHistorySample:
+			if len(pending) != 0 || !sampleAllowed || entry.TurnID != turnID {
+				return fmt.Errorf("sample history position is invalid")
+			}
+			sampleAllowed = false
+			steeringAllowed = false
+			nextSample++
 			pending = functionCalls(entry.Outputs)
 		case nativeHistoryToolOutputs:
-			if len(pending) == 0 {
-				return fmt.Errorf("OpenAI tool outputs have no pending tool calls")
+			if len(pending) == 0 || entry.TurnID != turnID {
+				return fmt.Errorf("tool outputs have no matching pending calls")
 			}
 			if err := matchFunctionOutputs(pending, entry.ToolOutputs); err != nil {
 				return err
 			}
 			pending = nil
-			expectContinuation = true
+			sampleAllowed = true
+			steeringAllowed = true
 		}
 	}
 	return nil

@@ -13,13 +13,13 @@ func TestPrepareToolOutputsPairsResultsInModelOrder(t *testing.T) {
 	invocationID, _ := tool.GenerateInvocationID()
 	invocation, _ := tool.NewReadInvocation(invocationID, ready)
 	result := tool.NewReadErrorResult(invocation, tool.ResultError, "read_failed", "cannot read file", ".")
-	history := []nativeHistoryEntry{{
-		Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("read it")),
+	history := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, newUserMessage("read it")), {
+		Kind: nativeHistorySample,
 		Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{
 			Type: blockTypeToolUse, ID: "toolu-1", Name: "Read", Input: []byte(`{"file_path":"README.md"}`),
 		}}},
 		Metadata: messageMetadata{ID: "msg-1", Model: "claude-test"},
-	}}
+	}})
 	entry, err := prepareToolOutputsEntry(history, []tool.InvocationResult{result})
 	if err != nil {
 		t.Fatal(err)
@@ -42,7 +42,7 @@ func TestPreparePatchToolOutputPreservesEditPairing(t *testing.T) {
 	invocationID, _ := tool.GenerateInvocationID()
 	invocation, _ := tool.NewPatchInvocation(invocationID, ready)
 	result := tool.NewPatchErrorResult(invocation, tool.ResultDenied, "approval_required", "Patch denied: approval_required")
-	history := []nativeHistoryEntry{{Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("edit it")), Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeToolUse, ID: "toolu-edit", Name: "Edit", Input: []byte(`{"file_path":"main.go","old_string":"old","new_string":"new"}`)}}}, Metadata: messageMetadata{ID: "msg-edit", Model: "claude-test"}}}
+	history := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, newUserMessage("edit it")), {Kind: nativeHistorySample, Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeToolUse, ID: "toolu-edit", Name: "Edit", Input: []byte(`{"file_path":"main.go","old_string":"old","new_string":"new"}`)}}}, Metadata: messageMetadata{ID: "msg-edit", Model: "claude-test"}}})
 	entry, err := prepareToolOutputsEntry(history, []tool.InvocationResult{result})
 	if err != nil {
 		t.Fatal(err)
@@ -63,13 +63,13 @@ func TestPrepareToolOutputsRejectsMismatchedCallID(t *testing.T) {
 	invocationID, _ := tool.GenerateInvocationID()
 	invocation, _ := tool.NewReadInvocation(invocationID, ready)
 	result := tool.NewReadErrorResult(invocation, tool.ResultError, "read_failed", "cannot read file", ".")
-	history := []nativeHistoryEntry{{
-		Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("read it")),
+	history := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, newUserMessage("read it")), {
+		Kind: nativeHistorySample,
 		Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{
 			Type: blockTypeToolUse, ID: "toolu-1", Name: "Read", Input: []byte(`{"file_path":"README.md"}`),
 		}}},
 		Metadata: messageMetadata{ID: "msg-1", Model: "claude-test"},
-	}}
+	}})
 	if _, err := prepareToolOutputsEntry(history, []tool.InvocationResult{result}); err == nil {
 		t.Fatal("mismatched tool result unexpectedly accepted")
 	}
@@ -84,13 +84,13 @@ func TestPrepareToolOutputsRejectsCapabilityMismatch(t *testing.T) {
 	metadata, _ := tool.NewGlobResultMetadata([]string{"main.go"}, false, 0, 1, tool.SearchComplete, tool.SearchSkipCounts{})
 	preview, _ := tool.NewModelPreview("main.go\n")
 	result, _ := tool.NewGlobInvocationResult(invocation, tool.ResultSuccess, "ok", preview, metadata)
-	history := []nativeHistoryEntry{{
-		Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("read it")),
+	history := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, newUserMessage("read it")), {
+		Kind: nativeHistorySample,
 		Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{
 			Type: blockTypeToolUse, ID: "toolu-1", Name: "Read", Input: []byte(`{"file_path":"README.md"}`),
 		}}},
 		Metadata: messageMetadata{ID: "msg-1", Model: "claude-test"},
-	}}
+	}})
 	if _, err := prepareToolOutputsEntry(history, []tool.InvocationResult{result}); err == nil {
 		t.Fatal("capability 与 pending call 错配未被拒绝")
 	}

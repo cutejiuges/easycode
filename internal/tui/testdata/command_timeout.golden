@@ -6,4 +6,5 @@ Command: printf 'full command first line' …
 recent output
 last line
 
-> [streaming — Esc/Ctrl+C to cancel]
+> kept draft|
+Enter: send | Alt+Enter/Ctrl+J: newline

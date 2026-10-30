@@ -66,7 +66,7 @@ func TestNativeItemKeepsRequiredEmptyFields(t *testing.T) {
 
 func TestNativeHistoryEntryCloneDoesNotShareOpaqueData(t *testing.T) {
 	entry := nativeHistoryEntry{
-		Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("hello")),
+		Kind: nativeHistorySample,
 		Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{
 			Type: blockTypeRedactedThinking,
 			Raw:  []byte(`{"type":"redacted_thinking","data":"opaque"}`),

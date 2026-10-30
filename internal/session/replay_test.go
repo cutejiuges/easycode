@@ -19,8 +19,10 @@ func TestReplayPlannerBuildsValidTextPlan(t *testing.T) {
 	fixture := newReplayFixture(t)
 	fixture.appendMetadata()
 	fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+	fixture.appendInitialInputs(testTurnID)
 	fixture.appendBatch(mustDraft(t, EventTurnFailed, testTurnID, TurnFailedPayload{Code: "user_cancelled"}))
 	fixture.appendBatch(mustDraft(t, EventTurnStarted, secondTurnID, TurnStartedPayload{}))
+	fixture.appendInitialInputs(secondTurnID)
 	fixture.appendBatch(
 		mustDraft(t, EventProviderNativeCommit, secondTurnID, validNativeCommit()),
 		mustDraft(t, EventSampleUsage, secondTurnID, testSampleUsage(t)),
@@ -31,7 +33,7 @@ func TestReplayPlannerBuildsValidTextPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	if plan.Identity.SessionID != testSessionID || plan.Identity.ThreadID != testThreadID ||
-		len(plan.NativeCommits) != 1 || plan.NativeCommits[0].TurnID != secondTurnID ||
+		len(plan.NativeCommits) != 3 || plan.NativeCommits[0].Role != domain.NativeCommitUserInputs || plan.NativeCommits[2].TurnID != secondTurnID ||
 		len(plan.SampleUsages) != 1 || plan.SampleUsages[0].TurnID != secondTurnID ||
 		len(plan.Turns) != 2 || plan.Turns[0].State != ReplayedTurnFailed ||
 		plan.Turns[1].State != ReplayedTurnCompleted ||
@@ -83,6 +85,7 @@ func TestReplayPlannerRejectsIllegalLifecycleTransitions(t *testing.T) {
 		},
 		"completion without usage": func(fixture *replayFixture) {
 			fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+			fixture.appendInitialInputs(testTurnID)
 			fixture.appendBatch(
 				mustDraft(t, EventProviderNativeCommit, testTurnID, validNativeCommit()),
 				mustDraft(t, EventTurnCompleted, testTurnID, TurnCompletedPayload{}),
@@ -90,6 +93,7 @@ func TestReplayPlannerRejectsIllegalLifecycleTransitions(t *testing.T) {
 		},
 		"usage before commit": func(fixture *replayFixture) {
 			fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+			fixture.appendInitialInputs(testTurnID)
 			fixture.appendBatch(
 				mustDraft(t, EventSampleUsage, testTurnID, testSampleUsage(t)),
 				mustDraft(t, EventProviderNativeCommit, testTurnID, validNativeCommit()),
@@ -98,19 +102,24 @@ func TestReplayPlannerRejectsIllegalLifecycleTransitions(t *testing.T) {
 		},
 		"duplicate terminal": func(fixture *replayFixture) {
 			fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+			fixture.appendInitialInputs(testTurnID)
 			fixture.appendBatch(mustDraft(t, EventTurnFailed, testTurnID, TurnFailedPayload{Code: "failed"}))
 			fixture.appendBatch(mustDraft(t, EventTurnFailed, testTurnID, TurnFailedPayload{Code: "failed_again"}))
 		},
 		"completion missing terminal": func(fixture *replayFixture) {
 			fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+			fixture.appendInitialInputs(testTurnID)
 			fixture.appendBatch(mustDraft(t, EventProviderNativeCommit, testTurnID, validNativeCommit()))
 		},
 		"new turn covers active": func(fixture *replayFixture) {
 			fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+			fixture.appendInitialInputs(testTurnID)
 			fixture.appendBatch(mustDraft(t, EventTurnStarted, secondTurnID, TurnStartedPayload{}))
+			fixture.appendInitialInputs(secondTurnID)
 		},
 		"unknown follows active turn": func(fixture *replayFixture) {
 			fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+			fixture.appendInitialInputs(testTurnID)
 			fixture.appendUnknown()
 		},
 	}
@@ -132,6 +141,7 @@ func TestReplayPlannerBuildsCompletedToolLoop(t *testing.T) {
 	fixture := newReplayFixture(t)
 	fixture.appendMetadata()
 	fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+	fixture.appendInitialInputs(testTurnID)
 	invocation := testReplayInvocation(t, "01890f3e-7bcd-7abc-8abc-0123456789ab", "call-1")
 	fixture.appendBatch(
 		mustDraft(t, EventProviderNativeCommit, testTurnID, validNativeCommit()),
@@ -151,7 +161,7 @@ func TestReplayPlannerBuildsCompletedToolLoop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.NativeCommits) != 3 || len(plan.SampleUsages) != 2 || len(plan.Turns) != 1 ||
+	if len(plan.NativeCommits) != 4 || len(plan.SampleUsages) != 2 || len(plan.Turns) != 1 ||
 		plan.Turns[0].State != ReplayedTurnCompleted || plan.ToolRecovery != nil || plan.InterruptedTail != nil {
 		t.Fatalf("tool loop replay plan = %#v", plan)
 	}
@@ -161,6 +171,7 @@ func TestReplayPlannerAcceptsOrderedParallelHeterogeneousLedger(t *testing.T) {
 	fixture := newReplayFixture(t)
 	fixture.appendMetadata()
 	fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+	fixture.appendInitialInputs(testTurnID)
 	read := testReplayInvocation(t, "01890f3e-7bcd-7abc-8abc-0123456789ab", "call-0")
 	glob := testReplayGlobInvocation(t, "01890f3e-7bcd-7abc-8abc-0123456789ac", "call-1")
 	fixture.appendBatch(
@@ -187,6 +198,7 @@ func TestReplayPlannerRejectsParallelCompletionOrderPersistence(t *testing.T) {
 	fixture := newReplayFixture(t)
 	fixture.appendMetadata()
 	fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+	fixture.appendInitialInputs(testTurnID)
 	read := testReplayInvocation(t, "01890f3e-7bcd-7abc-8abc-0123456789ab", "call-0")
 	glob := testReplayGlobInvocation(t, "01890f3e-7bcd-7abc-8abc-0123456789ac", "call-1")
 	fixture.appendBatch(
@@ -229,6 +241,7 @@ func TestReplayPlannerReportsToolRecoveryStates(t *testing.T) {
 			fixture := newReplayFixture(t)
 			fixture.appendMetadata()
 			fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+			fixture.appendInitialInputs(testTurnID)
 			invocation := testReplayInvocation(t, "01890f3e-7bcd-7abc-8abc-0123456789ab", "call-1")
 			fixture.appendBatch(
 				mustDraft(t, EventProviderNativeCommit, testTurnID, validNativeCommit()),
@@ -286,6 +299,7 @@ func TestReplayPlannerReportsPatchCrashStates(t *testing.T) {
 			fixture := newReplayFixture(t)
 			fixture.appendMetadata()
 			fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+			fixture.appendInitialInputs(testTurnID)
 			invocation := testReplayPatchInvocation(t)
 			appendReplayCallSample(t, fixture, invocation)
 			fingerprint := tool.NewCandidateFingerprint([]byte("candidate"))
@@ -311,6 +325,7 @@ func TestReplayPlannerRejectsAllowedPatchResultWithoutStart(t *testing.T) {
 	fixture := newReplayFixture(t)
 	fixture.appendMetadata()
 	fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+	fixture.appendInitialInputs(testTurnID)
 	invocation := testReplayPatchInvocation(t)
 	appendReplayCallSample(t, fixture, invocation)
 	fingerprint := tool.NewCandidateFingerprint([]byte("candidate"))
@@ -325,6 +340,7 @@ func TestReplayPlannerAcceptsCancellationBeforeExecutorStart(t *testing.T) {
 	fixture := newReplayFixture(t)
 	fixture.appendMetadata()
 	fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+	fixture.appendInitialInputs(testTurnID)
 	invocation := testReplayInvocation(t, "01890f3e-7bcd-7abc-8abc-0123456789ab", "call-1")
 	appendReplayCallSample(t, fixture, invocation)
 	readInvocation, _ := invocation.Read()
@@ -426,6 +442,7 @@ func TestReplayPlannerRejectsIllegalToolLedgerTransitions(t *testing.T) {
 			fixture := newReplayFixture(t)
 			fixture.appendMetadata()
 			fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+			fixture.appendInitialInputs(testTurnID)
 			invocation := testReplayInvocation(t, "01890f3e-7bcd-7abc-8abc-0123456789ab", "call-1")
 			test.mutate(fixture, invocation)
 			if _, err := NewReplayPlanner().Plan(fixture.loaded()); err == nil || !strings.Contains(err.Error(), "corrupted") {
@@ -671,14 +688,27 @@ func (fixture *replayFixture) loaded() LoadResult {
 
 func validNativeCommit() NativeCommitPayload {
 	return NativeCommitPayload{
-		Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 1,
+		Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 2,
 		Payload: json.RawMessage(`{"kind":"sample"}`),
 	}
 }
 
 func validToolOutputsCommit() NativeCommitPayload {
 	return NativeCommitPayload{
-		Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 1,
+		Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 2,
 		Payload: json.RawMessage(`{"kind":"tool_outputs"}`),
 	}
+}
+
+func (fixture *replayFixture) appendInitialInputs(turnID domain.TurnID) {
+	fixture.t.Helper()
+	association, err := domain.NewInputAssociation(turnID, domain.InputInitial, 0, []domain.InputID{domain.InputID(turnID)})
+	if err != nil {
+		fixture.t.Fatal(err)
+	}
+	draft, err := NewTurnInputsCommittedDraft(association)
+	if err != nil {
+		fixture.t.Fatal(err)
+	}
+	fixture.appendBatch(draft, mustDraft(fixture.t, EventProviderNativeCommit, turnID, NativeCommitPayload{Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 2, Payload: json.RawMessage(`{"kind":"user_inputs"}`)}))
 }

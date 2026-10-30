@@ -31,13 +31,10 @@ func buildMessagesRequest(
 	maxTokens int,
 	history []nativeHistoryEntry,
 	projectInstructions *domain.ProjectInstructionsSnapshot,
-	currentInput *nativeMessage,
 	toolView tool.FacadeView,
 ) messagesRequest {
 	messageCount := len(history)*2 + 1
-	if currentInput == nil {
-		messageCount--
-	}
+
 	if projectInstructions != nil && projectInstructions.HasDocuments() {
 		messageCount++
 	}
@@ -46,18 +43,16 @@ func buildMessagesRequest(
 		messages = append(messages, newUserMessage(projectInstructions.RenderedText()))
 	}
 	for _, entry := range history {
-		if entry.Input != nil {
-			messages = append(messages, entry.Input.clone())
+		for _, message := range entry.UserInputs {
+			messages = append(messages, message.clone())
 		}
 		if entry.Kind == nativeHistorySample {
 			messages = append(messages, entry.Assistant.clone())
-		} else {
+		} else if entry.Kind == nativeHistoryToolOutputs {
 			messages = append(messages, entry.ToolOutputs.clone())
 		}
 	}
-	if currentInput != nil {
-		messages = append(messages, currentInput.clone())
-	}
+
 	tools := make([]anthropicTool, 0, len(toolView.Facades()))
 	for _, facade := range toolView.Facades() {
 		tools = append(tools, anthropicTool{
@@ -78,7 +73,6 @@ func compileMessagesRequest(
 	maxTokens int,
 	history []nativeHistoryEntry,
 	projectInstructions *domain.ProjectInstructionsSnapshot,
-	currentInput *nativeMessage,
 	toolView tool.FacadeView,
 ) (codec.CanonicalJSON, error) {
 	if projectInstructions != nil {
@@ -90,7 +84,7 @@ func compileMessagesRequest(
 		return codec.CanonicalJSON{}, fmt.Errorf("anthropic tool catalog view is invalid")
 	}
 	return codec.MarshalCanonical(
-		buildMessagesRequest(model, maxTokens, history, projectInstructions, currentInput, toolView),
+		buildMessagesRequest(model, maxTokens, history, projectInstructions, toolView),
 		maxMessagesRequestBytes,
 	)
 }

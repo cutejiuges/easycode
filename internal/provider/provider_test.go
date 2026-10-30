@@ -16,7 +16,7 @@ import (
 
 func TestTurnInputProjectInstructionsAreOptionalAndImmutable(t *testing.T) {
 	t.Parallel()
-	plain := TurnInput{Text: "hello"}
+	plain := NewSamplingInput()
 	if _, exists, err := plain.ProjectInstructions(); err != nil || exists {
 		t.Fatalf("plain project instructions = exists %t, err %v", exists, err)
 	}
@@ -43,9 +43,10 @@ func TestTurnInputProjectInstructionsAreOptionalAndImmutable(t *testing.T) {
 	if err != nil || !exists || len(second.Documents()) != 1 || second.Documents()[0].Content() != "follow the project rules" {
 		t.Fatalf("project instructions share mutable state: %#v, exists %t, err %v", second, exists, err)
 	}
-	if attached.Text != "hello" || plain.Text != "hello" {
-		t.Fatalf("attaching project instructions changed user text: %#v %#v", attached, plain)
+	if attached.Validate() != nil || plain.Validate() != nil {
+		t.Fatal("snapshot attachment invalidated sampling input")
 	}
+
 }
 
 func TestTurnInputAcceptsExplicitEmptyProjectInstructions(t *testing.T) {
@@ -54,7 +55,7 @@ func TestTurnInputAcceptsExplicitEmptyProjectInstructions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := (TurnInput{Text: "hello"}).WithProjectInstructions(snapshot)
+	input, err := (NewSamplingInput()).WithProjectInstructions(snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}

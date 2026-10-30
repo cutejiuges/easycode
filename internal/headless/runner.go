@@ -133,6 +133,9 @@ func consumeEvent(
 	if err != nil {
 		return consumeResult{result: reportProtocolError(session, events, encoder)}, true
 	}
+	if projected.event == nil {
+		return consumeResult{}, false
+	}
 	if mode == ModeText && projected.text != "" {
 		text.WriteString(projected.text)
 	}

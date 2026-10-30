@@ -40,20 +40,15 @@ func buildResponsesRequest(
 	model string,
 	history []nativeHistoryEntry,
 	projectInstructions *domain.ProjectInstructionsSnapshot,
-	currentInput *NativeItem,
 	toolView tool.FacadeView,
 ) responsesRequest {
 	itemCount := 0
-	if currentInput != nil {
-		itemCount++
-	}
+
 	if projectInstructions != nil && projectInstructions.HasDocuments() {
 		itemCount++
 	}
 	for _, entry := range history {
-		if entry.Input != nil {
-			itemCount++
-		}
+		itemCount += len(entry.UserInputs)
 		itemCount += len(entry.Outputs) + len(entry.ToolOutputs)
 	}
 	input := make([]NativeItem, 0, itemCount)
@@ -61,8 +56,8 @@ func buildResponsesRequest(
 		input = append(input, NewUserItem(projectInstructions.RenderedText()))
 	}
 	for _, entry := range history {
-		if entry.Input != nil {
-			input = append(input, entry.Input.clone())
+		for _, item := range entry.UserInputs {
+			input = append(input, item.clone())
 		}
 		for _, item := range entry.Outputs {
 			input = append(input, item.clone())
@@ -71,9 +66,7 @@ func buildResponsesRequest(
 			input = append(input, item.clone())
 		}
 	}
-	if currentInput != nil {
-		input = append(input, currentInput.clone())
-	}
+
 	tools := make([]responseTool, 0, len(toolView.Facades()))
 	for _, facade := range toolView.Facades() {
 		switch facade.WireKind() {
@@ -98,7 +91,6 @@ func compileResponsesRequest(
 	model string,
 	history []nativeHistoryEntry,
 	projectInstructions *domain.ProjectInstructionsSnapshot,
-	currentInput *NativeItem,
 	toolView tool.FacadeView,
 ) (codec.CanonicalJSON, error) {
 	if projectInstructions != nil {
@@ -110,7 +102,7 @@ func compileResponsesRequest(
 		return codec.CanonicalJSON{}, fmt.Errorf("OpenAI tool catalog view is invalid")
 	}
 	return codec.MarshalCanonical(
-		buildResponsesRequest(model, history, projectInstructions, currentInput, toolView),
+		buildResponsesRequest(model, history, projectInstructions, toolView),
 		maxResponsesRequestBytes,
 	)
 }

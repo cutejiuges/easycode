@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"easycode/internal/codec"
+	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/provider"
 	"easycode/internal/provider/transport"
@@ -97,7 +98,7 @@ func TestConversationIgnoresRepeatedCompletedTerminal(t *testing.T) {
 	stream <- anthropicEvent(`{"type":"message_stop"}`)
 	close(stream)
 	output := make(chan provider.StreamEvent, 16)
-	conversation.consumeStream(context.Background(), func() {}, nativeMessagePointer(newUserMessage("question")), testAnthropicToolCatalog(t), stream, output)
+	testConsumeStream(t, conversation, context.Background(), func() {}, nativeMessagePointer(newUserMessage("question")), testAnthropicToolCatalog(t), stream, output)
 	terminalCount := 0
 	for event := range output {
 		if !event.Kind().Terminal() {
@@ -107,14 +108,14 @@ func TestConversationIgnoresRepeatedCompletedTerminal(t *testing.T) {
 		if event.Kind() != provider.StreamEventCompleted || event.PreparedSample() == nil {
 			t.Fatalf("terminal = %#v", event)
 		}
-		if len(conversation.historySnapshot()) != 0 {
+		if len(conversation.historySnapshot()) != 1 {
 			t.Fatal("sample committed before finalization")
 		}
 		if err := event.PreparedSample().Finalize(); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if terminalCount != 1 || len(conversation.historySnapshot()) != 1 {
+	if terminalCount != 1 || len(conversation.historySnapshot()) != 2 {
 		t.Fatalf("terminal count/history = %d/%#v", terminalCount, conversation.historySnapshot())
 	}
 }
@@ -141,7 +142,7 @@ func TestConversationCancelCompletedRaceHasOneTerminal(t *testing.T) {
 		senders.Wait()
 		close(stream)
 		output := make(chan provider.StreamEvent, 16)
-		conversation.consumeStream(ctx, func() {}, nativeMessagePointer(newUserMessage("question")), testAnthropicToolCatalog(t), stream, output)
+		testConsumeStream(t, conversation, ctx, func() {}, nativeMessagePointer(newUserMessage("question")), testAnthropicToolCatalog(t), stream, output)
 		terminalCount := 0
 		for event := range output {
 			if !event.Kind().Terminal() {
@@ -199,18 +200,18 @@ func TestProviderCreatesIsolatedConversations(t *testing.T) {
 
 	first := instance.NewConversation().(*Conversation)
 	second := instance.NewConversation().(*Conversation)
-	first.history.commit(nativeHistoryEntry{
-		Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("first")),
+	testCommitHistory(t, &first.history, testInputEntry(t, newUserMessage("first")), nativeHistoryEntry{
+		Kind:      nativeHistorySample,
 		Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeText, Text: "answer"}}},
 	})
 
-	if len(first.historySnapshot()) != 1 {
+	if len(first.historySnapshot()) != 2 {
 		t.Fatalf("first history: %#v", first.historySnapshot())
 	}
 	if len(second.historySnapshot()) != 0 {
 		t.Fatalf("second conversation shared history: %#v", second.historySnapshot())
 	}
-	if got := first.ProjectHistory(); len(got.Turns) != 1 || got.Turns[0].UserText != "first" || got.Turns[0].AssistantText != "answer" {
+	if got := first.ProjectHistory(); len(got.Turns) != 1 || got.Turns[0].Messages[0].Text != "first" || got.Turns[0].Messages[1].Text != "answer" {
 		t.Fatalf("first projection: %#v", got)
 	}
 	if got := second.ProjectHistory(); got.Turns == nil || len(got.Turns) != 0 {
@@ -250,13 +251,13 @@ func TestConversationAllowsOnlyOneActiveTurn(t *testing.T) {
 	defer closeAnthropicProvider(t, instance)
 	conversation := instance.NewConversation().(*Conversation)
 	ctx, cancel := context.WithCancel(context.Background())
-	stream, err := conversation.Stream(ctx, testAnthropicTurnInput(t, "first"))
+	stream, err := conversation.Stream(ctx, testAnthropicTurnInput(t, conversation, "first"))
 	if err != nil {
 		t.Fatalf("start first turn: %v", err)
 	}
 	<-requestStarted
 
-	second, err := conversation.Stream(context.Background(), testAnthropicTurnInput(t, "second"))
+	second, err := conversation.Stream(context.Background(), provider.NewSamplingInput())
 	if second != nil {
 		t.Fatalf("concurrent turn returned stream: %#v", second)
 	}
@@ -269,7 +270,7 @@ func TestConversationAllowsOnlyOneActiveTurn(t *testing.T) {
 	}
 	nextContext, cancelNext := context.WithCancel(context.Background())
 	cancelNext()
-	if next, nextErr := conversation.Stream(nextContext, testAnthropicTurnInput(t, "next")); next != nil || !errors.Is(nextErr, context.Canceled) {
+	if next, nextErr := conversation.Stream(nextContext, testAnthropicTurnInput(t, conversation, "next")); next != nil || !errors.Is(nextErr, context.Canceled) {
 		t.Fatalf("next stream after cleanup = %#v, %v", next, nextErr)
 	}
 }
@@ -303,11 +304,11 @@ func TestConversationPublishesOrderedEventsAndCommitsOnMessageStop(t *testing.T)
 		}
 	}
 	history := conversation.historySnapshot()
-	if len(history) != 1 || history[0].Input.Content[0].Text != "hello" || history[0].Assistant.Content[0].Text != "hello" {
+	if len(history) != 2 || history[0].UserInputs[0].Content[0].Text != "hello" || history[1].Assistant.Content[0].Text != "hello" {
 		t.Fatalf("committed history: %#v", history)
 	}
-	if history[0].Metadata.ID != "msg-1" || history[0].Metadata.StopReason.Value != "end_turn" || history[0].Metadata.Usage.OutputTokens.Value != 2 {
-		t.Fatalf("committed metadata: %#v", history[0].Metadata)
+	if history[1].Metadata.ID != "msg-1" || history[1].Metadata.StopReason.Value != "end_turn" || history[1].Metadata.Usage.OutputTokens.Value != 2 {
+		t.Fatalf("committed metadata: %#v", history[1].Metadata)
 	}
 }
 
@@ -347,7 +348,7 @@ func TestConversationDiscardsFailedStagingBeforeNextTurn(t *testing.T) {
 	}
 	defer closeAnthropicProvider(t, instance)
 	conversation := instance.NewConversation().(*Conversation)
-	failedStream, err := conversation.Stream(context.Background(), testAnthropicTurnInput(t, "failed user"))
+	failedStream, err := conversation.Stream(context.Background(), testAnthropicTurnInput(t, conversation, "failed user"))
 	if err != nil {
 		t.Fatalf("start failed turn: %v", err)
 	}
@@ -356,17 +357,17 @@ func TestConversationDiscardsFailedStagingBeforeNextTurn(t *testing.T) {
 		t.Fatalf("failed terminal: %#v", failedTerminal)
 	}
 	assertFaultCode(t, failedTerminal.Error(), fault.CodeStreamProtocol)
-	if len(conversation.historySnapshot()) != 0 {
+	if len(conversation.historySnapshot()) != 1 {
 		t.Fatalf("failed turn committed: %#v", conversation.historySnapshot())
 	}
-	if projection := conversation.ProjectHistory(); len(projection.Turns) != 0 {
+	if projection := conversation.ProjectHistory(); len(projection.Turns) != 1 || len(projection.Turns[0].Messages) != 1 || projection.Turns[0].Messages[0].Role != domain.SemanticUser {
 		t.Fatalf("failed turn projected: %#v", projection)
 	}
 
 	runCompletedAnthropicTurn(t, conversation, "second")
 	mu.Lock()
 	defer mu.Unlock()
-	if len(requests) != 2 || len(requests[1].Messages) != 1 || requests[1].Messages[0].Content[0].Text != "second" {
+	if len(requests) != 2 || len(requests[1].Messages) != 2 || requests[1].Messages[0].Content[0].Text != "failed user" || requests[1].Messages[1].Content[0].Text != "second" {
 		t.Fatalf("second request contains failed staging: %#v", requests)
 	}
 }
@@ -407,7 +408,7 @@ func TestConversationMapsStreamFailuresWithoutCommitting(t *testing.T) {
 			}
 			defer closeAnthropicProvider(t, instance)
 			conversation := instance.NewConversation().(*Conversation)
-			stream, err := conversation.Stream(context.Background(), testAnthropicTurnInputWithProject(t, "hello"))
+			stream, err := conversation.Stream(context.Background(), testAnthropicTurnInputWithProject(t, conversation, "hello"))
 			if err != nil {
 				t.Fatalf("start stream: %v", err)
 			}
@@ -419,10 +420,10 @@ func TestConversationMapsStreamFailuresWithoutCommitting(t *testing.T) {
 			if strings.Contains(terminal.Error().Error(), "sensitive response") {
 				t.Fatalf("terminal leaked provider body: %v", terminal.Error())
 			}
-			if len(conversation.historySnapshot()) != 0 {
+			if len(conversation.historySnapshot()) != 1 {
 				t.Fatalf("failed stream committed history: %#v", conversation.historySnapshot())
 			}
-			if projection := conversation.ProjectHistory(); len(projection.Turns) != 0 {
+			if projection := conversation.ProjectHistory(); len(projection.Turns) != 1 || len(projection.Turns[0].Messages) != 1 || projection.Turns[0].Messages[0].Role != domain.SemanticUser {
 				t.Fatalf("failed stream projected history: %#v", projection)
 			}
 		})
@@ -463,7 +464,7 @@ func TestConversationCancelAndIdleTimeoutCleanUpRequest(t *testing.T) {
 			defer closeAnthropicProvider(t, instance)
 			ctx, cancel := context.WithCancel(context.Background())
 			conversation := instance.NewConversation().(*Conversation)
-			stream, err := conversation.Stream(ctx, testAnthropicTurnInputWithProject(t, "hello"))
+			stream, err := conversation.Stream(ctx, testAnthropicTurnInputWithProject(t, conversation, "hello"))
 			if err != nil {
 				t.Fatalf("start stream: %v", err)
 			}
@@ -477,10 +478,10 @@ func TestConversationCancelAndIdleTimeoutCleanUpRequest(t *testing.T) {
 				t.Fatalf("terminal: %#v", terminal)
 			}
 			assertFaultCode(t, terminal.Error(), test.wantCode)
-			if projection := conversation.ProjectHistory(); len(projection.Turns) != 0 {
+			if projection := conversation.ProjectHistory(); len(projection.Turns) != 1 || len(projection.Turns[0].Messages) != 1 || projection.Turns[0].Messages[0].Role != domain.SemanticUser {
 				t.Fatalf("cancelled or timed out turn projected: %#v", projection)
 			}
-			if len(conversation.historySnapshot()) != 0 {
+			if len(conversation.historySnapshot()) != 1 {
 				t.Fatalf("cancelled or timed out turn committed: %#v", conversation.historySnapshot())
 			}
 			select {
@@ -492,10 +493,11 @@ func TestConversationCancelAndIdleTimeoutCleanUpRequest(t *testing.T) {
 	}
 }
 
-func testAnthropicTurnInputWithProject(t *testing.T, text string) provider.TurnInput {
+func testAnthropicTurnInputWithProject(t *testing.T, conversation provider.Conversation, text string) provider.TurnInput {
 	t.Helper()
+	testCommitUserInput(t, conversation.(*Conversation), text)
 	snapshot := testAnthropicProjectInstructions(t, "AGENTS.md", "project-only-marker")
-	input, err := (provider.TurnInput{Text: text}).WithProjectInstructions(snapshot)
+	input, err := provider.NewSamplingInput().WithProjectInstructions(snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -520,7 +522,7 @@ func TestConversationRejectsOversizedEvent(t *testing.T) {
 	}
 	defer closeAnthropicProvider(t, instance)
 	conversation := instance.NewConversation().(*Conversation)
-	stream, err := conversation.Stream(context.Background(), testAnthropicTurnInput(t, "hello"))
+	stream, err := conversation.Stream(context.Background(), testAnthropicTurnInput(t, conversation, "hello"))
 	if err != nil {
 		t.Fatalf("start stream: %v", err)
 	}
@@ -529,7 +531,7 @@ func TestConversationRejectsOversizedEvent(t *testing.T) {
 		t.Fatalf("terminal: %#v", terminal)
 	}
 	assertFaultCode(t, terminal.Error(), fault.CodeStreamProtocol)
-	if len(conversation.historySnapshot()) != 0 {
+	if len(conversation.historySnapshot()) != 1 {
 		t.Fatalf("oversized event committed history: %#v", conversation.historySnapshot())
 	}
 }

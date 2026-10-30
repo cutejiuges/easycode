@@ -12,18 +12,21 @@ func (conversation *Conversation) ProjectHistory() domain.SemanticHistoryView {
 }
 
 func projectHistory(history []nativeHistoryEntry) domain.SemanticHistoryView {
-	turns := make([]domain.SemanticTurn, 0, len(history))
+	turns := make([]domain.SemanticTurn, 0)
 	for _, entry := range history {
-		if entry.Kind != nativeHistorySample {
+		if entry.Kind == nativeHistoryToolOutputs {
 			continue
 		}
-		assistantText := projectMessageText(entry.Assistant, roleAssistant)
-		if entry.Input != nil {
-			turns = append(turns, domain.SemanticTurn{
-				UserText: projectMessageText(*entry.Input, roleUser), AssistantText: assistantText,
-			})
-		} else if len(turns) > 0 {
-			turns[len(turns)-1].AssistantText += assistantText
+		if len(turns) == 0 || turns[len(turns)-1].TurnID != entry.TurnID {
+			turns = append(turns, domain.SemanticTurn{TurnID: entry.TurnID, Messages: make([]domain.SemanticMessage, 0)})
+		}
+		turn := &turns[len(turns)-1]
+		if entry.Kind == nativeHistoryUserInputs {
+			for i, input := range entry.UserInputs {
+				turn.Messages = append(turn.Messages, domain.SemanticMessage{Role: domain.SemanticUser, InputID: entry.InputMetadata.InputIDs[i], Text: projectMessageText(input, roleUser)})
+			}
+		} else if text := projectMessageText(entry.Assistant, roleAssistant); text != "" {
+			turn.Messages = append(turn.Messages, domain.SemanticMessage{Role: domain.SemanticAssistant, Text: text})
 		}
 	}
 	return domain.SemanticHistoryView{Provider: domain.ProviderAnthropic, Turns: turns}

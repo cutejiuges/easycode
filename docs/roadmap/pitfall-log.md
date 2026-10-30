@@ -694,3 +694,12 @@
 - 修复方案：校验与正文构造分离，所有宿主有效输入原样进入 Provider；只有 TUI 规范化 CRLF/CR。输入、布局、历史按职责组合，接收前保留快照，拒绝恢复且不产生幽灵 transcript。不要使用第二个 stdin reader 或计时猜测粘贴。
 - 缓存影响：未裁剪正文将合法改变请求字节；固定多行 golden、原生顺序、恢复请求和 fingerprint 等价回归，Tool catalog 与稳定前缀不变。
 - 验证：`internal/tui/composer_terminal_test.go` 用真实 Bubble Tea Program 和受控 reader 验证分块输入；`internal/app/composer_e2e_test.go` 验证双 Provider、三种 headless 模式和恢复。原始终端未闭合 paste 内存上限、U+FFFD 保真和增强键盘协议须单独设计，不冒充已解决。
+
+## 2026-10-30：追加输入必须先预检再持久化
+
+- 影响变更：`add-same-turn-steering`。
+- 问题：若先保存输入再发现上下文或请求超限，该正文会留在原生历史，用户缩短重提仍无法恢复可请求状态。UI admission 也不能等同 durable commit。
+- 处理：Provider 私有候选历史暴露只读 preview；Context 与请求编译使用相同快照纯内存预检，通过后提交输入关联与原生 commit。Sync/finalize 后才投影正式正文；取消遵循 writer admission，未知结果 poison 并禁止重试。
+- 复用：输入与工具输出共享私有 prepared resolution 骨架；Session 保持唯一 writer/lease/codec；TUI 仅有一个控制输出消费者和不可执行本地副本。
+- 验证：`internal/runtime/input_commit_test.go`、`internal/runtime/steering_test.go`、双 Provider 的 `steering_test.go`、`internal/session/input_commit_test.go`、`internal/tui/input_test.go` 和 `internal/app/resume_e2e_test.go` 覆盖取消、FIFO、原子取回、原生恢复及 input-only/steering 固定 fixtures。
+- 后续边界：队列/returned 不跨进程保存，uncertain 不能重新排队；工具预算、原生 reasoning、已发布协议兼容均不得通过同轮输入偷偷降级。

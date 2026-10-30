@@ -13,7 +13,7 @@ import (
 func TestNativeCommitRoundTripPreservesPrivateResponsesItems(t *testing.T) {
 	t.Parallel()
 	entry := nativeHistoryEntry{
-		Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("question")),
+		Kind: nativeHistorySample,
 		Outputs: []NativeItem{
 			{
 				Type: "reasoning", ID: "reason-1", Phase: "analysis",
@@ -44,7 +44,7 @@ func TestNativeCommitRoundTripPreservesPrivateResponsesItems(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Input.Content[0].Text != "question" || len(decoded.Outputs) != 3 ||
+	if len(decoded.Outputs) != 3 ||
 		decoded.Outputs[0].Phase != "analysis" || decoded.Outputs[0].EncryptedContent != "opaque-encrypted" ||
 		decoded.Outputs[1].Phase != "final" || decoded.Outputs[1].Content[0].Text != "answer" ||
 		!bytes.Equal(decoded.Outputs[2].Raw, entry.Outputs[2].Raw) {
@@ -64,7 +64,7 @@ func TestNativeCommitRoundTripPreservesPrivateResponsesItems(t *testing.T) {
 func TestNativeCommitCanonicalGolden(t *testing.T) {
 	t.Parallel()
 	envelope, err := encodeNativeCommit(nativeHistoryEntry{
-		Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("hello")),
+		Kind: nativeHistorySample,
 		Outputs: []NativeItem{{
 			Type: "message", ID: "msg-1", Role: "assistant", Phase: "final",
 			Content: []ContentPart{{Type: "output_text", Text: "world"}},
@@ -73,7 +73,7 @@ func TestNativeCommitCanonicalGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `{"kind":"sample","input":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},"outputs":[{"type":"message","id":"msg-1","role":"assistant","phase":"final","content":[{"type":"output_text","text":"world"}]}],"usage":{"input_tokens":{"known":false},"cached_input_tokens":{"known":false},"cache_write_tokens":{"known":false},"output_tokens":{"known":false},"reasoning_output_tokens":{"known":false}}}`
+	const want = `{"kind":"sample","outputs":[{"type":"message","id":"msg-1","role":"assistant","phase":"final","content":[{"type":"output_text","text":"world"}]}],"usage":{"input_tokens":{"known":false},"cached_input_tokens":{"known":false},"cache_write_tokens":{"known":false},"output_tokens":{"known":false},"reasoning_output_tokens":{"known":false}}}`
 	if got := string(envelope.Payload()); got != want {
 		t.Fatalf("OpenAI native commit golden changed:\n%s", got)
 	}
@@ -81,7 +81,7 @@ func TestNativeCommitCanonicalGolden(t *testing.T) {
 
 func TestNativeCommitRejectsIncompatibleAndCorruptPayloads(t *testing.T) {
 	t.Parallel()
-	validPayload := json.RawMessage(`{"kind":"sample","input":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},"outputs":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"world"}]}],"usage":{"input_tokens":{"known":false},"cached_input_tokens":{"known":false},"cache_write_tokens":{"known":false},"output_tokens":{"known":false},"reasoning_output_tokens":{"known":false}}}`)
+	validPayload := json.RawMessage(`{"kind":"sample","outputs":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"world"}]}],"usage":{"input_tokens":{"known":false},"cached_input_tokens":{"known":false},"cache_write_tokens":{"known":false},"output_tokens":{"known":false},"reasoning_output_tokens":{"known":false}}}`)
 	fixtures := []struct {
 		name    string
 		family  domain.ProviderFamily
@@ -89,12 +89,12 @@ func TestNativeCommitRejectsIncompatibleAndCorruptPayloads(t *testing.T) {
 		version int
 		payload json.RawMessage
 	}{
-		{name: "family", family: domain.ProviderAnthropic, wire: responsesWire, version: 1, payload: validPayload},
-		{name: "wire", family: domain.ProviderOpenAI, wire: "chat_completions", version: 1, payload: validPayload},
-		{name: "revision", family: domain.ProviderOpenAI, wire: responsesWire, version: 2, payload: validPayload},
-		{name: "kind", family: domain.ProviderOpenAI, wire: responsesWire, version: 1, payload: json.RawMessage(`{"kind":"future","input":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},"outputs":[{"type":"message","role":"assistant"}]}`)},
-		{name: "missing outputs", family: domain.ProviderOpenAI, wire: responsesWire, version: 1, payload: json.RawMessage(`{"kind":"sample","input":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},"outputs":[],"usage":{"input_tokens":{"known":false},"cached_input_tokens":{"known":false},"cache_write_tokens":{"known":false},"output_tokens":{"known":false},"reasoning_output_tokens":{"known":false}}}`)},
-		{name: "unknown outer", family: domain.ProviderOpenAI, wire: responsesWire, version: 1, payload: json.RawMessage(`{"kind":"sample","input":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},"outputs":[{"type":"message","role":"assistant"}],"future":true}`)},
+		{name: "family", family: domain.ProviderAnthropic, wire: responsesWire, version: 2, payload: validPayload},
+		{name: "wire", family: domain.ProviderOpenAI, wire: "chat_completions", version: 2, payload: validPayload},
+		{name: "revision", family: domain.ProviderOpenAI, wire: responsesWire, version: 1, payload: validPayload},
+		{name: "kind", family: domain.ProviderOpenAI, wire: responsesWire, version: 2, payload: json.RawMessage(`{"kind":"future","outputs":[{"type":"message","role":"assistant"}]}`)},
+		{name: "missing outputs", family: domain.ProviderOpenAI, wire: responsesWire, version: 2, payload: json.RawMessage(`{"kind":"sample","outputs":[],"usage":{"input_tokens":{"known":false},"cached_input_tokens":{"known":false},"cache_write_tokens":{"known":false},"output_tokens":{"known":false},"reasoning_output_tokens":{"known":false}}}`)},
+		{name: "unknown outer", family: domain.ProviderOpenAI, wire: responsesWire, version: 2, payload: json.RawMessage(`{"kind":"sample","outputs":[{"type":"message","role":"assistant"}],"future":true}`)},
 	}
 	for _, fixture := range fixtures {
 		fixture := fixture
@@ -112,7 +112,7 @@ func TestNativeCommitRejectsIncompatibleAndCorruptPayloads(t *testing.T) {
 
 func TestNativeCommitRejectsSampleWithoutUsage(t *testing.T) {
 	t.Parallel()
-	payload := json.RawMessage(`{"kind":"sample","input":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]},"outputs":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"world"}]}]}`)
+	payload := json.RawMessage(`{"kind":"sample","outputs":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"world"}]}]}`)
 	envelope, err := provider.NewNativeCommitEnvelope(domain.ProviderOpenAI, responsesWire, nativeCommitPayloadRevision, payload)
 	if err != nil {
 		t.Fatal(err)
@@ -125,7 +125,7 @@ func TestNativeCommitRejectsSampleWithoutUsage(t *testing.T) {
 func TestNativeCommitRejectsOversizedPayload(t *testing.T) {
 	t.Parallel()
 	entry := nativeHistoryEntry{
-		Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("hello")),
+		Kind: nativeHistorySample,
 		Outputs: []NativeItem{{
 			Type: "future_item",
 			Raw:  append(append(json.RawMessage(`{"type":"future_item","data":"`), bytes.Repeat([]byte{'x'}, provider.MaxNativeCommitBytes)...), []byte(`"}`)...),

@@ -60,21 +60,17 @@ func TestImmutableExecFixtureRestoresRealProviderNativePairs(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer factory.Close()
-			var commits []provider.NativeCommitEnvelope
-			for _, native := range plan.NativeCommits {
-				payload := native.Commit
-				commit, err := provider.NewNativeCommitEnvelope(payload.Provider, payload.Wire, payload.PayloadVersion, payload.Payload)
-				if err != nil {
-					t.Fatal(err)
-				}
-				commits = append(commits, commit)
+			commits, err := nativeRestoreRecords(plan.NativeCommits)
+			if err != nil {
+				t.Fatal(err)
 			}
+
 			conversation, err := factory.RestoreConversation(commits)
 			if err != nil {
 				t.Fatal(err)
 			}
 			view := conversation.ProjectHistory()
-			if len(view.Turns) != 1 || view.Turns[0].UserText != "Inspect, edit and verify" {
+			if len(view.Turns) != 1 || view.Turns[0].Messages[0].Text != "Inspect, edit and verify" {
 				t.Fatal("native fixture changed history boundaries")
 			}
 			call := plan.ToolRecovery.Calls()[0]
@@ -97,7 +93,11 @@ func TestImmutableExecFixtureRestoresRealProviderNativePairs(t *testing.T) {
 			if err := prepared.Finalize(); err != nil {
 				t.Fatal(err)
 			}
-			commits = append(commits, envelope)
+			outputRecord, err := provider.NewToolOutputRestoreRecord(plan.ToolRecovery.TurnID(), envelope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			commits = append(commits, outputRecord)
 			if _, err := factory.RestoreConversation(commits); err != nil {
 				t.Fatalf("compensated native pairs invalid: %v", err)
 			}

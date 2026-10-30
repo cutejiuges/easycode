@@ -91,7 +91,7 @@ func TestWriteEndToEndCreateReadOverwriteAndVerify(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			events, err := control.Submit(context.Background(), "Create and then rewrite the files")
+			events, err := submitInteractiveFixture(t, control, context.Background(), "Create and then rewrite the files")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -206,7 +206,7 @@ func TestWriteEndToEndPreparationDenialAndConflict(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				events, err := control.Submit(context.Background(), "Rewrite a")
+				events, err := submitInteractiveFixture(t, control, context.Background(), "Rewrite a")
 				if err != nil {
 					t.Fatal(err)
 				}

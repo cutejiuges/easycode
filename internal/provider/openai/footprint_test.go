@@ -15,19 +15,19 @@ func TestHistoryFootprintCountsCommittedVisibleAndOpaqueItems(t *testing.T) {
 	t.Parallel()
 	conversation := &Conversation{}
 	entry := nativeHistoryEntry{
-		Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("hello")),
+		Kind: nativeHistorySample,
 		Outputs: []NativeItem{
 			{Type: "reasoning", ID: "reason-1", ReasoningSummary: []ReasoningSummaryPart{{Type: "summary_text", Text: "private"}}, EncryptedContent: "opaque-encrypted"},
 			{Type: "message", ID: "message-1", Role: "assistant", Phase: "final", Content: []ContentPart{{Type: "output_text", Text: "answer"}}},
 			{Type: "future_item", Raw: json.RawMessage(`{"type":"future_item","opaque":{"value":2}}`)},
 		},
 	}
-	conversation.history.commit(entry)
+	testCommitHistory(t, &conversation.history, testInputEntry(t, NewUserItem("hello")), entry)
 	footprint, err := conversation.HistoryFootprint()
 	if err != nil {
 		t.Fatal(err)
 	}
-	user, _ := json.Marshal(entry.Input)
+	user, _ := json.Marshal(NewUserItem("hello"))
 	bytesTotal := uint64(len(user))
 	for _, item := range entry.Outputs {
 		encoded, _ := json.Marshal(item)
@@ -35,7 +35,7 @@ func TestHistoryFootprintCountsCommittedVisibleAndOpaqueItems(t *testing.T) {
 	}
 	want := estimate.ByteCount(bytesTotal)
 	got, known := footprint.Estimate().Tokens()
-	if footprint.Family() != domain.ProviderOpenAI || footprint.Revision() != 1 ||
+	if footprint.Family() != domain.ProviderOpenAI || footprint.Revision() != 2 ||
 		footprint.Estimate().Method() != estimate.MethodByteHeuristic || !known || got != want {
 		t.Fatalf("footprint = family %q revision %d estimate %#v", footprint.Family(), footprint.Revision(), footprint.Estimate())
 	}
@@ -78,7 +78,7 @@ func TestHistoryFootprintDoesNotChangeNextResponsesRequest(t *testing.T) {
 	conversation := &Conversation{}
 	conversation.history.commit(validFootprintEntry())
 	next := NewUserItem("next")
-	before, err := compileResponsesRequest("gpt-test", conversation.history.snapshot(), nil, nativeItemPointer(next), testOpenAIToolView(t))
+	before, err := compileResponsesRequest("gpt-test", append(conversation.history.snapshot(), testInputEntry(t, next)), nil, testOpenAIToolView(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestHistoryFootprintDoesNotChangeNextResponsesRequest(t *testing.T) {
 	if _, err := conversation.HistoryFootprint(); err != nil {
 		t.Fatal(err)
 	}
-	after, err := compileResponsesRequest("gpt-test", conversation.history.snapshot(), nil, nativeItemPointer(next), testOpenAIToolView(t))
+	after, err := compileResponsesRequest("gpt-test", append(conversation.history.snapshot(), testInputEntry(t, next)), nil, testOpenAIToolView(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestHistoryFootprintDoesNotChangeNextResponsesRequest(t *testing.T) {
 
 func validFootprintEntry() nativeHistoryEntry {
 	return nativeHistoryEntry{
-		Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("hello")),
+		Kind: nativeHistorySample,
 		Outputs: []NativeItem{{
 			Type: "message", Role: "assistant", Phase: "final",
 			Content: []ContentPart{{Type: "output_text", Text: "answer"}},
@@ -127,7 +127,7 @@ func footprintUsage(t *testing.T) domain.SampleUsage {
 
 func TestDiscardedPreparedSamplePreservesNextRequest(t *testing.T) {
 	conversation := &Conversation{}
-	before, err := compileResponsesRequest("gpt-test", conversation.history.snapshot(), nil, nativeItemPointer(NewUserItem("next")), testOpenAIToolView(t))
+	before, err := compileResponsesRequest("gpt-test", append(conversation.history.snapshot(), testInputEntry(t, NewUserItem("next"))), nil, testOpenAIToolView(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,10 @@ func TestDiscardedPreparedSamplePreservesNextRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	finalized, discarded := 0, 0
-	prepared, err := provider.NewPreparedSample(envelope, footprintUsage(t), func() { finalized++; conversation.history.commit(entry) }, func() { discarded++ })
+	prepared, err := provider.NewPreparedSample(envelope, footprintUsage(t), func() {
+		finalized++
+		testCommitHistory(t, &conversation.history, testInputEntry(t, NewUserItem("hello")), entry)
+	}, func() { discarded++ })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +154,7 @@ func TestDiscardedPreparedSamplePreservesNextRequest(t *testing.T) {
 	if err != nil || footprint.Revision() != 0 {
 		t.Fatal("discard changed history revision")
 	}
-	after, err := compileResponsesRequest("gpt-test", conversation.history.snapshot(), nil, nativeItemPointer(NewUserItem("next")), testOpenAIToolView(t))
+	after, err := compileResponsesRequest("gpt-test", append(conversation.history.snapshot(), testInputEntry(t, NewUserItem("next"))), nil, testOpenAIToolView(t))
 	if err != nil {
 		t.Fatal(err)
 	}

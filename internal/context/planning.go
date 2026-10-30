@@ -113,49 +113,18 @@ type ProviderProfile struct {
 	model  string
 }
 
-// CurrentInputKind 区分首个用户 sample 与工具结果后的继续采样。
-type CurrentInputKind string
+// CurrentInput 表达没有额外正文的当前采样状态。
+type CurrentInput struct{ sampling bool }
 
-const (
-	CurrentInputUserText         CurrentInputKind = "user_text"
-	CurrentInputToolContinuation CurrentInputKind = "tool_continuation"
-)
+// NewSamplingInput 创建仅从候选或已提交历史估算的采样标记。
+func NewSamplingInput() CurrentInput { return CurrentInput{sampling: true} }
 
-// CurrentInput 是上下文计划使用的封闭当前输入值。
-type CurrentInput struct {
-	kind CurrentInputKind
-	text string
-}
-
-// NewUserTextInput 创建首个 sample 的用户文本输入。
-func NewUserTextInput(text string) CurrentInput {
-	return CurrentInput{kind: CurrentInputUserText, text: text}
-}
-
-// NewToolContinuationInput 创建不附加共享用户文本的工具继续采样输入。
-func NewToolContinuationInput() CurrentInput {
-	return CurrentInput{kind: CurrentInputToolContinuation}
-}
-
-// Kind 返回 current input variant。
-func (input CurrentInput) Kind() CurrentInputKind { return input.kind }
-
-// Text 返回用户输入；tool continuation 固定为空。
-func (input CurrentInput) Text() string { return input.text }
-
-// Validate 拒绝未知 variant 和带伪造文本的 continuation。
+// Validate 拒绝未显式初始化的采样标记。
 func (input CurrentInput) Validate() error {
-	switch input.kind {
-	case CurrentInputUserText:
-		return nil
-	case CurrentInputToolContinuation:
-		if input.text != "" {
-			return fmt.Errorf("tool continuation must not contain user text")
-		}
-		return nil
-	default:
-		return fmt.Errorf("current input kind is invalid")
+	if !input.sampling {
+		return fmt.Errorf("sampling input is required")
 	}
+	return nil
 }
 
 // NewProviderProfile 创建不包含连接凭据的 Provider profile。
@@ -242,6 +211,11 @@ func (input PlanningInput) Validate() error {
 	}
 	if input.history.Turns == nil {
 		return fmt.Errorf("semantic history turns must not be nil")
+	}
+	for _, turn := range input.history.Turns {
+		if err := turn.Validate(); err != nil {
+			return fmt.Errorf("semantic history turn is invalid: %w", err)
+		}
 	}
 	if err := input.footprint.Validate(); err != nil {
 		return err
@@ -403,9 +377,7 @@ func (*Planner) Plan(input PlanningInput) (ContextPlan, error) {
 		return ContextPlan{}, err
 	}
 	currentEstimate := mustEstimated(0)
-	if input.currentInput.kind == CurrentInputUserText {
-		currentEstimate = estimate.String(input.currentInput.text)
-	}
+
 	projectEstimate := mustEstimated(0)
 	if input.projectInstructions.HasDocuments() {
 		projectEstimate = estimate.String(input.projectInstructions.RenderedText())
@@ -464,14 +436,14 @@ func buildCachePlan(input PlanningInput) (Plan, error) {
 		return Plan{}, err
 	}
 	historyJSON, err := codec.MarshalCanonical(struct {
-		History   domain.SemanticHistoryView `json:"history"`
-		Revision  uint64                     `json:"native_revision"`
-		Method    string                     `json:"estimate_method"`
-		State     domain.TokenEstimateState  `json:"estimate_state"`
-		Tokens    uint64                     `json:"estimated_tokens"`
-		HasTokens bool                       `json:"has_estimated_tokens"`
+		History   []semanticContentMessage  `json:"history"`
+		Revision  uint64                    `json:"native_revision"`
+		Method    string                    `json:"estimate_method"`
+		State     domain.TokenEstimateState `json:"estimate_state"`
+		Tokens    uint64                    `json:"estimated_tokens"`
+		HasTokens bool                      `json:"has_estimated_tokens"`
 	}{
-		History: cloneSemanticHistory(input.history), Revision: input.footprint.Revision(),
+		History: semanticContent(input.history), Revision: input.footprint.Revision(),
 		Method: input.footprint.Estimate().Method(), State: input.footprint.Estimate().State(),
 		Tokens: tokenValue(input.footprint.Estimate()), HasTokens: hasTokenValue(input.footprint.Estimate()),
 	}, MaxSegmentBytes)
@@ -479,10 +451,8 @@ func buildCachePlan(input PlanningInput) (Plan, error) {
 		return Plan{}, err
 	}
 	inputJSON, err := codec.MarshalCanonical(struct {
-		Kind           CurrentInputKind `json:"kind"`
-		Text           string           `json:"text,omitempty"`
-		SchemaRevision string           `json:"schema_revision"`
-	}{input.currentInput.kind, input.currentInput.text, currentInputRevision}, MaxSegmentBytes)
+		Sampling bool `json:"sampling"`
+	}{true}, MaxSegmentBytes)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -526,11 +496,28 @@ func buildCachePlan(input PlanningInput) (Plan, error) {
 func estimateSemanticHistory(history domain.SemanticHistoryView) domain.TokenEstimate {
 	var tokens uint64
 	for _, turn := range history.Turns {
-		user, _ := estimate.String(turn.UserText).Tokens()
-		assistant, _ := estimate.String(turn.AssistantText).Tokens()
-		tokens = estimate.SaturatingAdd(tokens, user, assistant)
+		for _, message := range turn.Messages {
+			value, _ := estimate.String(message.Text).Tokens()
+			tokens = estimate.SaturatingAdd(tokens, value)
+		}
 	}
 	return mustEstimated(tokens)
+}
+
+// semanticContentMessage 只保留 cache 内容，不包含展示或恢复身份。
+type semanticContentMessage struct {
+	Role domain.SemanticRole `json:"role"`
+	Text string              `json:"text"`
+}
+
+func semanticContent(history domain.SemanticHistoryView) []semanticContentMessage {
+	messages := make([]semanticContentMessage, 0)
+	for _, turn := range history.Turns {
+		for _, message := range turn.Messages {
+			messages = append(messages, semanticContentMessage{Role: message.Role, Text: message.Text})
+		}
+	}
+	return messages
 }
 
 func coverEstimates(first, second domain.TokenEstimate) (domain.TokenEstimate, error) {
@@ -582,12 +569,7 @@ func mustEstimated(tokens uint64) domain.TokenEstimate {
 }
 
 func cloneSemanticHistory(history domain.SemanticHistoryView) domain.SemanticHistoryView {
-	turns := make([]domain.SemanticTurn, len(history.Turns))
-	copy(turns, history.Turns)
-	return domain.SemanticHistoryView{
-		Provider: history.Provider,
-		Turns:    turns,
-	}
+	return history.Clone()
 }
 
 func tokenValue(value domain.TokenEstimate) uint64 {

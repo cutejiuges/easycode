@@ -16,6 +16,7 @@ import (
 	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
 	"easycode/internal/headless"
+	"easycode/internal/protocol"
 	"easycode/internal/secret"
 	"easycode/internal/tui"
 	tea "github.com/charmbracelet/bubbletea"
@@ -84,7 +85,7 @@ func TestComposerProvidersPersistExactTextAcrossResizeAndResume(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := resources.session.Start(context.Background()); err != nil {
+				if err := resources.session.StartInteractive(context.Background()); err != nil {
 					t.Fatal(err)
 				}
 				var model tea.Model = tui.NewModel(context.Background(), "test", resources.session, resources.history)
@@ -94,7 +95,9 @@ func TestComposerProvidersPersistExactTextAcrossResizeAndResume(t *testing.T) {
 				model, _ = model.Update(tea.KeyMsg{Type: tea.KeyRight})
 				var cmd tea.Cmd
 				model, cmd = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
-				for cmd != nil {
+				model, _ = model.Update(cmd())
+				cmd = model.Init()
+				for !strings.Contains(model.View(), "answer-1") || !strings.Contains(model.View(), "Status: idle") {
 					model, cmd = model.Update(cmd())
 				}
 				if !strings.Contains(model.View(), "answer-1") {
@@ -109,11 +112,31 @@ func TestComposerProvidersPersistExactTextAcrossResizeAndResume(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if len(resources.history.Turns) != 1 || resources.history.Turns[0].UserText != prompt {
+					if len(resources.history.Turns) != 1 || resources.history.Turns[0].Messages[0].Text != prompt {
 						t.Fatalf("history=%#v", resources.history)
 					}
 				}
-				submitAppTurn(t, resources, " next\n")
+				if width == 32 {
+					if err := resources.session.StartInteractive(context.Background()); err != nil {
+						t.Fatal(err)
+					}
+				}
+				nextEvents, err := submitInteractiveFixture(t, resources.session, context.Background(), " next\n")
+				if err != nil {
+					t.Fatal(err)
+				}
+				nextCompleted := false
+				for event := range nextEvents {
+					if event.Kind == protocol.EventTurnCompleted {
+						nextCompleted = true
+					}
+					if event.Kind == protocol.EventTurnFailed {
+						t.Fatalf("next turn failed: %s", event.Payload)
+					}
+				}
+				if !nextCompleted {
+					t.Fatal("next turn did not complete")
+				}
 				if err := resources.close(context.Background()); err != nil {
 					t.Fatal(err)
 				}

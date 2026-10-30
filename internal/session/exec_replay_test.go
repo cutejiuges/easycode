@@ -64,6 +64,7 @@ func TestReplayExecCrashBoundariesAndInvalidTransitions(t *testing.T) {
 			fixture := newReplayFixture(t)
 			fixture.appendMetadata()
 			fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+			fixture.appendInitialInputs(testTurnID)
 			invocation := replayExecInvocation(t)
 			appendReplayCallSample(t, fixture, invocation)
 			fingerprint := tool.NewCandidateFingerprint([]byte("exec-candidate"))

@@ -9,10 +9,14 @@ import (
 // HistoryFootprint 返回下一次 Responses 请求会重放的已提交原生历史估算。
 func (conversation *Conversation) HistoryFootprint() (domain.NativeHistoryFootprint, error) {
 	entries, revision := conversation.history.snapshotWithRevision()
+	return historyFootprint(entries, revision)
+}
+
+func historyFootprint(entries []nativeHistoryEntry, revision uint64) (domain.NativeHistoryFootprint, error) {
 	var bytes uint64
 	for _, entry := range entries {
-		if entry.Input != nil {
-			input, err := codec.MarshalStable(entry.Input)
+		for _, userInput := range entry.UserInputs {
+			input, err := codec.MarshalStable(userInput)
 			if err != nil {
 				return unknownHistoryFootprint(revision)
 			}

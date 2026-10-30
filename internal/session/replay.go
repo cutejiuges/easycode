@@ -12,6 +12,8 @@ import (
 
 // NativeCommitRecord 将通过 lifecycle 校验的 opaque commit 与顺序绑定。
 type NativeCommitRecord struct {
+	Role     domain.NativeCommitRole
+	Inputs   domain.InputAssociation
 	Sequence uint64
 	TurnID   domain.TurnID
 	Commit   NativeCommitPayload
@@ -299,6 +301,7 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 	}
 	var active *activeReplayTurn
 	seenInvocations := make(map[tool.InvocationID]struct{})
+	seenInputs := make(map[domain.InputID]struct{})
 	for _, batch := range batches[1:] {
 		for _, record := range batch {
 			if record.ParentThreadID != "" {
@@ -320,6 +323,10 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 			active = &activeReplayTurn{
 				turnID: batch[0].TurnID, startSequence: batch[0].Sequence, lastSequence: batch[0].Sequence,
 				providerCallIDs: make(map[tool.ProviderCallID]struct{}),
+			}
+		case EventTurnInputsCommitted:
+			if err := acceptInputBatch(&plan, active, batch, seenInputs); err != nil {
+				return ReplayPlan{}, err
 			}
 		case EventProviderNativeCommit:
 			if active == nil || !batchHasTurn(batch, active.turnID) {
@@ -400,6 +407,8 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 }
 
 type activeReplayTurn struct {
+	initialInputs        bool
+	inputAtSample        bool
 	turnID               domain.TurnID
 	startSequence        uint64
 	lastSequence         uint64
@@ -411,7 +420,7 @@ type activeReplayTurn struct {
 }
 
 func acceptSampleBatch(plan *ReplayPlan, active *activeReplayTurn, batch []Record, seenInvocations map[tool.InvocationID]struct{}) (bool, error) {
-	if active.pendingCalls != nil || (active.hadToolSample && !active.toolOutputsCommitted) || len(batch) < 3 ||
+	if !active.initialInputs || active.pendingCalls != nil || (active.hadToolSample && !active.toolOutputsCommitted) || len(batch) < 3 ||
 		batch[1].EventKind != EventSampleUsage {
 		return false, replayCorrupt("sample batch placement is invalid")
 	}
@@ -428,7 +437,7 @@ func acceptSampleBatch(plan *ReplayPlan, active *activeReplayTurn, batch []Recor
 		return false, replayCorrupt("sample_usage payload is invalid")
 	}
 	plan.NativeCommits = append(plan.NativeCommits, NativeCommitRecord{
-		Sequence: batch[0].Sequence, TurnID: active.turnID, Commit: cloneNativeCommit(commit),
+		Sequence: batch[0].Sequence, TurnID: active.turnID, Role: domain.NativeCommitSample, Commit: cloneNativeCommit(commit),
 	})
 	plan.SampleUsages = append(plan.SampleUsages, SampleUsageRecord{
 		Sequence: batch[1].Sequence, TurnID: active.turnID, Usage: usage,
@@ -469,6 +478,7 @@ func acceptSampleBatch(plan *ReplayPlan, active *activeReplayTurn, batch []Recor
 	active.hadToolSample = true
 	active.toolOutputsCommitted = false
 	active.nextSampleIndex++
+	active.inputAtSample = false
 	active.lastSequence = batch[len(batch)-1].Sequence
 	return false, nil
 }
@@ -487,7 +497,7 @@ func acceptToolOutputs(plan *ReplayPlan, active *activeReplayTurn, record Record
 		return replayCorrupt("provider native commit payload is invalid")
 	}
 	plan.NativeCommits = append(plan.NativeCommits, NativeCommitRecord{
-		Sequence: record.Sequence, TurnID: active.turnID, Commit: cloneNativeCommit(commit),
+		Sequence: record.Sequence, TurnID: active.turnID, Role: domain.NativeCommitToolOutputs, Commit: cloneNativeCommit(commit),
 	})
 	active.pendingCalls = nil
 	active.toolOutputsCommitted = true

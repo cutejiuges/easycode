@@ -45,7 +45,7 @@ func TestExecNativeResultsRestoreExactly(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			history := []nativeHistoryEntry{{Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("test")), Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeThinking, Thinking: "private", Signature: "opaque-signature"}, {Type: blockTypeToolUse, ID: "call-exec", Name: "Bash", Input: json.RawMessage(`{"command":"printf '你好'","workdir":"src","timeout_ms":1000}`)}}}, Metadata: messageMetadata{ID: "msg-exec", Model: "fixture-model"}}}
+			history := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, newUserMessage("test")), {Kind: nativeHistorySample, Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeThinking, Thinking: "private", Signature: "opaque-signature"}, {Type: blockTypeToolUse, ID: "call-exec", Name: "Bash", Input: json.RawMessage(`{"command":"printf '你好'","workdir":"src","timeout_ms":1000}`)}}}, Metadata: messageMetadata{ID: "msg-exec", Model: "fixture-model"}}})
 			output, err := prepareToolOutputsEntry(history, []tool.InvocationResult{result})
 			if err != nil {
 				t.Fatal(err)
@@ -68,16 +68,16 @@ func TestExecNativeResultsRestoreExactly(t *testing.T) {
 				}
 				commits = append(commits, commit)
 			}
-			restoredValue, err := instance.RestoreConversation(commits)
+			restoredValue, err := instance.RestoreConversation(testRestoreRecords(t, commits))
 			if err != nil {
 				t.Fatal(err)
 			}
 			restored := restoredValue.(*Conversation)
-			first, err := compileMessagesRequest(instance.config.Model, instance.config.MaxOutputTokens, uninterrupted.historySnapshot(), nil, nil, testAnthropicToolView(t))
+			first, err := compileMessagesRequest(instance.config.Model, instance.config.MaxOutputTokens, uninterrupted.historySnapshot(), nil, testAnthropicToolView(t))
 			if err != nil {
 				t.Fatal(err)
 			}
-			second, err := compileMessagesRequest(instance.config.Model, instance.config.MaxOutputTokens, restored.historySnapshot(), nil, nil, testAnthropicToolView(t))
+			second, err := compileMessagesRequest(instance.config.Model, instance.config.MaxOutputTokens, restored.historySnapshot(), nil, testAnthropicToolView(t))
 			if err != nil {
 				t.Fatal(err)
 			}

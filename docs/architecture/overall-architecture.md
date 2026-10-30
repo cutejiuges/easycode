@@ -4,7 +4,7 @@
 
 命令输出存储位于 `internal/session/artifact`；Runtime 在 durable result 后授权引用并更新独立命令历史，app 装配 typed 宿主查询，TUI 不读文件。ReadArtifact 是第七项真实能力，命令预览与保存前缀分离；保存文件缺失不影响 Provider 原生恢复。预算、目录隔离和 owner 细节见 [ADR-0005](adr/0005-private-command-output-and-host-queries.md) 与 [Tool 输出存储](tool-system.md#命令输出存储与查询)。
 
-Session envelope/payload canary 为 `4`，双 Provider native payload revision 为 `1`，外部 headless JSONL version 为 `1`。这些标记属于不同边界，不构成并行兼容 reader。prepared sample/tool outputs 仅提供显式 finalize/discard 构造器，回调完成后才能报告 finalized。
+Session envelope/payload canary 为 `5`，双 Provider native payload revision 为 `2`，外部 headless JSONL version 为 `1`。这些标记属于不同边界，不构成并行兼容 reader。prepared sample/tool outputs 仅提供显式 finalize/discard 构造器，回调完成后才能报告 finalized。
 
 `internal/codec` 从固定 Sonic 配置值编码，不读取可替换的第三方默认 codec。封闭 JSON 对象拒绝重复键、大小写别名、未知字段、尾随内容和有损 Unicode。工具缺省参数保留默认值，显式 null 失败；持久化 record 按 json 标签要求非 omitempty 字段存在，标量与对象不接受 null，当前 nil 集合仍允许编码为 null。自定义联合 decoder 负责分支字段；Provider opaque 原生项保留独立扩展规则和原始字节。
 
@@ -319,7 +319,7 @@ RequestCompiler、NativeHistory、Session 事实源和 Provider resume 只能使
 
 ### 5.6 Durable native commit 接缝
 
-当前文本会话使用两阶段提交。Provider 在成功终态生成同时携带 opaque `NativeCommitEnvelope` 与 normalized `SampleUsage` 的 `PreparedSample`，不立即修改 committed native history。Runtime 重新验证两者，将 `[provider_native_commit(v1), sample_usage(v1), turn_completed(v1)]` 作为同一 JSONL batch 写入并执行 `Sync`，随后调用一次性 finalizer，最后才发布携带聚合 turn usage 的成功终态。持久化失败会 poison 当前 Runtime，未 finalize 的 staging 不得进入下一请求。
+当前文本会话使用两阶段提交。Provider 在成功终态生成同时携带 opaque `NativeCommitEnvelope` 与 normalized `SampleUsage` 的 `PreparedSample`，不立即修改 committed native history。Runtime 重新验证两者，将 `[provider_native_commit(sample), sample_usage, turn_completed]` 作为同一 JSONL batch 写入并执行 `Sync`，随后调用一次性 finalizer，最后才发布携带聚合 turn usage 的成功终态。持久化失败会 poison 当前 Runtime，未 finalize 的 staging 不得进入下一请求。
 
 OpenAI payload v1 保存用户 Responses item、有序 output items 和原始 usage；Anthropic payload v1 保存 user/assistant message、最终 metadata 和原始 usage。两者都显式保留 known/unknown 状态，归一化结果由独立 `sample_usage` 保存。恢复时对应 Provider 先事务式解码全部 commits，任一错误都不返回部分历史。共享 Session、Runtime 和 TUI 不解析具体 Provider wire。
 
@@ -464,7 +464,7 @@ CommandStarted / CommandProgress / CommandTerminal
 
 `--print` 在内存中聚合文本，仅在 Runtime 已 durable 发布 `turn_completed` 且事件流正常闭合后输出最终值。`--json` 可实时输出 delta，但同样不从 channel close 或已见文本推断成功。取消、短写和断管会触发幂等 Interrupt 并 drain Runtime；已 durable 完成后的输出失败只改变进程交付状态，不回滚 Session。
 
-一次性 headless prompt 在应用装配前解析：无位置参数或显式 `-` 时读取 stdin；显式 prompt 与非终端 stdin 同时存在时使用稳定 `<stdin>` 边界追加；组合内容必须是合法 UTF-8、非空且不超过 4 MiB。流式模式只由 `--json --input-format stream-json` 显式启用，要求可关闭的非终端 stdin/stdout transport，以不超过 32 MiB 的单行 NDJSON 接收 `input.submit`、定向 `turn.interrupt` 和 `session.shutdown`。`--continue` 会在当前 cwd、Provider family/wire 和 model 完全匹配时恢复最近 root Session，并与 `--resume` 互斥。当前仍不支持独立 usage 更新或 reasoning/tool 事件。
+一次性 headless prompt 在应用装配前解析：无位置参数或显式 `-` 时读取 stdin；显式 prompt 与非终端 stdin 同时存在时使用稳定 `<stdin>` 边界追加；组合内容必须是合法 UTF-8、非空且不超过 4 MiB。流式模式只由 `--json --input-format stream-json` 显式启用，要求可关闭的非终端 stdin/stdout transport，以不超过 32 MiB 的单行 NDJSON 接收严格 `input.submit`、自动 `input.append`、按 InputID 原子 `input.retract`、定向 `turn.stop`/`turn.interrupt` 和 `session.shutdown`。`--continue` 会在当前 cwd、Provider family/wire 和 model 完全匹配时恢复最近 root Session，并与 `--resume` 互斥。当前仍不支持独立 usage 更新或 reasoning/tool 事件。
 
 ### 7.3 AgentLoop 输入控制
 
@@ -472,7 +472,7 @@ CommandStarted / CommandProgress / CommandTerminal
 
 queue 是有界、非 durable 的进程内状态。stdin EOF 只停止新 admission，并按 FIFO 排空已经接受的输入；显式 shutdown 则停止 admission、取消活动 turn、为所有尚未开始的输入发布 `session_shutdown` discard，并等待 Runtime durable terminal 与 worker cleanup。interrupt 必须携带当前活动 `turn_id`，过期目标不得误取消下一 turn。普通 Provider failure 后 loop 可以继续；journal poisoned 或 durable 结果不确定时停止所有后续 Provider 副作用。
 
-本能力是跨 turn 的 follow-up control loop，不是 same-turn steer。当前 Read Tool Loop 已允许一个 turn 内发生多个顺序 Provider sample，并在 durable tool output 后形成明确边界；但该边界尚未接入排队用户输入，真正的 same-turn steer 仍需独立变更定义 admission、缓存与历史语义。TUI 继续使用 `ChatSession`，待需要 queue 交互时再迁移到同一控制器并删除重复 facade。
+该控制器同时处理严格跨 turn follow-up 与自动同轮输入。自动输入只在完整 durable tool outputs 后、下一 sample 前领取，strict-next 保持 FIFO 屏障。TUI 通过 ChatSession 的长期控制流接入同一 AgentLoop；一次性 headless 保留严格提交接口，二者共享唯一执行 owner。
 
 ### 7.4 Provider StreamReducer
 
@@ -671,7 +671,7 @@ EventEnvelope
 
 Provider native commit 只记录 Provider 已验证的原生增量和 raw usage；紧邻的 `sample_usage` 记录共享五项三态指标。无工具的成功 sample 仍以 native commit、usage 与 terminal 原子提交；带调用的 sample 则把有序 ready facts 放入同一 durable batch，随后按需要 durable 批准决定，再提交 started、result 和 Provider 原生 tool outputs。当前 approval fact 保存 decision source、candidate fingerprint 与安全展示 metadata；Exec 不持久化 PID、宿主环境、输出 chunk 或底层 cause。缺失 usage、错序、遗漏配对或重复调用身份一律 fail closed。hook、subagent、cache 与 compaction checkpoint 仍需按各自恢复语义定义记录；不能把 RuntimeEvent 或 UI transcript 当作 native history。
 
-当前 Session envelope/payload 使用唯一 canary 4，进程内 RuntimeEvent 不携带固定版本；headless JSONL v1 是独立外部 wire。稳定发布前的契约补全直接替换唯一 current fixture，不保留双 reader；只有契约已冻结、变化无法加法表达且已发布数据或客户端必须并存时，才引入新 revision，并同时定义兼容窗口与退出条件。
+当前 Session envelope/payload 使用唯一 canary 5，进程内 RuntimeEvent 不携带固定版本；headless JSONL v1 是独立外部 wire。稳定发布前的契约补全直接替换唯一 current fixture，不保留双 reader；只有契约已冻结、变化无法加法表达且已发布数据或客户端必须并存时，才引入新 revision，并同时定义兼容窗口与退出条件。
 
 Headless JSONL v1 是 stdout 外部协议，不是 Session record：不得写入 journal，也不得在 resume 时回放。headless resume 只复用连续 lease 下恢复出的 Provider-native history，并只发布本次新 turn；`SemanticHistoryView` 仍只供 TUI 等只读消费者使用。
 
@@ -818,7 +818,18 @@ manifest adapter 可以统一扩展描述，但不能用于统一 provider 对�
 
 当前多行输入由 `internal/tui/composer.go`、`composer_input.go`、`composer_layout.go` 和 `composer_history.go` 组合实现。composer 拥有 UTF-8 正文与字素边界光标；同一不可变布局供视觉行移动、视口和无色光标渲染复用，普通移动与重复 View 不重建布局。历史以写时复制保留至多 100 条/8 MiB，直接消费 SemanticHistoryView，不执行 Session I/O。编辑和输入校验共享 `replace`，没有通用 editor registry 或新的宿主接口。
 
-Model 将审批、详情、提交等待/活动 turn、composer 依次路由。pending 快照冻结到 ChatSession.Submit 返回：拒绝恢复正文/光标/历史浏览状态，接收后才追加 transcript/recall 并清空输入。取消继续使用既有 owner 与 Interrupt，已接收后的失败不自动重提。布局与用户 transcript 的控制字符仅在显示副本转义，实际输入除 TUI 的 CRLF/CR → LF 外保真；双 Provider 不裁剪正文，headless 保留原换行。没有新增 RuntimeEvent、Session record 或外部 JSONL 版本。
+Model 将审批、详情、提交等待、composer 依次路由；普通活动 turn 期间可编辑并 Enter 自动追加。ChatSession 的交互模式只有一个长期 Outputs 消费者，Append 返回不是正式 transcript 事实。pending 快照冻结到 admission response：拒绝保留正文/光标/历史，接受后记入 recall 并清空草稿；只有 UserInputCommitted 才将对应 InputID 的正文移入 transcript。Up（空草稿首行）/普通 Esc 原子取回 queued 项，Ctrl+C 或无 queued 的 Esc 定向停止；Ctrl+R 逐条取回 returned，Ctrl+D 逐条丢弃，不自动执行。状态副本与 returned 共用 64 条/16 MiB 本地保留额度，uncertain 不允许取回重试。布局与用户 transcript 的控制字符只在显示副本转义，实际输入除 TUI 的 CRLF/CR → LF 外保真；headless 保留原换行。
+
+#### 同轮输入与持久化边界
+
+AgentLoop 单 owner 管理 auto/strict-next 共用 FIFO；strict-next 每条独立 turn，自动前缀可共享初始 turn。只有完整工具 outputs durable/finalize 后、下一 sample 前可以 claim 自动前缀，16 samples/64 calls 上限不重置。每条独立 InputID，RequestID 只用于控制响应，实际 turn 身份由 claim 决定。
+
+输入先经 UserInputPreparer 纯内存候选历史、Context 预算和 Provider 请求编码预检，再提交相邻 `turn_inputs_committed` + `provider_native_commit` batch；Sync 成功后 finalize 并发出 UserInputCommitted 与 committed 状态。可预判超限返还输入且不改变历史；网络失败保留已保存输入；无法确认 durability 则 uncertain/poison，不自动重试。single writer 的接收线性化、lease 与 cleanup owner 继续生效。
+
+Provider 当前 native kind 封闭为 `user_inputs`/`sample`/`tool_outputs`，sample 不再携带用户输入。原生 user_inputs 保存有序独立消息及 turn/placement/target_sample_index/input_ids；Session 输入事实只保存关联，无正文和 RequestID。SemanticHistoryView 按真实 TurnID 投影有序强类型消息，InputID 不进入请求 bytes/token fingerprint。PreparedUserInputs 和 PreparedToolOutputs 仅共享私有 resolution 生命周期骨架；Provider 编译始终读取原生历史，不反向使用投影。
+
+input-only 崩溃尾部先在本地 durable 收口；工具安全点的 steering 尾部复用现有工具补偿路径，不重跑工具或自动联网。内存队列与 returned tray 不持久化，重启不猜测未保存输入。外部 headless JSONL 仍为 v1，自动 admission 增加 entry_id，input.status 不含正文；一次性 text/JSON 过滤新增内部输入事件。
+
 
 已实现多行、字素编辑、显式 decoded paste 与有界历史；原始终端缓冲/RuneError 的框架限制见 README。以下列表仍包含后续目标，补全与 slash command 尚未实现。
 

@@ -10,7 +10,7 @@ import (
 )
 
 func TestCompileMessagesRequestMatchesGolden(t *testing.T) {
-	request, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, nil, nil, nativeMessagePointer(newUserMessage("hello")), testAnthropicToolView(t))
+	request, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, append([]nativeHistoryEntry(nil), testInputEntry(t, newUserMessage("hello"))), nil, testAnthropicToolView(t))
 	if err != nil {
 		t.Fatalf("compile request: %v", err)
 	}
@@ -31,9 +31,7 @@ func TestCompileMessagesRequestMatchesGolden(t *testing.T) {
 
 func TestCompileMessagesRequestWithProjectInstructionsMatchesGolden(t *testing.T) {
 	snapshot := testAnthropicProjectInstructions(t, "AGENTS.md", "Use make verify.")
-	request, err := compileMessagesRequest(
-		"claude-test", DefaultMaxOutputTokens, nil, &snapshot, nativeMessagePointer(newUserMessage("hello")), testAnthropicToolView(t),
-	)
+	request, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, append([]nativeHistoryEntry(nil), testInputEntry(t, newUserMessage("hello"))), &snapshot, testAnthropicToolView(t))
 	if err != nil {
 		t.Fatalf("compile request: %v", err)
 	}
@@ -53,15 +51,15 @@ func TestCompileMessagesRequestWithProjectInstructionsMatchesGolden(t *testing.T
 }
 
 func TestCompileMessagesRequestKeepsNativeMessageOrder(t *testing.T) {
-	history := []nativeHistoryEntry{{
-		Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("first")),
+	history := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, newUserMessage("first")), {
+		Kind: nativeHistorySample,
 		Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{
 			{Type: blockTypeThinking, Thinking: "reason", Signature: "opaque-signature"},
 			{Type: blockTypeRedactedThinking, RedactedData: "opaque-redacted"},
 			{Type: blockTypeText, Text: "answer"},
 		}},
-	}}
-	request := buildMessagesRequest("claude-test", 8192, history, nil, nativeMessagePointer(newUserMessage("second")), testAnthropicToolView(t))
+	}})
+	request := buildMessagesRequest("claude-test", 8192, append(history, testInputEntry(t, newUserMessage("second"))), nil, testAnthropicToolView(t))
 	if request.MaxTokens != 8192 || len(request.Messages) != 3 {
 		t.Fatalf("request shape: %#v", request)
 	}
@@ -75,9 +73,9 @@ func TestCompileMessagesRequestKeepsNativeMessageOrder(t *testing.T) {
 }
 
 func TestBuildMessagesRequestContinuesAfterToolResultsWithoutSyntheticUser(t *testing.T) {
-	history := []nativeHistoryEntry{
-		{
-			Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("read it")),
+	history := testAssociatedHistory([]nativeHistoryEntry{
+		testInputEntry(t, newUserMessage("read it")), {
+			Kind: nativeHistorySample,
 			Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{
 				Type: blockTypeToolUse, ID: "toolu-1", Name: "Read", Input: []byte(`{"file_path":"README.md"}`),
 			}}},
@@ -88,8 +86,8 @@ func TestBuildMessagesRequestContinuesAfterToolResultsWithoutSyntheticUser(t *te
 				Type: blockTypeToolResult, ToolUseID: "toolu-1", Content: "1\tcontent\n",
 			}}},
 		},
-	}
-	request := buildMessagesRequest("claude-test", 4096, history, nil, nil, testAnthropicToolView(t))
+	})
+	request := buildMessagesRequest("claude-test", 4096, history, nil, testAnthropicToolView(t))
 	if len(request.Messages) != 3 || request.Messages[0].Content[0].Text != "read it" ||
 		request.Messages[1].Content[0].Type != blockTypeToolUse || request.Messages[2].Content[0].Type != blockTypeToolResult {
 		t.Fatalf("continuation messages = %#v", request.Messages)
@@ -97,7 +95,7 @@ func TestBuildMessagesRequestContinuesAfterToolResultsWithoutSyntheticUser(t *te
 }
 
 func TestMessagesRequestFingerprintIsStableAndSecretFree(t *testing.T) {
-	request, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, nil, nil, nativeMessagePointer(newUserMessage("hello")), testAnthropicToolView(t))
+	request, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, append([]nativeHistoryEntry(nil), testInputEntry(t, newUserMessage("hello"))), nil, testAnthropicToolView(t))
 	if err != nil {
 		t.Fatalf("compile request: %v", err)
 	}

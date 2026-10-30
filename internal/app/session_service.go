@@ -125,17 +125,11 @@ func (service *sessionService) resume(
 	if metadata.Provider != factory.Family() || metadata.ProviderWire != wire || metadata.Model != model {
 		return assembledSession{}, fault.New(fault.CodeSessionIncompatible, "session provider configuration is incompatible")
 	}
-	commits := make([]provider.NativeCommitEnvelope, 0, len(plan.NativeCommits))
-	for _, record := range plan.NativeCommits {
-		commit, buildErr := provider.NewNativeCommitEnvelope(
-			record.Commit.Provider, record.Commit.Wire,
-			record.Commit.PayloadVersion, record.Commit.Payload,
-		)
-		if buildErr != nil {
-			return assembledSession{}, fault.Wrap(fault.CodeSessionCorruption, "session native commit envelope is invalid", buildErr)
-		}
-		commits = append(commits, commit)
+	commits, err := nativeRestoreRecords(plan.NativeCommits)
+	if err != nil {
+		return assembledSession{}, err
 	}
+
 	conversation, err := factory.RestoreConversation(commits)
 	if err != nil {
 		return assembledSession{}, fault.Wrap(fault.CodeSessionCorruption, "restore provider native history failed", err)
@@ -194,4 +188,33 @@ func (service *sessionService) close() error {
 		return nil
 	}
 	return service.repository.Close()
+}
+
+func nativeRestoreRecords(records []session.NativeCommitRecord) ([]provider.RestoreRecord, error) {
+	commits := make([]provider.RestoreRecord, 0, len(records))
+	for _, record := range records {
+		commit, buildErr := provider.NewNativeCommitEnvelope(
+			record.Commit.Provider, record.Commit.Wire,
+			record.Commit.PayloadVersion, record.Commit.Payload,
+		)
+		if buildErr != nil {
+			return nil, fault.Wrap(fault.CodeSessionCorruption, "session native commit envelope is invalid", buildErr)
+		}
+		var restored provider.RestoreRecord
+		switch record.Role {
+		case domain.NativeCommitUserInputs:
+			restored, buildErr = provider.NewInputRestoreRecord(record.Inputs, commit)
+		case domain.NativeCommitSample:
+			restored, buildErr = provider.NewSampleRestoreRecord(record.TurnID, commit)
+		case domain.NativeCommitToolOutputs:
+			restored, buildErr = provider.NewToolOutputRestoreRecord(record.TurnID, commit)
+		default:
+			return nil, fault.New(fault.CodeSessionCorruption, "unknown native commit role")
+		}
+		if buildErr != nil {
+			return nil, buildErr
+		}
+		commits = append(commits, restored)
+	}
+	return commits, nil
 }

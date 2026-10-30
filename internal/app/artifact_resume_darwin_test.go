@@ -29,7 +29,7 @@ func runArtifactTestTurn(t *testing.T, resources *chatResources, prompt string) 
 		t.Fatal(err)
 	}
 	resources.session = control
-	events, err := control.Submit(context.Background(), prompt)
+	events, err := submitInteractiveFixture(t, control, context.Background(), prompt)
 	if err != nil {
 		t.Fatal(err)
 	}

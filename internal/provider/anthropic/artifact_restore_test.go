@@ -46,7 +46,7 @@ func TestReadArtifactNativeResultsRestoreExactly(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			history := []nativeHistoryEntry{{Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("test")), Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeThinking, Thinking: "private", Signature: "opaque-signature"}, {Type: blockTypeToolUse, ID: "call-exec", Name: "ReadArtifact", Input: json.RawMessage(`{"artifact_id":"0123456789abcdef0123456789abcdef","offset":0,"limit":3}`)}}}, Metadata: messageMetadata{ID: "msg-exec", Model: "fixture-model"}}}
+			history := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, newUserMessage("test")), {Kind: nativeHistorySample, Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeThinking, Thinking: "private", Signature: "opaque-signature"}, {Type: blockTypeToolUse, ID: "call-exec", Name: "ReadArtifact", Input: json.RawMessage(`{"artifact_id":"0123456789abcdef0123456789abcdef","offset":0,"limit":3}`)}}}, Metadata: messageMetadata{ID: "msg-exec", Model: "fixture-model"}}})
 			output, err := prepareToolOutputsEntry(history, []tool.InvocationResult{result})
 			if err != nil {
 				t.Fatal(err)
@@ -69,16 +69,16 @@ func TestReadArtifactNativeResultsRestoreExactly(t *testing.T) {
 				}
 				commits = append(commits, commit)
 			}
-			restoredValue, err := instance.RestoreConversation(commits)
+			restoredValue, err := instance.RestoreConversation(testRestoreRecords(t, commits))
 			if err != nil {
 				t.Fatal(err)
 			}
 			restored := restoredValue.(*Conversation)
-			first, err := compileMessagesRequest(instance.config.Model, instance.config.MaxOutputTokens, uninterrupted.historySnapshot(), nil, nil, testAnthropicToolView(t))
+			first, err := compileMessagesRequest(instance.config.Model, instance.config.MaxOutputTokens, uninterrupted.historySnapshot(), nil, testAnthropicToolView(t))
 			if err != nil {
 				t.Fatal(err)
 			}
-			second, err := compileMessagesRequest(instance.config.Model, instance.config.MaxOutputTokens, restored.historySnapshot(), nil, nil, testAnthropicToolView(t))
+			second, err := compileMessagesRequest(instance.config.Model, instance.config.MaxOutputTokens, restored.historySnapshot(), nil, testAnthropicToolView(t))
 			if err != nil {
 				t.Fatal(err)
 			}

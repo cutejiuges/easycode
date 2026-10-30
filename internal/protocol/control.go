@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"easycode/internal/domain"
 	"fmt"
 )
 
@@ -16,6 +17,8 @@ const (
 type CommandDisposition string
 
 const (
+	CommandDispositionRetracted    CommandDisposition = "retracted"
+	CommandDispositionStopping     CommandDisposition = "stopping"
 	CommandDispositionStarting     CommandDisposition = "starting"
 	CommandDispositionQueued       CommandDisposition = "queued"
 	CommandDispositionInterrupting CommandDisposition = "interrupting"
@@ -27,17 +30,20 @@ const (
 type ControlErrorCode string
 
 const (
-	ControlErrorInvalidCommand   ControlErrorCode = "invalid_command"
-	ControlErrorInvalidInput     ControlErrorCode = "invalid_input"
-	ControlErrorInputQueueFull   ControlErrorCode = "input_queue_full"
-	ControlErrorDuplicateRequest ControlErrorCode = "duplicate_request"
-	ControlErrorNoActiveTurn     ControlErrorCode = "no_active_turn"
-	ControlErrorTurnMismatch     ControlErrorCode = "turn_mismatch"
-	ControlErrorNoActiveApproval ControlErrorCode = "no_active_approval"
-	ControlErrorApprovalMismatch ControlErrorCode = "approval_mismatch"
-	ControlErrorSessionClosing   ControlErrorCode = "session_closing"
-	ControlErrorSessionShutdown  ControlErrorCode = "session_shutdown"
-	ControlErrorSessionFailed    ControlErrorCode = "session_failed"
+	ControlErrorInputNotQueued     ControlErrorCode = "input_not_queued"
+	ControlErrorInputEncodingLimit ControlErrorCode = "input_encoding_limit"
+	ControlErrorInputStopping      ControlErrorCode = "input_stopping"
+	ControlErrorInvalidCommand     ControlErrorCode = "invalid_command"
+	ControlErrorInvalidInput       ControlErrorCode = "invalid_input"
+	ControlErrorInputQueueFull     ControlErrorCode = "input_queue_full"
+	ControlErrorDuplicateRequest   ControlErrorCode = "duplicate_request"
+	ControlErrorNoActiveTurn       ControlErrorCode = "no_active_turn"
+	ControlErrorTurnMismatch       ControlErrorCode = "turn_mismatch"
+	ControlErrorNoActiveApproval   ControlErrorCode = "no_active_approval"
+	ControlErrorApprovalMismatch   ControlErrorCode = "approval_mismatch"
+	ControlErrorSessionClosing     ControlErrorCode = "session_closing"
+	ControlErrorSessionShutdown    ControlErrorCode = "session_shutdown"
+	ControlErrorSessionFailed      ControlErrorCode = "session_failed"
 )
 
 // ControlError 是不包含底层 cause 的控制面安全错误摘要。
@@ -63,6 +69,7 @@ func (controlError ControlError) Validate() error {
 
 // CommandResult 是 owner 对一条命令的确定 admission 结果。
 type CommandResult struct {
+	entryID     domain.InputID
 	requestID   RequestID
 	commandKind CommandKind
 	status      CommandStatus
@@ -128,11 +135,18 @@ func (result CommandResult) Validate() error {
 	}
 	switch result.status {
 	case CommandStatusAccepted:
+		if result.commandKind == CommandSubmitConversationalInput {
+			if !result.entryID.Valid() {
+				return fmt.Errorf("accepted input identity is invalid")
+			}
+		} else if result.entryID != "" {
+			return fmt.Errorf("unrelated input identity")
+		}
 		if result.controlErr != (ControlError{}) || !dispositionMatches(result.commandKind, result.disposition) {
 			return fmt.Errorf("accepted command result is invalid")
 		}
 	case CommandStatusRejected:
-		if result.disposition != "" || result.controlErr.Validate() != nil {
+		if result.entryID != "" || result.disposition != "" || result.controlErr.Validate() != nil {
 			return fmt.Errorf("rejected command result is invalid")
 		}
 	default:
@@ -145,6 +159,7 @@ func (result CommandResult) Validate() error {
 type ControlItemKind string
 
 const (
+	ControlItemInputStatus   ControlItemKind = "input_status"
 	ControlItemCommandResult ControlItemKind = "command_result"
 	ControlItemTurnEvent     ControlItemKind = "turn_event"
 	ControlItemInputDiscard  ControlItemKind = "input_discard"
@@ -152,11 +167,12 @@ const (
 
 // ControlItem 是 command result、关联 turn event 与 input discard 的封闭联合。
 type ControlItem struct {
-	kind      ControlItemKind
-	requestID RequestID
-	result    CommandResult
-	event     Event
-	discard   ControlError
+	inputStatus InputStatus
+	kind        ControlItemKind
+	requestID   RequestID
+	result      CommandResult
+	event       Event
+	discard     ControlError
 }
 
 // NewCommandResultItem 创建命令结果输出。
@@ -219,7 +235,14 @@ func (item ControlItem) Validate() error {
 	if !item.requestID.Valid() {
 		return fmt.Errorf("control item request ID is invalid")
 	}
+	if item.kind != ControlItemInputStatus && item.inputStatus != (InputStatus{}) {
+		return fmt.Errorf("unrelated input status")
+	}
 	switch item.kind {
+	case ControlItemInputStatus:
+		if item.inputStatus.Validate() != nil || item.inputStatus.RequestID() != item.requestID || item.result != (CommandResult{}) || item.event.Kind != "" || item.discard != (ControlError{}) {
+			return fmt.Errorf("input status item is invalid")
+		}
 	case ControlItemCommandResult:
 		if item.result.Validate() != nil || item.result.RequestID() != item.requestID || item.event.Kind != "" || item.discard != (ControlError{}) {
 			return fmt.Errorf("command result item is invalid")
@@ -240,13 +263,17 @@ func (item ControlItem) Validate() error {
 }
 
 func validCommandKind(kind CommandKind) bool {
-	return kind == CommandSubmitInput || kind == CommandInterrupt || kind == CommandShutdown || kind == CommandResolveToolApproval
+	return kind == CommandSubmitConversationalInput || kind == CommandRetractInputs || kind == CommandStopTurn || kind == CommandSubmitInput || kind == CommandInterrupt || kind == CommandShutdown || kind == CommandResolveToolApproval
 }
 
 func dispositionMatches(kind CommandKind, disposition CommandDisposition) bool {
 	switch kind {
-	case CommandSubmitInput:
+	case CommandSubmitInput, CommandSubmitConversationalInput:
 		return disposition == CommandDispositionStarting || disposition == CommandDispositionQueued
+	case CommandRetractInputs:
+		return disposition == CommandDispositionRetracted
+	case CommandStopTurn:
+		return disposition == CommandDispositionStopping
 	case CommandInterrupt:
 		return disposition == CommandDispositionInterrupting
 	case CommandShutdown:
@@ -260,6 +287,12 @@ func dispositionMatches(kind CommandKind, disposition CommandDisposition) bool {
 
 func controlErrorMessage(code ControlErrorCode) (string, bool) {
 	switch code {
+	case ControlErrorInputNotQueued:
+		return "input is no longer queued", true
+	case ControlErrorInputEncodingLimit:
+		return "input exceeds encoding limits", true
+	case ControlErrorInputStopping:
+		return "automatic input is unavailable while stopping", true
 	case ControlErrorInvalidCommand:
 		return "command is invalid", true
 	case ControlErrorInvalidInput:

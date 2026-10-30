@@ -13,7 +13,7 @@ import (
 func TestNativeCommitRoundTripPreservesThinkingRawAndUsageKnowledge(t *testing.T) {
 	t.Parallel()
 	entry := nativeHistoryEntry{
-		Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("question")),
+		Kind: nativeHistorySample,
 		Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{
 			{Type: blockTypeThinking, Thinking: "private", Signature: "opaque-signature"},
 			{Type: blockTypeRedactedThinking, RedactedData: "opaque-redacted", Raw: json.RawMessage(`{"type":"redacted_thinking","data":"opaque-redacted","future":true}`)},
@@ -36,7 +36,7 @@ func TestNativeCommitRoundTripPreservesThinkingRawAndUsageKnowledge(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Input.Content[0].Text != "question" || len(decoded.Assistant.Content) != 4 ||
+	if len(decoded.Assistant.Content) != 4 ||
 		decoded.Assistant.Content[0].Signature != "opaque-signature" ||
 		!bytes.Equal(decoded.Assistant.Content[1].Raw, entry.Assistant.Content[1].Raw) ||
 		!bytes.Equal(decoded.Assistant.Content[3].Raw, entry.Assistant.Content[3].Raw) {
@@ -57,7 +57,7 @@ func TestNativeCommitRoundTripPreservesThinkingRawAndUsageKnowledge(t *testing.T
 func TestNativeCommitCanonicalGolden(t *testing.T) {
 	t.Parallel()
 	envelope, err := encodeNativeCommit(nativeHistoryEntry{
-		Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("hello")),
+		Kind:      nativeHistorySample,
 		Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeText, Text: "world"}}},
 		Metadata: messageMetadata{
 			ID: "msg-1", Model: "claude-test", StopReason: optionalString{Known: true, Value: "end_turn"},
@@ -67,7 +67,7 @@ func TestNativeCommitCanonicalGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `{"kind":"sample","input":{"role":"user","content":[{"type":"text","text":"hello"}]},"assistant":{"role":"assistant","content":[{"type":"text","text":"world"}]},"metadata":{"id":"msg-1","model":"claude-test","stop_reason":{"known":true,"value":"end_turn"},"usage":{"input_tokens":{"known":true,"value":3},"cache_creation_input_tokens":{"known":false},"cache_read_input_tokens":{"known":false},"output_tokens":{"known":false}}}}`
+	const want = `{"kind":"sample","assistant":{"role":"assistant","content":[{"type":"text","text":"world"}]},"metadata":{"id":"msg-1","model":"claude-test","stop_reason":{"known":true,"value":"end_turn"},"usage":{"input_tokens":{"known":true,"value":3},"cache_creation_input_tokens":{"known":false},"cache_read_input_tokens":{"known":false},"output_tokens":{"known":false}}}}`
 	if got := string(envelope.Payload()); got != want {
 		t.Fatalf("Anthropic native commit golden changed:\n%s", got)
 	}
@@ -75,7 +75,7 @@ func TestNativeCommitCanonicalGolden(t *testing.T) {
 
 func TestNativeCommitRejectsIncompatibleAndCorruptPayloads(t *testing.T) {
 	t.Parallel()
-	validPayload := json.RawMessage(`{"kind":"sample","input":{"role":"user","content":[{"type":"text","text":"hello"}]},"assistant":{"role":"assistant","content":[{"type":"text","text":"world"}]},"metadata":{"id":"msg-1","model":"claude-test","stop_reason":{"known":false},"usage":{"input_tokens":{"known":false},"cache_creation_input_tokens":{"known":false},"cache_read_input_tokens":{"known":false},"output_tokens":{"known":false}}}}`)
+	validPayload := json.RawMessage(`{"kind":"sample","assistant":{"role":"assistant","content":[{"type":"text","text":"world"}]},"metadata":{"id":"msg-1","model":"claude-test","stop_reason":{"known":false},"usage":{"input_tokens":{"known":false},"cache_creation_input_tokens":{"known":false},"cache_read_input_tokens":{"known":false},"output_tokens":{"known":false}}}}`)
 	fixtures := []struct {
 		name    string
 		family  domain.ProviderFamily
@@ -83,12 +83,12 @@ func TestNativeCommitRejectsIncompatibleAndCorruptPayloads(t *testing.T) {
 		version int
 		payload json.RawMessage
 	}{
-		{name: "family", family: domain.ProviderOpenAI, wire: messagesWire, version: 1, payload: validPayload},
-		{name: "wire", family: domain.ProviderAnthropic, wire: "completions", version: 1, payload: validPayload},
-		{name: "revision", family: domain.ProviderAnthropic, wire: messagesWire, version: 2, payload: validPayload},
-		{name: "kind", family: domain.ProviderAnthropic, wire: messagesWire, version: 1, payload: bytes.Replace(validPayload, []byte(`"sample"`), []byte(`"future"`), 1)},
-		{name: "role", family: domain.ProviderAnthropic, wire: messagesWire, version: 1, payload: bytes.Replace(validPayload, []byte(`"role":"user"`), []byte(`"role":"assistant"`), 1)},
-		{name: "unknown outer", family: domain.ProviderAnthropic, wire: messagesWire, version: 1, payload: bytes.Replace(validPayload, []byte(`{"kind"`), []byte(`{"future":true,"kind"`), 1)},
+		{name: "family", family: domain.ProviderOpenAI, wire: messagesWire, version: 2, payload: validPayload},
+		{name: "wire", family: domain.ProviderAnthropic, wire: "completions", version: 2, payload: validPayload},
+		{name: "revision", family: domain.ProviderAnthropic, wire: messagesWire, version: 1, payload: validPayload},
+		{name: "kind", family: domain.ProviderAnthropic, wire: messagesWire, version: 2, payload: bytes.Replace(validPayload, []byte(`"sample"`), []byte(`"future"`), 1)},
+		{name: "role", family: domain.ProviderAnthropic, wire: messagesWire, version: 2, payload: bytes.Replace(validPayload, []byte(`"role":"assistant"`), []byte(`"role":"user"`), 1)},
+		{name: "unknown outer", family: domain.ProviderAnthropic, wire: messagesWire, version: 2, payload: bytes.Replace(validPayload, []byte(`{"kind"`), []byte(`{"future":true,"kind"`), 1)},
 	}
 	for _, fixture := range fixtures {
 		fixture := fixture
@@ -107,7 +107,7 @@ func TestNativeCommitRejectsIncompatibleAndCorruptPayloads(t *testing.T) {
 func TestNativeCommitRejectsOversizedPayload(t *testing.T) {
 	t.Parallel()
 	entry := nativeHistoryEntry{
-		Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("hello")),
+		Kind: nativeHistorySample,
 		Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{
 			Type: "future_block",
 			Raw:  append(append(json.RawMessage(`{"type":"future_block","data":"`), bytes.Repeat([]byte{'x'}, provider.MaxNativeCommitBytes)...), []byte(`"}`)...),

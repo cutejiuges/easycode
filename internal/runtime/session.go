@@ -13,16 +13,18 @@ import (
 
 // ChatSession 把交互与一次性宿主操作统一交给 AgentLoop 单 owner。
 type ChatSession struct {
-	runtime    *Runtime
-	loop       *AgentLoop
-	started    bool
-	closed     bool
-	cancel     context.CancelFunc
-	stop       chan struct{}
-	done       chan struct{}
-	runErr     error
-	nextID     atomic.Uint64
-	interrupts chan domain.TurnID
+	runtime     *Runtime
+	loop        *AgentLoop
+	started     bool
+	closed      bool
+	cancel      context.CancelFunc
+	stop        chan struct{}
+	done        chan struct{}
+	runErr      error
+	nextID      atomic.Uint64
+	interrupts  chan domain.TurnID
+	interactive bool
+	outputs     chan protocol.ControlItem
 
 	mu           sync.Mutex
 	streams      map[protocol.RequestID]chan protocol.Event
@@ -31,7 +33,50 @@ type ChatSession struct {
 
 // NewChatSession 只构造 AgentLoop 的宿主适配器；Start 显式取得运行所有权。
 func NewChatSession(runtimeValue *Runtime) *ChatSession {
-	return &ChatSession{runtime: runtimeValue, streams: make(map[protocol.RequestID]chan protocol.Event), stop: make(chan struct{}), done: make(chan struct{}), interrupts: make(chan domain.TurnID, 1)}
+	return &ChatSession{runtime: runtimeValue, outputs: make(chan protocol.ControlItem, 16), streams: make(map[protocol.RequestID]chan protocol.Event), stop: make(chan struct{}), done: make(chan struct{}), interrupts: make(chan domain.TurnID, 1)}
+}
+
+// StartInteractive 显式选择长期控制输出并启动会话。
+func (session *ChatSession) StartInteractive(ctx context.Context) error {
+	session.mu.Lock()
+	if session.started || session.closed {
+		session.mu.Unlock()
+		return fmt.Errorf("session already started or closed")
+	}
+	session.interactive = true
+	session.mu.Unlock()
+	return session.Start(ctx)
+}
+
+// Outputs 返回交互宿主独占消费的长期控制流。
+func (session *ChatSession) Outputs() <-chan protocol.ControlItem { return session.outputs }
+
+// Append 向 owner 提交可在安全边界领取的输入。
+func (session *ChatSession) Append(ctx context.Context, text string) (protocol.CommandResult, error) {
+	command, err := protocol.NewSubmitConversationalInputCommand(session.requestID("host-append"), text)
+	if err != nil {
+		return protocol.CommandResult{}, err
+	}
+	return session.submitInteractive(ctx, command)
+}
+
+// Retract 原子取回尚未领取的指定输入。
+func (session *ChatSession) Retract(ctx context.Context, ids []domain.InputID) (protocol.CommandResult, error) {
+	command, err := protocol.NewRetractInputsCommand(session.requestID("host-retract"), ids)
+	if err != nil {
+		return protocol.CommandResult{}, err
+	}
+	return session.submitInteractive(ctx, command)
+}
+
+func (session *ChatSession) submitInteractive(ctx context.Context, command protocol.Command) (protocol.CommandResult, error) {
+	session.mu.Lock()
+	live, loop := session.started && !session.closed && session.interactive, session.loop
+	session.mu.Unlock()
+	if !live {
+		return protocol.CommandResult{}, fmt.Errorf("interactive session is not running")
+	}
+	return loop.Submit(ctx, command)
 }
 
 // Start 显式启动唯一控制循环与输出分发器，返回前确认启动或完成清理。
@@ -131,7 +176,7 @@ func (session *ChatSession) Submit(ctx context.Context, text string) (<-chan pro
 	}
 	events := make(chan protocol.Event, 16)
 	session.mu.Lock()
-	if len(session.streams) != 0 || session.closed {
+	if len(session.streams) != 0 || session.closed || session.interactive {
 		session.mu.Unlock()
 		return nil, fault.New(fault.CodeTurnFailed, "host already has an active input")
 	}
@@ -187,9 +232,16 @@ func (session *ChatSession) Interrupt() {
 }
 
 func (session *ChatSession) dispatchOutputs() {
+	defer close(session.outputs)
 	for item := range session.loop.Outputs() {
 		event, ok := item.TurnEvent()
 		if !ok {
+			if session.interactive {
+				select {
+				case session.outputs <- item:
+				case <-session.stop:
+				}
+			}
 			continue
 		}
 		session.mu.Lock()
@@ -205,7 +257,13 @@ func (session *ChatSession) dispatchOutputs() {
 			}
 		}
 		session.mu.Unlock()
-		if stream != nil {
+		if session.interactive {
+			select {
+			case session.outputs <- item:
+			case <-session.stop:
+			}
+		}
+		if stream != nil && event.Kind != protocol.EventUserInputCommitted {
 			select {
 			case stream <- event:
 			case <-session.stop:
@@ -269,7 +327,11 @@ func (session *ChatSession) runInterrupts(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case turnID := <-session.interrupts:
-			command, err := protocol.NewInterruptCommand(session.requestID("host-interrupt"), turnID)
+			requestID := session.requestID("host-interrupt")
+			command, err := protocol.NewInterruptCommand(requestID, turnID)
+			if session.interactive {
+				command, err = protocol.NewStopTurnCommand(requestID, turnID)
+			}
 			if err == nil {
 				_, _ = session.loop.Submit(ctx, command)
 			}

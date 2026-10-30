@@ -3,4 +3,5 @@ Status: streaming
 
 User: hello
 
-> [streaming — Esc/Ctrl+C to cancel]
+> |
+Enter: send | Alt+Enter/Ctrl+J: newline

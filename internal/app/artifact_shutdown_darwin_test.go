@@ -76,7 +76,7 @@ func TestArtifactShutdownRetainsRealLeaseWhileDiskBlocked(t *testing.T) {
 				t.Fatal(err)
 			}
 			resources.session = host
-			events, err := host.Submit(context.Background(), "run")
+			events, err := submitInteractiveFixture(t, host, context.Background(), "run")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -98,7 +98,7 @@ func TestArtifactShutdownRetainsRealLeaseWhileDiskBlocked(t *testing.T) {
 			if err := host.Shutdown(ctx); !errors.Is(err, context.Canceled) {
 				t.Fatalf("shutdown did not retain blocked owner: %v", err)
 			}
-			if _, err := host.Submit(context.Background(), "must not run"); err == nil {
+			if _, err := submitInteractiveFixture(t, host, context.Background(), "must not run"); err == nil {
 				t.Fatal("blocked shutdown accepted a new turn")
 			}
 			probe := func(expected string) {

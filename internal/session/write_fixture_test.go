@@ -97,22 +97,22 @@ func TestWriteInvalidCurrentRecordsFailBeforeRepairOrAppend(t *testing.T) {
 		seq           int
 		mutate        func(*Record)
 	}{
-		{"missing-content", "write_before_approval.jsonl", 6, func(r *Record) { r.Payload = bytes.Replace(r.Payload, []byte(`,"content":"new"`), nil, 1) }},
-		{"null-content", "write_before_approval.jsonl", 6, func(r *Record) {
+		{"missing-content", "write_before_approval.jsonl", 8, func(r *Record) { r.Payload = bytes.Replace(r.Payload, []byte(`,"content":"new"`), nil, 1) }},
+		{"null-content", "write_before_approval.jsonl", 8, func(r *Record) {
 			r.Payload = bytes.Replace(r.Payload, []byte(`"content":"new"`), []byte(`"content":null`), 1)
 		}},
-		{"wrong-wire", "write_before_approval.jsonl", 6, func(r *Record) {
+		{"wrong-wire", "write_before_approval.jsonl", 8, func(r *Record) {
 			r.Payload = bytes.Replace(r.Payload, []byte(`"wire_kind":"structured"`), []byte(`"wire_kind":"custom_freeform"`), 1)
 		}},
-		{"wrong-operation", "write_create_result_tail.jsonl", 9, func(r *Record) {
+		{"wrong-operation", "write_create_result_tail.jsonl", 11, func(r *Record) {
 			r.Payload = bytes.Replace(r.Payload, []byte(`"operation":"create"`), []byte(`"operation":"unavailable"`), 1)
 		}},
-		{"wrong-count", "write_create_result_tail.jsonl", 9, func(r *Record) { r.Payload = bytes.Replace(r.Payload, []byte(`"bytes":3`), []byte(`"bytes":4`), 1) }},
-		{"missing-count", "write_create_result_tail.jsonl", 9, func(r *Record) { r.Payload = bytes.Replace(r.Payload, []byte(`,"lines":1`), nil, 1) }},
-		{"success-before-start", "write_no_changes_tail.jsonl", 7, func(r *Record) {
+		{"wrong-count", "write_create_result_tail.jsonl", 11, func(r *Record) { r.Payload = bytes.Replace(r.Payload, []byte(`"bytes":3`), []byte(`"bytes":4`), 1) }},
+		{"missing-count", "write_create_result_tail.jsonl", 11, func(r *Record) { r.Payload = bytes.Replace(r.Payload, []byte(`,"lines":1`), nil, 1) }},
+		{"success-before-start", "write_no_changes_tail.jsonl", 9, func(r *Record) {
 			r.Payload = bytes.Replace(r.Payload, []byte(`"status":"error"`), []byte(`"status":"success"`), 1)
 		}},
-		{"started-without-allow", "write_started_tail.jsonl", 7, func(r *Record) {
+		{"started-without-allow", "write_started_tail.jsonl", 9, func(r *Record) {
 			r.Payload = bytes.Replace(r.Payload, []byte(`"outcome":"allow_once"`), []byte(`"outcome":"deny"`), 1)
 		}},
 	} {

@@ -91,14 +91,12 @@ func TestExecFailurePathsEndToEndForBothProviders(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer control.Shutdown(context.Background())
-				events, err := control.Submit(context.Background(), "run local check")
+				events, err := submitInteractiveFixture(t, control, context.Background(), "run local check")
 				if err != nil {
 					t.Fatal(err)
 				}
 				var ui tea.Model = tui.NewModel(context.Background(), "test", control)
 				ui, _ = ui.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-				ui, _ = ui.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("run local check")})
-				ui, _ = ui.Update(tea.KeyMsg{Type: tea.KeyEnter})
 				starts, terminals, turns := 0, 0, 0
 				interrupted := false
 				for event := range events {

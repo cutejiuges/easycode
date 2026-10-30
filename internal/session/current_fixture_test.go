@@ -77,6 +77,7 @@ func TestCurrentFixtureReplay(t *testing.T) {
 	}
 	for _, kind := range []EventKind{
 		EventSessionMeta, EventThreadMeta, EventTurnStarted,
+		EventTurnInputsCommitted, EventProviderNativeCommit,
 		EventProviderNativeCommit, EventSampleUsage, EventTurnCompleted, EventTurnFailed,
 	} {
 		if !kinds[kind] {
@@ -100,6 +101,7 @@ func TestCurrentFixtureCanonicalBytesStayStable(t *testing.T) {
 		EventTurnStarted,
 		EventTurnFailed,
 		EventTurnStarted,
+		EventTurnInputsCommitted, EventProviderNativeCommit,
 		EventProviderNativeCommit,
 		EventSampleUsage,
 		EventTurnCompleted,
@@ -129,6 +131,7 @@ func TestCurrentToolLoopFixtureReplay(t *testing.T) {
 	fixture := bytes.TrimSuffix(readCurrentFixture(t, "tool_loop.jsonl"), []byte{'\n'})
 	wantKinds := []EventKind{
 		EventSessionMeta, EventThreadMeta, EventTurnStarted,
+		EventTurnInputsCommitted, EventProviderNativeCommit,
 		EventProviderNativeCommit, EventSampleUsage,
 		EventToolCallReady, EventToolCallReady, EventToolCallReady,
 		EventToolExecutionStarted, EventToolExecutionStarted, EventToolExecutionStarted,
@@ -200,7 +203,7 @@ func TestCurrentFixtureContinuesWithoutRewrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(records) != 1 || records[0].Sequence != 9 {
+	if len(records) != 1 || records[0].Sequence != 11 {
 		t.Fatalf("continued records = %#v", records)
 	}
 	if err := writer.Close(context.Background()); err != nil {
@@ -255,7 +258,7 @@ func TestCurrentFixtureRejectsUnsupportedShapeReadOnly(t *testing.T) {
 	baseline := readCurrentFixture(t, "root.jsonl")
 	superseded := readCurrentFixture(t, "superseded_envelope.jsonl")
 	fixtures := map[string][]byte{
-		"schema revision":     bytes.Replace(baseline, []byte(`"schema_version":4`), []byte(`"schema_version":99`), 1),
+		"schema revision":     bytes.Replace(baseline, []byte(`"schema_version":5`), []byte(`"schema_version":99`), 1),
 		"superseded envelope": append(append([]byte(nil), baseline...), superseded...),
 	}
 	for name, content := range fixtures {

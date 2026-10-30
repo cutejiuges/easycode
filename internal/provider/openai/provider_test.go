@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/provider"
 	"easycode/internal/provider/transport"
@@ -26,15 +27,15 @@ func TestProviderCreatesIsolatedConversations(t *testing.T) {
 
 	first := instance.NewConversation().(*Conversation)
 	second := instance.NewConversation().(*Conversation)
-	first.history.commit(testSampleEntry(NewUserItem("first"), []NativeItem{{Type: "message", ID: "msg-1", Role: "assistant"}}))
+	testCommitHistory(t, &first.history, testInputEntry(t, NewUserItem("first")), testSampleEntry([]NativeItem{{Type: "message", ID: "msg-1", Role: "assistant"}}))
 
-	if history := first.historySnapshot(); len(history) != 1 || history[0].Input.Content[0].Text != "first" || history[0].Outputs[0].ID != "msg-1" {
+	if history := first.historySnapshot(); len(history) != 2 || history[0].UserInputs[0].Content[0].Text != "first" || history[1].Outputs[0].ID != "msg-1" {
 		t.Fatalf("first history: %#v", first.historySnapshot())
 	}
 	if len(second.historySnapshot()) != 0 {
 		t.Fatalf("second conversation shared history: %#v", second.historySnapshot())
 	}
-	if got := first.ProjectHistory(); len(got.Turns) != 1 || got.Turns[0].UserText != "first" || got.Turns[0].AssistantText != "" {
+	if got := first.ProjectHistory(); len(got.Turns) != 1 || got.Turns[0].Messages[0].Text != "first" || len(got.Turns[0].Messages) != 1 {
 		t.Fatalf("first projection: %#v", got)
 	}
 	if got := second.ProjectHistory(); got.Turns == nil || len(got.Turns) != 0 {
@@ -52,7 +53,7 @@ func TestConversationIgnoresRepeatedCompletedTerminal(t *testing.T) {
 	stream <- responseEvent(`{"type":"response.completed","response":{"id":"resp-2"}}`)
 	close(stream)
 	output := make(chan provider.StreamEvent, 16)
-	conversation.consumeStream(context.Background(), func() {}, nativeItemPointer(NewUserItem("question")), testOpenAIToolCatalog(t), stream, output)
+	testConsumeStream(t, conversation, context.Background(), func() {}, nativeItemPointer(NewUserItem("question")), testOpenAIToolCatalog(t), stream, output)
 	terminalCount := 0
 	for event := range output {
 		if !event.Kind().Terminal() {
@@ -66,7 +67,7 @@ func TestConversationIgnoresRepeatedCompletedTerminal(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if terminalCount != 1 || len(conversation.historySnapshot()) != 1 {
+	if terminalCount != 1 || len(conversation.historySnapshot()) != 2 {
 		t.Fatalf("terminal count/history = %d/%#v", terminalCount, conversation.historySnapshot())
 	}
 }
@@ -92,7 +93,7 @@ func TestConversationCancelCompletedRaceHasOneTerminal(t *testing.T) {
 		senders.Wait()
 		close(stream)
 		output := make(chan provider.StreamEvent, 16)
-		conversation.consumeStream(ctx, func() {}, nativeItemPointer(NewUserItem("question")), testOpenAIToolCatalog(t), stream, output)
+		testConsumeStream(t, conversation, ctx, func() {}, nativeItemPointer(NewUserItem("question")), testOpenAIToolCatalog(t), stream, output)
 		terminalCount := 0
 		for event := range output {
 			if !event.Kind().Terminal() {
@@ -161,7 +162,7 @@ func TestConversationStreamsAndCommitsOnlyOnCompleted(t *testing.T) {
 	defer closeProvider(t, instance)
 	conversation := instance.NewConversation().(*Conversation)
 
-	stream, err := conversation.Stream(context.Background(), testOpenAITurnInput(t, "hello"))
+	stream, err := conversation.Stream(context.Background(), testOpenAITurnInput(t, conversation, "hello"))
 	if err != nil {
 		t.Fatalf("start stream: %v", err)
 	}
@@ -185,7 +186,7 @@ func TestConversationStreamsAndCommitsOnlyOnCompleted(t *testing.T) {
 	if got := <-authorization; got != "Bearer test-key" {
 		t.Fatalf("authorization: %q", got)
 	}
-	if history := conversation.historySnapshot(); len(history) != 0 {
+	if history := conversation.historySnapshot(); len(history) != 1 {
 		t.Fatalf("history committed before durable finalization: %#v", history)
 	}
 	if prepared == nil {
@@ -197,7 +198,7 @@ func TestConversationStreamsAndCommitsOnlyOnCompleted(t *testing.T) {
 	if err := prepared.Finalize(); err == nil {
 		t.Fatal("prepared sample finalized twice")
 	}
-	if history := conversation.historySnapshot(); len(history) != 1 || history[0].Input.Content[0].Text != "hello" || history[0].Outputs[0].ID != "msg-1" {
+	if history := conversation.historySnapshot(); len(history) != 2 || history[0].UserInputs[0].Content[0].Text != "hello" || history[1].Outputs[0].ID != "msg-1" {
 		t.Fatalf("committed history: %#v", history)
 	}
 }
@@ -217,7 +218,7 @@ func TestConversationRejectsEOFBeforeCompletedWithoutCommitting(t *testing.T) {
 	defer closeProvider(t, instance)
 	conversation := instance.NewConversation().(*Conversation)
 
-	stream, err := conversation.Stream(context.Background(), testOpenAITurnInput(t, "hello"))
+	stream, err := conversation.Stream(context.Background(), testOpenAITurnInput(t, conversation, "hello"))
 	if err != nil {
 		t.Fatalf("start stream: %v", err)
 	}
@@ -229,10 +230,10 @@ func TestConversationRejectsEOFBeforeCompletedWithoutCommitting(t *testing.T) {
 	if !errors.As(terminal.Error(), &faultError) || faultError.Code != fault.CodeStreamProtocol {
 		t.Fatalf("terminal error: %v", terminal.Error())
 	}
-	if len(conversation.historySnapshot()) != 0 {
+	if len(conversation.historySnapshot()) != 1 {
 		t.Fatalf("partial turn committed: %#v", conversation.historySnapshot())
 	}
-	if projection := conversation.ProjectHistory(); len(projection.Turns) != 0 {
+	if projection := conversation.ProjectHistory(); len(projection.Turns) != 1 || len(projection.Turns[0].Messages) != 1 || projection.Turns[0].Messages[0].Role != domain.SemanticUser {
 		t.Fatalf("partial turn projected: %#v", projection)
 	}
 }
@@ -254,7 +255,7 @@ func TestConversationCancelProducesCancelledTerminal(t *testing.T) {
 	defer closeProvider(t, instance)
 	conversation := instance.NewConversation().(*Conversation)
 	ctx, cancel := context.WithCancel(context.Background())
-	stream, err := conversation.Stream(ctx, testOpenAITurnInputWithProject(t, "hello"))
+	stream, err := conversation.Stream(ctx, testOpenAITurnInputWithProject(t, conversation, "hello"))
 	if err != nil {
 		t.Fatalf("start stream: %v", err)
 	}
@@ -264,15 +265,15 @@ func TestConversationCancelProducesCancelledTerminal(t *testing.T) {
 	if terminal.Kind() != provider.StreamEventCancelled || !errors.Is(terminal.Error(), context.Canceled) {
 		t.Fatalf("terminal: %#v", terminal)
 	}
-	if projection := conversation.ProjectHistory(); len(projection.Turns) != 0 {
+	if projection := conversation.ProjectHistory(); len(projection.Turns) != 1 || len(projection.Turns[0].Messages) != 1 || projection.Turns[0].Messages[0].Role != domain.SemanticUser {
 		t.Fatalf("cancelled turn projected: %#v", projection)
 	}
-	if len(conversation.historySnapshot()) != 0 {
+	if len(conversation.historySnapshot()) != 1 {
 		t.Fatalf("cancelled turn committed: %#v", conversation.historySnapshot())
 	}
 	nextContext, cancelNext := context.WithCancel(context.Background())
 	cancelNext()
-	if next, nextErr := conversation.Stream(nextContext, testOpenAITurnInput(t, "next")); next != nil || !errors.Is(nextErr, context.Canceled) {
+	if next, nextErr := conversation.Stream(nextContext, testOpenAITurnInput(t, conversation, "next")); next != nil || !errors.Is(nextErr, context.Canceled) {
 		t.Fatalf("next stream after cleanup = %#v, %v", next, nextErr)
 	}
 }
@@ -323,7 +324,7 @@ func TestConversationFailureAndIdleTimeoutDoNotProjectTurn(t *testing.T) {
 			}
 			defer closeProvider(t, instance)
 			conversation := instance.NewConversation().(*Conversation)
-			stream, err := conversation.Stream(context.Background(), testOpenAITurnInputWithProject(t, "hello"))
+			stream, err := conversation.Stream(context.Background(), testOpenAITurnInputWithProject(t, conversation, "hello"))
 			if err != nil {
 				t.Fatalf("start stream: %v", err)
 			}
@@ -335,20 +336,21 @@ func TestConversationFailureAndIdleTimeoutDoNotProjectTurn(t *testing.T) {
 			if !errors.As(terminal.Error(), &faultError) || faultError.Code != test.wantCode {
 				t.Fatalf("terminal error: got %v want code %s", terminal.Error(), test.wantCode)
 			}
-			if projection := conversation.ProjectHistory(); len(projection.Turns) != 0 {
+			if projection := conversation.ProjectHistory(); len(projection.Turns) != 1 || len(projection.Turns[0].Messages) != 1 || projection.Turns[0].Messages[0].Role != domain.SemanticUser {
 				t.Fatalf("failed turn projected: %#v", projection)
 			}
-			if len(conversation.historySnapshot()) != 0 {
+			if len(conversation.historySnapshot()) != 1 {
 				t.Fatalf("failed turn committed: %#v", conversation.historySnapshot())
 			}
 		})
 	}
 }
 
-func testOpenAITurnInputWithProject(t *testing.T, text string) provider.TurnInput {
+func testOpenAITurnInputWithProject(t *testing.T, conversation provider.Conversation, text string) provider.TurnInput {
 	t.Helper()
+	testCommitUserInput(t, conversation.(*Conversation), text)
 	snapshot := testOpenAIProjectInstructions(t, "AGENTS.md", "project-only-marker")
-	input, err := (provider.TurnInput{Text: text}).WithProjectInstructions(snapshot)
+	input, err := provider.NewSamplingInput().WithProjectInstructions(snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,7 +372,8 @@ func TestProviderRequestErrorDoesNotExposeAPIKey(t *testing.T) {
 		t.Fatalf("new provider: %v", err)
 	}
 	defer closeProvider(t, instance)
-	_, err = instance.NewConversation().Stream(context.Background(), testOpenAITurnInput(t, "hello"))
+	conversation := instance.NewConversation()
+	_, err = conversation.Stream(context.Background(), testOpenAITurnInput(t, conversation, "hello"))
 	if err == nil || strings.Contains(err.Error(), "top-secret") {
 		t.Fatalf("unsafe provider error: %v", err)
 	}

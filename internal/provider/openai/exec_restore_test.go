@@ -45,7 +45,7 @@ func TestExecNativeResultsRestoreExactly(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			history := []nativeHistoryEntry{{Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("test")), Outputs: []NativeItem{{Type: "reasoning", ID: "reason-exec", EncryptedContent: "opaque-reason"}, {Type: "function_call", ID: "fc-exec", CallID: "call-exec", Name: "exec_command", Arguments: `{"command":"printf '你好'","workdir":"src","timeout_ms":1000}`}}}}
+			history := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, NewUserItem("test")), {Kind: nativeHistorySample, Outputs: []NativeItem{{Type: "reasoning", ID: "reason-exec", EncryptedContent: "opaque-reason"}, {Type: "function_call", ID: "fc-exec", CallID: "call-exec", Name: "exec_command", Arguments: `{"command":"printf '你好'","workdir":"src","timeout_ms":1000}`}}}})
 			output, err := prepareToolOutputsEntry(history, []tool.InvocationResult{result})
 			if err != nil {
 				t.Fatal(err)
@@ -75,16 +75,16 @@ func TestExecNativeResultsRestoreExactly(t *testing.T) {
 				}
 				commits = append(commits, commit)
 			}
-			restoredValue, err := instance.RestoreConversation(commits)
+			restoredValue, err := instance.RestoreConversation(testRestoreRecords(t, commits))
 			if err != nil {
 				t.Fatal(err)
 			}
 			restored := restoredValue.(*Conversation)
-			first, err := compileResponsesRequest(instance.config.Model, uninterrupted.historySnapshot(), nil, nil, testOpenAIToolView(t))
+			first, err := compileResponsesRequest(instance.config.Model, uninterrupted.historySnapshot(), nil, testOpenAIToolView(t))
 			if err != nil {
 				t.Fatal(err)
 			}
-			second, err := compileResponsesRequest(instance.config.Model, restored.historySnapshot(), nil, nil, testOpenAIToolView(t))
+			second, err := compileResponsesRequest(instance.config.Model, restored.historySnapshot(), nil, testOpenAIToolView(t))
 			if err != nil {
 				t.Fatal(err)
 			}

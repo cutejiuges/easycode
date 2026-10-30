@@ -28,8 +28,9 @@ func (m observedComposer) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch value := message.(type) {
 	case tea.KeyMsg:
 		m.observed <- composerObservation{m.model.composer.text, m.model.state, value.Paste}
-	case RuntimeEventMsg:
-		if value.Event.Kind == protocol.EventTurnCompleted {
+	case controlItemMsg:
+		event, ok := value.item.TurnEvent()
+		if ok && event.Kind == protocol.EventTurnCompleted {
 			m.observed <- composerObservation{m.model.composer.text, m.model.state, false}
 		}
 	}

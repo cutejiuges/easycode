@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -90,9 +91,9 @@ func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(resumed.history.Turns) != 2 || resumed.history.Turns[0].UserText != "first" ||
-				resumed.history.Turns[0].AssistantText != "answer-1" ||
-				resumed.history.Turns[1].UserText != "second" || resumed.history.Turns[1].AssistantText != "answer-2" {
+			if len(resumed.history.Turns) != 2 || resumed.history.Turns[0].Messages[0].Text != "first" ||
+				resumed.history.Turns[0].Messages[1].Text != "answer-1" ||
+				resumed.history.Turns[1].Messages[0].Text != "second" || resumed.history.Turns[1].Messages[1].Text != "answer-2" {
 				t.Fatalf("resumed history = %#v", resumed.history)
 			}
 			view := tui.NewModel(context.Background(), "test", resumed.session, resumed.history).View()
@@ -186,7 +187,7 @@ func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = repository.Close()
-			if len(loaded.Records) != 14 || loaded.NextSequence != 15 {
+			if len(loaded.Records) != 20 || loaded.NextSequence != 21 {
 				t.Fatalf("journal record count/next = %d/%d", len(loaded.Records), loaded.NextSequence)
 			}
 			for index, record := range loaded.Records {
@@ -197,7 +198,7 @@ func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
 					t.Fatal("journal contains connection secret")
 				}
 			}
-			for _, index := range []int{4, 8, 12} {
+			for _, index := range []int{6, 12, 18} {
 				if loaded.Records[index].EventKind != session.EventSampleUsage {
 					t.Fatalf("record[%d] kind = %s", index, loaded.Records[index].EventKind)
 				}
@@ -265,8 +266,8 @@ func TestCurrentSessionFixtureRestoresVisibleHistoryWithoutNetwork(t *testing.T)
 		t.Fatalf("session fixture restore made %d network calls", networkCalls.Load())
 	}
 	if len(resources.history.Turns) != 1 ||
-		resources.history.Turns[0].UserText != "fixture question" ||
-		resources.history.Turns[0].AssistantText != "fixture answer" {
+		resources.history.Turns[0].Messages[0].Text != "fixture question" ||
+		resources.history.Turns[0].Messages[1].Text != "fixture answer" {
 		t.Fatalf("session fixture history = %#v", resources.history)
 	}
 	view := tui.NewModel(context.Background(), "test", resources.session, resources.history).View()
@@ -486,7 +487,7 @@ func TestResumeWithDifferentCWDAndRefreshedConnectionDoesNotChangeProcessCWD(t *
 	}
 }
 
-func TestCancelledTurnDoesNotEnterHistoryAfterResume(t *testing.T) {
+func TestCancelledSampleRetainsCommittedInputAfterResume(t *testing.T) {
 	t.Parallel()
 	requestStarted := make(chan struct{})
 	cancelServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -547,13 +548,13 @@ func TestCancelledTurnDoesNotEnterHistoryAfterResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(resumed.history.Turns) != 0 {
-		t.Fatalf("cancelled turn entered restored history: %#v", resumed.history)
+	if len(resumed.history.Turns) != 1 || len(resumed.history.Turns[0].Messages) != 1 || resumed.history.Turns[0].Messages[0].Text != "cancelled prompt" {
+		t.Fatalf("committed input missing from restored history: %#v", resumed.history)
 	}
 	submitAppTurn(t, resumed, "retry")
 	body := <-requestBody
-	if strings.Contains(string(body), "cancelled prompt") || !strings.Contains(string(body), "retry") {
-		t.Fatalf("resumed request contains cancelled history: %s", body)
+	if !strings.Contains(string(body), "cancelled prompt") || !strings.Contains(string(body), "retry") {
+		t.Fatalf("resumed request lost committed input: %s", body)
 	}
 	if err := resumed.close(context.Background()); err != nil {
 		t.Fatal(err)
@@ -621,5 +622,77 @@ func TestResumeRepairsHalfLineOnceAndKeepsCommittedHistory(t *testing.T) {
 	}
 	if err := second.close(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSteeringFixturesRestoreLocallyAndCloseOldTurn(t *testing.T) {
+	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
+		for _, prefix := range []string{"input_only_", "steering_tail_"} {
+			t.Run(prefix+string(family), func(t *testing.T) {
+				fixture, err := os.ReadFile(filepath.Join("..", "session", "testdata", "current", prefix+string(family)+".jsonl"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				dataRoot := filepath.Join(t.TempDir(), "sessions")
+				repository, err := session.OpenOrCreateRepository(dataRoot)
+				if err != nil {
+					t.Fatal(err)
+				}
+				threadID := domain.ThreadID("00000000-0001-7000-8000-000000000002")
+				lease, err := repository.Create(context.Background(), threadID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := lease.Close(); err != nil {
+					t.Fatal(err)
+				}
+				path, err := repository.JournalPath(threadID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, fixture, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := repository.Close(); err != nil {
+					t.Fatal(err)
+				}
+
+				var networkCalls atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+					networkCalls.Add(1)
+				}))
+				defer server.Close()
+				applicationConfig := config.Config{Provider: config.Provider{
+					Family: family, BaseURL: server.URL,
+					APIKey: secret.New("fixture-key"), Model: "fixture-model",
+				}}
+				resources, err := openChatResources(
+					context.Background(), applicationConfig, dataRoot, string(threadID), t.TempDir(),
+				)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if networkCalls.Load() != 0 {
+					t.Fatalf("session fixture restore made %d network calls", networkCalls.Load())
+				}
+				if len(resources.history.Turns) != 1 || resources.history.Turns[0].Messages[0].Text != "Inspect, edit and verify" {
+					t.Fatal("saved initial input missing")
+				}
+				messages := resources.history.Turns[0].Messages
+				if prefix == "steering_tail_" && (len(messages) < 3 || messages[len(messages)-2].Text != "  preserve 中文\n" || messages[len(messages)-1].Text != "also verify tests") {
+					t.Fatal("steering input order lost")
+				}
+				if err := resources.close(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				journal, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !bytes.HasPrefix(journal, fixture) || bytes.Count(journal, []byte(`"event_kind":"turn_failed"`)) != 1 {
+					t.Fatal("old turn was not durably closed without rewriting")
+				}
+			})
+		}
 	}
 }
