@@ -34,3 +34,13 @@ func (*Store) Clean(context.Context, []tool.ArtifactDescriptor) error {
 
 // Close 没有需要释放的资源。
 func (*Store) Close() error { return nil }
+
+// StartText 在未支持的平台不创建搜索保存资源。
+func (*Store) StartText(context.Context, tool.InvocationID, tool.CapabilityID) (tool.TextOutputCapture, error) {
+	return nil, tool.ArtifactReadUnavailable
+}
+
+// ReadWindow 在未支持的平台不读取外部窗口。
+func (*Store) ReadWindow(context.Context, tool.ArtifactDescriptor, tool.ReadArtifactInput) (tool.ArtifactWindow, error) {
+	return tool.ArtifactWindow{}, tool.ArtifactReadUnavailable
+}

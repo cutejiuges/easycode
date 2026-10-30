@@ -2,6 +2,7 @@ package tool
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -73,8 +74,8 @@ func (buffer *ExecOutputBuffer) Snapshot() ExecOutputSnapshot {
 func (snapshot ExecOutputSnapshot) Stats() ExecStreamStats { return snapshot.stats }
 
 // ExecOutputNeedsSaving 在发布对象前判断原始输出是否能完整内联，不生成最终模型结果。
-func ExecOutputNeedsSaving(stdout, stderr ExecOutputSnapshot) bool {
-	const budget = (ExecModelPreviewBytes - 2048) / 2
+func ExecOutputNeedsSaving(stdout, stderr ExecOutputSnapshot, allowance int) bool {
+	budget := (allowance - min(2048, allowance*3/4)) / 2
 	for _, s := range []ExecOutputSnapshot{stdout, stderr} {
 		if s.stats.OmittedBytes() > 0 || len(s.head)+len(s.tail) > budget || !utf8.ValidString(s.head+s.tail) {
 			return true
@@ -85,11 +86,14 @@ func ExecOutputNeedsSaving(stdout, stderr ExecOutputSnapshot) bool {
 
 // RenderExecOutput 固定按stdout后stderr生成UTF-8预览，并为每个流预留独立预算。
 // 无效UTF-8以单字节问号修复，避免修复过程放大输出预算。
-func RenderExecOutput(stdout, stderr ExecOutputSnapshot, metadata ExecResultMetadata) (ModelPreview, bool, error) {
+func RenderExecOutput(stdout, stderr ExecOutputSnapshot, metadata ExecResultMetadata, allowance int) (ModelPreview, bool, error) {
 	if err := metadata.Validate(); err != nil {
 		return ModelPreview{}, false, err
 	}
-	const streamBudget = (ExecModelPreviewBytes - 2048) / 2
+	if allowance < SafetyResultBytes || allowance > ExecModelPreviewBytes {
+		return ModelPreview{}, false, errors.New("invalid Exec preview allowance")
+	}
+	streamBudget := (allowance - min(2048, allowance*3/4)) / 2
 	out, outCut := stdout.render(streamBudget)
 	errout, errCut := stderr.render(streamBudget)
 	exit := "unknown"

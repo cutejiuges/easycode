@@ -44,7 +44,7 @@ func TestExecShutdownTimeoutRetainsTurnUntilExecutorCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	for event := range events {
-		if event.Kind == protocol.EventCommandStarted {
+		if event.Kind == protocol.EventToolStarted {
 			break
 		}
 		if event.Kind != protocol.EventToolApprovalRequested {

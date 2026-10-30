@@ -70,23 +70,23 @@ type providerResource interface {
 }
 
 type chatResources struct {
-	identity       session.Identity
-	provider       providerResource
-	workspace      *builtin.Workspace
-	service        *sessionService
-	artifactLayout *artifact.Layout
-	artifactStore  *artifact.Store
-	commandQueries *commandQueries
-	writer         managedJournal
-	runtime        *chatRuntime.Runtime
-	session        *chatRuntime.ChatSession
-	history        domain.SemanticHistoryView
-	repair         session.RepairReport
-	resumed        bool
-	providerClosed bool
-	closeMu        sync.Mutex
-	closeDone      chan struct{}
-	closeErr       error
+	identity          session.Identity
+	provider          providerResource
+	workspace         *builtin.Workspace
+	service           *sessionService
+	artifactLayout    *artifact.Layout
+	artifactStore     *artifact.Store
+	transcriptQueries *transcriptQueries
+	writer            managedJournal
+	runtime           *chatRuntime.Runtime
+	session           *chatRuntime.ChatSession
+	history           domain.SemanticHistoryView
+	repair            session.RepairReport
+	resumed           bool
+	providerClosed    bool
+	closeMu           sync.Mutex
+	closeDone         chan struct{}
+	closeErr          error
 }
 
 // resourceCleanup 在应用装配成功前按取得顺序持有资源，并按严格逆序释放。
@@ -251,7 +251,7 @@ func runTUI(ctx context.Context, options Options, resources *chatResources) Outc
 		return runtimeFailure(err)
 	}
 	resources.session = controlSession
-	model := tui.NewModel(ctx, Version, controlSession, resources.history).WithCommandQueries(resources.identity.ThreadID, resources.commandQueries)
+	model := tui.NewModel(ctx, Version, controlSession).WithInputHistory(resources.history).WithTranscriptQueries(resources.identity.ThreadID, resources.transcriptQueries)
 	programOptions := []tea.ProgramOption{tea.WithContext(ctx), tea.WithOutput(options.Output)}
 	if options.Input != nil {
 		programOptions = append(programOptions, tea.WithInput(options.Input))
@@ -432,11 +432,11 @@ func openChatResourcesWithSnapshot(
 		return nil, fault.New(fault.CodeSessionWrite, "artifact storage is unavailable")
 	}
 	cleanup.add(artifactStore.Close)
-	artifactReferences, err := tool.NewArtifactReferences(assembled.identity.ThreadID, session.CommandArtifactReferences(assembled.commands))
+	artifactReferences, err := tool.NewArtifactReferences(assembled.identity.ThreadID, session.ToolArtifactReferences(assembled.tools))
 	if err != nil {
 		return nil, fault.New(fault.CodeSessionCorruption, "artifact references are invalid")
 	}
-	if err = artifactStore.Clean(ctx, session.CommandArtifactReferences(assembled.commands)); err != nil {
+	if err = artifactStore.Clean(ctx, session.ToolArtifactReferences(assembled.tools)); err != nil {
 		return nil, fault.New(fault.CodeSessionWrite, "artifact cleanup failed")
 	}
 	readArtifactExecutor, err := builtin.NewReadArtifactExecutor(artifactRangeReader{store: artifactStore, references: artifactReferences})
@@ -469,11 +469,19 @@ func openChatResourcesWithSnapshot(
 	if err != nil {
 		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "context profile is invalid", err)
 	}
-	queries := newCommandQueries(assembled.identity.ThreadID, artifactRangeReader{store: artifactStore, references: artifactReferences}, assembled.commands)
+	queries := newTranscriptQueries(assembled.identity.ThreadID, artifactRangeReader{store: artifactStore, references: artifactReferences}, assembled.tools)
+	projector, ok := assembled.conversation.(provider.TranscriptProjector)
+	if !ok {
+		return nil, fault.New(fault.CodeStreamProtocol, "transcript projection is unavailable")
+	}
+	if err = queries.bindTranscript(projector, toolCatalog, assembled.nativeCommits); err != nil {
+		return nil, err
+	}
 	cleanup.add(queries.Close)
 	runtimeInstance, err := chatRuntime.New(assembled.conversation, chatRuntime.Config{
 		ArtifactReferences: artifactReferences,
-		CommandHistory:     queries,
+		TextOutputStore:    artifactOutputStore{store: artifactStore},
+		ToolHistory:        queries,
 		SessionID:          assembled.identity.SessionID, ThreadID: assembled.identity.ThreadID,
 		Journal: assembled.writer, ContextProfile: contextProfile,
 		ToolCatalog:          toolCatalog,
@@ -502,7 +510,7 @@ func openChatResourcesWithSnapshot(
 		assembled.history = assembled.conversation.ProjectHistory()
 	}
 	resources = &chatResources{
-		artifactLayout: artifactLayout, artifactStore: artifactStore, commandQueries: queries,
+		artifactLayout: artifactLayout, artifactStore: artifactStore, transcriptQueries: queries,
 		identity: assembled.identity,
 		provider: providerInstance, workspace: workspace, service: service, writer: assembled.writer,
 		runtime: runtimeInstance, session: chatRuntime.NewChatSession(runtimeInstance), history: assembled.history,
@@ -654,8 +662,8 @@ func (resources *chatResources) close(ctx context.Context) error {
 	if ctx.Err() != nil {
 		closeContext = context.Background()
 	}
-	if resources.commandQueries != nil {
-		_ = resources.commandQueries.Close()
+	if resources.transcriptQueries != nil {
+		_ = resources.transcriptQueries.Close()
 	}
 	var artifactErr error
 	if resources.artifactStore != nil {

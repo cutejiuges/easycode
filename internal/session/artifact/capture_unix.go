@@ -15,6 +15,7 @@ import (
 )
 
 type captureFile interface {
+	Truncate(int64) error
 	Write([]byte) (int, error)
 	Sync() error
 	Close() error
@@ -39,8 +40,9 @@ type Capture struct {
 	publish                func(*os.File, string, string) error
 }
 
-func (c *Capture) openStreams() error {
-	for _, s := range []*capturedStream{&c.stdout, &c.stderr} {
+func (c *Capture) openSources(count int) error {
+	streams := []*capturedStream{&c.stdout, &c.stderr}
+	for _, s := range streams[:count] {
 		id, err := randomID()
 		if err != nil {
 			return err

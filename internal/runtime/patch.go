@@ -23,7 +23,7 @@ func (runtime *Runtime) executePatchCall(ctx context.Context, emit Emitter, turn
 			code = value.Code()
 		}
 		result := tool.NewPatchErrorResult(patch, tool.ResultError, code, "Patch failed: "+code)
-		if persistErr := runtime.persistToolResult(context.WithoutCancel(ctx), turnID, result); persistErr != nil {
+		if persistErr := runtime.persistToolResult(context.WithoutCancel(ctx), turnID, &result); persistErr != nil {
 			return tool.InvocationResult{}, false, persistErr
 		}
 		return result, false, nil
@@ -92,6 +92,10 @@ func (runtime *Runtime) executePatchCall(ctx context.Context, emit Emitter, turn
 		if draftErr != nil {
 			return tool.InvocationResult{}, false, draftErr
 		}
+		result, freezeErr := runtime.freezeResult(result)
+		if freezeErr != nil {
+			return tool.InvocationResult{}, false, freezeErr
+		}
 		resultDraft, draftErr := session.NewToolCallResultDraft(turnID, result)
 		if draftErr != nil {
 			return tool.InvocationResult{}, false, draftErr
@@ -100,6 +104,7 @@ func (runtime *Runtime) executePatchCall(ctx context.Context, emit Emitter, turn
 			runtime.poisoned.Store(true)
 			return tool.InvocationResult{}, false, fault.Wrap(fault.CodeSessionWrite, "persist Patch denial failed", appendErr)
 		}
+		runtime.notifyToolResult(turnID, result)
 		runtime.emitApprovalResolved(emit, turnID, request, outcome)
 		return result, outcome == tool.ApprovalOutcomeAbort, nil
 	}

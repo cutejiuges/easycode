@@ -16,7 +16,7 @@ func (runtime *Runtime) executeWriteCall(ctx context.Context, emit Emitter, turn
 		return tool.InvocationResult{}, false, fault.New(fault.CodeTurnFailed, "Write runtime is not configured")
 	}
 	finish := func(result tool.InvocationResult) (tool.InvocationResult, bool, error) {
-		if err := runtime.persistToolResult(context.WithoutCancel(ctx), turnID, result); err != nil {
+		if err := runtime.persistToolResult(context.WithoutCancel(ctx), turnID, &result); err != nil {
 			return tool.InvocationResult{}, false, err
 		}
 		return result, false, nil
@@ -113,6 +113,10 @@ func (runtime *Runtime) executeWriteCall(ctx context.Context, emit Emitter, turn
 			message += "\nUser feedback: " + feedback
 		}
 		result := tool.NewWriteErrorResult(v, status, code, message)
+		result, freezeErr := runtime.freezeResult(result)
+		if freezeErr != nil {
+			return tool.InvocationResult{}, false, freezeErr
+		}
 		resultDraft, err := session.NewToolCallResultDraft(turnID, result)
 		if err != nil {
 			return tool.InvocationResult{}, false, err
@@ -121,6 +125,7 @@ func (runtime *Runtime) executeWriteCall(ctx context.Context, emit Emitter, turn
 			runtime.poisoned.Store(true)
 			return tool.InvocationResult{}, false, fault.Wrap(fault.CodeSessionWrite, "persist Write denial failed", err)
 		}
+		runtime.notifyToolResult(turnID, result)
 		runtime.emitApprovalResolved(emit, turnID, request, outcome)
 		return result, outcome == tool.ApprovalOutcomeAbort, nil
 	}

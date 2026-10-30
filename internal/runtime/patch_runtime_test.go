@@ -95,7 +95,11 @@ func TestPatchApprovalDurabilityPrecedesExecution(t *testing.T) {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		results, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, []tool.Invocation{invocation}, func(event protocol.Event) { events <- event })
+		results, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, []tool.Invocation{invocation}, func(event protocol.Event) {
+			if event.Kind == protocol.EventToolApprovalRequested || event.Kind == protocol.EventToolApprovalResolved {
+				events <- event
+			}
+		})
 		done <- outcome{results, err}
 	}()
 	requested := <-events
@@ -218,7 +222,11 @@ func TestPatchApprovalCancellationWinsBeforeResponse(t *testing.T) {
 	events := make(chan protocol.Event, 2)
 	done := make(chan error, 1)
 	go func() {
-		_, err := runtime.executeToolCalls(ctx, runtimeTurnID, []tool.Invocation{invocation}, func(event protocol.Event) { events <- event })
+		_, err := runtime.executeToolCalls(ctx, runtimeTurnID, []tool.Invocation{invocation}, func(event protocol.Event) {
+			if event.Kind == protocol.EventToolApprovalRequested || event.Kind == protocol.EventToolApprovalResolved {
+				events <- event
+			}
+		})
 		done <- err
 	}()
 	requested := <-events
@@ -249,7 +257,11 @@ func TestPatchAllowSessionGrantStaysRuntimeLocal(t *testing.T) {
 	events := make(chan protocol.Event, 4)
 	firstDone := make(chan error, 1)
 	go func() {
-		_, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, []tool.Invocation{invocation}, func(event protocol.Event) { events <- event })
+		_, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, []tool.Invocation{invocation}, func(event protocol.Event) {
+			if event.Kind == protocol.EventToolApprovalRequested || event.Kind == protocol.EventToolApprovalResolved {
+				events <- event
+			}
+		})
 		firstDone <- err
 	}()
 	requested := <-events
@@ -270,6 +282,7 @@ func TestPatchAllowSessionGrantStaysRuntimeLocal(t *testing.T) {
 	if _, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, []tool.Invocation{invocation}, func(event protocol.Event) { secondEvents = append(secondEvents, event) }); err != nil {
 		t.Fatal(err)
 	}
+	secondEvents = validateToolActivitiesAndConversation(t, secondEvents)
 	if executor.calls != 2 || len(secondEvents) != 1 || secondEvents[0].Kind != protocol.EventToolApprovalResolved {
 		t.Fatalf("executor calls=%d second events=%#v", executor.calls, secondEvents)
 	}
@@ -296,7 +309,11 @@ func TestPatchApprovalAbortClosesAllRemainingCallsInOrder(t *testing.T) {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		results, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, []tool.Invocation{patchInvocation, read}, func(event protocol.Event) { events <- event })
+		results, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, []tool.Invocation{patchInvocation, read}, func(event protocol.Event) {
+			if event.Kind == protocol.EventToolApprovalRequested || event.Kind == protocol.EventToolApprovalResolved {
+				events <- event
+			}
+		})
 		done <- outcome{results: results, err: err}
 	}()
 	requested := <-events

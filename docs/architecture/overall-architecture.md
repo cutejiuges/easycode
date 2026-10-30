@@ -2,9 +2,9 @@
 
 ## 当前契约与生命周期基线
 
-命令输出存储位于 `internal/session/artifact`；Runtime 在 durable result 后授权引用并更新独立命令历史，app 装配 typed 宿主查询，TUI 不读文件。ReadArtifact 是第七项真实能力，命令预览与保存前缀分离；保存文件缺失不影响 Provider 原生恢复。预算、目录隔离和 owner 细节见 [ADR-0005](adr/0005-private-command-output-and-host-queries.md) 与 [Tool 输出存储](tool-system.md#命令输出存储与查询)。
+命令输出存储位于 `internal/session/artifact`；Runtime 在 durable result 后授权引用并更新七工具事实投影，app 装配 typed 宿主查询，TUI 不读文件。ReadArtifact 是第七项真实能力，命令预览与保存前缀分离；保存文件缺失不影响 Provider 原生恢复。预算、目录隔离和 owner 细节见 [ADR-0005](adr/0005-private-command-output-and-host-queries.md) 与 [Tool 输出存储](tool-system.md#命令输出存储与查询)。
 
-Session envelope/payload canary 为 `5`，双 Provider native payload revision 为 `2`，外部 headless JSONL version 为 `1`。这些标记属于不同边界，不构成并行兼容 reader。prepared sample/tool outputs 仅提供显式 finalize/discard 构造器，回调完成后才能报告 finalized。
+Session envelope/payload canary 为 `6`，双 Provider native payload revision 为 `2`，外部 headless JSONL version 为 `1`。这些标记属于不同边界，不构成并行兼容 reader。prepared sample/tool outputs 仅提供显式 finalize/discard 构造器，回调完成后才能报告 finalized。
 
 `internal/codec` 从固定 Sonic 配置值编码，不读取可替换的第三方默认 codec。封闭 JSON 对象拒绝重复键、大小写别名、未知字段、尾随内容和有损 Unicode。工具缺省参数保留默认值，显式 null 失败；持久化 record 按 json 标签要求非 omitempty 字段存在，标量与对象不接受 null，当前 nil 集合仍允许编码为 null。自定义联合 decoder 负责分支字段；Provider opaque 原生项保留独立扩展规则和原始字节。
 
@@ -13,7 +13,7 @@ TUI 与一次性 headless 由显式 `ChatSession.Start` 启动 AgentLoop adapter
 Runtime 的有序调度、实例审批状态和独占执行骨架分别位于 `tool_scheduler.go`、`approval.go`、`exclusive.go`。骨架持有强类型策略，统一 started 接收、结果关联验证与 durable 收口；各工具保留候选、安全和展示规则。架构守卫覆盖 tool 核心 API、codec 越界及构造器可解析调用链；动态接口与第三方实现另由边界生命周期测试验证。
 
 > 状态：持续演进
-> 更新时间：2026-10-24
+> 更新时间：2026-10-30
 > 适用范围：EasyCode CLI、Agent Runtime、Provider、工具、扩展系统、会话存储和 TUI
 
 ## 1. 背景与目标
@@ -453,10 +453,10 @@ AssistantTextDelta { text }
 TurnCompleted { usage }
 TurnFailed
 ToolApprovalRequested / ToolApprovalResolved
-CommandStarted / CommandProgress / CommandTerminal
+ToolReady / ToolStarted / ToolProgress / ToolTerminal / TranscriptCommitted
 ```
 
-当前进程内 RuntimeEvent 声明上述九种具有 producer、consumer 和 validator 的事件，并携带匹配的 `session_id/thread_id/turn_id`。`turn_completed` 必须携带所有 sample 聚合的五项三态 turn usage。批准 payload 是 Patch/Write/Exec 封闭联合；命令进度是有界瞬时快照，不写 Session，只有 terminal payload 携带 result durable 后的冻结 preview。TUI 复用完整批准命令和 terminal preview 展示 Ctrl+O 详情，取消中仍等待 owner 清理。独立 usage 更新、reasoning、通用 Tool/patch delta 和 compaction kind 尚未实现，不能提前保留空枚举。外部 headless JSONL 词汇不因这些内部事件扩张。
+当前进程内 RuntimeEvent 声明上述具有封闭 payload、producer、consumer 和 validator 的事件，并携带匹配的 `session_id/thread_id/turn_id`。`turn_completed` 必须携带所有 sample 聚合的五项三态 turn usage。批准 payload 是 Patch/Write/Exec 封闭联合；命令进度是有界瞬时快照，不写 Session，只有 terminal payload 携带 result durable 后的冻结 preview、保存状态和授权 descriptor。TUI 通过统一 transcript/detail 查询显示完整命令和冻结结果，取消中仍等待 owner 清理。独立 usage 更新、reasoning、patch delta 和 compaction kind 尚未实现，不能提前保留空枚举。外部 headless JSONL 词汇不因这些内部事件扩张。
 
 ### 7.2 Headless JSONL v1
 
@@ -671,7 +671,7 @@ EventEnvelope
 
 Provider native commit 只记录 Provider 已验证的原生增量和 raw usage；紧邻的 `sample_usage` 记录共享五项三态指标。无工具的成功 sample 仍以 native commit、usage 与 terminal 原子提交；带调用的 sample 则把有序 ready facts 放入同一 durable batch，随后按需要 durable 批准决定，再提交 started、result 和 Provider 原生 tool outputs。当前 approval fact 保存 decision source、candidate fingerprint 与安全展示 metadata；Exec 不持久化 PID、宿主环境、输出 chunk 或底层 cause。缺失 usage、错序、遗漏配对或重复调用身份一律 fail closed。hook、subagent、cache 与 compaction checkpoint 仍需按各自恢复语义定义记录；不能把 RuntimeEvent 或 UI transcript 当作 native history。
 
-当前 Session envelope/payload 使用唯一 canary 5，进程内 RuntimeEvent 不携带固定版本；headless JSONL v1 是独立外部 wire。稳定发布前的契约补全直接替换唯一 current fixture，不保留双 reader；只有契约已冻结、变化无法加法表达且已发布数据或客户端必须并存时，才引入新 revision，并同时定义兼容窗口与退出条件。
+当前 Session envelope/payload 使用唯一 canary 6，进程内 RuntimeEvent 不携带固定版本；headless JSONL v1 是独立外部 wire。稳定发布前的契约补全直接替换唯一 current fixture，不保留双 reader；只有契约已冻结、变化无法加法表达且已发布数据或客户端必须并存时，才引入新 revision，并同时定义兼容窗口与退出条件。
 
 Headless JSONL v1 是 stdout 外部协议，不是 Session record：不得写入 journal，也不得在 resume 时回放。headless resume 只复用连续 lease 下恢复出的 Provider-native history，并只发布本次新 turn；`SemanticHistoryView` 仍只供 TUI 等只读消费者使用。
 

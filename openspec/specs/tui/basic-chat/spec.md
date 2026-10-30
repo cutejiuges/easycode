@@ -249,20 +249,20 @@ TUI SHALL将typed Exec approval request投影为modal overlay，显示完整命�
 
 ### Requirement: Command progress and result use a compact Claude-style timeline
 
-命令排队时TUI SHALL显示紧凑命令与`Waiting`；执行后显示`Running`、相对workdir、elapsed time、累计输出规模和有界近期输出；完成后显示exit code或timeout/cancelled/failed状态以及truncated提示。普通视图的命令摘要最多两行和160个Unicode code points。Ctrl+O SHALL 打开历史命令列表并默认选中最新项，↑/↓ 选择、Enter 进入详情，复用完整命令和冻结 preview；运行中只显示有界 recent 输出。
+命令排队时TUI SHALL显示紧凑命令与`Waiting`；执行后主线显示`Running`和至多三行近期输出，相对 workdir、elapsed time 与累计输出规模在详情查看；完成后显示exit code或timeout/cancelled/failed状态以及truncated提示。普通视图的命令摘要最多两行和160个Unicode code points。Ctrl+O SHALL 打开完整对话 transcript，定位当前锚点或最新活动，↑/↓ 选择、Enter 进入详情，复用完整命令和冻结 preview；运行中只显示有界 recent 输出。
 
-详情 SHALL 支持 Tab 切换 stdout/stderr、PgUp/PgDn 有界分页与 resize；Esc 从详情返回列表，再次 Esc 关闭，Ctrl+O 直接关闭覆盖层。命令活动时 Ctrl+C 仍定向中断，普通字符和 Enter 不得修改 composer 或提交并发 turn。显示副本 SHALL清理终端控制字符，不改变候选和冻结结果。
+详情 SHALL 支持 Tab 切换 stdout/stderr、PgUp/PgDn 有界分页与 resize；Esc 从详情返回列表，再次 Esc 返回主线，Ctrl+O 退出 transcript 并恢复主线位置与草稿。命令活动时 Ctrl+C 仍定向中断，普通字符和 Enter 不得修改 composer 或提交并发 turn。显示副本 SHALL清理终端控制字符，不改变候选和冻结结果。
 
 #### Scenario: Inspect a completed command
 - **WHEN** 用户在命令终态后按 Ctrl+O 并选择该命令进入详情
 - **THEN** 详情立即展示相同完整命令和冻结有界结果，存在保存引用时通过 typed 宿主查询异步获取首个输出页
 - **THEN** View/resize 不读取外部资源，分页 I/O 只在异步查询执行，不改变候选或冻结模型输出预算
 
-TUI 只能消费 typed RuntimeEvent 和宿主 typed 命令查询结果，不得直接读取 executor、Session、文件系统、PID 或 Provider native item。活动Exec期间composer不得提交并发turn，定向interrupt保持可用；只有Runtime已经完成进程cleanup并发布terminal后，TUI才可恢复idle输入状态。
+TUI 只能消费 typed RuntimeEvent 和宿主 typed transcript/detail 查询结果，不得直接读取 executor、Session、文件系统、PID 或 Provider native item。活动Exec期间composer不得提交并发turn，定向interrupt保持可用；只有Runtime已经完成进程cleanup并发布terminal后，TUI才可恢复idle输入状态。
 
 #### Scenario: Render deterministic command progress
-- **WHEN** 固定进度序列包含command started、两个output progress和completed
-- **THEN** 固定尺寸snapshot依次展示Waiting、Running、近期输出、elapsed/bytes和最终exit code
+- **WHEN** 固定进度序列包含统一 tool started、两个 Exec progress 和 completed
+- **THEN** 固定尺寸snapshot依次展示Waiting、Running、至多三行近期输出和最终 exit code，详情包含 elapsed/bytes
 
 #### Scenario: Show a truncated result safely
 - **WHEN** 命令结果报告omitted bytes
@@ -285,6 +285,12 @@ TUI 只能消费 typed RuntimeEvent 和宿主 typed 命令查询结果，不得�
 #### Scenario: Show partial storage
 - **WHEN** artifact 只保存前段而预览包含末尾
 - **THEN** 详情明确标注保存范围，stored EOF 不被显示为完整输出结束
+
+主线 SHALL 按 tui/tool-transcript 覆盖全部七工具，提供确定性 Read/Search 分组和明显异常状态，并移除持续调试式 Status 行。审批焦点高于 transcript；浏览不得改变 composer、原生请求或工具执行事实。列表中的正文按 64 KiB UTF-8 页查询，不为折叠或 resize 构建全部历史行。旧 Ctrl+O 命令列表入口 SHALL 被本交互替换，不并存第二套浏览状态。
+
+#### Scenario: Preserve draft across transcript and approval
+- **WHEN** 用户带草稿浏览 Read/Search 组时出现审批
+- **THEN** 审批获得焦点，浏览按键不处理；审批完成后恢复原浏览位置，退出后草稿不变
 
 ### Requirement: Composer editing preserves grapheme boundaries
 

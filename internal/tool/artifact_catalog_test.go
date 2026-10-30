@@ -6,8 +6,9 @@ import (
 
 type catalogArtifactExecutor struct{}
 
-func (catalogArtifactExecutor) Execute(_ context.Context, v ReadArtifactInvocation) InvocationResult {
+func (catalogArtifactExecutor) Execute(_ context.Context, v ReadArtifactInvocation) ReadArtifactExecution {
 	p, _ := NewModelPreview("ReadArtifact failed: unavailable")
 	r, _ := NewReadArtifactInvocationResult(v, ResultError, "unavailable", p, ArtifactPage{})
-	return r
+	execution, _ := NewReadArtifactFailure(r)
+	return execution
 }

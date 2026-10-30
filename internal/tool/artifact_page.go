@@ -76,7 +76,10 @@ func (p ArtifactPage) Preview() (ModelPreview, error) {
 
 // RenderArtifactRange 从包含前后最多三个边界字节的已校验窗口生成页。
 // windowOffset 指定窗口首字节的原始偏移；完整性必须由调用者先验证。
-func RenderArtifactRange(d ArtifactDescriptor, input ReadArtifactInput, windowOffset uint64, window []byte) (ArtifactPage, error) {
+func RenderArtifactRange(d ArtifactDescriptor, input ReadArtifactInput, windowOffset uint64, window []byte, allowance int) (ArtifactPage, error) {
+	if allowance < SafetyResultBytes || allowance > MaxModelPreviewBytes {
+		return ArtifactPage{}, ArtifactReadInvalidRange
+	}
 	if d.Validate() != nil || input.Validate() != nil || d.ID() != input.ID() {
 		return ArtifactPage{}, ArtifactReadUnauthorized
 	}
@@ -99,6 +102,8 @@ func RenderArtifactRange(d ArtifactDescriptor, input ReadArtifactInput, windowOf
 	end := min(size, offset+input.Limit())
 	var text strings.Builder
 	consumed := uint64(0)
+	// 使用最大游标位数预留页头，正文始终取得正的可用空间。
+	header := fmt.Sprintf("artifact_id: %s; offset: %d; next_offset: %d; saved_bytes: %d; stored_eof: false; source_complete: %t\n", d.ID(), offset, size, size, d.Complete())
 	for offset+consumed < end {
 		i := start + consumed
 		if i >= uint64(len(window)) {
@@ -118,7 +123,7 @@ func RenderArtifactRange(d ArtifactDescriptor, input ReadArtifactInput, windowOf
 		} else {
 			part = string(window[i : i+uint64(n)])
 		}
-		if text.Len()+len(part) > MaxModelPreviewBytes-1024 {
+		if text.Len()+len(part) > min(MaxModelPreviewBytes-1024, allowance-len(header)) {
 			break
 		}
 		text.WriteString(part)

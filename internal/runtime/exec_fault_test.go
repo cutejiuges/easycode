@@ -135,7 +135,7 @@ func TestExecApprovalCancellationRejectsLateResponseAndNeverStarts(t *testing.T)
 			cancel()
 		}
 	}
-	_, _, err := runtime.executeExecCall(ctx, emit, runtimeTurnID, invocation)
+	_, _, err := executeExecActivityTest(runtime, ctx, emit, runtimeTurnID, invocation)
 	if err != nil {
 		t.Fatal(err)
 	}

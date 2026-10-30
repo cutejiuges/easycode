@@ -19,7 +19,7 @@ func NewGlobExecutor(workspace *Workspace) (*GlobExecutor, error) {
 }
 
 // Execute 在安全 walker 结果上执行确定性 Glob 匹配。
-func (executor *GlobExecutor) Execute(ctx context.Context, invocation tool.GlobInvocation) tool.InvocationResult {
+func (executor *GlobExecutor) Execute(ctx context.Context, invocation tool.GlobInvocation, capture tool.TextOutputCapture) tool.SearchExecution {
 	if ctx == nil || ctx.Err() != nil {
 		return globError(invocation, tool.ResultCancelled, "cancelled", "Glob cancelled")
 	}
@@ -38,36 +38,42 @@ func (executor *GlobExecutor) Execute(ctx context.Context, invocation tool.GlobI
 		return globError(invocation, tool.ResultError, "search_unavailable", "Glob failed: workspace is unavailable")
 	}
 	matches := make([]string, 0)
+	omitted := 0
 	for _, file := range walked.files {
+		if ctx.Err() != nil {
+			return globError(invocation, tool.ResultCancelled, "cancelled", "Glob cancelled")
+		}
 		if matcher.Match(file.relativePath) {
-			matches = append(matches, file.relativePath)
+			if len(matches) < invocation.Input().Limit() {
+				if capture != nil {
+					_ = capture.WriteText(file.relativePath + "\n")
+				}
+				matches = append(matches, file.relativePath)
+			} else {
+				omitted++
+			}
 		}
 	}
-	omitted := 0
-	if len(matches) > invocation.Input().Limit() {
-		omitted = len(matches) - invocation.Input().Limit()
-		matches = matches[:invocation.Input().Limit()]
-	}
-	preview, previewOmitted := renderSearchPreview(matches)
-	omitted += previewOmitted
 	truncated := omitted > 0 || walked.incompleteReason != tool.SearchComplete
 	metadata, err := tool.NewGlobResultMetadata(matches, truncated, omitted, walked.visitedEntries, walked.incompleteReason, walked.skipped.freeze())
 	if err != nil {
 		return globError(invocation, tool.ResultError, "internal_error", "Glob failed: internal error")
 	}
-	result, err := tool.NewGlobInvocationResult(invocation, tool.ResultSuccess, "ok", preview, metadata)
+	result, err := tool.NewGlobInvocationResult(invocation, tool.ResultSuccess, "ok", tool.ModelPreview{}, metadata)
 	if err != nil {
 		return globError(invocation, tool.ResultError, "internal_error", "Glob failed: internal error")
 	}
-	return result
+	execution, _ := tool.NewSearchExecution(result, false)
+	return execution
 }
 
-func globError(invocation tool.GlobInvocation, status tool.ResultStatus, code string, message string) tool.InvocationResult {
+func globError(invocation tool.GlobInvocation, status tool.ResultStatus, code string, message string) tool.SearchExecution {
 	preview, _ := tool.NewModelPreview(message)
 	metadata, _ := tool.NewGlobResultMetadata([]string{}, false, 0, 0, tool.SearchComplete, tool.SearchSkipCounts{})
 	result, err := tool.NewGlobInvocationResult(invocation, status, code, preview, metadata)
 	if err == nil {
-		return result
+		execution, _ := tool.NewSearchExecution(result, false)
+		return execution
 	}
-	return tool.InvocationResult{}
+	return tool.SearchExecution{}
 }

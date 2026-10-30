@@ -35,7 +35,7 @@ func (o *artifactBarrierOperations) executeReadBatch(_ context.Context, _ domain
 	o.trace = append(o.trace, "read:"+strings.Join(names, ","))
 	return results, nil
 }
-func (*artifactBarrierOperations) persistToolResult(context.Context, domain.TurnID, tool.InvocationResult) error {
+func (*artifactBarrierOperations) persistToolResult(context.Context, domain.TurnID, *tool.InvocationResult) error {
 	return nil
 }
 
@@ -74,7 +74,7 @@ func TestArtifactMixedSchedulerHonorsEveryExclusiveBarrier(t *testing.T) {
 	}
 }
 
-func (e *gatedArtifactExecutor) Execute(ctx context.Context, v tool.ReadArtifactInvocation) tool.InvocationResult {
+func (e *gatedArtifactExecutor) Execute(ctx context.Context, v tool.ReadArtifactInvocation) tool.ReadArtifactExecution {
 	e.mu.Lock()
 	e.calls[v.InvocationID()]++
 	e.mu.Unlock()
@@ -89,7 +89,8 @@ func (e *gatedArtifactExecutor) Execute(ctx context.Context, v tool.ReadArtifact
 	}
 	p, _ := tool.NewModelPreview("ReadArtifact failed: " + code)
 	r, _ := tool.NewReadArtifactInvocationResult(v, status, code, p, tool.ArtifactPage{})
-	return r
+	execution, _ := tool.NewReadArtifactFailure(r)
+	return execution
 }
 
 func TestArtifactSchedulerBoundsWorkersAndPreservesResultOrder(t *testing.T) {

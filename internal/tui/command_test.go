@@ -77,42 +77,42 @@ func TestCommandTimelineOrderingAndTerminalEscapes(t *testing.T) {
 	model := NewModel(context.Background(), "test", &fakeChatSession{})
 	turnID := mustExecApproval(t).TurnID
 	model.activeTurnID, model.state = turnID, stateStreaming
-	payload := protocol.CommandActivityPayload{InvocationID: eventApprovalInvocationID, Command: "printf hello", Workdir: "src", Status: "running"}
-	started, err := protocol.NewCommandStarted(payload)
+	payload := protocol.ToolActivityPayload{Tool: protocol.ToolShell, InvocationID: eventApprovalInvocationID, Summary: "printf hello", Workdir: "src", Status: "running"}
+	started, err := protocol.NewToolStarted(payload)
 	if err != nil {
 		t.Fatal(err)
 	}
 	started.TurnID = turnID
 	model = updateModel(t, model, RuntimeEventMsg{Event: started})
-	if len(model.transcript) != 1 || !strings.Contains(model.transcript[0].text, "Running") {
+	if len(model.transcript) != 1 || model.transcript[0].activity.Status != "running" {
 		t.Fatal("missing running command")
 	}
 	payload.StdoutBytes, payload.StdoutLines, payload.ElapsedMillis = 20, 1, 100
 	payload.Recent = "hello\n\x1b]52;c;secret\a\u202e"
-	progress, err := protocol.NewCommandProgress(payload)
+	progress, err := protocol.NewToolProgress(payload)
 	if err != nil {
 		t.Fatal(err)
 	}
 	progress.TurnID = turnID
 	model = updateModel(t, model, RuntimeEventMsg{Event: progress})
-	text := model.transcript[0].text
-	if strings.ContainsAny(text, "\x1b\a\u202e") || !strings.Contains(text, "100 ms · 20 bytes") || !strings.Contains(text, "hello") {
+	text := model.View()
+	if strings.ContainsAny(text, "\x1b\a\u202e") || model.transcript[0].activity.ElapsedMillis != 100 || model.transcript[0].activity.StdoutBytes != 20 || !strings.Contains(text, "hello") {
 		t.Fatalf("unsafe or incomplete projection: %q", text)
 	}
 	payload.Status, payload.Code, payload.ExitKnown, payload.ExitCode = "success", "ok", true, 2
-	terminal, err := protocol.NewCommandTerminal(protocol.CommandTerminalPayload{CommandActivityPayload: payload, ResultPreview: "frozen result"})
+	terminal, err := protocol.NewToolTerminal(protocol.ToolTerminalPayload{ToolActivityPayload: payload, ResultPreview: "frozen result"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	terminal.TurnID = turnID
 	model = updateModel(t, model, RuntimeEventMsg{Event: terminal})
-	frozen := model.transcript[0].text
-	if !strings.Contains(frozen, "exit=2") || model.state != stateStreaming {
+	frozen := *model.transcript[0].activity
+	if frozen.ExitCode != 2 || model.state != stateStreaming {
 		t.Fatal("command completion prematurely ended turn")
 	}
 	for _, invalid := range []protocol.Event{progress, terminal, started} {
 		model = updateModel(t, model, RuntimeEventMsg{Event: invalid})
-		if model.transcript[0].text != frozen || model.errorSummary == "" {
+		if *model.transcript[0].activity != frozen || model.errorSummary == "" {
 			t.Fatal("late activity changed terminal")
 		}
 	}
@@ -122,8 +122,8 @@ func TestCommandActivityCannotPrecedeStartOrCrossTurns(t *testing.T) {
 	for _, wrongTurn := range []bool{false, true} {
 		model := NewModel(context.Background(), "test", &fakeChatSession{})
 		model.activeTurnID = mustExecApproval(t).TurnID
-		payload := protocol.CommandActivityPayload{InvocationID: eventApprovalInvocationID, Command: "true", Status: "running"}
-		event, err := protocol.NewCommandProgress(payload)
+		payload := protocol.ToolActivityPayload{Tool: protocol.ToolShell, InvocationID: eventApprovalInvocationID, Summary: "true", Status: "running"}
+		event, err := protocol.NewToolProgress(payload)
 		if err != nil {
 			t.Fatal(err)
 		}

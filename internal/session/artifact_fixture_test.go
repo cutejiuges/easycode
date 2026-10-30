@@ -41,14 +41,14 @@ func TestArtifactCurrentFixturesReplayWithoutObjects(t *testing.T) {
 				}
 				return
 			}
-			if len(plan.Commands) != 1 || !plan.Commands[0].HasResult {
+			if len(plan.Tools) != 1 || !plan.Tools[0].HasResult {
 				t.Fatal("historical command missing")
 			}
-			result := plan.Commands[0].Result
+			result := plan.Tools[0].Result
 			if result.Preview().Text() != "frozen Exec output" || string(result.ExecMetadata().StdoutSaving().Status()) != state {
 				t.Fatal("storage state changed frozen preview")
 			}
-			refs := CommandArtifactReferences(plan.Commands)
+			refs := ToolArtifactReferences(plan.Tools)
 			if state == "unavailable" {
 				if len(refs) != 0 {
 					t.Fatal("unavailable output granted reference")
@@ -72,7 +72,7 @@ func TestReadArtifactCurrentNativeFixturesKeepCommittedPages(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(plan.Commands) != 2 || len(CommandArtifactReferences(plan.Commands)) != 1 {
+		if len(plan.Tools) != 7 || plan.Tools[0].Invocation.Capability() != tool.CapabilityGlob || plan.Tools[5].Invocation.Capability() != tool.CapabilityReadArtifact || len(ToolArtifactReferences(plan.Tools)) != 1 {
 			t.Fatal("artifact history or reference lost")
 		}
 		found := false

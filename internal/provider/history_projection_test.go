@@ -24,14 +24,14 @@ func (inertReadExecutor) Execute(context.Context, tool.ReadInvocation) tool.Read
 
 type inertGlobExecutor struct{}
 
-func (inertGlobExecutor) Execute(context.Context, tool.GlobInvocation) tool.InvocationResult {
-	return tool.InvocationResult{}
+func (inertGlobExecutor) Execute(context.Context, tool.GlobInvocation, tool.TextOutputCapture) tool.SearchExecution {
+	return tool.SearchExecution{}
 }
 
 type inertGrepExecutor struct{}
 
-func (inertGrepExecutor) Execute(context.Context, tool.GrepInvocation) tool.InvocationResult {
-	return tool.InvocationResult{}
+func (inertGrepExecutor) Execute(context.Context, tool.GrepInvocation, tool.TextOutputCapture) tool.SearchExecution {
+	return tool.SearchExecution{}
 }
 
 func TestProviderHistoryProjectorsProduceEquivalentTextSemantics(t *testing.T) {

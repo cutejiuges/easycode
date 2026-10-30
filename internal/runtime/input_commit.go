@@ -115,7 +115,8 @@ func (runtime *Runtime) commitInputs(ctx context.Context, turnID domain.TurnID, 
 	if err := prepared.CheckRequest(sampling); err != nil {
 		return rejected(fault.New(fault.CodeProviderRequest, "input request preflight failed"))
 	}
-	if _, err = runtime.journal.AppendBatch(ctx, drafts); err != nil {
+	records, err := runtime.journal.AppendBatch(ctx, drafts)
+	if err != nil {
 		if runtime.journal.Poisoned() {
 			runtime.poisoned.Store(true)
 			resolve(protocol.InputUncertain, protocol.InputReasonUncertain)
@@ -131,6 +132,13 @@ func (runtime *Runtime) commitInputs(ctx context.Context, turnID domain.TurnID, 
 		resolve(protocol.InputUncertain, protocol.InputReasonUncertain)
 		return inputCommitResult{err: fault.New(fault.CodeSessionWrite, "finalize user input failed")}
 	}
+	if runtime.toolHistory != nil {
+		if err := runtime.toolHistory.NativeCommitted(records[1].Sequence, nil); err != nil {
+			runtime.poisoned.Store(true)
+			resolve(protocol.InputUncertain, protocol.InputReasonUncertain)
+			return inputCommitResult{err: err}
+		}
+	}
 	for _, input := range inputs {
 		event, err := protocol.NewUserInputCommitted(input)
 		if err != nil {
@@ -140,6 +148,7 @@ func (runtime *Runtime) commitInputs(ctx context.Context, turnID domain.TurnID, 
 		}
 		emit(runtime.decorate(event, turnID))
 	}
+	runtime.emitTranscriptCommit(turnID, records[1].Sequence)
 	resolve(protocol.InputCommitted, "")
 	return inputCommitResult{committed: true}
 }

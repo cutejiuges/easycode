@@ -101,6 +101,8 @@ func (metadata ReadResultMetadata) OutputTruncated() bool   { return metadata.ou
 
 // InvocationResult 是可直接持久化并交给 Provider result codec 的冻结结果。
 type InvocationResult struct {
+	searchSaving   ArtifactSaving
+	budget         ResultBudgetMetadata
 	artifactInput  ReadArtifactInput
 	artifactPage   ArtifactPage
 	invocationID   InvocationID
@@ -124,10 +126,7 @@ func NewReadInvocationResult(invocation ReadInvocation, status ResultStatus, cod
 		invocationID: invocation.invocationID, providerCallID: invocation.providerCallID,
 		capability: CapabilityRead, wireKind: WireStructured, status: status, code: code, preview: preview, readMetadata: metadata,
 	}
-	if err := result.Validate(); err != nil {
-		return InvocationResult{}, err
-	}
-	return result, nil
+	return initializeResultBudget(result)
 }
 
 // NewGlobInvocationResult 构造完整 Glob 结果。
@@ -136,10 +135,7 @@ func NewGlobInvocationResult(invocation GlobInvocation, status ResultStatus, cod
 		invocationID: invocation.invocationID, providerCallID: invocation.providerCallID,
 		capability: CapabilityGlob, wireKind: WireStructured, status: status, code: code, preview: preview, globMetadata: metadata,
 	}
-	if err := result.Validate(); err != nil {
-		return InvocationResult{}, err
-	}
-	return result, nil
+	return initializeResultBudget(result)
 }
 
 // NewGrepInvocationResult 构造完整 Grep 结果。
@@ -148,10 +144,7 @@ func NewGrepInvocationResult(invocation GrepInvocation, status ResultStatus, cod
 		invocationID: invocation.invocationID, providerCallID: invocation.providerCallID,
 		capability: CapabilityGrep, wireKind: WireStructured, status: status, code: code, preview: preview, grepMetadata: metadata,
 	}
-	if err := result.Validate(); err != nil {
-		return InvocationResult{}, err
-	}
-	return result, nil
+	return initializeResultBudget(result)
 }
 
 // NewPatchInvocationResult 构造完整Patch结果并保留原生wire kind。
@@ -160,10 +153,7 @@ func NewPatchInvocationResult(invocation PatchInvocation, status ResultStatus, c
 		invocationID: invocation.invocationID, providerCallID: invocation.providerCallID,
 		capability: CapabilityPatch, wireKind: invocation.wireKind, status: status, code: code, preview: preview, patchMetadata: metadata,
 	}
-	if err := result.Validate(); err != nil {
-		return InvocationResult{}, err
-	}
-	return result, nil
+	return initializeResultBudget(result)
 }
 
 func (result InvocationResult) InvocationID() InvocationID       { return result.invocationID }
@@ -184,6 +174,20 @@ func (result InvocationResult) WriteMetadata() WriteResultMetadata { return resu
 
 // Validate 验证结果身份、状态、错误码、preview 和元数据。
 func (result InvocationResult) Validate() error {
+	if result.capability == CapabilityGlob || result.capability == CapabilityGrep {
+		if (result.capability != CapabilityGlob && result.capability != CapabilityGrep) || result.searchSaving.Validate() != nil {
+			return errors.New("invalid search saving")
+		}
+		if d, ok := result.searchSaving.Descriptor(); ok && (d.Stream() != ArtifactSearchResult || d.InvocationID() != result.invocationID) {
+			return errors.New("search artifact mismatch")
+		}
+	} else if result.searchSaving != (ArtifactSaving{}) {
+		return errors.New("mismatched search saving")
+	}
+
+	if result.budget.Validate() != nil || result.budget.actual != len(result.preview.text) || ((result.capability == CapabilityGlob || result.capability == CapabilityGrep) && result.budget.allowance > MaxSearchPreviewBytes) {
+		return errors.New("invalid tool result budget")
+	}
 	if result.capability != CapabilityReadArtifact && (result.artifactInput != (ReadArtifactInput{}) || result.artifactPage != (ArtifactPage{})) {
 		return errors.New("mismatched artifact result")
 	}
@@ -247,6 +251,9 @@ func (result InvocationResult) Validate() error {
 }
 
 func validResultCode(code string) bool {
+	if len(code) > 128 {
+		return false
+	}
 	for _, character := range code {
 		if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '_' {
 			return false
@@ -366,10 +373,11 @@ func invalidInternalResult(invocation ReadInvocation, relativePath string) Invoc
 	}
 	preview := ModelPreview{text: "Read failed: internal_error"}
 	metadata := ReadResultMetadata{relativePath: relativePath, requestedOffset: invocation.input.offset, requestedLimit: invocation.input.limit}
-	return InvocationResult{
+	result, _ := initializeResultBudget(InvocationResult{
 		invocationID: invocation.invocationID, providerCallID: invocation.providerCallID,
 		capability: CapabilityRead, wireKind: WireStructured, status: ResultError, code: "internal_error", preview: preview, readMetadata: metadata,
-	}
+	})
+	return result
 }
 
 // NewPatchSuccessResult 生成稳定且不包含文件正文的Patch成功结果。
@@ -419,11 +427,12 @@ func invalidPatchInternalResult(invocation PatchInvocation) InvocationResult {
 	}
 	preview := ModelPreview{text: "Patch failed: internal_error"}
 	metadata := PatchResultMetadata{relativePath: path, replacementCount: count}
-	return InvocationResult{
+	result, _ := initializeResultBudget(InvocationResult{
 		invocationID: invocation.invocationID, providerCallID: invocation.providerCallID,
 		capability: CapabilityPatch, wireKind: invocation.wireKind, status: ResultError,
 		code: "internal_error", preview: preview, patchMetadata: metadata,
-	}
+	})
+	return result
 }
 
 func truncateRunes(value string, limit int) (string, bool) {
@@ -446,4 +455,18 @@ func ResultValidationError(err error) error {
 		return nil
 	}
 	return fmt.Errorf("invalid tool result")
+}
+
+// SearchSaving 返回搜索文本的冻结保存状态。
+func (result InvocationResult) SearchSaving() ArtifactSaving {
+	return result.searchSaving
+}
+
+// WithSearchSaving 仅在构造或恢复搜索结果时绑定保存事实。
+func (result InvocationResult) WithSearchSaving(saving ArtifactSaving) (InvocationResult, error) {
+	if saving.Validate() != nil {
+		return InvocationResult{}, errors.New("invalid search saving")
+	}
+	result.searchSaving = saving
+	return result, result.Validate()
 }

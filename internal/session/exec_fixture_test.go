@@ -28,11 +28,11 @@ func TestCurrentHeterogeneousExecFixturesUseProductionReplay(t *testing.T) {
 			if len(loaded.Records) != 36 || plan.NextSequence != 37 || len(plan.NativeCommits) != 6 || len(plan.SampleUsages) != 3 || plan.SessionMetadata.Provider != family {
 				t.Fatal("heterogeneous fixture summary changed")
 			}
-			if len(plan.Commands) != 3 || !plan.Commands[0].HasResult || !plan.Commands[1].HasResult || plan.Commands[2].HasResult || plan.Commands[1].Result.Status() != tool.ResultDenied {
-				t.Fatal("full command history was reduced to recovery tail")
+			if len(plan.Tools) != 7 || !plan.Tools[0].HasResult || !plan.Tools[4].HasResult || !plan.Tools[5].HasResult || plan.Tools[6].HasResult || plan.Tools[5].Result.Status() != tool.ResultDenied {
+				t.Fatal("full tool history was reduced to recovery tail")
 			}
-			for i := 1; i < len(plan.Commands); i++ {
-				if plan.Commands[i-1].Sequence >= plan.Commands[i].Sequence {
+			for i := 1; i < len(plan.Tools); i++ {
+				if plan.Tools[i-1].Sequence >= plan.Tools[i].Sequence {
 					t.Fatal("command history order changed")
 				}
 			}

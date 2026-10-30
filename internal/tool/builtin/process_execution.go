@@ -249,7 +249,7 @@ func (execution *ProcessExecution) Run(ctx context.Context) tool.InvocationResul
 	if err != nil {
 		return failed(tool.ResultOutcomeUncertain, "invalid_process_result")
 	}
-	truncated := tool.ExecOutputNeedsSaving(outResult.output, errResult.output)
+	truncated := tool.ExecOutputNeedsSaving(outResult.output, errResult.output, execution.candidate.PreviewAllowance())
 	needsSaving := truncated || drainExpired || outResult.err != nil || errResult.err != nil
 	var preview tool.ModelPreview
 	if capture != nil {
@@ -266,7 +266,7 @@ func (execution *ProcessExecution) Run(ctx context.Context) tool.InvocationResul
 	if err != nil {
 		return failed(tool.ResultOutcomeUncertain, "invalid_process_result")
 	}
-	preview, truncated, err = execution.renderer(outResult.output, errResult.output, metadata)
+	preview, truncated, err = execution.renderer(outResult.output, errResult.output, metadata, execution.candidate.PreviewAllowance())
 	if err != nil {
 		return failed(tool.ResultOutcomeUncertain, "invalid_process_result")
 	}
@@ -284,6 +284,18 @@ func (execution *ProcessExecution) Run(ctx context.Context) tool.InvocationResul
 		return failed(tool.ResultOutcomeUncertain, "invalid_process_result")
 	}
 	result, err := tool.NewExecInvocationResult(execution.candidate.Invocation(), status, code, preview, metadata)
+	if err != nil {
+		return failed(tool.ResultOutcomeUncertain, "invalid_process_result")
+	}
+	reason := tool.BudgetPreserved
+	if truncated {
+		reason = tool.BudgetShortened
+	}
+	budget, budgetErr := tool.NewResultBudgetMetadata(execution.candidate.PreviewAllowance(), len(preview.Text()), reason)
+	if budgetErr != nil {
+		return failed(tool.ResultOutcomeUncertain, "invalid_process_result")
+	}
+	result, err = result.WithBudget(budget)
 	if err != nil {
 		return failed(tool.ResultOutcomeUncertain, "invalid_process_result")
 	}

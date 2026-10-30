@@ -3,9 +3,7 @@ package builtin
 import (
 	"context"
 	"errors"
-	"fmt"
 	"regexp"
-	"strconv"
 	"unicode/utf8"
 
 	"easycode/internal/tool"
@@ -28,12 +26,12 @@ func NewGrepExecutor(workspace *Workspace) (*GrepExecutor, error) {
 }
 
 // Execute 按规范路径与行号顺序扫描 UTF-8 普通文件。
-func (executor *GrepExecutor) Execute(ctx context.Context, invocation tool.GrepInvocation) tool.InvocationResult {
+func (executor *GrepExecutor) Execute(ctx context.Context, invocation tool.GrepInvocation, capture tool.TextOutputCapture) tool.SearchExecution {
 	if ctx == nil || ctx.Err() != nil {
 		return grepError(invocation, tool.ResultCancelled, "cancelled", "Grep cancelled")
 	}
 	if executor == nil || executor.workspace == nil || invocation.Validate() != nil {
-		return tool.InvocationResult{}
+		return tool.SearchExecution{}
 	}
 	input := invocation.Input()
 	pattern := input.Pattern()
@@ -60,6 +58,8 @@ func (executor *GrepExecutor) Execute(ctx context.Context, invocation tool.GrepI
 	}
 	skipped := walked.skipped
 	matches := make([]tool.GrepMatch, 0)
+	omitted := 0
+	lineCut := false
 	matchingLines := 0
 	scannedFiles := 0
 	var scannedBytes int64
@@ -118,33 +118,33 @@ func (executor *GrepExecutor) Execute(ctx context.Context, invocation tool.GrepI
 		lines := splitTextLines(string(data))
 		matchedIndexes := matchingLineIndexes(lines, expression)
 		matchingLines += len(matchedIndexes)
-		fileMatches, buildErr := grepMatchesForFile(candidate.relativePath, lines, matchedIndexes, input)
+		buildErr := visitGrepMatches(candidate.relativePath, lines, matchedIndexes, input, func(match tool.GrepMatch) {
+			if len(matches) >= input.Limit() {
+				omitted++
+				return
+			}
+			if capture != nil {
+				_ = capture.WriteText(tool.RenderGrepMatch(input.OutputMode(), match) + "\n")
+			}
+			bounded := tool.BoundGrepMatch(match)
+			lineCut = lineCut || bounded.Text() != match.Text()
+			matches = append(matches, bounded)
+		})
 		if buildErr != nil {
 			return grepError(invocation, tool.ResultError, "internal_error", "Grep failed: internal error")
 		}
-		matches = append(matches, fileMatches...)
 	}
-	omitted := 0
-	if len(matches) > input.Limit() {
-		omitted = len(matches) - input.Limit()
-		matches = matches[:input.Limit()]
-	}
-	previewLines := make([]string, len(matches))
-	for index, match := range matches {
-		previewLines[index] = renderGrepMatch(input.OutputMode(), match)
-	}
-	preview, previewOmitted := renderSearchPreview(previewLines)
-	omitted += previewOmitted
 	truncated := omitted > 0 || incompleteReason != tool.SearchComplete
 	metadata, err := tool.NewGrepResultMetadata(input.OutputMode(), matches, matchingLines, truncated, omitted, walked.visitedEntries, scannedFiles, scannedBytes, incompleteReason, skipped.freeze())
 	if err != nil {
 		return grepError(invocation, tool.ResultError, "internal_error", "Grep failed: internal error")
 	}
-	result, err := tool.NewGrepInvocationResult(invocation, tool.ResultSuccess, "ok", preview, metadata)
+	result, err := tool.NewGrepInvocationResult(invocation, tool.ResultSuccess, "ok", tool.ModelPreview{}, metadata)
 	if err != nil {
 		return grepError(invocation, tool.ResultError, "internal_error", "Grep failed: internal error")
 	}
-	return result
+	execution, _ := tool.NewSearchExecution(result, lineCut)
+	return execution
 }
 
 func matchingLineIndexes(lines []string, expression *regexp.Regexp) []int {
@@ -157,17 +157,23 @@ func matchingLineIndexes(lines []string, expression *regexp.Regexp) []int {
 	return indexes
 }
 
-func grepMatchesForFile(relativePath string, lines []string, matchedIndexes []int, input tool.GrepInput) ([]tool.GrepMatch, error) {
+func visitGrepMatches(relativePath string, lines []string, matchedIndexes []int, input tool.GrepInput, visit func(tool.GrepMatch)) error {
 	if len(matchedIndexes) == 0 {
-		return nil, nil
+		return nil
 	}
 	switch input.OutputMode() {
 	case tool.GrepOutputFilesWithMatches:
 		match, err := tool.NewGrepFileMatch(relativePath)
-		return []tool.GrepMatch{match}, err
+		if err == nil {
+			visit(match)
+		}
+		return err
 	case tool.GrepOutputCount:
 		match, err := tool.NewGrepCountMatch(relativePath, len(matchedIndexes))
-		return []tool.GrepMatch{match}, err
+		if err == nil {
+			visit(match)
+		}
+		return err
 	case tool.GrepOutputContent:
 		selected := make([]bool, len(lines))
 		matched := make([]bool, len(lines))
@@ -185,35 +191,19 @@ func grepMatchesForFile(relativePath string, lines []string, matchedIndexes []in
 				selected[current] = true
 			}
 		}
-		result := make([]tool.GrepMatch, 0)
 		for index, include := range selected {
 			if !include {
 				continue
 			}
 			match, err := tool.NewGrepContentMatch(relativePath, index+1, lines[index], matched[index])
 			if err != nil {
-				return nil, err
+				return err
 			}
-			result = append(result, match)
+			visit(match)
 		}
-		return result, nil
+		return nil
 	default:
-		return nil, errors.New("unsupported Grep output mode")
-	}
-}
-
-func renderGrepMatch(mode tool.GrepOutputMode, match tool.GrepMatch) string {
-	switch mode {
-	case tool.GrepOutputFilesWithMatches:
-		return match.RelativePath()
-	case tool.GrepOutputCount:
-		return match.RelativePath() + ":" + strconv.Itoa(match.Count())
-	default:
-		separator := "-"
-		if match.MatchingLine() {
-			separator = ":"
-		}
-		return fmt.Sprintf("%s%s%d%s%s", match.RelativePath(), separator, match.Line(), separator, match.Text())
+		return errors.New("unsupported Grep output mode")
 	}
 }
 
@@ -230,15 +220,16 @@ func classifyGrepOpenError(err error, counts *mutableSkipCounts) {
 	}
 }
 
-func grepError(invocation tool.GrepInvocation, status tool.ResultStatus, code string, message string) tool.InvocationResult {
+func grepError(invocation tool.GrepInvocation, status tool.ResultStatus, code string, message string) tool.SearchExecution {
 	if invocation.Validate() != nil {
-		return tool.InvocationResult{}
+		return tool.SearchExecution{}
 	}
 	preview, _ := tool.NewModelPreview(message)
 	metadata, _ := tool.NewGrepResultMetadata(invocation.Input().OutputMode(), []tool.GrepMatch{}, 0, false, 0, 0, 0, 0, tool.SearchComplete, tool.SearchSkipCounts{})
 	result, err := tool.NewGrepInvocationResult(invocation, status, code, preview, metadata)
 	if err == nil {
-		return result
+		execution, _ := tool.NewSearchExecution(result, false)
+		return execution
 	}
-	return tool.InvocationResult{}
+	return tool.SearchExecution{}
 }

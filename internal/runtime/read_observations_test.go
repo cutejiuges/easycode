@@ -88,7 +88,7 @@ func TestReadObservationActivatesAfterOutputDurabilityAndFinalization(t *testing
 			runtime := newTestRuntime(t, conversation, journal)
 			r, o := completeObservation(t, "a")
 			runtime.readObservations.beginGroup()
-			if err := runtime.persistToolResult(context.Background(), runtimeTurnID, r); err != nil {
+			if err := runtime.persistToolResult(context.Background(), runtimeTurnID, &r); err != nil {
 				t.Fatal(err)
 			}
 			runtime.readObservations.stage(r, o)

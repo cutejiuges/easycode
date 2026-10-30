@@ -35,12 +35,12 @@ type artifactRangeReader struct {
 	references *tool.ArtifactReferences
 }
 
-func (r artifactRangeReader) ReadArtifact(ctx context.Context, input tool.ReadArtifactInput) (tool.ArtifactPage, error) {
+func (r artifactRangeReader) ReadArtifact(ctx context.Context, input tool.ReadArtifactInput) (tool.ArtifactWindow, error) {
 	d, ok := r.references.Lookup(input.ID())
 	if !ok {
-		return tool.ArtifactPage{}, tool.ArtifactReadUnauthorized
+		return tool.ArtifactWindow{}, tool.ArtifactReadUnauthorized
 	}
-	return r.store.Read(ctx, d, input)
+	return r.store.ReadWindow(ctx, d, input)
 }
 
 func openCommandArtifactBoundary(ctx context.Context, root, workspace string) (*artifact.Layout, error) {
@@ -70,4 +70,13 @@ func (b *commandArtifactBoundary) Execute(ctx context.Context, candidate tool.Ex
 		return tool.NewExecErrorResult(candidate.Invocation(), tool.ResultError, "unsafe_storage_layout", "Exec failed: unsafe_storage_layout")
 	}
 	return b.executor.Execute(ctx, candidate, progress)
+}
+
+// StartTextCapture 为搜索调用适配同一私有存储与宿主生命周期。
+func (s artifactOutputStore) StartTextCapture(ctx context.Context, id tool.InvocationID, capability tool.CapabilityID) (tool.TextOutputCapture, error) {
+	capture, err := s.store.StartText(ctx, id, capability)
+	if err != nil {
+		return nil, err
+	}
+	return capture, nil
 }

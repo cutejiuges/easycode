@@ -31,6 +31,8 @@ Session envelope/payload canary 从 3 替换为 4，仅保留当前 reader；nat
 
 全额预留会降低剩余空间利用率；同步磁盘写入可能背压；每页读取先校验最多 16 MiB 完整对象，但仅保留所需范围。范围最多 64 KiB raw bytes，转义后最多 256 KiB。TUI 列表最多 50 条，最多缓存四页，用 generation 丢弃迟到回复。
 
-验证见 `internal/session/artifact/*_test.go`、`internal/runtime/artifact_commit_test.go`、`internal/tool/builtin/artifact_owner_test.go`、`internal/app/artifact_resume_darwin_test.go`、两家 Provider 的 `artifact_stream_test.go`/`artifact_restore_test.go` 和 `internal/tui/command_browser_test.go`。
+验证见 `internal/session/artifact/*_test.go`、`internal/runtime/artifact_commit_test.go`、`internal/tool/builtin/artifact_owner_test.go`、`internal/app/artifact_resume_darwin_test.go`、两家 Provider 的 `artifact_stream_test.go`/`artifact_restore_test.go` 和 `internal/tui/transcript_browser_test.go`。
 
 回滚必须使用匹配旧 canary 的独立开发数据；禁止旧程序读取新 journal。PTY、后台控制、全工具输出预算和自动过期均需后续独立 OpenSpec。
+
+统一七工具记录、搜索保存及结果预算的后续决策见 [ADR-0006](0006-tool-transcript-and-result-budget.md)。本 ADR 中 4/1 canary 与 command-only 描述保留为当时决策背景。

@@ -33,18 +33,15 @@ func NewArtifactReferences(thread domain.ThreadID, descriptors []ArtifactDescrip
 
 // AuthorizeCommitted 只能由 result 已成功 Sync 的 owner 调用。
 func (r *ArtifactReferences) AuthorizeCommitted(result InvocationResult) error {
-	if r == nil || result.Validate() != nil || result.Capability() != CapabilityExec {
+	if r == nil || result.Validate() != nil {
 		return errors.New("invalid committed artifact result")
 	}
-	m := result.ExecMetadata()
 	var descriptors []ArtifactDescriptor
-	for _, s := range []ArtifactSaving{m.StdoutSaving(), m.StderrSaving()} {
-		if d, ok := s.Descriptor(); ok {
-			if d.ThreadID() != r.thread {
-				return errors.New("artifact thread mismatch")
-			}
-			descriptors = append(descriptors, d)
+	for _, d := range result.ArtifactDescriptors() {
+		if d.ThreadID() != r.thread {
+			return errors.New("artifact thread mismatch")
 		}
+		descriptors = append(descriptors, d)
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -61,23 +58,20 @@ func (r *ArtifactReferences) AuthorizeCommitted(result InvocationResult) error {
 
 // ValidatePending 在持久化前验证引用归属与冲突，但不授予读取权限。
 func (r *ArtifactReferences) ValidatePending(result InvocationResult) error {
-	if r == nil || result.Validate() != nil || result.Capability() != CapabilityExec {
+	if r == nil || result.Validate() != nil {
 		return errors.New("invalid pending artifact result")
 	}
-	m := result.ExecMetadata()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	var previous ArtifactID
-	for _, saving := range []ArtifactSaving{m.StdoutSaving(), m.StderrSaving()} {
-		if d, ok := saving.Descriptor(); ok {
-			if d.ThreadID() != r.thread || d.ID() == previous {
-				return errors.New("artifact reference mismatch")
-			}
-			if old, exists := r.items[d.ID()]; exists && old != d {
-				return errors.New("conflicting artifact reference")
-			}
-			previous = d.ID()
+	for _, d := range result.ArtifactDescriptors() {
+		if d.ThreadID() != r.thread || d.ID() == previous {
+			return errors.New("artifact reference mismatch")
 		}
+		if old, exists := r.items[d.ID()]; exists && old != d {
+			return errors.New("conflicting artifact reference")
+		}
+		previous = d.ID()
 	}
 	return nil
 }
@@ -91,4 +85,22 @@ func (r *ArtifactReferences) Lookup(id ArtifactID) (ArtifactDescriptor, bool) {
 	d, ok := r.items[id]
 	r.mu.RUnlock()
 	return d, ok
+}
+
+// ArtifactDescriptors 仅投影当前能力允许且已经冻结的引用，不访问保存对象。
+func (result InvocationResult) ArtifactDescriptors() []ArtifactDescriptor {
+	var savings []ArtifactSaving
+	switch result.capability {
+	case CapabilityExec:
+		savings = []ArtifactSaving{result.execMetadata.StdoutSaving(), result.execMetadata.StderrSaving()}
+	case CapabilityGlob, CapabilityGrep:
+		savings = []ArtifactSaving{result.SearchSaving()}
+	}
+	var descriptors []ArtifactDescriptor
+	for _, saving := range savings {
+		if d, ok := saving.Descriptor(); ok {
+			descriptors = append(descriptors, d)
+		}
+	}
+	return descriptors
 }

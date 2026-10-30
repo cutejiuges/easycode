@@ -111,10 +111,14 @@ func TestReadPatchExecApprovedLoopForBothProviders(t *testing.T) {
 			var approvals []string
 			var commandStarted, commandTerminal, completed int
 			var completedUsage domain.SampleUsage
-			var ui tea.Model = tui.NewModel(context.Background(), "test", control).WithCommandQueries(resources.identity.ThreadID, resources.commandQueries)
+			var ui tea.Model = tui.NewModel(context.Background(), "test", control).WithTranscriptQueries(resources.identity.ThreadID, resources.transcriptQueries)
 			ui, _ = ui.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 			for event := range events {
-				ui, _ = ui.Update(tui.RuntimeEventMsg{Event: event})
+				var render tea.Cmd
+				ui, render = ui.Update(tui.RuntimeEventMsg{Event: event})
+				if event.Kind == protocol.EventTranscriptCommitted && render != nil {
+					ui, _ = ui.Update(render())
+				}
 				switch event.Kind {
 				case protocol.EventToolApprovalRequested:
 					payload, err := protocol.DecodeToolApprovalRequested(event)
@@ -125,11 +129,23 @@ func TestReadPatchExecApprovedLoopForBothProviders(t *testing.T) {
 					if err := control.ResolveApproval(context.Background(), event.TurnID, payload, protocol.ApprovalAllowOnce, ""); err != nil {
 						t.Fatal(err)
 					}
-				case protocol.EventCommandStarted:
-					commandStarted++
-				case protocol.EventCommandTerminal:
+				case protocol.EventToolStarted:
+					payload, err := protocol.DecodeToolActivity(event)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if payload.Tool == protocol.ToolShell {
+						commandStarted++
+					}
+				case protocol.EventToolTerminal:
+					payload, err := protocol.DecodeToolActivity(event)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if payload.Tool != protocol.ToolShell {
+						continue
+					}
 					commandTerminal++
-					payload, err := protocol.DecodeCommandActivity(event)
 					if err != nil || payload.Status != "success" || !payload.ExitKnown || payload.ExitCode != 0 {
 						t.Fatalf("command terminal = %#v %v", payload, err)
 					}
@@ -153,18 +169,35 @@ func TestReadPatchExecApprovedLoopForBothProviders(t *testing.T) {
 			if strings.Join(approvals, ",") != "fs.patch,process.exec" || commandStarted != 1 || commandTerminal != 1 || completed != 1 {
 				t.Fatalf("approval/lifecycle = %v %d/%d/%d", approvals, commandStarted, commandTerminal, completed)
 			}
-			if !strings.Contains(ui.View(), "Status: idle") || !strings.Contains(ui.View(), "answer-4") || !strings.Contains(ui.View(), "exit=0") {
+			if strings.Contains(ui.View(), "Status:") || !strings.Contains(ui.View(), "answer-4") || !strings.Contains(ui.View(), "Shell(") {
 				t.Fatalf("final TUI lost completed command: %s", ui.View())
 			}
 			var query tea.Cmd
 			ui, query = ui.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 			ui, _ = ui.Update(query())
+			page, err := resources.transcriptQueries.ListTranscript(context.Background(), protocol.TranscriptListQuery{ThreadID: resources.identity.ThreadID, Limit: 50})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, item := range page.Items {
+				if item.Activity.Tool == protocol.ToolShell {
+					break
+				}
+				ui, _ = ui.Update(tea.KeyMsg{Type: tea.KeyDown})
+			}
 			ui, query = ui.Update(tea.KeyMsg{Type: tea.KeyEnter})
 			if query != nil {
 				ui, _ = ui.Update(query())
 			}
-			if !strings.Contains(ui.View(), "checks-passed") || !strings.Contains(ui.View(), "command-environment") {
-				t.Fatal("TUI details lost full command or frozen result")
+			if !strings.Contains(ui.View(), "checks-passed") {
+				t.Fatal("TUI details lost frozen result")
+			}
+			ui, query = ui.Update(tea.KeyMsg{Type: tea.KeyLeft})
+			if query != nil {
+				ui, _ = ui.Update(query())
+			}
+			if !strings.Contains(ui.View(), "command-environment") {
+				t.Fatal("TUI details lost full command")
 			}
 			if err := resources.close(context.Background()); err != nil {
 				t.Fatal(err)

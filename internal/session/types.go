@@ -11,7 +11,7 @@ import (
 
 const (
 	// EnvelopeVersion 是当前公共 JSONL 信封版本。
-	EnvelopeVersion = 5
+	EnvelopeVersion = 6
 	// MaxRecordBytes 限制单条 canonical JSON 记录大小。
 	MaxRecordBytes = 16 << 20
 	// MaxBatchBytes 限制单个逻辑 batch 的总大小。
@@ -208,12 +208,14 @@ type SearchSkipCountsPayload struct {
 }
 
 type GlobResultMetadataPayload struct {
-	Matches          []string                    `json:"matches"`
-	Truncated        bool                        `json:"truncated"`
-	OmittedMatches   int                         `json:"omitted_matches"`
-	VisitedEntries   int                         `json:"visited_entries"`
-	IncompleteReason tool.SearchIncompleteReason `json:"incomplete_reason"`
-	Skipped          SearchSkipCountsPayload     `json:"skipped"`
+	ModelOmittedMatches int                         `json:"model_omitted_matches"`
+	Saving              tool.ArtifactSaving         `json:"saving"`
+	Matches             []string                    `json:"matches"`
+	Truncated           bool                        `json:"truncated"`
+	OmittedMatches      int                         `json:"omitted_matches"`
+	VisitedEntries      int                         `json:"visited_entries"`
+	IncompleteReason    tool.SearchIncompleteReason `json:"incomplete_reason"`
+	Skipped             SearchSkipCountsPayload     `json:"skipped"`
 }
 
 type GrepMatchPayload struct {
@@ -225,16 +227,18 @@ type GrepMatchPayload struct {
 }
 
 type GrepResultMetadataPayload struct {
-	Mode             tool.GrepOutputMode         `json:"mode"`
-	Matches          []GrepMatchPayload          `json:"matches"`
-	MatchingLines    int                         `json:"matching_lines"`
-	Truncated        bool                        `json:"truncated"`
-	OmittedMatches   int                         `json:"omitted_matches"`
-	VisitedEntries   int                         `json:"visited_entries"`
-	ScannedFiles     int                         `json:"scanned_files"`
-	ScannedBytes     int64                       `json:"scanned_bytes"`
-	IncompleteReason tool.SearchIncompleteReason `json:"incomplete_reason"`
-	Skipped          SearchSkipCountsPayload     `json:"skipped"`
+	ModelOmittedMatches int                         `json:"model_omitted_matches"`
+	Saving              tool.ArtifactSaving         `json:"saving"`
+	Mode                tool.GrepOutputMode         `json:"mode"`
+	Matches             []GrepMatchPayload          `json:"matches"`
+	MatchingLines       int                         `json:"matching_lines"`
+	Truncated           bool                        `json:"truncated"`
+	OmittedMatches      int                         `json:"omitted_matches"`
+	VisitedEntries      int                         `json:"visited_entries"`
+	ScannedFiles        int                         `json:"scanned_files"`
+	ScannedBytes        int64                       `json:"scanned_bytes"`
+	IncompleteReason    tool.SearchIncompleteReason `json:"incomplete_reason"`
+	Skipped             SearchSkipCountsPayload     `json:"skipped"`
 }
 
 type PatchResultMetadataPayload struct {
@@ -246,6 +250,7 @@ type PatchResultMetadataPayload struct {
 
 // ToolCallResultPayload 保存无需重新执行即可恢复的冻结结果。
 type ToolCallResultPayload struct {
+	Budget               tool.ResultBudgetMetadata   `json:"budget"`
 	ReadArtifactMetadata *ReadArtifactResultPayload  `json:"read_artifact_metadata,omitempty"`
 	InvocationID         tool.InvocationID           `json:"invocation_id"`
 	Capability           tool.CapabilityID           `json:"capability"`

@@ -72,7 +72,7 @@ func NewWriteInvocationResult(v WriteInvocation, status ResultStatus, code strin
 		return InvocationResult{}, errors.New("Write success counts do not match input")
 	}
 	r := InvocationResult{invocationID: v.invocationID, providerCallID: v.providerCallID, capability: CapabilityWrite, wireKind: WireStructured, status: status, code: code, preview: preview, writeMetadata: m}
-	return r, r.Validate()
+	return initializeResultBudget(r)
 }
 
 // NewWriteErrorResult 为准备失败和恢复补偿保存明确的不可确定操作。

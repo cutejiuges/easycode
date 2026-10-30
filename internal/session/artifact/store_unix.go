@@ -142,6 +142,10 @@ func lockAccounting(ctx context.Context, root *os.File) (*os.File, error) {
 
 // Start 原子预留整次命令的预算，返回独占保存 owner。
 func (s *Store) Start(ctx context.Context, id tool.InvocationID) (*Capture, error) {
+	return s.start(ctx, id, commandReservation())
+}
+
+func (s *Store) start(ctx context.Context, id tool.InvocationID, reservationKind reservationSpec) (*Capture, error) {
 	if ctx == nil || !id.Valid() || s == nil || s.root == nil {
 		return nil, tool.ArtifactReadUnavailable
 	}
@@ -154,7 +158,7 @@ func (s *Store) Start(ctx context.Context, id tool.InvocationID) (*Capture, erro
 	if err != nil {
 		return nil, tool.ArtifactReadUnavailable
 	}
-	if total+tool.ArtifactInvocationBytes > s.rootBudget || thread+tool.ArtifactInvocationBytes > s.threadBudget {
+	if total+reservationKind.bytes > s.rootBudget || thread+reservationKind.bytes > s.threadBudget {
 		return nil, tool.ArtifactQuotaExceeded
 	}
 	// 创建调用目录是预留接收点；之前取消不创建调用资源，之后返回确定 owner 或失败。
@@ -175,7 +179,7 @@ func (s *Store) Start(ctx context.Context, id tool.InvocationID) (*Capture, erro
 		return nil, err
 	}
 	if err = unix.Flock(int(reservation.Fd()), unix.LOCK_EX|unix.LOCK_NB); err == nil {
-		_, err = reservation.WriteString("33554432\n")
+		_, err = reservation.WriteString(reservationKind.wire)
 	}
 	if err == nil {
 		err = reservation.Sync()
@@ -192,7 +196,7 @@ func (s *Store) Start(ctx context.Context, id tool.InvocationID) (*Capture, erro
 		return nil, tool.ArtifactReadUnavailable
 	}
 	c := &Capture{directory: dir, reservation: reservation, thread: s.threadID, invocation: id, syncDirectory: syncArtifactDirectory, publish: publishObject}
-	if err = c.openStreams(); err != nil {
+	if err = c.openSources(reservationKind.sources); err != nil {
 		_ = c.Close()
 		return nil, err
 	}
@@ -266,17 +270,21 @@ func invocationUsage(dir *os.File) (int64, error) {
 	}
 	var actual int64
 	active := false
+	var reserved int64
+	hasReservation := false
 	for _, name := range entries {
 		f, err := openObject(dir, name, unix.O_RDONLY)
 		if err != nil {
 			return 0, err
 		}
 		if name == "reservation" {
-			b, readErr := io.ReadAll(io.LimitReader(f, 32))
-			if readErr != nil || string(b) != "33554432\n" {
+			b, readErr := io.ReadAll(io.LimitReader(f, 256))
+			spec, valid := decodeReservation(string(b))
+			if readErr != nil || !valid {
 				_ = f.Close()
 				return 0, tool.ArtifactReadCorrupt
 			}
+			reserved, hasReservation = spec.bytes, true
 			err = unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 			active = errors.Is(err, unix.EWOULDBLOCK)
 			if err != nil && !active {
@@ -293,36 +301,48 @@ func invocationUsage(dir *os.File) (int64, error) {
 		}
 		_ = f.Close()
 	}
+	if !hasReservation {
+		return 0, tool.ArtifactReadCorrupt
+	}
 	if active {
-		actual = max(actual, tool.ArtifactInvocationBytes)
+		actual = max(actual, reserved)
 	}
 	return actual, nil
 }
 
-// Read 只消费上层已授权的描述符，并验证同一 FD 的完整内容后返回页。
+// Read 为宿主浏览生成最大允许范围页，模型执行使用 ReadWindow 延后预算处理。
 func (s *Store) Read(ctx context.Context, d tool.ArtifactDescriptor, input tool.ReadArtifactInput) (tool.ArtifactPage, error) {
+	window, err := s.ReadWindow(ctx, d, input)
+	if err != nil {
+		return tool.ArtifactPage{}, err
+	}
+	return window.Render(tool.MaxModelPreviewBytes)
+}
+
+// ReadWindow 在同一 FD 上验证全部内容，只返回指定范围及 UTF-8 边界。
+func (s *Store) ReadWindow(ctx context.Context, d tool.ArtifactDescriptor, input tool.ReadArtifactInput) (tool.ArtifactWindow, error) {
 	if ctx == nil || d.Validate() != nil || d.ThreadID() != s.threadID || input.Validate() != nil || d.ID() != input.ID() {
-		return tool.ArtifactPage{}, tool.ArtifactReadUnauthorized
+		return tool.ArtifactWindow{}, tool.ArtifactReadUnauthorized
 	}
 	if err := ctx.Err(); err != nil {
-		return tool.ArtifactPage{}, err
+		return tool.ArtifactWindow{}, err
 	}
 	dir, err := openChildDirectory(s.thread, string(d.InvocationID()), false)
 	if err != nil {
-		return tool.ArtifactPage{}, tool.ArtifactReadUnavailable
+		return tool.ArtifactWindow{}, tool.ArtifactReadUnavailable
 	}
 	defer func() { _ = dir.Close() }()
 	f, err := openObject(dir, string(d.ID()), unix.O_RDONLY)
 	if err != nil {
-		return tool.ArtifactPage{}, tool.ArtifactReadUnavailable
+		return tool.ArtifactWindow{}, tool.ArtifactReadUnavailable
 	}
 	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil || info.Size() != d.SavedBytes() {
-		return tool.ArtifactPage{}, tool.ArtifactReadCorrupt
+		return tool.ArtifactWindow{}, tool.ArtifactReadCorrupt
 	}
 	if input.Offset() > uint64(info.Size()) {
-		return tool.ArtifactPage{}, tool.ArtifactReadInvalidRange
+		return tool.ArtifactWindow{}, tool.ArtifactReadInvalidRange
 	}
 	start := input.Offset() - min(input.Offset(), 3)
 	end := min(uint64(info.Size()), input.Offset()+input.Limit()+3)
@@ -332,7 +352,7 @@ func (s *Store) Read(ctx context.Context, d tool.ArtifactDescriptor, input tool.
 	position := uint64(0)
 	for {
 		if ctx.Err() != nil {
-			return tool.ArtifactPage{}, ctx.Err()
+			return tool.ArtifactWindow{}, ctx.Err()
 		}
 		n, e := f.Read(buffer)
 		if n > 0 {
@@ -343,20 +363,20 @@ func (s *Store) Read(ctx context.Context, d tool.ArtifactDescriptor, input tool.
 			}
 			position += uint64(n)
 			if position > uint64(d.SavedBytes()) {
-				return tool.ArtifactPage{}, tool.ArtifactReadCorrupt
+				return tool.ArtifactWindow{}, tool.ArtifactReadCorrupt
 			}
 		}
 		if e == io.EOF {
 			break
 		}
 		if e != nil {
-			return tool.ArtifactPage{}, tool.ArtifactReadUnavailable
+			return tool.ArtifactWindow{}, tool.ArtifactReadUnavailable
 		}
 	}
 	if position != uint64(d.SavedBytes()) || hex.EncodeToString(hash.Sum(nil)) != d.Digest() {
-		return tool.ArtifactPage{}, tool.ArtifactReadCorrupt
+		return tool.ArtifactWindow{}, tool.ArtifactReadCorrupt
 	}
-	return tool.RenderArtifactRange(d, input, start, window)
+	return tool.NewArtifactWindow(d, input, start, window)
 }
 
 func randomID() (tool.ArtifactID, error) {

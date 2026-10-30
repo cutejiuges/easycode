@@ -1,9 +1,11 @@
 # EasyCode 产品与工程 Roadmap
 
+`add-tool-transcript-and-result-budget` 已实现七工具统一记录、搜索原文保存、按顺序冻结的 sample/turn 预算和 Claude 风格主线；质量门及平台范围见该 change 的 [验收记录](../../openspec/changes/archive/2026-10-30-add-tool-transcript-and-result-budget/verification.md)，change 已归档。当前 Session/native/headless 标记分别为 6/2/1。
+
 当前契约治理变更 `unify-current-contract-lifecycle` 收敛了固定 codec、prepared commit、宿主 owner 与副作用 admission。TUI、一次性 headless、stream-json 共用 AgentLoop；关闭期间排空事件，活动 transport 可显式取消，journal lease 保留至清理完成。Patch/Write grant 仅在批准 Sync 后生效，三种副作用工具统一验证结果关联并以 uncertain 收口错配结果。本次未引入迁移或兼容 reader，后续 P4/P6/P7/P8 能力及占位退出条件保持原有范围。
 
 > 状态：持续演进（P2 进行中）
-> 更新时间：2026-10-24
+> 更新时间：2026-10-30
 > 依赖设计：[`../architecture/overall-architecture.md`](../architecture/overall-architecture.md)
 > Tool 专题设计：[`../architecture/tool-system.md`](../architecture/tool-system.md)
 
@@ -289,7 +291,7 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 
 ## 7. P3：Coding Tools 与安全执行
 
-命令输出切片 `add-command-output-artifacts` 已接入双流私有前缀存储、七工具 catalog 中的 ReadArtifact、durable descriptor 授权、完整命令历史和 Ctrl+O 列表/分页详情。默认预算为每流 16 MiB、调用预留 32 MiB、thread 256 MiB、root 1 GiB；模型预览仍最多 256 KiB，Session 当前 canary 为 5。该切片不代表全工具结果预算或 P3 已完成；PTY、后台命令、通用工具 UI、非 Darwin 命令执行和自动过期仍未实现。平台运行验证范围以 change 的最终验收记录为准。
+命令输出切片 `add-command-output-artifacts` 已接入双流私有前缀存储、七工具 catalog 中的 ReadArtifact、durable descriptor 授权、完整命令历史和 Ctrl+O 列表/分页详情。默认预算为每流 16 MiB、调用预留 32 MiB、thread 256 MiB、root 1 GiB；后续 `add-tool-transcript-and-result-budget` 已统一七工具主线与完整 transcript，增加搜索保存及 sample/turn 累计预算，Session 当前 canary 为 6。P3 尚未整体完成；PTY、后台命令、非 Darwin 命令执行和自动过期仍未实现。平台运行验证范围以 change 的最终验收记录为准。
 
 ### 7.1 目标
 
@@ -310,7 +312,7 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 
 P3 不采用一个覆盖全部工具的长线 change。以下名称是推荐顺序，不代表 change 已创建；每项仍需独立执行 `propose -> review/confirm -> apply -> verify -> archive`：
 
-当前状态：`add-read-tool-loop`、`add-search-tools-and-ordered-parallelism`、`add-approved-file-patch-flow`、`add-file-write-tool` 与 `add-command-execution` 已实现，提供 Read/Glob/Grep/单文件 Patch/Write/Darwin 前台 Exec、双 Provider 原生 wire、多 sample Runtime、最多 8 路只读并行、Patch/Write/Exec 独占屏障、按 call index durable/提交、崩溃补偿和本地-only resume。Patch 已实现 allow/ask/deny、Runtime 局部 session grant、headless 失败关闭和 Claude 风格 diff approval overlay；Write 已实现 create/overwrite 完整审批、独立 session grant、先前完整 Read 证据和私有目录树 no-replace 发布；Exec 始终只允许单次批准并在 headless 失败关闭。命令输出 artifact 与 ReadArtifact 已接入；全工具 artifact、通用 Tool UI、PTY 和后台进程控制仍未实现。Linux adapter 已交叉编译，真实 Linux 文件系统测试因当前无 runner 尚未运行，详见 Tool 架构的验证范围。
+当前状态：`add-read-tool-loop`、`add-search-tools-and-ordered-parallelism`、`add-approved-file-patch-flow`、`add-file-write-tool` 与 `add-command-execution` 已实现，提供 Read/Glob/Grep/单文件 Patch/Write/Darwin 前台 Exec、双 Provider 原生 wire、多 sample Runtime、最多 8 路只读并行、Patch/Write/Exec 独占屏障、按 call index durable/提交、崩溃补偿和本地-only resume。Patch 已实现 allow/ask/deny、Runtime 局部 session grant、headless 失败关闭和 Claude 风格 diff approval overlay；Write 已实现 create/overwrite 完整审批、独立 session grant、先前完整 Read 证据和私有目录树 no-replace 发布；Exec 始终只允许单次批准并在 headless 失败关闭。命令/搜索输出 artifact、ReadArtifact、七工具主线与统一详情已接入；Read/Patch/Write 自动 artifact、PTY 和后台进程控制仍未实现。Linux adapter 已交叉编译，真实 Linux 文件系统测试因当前无 runner 尚未运行，详见 Tool 架构的验证范围。
 
 Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘要与展开详情决定交互；Codex `c248f6d48b` 的 unified_exec、Seatbelt 和进程生命周期分层决定内核边界。当前固定 non-login `/bin/sh`、环境 allowlist、workspace 写入和禁用网络；非 Darwin 稳定返回 `unsupported_platform`。清理保证只覆盖原进程组，`setsid`/脱离组后代不属于后台控制能力；保留输出造成排空失败时返回不确定结果并 poison Runtime。Linux/Windows 已交叉构建，尚无原生运行验证，不代表 P8 跨平台支持已完成。
 
@@ -321,8 +323,8 @@ Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘�
 5. `add-command-execution`（已实现）：Darwin 前台 exec、进程 owner、取消/timeout、确定性输出预算、sandbox、单次批准与命令详情；双 Provider 的 Read → Patch → Exec → 总结及拒绝/中断/崩溃恢复均有回归。
 6. `add-command-output-artifacts`（已实现）：命令输出保存、当前线程 ReadArtifact、完整历史查询与 Claude 风格列表/详情；保持冻结预览和原生恢复独立于对象存在性。
 7. `add-background-process-control`：先定义受控 process handle、PTY/stdin、后台 admission、超时与唯一 shutdown owner，再增加 write_stdin；不得把当前前台命令脱离原组视为实现。
-8. `add-tool-result-budget`：在命令输出 artifact 的真实存储边界上扩展其他工具预算；当前每流保存至多 16 MiB 连续前缀，通用累计预算和上下文替换仍未实现。
-9. `add-same-turn-steering`（已实现）：活动 composer 自动追加，单 FIFO/strict 屏障；仅在完整 tool outputs 后、下一 sample 前注入独立原生输入。支持按 IDs 原子取回、停止返还、提交前预检、input-only 恢复，Session/native canary 分别为 5/2。
+8. `add-tool-transcript-and-result-budget`（已实现，合并原工具预算与 UI 切片）：单调用 256 KiB（搜索 64 KiB）、sample 512 KiB、turn 2 MiB，顺序冻结、搜索原文保存、七工具紧凑主线及四页缓存详情；不改写历史 native outputs，不实现上下文替换。
+9. `add-same-turn-steering`（已实现）：活动 composer 自动追加，单 FIFO/strict 屏障；仅在完整 tool outputs 后、下一 sample 前注入独立原生输入。支持按 IDs 原子取回、停止返还、提交前预检、input-only 恢复，该切片最初使用 Session/native canary 5/2；当前由统一工具预算切片更新为 6/2。
 
 首个切片选择 Read，是因为它能用最低副作用风险验证最关键的双 Provider、Session durable 和 call/output 配对边界，并让接口由真实消费者驱动；不先建立万能 registry、空 facade 或没有行为证据的完整框架。
 

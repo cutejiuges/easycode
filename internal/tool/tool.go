@@ -494,12 +494,12 @@ type ReadExecutor interface {
 
 // GlobExecutor 执行一个已经持久化并获准执行的 Glob 调用。
 type GlobExecutor interface {
-	Execute(context.Context, GlobInvocation) InvocationResult
+	Execute(context.Context, GlobInvocation, TextOutputCapture) SearchExecution
 }
 
 // GrepExecutor 执行一个已经持久化并获准执行的 Grep 调用。
 type GrepExecutor interface {
-	Execute(context.Context, GrepInvocation) InvocationResult
+	Execute(context.Context, GrepInvocation, TextOutputCapture) SearchExecution
 }
 
 // PatchPreparer 在durable ready之后读取目标并生成零写入候选。

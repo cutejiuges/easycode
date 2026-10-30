@@ -4,15 +4,29 @@
 
 `add-command-output-artifacts` 增加第七项能力 `artifact.read`，两家 facade 都命名为 `ReadArtifact`。输入为不透明 `artifact_id`、raw-byte `offset` 和 `limit`，单页最多 65,536 bytes；它不接受文件路径，不生成工作区 Read 证据。目录稳定排序与 schema 估算包括七项工具。
 
-`session/artifact` 在 Session 根的 `artifacts/<thread-id>/<invocation-id>/` 保存 stdout/stderr。每流最多 16 MiB 连续前缀，调用原子预留 32 MiB，thread/root 分别为 256 MiB/1 GiB。内存仍是每流 512 KiB 头尾，模型预览连同引用提示不超过 256 KiB。确认 EOF 的空流和完整内联小输出为 not_needed；其他结果分别记录 complete、partial、unavailable，不覆盖 exit/timeout/cancelled。
+`session/artifact` 在 Session 根的 `artifacts/<thread-id>/<invocation-id>/` 保存 stdout/stderr/search_result。每对象最多 16 MiB 连续前缀，Exec 原子预留 32 MiB，Glob/Grep 单文本预留 16 MiB，thread/root 分别为 256 MiB/1 GiB。内存仍是每流 512 KiB 头尾，模型预览连同引用提示不超过 256 KiB。确认 EOF 的空流和完整内联小输出为 not_needed；其他结果分别记录 complete、partial、unavailable，不覆盖 exit/timeout/cancelled。
 
 发布顺序是文件 Sync → no-replace rename → 目录 Sync → result Sync → native output Sync。`ArtifactReferences` 在 result Sync 后授权；对象存在不等于可读。范围读取验证同一 FD 的长度和 SHA-256，UTF-8 不拆字符，无效 bytes 展示为 `\xHH`，stored EOF 与 source_complete 分开。持有 thread journal lease 并验证完整 replay 后才清理本线程 staging/孤儿；已引用对象不按年龄删除。
 
 app 在启动和 Exec 前拒绝存储根与 workspace 重合、互为祖先或落在 sandbox 其他读写根内的布局，错误为 `unsafe_storage_layout`。权限 0700/0600 不能替代这一隔离检查。Darwin/Linux 实现 FD 绑定存储；其他平台拒绝打开不具备安全保证的存储，不能据交叉编译宣称运行支持。
 
-TUI 的 Ctrl+O 打开历史列表，↑/↓ 选择、Enter 详情、Tab 切换双流、PgUp/PgDn 分页、Esc 返回列表再关闭。详情 ↑/↓ 滚动；Ctrl+C 保持定向中断，审批优先。app 查询 owner 负责取消和等待；protocol 不引用 tool/session。列表最多 50 条、缓存最多四页，换选择或 session 后用 generation 拒绝迟到回复。查询不修改 Provider、catalog 或 journal，文件缺失/损坏仍保留冻结预览。
+TUI 的 Ctrl+O 打开完整 transcript 列表，↑/↓ 选择、Enter 详情、仅 Shell 的 Tab 切换双流、PgUp/PgDn 分页、Esc 返回列表再关闭。详情 ↑/↓ 滚动；Ctrl+C 保持定向中断，审批优先。app 查询 owner 负责取消和等待；protocol 不引用 tool/session。列表最多 50 条、缓存最多四页，换选择或 session 后用 generation 拒绝迟到回复。查询不修改 Provider、catalog 或 journal，文件缺失/损坏仍保留冻结预览。
 
 设计理由见 [ADR-0005](adr/0005-private-command-output-and-host-queries.md)。关键回归包括 `artifact_exec_darwin_test.go` 的双流省略回读、`artifact_resume_darwin_test.go` 的双 Provider 恢复等价和 `artifact_owner_test.go` 的阻塞 I/O 所有权。
+
+## 统一记录与结果预算
+
+`domain.TranscriptView` 与 `SemanticHistoryView` 分离。双 Provider 按 native entry/item 输出用户文本、assistant 文本和调用锚点，不暴露 opaque reasoning、参数或 wire。`app/transcript_projection.go` 用原生提交 seq、调用 ID、调用序号与 facade 能力连接 `session.ToolHistoryEntry`，重复或缺失锚点失败关闭。调用输出本身不制造新的显示锚点。
+
+Runtime turn owner 分配最终额度：Read/ReadArtifact/Exec 上限 256 KiB，Glob/Grep 上限 64 KiB，sample 512 KiB、turn 2 MiB；为后续最多 64 个调用各保留 1 KiB 安全终态。计费包含页头、引用、标记和最终正文，不含 Provider JSON 包装。并行 worker 返回 typed material，owner 按调用顺序 finalization、扣除实际 bytes、Sync；同轮追加不重置账本。只剩安全空间时锁定耗尽状态，停止新副作用准入，配对已有调用并提交 native outputs，最后以 `tool_result_budget_exceeded` 结束 turn。
+
+Read 超实际额度返回 `result_budget_exceeded` 并失效旧覆盖证据。ReadArtifact 在已验证窗口上按实际额度渲染，真实游标保证正进度；它不产生 ReadObservation 或递归保存。Exec 审批 fingerprint 包含实际 allowance，保存失败不改写真实退出状态。Patch/Write 的缩减摘要保留真实副作用终态。搜索 metadata 仅保存模型可见 matches；`omitted_matches - model_omitted_matches` 表示采集覆盖省略，与保存对象 complete/partial 独立。
+
+`tool_ready/tool_started/tool_progress/tool_terminal` 是统一活动事件，只有 Shell 产生进度；`transcript_committed` 在 native finalize 与宿主投影更新后发出。TUI 用提交序号上界查询最新 50 项，把 provisional sample 恰好一次替换为 committed 投影；未提交失败文本只在当前进程标为 unfinished。主线按视口裁剪，Shell 三行、相邻成功 Read/Search 去重计数；Ctrl+O 访问完整记录。正文页最多 64 KiB UTF-8，保存页最多 64 KiB raw / 256 KiB escaped，前后翻页不依赖无限缓存，浏览端统一缓存四页。TUI render 不执行 I/O。
+
+Session 当前 canary 为 6，native revision 为 2，headless JSONL 为 v1。预算与保存状态都是 result 的必需字段；恢复复用冻结 preview，不重新预算或读取对象。记录词汇仍为 `session_meta/thread_meta/turn_started/turn_inputs_committed/provider_native_commit/sample_usage/tool_call_ready/tool_approval_decided/tool_execution_started/tool_call_result/turn_completed/turn_failed`；UI 活动与提交提示不写入 journal。
+
+设计与复用依据见 [ADR-0006](adr/0006-tool-transcript-and-result-budget.md)。
 
 ## 当前独占执行不变量
 
@@ -329,7 +343,7 @@ headless 无交互宿主遇到 `ask` 时默认失败关闭。未来若支持预�
 - Owner：启动屏障保证退出观察建立后才运行命令；先非回收地观察 leader，再处理原进程组，最后唯一 `Wait`。取消/timeout 使用 TERM、250 ms 宽限、必要时 KILL、有界组收口及 1 s 输出排空；最终回收后不再向旧 PID/PGID 探测或发信号。阻塞的最终 Wait 仍由原 owner 持有，不能靠提前返回释放下一 turn。
 - 限制：保证原进程组清理，不承诺任意进程树或后台任务管理。`setsid`/脱离原组的后代可能继续存在，但仍继承 sandbox；保留输出管道导致排空超时则返回 `outcome_uncertain/output_cleanup_incomplete` 并 poison 当前 Runtime。关闭输出后脱离的进程不能据此检测，前台成功不等于任意后代已终止。
 - 输出：stdout/stderr 各保留 512 KiB 确定性头尾窗口，模型 preview 至多 256 KiB，固定 stdout 后 stderr 并保证 UTF-8；原始连续前缀按私有 artifact 策略保存。Session 冻结 preview/字节数/截断和退出 metadata，恢复不重新读取或截断。
-- TUI：普通命令摘要最多两行、160 code points；运行态只显示有界近期输出。`Ctrl+O` 打开历史列表，Enter 进入可分页详情，完整命令复用批准信息，终态预览来自 result durable 后的 typed terminal payload；进度不进 Session。`Ctrl+C` 定向中断后保持取消中，直到 cleanup 与 turn terminal 完成才恢复输入。
+- TUI：普通命令摘要最多两行、160 code points；运行态只显示有界近期输出。`Ctrl+O` 打开完整 transcript 列表，Enter 进入可分页详情，完整命令复用批准信息，终态预览来自 result durable 后的 typed terminal payload；进度不进 Session。`Ctrl+C` 定向中断后保持取消中，直到 cleanup 与 turn terminal 完成才恢复输入。
 
 该切片选择 Exec 优先于整文件 Write，是为了补齐已有“读取/搜索 → Patch → 执行验证 → 总结”的真实闭环。Claude Code 2.1.88 的 Bash 批准、默认 No、命令摘要/展开详情指导产品交互；Codex `c248f6d48b` 的 unified_exec、Seatbelt 与进程 owner 分层指导内核边界。两者均只读参考：不引入 Claude Code 的流内提前副作用，也不提前复制 Codex 的 PTY/后台句柄；当前保留双 Provider 原生 call/output 语义，并以 durable started 作为执行接收点。具体证据和范围取舍见 `add-command-execution` 的 proposal/design。
 
@@ -351,7 +365,7 @@ headless 无交互宿主遇到 `ask` 时默认失败关闭。未来若支持预�
 3. 将“模型实际收到的预览字节 + artifact descriptor + 截断元数据”写入 durable fact。
 4. 恢复时复用已保存预览，不根据新预算重新截断。
 
-Exec 从首字节暂存双流，各保存最多 16 MiB 连续前缀；小输出完全内联时删除暂存。搜索工具仍只持久化最多 64 KiB 的确定性预览。Exec 冻结最多 256 KiB 预览和 complete/partial/unavailable/not_needed 保存状态，恢复不读对象、不重新截断。JSONL 是事实源，artifact 是按 descriptor 校验的私有数据，SQLite 仍只做可重建索引。详见 [命令输出存储与查询](#命令输出存储与查询)。
+Exec 从首字节暂存双流，各保存最多 16 MiB 连续前缀；小输出完全内联时删除暂存。搜索工具在扫描上限内增量保存选中原文，并冻结最多 64 KiB 的确定性首尾预览。Exec 冻结最多 256 KiB 预览和 complete/partial/unavailable/not_needed 保存状态，恢复不读对象、不重新截断。JSONL 是事实源，artifact 是按 descriptor 校验的私有数据，SQLite 仍只做可重建索引。详见 [命令输出存储与查询](#命令输出存储与查询)。
 
 ### 10.1 Write 已实现边界
 
@@ -475,3 +489,5 @@ Runtime 的观察表仅由 turn owner 操作，上限 1024，按输出提交顺�
 - `outcome_uncertain` 的用户恢复命令与宿主交互。
 
 在对应 change 批准前，不得通过隐藏默认、占位配置或未消费的 event kind 抢先实现这些选择。
+
+输入召回复用已有语义视图，独立限制为 100 条和 8 MiB，不能用 transcript 短预览作为召回正文。Shell 详情查询完整命令与冻结结果，存在引用时异步预取首个保存页；预取同样计入最多四页的缓存，失败不替换原冻结结果。

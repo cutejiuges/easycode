@@ -39,15 +39,15 @@ func commandDetailModel(t *testing.T, terminal bool, status, code string, trunca
 	}
 	resolved.TurnID = approval.TurnID
 	model = updateModel(t, model, RuntimeEventMsg{Event: resolved})
-	activity := protocol.CommandActivityPayload{InvocationID: request.InvocationID, Command: "printf 'full command first line' …", Workdir: "src", Status: "running"}
-	started, err := protocol.NewCommandStarted(activity)
+	activity := protocol.ToolActivityPayload{Tool: protocol.ToolShell, InvocationID: request.InvocationID, Summary: "printf 'full command first line' …", Workdir: "src", Status: "running"}
+	started, err := protocol.NewToolStarted(activity)
 	if err != nil {
 		t.Fatal(err)
 	}
 	started.TurnID = approval.TurnID
 	model = updateModel(t, model, RuntimeEventMsg{Event: started})
 	activity.ElapsedMillis, activity.StdoutBytes, activity.StdoutLines, activity.Recent = 250, 512, 3, "recent output\nlast line"
-	progress, err := protocol.NewCommandProgress(activity)
+	progress, err := protocol.NewToolProgress(activity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,33 +58,41 @@ func commandDetailModel(t *testing.T, terminal bool, status, code string, trunca
 		if status == "success" {
 			activity.ExitKnown, activity.ExitCode = true, 2
 		}
-		completed, err := protocol.NewCommandTerminal(protocol.CommandTerminalPayload{CommandActivityPayload: activity, ResultPreview: "stdout:\nhead retained\n[... 128 bytes omitted ...]\ntail retained\nstderr:\nwarning"})
+		completed, err := protocol.NewToolTerminal(protocol.ToolTerminalPayload{ToolActivityPayload: activity, ResultPreview: "stdout:\nhead retained\n[... 128 bytes omitted ...]\ntail retained\nstderr:\nwarning"})
 		if err != nil {
 			t.Fatal(err)
 		}
 		completed.TurnID = approval.TurnID
 		model = updateModel(t, model, RuntimeEventMsg{Event: completed})
 	}
-	item := protocol.CommandHistoryItem{Sequence: 1, InvocationID: request.InvocationID, Command: request.Command, Workdir: activity.Workdir, Status: activity.Status, Code: activity.Code, Terminal: terminal, Truncated: activity.Truncated, ExitCode: activity.ExitCode, ExitKnown: activity.ExitKnown, DurationMillis: activity.ElapsedMillis}
+	item := protocol.TranscriptListItem{Cursor: protocol.TranscriptCursor{Sequence: 1}, Kind: domain.TranscriptCall, TurnID: model.activeTurnID, Activity: activity, ModelShortened: truncated}
+	preview := ""
 	if terminal {
-		item.Preview = "stdout:\nhead retained\n[... 128 bytes omitted ...]\ntail retained\nstderr:\nwarning"
-	}
-
-	if terminal {
+		preview = "stdout:\nhead retained\n[... 128 bytes omitted ...]\ntail retained\nstderr:\nwarning"
 		item.Stdout.Status = "not_needed"
 		item.Stderr.Status = "not_needed"
 	}
-	model = model.WithCommandQueries(domain.ThreadID("018f1d8a-7b5c-7def-8123-456789abcdef"), snapshotCommandQueries{item})
+	model = model.WithTranscriptQueries(domain.ThreadID("018f1d8a-7b5c-7def-8123-456789abcdef"), snapshotTranscriptQueries{item: item, input: request.Command, preview: preview})
 	return model, session
 }
 
-type snapshotCommandQueries struct{ item protocol.CommandHistoryItem }
-
-func (q snapshotCommandQueries) ListCommands(context.Context, protocol.CommandListQuery) (protocol.CommandListPage, error) {
-	return protocol.CommandListPage{Items: []protocol.CommandHistoryItem{q.item}}, nil
+type snapshotTranscriptQueries struct {
+	item           protocol.TranscriptListItem
+	input, preview string
 }
-func (snapshotCommandQueries) ReadCommandOutput(context.Context, protocol.CommandOutputQuery) (protocol.CommandOutputPage, error) {
-	return protocol.CommandOutputPage{}, nil
+
+func (q snapshotTranscriptQueries) ListTranscript(context.Context, protocol.TranscriptListQuery) (protocol.TranscriptListPage, error) {
+	return protocol.TranscriptListPage{Items: []protocol.TranscriptListItem{q.item}}, nil
+}
+func (q snapshotTranscriptQueries) ReadTranscriptBody(_ context.Context, query protocol.TranscriptBodyQuery) (protocol.TranscriptBodyPage, error) {
+	text := q.preview
+	if query.Source == protocol.TranscriptInput {
+		text = q.input
+	}
+	return protocol.TranscriptBodyPage{Text: text, NextOffset: uint64(len(text)), TotalBytes: uint64(len(text))}, nil
+}
+func (snapshotTranscriptQueries) ReadToolOutput(context.Context, protocol.ToolOutputQuery) (protocol.ToolOutputPage, error) {
+	return protocol.ToolOutputPage{}, nil
 }
 func openSnapshotCommandDetail(t *testing.T, model Model) Model {
 	t.Helper()
@@ -139,7 +147,7 @@ func TestCommandTimelineAndDetailSnapshots(t *testing.T) {
 func TestCommandDetailPreservesCandidateDraftAndInterruptRouting(t *testing.T) {
 	model, session := commandDetailModel(t, false, "", "", false)
 	model = openSnapshotCommandDetail(t, model)
-	stored := model.commandViews[snapshotCommandID(model)]
+	stored := model.toolActivities[snapshotCommandID(model)]
 	if !strings.Contains(model.View(), "full command second line") || strings.Contains(model.View(), "head retained") {
 		t.Fatal("running details did not use approval command and recent output")
 	}
@@ -147,7 +155,7 @@ func TestCommandDetailPreservesCandidateDraftAndInterruptRouting(t *testing.T) {
 		model = updateModel(t, model, key)
 	}
 	model = updateModel(t, model, tea.WindowSizeMsg{Width: 42, Height: 14})
-	if model.commandViews[snapshotCommandID(model)] != stored || model.composer.text != "kept draft" || len(session.submits) != 0 {
+	if model.toolActivities[snapshotCommandID(model)] != stored || model.composer.text != "kept draft" || len(session.submits) != 0 {
 		t.Fatal("detail navigation changed candidate or composer")
 	}
 	updated, interrupt := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
@@ -178,7 +186,7 @@ func TestCommandDetailPreservesCandidateDraftAndInterruptRouting(t *testing.T) {
 		t.Fatal("closing details left overlay open")
 	}
 	completed = openSnapshotCommandDetail(t, completed)
-	if completed.browser.items[completed.browser.selected] != frozen || len(completed.commandViews) != 0 {
+	if completed.browser.items[completed.browser.selected] != frozen || len(completed.toolActivities) != 0 {
 		t.Fatal("closing details changed result")
 	}
 }
@@ -206,9 +214,9 @@ func TestCommandInterruptKeepsDraftBlockedUntilTurnCleanupTerminal(t *testing.T)
 	if model.state != stateStreaming || model.composer.text != "kept draft" || len(session.submits) != 0 || !strings.Contains(model.View(), "waiting for cleanup") {
 		t.Fatal("cancellation released composer before cleanup")
 	}
-	detail := model.commandViews[snapshotCommandID(model)]
+	detail := model.toolActivities[snapshotCommandID(model)]
 	detail.activity.Status, detail.activity.Code = "cancelled", "cancelled"
-	terminal, err := protocol.NewCommandTerminal(protocol.CommandTerminalPayload{CommandActivityPayload: detail.activity, ResultPreview: "Exec cancelled"})
+	terminal, err := protocol.NewToolTerminal(protocol.ToolTerminalPayload{ToolActivityPayload: detail.activity, ResultPreview: "Exec cancelled"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,5 +245,5 @@ func TestCommandInterruptKeepsDraftBlockedUntilTurnCleanupTerminal(t *testing.T)
 }
 
 func snapshotCommandID(model Model) string {
-	return model.browser.queries.(snapshotCommandQueries).item.InvocationID
+	return model.browser.queries.(snapshotTranscriptQueries).item.Activity.InvocationID
 }

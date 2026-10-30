@@ -22,6 +22,7 @@ const (
 	CodeStreamProtocol                 Code = "stream_protocol_error"
 	CodeStreamIdleTimeout              Code = "stream_idle_timeout"
 	CodeUserCancelled                  Code = "user_cancelled"
+	CodeToolResultBudgetExceeded       Code = "tool_result_budget_exceeded"
 	CodeTurnFailed                     Code = "turn_failed"
 	CodeOutput                         Code = "output_failed"
 	CodeSessionWrite                   Code = "session_write_failed"

@@ -35,13 +35,14 @@ type chatRuntimeJournal interface {
 }
 
 type assembledSession struct {
-	commands     []session.CommandHistoryEntry
-	identity     session.Identity
-	conversation provider.Conversation
-	writer       managedJournal
-	history      domain.SemanticHistoryView
-	repair       session.RepairReport
-	toolRecovery *session.ToolRecoveryPlan
+	nativeCommits []session.NativeCommitRecord
+	tools         []session.ToolHistoryEntry
+	identity      session.Identity
+	conversation  provider.Conversation
+	writer        managedJournal
+	history       domain.SemanticHistoryView
+	repair        session.RepairReport
+	toolRecovery  *session.ToolRecoveryPlan
 }
 
 func openSessionService(dataRoot string) (*sessionService, error) {
@@ -178,8 +179,9 @@ func (service *sessionService) resume(
 	}
 	return assembledSession{
 		identity: plan.Identity, conversation: conversation, writer: writer,
-		commands: plan.Commands,
-		history:  conversation.ProjectHistory(), repair: plan.Repair, toolRecovery: toolRecovery,
+		tools:         plan.Tools,
+		nativeCommits: plan.NativeCommits,
+		history:       conversation.ProjectHistory(), repair: plan.Repair, toolRecovery: toolRecovery,
 	}, nil
 }
 
