@@ -73,7 +73,7 @@ Runtime SHALL 将调用 context 的取消传播到每次 Provider stream 的派�
 
 ### Requirement: Only one active turn mutates a conversation
 
-同一个会话级 Runtime SHALL 在任意时刻最多允许一个活动 turn 修改 provider 原生历史。并发提交 MUST 被拒绝或留在宿主层等待，不能并行写入同一 conversation history。
+同一个会话级 Runtime SHALL 在任意时刻最多允许一个活动 turn 修改 provider 原生历史。并发提交 MUST 由唯一控制 owner 排队或拒绝，不能并行写入同一 conversation history。
 
 #### Scenario: Submit while a turn is active
 
@@ -83,7 +83,7 @@ Runtime SHALL 将调用 context 的取消传播到每次 Provider stream 的派�
 
 ### Requirement: Runtime events carry stable Session identity
 
-Session-bound Runtime SHALL 在接受 turn 前获得有效的 `session_id` 与 `thread_id`，并为每次提交分配新的 `turn_id`。该 turn 产生的 `turn_started`、assistant 语义事件和唯一终态事件 MUST 携带相同的 session/thread/turn 标识；Provider 产生的语义 payload 不得自行决定或覆盖这些标识。进程内 RuntimeEvent SHALL 使用唯一当前强类型 kind/payload，不携带 format version，也不提供 JSON decoder；headless adapter 负责把它单向投影为外部 JSONL v1。Runtime MUST NOT 接受包含未收口 interrupted-tail turn 的恢复计划；应用必须先 durable 记录对应失败边界。
+Session-bound Runtime SHALL 在接受 turn 前获得有效的 `session_id` 与 `thread_id`，并为每次新 turn 分配新的 `turn_id`；同一 turn 消费的自动输入共享该标识，但每条输入保持独立 InputID。该 turn 产生的 `turn_started`、assistant 语义事件和唯一终态事件 MUST 携带相同的 session/thread/turn 标识；Provider 产生的语义 payload 不得自行决定或覆盖这些标识。进程内 RuntimeEvent SHALL 使用唯一当前强类型 kind/payload，不携带 format version，也不提供 JSON decoder；headless adapter 负责把它单向投影为外部 JSONL v1。Runtime MUST NOT 接受包含未收口 interrupted-tail turn 的恢复计划；应用必须先 durable 记录对应失败边界。
 
 #### Scenario: Decorate a successful turn
 - **WHEN** Runtime 在一个 root thread 中执行成功文本 turn
@@ -102,9 +102,11 @@ Session-bound Runtime SHALL 在接受 turn 前获得有效的 `session_id` 与 `
 - **WHEN** headless adapter 接收一个已验证的当前进程内 RuntimeEvent
 - **THEN** adapter 生成带 `version: 1` 的外部 JSONL 对象，而内部 event 保持无版本强类型值
 
+用户输入 committed 事件 SHALL 携带已保存正文、InputID 和实际 turn identity；仅在对应输入 Sync/finalize 后发布，不能由队列 admission 推断。
+
 ### Requirement: Durable facts precede Provider side effects and completion
 
-Runtime SHALL在首次Provider请求前durable append当前`turn_started`；失败时不得建立网络流。每个completed sample的`provider_native_commit`、`sample_usage`和全部ready-call facts MUST在同一batch append/Sync后finalize，随后才允许候选准备或executor I/O。
+Runtime SHALL 在首次 Provider 请求前依次提交 turn_started、纯内存预检候选输入、durable 提交 initial 用户输入 batch 并 finalize；任一步失败时不得建立网络流。每个completed sample的`provider_native_commit`、`sample_usage`和全部ready-call facts MUST在同一batch append/Sync后finalize，随后才允许候选准备或executor I/O。
 
 Runtime SHALL按call index与调度屏障完成policy及所需approval。Patch候选只能在ready durable且前序批次结果durable后读取目标；ask decision只有在匹配`tool_approval_decided(allow*)`成功Sync后才可进入执行准入，deny decision必须与denied result同batch durable且零executor I/O。Runtime SHALL按调度批次逐一durable`tool_execution_started`：连续`parallel_read`批次的全部准入完成后最多启动8个workers，每个`exclusive` Patch在前序批次完成后准备候选、请求approval并独占执行。worker/executor只返回固定call slot的typed result，不得写Session或Provider history；协调owner按call index durable result facts。全部results durable后，匹配的Provider-native tool outputs MUST在下一Provider sample前append/Sync并finalize。最终无calls sample的native commit、sample usage和`turn_completed` SHALL在同一batch durable；携带聚合usage的`turn_completed` RuntimeEvent只有在finalizer成功后才能发布。
 
@@ -126,7 +128,7 @@ Provider/工具/approval失败、取消、协议错误或append/Sync失败 MUST�
 
 #### Scenario: Cancel before Provider commit
 - **WHEN** 首个sample在成功terminal前取消
-- **THEN** Runtime不写入native commit或sample usage，并以唯一失败边界收口
+- **THEN** Runtime不写入 sample native commit 或 sample usage，已经 durable 的用户输入保持不变，并以唯一失败边界收口
 
 #### Scenario: Persist a call before Read
 - **WHEN** Provider完成包含合法Read call的sample
@@ -165,6 +167,12 @@ Provider/工具/approval失败、取消、协议错误或append/Sync失败 MUST�
 #### Scenario: Stop after an uncertain Write
 - **WHEN** Write 发布或清理的结果无法确认
 - **THEN** Runtime poisoned，等待所拥有清理完成，不执行后续 sibling 或发起下一 sample
+
+中途输入 SHALL 只在整组工具 outputs 成功 Sync/finalize 后提交。writer admission 前取消不得写入；接收后必须返回确定提交结果，成功则 finalize 一次，即使取消也不得返还，无法确认则 poison 并禁止后续副作用。
+
+#### Scenario: Cancel around user input durability
+- **WHEN** 取消分别发生在 writer 接收前、接收后 Sync 成功或结果不确定
+- **THEN** 输入分别确定返还、保留为 committed 或标记 uncertain；每条只有一种结果，后两者不得自动重试
 
 ### Requirement: Host submission carries an explicit operation context
 
@@ -250,7 +258,7 @@ Runtime SHALL 在构造 Session drafts 前同时复制并重新验证 prepared s
 
 ### Requirement: Runtime plans context before Provider side effects
 
-Runtime SHALL 在 `turn_started` 已 durable、每次 Provider stream之前，使用同一不可变项目指令与Tool Catalog snapshots、当前已提交Conversation history以及本轮输入状态生成上下文计划。首次sample包含真实用户输入；后续sample只从已提交Provider-native tool outputs继续，不得把result、RuntimeEvent或SemanticHistoryView伪造成新的共享user文本。
+Runtime SHALL 在 `turn_started` 已 durable、每次 Provider stream之前，使用同一不可变项目指令与Tool Catalog snapshots、当前已提交Conversation history以及本轮输入状态生成上下文计划。首轮和中途用户输入均先以候选历史预检，通过后独立提交；实际 sample 只从已提交 Provider-native 用户输入和 tool outputs 继续，不得把result、RuntimeEvent或SemanticHistoryView伪造成新的共享user文本。
 
 规划失败或预算明确 `over_limit` 时，Runtime MUST durable收口当前turn且不得建立该Provider stream。Tool Catalog segment必须参与stable-prefix fingerprint和估算，但catalog、workspace绝对路径、invocation identity、ledger和结果正文不得新增RuntimeEvent或独立prompt文本。
 
@@ -281,6 +289,8 @@ Runtime SHALL 在 `turn_started` 已 durable、每次 Provider stream之前，�
 #### Scenario: Plan after tool outputs
 - **WHEN** Read outputs已durable并finalize到原生history
 - **THEN** 下一sample从更新后的Provider history编译，且不把同一tool result再作为共享user输入附加
+
+用户输入 SHALL 在 Sync 前经过纯内存候选上下文预算与请求编码大小预检；本地超限必须 discard 并返还本次输入，不改变已提交历史。初始预检失败收口 turn，中途预检失败可以继续未追加输入的原循环。提交后的网络失败保留输入；当前采样状态不携带额外用户正文。
 
 ### Requirement: Approval requests are typed Runtime events and suspend the matching call
 

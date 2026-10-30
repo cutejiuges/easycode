@@ -59,7 +59,7 @@ func TestWriteRecoveryPairsEveryTailWithoutReplayingFilesOrGrants(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			events, err := control.Submit(context.Background(), "create")
+			events, err := submitInteractiveFixture(t, control, context.Background(), "create")
 			if err != nil {
 				t.Fatal(err)
 			}

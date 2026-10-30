@@ -16,7 +16,10 @@ func assertExecLoopNativeOrder(t *testing.T, plan session.ReplayPlan, family dom
 	if family == domain.ProviderAnthropic {
 		ids = []string{"toolu-1", "toolu-edit", "call-exec"}
 	}
-	for index, native := range plan.NativeCommits {
+	if plan.NativeCommits[0].Role != domain.NativeCommitUserInputs {
+		t.Fatal("initial input commit missing")
+	}
+	for index, native := range plan.NativeCommits[1:] {
 		var entry struct {
 			Kind    string `json:"kind"`
 			Outputs []struct {

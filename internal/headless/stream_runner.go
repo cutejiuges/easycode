@@ -119,6 +119,9 @@ func (state *streamRunnerRunState) handleOutput(item protocol.ControlItem, open 
 		state.requestStop()
 		return
 	}
+	if wire == nil {
+		return
+	}
 	if err := state.encoder.Write(wire); err != nil {
 		state.outputUnavailable = true
 		state.setFailure(fault.Summary{Code: fault.CodeOutput, Message: "write headless output failed"})

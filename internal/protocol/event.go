@@ -13,6 +13,7 @@ import (
 type EventKind string
 
 const (
+	EventUserInputCommitted    EventKind = "user_input_committed"
 	EventTurnStarted           EventKind = "turn_started"
 	EventAssistantTextDelta    EventKind = "assistant_text_delta"
 	EventTurnCompleted         EventKind = "turn_completed"
@@ -51,6 +52,9 @@ func (event Event) Validate() error {
 		return fmt.Errorf("runtime event identity is invalid")
 	}
 	switch event.Kind {
+	case EventUserInputCommitted:
+		_, err := DecodeUserInputCommitted(event)
+		return err
 	case EventCommandStarted, EventCommandProgress, EventCommandTerminal:
 		if !hasIdentity {
 			return fmt.Errorf("command event identity is required")

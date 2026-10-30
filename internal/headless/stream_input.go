@@ -107,6 +107,13 @@ type streamInterruptCommand struct {
 	ExpectedTurnID string `json:"expected_turn_id"`
 }
 
+type streamRetractCommand struct {
+	Version   int              `json:"version"`
+	Type      string           `json:"type"`
+	RequestID string           `json:"request_id"`
+	InputIDs  []domain.InputID `json:"input_ids"`
+}
+
 type streamShutdownCommand struct {
 	Version   int    `json:"version"`
 	Type      string `json:"type"`
@@ -133,17 +140,26 @@ func DecodeStreamCommand(line []byte) (protocol.Command, error) {
 		return protocol.Command{}, fmt.Errorf("stream command request ID is invalid")
 	}
 	switch envelope.Type {
-	case "input.submit":
+	case "input.submit", "input.append":
 		var wire streamSubmitCommand
 		if err := codec.DecodeObject(line, &wire, "version", "type", "request_id"); err != nil {
 			return protocol.Command{}, fmt.Errorf("input.submit command is invalid")
 		}
 		command, err := protocol.NewSubmitInputCommand(requestID, wire.Text)
+		if envelope.Type == "input.append" {
+			command, err = protocol.NewSubmitConversationalInputCommand(requestID, wire.Text)
+		}
 		if err != nil {
 			return protocol.Command{}, fmt.Errorf("input.submit command is invalid")
 		}
 		return command, nil
-	case "turn.interrupt":
+	case "input.retract":
+		var wire streamRetractCommand
+		if err := codec.DecodeObject(line, &wire, "version", "type", "request_id", "input_ids"); err != nil {
+			return protocol.Command{}, fmt.Errorf("input.retract command is invalid")
+		}
+		return protocol.NewRetractInputsCommand(requestID, wire.InputIDs)
+	case "turn.interrupt", "turn.stop":
 		var wire streamInterruptCommand
 		if err := codec.DecodeObject(line, &wire, "version", "type", "request_id"); err != nil {
 			return protocol.Command{}, fmt.Errorf("turn.interrupt command is invalid")
@@ -151,6 +167,9 @@ func DecodeStreamCommand(line []byte) (protocol.Command, error) {
 		turnID, err := domain.ParseTurnID(wire.ExpectedTurnID)
 		if err != nil {
 			return protocol.Command{}, fmt.Errorf("turn.interrupt command is invalid")
+		}
+		if envelope.Type == "turn.stop" {
+			return protocol.NewStopTurnCommand(requestID, turnID)
 		}
 		return protocol.NewInterruptCommand(requestID, turnID)
 	case "session.shutdown":

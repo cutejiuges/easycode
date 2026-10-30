@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"easycode/internal/codec"
+	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
 	"easycode/internal/provider"
@@ -70,7 +71,7 @@ func TestConversationStreamIdentityIntegration(t *testing.T) {
 			}
 			defer closeProvider(t, instance)
 			conversation := instance.NewConversation().(*Conversation)
-			stream, err := conversation.Stream(context.Background(), testOpenAITurnInput(t, "question"))
+			stream, err := conversation.Stream(context.Background(), testOpenAITurnInput(t, conversation, "question"))
 			if err != nil {
 				t.Fatalf("start stream: %v", err)
 			}
@@ -84,7 +85,7 @@ func TestConversationStreamIdentityIntegration(t *testing.T) {
 				if !errors.As(terminal.Error(), &faultError) || faultError.Code != test.wantFault {
 					t.Fatalf("terminal error: got %v want code %s", terminal.Error(), test.wantFault)
 				}
-				if len(conversation.historySnapshot()) != 0 {
+				if len(conversation.historySnapshot()) != 1 {
 					t.Fatalf("invalid stream committed history: %#v", conversation.historySnapshot())
 				}
 				return
@@ -95,7 +96,7 @@ func TestConversationStreamIdentityIntegration(t *testing.T) {
 			if err := terminal.PreparedSample().Finalize(); err != nil {
 				t.Fatalf("finalize prepared sample: %v", err)
 			}
-			if history := conversation.historySnapshot(); len(history) != 1 || len(history[0].Outputs) != 1 || history[0].Outputs[0].ID != "msg-1" {
+			if history := conversation.historySnapshot(); len(history) != 2 || len(history[1].Outputs) != 1 || history[1].Outputs[0].ID != "msg-1" {
 				t.Fatalf("committed history: %#v", history)
 			}
 		})
@@ -162,17 +163,17 @@ func TestConversationUsesNativeHistoryAcrossTwoTurnsAndBaseURLForms(t *testing.T
 			if len(requests) != 2 {
 				t.Fatalf("request count: %d", len(requests))
 			}
-			firstCompiled, err := compileResponsesRequest("gpt-test", nil, nil, nativeItemPointer(NewUserItem("first")), testOpenAIToolView(t))
+			firstCompiled, err := compileResponsesRequest("gpt-test", append([]nativeHistoryEntry(nil), testInputEntry(t, NewUserItem("first"))), nil, testOpenAIToolView(t))
 			if err != nil {
 				t.Fatalf("compile first expected request: %v", err)
 			}
-			secondCompiled, err := compileResponsesRequest("gpt-test", []nativeHistoryEntry{{
-				Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("first")),
+			secondCompiled, err := compileResponsesRequest("gpt-test", append(testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, NewUserItem("first")), {
+				Kind: nativeHistorySample,
 				Outputs: []NativeItem{{
 					Type: "message", ID: "msg-1", Role: "assistant",
 					Content: []ContentPart{{Type: "output_text", Text: "answer"}},
 				}},
-			}}, nil, nativeItemPointer(NewUserItem("second")), testOpenAIToolView(t))
+			}}), testInputEntry(t, NewUserItem("second"))), nil, testOpenAIToolView(t))
 			if err != nil {
 				t.Fatalf("compile second expected request: %v", err)
 			}
@@ -224,7 +225,8 @@ func TestConversationKeepsProjectInstructionsOutOfNativeHistory(t *testing.T) {
 	conversation := instance.NewConversation().(*Conversation)
 	snapshot := testOpenAIProjectInstructions(t, "AGENTS.md", projectMarker)
 	for _, text := range []string{"first", "second"} {
-		input, attachErr := (provider.TurnInput{Text: text}).WithProjectInstructions(snapshot)
+		testCommitUserInput(t, conversation, text)
+		input, attachErr := provider.NewSamplingInput().WithProjectInstructions(snapshot)
 		if attachErr != nil {
 			t.Fatal(attachErr)
 		}
@@ -269,10 +271,10 @@ func TestConversationKeepsProjectInstructionsOutOfNativeHistory(t *testing.T) {
 	}
 	history := conversation.historySnapshot()
 	projection := conversation.ProjectHistory()
-	if len(history) != 2 || history[0].Input.Content[0].Text != "first" || history[1].Input.Content[0].Text != "second" {
+	if len(history) != 4 || history[0].UserInputs[0].Content[0].Text != "first" || history[2].UserInputs[0].Content[0].Text != "second" {
 		t.Fatalf("native history contains unexpected users: %#v", history)
 	}
-	if len(projection.Turns) != 2 || strings.Contains(projection.Turns[0].UserText, projectMarker) || strings.Contains(projection.Turns[1].UserText, projectMarker) {
+	if len(projection.Turns) != 2 || strings.Contains(projection.Turns[0].Messages[0].Text, projectMarker) || strings.Contains(projection.Turns[1].Messages[0].Text, projectMarker) {
 		t.Fatalf("semantic history contains project instructions: %#v", projection)
 	}
 }
@@ -302,7 +304,7 @@ func TestConversationProjectionMatchesLiveTextAndHidesActiveTurn(t *testing.T) {
 	}
 	defer closeProvider(t, instance)
 	conversation := instance.NewConversation().(*Conversation)
-	stream, err := conversation.Stream(context.Background(), testOpenAITurnInput(t, "question"))
+	stream, err := conversation.Stream(context.Background(), testOpenAITurnInput(t, conversation, "question"))
 	if err != nil {
 		t.Fatalf("start stream: %v", err)
 	}
@@ -313,7 +315,7 @@ func TestConversationProjectionMatchesLiveTextAndHidesActiveTurn(t *testing.T) {
 		t.Fatalf("invalid first stream event: %v", err)
 	}
 	liveText := decodeOpenAILiveText(t, firstEvent)
-	if projection := conversation.ProjectHistory(); len(projection.Turns) != 0 {
+	if projection := conversation.ProjectHistory(); len(projection.Turns) != 1 || len(projection.Turns[0].Messages) != 1 || projection.Turns[0].Messages[0].Role != domain.SemanticUser {
 		t.Fatalf("active turn projected: %#v", projection)
 	}
 	close(release)
@@ -348,7 +350,7 @@ func TestConversationProjectionMatchesLiveTextAndHidesActiveTurn(t *testing.T) {
 		t.Fatal("stream channel closed before conversation became inactive")
 	}
 	projection := conversation.ProjectHistory()
-	if len(projection.Turns) != 1 || projection.Turns[0].UserText != "question" || projection.Turns[0].AssistantText != liveText || liveText != "hello world" {
+	if len(projection.Turns) != 1 || projection.Turns[0].Messages[0].Text != "question" || projection.Turns[0].Messages[1].Text != liveText || liveText != "hello world" {
 		t.Fatalf("live text %q projection %#v", liveText, projection)
 	}
 }
@@ -367,7 +369,7 @@ func decodeOpenAILiveText(t *testing.T, event provider.StreamEvent) string {
 
 func runCompletedTurn(t *testing.T, conversation provider.Conversation, text string) {
 	t.Helper()
-	input := testOpenAITurnInput(t, text)
+	input := testOpenAITurnInput(t, conversation, text)
 	stream, err := conversation.Stream(context.Background(), input)
 	if err != nil {
 		t.Fatalf("start turn %q: %v", text, err)

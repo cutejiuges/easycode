@@ -35,36 +35,17 @@ type Capabilities struct {
 
 // TurnInput 是共享 turn 模板交给 Provider Kernel 的最小输入。
 type TurnInput struct {
-	Text string
-
 	projectInstructions    domain.ProjectInstructionsSnapshot
 	hasProjectInstructions bool
 	toolCatalog            tool.CatalogSnapshot
 	hasToolCatalog         bool
-	continuation           bool
 }
 
-// NewToolContinuationInput 创建只从已提交工具结果继续采样的输入。
-func NewToolContinuationInput() TurnInput {
-	return TurnInput{continuation: true}
-}
+// NewSamplingInput 创建仅使用已提交原生历史的采样输入。
+func NewSamplingInput() TurnInput { return TurnInput{} }
 
-// IsToolContinuation 判断本次采样是否不应追加新的用户文本。
-func (input TurnInput) IsToolContinuation() bool { return input.continuation }
-
-// Validate 校验用户输入与工具继续采样的封闭组合。
-func (input TurnInput) Validate() error {
-	if input.continuation {
-		if input.Text != "" {
-			return fmt.Errorf("tool continuation must not contain user text")
-		}
-		return nil
-	}
-	if strings.TrimSpace(input.Text) == "" {
-		return fmt.Errorf("turn input is required")
-	}
-	return nil
-}
+// Validate 校验纯采样输入；用户正文只通过独立输入提交传递。
+func (input TurnInput) Validate() error { return nil }
 
 // WithProjectInstructions 返回附着了项目指令快照的输入副本。
 func (input TurnInput) WithProjectInstructions(
@@ -520,69 +501,45 @@ func cloneReadyCalls(calls []tool.ReadyCall) ([]tool.ReadyCall, error) {
 
 // PreparedToolOutputs 封装不携带 usage 的 Provider-native 工具结果增量。
 type PreparedToolOutputs struct {
-	envelope NativeCommitEnvelope
-	finalize func()
-	discard  func()
-	state    atomic.Uint32
-	resolved chan struct{}
+	commit *preparedNativeCommit
 }
 
 // NewPreparedToolOutputs 创建具有显式提交和丢弃路径的工具结果提交。
 func NewPreparedToolOutputs(envelope NativeCommitEnvelope, finalize func(), discard func()) (*PreparedToolOutputs, error) {
-	cloned, err := envelope.Clone()
+	commit, err := newPreparedNativeCommit(envelope, finalize, discard)
 	if err != nil {
 		return nil, err
 	}
-	if finalize == nil || discard == nil {
-		return nil, fmt.Errorf("prepared tool outputs lifecycle callbacks are required")
-	}
-	return &PreparedToolOutputs{envelope: cloned, finalize: finalize, discard: discard, resolved: make(chan struct{})}, nil
+	return &PreparedToolOutputs{commit: commit}, nil
 }
 
 // Envelope 返回待持久化原生增量的独立副本。
-func (commit *PreparedToolOutputs) Envelope() (NativeCommitEnvelope, error) {
-	if commit == nil || commit.finalize == nil {
+func (outputs *PreparedToolOutputs) Envelope() (NativeCommitEnvelope, error) {
+	if outputs == nil {
 		return NativeCommitEnvelope{}, fmt.Errorf("prepared tool outputs are invalid")
 	}
-	if commit.state.Load() != 0 {
-		return NativeCommitEnvelope{}, fmt.Errorf("prepared tool outputs are already finalized")
-	}
-	return commit.envelope.Clone()
+	return outputs.commit.envelopeCopy()
 }
 
 // Finalize 在 durable success 后恰好一次提交工具结果历史。
-func (commit *PreparedToolOutputs) Finalize() error {
-	if commit == nil || commit.finalize == nil {
+func (outputs *PreparedToolOutputs) Finalize() error {
+	if outputs == nil {
 		return fmt.Errorf("prepared tool outputs are invalid")
 	}
-	if !commit.state.CompareAndSwap(0, 3) {
-		<-commit.resolved
-		return fmt.Errorf("prepared tool outputs are already finalized")
-	}
-	commit.finalize()
-	commit.state.Store(1)
-	close(commit.resolved)
-	return nil
+	return outputs.commit.resolve(true)
 }
 
-// Discard 在native commit尚未durable时恰好一次释放Provider staging。
-func (commit *PreparedToolOutputs) Discard() error {
-	if commit == nil || commit.discard == nil {
+// Discard 在未 durable 时恰好一次释放 staging。
+func (outputs *PreparedToolOutputs) Discard() error {
+	if outputs == nil {
 		return fmt.Errorf("prepared tool outputs are invalid")
 	}
-	if !commit.state.CompareAndSwap(0, 3) {
-		<-commit.resolved
-		return fmt.Errorf("prepared tool outputs are already resolved")
-	}
-	commit.discard()
-	commit.state.Store(2)
-	close(commit.resolved)
-	return nil
+	return outputs.commit.resolve(false)
 }
 
 // Finalized 判断工具结果提交是否已进入内存历史。
-func (commit *PreparedToolOutputs) Finalized() bool {
-	return commit != nil && commit.state.Load() == 1
+func (outputs *PreparedToolOutputs) Finalized() bool {
+	return outputs != nil && outputs.commit != nil && outputs.commit.state.Load() == 1
 }
 
 // Factory 创建相互隔离的会话级 Provider Conversation。
@@ -590,5 +547,5 @@ type Factory interface {
 	Family() domain.ProviderFamily
 	Capabilities() Capabilities
 	NewConversation() Conversation
-	RestoreConversation([]NativeCommitEnvelope) (Conversation, error)
+	RestoreConversation([]RestoreRecord) (Conversation, error)
 }

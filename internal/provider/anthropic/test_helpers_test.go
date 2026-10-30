@@ -66,9 +66,10 @@ func testAnthropicToolView(t *testing.T) tool.FacadeView {
 	return view
 }
 
-func testAnthropicTurnInput(t *testing.T, text string) provider.TurnInput {
+func testAnthropicTurnInput(t *testing.T, conversation provider.Conversation, text string) provider.TurnInput {
 	t.Helper()
-	input, err := (provider.TurnInput{Text: text}).WithToolCatalog(testAnthropicToolCatalog(t))
+	testCommitUserInput(t, conversation.(*Conversation), text)
+	input, err := provider.NewSamplingInput().WithToolCatalog(testAnthropicToolCatalog(t))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -30,7 +30,7 @@ func commandDetailModel(t *testing.T, terminal bool, status, code string, trunca
 	}
 	approval.TurnID = mustExecApproval(t).TurnID
 	model.activeTurnID, model.state = approval.TurnID, stateStreaming
-	model.events = make(chan protocol.Event)
+	model.outputs = make(chan protocol.ControlItem)
 	model.composer = composerWithText(t, "kept draft")
 	model = updateModel(t, model, RuntimeEventMsg{Event: approval})
 	resolved, err := protocol.NewToolApprovalResolved(protocol.ToolApprovalResolvedPayload{RequestID: request.RequestID, InvocationID: request.InvocationID, Fingerprint: request.Fingerprint, Decision: protocol.ApprovalAllowOnce})

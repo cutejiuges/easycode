@@ -9,7 +9,6 @@ import (
 	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
-	"easycode/internal/provider"
 	"easycode/internal/tool"
 )
 
@@ -49,12 +48,14 @@ type AgentLoop struct {
 	runtime *Runtime
 	config  AgentLoopConfig
 
-	requests  chan loopCommandRequest
-	lifecycle chan loopLifecycleRequest
-	outputs   chan protocol.ControlItem
-	ready     chan struct{}
-	done      chan struct{}
-	state     atomic.Uint32
+	claims      chan inputClaimRequest
+	resolutions chan inputResolution
+	requests    chan loopCommandRequest
+	lifecycle   chan loopLifecycleRequest
+	outputs     chan protocol.ControlItem
+	ready       chan struct{}
+	done        chan struct{}
+	state       atomic.Uint32
 }
 
 // NewAgentLoop 只在内存中构造控制器；调用方必须显式调用 Run。
@@ -67,6 +68,7 @@ func NewAgentLoop(runtime *Runtime, config AgentLoopConfig) (*AgentLoop, error) 
 	}
 	return &AgentLoop{
 		runtime: runtime, config: config,
+		claims: make(chan inputClaimRequest), resolutions: make(chan inputResolution),
 		requests: make(chan loopCommandRequest), lifecycle: make(chan loopLifecycleRequest),
 		outputs: make(chan protocol.ControlItem, agentLoopOutputBuffer), ready: make(chan struct{}), done: make(chan struct{}),
 	}, nil
@@ -225,11 +227,15 @@ const (
 )
 
 type queuedInput struct {
+	value     domain.UserInput
+	automatic bool
 	requestID protocol.RequestID
 	text      string
 }
 
 type activeLoopTurn struct {
+	claim           []queuedInput
+	stopping        bool
 	input           queuedInput
 	cancel          context.CancelFunc
 	events          <-chan protocol.Event
@@ -318,6 +324,16 @@ func (state *agentLoopRunState) reject(request loopCommandRequest, code protocol
 
 func (state *agentLoopRunState) discardQueue(code protocol.ControlErrorCode) {
 	for _, input := range state.queue {
+		if input.automatic {
+			reason := protocol.InputReasonShutdown
+			if code == protocol.ControlErrorSessionFailed {
+				reason = protocol.InputReasonFailed
+			}
+			state.emitInputStatus(input, "", protocol.InputReturned, reason)
+			state.queuedBytes -= len(input.text)
+			state.completeRequest(input.requestID)
+			continue
+		}
 		item, err := protocol.NewInputDiscardItem(input.requestID, code)
 		if err == nil {
 			state.loop.outputs <- item
@@ -326,32 +342,38 @@ func (state *agentLoopRunState) discardQueue(code protocol.ControlErrorCode) {
 	}
 	state.queue = state.queue[:0]
 	state.queuedBytes = 0
+	if state.active != nil {
+		for _, input := range state.active.claim {
+			state.queuedBytes += len(input.text)
+		}
+	}
 }
 
-func (state *agentLoopRunState) startTurn(input queuedInput) *activeLoopTurn {
+func (state *agentLoopRunState) startTurn(inputs []queuedInput) *activeLoopTurn {
 	turnContext, cancel := context.WithCancel(state.ctx)
 	events := make(chan protocol.Event)
 	finished := make(chan error, 1)
+	control := &loopInputControl{loop: state.loop, reply: make(chan []domain.UserInput, 1), resolved: make(chan struct{}, 1)}
 	go func() {
-		err := state.loop.runtime.RunTurn(turnContext, provider.TurnInput{Text: input.text}, func(event protocol.Event) {
-			events <- event
-		})
+		err := state.loop.runtime.runTurn(turnContext, queuedDomainInputs(inputs), control, func(event protocol.Event) { events <- event })
 		close(events)
 		finished <- err
 		close(finished)
 	}()
-	return &activeLoopTurn{input: input, cancel: cancel, events: events, finished: finished}
+	return &activeLoopTurn{input: inputs[0], claim: inputs, cancel: cancel, events: events, finished: finished}
 }
 
 func (state *agentLoopRunState) startNext() {
 	if state.active != nil || len(state.queue) == 0 || state.mode == loopModeClosing {
 		return
 	}
-	next := state.queue[0]
-	copy(state.queue, state.queue[1:])
-	state.queue = state.queue[:len(state.queue)-1]
-	state.queuedBytes -= len(next.text)
-	state.active = state.startTurn(next)
+	inputs := state.takePrefix(domain.TurnID(state.queue[0].value.ID()), 0, true)
+	if len(inputs) == 0 {
+		state.mode = loopModeClosing
+		state.discardQueue(protocol.ControlErrorSessionFailed)
+		return
+	}
+	state.active = state.startTurn(inputs)
 }
 
 func (state *agentLoopRunState) shouldExit() bool {
@@ -389,23 +411,52 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 	}
 
 	switch request.command.Kind() {
-	case protocol.CommandSubmitInput:
-		input := queuedInput{requestID: requestID, text: request.command.Text()}
-		if state.active == nil && len(state.queue) == 0 {
-			result, _ := protocol.NewAcceptedCommandResult(request.command, protocol.CommandDispositionStarting)
-			state.emitResult(request, result)
-			state.active = state.startTurn(input)
+	case protocol.CommandSubmitInput, protocol.CommandSubmitConversationalInput:
+		automatic := request.command.Kind() == protocol.CommandSubmitConversationalInput
+		if automatic && state.active != nil && state.active.stopping {
+			state.reject(request, protocol.ControlErrorInputStopping, true)
 			return
 		}
-		if len(state.queue) >= state.loop.config.MaxQueuedInputs || state.queuedBytes+len(input.text) > state.loop.config.MaxQueuedBytes {
+		count := len(state.queue)
+		if state.active != nil {
+			count += len(state.active.claim)
+		}
+		if count >= state.loop.config.MaxQueuedInputs || state.queuedBytes+len(request.command.Text()) > state.loop.config.MaxQueuedBytes {
 			state.reject(request, protocol.ControlErrorInputQueueFull, true)
 			return
 		}
-		state.queue = append(state.queue, input)
-		state.queuedBytes += len(input.text)
-		result, _ := protocol.NewAcceptedCommandResult(request.command, protocol.CommandDispositionQueued)
+		id, err := domain.GenerateInputID()
+		if err != nil {
+			state.reject(request, protocol.ControlErrorInvalidInput, true)
+			return
+		}
+		value, err := domain.NewUserInput(id, request.command.Text())
+		if err != nil {
+			state.reject(request, protocol.ControlErrorInvalidInput, true)
+			return
+		}
+		a, _ := inputAssociation(domain.TurnID(id), 15, []domain.UserInput{value})
+		if !state.loop.runtime.inputEncodingFits(a, []domain.UserInput{value}) {
+			state.reject(request, protocol.ControlErrorInputEncodingLimit, true)
+			return
+		}
+		disposition := protocol.CommandDispositionQueued
+		if state.active == nil && len(state.queue) == 0 {
+			disposition = protocol.CommandDispositionStarting
+		}
+		var result protocol.CommandResult
+		if automatic {
+			result, _ = protocol.NewAcceptedInputResult(request.command, disposition, id)
+		} else {
+			result, _ = protocol.NewAcceptedCommandResult(request.command, disposition)
+		}
+		state.queue = append(state.queue, queuedInput{requestID: requestID, text: value.Text(), value: value, automatic: automatic})
+		state.queuedBytes += len(value.Text())
 		state.emitResult(request, result)
-	case protocol.CommandInterrupt:
+		state.startNext()
+	case protocol.CommandRetractInputs:
+		state.retract(request)
+	case protocol.CommandInterrupt, protocol.CommandStopTurn:
 		if state.active == nil || state.active.turnID == "" {
 			state.reject(request, protocol.ControlErrorNoActiveTurn, true)
 			return
@@ -414,9 +465,17 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 			state.reject(request, protocol.ControlErrorTurnMismatch, true)
 			return
 		}
-		result, _ := protocol.NewAcceptedCommandResult(request.command, protocol.CommandDispositionInterrupting)
+		disposition := protocol.CommandDispositionInterrupting
+		if request.command.Kind() == protocol.CommandStopTurn {
+			disposition = protocol.CommandDispositionStopping
+		}
+		result, _ := protocol.NewAcceptedCommandResult(request.command, disposition)
 		state.emitResult(request, result)
 		state.completeRequest(requestID)
+		if request.command.Kind() == protocol.CommandStopTurn {
+			state.active.stopping = true
+			state.returnAutomatic(protocol.InputReasonStopped)
+		}
 		if !state.active.cancelRequested {
 			state.active.cancelRequested = true
 			state.active.cancel()
@@ -454,6 +513,10 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 		result, _ := protocol.NewAcceptedCommandResult(request.command, protocol.CommandDispositionResolving)
 		state.emitResult(request, result)
 		state.completeRequest(request.command.RequestID())
+		if request.command.ApprovalDecision() == protocol.ApprovalAbort {
+			state.active.stopping = true
+			state.returnAutomatic(protocol.InputReasonStopped)
+		}
 	case protocol.CommandShutdown:
 		result, _ := protocol.NewAcceptedCommandResult(request.command, protocol.CommandDispositionClosing)
 		state.emitResult(request, result)
@@ -507,6 +570,11 @@ func (state *agentLoopRunState) handleTurnEvent(event protocol.Event, open bool)
 		state.active.terminalSeen = true
 	}
 	state.loop.outputs <- item
+	if event.Kind == protocol.EventTurnStarted {
+		for _, input := range state.active.claim {
+			state.emitInputStatus(input, event.TurnID, protocol.InputClaimed, "")
+		}
+	}
 }
 
 func (state *agentLoopRunState) handleTurnFinished(workerErr error, open bool) {
@@ -528,6 +596,12 @@ func (state *agentLoopRunState) handleTurnFinished(workerErr error, open bool) {
 		state.mode = loopModeClosing
 		state.discardQueue(protocol.ControlErrorSessionFailed)
 	}
+	for _, input := range state.active.claim {
+		state.queuedBytes -= len(input.text)
+		state.emitInputStatus(input, state.active.turnID, protocol.InputReturned, protocol.InputReasonFailed)
+		state.completeRequest(input.requestID)
+	}
+	state.active.claim = nil
 	state.completeRequest(state.active.input.requestID)
 	state.active = nil
 }
@@ -570,6 +644,10 @@ func (loop *AgentLoop) Run(ctx context.Context) error {
 		eventChannel, finishedChannel := state.activeChannels()
 
 		select {
+		case request := <-loop.claims:
+			state.handleInputClaim(request)
+		case resolution := <-loop.resolutions:
+			state.handleInputResolution(resolution)
 		case request := <-loop.requests:
 			state.handleCommand(request)
 

@@ -36,14 +36,14 @@ func (factory *fakeProviderFactory) NewConversation() provider.Conversation {
 	return &fakeAppConversation{family: factory.family, networkCalls: &factory.networkCalls}
 }
 
-func (factory *fakeProviderFactory) RestoreConversation(commits []provider.NativeCommitEnvelope) (provider.Conversation, error) {
+func (factory *fakeProviderFactory) RestoreConversation(commits []provider.RestoreRecord) (provider.Conversation, error) {
 	factory.restoreCalls.Add(1)
 	if factory.restoreErr != nil {
 		return nil, factory.restoreErr
 	}
 	factory.restored = make([]provider.NativeCommitEnvelope, len(commits))
 	for index, commit := range commits {
-		cloned, err := commit.Clone()
+		cloned, err := commit.Envelope()
 		if err != nil {
 			return nil, err
 		}
@@ -412,6 +412,7 @@ func TestSessionServiceReturnsSealedToolRecoveryWithoutExternalCalls(t *testing.
 	if _, err := created.writer.AppendBatch(context.Background(), []session.RecordDraft{started}); err != nil {
 		t.Fatal(err)
 	}
+	appendFixtureInitialInput(t, created.writer, turnID)
 	invocationID, err := tool.ParseInvocationID("01890f3e-7bcd-7abc-8abc-0123456789ab")
 	if err != nil {
 		t.Fatal(err)

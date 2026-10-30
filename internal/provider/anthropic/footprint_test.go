@@ -15,23 +15,23 @@ func TestHistoryFootprintCountsCommittedVisibleAndOpaqueMessages(t *testing.T) {
 	t.Parallel()
 	conversation := &Conversation{}
 	entry := nativeHistoryEntry{
-		Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("hello")),
+		Kind: nativeHistorySample,
 		Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{
 			{Type: blockTypeThinking, Thinking: "private-thought", Signature: "opaque-signature"},
 			{Type: blockTypeRedactedThinking, Raw: json.RawMessage(`{"type":"redacted_thinking","data":"opaque","future":true}`)},
 			{Type: blockTypeText, Text: "answer"},
 		}},
 	}
-	conversation.history.commit(entry)
+	testCommitHistory(t, &conversation.history, testInputEntry(t, newUserMessage("hello")), entry)
 	footprint, err := conversation.HistoryFootprint()
 	if err != nil {
 		t.Fatal(err)
 	}
-	user, _ := json.Marshal(entry.Input)
+	user, _ := json.Marshal(newUserMessage("hello"))
 	assistant, _ := json.Marshal(entry.Assistant)
 	want := estimate.ByteCount(uint64(len(user) + len(assistant)))
 	got, known := footprint.Estimate().Tokens()
-	if footprint.Family() != domain.ProviderAnthropic || footprint.Revision() != 1 ||
+	if footprint.Family() != domain.ProviderAnthropic || footprint.Revision() != 2 ||
 		footprint.Estimate().Method() != estimate.MethodByteHeuristic || !known || got != want {
 		t.Fatalf("footprint = family %q revision %d estimate %#v", footprint.Family(), footprint.Revision(), footprint.Estimate())
 	}
@@ -74,7 +74,7 @@ func TestHistoryFootprintDoesNotChangeNextMessagesRequest(t *testing.T) {
 	conversation := &Conversation{}
 	conversation.history.commit(validFootprintEntry())
 	next := newUserMessage("next")
-	before, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, conversation.history.snapshot(), nil, nativeMessagePointer(next), testAnthropicToolView(t))
+	before, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, append(conversation.history.snapshot(), testInputEntry(t, next)), nil, testAnthropicToolView(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestHistoryFootprintDoesNotChangeNextMessagesRequest(t *testing.T) {
 	if _, err := conversation.HistoryFootprint(); err != nil {
 		t.Fatal(err)
 	}
-	after, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, conversation.history.snapshot(), nil, nativeMessagePointer(next), testAnthropicToolView(t))
+	after, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, append(conversation.history.snapshot(), testInputEntry(t, next)), nil, testAnthropicToolView(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestHistoryFootprintDoesNotChangeNextMessagesRequest(t *testing.T) {
 
 func validFootprintEntry() nativeHistoryEntry {
 	return nativeHistoryEntry{
-		Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("hello")),
+		Kind:      nativeHistorySample,
 		Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeText, Text: "answer"}}},
 		Metadata:  messageMetadata{ID: "msg-1", Model: "claude-test"},
 	}
@@ -120,7 +120,7 @@ func footprintUsage(t *testing.T) domain.SampleUsage {
 
 func TestDiscardedPreparedSamplePreservesNextRequest(t *testing.T) {
 	conversation := &Conversation{}
-	before, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, conversation.history.snapshot(), nil, nativeMessagePointer(newUserMessage("next")), testAnthropicToolView(t))
+	before, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, append(conversation.history.snapshot(), testInputEntry(t, newUserMessage("next"))), nil, testAnthropicToolView(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,10 @@ func TestDiscardedPreparedSamplePreservesNextRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	finalized, discarded := 0, 0
-	prepared, err := provider.NewPreparedSample(envelope, footprintUsage(t), func() { finalized++; conversation.history.commit(entry) }, func() { discarded++ })
+	prepared, err := provider.NewPreparedSample(envelope, footprintUsage(t), func() {
+		finalized++
+		testCommitHistory(t, &conversation.history, testInputEntry(t, newUserMessage("hello")), entry)
+	}, func() { discarded++ })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +147,7 @@ func TestDiscardedPreparedSamplePreservesNextRequest(t *testing.T) {
 	if err != nil || footprint.Revision() != 0 {
 		t.Fatal("discard changed history revision")
 	}
-	after, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, conversation.history.snapshot(), nil, nativeMessagePointer(newUserMessage("next")), testAnthropicToolView(t))
+	after, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, append(conversation.history.snapshot(), testInputEntry(t, newUserMessage("next"))), nil, testAnthropicToolView(t))
 	if err != nil {
 		t.Fatal(err)
 	}

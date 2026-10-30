@@ -11,15 +11,16 @@ import (
 
 const (
 	responsesWire               = "responses"
-	nativeCommitPayloadRevision = 1
+	nativeCommitPayloadRevision = 2
 )
 
 type nativeHistoryCommit struct {
-	Kind        nativeHistoryEntryKind `json:"kind"`
-	Input       *NativeItem            `json:"input,omitempty"`
-	Outputs     []NativeItem           `json:"outputs,omitempty"`
-	ToolOutputs []NativeItem           `json:"tool_outputs,omitempty"`
-	Usage       *rawUsageCommit        `json:"usage,omitempty"`
+	Kind          nativeHistoryEntryKind  `json:"kind"`
+	UserInputs    []NativeItem            `json:"user_inputs,omitempty"`
+	InputMetadata *provider.InputMetadata `json:"input_metadata,omitempty"`
+	Outputs       []NativeItem            `json:"outputs,omitempty"`
+	ToolOutputs   []NativeItem            `json:"tool_outputs,omitempty"`
+	Usage         *rawUsageCommit         `json:"usage,omitempty"`
 }
 
 type optionalUintCommit struct {
@@ -41,7 +42,7 @@ func encodeNativeCommit(entry nativeHistoryEntry) (provider.NativeCommitEnvelope
 		return provider.NativeCommitEnvelope{}, err
 	}
 	commit := nativeHistoryCommit{
-		Kind: cloned.Kind, Input: cloned.Input, Outputs: cloned.Outputs,
+		Kind: cloned.Kind, UserInputs: cloned.UserInputs, InputMetadata: cloned.InputMetadata, Outputs: cloned.Outputs,
 		ToolOutputs: cloned.ToolOutputs,
 	}
 	if cloned.Kind == nativeHistorySample {
@@ -76,10 +77,12 @@ func decodeNativeCommit(envelope provider.NativeCommitEnvelope) (nativeHistoryEn
 		Kind: commit.Kind, Outputs: cloneNativeItems(commit.Outputs),
 		ToolOutputs: cloneNativeItems(commit.ToolOutputs),
 	}
-	if commit.Input != nil {
-		input := commit.Input.clone()
-		entry.Input = &input
+	entry.UserInputs = commit.UserInputs
+	entry.InputMetadata = commit.InputMetadata
+	if commit.InputMetadata != nil {
+		entry.TurnID = commit.InputMetadata.TurnID
 	}
+
 	if commit.Kind == nativeHistorySample {
 		usage, err := decodeRawUsage(commit.Usage)
 		if err != nil {
@@ -97,15 +100,31 @@ func decodeNativeCommit(envelope provider.NativeCommitEnvelope) (nativeHistoryEn
 
 func validateNativeHistoryEntry(entry nativeHistoryEntry) error {
 	switch entry.Kind {
+	case nativeHistoryUserInputs:
+		if entry.InputMetadata == nil || len(entry.UserInputs) == 0 || len(entry.Outputs) != 0 || len(entry.ToolOutputs) != 0 {
+			return fmt.Errorf("user input entry fields are invalid")
+		}
+		a, err := entry.InputMetadata.Association()
+		if err != nil {
+			return err
+		}
+		if len(a.IDs()) != len(entry.UserInputs) {
+			return fmt.Errorf("user input count does not match metadata")
+		}
+		for _, input := range entry.UserInputs {
+			if err := validateUserItem(input); err != nil {
+				return err
+			}
+		}
+
 	case nativeHistorySample:
 		if len(entry.Outputs) == 0 || len(entry.ToolOutputs) != 0 {
 			return fmt.Errorf("OpenAI sample entry fields are invalid")
 		}
-		if entry.Input != nil {
-			if err := validateUserItem(*entry.Input); err != nil {
-				return err
-			}
+		if len(entry.UserInputs) != 0 || entry.InputMetadata != nil {
+			return fmt.Errorf("sample contains user input fields")
 		}
+
 		seenCallIDs := make(map[string]struct{})
 		for _, item := range entry.Outputs {
 			if err := validateOutputItem(item); err != nil {
@@ -122,7 +141,7 @@ func validateNativeHistoryEntry(entry nativeHistoryEntry) error {
 			return fmt.Errorf("OpenAI native commit usage is invalid: %w", err)
 		}
 	case nativeHistoryToolOutputs:
-		if entry.Input != nil || len(entry.Outputs) != 0 || len(entry.ToolOutputs) == 0 {
+		if len(entry.UserInputs) != 0 || entry.InputMetadata != nil || len(entry.Outputs) != 0 || len(entry.ToolOutputs) == 0 {
 			return fmt.Errorf("OpenAI tool outputs entry fields are invalid")
 		}
 		for _, item := range entry.ToolOutputs {
@@ -137,15 +156,26 @@ func validateNativeHistoryEntry(entry nativeHistoryEntry) error {
 }
 
 func validateUserItem(item NativeItem) error {
-	if item.Type != "message" || item.Role != "user" || len(item.Content) == 0 {
-		return fmt.Errorf("OpenAI native commit user item is invalid")
+	// 当前用户输入只有一个纯文本片段；原生 opaque 扩展仅允许模型输出持有。
+	encoded, err := codec.MarshalStable(item)
+	if err != nil {
+		return fmt.Errorf("user input encoding is invalid")
 	}
-	for _, part := range item.Content {
-		if part.Type != "input_text" {
-			return fmt.Errorf("OpenAI native commit user content is invalid")
-		}
+	var current struct {
+		Type    string `json:"type"`
+		Role    string `json:"role"`
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
 	}
-	return nil
+	if err := codec.UnmarshalRecord(encoded, &current); err != nil {
+		return fmt.Errorf("user input shape is invalid")
+	}
+	if current.Role != "user" || current.Type != "message" || len(current.Content) != 1 || current.Content[0].Type != "input_text" {
+		return fmt.Errorf("user input content is invalid")
+	}
+	return domain.ValidateUserText(current.Content[0].Text)
 }
 
 func validateOutputItem(item NativeItem) error {

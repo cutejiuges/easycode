@@ -24,10 +24,10 @@ func (conversation *execOutputFaultConversation) PrepareToolOutputs(results []to
 }
 
 func TestExecTurnDurabilityAndFinalizersFailClosedAtEveryBoundary(t *testing.T) {
-	for _, boundary := range []string{"append-1", "append-2", "append-3", "append-4", "append-5", "append-6", "append-7", "sample-finalizer", "output-finalizer", "final-finalizer", "uncertain-result", "invalid-result"} {
+	for _, boundary := range []string{"append-1", "append-2", "append-3", "append-4", "append-5", "append-6", "append-7", "append-8", "sample-finalizer", "output-finalizer", "final-finalizer", "uncertain-result", "invalid-result"} {
 		t.Run(boundary, func(t *testing.T) {
 			journal := &fakeJournal{}
-			for index := 1; index <= 7; index++ {
+			for index := 1; index <= 8; index++ {
 				if boundary == fmt.Sprintf("append-%d", index) {
 					journal.failAt = index
 				}
@@ -77,12 +77,12 @@ func TestExecTurnDurabilityAndFinalizersFailClosedAtEveryBoundary(t *testing.T) 
 				t.Fatal(err)
 			}
 			var events []protocol.Event
-			err = runtime.RunTurn(context.Background(), provider.TurnInput{Text: "run command"}, execApprovalEmitter(t, runtime, tool.ApprovalAllowOnce, &events))
+			err = runtime.RunTurn(context.Background(), runtimeInputs("run command"), execApprovalEmitter(t, runtime, tool.ApprovalAllowOnce, &events))
 			if err == nil || !runtime.poisoned.Load() {
 				t.Fatalf("boundary did not poison: %v", err)
 			}
 			wantExecutions := 1
-			if journal.failAt > 0 && journal.failAt <= 4 || boundary == "sample-finalizer" {
+			if journal.failAt > 0 && journal.failAt <= 5 || boundary == "sample-finalizer" {
 				wantExecutions = 0
 			}
 			if executor.calls != wantExecutions {

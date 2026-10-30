@@ -1,6 +1,7 @@
 package anthropic
 
 import (
+	"easycode/internal/provider"
 	"encoding/json"
 	"fmt"
 
@@ -217,16 +218,19 @@ type nativeHistoryEntryKind string
 
 const (
 	nativeHistorySample      nativeHistoryEntryKind = "sample"
+	nativeHistoryUserInputs  nativeHistoryEntryKind = "user_inputs"
 	nativeHistoryToolOutputs nativeHistoryEntryKind = "tool_outputs"
 )
 
 // nativeHistoryEntry 是 Messages 原生历史唯一的当前内存模型。
 type nativeHistoryEntry struct {
-	Kind        nativeHistoryEntryKind
-	Input       *nativeMessage
-	Assistant   nativeMessage
-	ToolOutputs nativeMessage
-	Metadata    messageMetadata
+	Kind          nativeHistoryEntryKind
+	TurnID        domain.TurnID
+	UserInputs    []nativeMessage
+	InputMetadata *provider.InputMetadata
+	Assistant     nativeMessage
+	ToolOutputs   nativeMessage
+	Metadata      messageMetadata
 }
 
 func (entry nativeHistoryEntry) clone() nativeHistoryEntry {
@@ -234,9 +238,16 @@ func (entry nativeHistoryEntry) clone() nativeHistoryEntry {
 		Kind: entry.Kind, Assistant: entry.Assistant.clone(),
 		ToolOutputs: entry.ToolOutputs.clone(), Metadata: entry.Metadata.clone(),
 	}
-	if entry.Input != nil {
-		input := entry.Input.clone()
-		cloned.Input = &input
+	cloned.TurnID = entry.TurnID
+	cloned.UserInputs = make([]nativeMessage, len(entry.UserInputs))
+	for i, input := range entry.UserInputs {
+		cloned.UserInputs[i] = input.clone()
 	}
+	if entry.InputMetadata != nil {
+		m := *entry.InputMetadata
+		m.InputIDs = append([]domain.InputID(nil), m.InputIDs...)
+		cloned.InputMetadata = &m
+	}
+
 	return cloned
 }

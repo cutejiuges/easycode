@@ -8,7 +8,7 @@
 
 ### Requirement: Compile a deterministic text-only Messages request
 
-系统 SHALL向解析后的相对`messages` endpoint发送Anthropic Messages请求并保留`base_url`路径前缀。请求 SHALL使用既有鉴权/version/JSON/SSE headers；正文 MUST包含model、正整数`max_tokens`、可选临时项目指令、按原顺序排列的Anthropic native history、`stream=true`和当前Tool Catalog编译出的稳定tools数组。首个sample或新用户turn必须追加真实当前用户输入；tool outputs后的continuation sample不得追加合成user文本或空message。
+系统 SHALL向解析后的相对`messages` endpoint发送Anthropic Messages请求并保留`base_url`路径前缀。请求 SHALL使用既有鉴权/version/JSON/SSE headers；正文 MUST包含model、正整数`max_tokens`、可选临时项目指令、按原顺序排列的Anthropic native history、`stream=true`和当前Tool Catalog编译出的稳定tools数组。所有真实用户输入 SHALL 已独立提交到 native history，编译仅按原生顺序回放，不额外追加当前正文、合成 user 或空消息。
 
 存在项目指令时，其user context message SHALL位于已提交history和真实当前输入之前，并保持独立且不进入native history。Read、Glob、Grep、Write facade与structured `Edit`/`Bash` facade SHALL编译为稳定名称、description和strict JSON input schema；tools顺序与schema bytes MUST来自本次不可变catalog snapshot。请求不得声明custom/freeform tool、后台进程、write_stdin、system、thinking配置或`cache_control`。secret、项目指令正文、workspace绝对路径、candidate fingerprint、实际环境和动态调用/approval identity MUST NOT进入错误、日志或普通fixture。
 
@@ -32,19 +32,25 @@ Write 的稳定 schema/description SHALL 来自同一不可变 catalog；文件�
 
 #### Scenario: Compile a later Anthropic turn from native history
 - **WHEN** 已完成文本或工具回合后使用相同外部snapshots提交下一输入
-- **THEN** messages按项目指令、已提交原生messages和当前输入顺序排列，且不从共享事件重建
+- **THEN** messages 按项目指令、包含当前已提交用户输入的原生 messages 顺序排列，且不从共享事件重建
 
 #### Scenario: Produce stable request bytes
 - **WHEN** model、catalog、项目指令、native history和当前输入相同
 - **THEN** canonical request bytes和fingerprint完全相同，cwd、Session identity、invocation ID和approval状态不参与
 
 #### Scenario: Compile a continuation after tool results
-- **WHEN** 原生history已提交assistant`tool_use`及匹配的user`tool_result`
+- **WHEN** 原生 history 已提交 assistant tool_use 及匹配的 user tool_result 且没有新增 user_inputs
 - **THEN** 下一请求按原顺序回放call/output并直接继续sampling，不再追加新的user message
 
 #### Scenario: Keep Write catalog bytes stable
 - **WHEN** 相同 catalog 下改变 workspace 内容、Read observation 或 Write grant
 - **THEN** tools canonical bytes 与 tool catalog fingerprint 保持一致
+
+每条追加输入 SHALL 保持独立用户消息，InputID/turn identity 不得进入 wire 或内容 fingerprint。 tool_result user message 与后续用户文本 message 保持独立，不改写已提交 outputs 或自动合并消息。
+
+#### Scenario: Compile ordered steering inputs
+- **WHEN** 整组工具 outputs 后提交两条自动输入再请求下一 sample
+- **THEN** 两条用户消息按 admission 顺序各出现一次，calls/outputs 配对和 opaque reasoning 保持原样；恢复与不中断请求 canonical bytes/fingerprint 相同
 
 ### Requirement: Reduce Anthropic content blocks with an indexed state machine
 
@@ -96,7 +102,7 @@ Write SHALL 严格归并完整 structured 参数，未知/重复字段、null、
 
 ### Requirement: Native Messages history commits transactionally
 
-系统 SHALL在Anthropic native history中保持message边界、content block顺序和原生字段。可选当前输入、完成assistant blocks、metadata、raw usage和ready calls SHALL先进入sample staging，仅在合法`message_stop`后形成prepared sample。首个sample必须暂存真实user message；tool outputs后的continuation sample不得暂存或提交新的user message。失败、取消、timeout、协议错误或EOF MUST丢弃整个staging。
+系统 SHALL 保持原生 message/item 边界与字段。用户输入独立 prepare、Sync、finalize 为 user_inputs。sample staging 仅保存完成模型输出、metadata、raw usage 和 ready calls，合法 Provider terminal 后形成 prepared sample；失败、取消、timeout、协议错误或 EOF 丢弃本 sample staging，但不得删除先前已提交的用户输入。
 
 Read、Glob、Grep、Patch与Write results SHALL由Anthropic result codec编码为一个user message中的有序`tool_result` blocks；每个block必须匹配前一assistant message中尚未闭合的`tool_use.id`，并保存冻结模型preview与error状态。approval request/decision不得伪装成Anthropic message；只有最终tool result进入Provider history。tool-output entry只有在Session commit durable后才能进入Conversation history。
 
@@ -104,7 +110,7 @@ Write 的完整调用参数与冻结结果 SHALL 无损保存和恢复；Read ob
 
 #### Scenario: Commit a successful Anthropic turn
 - **WHEN** assistant message包含文本以及合法Read和Edit `tool_use`
-- **THEN** user输入、完整assistant blocks、metadata和usage一次性进入sample native commit
+- **THEN** 完整 assistant blocks、metadata 和 usage 进入 sample native commit；用户输入已在独立 user_inputs commit 中保存
 
 #### Scenario: Compile a later turn from native history
 - **WHEN** 已提交文本或tool call/result原生entries后开始下一sample
@@ -112,7 +118,7 @@ Write 的完整调用参数与冻结结果 SHALL 无损保存和恢复；Read ob
 
 #### Scenario: Discard a partial failed turn
 - **WHEN** 已产生文本或tool delta后sample失败
-- **THEN** 本sample输入、assistant blocks和calls均不进入已提交history
+- **THEN** 本 sample 的 assistant blocks 和 calls 不进入已提交 history，已保存用户输入保持不变
 
 #### Scenario: Preserve final message metadata without inventing usage
 - **WHEN** message start/delta提供部分stop metadata或usage

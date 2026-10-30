@@ -220,7 +220,7 @@ make verify
 
 2026-10-23 已交付独立 `sessions list [--all] [--limit N]`：默认当前规范化目录 20 条，最大 200 条，按 durable 更新时间及 thread ID 双降序；所有 Provider/model 可发现，完整 ID 可交给既有 `--resume`。入口无需模型配置、不访问网络、不读取 stdin、不进入聊天资源链。Catalog schema 和 Session vocabulary 不变，协调仍全量扫描并允许 lease 下尾修复，busy/invalid 以全局警告报告。固定文本 golden、双 Provider 列表后恢复、索引重建、跨进程占用和取消/输出失败验证覆盖该入口；此交付不包含 picker、标题搜索或 worktree 聚合。
 
-P2 尚未完成：session picker、worktree/project catalog、title/tag/search、实时索引、same-turn steered input、usage 成本/配额与 TUI 展示、真实 cache request 策略和观测指标、skill context sources、全工具 artifact、fork/subagent 线程树、compaction checkpoint，以及稳定发布后真实 schema/payload revision 的版本专属转换。Read/Glob/Grep/Patch/Write/Exec Tool Loop 已交付 tool catalog source、approval/ledger/result、durable output、有序并行与 exclusive 屏障；已交付的 FIFO follow-up queue 仍只在进程内存在，`queued` 不是 durable 确认，same-turn steer 必须另行接入 tool output safe point。当前 fixture 是唯一当前格式，不代表通用 migration 已实现；当前进度不能视为 P2 退出。
+P2 尚未完成：session picker、worktree/project catalog、title/tag/search、实时索引、usage 成本/配额与 TUI 展示、真实 cache request 策略和观测指标、skill context sources、全工具 artifact、fork/subagent 线程树、compaction checkpoint，以及稳定发布后真实 schema/payload revision 的版本专属转换。Read/Glob/Grep/Patch/Write/Exec Tool Loop 已交付 tool catalog source、approval/ledger/result、durable output、有序并行与 exclusive 屏障；已交付的 FIFO follow-up queue 仍只在进程内存在，`queued` 不是 durable 确认，same-turn steer 已接入完整 tool outputs 后的安全点，queued/claimed 与 returned 仍是进程内状态。当前 fixture 是唯一当前格式，不代表通用 migration 已实现；当前进度不能视为 P2 退出。
 
 本次 P2 基础契约强化还加入语义分支脚本、本地 hooks、GitHub Actions jobs 和集中式架构守卫。GitHub `main` ruleset 的 required checks 与 direct-push 禁止仍须管理员在仓库外启用。secure config/session opener 当前只在 macOS/Linux 提供等价语义；Windows 等目标可以编译，但相关运行路径明确失败关闭，平台实现与兼容矩阵留在 P8。
 
@@ -239,8 +239,8 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 
 ### 6.3 工作内容
 
-- 已实现 text user input、Read/Glob/Grep/Patch/Write 多 sample Tool Loop 与 final assistant output；Patch approval 已具备交互与 headless 失败关闭语义，整文件 Write 已支持完整 Read 后批准覆盖及原子创建，Darwin 前台命令已交付，same-turn steer 仍待后续 change。
-- 已实现有界 FIFO queued follow-up、request identity 去重、定向 interrupt、EOF drain 与显式 shutdown；same-turn steer 仍待 P3 safe point。
+- 已实现 text user input、Read/Glob/Grep/Patch/Write 多 sample Tool Loop 与 final assistant output；Patch approval 已具备交互与 headless 失败关闭语义，整文件 Write 已支持完整 Read 后批准覆盖及原子创建，Darwin 前台命令已交付，same-turn steer 已通过独立输入 batch 接入。
+- 已实现有界 FIFO queued follow-up、request identity 去重、定向 interrupt、EOF drain 与显式 shutdown；同轮自动输入已接入 P3 safe point。
 - 已实现 `provider_profile`、可选 `project_instructions`、`committed_history`、`current_input` 的固定顺序、正交 lifecycle/cache stability、canonical segments、stable prefix、SemanticHistoryView 可见估算与 Provider-native footprint 覆盖合并；后续来源必须随真实消费者独立落地。
 - 已实现 JSONL SessionMeta、native commit、`sample_usage` 和文本 turn boundary；成本、缓存失效原因与累计指标仍待实现。
 - 已实现由同一 exclusive lease 覆盖 load/repair、Provider 恢复、续写和最终关闭的跨进程单 writer，及 `Sync`、尾部半行/未完成尾批修复、单一当前 envelope/payload canary 与不可变 current fixture；旧开发 shape 失败关闭，未来版本转换只在稳定发布后真实 revision 出现时按批准的兼容窗口实现。
@@ -252,7 +252,7 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 
 ### 6.4 交付物
 
-- 已交付可 resume/continue 的一次性 headless 文本 chat 与同进程 FIFO AgentLoop；Read/Glob/Grep/Patch/Write 已交付，Darwin 前台命令已交付，same-turn steer 尚未交付。
+- 已交付可 resume/continue 的一次性 headless 文本 chat 与同进程 FIFO AgentLoop；Read/Glob/Grep/Patch/Write 已交付，Darwin 前台命令已交付，同轮追加、取回与停止返还已交付。
 - 已交付 session JSONL 与可从 JSONL 重建的 `state.sqlite` Catalog v1。
 - 已交付显式 resume 与兼容性精确匹配的 `--continue`；离线 `sessions list` 已交付，可视化 session picker 尚未交付。
 - 已交付一次性 thread/turn/text/failure JSONL v1 与独立 streaming control v1，成功 `turn.completed` 必含 normalized usage；独立 usage 更新、reasoning 与 tool 事件尚未交付。
@@ -285,11 +285,11 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 
 ### 6.7 退出条件
 
-两种 provider 的同进程 FIFO 多轮、重启恢复、取消、JSONL 修复、SQLite 重建、`--continue`、durable usage、层级项目指令、确定性 context planning/token estimator 和两套 headless 输出协议测试已通过；本阶段剩余 same-turn steer、工具上下文来源、成本/cache 策略等能力通过后，P2 才满足退出条件。
+两种 provider 的同进程 FIFO 多轮、重启恢复、取消、JSONL 修复、SQLite 重建、`--continue`、durable usage、层级项目指令、确定性 context planning/token estimator 和两套 headless 输出协议测试已通过；本阶段剩余工具上下文来源、成本/cache 策略等能力通过后，P2 才满足退出条件。
 
 ## 7. P3：Coding Tools 与安全执行
 
-命令输出切片 `add-command-output-artifacts` 已接入双流私有前缀存储、七工具 catalog 中的 ReadArtifact、durable descriptor 授权、完整命令历史和 Ctrl+O 列表/分页详情。默认预算为每流 16 MiB、调用预留 32 MiB、thread 256 MiB、root 1 GiB；模型预览仍最多 256 KiB，Session 当前 canary 为 4。该切片不代表全工具结果预算或 P3 已完成；PTY、后台命令、通用工具 UI、非 Darwin 命令执行和自动过期仍未实现。平台运行验证范围以 change 的最终验收记录为准。
+命令输出切片 `add-command-output-artifacts` 已接入双流私有前缀存储、七工具 catalog 中的 ReadArtifact、durable descriptor 授权、完整命令历史和 Ctrl+O 列表/分页详情。默认预算为每流 16 MiB、调用预留 32 MiB、thread 256 MiB、root 1 GiB；模型预览仍最多 256 KiB，Session 当前 canary 为 5。该切片不代表全工具结果预算或 P3 已完成；PTY、后台命令、通用工具 UI、非 Darwin 命令执行和自动过期仍未实现。平台运行验证范围以 change 的最终验收记录为准。
 
 ### 7.1 目标
 
@@ -322,7 +322,7 @@ Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘�
 6. `add-command-output-artifacts`（已实现）：命令输出保存、当前线程 ReadArtifact、完整历史查询与 Claude 风格列表/详情；保持冻结预览和原生恢复独立于对象存在性。
 7. `add-background-process-control`：先定义受控 process handle、PTY/stdin、后台 admission、超时与唯一 shutdown owner，再增加 write_stdin；不得把当前前台命令脱离原组视为实现。
 8. `add-tool-result-budget`：在命令输出 artifact 的真实存储边界上扩展其他工具预算；当前每流保存至多 16 MiB 连续前缀，通用累计预算和上下文替换仍未实现。
-9. `add-same-turn-steering`：只在 tool outputs 后、下一 sample 前的 safe point 注入输入。
+9. `add-same-turn-steering`（已实现）：活动 composer 自动追加，单 FIFO/strict 屏障；仅在完整 tool outputs 后、下一 sample 前注入独立原生输入。支持按 IDs 原子取回、停止返还、提交前预检、input-only 恢复，Session/native canary 分别为 5/2。
 
 首个切片选择 Read，是因为它能用最低副作用风险验证最关键的双 Provider、Session durable 和 call/output 配对边界，并让接口由真实消费者驱动；不先建立万能 registry、空 facade 或没有行为证据的完整框架。
 
@@ -734,3 +734,7 @@ Turn 1 建立稳定前缀
 - 新功能先归属现有边界；如果必须新建模块，要证明其职责和依赖方向。
 - 不以“后续重构”为理由合入已知反模式。
 - 已完成阶段发现回归时，相关阶段重新进入未通过状态，修复并补充回归测试后再关闭。
+
+### 同轮输入参考与边界（2026-10-30）
+
+本切片参考只读 Claude Code 2.1.88 和 Codex `6f8bf683c`：产品侧采用运行中输入、排队展示和取回编辑；内核侧采用强类型输入身份、有序命令与可测试提交边界。不会中断正在产生的 sample 来伪造请求变更，不承诺远端撤销，不增加后台进程、PTY、Subagent 或完整缓存策略。引用与取舍详见 `openspec/changes/archive/2026-10-30-add-same-turn-steering/design.md`；既有 Exec ADR/历史记录中的旧参考 revision 保持原语境。

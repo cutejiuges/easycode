@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"easycode/internal/codec"
+	"easycode/internal/domain"
 	"easycode/internal/protocol"
 	"easycode/internal/provider"
 	"easycode/internal/secret"
@@ -76,18 +77,18 @@ func TestConversationUsesNativeHistoryAcrossTwoTurnsAndBaseURLForms(t *testing.T
 			if len(requests) != 2 {
 				t.Fatalf("request count: %d", len(requests))
 			}
-			firstCompiled, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, nil, nil, nativeMessagePointer(newUserMessage("first")), testAnthropicToolView(t))
+			firstCompiled, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, append([]nativeHistoryEntry(nil), testInputEntry(t, newUserMessage("first"))), nil, testAnthropicToolView(t))
 			if err != nil {
 				t.Fatalf("compile first expected request: %v", err)
 			}
-			secondCompiled, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, []nativeHistoryEntry{{
-				Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("first")),
+			secondCompiled, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, append(testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, newUserMessage("first")), {
+				Kind: nativeHistorySample,
 				Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{
 					{Type: blockTypeThinking, Thinking: "private", Signature: "opaque-signature"},
 					{Type: blockTypeRedactedThinking, RedactedData: "opaque-data"},
 					{Type: blockTypeText, Text: "answer"},
 				}},
-			}}, nil, nativeMessagePointer(newUserMessage("second")), testAnthropicToolView(t))
+			}}), testInputEntry(t, newUserMessage("second"))), nil, testAnthropicToolView(t))
 			if err != nil {
 				t.Fatalf("compile second expected request: %v", err)
 			}
@@ -160,7 +161,8 @@ func TestConversationKeepsProjectInstructionsOutOfNativeHistory(t *testing.T) {
 	conversation := instance.NewConversation().(*Conversation)
 	snapshot := testAnthropicProjectInstructions(t, "AGENTS.md", projectMarker)
 	for _, text := range []string{"first", "second"} {
-		input, attachErr := (provider.TurnInput{Text: text}).WithProjectInstructions(snapshot)
+		testCommitUserInput(t, conversation, text)
+		input, attachErr := provider.NewSamplingInput().WithProjectInstructions(snapshot)
 		if attachErr != nil {
 			t.Fatal(attachErr)
 		}
@@ -205,10 +207,10 @@ func TestConversationKeepsProjectInstructionsOutOfNativeHistory(t *testing.T) {
 	}
 	history := conversation.historySnapshot()
 	projection := conversation.ProjectHistory()
-	if len(history) != 2 || history[0].Input.Content[0].Text != "first" || history[1].Input.Content[0].Text != "second" {
+	if len(history) != 4 || history[0].UserInputs[0].Content[0].Text != "first" || history[2].UserInputs[0].Content[0].Text != "second" {
 		t.Fatalf("native history contains unexpected users: %#v", history)
 	}
-	if len(projection.Turns) != 2 || strings.Contains(projection.Turns[0].UserText, projectMarker) || strings.Contains(projection.Turns[1].UserText, projectMarker) {
+	if len(projection.Turns) != 2 || strings.Contains(projection.Turns[0].Messages[0].Text, projectMarker) || strings.Contains(projection.Turns[1].Messages[0].Text, projectMarker) {
 		t.Fatalf("semantic history contains project instructions: %#v", projection)
 	}
 }
@@ -238,7 +240,7 @@ func TestConversationProjectionMatchesLiveTextAndHidesActiveTurn(t *testing.T) {
 	}
 	defer closeAnthropicProvider(t, instance)
 	conversation := instance.NewConversation().(*Conversation)
-	stream, err := conversation.Stream(context.Background(), testAnthropicTurnInput(t, "question"))
+	stream, err := conversation.Stream(context.Background(), testAnthropicTurnInput(t, conversation, "question"))
 	if err != nil {
 		t.Fatalf("start stream: %v", err)
 	}
@@ -246,7 +248,7 @@ func TestConversationProjectionMatchesLiveTextAndHidesActiveTurn(t *testing.T) {
 
 	firstEvent := <-stream
 	liveText := decodeAnthropicLiveText(t, firstEvent)
-	if projection := conversation.ProjectHistory(); len(projection.Turns) != 0 {
+	if projection := conversation.ProjectHistory(); len(projection.Turns) != 1 || len(projection.Turns[0].Messages) != 1 || projection.Turns[0].Messages[0].Role != domain.SemanticUser {
 		t.Fatalf("active turn projected: %#v", projection)
 	}
 	close(release)
@@ -270,7 +272,7 @@ func TestConversationProjectionMatchesLiveTextAndHidesActiveTurn(t *testing.T) {
 		t.Fatalf("terminal count: %d", terminalCount)
 	}
 	projection := conversation.ProjectHistory()
-	if len(projection.Turns) != 1 || projection.Turns[0].UserText != "question" || projection.Turns[0].AssistantText != liveText || liveText != "hello world" {
+	if len(projection.Turns) != 1 || projection.Turns[0].Messages[0].Text != "question" || projection.Turns[0].Messages[1].Text != liveText || liveText != "hello world" {
 		t.Fatalf("live text %q projection %#v", liveText, projection)
 	}
 }
@@ -305,7 +307,7 @@ func writeSuccessfulAnthropicTurn(writer io.Writer) {
 func runCompletedAnthropicTurn(t *testing.T, conversation provider.Conversation, text string) []provider.StreamEvent {
 	t.Helper()
 	committedBefore := len(conversation.ProjectHistory().Turns)
-	stream, err := conversation.Stream(context.Background(), testAnthropicTurnInput(t, text))
+	stream, err := conversation.Stream(context.Background(), testAnthropicTurnInput(t, conversation, text))
 	if err != nil {
 		t.Fatalf("start turn %q: %v", text, err)
 	}
@@ -329,7 +331,7 @@ func runCompletedAnthropicTurn(t *testing.T, conversation provider.Conversation,
 			if event.PreparedSample() == nil {
 				t.Fatalf("turn %q completed without prepared sample", text)
 			}
-			if got := len(conversation.ProjectHistory().Turns); got != committedBefore {
+			if got := len(conversation.ProjectHistory().Turns); got != committedBefore+1 {
 				t.Fatalf("turn %q committed before finalization: %d", text, got)
 			}
 			if err := event.PreparedSample().Finalize(); err != nil {
@@ -363,7 +365,8 @@ func TestProviderRequestErrorIsSanitizedAndNotRetried(t *testing.T) {
 		t.Fatalf("new provider: %v", err)
 	}
 	defer closeAnthropicProvider(t, instance)
-	_, err = instance.NewConversation().Stream(context.Background(), testAnthropicTurnInput(t, "hello"))
+	conversation := instance.NewConversation()
+	_, err = conversation.Stream(context.Background(), testAnthropicTurnInput(t, conversation, "hello"))
 	if err == nil {
 		t.Fatal("expected provider request error")
 	}

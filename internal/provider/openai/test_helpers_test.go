@@ -66,9 +66,10 @@ func testOpenAIToolView(t *testing.T) tool.FacadeView {
 	return view
 }
 
-func testOpenAITurnInput(t *testing.T, text string) provider.TurnInput {
+func testOpenAITurnInput(t *testing.T, conversation provider.Conversation, text string) provider.TurnInput {
 	t.Helper()
-	input, err := (provider.TurnInput{Text: text}).WithToolCatalog(testOpenAIToolCatalog(t))
+	testCommitUserInput(t, conversation.(*Conversation), text)
+	input, err := provider.NewSamplingInput().WithToolCatalog(testOpenAIToolCatalog(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,9 +81,9 @@ func nativeItemPointer(item NativeItem) *NativeItem {
 	return &owned
 }
 
-func testSampleEntry(user NativeItem, outputs []NativeItem) nativeHistoryEntry {
+func testSampleEntry(outputs []NativeItem) nativeHistoryEntry {
 	return nativeHistoryEntry{
-		Kind: nativeHistorySample, Input: nativeItemPointer(user), Outputs: cloneNativeItems(outputs), Usage: rawUsage{},
+		Kind: nativeHistorySample, Outputs: cloneNativeItems(outputs), Usage: rawUsage{},
 	}
 }
 

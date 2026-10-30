@@ -17,6 +17,7 @@ type fakeChatSession struct {
 	mu         sync.Mutex
 	submits    []string
 	events     chan protocol.Event
+	outputs    chan protocol.ControlItem
 	submitErr  error
 	interrupts int
 	contexts   []context.Context
@@ -30,18 +31,71 @@ type capturedApproval struct {
 	feedback string
 }
 
-func (session *fakeChatSession) Submit(ctx context.Context, text string) (<-chan protocol.Event, error) {
+func (session *fakeChatSession) Outputs() <-chan protocol.ControlItem {
+	if session.outputs == nil {
+		session.outputs = make(chan protocol.ControlItem, 64)
+	}
+	return session.outputs
+}
+func (session *fakeChatSession) Append(ctx context.Context, text string) (protocol.CommandResult, error) {
 	session.mu.Lock()
-	defer session.mu.Unlock()
 	session.contexts = append(session.contexts, ctx)
 	session.submits = append(session.submits, text)
-	if session.submitErr != nil {
-		return nil, session.submitErr
+	err := session.submitErr
+	session.mu.Unlock()
+	if err != nil {
+		return protocol.CommandResult{}, err
 	}
-	if session.events == nil {
-		session.events = make(chan protocol.Event, 8)
+	command, _ := protocol.NewSubmitConversationalInputCommand("ui-input", text)
+	result, _ := protocol.NewAcceptedInputResult(command, protocol.CommandDispositionStarting, "01900000-0000-7000-8000-000000000001")
+	item, _ := protocol.NewCommandResultItem(result)
+	session.outputs <- item
+	if session.events != nil {
+		session.sendEvent(protocol.NewTurnStarted())
+		input, _ := domain.NewUserInput(result.EntryID(), text)
+		event, _ := protocol.NewUserInputCommitted(input)
+		session.sendEvent(event)
+		for len(session.events) > 0 {
+			session.sendEvent(<-session.events)
+		}
 	}
-	return session.events, nil
+	return result, nil
+}
+func (session *fakeChatSession) Retract(ctx context.Context, ids []domain.InputID) (protocol.CommandResult, error) {
+	command, err := protocol.NewRetractInputsCommand("ui-retract", ids)
+	if err != nil {
+		return protocol.CommandResult{}, err
+	}
+	result, err := protocol.NewAcceptedCommandResult(command, protocol.CommandDispositionRetracted)
+	if err != nil {
+		return result, err
+	}
+	item, _ := protocol.NewCommandResultItem(result)
+	session.outputs <- item
+	for _, id := range ids {
+		status, _ := protocol.NewInputStatus("ui-input", id, protocol.InputReturned, "", protocol.InputReasonRetracted)
+		item, _ := protocol.NewInputStatusItem(status)
+		session.outputs <- item
+	}
+	return result, nil
+}
+func (session *fakeChatSession) sendEvent(event protocol.Event) {
+	event.SessionID = "01900000-0000-7000-8000-000000000011"
+	event.ThreadID = "01900000-0000-7000-8000-000000000012"
+	event.TurnID = "018f1d8a-7b5c-7def-8234-456789abcdef"
+	item, err := protocol.NewCorrelatedTurnItem("ui-input", event)
+	if err != nil {
+		panic(err)
+	}
+	session.outputs <- item
+}
+
+func testAdmissionMessage(model Model, command tea.Cmd) tea.Msg {
+	message := command()
+	if message != nil {
+		return message
+	}
+	return waitForControl(model.outputs)()
 }
 
 func (session *fakeChatSession) Interrupt() {
@@ -175,24 +229,22 @@ func TestModelSubmitsAndProjectsOrderedDeltas(t *testing.T) {
 	if command == nil || model.state != stateSubmitting || len(model.transcript) != 0 {
 		t.Fatalf("submit state: %#v", model)
 	}
-	ready := command()
+	ready := testAdmissionMessage(model, command)
 	model, command = updateModelWithCommand(t, model, ready)
 	if command == nil {
 		t.Fatal("missing event wait command")
 	}
 
+	model = testCommitAcceptedInput(t, model)
 	first, _ := protocol.NewAssistantTextDelta("hel")
 	second, _ := protocol.NewAssistantTextDelta("lo")
-	session.events <- first
-	model, command = updateModelWithCommand(t, model, command())
-	session.events <- second
-	model, command = updateModelWithCommand(t, model, command())
-	session.events <- mustRuntimeCompleted(t)
-	model, command = updateModelWithCommand(t, model, command())
-
-	if command != nil || model.state != stateIdle {
-		t.Fatalf("completed state: %#v command=%v", model, command)
+	model = updateModel(t, model, RuntimeEventMsg{Event: first})
+	model = updateModel(t, model, RuntimeEventMsg{Event: second})
+	model = updateModel(t, model, RuntimeEventMsg{Event: mustRuntimeCompleted(t)})
+	if model.state != stateIdle || model.outputs == nil {
+		t.Fatal("terminal closed the long-lived control consumer")
 	}
+
 	if len(model.transcript) != 2 || model.transcript[1].text != "hello" {
 		t.Fatalf("transcript: %#v", model.transcript)
 	}
@@ -238,12 +290,12 @@ func TestModelInputAndCancellationKeys(t *testing.T) {
 	}
 
 	model.state = stateStreaming
-	model.events = make(chan protocol.Event)
-	before := len(session.submits)
+	model.activeTurnID = "018f1d8a-7b5c-7def-8234-456789abcdef"
 	updated, command = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if command != nil || len(session.submits) != before || updated.(Model).state != stateStreaming {
-		t.Fatal("streaming enter started another turn")
+	if command == nil || updated.(Model).state != stateSubmitting {
+		t.Fatal("running composer did not submit automatic input")
 	}
+
 	_, command = model.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	if command == nil {
 		t.Fatal("escape did not create interrupt command")
@@ -279,14 +331,15 @@ func TestModelQueuesInterruptUntilSubmitIsReady(t *testing.T) {
 		t.Fatalf("interrupt was not queued: %#v", model)
 	}
 
-	model, interruptCommand = updateModelWithCommand(t, model, submitCommand())
-	batch, ok := interruptCommand().(tea.BatchMsg)
-	if !ok || len(batch) != 2 {
-		t.Fatalf("queued commands: %#v", batch)
+	model = updateModel(t, model, testAdmissionMessage(model, submitCommand))
+	item := <-model.outputs
+	next, interruptCommand := model.projectControlItem(item)
+	model = next.(Model)
+	if interruptCommand == nil {
+		t.Fatal("turn start did not deliver pending stop")
 	}
-	for _, command := range batch {
-		_ = command()
-	}
+	interruptCommand()
+
 	if session.interrupts != 1 || model.interruptNext {
 		t.Fatalf("queued interrupt result: interrupts=%d model=%#v", session.interrupts, model)
 	}
@@ -330,7 +383,7 @@ func TestModelSubmitErrorIsSanitized(t *testing.T) {
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello")})
 	updated, command := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	model = updated.(Model)
-	model = updateModel(t, model, command())
+	model = updateModel(t, model, testAdmissionMessage(model, command))
 	if model.errorSummary != "provider_request_failed: provider request failed" || model.state != stateIdle {
 		t.Fatalf("submit error: %#v", model)
 	}
@@ -346,4 +399,32 @@ func updateModelWithCommand(t *testing.T, model Model, message tea.Msg) (Model, 
 	t.Helper()
 	updated, command := model.Update(message)
 	return updated.(Model), command
+}
+
+func testSemanticTurn(user, assistant string) domain.SemanticTurn {
+	messages := []domain.SemanticMessage{{Role: domain.SemanticUser, InputID: "01900000-0000-7000-8000-000000000001", Text: user}}
+	if assistant != "" {
+		messages = append(messages, domain.SemanticMessage{Role: domain.SemanticAssistant, Text: assistant})
+	}
+	return domain.SemanticTurn{TurnID: "018f1d8a-7b5c-7def-8234-456789abcdef", Messages: messages}
+}
+func testCommitAcceptedInput(t *testing.T, model Model) Model {
+	t.Helper()
+	input := model.inputs[0]
+	event := protocol.NewTurnStarted()
+	event.TurnID = "018f1d8a-7b5c-7def-8234-456789abcdef"
+	model = updateModel(t, model, RuntimeEventMsg{Event: event})
+	value, err := domain.NewUserInput(input.id, input.text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, err = protocol.NewUserInputCommitted(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event.TurnID = model.activeTurnID
+	model = updateModel(t, model, RuntimeEventMsg{Event: event})
+	status, _ := protocol.NewInputStatus("ui-input", input.id, protocol.InputCommitted, model.activeTurnID, "")
+	item, _ := protocol.NewInputStatusItem(status)
+	return updateModel(t, model, controlItemMsg{item: item})
 }

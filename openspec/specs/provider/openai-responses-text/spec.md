@@ -8,7 +8,7 @@
 
 ### Requirement: Compile a text-only Responses request
 
-系统 SHALL向解析后的`responses` endpoint发送OpenAI Responses请求。请求 MUST包含model、可选临时项目指令context item、完整native input、`stream=true`、`store=false`以及当前Tool Catalog编译出的稳定tools数组。首个sample或新用户turn必须追加真实当前用户input item；tool outputs后的continuation sample不得追加合成user item或空input。
+系统 SHALL向解析后的`responses` endpoint发送OpenAI Responses请求。请求 MUST包含model、可选临时项目指令context item、完整native input、`stream=true`、`store=false`以及当前Tool Catalog编译出的稳定tools数组。所有真实用户输入 SHALL 已独立提交到 native history，编译仅按原生顺序回放，不额外追加当前正文、合成 user 或空消息。
 
 项目指令context item SHALL位于native history和真实当前输入之前，保持独立且不进入native history。Read、Glob、Grep、Write与`exec_command` facade SHALL编译为strict function tools；`apply_patch` SHALL编译为唯一custom freeform tool，名称、description、wire kind和定义来自不可变catalog snapshot。请求 MUST NOT使用`previous_response_id`或声明后台进程、write_stdin、其他未实现custom/parallel tools，并继续请求保留encrypted reasoning。Authorization secret、项目指令正文、workspace绝对路径、candidate fingerprint、实际环境和动态调用/approval identity MUST NOT进入错误、日志或普通fixture。
 
@@ -33,6 +33,12 @@ Write 的稳定 schema/description SHALL 来自同一不可变 catalog；文件�
 #### Scenario: Keep Write catalog bytes stable
 - **WHEN** 相同 catalog 下改变 workspace 内容、Read observation 或 Write grant
 - **THEN** tools canonical bytes 与 tool catalog fingerprint 保持一致
+
+每条追加输入 SHALL 保持独立用户消息，InputID/turn identity 不得进入 wire 或内容 fingerprint。 每条为独立 user input_text item，位于全部匹配 function/custom outputs 之后，InputID 不得冒充 Provider item ID。
+
+#### Scenario: Compile ordered steering inputs
+- **WHEN** 整组工具 outputs 后提交两条自动输入再请求下一 sample
+- **THEN** 两条用户消息按 admission 顺序各出现一次，calls/outputs 配对和 opaque reasoning 保持原样；恢复与不中断请求 canonical bytes/fingerprint 相同
 
 ### Requirement: Reduce supported Responses stream events
 
@@ -100,7 +106,7 @@ Write SHALL 严格归并完整 structured 参数，未知/重复字段、null、
 
 ### Requirement: Native history commits transactionally
 
-系统 SHALL将可选当前用户item、本sample完成output items、raw usage和ready calls暂存在sample staging，仅在合法`response.completed`后形成prepared sample。首个sample必须暂存真实user item；tool outputs后的continuation sample不得暂存或提交新的user item。失败、取消、timeout或EOF不得把部分item提交为history。
+系统 SHALL 保持原生 message/item 边界与字段。用户输入独立 prepare、Sync、finalize 为 user_inputs。sample staging 仅保存完成模型输出、metadata、raw usage 和 ready calls，合法 Provider terminal 后形成 prepared sample；失败、取消、timeout、协议错误或 EOF 丢弃本 sample staging，但不得删除先前已提交的用户输入。
 
 Read、Glob、Grep、Write results SHALL编码为按call index排列的`function_call_output`；Patch result SHALL编码为匹配原custom call的`custom_tool_call_output`。每项必须匹配前一sample尚未闭合的call ID和wire kind并包含冻结模型preview。approval request/decision不得成为OpenAI native item；只有最终tool result进入Provider history。tool-output entry只有在Session commit durable后才能进入Conversation history。
 
@@ -108,7 +114,7 @@ Write 的完整调用参数与冻结结果 SHALL 无损保存和恢复；Read ob
 
 #### Scenario: Commit a successful turn
 - **WHEN** response完成function calls与一个custom apply_patch call
-- **THEN** 用户item、全部output items和usage按wire顺序进入sample native commit
+- **THEN** 全部 output items 和 usage 按 wire 顺序进入 sample native commit，用户 item 已独立提交且不重复保存
 
 #### Scenario: Discard a partial failed turn
 - **WHEN** 已收到文本、tool input delta或output item后sample失败

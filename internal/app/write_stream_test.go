@@ -99,7 +99,7 @@ func TestWriteSSEChunksCancellationEOFAndLimitsPrecedeSideEffects(t *testing.T) 
 				if err != nil {
 					t.Fatal(err)
 				}
-				events, err := control.Submit(ctx, "write")
+				events, err := submitInteractiveFixture(t, control, ctx, "write")
 				if err != nil {
 					t.Fatal(err)
 				}

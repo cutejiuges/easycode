@@ -1,1 +1,1 @@
-{"provider":"anthropic","turns":[{"user_text":"hello\nworld","assistant_text":"visible answer"}]}
+{"provider":"anthropic","turns":[{"turn_id":"01900000-0000-7000-8000-26c60a61d01d","messages":[{"role":"user","input_id":"01900000-0000-7000-8000-26c60a61d01d","text":"hello\nworld"},{"role":"assistant","text":"visible answer"}]}]}

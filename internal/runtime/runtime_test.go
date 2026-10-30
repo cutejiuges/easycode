@@ -318,29 +318,29 @@ func TestRunTurnDurableSuccessOrderingAndIdentity(t *testing.T) {
 	if runErr != nil {
 		t.Fatal(runErr)
 	}
-	assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventAssistantTextDelta, protocol.EventTurnCompleted)
+	assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventUserInputCommitted, protocol.EventAssistantTextDelta, protocol.EventTurnCompleted)
 	for _, event := range events {
 		if event.SessionID != runtimeSessionID || event.ThreadID != runtimeThreadID || event.TurnID != runtimeTurnID {
 			t.Fatalf("event identity = %#v", event)
 		}
 	}
 	wantTimeline := []string{
-		"append:turn_started", "emit:turn_started", "provider", "emit:assistant_text_delta",
+		"append:turn_started", "emit:turn_started", "append:turn_inputs_committed", "emit:user_input_committed", "provider", "emit:assistant_text_delta",
 		"append:provider_native_commit", "finalize", "emit:turn_completed",
 	}
 	if fmt.Sprint(timeline) != fmt.Sprint(wantTimeline) {
 		t.Fatalf("timeline = %#v, want %#v", timeline, wantTimeline)
 	}
 	batches := journal.snapshot()
-	if len(batches) != 2 || len(batches[0]) != 1 || len(batches[1]) != 3 ||
-		batches[1][0].EventKind() != session.EventProviderNativeCommit ||
-		batches[1][1].EventKind() != session.EventSampleUsage ||
-		batches[1][2].EventKind() != session.EventTurnCompleted {
+	if len(batches) != 3 || len(batches[0]) != 1 || len(batches[2]) != 3 ||
+		batches[2][0].EventKind() != session.EventProviderNativeCommit ||
+		batches[2][1].EventKind() != session.EventSampleUsage ||
+		batches[2][2].EventKind() != session.EventTurnCompleted {
 		t.Fatalf("journal batches = %#v", batches)
 	}
 	commit, err := session.DecodeNativeCommitPayload(session.Record{
 		PayloadVersion: session.EnvelopeVersion,
-		EventKind:      batches[1][0].EventKind(), Payload: batches[1][0].PayloadBytes(),
+		EventKind:      batches[2][0].EventKind(), Payload: batches[2][0].PayloadBytes(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -350,7 +350,7 @@ func TestRunTurnDurableSuccessOrderingAndIdentity(t *testing.T) {
 	}
 	usageRecord, err := session.DecodeSampleUsagePayload(session.Record{
 		PayloadVersion: session.EnvelopeVersion,
-		EventKind:      batches[1][1].EventKind(), Payload: batches[1][1].PayloadBytes(),
+		EventKind:      batches[2][1].EventKind(), Payload: batches[2][1].PayloadBytes(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -415,7 +415,7 @@ func TestRunTurnCancellationUsesStartedAcceptanceAsExecutorBoundary(t *testing.T
 			if !errors.Is(runErr, context.Canceled) {
 				t.Fatalf("RunTurn() error = %v", runErr)
 			}
-			assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnFailed)
+			assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventUserInputCommitted, protocol.EventTurnFailed)
 			if executor.calls.Load() != test.wantExecutorCalls {
 				t.Fatalf("executor calls = %d", executor.calls.Load())
 			}
@@ -492,7 +492,7 @@ func TestRunTurnCompletesOrderedMultiSampleToolLoop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnCompleted)
+	assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventUserInputCommitted, protocol.EventTurnCompleted)
 	if base.calls.Load() != 2 || executor.calls.Load() != 2 || len(conversation.results) != 2 ||
 		conversation.results[0].ProviderCallID() != "call-1" || conversation.results[1].ProviderCallID() != "call-2" {
 		t.Fatalf(
@@ -503,6 +503,7 @@ func TestRunTurnCompletesOrderedMultiSampleToolLoop(t *testing.T) {
 	batches := journal.snapshot()
 	wantKinds := [][]session.EventKind{
 		{session.EventTurnStarted},
+		{session.EventTurnInputsCommitted, session.EventProviderNativeCommit},
 		{session.EventProviderNativeCommit, session.EventSampleUsage, session.EventToolCallReady, session.EventToolCallReady},
 		{session.EventToolExecutionStarted},
 		{session.EventToolExecutionStarted},
@@ -682,7 +683,7 @@ func TestStartedAppendFailureWaitsAcceptedCallsAndStopsLaterCalls(t *testing.T) 
 			conversation := &fakeToolConversation{fakeConversation: &fakeConversation{
 				stream: fixedStream(completedProviderEventWithSample(t, sample)),
 			}}
-			journal := &startedFailureJournal{failAt: 4, poisonOnFailure: test.poisoned}
+			journal := &startedFailureJournal{failAt: 5, poisonOnFailure: test.poisoned}
 			config := testRuntimeConfig(t, journal)
 			config.ReadExecutor = executor
 			config.ToolCatalog = mustRuntimeToolCatalogWithExecutor(t, executor)
@@ -702,7 +703,7 @@ func TestStartedAppendFailureWaitsAcceptedCallsAndStopsLaterCalls(t *testing.T) 
 			if !errors.Is(runErr, &fault.Error{Code: fault.CodeSessionWrite}) {
 				t.Fatalf("RunTurn() error = %v", runErr)
 			}
-			assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnFailed)
+			assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventUserInputCommitted, protocol.EventTurnFailed)
 			if executor.calls.Load() != 1 || fmt.Sprint(executor.invocationSnapshot()) != fmt.Sprint([]tool.ProviderCallID{"call-0"}) ||
 				conversation.calls.Load() != 1 || conversation.prepareCalls.Load() != 0 {
 				t.Fatalf("executor calls/order, streams, prepare = %d/%#v/%d/%d", executor.calls.Load(), executor.invocationSnapshot(), conversation.calls.Load(), conversation.prepareCalls.Load())
@@ -750,7 +751,7 @@ func TestRunTurnToolDurabilityFailuresPreventLaterSideEffects(t *testing.T) {
 		conversation := &fakeToolConversation{fakeConversation: &fakeConversation{
 			stream: fixedStream(completedProviderEventWithSample(t, sample)),
 		}}
-		journal := &fakeJournal{failAt: 2}
+		journal := &fakeJournal{failAt: 3}
 		config := testRuntimeConfig(t, journal)
 		config.ReadExecutor = executor
 		config.ToolCatalog = mustRuntimeToolCatalogWithExecutor(t, executor)
@@ -763,7 +764,7 @@ func TestRunTurnToolDurabilityFailuresPreventLaterSideEffects(t *testing.T) {
 		if !errors.Is(runErr, &fault.Error{Code: fault.CodeSessionWrite}) {
 			t.Fatalf("RunTurn() error = %v", runErr)
 		}
-		assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnFailed)
+		assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventUserInputCommitted, protocol.EventTurnFailed)
 		if finalized.Load() != 0 || discarded.Load() != 1 || executor.calls.Load() != 0 ||
 			conversation.prepareCalls.Load() != 0 {
 			t.Fatalf(
@@ -798,7 +799,7 @@ func TestRunTurnToolDurabilityFailuresPreventLaterSideEffects(t *testing.T) {
 		if !errors.Is(runErr, &fault.Error{Code: fault.CodeStreamProtocol}) {
 			t.Fatalf("RunTurn() error = %v", runErr)
 		}
-		assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnFailed)
+		assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventUserInputCommitted, protocol.EventTurnFailed)
 		if executor.calls.Load() != 0 || conversation.prepareCalls.Load() != 0 || !sample.Finalized() {
 			t.Fatalf(
 				"executor/output/finalized = %d/%d/%t",
@@ -814,7 +815,7 @@ func TestRunTurnToolDurabilityFailuresPreventLaterSideEffects(t *testing.T) {
 				t, newPreparedSampleWithReady(t, testRuntimeReadyCall(t, "call-failed-output")),
 			)),
 		}}
-		journal := &fakeJournal{failAt: 5}
+		journal := &fakeJournal{failAt: 6}
 		config := testRuntimeConfig(t, journal)
 		config.ReadExecutor = executor
 		config.ToolCatalog = mustRuntimeToolCatalogWithExecutor(t, executor)
@@ -827,7 +828,7 @@ func TestRunTurnToolDurabilityFailuresPreventLaterSideEffects(t *testing.T) {
 		if !errors.Is(runErr, &fault.Error{Code: fault.CodeSessionWrite}) {
 			t.Fatalf("RunTurn() error = %v", runErr)
 		}
-		assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnFailed)
+		assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventUserInputCommitted, protocol.EventTurnFailed)
 		if executor.calls.Load() != 1 || conversation.prepareCalls.Load() != 1 ||
 			conversation.finalized.Load() != 0 || conversation.discarded.Load() != 1 ||
 			conversation.calls.Load() != 1 {
@@ -856,7 +857,7 @@ func TestRunTurnConvertsInvalidExecutorResultAndContinuesSampling(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnCompleted)
+	assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventUserInputCommitted, protocol.EventTurnCompleted)
 	if len(conversation.results) != 1 || conversation.results[0].Status() != tool.ResultError ||
 		conversation.results[0].Code() != "invalid_tool_result" || base.calls.Load() != 2 {
 		t.Fatalf("tool results/streams = %#v/%d", conversation.results, base.calls.Load())
@@ -903,12 +904,12 @@ func TestRunTurnToolCallLimitAllowsFinalSampleAndRejectsNextCall(t *testing.T) {
 				if runErr != nil {
 					t.Fatal(runErr)
 				}
-				assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnCompleted)
+				assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventUserInputCommitted, protocol.EventTurnCompleted)
 			} else {
 				if runErr == nil || !strings.Contains(runErr.Error(), "tool_loop_limit_exceeded") {
 					t.Fatalf("RunTurn() error = %v", runErr)
 				}
-				assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnFailed)
+				assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventUserInputCommitted, protocol.EventTurnFailed)
 			}
 			if executor.calls.Load() != test.wantExecutions || base.calls.Load() != test.wantStreams {
 				t.Fatalf("executor/stream calls = %d/%d", executor.calls.Load(), base.calls.Load())
@@ -939,7 +940,7 @@ func TestRunTurnSampleLimitStopsBeforeAdditionalProviderOrToolSideEffects(t *tes
 	if runErr == nil || !strings.Contains(runErr.Error(), "tool_loop_limit_exceeded") {
 		t.Fatalf("RunTurn() error = %v", runErr)
 	}
-	assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnFailed)
+	assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventUserInputCommitted, protocol.EventTurnFailed)
 	if base.calls.Load() != maxSamplesPerTurn || executor.calls.Load() != maxSamplesPerTurn ||
 		conversation.prepareCalls.Load() != maxSamplesPerTurn {
 		t.Fatalf(
@@ -1162,10 +1163,7 @@ func TestRunTurnUsesRuntimeProjectInstructionsForPlanAndProvider(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	callerInput, err := (provider.TurnInput{Text: "hello"}).WithProjectInstructions(callerSnapshot)
-	if err != nil {
-		t.Fatal(err)
-	}
+	callerInput := runtimeInputs("hello")
 	var events []protocol.Event
 	if err := runtimeValue.RunTurn(context.Background(), callerInput, func(event protocol.Event) {
 		events = append(events, event)
@@ -1232,7 +1230,7 @@ func TestRunTurnContinuesForNonBlockingBudgetStates(t *testing.T) {
 			if runErr != nil || conversation.calls.Load() != 1 {
 				t.Fatalf("RunTurn() error=%v calls=%d", runErr, conversation.calls.Load())
 			}
-			assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnCompleted)
+			assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventUserInputCommitted, protocol.EventTurnCompleted)
 		})
 	}
 }
@@ -1242,17 +1240,17 @@ func TestRunTurnCompletionWriteFailureDoesNotFinalizeAndPoisons(t *testing.T) {
 	var finalized atomic.Int32
 	prepared := newPreparedSample(t, func() { finalized.Add(1) })
 	conversation := &fakeConversation{stream: fixedStream(completedProviderEventWithSample(t, prepared))}
-	journal := &fakeJournal{failAt: 2}
+	journal := &fakeJournal{failAt: 3}
 	runtime := newTestRuntime(t, conversation, journal)
 	events, err := collectTurn(runtime, context.Background(), nil)
 	if !errors.Is(err, &fault.Error{Code: fault.CodeSessionWrite}) {
 		t.Fatalf("RunTurn() error = %v", err)
 	}
-	assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnFailed)
+	assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventUserInputCommitted, protocol.EventTurnFailed)
 	if finalized.Load() != 0 || prepared.Finalized() {
 		t.Fatalf("prepared sample was finalized: %d", finalized.Load())
 	}
-	if journal.calls != 2 {
+	if journal.calls != 3 {
 		t.Fatalf("journal calls = %d, failure path retried poisoned writer", journal.calls)
 	}
 	if _, err := collectTurn(runtime, context.Background(), nil); !errors.Is(err, &fault.Error{Code: fault.CodeSessionWrite}) {
@@ -1276,15 +1274,15 @@ func TestRunTurnFinalizerConflictAfterDurableSuccessPoisonsWithoutPublishingUsag
 	if !errors.Is(err, &fault.Error{Code: fault.CodeStreamProtocol}) {
 		t.Fatalf("RunTurn() error = %v", err)
 	}
-	assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnFailed)
+	assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventUserInputCommitted, protocol.EventTurnFailed)
 	if finalized.Load() != 1 {
 		t.Fatalf("finalizer calls = %d", finalized.Load())
 	}
 	batches := journal.snapshot()
-	if len(batches) != 2 || len(batches[1]) != 3 ||
-		batches[1][0].EventKind() != session.EventProviderNativeCommit ||
-		batches[1][1].EventKind() != session.EventSampleUsage ||
-		batches[1][2].EventKind() != session.EventTurnCompleted {
+	if len(batches) != 3 || len(batches[2]) != 3 ||
+		batches[2][0].EventKind() != session.EventProviderNativeCommit ||
+		batches[2][1].EventKind() != session.EventSampleUsage ||
+		batches[2][2].EventKind() != session.EventTurnCompleted {
 		t.Fatalf("durable batches = %#v", batches)
 	}
 	if _, err := collectTurn(runtime, context.Background(), nil); !errors.Is(err, &fault.Error{Code: fault.CodeSessionWrite}) {
@@ -1306,9 +1304,9 @@ func TestRunTurnRevalidatesPreparedSampleBeforeNativeCommit(t *testing.T) {
 	if !errors.Is(err, &fault.Error{Code: fault.CodeStreamProtocol}) {
 		t.Fatalf("RunTurn() error = %v", err)
 	}
-	assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnFailed)
+	assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventUserInputCommitted, protocol.EventTurnFailed)
 	batches := journal.snapshot()
-	if len(batches) != 2 || len(batches[1]) != 1 || batches[1][0].EventKind() != session.EventTurnFailed {
+	if len(batches) != 3 || len(batches[2]) != 1 || batches[2][0].EventKind() != session.EventTurnFailed {
 		t.Fatalf("invalid sample persisted non-failure records: %#v", batches)
 	}
 	if finalized.Load() != 1 {
@@ -1339,14 +1337,14 @@ func TestRunTurnPersistsProviderFailureCancellationAndEarlyEOF(t *testing.T) {
 			if !errors.Is(err, &fault.Error{Code: fixture.code}) {
 				t.Fatalf("RunTurn() error = %v", err)
 			}
-			assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnFailed)
+			assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventUserInputCommitted, protocol.EventTurnFailed)
 			batches := journal.snapshot()
-			if len(batches) != 2 || batches[1][0].EventKind() != session.EventTurnFailed {
+			if len(batches) != 3 || batches[2][0].EventKind() != session.EventTurnFailed {
 				t.Fatalf("journal batches = %#v", batches)
 			}
 			failure, decodeErr := session.DecodeTurnFailedPayload(session.Record{
 				PayloadVersion: session.EnvelopeVersion,
-				EventKind:      batches[1][0].EventKind(), Payload: batches[1][0].PayloadBytes(),
+				EventKind:      batches[2][0].EventKind(), Payload: batches[2][0].PayloadBytes(),
 			})
 			if decodeErr != nil {
 				t.Fatal(decodeErr)
@@ -1372,8 +1370,8 @@ func TestRunTurnRejectsEventAfterTerminalWithoutFinalizing(t *testing.T) {
 	if !errors.Is(err, &fault.Error{Code: fault.CodeStreamProtocol}) {
 		t.Fatalf("RunTurn() error = %v", err)
 	}
-	assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnFailed)
-	if finalized.Load() != 0 || len(journal.snapshot()) != 2 {
+	assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventUserInputCommitted, protocol.EventTurnFailed)
+	if finalized.Load() != 0 || len(journal.snapshot()) != 3 {
 		t.Fatalf("finalized/batches = %d/%#v", finalized.Load(), journal.snapshot())
 	}
 }
@@ -1407,9 +1405,9 @@ func TestRunTurnCancelsAndDrainsAfterInvalidEvent(t *testing.T) {
 	}
 	<-cancelObserved
 	<-producerDone
-	assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnFailed)
+	assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventUserInputCommitted, protocol.EventTurnFailed)
 	batches := journal.snapshot()
-	if len(batches) != 2 || len(batches[1]) != 1 || batches[1][0].EventKind() != session.EventTurnFailed {
+	if len(batches) != 3 || len(batches[2]) != 1 || batches[2][0].EventKind() != session.EventTurnFailed {
 		t.Fatalf("durable batches = %#v", batches)
 	}
 }
@@ -1466,7 +1464,7 @@ func TestRunTurnRejectsEveryEventKindAfterTerminalAndDrains(t *testing.T) {
 			}
 			<-cancelObserved
 			<-producerDone
-			assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventTurnFailed)
+			assertEventKinds(t, events, protocol.EventTurnStarted, protocol.EventUserInputCommitted, protocol.EventTurnFailed)
 			if finalized.Load() != 0 {
 				t.Fatalf("finalizer calls = %d", finalized.Load())
 			}
@@ -1478,10 +1476,12 @@ func TestRunTurnCancellationAndCompletionHaveDeterministicOwners(t *testing.T) {
 	t.Run("cancellation wins before terminal", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancelObserved := make(chan struct{})
+		streamStarted := make(chan struct{})
 		releaseCleanup := make(chan struct{})
 		producerDone := make(chan struct{})
 		conversation := &fakeConversation{stream: func(streamCtx context.Context, _ provider.TurnInput) (<-chan provider.StreamEvent, error) {
 			stream := make(chan provider.StreamEvent)
+			close(streamStarted)
 			go func() {
 				defer close(producerDone)
 				defer close(stream)
@@ -1495,8 +1495,9 @@ func TestRunTurnCancellationAndCompletionHaveDeterministicOwners(t *testing.T) {
 		runtime := newTestRuntime(t, conversation, &fakeJournal{})
 		runDone := make(chan error, 1)
 		go func() {
-			runDone <- runtime.RunTurn(ctx, provider.TurnInput{Text: "hello"}, func(protocol.Event) {})
+			runDone <- runtime.RunTurn(ctx, runtimeInputs("hello"), func(protocol.Event) {})
 		}()
+		<-streamStarted
 		cancel()
 		<-cancelObserved
 		select {
@@ -1532,7 +1533,7 @@ func TestRunTurnCancellationAndCompletionHaveDeterministicOwners(t *testing.T) {
 		runtime := newTestRuntime(t, conversation, &fakeJournal{})
 		runDone := make(chan error, 1)
 		go func() {
-			runDone <- runtime.RunTurn(ctx, provider.TurnInput{Text: "hello"}, func(protocol.Event) {})
+			runDone <- runtime.RunTurn(ctx, runtimeInputs("hello"), func(protocol.Event) {})
 		}()
 		<-terminalSent
 		cancel()
@@ -1570,10 +1571,10 @@ func TestRunTurnRejectsConcurrentTurn(t *testing.T) {
 	runtime := newTestRuntime(t, conversation, &fakeJournal{})
 	firstDone := make(chan error, 1)
 	go func() {
-		firstDone <- runtime.RunTurn(context.Background(), provider.TurnInput{Text: "first"}, func(protocol.Event) {})
+		firstDone <- runtime.RunTurn(context.Background(), runtimeInputs("first"), func(protocol.Event) {})
 	}()
 	<-started
-	secondErr := runtime.RunTurn(context.Background(), provider.TurnInput{Text: "second"}, func(protocol.Event) {})
+	secondErr := runtime.RunTurn(context.Background(), runtimeInputs("second"), func(protocol.Event) {})
 	if !errors.Is(secondErr, &fault.Error{Code: fault.CodeTurnFailed}) {
 		t.Fatalf("second turn error = %v", secondErr)
 	}
@@ -1606,7 +1607,7 @@ func TestRunTurnCancelCompletionRacePublishesOneTerminal(t *testing.T) {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			_ = runtime.RunTurn(ctx, provider.TurnInput{Text: "hello"}, func(event protocol.Event) {
+			_ = runtime.RunTurn(ctx, runtimeInputs("hello"), func(event protocol.Event) {
 				if event.Kind == protocol.EventTurnCompleted || event.Kind == protocol.EventTurnFailed {
 					terminalCount.Add(1)
 				}
@@ -1916,7 +1917,7 @@ func cancelledProviderEvent(t *testing.T, failure error) provider.StreamEvent {
 
 func collectTurn(runtime *Runtime, ctx context.Context, observe Emitter) ([]protocol.Event, error) {
 	var events []protocol.Event
-	err := runtime.RunTurn(ctx, provider.TurnInput{Text: "hello"}, func(event protocol.Event) {
+	err := runtime.RunTurn(ctx, runtimeInputs("hello"), func(event protocol.Event) {
 		events = append(events, event)
 		if observe != nil {
 			observe(event)

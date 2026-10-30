@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"easycode/internal/provider"
 	"encoding/json"
 	"fmt"
 
@@ -179,16 +180,19 @@ type nativeHistoryEntryKind string
 
 const (
 	nativeHistorySample      nativeHistoryEntryKind = "sample"
+	nativeHistoryUserInputs  nativeHistoryEntryKind = "user_inputs"
 	nativeHistoryToolOutputs nativeHistoryEntryKind = "tool_outputs"
 )
 
 // nativeHistoryEntry 是 Responses 原生历史唯一的当前内存模型。
 type nativeHistoryEntry struct {
-	Kind        nativeHistoryEntryKind
-	Input       *NativeItem
-	Outputs     []NativeItem
-	ToolOutputs []NativeItem
-	Usage       rawUsage
+	Kind          nativeHistoryEntryKind
+	TurnID        domain.TurnID
+	UserInputs    []NativeItem
+	InputMetadata *provider.InputMetadata
+	Outputs       []NativeItem
+	ToolOutputs   []NativeItem
+	Usage         rawUsage
 }
 
 func (entry nativeHistoryEntry) clone() nativeHistoryEntry {
@@ -196,9 +200,16 @@ func (entry nativeHistoryEntry) clone() nativeHistoryEntry {
 		Kind: entry.Kind, Outputs: cloneNativeItems(entry.Outputs),
 		ToolOutputs: cloneNativeItems(entry.ToolOutputs), Usage: entry.Usage.clone(),
 	}
-	if entry.Input != nil {
-		input := entry.Input.clone()
-		cloned.Input = &input
+	cloned.TurnID = entry.TurnID
+	cloned.UserInputs = make([]NativeItem, len(entry.UserInputs))
+	for i, input := range entry.UserInputs {
+		cloned.UserInputs[i] = input.clone()
 	}
+	if entry.InputMetadata != nil {
+		m := *entry.InputMetadata
+		m.InputIDs = append([]domain.InputID(nil), m.InputIDs...)
+		cloned.InputMetadata = &m
+	}
+
 	return cloned
 }

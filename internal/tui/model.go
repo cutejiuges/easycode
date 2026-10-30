@@ -18,7 +18,9 @@ import (
 
 // ChatSession 是 TUI 使用的最小会话接口。
 type ChatSession interface {
-	Submit(context.Context, string) (<-chan protocol.Event, error)
+	Outputs() <-chan protocol.ControlItem
+	Append(context.Context, string) (protocol.CommandResult, error)
+	Retract(context.Context, []domain.InputID) (protocol.CommandResult, error)
 	Interrupt()
 }
 
@@ -31,9 +33,7 @@ type RuntimeEventMsg struct {
 	Event protocol.Event
 }
 
-type streamReadyMsg struct {
-	events <-chan protocol.Event
-}
+type controlItemMsg struct{ item protocol.ControlItem }
 
 type submissionFailedMsg struct{ err error }
 
@@ -68,7 +68,10 @@ type Model struct {
 	state         turnState
 	assistantItem int
 	errorSummary  string
-	events        <-chan protocol.Event
+	outputs       <-chan protocol.ControlItem
+	inputs        []inputPreview
+	retracting    *inputRetraction
+	submitContext context.Context
 	interruptNext bool
 	approval      *approvalOverlay
 	activeTurnID  domain.TurnID
@@ -98,27 +101,33 @@ func NewModel(
 	initialHistory ...domain.SemanticHistoryView,
 ) Model {
 	model := Model{
-		version: version, session: session, assistantItem: -1, composer: newComposer(),
+		version: version, session: session, submitContext: submitContext, assistantItem: -1, composer: newComposer(),
 		submit: func(target ChatSession, prompt string) tea.Cmd {
 			return submitTurn(submitContext, target, prompt)
 		},
+	}
+	if session != nil {
+		model.outputs = session.Outputs()
 	}
 	if len(initialHistory) == 0 {
 		return model
 	}
 	for _, turn := range initialHistory[0].Turns {
-		model.composer.history.add(turn.UserText)
-		model.transcript = append(model.transcript,
-			transcriptMessage{role: "User", text: turn.UserText},
-			transcriptMessage{role: "Assistant", text: turn.AssistantText},
-		)
+		for _, message := range turn.Messages {
+			role := "Assistant"
+			if message.Role == domain.SemanticUser {
+				role = "User"
+				model.composer.history.add(message.Text)
+			}
+			model.transcript = append(model.transcript, transcriptMessage{role: role, text: message.Text})
+		}
 	}
 	return model
 }
 
 // Init 返回初始命令。
-func (Model) Init() tea.Cmd {
-	return nil
+func (model Model) Init() tea.Cmd {
+	return waitForControl(model.outputs)
 }
 
 // Update 更新纯 UI 状态，并把会话操作留给 tea.Cmd。
@@ -133,28 +142,14 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.height = value.Height
 		model.composer.resize(value.Width, value.Height)
 		return model, nil
-	case streamReadyMsg:
-		if model.state != stateSubmitting || model.pending == nil {
-			return model, nil
-		}
-		prompt := model.pending.text
-		model.transcript = append(model.transcript, transcriptMessage{role: "User", text: prompt})
-		model.composer.history.add(prompt)
-		model.composer.clear()
-		model.pending = nil
-		model.state = stateStreaming
-		model.events = value.events
-		waitCommand := waitForEvent(value.events)
-		if !model.interruptNext {
-			return model, waitCommand
-		}
-		model.interruptNext = false
-		return model, tea.Batch(waitCommand, interruptSession(model.session))
+	case controlItemMsg:
+		next, cmd := model.projectControlItem(value.item)
+		return next, tea.Batch(cmd, waitForControl(model.outputs))
 	case eventStreamClosedMsg:
 		if model.state == stateStreaming {
 			model.state = stateIdle
 			model.assistantItem = -1
-			model.events = nil
+			model.outputs = nil
 			model.interruptNext = false
 			model.errorSummary = "stream_protocol_error: runtime event stream closed before terminal"
 		}
@@ -174,9 +169,13 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.composer = *model.pending
 		model.composer.resize(model.widthOrDefault(), model.heightOrDefault())
 		model.pending = nil
-		model.state = stateIdle
+		model.refreshState()
 		model.interruptNext = false
 		model.cancelling = false
+		model.errorSummary = safeErrorSummary(value.err)
+		return model, nil
+	case retractFailedMsg:
+		model.retracting = nil
 		model.errorSummary = safeErrorSummary(value.err)
 		return model, nil
 	case approvalSubmitErrorMsg:
@@ -193,7 +192,7 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if key.Paste && (model.approval != nil || model.detailOpen || model.state != stateIdle) {
+	if key.Paste && (model.approval != nil || model.detailOpen || (model.pending != nil || model.retracting != nil)) {
 		if model.approval != nil && model.approval.editing && !model.approval.submitted {
 			return model.handleApprovalKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: key.Runes, Paste: true})
 		}
@@ -208,16 +207,34 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if model.detailOpen {
 		return model.handleCommandBrowserKey(key)
 	}
-	if model.state != stateIdle {
-		if key.Type == tea.KeyEsc || key.Type == tea.KeyCtrlC {
-			model.cancelling = true
-			if model.events == nil {
-				model.interruptNext = true
-				return model, nil
+	if key.Type == tea.KeyCtrlC && model.activeTurnID.Valid() {
+		model.cancelling = true
+		return model, interruptSession(model.session)
+	}
+	if model.cancelling {
+		return model, nil
+	}
+	if model.pending != nil || model.retracting != nil {
+		if model.pending != nil && (key.Type == tea.KeyCtrlC || key.Type == tea.KeyEsc) {
+			if model.activeTurnID.Valid() {
+				model.cancelling = true
+				return model, interruptSession(model.session)
 			}
-			return model, interruptSession(model.session)
+			model.interruptNext = true
 		}
 		return model, nil
+	}
+	if key.Type == tea.KeyCtrlR || key.Type == tea.KeyCtrlD {
+		return model.handleReturnedInput(key.Type == tea.KeyCtrlR)
+	}
+	if key.Type == tea.KeyEsc || (key.Type == tea.KeyUp && model.composer.text == "" && model.composer.rowIndex() == 0) {
+		if model.hasQueuedInput() {
+			return model.retractQueuedInputs()
+		}
+		if key.Type == tea.KeyEsc && model.activeTurnID.Valid() {
+			model.cancelling = true
+			return model, interruptSession(model.session)
+		}
 	}
 
 	intent, err := model.composer.input(key)
@@ -227,15 +244,21 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch intent {
 	case composerQuit:
+		if model.activeTurnID.Valid() || model.composer.text != "" {
+			return model, nil
+		}
 		return model, tea.Quit
 	case composerSubmit:
 		if model.session == nil {
 			return model, nil
 		}
+		if !model.canRetainInput(model.composer.text) {
+			model.errorSummary = "input_queue_full: take or discard returned inputs first"
+			return model, nil
+		}
 		snapshot := model.composer
 		model.pending = &snapshot
 		model.state = stateSubmitting
-		model.assistantItem = -1
 		model.errorSummary = ""
 		return model, model.submit(model.session, snapshot.text)
 	}
@@ -397,15 +420,28 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 			model.commandViews[payload.InvocationID] = commandDetail{activity: payload}
 		}
 
+	case protocol.EventUserInputCommitted:
+		payload, err := protocol.DecodeUserInputCommitted(event)
+		if err != nil || event.TurnID != model.activeTurnID {
+			model.errorSummary = "stream_protocol_error: invalid committed input"
+			return model, nil
+		}
+		model.transcript = append(model.transcript, transcriptMessage{role: "User", text: payload.Text})
+		model.assistantItem = -1
 	case protocol.EventTurnStarted:
 		if event.TurnID.Valid() {
 			model.activeTurnID = event.TurnID
+			model.refreshState()
+			if model.interruptNext {
+				model.interruptNext = false
+				model.cancelling = true
+				return model, interruptSession(model.session)
+			}
 		}
 	case protocol.EventAssistantTextDelta:
 		payload, err := protocol.DecodeAssistantTextDelta(event)
 		if err != nil {
 			model.state = stateIdle
-			model.events = nil
 			model.assistantItem = -1
 			model.interruptNext = false
 			model.errorSummary = "stream_protocol_error: invalid assistant text event"
@@ -419,7 +455,6 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 	case protocol.EventTurnCompleted:
 		if _, err := protocol.DecodeTurnCompleted(event); err != nil {
 			model.state = stateIdle
-			model.events = nil
 			model.assistantItem = -1
 			model.interruptNext = false
 			model.errorSummary = "stream_protocol_error: invalid turn completion event"
@@ -427,7 +462,6 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 		}
 		model.state = stateIdle
 		model.assistantItem = -1
-		model.events = nil
 		model.interruptNext = false
 		terminal = true
 	case protocol.EventTurnFailed:
@@ -439,7 +473,6 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 		}
 		model.state = stateIdle
 		model.assistantItem = -1
-		model.events = nil
 		model.interruptNext = false
 		terminal = true
 	case protocol.EventToolApprovalRequested:
@@ -474,10 +507,8 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 		model.activeTurnID = ""
 		model.cancelling = false
 	}
-	if terminal || model.events == nil {
-		return model, nil
-	}
-	return model, waitForEvent(model.events)
+	model.refreshState()
+	return model, nil
 }
 
 // View 渲染确定性的聊天投影和已准备的多行输入布局。
@@ -514,11 +545,8 @@ func (model Model) View() string {
 		_, _ = fmt.Fprintf(&view, "Error: %s\n", model.errorSummary)
 	}
 	view.WriteString("\n")
-	if model.state == stateStreaming {
-		view.WriteString("> [streaming — Esc/Ctrl+C to cancel]\n")
-	} else {
-		view.WriteString(model.composer.view(model.state == stateIdle))
-	}
+	view.WriteString(model.renderInputs())
+	view.WriteString(model.composer.view(model.pending == nil && model.retracting == nil && !model.cancelling))
 	return view.String()
 }
 
@@ -631,21 +659,24 @@ func truncateRunes(value string, width int) string {
 
 func submitTurn(ctx context.Context, session ChatSession, prompt string) tea.Cmd {
 	return func() tea.Msg {
-		events, err := session.Submit(ctx, prompt)
+		_, err := session.Append(ctx, prompt)
 		if err != nil {
 			return submissionFailedMsg{err: err}
 		}
-		return streamReadyMsg{events: events}
+		return nil
 	}
 }
 
-func waitForEvent(events <-chan protocol.Event) tea.Cmd {
+func waitForControl(outputs <-chan protocol.ControlItem) tea.Cmd {
+	if outputs == nil {
+		return nil
+	}
 	return func() tea.Msg {
-		event, open := <-events
+		item, open := <-outputs
 		if !open {
 			return eventStreamClosedMsg{}
 		}
-		return RuntimeEventMsg{Event: event}
+		return controlItemMsg{item: item}
 	}
 }
 

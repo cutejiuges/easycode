@@ -29,12 +29,12 @@ func TestPrepareToolOutputsPairsResultsInModelOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := tool.NewReadErrorResult(invocation, tool.ResultError, "read_failed", "cannot read file", ".")
-	history := []nativeHistoryEntry{{
-		Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("read it")),
+	history := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, NewUserItem("read it")), {
+		Kind: nativeHistorySample,
 		Outputs: []NativeItem{{
 			Type: "function_call", ID: "fc-1", CallID: "call-1", Name: "Read", Arguments: `{"file_path":"README.md"}`,
 		}},
-	}}
+	}})
 	entry, err := prepareToolOutputsEntry(history, []tool.InvocationResult{result})
 	if err != nil {
 		t.Fatal(err)
@@ -57,7 +57,7 @@ func TestPrepareCustomPatchOutputPreservesWireKind(t *testing.T) {
 	invocation, _ := tool.NewPatchInvocation(invocationID, ready)
 	result := tool.NewPatchErrorResult(invocation, tool.ResultDenied, "approval_required", "Patch denied: approval_required")
 	patch := "*** Begin Patch\n*** Update File: main.go\n@@\n-old\n+new\n*** End Patch\n"
-	history := []nativeHistoryEntry{{Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("edit it")), Outputs: []NativeItem{{Type: "custom_tool_call", ID: "ctc-1", CallID: "call-patch", Name: "apply_patch", Input: patch}}}}
+	history := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, NewUserItem("edit it")), {Kind: nativeHistorySample, Outputs: []NativeItem{{Type: "custom_tool_call", ID: "ctc-1", CallID: "call-patch", Name: "apply_patch", Input: patch}}}})
 	entry, err := prepareToolOutputsEntry(history, []tool.InvocationResult{result})
 	if err != nil {
 		t.Fatal(err)
@@ -77,26 +77,26 @@ func TestPrepareToolOutputsRejectsMismatchedCallID(t *testing.T) {
 	invocationID, _ := tool.GenerateInvocationID()
 	invocation, _ := tool.NewReadInvocation(invocationID, ready)
 	result := tool.NewReadErrorResult(invocation, tool.ResultError, "read_failed", "cannot read file", ".")
-	history := []nativeHistoryEntry{{
-		Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("read it")),
+	history := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, NewUserItem("read it")), {
+		Kind: nativeHistorySample,
 		Outputs: []NativeItem{{
 			Type: "function_call", ID: "fc-1", CallID: "call-1", Name: "Read", Arguments: `{"file_path":"README.md"}`,
 		}},
-	}}
+	}})
 	if _, err := prepareToolOutputsEntry(history, []tool.InvocationResult{result}); err == nil {
 		t.Fatal("mismatched tool result unexpectedly accepted")
 	}
 }
 
 func TestPrepareToolOutputsAcceptsOrderedHeterogeneousResultsAndRejectsCapabilityMismatch(t *testing.T) {
-	history := []nativeHistoryEntry{{
-		Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("search")),
+	history := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, NewUserItem("search")), {
+		Kind: nativeHistorySample,
 		Outputs: []NativeItem{
 			{Type: "function_call", ID: "fc-0", CallID: "call-0", Name: "Glob", Arguments: `{"pattern":"**/*.go"}`},
 			{Type: "function_call", ID: "fc-1", CallID: "call-1", Name: "Grep", Arguments: `{"pattern":"TODO"}`},
 			{Type: "function_call", ID: "fc-2", CallID: "call-2", Name: "Read", Arguments: `{"file_path":"README.md"}`},
 		},
-	}}
+	}})
 	results := []tool.InvocationResult{
 		testGlobProviderResult(t, "call-0"),
 		testGrepProviderResult(t, "call-1"),

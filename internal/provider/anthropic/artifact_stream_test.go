@@ -72,7 +72,8 @@ func TestReadArtifactSSEChunkingAndRejectedSamples(t *testing.T) {
 				}
 				defer instance.Close()
 				conversation := instance.NewConversation().(*Conversation)
-				turn, err := (provider.TurnInput{Text: "test"}).WithToolCatalog(testAnthropicToolCatalog(t))
+				testCommitUserInput(t, conversation, "test")
+				turn, err := provider.NewSamplingInput().WithToolCatalog(testAnthropicToolCatalog(t))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -106,9 +107,9 @@ func TestReadArtifactSSEChunkingAndRejectedSamples(t *testing.T) {
 				if terminals != 1 {
 					t.Fatalf("terminal count=%d", terminals)
 				}
-				want := 0
+				want := 1
 				if mode == "valid" {
-					want = 1
+					want = 2
 				}
 				if len(conversation.historySnapshot()) != want {
 					t.Fatal("invalid ReadArtifact stream changed native history")

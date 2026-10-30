@@ -10,7 +10,7 @@ import (
 )
 
 func TestCompileResponsesRequestMatchesGolden(t *testing.T) {
-	request, err := compileResponsesRequest("gpt-test", nil, nil, nativeItemPointer(NewUserItem("hello")), testOpenAIToolView(t))
+	request, err := compileResponsesRequest("gpt-test", append([]nativeHistoryEntry(nil), testInputEntry(t, NewUserItem("hello"))), nil, testOpenAIToolView(t))
 	if err != nil {
 		t.Fatalf("compile request: %v", err)
 	}
@@ -32,7 +32,7 @@ func TestCompileResponsesRequestMatchesGolden(t *testing.T) {
 
 func TestCompileResponsesRequestWithProjectInstructionsMatchesGolden(t *testing.T) {
 	snapshot := testOpenAIProjectInstructions(t, "AGENTS.md", "Use make verify.")
-	request, err := compileResponsesRequest("gpt-test", nil, &snapshot, nativeItemPointer(NewUserItem("hello")), testOpenAIToolView(t))
+	request, err := compileResponsesRequest("gpt-test", append([]nativeHistoryEntry(nil), testInputEntry(t, NewUserItem("hello"))), &snapshot, testOpenAIToolView(t))
 	if err != nil {
 		t.Fatalf("compile request: %v", err)
 	}
@@ -59,12 +59,12 @@ func TestCompileResponsesRequestIncludesNativeHistoryAndStableFingerprint(t *tes
 			Text: "first answer",
 		}},
 	}
-	history := []nativeHistoryEntry{testSampleEntry(NewUserItem("first"), []NativeItem{assistant})}
-	request := buildResponsesRequest("gpt-test", history, nil, nativeItemPointer(NewUserItem("second")), testOpenAIToolView(t))
+	history := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, NewUserItem("first")), testSampleEntry([]NativeItem{assistant})})
+	request := buildResponsesRequest("gpt-test", append(history, testInputEntry(t, NewUserItem("second"))), nil, testOpenAIToolView(t))
 	if len(request.Input) != 3 || request.Input[1].ID != "msg-1" || request.Input[2].Content[0].Text != "second" {
 		t.Fatalf("unexpected request input: %#v", request.Input)
 	}
-	compiled, err := compileResponsesRequest("gpt-test", history, nil, nativeItemPointer(NewUserItem("second")), testOpenAIToolView(t))
+	compiled, err := compileResponsesRequest("gpt-test", append(history, testInputEntry(t, NewUserItem("second"))), nil, testOpenAIToolView(t))
 	if err != nil {
 		t.Fatalf("compile request: %v", err)
 	}

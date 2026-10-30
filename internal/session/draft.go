@@ -258,7 +258,7 @@ func validateDraftPlacement(draft RecordDraft) error {
 		if draft.turnID != "" {
 			return fmt.Errorf("thread metadata draft placement is invalid")
 		}
-	case EventTurnStarted, EventProviderNativeCommit, EventSampleUsage, EventToolCallReady,
+	case EventTurnInputsCommitted, EventTurnStarted, EventProviderNativeCommit, EventSampleUsage, EventToolCallReady,
 		EventToolApprovalDecided, EventToolExecutionStarted, EventToolCallResult, EventTurnCompleted, EventTurnFailed:
 		if draft.parentThreadID != "" || !draft.turnID.Valid() {
 			return fmt.Errorf("turn draft placement is invalid")
@@ -271,8 +271,8 @@ func validateDraftPlacement(draft RecordDraft) error {
 
 func validateDraftPayload(draft RecordDraft) error {
 	record := Record{
-		PayloadVersion: EnvelopeVersion,
-		EventKind:      draft.descriptor.Kind, Payload: draft.PayloadBytes(),
+		PayloadVersion: EnvelopeVersion, TurnID: draft.turnID,
+		EventKind: draft.descriptor.Kind, Payload: draft.PayloadBytes(),
 	}
 	switch draft.descriptor.Kind {
 	case EventSessionMeta:
@@ -283,6 +283,9 @@ func validateDraftPayload(draft RecordDraft) error {
 		if err == nil && payload.ParentThreadID != draft.parentThreadID {
 			return fmt.Errorf("thread metadata parent does not match draft")
 		}
+		return err
+	case EventTurnInputsCommitted:
+		_, err := DecodeTurnInputsPayload(record)
 		return err
 	case EventTurnStarted:
 		_, err := DecodeTurnStartedPayload(record)

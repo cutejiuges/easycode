@@ -17,12 +17,14 @@ import (
 )
 
 type controlledInvocation struct {
+	history domain.SemanticHistoryView
 	input   string
 	ctx     context.Context
 	release chan provider.StreamEvent
 }
 
 type controlledConversation struct {
+	history        domain.SemanticHistoryView
 	calls          chan controlledInvocation
 	cancelObserved chan struct{}
 	cancelRelease  <-chan struct{}
@@ -40,7 +42,10 @@ func (*controlledConversation) Capabilities() provider.Capabilities {
 	return provider.Capabilities{Streaming: true}
 }
 
-func (*controlledConversation) ProjectHistory() domain.SemanticHistoryView {
+func (conversation *controlledConversation) ProjectHistory() domain.SemanticHistoryView {
+	if conversation.history.Provider.Valid() {
+		return conversation.history.Clone()
+	}
 	return domain.SemanticHistoryView{Provider: domain.ProviderOpenAI, Turns: make([]domain.SemanticTurn, 0)}
 }
 
@@ -58,7 +63,7 @@ func (conversation *controlledConversation) Stream(ctx context.Context, input pr
 		}
 	}
 	stream := make(chan provider.StreamEvent, 1)
-	invocation := controlledInvocation{input: input.Text, ctx: ctx, release: make(chan provider.StreamEvent, 1)}
+	invocation := controlledInvocation{history: conversation.history.Clone(), input: conversation.history.Turns[len(conversation.history.Turns)-1].Messages[0].Text, ctx: ctx, release: make(chan provider.StreamEvent, 1)}
 	conversation.calls <- invocation
 	go func() {
 		defer conversation.active.Add(-1)
@@ -305,7 +310,7 @@ func TestAgentLoopContinuesAfterOrdinaryFailureAndStopsWhenPoisoned(t *testing.T
 
 	t.Run("poisoned journal", func(t *testing.T) {
 		conversation := newControlledConversation()
-		journal := &fakeJournal{failAt: 2}
+		journal := &fakeJournal{failAt: 3}
 		loop := newControlledAgentLoop(t, conversation, journal)
 		runDone := startAgentLoop(t, loop)
 		submitLoopCommand(t, loop, "poison-1", "first")

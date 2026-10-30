@@ -1,8 +1,8 @@
 EasyCode test
-Status: streaming
-
-User:   中文 é 👨‍👩‍👧‍👦
-    code\u001b[31m 
+Status: idle
 
 
-> [streaming — Esc/Ctrl+C to cancel]
+[queued]   中文 é 👨‍👩‍👧‍👦 ↵     code\u001b[31m  ↵
+Up/Esc: edit queued · Ctrl+R: take returned · Ctrl+D: discard returned
+> |
+Enter: send | Alt+Enter/Ctrl+J: newline

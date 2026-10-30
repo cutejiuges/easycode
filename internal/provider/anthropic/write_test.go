@@ -69,7 +69,7 @@ func TestWriteOutputPairsOnlyMatchingToolUse(t *testing.T) {
 	id, _ := tool.GenerateInvocationID()
 	v, _ := tool.NewWriteInvocation(id, ready)
 	result := tool.NewWriteErrorResult(v, tool.ResultDenied, "approval_required", "Write denied: approval_required")
-	history := []nativeHistoryEntry{{Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("write")), Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeToolUse, ID: "call-write", Name: "Write", Input: []byte(`{"file_path":"a","content":"secret-body"}`)}}}, Metadata: messageMetadata{ID: "write", Model: "claude-test"}}}
+	history := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, newUserMessage("write")), {Kind: nativeHistorySample, Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeToolUse, ID: "call-write", Name: "Write", Input: []byte(`{"file_path":"a","content":"secret-body"}`)}}}, Metadata: messageMetadata{ID: "write", Model: "claude-test"}}})
 	entry, err := prepareToolOutputsEntry(history, []tool.InvocationResult{result})
 	if err != nil {
 		t.Fatal(err)
@@ -81,8 +81,8 @@ func TestWriteOutputPairsOnlyMatchingToolUse(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, mutation := range []func(*NativeItem){func(i *NativeItem) { i.ID = "other" }, func(i *NativeItem) { i.Name = "Read" }} {
-		changed := history[0]
-		changed.Assistant.Content = append([]NativeItem(nil), history[0].Assistant.Content...)
+		changed := history[1]
+		changed.Assistant.Content = append([]NativeItem(nil), history[1].Assistant.Content...)
 		mutation(&changed.Assistant.Content[0])
 		if _, err := prepareToolOutputsEntry([]nativeHistoryEntry{changed}, []tool.InvocationResult{result}); err == nil {
 			t.Fatal("接受错配 output")
@@ -95,14 +95,14 @@ func TestWriteAggregateNativeAndRequestBudgetsRemainSixteenMiB(t *testing.T) {
 	if _, err := tool.DecodeWriteInput([]byte(input)); err != nil {
 		t.Fatal("单调用应在预算内", err)
 	}
-	entry := nativeHistoryEntry{Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("write")), Assistant: nativeMessage{Role: roleAssistant}, Metadata: messageMetadata{ID: "write", Model: "claude-test"}}
+	entry := nativeHistoryEntry{Kind: nativeHistorySample, Assistant: nativeMessage{Role: roleAssistant}, Metadata: messageMetadata{ID: "write", Model: "claude-test"}}
 	for i := 0; i < 17; i++ {
 		entry.Assistant.Content = append(entry.Assistant.Content, NativeItem{Type: blockTypeToolUse, ID: fmt.Sprintf("call-%d", i), Name: "Write", Input: []byte(input)})
 	}
 	if _, err := encodeNativeCommit(entry); err == nil {
 		t.Fatal("聚合 Write 绕过 native record budget")
 	}
-	if _, err := compileMessagesRequest("claude-test", 1024, []nativeHistoryEntry{entry}, nil, nil, testAnthropicToolView(t)); err == nil {
+	if _, err := compileMessagesRequest("claude-test", 1024, []nativeHistoryEntry{entry}, nil, testAnthropicToolView(t)); err == nil {
 		t.Fatal("聚合 Write 绕过 request budget")
 	}
 	if maxMessagesRequestBytes != 16<<20 {

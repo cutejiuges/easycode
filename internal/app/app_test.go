@@ -444,7 +444,7 @@ func TestChatResourcesCloseOrdersSessionJournalAndProvider(t *testing.T) {
 	mu.Lock()
 	got := append([]string(nil), timeline...)
 	mu.Unlock()
-	want := []string{"append:turn_started", "provider:stream", "append:turn_failed", "journal:close", "provider:close"}
+	want := []string{"append:turn_started", "append:turn_inputs_committed", "provider:stream", "append:turn_failed", "journal:close", "provider:close"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("close timeline = %#v, want %#v", got, want)
 	}
@@ -770,7 +770,7 @@ func (resource *orderedProviderResource) NewConversation() provider.Conversation
 	return resource.factory.NewConversation()
 }
 
-func (resource *orderedProviderResource) RestoreConversation(commits []provider.NativeCommitEnvelope) (provider.Conversation, error) {
+func (resource *orderedProviderResource) RestoreConversation(commits []provider.RestoreRecord) (provider.Conversation, error) {
 	return resource.factory.RestoreConversation(commits)
 }
 

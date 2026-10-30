@@ -101,7 +101,7 @@ func TestListThenResumeBothProviders(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(resumed.history.Turns) != 1 || resumed.history.Turns[0].UserText != "private-list-prompt" {
+			if len(resumed.history.Turns) != 1 || resumed.history.Turns[0].Messages[0].Text != "private-list-prompt" {
 				t.Fatal("history was lost")
 			}
 			submitAppTurn(t, resumed, "next")

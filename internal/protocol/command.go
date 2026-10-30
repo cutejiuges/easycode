@@ -11,7 +11,7 @@ import (
 
 const (
 	// MaxInputBytes 是单条 Runtime 文本输入的 UTF-8 字节上限。
-	MaxInputBytes = 4 << 20
+	MaxInputBytes = domain.MaxUserInputBytes
 	// MaxRequestIDBytes 是进程内关联标识的字节上限。
 	MaxRequestIDBytes = 128
 )
@@ -20,10 +20,13 @@ const (
 type CommandKind string
 
 const (
-	CommandSubmitInput         CommandKind = "submit_input"
-	CommandInterrupt           CommandKind = "interrupt"
-	CommandShutdown            CommandKind = "shutdown"
-	CommandResolveToolApproval CommandKind = "resolve_tool_approval"
+	CommandSubmitInput               CommandKind = "submit_input"
+	CommandSubmitConversationalInput CommandKind = "submit_conversational_input"
+	CommandRetractInputs             CommandKind = "retract_inputs"
+	CommandStopTurn                  CommandKind = "stop_turn"
+	CommandInterrupt                 CommandKind = "interrupt"
+	CommandShutdown                  CommandKind = "shutdown"
+	CommandResolveToolApproval       CommandKind = "resolve_tool_approval"
 )
 
 // RequestID 是调用方提供的进程内命令关联标识。
@@ -53,6 +56,7 @@ type Command struct {
 	kind              CommandKind
 	requestID         RequestID
 	text              string
+	inputIDs          []domain.InputID
 	expectedTurnID    domain.TurnID
 	approvalRequestID string
 	invocationID      string
@@ -119,17 +123,34 @@ func (command Command) Validate() error {
 	if !command.requestID.Valid() {
 		return fmt.Errorf("command request ID is invalid")
 	}
+	if command.kind != CommandRetractInputs && len(command.inputIDs) != 0 {
+		return fmt.Errorf("command contains unrelated input IDs")
+	}
 	switch command.kind {
-	case CommandSubmitInput:
+	case CommandSubmitInput, CommandSubmitConversationalInput:
 		if command.expectedTurnID != "" || command.approvalRequestID != "" || command.invocationID != "" || command.fingerprint != "" || command.decision != "" || command.feedback != "" {
 			return fmt.Errorf("submit command contains an interrupt target")
 		}
 		if err := validateInputText(command.text); err != nil {
 			return err
 		}
-	case CommandInterrupt:
+	case CommandInterrupt, CommandStopTurn:
 		if command.text != "" || !command.expectedTurnID.Valid() || command.approvalRequestID != "" || command.invocationID != "" || command.fingerprint != "" || command.decision != "" || command.feedback != "" {
 			return fmt.Errorf("interrupt command payload is invalid")
+		}
+	case CommandRetractInputs:
+		if command.text != "" || command.expectedTurnID != "" || command.approvalRequestID != "" || command.invocationID != "" || command.fingerprint != "" || command.decision != "" || command.feedback != "" || len(command.inputIDs) == 0 || len(command.inputIDs) > domain.MaxPendingInputs {
+			return fmt.Errorf("retract command payload is invalid")
+		}
+		seen := make(map[domain.InputID]struct{}, len(command.inputIDs))
+		for _, id := range command.inputIDs {
+			if !id.Valid() {
+				return fmt.Errorf("retract input ID is invalid")
+			}
+			if _, exists := seen[id]; exists {
+				return fmt.Errorf("retract input ID is duplicated")
+			}
+			seen[id] = struct{}{}
 		}
 	case CommandShutdown:
 		if command.text != "" || command.expectedTurnID != "" || command.approvalRequestID != "" || command.invocationID != "" || command.fingerprint != "" || command.decision != "" || command.feedback != "" {
@@ -156,4 +177,36 @@ func validateInputText(text string) error {
 		return fmt.Errorf("command input exceeds %d bytes", MaxInputBytes)
 	}
 	return nil
+}
+
+// NewSubmitConversationalInputCommand 创建优先进入工具安全点的自动输入命令。
+func NewSubmitConversationalInputCommand(requestID RequestID, text string) (Command, error) {
+	command := Command{kind: CommandSubmitConversationalInput, requestID: requestID, text: text}
+	if err := command.Validate(); err != nil {
+		return Command{}, err
+	}
+	return command, nil
+}
+
+// NewRetractInputsCommand 创建原子取回指定排队输入的命令。
+func NewRetractInputsCommand(requestID RequestID, ids []domain.InputID) (Command, error) {
+	command := Command{kind: CommandRetractInputs, requestID: requestID, inputIDs: append([]domain.InputID(nil), ids...)}
+	if err := command.Validate(); err != nil {
+		return Command{}, err
+	}
+	return command, nil
+}
+
+// NewStopTurnCommand 创建返还未消费自动输入的定向停止命令。
+func NewStopTurnCommand(requestID RequestID, turnID domain.TurnID) (Command, error) {
+	command := Command{kind: CommandStopTurn, requestID: requestID, expectedTurnID: turnID}
+	if err := command.Validate(); err != nil {
+		return Command{}, err
+	}
+	return command, nil
+}
+
+// InputIDs 返回独立的取回目标身份副本。
+func (command Command) InputIDs() []domain.InputID {
+	return append([]domain.InputID(nil), command.inputIDs...)
 }

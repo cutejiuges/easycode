@@ -24,13 +24,13 @@ func TestProjectHistory(t *testing.T) {
 		},
 		{
 			name: "ordered text across items and parts",
-			history: []nativeHistoryEntry{
-				{
-					Kind: nativeHistorySample, Input: nativeItemPointer(NativeItem{Type: "message", Role: "user", Content: []ContentPart{
-						{Type: "input_text", Text: "first\n"},
-						{Type: "input_image", Text: "ignored-image"},
-						{Type: "input_text", Text: "question"},
-					}}),
+			history: testAssociatedHistory([]nativeHistoryEntry{
+				testInputEntry(t, NativeItem{Type: "message", Role: "user", Content: []ContentPart{
+					{Type: "input_text", Text: "first\n"},
+					{Type: "input_image", Text: "ignored-image"},
+					{Type: "input_text", Text: "question"},
+				}}), {
+					Kind: nativeHistorySample,
 					Outputs: []NativeItem{
 						{Type: "reasoning", ReasoningSummary: []ReasoningSummaryPart{{Type: "summary_text", Text: "private summary"}}, EncryptedContent: "opaque-encrypted"},
 						{Type: "message", ID: "msg-1", Role: "assistant", Phase: "final", Content: []ContentPart{
@@ -41,39 +41,39 @@ func TestProjectHistory(t *testing.T) {
 						{Type: "message", Role: "assistant", Content: []ContentPart{{Type: "output_text", Text: "one"}}},
 					},
 				},
-				{
-					Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("second")),
+				testInputEntry(t, NewUserItem("second")), {
+					Kind: nativeHistorySample,
 					Outputs: []NativeItem{{
 						Type: "message", Role: "assistant", Content: []ContentPart{{Type: "output_text", Text: "answer two"}},
 					}},
 				},
-			},
+			}),
 			want: domain.SemanticHistoryView{Provider: domain.ProviderOpenAI, Turns: []domain.SemanticTurn{
-				{UserText: "first\nquestion", AssistantText: "answer one"},
-				{UserText: "second", AssistantText: "answer two"},
+				testSemanticTurn("first\nquestion", "answer one"),
+				testSemanticTurn("second", "answer two"),
 			}},
 		},
 		{
 			name: "empty assistant text and strict item filters",
-			history: []nativeHistoryEntry{
-				{
-					Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("visible")),
+			history: testAssociatedHistory([]nativeHistoryEntry{
+				testInputEntry(t, NewUserItem("visible")), {
+					Kind: nativeHistorySample,
 					Outputs: []NativeItem{
 						{Type: "reasoning", Content: []ContentPart{{Type: "output_text", Text: "wrong item type"}}},
 						{Type: "message", Role: "user", Content: []ContentPart{{Type: "output_text", Text: "wrong role"}}},
 						{Type: "message", Role: "assistant", Content: []ContentPart{{Type: "input_text", Text: "wrong part"}}},
 					},
 				},
-				{
-					Kind: nativeHistorySample, Input: nativeItemPointer(NativeItem{Type: "message", Role: "assistant", Content: []ContentPart{{Type: "input_text", Text: "wrong user role"}}}),
+				testInputEntry(t, NativeItem{Type: "message", Role: "assistant", Content: []ContentPart{{Type: "input_text", Text: "wrong user role"}}}), {
+					Kind: nativeHistorySample,
 					Outputs: []NativeItem{{
 						Type: "message", Role: "assistant", Content: []ContentPart{{Type: "output_text", Text: "visible answer"}},
 					}},
 				},
-			},
+			}),
 			want: domain.SemanticHistoryView{Provider: domain.ProviderOpenAI, Turns: []domain.SemanticTurn{
-				{UserText: "visible", AssistantText: ""},
-				{UserText: "", AssistantText: "visible answer"},
+				testSemanticTurn("visible", ""),
+				testSemanticTurn("", "visible answer"),
 			}},
 		},
 	}
@@ -94,8 +94,8 @@ func TestProjectHistoryConcurrentCommitReturnsCompleteSnapshots(t *testing.T) {
 		defer close(done)
 		<-start
 		for index := 0; index < 200; index++ {
-			conversation.history.commit(nativeHistoryEntry{
-				Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem(fmt.Sprintf("user-%d", index))),
+			testCommitHistory(t, &conversation.history, testInputEntry(t, NewUserItem(fmt.Sprintf("user-%d", index))), nativeHistoryEntry{
+				Kind:    nativeHistorySample,
 				Outputs: []NativeItem{{Type: "message", Role: "assistant", Content: []ContentPart{{Type: "output_text", Text: fmt.Sprintf("assistant-%d", index)}}}},
 			})
 			runtime.Gosched()
@@ -125,7 +125,7 @@ func assertCompleteOpenAIProjection(t *testing.T, projection domain.SemanticHist
 	for index, turn := range projection.Turns {
 		wantUser := fmt.Sprintf("user-%d", index)
 		wantAssistant := fmt.Sprintf("assistant-%d", index)
-		if turn.UserText != wantUser || turn.AssistantText != wantAssistant {
+		if len(turn.Messages) == 0 || len(turn.Messages) > 2 || turn.Messages[0].Text != wantUser || (len(turn.Messages) == 2 && turn.Messages[1].Text != wantAssistant) || (len(turn.Messages) == 1 && index != len(projection.Turns)-1) {
 			t.Fatalf("partial turn %d: %#v", index, turn)
 		}
 	}
@@ -133,7 +133,7 @@ func assertCompleteOpenAIProjection(t *testing.T, projection domain.SemanticHist
 
 func TestProjectHistoryMatchesGoldenAndOmitsOpaqueData(t *testing.T) {
 	conversation := &Conversation{}
-	conversation.history.commit(nativeHistoryEntry{Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("hello\nworld")), Outputs: []NativeItem{
+	testCommitHistory(t, &conversation.history, testInputEntry(t, NewUserItem("hello\nworld")), nativeHistoryEntry{Kind: nativeHistorySample, Outputs: []NativeItem{
 		{
 			Type:             "reasoning",
 			ID:               "reasoning-secret",
@@ -170,12 +170,12 @@ func TestProjectHistoryMatchesGoldenAndOmitsOpaqueData(t *testing.T) {
 func TestProjectHistoryIsIndependentAndDoesNotChangeRequest(t *testing.T) {
 	conversation := &Conversation{}
 	reasoningRaw := []byte(`{"type":"reasoning","id":"reasoning-1","summary":[{"type":"summary_text","text":"private"}],"encrypted_content":"opaque-encrypted"}`)
-	conversation.history.commit(nativeHistoryEntry{Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("first")), Outputs: []NativeItem{
+	testCommitHistory(t, &conversation.history, testInputEntry(t, NewUserItem("first")), nativeHistoryEntry{Kind: nativeHistorySample, Outputs: []NativeItem{
 		{Type: "reasoning", ID: "reasoning-1", EncryptedContent: "opaque-encrypted", Raw: reasoningRaw},
 		{Type: "message", ID: "msg-1", Role: "assistant", Content: []ContentPart{{Type: "output_text", Text: "answer"}}},
 	}})
 
-	before, err := compileResponsesRequest("gpt-test", conversation.history.snapshot(), nil, nativeItemPointer(NewUserItem("second")), testOpenAIToolView(t))
+	before, err := compileResponsesRequest("gpt-test", append(conversation.history.snapshot(), testInputEntry(t, NewUserItem("second"))), nil, testOpenAIToolView(t))
 	if err != nil {
 		t.Fatalf("compile request before projection: %v", err)
 	}
@@ -186,14 +186,14 @@ func TestProjectHistoryIsIndependentAndDoesNotChangeRequest(t *testing.T) {
 
 	view := conversation.ProjectHistory()
 	view.Provider = domain.ProviderAnthropic
-	view.Turns[0].UserText = "changed"
-	view.Turns[0].AssistantText = "changed"
-	view.Turns = append(view.Turns, domain.SemanticTurn{UserText: "injected"})
+	view.Turns[0].Messages[0].Text = "changed"
+	view.Turns[0].Messages[1].Text = "changed"
+	view.Turns = append(view.Turns, testSemanticTurn("injected", ""))
 
 	afterView := conversation.ProjectHistory()
-	wantView := domain.SemanticHistoryView{Provider: domain.ProviderOpenAI, Turns: []domain.SemanticTurn{{UserText: "first", AssistantText: "answer"}}}
+	wantView := domain.SemanticHistoryView{Provider: domain.ProviderOpenAI, Turns: []domain.SemanticTurn{testSemanticTurn("first", "answer")}}
 	assertSemanticHistory(t, afterView, wantView)
-	after, err := compileResponsesRequest("gpt-test", conversation.history.snapshot(), nil, nativeItemPointer(NewUserItem("second")), testOpenAIToolView(t))
+	after, err := compileResponsesRequest("gpt-test", append(conversation.history.snapshot(), testInputEntry(t, NewUserItem("second"))), nil, testOpenAIToolView(t))
 	if err != nil {
 		t.Fatalf("compile request after projection: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestProjectHistoryIsIndependentAndDoesNotChangeRequest(t *testing.T) {
 	if beforeSegment.Fingerprint() != afterSegment.Fingerprint() || string(beforeSegment.CanonicalJSON()) != string(afterSegment.CanonicalJSON()) {
 		t.Fatalf("projection changed request:\n before: %s\n after: %s", beforeSegment.CanonicalJSON(), afterSegment.CanonicalJSON())
 	}
-	afterRequest := buildResponsesRequest("gpt-test", conversation.history.snapshot(), nil, nativeItemPointer(NewUserItem("second")), testOpenAIToolView(t))
+	afterRequest := buildResponsesRequest("gpt-test", append(conversation.history.snapshot(), testInputEntry(t, NewUserItem("second"))), nil, testOpenAIToolView(t))
 	if len(afterRequest.Input) != 4 || afterRequest.Input[1].EncryptedContent != "opaque-encrypted" || string(afterRequest.Input[1].Raw) != string(reasoningRaw) {
 		t.Fatalf("projection changed reasoning replay: %#v", afterRequest.Input)
 	}

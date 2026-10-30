@@ -246,7 +246,7 @@ func TestInteractivePatchAllowOnceForBothProviders(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			events, err := controlSession.Submit(context.Background(), "Update main.go")
+			events, err := submitInteractiveFixture(t, controlSession, context.Background(), "Update main.go")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -321,7 +321,7 @@ func TestInteractivePatchDenyFeedbackAndConflictForBothProviders(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				events, err := controlSession.Submit(context.Background(), "Update main.go")
+				events, err := submitInteractiveFixture(t, controlSession, context.Background(), "Update main.go")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -540,7 +540,7 @@ func toolCrashCheckpoints(t *testing.T, dataRoot string, threadID domain.ThreadI
 			})
 		case session.EventProviderNativeCommit:
 			nativeCommits++
-			if nativeCommits == 2 {
+			if nativeCommits == 3 {
 				checkpoints = append(checkpoints, toolCrashCheckpoint{
 					name: "output", sequence: record.Sequence, outputMarker: "original before crash",
 				})

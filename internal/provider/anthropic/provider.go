@@ -102,12 +102,26 @@ func (instance *Provider) NewConversation() provider.Conversation {
 }
 
 // RestoreConversation 先事务式校验全部 commits，再构造可调用 Conversation。
-func (instance *Provider) RestoreConversation(commits []provider.NativeCommitEnvelope) (provider.Conversation, error) {
+func (instance *Provider) RestoreConversation(commits []provider.RestoreRecord) (provider.Conversation, error) {
 	entries := make([]nativeHistoryEntry, 0, len(commits))
 	for index, commit := range commits {
-		entry, err := decodeNativeCommit(commit)
+		envelope, err := commit.Envelope()
+		if err != nil {
+			return nil, err
+		}
+		entry, err := decodeNativeCommit(envelope)
 		if err != nil {
 			return nil, fmt.Errorf("restore Anthropic native commit %d: %w", index+1, err)
+		}
+		if string(entry.Kind) != string(commit.Role()) {
+			return nil, fmt.Errorf("native commit role mismatch")
+		}
+		entry.TurnID = commit.TurnID()
+		if entry.Kind == nativeHistoryUserInputs {
+			a, ok := commit.Association()
+			if !ok || entry.InputMetadata == nil || !entry.InputMetadata.Matches(a) {
+				return nil, fmt.Errorf("native input association mismatch")
+			}
 		}
 		entries = append(entries, entry.clone())
 	}
@@ -148,43 +162,17 @@ func (conversation *Conversation) Stream(
 		return nil, fault.New(fault.CodeTurnFailed, "conversation has an unfinalized sample")
 	}
 
-	expectsContinuation := conversation.history.expectsContinuation()
-	if input.IsToolContinuation() && !expectsContinuation {
+	history := conversation.history.snapshot()
+	if len(history) == 0 || validateNativeHistory(history) != nil || (history[len(history)-1].Kind != nativeHistoryUserInputs && history[len(history)-1].Kind != nativeHistoryToolOutputs) {
 		conversation.active.Store(false)
-		return nil, fault.New(fault.CodeTurnFailed, "turn input does not match native history state")
-	}
-	var userMessage *nativeMessage
-	if !input.IsToolContinuation() {
-		message := newUserMessage(input.Text)
-		userMessage = &message
-	}
-	projectInstructions, hasProjectInstructions, err := input.ProjectInstructions()
-	if err != nil {
-		conversation.active.Store(false)
-		return nil, fault.Wrap(fault.CodeProviderRequest, "read project instructions failed", err)
-	}
-	var projectInstructionsPointer *domain.ProjectInstructionsSnapshot
-	if hasProjectInstructions {
-		projectInstructionsPointer = &projectInstructions
+		return nil, fault.New(fault.CodeTurnFailed, "native history is not ready for sampling")
 	}
 	catalog, hasCatalog, err := input.ToolCatalog()
 	if err != nil || !hasCatalog {
 		conversation.active.Store(false)
 		return nil, fault.New(fault.CodeProviderRequest, "tool catalog is required")
 	}
-	toolView, err := catalog.View(domain.ProviderAnthropic)
-	if err != nil {
-		conversation.active.Store(false)
-		return nil, fault.Wrap(fault.CodeProviderRequest, "compile tool catalog failed", err)
-	}
-	request, err := compileMessagesRequest(
-		conversation.provider.config.Model,
-		conversation.provider.config.MaxOutputTokens,
-		conversation.history.snapshot(),
-		projectInstructionsPointer,
-		userMessage,
-		toolView,
-	)
+	request, err := conversation.compileSamplingRequest(history, input)
 	if err != nil {
 		conversation.active.Store(false)
 		return nil, fault.Wrap(fault.CodeProviderRequest, "compile provider request failed", err)
@@ -211,14 +199,13 @@ func (conversation *Conversation) Stream(
 	}
 
 	output := make(chan provider.StreamEvent, 16)
-	go conversation.consumeStream(ctx, cancelStream, userMessage, catalog, stream, output)
+	go conversation.consumeStream(ctx, cancelStream, catalog, stream, output)
 	return output, nil
 }
 
 func (conversation *Conversation) consumeStream(
 	ctx context.Context,
 	cancelStream context.CancelFunc,
-	userMessage *nativeMessage,
 	catalog tool.CatalogSnapshot,
 	stream <-chan transport.SSEMessage,
 	output chan<- provider.StreamEvent,
@@ -288,10 +275,9 @@ func (conversation *Conversation) consumeStream(
 					Assistant: reducer.assistantMessage(),
 					Metadata:  reducer.messageMetadata(),
 				}
-				if userMessage != nil {
-					inputMessage := userMessage.clone()
-					entry.Input = &inputMessage
-				}
+				snapshot := conversation.history.snapshot()
+				entry.TurnID = snapshot[len(snapshot)-1].TurnID
+
 				envelope, encodeErr := encodeNativeCommit(entry)
 				if encodeErr != nil {
 					sendTerminal(provider.StreamEventFailed, nil, fault.Wrap(fault.CodeStreamProtocol, "Anthropic completed sample is invalid", encodeErr))
@@ -365,12 +351,6 @@ func (history *nativeHistory) commit(entry nativeHistoryEntry) {
 	if history.revision < ^uint64(0) {
 		history.revision++
 	}
-}
-
-func (history *nativeHistory) expectsContinuation() bool {
-	history.mu.RLock()
-	defer history.mu.RUnlock()
-	return len(history.entries) > 0 && history.entries[len(history.entries)-1].Kind == nativeHistoryToolOutputs
 }
 
 func (conversation *Conversation) historySnapshot() []nativeHistoryEntry {

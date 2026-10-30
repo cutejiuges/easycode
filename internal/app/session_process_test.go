@@ -39,6 +39,7 @@ func TestSessionServiceResumeAcrossProcesses(t *testing.T) {
 	if _, err := created.writer.AppendBatch(context.Background(), []session.RecordDraft{startedDraft}); err != nil {
 		t.Fatal(err)
 	}
+	appendFixtureInitialInput(t, created.writer, completedTurnID)
 	usage, err := domain.NewSampleUsage(
 		domain.KnownUsageMetric(1), domain.UnknownUsageMetric(),
 		domain.NotApplicableUsageMetric(), domain.KnownUsageMetric(2),
@@ -120,15 +121,15 @@ func TestSessionServiceResumeAcrossProcesses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(records) != 1 || records[0].Sequence != 7 {
+	if len(records) != 1 || records[0].Sequence != 9 {
 		t.Fatalf("resumed append records = %#v", records)
 	}
 	if err := resumed.writer.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	loaded, _ := loadAppPlan(t, competitor, created.identity.ThreadID)
-	if loaded.NextSequence != 8 || loaded.Records[len(loaded.Records)-1].Sequence != 7 ||
-		len(factory.restored) != 1 {
+	if loaded.NextSequence != 10 || loaded.Records[len(loaded.Records)-1].Sequence != 9 ||
+		len(factory.restored) != 2 {
 		t.Fatalf("resumed journal next/last = %d/%d", loaded.NextSequence, loaded.Records[len(loaded.Records)-1].Sequence)
 	}
 }

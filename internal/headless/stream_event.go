@@ -37,11 +37,25 @@ type StreamControlResponseEvent struct {
 	Version     int                         `json:"version"`
 	Type        string                      `json:"type"`
 	RequestID   protocol.RequestID          `json:"request_id"`
+	EntryID     domain.InputID              `json:"entry_id,omitempty"`
 	CommandType string                      `json:"command_type"`
 	Status      protocol.CommandStatus      `json:"status"`
 	Disposition protocol.CommandDisposition `json:"disposition,omitempty"`
 	Error       *StreamControlError         `json:"error,omitempty"`
 }
+
+// StreamInputStatusEvent 投影输入归属与持久化结果，不包含正文。
+type StreamInputStatusEvent struct {
+	Version   int                  `json:"version"`
+	Type      string               `json:"type"`
+	RequestID protocol.RequestID   `json:"request_id"`
+	EntryID   domain.InputID       `json:"entry_id"`
+	State     protocol.InputState  `json:"state"`
+	TurnID    domain.TurnID        `json:"turn_id,omitempty"`
+	Reason    protocol.InputReason `json:"reason,omitempty"`
+}
+
+func (StreamInputStatusEvent) streamEvent() {}
 
 // StreamTurnStartedEvent 表示某个 input 已 durable 开始独立 turn。
 type StreamTurnStartedEvent struct {
@@ -158,6 +172,9 @@ func (projectorValue *StreamProjector) Project(item protocol.ControlItem) (Strea
 	case protocol.ControlItemCommandResult:
 		result, _ := item.CommandResult()
 		return projectCommandResult(result)
+	case protocol.ControlItemInputStatus:
+		status, _ := item.InputStatus()
+		return StreamInputStatusEvent{Version: eventVersion, Type: "input.status", RequestID: status.RequestID(), EntryID: status.EntryID(), State: status.State(), TurnID: status.TurnID(), Reason: status.Reason()}, nil
 	case protocol.ControlItemTurnEvent:
 		runtimeEvent, _ := item.TurnEvent()
 		if runtimeEvent.SessionID != projectorValue.sessionID || runtimeEvent.ThreadID != projectorValue.threadID {
@@ -171,6 +188,9 @@ func (projectorValue *StreamProjector) Project(item protocol.ControlItem) (Strea
 		projected, err := current.project(runtimeEvent)
 		if err != nil {
 			return nil, err
+		}
+		if projected.event == nil {
+			return nil, nil
 		}
 		wire, err := correlateProjectedEvent(item.RequestID(), projected.event)
 		if projected.terminal {
@@ -195,7 +215,7 @@ func projectCommandResult(result protocol.CommandResult) (StreamEvent, error) {
 	}
 	event := StreamControlResponseEvent{
 		Version: eventVersion, Type: "control.response", RequestID: result.RequestID(),
-		CommandType: commandType, Status: result.Status(), Disposition: result.Disposition(),
+		EntryID: result.EntryID(), CommandType: commandType, Status: result.Status(), Disposition: result.Disposition(),
 	}
 	if summary, rejected := result.Error(); rejected {
 		event.Error = &StreamControlError{Code: summary.Code(), Message: summary.Message()}
@@ -235,6 +255,12 @@ func correlateProjectedEvent(inputID protocol.RequestID, event Event) (StreamEve
 
 func streamCommandType(kind protocol.CommandKind) (string, bool) {
 	switch kind {
+	case protocol.CommandSubmitConversationalInput:
+		return "input.append", true
+	case protocol.CommandRetractInputs:
+		return "input.retract", true
+	case protocol.CommandStopTurn:
+		return "turn.stop", true
 	case protocol.CommandSubmitInput:
 		return "input.submit", true
 	case protocol.CommandInterrupt:
@@ -248,6 +274,12 @@ func streamCommandType(kind protocol.CommandKind) (string, bool) {
 
 func validateStreamEvent(event StreamEvent) error {
 	switch value := event.(type) {
+	case StreamInputStatusEvent:
+		if value.Version != eventVersion || value.Type != "input.status" {
+			return fmt.Errorf("input status envelope is invalid")
+		}
+		_, err := protocol.NewInputStatus(value.RequestID, value.EntryID, value.State, value.TurnID, value.Reason)
+		return err
 	case StreamThreadStartedEvent:
 		if value.Version != eventVersion || value.Type != "thread.started" {
 			return fmt.Errorf("stream thread.started envelope is invalid")
@@ -257,16 +289,16 @@ func validateStreamEvent(event StreamEvent) error {
 		if value.Version != eventVersion || value.Type != "control.response" || !value.RequestID.Valid() {
 			return fmt.Errorf("stream control.response envelope is invalid")
 		}
-		if value.CommandType != "input.submit" && value.CommandType != "turn.interrupt" && value.CommandType != "session.shutdown" {
+		if value.CommandType != "input.append" && value.CommandType != "input.retract" && value.CommandType != "turn.stop" && value.CommandType != "input.submit" && value.CommandType != "turn.interrupt" && value.CommandType != "session.shutdown" {
 			return fmt.Errorf("stream control.response command type is invalid")
 		}
 		if value.Status == protocol.CommandStatusAccepted {
-			if value.Error != nil || value.Disposition == "" {
+			if value.Error != nil || value.Disposition == "" || (value.CommandType == "input.append") != value.EntryID.Valid() {
 				return fmt.Errorf("stream accepted response is invalid")
 			}
 			return nil
 		}
-		if value.Status != protocol.CommandStatusRejected || value.Disposition != "" || value.Error == nil || value.Error.Code == "" || value.Error.Message == "" {
+		if value.EntryID != "" || value.Status != protocol.CommandStatusRejected || value.Disposition != "" || value.Error == nil || value.Error.Code == "" || value.Error.Message == "" {
 			return fmt.Errorf("stream rejected response is invalid")
 		}
 		return nil

@@ -365,7 +365,7 @@ Runtime 的观察表仅由 turn owner 操作，上限 1024，按输出提交顺�
 
 发布前取消不改变正式目标；确定发布后忽略迟到取消，完成父目录 Sync/清理后返回 success。发布结果无法确认、目录 Sync 或 cleanup 失败返回 outcome_uncertain；Runtime 停止后续副作用，但健康 journal 仍保存冻结结果和配对 output。owner 仅清理 identity 匹配的自有项，不递归删除未知内容；SIGKILL 可留下私有暂存项，resume 不访问它们。
 
-当前 canary 为 4；`tool_call_ready` 保存必要 WriteInput，包括 content，`tool_call_result` 只保存冻结摘要与 operation/byte/line/created-directory metadata，不重复保存 base/final 文件或候选 diff。审批仍用 `tool_approval_decided`，执行仍用 `tool_execution_started`，不新增 Read observation record。恢复验证按连续只读组与独占屏障检查顺序，不能要求所有调用先 started 后 result。
+当前 canary 为 5；`tool_call_ready` 保存必要 WriteInput，包括 content，`tool_call_result` 只保存冻结摘要与 operation/byte/line/created-directory metadata，不重复保存 base/final 文件或候选 diff。审批仍用 `tool_approval_decided`，执行仍用 `tool_execution_started`，不新增 Read observation record。恢复验证按连续只读组与独占屏障检查顺序，不能要求所有调用先 started 后 result。
 
 测试入口：`internal/tool/builtin/write_*_test.go`、`internal/runtime/write*_test.go`、`internal/runtime/read_observations_test.go`、`internal/session/write_fixture_test.go`、两家 Provider 的 `write_test.go`/`restore_test.go`、`internal/tui/write_test.go` 与 `internal/app/write*_test.go`。当前 macOS 已运行真实发布/竞争/进程崩溃测试；Linux 与 Windows 已交叉编译，当前环境无 Linux runner，Linux 文件系统运行验证仍是已记录限制，不能等同交叉编译通过。
 
@@ -383,7 +383,7 @@ Runtime 的观察表仅由 turn owner 操作，上限 1024，按输出提交顺�
 | 模型预览字节与截断元数据 | 是 | 可投影 | 恢复必须精确复用 |
 | UI 展开、焦点、spinner | 否 | 本地状态 | 不进入协议与缓存 |
 
-当前 Session envelope canary 为 `4`，仍只有一个 reader。`tool_approval_decided` 保存 typed `decision_source` 和安全展示 metadata（capability、相对目标、Exec timeout），不保存 PID、绝对路径、宿主环境、输出 chunk 或底层 cause。Exec 恢复时，未决定批准为 `session_interrupted_before_approval`，allow 但未 started 为 `session_interrupted_before_execution`，started 无结果为 `outcome_uncertain`；均不重试命令。
+当前 Session envelope canary 为 `5`，仍只有一个 reader。`tool_approval_decided` 保存 typed `decision_source` 和安全展示 metadata（capability、相对目标、Exec timeout），不保存 PID、绝对路径、宿主环境、输出 chunk 或底层 cause。Exec 恢复时，未决定批准为 `session_interrupted_before_approval`，allow 但未 started 为 `session_interrupted_before_execution`，started 无结果为 `outcome_uncertain`；均不重试命令。
 
 稳定发布前新增或修改 record kind 时，直接替换唯一 current fixture，并让旧开发 shape fail closed。稳定发布后若引入真实 revision，必须同时提交 typed constructor、strict decoder、validator、不可变历史 fixture、兼容窗口和 replay migration test；既有 append-only records 不得在 resume 时原地改写。
 
@@ -411,7 +411,7 @@ Runtime 的观察表仅由 turn owner 操作，上限 1024，按输出提交顺�
 - `write_stdin`、PTY、后台进程控制：待各自定义输入、授权和资源所有权后实现。
 - allow/ask/deny、approval：已实现 Patch/Write/Exec 闭环；SandboxPlan 当前只覆盖 Exec，不等于通用策略引擎。
 - ledger 与配对恢复：七项能力均已实现；通用结果预算和非命令工具 artifact 仍未实现。
-- 工具输出后的 sampling safe point 已存在；same-turn steer 尚未接入。
+- 完整工具输出后的 sampling safe point 已接入 same-turn steer；只领取队首自动输入前缀，strict-next 保持屏障，输入提交不重置 sample/call 上限。
 
 ### 13.2 后续阶段能力
 

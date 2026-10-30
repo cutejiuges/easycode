@@ -10,6 +10,12 @@ import (
 
 const maxUUIDv7UnixMilli = int64(1<<48 - 1)
 
+// GenerateInputID 显式生成一次接收输入的 UUIDv7 身份。
+func GenerateInputID() (InputID, error) {
+	value, err := generateUUIDv7(time.Now(), rand.Reader)
+	return InputID(value), err
+}
+
 // GenerateSessionID 生成以当前 UTC 毫秒为时间字段的 UUIDv7 Session 标识。
 func GenerateSessionID() (SessionID, error) {
 	value, err := generateUUIDv7(time.Now(), rand.Reader)

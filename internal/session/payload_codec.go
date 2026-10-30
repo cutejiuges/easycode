@@ -635,6 +635,9 @@ func validateTurnFailedPayload(payload TurnFailedPayload) error {
 
 func decodeKnownRecord(record Record) error {
 	switch record.EventKind {
+	case EventTurnInputsCommitted:
+		_, err := DecodeTurnInputsPayload(record)
+		return err
 	case EventSessionMeta:
 		_, err := DecodeSessionMetaPayload(record)
 		return err

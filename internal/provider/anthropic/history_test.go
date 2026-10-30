@@ -24,13 +24,13 @@ func TestProjectHistory(t *testing.T) {
 		},
 		{
 			name: "ordered text and opaque blocks",
-			history: []nativeHistoryEntry{
-				{
-					Kind: nativeHistorySample, Input: nativeMessagePointer(nativeMessage{Role: roleUser, Content: []NativeItem{
-						{Type: blockTypeText, Text: "first\n"},
-						{Type: blockTypeThinking, Thinking: "private-user"},
-						{Type: blockTypeText, Text: "question"},
-					}}),
+			history: testAssociatedHistory([]nativeHistoryEntry{
+				testInputEntry(t, nativeMessage{Role: roleUser, Content: []NativeItem{
+					{Type: blockTypeText, Text: "first\n"},
+					{Type: blockTypeThinking, Thinking: "private-user"},
+					{Type: blockTypeText, Text: "question"},
+				}}), {
+					Kind: nativeHistorySample,
 					Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{
 						{Type: blockTypeThinking, Thinking: "private", Signature: "opaque-signature"},
 						{Type: blockTypeText, Text: "answer "},
@@ -40,31 +40,31 @@ func TestProjectHistory(t *testing.T) {
 					}},
 					Metadata: messageMetadata{ID: "msg-private", Usage: rawUsage{InputTokens: optionalUint{Value: 7, Known: true}}},
 				},
-				{
-					Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("second")),
+				testInputEntry(t, newUserMessage("second")), {
+					Kind:      nativeHistorySample,
 					Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeText, Text: "answer two"}}},
 				},
-			},
+			}),
 			want: domain.SemanticHistoryView{Provider: domain.ProviderAnthropic, Turns: []domain.SemanticTurn{
-				{UserText: "first\nquestion", AssistantText: "answer one"},
-				{UserText: "second", AssistantText: "answer two"},
+				testSemanticTurn("first\nquestion", "answer one"),
+				testSemanticTurn("second", "answer two"),
 			}},
 		},
 		{
 			name: "empty assistant text and mismatched roles",
-			history: []nativeHistoryEntry{
-				{
-					Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("visible")),
+			history: testAssociatedHistory([]nativeHistoryEntry{
+				testInputEntry(t, newUserMessage("visible")), {
+					Kind:      nativeHistorySample,
 					Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeThinking, Thinking: "hidden"}}},
 				},
-				{
-					Kind: nativeHistorySample, Input: nativeMessagePointer(nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeText, Text: "wrong user role"}}}),
+				testInputEntry(t, nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeText, Text: "wrong user role"}}}), {
+					Kind:      nativeHistorySample,
 					Assistant: nativeMessage{Role: roleUser, Content: []NativeItem{{Type: blockTypeText, Text: "wrong assistant role"}}},
 				},
-			},
+			}),
 			want: domain.SemanticHistoryView{Provider: domain.ProviderAnthropic, Turns: []domain.SemanticTurn{
-				{UserText: "visible", AssistantText: ""},
-				{UserText: "", AssistantText: ""},
+				testSemanticTurn("visible", ""),
+				testSemanticTurn("", ""),
 			}},
 		},
 	}
@@ -85,8 +85,8 @@ func TestProjectHistoryConcurrentCommitReturnsCompleteSnapshots(t *testing.T) {
 		defer close(done)
 		<-start
 		for index := 0; index < 200; index++ {
-			conversation.history.commit(nativeHistoryEntry{
-				Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage(fmt.Sprintf("user-%d", index))),
+			testCommitHistory(t, &conversation.history, testInputEntry(t, newUserMessage(fmt.Sprintf("user-%d", index))), nativeHistoryEntry{
+				Kind:      nativeHistorySample,
 				Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeText, Text: fmt.Sprintf("assistant-%d", index)}}},
 			})
 			runtime.Gosched()
@@ -116,7 +116,7 @@ func assertCompleteAnthropicProjection(t *testing.T, projection domain.SemanticH
 	for index, turn := range projection.Turns {
 		wantUser := fmt.Sprintf("user-%d", index)
 		wantAssistant := fmt.Sprintf("assistant-%d", index)
-		if turn.UserText != wantUser || turn.AssistantText != wantAssistant {
+		if len(turn.Messages) == 0 || len(turn.Messages) > 2 || turn.Messages[0].Text != wantUser || (len(turn.Messages) == 2 && turn.Messages[1].Text != wantAssistant) || (len(turn.Messages) == 1 && index != len(projection.Turns)-1) {
 			t.Fatalf("partial turn %d: %#v", index, turn)
 		}
 	}
@@ -124,8 +124,8 @@ func assertCompleteAnthropicProjection(t *testing.T, projection domain.SemanticH
 
 func TestProjectHistoryMatchesGoldenAndOmitsOpaqueData(t *testing.T) {
 	conversation := &Conversation{}
-	conversation.history.commit(nativeHistoryEntry{
-		Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("hello\nworld")),
+	testCommitHistory(t, &conversation.history, testInputEntry(t, newUserMessage("hello\nworld")), nativeHistoryEntry{
+		Kind: nativeHistorySample,
 		Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{
 			{Type: blockTypeThinking, Thinking: "private-thought", Signature: "opaque-signature"},
 			{Type: blockTypeRedactedThinking, RedactedData: "opaque-data"},
@@ -159,15 +159,15 @@ func TestProjectHistoryMatchesGoldenAndOmitsOpaqueData(t *testing.T) {
 
 func TestProjectHistoryIsIndependentAndDoesNotChangeRequest(t *testing.T) {
 	conversation := &Conversation{}
-	conversation.history.commit(nativeHistoryEntry{
-		Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("first")),
+	testCommitHistory(t, &conversation.history, testInputEntry(t, newUserMessage("first")), nativeHistoryEntry{
+		Kind: nativeHistorySample,
 		Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{
 			{Type: blockTypeThinking, Thinking: "private", Signature: "signature"},
 			{Type: blockTypeText, Text: "answer"},
 		}},
 	})
 
-	before, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, conversation.history.snapshot(), nil, nativeMessagePointer(newUserMessage("second")), testAnthropicToolView(t))
+	before, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, append(conversation.history.snapshot(), testInputEntry(t, newUserMessage("second"))), nil, testAnthropicToolView(t))
 	if err != nil {
 		t.Fatalf("compile request before projection: %v", err)
 	}
@@ -178,14 +178,14 @@ func TestProjectHistoryIsIndependentAndDoesNotChangeRequest(t *testing.T) {
 
 	view := conversation.ProjectHistory()
 	view.Provider = domain.ProviderOpenAI
-	view.Turns[0].UserText = "changed"
-	view.Turns[0].AssistantText = "changed"
-	view.Turns = append(view.Turns, domain.SemanticTurn{UserText: "injected"})
+	view.Turns[0].Messages[0].Text = "changed"
+	view.Turns[0].Messages[1].Text = "changed"
+	view.Turns = append(view.Turns, testSemanticTurn("injected", ""))
 
 	afterView := conversation.ProjectHistory()
-	wantView := domain.SemanticHistoryView{Provider: domain.ProviderAnthropic, Turns: []domain.SemanticTurn{{UserText: "first", AssistantText: "answer"}}}
+	wantView := domain.SemanticHistoryView{Provider: domain.ProviderAnthropic, Turns: []domain.SemanticTurn{testSemanticTurn("first", "answer")}}
 	assertSemanticHistory(t, afterView, wantView)
-	after, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, conversation.history.snapshot(), nil, nativeMessagePointer(newUserMessage("second")), testAnthropicToolView(t))
+	after, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, append(conversation.history.snapshot(), testInputEntry(t, newUserMessage("second"))), nil, testAnthropicToolView(t))
 	if err != nil {
 		t.Fatalf("compile request after projection: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestProjectHistoryIsIndependentAndDoesNotChangeRequest(t *testing.T) {
 	if beforeSegment.Fingerprint() != afterSegment.Fingerprint() || string(beforeSegment.CanonicalJSON()) != string(afterSegment.CanonicalJSON()) {
 		t.Fatalf("projection changed request:\n before: %s\n after: %s", beforeSegment.CanonicalJSON(), afterSegment.CanonicalJSON())
 	}
-	afterRequest := buildMessagesRequest("claude-test", DefaultMaxOutputTokens, conversation.history.snapshot(), nil, nativeMessagePointer(newUserMessage("second")), testAnthropicToolView(t))
+	afterRequest := buildMessagesRequest("claude-test", DefaultMaxOutputTokens, append(conversation.history.snapshot(), testInputEntry(t, newUserMessage("second"))), nil, testAnthropicToolView(t))
 	if afterRequest.Messages[1].Content[0].Signature != "signature" || afterRequest.Messages[1].Content[1].Text != "answer" {
 		t.Fatalf("projection changed native history: %#v", afterRequest.Messages)
 	}

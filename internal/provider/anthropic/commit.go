@@ -13,15 +13,16 @@ import (
 
 const (
 	messagesWire                = "messages"
-	nativeCommitPayloadRevision = 1
+	nativeCommitPayloadRevision = 2
 )
 
 type nativeHistoryCommit struct {
-	Kind        nativeHistoryEntryKind `json:"kind"`
-	Input       *nativeMessage         `json:"input,omitempty"`
-	Assistant   *nativeMessage         `json:"assistant,omitempty"`
-	ToolOutputs *nativeMessage         `json:"tool_outputs,omitempty"`
-	Metadata    *messageMetadataCommit `json:"metadata,omitempty"`
+	Kind          nativeHistoryEntryKind  `json:"kind"`
+	UserInputs    []nativeMessage         `json:"user_inputs,omitempty"`
+	InputMetadata *provider.InputMetadata `json:"input_metadata,omitempty"`
+	Assistant     *nativeMessage          `json:"assistant,omitempty"`
+	ToolOutputs   *nativeMessage          `json:"tool_outputs,omitempty"`
+	Metadata      *messageMetadataCommit  `json:"metadata,omitempty"`
 }
 
 type messageMetadataCommit struct {
@@ -53,13 +54,13 @@ func encodeNativeCommit(entry nativeHistoryEntry) (provider.NativeCommitEnvelope
 	if err := validateNativeHistoryEntry(cloned); err != nil {
 		return provider.NativeCommitEnvelope{}, err
 	}
-	commit := nativeHistoryCommit{Kind: cloned.Kind, Input: cloned.Input}
+	commit := nativeHistoryCommit{Kind: cloned.Kind, UserInputs: cloned.UserInputs, InputMetadata: cloned.InputMetadata}
 	if cloned.Kind == nativeHistorySample {
 		assistant := cloned.Assistant.clone()
 		metadata := encodeMetadata(cloned.Metadata)
 		commit.Assistant = &assistant
 		commit.Metadata = &metadata
-	} else {
+	} else if cloned.Kind == nativeHistoryToolOutputs {
 		outputs := cloned.ToolOutputs.clone()
 		commit.ToolOutputs = &outputs
 	}
@@ -87,11 +88,17 @@ func decodeNativeCommit(envelope provider.NativeCommitEnvelope) (nativeHistoryEn
 		return nativeHistoryEntry{}, fmt.Errorf("decode native commit: %w", err)
 	}
 	entry := nativeHistoryEntry{Kind: commit.Kind}
-	if commit.Input != nil {
-		input := commit.Input.clone()
-		entry.Input = &input
+	entry.UserInputs = commit.UserInputs
+	entry.InputMetadata = commit.InputMetadata
+	if commit.InputMetadata != nil {
+		entry.TurnID = commit.InputMetadata.TurnID
 	}
+
 	switch commit.Kind {
+	case nativeHistoryUserInputs:
+		if commit.Assistant != nil || commit.Metadata != nil || commit.ToolOutputs != nil {
+			return nativeHistoryEntry{}, fmt.Errorf("user inputs contain unrelated fields")
+		}
 	case nativeHistorySample:
 		if commit.Assistant == nil || commit.Metadata == nil || commit.ToolOutputs != nil {
 			return nativeHistoryEntry{}, fmt.Errorf("anthropic sample commit fields are invalid")
@@ -102,7 +109,7 @@ func decodeNativeCommit(envelope provider.NativeCommitEnvelope) (nativeHistoryEn
 		entry.Assistant = commit.Assistant.clone()
 		entry.Metadata = decodeMetadata(*commit.Metadata)
 	case nativeHistoryToolOutputs:
-		if commit.Input != nil || commit.Assistant != nil || commit.Metadata != nil || commit.ToolOutputs == nil {
+		if len(commit.UserInputs) != 0 || commit.InputMetadata != nil || commit.Assistant != nil || commit.Metadata != nil || commit.ToolOutputs == nil {
 			return nativeHistoryEntry{}, fmt.Errorf("anthropic tool outputs commit fields are invalid")
 		}
 		entry.ToolOutputs = commit.ToolOutputs.clone()
@@ -129,12 +136,28 @@ func validateRawUsageCommit(usage rawUsageCommit) error {
 
 func validateNativeHistoryEntry(entry nativeHistoryEntry) error {
 	switch entry.Kind {
-	case nativeHistorySample:
-		if entry.Input != nil {
-			if err := validateUserTextMessage(*entry.Input); err != nil {
+	case nativeHistoryUserInputs:
+		if entry.InputMetadata == nil || len(entry.UserInputs) == 0 || entry.Assistant.Role != "" || entry.ToolOutputs.Role != "" || entry.Metadata.ID != "" {
+			return fmt.Errorf("user input entry fields are invalid")
+		}
+		a, err := entry.InputMetadata.Association()
+		if err != nil {
+			return err
+		}
+		if len(a.IDs()) != len(entry.UserInputs) {
+			return fmt.Errorf("user input count does not match metadata")
+		}
+		for _, input := range entry.UserInputs {
+			if err := validateUserTextMessage(input); err != nil {
 				return err
 			}
 		}
+
+	case nativeHistorySample:
+		if len(entry.UserInputs) != 0 || entry.InputMetadata != nil {
+			return fmt.Errorf("sample contains user input fields")
+		}
+
 		if entry.Assistant.Role != roleAssistant || len(entry.Assistant.Content) == 0 ||
 			entry.ToolOutputs.Role != "" || len(entry.ToolOutputs.Content) != 0 {
 			return fmt.Errorf("anthropic native commit assistant message is invalid")
@@ -158,7 +181,7 @@ func validateNativeHistoryEntry(entry nativeHistoryEntry) error {
 			return fmt.Errorf("anthropic native commit usage is invalid: %w", err)
 		}
 	case nativeHistoryToolOutputs:
-		if entry.Input != nil || entry.Assistant.Role != "" || len(entry.Assistant.Content) != 0 ||
+		if len(entry.UserInputs) != 0 || entry.InputMetadata != nil || entry.Assistant.Role != "" || len(entry.Assistant.Content) != 0 ||
 			entry.ToolOutputs.Role != roleUser || len(entry.ToolOutputs.Content) == 0 || entry.Metadata.ID != "" {
 			return fmt.Errorf("anthropic tool outputs entry fields are invalid")
 		}
@@ -179,15 +202,25 @@ func validateNativeHistoryEntry(entry nativeHistoryEntry) error {
 }
 
 func validateUserTextMessage(message nativeMessage) error {
-	if message.Role != roleUser || len(message.Content) == 0 {
-		return fmt.Errorf("anthropic native commit user message is invalid")
+	// 当前用户输入只有一个纯文本片段；原生 opaque 扩展仅允许模型输出持有。
+	encoded, err := codec.MarshalStable(message)
+	if err != nil {
+		return fmt.Errorf("user input encoding is invalid")
 	}
-	for _, block := range message.Content {
-		if block.Type != blockTypeText {
-			return fmt.Errorf("anthropic native commit user content is invalid")
-		}
+	var current struct {
+		Role    string `json:"role"`
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
 	}
-	return nil
+	if err := codec.UnmarshalRecord(encoded, &current); err != nil {
+		return fmt.Errorf("user input shape is invalid")
+	}
+	if current.Role != "user" || len(current.Content) != 1 || current.Content[0].Type != "text" {
+		return fmt.Errorf("user input content is invalid")
+	}
+	return domain.ValidateUserText(current.Content[0].Text)
 }
 
 func validateAssistantBlock(block NativeItem) error {

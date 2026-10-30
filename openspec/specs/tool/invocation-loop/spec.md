@@ -174,6 +174,16 @@ Write 的目标/目录检查与候选读取 SHALL 遵循上述 Patch 的 ready d
 - **WHEN** ReadArtifact、Exec、ReadArtifact 按此顺序 ready
 - **THEN** 后一个读取等待 exclusive Exec 结果，所有 result/native output 按原 call index 提交
 
+自动追加安全点 SHALL 仅在整组 results 与匹配 native outputs 均 durable/finalize 后开放；上限、取消、poison 或无 calls 最终决策后不得领取。输入提交不占用 sample、不重置 16/64 上限，不改变工具执行权限与 pairing。
+
+#### Scenario: Consume steering after complete outputs
+- **WHEN** 并行调用乱序完成且存在排队自动输入
+- **THEN** 全部结果仍按原 call index 提交，outputs 成功后才可提交追加输入并开始下一 sample
+
+#### Scenario: Leave late input for the next turn
+- **WHEN** 无 calls sample 已选择提交最终边界后输入到达
+- **THEN** 当前 turn 正常完成，输入保留 FIFO 等待新 turn
+
 ### Requirement: Execution ledger provides at-most-once automatic execution
 
 自动允许调用的正常路径 SHALL 遵循`ready_durable -> execution_started_durable -> result_durable`；需要审批的调用 SHALL 遵循`ready_durable -> approval_decided_durable -> execution_started_durable -> result_durable`。拒绝路径 SHALL为`ready_durable -> [approval_decided(deny), result(denied)]_durable`且不得出现started。Runtime SHALL在启动任何worker前按调度顺序为每个仍可执行调用单独append/Sync`tool_execution_started`；该append被接受的成功点是该调用的执行接收线性化点。在它之前观察到取消的调用 SHALL被分类为cancelled且不得进入executor；在它之后Runtime MUST恰好调用一次匹配executor，即使turn context已取消。

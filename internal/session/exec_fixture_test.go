@@ -25,7 +25,7 @@ func TestCurrentHeterogeneousExecFixturesUseProductionReplay(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(loaded.Records) != 34 || plan.NextSequence != 35 || len(plan.NativeCommits) != 5 || len(plan.SampleUsages) != 3 || plan.SessionMetadata.Provider != family {
+			if len(loaded.Records) != 36 || plan.NextSequence != 37 || len(plan.NativeCommits) != 6 || len(plan.SampleUsages) != 3 || plan.SessionMetadata.Provider != family {
 				t.Fatal("heterogeneous fixture summary changed")
 			}
 			if len(plan.Commands) != 3 || !plan.Commands[0].HasResult || !plan.Commands[1].HasResult || plan.Commands[2].HasResult || plan.Commands[1].Result.Status() != tool.ResultDenied {
@@ -167,7 +167,7 @@ func TestExecInterruptedRecoveryRetainsCrossProcessLeaseAndAppendOnlyBytes(t *te
 		t.Fatal(err)
 	}
 	calls = plan.ToolRecovery.Calls()
-	if len(calls) != 1 || calls[0].State != ReplayedToolCallResult || calls[0].Result.Status() != tool.ResultOutcomeUncertain || len(loaded.Records) != 9 {
+	if len(calls) != 1 || calls[0].State != ReplayedToolCallResult || calls[0].Result.Status() != tool.ResultOutcomeUncertain || len(loaded.Records) != 11 {
 		t.Fatal("recovery reran or fabricated command success")
 	}
 }

@@ -25,17 +25,17 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer instance.Close()
-	entries := []nativeHistoryEntry{
-		{
-			Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("  中文\n\tcode  \n")),
+	entries := testAssociatedHistory([]nativeHistoryEntry{
+		testInputEntry(t, newUserMessage("  中文\n\tcode  \n")), {
+			Kind: nativeHistorySample,
 			Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{
 				{Type: blockTypeThinking, Thinking: "private", Signature: "opaque-signature"},
 				{Type: blockTypeText, Text: "answer-1"},
 			}},
 			Metadata: messageMetadata{ID: "msg-1", Model: "claude-test"},
 		},
-		{
-			Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("second")),
+		testInputEntry(t, newUserMessage("second")), {
+			Kind: nativeHistorySample,
 			Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{
 				Type: "future_block", Raw: json.RawMessage(`{"type":"future_block","opaque":{"value":2}}`),
 			}}},
@@ -44,8 +44,8 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 				Usage: rawUsage{InputTokens: optionalUint{Known: true, Value: 9}},
 			},
 		},
-		{
-			Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("search")),
+		testInputEntry(t, newUserMessage("search")), {
+			Kind: nativeHistorySample,
 			Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{
 				{Type: blockTypeToolUse, ID: "toolu-glob", Name: "Glob", Input: json.RawMessage(`{"pattern":"**/*.go"}`)},
 				{Type: blockTypeToolUse, ID: "toolu-grep", Name: "Grep", Input: json.RawMessage(`{"pattern":"TODO"}`)},
@@ -61,8 +61,8 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 				{Type: blockTypeToolResult, ToolUseID: "toolu-read", Content: "frozen read"},
 			}},
 		},
-		{
-			Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("edit")),
+		testInputEntry(t, newUserMessage("edit")), {
+			Kind: nativeHistorySample,
 			Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{
 				{Type: blockTypeThinking, Thinking: "private-edit", Signature: "opaque-edit-signature"},
 				{Type: blockTypeToolUse, ID: "toolu-edit", Name: "Edit", Input: json.RawMessage(`{"file_path":"main.go","old_string":"old","new_string":"new"}`)},
@@ -70,11 +70,13 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 			Metadata: messageMetadata{ID: "msg-edit", Model: "claude-test"},
 		},
 		{Kind: nativeHistoryToolOutputs, ToolOutputs: nativeMessage{Role: roleUser, Content: []NativeItem{{Type: blockTypeToolResult, ToolUseID: "toolu-edit", Content: "frozen patch"}}}},
-	}
+	})
 	entries = append(entries,
-		nativeHistoryEntry{Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("write")), Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeToolUse, ID: "toolu-write", Name: "Write", Input: json.RawMessage(`{"file_path":"new/a","content":"中文\r\n"}`)}}}, Metadata: messageMetadata{ID: "msg-write", Model: "claude-test"}},
+		testInputEntry(t, newUserMessage("write")),
+		nativeHistoryEntry{Kind: nativeHistorySample, Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeToolUse, ID: "toolu-write", Name: "Write", Input: json.RawMessage(`{"file_path":"new/a","content":"中文\r\n"}`)}}}, Metadata: messageMetadata{ID: "msg-write", Model: "claude-test"}},
 		nativeHistoryEntry{Kind: nativeHistoryToolOutputs, ToolOutputs: nativeMessage{Role: roleUser, Content: []NativeItem{{Type: blockTypeToolResult, ToolUseID: "toolu-write", Content: "Created new/a (8 bytes, 1 lines, 1 directories created)"}}}},
 	)
+	entries = testAssociatedHistory(entries)
 	uninterrupted := &Conversation{provider: instance}
 	commits := make([]provider.NativeCommitEnvelope, 0, len(entries))
 	for _, entry := range entries {
@@ -85,7 +87,7 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 		}
 		commits = append(commits, commit)
 	}
-	restoredValue, err := instance.RestoreConversation(commits)
+	restoredValue, err := instance.RestoreConversation(testRestoreRecords(t, commits))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +108,7 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 	if !reflect.DeepEqual(restoredView, uninterruptedView) {
 		t.Fatalf("restored projection differs: %#v %#v", restoredView, uninterruptedView)
 	}
-	restoredView.Turns[0].UserText = "mutated projection"
+	restoredView.Turns[0].Messages[0].Text = "mutated projection"
 	next := newUserMessage("third")
 	projectInstructions := testAnthropicProjectInstructions(t, "AGENTS.md", "same-startup-snapshot")
 	uninterruptedToolView := testAnthropicToolView(t)
@@ -114,15 +116,11 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 	if uninterruptedToolView.Fingerprint() != restoredToolView.Fingerprint() {
 		t.Fatal("restored tool catalog fingerprint differs")
 	}
-	uninterruptedRequest, err := compileMessagesRequest(
-		instance.config.Model, instance.config.MaxOutputTokens, uninterrupted.historySnapshot(), &projectInstructions, nativeMessagePointer(next), uninterruptedToolView,
-	)
+	uninterruptedRequest, err := compileMessagesRequest(instance.config.Model, instance.config.MaxOutputTokens, append(uninterrupted.historySnapshot(), testInputEntry(t, next)), &projectInstructions, uninterruptedToolView)
 	if err != nil {
 		t.Fatal(err)
 	}
-	restoredRequest, err := compileMessagesRequest(
-		instance.config.Model, instance.config.MaxOutputTokens, restored.historySnapshot(), &projectInstructions, nativeMessagePointer(next), restoredToolView,
-	)
+	restoredRequest, err := compileMessagesRequest(instance.config.Model, instance.config.MaxOutputTokens, append(restored.historySnapshot(), testInputEntry(t, next)), &projectInstructions, restoredToolView)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +146,7 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restoredShape := buildMessagesRequest(instance.config.Model, instance.config.MaxOutputTokens, restored.historySnapshot(), &projectInstructions, nativeMessagePointer(next), restoredToolView)
+	restoredShape := buildMessagesRequest(instance.config.Model, instance.config.MaxOutputTokens, append(restored.historySnapshot(), testInputEntry(t, next)), &projectInstructions, restoredToolView)
 	if first.Fingerprint() != second.Fingerprint() || len(restoredShape.Messages) != 15 ||
 		restoredShape.Messages[0].Content[0].Text != projectInstructions.RenderedText() ||
 		restoredShape.Messages[4].Content[0].Type != "future_block" ||
@@ -163,15 +161,11 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 	}
 
 	changedProjectInstructions := testAnthropicProjectInstructions(t, "AGENTS.md", "changed-startup-snapshot")
-	changedRequest, err := compileMessagesRequest(
-		instance.config.Model, instance.config.MaxOutputTokens, restored.historySnapshot(), &changedProjectInstructions, nativeMessagePointer(next), testAnthropicToolView(t),
-	)
+	changedRequest, err := compileMessagesRequest(instance.config.Model, instance.config.MaxOutputTokens, append(restored.historySnapshot(), testInputEntry(t, next)), &changedProjectInstructions, testAnthropicToolView(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	changedShape := buildMessagesRequest(
-		instance.config.Model, instance.config.MaxOutputTokens, restored.historySnapshot(), &changedProjectInstructions, nativeMessagePointer(next), testAnthropicToolView(t),
-	)
+	changedShape := buildMessagesRequest(instance.config.Model, instance.config.MaxOutputTokens, append(restored.historySnapshot(), testInputEntry(t, next)), &changedProjectInstructions, testAnthropicToolView(t))
 	if bytes.Equal(changedRequest.Bytes(), restoredRequest.Bytes()) ||
 		!reflect.DeepEqual(changedShape.Messages[1:], restoredShape.Messages[1:]) ||
 		changedShape.Messages[0].Content[0].Text == restoredShape.Messages[0].Content[0].Text {
@@ -221,7 +215,7 @@ func TestRestoreConversationRejectsEntireHistoryOnOneBadCommit(t *testing.T) {
 	}
 	defer instance.Close()
 	valid, err := encodeNativeCommit(nativeHistoryEntry{
-		Kind: nativeHistorySample, Input: nativeMessagePointer(newUserMessage("first")),
+		Kind:      nativeHistorySample,
 		Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeText, Text: "answer"}}},
 		Metadata:  messageMetadata{ID: "msg-1", Model: "claude-test"},
 	})
@@ -234,7 +228,7 @@ func TestRestoreConversationRejectsEntireHistoryOnOneBadCommit(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		restored, err := instance.RestoreConversation([]provider.NativeCommitEnvelope{valid, invalid})
+		restored, err := instance.RestoreConversation(testSampleRestoreSequence(t, valid, invalid))
 		if err == nil || restored != nil {
 			t.Fatalf("accepted ambiguous nested usage: %s", replacement)
 		}
@@ -249,7 +243,7 @@ func TestRestoreConversationRejectsEntireHistoryOnOneBadCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restored, err := instance.RestoreConversation([]provider.NativeCommitEnvelope{valid, bad})
+	restored, err := instance.RestoreConversation(testSampleRestoreSequence(t, valid, bad))
 	if err == nil || restored != nil {
 		t.Fatalf("RestoreConversation() = %#v, %v", restored, err)
 	}

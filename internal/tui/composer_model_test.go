@@ -32,7 +32,7 @@ func TestComposerSubmissionOwnershipAndRecovery(t *testing.T) {
 	}
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("ignored"), Paste: true})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEsc})
-	model = updateModel(t, model, submit())
+	model = updateModel(t, model, testAdmissionMessage(model, submit))
 	if !reflect.DeepEqual(model.composer, original) || len(model.transcript) != 0 || model.interruptNext || model.cancelling {
 		t.Fatal("rejection did not restore snapshot")
 	}
@@ -41,10 +41,11 @@ func TestComposerSubmissionOwnershipAndRecovery(t *testing.T) {
 	}
 	session.submitErr = nil
 	model, submit = updateModelWithCommand(t, model, tea.KeyMsg{Type: tea.KeyEnter})
-	model, wait := updateModelWithCommand(t, model, submit())
-	if wait == nil || model.pending != nil || model.composer.text != "" || len(model.transcript) != 1 || model.transcript[0].text != original.text {
+	model, wait := updateModelWithCommand(t, model, testAdmissionMessage(model, submit))
+	if wait == nil || model.pending != nil || model.composer.text != "" || len(model.transcript) != 0 || len(model.inputs) != 1 || model.inputs[0].text != original.text {
 		t.Fatal("acceptance did not transfer ownership")
 	}
+	model = testCommitAcceptedInput(t, model)
 	failure, _ := protocol.NewTurnFailed("provider_request_failed", "request failed", false)
 	model = updateModel(t, model, RuntimeEventMsg{Event: failure})
 	if model.state != stateIdle || model.composer.text != "" || len(session.submits) != 2 || len(model.composer.history.entries) != 2 {
@@ -63,7 +64,7 @@ func TestComposerRestoreRecallAfterRejectedAdmissionAndResize(t *testing.T) {
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyUp})
 	model, submit := updateModelWithCommand(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = updateModel(t, model, tea.WindowSizeMsg{Width: 32, Height: 10})
-	model = updateModel(t, model, submit())
+	model = updateModel(t, model, testAdmissionMessage(model, submit))
 	if !model.composer.history.browsing || model.composer.width != 32 {
 		t.Fatal("recall or new dimensions lost")
 	}
@@ -74,18 +75,18 @@ func TestComposerRestoreRecallAfterRejectedAdmissionAndResize(t *testing.T) {
 }
 
 func TestComposerFocusRoutingAndResumeSeed(t *testing.T) {
-	seed := domain.SemanticHistoryView{Provider: domain.ProviderOpenAI, Turns: []domain.SemanticTurn{{UserText: "  first\r\n"}, {UserText: " \n"}, {UserText: strings.Repeat("x", protocol.MaxInputBytes+1)}, {UserText: "last"}}}
+	seed := domain.SemanticHistoryView{Provider: domain.ProviderOpenAI, Turns: []domain.SemanticTurn{testSemanticTurn("  first\r\n", ""), testSemanticTurn(" \n", ""), testSemanticTurn(strings.Repeat("x", protocol.MaxInputBytes+1), ""), testSemanticTurn("last", "")}}
 	model := NewModel(context.Background(), "test", &fakeChatSession{}, seed)
 	if !reflect.DeepEqual(model.composer.history.entries, []string{"  first\n", "last"}) {
 		t.Fatal("invalid recall seed")
 	}
-	if len(model.transcript) != 8 {
+	if len(model.transcript) != 4 {
 		t.Fatal("recall filtering changed transcript")
 	}
 	model.composer = composerWithText(t, "draft\n中文")
 	model.composer.moveTo(2)
 	original := model.composer
-	for _, mode := range []string{"approval", "detail", "streaming"} {
+	for _, mode := range []string{"approval", "detail", "admission"} {
 		t.Run(mode, func(t *testing.T) {
 			current := model
 			switch mode {
@@ -93,8 +94,10 @@ func TestComposerFocusRoutingAndResumeSeed(t *testing.T) {
 				current = updateModel(t, current, RuntimeEventMsg{Event: mustApprovalRequested(t)})
 			case "detail":
 				current.detailOpen = true
-			case "streaming":
-				current.state = stateStreaming
+			case "admission":
+				snapshot := current.composer
+				current.pending = &snapshot
+				current.state = stateSubmitting
 			}
 			for _, key := range []tea.KeyMsg{{Type: tea.KeyRunes, Runes: []rune("paste\n\x03"), Paste: true}, {Type: tea.KeyRunes, Runes: []rune("q")}, {Type: tea.KeyTab}, {Type: tea.KeyLeft}, {Type: tea.KeyEnter}} {
 				current = updateModel(t, current, key)
@@ -130,7 +133,7 @@ func composerSnapshots(t *testing.T) map[string]Model {
 	snapshots["composer_recalled"] = recalled
 	pending, submit := updateModelWithCommand(t, base, tea.KeyMsg{Type: tea.KeyEnter})
 	snapshots["composer_submitting"] = pending
-	accepted := updateModel(t, pending, submit())
+	accepted := updateModel(t, pending, testAdmissionMessage(pending, submit))
 	snapshots["composer_accepted"] = accepted
 	rejected := updateModel(t, pending, submissionFailedMsg{err: errors.New("private")})
 	snapshots["composer_rejected"] = rejected
@@ -158,27 +161,27 @@ func TestComposerFixedSnapshots(t *testing.T) {
 
 // gatedComposerSession 用接收屏障固定取消与提交结果的先后关系。
 type gatedComposerSession struct {
+	fakeChatSession
 	entered    chan struct{}
 	release    chan struct{}
-	events     chan protocol.Event
 	reject     bool
 	interrupts int
 }
 
-func (s *gatedComposerSession) Submit(context.Context, string) (<-chan protocol.Event, error) {
+func (s *gatedComposerSession) Append(ctx context.Context, text string) (protocol.CommandResult, error) {
 	close(s.entered)
 	<-s.release
 	if s.reject {
-		return nil, errors.New("admission rejected")
+		return protocol.CommandResult{}, errors.New("admission rejected")
 	}
-	return s.events, nil
+	return s.fakeChatSession.Append(ctx, text)
 }
 func (s *gatedComposerSession) Interrupt() { s.interrupts++ }
 
 func TestComposerCancellationDuringAdmissionBarrier(t *testing.T) {
 	for _, reject := range []bool{false, true} {
 		t.Run(fmt.Sprint(reject), func(t *testing.T) {
-			s := &gatedComposerSession{entered: make(chan struct{}), release: make(chan struct{}), events: make(chan protocol.Event, 1), reject: reject}
+			s := &gatedComposerSession{entered: make(chan struct{}), release: make(chan struct{}), fakeChatSession: fakeChatSession{events: make(chan protocol.Event, 1)}, reject: reject}
 			failure, _ := protocol.NewTurnFailed("user_cancelled", "cancelled", true)
 			s.events <- failure
 			m := NewModel(context.Background(), "test", s)
@@ -195,20 +198,18 @@ func TestComposerCancellationDuringAdmissionBarrier(t *testing.T) {
 			close(s.release)
 			message := <-result
 			<-done
-			m, cmd := updateModelWithCommand(t, m, message)
 			if reject {
-				if cmd != nil || m.interruptNext || m.cancelling || m.composer.text != "  pending\n" || s.interrupts != 0 {
+				m = updateModel(t, m, message)
+				if m.interruptNext || m.cancelling || m.composer.text != "  pending\n" || s.interrupts != 0 {
 					t.Fatal("rejected admission retained cancellation")
 				}
 			} else {
-				batch, ok := cmd().(tea.BatchMsg)
-				if !ok {
-					t.Fatal("missing queued interrupt")
-				}
-				for _, child := range batch {
-					msg := child()
-					if msg != nil {
-						m = updateModel(t, m, msg)
+				for range 4 {
+					item := <-m.outputs
+					next, command := m.projectControlItem(item)
+					m = next.(Model)
+					if command != nil {
+						command()
 					}
 				}
 				if s.interrupts != 1 || m.state != stateIdle || m.cancelling || m.interruptNext {

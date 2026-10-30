@@ -24,7 +24,7 @@ func TestExecCatalogEstimateAndStablePrefixRegression(t *testing.T) {
 				t.Fatal(err)
 			}
 			profile, _ := NewProviderProfile(family, "fixture-model")
-			input, err := NewPlanningInput(profile, catalog, emptyProjectInstructions(t), emptyHistory(family), estimatedFootprint(t, family, 0, 0), NewUserTextInput("next"), DisabledBudget())
+			input, err := NewPlanningInput(profile, catalog, emptyProjectInstructions(t), emptyHistory(family), estimatedFootprint(t, family, 0, 0), NewSamplingInput(), DisabledBudget())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -36,7 +36,7 @@ func TestExecCatalogEstimateAndStablePrefixRegression(t *testing.T) {
 			catalogTokens, known := plan.Sources()[1].Estimate().Tokens()
 			wantTokens, _ := estimate.Bytes(view.CanonicalJSON()).Tokens()
 			total, _ := plan.TotalEstimate().Tokens()
-			if !known || catalogTokens != wantTokens || total != catalogTokens+1 || plan.Sources()[1].Revision() != view.Fingerprint() {
+			if !known || catalogTokens != wantTokens || total != catalogTokens || plan.Sources()[1].Revision() != view.Fingerprint() {
 				t.Fatal("context omitted current facade schema or source revision")
 			}
 			// 只在测试中投影不含Exec的字节用于增量比较，不构造旧目录或兼容reader。
@@ -87,8 +87,8 @@ func TestExecCatalogEstimateAndStablePrefixRegression(t *testing.T) {
 				t.Fatalf("planning golden mismatch: %v; actual=%q", err, actual)
 			}
 			for _, dynamic := range []string{"command=go test ./... workdir=src timeout=1000 approval=one env=secret-one", "command=make verify workdir=test timeout=2000 approval=two env=secret-two"} {
-				changedHistory := domain.SemanticHistoryView{Provider: family, Turns: []domain.SemanticTurn{{UserText: dynamic, AssistantText: "command completed"}}}
-				changedInput, err := NewPlanningInput(profile, catalog, emptyProjectInstructions(t), changedHistory, estimatedFootprint(t, family, 1, 100), NewUserTextInput(dynamic), DisabledBudget())
+				changedHistory := domain.SemanticHistoryView{Provider: family, Turns: []domain.SemanticTurn{planningTurn(dynamic, "command completed")}}
+				changedInput, err := NewPlanningInput(profile, catalog, emptyProjectInstructions(t), changedHistory, estimatedFootprint(t, family, 1, 100), NewSamplingInput(), DisabledBudget())
 				if err != nil {
 					t.Fatal(err)
 				}

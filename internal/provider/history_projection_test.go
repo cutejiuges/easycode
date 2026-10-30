@@ -88,7 +88,7 @@ func TestProviderHistoryProjectorsProduceEquivalentTextSemantics(t *testing.T) {
 
 	anthropicView := completeTurnAndProject(t, anthropicProvider.NewConversation(), "shared question")
 	openAIView := completeTurnAndProject(t, openAIProvider.NewConversation(), "shared question")
-	wantTurns := []domain.SemanticTurn{{UserText: "shared question", AssistantText: "shared answer"}}
+	wantTurns := []domain.SemanticTurn{{TurnID: "01900000-0000-7000-8000-000000000001", Messages: []domain.SemanticMessage{{Role: domain.SemanticUser, InputID: "01900000-0000-7000-8000-000000000002", Text: "shared question"}, {Role: domain.SemanticAssistant, Text: "shared answer"}}}}
 	if anthropicView.Provider != domain.ProviderAnthropic || openAIView.Provider != domain.ProviderOpenAI {
 		t.Fatalf("provider families: Anthropic=%s OpenAI=%s", anthropicView.Provider, openAIView.Provider)
 	}
@@ -103,8 +103,17 @@ func completeTurnAndProject(t *testing.T, conversation provider.Conversation, te
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := (provider.TurnInput{Text: text}).WithToolCatalog(catalog)
+	input, err := provider.NewSamplingInput().WithToolCatalog(catalog)
 	if err != nil {
+		t.Fatal(err)
+	}
+	user, _ := domain.NewUserInput("01900000-0000-7000-8000-000000000002", text)
+	association, _ := domain.NewInputAssociation("01900000-0000-7000-8000-000000000001", domain.InputInitial, 0, []domain.InputID{user.ID()})
+	prepared, err := conversation.(provider.UserInputPreparer).PrepareUserInputs(association, []domain.UserInput{user})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := prepared.Finalize(); err != nil {
 		t.Fatal(err)
 	}
 	stream, err := conversation.Stream(context.Background(), input)

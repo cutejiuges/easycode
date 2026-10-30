@@ -219,10 +219,6 @@ func (model Model) handleCommandBrowserKey(key tea.KeyMsg) (tea.Model, tea.Cmd) 
 	b := &model.browser
 	if key.Type == tea.KeyCtrlC && model.state != stateIdle {
 		model.cancelling = true
-		if model.events == nil {
-			model.interruptNext = true
-			return model, nil
-		}
 		return model, interruptSession(model.session)
 	}
 	if key.Type == tea.KeyEsc {

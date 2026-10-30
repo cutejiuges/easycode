@@ -68,7 +68,9 @@ func TestApprovalOverlaySnapshots(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			model := snapshotStreamingModel(t)
-			model = updateModel(t, model, RuntimeEventMsg{Event: mustApprovalRequested(t)})
+			approval := mustApprovalRequested(t)
+			approval.TurnID = model.activeTurnID
+			model = updateModel(t, model, RuntimeEventMsg{Event: approval})
 			model = updateModel(t, model, tea.WindowSizeMsg{Width: test.width, Height: test.height})
 			if test.mutate != nil {
 				test.mutate(&model)
@@ -90,8 +92,8 @@ func snapshotResumedModel(t *testing.T) Model {
 	return NewModel(context.Background(), "test", &fakeChatSession{}, domain.SemanticHistoryView{
 		Provider: domain.ProviderOpenAI,
 		Turns: []domain.SemanticTurn{
-			{UserText: "first question", AssistantText: "first answer"},
-			{UserText: "second question", AssistantText: "second answer"},
+			testSemanticTurn("first question", "first answer"),
+			testSemanticTurn("second question", "second answer"),
 		},
 	})
 }
@@ -110,7 +112,9 @@ func snapshotStreamingModel(t *testing.T) Model {
 	t.Helper()
 	model := updateModel(t, snapshotIdleModel(t), tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello")})
 	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	return updateModel(t, updated.(Model), cmd())
+	pending := updated.(Model)
+	accepted := updateModel(t, pending, testAdmissionMessage(pending, cmd))
+	return testCommitAcceptedInput(t, accepted)
 }
 
 func snapshotCompletedModel(t *testing.T) Model {

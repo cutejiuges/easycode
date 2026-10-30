@@ -72,7 +72,7 @@ func TestWriteOutputPairsOnlyMatchingStructuredCall(t *testing.T) {
 	id, _ := tool.GenerateInvocationID()
 	v, _ := tool.NewWriteInvocation(id, ready)
 	result := tool.NewWriteErrorResult(v, tool.ResultDenied, "approval_required", "Write denied: approval_required")
-	history := []nativeHistoryEntry{{Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("write")), Outputs: []NativeItem{{Type: "function_call", ID: "item-write", CallID: "call-write", Name: "Write", Arguments: `{"file_path":"a","content":"secret-body"}`}}}}
+	history := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, NewUserItem("write")), {Kind: nativeHistorySample, Outputs: []NativeItem{{Type: "function_call", ID: "item-write", CallID: "call-write", Name: "Write", Arguments: `{"file_path":"a","content":"secret-body"}`}}}})
 	entry, err := prepareToolOutputsEntry(history, []tool.InvocationResult{result})
 	if err != nil {
 		t.Fatal(err)
@@ -84,8 +84,8 @@ func TestWriteOutputPairsOnlyMatchingStructuredCall(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, mutation := range []func(*NativeItem){func(i *NativeItem) { i.CallID = "other" }, func(i *NativeItem) { i.Name = "Read" }, func(i *NativeItem) { i.Type = "custom_tool_call"; i.Input = i.Arguments; i.Arguments = "" }} {
-		changed := history[0]
-		changed.Outputs = append([]NativeItem(nil), history[0].Outputs...)
+		changed := history[1]
+		changed.Outputs = append([]NativeItem(nil), history[1].Outputs...)
 		mutation(&changed.Outputs[0])
 		if _, err := prepareToolOutputsEntry([]nativeHistoryEntry{changed}, []tool.InvocationResult{result}); err == nil {
 			t.Fatal("接受错配 output")
@@ -98,14 +98,14 @@ func TestWriteAggregateNativeAndRequestBudgetsRemainSixteenMiB(t *testing.T) {
 	if _, err := tool.DecodeWriteInput([]byte(input)); err != nil {
 		t.Fatal("单调用应在预算内", err)
 	}
-	entry := nativeHistoryEntry{Kind: nativeHistorySample, Input: nativeItemPointer(NewUserItem("write"))}
+	entry := nativeHistoryEntry{Kind: nativeHistorySample}
 	for i := 0; i < 17; i++ {
 		entry.Outputs = append(entry.Outputs, NativeItem{Type: "function_call", ID: fmt.Sprintf("item-%d", i), CallID: fmt.Sprintf("call-%d", i), Name: "Write", Arguments: input})
 	}
 	if _, err := encodeNativeCommit(entry); err == nil {
 		t.Fatal("聚合 Write 绕过 native record budget")
 	}
-	if _, err := compileResponsesRequest("gpt-test", []nativeHistoryEntry{entry}, nil, nil, testOpenAIToolView(t)); err == nil {
+	if _, err := compileResponsesRequest("gpt-test", []nativeHistoryEntry{entry}, nil, testOpenAIToolView(t)); err == nil {
 		t.Fatal("聚合 Write 绕过 request budget")
 	}
 	if maxResponsesRequestBytes != 16<<20 {

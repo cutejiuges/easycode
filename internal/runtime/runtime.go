@@ -189,11 +189,11 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 }
 
 // RunTurn 执行一次文本 turn，并等待 Provider terminal 后的 durable 收口。
-func (runtime *Runtime) RunTurn(
-	ctx context.Context,
-	input provider.TurnInput,
-	emit Emitter,
-) error {
+func (runtime *Runtime) RunTurn(ctx context.Context, inputs []domain.UserInput, emit Emitter) error {
+	return runtime.runTurn(ctx, inputs, nil, emit)
+}
+
+func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, control turnInputControl, emit Emitter) error {
 	if err := runtime.validateTurnRequest(ctx, emit); err != nil {
 		return err
 	}
@@ -207,7 +207,11 @@ func (runtime *Runtime) RunTurn(
 	if err != nil {
 		return err
 	}
-	currentInput := input
+	result := runtime.commitInputs(ctx, turnID, 0, inputs, control, emit)
+	if result.err != nil {
+		return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, result.err)
+	}
+	currentInput := provider.NewSamplingInput()
 	usages := make([]domain.SampleUsage, 0, maxSamplesPerTurn)
 	totalCalls := 0
 	seenInvocationIDs := make(map[tool.InvocationID]struct{})
@@ -259,7 +263,19 @@ func (runtime *Runtime) RunTurn(
 			cancelled := fault.Wrap(fault.CodeUserCancelled, "turn was cancelled", context.Canceled)
 			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, cancelled)
 		}
-		currentInput = provider.NewToolContinuationInput()
+		if control != nil && sampleIndex+1 < maxSamplesPerTurn && totalCalls < maxToolCallsPerTurn {
+			pending, err := control.claim(ctx, turnID, uint32(sampleIndex+1))
+			if err != nil {
+				return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, err)
+			}
+			if len(pending) > 0 {
+				result := runtime.commitInputs(ctx, turnID, uint32(sampleIndex+1), pending, control, emit)
+				if result.err != nil && !result.preflightRejected {
+					return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, result.err)
+				}
+			}
+		}
+		currentInput = provider.NewSamplingInput()
 	}
 }
 
@@ -400,35 +416,11 @@ func (runtime *Runtime) beginTurn(ctx context.Context, emit Emitter) (domain.Tur
 }
 
 func (runtime *Runtime) planTurnInput(input provider.TurnInput) (provider.TurnInput, error) {
-	planInput, err := runtime.contextPlanningInput(input)
+	footprint, err := runtime.conversation.HistoryFootprint()
 	if err != nil {
-		return provider.TurnInput{}, fault.New(fault.CodeTurnFailed, "context planning input is invalid")
+		return provider.TurnInput{}, err
 	}
-	plan, err := runtime.planner.Plan(planInput)
-	if err != nil {
-		return provider.TurnInput{}, fault.New(fault.CodeTurnFailed, "context planning failed")
-	}
-	if plan.Decision().State() == contextplan.BudgetOverLimit {
-		total, _ := plan.TotalEstimate().Tokens()
-		limit, _ := plan.Decision().EffectiveLimit()
-		return provider.TurnInput{}, fault.New(
-			fault.CodeContextLimitExceeded,
-			fmt.Sprintf("estimated context tokens %d exceed effective input limit %d", total, limit),
-		)
-	}
-	providerInput := provider.TurnInput{Text: input.Text}
-	if input.IsToolContinuation() {
-		providerInput = provider.NewToolContinuationInput()
-	}
-	providerInput, err = providerInput.WithProjectInstructions(runtime.projectInstructions)
-	if err != nil {
-		return provider.TurnInput{}, fault.New(fault.CodeTurnFailed, "provider input is invalid")
-	}
-	providerInput, err = providerInput.WithToolCatalog(runtime.toolCatalog)
-	if err != nil {
-		return provider.TurnInput{}, fault.New(fault.CodeTurnFailed, "provider tool catalog is invalid")
-	}
-	return providerInput, nil
+	return runtime.planHistory(runtime.conversation.ProjectHistory(), footprint)
 }
 
 func (runtime *Runtime) consumeProviderStream(
@@ -883,22 +875,6 @@ func discardPreparedSample(sample *provider.PreparedSample) {
 	if sample != nil && !sample.Finalized() {
 		_ = sample.Discard()
 	}
-}
-
-func (runtime *Runtime) contextPlanningInput(input provider.TurnInput) (contextplan.PlanningInput, error) {
-	history := runtime.conversation.ProjectHistory()
-	footprint, err := runtime.conversation.HistoryFootprint()
-	if err != nil {
-		return contextplan.PlanningInput{}, err
-	}
-	currentInput := contextplan.NewUserTextInput(input.Text)
-	if input.IsToolContinuation() {
-		currentInput = contextplan.NewToolContinuationInput()
-	}
-	return contextplan.NewPlanningInput(
-		runtime.profile, runtime.toolCatalog, runtime.projectInstructions, history, footprint,
-		currentInput, runtime.budget,
-	)
 }
 
 func (runtime *Runtime) failTurn(ctx context.Context, emit Emitter, turnID domain.TurnID, cause error) error {
