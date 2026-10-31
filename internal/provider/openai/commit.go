@@ -11,7 +11,7 @@ import (
 
 const (
 	responsesWire               = "responses"
-	nativeCommitPayloadRevision = 2
+	nativeCommitPayloadRevision = 3
 )
 
 type nativeHistoryCommit struct {

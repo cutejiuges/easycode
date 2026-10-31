@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -29,12 +30,13 @@ type RepairReport struct {
 	RemovedBytes  int64      `json:"removed_bytes,omitempty"`
 }
 
-// LoadResult 是完成结构校验和可选尾部修复后的 journal 快照。
+// LoadResult 是完成只读结构校验后的 journal 快照。
 type LoadResult struct {
 	Identity     Identity
 	Records      []Record
 	NextSequence uint64
 	Repair       RepairReport
+	repair       *repairTicket
 }
 
 // Loader 负责有界结构加载，不解释 turn 或 Provider 语义。
@@ -45,7 +47,7 @@ func NewLoader() *Loader {
 	return &Loader{}
 }
 
-// Load 借用 lease 的同一 handle 完整校验 journal，并仅修复文件末尾的半行或未闭合 batch。
+// Load 借用 lease 的同一 handle 完整校验 journal，并返回待修复尾部；调用方完成语义验证后显式调用 Repair。
 func (loader *Loader) Load(ctx context.Context, lease *JournalLease) (LoadResult, error) {
 	if err := contextError(ctx); err != nil {
 		return LoadResult{}, err
@@ -53,14 +55,25 @@ func (loader *Loader) Load(ctx context.Context, lease *JournalLease) (LoadResult
 	if loader == nil {
 		return LoadResult{}, fmt.Errorf("session loader is required")
 	}
-	file, threadID, err := lease.borrow()
+	file, threadID, err := lease.beginIO()
 	if err != nil {
 		return LoadResult{}, err
 	}
-	return loadJournal(ctx, file, threadID)
+	defer lease.endIO()
+	result, err := loadJournal(ctx, file, threadID)
+	if err != nil {
+		return LoadResult{}, err
+	}
+	if result.repair != nil {
+		result.repair.lease = lease
+	}
+	lease.mu.Lock()
+	lease.repair = result.repair
+	lease.mu.Unlock()
+	return result, nil
 }
 
-func loadJournal(ctx context.Context, file *os.File, expectedThreadID domain.ThreadID) (LoadResult, error) {
+func loadJournal(ctx context.Context, file *os.File, expectedThreadID domain.ThreadID) (result LoadResult, resultErr error) {
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return LoadResult{}, fmt.Errorf("seek session journal: %w", err)
 	}
@@ -69,7 +82,13 @@ func loadJournal(ctx context.Context, file *os.File, expectedThreadID domain.Thr
 		return LoadResult{}, fmt.Errorf("inspect session journal: %w", err)
 	}
 	originalSize := info.Size()
-	reader := bufio.NewReaderSize(file, 64<<10)
+	digest := sha256.New()
+	reader := bufio.NewReaderSize(io.TeeReader(file, digest), 64<<10)
+	defer func() {
+		if resultErr == nil && result.repair != nil {
+			copy(result.repair.digest[:], digest.Sum(nil))
+		}
+	}()
 	committed := make([]Record, 0)
 	currentBatch := make([]Record, 0)
 	var identity Identity
@@ -101,11 +120,9 @@ func loadJournal(ctx context.Context, file *os.File, expectedThreadID domain.Thr
 			if len(currentBatch) > 0 {
 				truncateAt = batchOffset
 			}
-			report, repairErr := repairTail(file, originalSize, truncateAt, RepairHalfLine)
-			if repairErr != nil {
-				return LoadResult{}, repairErr
-			}
-			return finalLoadResult(identity, committed, expectedThreadID, report), nil
+			result := finalLoadResult(identity, committed, expectedThreadID, RepairReport{})
+			result.repair = &repairTicket{size: originalSize, offset: truncateAt, kind: RepairHalfLine}
+			return result, nil
 		}
 
 		record, decodeErr := DecodeRecord(line)
@@ -151,11 +168,9 @@ func loadJournal(ctx context.Context, file *os.File, expectedThreadID domain.Thr
 	}
 
 	if len(currentBatch) > 0 {
-		report, repairErr := repairTail(file, originalSize, batchOffset, RepairIncompleteBatch)
-		if repairErr != nil {
-			return LoadResult{}, repairErr
-		}
-		return finalLoadResult(identity, committed, expectedThreadID, report), nil
+		result := finalLoadResult(identity, committed, expectedThreadID, RepairReport{})
+		result.repair = &repairTicket{size: originalSize, offset: batchOffset, kind: RepairIncompleteBatch}
+		return result, nil
 	}
 	return finalLoadResult(identity, committed, expectedThreadID, RepairReport{}), nil
 }
@@ -180,21 +195,6 @@ func readBoundedLine(reader *bufio.Reader) ([]byte, bool, error) {
 			return nil, false, err
 		}
 	}
-}
-
-func repairTail(file *os.File, originalSize int64, truncateAt int64, kind RepairKind) (RepairReport, error) {
-	if truncateAt < 0 || truncateAt > originalSize {
-		return RepairReport{}, corrupt(fmt.Errorf("session repair offset is invalid"))
-	}
-	if err := file.Truncate(truncateAt); err != nil {
-		return RepairReport{}, fmt.Errorf("truncate session journal tail: %w", err)
-	}
-	if err := file.Sync(); err != nil {
-		return RepairReport{}, fmt.Errorf("sync repaired session journal: %w", err)
-	}
-	return RepairReport{
-		Repaired: true, Kind: kind, TruncatedFrom: truncateAt, RemovedBytes: originalSize - truncateAt,
-	}, nil
 }
 
 func finalLoadResult(

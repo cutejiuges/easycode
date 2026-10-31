@@ -140,7 +140,7 @@ func DecodeTurnFailed(event Event) (TurnFailedPayload, error) {
 
 // NewTurnCompleted 创建携带 turn usage 的成功完成事件。
 func NewTurnCompleted(usage domain.SampleUsage) (Event, error) {
-	payload, err := newUsagePayload(usage)
+	payload, err := NewUsagePayload(usage)
 	if err != nil {
 		return Event{}, err
 	}

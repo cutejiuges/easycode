@@ -54,11 +54,17 @@ Anthropic entry SHALL保留原生message/content block与metadata；OpenAI entry
 - **WHEN** Conversation先提交含calls的sample再提交tool outputs
 - **THEN** Provider使用同一当前encoder/decoder和不同entry kind表达两次提交，不新增payload revision或业务DTO
 
-当前 native canary SHALL 精确为 2，旧 canary/旧 sample input 字段失败关闭。恢复 SHALL 接收经过验证的真实 turn identity、期望提交角色和有序 InputIDs，并与 opaque entry 的 kind、身份及顺序交叉校验；任一错配必须事务性拒绝全部恢复，不允许共享层解析 wire。
+当前 native canary SHALL 精确为 3，旧 canary/旧 sample input 字段失败关闭。恢复 SHALL 接收经过验证的真实 turn identity、期望提交角色和有序 InputIDs，并与 opaque entry 的 kind、身份及顺序交叉校验；任一错配必须事务性拒绝全部恢复，不允许共享层解析 wire。
 
 #### Scenario: Reject mismatched input associations
 - **WHEN** 外部输入事实与 native entry 的 ID、顺序或角色不一致
 - **THEN** 恢复整体失败且没有部分 Conversation、repair 或网络副作用
+
+普通 user_inputs/sample/tool_outputs 继续使用三种原生增量。压缩 SHALL 使用独立 Provider-owned checkpoint envelope，由 compaction_completed 保存，不作为普通 sample 或 provider_native_commit。checkpoint 以及失败计量 provenance 同样采用唯一当前 canary 3、封闭 typed codec 和严格校验；共享层只验证 metadata，不解析 Provider wire。
+
+#### Scenario: Keep checkpoint separate from ordinary commits
+- **WHEN** 一个 thread 完成手动压缩
+- **THEN** checkpoint 不占用普通 native commit ordinal，不伪造 user_inputs/sample/tool_outputs 或 InputID
 
 ### Requirement: Native round-trip preserves Provider-private semantics
 
@@ -83,7 +89,7 @@ OpenAI codec MUST 无损保留 Responses item 顺序、message role/content、ph
 
 ### Requirement: Restore validates all native commits transactionally
 
-恢复会话前，对应Provider SHALL只接收Session语义回放计划中已通过lifecycle校验的`provider_native_commit`，并按seq校验其family、wire、payload revision、commit shape、结构、角色/边界和原生不变量。只有所有待恢复提交均有效时才能创建可用Conversation；任一损坏、不匹配或不受支持的提交 MUST使恢复整体失败，不得加载前缀后继续网络请求。
+恢复会话前，对应Provider SHALL只接收Session语义回放计划中已通过lifecycle校验的`provider_native_commit`和压缩 checkpoint，并按seq校验其family、wire、payload revision、commit shape、结构、角色/边界和原生不变量。只有所有待恢复提交均有效时才能创建可用Conversation；任一损坏、不匹配或不受支持的提交 MUST使恢复整体失败，不得加载前缀后继续网络请求。
 
 同一thread中的user-input、sample 与 tool-output entries SHALL按持久化顺序恢复。Provider MUST验证每组原生outputs与前一未闭合tool calls的wire kind、call ID、capability、数量和顺序匹配，并验证首个 sample 前存在 initial user_inputs、continuation sample 位于已闭合 tool outputs 及可选 steering user_inputs 之后；全部 sample 不含 input 字段；孤立output、function/custom错配、重复output、跨Provider output、遗漏call或非法sample边界 MUST使恢复整体失败。Provider不得从`SemanticHistoryView`、RuntimeEvent、TUI transcript、approval fact或错误摘要补全缺失原生数据，也不得仅根据原生call/output推断共享工具副作用；执行、批准与重放决策只来自独立Session ledger。
 
@@ -112,6 +118,16 @@ OpenAI codec MUST 无损保留 Responses item 顺序、message role/content、ph
 - **WHEN** 首个 sample 缺少 initial user_inputs，或后续 sample 前工具组未闭合，或 steering 关联非法
 - **THEN** Provider恢复整体失败且不构造下一请求
 
+恢复 SHALL 按 Session seq 交错验证普通增量和 checkpoint；checkpoint 必须匹配此前 committed/context revision、前驱或 root、有效原生内容 digest、family/wire/model。完整旧原生历史仍验证工具配对和 opaque 结构；checkpoint 不得掩盖被覆盖区域损坏。最新 checkpoint 非法时 MUST 整体拒绝，不回退旧 checkpoint，不调用网络。
+
+#### Scenario: Reject a stale checkpoint source
+- **WHEN** checksum 合法但 checkpoint 引用了不匹配的前驱、窗口 digest 或提交位置
+- **THEN** 整体恢复失败，无部分 Conversation、补偿写入或 Provider 请求
+
+#### Scenario: Validate archived opaque records
+- **WHEN** 最新 checkpoint 完整但较早已覆盖的原生 tool pair 或 opaque entry 非法
+- **THEN** 恢复失败，不因该内容已不在模型窗口而跳过验证
+
 ### Requirement: Restored requests match uninterrupted requests
 
 对相同Provider配置、相同Tool Catalog snapshot、相同已提交历史、相同下一条用户输入和相同项目指令快照，从JSONL恢复后的RequestCompiler输出 MUST与未退出进程的Conversation输出保持相同Provider-native item顺序、tool definition顺序与wire kind、canonical request bytes和cache fingerprint。恢复不得生成新的Provider item/call ID、签名、encrypted content或其他wire字段来替代持久化值。
@@ -130,6 +146,13 @@ OpenAI codec MUST 无损保留 Responses item 顺序、message role/content、ph
 - **WHEN** 相同native commits在新进程中恢复，但项目指令或Tool Catalog snapshot发生变化
 - **THEN** restored native history的revision、原生item顺序和opaque bytes完全不变
 - **THEN** 下一请求变化只能归因于当前外部snapshot，并产生对应fingerprint变化
+
+恢复等价性 SHALL 覆盖 checkpoint 后零个/多个增量及连续多次压缩。模型请求使用最新合法原生摘要窗口和后续增量，完整历史仍可独立查询；恢复不得重新生成摘要或 wrapper。checkpoint 来源 digest 不包含当前项目指令/工具目录，当前快照只在请求时注入。
+
+#### Scenario: Restore a compacted continuation
+- **WHEN** 两家 Provider 分别从同一成功 checkpoint 和后续工具闭环恢复
+- **THEN** 与 uninterrupted 路径的下一请求 canonical bytes、原生顺序、context revision 和 fingerprint 相同
+- **THEN** 生成摘要网络次数为零，工具执行次数为零
 
 ### Requirement: Restored semantic projection remains derived and lossy
 
@@ -186,13 +209,13 @@ Normalized usage 属于共享计量事实，不得嵌入公共 opaque envelope �
 
 ### Requirement: Native usage round-trip preserves Provider facts
 
-OpenAI native commit SHALL 在当前 payload canary 2 中保存 completed response 中受支持 raw usage 字段及其字段级已知/未知状态；Anthropic native commit SHALL 继续在 payload canary 2 中保存最终 message raw usage。两个 Provider 的 codec 都 MUST 在 encode/decode/restore round-trip 后保持 raw usage 数值、缺失状态和 Provider 字段含义等价，且不得因为存在 normalized usage 而删除或重写 raw usage。usage SHALL 沿用唯一当前 sample 契约，不引入双版本 decoder；user_inputs 不得伪造 usage。
+OpenAI native commit SHALL 在当前 payload canary 3 中保存 completed response 中受支持 raw usage 字段及其字段级已知/未知状态；Anthropic native commit SHALL 继续在 payload canary 3 中保存最终 message raw usage。两个 Provider 的 codec 都 MUST 在 encode/decode/restore round-trip 后保持 raw usage 数值、缺失状态和 Provider 字段含义等价，且不得因为存在 normalized usage 而删除或重写 raw usage。usage SHALL 沿用唯一当前 sample 契约，不引入双版本 decoder；user_inputs 不得伪造 usage。
 
 #### Scenario: Round-trip OpenAI raw usage
 
 - **WHEN** OpenAI native commit 包含部分已知、部分缺失的 Responses usage
 - **THEN** 持久化并恢复后的 raw usage 数值和字段缺失状态与完成响应等价
-- **THEN** commit 继续使用唯一的 OpenAI native payload canary 2
+- **THEN** commit 继续使用唯一的 OpenAI native payload canary 3
 
 #### Scenario: Round-trip Anthropic raw usage
 
@@ -208,7 +231,7 @@ OpenAI native commit SHALL 在当前 payload canary 2 中保存 completed respon
 
 每个受支持 Provider Conversation SHALL 从已成功提交的原生历史生成只读、强类型的上下文 footprint。footprint MUST 表示下一次请求会重放的已提交原生内容总估算，包括可见文本以及 Anthropic thinking/signature/redacted thinking、OpenAI reasoning/encrypted content 和受控未知原生项；不得计入 usage、response ID、transport metadata 或尚未提交的 streaming staging。
 
-footprint SHALL 只暴露 Provider family、可恢复等价的单调 committed revision、版本化 estimator method、`estimated` 或 `unknown` 状态及 token 数，不得暴露原生 item、正文、signature、encrypted bytes、raw JSON 或可逆摘要。空历史 revision SHALL 为零；每个成功 finalized native commit SHALL 恰好推进一次 revision，失败或 staging sample 不得推进。读取 footprint MUST 是无网络、文件、数据库和进程副作用的内存操作，不得修改原生历史或后续请求编译结果。
+footprint SHALL 只暴露 Provider family、可恢复等价的单调 context revision、版本化 estimator method、`estimated` 或 `unknown` 状态及 token 数，不得暴露原生 item、正文、signature、encrypted bytes、raw JSON 或可逆摘要。空历史且无 checkpoint 时 context revision SHALL 为零；每个成功 finalized native commit 或 checkpoint SHALL 恰好推进一次 context revision，失败或 staging sample 不得推进。读取 footprint MUST 是无网络、文件、数据库和进程副作用的内存操作，不得修改原生历史或后续请求编译结果。
 
 #### Scenario: Estimate committed opaque Anthropic history
 
@@ -226,7 +249,7 @@ footprint SHALL 只暴露 Provider family、可恢复等价的单调 committed r
 
 - **WHEN** Conversation 正在归并一个尚未成功 durable finalize 的 sample
 - **THEN** footprint 与该 sample 开始前一致
-- **THEN** 当前用户输入和部分 assistant 输出不进入已提交历史 footprint
+- **THEN** 已独立提交的当前用户输入仍计入 footprint，未提交的部分 assistant 输出不计入
 
 #### Scenario: Advance revision only after native commit
 
@@ -239,9 +262,15 @@ footprint SHALL 只暴露 Provider family、可恢复等价的单调 committed r
 - **WHEN** 对同一 Conversation 读取一次或多次 footprint 后编译下一轮请求
 - **THEN** 请求的原生 item 顺序、canonical bytes 和 cache fingerprint 与未读取 footprint 时完全相同
 
+footprint SHALL 仅覆盖当前有效原生窗口；完整 native committed revision 与 context revision 是不同概念。checkpoint 推进 context revision 而不增加普通 native commit 数；不得将归档全文估算与窗口 footprint 合并。
+
+#### Scenario: Advance only the context revision on compaction
+- **WHEN** 一个有效 checkpoint 成功 Sync 并 finalize
+- **THEN** context revision 恰好推进一次，普通 native committed revision 和原 item 顺序不变，footprint 只计算新窗口
+
 ### Requirement: Restored native footprint matches uninterrupted history
 
-对于相同 Provider 配置和相同已提交 native commits，从 Session 恢复的 Conversation SHALL 产生与未退出进程的 Conversation 相同 family、committed revision、estimator method、估算状态和 token 数。恢复路径 MUST 从已验证的 Provider-native history 重新计算 footprint，不得从 `SemanticHistoryView`、RuntimeEvent、normalized usage 或 Session 错误摘要反推 opaque 内容。
+对于相同 Provider 配置和相同已提交 native commits 和 checkpoints，从 Session 恢复的 Conversation SHALL 产生与未退出进程的 Conversation 相同 family、context revision、estimator method、估算状态和 token 数。恢复路径 MUST 从已验证的 Provider-native history 重新计算 footprint，不得从 `SemanticHistoryView`、RuntimeEvent、normalized usage 或 Session 错误摘要反推 opaque 内容。
 
 #### Scenario: Compare uninterrupted and restored Anthropic footprints
 
@@ -306,3 +335,19 @@ user-input、sample 与 tool-output prepared commit SHALL 各有唯一当前构�
 - **THEN** restored 与 uninterrupted 路径的原生 item 顺序、opaque bytes、下一请求 canonical bytes 和 fingerprint 一致
 
 用户输入准备 SHALL 是纯内存操作，返回独立只读的输入关联及 envelope；只有语义与生命周期相同的私有逻辑可以复用，不得把用户输入编码为工具结果。
+
+### Requirement: Prepared checkpoints own immutable provenance and one resolution
+
+Provider checkpoint SHALL 绑定独立 CompactionID、原始来源 revisions/前驱/digest、family/wire/model、prompt revision、有界原生摘要编码与生成响应 provenance，保存 raw usage；normalized usage 独立暴露给共享层。summary wrapper MUST 由 Provider 一次确定性生成并持久化，恢复不得按新版 prompt 重新包装。shared API MUST NOT 接受 any、任意 Message map 或可变全局 codec。准备、读取、编码、验证与 finalize/discard MUST 纯内存；finalize 仅在成功 Sync 后恰好一次执行，失败 discard 不改变当前窗口。checkpoint getter 和投影必须深拷贝。
+
+#### Scenario: Freeze candidate bytes
+- **WHEN** 调用方修改 prepared checkpoint getter 返回的 bytes 或 summary 投影
+- **THEN** 原 checkpoint、请求 bytes、provenance 和后续恢复结果不变
+
+#### Scenario: Resolve once after durability
+- **WHEN** finalize/discard 或重复 resolution 竞争
+- **THEN** 只执行一个合法 resolution，成功 Sync 后窗口只切换一次，cleanup 不早于 resolution 完成
+
+#### Scenario: Keep native summary provenance out of the request
+- **WHEN** 摘要响应包含合法 opaque reasoning 与 raw usage
+- **THEN** provenance 保真保存，后续请求只发送摘要上下文和新增原生历史，不重放本次生成响应的 reasoning/usage

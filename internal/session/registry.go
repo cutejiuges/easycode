@@ -12,10 +12,12 @@ const (
 type Placement string
 
 const (
-	PlacementInitialMetadata Placement = "initial_metadata"
-	PlacementTurnStart       Placement = "turn_start"
-	PlacementActiveTurn      Placement = "active_turn"
-	PlacementTurnTerminal    Placement = "turn_terminal"
+	PlacementCompactionStart    Placement = "compaction_start"
+	PlacementCompactionTerminal Placement = "compaction_terminal"
+	PlacementInitialMetadata    Placement = "initial_metadata"
+	PlacementTurnStart          Placement = "turn_start"
+	PlacementActiveTurn         Placement = "active_turn"
+	PlacementTurnTerminal       Placement = "turn_terminal"
 )
 
 // Descriptor 是一种已知 event kind 的唯一当前语义声明。
@@ -27,6 +29,10 @@ type Descriptor struct {
 
 func descriptorByKind(kind EventKind) (Descriptor, bool) {
 	switch kind {
+	case EventCompactionStarted:
+		return Descriptor{Kind: kind, Cardinality: CardinalityMany, Placement: PlacementCompactionStart}, true
+	case EventCompactionCompleted, EventCompactionFailed:
+		return Descriptor{Kind: kind, Cardinality: CardinalityMany, Placement: PlacementCompactionTerminal}, true
 	case EventSessionMeta:
 		return Descriptor{
 			Kind:        EventSessionMeta,

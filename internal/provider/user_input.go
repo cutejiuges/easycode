@@ -124,34 +124,32 @@ func (commit *preparedNativeCommit) resolve(finalize bool) error {
 
 // InputPreview 保存同一候选原生历史的只读估算快照和纯内存请求校验策略。
 type InputPreview struct {
-	history      domain.SemanticHistoryView
+	history      domain.ActiveContextView
 	footprint    domain.NativeHistoryFootprint
 	checkRequest func(TurnInput) error
 }
 
 // NewInputPreview 创建与 prepared 输入生命周期绑定的候选预检值。
-func NewInputPreview(history domain.SemanticHistoryView, footprint domain.NativeHistoryFootprint, checkRequest func(TurnInput) error) (InputPreview, error) {
-	if !history.Provider.Valid() || history.Turns == nil || checkRequest == nil {
-		return InputPreview{}, fmt.Errorf("input preview is invalid")
+func NewInputPreview(history domain.ActiveContextView, footprint domain.NativeHistoryFootprint, checkRequest func(TurnInput) error) (InputPreview, error) {
+	if err := history.Validate(); err != nil {
+		return InputPreview{}, err
 	}
-	for _, turn := range history.Turns {
-		if err := turn.Validate(); err != nil {
-			return InputPreview{}, err
-		}
+	if checkRequest == nil {
+		return InputPreview{}, fmt.Errorf("input preview is invalid")
 	}
 	if err := footprint.Validate(); err != nil {
 		return InputPreview{}, err
 	}
-	if footprint.Family() != history.Provider {
+	if footprint.Family() != history.History().Provider || footprint.Revision() != history.Revision() {
 		return InputPreview{}, fmt.Errorf("preview provider mismatch")
 	}
 	return InputPreview{history: history.Clone(), footprint: footprint, checkRequest: checkRequest}, nil
 }
 
 // Preview 返回候选视图和原生 footprint，绝不发布到 committed history。
-func (inputs *PreparedUserInputs) Preview() (domain.SemanticHistoryView, domain.NativeHistoryFootprint, error) {
+func (inputs *PreparedUserInputs) Preview() (domain.ActiveContextView, domain.NativeHistoryFootprint, error) {
 	if inputs == nil || inputs.commit == nil || inputs.commit.state.Load() != 0 {
-		return domain.SemanticHistoryView{}, domain.NativeHistoryFootprint{}, fmt.Errorf("prepared inputs are not pending")
+		return domain.ActiveContextView{}, domain.NativeHistoryFootprint{}, fmt.Errorf("prepared inputs are not pending")
 	}
 	return inputs.preview.history.Clone(), inputs.preview.footprint, nil
 }

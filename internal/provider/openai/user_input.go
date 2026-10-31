@@ -39,11 +39,15 @@ func (conversation *Conversation) PrepareUserInputs(a domain.InputAssociation, i
 	if err != nil {
 		return nil, err
 	}
-	footprint, err := historyFootprint(candidate, revision+1)
+	footprint, err := conversation.windowFootprint(candidate, revision+1)
 	if err != nil {
 		return nil, err
 	}
-	preview, err := provider.NewInputPreview(projectHistory(candidate), footprint, func(input provider.TurnInput) error {
+	activeView, err := conversation.projectActiveWindow(candidate, revision+1)
+	if err != nil {
+		return nil, err
+	}
+	preview, err := provider.NewInputPreview(activeView, footprint, func(input provider.TurnInput) error {
 		_, err := conversation.compileSamplingRequest(candidate, input)
 		return err
 	})
@@ -60,6 +64,7 @@ func (conversation *Conversation) PrepareUserInputs(a domain.InputAssociation, i
 
 // compileSamplingRequest 是预检与实际采样共用的纯内存编译入口。
 func (conversation *Conversation) compileSamplingRequest(history []nativeHistoryEntry, input provider.TurnInput) (codec.CanonicalJSON, error) {
+	history = conversation.windowRequestEntries(history)
 	snapshot, exists, err := input.ProjectInstructions()
 	if err != nil {
 		return codec.CanonicalJSON{}, err

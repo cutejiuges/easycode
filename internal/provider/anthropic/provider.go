@@ -50,9 +50,14 @@ type Conversation struct {
 }
 
 type nativeHistory struct {
-	mu       sync.RWMutex
-	entries  []nativeHistoryEntry
-	revision uint64
+	mu               sync.RWMutex
+	entries          []nativeHistoryEntry
+	revision         uint64
+	checkpoint       *provider.CheckpointEnvelope
+	summaryNative    nativeHistoryEntry
+	contextSummary   domain.ContextSummary
+	checkpointOffset int
+	checkpointCount  uint64
 }
 
 var _ provider.Conversation = (*Conversation)(nil)
@@ -104,7 +109,45 @@ func (instance *Provider) NewConversation() provider.Conversation {
 // RestoreConversation 先事务式校验全部 commits，再构造可调用 Conversation。
 func (instance *Provider) RestoreConversation(commits []provider.RestoreRecord) (provider.Conversation, error) {
 	entries := make([]nativeHistoryEntry, 0, len(commits))
+	conversation := &Conversation{provider: instance}
+	seenCheckpoints := make(map[domain.CompactionID]struct{})
 	for index, commit := range commits {
+		if expected, ok := commit.CompactionSource(); ok {
+			if err := commit.Validate(); err != nil {
+				return nil, err
+			}
+			conversation.history.entries = entries
+			conversation.history.revision = uint64(len(entries))
+			source, err := conversation.compactionSource()
+			if err != nil || source != expected {
+				return nil, fmt.Errorf("compaction source does not match native history")
+			}
+			continue
+		}
+
+		if commit.IsCheckpoint() {
+			checkpoint, err := commit.Checkpoint()
+			if err != nil {
+				return nil, err
+			}
+			if _, exists := seenCheckpoints[checkpoint.ID()]; exists {
+				return nil, fmt.Errorf("checkpoint identity is duplicated")
+			}
+			seenCheckpoints[checkpoint.ID()] = struct{}{}
+			conversation.history.entries = entries
+			conversation.history.revision = uint64(len(entries))
+			source, err := conversation.compactionSource()
+			if err != nil || source != checkpoint.Source() {
+				return nil, fmt.Errorf("checkpoint source does not match native history")
+			}
+			summary, summaryText, err := decodeCheckpoint(checkpoint)
+			if err != nil {
+				return nil, err
+			}
+			conversation.history.installCheckpoint(checkpoint, summary, summaryText)
+			continue
+		}
+
 		envelope, err := commit.Envelope()
 		if err != nil {
 			return nil, err
@@ -128,7 +171,9 @@ func (instance *Provider) RestoreConversation(commits []provider.RestoreRecord) 
 	if err := validateNativeHistory(entries); err != nil {
 		return nil, fmt.Errorf("restore Anthropic native history: %w", err)
 	}
-	return &Conversation{provider: instance, history: nativeHistory{entries: entries, revision: uint64(len(entries))}}, nil
+	conversation.history.entries = entries
+	conversation.history.revision = uint64(len(entries))
+	return conversation, nil
 }
 
 // Close 释放 HTTP transport 资源。

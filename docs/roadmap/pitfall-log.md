@@ -1,5 +1,13 @@
 # EasyCode 踩坑与经验记录
 
+### [P4][2026-10-31] 结构修复先于语义验证会改变被拒绝的会话
+
+- 状态：已随手动压缩实现；恢复前拒绝组合损坏，Catalog 保持只读。
+- 根因：Loader 在 EOF 半行时立即截断并 Sync，随后 app 才验证 replay 和 Provider；语义非法前缀加半行尾部会先改文件再拒绝恢复。
+- 修复：Load 只读扫描；恢复协调者验证全部前缀后显式 Repair；凭据绑定同一 lease、大小和 digest，取消以截断接收为边界，I/O 失败 poison。Catalog 不修复 journal。
+- 回归：`internal/session/repair_test.go`、`internal/app/repair_order_test.go`、原真实子进程 lease 和 Catalog 测试。
+- 关联：`openspec/changes/archive/2026-10-31-add-durable-manual-compaction/design.md`。
+
 ### [P3][2026-10-30] 预览省略与记录位置混用
 
 - 状态：已修复，`add-tool-transcript-and-result-budget` 的 macOS 全量与 race 验收通过；Linux 原生矩阵因无 runner 未验收。
@@ -711,3 +719,11 @@
 - 复用：输入与工具输出共享私有 prepared resolution 骨架；Session 保持唯一 writer/lease/codec；TUI 仅有一个控制输出消费者和不可执行本地副本。
 - 验证：`internal/runtime/input_commit_test.go`、`internal/runtime/steering_test.go`、双 Provider 的 `steering_test.go`、`internal/session/input_commit_test.go`、`internal/tui/input_test.go` 和 `internal/app/resume_e2e_test.go` 覆盖取消、FIFO、原子取回、原生恢复及 input-only/steering 固定 fixtures。
 - 后续边界：队列/returned 不跨进程保存，uncertain 不能重新排队；工具预算、原生 reasoning、已发布协议兼容均不得通过同轮输入偷偷降级。
+
+
+### [P4][2026-10-31] 摘要成功不等于窗口已安装
+
+- 根因：流式文本、SDK 终态、writer admission 和 durable Sync 是不同边界，任一提前切窗都会使取消或恢复后请求分叉。
+- 处理：独立摘要 consumer 拒绝 refusal/incomplete/工具调用；候选先检查缩减与预算，completed Sync 后复用 prepared finalize。summary-native 包装进入窗口，生成 reasoning/raw usage 仅留作 provenance；完整 transcript 不切除。
+- 回归：双 Provider `compaction_stream_test.go`、`compaction_test.go`、`steering_test.go`；`internal/runtime/compaction_test.go`；`internal/app/compaction_fixture_test.go` 与 `compaction_headless_test.go`。
+- 取消：120 秒期限使用可控注入验证；shutdown 超时仍等待唯一 cleanup owner。输出断管通过下一次写失败观测，不把 stdin EOF 当作操作取消。

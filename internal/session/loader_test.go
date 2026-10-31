@@ -247,7 +247,11 @@ type testJournalLoader struct {
 }
 
 func (loader *testJournalLoader) Load(ctx context.Context, _ domain.ThreadID) (LoadResult, error) {
-	return loader.loader.Load(ctx, loader.lease)
+	loaded, err := loader.loader.Load(ctx, loader.lease)
+	if err == nil && loaded.NeedsRepair() {
+		loaded.Repair, err = loader.loader.Repair(ctx, loader.lease, loaded)
+	}
+	return loaded, err
 }
 
 func writeRawJournal(t *testing.T, content []byte) (*testJournalLoader, *Repository) {

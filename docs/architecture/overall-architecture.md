@@ -4,7 +4,7 @@
 
 命令输出存储位于 `internal/session/artifact`；Runtime 在 durable result 后授权引用并更新七工具事实投影，app 装配 typed 宿主查询，TUI 不读文件。ReadArtifact 是第七项真实能力，命令预览与保存前缀分离；保存文件缺失不影响 Provider 原生恢复。预算、目录隔离和 owner 细节见 [ADR-0005](adr/0005-private-command-output-and-host-queries.md) 与 [Tool 输出存储](tool-system.md#命令输出存储与查询)。
 
-Session envelope/payload canary 为 `6`，双 Provider native payload revision 为 `2`，外部 headless JSONL version 为 `1`。这些标记属于不同边界，不构成并行兼容 reader。prepared sample/tool outputs 仅提供显式 finalize/discard 构造器，回调完成后才能报告 finalized。
+Session envelope/payload canary 为 `7`，双 Provider native payload revision 为 `3`，外部 headless JSONL version 为 `1`。这些标记属于不同边界，不构成并行兼容 reader。prepared sample/tool outputs 仅提供显式 finalize/discard 构造器，回调完成后才能报告 finalized。
 
 `internal/codec` 从固定 Sonic 配置值编码，不读取可替换的第三方默认 codec。封闭 JSON 对象拒绝重复键、大小写别名、未知字段、尾随内容和有损 Unicode。工具缺省参数保留默认值，显式 null 失败；持久化 record 按 json 标签要求非 omitempty 字段存在，标量与对象不接受 null，当前 nil 集合仍允许编码为 null。自定义联合 decoder 负责分支字段；Provider opaque 原生项保留独立扩展规则和原始字节。
 
@@ -464,7 +464,7 @@ ToolReady / ToolStarted / ToolProgress / ToolTerminal / TranscriptCommitted
 
 `--print` 在内存中聚合文本，仅在 Runtime 已 durable 发布 `turn_completed` 且事件流正常闭合后输出最终值。`--json` 可实时输出 delta，但同样不从 channel close 或已见文本推断成功。取消、短写和断管会触发幂等 Interrupt 并 drain Runtime；已 durable 完成后的输出失败只改变进程交付状态，不回滚 Session。
 
-一次性 headless prompt 在应用装配前解析：无位置参数或显式 `-` 时读取 stdin；显式 prompt 与非终端 stdin 同时存在时使用稳定 `<stdin>` 边界追加；组合内容必须是合法 UTF-8、非空且不超过 4 MiB。流式模式只由 `--json --input-format stream-json` 显式启用，要求可关闭的非终端 stdin/stdout transport，以不超过 32 MiB 的单行 NDJSON 接收严格 `input.submit`、自动 `input.append`、按 InputID 原子 `input.retract`、定向 `turn.stop`/`turn.interrupt` 和 `session.shutdown`。`--continue` 会在当前 cwd、Provider family/wire 和 model 完全匹配时恢复最近 root Session，并与 `--resume` 互斥。当前仍不支持独立 usage 更新或 reasoning/tool 事件。
+一次性 headless prompt 在应用装配前解析：无位置参数或显式 `-` 时读取 stdin；显式 prompt 与非终端 stdin 同时存在时使用稳定 `<stdin>` 边界追加；组合内容必须是合法 UTF-8、非空且不超过 4 MiB。流式模式只由 `--json --input-format stream-json` 显式启用，要求可关闭的非终端 stdin/stdout transport，以不超过 32 MiB 的单行 NDJSON 接收严格 `input.submit`、自动 `input.append`、按 InputID 原子 `input.retract`、定向 `turn.stop`/`turn.interrupt` 、`context.query/compact/cancel` 和 `session.shutdown`。`--continue` 会在当前 cwd、Provider family/wire 和 model 完全匹配时恢复最近 root Session，并与 `--resume` 互斥。当前仍不支持独立 usage 更新或 reasoning/tool 事件。
 
 ### 7.3 AgentLoop 输入控制
 
@@ -573,22 +573,22 @@ Skill 与 hooks/plugins 属于 P6；MCP 和 Agent/Subagent 属于 P7；完整跨
 
 ## 9. Context 与 Compaction
 
-本章同时描述当前 P2 基线和 P4 目标。当前已实现包含 Tool Catalog 的确定性 ContextPlanner、可选项目指令、本地 token estimate、Provider-private HistoryFootprint、可选显式 token budget 和请求前超限守卫；动态扩展/skill 来源、真实 Provider cache policy、compaction 以及跨 Provider fork 尚未实现。
+本章同时描述当前 P2 基线和 P4 目标。当前已实现包含 Tool Catalog 的确定性 ContextPlanner、可选项目指令、本地 token estimate、Provider-private HistoryFootprint、可选显式 token budget 和请求前超限守卫；手动 compaction、有效窗口查询与 durable checkpoint 已实现；动态扩展/skill 来源、真实 Provider cache policy、自动压缩及跨 Provider fork 尚未实现。
 
 ### 9.1 上下文来源
 
 当前已接入 Runtime 的来源只有：
 
 - `provider_profile`：family、model、schema revision，`replace + stable`。
+- `tool_catalog`：七项工具的确定性 schema，`replace + stable`。
 - `project_instructions`：启动时发现的有界结构化快照，存在文档时为 `replace + project-stable`，空快照省略。
-- `committed_history`：`SemanticHistoryView` 与不含 opaque 正文的 Provider footprint，`append + turn-stable`。
-- `current_input`：本轮用户文本，`replace + volatile`。
+- `committed_history`：`ActiveContextView` 中的独立摘要与增量历史，结合不含 opaque 正文的 Provider footprint，`append + turn-stable`。
+- `current_input`：采样标记，`replace + volatile`；正文已进入有效原生历史，排队和 staging 输入不重复计量。
 
 后续阶段将在存在真实消费者、验证和测试时逐项增加以下来源：
 
 - base/developer instructions
 - provider/model/collaboration mode
-- tool schemas
 - plugin/skill catalog
 - 已激活 skill 正文
 - 原生 conversation history
@@ -606,14 +606,17 @@ ContextPlanner 必须明确每一项的来源、优先级、稳定性、token �
 - 大工具结果在进入历史前截断，并将完整内容存入 artifact。
 - 图像、音频和其他 modality 按模型能力过滤。
 
-### 9.3 Compaction
+### 9.3 手动 Compaction
 
-- 支持手动和阈值自动 compact。
-- compact 前后触发 hooks。
-- summary 替换模型窗口，但原始 JSONL 保留。
-- 重新注入项目指令、活动 skill、计划、关键文件和必要 retained context。
-- CompactionCodec 可以 provider-specific；summary 的领域含义共享。
-- 对模型或 provider 切换，使用 compaction compatibility 判断是否需要重建窗口。
+Provider 同时保留完整原生历史和有效请求窗口。checkpoint 安装后，普通请求只发送 Provider 保存的摘要包装及新增原生条目；完整 transcript、thinking/signature/encrypted content、工具位置和冻结预览保持不变。独立摘要不伪造 UserInput、TurnID 或 native ordinal。
+
+AgentLoop 只允许空闲且队列为空时接收压缩。预检通过才生成 CompactionID，成功保存 `compaction_started` 后进行一次最长 120 秒的独立网络请求；双 Provider 保留工具目录与项目指令，但禁用 tool choice，并再次拒绝流中的工具调用。输出上限由 JSON-only `compaction_output_tokens` 控制，默认 4096，范围 1..65536。只接受完整、非空、合法 UTF-8、至多 256 KiB 的摘要，并要求新窗口估算严格缩减且满足配置预算。
+
+候选沿用 prepared resolution：`compaction_completed` 成功 Sync 后才 finalize；取消发生在 writer admission 后仍以确定提交结果为准。失败保留旧窗口，无法确认持久化时 poison 并关闭；`compaction_failed` 单独记录 observed/unavailable usage，压缩费用不混入普通 turn。操作和队列状态不写入请求指纹。
+
+恢复按 seq 验证全部原生记录、来源 digest、模型、前驱与 checkpoint 包装，再修复物理尾部。started-only 只追加本地 interrupted 终态，不联网、重执行工具或读取旧 artifact 内容。摘要不恢复审批 grant、文件观察或 artifact 授权。新进程重新发现当前项目指令。详见 [ADR-0008](adr/0008-durable-context-checkpoints.md)。
+
+TUI 提供 `/context`、`/compact [instructions]`、定向取消及 Ctrl+O 完整历史；headless stream v1 提供 `context.query/compact/cancel`。完成后等待显式输入，已有队列则清理完成后继续；失败返还 auto，保留 strict-next。自动阈值压缩、Hook、Skills/MCP、跨 Provider fork 与自动文件 rehydrate 仍是后续能力。
 
 ## 10. Session 与存储
 
@@ -621,7 +624,7 @@ ContextPlanner 必须明确每一项的来源、优先级、稳定性、token �
 
 - `session`：一个逻辑会话和持久化命名空间，拥有一棵线程树，不等同于单条消息历史。
 - `root thread`：Session 创建时的根线程，承载默认用户交互历史。
-- `thread`：Session 内一条线性的 turn/native history；Subagent、fork 和 compaction 可以创建 child thread。
+- `thread`：Session 内一条线性的 turn/native history；未来 Subagent 与跨 Provider fork 可创建 child thread；当前手动压缩始终留在原 thread。
 - `turn`：Thread 内一次用户输入到模型停止/工具循环结束的完整生命周期。
 
 `session_id` 用于定位逻辑会话，`thread_id` 用于定位具体执行链；EventEnvelope 同时携带二者，不能只用其中一个替代另一个。线程树决策见 [ADR-0003](adr/0003-session-thread-tree.md)。
@@ -671,7 +674,7 @@ EventEnvelope
 
 Provider native commit 只记录 Provider 已验证的原生增量和 raw usage；紧邻的 `sample_usage` 记录共享五项三态指标。无工具的成功 sample 仍以 native commit、usage 与 terminal 原子提交；带调用的 sample 则把有序 ready facts 放入同一 durable batch，随后按需要 durable 批准决定，再提交 started、result 和 Provider 原生 tool outputs。当前 approval fact 保存 decision source、candidate fingerprint 与安全展示 metadata；Exec 不持久化 PID、宿主环境、输出 chunk 或底层 cause。缺失 usage、错序、遗漏配对或重复调用身份一律 fail closed。hook、subagent、cache 与 compaction checkpoint 仍需按各自恢复语义定义记录；不能把 RuntimeEvent 或 UI transcript 当作 native history。
 
-当前 Session envelope/payload 使用唯一 canary 6，进程内 RuntimeEvent 不携带固定版本；headless JSONL v1 是独立外部 wire。稳定发布前的契约补全直接替换唯一 current fixture，不保留双 reader；只有契约已冻结、变化无法加法表达且已发布数据或客户端必须并存时，才引入新 revision，并同时定义兼容窗口与退出条件。
+当前 Session envelope/payload 使用唯一 canary 7，进程内 RuntimeEvent 不携带固定版本；headless JSONL v1 是独立外部 wire。稳定发布前的契约补全直接替换唯一 current fixture，不保留双 reader；只有契约已冻结、变化无法加法表达且已发布数据或客户端必须并存时，才引入新 revision，并同时定义兼容窗口与退出条件。
 
 Headless JSONL v1 是 stdout 外部协议，不是 Session record：不得写入 journal，也不得在 resume 时回放。headless resume 只复用连续 lease 下恢复出的 Provider-native history，并只发布本次新 turn；`SemanticHistoryView` 仍只供 TUI 等只读消费者使用。
 
@@ -695,7 +698,7 @@ Open Catalog lock
   -> 使用选中的 thread ID 进入既有 sessionService.resume
 ```
 
-全部 journal 文件 I/O 在 SQLite transaction 外完成；协调过程不启动后台 goroutine，也不会同时持有多个 journal lease。busy 的已索引行保持原值，未索引 busy thread 会阻止自动选择，避免静默跳到更旧会话。真正缺失或无效 journal 的旧行会删除；可修复尾部只能在 exclusive lease 下 truncate 并 `Sync`。
+全部 journal 文件 I/O 在 SQLite transaction 外完成；协调过程不启动后台 goroutine，也不会同时持有多个 journal lease。busy 的已索引行保持原值，未索引 busy thread 会阻止自动选择，避免静默跳到更旧会话。真正缺失或无效 journal 的旧行会删除；Catalog 不修复尾部；resume 完整验证 replay、Provider 兼容及原生内容后，才在同一 exclusive lease 下显式 Repair、truncate 并 `Sync`。
 
 `state.sqlite.lock` 为 schema、重建和 reconciliation 提供跨进程唯一 owner。Unix adapter 从实际打开的 handle 校验私有 data home、数据库、rollback journal 与 sidecar 的普通文件类型和 `0600` 权限，并使用 no-follow 打开；无法提供等价语义的平台失败关闭。数据库缺失、损坏或 schema 不兼容时，在同一 Catalog 锁下从 JSONL 构建临时数据库，`Sync` 后原子替换。
 
@@ -703,14 +706,14 @@ Open Catalog lock
 
 `sessions list` 新增独立发现入口：`cmd/easycode/sessions.go -> app.ListSessions -> catalog.Reconcile/List`，不进入聊天配置、项目指令、Provider 或 Runtime 装配。`ListQuery` 明确区分规范化创建目录和全部目录，使用原 schema 按 committed `updated_at`/thread ID 双降序、先筛选后 limit+1，返回至多 200 条及 HasMore。查询不依赖 Provider selector，`LatestCompatible` 仍保留原四字段精确匹配。
 
-列表沿用上述安全协调与允许尾修复，随后先关闭 Catalog/Repository，再格式化和输出。busy/invalid 是全存储扫描报告，stderr 明确提示元数据可能未刷新或会话缺席；列表不补偿未完成 turn，也不把可见条目当作恢复事实。CLI 采用紧凑文本、完整 ID、受限并转义的字段，不读取对话正文作标题。当前目录不等于项目/worktree，limit 不是扫描预算；这些扩展与交互 picker 仍需后续 change。
+列表沿用上述只读 journal 协调，随后先关闭 Catalog/Repository，再格式化和输出。busy/invalid 是全存储扫描报告，stderr 明确提示元数据可能未刷新或会话缺席；列表不补偿未完成 turn，也不把可见条目当作恢复事实。CLI 采用紧凑文本、完整 ID、受限并转义的字段，不读取对话正文作标题。当前目录不等于项目/worktree，limit 不是扫描预算；这些扩展与交互 picker 仍需后续 change。
 
 ### 10.4 写入与权限
 
 - JSONL append-only；每个活动 thread 通过绑定 journal handle 的跨进程 exclusive lease 保证只有一个 writer。新建 metadata 或对既有 journal 执行 load/repair 前必须先取得 lease，并连续保持到 writer 完成最终 `Sync` 和关闭 handle；每个 durable batch 连续编号。
 - macOS/Linux 从已打开数据根使用 no-follow、descriptor-relative walker 逐级创建/打开日期目录与 journal，并从实际 handle 校验类型和权限；lease、Loader、repair 与 writer transfer 复用最终 journal handle。Windows 等尚未提供等价语义的平台当前明确失败关闭，跨平台实现与真实平台验证留在 P8。
 - 文件使用用户私有权限，Unix 下目标为文件 `0600`、目录 `0700`。
-- Loader 严格校验 canonical UUIDv7、UTC 时间、checksum、ID 归属、序号和 batch 完整性；只允许截去 EOF 尾部半行或未完成尾批次，不允许跳过中段损坏。
+- Loader 严格校验 canonical UUIDv7、UTC 时间、checksum、ID 归属、序号和 batch 完整性；只读返回完整 committed 前缀及待修复凭据。显式 Repair 绑定 lease、原始大小与 digest，只允许在完整语义/Provider 校验后截去 EOF 尾部半行或未完成尾批次；截断接收后必须等待 Sync 确定结果，失败 poison lease，不允许跳过中段损坏。
 - ReplayPlanner 只重放完整 batch。普通文本turn尾部直接追加 `turn_failed(code=session_interrupted)`；工具turn先按ledger在本地补齐cancelled/outcome-uncertain result与缺失Provider output，再追加唯一失败终态。两类恢复都不自动发起Provider请求。
 - 当前 `--resume <thread-id>` 通过日期编码的 UUIDv7 定位文件，恢复 native history 和只读语义视图；不恢复旧 API key、base URL、cwd 或其他动态 world state。
 - 仓库已建立不可变的当前文本与 Tool Loop fixture，用于验证 Loader/ReplayPlanner 的读取、续写 prefix 不变、账本顺序和双 Provider 恢复等价性；项目没有线上历史格式，因此开发期旧 fixture 与旧 reader 已删除。未来真实 schema/payload revision 的版本专属转换仍未实现，也不得在 resume 时原地改写既有 records。

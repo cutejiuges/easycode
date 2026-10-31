@@ -1,6 +1,6 @@
 # EasyCode 产品与工程 Roadmap
 
-`add-tool-transcript-and-result-budget` 已实现七工具统一记录、搜索原文保存、按顺序冻结的 sample/turn 预算和 Claude 风格主线；质量门及平台范围见该 change 的 [验收记录](../../openspec/changes/archive/2026-10-30-add-tool-transcript-and-result-budget/verification.md)，change 已归档。当前 Session/native/headless 标记分别为 6/2/1。
+`add-tool-transcript-and-result-budget` 已实现七工具统一记录、搜索原文保存、按顺序冻结的 sample/turn 预算和 Claude 风格主线；质量门及平台范围见该 change 的 [验收记录](../../openspec/changes/archive/2026-10-30-add-tool-transcript-and-result-budget/verification.md)，change 已归档。当前 Session/native/headless 标记分别为 7/3/1。
 
 当前契约治理变更 `unify-current-contract-lifecycle` 收敛了固定 codec、prepared commit、宿主 owner 与副作用 admission。TUI、一次性 headless、stream-json 共用 AgentLoop；关闭期间排空事件，活动 transport 可显式取消，journal lease 保留至清理完成。Patch/Write grant 仅在批准 Sync 后生效，三种副作用工具统一验证结果关联并以 uncertain 收口错配结果。本次未引入迁移或兼容 reader，后续 P4/P6/P7/P8 能力及占位退出条件保持原有范围。
 
@@ -222,7 +222,7 @@ make verify
 
 2026-10-23 已交付独立 `sessions list [--all] [--limit N]`：默认当前规范化目录 20 条，最大 200 条，按 durable 更新时间及 thread ID 双降序；所有 Provider/model 可发现，完整 ID 可交给既有 `--resume`。入口无需模型配置、不访问网络、不读取 stdin、不进入聊天资源链。Catalog schema 和 Session vocabulary 不变，协调仍全量扫描并允许 lease 下尾修复，busy/invalid 以全局警告报告。固定文本 golden、双 Provider 列表后恢复、索引重建、跨进程占用和取消/输出失败验证覆盖该入口；此交付不包含 picker、标题搜索或 worktree 聚合。
 
-P2 尚未完成：session picker、worktree/project catalog、title/tag/search、实时索引、usage 成本/配额与 TUI 展示、真实 cache request 策略和观测指标、skill context sources、全工具 artifact、fork/subagent 线程树、compaction checkpoint，以及稳定发布后真实 schema/payload revision 的版本专属转换。Read/Glob/Grep/Patch/Write/Exec Tool Loop 已交付 tool catalog source、approval/ledger/result、durable output、有序并行与 exclusive 屏障；已交付的 FIFO follow-up queue 仍只在进程内存在，`queued` 不是 durable 确认，same-turn steer 已接入完整 tool outputs 后的安全点，queued/claimed 与 returned 仍是进程内状态。当前 fixture 是唯一当前格式，不代表通用 migration 已实现；当前进度不能视为 P2 退出。
+P2 尚未完成：session picker、worktree/project catalog、title/tag/search、实时索引、usage 成本/配额与 TUI 展示、真实 cache request 策略和观测指标、skill context sources、全工具 artifact、fork/subagent 线程树，以及稳定发布后真实 schema/payload revision 的版本专属转换。Read/Glob/Grep/Patch/Write/Exec Tool Loop 已交付 tool catalog source、approval/ledger/result、durable output、有序并行与 exclusive 屏障；已交付的 FIFO follow-up queue 仍只在进程内存在，`queued` 不是 durable 确认，same-turn steer 已接入完整 tool outputs 后的安全点，queued/claimed 与 returned 仍是进程内状态。当前 fixture 是唯一当前格式，不代表通用 migration 已实现；当前进度不能视为 P2 退出。
 
 本次 P2 基础契约强化还加入语义分支脚本、本地 hooks、GitHub Actions jobs 和集中式架构守卫。GitHub `main` ruleset 的 required checks 与 direct-push 禁止仍须管理员在仓库外启用。secure config/session opener 当前只在 macOS/Linux 提供等价语义；Windows 等目标可以编译，但相关运行路径明确失败关闭，平台实现与兼容矩阵留在 P8。
 
@@ -258,7 +258,7 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 - 已交付 session JSONL 与可从 JSONL 重建的 `state.sqlite` Catalog v1。
 - 已交付显式 resume 与兼容性精确匹配的 `--continue`；离线 `sessions list` 已交付，可视化 session picker 尚未交付。
 - 已交付一次性 thread/turn/text/failure JSONL v1 与独立 streaming control v1，成功 `turn.completed` 必含 normalized usage；独立 usage 更新、reasoning 与 tool 事件尚未交付。
-- 已交付不新增 Session/RuntimeEvent vocabulary 的请求前 ContextPlan 和显式预算守卫；远程 token count、自动压缩、Provider cache marker/key 和 context UI 尚未交付。
+- 已交付不新增 Session/RuntimeEvent vocabulary 的请求前 ContextPlan 和显式预算守卫；远程 token count、自动压缩和 Provider cache marker/key 尚未交付；手动压缩与 context UI 已交付。
 - 已交付启动时层级项目指令发现、descriptor-bound 安全读取、确定性预算截断、双 Provider 临时注入和恢复隔离；规则热重载、全局用户指令、includes 与 `.claude/rules` 尚未交付。
 
 ### 6.5 验收标准
@@ -291,7 +291,7 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 
 ## 7. P3：Coding Tools 与安全执行
 
-命令输出切片 `add-command-output-artifacts` 已接入双流私有前缀存储、七工具 catalog 中的 ReadArtifact、durable descriptor 授权、完整命令历史和 Ctrl+O 列表/分页详情。默认预算为每流 16 MiB、调用预留 32 MiB、thread 256 MiB、root 1 GiB；后续 `add-tool-transcript-and-result-budget` 已统一七工具主线与完整 transcript，增加搜索保存及 sample/turn 累计预算，Session 当前 canary 为 6。P3 尚未整体完成；PTY、后台命令、非 Darwin 命令执行和自动过期仍未实现。平台运行验证范围以 change 的最终验收记录为准。
+命令输出切片 `add-command-output-artifacts` 已接入双流私有前缀存储、七工具 catalog 中的 ReadArtifact、durable descriptor 授权、完整命令历史和 Ctrl+O 列表/分页详情。默认预算为每流 16 MiB、调用预留 32 MiB、thread 256 MiB、root 1 GiB；后续 `add-tool-transcript-and-result-budget` 已统一七工具主线与完整 transcript，增加搜索保存及 sample/turn 累计预算，Session 当前 canary 为 7。P3 尚未整体完成；PTY、后台命令、非 Darwin 命令执行和自动过期仍未实现。平台运行验证范围以 change 的最终验收记录为准。
 
 ### 7.1 目标
 
@@ -324,7 +324,7 @@ Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘�
 6. `add-command-output-artifacts`（已实现）：命令输出保存、当前线程 ReadArtifact、完整历史查询与 Claude 风格列表/详情；保持冻结预览和原生恢复独立于对象存在性。
 7. `add-background-process-control`：先定义受控 process handle、PTY/stdin、后台 admission、超时与唯一 shutdown owner，再增加 write_stdin；不得把当前前台命令脱离原组视为实现。
 8. `add-tool-transcript-and-result-budget`（已实现，合并原工具预算与 UI 切片）：单调用 256 KiB（搜索 64 KiB）、sample 512 KiB、turn 2 MiB，顺序冻结、搜索原文保存、七工具紧凑主线及四页缓存详情；不改写历史 native outputs，不实现上下文替换。
-9. `add-same-turn-steering`（已实现）：活动 composer 自动追加，单 FIFO/strict 屏障；仅在完整 tool outputs 后、下一 sample 前注入独立原生输入。支持按 IDs 原子取回、停止返还、提交前预检、input-only 恢复，该切片最初使用 Session/native canary 5/2；当前由统一工具预算切片更新为 6/2。
+9. `add-same-turn-steering`（已实现）：活动 composer 自动追加，单 FIFO/strict 屏障；仅在完整 tool outputs 后、下一 sample 前注入独立原生输入。支持按 IDs 原子取回、停止返还、提交前预检、input-only 恢复，该切片最初使用 Session/native canary 5/2；当前由手动压缩切片更新为 7/3。
 
 首个切片选择 Read，是因为它能用最低副作用风险验证最关键的双 Provider、Session durable 和 call/output 配对边界，并让接口由真实消费者驱动；不先建立万能 registry、空 facade 或没有行为证据的完整框架。
 
@@ -379,6 +379,8 @@ Skill、hooks/plugins、MCP 和 Agent/Subagent 不属于 P3 内置工具清单�
 基本 coding loop、安全策略、并发、有序结果、patch streaming、至多一次自动执行、不确定结果失败关闭和恢复等价测试全部通过。当前前台 Exec 与命令输出 artifact 闭环已补齐，但全工具输出预算、后台控制和其余 P3 交付仍未完成，不能据此宣布整个 P3 退出。
 
 ## 8. P4：缓存与上下文强化
+
+`add-durable-manual-compaction` 已实现手动压缩、独立上下文查询、双 Provider 有效窗口、durable checkpoint 和 stream-json 控制。Load 只读，完整 replay/Provider 校验后在同一 lease 下 Repair 与 Sync；Catalog 不修改 journal。摘要预算默认 4096，取消有独立身份，失败保留旧窗口；完整历史与工具授权边界保持。自动压缩、Hook、远程 token count、Provider cache 策略和跨 Provider fork 未实现，P4 尚未整体完成。变更已归档，验收见[验收记录](../../openspec/changes/archive/2026-10-31-add-durable-manual-compaction/verification.md)。
 
 ### 8.1 目标
 

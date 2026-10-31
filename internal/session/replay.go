@@ -248,17 +248,19 @@ func (plan ToolRecoveryPlan) Validate() error {
 
 // ReplayPlan 是创建 Provider Conversation 前的不可变语义恢复计划。
 type ReplayPlan struct {
-	Tools           []ToolHistoryEntry
-	Identity        Identity
-	SessionMetadata SessionMetaPayload
-	ThreadMetadata  ThreadMetaPayload
-	NativeCommits   []NativeCommitRecord
-	SampleUsages    []SampleUsageRecord
-	Turns           []ReplayedTurn
-	InterruptedTail *InterruptedTail
-	ToolRecovery    *ToolRecoveryPlan
-	NextSequence    uint64
-	Repair          RepairReport
+	Compactions           []ReplayedCompaction
+	InterruptedCompaction *ReplayedCompaction
+	Tools                 []ToolHistoryEntry
+	Identity              Identity
+	SessionMetadata       SessionMetaPayload
+	ThreadMetadata        ThreadMetaPayload
+	NativeCommits         []NativeCommitRecord
+	SampleUsages          []SampleUsageRecord
+	Turns                 []ReplayedTurn
+	InterruptedTail       *InterruptedTail
+	ToolRecovery          *ToolRecoveryPlan
+	NextSequence          uint64
+	Repair                RepairReport
 }
 
 // ReplayPlanner 在 Loader 之后校验强类型 Session lifecycle。
@@ -300,6 +302,7 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 		Turns: make([]ReplayedTurn, 0), NextSequence: loaded.NextSequence, Repair: loaded.Repair,
 	}
 	var active *activeReplayTurn
+	compaction := compactionReplay{seen: make(map[domain.CompactionID]struct{})}
 	seenInvocations := make(map[tool.InvocationID]struct{})
 	seenInputs := make(map[domain.InputID]struct{})
 	for _, batch := range batches[1:] {
@@ -312,6 +315,16 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 			}
 		}
 
+		switch batch[0].EventKind {
+		case EventCompactionStarted, EventCompactionCompleted, EventCompactionFailed:
+			if err := compaction.accept(&plan, batch, active != nil); err != nil {
+				return ReplayPlan{}, err
+			}
+			continue
+		}
+		if compaction.active != nil {
+			return ReplayPlan{}, replayCorrupt("turn record overlaps compaction")
+		}
 		switch batch[0].EventKind {
 		case EventTurnStarted:
 			if active != nil || len(batch) != 1 || batch[0].TurnID == "" {
@@ -395,6 +408,7 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 			plan.ToolRecovery = &recovery
 		}
 	}
+	plan.InterruptedCompaction = compaction.active
 	plan.NativeCommits = cloneNativeCommitRecords(plan.NativeCommits)
 	if err := validateArtifactHistory(loaded.Identity.ThreadID, loaded.Records); err != nil {
 		return ReplayPlan{}, err

@@ -258,7 +258,7 @@ func eventHasNoSemantic(event StreamEvent) bool {
 func protocolEventEmpty(event protocol.Event) bool {
 	return event.Kind == "" && event.Timestamp.IsZero() &&
 		event.SessionID == "" && event.ThreadID == "" && event.TurnID == "" &&
-		event.ItemID == "" && event.CallID == "" && len(event.Payload) == 0
+		event.ItemID == "" && event.CallID == "" && event.CompactionID == "" && len(event.Payload) == 0
 }
 
 func cloneProtocolEvent(event protocol.Event) protocol.Event {
@@ -306,6 +306,7 @@ type HistoryFootprinter interface {
 type Conversation interface {
 	HistoryProjector
 	HistoryFootprinter
+	ProjectActiveContext() (domain.ActiveContextView, error)
 	Family() domain.ProviderFamily
 	Capabilities() Capabilities
 	Stream(context.Context, TurnInput) (<-chan StreamEvent, error)

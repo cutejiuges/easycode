@@ -8,12 +8,12 @@
 
 ### Requirement: Context planning uses typed ordered sources
 
-上下文规划 SHALL 只接收强类型的 Provider profile、Tool Catalog snapshot、可选项目指令快照、已提交语义历史、Provider 原生历史 footprint、不携带额外正文的当前采样状态和可选预算。来源 MUST 按 `provider_profile`、`tool_catalog`、可选 `project_instructions`、`committed_history`、`current_input` 的固定顺序出现；无项目指令文档时 MUST 省略 `project_instructions`。规划不得隐式读取时间戳、随机 ID、cwd、环境变量、Session 路径、git 状态、文件系统或网络。
+上下文规划 SHALL 只接收强类型的 Provider profile、Tool Catalog snapshot、可选项目指令快照、已提交有效窗口语义快照、Provider 原生历史 footprint、不携带额外正文的当前采样状态和可选预算。来源 MUST 按 `provider_profile`、`tool_catalog`、可选 `project_instructions`、`committed_history`、`current_input` 的固定顺序出现；无项目指令文档时 MUST 省略 `project_instructions`。规划不得隐式读取时间戳、随机 ID、cwd、环境变量、Session 路径、git 状态、文件系统或网络。
 
 `provider_profile` SHALL 只包含 Provider family、model 和显式 schema revision，不得包含 API key、base URL 凭据或其他 secret。`tool_catalog` SHALL 只包含 catalog revision、稳定排序的 facade schema canonical bytes 与内容派生 fingerprint，不得包含 executor、invocation/call identity、权限临时状态或 workspace 绝对路径。`project_instructions` SHALL 只包含经过发现契约验证的不可变快照、内容派生 revision、截断状态和项目根相对来源，不得包含绝对项目根或启动 cwd。规划 MUST 是纯内存操作，且不得修改输入快照或 Provider 原生历史。
 
 #### Scenario: Plan the same inputs twice
-- **WHEN** 两次规划使用相同 profile、Tool Catalog、项目指令快照、语义历史、原生 footprint、当前输入和预算
+- **WHEN** 两次规划使用相同 profile、Tool Catalog、项目指令快照、有效窗口语义快照、原生 footprint、当前输入和预算
 - **THEN** 两次计划的来源顺序、revision、估算、预算状态、canonical cache segments 和指纹完全一致
 
 #### Scenario: Exclude ambient process state
@@ -31,6 +31,12 @@
 - **THEN** cache segments、stable prefix fingerprint 和预算结果不因空占位而改变
 
 输入提交前 SHALL 以已提交历史加 prepared inputs 的独立候选历史进行纯内存规划；候选语义视图仅用于估算，候选请求只能由 Provider 原生历史构造。实际网络采样前全部文本已经提交。current_input 保留为无额外正文的采样标记，不保留旧 Text/continuation 双 shape。
+
+规划历史 SHALL 为 Provider 从有效窗口产生的只读语义快照，摘要具有独立来源类型，不伪造 user InputID/turn；完整历史只供 recall/transcript。prepared inputs 的候选预检 SHALL 同样基于有效窗口。current_input 仍无额外正文，source 顺序与稳定级别不变。
+
+#### Scenario: Plan after a successful compaction
+- **WHEN** 完整原生历史很大但成功 checkpoint 已替换有效窗口
+- **THEN** committed_history 只计摘要与其后增量，完整历史不再进入覆盖估算；请求仍由原生窗口编译
 
 ### Requirement: Context plans are immutable validated snapshots
 
@@ -75,17 +81,27 @@ artifact ID、保存状态、存储目录、实时配额与读取游标 MUST NOT
 - **WHEN** 同一 catalog 下创建、读取、删除输出对象或改变配额使用量
 - **THEN** catalog canonical bytes、source revision 和 stable prefix fingerprint 不变；估算包含 ReadArtifact 实际 facade schema
 
-committed_history 的 cache canonical 内容 SHALL 仅含有序角色/文本，不包含 InputID、turn ID 或展示状态；同内容不同关联身份必须得到相同内容 fingerprint。
+committed_history 的 cache canonical 内容 SHALL 仅含封闭 summary/text kind、有序角色和文本，不包含 InputID、turn ID 或展示状态；同内容不同关联身份必须得到相同内容 fingerprint。
 
 #### Scenario: Keep identity out of cache content
 - **WHEN** 仅改变输入和 turn 身份但原生可见内容及其顺序相同
 - **THEN** 请求与语义规划内容 fingerprint 相同，stable prefix 不变
 
+committed_history source revision SHALL 使用独立单调 context revision；普通 native commit 和成功 checkpoint 各推进一次，失败/查询不推进。摘要正文按有来源标记的文本参与该尾部分段 canonical 内容，CompactionID、原始记录位置和时间不得进入内容 fingerprint。既有“角色/文本”规范在摘要出现时扩展为封闭 summary/text kind，仍不得纳入展示身份。
+
+#### Scenario: Change only compaction identity
+- **WHEN** 两个窗口的摘要与增量内容、source revisions 相同但 CompactionID 或 Session 路径不同
+- **THEN** 请求 canonical bytes、历史内容 fingerprint 和 stable prefix fingerprint 一致
+
+#### Scenario: Retain a stable prefix across compaction
+- **WHEN** 只成功替换有效历史，profile/tools/project instructions 不变
+- **THEN** 稳定前缀 fingerprint 不变，committed_history 的 revision/内容 fingerprint 发生可解释变化
+
 ### Requirement: Token estimates preserve method and uncertainty
 
 每个可计量来源和计划总量 SHALL 携带非空 estimator method、显式 `estimated` 或 `unknown` 状态以及无符号 token 数；unknown 状态不得伪装为已知零。当前切片 MUST 使用版本化、本地、确定性的启发式算法，不得调用远程 token-count API，也不得将 Provider 返回的 normalized usage 直接解释为当前上下文占用。
 
-共享层 SHALL 从 `SemanticHistoryView` 估算已提交可见文本，按 turn 内有序消息计量每条文本一次；current_input 采样标记没有新增正文估算。Provider 原生 footprint 表示已提交原生历史的总估算，已经包含其中可见和 opaque 内容；规划合并已提交历史时 MUST 使用能够覆盖共享可见估算与原生总估算的单一值，不得将两者直接相加造成重复计数。若任一覆盖输入 unknown，结果 MUST 保留不确定性而不是静默降低为较小的已知值。
+共享层 SHALL 从 `ActiveContextView` 估算已提交可见文本，按 turn 内有序消息计量每条文本一次；current_input 采样标记没有新增正文估算。Provider 原生 footprint 表示已提交原生历史的总估算，已经包含其中可见和 opaque 内容；规划合并已提交历史时 MUST 使用能够覆盖共享可见估算与原生总估算的单一值，不得将两者直接相加造成重复计数。若任一覆盖输入 unknown，结果 MUST 保留不确定性而不是静默降低为较小的已知值。
 
 所有加减法 MUST 检测溢出或使用饱和语义，不得因整数 wraparound 把超大上下文判为可用。
 
@@ -97,7 +113,7 @@ committed_history 的 cache canonical 内容 SHALL 仅含有序角色/文本，�
 
 #### Scenario: Avoid double-counting visible history
 
-- **WHEN** 语义历史估算为 100 tokens，Provider 原生历史总 footprint 为 140 tokens
+- **WHEN** 有效窗口语义快照估算为 100 tokens，Provider 原生历史总 footprint 为 140 tokens
 - **THEN** committed history 贡献为覆盖两者的 140 tokens，而不是 240 tokens
 
 #### Scenario: Preserve an unknown estimate
@@ -109,6 +125,12 @@ committed_history 的 cache canonical 内容 SHALL 仅含有序角色/文本，�
 #### Scenario: Count steering once
 - **WHEN** 两条追加输入已经进入 native history 并参与下一 sample 规划
 - **THEN** 可见估算与 native footprint 使用覆盖值而不相加，追加文本不再次作为 current input 计量
+
+语义估算与原生 footprint MUST 指向同一有效窗口和 context revision；压缩摘要只计一次，已归档正文不计入。摘要请求消耗的 usage 不得用作新窗口占用。
+
+#### Scenario: Avoid counting archived history
+- **WHEN** 已归档历史估算 100000，当前摘要语义估算 1000，当前原生窗口估算 1200
+- **THEN** 历史贡献为 1200，而非 100000、101200 或 2200
 
 ### Requirement: Budget decisions require explicit configuration and complete evidence
 

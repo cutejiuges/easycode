@@ -160,8 +160,8 @@ func TestListBusyProcessCannotRepairUntilRelease(t *testing.T) {
 	}
 	for i, path := range paths {
 		got, err := os.ReadFile(path)
-		if err != nil || !bytes.Equal(got, committed[i]) {
-			t.Fatal("repair lost committed records")
+		if err != nil || !bytes.Equal(got, append(append([]byte(nil), committed[i]...), []byte(`{"incomplete":`)...)) {
+			t.Fatal("read-only catalog modified journal")
 		}
 	}
 }

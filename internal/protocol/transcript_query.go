@@ -44,6 +44,7 @@ func DecodeTranscriptListQuery(data []byte) (TranscriptListQuery, error) {
 
 // TranscriptListItem 只携带短摘要，完整正文必须通过范围查询获取。
 type TranscriptListItem struct {
+	CompactionID       domain.CompactionID   `json:"compaction_id,omitempty"`
 	Preview            string                `json:"preview"`
 	Stdout             ToolOutputSummary     `json:"stdout"`
 	Stderr             ToolOutputSummary     `json:"stderr"`
@@ -67,8 +68,17 @@ func (v TranscriptListItem) Validate() error {
 	if v.Kind != domain.TranscriptCall && (v.Preview != "" || v.Stdout != (ToolOutputSummary{}) || v.Stderr != (ToolOutputSummary{}) || v.Search != (ToolOutputSummary{}) || v.ModelShortened || v.CoverageIncomplete || v.SummaryOnly) {
 		return errors.New("invalid text transcript metadata")
 	}
-	if v.Stdout.Validate() != nil || v.Stderr.Validate() != nil || v.Search.Validate() != nil || !v.Cursor.Valid() || !v.TurnID.Valid() || len(v.Text) > 512 || !utf8.ValidString(v.Text) {
+	if v.Stdout.Validate() != nil || v.Stderr.Validate() != nil || v.Search.Validate() != nil || !v.Cursor.Valid() || len(v.Text) > 512 || !utf8.ValidString(v.Text) {
 		return errors.New("invalid transcript list item")
+	}
+	if v.Kind == domain.TranscriptCompaction {
+		if !v.CompactionID.Valid() || v.TurnID != "" || v.InputID != "" || v.Activity != (ToolActivityPayload{}) {
+			return errors.New("invalid compaction transcript item")
+		}
+		return nil
+	}
+	if !v.TurnID.Valid() || v.CompactionID != "" {
+		return errors.New("invalid transcript identity")
 	}
 	switch v.Kind {
 	case domain.TranscriptUser:

@@ -24,7 +24,7 @@ func TestExecCatalogEstimateAndStablePrefixRegression(t *testing.T) {
 				t.Fatal(err)
 			}
 			profile, _ := NewProviderProfile(family, "fixture-model")
-			input, err := NewPlanningInput(profile, catalog, emptyProjectInstructions(t), emptyHistory(family), estimatedFootprint(t, family, 0, 0), NewSamplingInput(), DisabledBudget())
+			input, err := testPlanningInput(profile, catalog, emptyProjectInstructions(t), emptyHistory(family), estimatedFootprint(t, family, 0, 0), NewSamplingInput(), DisabledBudget())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -88,7 +88,7 @@ func TestExecCatalogEstimateAndStablePrefixRegression(t *testing.T) {
 			}
 			for _, dynamic := range []string{"command=go test ./... workdir=src timeout=1000 approval=one env=secret-one", "command=make verify workdir=test timeout=2000 approval=two env=secret-two"} {
 				changedHistory := domain.SemanticHistoryView{Provider: family, Turns: []domain.SemanticTurn{planningTurn(dynamic, "command completed")}}
-				changedInput, err := NewPlanningInput(profile, catalog, emptyProjectInstructions(t), changedHistory, estimatedFootprint(t, family, 1, 100), NewSamplingInput(), DisabledBudget())
+				changedInput, err := testPlanningInput(profile, catalog, emptyProjectInstructions(t), changedHistory, estimatedFootprint(t, family, 1, 100), NewSamplingInput(), DisabledBudget())
 				if err != nil {
 					t.Fatal(err)
 				}

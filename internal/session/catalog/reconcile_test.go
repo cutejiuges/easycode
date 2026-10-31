@@ -87,7 +87,7 @@ func TestReconcileDeletesMissingAndExcludesInvalidRows(t *testing.T) {
 	}
 }
 
-func TestReconcileRepairsRecoverableTailUnderLease(t *testing.T) {
+func TestReconcileLeavesRecoverableTailForValidatedResume(t *testing.T) {
 	directory := privateTempDir(t)
 	root := filepath.Join(directory, "sessions")
 	repository, err := session.OpenOrCreateRepository(root)
@@ -123,7 +123,7 @@ func TestReconcileRepairsRecoverableTailUnderLease(t *testing.T) {
 		t.Fatalf("repair report = %#v, %v", report, err)
 	}
 	after, err := os.ReadFile(path)
-	if err != nil || !bytes.Equal(after, committed) {
+	if err != nil || !bytes.Equal(after, append(append([]byte(nil), committed...), []byte(`{"schema_version":1`)...)) {
 		t.Fatalf("repaired bytes differ: %v", err)
 	}
 	entry, found, err := instance.LatestCompatible(context.Background(), Selector{

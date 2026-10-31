@@ -11,9 +11,10 @@ import (
 )
 
 type transcriptNode struct {
-	cursor    protocol.TranscriptCursor
-	item      domain.TranscriptItem
-	toolIndex int
+	compaction *compactionTranscript
+	cursor     protocol.TranscriptCursor
+	item       domain.TranscriptItem
+	toolIndex  int
 }
 
 type transcriptCallKey struct {
@@ -111,7 +112,7 @@ func (q *transcriptQueries) bindTranscript(projector provider.TranscriptProjecto
 	q.projector = projector
 	q.facades = catalog.Facades()
 	q.nativeSequences = sequences
-	q.nodes = nodes
+	q.nodes = mergeCompactionTranscript(nodes, q.compactions)
 	return nil
 }
 
@@ -122,7 +123,7 @@ func (q *transcriptQueries) NativeCommitted(sequence uint64, ready []session.Too
 		q.mu.Unlock()
 		return errors.New("invalid transcript facts")
 	}
-	entries, sequences := q.entries, q.nativeSequences
+	entries, sequences, compactions := q.entries, q.nativeSequences, q.compactions
 	q.mu.Unlock()
 	entries = append(append([]session.ToolHistoryEntry(nil), entries...), ready...)
 	sequences = append(append([]uint64(nil), sequences...), sequence)
@@ -141,6 +142,7 @@ func (q *transcriptQueries) NativeCommitted(sequence uint64, ready []session.Too
 		}
 		indices[entry.Invocation.InvocationID()] = i
 	}
+	nodes = mergeCompactionTranscript(nodes, compactions)
 	q.mu.Lock()
 	q.entries, q.nativeSequences, q.nodes, q.indices = entries, sequences, nodes, indices
 	q.mu.Unlock()

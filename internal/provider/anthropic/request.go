@@ -13,11 +13,16 @@ const maxMessagesRequestBytes = 16 << 20
 
 // messagesRequest 是当前文本切片发送给 Messages API 的稳定请求。
 type messagesRequest struct {
-	Model     string          `json:"model"`
-	Messages  []nativeMessage `json:"messages"`
-	MaxTokens int             `json:"max_tokens"`
-	Tools     []anthropicTool `json:"tools"`
-	Stream    bool            `json:"stream"`
+	ToolChoice *summaryToolChoice `json:"tool_choice,omitempty"`
+	Model      string             `json:"model"`
+	Messages   []nativeMessage    `json:"messages"`
+	MaxTokens  int                `json:"max_tokens"`
+	Tools      []anthropicTool    `json:"tools"`
+	Stream     bool               `json:"stream"`
+}
+
+type summaryToolChoice struct {
+	Type string `json:"type"`
 }
 
 type anthropicTool struct {

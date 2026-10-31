@@ -25,7 +25,7 @@ type retractFailedMsg struct{ err error }
 
 func (model *Model) refreshState() {
 	model.state = stateIdle
-	if model.activeTurnID.Valid() {
+	if model.activeTurnID.Valid() || model.activeCompactionID.Valid() {
 		model.state = stateStreaming
 	}
 	if model.pending != nil {
@@ -46,11 +46,16 @@ func (model Model) projectControlItem(item protocol.ControlItem) (tea.Model, tea
 		model.errorSummary = "stream_protocol_error: invalid control item"
 		return model, nil
 	}
+	if event, ok := item.ContextEvent(); ok {
+		return model.projectContextEvent(event)
+	}
 	if event, ok := item.TurnEvent(); ok {
 		return model.Update(RuntimeEventMsg{Event: event})
 	}
 	if result, ok := item.CommandResult(); ok {
 		switch result.CommandKind() {
+		case protocol.CommandQueryContext, protocol.CommandCompactContext, protocol.CommandCancelCompaction:
+			return model.projectContextResult(result)
 		case protocol.CommandSubmitConversationalInput:
 			if model.pending == nil {
 				model.errorSummary = "stream_protocol_error: unexpected admission"

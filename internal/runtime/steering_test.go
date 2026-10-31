@@ -13,7 +13,7 @@ import (
 type controlledToolConversation struct{ *controlledConversation }
 
 func (conversation *controlledToolConversation) PrepareToolOutputs(results []tool.InvocationResult) (*provider.PreparedToolOutputs, error) {
-	envelope, err := provider.NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", 2, []byte(`{"kind":"tool_outputs"}`))
+	envelope, err := provider.NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", 3, []byte(`{"kind":"tool_outputs"}`))
 	if err != nil {
 		return nil, err
 	}

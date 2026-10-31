@@ -13,6 +13,10 @@ import (
 type EventKind string
 
 const (
+	EventContextSnapshot       EventKind = "context_snapshot"
+	EventCompactionStarted     EventKind = "compaction_started"
+	EventCompactionCompleted   EventKind = "compaction_completed"
+	EventCompactionFailed      EventKind = "compaction_failed"
 	EventTranscriptCommitted   EventKind = "transcript_committed"
 	EventUserInputCommitted    EventKind = "user_input_committed"
 	EventTurnStarted           EventKind = "turn_started"
@@ -29,11 +33,12 @@ const (
 
 // Event 是 TUI、headless 和其他宿主共同消费的进程内语义事件信封。
 type Event struct {
-	Kind      EventKind        `json:"kind"`
-	Timestamp time.Time        `json:"timestamp"`
-	SessionID domain.SessionID `json:"session_id,omitempty"`
-	ThreadID  domain.ThreadID  `json:"thread_id,omitempty"`
-	TurnID    domain.TurnID    `json:"turn_id,omitempty"`
+	CompactionID domain.CompactionID `json:"compaction_id,omitempty"`
+	Kind         EventKind           `json:"kind"`
+	Timestamp    time.Time           `json:"timestamp"`
+	SessionID    domain.SessionID    `json:"session_id,omitempty"`
+	ThreadID     domain.ThreadID     `json:"thread_id,omitempty"`
+	TurnID       domain.TurnID       `json:"turn_id,omitempty"`
 	// TODO(P3): ItemID 与 CallID 仅为工具调用及结果配对保留；由后续 OpenSpec 同时提供真实消费者、验证与测试时启用，否则删除。
 	ItemID  domain.ItemID   `json:"item_id,omitempty"`
 	CallID  domain.CallID   `json:"call_id,omitempty"`
@@ -48,6 +53,35 @@ func (event Event) Validate() error {
 	}
 	if event.ItemID != "" || event.CallID != "" {
 		return fmt.Errorf("runtime event reserved identity is invalid")
+	}
+	if event.Kind == EventContextSnapshot || event.Kind == EventCompactionStarted || event.Kind == EventCompactionCompleted || event.Kind == EventCompactionFailed {
+		if !event.SessionID.Valid() || !event.ThreadID.Valid() || event.TurnID != "" {
+			return fmt.Errorf("context event scope is invalid")
+		}
+		if event.Kind == EventContextSnapshot {
+			if event.CompactionID != "" {
+				return fmt.Errorf("query event has compaction identity")
+			}
+			_, err := DecodeContextSnapshot(event)
+			return err
+		}
+		if !event.CompactionID.Valid() {
+			return fmt.Errorf("compaction event identity is invalid")
+		}
+		switch event.Kind {
+		case EventCompactionStarted:
+			_, err := DecodeCompactionStarted(event)
+			return err
+		case EventCompactionCompleted:
+			_, err := DecodeCompactionCompleted(event)
+			return err
+		case EventCompactionFailed:
+			_, err := DecodeCompactionFailed(event)
+			return err
+		}
+	}
+	if event.CompactionID != "" {
+		return fmt.Errorf("turn event contains compaction identity")
 	}
 	hasIdentity := event.SessionID != "" || event.ThreadID != "" || event.TurnID != ""
 	if hasIdentity && (!event.SessionID.Valid() || !event.ThreadID.Valid() || !event.TurnID.Valid()) {

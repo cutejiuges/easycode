@@ -25,7 +25,7 @@ func (conversation *orderedConversation) EncodeUserInputs(a domain.InputAssociat
 	if err != nil {
 		return provider.NativeCommitEnvelope{}, err
 	}
-	return provider.NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", 2, payload)
+	return provider.NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", 3, payload)
 }
 func (conversation *orderedConversation) PrepareUserInputs(a domain.InputAssociation, inputs []domain.UserInput) (*provider.PreparedUserInputs, error) {
 	envelope, err := conversation.EncodeUserInputs(a, inputs)
@@ -47,7 +47,11 @@ func (conversation *orderedConversation) PrepareUserInputs(a domain.InputAssocia
 	if err != nil {
 		return nil, err
 	}
-	preview, err := provider.NewInputPreview(domain.SemanticHistoryView{Provider: domain.ProviderOpenAI, Turns: []domain.SemanticTurn{turn}}, footprint, func(provider.TurnInput) error { return nil })
+	view, err := domain.NewActiveContextView(domain.SemanticHistoryView{Provider: domain.ProviderOpenAI, Turns: []domain.SemanticTurn{turn}}, domain.ContextSummary{}, footprint.Revision())
+	if err != nil {
+		return nil, err
+	}
+	preview, err := provider.NewInputPreview(view, footprint, func(provider.TurnInput) error { return nil })
 	if err != nil {
 		return nil, err
 	}
@@ -97,11 +101,27 @@ func appendFixtureInitialInput(t *testing.T, writer interface {
 	if err != nil {
 		t.Fatal(err)
 	}
-	native, err := session.NewProviderNativeCommitDraft(turnID, session.NativeCommitPayload{Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 2, Payload: []byte(`{"kind":"user_inputs"}`)})
+	native, err := session.NewProviderNativeCommitDraft(turnID, session.NativeCommitPayload{Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 3, Payload: []byte(`{"kind":"user_inputs"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := writer.AppendBatch(context.Background(), []session.RecordDraft{draft, native}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func (conversation *orderedConversation) ProjectActiveContext() (domain.ActiveContextView, error) {
+	footprint, err := conversation.HistoryFootprint()
+	if err != nil {
+		return domain.ActiveContextView{}, err
+	}
+	return domain.NewActiveContextView(conversation.ProjectHistory(), domain.ContextSummary{}, footprint.Revision())
+}
+
+func (conversation *fakeAppConversation) ProjectActiveContext() (domain.ActiveContextView, error) {
+	footprint, err := conversation.HistoryFootprint()
+	if err != nil {
+		return domain.ActiveContextView{}, err
+	}
+	return domain.NewActiveContextView(conversation.ProjectHistory(), domain.ContextSummary{}, footprint.Revision())
 }

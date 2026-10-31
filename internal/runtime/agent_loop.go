@@ -238,7 +238,7 @@ type activeLoopTurn struct {
 	stopping        bool
 	input           queuedInput
 	cancel          context.CancelFunc
-	events          <-chan protocol.Event
+	events          <-chan runtimePublication
 	finished        <-chan error
 	turnID          domain.TurnID
 	terminalSeen    bool
@@ -274,16 +274,19 @@ func (ledger *recentRequestLedger) add(requestID protocol.RequestID) {
 }
 
 type agentLoopRunState struct {
-	loop           *AgentLoop
-	ctx            context.Context
-	mode           loopMode
-	queue          []queuedInput
-	queuedBytes    int
-	outstanding    map[protocol.RequestID]struct{}
-	recent         recentRequestLedger
-	active         *activeLoopTurn
-	runErr         error
-	runContextDone <-chan struct{}
+	compaction         *activeLoopCompaction
+	contextSnapshot    protocol.ContextSnapshotPayload
+	contextSnapshotErr error
+	loop               *AgentLoop
+	ctx                context.Context
+	mode               loopMode
+	queue              []queuedInput
+	queuedBytes        int
+	outstanding        map[protocol.RequestID]struct{}
+	recent             recentRequestLedger
+	active             *activeLoopTurn
+	runErr             error
+	runContextDone     <-chan struct{}
 }
 
 func newAgentLoopRunState(loop *AgentLoop, ctx context.Context) *agentLoopRunState {
@@ -351,11 +354,11 @@ func (state *agentLoopRunState) discardQueue(code protocol.ControlErrorCode) {
 
 func (state *agentLoopRunState) startTurn(inputs []queuedInput) *activeLoopTurn {
 	turnContext, cancel := context.WithCancel(state.ctx)
-	events := make(chan protocol.Event)
+	events := make(chan runtimePublication)
 	finished := make(chan error, 1)
 	control := &loopInputControl{loop: state.loop, reply: make(chan []domain.UserInput, 1), resolved: make(chan struct{}, 1)}
 	go func() {
-		err := state.loop.runtime.runTurn(turnContext, queuedDomainInputs(inputs), control, func(event protocol.Event) { events <- event })
+		err := state.loop.runtime.runTurn(turnContext, queuedDomainInputs(inputs), control, func(event protocol.Event) { events <- state.loop.runtime.publishContext(event) })
 		close(events)
 		finished <- err
 		close(finished)
@@ -364,7 +367,7 @@ func (state *agentLoopRunState) startTurn(inputs []queuedInput) *activeLoopTurn 
 }
 
 func (state *agentLoopRunState) startNext() {
-	if state.active != nil || len(state.queue) == 0 || state.mode == loopModeClosing {
+	if state.active != nil || state.compaction != nil || len(state.queue) == 0 || state.mode == loopModeClosing {
 		return
 	}
 	inputs := state.takePrefix(domain.TurnID(state.queue[0].value.ID()), 0, true)
@@ -377,10 +380,10 @@ func (state *agentLoopRunState) startNext() {
 }
 
 func (state *agentLoopRunState) shouldExit() bool {
-	return state.active == nil && (state.mode == loopModeClosing || (state.mode == loopModeDraining && len(state.queue) == 0))
+	return state.active == nil && state.compaction == nil && (state.mode == loopModeClosing || (state.mode == loopModeDraining && len(state.queue) == 0))
 }
 
-func (state *agentLoopRunState) activeChannels() (<-chan protocol.Event, <-chan error) {
+func (state *agentLoopRunState) activeChannels() (<-chan runtimePublication, <-chan error) {
 	if state.active == nil {
 		return nil, nil
 	}
@@ -411,6 +414,12 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 	}
 
 	switch request.command.Kind() {
+	case protocol.CommandQueryContext:
+		state.queryContext(request)
+	case protocol.CommandCompactContext:
+		state.compactContext(request)
+	case protocol.CommandCancelCompaction:
+		state.cancelCompaction(request)
 	case protocol.CommandSubmitInput, protocol.CommandSubmitConversationalInput:
 		automatic := request.command.Kind() == protocol.CommandSubmitConversationalInput
 		if automatic && state.active != nil && state.active.stopping {
@@ -441,7 +450,7 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 			return
 		}
 		disposition := protocol.CommandDispositionQueued
-		if state.active == nil && len(state.queue) == 0 {
+		if state.active == nil && state.compaction == nil && len(state.queue) == 0 {
 			disposition = protocol.CommandDispositionStarting
 		}
 		var result protocol.CommandResult
@@ -528,6 +537,9 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 }
 
 func (state *agentLoopRunState) cancelActive() {
+	if state.compaction != nil {
+		state.compaction.cancel()
+	}
 	if state.active != nil && !state.active.cancelRequested {
 		state.active.cancelRequested = true
 		state.active.cancel()
@@ -550,7 +562,8 @@ func (state *agentLoopRunState) handleLifecycle(lifecycle loopLifecycleRequest) 
 	close(lifecycle.accepted)
 }
 
-func (state *agentLoopRunState) handleTurnEvent(event protocol.Event, open bool) {
+func (state *agentLoopRunState) handleTurnEvent(publication runtimePublication, open bool) {
+	event := publication.event
 	if !open {
 		state.active.events = nil
 		return
@@ -562,6 +575,9 @@ func (state *agentLoopRunState) handleTurnEvent(event protocol.Event, open bool)
 		state.discardQueue(protocol.ControlErrorSessionFailed)
 		state.cancelActive()
 		return
+	}
+	if event.Kind != protocol.EventAssistantTextDelta {
+		state.contextSnapshot, state.contextSnapshotErr = publication.snapshot, publication.snapshotErr
 	}
 	if event.Kind == protocol.EventTurnStarted {
 		state.active.turnID = event.TurnID
@@ -633,6 +649,7 @@ func (loop *AgentLoop) Run(ctx context.Context) error {
 		close(loop.done)
 	}()
 	state := newAgentLoopRunState(loop, ctx)
+	state.refreshContextSnapshot()
 
 	for {
 		if state.active == nil {
@@ -642,8 +659,13 @@ func (loop *AgentLoop) Run(ctx context.Context) error {
 			state.startNext()
 		}
 		eventChannel, finishedChannel := state.activeChannels()
+		compactionEvents, compactionFinished := state.compactionChannels()
 
 		select {
+		case event, open := <-compactionEvents:
+			state.handleCompactionEvent(event, open)
+		case err, open := <-compactionFinished:
+			state.handleCompactionFinished(err, open)
 		case request := <-loop.claims:
 			state.handleInputClaim(request)
 		case resolution := <-loop.resolutions:

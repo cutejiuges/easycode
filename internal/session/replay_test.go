@@ -688,14 +688,14 @@ func (fixture *replayFixture) loaded() LoadResult {
 
 func validNativeCommit() NativeCommitPayload {
 	return NativeCommitPayload{
-		Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 2,
+		Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 3,
 		Payload: json.RawMessage(`{"kind":"sample"}`),
 	}
 }
 
 func validToolOutputsCommit() NativeCommitPayload {
 	return NativeCommitPayload{
-		Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 2,
+		Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 3,
 		Payload: json.RawMessage(`{"kind":"tool_outputs"}`),
 	}
 }
@@ -710,5 +710,5 @@ func (fixture *replayFixture) appendInitialInputs(turnID domain.TurnID) {
 	if err != nil {
 		fixture.t.Fatal(err)
 	}
-	fixture.appendBatch(draft, mustDraft(fixture.t, EventProviderNativeCommit, turnID, NativeCommitPayload{Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 2, Payload: json.RawMessage(`{"kind":"user_inputs"}`)}))
+	fixture.appendBatch(draft, mustDraft(fixture.t, EventProviderNativeCommit, turnID, NativeCommitPayload{Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 3, Payload: json.RawMessage(`{"kind":"user_inputs"}`)}))
 }

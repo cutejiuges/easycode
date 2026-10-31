@@ -56,13 +56,17 @@ const (
 
 // Model 保存纯 UI 投影状态，不依赖 Provider 或 transport。
 type Model struct {
-	main    mainTranscript
-	browser transcriptBrowser
-	version string
-	width   int
-	height  int
-	session ChatSession
-	submit  func(ChatSession, string) tea.Cmd
+	pendingContext     protocol.CommandKind
+	activeCompactionID domain.CompactionID
+	compactionStatus   string
+	contextPanel       *protocol.ContextSnapshotPayload
+	main               mainTranscript
+	browser            transcriptBrowser
+	version            string
+	width              int
+	height             int
+	session            ChatSession
+	submit             func(ChatSession, string) tea.Cmd
 
 	composer       composer
 	pending        *composer
@@ -146,6 +150,8 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		next, cmd := model.projectControlItem(value)
 		return next, tea.Batch(cmd, waitForControl(model.outputs))
 	case eventStreamClosedMsg:
+		model.activeCompactionID = ""
+		model.pendingContext = ""
 		if model.state == stateStreaming {
 			model.state = stateIdle
 			model.assistantItem = -1
@@ -169,6 +175,7 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.composer = *model.pending
 		model.composer.resize(model.widthOrDefault(), model.heightOrDefault())
 		model.pending = nil
+		model.pendingContext = ""
 		model.refreshState()
 		model.interruptNext = false
 		model.cancelling = false
@@ -198,6 +205,12 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return model, nil
 	}
+	if model.contextPanel != nil {
+		if key.Type == tea.KeyEsc {
+			model.contextPanel = nil
+		}
+		return model, nil
+	}
 	if model.approval != nil {
 		return model.handleApprovalKey(key)
 	}
@@ -206,6 +219,10 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if model.detailOpen {
 		return model.handleTranscriptBrowserKey(key)
+	}
+	if key.Type == tea.KeyCtrlC && model.activeCompactionID.Valid() {
+		model.compactionStatus = "Cancelling compaction — waiting for cleanup"
+		return model, model.cancelActiveCompaction()
 	}
 	if key.Type == tea.KeyCtrlC && model.activeTurnID.Valid() {
 		model.cancelling = true
@@ -231,6 +248,10 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if model.hasQueuedInput() {
 			return model.retractQueuedInputs()
 		}
+		if key.Type == tea.KeyEsc && model.activeCompactionID.Valid() {
+			model.compactionStatus = "Cancelling compaction — waiting for cleanup"
+			return model, model.cancelActiveCompaction()
+		}
 		if key.Type == tea.KeyEsc && model.activeTurnID.Valid() {
 			model.cancelling = true
 			return model, interruptSession(model.session)
@@ -244,13 +265,20 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch intent {
 	case composerQuit:
-		if model.activeTurnID.Valid() || model.composer.text != "" {
+		if model.activeTurnID.Valid() || model.activeCompactionID.Valid() || model.composer.text != "" {
 			return model, nil
 		}
 		return model, tea.Quit
 	case composerSubmit:
 		if model.session == nil {
 			return model, nil
+		}
+		if command, local, err := parseContextCommand(model.composer.text); local {
+			if err != nil {
+				model.errorSummary = "invalid_command: " + err.Error()
+				return model, nil
+			}
+			return model.submitContextCommand(command)
 		}
 		if !model.canRetainInput(model.composer.text) {
 			model.errorSummary = "input_queue_full: take or discard returned inputs first"
@@ -520,6 +548,9 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 
 // View 渲染确定性的聊天投影和已准备的多行输入布局。
 func (model Model) View() string {
+	if model.contextPanel != nil {
+		return model.renderContextPanel()
+	}
 	if model.approval != nil {
 		return model.renderApproval()
 	}
@@ -534,10 +565,18 @@ func (model Model) View() string {
 	if model.cancelling {
 		view.WriteString("Cancelling — waiting for cleanup\n")
 	}
+	if model.compactionStatus != "" {
+		view.WriteString(ansi.Hardwrap(model.compactionStatus, model.widthOrDefault(), true))
+		view.WriteByte('\n')
+	}
 	view.WriteString("\n")
 	messages := model.visibleTranscript()
 	lines := renderTranscript(messages, model.widthOrDefault())
-	available := max(1, model.heightOrDefault()-strings.Count(model.composer.view(true), "\n")-strings.Count(model.renderInputs(), "\n")-5)
+	statusLines := 0
+	if model.compactionStatus != "" {
+		statusLines = strings.Count(ansi.Hardwrap(model.compactionStatus, model.widthOrDefault(), true), "\n") + 1
+	}
+	available := max(1, model.heightOrDefault()-strings.Count(model.composer.view(true), "\n")-strings.Count(model.renderInputs(), "\n")-5-statusLines)
 	if len(lines) > available {
 		lines = lines[len(lines)-available:]
 	}

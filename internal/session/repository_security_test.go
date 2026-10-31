@@ -217,6 +217,10 @@ func TestRepositoryResumeRepairAndWriterStayBoundToOpenedJournal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	loaded.Repair, err = NewLoader().Repair(context.Background(), lease, loaded)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !loaded.Repair.Repaired || loaded.Repair.Kind != RepairHalfLine {
 		t.Fatalf("repair = %#v", loaded.Repair)
 	}
