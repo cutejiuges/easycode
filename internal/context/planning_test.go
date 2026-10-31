@@ -142,8 +142,8 @@ func TestPlannerCacheFingerprintIgnoresVolatileInputAndSecrets(t *testing.T) {
 	footprint := estimatedFootprint(t, domain.ProviderAnthropic, 0, 0)
 	empty := emptyProjectInstructions(t)
 	catalog := testToolCatalog(t)
-	firstInput, _ := NewPlanningInput(profile, catalog, empty, planningHistoryWithInput(history, "first secret-input"), footprint, NewSamplingInput(), DisabledBudget())
-	secondInput, _ := NewPlanningInput(profile, catalog, empty, planningHistoryWithInput(history, "second secret-input"), footprint, NewSamplingInput(), DisabledBudget())
+	firstInput, _ := testPlanningInput(profile, catalog, empty, planningHistoryWithInput(history, "first secret-input"), footprint, NewSamplingInput(), DisabledBudget())
+	secondInput, _ := testPlanningInput(profile, catalog, empty, planningHistoryWithInput(history, "second secret-input"), footprint, NewSamplingInput(), DisabledBudget())
 	first, _ := NewPlanner().Plan(firstInput)
 	second, _ := NewPlanner().Plan(secondInput)
 	firstFingerprint, _ := first.CachePlan().StablePrefixFingerprint()
@@ -162,7 +162,7 @@ func TestPlannerCacheFingerprintIgnoresVolatileInputAndSecrets(t *testing.T) {
 func TestPlannerToolContinuationHasZeroCurrentInputEstimate(t *testing.T) {
 	t.Parallel()
 	profile, _ := NewProviderProfile(domain.ProviderOpenAI, "gpt-test")
-	input, err := NewPlanningInput(
+	input, err := testPlanningInput(
 		profile, testToolCatalog(t), emptyProjectInstructions(t), emptyHistory(domain.ProviderOpenAI),
 		estimatedFootprint(t, domain.ProviderOpenAI, 1, 12), NewSamplingInput(), DisabledBudget(),
 	)
@@ -182,7 +182,7 @@ func TestPlannerToolContinuationHasZeroCurrentInputEstimate(t *testing.T) {
 		t.Fatalf("continuation current input estimate = %d known=%t", tokens, known)
 	}
 	invalid := CurrentInput{}
-	if _, err := NewPlanningInput(
+	if _, err := testPlanningInput(
 		profile, testToolCatalog(t), emptyProjectInstructions(t), emptyHistory(domain.ProviderOpenAI),
 		estimatedFootprint(t, domain.ProviderOpenAI, 1, 12), invalid, DisabledBudget(),
 	); err == nil {
@@ -216,12 +216,12 @@ func TestPlanningInputRejectsProviderAndMethodMismatch(t *testing.T) {
 	catalog := testToolCatalog(t)
 	wrongFamily := estimatedFootprint(t, domain.ProviderAnthropic, 0, 0)
 	empty := emptyProjectInstructions(t)
-	if _, err := NewPlanningInput(profile, catalog, empty, emptyHistory(domain.ProviderOpenAI), wrongFamily, NewSamplingInput(), DisabledBudget()); err == nil {
+	if _, err := testPlanningInput(profile, catalog, empty, emptyHistory(domain.ProviderOpenAI), wrongFamily, NewSamplingInput(), DisabledBudget()); err == nil {
 		t.Fatal("family mismatch unexpectedly accepted")
 	}
 	other, _ := domain.NewEstimatedTokenEstimate("future", 1)
 	footprint, _ := domain.NewNativeHistoryFootprint(domain.ProviderOpenAI, 0, other)
-	if _, err := NewPlanningInput(profile, catalog, empty, emptyHistory(domain.ProviderOpenAI), footprint, NewSamplingInput(), DisabledBudget()); err == nil {
+	if _, err := testPlanningInput(profile, catalog, empty, emptyHistory(domain.ProviderOpenAI), footprint, NewSamplingInput(), DisabledBudget()); err == nil {
 		t.Fatal("method mismatch unexpectedly accepted")
 	}
 }
@@ -252,7 +252,7 @@ func TestPlannerIncludesProjectInstructionsAsProjectStableSource(t *testing.T) {
 	t.Parallel()
 	snapshot := projectInstructions(t, "nested/AGENTS.md", "use make verify")
 	profile, _ := NewProviderProfile(domain.ProviderOpenAI, "gpt-test")
-	input, err := NewPlanningInput(
+	input, err := testPlanningInput(
 		profile, testToolCatalog(t), snapshot, emptyHistory(domain.ProviderOpenAI),
 		estimatedFootprint(t, domain.ProviderOpenAI, 0, 0), NewSamplingInput(), DisabledBudget(),
 	)
@@ -339,7 +339,7 @@ func TestPlannerProjectInstructionsParticipateInBudgetDecisions(t *testing.T) {
 	unknown, _ := domain.NewUnknownTokenEstimate(estimate.MethodByteHeuristic)
 	footprint, _ := domain.NewNativeHistoryFootprint(domain.ProviderOpenAI, 0, unknown)
 	profile, _ := NewProviderProfile(domain.ProviderOpenAI, "gpt-test")
-	input, err := NewPlanningInput(profile, testToolCatalog(t), snapshot, emptyHistory(domain.ProviderOpenAI), footprint, NewSamplingInput(), exactBudget)
+	input, err := testPlanningInput(profile, testToolCatalog(t), snapshot, emptyHistory(domain.ProviderOpenAI), footprint, NewSamplingInput(), exactBudget)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -378,7 +378,7 @@ func mustPlanningInput(t *testing.T, history domain.SemanticHistoryView, footpri
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := NewPlanningInput(profile, testToolCatalog(t), emptyProjectInstructions(t), planningHistoryWithInput(history, current), footprint, NewSamplingInput(), budget)
+	input, err := testPlanningInput(profile, testToolCatalog(t), emptyProjectInstructions(t), planningHistoryWithInput(history, current), footprint, NewSamplingInput(), budget)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -415,7 +415,7 @@ func planWithProjectInstructions(
 ) ContextPlan {
 	t.Helper()
 	profile, _ := NewProviderProfile(domain.ProviderOpenAI, "gpt-test")
-	input, err := NewPlanningInput(
+	input, err := testPlanningInput(
 		profile, testToolCatalog(t), snapshot, planningHistoryWithInput(emptyHistory(domain.ProviderOpenAI), current),
 		estimatedFootprint(t, domain.ProviderOpenAI, 0, 0), NewSamplingInput(), budget,
 	)
@@ -504,9 +504,13 @@ func TestPlanningIdentityDoesNotChangeContentFingerprint(t *testing.T) {
 		t.Fatal(err)
 	}
 	changed := input
-	changed.history = history.Clone()
-	changed.history.Turns[0].TurnID = "01900000-0000-7000-8000-000000000099"
-	changed.history.Turns[0].Messages[0].InputID = "01900000-0000-7000-8000-000000000098"
+	changedHistory := history.Clone()
+	changedHistory.Turns[0].TurnID = "01900000-0000-7000-8000-000000000099"
+	changedHistory.Turns[0].Messages[0].InputID = "01900000-0000-7000-8000-000000000098"
+	changed.history, err = domain.NewActiveContextView(changedHistory, domain.ContextSummary{}, input.history.Revision())
+	if err != nil {
+		t.Fatal(err)
+	}
 	second, err := NewPlanner().Plan(changed)
 	if err != nil {
 		t.Fatal(err)
@@ -514,8 +518,17 @@ func TestPlanningIdentityDoesNotChangeContentFingerprint(t *testing.T) {
 	if !reflect.DeepEqual(first, second) {
 		t.Fatal("identity polluted context plan")
 	}
-	changed.history.Turns[0].Messages[0].Role = "unknown"
-	if _, err := NewPlanner().Plan(changed); err == nil {
+	changedHistory.Turns[0].Messages[0].Role = "unknown"
+	if _, err := domain.NewActiveContextView(changedHistory, domain.ContextSummary{}, input.history.Revision()); err == nil {
 		t.Fatal("invalid semantic role accepted")
 	}
+}
+
+// testPlanningInput 将无 checkpoint 的历史 fixture 转成真实有效窗口。
+func testPlanningInput(profile ProviderProfile, catalog tool.CatalogSnapshot, project domain.ProjectInstructionsSnapshot, history domain.SemanticHistoryView, footprint domain.NativeHistoryFootprint, current CurrentInput, budget Budget) (PlanningInput, error) {
+	view, err := domain.NewActiveContextView(history, domain.ContextSummary{}, footprint.Revision())
+	if err != nil {
+		return PlanningInput{}, err
+	}
+	return NewPlanningInput(profile, catalog, project, view, footprint, current, budget)
 }

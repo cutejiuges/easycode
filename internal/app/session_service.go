@@ -35,6 +35,7 @@ type chatRuntimeJournal interface {
 }
 
 type assembledSession struct {
+	compactions   []compactionTranscript
 	nativeCommits []session.NativeCommitRecord
 	tools         []session.ToolHistoryEntry
 	identity      session.Identity
@@ -126,7 +127,7 @@ func (service *sessionService) resume(
 	if metadata.Provider != factory.Family() || metadata.ProviderWire != wire || metadata.Model != model {
 		return assembledSession{}, fault.New(fault.CodeSessionIncompatible, "session provider configuration is incompatible")
 	}
-	commits, err := nativeRestoreRecords(plan.NativeCommits)
+	commits, err := orderedRestoreRecords(plan)
 	if err != nil {
 		return assembledSession{}, err
 	}
@@ -134,6 +135,20 @@ func (service *sessionService) resume(
 	conversation, err := factory.RestoreConversation(commits)
 	if err != nil {
 		return assembledSession{}, fault.Wrap(fault.CodeSessionCorruption, "restore provider native history failed", err)
+	}
+	if err := validateCompactionUsage(factory, plan); err != nil {
+		return assembledSession{}, fault.Wrap(fault.CodeSessionCorruption, "compaction usage is invalid", err)
+	}
+	compactions, err := restoreCompactionTranscript(factory, plan)
+	if err != nil {
+		return assembledSession{}, fault.Wrap(fault.CodeSessionCorruption, "compaction transcript is invalid", err)
+	}
+	if loaded.NeedsRepair() {
+		report, repairErr := session.NewLoader().Repair(ctx, lease, loaded)
+		if repairErr != nil {
+			return assembledSession{}, fault.Wrap(fault.CodeSessionWrite, "repair session journal failed", repairErr)
+		}
+		loaded.Repair = report
 	}
 	started, err := service.start(lease, loaded.Identity, loaded.NextSequence)
 	if err != nil {
@@ -145,6 +160,10 @@ func (service *sessionService) resume(
 	}
 	if started.transferred {
 		lease = nil
+	}
+	if err := reconcileInterruptedCompaction(ctx, writer, plan.InterruptedCompaction); err != nil {
+		closeErr := writer.Close(context.Background())
+		return assembledSession{}, fault.Wrap(fault.CodeSessionWrite, "close interrupted compaction failed", errors.Join(err, closeErr))
 	}
 	if plan.InterruptedTail != nil {
 		failureDraft, draftErr := session.NewTurnFailedDraft(plan.InterruptedTail.TurnID, session.TurnFailedPayload{
@@ -178,10 +197,10 @@ func (service *sessionService) resume(
 		toolRecovery = &cloned
 	}
 	return assembledSession{
-		identity: plan.Identity, conversation: conversation, writer: writer,
+		compactions: compactions, identity: plan.Identity, conversation: conversation, writer: writer,
 		tools:         plan.Tools,
 		nativeCommits: plan.NativeCommits,
-		history:       conversation.ProjectHistory(), repair: plan.Repair, toolRecovery: toolRecovery,
+		history:       conversation.ProjectHistory(), repair: loaded.Repair, toolRecovery: toolRecovery,
 	}, nil
 }
 

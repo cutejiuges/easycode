@@ -109,12 +109,16 @@ func TestExecInterruptedRecoveryRetainsCrossProcessLeaseAndAppendOnlyBytes(t *te
 	}
 	defer lease.Close()
 	loaded, err := NewLoader().Load(context.Background(), lease)
-	if err != nil || !loaded.Repair.Repaired {
+	if err != nil || !loaded.NeedsRepair() {
 		t.Fatalf("crash release did not permit repair: %v", err)
 	}
 	plan, err := NewReplayPlanner().Plan(loaded)
 	if err != nil {
 		t.Fatal(err)
+	}
+	loaded.Repair, err = NewLoader().Repair(context.Background(), lease, loaded)
+	if err != nil || !loaded.Repair.Repaired {
+		t.Fatalf("repair: %v", err)
 	}
 	calls := plan.ToolRecovery.Calls()
 	if len(calls) != 1 || calls[0].State != ReplayedToolCallStarted || calls[0].Invocation.Capability() != tool.CapabilityExec {

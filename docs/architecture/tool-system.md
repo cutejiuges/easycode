@@ -24,7 +24,7 @@ Read 超实际额度返回 `result_budget_exceeded` 并失效旧覆盖证据。R
 
 `tool_ready/tool_started/tool_progress/tool_terminal` 是统一活动事件，只有 Shell 产生进度；`transcript_committed` 在 native finalize 与宿主投影更新后发出。TUI 用提交序号上界查询最新 50 项，把 provisional sample 恰好一次替换为 committed 投影；未提交失败文本只在当前进程标为 unfinished。主线按视口裁剪，Shell 三行、相邻成功 Read/Search 去重计数；Ctrl+O 访问完整记录。正文页最多 64 KiB UTF-8，保存页最多 64 KiB raw / 256 KiB escaped，前后翻页不依赖无限缓存，浏览端统一缓存四页。TUI render 不执行 I/O。
 
-Session 当前 canary 为 6，native revision 为 2，headless JSONL 为 v1。预算与保存状态都是 result 的必需字段；恢复复用冻结 preview，不重新预算或读取对象。记录词汇仍为 `session_meta/thread_meta/turn_started/turn_inputs_committed/provider_native_commit/sample_usage/tool_call_ready/tool_approval_decided/tool_execution_started/tool_call_result/turn_completed/turn_failed`；UI 活动与提交提示不写入 journal。
+Session 当前 canary 为 7，native revision 为 3，headless JSONL 为 v1。预算与保存状态都是 result 的必需字段；恢复复用冻结 preview，不重新预算或读取对象。记录词汇仍为 `session_meta/thread_meta/turn_started/turn_inputs_committed/provider_native_commit/sample_usage/tool_call_ready/tool_approval_decided/tool_execution_started/tool_call_result/turn_completed/turn_failed/compaction_started/compaction_completed/compaction_failed`；UI 活动与提交提示不写入 journal。
 
 设计与复用依据见 [ADR-0006](adr/0006-tool-transcript-and-result-budget.md)。
 
@@ -397,7 +397,7 @@ Runtime 的观察表仅由 turn owner 操作，上限 1024，按输出提交顺�
 | 模型预览字节与截断元数据 | 是 | 可投影 | 恢复必须精确复用 |
 | UI 展开、焦点、spinner | 否 | 本地状态 | 不进入协议与缓存 |
 
-当前 Session envelope canary 为 `5`，仍只有一个 reader。`tool_approval_decided` 保存 typed `decision_source` 和安全展示 metadata（capability、相对目标、Exec timeout），不保存 PID、绝对路径、宿主环境、输出 chunk 或底层 cause。Exec 恢复时，未决定批准为 `session_interrupted_before_approval`，allow 但未 started 为 `session_interrupted_before_execution`，started 无结果为 `outcome_uncertain`；均不重试命令。
+当前 Session envelope canary 为 `7`，仍只有一个 reader。`tool_approval_decided` 保存 typed `decision_source` 和安全展示 metadata（capability、相对目标、Exec timeout），不保存 PID、绝对路径、宿主环境、输出 chunk 或底层 cause。Exec 恢复时，未决定批准为 `session_interrupted_before_approval`，allow 但未 started 为 `session_interrupted_before_execution`，started 无结果为 `outcome_uncertain`；均不重试命令。
 
 稳定发布前新增或修改 record kind 时，直接替换唯一 current fixture，并让旧开发 shape fail closed。稳定发布后若引入真实 revision，必须同时提交 typed constructor、strict decoder、validator、不可变历史 fixture、兼容窗口和 replay migration test；既有 append-only records 不得在 resume 时原地改写。
 

@@ -4,7 +4,7 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 
 用户只需要提供 `base_url`、`api_key` 和模型名称即可连接服务，不需要账号登录、OAuth、设备码或订阅鉴权。
 
-> 项目正在推进 P3 Coding Tools。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、原生多轮 Session、`--resume`/`--continue`、headless/FIFO 输入、离线 `sessions list`，以及 Read、Glob、Grep、需批准的单文件 Patch、整文件 Write 和 Darwin 前台命令执行。会话 picker、artifact、通用 Tool UI 和完整缓存/推理界面仍按 Roadmap 分阶段推进。
+> 项目正在推进 P3 Coding Tools。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、原生多轮 Session、`--resume`/`--continue`、headless/FIFO 输入、离线 `sessions list`，以及 Read、Glob、Grep、需批准的单文件 Patch、整文件 Write 和 Darwin 前台命令执行。已支持工具原文 artifact、统一工具详情、手动上下文压缩与查询；会话 picker、自动压缩、Hook 和完整缓存/推理界面仍按 Roadmap 分阶段推进。
 
 ## 多行聊天输入
 
@@ -36,7 +36,7 @@ TUI 将 CRLF/CR 规范化为 LF，保留缩进、Tab、尾空格及尾换行；�
 | Runtime | 已实现多 sample 工具循环、同轮自动追加与严格 FIFO 屏障、原子取回、定向停止和 durable-before-memory 输入提交 |
 | 安全配置 | 已实现 JSON 配置、环境变量覆盖、API key 脱敏，以及 macOS/Linux 上绑定实际句柄的 no-follow 校验；其他平台当前安全失败关闭 |
 | Tools | 已实现 Read/Glob/Grep、Anthropic Edit / OpenAI custom apply_patch、双 Provider structured Write，以及 Darwin 前台 Exec（Anthropic Bash / OpenAI exec_command）；只读最多 8 路并行，Patch/Write/Exec 独占、有序提交并需批准 |
-| Session | 已实现 append-only JSONL、单一当前 canary 5 的强类型 draft/decoder、UUIDv7、跨进程 lease、同句柄 load/repair/write、`Sync`、尾部修复、fixture、显式恢复，以及可从 JSONL 重建的 SQLite Catalog v1、`--continue` 与离线 `sessions list`；session picker/search 尚未实现 |
+| Session | 已实现 append-only JSONL、单一当前 canary 7 的强类型 draft/decoder、UUIDv7、跨进程 lease、同句柄 load/repair/write、`Sync`、尾部修复、fixture、显式恢复，以及可从 JSONL 重建的 SQLite Catalog v1、`--continue` 与离线 `sessions list`；session picker/search 尚未实现 |
 | 扩展系统 | P6 目标；Hooks、Plugins、Skills 和 MCP 目前仅为经批准的 TODO 占位，未接入 Runtime/app |
 | Subagent | P7 目标；当前仅为经批准的 TODO 控制边界，调度、线程树和生命周期尚未实现 |
 | Telemetry | P8 目标；当前 logger 仅为经批准的 TODO 占位，未接入请求正文、Session 或运行时链路 |
@@ -105,7 +105,7 @@ bin/easycode
 
 默认按最近提交活动列出当前目录的 20 个 root 会话，数量范围为 1–200；`--all` 显示所有创建目录。每项保留完整 thread ID、UTC 更新时间和 Provider/wire/model，可复制 ID 给 `--resume`。列表展示所有模型，但恢复仍需配置匹配，并使用恢复进程的当前目录，不会自动切换到创建目录。
 
-列表不会启动模型、读取 stdin 或创建新会话。它会全量协调本地索引，可能创建/重建 SQLite，并在取得 exclusive lease 后修复不完整 journal 尾部；`--limit` 只限制展示数量，不限制扫描工作量。被占用或无效的 journal 会产生 stderr 警告，旧索引可能过时或缺失；这是元数据列表，不是完整可恢复性保证。当前安全存储支持 macOS/Linux，其他平台失败关闭。
+列表不会启动模型、读取 stdin 或创建新会话。它会全量协调本地索引，可能创建/重建 SQLite，但不会修改 journal；不完整尾部仅在 resume 完整校验后、同一 exclusive lease 下修复；`--limit` 只限制展示数量，不限制扫描工作量。被占用或无效的 journal 会产生 stderr 警告，旧索引可能过时或缺失；这是元数据列表，不是完整可恢复性保证。当前安全存储支持 macOS/Linux，其他平台失败关闭。
 
 只输出本次 turn 的最终文本：
 
@@ -383,3 +383,24 @@ make install-hooks
 任务运行时仍可编辑草稿，Enter 将输入排队；完整工具结果保存后，追加内容可以进入同一轮的下一次模型请求。没有下一次工具采样时，输入按顺序开启新轮。queued/claimed 表示尚未保存；正文进入对话记录才表示 committed。
 
 空草稿首行 Up 或普通 Esc 将尚未领取的排队输入取回编辑；Ctrl+C（或无可取回输入时 Esc）停止当前轮。停止后返还的内容使用 Ctrl+R 逐条放回草稿，Ctrl+D 逐条丢弃，均不会自动发送。审批和命令详情优先使用各自快捷键。队列和返还区只在本进程保留；已保存的输入可以恢复，未保存内容不会在重启后自动执行。
+
+
+### 上下文查询与手动压缩
+
+- `/context`：查看已提交窗口的分类 token 估算、模型、revision、窗口与预留；运行中可查询，排队输入和 staging 不计入。估算不是 usage，未配置窗口时不显示比例。
+- `/compact` 或 `/compact 保留失败测试与下一步`：空闲且没有排队输入时总结当前窗口。完成后显示简短边界，Ctrl+O 查看摘要与全部旧历史。没有后续输入时保持等待。
+- 压缩期间仍可编辑和排队；Ctrl+C 取消当前压缩。Esc 优先关闭详情、取回 queued auto，再取消压缩。失败保持旧窗口并返还自动输入，strict-next 保留。
+
+JSON 配置可设置 `"compaction_output_tokens": 4096`，范围 1–65536，不提供环境变量覆盖；这是摘要输出上限，与普通输出预留独立。网络期限为 120 秒；超预算、摘要无效或无法缩减时明确失败，不重试或自动删历史。默认 4096 与小窗口冲突只拒绝压缩，不阻断普通启动。
+
+stream-json v1 使用显式控制，不把普通输入中的 slash 当命令：
+
+```json
+{"version":1,"type":"context.query","request_id":"context-1"}
+{"version":1,"type":"context.compact","request_id":"compact-1","instructions":"保留未解决问题"}
+{"version":1,"type":"context.cancel","request_id":"cancel-1","expected_compaction_id":"<accepted response 中的 compaction_id>"}
+```
+
+控制响应先于 `context.snapshot` 或 `compaction.started/completed/failed`。压缩输出关联独立 CompactionID，不含 TurnID、摘要正文或 opaque 内容；失败带 `durable`。stdin EOF 等待已接受操作完成，显式 shutdown 取消并等待清理。
+
+当前 Session/native canary 为 **7/3**，headless 保持 **v1**。旧开发 journal 在修复或追加前失败关闭。压缩保留原始 JSONL 和工具详情；resume 本地恢复 checkpoint，未完成摘要本地收口，不重执行工具。自动压缩、Hook 和跨 Provider fork 尚未实现。

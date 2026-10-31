@@ -17,6 +17,9 @@ const (
 type CommandDisposition string
 
 const (
+	CommandDispositionQueried      CommandDisposition = "queried"
+	CommandDispositionCompacting   CommandDisposition = "compacting"
+	CommandDispositionCancelling   CommandDisposition = "cancelling"
 	CommandDispositionRetracted    CommandDisposition = "retracted"
 	CommandDispositionStopping     CommandDisposition = "stopping"
 	CommandDispositionStarting     CommandDisposition = "starting"
@@ -30,20 +33,26 @@ const (
 type ControlErrorCode string
 
 const (
-	ControlErrorInputNotQueued     ControlErrorCode = "input_not_queued"
-	ControlErrorInputEncodingLimit ControlErrorCode = "input_encoding_limit"
-	ControlErrorInputStopping      ControlErrorCode = "input_stopping"
-	ControlErrorInvalidCommand     ControlErrorCode = "invalid_command"
-	ControlErrorInvalidInput       ControlErrorCode = "invalid_input"
-	ControlErrorInputQueueFull     ControlErrorCode = "input_queue_full"
-	ControlErrorDuplicateRequest   ControlErrorCode = "duplicate_request"
-	ControlErrorNoActiveTurn       ControlErrorCode = "no_active_turn"
-	ControlErrorTurnMismatch       ControlErrorCode = "turn_mismatch"
-	ControlErrorNoActiveApproval   ControlErrorCode = "no_active_approval"
-	ControlErrorApprovalMismatch   ControlErrorCode = "approval_mismatch"
-	ControlErrorSessionClosing     ControlErrorCode = "session_closing"
-	ControlErrorSessionShutdown    ControlErrorCode = "session_shutdown"
-	ControlErrorSessionFailed      ControlErrorCode = "session_failed"
+	ControlErrorSessionBusy              ControlErrorCode = "session_busy"
+	ControlErrorNothingToCompact         ControlErrorCode = "nothing_to_compact"
+	ControlErrorCompactionBudgetUnknown  ControlErrorCode = "compaction_budget_unknown"
+	ControlErrorCompactionBudgetExceeded ControlErrorCode = "compaction_budget_exceeded"
+	ControlErrorNoActiveCompaction       ControlErrorCode = "no_active_compaction"
+	ControlErrorCompactionMismatch       ControlErrorCode = "compaction_mismatch"
+	ControlErrorInputNotQueued           ControlErrorCode = "input_not_queued"
+	ControlErrorInputEncodingLimit       ControlErrorCode = "input_encoding_limit"
+	ControlErrorInputStopping            ControlErrorCode = "input_stopping"
+	ControlErrorInvalidCommand           ControlErrorCode = "invalid_command"
+	ControlErrorInvalidInput             ControlErrorCode = "invalid_input"
+	ControlErrorInputQueueFull           ControlErrorCode = "input_queue_full"
+	ControlErrorDuplicateRequest         ControlErrorCode = "duplicate_request"
+	ControlErrorNoActiveTurn             ControlErrorCode = "no_active_turn"
+	ControlErrorTurnMismatch             ControlErrorCode = "turn_mismatch"
+	ControlErrorNoActiveApproval         ControlErrorCode = "no_active_approval"
+	ControlErrorApprovalMismatch         ControlErrorCode = "approval_mismatch"
+	ControlErrorSessionClosing           ControlErrorCode = "session_closing"
+	ControlErrorSessionShutdown          ControlErrorCode = "session_shutdown"
+	ControlErrorSessionFailed            ControlErrorCode = "session_failed"
 )
 
 // ControlError 是不包含底层 cause 的控制面安全错误摘要。
@@ -69,12 +78,13 @@ func (controlError ControlError) Validate() error {
 
 // CommandResult 是 owner 对一条命令的确定 admission 结果。
 type CommandResult struct {
-	entryID     domain.InputID
-	requestID   RequestID
-	commandKind CommandKind
-	status      CommandStatus
-	disposition CommandDisposition
-	controlErr  ControlError
+	compactionID domain.CompactionID
+	entryID      domain.InputID
+	requestID    RequestID
+	commandKind  CommandKind
+	status       CommandStatus
+	disposition  CommandDisposition
+	controlErr   ControlError
 }
 
 // NewAcceptedCommandResult 创建与 command kind 匹配的接受结果。
@@ -130,6 +140,14 @@ func (result CommandResult) Error() (ControlError, bool) {
 
 // Validate 验证 command kind、status 和 disposition/error 的组合。
 func (result CommandResult) Validate() error {
+	if result.commandKind == CommandCompactContext && result.status == CommandStatusAccepted {
+		if !result.compactionID.Valid() {
+			return fmt.Errorf("accepted compaction identity is invalid")
+		}
+	} else if result.compactionID != "" {
+		return fmt.Errorf("unrelated compaction identity")
+	}
+
 	if !result.requestID.Valid() || !validCommandKind(result.commandKind) {
 		return fmt.Errorf("command result identity is invalid")
 	}
@@ -159,6 +177,7 @@ func (result CommandResult) Validate() error {
 type ControlItemKind string
 
 const (
+	ControlItemContextEvent  ControlItemKind = "context_event"
 	ControlItemInputStatus   ControlItemKind = "input_status"
 	ControlItemCommandResult ControlItemKind = "command_result"
 	ControlItemTurnEvent     ControlItemKind = "turn_event"
@@ -247,6 +266,10 @@ func (item ControlItem) Validate() error {
 		if item.result.Validate() != nil || item.result.RequestID() != item.requestID || item.event.Kind != "" || item.discard != (ControlError{}) {
 			return fmt.Errorf("command result item is invalid")
 		}
+	case ControlItemContextEvent:
+		if item.result != (CommandResult{}) || item.discard != (ControlError{}) || item.event.TurnID != "" || item.event.Validate() != nil || (item.event.Kind != EventContextSnapshot && item.event.Kind != EventCompactionStarted && item.event.Kind != EventCompactionCompleted && item.event.Kind != EventCompactionFailed) {
+			return fmt.Errorf("correlated context item is invalid")
+		}
 	case ControlItemTurnEvent:
 		if item.result != (CommandResult{}) || item.discard != (ControlError{}) || validateRuntimeEvent(item.event) != nil {
 			return fmt.Errorf("correlated turn item is invalid")
@@ -263,11 +286,17 @@ func (item ControlItem) Validate() error {
 }
 
 func validCommandKind(kind CommandKind) bool {
-	return kind == CommandSubmitConversationalInput || kind == CommandRetractInputs || kind == CommandStopTurn || kind == CommandSubmitInput || kind == CommandInterrupt || kind == CommandShutdown || kind == CommandResolveToolApproval
+	return kind == CommandQueryContext || kind == CommandCompactContext || kind == CommandCancelCompaction || kind == CommandSubmitConversationalInput || kind == CommandRetractInputs || kind == CommandStopTurn || kind == CommandSubmitInput || kind == CommandInterrupt || kind == CommandShutdown || kind == CommandResolveToolApproval
 }
 
 func dispositionMatches(kind CommandKind, disposition CommandDisposition) bool {
 	switch kind {
+	case CommandQueryContext:
+		return disposition == CommandDispositionQueried
+	case CommandCompactContext:
+		return disposition == CommandDispositionCompacting
+	case CommandCancelCompaction:
+		return disposition == CommandDispositionCancelling
 	case CommandSubmitInput, CommandSubmitConversationalInput:
 		return disposition == CommandDispositionStarting || disposition == CommandDispositionQueued
 	case CommandRetractInputs:
@@ -287,6 +316,18 @@ func dispositionMatches(kind CommandKind, disposition CommandDisposition) bool {
 
 func controlErrorMessage(code ControlErrorCode) (string, bool) {
 	switch code {
+	case ControlErrorSessionBusy:
+		return "session has active or queued work", true
+	case ControlErrorNothingToCompact:
+		return "there is no new context to compact", true
+	case ControlErrorCompactionBudgetUnknown:
+		return "compaction budget cannot be estimated", true
+	case ControlErrorCompactionBudgetExceeded:
+		return "compaction request exceeds the context budget", true
+	case ControlErrorNoActiveCompaction:
+		return "there is no active compaction", true
+	case ControlErrorCompactionMismatch:
+		return "active compaction does not match the expected identity", true
 	case ControlErrorInputNotQueued:
 		return "input is no longer queued", true
 	case ControlErrorInputEncodingLimit:
@@ -325,4 +366,33 @@ func validateRuntimeEvent(event Event) error {
 		return fmt.Errorf("runtime event identity is invalid")
 	}
 	return event.Validate()
+}
+
+// NewAcceptedCompactionResult 创建带独立操作身份的 admission 结果。
+func NewAcceptedCompactionResult(command Command, id domain.CompactionID) (CommandResult, error) {
+	if command.Validate() != nil || command.Kind() != CommandCompactContext {
+		return CommandResult{}, fmt.Errorf("compaction command is invalid")
+	}
+	result := CommandResult{requestID: command.RequestID(), commandKind: command.Kind(), status: CommandStatusAccepted, disposition: CommandDispositionCompacting, compactionID: id}
+	return result, result.Validate()
+}
+
+// CompactionID 返回接受压缩时分配的独立身份。
+func (result CommandResult) CompactionID() domain.CompactionID { return result.compactionID }
+
+// NewCorrelatedContextItem 创建 thread 查询或压缩事件的关联输出。
+func NewCorrelatedContextItem(requestID RequestID, event Event) (ControlItem, error) {
+	event.Payload = append([]byte(nil), event.Payload...)
+	item := ControlItem{kind: ControlItemContextEvent, requestID: requestID, event: event}
+	return item, item.Validate()
+}
+
+// ContextEvent 返回独立复制的查询或压缩事件。
+func (item ControlItem) ContextEvent() (Event, bool) {
+	if item.kind != ControlItemContextEvent {
+		return Event{}, false
+	}
+	event := item.event
+	event.Payload = append([]byte(nil), event.Payload...)
+	return event, true
 }

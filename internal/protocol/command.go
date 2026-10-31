@@ -25,6 +25,9 @@ const (
 	CommandRetractInputs             CommandKind = "retract_inputs"
 	CommandStopTurn                  CommandKind = "stop_turn"
 	CommandInterrupt                 CommandKind = "interrupt"
+	CommandQueryContext              CommandKind = "query_context"
+	CommandCompactContext            CommandKind = "compact_context"
+	CommandCancelCompaction          CommandKind = "cancel_compaction"
 	CommandShutdown                  CommandKind = "shutdown"
 	CommandResolveToolApproval       CommandKind = "resolve_tool_approval"
 )
@@ -53,16 +56,18 @@ func (id RequestID) Valid() bool {
 
 // Command 是封闭的 Runtime 输入命令值对象。
 type Command struct {
-	kind              CommandKind
-	requestID         RequestID
-	text              string
-	inputIDs          []domain.InputID
-	expectedTurnID    domain.TurnID
-	approvalRequestID string
-	invocationID      string
-	fingerprint       string
-	decision          ApprovalDecision
-	feedback          string
+	instructions         string
+	expectedCompactionID domain.CompactionID
+	kind                 CommandKind
+	requestID            RequestID
+	text                 string
+	inputIDs             []domain.InputID
+	expectedTurnID       domain.TurnID
+	approvalRequestID    string
+	invocationID         string
+	fingerprint          string
+	decision             ApprovalDecision
+	feedback             string
 }
 
 // NewResolveToolApprovalCommand 创建与活动批准请求完整关联的响应命令。
@@ -126,7 +131,24 @@ func (command Command) Validate() error {
 	if command.kind != CommandRetractInputs && len(command.inputIDs) != 0 {
 		return fmt.Errorf("command contains unrelated input IDs")
 	}
+	if command.kind != CommandCompactContext && command.instructions != "" {
+		return fmt.Errorf("command contains unrelated compaction instructions")
+	}
+	if command.kind != CommandCancelCompaction && command.expectedCompactionID != "" {
+		return fmt.Errorf("command contains unrelated compaction identity")
+	}
 	switch command.kind {
+	case CommandQueryContext, CommandCompactContext, CommandCancelCompaction:
+		if command.text != "" || command.expectedTurnID != "" || command.approvalRequestID != "" || command.invocationID != "" || command.fingerprint != "" || command.decision != "" || command.feedback != "" {
+			return fmt.Errorf("context command contains unrelated payload")
+		}
+		if !utf8.ValidString(command.instructions) || len(command.instructions) > 16<<10 || strings.TrimSpace(command.instructions) != command.instructions {
+			return fmt.Errorf("compaction instructions are invalid")
+		}
+		if command.kind == CommandCancelCompaction && !command.expectedCompactionID.Valid() {
+			return fmt.Errorf("compaction cancel target is invalid")
+		}
+
 	case CommandSubmitInput, CommandSubmitConversationalInput:
 		if command.expectedTurnID != "" || command.approvalRequestID != "" || command.invocationID != "" || command.fingerprint != "" || command.decision != "" || command.feedback != "" {
 			return fmt.Errorf("submit command contains an interrupt target")
@@ -209,4 +231,30 @@ func NewStopTurnCommand(requestID RequestID, turnID domain.TurnID) (Command, err
 // InputIDs 返回独立的取回目标身份副本。
 func (command Command) InputIDs() []domain.InputID {
 	return append([]domain.InputID(nil), command.inputIDs...)
+}
+
+// NewQueryContextCommand 创建只读已提交窗口查询。
+func NewQueryContextCommand(requestID RequestID) (Command, error) {
+	command := Command{kind: CommandQueryContext, requestID: requestID}
+	return command, command.Validate()
+}
+
+// NewCompactContextCommand 创建独立摘要请求，不分配输入身份。
+func NewCompactContextCommand(requestID RequestID, instructions string) (Command, error) {
+	command := Command{kind: CommandCompactContext, requestID: requestID, instructions: strings.TrimSpace(instructions)}
+	return command, command.Validate()
+}
+
+// NewCancelCompactionCommand 创建定向取消，过期身份不能影响新操作。
+func NewCancelCompactionCommand(requestID RequestID, id domain.CompactionID) (Command, error) {
+	command := Command{kind: CommandCancelCompaction, requestID: requestID, expectedCompactionID: id}
+	return command, command.Validate()
+}
+
+// Instructions 返回摘要关注点，其他命令为空。
+func (command Command) Instructions() string { return command.instructions }
+
+// ExpectedCompactionID 返回定向取消目标。
+func (command Command) ExpectedCompactionID() domain.CompactionID {
+	return command.expectedCompactionID
 }

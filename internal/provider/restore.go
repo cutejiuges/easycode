@@ -7,6 +7,8 @@ import (
 
 // RestoreRecord 将 opaque 原生增量绑定到已校验的 turn 和提交角色。
 type RestoreRecord struct {
+	source      *CompactionSource
+	checkpoint  *CheckpointEnvelope
 	turnID      domain.TurnID
 	role        domain.NativeCommitRole
 	association domain.InputAssociation
@@ -58,6 +60,10 @@ func (record RestoreRecord) Role() domain.NativeCommitRole { return record.role 
 
 // Envelope 返回经校验的独立原生增量。
 func (record RestoreRecord) Envelope() (NativeCommitEnvelope, error) {
+	if record.checkpoint != nil || record.source != nil {
+		return NativeCommitEnvelope{}, fmt.Errorf("checkpoint is not a native commit")
+	}
+
 	if err := record.Validate(); err != nil {
 		return NativeCommitEnvelope{}, err
 	}
@@ -76,6 +82,21 @@ func (record RestoreRecord) Association() (domain.InputAssociation, bool) {
 
 // Validate 拒绝零值或不匹配的恢复角色。
 func (record RestoreRecord) Validate() error {
+	if record.source != nil {
+		if record.checkpoint != nil || record.turnID != "" || record.role != "" || record.association.TurnID() != "" || record.envelope.Family() != "" {
+			return fmt.Errorf("compaction source record contains unrelated fields")
+		}
+		return record.source.Validate()
+	}
+
+	if record.checkpoint != nil {
+		if record.turnID != "" || record.role != "" || record.association.TurnID() != "" || record.envelope.Family() != "" {
+			return fmt.Errorf("checkpoint restore record contains turn fields")
+		}
+		_, err := record.checkpoint.Clone()
+		return err
+	}
+
 	if !record.turnID.Valid() {
 		return fmt.Errorf("restore turn ID is invalid")
 	}
@@ -95,4 +116,43 @@ func (record RestoreRecord) Validate() error {
 		return fmt.Errorf("restore commit role is invalid")
 	}
 	return nil
+}
+
+// NewCheckpointRestoreRecord 保留与普通增量交错的独立 checkpoint。
+func NewCheckpointRestoreRecord(checkpoint CheckpointEnvelope) (RestoreRecord, error) {
+	clone, err := checkpoint.Clone()
+	if err != nil {
+		return RestoreRecord{}, err
+	}
+	return RestoreRecord{checkpoint: &clone}, nil
+}
+
+// IsCheckpoint 判断恢复记录是否具有独立窗口边界。
+func (record RestoreRecord) IsCheckpoint() bool { return record.checkpoint != nil }
+
+// Checkpoint 返回经过校验且不共享 payload 的 checkpoint。
+func (record RestoreRecord) Checkpoint() (CheckpointEnvelope, error) {
+	if record.checkpoint == nil {
+		return CheckpointEnvelope{}, fmt.Errorf("restore record is not a checkpoint")
+	}
+	if err := record.Validate(); err != nil {
+		return CheckpointEnvelope{}, err
+	}
+	return record.checkpoint.Clone()
+}
+
+// NewCompactionSourceRestoreRecord 在开始事实的位置校验来源，包括最终失败或中断的操作。
+func NewCompactionSourceRestoreRecord(source CompactionSource) (RestoreRecord, error) {
+	if err := source.Validate(); err != nil {
+		return RestoreRecord{}, err
+	}
+	return RestoreRecord{source: &source}, nil
+}
+
+// CompactionSource 返回仅用于校验的来源标记，不产生原生增量。
+func (record RestoreRecord) CompactionSource() (CompactionSource, bool) {
+	if record.source == nil {
+		return CompactionSource{}, false
+	}
+	return *record.source, true
 }

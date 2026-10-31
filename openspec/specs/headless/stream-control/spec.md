@@ -34,6 +34,9 @@ CLI SHALL 仅在 `--json --input-format stream-json` 组合下启用长期流式
 - `input.submit`：包含 `text`，其语义和 4 MiB 上限与 Runtime submit input 一致。
 - `turn.interrupt`：包含 `expected_turn_id`。
 - `session.shutdown`：不包含额外 payload。
+- `context.query`：不包含额外 payload。
+- `context.compact`：必需 instructions 字符串，可为空，合法 UTF-8 且去除外围空白后最多 16 KiB。
+- `context.cancel`：必需 expected_compaction_id，合法 UUIDv7，不接受 TurnID。
 - `input.append`：包含 text，使用自动投递语义。
 - `input.retract`：包含 1 至 64 个合法、非重复领域 InputIDs 的 input_ids。
 - `turn.stop`：包含 expected_turn_id，停止并返还未消费自动输入。
@@ -56,6 +59,14 @@ decoder SHALL 支持任意读取 chunk、跨 chunk 的 JSON 行、UTF-8 多字�
 - **THEN** reader 停止累积、报告安全 `invalid_input`，并进入协议失败清理流程
 
 新增字段 SHALL 严格拒绝 null、重复、未知字段与非法组合；input.submit 保持严格下一 turn，turn.interrupt 保持后续队列。
+
+#### Scenario: Decode a manual compaction command
+- **WHEN** context.compact 带 version=1、合法 request_id 和 instructions
+- **THEN** 产生专属压缩命令，不解析成普通 input.submit；null、重复/未知字段或混合 turn 身份被拒绝
+
+#### Scenario: Keep literal slash text literal
+- **WHEN** input.submit/input.append 的 text 包含 /compact 或 /context
+- **THEN** 仍作为用户正文，不执行本地命令
 
 ### Requirement: Every command receives one ordered control response
 
@@ -90,6 +101,16 @@ decoder SHALL 支持任意读取 chunk、跨 chunk 的 JSON 行、UTF-8 多字�
 #### Scenario: Retract only requested pending inputs
 - **WHEN** input.retract 与 claim 并发
 - **THEN** 先被 owner 接受者决定结果；全量取回成功或 input_not_queued，不能部分取回
+
+上下文 query 被接受时 disposition SHALL 为 queried，随后输出一次携带相同 request_id 的 context.snapshot；compact 为 compacting 并携带 compaction_id；cancel 为 cancelling。拒绝使用 session_busy、nothing_to_compact、compaction_budget_unknown、compaction_budget_exceeded、no_active_compaction、compaction_mismatch 等匹配的安全英文代码。压缩 admission 不等于 durable started，取消 admission 不等于操作已结束。
+
+#### Scenario: Correlate compaction independently of turns
+- **WHEN** context.compact 被接受
+- **THEN** response 先包含 compaction_id，后续操作事件使用发起 request_id 和同一 compaction_id，不携带 input_id/turn_id
+
+#### Scenario: Cancel an old compaction
+- **WHEN** expected_compaction_id 不匹配当前活动压缩
+- **THEN** 一次 rejected response，不取消当前 worker 或后续 turn
 
 ### Requirement: One stdout writer preserves cross-protocol order
 
@@ -164,3 +185,33 @@ stdin EOF SHALL 被解释为 graceful input close：应用停止 admission，继
 - **WHEN** 客户端在进程重启后重发一个此前仅收到 queued response、但从未产生 `turn.started` 的 identity
 - **THEN** 新进程不从 Session 推断该 identity 已执行
 - **THEN** 跨重启重试语义由调用方根据 durable `turn.started`/terminal 事件决定
+
+### Requirement: Context output is explicit ordered and isolated from one-shot output
+
+stream-json v1 SHALL 增加 context.snapshot 与 compaction.started/completed/failed，由唯一 stdout writer 编码。snapshot SHALL 只包含有界数值、source kinds/revisions、配置/估算状态、活动状态与 committed scope，不包含正文；completed SHALL 只包含估算、normalized usage 和状态，不包含摘要正文、原生 payload 或权限数据。started 只在 durable start 后、completed 只在成功 Sync/finalize 后输出；每个 accepted compact 必须获得一个成功或失败终态，未获得 durable started 的失败不能伪造 started。durability 不确定时失败输出 MUST 显式标记 durable=false，不宣称已持久化收口。
+
+context.query response MUST 先于 snapshot，compact response MUST 先于对应所有操作事件；成功/失败 terminal 和 cleanup 必须先于 queued 输入启动。没有显式新上下文命令时不得新增压缩控制输出。一次性 --print/--json 的词汇、slash 正文、退出规则保持原样。每个新 kind 必须有严格解码/校验与 golden，不直接序列化内部结构。
+
+#### Scenario: Query during an active operation
+- **WHEN** 客户端在普通 turn 或压缩中请求 context.query
+- **THEN** response 后得到最近 committed snapshot，active 状态可见，查询不触发网络或窗口变换
+
+#### Scenario: Fail before started became durable
+- **WHEN** compact accepted 后 started 的写入确定失败
+- **THEN** 输出唯一 compaction.failed(durable=false)，不输出虚假的 started/completed
+
+#### Scenario: Preserve old headless output
+- **WHEN** 客户端只使用既有命令或一次性输出模式
+- **THEN** 既有字段与事件序列不变，一次性模式不出现 context/compaction 控制帧
+
+### Requirement: Compaction participates in stream drain and shutdown
+
+EOF SHALL 排空已接受压缩与输入，显式 shutdown、协议失败或 stdout 故障 SHALL 取消压缩并等待原有唯一 owner 清理，writer/lease 不提前释放。普通压缩失败作为操作结果报告，不单独使健康控制进程退出为基础设施错误。正常清理保持退出码 0，协议/输出失败保持 1，用法错误保持 2；已损坏 stdout 不再尝试追加错误帧。
+
+#### Scenario: Drain a compact followed by input
+- **WHEN** EOF 时压缩活动且存在 queued input
+- **THEN** 按操作成功/失败队列规则处理，所有需交付终态和清理完成后关闭输出
+
+#### Scenario: Break stdout during a summary
+- **WHEN** stdout 短写或断管且摘要网络仍活动
+- **THEN** 停止输出、取消并等待 transport 与 Session cleanup，退出 1，期间 lease 保持

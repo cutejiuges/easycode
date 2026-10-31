@@ -253,6 +253,10 @@ func (draft RecordDraft) clone() RecordDraft {
 
 func validateDraftPlacement(draft RecordDraft) error {
 	switch draft.descriptor.Kind {
+	case EventCompactionStarted, EventCompactionCompleted, EventCompactionFailed:
+		if draft.turnID != "" || draft.parentThreadID != "" {
+			return fmt.Errorf("compaction draft placement is invalid")
+		}
 	case EventSessionMeta:
 		if draft.parentThreadID != "" || draft.turnID != "" {
 			return fmt.Errorf("session metadata draft placement is invalid")
@@ -278,6 +282,15 @@ func validateDraftPayload(draft RecordDraft) error {
 		EventKind: draft.descriptor.Kind, Payload: draft.PayloadBytes(),
 	}
 	switch draft.descriptor.Kind {
+	case EventCompactionStarted:
+		_, err := DecodeCompactionStartedPayload(record)
+		return err
+	case EventCompactionCompleted:
+		_, err := DecodeCompactionCompletedPayload(record)
+		return err
+	case EventCompactionFailed:
+		_, err := DecodeCompactionFailedPayload(record)
+		return err
 	case EventSessionMeta:
 		_, err := DecodeSessionMetaPayload(record)
 		return err

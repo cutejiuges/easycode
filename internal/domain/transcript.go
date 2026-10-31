@@ -11,9 +11,10 @@ import (
 type TranscriptKind string
 
 const (
-	TranscriptUser      TranscriptKind = "user"
-	TranscriptAssistant TranscriptKind = "assistant"
-	TranscriptCall      TranscriptKind = "call"
+	TranscriptUser       TranscriptKind = "user"
+	TranscriptCompaction TranscriptKind = "compaction"
+	TranscriptAssistant  TranscriptKind = "assistant"
+	TranscriptCall       TranscriptKind = "call"
 )
 
 // TranscriptPosition 用原生提交序号及提交内位置定位内容，均从零开始。

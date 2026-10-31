@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
@@ -46,6 +47,8 @@ type ContextPlanner interface {
 
 // Config 固定一个 Session-bound Runtime 的身份与 durable 边界。
 type Config struct {
+	CompactionHistory         CompactionHistoryObserver
+	CompactionOutputTokens    uint64
 	TextOutputStore           tool.TextOutputStore
 	ToolHistory               ToolHistoryObserver
 	ReadArtifactExecutor      tool.ReadArtifactExecutor
@@ -77,41 +80,44 @@ type Config struct {
 
 // Runtime 持有一条会话级 Provider Conversation 和同一 thread journal。
 type Runtime struct {
-	turnEmitter          Emitter
-	activityEmitter      Emitter
-	activityInvocations  map[tool.InvocationID]tool.Invocation
-	resultBudget         *tool.ResultBudget
-	textOutputStore      tool.TextOutputStore
-	toolHistory          ToolHistoryObserver
-	readArtifactExecutor tool.ReadArtifactExecutor
-	artifactReferences   *tool.ArtifactReferences
-	conversation         provider.Conversation
-	journal              Journal
-	sessionID            domain.SessionID
-	threadID             domain.ThreadID
-	newTurnID            TurnIDGenerator
-	newInvocationID      InvocationIDGenerator
-	profile              contextplan.ProviderProfile
-	toolCatalog          tool.CatalogSnapshot
-	readExecutor         tool.ReadExecutor
-	globExecutor         tool.GlobExecutor
-	grepExecutor         tool.GrepExecutor
-	patchPreparer        tool.PatchPreparer
-	patchExecutor        tool.PatchExecutor
-	writePreparer        tool.WritePreparer
-	writeExecutor        tool.WriteExecutor
-	execPreparer         tool.ExecPreparer
-	execExecutor         tool.ExecExecutor
-	toolPolicy           tool.Policy
-	newApprovalRequestID ApprovalRequestIDGenerator
-	interactiveApprovals bool
-	readObservations     readObservations
-	approvals            approvalState
-	projectInstructions  domain.ProjectInstructionsSnapshot
-	budget               contextplan.Budget
-	planner              ContextPlanner
-	active               atomic.Bool
-	poisoned             atomic.Bool
+	compactionHistory      CompactionHistoryObserver
+	compactionOutputTokens uint64
+	compactionDeadline     func(context.Context, time.Duration) (context.Context, context.CancelFunc)
+	turnEmitter            Emitter
+	activityEmitter        Emitter
+	activityInvocations    map[tool.InvocationID]tool.Invocation
+	resultBudget           *tool.ResultBudget
+	textOutputStore        tool.TextOutputStore
+	toolHistory            ToolHistoryObserver
+	readArtifactExecutor   tool.ReadArtifactExecutor
+	artifactReferences     *tool.ArtifactReferences
+	conversation           provider.Conversation
+	journal                Journal
+	sessionID              domain.SessionID
+	threadID               domain.ThreadID
+	newTurnID              TurnIDGenerator
+	newInvocationID        InvocationIDGenerator
+	profile                contextplan.ProviderProfile
+	toolCatalog            tool.CatalogSnapshot
+	readExecutor           tool.ReadExecutor
+	globExecutor           tool.GlobExecutor
+	grepExecutor           tool.GrepExecutor
+	patchPreparer          tool.PatchPreparer
+	patchExecutor          tool.PatchExecutor
+	writePreparer          tool.WritePreparer
+	writeExecutor          tool.WriteExecutor
+	execPreparer           tool.ExecPreparer
+	execExecutor           tool.ExecExecutor
+	toolPolicy             tool.Policy
+	newApprovalRequestID   ApprovalRequestIDGenerator
+	interactiveApprovals   bool
+	readObservations       readObservations
+	approvals              approvalState
+	projectInstructions    domain.ProjectInstructionsSnapshot
+	budget                 contextplan.Budget
+	planner                ContextPlanner
+	active                 atomic.Bool
+	poisoned               atomic.Bool
 }
 
 type runtimeApproval struct {
@@ -167,6 +173,12 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 	if config.ContextPlanner == nil {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "runtime context planner is not configured")
 	}
+	if config.CompactionOutputTokens == 0 {
+		config.CompactionOutputTokens = 4096
+	}
+	if config.CompactionOutputTokens > 65536 {
+		return nil, fault.New(fault.CodeInvalidConfiguration, "compaction output tokens are invalid")
+	}
 	if config.GenerateTurnID == nil {
 		config.GenerateTurnID = domain.GenerateTurnID
 	}
@@ -181,11 +193,14 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 		}
 	}
 	return &Runtime{
-		toolHistory:          config.ToolHistory,
-		readArtifactExecutor: config.ReadArtifactExecutor,
-		textOutputStore:      config.TextOutputStore,
-		artifactReferences:   config.ArtifactReferences,
-		conversation:         conversation, journal: config.Journal,
+		compactionHistory:      config.CompactionHistory,
+		compactionDeadline:     context.WithTimeout,
+		compactionOutputTokens: config.CompactionOutputTokens,
+		toolHistory:            config.ToolHistory,
+		readArtifactExecutor:   config.ReadArtifactExecutor,
+		textOutputStore:        config.TextOutputStore,
+		artifactReferences:     config.ArtifactReferences,
+		conversation:           conversation, journal: config.Journal,
 		sessionID: config.SessionID, threadID: config.ThreadID, newTurnID: config.GenerateTurnID,
 		newInvocationID: config.GenerateInvocationID,
 		profile:         config.ContextProfile, toolCatalog: config.ToolCatalog.Clone(),
@@ -436,7 +451,11 @@ func (runtime *Runtime) planTurnInput(input provider.TurnInput) (provider.TurnIn
 	if err != nil {
 		return provider.TurnInput{}, err
 	}
-	return runtime.planHistory(runtime.conversation.ProjectHistory(), footprint)
+	view, err := runtime.conversation.ProjectActiveContext()
+	if err != nil {
+		return provider.TurnInput{}, err
+	}
+	return runtime.planHistory(view, footprint)
 }
 
 func (runtime *Runtime) consumeProviderStream(

@@ -32,7 +32,7 @@ func TestSteeringInputsPreviewCommitRestoreAndRequestEquivalence(t *testing.T) {
 		t.Fatal(err)
 	}
 	preview, _, err := prepared.Preview()
-	if err != nil || len(preview.Turns) != 1 || len(conversation.ProjectHistory().Turns) != 0 {
+	if err != nil || len(preview.History().Turns) != 1 || len(conversation.ProjectHistory().Turns) != 0 {
 		t.Fatal("candidate leaked into committed history")
 	}
 	if err := prepared.Discard(); err != nil {
@@ -74,7 +74,7 @@ func TestSteeringInputsPreviewCommitRestoreAndRequestEquivalence(t *testing.T) {
 		t.Fatal(err)
 	}
 	preview, candidateFootprint, err := prepared.Preview()
-	if err != nil || len(preview.Turns) != 1 || len(preview.Turns[0].Messages) != 4 || preview.Turns[0].Messages[2].InputID != ids[1] || candidateFootprint.Revision() != before.Revision()+1 {
+	if err != nil || len(preview.History().Turns) != 1 || len(preview.History().Turns[0].Messages) != 4 || preview.History().Turns[0].Messages[2].InputID != ids[1] || candidateFootprint.Revision() != before.Revision()+1 {
 		t.Fatal("candidate association or footprint changed")
 	}
 	if len(conversation.ProjectHistory().Turns[0].Messages) != 2 {
@@ -141,6 +141,7 @@ func TestSteeringInputsPreviewCommitRestoreAndRequestEquivalence(t *testing.T) {
 	if !bytes.Equal(liveBytes.Bytes(), changedBytes.Bytes()) {
 		t.Fatal("input identity polluted request bytes")
 	}
+	assertCompactionAfterToolSteering(t, instance, conversation, sampling, envelopes)
 	records := testRestoreRecords(t, envelopes)
 	wrong, _ := domain.NewInputAssociation(turnID, domain.InputSteering, 2, ids[1:])
 	records[len(records)-1], _ = provider.NewInputRestoreRecord(wrong, envelopes[len(envelopes)-1])

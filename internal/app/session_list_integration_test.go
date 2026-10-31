@@ -225,7 +225,7 @@ func TestSessionListInterruptedTailAndInvalidJournal(t *testing.T) {
 			case "half-line":
 				before = append(before, []byte(`{"schema":`)...)
 			case "incomplete-batch":
-				// 创建元数据 batch 共两条；仅保留首条可验证整个未完成尾 batch 被修复。
+				// 创建元数据 batch 共两条；仅保留首条可验证列表排除未完成 batch 且不修改源文件。
 				before = append([]byte(nil), original[:bytes.IndexByte(original, '\n')+1]...)
 			case "invalid":
 				before = append(before, []byte("invalid-middle-record\n")...)
@@ -247,11 +247,11 @@ func TestSessionListInterruptedTailAndInvalidJournal(t *testing.T) {
 			after, readErr := os.ReadFile(path)
 			switch kind {
 			case "half-line":
-				if readErr != nil || !bytes.Equal(after, original) || !strings.Contains(out.String(), string(id)) {
-					t.Fatal("repair failed")
+				if readErr != nil || !bytes.Equal(after, before) || !strings.Contains(out.String(), string(id)) {
+					t.Fatal("read-only listing modified recoverable tail")
 				}
 			case "incomplete-batch":
-				if readErr != nil || len(after) != 0 || !strings.Contains(diagnostics.String(), "invalid") || strings.Contains(out.String(), string(id)) {
+				if readErr != nil || !bytes.Equal(after, before) || !strings.Contains(diagnostics.String(), "invalid") || strings.Contains(out.String(), string(id)) {
 					t.Fatal("incomplete metadata was indexed")
 				}
 			case "deleted":

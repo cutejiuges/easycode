@@ -84,7 +84,7 @@ ReadArtifact result SHALL 保存冻结页 preview、artifact ID、实际 offset/
 - **WHEN** checksum 合法但 descriptor 的 thread/invocation/stream、digest、长度或状态与结果不一致
 - **THEN** 当前 decoder/replay 拒绝记录，不访问 artifact 或修改 journal
 
-Session 当前 canary SHALL 为 6，Provider native 当前 canary 为 2；只允许精确匹配，旧开发 shape 在 repair/append 前失败关闭，不保留兼容 reader。新增 turn_inputs_committed 必须使用强类型 payload，仅含 initial/steering placement、target_sample_index 与有序非重复 InputIDs；不含正文、RequestID 或 UI 状态。正文仅由同 batch native user_inputs 保存，输入 batch 不产生 sample_usage。
+Session 当前 canary SHALL 为 7，Provider native 当前 canary 为 3；只允许精确匹配，旧开发 shape 在 repair/append 前失败关闭，不保留兼容 reader。新增 turn_inputs_committed 必须使用强类型 payload，仅含 initial/steering placement、target_sample_index 与有序非重复 InputIDs；不含正文、RequestID 或 UI 状态。正文仅由同 batch native user_inputs 保存，输入 batch 不产生 sample_usage。
 
 #### Scenario: Persist input identity without duplicating text
 - **WHEN** 一组初始或中途用户输入提交
@@ -95,6 +95,16 @@ Session 当前 canary SHALL 为 6，Provider native 当前 canary 为 2；只允
 #### Scenario: Reject inconsistent result budget
 - **WHEN** checksum 合法但记录实际 preview bytes 超过声明 allowance 或缺失预算字段
 - **THEN** strict decoder/replay 在恢复副作用前拒绝，不按新策略补齐字段或裁剪正文
+
+当前词汇 SHALL 增加 compaction_started、compaction_completed、compaction_failed；它们使用同一 envelope 的 session/thread 身份、空 TurnID 与 payload 内独立 CompactionID。每个新 kind MUST 有专属构造/strict decoder/validator，不添加 optional record、任意 payload 或展示状态。普通 turn 身份规则不放宽。当前 schema/payload canary 均为 7，旧 6 和更早 shape 在 repair/append 前拒绝。
+
+#### Scenario: Encode a scoped compaction fact
+- **WHEN** 压缩事实写入 journal
+- **THEN** payload 含合法 CompactionID，TurnID 为空，不复制 RequestID、排队输入、spinner 或摘要 delta
+
+#### Scenario: Reject superseded current fixtures
+- **WHEN** journal 使用 Session canary 6 或 native canary 2
+- **THEN** 在 repair/append/网络前失败关闭，不保留旧 reader，不迁移既有 bytes
 
 ### Requirement: A single writer assigns order and durably appends batches
 
@@ -178,6 +188,12 @@ Session loader SHALL 按行和 batch 顺序校验记录大小、JSON、完整性
 #### Scenario: Reject ambiguous JSON envelope fields
 - **WHEN** 一行包含重复 `seq`、未知当前顶层字段或一个合法对象后的尾随 JSON value
 - **THEN** loader 将该行视为损坏并且不得依赖 JSON decoder 的覆盖或宽松默认行为
+
+Load SHALL 只读扫描并返回完整 committed 前缀和私有待修复凭据，不执行 Truncate/Sync。恢复协调者 MUST 在全部 replay、Provider 兼容和原生/checkpoint 校验通过后才执行显式 Repair。Catalog SHALL 只读扫描，不隐式修复。
+
+#### Scenario: Reject semantic corruption with a torn tail
+- **WHEN** committed 前缀语义非法或 Provider/checkpoint 校验失败，且末尾另有半行或未完成 batch
+- **THEN** 恢复拒绝，原 journal 全部 bytes 不变，不启动 writer 或补偿
 
 ### Requirement: Replay validation enforces record state transitions
 
@@ -273,22 +289,36 @@ ReplayPlanner MUST 拒绝孤立/重复 approval、result 或 started、allow 后
 - **WHEN** journal 在完整 initial 或 steering 输入 batch 后中断
 - **THEN** 回放保留输入及关联，并返回本地 lifecycle reconciliation，不请求模型或执行工具
 
+普通 turn grammar 保持以上规则；压缩是与 turn 互斥的独立生命周期。compaction_started 必须为 idle 时单记录 batch，绑定当前来源 revisions/前驱/digest；其后恰好一个同身份 completed 或 failed 才能开始下一操作。completed 必须含有界 checkpoint envelope、normalized usage、前后估算并原子提交；failed 必须含 typed 原因和 observed/unavailable 计量状态。普通 terminal 后合法开始新的压缩不是“terminal 后同 turn 记录”；压缩不能插入活动 turn、不能带 TurnID，也不能冒充普通 native sample/usage。
+
+#### Scenario: Replay a compacted thread
+- **WHEN** 完整 turn 之后记录 started/completed，再记录新 turn
+- **THEN** replay 返回有序普通 commits、checkpoint 和独立操作事实，原 native ordinal 不变
+
+#### Scenario: Reject overlapping operations
+- **WHEN** 活动 turn 中出现 compaction_started，或活动压缩中出现新 turn/第二个 started
+- **THEN** 语义回放失败，journal 不进入可继续状态
+
+#### Scenario: Reject invalid compaction terminals
+- **WHEN** completion 无 started、身份错配、重复 terminal、缺失 checkpoint/usage 或 failed 含可安装窗口
+- **THEN** strict decoder/replay 拒绝，不通过默认值修复
+
 ### Requirement: Tail repair never rewrites committed history
 
-loader SHALL 只修复文件末尾的半行或未完成 batch：截断到最后一个完整 committed batch 边界，保留此前所有合法 bytes，并以结构化结果报告发生了修复。已经完整提交的 batch、文件中间的损坏和语义非法记录 MUST NOT 被自动删除、重排或重写。
+显式 Repair SHALL 在完整语义及 Provider 校验后只修复文件末尾的半行或未完成 batch：截断到最后一个完整 committed batch 边界，保留此前所有合法 bytes，并以结构化结果报告发生了修复。已经完整提交的 batch、文件中间的损坏和语义非法记录 MUST NOT 被自动删除、重排或重写。
 
 修复后 writer SHALL 从最后一个保留记录的下一 seq 继续；反复加载同一已修复文件 MUST 是幂等的。
 
 #### Scenario: Repair a truncated final line
 
 - **WHEN** 进程中断导致 JSONL 最后一行只写入部分 bytes
-- **THEN** loader 截断该半行并保留之前的全部 committed batches
+- **THEN** 只读 Load 返回待修复凭据，验证通过后 Repair 截断该半行并保留之前的全部 committed batches
 - **THEN** 修复结果明确报告被截断的尾部而不回显其 payload
 
 #### Scenario: Repair a trailing incomplete batch
 
 - **WHEN** 尾部含有一个或多个完整 JSON 行但逻辑 batch 缺少 commit 边界
-- **THEN** loader 将整个未完成 batch 从可恢复事实中移除并从其起始 offset 截断
+- **THEN** 只读 Load 排除未完成 batch，验证通过后 Repair 将整个未完成 batch 从可恢复事实中移除并从其起始 offset 截断
 - **THEN** 先前 committed batch 的原始 bytes 保持不变
 
 #### Scenario: Reopen after repair
@@ -300,6 +330,20 @@ loader SHALL 只修复文件末尾的半行或未完成 batch：截断到最后�
 
 - **WHEN** 最后一条 `turn_started` 所在 batch 已完整写入并通过 checksum，但进程在 terminal 前退出
 - **THEN** loader 保留该 batch，由 replay validator 报告 interrupted-tail 状态
+
+修复凭据 MUST 绑定原始 lease、handle、文件大小和内容 digest，拒绝伪造、跨 lease、扫描后内容变化及重复消费。修复接收前取消 MUST 保持 bytes 不变；接收 Truncate 后 MUST 等待 Sync 确定结果，不因取消提前返回。Truncate/Sync 失败 MUST poison lease 并禁止 writer transfer，唯一 owner 保持到关闭。并发 Close 必须等待修复完成，不在锁内执行 I/O 或等待。无损 journal 不需要截断，但不得用零值凭据伪造已修复报告。
+
+#### Scenario: Reject stale repair authority
+- **WHEN** 修复凭据来自其他 lease、已消费或扫描后文件内容改变
+- **THEN** Repair 拒绝且不截断、不启动 writer
+
+#### Scenario: Cancel a repair before admission
+- **WHEN** 截断接收前 context 已取消
+- **THEN** 返回取消且原始 bytes 不变
+
+#### Scenario: Finish an admitted repair
+- **WHEN** Truncate 已接收后取消与 Sync 竞争
+- **THEN** 等待 Sync 确定结果；失败 poison，Close 等待最终 I/O 完成且 writer 不得接管
 
 ### Requirement: Session storage is private and path-safe
 
@@ -498,3 +542,19 @@ ReplayPlanner SHALL只从Exec ready、approval、started、result和Provider-nat
 #### Scenario: Restore without presentation state
 - **WHEN** 进程曾显示搜索 running 或未提交文本后中断
 - **THEN** 恢复仅从已验证事实生成活动，不保留伪完成状态或未提交文本
+
+### Requirement: Compaction facts preserve durable window installation
+
+compaction_started SHALL 在摘要网络请求前成功 Sync；completion SHALL 以单记录原子 batch 保存安装所需来源、Provider checkpoint、normalized usage 与估算，成功 Sync 前不得切换内存窗口。failed SHALL 保留安全原因和适用计量 provenance，不安装窗口；原始历史 append-only，不将全文复制进 checkpoint。writer admission、lease、poison、编码大小和尾部修复继续适用。完整 checksum 合法但语义非法的 checkpoint MUST NOT 当成可删除尾部。
+
+#### Scenario: Recover a partial completion batch
+- **WHEN** 文件以不完整 completion batch 结束
+- **THEN** 仅按现有尾部规则修复，started 保留为未完成操作，不安装半个 checkpoint
+
+#### Scenario: Preserve a source journal prefix
+- **WHEN** 压缩成功或普通失败后继续会话
+- **THEN** 原 journal prefix 逐字节不变，新增 seq 单调，成功窗口事实只来自已完成 batch
+
+#### Scenario: Retain lease during cleanup
+- **WHEN** 压缩清理阻塞且另一个进程尝试 resume/repair
+- **THEN** 竞争进程 session_busy 且 journal bytes 不变，lease 直到最终 Sync/Close 才释放

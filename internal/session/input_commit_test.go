@@ -110,7 +110,7 @@ func TestCurrentInputOnlyAndSteeringFixtures(t *testing.T) {
 func TestInputDraftBudgetIncludesCanonicalEnvelopeAndNewlines(t *testing.T) {
 	makeDraft := func(size int) RecordDraft {
 		t.Helper()
-		draft, err := NewProviderNativeCommitDraft(testTurnID, NativeCommitPayload{Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 2, Payload: json.RawMessage(`{"text":"` + strings.Repeat("x", size) + `"}`)})
+		draft, err := NewProviderNativeCommitDraft(testTurnID, NativeCommitPayload{Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 3, Payload: json.RawMessage(`{"text":"` + strings.Repeat("x", size) + `"}`)})
 		if err != nil {
 			t.Fatal(err)
 		}

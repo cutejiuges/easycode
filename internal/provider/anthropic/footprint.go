@@ -8,8 +8,8 @@ import (
 
 // HistoryFootprint 返回下一次 Messages 请求会重放的已提交原生历史估算。
 func (conversation *Conversation) HistoryFootprint() (domain.NativeHistoryFootprint, error) {
-	entries, revision := conversation.history.snapshotWithRevision()
-	return historyFootprint(entries, revision)
+	snapshot := conversation.history.snapshotWindow()
+	return historyFootprint(snapshot.requestEntries(), snapshot.revision+snapshot.count)
 }
 
 func historyFootprint(entries []nativeHistoryEntry, revision uint64) (domain.NativeHistoryFootprint, error) {

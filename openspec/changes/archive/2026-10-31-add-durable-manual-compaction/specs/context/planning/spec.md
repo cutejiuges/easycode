@@ -1,0 +1,127 @@
+## MODIFIED Requirements
+
+### Requirement: Context planning uses typed ordered sources
+
+上下文规划 SHALL 只接收强类型的 Provider profile、Tool Catalog snapshot、可选项目指令快照、已提交有效窗口语义快照、Provider 原生历史 footprint、不携带额外正文的当前采样状态和可选预算。来源 MUST 按 `provider_profile`、`tool_catalog`、可选 `project_instructions`、`committed_history`、`current_input` 的固定顺序出现；无项目指令文档时 MUST 省略 `project_instructions`。规划不得隐式读取时间戳、随机 ID、cwd、环境变量、Session 路径、git 状态、文件系统或网络。
+
+`provider_profile` SHALL 只包含 Provider family、model 和显式 schema revision，不得包含 API key、base URL 凭据或其他 secret。`tool_catalog` SHALL 只包含 catalog revision、稳定排序的 facade schema canonical bytes 与内容派生 fingerprint，不得包含 executor、invocation/call identity、权限临时状态或 workspace 绝对路径。`project_instructions` SHALL 只包含经过发现契约验证的不可变快照、内容派生 revision、截断状态和项目根相对来源，不得包含绝对项目根或启动 cwd。规划 MUST 是纯内存操作，且不得修改输入快照或 Provider 原生历史。
+
+#### Scenario: Plan the same inputs twice
+- **WHEN** 两次规划使用相同 profile、Tool Catalog、项目指令快照、有效窗口语义快照、原生 footprint、当前输入和预算
+- **THEN** 两次计划的来源顺序、revision、估算、预算状态、canonical cache segments 和指纹完全一致
+
+#### Scenario: Exclude ambient process state
+- **WHEN** 规划输入不变但当前时间、cwd、环境变量、Session 文件路径或随机调用 identity 发生变化
+- **THEN** 计划的 canonical bytes、分段指纹和预算判定保持不变
+
+#### Scenario: Keep secrets out of the profile source
+- **WHEN** 相同 family、model 和 Tool Catalog 使用不同 API key、workspace 绝对位置或带凭据的配置来源
+- **THEN** `provider_profile`、`tool_catalog` 与稳定前缀指纹保持一致
+- **THEN** 计划摘要、错误和诊断不包含 API key、URL 凭据或 workspace 绝对路径
+
+#### Scenario: Omit an empty project source
+- **WHEN** 项目指令快照不含任何选中文档
+- **THEN** 计划保持 `provider_profile`、`tool_catalog`、`committed_history`、`current_input` 的固定顺序
+- **THEN** cache segments、stable prefix fingerprint 和预算结果不因空占位而改变
+
+输入提交前 SHALL 以已提交历史加 prepared inputs 的独立候选历史进行纯内存规划；候选语义视图仅用于估算，候选请求只能由 Provider 原生历史构造。实际网络采样前全部文本已经提交。current_input 保留为无额外正文的采样标记，不保留旧 Text/continuation 双 shape。
+
+规划历史 SHALL 为 Provider 从有效窗口产生的只读语义快照，摘要具有独立来源类型，不伪造 user InputID/turn；完整历史只供 recall/transcript。prepared inputs 的候选预检 SHALL 同样基于有效窗口。current_input 仍无额外正文，source 顺序与稳定级别不变。
+
+#### Scenario: Plan after a successful compaction
+- **WHEN** 完整原生历史很大但成功 checkpoint 已替换有效窗口
+- **THEN** committed_history 只计摘要与其后增量，完整历史不再进入覆盖估算；请求仍由原生窗口编译
+
+### Requirement: Context plans are immutable validated snapshots
+
+上下文计划 SHALL 使用唯一当前的强类型 shape，并深拷贝所有调用方可变输入；纯内存 plan MUST NOT 携带固定 format revision 或按 revision 选择 validator。计划 MUST 拒绝未知来源 kind、重复来源、非法顺序、空 source revision、非法 Tool Catalog、非法项目指令快照、非法估算状态、Provider family 不匹配及无效缓存计划。所有返回 slice、bytes 或嵌套值的读取操作 MUST 返回独立副本。
+
+计划 SHALL 把 `provider_profile` 与包含 Read、Glob、Grep、Patch、Write、Exec、ReadArtifact 的完整 `tool_catalog` 映射为 stable cache segments，把可选 `project_instructions` 映射为 project-stable cache segment，把 `committed_history` 映射为 turn-stable segment，把 `current_input` 映射为 volatile segment，并复用 `context/cache-plan` 的 canonical JSON、排序和 stable prefix fingerprint 契约。Tool Catalog 估算 SHALL 覆盖实际发送给对应 Provider 的全部 facade schema/description；Exec动态command、workdir、timeout、approval、sandbox临时状态与环境实际值不得进入catalog source。来源生命周期、source revision 与缓存稳定级别 MUST 保持为不同的强类型概念。
+
+#### Scenario: Mutate caller-owned planning inputs
+- **WHEN** 调用方在计划创建后修改原 Tool Catalog bytes、项目指令、语义 turn slice、有序消息 buffer 或 getter 返回的数据
+- **THEN** 计划中的来源、估算、canonical segments 和指纹保持不变
+
+#### Scenario: Reject a malformed source sequence
+- **WHEN** 来源缺失必需项、包含重复 kind，或 `tool_catalog` 不在 profile 与可选项目指令之间
+- **THEN** 规划失败且不返回可供 Runtime 或 Provider 使用的部分计划
+
+#### Scenario: Change only the volatile input
+- **WHEN** 调用方尝试仅替换 current_input 为携带新正文的旧开发 shape
+- **THEN** 当前 validator 拒绝旧 shape；合法追加必须先提交历史，不能通过 volatile input 绕过持久化
+- **THEN** 拒绝操作不改变已有计划的 stable prefix fingerprint
+
+#### Scenario: Change project instructions
+- **WHEN** 仅项目指令的规范化内容或项目根相对来源发生变化
+- **THEN** project-stable segment、计划总估算和 stable prefix fingerprint 发生变化
+- **THEN** tool catalog、committed history 与 current input segments 保持不变
+
+#### Scenario: Change the Tool Catalog
+- **WHEN** 任一当前facade的schema、description或catalog source revision发生变化
+- **THEN** tool catalog segment、计划总估算与stable prefix fingerprint发生变化并可定位到该source revision
+- **THEN** committed history 与 current input segments 保持不变
+
+#### Scenario: Keep command world state out of the stable prefix
+- **WHEN** catalog定义不变但实际command、workdir、环境值、approval identity或sandbox实例状态变化
+- **THEN** tool catalog canonical bytes、source revision与stable prefix fingerprint保持不变
+
+#### Scenario: Avoid a context-plan version router
+- **WHEN** Runtime 规划当前 Provider 请求
+- **THEN** ContextPlan API 不要求永远等于常量的 plan revision，且生产代码不存在旧计划 decoder 分支
+
+artifact ID、保存状态、存储目录、实时配额与读取游标 MUST NOT 进入 stable catalog source。
+
+#### Scenario: Keep artifact activity outside the stable prefix
+- **WHEN** 同一 catalog 下创建、读取、删除输出对象或改变配额使用量
+- **THEN** catalog canonical bytes、source revision 和 stable prefix fingerprint 不变；估算包含 ReadArtifact 实际 facade schema
+
+committed_history 的 cache canonical 内容 SHALL 仅含封闭 summary/text kind、有序角色和文本，不包含 InputID、turn ID 或展示状态；同内容不同关联身份必须得到相同内容 fingerprint。
+
+#### Scenario: Keep identity out of cache content
+- **WHEN** 仅改变输入和 turn 身份但原生可见内容及其顺序相同
+- **THEN** 请求与语义规划内容 fingerprint 相同，stable prefix 不变
+
+committed_history source revision SHALL 使用独立单调 context revision；普通 native commit 和成功 checkpoint 各推进一次，失败/查询不推进。摘要正文按有来源标记的文本参与该尾部分段 canonical 内容，CompactionID、原始记录位置和时间不得进入内容 fingerprint。既有“角色/文本”规范在摘要出现时扩展为封闭 summary/text kind，仍不得纳入展示身份。
+
+#### Scenario: Change only compaction identity
+- **WHEN** 两个窗口的摘要与增量内容、source revisions 相同但 CompactionID 或 Session 路径不同
+- **THEN** 请求 canonical bytes、历史内容 fingerprint 和 stable prefix fingerprint 一致
+
+#### Scenario: Retain a stable prefix across compaction
+- **WHEN** 只成功替换有效历史，profile/tools/project instructions 不变
+- **THEN** 稳定前缀 fingerprint 不变，committed_history 的 revision/内容 fingerprint 发生可解释变化
+
+### Requirement: Token estimates preserve method and uncertainty
+
+每个可计量来源和计划总量 SHALL 携带非空 estimator method、显式 `estimated` 或 `unknown` 状态以及无符号 token 数；unknown 状态不得伪装为已知零。当前切片 MUST 使用版本化、本地、确定性的启发式算法，不得调用远程 token-count API，也不得将 Provider 返回的 normalized usage 直接解释为当前上下文占用。
+
+共享层 SHALL 从 `ActiveContextView` 估算已提交可见文本，按 turn 内有序消息计量每条文本一次；current_input 采样标记没有新增正文估算。Provider 原生 footprint 表示已提交原生历史的总估算，已经包含其中可见和 opaque 内容；规划合并已提交历史时 MUST 使用能够覆盖共享可见估算与原生总估算的单一值，不得将两者直接相加造成重复计数。若任一覆盖输入 unknown，结果 MUST 保留不确定性而不是静默降低为较小的已知值。
+
+所有加减法 MUST 检测溢出或使用饱和语义，不得因整数 wraparound 把超大上下文判为可用。
+
+#### Scenario: Include Provider-private history without exposing it
+
+- **WHEN** 原生历史包含可见文本和不进入语义投影的 thinking、redacted thinking 或 encrypted reasoning
+- **THEN** committed history 总估算覆盖语义文本估算和 Provider 原生总估算
+- **THEN** 计划不包含 opaque 正文、signature、encrypted bytes 或原生 item
+
+#### Scenario: Avoid double-counting visible history
+
+- **WHEN** 有效窗口语义快照估算为 100 tokens，Provider 原生历史总 footprint 为 140 tokens
+- **THEN** committed history 贡献为覆盖两者的 140 tokens，而不是 240 tokens
+
+#### Scenario: Preserve an unknown estimate
+
+- **WHEN** Provider 无法为一个会在下一请求中重放的原生 item 产生受支持估算
+- **THEN** committed history 和计划总量标识为 unknown
+- **THEN** unknown 不会被展示或计算为零 token
+
+#### Scenario: Count steering once
+- **WHEN** 两条追加输入已经进入 native history 并参与下一 sample 规划
+- **THEN** 可见估算与 native footprint 使用覆盖值而不相加，追加文本不再次作为 current input 计量
+
+语义估算与原生 footprint MUST 指向同一有效窗口和 context revision；压缩摘要只计一次，已归档正文不计入。摘要请求消耗的 usage 不得用作新窗口占用。
+
+#### Scenario: Avoid counting archived history
+- **WHEN** 已归档历史估算 100000，当前摘要语义估算 1000，当前原生窗口估算 1200
+- **THEN** 历史贡献为 1200，而非 100000、101200 或 2200

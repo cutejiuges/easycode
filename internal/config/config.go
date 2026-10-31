@@ -37,16 +37,18 @@ type Provider struct {
 
 // Config 是应用运行所需的顶层配置。
 type Config struct {
-	Provider      Provider
-	ContextBudget contextplan.Budget
+	Provider         Provider
+	ContextBudget    contextplan.Budget
+	compactionOutput optionalUint64
 }
 
 type fileConfig struct {
-	provider string
-	baseURL  string
-	apiKey   string
-	model    string
-	budget   contextplan.Budget
+	provider         string
+	baseURL          string
+	apiKey           string
+	model            string
+	budget           contextplan.Budget
+	compactionOutput optionalUint64
 }
 
 type optionalUint64 struct {
@@ -193,6 +195,8 @@ func decodeFile(content []byte) (fileConfig, error) {
 			reservedOutput, err = decodeUint64Field(rawValue)
 		case "context_safety_margin_tokens":
 			safetyMargin, err = decodeUint64Field(rawValue)
+		case "compaction_output_tokens":
+			decoded.compactionOutput, err = decodeUint64Field(rawValue)
 		default:
 			return fileConfig{}, fault.New(fault.CodeInvalidConfiguration, "configuration file contains an unknown field")
 		}
@@ -209,6 +213,9 @@ func decodeFile(content []byte) (fileConfig, error) {
 		return fileConfig{}, err
 	}
 	decoded.budget = budget
+	if err := validateCompactionOutput(decoded.compactionOutput, budget); err != nil {
+		return fileConfig{}, err
+	}
 	return decoded, nil
 }
 
@@ -265,7 +272,7 @@ func (values fileConfig) toConfig() Config {
 		BaseURL: strings.TrimSpace(values.baseURL),
 		APIKey:  secret.New(strings.TrimSpace(values.apiKey)),
 		Model:   strings.TrimSpace(values.model),
-	}, ContextBudget: values.budget}
+	}, ContextBudget: values.budget, compactionOutput: values.compactionOutput}
 }
 
 func mergeEnvironment(base Config) Config {
@@ -286,6 +293,9 @@ func mergeEnvironment(base Config) Config {
 
 // ValidateProvider 校验启动真实模型请求前必须具备的字段。
 func (config Config) ValidateProvider() error {
+	if err := validateCompactionOutput(config.compactionOutput, config.ContextBudget); err != nil {
+		return err
+	}
 	if err := config.ContextBudget.Validate(); err != nil {
 		return fault.New(fault.CodeInvalidConfiguration, "context token budget is invalid")
 	}

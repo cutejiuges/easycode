@@ -213,6 +213,13 @@ func TestLoaderDoesNotRepairWhileHelperOwnsLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !first.NeedsRepair() {
+		t.Fatal("expected pending repair")
+	}
+	first.Repair, err = NewLoader().Repair(context.Background(), lease, first)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !first.Repair.Repaired || first.Repair.Kind != RepairHalfLine {
 		t.Fatalf("first repair = %#v", first.Repair)
 	}
@@ -301,11 +308,16 @@ type journalLeaseHelper struct {
 
 func startJournalLeaseHelper(t *testing.T, dataRoot string) *journalLeaseHelper {
 	t.Helper()
+	return startJournalLeaseHelperForThread(t, dataRoot, testThreadID)
+}
+
+func startJournalLeaseHelperForThread(t *testing.T, dataRoot string, threadID domain.ThreadID) *journalLeaseHelper {
+	t.Helper()
 	command := exec.Command(os.Args[0], "-test.run=^TestJournalLeaseHelperProcess$")
 	command.Env = append(os.Environ(),
 		journalLeaseHelperEnv+"=1",
 		"EASYCODE_TEST_JOURNAL_ROOT="+dataRoot,
-		"EASYCODE_TEST_JOURNAL_THREAD="+string(testThreadID),
+		"EASYCODE_TEST_JOURNAL_THREAD="+string(threadID),
 	)
 	stdout, err := command.StdoutPipe()
 	if err != nil {

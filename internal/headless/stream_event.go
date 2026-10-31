@@ -34,14 +34,15 @@ type StreamControlError struct {
 
 // StreamControlResponseEvent 表示一条入站命令的 admission 结果。
 type StreamControlResponseEvent struct {
-	Version     int                         `json:"version"`
-	Type        string                      `json:"type"`
-	RequestID   protocol.RequestID          `json:"request_id"`
-	EntryID     domain.InputID              `json:"entry_id,omitempty"`
-	CommandType string                      `json:"command_type"`
-	Status      protocol.CommandStatus      `json:"status"`
-	Disposition protocol.CommandDisposition `json:"disposition,omitempty"`
-	Error       *StreamControlError         `json:"error,omitempty"`
+	CompactionID domain.CompactionID         `json:"compaction_id,omitempty"`
+	Version      int                         `json:"version"`
+	Type         string                      `json:"type"`
+	RequestID    protocol.RequestID          `json:"request_id"`
+	EntryID      domain.InputID              `json:"entry_id,omitempty"`
+	CommandType  string                      `json:"command_type"`
+	Status       protocol.CommandStatus      `json:"status"`
+	Disposition  protocol.CommandDisposition `json:"disposition,omitempty"`
+	Error        *StreamControlError         `json:"error,omitempty"`
 }
 
 // StreamInputStatusEvent 投影输入归属与持久化结果，不包含正文。
@@ -169,6 +170,8 @@ func (projectorValue *StreamProjector) Project(item protocol.ControlItem) (Strea
 		return nil, fmt.Errorf("control item is invalid")
 	}
 	switch item.Kind() {
+	case protocol.ControlItemContextEvent:
+		return projectorValue.projectContext(item)
 	case protocol.ControlItemCommandResult:
 		result, _ := item.CommandResult()
 		return projectCommandResult(result)
@@ -215,7 +218,7 @@ func projectCommandResult(result protocol.CommandResult) (StreamEvent, error) {
 	}
 	event := StreamControlResponseEvent{
 		Version: eventVersion, Type: "control.response", RequestID: result.RequestID(),
-		EntryID: result.EntryID(), CommandType: commandType, Status: result.Status(), Disposition: result.Disposition(),
+		CompactionID: result.CompactionID(), EntryID: result.EntryID(), CommandType: commandType, Status: result.Status(), Disposition: result.Disposition(),
 	}
 	if summary, rejected := result.Error(); rejected {
 		event.Error = &StreamControlError{Code: summary.Code(), Message: summary.Message()}
@@ -255,6 +258,13 @@ func correlateProjectedEvent(inputID protocol.RequestID, event Event) (StreamEve
 
 func streamCommandType(kind protocol.CommandKind) (string, bool) {
 	switch kind {
+	case protocol.CommandQueryContext:
+		return "context.query", true
+	case protocol.CommandCompactContext:
+		return "context.compact", true
+	case protocol.CommandCancelCompaction:
+		return "context.cancel", true
+
 	case protocol.CommandSubmitConversationalInput:
 		return "input.append", true
 	case protocol.CommandRetractInputs:
@@ -274,6 +284,32 @@ func streamCommandType(kind protocol.CommandKind) (string, bool) {
 
 func validateStreamEvent(event StreamEvent) error {
 	switch value := event.(type) {
+	case StreamContextSnapshotEvent:
+		if value.Version != eventVersion || value.Type != "context.snapshot" || !value.RequestID.Valid() {
+			return fmt.Errorf("context snapshot envelope is invalid")
+		}
+		if err := validateThreadIdentity(value.SessionID, value.ThreadID); err != nil {
+			return err
+		}
+		return value.Snapshot.Validate()
+	case StreamCompactionStartedEvent:
+		if err := validateCompactionWire(value.Version, value.Type, "compaction.started", value.RequestID, value.SessionID, value.ThreadID, value.CompactionID); err != nil {
+			return err
+		}
+		if value.ContextRevision == 0 {
+			return fmt.Errorf("compaction context revision is invalid")
+		}
+		return nil
+	case StreamCompactionCompletedEvent:
+		if err := validateCompactionWire(value.Version, value.Type, "compaction.completed", value.RequestID, value.SessionID, value.ThreadID, value.CompactionID); err != nil {
+			return err
+		}
+		return value.CompactionCompletedPayload.Validate()
+	case StreamCompactionFailedEvent:
+		if err := validateCompactionWire(value.Version, value.Type, "compaction.failed", value.RequestID, value.SessionID, value.ThreadID, value.CompactionID); err != nil {
+			return err
+		}
+		return value.CompactionFailedPayload.Validate()
 	case StreamInputStatusEvent:
 		if value.Version != eventVersion || value.Type != "input.status" {
 			return fmt.Errorf("input status envelope is invalid")
@@ -289,16 +325,20 @@ func validateStreamEvent(event StreamEvent) error {
 		if value.Version != eventVersion || value.Type != "control.response" || !value.RequestID.Valid() {
 			return fmt.Errorf("stream control.response envelope is invalid")
 		}
-		if value.CommandType != "input.append" && value.CommandType != "input.retract" && value.CommandType != "turn.stop" && value.CommandType != "input.submit" && value.CommandType != "turn.interrupt" && value.CommandType != "session.shutdown" {
+		if value.CommandType != "context.query" && value.CommandType != "context.compact" && value.CommandType != "context.cancel" && value.CommandType != "input.append" && value.CommandType != "input.retract" && value.CommandType != "turn.stop" && value.CommandType != "input.submit" && value.CommandType != "turn.interrupt" && value.CommandType != "session.shutdown" {
 			return fmt.Errorf("stream control.response command type is invalid")
 		}
 		if value.Status == protocol.CommandStatusAccepted {
+			if (value.CommandType == "context.compact") != value.CompactionID.Valid() || (value.CommandType != "context.compact" && value.CompactionID != "") {
+				return fmt.Errorf("compaction response identity is invalid")
+			}
+
 			if value.Error != nil || value.Disposition == "" || (value.CommandType == "input.append") != value.EntryID.Valid() {
 				return fmt.Errorf("stream accepted response is invalid")
 			}
 			return nil
 		}
-		if value.EntryID != "" || value.Status != protocol.CommandStatusRejected || value.Disposition != "" || value.Error == nil || value.Error.Code == "" || value.Error.Message == "" {
+		if value.CompactionID != "" || value.EntryID != "" || value.Status != protocol.CommandStatusRejected || value.Disposition != "" || value.Error == nil || value.Error.Code == "" || value.Error.Message == "" {
 			return fmt.Errorf("stream rejected response is invalid")
 		}
 		return nil

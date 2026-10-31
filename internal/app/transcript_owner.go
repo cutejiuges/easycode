@@ -14,6 +14,7 @@ import (
 
 // transcriptQueries 拥有当前线程查询与事实投影，关闭时取消并等待所有已接收查询。
 type transcriptQueries struct {
+	compactions     []compactionTranscript
 	projector       provider.TranscriptProjector
 	facades         []tool.Facade
 	nativeSequences []uint64

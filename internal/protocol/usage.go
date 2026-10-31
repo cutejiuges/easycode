@@ -21,7 +21,8 @@ type UsagePayload struct {
 	ReasoningOutput UsageMetricPayload `json:"reasoning_output"`
 }
 
-func newUsagePayload(usage domain.SampleUsage) (UsagePayload, error) {
+// NewUsagePayload 创建不含 Provider 原生字段的计量投影。
+func NewUsagePayload(usage domain.SampleUsage) (UsagePayload, error) {
 	if err := usage.Validate(); err != nil {
 		return UsagePayload{}, fmt.Errorf("turn usage is invalid: %w", err)
 	}

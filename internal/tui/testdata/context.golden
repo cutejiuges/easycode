@@ -1,0 +1,12 @@
+Context · committed snapshot
+Model: fixture-model · revision 3 · compacting
+
+provider profile: 120 tokens (estimated)
+tool catalog: 120 tokens (estimated)
+committed history: 120 tokens (estimated)
+current input: 120 tokens (estimated)
+
+Total: 480 tokens · byte_heuristic_v1
+Context window not configured
+Budget: not_enforced
+Esc: close

@@ -470,6 +470,7 @@ func openChatResourcesWithSnapshot(
 		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "context profile is invalid", err)
 	}
 	queries := newTranscriptQueries(assembled.identity.ThreadID, artifactRangeReader{store: artifactStore, references: artifactReferences}, assembled.tools)
+	queries.compactions = append([]compactionTranscript(nil), assembled.compactions...)
 	projector, ok := assembled.conversation.(provider.TranscriptProjector)
 	if !ok {
 		return nil, fault.New(fault.CodeStreamProtocol, "transcript projection is unavailable")
@@ -498,7 +499,8 @@ func openChatResourcesWithSnapshot(
 		ToolPolicy:           toolPolicy,
 		InteractiveApprovals: hooks.interactiveApprovals,
 		ProjectInstructions:  projectInstructions,
-		ContextBudget:        applicationConfig.ContextBudget, ContextPlanner: contextplan.NewPlanner(),
+		CompactionHistory:    queries, CompactionOutputTokens: applicationConfig.CompactionOutputTokens(),
+		ContextBudget: applicationConfig.ContextBudget, ContextPlanner: contextplan.NewPlanner(),
 	})
 	if err != nil {
 		return nil, err

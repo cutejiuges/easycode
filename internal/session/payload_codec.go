@@ -672,6 +672,16 @@ func validateTurnFailedPayload(payload TurnFailedPayload) error {
 
 func decodeKnownRecord(record Record) error {
 	switch record.EventKind {
+	case EventCompactionStarted:
+		_, err := DecodeCompactionStartedPayload(record)
+		return err
+	case EventCompactionCompleted:
+		_, err := DecodeCompactionCompletedPayload(record)
+		return err
+	case EventCompactionFailed:
+		_, err := DecodeCompactionFailedPayload(record)
+		return err
+
 	case EventTurnInputsCommitted:
 		_, err := DecodeTurnInputsPayload(record)
 		return err

@@ -13,12 +13,14 @@ const maxResponsesRequestBytes = 16 << 20
 
 // responsesRequest 是当前文本切片发送给 Responses API 的稳定请求。
 type responsesRequest struct {
-	Model   string         `json:"model"`
-	Input   []NativeItem   `json:"input"`
-	Tools   []responseTool `json:"tools"`
-	Stream  bool           `json:"stream"`
-	Store   bool           `json:"store"`
-	Include []string       `json:"include"`
+	ToolChoice      string         `json:"tool_choice,omitempty"`
+	MaxOutputTokens uint64         `json:"max_output_tokens,omitempty"`
+	Model           string         `json:"model"`
+	Input           []NativeItem   `json:"input"`
+	Tools           []responseTool `json:"tools"`
+	Stream          bool           `json:"stream"`
+	Store           bool           `json:"store"`
+	Include         []string       `json:"include"`
 }
 
 type responseTool struct {

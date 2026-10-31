@@ -338,3 +338,30 @@ func (session *ChatSession) runInterrupts(ctx context.Context) {
 		}
 	}
 }
+
+// QueryContext 查询单 owner 保存的最近已提交上下文快照。
+func (session *ChatSession) QueryContext(ctx context.Context) (protocol.CommandResult, error) {
+	command, err := protocol.NewQueryContextCommand(session.requestID("host-context"))
+	if err != nil {
+		return protocol.CommandResult{}, err
+	}
+	return session.submitInteractive(ctx, command)
+}
+
+// CompactContext 请求空闲时执行手动压缩。
+func (session *ChatSession) CompactContext(ctx context.Context, instructions string) (protocol.CommandResult, error) {
+	command, err := protocol.NewCompactContextCommand(session.requestID("host-compact"), instructions)
+	if err != nil {
+		return protocol.CommandResult{}, err
+	}
+	return session.submitInteractive(ctx, command)
+}
+
+// CancelCompaction 取消指定压缩操作，不影响后来的 turn 或压缩。
+func (session *ChatSession) CancelCompaction(ctx context.Context, id domain.CompactionID) (protocol.CommandResult, error) {
+	command, err := protocol.NewCancelCompactionCommand(session.requestID("host-cancel-compaction"), id)
+	if err != nil {
+		return protocol.CommandResult{}, err
+	}
+	return session.submitInteractive(ctx, command)
+}

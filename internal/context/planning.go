@@ -158,7 +158,7 @@ type PlanningInput struct {
 	profile             ProviderProfile
 	toolCatalog         tool.CatalogSnapshot
 	projectInstructions domain.ProjectInstructionsSnapshot
-	history             domain.SemanticHistoryView
+	history             domain.ActiveContextView
 	footprint           domain.NativeHistoryFootprint
 	currentInput        CurrentInput
 	budget              Budget
@@ -169,13 +169,13 @@ func NewPlanningInput(
 	profile ProviderProfile,
 	toolCatalog tool.CatalogSnapshot,
 	projectInstructions domain.ProjectInstructionsSnapshot,
-	history domain.SemanticHistoryView,
+	history domain.ActiveContextView,
 	footprint domain.NativeHistoryFootprint,
 	currentInput CurrentInput,
 	budget Budget,
 ) (PlanningInput, error) {
 	input := PlanningInput{
-		profile: profile, toolCatalog: toolCatalog.Clone(), projectInstructions: projectInstructions, history: cloneSemanticHistory(history), footprint: footprint,
+		profile: profile, toolCatalog: toolCatalog.Clone(), projectInstructions: projectInstructions, history: history.Clone(), footprint: footprint,
 		currentInput: currentInput, budget: budget,
 	}
 	cloned, err := projectInstructions.Clone()
@@ -206,16 +206,11 @@ func (input PlanningInput) Validate() error {
 	if err := input.projectInstructions.Validate(); err != nil {
 		return fmt.Errorf("project instructions are invalid: %w", err)
 	}
-	if !input.history.Provider.Valid() || input.history.Provider != input.profile.family {
-		return fmt.Errorf("semantic history provider family does not match profile")
+	if err := input.history.Validate(); err != nil {
+		return err
 	}
-	if input.history.Turns == nil {
-		return fmt.Errorf("semantic history turns must not be nil")
-	}
-	for _, turn := range input.history.Turns {
-		if err := turn.Validate(); err != nil {
-			return fmt.Errorf("semantic history turn is invalid: %w", err)
-		}
+	if input.history.History().Provider != input.profile.family || input.history.Revision() != input.footprint.Revision() {
+		return fmt.Errorf("active context does not match profile or footprint revision")
 	}
 	if err := input.footprint.Validate(); err != nil {
 		return err
@@ -371,7 +366,7 @@ func (*Planner) Plan(input PlanningInput) (ContextPlan, error) {
 		return ContextPlan{}, err
 	}
 	toolEstimate := estimate.String(string(toolView.CanonicalJSON()))
-	visibleEstimate := estimateSemanticHistory(input.history)
+	visibleEstimate := estimateActiveContext(input.history)
 	historyEstimate, err := coverEstimates(visibleEstimate, input.footprint.Estimate())
 	if err != nil {
 		return ContextPlan{}, err
@@ -436,6 +431,7 @@ func buildCachePlan(input PlanningInput) (Plan, error) {
 		return Plan{}, err
 	}
 	historyJSON, err := codec.MarshalCanonical(struct {
+		Summary   string                    `json:"summary,omitempty"`
 		History   []semanticContentMessage  `json:"history"`
 		Revision  uint64                    `json:"native_revision"`
 		Method    string                    `json:"estimate_method"`
@@ -443,7 +439,7 @@ func buildCachePlan(input PlanningInput) (Plan, error) {
 		Tokens    uint64                    `json:"estimated_tokens"`
 		HasTokens bool                      `json:"has_estimated_tokens"`
 	}{
-		History: semanticContent(input.history), Revision: input.footprint.Revision(),
+		Summary: activeSummaryText(input.history), History: semanticContent(input.history.History()), Revision: input.footprint.Revision(),
 		Method: input.footprint.Estimate().Method(), State: input.footprint.Estimate().State(),
 		Tokens: tokenValue(input.footprint.Estimate()), HasTokens: hasTokenValue(input.footprint.Estimate()),
 	}, MaxSegmentBytes)
@@ -568,8 +564,13 @@ func mustEstimated(tokens uint64) domain.TokenEstimate {
 	return value
 }
 
-func cloneSemanticHistory(history domain.SemanticHistoryView) domain.SemanticHistoryView {
-	return history.Clone()
+func activeSummaryText(view domain.ActiveContextView) string {
+	summary, _ := view.Summary()
+	return summary.Text()
+}
+
+func estimateActiveContext(view domain.ActiveContextView) domain.TokenEstimate {
+	return sumEstimates(estimateSemanticHistory(view.History()), estimate.String(activeSummaryText(view)))
 }
 
 func tokenValue(value domain.TokenEstimate) uint64 {

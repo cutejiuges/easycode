@@ -140,6 +140,25 @@ func DecodeStreamCommand(line []byte) (protocol.Command, error) {
 		return protocol.Command{}, fmt.Errorf("stream command request ID is invalid")
 	}
 	switch envelope.Type {
+	case "context.query":
+		var wire streamCommandEnvelope
+		if err := codec.DecodeObject(line, &wire, "version", "type", "request_id"); err != nil {
+			return protocol.Command{}, fmt.Errorf("context.query command is invalid")
+		}
+		return protocol.NewQueryContextCommand(requestID)
+	case "context.compact":
+		var wire streamCompactCommand
+		if err := codec.DecodeObject(line, &wire, "version", "type", "request_id", "instructions"); err != nil {
+			return protocol.Command{}, fmt.Errorf("context.compact command is invalid")
+		}
+		return protocol.NewCompactContextCommand(requestID, wire.Instructions)
+	case "context.cancel":
+		var wire streamCancelCompactionCommand
+		if err := codec.DecodeObject(line, &wire, "version", "type", "request_id", "expected_compaction_id"); err != nil {
+			return protocol.Command{}, fmt.Errorf("context.cancel command is invalid")
+		}
+		return protocol.NewCancelCompactionCommand(requestID, wire.ExpectedCompactionID)
+
 	case "input.submit", "input.append":
 		var wire streamSubmitCommand
 		if err := codec.DecodeObject(line, &wire, "version", "type", "request_id"); err != nil {
@@ -185,4 +204,17 @@ func DecodeStreamCommand(line []byte) (protocol.Command, error) {
 
 func scanStreamMembers(line []byte) (map[string]json.RawMessage, error) {
 	return codec.ObjectMembers(line)
+}
+
+type streamCompactCommand struct {
+	Version      int    `json:"version"`
+	Type         string `json:"type"`
+	RequestID    string `json:"request_id"`
+	Instructions string `json:"instructions"`
+}
+type streamCancelCompactionCommand struct {
+	Version              int                 `json:"version"`
+	Type                 string              `json:"type"`
+	RequestID            string              `json:"request_id"`
+	ExpectedCompactionID domain.CompactionID `json:"expected_compaction_id"`
 }

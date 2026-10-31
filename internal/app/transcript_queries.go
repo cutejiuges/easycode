@@ -6,12 +6,17 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"easycode/internal/domain"
 	"easycode/internal/protocol"
 	"easycode/internal/session"
 	"easycode/internal/tool"
 )
 
 func transcriptListItem(node transcriptNode, entry session.ToolHistoryEntry) protocol.TranscriptListItem {
+	if node.compaction != nil {
+		return protocol.TranscriptListItem{Cursor: node.cursor, Kind: domain.TranscriptCompaction, CompactionID: node.compaction.id, Text: "Conversation compacted", More: true}
+	}
+
 	item := protocol.TranscriptListItem{Cursor: node.cursor, Kind: node.item.Kind, TurnID: node.item.TurnID, InputID: node.item.InputID}
 	if node.toolIndex < 0 {
 		item.Text = tool.ActivityText(node.item.Text, 512)
@@ -131,6 +136,9 @@ func (q *transcriptQueries) ReadTranscriptBody(ctx context.Context, query protoc
 			return protocol.TranscriptBodyPage{}, tool.ArtifactReadInvalidRange
 		}
 		text = node.item.Text
+		if node.compaction != nil {
+			text = node.compaction.summary.Text()
+		}
 	} else {
 		switch query.Source {
 		case protocol.TranscriptInput:

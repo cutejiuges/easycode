@@ -77,6 +77,8 @@ func (model Model) receiveMainTranscript(reply mainTranscriptReply) (tea.Model, 
 		item := reply.page.Items[i]
 		message := transcriptMessage{text: item.Text}
 		switch item.Kind {
+		case domain.TranscriptCompaction:
+			message.role = "Compaction"
 		case domain.TranscriptUser:
 			message.role = "User"
 		case domain.TranscriptAssistant:
@@ -91,6 +93,12 @@ func (model Model) receiveMainTranscript(reply mainTranscriptReply) (tea.Model, 
 			message.text += " … [Ctrl+O for full text]"
 		}
 		messages = append(messages, message)
+	}
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].role == "Compaction" {
+			messages = messages[i:]
+			break
+		}
 	}
 	model.main.items = messages
 	return model, nil

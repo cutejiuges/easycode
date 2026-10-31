@@ -30,7 +30,7 @@ func encodeFixtureInputs(a domain.InputAssociation, inputs []domain.UserInput) (
 	if err != nil {
 		return provider.NativeCommitEnvelope{}, err
 	}
-	return provider.NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", 2, bytes)
+	return provider.NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", 3, bytes)
 }
 
 func prepareFixtureInputs(a domain.InputAssociation, inputs []domain.UserInput, history domain.SemanticHistoryView, footprint domain.NativeHistoryFootprint, commit func(domain.SemanticHistoryView)) (*provider.PreparedUserInputs, error) {
@@ -56,7 +56,11 @@ func prepareFixtureInputs(a domain.InputAssociation, inputs []domain.UserInput, 
 		last := len(candidate.Turns) - 1
 		candidate.Turns[last].Messages = append(candidate.Turns[last].Messages, messages...)
 	}
-	preview, err := provider.NewInputPreview(candidate, footprint, func(provider.TurnInput) error { return nil })
+	view, err := domain.NewActiveContextView(candidate, domain.ContextSummary{}, footprint.Revision())
+	if err != nil {
+		return nil, err
+	}
+	preview, err := provider.NewInputPreview(view, footprint, func(provider.TurnInput) error { return nil })
 	if err != nil {
 		return nil, err
 	}
@@ -82,4 +86,20 @@ func (conversation *controlledConversation) PrepareUserInputs(a domain.InputAsso
 		return nil, err
 	}
 	return prepareFixtureInputs(a, inputs, conversation.ProjectHistory(), footprint, func(view domain.SemanticHistoryView) { conversation.history = view })
+}
+
+func (conversation *fakeConversation) ProjectActiveContext() (domain.ActiveContextView, error) {
+	footprint, err := conversation.HistoryFootprint()
+	if err != nil {
+		return domain.ActiveContextView{}, err
+	}
+	return domain.NewActiveContextView(conversation.ProjectHistory(), domain.ContextSummary{}, footprint.Revision())
+}
+
+func (conversation *controlledConversation) ProjectActiveContext() (domain.ActiveContextView, error) {
+	footprint, err := conversation.HistoryFootprint()
+	if err != nil {
+		return domain.ActiveContextView{}, err
+	}
+	return domain.NewActiveContextView(conversation.ProjectHistory(), domain.ContextSummary{}, footprint.Revision())
 }

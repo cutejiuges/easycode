@@ -1,0 +1,3 @@
+{"compaction_id":"01900000-0000-7000-8000-000000000003","version":1,"type":"control.response","request_id":"c","command_type":"context.compact","status":"accepted","disposition":"compacting"}
+{"version":1,"type":"compaction.started","request_id":"c","session_id":"01900000-0000-7000-8000-000000000001","thread_id":"01900000-0000-7000-8000-000000000002","compaction_id":"01900000-0000-7000-8000-000000000003","context_revision":2}
+{"version":1,"type":"compaction.failed","request_id":"c","session_id":"01900000-0000-7000-8000-000000000001","thread_id":"01900000-0000-7000-8000-000000000002","compaction_id":"01900000-0000-7000-8000-000000000003","code":"compaction_cancelled","durable":true,"usage_state":"unavailable"}

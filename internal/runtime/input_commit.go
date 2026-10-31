@@ -153,8 +153,8 @@ func (runtime *Runtime) commitInputs(ctx context.Context, turnID domain.TurnID, 
 	return inputCommitResult{committed: true}
 }
 
-func (runtime *Runtime) planHistory(history domain.SemanticHistoryView, footprint domain.NativeHistoryFootprint) (provider.TurnInput, error) {
-	input, err := contextplan.NewPlanningInput(runtime.profile, runtime.toolCatalog, runtime.projectInstructions, history, footprint, contextplan.NewSamplingInput(), runtime.budget)
+func (runtime *Runtime) planHistory(view domain.ActiveContextView, footprint domain.NativeHistoryFootprint) (provider.TurnInput, error) {
+	input, err := contextplan.NewPlanningInput(runtime.profile, runtime.toolCatalog, runtime.projectInstructions, view, footprint, contextplan.NewSamplingInput(), runtime.budget)
 	if err != nil {
 		return provider.TurnInput{}, fault.New(fault.CodeTurnFailed, "context planning input is invalid")
 	}

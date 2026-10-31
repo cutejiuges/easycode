@@ -22,3 +22,8 @@ func (runtime *Runtime) emitTranscriptCommit(turnID domain.TurnID, sequence uint
 		runtime.turnEmitter(runtime.decorate(event, turnID))
 	}
 }
+
+// CompactionHistoryObserver 只在成功 Sync 和安装之后更新内存摘要边界。
+type CompactionHistoryObserver interface {
+	CompactionCommitted(uint64, domain.CompactionID, domain.ContextSummary) error
+}

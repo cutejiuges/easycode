@@ -11,7 +11,7 @@ import (
 
 const (
 	// EnvelopeVersion 是当前公共 JSONL 信封版本。
-	EnvelopeVersion = 6
+	EnvelopeVersion = 7
 	// MaxRecordBytes 限制单条 canonical JSON 记录大小。
 	MaxRecordBytes = 16 << 20
 	// MaxBatchBytes 限制单个逻辑 batch 的总大小。
@@ -22,6 +22,9 @@ const (
 type EventKind string
 
 const (
+	EventCompactionStarted    EventKind = "compaction_started"
+	EventCompactionCompleted  EventKind = "compaction_completed"
+	EventCompactionFailed     EventKind = "compaction_failed"
 	EventSessionMeta          EventKind = "session_meta"
 	EventThreadMeta           EventKind = "thread_meta"
 	EventTurnInputsCommitted  EventKind = "turn_inputs_committed"
@@ -307,7 +310,8 @@ type TurnFailedPayload struct {
 }
 
 type recordPayload interface {
-	TurnInputsPayload |
+	CompactionStartedPayload | CompactionCompletedPayload | CompactionFailedPayload |
+		TurnInputsPayload |
 		SessionMetaPayload | ThreadMetaPayload | TurnStartedPayload | NativeCommitPayload |
 		SampleUsagePayload | ToolCallReadyPayload | ToolExecutionStartedPayload |
 		ToolApprovalDecidedPayload | ToolCallResultPayload | TurnCompletedPayload | TurnFailedPayload

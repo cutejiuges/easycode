@@ -55,7 +55,7 @@ Catalog SHALL 支持按规范化 `creation_cwd`、Provider family、wire 和 mod
 
 Catalog reconciliation SHALL 从已安全打开并校验的 Session 根开始，以 descriptor-relative、no-follow 的方式枚举日期目录与 canonical UUIDv7 journal；目录类型、权限、journal 普通文件类型和权限 MUST 绑定到实际参与枚举与加载的句柄。路径穿越、symlink、非普通文件、非法日期层级或文件名 MUST 在内容读取、repair 或 SQLite 投影前拒绝。
 
-对 journal 执行 Loader 或任何尾部 repair 前，reconciliation MUST 取得该 journal handle 的跨进程 exclusive lease，并在 Loader、ReplayPlanner 和该 journal 投影完成前保持所有权；同一时刻不得持有多个 journal lease。允许的半行或未完成 batch repair SHALL 继续使用现有 truncate、Sync 和 RepairReport 语义，中段损坏不得因 Catalog 重建被删除或跳过后伪装为合法历史。
+对 journal 执行只读 Loader 前，reconciliation MUST 取得该 journal handle 的跨进程 exclusive lease，并在 Loader、ReplayPlanner 和该 journal 投影完成前保持所有权；同一时刻不得持有多个 journal lease。协调 SHALL 只投影完整 committed 前缀，不执行半行或未完成 batch 的截断/Sync；尾部修复留给完整语义及 Provider 校验后的显式 resume，中段损坏不得因 Catalog 重建被删除或跳过后伪装为合法历史。
 
 #### Scenario: Reject a symlink during catalog scan
 
@@ -66,8 +66,8 @@ Catalog reconciliation SHALL 从已安全打开并校验的 Session 根开始，
 #### Scenario: Repair a recoverable tail under one lease
 
 - **WHEN** 未被占用的 journal 仅包含 EOF 半行或未完成尾 batch
-- **THEN** reconciliation 在同一 exclusive lease 下复用 Loader 截断并 Sync 到最后完整 batch
-- **THEN** Catalog 只投影修复后 ReplayPlan 中的 committed records
+- **THEN** reconciliation 在同一 exclusive lease 下只读扫描，原始 journal 全部 bytes 不变
+- **THEN** Catalog 只投影只读 ReplayPlan 中的 committed records
 
 #### Scenario: Do not inspect an active journal
 
@@ -150,7 +150,7 @@ Catalog SHALL 提供当前规范化创建目录或全部目录的 root 会话列
 
 ### Requirement: Session discovery preserves reconciliation and recovery separation
 
-宿主为列表执行协调时 SHALL 沿用既有 descriptor-bound 枚举、单 journal exclusive lease、严格 load/replay、短事务与 busy/invalid 处理语义。列表查询本身 MUST NOT 自动修复、启动 writer、补偿未完成 turn、恢复 Provider 或执行工具；协调阶段允许的尾部修复仍遵循既有契约。列表不是可恢复性承诺，实际 resume SHALL 重新取得 lease 并校验事实源及 Provider 配置。
+宿主为列表执行协调时 SHALL 沿用既有 descriptor-bound 枚举、单 journal exclusive lease、严格 load/replay、短事务与 busy/invalid 处理语义。列表查询本身 MUST NOT 自动修复、启动 writer、补偿未完成 turn、恢复 Provider 或执行工具；协调阶段也 MUST NOT 修复，只有 resume 完整验证后才能显式修复。列表不是可恢复性承诺，实际 resume SHALL 重新取得 lease 并校验事实源及 Provider 配置。
 
 #### Scenario: Keep indexed busy metadata without inspecting the journal
 
