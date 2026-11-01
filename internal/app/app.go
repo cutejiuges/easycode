@@ -469,6 +469,10 @@ func openChatResourcesWithSnapshot(
 	if err != nil {
 		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "context profile is invalid", err)
 	}
+	autoPolicy, err := applicationConfig.AutoCompactionPolicy()
+	if err != nil {
+		return nil, err
+	}
 	queries := newTranscriptQueries(assembled.identity.ThreadID, artifactRangeReader{store: artifactStore, references: artifactReferences}, assembled.tools)
 	queries.compactions = append([]compactionTranscript(nil), assembled.compactions...)
 	projector, ok := assembled.conversation.(provider.TranscriptProjector)
@@ -499,6 +503,7 @@ func openChatResourcesWithSnapshot(
 		ToolPolicy:           toolPolicy,
 		InteractiveApprovals: hooks.interactiveApprovals,
 		ProjectInstructions:  projectInstructions,
+		AutoCompactionPolicy: autoPolicy,
 		CompactionHistory:    queries, CompactionOutputTokens: applicationConfig.CompactionOutputTokens(),
 		ContextBudget: applicationConfig.ContextBudget, ContextPlanner: contextplan.NewPlanner(),
 	})

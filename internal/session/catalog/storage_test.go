@@ -335,3 +335,27 @@ func privateTempDir(t *testing.T) string {
 	}
 	return resolved
 }
+
+func TestCatalogIgnoresUnrelatedVersionMetadata(t *testing.T) {
+	directory := privateTempDir(t)
+	database := filepath.Join(directory, "state.sqlite")
+	root := filepath.Join(directory, "sessions")
+	instance := openTestCatalog(t, database, root)
+	entry := catalogTestEntry(t, directory, domain.ProviderOpenAI, "responses", "gpt-test", time.Unix(500, 0).UTC())
+	if err := instance.applyReconciliation(context.Background(), []Entry{entry}, map[domain.ThreadID]struct{}{entry.ThreadID: {}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := instance.db.Exec("PRAGMA user_version=99"); err != nil {
+		t.Fatal(err)
+	}
+	if err := instance.Close(); err != nil {
+		t.Fatal(err)
+	}
+	instance = openTestCatalog(t, database, root)
+	defer func() { _ = instance.Close() }()
+	// 不执行协调即可查到原投影，证明打开未因无关元数据清空索引。
+	got, found, err := instance.LatestCompatible(context.Background(), Selector{CreationCWD: directory, ProviderFamily: entry.ProviderFamily, ProviderWire: entry.ProviderWire, Model: entry.Model})
+	if err != nil || !found || got != entry {
+		t.Fatalf("projection changed: got=%+v found=%t err=%v", got, found, err)
+	}
+}

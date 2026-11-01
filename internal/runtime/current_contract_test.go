@@ -64,7 +64,7 @@ func TestFileGrantCannotOverridePolicyDeny(t *testing.T) {
 				t.Fatalf("deny overridden: %v", err)
 			}
 			draft := journal.snapshot()[0][0]
-			record := session.Record{EventKind: draft.EventKind(), PayloadVersion: session.EnvelopeVersion, Payload: draft.PayloadBytes()}
+			record := session.Record{EventKind: draft.EventKind(), Payload: draft.PayloadBytes()}
 			fact, err := session.DecodeToolApprovalDecidedPayload(record)
 			if err != nil || fact.Source != session.ApprovalSourcePolicy {
 				t.Fatalf("wrong source: %#v %v", fact, err)

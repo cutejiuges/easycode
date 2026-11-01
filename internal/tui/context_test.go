@@ -2,16 +2,17 @@ package tui
 
 import (
 	"context"
-	"github.com/charmbracelet/x/ansi"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
+
 	"easycode/internal/domain"
 	"easycode/internal/protocol"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 type contextFixtureSession struct {
@@ -97,7 +98,7 @@ func TestLocalCompactionAdmissionDoesNotCreateInput(t *testing.T) {
 func TestContextPanelSnapshotsAndPureRender(t *testing.T) {
 	tokens := uint64(120)
 	estimate := protocol.ContextEstimatePayload{Method: "byte_heuristic_v1", State: domain.TokenEstimateEstimated, Tokens: &tokens}
-	payload := protocol.ContextSnapshotPayload{Scope: "committed", Revision: 3, Activity: "compacting", Model: "fixture-model", Sources: []protocol.ContextSourcePayload{
+	payload := protocol.ContextSnapshotPayload{AutoCompactionState: "disabled", AutoCompactionReason: "disabled", Scope: "committed", Revision: 3, Activity: "compacting", Model: "fixture-model", Sources: []protocol.ContextSourcePayload{
 		{Kind: "provider_profile", Revision: "profile", Estimate: estimate},
 		{Kind: "tool_catalog", Revision: "tools", Estimate: estimate},
 		{Kind: "committed_history", Revision: "history", Estimate: estimate},
@@ -174,7 +175,7 @@ func TestContextRejectionAndStaleCompletionPreserveDraft(t *testing.T) {
 		t.Fatal("rejection lost draft or cursor")
 	}
 	model.activeCompactionID = "01900000-0000-7000-8000-000000000009"
-	event, _ := protocol.NewCompactionFailed("01900000-0000-7000-8000-000000000001", "01900000-0000-7000-8000-000000000002", "01900000-0000-7000-8000-000000000008", protocol.CompactionFailedPayload{Code: protocol.CompactionFailureCancelled, Durable: true, UsageState: "unavailable"})
+	event, _ := protocol.NewCompactionFailed("01900000-0000-7000-8000-000000000001", "01900000-0000-7000-8000-000000000002", "01900000-0000-7000-8000-000000000008", protocol.CompactionFailedPayload{Scope: domain.ManualCompactionScope(), Code: protocol.CompactionFailureCancelled, Durable: true, UsageState: "unavailable"})
 	next, _ = model.projectContextEvent(event)
 	model = next.(Model)
 	if !model.activeCompactionID.Valid() || !reflect.DeepEqual(model.composer, draft) {
@@ -229,5 +230,37 @@ func TestCompactionMainAndRestoredBoundarySnapshots(t *testing.T) {
 		if err != nil || string(want) != got {
 			t.Fatalf("%s snapshot changed: %v", phase, err)
 		}
+	}
+}
+
+func TestAutomaticCompactionKeepsActiveTaskAndCancelsTurn(t *testing.T) {
+	session := &contextFixtureSession{}
+	model := NewModel(context.Background(), "test", session)
+	turn := domain.TurnID("01900000-0000-7000-8000-000000000007")
+	id := domain.CompactionID("01900000-0000-7000-8000-000000000008")
+	model.activeTurnID = turn
+	model = updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
+	scope, _ := domain.NewAutoCompactionScope(turn, 1)
+	event, err := protocol.NewCompactionStarted("01900000-0000-7000-8000-000000000001", "01900000-0000-7000-8000-000000000002", id, 2, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, _ := model.projectContextEvent(event)
+	model = value.(Model)
+	if model.activeCompactionID != id || model.activeTurnID != turn || !strings.Contains(model.View(), "Compacting conversation") {
+		t.Fatal("automatic phase missing")
+	}
+	want, readErr := os.ReadFile("testdata/auto_compacting.golden")
+	if readErr != nil || string(want) != model.View() {
+		t.Fatalf("automatic snapshot changed: %q", model.View())
+	}
+	value, cmd := model.handleKey(tea.KeyMsg{Type: tea.KeyCtrlC})
+	_ = value
+	if cmd == nil {
+		t.Fatal("cancellation absent")
+	}
+	cmd()
+	if session.interrupts != 1 || session.cancelled != "" {
+		t.Fatal("automatic cancellation used manual operation")
 	}
 }

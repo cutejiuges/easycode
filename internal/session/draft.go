@@ -278,7 +278,7 @@ func validateDraftPlacement(draft RecordDraft) error {
 
 func validateDraftPayload(draft RecordDraft) error {
 	record := Record{
-		PayloadVersion: EnvelopeVersion, TurnID: draft.turnID,
+		TurnID:    draft.turnID,
 		EventKind: draft.descriptor.Kind, Payload: draft.PayloadBytes(),
 	}
 	switch draft.descriptor.Kind {

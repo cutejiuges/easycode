@@ -220,7 +220,7 @@ func TestRestoreConversationRejectsEntireHistoryOnOneBadCommit(t *testing.T) {
 	}
 	for _, replacement := range []string{`"known":null`, `"Known":false`, `"known":false,"known":true`} {
 		payload := strings.Replace(string(valid.Payload()), `"known":false`, replacement, 1)
-		invalid, err := provider.NewNativeCommitEnvelope(valid.Family(), valid.Wire(), valid.PayloadVersion(), []byte(payload))
+		invalid, err := provider.NewNativeCommitEnvelope(valid.Family(), valid.Wire(), []byte(payload))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -233,8 +233,7 @@ func TestRestoreConversationRejectsEntireHistoryOnOneBadCommit(t *testing.T) {
 		}
 	}
 	bad, err := provider.NewNativeCommitEnvelope(
-		domain.ProviderOpenAI, responsesWire, 1,
-		json.RawMessage(`{"kind":"sample","input":{"type":"message","role":"assistant"},"outputs":[]}`),
+		domain.ProviderOpenAI, responsesWire, json.RawMessage(`{"kind":"sample","input":{"type":"message","role":"assistant"},"outputs":[]}`),
 	)
 	if err != nil {
 		t.Fatal(err)

@@ -1,0 +1,95 @@
+## MODIFIED Requirements
+
+### Requirement: Every boundary has one current executable contract
+
+每个 Session record、Provider native envelope、Tool input/result、Runtime command/event、Context plan、缓存计划和 SQLite 索引 SHALL 只有一套当前 typed model、constructor、validator、encoder 与 decoder。生产代码 MUST NOT 通过版本号、后缀类型、legacy DTO、fallback decoder、migration graph 或 feature flag 在同一二进制中选择多套历史业务语义。
+
+未经用户明确要求 MUST NOT 主动设计多版本兼容、历史 reader、迁移器或为未来兼容增加内部版本门禁；发布状态本身不构成授权。纯内存值和同进程命令在没有跨版本交换需求时 MUST NOT 携带固定格式版本。核心业务类型、构造器和 decoder 名称 MUST NOT 使用 `V1`、`V2`、`V3` 或 `Legacy` 后缀表达当前实现。
+
+#### Scenario: Reject a second runtime decoder
+- **WHEN** 实现尝试为同一 Session kind、Tool capability 或内部 Runtime command 注册第二个按 revision 选择的 decoder
+- **THEN** 架构检查失败，且该多版本路由不得进入生产构建
+
+#### Scenario: Keep an in-memory value unversioned
+- **WHEN** Context plan 或 Runtime command 只在当前进程内由强类型调用方传递
+- **THEN** 该值通过 kind 与强类型 payload 校验，不携带只会等于常量的 format version
+
+### Requirement: Boundary markers validate but never route history
+
+内部持久化边界 SHALL 使用严格当前结构，不因跨进程或跨磁盘而默认引入版本标记。Session/native/checkpoint envelope 和压缩来源 MUST 不含 schema_version、payload_version、固定 prompt_revision、canary 或同义格式标记；附加版本字段按未知字段拒绝。SQLite Catalog MUST 不设置或校验 user_version，只按完整性和实际结构决定是否重建。已明确声明的 headless JSONL 外部协议 SHALL 保留当前 version，并精确校验，不选择旧 decoder、猜测兼容 shape 或原地改写输入。
+
+内容派生的 source revision、fingerprint、checksum、Provider history committed revision、estimator method、UUIDv7 与应用版本不是格式兼容路由，SHALL 保留其原有语义。Provider opaque unknown item 由 Provider codec 无损保存，不得被误删或解释为共享层版本兼容。
+
+#### Scenario: Reject a stale persisted marker
+- **WHEN** 当前程序读取包含非法附加 schema_version 或 payload_version 的 Session journal
+- **THEN** 恢复在 repair、append、executor、Provider 网络请求或 SQLite 写入前失败
+- **THEN** 系统按未知字段拒绝，不调用历史 decoder或改写原始 bytes
+
+#### Scenario: Preserve a content revision
+- **WHEN** Tool Catalog、项目指令或缓存分段的规范化内容发生变化
+- **THEN** 对应 source revision 或 fingerprint 按内容变化
+- **THEN** 系统不把该变化解释为需要并存业务 DTO 的格式升级
+
+#### Scenario: Keep one external protocol decoder
+- **WHEN** headless 客户端发送当前 `version: 1` 的 stream-json 命令
+- **THEN** 外部协议仍按其已声明的严格 v1 shape 解码
+- **THEN** 内部 RuntimeCommand 不复制该外部 version，也不存在另一个 headless 版本 decoder
+
+### Requirement: Pre-release breaking changes replace the current baseline
+
+在产品首次稳定发布前，契约破坏性变化 SHALL 直接替换仓库中的当前 schema、当前 encoder/decoder、golden 与不可变 fixture。被替换的开发期 journal 或 fixture MUST 明确拒绝，不得以兼容历史用户为理由保留旧 reader、旧 writer、双写、在线 migration 或混合 revision replay。
+
+SQLite 作为可重建索引，在完整性或实际结构不符合当前要求时 SHALL 从 JSONL 事实源重建，不得维护历史 migration 链。仓库 MUST 通过静态架构检查与测试约束：每个边界只有一个当前 codec，禁止 Session/native/checkpoint 格式版本、固定压缩 prompt revision 和 Catalog user_version 门禁；fixture 目录不按 v1/v2 并存；Session 不透传 optional 未知 record；工具不按 input/result revision 分派。首次稳定发布后的兼容窗口必须由新的已确认 OpenSpec 变更另行定义，不能由当前代码预埋。
+
+#### Scenario: Replace a development fixture
+- **WHEN** 当前变更改变 Tool ledger 的持久化 shape
+- **THEN** 仓库提交一套由固定 bytes 构成的当前 fixture 和预期 replay 摘要
+- **THEN** 旧开发 fixture、兼容 decoder 和 migration 测试被删除而不是并存
+
+#### Scenario: Rebuild a derived index
+- **WHEN** SQLite 实际表或索引结构不符合当前要求
+- **THEN** 系统在验证 JSONL 事实源后重建索引
+- **THEN** SQLite 不通过逐版本 migration 改写事实源或维持历史 schema
+
+### Requirement: Canonical encoding is independent of replaceable global configuration
+
+缓存 fingerprint、Session checksum、Provider request 和当前持久化对象的 canonical 编码 SHALL 使用固定且不可由包级可变配置替换的规则。相同有效输入 MUST 在不同实例和恢复前后产生相同 bytes；第三方默认 codec 的修改不得改变该结果。纯内存构造不得为实现 codec 共享而启动后台任务或打开外部资源。
+
+#### Scenario: Replace an unrelated global codec
+- **WHEN** 隔离测试进程替换第三方默认 codec 配置，再编码同一有效对象
+- **THEN** 当前 canonical bytes、checksum 与 fingerprint 和替换前逐字节一致
+- **THEN** 测试不得通过共享进程全局修改干扰其他并行测试
+
+#### Scenario: Preserve current valid fixtures
+- **WHEN** 当前合法 Session、Provider 和 Tool fixture 经统一 codec 编解码
+- **THEN** 既有 canonical bytes 与语义保持一致，不生成另一套版本化 fixture
+
+### Requirement: Closed JSON contracts reject ambiguous or lossy input
+
+自有封闭 JSON 契约 SHALL 在业务副作用前拒绝重复字段、未知字段、大小写别名、尾随值、非法 UTF-8、孤立 Unicode 代理项、缺失必需字段和不允许的 null。可选字段的默认值 MUST 只应用于字段省略，不能把显式 null 当作省略；嵌套封闭对象遵循同样规则。基础解析规则 SHALL 通过统一入口实现，边界仍持有自己的字段与业务验证，不允许宽松旧 decoder 回退。
+
+Provider 外部 wire 中已允许的未知原生 item 与 opaque 扩展 SHALL 继续无损保留；封闭自有 envelope 的严格校验不得变成对所有未知原生字段的一概拒绝。
+
+#### Scenario: Reject null instead of defaulting an integer
+- **WHEN** Read 输入为 `{"file_path":"a","offset":null}` 或 `{"file_path":"a","limit":null}`
+- **THEN** 输入被拒绝且 executor 不执行；省略 offset/limit 的合法输入仍采用既定默认值
+
+#### Scenario: Reject nested ambiguity
+- **WHEN** 当前持久化 payload 的嵌套封闭对象包含重复键、大小写别名或非 nullable 字段上的 null
+- **THEN** 解码失败，不加载部分状态、不 repair 或 append 输入 journal
+
+#### Scenario: Preserve opaque provider data
+- **WHEN** 合法 native commit 包含未知原生 item、thinking signature 或 encrypted content
+- **THEN** 往返与恢复保持原生顺序和 opaque bytes，严格校验不将其转换为共享 DTO
+
+### Requirement: Architecture verification covers contract escape paths
+
+质量门 SHALL 检查所有核心边界（包括 Tool）的无约束动态类型泄漏、业务包绕过统一 JSON 入口、canonical 路径读取可替换全局 codec，以及本次移除的旧构造入口回流。构造器副作用检查 MUST 覆盖生产包而不只覆盖协议包，并以确定性生命周期测试补足静态分析不能证明的边界。
+
+#### Scenario: Reject a contract violation fixture
+- **WHEN** 负例暴露 Tool any 参数、在业务包直接解码 JSON、读取可变全局 codec 或重新引入已删除的简化构造入口
+- **THEN** 架构检查失败，并定位到对应违规边界
+
+#### Scenario: Keep legitimate boundary markers
+- **WHEN** 代码使用外部 headless version、内容 revision 或 Provider opaque envelope
+- **THEN** 架构检查不会把这些合法边界误判为多版本兼容实现

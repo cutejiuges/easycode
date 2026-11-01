@@ -32,7 +32,7 @@ func TestExecBarrierWaitsForPriorDurabilityAndPreservesResultOrder(t *testing.T)
 				if draft.EventKind() != session.EventToolCallResult {
 					continue
 				}
-				payload, err := session.DecodeToolCallResultPayload(session.Record{PayloadVersion: session.EnvelopeVersion, EventKind: session.EventToolCallResult, Payload: draft.PayloadBytes()})
+				payload, err := session.DecodeToolCallResultPayload(session.Record{EventKind: session.EventToolCallResult, Payload: draft.PayloadBytes()})
 				if err != nil {
 					t.Error(err)
 					continue

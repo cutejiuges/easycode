@@ -107,7 +107,7 @@ func TestJournalWriterAssignsBatchBoundaryAndResumeSequence(t *testing.T) {
 	}
 	records, err := writer.AppendBatch(context.Background(), []RecordDraft{
 		mustDraft(t, EventProviderNativeCommit, testTurnID, NativeCommitPayload{
-			Provider: "openai", Wire: "responses", PayloadVersion: 1, Payload: []byte(`{"shape":"text_sample"}`),
+			Provider: "openai", Wire: "responses", Payload: []byte(`{"shape":"text_sample"}`),
 		}),
 		mustDraft(t, EventSampleUsage, testTurnID, testSampleUsage(t)),
 		mustDraft(t, EventTurnCompleted, testTurnID, TurnCompletedPayload{}),

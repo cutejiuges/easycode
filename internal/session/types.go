@@ -10,8 +10,6 @@ import (
 )
 
 const (
-	// EnvelopeVersion 是当前公共 JSONL 信封版本。
-	EnvelopeVersion = 7
 	// MaxRecordBytes 限制单条 canonical JSON 记录大小。
 	MaxRecordBytes = 16 << 20
 	// MaxBatchBytes 限制单个逻辑 batch 的总大小。
@@ -41,8 +39,6 @@ const (
 
 // Record 是一行可独立校验的当前 JSONL 信封。
 type Record struct {
-	SchemaVersion  int              `json:"schema_version"`
-	PayloadVersion int              `json:"payload_version"`
 	Sequence       uint64           `json:"seq"`
 	Timestamp      time.Time        `json:"timestamp"`
 	SessionID      domain.SessionID `json:"session_id"`
@@ -106,10 +102,9 @@ type TurnStartedPayload struct{}
 
 // NativeCommitPayload 保存 Provider-owned opaque 原生历史增量。
 type NativeCommitPayload struct {
-	Provider       domain.ProviderFamily `json:"provider"`
-	Wire           string                `json:"wire"`
-	PayloadVersion int                   `json:"payload_version"`
-	Payload        json.RawMessage       `json:"payload"`
+	Provider domain.ProviderFamily `json:"provider"`
+	Wire     string                `json:"wire"`
+	Payload  json.RawMessage       `json:"payload"`
 }
 
 // ReadInputPayload 保存可严格恢复的Read输入。

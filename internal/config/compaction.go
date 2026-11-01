@@ -1,6 +1,9 @@
 package config
 
 import (
+	"bytes"
+	"encoding/json"
+
 	contextplan "easycode/internal/context"
 	"easycode/internal/fault"
 )
@@ -24,4 +27,32 @@ func validateCompactionOutput(output optionalUint64, budget contextplan.Budget) 
 		return fault.New(fault.CodeInvalidConfiguration, "compaction output reserve must be less than the context window")
 	}
 	return nil
+}
+
+type optionalBool struct {
+	value   bool
+	present bool
+}
+
+func decodeAutoCompact(raw json.RawMessage) (optionalBool, error) {
+	switch string(bytes.TrimSpace(raw)) {
+	case "true":
+		return optionalBool{true, true}, nil
+	case "false":
+		return optionalBool{false, true}, nil
+	default:
+		return optionalBool{}, fault.New(fault.CodeInvalidConfiguration, "auto compact must be a boolean")
+	}
+}
+
+// AutoCompactionPolicy 返回仅由显式配置派生的自动调度策略。
+func (config Config) AutoCompactionPolicy() (contextplan.AutoCompactionPolicy, error) {
+	enabled := true
+	if config.autoCompact.present {
+		enabled = config.autoCompact.value
+	}
+	if config.autoCompact.present && enabled && !config.ContextBudget.Enabled() {
+		return contextplan.AutoCompactionPolicy{}, fault.New(fault.CodeInvalidConfiguration, "auto compact requires a context window")
+	}
+	return contextplan.NewAutoCompactionPolicy(enabled, config.ContextBudget, config.CompactionOutputTokens())
 }

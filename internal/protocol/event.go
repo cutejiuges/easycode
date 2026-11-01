@@ -55,11 +55,11 @@ func (event Event) Validate() error {
 		return fmt.Errorf("runtime event reserved identity is invalid")
 	}
 	if event.Kind == EventContextSnapshot || event.Kind == EventCompactionStarted || event.Kind == EventCompactionCompleted || event.Kind == EventCompactionFailed {
-		if !event.SessionID.Valid() || !event.ThreadID.Valid() || event.TurnID != "" {
+		if !event.SessionID.Valid() || !event.ThreadID.Valid() {
 			return fmt.Errorf("context event scope is invalid")
 		}
 		if event.Kind == EventContextSnapshot {
-			if event.CompactionID != "" {
+			if event.CompactionID != "" || event.TurnID != "" {
 				return fmt.Errorf("query event has compaction identity")
 			}
 			_, err := DecodeContextSnapshot(event)

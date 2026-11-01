@@ -137,7 +137,7 @@ func TestArtifactSchedulerBoundsWorkersAndPreservesResultOrder(t *testing.T) {
 			for _, batch := range journal.snapshot() {
 				for _, draft := range batch {
 					if draft.EventKind() == session.EventToolCallResult {
-						p, err := session.DecodeToolCallResultPayload(session.Record{EventKind: session.EventToolCallResult, PayloadVersion: session.EnvelopeVersion, Payload: draft.PayloadBytes()})
+						p, err := session.DecodeToolCallResultPayload(session.Record{EventKind: session.EventToolCallResult, Payload: draft.PayloadBytes()})
 						if err != nil {
 							t.Fatal(err)
 						}

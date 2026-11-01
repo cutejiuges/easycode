@@ -86,20 +86,19 @@ func TestNativeCommitRejectsIncompatibleAndCorruptPayloads(t *testing.T) {
 		name    string
 		family  domain.ProviderFamily
 		wire    string
-		version int
 		payload json.RawMessage
 	}{
-		{name: "family", family: domain.ProviderAnthropic, wire: responsesWire, version: 2, payload: validPayload},
-		{name: "wire", family: domain.ProviderOpenAI, wire: "chat_completions", version: 2, payload: validPayload},
-		{name: "revision", family: domain.ProviderOpenAI, wire: responsesWire, version: 1, payload: validPayload},
-		{name: "kind", family: domain.ProviderOpenAI, wire: responsesWire, version: 2, payload: json.RawMessage(`{"kind":"future","outputs":[{"type":"message","role":"assistant"}]}`)},
-		{name: "missing outputs", family: domain.ProviderOpenAI, wire: responsesWire, version: 2, payload: json.RawMessage(`{"kind":"sample","outputs":[],"usage":{"input_tokens":{"known":false},"cached_input_tokens":{"known":false},"cache_write_tokens":{"known":false},"output_tokens":{"known":false},"reasoning_output_tokens":{"known":false}}}`)},
-		{name: "unknown outer", family: domain.ProviderOpenAI, wire: responsesWire, version: 2, payload: json.RawMessage(`{"kind":"sample","outputs":[{"type":"message","role":"assistant"}],"future":true}`)},
+		{name: "family", family: domain.ProviderAnthropic, wire: responsesWire, payload: validPayload},
+		{name: "wire", family: domain.ProviderOpenAI, wire: "chat_completions", payload: validPayload},
+		{name: "unexpected version field", family: domain.ProviderOpenAI, wire: responsesWire, payload: append([]byte(`{"payload_version":3,`), validPayload[1:]...)},
+		{name: "kind", family: domain.ProviderOpenAI, wire: responsesWire, payload: json.RawMessage(`{"kind":"future","outputs":[{"type":"message","role":"assistant"}]}`)},
+		{name: "missing outputs", family: domain.ProviderOpenAI, wire: responsesWire, payload: json.RawMessage(`{"kind":"sample","outputs":[],"usage":{"input_tokens":{"known":false},"cached_input_tokens":{"known":false},"cache_write_tokens":{"known":false},"output_tokens":{"known":false},"reasoning_output_tokens":{"known":false}}}`)},
+		{name: "unknown outer", family: domain.ProviderOpenAI, wire: responsesWire, payload: json.RawMessage(`{"kind":"sample","outputs":[{"type":"message","role":"assistant"}],"future":true}`)},
 	}
 	for _, fixture := range fixtures {
 		fixture := fixture
 		t.Run(fixture.name, func(t *testing.T) {
-			envelope, err := provider.NewNativeCommitEnvelope(fixture.family, fixture.wire, fixture.version, fixture.payload)
+			envelope, err := provider.NewNativeCommitEnvelope(fixture.family, fixture.wire, fixture.payload)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -113,7 +112,7 @@ func TestNativeCommitRejectsIncompatibleAndCorruptPayloads(t *testing.T) {
 func TestNativeCommitRejectsSampleWithoutUsage(t *testing.T) {
 	t.Parallel()
 	payload := json.RawMessage(`{"kind":"sample","outputs":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"world"}]}]}`)
-	envelope, err := provider.NewNativeCommitEnvelope(domain.ProviderOpenAI, responsesWire, nativeCommitPayloadRevision, payload)
+	envelope, err := provider.NewNativeCommitEnvelope(domain.ProviderOpenAI, responsesWire, payload)
 	if err != nil {
 		t.Fatal(err)
 	}

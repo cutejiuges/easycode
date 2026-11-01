@@ -612,7 +612,7 @@ func TestResumeRepairsHalfLineOnceAndKeepsCommittedHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := file.WriteString(`{"schema_version":1,"payload_version"`); err != nil {
+	if _, err := file.WriteString(`{"seq":1,"timestamp"`); err != nil {
 		t.Fatal(err)
 	}
 	if err := file.Sync(); err != nil {

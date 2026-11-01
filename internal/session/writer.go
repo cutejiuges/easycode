@@ -240,7 +240,6 @@ func (writer *JournalWriter) append(nextSequence uint64, drafts []RecordDraft) (
 	records := make([]Record, 0, len(drafts))
 	for index, draft := range drafts {
 		record := Record{
-			SchemaVersion: EnvelopeVersion, PayloadVersion: EnvelopeVersion,
 			Sequence:  nextSequence + uint64(index),
 			Timestamp: writer.clock().UTC(), SessionID: writer.identity.SessionID,
 			ThreadID: writer.identity.ThreadID, ParentThreadID: draft.parentThreadID,

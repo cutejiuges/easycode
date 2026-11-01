@@ -40,6 +40,7 @@ type Config struct {
 	Provider         Provider
 	ContextBudget    contextplan.Budget
 	compactionOutput optionalUint64
+	autoCompact      optionalBool
 }
 
 type fileConfig struct {
@@ -49,6 +50,7 @@ type fileConfig struct {
 	model            string
 	budget           contextplan.Budget
 	compactionOutput optionalUint64
+	autoCompact      optionalBool
 }
 
 type optionalUint64 struct {
@@ -195,6 +197,8 @@ func decodeFile(content []byte) (fileConfig, error) {
 			reservedOutput, err = decodeUint64Field(rawValue)
 		case "context_safety_margin_tokens":
 			safetyMargin, err = decodeUint64Field(rawValue)
+		case "auto_compact":
+			decoded.autoCompact, err = decodeAutoCompact(rawValue)
 		case "compaction_output_tokens":
 			decoded.compactionOutput, err = decodeUint64Field(rawValue)
 		default:
@@ -213,6 +217,9 @@ func decodeFile(content []byte) (fileConfig, error) {
 		return fileConfig{}, err
 	}
 	decoded.budget = budget
+	if decoded.autoCompact.present && decoded.autoCompact.value && !budget.Enabled() {
+		return fileConfig{}, fault.New(fault.CodeInvalidConfiguration, "auto compact requires a context window")
+	}
 	if err := validateCompactionOutput(decoded.compactionOutput, budget); err != nil {
 		return fileConfig{}, err
 	}
@@ -272,7 +279,7 @@ func (values fileConfig) toConfig() Config {
 		BaseURL: strings.TrimSpace(values.baseURL),
 		APIKey:  secret.New(strings.TrimSpace(values.apiKey)),
 		Model:   strings.TrimSpace(values.model),
-	}, ContextBudget: values.budget, compactionOutput: values.compactionOutput}
+	}, ContextBudget: values.budget, compactionOutput: values.compactionOutput, autoCompact: values.autoCompact}
 }
 
 func mergeEnvironment(base Config) Config {
@@ -293,6 +300,9 @@ func mergeEnvironment(base Config) Config {
 
 // ValidateProvider 校验启动真实模型请求前必须具备的字段。
 func (config Config) ValidateProvider() error {
+	if _, err := config.AutoCompactionPolicy(); err != nil {
+		return err
+	}
 	if err := validateCompactionOutput(config.compactionOutput, config.ContextBudget); err != nil {
 		return err
 	}

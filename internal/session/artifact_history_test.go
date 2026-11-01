@@ -30,7 +30,7 @@ func TestArtifactHistoryRequiresEarlierDurableReference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	readRecord := Record{ThreadID: thread, PayloadVersion: EnvelopeVersion, EventKind: EventToolCallResult, Payload: draft.PayloadBytes()}
+	readRecord := Record{ThreadID: thread, EventKind: EventToolCallResult, Payload: draft.PayloadBytes()}
 	if err := validateArtifactHistory(thread, append(append([]Record(nil), records...), readRecord)); err != nil {
 		t.Fatal(err)
 	}

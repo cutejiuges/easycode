@@ -234,15 +234,17 @@ type queuedInput struct {
 }
 
 type activeLoopTurn struct {
-	claim           []queuedInput
-	stopping        bool
-	input           queuedInput
-	cancel          context.CancelFunc
-	events          <-chan runtimePublication
-	finished        <-chan error
-	turnID          domain.TurnID
-	terminalSeen    bool
-	cancelRequested bool
+	autoCompactionSeen bool
+	compactionID       domain.CompactionID
+	claim              []queuedInput
+	stopping           bool
+	input              queuedInput
+	cancel             context.CancelFunc
+	events             <-chan runtimePublication
+	finished           <-chan error
+	turnID             domain.TurnID
+	terminalSeen       bool
+	cancelRequested    bool
 }
 
 type recentRequestLedger struct {
@@ -569,6 +571,24 @@ func (state *agentLoopRunState) handleTurnEvent(publication runtimePublication, 
 		return
 	}
 	item, err := protocol.NewCorrelatedTurnItem(state.active.input.requestID, event)
+	if event.CompactionID.Valid() {
+		state.active.autoCompactionSeen = true
+		item, err = protocol.NewCorrelatedContextItem(state.active.input.requestID, event)
+		if event.TurnID != state.active.turnID {
+			err = fault.New(fault.CodeStreamProtocol, "automatic compaction turn mismatch")
+		}
+		if event.Kind == protocol.EventCompactionStarted {
+			if state.active.compactionID != "" {
+				err = fault.New(fault.CodeStreamProtocol, "automatic compaction overlap")
+			}
+			state.active.compactionID = event.CompactionID
+		} else {
+			if state.active.compactionID != event.CompactionID {
+				err = fault.New(fault.CodeStreamProtocol, "automatic compaction identity mismatch")
+			}
+			state.active.compactionID = ""
+		}
+	}
 	if err != nil {
 		state.runErr = fault.New(fault.CodeTurnFailed, "runtime emitted an invalid control event")
 		state.mode = loopModeClosing
@@ -600,6 +620,9 @@ func (state *agentLoopRunState) handleTurnFinished(workerErr error, open bool) {
 	}
 	state.active.finished = nil
 	state.active.cancel()
+	if workerErr != nil && state.active.autoCompactionSeen {
+		state.returnAutomatic(protocol.InputReasonFailed)
+	}
 	if !state.active.terminalSeen && state.runErr == nil {
 		state.runErr = fault.New(fault.CodeTurnFailed, "runtime turn ended without a terminal event")
 		state.mode = loopModeClosing

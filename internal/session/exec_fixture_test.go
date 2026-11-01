@@ -83,7 +83,7 @@ func TestCurrentHeterogeneousExecFixturesUseProductionReplay(t *testing.T) {
 
 func TestExecInterruptedRecoveryRetainsCrossProcessLeaseAndAppendOnlyBytes(t *testing.T) {
 	prefix := readCurrentFixture(t, "exec_started_tail.jsonl")
-	torn := append(bytes.Clone(prefix), []byte(`{"schema_version":3`)...)
+	torn := append(bytes.Clone(prefix), []byte(`{"seq":3`)...)
 	root := createLeaseProcessJournal(t, torn)
 	repository, err := OpenOrCreateRepository(root)
 	if err != nil {

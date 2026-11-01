@@ -282,7 +282,7 @@ func TestScriptedTurnExhaustionCommitsOutputsBeforeFailureAndStopsSteering(t *te
 	for _, batch := range batches {
 		for _, draft := range batch {
 			if draft.EventKind() == session.EventToolCallResult {
-				payload, err := session.DecodeToolCallResultPayload(session.Record{EventKind: session.EventToolCallResult, PayloadVersion: session.EnvelopeVersion, Payload: draft.PayloadBytes()})
+				payload, err := session.DecodeToolCallResultPayload(session.Record{EventKind: session.EventToolCallResult, Payload: draft.PayloadBytes()})
 				if err != nil {
 					t.Fatal(err)
 				}

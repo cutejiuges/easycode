@@ -16,22 +16,19 @@
       "sequence": 5,
       "turn_id": "00000000-0002-7000-8000-000000000003",
       "provider": "openai",
-      "wire": "responses",
-      "payload_version": 3
+      "wire": "responses"
     },
     {
       "sequence": 6,
       "turn_id": "00000000-0002-7000-8000-000000000003",
       "provider": "openai",
-      "wire": "responses",
-      "payload_version": 3
+      "wire": "responses"
     },
     {
       "sequence": 17,
       "turn_id": "00000000-0002-7000-8000-000000000003",
       "provider": "openai",
-      "wire": "responses",
-      "payload_version": 3
+      "wire": "responses"
     }
   ],
   "sample_usages": [

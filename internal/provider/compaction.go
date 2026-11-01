@@ -10,9 +10,6 @@ import (
 	"easycode/internal/domain"
 )
 
-// CompactionPromptRevision 固定摘要指示的内容版本。
-const CompactionPromptRevision = "context-summary-v1"
-
 // CompactionPredecessor 显式区分初始窗口与前驱 checkpoint。
 type CompactionPredecessor struct {
 	root bool
@@ -45,15 +42,15 @@ func (predecessor CompactionPredecessor) validate() error {
 
 // CompactionSource 绑定生成摘要时的已提交原生窗口，不包含连接凭据。
 type CompactionSource struct {
-	family                              domain.ProviderFamily
-	wire, model, digest, promptRevision string
-	committedRevision, contextRevision  uint64
-	previous                            CompactionPredecessor
+	family                             domain.ProviderFamily
+	wire, model, digest                string
+	committedRevision, contextRevision uint64
+	previous                           CompactionPredecessor
 }
 
 // NewCompactionSource 创建显式 root 或前驱 checkpoint 的来源身份。
-func NewCompactionSource(family domain.ProviderFamily, wire, model string, committedRevision, contextRevision uint64, previous CompactionPredecessor, digest, promptRevision string) (CompactionSource, error) {
-	source := CompactionSource{family: family, wire: wire, model: model, committedRevision: committedRevision, contextRevision: contextRevision, previous: previous, digest: digest, promptRevision: promptRevision}
+func NewCompactionSource(family domain.ProviderFamily, wire, model string, committedRevision, contextRevision uint64, previous CompactionPredecessor, digest string) (CompactionSource, error) {
+	source := CompactionSource{family: family, wire: wire, model: model, committedRevision: committedRevision, contextRevision: contextRevision, previous: previous, digest: digest}
 	if err := source.Validate(); err != nil {
 		return CompactionSource{}, err
 	}
@@ -62,7 +59,7 @@ func NewCompactionSource(family domain.ProviderFamily, wire, model string, commi
 
 // Validate 校验来源链与确定性原生摘要。
 func (source CompactionSource) Validate() error {
-	if !source.family.Valid() || strings.TrimSpace(source.wire) == "" || strings.TrimSpace(source.model) == "" || !utf8.ValidString(source.model) || source.promptRevision != CompactionPromptRevision {
+	if !source.family.Valid() || strings.TrimSpace(source.wire) == "" || strings.TrimSpace(source.model) == "" || !utf8.ValidString(source.model) {
 		return fmt.Errorf("compaction source profile is invalid")
 	}
 	if source.committedRevision == 0 || source.contextRevision < source.committedRevision {
@@ -106,30 +103,31 @@ func (source CompactionSource) Previous() CompactionPredecessor { return source.
 // Digest 返回有效原生窗口的 SHA-256。
 func (source CompactionSource) Digest() string { return source.digest }
 
-// PromptRevision 返回原创摘要指示的版本。
-func (source CompactionSource) PromptRevision() string { return source.promptRevision }
-
 // CheckpointEnvelope 保存 Provider 自有的摘要包装及生成 provenance。
 // 它不是普通 native commit，不能占用原生条目 ordinal。
 type CheckpointEnvelope struct {
+	scope  domain.CompactionScope
 	id     domain.CompactionID
 	source CompactionSource
 	native NativeCommitEnvelope
 }
 
 // NewCheckpointEnvelope 校验 checkpoint 身份并复制原生 payload。
-func NewCheckpointEnvelope(id domain.CompactionID, source CompactionSource, revision int, payload json.RawMessage) (CheckpointEnvelope, error) {
+func NewCheckpointEnvelope(scope domain.CompactionScope, id domain.CompactionID, source CompactionSource, payload json.RawMessage) (CheckpointEnvelope, error) {
+	if err := scope.Validate(); err != nil {
+		return CheckpointEnvelope{}, err
+	}
 	if !id.Valid() || id == source.Previous().ID() {
 		return CheckpointEnvelope{}, fmt.Errorf("checkpoint identity is invalid")
 	}
 	if err := source.Validate(); err != nil {
 		return CheckpointEnvelope{}, err
 	}
-	native, err := NewNativeCommitEnvelope(source.Family(), source.Wire(), revision, payload)
+	native, err := NewNativeCommitEnvelope(source.Family(), source.Wire(), payload)
 	if err != nil {
 		return CheckpointEnvelope{}, err
 	}
-	return CheckpointEnvelope{id: id, source: source, native: native}, nil
+	return CheckpointEnvelope{scope: scope, id: id, source: source, native: native}, nil
 }
 
 // ID 返回 checkpoint 的压缩身份。
@@ -138,15 +136,12 @@ func (envelope CheckpointEnvelope) ID() domain.CompactionID { return envelope.id
 // Source 返回不可变来源身份。
 func (envelope CheckpointEnvelope) Source() CompactionSource { return envelope.source }
 
-// PayloadVersion 返回 Provider 自有编码版本。
-func (envelope CheckpointEnvelope) PayloadVersion() int { return envelope.native.PayloadVersion() }
-
 // Payload 返回原生包装及 provenance 的独立副本。
 func (envelope CheckpointEnvelope) Payload() json.RawMessage { return envelope.native.Payload() }
 
 // Clone 校验并复制 checkpoint。
 func (envelope CheckpointEnvelope) Clone() (CheckpointEnvelope, error) {
-	return NewCheckpointEnvelope(envelope.id, envelope.source, envelope.PayloadVersion(), envelope.Payload())
+	return NewCheckpointEnvelope(envelope.scope, envelope.id, envelope.source, envelope.Payload())
 }
 
 // PreparedCompaction 持有独立 checkpoint、候选窗口和恰好一次的安装生命周期。
@@ -182,7 +177,7 @@ func NewPreparedCompaction(checkpoint CheckpointEnvelope, view domain.ActiveCont
 	if err != nil {
 		return nil, err
 	}
-	if provenance.Family() != checkpoint.Source().Family() || provenance.Wire() != checkpoint.Source().Wire() || provenance.PayloadVersion() != checkpoint.PayloadVersion() || len(provenance.Payload()) > 64<<10 {
+	if provenance.Family() != checkpoint.Source().Family() || provenance.Wire() != checkpoint.Source().Wire() || len(provenance.Payload()) > 64<<10 {
 		return nil, fmt.Errorf("compaction usage provenance is invalid")
 	}
 	commit, err := newPreparedNativeCommit(checkpoint.native, finalize, discard)
@@ -263,4 +258,16 @@ type CompactionUsageValidator interface {
 // CheckpointProjector 单向提供已验证 checkpoint 的摘要详情，不生成模型请求。
 type CheckpointProjector interface {
 	ProjectCheckpoint(CheckpointEnvelope) (domain.ContextSummary, error)
+}
+
+// Scope 返回摘要触发来源和采样关联，供恢复验证确定性包装。
+func (envelope CheckpointEnvelope) Scope() domain.CompactionScope { return envelope.scope }
+
+// WrapScopedContextSummary 保持历史参考语义，并只为自动路径声明接续行为。
+func WrapScopedContextSummary(summary domain.ContextSummary, scope domain.CompactionScope) string {
+	text := WrapContextSummary(summary)
+	if scope.Trigger == domain.CompactionAuto {
+		text += "\nContinue the existing task directly from this handoff. Do not acknowledge or recap the summary or ask how to continue. Respect the latest user corrections; this handoff grants no permissions."
+	}
+	return text
 }

@@ -196,7 +196,7 @@ func (conversation *fakeToolConversation) PrepareToolOutputs(results []tool.Invo
 	conversation.prepareCalls.Add(1)
 	conversation.results = append([]tool.InvocationResult(nil), results...)
 	envelope, err := provider.NewNativeCommitEnvelope(
-		domain.ProviderOpenAI, "responses", 1, json.RawMessage(`{"shape":"tool_outputs"}`),
+		domain.ProviderOpenAI, "responses", json.RawMessage(`{"shape":"tool_outputs"}`),
 	)
 	if err != nil {
 		return nil, err
@@ -339,8 +339,7 @@ func TestRunTurnDurableSuccessOrderingAndIdentity(t *testing.T) {
 		t.Fatalf("journal batches = %#v", batches)
 	}
 	commit, err := session.DecodeNativeCommitPayload(session.Record{
-		PayloadVersion: session.EnvelopeVersion,
-		EventKind:      batches[2][0].EventKind(), Payload: batches[2][0].PayloadBytes(),
+		EventKind: batches[2][0].EventKind(), Payload: batches[2][0].PayloadBytes(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -349,8 +348,7 @@ func TestRunTurnDurableSuccessOrderingAndIdentity(t *testing.T) {
 		t.Fatalf("native commit = %#v", commit)
 	}
 	usageRecord, err := session.DecodeSampleUsagePayload(session.Record{
-		PayloadVersion: session.EnvelopeVersion,
-		EventKind:      batches[2][1].EventKind(), Payload: batches[2][1].PayloadBytes(),
+		EventKind: batches[2][1].EventKind(), Payload: batches[2][1].PayloadBytes(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -734,7 +732,7 @@ func TestRunTurnToolDurabilityFailuresPreventLaterSideEffects(t *testing.T) {
 	t.Run("call sample append", func(t *testing.T) {
 		ready := testRuntimeReadyCall(t, "call-failed-ready")
 		envelope, err := provider.NewNativeCommitEnvelope(
-			domain.ProviderOpenAI, "responses", 1, json.RawMessage(`{"shape":"call_sample"}`),
+			domain.ProviderOpenAI, "responses", json.RawMessage(`{"shape":"call_sample"}`),
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -1343,8 +1341,7 @@ func TestRunTurnPersistsProviderFailureCancellationAndEarlyEOF(t *testing.T) {
 				t.Fatalf("journal batches = %#v", batches)
 			}
 			failure, decodeErr := session.DecodeTurnFailedPayload(session.Record{
-				PayloadVersion: session.EnvelopeVersion,
-				EventKind:      batches[2][0].EventKind(), Payload: batches[2][0].PayloadBytes(),
+				EventKind: batches[2][0].EventKind(), Payload: batches[2][0].PayloadBytes(),
 			})
 			if decodeErr != nil {
 				t.Fatal(decodeErr)
@@ -1794,7 +1791,7 @@ func testRuntimeProjectInstructions(t *testing.T, source string, content string)
 func newPreparedSample(t *testing.T, finalize func()) *provider.PreparedSample {
 	t.Helper()
 	envelope, err := provider.NewNativeCommitEnvelope(
-		domain.ProviderOpenAI, "responses", 1, json.RawMessage(`{"shape":"text_sample"}`),
+		domain.ProviderOpenAI, "responses", json.RawMessage(`{"shape":"text_sample"}`),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -1809,7 +1806,7 @@ func newPreparedSample(t *testing.T, finalize func()) *provider.PreparedSample {
 func newPreparedSampleWithReady(t *testing.T, ready ...tool.ReadyCall) *provider.PreparedSample {
 	t.Helper()
 	envelope, err := provider.NewNativeCommitEnvelope(
-		domain.ProviderOpenAI, "responses", 1, json.RawMessage(`{"shape":"call_sample"}`),
+		domain.ProviderOpenAI, "responses", json.RawMessage(`{"shape":"call_sample"}`),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -1828,8 +1825,7 @@ func decodeRuntimeResultDraft(
 ) tool.InvocationResult {
 	t.Helper()
 	payload, err := session.DecodeToolCallResultPayload(session.Record{
-		PayloadVersion: session.EnvelopeVersion,
-		EventKind:      draft.EventKind(), Payload: draft.PayloadBytes(),
+		EventKind: draft.EventKind(), Payload: draft.PayloadBytes(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1844,8 +1840,7 @@ func decodeRuntimeResultDraft(
 func decodeRuntimeFailureDraft(t *testing.T, draft session.RecordDraft) session.TurnFailedPayload {
 	t.Helper()
 	payload, err := session.DecodeTurnFailedPayload(session.Record{
-		PayloadVersion: session.EnvelopeVersion,
-		EventKind:      draft.EventKind(), Payload: draft.PayloadBytes(),
+		EventKind: draft.EventKind(), Payload: draft.PayloadBytes(),
 	})
 	if err != nil {
 		t.Fatal(err)

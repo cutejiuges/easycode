@@ -36,7 +36,7 @@ func TestRecordCanonicalGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `{"schema_version":7,"payload_version":7,"seq":3,"timestamp":"2026-09-28T12:34:56.123Z","session_id":"00000000-0000-7000-8000-000000000001","thread_id":"00000000-0001-7000-8000-000000000002","turn_id":"00000000-0002-7000-8000-000000000003","event_kind":"turn_failed","batch_id":3,"batch_index":0,"batch_size":1,"payload":{"code":"user_cancelled","message":"turn was cancelled","cancelled":true},"checksum":"fbd4f40d24bbc1ab75f5b142d1c640eb26df5ca60f5397ba15ee7d5bab3de97c"}`
+	const want = `{"seq":3,"timestamp":"2026-09-28T12:34:56.123Z","session_id":"00000000-0000-7000-8000-000000000001","thread_id":"00000000-0001-7000-8000-000000000002","turn_id":"00000000-0002-7000-8000-000000000003","event_kind":"turn_failed","batch_id":3,"batch_index":0,"batch_size":1,"payload":{"code":"user_cancelled","message":"turn was cancelled","cancelled":true},"checksum":"8fd35b07ed3f1458c8db2c2129bee298274f46af0c1cd73d84d782b1b750de51"}`
 	if string(encoded) != want {
 		t.Fatalf("canonical record changed:\n%s", encoded)
 	}
@@ -58,11 +58,11 @@ func TestRecordRejectsChecksumTampering(t *testing.T) {
 	}
 }
 
-func TestCurrentSchemaRejectsCanaryKindAndWrongPayload(t *testing.T) {
+func TestCurrentSchemaRejectsIdentityKindAndWrongPayload(t *testing.T) {
 	t.Parallel()
 	record := mustDecodedRecord(t, EventTurnStarted, TurnStartedPayload{})
-	record.PayloadVersion++
-	if _, _, err := EncodeRecord(record); err == nil || !strings.Contains(err.Error(), "canary") {
+	record.SessionID = ""
+	if _, _, err := EncodeRecord(record); err == nil || !strings.Contains(err.Error(), "identity") {
 		t.Fatalf("EncodeRecord() error = %v", err)
 	}
 	record = mustDecodedRecord(t, EventTurnStarted, TurnStartedPayload{})
@@ -94,20 +94,18 @@ func TestCurrentSchemaRejectsCanaryKindAndWrongPayload(t *testing.T) {
 func TestUnknownRecordShapeIsRejected(t *testing.T) {
 	t.Parallel()
 	current := mustRecord(t, EventTurnFailed, TurnFailedPayload{Code: "failed"})
-	legacy := bytes.Replace(current, []byte(`"payload_version":7`), []byte(`"payload_version":99`), 1)
-	if _, err := DecodeRecord(legacy); err == nil {
-		t.Fatal("unknown payload canary unexpectedly decoded")
+	for _, field := range []string{"schema_version", "payload_version", "format_version", "canary", "replay_requirement"} {
+		invalid := append([]byte("{\""+field+"\":1,"), current[1:]...)
+		if _, err := DecodeRecord(invalid); err == nil || !strings.Contains(err.Error(), "unknown") {
+			t.Fatalf("version or optional field %s accepted: %v", field, err)
+		}
 	}
-	withOptional := bytes.Replace(current, []byte(`"payload_version":7,`), []byte(`"payload_version":7,"replay_requirement":"optional",`), 1)
-	if _, err := DecodeRecord(withOptional); err == nil || !strings.Contains(err.Error(), "unknown") {
-		t.Fatalf("legacy optional envelope error = %v", err)
-	}
+
 }
 
 func TestRecordSizeLimits(t *testing.T) {
 	t.Parallel()
 	oversized := Record{
-		SchemaVersion: EnvelopeVersion, PayloadVersion: EnvelopeVersion,
 		Sequence:  1,
 		Timestamp: time.Unix(0, 0).UTC(), SessionID: testSessionID,
 		ThreadID: testThreadID, EventKind: EventTurnFailed, BatchID: 1,

@@ -25,7 +25,7 @@ func (conversation *orderedConversation) EncodeUserInputs(a domain.InputAssociat
 	if err != nil {
 		return provider.NativeCommitEnvelope{}, err
 	}
-	return provider.NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", 3, payload)
+	return provider.NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", payload)
 }
 func (conversation *orderedConversation) PrepareUserInputs(a domain.InputAssociation, inputs []domain.UserInput) (*provider.PreparedUserInputs, error) {
 	envelope, err := conversation.EncodeUserInputs(a, inputs)
@@ -101,7 +101,7 @@ func appendFixtureInitialInput(t *testing.T, writer interface {
 	if err != nil {
 		t.Fatal(err)
 	}
-	native, err := session.NewProviderNativeCommitDraft(turnID, session.NativeCommitPayload{Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 3, Payload: []byte(`{"kind":"user_inputs"}`)})
+	native, err := session.NewProviderNativeCommitDraft(turnID, session.NativeCommitPayload{Provider: domain.ProviderOpenAI, Wire: "responses", Payload: []byte(`{"kind":"user_inputs"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}

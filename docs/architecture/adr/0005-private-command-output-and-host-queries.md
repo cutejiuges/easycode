@@ -1,5 +1,7 @@
 # ADR-0005：私有命令输出与独立宿主查询
 
+> 后续决策：`add-threshold-auto-compaction` 已删除 Session/native/checkpoint 格式版本、固定压缩 prompt revision 和 Catalog user_version 门禁；本文涉及这些内部格式的版本数字仅为历史背景，当前实现以单一无版本内部契约为准。外部 headless 协议与实际内容 revision 保留。
+
 - 状态：accepted
 - 日期：2026-10-29
 - Roadmap 阶段：P3

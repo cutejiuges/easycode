@@ -45,7 +45,15 @@ func (runtime *Runtime) contextSnapshot() (protocol.ContextSnapshotPayload, erro
 	if err != nil {
 		return protocol.ContextSnapshotPayload{}, err
 	}
-	snapshot := protocol.ContextSnapshotPayload{Scope: "committed", Revision: view.Revision(), Activity: "idle", Model: runtime.profile.Model(), Sources: make([]protocol.ContextSourcePayload, 0), Total: total, WindowConfigured: runtime.budget.Enabled(), Window: runtime.budget.Window(), ReservedOutput: runtime.budget.ReservedOutput(), SafetyMargin: runtime.budget.SafetyMargin(), BudgetState: string(plan.Decision().State())}
+	suppressed := runtime.autoCompactionFailures >= 3 || (runtime.autoCompactionFailures > 0 && runtime.autoCompactionFailedRevision == view.Revision())
+	decision, err := runtime.autoCompactionPolicy.Decide(plan.TotalEstimate(), suppressed)
+	if err != nil {
+		return protocol.ContextSnapshotPayload{}, err
+	}
+	snapshot := protocol.ContextSnapshotPayload{AutoCompactionState: string(decision), AutoCompactionReason: runtime.autoCompactionPolicy.UnavailableReason(), Scope: "committed", Revision: view.Revision(), Activity: "idle", Model: runtime.profile.Model(), Sources: make([]protocol.ContextSourcePayload, 0), Total: total, WindowConfigured: runtime.budget.Enabled(), Window: runtime.budget.Window(), ReservedOutput: runtime.budget.ReservedOutput(), SafetyMargin: runtime.budget.SafetyMargin(), BudgetState: string(plan.Decision().State())}
+	if threshold, enabled := runtime.autoCompactionPolicy.Threshold(); enabled {
+		snapshot.AutoCompactionThreshold = &threshold
+	}
 	for _, source := range plan.Sources() {
 		estimate, err := protocol.NewContextEstimatePayload(source.Estimate())
 		if err != nil {
@@ -111,20 +119,24 @@ func (runtime *Runtime) runCompaction(ctx context.Context, id domain.CompactionI
 		return runtime.failCompaction(id, protocol.CompactionFailureSession, false, nil, emit)
 	}
 	defer runtime.active.Store(false)
-	started, err := session.NewCompactionStartedDraft(id, admission.preview.Source())
+	return runtime.runCompactionOwned(ctx, id, admission, domain.ManualCompactionScope(), emit)
+}
+
+func (runtime *Runtime) runCompactionOwned(ctx context.Context, id domain.CompactionID, admission compactionAdmission, scope domain.CompactionScope, emit Emitter) error {
+	started, err := session.NewCompactionStartedDraft(scope, id, admission.preview.Source())
 	if err != nil {
-		return runtime.failCompaction(id, protocol.CompactionFailureSession, false, nil, emit)
+		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, false, nil, emit)
 	}
 	if _, err = runtime.journal.AppendBatch(ctx, []session.RecordDraft{started}); err != nil {
 		if runtime.journal.Poisoned() {
 			runtime.poisoned.Store(true)
 		}
-		return runtime.failCompaction(id, compactionFailureCode(ctx, err), false, nil, emit)
+		return runtime.failScopedCompaction(scope, id, compactionFailureCode(ctx, err), false, nil, emit)
 	}
-	event, err := protocol.NewCompactionStarted(runtime.sessionID, runtime.threadID, id, admission.preview.Source().ContextRevision())
+	event, err := protocol.NewCompactionStarted(runtime.sessionID, runtime.threadID, id, admission.preview.Source().ContextRevision(), scope)
 	if err != nil {
 		runtime.poisoned.Store(true)
-		return runtime.failCompaction(id, protocol.CompactionFailureSession, false, nil, emit)
+		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, false, nil, emit)
 	}
 	emit(event)
 	networkCtx, cancel := runtime.compactionDeadline(ctx, 120*time.Second)
@@ -132,63 +144,78 @@ func (runtime *Runtime) runCompaction(ctx context.Context, id domain.CompactionI
 	code := compactionFailureCode(networkCtx, err)
 	cancel()
 	if err != nil {
-		return runtime.failCompaction(id, code, true, nil, emit)
+		var failure *provider.CompactionError
+		if errors.As(err, &failure) && (failure.Code() == provider.CompactionBusy || failure.Code() == provider.CompactionSourceChanged) {
+			runtime.poisoned.Store(true)
+			code = protocol.CompactionFailureSession
+		}
+		return runtime.failScopedCompaction(scope, id, code, true, nil, emit)
 	}
 	view, footprint, err := prepared.Preview()
 	if err != nil {
-		return runtime.failCompaction(id, protocol.CompactionFailureResponse, true, prepared, emit)
+		runtime.poisoned.Store(true)
+		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, true, prepared, emit)
 	}
 	candidate, err := runtime.planWindow(view, footprint)
 	if err == nil {
 		err = contextplan.CheckCompactionCandidate(admission.before, candidate)
 	}
 	if err != nil {
-		return runtime.failCompaction(id, compactionFailureCode(ctx, err), true, prepared, emit)
+		return runtime.failScopedCompaction(scope, id, compactionFailureCode(ctx, err), true, prepared, emit)
 	}
 	checkpoint, err := prepared.Checkpoint()
-	if err != nil || checkpoint.ID() != id || checkpoint.Source() != admission.preview.Source() {
-		return runtime.failCompaction(id, protocol.CompactionFailureResponse, true, prepared, emit)
+	if err != nil || checkpoint.ID() != id || checkpoint.Source() != admission.preview.Source() || checkpoint.Scope() != scope {
+		runtime.poisoned.Store(true)
+		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureResponse, true, prepared, emit)
 	}
 	usage, err := prepared.Usage()
 	if err != nil {
-		return runtime.failCompaction(id, protocol.CompactionFailureResponse, true, prepared, emit)
+		runtime.poisoned.Store(true)
+		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, true, prepared, emit)
 	}
-	completed, err := session.NewCompactionCompletedDraft(checkpoint, usage, admission.before.TotalEstimate(), candidate.TotalEstimate())
+	completed, err := session.NewCompactionCompletedDraft(scope, checkpoint, usage, admission.before.TotalEstimate(), candidate.TotalEstimate())
 	if err != nil {
-		return runtime.failCompaction(id, protocol.CompactionFailureResponse, true, prepared, emit)
+		runtime.poisoned.Store(true)
+		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, true, prepared, emit)
 	}
 	records, err := runtime.journal.AppendBatch(ctx, []session.RecordDraft{completed})
 	if err != nil {
 		if runtime.journal.Poisoned() {
 			runtime.poisoned.Store(true)
-			return runtime.failCompaction(id, protocol.CompactionFailureSession, false, prepared, emit)
+			return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, false, prepared, emit)
 		}
-		return runtime.failCompaction(id, compactionFailureCode(ctx, err), true, prepared, emit)
+		return runtime.failScopedCompaction(scope, id, compactionFailureCode(ctx, err), true, prepared, emit)
 	}
 	// writer admission 后的确定提交结果优先于取消，窗口必须安装且只发送 completed。
 	if err = prepared.Finalize(); err != nil {
 		runtime.poisoned.Store(true)
-		return runtime.failCompaction(id, protocol.CompactionFailureSession, false, nil, emit)
+		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, false, nil, emit)
 	}
 	if runtime.compactionHistory != nil {
 		summary, _ := view.Summary()
 		if len(records) != 1 || runtime.compactionHistory.CompactionCommitted(records[0].Sequence, id, summary) != nil {
 			runtime.poisoned.Store(true)
-			return runtime.failCompaction(id, protocol.CompactionFailureSession, false, nil, emit)
+			return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, false, nil, emit)
 		}
 	}
-	event, err = protocol.NewCompactionCompleted(runtime.sessionID, runtime.threadID, id, view.Revision(), admission.before.TotalEstimate(), candidate.TotalEstimate(), usage)
+	event, err = protocol.NewCompactionCompleted(runtime.sessionID, runtime.threadID, id, view.Revision(), admission.before.TotalEstimate(), candidate.TotalEstimate(), usage, scope)
 	if err != nil {
 		runtime.poisoned.Store(true)
-		return runtime.failCompaction(id, protocol.CompactionFailureSession, false, nil, emit)
+		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, false, nil, emit)
 	}
+	runtime.autoCompactionFailures = 0
+	runtime.autoCompactionFailedRevision = 0
 	emit(event)
 	return nil
 }
 
 func (runtime *Runtime) failCompaction(id domain.CompactionID, code protocol.CompactionFailureCode, started bool, prepared *provider.PreparedCompaction, emit Emitter) error {
-	payload := session.CompactionFailedPayload{ID: id, Code: code, UsageState: "unavailable"}
-	eventPayload := protocol.CompactionFailedPayload{Code: code, UsageState: "unavailable"}
+	return runtime.failScopedCompaction(domain.ManualCompactionScope(), id, code, started, prepared, emit)
+}
+
+func (runtime *Runtime) failScopedCompaction(scope domain.CompactionScope, id domain.CompactionID, code protocol.CompactionFailureCode, started bool, prepared *provider.PreparedCompaction, emit Emitter) error {
+	payload := session.CompactionFailedPayload{Scope: scope, ID: id, Code: code, UsageState: "unavailable"}
+	eventPayload := protocol.CompactionFailedPayload{Scope: scope, Code: code, UsageState: "unavailable"}
 	if prepared != nil {
 		usage, usageErr := prepared.Usage()
 		provenance, provenanceErr := prepared.UsageProvenance()
@@ -197,7 +224,7 @@ func (runtime *Runtime) failCompaction(id domain.CompactionID, code protocol.Com
 			if err == nil {
 				payload.UsageState = "observed"
 				payload.Usage = &value
-				payload.Provenance = &session.NativeCommitPayload{Provider: provenance.Family(), Wire: provenance.Wire(), PayloadVersion: provenance.PayloadVersion(), Payload: provenance.Payload()}
+				payload.Provenance = &session.NativeCommitPayload{Provider: provenance.Family(), Wire: provenance.Wire(), Payload: provenance.Payload()}
 				// 公共事件只接收归一化计量，绝不复制 Provider raw usage。
 				usagePayload, err := protocol.NewUsagePayload(usage)
 				if err == nil {

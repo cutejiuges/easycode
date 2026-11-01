@@ -10,8 +10,7 @@ import (
 )
 
 const (
-	responsesWire               = "responses"
-	nativeCommitPayloadRevision = 3
+	responsesWire = "responses"
 )
 
 type nativeHistoryCommit struct {
@@ -56,13 +55,12 @@ func encodeNativeCommit(entry nativeHistoryEntry) (provider.NativeCommitEnvelope
 		return provider.NativeCommitEnvelope{}, fmt.Errorf("OpenAI native commit exceeds size limit")
 	}
 	return provider.NewNativeCommitEnvelope(
-		domain.ProviderOpenAI, responsesWire, nativeCommitPayloadRevision, payload,
+		domain.ProviderOpenAI, responsesWire, payload,
 	)
 }
 
 func decodeNativeCommit(envelope provider.NativeCommitEnvelope) (nativeHistoryEntry, error) {
-	if envelope.Family() != domain.ProviderOpenAI || envelope.Wire() != responsesWire ||
-		envelope.PayloadVersion() != nativeCommitPayloadRevision {
+	if envelope.Family() != domain.ProviderOpenAI || envelope.Wire() != responsesWire {
 		return nativeHistoryEntry{}, fmt.Errorf("OpenAI native commit boundary is incompatible")
 	}
 	payload := envelope.Payload()

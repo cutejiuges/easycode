@@ -19,8 +19,7 @@ func TestLoaderLoadsValidBatches(t *testing.T) {
 		encodeTestBatch(t, 1, []RecordDraft{mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{})}),
 		encodeTestBatch(t, 2, []RecordDraft{
 			mustDraft(t, EventProviderNativeCommit, testTurnID, NativeCommitPayload{
-				Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 1,
-				Payload: json.RawMessage(`{"shape":"text_sample"}`),
+				Provider: domain.ProviderOpenAI, Wire: "responses", Payload: json.RawMessage(`{"shape":"text_sample"}`),
 			}),
 			mustDraft(t, EventSampleUsage, testTurnID, testSampleUsage(t)),
 			mustDraft(t, EventTurnCompleted, testTurnID, TurnCompletedPayload{}),
@@ -45,7 +44,7 @@ func TestLoaderLoadsValidBatches(t *testing.T) {
 func TestLoaderRepairsTruncatedFinalLineIdempotently(t *testing.T) {
 	t.Parallel()
 	committed := encodeTestBatch(t, 1, []RecordDraft{mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{})})
-	content := append(append([]byte(nil), committed...), []byte(`{"schema_version":1,"payload_version"`)...)
+	content := append(append([]byte(nil), committed...), []byte(`{"seq":1,"timestamp"`)...)
 	loader, repository := writeRawJournal(t, content)
 	defer repository.Close()
 	first, err := loader.Load(context.Background(), testThreadID)
@@ -70,7 +69,7 @@ func TestLoaderRepairsWholeTrailingIncompleteBatch(t *testing.T) {
 	committed := encodeTestBatch(t, 1, []RecordDraft{mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{})})
 	firstOfTwo := encodeTestRecord(t, 2, 2, 0, 2, mustDraft(
 		t, EventProviderNativeCommit, testTurnID,
-		NativeCommitPayload{Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 1, Payload: json.RawMessage(`{}`)},
+		NativeCommitPayload{Provider: domain.ProviderOpenAI, Wire: "responses", Payload: json.RawMessage(`{}`)},
 	))
 	content := append(append([]byte(nil), committed...), firstOfTwo...)
 	content = append(content, '\n')

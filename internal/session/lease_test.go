@@ -181,7 +181,7 @@ func TestLoaderDoesNotRepairWhileHelperOwnsLease(t *testing.T) {
 	committed := encodeTestBatch(t, 1, []RecordDraft{
 		mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}),
 	})
-	torn := append(append([]byte(nil), committed...), []byte(`{"schema_version":1,"payload_version"`)...)
+	torn := append(append([]byte(nil), committed...), []byte(`{"seq":1,"timestamp"`)...)
 	dataRoot := createLeaseProcessJournal(t, torn)
 	repository, err := OpenOrCreateRepository(dataRoot)
 	if err != nil {

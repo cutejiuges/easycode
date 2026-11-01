@@ -1,8 +1,9 @@
 package protocol
 
 import (
-	"easycode/internal/domain"
 	"fmt"
+
+	"easycode/internal/domain"
 )
 
 // CommandStatus 描述命令是否被 owner 接受。
@@ -267,7 +268,7 @@ func (item ControlItem) Validate() error {
 			return fmt.Errorf("command result item is invalid")
 		}
 	case ControlItemContextEvent:
-		if item.result != (CommandResult{}) || item.discard != (ControlError{}) || item.event.TurnID != "" || item.event.Validate() != nil || (item.event.Kind != EventContextSnapshot && item.event.Kind != EventCompactionStarted && item.event.Kind != EventCompactionCompleted && item.event.Kind != EventCompactionFailed) {
+		if item.result != (CommandResult{}) || item.discard != (ControlError{}) || item.event.Validate() != nil || (item.event.Kind != EventContextSnapshot && item.event.Kind != EventCompactionStarted && item.event.Kind != EventCompactionCompleted && item.event.Kind != EventCompactionFailed) {
 			return fmt.Errorf("correlated context item is invalid")
 		}
 	case ControlItemTurnEvent:
@@ -362,7 +363,7 @@ func controlErrorMessage(code ControlErrorCode) (string, bool) {
 }
 
 func validateRuntimeEvent(event Event) error {
-	if !event.SessionID.Valid() || !event.ThreadID.Valid() || !event.TurnID.Valid() {
+	if !event.SessionID.Valid() || !event.ThreadID.Valid() || !event.TurnID.Valid() || event.CompactionID != "" {
 		return fmt.Errorf("runtime event identity is invalid")
 	}
 	return event.Validate()

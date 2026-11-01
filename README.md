@@ -36,7 +36,7 @@ TUI 将 CRLF/CR 规范化为 LF，保留缩进、Tab、尾空格及尾换行；�
 | Runtime | 已实现多 sample 工具循环、同轮自动追加与严格 FIFO 屏障、原子取回、定向停止和 durable-before-memory 输入提交 |
 | 安全配置 | 已实现 JSON 配置、环境变量覆盖、API key 脱敏，以及 macOS/Linux 上绑定实际句柄的 no-follow 校验；其他平台当前安全失败关闭 |
 | Tools | 已实现 Read/Glob/Grep、Anthropic Edit / OpenAI custom apply_patch、双 Provider structured Write，以及 Darwin 前台 Exec（Anthropic Bash / OpenAI exec_command）；只读最多 8 路并行，Patch/Write/Exec 独占、有序提交并需批准 |
-| Session | 已实现 append-only JSONL、单一当前 canary 7 的强类型 draft/decoder、UUIDv7、跨进程 lease、同句柄 load/repair/write、`Sync`、尾部修复、fixture、显式恢复，以及可从 JSONL 重建的 SQLite Catalog v1、`--continue` 与离线 `sessions list`；session picker/search 尚未实现 |
+| Session | 已实现 append-only JSONL、唯一当前无版本格式的强类型 draft/decoder、UUIDv7、跨进程 lease、同句柄 load/repair/write、`Sync`、尾部修复、fixture、显式恢复，以及可从 JSONL 重建的 SQLite Catalog、`--continue` 与离线 `sessions list`；session picker/search 尚未实现 |
 | 扩展系统 | P6 目标；Hooks、Plugins、Skills 和 MCP 目前仅为经批准的 TODO 占位，未接入 Runtime/app |
 | Subagent | P7 目标；当前仅为经批准的 TODO 控制边界，调度、线程树和生命周期尚未实现 |
 | Telemetry | P8 目标；当前 logger 仅为经批准的 TODO 占位，未接入请求正文、Session 或运行时链路 |
@@ -393,6 +393,13 @@ make install-hooks
 
 JSON 配置可设置 `"compaction_output_tokens": 4096`，范围 1–65536，不提供环境变量覆盖；这是摘要输出上限，与普通输出预留独立。网络期限为 120 秒；超预算、摘要无效或无法缩减时明确失败，不重试或自动删历史。默认 4096 与小窗口冲突只拒绝压缩，不阻断普通启动。
 
+配置显式 `context_window_tokens` 时默认启用自动压缩，可用 `"auto_compact": false` 关闭；显式 true 但没有窗口会拒绝配置。阈值为 `floor((window - safety - max(reserved_output, compaction_output)) × 80%)`，只是本地粗估软阈值，实际请求仍做预算与编码预检。未配置窗口或摘要预留不可容纳时不会自动压缩，`/context` 显示状态、原因和可用阈值。
+
+自动压缩发生在下一采样准备阶段：新输入保持逐字原文，工具结果完整持久化后才允许切窗；摘要成功后继续同一任务，不重新执行工具。Ctrl+C 取消活动任务及其摘要；completed 成功 Sync 后的取消不会回滚新窗口。网络失败、超时或无缩减且旧窗口仍可请求时继续工作，否则结束任务并返还未保存输入。相同来源失败不重复尝试，连续三次自动失败后在当前进程会话熔断；成功手动压缩可重置。不会自动裁历史、换模型或重试摘要。
+
+Session/native/checkpoint envelope 不含 schema_version、payload_version 或同义版本标记，压缩来源不保存固定 prompt revision，Catalog 不依赖 user_version；只有一种当前字段结构，不引入版本门禁、迁移或兼容 reader。stream-json 自动压缩事件的 `scope` 包含 trigger、turn_id、sample_index，并关联原 submit 的 request_id；没有额外 compact response，一次性 text/JSON 不输出这些控制帧。
+
+
 stream-json v1 使用显式控制，不把普通输入中的 slash 当命令：
 
 ```json
@@ -403,4 +410,4 @@ stream-json v1 使用显式控制，不把普通输入中的 slash 当命令：
 
 控制响应先于 `context.snapshot` 或 `compaction.started/completed/failed`。压缩输出关联独立 CompactionID，不含 TurnID、摘要正文或 opaque 内容；失败带 `durable`。stdin EOF 等待已接受操作完成，显式 shutdown 取消并等待清理。
 
-当前 Session/native canary 为 **7/3**，headless 保持 **v1**。旧开发 journal 在修复或追加前失败关闭。压缩保留原始 JSONL 和工具详情；resume 本地恢复 checkpoint，未完成摘要本地收口，不重执行工具。自动压缩、Hook 和跨 Provider fork 尚未实现。
+Session envelope 没有版本字段，headless 仍遵循独立外部协议。旧开发 journal 在修复或追加前失败关闭。压缩保留原始 JSONL 和工具详情；resume 本地恢复 checkpoint，未完成摘要本地收口，不重执行工具。阈值自动压缩已实现；Hook 和跨 Provider fork 尚未实现。

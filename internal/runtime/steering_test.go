@@ -13,7 +13,7 @@ import (
 type controlledToolConversation struct{ *controlledConversation }
 
 func (conversation *controlledToolConversation) PrepareToolOutputs(results []tool.InvocationResult) (*provider.PreparedToolOutputs, error) {
-	envelope, err := provider.NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", 3, []byte(`{"kind":"tool_outputs"}`))
+	envelope, err := provider.NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", []byte(`{"kind":"tool_outputs"}`))
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +112,7 @@ func TestAgentLoopSteersOnlyCompleteToolBoundaryAndPreservesStrictFIFO(t *testin
 			outputIndex = i
 		}
 		if batch[0].EventKind() == session.EventTurnInputsCommitted {
-			record := session.Record{PayloadVersion: session.EnvelopeVersion, TurnID: batch[0].TurnID(), EventKind: batch[0].EventKind(), Payload: batch[0].PayloadBytes()}
+			record := session.Record{TurnID: batch[0].TurnID(), EventKind: batch[0].EventKind(), Payload: batch[0].PayloadBytes()}
 			payload, err := session.DecodeTurnInputsPayload(record)
 			if err != nil {
 				t.Fatal(err)

@@ -12,7 +12,7 @@ func TestPreparedUserInputsOwnsAssociationAndResolvesOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	envelope, err := NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", 3, []byte(`{"kind":"user_inputs"}`))
+	envelope, err := NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", []byte(`{"kind":"user_inputs"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestPreparedUserInputsOwnsAssociationAndResolvesOnce(t *testing.T) {
 func TestPreparedUserInputsRejectsIncompleteLifecycle(t *testing.T) {
 	id := domain.InputID("01900000-0000-7000-8000-000000000001")
 	association, _ := domain.NewInputAssociation(domain.TurnID(id), domain.InputSteering, 1, []domain.InputID{id})
-	envelope, _ := NewNativeCommitEnvelope(domain.ProviderAnthropic, "messages", 3, []byte(`{"kind":"user_inputs"}`))
+	envelope, _ := NewNativeCommitEnvelope(domain.ProviderAnthropic, "messages", []byte(`{"kind":"user_inputs"}`))
 	if _, err := NewPreparedUserInputs(association, envelope, func() {}, nil, testInputPreview(t, domain.ProviderAnthropic)); err == nil {
 		t.Fatal("missing discard accepted")
 	}
@@ -74,7 +74,7 @@ func TestPreparedUserInputsRejectsIncompleteLifecycle(t *testing.T) {
 func TestRestoreRecordKeepsExplicitRoleAndTurn(t *testing.T) {
 	id := domain.InputID("01900000-0000-7000-8000-000000000001")
 	association, _ := domain.NewInputAssociation(domain.TurnID(id), domain.InputInitial, 0, []domain.InputID{id})
-	envelope, _ := NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", 3, []byte(`{"kind":"user_inputs"}`))
+	envelope, _ := NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", []byte(`{"kind":"user_inputs"}`))
 	record, err := NewInputRestoreRecord(association, envelope)
 	if err != nil {
 		t.Fatal(err)
