@@ -20,7 +20,7 @@ Session Catalog SHALL 将 SQLite 仅作为 JSONL journal 的可重建只读投�
 
 #### Scenario: Reject unsupported required history during projection
 
-- **WHEN** 一个 journal 包含当前程序不支持的 required kind 或 payload revision
+- **WHEN** 一个 journal 包含当前程序不支持的 record kind 或 payload 字段结构
 - **THEN** Catalog 不把该 journal 投影为可恢复 thread
 - **THEN** 系统不展开、不记录也不复制未知 opaque payload
 
@@ -98,6 +98,8 @@ Catalog reconciliation SHALL 从已安全打开并校验的 Session 根开始，
 
 ### Requirement: Catalog lifecycle, schema, and storage are explicit and private
 
+Catalog SHALL 不设置或校验 PRAGMA user_version，不使用 schemaVersion 或其他固定格式门禁。合法结构中无关的版本元数据 MUST NOT 触发重建；只按完整性、实际表字段和所需索引校验当前结构，不实现历史迁移。
+
 Catalog 的纯内存配置与数据库资源获取 SHALL 分离；打开、创建、重建、提交和关闭 SQLite 必须使用显式生命周期操作。数据库连接、codec、schema 状态、statement 和缓存 MUST 由实例持有，不得使用可变包级 registry、可替换全局 codec、隐藏 goroutine 或进程级内存单例协调多个进程。
 
 默认 Catalog SHALL 位于 `~/.easycode/state.sqlite`，Session 根和 Catalog 路径 MUST 能在测试与宿主装配时分别注入。支持权限位的平台上，父目录 MUST 为当前用户私有且数据库及其 sidecar MUST 使用用户私有权限；打开数据库不得跟随 symlink，文件类型与权限 MUST 根据 SQLite 实际使用的对象校验，单独 `Lstat` 后再按路径打开不满足该契约。无法提供等价保证的平台 SHALL fail closed。
@@ -116,8 +118,13 @@ Catalog schema SHALL 具有显式版本。当前程序遇到缺失、损坏或�
 
 #### Scenario: Rebuild an incompatible derived schema
 
-- **WHEN** 现有 SQLite schema version 不是当前程序支持的派生版本
+- **WHEN** 现有 SQLite 表或索引结构不符合当前结构，或完整性校验失败
 - **THEN** 系统不使用其中的 thread 行作恢复决策，并从 JSONL 构建当前 schema
+
+#### Scenario: Ignore unrelated SQLite version metadata
+
+- **WHEN** 当前表与索引结构完整合法，但 user_version 为任意值
+- **THEN** 打开 Catalog 保留已验证投影行，不因该值重建，也不执行历史迁移
 
 ### Requirement: Catalog supports bounded root session discovery independent of provider configuration
 

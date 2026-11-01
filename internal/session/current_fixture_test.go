@@ -33,11 +33,10 @@ type currentTurnSummary struct {
 }
 
 type currentNativeSummary struct {
-	Sequence       uint64                `json:"sequence"`
-	TurnID         domain.TurnID         `json:"turn_id"`
-	Provider       domain.ProviderFamily `json:"provider"`
-	Wire           string                `json:"wire"`
-	PayloadVersion int                   `json:"payload_version"`
+	Sequence uint64                `json:"sequence"`
+	TurnID   domain.TurnID         `json:"turn_id"`
+	Provider domain.ProviderFamily `json:"provider"`
+	Wire     string                `json:"wire"`
 }
 
 type currentUsageSummary struct {
@@ -256,10 +255,10 @@ func TestCurrentCompletionWithoutSampleUsageFailsClosed(t *testing.T) {
 
 func TestCurrentFixtureRejectsUnsupportedShapeReadOnly(t *testing.T) {
 	baseline := readCurrentFixture(t, "root.jsonl")
-	superseded := readCurrentFixture(t, "superseded_envelope.jsonl")
+	invalidFields := readCurrentFixture(t, "invalid_version_fields.jsonl")
 	fixtures := map[string][]byte{
-		"schema revision":     bytes.Replace(baseline, []byte(`"schema_version":7`), []byte(`"schema_version":99`), 1),
-		"superseded envelope": append(append([]byte(nil), baseline...), superseded...),
+		"unexpected version":     append([]byte(`{"schema_version":1,`), baseline[1:]...),
+		"version fields in tail": append(append([]byte(nil), baseline...), invalidFields...),
 	}
 	for name, content := range fixtures {
 		name, content := name, content
@@ -491,7 +490,7 @@ func summarizeCurrentReplay(t *testing.T, plan ReplayPlan) currentReplaySummary 
 	for _, commit := range plan.NativeCommits {
 		summary.NativeCommits = append(summary.NativeCommits, currentNativeSummary{
 			Sequence: commit.Sequence, TurnID: commit.TurnID, Provider: commit.Commit.Provider,
-			Wire: commit.Commit.Wire, PayloadVersion: commit.Commit.PayloadVersion,
+			Wire: commit.Commit.Wire,
 		})
 	}
 	for _, usage := range plan.SampleUsages {

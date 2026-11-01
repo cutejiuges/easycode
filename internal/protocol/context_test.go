@@ -43,7 +43,7 @@ func TestCompactionEventScopesAndStrictDecoders(t *testing.T) {
 	sessionID := domain.SessionID("01900000-0000-7000-8000-000000000001")
 	threadID := domain.ThreadID("01900000-0000-7000-8000-000000000002")
 	id := domain.CompactionID("01900000-0000-7000-8000-000000000003")
-	started, err := NewCompactionStarted(sessionID, threadID, id, 2)
+	started, err := NewCompactionStarted(sessionID, threadID, id, 2, domain.ManualCompactionScope())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestCompactionEventScopesAndStrictDecoders(t *testing.T) {
 			t.Fatal("invalid payload accepted")
 		}
 	}
-	failed, err := NewCompactionFailed(sessionID, threadID, id, CompactionFailedPayload{Code: CompactionFailureCancelled, Durable: false, UsageState: "unavailable"})
+	failed, err := NewCompactionFailed(sessionID, threadID, id, CompactionFailedPayload{Scope: domain.ManualCompactionScope(), Code: CompactionFailureCancelled, Durable: false, UsageState: "unavailable"})
 	if err != nil {
 		t.Fatal(err)
 	}

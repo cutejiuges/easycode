@@ -27,7 +27,7 @@ func TestExecDraftRoundTripAndStrictMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ready, err := DecodeToolCallReadyPayload(Record{PayloadVersion: EnvelopeVersion, EventKind: EventToolCallReady, Payload: draft.PayloadBytes()})
+	ready, err := DecodeToolCallReadyPayload(Record{EventKind: EventToolCallReady, Payload: draft.PayloadBytes()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,21 +42,20 @@ func TestExecDraftRoundTripAndStrictMetadata(t *testing.T) {
 	for _, test := range []struct {
 		name    string
 		payload string
-		version int
 	}{
-		{"unknown", strings.Replace(string(draft.PayloadBytes()), `"exec_input":{`, `"exec_input":{"future":true,`, 1), EnvelopeVersion},
-		{"trailing", string(draft.PayloadBytes()) + `{}`, EnvelopeVersion},
-		{"canary", string(draft.PayloadBytes()), EnvelopeVersion + 1},
-		{"capability", strings.Replace(string(draft.PayloadBytes()), `"process.exec"`, `"fs.read"`, 1), EnvelopeVersion},
-		{"wire", strings.Replace(string(draft.PayloadBytes()), string(tool.WireStructured), string(tool.WireCustomFreeform), 1), EnvelopeVersion},
-		{"sample", strings.Replace(string(draft.PayloadBytes()), `"sample_index":1`, `"sample_index":-1`, 1), EnvelopeVersion},
-		{"call", strings.Replace(string(draft.PayloadBytes()), `"call_index":2`, `"call_index":-1`, 1), EnvelopeVersion},
+		{"unknown", strings.Replace(string(draft.PayloadBytes()), `"exec_input":{`, `"exec_input":{"future":true,`, 1)},
+		{"trailing", string(draft.PayloadBytes()) + `{}`},
+		{"version field", strings.Replace(string(draft.PayloadBytes()), `"sample_index":1`, `"sample_index":1,"payload_version":7`, 1)},
+		{"capability", strings.Replace(string(draft.PayloadBytes()), `"process.exec"`, `"fs.read"`, 1)},
+		{"wire", strings.Replace(string(draft.PayloadBytes()), string(tool.WireStructured), string(tool.WireCustomFreeform), 1)},
+		{"sample", strings.Replace(string(draft.PayloadBytes()), `"sample_index":1`, `"sample_index":-1`, 1)},
+		{"call", strings.Replace(string(draft.PayloadBytes()), `"call_index":2`, `"call_index":-1`, 1)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if test.version == EnvelopeVersion && test.payload == string(draft.PayloadBytes()) {
+			if test.payload == string(draft.PayloadBytes()) {
 				t.Fatal("test did not mutate ready payload")
 			}
-			if _, err := DecodeToolCallReadyPayload(Record{PayloadVersion: test.version, EventKind: EventToolCallReady, Payload: []byte(test.payload)}); err == nil {
+			if _, err := DecodeToolCallReadyPayload(Record{EventKind: EventToolCallReady, Payload: []byte(test.payload)}); err == nil {
 				t.Fatal("invalid Exec ready payload accepted")
 			}
 		})
@@ -67,7 +66,7 @@ func TestExecDraftRoundTripAndStrictMetadata(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		record := Record{PayloadVersion: EnvelopeVersion, EventKind: EventToolCallResult, Payload: resultDraft.PayloadBytes()}
+		record := Record{EventKind: EventToolCallResult, Payload: resultDraft.PayloadBytes()}
 		payload, err := DecodeToolCallResultPayload(record)
 		if err != nil {
 			t.Fatal(err)

@@ -47,6 +47,7 @@ type ContextPlanner interface {
 
 // Config 固定一个 Session-bound Runtime 的身份与 durable 边界。
 type Config struct {
+	AutoCompactionPolicy      contextplan.AutoCompactionPolicy
 	CompactionHistory         CompactionHistoryObserver
 	CompactionOutputTokens    uint64
 	TextOutputStore           tool.TextOutputStore
@@ -80,44 +81,47 @@ type Config struct {
 
 // Runtime 持有一条会话级 Provider Conversation 和同一 thread journal。
 type Runtime struct {
-	compactionHistory      CompactionHistoryObserver
-	compactionOutputTokens uint64
-	compactionDeadline     func(context.Context, time.Duration) (context.Context, context.CancelFunc)
-	turnEmitter            Emitter
-	activityEmitter        Emitter
-	activityInvocations    map[tool.InvocationID]tool.Invocation
-	resultBudget           *tool.ResultBudget
-	textOutputStore        tool.TextOutputStore
-	toolHistory            ToolHistoryObserver
-	readArtifactExecutor   tool.ReadArtifactExecutor
-	artifactReferences     *tool.ArtifactReferences
-	conversation           provider.Conversation
-	journal                Journal
-	sessionID              domain.SessionID
-	threadID               domain.ThreadID
-	newTurnID              TurnIDGenerator
-	newInvocationID        InvocationIDGenerator
-	profile                contextplan.ProviderProfile
-	toolCatalog            tool.CatalogSnapshot
-	readExecutor           tool.ReadExecutor
-	globExecutor           tool.GlobExecutor
-	grepExecutor           tool.GrepExecutor
-	patchPreparer          tool.PatchPreparer
-	patchExecutor          tool.PatchExecutor
-	writePreparer          tool.WritePreparer
-	writeExecutor          tool.WriteExecutor
-	execPreparer           tool.ExecPreparer
-	execExecutor           tool.ExecExecutor
-	toolPolicy             tool.Policy
-	newApprovalRequestID   ApprovalRequestIDGenerator
-	interactiveApprovals   bool
-	readObservations       readObservations
-	approvals              approvalState
-	projectInstructions    domain.ProjectInstructionsSnapshot
-	budget                 contextplan.Budget
-	planner                ContextPlanner
-	active                 atomic.Bool
-	poisoned               atomic.Bool
+	autoCompactionFailures       uint8
+	autoCompactionFailedRevision uint64
+	autoCompactionPolicy         contextplan.AutoCompactionPolicy
+	compactionHistory            CompactionHistoryObserver
+	compactionOutputTokens       uint64
+	compactionDeadline           func(context.Context, time.Duration) (context.Context, context.CancelFunc)
+	turnEmitter                  Emitter
+	activityEmitter              Emitter
+	activityInvocations          map[tool.InvocationID]tool.Invocation
+	resultBudget                 *tool.ResultBudget
+	textOutputStore              tool.TextOutputStore
+	toolHistory                  ToolHistoryObserver
+	readArtifactExecutor         tool.ReadArtifactExecutor
+	artifactReferences           *tool.ArtifactReferences
+	conversation                 provider.Conversation
+	journal                      Journal
+	sessionID                    domain.SessionID
+	threadID                     domain.ThreadID
+	newTurnID                    TurnIDGenerator
+	newInvocationID              InvocationIDGenerator
+	profile                      contextplan.ProviderProfile
+	toolCatalog                  tool.CatalogSnapshot
+	readExecutor                 tool.ReadExecutor
+	globExecutor                 tool.GlobExecutor
+	grepExecutor                 tool.GrepExecutor
+	patchPreparer                tool.PatchPreparer
+	patchExecutor                tool.PatchExecutor
+	writePreparer                tool.WritePreparer
+	writeExecutor                tool.WriteExecutor
+	execPreparer                 tool.ExecPreparer
+	execExecutor                 tool.ExecExecutor
+	toolPolicy                   tool.Policy
+	newApprovalRequestID         ApprovalRequestIDGenerator
+	interactiveApprovals         bool
+	readObservations             readObservations
+	approvals                    approvalState
+	projectInstructions          domain.ProjectInstructionsSnapshot
+	budget                       contextplan.Budget
+	planner                      ContextPlanner
+	active                       atomic.Bool
+	poisoned                     atomic.Bool
 }
 
 type runtimeApproval struct {
@@ -193,6 +197,7 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 		}
 	}
 	return &Runtime{
+		autoCompactionPolicy:   config.AutoCompactionPolicy,
 		compactionHistory:      config.CompactionHistory,
 		compactionDeadline:     context.WithTimeout,
 		compactionOutputTokens: config.CompactionOutputTokens,
@@ -232,6 +237,16 @@ func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, 
 	turnID, err := runtime.beginTurn(ctx, emit)
 	if err != nil {
 		return err
+	}
+	if err := runtime.prepareAutomaticSample(ctx, turnID, 0, inputs, emit); err != nil {
+		if control != nil {
+			reason := protocol.InputReasonFailed
+			if ctx.Err() != nil {
+				reason = protocol.InputReasonCancelled
+			}
+			control.resolve(turnID, inputs, protocol.InputReturned, reason)
+		}
+		return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, err)
 	}
 	result := runtime.commitInputs(ctx, turnID, 0, inputs, control, emit)
 	if result.err != nil {
@@ -292,9 +307,23 @@ func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, 
 			cancelled := fault.Wrap(fault.CodeUserCancelled, "turn was cancelled", context.Canceled)
 			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, cancelled)
 		}
+		var pending []domain.UserInput
 		if control != nil && sampleIndex+1 < maxSamplesPerTurn && totalCalls < maxToolCallsPerTurn {
-			pending, err := control.claim(ctx, turnID, uint32(sampleIndex+1))
+			claimed, err := control.claim(ctx, turnID, uint32(sampleIndex+1))
 			if err != nil {
+				return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, err)
+			}
+			pending = claimed
+		}
+		if sampleIndex+1 < maxSamplesPerTurn && totalCalls < maxToolCallsPerTurn {
+			if err := runtime.prepareAutomaticSample(ctx, turnID, uint32(sampleIndex+1), pending, emit); err != nil {
+				if control != nil && len(pending) > 0 {
+					reason := protocol.InputReasonFailed
+					if ctx.Err() != nil {
+						reason = protocol.InputReasonCancelled
+					}
+					control.resolve(turnID, pending, protocol.InputReturned, reason)
+				}
 				return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, err)
 			}
 			if len(pending) > 0 {
@@ -598,7 +627,7 @@ func (runtime *Runtime) commitFinalSample(
 	}
 	commitDraft, err := session.NewProviderNativeCommitDraft(turnID, session.NativeCommitPayload{
 		Provider: envelope.Family(), Wire: envelope.Wire(),
-		PayloadVersion: envelope.PayloadVersion(), Payload: envelope.Payload(),
+		Payload: envelope.Payload(),
 	})
 	if err != nil {
 		failure := fault.Wrap(fault.CodeStreamProtocol, "provider native commit is invalid", err)
@@ -661,7 +690,7 @@ func (runtime *Runtime) commitCallSample(
 		return nil, fault.Wrap(fault.CodeStreamProtocol, "provider prepared sample is invalid", err)
 	}
 	commitDraft, err := session.NewProviderNativeCommitDraft(turnID, session.NativeCommitPayload{
-		Provider: envelope.Family(), Wire: envelope.Wire(), PayloadVersion: envelope.PayloadVersion(), Payload: envelope.Payload(),
+		Provider: envelope.Family(), Wire: envelope.Wire(), Payload: envelope.Payload(),
 	})
 	if err != nil {
 		discardPreparedSample(sample)
@@ -955,7 +984,7 @@ func (runtime *Runtime) commitToolOutputs(ctx context.Context, turnID domain.Tur
 		return fault.Wrap(fault.CodeStreamProtocol, "provider tool outputs are invalid", err)
 	}
 	draft, err := session.NewProviderNativeCommitDraft(turnID, session.NativeCommitPayload{
-		Provider: envelope.Family(), Wire: envelope.Wire(), PayloadVersion: envelope.PayloadVersion(), Payload: envelope.Payload(),
+		Provider: envelope.Family(), Wire: envelope.Wire(), Payload: envelope.Payload(),
 	})
 	if err != nil {
 		_ = prepared.Discard()

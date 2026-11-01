@@ -138,9 +138,9 @@ func TestWriteInvalidCurrentRecordsFailBeforeRepairOrAppend(t *testing.T) {
 			}
 		})
 	}
-	old := readCurrentFixture(t, "superseded_write_baseline.jsonl")
-	if _, err := DecodeRecord(bytes.TrimSpace(old)); err == nil {
-		t.Fatal("接受旧开发期 canary")
+	invalidFields := readCurrentFixture(t, "invalid_version_fields.jsonl")
+	if _, err := DecodeRecord(bytes.TrimSpace(invalidFields)); err == nil {
+		t.Fatal("接受非法版本字段")
 	}
 }
 

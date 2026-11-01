@@ -14,8 +14,6 @@ import (
 )
 
 type checksumEnvelope struct {
-	SchemaVersion  int                `json:"schema_version"`
-	PayloadVersion int                `json:"payload_version"`
 	Sequence       uint64             `json:"seq"`
 	Timestamp      time.Time          `json:"timestamp"`
 	SessionID      domain.SessionID   `json:"session_id"`
@@ -44,8 +42,6 @@ func BuildRecord(
 	}
 	descriptor := draft.descriptor
 	return Record{
-		SchemaVersion:  EnvelopeVersion,
-		PayloadVersion: EnvelopeVersion,
 		Sequence:       sequence,
 		Timestamp:      timestamp.UTC(),
 		SessionID:      identity.SessionID,
@@ -94,7 +90,7 @@ func DecodeRecord(line []byte) (Record, error) {
 		return Record{}, err
 	}
 	requiredFields := [...]string{
-		"schema_version", "payload_version", "seq", "timestamp",
+		"seq", "timestamp",
 		"session_id", "thread_id", "event_kind", "batch_id", "batch_index",
 		"batch_size", "payload", "checksum",
 	}
@@ -144,7 +140,7 @@ func scanEnvelope(line []byte) (map[string]stdjson.RawMessage, error) {
 
 func knownEnvelopeField(name string) bool {
 	switch name {
-	case "schema_version", "payload_version", "seq", "timestamp",
+	case "seq", "timestamp",
 		"session_id", "thread_id", "parent_thread_id", "turn_id", "event_kind",
 		"batch_id", "batch_index", "batch_size", "payload", "checksum":
 		return true
@@ -154,12 +150,6 @@ func knownEnvelopeField(name string) bool {
 }
 
 func validateRecord(record Record, requireChecksum bool) error {
-	if record.SchemaVersion != EnvelopeVersion {
-		return fmt.Errorf("session envelope version is unsupported")
-	}
-	if record.PayloadVersion != EnvelopeVersion {
-		return fmt.Errorf("session payload canary is unsupported")
-	}
 	if record.Sequence == 0 || record.BatchID == 0 || record.BatchSize == 0 || record.BatchIndex >= record.BatchSize {
 		return fmt.Errorf("session sequence or batch boundary is invalid")
 	}
@@ -196,7 +186,7 @@ func validateRecord(record Record, requireChecksum bool) error {
 
 func recordChecksum(record Record) (string, error) {
 	encoded, err := codec.MarshalStable(checksumEnvelope{
-		SchemaVersion: record.SchemaVersion, PayloadVersion: record.PayloadVersion,
+
 		Sequence:  record.Sequence,
 		Timestamp: record.Timestamp, SessionID: record.SessionID, ThreadID: record.ThreadID,
 		ParentThreadID: record.ParentThreadID, TurnID: record.TurnID, EventKind: record.EventKind,

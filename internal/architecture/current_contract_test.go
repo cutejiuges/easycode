@@ -225,13 +225,13 @@ func TestCurrentContractGuardNegativeAndPositiveCases(t *testing.T) {
 			t.Fatal("constructor violation escaped", source)
 		}
 	}
-	file, err := parser.ParseFile(token.NewFileSet(), "fixture.go", `package fixture; import "encoding/json"; const EnvelopeVersion=3; const nativeCommitPayloadRevision=1; type Opaque struct { Raw json.RawMessage }; func NewValue() Opaque { return Opaque{} }`, 0)
+	file, err := parser.ParseFile(token.NewFileSet(), "fixture.go", `package fixture; import "encoding/json"; type Opaque struct { Raw json.RawMessage }; func NewValue() Opaque { return Opaque{} }`, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	current := &sourcePackage{path: "fixture", files: map[string]*ast.File{"fixture.go": file}}
 	if len(codecBoundaryViolations(current))+len(constructorViolations(map[string]*sourcePackage{"fixture": current}))+len(singleCurrentDeclarationViolations(current)) != 0 {
-		t.Fatal("current canary or opaque value rejected")
+		t.Fatal("current native envelope or opaque value rejected")
 	}
 	if !isCoreContractPackage("easycode/internal/tool") {
 		t.Fatal("tool core contract excluded")
@@ -343,4 +343,44 @@ func constructorExpressionType(expression ast.Expr, current constructorFunction,
 		}
 	}
 	return ""
+}
+
+func TestSessionEnvelopeVersionMarkersAreForbidden(t *testing.T) {
+	for _, source := range []string{
+		`package session; const EnvelopeVersion=1`,
+		`package session; const formatCanary=1`,
+		`package session; type Record struct { Version int }`,
+		`package session; type checksumEnvelope struct { FormatRevision int }`,
+		"package session; type Record struct { Marker int `json:\"schema_version\"` }",
+	} {
+		file, err := parser.ParseFile(token.NewFileSet(), "fixture.go", source, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		current := &sourcePackage{path: "easycode/internal/session", files: map[string]*ast.File{"fixture.go": file}}
+		if len(singleCurrentDeclarationViolations(current)) == 0 {
+			t.Fatal("Session version marker escaped guard", source)
+		}
+	}
+}
+
+func TestNativeAndCatalogVersionMarkersAreForbidden(t *testing.T) {
+	for _, fixture := range []struct{ pkg, source string }{
+		{"provider", `package provider; const nativeCommitPayloadRevision=3`},
+		{"provider", `package provider; type NativeCommitEnvelope struct { payloadVersion int }`},
+		{"provider", `package provider; type checkpointRecord struct { FormatVersion int }`},
+		{"provider", `package provider; type CompactionSource struct { promptRevision string }`},
+		{"session", `package session; type NativeCommitPayload struct { PayloadVersion int }`},
+		{"session/catalog", `package catalog; const schemaVersion=1`},
+		{"session/catalog", `package catalog; const sql="PRAGMA user_version=1"`},
+	} {
+		file, err := parser.ParseFile(token.NewFileSet(), "fixture.go", fixture.source, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		current := &sourcePackage{path: "easycode/internal/" + fixture.pkg, files: map[string]*ast.File{"fixture.go": file}}
+		if len(singleCurrentDeclarationViolations(current)) == 0 {
+			t.Fatal("internal format marker escaped guard", fixture.source)
+		}
+	}
 }

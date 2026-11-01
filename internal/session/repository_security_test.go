@@ -192,7 +192,7 @@ func TestRepositoryResumeRepairAndWriterStayBoundToOpenedJournal(t *testing.T) {
 	committed := encodeTestBatch(t, 1, []RecordDraft{
 		mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}),
 	})
-	torn := append(append([]byte(nil), committed...), []byte(`{"schema_version":1`)...)
+	torn := append(append([]byte(nil), committed...), []byte(`{"seq":1`)...)
 	writeSecurityFixture(t, journalPath, torn, 0o600)
 	heldJournal := journalPath + ".opened"
 	outsideJournal := filepath.Join(t.TempDir(), "outside.jsonl")

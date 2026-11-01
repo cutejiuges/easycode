@@ -68,7 +68,7 @@ func TestTurnInputAcceptsExplicitEmptyProjectInstructions(t *testing.T) {
 func TestNativeCommitEnvelopeDeepCopiesOpaquePayload(t *testing.T) {
 	t.Parallel()
 	payload := json.RawMessage(`{"shape":"text_sample"}`)
-	envelope, err := NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", 1, payload)
+	envelope, err := NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", payload)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,17 +102,16 @@ func TestNativeCommitEnvelopeRejectsInvalidBoundary(t *testing.T) {
 	fixtures := []struct {
 		family  domain.ProviderFamily
 		wire    string
-		version int
 		payload json.RawMessage
 	}{
-		{family: "unknown", wire: "responses", version: 1, payload: json.RawMessage(`{}`)},
-		{family: domain.ProviderOpenAI, wire: "", version: 1, payload: json.RawMessage(`{}`)},
-		{family: domain.ProviderOpenAI, wire: "responses", version: 0, payload: json.RawMessage(`{}`)},
-		{family: domain.ProviderOpenAI, wire: "responses", version: 1, payload: json.RawMessage(`{`)},
-		{family: domain.ProviderOpenAI, wire: "responses", version: 1, payload: nil},
+		{family: "unknown", wire: "responses", payload: json.RawMessage(`{}`)},
+		{family: domain.ProviderOpenAI, wire: "", payload: json.RawMessage(`{}`)},
+		{family: domain.ProviderOpenAI, wire: "   ", payload: json.RawMessage(`{}`)},
+		{family: domain.ProviderOpenAI, wire: "responses", payload: json.RawMessage(`{`)},
+		{family: domain.ProviderOpenAI, wire: "responses", payload: nil},
 	}
 	for _, fixture := range fixtures {
-		if _, err := NewNativeCommitEnvelope(fixture.family, fixture.wire, fixture.version, fixture.payload); err == nil {
+		if _, err := NewNativeCommitEnvelope(fixture.family, fixture.wire, fixture.payload); err == nil {
 			t.Fatalf("NewNativeCommitEnvelope(%#v) unexpectedly succeeded", fixture)
 		}
 	}
@@ -120,7 +119,7 @@ func TestNativeCommitEnvelopeRejectsInvalidBoundary(t *testing.T) {
 
 func TestPreparedSampleFinalizesExactlyOnceConcurrently(t *testing.T) {
 	t.Parallel()
-	envelope, err := NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", 1, json.RawMessage(`{}`))
+	envelope, err := NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +132,7 @@ func TestPreparedSampleFinalizesExactlyOnceConcurrently(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if copy.Family() != domain.ProviderOpenAI || copy.Wire() != "responses" || copy.PayloadVersion() != 1 {
+	if copy.Family() != domain.ProviderOpenAI || copy.Wire() != "responses" || !bytes.Equal(copy.Payload(), envelope.Payload()) {
 		t.Fatalf("Envelope() = %#v", copy)
 	}
 	usage, err := sample.Usage()
@@ -166,7 +165,7 @@ func TestPreparedSampleFinalizesExactlyOnceConcurrently(t *testing.T) {
 
 func TestPreparedSampleRejectsInvalidConstructionAndZeroValue(t *testing.T) {
 	t.Parallel()
-	envelope, err := NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", 1, json.RawMessage(`{}`))
+	envelope, err := NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +203,7 @@ func TestPreparedSampleRejectsInvalidConstructionAndZeroValue(t *testing.T) {
 
 func TestPreparedSampleOwnsValidatedOrderedReadyCalls(t *testing.T) {
 	t.Parallel()
-	envelope, err := NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", 1, json.RawMessage(`{}`))
+	envelope, err := NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +237,7 @@ func TestPreparedSampleOwnsValidatedOrderedReadyCalls(t *testing.T) {
 
 func TestPreparedToolOutputsFinalizesExactlyOnce(t *testing.T) {
 	t.Parallel()
-	envelope, err := NewNativeCommitEnvelope(domain.ProviderAnthropic, "messages", 1, json.RawMessage(`{"kind":"tool_outputs"}`))
+	envelope, err := NewNativeCommitEnvelope(domain.ProviderAnthropic, "messages", json.RawMessage(`{"kind":"tool_outputs"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +247,7 @@ func TestPreparedToolOutputsFinalizesExactlyOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	copy, err := commit.Envelope()
-	if err != nil || copy.PayloadVersion() != 1 {
+	if err != nil || !bytes.Equal(copy.Payload(), envelope.Payload()) {
 		t.Fatalf("tool outputs envelope = %#v, %v", copy, err)
 	}
 	if err := commit.Finalize(); err != nil {
@@ -433,7 +432,7 @@ func TestCompletedStreamEventRejectsFinalizedSampleWithoutSideEffects(t *testing
 
 func newProviderTestSample(t *testing.T, finalize func()) *PreparedSample {
 	t.Helper()
-	envelope, err := NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", 1, json.RawMessage(`{}`))
+	envelope, err := NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatal(err)
 	}

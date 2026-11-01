@@ -41,7 +41,7 @@ func inputCommitDrafts(a domain.InputAssociation, envelope provider.NativeCommit
 	if err != nil {
 		return nil, err
 	}
-	native, err := session.NewProviderNativeCommitDraft(a.TurnID(), session.NativeCommitPayload{Provider: envelope.Family(), Wire: envelope.Wire(), PayloadVersion: envelope.PayloadVersion(), Payload: envelope.Payload()})
+	native, err := session.NewProviderNativeCommitDraft(a.TurnID(), session.NativeCommitPayload{Provider: envelope.Family(), Wire: envelope.Wire(), Payload: envelope.Payload()})
 	if err != nil {
 		return nil, err
 	}

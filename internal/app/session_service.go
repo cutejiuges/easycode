@@ -216,7 +216,7 @@ func nativeRestoreRecords(records []session.NativeCommitRecord) ([]provider.Rest
 	for _, record := range records {
 		commit, buildErr := provider.NewNativeCommitEnvelope(
 			record.Commit.Provider, record.Commit.Wire,
-			record.Commit.PayloadVersion, record.Commit.Payload,
+			record.Commit.Payload,
 		)
 		if buildErr != nil {
 			return nil, fault.Wrap(fault.CodeSessionCorruption, "session native commit envelope is invalid", buildErr)

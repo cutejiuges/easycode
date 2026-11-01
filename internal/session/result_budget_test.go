@@ -15,7 +15,7 @@ func TestCurrentResultRequiresFrozenBudgetSavingAndVisibleMetadata(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	record := Record{PayloadVersion: EnvelopeVersion, EventKind: EventToolCallResult, Payload: draft.PayloadBytes()}
+	record := Record{EventKind: EventToolCallResult, Payload: draft.PayloadBytes()}
 	payload, err := DecodeToolCallResultPayload(record)
 	if err != nil {
 		t.Fatal(err)
@@ -59,10 +59,10 @@ func TestCurrentResultRequiresFrozenBudgetSavingAndVisibleMetadata(t *testing.T)
 	if payload.Budget.ActualBytes() != len(result.Preview().Text()) {
 		t.Fatal("budget lost bytes")
 	}
-	old := record
-	old.PayloadVersion = 5
-	if _, err := DecodeToolCallResultPayload(old); err == nil {
-		t.Fatal("old canary accepted")
+	invalid := record
+	invalid.Payload = append([]byte(`{"payload_version":5,`), record.Payload[1:]...)
+	if _, err := DecodeToolCallResultPayload(invalid); err == nil {
+		t.Fatal("unexpected version field accepted")
 	}
 }
 

@@ -17,7 +17,7 @@ func TestInputAssociationStrictPayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	record := Record{EventKind: EventTurnInputsCommitted, TurnID: testTurnID, PayloadVersion: EnvelopeVersion, Payload: draft.PayloadBytes()}
+	record := Record{EventKind: EventTurnInputsCommitted, TurnID: testTurnID, Payload: draft.PayloadBytes()}
 	if p, err := DecodeTurnInputsPayload(record); err != nil || len(p.InputIDs) != 1 || p.InputIDs[0] != id {
 		t.Fatalf("roundtrip: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestCurrentInputOnlyAndSteeringFixtures(t *testing.T) {
 func TestInputDraftBudgetIncludesCanonicalEnvelopeAndNewlines(t *testing.T) {
 	makeDraft := func(size int) RecordDraft {
 		t.Helper()
-		draft, err := NewProviderNativeCommitDraft(testTurnID, NativeCommitPayload{Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 3, Payload: json.RawMessage(`{"text":"` + strings.Repeat("x", size) + `"}`)})
+		draft, err := NewProviderNativeCommitDraft(testTurnID, NativeCommitPayload{Provider: domain.ProviderOpenAI, Wire: "responses", Payload: json.RawMessage(`{"text":"` + strings.Repeat("x", size) + `"}`)})
 		if err != nil {
 			t.Fatal(err)
 		}

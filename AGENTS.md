@@ -42,7 +42,7 @@ explore -> propose -> review/confirm -> apply -> verify -> archive
 - 依赖方向保持 `domain/protocol <- provider|tool|context|session|extension|subagent <- runtime <- app/tui/cmd`，下层不得反向依赖。
 - 核心协议使用强类型；未知扩展只允许受控的 `json.RawMessage`/opaque envelope，禁止无约束传播 `map[string]any`。
 - 核心协议的导出构造器、接口和 record draft 禁止接受或返回 `any`；每个当前 kind 必须具有 typed constructor、strict decoder 和 validator。
-- 产品稳定发布前，进程内协议、Tool 和 Session 只允许一个当前契约；旧开发 shape 直接失败关闭，禁止 V1/V2/Legacy 类型、双 reader、optional record 或无退出条件的兼容分支。真正发布后的 revision 兼容必须另经 OpenSpec 批准兼容窗口和退出条件。
+- 产品稳定发布前，进程内协议、Tool 和 Session 只允许一个当前契约；旧开发 shape 直接失败关闭，禁止 V1/V2/Legacy 类型、双 reader、optional record 或无退出条件的兼容分支。未经用户明确要求，禁止自行引入多版本兼容、历史 reader、迁移器、兼容窗口或为未来兼容预留内部格式版本门禁；即使未来发布也不得推定获得兼容设计授权。用户明确要求后，仍须先经 OpenSpec 批准具体范围和退出条件。
 - 构造、getter、序列化和 UI render 中不得执行网络、磁盘、进程或数据库操作。
 - 所有 `New*` 必须是纯内存构造，不得打开、创建、修复外部资源或启动隐藏 goroutine；对应行为使用 `Open`、`Load`、`Create`、`Start`、`Run` 等显式生命周期动词。
 - 接口保持小而稳定，优先组合与依赖倒置；只有语义和生命周期一致的逻辑才能共享。
@@ -84,8 +84,8 @@ explore -> propose -> review/confirm -> apply -> verify -> archive
 - 工具参数完整并进入 ToolCallReady 后才能产生副作用；每次调用具有唯一 call ID 和幂等 ledger。
 - 并发执行结果仍按模型调用顺序提交，保持 tool call/output pairing；文件、命令和网络操作必须经过权限、路径和 sandbox capability。
 - 大输出必须截断，完整内容按策略保存为 artifact。
-- JSONL 是 Session 事实源，SQLite 只是可重建索引；Session envelope 保留单一当前 canary，headless 外部 JSONL 独立版本化，二者不得混为一套协议。
-- 稳定发布前直接替换唯一 `testdata/current` fixture，旧开发 shape fail closed 且不保留兼容 reader；稳定发布后首次引入真实 schema/payload revision 时，必须提交不可变历史 fixture、兼容窗口和到当前 replay model 的迁移回归，禁止在 resume 时原地重写既有 append-only records。
+- JSONL 是 Session 事实源，SQLite 只是可重建索引；Session/native/checkpoint envelope 只保留唯一当前结构，不含 schema_version、payload_version、canary 或同义版本标记，headless 外部 JSONL 独立版本化，二者不得混为一套协议。压缩来源不得保存固定 prompt revision；Catalog 不设置或校验 user_version，只验证实际结构与完整性。
+- 当前没有存量用户或业务数据，格式调整直接修改唯一当前结构并替换 `testdata/current` fixture，不递增版本，不保留兼容 reader。只有用户明确要求多版本兼容后，才另经 OpenSpec 定义历史 fixture、迁移与退出条件；禁止在 resume 时原地重写既有 append-only records。
 - 每个活动 thread 的单 writer 指跨 goroutine、跨 Repository 实例和跨进程独占；exclusive lease 必须先于 load/repair 获得并保持到 writer 完成 Sync 和关闭，禁止 load/reopen 无锁窗口。
 - Session 写入保持 append-only、单调 seq，并能修复尾部半行；flush 不代表 durable success，恢复或副作用前置事实只有在成功 Sync 后才能确认。
 - durable 操作必须定义取消线性化点：接收前取消不得产生副作用；接收后必须返回确定提交结果，无法确认时进入 poisoned 状态。
@@ -112,9 +112,9 @@ explore -> propose -> review/confirm -> apply -> verify -> archive
 ## 7. 测试与完成标准
 
 - 每次逻辑变更必须补测试：纯逻辑用单测，跨模块/I/O 用集成测试，Bug 修复用回归测试。
-- Provider request/stream 使用 golden/fixture；SSE 覆盖随机 chunk、半包、UTF-8、取消和断线；TUI 使用固定尺寸 snapshot；Session 覆盖迁移和损坏恢复；Tool 覆盖拒绝、取消、重放和幂等。
+- Provider request/stream 使用 golden/fixture；SSE 覆盖随机 chunk、半包、UTF-8、取消和断线；TUI 使用固定尺寸 snapshot；Session 覆盖当前格式校验和损坏恢复；只有用户明确要求迁移时才增加迁移测试；Tool 覆盖拒绝、取消、重放和幂等。
 - Session 并发测试必须包含真实子进程的 lease 竞争、崩溃释放、占用期间禁止 repair、续写 seq 单调和失败路径 journal bytes 不变。
-- Session 当前 fixture 必须逐字节固定且不得在测试运行时由当前 encoder 生成；稳定发布后若引入真实 migration fixture，同样必须使用仓库内不可变历史 bytes。
+- Session 当前 fixture 必须逐字节固定且不得在测试运行时由当前 encoder 生成；用户明确要求并批准 migration fixture 后，同样必须使用仓库内不可变历史 bytes。
 - symlink/TOCTOU、Sync 失败、阻塞 stream 和 shutdown timeout 必须使用确定性故障注入，禁止依赖 sleep 或概率竞态证明正确性。
 - 禁止通过删除、跳过、弱化测试或编写无业务断言的测试掩盖失败；单测不得使用真实 API key 或默认访问外网。
 - 完成前必须执行 `make verify`，其范围不得弱于 gofmt、go vet、Staticcheck、架构边界测试、全量测试和 race test；pre-commit 必须执行同一质量门。仅通过语言工具和单测不能替代 AGENTS/OpenSpec 契约检查。

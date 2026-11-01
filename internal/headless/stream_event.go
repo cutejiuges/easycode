@@ -296,6 +296,9 @@ func validateStreamEvent(event StreamEvent) error {
 		if err := validateCompactionWire(value.Version, value.Type, "compaction.started", value.RequestID, value.SessionID, value.ThreadID, value.CompactionID); err != nil {
 			return err
 		}
+		if err := value.Scope.Validate(); err != nil {
+			return err
+		}
 		if value.ContextRevision == 0 {
 			return fmt.Errorf("compaction context revision is invalid")
 		}

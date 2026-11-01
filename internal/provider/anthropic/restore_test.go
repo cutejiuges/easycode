@@ -224,7 +224,7 @@ func TestRestoreConversationRejectsEntireHistoryOnOneBadCommit(t *testing.T) {
 	}
 	for _, replacement := range []string{`"known":null`, `"Known":false`, `"known":false,"known":true`} {
 		payload := strings.Replace(string(valid.Payload()), `"known":false`, replacement, 1)
-		invalid, err := provider.NewNativeCommitEnvelope(valid.Family(), valid.Wire(), valid.PayloadVersion(), []byte(payload))
+		invalid, err := provider.NewNativeCommitEnvelope(valid.Family(), valid.Wire(), []byte(payload))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -237,8 +237,7 @@ func TestRestoreConversationRejectsEntireHistoryOnOneBadCommit(t *testing.T) {
 		}
 	}
 	bad, err := provider.NewNativeCommitEnvelope(
-		domain.ProviderAnthropic, messagesWire, 1,
-		json.RawMessage(`{"kind":"sample","input":{"role":"assistant","content":[]},"assistant":{"role":"assistant","content":[]},"metadata":{"id":"msg-2","model":"claude-test","stop_reason":{"known":false},"usage":{"input_tokens":{"known":false},"cache_creation_input_tokens":{"known":false},"cache_read_input_tokens":{"known":false},"output_tokens":{"known":false}}}}`),
+		domain.ProviderAnthropic, messagesWire, json.RawMessage(`{"kind":"sample","input":{"role":"assistant","content":[]},"assistant":{"role":"assistant","content":[]},"metadata":{"id":"msg-2","model":"claude-test","stop_reason":{"known":false},"usage":{"input_tokens":{"known":false},"cache_creation_input_tokens":{"known":false},"cache_read_input_tokens":{"known":false},"output_tokens":{"known":false}}}}`),
 	)
 	if err != nil {
 		t.Fatal(err)

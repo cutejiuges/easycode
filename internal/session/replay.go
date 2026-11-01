@@ -317,8 +317,11 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 
 		switch batch[0].EventKind {
 		case EventCompactionStarted, EventCompactionCompleted, EventCompactionFailed:
-			if err := compaction.accept(&plan, batch, active != nil); err != nil {
+			if err := compaction.accept(&plan, batch, active); err != nil {
 				return ReplayPlan{}, err
+			}
+			if active != nil {
+				active.lastSequence = batch[0].Sequence
 			}
 			continue
 		}
@@ -421,6 +424,7 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 }
 
 type activeReplayTurn struct {
+	autoCompactedSample  bool
 	initialInputs        bool
 	inputAtSample        bool
 	turnID               domain.TurnID
@@ -493,6 +497,7 @@ func acceptSampleBatch(plan *ReplayPlan, active *activeReplayTurn, batch []Recor
 	active.toolOutputsCommitted = false
 	active.nextSampleIndex++
 	active.inputAtSample = false
+	active.autoCompactedSample = false
 	active.lastSequence = batch[len(batch)-1].Sequence
 	return false, nil
 }

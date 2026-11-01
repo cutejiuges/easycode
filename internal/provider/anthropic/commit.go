@@ -12,8 +12,7 @@ import (
 )
 
 const (
-	messagesWire                = "messages"
-	nativeCommitPayloadRevision = 3
+	messagesWire = "messages"
 )
 
 type nativeHistoryCommit struct {
@@ -71,12 +70,11 @@ func encodeNativeCommit(entry nativeHistoryEntry) (provider.NativeCommitEnvelope
 	if len(payload) > provider.MaxNativeCommitBytes {
 		return provider.NativeCommitEnvelope{}, fmt.Errorf("anthropic native commit exceeds size limit")
 	}
-	return provider.NewNativeCommitEnvelope(domain.ProviderAnthropic, messagesWire, nativeCommitPayloadRevision, payload)
+	return provider.NewNativeCommitEnvelope(domain.ProviderAnthropic, messagesWire, payload)
 }
 
 func decodeNativeCommit(envelope provider.NativeCommitEnvelope) (nativeHistoryEntry, error) {
-	if envelope.Family() != domain.ProviderAnthropic || envelope.Wire() != messagesWire ||
-		envelope.PayloadVersion() != nativeCommitPayloadRevision {
+	if envelope.Family() != domain.ProviderAnthropic || envelope.Wire() != messagesWire {
 		return nativeHistoryEntry{}, fmt.Errorf("anthropic native commit boundary is incompatible")
 	}
 	payload := envelope.Payload()

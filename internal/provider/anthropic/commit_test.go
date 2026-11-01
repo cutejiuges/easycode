@@ -80,20 +80,19 @@ func TestNativeCommitRejectsIncompatibleAndCorruptPayloads(t *testing.T) {
 		name    string
 		family  domain.ProviderFamily
 		wire    string
-		version int
 		payload json.RawMessage
 	}{
-		{name: "family", family: domain.ProviderOpenAI, wire: messagesWire, version: 2, payload: validPayload},
-		{name: "wire", family: domain.ProviderAnthropic, wire: "completions", version: 2, payload: validPayload},
-		{name: "revision", family: domain.ProviderAnthropic, wire: messagesWire, version: 1, payload: validPayload},
-		{name: "kind", family: domain.ProviderAnthropic, wire: messagesWire, version: 2, payload: bytes.Replace(validPayload, []byte(`"sample"`), []byte(`"future"`), 1)},
-		{name: "role", family: domain.ProviderAnthropic, wire: messagesWire, version: 2, payload: bytes.Replace(validPayload, []byte(`"role":"assistant"`), []byte(`"role":"user"`), 1)},
-		{name: "unknown outer", family: domain.ProviderAnthropic, wire: messagesWire, version: 2, payload: bytes.Replace(validPayload, []byte(`{"kind"`), []byte(`{"future":true,"kind"`), 1)},
+		{name: "family", family: domain.ProviderOpenAI, wire: messagesWire, payload: validPayload},
+		{name: "wire", family: domain.ProviderAnthropic, wire: "completions", payload: validPayload},
+		{name: "unexpected version field", family: domain.ProviderAnthropic, wire: messagesWire, payload: append([]byte(`{"payload_version":3,`), validPayload[1:]...)},
+		{name: "kind", family: domain.ProviderAnthropic, wire: messagesWire, payload: bytes.Replace(validPayload, []byte(`"sample"`), []byte(`"future"`), 1)},
+		{name: "role", family: domain.ProviderAnthropic, wire: messagesWire, payload: bytes.Replace(validPayload, []byte(`"role":"assistant"`), []byte(`"role":"user"`), 1)},
+		{name: "unknown outer", family: domain.ProviderAnthropic, wire: messagesWire, payload: bytes.Replace(validPayload, []byte(`{"kind"`), []byte(`{"future":true,"kind"`), 1)},
 	}
 	for _, fixture := range fixtures {
 		fixture := fixture
 		t.Run(fixture.name, func(t *testing.T) {
-			envelope, err := provider.NewNativeCommitEnvelope(fixture.family, fixture.wire, fixture.version, fixture.payload)
+			envelope, err := provider.NewNativeCommitEnvelope(fixture.family, fixture.wire, fixture.payload)
 			if err != nil {
 				t.Fatal(err)
 			}

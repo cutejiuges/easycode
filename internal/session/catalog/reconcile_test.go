@@ -109,7 +109,7 @@ func TestReconcileLeavesRecoverableTailForValidatedResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := file.WriteString(`{"schema_version":1`); err != nil {
+	if _, err := file.WriteString(`{"seq":1`); err != nil {
 		_ = file.Close()
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestReconcileLeavesRecoverableTailForValidatedResume(t *testing.T) {
 		t.Fatalf("repair report = %#v, %v", report, err)
 	}
 	after, err := os.ReadFile(path)
-	if err != nil || !bytes.Equal(after, append(append([]byte(nil), committed...), []byte(`{"schema_version":1`)...)) {
+	if err != nil || !bytes.Equal(after, append(append([]byte(nil), committed...), []byte(`{"seq":1`)...)) {
 		t.Fatalf("repaired bytes differ: %v", err)
 	}
 	entry, found, err := instance.LatestCompatible(context.Background(), Selector{

@@ -7,10 +7,11 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"easycode/internal/domain"
-	"easycode/internal/protocol"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
+
+	"easycode/internal/domain"
+	"easycode/internal/protocol"
 )
 
 type contextSession interface {
@@ -76,6 +77,9 @@ func (model Model) submitContextCommand(command localContextCommand) (tea.Model,
 }
 
 func (model Model) cancelActiveCompaction() tea.Cmd {
+	if model.activeTurnID.Valid() {
+		return interruptSession(model.session)
+	}
 	target, ok := model.session.(contextSession)
 	if !ok {
 		return nil
@@ -134,6 +138,14 @@ func (model Model) projectContextEvent(event protocol.Event) (tea.Model, tea.Cmd
 		}
 		model.contextPanel = &payload
 	case protocol.EventCompactionStarted:
+		payload, err := protocol.DecodeCompactionStarted(event)
+		if err != nil {
+			model.errorSummary = "stream_protocol_error: invalid compaction start"
+			return model, nil
+		}
+		if payload.Scope.Trigger == domain.CompactionAuto && event.TurnID == model.activeTurnID && model.activeCompactionID == "" {
+			model.activeCompactionID = event.CompactionID
+		}
 		if event.CompactionID != model.activeCompactionID {
 			return model, nil
 		}
@@ -192,7 +204,14 @@ func (model Model) renderContextPanel() string {
 	} else {
 		lines = append(lines, "Context window not configured")
 	}
-	lines = append(lines, "Budget: "+payload.BudgetState, "Esc: close")
+	auto := "Auto compact: " + payload.AutoCompactionState
+	if payload.AutoCompactionReason != "" {
+		auto += " (" + payload.AutoCompactionReason + ")"
+	}
+	if payload.AutoCompactionThreshold != nil {
+		auto += fmt.Sprintf(" at %d tokens", *payload.AutoCompactionThreshold)
+	}
+	lines = append(lines, auto, "Budget: "+payload.BudgetState, "Esc: close")
 	width, height := max(1, model.widthOrDefault()), max(1, model.heightOrDefault())
 	rendered := make([]string, 0, height)
 	for _, line := range lines {

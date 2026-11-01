@@ -10,12 +10,12 @@ import (
 
 func compactionFixture(t *testing.T) (CheckpointEnvelope, domain.ActiveContextView, domain.NativeHistoryFootprint, domain.SampleUsage) {
 	t.Helper()
-	source, err := NewCompactionSource(domain.ProviderOpenAI, "responses", "model", 2, 2, RootCompactionPredecessor(), strings.Repeat("a", 64), CompactionPromptRevision)
+	source, err := NewCompactionSource(domain.ProviderOpenAI, "responses", "model", 2, 2, RootCompactionPredecessor(), strings.Repeat("a", 64))
 	if err != nil {
 		t.Fatal(err)
 	}
 	summary, _ := domain.NewContextSummary("completed work and next task")
-	checkpoint, err := NewCheckpointEnvelope("01900000-0000-7000-8000-000000000001", source, 3, []byte(`{"summary":"native"}`))
+	checkpoint, err := NewCheckpointEnvelope(domain.ManualCompactionScope(), "01900000-0000-7000-8000-000000000001", source, []byte(`{"summary":"native"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,21 +109,21 @@ func TestPreparedCompactionRejectsSourceMismatchAndZero(t *testing.T) {
 		t.Fatal("resolved candidate reused")
 	}
 	source := checkpoint.Source()
-	if _, err := NewCompactionSource(source.Family(), source.Wire(), source.Model(), 2, 2, CompactionPredecessor{}, source.Digest(), source.PromptRevision()); err == nil {
+	if _, err := NewCompactionSource(source.Family(), source.Wire(), source.Model(), 2, 2, CompactionPredecessor{}, source.Digest()); err == nil {
 		t.Fatal("implicit root accepted")
 	}
 	predecessor, _ := AfterCompactionCheckpoint(checkpoint.ID())
-	if _, err := NewCompactionSource(source.Family(), source.Wire(), source.Model(), 2, 2, predecessor, source.Digest(), source.PromptRevision()); err == nil {
+	if _, err := NewCompactionSource(source.Family(), source.Wire(), source.Model(), 2, 2, predecessor, source.Digest()); err == nil {
 		t.Fatal("checkpoint without advanced revision accepted")
 	}
-	if _, err := NewCompactionSource(source.Family(), source.Wire(), source.Model(), 2, 3, RootCompactionPredecessor(), source.Digest(), source.PromptRevision()); err == nil {
+	if _, err := NewCompactionSource(source.Family(), source.Wire(), source.Model(), 2, 3, RootCompactionPredecessor(), source.Digest()); err == nil {
 		t.Fatal("root with advanced revision accepted")
 	}
 }
 
 func testCompactionUsage(t *testing.T) NativeCommitEnvelope {
 	t.Helper()
-	envelope, err := NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", 3, []byte(`{"usage":"fixture"}`))
+	envelope, err := NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", []byte(`{"usage":"fixture"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,11 +144,11 @@ func TestCheckpointCodecStrictAndIndependent(t *testing.T) {
 		t.Fatal("checkpoint codec changed identity or bytes")
 	}
 	for _, bad := range []string{
-		strings.Replace(string(encoded), `"payload_version":3`, `"payload_version":null`, 1),
+		strings.Replace(string(encoded), `"scope":`, `"payload_version":3,"scope":`, 1),
 		strings.Replace(string(encoded), `"root":true`, `"root":true,"checkpoint_id":"01900000-0000-7000-8000-000000000009"`, 1),
 		strings.Replace(string(encoded), `"root":true`, `"root":false`, 1),
 		strings.Replace(string(encoded), `"context_revision":2`, `"context_revision":2,"context_revision":3`, 1),
-		strings.Replace(string(encoded), `"prompt_revision":"context-summary-v1"`, `"prompt_revision":"unknown"`, 1),
+		strings.Replace(string(encoded), `"context_revision":2`, `"prompt_revision":"context-summary-v1","context_revision":2`, 1),
 		strings.Replace(string(encoded), `"committed_revision":2`, `"committed_revision":3`, 1),
 		strings.TrimSuffix(string(encoded), "}") + `,"unknown":true}`,
 	} {

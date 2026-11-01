@@ -30,7 +30,7 @@
 - 影响范围：上线前 codec、prepared commit、TUI/一次性 headless 与 Patch 执行链。
 - 根因：默认 Sonic codec 可被全局替换；分散 decoder 接受部分 null/重复字段；TUI 满 buffer 阻塞分发，资源关闭等待另一个空闲 facade；Patch 在批准 Sync 前安装 grant，started 绕过取消且非法结果被降级为普通 error。
 - 修复：固定 codec 配置并集中严格检查，删除 prepared 简化入口；宿主统一 AgentLoop，detach 后排空并 join，transport 取消活动流；独占工具共用 durable admission 和 uncertain 收口。
-- 架构与缓存影响：未新增兼容 reader 或持久化 shape，合法 canonical bytes、checksum 与 fingerprint 不变，真实 canary 和 native revision 分别保留。
+- 架构与缓存影响：未新增兼容 reader 或持久化 shape，合法 canonical bytes、checksum 与 fingerprint 不变，内容 revision 与外部 headless 协议保留。
 - 回归：`internal/codec/global_isolation_test.go`、`internal/codec/validation_test.go`、`internal/provider/prepared_lifecycle_test.go`、`internal/runtime/session_owner_test.go`、`internal/runtime/current_contract_test.go`、`internal/provider/transport/close_test.go`、`internal/app/host_lease_test.go`、`internal/architecture/current_contract_test.go`。
 
 > 本文记录实际开发中已经发生的问题、根因和防回归措施。  
@@ -265,7 +265,7 @@
 - 现象：Claude Code 的 transcript 会混合用户/assistant/tool/progress 等消息，Codex rollout 则记录 response item、event 和上下文；二者都包含工具相关事实，但记录边界、恢复来源和宿主事件并不相同。直接照搬任一 JSONL 形状会把 Provider wire、运行时展示和副作用事实耦合。
 - 触发条件：在工具尚未实现时先设计 Session schema，并要求未来无损承接 thinking、tool use 和 MCP call。
 - 根因：把“JSONL 是容器”误当成“所有事件共享同一语义”。Provider native history、工具幂等 ledger 和 RuntimeEvent 实际具有不同提交时机与恢复责任。
-- 架构影响：公共 envelope 只负责当前 canary、顺序、批次、归属与完整性；`provider_native_commit` payload 由对应 Provider 私有解码。当前 kinds 除会话与文本回合事实外，已包含 `tool_call_ready`、`tool_execution_started` 和 `tool_call_result`；未来 permission、hook、subagent、cache 使用独立强类型 kind，展示事实不得通过 optional record 绕过完整恢复校验。
+- 架构影响：公共 envelope 只负责当前结构、顺序、批次、归属与完整性；`provider_native_commit` payload 由对应 Provider 私有解码。当前 kinds 除会话与文本回合事实外，已包含 `tool_call_ready`、`tool_execution_started` 和 `tool_call_result`；未来 permission、hook、subagent、cache 使用独立强类型 kind，展示事实不得通过 optional record 绕过完整恢复校验。
 - 缓存影响：Session envelope 和动态路径不参与 Provider 请求 canonical bytes；恢复后的请求字节必须与未退出进程的下一轮一致。
 - 修复方案：OpenAI 保存 user input item 与有序 output items，Anthropic 保存 user/assistant message、metadata 与 usage presence；共享层只传递 opaque envelope。Read tool result 已在副作用 durable 后作为下一次请求的 input-only native 增量提交，不重复 assistant tool call；MCP call 未来复用工具事实边界，但其 manifest/capability 另行版本化。
 - 未采用方案及原因：未将 tool/thinking/MCP 预先塞入通用 `map[string]any`，也未以 UI transcript 反向构造 Provider 请求；这些做法无法保证类型、幂等和 opaque reasoning 无损。
@@ -280,7 +280,7 @@
 - 现象：只校验每行 JSON 可解析，仍可能接受换序、跨线程混写、未知 required 记录、半个成功提交或完整 JSON 但未写完的尾批次。
 - 触发条件：进程在多行 commit 中途退出、文件尾部半行、人工修改、磁盘错误或错误版本的 reader 打开新 schema。
 - 根因：单行 checksum 不能表达多记录原子边界，也不能判断一组记录能否形成可恢复的 Provider 历史。
-- 架构影响：Loader 第一层严格验证单一当前 schema/payload canary、canonical UUIDv7/UTC、checksum、文件归属和单调 seq；第二层只向 ReplayPlanner 暴露完整连续 batch；第三层由 Provider 事务式解码全部 native commits，任一错误都不返回部分历史。
+- 架构影响：Loader 第一层严格验证单一当前字段结构、canonical UUIDv7/UTC、checksum、文件归属和单调 seq；第二层只向 ReplayPlanner 暴露完整连续 batch；第三层由 Provider 事务式解码全部 native commits，任一错误都不返回部分历史。
 - 缓存影响：阻止损坏历史生成看似合法但字节不同的续写请求。
 - 修复方案：只允许修复 EOF 尾部半行和最后一个未完成 batch，修复后截断并 `Sync`；中段损坏、完整但校验失败的末行、未知 required 版本全部硬失败。若完整日志以未闭合 turn 结束，恢复先追加 `turn_failed(code=session_interrupted)` 补偿记录，再开始新 turn。
 - 未采用方案及原因：不跳过坏行继续扫描，不自动猜测未知 required payload，也不把尾批次中的部分 native commit 交给 Provider。
@@ -395,7 +395,7 @@
 
 ### [P2][2026-09-30] 会话发现不能把文件属性或派生数据库当作事实
 
-- 状态：已解决当前 Catalog v1 与 `--continue` 切片
+- 状态：已解决当前 Catalog 与 `--continue` 切片
 - 影响版本或提交：OpenSpec `add-rebuildable-session-catalog`
 - 现象：若直接按 journal mtime 排序、字符串读取 head/tail 提取 metadata，或把 SQLite row 当成可恢复历史，外部触碰文件、半写 batch、未知 required revision 和陈旧索引都可能让应用选择错误会话。
 - 触发条件：实现最近会话发现、删除后索引重建、活动 writer 协调或选择后恢复时绕过 Loader/ReplayPlanner。
@@ -460,10 +460,10 @@
 - 现象：固定 `Version()`、Tool input/result revision、Session required/optional registry 和按版本 fixture 同时存在时，每次契约调整都要求维护并未发布的旧 reader，调用方也会开始按版本分支。
 - 触发条件：把尚无用户的开发 fixture 当成已发布兼容承诺，或把内容 fingerprint、外部 wire version 与进程内固定版本混为一谈。
 - 根因：没有区分发布边界的 canary/外部协议和进程内单一当前强类型值，也没有为兼容代码设定进入条件与退出条件。
-- 架构影响：进程内 Command/Event/ContextPlan 不携带固定版本；Tool catalog 只使用内容 fingerprint；Session 只保留唯一当前 canary 与按 kind 的唯一 decoder。Provider native payload、headless JSONL v1 和 SQLite `user_version` 仍是明确边界，不受此规则误伤。
+- 架构影响：进程内 Command/Event/ContextPlan 不携带固定版本；Tool catalog 只使用内容 fingerprint；Session/native/checkpoint 只保留唯一当前结构与按 kind 的唯一 decoder。headless JSONL v1 保留外部协议；Catalog 按结构校验，不依赖 `user_version`。
 - 缓存影响：删除虚构 revision 后，Tool segment 只由排序后的 facade 名称、描述与 canonical schema bytes 失效，动态 Session/cwd/time 不进入稳定前缀。
 - 修复方案：直接替换 `testdata/current`，旧开发 shape 在 repair/恢复前失败关闭，并增加 AST/fixture 目录架构守卫禁止 V1/V2/Legacy、optional API 和 version 参数 registry 回流。
-- 未采用方案及原因：不保留旧 reader、migration graph 或 feature flag，因为当前没有已发布数据需要兼容；也不删除 Provider/Session/headless/SQLite 的真实边界 canary。
+- 未采用方案及原因：不保留旧 reader、migration graph 或 feature flag，因为当前没有已发布数据需要兼容；保留外部 headless 协议与实际内容身份，不以持久化边界为理由预埋格式版本。
 - 回归测试：`internal/architecture/architecture_test.go`、`internal/session/current_fixture_test.go`、`internal/headless/*_test.go`、双 Provider restore tests。
 - 关联 ADR/Issue/PR：OpenSpec `add-search-tools-and-ordered-parallelism`；这是发布前演进规则，不新增长期 ADR。
 - 后续行动：稳定发布后首次需要破坏性 revision 时，必须先通过 OpenSpec 明确不可变历史 fixture、兼容窗口、迁移方向和删除条件。
@@ -727,3 +727,29 @@
 - 处理：独立摘要 consumer 拒绝 refusal/incomplete/工具调用；候选先检查缩减与预算，completed Sync 后复用 prepared finalize。summary-native 包装进入窗口，生成 reasoning/raw usage 仅留作 provenance；完整 transcript 不切除。
 - 回归：双 Provider `compaction_stream_test.go`、`compaction_test.go`、`steering_test.go`；`internal/runtime/compaction_test.go`；`internal/app/compaction_fixture_test.go` 与 `compaction_headless_test.go`。
 - 取消：120 秒期限使用可控注入验证；shutdown 超时仍等待唯一 cleanup owner。输出断管通过下一次写失败观测，不把 stdin EOF 当作操作取消。
+
+
+### [P4][2026-11-01] 自动摘要属于采样准备，不能与输入候选争用 pending 状态
+
+- 影响变更：`add-threshold-auto-compaction`。
+- 根因：两家 Provider 都拒绝 pending 候选时进行摘要；分别在工具输出和输入预检处触发还可能对同一 sample 重复压缩。Session 旧语法也拒绝一切活动 turn 内摘要。
+- 处理：由同一 turn worker 冻结 claim，丢弃候选后摘要，再重建同 InputID/正文；每目标 sample 一次额度。Replay 验证初始提交前或完整工具 outputs 后的 scope，成功 Sync 后切窗且取消不回滚。
+- 失败：摘要失败与普通任务失败分别投影；确定收口后旧窗口仍可请求才继续。相同来源抑制之外，连续失败必须跨 revision 累积，否则每轮新输入会绕过熔断。任务最终失败后 queued auto 必须返还，不能被启动成下一任务。
+- 缓存：checkpoint scope 决定自动接续包装，恢复校验同一包装；native 原生 item 顺序、opaque reasoning 与稳定目录不转换。
+- 回归：`internal/runtime/auto_compaction_test.go`、`internal/app/auto_compaction_test.go`、双 Provider `compaction_test.go`/`compaction_stream_test.go`、`internal/app/compaction_fixture_test.go`、`internal/session/compaction_process_test.go`。固定 fixture 在测试外更新，不能在测试中用当前 encoder 生成事实源。
+
+
+### [P2][2026-11-01] 唯一当前格式不需要版本门禁
+
+- 用户明确要求：Session 不存在格式版本字段，未经明确指示不得自行设计多版本兼容。将版本从 8 改回 7 仍保留了错误机制。
+- 处理：删除 Session 版本常量、信封/checksum 字段、构造赋值和 decoder 门禁，不以 canary 或 revision 换名保留。严格结构、checksum 与 replay 校验继续承担正确性保证。
+- 回归：`internal/session/codec_test.go` 固定无版本 canonical bytes 并拒绝非法附加版本字段；`internal/architecture/current_contract_test.go` 阻止版本标记回流；全量恢复、损坏、lease 与双 Provider 请求等价测试沿用唯一当前 fixture。
+
+
+## 全工程内部版本门禁清理（2026-11-01）
+
+- 问题：移除 Session 外层版本后，native/checkpoint 仍有 payload_version=3，压缩来源有固定 prompt_revision，Catalog 仍按 user_version 判断重建；三者没有实际兼容需求。
+- 处理：删除字段、常量、构造参数与相等性门禁，替换唯一 current fixture。以非法附加版本字段、原生配对、来源 digest/前驱/实际窗口计数验证拒绝路径；Catalog 按完整性、实际字段和索引重建。
+- 验证：双 Provider restore/compaction 测试继续对比 canonical request、原生顺序和 fingerprint；Catalog 回归证明无关 user_version 不清空已有投影，错误表结构仍重建；架构守卫覆盖版本字段/常量和 Catalog PRAGMA 回流。
+- 保留依据：headless JSONL 是已声明的外部机器协议；Anthropic header 和 sandbox profile version 属于外部语法；应用版本与 UUIDv7 有各自消费者。内容 revisions、fingerprint、估算方法和缓存来源/renderer 标识用于缓存定位与失效，不选择历史 decoder；resume 配置匹配保障 Provider/model/目录边界。
+- 规约：无用户明确要求不得自行增加多版本兼容、迁移或内部格式版本门禁；跨磁盘、跨进程或发布本身均不构成需求。

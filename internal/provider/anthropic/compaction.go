@@ -54,7 +54,7 @@ func (conversation *Conversation) compactionSource() (provider.CompactionSource,
 		return provider.CompactionSource{}, err
 	}
 	digest := sha256.Sum256(canonical.Bytes())
-	return provider.NewCompactionSource(domain.ProviderAnthropic, messagesWire, conversation.provider.config.Model, revision, revision+count, predecessor, hex.EncodeToString(digest[:]), provider.CompactionPromptRevision)
+	return provider.NewCompactionSource(domain.ProviderAnthropic, messagesWire, conversation.provider.config.Model, revision, revision+count, predecessor, hex.EncodeToString(digest[:]))
 }
 
 func (conversation *Conversation) compileCompactionRequest(input provider.CompactionInput) (codec.CanonicalJSON, error) {
@@ -147,7 +147,7 @@ func (conversation *Conversation) RunCompaction(ctx context.Context, id domain.C
 			return nil, compactionNetworkError(ctx)
 		}
 		generation := nativeHistoryEntry{Kind: nativeHistorySample, Assistant: reducer.assistantMessage(), Metadata: reducer.messageMetadata()}
-		return conversation.prepareCheckpoint(id, source, generation)
+		return conversation.prepareCheckpoint(preview.Input().Scope(), id, source, generation)
 	}
 	return nil, compactionNetworkError(ctx)
 }
@@ -183,7 +183,7 @@ func compactionSummary(generation nativeHistoryEntry) (domain.ContextSummary, er
 	return summary, nil
 }
 
-func (conversation *Conversation) prepareCheckpoint(id domain.CompactionID, source provider.CompactionSource, generation nativeHistoryEntry) (*provider.PreparedCompaction, error) {
+func (conversation *Conversation) prepareCheckpoint(scope domain.CompactionScope, id domain.CompactionID, source provider.CompactionSource, generation nativeHistoryEntry) (*provider.PreparedCompaction, error) {
 	summary, err := compactionSummary(generation)
 	if err != nil {
 		return nil, err
@@ -192,12 +192,12 @@ func (conversation *Conversation) prepareCheckpoint(id domain.CompactionID, sour
 	if err != nil {
 		return nil, err
 	}
-	native := newUserMessage(provider.WrapContextSummary(summary))
+	native := newUserMessage(provider.WrapScopedContextSummary(summary, scope))
 	payload, err := codec.MarshalStable(checkpointPayload{Summary: native, Generation: encoded.Payload()})
 	if err != nil {
 		return nil, err
 	}
-	checkpoint, err := provider.NewCheckpointEnvelope(id, source, nativeCommitPayloadRevision, payload)
+	checkpoint, err := provider.NewCheckpointEnvelope(scope, id, source, payload)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +222,7 @@ func (conversation *Conversation) prepareCheckpoint(id domain.CompactionID, sour
 	if err != nil {
 		return nil, err
 	}
-	provenance, err := provider.NewNativeCommitEnvelope(source.Family(), source.Wire(), nativeCommitPayloadRevision, usageBytes)
+	provenance, err := provider.NewNativeCommitEnvelope(source.Family(), source.Wire(), usageBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -248,14 +248,14 @@ func (history *nativeHistory) installCheckpoint(checkpoint provider.CheckpointEn
 }
 
 func decodeCheckpoint(checkpoint provider.CheckpointEnvelope) (nativeHistoryEntry, domain.ContextSummary, error) {
-	if checkpoint.Source().Family() != domain.ProviderAnthropic || checkpoint.Source().Wire() != messagesWire || checkpoint.PayloadVersion() != nativeCommitPayloadRevision {
+	if checkpoint.Source().Family() != domain.ProviderAnthropic || checkpoint.Source().Wire() != messagesWire {
 		return nativeHistoryEntry{}, domain.ContextSummary{}, fmt.Errorf("checkpoint boundary is incompatible")
 	}
 	var payload checkpointPayload
 	if err := codec.UnmarshalRecord(checkpoint.Payload(), &payload); err != nil {
 		return nativeHistoryEntry{}, domain.ContextSummary{}, fmt.Errorf("checkpoint payload is invalid")
 	}
-	envelope, err := provider.NewNativeCommitEnvelope(domain.ProviderAnthropic, messagesWire, nativeCommitPayloadRevision, payload.Generation)
+	envelope, err := provider.NewNativeCommitEnvelope(domain.ProviderAnthropic, messagesWire, payload.Generation)
 	if err != nil {
 		return nativeHistoryEntry{}, domain.ContextSummary{}, err
 	}
@@ -267,7 +267,7 @@ func decodeCheckpoint(checkpoint provider.CheckpointEnvelope) (nativeHistoryEntr
 	if err != nil {
 		return nativeHistoryEntry{}, domain.ContextSummary{}, fmt.Errorf("checkpoint summary does not match generation")
 	}
-	expected, _ := codec.MarshalCanonical(newUserMessage(provider.WrapContextSummary(summary)), provider.MaxNativeCommitBytes)
+	expected, _ := codec.MarshalCanonical(newUserMessage(provider.WrapScopedContextSummary(summary, checkpoint.Scope())), provider.MaxNativeCommitBytes)
 	actual, err := codec.MarshalCanonical(payload.Summary, provider.MaxNativeCommitBytes)
 	if err != nil || string(expected.Bytes()) != string(actual.Bytes()) {
 		return nativeHistoryEntry{}, domain.ContextSummary{}, fmt.Errorf("checkpoint native summary is invalid")
@@ -277,7 +277,7 @@ func decodeCheckpoint(checkpoint provider.CheckpointEnvelope) (nativeHistoryEntr
 
 // ValidateCompactionUsage 验证失败计量的 raw facts 与归一化值一致。
 func (instance *Provider) ValidateCompactionUsage(envelope provider.NativeCommitEnvelope, expected domain.SampleUsage) error {
-	if envelope.Family() != domain.ProviderAnthropic || envelope.Wire() != messagesWire || envelope.PayloadVersion() != nativeCommitPayloadRevision || len(envelope.Payload()) > 64<<10 {
+	if envelope.Family() != domain.ProviderAnthropic || envelope.Wire() != messagesWire || len(envelope.Payload()) > 64<<10 {
 		return fmt.Errorf("compaction usage boundary is incompatible")
 	}
 	var record rawUsageCommit
@@ -315,7 +315,7 @@ func (instance *Provider) ValidateCheckpointUsage(checkpoint provider.Checkpoint
 	if err := codec.UnmarshalRecord(checkpoint.Payload(), &payload); err != nil {
 		return fmt.Errorf("checkpoint usage encoding is invalid")
 	}
-	envelope, err := provider.NewNativeCommitEnvelope(domain.ProviderAnthropic, messagesWire, nativeCommitPayloadRevision, payload.Generation)
+	envelope, err := provider.NewNativeCommitEnvelope(domain.ProviderAnthropic, messagesWire, payload.Generation)
 	if err != nil {
 		return err
 	}

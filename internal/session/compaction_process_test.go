@@ -11,7 +11,12 @@ import (
 )
 
 func TestCompactionLeaseCrashAndMonotonicRecovery(t *testing.T) {
-	fixture := readCurrentFixture(t, "compaction_completed_openai.jsonl")
+	for _, name := range []string{"compaction_completed_openai.jsonl", "auto_compaction_completed_openai.jsonl"} {
+		t.Run(name, func(t *testing.T) { testCompactionLeaseCrashAndMonotonicRecovery(t, name) })
+	}
+}
+func testCompactionLeaseCrashAndMonotonicRecovery(t *testing.T, name string) {
+	fixture := readCurrentFixture(t, name)
 	lines := bytes.Split(bytes.TrimSuffix(fixture, []byte{'\n'}), []byte{'\n'})
 	first, err := DecodeRecord(lines[0])
 	if err != nil {
@@ -72,7 +77,7 @@ func TestCompactionLeaseCrashAndMonotonicRecovery(t *testing.T) {
 	if _, err := loader.Repair(context.Background(), lease, loaded); err != nil {
 		t.Fatal(err)
 	}
-	failed, err := NewCompactionFailedDraft(CompactionFailedPayload{ID: plan.InterruptedCompaction.Started.ID, Code: protocol.CompactionFailureInterrupted, UsageState: "unavailable"})
+	failed, err := NewCompactionFailedDraft(CompactionFailedPayload{Scope: plan.InterruptedCompaction.Started.Scope, ID: plan.InterruptedCompaction.Started.ID, Code: protocol.CompactionFailureInterrupted, UsageState: "unavailable"})
 	if err != nil {
 		t.Fatal(err)
 	}

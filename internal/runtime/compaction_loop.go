@@ -30,6 +30,9 @@ func (state *agentLoopRunState) queryContext(request loopCommandRequest) {
 	payload := state.contextSnapshot
 	if state.active != nil {
 		payload.Activity = "turn"
+		if state.active.compactionID.Valid() {
+			payload.Activity = "compacting"
+		}
 	} else if state.compaction != nil {
 		payload.Activity = "compacting"
 	} else {

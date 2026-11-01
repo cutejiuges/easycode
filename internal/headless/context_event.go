@@ -19,13 +19,14 @@ type StreamContextSnapshotEvent struct {
 
 // StreamCompactionStartedEvent 表示 started 已成功 Sync。
 type StreamCompactionStartedEvent struct {
-	Version         int                 `json:"version"`
-	Type            string              `json:"type"`
-	RequestID       protocol.RequestID  `json:"request_id"`
-	SessionID       domain.SessionID    `json:"session_id"`
-	ThreadID        domain.ThreadID     `json:"thread_id"`
-	CompactionID    domain.CompactionID `json:"compaction_id"`
-	ContextRevision uint64              `json:"context_revision"`
+	Scope           domain.CompactionScope `json:"scope"`
+	Version         int                    `json:"version"`
+	Type            string                 `json:"type"`
+	RequestID       protocol.RequestID     `json:"request_id"`
+	SessionID       domain.SessionID       `json:"session_id"`
+	ThreadID        domain.ThreadID        `json:"thread_id"`
+	CompactionID    domain.CompactionID    `json:"compaction_id"`
+	ContextRevision uint64                 `json:"context_revision"`
 }
 
 // StreamCompactionCompletedEvent 不暴露摘要或原生 provenance。
@@ -72,7 +73,7 @@ func (projectorValue *StreamProjector) projectContext(item protocol.ControlItem)
 		if err != nil {
 			return nil, err
 		}
-		return StreamCompactionStartedEvent{Version: eventVersion, Type: "compaction.started", RequestID: item.RequestID(), SessionID: event.SessionID, ThreadID: event.ThreadID, CompactionID: event.CompactionID, ContextRevision: payload.ContextRevision}, nil
+		return StreamCompactionStartedEvent{Scope: payload.Scope, Version: eventVersion, Type: "compaction.started", RequestID: item.RequestID(), SessionID: event.SessionID, ThreadID: event.ThreadID, CompactionID: event.CompactionID, ContextRevision: payload.ContextRevision}, nil
 	case protocol.EventCompactionCompleted:
 		payload, err := protocol.DecodeCompactionCompleted(event)
 		if err != nil {

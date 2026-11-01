@@ -169,7 +169,7 @@ func TestExecApprovalAndAdmissionDurability(t *testing.T) {
 	if len(batches) != 3 || batches[2][0].EventKind() != session.EventToolCallResult {
 		t.Fatal("Exec result not persisted")
 	}
-	approval, err := session.DecodeToolApprovalDecidedPayload(session.Record{PayloadVersion: session.EnvelopeVersion, EventKind: session.EventToolApprovalDecided, Payload: batches[0][0].PayloadBytes()})
+	approval, err := session.DecodeToolApprovalDecidedPayload(session.Record{EventKind: session.EventToolApprovalDecided, Payload: batches[0][0].PayloadBytes()})
 	if err != nil || approval.Source != session.ApprovalSourceInteractive || approval.Metadata.Capability != tool.CapabilityExec || approval.Metadata.TimeoutMillis != 1000 {
 		t.Fatal("interactive approval source or metadata lost")
 	}
@@ -216,7 +216,7 @@ func TestExecHeadlessDenialHasNoExecution(t *testing.T) {
 	if len(batches) != 1 || len(batches[0]) != 2 || batches[0][0].EventKind() != session.EventToolApprovalDecided || batches[0][1].EventKind() != session.EventToolCallResult {
 		t.Fatal("headless denial ledger changed")
 	}
-	approval, err := session.DecodeToolApprovalDecidedPayload(session.Record{PayloadVersion: session.EnvelopeVersion, EventKind: session.EventToolApprovalDecided, Payload: batches[0][0].PayloadBytes()})
+	approval, err := session.DecodeToolApprovalDecidedPayload(session.Record{EventKind: session.EventToolApprovalDecided, Payload: batches[0][0].PayloadBytes()})
 	if err != nil || approval.Source != session.ApprovalSourceHeadless {
 		t.Fatal("headless denial source lost")
 	}

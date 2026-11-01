@@ -48,9 +48,9 @@ func TestCompactionStreamProjectionHasIndependentIdentity(t *testing.T) {
 	command, _ := protocol.NewCompactContextCommand("c", "")
 	accepted, _ := protocol.NewAcceptedCompactionResult(command, id)
 	result, _ := protocol.NewCommandResultItem(accepted)
-	started, _ := protocol.NewCompactionStarted(sessionID, threadID, id, 2)
+	started, _ := protocol.NewCompactionStarted(sessionID, threadID, id, 2, domain.ManualCompactionScope())
 	startItem, _ := protocol.NewCorrelatedContextItem("c", started)
-	failed, _ := protocol.NewCompactionFailed(sessionID, threadID, id, protocol.CompactionFailedPayload{Code: protocol.CompactionFailureCancelled, Durable: true, UsageState: "unavailable"})
+	failed, _ := protocol.NewCompactionFailed(sessionID, threadID, id, protocol.CompactionFailedPayload{Scope: domain.ManualCompactionScope(), Code: protocol.CompactionFailureCancelled, Durable: true, UsageState: "unavailable"})
 	failItem, _ := protocol.NewCorrelatedContextItem("c", failed)
 	var output bytes.Buffer
 	encoder := NewStreamEncoder(&output)
@@ -89,5 +89,42 @@ func TestContextCommandReaderUTF8Fragments(t *testing.T) {
 	}
 	if _, err := reader.ReadCommand(); err != io.EOF {
 		t.Fatal("reader did not drain")
+	}
+}
+
+func TestAutomaticCompactionWireKeepsOriginalSubmitAssociation(t *testing.T) {
+	sessionID := domain.SessionID("01900000-0000-7000-8000-000000000001")
+	threadID := domain.ThreadID("01900000-0000-7000-8000-000000000002")
+	id := domain.CompactionID("01900000-0000-7000-8000-000000000003")
+	scope, _ := domain.NewAutoCompactionScope("01900000-0000-7000-8000-000000000004", 1)
+	projector, err := NewStreamProjector(sessionID, threadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, err := protocol.NewCompactionStarted(sessionID, threadID, id, 2, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed, err := protocol.NewCompactionFailed(sessionID, threadID, id, protocol.CompactionFailedPayload{Scope: scope, Code: protocol.CompactionFailureResponse, Durable: true, UsageState: "unavailable"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	for _, event := range []protocol.Event{started, failed} {
+		item, err := protocol.NewCorrelatedContextItem("original-submit", event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wire, err := projector.Project(item)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := NewStreamEncoder(&output).Write(wire); err != nil {
+			t.Fatal(err)
+		}
+	}
+	text := output.String()
+	if strings.Count(text, `"request_id":"original-submit"`) != 2 || strings.Count(text, `"trigger":"auto"`) != 2 || strings.Contains(text, "control.response") || strings.Contains(text, "turn.failed") {
+		t.Fatal("automatic wire association lost", text)
 	}
 }

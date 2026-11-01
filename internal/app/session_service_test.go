@@ -237,7 +237,7 @@ func TestSessionServiceRejectsSupersededEnvelopeBeforeProviderRestore(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	newer, err := os.ReadFile(filepath.Join("..", "session", "testdata", "current", "superseded_envelope.jsonl"))
+	newer, err := os.ReadFile(filepath.Join("..", "session", "testdata", "current", "invalid_version_fields.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,8 +425,7 @@ func TestSessionServiceReturnsSealedToolRecoveryWithoutExternalCalls(t *testing.
 		t.Fatal(err)
 	}
 	commit, err := session.NewProviderNativeCommitDraft(turnID, session.NativeCommitPayload{
-		Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 1,
-		Payload: []byte(`{"shape":"call_sample"}`),
+		Provider: domain.ProviderOpenAI, Wire: "responses", Payload: []byte(`{"shape":"call_sample"}`),
 	})
 	if err != nil {
 		t.Fatal(err)

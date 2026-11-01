@@ -49,8 +49,7 @@ func TestSessionServiceResumeAcrossProcesses(t *testing.T) {
 		t.Fatal(err)
 	}
 	commitDraft, err := session.NewProviderNativeCommitDraft(completedTurnID, session.NativeCommitPayload{
-		Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 1,
-		Payload: []byte(`{"shape":"fixture"}`),
+		Provider: domain.ProviderOpenAI, Wire: "responses", Payload: []byte(`{"shape":"fixture"}`),
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -13,8 +13,6 @@ import (
 	"easycode/internal/domain"
 )
 
-const schemaVersion = 1
-
 const schemaSQL = `
 CREATE TABLE threads (
     thread_id TEXT PRIMARY KEY,
@@ -37,7 +35,6 @@ CREATE INDEX threads_continue_lookup ON threads (
     updated_at_ns DESC,
     thread_id DESC
 );
-PRAGMA user_version = 1;
 `
 
 // Catalog 持有一次显式 Catalog 协调所需的锁和单一 SQLite 连接。
@@ -59,7 +56,7 @@ func New(config Config) (*Catalog, error) {
 	return &Catalog{config: config}, nil
 }
 
-// Open 取得跨进程 Catalog 锁，并打开、校验或重建 schema v1。
+// Open 取得跨进程 Catalog 锁，并打开、校验或重建 schema。
 func (catalog *Catalog) Open(ctx context.Context) error {
 	if catalog == nil {
 		return fmt.Errorf("session catalog is required")
@@ -123,10 +120,6 @@ func validateSchema(db *sqlite3.Conn) error {
 	check, err := querySingleText(db, "PRAGMA quick_check")
 	if err != nil || check != "ok" {
 		return fmt.Errorf("session catalog integrity check failed")
-	}
-	version, err := querySingleInt64(db, "PRAGMA user_version")
-	if err != nil || version != schemaVersion {
-		return fmt.Errorf("session catalog schema is incompatible")
 	}
 	wantColumns := []string{
 		"thread_id", "session_id", "journal_path", "created_at_ns", "updated_at_ns",

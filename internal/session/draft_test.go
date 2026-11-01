@@ -34,7 +34,7 @@ func TestTypedDraftConstructorsSealKindAndPayload(t *testing.T) {
 		}},
 		{name: "native commit", kind: EventProviderNativeCommit, make: func() (RecordDraft, error) {
 			return NewProviderNativeCommitDraft(testTurnID, NativeCommitPayload{
-				Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 1, Payload: nativeBytes,
+				Provider: domain.ProviderOpenAI, Wire: "responses", Payload: nativeBytes,
 			})
 		}},
 		{name: "sample usage", kind: EventSampleUsage, make: func() (RecordDraft, error) {
@@ -156,8 +156,7 @@ func TestCurrentDecodersAreStrict(t *testing.T) {
 		mustDraft(t, EventThreadMeta, "", ThreadMetaPayload{Root: true}),
 		mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}),
 		mustDraft(t, EventProviderNativeCommit, testTurnID, NativeCommitPayload{
-			Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 1,
-			Payload: json.RawMessage(`{"shape":"text_sample"}`),
+			Provider: domain.ProviderOpenAI, Wire: "responses", Payload: json.RawMessage(`{"shape":"text_sample"}`),
 		}),
 		mustDraft(t, EventSampleUsage, testTurnID, testSampleUsage(t)),
 		mustToolReadyDraft(t),
@@ -169,8 +168,7 @@ func TestCurrentDecodersAreStrict(t *testing.T) {
 
 	for _, draft := range validDrafts {
 		record := Record{
-			PayloadVersion: EnvelopeVersion,
-			EventKind:      draft.EventKind(), Payload: draft.PayloadBytes(),
+			EventKind: draft.EventKind(), Payload: draft.PayloadBytes(),
 		}
 		t.Run(string(draft.EventKind()), func(t *testing.T) {
 			if err := decodeKnownRecord(record); err != nil {
@@ -187,10 +185,10 @@ func TestCurrentDecodersAreStrict(t *testing.T) {
 			if err := decodeKnownRecord(trailing); err == nil || !strings.Contains(err.Error(), "trailing") {
 				t.Fatalf("trailing JSON error = %v", err)
 			}
-			wrongRevision := record
-			wrongRevision.PayloadVersion++
-			if err := decodeKnownRecord(wrongRevision); err == nil || !strings.Contains(err.Error(), "declaration") {
-				t.Fatalf("revision error = %v", err)
+			wrongKind := record
+			wrongKind.EventKind = "unrecognized_kind"
+			if err := decodeKnownRecord(wrongKind); err == nil || !strings.Contains(err.Error(), "kind") {
+				t.Fatalf("kind error = %v", err)
 			}
 		})
 	}
@@ -198,8 +196,8 @@ func TestCurrentDecodersAreStrict(t *testing.T) {
 
 func TestToolLedgerPayloadsRoundTripAndRejectMalformedValues(t *testing.T) {
 	readyRecord := Record{
-		PayloadVersion: EnvelopeVersion, EventKind: EventToolCallReady,
-		Payload: mustToolReadyDraft(t).PayloadBytes(),
+		EventKind: EventToolCallReady,
+		Payload:   mustToolReadyDraft(t).PayloadBytes(),
 	}
 	readyPayload, err := DecodeToolCallReadyPayload(readyRecord)
 	if err != nil {
@@ -212,8 +210,8 @@ func TestToolLedgerPayloadsRoundTripAndRejectMalformedValues(t *testing.T) {
 	}
 
 	resultRecord := Record{
-		PayloadVersion: EnvelopeVersion, EventKind: EventToolCallResult,
-		Payload: mustToolResultDraft(t).PayloadBytes(),
+		EventKind: EventToolCallResult,
+		Payload:   mustToolResultDraft(t).PayloadBytes(),
 	}
 	resultPayload, err := DecodeToolCallResultPayload(resultRecord)
 	if err != nil {
@@ -268,7 +266,7 @@ func TestSearchToolLedgerPayloadsRoundTripAndRejectCapabilityMismatch(t *testing
 			if err != nil {
 				t.Fatal(err)
 			}
-			readyPayload, err := DecodeToolCallReadyPayload(Record{PayloadVersion: EnvelopeVersion, EventKind: EventToolCallReady, Payload: readyDraft.PayloadBytes()})
+			readyPayload, err := DecodeToolCallReadyPayload(Record{EventKind: EventToolCallReady, Payload: readyDraft.PayloadBytes()})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -280,7 +278,7 @@ func TestSearchToolLedgerPayloadsRoundTripAndRejectCapabilityMismatch(t *testing
 			if err != nil {
 				t.Fatal(err)
 			}
-			resultPayload, err := DecodeToolCallResultPayload(Record{PayloadVersion: EnvelopeVersion, EventKind: EventToolCallResult, Payload: resultDraft.PayloadBytes()})
+			resultPayload, err := DecodeToolCallResultPayload(Record{EventKind: EventToolCallResult, Payload: resultDraft.PayloadBytes()})
 			if err != nil {
 				t.Fatal(err)
 			}

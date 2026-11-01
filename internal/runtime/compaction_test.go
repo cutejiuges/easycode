@@ -22,6 +22,7 @@ type compactionConversation struct {
 	installed       atomic.Bool
 	discarded       atomic.Int32
 	candidateTokens uint64
+	revision        uint64
 	generationErr   error
 	entered         chan struct{}
 	release         <-chan struct{}
@@ -30,30 +31,34 @@ type compactionConversation struct {
 }
 
 func newCompactionConversation() *compactionConversation {
-	return &compactionConversation{fakeConversation: &fakeConversation{stream: fixedStream()}, candidateTokens: 10}
+	return &compactionConversation{fakeConversation: &fakeConversation{stream: fixedStream()}, candidateTokens: 10, revision: 2}
 }
 func (conversation *compactionConversation) HistoryFootprint() (domain.NativeHistoryFootprint, error) {
-	revision, tokens := uint64(2), uint64(50000)
+	revision, tokens := conversation.revision, uint64(50000)
 	if conversation.installed.Load() {
-		revision, tokens = 3, conversation.candidateTokens
+		revision, tokens = conversation.revision+1, conversation.candidateTokens
 	}
 	value, _ := domain.NewEstimatedTokenEstimate(estimate.MethodByteHeuristic, tokens)
 	return domain.NewNativeHistoryFootprint(domain.ProviderOpenAI, revision, value)
 }
 func (conversation *compactionConversation) ProjectActiveContext() (domain.ActiveContextView, error) {
-	revision := uint64(2)
+	revision := conversation.revision
 	var summary domain.ContextSummary
 	if conversation.installed.Load() {
-		revision = 3
+		revision = conversation.revision + 1
 		summary, _ = domain.NewContextSummary("summary")
 	}
-	return domain.NewActiveContextView(conversation.ProjectHistory(), summary, revision)
+	history := conversation.ProjectHistory()
+	if conversation.installed.Load() {
+		history.Turns = []domain.SemanticTurn{}
+	}
+	return domain.NewActiveContextView(history, summary, revision)
 }
 func (conversation *compactionConversation) PreflightCompaction(input provider.CompactionInput) (provider.CompactionPreview, error) {
 	if conversation.installed.Load() {
 		return provider.CompactionPreview{}, provider.NewCompactionError(provider.CompactionNothing)
 	}
-	source, err := provider.NewCompactionSource(domain.ProviderOpenAI, "responses", "model", 2, 2, provider.RootCompactionPredecessor(), strings.Repeat("a", 64), provider.CompactionPromptRevision)
+	source, err := provider.NewCompactionSource(domain.ProviderOpenAI, "responses", "model", conversation.revision, conversation.revision, provider.RootCompactionPredecessor(), strings.Repeat("a", 64))
 	if err != nil {
 		return provider.CompactionPreview{}, err
 	}
@@ -82,15 +87,15 @@ func (conversation *compactionConversation) RunCompaction(ctx context.Context, i
 		return nil, conversation.generationErr
 	}
 	summary, _ := domain.NewContextSummary("summary")
-	checkpoint, err := provider.NewCheckpointEnvelope(id, preview.Source(), 3, []byte(`{"native":"summary"}`))
+	checkpoint, err := provider.NewCheckpointEnvelope(preview.Input().Scope(), id, preview.Source(), []byte(`{"native":"summary"}`))
 	if err != nil {
 		return nil, err
 	}
-	view, _ := domain.NewActiveContextView(conversation.ProjectHistory(), summary, 3)
+	view, _ := domain.NewActiveContextView(domain.SemanticHistoryView{Provider: domain.ProviderOpenAI, Turns: []domain.SemanticTurn{}}, summary, conversation.revision+1)
 	tokens, _ := domain.NewEstimatedTokenEstimate(estimate.MethodByteHeuristic, conversation.candidateTokens)
-	footprint, _ := domain.NewNativeHistoryFootprint(domain.ProviderOpenAI, 3, tokens)
+	footprint, _ := domain.NewNativeHistoryFootprint(domain.ProviderOpenAI, conversation.revision+1, tokens)
 	usage, _ := domain.NewSampleUsage(domain.KnownUsageMetric(50000), domain.UnknownUsageMetric(), domain.NotApplicableUsageMetric(), domain.KnownUsageMetric(10), domain.UnknownUsageMetric())
-	provenance, _ := provider.NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", 3, []byte(`{"usage":10}`))
+	provenance, _ := provider.NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", []byte(`{"usage":10}`))
 	return provider.NewPreparedCompaction(checkpoint, view, footprint, usage, provenance, func() { conversation.installed.Store(true) }, func() { conversation.discarded.Add(1) })
 }
 
@@ -395,4 +400,12 @@ func TestCompactionQueueFailureAndSuccessFIFO(t *testing.T) {
 			t.Fatal("automatic return count wrong")
 		}
 	}
+}
+
+func (conversation *compactionConversation) PrepareUserInputs(a domain.InputAssociation, inputs []domain.UserInput) (*provider.PreparedUserInputs, error) {
+	footprint, err := conversation.HistoryFootprint()
+	if err != nil {
+		return nil, err
+	}
+	return prepareFixtureInputs(a, inputs, conversation.ProjectHistory(), footprint, func(view domain.SemanticHistoryView) { conversation.history = view })
 }

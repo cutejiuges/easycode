@@ -73,7 +73,7 @@ func validateCompactionUsage(factory provider.Factory, plan session.ReplayPlan) 
 			return fmt.Errorf("provider cannot validate compaction usage")
 		}
 		raw := operation.Failed.Provenance
-		envelope, err := provider.NewNativeCommitEnvelope(raw.Provider, raw.Wire, raw.PayloadVersion, raw.Payload)
+		envelope, err := provider.NewNativeCommitEnvelope(raw.Provider, raw.Wire, raw.Payload)
 		if err != nil {
 			return err
 		}
@@ -92,7 +92,7 @@ func reconcileInterruptedCompaction(ctx context.Context, writer managedJournal, 
 	if operation == nil {
 		return nil
 	}
-	draft, err := session.NewCompactionFailedDraft(session.CompactionFailedPayload{ID: operation.Started.ID, Code: protocol.CompactionFailureInterrupted, UsageState: "unavailable"})
+	draft, err := session.NewCompactionFailedDraft(session.CompactionFailedPayload{Scope: operation.Started.Scope, ID: operation.Started.ID, Code: protocol.CompactionFailureInterrupted, UsageState: "unavailable"})
 	if err != nil {
 		return err
 	}

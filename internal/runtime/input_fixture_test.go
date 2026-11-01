@@ -30,7 +30,7 @@ func encodeFixtureInputs(a domain.InputAssociation, inputs []domain.UserInput) (
 	if err != nil {
 		return provider.NativeCommitEnvelope{}, err
 	}
-	return provider.NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", 3, bytes)
+	return provider.NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", bytes)
 }
 
 func prepareFixtureInputs(a domain.InputAssociation, inputs []domain.UserInput, history domain.SemanticHistoryView, footprint domain.NativeHistoryFootprint, commit func(domain.SemanticHistoryView)) (*provider.PreparedUserInputs, error) {

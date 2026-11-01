@@ -39,7 +39,7 @@ func TestPatchReadyApprovalAndResultDraftRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	readyPayload, err := DecodeToolCallReadyPayload(Record{PayloadVersion: EnvelopeVersion, EventKind: EventToolCallReady, Payload: readyDraft.PayloadBytes()})
+	readyPayload, err := DecodeToolCallReadyPayload(Record{EventKind: EventToolCallReady, Payload: readyDraft.PayloadBytes()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestPatchReadyApprovalAndResultDraftRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	approval, err := DecodeToolApprovalDecidedPayload(Record{PayloadVersion: EnvelopeVersion, EventKind: EventToolApprovalDecided, Payload: approvalDraft.PayloadBytes()})
+	approval, err := DecodeToolApprovalDecidedPayload(Record{EventKind: EventToolApprovalDecided, Payload: approvalDraft.PayloadBytes()})
 	if err != nil || approval.Feedback != "use another name" {
 		t.Fatalf("approval=%#v error=%v", approval, err)
 	}
@@ -67,7 +67,7 @@ func TestPatchReadyApprovalAndResultDraftRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resultPayload, err := DecodeToolCallResultPayload(Record{PayloadVersion: EnvelopeVersion, EventKind: EventToolCallResult, Payload: resultDraft.PayloadBytes()})
+	resultPayload, err := DecodeToolCallResultPayload(Record{EventKind: EventToolCallResult, Payload: resultDraft.PayloadBytes()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestPatchSessionPayloadsFailClosed(t *testing.T) {
 	}
 	object["future"] = json.RawMessage("true")
 	encoded, _ := json.Marshal(object)
-	if _, err := DecodeToolCallReadyPayload(Record{PayloadVersion: EnvelopeVersion, EventKind: EventToolCallReady, Payload: encoded}); err == nil {
+	if _, err := DecodeToolCallReadyPayload(Record{EventKind: EventToolCallReady, Payload: encoded}); err == nil {
 		t.Fatal("未知Patch ready字段未被拒绝")
 	}
 	requestID, _ := tool.ParseApprovalRequestID("018f1d8a-7b5c-7def-8abc-456789abcdef")

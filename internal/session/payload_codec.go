@@ -622,7 +622,7 @@ func DecodeTurnFailedPayload(record Record) (TurnFailedPayload, error) {
 func decodeKnownPayload[T recordPayload](record Record, kind EventKind) (T, error) {
 	var zero T
 	_, exists := descriptorByKind(kind)
-	if !exists || record.EventKind != kind || record.PayloadVersion != EnvelopeVersion {
+	if !exists || record.EventKind != kind {
 		return zero, fmt.Errorf("session payload declaration is invalid")
 	}
 	if err := codec.UnmarshalRecord(record.Payload, &zero); err != nil {
@@ -656,7 +656,7 @@ func validateThreadMetaPayload(payload ThreadMetaPayload) error {
 }
 
 func validateNativeCommitPayload(payload NativeCommitPayload) error {
-	if !payload.Provider.Valid() || strings.TrimSpace(payload.Wire) == "" || payload.PayloadVersion <= 0 ||
+	if !payload.Provider.Valid() || strings.TrimSpace(payload.Wire) == "" ||
 		len(payload.Payload) == 0 || len(payload.Payload) > MaxRecordBytes || !codec.Valid(payload.Payload) {
 		return fmt.Errorf("provider native commit payload is invalid")
 	}

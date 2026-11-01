@@ -28,7 +28,7 @@ func TestApprovalFactsHaveStrictSafeMetadataAndDecisionSource(t *testing.T) {
 			t.Fatal(err)
 		}
 		raw := string(draft.PayloadBytes())
-		record := Record{PayloadVersion: EnvelopeVersion, EventKind: EventToolApprovalDecided, Payload: draft.PayloadBytes()}
+		record := Record{EventKind: EventToolApprovalDecided, Payload: draft.PayloadBytes()}
 		decoded, err := DecodeToolApprovalDecidedPayload(record)
 		if err != nil || decoded != fact {
 			t.Fatalf("approval fact changed: %v", err)
@@ -69,7 +69,7 @@ func TestReplayRejectsApprovalMetadataNotMatchingInvocation(t *testing.T) {
 	invocation := replayExecInvocation(t)
 	appendReplayCallSample(t, fixture, invocation)
 	draft := mustPatchApprovalDraft(t, invocation, tool.NewCandidateFingerprint([]byte("candidate")), tool.ApprovalOutcomeAllowOnce)
-	payload, err := DecodeToolApprovalDecidedPayload(Record{PayloadVersion: EnvelopeVersion, EventKind: EventToolApprovalDecided, Payload: draft.PayloadBytes()})
+	payload, err := DecodeToolApprovalDecidedPayload(Record{EventKind: EventToolApprovalDecided, Payload: draft.PayloadBytes()})
 	if err != nil {
 		t.Fatal(err)
 	}

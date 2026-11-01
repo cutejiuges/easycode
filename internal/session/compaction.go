@@ -10,12 +10,14 @@ import (
 
 // CompactionStartedPayload 冻结压缩开始时的已提交来源。
 type CompactionStartedPayload struct {
+	Scope  domain.CompactionScope    `json:"scope"`
 	ID     domain.CompactionID       `json:"compaction_id"`
 	Source provider.CompactionSource `json:"source"`
 }
 
 // CompactionCompletedPayload 原子保存独立 checkpoint、摘要计量和窗口估算。
 type CompactionCompletedPayload struct {
+	Scope      domain.CompactionScope          `json:"scope"`
 	Checkpoint provider.CheckpointEnvelope     `json:"checkpoint"`
 	Usage      SampleUsagePayload              `json:"usage"`
 	Before     protocol.ContextEstimatePayload `json:"before"`
@@ -24,6 +26,7 @@ type CompactionCompletedPayload struct {
 
 // CompactionFailedPayload 保存唯一失败及有明确可用性的独立计量。
 type CompactionFailedPayload struct {
+	Scope      domain.CompactionScope         `json:"scope"`
 	ID         domain.CompactionID            `json:"compaction_id"`
 	Code       protocol.CompactionFailureCode `json:"code"`
 	UsageState string                         `json:"usage_state"`
@@ -32,8 +35,8 @@ type CompactionFailedPayload struct {
 }
 
 // NewCompactionStartedDraft 在网络前创建必须 Sync 的独立操作事实。
-func NewCompactionStartedDraft(id domain.CompactionID, source provider.CompactionSource) (RecordDraft, error) {
-	payload := CompactionStartedPayload{ID: id, Source: source}
+func NewCompactionStartedDraft(scope domain.CompactionScope, id domain.CompactionID, source provider.CompactionSource) (RecordDraft, error) {
+	payload := CompactionStartedPayload{Scope: scope, ID: id, Source: source}
 	if err := payload.Validate(); err != nil {
 		return RecordDraft{}, err
 	}
@@ -41,7 +44,7 @@ func NewCompactionStartedDraft(id domain.CompactionID, source provider.Compactio
 }
 
 // NewCompactionCompletedDraft 冻结成功候选，编码不安装内存窗口。
-func NewCompactionCompletedDraft(checkpoint provider.CheckpointEnvelope, usage domain.SampleUsage, before, after domain.TokenEstimate) (RecordDraft, error) {
+func NewCompactionCompletedDraft(scope domain.CompactionScope, checkpoint provider.CheckpointEnvelope, usage domain.SampleUsage, before, after domain.TokenEstimate) (RecordDraft, error) {
 	usagePayload, err := NewSampleUsagePayload(usage)
 	if err != nil {
 		return RecordDraft{}, err
@@ -54,7 +57,7 @@ func NewCompactionCompletedDraft(checkpoint provider.CheckpointEnvelope, usage d
 	if err != nil {
 		return RecordDraft{}, err
 	}
-	payload := CompactionCompletedPayload{Checkpoint: checkpoint, Usage: usagePayload, Before: beforePayload, After: afterPayload}
+	payload := CompactionCompletedPayload{Scope: scope, Checkpoint: checkpoint, Usage: usagePayload, Before: beforePayload, After: afterPayload}
 	if err := payload.Validate(); err != nil {
 		return RecordDraft{}, err
 	}
@@ -71,6 +74,9 @@ func NewCompactionFailedDraft(payload CompactionFailedPayload) (RecordDraft, err
 
 // Validate 校验操作身份和来源，拒绝把前驱重用为新操作。
 func (payload CompactionStartedPayload) Validate() error {
+	if err := payload.Scope.Validate(); err != nil {
+		return err
+	}
 	if !payload.ID.Valid() || payload.ID == payload.Source.Previous().ID() {
 		return fmt.Errorf("compaction identity is invalid")
 	}
@@ -79,6 +85,12 @@ func (payload CompactionStartedPayload) Validate() error {
 
 // Validate 校验原生 envelope、usage 及严格缩减条件。
 func (payload CompactionCompletedPayload) Validate() error {
+	if payload.Scope != payload.Checkpoint.Scope() {
+		return fmt.Errorf("checkpoint scope mismatch")
+	}
+	if err := payload.Scope.Validate(); err != nil {
+		return err
+	}
 	if _, err := payload.Checkpoint.Clone(); err != nil {
 		return err
 	}
@@ -103,6 +115,9 @@ func (payload CompactionCompletedPayload) Validate() error {
 
 // Validate 拒绝缺失或伪造的 unavailable/observed 字段组合。
 func (payload CompactionFailedPayload) Validate() error {
+	if err := payload.Scope.Validate(); err != nil {
+		return err
+	}
 	if !payload.ID.Valid() || !payload.Code.Valid() {
 		return fmt.Errorf("compaction failure identity or code is invalid")
 	}
@@ -183,8 +198,8 @@ type compactionReplay struct {
 	completed uint64
 }
 
-func (state *compactionReplay) accept(plan *ReplayPlan, batch []Record, turnActive bool) error {
-	if len(batch) != 1 || turnActive {
+func (state *compactionReplay) accept(plan *ReplayPlan, batch []Record, turn *activeReplayTurn) error {
+	if len(batch) != 1 {
 		return replayCorrupt("compaction placement is invalid")
 	}
 	record := batch[0]
@@ -200,6 +215,16 @@ func (state *compactionReplay) accept(plan *ReplayPlan, batch []Record, turnActi
 		if _, exists := state.seen[payload.ID]; exists {
 			return replayCorrupt("compaction identity is duplicated")
 		}
+		if payload.Scope.Trigger == domain.CompactionManual {
+			if turn != nil {
+				return replayCorrupt("manual compaction overlaps turn")
+			}
+		} else {
+			if turn == nil || payload.Scope.TurnID != turn.turnID || payload.Scope.SampleIndex != turn.nextSampleIndex || turn.inputAtSample || turn.autoCompactedSample || turn.pendingCalls != nil || (turn.initialInputs && (!turn.hadToolSample || !turn.toolOutputsCommitted)) {
+				return replayCorrupt("automatic compaction boundary is invalid")
+			}
+			turn.autoCompactedSample = true
+		}
 		source := payload.Source
 		if source.Family() != plan.SessionMetadata.Provider || source.Wire() != plan.SessionMetadata.ProviderWire || source.Model() != plan.SessionMetadata.Model || source.CommittedRevision() != uint64(len(plan.NativeCommits)) || source.ContextRevision() != uint64(len(plan.NativeCommits))+state.completed || source.Previous().ID() != state.previous || source.Previous().IsRoot() != (state.previous == "") {
 			return replayCorrupt("compaction source metadata does not match journal")
@@ -211,7 +236,7 @@ func (state *compactionReplay) accept(plan *ReplayPlan, batch []Record, turnActi
 		if err != nil {
 			return err
 		}
-		if state.active == nil || payload.Checkpoint.ID() != state.active.Started.ID || payload.Checkpoint.Source() != state.active.Started.Source {
+		if state.active == nil || payload.Checkpoint.ID() != state.active.Started.ID || payload.Checkpoint.Source() != state.active.Started.Source || payload.Scope != state.active.Started.Scope {
 			return replayCorrupt("compaction completion does not match start")
 		}
 		state.active.Completed = &payload
@@ -222,7 +247,7 @@ func (state *compactionReplay) accept(plan *ReplayPlan, batch []Record, turnActi
 		if err != nil {
 			return err
 		}
-		if state.active == nil || payload.ID != state.active.Started.ID {
+		if state.active == nil || payload.ID != state.active.Started.ID || payload.Scope != state.active.Started.Scope {
 			return replayCorrupt("compaction failure does not match start")
 		}
 		if payload.Provenance != nil && (payload.Provenance.Provider != state.active.Started.Source.Family() || payload.Provenance.Wire != state.active.Started.Source.Wire()) {

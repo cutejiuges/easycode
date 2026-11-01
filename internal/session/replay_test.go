@@ -670,7 +670,6 @@ func (fixture *replayFixture) appendBatch(drafts ...RecordDraft) {
 func (fixture *replayFixture) appendUnknown() {
 	fixture.t.Helper()
 	record := Record{
-		SchemaVersion: EnvelopeVersion, PayloadVersion: EnvelopeVersion,
 		Sequence: fixture.next, Timestamp: time.Unix(0, 0).UTC(), SessionID: testSessionID,
 		ThreadID: testThreadID, EventKind: "future_event", BatchID: fixture.next,
 		BatchIndex: 0, BatchSize: 1, Payload: json.RawMessage(`{"opaque":true}`),
@@ -688,15 +687,13 @@ func (fixture *replayFixture) loaded() LoadResult {
 
 func validNativeCommit() NativeCommitPayload {
 	return NativeCommitPayload{
-		Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 3,
-		Payload: json.RawMessage(`{"kind":"sample"}`),
+		Provider: domain.ProviderOpenAI, Wire: "responses", Payload: json.RawMessage(`{"kind":"sample"}`),
 	}
 }
 
 func validToolOutputsCommit() NativeCommitPayload {
 	return NativeCommitPayload{
-		Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 3,
-		Payload: json.RawMessage(`{"kind":"tool_outputs"}`),
+		Provider: domain.ProviderOpenAI, Wire: "responses", Payload: json.RawMessage(`{"kind":"tool_outputs"}`),
 	}
 }
 
@@ -710,5 +707,5 @@ func (fixture *replayFixture) appendInitialInputs(turnID domain.TurnID) {
 	if err != nil {
 		fixture.t.Fatal(err)
 	}
-	fixture.appendBatch(draft, mustDraft(fixture.t, EventProviderNativeCommit, turnID, NativeCommitPayload{Provider: domain.ProviderOpenAI, Wire: "responses", PayloadVersion: 3, Payload: json.RawMessage(`{"kind":"user_inputs"}`)}))
+	fixture.appendBatch(draft, mustDraft(fixture.t, EventProviderNativeCommit, turnID, NativeCommitPayload{Provider: domain.ProviderOpenAI, Wire: "responses", Payload: json.RawMessage(`{"kind":"user_inputs"}`)}))
 }

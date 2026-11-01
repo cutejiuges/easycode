@@ -9,7 +9,7 @@ import (
 )
 
 func TestPreparedResolutionCompletesCallbackBeforeFinalized(t *testing.T) {
-	envelope, err := NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", 1, []byte(`{}`))
+	envelope, err := NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", []byte(`{}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestPreparedResolutionCompletesCallbackBeforeFinalized(t *testing.T) {
 }
 
 func TestPreparedFinalizeDiscardCompetition(t *testing.T) {
-	envelope, err := NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", 1, []byte(`{}`))
+	envelope, err := NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", []byte(`{}`))
 	if err != nil {
 		t.Fatal(err)
 	}

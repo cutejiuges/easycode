@@ -321,13 +321,36 @@ func singleCurrentDeclarationViolations(current *sourcePackage) []string {
 		"ReplayRequirement": {}, "ReplayRequired": {}, "ReplayOptional": {}, "OptionalRecords": {},
 		"CatalogRevision": {}, "ReadInputRevision": {}, "ReadResultCodecRevision": {},
 		"ReadRendererRevision": {}, "InputRevision": {}, "ResultCodecRevision": {}, "RendererRevision": {},
+		"nativeCommitPayloadRevision": {}, "CompactionPromptRevision": {}, "PayloadVersion": {}, "PromptRevision": {},
 	}
 	versionedName := regexp.MustCompile(`Legacy|(^|_)V[0-9]+($|_)|V[0-9]+$`)
 	var violations []string
 	for relative, file := range current.files {
 		ast.Inspect(file, func(node ast.Node) bool {
 			switch declaration := node.(type) {
+			case *ast.BasicLit:
+				if current.path == "easycode/internal/session/catalog" && declaration.Kind == token.STRING && strings.Contains(strings.ToLower(declaration.Value), "user_version") {
+					violations = append(violations, relative+": Catalog 禁止 user_version 格式门禁")
+				}
+
 			case *ast.TypeSpec:
+				if (current.path == "easycode/internal/session" && (declaration.Name.Name == "Record" || declaration.Name.Name == "checksumEnvelope" || declaration.Name.Name == "NativeCommitPayload")) ||
+					(current.path == "easycode/internal/provider" && (declaration.Name.Name == "NativeCommitEnvelope" || declaration.Name.Name == "CheckpointEnvelope" || declaration.Name.Name == "checkpointRecord" || declaration.Name.Name == "CompactionSource" || declaration.Name.Name == "compactionSourceRecord")) {
+					if structure, ok := declaration.Type.(*ast.StructType); ok {
+						for _, field := range structure.Fields.List {
+							label := ""
+							if field.Tag != nil {
+								label = strings.ToLower(field.Tag.Value)
+							}
+							for _, name := range field.Names {
+								label += " " + strings.ToLower(name.Name)
+							}
+							if strings.Contains(label, "version") || strings.Contains(label, "formatrevision") || strings.Contains(label, "format_revision") || strings.Contains(label, "promptrevision") || strings.Contains(label, "prompt_revision") || strings.Contains(label, "canary") {
+								violations = append(violations, relative+": 内部持久化契约禁止格式版本字段")
+							}
+						}
+					}
+				}
 				if _, found := forbidden[declaration.Name.Name]; found {
 					violations = append(violations, relative+": 禁止多版本契约声明 "+declaration.Name.Name)
 				}
@@ -362,6 +385,9 @@ func singleCurrentDeclarationViolations(current *sourcePackage) []string {
 				}
 			case *ast.ValueSpec:
 				for _, name := range declaration.Names {
+					if (current.path == "easycode/internal/session" || current.path == "easycode/internal/session/catalog") && (strings.Contains(strings.ToLower(name.Name), "version") || strings.Contains(strings.ToLower(name.Name), "canary")) {
+						violations = append(violations, relative+": 内部持久化禁止格式版本标记 "+name.Name)
+					}
 					if _, found := forbidden[name.Name]; found || versionedName.MatchString(name.Name) {
 						violations = append(violations, relative+": 禁止多版本值 "+name.Name)
 					}

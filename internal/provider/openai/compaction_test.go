@@ -15,6 +15,13 @@ import (
 )
 
 func TestCheckpointWindowAndRestoredRequest(t *testing.T) {
+	auto, _ := domain.NewAutoCompactionScope("01900000-0000-7000-8000-000000000099", 1)
+	for _, scope := range []domain.CompactionScope{domain.ManualCompactionScope(), auto} {
+		t.Run(string(scope.Trigger), func(t *testing.T) { testCheckpointWindowAndRestoredRequest(t, scope) })
+	}
+}
+
+func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.CompactionScope) {
 	instance, err := New(Config{BaseURL: "https://example.invalid", APIKey: secret.New("fixture-key"), Model: "model"})
 	if err != nil {
 		t.Fatal(err)
@@ -69,7 +76,7 @@ func TestCheckpointWindowAndRestoredRequest(t *testing.T) {
 		t.Fatal("summary request protection or sources missing")
 	}
 	generation := nativeHistoryEntry{Kind: nativeHistorySample, Outputs: []NativeItem{{Type: "reasoning", EncryptedContent: "summary-generation-only"}, {Type: "message", Role: "assistant", Content: []ContentPart{{Type: "output_text", Text: "goal; completed tests; next task"}}}}}
-	prepared, err := conversation.prepareCheckpoint("01900000-0000-7000-8000-000000000001", preview.Source(), generation)
+	prepared, err := conversation.prepareCheckpoint(scope, "01900000-0000-7000-8000-000000000001", preview.Source(), generation)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,6 +127,9 @@ func TestCheckpointWindowAndRestoredRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if (scope.Trigger == domain.CompactionAuto) != strings.Contains(string(a.Bytes()), "Continue the existing task directly") {
+		t.Fatal("continuation scope lost")
+	}
 	if !bytes.Equal(a.Bytes(), b.Bytes()) {
 		t.Fatal("restored canonical request differs")
 	}
@@ -150,7 +160,7 @@ func TestCheckpointWindowAndRestoredRequest(t *testing.T) {
 	if secondPreview.Source().Previous().ID() != checkpoint.ID() {
 		t.Fatal("predecessor lost")
 	}
-	second, err := conversation.prepareCheckpoint("01900000-0000-7000-8000-000000000002", secondPreview.Source(), generation)
+	second, err := conversation.prepareCheckpoint(domain.ManualCompactionScope(), "01900000-0000-7000-8000-000000000002", secondPreview.Source(), generation)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +215,8 @@ func assertCompactionAfterToolSteering(t *testing.T, instance *Provider, convers
 		if err != nil {
 			t.Fatal(err)
 		}
-		candidate, err := conversation.prepareCheckpoint(id, preview.Source(), nativeHistoryEntry{Kind: nativeHistorySample, Outputs: []NativeItem{{Type: "reasoning", EncryptedContent: "summary-opaque"}, {Type: "message", Role: "assistant", Content: []ContentPart{{Type: "output_text", Text: "Preserve goal and tests"}}}}})
+		scope, _ := domain.NewAutoCompactionScope("01900000-0000-7000-8000-000000000099", uint32(iteration+1))
+		candidate, err := conversation.prepareCheckpoint(scope, id, preview.Source(), nativeHistoryEntry{Kind: nativeHistorySample, Outputs: []NativeItem{{Type: "reasoning", EncryptedContent: "summary-opaque"}, {Type: "message", Role: "assistant", Content: []ContentPart{{Type: "output_text", Text: "Preserve goal and tests"}}}}})
 		if err != nil {
 			t.Fatal(err)
 		}

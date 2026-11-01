@@ -4,7 +4,7 @@
 
 命令输出存储位于 `internal/session/artifact`；Runtime 在 durable result 后授权引用并更新七工具事实投影，app 装配 typed 宿主查询，TUI 不读文件。ReadArtifact 是第七项真实能力，命令预览与保存前缀分离；保存文件缺失不影响 Provider 原生恢复。预算、目录隔离和 owner 细节见 [ADR-0005](adr/0005-private-command-output-and-host-queries.md) 与 [Tool 输出存储](tool-system.md#命令输出存储与查询)。
 
-Session envelope/payload canary 为 `7`，双 Provider native payload revision 为 `3`，外部 headless JSONL version 为 `1`。这些标记属于不同边界，不构成并行兼容 reader。prepared sample/tool outputs 仅提供显式 finalize/discard 构造器，回调完成后才能报告 finalized。
+Session envelope 不含版本字段；双 Provider native envelope 与 headless JSONL 分别遵循自己的独立契约，不得把它们的字段类推到 Session。prepared sample/tool outputs 仅提供显式 finalize/discard 构造器，回调完成后才能报告 finalized。
 
 `internal/codec` 从固定 Sonic 配置值编码，不读取可替换的第三方默认 codec。封闭 JSON 对象拒绝重复键、大小写别名、未知字段、尾随内容和有损 Unicode。工具缺省参数保留默认值，显式 null 失败；持久化 record 按 json 标签要求非 omitempty 字段存在，标量与对象不接受 null，当前 nil 集合仍允许编码为 null。自定义联合 decoder 负责分支字段；Provider opaque 原生项保留独立扩展规则和原始字节。
 
@@ -13,7 +13,7 @@ TUI 与一次性 headless 由显式 `ChatSession.Start` 启动 AgentLoop adapter
 Runtime 的有序调度、实例审批状态和独占执行骨架分别位于 `tool_scheduler.go`、`approval.go`、`exclusive.go`。骨架持有强类型策略，统一 started 接收、结果关联验证与 durable 收口；各工具保留候选、安全和展示规则。架构守卫覆盖 tool 核心 API、codec 越界及构造器可解析调用链；动态接口与第三方实现另由边界生命周期测试验证。
 
 > 状态：持续演进
-> 更新时间：2026-10-30
+> 更新时间：2026-11-01
 > 适用范围：EasyCode CLI、Agent Runtime、Provider、工具、扩展系统、会话存储和 TUI
 
 ## 1. 背景与目标
@@ -573,7 +573,7 @@ Skill 与 hooks/plugins 属于 P6；MCP 和 Agent/Subagent 属于 P7；完整跨
 
 ## 9. Context 与 Compaction
 
-本章同时描述当前 P2 基线和 P4 目标。当前已实现包含 Tool Catalog 的确定性 ContextPlanner、可选项目指令、本地 token estimate、Provider-private HistoryFootprint、可选显式 token budget 和请求前超限守卫；手动 compaction、有效窗口查询与 durable checkpoint 已实现；动态扩展/skill 来源、真实 Provider cache policy、自动压缩及跨 Provider fork 尚未实现。
+本章同时描述当前 P2 基线和 P4 目标。当前已实现包含 Tool Catalog 的确定性 ContextPlanner、可选项目指令、本地 token estimate、Provider-private HistoryFootprint、可选显式 token budget 和请求前超限守卫；手动 compaction、有效窗口查询与 durable checkpoint 已实现；阈值自动压缩已实现；动态扩展/skill 来源、真实 Provider cache policy 及跨 Provider fork 尚未实现。
 
 ### 9.1 上下文来源
 
@@ -624,7 +624,7 @@ TUI 提供 `/context`、`/compact [instructions]`、定向取消及 Ctrl+O 完�
 
 - `session`：一个逻辑会话和持久化命名空间，拥有一棵线程树，不等同于单条消息历史。
 - `root thread`：Session 创建时的根线程，承载默认用户交互历史。
-- `thread`：Session 内一条线性的 turn/native history；未来 Subagent 与跨 Provider fork 可创建 child thread；当前手动压缩始终留在原 thread。
+- `thread`：Session 内一条线性的 turn/native history；未来 Subagent 与跨 Provider fork 可创建 child thread；当前手动与自动压缩始终留在原 thread。
 - `turn`：Thread 内一次用户输入到模型停止/工具循环结束的完整生命周期。
 
 `session_id` 用于定位逻辑会话，`thread_id` 用于定位具体执行链；EventEnvelope 同时携带二者，不能只用其中一个替代另一个。线程树决策见 [ADR-0003](adr/0003-session-thread-tree.md)。
@@ -646,8 +646,6 @@ TUI 提供 `/context`、`/compact [instructions]`、定向取消及 Ctrl+O 完�
 
 ```text
 EventEnvelope
-  schema_version
-  payload_version
   seq
   timestamp
   session_id
@@ -670,11 +668,11 @@ EventEnvelope
 - `tool_call_ready`、`tool_approval_decided`、`tool_execution_started` 与 `tool_call_result`；
 - `turn_failed`。
 
-`schema_version` 与 `payload_version` 是单一当前 canary，decoder 在 canary 校验后只按 `event_kind` 选择唯一 strict decoder。所有当前记录都参与恢复；未知 kind、未知字段、旧/新 canary 或损坏必须在 repair、Provider 恢复和 append 前失败关闭，不存在 optional record 或多版本 decoder registry。
+Session envelope 只使用唯一当前字段结构，不包含 schema_version、payload_version、canary 或同义版本标记。decoder 只按 event_kind 选择唯一 strict decoder，字段/类型、checksum 和 replay 状态机共同校验恢复事实；未知 kind、未知字段与损坏在 repair、Provider 恢复和 append 前失败关闭。
 
 Provider native commit 只记录 Provider 已验证的原生增量和 raw usage；紧邻的 `sample_usage` 记录共享五项三态指标。无工具的成功 sample 仍以 native commit、usage 与 terminal 原子提交；带调用的 sample 则把有序 ready facts 放入同一 durable batch，随后按需要 durable 批准决定，再提交 started、result 和 Provider 原生 tool outputs。当前 approval fact 保存 decision source、candidate fingerprint 与安全展示 metadata；Exec 不持久化 PID、宿主环境、输出 chunk 或底层 cause。缺失 usage、错序、遗漏配对或重复调用身份一律 fail closed。hook、subagent、cache 与 compaction checkpoint 仍需按各自恢复语义定义记录；不能把 RuntimeEvent 或 UI transcript 当作 native history。
 
-当前 Session envelope/payload 使用唯一 canary 7，进程内 RuntimeEvent 不携带固定版本；headless JSONL v1 是独立外部 wire。稳定发布前的契约补全直接替换唯一 current fixture，不保留双 reader；只有契约已冻结、变化无法加法表达且已发布数据或客户端必须并存时，才引入新 revision，并同时定义兼容窗口与退出条件。
+Session、Provider native/checkpoint 和压缩来源不承担格式版本管理。Catalog 不设置或校验 user_version，按实际结构与完整性重建派生索引。当前没有存量用户或业务数据，直接修改唯一当前格式与 current fixture。未经用户明确指示，禁止引入多版本兼容、历史 reader、迁移器或以 canary/revision 为同义替代的版本门禁；即使未来发布也不能推定获得授权。headless JSONL 是独立外部协议。
 
 Headless JSONL v1 是 stdout 外部协议，不是 Session record：不得写入 journal，也不得在 resume 时回放。headless resume 只复用连续 lease 下恢复出的 Provider-native history，并只发布本次新 turn；`SemanticHistoryView` 仍只供 TUI 等只读消费者使用。
 
@@ -682,7 +680,7 @@ Headless JSONL v1 是 stdout 外部协议，不是 Session record：不得写入
 
 ### 10.3 SQLite projection
 
-`internal/session/catalog` 是 JSONL 事实源之上的可重建投影边界。当前 schema v1 只包含 `threads` 表及 continue 组合索引，保存 root thread 的 session/thread identity、journal 相对定位、创建 cwd、Provider family/wire、model、最后 committed record 的 timestamp/seq/checksum；不保存 prompt、response、native payload、title、tag、worktree 或全文搜索内容。
+`internal/session/catalog` 是 JSONL 事实源之上的可重建投影边界。当前唯一 schema 只包含 `threads` 表及 continue 组合索引，保存 root thread 的 session/thread identity、journal 相对定位、创建 cwd、Provider family/wire、model、最后 committed record 的 timestamp/seq/checksum；不保存 prompt、response、native payload、title、tag、worktree 或全文搜索内容。
 
 Catalog 在 `--continue` 路径按以下顺序工作：
 
@@ -718,9 +716,19 @@ Open Catalog lock
 - 当前 `--resume <thread-id>` 通过日期编码的 UUIDv7 定位文件，恢复 native history 和只读语义视图；不恢复旧 API key、base URL、cwd 或其他动态 world state。
 - 仓库已建立不可变的当前文本与 Tool Loop fixture，用于验证 Loader/ReplayPlanner 的读取、续写 prefix 不变、账本顺序和双 Provider 恢复等价性；项目没有线上历史格式，因此开发期旧 fixture 与旧 reader 已删除。未来真实 schema/payload revision 的版本专属转换仍未实现，也不得在 resume 时原地改写既有 records。
 - exclusive lease 是协作进程间的 advisory lock，不能阻止旧版 EasyCode 或非协作进程绕过锁直接写文件；混合版本运行前必须确保目标 thread 没有其他 owner，绕过锁产生的损坏继续由 checksum、seq 和完整回放校验发现。
-- SQLite Catalog v1、`--continue` 与离线 `sessions list` 已实现；session picker、worktree/project catalog、title/tag、搜索、实时索引、全工具 artifact 和未来 schema 转换尚未实现。
-- 未来 compaction/fork 只能追加 checkpoint/cursor 和 child-thread 元数据，原始 JSONL 继续保留；不得重写、截短或把 summary 伪装成原生历史。该能力目前仅有约束，尚未实现。
+- SQLite Catalog、`--continue` 与离线 `sessions list` 已实现；session picker、worktree/project catalog、title/tag、搜索、实时索引、全工具 artifact 和未来 schema 转换尚未实现。
+- 手动与阈值自动 compaction 追加独立 checkpoint，保留原始 JSONL；跨 Provider fork 与 child-thread 元数据仍为后续目标。摘要是可辨识的历史参考，不构成新的用户输入或授权。
 - artifact 文件路径必须防止目录穿越。
+
+### 10.5 自动压缩与活动回合
+
+`internal/context/auto_compaction.go` 是纯值策略，`internal/runtime/auto_compaction.go` 在既有 turn worker 内协调输入候选、一次摘要尝试与普通请求重新预检；不存在并行摘要 owner。策略只使用显式窗口及 byte_heuristic_v1，不猜服务商容量，未配置、禁用、小窗口和 unknown 明确呈现。失败来源与连续三次熔断状态由 Runtime 实例持有，不写 Session。
+
+手动入口取得 Runtime.active，自动路径复用已持有 owner 的摘要骨架。初始输入提交前或完整工具 outputs 后，冻结已领取输入，候选必须 Discard 后才允许 Kernel 摘要，成功后重新准备相同正文和 InputID。同一目标 sample 共用一次尝试额度；sample/call/result 预算不重置。compaction usage 不混入普通 sample usage。
+
+Session 的 compaction_started/completed/failed 具有强类型 scope（manual，或 auto + turn_id + sample_index），checkpoint 保存同一 scope 并验证确定性接续包装。Replay 校验目标采样、工具闭合、同一 sample 不重复压缩，以及摘要区间不插入普通事实。恢复先收口悬空摘要，再关闭活动 turn；durable completed 恢复新窗口，不自动联网。取消与 completed Sync 竞争时已确定提交优先，后续任务停止，窗口不回滚。
+
+自动事件通过 turn worker 的 publication 通道交给唯一 AgentLoop，使用关联原 submit 的 context item；查询观察 coherent committed snapshot，活动阶段显示 compacting，TUI 的摘要完成不代表 turn 完成。可恢复摘要失败只有在确定收口且普通请求重新预检通过时才继续；内部生命周期与 durability 错误停止工作。任务失败后返还 queued auto，strict-next 保持原顺序。TUI/stream-json 使用真实边界，一次性输出过滤摘要控制帧。
 
 ## 11. Subagent
 
@@ -963,7 +971,7 @@ make verify
 10. 禁止上帝类、上帝包、循环依赖和跨层捷径。
 11. 每次逻辑变更都需要测试、自检并保持全量测试通过。
 12. Provider request canonical bytes 由 Provider compiler 唯一生成，transport 只发送不可变快照。
-13. Session 当前 draft/decoder 强类型且按 canary/kind 校验，不通过 `any` 或反射 registry 传播核心 payload。
+13. Session 当前 draft/decoder 强类型且按 kind 与当前字段结构校验，不通过 `any` 或反射 registry 传播核心 payload。
 14. 配置与 Session 的类型、权限和 symlink 安全判断绑定实际打开句柄；无法提供等价语义的平台必须失败关闭。
 15. 生产包级 `var` 只允许私有 sentinel error 和编译期接口断言；依赖方向、核心动态类型与占位 reachability 由 `internal/architecture` 的 AST/import graph 回归守卫。
 16. 项目指令只由当前进程启动目录的一次安全发现产生；它可以进入 ContextPlan 与 Provider 临时请求上下文，但不得进入 native commit、Session、RuntimeEvent 或语义历史。

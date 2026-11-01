@@ -46,21 +46,42 @@ type ContextSourcePayload struct {
 
 // ContextSnapshotPayload 保存已提交窗口的纯数值快照。
 type ContextSnapshotPayload struct {
-	Scope            string                 `json:"scope"`
-	Revision         uint64                 `json:"revision"`
-	Activity         string                 `json:"activity"`
-	Model            string                 `json:"model"`
-	Sources          []ContextSourcePayload `json:"sources"`
-	Total            ContextEstimatePayload `json:"total"`
-	WindowConfigured bool                   `json:"window_configured"`
-	Window           uint64                 `json:"window"`
-	ReservedOutput   uint64                 `json:"reserved_output"`
-	SafetyMargin     uint64                 `json:"safety_margin"`
-	BudgetState      string                 `json:"budget_state"`
+	AutoCompactionState     string                 `json:"auto_compaction_state"`
+	AutoCompactionReason    string                 `json:"auto_compaction_reason"`
+	AutoCompactionThreshold *uint64                `json:"auto_compaction_threshold,omitempty"`
+	Scope                   string                 `json:"scope"`
+	Revision                uint64                 `json:"revision"`
+	Activity                string                 `json:"activity"`
+	Model                   string                 `json:"model"`
+	Sources                 []ContextSourcePayload `json:"sources"`
+	Total                   ContextEstimatePayload `json:"total"`
+	WindowConfigured        bool                   `json:"window_configured"`
+	Window                  uint64                 `json:"window"`
+	ReservedOutput          uint64                 `json:"reserved_output"`
+	SafetyMargin            uint64                 `json:"safety_margin"`
+	BudgetState             string                 `json:"budget_state"`
 }
 
 // Validate 拒绝伪实时窗口、未知分类与不一致预算。
 func (payload ContextSnapshotPayload) Validate() error {
+	switch payload.AutoCompactionState {
+	case "disabled":
+		if payload.AutoCompactionThreshold != nil {
+			return fmt.Errorf("disabled auto compaction contains threshold")
+		}
+		switch payload.AutoCompactionReason {
+		case "disabled", "window_not_configured", "insufficient_summary_reserve":
+		default:
+			return fmt.Errorf("auto compaction reason is invalid")
+		}
+	case "unknown", "below_threshold", "eligible", "suppressed":
+		if payload.AutoCompactionThreshold == nil || payload.AutoCompactionReason != "" {
+			return fmt.Errorf("auto compaction threshold is missing")
+		}
+	default:
+		return fmt.Errorf("auto compaction state is invalid")
+	}
+
 	if payload.Scope != "committed" || payload.Model == "" {
 		return fmt.Errorf("context snapshot scope or model is invalid")
 	}
@@ -88,6 +109,9 @@ func (payload ContextSnapshotPayload) Validate() error {
 		}
 	}
 	if !payload.WindowConfigured {
+		if payload.AutoCompactionState != "disabled" {
+			return fmt.Errorf("auto compaction requires a configured window")
+		}
 		if payload.Window != 0 || payload.ReservedOutput != 0 || payload.SafetyMargin != 0 || payload.BudgetState != "not_enforced" {
 			return fmt.Errorf("unconfigured context budget contains values")
 		}
@@ -106,11 +130,13 @@ func (payload ContextSnapshotPayload) Validate() error {
 
 // CompactionStartedPayload 不包含临时 instructions 或摘要正文。
 type CompactionStartedPayload struct {
-	ContextRevision uint64 `json:"context_revision"`
+	Scope           domain.CompactionScope `json:"scope"`
+	ContextRevision uint64                 `json:"context_revision"`
 }
 
 // CompactionCompletedPayload 只公布窗口估算及独立摘要 usage。
 type CompactionCompletedPayload struct {
+	Scope           domain.CompactionScope `json:"scope"`
 	ContextRevision uint64                 `json:"context_revision"`
 	Before          ContextEstimatePayload `json:"before"`
 	After           ContextEstimatePayload `json:"after"`
@@ -144,14 +170,18 @@ func (code CompactionFailureCode) Valid() bool {
 
 // CompactionFailedPayload 显式区分已 durable 收口和无法确认的失败。
 type CompactionFailedPayload struct {
-	Code       CompactionFailureCode `json:"code"`
-	Durable    bool                  `json:"durable"`
-	UsageState string                `json:"usage_state"`
-	Usage      *UsagePayload         `json:"usage,omitempty"`
+	Scope      domain.CompactionScope `json:"scope"`
+	Code       CompactionFailureCode  `json:"code"`
+	Durable    bool                   `json:"durable"`
+	UsageState string                 `json:"usage_state"`
+	Usage      *UsagePayload          `json:"usage,omitempty"`
 }
 
 // Validate 保持 unavailable 与 observed 的唯一字段组合。
 func (payload CompactionFailedPayload) Validate() error {
+	if err := payload.Scope.Validate(); err != nil {
+		return err
+	}
 	if !payload.Code.Valid() {
 		return fmt.Errorf("compaction failure code is invalid")
 	}
@@ -202,8 +232,8 @@ func DecodeContextSnapshot(event Event) (ContextSnapshotPayload, error) {
 }
 
 // NewCompactionStarted 创建独立操作的开始事件。
-func NewCompactionStarted(sessionID domain.SessionID, threadID domain.ThreadID, id domain.CompactionID, revision uint64) (Event, error) {
-	raw, err := codec.MarshalStable(CompactionStartedPayload{ContextRevision: revision})
+func NewCompactionStarted(sessionID domain.SessionID, threadID domain.ThreadID, id domain.CompactionID, revision uint64, scope domain.CompactionScope) (Event, error) {
+	raw, err := codec.MarshalStable(CompactionStartedPayload{Scope: scope, ContextRevision: revision})
 	if err != nil {
 		return Event{}, err
 	}
@@ -211,6 +241,7 @@ func NewCompactionStarted(sessionID domain.SessionID, threadID domain.ThreadID, 
 	event.SessionID = sessionID
 	event.ThreadID = threadID
 	event.CompactionID = id
+	event.TurnID = scope.TurnID
 	event.Payload = raw
 	return event, event.Validate()
 }
@@ -224,6 +255,12 @@ func DecodeCompactionStarted(event Event) (CompactionStartedPayload, error) {
 	if err := codec.UnmarshalRecord(event.Payload, &payload); err != nil {
 		return payload, err
 	}
+	if err := payload.Scope.Validate(); err != nil {
+		return payload, err
+	}
+	if event.TurnID != payload.Scope.TurnID {
+		return payload, fmt.Errorf("compaction scope mismatch")
+	}
 	if payload.ContextRevision == 0 {
 		return payload, fmt.Errorf("compaction context revision is invalid")
 	}
@@ -231,7 +268,7 @@ func DecodeCompactionStarted(event Event) (CompactionStartedPayload, error) {
 }
 
 // NewCompactionCompleted 创建 Sync 和 finalize 后的成功事件。
-func NewCompactionCompleted(sessionID domain.SessionID, threadID domain.ThreadID, id domain.CompactionID, revision uint64, before, after domain.TokenEstimate, usage domain.SampleUsage) (Event, error) {
+func NewCompactionCompleted(sessionID domain.SessionID, threadID domain.ThreadID, id domain.CompactionID, revision uint64, before, after domain.TokenEstimate, usage domain.SampleUsage, scope domain.CompactionScope) (Event, error) {
 	beforePayload, err := NewContextEstimatePayload(before)
 	if err != nil {
 		return Event{}, err
@@ -244,7 +281,7 @@ func NewCompactionCompleted(sessionID domain.SessionID, threadID domain.ThreadID
 	if err != nil {
 		return Event{}, err
 	}
-	raw, err := codec.MarshalStable(CompactionCompletedPayload{ContextRevision: revision, Before: beforePayload, After: afterPayload, Usage: usagePayload})
+	raw, err := codec.MarshalStable(CompactionCompletedPayload{Scope: scope, ContextRevision: revision, Before: beforePayload, After: afterPayload, Usage: usagePayload})
 	if err != nil {
 		return Event{}, err
 	}
@@ -252,6 +289,7 @@ func NewCompactionCompleted(sessionID domain.SessionID, threadID domain.ThreadID
 	event.SessionID = sessionID
 	event.ThreadID = threadID
 	event.CompactionID = id
+	event.TurnID = scope.TurnID
 	event.Payload = raw
 	return event, event.Validate()
 }
@@ -265,11 +303,17 @@ func DecodeCompactionCompleted(event Event) (CompactionCompletedPayload, error) 
 	if err := codec.UnmarshalRecord(event.Payload, &payload); err != nil {
 		return payload, err
 	}
+	if event.TurnID != payload.Scope.TurnID {
+		return payload, fmt.Errorf("compaction scope mismatch")
+	}
 	return payload, payload.Validate()
 }
 
 // Validate 校验窗口缩减与独立 usage，不创建事件或时间戳。
 func (payload CompactionCompletedPayload) Validate() error {
+	if err := payload.Scope.Validate(); err != nil {
+		return err
+	}
 	if payload.ContextRevision < 2 {
 		return fmt.Errorf("compaction context revision is invalid")
 	}
@@ -303,6 +347,7 @@ func NewCompactionFailed(sessionID domain.SessionID, threadID domain.ThreadID, i
 	event.SessionID = sessionID
 	event.ThreadID = threadID
 	event.CompactionID = id
+	event.TurnID = payload.Scope.TurnID
 	event.Payload = raw
 	return event, event.Validate()
 }
@@ -315,6 +360,9 @@ func DecodeCompactionFailed(event Event) (CompactionFailedPayload, error) {
 	}
 	if err := codec.UnmarshalRecord(event.Payload, &payload); err != nil {
 		return payload, err
+	}
+	if event.TurnID != payload.Scope.TurnID {
+		return payload, fmt.Errorf("compaction scope mismatch")
 	}
 	return payload, payload.Validate()
 }

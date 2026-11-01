@@ -319,17 +319,15 @@ type ToolResultPreparer interface {
 
 // NativeCommitEnvelope 是共享层可复制但不可解释的 Provider 原生历史增量。
 type NativeCommitEnvelope struct {
-	family         domain.ProviderFamily
-	wire           string
-	payloadVersion int
-	payload        json.RawMessage
+	family  domain.ProviderFamily
+	wire    string
+	payload json.RawMessage
 }
 
 // NewNativeCommitEnvelope 校验公共字段并深拷贝 opaque payload。
 func NewNativeCommitEnvelope(
 	family domain.ProviderFamily,
 	wire string,
-	payloadVersion int,
 	payload json.RawMessage,
 ) (NativeCommitEnvelope, error) {
 	if !family.Valid() {
@@ -338,14 +336,11 @@ func NewNativeCommitEnvelope(
 	if strings.TrimSpace(wire) == "" {
 		return NativeCommitEnvelope{}, fmt.Errorf("native commit wire is required")
 	}
-	if payloadVersion <= 0 {
-		return NativeCommitEnvelope{}, fmt.Errorf("native commit payload version is invalid")
-	}
 	if len(payload) == 0 || len(payload) > MaxNativeCommitBytes || !codec.Valid(payload) {
 		return NativeCommitEnvelope{}, fmt.Errorf("native commit payload is invalid")
 	}
 	return NativeCommitEnvelope{
-		family: family, wire: wire, payloadVersion: payloadVersion,
+		family: family, wire: wire,
 		payload: append(json.RawMessage(nil), payload...),
 	}, nil
 }
@@ -360,11 +355,6 @@ func (envelope NativeCommitEnvelope) Wire() string {
 	return envelope.wire
 }
 
-// PayloadVersion 返回 Provider-owned payload revision。
-func (envelope NativeCommitEnvelope) PayloadVersion() int {
-	return envelope.payloadVersion
-}
-
 // Payload 返回 opaque payload 的独立副本。
 func (envelope NativeCommitEnvelope) Payload() json.RawMessage {
 	return append(json.RawMessage(nil), envelope.payload...)
@@ -373,7 +363,7 @@ func (envelope NativeCommitEnvelope) Payload() json.RawMessage {
 // Clone 校验当前状态并返回不共享可变 payload buffer 的 envelope。
 func (envelope NativeCommitEnvelope) Clone() (NativeCommitEnvelope, error) {
 	return NewNativeCommitEnvelope(
-		envelope.family, envelope.wire, envelope.payloadVersion, envelope.payload,
+		envelope.family, envelope.wire, envelope.payload,
 	)
 }
 

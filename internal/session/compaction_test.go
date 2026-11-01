@@ -16,27 +16,27 @@ func compactionReplayFixture(t *testing.T) (*replayFixture, RecordDraft, RecordD
 	fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
 	fixture.appendInitialInputs(testTurnID)
 	fixture.appendBatch(mustDraft(t, EventTurnFailed, testTurnID, TurnFailedPayload{Code: "cancelled"}))
-	source, err := provider.NewCompactionSource(domain.ProviderOpenAI, "responses", "fixture-model", 1, 1, provider.RootCompactionPredecessor(), strings.Repeat("a", 64), provider.CompactionPromptRevision)
+	source, err := provider.NewCompactionSource(domain.ProviderOpenAI, "responses", "fixture-model", 1, 1, provider.RootCompactionPredecessor(), strings.Repeat("a", 64))
 	if err != nil {
 		t.Fatal(err)
 	}
 	id := domain.CompactionID("01900000-0000-7000-8000-000000000009")
-	start, err := NewCompactionStartedDraft(id, source)
+	start, err := NewCompactionStartedDraft(domain.ManualCompactionScope(), id, source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkpoint, err := provider.NewCheckpointEnvelope(id, source, 3, []byte(`{"fixture":"opaque"}`))
+	checkpoint, err := provider.NewCheckpointEnvelope(domain.ManualCompactionScope(), id, source, []byte(`{"fixture":"opaque"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	usage, _ := domain.NewSampleUsage(domain.KnownUsageMetric(100), domain.UnknownUsageMetric(), domain.NotApplicableUsageMetric(), domain.KnownUsageMetric(10), domain.UnknownUsageMetric())
 	before, _ := domain.NewEstimatedTokenEstimate("byte_heuristic_v1", 100)
 	after, _ := domain.NewEstimatedTokenEstimate("byte_heuristic_v1", 20)
-	complete, err := NewCompactionCompletedDraft(checkpoint, usage, before, after)
+	complete, err := NewCompactionCompletedDraft(domain.ManualCompactionScope(), checkpoint, usage, before, after)
 	if err != nil {
 		t.Fatal(err)
 	}
-	failed, err := NewCompactionFailedDraft(CompactionFailedPayload{ID: id, Code: protocol.CompactionFailureCancelled, UsageState: "unavailable"})
+	failed, err := NewCompactionFailedDraft(CompactionFailedPayload{Scope: domain.ManualCompactionScope(), ID: id, Code: protocol.CompactionFailureCancelled, UsageState: "unavailable"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestCompactionPayloadStrictShape(t *testing.T) {
 			t.Fatal("compaction with turn identity accepted")
 		}
 	}
-	record := Record{PayloadVersion: EnvelopeVersion, EventKind: EventCompactionFailed}
+	record := Record{EventKind: EventCompactionFailed}
 	for _, body := range []string{
 		`{"compaction_id":"01900000-0000-7000-8000-000000000009","code":"compaction_cancelled","usage_state":"unavailable","usage":{}}`,
 		`{"compaction_id":"01900000-0000-7000-8000-000000000009","code":"compaction_cancelled","usage_state":"observed"}`,
@@ -118,5 +118,51 @@ func TestCompactionPayloadStrictShape(t *testing.T) {
 		if _, err := DecodeCompactionFailedPayload(record); err == nil {
 			t.Fatal("invalid failure shape accepted")
 		}
+	}
+}
+
+func TestAutomaticCompactionRequiresExactSamplingBoundary(t *testing.T) {
+	for _, mode := range []string{"initial", "outputs", "wrong_sample", "wrong_turn", "pending_calls", "input_saved", "outputs_missing", "repeated"} {
+		t.Run(mode, func(t *testing.T) {
+			fixture, _, _, _ := compactionReplayFixture(t)
+			plan, err := NewReplayPlanner().Plan(fixture.loaded())
+			if err != nil {
+				t.Fatal(err)
+			}
+			source, _ := provider.NewCompactionSource(domain.ProviderOpenAI, "responses", "fixture-model", 1, 1, provider.RootCompactionPredecessor(), strings.Repeat("a", 64))
+			turn := &activeReplayTurn{turnID: testTurnID}
+			scope, _ := domain.NewAutoCompactionScope(testTurnID, 0)
+			switch mode {
+			case "outputs":
+				turn.initialInputs = true
+				turn.hadToolSample = true
+				turn.toolOutputsCommitted = true
+				turn.nextSampleIndex = 1
+				scope.SampleIndex = 1
+			case "wrong_sample":
+				scope.SampleIndex = 1
+			case "wrong_turn":
+				scope.TurnID = secondTurnID
+			case "pending_calls":
+				turn.pendingCalls = []ReplayedToolCall{{}}
+			case "input_saved":
+				turn.inputAtSample = true
+			case "outputs_missing":
+				turn.initialInputs = true
+				turn.hadToolSample = true
+			case "repeated":
+				turn.autoCompactedSample = true
+			}
+			draft, err := NewCompactionStartedDraft(scope, "01900000-0000-7000-8000-000000000009", source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			record := Record{EventKind: EventCompactionStarted, Payload: draft.PayloadBytes()}
+			state := compactionReplay{seen: make(map[domain.CompactionID]struct{})}
+			err = state.accept(&plan, []Record{record}, turn)
+			if (err == nil) != (mode == "initial" || mode == "outputs") {
+				t.Fatalf("mode=%s err=%v", mode, err)
+			}
+		})
 	}
 }

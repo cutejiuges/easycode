@@ -75,9 +75,8 @@ func TestListRebuildsFromJournalsWithoutChangingFacts(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		version, err := querySingleInt64(instance.db, "PRAGMA user_version")
-		if err != nil || version != 1 {
-			t.Fatalf("schema=%d %v", version, err)
+		if err := validateSchema(instance.db); err != nil {
+			t.Fatal(err)
 		}
 		if err := instance.Close(); err != nil {
 			t.Fatal(err)
