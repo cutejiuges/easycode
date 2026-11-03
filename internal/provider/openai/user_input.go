@@ -81,7 +81,14 @@ func (conversation *Conversation) compileSamplingRequest(history []nativeHistory
 	if err != nil {
 		return codec.CanonicalJSON{}, err
 	}
-	return compileResponsesRequest(conversation.provider.config.Model, history, instructions, view)
+	request := buildResponsesRequest(conversation.provider.config.Model, history, instructions, view)
+	if conversation.provider.config.CachePolicy.Key() == domain.OpenAICacheThread {
+		request.PromptCacheKey, err = domain.ThreadCacheKey(conversation.threadID)
+		if err != nil {
+			return codec.CanonicalJSON{}, err
+		}
+	}
+	return codec.MarshalCanonical(request, maxResponsesRequestBytes)
 }
 
 // EncodeUserInputs 不读取会话状态，仅验证用户消息的可表示性。

@@ -10,4 +10,5 @@ Total: unknown tokens · byte_heuristic_v1
 Context window not configured
 Auto compact: disabled (disabled)
 Budget: not_enforced
+Cache: disabled · key omit · http_sse
 Esc: close

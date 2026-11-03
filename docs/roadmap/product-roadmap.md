@@ -244,7 +244,7 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 - 已实现 text user input、Read/Glob/Grep/Patch/Write 多 sample Tool Loop 与 final assistant output；Patch approval 已具备交互与 headless 失败关闭语义，整文件 Write 已支持完整 Read 后批准覆盖及原子创建，Darwin 前台命令已交付，same-turn steer 已通过独立输入 batch 接入。
 - 已实现有界 FIFO queued follow-up、request identity 去重、定向 interrupt、EOF drain 与显式 shutdown；同轮自动输入已接入 P3 safe point。
 - 已实现 `provider_profile`、可选 `project_instructions`、`committed_history`、`current_input` 的固定顺序、正交 lifecycle/cache stability、canonical segments、stable prefix、SemanticHistoryView 可见估算与 Provider-native footprint 覆盖合并；后续来源必须随真实消费者独立落地。
-- 已实现 JSONL SessionMeta、native commit、`sample_usage` 和文本 turn boundary；成本、缓存失效原因与累计指标仍待实现。
+- 已实现 JSONL SessionMeta、native commit、`sample_usage` 和文本 turn boundary；成本与累计指标仍待实现；P4 缓存切片已增加有界的进程级来源失效解释。
 - 已实现由同一 exclusive lease 覆盖 load/repair、Provider 恢复、续写和最终关闭的跨进程单 writer，及 `Sync`、尾部半行/未完成尾批修复、唯一当前无版本 envelope 与不可变 current fixture；旧开发 shape 失败关闭，未经用户明确指示不得引入版本转换或兼容设计。
 - 已实现 SQLite Catalog 的 root thread 最小索引、全量前台 reconciliation 与损坏/不兼容数据库重建；project/worktree、title/tag/search、实时索引和 thread graph 仍待实现。
 - 已实现 `--resume <thread-id>`、`--continue`、单 turn `--print`/JSONL v1 `--json`，以及独立 `stream-json` 双向控制模式的同进程多 turn。
@@ -380,7 +380,10 @@ Skill、hooks/plugins、MCP 和 Agent/Subagent 不属于 P3 内置工具清单�
 
 ## 8. P4：缓存与上下文强化
 
-`add-durable-manual-compaction` 已实现手动压缩、独立上下文查询、双 Provider 有效窗口、durable checkpoint 和 stream-json 控制。Load 只读，完整 replay/Provider 校验后在同一 lease 下 Repair 与 Sync；Catalog 不修改 journal。摘要预算默认 4096，取消有独立身份，失败保留旧窗口；完整历史与工具授权边界保持。后续自动压缩状态见下文；Hook、远程 token count、Provider cache 策略和跨 Provider fork 未实现，P4 尚未整体完成。变更已归档，验收见[验收记录](../../openspec/changes/archive/2026-10-31-add-durable-manual-compaction/verification.md)。
+`add-provider-prompt-caching` 已实现并归档，提供双 Provider 显式策略：Anthropic 5m/1h 断点、OpenAI thread key、默认 HTTP/SSE 与可选 WebSocket durable 原生增量、process 级 /cache 与 cache.query。内容/策略/请求/原生证据分开，未知计量保持未知，摘要与普通用量隔离；恢复、窗口、取消和关闭边界均回归。没有新增内部格式版本或迁移。验收见[矩阵](../../openspec/changes/archive/2026-11-03-add-provider-prompt-caching/verification.md)与 [ADR-0009](../architecture/adr/0009-provider-cache-and-transient-continuation.md)。跨 Provider fork、扩展目录、远端费用和累计遥测仍未实现，不代表 P4 整体完成。
+
+
+`add-durable-manual-compaction` 已实现手动压缩、独立上下文查询、双 Provider 有效窗口、durable checkpoint 和 stream-json 控制。Load 只读，完整 replay/Provider 校验后在同一 lease 下 Repair 与 Sync；Catalog 不修改 journal。摘要预算默认 4096，取消有独立身份，失败保留旧窗口；完整历史与工具授权边界保持。后续自动压缩状态见下文；Hook、远程 token count 和跨 Provider fork 未实现，P4 尚未整体完成。变更已归档，验收见[验收记录](../../openspec/changes/archive/2026-10-31-add-durable-manual-compaction/verification.md)。
 
 `add-threshold-auto-compaction` 已实现阈值自动摘要：统一采样准备、未提交输入保真、工具输出闭合后切窗、可恢复失败继续、来源抑制与三次熔断、活动 turn 的 durable 恢复和宿主控制投影。Session/native/checkpoint 不包含格式版本或 canary；压缩来源不保存固定 prompt revision，Catalog 只校验实际结构与完整性。质量门结果见 [验收记录](../../openspec/changes/archive/2026-11-01-add-threshold-auto-compaction/verification.md)；change 已归档，不据此宣布 P4 整体完成。
 

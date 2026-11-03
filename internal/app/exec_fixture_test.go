@@ -16,6 +16,12 @@ import (
 )
 
 func TestImmutableExecFixtureRestoresRealProviderNativePairs(t *testing.T) {
+	runCacheImmutableExecFixtureRestoresRealProviderNativePairs(t, false)
+}
+func TestCachedImmutableExecFixtureRestoresRealProviderNativePairs(t *testing.T) {
+	runCacheImmutableExecFixtureRestoresRealProviderNativePairs(t, true)
+}
+func runCacheImmutableExecFixtureRestoresRealProviderNativePairs(t *testing.T, cacheEnabled bool) {
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		t.Run(string(family), func(t *testing.T) {
 			fixture, err := os.ReadFile(filepath.Join("..", "session", "testdata", "current", "heterogeneous_exec_"+string(family)+".jsonl"))
@@ -55,7 +61,7 @@ func TestImmutableExecFixtureRestoresRealProviderNativePairs(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			factory, err := newProviderResource(config.Config{Provider: config.Provider{Family: family, Model: "fixture-model", BaseURL: "https://example.invalid", APIKey: secret.New("fixture-private-key")}})
+			factory, err := newProviderResource(cacheFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, Model: "fixture-model", BaseURL: "https://example.invalid", APIKey: secret.New("fixture-private-key")}}, cacheEnabled))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -65,7 +71,7 @@ func TestImmutableExecFixtureRestoresRealProviderNativePairs(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			conversation, err := factory.RestoreConversation(commits)
+			conversation, err := factory.RestoreConversation(thread, commits)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -98,7 +104,7 @@ func TestImmutableExecFixtureRestoresRealProviderNativePairs(t *testing.T) {
 				t.Fatal(err)
 			}
 			commits = append(commits, outputRecord)
-			if _, err := factory.RestoreConversation(commits); err != nil {
+			if _, err := factory.RestoreConversation(thread, commits); err != nil {
 				t.Fatalf("compensated native pairs invalid: %v", err)
 			}
 			after, err := os.ReadFile(path)

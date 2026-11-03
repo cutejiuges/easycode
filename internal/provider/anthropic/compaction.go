@@ -61,18 +61,14 @@ func (conversation *Conversation) compileCompactionRequest(input provider.Compac
 	if err := input.Validate(); err != nil {
 		return codec.CanonicalJSON{}, err
 	}
-	ordinary, err := conversation.compileSamplingRequest(conversation.history.snapshot(), input.Sampling())
+	plan, err := conversation.planSamplingRequest(conversation.history.snapshot(), input.Sampling())
 	if err != nil {
 		return codec.CanonicalJSON{}, err
 	}
-	var request messagesRequest
-	if err := codec.Unmarshal(ordinary.Bytes(), &request); err != nil {
-		return codec.CanonicalJSON{}, err
-	}
-	request.ToolChoice = &summaryToolChoice{Type: "none"}
-	request.MaxTokens = int(input.OutputTokens())
-	request.Messages = append(request.Messages, newUserMessage(provider.CompactionPrompt(input.Instructions())))
-	return codec.MarshalCanonical(request, maxMessagesRequestBytes)
+	plan.request.ToolChoice = &summaryToolChoice{Type: "none"}
+	plan.request.MaxTokens = int(input.OutputTokens())
+	plan.request.Messages = append(plan.request.Messages, newUserMessage(provider.CompactionPrompt(input.Instructions())))
+	return compileCachedMessagesRequest(plan, true, conversation.provider.config.CachePolicy.Anthropic())
 }
 
 // PreflightCompaction 只编译和估算当前完整有效窗口，不产生副作用。
@@ -147,7 +143,15 @@ func (conversation *Conversation) RunCompaction(ctx context.Context, id domain.C
 			return nil, compactionNetworkError(ctx)
 		}
 		generation := nativeHistoryEntry{Kind: nativeHistorySample, Assistant: reducer.assistantMessage(), Metadata: reducer.messageMetadata()}
-		return conversation.prepareCheckpoint(preview.Input().Scope(), id, source, generation)
+		evidence, evidenceErr := conversation.requestEvidence(preview.Input().Sampling())
+		if evidenceErr != nil {
+			return nil, evidenceErr
+		}
+		receipt, receiptErr := conversation.describeRequest(request, evidence, domain.RequestSummary)
+		if receiptErr != nil {
+			return nil, receiptErr
+		}
+		return conversation.prepareCheckpoint(preview.Input().Scope(), id, source, generation, receipt)
 	}
 	return nil, compactionNetworkError(ctx)
 }
@@ -183,7 +187,7 @@ func compactionSummary(generation nativeHistoryEntry) (domain.ContextSummary, er
 	return summary, nil
 }
 
-func (conversation *Conversation) prepareCheckpoint(scope domain.CompactionScope, id domain.CompactionID, source provider.CompactionSource, generation nativeHistoryEntry) (*provider.PreparedCompaction, error) {
+func (conversation *Conversation) prepareCheckpoint(scope domain.CompactionScope, id domain.CompactionID, source provider.CompactionSource, generation nativeHistoryEntry, receipt domain.RequestReceipt) (*provider.PreparedCompaction, error) {
 	summary, err := compactionSummary(generation)
 	if err != nil {
 		return nil, err
@@ -227,7 +231,9 @@ func (conversation *Conversation) prepareCheckpoint(scope domain.CompactionScope
 		return nil, err
 	}
 	conversation.pending.Store(true)
-	prepared, err := provider.NewPreparedCompaction(checkpoint, view, footprint, usage, provenance, func() {
+	prepared, err := provider.NewPreparedCompaction(checkpoint, view, footprint, usage, provenance, receipt, func() {
+		conversation.baseline = provider.RequestBaseline{}
+		conversation.nextReason = domain.ResetCompacted
 		conversation.history.installCheckpoint(checkpoint, summaryEntry, summary)
 		conversation.pending.Store(false)
 	}, func() { conversation.pending.Store(false) })

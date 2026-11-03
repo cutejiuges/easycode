@@ -15,7 +15,7 @@ import (
 )
 
 type contextSession interface {
-	QueryContext(context.Context) (protocol.CommandResult, error)
+	QueryContext(context.Context, protocol.RequestID) (protocol.CommandResult, error)
 	CompactContext(context.Context, string) (protocol.CommandResult, error)
 	CancelCompaction(context.Context, domain.CompactionID) (protocol.CommandResult, error)
 }
@@ -35,6 +35,11 @@ func parseContextCommand(text string) (localContextCommand, bool, error) {
 		remainder = strings.TrimSpace(trimmed[split:])
 	}
 	switch word {
+	case "/cache":
+		if remainder != "" {
+			return localContextCommand{}, true, fmt.Errorf("/cache does not accept arguments")
+		}
+		return localContextCommand{kind: protocol.CommandQueryCache}, true, nil
 	case "/context":
 		if remainder != "" {
 			return localContextCommand{}, true, fmt.Errorf("/context does not accept arguments")
@@ -51,25 +56,35 @@ func parseContextCommand(text string) (localContextCommand, bool, error) {
 }
 
 func (model Model) submitContextCommand(command localContextCommand) (tea.Model, tea.Cmd) {
+	if command.kind == protocol.CommandQueryCache {
+		return model.submitCacheCommand()
+	}
 	target, ok := model.session.(contextSession)
 	if !ok {
 		model.errorSummary = "invalid_command: context control is unavailable"
 		return model, nil
 	}
+	model.queryGeneration++
+	model.queryRequestID = protocol.RequestID(fmt.Sprintf("tui-context-%d", model.queryGeneration))
+	model.queryKind = command.kind
 	snapshot := model.composer
 	model.pending = &snapshot
 	model.pendingContext = command.kind
 	model.state = stateSubmitting
 	model.errorSummary = ""
-	ctx := model.submitContext
+	ctx, requestID := model.submitContext, model.queryRequestID
+	generation := model.queryGeneration
 	return model, func() tea.Msg {
 		var err error
 		if command.kind == protocol.CommandQueryContext {
-			_, err = target.QueryContext(ctx)
+			_, err = target.QueryContext(ctx, requestID)
 		} else {
 			_, err = target.CompactContext(ctx, command.instructions)
 		}
 		if err != nil {
+			if command.kind == protocol.CommandQueryContext {
+				return cacheQueryFailedMsg{generation: generation, err: err}
+			}
 			return submissionFailedMsg{err: err}
 		}
 		return nil
@@ -101,11 +116,19 @@ func (model Model) projectContextResult(result protocol.CommandResult) (tea.Mode
 		}
 		return model, nil
 	}
+	if (result.CommandKind() == protocol.CommandQueryCache || result.CommandKind() == protocol.CommandQueryContext) && result.RequestID() != model.queryRequestID {
+		return model, nil
+	}
 	if model.pending == nil || model.pendingContext != result.CommandKind() {
 		return model, nil
 	}
 	if result.Status() == protocol.CommandStatusAccepted {
-		model.composer.history.add(model.pending.text)
+		if result.CommandKind() != protocol.CommandQueryCache {
+			model.composer.history.add(model.pending.text)
+		}
+		if result.CommandKind() == protocol.CommandQueryCache || result.CommandKind() == protocol.CommandQueryContext {
+			model.queryRequestID = result.RequestID()
+		}
 		model.composer.clear()
 		if result.CommandKind() == protocol.CommandCompactContext {
 			model.activeCompactionID = result.CompactionID()
@@ -211,7 +234,7 @@ func (model Model) renderContextPanel() string {
 	if payload.AutoCompactionThreshold != nil {
 		auto += fmt.Sprintf(" at %d tokens", *payload.AutoCompactionThreshold)
 	}
-	lines = append(lines, auto, "Budget: "+payload.BudgetState, "Esc: close")
+	lines = append(lines, auto, "Budget: "+payload.BudgetState, fmt.Sprintf("Cache: %s · key %s · %s", payload.CachePolicy.Anthropic, payload.CachePolicy.Key, payload.CachePolicy.Transport), "Esc: close")
 	width, height := max(1, model.widthOrDefault()), max(1, model.heightOrDefault())
 	rendered := make([]string, 0, height)
 	for _, line := range lines {

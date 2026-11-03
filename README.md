@@ -387,7 +387,8 @@ make install-hooks
 
 ### 上下文查询与手动压缩
 
-- `/context`：查看已提交窗口的分类 token 估算、模型、revision、窗口与预留；运行中可查询，排队输入和 staging 不计入。估算不是 usage，未配置窗口时不显示比例。
+- `/cache`：查看进程内最近已提交的缓存观测、来源变化、三态 usage 与实际 transport；上下滚动，Esc 关闭。不创建 turn 或输入回忆。
+- `/context`：查看显式缓存策略，以及已提交窗口的分类 token 估算、模型、revision、窗口与预留；运行中可查询，排队输入和 staging 不计入。估算不是 usage，未配置窗口时不显示比例。
 - `/compact` 或 `/compact 保留失败测试与下一步`：空闲且没有排队输入时总结当前窗口。完成后显示简短边界，Ctrl+O 查看摘要与全部旧历史。没有后续输入时保持等待。
 - 压缩期间仍可编辑和排队；Ctrl+C 取消当前压缩。Esc 优先关闭详情、取回 queued auto，再取消压缩。失败保持旧窗口并返还自动输入，strict-next 保留。
 
@@ -403,11 +404,26 @@ Session/native/checkpoint envelope 不含 schema_version、payload_version 或�
 stream-json v1 使用显式控制，不把普通输入中的 slash 当命令：
 
 ```json
+{"version":1,"type":"cache.query","request_id":"cache-1"}
 {"version":1,"type":"context.query","request_id":"context-1"}
 {"version":1,"type":"context.compact","request_id":"compact-1","instructions":"保留未解决问题"}
 {"version":1,"type":"context.cancel","request_id":"cancel-1","expected_compaction_id":"<accepted response 中的 compaction_id>"}
 ```
 
-控制响应先于 `context.snapshot` 或 `compaction.started/completed/failed`。压缩输出关联独立 CompactionID，不含 TurnID、摘要正文或 opaque 内容；失败带 `durable`。stdin EOF 等待已接受操作完成，显式 shutdown 取消并等待清理。
+控制响应先于 `cache.snapshot`、`context.snapshot` 或 `compaction.started/completed/failed`。压缩输出关联独立 CompactionID，不含 TurnID、摘要正文或 opaque 内容；失败带 `durable`。stdin EOF 等待已接受操作完成，显式 shutdown 取消并等待清理。
 
 Session envelope 没有版本字段，headless 仍遵循独立外部协议。旧开发 journal 在修复或追加前失败关闭。压缩保留原始 JSONL 和工具详情；resume 本地恢复 checkpoint，未完成摘要本地收口，不重执行工具。阈值自动压缩已实现；Hook 和跨 Provider fork 尚未实现。
+
+### 显式 Provider 缓存配置
+
+以下字段只通过 JSON 配置，不提供新的环境变量或 CLI 开关；最终环境变量合并后再校验 Provider 组合，未知值、null、重复字段与无关 Provider 的非默认策略会失败。
+
+| 字段 | 默认 | 可选值 |
+|---|---|---|
+| anthropic_prompt_cache | disabled | ephemeral_5m、ephemeral_1h（仅 Anthropic） |
+| openai_prompt_cache_key | omit | thread（仅 OpenAI） |
+| openai_transport | http_sse | websocket_auto（仅 OpenAI） |
+
+Anthropic 5m 使用 ephemeral 标记并省略 TTL，1h 显式请求 1 小时，可能有更高缓存写入费用；一条活动会话内策略固定。OpenAI thread key 可在同 ThreadID 恢复后保持一致。websocket_auto 可与 key 独立启用：保留 HTTP/SSE，只有同一连接与 durable 原生前缀满足条件才增量续写，始终 store=false。仅生成写入前的明确连接不可用/404/405/426 可回退；鉴权、TLS、重定向、取消或生成写入后错误不自动重发。
+
+/cache 明确区分配置与已观测状态，恢复后显示 restored_baseline。已知零、unknown、not_applicable 与未观测各自保留；只有适用输入计量全部已知且分母非零才有读取比例。关闭显式策略不代表服务端不会进行隐式缓存；相同 fingerprint 不证明命中，也不保证 TTL、延迟或费用收益。查询不显示真实 key、正文、路径、凭据或 opaque reasoning；一次性 --print/--json 不新增这些输出。

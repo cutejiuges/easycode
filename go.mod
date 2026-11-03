@@ -9,6 +9,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/x/ansi v0.10.1
 	github.com/charmbracelet/x/term v0.2.1
+	github.com/coder/websocket v1.8.14
 	github.com/ncruces/go-sqlite3 v0.32.0
 	github.com/rivo/uniseg v0.4.7
 	golang.org/x/sys v0.41.0

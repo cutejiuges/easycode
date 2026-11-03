@@ -25,6 +25,7 @@ const (
 	CommandRetractInputs             CommandKind = "retract_inputs"
 	CommandStopTurn                  CommandKind = "stop_turn"
 	CommandInterrupt                 CommandKind = "interrupt"
+	CommandQueryCache                CommandKind = "query_cache"
 	CommandQueryContext              CommandKind = "query_context"
 	CommandCompactContext            CommandKind = "compact_context"
 	CommandCancelCompaction          CommandKind = "cancel_compaction"
@@ -138,7 +139,7 @@ func (command Command) Validate() error {
 		return fmt.Errorf("command contains unrelated compaction identity")
 	}
 	switch command.kind {
-	case CommandQueryContext, CommandCompactContext, CommandCancelCompaction:
+	case CommandQueryCache, CommandQueryContext, CommandCompactContext, CommandCancelCompaction:
 		if command.text != "" || command.expectedTurnID != "" || command.approvalRequestID != "" || command.invocationID != "" || command.fingerprint != "" || command.decision != "" || command.feedback != "" {
 			return fmt.Errorf("context command contains unrelated payload")
 		}

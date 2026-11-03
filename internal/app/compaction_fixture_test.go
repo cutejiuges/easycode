@@ -17,6 +17,12 @@ import (
 )
 
 func TestCompactionFixedFixturesResumeAndRepair(t *testing.T) {
+	runCacheCompactionFixedFixturesResumeAndRepair(t, false)
+}
+func TestCachedCompactionFixedFixturesResumeAndRepair(t *testing.T) {
+	runCacheCompactionFixedFixturesResumeAndRepair(t, true)
+}
+func runCacheCompactionFixedFixturesResumeAndRepair(t *testing.T, cacheEnabled bool) {
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		for _, fixturePrefix := range []string{"", "auto_"} {
 			for _, mode := range []string{"completed", "started", "half_completion", "source", "native_version_field", "session_version_field", "summary"} {
@@ -96,7 +102,7 @@ func TestCompactionFixedFixturesResumeAndRepair(t *testing.T) {
 					if err := os.WriteFile(path, data, 0600); err != nil {
 						t.Fatal(err)
 					}
-					resource, err := newProviderResource(config.Config{Provider: config.Provider{Family: family, Model: "claude-test", BaseURL: "https://example.invalid", APIKey: secret.New("fixture-private-key")}})
+					resource, err := newProviderResource(cacheFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, Model: "claude-test", BaseURL: "https://example.invalid", APIKey: secret.New("fixture-private-key")}}, cacheEnabled))
 					if err != nil {
 						t.Fatal(err)
 					}

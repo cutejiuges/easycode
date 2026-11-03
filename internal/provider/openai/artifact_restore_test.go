@@ -76,7 +76,7 @@ func TestReadArtifactNativeResultsRestoreExactly(t *testing.T) {
 				}
 				commits = append(commits, commit)
 			}
-			restoredValue, err := instance.RestoreConversation(testRestoreRecords(t, commits))
+			restoredValue, err := instance.RestoreConversation("01900000-0000-7000-8000-000000000001", testRestoreRecords(t, commits))
 			if err != nil {
 				t.Fatal(err)
 			}

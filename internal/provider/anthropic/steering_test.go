@@ -15,7 +15,7 @@ func TestSteeringInputsPreviewCommitRestoreAndRequestEquivalence(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer instance.Close()
-	conversation := instance.NewConversation().(*Conversation)
+	conversation := testConversation(t, instance)
 	turnID := domain.TurnID("01900000-0000-7000-8000-000000000010")
 	ids := []domain.InputID{"01900000-0000-7000-8000-000000000011", "01900000-0000-7000-8000-000000000012", "01900000-0000-7000-8000-000000000013"}
 	texts := []string{"inspect", "  preserve 中文\n", "also test\t"}
@@ -91,7 +91,7 @@ func TestSteeringInputsPreviewCommitRestoreAndRequestEquivalence(t *testing.T) {
 		}
 		envelopes = append(envelopes, envelope)
 	}
-	restoredValue, err := instance.RestoreConversation(testRestoreRecords(t, envelopes))
+	restoredValue, err := instance.RestoreConversation("01900000-0000-7000-8000-000000000001", testRestoreRecords(t, envelopes))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestSteeringInputsPreviewCommitRestoreAndRequestEquivalence(t *testing.T) {
 	records := testRestoreRecords(t, envelopes)
 	wrong, _ := domain.NewInputAssociation(turnID, domain.InputSteering, 2, ids[1:])
 	records[len(records)-1], _ = provider.NewInputRestoreRecord(wrong, envelopes[len(envelopes)-1])
-	if _, err := instance.RestoreConversation(records); err == nil {
+	if _, err := instance.RestoreConversation("01900000-0000-7000-8000-000000000001", records); err == nil {
 		t.Fatal("mismatched restore association accepted")
 	}
 }

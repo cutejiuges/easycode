@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"net/http"
 
 	"easycode/internal/codec"
 	"easycode/internal/context/estimate"
@@ -109,9 +108,12 @@ func (conversation *Conversation) RunCompaction(ctx context.Context, id domain.C
 	}
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	stream, err := conversation.provider.transport.StreamSSE(streamCtx, transport.SSERequest{Method: http.MethodPost, Path: "responses", Headers: map[string]string{
-		"Authorization": "Bearer " + conversation.provider.config.APIKey.Reveal(), "Accept": "text/event-stream", "Content-Type": "application/json",
-	}, Body: request}, transport.StreamOptions{IdleTimeout: conversation.provider.config.StreamIdleTimeout})
+	evidence, evidenceErr := conversation.requestEvidence(preview.Input().Sampling())
+	if evidenceErr != nil {
+		return nil, evidenceErr
+	}
+	stream, selection, cleanup, err := conversation.startRequest(streamCtx, request, evidence, domain.RequestSummary)
+	defer cleanup()
 	if err != nil {
 		return nil, compactionNetworkError(ctx)
 	}
@@ -146,7 +148,18 @@ func (conversation *Conversation) RunCompaction(ctx context.Context, id domain.C
 			return nil, compactionNetworkError(ctx)
 		}
 		generation := nativeHistoryEntry{Kind: nativeHistorySample, Outputs: reducer.outputItems(), Usage: reducer.rawUsage()}
-		return conversation.prepareCheckpoint(preview.Input().Scope(), id, source, generation)
+		evidence, evidenceErr := conversation.requestEvidence(preview.Input().Sampling())
+		if evidenceErr != nil {
+			return nil, evidenceErr
+		}
+		receipt, receiptErr := conversation.describeRequest(request, evidence, domain.RequestSummary)
+		if receiptErr == nil {
+			receipt, receiptErr = selection.apply(receipt)
+		}
+		if receiptErr != nil {
+			return nil, receiptErr
+		}
+		return conversation.prepareCheckpoint(preview.Input().Scope(), id, source, generation, receipt)
 	}
 	return nil, compactionNetworkError(ctx)
 }
@@ -185,7 +198,7 @@ func compactionSummary(generation nativeHistoryEntry) (domain.ContextSummary, er
 	return summary, nil
 }
 
-func (conversation *Conversation) prepareCheckpoint(scope domain.CompactionScope, id domain.CompactionID, source provider.CompactionSource, generation nativeHistoryEntry) (*provider.PreparedCompaction, error) {
+func (conversation *Conversation) prepareCheckpoint(scope domain.CompactionScope, id domain.CompactionID, source provider.CompactionSource, generation nativeHistoryEntry, receipt domain.RequestReceipt) (*provider.PreparedCompaction, error) {
 	summary, err := compactionSummary(generation)
 	if err != nil {
 		return nil, err
@@ -229,7 +242,9 @@ func (conversation *Conversation) prepareCheckpoint(scope domain.CompactionScope
 		return nil, err
 	}
 	conversation.pending.Store(true)
-	prepared, err := provider.NewPreparedCompaction(checkpoint, view, footprint, usage, provenance, func() {
+	prepared, err := provider.NewPreparedCompaction(checkpoint, view, footprint, usage, provenance, receipt, func() {
+		conversation.baseline = provider.RequestBaseline{}
+		conversation.nextReason = domain.ResetCompacted
 		conversation.history.installCheckpoint(checkpoint, summaryEntry, summary)
 		conversation.pending.Store(false)
 	}, func() { conversation.pending.Store(false) })

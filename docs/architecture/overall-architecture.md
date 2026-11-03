@@ -8,7 +8,7 @@ Session envelope 不含版本字段；双 Provider native envelope 与 headless 
 
 `internal/codec` 从固定 Sonic 配置值编码，不读取可替换的第三方默认 codec。封闭 JSON 对象拒绝重复键、大小写别名、未知字段、尾随内容和有损 Unicode。工具缺省参数保留默认值，显式 null 失败；持久化 record 按 json 标签要求非 omitempty 字段存在，标量与对象不接受 null，当前 nil 集合仍允许编码为 null。自定义联合 decoder 负责分支字段；Provider opaque 原生项保留独立扩展规则和原始字节。
 
-TUI 与一次性 headless 由显式 `ChatSession.Start` 启动 AgentLoop adapter；stream-json 由 StreamRunner 启动同一 AgentLoop 内核，在返回前完成 join。ChatSession 不再直接启动 RunTurn。宿主退出先停止投递、排空控制输出并等待 worker、loop、dispatcher，应用随后释放 writer、workspace、repository。等待超时保留错误，transport 取消登记的活动请求，由 SSE owner 关闭实际 body；lease 保留至最终清理完成。重复资源关闭等待同一个完成信号并保留最终错误。
+TUI 与一次性 headless 由显式 `ChatSession.Start` 启动 AgentLoop adapter；stream-json 由 StreamRunner 启动同一 AgentLoop 内核，在返回前完成 join。ChatSession 不再直接启动 RunTurn。宿主退出先停止投递、排空控制输出并等待 worker、loop、dispatcher，应用随后关闭 Provider 的活动及空闲连接，再释放 writer、workspace、repository。等待超时保留错误，transport 取消登记的活动请求，由 SSE owner 关闭实际 body；lease 保留至最终清理完成。重复资源关闭等待同一个完成信号并保留最终错误。
 
 Runtime 的有序调度、实例审批状态和独占执行骨架分别位于 `tool_scheduler.go`、`approval.go`、`exclusive.go`。骨架持有强类型策略，统一 started 接收、结果关联验证与 durable 收口；各工具保留候选、安全和展示规则。架构守卫覆盖 tool 核心 API、codec 越界及构造器可解析调用链；动态接口与第三方实现另由边界生命周期测试验证。
 
@@ -245,7 +245,7 @@ ProviderKernel
   HistoryProjector
 ```
 
-Go 中通过小接口与组合实现。Provider 持有不可变配置和 transport，并通过 `provider.Factory` 创建会话级 `provider.Conversation`；`runtime.Runtime` 只依赖 Conversation，避免多个 Session 共享可变 native history。运行时装配具体实现：
+Go 中通过小接口与组合实现。Provider 持有不可变配置和 transport，并通过显式 ThreadID 的 `provider.Factory.NewConversation` / `RestoreConversation` 创建会话级 `provider.Conversation`；`runtime.Runtime` 只依赖 Conversation，避免多个 Session 共享可变 native history。运行时装配具体实现：
 
 ```text
 anthropic.Provider
@@ -377,23 +377,15 @@ token 估算当前使用版本化本地 `byte_heuristic_v1`，明确标记 `esti
 
 ### 6.4 Anthropic 缓存策略
 
-Anthropic CachePlanner 负责：
+已实现 disabled、ephemeral_5m 与 ephemeral_1h。策略在构造时冻结；5m 省略 ttl，1h 显式 ttl=1h。最终请求副本选择最多四个断点：最后内置工具、非空项目指令、满足至少 20 blocks 距离的先前普通输入边界、最新合法可复用内容。只标记 text/tool_use/tool_result，不标记 thinking、redacted、未知 block 或一次性摘要后缀；Raw 包装保留未知字段且拒绝冲突标记。普通、候选预检与手动/自动摘要共享最终编译入口，原生持久化结构不变。动态 MCP/插件工具尚未实现。
 
-- 在 system、tool schema、message content 上放置合法的 `cache_control`。
-- 根据服务能力选择 ephemeral/TTL，且同一 session 内保持策略稳定。
-- 内置工具形成连续稳定前缀，动态 MCP/插件工具进入独立后缀。
-- 保证 thinking/tool result/content block 的原始顺序不因缓存处理改变。
-- 记录 cache creation/read input token，并映射到统一 usage metrics。
+### 6.5 OpenAI 缓存与瞬态连接
 
-### 6.5 OpenAI 缓存策略
+已实现 omit/thread 的稳定 prompt_cache_key；key 只由命名空间与合法 ThreadID 派生。HTTP/SSE 默认且继续由 Resty 提供；可选 websocket_auto 通过 transport 封装 coder/websocket v1.8.14，保持 store=false，不转用服务端持久化。
 
-OpenAI CachePlanner 负责：
+完整逻辑请求总是可独立编译。WebSocket 的 response.create 省略 stream，只有同一连接上已经 durable finalize 的响应、完全相同的非 input 属性和精确原生前缀才可使用 previous_response_id + suffix。首次、恢复、失败、外层取消、换连接与压缩后发送 full；摘要独立 full 连接，不成为普通基线。写生成请求前仅对明确不可用或握手 404/405/426 固定回退 HTTP；写入后失败不自动重发。thinking/encrypted/phase 与未知字段参与字节比较。
 
-- 生成 session/thread 稳定的 `prompt_cache_key`。
-- 保持 instructions、tools 和 input prefix 的精确稳定。
-- 在 provider 支持且请求连续时维护 `previous_response_id`。
-- capability 不支持增量请求时回退到完整 history，不影响正确性。
-- 保留 reasoning encrypted content 和原始 item 顺序。
+每个连接一个活动读写 owner；空闲无 reader，实例登记持有唯一完成信号。握手/写期限 30 秒、事件 4 MiB、请求 16 MiB、读空闲复用既有配置。关闭先 join Session、取消并等待 Provider 所有连接，再关闭 writer lease。详见 [ADR-0009](adr/0009-provider-cache-and-transient-continuation.md)。
 
 ### 6.6 缓存失效矩阵
 
@@ -411,27 +403,11 @@ OpenAI CachePlanner 负责：
 
 ### 6.7 缓存可观测性
 
-每次模型请求记录以下非敏感诊断字段：
+当前 `/cache` 与 stream-json `cache.query` 提供 process 级已提交快照：provider/wire/model、显式策略与独立策略 fingerprint、五种有序来源的 revision/content fingerprint、stable-prefix fingerprint、首个来源变化、原生 digest/关系、完整逻辑请求 fingerprint、最近实际 transport/full/incremental/reset/fallback，以及最近成功 sample/turn/摘要的 normalized usage。正文、真实缓存 key、URL、路径、凭据和原生 reasoning 不进入诊断。没有 cache plan 版本或原始 usage 日志。
 
-- provider、wire、model。
-- cache plan version。
-- 各 segment fingerprint 的短摘要，不记录正文。
-- 与上次请求相比首个变化 segment。
-- provider 原始 usage 摘要和归一化后的 `input_uncached/cache_read/cache_write` token。
-- cacheable prefix token 估算。
-- previous response 是否复用及回退原因。
+Runtime 在实际采样前冻结同一 ContextPlan 的有界元数据，收据在 append 前验证，Sync/finalize 后发布给单 owner。候选预检与查询不推进观测；摘要独立计量，失败后保留已提交 sample，不伪造成功 turn。恢复显示 restored_baseline，不重建进程外历史统计。状态只保存固定五来源与最近三项观测，编码上限 64 KiB。
 
-核心指标：
-
-```text
-normalized_input_total = input_uncached + cache_read + cache_write
-cache_read_ratio       = cache_read / normalized_input_total
-cache_write_ratio      = cache_write / normalized_input_total
-stable_prefix_reuse    = repeated stable fingerprint requests / eligible requests
-prefix_churn_by_source = invalidations grouped by segment/source
-```
-
-Anthropic 的 `input_tokens` 表示未命中缓存的输入，`cache_read_input_tokens` 与 `cache_creation_input_tokens` 是额外字段；OpenAI 的总 input 包含 cached input 子集。因此不能直接用两家原始字段做同一个分母。当前 normalized usage 已按 Provider 语义保存五项指标：Anthropic 直接映射三类输入，OpenAI 仅在 total 与 cached 同时 known 时相减得到 uncached，并拒绝 cached 大于 total。字段状态区分 known、unknown 和 not-applicable，`known:0` 不等于缺失。缓存比例、成本和 telemetry 仍属后续能力；实现时只能读取 normalized usage，分母未知或为零时 ratio 保持 unknown。
+Anthropic input_tokens 是 uncached 输入；OpenAI total 包含 cached 子集，只有二者 known 才相减。使用统一 input_uncached/cache_read/cache_write/output/reasoning_output 的 known、unknown、not_applicable。所有适用输入分量已知、和无溢出且大于零才计算 cache_read_ratio；N/A 不贡献数值，unknown 不作零。cache_read>0 才表示观察到读取；相同指纹不证明命中。无已解释客户端变化的读取降低只显示 unexplained_cache_read_drop，不确定推断 TTL 或驱逐。费用、累计遥测和实际远端收益未验证。
 
 ### 6.8 缓存测试门槛
 

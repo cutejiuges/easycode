@@ -70,7 +70,7 @@ func TestConversationStreamIdentityIntegration(t *testing.T) {
 				t.Fatalf("new provider: %v", err)
 			}
 			defer closeProvider(t, instance)
-			conversation := instance.NewConversation().(*Conversation)
+			conversation := testConversation(t, instance)
 			stream, err := conversation.Stream(context.Background(), testOpenAITurnInput(t, conversation, "question"))
 			if err != nil {
 				t.Fatalf("start stream: %v", err)
@@ -153,7 +153,7 @@ func TestConversationUsesNativeHistoryAcrossTwoTurnsAndBaseURLForms(t *testing.T
 				t.Fatalf("new provider: %v", err)
 			}
 			defer closeProvider(t, instance)
-			conversation := instance.NewConversation()
+			conversation := testConversation(t, instance)
 
 			runCompletedTurn(t, conversation, "first")
 			runCompletedTurn(t, conversation, "second")
@@ -222,7 +222,7 @@ func TestConversationKeepsProjectInstructionsOutOfNativeHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closeProvider(t, instance)
-	conversation := instance.NewConversation().(*Conversation)
+	conversation := testConversation(t, instance)
 	snapshot := testOpenAIProjectInstructions(t, "AGENTS.md", projectMarker)
 	for _, text := range []string{"first", "second"} {
 		testCommitUserInput(t, conversation, text)
@@ -303,7 +303,7 @@ func TestConversationProjectionMatchesLiveTextAndHidesActiveTurn(t *testing.T) {
 		t.Fatalf("new provider: %v", err)
 	}
 	defer closeProvider(t, instance)
-	conversation := instance.NewConversation().(*Conversation)
+	conversation := testConversation(t, instance)
 	stream, err := conversation.Stream(context.Background(), testOpenAITurnInput(t, conversation, "question"))
 	if err != nil {
 		t.Fatalf("start stream: %v", err)

@@ -277,6 +277,8 @@ func (ledger *recentRequestLedger) add(requestID protocol.RequestID) {
 
 type agentLoopRunState struct {
 	compaction         *activeLoopCompaction
+	cacheSnapshot      protocol.CacheSnapshotPayload
+	cacheSnapshotErr   error
 	contextSnapshot    protocol.ContextSnapshotPayload
 	contextSnapshotErr error
 	loop               *AgentLoop
@@ -360,7 +362,11 @@ func (state *agentLoopRunState) startTurn(inputs []queuedInput) *activeLoopTurn 
 	finished := make(chan error, 1)
 	control := &loopInputControl{loop: state.loop, reply: make(chan []domain.UserInput, 1), resolved: make(chan struct{}, 1)}
 	go func() {
+		state.loop.runtime.cachePublisher = func(snapshot protocol.CacheSnapshotPayload) {
+			events <- runtimePublication{cacheOnly: true, cacheSnapshot: snapshot}
+		}
 		err := state.loop.runtime.runTurn(turnContext, queuedDomainInputs(inputs), control, func(event protocol.Event) { events <- state.loop.runtime.publishContext(event) })
+		state.loop.runtime.cachePublisher = nil
 		close(events)
 		finished <- err
 		close(finished)
@@ -416,6 +422,8 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 	}
 
 	switch request.command.Kind() {
+	case protocol.CommandQueryCache:
+		state.queryCache(request)
 	case protocol.CommandQueryContext:
 		state.queryContext(request)
 	case protocol.CommandCompactContext:
@@ -570,6 +578,10 @@ func (state *agentLoopRunState) handleTurnEvent(publication runtimePublication, 
 		state.active.events = nil
 		return
 	}
+	if publication.cacheOnly {
+		state.cacheSnapshot = publication.cacheSnapshot
+		return
+	}
 	item, err := protocol.NewCorrelatedTurnItem(state.active.input.requestID, event)
 	if event.CompactionID.Valid() {
 		state.active.autoCompactionSeen = true
@@ -598,6 +610,7 @@ func (state *agentLoopRunState) handleTurnEvent(publication runtimePublication, 
 	}
 	if event.Kind != protocol.EventAssistantTextDelta {
 		state.contextSnapshot, state.contextSnapshotErr = publication.snapshot, publication.snapshotErr
+		state.cacheSnapshot = publication.cacheSnapshot
 	}
 	if event.Kind == protocol.EventTurnStarted {
 		state.active.turnID = event.TurnID

@@ -198,8 +198,8 @@ func TestProviderCreatesIsolatedConversations(t *testing.T) {
 	}
 	defer closeAnthropicProvider(t, instance)
 
-	first := instance.NewConversation().(*Conversation)
-	second := instance.NewConversation().(*Conversation)
+	first := testConversation(t, instance)
+	second := testConversation(t, instance)
 	testCommitHistory(t, &first.history, testInputEntry(t, newUserMessage("first")), nativeHistoryEntry{
 		Kind:      nativeHistorySample,
 		Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeText, Text: "answer"}}},
@@ -249,7 +249,7 @@ func TestConversationAllowsOnlyOneActiveTurn(t *testing.T) {
 		t.Fatalf("new provider: %v", err)
 	}
 	defer closeAnthropicProvider(t, instance)
-	conversation := instance.NewConversation().(*Conversation)
+	conversation := testConversation(t, instance)
 	ctx, cancel := context.WithCancel(context.Background())
 	stream, err := conversation.Stream(ctx, testAnthropicTurnInput(t, conversation, "first"))
 	if err != nil {
@@ -292,7 +292,7 @@ func TestConversationPublishesOrderedEventsAndCommitsOnMessageStop(t *testing.T)
 		t.Fatalf("new provider: %v", err)
 	}
 	defer closeAnthropicProvider(t, instance)
-	conversation := instance.NewConversation().(*Conversation)
+	conversation := testConversation(t, instance)
 	events := runCompletedAnthropicTurn(t, conversation, "hello")
 	wantKinds := []provider.StreamEventKind{provider.StreamEventSemantic, provider.StreamEventNative, provider.StreamEventCompleted}
 	if len(events) != len(wantKinds) {
@@ -347,7 +347,7 @@ func TestConversationDiscardsFailedStagingBeforeNextTurn(t *testing.T) {
 		t.Fatalf("new provider: %v", err)
 	}
 	defer closeAnthropicProvider(t, instance)
-	conversation := instance.NewConversation().(*Conversation)
+	conversation := testConversation(t, instance)
 	failedStream, err := conversation.Stream(context.Background(), testAnthropicTurnInput(t, conversation, "failed user"))
 	if err != nil {
 		t.Fatalf("start failed turn: %v", err)
@@ -407,7 +407,7 @@ func TestConversationMapsStreamFailuresWithoutCommitting(t *testing.T) {
 				t.Fatalf("new provider: %v", err)
 			}
 			defer closeAnthropicProvider(t, instance)
-			conversation := instance.NewConversation().(*Conversation)
+			conversation := testConversation(t, instance)
 			stream, err := conversation.Stream(context.Background(), testAnthropicTurnInputWithProject(t, conversation, "hello"))
 			if err != nil {
 				t.Fatalf("start stream: %v", err)
@@ -463,7 +463,7 @@ func TestConversationCancelAndIdleTimeoutCleanUpRequest(t *testing.T) {
 			}
 			defer closeAnthropicProvider(t, instance)
 			ctx, cancel := context.WithCancel(context.Background())
-			conversation := instance.NewConversation().(*Conversation)
+			conversation := testConversation(t, instance)
 			stream, err := conversation.Stream(ctx, testAnthropicTurnInputWithProject(t, conversation, "hello"))
 			if err != nil {
 				t.Fatalf("start stream: %v", err)
@@ -521,7 +521,7 @@ func TestConversationRejectsOversizedEvent(t *testing.T) {
 		t.Fatalf("new provider: %v", err)
 	}
 	defer closeAnthropicProvider(t, instance)
-	conversation := instance.NewConversation().(*Conversation)
+	conversation := testConversation(t, instance)
 	stream, err := conversation.Stream(context.Background(), testAnthropicTurnInput(t, conversation, "hello"))
 	if err != nil {
 		t.Fatalf("start stream: %v", err)

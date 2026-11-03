@@ -33,7 +33,7 @@ func TestPreparedCompactionOwnsCandidateAndResolution(t *testing.T) {
 	checkpoint, view, footprint, usage := compactionFixture(t)
 	entered, release := make(chan struct{}), make(chan struct{})
 	var finalized, discarded atomic.Int32
-	prepared, err := NewPreparedCompaction(checkpoint, view, footprint, usage, testCompactionUsage(t), func() { finalized.Add(1); close(entered); <-release }, func() { discarded.Add(1) })
+	prepared, err := NewPreparedCompaction(checkpoint, view, footprint, usage, testCompactionUsage(t), syntheticRequestReceipt(domain.RequestSummary), func() { finalized.Add(1); close(entered); <-release }, func() { discarded.Add(1) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,14 +91,14 @@ func TestPreparedCompactionRejectsSourceMismatchAndZero(t *testing.T) {
 	}
 	summary, _ := domain.NewContextSummary("different summary")
 	wrong, _ := domain.NewActiveContextView(view.History(), summary, view.Revision()+1)
-	if _, err := NewPreparedCompaction(checkpoint, wrong, footprint, usage, testCompactionUsage(t), func() {}, func() {}); err == nil {
+	if _, err := NewPreparedCompaction(checkpoint, wrong, footprint, usage, testCompactionUsage(t), syntheticRequestReceipt(domain.RequestSummary), func() {}, func() {}); err == nil {
 		t.Fatal("revision mismatch accepted")
 	}
-	if _, err := NewPreparedCompaction(checkpoint, view, footprint, usage, testCompactionUsage(t), nil, func() {}); err == nil {
+	if _, err := NewPreparedCompaction(checkpoint, view, footprint, usage, testCompactionUsage(t), syntheticRequestReceipt(domain.RequestSummary), nil, func() {}); err == nil {
 		t.Fatal("missing lifecycle accepted")
 	}
 	var discarded int
-	prepared, err := NewPreparedCompaction(checkpoint, view, footprint, usage, testCompactionUsage(t), func() { t.Fatal("discard installed checkpoint") }, func() { discarded++ })
+	prepared, err := NewPreparedCompaction(checkpoint, view, footprint, usage, testCompactionUsage(t), syntheticRequestReceipt(domain.RequestSummary), func() { t.Fatal("discard installed checkpoint") }, func() { discarded++ })
 	if err != nil {
 		t.Fatal(err)
 	}

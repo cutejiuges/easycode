@@ -238,6 +238,9 @@ func (event StreamEvent) Validate() error {
 		if _, err := event.prepared.Usage(); err != nil {
 			return fmt.Errorf("completed stream event sample is invalid: %w", err)
 		}
+		if _, err := event.prepared.Receipt(); err != nil {
+			return fmt.Errorf("completed receipt is invalid: %w", err)
+		}
 		if _, err := event.prepared.ReadyCalls(); err != nil {
 			return fmt.Errorf("completed stream event sample is invalid: %w", err)
 		}
@@ -370,6 +373,7 @@ func (envelope NativeCommitEnvelope) Clone() (NativeCommitEnvelope, error) {
 // PreparedSample 封装一次已校验增量及其恰好一次的纯内存 finalizer。
 type PreparedSample struct {
 	envelope NativeCommitEnvelope
+	receipt  domain.RequestReceipt
 	usage    domain.SampleUsage
 	ready    []tool.ReadyCall
 	finalize func()
@@ -382,6 +386,7 @@ type PreparedSample struct {
 func NewPreparedSample(
 	envelope NativeCommitEnvelope,
 	usage domain.SampleUsage,
+	receipt domain.RequestReceipt,
 	finalize func(),
 	discard func(),
 	ready ...tool.ReadyCall,
@@ -396,11 +401,17 @@ func NewPreparedSample(
 	if finalize == nil || discard == nil {
 		return nil, fmt.Errorf("prepared sample lifecycle callbacks are required")
 	}
+	if err := receipt.Validate(); err != nil {
+		return nil, err
+	}
+	if receipt.Family != cloned.Family() || receipt.Purpose != domain.RequestSample {
+		return nil, fmt.Errorf("prepared request receipt mismatch")
+	}
 	clonedReady, err := cloneReadyCalls(ready)
 	if err != nil {
 		return nil, err
 	}
-	return &PreparedSample{envelope: cloned, usage: usage, ready: clonedReady, finalize: finalize, discard: discard, resolved: make(chan struct{})}, nil
+	return &PreparedSample{receipt: receipt, envelope: cloned, usage: usage, ready: clonedReady, finalize: finalize, discard: discard, resolved: make(chan struct{})}, nil
 }
 
 // ReadyCalls 返回按模型 item 顺序排列的独立 typed 调用切片。
@@ -537,11 +548,25 @@ func (outputs *PreparedToolOutputs) Finalized() bool {
 type Factory interface {
 	Family() domain.ProviderFamily
 	Capabilities() Capabilities
-	NewConversation() Conversation
-	RestoreConversation([]RestoreRecord) (Conversation, error)
+	NewConversation(domain.ThreadID) (Conversation, error)
+	RestoreConversation(domain.ThreadID, []RestoreRecord) (Conversation, error)
 }
 
 // TranscriptProjector 为宿主生成只读有序展示投影，不参与请求编译。
 type TranscriptProjector interface {
 	ProjectTranscript() (domain.TranscriptView, error)
 }
+
+// Receipt 返回待提交样本的纯值请求收据。
+func (sample *PreparedSample) Receipt() (domain.RequestReceipt, error) {
+	if sample == nil || sample.finalize == nil || sample.state.Load() != 0 {
+		return domain.RequestReceipt{}, fmt.Errorf("prepared sample is not pending")
+	}
+	if err := sample.receipt.Validate(); err != nil {
+		return domain.RequestReceipt{}, err
+	}
+	return sample.receipt, nil
+}
+
+// ContinuationResetter 由持有瞬态续写资源的 Conversation 实现显式生命周期清理。
+type ContinuationResetter interface{ ResetContinuation() }

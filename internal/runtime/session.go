@@ -339,9 +339,18 @@ func (session *ChatSession) runInterrupts(ctx context.Context) {
 	}
 }
 
+// QueryCache 查询单 owner 保存的最近 durable 缓存证据。
+func (session *ChatSession) QueryCache(ctx context.Context, requestID protocol.RequestID) (protocol.CommandResult, error) {
+	command, err := protocol.NewQueryCacheCommand(requestID)
+	if err != nil {
+		return protocol.CommandResult{}, err
+	}
+	return session.submitInteractive(ctx, command)
+}
+
 // QueryContext 查询单 owner 保存的最近已提交上下文快照。
-func (session *ChatSession) QueryContext(ctx context.Context) (protocol.CommandResult, error) {
-	command, err := protocol.NewQueryContextCommand(session.requestID("host-context"))
+func (session *ChatSession) QueryContext(ctx context.Context, requestID protocol.RequestID) (protocol.CommandResult, error) {
+	command, err := protocol.NewQueryContextCommand(requestID)
 	if err != nil {
 		return protocol.CommandResult{}, err
 	}

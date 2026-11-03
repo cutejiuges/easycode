@@ -56,6 +56,11 @@ const (
 
 // Model 保存纯 UI 投影状态，不依赖 Provider 或 transport。
 type Model struct {
+	queryGeneration    uint64
+	queryRequestID     protocol.RequestID
+	queryKind          protocol.CommandKind
+	cachePanel         *protocol.CacheSnapshotPayload
+	cacheScroll        int
 	pendingContext     protocol.CommandKind
 	activeCompactionID domain.CompactionID
 	compactionStatus   string
@@ -191,6 +196,11 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		model.errorSummary = safeErrorSummary(value.err)
 		return model, nil
+	case cacheQueryFailedMsg:
+		if value.generation != model.queryGeneration {
+			return model, nil
+		}
+		return model.Update(submissionFailedMsg{err: value.err})
 	case tea.KeyMsg:
 		return model.handleKey(value)
 	default:
@@ -205,9 +215,43 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return model, nil
 	}
-	if model.contextPanel != nil {
-		if key.Type == tea.KeyEsc {
+	if (key.Type == tea.KeyEsc || key.Type == tea.KeyCtrlC) && (model.pendingContext == protocol.CommandQueryCache || model.pendingContext == protocol.CommandQueryContext) {
+		if model.pending != nil {
+			model.composer = *model.pending
+		}
+		model.pending = nil
+		model.pendingContext = ""
+		model.queryRequestID = ""
+		model.queryKind = ""
+		model.queryGeneration++
+		model.refreshState()
+		if key.Type == tea.KeyCtrlC {
+			return model.handleKey(key)
+		}
+		return model, nil
+	}
+	if model.cachePanel != nil {
+		switch key.Type {
+		case tea.KeyDown:
+			model.cacheScroll++
+		case tea.KeyUp:
+			model.cacheScroll = max(0, model.cacheScroll-1)
+		case tea.KeyPgDown:
+			model.cacheScroll += max(1, model.heightOrDefault()-2)
+		case tea.KeyPgUp:
+			model.cacheScroll = max(0, model.cacheScroll-max(1, model.heightOrDefault()-2))
+		}
+	}
+	if model.contextPanel != nil || model.cachePanel != nil {
+		if key.Type == tea.KeyEsc || key.Type == tea.KeyCtrlC {
 			model.contextPanel = nil
+			model.cachePanel = nil
+			model.queryGeneration++
+			model.queryRequestID = ""
+			model.queryKind = ""
+			if key.Type == tea.KeyCtrlC {
+				return model.handleKey(key)
+			}
 		}
 		return model, nil
 	}
@@ -548,6 +592,9 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 
 // View 渲染确定性的聊天投影和已准备的多行输入布局。
 func (model Model) View() string {
+	if model.cachePanel != nil {
+		return model.renderCachePanel()
+	}
 	if model.contextPanel != nil {
 		return model.renderContextPanel()
 	}

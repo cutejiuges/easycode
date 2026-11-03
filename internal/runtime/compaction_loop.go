@@ -20,6 +20,8 @@ type activeLoopCompaction struct {
 
 func (state *agentLoopRunState) refreshContextSnapshot() {
 	state.contextSnapshot, state.contextSnapshotErr = state.loop.runtime.contextSnapshot()
+	state.cacheSnapshot, state.cacheSnapshotErr = state.loop.runtime.initialCacheSnapshot()
+	state.loop.runtime.cache.snapshot = state.cacheSnapshot
 }
 
 func (state *agentLoopRunState) queryContext(request loopCommandRequest) {
@@ -76,7 +78,11 @@ func (state *agentLoopRunState) compactContext(request loopCommandRequest) {
 	finished := make(chan error, 1)
 	state.compaction = &activeLoopCompaction{id: id, requestID: request.command.RequestID(), cancel: cancel, events: events, finished: finished}
 	go func() {
+		state.loop.runtime.cachePublisher = func(snapshot protocol.CacheSnapshotPayload) {
+			events <- runtimePublication{cacheOnly: true, cacheSnapshot: snapshot}
+		}
 		err := state.loop.runtime.runCompaction(operationCtx, id, admission, func(event protocol.Event) { events <- state.loop.runtime.publishContext(event) })
+		state.loop.runtime.cachePublisher = nil
 		close(events)
 		finished <- err
 		close(finished)
@@ -111,6 +117,10 @@ func (state *agentLoopRunState) handleCompactionEvent(publication runtimePublica
 		state.compaction.events = nil
 		return
 	}
+	if publication.cacheOnly {
+		state.cacheSnapshot = publication.cacheSnapshot
+		return
+	}
 	item, err := protocol.NewCorrelatedContextItem(state.compaction.requestID, event)
 	if err != nil || event.CompactionID != state.compaction.id || state.compaction.terminalSeen {
 		state.runErr = fault.New(fault.CodeTurnFailed, "compaction emitted an invalid event")
@@ -123,6 +133,7 @@ func (state *agentLoopRunState) handleCompactionEvent(publication runtimePublica
 		state.compaction.terminalSeen = true
 		state.compaction.succeeded = event.Kind == protocol.EventCompactionCompleted
 		state.contextSnapshot, state.contextSnapshotErr = publication.snapshot, publication.snapshotErr
+		state.cacheSnapshot = publication.cacheSnapshot
 	}
 	state.loop.outputs <- item
 }
@@ -146,13 +157,21 @@ func (state *agentLoopRunState) handleCompactionFinished(workerErr error, open b
 
 // runtimePublication 将同一提交边界的事件与只读快照一起交给控制 owner。
 type runtimePublication struct {
-	event       protocol.Event
-	snapshot    protocol.ContextSnapshotPayload
-	snapshotErr error
+	cacheOnly     bool
+	cacheSnapshot protocol.CacheSnapshotPayload
+	event         protocol.Event
+	snapshot      protocol.ContextSnapshotPayload
+	snapshotErr   error
 }
 
 func (runtime *Runtime) publishContext(event protocol.Event) runtimePublication {
-	publication := runtimePublication{event: event}
+	if event.Kind == protocol.EventTurnFailed {
+		runtime.cache.snapshot.LastFailure = "turn_failed"
+	}
+	if event.Kind == protocol.EventCompactionFailed {
+		runtime.cache.snapshot.LastFailure = "compaction_failed"
+	}
+	publication := runtimePublication{event: event, cacheSnapshot: runtime.cache.snapshot}
 	if event.Kind != protocol.EventAssistantTextDelta {
 		publication.snapshot, publication.snapshotErr = runtime.contextSnapshot()
 	}

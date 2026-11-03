@@ -46,6 +46,7 @@ type ContextSourcePayload struct {
 
 // ContextSnapshotPayload 保存已提交窗口的纯数值快照。
 type ContextSnapshotPayload struct {
+	CachePolicy             CachePolicyPayload     `json:"cache_policy"`
 	AutoCompactionState     string                 `json:"auto_compaction_state"`
 	AutoCompactionReason    string                 `json:"auto_compaction_reason"`
 	AutoCompactionThreshold *uint64                `json:"auto_compaction_threshold,omitempty"`
@@ -64,6 +65,9 @@ type ContextSnapshotPayload struct {
 
 // Validate 拒绝伪实时窗口、未知分类与不一致预算。
 func (payload ContextSnapshotPayload) Validate() error {
+	if _, err := payload.CachePolicy.Domain(); err != nil {
+		return err
+	}
 	switch payload.AutoCompactionState {
 	case "disabled":
 		if payload.AutoCompactionThreshold != nil {

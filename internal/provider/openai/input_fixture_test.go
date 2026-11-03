@@ -108,7 +108,22 @@ func testConsumeStream(t *testing.T, conversation *Conversation, ctx context.Con
 	if user != nil {
 		conversation.history.commit(testInputEntry(t, *user))
 	}
-	conversation.consumeStream(ctx, cancel, catalog, stream, output)
+	if conversation.provider == nil {
+		conversation.provider = &Provider{config: Config{Model: "fixture-model", CachePolicy: domain.DefaultCachePolicy()}}
+	}
+	input, err := provider.NewSamplingInput().WithToolCatalog(catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := conversation.compileSamplingRequest(conversation.history.snapshot(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := conversation.requestEvidence(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversation.consumeStream(ctx, cancel, catalog, stream, output, request, evidence, requestSelection{transport: domain.TransportHTTP, mode: domain.RequestFull, reason: domain.ResetNone, fallback: domain.FallbackNone}, func() {})
 }
 
 func testSampleRestoreSequence(t *testing.T, envelopes ...provider.NativeCommitEnvelope) []provider.RestoreRecord {

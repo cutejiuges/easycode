@@ -96,7 +96,7 @@ func (conversation *compactionConversation) RunCompaction(ctx context.Context, i
 	footprint, _ := domain.NewNativeHistoryFootprint(domain.ProviderOpenAI, conversation.revision+1, tokens)
 	usage, _ := domain.NewSampleUsage(domain.KnownUsageMetric(50000), domain.UnknownUsageMetric(), domain.NotApplicableUsageMetric(), domain.KnownUsageMetric(10), domain.UnknownUsageMetric())
 	provenance, _ := provider.NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", []byte(`{"usage":10}`))
-	return provider.NewPreparedCompaction(checkpoint, view, footprint, usage, provenance, func() { conversation.installed.Store(true) }, func() { conversation.discarded.Add(1) })
+	return provider.NewPreparedCompaction(checkpoint, view, footprint, usage, provenance, syntheticRequestReceipt(domain.RequestSummary), func() { conversation.installed.Store(true) }, func() { conversation.discarded.Add(1) })
 }
 
 func TestCompactionDurableOrderAndCancellation(t *testing.T) {

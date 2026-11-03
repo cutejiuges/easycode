@@ -25,8 +25,8 @@ func TestProviderCreatesIsolatedConversations(t *testing.T) {
 	}
 	defer closeProvider(t, instance)
 
-	first := instance.NewConversation().(*Conversation)
-	second := instance.NewConversation().(*Conversation)
+	first := testConversation(t, instance)
+	second := testConversation(t, instance)
 	testCommitHistory(t, &first.history, testInputEntry(t, NewUserItem("first")), testSampleEntry([]NativeItem{{Type: "message", ID: "msg-1", Role: "assistant"}}))
 
 	if history := first.historySnapshot(); len(history) != 2 || history[0].UserInputs[0].Content[0].Text != "first" || history[1].Outputs[0].ID != "msg-1" {
@@ -160,7 +160,7 @@ func TestConversationStreamsAndCommitsOnlyOnCompleted(t *testing.T) {
 		t.Fatalf("new provider: %v", err)
 	}
 	defer closeProvider(t, instance)
-	conversation := instance.NewConversation().(*Conversation)
+	conversation := testConversation(t, instance)
 
 	stream, err := conversation.Stream(context.Background(), testOpenAITurnInput(t, conversation, "hello"))
 	if err != nil {
@@ -216,7 +216,7 @@ func TestConversationRejectsEOFBeforeCompletedWithoutCommitting(t *testing.T) {
 		t.Fatalf("new provider: %v", err)
 	}
 	defer closeProvider(t, instance)
-	conversation := instance.NewConversation().(*Conversation)
+	conversation := testConversation(t, instance)
 
 	stream, err := conversation.Stream(context.Background(), testOpenAITurnInput(t, conversation, "hello"))
 	if err != nil {
@@ -253,7 +253,7 @@ func TestConversationCancelProducesCancelledTerminal(t *testing.T) {
 		t.Fatalf("new provider: %v", err)
 	}
 	defer closeProvider(t, instance)
-	conversation := instance.NewConversation().(*Conversation)
+	conversation := testConversation(t, instance)
 	ctx, cancel := context.WithCancel(context.Background())
 	stream, err := conversation.Stream(ctx, testOpenAITurnInputWithProject(t, conversation, "hello"))
 	if err != nil {
@@ -323,7 +323,7 @@ func TestConversationFailureAndIdleTimeoutDoNotProjectTurn(t *testing.T) {
 				t.Fatalf("new provider: %v", err)
 			}
 			defer closeProvider(t, instance)
-			conversation := instance.NewConversation().(*Conversation)
+			conversation := testConversation(t, instance)
 			stream, err := conversation.Stream(context.Background(), testOpenAITurnInputWithProject(t, conversation, "hello"))
 			if err != nil {
 				t.Fatalf("start stream: %v", err)
@@ -372,7 +372,7 @@ func TestProviderRequestErrorDoesNotExposeAPIKey(t *testing.T) {
 		t.Fatalf("new provider: %v", err)
 	}
 	defer closeProvider(t, instance)
-	conversation := instance.NewConversation()
+	conversation := testConversation(t, instance)
 	_, err = conversation.Stream(context.Background(), testOpenAITurnInput(t, conversation, "hello"))
 	if err == nil || strings.Contains(err.Error(), "top-secret") {
 		t.Fatalf("unsafe provider error: %v", err)

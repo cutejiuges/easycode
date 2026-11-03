@@ -76,7 +76,10 @@ func (service *sessionService) create(
 	if err != nil {
 		return assembledSession{}, fault.Wrap(fault.CodeSessionWrite, "create session identity failed", err)
 	}
-	conversation := factory.NewConversation()
+	conversation, err := factory.NewConversation(identity.ThreadID)
+	if err != nil {
+		return assembledSession{}, fault.Wrap(fault.CodeProviderUnavailable, "create conversation failed", err)
+	}
 	writer, _, err := session.CreateRootJournal(ctx, service.repository, identity, session.RootJournalConfig{
 		Provider: factory.Family(), ProviderWire: wire, Model: model,
 		CreationCWD: creationCWD, CreatedAt: time.Now().UTC(),
@@ -132,7 +135,7 @@ func (service *sessionService) resume(
 		return assembledSession{}, err
 	}
 
-	conversation, err := factory.RestoreConversation(commits)
+	conversation, err := factory.RestoreConversation(plan.Identity.ThreadID, commits)
 	if err != nil {
 		return assembledSession{}, fault.Wrap(fault.CodeSessionCorruption, "restore provider native history failed", err)
 	}

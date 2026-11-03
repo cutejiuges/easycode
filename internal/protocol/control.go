@@ -268,7 +268,7 @@ func (item ControlItem) Validate() error {
 			return fmt.Errorf("command result item is invalid")
 		}
 	case ControlItemContextEvent:
-		if item.result != (CommandResult{}) || item.discard != (ControlError{}) || item.event.Validate() != nil || (item.event.Kind != EventContextSnapshot && item.event.Kind != EventCompactionStarted && item.event.Kind != EventCompactionCompleted && item.event.Kind != EventCompactionFailed) {
+		if item.result != (CommandResult{}) || item.discard != (ControlError{}) || item.event.Validate() != nil || (item.event.Kind != EventCacheSnapshot && item.event.Kind != EventContextSnapshot && item.event.Kind != EventCompactionStarted && item.event.Kind != EventCompactionCompleted && item.event.Kind != EventCompactionFailed) {
 			return fmt.Errorf("correlated context item is invalid")
 		}
 	case ControlItemTurnEvent:
@@ -287,12 +287,12 @@ func (item ControlItem) Validate() error {
 }
 
 func validCommandKind(kind CommandKind) bool {
-	return kind == CommandQueryContext || kind == CommandCompactContext || kind == CommandCancelCompaction || kind == CommandSubmitConversationalInput || kind == CommandRetractInputs || kind == CommandStopTurn || kind == CommandSubmitInput || kind == CommandInterrupt || kind == CommandShutdown || kind == CommandResolveToolApproval
+	return kind == CommandQueryCache || kind == CommandQueryContext || kind == CommandCompactContext || kind == CommandCancelCompaction || kind == CommandSubmitConversationalInput || kind == CommandRetractInputs || kind == CommandStopTurn || kind == CommandSubmitInput || kind == CommandInterrupt || kind == CommandShutdown || kind == CommandResolveToolApproval
 }
 
 func dispositionMatches(kind CommandKind, disposition CommandDisposition) bool {
 	switch kind {
-	case CommandQueryContext:
+	case CommandQueryCache, CommandQueryContext:
 		return disposition == CommandDispositionQueried
 	case CommandCompactContext:
 		return disposition == CommandDispositionCompacting

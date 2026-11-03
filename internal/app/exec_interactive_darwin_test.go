@@ -37,6 +37,12 @@ func TestMain(m *testing.M) {
 }
 
 func TestReadPatchExecApprovedLoopForBothProviders(t *testing.T) {
+	runCacheReadPatchExecApprovedLoopForBothProviders(t, false)
+}
+func TestCachedReadPatchExecApprovedLoopForBothProviders(t *testing.T) {
+	runCacheReadPatchExecApprovedLoopForBothProviders(t, true)
+}
+func runCacheReadPatchExecApprovedLoopForBothProviders(t *testing.T, cacheEnabled bool) {
 	const command = `test "$(cat main.go)" = new && env > command-environment && printf verified > exec-marker && printf checks-passed`
 	for _, name := range []string{"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "AUTHORIZATION", "COOKIE", "HTTPS_PROXY", "ALL_PROXY", "EASYCODE_INTERNAL_SESSION", "BASH_ENV", "DYLD_INSERT_LIBRARIES"} {
 		t.Setenv(name, "command-private-secret")
@@ -92,9 +98,9 @@ func TestReadPatchExecApprovedLoopForBothProviders(t *testing.T) {
 			if family == domain.ProviderAnthropic {
 				model = "claude-test"
 			}
-			resources, err := openChatResourcesWithHooks(context.Background(), config.Config{Provider: config.Provider{
+			resources, err := openChatResourcesWithHooks(context.Background(), cacheFixtureConfig(t, config.Config{Provider: config.Provider{
 				Family: family, Model: model, BaseURL: server.URL, APIKey: secret.New("exec-private-key"),
-			}}, dataPaths{sessionRoot: root}, "", false, workspace, chatResourceHooks{interactiveApprovals: true})
+			}}, cacheEnabled), dataPaths{sessionRoot: root}, "", false, workspace, chatResourceHooks{interactiveApprovals: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -328,9 +334,9 @@ func TestReadPatchExecApprovedLoopForBothProviders(t *testing.T) {
 					if err := os.WriteFile(filepath.Join(workspace, "exec-marker"), []byte("must-not-rerun"), 0600); err != nil {
 						t.Fatal(err)
 					}
-					resumed, err := openChatResources(context.Background(), config.Config{Provider: config.Provider{
+					resumed, err := openChatResources(context.Background(), cacheFixtureConfig(t, config.Config{Provider: config.Provider{
 						Family: family, Model: model, BaseURL: server.URL, APIKey: secret.New("exec-private-key"),
-					}}, root, string(resources.identity.ThreadID), workspace)
+					}}, cacheEnabled), root, string(resources.identity.ThreadID), workspace)
 					if err != nil {
 						t.Fatal(err)
 					}

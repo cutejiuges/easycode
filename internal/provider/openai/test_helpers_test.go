@@ -99,3 +99,13 @@ type catalogWriteExecutor struct{}
 func (catalogWriteExecutor) Execute(context.Context, tool.WriteCandidate) tool.InvocationResult {
 	return tool.InvocationResult{}
 }
+
+// testConversation 使用当前显式身份契约创建测试会话。
+func testConversation(t *testing.T, instance *Provider) *Conversation {
+	t.Helper()
+	value, err := instance.NewConversation("01900000-0000-7000-8000-000000000001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value.(*Conversation)
+}

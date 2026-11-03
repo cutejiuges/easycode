@@ -23,6 +23,12 @@ import (
 )
 
 func TestReadToolLoopCompletesEndToEndForBothProviders(t *testing.T) {
+	runCacheReadToolLoopCompletesEndToEndForBothProviders(t, false)
+}
+func TestCachedReadToolLoopCompletesEndToEndForBothProviders(t *testing.T) {
+	runCacheReadToolLoopCompletesEndToEndForBothProviders(t, true)
+}
+func runCacheReadToolLoopCompletesEndToEndForBothProviders(t *testing.T, cacheEnabled bool) {
 	for _, test := range []struct {
 		name         string
 		family       domain.ProviderFamily
@@ -66,13 +72,13 @@ func TestReadToolLoopCompletesEndToEndForBothProviders(t *testing.T) {
 			}
 			resources, err := openChatResources(
 				context.Background(),
-				config.Config{
+				cacheFixtureConfig(t, config.Config{
 					Provider: config.Provider{
 						Family: test.family, BaseURL: server.URL,
 						APIKey: secret.New("tool-loop-secret"), Model: test.model,
 					},
 					ContextBudget: budget,
-				},
+				}, cacheEnabled),
 				filepath.Join(t.TempDir(), "sessions"), "", workspace,
 			)
 			if err != nil {
@@ -99,6 +105,12 @@ func TestReadToolLoopCompletesEndToEndForBothProviders(t *testing.T) {
 }
 
 func TestParallelSearchToolLoopCompletesEndToEndForBothProviders(t *testing.T) {
+	runCacheParallelSearchToolLoopCompletesEndToEndForBothProviders(t, false)
+}
+func TestCachedParallelSearchToolLoopCompletesEndToEndForBothProviders(t *testing.T) {
+	runCacheParallelSearchToolLoopCompletesEndToEndForBothProviders(t, true)
+}
+func runCacheParallelSearchToolLoopCompletesEndToEndForBothProviders(t *testing.T, cacheEnabled bool) {
 	for _, test := range []struct {
 		name   string
 		family domain.ProviderFamily
@@ -134,9 +146,9 @@ func TestParallelSearchToolLoopCompletesEndToEndForBothProviders(t *testing.T) {
 			}))
 			defer server.Close()
 			resources, err := openChatResources(
-				context.Background(), config.Config{Provider: config.Provider{
+				context.Background(), cacheFixtureConfig(t, config.Config{Provider: config.Provider{
 					Family: test.family, BaseURL: server.URL, APIKey: secret.New("parallel-search-secret"), Model: test.model,
-				}}, filepath.Join(t.TempDir(), "sessions"), "", workspace,
+				}}, cacheEnabled), filepath.Join(t.TempDir(), "sessions"), "", workspace,
 			)
 			if err != nil {
 				t.Fatal(err)

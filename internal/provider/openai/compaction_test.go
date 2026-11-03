@@ -17,17 +17,20 @@ import (
 func TestCheckpointWindowAndRestoredRequest(t *testing.T) {
 	auto, _ := domain.NewAutoCompactionScope("01900000-0000-7000-8000-000000000099", 1)
 	for _, scope := range []domain.CompactionScope{domain.ManualCompactionScope(), auto} {
-		t.Run(string(scope.Trigger), func(t *testing.T) { testCheckpointWindowAndRestoredRequest(t, scope) })
+		for _, key := range []domain.OpenAICacheKeyMode{domain.OpenAICacheOmit, domain.OpenAICacheThread} {
+			policy, _ := domain.NewCachePolicy(domain.AnthropicCacheDisabled, key, domain.OpenAIHTTPSSE)
+			t.Run(string(scope.Trigger)+"/"+string(key), func(t *testing.T) { testCheckpointWindowAndRestoredRequest(t, scope, policy) })
+		}
 	}
 }
 
-func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.CompactionScope) {
-	instance, err := New(Config{BaseURL: "https://example.invalid", APIKey: secret.New("fixture-key"), Model: "model"})
+func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.CompactionScope, policy domain.CachePolicy) {
+	instance, err := New(Config{CachePolicy: policy, BaseURL: "https://example.invalid", APIKey: secret.New("fixture-key"), Model: "model"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer instance.Close()
-	conversation := instance.NewConversation().(*Conversation)
+	conversation := testConversation(t, instance)
 	entries := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, NewUserItem(strings.Repeat("archived work ", 100))), {Kind: nativeHistorySample, Outputs: []NativeItem{{Type: "reasoning", EncryptedContent: "old-opaque"}, {Type: "message", Role: "assistant", Content: []ContentPart{{Type: "output_text", Text: "old answer"}}}}}})
 	envelopes := make([]provider.NativeCommitEnvelope, 0)
 	for _, entry := range entries {
@@ -60,7 +63,11 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 	if err != nil {
 		t.Fatal(err)
 	}
-	golden, err := os.ReadFile("testdata/compaction_request.golden.json")
+	goldenPath := "testdata/compaction_request.golden.json"
+	if policy != domain.DefaultCachePolicy() {
+		goldenPath = "testdata/cache_thread_compaction_request.golden.json"
+	}
+	golden, err := os.ReadFile(goldenPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +83,7 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 		t.Fatal("summary request protection or sources missing")
 	}
 	generation := nativeHistoryEntry{Kind: nativeHistorySample, Outputs: []NativeItem{{Type: "reasoning", EncryptedContent: "summary-generation-only"}, {Type: "message", Role: "assistant", Content: []ContentPart{{Type: "output_text", Text: "goal; completed tests; next task"}}}}}
-	prepared, err := conversation.prepareCheckpoint(scope, "01900000-0000-7000-8000-000000000001", preview.Source(), generation)
+	prepared, err := conversation.prepareCheckpoint(scope, "01900000-0000-7000-8000-000000000001", preview.Source(), generation, syntheticRequestReceipt(domain.RequestSummary))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +121,7 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 		t.Fatal(err)
 	}
 	records = append(records, testRestoreRecords(t, []provider.NativeCommitEnvelope{envelope})...)
-	restoredValue, err := instance.RestoreConversation(records)
+	restoredValue, err := instance.RestoreConversation("01900000-0000-7000-8000-000000000001", records)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +167,7 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 	if secondPreview.Source().Previous().ID() != checkpoint.ID() {
 		t.Fatal("predecessor lost")
 	}
-	second, err := conversation.prepareCheckpoint(domain.ManualCompactionScope(), "01900000-0000-7000-8000-000000000002", secondPreview.Source(), generation)
+	second, err := conversation.prepareCheckpoint(domain.ManualCompactionScope(), "01900000-0000-7000-8000-000000000002", secondPreview.Source(), generation, syntheticRequestReceipt(domain.RequestSummary))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +177,7 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 	}
 	secondRecord, _ := provider.NewCheckpointRestoreRecord(secondCheckpoint)
 	records = append(records, secondRecord)
-	restoredValue, err = instance.RestoreConversation(records)
+	restoredValue, err = instance.RestoreConversation("01900000-0000-7000-8000-000000000001", records)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +188,7 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 	}
 	bad := append([]provider.RestoreRecord{}, records...)
 	bad[len(bad)-1] = record
-	if value, err := instance.RestoreConversation(bad); err == nil || value != nil {
+	if value, err := instance.RestoreConversation("01900000-0000-7000-8000-000000000001", bad); err == nil || value != nil {
 		t.Fatal("stale predecessor accepted")
 	}
 }
@@ -216,7 +223,7 @@ func assertCompactionAfterToolSteering(t *testing.T, instance *Provider, convers
 			t.Fatal(err)
 		}
 		scope, _ := domain.NewAutoCompactionScope("01900000-0000-7000-8000-000000000099", uint32(iteration+1))
-		candidate, err := conversation.prepareCheckpoint(scope, id, preview.Source(), nativeHistoryEntry{Kind: nativeHistorySample, Outputs: []NativeItem{{Type: "reasoning", EncryptedContent: "summary-opaque"}, {Type: "message", Role: "assistant", Content: []ContentPart{{Type: "output_text", Text: "Preserve goal and tests"}}}}})
+		candidate, err := conversation.prepareCheckpoint(scope, id, preview.Source(), nativeHistoryEntry{Kind: nativeHistorySample, Outputs: []NativeItem{{Type: "reasoning", EncryptedContent: "summary-opaque"}, {Type: "message", Role: "assistant", Content: []ContentPart{{Type: "output_text", Text: "Preserve goal and tests"}}}}}, syntheticRequestReceipt(domain.RequestSummary))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -226,7 +233,7 @@ func assertCompactionAfterToolSteering(t *testing.T, instance *Provider, convers
 		}
 		record, _ := provider.NewCheckpointRestoreRecord(checkpoint)
 		records = append(records, record)
-		restoredValue, err := instance.RestoreConversation(records)
+		restoredValue, err := instance.RestoreConversation("01900000-0000-7000-8000-000000000001", records)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -315,7 +322,7 @@ func assertCompactionAfterToolSteering(t *testing.T, instance *Provider, convers
 		tailEnvelopes = append(tailEnvelopes, envelope)
 	}
 	records = append(records, testRestoreRecords(t, tailEnvelopes)...)
-	restoredValue, err := instance.RestoreConversation(records)
+	restoredValue, err := instance.RestoreConversation("01900000-0000-7000-8000-000000000001", records)
 	if err != nil {
 		t.Fatal(err)
 	}

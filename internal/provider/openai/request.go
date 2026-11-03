@@ -13,6 +13,7 @@ const maxResponsesRequestBytes = 16 << 20
 
 // responsesRequest 是当前文本切片发送给 Responses API 的稳定请求。
 type responsesRequest struct {
+	PromptCacheKey  string         `json:"prompt_cache_key,omitempty"`
 	ToolChoice      string         `json:"tool_choice,omitempty"`
 	MaxOutputTokens uint64         `json:"max_output_tokens,omitempty"`
 	Model           string         `json:"model"`

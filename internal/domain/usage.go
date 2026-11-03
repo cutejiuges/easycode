@@ -185,3 +185,29 @@ func aggregateUsageMetric(samples []SampleUsage, selectMetric func(SampleUsage) 
 	}
 	return KnownUsageMetric(total), nil
 }
+
+// CacheReadRatio 只在全部适用输入指标已知、无溢出且非零时返回比例。
+func CacheReadRatio(usage SampleUsage) (float64, bool) {
+	if usage.Validate() != nil {
+		return 0, false
+	}
+	read, known := usage.CacheRead().Value()
+	if !known {
+		return 0, false
+	}
+	var total uint64
+	for _, metric := range []UsageMetric{usage.InputUncached(), usage.CacheRead(), usage.CacheWrite()} {
+		if metric.State() == UsageMetricNotApplicable {
+			continue
+		}
+		value, ok := metric.Value()
+		if !ok || value > math.MaxUint64-total {
+			return 0, false
+		}
+		total += value
+	}
+	if total == 0 {
+		return 0, false
+	}
+	return float64(read) / float64(total), true
+}

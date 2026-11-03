@@ -21,8 +21,8 @@ type contextFixtureSession struct {
 	cancelled    domain.CompactionID
 }
 
-func (session *contextFixtureSession) QueryContext(context.Context) (protocol.CommandResult, error) {
-	command, _ := protocol.NewQueryContextCommand("query")
+func (session *contextFixtureSession) QueryContext(_ context.Context, requestID protocol.RequestID) (protocol.CommandResult, error) {
+	command, _ := protocol.NewQueryContextCommand(requestID)
 	result, err := protocol.NewAcceptedCommandResult(command, protocol.CommandDispositionQueried)
 	item, _ := protocol.NewCommandResultItem(result)
 	session.outputs <- item
@@ -98,7 +98,11 @@ func TestLocalCompactionAdmissionDoesNotCreateInput(t *testing.T) {
 func TestContextPanelSnapshotsAndPureRender(t *testing.T) {
 	tokens := uint64(120)
 	estimate := protocol.ContextEstimatePayload{Method: "byte_heuristic_v1", State: domain.TokenEstimateEstimated, Tokens: &tokens}
-	payload := protocol.ContextSnapshotPayload{AutoCompactionState: "disabled", AutoCompactionReason: "disabled", Scope: "committed", Revision: 3, Activity: "compacting", Model: "fixture-model", Sources: []protocol.ContextSourcePayload{
+	policy, err := protocol.NewCachePolicyPayload(domain.DefaultCachePolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := protocol.ContextSnapshotPayload{CachePolicy: policy, AutoCompactionState: "disabled", AutoCompactionReason: "disabled", Scope: "committed", Revision: 3, Activity: "compacting", Model: "fixture-model", Sources: []protocol.ContextSourcePayload{
 		{Kind: "provider_profile", Revision: "profile", Estimate: estimate},
 		{Kind: "tool_catalog", Revision: "tools", Estimate: estimate},
 		{Kind: "committed_history", Revision: "history", Estimate: estimate},

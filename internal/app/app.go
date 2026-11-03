@@ -488,7 +488,7 @@ func openChatResourcesWithSnapshot(
 		TextOutputStore:    artifactOutputStore{store: artifactStore},
 		ToolHistory:        queries,
 		SessionID:          assembled.identity.SessionID, ThreadID: assembled.identity.ThreadID,
-		Journal: assembled.writer, ContextProfile: contextProfile,
+		Journal: assembled.writer, ContextProfile: contextProfile, CachePolicy: applicationConfig.CachePolicy(), RestoredCacheBaseline: resumeThreadID != "",
 		ToolCatalog:          toolCatalog,
 		ReadExecutor:         readExecutor,
 		ReadArtifactExecutor: readArtifactExecutor,
@@ -576,16 +576,18 @@ func newProviderResource(applicationConfig config.Config) (providerResource, err
 	switch applicationConfig.Provider.Family {
 	case domain.ProviderOpenAI:
 		instance, err := openai.New(openai.Config{
-			BaseURL: applicationConfig.Provider.BaseURL,
-			APIKey:  applicationConfig.Provider.APIKey,
-			Model:   applicationConfig.Provider.Model,
+			BaseURL:     applicationConfig.Provider.BaseURL,
+			APIKey:      applicationConfig.Provider.APIKey,
+			Model:       applicationConfig.Provider.Model,
+			CachePolicy: applicationConfig.CachePolicy(),
 		})
 		return instance, err
 	case domain.ProviderAnthropic:
 		instance, err := anthropic.New(anthropic.Config{
-			BaseURL: applicationConfig.Provider.BaseURL,
-			APIKey:  applicationConfig.Provider.APIKey,
-			Model:   applicationConfig.Provider.Model,
+			BaseURL:     applicationConfig.Provider.BaseURL,
+			APIKey:      applicationConfig.Provider.APIKey,
+			Model:       applicationConfig.Provider.Model,
+			CachePolicy: applicationConfig.CachePolicy(),
 		})
 		return instance, err
 	default:
@@ -676,13 +678,13 @@ func (resources *chatResources) close(ctx context.Context) error {
 	if resources.artifactStore != nil {
 		artifactErr = resources.artifactStore.Close()
 	}
-	var writerErr error
-	if resources.writer != nil {
-		writerErr = resources.writer.Close(closeContext)
-	}
 	var providerErr error
 	if resources.provider != nil && !providerClosed {
 		providerErr = resources.provider.Close()
+	}
+	var writerErr error
+	if resources.writer != nil {
+		writerErr = resources.writer.Close(closeContext)
 	}
 	var workspaceErr error
 	if resources.workspace != nil {

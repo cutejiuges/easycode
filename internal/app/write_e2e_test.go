@@ -52,6 +52,12 @@ func serveWriteScenarioSample(writer io.Writer, family domain.ProviderFamily, sa
 }
 
 func TestWriteEndToEndCreateReadOverwriteAndVerify(t *testing.T) {
+	runCacheWriteEndToEndCreateReadOverwriteAndVerify(t, false)
+}
+func TestCachedWriteEndToEndCreateReadOverwriteAndVerify(t *testing.T) {
+	runCacheWriteEndToEndCreateReadOverwriteAndVerify(t, true)
+}
+func runCacheWriteEndToEndCreateReadOverwriteAndVerify(t *testing.T, cacheEnabled bool) {
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		t.Run(string(family), func(t *testing.T) {
 			root := t.TempDir()
@@ -83,7 +89,7 @@ func TestWriteEndToEndCreateReadOverwriteAndVerify(t *testing.T) {
 			if family == domain.ProviderAnthropic {
 				model = "claude-test"
 			}
-			resources, err := openChatResourcesWithHooks(context.Background(), config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, APIKey: secret.New("write-e2e-fixture"), Model: model}}, dataPaths{sessionRoot: filepath.Join(dataRoot, "sessions")}, "", false, root, chatResourceHooks{interactiveApprovals: true})
+			resources, err := openChatResourcesWithHooks(context.Background(), cacheFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, APIKey: secret.New("write-e2e-fixture"), Model: model}}, cacheEnabled), dataPaths{sessionRoot: filepath.Join(dataRoot, "sessions")}, "", false, root, chatResourceHooks{interactiveApprovals: true})
 			if err != nil {
 				t.Fatal(err)
 			}
