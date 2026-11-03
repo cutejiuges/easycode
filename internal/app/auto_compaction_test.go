@@ -22,6 +22,12 @@ import (
 )
 
 func TestAutomaticCompactionRealProvidersAndResume(t *testing.T) {
+	runCacheAutomaticCompactionRealProvidersAndResume(t, false)
+}
+func TestCachedAutomaticCompactionRealProvidersAndResume(t *testing.T) {
+	runCacheAutomaticCompactionRealProvidersAndResume(t, true)
+}
+func runCacheAutomaticCompactionRealProvidersAndResume(t *testing.T, cacheEnabled bool) {
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		for _, failure := range []bool{false, true} {
 			name := string(family)
@@ -66,7 +72,7 @@ func TestAutomaticCompactionRealProvidersAndResume(t *testing.T) {
 				}))
 				defer server.Close()
 				budget, _ := contextplan.NewBudget(20000, 0, 0)
-				cfg := config.Config{Provider: config.Provider{Family: family, Model: "claude-test", BaseURL: server.URL, APIKey: secret.New("private-test-key")}, ContextBudget: budget}
+				cfg := cacheFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, Model: "claude-test", BaseURL: server.URL, APIKey: secret.New("private-test-key")}, ContextBudget: budget}, cacheEnabled)
 				root, workspace := filepath.Join(t.TempDir(), "sessions"), t.TempDir()
 				resources, err := openChatResources(context.Background(), cfg, root, "", workspace)
 				if err != nil {

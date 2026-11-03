@@ -140,6 +140,12 @@ func DecodeStreamCommand(line []byte) (protocol.Command, error) {
 		return protocol.Command{}, fmt.Errorf("stream command request ID is invalid")
 	}
 	switch envelope.Type {
+	case "cache.query":
+		var wire streamCommandEnvelope
+		if err := codec.DecodeObject(line, &wire, "version", "type", "request_id"); err != nil {
+			return protocol.Command{}, fmt.Errorf("cache.query command is invalid")
+		}
+		return protocol.NewQueryCacheCommand(requestID)
 	case "context.query":
 		var wire streamCommandEnvelope
 		if err := codec.DecodeObject(line, &wire, "version", "type", "request_id"); err != nil {

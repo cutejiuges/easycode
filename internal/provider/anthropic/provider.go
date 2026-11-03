@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"easycode/internal/codec"
 	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/provider"
@@ -33,6 +34,7 @@ type Config struct {
 	Model             string
 	MaxOutputTokens   int
 	StreamIdleTimeout time.Duration
+	CachePolicy       domain.CachePolicy
 }
 
 // Provider 持有不可变 Anthropic 配置和共享 Resty transport。
@@ -43,10 +45,13 @@ type Provider struct {
 
 // Conversation 持有一条会话独占的 Anthropic 原生历史。
 type Conversation struct {
-	provider *Provider
-	history  nativeHistory
-	active   atomic.Bool
-	pending  atomic.Bool
+	provider   *Provider
+	threadID   domain.ThreadID
+	baseline   provider.RequestBaseline
+	nextReason domain.RequestResetReason
+	history    nativeHistory
+	active     atomic.Bool
+	pending    atomic.Bool
 }
 
 type nativeHistory struct {
@@ -66,6 +71,10 @@ var _ provider.Factory = (*Provider)(nil)
 
 // New 创建 Anthropic Provider。
 func New(config Config) (*Provider, error) {
+	config.CachePolicy = domain.WithDefaultCachePolicy(config.CachePolicy)
+	if err := config.CachePolicy.ValidateFamily(domain.ProviderAnthropic); err != nil {
+		return nil, fault.New(fault.CodeInvalidConfiguration, "cache policy is invalid")
+	}
 	config.Model = strings.TrimSpace(config.Model)
 	if config.Model == "" {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "Anthropic model is required")
@@ -92,24 +101,31 @@ func (*Provider) Family() domain.ProviderFamily {
 }
 
 // Capabilities 返回当前文本切片已实现的能力集。
-func (*Provider) Capabilities() provider.Capabilities {
+func (instance *Provider) Capabilities() provider.Capabilities {
 	return provider.Capabilities{
-		Streaming:         true,
-		ThinkingSignature: true,
-		FunctionTools:     true,
-		FilePatch:         true,
+		PromptCacheControl: instance.config.CachePolicy.Anthropic() != domain.AnthropicCacheDisabled,
+		Streaming:          true,
+		ThinkingSignature:  true,
+		FunctionTools:      true,
+		FilePatch:          true,
 	}
 }
 
 // NewConversation 创建历史相互隔离的会话。
-func (instance *Provider) NewConversation() provider.Conversation {
-	return &Conversation{provider: instance}
+func (instance *Provider) NewConversation(threadID domain.ThreadID) (provider.Conversation, error) {
+	if !threadID.Valid() {
+		return nil, fmt.Errorf("conversation thread ID is invalid")
+	}
+	return &Conversation{provider: instance, threadID: threadID}, nil
 }
 
 // RestoreConversation 先事务式校验全部 commits，再构造可调用 Conversation。
-func (instance *Provider) RestoreConversation(commits []provider.RestoreRecord) (provider.Conversation, error) {
+func (instance *Provider) RestoreConversation(threadID domain.ThreadID, commits []provider.RestoreRecord) (provider.Conversation, error) {
+	if !threadID.Valid() {
+		return nil, fmt.Errorf("conversation thread ID is invalid")
+	}
 	entries := make([]nativeHistoryEntry, 0, len(commits))
-	conversation := &Conversation{provider: instance}
+	conversation := &Conversation{provider: instance, threadID: threadID, nextReason: domain.ResetRestored}
 	seenCheckpoints := make(map[domain.CompactionID]struct{})
 	for index, commit := range commits {
 		if expected, ok := commit.CompactionSource(); ok {
@@ -222,6 +238,11 @@ func (conversation *Conversation) Stream(
 		conversation.active.Store(false)
 		return nil, fault.Wrap(fault.CodeProviderRequest, "compile provider request failed", err)
 	}
+	evidence, err := conversation.requestEvidence(input)
+	if err != nil {
+		conversation.active.Store(false)
+		return nil, err
+	}
 	streamContext, cancelStream := context.WithCancel(ctx)
 	stream, err := conversation.provider.transport.StreamSSE(streamContext, transport.SSERequest{
 		Method: http.MethodPost,
@@ -244,7 +265,7 @@ func (conversation *Conversation) Stream(
 	}
 
 	output := make(chan provider.StreamEvent, 16)
-	go conversation.consumeStream(ctx, cancelStream, catalog, stream, output)
+	go conversation.consumeStream(ctx, cancelStream, catalog, stream, output, request, evidence)
 	return output, nil
 }
 
@@ -254,6 +275,8 @@ func (conversation *Conversation) consumeStream(
 	catalog tool.CatalogSnapshot,
 	stream <-chan transport.SSEMessage,
 	output chan<- provider.StreamEvent,
+	request codec.CanonicalJSON,
+	evidence requestEvidence,
 ) {
 	defer close(output)
 	defer conversation.active.Store(false)
@@ -328,8 +351,20 @@ func (conversation *Conversation) consumeStream(
 					sendTerminal(provider.StreamEventFailed, nil, fault.Wrap(fault.CodeStreamProtocol, "Anthropic completed sample is invalid", encodeErr))
 					return
 				}
+				receipt, receiptErr := conversation.describeRequest(request, evidence, domain.RequestSample)
+				if receiptErr != nil {
+					sendTerminal(provider.StreamEventFailed, nil, receiptErr)
+					return
+				}
+				baseline, baselineErr := evidence.commitBaseline(entry)
+				if baselineErr != nil {
+					sendTerminal(provider.StreamEventFailed, nil, baselineErr)
+					return
+				}
 				conversation.pending.Store(true)
-				prepared, prepareErr := provider.NewPreparedSample(envelope, usage, func() {
+				prepared, prepareErr := provider.NewPreparedSample(envelope, usage, receipt, func() {
+					conversation.baseline = baseline
+					conversation.nextReason = domain.ResetNone
 					conversation.history.commit(entry)
 					conversation.pending.Store(false)
 				}, func() { conversation.pending.Store(false) }, reducer.readyCalls()...)

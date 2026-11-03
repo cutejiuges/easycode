@@ -10,4 +10,5 @@ Total: 480 tokens · byte_heuristic_v1
 Window: 200000 · output reserve: 4096 · safety: 1000
 Auto compact: disabled (disabled)
 Budget: within_limit
+Cache: disabled · key omit · http_sse
 Esc: close

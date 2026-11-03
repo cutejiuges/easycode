@@ -1,0 +1,28 @@
+Cache · process snapshot
+anthropic/messages · fixture-model · idle
+Baseline: fresh
+Configured: disabled
+Observed transport: http_sse · full · first_request
+Change: first_request
+Policy changed: false
+Last sample: uncached unknown · read unknown · write unknown · output 5 · reason
+ing not_applicable
+Read ratio: unknown · read observed: false · markers: 0
+Request: 1f58b9145b24d108d7ac38887338b3ea3229833b9c1e418250343f907bfd1047
+Native: bef32d2c315a289576f2a6828d27edb16bb316a4d85c271f2d794045f3ea668d · first
+Fallback: none
+Last summary: not observed
+Last successful turn: uncached unknown · read unknown · write unknown · output 5
+ · reasoning not_applicable
+Stable prefix: f89c849c36a74d34b9a7250089715d4cb71299deb7b1993c65cdc875065409e8
+Content: 80f969de7c5c62c6274c391c6a9e7722c6a55f7157030f7f8e44217ec5435a85
+provider_profile · fixture · 3de22ef1eb90f2dd5c4634e76774f1d36e967694afb8f856946
+ea20507e28b84
+tool_catalog · fixture · 0bd76a36cd3e749754d116989bf9cc62b2bbfb9fb1b3de9ade7b58b
+28ab472e4
+committed_history · fixture · 503ee45ae1a42e9c93ef91e31d405ef7b96bbc1c1fd1963a1a
+b5000fcce9a43b
+current_input · fixture · 5b8fbf7d3bd680abc4de8a5abad8ac6ca563e2f52b54267ae131fd
+5bc9d6df54
+Equal fingerprints do not prove a server cache hit.
+↑/↓: scroll · Esc: close

@@ -60,6 +60,8 @@ type Config struct {
 	GenerateTurnID            TurnIDGenerator
 	GenerateInvocationID      InvocationIDGenerator
 	InterruptedTail           bool
+	CachePolicy               domain.CachePolicy
+	RestoredCacheBaseline     bool
 	ContextProfile            contextplan.ProviderProfile
 	ToolCatalog               tool.CatalogSnapshot
 	ReadExecutor              tool.ReadExecutor
@@ -81,6 +83,10 @@ type Config struct {
 
 // Runtime 持有一条会话级 Provider Conversation 和同一 thread journal。
 type Runtime struct {
+	cachePublisher               func(protocol.CacheSnapshotPayload)
+	cachePolicy                  domain.CachePolicy
+	restoredCacheBaseline        bool
+	cache                        cacheDiagnostics
 	autoCompactionFailures       uint8
 	autoCompactionFailedRevision uint64
 	autoCompactionPolicy         contextplan.AutoCompactionPolicy
@@ -136,6 +142,9 @@ type runtimeApproval struct {
 func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 	if conversation == nil {
 		return nil, fault.New(fault.CodeProviderUnavailable, "provider conversation is not configured")
+	}
+	if err := domain.WithDefaultCachePolicy(config.CachePolicy).ValidateFamily(conversation.Family()); err != nil {
+		return nil, err
 	}
 	if !config.SessionID.Valid() || !config.ThreadID.Valid() {
 		return nil, fault.New(fault.CodeTurnFailed, "runtime session identity is invalid")
@@ -208,7 +217,8 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 		conversation:           conversation, journal: config.Journal,
 		sessionID: config.SessionID, threadID: config.ThreadID, newTurnID: config.GenerateTurnID,
 		newInvocationID: config.GenerateInvocationID,
-		profile:         config.ContextProfile, toolCatalog: config.ToolCatalog.Clone(),
+		cachePolicy:     domain.WithDefaultCachePolicy(config.CachePolicy), restoredCacheBaseline: config.RestoredCacheBaseline,
+		profile: config.ContextProfile, toolCatalog: config.ToolCatalog.Clone(),
 		readExecutor: config.ReadExecutor, globExecutor: config.GlobExecutor, grepExecutor: config.GrepExecutor,
 		patchPreparer: config.PatchPreparer, patchExecutor: config.PatchExecutor, writePreparer: config.WritePreparer, writeExecutor: config.WriteExecutor, execPreparer: config.ExecPreparer, execExecutor: config.ExecExecutor, toolPolicy: config.ToolPolicy, newApprovalRequestID: config.GenerateApprovalRequestID, interactiveApprovals: config.InteractiveApprovals, projectInstructions: projectInstructions,
 		budget: config.ContextBudget, planner: config.ContextPlanner,
@@ -220,7 +230,7 @@ func (runtime *Runtime) RunTurn(ctx context.Context, inputs []domain.UserInput, 
 	return runtime.runTurn(ctx, inputs, nil, emit)
 }
 
-func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, control turnInputControl, emit Emitter) error {
+func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, control turnInputControl, emit Emitter) (resultErr error) {
 	if err := runtime.validateTurnRequest(ctx, emit); err != nil {
 		return err
 	}
@@ -228,6 +238,13 @@ func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, 
 		return fault.New(fault.CodeTurnFailed, "conversation already has an active turn")
 	}
 	defer runtime.active.Store(false)
+	defer func() {
+		if resultErr != nil || ctx.Err() != nil {
+			if resetter, ok := runtime.conversation.(provider.ContinuationResetter); ok {
+				resetter.ResetContinuation()
+			}
+		}
+	}()
 	runtime.turnEmitter = emit
 	defer func() { runtime.turnEmitter = nil }()
 	defer runtime.clearTurnObservations()
@@ -475,14 +492,14 @@ func (runtime *Runtime) beginTurn(ctx context.Context, emit Emitter) (domain.Tur
 	return turnID, nil
 }
 
-func (runtime *Runtime) planTurnInput(input provider.TurnInput) (provider.TurnInput, error) {
+func (runtime *Runtime) planTurnInput(input provider.TurnInput) (provider.TurnInput, contextplan.ContextPlan, error) {
 	footprint, err := runtime.conversation.HistoryFootprint()
 	if err != nil {
-		return provider.TurnInput{}, err
+		return provider.TurnInput{}, contextplan.ContextPlan{}, err
 	}
 	view, err := runtime.conversation.ProjectActiveContext()
 	if err != nil {
-		return provider.TurnInput{}, err
+		return provider.TurnInput{}, contextplan.ContextPlan{}, err
 	}
 	return runtime.planHistory(view, footprint)
 }
@@ -542,8 +559,11 @@ func (runtime *Runtime) runProviderSample(
 	turnID domain.TurnID,
 	input provider.TurnInput,
 ) (provider.StreamEvent, error) {
-	providerInput, err := runtime.planTurnInput(input)
+	providerInput, plan, err := runtime.planTurnInput(input)
 	if err != nil {
+		return provider.StreamEvent{}, err
+	}
+	if err := runtime.freezeCacheSources(plan); err != nil {
 		return provider.StreamEvent{}, err
 	}
 	streamContext, cancelStream := context.WithCancel(ctx)
@@ -584,6 +604,9 @@ func (runtime *Runtime) finishFailedProviderStream(
 }
 
 func inspectPreparedSample(sample *provider.PreparedSample) ([]tool.ReadyCall, domain.SampleUsage, error) {
+	if _, err := sample.Receipt(); err != nil {
+		return nil, domain.SampleUsage{}, fault.Wrap(fault.CodeStreamProtocol, "provider request receipt is invalid", err)
+	}
 	if sample == nil || sample.Finalized() {
 		return nil, domain.SampleUsage{}, fault.New(fault.CodeStreamProtocol, "provider completed without a fresh prepared sample")
 	}
@@ -605,6 +628,11 @@ func (runtime *Runtime) commitFinalSample(
 	sample *provider.PreparedSample,
 	usages []domain.SampleUsage,
 ) error {
+	defer discardPreparedSample(sample)
+	observation, err := runtime.sampleObservation(sample)
+	if err != nil {
+		return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, err)
+	}
 	envelope, err := sample.Envelope()
 	if err != nil {
 		failure := fault.Wrap(fault.CodeStreamProtocol, "provider prepared sample is invalid", err)
@@ -662,6 +690,10 @@ func (runtime *Runtime) commitFinalSample(
 		runtime.emitFailure(emit, turnID, failure)
 		return failure
 	}
+	runtime.commitSampleObservation(observation)
+	turnPayload, _ := protocol.NewUsagePayload(turnUsage)
+	runtime.cache.snapshot.LastTurn = &turnPayload
+	runtime.publishCacheSnapshot()
 	if runtime.toolHistory != nil {
 		if err := runtime.toolHistory.NativeCommitted(records[0].Sequence, nil); err != nil {
 			runtime.poisoned.Store(true)
@@ -684,6 +716,11 @@ func (runtime *Runtime) commitCallSample(
 	usage domain.SampleUsage,
 	seenInvocationIDs map[tool.InvocationID]struct{},
 ) ([]tool.Invocation, error) {
+	observation, err := runtime.sampleObservation(sample)
+	if err != nil {
+		discardPreparedSample(sample)
+		return nil, err
+	}
 	envelope, err := sample.Envelope()
 	if err != nil {
 		discardPreparedSample(sample)
@@ -742,6 +779,8 @@ func (runtime *Runtime) commitCallSample(
 		runtime.poisoned.Store(true)
 		return nil, fault.Wrap(fault.CodeStreamProtocol, "finalize prepared sample failed", err)
 	}
+	runtime.commitSampleObservation(observation)
+	runtime.publishCacheSnapshot()
 	if runtime.toolHistory != nil {
 		entries := make([]session.ToolHistoryEntry, len(invocations))
 		for index, invocation := range invocations {

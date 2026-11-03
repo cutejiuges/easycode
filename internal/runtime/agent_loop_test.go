@@ -398,11 +398,13 @@ func TestAgentLoopTargetedInterruptIsRaceSafe(t *testing.T) {
 }
 
 func TestAgentLoopShutdownDiscardsQueueAndRetainsCleanupOwner(t *testing.T) {
+	providerStarted := make(chan struct{})
 	providerCancelled := make(chan struct{})
 	releaseCleanup := make(chan struct{})
 	var cancelOnce sync.Once
 	conversation := &fakeConversation{stream: func(ctx context.Context, _ provider.TurnInput) (<-chan provider.StreamEvent, error) {
 		stream := make(chan provider.StreamEvent, 1)
+		close(providerStarted)
 		go func() {
 			<-ctx.Done()
 			cancelOnce.Do(func() { close(providerCancelled) })
@@ -416,6 +418,8 @@ func TestAgentLoopShutdownDiscardsQueueAndRetainsCleanupOwner(t *testing.T) {
 	runDone := startAgentLoop(t, loop)
 	submitLoopCommand(t, loop, "shutdown-input-1", "first")
 	receiveTurnEvent(t, loop.Outputs(), "shutdown-input-1", protocol.EventTurnStarted)
+	// TurnStarted 只证明 turn 已提交；必须等 Provider 进入 Stream 后才能验证其取消清理。
+	<-providerStarted
 	submitLoopCommand(t, loop, "shutdown-input-2", "second")
 	shutdown, _ := protocol.NewShutdownCommand("shutdown-command")
 	result, err := loop.Submit(context.Background(), shutdown)

@@ -50,7 +50,11 @@ func (runtime *Runtime) contextSnapshot() (protocol.ContextSnapshotPayload, erro
 	if err != nil {
 		return protocol.ContextSnapshotPayload{}, err
 	}
-	snapshot := protocol.ContextSnapshotPayload{AutoCompactionState: string(decision), AutoCompactionReason: runtime.autoCompactionPolicy.UnavailableReason(), Scope: "committed", Revision: view.Revision(), Activity: "idle", Model: runtime.profile.Model(), Sources: make([]protocol.ContextSourcePayload, 0), Total: total, WindowConfigured: runtime.budget.Enabled(), Window: runtime.budget.Window(), ReservedOutput: runtime.budget.ReservedOutput(), SafetyMargin: runtime.budget.SafetyMargin(), BudgetState: string(plan.Decision().State())}
+	policy, err := protocol.NewCachePolicyPayload(runtime.cachePolicy)
+	if err != nil {
+		return protocol.ContextSnapshotPayload{}, err
+	}
+	snapshot := protocol.ContextSnapshotPayload{CachePolicy: policy, AutoCompactionState: string(decision), AutoCompactionReason: runtime.autoCompactionPolicy.UnavailableReason(), Scope: "committed", Revision: view.Revision(), Activity: "idle", Model: runtime.profile.Model(), Sources: make([]protocol.ContextSourcePayload, 0), Total: total, WindowConfigured: runtime.budget.Enabled(), Window: runtime.budget.Window(), ReservedOutput: runtime.budget.ReservedOutput(), SafetyMargin: runtime.budget.SafetyMargin(), BudgetState: string(plan.Decision().State())}
 	if threshold, enabled := runtime.autoCompactionPolicy.Threshold(); enabled {
 		snapshot.AutoCompactionThreshold = &threshold
 	}
@@ -139,6 +143,10 @@ func (runtime *Runtime) runCompactionOwned(ctx context.Context, id domain.Compac
 		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, false, nil, emit)
 	}
 	emit(event)
+	runtime.cache.frozen, err = contextplan.NewCacheSources(admission.before)
+	if err != nil {
+		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, true, nil, emit)
+	}
 	networkCtx, cancel := runtime.compactionDeadline(ctx, 120*time.Second)
 	prepared, err := admission.kernel.RunCompaction(networkCtx, id, admission.preview)
 	code := compactionFailureCode(networkCtx, err)
@@ -173,6 +181,14 @@ func (runtime *Runtime) runCompactionOwned(ctx context.Context, id domain.Compac
 		runtime.poisoned.Store(true)
 		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, true, prepared, emit)
 	}
+	receipt, receiptErr := prepared.Receipt()
+	if receiptErr != nil {
+		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureResponse, true, prepared, emit)
+	}
+	observation, observationErr := runtime.cacheObservation(receipt, usage, domain.RequestSummary, id)
+	if observationErr != nil {
+		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureResponse, true, prepared, emit)
+	}
 	completed, err := session.NewCompactionCompletedDraft(scope, checkpoint, usage, admission.before.TotalEstimate(), candidate.TotalEstimate())
 	if err != nil {
 		runtime.poisoned.Store(true)
@@ -191,6 +207,8 @@ func (runtime *Runtime) runCompactionOwned(ctx context.Context, id domain.Compac
 		runtime.poisoned.Store(true)
 		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, false, nil, emit)
 	}
+	runtime.cache.snapshot.LastSummary = &observation
+	runtime.cache.snapshot.LastFailure = ""
 	if runtime.compactionHistory != nil {
 		summary, _ := view.Summary()
 		if len(records) != 1 || runtime.compactionHistory.CompactionCommitted(records[0].Sequence, id, summary) != nil {

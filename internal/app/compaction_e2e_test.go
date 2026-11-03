@@ -192,7 +192,11 @@ func waitCompactionIdle(t *testing.T, resources *chatResources) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	for {
-		if _, err := resources.session.QueryContext(ctx); err != nil {
+		requestID, err := domain.GenerateInputID()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := resources.session.QueryContext(ctx, protocol.RequestID("test-context-"+string(requestID))); err != nil {
 			t.Fatal(err)
 		}
 		for {

@@ -258,6 +258,8 @@ func correlateProjectedEvent(inputID protocol.RequestID, event Event) (StreamEve
 
 func streamCommandType(kind protocol.CommandKind) (string, bool) {
 	switch kind {
+	case protocol.CommandQueryCache:
+		return "cache.query", true
 	case protocol.CommandQueryContext:
 		return "context.query", true
 	case protocol.CommandCompactContext:
@@ -284,6 +286,14 @@ func streamCommandType(kind protocol.CommandKind) (string, bool) {
 
 func validateStreamEvent(event StreamEvent) error {
 	switch value := event.(type) {
+	case StreamCacheSnapshotEvent:
+		if value.Version != eventVersion || value.Type != "cache.snapshot" || !value.RequestID.Valid() {
+			return fmt.Errorf("cache snapshot envelope is invalid")
+		}
+		if err := validateThreadIdentity(value.SessionID, value.ThreadID); err != nil {
+			return err
+		}
+		return value.Snapshot.validate()
 	case StreamContextSnapshotEvent:
 		if value.Version != eventVersion || value.Type != "context.snapshot" || !value.RequestID.Valid() {
 			return fmt.Errorf("context snapshot envelope is invalid")
@@ -328,7 +338,7 @@ func validateStreamEvent(event StreamEvent) error {
 		if value.Version != eventVersion || value.Type != "control.response" || !value.RequestID.Valid() {
 			return fmt.Errorf("stream control.response envelope is invalid")
 		}
-		if value.CommandType != "context.query" && value.CommandType != "context.compact" && value.CommandType != "context.cancel" && value.CommandType != "input.append" && value.CommandType != "input.retract" && value.CommandType != "turn.stop" && value.CommandType != "input.submit" && value.CommandType != "turn.interrupt" && value.CommandType != "session.shutdown" {
+		if value.CommandType != "cache.query" && value.CommandType != "context.query" && value.CommandType != "context.compact" && value.CommandType != "context.cancel" && value.CommandType != "input.append" && value.CommandType != "input.retract" && value.CommandType != "turn.stop" && value.CommandType != "input.submit" && value.CommandType != "turn.interrupt" && value.CommandType != "session.shutdown" {
 			return fmt.Errorf("stream control.response command type is invalid")
 		}
 		if value.Status == protocol.CommandStatusAccepted {

@@ -15,6 +15,14 @@ import (
 )
 
 func TestCompactionStreamFailuresAndUTF8(t *testing.T) {
+	for _, mode := range []domain.AnthropicCacheMode{domain.AnthropicCacheDisabled, domain.AnthropicCache5m, domain.AnthropicCache1h} {
+		t.Run(string(mode), func(t *testing.T) {
+			policy, _ := domain.NewCachePolicy(mode, domain.OpenAICacheOmit, domain.OpenAIHTTPSSE)
+			testCompactionCacheStreams(t, policy)
+		})
+	}
+}
+func testCompactionCacheStreams(t *testing.T, policy domain.CachePolicy) {
 	for _, trigger := range []domain.CompactionTrigger{domain.CompactionManual, domain.CompactionAuto} {
 		for _, mode := range []string{"success", "refusal", "incomplete", "tool", "empty", "disconnect", "http"} {
 			t.Run(string(trigger)+"/"+mode, func(t *testing.T) {
@@ -55,12 +63,12 @@ func TestCompactionStreamFailuresAndUTF8(t *testing.T) {
 					}
 				}))
 				defer server.Close()
-				instance, err := New(Config{BaseURL: server.URL, APIKey: secret.New("private-secret"), Model: "model"})
+				instance, err := New(Config{CachePolicy: policy, BaseURL: server.URL, APIKey: secret.New("private-secret"), Model: "model"})
 				if err != nil {
 					t.Fatal(err)
 				}
 				defer instance.Close()
-				conversation := instance.NewConversation().(*Conversation)
+				conversation := testConversation(t, instance)
 				for _, entry := range testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, newUserMessage(strings.Repeat("old history ", 100)))}) {
 					conversation.history.commit(entry)
 				}
@@ -105,6 +113,13 @@ func TestCompactionStreamFailuresAndUTF8(t *testing.T) {
 
 // 取消必须等待 HTTP reader 退出后返回，不安装候选。
 func TestCompactionStreamCancellation(t *testing.T) {
+	policy, _ := domain.NewCachePolicy(domain.AnthropicCache1h, domain.OpenAICacheOmit, domain.OpenAIHTTPSSE)
+	for _, current := range []domain.CachePolicy{domain.DefaultCachePolicy(), policy} {
+		fingerprint, _ := current.Fingerprint()
+		t.Run(fingerprint, func(t *testing.T) { testCompactionStreamCancellation(t, current) })
+	}
+}
+func testCompactionStreamCancellation(t *testing.T, policy domain.CachePolicy) {
 	entered := make(chan struct{})
 	released := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -116,12 +131,12 @@ func TestCompactionStreamCancellation(t *testing.T) {
 		close(released)
 	}))
 	defer server.Close()
-	instance, err := New(Config{BaseURL: server.URL, APIKey: secret.New("private-secret"), Model: "model"})
+	instance, err := New(Config{CachePolicy: policy, BaseURL: server.URL, APIKey: secret.New("private-secret"), Model: "model"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer instance.Close()
-	conversation := instance.NewConversation().(*Conversation)
+	conversation := testConversation(t, instance)
 	for _, entry := range testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, newUserMessage(strings.Repeat("old history ", 100)))}) {
 		conversation.history.commit(entry)
 	}

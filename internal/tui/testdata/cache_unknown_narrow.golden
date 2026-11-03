@@ -1,0 +1,18 @@
+Cache · process snapshot
+anthropic/messages · fix
+ture-model · idle
+Baseline: fresh
+Configured: disabled
+Observed transport: http
+_sse · full · first_requ
+est
+Change: first_request
+Policy changed: false
+Last sample: uncached un
+known · read unknown · w
+rite unknown · output 5
+· reasoning not_applicab
+le
+Read ratio: unknown · re
+ad observed: false · mar
+Esc: close

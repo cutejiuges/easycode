@@ -1,0 +1,18 @@
+Cache · process snapshot
+openai/responses · fixtu
+re-model · idle
+Baseline: fresh
+Configured: key omit · h
+ttp_sse
+Observed transport: not
+observed
+Change: first_request
+Policy changed: false
+Last sample: not observe
+d
+Last summary: not observ
+ed
+Last successful turn: no
+t observed
+Stable prefix: f89c849c3
+Esc: close

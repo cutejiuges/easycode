@@ -1,5 +1,22 @@
 # EasyCode 踩坑与经验记录
 
+### [P4][2026-11-03] 关闭清理测试把 turn 事件误当作 Provider 启动屏障
+
+- 状态：已修复测试同步，生产契约不变。
+- 现象：PR #27 的 Linux CI 在关闭测试中等待 Provider 取消信号，最终触发十分钟测试超时。
+- 根因：`TurnStarted` 先于上下文准备和 Provider `Stream`；关闭可能在 Provider 启动前取消 turn，此时不会产生该 Provider 的取消信号。
+- 修复：测试用显式 channel 确认进入 `Stream` 后才发起关闭，保留队列丢弃、清理完成前 owner 不退出及单次调用断言。
+- 回归：`internal/runtime/agent_loop_test.go` 中的 `TestAgentLoopShutdownDiscardsQueueAndRetainsCleanupOwner`，普通与 race 模式各重复一百次验证。
+
+
+### [P4][2026-11-03] 缓存标记、完成事件与连接资格混为一体
+
+- 状态：已在 `add-provider-prompt-caching` 修复并加入回归。
+- 根因：修改 Raw 所属原生 item 会污染恢复事实；completed 先于 Sync，不能据此建立 previous_response_id；采样子 context 的清理取消不等于用户取消；空闲连接仍占有资源，writer lease 不得先释放。
+- 修复：只覆盖最终请求副本，TTL 构造时冻结；收据先验证、Sync/finalize 后建立普通基线与观测。摘要独立 full 连接，失败也重置。turn owner 在外层取消或失败时显式 ResetContinuation，采样计划与诊断元数据在同次规划中冻结。应用先关闭 Provider，再关闭 writer。
+- 交互：异步查询必须在提交前具有 request/generation，关闭后迟到 ack/snapshot 不得覆盖新草稿或重开面板；查询不写 Session 或输入回忆。
+- 回归：`internal/provider/anthropic/cache_test.go`、`internal/provider/openai/websocket_test.go`、`internal/provider/transport/websocket_test.go`、`internal/runtime/cache_websocket_test.go`、`internal/app/cache_websocket_test.go`、`internal/tui/cache_test.go`；完整证据见[归档验收记录](../../openspec/changes/archive/2026-11-03-add-provider-prompt-caching/verification.md)。
+
 ### [P4][2026-10-31] 结构修复先于语义验证会改变被拒绝的会话
 
 - 状态：已随手动压缩实现；恢复前拒绝组合损坏，Catalog 保持只读。

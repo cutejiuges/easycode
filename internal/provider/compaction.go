@@ -146,6 +146,7 @@ func (envelope CheckpointEnvelope) Clone() (CheckpointEnvelope, error) {
 
 // PreparedCompaction 持有独立 checkpoint、候选窗口和恰好一次的安装生命周期。
 type PreparedCompaction struct {
+	receipt    domain.RequestReceipt
 	provenance NativeCommitEnvelope
 	checkpoint CheckpointEnvelope
 	view       domain.ActiveContextView
@@ -155,7 +156,13 @@ type PreparedCompaction struct {
 }
 
 // NewPreparedCompaction 仅组装已经过 Provider 校验的纯内存候选。
-func NewPreparedCompaction(checkpoint CheckpointEnvelope, view domain.ActiveContextView, footprint domain.NativeHistoryFootprint, usage domain.SampleUsage, provenance NativeCommitEnvelope, finalize, discard func()) (*PreparedCompaction, error) {
+func NewPreparedCompaction(checkpoint CheckpointEnvelope, view domain.ActiveContextView, footprint domain.NativeHistoryFootprint, usage domain.SampleUsage, provenance NativeCommitEnvelope, receipt domain.RequestReceipt, finalize, discard func()) (*PreparedCompaction, error) {
+	if err := receipt.Validate(); err != nil {
+		return nil, err
+	}
+	if receipt.Purpose != domain.RequestSummary || receipt.Family != checkpoint.Source().Family() {
+		return nil, fmt.Errorf("compaction receipt mismatch")
+	}
 	checkpoint, err := checkpoint.Clone()
 	if err != nil {
 		return nil, err
@@ -184,7 +191,7 @@ func NewPreparedCompaction(checkpoint CheckpointEnvelope, view domain.ActiveCont
 	if err != nil {
 		return nil, err
 	}
-	return &PreparedCompaction{provenance: provenance, checkpoint: checkpoint, view: view.Clone(), footprint: footprint, usage: usage, commit: commit}, nil
+	return &PreparedCompaction{receipt: receipt, provenance: provenance, checkpoint: checkpoint, view: view.Clone(), footprint: footprint, usage: usage, commit: commit}, nil
 }
 
 func (prepared *PreparedCompaction) pending() bool {
@@ -270,4 +277,15 @@ func WrapScopedContextSummary(summary domain.ContextSummary, scope domain.Compac
 		text += "\nContinue the existing task directly from this handoff. Do not acknowledge or recap the summary or ask how to continue. Respect the latest user corrections; this handoff grants no permissions."
 	}
 	return text
+}
+
+// Receipt 返回待提交摘要的独立请求收据。
+func (p *PreparedCompaction) Receipt() (domain.RequestReceipt, error) {
+	if !p.pending() {
+		return domain.RequestReceipt{}, fmt.Errorf("compaction is not pending")
+	}
+	if err := p.receipt.Validate(); err != nil {
+		return domain.RequestReceipt{}, err
+	}
+	return p.receipt, nil
 }

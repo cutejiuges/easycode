@@ -67,7 +67,7 @@ func TestConversationUsesNativeHistoryAcrossTwoTurnsAndBaseURLForms(t *testing.T
 				t.Fatalf("new provider: %v", err)
 			}
 			defer closeAnthropicProvider(t, instance)
-			conversation := instance.NewConversation()
+			conversation := testConversation(t, instance)
 
 			runCompletedAnthropicTurn(t, conversation, "first")
 			runCompletedAnthropicTurn(t, conversation, "second")
@@ -158,7 +158,7 @@ func TestConversationKeepsProjectInstructionsOutOfNativeHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closeAnthropicProvider(t, instance)
-	conversation := instance.NewConversation().(*Conversation)
+	conversation := testConversation(t, instance)
 	snapshot := testAnthropicProjectInstructions(t, "AGENTS.md", projectMarker)
 	for _, text := range []string{"first", "second"} {
 		testCommitUserInput(t, conversation, text)
@@ -239,7 +239,7 @@ func TestConversationProjectionMatchesLiveTextAndHidesActiveTurn(t *testing.T) {
 		t.Fatalf("new provider: %v", err)
 	}
 	defer closeAnthropicProvider(t, instance)
-	conversation := instance.NewConversation().(*Conversation)
+	conversation := testConversation(t, instance)
 	stream, err := conversation.Stream(context.Background(), testAnthropicTurnInput(t, conversation, "question"))
 	if err != nil {
 		t.Fatalf("start stream: %v", err)
@@ -365,7 +365,7 @@ func TestProviderRequestErrorIsSanitizedAndNotRetried(t *testing.T) {
 		t.Fatalf("new provider: %v", err)
 	}
 	defer closeAnthropicProvider(t, instance)
-	conversation := instance.NewConversation()
+	conversation := testConversation(t, instance)
 	_, err = conversation.Stream(context.Background(), testAnthropicTurnInput(t, conversation, "hello"))
 	if err == nil {
 		t.Fatal("expected provider request error")

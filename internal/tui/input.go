@@ -47,6 +47,20 @@ func (model Model) projectControlItem(item protocol.ControlItem) (tea.Model, tea
 		return model, nil
 	}
 	if event, ok := item.ContextEvent(); ok {
+		if event.Kind == protocol.EventCacheSnapshot || event.Kind == protocol.EventContextSnapshot {
+			if item.RequestID() != model.queryRequestID || model.queryRequestID == "" {
+				return model, nil
+			}
+			if event.Kind == protocol.EventCacheSnapshot {
+				if model.queryKind != protocol.CommandQueryCache {
+					return model, nil
+				}
+				return model.projectCacheEvent(event)
+			}
+			if model.queryKind != protocol.CommandQueryContext {
+				return model, nil
+			}
+		}
 		return model.projectContextEvent(event)
 	}
 	if event, ok := item.TurnEvent(); ok {
@@ -54,7 +68,7 @@ func (model Model) projectControlItem(item protocol.ControlItem) (tea.Model, tea
 	}
 	if result, ok := item.CommandResult(); ok {
 		switch result.CommandKind() {
-		case protocol.CommandQueryContext, protocol.CommandCompactContext, protocol.CommandCancelCompaction:
+		case protocol.CommandQueryCache, protocol.CommandQueryContext, protocol.CommandCompactContext, protocol.CommandCancelCompaction:
 			return model.projectContextResult(result)
 		case protocol.CommandSubmitConversationalInput:
 			if model.pending == nil {

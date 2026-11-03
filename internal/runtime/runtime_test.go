@@ -740,7 +740,7 @@ func TestRunTurnToolDurabilityFailuresPreventLaterSideEffects(t *testing.T) {
 		var finalized atomic.Int32
 		var discarded atomic.Int32
 		sample, err := provider.NewPreparedSample(
-			envelope, testRuntimeUsage(t), func() { finalized.Add(1) }, func() { discarded.Add(1) }, ready,
+			envelope, testRuntimeUsage(t), syntheticRequestReceipt(domain.RequestSample), func() { finalized.Add(1) }, func() { discarded.Add(1) }, ready,
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -1796,7 +1796,7 @@ func newPreparedSample(t *testing.T, finalize func()) *provider.PreparedSample {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := provider.NewPreparedSample(envelope, testRuntimeUsage(t), finalize, func() {})
+	prepared, err := provider.NewPreparedSample(envelope, testRuntimeUsage(t), syntheticRequestReceipt(domain.RequestSample), finalize, func() {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1811,7 +1811,7 @@ func newPreparedSampleWithReady(t *testing.T, ready ...tool.ReadyCall) *provider
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := provider.NewPreparedSample(envelope, testRuntimeUsage(t), func() {}, func() {}, ready...)
+	prepared, err := provider.NewPreparedSample(envelope, testRuntimeUsage(t), syntheticRequestReceipt(domain.RequestSample), func() {}, func() {}, ready...)
 	if err != nil {
 		t.Fatal(err)
 	}

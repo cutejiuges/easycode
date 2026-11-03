@@ -6,12 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"easycode/internal/codec"
 	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/provider"
@@ -26,20 +26,29 @@ type Config struct {
 	APIKey            secret.Value
 	Model             string
 	StreamIdleTimeout time.Duration
+	CachePolicy       domain.CachePolicy
 }
 
 // Provider 持有不可变 OpenAI 配置和共享 Resty transport。
 type Provider struct {
 	config    Config
 	transport *transport.Client
+	websocket *transport.WSClient
 }
 
 // Conversation 持有一条会话独占的 OpenAI 原生历史。
 type Conversation struct {
-	provider *Provider
-	history  nativeHistory
-	active   atomic.Bool
-	pending  atomic.Bool
+	provider     *Provider
+	threadID     domain.ThreadID
+	baseline     provider.RequestBaseline
+	nextReason   domain.RequestResetReason
+	socket       *transport.WSConnection
+	wsResponseID string
+	httpFallback atomic.Bool
+	fallback     domain.CacheFallbackReason
+	history      nativeHistory
+	active       atomic.Bool
+	pending      atomic.Bool
 }
 
 type nativeHistory struct {
@@ -59,6 +68,10 @@ var _ provider.Factory = (*Provider)(nil)
 
 // New 创建 OpenAI Provider。
 func New(config Config) (*Provider, error) {
+	config.CachePolicy = domain.WithDefaultCachePolicy(config.CachePolicy)
+	if err := config.CachePolicy.ValidateFamily(domain.ProviderOpenAI); err != nil {
+		return nil, fault.New(fault.CodeInvalidConfiguration, "cache policy is invalid")
+	}
 	if strings.TrimSpace(config.Model) == "" {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "OpenAI model is required")
 	}
@@ -69,7 +82,11 @@ func New(config Config) (*Provider, error) {
 	if err != nil {
 		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "OpenAI base URL is invalid", err)
 	}
-	return &Provider{config: config, transport: client}, nil
+	wsClient, err := transport.NewWSClient(config.BaseURL)
+	if err != nil {
+		return nil, err
+	}
+	return &Provider{config: config, transport: client, websocket: wsClient}, nil
 }
 
 // Family 返回 OpenAI 协议家族。
@@ -78,8 +95,10 @@ func (*Provider) Family() domain.ProviderFamily {
 }
 
 // Capabilities 返回当前文本切片已实现的能力集。
-func (*Provider) Capabilities() provider.Capabilities {
+func (instance *Provider) Capabilities() provider.Capabilities {
 	return provider.Capabilities{
+		PromptCacheKey:     instance.config.CachePolicy.Key() == domain.OpenAICacheThread,
+		PreviousResponse:   instance.config.CachePolicy.Transport() == domain.OpenAIWebSocketAuto,
 		Streaming:          true,
 		EncryptedReasoning: true,
 		FunctionTools:      true,
@@ -89,14 +108,20 @@ func (*Provider) Capabilities() provider.Capabilities {
 }
 
 // NewConversation 创建历史相互隔离的会话。
-func (instance *Provider) NewConversation() provider.Conversation {
-	return &Conversation{provider: instance}
+func (instance *Provider) NewConversation(threadID domain.ThreadID) (provider.Conversation, error) {
+	if !threadID.Valid() {
+		return nil, fmt.Errorf("conversation thread ID is invalid")
+	}
+	return &Conversation{provider: instance, threadID: threadID}, nil
 }
 
 // RestoreConversation 先事务式校验全部 commits，再构造可调用 Conversation。
-func (instance *Provider) RestoreConversation(commits []provider.RestoreRecord) (provider.Conversation, error) {
+func (instance *Provider) RestoreConversation(threadID domain.ThreadID, commits []provider.RestoreRecord) (provider.Conversation, error) {
+	if !threadID.Valid() {
+		return nil, fmt.Errorf("conversation thread ID is invalid")
+	}
 	entries := make([]nativeHistoryEntry, 0, len(commits))
-	conversation := &Conversation{provider: instance}
+	conversation := &Conversation{provider: instance, threadID: threadID, nextReason: domain.ResetRestored}
 	seenCheckpoints := make(map[domain.CompactionID]struct{})
 	for index, commit := range commits {
 		if expected, ok := commit.CompactionSource(); ok {
@@ -165,7 +190,7 @@ func (instance *Provider) RestoreConversation(commits []provider.RestoreRecord) 
 
 // Close 释放 HTTP transport 资源。
 func (instance *Provider) Close() error {
-	return instance.transport.Close()
+	return errors.Join(instance.websocket.Close(), instance.transport.Close())
 }
 
 // Family 返回 OpenAI 协议家族。
@@ -175,7 +200,9 @@ func (*Conversation) Family() domain.ProviderFamily {
 
 // Capabilities 返回当前会话所属 Provider 的能力集。
 func (conversation *Conversation) Capabilities() provider.Capabilities {
-	return conversation.provider.Capabilities()
+	capabilities := conversation.provider.Capabilities()
+	capabilities.PreviousResponse = capabilities.PreviousResponse && !conversation.httpFallback.Load()
+	return capabilities
 }
 
 // Stream 发起一次 Responses 文本 turn。
@@ -209,17 +236,13 @@ func (conversation *Conversation) Stream(
 		conversation.active.Store(false)
 		return nil, fault.Wrap(fault.CodeProviderRequest, "compile provider request failed", err)
 	}
+	evidence, err := conversation.requestEvidence(input)
+	if err != nil {
+		conversation.active.Store(false)
+		return nil, err
+	}
 	streamContext, cancelStream := context.WithCancel(ctx)
-	stream, err := conversation.provider.transport.StreamSSE(streamContext, transport.SSERequest{
-		Method: http.MethodPost,
-		Path:   "responses",
-		Headers: map[string]string{
-			"Authorization": "Bearer " + conversation.provider.config.APIKey.Reveal(),
-			"Accept":        "text/event-stream",
-			"Content-Type":  "application/json",
-		},
-		Body: request,
-	}, transport.StreamOptions{IdleTimeout: conversation.provider.config.StreamIdleTimeout})
+	stream, selection, cleanup, err := conversation.startRequest(streamContext, request, evidence, domain.RequestSample)
 	if err != nil {
 		cancelStream()
 		conversation.active.Store(false)
@@ -230,7 +253,7 @@ func (conversation *Conversation) Stream(
 	}
 
 	output := make(chan provider.StreamEvent, 16)
-	go conversation.consumeStream(ctx, cancelStream, catalog, stream, output)
+	go conversation.consumeStream(ctx, cancelStream, catalog, stream, output, request, evidence, selection, cleanup)
 	return output, nil
 }
 
@@ -240,9 +263,20 @@ func (conversation *Conversation) consumeStream(
 	catalog tool.CatalogSnapshot,
 	stream <-chan transport.SSEMessage,
 	output chan<- provider.StreamEvent,
+	request codec.CanonicalJSON,
+	evidence requestEvidence,
+	selection requestSelection,
+	cleanup func(),
 ) {
+	successful := false
 	defer close(output)
 	defer conversation.active.Store(false)
+	defer func() {
+		cleanup()
+		if !successful {
+			conversation.closeWebsocket()
+		}
+	}()
 	defer cancelStream()
 
 	reducer := newResponsesStreamReducer(catalog)
@@ -270,6 +304,11 @@ func (conversation *Conversation) consumeStream(
 
 	for message := range stream {
 		if message.Event != nil {
+			if message.Event.Name == "error" {
+				stopTransport()
+				sendTerminal(provider.StreamEventFailed, nil, fault.New(fault.CodeProviderRequest, "provider reported a websocket error"))
+				return
+			}
 			result, err := reducer.reduce(*message.Event)
 			if err != nil {
 				stopTransport()
@@ -311,16 +350,35 @@ func (conversation *Conversation) consumeStream(
 					sendTerminal(provider.StreamEventFailed, nil, fault.Wrap(fault.CodeStreamProtocol, "OpenAI completed sample is invalid", encodeErr))
 					return
 				}
+				receipt, receiptErr := conversation.describeRequest(request, evidence, domain.RequestSample)
+				if receiptErr == nil {
+					receipt, receiptErr = selection.apply(receipt)
+				}
+				if receiptErr != nil {
+					sendTerminal(provider.StreamEventFailed, nil, receiptErr)
+					return
+				}
+				baseline, baselineErr := evidence.commitBaseline(entry)
+				if baselineErr != nil {
+					sendTerminal(provider.StreamEventFailed, nil, baselineErr)
+					return
+				}
 				conversation.pending.Store(true)
-				prepared, prepareErr := provider.NewPreparedSample(envelope, usage, func() {
+				prepared, prepareErr := provider.NewPreparedSample(envelope, usage, receipt, func() {
+					conversation.baseline = baseline
+					if selection.transport == domain.TransportWebSocket && conversation.socket != nil && !conversation.socket.Closed() {
+						conversation.wsResponseID = reducer.responseIdentity()
+					}
+					conversation.nextReason = domain.ResetNone
 					conversation.history.commit(entry)
 					conversation.pending.Store(false)
-				}, func() { conversation.pending.Store(false) }, reducer.readyCalls()...)
+				}, func() { conversation.pending.Store(false); conversation.closeWebsocket() }, reducer.readyCalls()...)
 				if prepareErr != nil {
 					conversation.pending.Store(false)
 					sendTerminal(provider.StreamEventFailed, nil, fault.Wrap(fault.CodeStreamProtocol, "OpenAI completed sample cannot be prepared", prepareErr))
 					return
 				}
+				successful = true
 				sendTerminal(provider.StreamEventCompleted, prepared, nil)
 				return
 			}

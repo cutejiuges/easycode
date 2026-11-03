@@ -49,7 +49,7 @@ func TestHistoryFootprintAdvancesOnlyAfterPreparedFinalize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := provider.NewPreparedSample(envelope, footprintUsage(t), func() { conversation.history.commit(entry) }, func() {})
+	prepared, err := provider.NewPreparedSample(envelope, footprintUsage(t), syntheticRequestReceipt(domain.RequestSample), func() { conversation.history.commit(entry) }, func() {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestDiscardedPreparedSamplePreservesNextRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	finalized, discarded := 0, 0
-	prepared, err := provider.NewPreparedSample(envelope, footprintUsage(t), func() {
+	prepared, err := provider.NewPreparedSample(envelope, footprintUsage(t), syntheticRequestReceipt(domain.RequestSample), func() {
 		finalized++
 		testCommitHistory(t, &conversation.history, testInputEntry(t, NewUserItem("hello")), entry)
 	}, func() { discarded++ })

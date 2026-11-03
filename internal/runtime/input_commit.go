@@ -108,7 +108,7 @@ func (runtime *Runtime) commitInputs(ctx context.Context, turnID domain.TurnID, 
 	if err != nil {
 		return rejected(err)
 	}
-	sampling, err := runtime.planHistory(history, footprint)
+	sampling, _, err := runtime.planHistory(history, footprint)
 	if err != nil {
 		return rejected(err)
 	}
@@ -153,23 +153,24 @@ func (runtime *Runtime) commitInputs(ctx context.Context, turnID domain.TurnID, 
 	return inputCommitResult{committed: true}
 }
 
-func (runtime *Runtime) planHistory(view domain.ActiveContextView, footprint domain.NativeHistoryFootprint) (provider.TurnInput, error) {
+func (runtime *Runtime) planHistory(view domain.ActiveContextView, footprint domain.NativeHistoryFootprint) (provider.TurnInput, contextplan.ContextPlan, error) {
 	input, err := contextplan.NewPlanningInput(runtime.profile, runtime.toolCatalog, runtime.projectInstructions, view, footprint, contextplan.NewSamplingInput(), runtime.budget)
 	if err != nil {
-		return provider.TurnInput{}, fault.New(fault.CodeTurnFailed, "context planning input is invalid")
+		return provider.TurnInput{}, contextplan.ContextPlan{}, fault.New(fault.CodeTurnFailed, "context planning input is invalid")
 	}
 	plan, err := runtime.planner.Plan(input)
 	if err != nil {
-		return provider.TurnInput{}, fault.New(fault.CodeTurnFailed, "context planning failed")
+		return provider.TurnInput{}, contextplan.ContextPlan{}, fault.New(fault.CodeTurnFailed, "context planning failed")
 	}
 	if plan.Decision().State() == contextplan.BudgetOverLimit {
 		total, _ := plan.TotalEstimate().Tokens()
 		limit, _ := plan.Decision().EffectiveLimit()
-		return provider.TurnInput{}, fault.New(fault.CodeContextLimitExceeded, fmt.Sprintf("estimated context tokens %d exceed effective input limit %d", total, limit))
+		return provider.TurnInput{}, contextplan.ContextPlan{}, fault.New(fault.CodeContextLimitExceeded, fmt.Sprintf("estimated context tokens %d exceed effective input limit %d", total, limit))
 	}
 	sampling, err := provider.NewSamplingInput().WithProjectInstructions(runtime.projectInstructions)
 	if err != nil {
-		return provider.TurnInput{}, err
+		return provider.TurnInput{}, contextplan.ContextPlan{}, err
 	}
-	return sampling.WithToolCatalog(runtime.toolCatalog)
+	sampling, err = sampling.WithToolCatalog(runtime.toolCatalog)
+	return sampling, plan, err
 }

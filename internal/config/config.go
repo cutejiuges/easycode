@@ -41,6 +41,7 @@ type Config struct {
 	ContextBudget    contextplan.Budget
 	compactionOutput optionalUint64
 	autoCompact      optionalBool
+	cachePolicy      domain.CachePolicy
 }
 
 type fileConfig struct {
@@ -51,6 +52,7 @@ type fileConfig struct {
 	budget           contextplan.Budget
 	compactionOutput optionalUint64
 	autoCompact      optionalBool
+	cachePolicy      domain.CachePolicy
 }
 
 type optionalUint64 struct {
@@ -181,8 +183,15 @@ func decodeFile(content []byte) (fileConfig, error) {
 	}
 	decoded := fileConfig{}
 	var window, reservedOutput, safetyMargin optionalUint64
+	anthropic, cacheKey, transport := string(domain.AnthropicCacheDisabled), string(domain.OpenAICacheOmit), string(domain.OpenAIHTTPSSE)
 	for key, rawValue := range members {
 		switch key {
+		case "anthropic_prompt_cache":
+			anthropic, err = decodeStringField(rawValue)
+		case "openai_prompt_cache_key":
+			cacheKey, err = decodeStringField(rawValue)
+		case "openai_transport":
+			transport, err = decodeStringField(rawValue)
 		case "provider":
 			decoded.provider, err = decodeStringField(rawValue)
 		case "base_url":
@@ -212,6 +221,10 @@ func decodeFile(content []byte) (fileConfig, error) {
 		return fileConfig{}, fault.New(fault.CodeInvalidConfiguration, "configuration file must not be empty")
 	}
 
+	decoded.cachePolicy, err = domain.NewCachePolicy(domain.AnthropicCacheMode(anthropic), domain.OpenAICacheKeyMode(cacheKey), domain.OpenAITransportMode(transport))
+	if err != nil {
+		return fileConfig{}, fault.New(fault.CodeInvalidConfiguration, "cache policy is invalid")
+	}
 	budget, err := decodeContextBudget(window, reservedOutput, safetyMargin)
 	if err != nil {
 		return fileConfig{}, err
@@ -279,7 +292,7 @@ func (values fileConfig) toConfig() Config {
 		BaseURL: strings.TrimSpace(values.baseURL),
 		APIKey:  secret.New(strings.TrimSpace(values.apiKey)),
 		Model:   strings.TrimSpace(values.model),
-	}, ContextBudget: values.budget, compactionOutput: values.compactionOutput, autoCompact: values.autoCompact}
+	}, ContextBudget: values.budget, compactionOutput: values.compactionOutput, autoCompact: values.autoCompact, cachePolicy: values.cachePolicy}
 }
 
 func mergeEnvironment(base Config) Config {
@@ -300,6 +313,9 @@ func mergeEnvironment(base Config) Config {
 
 // ValidateProvider 校验启动真实模型请求前必须具备的字段。
 func (config Config) ValidateProvider() error {
+	if err := config.CachePolicy().ValidateFamily(config.Provider.Family); err != nil {
+		return fault.New(fault.CodeInvalidConfiguration, "cache policy does not match provider")
+	}
 	if _, err := config.AutoCompactionPolicy(); err != nil {
 		return err
 	}
@@ -354,4 +370,9 @@ func safeBaseURL(rawURL string) string {
 	parsedURL.RawQuery = ""
 	parsedURL.Fragment = ""
 	return parsedURL.String()
+}
+
+// CachePolicy 返回纯内存的有效缓存和传输配置。
+func (config Config) CachePolicy() domain.CachePolicy {
+	return domain.WithDefaultCachePolicy(config.cachePolicy)
 }

@@ -31,12 +31,12 @@ func (*fakeProviderFactory) Capabilities() provider.Capabilities {
 	return provider.Capabilities{Streaming: true}
 }
 
-func (factory *fakeProviderFactory) NewConversation() provider.Conversation {
+func (factory *fakeProviderFactory) NewConversation(threadID domain.ThreadID) (provider.Conversation, error) {
 	factory.newCalls.Add(1)
-	return &fakeAppConversation{family: factory.family, networkCalls: &factory.networkCalls}
+	return &fakeAppConversation{family: factory.family, networkCalls: &factory.networkCalls}, nil
 }
 
-func (factory *fakeProviderFactory) RestoreConversation(commits []provider.RestoreRecord) (provider.Conversation, error) {
+func (factory *fakeProviderFactory) RestoreConversation(threadID domain.ThreadID, commits []provider.RestoreRecord) (provider.Conversation, error) {
 	factory.restoreCalls.Add(1)
 	if factory.restoreErr != nil {
 		return nil, factory.restoreErr

@@ -444,7 +444,7 @@ func TestChatResourcesCloseOrdersSessionJournalAndProvider(t *testing.T) {
 	mu.Lock()
 	got := append([]string(nil), timeline...)
 	mu.Unlock()
-	want := []string{"append:turn_started", "append:turn_inputs_committed", "provider:stream", "append:turn_failed", "journal:close", "provider:close"}
+	want := []string{"append:turn_started", "append:turn_inputs_committed", "provider:stream", "append:turn_failed", "provider:close", "journal:close"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("close timeline = %#v, want %#v", got, want)
 	}
@@ -472,7 +472,7 @@ func TestChatResourcesWriterCloseFailureStillClosesProvider(t *testing.T) {
 	mu.Lock()
 	got := strings.Join(timeline, ",")
 	mu.Unlock()
-	if got != "journal:close,provider:close" {
+	if got != "provider:close,journal:close" {
 		t.Fatalf("close timeline = %q", got)
 	}
 }
@@ -766,12 +766,12 @@ func (resource *orderedProviderResource) Capabilities() provider.Capabilities {
 	return resource.factory.Capabilities()
 }
 
-func (resource *orderedProviderResource) NewConversation() provider.Conversation {
-	return resource.factory.NewConversation()
+func (resource *orderedProviderResource) NewConversation(threadID domain.ThreadID) (provider.Conversation, error) {
+	return resource.factory.NewConversation(threadID)
 }
 
-func (resource *orderedProviderResource) RestoreConversation(commits []provider.RestoreRecord) (provider.Conversation, error) {
-	return resource.factory.RestoreConversation(commits)
+func (resource *orderedProviderResource) RestoreConversation(threadID domain.ThreadID, commits []provider.RestoreRecord) (provider.Conversation, error) {
+	return resource.factory.RestoreConversation(threadID, commits)
 }
 
 func (resource *orderedProviderResource) Close() error {

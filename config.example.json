@@ -2,5 +2,8 @@
   "provider": "openai",
   "base_url": "https://api.openai.com/v1",
   "api_key": "",
-  "model": "your-model"
+  "model": "your-model",
+  "anthropic_prompt_cache": "disabled",
+  "openai_prompt_cache_key": "omit",
+  "openai_transport": "http_sse"
 }

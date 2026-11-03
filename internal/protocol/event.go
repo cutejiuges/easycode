@@ -13,6 +13,7 @@ import (
 type EventKind string
 
 const (
+	EventCacheSnapshot         EventKind = "cache_snapshot"
 	EventContextSnapshot       EventKind = "context_snapshot"
 	EventCompactionStarted     EventKind = "compaction_started"
 	EventCompactionCompleted   EventKind = "compaction_completed"
@@ -54,13 +55,17 @@ func (event Event) Validate() error {
 	if event.ItemID != "" || event.CallID != "" {
 		return fmt.Errorf("runtime event reserved identity is invalid")
 	}
-	if event.Kind == EventContextSnapshot || event.Kind == EventCompactionStarted || event.Kind == EventCompactionCompleted || event.Kind == EventCompactionFailed {
+	if event.Kind == EventCacheSnapshot || event.Kind == EventContextSnapshot || event.Kind == EventCompactionStarted || event.Kind == EventCompactionCompleted || event.Kind == EventCompactionFailed {
 		if !event.SessionID.Valid() || !event.ThreadID.Valid() {
 			return fmt.Errorf("context event scope is invalid")
 		}
-		if event.Kind == EventContextSnapshot {
+		if event.Kind == EventCacheSnapshot || event.Kind == EventContextSnapshot {
 			if event.CompactionID != "" || event.TurnID != "" {
 				return fmt.Errorf("query event has compaction identity")
+			}
+			if event.Kind == EventCacheSnapshot {
+				_, err := DecodeCacheSnapshot(event)
+				return err
 			}
 			_, err := DecodeContextSnapshot(event)
 			return err
