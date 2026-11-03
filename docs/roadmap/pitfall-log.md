@@ -1,5 +1,13 @@
 # EasyCode 踩坑与经验记录
 
+### [P4][2026-11-03] 关闭清理测试把 turn 事件误当作 Provider 启动屏障
+
+- 状态：已修复测试同步，生产契约不变。
+- 现象：PR #27 的 Linux CI 在关闭测试中等待 Provider 取消信号，最终触发十分钟测试超时。
+- 根因：`TurnStarted` 先于上下文准备和 Provider `Stream`；关闭可能在 Provider 启动前取消 turn，此时不会产生该 Provider 的取消信号。
+- 修复：测试用显式 channel 确认进入 `Stream` 后才发起关闭，保留队列丢弃、清理完成前 owner 不退出及单次调用断言。
+- 回归：`internal/runtime/agent_loop_test.go` 中的 `TestAgentLoopShutdownDiscardsQueueAndRetainsCleanupOwner`，普通与 race 模式各重复一百次验证。
+
 
 ### [P4][2026-11-03] 缓存标记、完成事件与连接资格混为一体
 
