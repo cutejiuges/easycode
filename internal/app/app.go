@@ -58,6 +58,7 @@ type dataPaths struct {
 }
 
 type chatResourceHooks struct {
+	recovery               *recoveryAttempt
 	afterContinueSelection func(domain.ThreadID)
 	interactiveApprovals   bool
 	newExecExecutor        func(*builtin.Workspace, builtin.CommandEnvironment, tool.ExecOutputRenderer) (tool.ExecExecutor, error)
@@ -246,12 +247,10 @@ func runStreamWithEscalation(
 }
 
 func runTUI(ctx context.Context, options Options, resources *chatResources) Outcome {
-	controlSession, err := startTUIControlSession(ctx, resources.runtime)
+	model, err := assembleChatModel(ctx, resources)
 	if err != nil {
 		return runtimeFailure(err)
 	}
-	resources.session = controlSession
-	model := tui.NewModel(ctx, Version, controlSession).WithInputHistory(resources.history).WithTranscriptQueries(resources.identity.ThreadID, resources.transcriptQueries)
 	programOptions := []tea.ProgramOption{tea.WithContext(ctx), tea.WithOutput(options.Output)}
 	if options.Input != nil {
 		programOptions = append(programOptions, tea.WithInput(options.Input))
@@ -336,7 +335,9 @@ func openChatResourcesWithSnapshot(
 	cleanup := &resourceCleanup{}
 	defer func() {
 		if resultErr != nil {
-			resultErr = errors.Join(resultErr, cleanup.close())
+			closeErr := cleanup.close()
+			hooks.recovery.cleanup(closeErr)
+			resultErr = errors.Join(resultErr, closeErr)
 		}
 	}()
 	if err := applicationConfig.ValidateProvider(); err != nil {
@@ -350,6 +351,7 @@ func openChatResourcesWithSnapshot(
 	if err != nil {
 		return nil, err
 	}
+	service.recovery = hooks.recovery
 	cleanup.add(service.close)
 	artifactLayout, err := openCommandArtifactBoundary(ctx, service.repository.RootPath(), creationCWD)
 	if err != nil {
@@ -511,6 +513,7 @@ func openChatResourcesWithSnapshot(
 		return nil, err
 	}
 	if assembled.toolRecovery != nil {
+		hooks.recovery.mutating()
 		if err := runtimeInstance.ReconcileToolTurn(ctx, assembled.toolRecovery.Clone()); err != nil {
 			return nil, err
 		}
@@ -671,8 +674,9 @@ func (resources *chatResources) close(ctx context.Context) error {
 	if ctx.Err() != nil {
 		closeContext = context.Background()
 	}
+	var queryErr error
 	if resources.transcriptQueries != nil {
-		_ = resources.transcriptQueries.Close()
+		queryErr = resources.transcriptQueries.Close()
 	}
 	var artifactErr error
 	if resources.artifactStore != nil {
@@ -697,7 +701,7 @@ func (resources *chatResources) close(ctx context.Context) error {
 	if resources.service != nil {
 		repositoryErr = errors.Join(repositoryErr, resources.service.close())
 	}
-	resources.closeErr = errors.Join(shutdownErr, artifactErr, writerErr, providerErr, workspaceErr, repositoryErr)
+	resources.closeErr = errors.Join(shutdownErr, queryErr, artifactErr, writerErr, providerErr, workspaceErr, repositoryErr)
 	close(resources.closeDone)
 	return resources.closeErr
 }
@@ -708,4 +712,14 @@ func (resources *chatResources) forceCloseProvider() error {
 	}
 	resources.providerClosed = true
 	return resources.provider.Close()
+}
+
+// assembleChatModel 复用活动聊天的控制会话和全部投影装配。
+func assembleChatModel(ctx context.Context, resources *chatResources) (tui.Model, error) {
+	control, err := startTUIControlSession(ctx, resources.runtime)
+	if err != nil {
+		return tui.Model{}, err
+	}
+	resources.session = control
+	return tui.NewModel(ctx, Version, control).WithInputHistory(resources.history).WithTranscriptQueries(resources.identity.ThreadID, resources.transcriptQueries), nil
 }

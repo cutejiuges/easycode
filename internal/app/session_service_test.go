@@ -477,6 +477,7 @@ func TestSessionServiceReturnsSealedToolRecoveryWithoutExternalCalls(t *testing.
 func TestSessionServiceInterruptedCompensationFailureDoesNotBecomeUsable(t *testing.T) {
 	t.Parallel()
 	service := newTestSessionService(t)
+	service.recovery = &recoveryAttempt{}
 	defer service.close()
 	factory := &fakeProviderFactory{family: domain.ProviderOpenAI}
 	created, err := service.create(context.Background(), factory, "responses", "gpt-test", t.TempDir())
@@ -504,11 +505,15 @@ func TestSessionServiceInterruptedCompensationFailureDoesNotBecomeUsable(t *test
 	if failing.appendCalls.Load() != 1 || failing.closeCalls.Load() != 1 || restorer.networkCalls.Load() != 0 {
 		t.Fatalf("append/close/network = %d/%d/%d", failing.appendCalls.Load(), failing.closeCalls.Load(), restorer.networkCalls.Load())
 	}
+	if !service.recovery.fatal() {
+		t.Fatal("uncertain durable compensation classified retryable")
+	}
 	assertSessionLeaseAvailable(t, service, created.identity.ThreadID)
 }
 
 func TestSessionServiceInterruptedAppendFailureReleasesLease(t *testing.T) {
 	service := newTestSessionService(t)
+	service.recovery = &recoveryAttempt{}
 	defer service.close()
 	created, err := service.create(
 		context.Background(), &fakeProviderFactory{family: domain.ProviderOpenAI},
@@ -541,6 +546,9 @@ func TestSessionServiceInterruptedAppendFailureReleasesLease(t *testing.T) {
 	}
 	if failing.appendCalls.Load() != 1 || failing.closeCalls.Load() != 1 || factory.networkCalls.Load() != 0 {
 		t.Fatalf("append/close/network = %d/%d/%d", failing.appendCalls.Load(), failing.closeCalls.Load(), factory.networkCalls.Load())
+	}
+	if !service.recovery.fatal() {
+		t.Fatal("uncertain durable compensation classified retryable")
 	}
 	assertSessionLeaseAvailable(t, service, created.identity.ThreadID)
 }

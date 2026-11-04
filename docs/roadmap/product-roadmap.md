@@ -148,7 +148,7 @@ make verify
 - 已完成双 Provider 共享 `StreamEvent` 的封闭构造与纯内存验证；Runtime 在消费端协议错误时取消派生 context并同步排空到 producer 关闭，AgentLoop 只在前一 stream 清理完成后启动下一 turn。
 - 已完成双 Provider 的 committed-only 文本 `HistoryProjector`：投影保留 turn 边界和可见文本，但不暴露 thinking/signature、redacted thinking、reasoning summary、encrypted content、phase、usage 或未知扩展，也不参与后续请求编译。
 - Anthropic 当前声明 streaming、thinking-signature 原生保留与 structured tools（含 Edit/Write/Bash），OpenAI 当前声明 streaming、encrypted reasoning 原生保留、function tools（含 Write/exec_command）与 custom freeform apply_patch。P2 已落地 completed-sample usage、原生历史 footprint、JSONL Session、resume/headless 和 ContextPlanner；P3 已补充 Read/Glob/Grep/Patch/Write/Exec Tool Loop 与 approval，但通用 tool UI、完整 CachePlanner、usage 成本/TUI、prompt cache key、`previous_response_id` 和自动重试仍留在后续阶段。
-- TUI 只消费 typed RuntimeEvent 和 ChatSession facade；已提供 Patch diff/Write、Exec approval overlay、命令进度和 Ctrl+O 历史列表与分页详情，多行 composer、字素编辑、显式 decoded paste 和有界历史；Markdown、slash command、通用 permission 面板和 session picker 仍未实现。
+- TUI 只消费 typed RuntimeEvent 和 ChatSession facade；已提供 Patch diff/Write、Exec approval overlay、命令进度和 Ctrl+O 历史列表与分页详情，多行 composer、字素编辑、显式 decoded paste 和有界历史；Markdown、slash command、通用 permission 面板仍未实现；启动 session picker 已于 2026-11-04 接入。
 
 #### OpenAI Responses（首要 Provider）
 
@@ -220,9 +220,9 @@ make verify
 
 确定性上下文规划基线已交付：Runtime 在 durable `turn_started` 与 Provider stream 之间构造 `provider_profile -> tool_catalog -> [project_instructions] -> committed_history -> current_input`，输出不可变来源、CachePlan、stable-prefix fingerprint、本地 `byte_heuristic_v1` 估算和预算判定。七项工具的稳定 schema 纳入估算与 fingerprint，具体 command、workdir、approval 和宿主环境不进入稳定前缀。应用在资源打开前从当前启动目录安全发现一次层级 `AGENTS.md`/`CLAUDE.md`，形成默认 32 KiB、硬上限 4 MiB、只含项目根相对来源的不可变快照；活动进程不热更新，resume/continue 在新进程当前目录重新发现。双 Provider 每轮把非空快照作为单一临时 user context 置于 native history 前，但不提交到 native history、Session、RuntimeEvent 或语义投影。双 Provider 从 committed native history 提供只含 family/revision/method/state/tokens 的 footprint，opaque reasoning 不进入共享视图；语义估算与 native footprint 取覆盖值而不是相加。用户可显式配置 context window、输出预留和安全余量；未配置或估算 unknown 时不硬拒绝，明确超限以 `context_limit_exceeded` 在网络前 durable 失败。
 
-2026-10-23 已交付独立 `sessions list [--all] [--limit N]`：默认当前规范化目录 20 条，最大 200 条，按 durable 更新时间及 thread ID 双降序；所有 Provider/model 可发现，完整 ID 可交给既有 `--resume`。入口无需模型配置、不访问网络、不读取 stdin、不进入聊天资源链。Catalog schema 和 Session vocabulary 不变，协调仍全量扫描并允许 lease 下尾修复，busy/invalid 以全局警告报告。固定文本 golden、双 Provider 列表后恢复、索引重建、跨进程占用和取消/输出失败验证覆盖该入口；此交付不包含 picker、标题搜索或 worktree 聚合。
+2026-10-23 已交付独立 `sessions list [--all] [--limit N]`：默认当前规范化目录 20 条，最大 200 条，按 durable 更新时间及 thread ID 双降序；所有 Provider/model 可发现，完整 ID 可交给既有 `--resume`。入口无需模型配置、不访问网络、不读取 stdin、不进入聊天资源链。Catalog schema 和 Session vocabulary 不变，协调仍全量扫描，仅在 lease 下读取 committed 前缀，不修复日志，busy/invalid 以全局警告报告。固定文本 golden、双 Provider 列表后恢复、索引重建、跨进程占用和取消/输出失败验证覆盖该入口；此交付不包含 picker、标题搜索或 worktree 聚合。
 
-P2 尚未完成：session picker、worktree/project catalog、title/tag/search、实时索引、usage 成本/配额与 TUI 展示、真实 cache request 策略和观测指标、skill context sources、全工具 artifact、fork/subagent 线程树，以及稳定发布后真实 schema/payload revision 的版本专属转换。Read/Glob/Grep/Patch/Write/Exec Tool Loop 已交付 tool catalog source、approval/ledger/result、durable output、有序并行与 exclusive 屏障；已交付的 FIFO follow-up queue 仍只在进程内存在，`queued` 不是 durable 确认，same-turn steer 已接入完整 tool outputs 后的安全点，queued/claimed 与 returned 仍是进程内状态。当前 fixture 是唯一当前格式，不代表通用 migration 已实现；当前进度不能视为 P2 退出。
+P2 尚未完成：worktree/project catalog、title/tag/search、实时索引、usage 成本/配额与 TUI 展示、真实 cache request 策略和观测指标、skill context sources、全工具 artifact、fork/subagent 线程树，以及稳定发布后真实 schema/payload revision 的版本专属转换。Read/Glob/Grep/Patch/Write/Exec Tool Loop 已交付 tool catalog source、approval/ledger/result、durable output、有序并行与 exclusive 屏障；已交付的 FIFO follow-up queue 仍只在进程内存在，`queued` 不是 durable 确认，same-turn steer 已接入完整 tool outputs 后的安全点，queued/claimed 与 returned 仍是进程内状态。当前 fixture 是唯一当前格式，不代表通用 migration 已实现；当前进度不能视为 P2 退出。
 
 本次 P2 基础契约强化还加入语义分支脚本、本地 hooks、GitHub Actions jobs 和集中式架构守卫。GitHub `main` ruleset 的 required checks 与 direct-push 禁止仍须管理员在仓库外启用。secure config/session opener 当前只在 macOS/Linux 提供等价语义；Windows 等目标可以编译，但相关运行路径明确失败关闭，平台实现与兼容矩阵留在 P8。
 
@@ -256,7 +256,7 @@ P2 尚未完成：session picker、worktree/project catalog、title/tag/search�
 
 - 已交付可 resume/continue 的一次性 headless 文本 chat 与同进程 FIFO AgentLoop；Read/Glob/Grep/Patch/Write 已交付，Darwin 前台命令已交付，同轮追加、取回与停止返还已交付。
 - 已交付 session JSONL 与可从 JSONL 重建的 `state.sqlite` Catalog。
-- 已交付显式 resume 与兼容性精确匹配的 `--continue`；离线 `sessions list` 已交付，可视化 session picker 尚未交付。
+- 已交付显式 resume 与兼容性精确匹配的 `--continue`；离线 `sessions list` 已交付，启动 `resume` 选择器已交付，支持元数据搜索与显式只读预览。
 - 已交付一次性 thread/turn/text/failure JSONL v1 与独立 streaming control v1，成功 `turn.completed` 必含 normalized usage；独立 usage 更新、reasoning 与 tool 事件尚未交付。
 - 已交付不新增 Session/RuntimeEvent vocabulary 的请求前 ContextPlan 和显式预算守卫；远程 token count 和 Provider cache marker/key 尚未交付；手动压缩、阈值自动压缩与 context UI 已交付。
 - 已交付启动时层级项目指令发现、descriptor-bound 安全读取、确定性预算截断、双 Provider 临时注入和恢复隔离；规则热重载、全局用户指令、includes 与 `.claude/rules` 尚未交付。
@@ -465,7 +465,7 @@ Skill、hooks/plugins、MCP 和 Agent/Subagent 不属于 P3 内置工具清单�
 
 ### 9.3 工作内容
 
-2026-09-19 已先交付验证 RuntimeEvent 边界的薄切片；2026-10-11 又交付了与 Patch candidate 精确关联的 diff approval overlay，包含默认 No、一次/本 Runtime session 允许、拒绝反馈、小窗口滚动、按键隔离和固定 snapshot。它不改变 P5 的完整范围，2026-10-28 已补充多行 composer、字素编辑、显式 decoded paste、有界 recall 与提交拒绝恢复。补全、slash command、Markdown、通用工具 cell、reasoning 和 session picker 仍按本节后续实施。
+2026-09-19 已先交付验证 RuntimeEvent 边界的薄切片；2026-10-11 又交付了与 Patch candidate 精确关联的 diff approval overlay，包含默认 No、一次/本 Runtime session 允许、拒绝反馈、小窗口滚动、按键隔离和固定 snapshot。它不改变 P5 的完整范围，2026-10-28 已补充多行 composer、字素编辑、显式 decoded paste、有界 recall 与提交拒绝恢复。补全、slash command、Markdown、通用工具 cell、reasoning 与 fork picker 仍按本节后续实施；启动 resume picker 已于 2026-11-04 作为独立切片交付。
 
 - composer、多行输入、paste 保护、历史、补全和 slash command。
 - assistant commentary/final、thinking/reasoning 折叠。
@@ -747,3 +747,12 @@ Turn 1 建立稳定前缀
 ### 同轮输入参考与边界（2026-10-30）
 
 本切片参考只读 Claude Code 2.1.88 和 Codex `6f8bf683c`：产品侧采用运行中输入、排队展示和取回编辑；内核侧采用强类型输入身份、有序命令与可测试提交边界。不会中断正在产生的 sample 来伪造请求变更，不承诺远端撤销，不增加后台进程、PTY、Subagent 或完整缓存策略。引用与取舍详见 `openspec/changes/archive/2026-10-30-add-same-turn-steering/design.md`；既有 Exec ADR/历史记录中的旧参考 revision 保持原语境。
+
+
+### 2026-11-04：启动会话选择器
+
+新增 `easycode resume [--all] [--config PATH]`：复用 Catalog 与连续 lease 恢复，采用 Claude Code 的搜索/范围/显式预览/分层返回交互，以及 Codex 的请求身份和过期结果隔离。选择这一能力是因为现有 Session、Catalog 和双 Provider 原生恢复已具备基础，能直接改善会话辨认与续接体验，同时避免提前扩张工具或扩展系统边界。
+
+交付范围包含最近 200 条元数据搜索、跨目录默认返回确认、128 条/32 KiB 文本预览、离线严格原生校验和唯一 owner 清理。无标题/正文索引、自动模型切换、worktree 聚合、活动会话切换或 fork；P5 仍未整体完成。对应变更：`add-interactive-session-picker`。
+
+2026-11-04 复核补强：修复选择器父取消接收窗口、预览预算和窄屏/失败展示，补充真实 journal 追加后恢复、双 Provider 校验中取消以及无变更/补偿后失败分类的直接断言。范围仍为现有启动选择器；跟踪变更 `harden-session-picker-review`。

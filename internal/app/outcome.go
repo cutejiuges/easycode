@@ -9,6 +9,7 @@ const (
 	ExitSuccess ExitClass = iota
 	ExitRuntimeFailure
 	ExitUsageFailure
+	ExitCancelled
 )
 
 // ReportState 表示失败是否已经通过选定输出协议报告。
@@ -32,6 +33,8 @@ func (outcome Outcome) ExitCode() int {
 	switch outcome.Class {
 	case ExitSuccess:
 		return 0
+	case ExitCancelled:
+		return 130
 	case ExitUsageFailure:
 		return 2
 	default:

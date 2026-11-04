@@ -23,7 +23,10 @@ type checkpointPayload struct {
 }
 
 func (conversation *Conversation) compactionSource() (provider.CompactionSource, error) {
-	snapshot := conversation.history.snapshotWindow()
+	return nativeCompactionSource(conversation.history.snapshotWindow(), conversation.provider.config.Model)
+}
+
+func nativeCompactionSource(snapshot nativeWindowSnapshot, model string) (provider.CompactionSource, error) {
 	entries, revision := snapshot.entries, snapshot.revision
 	checkpoint, offset, count := snapshot.checkpoint, snapshot.offset, snapshot.count
 	if len(entries) == offset {
@@ -54,7 +57,7 @@ func (conversation *Conversation) compactionSource() (provider.CompactionSource,
 		return provider.CompactionSource{}, err
 	}
 	digest := sha256.Sum256(canonical.Bytes())
-	return provider.NewCompactionSource(domain.ProviderAnthropic, messagesWire, conversation.provider.config.Model, revision, revision+count, predecessor, hex.EncodeToString(digest[:]))
+	return provider.NewCompactionSource(domain.ProviderAnthropic, messagesWire, model, revision, revision+count, predecessor, hex.EncodeToString(digest[:]))
 }
 
 func (conversation *Conversation) compileCompactionRequest(input provider.CompactionInput) (codec.CanonicalJSON, error) {
@@ -283,6 +286,10 @@ func decodeCheckpoint(checkpoint provider.CheckpointEnvelope) (nativeHistoryEntr
 
 // ValidateCompactionUsage 验证失败计量的 raw facts 与归一化值一致。
 func (instance *Provider) ValidateCompactionUsage(envelope provider.NativeCommitEnvelope, expected domain.SampleUsage) error {
+	return validateCompactionUsage(envelope, expected)
+}
+
+func validateCompactionUsage(envelope provider.NativeCommitEnvelope, expected domain.SampleUsage) error {
 	if envelope.Family() != domain.ProviderAnthropic || envelope.Wire() != messagesWire || len(envelope.Payload()) > 64<<10 {
 		return fmt.Errorf("compaction usage boundary is incompatible")
 	}
@@ -314,6 +321,10 @@ func (instance *Provider) ProjectCheckpoint(checkpoint provider.CheckpointEnvelo
 
 // ValidateCheckpointUsage 对照生成 provenance 核验共享成功计量。
 func (instance *Provider) ValidateCheckpointUsage(checkpoint provider.CheckpointEnvelope, expected domain.SampleUsage) error {
+	return validateCheckpointUsage(checkpoint, expected)
+}
+
+func validateCheckpointUsage(checkpoint provider.CheckpointEnvelope, expected domain.SampleUsage) error {
 	if _, _, err := decodeCheckpoint(checkpoint); err != nil {
 		return err
 	}

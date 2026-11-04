@@ -16,7 +16,7 @@ List local session metadata without model configuration or network access.
   --all       show sessions across all directories (default: current directory)
   --limit N   maximum entries, from 1 to 200 (default: 20)
 
-Refresh scans all stored journals and may rebuild the index or repair incomplete tails under an exclusive lease.
+Refresh scans all stored journals under an exclusive lease and may rebuild the index; it never repairs journals.
 Resume with: easycode --resume <thread-id>
 `
 

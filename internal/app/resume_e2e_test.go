@@ -86,6 +86,16 @@ func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
 				t.Fatal(err)
 			}
 
+			preview, cleanupFailed, previewErr := previewSession(context.Background(), dataRoot, threadID, defaultPreviewDependencies())
+			if previewErr != nil || cleanupFailed || len(preview.Messages) == 0 {
+				t.Fatalf("preview before resume failed: %v", previewErr)
+			}
+			mu.Lock()
+			requestCount := len(requests)
+			mu.Unlock()
+			if requestCount != 2 {
+				t.Fatal("preview performed provider request")
+			}
 			resumed, err := openChatResources(
 				context.Background(), providerConfig, dataRoot, string(threadID), t.TempDir(),
 			)
