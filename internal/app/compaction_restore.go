@@ -51,10 +51,14 @@ func orderedRestoreRecords(plan session.ReplayPlan) ([]provider.RestoreRecord, e
 }
 
 func validateCompactionUsage(factory provider.Factory, plan session.ReplayPlan) error {
+	validator, _ := factory.(provider.CompactionUsageValidator)
+	return validateCompactionUsageEvidence(validator, plan)
+}
+
+func validateCompactionUsageEvidence(validator provider.CompactionUsageValidator, plan session.ReplayPlan) error {
 	for _, operation := range plan.Compactions {
 		if operation.Completed != nil {
-			validator, ok := factory.(provider.CompactionUsageValidator)
-			if !ok {
+			if validator == nil {
 				return fmt.Errorf("provider cannot validate checkpoint usage")
 			}
 			usage, err := operation.Completed.Usage.Domain()
@@ -68,8 +72,7 @@ func validateCompactionUsage(factory provider.Factory, plan session.ReplayPlan) 
 		if operation.Failed == nil || operation.Failed.UsageState != "observed" {
 			continue
 		}
-		validator, ok := factory.(provider.CompactionUsageValidator)
-		if !ok {
+		if validator == nil {
 			return fmt.Errorf("provider cannot validate compaction usage")
 		}
 		raw := operation.Failed.Provenance

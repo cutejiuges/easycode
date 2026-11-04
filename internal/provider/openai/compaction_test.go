@@ -91,6 +91,7 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 	if err != nil {
 		t.Fatal(err)
 	}
+	testOfflineUsageEvidence(t, instance, prepared, checkpoint)
 	before, _ := conversation.HistoryFootprint()
 	if before.Revision() != 2 {
 		t.Fatal("staging changed committed revision")
@@ -121,7 +122,7 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 		t.Fatal(err)
 	}
 	records = append(records, testRestoreRecords(t, []provider.NativeCommitEnvelope{envelope})...)
-	restoredValue, err := instance.RestoreConversation("01900000-0000-7000-8000-000000000001", records)
+	restoredValue, err := testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", records)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +178,7 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 	}
 	secondRecord, _ := provider.NewCheckpointRestoreRecord(secondCheckpoint)
 	records = append(records, secondRecord)
-	restoredValue, err = instance.RestoreConversation("01900000-0000-7000-8000-000000000001", records)
+	restoredValue, err = testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", records)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +189,7 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 	}
 	bad := append([]provider.RestoreRecord{}, records...)
 	bad[len(bad)-1] = record
-	if value, err := instance.RestoreConversation("01900000-0000-7000-8000-000000000001", bad); err == nil || value != nil {
+	if value, err := testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", bad); err == nil || value != nil {
 		t.Fatal("stale predecessor accepted")
 	}
 }
@@ -233,7 +234,7 @@ func assertCompactionAfterToolSteering(t *testing.T, instance *Provider, convers
 		}
 		record, _ := provider.NewCheckpointRestoreRecord(checkpoint)
 		records = append(records, record)
-		restoredValue, err := instance.RestoreConversation("01900000-0000-7000-8000-000000000001", records)
+		restoredValue, err := testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", records)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -322,7 +323,7 @@ func assertCompactionAfterToolSteering(t *testing.T, instance *Provider, convers
 		tailEnvelopes = append(tailEnvelopes, envelope)
 	}
 	records = append(records, testRestoreRecords(t, tailEnvelopes)...)
-	restoredValue, err := instance.RestoreConversation("01900000-0000-7000-8000-000000000001", records)
+	restoredValue, err := testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", records)
 	if err != nil {
 		t.Fatal(err)
 	}

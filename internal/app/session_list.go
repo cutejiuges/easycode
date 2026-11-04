@@ -39,12 +39,7 @@ type sessionListDependencies struct {
 
 // ListSessions 协调本地索引并输出列表，不创建聊天资源。
 func ListSessions(ctx context.Context, options SessionListOptions) Outcome {
-	return listSessions(ctx, options, sessionListDependencies{
-		workingDirectory: os.Getwd,
-		openRepository:   session.OpenOrCreateRepository,
-		closeRepository:  func(repository *session.Repository) error { return repository.Close() },
-		newCatalog:       func(config catalog.Config) (sessionListCatalog, error) { return catalog.New(config) },
-	})
+	return listSessions(ctx, options, defaultSessionListDependencies())
 }
 
 func listSessions(ctx context.Context, options SessionListOptions, deps sessionListDependencies) Outcome {
@@ -102,44 +97,73 @@ func listSessions(ctx context.Context, options SessionListOptions, deps sessionL
 	return Outcome{Class: ExitSuccess}
 }
 
-func loadSessionList(ctx context.Context, paths dataPaths, query catalog.ListQuery, deps sessionListDependencies) (result catalog.ListResult, report catalog.ReconciliationReport, resultErr error) {
+func loadSessionList(ctx context.Context, paths dataPaths, query catalog.ListQuery, deps sessionListDependencies) (catalog.ListResult, catalog.ReconciliationReport, error) {
+	snapshot, err := loadSessionCatalog(ctx, paths, query, deps, true)
+	return snapshot.rows, snapshot.report, err
+}
+
+type catalogSnapshot struct {
+	rows          catalog.ListResult
+	report        catalog.ReconciliationReport
+	cleanupFailed bool
+}
+
+// loadSessionCatalog 复用一次性列表和选择器的显式资源生命周期。
+func loadSessionCatalog(ctx context.Context, paths dataPaths, query catalog.ListQuery, deps sessionListDependencies, reconcile bool) (snapshot catalogSnapshot, resultErr error) {
 	if err := ctx.Err(); err != nil {
-		return result, report, err
+		return snapshot, err
 	}
 	repository, err := deps.openRepository(paths.sessionRoot)
 	if err != nil {
-		return result, report, err
+		return snapshot, err
 	}
-	defer func() { resultErr = errors.Join(resultErr, deps.closeRepository(repository)) }()
+	defer func() {
+		err := deps.closeRepository(repository)
+		snapshot.cleanupFailed = snapshot.cleanupFailed || err != nil
+		resultErr = errors.Join(resultErr, err)
+		if resultErr == nil {
+			resultErr = ctx.Err()
+		}
+	}()
 	if err := ctx.Err(); err != nil {
-		return result, report, err
+		return snapshot, err
 	}
 	instance, err := deps.newCatalog(catalog.Config{DatabasePath: paths.catalogPath, SessionRoot: paths.sessionRoot})
 	if err != nil {
-		return result, report, err
+		return snapshot, err
 	}
-	defer func() { resultErr = errors.Join(resultErr, instance.Close()) }()
+	defer func() {
+		err := instance.Close()
+		snapshot.cleanupFailed = snapshot.cleanupFailed || err != nil
+		resultErr = errors.Join(resultErr, err)
+	}()
 	if err := ctx.Err(); err != nil {
-		return result, report, err
+		return snapshot, err
 	}
 	if err := instance.Open(ctx); err != nil {
-		return result, report, err
+		return snapshot, err
 	}
 	if err := ctx.Err(); err != nil {
-		return result, report, err
+		return snapshot, err
 	}
-	report, err = instance.Reconcile(ctx, repository)
+	if reconcile {
+		snapshot.report, err = instance.Reconcile(ctx, repository)
+		if err != nil {
+			return snapshot, err
+		}
+		if err := ctx.Err(); err != nil {
+			return snapshot, err
+		}
+	}
+	snapshot.rows, err = instance.List(ctx, query)
 	if err != nil {
-		return result, report, err
+		return snapshot, err
 	}
-	if err := ctx.Err(); err != nil {
-		return result, report, err
-	}
-	result, err = instance.List(ctx, query)
-	if err != nil {
-		return result, report, err
-	}
-	return result, report, ctx.Err()
+	return snapshot, ctx.Err()
+}
+
+func defaultSessionListDependencies() sessionListDependencies {
+	return sessionListDependencies{workingDirectory: os.Getwd, openRepository: session.OpenOrCreateRepository, closeRepository: func(repo *session.Repository) error { return repo.Close() }, newCatalog: func(config catalog.Config) (sessionListCatalog, error) { return catalog.New(config) }}
 }
 
 func sessionListFailure(message string) Outcome {

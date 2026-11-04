@@ -120,71 +120,10 @@ func (instance *Provider) RestoreConversation(threadID domain.ThreadID, commits 
 	if !threadID.Valid() {
 		return nil, fmt.Errorf("conversation thread ID is invalid")
 	}
-	entries := make([]nativeHistoryEntry, 0, len(commits))
 	conversation := &Conversation{provider: instance, threadID: threadID, nextReason: domain.ResetRestored}
-	seenCheckpoints := make(map[domain.CompactionID]struct{})
-	for index, commit := range commits {
-		if expected, ok := commit.CompactionSource(); ok {
-			if err := commit.Validate(); err != nil {
-				return nil, err
-			}
-			conversation.history.entries = entries
-			conversation.history.revision = uint64(len(entries))
-			source, err := conversation.compactionSource()
-			if err != nil || source != expected {
-				return nil, fmt.Errorf("compaction source does not match native history")
-			}
-			continue
-		}
-
-		if commit.IsCheckpoint() {
-			checkpoint, err := commit.Checkpoint()
-			if err != nil {
-				return nil, err
-			}
-			if _, exists := seenCheckpoints[checkpoint.ID()]; exists {
-				return nil, fmt.Errorf("checkpoint identity is duplicated")
-			}
-			seenCheckpoints[checkpoint.ID()] = struct{}{}
-			conversation.history.entries = entries
-			conversation.history.revision = uint64(len(entries))
-			source, err := conversation.compactionSource()
-			if err != nil || source != checkpoint.Source() {
-				return nil, fmt.Errorf("checkpoint source does not match native history")
-			}
-			summary, summaryText, err := decodeCheckpoint(checkpoint)
-			if err != nil {
-				return nil, err
-			}
-			conversation.history.installCheckpoint(checkpoint, summary, summaryText)
-			continue
-		}
-
-		envelope, err := commit.Envelope()
-		if err != nil {
-			return nil, err
-		}
-		entry, err := decodeNativeCommit(envelope)
-		if err != nil {
-			return nil, fmt.Errorf("restore OpenAI native commit %d: %w", index+1, err)
-		}
-		if string(entry.Kind) != string(commit.Role()) {
-			return nil, fmt.Errorf("native commit role mismatch")
-		}
-		entry.TurnID = commit.TurnID()
-		if entry.Kind == nativeHistoryUserInputs {
-			a, ok := commit.Association()
-			if !ok || entry.InputMetadata == nil || !entry.InputMetadata.Matches(a) {
-				return nil, fmt.Errorf("native input association mismatch")
-			}
-		}
-		entries = append(entries, entry.clone())
+	if err := restoreNativeHistory(context.Background(), instance.config.Model, commits, &conversation.history); err != nil {
+		return nil, err
 	}
-	if err := validateNativeHistory(entries); err != nil {
-		return nil, fmt.Errorf("restore OpenAI native history: %w", err)
-	}
-	conversation.history.entries = entries
-	conversation.history.revision = uint64(len(entries))
 	return conversation, nil
 }
 

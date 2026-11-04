@@ -770,3 +770,24 @@
 - 验证：双 Provider restore/compaction 测试继续对比 canonical request、原生顺序和 fingerprint；Catalog 回归证明无关 user_version 不清空已有投影，错误表结构仍重建；架构守卫覆盖版本字段/常量和 Catalog PRAGMA 回流。
 - 保留依据：headless JSONL 是已声明的外部机器协议；Anthropic header 和 sandbox profile version 属于外部语法；应用版本与 UUIDv7 有各自消费者。内容 revisions、fingerprint、估算方法和缓存来源/renderer 标识用于缓存定位与失效，不选择历史 decoder；resume 配置匹配保障 Provider/model/目录边界。
 - 规约：无用户明确要求不得自行增加多版本兼容、迁移或内部格式版本门禁；跨磁盘、跨进程或发布本身均不构成需求。
+
+
+### [P2/P5][2026-11-04] 预览成功不能代替恢复事实与资源接收
+
+- 变更：`add-interactive-session-picker`。
+- 原因：Session 日志层 fixture 未必满足 Provider 的完整原生契约；列表、预览、恢复也存在不同的校验和副作用边界。不能因为 JSONL 可回放就绕过 native role、InputID、工具配对或 checkpoint/provenance 校验。
+- 处理：离线 reader 与正式恢复共用两家私有校验，预览在独占 lease 下读取且不 repair，结果发布前释放句柄。正式恢复重新读事实源；预览后替换、删除或损坏不能沿用旧正文。
+- 所有权：Bubble Tea 返回不代表异步应用 I/O 已完成。单 worker 合并最新意图，显式 Start/Stop/Wait 与资源 Accept，迟到成功也必须关闭。取消函数由 admission 显式转移给 owner；退出完成信号在清理后关闭。
+- 失败阶段：repair/补偿前的验证错误可返回列表；开始改变 journal 或清理失败时结束启动。不可从错误文本推测阶段，也不能回滚已提交事实。
+- 回归：双 Provider `offline_history_test.go` 和原有 request golden；app `session_preview_test.go`、`session_picker_process_test.go`、`picker_owner_test.go`、`session_picker_test.go`；TUI `session_picker_test.go` 与固定尺寸 golden。
+- 文档核对：本次修正 `sessions` 帮助和 Roadmap 的“列表 repair”误述。历史 specs 的 schema revision/显式 schema 版本措辞仍需独立文档收敛；没有据此增加版本字段、迁移器或兼容 reader。
+- 真实 PTY 发现的额外边界：输出错误监测包装必须保留 `term.File`，否则 Bubble Tea 无法感知窗口尺寸；正常退出需先固定 UI 终态，避免 owner 结果通道关闭抢先把退出 0 改成 1。`scripts/session-picker-smoke.py` 验证 resize、跨目录确认、无色和 0/130 退出；Darwin 的 PENDIN 作为内核状态单独记录。
+
+### [P2/P5][2026-11-04] 选择器接收线性化与展示预算复核
+
+- 现象：父 context 已取消但 worker 尚未 Stop 时，Accept 原先仍可成功；安全展示刚好填满预算时，下一条正文可能被静默省略。
+- 原因：仅检查 owner 标志不能观察已发生的父取消；仅从当前消息预留标记不能处理此前已经用尽的预算。原验收映射还将相关测试误当成直接覆盖。
+- 处理：接收/admission 在锁内非阻塞检查 done，取消与关闭仍在锁外且由唯一 worker 收尾；安全预算溢出回收尾部空间保留标记，UTF-8 无完整 rune 时不创建空消息。正文保留换行/Tab，元数据转义行/段分隔符。
+- 交互：初次加载失败不显示空列表；陈旧列表注明原范围；短屏保留错误、确认选项，目录和预览可滚动；超长搜索明确提示。
+- 回归：`internal/app/picker_owner_test.go` 的已取消接收；`session_preview_test.go` 的双 Provider 校验 barrier、lease 释放与 bytes 不变；`session_picker_test.go` 的真实追加后重读和 clean/compensation/repair 失败分类；`internal/tui/session_picker_test.go` 的精确预算与窄屏状态。
+- 架构与缓存：不增加 goroutine、公共协议或存储版本，不从预览反向生成 Provider 请求；完整原生校验与既有 request golden 保持。

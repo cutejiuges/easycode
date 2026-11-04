@@ -4,7 +4,17 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 
 用户只需要提供 `base_url`、`api_key` 和模型名称即可连接服务，不需要账号登录、OAuth、设备码或订阅鉴权。
 
-> 项目正在推进 P3 Coding Tools。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、原生多轮 Session、`--resume`/`--continue`、headless/FIFO 输入、离线 `sessions list`，以及 Read、Glob、Grep、需批准的单文件 Patch、整文件 Write 和 Darwin 前台命令执行。已支持工具原文 artifact、统一工具详情、手动上下文压缩与查询；会话 picker、自动压缩、Hook 和完整缓存/推理界面仍按 Roadmap 分阶段推进。
+> 项目正在推进 P3 Coding Tools。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、原生多轮 Session、`--resume`/`--continue`、headless/FIFO 输入、离线 `sessions list`，以及 Read、Glob、Grep、需批准的单文件 Patch、整文件 Write 和 Darwin 前台命令执行。已支持工具原文 artifact、统一工具详情、手动上下文压缩与查询；已增加启动会话选择器和只读预览；Hook 和完整推理界面仍按 Roadmap 分阶段推进。
+
+## 交互式恢复会话
+
+运行 `easycode resume [--all] [--config PATH]`，在当前目录或全部创建目录中选择会话。该入口需要有效模型配置以及终端 stdin/stdout；无需配置的发现入口仍是 `easycode sessions list`。已有 `--resume ID`、`--continue` 和 headless 行为保持一致。
+
+输入搜索 ID、Provider、wire、model、创建目录；搜索只覆盖当前范围最近 200 条元数据，最多 256 个 Unicode 码点。上下键/翻页选择，Ctrl+A 切范围，Ctrl+R 重新协调索引，Ctrl+V 按需预览，Tab 查看可滚动完整身份，Enter 恢复。Esc 逐层返回、清空搜索、退出；Ctrl+C 取消启动。
+
+预览严格校验原生历史，只显示前 128 条非空用户/assistant 文本，正文总量最多 32768 UTF-8 bytes，安全转义后的展示最多 196608 bytes。预览不访问模型、不执行工具、不修复日志；不完整尾部显示已提交前缀并明确提示。工具详情、opaque reasoning 和压缩摘要不伪装成原始消息，正文不进入索引或日志，关闭即丢弃。
+
+不兼容配置可浏览和预览，但不能直接恢复。跨目录恢复默认返回，明确确认后仍使用当前工作目录和项目指令。预览不是恢复缓存：正式恢复重新获取独占 lease 并校验日志。正常取消浏览退出 0，启动中断退出 130；配置、不可确定的恢复或清理失败退出 1，非法参数或非终端调用退出 2。
 
 ## 多行聊天输入
 
@@ -36,7 +46,7 @@ TUI 将 CRLF/CR 规范化为 LF，保留缩进、Tab、尾空格及尾换行；�
 | Runtime | 已实现多 sample 工具循环、同轮自动追加与严格 FIFO 屏障、原子取回、定向停止和 durable-before-memory 输入提交 |
 | 安全配置 | 已实现 JSON 配置、环境变量覆盖、API key 脱敏，以及 macOS/Linux 上绑定实际句柄的 no-follow 校验；其他平台当前安全失败关闭 |
 | Tools | 已实现 Read/Glob/Grep、Anthropic Edit / OpenAI custom apply_patch、双 Provider structured Write，以及 Darwin 前台 Exec（Anthropic Bash / OpenAI exec_command）；只读最多 8 路并行，Patch/Write/Exec 独占、有序提交并需批准 |
-| Session | 已实现 append-only JSONL、唯一当前无版本格式的强类型 draft/decoder、UUIDv7、跨进程 lease、同句柄 load/repair/write、`Sync`、尾部修复、fixture、显式恢复，以及可从 JSONL 重建的 SQLite Catalog、`--continue` 与离线 `sessions list`；session picker/search 尚未实现 |
+| Session | 已实现 append-only JSONL、唯一当前无版本格式的强类型 draft/decoder、UUIDv7、跨进程 lease、同句柄 load/repair/write、`Sync`、尾部修复、fixture、显式恢复，以及可从 JSONL 重建的 SQLite Catalog、`--continue` 与离线 `sessions list`，以及 `resume` 启动选择器和有界元数据搜索/只读文本预览；全文搜索尚未实现 |
 | 扩展系统 | P6 目标；Hooks、Plugins、Skills 和 MCP 目前仅为经批准的 TODO 占位，未接入 Runtime/app |
 | Subagent | P7 目标；当前仅为经批准的 TODO 控制边界，调度、线程树和生命周期尚未实现 |
 | Telemetry | P8 目标；当前 logger 仅为经批准的 TODO 占位，未接入请求正文、Session 或运行时链路 |

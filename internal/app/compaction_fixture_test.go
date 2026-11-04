@@ -111,6 +111,17 @@ func runCacheCompactionFixedFixturesResumeAndRepair(t *testing.T, cacheEnabled b
 					if family == domain.ProviderAnthropic {
 						wire = "messages"
 					}
+					preview, cleanupFailed, previewErr := previewSession(context.Background(), service.repository.RootPath(), thread, defaultPreviewDependencies())
+					if cleanupFailed || (previewErr == nil) != valid {
+						t.Fatalf("preview validation: valid=%v err=%v", valid, previewErr)
+					}
+					if !valid && len(preview.Messages) != 0 {
+						t.Fatal("invalid preview exposed partial text")
+					}
+					unchanged, readErr := os.ReadFile(path)
+					if readErr != nil || !bytes.Equal(unchanged, data) {
+						t.Fatal("preview changed compaction journal")
+					}
 					resumed, err := service.resume(context.Background(), resource, wire, "claude-test", thread)
 					if (err == nil) != valid {
 						t.Fatalf("valid=%t err=%v", valid, err)

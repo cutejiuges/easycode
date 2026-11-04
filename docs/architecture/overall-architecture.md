@@ -676,7 +676,7 @@ Open Catalog lock
 
 `state.sqlite.lock` 为 schema、重建和 reconciliation 提供跨进程唯一 owner。Unix adapter 从实际打开的 handle 校验私有 data home、数据库、rollback journal 与 sidecar 的普通文件类型和 `0600` 权限，并使用 no-follow 打开；无法提供等价语义的平台失败关闭。数据库缺失、损坏或 schema 不兼容时，在同一 Catalog 锁下从 JSONL 构建临时数据库，`Sync` 后原子替换。
 
-选择结果不是恢复事实：Catalog 关闭后，app 仍通过既有 `sessionService.resume` 重新取得 journal lease并完整执行 load、repair、ReplayPlanner、Provider-native restore 与兼容性校验。选择和恢复之间发生占用、替换、损坏或配置不兼容时直接失败，不回退旧 thread。session picker、worktree/project catalog、title/tag、全文搜索、实时索引和 thread graph 仍属后续能力。
+选择结果不是恢复事实：Catalog 关闭后，app 仍通过既有 `sessionService.resume` 重新取得 journal lease并完整执行 load、repair、ReplayPlanner、Provider-native restore 与兼容性校验。选择和恢复之间发生占用、替换、损坏或配置不兼容时直接失败，不回退旧 thread。worktree/project catalog、title/tag、全文搜索、实时索引和 thread graph 仍属后续能力。
 
 `sessions list` 新增独立发现入口：`cmd/easycode/sessions.go -> app.ListSessions -> catalog.Reconcile/List`，不进入聊天配置、项目指令、Provider 或 Runtime 装配。`ListQuery` 明确区分规范化创建目录和全部目录，使用原 schema 按 committed `updated_at`/thread ID 双降序、先筛选后 limit+1，返回至多 200 条及 HasMore。查询不依赖 Provider selector，`LatestCompatible` 仍保留原四字段精确匹配。
 
@@ -692,7 +692,7 @@ Open Catalog lock
 - 当前 `--resume <thread-id>` 通过日期编码的 UUIDv7 定位文件，恢复 native history 和只读语义视图；不恢复旧 API key、base URL、cwd 或其他动态 world state。
 - 仓库已建立不可变的当前文本与 Tool Loop fixture，用于验证 Loader/ReplayPlanner 的读取、续写 prefix 不变、账本顺序和双 Provider 恢复等价性；项目没有线上历史格式，因此开发期旧 fixture 与旧 reader 已删除。未来真实 schema/payload revision 的版本专属转换仍未实现，也不得在 resume 时原地改写既有 records。
 - exclusive lease 是协作进程间的 advisory lock，不能阻止旧版 EasyCode 或非协作进程绕过锁直接写文件；混合版本运行前必须确保目标 thread 没有其他 owner，绕过锁产生的损坏继续由 checksum、seq 和完整回放校验发现。
-- SQLite Catalog、`--continue` 与离线 `sessions list` 已实现；session picker、worktree/project catalog、title/tag、搜索、实时索引、全工具 artifact 和未来 schema 转换尚未实现。
+- SQLite Catalog、`--continue`、离线 `sessions list` 与启动 `resume` picker 已实现；worktree/project catalog、title/tag、全文搜索、实时索引和全工具 artifact 尚未实现。内部格式继续保持唯一当前契约，不预设未来兼容授权。
 - 手动与阈值自动 compaction 追加独立 checkpoint，保留原始 JSONL；跨 Provider fork 与 child-thread 元数据仍为后续目标。摘要是可辨识的历史参考，不构成新的用户输入或授权。
 - artifact 文件路径必须防止目录穿越。
 
@@ -968,3 +968,16 @@ make verify
 ```
 
 ADR 存放在 `docs/architecture/adr/`，模板见该目录的 `README.md`，并与产生该决策的 OpenSpec change 双向引用。实际开发中遇到的 provider 兼容、缓存失效、流式边界、工具幂等、终端渲染和 session 恢复问题，统一记录到 `docs/roadmap/pitfall-log.md`，并关联 OpenSpec change、修复提交、测试和 ADR。
+
+
+### 启动会话选择与离线投影
+
+`cmd/easycode/resume.go -> app.RunSessionPicker -> tui.StartupModel` 在一个 Bubble Tea Program 中组合选择器与既有 Chat Model。配置与 cwd 在启动时冻结，项目指令仅在正式恢复时加载。`assembleChatModel` 由普通聊天和选择器共用，工具、审批、上下文、缓存与 transcript 消费逻辑保持单一实现。
+
+`pickerOwner` 使用一个 worker、一个最新意图槽、单调请求身份和唯一 done。取消旧操作后等待清理再开始下一操作；成功资源先由宿主持有，经 UI 显式 Accept 后进入 Chat，关闭始终由宿主负责。锁内只转换状态，取消、结果发送和关闭均在锁外。`recoveryAttempt` 区分纯验证、可能修改 journal 和清理失败；后两类失败结束启动，不把已有合法事实当作未发生。
+
+列表与独立 `sessions list` 共用 `loadSessionCatalog` 生命周期；首次和刷新协调，成功后的切范围仅查询，最多 200 条，正文不入 Catalog。`previewSession` 在 descriptor-bound lease 下 Load/Replay、恢复顺序及压缩用量校验，关闭句柄后才发布预览；不用 resume、writer、Repair、artifact 或 Runtime。`provider.StoredHistoryReader` 是有实际消费者的单向离线接口，两家独立 reader 与正式恢复共享私有 native 校验和压缩来源计算，无连接、凭据或新增 capability。
+
+选择理由、参考工程版本、预算和验证方案见 [OpenSpec 变更](../../openspec/changes/archive/2026-11-04-add-interactive-session-picker/design.md)。这是一块恢复入口的完整切片，不代表 P5 的 Markdown、reasoning、补全或 fork picker 已完成。
+
+选择器接收以 owner 锁内对操作/父取消 done channel 的非阻塞检查为线性化点；此前已取消的结果不能进入 Chat。资源仍由同一 worker 持有到最终关闭，不在锁内调用 context 实现或执行关闭。预览的原文预算和安全展示预算分别裁剪，任何省略都保留可见标记；展示不会持有被截掉的大字符串 backing storage。短屏确认保留当前选项并允许滚动目录，短屏预览允许滚过状态头部。

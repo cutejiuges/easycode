@@ -13,6 +13,7 @@ import (
 )
 
 type sessionService struct {
+	recovery   *recoveryAttempt
 	repository *session.Repository
 	load       func(context.Context, *session.JournalLease) (session.LoadResult, error)
 	plan       func(session.LoadResult) (session.ReplayPlan, error)
@@ -112,7 +113,9 @@ func (service *sessionService) resume(
 	}
 	defer func() {
 		if lease != nil {
-			resultErr = errors.Join(resultErr, lease.Close())
+			closeErr := lease.Close()
+			service.recovery.cleanup(closeErr)
+			resultErr = errors.Join(resultErr, closeErr)
 		}
 	}()
 	loaded, err := service.load(ctx, lease)
@@ -147,6 +150,7 @@ func (service *sessionService) resume(
 		return assembledSession{}, fault.Wrap(fault.CodeSessionCorruption, "compaction transcript is invalid", err)
 	}
 	if loaded.NeedsRepair() {
+		service.recovery.mutating()
 		report, repairErr := session.NewLoader().Repair(ctx, lease, loaded)
 		if repairErr != nil {
 			return assembledSession{}, fault.Wrap(fault.CodeSessionWrite, "repair session journal failed", repairErr)
@@ -164,8 +168,12 @@ func (service *sessionService) resume(
 	if started.transferred {
 		lease = nil
 	}
+	if plan.InterruptedCompaction != nil || plan.InterruptedTail != nil {
+		service.recovery.mutating()
+	}
 	if err := reconcileInterruptedCompaction(ctx, writer, plan.InterruptedCompaction); err != nil {
 		closeErr := writer.Close(context.Background())
+		service.recovery.cleanup(closeErr)
 		return assembledSession{}, fault.Wrap(fault.CodeSessionWrite, "close interrupted compaction failed", errors.Join(err, closeErr))
 	}
 	if plan.InterruptedTail != nil {
@@ -174,6 +182,7 @@ func (service *sessionService) resume(
 		})
 		if draftErr != nil {
 			closeErr := writer.Close(context.Background())
+			service.recovery.cleanup(closeErr)
 			return assembledSession{}, fault.Wrap(
 				fault.CodeSessionWrite, "build interrupted session turn failed",
 				errors.Join(draftErr, closeErr),
@@ -182,6 +191,7 @@ func (service *sessionService) resume(
 		_, appendErr := writer.AppendBatch(ctx, []session.RecordDraft{failureDraft})
 		if appendErr != nil {
 			closeErr := writer.Close(context.Background())
+			service.recovery.cleanup(closeErr)
 			return assembledSession{}, fault.Wrap(
 				fault.CodeSessionWrite, "close interrupted session turn failed",
 				errors.Join(appendErr, closeErr),
@@ -190,6 +200,7 @@ func (service *sessionService) resume(
 	}
 	if !started.transferred {
 		closeErr := writer.Close(context.Background())
+		service.recovery.cleanup(closeErr)
 		return assembledSession{}, fault.Wrap(
 			fault.CodeSessionWrite, "session journal ownership was not transferred", closeErr,
 		)

@@ -41,6 +41,9 @@ func run(
 	errorOutput io.Writer,
 	stdinIsTerminal bool,
 ) int {
+	if len(arguments) > 0 && arguments[0] == "resume" {
+		return runResume(ctx, arguments[1:], input, output, errorOutput, stdinIsTerminal, outputIsTerminal(output))
+	}
 	if len(arguments) > 0 && arguments[0] == "sessions" {
 		return runSessions(ctx, arguments[1:], output, errorOutput)
 	}
