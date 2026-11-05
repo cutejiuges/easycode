@@ -3,7 +3,7 @@ package builtin
 
 import "easycode/internal/tool"
 
-// NewCatalog 创建六种能力均已绑定真实组件的确定性目录快照。
+// NewCatalog 创建八种能力均已绑定真实组件的确定性目录快照。
 func NewCatalog(
 	readExecutor tool.ReadExecutor,
 	globExecutor tool.GlobExecutor,
@@ -17,8 +17,9 @@ func NewCatalog(
 	renderer tool.ExecOutputRenderer,
 	policy tool.Policy,
 	artifactExecutor tool.ReadArtifactExecutor,
+	skillExecutor tool.SkillExecutor,
 ) (tool.CatalogSnapshot, error) {
 	return tool.NewCatalogSnapshot(
-		readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, writePreparer, writeExecutor, execPreparer, execExecutor, renderer, policy, artifactExecutor,
+		readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, writePreparer, writeExecutor, execPreparer, execExecutor, renderer, policy, artifactExecutor, skillExecutor,
 	)
 }

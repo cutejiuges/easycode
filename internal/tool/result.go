@@ -1,6 +1,7 @@
 package tool
 
 import (
+	"easycode/internal/domain"
 	"errors"
 	"fmt"
 	"strconv"
@@ -101,23 +102,25 @@ func (metadata ReadResultMetadata) OutputTruncated() bool   { return metadata.ou
 
 // InvocationResult 是可直接持久化并交给 Provider result codec 的冻结结果。
 type InvocationResult struct {
-	searchSaving   ArtifactSaving
-	budget         ResultBudgetMetadata
-	artifactInput  ReadArtifactInput
-	artifactPage   ArtifactPage
-	invocationID   InvocationID
-	providerCallID ProviderCallID
-	capability     CapabilityID
-	wireKind       ProviderWireKind
-	status         ResultStatus
-	code           string
-	preview        ModelPreview
-	readMetadata   ReadResultMetadata
-	globMetadata   GlobResultMetadata
-	grepMetadata   GrepResultMetadata
-	patchMetadata  PatchResultMetadata
-	writeMetadata  WriteResultMetadata
-	execMetadata   ExecResultMetadata
+	skillInput      SkillInput
+	skillAttachment domain.SkillAttachment
+	searchSaving    ArtifactSaving
+	budget          ResultBudgetMetadata
+	artifactInput   ReadArtifactInput
+	artifactPage    ArtifactPage
+	invocationID    InvocationID
+	providerCallID  ProviderCallID
+	capability      CapabilityID
+	wireKind        ProviderWireKind
+	status          ResultStatus
+	code            string
+	preview         ModelPreview
+	readMetadata    ReadResultMetadata
+	globMetadata    GlobResultMetadata
+	grepMetadata    GrepResultMetadata
+	patchMetadata   PatchResultMetadata
+	writeMetadata   WriteResultMetadata
+	execMetadata    ExecResultMetadata
 }
 
 // NewReadInvocationResult 构造完整 Read 结果。
@@ -174,6 +177,9 @@ func (result InvocationResult) WriteMetadata() WriteResultMetadata { return resu
 
 // Validate 验证结果身份、状态、错误码、preview 和元数据。
 func (result InvocationResult) Validate() error {
+	if result.capability != CapabilitySkill && (result.skillInput != (SkillInput{}) || result.skillAttachment != (domain.SkillAttachment{})) {
+		return errors.New("mismatched Skill metadata")
+	}
 	if result.capability == CapabilityGlob || result.capability == CapabilityGrep {
 		if (result.capability != CapabilityGlob && result.capability != CapabilityGrep) || result.searchSaving.Validate() != nil {
 			return errors.New("invalid search saving")
@@ -216,6 +222,8 @@ func (result InvocationResult) Validate() error {
 		return errors.New("tool result contains mismatched Write metadata")
 	}
 	switch result.capability {
+	case CapabilitySkill:
+		return result.validateSkillResult()
 	case CapabilityReadArtifact:
 		return result.validateArtifactResult()
 	case CapabilityExec:
@@ -330,6 +338,11 @@ func NewReadErrorResult(invocation ReadInvocation, status ResultStatus, code str
 // NewInvocationErrorResult 为当前四种能力生成不泄漏底层cause的确定错误结果。
 func NewInvocationErrorResult(invocation Invocation, status ResultStatus, code string, message string) InvocationResult {
 	switch invocation.Capability() {
+	case CapabilitySkill:
+		v, _ := invocation.Skill()
+		p, _ := NewModelPreview(message)
+		r, _ := NewSkillInvocationResult(v, status, code, p, domain.SkillAttachment{})
+		return r
 	case CapabilityReadArtifact:
 		v, _ := invocation.ReadArtifact()
 		p, _ := NewModelPreview(message)

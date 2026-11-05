@@ -22,20 +22,9 @@ import (
 	"easycode/internal/secret"
 	"easycode/internal/session"
 	"easycode/internal/tool"
-	"easycode/internal/tool/builtin"
 	"easycode/internal/tui"
 	tea "github.com/charmbracelet/bubbletea"
 )
-
-func TestMain(m *testing.M) {
-	if handled, err := builtin.RunCommandChild(os.Args[1:]); handled {
-		if err != nil {
-			os.Exit(125)
-		}
-		os.Exit(0)
-	}
-	os.Exit(m.Run())
-}
 
 func TestReadPatchExecApprovedLoopForBothProviders(t *testing.T) {
 	runCacheReadPatchExecApprovedLoopForBothProviders(t, false)
@@ -243,7 +232,7 @@ func runCacheReadPatchExecApprovedLoopForBothProviders(t *testing.T, cacheEnable
 					t.Fatal("command state invalidated stable tool catalog")
 				}
 				var facades []json.RawMessage
-				if err := json.Unmarshal(request.Tools, &facades); err != nil || len(facades) != 7 {
+				if err := json.Unmarshal(request.Tools, &facades); err != nil || len(facades) != 8 {
 					t.Fatal("request catalog lost a real capability")
 				}
 			}

@@ -14,6 +14,7 @@ require (
 	github.com/rivo/uniseg v0.4.7
 	github.com/yuin/goldmark v1.7.8
 	golang.org/x/sys v0.41.0
+	gopkg.in/yaml.v3 v3.0.1
 	resty.dev/v3 v3.0.0-rc.4
 )
 

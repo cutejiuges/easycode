@@ -251,7 +251,7 @@ func TestModelSubmitsAndProjectsOrderedDeltas(t *testing.T) {
 	if len(session.submits) != 1 || session.submits[0] != "hello" {
 		t.Fatalf("submits: %#v", session.submits)
 	}
-	if len(session.contexts) != 1 || session.contexts[0] != submitContext {
+	if len(session.contexts) != 1 || session.contexts[0].Value(contextKey{}) != "operation" || session.contexts[0].Err() != context.Canceled {
 		t.Fatalf("submit contexts: %#v", session.contexts)
 	}
 }

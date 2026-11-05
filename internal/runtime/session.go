@@ -57,6 +57,10 @@ func (session *ChatSession) Append(ctx context.Context, text string) (protocol.C
 	if err != nil {
 		return protocol.CommandResult{}, err
 	}
+	command, err = session.runtime.PrepareInput(ctx, command)
+	if err != nil {
+		return protocol.CommandResult{}, err
+	}
 	return session.submitInteractive(ctx, command)
 }
 
@@ -173,6 +177,10 @@ func (session *ChatSession) Submit(ctx context.Context, text string) (<-chan pro
 	command, err := protocol.NewSubmitInputCommand(requestID, text)
 	if err != nil {
 		return nil, fault.New(fault.CodeInvalidInput, "host input is invalid")
+	}
+	command, err = session.runtime.PrepareInput(ctx, command)
+	if err != nil {
+		return nil, err
 	}
 	events := make(chan protocol.Event, 16)
 	session.mu.Lock()

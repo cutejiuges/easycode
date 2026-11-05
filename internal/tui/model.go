@@ -33,7 +33,10 @@ type RuntimeEventMsg struct {
 	Event protocol.Event
 }
 
-type submissionFailedMsg struct{ err error }
+type submissionFailedMsg struct {
+	err        error
+	generation uint64
+}
 
 type eventStreamClosedMsg struct{}
 type approvalSubmitErrorMsg struct{ err error }
@@ -62,25 +65,29 @@ const (
 
 // Model 保存纯 UI 投影状态，不依赖 Provider 或 transport。
 type Model struct {
-	nextTextID         uint64
-	reading            transcriptViewport
-	markdown           markdownViewCache
-	queryGeneration    uint64
-	queryRequestID     protocol.RequestID
-	queryKind          protocol.CommandKind
-	cachePanel         *protocol.CacheSnapshotPayload
-	cacheScroll        int
-	pendingContext     protocol.CommandKind
-	activeCompactionID domain.CompactionID
-	compactionStatus   string
-	contextPanel       *protocol.ContextSnapshotPayload
-	main               mainTranscript
-	browser            transcriptBrowser
-	version            string
-	width              int
-	height             int
-	session            ChatSession
-	submit             func(ChatSession, string) tea.Cmd
+	nextTextID           uint64
+	reading              transcriptViewport
+	markdown             markdownViewCache
+	skills               []domain.SkillListEntry
+	skillsOpen           bool
+	skillSelection       int
+	queryGeneration      uint64
+	queryRequestID       protocol.RequestID
+	queryKind            protocol.CommandKind
+	cachePanel           *protocol.CacheSnapshotPayload
+	cacheScroll          int
+	pendingContext       protocol.CommandKind
+	activeCompactionID   domain.CompactionID
+	compactionStatus     string
+	contextPanel         *protocol.ContextSnapshotPayload
+	main                 mainTranscript
+	browser              transcriptBrowser
+	version              string
+	width                int
+	height               int
+	session              ChatSession
+	pendingCancel        context.CancelFunc
+	submissionGeneration uint64
 
 	composer       composer
 	pending        *composer
@@ -120,10 +127,8 @@ func NewModel(
 	session ChatSession,
 ) Model {
 	model := Model{
-		markdown: newMarkdownViewCache(), version: version, session: session, submitContext: submitContext, assistantItem: -1, composer: newComposer(),
-		submit: func(target ChatSession, prompt string) tea.Cmd {
-			return submitTurn(submitContext, target, prompt)
-		},
+		markdown: newMarkdownViewCache(),
+		version:  version, session: session, submitContext: submitContext, assistantItem: -1, composer: newComposer(),
 	}
 	if session != nil {
 		model.outputs = session.Outputs()
@@ -204,6 +209,10 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return next, cmd
 	case submissionFailedMsg:
+		if value.generation != 0 && value.generation != model.submissionGeneration {
+			return model, nil
+		}
+		model.pendingCancel = nil
 		if model.state != stateSubmitting || model.pending == nil {
 			return model, nil
 		}
@@ -239,6 +248,9 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if model.skillsOpen {
+		return model.handleSkillsKey(key)
+	}
 	if key.Paste && (model.approval != nil || model.detailOpen || (model.pending != nil || model.retracting != nil)) {
 		if model.approval != nil && model.approval.editing && !model.approval.submitted {
 			return model.handleApprovalKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: key.Runes, Paste: true})
@@ -310,6 +322,9 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if model.pending != nil || model.retracting != nil {
 		if model.pending != nil && (key.Type == tea.KeyCtrlC || key.Type == tea.KeyEsc) {
+			if model.pendingCancel != nil {
+				model.pendingCancel()
+			}
 			if model.activeTurnID.Valid() {
 				model.cancelling = true
 				return model, interruptSession(model.session)
@@ -347,6 +362,15 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return model.quitTranscript()
 	case composerSubmit:
+		if words := strings.Fields(model.composer.text); len(words) > 0 && words[0] == "/skills" {
+			if len(words) != 1 {
+				model.errorSummary = "invalid_command: /skills does not accept arguments"
+			} else {
+				model.skillsOpen = true
+				model.skillSelection = 0
+			}
+			return model, nil
+		}
 		if model.session == nil {
 			return model, nil
 		}
@@ -365,7 +389,19 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		model.pending = &snapshot
 		model.state = stateSubmitting
 		model.errorSummary = ""
-		return model, model.submit(model.session, snapshot.text)
+		ctx, cancel := context.WithCancel(model.submitContext)
+		model.pendingCancel = cancel
+		model.submissionGeneration++
+		generation := model.submissionGeneration
+		target := model.session
+		return model, func() tea.Msg {
+			defer cancel()
+			_, err := target.Append(ctx, snapshot.text)
+			if err != nil {
+				return submissionFailedMsg{err: err, generation: generation}
+			}
+			return nil
+		}
 	}
 	return model, nil
 }
@@ -535,7 +571,11 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 			model.errorSummary = "stream_protocol_error: invalid committed input"
 			return model, nil
 		}
-		model.transcript = append(model.transcript, transcriptMessage{role: "User", text: payload.Text})
+		text := payload.Text
+		if payload.Skill != nil {
+			text += "\nSkill loaded: " + payload.Skill.Name + " (" + payload.Skill.Source.ID() + ")"
+		}
+		model.transcript = append(model.transcript, transcriptMessage{role: "User", text: text})
 		model.assistantItem = -1
 	case protocol.EventTurnStarted:
 		if event.TurnID.Valid() {
@@ -630,6 +670,9 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 
 // View 渲染确定性的聊天投影和已准备的多行输入布局。
 func (model Model) View() string {
+	if model.skillsOpen {
+		return model.renderSkills()
+	}
 	if model.cachePanel != nil {
 		return model.renderCachePanel()
 	}
@@ -788,16 +831,6 @@ func truncateRunes(value string, width int) string {
 		return ""
 	}
 	return ansi.Truncate(value, width, "…")
-}
-
-func submitTurn(ctx context.Context, session ChatSession, prompt string) tea.Cmd {
-	return func() tea.Msg {
-		_, err := session.Append(ctx, prompt)
-		if err != nil {
-			return submissionFailedMsg{err: err}
-		}
-		return nil
-	}
 }
 
 func waitForControl(outputs <-chan protocol.ControlItem) tea.Cmd {

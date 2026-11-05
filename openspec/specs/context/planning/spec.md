@@ -8,12 +8,12 @@
 
 ### Requirement: Context planning uses typed ordered sources
 
-上下文规划 SHALL 只接收强类型的 Provider profile、Tool Catalog snapshot、可选项目指令快照、已提交有效窗口语义快照、Provider 原生历史 footprint、不携带额外正文的当前采样状态和可选预算。来源 MUST 按 `provider_profile`、`tool_catalog`、可选 `project_instructions`、`committed_history`、`current_input` 的固定顺序出现；无项目指令文档时 MUST 省略 `project_instructions`。规划不得隐式读取时间戳、随机 ID、cwd、环境变量、Session 路径、git 状态、文件系统或网络。
+上下文规划 SHALL 只接收强类型的 Provider profile、Tool Catalog snapshot、可选项目指令快照、可选 Skill metadata 快照、已提交有效窗口语义快照、Provider 原生历史 footprint、不携带额外正文的当前采样状态和可选预算。来源 MUST 按 `provider_profile`、`tool_catalog`、可选 `project_instructions`、可选 `skill_catalog`、`committed_history`、`current_input` 的固定顺序出现；无项目指令文档时 MUST 省略 `project_instructions`，无可向模型披露的 Skill 时 MUST 省略 `skill_catalog`。规划不得隐式读取时间戳、随机 ID、cwd、环境变量、Session 路径、git 状态、文件系统或网络。
 
 `provider_profile` SHALL 只包含 Provider family、model 和显式 schema revision，不得包含 API key、base URL 凭据或其他 secret。`tool_catalog` SHALL 只包含 catalog revision、稳定排序的 facade schema canonical bytes 与内容派生 fingerprint，不得包含 executor、invocation/call identity、权限临时状态或 workspace 绝对路径。`project_instructions` SHALL 只包含经过发现契约验证的不可变快照、内容派生 revision、截断状态和项目根相对来源，不得包含绝对项目根或启动 cwd。规划 MUST 是纯内存操作，且不得修改输入快照或 Provider 原生历史。
 
 #### Scenario: Plan the same inputs twice
-- **WHEN** 两次规划使用相同 profile、Tool Catalog、项目指令快照、有效窗口语义快照、原生 footprint、当前输入和预算
+- **WHEN** 两次规划使用相同 profile、Tool Catalog、项目指令快照、Skill metadata、有效窗口语义快照、原生 footprint、当前输入和预算
 - **THEN** 两次计划的来源顺序、revision、估算、预算状态、canonical cache segments 和指纹完全一致
 
 #### Scenario: Exclude ambient process state
@@ -26,7 +26,7 @@
 - **THEN** 计划摘要、错误和诊断不包含 API key、URL 凭据或 workspace 绝对路径
 
 #### Scenario: Omit an empty project source
-- **WHEN** 项目指令快照不含任何选中文档
+- **WHEN** 项目指令快照不含任何选中文档且 Skill 目录为空
 - **THEN** 计划保持 `provider_profile`、`tool_catalog`、`committed_history`、`current_input` 的固定顺序
 - **THEN** cache segments、stable prefix fingerprint 和预算结果不因空占位而改变
 
@@ -38,11 +38,17 @@
 - **WHEN** 完整原生历史很大但成功 checkpoint 已替换有效窗口
 - **THEN** committed_history 只计摘要与其后增量，完整历史不再进入覆盖估算；请求仍由原生窗口编译
 
+Skill metadata SHALL 只包含实际发送的稳定名称、描述、调用策略与相对来源；正文、绝对路径、digest 检查的文件身份和队列状态不得进入稳定目录。
+
+#### Scenario: Plan a skill catalog
+- **WHEN** 模型可用 Skill metadata 非空
+- **THEN** skill_catalog 在项目指令之后、已提交历史之前出现，其估算覆盖实际发送的目录文本
+
 ### Requirement: Context plans are immutable validated snapshots
 
-上下文计划 SHALL 使用唯一当前的强类型 shape，并深拷贝所有调用方可变输入；纯内存 plan MUST NOT 携带固定 format revision 或按 revision 选择 validator。计划 MUST 拒绝未知来源 kind、重复来源、非法顺序、空 source revision、非法 Tool Catalog、非法项目指令快照、非法估算状态、Provider family 不匹配及无效缓存计划。所有返回 slice、bytes 或嵌套值的读取操作 MUST 返回独立副本。
+上下文计划 SHALL 使用唯一当前的强类型 shape，并深拷贝所有调用方可变输入；纯内存 plan MUST NOT 携带固定 format revision 或按 revision 选择 validator。计划 MUST 拒绝未知来源 kind、重复来源、非法顺序、空 source revision、非法 Tool Catalog、非法项目指令快照、非法 Skill 目录、非法估算状态、Provider family 不匹配及无效缓存计划。所有返回 slice、bytes 或嵌套值的读取操作 MUST 返回独立副本。
 
-计划 SHALL 把 `provider_profile` 与包含 Read、Glob、Grep、Patch、Write、Exec、ReadArtifact 的完整 `tool_catalog` 映射为 stable cache segments，把可选 `project_instructions` 映射为 project-stable cache segment，把 `committed_history` 映射为 turn-stable segment，把 `current_input` 映射为 volatile segment，并复用 `context/cache-plan` 的 canonical JSON、排序和 stable prefix fingerprint 契约。Tool Catalog 估算 SHALL 覆盖实际发送给对应 Provider 的全部 facade schema/description；Exec动态command、workdir、timeout、approval、sandbox临时状态与环境实际值不得进入catalog source。来源生命周期、source revision 与缓存稳定级别 MUST 保持为不同的强类型概念。
+计划 SHALL 把 `provider_profile` 与包含 Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill 的完整 `tool_catalog` 映射为 stable cache segments，把可选 `project_instructions` 映射为 project-stable cache segment，把可选 `skill_catalog` 映射为 project-stable segment，把 `committed_history` 映射为 turn-stable segment，把 `current_input` 映射为 volatile segment，并复用 `context/cache-plan` 的 canonical JSON、排序和 stable prefix fingerprint 契约。Tool Catalog 估算 SHALL 覆盖实际发送给对应 Provider 的全部 facade schema/description；Exec动态command、workdir、timeout、approval、sandbox临时状态与环境实际值不得进入catalog source。来源生命周期、source revision 与缓存稳定级别 MUST 保持为不同的强类型概念。
 
 #### Scenario: Mutate caller-owned planning inputs
 - **WHEN** 调用方在计划创建后修改原 Tool Catalog bytes、项目指令、语义 turn slice、有序消息 buffer 或 getter 返回的数据
@@ -81,21 +87,29 @@ artifact ID、保存状态、存储目录、实时配额与读取游标 MUST NOT
 - **WHEN** 同一 catalog 下创建、读取、删除输出对象或改变配额使用量
 - **THEN** catalog canonical bytes、source revision 和 stable prefix fingerprint 不变；估算包含 ReadArtifact 实际 facade schema
 
-committed_history 的 cache canonical 内容 SHALL 仅含封闭 summary/text kind、有序角色和文本，不包含 InputID、turn ID 或展示状态；同内容不同关联身份必须得到相同内容 fingerprint。
+committed_history 的 cache canonical 内容 SHALL 仅含封闭 summary/text/skill_attachment kind、有序角色和文本，不包含 InputID、turn ID 或展示状态；同内容不同关联身份必须得到相同内容 fingerprint。
 
 #### Scenario: Keep identity out of cache content
 - **WHEN** 仅改变输入和 turn 身份但原生可见内容及其顺序相同
 - **THEN** 请求与语义规划内容 fingerprint 相同，stable prefix 不变
 
-committed_history source revision SHALL 使用独立单调 context revision；普通 native commit 和成功 checkpoint 各推进一次，失败/查询不推进。摘要正文按有来源标记的文本参与该尾部分段 canonical 内容，CompactionID、原始记录位置和时间不得进入内容 fingerprint。既有“角色/文本”规范在摘要出现时扩展为封闭 summary/text kind，仍不得纳入展示身份。
+committed_history source revision SHALL 使用独立单调 context revision；普通 native commit 和成功 checkpoint 各推进一次，失败/查询不推进。摘要正文按有来源标记的文本参与该尾部分段 canonical 内容，CompactionID、原始记录位置和时间不得进入内容 fingerprint。既有“角色/文本”规范在摘要出现时扩展为封闭 summary/text/skill_attachment kind，仍不得纳入展示身份。
 
 #### Scenario: Change only compaction identity
 - **WHEN** 两个窗口的摘要与增量内容、source revisions 相同但 CompactionID 或 Session 路径不同
 - **THEN** 请求 canonical bytes、历史内容 fingerprint 和 stable prefix fingerprint 一致
 
 #### Scenario: Retain a stable prefix across compaction
-- **WHEN** 只成功替换有效历史，profile/tools/project instructions 不变
+- **WHEN** 只成功替换有效历史，profile/tools/project instructions/skill catalog 不变
 - **THEN** 稳定前缀 fingerprint 不变，committed_history 的 revision/内容 fingerprint 发生可解释变化
+
+#### Scenario: Change skill metadata without dynamic paths
+- **WHEN** 只改变 Skill 描述或调用策略
+- **THEN** skill_catalog 的 revision、fingerprint 和估算发生可解释变化；仅移动绝对根目录而相对内容不变时指纹保持不变
+
+#### Scenario: Load a body into the history tail
+- **WHEN** 同一目录下成功调用 Skill
+- **THEN** 正文只计入有效历史一次，不改变 metadata 或稳定工具 schema，不再通过 current_input 重复计量
 
 ### Requirement: Token estimates preserve method and uncertainty
 

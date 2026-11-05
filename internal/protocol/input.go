@@ -8,8 +8,9 @@ import (
 
 // UserInputCommittedPayload 是已成功保存的单条用户输入展示事实。
 type UserInputCommittedPayload struct {
-	InputID domain.InputID `json:"input_id"`
-	Text    string         `json:"text"`
+	Skill   *domain.SkillAttachment `json:"skill,omitempty"`
+	InputID domain.InputID          `json:"input_id"`
+	Text    string                  `json:"text"`
 }
 
 // NewUserInputCommitted 创建输入已保存事件，不替代原生历史。
@@ -17,7 +18,11 @@ func NewUserInputCommitted(input domain.UserInput) (Event, error) {
 	if err := input.Validate(); err != nil {
 		return Event{}, err
 	}
-	return newEventWithPayload(EventUserInputCommitted, UserInputCommittedPayload{InputID: input.ID(), Text: input.Text()})
+	p := UserInputCommittedPayload{InputID: input.ID(), Text: input.Text()}
+	if a, ok := input.SkillAttachment(); ok {
+		p.Skill = &a
+	}
+	return newEventWithPayload(EventUserInputCommitted, p)
 }
 
 // DecodeUserInputCommitted 严格解码并验证用户输入事实。
@@ -29,7 +34,10 @@ func DecodeUserInputCommitted(event Event) (UserInputCommittedPayload, error) {
 	if err := codec.UnmarshalRecord(event.Payload, &p); err != nil {
 		return p, err
 	}
-	_, err := domain.NewUserInput(p.InputID, p.Text)
+	v, err := domain.NewUserInput(p.InputID, p.Text)
+	if err == nil && p.Skill != nil {
+		_, err = v.WithSkillAttachment(*p.Skill)
+	}
 	return p, err
 }
 

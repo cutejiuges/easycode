@@ -7,7 +7,7 @@
 
 ### Requirement: Tool preview budgets have explicit units and deterministic allocation
 
-系统 SHALL 计量最终模型 preview 的 UTF-8 bytes，包含行号、结果说明、省略提示和 artifact 引用。Read/Exec/ReadArtifact 单次上限为 256 KiB、Glob/Grep 为 64 KiB，每 sample 总上限 512 KiB、每 turn 总上限 2 MiB。Patch/Write 返回紧凑摘要且服从累计额度。计数不是 token window 或完整网络请求大小；实际序列化膨胀 MUST 仍经过 Provider 编译及既有请求检查。
+系统 SHALL 计量最终模型 preview 的 UTF-8 bytes，包含行号、结果说明、省略提示和 artifact 引用。Read/Exec/ReadArtifact 单次上限为 256 KiB、Glob/Grep 为 64 KiB、Skill 为 128 KiB，每 sample 总上限 512 KiB、每 turn 总上限 2 MiB。Patch/Write 返回紧凑摘要且服从累计额度。计数不是 token window 或完整网络请求大小；实际序列化膨胀 MUST 仍经过 Provider 编译及既有请求检查。
 
 分配 SHALL 按 call index 与已冻结结果计费，为当前 sample 后续 calls 和本 turn 剩余 64-call 上限位置各保留每项 1 KiB 安全结果空间；两者分别约束 sample/turn 剩余额度，不重复扣费。当前 allowance 为单次上限、sample 扣除后续预留的余额、turn 扣除后续预留的余额中的最小值。加减 MUST 检测溢出/下溢；并行完成时间不能改变分配。预算只处理新结果，同轮追加不重置，已 durable 结果不能重新裁剪。
 
@@ -34,6 +34,12 @@ Read SHALL 优先返回原请求范围的既有有界结果；若该结果超过
 #### Scenario: Save output made large by aggregate pressure
 - **WHEN** Exec 输出小于 256 KiB 但超过本次冻结 allowance
 - **THEN** 输出按私有策略保存且模型预览缩短，不提前以原单次上限判定 not_needed
+
+Skill SHALL 完整返回经过展开及来源包装的主文档或资源全文；超出当前 allowance 时只返回有界 result_budget_exceeded，不裁剪指令、不报告加载成功、不自动保存 artifact 代替缺失正文。
+
+#### Scenario: Reject a partial skill result
+- **WHEN** Skill 完整 preview 小于单次上限但超过有序累计分配的 allowance
+- **THEN** 返回配对预算错误，没有任何部分成功指令进入 Provider 历史
 
 ### Requirement: Exhaustion preserves accepted execution and pairing
 

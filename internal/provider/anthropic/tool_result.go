@@ -45,6 +45,8 @@ func anthropicCapabilityForName(name string) tool.CapabilityID {
 	switch name {
 	case "Bash":
 		return tool.CapabilityExec
+	case "Skill":
+		return tool.CapabilitySkill
 	case "ReadArtifact":
 		return tool.CapabilityReadArtifact
 	case "Read":

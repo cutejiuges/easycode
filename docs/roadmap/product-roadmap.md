@@ -222,7 +222,7 @@ make verify
 
 2026-10-23 已交付独立 `sessions list [--all] [--limit N]`：默认当前规范化目录 20 条，最大 200 条，按 durable 更新时间及 thread ID 双降序；所有 Provider/model 可发现，完整 ID 可交给既有 `--resume`。入口无需模型配置、不访问网络、不读取 stdin、不进入聊天资源链。Catalog schema 和 Session vocabulary 不变，协调仍全量扫描，仅在 lease 下读取 committed 前缀，不修复日志，busy/invalid 以全局警告报告。固定文本 golden、双 Provider 列表后恢复、索引重建、跨进程占用和取消/输出失败验证覆盖该入口；此交付不包含 picker、标题搜索或 worktree 聚合。
 
-P2 尚未完成：worktree/project catalog、title/tag/search、实时索引、usage 成本/配额与 TUI 展示、真实 cache request 策略和观测指标、skill context sources、全工具 artifact、fork/subagent 线程树，以及稳定发布后真实 schema/payload revision 的版本专属转换。Read/Glob/Grep/Patch/Write/Exec Tool Loop 已交付 tool catalog source、approval/ledger/result、durable output、有序并行与 exclusive 屏障；已交付的 FIFO follow-up queue 仍只在进程内存在，`queued` 不是 durable 确认，same-turn steer 已接入完整 tool outputs 后的安全点，queued/claimed 与 returned 仍是进程内状态。当前 fixture 是唯一当前格式，不代表通用 migration 已实现；当前进度不能视为 P2 退出。
+P2 尚未完成：worktree/project catalog、title/tag/search、实时索引、usage 成本/配额与 TUI 展示、真实 cache request 策略和观测指标、全工具 artifact、fork/subagent 线程树，以及稳定发布后真实 schema/payload revision 的版本专属转换。Read/Glob/Grep/Patch/Write/Exec Tool Loop 已交付 tool catalog source、approval/ledger/result、durable output、有序并行与 exclusive 屏障；已交付的 FIFO follow-up queue 仍只在进程内存在，`queued` 不是 durable 确认，same-turn steer 已接入完整 tool outputs 后的安全点，queued/claimed 与 returned 仍是进程内状态。当前 fixture 是唯一当前格式，不代表通用 migration 已实现；当前进度不能视为 P2 退出。
 
 本次 P2 基础契约强化还加入语义分支脚本、本地 hooks、GitHub Actions jobs 和集中式架构守卫。GitHub `main` ruleset 的 required checks 与 direct-push 禁止仍须管理员在仓库外启用。secure config/session opener 当前只在 macOS/Linux 提供等价语义；Windows 等目标可以编译，但相关运行路径明确失败关闭，平台实现与兼容矩阵留在 P8。
 
@@ -513,6 +513,8 @@ Skill、hooks/plugins、MCP 和 Agent/Subagent 不属于 P3 内置工具清单�
 ### 10.1 目标
 
 支持 Claude 风格 hooks、渐进披露 skills、MCP 和本地 plugins，并保证来源权限、信任、缓存稳定和热加载安全。
+
+当前已交付本地 Skills 首个切片：固定 user/project 根发现、严格静态 frontmatter、`/skills` 列表、`/name` / `$name` 显式附件、Skill 主文档/同来源资源读取、缓存元数据来源与双 Provider 原生恢复。Hooks、Plugins、MCP、plugin/system skills、path activation、allowed-tools、fork 与热加载仍未实现，不能将本切片视为 P6 退出。
 
 ### 10.2 架构选择
 

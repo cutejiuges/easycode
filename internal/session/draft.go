@@ -70,6 +70,9 @@ func NewToolCallReadyDraft(turnID domain.TurnID, invocation tool.Invocation, sam
 		SampleIndex: sampleIndex, CallIndex: callIndex, Capability: invocation.Capability(), WireKind: invocation.WireKind(),
 	}
 	switch invocation.Capability() {
+	case tool.CapabilitySkill:
+		v, _ := invocation.Skill()
+		payload.SkillInput = encodeSkillInput(v.Input())
 	case tool.CapabilityReadArtifact:
 		v, _ := invocation.ReadArtifact()
 		i := v.Input()
@@ -148,6 +151,12 @@ func NewToolCallResultDraft(turnID domain.TurnID, result tool.InvocationResult) 
 		InvocationID: result.InvocationID(), Capability: result.Capability(), WireKind: result.WireKind(), Status: result.Status(), Code: result.Code(), Preview: result.Preview().Text(),
 	}
 	switch result.Capability() {
+	case tool.CapabilitySkill:
+		m := &SkillResultPayload{Input: *encodeSkillInput(result.SkillInput())}
+		if a, ok := result.SkillAttachment(); ok {
+			m.Attachment = &a
+		}
+		payload.SkillMetadata = m
 	case tool.CapabilityReadArtifact:
 		i := result.ReadArtifactInput()
 		m := &ReadArtifactResultPayload{Input: ReadArtifactInputPayload{ID: i.ID(), Offset: i.Offset(), Limit: i.Limit()}}

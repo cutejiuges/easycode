@@ -1,0 +1,8 @@
+Skills
+Enter: use in composer · Esc: back
+
+project:easycode:.
+> /demo [available] Review changes
+  /broken [invalid]
+  skill_unsupported_field
+  /demo [shadowed] Review changes

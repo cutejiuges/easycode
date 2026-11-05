@@ -109,7 +109,15 @@ func validateNativeHistoryEntry(entry nativeHistoryEntry) error {
 		if len(a.IDs()) != len(entry.UserInputs) {
 			return fmt.Errorf("user input count does not match metadata")
 		}
-		for _, input := range entry.UserInputs {
+		for i, input := range entry.UserInputs {
+			a, ok := entry.InputMetadata.Skill(entry.InputMetadata.InputIDs[i])
+			expected := 1
+			if ok {
+				expected = 2
+			}
+			if len(input.Content) != expected || (ok && input.Content[1].Text != a.Content) {
+				return fmt.Errorf("skill content mismatch")
+			}
 			if err := validateUserItem(input); err != nil {
 				return err
 			}
@@ -170,8 +178,11 @@ func validateUserItem(item NativeItem) error {
 	if err := codec.UnmarshalRecord(encoded, &current); err != nil {
 		return fmt.Errorf("user input shape is invalid")
 	}
-	if current.Role != "user" || current.Type != "message" || len(current.Content) != 1 || current.Content[0].Type != "input_text" {
+	if current.Role != "user" || current.Type != "message" || (len(current.Content) != 1 && len(current.Content) != 2) || current.Content[0].Type != "input_text" {
 		return fmt.Errorf("user input content is invalid")
+	}
+	if len(current.Content) == 2 && (current.Content[1].Type != "input_text" || len(current.Content[1].Text) > domain.MaxSkillContentBytes) {
+		return fmt.Errorf("invalid Skill content block")
 	}
 	return domain.ValidateUserText(current.Content[0].Text)
 }

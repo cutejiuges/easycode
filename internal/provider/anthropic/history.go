@@ -23,7 +23,12 @@ func projectHistory(history []nativeHistoryEntry) domain.SemanticHistoryView {
 		turn := &turns[len(turns)-1]
 		if entry.Kind == nativeHistoryUserInputs {
 			for i, input := range entry.UserInputs {
-				turn.Messages = append(turn.Messages, domain.SemanticMessage{Role: domain.SemanticUser, InputID: entry.InputMetadata.InputIDs[i], Text: projectMessageText(input, roleUser)})
+				a, ok := entry.InputMetadata.Skill(entry.InputMetadata.InputIDs[i])
+				text := projectMessageText(input, roleUser)
+				if ok {
+					text = input.Content[0].Text
+				}
+				turn.Messages = append(turn.Messages, domain.SemanticMessage{Role: domain.SemanticUser, InputID: entry.InputMetadata.InputIDs[i], Text: text, Skill: a, HasSkill: ok})
 			}
 		} else if text := projectMessageText(entry.Assistant, roleAssistant); text != "" {
 			turn.Messages = append(turn.Messages, domain.SemanticMessage{Role: domain.SemanticAssistant, Text: text})

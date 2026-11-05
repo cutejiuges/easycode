@@ -104,8 +104,12 @@ func messageCachePositions(plan samplingRequestPlan, summary bool) []cachePositi
 		}
 		positions = append(positions, p)
 	}
-	if plan.project {
-		if p, ok := lastCachePosition(messages, 0); ok {
+	if plan.project || plan.skills {
+		index := 0
+		if plan.project && plan.skills {
+			index = 1
+		}
+		if p, ok := lastCachePosition(messages, index); ok {
 			appendUnique(p)
 		}
 	}
@@ -115,6 +119,9 @@ func messageCachePositions(plan samplingRequestPlan, summary bool) []cachePositi
 	}
 	messageCount := 0
 	if plan.project {
+		messageCount++
+	}
+	if plan.skills {
 		messageCount++
 	}
 	boundary := -1

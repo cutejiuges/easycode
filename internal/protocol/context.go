@@ -97,10 +97,16 @@ func (payload ContextSnapshotPayload) Validate() error {
 	if _, err := payload.Total.Domain(); err != nil {
 		return err
 	}
-	expected := []string{"provider_profile", "tool_catalog", "committed_history", "current_input"}
-	if len(payload.Sources) == 5 {
-		expected = []string{"provider_profile", "tool_catalog", "project_instructions", "committed_history", "current_input"}
+	expected := []string{"provider_profile", "tool_catalog"}
+	for _, kind := range []string{"project_instructions", "skill_catalog"} {
+		for _, source := range payload.Sources {
+			if source.Kind == kind {
+				expected = append(expected, kind)
+				break
+			}
+		}
 	}
+	expected = append(expected, "committed_history", "current_input")
 	if len(payload.Sources) != len(expected) {
 		return fmt.Errorf("context sources are invalid")
 	}

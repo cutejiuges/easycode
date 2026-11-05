@@ -10,13 +10,14 @@ const (
 	ToolPatch        ToolName = "Patch"
 	ToolWrite        ToolName = "Write"
 	ToolShell        ToolName = "Shell"
+	ToolSkill        ToolName = "Skill"
 	ToolReadArtifact ToolName = "ReadArtifact"
 )
 
 // Valid 只接受实际实现且具有消费者的能力名称。
 func (name ToolName) Valid() bool {
 	switch name {
-	case ToolRead, ToolGlob, ToolGrep, ToolPatch, ToolWrite, ToolShell, ToolReadArtifact:
+	case ToolRead, ToolGlob, ToolGrep, ToolPatch, ToolWrite, ToolShell, ToolReadArtifact, ToolSkill:
 		return true
 	default:
 		return false

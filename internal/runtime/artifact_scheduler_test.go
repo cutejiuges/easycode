@@ -56,14 +56,16 @@ func TestArtifactMixedSchedulerHonorsEveryExclusiveBarrier(t *testing.T) {
 		}
 		return v
 	}
-	values := []tool.Invocation{makeInvocation(artifactCall), makeInvocation(readCall), patch, write, makeInvocation(execCall), makeInvocation(artifactCall)}
+	skillInput, _ := tool.NewSkillLoadInput("demo", "")
+	skillCall, _ := tool.NewSkillReadyCall("skill", skillInput)
+	values := []tool.Invocation{makeInvocation(skillCall), makeInvocation(artifactCall), makeInvocation(readCall), patch, write, makeInvocation(execCall), makeInvocation(skillCall), makeInvocation(artifactCall)}
 	operations := &artifactBarrierOperations{}
 	observations := &readObservations{}
 	results, err := (orderedToolScheduler{operations: operations, observations: observations}).execute(context.Background(), domain.TurnID("018f1d8a-7b5c-7def-8123-456789abcdef"), values)
 	if err != nil || len(results) != len(values) {
 		t.Fatalf("mixed scheduling: %v", err)
 	}
-	want := "read:artifact.read,fs.read|exclusive:fs.patch|exclusive:fs.write|exclusive:process.exec|read:artifact.read"
+	want := "read:skill.read,artifact.read,fs.read|exclusive:fs.patch|exclusive:fs.write|exclusive:process.exec|read:skill.read,artifact.read"
 	if strings.Join(operations.trace, "|") != want {
 		t.Fatalf("barriers: %v", operations.trace)
 	}
