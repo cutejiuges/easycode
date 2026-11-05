@@ -29,6 +29,8 @@ type Descriptor struct {
 
 func descriptorByKind(kind EventKind) (Descriptor, bool) {
 	switch kind {
+	case EventToolHookGatePlanned, EventHookExecutionStarted, EventHookExecutionFinished, EventToolHookGateDecided:
+		return Descriptor{Kind: kind, Cardinality: CardinalityMany, Placement: PlacementActiveTurn}, true
 	case EventCompactionStarted:
 		return Descriptor{Kind: kind, Cardinality: CardinalityMany, Placement: PlacementCompactionStart}, true
 	case EventCompactionCompleted, EventCompactionFailed:

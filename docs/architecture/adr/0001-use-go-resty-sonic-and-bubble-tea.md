@@ -1,5 +1,7 @@
 # ADR-0001：使用 Go、Resty v3、Sonic 和 Bubble Tea
 
+> 当前对照（2026-11-06）：技术栈已经落地，当前固定依赖见 go.mod。本文初始“未来 JSON 显式版本化”只保留为当时背景；现有 Session/native/checkpoint 与进程内契约无格式版本，外部 headless 单独使用 v1，兼容设计须明确授权。 [当前能力清单](../../roadmap/capability-status.md)。
+
 > 后续决策：`add-threshold-auto-compaction` 已删除 Session/native/checkpoint 格式版本、固定压缩 prompt revision 和 Catalog user_version 门禁；本文涉及这些内部格式的版本数字仅为历史背景，当前实现以单一无版本内部契约为准。外部 headless 协议与实际内容 revision 保留。
 
 - 状态：accepted

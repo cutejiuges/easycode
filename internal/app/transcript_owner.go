@@ -34,6 +34,9 @@ type transcriptQueries struct {
 func newTranscriptQueries(thread domain.ThreadID, reader tool.ArtifactRangeReader, entries []session.ToolHistoryEntry) *transcriptQueries {
 	q := &transcriptQueries{thread: thread, reader: reader, indices: make(map[tool.InvocationID]int), active: make(map[uint64]context.CancelFunc)}
 	q.entries = append([]session.ToolHistoryEntry(nil), entries...)
+	for i := range q.entries {
+		q.entries[i].Hooks = append([]session.HookHistoryEntry(nil), q.entries[i].Hooks...)
+	}
 	for i, e := range q.entries {
 		q.indices[e.Invocation.InvocationID()] = i
 	}
@@ -171,4 +174,22 @@ func (q *transcriptQueries) ReadToolOutput(ctx context.Context, query protocol.T
 		return protocol.ToolOutputPage{}, tool.ArtifactReadUnavailable
 	}
 	return protocol.ToolOutputPage{Offset: page.Offset(), NextOffset: page.NextOffset(), StoredBytes: page.SavedBytes(), StoredEOF: page.EOF(), SourceComplete: page.SourceComplete(), Text: page.Text()}, nil
+}
+
+// HookFinished 在唯一事实 owner 成功提交后安装独立副本。
+func (q *transcriptQueries) HookFinished(ref domain.HookReference, result domain.HookRunResult) {
+	invalid := ref.Validate() != nil || result.Validate() != nil
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	index, ok := q.indices[tool.InvocationID(result.Identity.InvocationID)]
+	if invalid || !ok {
+		q.invalid = true
+		return
+	}
+	hooks := q.entries[index].Hooks
+	if result.Identity.Ordinal != len(hooks) {
+		q.invalid = true
+		return
+	}
+	q.entries[index].Hooks = append(append([]session.HookHistoryEntry(nil), hooks...), session.HookHistoryEntry{Reference: ref, Result: result})
 }

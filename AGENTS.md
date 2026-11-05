@@ -55,7 +55,6 @@ explore -> propose -> review/confirm -> apply -> verify -> archive
 - `internal/protocol/event.go` 中未来的 `ItemID`/`CallID` 字段
 - `internal/domain/types.go` 中未来的 `ItemID`/`CallID`
 - `internal/extension/extension.go`
-- `internal/extension/hook/hook.go`
 - `internal/extension/mcp/mcp.go`
 - `internal/extension/plugin/plugin.go`
 - `internal/subagent/control.go`

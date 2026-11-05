@@ -20,6 +20,8 @@ const (
 type CommandKind string
 
 const (
+	CommandResolveHookTrust          CommandKind = "resolve_hook_trust"
+	CommandResetHookTrust            CommandKind = "reset_hook_trust"
 	CommandSubmitInput               CommandKind = "submit_input"
 	CommandSubmitConversationalInput CommandKind = "submit_conversational_input"
 	CommandRetractInputs             CommandKind = "retract_inputs"
@@ -57,7 +59,10 @@ func (id RequestID) Valid() bool {
 
 // Command 是封闭的 Runtime 输入命令值对象。
 type Command struct {
-	questionResponse     UserQuestionResponse
+	questionResponse UserQuestionResponse
+
+	hookTrust            HookTrustResponse
+	hookTarget           HookTrustTarget
 	skillAttachment      domain.SkillAttachment
 	hasSkillAttachment   bool
 	instructions         string
@@ -141,6 +146,24 @@ func (command Command) Validate() error {
 	}
 	if !command.requestID.Valid() {
 		return fmt.Errorf("command request ID is invalid")
+	}
+	if command.kind == CommandResolveHookTrust || command.kind == CommandResetHookTrust {
+		if command.text != "" || len(command.inputIDs) > 0 || command.expectedTurnID != "" || command.approvalRequestID != "" || command.invocationID != "" || command.fingerprint != "" || command.decision != "" || command.feedback != "" || command.instructions != "" || command.expectedCompactionID != "" || command.hasSkillAttachment {
+			return fmt.Errorf("hook command contains unrelated payload")
+		}
+		if command.kind == CommandResolveHookTrust {
+			if command.hookTarget != (HookTrustTarget{}) {
+				return fmt.Errorf("hook response has reset payload")
+			}
+			return command.hookTrust.Validate()
+		}
+		if command.hookTrust != (HookTrustResponse{}) {
+			return fmt.Errorf("hook reset has response payload")
+		}
+		return command.hookTarget.Validate()
+	}
+	if command.hookTrust != (HookTrustResponse{}) || command.hookTarget != (HookTrustTarget{}) {
+		return fmt.Errorf("command has unrelated hook payload")
 	}
 	if command.kind != CommandRetractInputs && len(command.inputIDs) != 0 {
 		return fmt.Errorf("command contains unrelated input IDs")

@@ -287,7 +287,7 @@ func (item ControlItem) Validate() error {
 }
 
 func validCommandKind(kind CommandKind) bool {
-	return kind == CommandResolveUserQuestion || kind == CommandQueryCache || kind == CommandQueryContext || kind == CommandCompactContext || kind == CommandCancelCompaction || kind == CommandSubmitConversationalInput || kind == CommandRetractInputs || kind == CommandStopTurn || kind == CommandSubmitInput || kind == CommandInterrupt || kind == CommandShutdown || kind == CommandResolveToolApproval
+	return kind == CommandResolveUserQuestion || kind == CommandResolveHookTrust || kind == CommandResetHookTrust || kind == CommandQueryCache || kind == CommandQueryContext || kind == CommandCompactContext || kind == CommandCancelCompaction || kind == CommandSubmitConversationalInput || kind == CommandRetractInputs || kind == CommandStopTurn || kind == CommandSubmitInput || kind == CommandInterrupt || kind == CommandShutdown || kind == CommandResolveToolApproval
 }
 
 func dispositionMatches(kind CommandKind, disposition CommandDisposition) bool {
@@ -308,7 +308,7 @@ func dispositionMatches(kind CommandKind, disposition CommandDisposition) bool {
 		return disposition == CommandDispositionInterrupting
 	case CommandShutdown:
 		return disposition == CommandDispositionClosing
-	case CommandResolveUserQuestion, CommandResolveToolApproval:
+	case CommandResolveUserQuestion, CommandResolveToolApproval, CommandResolveHookTrust, CommandResetHookTrust:
 		return disposition == CommandDispositionResolving
 	default:
 		return false

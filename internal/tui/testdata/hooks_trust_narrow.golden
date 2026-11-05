@@ -1,0 +1,20 @@
+Trust this hook?
+Source: project · check
+PreToolUse: fs.patch|fs.writ
+e|process.exec
+Timeout: 5 seconds
+Workspace: . · read-only · n
+etwork denied
+This does not approve the mo
+del's tool call.
+Workspace scripts can change
+ after review.
+PgUp/PgDn: full command · Ta
+b/↑/↓: choose · Esc: deny
+
+  Trust for this session
+> Deny
+
+Command:
+cat >/dev/null
+printf '{}'

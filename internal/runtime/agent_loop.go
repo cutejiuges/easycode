@@ -518,6 +518,23 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 		result, _ := protocol.NewAcceptedCommandResult(request.command, protocol.CommandDispositionResolving)
 		state.emitResult(request, result)
 		state.completeRequest(request.command.RequestID())
+	case protocol.CommandResolveHookTrust:
+		response := request.command.HookTrustResponse()
+		if state.active == nil || state.active.turnID != response.TurnID || state.loop.runtime.ResolveHookTrust(response) != nil {
+			state.reject(request, protocol.ControlErrorApprovalMismatch, true)
+			return
+		}
+		result, _ := protocol.NewAcceptedCommandResult(request.command, protocol.CommandDispositionResolving)
+		state.emitResult(request, result)
+		state.completeRequest(request.command.RequestID())
+	case protocol.CommandResetHookTrust:
+		if state.active != nil || state.compaction != nil || state.loop.runtime.ResetHookTrust(request.command.HookTrustTarget()) != nil {
+			state.reject(request, protocol.ControlErrorSessionBusy, true)
+			return
+		}
+		result, _ := protocol.NewAcceptedCommandResult(request.command, protocol.CommandDispositionResolving)
+		state.emitResult(request, result)
+		state.completeRequest(request.command.RequestID())
 	case protocol.CommandResolveToolApproval:
 		if state.active == nil || state.active.turnID == "" {
 			state.reject(request, protocol.ControlErrorNoActiveApproval, true)

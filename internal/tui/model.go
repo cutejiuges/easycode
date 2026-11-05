@@ -42,6 +42,7 @@ type eventStreamClosedMsg struct{}
 type approvalSubmitErrorMsg struct{ err error }
 
 type transcriptMessage struct {
+	hook        *protocol.HookActivityPayload
 	unfinished  bool
 	local       uint64
 	sourceStart int
@@ -65,7 +66,10 @@ const (
 
 // Model 保存纯 UI 投影状态，不依赖 Provider 或 transport。
 type Model struct {
-	question             *questionOverlay
+	question *questionOverlay
+
+	hooks                hookBrowser
+	hookTrust            *hookTrustOverlay
 	nextTextID           uint64
 	reading              transcriptViewport
 	markdown             markdownViewCache
@@ -175,6 +179,23 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch value := message.(type) {
+	case hookTrustFailedMsg:
+		if model.hookTrust != nil && model.hookTrust.request.RequestID == value.request && model.hookTrust.turn == value.turn {
+			model.hookTrust.submitted = false
+			model.errorSummary = safeErrorSummary(value.err)
+		}
+		return model, nil
+	case hookResetMsg:
+		if !model.hooks.open || model.hooks.generation != value.generation {
+			return model, nil
+		}
+		if value.err != nil {
+			model.errorSummary = safeErrorSummary(value.err)
+		} else {
+			model.hooks.entries = append([]domain.HookListEntry(nil), value.entries...)
+		}
+		return model, nil
+
 	case transcriptHydration:
 		return model.receiveHydration(value)
 	case mainTranscriptReply:
@@ -261,6 +282,14 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if model.question != nil {
 		return model.handleQuestionKey(key)
 	}
+
+	if model.hookTrust != nil {
+		return model.handleHookTrustKey(key)
+	}
+	if model.hooks.open {
+		return model.handleHooksKey(key)
+	}
+
 	if model.skillsOpen {
 		return model.handleSkillsKey(key)
 	}
@@ -375,6 +404,13 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return model.quitTranscript()
 	case composerSubmit:
+		if words := strings.Fields(model.composer.text); len(words) > 0 && words[0] == "/hooks" {
+			if len(words) != 1 {
+				model.errorSummary = "invalid_command: /hooks does not accept arguments"
+				return model, nil
+			}
+			return model.openHooks()
+		}
 		if words := strings.Fields(model.composer.text); len(words) > 0 && words[0] == "/skills" {
 			if len(words) != 1 {
 				model.errorSummary = "invalid_command: /skills does not accept arguments"
@@ -524,6 +560,10 @@ func (model *Model) submitApproval() tea.Cmd {
 }
 
 func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd) {
+	if event.Kind == protocol.EventHookTrustRequested || event.Kind == protocol.EventHookTrustResolved || event.Kind == protocol.EventHookActivity {
+		return model.projectHookEvent(event)
+	}
+
 	terminal := false
 	switch event.Kind {
 	case protocol.EventTranscriptCommitted:
@@ -647,7 +687,7 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 		terminal = true
 	case protocol.EventUserQuestionRequested:
 		p, err := protocol.DecodeUserQuestionRequested(event)
-		if err != nil || !event.TurnID.Valid() || model.question != nil || model.approval != nil || (model.activeTurnID != "" && model.activeTurnID != event.TurnID) {
+		if err != nil || !event.TurnID.Valid() || model.question != nil || model.approval != nil || model.hookTrust != nil || (model.activeTurnID != "" && model.activeTurnID != event.TurnID) {
 			model.errorSummary = "stream_protocol_error: invalid question request"
 			return model, interruptSession(model.session)
 		}
@@ -668,7 +708,7 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 		}
 	case protocol.EventToolApprovalRequested:
 		payload, err := protocol.DecodeToolApprovalRequested(event)
-		if err != nil || !event.TurnID.Valid() || model.approval != nil || model.question != nil ||
+		if err != nil || !event.TurnID.Valid() || model.approval != nil || model.question != nil || model.hookTrust != nil ||
 			(model.activeTurnID != "" && model.activeTurnID != event.TurnID) {
 			model.errorSummary = "stream_protocol_error: invalid approval request event"
 			return model, interruptSession(model.session)
@@ -695,6 +735,8 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 	}
 	if terminal {
 		model.question = nil
+
+		model.hookTrust = nil
 		model.approval = nil
 		model.activeTurnID = ""
 		model.cancelling = false
@@ -708,6 +750,14 @@ func (model Model) View() string {
 	if model.question != nil {
 		return model.renderQuestion()
 	}
+
+	if model.hookTrust != nil {
+		return model.renderHookTrust()
+	}
+	if model.hooks.open {
+		return model.renderHooks()
+	}
+
 	if model.skillsOpen {
 		return model.renderSkills()
 	}

@@ -74,6 +74,10 @@ func (runtime *Runtime) executeApproved(ctx context.Context, emit Emitter, turnI
 		err := runtime.persistToolResult(context.WithoutCancel(ctx), turnID, &result)
 		return result, false, err
 	}
+	if result, blocked, err := runtime.checkToolHooks(ctx, emit, turnID, invocation); blocked || err != nil {
+		return result, false, err
+	}
+
 	switch invocation.Capability() {
 	case tool.CapabilityPatch:
 		return runtime.executePatchCall(ctx, emit, turnID, invocation)

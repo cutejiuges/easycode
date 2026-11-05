@@ -57,6 +57,7 @@ const (
 
 // ReplayedToolCall 保存恢复所需的typed调用、结果和事实顺序。
 type ReplayedToolCall struct {
+	Hooks                *ReplayedHookGate
 	ReadySequence        uint64
 	StartedSequence      uint64
 	ResultSequence       uint64
@@ -139,6 +140,31 @@ func (plan ToolRecoveryPlan) Validate() error {
 		}
 		if call.ReadySequence <= lastReadySequence {
 			return fmt.Errorf("tool recovery ready sequence is invalid")
+		}
+		if call.Hooks != nil {
+			if err := call.Hooks.Validate(string(call.Invocation.InvocationID()), domain.HookCapability(call.Invocation.Capability())); err != nil {
+				return err
+			}
+			g := call.Hooks
+			if !call.Invocation.Capability().Exclusive() || g.PlanSequence <= plan.calls[len(plan.calls)-1].ReadySequence {
+				return fmt.Errorf("hook plan preceded call group admission")
+			}
+			if g.Decision == nil && (call.ApprovalSequence != 0 || call.StartedSequence != 0 || call.ResultSequence != 0) {
+				return fmt.Errorf("tool facts preceded hook decision")
+			}
+			if g.Decision != nil {
+				if call.ApprovalSequence != 0 && (g.Decision.Status != domain.HookContinue || call.ApprovalSequence <= g.DecisionSequence) || call.ResultSequence != 0 && call.ResultSequence <= g.DecisionSequence {
+					return fmt.Errorf("tool facts crossed hook decision")
+				}
+				if g.Decision.Status != domain.HookContinue && (call.State != ReplayedToolCallResult || !validHookDeniedResult(call, call.Result)) {
+					return fmt.Errorf("hook denial has no matching tool result")
+				}
+			}
+			for previous := 0; previous < index; previous++ {
+				if prior := plan.calls[previous]; prior.ResultSequence == 0 || prior.ResultSequence >= g.PlanSequence {
+					return fmt.Errorf("hook gate crossed an unfinished call")
+				}
+			}
 		}
 		lastReadySequence = call.ReadySequence
 		if !call.Invocation.Capability().RequiresApproval() {
@@ -232,7 +258,7 @@ func (plan ToolRecoveryPlan) Validate() error {
 					((call.ApprovalOutcome == tool.ApprovalOutcomeDeny && call.Result.Status() == tool.ResultDenied) ||
 						(call.ApprovalOutcome == tool.ApprovalOutcomeAbort && call.Result.Status() == tool.ResultCancelled))
 				preparedFailure := call.Invocation.Capability().Exclusive() && call.ApprovalSequence == 0 && (call.Result.Status() == tool.ResultError || (call.Invocation.Capability() == tool.CapabilityQuestion && call.Result.Status() == tool.ResultDenied) || (call.Invocation.Capability() == tool.CapabilityWrite && call.Result.Status() == tool.ResultConflict))
-				if call.Result.Status() != tool.ResultCancelled && !closedExclusive && !preparedFailure {
+				if call.Result.Status() != tool.ResultCancelled && !closedExclusive && !preparedFailure && !validHookDeniedResult(call, call.Result) {
 					return fmt.Errorf("tool result before execution start is not cancelled")
 				}
 			} else if call.ResultSequence <= call.StartedSequence {
@@ -361,6 +387,13 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 			if completed {
 				plan.Turns = append(plan.Turns, ReplayedTurn{TurnID: active.turnID, State: ReplayedTurnCompleted})
 				active = nil
+			}
+		case EventToolHookGatePlanned, EventHookExecutionStarted, EventHookExecutionFinished, EventToolHookGateDecided:
+			if active == nil {
+				return ReplayPlan{}, replayCorrupt("hook facts outside active turn")
+			}
+			if err := active.acceptHookBatch(batch); err != nil {
+				return ReplayPlan{}, err
 			}
 		case EventToolExecutionStarted:
 			if active == nil || len(batch) != 1 || batch[0].TurnID != active.turnID {
@@ -537,7 +570,7 @@ func (active *activeReplayTurn) acceptStarted(record Record) error {
 		if call.Invocation.InvocationID() != payload.InvocationID {
 			continue
 		}
-		if call.State != ReplayedToolCallReady {
+		if call.State != ReplayedToolCallReady || call.Hooks != nil && (call.Hooks.Decision == nil || call.Hooks.Decision.Status != domain.HookContinue) {
 			return replayCorrupt("tool execution order is invalid")
 		}
 		if call.Invocation.Capability().Exclusive() {
@@ -578,7 +611,7 @@ func (active *activeReplayTurn) acceptApproval(batch []Record) error {
 		if call.Invocation.InvocationID() != payload.InvocationID {
 			continue
 		}
-		if !call.Invocation.Capability().RequiresApproval() || call.State != ReplayedToolCallReady || call.ApprovalSequence != 0 {
+		if !call.Invocation.Capability().RequiresApproval() || call.State != ReplayedToolCallReady || call.ApprovalSequence != 0 || call.Hooks != nil && (call.Hooks.Decision == nil || call.Hooks.Decision.Status != domain.HookContinue) {
 			return replayCorrupt("tool approval does not match a pending exclusive call")
 		}
 		metadata, metadataErr := NewApprovalMetadata(call.Invocation)
@@ -635,9 +668,15 @@ func (active *activeReplayTurn) acceptResult(record Record) error {
 		if decodeErr != nil {
 			return replayCorrupt("tool_call_result does not match ready call")
 		}
+		if call.Hooks != nil && call.Hooks.Decision == nil {
+			return replayCorrupt("tool result preceded hook decision")
+		}
+		if call.Hooks != nil && call.Hooks.Decision.Status != domain.HookContinue && !validHookDeniedResult(*call, result) {
+			return replayCorrupt("tool result differs from hook decision")
+		}
 		if call.State == ReplayedToolCallReady {
 			if call.Invocation.Capability().Exclusive() {
-				if call.ApprovalSequence == 0 && result.Status() != tool.ResultError && result.Status() != tool.ResultCancelled && !(call.Invocation.Capability() == tool.CapabilityQuestion && result.Status() == tool.ResultDenied) && !(call.Invocation.Capability() == tool.CapabilityWrite && result.Status() == tool.ResultConflict) {
+				if call.ApprovalSequence == 0 && !validHookDeniedResult(*call, result) && result.Status() != tool.ResultError && result.Status() != tool.ResultCancelled && !(call.Invocation.Capability() == tool.CapabilityQuestion && result.Status() == tool.ResultDenied) && !(call.Invocation.Capability() == tool.CapabilityWrite && result.Status() == tool.ResultConflict) {
 					return replayCorrupt("exclusive result before approval is invalid")
 				}
 				if call.ApprovalSequence != 0 && (call.ApprovalOutcome == tool.ApprovalOutcomeAllowOnce || call.ApprovalOutcome == tool.ApprovalOutcomeAllowSession || call.ApprovalOutcome == tool.ApprovalOutcomeAllowFromSession) {
@@ -686,6 +725,12 @@ func cloneReplayedToolCalls(calls []ReplayedToolCall) []ReplayedToolCall {
 	}
 	cloned := make([]ReplayedToolCall, len(calls))
 	copy(cloned, calls)
+	for i := range cloned {
+		if cloned[i].Hooks != nil {
+			g := cloned[i].Hooks.Clone()
+			cloned[i].Hooks = &g
+		}
+	}
 	return cloned
 }
 

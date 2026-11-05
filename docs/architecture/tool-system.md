@@ -1,5 +1,7 @@
 # EasyCode Tool 系统架构设计
 
+当前可执行能力及平台范围见[能力清单](../roadmap/capability-status.md)。本文的后续目标与历史参考不表示已实现；主规格、代码与验收记录共同约束当前行为。
+
 ## 结构化用户提问
 
 当前第九项能力 `user.question` 的两个 facade 为 Anthropic `AskUserQuestion` 和 OpenAI `request_user_input`，均为 structured JSON。1–4 题、每题 2–4 选项，以稳定题目 ID 和零基选项索引关联答案，支持单选、多选、精确说明文字与显式跳过；模型 schema 不包含预填答案或权限字段。问题值由 protocol 持有不可变编码，tool 别名复用；执行器不依赖 Provider、Runtime 或 TUI。
@@ -13,6 +15,12 @@ Runtime 的实例 pending 状态与 AgentLoop owner 接收 `resolve_user_questio
 原生恢复与离线 reader 还会核对 Session ready/result 的完整题目和冻结输出；`RestoreRecord.WithQuestionFacts` 只传递已验证的内存事实，不增加 record 或正文副本。仅分别验证两套合法数据不足以证明它们相同，native/shared 题目或答案错配必须整体拒绝并保留原日志。
 
 恢复不重新执行提问：ready 尾部补取消，started 无结果补 outcome_uncertain，result/output 缺口复用冻结答案。正文仅在现有结果 preview 保存；临时 request ID 与 UI 草稿不持久化。TUI 复核提交、单独说明编辑、窄屏滚动和 Ctrl+O 回看共用既有分页/四页缓存；实现与验证见 `internal/tui/user_questions.go`、`internal/runtime/user_question.go`、`internal/app/questions_e2e_test.go`、`internal/session/question_fixture_test.go` 和 `scripts/user-question-smoke.py`。
+
+## PreToolUse 执行前门禁
+
+当前 user/project command Hook 只匹配 Patch/Write/Exec，在现有 exclusive 屏障内、候选准备和普通审批前运行；Question、Skill 与其他只读能力不触发。Hook 信任是按当前 Runtime/Session/workspace/来源 revision/命令指纹保存的独立内存状态，不能从工具批准、问卷回答或恢复记录推导。headless 匹配项以 `hook_trust_required` 拒绝，无匹配保持普通审批规则。
+
+Exec/Hook 共享 `internal/executor/process` 的单次接收、stdin/双流、退出观察、原组清理和最终 Wait；业务保留各自输出与安全策略。Hook 在 Darwin 使用只读工作区/禁网，Exec 为可写工作区/禁网；两个来源与进程启动都没有不安全 fallback。Hook 四类 facts 独立于目标工具 started，冻结计划与原子收口使恢复仅补偿、不重跑。完整配置与界面规则见[总体架构 12.1](overall-architecture.md#121-当前-pretooluse-命令-hook)和 [Hook 主规格](../../openspec/specs/extension/command-hooks/spec.md)。
 
 ## 命令输出存储与查询
 
@@ -38,7 +46,7 @@ Read 超实际额度返回 `result_budget_exceeded` 并失效旧覆盖证据。R
 
 `tool_ready/tool_started/tool_progress/tool_terminal` 是统一活动事件，只有 Shell 产生进度；`transcript_committed` 在 native finalize 与宿主投影更新后发出。TUI 用提交序号上界查询最新 50 项，把 provisional sample 恰好一次替换为 committed 投影；未提交失败文本只在当前进程标为 unfinished。主线按视口裁剪，Shell 三行、相邻成功 Read/Search 去重计数；Ctrl+O 访问完整记录。正文页最多 64 KiB UTF-8，保存页最多 64 KiB raw / 256 KiB escaped，前后翻页不依赖无限缓存，浏览端统一缓存四页。TUI render 不执行 I/O。
 
-Session 当前 canary 为 7，native revision 为 3，headless JSONL 为 v1。预算与保存状态都是 result 的必需字段；恢复复用冻结 preview，不重新预算或读取对象。记录词汇仍为 `session_meta/thread_meta/turn_started/turn_inputs_committed/provider_native_commit/sample_usage/tool_call_ready/tool_approval_decided/tool_execution_started/tool_call_result/turn_completed/turn_failed/compaction_started/compaction_completed/compaction_failed`；UI 活动与提交提示不写入 journal。
+Session/native/checkpoint 均为唯一当前无版本格式；headless JSONL 保留独立外部 v1。预算与保存状态都是 result 的必需字段；恢复复用冻结 preview，不重新预算或读取对象。记录词汇仍为 `session_meta/thread_meta/turn_started/turn_inputs_committed/provider_native_commit/sample_usage/tool_call_ready/tool_approval_decided/tool_execution_started/tool_call_result/turn_completed/turn_failed/compaction_started/compaction_completed/compaction_failed/tool_hook_gate_planned/hook_execution_started/hook_execution_finished/tool_hook_gate_decided`；UI 活动与提交提示不写入 journal。
 
 设计与复用依据见 [ADR-0006](adr/0006-tool-transcript-and-result-budget.md)。
 
@@ -52,8 +60,8 @@ Patch/Write grant 仅满足各自 capability 的 ask，不覆盖 deny，且只�
 
 执行结果必须匹配 invocation ID、Provider call ID、capability、wire kind 与候选 metadata。错配或非法结果保存为原调用的 outcome_uncertain/invalid_tool_result，停止后续副作用并按模型顺序取消剩余调用；健康 journal 仍完成 native output pairing 与唯一失败 terminal，不重试执行。
 
-> 状态：P3 增量实现中；Read、Glob、Grep、需批准的单文件 Patch/Write 与 Darwin 前台 Exec 已实现
-> 更新时间：2026-10-24
+> 状态：九项模型工具及三项 mutation 的 PreToolUse 门禁已实现；后台进程、通用 sandbox 和全工具 artifact 仍待后续推进
+> 更新时间：2026-11-06
 > 适用范围：Tool Catalog、Provider Tool Wire、Agent Tool Loop、权限与 sandbox、执行调度、结果预算、Session 恢复和宿主展示
 > 前置阅读：[总体架构设计](overall-architecture.md)、[产品阶段路线图](../roadmap/product-roadmap.md)、[踩坑与经验记录](../roadmap/pitfall-log.md)
 
@@ -61,7 +69,7 @@ Patch/Write grant 仅满足各自 capability 的 ask，不覆盖 deny，且只�
 
 本文固定 Tool 系统的完整大图、长期边界和分阶段实现顺序，避免多个长周期 change 各自发明一套调用、权限、恢复或结果协议。
 
-本文同时记录已实现基线与后续目标。当前 `internal/tool` 与 `internal/tool/builtin` 提供 Read、Glob、Grep、单个已有 UTF-8 工作区文件 Patch、structured `Write(file_path, content)`，以及 Darwin 前台 Exec、ReadArtifact、本地 Skill 和结构化用户提问。九项能力具有强类型输入/结果、双 Provider facade 和有序调度；Patch/Write/Exec/Question 都是 exclusive 屏障，只有前三者需要批准。Anthropic 使用 structured `Edit`/`Write`/`Bash`，OpenAI 使用 custom freeform `apply_patch`、structured `Write` 与 function `exec_command`。交互式 Patch 显示完整 diff，Write 区分创建与覆盖，二者默认聚焦 No；Exec 始终只允许单次批准；headless `ask` 以 `approval_required` 失败关闭。非 Darwin 命令执行明确返回 `unsupported_platform`，不得无 sandbox 降级。PTY、后台进程控制、全工具 artifact、跨能力通用 SandboxPlanner 和完整 Tool UI 尚未实现。新增 Tool schema、Session record、权限协议或跨包接口仍须独立 OpenSpec change，经过 `propose -> review/confirm -> apply -> verify -> archive`。
+本文同时记录已实现基线与后续目标。当前 `internal/tool` 与 `internal/tool/builtin` 提供 Read、Glob、Grep、单个已有 UTF-8 工作区文件 Patch、structured `Write(file_path, content)`，以及 Darwin 前台 Exec、ReadArtifact、本地 Skill 和结构化用户提问。九项能力具有强类型输入/结果、双 Provider facade 和有序调度；Patch/Write/Exec/Question 都是 exclusive 屏障，只有前三者需要批准。Anthropic 使用 structured `Edit`/`Write`/`Bash`，OpenAI 使用 custom freeform `apply_patch`、structured `Write` 与 function `exec_command`。交互式 Patch 显示完整 diff，Write 区分创建与覆盖，二者默认聚焦 No；Exec 始终只允许单次批准；headless mutation 无匹配 Hook 时普通 `ask` 以 `approval_required` 失败关闭，匹配项优先 `hook_trust_required`；Question 以 `user_input_unavailable` 失败关闭。非 Darwin 命令执行明确返回 `unsupported_platform`，不得无 sandbox 降级。PTY、后台进程控制、全工具 artifact、跨能力通用 SandboxPlanner 和 reasoning/后台任务等其余 UI 尚未实现。新增 Tool schema、Session record、权限协议或跨包接口仍须独立 OpenSpec change，经过 `propose -> review/confirm -> apply -> verify -> archive`。
 
 参考工程的使用原则如下：
 
@@ -69,18 +77,18 @@ Patch/Write grant 仅满足各自 capability 的 ask，不覆盖 deny，且只�
 - Codex 的 Tool 初版参考提交 `c248f6d48b`，Write 切片另核对 `044da98b4` 用于理解 Responses tool wire、工具路由、sandbox、进程生命周期、结果截断和 rollout 恢复。
 - EasyCode 的产品体验优先对齐 Claude Code；内核边界选择可测试、可恢复、能支持双 Provider 的方案。两者存在冲突时，不以照搬任一参考工程为目标。
 
-### 1.1 为什么当前选择 Tool 模块
+### 1.1 初次选择 Tool 模块的依据
 
-Tool 是当前最适合推进的能力模块，原因不是 Roadmap 顺序本身，而是已有基线刚好满足它的关键前置条件：
+初次规划 Tool 切片时选择该模块，原因不是 Roadmap 顺序本身，而是已有基线刚好满足它的关键前置条件：
 
 1. 双 Provider 已建立原生 history、request compiler、stream reducer 和 prepared sample 边界，可以在不压平 Anthropic/OpenAI 语义的前提下接入两套 tool wire。
 2. Session 已具备 append-only JSONL、exclusive lease、durable batch、typed record 和恢复校验，可以承载“副作用前必须持久化”的调用事实。
 3. Runtime 已具备 turn owner、取消、输入队列和 Provider stream 清理路径，可以自然演进为多 sample Tool Loop，而不需要另建第二套 agent lifecycle。
 4. ContextPlanner、项目指令和 usage 已有稳定来源与 fingerprint 规则，Tool schema 可以作为新的明确来源加入，而不是混进动态 prompt 文本。
-5. Tool 是从文本对话走向真实 coding agent 的最短产品闭环，也是 P4 tool schema cache、P6 hooks/skills、P7 MCP/subagent 的共同前置；继续先做上层扩展会迫使它们依赖空接口。
+5. Tool 是从文本对话走向真实 coding agent 的最短产品闭环，也是 P4 tool schema cache、P6 hooks/skills、P6 MCP 与 P7 Subagent 的共同前置；继续先做上层扩展会迫使它们依赖空接口。
 6. 风险可以通过 Read 首个纵向切片控制：先验证双 Provider、多 sample、durable、ledger 和配对，再引入写文件与进程的不可逆副作用。
 
-因此选择整个 Tool 系统作为下一能力模块，但实现单位不是“大而全 Tool change”，而是第 14 节定义的分散纵向 change。这个选择同时满足产品价值、依赖顺序和风险可控三项条件。
+因此当时选择整个 Tool 系统作为下一能力模块，但实现单位不是“大而全 Tool change”，而是第 14 节定义的分散纵向 change。这个选择同时满足产品价值、依赖顺序和风险可控三项条件。
 
 ## 2. 参考工程结论与 EasyCode 取舍
 
@@ -204,11 +212,11 @@ Policy 输入是不可变调用描述和当前安全上下文，输出强类型�
 - `ask`：生成权限请求，等待宿主答复。
 - `deny`：生成稳定的机器错误码和 Provider-native 拒绝结果。
 
-用户批准可以是本次允许、会话内规则或配置变更，但持久范围必须由独立 OpenSpec 明确定义。若宿主允许修改命令、路径或 patch，修改后的输入视为新候选，必须重新 decode、validate、policy 和 sandbox plan，不能继承旧批准。
+当前 Patch/Write 支持单次或本 Runtime 的各自 session grant，Exec 只有单次批准；不写配置，不跨恢复。持久规则与批准时改写命令/路径/patch 均未实现，未来需要独立 OpenSpec；改写候选不能继承旧批准。
 
 ### 5.6 SandboxPlanner
 
-SandboxPlanner 的目标是把验证后的调用转换为实际执行能力计划，Approval 只能接受或拒绝，不能扩大计划。当前仅实现 Exec 专用的纯内存 `SandboxPlanner`：冻结经过 descriptor 校验的 workspace、相对 workdir、读写范围、临时/缓存范围、禁止网络的 profile revision 与 candidate fingerprint；Darwin adapter 将其渲染为系统 sandbox profile。跨能力、可配置的通用 planner 尚未实现。
+SandboxPlanner 的目标是把验证后的调用转换为实际执行能力计划，Approval 只能接受或拒绝，不能扩大计划。当前 Exec 的纯内存 `SandboxPlanner` 与 Hook 的只读 launch policy 共用 `SandboxPlan` 和 Darwin 启动骨架：冻结经过 descriptor 校验的 workspace、相对 workdir、读写范围、临时/缓存范围、禁止网络的 profile revision 与 candidate fingerprint；Darwin adapter 将其渲染为系统 sandbox profile。跨能力、可配置的通用 planner 尚未实现。
 
 批准不能绕过平台不支持或安全 fallback。某平台无法提供声明的强制隔离时，应失败关闭或明确降级为更严格能力，不能仅用提示文本模拟 sandbox。
 
@@ -292,7 +300,7 @@ durable turn_started
 - 每个 sample 独立记录 usage，turn usage 只是投影，不替代原始 sample facts。
 - Provider finalizer 只在对应 durable batch 成功后执行一次。
 - tool outputs 全部 durable 后才能开始下一次 Provider stream。
-- follow-up queue 默认仍形成后续独立 turn；same-turn steer 只能在 tool outputs 后、下一 sample 前的 safe point 注入，并必须通过独立 change 定义历史与缓存语义。
+- 已交付 same-turn steer：队首自动输入可在 tool outputs durable/finalize 后、下一 sample 前提交；strict-next 仍保持独立 turn 和 FIFO 屏障，输入提交不重置 16/64 或结果预算。
 - 每个 turn 必须限制最大 sample 数、最大 tool call 数和累计结果预算；达到限制时产生可恢复的明确终态，不能无限循环。
 
 ## 8. 执行 Ledger 与崩溃语义
@@ -385,7 +393,7 @@ Exec 从首字节暂存双流，各保存最多 16 MiB 连续前缀；小输出�
 
 `WriteInput` 严格拒绝缺字段、null、重复键、未知字段、非法 Unicode 与尾随 JSON；原始及规范编码均限 1 MiB。`ReadExecution` 是 Read executor 唯一返回值，携带原有 preview 和完整/不可用观察联合。在同一安全 fd 上比较读取前后 identity、mode、size、mtime/ctime，摘要使用原始 bytes。offset=1、到 EOF 且未按行/总预算截断才可能产生证据；Read 仍限 2000 行、单行 2000 码点、preview 256 KiB、文件 16 MiB。
 
-Runtime 的观察表仅由 turn owner 操作，上限 1024，按输出提交顺序淘汰。worker 返回固定 call slot；result durable 不代表模型已见结果，只有全部 native outputs Sync 且 finalize 后才激活。同 sample Read 不能预授权 Write。Patch/Write started、Write conflict 与失败/截断 Read 使相应路径的当前和待生效观察失效；无法确定失败路径时清空观察。Patch 后的新 Read 可在 outputs 提交后生效。正常跨 turn 保留已生效证据，poison、关闭和恢复清空；不为未合入的 Exec 暴露占位接口。
+Runtime 的观察表仅由 turn owner 操作，上限 1024，按输出提交顺序淘汰。worker 返回固定 call slot；result durable 不代表模型已见结果，只有全部 native outputs Sync 且 finalize 后才激活。同 sample Read 不能预授权 Write。Patch/Write started、Write conflict 与失败/截断 Read 使相应路径的当前和待生效观察失效；无法确定失败路径时清空观察。Patch 后的新 Read 可在 outputs 提交后生效。正常跨 turn 保留已生效证据，poison、关闭和恢复清空；Exec 等独占调用沿已实现的观察失效边界处理，不为未来能力暴露空接口。
 
 `WritePreparer` 只读，冻结 operation、基本权限、`FileBaseEvidence`、祖先目录 identity、最多 16 层待建目录、精确 final bytes、完整转义预览和 fingerprint。覆盖要求先前完整 Read、文件可读可写且无特殊权限位；同内容报 `write_no_changes`。审批用 `patch / write-create / write-overwrite` 强类型展示，控制字符可见转义后的完整展示不超过 256 KiB。Write 与 Patch grant 独立，Write allow fact 成功 Sync 后才安装 grant。
 
@@ -393,7 +401,7 @@ Runtime 的观察表仅由 turn owner 操作，上限 1024，按输出提交顺�
 
 发布前取消不改变正式目标；确定发布后忽略迟到取消，完成父目录 Sync/清理后返回 success。发布结果无法确认、目录 Sync 或 cleanup 失败返回 outcome_uncertain；Runtime 停止后续副作用，但健康 journal 仍保存冻结结果和配对 output。owner 仅清理 identity 匹配的自有项，不递归删除未知内容；SIGKILL 可留下私有暂存项，resume 不访问它们。
 
-当前 canary 为 5；`tool_call_ready` 保存必要 WriteInput，包括 content，`tool_call_result` 只保存冻结摘要与 operation/byte/line/created-directory metadata，不重复保存 base/final 文件或候选 diff。审批仍用 `tool_approval_decided`，执行仍用 `tool_execution_started`，不新增 Read observation record。恢复验证按连续只读组与独占屏障检查顺序，不能要求所有调用先 started 后 result。
+当前无版本的唯一结构中，`tool_call_ready` 保存必要 WriteInput，包括 content，`tool_call_result` 只保存冻结摘要与 operation/byte/line/created-directory metadata，不重复保存 base/final 文件或候选 diff。审批仍用 `tool_approval_decided`，执行仍用 `tool_execution_started`，不新增 Read observation record。恢复验证按连续只读组与独占屏障检查顺序，不能要求所有调用先 started 后 result。
 
 测试入口：`internal/tool/builtin/write_*_test.go`、`internal/runtime/write*_test.go`、`internal/runtime/read_observations_test.go`、`internal/session/write_fixture_test.go`、两家 Provider 的 `write_test.go`/`restore_test.go`、`internal/tui/write_test.go` 与 `internal/app/write*_test.go`。当前 macOS 已运行真实发布/竞争/进程崩溃测试；Linux 与 Windows 已交叉编译，当前环境无 Linux runner，Linux 文件系统运行验证仍是已记录限制，不能等同交叉编译通过。
 
@@ -402,24 +410,27 @@ Runtime 的观察表仅由 turn owner 操作，上限 1024，按输出提交顺�
 | 信息 | Session durable fact | RuntimeEvent | 说明 |
 | --- | --- | --- | --- |
 | Provider 原生 sample | 是 | 可投影摘要 | 下一请求与恢复事实 |
-| ToolCallReady | 是 | 当前无专属事件 | 副作用前置事实 |
+| ToolCallReady | 是 | `tool_ready` | 副作用前置事实 |
 | 权限请求与决定 | 决定是；瞬时 UI 状态否 | 仅交互宿主 | 决定影响恢复，动画不影响 |
-| execution started | 是，且先于副作用 | 当前无专属事件 | ledger 线性化点 |
-| 结果/拒绝/取消/不确定 | 是 | 当前无专属事件 | 保证 call/output 配对 |
+| execution started | 是，且先于对应执行 | `tool_started` | ledger 线性化点 |
+| 结果/拒绝/取消/不确定 | 是 | `tool_terminal` | 保证 call/output 配对 |
 | 高频参数 delta | 否 | 可节流发布 | 不作为恢复事实 |
 | 高频 stdout/stderr chunk | 默认否 | 可节流发布 | 完整内容按 artifact 策略处理 |
 | 模型预览字节与截断元数据 | 是 | 可投影 | 恢复必须精确复用 |
+| Hook 计划/started/finished/gate | 是 | `hook_activity`；信任请求/响应仅瞬态 | Hook started 不等于目标工具 started |
+| Question 题目/冻结答案 | 复用 ready/result | `user_question_requested/resolved` | 未提交草稿不保存，回答不授权 |
 | UI 展开、焦点、spinner | 否 | 本地状态 | 不进入协议与缓存 |
 
-当前 Session envelope canary 为 `7`，仍只有一个 reader。`tool_approval_decided` 保存 typed `decision_source` 和安全展示 metadata（capability、相对目标、Exec timeout），不保存 PID、绝对路径、宿主环境、输出 chunk 或底层 cause。Exec 恢复时，未决定批准为 `session_interrupted_before_approval`，allow 但未 started 为 `session_interrupted_before_execution`，started 无结果为 `outcome_uncertain`；均不重试命令。
+当前 Session/native/checkpoint 不含格式版本、canary 或兼容门禁，只有一个当前 strict decoder。`tool_approval_decided` 保存 typed `decision_source` 和安全展示 metadata（capability、相对目标、Exec timeout），不保存 PID、绝对路径、宿主环境、输出 chunk 或底层 cause。Exec 恢复时，未决定批准为 `session_interrupted_before_approval`，allow 但未 started 为 `session_interrupted_before_execution`，started 无结果为 `outcome_uncertain`；均不重试命令。
 
-稳定发布前新增或修改 record kind 时，直接替换唯一 current fixture，并让旧开发 shape fail closed。稳定发布后若引入真实 revision，必须同时提交 typed constructor、strict decoder、validator、不可变历史 fixture、兼容窗口和 replay migration test；既有 append-only records 不得在 resume 时原地改写。
+稳定发布前新增或修改 record kind 时，直接替换唯一 current fixture，并让旧开发 shape fail closed。即使未来稳定发布也不自动授权兼容设计；只有用户明确要求后，才经 OpenSpec 定义历史 fixture、兼容窗口、退出条件和迁移验证。既有 append-only records 不得在 resume 原地改写。
 
 ## 12. 配对修复与恢复
 
 恢复器按 Provider-native history 和 ledger 判断：
 
-- `tool_call_ready` 已 durable 且无批准的 Patch/Write：补 `cancelled/session_interrupted_before_approval`；已允许但无 `tool_execution_started`：补 `cancelled/session_interrupted_before_execution`。不调用 policy/preparer/executor。
+- 有未收口 Hook plan 时，优先用冻结计划补偿取消/Hook 不确定和目标工具 cancelled；不加载配置、不请求信任、不启动 Hook。Question 没有批准前置；ready 取消、started 缺失结果为不确定、已保存答案原字节复用。
+- `tool_call_ready` 已 durable 且无批准的 Patch/Write/Exec：补 `cancelled/session_interrupted_before_approval`；已允许但无 `tool_execution_started`：补 `cancelled/session_interrupted_before_execution`。不调用 policy/preparer/executor。
 - 已有确定结果：只重建 Provider-native output，不重复执行。
 - `tool_execution_started` 已 durable 但无确定结果：标记 `outcome_uncertain`，生成确定的补偿 output，禁止自动重跑。
 - 权限拒绝、验证失败和取消：生成与 Provider call 类型匹配的错误 output。
@@ -437,16 +448,16 @@ Runtime 的观察表仅由 turn owner 操作，上限 1024，按输出提交顺�
 - Write：已实现新文件/空文件/缺失父目录链创建、完整 Read 后覆盖、独立批准与强类型 create/overwrite 结果。
 - Exec：已实现 Darwin 前台执行、单次批准、sandbox、取消/timeout、输出预算、进度与详情；非 Darwin 失败关闭。
 - `write_stdin`、PTY、后台进程控制：待各自定义输入、授权和资源所有权后实现。
-- allow/ask/deny、approval：已实现 Patch/Write/Exec 闭环；SandboxPlan 当前只覆盖 Exec，不等于通用策略引擎。
+- allow/ask/deny、approval：已实现 Patch/Write/Exec 闭环；当前命令 SandboxPlan 覆盖 Exec/Hook 的不同策略，不等于通用跨能力策略引擎。
 - ledger、配对恢复和通用结果预算：九项能力均已实现；覆盖所有工具输出的统一 artifact 仍属于后续范围。
 - 完整工具输出后的 sampling safe point 已接入 same-turn steer；只领取队首自动输入前缀，strict-next 保持屏障，输入提交不重置 sample/call 上限。
 
-### 13.2 后续阶段能力
+### 13.2 已交付扩展与后续范围
 
 - Skill：已通过 `add-local-skills` 接入 `skill.read`，两家 structured facade 均为 `Skill`，复用只读调度和 durable ledger；不执行脚本，不提升权限。
-- MCP tools：属于 P7 的远程 catalog、trust、认证和动态 schema 能力。
+- MCP tools：属于 P6 的远程 catalog、trust、认证和动态 schema 能力。
 - Agent/Subagent：属于 P7 的 thread、budget、completion envelope 和取消传播能力。
-- hooks/plugins：属于 P6，不能借 Tool callback 绕过版本化 manifest 和权限边界。
+- PreToolUse command Hook 已交付；其余 Hook、Plugins 与热加载属于 P6 后续范围，不能借 Tool callback 绕过 manifest/trust 和权限边界。
 - 完整跨平台 sandbox 矩阵：P8；P3 只实现已验证平台能力并对其他平台失败关闭。
 
 ## 14. 推荐的 OpenSpec 纵向切片
@@ -458,12 +469,15 @@ Runtime 的观察表仅由 turn owner 操作，上限 1024，按输出提交顺�
 | 1（已实现） | `add-read-tool-loop` | 单个 Read 的 catalog、双 Provider wire、durable ready/result、ledger、一个多 sample 回合 | 并发、写入、shell、通用动态 registry |
 | 2（已实现） | `add-search-tools-and-ordered-parallelism` | Glob/Grep、连续只读并发、按调用顺序提交 | 写工具和复杂调度 DAG |
 | 3–4（已实现） | `add-approved-file-patch-flow` | allow/ask/deny、headless 失败关闭、完整 diff、双 Provider Patch、base evidence、原子替换与恢复 | diff artifact、任意文件写入 facade |
-| 5 | `add-file-write-tool` | 新文件/整文件写入、原子替换、权限与冲突策略 | 命令执行 |
+| 5（已实现） | `add-file-write-tool` | 新文件/整文件写入、原子替换、权限与冲突策略 | 命令执行 |
 | 6（已实现） | `add-command-execution` | Darwin 前台 exec、单次批准、进程 owner、取消、超时、输出预算、sandbox 与 TUI 详情 | PTY、后台控制、artifact、非 Darwin 执行 |
 | 7（已实现） | `add-command-output-artifacts` | 双流私有保存、ReadArtifact、独立历史与有界分页、恢复等价 | 全工具预算、自动过期 |
 | 8 | `add-background-process-control` | process handle、write_stdin、最终 wait 和 shutdown | 通用任务系统 |
-| 9 | `add-tool-result-budget` | 各工具预算、artifact、持久化模型预览、恢复等价 | 远程 artifact 服务 |
-| 10 | `add-same-turn-steering` | tool output 后 safe point 注入、缓存与历史语义 | 任意时刻抢占 Provider stream |
+| 9（已实现） | `add-tool-transcript-and-result-budget` | 各工具预算、artifact、持久化模型预览、恢复等价 | 远程 artifact 服务 |
+| 10（已实现） | `add-same-turn-steering` | tool output 后 safe point 注入、缓存与历史语义 | 任意时刻抢占 Provider stream |
+| P6（已实现） | `add-local-skills` | 本地目录、显式附件、按需正文和原生恢复 | plugin/system 来源、fork 与热加载 |
+| P5（已实现） | `add-structured-user-questions` | 双 Provider 问卷、回答预算、离线补偿与历史 | 自动代答、MCP elicitation |
+| P6（实现完成待归档） | `add-pre-tool-use-command-hooks` | 独立信任、Darwin 只读检查、四类事实和恢复 | 其他事件、async 与改写 |
 
 首个 change 选择 Read，而不是先搭建“完整通用框架”，原因是：
 

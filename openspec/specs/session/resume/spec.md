@@ -286,6 +286,12 @@ resume SHALL 从已安全打开并校验的数据根开始，相对于父目录�
 
 reconciliation MUST保持原call index、capability、Provider call identity、wire kind和已durable candidate fingerprint，只允许纯内存Provider output编码和Session append/Sync；MUST NOT调用任一tool executor、候选准备器或approval presenter，MUST NOT访问Patch目标、恢复进程内session grant、发起Provider请求或自动继续下一sample。每次append/Sync失败 MUST使resume失败并阻止新turn副作用。旧开发schema、未知record/canary或混合revision journal MUST在reconciliation、repair和Provider恢复前fail closed，不得选择兼容reader。
 
+上述常规 ready/approval/started 矩阵 SHALL 在没有未收口 Hook 子状态时适用。有 Hook plan 时 MUST 先消费已验证的冻结计划，且不读取当前 hooks.json、不重新选择 matcher、不请求信任、不调用 Hook runner：plan 尚未开始或仅完成成功前缀时，追加 gate cancelled 与原工具 cancelled/session_interrupted_before_hook；Hook started 无 finished 时，以同 batch 追加 recovery finished(outcome_uncertain, exit unknown, cleanup_confirmed=false)、gate outcome_uncertain 与原工具 cancelled/hook_outcome_uncertain。系统 MUST NOT 将 Hook 不确定冒充目标工具已执行或宣称旧进程已清理。
+
+gate continue 后的未审批/allow 未 tool-started 状态 SHALL 沿用本条常规取消；gate 阻断和 result 已 durable 时直接复用 result；tool started 无 result 则仍按目标工具 outcome_uncertain 补偿。所有缺失 outputs 只由 frozen results 编码，结束旧 turn 后不自动采样。reconciliation 再次中断不得重复已 durable 的 Hook completion、gate、result、outputs 或 terminal。
+
+旧 turn reconciliation SHALL 在当前 Hook 来源 Load/install 之前完成，并始终持有原连续 lease；当前配置只服务未来调用。已删除或损坏配置不得改变历史补偿或恢复 bytes；旧事实不建立当前 trust。完成补偿后新 turn 重新接受当前配置和信任检查。与同一 reconciled history 的不中断路径比较时，双 Provider canonical request、native item 顺序、opaque bytes、context footprint 与 cache fingerprints MUST 相同；旧门禁恢复的配置 loader、信任、进程、工具与 Provider 网络调用次数均为零。
+
 #### Scenario: Close a patch before approval
 - **WHEN** journal在Patch ready durable后、approval fact前结束
 - **THEN** resume持久化`session_interrupted_before_approval`结果与matching output并关闭旧turn
@@ -358,6 +364,26 @@ reconciliation MUST保持原call index、capability、Provider call identity、w
 #### Scenario: Do not repeat interrupted artifact reading
 - **WHEN** ReadArtifact ready 或 started 后缺少 result
 - **THEN** 恢复沿既有取消/不确定规则补偿，不访问文件或自动重新执行
+
+#### Scenario: Reconcile a partly completed plan offline
+- **WHEN** 计划有两项，第一项已 continue，第二项未 started
+- **THEN** 不续跑第二项，追加 gate/tool cancelled 和原生配对，关闭旧 turn；所有外部执行调用次数为零
+
+#### Scenario: Record uncertain hook recovery
+- **WHEN** Hook started 已 durable 但 finished 缺失，且没有目标 tool started
+- **THEN** 同批补偿 Hook 不确定、gate 不确定和目标工具 cancelled/hook_outcome_uncertain；不查询 PID、不读取 workspace 或配置
+
+#### Scenario: Recover after configuration disappears
+- **WHEN** Hook result 已 durable 而 native output 缺失，配置随后删除或损坏
+- **THEN** 仅用冻结结果补齐原 call slot 的输出，canonical bytes/原生顺序/fingerprint 等于同一已补偿历史的不中断路径
+
+#### Scenario: Repeat recovery after a second crash
+- **WHEN** 第一次恢复已提交 Hook 补偿 batch 后再次退出
+- **THEN** 第二次恢复复用已提交事实，不重复 finished/gate/result/output，旧 turn 最多一个失败 terminal
+
+#### Scenario: Retain lease while a competing process attempts repair
+- **WHEN** 持有者正在补偿 Hook，真实竞争进程请求同一 journal
+- **THEN** 竞争者 session_busy，不能读取后 repair 或追加；持有者续写 seq 单调，失败路径 bytes 不变
 
 ### Requirement: Resume restores checkpoints and locally closes interrupted compaction
 

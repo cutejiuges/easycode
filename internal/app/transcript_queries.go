@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -164,6 +165,9 @@ func (q *transcriptQueries) ReadTranscriptBody(ctx context.Context, query protoc
 			text = entry.Result.Preview().Text()
 			if question, ok := entry.Invocation.Question(); ok {
 				text = tool.QuestionResultText(question.Input(), entry.Result)
+			}
+			for _, h := range entry.Hooks {
+				text += fmt.Sprintf("\n\nCheck %s:%s · %s (%s) · timeout %ds · stdout %d bytes · stderr %d bytes\nDetailed hook output was not recorded.", h.Reference.Source, h.Reference.ID, h.Result.Status, h.Result.Code, h.Reference.TimeoutSeconds, h.Result.StdoutBytes, h.Result.StderrBytes)
 			}
 		default:
 			return protocol.TranscriptBodyPage{}, tool.ArtifactReadInvalidRange

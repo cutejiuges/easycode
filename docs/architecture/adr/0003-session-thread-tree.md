@@ -1,5 +1,7 @@
 # ADR-0003：使用 Session 线程树组织会话
 
+> 当前对照（2026-11-06）：当前只实现 root thread 的会话/原生恢复和 SQLite 最小元数据索引；child thread、fork、跨 Provider compacted fork 与 Subagent 尚未实现。正文的线程树与迁移讨论是当时目标，不代表当前 reader、目录或授权承诺。 [当前能力清单](../../roadmap/capability-status.md)。
+
 - 状态：accepted
 - 日期：2026-09-18
 - Roadmap 阶段：P0-P2、P7

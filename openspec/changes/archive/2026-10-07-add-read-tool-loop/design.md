@@ -10,7 +10,7 @@
 - ContextPlan当前固定四类来源；Runtime在turn开始后、Provider stream前进行一次规划。
 - 应用启动时已能冻结项目指令快照和规范化cwd，但还没有可供文件工具使用的workspace handle capability。
 
-本设计受 [Tool系统架构](../../../docs/architecture/tool-system.md) 和本change的delta specs约束。它优先复用现有Provider-native、durable和cleanup边界，不建立第二套agent runtime。
+本设计受 [Tool系统架构](../../../../docs/architecture/tool-system.md) 和本change的delta specs约束。它优先复用现有Provider-native、durable和cleanup边界，不建立第二套agent runtime。
 
 ## Goals / Non-Goals
 

@@ -1,12 +1,7 @@
 package skill
 
-import "strings"
+import "easycode/internal/extension/localfile"
 
 func systemSkillPath(p string) string {
-	for _, prefix := range []string{"/var", "/tmp", "/etc"} {
-		if p == prefix || strings.HasPrefix(p, prefix+"/") {
-			return "/private" + p
-		}
-	}
-	return p
+	return localfile.SystemPath(p)
 }

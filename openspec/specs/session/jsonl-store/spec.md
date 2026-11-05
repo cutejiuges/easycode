@@ -16,6 +16,10 @@ Session envelope MUST NOT 包含 schema_version、payload_version、canary、for
 
 Write 的必要 typed input SHALL 保存 file_path/content，并与原生调用参数一致；该 content 是调用事实，不是额外采集的磁盘文件快照。Write result SHALL 只保存冻结的有界摘要与 typed metadata，不回显正文。Read observation、目录/file identity、暂存路径与 grant MUST NOT 保存。
 
+当前词汇 SHALL 增加 tool_hook_gate_planned、hook_execution_started、hook_execution_finished、tool_hook_gate_decided；四类事实均使用当前 envelope、真实 turn/invocation 身份及各自 typed constructor/strict decoder/validator，不能以 opaque payload、optional record 或版本字段代替。计划只保存有序 1..8 个来源种类/revision、Hook id、命令 fingerprint、timeout、能力及 plan digest；started/finished 保存匹配 ordinal 与 HookRunID。finished SHALL 保存封闭 status/code、exit known/value、timeout/cancelled、输出字节数、cleanup confirmed 及 execution/recovery origin；决定保存聚合状态、完成数量和适用时的阻断 ordinal。
+
+新增事实 MUST NOT 保存完整 command、配置路径、stdin、stdout/stderr、自由文本 reason、绝对 cwd、环境实际值、PID、信任响应或 grant。source revision、fingerprint、plan digest 是内容关联，不是格式版本。无匹配时没有 Hook facts 是合法当前路径；实际存在的新 facts 全部是必须理解的恢复事实。
+
 #### Scenario: Encode the current record vocabulary
 - **WHEN** 一个 root thread 完成包含 Read、Glob、Grep、获批 Patch 与获批 Exec 的 Tool Loop
 - **THEN** JSONL 复用同一当前 envelope 记录 metadata、turn 边界、sample commits/usages、四类 ledger records 和 tool-output commit
@@ -111,6 +115,14 @@ Session envelope SHALL 不携带格式版本字段；Provider native/checkpoint 
 #### Scenario: Persist a question without approval
 - **WHEN** 用户提交一个合法问卷
 - **THEN** 当前唯一记录结构保存 ready/started/result 和匹配 native outputs，不出现该调用的 approval record 或 UI 草稿
+
+#### Scenario: Encode a complete hook gate
+- **WHEN** 合法检查在一个真实 mutation 调用前完成
+- **THEN** 四类 facts 使用同一当前 envelope 与独立 typed payload，保留调用身份和检查顺序，不保存脚本输入输出正文
+
+#### Scenario: Reject an unrecognized hook shape
+- **WHEN** Hook record 缺失当前必需字段、包含版本标记、未知 kind 或 raw output
+- **THEN** strict 校验在 repair/append/副作用前失败，不跳过记录或使用历史 reader
 
 ### Requirement: A single writer assigns order and durably appends batches
 
@@ -212,6 +224,12 @@ Loader 完成字节、envelope 和 batch 校验后，ReplayPlanner SHALL 在创�
 ReplayPlanner MUST 拒绝孤立/重复 approval、result 或 started、allow 后缺失 candidate fingerprint、deny 后出现 started、started 早于必需 allow、started/result index 非法、越过 exclusive 屏障、ready 后直接开始下一 sample、outputs 数量/wire kind/call identity 不匹配、sample usage 缺失/重复、tool-output commit 携带 usage、terminal 后 records 或新 turn 覆盖活动 turn。只有 journal 末尾已承诺的活动状态可作为显式 reconciliation 计划返回；它不是可由 Loader 截断的文件损坏。
 
 本条中 Patch 的 approval/started/result、exclusive 屏障和恢复规则 SHALL 同样适用于 Write。Write 准备失败可从 ready 进入 error/conflict/cancelled，但 success 或 outcome_uncertain 必须具有合法 started；write_no_changes 为 error。Write input/result 联合与 operation 的已知/未知状态必须严格验证，恢复不通过文件系统补齐。
+
+对于有 Hook plan 的 call slot，ReplayPlanner SHALL 先验证独立 Hook 前缀：每调用至多一个 plan/decision，ordinal 连续且匹配计划，每项至多一个 started/finished，前项 continue 才可启动下一项。全计划成功完成才允许 gate continue；trust 拒绝可在未 started 的下一项处短路。任一 Hook 阻断、error 或 cancelled 只结束该 call slot；cleanup 不确定另行记录，目标工具不得出现 started。普通 approval/候选执行事实不得先于 gate continue，后序 call 不得越过当前 exclusive result。
+
+计划和每项 started SHALL 单独 batch；中间成功 finished 单独 batch；最后成功 finished 与 gate continue MUST 同批；executed 阻断/错误/取消的 finished、gate decision 和冻结 tool result MUST 同批，trust 拒绝则 gate decision/result 同批，不伪造执行记录。正常 gate 终止状态与 result code/status MUST 一致。恢复补偿 Hook 不确定时，finished(origin=recovery, cleanup_confirmed=false, exit unknown)、gate outcome_uncertain 与工具 cancelled/hook_outcome_uncertain MUST 同批。完整 committed 记录违反上述组合为 corruption，不得当成合法活动尾部。
+
+正常路径 started 后 cleanup 不确定或 runner 结果错配 MUST 记录 gate outcome_uncertain、工具 cancelled/hook_outcome_uncertain，并停止后续工具；健康 journal 按 call index 完成剩余取消配对，owner 未真正清理完成前不能释放 lease。缺失 finished 的合法末尾 SHALL 投影为独立 Hook recovery 状态，不得退化为普通 ready-before-approval 或目标工具 started。
 
 #### Scenario: Build a valid approved patch replay plan
 - **WHEN** journal 包含 Patch ready、matching allow、started、result、custom或tool-result output与最终 sample completion
@@ -318,6 +336,22 @@ ReplayPlanner MUST 拒绝孤立/重复 approval、result 或 started、allow 后
 #### Scenario: Reject question approval facts
 - **WHEN** journal 为 user.question 记录了 tool_approval_decided
 - **THEN** 恢复整体拒绝且不 repair，不把提问选择视为副作用授权
+
+#### Scenario: Reject a gate that skips a planned hook
+- **WHEN** checksum 合法且 plan 有两项，但只有第一项 finished 后便记录 gate continue 或 tool approval
+- **THEN** 整体恢复失败，journal bytes 不变，不读取配置或启动进程
+
+#### Scenario: Require an atomic denial result
+- **WHEN** 完整 committed batch 保存 gate deny 却没有同批 tool result，或拒绝后出现 tool started
+- **THEN** 语义损坏被拒绝，不能由 repair 删除已提交记录
+
+#### Scenario: Keep a hook-started tail distinct
+- **WHEN** 合法 journal 恰好以 hook_execution_started 结束
+- **THEN** 返回包含原计划和未完成 ordinal 的 recovery 子状态，不伪造 tool_execution_started
+
+#### Scenario: Reject corruption even with a torn suffix
+- **WHEN** 计划/ordinal/身份非法的完整前缀后另有半行
+- **THEN** 恢复失败且全部 journal bytes 不变，禁止先截断再校验
 
 ### Requirement: Tail repair never rewrites committed history
 
@@ -472,7 +506,7 @@ JSONL 事实源 SHALL 只持久化恢复、幂等和审计所需的业务边界�
 本变更 SHALL 直接更新唯一当前无版本结构并逐字节固定 Exec 保存状态与 ReadArtifact 的 current fixtures；缺少保存字段的旧开发 shape MUST 在 repair/append 前失败，不保留兼容 reader。
 
 #### Scenario: Load fixed artifact fixtures
-- **WHEN** 加载仓库内七工具、partial/unavailable 和恢复中断的固定 bytes
+- **WHEN** 加载仓库内基础七工具、partial/unavailable 和恢复中断的固定 bytes
 - **THEN** 生产 decoder/replay 校验通过；测试运行时不使用当前 encoder 生成输入 fixture
 
 ### Requirement: Repository lifecycle and path safety are explicit
@@ -553,7 +587,7 @@ ReplayPlanner SHALL只从Exec ready、approval、started、result和Provider-nat
 - **WHEN** journal包含Exec started但没有result且进程已经退出或状态未知
 - **THEN** replay生成`outcome_uncertain`补偿而不查找PID、不连接进程、不重新执行命令
 
-以上约束 SHALL 扩展到七工具统一活动投影；ready、approval、started、result 与 native commits 是恢复依据，临时 sample 文本、工具进度、折叠组与浏览页不属于事实源。
+以上约束 SHALL 扩展到已实现工具统一活动投影；ready、approval、started、result 与 native commits 是恢复依据，临时 sample 文本、工具进度、折叠组与浏览页不属于事实源。
 
 #### Scenario: Restore without presentation state
 - **WHEN** 进程曾显示搜索 running 或未提交文本后中断

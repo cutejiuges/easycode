@@ -58,6 +58,7 @@ type Config struct {
 	CompactionOutputTokens    uint64
 	TextOutputStore           tool.TextOutputStore
 	ToolHistory               ToolHistoryObserver
+	HookHistory               HookHistoryObserver
 	ReadArtifactExecutor      tool.ReadArtifactExecutor
 	ArtifactReferences        *tool.ArtifactReferences
 	SessionID                 domain.SessionID
@@ -89,10 +90,12 @@ type Config struct {
 
 // Runtime 持有一条会话级 Provider Conversation 和同一 thread journal。
 type Runtime struct {
-	questionExecutor             tool.QuestionExecutor
-	interactiveQuestions         bool
-	newQuestionRequestID         func() (domain.QuestionRequestID, error)
-	questions                    questionState
+	questionExecutor     tool.QuestionExecutor
+	interactiveQuestions bool
+	newQuestionRequestID func() (domain.QuestionRequestID, error)
+	questions            questionState
+
+	hooks                        hookState
 	skillExecutor                tool.SkillExecutor
 	skillPreparer                SkillPreparer
 	skillCatalog                 domain.SkillCatalog
@@ -113,6 +116,7 @@ type Runtime struct {
 	resultBudget                 *tool.ResultBudget
 	textOutputStore              tool.TextOutputStore
 	toolHistory                  ToolHistoryObserver
+	hookHistory                  HookHistoryObserver
 	readArtifactExecutor         tool.ReadArtifactExecutor
 	artifactReferences           *tool.ArtifactReferences
 	conversation                 provider.Conversation
@@ -231,6 +235,7 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 		compactionDeadline:     context.WithTimeout,
 		compactionOutputTokens: config.CompactionOutputTokens,
 		toolHistory:            config.ToolHistory,
+		hookHistory:            config.HookHistory,
 		readArtifactExecutor:   config.ReadArtifactExecutor,
 		questionExecutor:       config.QuestionExecutor, interactiveQuestions: config.InteractiveQuestions, newQuestionRequestID: config.GenerateQuestionRequestID,
 		skillExecutor: config.SkillExecutor, skillPreparer: config.SkillPreparer, skillCatalog: config.SkillCatalog.Clone(),
@@ -260,6 +265,7 @@ func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, 
 		return fault.New(fault.CodeTurnFailed, "conversation already has an active turn")
 	}
 	defer runtime.active.Store(false)
+	runtime.resetHookTurn()
 	runtime.explicitSkills = nil
 	defer func() { runtime.explicitSkills = nil }()
 	defer func() {
@@ -404,6 +410,15 @@ func (runtime *Runtime) ReconcileToolTurn(ctx context.Context, plan session.Tool
 	results := make([]tool.InvocationResult, 0, len(calls))
 	outcomeUncertain := false
 	for _, call := range calls {
+		if call.Hooks != nil && call.Hooks.Decision == nil {
+			result, err := runtime.reconcileHookGate(reconcileContext, plan.TurnID(), call)
+			if err != nil {
+				return err
+			}
+			results = append(results, result)
+			outcomeUncertain = outcomeUncertain || call.Hooks.Started != nil
+			continue
+		}
 		var result tool.InvocationResult
 		switch call.State {
 		case session.ReplayedToolCallReady:
@@ -435,7 +450,7 @@ func (runtime *Runtime) ReconcileToolTurn(ctx context.Context, plan session.Tool
 			outcomeUncertain = true
 		case session.ReplayedToolCallResult:
 			result = call.Result
-			outcomeUncertain = outcomeUncertain || result.Status() == tool.ResultOutcomeUncertain
+			outcomeUncertain = outcomeUncertain || result.Status() == tool.ResultOutcomeUncertain || call.Hooks != nil && call.Hooks.Decision != nil && call.Hooks.Decision.Status == domain.HookUncertain
 		default:
 			return fault.New(fault.CodeSessionCorruption, "tool recovery call state is invalid")
 		}

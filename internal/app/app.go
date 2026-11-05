@@ -60,6 +60,8 @@ type dataPaths struct {
 }
 
 type chatResourceHooks struct {
+	loadHooks              func(context.Context, string, string) (domain.HookSnapshot, error)
+	newHookRunner          func(*builtin.Workspace, builtin.CommandEnvironment, builtin.HookOutputParser) (chatRuntime.HookRunner, error)
 	recovery               *recoveryAttempt
 	afterContinueSelection func(domain.ThreadID)
 	interactiveApprovals   bool
@@ -502,6 +504,7 @@ func openChatResourcesWithSnapshot(
 		ArtifactReferences: artifactReferences,
 		TextOutputStore:    artifactOutputStore{store: artifactStore},
 		ToolHistory:        queries,
+		HookHistory:        queries,
 		SessionID:          assembled.identity.SessionID, ThreadID: assembled.identity.ThreadID,
 		Journal: assembled.writer, ContextProfile: contextProfile, CachePolicy: applicationConfig.CachePolicy(), RestoredCacheBaseline: resumeThreadID != "",
 		ToolCatalog:      toolCatalog,
@@ -533,6 +536,9 @@ func openChatResourcesWithSnapshot(
 			return nil, err
 		}
 		assembled.history = assembled.conversation.ProjectHistory()
+	}
+	if err := installChatHooks(ctx, runtimeInstance, workspace, artifactLayout, creationCWD, home, hooks); err != nil {
+		return nil, err
 	}
 	resources = &chatResources{
 		artifactLayout: artifactLayout, artifactStore: artifactStore, transcriptQueries: queries,
@@ -736,7 +742,7 @@ func assembleChatModel(ctx context.Context, resources *chatResources) (tui.Model
 		return tui.Model{}, err
 	}
 	resources.session = control
-	return tui.NewModel(ctx, Version, control).WithSkills(resources.skills).WithMarkdownColor(markdownColorEnabled(os.Getenv("NO_COLOR"), os.Getenv("TERM"), term.IsTerminal(os.Stdout.Fd()))).WithInputHistory(resources.history).WithTranscriptQueries(resources.identity.ThreadID, resources.transcriptQueries), nil
+	return tui.NewModel(ctx, Version, control).WithSkills(resources.skills).WithHooks(resources.session.HookEntries()).WithMarkdownColor(markdownColorEnabled(os.Getenv("NO_COLOR"), os.Getenv("TERM"), term.IsTerminal(os.Stdout.Fd()))).WithInputHistory(resources.history).WithTranscriptQueries(resources.identity.ThreadID, resources.transcriptQueries), nil
 }
 
 // markdownColorEnabled 由启动边界的显式环境和终端事实选择样式。

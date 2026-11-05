@@ -1,5 +1,7 @@
 # ADR-0006：有序工具记录与按调用顺序冻结的结果预算
 
+> 当前对照（2026-11-06）：当前为九项工具，Skill/Question 等有各自完整正文上限，均受共享 sample/turn 预算约束。本文的七工具与 canary/native revision 数字是当时范围，格式条款已被单当前契约收敛；当前边界见 Tool 系统与能力清单。 [当前能力清单](../../roadmap/capability-status.md)。
+
 > 后续决策：`add-threshold-auto-compaction` 已删除 Session/native/checkpoint 格式版本、固定压缩 prompt revision 和 Catalog user_version 门禁；本文涉及这些内部格式的版本数字仅为历史背景，当前实现以单一无版本内部契约为准。外部 headless 协议与实际内容 revision 保留。
 
 - 状态：accepted
@@ -23,7 +25,7 @@ Runtime 唯一 turn owner 按模型调用顺序分配额度、finalize worker �
 
 宿主查询按稳定位置返回最多 50 个逻辑项、64 KiB 正文或 raw 范围。主线保留最近逻辑页，浏览缓存最多四页；反向查询不依赖无限游标栈。`transcript_committed` 在 finalize 后驱动 provisional 替换，查询带提交上界并使用 generation 拒绝迟到回复。失败增量只标为当前进程的 unfinished 文本。
 
-## 当前格式与代价
+## 决策当时的格式与代价
 
 Session 唯一当前 canary 从 5 替换为 6，native revision 保持 2，外部 headless JSONL 保持 v1。新增进程内 UI 事件不写 journal，原 record vocabulary 保持不变。当前 fixture 离线替换，旧开发 shape 失败关闭，不提供双 reader。
 

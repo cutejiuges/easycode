@@ -2,6 +2,10 @@
 
 本目录记录已经作出的重要架构决策。ADR 一经接受不直接改写结论；后续发生变化时新增 ADR，并将旧记录标记为 superseded。
 
+## 与当前实现的关系
+
+已接受代表该决策的理由获准，不表示其中所有阶段目标均已实现。每篇 ADR 顶部的 2026-11-06 当前对照说明已落地与后续范围，完整状态见[能力清单](../../roadmap/capability-status.md)。ADR-0001/0005/0006/0008 中的内部格式数字和强制版本化条款已部分 superseded，当前以[单当前契约](../../../openspec/specs/architecture/single-current-contract/spec.md)及根 AGENTS 为准；保留原正文用于解释演进。ADR-0003 的 child/fork/Subagent 是目标架构，当前仅有 root-thread 实现。
+
 ## 命名
 
 ```text

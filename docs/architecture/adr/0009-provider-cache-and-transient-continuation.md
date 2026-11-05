@@ -1,5 +1,7 @@
 # ADR-0009：缓存策略与原生瞬态续写分离
 
+> 当前对照（2026-11-06）：显式缓存策略、WebSocket 原生增量、/cache 与 cache.query 已实现；Skill catalog 已纳入当前六类上下文来源。下文五来源/七工具描述对应本决策的历史范围；当前不提供 Plugins/MCP 动态目录、精确费用、远端计数或 telemetry。 [当前能力清单](../../roadmap/capability-status.md)。
+
 - 状态：accepted
 - 日期：2026-11-03
 - Roadmap 阶段：P4
@@ -25,7 +27,7 @@ WebSocket 保持 store=false，response.create 省略 HTTP stream 字段。只�
 
 PreparedSample/PreparedCompaction 必须携带唯一当前、严格校验的请求收据。Runtime 冻结同一采样计划的无正文来源，在 append 前验证；Sync/finalize 后才更新有界观测。普通 sample、成功 turn 和成功摘要各保存最近一项；失败不伪造成功 turn。publication 将值交给 AgentLoop 单 owner，活动请求和审批期间查询不读取 worker 可变状态。
 
-/cache 与 /context 不进入模型历史；stream-json v1 的 cache.query 明确接收 control.response 后输出 cache.snapshot。TUI 在提交前分配 request/generation，关闭后的迟到响应无效。快照最多五种来源、64 KiB，明确 process/restored_baseline，排除正文、真实 key、URL、凭据、路径和原生 reasoning。所有适用输入指标已知且无溢出、分母非零时才计算 cache_read 比例；相同 fingerprint 不证明实际命中，读取降低也不能确定归因 TTL。
+/cache 与 /context 不进入模型历史；stream-json v1 的 cache.query 明确接收 control.response 后输出 cache.snapshot。TUI 在提交前分配 request/generation，关闭后的迟到响应无效。本决策当时的快照最多五种来源、64 KiB，明确 process/restored_baseline，排除正文、真实 key、URL、凭据、路径和原生 reasoning。所有适用输入指标已知且无溢出、分母非零时才计算 cache_read 比例；相同 fingerprint 不证明实际命中，读取降低也不能确定归因 TTL。
 
 不增加 Session/native/checkpoint 字段、版本、迁移或兼容 reader。跨 Provider compacted fork、扩展目录、精确费用、远端 tokenizer、telemetry 和后台进程仍需独立变更。
 

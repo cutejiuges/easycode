@@ -8,7 +8,7 @@
 
 ### Requirement: Command history derives only from validated facts
 
-系统 SHALL 从经过 replay 校验的完整七工具 ready、approval、started、result facts 建立有序投影，包含稳定 invocation identity、seq、工具名称、typed 输入摘要、适用时的完整命令与相对 workdir、执行状态、冻结 preview 和保存 descriptor。拒绝、取消和恢复补偿结果不得丢失。输出文件存在性不能推断工具状态，瞬态 progress 不得作为恢复事实。该投影 MUST 不改变 Provider native history 或 SemanticHistoryView。
+系统 SHALL 从经过 replay 校验的完整已实现工具 ready、approval、started、result facts 建立有序投影，包含稳定 invocation identity、seq、工具名称、typed 输入摘要、适用时的完整命令与相对 workdir、执行状态、冻结 preview 和保存 descriptor。拒绝、取消和恢复补偿结果不得丢失。输出文件存在性不能推断工具状态，瞬态 progress 不得作为恢复事实。该投影 MUST 不改变 Provider native history 或 SemanticHistoryView。
 
 #### Scenario: Restore older commands
 - **WHEN** thread 含多个已完成 turn、拒绝命令及中断尾部

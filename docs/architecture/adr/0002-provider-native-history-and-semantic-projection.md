@@ -1,5 +1,7 @@
 # ADR-0002：保留 Provider 原生历史并提供单向语义投影
 
+> 当前对照（2026-11-06）：两家 HistoryProjector 与 TranscriptProjector 已有消费者和 golden；当前 PreToolUse 使用三种 typed tool input，不读取最后 assistant 文本。Stop Hook 与 Subagent 的投影消费者仍未实现；持久化投影缓存也未实现。 [当前能力清单](../../roadmap/capability-status.md)。
+
 - 状态：accepted
 - 日期：2026-09-18
 - Roadmap 阶段：P0-P2
