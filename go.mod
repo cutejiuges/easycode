@@ -12,6 +12,7 @@ require (
 	github.com/coder/websocket v1.8.14
 	github.com/ncruces/go-sqlite3 v0.32.0
 	github.com/rivo/uniseg v0.4.7
+	github.com/yuin/goldmark v1.7.8
 	golang.org/x/sys v0.41.0
 	resty.dev/v3 v3.0.0-rc.4
 )

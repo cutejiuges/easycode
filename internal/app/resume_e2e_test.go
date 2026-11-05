@@ -28,6 +28,9 @@ import (
 )
 
 func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
+	runProvidersPersistResumeReplayAndContinue(t, func(value string) string { return value }, nil)
+}
+func runProvidersPersistResumeReplayAndContinue(t *testing.T, answer func(string) string, browse func(*testing.T, tea.Model, string)) {
 	fixtures := []struct {
 		name        string
 		family      domain.ProviderFamily
@@ -54,6 +57,18 @@ func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
 			}
 			var mu sync.Mutex
 			var requests [][]byte
+			serve := func(w io.Writer, turn int) {
+				var wire bytes.Buffer
+				fixture.serveTurn(&wire, turn)
+				data := wire.Bytes()
+				if browse != nil {
+					data = addMarkdownReasoningFixture(data, fixture.family, turn)
+				}
+				label := fmt.Sprintf("answer-%d", turn)
+				original, _ := json.Marshal(label)
+				replacement, _ := json.Marshal(answer(label))
+				_, _ = w.Write(bytes.ReplaceAll(data, original, replacement))
+			}
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 				body, err := io.ReadAll(request.Body)
 				if err != nil {
@@ -65,7 +80,7 @@ func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
 				turn := len(requests)
 				mu.Unlock()
 				writer.Header().Set("Content-Type", "text/event-stream")
-				fixture.serveTurn(writer, turn)
+				serve(writer, turn)
 			}))
 			defer server.Close()
 
@@ -103,8 +118,8 @@ func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
 				t.Fatal(err)
 			}
 			if len(resumed.history.Turns) != 2 || resumed.history.Turns[0].Messages[0].Text != "first" ||
-				resumed.history.Turns[0].Messages[1].Text != "answer-1" ||
-				resumed.history.Turns[1].Messages[0].Text != "second" || resumed.history.Turns[1].Messages[1].Text != "answer-2" {
+				resumed.history.Turns[0].Messages[1].Text != answer("answer-1") ||
+				resumed.history.Turns[1].Messages[0].Text != "second" || resumed.history.Turns[1].Messages[1].Text != answer("answer-2") {
 				t.Fatalf("resumed history = %#v", resumed.history)
 			}
 			ui := tui.NewModel(context.Background(), "test", resumed.session).WithTranscriptQueries(resumed.identity.ThreadID, resumed.transcriptQueries)
@@ -116,10 +131,13 @@ func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
 				restored, _ = ui.Update(initial)
 			}
 			view := restored.View()
-			for _, visible := range []string{"User: first", "Assistant: answer-1", "User: second", "Assistant: answer-2"} {
+			for _, visible := range []string{"User: first", "● answer-1", "User: second", "● answer-2"} {
 				if !strings.Contains(view, visible) {
 					t.Fatalf("resumed transcript missing %q: %s", visible, view)
 				}
+			}
+			if browse != nil {
+				browse(t, restored, dataRoot)
 			}
 			submitAppTurn(t, resumed, "third")
 			if err := resumed.close(context.Background()); err != nil {
@@ -135,7 +153,17 @@ func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
 			if len(captured) != 3 {
 				t.Fatalf("request count = %d", len(captured))
 			}
-			fixture.assertThird(t, captured[2])
+			assertionBody := append([]byte(nil), captured[2]...)
+			for _, label := range []string{"answer-1", "answer-2"} {
+				original, _ := json.Marshal(answer(label))
+				replacement, _ := json.Marshal(label)
+				assertionBody = bytes.ReplaceAll(assertionBody, original, replacement)
+			}
+			if browse == nil {
+				fixture.assertThird(t, assertionBody)
+			} else {
+				assertMarkdownHistoryOrder(t, assertionBody)
+			}
 
 			var comparisonMu sync.Mutex
 			var comparisonRequests [][]byte
@@ -150,7 +178,7 @@ func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
 				turn := len(comparisonRequests)
 				comparisonMu.Unlock()
 				writer.Header().Set("Content-Type", "text/event-stream")
-				fixture.serveTurn(writer, turn)
+				serve(writer, turn)
 			}))
 			comparisonConfig := config.Config{Provider: config.Provider{
 				Family: fixture.family, BaseURL: comparisonServer.URL,
@@ -184,6 +212,7 @@ func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
 					comparisonCount, captured[2], comparisonThird,
 				)
 			}
+			assertRequestFingerprintEqual(t, captured[2], []byte(comparisonThird))
 			for _, dynamic := range []string{string(threadID), dataRoot, creationCWD, "e2e-secret"} {
 				if strings.Contains(string(captured[2]), dynamic) {
 					t.Fatalf("request contains dynamic/session input %q", dynamic)
@@ -298,7 +327,7 @@ func TestCurrentSessionFixtureRestoresVisibleHistoryWithoutNetwork(t *testing.T)
 		restored, _ = ui.Update(initial)
 	}
 	view := restored.View()
-	if !strings.Contains(view, "User: fixture question") || !strings.Contains(view, "Assistant: fixture answer") {
+	if !strings.Contains(view, "User: fixture question") || !strings.Contains(view, "● fixture answer") {
 		t.Fatalf("session fixture transcript = %s", view)
 	}
 	if err := resources.close(context.Background()); err != nil {

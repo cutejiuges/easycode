@@ -12,10 +12,16 @@ import (
 
 // mainTranscript 持有最新五十个逻辑项；未提交增量与查询快照分开拥有。
 type mainTranscript struct {
-	generation uint64
-	sequence   uint64
-	cancel     context.CancelFunc
-	items      []transcriptMessage
+	hydrationEpoch     uint64
+	awaitingProjection bool
+	hydrating          bool
+	hydrationCancel    context.CancelFunc
+	attempted          map[protocol.TranscriptCursor]hydrationState
+	handoff            []string
+	generation         uint64
+	sequence           uint64
+	cancel             context.CancelFunc
+	items              []transcriptMessage
 }
 type mainTranscriptReply struct {
 	generation uint64
@@ -50,6 +56,8 @@ func (model Model) commitMainTranscript(sequence uint64) (tea.Model, tea.Cmd) {
 	if model.main.cancel != nil {
 		model.main.cancel()
 	}
+	model.main.resetHydration()
+	model.main.awaitingProjection = false
 	model.main.sequence = sequence
 	model.main.generation++
 	ctx := model.submitContext
@@ -57,6 +65,11 @@ func (model Model) commitMainTranscript(sequence uint64) (tea.Model, tea.Cmd) {
 		ctx = context.Background()
 	}
 	ctx, model.main.cancel = context.WithCancel(ctx)
+	start := max(0, len(model.markdown.lines)-model.transcriptHeight())
+	if model.reading.detached {
+		start = min(model.reading.scroll, start)
+	}
+	model.main.handoff = append([]string(nil), model.markdown.lines[start:min(len(model.markdown.lines), start+model.transcriptHeight())]...)
 	model.transcript = nil
 	model.assistantItem = -1
 	model.toolItems = nil
@@ -68,14 +81,24 @@ func (model Model) receiveMainTranscript(reply mainTranscriptReply) (tea.Model, 
 	if reply.generation != model.main.generation {
 		return model, nil
 	}
+	if model.main.cancel != nil {
+		model.main.cancel()
+		model.main.cancel = nil
+	}
 	if reply.err != nil || reply.page.Validate() != nil {
-		model.errorSummary = "transcript_unavailable: committed history unavailable"
+		model.errorSummary = "History refresh failed"
 		return model, nil
+	}
+	for _, item := range reply.page.Items {
+		if model.main.sequence > 0 && item.Cursor.Sequence > model.main.sequence {
+			model.errorSummary = "History refresh failed"
+			return model, nil
+		}
 	}
 	messages := make([]transcriptMessage, 0, len(reply.page.Items))
 	for i := len(reply.page.Items) - 1; i >= 0; i-- {
 		item := reply.page.Items[i]
-		message := transcriptMessage{text: item.Text}
+		message := transcriptMessage{text: item.Text, cursor: item.Cursor, more: item.More}
 		switch item.Kind {
 		case domain.TranscriptCompaction:
 			message.role = "Compaction"
@@ -89,9 +112,6 @@ func (model Model) receiveMainTranscript(reply mainTranscriptReply) (tea.Model, 
 			message.preview = item.Preview
 			message.saving = savingNotice(item.Stdout, item.Stderr, item.Search)
 		}
-		if item.More {
-			message.text += " … [Ctrl+O for full text]"
-		}
 		messages = append(messages, message)
 	}
 	for i := len(messages) - 1; i >= 0; i-- {
@@ -100,7 +120,15 @@ func (model Model) receiveMainTranscript(reply mainTranscriptReply) (tea.Model, 
 			break
 		}
 	}
+	through := model.main.sequence
+	if through == 0 && len(reply.page.Items) > 0 {
+		through = reply.page.Items[0].Cursor.Sequence
+	}
+	model.browser.mainListKey = transcriptPageKey{kind: transcriptListPage, through: through}
+	model.browser.mainListPinned = true
+	model.browser.remember(cachedTranscriptPage{key: model.browser.mainListKey, list: reply.page})
 	model.main.items = messages
+	model.main.awaitingProjection = true
 	return model, nil
 }
 func (model Model) visibleTranscript() []transcriptMessage {
@@ -120,7 +148,7 @@ func (model Model) visibleTranscript() []transcriptMessage {
 		}
 		messages = append(messages, message)
 	}
-	return messages
+	return messages[max(0, len(messages)-50):]
 }
 
 // appendProvisionalText 限制尚未 durable 的显示缓存，完整正文在提交后由范围查询提供。
@@ -130,9 +158,22 @@ func appendProvisionalText(current, delta string) string {
 	if len(text) <= limit {
 		return text
 	}
-	start := len(text) - limit + 64
+	start := len(text) - limit
 	for start < len(text) && !utf8.RuneStart(text[start]) {
 		start++
 	}
-	return "[Streaming excerpt; full text available after commit]\n" + strings.Clone(text[start:])
+	return strings.Clone(text[start:])
+}
+
+func (model Model) quitTranscript() (tea.Model, tea.Cmd) {
+	model.browser.invalidate()
+	model.main.resetHydration()
+	if model.main.cancel != nil {
+		model.main.cancel()
+		model.main.cancel = nil
+	}
+	model.browser.queries = nil
+	model.main.awaitingProjection = false
+	model.main.handoff = nil
+	return model, tea.Quit
 }

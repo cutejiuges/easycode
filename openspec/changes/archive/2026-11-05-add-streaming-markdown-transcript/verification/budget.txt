@@ -1,0 +1,17 @@
+=== RUN   TestHighlightDepthQueueAndAllocationBoundaries
+--- PASS: TestHighlightDepthQueueAndAllocationBoundaries (0.00s)
+=== RUN   TestMarkdownTypicalLargeCodeRemainsHighlighted
+--- PASS: TestMarkdownTypicalLargeCodeRemainsHighlighted (0.00s)
+=== RUN   TestMarkdownModelBudgetAtNarrowWidth
+    markdown_test.go:164: source_bytes=65536 first="xxxxxx" retained_bytes=731915 nodes=9
+    markdown_test.go:164: source_bytes=65535 first="中中" retained_bytes=739611 nodes=9
+    markdown_test.go:164: source_bytes=64000 first="|ab|cd" retained_bytes=675743 nodes=0
+    markdown_test.go:164: source_bytes=16003 first="> > > " retained_bytes=855924 nodes=8003
+--- PASS: TestMarkdownModelBudgetAtNarrowWidth (0.08s)
+=== RUN   TestMarkdownMergePeakBudget
+--- PASS: TestMarkdownMergePeakBudget (0.00s)
+=== RUN   TestMarkdownFiftyCollapsedBodiesShareLayoutBudget
+    markdown_test.go:196: 50 items, width=3, retained_bytes=405386 nodes=12
+--- PASS: TestMarkdownFiftyCollapsedBodiesShareLayoutBudget (0.01s)
+PASS
+ok  	easycode/internal/tui	0.472s

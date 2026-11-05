@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -104,8 +105,9 @@ func TestCommandBrowserNavigationAndStaleReplies(t *testing.T) {
 	m, cmd = browserKey(t, m, tea.KeyEnter)
 	late := cmd()
 	m, _ = browserKey(t, m, tea.KeyCtrlO)
+	cachedBefore := append([]cachedTranscriptPage(nil), m.browser.cache...)
 	m = updateModel(t, m, late)
-	if m.detailOpen || m.browser.page != nil || len(m.browser.cache) != 0 {
+	if m.detailOpen || m.browser.page != nil || !reflect.DeepEqual(m.browser.cache, cachedBefore) {
 		t.Fatal("closed overlay accepted late result")
 	}
 	if m.composer.text != "kept draft" || len(session.submits) != 0 {

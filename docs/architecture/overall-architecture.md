@@ -981,3 +981,11 @@ ADR 存放在 `docs/architecture/adr/`，模板见该目录的 `README.md`，并
 选择理由、参考工程版本、预算和验证方案见 [OpenSpec 变更](../../openspec/changes/archive/2026-11-04-add-interactive-session-picker/design.md)。这是一块恢复入口的完整切片，不代表 P5 的 Markdown、reasoning、补全或 fork picker 已完成。
 
 选择器接收以 owner 锁内对操作/父取消 done channel 的非阻塞检查为线性化点；此前已取消的结果不能进入 Chat。资源仍由同一 worker 持有到最终关闭，不在锁内调用 context 实现或执行关闭。预览的原文预算和安全展示预算分别裁剪，任何省略都保留可见标记；展示不会持有被截掉的大字符串 backing storage。短屏确认保留当前选项并允许滚动目录，短屏预览允许滚过状态头部。
+
+### 助手正文的流式 Markdown 投影
+
+TUI 在 Update 中按消息身份准备布局。未提交文字按本地身份追加，持久化正文按 transcript cursor 读取。两种来源按已提交序号交接，查询等待期间保留可见行。阅读位置使用原文 UTF-8 偏移，缩放终端和切换原文时按新行宽定位。
+
+Goldmark 的块起点与围栏闭合事件决定稳定前缀。未闭合围栏先展示代码，收口后由实例词法扫描器着色。扫描器和语法树共享 32768 个节点预算，布局、映射和高亮容量共享 2 MiB。主线、历史列表、正文与命令附页共享四个查询缓存位置。超出单页的持久化正文通过原文字节范围查询浏览。
+
+展示状态由 TUI 实例拥有。继续采样时由 Provider 自身的 native history 还原请求。交互与缓存契约见 [Markdown transcript 规格](../../openspec/specs/tui/markdown-transcript/spec.md)。

@@ -1,0 +1,13 @@
+EasyCode test
+
+● [1mPlan[0m
+  • [x] inspect
+  • [ ] implement
+    [35mfunc[0m main() {
+        println([32m"你好"[0m)
+    }
+  │ name                                │ location                            │
+  │ 中文                                │ /workspace/a/very/long/path         │
+
+> |
+Enter: send | Alt+Enter/Ctrl+J: newline

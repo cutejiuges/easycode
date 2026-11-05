@@ -54,7 +54,11 @@ func renderTranscript(messages []transcriptMessage, width int) []string {
 		}
 		flush()
 		if a == nil {
-			lines = append(lines, wrapApprovalDiff(message.role+": "+commandDisplayText(message.text), width)...)
+			body := message.role + ": " + commandDisplayText(message.text)
+			if message.more {
+				body += " … [Ctrl+O for full text]"
+			}
+			lines = append(lines, wrapApprovalDiff(body, width)...)
 			continue
 		}
 		title := "● " + string(a.Tool) + "(" + commandDisplayText(a.Summary) + ")"

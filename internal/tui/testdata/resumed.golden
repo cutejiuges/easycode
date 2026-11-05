@@ -1,9 +1,9 @@
 EasyCode test
 
 User: first question
-Assistant: first answer
+● first answer
 User: second question
-Assistant: second answer
+● second answer
 
 > |
 Enter: send | Alt+Enter/Ctrl+J: newline

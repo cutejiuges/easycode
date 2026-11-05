@@ -39,11 +39,17 @@ type eventStreamClosedMsg struct{}
 type approvalSubmitErrorMsg struct{ err error }
 
 type transcriptMessage struct {
-	activity *protocol.ToolActivityPayload
-	preview  string
-	saving   string
-	role     string
-	text     string
+	unfinished  bool
+	local       uint64
+	sourceStart int
+	cursor      protocol.TranscriptCursor
+	more        bool
+	excerpt     bool
+	activity    *protocol.ToolActivityPayload
+	preview     string
+	saving      string
+	role        string
+	text        string
 }
 
 type turnState uint8
@@ -56,6 +62,9 @@ const (
 
 // Model 保存纯 UI 投影状态，不依赖 Provider 或 transport。
 type Model struct {
+	nextTextID         uint64
+	reading            transcriptViewport
+	markdown           markdownViewCache
 	queryGeneration    uint64
 	queryRequestID     protocol.RequestID
 	queryKind          protocol.CommandKind
@@ -111,7 +120,7 @@ func NewModel(
 	session ChatSession,
 ) Model {
 	model := Model{
-		version: version, session: session, submitContext: submitContext, assistantItem: -1, composer: newComposer(),
+		markdown: newMarkdownViewCache(), version: version, session: session, submitContext: submitContext, assistantItem: -1, composer: newComposer(),
 		submit: func(target ChatSession, prompt string) tea.Cmd {
 			return submitTurn(submitContext, target, prompt)
 		},
@@ -141,12 +150,33 @@ func (model Model) Init() tea.Cmd {
 
 // Update 更新纯 UI 状态，并把会话操作留给 tea.Cmd。
 func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := model.update(message)
+	updated := next.(Model)
+	updated.prepareMarkdownView()
+	updated.prepareMarkdownDetail()
+	if _, resize := message.(tea.WindowSizeMsg); !resize {
+		hydration := updated.scheduleHydration()
+		cmd = tea.Batch(cmd, hydration)
+		if updated.main.awaitingProjection && !updated.main.hydrating {
+			updated.main.awaitingProjection = false
+			updated.main.handoff = nil
+			updated.prepareMarkdownView()
+			cmd = tea.Batch(cmd, updated.scheduleHydration())
+		}
+	}
+	return updated, cmd
+}
+
+func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch value := message.(type) {
+	case transcriptHydration:
+		return model.receiveHydration(value)
 	case mainTranscriptReply:
 		return model.receiveMainTranscript(value)
 	case transcriptReply:
 		return model.receiveTranscriptPage(value)
 	case tea.WindowSizeMsg:
+		model.browser.markdown.preserveAnchor = true
 		model.width = value.Width
 		model.height = value.Height
 		model.composer.resize(value.Width, value.Height)
@@ -264,6 +294,9 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if model.detailOpen {
 		return model.handleTranscriptBrowserKey(key)
 	}
+	if key.Type == tea.KeyPgUp || key.Type == tea.KeyPgDown {
+		return model.navigateTranscript(key)
+	}
 	if key.Type == tea.KeyCtrlC && model.activeCompactionID.Valid() {
 		model.compactionStatus = "Cancelling compaction — waiting for cleanup"
 		return model, model.cancelActiveCompaction()
@@ -312,7 +345,7 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if model.activeTurnID.Valid() || model.activeCompactionID.Valid() || model.composer.text != "" {
 			return model, nil
 		}
-		return model, tea.Quit
+		return model.quitTranscript()
 	case composerSubmit:
 		if model.session == nil {
 			return model, nil
@@ -524,10 +557,15 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 			return model, nil
 		}
 		if model.assistantItem < 0 {
-			model.transcript = append(model.transcript, transcriptMessage{role: "Assistant"})
+			model.nextTextID++
+			model.transcript = append(model.transcript, transcriptMessage{role: "Assistant", local: model.nextTextID})
 			model.assistantItem = len(model.transcript) - 1
 		}
-		model.transcript[model.assistantItem].text = appendProvisionalText(model.transcript[model.assistantItem].text, payload.Text)
+		item := &model.transcript[model.assistantItem]
+		item.excerpt = item.excerpt || len(item.text)+len(payload.Text) > 64<<10
+		total := len(item.text) + len(payload.Text)
+		item.text = appendProvisionalText(item.text, payload.Text)
+		item.sourceStart += total - len(item.text)
 	case protocol.EventTurnCompleted:
 		if _, err := protocol.DecodeTurnCompleted(event); err != nil {
 			model.state = stateIdle
@@ -542,7 +580,7 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 		terminal = true
 	case protocol.EventTurnFailed:
 		if model.assistantItem >= 0 {
-			model.transcript[model.assistantItem].role = "Assistant (unfinished)"
+			model.transcript[model.assistantItem].unfinished = true
 		}
 		payload, err := protocol.DecodeTurnFailed(event)
 		if err != nil {
@@ -617,15 +655,19 @@ func (model Model) View() string {
 		view.WriteByte('\n')
 	}
 	view.WriteString("\n")
-	messages := model.visibleTranscript()
-	lines := renderTranscript(messages, model.widthOrDefault())
-	statusLines := 0
-	if model.compactionStatus != "" {
-		statusLines = strings.Count(ansi.Hardwrap(model.compactionStatus, model.widthOrDefault(), true), "\n") + 1
+	lines := model.markdown.lines
+	available := model.transcriptHeight()
+	start := max(0, len(lines)-available)
+	if model.reading.detached {
+		start = min(model.reading.scroll, max(0, len(lines)-available))
 	}
-	available := max(1, model.heightOrDefault()-strings.Count(model.composer.view(true), "\n")-strings.Count(model.renderInputs(), "\n")-5-statusLines)
-	if len(lines) > available {
-		lines = lines[len(lines)-available:]
+	lines = lines[start:min(len(lines), start+available)]
+	if model.reading.notice != "" {
+		view.WriteString(ansi.Truncate(model.reading.notice, model.widthOrDefault(), "…") + "\n")
+	} else if model.reading.newContent {
+		view.WriteString(ansi.Truncate("New content · PgDn to return to live output", model.widthOrDefault(), "…") + "\n")
+	} else if model.reading.detached {
+		view.WriteString(ansi.Truncate("Reading history · PgDn to return to live output", model.widthOrDefault(), "…") + "\n")
 	}
 	view.WriteString(strings.Join(lines, "\n"))
 	if len(lines) > 0 {

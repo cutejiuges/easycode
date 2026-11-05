@@ -1,0 +1,5 @@
+Change 'add-streaming-markdown-transcript' is valid
+Specification 'tui/markdown-transcript' is valid
+ℹ [INFO] requirements[1]: Requirement text is very long (>500 characters). Consider breaking it down.
+Specification 'tui/tool-transcript' is valid
+ℹ [INFO] requirements[3]: Requirement text is very long (>500 characters). Consider breaking it down.
