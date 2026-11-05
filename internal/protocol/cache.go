@@ -79,7 +79,7 @@ type CacheSnapshotPayload struct {
 	Wire                string                   `json:"wire"`
 	Model               string                   `json:"model"`
 	Policy              CachePolicyPayload       `json:"policy"`
-	Sources             [5]CacheSourcePayload    `json:"sources"`
+	Sources             [6]CacheSourcePayload    `json:"sources"`
 	StableFingerprint   string                   `json:"stable_fingerprint"`
 	ContentFingerprint  string                   `json:"content_fingerprint"`
 	ChangeReason        string                   `json:"change_reason"`
@@ -114,13 +114,13 @@ func (p CacheSnapshotPayload) Validate() error {
 	if p.Activity != "idle" && p.Activity != "turn" && p.Activity != "compacting" {
 		return fmt.Errorf("cache activity is invalid")
 	}
-	order := [5]string{"provider_profile", "tool_catalog", "project_instructions", "committed_history", "current_input"}
+	order := [6]string{"provider_profile", "tool_catalog", "project_instructions", "skill_catalog", "committed_history", "current_input"}
 	for i, s := range p.Sources {
 		if s.Kind != order[i] {
 			return fmt.Errorf("cache source order is invalid")
 		}
 		if !s.Present {
-			if i != 2 || s.Revision != "" || s.Fingerprint != "" {
+			if (i != 2 && i != 3) || s.Revision != "" || s.Fingerprint != "" {
 				return fmt.Errorf("cache source is missing")
 			}
 			continue
@@ -226,7 +226,7 @@ func DecodeCacheSnapshot(event Event) (CacheSnapshotPayload, error) {
 	var shape struct {
 		Sources []json.RawMessage `json:"sources"`
 	}
-	if err := codec.Unmarshal(event.Payload, &shape); err != nil || len(shape.Sources) != 5 {
+	if err := codec.Unmarshal(event.Payload, &shape); err != nil || len(shape.Sources) != 6 {
 		return payload, fmt.Errorf("cache snapshot source count is invalid")
 	}
 	if err := codec.UnmarshalRecord(event.Payload, &payload); err != nil {

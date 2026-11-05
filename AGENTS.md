@@ -58,7 +58,6 @@ explore -> propose -> review/confirm -> apply -> verify -> archive
 - `internal/extension/hook/hook.go`
 - `internal/extension/mcp/mcp.go`
 - `internal/extension/plugin/plugin.go`
-- `internal/extension/skill/skill.go`
 - `internal/subagent/control.go`
 - `internal/telemetry/logger.go`
 

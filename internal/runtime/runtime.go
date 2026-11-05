@@ -47,6 +47,9 @@ type ContextPlanner interface {
 
 // Config 固定一个 Session-bound Runtime 的身份与 durable 边界。
 type Config struct {
+	SkillExecutor             tool.SkillExecutor
+	SkillPreparer             SkillPreparer
+	SkillCatalog              domain.SkillCatalog
 	AutoCompactionPolicy      contextplan.AutoCompactionPolicy
 	CompactionHistory         CompactionHistoryObserver
 	CompactionOutputTokens    uint64
@@ -83,6 +86,10 @@ type Config struct {
 
 // Runtime 持有一条会话级 Provider Conversation 和同一 thread journal。
 type Runtime struct {
+	skillExecutor                tool.SkillExecutor
+	skillPreparer                SkillPreparer
+	skillCatalog                 domain.SkillCatalog
+	explicitSkills               []domain.SkillAttachment
 	cachePublisher               func(protocol.CacheSnapshotPayload)
 	cachePolicy                  domain.CachePolicy
 	restoredCacheBaseline        bool
@@ -167,7 +174,10 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 	if _, err := config.ToolCatalog.View(conversation.Family()); err != nil {
 		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "runtime tool catalog Provider view is invalid", err)
 	}
-	if config.ReadArtifactExecutor == nil || config.ReadExecutor == nil || config.GlobExecutor == nil || config.GrepExecutor == nil {
+	if config.SkillCatalog.Validate() != nil {
+		return nil, fault.New(fault.CodeInvalidConfiguration, "runtime skill catalog is invalid")
+	}
+	if config.SkillExecutor == nil || config.ReadArtifactExecutor == nil || config.ReadExecutor == nil || config.GlobExecutor == nil || config.GrepExecutor == nil {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "runtime read-only executors are not configured")
 	}
 	if config.PatchPreparer == nil || config.PatchExecutor == nil || config.WritePreparer == nil || config.WriteExecutor == nil || config.ExecPreparer == nil || config.ExecExecutor == nil || config.ToolPolicy == nil {
@@ -212,9 +222,10 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 		compactionOutputTokens: config.CompactionOutputTokens,
 		toolHistory:            config.ToolHistory,
 		readArtifactExecutor:   config.ReadArtifactExecutor,
-		textOutputStore:        config.TextOutputStore,
-		artifactReferences:     config.ArtifactReferences,
-		conversation:           conversation, journal: config.Journal,
+		skillExecutor:          config.SkillExecutor, skillPreparer: config.SkillPreparer, skillCatalog: config.SkillCatalog.Clone(),
+		textOutputStore:    config.TextOutputStore,
+		artifactReferences: config.ArtifactReferences,
+		conversation:       conversation, journal: config.Journal,
 		sessionID: config.SessionID, threadID: config.ThreadID, newTurnID: config.GenerateTurnID,
 		newInvocationID: config.GenerateInvocationID,
 		cachePolicy:     domain.WithDefaultCachePolicy(config.CachePolicy), restoredCacheBaseline: config.RestoredCacheBaseline,
@@ -238,6 +249,8 @@ func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, 
 		return fault.New(fault.CodeTurnFailed, "conversation already has an active turn")
 	}
 	defer runtime.active.Store(false)
+	runtime.explicitSkills = nil
+	defer func() { runtime.explicitSkills = nil }()
 	defer func() {
 		if resultErr != nil || ctx.Err() != nil {
 			if resetter, ok := runtime.conversation.(provider.ContinuationResetter); ok {
@@ -943,6 +956,9 @@ func (runtime *Runtime) executeReadBatch(ctx context.Context, turnID domain.Turn
 
 func (runtime *Runtime) executeInvocation(ctx context.Context, invocation tool.Invocation, capture tool.TextOutputCapture) (tool.ReadonlyMaterial, error) {
 	switch invocation.Capability() {
+	case tool.CapabilitySkill:
+		v, _ := invocation.Skill()
+		return tool.NewSkillMaterial(runtime.skillExecutor.Execute(ctx, v, append([]domain.SkillAttachment(nil), runtime.explicitSkills...)))
 	case tool.CapabilityReadArtifact:
 		v, _ := invocation.ReadArtifact()
 		return tool.NewArtifactMaterial(runtime.readArtifactExecutor.Execute(ctx, v))

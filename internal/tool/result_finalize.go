@@ -1,6 +1,7 @@
 package tool
 
 import (
+	"easycode/internal/domain"
 	"errors"
 	"fmt"
 )
@@ -13,6 +14,11 @@ func FinalizeResult(r InvocationResult, allowance int, reason BudgetReason) (Inv
 	}
 	if len(r.preview.text) > allowance {
 		switch r.capability {
+		case CapabilitySkill:
+			r.status, r.code = ResultError, "result_budget_exceeded"
+			r.preview = ModelPreview{text: "Skill failed: result_budget_exceeded; complete instructions were not loaded"}
+			r.skillAttachment = domain.SkillAttachment{}
+			reason = BudgetRejected
 		case CapabilityRead:
 			r.status, r.code = ResultError, "result_budget_exceeded"
 			r.preview = ModelPreview{text: "Read failed: result_budget_exceeded; retry with a smaller limit and explicit offset"}

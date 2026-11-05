@@ -30,6 +30,10 @@ func (runtime *Runtime) planWindow(view domain.ActiveContextView, footprint doma
 	if err != nil {
 		return contextplan.ContextPlan{}, err
 	}
+	input, err = input.WithSkillCatalog(runtime.skillCatalog)
+	if err != nil {
+		return contextplan.ContextPlan{}, err
+	}
 	return runtime.planner.Plan(input)
 }
 func (runtime *Runtime) contextSnapshot() (protocol.ContextSnapshotPayload, error) {
@@ -79,11 +83,7 @@ func (runtime *Runtime) preflightCompaction(instructions string) (compactionAdmi
 	if !ok {
 		return compactionAdmission{}, protocol.ControlErrorInvalidCommand
 	}
-	sampling, err := provider.NewSamplingInput().WithProjectInstructions(runtime.projectInstructions)
-	if err != nil {
-		return compactionAdmission{}, protocol.ControlErrorInvalidCommand
-	}
-	sampling, err = sampling.WithToolCatalog(runtime.toolCatalog)
+	sampling, err := runtime.samplingInput()
 	if err != nil {
 		return compactionAdmission{}, protocol.ControlErrorInvalidCommand
 	}

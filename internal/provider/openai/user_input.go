@@ -82,6 +82,15 @@ func (conversation *Conversation) compileSamplingRequest(history []nativeHistory
 		return codec.CanonicalJSON{}, err
 	}
 	request := buildResponsesRequest(conversation.provider.config.Model, history, instructions, view)
+	if c := input.SkillCatalog(); c.HasEntries() {
+		index := 0
+		if instructions != nil && instructions.HasDocuments() {
+			index = 1
+		}
+		items := append([]NativeItem(nil), request.Input[:index]...)
+		items = append(items, NewUserItem(c.RenderedText()))
+		request.Input = append(items, request.Input[index:]...)
+	}
 	if conversation.provider.config.CachePolicy.Key() == domain.OpenAICacheThread {
 		request.PromptCacheKey, err = domain.ThreadCacheKey(conversation.threadID)
 		if err != nil {
@@ -111,6 +120,10 @@ func userInputEntry(a domain.InputAssociation, inputs []domain.UserInput) (nativ
 	entry := nativeHistoryEntry{Kind: nativeHistoryUserInputs, TurnID: a.TurnID(), InputMetadata: &metadata, UserInputs: make([]NativeItem, len(inputs))}
 	for i, input := range inputs {
 		entry.UserInputs[i] = NewUserItem(input.Text())
+		if a, ok := input.SkillAttachment(); ok {
+			entry.UserInputs[i].Content = append(entry.UserInputs[i].Content, ContentPart{Type: "input_text", Text: a.Content})
+			metadata.Skills = append(metadata.Skills, provider.InputSkillMetadata{InputID: input.ID(), Attachment: a})
+		}
 	}
 	return entry, nil
 }

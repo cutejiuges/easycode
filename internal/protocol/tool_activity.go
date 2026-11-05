@@ -8,7 +8,7 @@ import (
 	"easycode/internal/codec"
 )
 
-// ToolActivityPayload 保存七工具活动的有界语义投影。
+// ToolActivityPayload 保存八工具活动的有界语义投影。
 type ToolActivityPayload struct {
 	Tool          ToolName `json:"tool"`
 	Target        string   `json:"target"`

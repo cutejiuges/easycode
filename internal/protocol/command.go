@@ -57,6 +57,8 @@ func (id RequestID) Valid() bool {
 
 // Command 是封闭的 Runtime 输入命令值对象。
 type Command struct {
+	skillAttachment      domain.SkillAttachment
+	hasSkillAttachment   bool
 	instructions         string
 	expectedCompactionID domain.CompactionID
 	kind                 CommandKind
@@ -126,6 +128,13 @@ func (command Command) Feedback() string                   { return command.feed
 
 // Validate 验证命令 kind 和专属 payload。
 func (command Command) Validate() error {
+	if command.hasSkillAttachment {
+		if (command.kind != CommandSubmitInput && command.kind != CommandSubmitConversationalInput) || command.skillAttachment.Validate() != nil || command.InputByteSize() > MaxInputBytes {
+			return fmt.Errorf("invalid Skill attachment")
+		}
+	} else if command.skillAttachment != (domain.SkillAttachment{}) {
+		return fmt.Errorf("unexpected Skill attachment")
+	}
 	if !command.requestID.Valid() {
 		return fmt.Errorf("command request ID is invalid")
 	}
@@ -258,4 +267,21 @@ func (command Command) Instructions() string { return command.instructions }
 // ExpectedCompactionID 返回定向取消目标。
 func (command Command) ExpectedCompactionID() domain.CompactionID {
 	return command.expectedCompactionID
+}
+
+// WithSkillAttachment 冻结宿主在接收前准备的技能正文。
+func (command Command) WithSkillAttachment(a domain.SkillAttachment) (Command, error) {
+	command.skillAttachment = a
+	command.hasSkillAttachment = true
+	return command, command.Validate()
+}
+
+// SkillAttachment 返回只读值副本。
+func (command Command) SkillAttachment() (domain.SkillAttachment, bool) {
+	return command.skillAttachment, command.hasSkillAttachment
+}
+
+// InputByteSize 包含原文和附件的完整预算。
+func (command Command) InputByteSize() int {
+	return len(command.text) + command.skillAttachment.ByteSize()
 }

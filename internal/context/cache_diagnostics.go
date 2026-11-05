@@ -15,15 +15,15 @@ type CacheSourceStamp struct {
 	Fingerprint string     `json:"fingerprint"`
 }
 
-// CacheSources 固定保存当前五种来源，内存不随会话长度增长。
+// CacheSources 固定保存当前六种来源，内存不随会话长度增长。
 type CacheSources struct {
-	Sources            [5]CacheSourceStamp `json:"sources"`
+	Sources            [6]CacheSourceStamp `json:"sources"`
 	StableFingerprint  string              `json:"stable_fingerprint"`
 	ContentFingerprint string              `json:"content_fingerprint"`
 }
 
-func cacheSourceOrder() [5]SourceKind {
-	return [5]SourceKind{SourceProviderProfile, SourceToolCatalog, SourceProjectInstructions, SourceCommittedHistory, SourceCurrentInput}
+func cacheSourceOrder() [6]SourceKind {
+	return [6]SourceKind{SourceProviderProfile, SourceToolCatalog, SourceProjectInstructions, SourceSkillCatalog, SourceCommittedHistory, SourceCurrentInput}
 }
 
 // NewCacheSources 从已冻结计划提取有界来源，不保留 canonical 正文。
@@ -62,7 +62,7 @@ func (s CacheSources) Validate() error {
 			return fmt.Errorf("cache source order is invalid")
 		}
 		if !source.Present {
-			if kind != SourceProjectInstructions || source.Revision != "" || source.Fingerprint != "" {
+			if (kind != SourceProjectInstructions && kind != SourceSkillCatalog) || source.Revision != "" || source.Fingerprint != "" {
 				return fmt.Errorf("cache source is missing")
 			}
 			continue

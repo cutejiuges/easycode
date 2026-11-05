@@ -17,6 +17,7 @@ import (
 	contextplan "easycode/internal/context"
 	"easycode/internal/context/projectinstructions"
 	"easycode/internal/domain"
+	"easycode/internal/extension/skill"
 	"easycode/internal/fault"
 	"easycode/internal/headless"
 	"easycode/internal/provider"
@@ -71,6 +72,7 @@ type providerResource interface {
 }
 
 type chatResources struct {
+	skills            []domain.SkillListEntry
 	identity          session.Identity
 	provider          providerResource
 	workspace         *builtin.Workspace
@@ -206,7 +208,7 @@ func runStreamJSON(ctx context.Context, options Options, resources *chatResource
 	if err != nil {
 		return runtimeFailure(err)
 	}
-	runner, err := headless.NewStreamRunner(loop, headless.StreamRunConfig{
+	runner, err := headless.NewStreamRunner(preparedControl{loop, resources.runtime}, headless.StreamRunConfig{
 		SessionID: resources.identity.SessionID, ThreadID: resources.identity.ThreadID,
 		Resumed: resources.resumed, Input: input, Output: options.Output, OutputCloser: outputCloser,
 	})
@@ -459,8 +461,17 @@ func openChatResourcesWithSnapshot(
 		return nil, fault.New(fault.CodeInvalidConfiguration, "Exec executor is unavailable")
 	}
 	execExecutor = &commandArtifactBoundary{layout: artifactLayout, executor: execExecutor}
+	skillSource := skill.NewLocal()
+	home, homeErr := os.UserHomeDir()
+	if homeErr != nil {
+		return nil, homeErr
+	}
+	if err := skillSource.Load(ctx, creationCWD, home); err != nil {
+		return nil, err
+	}
+	skillReader := skillExecutor{skillSource}
 	toolCatalog, err := builtin.NewCatalog(
-		readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, writePreparer, writeExecutor, execPreparer, execExecutor, tool.RenderExecOutput, toolPolicy, readArtifactExecutor,
+		readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, writePreparer, writeExecutor, execPreparer, execExecutor, tool.RenderExecOutput, toolPolicy, readArtifactExecutor, skillReader,
 	)
 	if err != nil {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "tool catalog is invalid")
@@ -494,6 +505,7 @@ func openChatResourcesWithSnapshot(
 		ToolCatalog:          toolCatalog,
 		ReadExecutor:         readExecutor,
 		ReadArtifactExecutor: readArtifactExecutor,
+		SkillExecutor:        skillReader, SkillPreparer: skillInputPreparer{skillSource}, SkillCatalog: skillSource.Catalog(),
 		GlobExecutor:         globExecutor,
 		GrepExecutor:         grepExecutor,
 		PatchPreparer:        patchPreparer,
@@ -523,7 +535,7 @@ func openChatResourcesWithSnapshot(
 		artifactLayout: artifactLayout, artifactStore: artifactStore, transcriptQueries: queries,
 		identity: assembled.identity,
 		provider: providerInstance, workspace: workspace, service: service, writer: assembled.writer,
-		runtime: runtimeInstance, session: chatRuntime.NewChatSession(runtimeInstance), history: assembled.history,
+		skills: skillSource.Entries(), runtime: runtimeInstance, session: chatRuntime.NewChatSession(runtimeInstance), history: assembled.history,
 		repair: assembled.repair, resumed: resumeThreadID != "",
 	}
 	cleanup.release()
@@ -721,5 +733,5 @@ func assembleChatModel(ctx context.Context, resources *chatResources) (tui.Model
 		return tui.Model{}, err
 	}
 	resources.session = control
-	return tui.NewModel(ctx, Version, control).WithInputHistory(resources.history).WithTranscriptQueries(resources.identity.ThreadID, resources.transcriptQueries), nil
+	return tui.NewModel(ctx, Version, control).WithSkills(resources.skills).WithInputHistory(resources.history).WithTranscriptQueries(resources.identity.ThreadID, resources.transcriptQueries), nil
 }

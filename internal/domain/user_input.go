@@ -31,8 +31,10 @@ func (id InputID) Valid() bool {
 
 // UserInput 是保留原始正文的不可变用户输入。
 type UserInput struct {
-	id   InputID
-	text string
+	attachment    SkillAttachment
+	hasAttachment bool
+	id            InputID
+	text          string
 }
 
 // NewUserInput 纯内存校验身份和正文，不规范化或裁剪文本。
@@ -54,6 +56,16 @@ func (input UserInput) Text() string { return input.text }
 func (input UserInput) Validate() error {
 	if !input.id.Valid() {
 		return fmt.Errorf("input ID is invalid")
+	}
+	if input.hasAttachment {
+		if err := input.attachment.Validate(); err != nil {
+			return err
+		}
+	} else if input.attachment != (SkillAttachment{}) {
+		return fmt.Errorf("unexpected Skill attachment")
+	}
+	if input.ByteSize() > MaxUserInputBytes {
+		return fmt.Errorf("input exceeds byte limit")
 	}
 	return ValidateUserText(input.text)
 }
@@ -149,3 +161,20 @@ const (
 	NativeCommitSample      NativeCommitRole = "sample"
 	NativeCommitToolOutputs NativeCommitRole = "tool_outputs"
 )
+
+// WithSkillAttachment 将准备好的正文冻结到输入，不执行 I/O。
+func (input UserInput) WithSkillAttachment(a SkillAttachment) (UserInput, error) {
+	input.attachment = a
+	input.hasAttachment = true
+	return input, input.Validate()
+}
+
+// SkillAttachment 返回独立的值副本。
+func (input UserInput) SkillAttachment() (SkillAttachment, bool) {
+	return input.attachment, input.hasAttachment
+}
+
+// ByteSize 对原文和完整附件同时计费。
+func (input UserInput) ByteSize() int {
+	return len(input.text) + input.attachment.ByteSize()
+}

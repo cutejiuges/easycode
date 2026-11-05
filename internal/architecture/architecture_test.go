@@ -25,7 +25,6 @@ var placeholderFiles = map[string]string{
 	"internal/extension/hook/hook.go":     "P6",
 	"internal/extension/mcp/mcp.go":       "P6",
 	"internal/extension/plugin/plugin.go": "P6",
-	"internal/extension/skill/skill.go":   "P6",
 	"internal/subagent/control.go":        "P7",
 	"internal/telemetry/logger.go":        "P8",
 }
@@ -35,7 +34,6 @@ var placeholderOnlyPackages = map[string]struct{}{
 	"easycode/internal/extension/hook":   {},
 	"easycode/internal/extension/mcp":    {},
 	"easycode/internal/extension/plugin": {},
-	"easycode/internal/extension/skill":  {},
 	"easycode/internal/subagent":         {},
 	"easycode/internal/telemetry":        {},
 }

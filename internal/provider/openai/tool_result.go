@@ -63,6 +63,8 @@ func openAICapabilityForName(name string) tool.CapabilityID {
 	switch name {
 	case "exec_command":
 		return tool.CapabilityExec
+	case "Skill":
+		return tool.CapabilitySkill
 	case "ReadArtifact":
 		return tool.CapabilityReadArtifact
 	case "Read":

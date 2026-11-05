@@ -75,6 +75,7 @@ type samplingRequestPlan struct {
 	request messagesRequest
 	history []nativeHistoryEntry
 	project bool
+	skills  bool
 }
 
 func (conversation *Conversation) planSamplingRequest(history []nativeHistoryEntry, input provider.TurnInput) (samplingRequestPlan, error) {
@@ -95,7 +96,18 @@ func (conversation *Conversation) planSamplingRequest(history []nativeHistoryEnt
 	if err != nil {
 		return samplingRequestPlan{}, err
 	}
-	return samplingRequestPlan{request: buildMessagesRequest(conversation.provider.config.Model, conversation.provider.config.MaxOutputTokens, history, instructions, view), history: history, project: instructions != nil && instructions.HasDocuments()}, nil
+	plan := samplingRequestPlan{request: buildMessagesRequest(conversation.provider.config.Model, conversation.provider.config.MaxOutputTokens, history, instructions, view), history: history, project: instructions != nil && instructions.HasDocuments()}
+	if c := input.SkillCatalog(); c.HasEntries() {
+		index := 0
+		if plan.project {
+			index = 1
+		}
+		messages := append([]nativeMessage(nil), plan.request.Messages[:index]...)
+		messages = append(messages, newUserMessage(c.RenderedText()))
+		plan.request.Messages = append(messages, plan.request.Messages[index:]...)
+		plan.skills = true
+	}
+	return plan, nil
 }
 
 // EncodeUserInputs 不读取会话状态，仅验证用户消息的可表示性。
@@ -118,6 +130,10 @@ func userInputEntry(a domain.InputAssociation, inputs []domain.UserInput) (nativ
 	entry := nativeHistoryEntry{Kind: nativeHistoryUserInputs, TurnID: a.TurnID(), InputMetadata: &metadata, UserInputs: make([]nativeMessage, len(inputs))}
 	for i, input := range inputs {
 		entry.UserInputs[i] = newUserMessage(input.Text())
+		if a, ok := input.SkillAttachment(); ok {
+			entry.UserInputs[i].Content = append(entry.UserInputs[i].Content, NativeItem{Type: "text", Text: a.Content})
+			metadata.Skills = append(metadata.Skills, provider.InputSkillMetadata{InputID: input.ID(), Attachment: a})
+		}
 	}
 	return entry, nil
 }

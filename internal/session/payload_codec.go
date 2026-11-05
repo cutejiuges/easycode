@@ -2,6 +2,7 @@ package session
 
 import (
 	"easycode/internal/codec"
+	"easycode/internal/domain"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -78,8 +79,11 @@ func DecodeToolCallReadyPayload(record Record) (ToolCallReadyPayload, error) {
 	return payload, nil
 }
 
-// Domain 重建已经分配 identity 的三工具 typed invocation。
+// Domain 重建已经分配 identity 的八工具 typed invocation。
 func (payload ToolCallReadyPayload) Domain() (tool.Invocation, error) {
+	if payload.Capability != tool.CapabilitySkill && payload.SkillInput != nil {
+		return tool.Invocation{}, fmt.Errorf("unexpected Skill input")
+	}
 	if payload.Capability != tool.CapabilityReadArtifact && payload.ReadArtifactInput != nil {
 		return tool.Invocation{}, fmt.Errorf("unexpected artifact input")
 	}
@@ -95,6 +99,15 @@ func (payload ToolCallReadyPayload) Domain() (tool.Invocation, error) {
 	var ready tool.ReadyCall
 	var err error
 	switch payload.Capability {
+	case tool.CapabilitySkill:
+		if payload.SkillInput == nil || payload.WireKind != tool.WireStructured || payload.ReadArtifactInput != nil || payload.ReadInput != nil || payload.GlobInput != nil || payload.GrepInput != nil || payload.PatchInput != nil || payload.ExecInput != nil || payload.WriteInput != nil {
+			return tool.Invocation{}, fmt.Errorf("invalid Skill input union")
+		}
+		input, e := payload.SkillInput.Domain()
+		if e != nil {
+			return tool.Invocation{}, e
+		}
+		ready, err = tool.NewSkillReadyCall(payload.ProviderCallID, input)
 	case tool.CapabilityReadArtifact:
 		if payload.WireKind != tool.WireStructured || payload.ReadArtifactInput == nil || payload.ReadInput != nil || payload.GlobInput != nil || payload.GrepInput != nil || payload.PatchInput != nil || payload.WriteInput != nil || payload.ExecInput != nil {
 			return tool.Invocation{}, fmt.Errorf("invalid artifact input union")
@@ -299,6 +312,9 @@ func (payload ToolCallResultPayload) Domain(invocation tool.Invocation) (tool.In
 }
 
 func decodeResultPayload(payload ToolCallResultPayload, invocation tool.Invocation) (tool.InvocationResult, error) {
+	if payload.Capability != tool.CapabilitySkill && payload.SkillMetadata != nil {
+		return tool.InvocationResult{}, fmt.Errorf("unexpected Skill metadata")
+	}
 	if payload.Capability != tool.CapabilityReadArtifact && payload.ReadArtifactMetadata != nil {
 		return tool.InvocationResult{}, fmt.Errorf("unexpected artifact metadata")
 	}
@@ -314,6 +330,20 @@ func decodeResultPayload(payload ToolCallResultPayload, invocation tool.Invocati
 	}
 	var result tool.InvocationResult
 	switch payload.Capability {
+	case tool.CapabilitySkill:
+		if payload.SkillMetadata == nil || payload.ReadArtifactMetadata != nil || payload.ReadMetadata != nil || payload.GlobMetadata != nil || payload.GrepMetadata != nil || payload.PatchMetadata != nil || payload.WriteMetadata != nil || payload.ExecMetadata != nil {
+			return tool.InvocationResult{}, fmt.Errorf("invalid Skill result union")
+		}
+		v, _ := invocation.Skill()
+		input, e := payload.SkillMetadata.Input.Domain()
+		if e != nil || input != v.Input() {
+			return tool.InvocationResult{}, fmt.Errorf("skill input mismatch")
+		}
+		var a domain.SkillAttachment
+		if payload.SkillMetadata.Attachment != nil {
+			a = *payload.SkillMetadata.Attachment
+		}
+		result, err = tool.NewSkillInvocationResult(v, payload.Status, payload.Code, preview, a)
 	case tool.CapabilityReadArtifact:
 		if payload.WireKind != tool.WireStructured || payload.ReadArtifactMetadata == nil || payload.ReadMetadata != nil || payload.GlobMetadata != nil || payload.GrepMetadata != nil || payload.PatchMetadata != nil || payload.WriteMetadata != nil || payload.ExecMetadata != nil {
 			return tool.InvocationResult{}, fmt.Errorf("invalid artifact result union")
@@ -392,6 +422,15 @@ func validationInvocation(payload ToolCallResultPayload) (tool.Invocation, error
 	var ready tool.ReadyCall
 	var err error
 	switch payload.Capability {
+	case tool.CapabilitySkill:
+		if payload.SkillMetadata == nil {
+			return tool.Invocation{}, fmt.Errorf("missing Skill metadata")
+		}
+		input, e := payload.SkillMetadata.Input.Domain()
+		if e != nil {
+			return tool.Invocation{}, e
+		}
+		ready, err = tool.NewSkillReadyCall(callID, input)
 	case tool.CapabilityReadArtifact:
 		if payload.ReadArtifactMetadata == nil {
 			return tool.Invocation{}, fmt.Errorf("missing artifact metadata")

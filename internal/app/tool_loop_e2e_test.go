@@ -777,7 +777,7 @@ func assertOpenAIToolContinuation(t *testing.T, body []byte) {
 	if err := json.Unmarshal(body, &request); err != nil {
 		t.Fatal(err)
 	}
-	if len(request.Tools) != 7 || request.Tools[0].Name != "ReadArtifact" || request.Tools[1].Type != "function" || request.Tools[1].Name != "Glob" ||
+	if len(request.Tools) != 8 || request.Tools[0].Name != "ReadArtifact" || request.Tools[1].Type != "function" || request.Tools[1].Name != "Glob" ||
 		request.Tools[2].Type != "function" || request.Tools[2].Name != "Grep" ||
 		request.Tools[3].Type != "custom" || request.Tools[3].Name != "apply_patch" ||
 		request.Tools[4].Type != "function" || request.Tools[4].Name != "Read" || request.Tools[5].Name != "Write" ||
@@ -819,7 +819,7 @@ func assertAnthropicToolContinuation(t *testing.T, body []byte) {
 	if err := json.Unmarshal(body, &request); err != nil {
 		t.Fatal(err)
 	}
-	if len(request.Tools) != 7 || request.Tools[0].Name != "ReadArtifact" || request.Tools[1].Name != "Glob" || request.Tools[2].Name != "Grep" ||
+	if len(request.Tools) != 8 || request.Tools[0].Name != "ReadArtifact" || request.Tools[1].Name != "Glob" || request.Tools[2].Name != "Grep" ||
 		request.Tools[3].Name != "Edit" || request.Tools[4].Name != "Read" || request.Tools[5].Name != "Write" ||
 		request.Tools[6].Name != "Bash" || len(request.Messages) != 3 {
 		t.Fatalf("Anthropic continuation shape = %s", body)

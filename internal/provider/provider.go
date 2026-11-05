@@ -35,6 +35,7 @@ type Capabilities struct {
 
 // TurnInput 是共享 turn 模板交给 Provider Kernel 的最小输入。
 type TurnInput struct {
+	skillCatalog           domain.SkillCatalog
 	projectInstructions    domain.ProjectInstructionsSnapshot
 	hasProjectInstructions bool
 	toolCatalog            tool.CatalogSnapshot
@@ -570,3 +571,15 @@ func (sample *PreparedSample) Receipt() (domain.RequestReceipt, error) {
 
 // ContinuationResetter 由持有瞬态续写资源的 Conversation 实现显式生命周期清理。
 type ContinuationResetter interface{ ResetContinuation() }
+
+// WithSkillCatalog 绑定不可变的本地技能元数据目录。
+func (input TurnInput) WithSkillCatalog(c domain.SkillCatalog) (TurnInput, error) {
+	if err := c.Validate(); err != nil {
+		return TurnInput{}, err
+	}
+	input.skillCatalog = c.Clone()
+	return input, nil
+}
+
+// SkillCatalog 返回不共享切片的目录。
+func (input TurnInput) SkillCatalog() domain.SkillCatalog { return input.skillCatalog.Clone() }

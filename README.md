@@ -47,9 +47,22 @@ TUI 将 CRLF/CR 规范化为 LF，保留缩进、Tab、尾空格及尾换行；�
 | 安全配置 | 已实现 JSON 配置、环境变量覆盖、API key 脱敏，以及 macOS/Linux 上绑定实际句柄的 no-follow 校验；其他平台当前安全失败关闭 |
 | Tools | 已实现 Read/Glob/Grep、Anthropic Edit / OpenAI custom apply_patch、双 Provider structured Write，以及 Darwin 前台 Exec（Anthropic Bash / OpenAI exec_command）；只读最多 8 路并行，Patch/Write/Exec 独占、有序提交并需批准 |
 | Session | 已实现 append-only JSONL、唯一当前无版本格式的强类型 draft/decoder、UUIDv7、跨进程 lease、同句柄 load/repair/write、`Sync`、尾部修复、fixture、显式恢复，以及可从 JSONL 重建的 SQLite Catalog、`--continue` 与离线 `sessions list`，以及 `resume` 启动选择器和有界元数据搜索/只读文本预览；全文搜索尚未实现 |
-| 扩展系统 | P6 目标；Hooks、Plugins、Skills 和 MCP 目前仅为经批准的 TODO 占位，未接入 Runtime/app |
+| 扩展系统 | P6 目标；本地 Skills 已实现发现、显式调用、按需工具读取和原生恢复；Hooks、Plugins 和 MCP 仍为经批准的 TODO 占位 |
 | Subagent | P7 目标；当前仅为经批准的 TODO 控制边界，调度、线程树和生命周期尚未实现 |
 | Telemetry | P8 目标；当前 logger 仅为经批准的 TODO 占位，未接入请求正文、Session 或运行时链路 |
+
+本地 Skills 支持 `/<name> 参数` 和 `$name 参数`。TUI 中输入 `/skills` 查看来源与诊断，Enter 只填入输入框，再次提交才执行。启动时扫描用户 `~/.config/easycode/skills`、`~/.agents/skills`、`~/.claude/skills`，以及项目根到当前目录内的 `.easycode/skills`、`.agents/skills`、`.claude/skills`；每个技能为直接子目录中的 `SKILL.md`。项目优先用户、近目录优先远目录，同层 EasyCode > agents > Claude，损坏的优先项不会回退。
+
+```markdown
+---
+name: review-local
+description: Review the current local changes
+argument-hint: scope
+---
+Review $ARGUMENTS. Explain findings and run the relevant tests.
+```
+
+仅支持静态 frontmatter：`name`、`description`、`argument-hint`、`user-invocable`、`disable-model-invocation`、`license` 和字符串 `metadata`。不支持的行为字段会禁用该条目。模型目录只包含元数据；Skill 工具加载完整正文或同来源相对资源，不提升工具权限。manual-only 技能仅在当前 turn 的显式附件成功持久化后，允许同来源、同 revision 的辅助资源读取。参数仅作字面量替换，不执行 shell。目录在启动时冻结，修改后重启；已提交附件和工具正文从 Session 恢复，不重读文件。
 
 完整阶段和验收标准见[产品 Roadmap](docs/roadmap/product-roadmap.md)。
 
@@ -264,7 +277,7 @@ Write 输入（原始 JSON 与规范编码）上限 1 MiB，审批完整展示�
 │   ├── config/                配置加载与校验
 │   ├── context/               上下文和缓存规划
 │   ├── domain/                核心值对象与领域语义
-│   ├── extension/             P6 批准占位：Hooks、Plugins、Skills、MCP
+│   ├── extension/             本地 Skills；Hooks、Plugins、MCP 为 P6 批准占位
 │   ├── headless/              prompt 解析、最终文本与 JSONL v1 宿主
 │   ├── protocol/              Command 与 RuntimeEvent 协议
 │   ├── provider/              Provider Kernel 与 HTTP/SSE 传输

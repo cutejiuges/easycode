@@ -337,7 +337,7 @@ func (state *agentLoopRunState) discardQueue(code protocol.ControlErrorCode) {
 				reason = protocol.InputReasonFailed
 			}
 			state.emitInputStatus(input, "", protocol.InputReturned, reason)
-			state.queuedBytes -= len(input.text)
+			state.queuedBytes -= input.value.ByteSize()
 			state.completeRequest(input.requestID)
 			continue
 		}
@@ -351,7 +351,7 @@ func (state *agentLoopRunState) discardQueue(code protocol.ControlErrorCode) {
 	state.queuedBytes = 0
 	if state.active != nil {
 		for _, input := range state.active.claim {
-			state.queuedBytes += len(input.text)
+			state.queuedBytes += input.value.ByteSize()
 		}
 	}
 }
@@ -440,7 +440,7 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 		if state.active != nil {
 			count += len(state.active.claim)
 		}
-		if count >= state.loop.config.MaxQueuedInputs || state.queuedBytes+len(request.command.Text()) > state.loop.config.MaxQueuedBytes {
+		if count >= state.loop.config.MaxQueuedInputs || state.queuedBytes+request.command.InputByteSize() > state.loop.config.MaxQueuedBytes {
 			state.reject(request, protocol.ControlErrorInputQueueFull, true)
 			return
 		}
@@ -450,6 +450,9 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 			return
 		}
 		value, err := domain.NewUserInput(id, request.command.Text())
+		if a, ok := request.command.SkillAttachment(); ok && err == nil {
+			value, err = value.WithSkillAttachment(a)
+		}
 		if err != nil {
 			state.reject(request, protocol.ControlErrorInvalidInput, true)
 			return
@@ -470,7 +473,7 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 			result, _ = protocol.NewAcceptedCommandResult(request.command, disposition)
 		}
 		state.queue = append(state.queue, queuedInput{requestID: requestID, text: value.Text(), value: value, automatic: automatic})
-		state.queuedBytes += len(value.Text())
+		state.queuedBytes += value.ByteSize()
 		state.emitResult(request, result)
 		state.startNext()
 	case protocol.CommandRetractInputs:
@@ -649,7 +652,7 @@ func (state *agentLoopRunState) handleTurnFinished(workerErr error, open bool) {
 		state.discardQueue(protocol.ControlErrorSessionFailed)
 	}
 	for _, input := range state.active.claim {
-		state.queuedBytes -= len(input.text)
+		state.queuedBytes -= input.value.ByteSize()
 		state.emitInputStatus(input, state.active.turnID, protocol.InputReturned, protocol.InputReasonFailed)
 		state.completeRequest(input.requestID)
 	}

@@ -20,7 +20,7 @@ func transcriptListItem(node transcriptNode, entry session.ToolHistoryEntry) pro
 	item := protocol.TranscriptListItem{Cursor: node.cursor, Kind: node.item.Kind, TurnID: node.item.TurnID, InputID: node.item.InputID}
 	if node.toolIndex < 0 {
 		item.Text = tool.ActivityText(node.item.Text, 512)
-		item.More = len(item.Text) < len(node.item.Text)
+		item.More = len(item.Text) < len(node.item.Text) || node.item.HasSkill
 		return item
 	}
 	item.Activity = tool.ProjectActivity(entry.Invocation)
@@ -30,6 +30,8 @@ func transcriptListItem(node transcriptNode, entry session.ToolHistoryEntry) pro
 		item.Activity.Status, item.Activity.Code = string(r.Status()), r.Code()
 		item.ModelShortened = r.Budget().Reason() != tool.BudgetPreserved
 		switch r.Capability() {
+		case tool.CapabilitySkill:
+			item.Preview = tool.SkillResultSummary(r)
 		case tool.CapabilityRead:
 			item.Activity.Target = r.ReadMetadata().RelativePath()
 			item.ModelShortened = item.ModelShortened || r.ReadMetadata().OutputTruncated() || r.ReadMetadata().LongLineTruncated()
@@ -136,6 +138,9 @@ func (q *transcriptQueries) ReadTranscriptBody(ctx context.Context, query protoc
 			return protocol.TranscriptBodyPage{}, tool.ArtifactReadInvalidRange
 		}
 		text = node.item.Text
+		if node.item.HasSkill {
+			text += "\n\n--- Skill attachment ---\n" + node.item.Skill.Content
+		}
 		if node.compaction != nil {
 			text = node.compaction.summary.Text()
 		}

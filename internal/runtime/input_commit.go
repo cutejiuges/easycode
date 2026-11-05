@@ -140,6 +140,9 @@ func (runtime *Runtime) commitInputs(ctx context.Context, turnID domain.TurnID, 
 		}
 	}
 	for _, input := range inputs {
+		if a, ok := input.SkillAttachment(); ok {
+			runtime.explicitSkills = append(runtime.explicitSkills, a)
+		}
 		event, err := protocol.NewUserInputCommitted(input)
 		if err != nil {
 			runtime.poisoned.Store(true)
@@ -154,11 +157,7 @@ func (runtime *Runtime) commitInputs(ctx context.Context, turnID domain.TurnID, 
 }
 
 func (runtime *Runtime) planHistory(view domain.ActiveContextView, footprint domain.NativeHistoryFootprint) (provider.TurnInput, contextplan.ContextPlan, error) {
-	input, err := contextplan.NewPlanningInput(runtime.profile, runtime.toolCatalog, runtime.projectInstructions, view, footprint, contextplan.NewSamplingInput(), runtime.budget)
-	if err != nil {
-		return provider.TurnInput{}, contextplan.ContextPlan{}, fault.New(fault.CodeTurnFailed, "context planning input is invalid")
-	}
-	plan, err := runtime.planner.Plan(input)
+	plan, err := runtime.planWindow(view, footprint)
 	if err != nil {
 		return provider.TurnInput{}, contextplan.ContextPlan{}, fault.New(fault.CodeTurnFailed, "context planning failed")
 	}
@@ -167,10 +166,19 @@ func (runtime *Runtime) planHistory(view domain.ActiveContextView, footprint dom
 		limit, _ := plan.Decision().EffectiveLimit()
 		return provider.TurnInput{}, contextplan.ContextPlan{}, fault.New(fault.CodeContextLimitExceeded, fmt.Sprintf("estimated context tokens %d exceed effective input limit %d", total, limit))
 	}
+	sampling, err := runtime.samplingInput()
+	return sampling, plan, err
+}
+
+// samplingInput 为预检、普通采样与压缩共用稳定来源快照。
+func (runtime *Runtime) samplingInput() (provider.TurnInput, error) {
 	sampling, err := provider.NewSamplingInput().WithProjectInstructions(runtime.projectInstructions)
 	if err != nil {
-		return provider.TurnInput{}, contextplan.ContextPlan{}, err
+		return provider.TurnInput{}, err
 	}
 	sampling, err = sampling.WithToolCatalog(runtime.toolCatalog)
-	return sampling, plan, err
+	if err != nil {
+		return provider.TurnInput{}, err
+	}
+	return sampling.WithSkillCatalog(runtime.skillCatalog)
 }
