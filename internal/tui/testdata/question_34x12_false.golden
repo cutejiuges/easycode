@@ -1,0 +1,12 @@
+Question 1/1
+存储 📦
+选择存储方式 1？�[2J保持已有数据
+> ( ) SQLite (Recommended)
+    本地文件，便于备份和恢复。
+  ( ) PostgreSQL
+    独立服务，多实例共享。
+  ( ) Memory
+    临时运行时状态。
+  Other: type an answer
+  Skip this question
+↑↓ Enter · Tab notes · Esc stop

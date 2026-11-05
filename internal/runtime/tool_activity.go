@@ -49,6 +49,9 @@ func (runtime *Runtime) notifyToolResult(turn domain.TurnID, result tool.Invocat
 		p.Truncated = result.Budget().Reason() == tool.BudgetShortened
 	}
 	preview := tool.ActivityText(result.Preview().Text(), 4096)
+	if result.Capability() == tool.CapabilityQuestion {
+		preview = tool.QuestionResultSummary(result)
+	}
 	if result.Capability() == tool.CapabilitySkill {
 		preview = tool.SkillResultSummary(result)
 	}

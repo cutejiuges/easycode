@@ -2,17 +2,20 @@ package provider
 
 import (
 	"easycode/internal/domain"
+	"easycode/internal/tool"
 	"fmt"
 )
 
 // RestoreRecord 将 opaque 原生增量绑定到已校验的 turn 和提交角色。
 type RestoreRecord struct {
-	source      *CompactionSource
-	checkpoint  *CheckpointEnvelope
-	turnID      domain.TurnID
-	role        domain.NativeCommitRole
-	association domain.InputAssociation
-	envelope    NativeCommitEnvelope
+	questions       []tool.QuestionInvocation
+	questionResults []tool.InvocationResult
+	source          *CompactionSource
+	checkpoint      *CheckpointEnvelope
+	turnID          domain.TurnID
+	role            domain.NativeCommitRole
+	association     domain.InputAssociation
+	envelope        NativeCommitEnvelope
 }
 
 // NewInputRestoreRecord 创建必须具有完整输入关联的恢复记录。
@@ -82,6 +85,35 @@ func (record RestoreRecord) Association() (domain.InputAssociation, bool) {
 
 // Validate 拒绝零值或不匹配的恢复角色。
 func (record RestoreRecord) Validate() error {
+	if len(record.questions) > 0 || len(record.questionResults) > 0 {
+		if record.source != nil || record.checkpoint != nil || record.role != domain.NativeCommitSample {
+			return fmt.Errorf("question facts require a sample restore record")
+		}
+		seen := make(map[tool.ProviderCallID]bool, len(record.questions))
+		for _, q := range record.questions {
+			if q.Validate() != nil || seen[q.ProviderCallID()] {
+				return fmt.Errorf("invalid question restore facts")
+			}
+			seen[q.ProviderCallID()] = true
+		}
+		seenResults := make(map[tool.ProviderCallID]bool, len(record.questionResults))
+		for _, result := range record.questionResults {
+			if tool.ValidateFrozenResult(result) != nil || result.Capability() != tool.CapabilityQuestion || seenResults[result.ProviderCallID()] {
+				return fmt.Errorf("invalid question restore result")
+			}
+			matched := false
+			for _, q := range record.questions {
+				if q.ProviderCallID() == result.ProviderCallID() && q.InvocationID() == result.InvocationID() && q.Input().Fingerprint() == result.QuestionMetadata().Fingerprint {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return fmt.Errorf("question restore result has no matching ready fact")
+			}
+			seenResults[result.ProviderCallID()] = true
+		}
+	}
 	if record.source != nil {
 		if record.checkpoint != nil || record.turnID != "" || record.role != "" || record.association.TurnID() != "" || record.envelope.Family() != "" {
 			return fmt.Errorf("compaction source record contains unrelated fields")
@@ -116,6 +148,23 @@ func (record RestoreRecord) Validate() error {
 		return fmt.Errorf("restore commit role is invalid")
 	}
 	return nil
+}
+
+// WithQuestionFacts 绑定同一 sample 的已验证 ready/result 事实，不改变原生信封。
+func (record RestoreRecord) WithQuestionFacts(questions []tool.QuestionInvocation, results []tool.InvocationResult) (RestoreRecord, error) {
+	record.questions = append([]tool.QuestionInvocation(nil), questions...)
+	record.questionResults = append([]tool.InvocationResult(nil), results...)
+	return record, record.Validate()
+}
+
+// QuestionInvocations 返回独立的强类型题目关联，仅供原生恢复核验。
+func (record RestoreRecord) QuestionInvocations() []tool.QuestionInvocation {
+	return append([]tool.QuestionInvocation(nil), record.questions...)
+}
+
+// QuestionResults 返回独立的已提交答案关联，不包含未提交草稿。
+func (record RestoreRecord) QuestionResults() []tool.InvocationResult {
+	return append([]tool.InvocationResult(nil), record.questionResults...)
 }
 
 // NewCheckpointRestoreRecord 保留与普通增量交错的独立 checkpoint。

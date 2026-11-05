@@ -196,3 +196,7 @@ func TestAgentLoopRetractStopAndStrictNextHaveOneResolution(t *testing.T) {
 		}
 	}
 }
+
+func (c *controlledToolConversation) PrepareToolOutputPreflight(inv tool.Invocation) (provider.ToolOutputPreflight, error) {
+	return fakeToolOutputPreflight{inv}, inv.Validate()
+}

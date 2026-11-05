@@ -1,11 +1,13 @@
 # EasyCode 产品与工程 Roadmap
 
+2026-11-05 已交付结构化用户提问：双 Provider 第九项工具、1–4 题单选/多选/说明/跳过/复核、独立回答控制、严格结果预算、原生持久化恢复、无交互失败关闭与只读历史。选择该切片是因为现有 Tool Loop、Session、AgentLoop 和 composer 已具备前置能力，可以直接补齐用户决策后继续任务的闭环。它不代表完整 P5，也不包含 Plan Mode、后台问题、自动代答或 MCP elicitation。验证入口为 `scripts/user-question-smoke.py` 和 `internal/app/questions_e2e_test.go`；平台范围沿用现有安全 opener，Darwin 完成真实 PTY 与命令链验收，其他平台未据交叉编译宣称原生支持。
+
 `add-tool-transcript-and-result-budget` 已实现七工具统一记录、搜索原文保存、按顺序冻结的 sample/turn 预算和 Claude 风格主线；质量门及平台范围见该 change 的 [验收记录](../../openspec/changes/archive/2026-10-30-add-tool-transcript-and-result-budget/verification.md)，change 已归档。当前 Session envelope 无版本字段；native/headless 各自遵循独立契约。
 
 当前契约治理变更 `unify-current-contract-lifecycle` 收敛了固定 codec、prepared commit、宿主 owner 与副作用 admission。TUI、一次性 headless、stream-json 共用 AgentLoop；关闭期间排空事件，活动 transport 可显式取消，journal lease 保留至清理完成。Patch/Write grant 仅在批准 Sync 后生效，三种副作用工具统一验证结果关联并以 uncertain 收口错配结果。本次未引入迁移或兼容 reader，后续 P4/P6/P7/P8 能力及占位退出条件保持原有范围。
 
-> 状态：持续演进（P2 进行中）
-> 更新时间：2026-11-01
+> 状态：持续演进（各阶段按纵向切片验收）
+> 更新时间：2026-11-05
 > 依赖设计：[`../architecture/overall-architecture.md`](../architecture/overall-architecture.md)
 > Tool 专题设计：[`../architecture/tool-system.md`](../architecture/tool-system.md)
 
@@ -471,7 +473,7 @@ Skill、hooks/plugins、MCP 和 Agent/Subagent 不属于 P3 内置工具清单�
 - assistant commentary/final、thinking/reasoning 折叠。
 - tool use/result、并行工具组、Bash 实时输出。
 - Edit/apply_patch 渐进 diff 和最终结果。
-- permission、AskUser、MCP elicitation overlay。
+- permission 与 AskUser overlay 已交付独立切片；MCP elicitation overlay 留待独立设计。
 - Ctrl+C、Esc、Ctrl+D 和终端恢复。
 - status line：model/provider/context/cache/cost/task。
 - session resume/fork picker。

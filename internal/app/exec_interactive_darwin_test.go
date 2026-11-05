@@ -232,7 +232,7 @@ func runCacheReadPatchExecApprovedLoopForBothProviders(t *testing.T, cacheEnable
 					t.Fatal("command state invalidated stable tool catalog")
 				}
 				var facades []json.RawMessage
-				if err := json.Unmarshal(request.Tools, &facades); err != nil || len(facades) != 8 {
+				if err := json.Unmarshal(request.Tools, &facades); err != nil || len(facades) != 9 {
 					t.Fatal("request catalog lost a real capability")
 				}
 			}

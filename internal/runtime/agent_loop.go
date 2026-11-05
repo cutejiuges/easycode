@@ -502,6 +502,22 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 			state.active.cancelRequested = true
 			state.active.cancel()
 		}
+	case protocol.CommandResolveUserQuestion:
+		if state.active == nil || state.active.turnID == "" || state.active.stopping || state.active.cancelRequested {
+			state.reject(request, protocol.ControlErrorNoActiveQuestion, true)
+			return
+		}
+		if request.command.ExpectedTurnID() != state.active.turnID {
+			state.reject(request, protocol.ControlErrorTurnMismatch, true)
+			return
+		}
+		if code := state.loop.runtime.acceptQuestionAnswer(state.active.turnID, request.command.QuestionResponse()); code != "" {
+			state.reject(request, code, true)
+			return
+		}
+		result, _ := protocol.NewAcceptedCommandResult(request.command, protocol.CommandDispositionResolving)
+		state.emitResult(request, result)
+		state.completeRequest(request.command.RequestID())
 	case protocol.CommandResolveToolApproval:
 		if state.active == nil || state.active.turnID == "" {
 			state.reject(request, protocol.ControlErrorNoActiveApproval, true)

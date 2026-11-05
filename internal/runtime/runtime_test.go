@@ -1680,7 +1680,7 @@ func testRuntimeConfig(t *testing.T, journal Journal) Config {
 	return Config{
 		SessionID: runtimeSessionID, ThreadID: runtimeThreadID, Journal: journal,
 		ContextProfile: profile, ToolCatalog: mustRuntimeToolCatalog(t), ProjectInstructions: projectInstructions,
-		SkillExecutor: catalogSkillExecutor{}, ReadArtifactExecutor: catalogArtifactExecutor{}, ReadExecutor: runtimeReadExecutor{}, GlobExecutor: runtimeGlobExecutor{}, GrepExecutor: runtimeGrepExecutor{},
+		QuestionExecutor: catalogQuestionFixture{}, SkillExecutor: catalogSkillExecutor{}, ReadArtifactExecutor: catalogArtifactExecutor{}, ReadExecutor: runtimeReadExecutor{}, GlobExecutor: runtimeGlobExecutor{}, GrepExecutor: runtimeGrepExecutor{},
 		PatchPreparer: catalogPatchPreparer{}, PatchExecutor: catalogPatchExecutor{}, WritePreparer: catalogWritePreparer{}, WriteExecutor: catalogWriteExecutor{}, ExecPreparer: catalogExecFixture{}, ExecExecutor: catalogExecFixture{}, ToolPolicy: tool.NewApprovalPolicy(),
 		ContextBudget:  contextplan.DisabledBudget(),
 		ContextPlanner: contextplan.NewPlanner(),
@@ -1694,7 +1694,7 @@ func mustRuntimeToolCatalog(t *testing.T) tool.CatalogSnapshot {
 
 func mustRuntimeToolCatalogWithExecutor(t *testing.T, executor tool.ReadExecutor) tool.CatalogSnapshot {
 	t.Helper()
-	catalog, err := tool.NewCatalogSnapshot(executor, runtimeGlobExecutor{}, runtimeGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, tool.RenderExecOutput, tool.NewApprovalPolicy(), catalogArtifactExecutor{}, catalogSkillExecutor{})
+	catalog, err := tool.NewCatalogSnapshot(executor, runtimeGlobExecutor{}, runtimeGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, tool.RenderExecOutput, tool.NewApprovalPolicy(), catalogArtifactExecutor{}, catalogSkillExecutor{}, catalogQuestionFixture{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2176,4 +2176,17 @@ type catalogWriteExecutor struct{}
 
 func (catalogWriteExecutor) Execute(context.Context, tool.WriteCandidate) tool.InvocationResult {
 	return tool.InvocationResult{}
+}
+
+// fakeToolOutputPreflight 为内存测试执行与生产相同的身份校验。
+type fakeToolOutputPreflight struct{ invocation tool.Invocation }
+
+func (p fakeToolOutputPreflight) Validate(r tool.InvocationResult) error {
+	if r.Validate() != nil || r.InvocationID() != p.invocation.InvocationID() || r.ProviderCallID() != p.invocation.ProviderCallID() || r.Capability() != p.invocation.Capability() {
+		return fmt.Errorf("invalid fake output")
+	}
+	return nil
+}
+func (c *fakeToolConversation) PrepareToolOutputPreflight(inv tool.Invocation) (provider.ToolOutputPreflight, error) {
+	return fakeToolOutputPreflight{inv}, inv.Validate()
 }

@@ -93,6 +93,12 @@ func (event Event) Validate() error {
 		return fmt.Errorf("runtime event identity is invalid")
 	}
 	switch event.Kind {
+	case EventUserQuestionRequested:
+		_, err := DecodeUserQuestionRequested(event)
+		return err
+	case EventUserQuestionResolved:
+		_, err := DecodeUserQuestionResolved(event)
+		return err
 	case EventTranscriptCommitted:
 		if !hasIdentity {
 			return fmt.Errorf("transcript event identity is required")

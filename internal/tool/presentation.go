@@ -24,6 +24,11 @@ func ActivityText(text string, limit int) string {
 func ProjectActivity(invocation Invocation) protocol.ToolActivityPayload {
 	p := protocol.ToolActivityPayload{InvocationID: string(invocation.InvocationID()), Status: "waiting"}
 	switch invocation.Capability() {
+	case CapabilityQuestion:
+		v, _ := invocation.Question()
+		p.Tool = protocol.ToolQuestion
+		p.Target = "User"
+		p.Summary = v.Input().Questions()[0].Question
 	case CapabilitySkill:
 		v, _ := invocation.Skill()
 		p.Tool = protocol.ToolSkill

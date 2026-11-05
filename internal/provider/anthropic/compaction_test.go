@@ -79,7 +79,7 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 	if err := codec.Unmarshal(request.Bytes(), &wire); err != nil {
 		t.Fatal(err)
 	}
-	if wire.ToolChoice == nil || wire.ToolChoice.Type != "none" || wire.MaxTokens != 4096 || len(wire.Tools) != 8 || !strings.Contains(string(request.Bytes()), "preserve test failures") {
+	if wire.ToolChoice == nil || wire.ToolChoice.Type != "none" || wire.MaxTokens != 4096 || len(wire.Tools) != 9 || !strings.Contains(string(request.Bytes()), "preserve test failures") {
 		t.Fatal("summary request protection or sources missing")
 	}
 	generation := compactionTestGeneration("goal; completed tests; next task", "summary-generation-only")

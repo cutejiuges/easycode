@@ -57,6 +57,7 @@ func (id RequestID) Valid() bool {
 
 // Command 是封闭的 Runtime 输入命令值对象。
 type Command struct {
+	questionResponse     UserQuestionResponse
 	skillAttachment      domain.SkillAttachment
 	hasSkillAttachment   bool
 	instructions         string
@@ -128,6 +129,9 @@ func (command Command) Feedback() string                   { return command.feed
 
 // Validate 验证命令 kind 和专属 payload。
 func (command Command) Validate() error {
+	if command.kind != CommandResolveUserQuestion && command.questionResponse != (UserQuestionResponse{}) {
+		return fmt.Errorf("unexpected question response")
+	}
 	if command.hasSkillAttachment {
 		if (command.kind != CommandSubmitInput && command.kind != CommandSubmitConversationalInput) || command.skillAttachment.Validate() != nil || command.InputByteSize() > MaxInputBytes {
 			return fmt.Errorf("invalid Skill attachment")
@@ -148,6 +152,10 @@ func (command Command) Validate() error {
 		return fmt.Errorf("command contains unrelated compaction identity")
 	}
 	switch command.kind {
+	case CommandResolveUserQuestion:
+		if !command.expectedTurnID.Valid() || command.questionResponse.Validate() != nil || command.text != "" || command.approvalRequestID != "" || command.invocationID != "" || command.fingerprint != "" || command.decision != "" || command.feedback != "" {
+			return fmt.Errorf("invalid question command payload")
+		}
 	case CommandQueryCache, CommandQueryContext, CommandCompactContext, CommandCancelCompaction:
 		if command.text != "" || command.expectedTurnID != "" || command.approvalRequestID != "" || command.invocationID != "" || command.fingerprint != "" || command.decision != "" || command.feedback != "" {
 			return fmt.Errorf("context command contains unrelated payload")

@@ -76,7 +76,7 @@ func testRestoreRecords(t *testing.T, envelopes []provider.NativeCommitEnvelope)
 	t.Helper()
 	var turnID domain.TurnID
 	records := make([]provider.RestoreRecord, 0, len(envelopes))
-	for _, envelope := range envelopes {
+	for envelopeIndex, envelope := range envelopes {
 		entry, err := decodeNativeCommit(envelope)
 		if err != nil {
 			t.Fatal(err)
@@ -92,6 +92,27 @@ func testRestoreRecords(t *testing.T, envelopes []provider.NativeCommitEnvelope)
 			record, err = provider.NewInputRestoreRecord(a, envelope)
 		case nativeHistorySample:
 			record, err = provider.NewSampleRestoreRecord(turnID, envelope)
+			if err == nil {
+				var questions []tool.QuestionInvocation
+				for _, item := range entry.Assistant.Content {
+					if item.Type == blockTypeToolUse && item.Name == "AskUserQuestion" {
+						input, e := tool.DecodeQuestionInput(item.Input)
+						if e != nil {
+							t.Fatal(e)
+						}
+						ready, e := tool.NewQuestionReadyCall(tool.ProviderCallID(item.ID), input)
+						if e != nil {
+							t.Fatal(e)
+						}
+						q, e := tool.NewQuestionInvocation(tool.InvocationID(testInputID("question/"+item.ID)), ready)
+						if e != nil {
+							t.Fatal(e)
+						}
+						questions = append(questions, q)
+					}
+				}
+				record, err = record.WithQuestionFacts(questions, testQuestionRestoreResults(t, envelopes[envelopeIndex+1:], questions))
+			}
 		case nativeHistoryToolOutputs:
 			record, err = provider.NewToolOutputRestoreRecord(turnID, envelope)
 		}

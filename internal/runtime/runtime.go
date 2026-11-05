@@ -47,6 +47,9 @@ type ContextPlanner interface {
 
 // Config 固定一个 Session-bound Runtime 的身份与 durable 边界。
 type Config struct {
+	QuestionExecutor          tool.QuestionExecutor
+	InteractiveQuestions      bool
+	GenerateQuestionRequestID func() (domain.QuestionRequestID, error)
 	SkillExecutor             tool.SkillExecutor
 	SkillPreparer             SkillPreparer
 	SkillCatalog              domain.SkillCatalog
@@ -86,6 +89,10 @@ type Config struct {
 
 // Runtime 持有一条会话级 Provider Conversation 和同一 thread journal。
 type Runtime struct {
+	questionExecutor             tool.QuestionExecutor
+	interactiveQuestions         bool
+	newQuestionRequestID         func() (domain.QuestionRequestID, error)
+	questions                    questionState
 	skillExecutor                tool.SkillExecutor
 	skillPreparer                SkillPreparer
 	skillCatalog                 domain.SkillCatalog
@@ -177,11 +184,14 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 	if config.SkillCatalog.Validate() != nil {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "runtime skill catalog is invalid")
 	}
-	if config.SkillExecutor == nil || config.ReadArtifactExecutor == nil || config.ReadExecutor == nil || config.GlobExecutor == nil || config.GrepExecutor == nil {
+	if config.QuestionExecutor == nil || config.SkillExecutor == nil || config.ReadArtifactExecutor == nil || config.ReadExecutor == nil || config.GlobExecutor == nil || config.GrepExecutor == nil {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "runtime read-only executors are not configured")
 	}
 	if config.PatchPreparer == nil || config.PatchExecutor == nil || config.WritePreparer == nil || config.WriteExecutor == nil || config.ExecPreparer == nil || config.ExecExecutor == nil || config.ToolPolicy == nil {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "runtime file mutation and Exec components are not configured")
+	}
+	if config.GenerateQuestionRequestID == nil {
+		config.GenerateQuestionRequestID = domain.GenerateQuestionRequestID
 	}
 	if config.GenerateApprovalRequestID == nil {
 		config.GenerateApprovalRequestID = tool.GenerateApprovalRequestID
@@ -222,7 +232,8 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 		compactionOutputTokens: config.CompactionOutputTokens,
 		toolHistory:            config.ToolHistory,
 		readArtifactExecutor:   config.ReadArtifactExecutor,
-		skillExecutor:          config.SkillExecutor, skillPreparer: config.SkillPreparer, skillCatalog: config.SkillCatalog.Clone(),
+		questionExecutor:       config.QuestionExecutor, interactiveQuestions: config.InteractiveQuestions, newQuestionRequestID: config.GenerateQuestionRequestID,
+		skillExecutor: config.SkillExecutor, skillPreparer: config.SkillPreparer, skillCatalog: config.SkillCatalog.Clone(),
 		textOutputStore:    config.TextOutputStore,
 		artifactReferences: config.ArtifactReferences,
 		conversation:       conversation, journal: config.Journal,
@@ -398,7 +409,7 @@ func (runtime *Runtime) ReconcileToolTurn(ctx context.Context, plan session.Tool
 		case session.ReplayedToolCallReady:
 			code := "session_interrupted_before_execution"
 			preview := "Tool cancelled: session interrupted before execution"
-			if call.Invocation.Capability().Exclusive() && call.ApprovalSequence == 0 {
+			if call.Invocation.Capability().RequiresApproval() && call.ApprovalSequence == 0 {
 				code = "session_interrupted_before_approval"
 				preview = "Tool cancelled: session interrupted before approval"
 				if call.Invocation.Capability() == tool.CapabilityExec {

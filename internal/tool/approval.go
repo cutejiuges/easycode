@@ -283,7 +283,7 @@ func (request ApprovalRequest) Decisions() []ApprovalDecision {
 
 // Validate 验证请求identity、显示数据和固定决定集合。
 func (request ApprovalRequest) Validate() error {
-	if !request.requestID.Valid() || !request.sessionID.Valid() || !request.threadID.Valid() || !request.turnID.Valid() || !request.invocationID.Valid() || !request.providerCallID.Valid() || !request.capability.Exclusive() || !request.fingerprint.Valid() {
+	if !request.requestID.Valid() || !request.sessionID.Valid() || !request.threadID.Valid() || !request.turnID.Valid() || !request.invocationID.Valid() || !request.providerCallID.Valid() || !request.capability.RequiresApproval() || !request.fingerprint.Valid() {
 		return errors.New("approval request identity is invalid")
 	}
 	if request.capability == CapabilityExec {

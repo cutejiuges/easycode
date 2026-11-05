@@ -69,9 +69,12 @@ func TestReadInputStrictDecodeAndBounds(t *testing.T) {
 func TestCatalogIsDeterministicImmutableAndReadOnly(t *testing.T) {
 	t.Parallel()
 
-	first, err := NewCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, inertGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, RenderExecOutput, NewApprovalPolicy(), catalogArtifactExecutor{}, catalogSkillExecutor{})
+	first, err := NewCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, inertGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, RenderExecOutput, NewApprovalPolicy(), catalogArtifactExecutor{}, catalogSkillExecutor{}, catalogQuestionFixture{})
 	if err != nil {
 		t.Fatalf("创建目录: %v", err)
+	}
+	if _, err := NewCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, inertGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, RenderExecOutput, NewApprovalPolicy(), catalogArtifactExecutor{}, catalogSkillExecutor{}, nil); err == nil {
+		t.Fatal("missing question executor accepted")
 	}
 	second, err := newCatalogSnapshot(reverseFacades(first.Facades()))
 	if err != nil {
@@ -89,8 +92,8 @@ func TestCatalogIsDeterministicImmutableAndReadOnly(t *testing.T) {
 		if viewErr != nil {
 			t.Fatalf("读取 %s view: %v", family, viewErr)
 		}
-		if len(view.Facades()) != 8 {
-			t.Fatalf("%s 未完整暴露八工具", family)
+		if len(view.Facades()) != 9 {
+			t.Fatalf("%s 未完整暴露九工具", family)
 		}
 		names := map[string]bool{}
 		readOnly := 0
@@ -100,7 +103,7 @@ func TestCatalogIsDeterministicImmutableAndReadOnly(t *testing.T) {
 				readOnly++
 			}
 		}
-		if !names["Skill"] || !names["ReadArtifact"] || !names["Read"] || !names["Glob"] || !names["Grep"] || !names["Write"] || (family == domain.ProviderOpenAI && !names["apply_patch"]) || (family == domain.ProviderAnthropic && !names["Edit"]) {
+		if (family == domain.ProviderOpenAI && !names["request_user_input"]) || (family == domain.ProviderAnthropic && !names["AskUserQuestion"]) || !names["Skill"] || !names["ReadArtifact"] || !names["Read"] || !names["Glob"] || !names["Grep"] || !names["Write"] || (family == domain.ProviderOpenAI && !names["apply_patch"]) || (family == domain.ProviderAnthropic && !names["Edit"]) {
 			t.Fatalf("%s facade 不完整: %#v", family, names)
 		}
 		if readOnly != 5 {
@@ -126,13 +129,13 @@ func TestCatalogIsDeterministicImmutableAndReadOnly(t *testing.T) {
 	if err := first.Validate(); err != nil {
 		t.Fatalf("调用方修改 getter 污染目录: %v", err)
 	}
-	if _, err := NewCatalogSnapshot(nil, inertGlobExecutor{}, inertGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, RenderExecOutput, NewApprovalPolicy(), catalogArtifactExecutor{}, catalogSkillExecutor{}); err == nil {
+	if _, err := NewCatalogSnapshot(nil, inertGlobExecutor{}, inertGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, RenderExecOutput, NewApprovalPolicy(), catalogArtifactExecutor{}, catalogSkillExecutor{}, catalogQuestionFixture{}); err == nil {
 		t.Fatal("缺少 Read executor 的目录应被拒绝")
 	}
-	if _, err := NewCatalogSnapshot(inertReadExecutor{}, nil, inertGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, RenderExecOutput, NewApprovalPolicy(), catalogArtifactExecutor{}, catalogSkillExecutor{}); err == nil {
+	if _, err := NewCatalogSnapshot(inertReadExecutor{}, nil, inertGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, RenderExecOutput, NewApprovalPolicy(), catalogArtifactExecutor{}, catalogSkillExecutor{}, catalogQuestionFixture{}); err == nil {
 		t.Fatal("缺少 Glob executor 的目录应被拒绝")
 	}
-	if _, err := NewCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, nil, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, RenderExecOutput, NewApprovalPolicy(), catalogArtifactExecutor{}, catalogSkillExecutor{}); err == nil {
+	if _, err := NewCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, nil, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, RenderExecOutput, NewApprovalPolicy(), catalogArtifactExecutor{}, catalogSkillExecutor{}, catalogQuestionFixture{}); err == nil {
 		t.Fatal("缺少 Grep executor 的目录应被拒绝")
 	}
 	changedFacades := first.Facades()
@@ -145,7 +148,7 @@ func TestCatalogIsDeterministicImmutableAndReadOnly(t *testing.T) {
 		t.Fatal("schema/description 变化未使 fingerprint 失效")
 	}
 	text := string(first.CanonicalJSON())
-	if _, err := NewCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, inertGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, RenderExecOutput, NewApprovalPolicy(), catalogArtifactExecutor{}, nil); err == nil {
+	if _, err := NewCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, inertGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, RenderExecOutput, NewApprovalPolicy(), catalogArtifactExecutor{}, nil, catalogQuestionFixture{}); err == nil {
 		t.Fatal("missing Skill executor accepted")
 	}
 	for _, absent := range []string{"write_stdin", "MCP", "Agent", "/absolute/", "secret", "input_revision", "result_codec_revision"} {

@@ -382,3 +382,23 @@ func (session *ChatSession) CancelCompaction(ctx context.Context, id domain.Comp
 	}
 	return session.submitInteractive(ctx, command)
 }
+
+// ResolveQuestion 通过唯一控制 owner 提交完整问卷，不创建新 turn。
+func (session *ChatSession) ResolveQuestion(ctx context.Context, turnID domain.TurnID, request protocol.UserQuestionRequestedPayload, answers protocol.QuestionAnswerSet) error {
+	response, err := protocol.NewUserQuestionResponse(request.RequestID, request.InvocationID, request.Fingerprint, answers)
+	if err != nil {
+		return err
+	}
+	command, err := protocol.NewResolveUserQuestionCommand(session.requestID("host-question"), turnID, response)
+	if err != nil {
+		return err
+	}
+	result, err := session.submitInteractive(ctx, command)
+	if err != nil {
+		return err
+	}
+	if rejected, ok := result.Error(); ok {
+		return fmt.Errorf("%s: %s", rejected.Code(), rejected.Message())
+	}
+	return nil
+}

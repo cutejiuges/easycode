@@ -8,9 +8,9 @@
 
 ### Requirement: Tool catalog snapshots are deterministic and executable
 
-每次 Provider sample SHALL 使用一个不可变 Tool Catalog snapshot。snapshot 中每个 facade MUST 关联唯一当前、已注册且可执行的 capability、强类型 input/result、Provider facade及其wire kind、validator、policy、sandbox planner、executor 和结果 renderer；系统 MUST NOT 暴露缺少任一真实消费者的 schema或freeform定义，也 MUST NOT 通过 input revision、result codec revision 或版本后缀类型选择实现。
+每次 Provider sample SHALL 使用一个不可变 Tool Catalog snapshot。snapshot 中每个 facade MUST 关联唯一当前、已注册且可执行的 capability、强类型 input/result、Provider facade及其wire kind、validator、policy、适用的 sandbox planner、executor 和结果 renderer；系统 MUST NOT 暴露缺少任一真实消费者的 schema或freeform定义，也 MUST NOT 通过 input revision、result codec revision 或版本后缀类型选择实现。
 
-当前 snapshot SHALL 恰好包含 `fs.read`、`fs.glob`、`fs.grep`、`fs.patch`、`fs.write`、`process.exec`、`artifact.read` 与 `skill.read`；Anthropic SHALL 将 patch/command 分别暴露为 structured `Edit`/`Bash`，OpenAI SHALL 将同一 patch/command 能力分别暴露为 custom freeform `apply_patch` 与 structured `exec_command`。facade 按稳定 capability ID、wire kind 与 facade name 确定性排序。snapshot SHALL 具有非空内容派生 source revision、canonical definition bytes 和 fingerprint；调用方修改 getter 返回值不得改变 snapshot。时间戳、cwd、Session/thread/turn identity、随机 invocation/approval ID、权限临时状态、base evidence、diff、命令环境实际值和文件系统枚举顺序 MUST NOT 进入 definition bytes 或 fingerprint。
+当前 snapshot SHALL 恰好包含 `fs.read`、`fs.glob`、`fs.grep`、`fs.patch`、`fs.write`、`process.exec`、`artifact.read`、`skill.read` 与 `user.question`；Anthropic SHALL 将 patch/command 分别暴露为 structured `Edit`/`Bash`，OpenAI SHALL 将同一 patch/command 能力分别暴露为 custom freeform `apply_patch` 与 structured `exec_command`。facade 按稳定 capability ID、wire kind 与 facade name 确定性排序。snapshot SHALL 具有非空内容派生 source revision、canonical definition bytes 和 fingerprint；调用方修改 getter 返回值不得改变 snapshot。时间戳、cwd、Session/thread/turn identity、随机 invocation/approval ID、权限临时状态、base evidence、diff、命令环境实际值和文件系统枚举顺序 MUST NOT 进入 definition bytes 或 fingerprint。
 
 两个 Provider SHALL 都以 structured Write 暴露 fs.write。Write 的 request、strict decoder、native restore、result codec、候选、policy、executor 和审批展示缺一不可；创建/覆盖证据和 Read observation MUST NOT 进入稳定 definition bytes。
 
@@ -24,7 +24,7 @@
 
 #### Scenario: Expose the complete current catalog
 - **WHEN** Runtime为本变更编译一次Provider请求
-- **THEN** catalog只声明Read、ReadArtifact、Glob、Grep、Write、对应Provider的Edit或apply_patch以及Bash或exec_command，额外声明 structured Skill，不声明MCP、Agent、后台进程或write_stdin
+- **THEN** catalog只声明Read、ReadArtifact、Glob、Grep、Write、对应Provider的Edit或apply_patch以及Bash或exec_command，额外声明 structured Skill 与对应 Provider 的 structured 提问 facade，不声明MCP、Agent、后台进程或write_stdin
 
 #### Scenario: Expose the complete read-only catalog
 - **WHEN** 将当前catalog中的只读子集投影给审计或测试
@@ -32,7 +32,7 @@
 
 #### Scenario: Expose only current contracts
 - **WHEN** 将当前catalog与早期开发期catalog比较
-- **THEN** 当前唯一catalog直接包含八项能力且不保留旧catalog、旧schema或兼容分支
+- **THEN** 当前唯一catalog直接包含九项能力且不保留旧catalog、旧schema或兼容分支
 
 #### Scenario: Expose Provider-specific mutation wire
 - **WHEN** 分别读取Anthropic与OpenAI catalog view
@@ -40,7 +40,7 @@
 
 #### Scenario: Expose only Read
 - **WHEN** 将当前catalog与最早只暴露Read的开发期catalog比较
-- **THEN** 当前唯一catalog直接包含Read、Glob、Grep、Patch、Write、Exec、ReadArtifact与Skill且不保留旧catalog分支
+- **THEN** 当前唯一catalog直接包含Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill与Question且不保留旧catalog分支
 
 #### Scenario: Expose Provider-specific patch wire
 - **WHEN** 分别读取Anthropic与OpenAI catalog view
@@ -55,13 +55,23 @@
 
 #### Scenario: Expose executable artifact reading
 - **WHEN** 构造两家 Provider 当前 catalog
-- **THEN** 恰好八项能力，ReadArtifact 具有完整 request、reducer、native restore、policy、executor 和 result codec
+- **THEN** 恰好九项能力，ReadArtifact 具有完整 request、reducer、native restore、policy、executor 和 result codec
 
 两家 Provider SHALL 以 structured Skill 暴露 skill.read，具备完整读取、validator、policy、来源范围约束、renderer 与恢复实现。目录为空仍保留真实 executor，未知名称返回安全错误，不暴露未来来源能力。
 
 #### Scenario: Expose executable Skill loading
 - **WHEN** 两家 Provider 构造当前目录
-- **THEN** 均恰好八项能力，Skill 的主文档与资源分支都有 typed input/result，定义不包含实际目录正文或绝对路径
+- **THEN** 均恰好九项能力，Skill 的主文档与资源分支都有 typed input/result，定义不包含实际目录正文或绝对路径
+
+user.question SHALL 具有完整 typed input/result、strict decoder、policy、实际交互执行消费者、renderer 和 native restore。Anthropic facade 为 AskUserQuestion，OpenAI facade 为 request_user_input，均为 structured wire。该能力不操作文件、进程或网络，不生成虚构 sandbox 候选或副作用批准；无交互宿主由真实执行路径返回配对不可用结果。目录定义中不得出现动态题目、回答、请求身份、结果余额或 UI 状态。
+
+#### Scenario: Expose executable user questions
+- **WHEN** 两家 Provider 构造完整当前 catalog
+- **THEN** 均恰好九项真实能力，提问 facade 按既有规则排序，不能只提供 schema 而没有交互、拒绝及恢复消费者
+
+#### Scenario: Keep the read-only subset precise
+- **WHEN** 检查可并行读取子集
+- **THEN** 仍为 Read、Glob、Grep、ReadArtifact、Skill，提问不因没有文件写入而被放入并行读批次
 
 ### Requirement: Completed samples produce typed ready calls
 
@@ -137,9 +147,9 @@ Write 的目标/目录检查与候选读取 SHALL 遵循上述 Patch 的 ready d
 
 ### Requirement: Tool turns use a bounded ordered multi-sample loop
 
-一个用户turn SHALL支持最多16个Provider samples和累计最多64个tool calls。completed sample不含tool calls时 SHALL结束turn；含calls时，Scheduler SHALL按call index把连续`parallel_read`调用组成最大8并发的批次，并把每个`exclusive` Patch、Write 或 Exec 作为前后屏障。Runtime SHALL在到达每个调用或批次时完成其policy；Patch候选准备和所需approval只能在其前序批次结果durable后发生，matching decision收口后才可越过该屏障。结果收集到固定call slot并按call index durable提交全部results和匹配Provider-native outputs，outputs durable后才可开始下一sample。
+一个用户turn SHALL支持最多16个Provider samples和累计最多64个tool calls。completed sample不含tool calls时 SHALL结束turn；含calls时，Scheduler SHALL按call index把连续`parallel_read`调用组成最大8并发的批次，并把每个`exclusive` Patch、Write、Exec 或 Question 作为前后屏障。Runtime SHALL在到达每个调用或批次时完成其policy；Patch候选准备和所需approval只能在其前序批次结果durable后发生，matching decision收口后才可越过该屏障。结果收集到固定call slot并按call index durable提交全部results和匹配Provider-native outputs，outputs durable后才可开始下一sample。
 
-当前Read、Glob、Grep、ReadArtifact属于`parallel_read`，Patch、Write与Exec属于`exclusive`。单个调用的普通执行错误、拒绝、冲突或无匹配结果不得取消independent sibling；`abort`、turn取消或poisoned状态按取消契约收口。goroutine完成顺序、approval响应时间和实际执行时间不得影响Session seq、Provider output顺序、preview bytes或后续请求。超过sample/call上限 SHALL以稳定英文`tool_loop_limit_exceeded`失败，并且已经durable的sample、approval、ledger和outputs不得被删除或改写。
+当前Read、Glob、Grep、ReadArtifact、Skill属于`parallel_read`，Patch、Write、Exec与Question属于`exclusive`。单个调用的普通执行错误、拒绝、冲突或无匹配结果不得取消independent sibling；`abort`、turn取消或poisoned状态按取消契约收口。goroutine完成顺序、approval响应时间和实际执行时间不得影响Session seq、Provider output顺序、preview bytes或后续请求。超过sample/call上限 SHALL以稳定英文`tool_loop_limit_exceeded`失败，并且已经durable的sample、approval、ledger和outputs不得被删除或改写。
 
 本条的 exclusive 屏障和串行审批语义 SHALL 同样适用于 Write；不能将非 Patch 调用默认视作 parallel_read。
 
@@ -205,6 +215,12 @@ Runtime SHALL 在同一 turn owner 持有 tool/result-budget 的纯内存账本�
 #### Scenario: Stop admission when turn body budget is exhausted
 - **WHEN** turn 除安全结果预留外已无正文额度
 - **THEN** 不再创建新审批或准入 executor；accepted 调用仍执行并清理一次，未 accepted ready 获得 result_budget_exceeded 配对；当前 outputs 完成后以 tool_result_budget_exceeded 失败收口且不领取 steer
+
+提问 exclusive 屏障 SHALL 仅约束调度；是否需要副作用审批必须独立判定。前序结果 durable 后才可准入提问，完整回答或跳过结果 durable 后才能准入后序调用；只有整组 matching outputs durable/finalize 后才开放 steering 和下一 sample。提问计入原有 16 samples/64 calls 上限；不新增执行循环或重置预算。
+
+#### Scenario: Preserve a question barrier
+- **WHEN** sample 按 Read、Question、Write、Question 排列
+- **THEN** 两个问题逐个处理且不重叠，Write 仍需单独批准，所有结果和 outputs 保持原 index
 
 ### Requirement: Execution ledger provides at-most-once automatic execution
 

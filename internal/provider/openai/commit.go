@@ -198,6 +198,11 @@ func validateOutputItem(item NativeItem) error {
 		return fmt.Errorf("OpenAI native commit message role is invalid")
 	}
 	if item.Type == "function_call" {
+		if item.Name == "request_user_input" {
+			if _, err := tool.DecodeQuestionInput([]byte(item.Arguments)); err != nil {
+				return fmt.Errorf("invalid native question input")
+			}
+		}
 		if item.Name == "Write" {
 			if _, err := tool.DecodeWriteInput([]byte(item.Arguments)); err != nil {
 				return fmt.Errorf("invalid native Write input")

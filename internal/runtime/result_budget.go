@@ -9,6 +9,9 @@ func (runtime *Runtime) resultAllowance(capability tool.CapabilityID) (int, erro
 	if capability == tool.CapabilityGlob || capability == tool.CapabilityGrep {
 		return tool.MaxSearchPreviewBytes, nil
 	}
+	if capability == tool.CapabilityQuestion {
+		return tool.MaxQuestionPreviewBytes, nil
+	}
 	return tool.MaxModelPreviewBytes, nil
 }
 

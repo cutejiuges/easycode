@@ -27,7 +27,7 @@ func TestCatalogRequiresAndExposesAllRealComponents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalog, err := NewCatalog(readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, writePreparer, writeExecutor, execPreparer, execExecutor, tool.RenderExecOutput, policy, catalogArtifactExecutor{}, catalogSkillExecutor{})
+	catalog, err := NewCatalog(readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, writePreparer, writeExecutor, execPreparer, execExecutor, tool.RenderExecOutput, policy, catalogArtifactExecutor{}, catalogSkillExecutor{}, NewQuestionExecutor())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,19 +42,19 @@ func TestCatalogRequiresAndExposesAllRealComponents(t *testing.T) {
 			t.Fatalf("catalog 暴露未实现能力 %s", absent)
 		}
 	}
-	if _, err := NewCatalog(readExecutor, nil, grepExecutor, patchPreparer, patchExecutor, writePreparer, writeExecutor, execPreparer, execExecutor, tool.RenderExecOutput, policy, catalogArtifactExecutor{}, catalogSkillExecutor{}); err == nil {
+	if _, err := NewCatalog(readExecutor, nil, grepExecutor, patchPreparer, patchExecutor, writePreparer, writeExecutor, execPreparer, execExecutor, tool.RenderExecOutput, policy, catalogArtifactExecutor{}, catalogSkillExecutor{}, NewQuestionExecutor()); err == nil {
 		t.Fatal("缺少组件的 catalog 未失败关闭")
 	}
-	if _, err := NewCatalog(readExecutor, globExecutor, grepExecutor, nil, patchExecutor, writePreparer, writeExecutor, execPreparer, execExecutor, tool.RenderExecOutput, policy, catalogArtifactExecutor{}, catalogSkillExecutor{}); err == nil {
+	if _, err := NewCatalog(readExecutor, globExecutor, grepExecutor, nil, patchExecutor, writePreparer, writeExecutor, execPreparer, execExecutor, tool.RenderExecOutput, policy, catalogArtifactExecutor{}, catalogSkillExecutor{}, NewQuestionExecutor()); err == nil {
 		t.Fatal("缺少 Patch preparer 的 catalog 未失败关闭")
 	}
-	if _, err := NewCatalog(readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, writePreparer, writeExecutor, nil, execExecutor, tool.RenderExecOutput, policy, catalogArtifactExecutor{}, catalogSkillExecutor{}); err == nil {
+	if _, err := NewCatalog(readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, writePreparer, writeExecutor, nil, execExecutor, tool.RenderExecOutput, policy, catalogArtifactExecutor{}, catalogSkillExecutor{}, NewQuestionExecutor()); err == nil {
 		t.Fatal("missing Exec planner accepted")
 	}
-	if _, err := NewCatalog(readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, writePreparer, writeExecutor, execPreparer, nil, tool.RenderExecOutput, policy, catalogArtifactExecutor{}, catalogSkillExecutor{}); err == nil {
+	if _, err := NewCatalog(readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, writePreparer, writeExecutor, execPreparer, nil, tool.RenderExecOutput, policy, catalogArtifactExecutor{}, catalogSkillExecutor{}, NewQuestionExecutor()); err == nil {
 		t.Fatal("missing Exec executor accepted")
 	}
-	if _, err := NewCatalog(readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, writePreparer, writeExecutor, execPreparer, execExecutor, nil, policy, catalogArtifactExecutor{}, catalogSkillExecutor{}); err == nil {
+	if _, err := NewCatalog(readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, writePreparer, writeExecutor, execPreparer, execExecutor, nil, policy, catalogArtifactExecutor{}, catalogSkillExecutor{}, NewQuestionExecutor()); err == nil {
 		t.Fatal("missing Exec renderer accepted")
 	}
 	if _, err := NewExecExecutor(workspace, OpenCommandEnvironment(), nil, testCommandOutputStore{}); err == nil {

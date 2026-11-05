@@ -6,6 +6,7 @@ import (
 
 	"easycode/internal/domain"
 	"easycode/internal/provider"
+	"easycode/internal/tool"
 )
 
 // HistoryReader 只验证和投影存储历史，不持有连接或凭据。
@@ -49,6 +50,7 @@ func (*HistoryReader) ValidateCheckpointUsage(checkpoint provider.CheckpointEnve
 // restoreNativeHistory 是联网恢复和离线投影共用的事务式验证步骤。
 func restoreNativeHistory(ctx context.Context, model string, commits []provider.RestoreRecord, history *nativeHistory) error {
 	entries := make([]nativeHistoryEntry, 0, len(commits))
+	var questionResults []tool.InvocationResult
 	seenCheckpoints := make(map[domain.CompactionID]struct{})
 	for index, commit := range commits {
 		if err := ctx.Err(); err != nil {
@@ -100,6 +102,21 @@ func restoreNativeHistory(ctx context.Context, model string, commits []provider.
 		}
 		if string(entry.Kind) != string(commit.Role()) {
 			return fmt.Errorf("native commit role mismatch")
+		}
+		if err := validateQuestionRestoreFacts(entry, commit.QuestionInvocations()); err != nil {
+			return err
+		}
+		if entry.Kind == nativeHistorySample {
+			questionResults = commit.QuestionResults()
+		}
+		if entry.Kind == nativeHistoryToolOutputs {
+			if len(entries) == 0 {
+				return fmt.Errorf("tool outputs have no sample")
+			}
+			if err := validateQuestionRestoredOutputs(entries[len(entries)-1], entry, questionResults); err != nil {
+				return err
+			}
+			questionResults = nil
 		}
 		entry.TurnID = commit.TurnID()
 		if entry.Kind == nativeHistoryUserInputs {

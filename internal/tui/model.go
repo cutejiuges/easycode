@@ -65,6 +65,7 @@ const (
 
 // Model 保存纯 UI 投影状态，不依赖 Provider 或 transport。
 type Model struct {
+	question             *questionOverlay
 	nextTextID           uint64
 	reading              transcriptViewport
 	markdown             markdownViewCache
@@ -185,6 +186,9 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.width = value.Width
 		model.height = value.Height
 		model.composer.resize(value.Width, value.Height)
+		if model.question != nil {
+			model.question.resize(value.Width, value.Height)
+		}
 		return model, nil
 	case protocol.ControlItem:
 		next, cmd := model.projectControlItem(value)
@@ -229,6 +233,12 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.retracting = nil
 		model.errorSummary = safeErrorSummary(value.err)
 		return model, nil
+	case questionSubmitResult:
+		if model.question != nil && model.question.request.RequestID == value.requestID && value.err != nil {
+			model.question.submitted = false
+			model.question.errorText = safeErrorSummary(value.err)
+		}
+		return model, nil
 	case approvalSubmitErrorMsg:
 		if model.approval != nil {
 			model.approval.submitted = false
@@ -248,6 +258,9 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if model.question != nil {
+		return model.handleQuestionKey(key)
+	}
 	if model.skillsOpen {
 		return model.handleSkillsKey(key)
 	}
@@ -632,9 +645,30 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 		model.assistantItem = -1
 		model.interruptNext = false
 		terminal = true
+	case protocol.EventUserQuestionRequested:
+		p, err := protocol.DecodeUserQuestionRequested(event)
+		if err != nil || !event.TurnID.Valid() || model.question != nil || model.approval != nil || (model.activeTurnID != "" && model.activeTurnID != event.TurnID) {
+			model.errorSummary = "stream_protocol_error: invalid question request"
+			return model, interruptSession(model.session)
+		}
+		model.question = newQuestionOverlay(p, event.TurnID, model.widthOrDefault(), model.heightOrDefault())
+	case protocol.EventUserQuestionResolved:
+		p, err := protocol.DecodeUserQuestionResolved(event)
+		if err != nil {
+			model.errorSummary = "stream_protocol_error: invalid question resolution"
+			return model, nil
+		}
+		if model.question != nil && model.question.request.RequestID == p.RequestID {
+			q := model.question
+			if q.turnID != event.TurnID || q.request.InvocationID != p.InvocationID || q.request.Fingerprint != p.Fingerprint {
+				model.errorSummary = "stream_protocol_error: question resolution mismatch"
+				return model, nil
+			}
+			model.question = nil
+		}
 	case protocol.EventToolApprovalRequested:
 		payload, err := protocol.DecodeToolApprovalRequested(event)
-		if err != nil || !event.TurnID.Valid() || model.approval != nil ||
+		if err != nil || !event.TurnID.Valid() || model.approval != nil || model.question != nil ||
 			(model.activeTurnID != "" && model.activeTurnID != event.TurnID) {
 			model.errorSummary = "stream_protocol_error: invalid approval request event"
 			return model, interruptSession(model.session)
@@ -660,6 +694,7 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 		}
 	}
 	if terminal {
+		model.question = nil
 		model.approval = nil
 		model.activeTurnID = ""
 		model.cancelling = false
@@ -670,6 +705,9 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 
 // View 渲染确定性的聊天投影和已准备的多行输入布局。
 func (model Model) View() string {
+	if model.question != nil {
+		return model.renderQuestion()
+	}
 	if model.skillsOpen {
 		return model.renderSkills()
 	}

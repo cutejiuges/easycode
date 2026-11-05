@@ -122,7 +122,7 @@ func safeComposerText(text string) string {
 	return result.String()
 }
 
-func (c composer) view(editable bool) string {
+func (c composer) inputView(editable bool) string {
 	if c.width == 1 {
 		if editable {
 			return "|\n"
@@ -150,6 +150,13 @@ func (c composer) view(editable bool) string {
 		}
 		result.WriteByte('\n')
 	}
+	return result.String()
+}
+
+func (c composer) view(editable bool) string {
+	var result strings.Builder
+	result.WriteString(c.inputView(editable))
+	end := min(len(c.layout.rows), c.top+c.visibleRows())
 	if c.height >= 5 && c.width >= 24 {
 		hint := "Enter: send | Alt+Enter/Ctrl+J: newline"
 		if c.top > 0 || end < len(c.layout.rows) {

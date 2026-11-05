@@ -1,8 +1,22 @@
 # EasyCode Tool 系统架构设计
 
+## 结构化用户提问
+
+当前第九项能力 `user.question` 的两个 facade 为 Anthropic `AskUserQuestion` 和 OpenAI `request_user_input`，均为 structured JSON。1–4 题、每题 2–4 选项，以稳定题目 ID 和零基选项索引关联答案，支持单选、多选、精确说明文字与显式跳过；模型 schema 不包含预填答案或权限字段。问题值由 protocol 持有不可变编码，tool 别名复用；执行器不依赖 Provider、Runtime 或 TUI。
+
+Question 复用 `tool_call_ready -> tool_execution_started -> tool_call_result -> provider_native_commit`，不增加 Session event、格式版本或历史 reader。它是 exclusive 调度屏障，但 `RequiresApproval=false`；后序调用必须等待其结果 Sync。回答不生成 approval fact/grant，Patch/Write/Exec 的批准规则保持独立。无交互宿主返回 `denied/user_input_unavailable`，没有问卷事件或 stdin 等待。
+
+Runtime 的实例 pending 状态与 AgentLoop owner 接收 `resolve_user_question`，关联 turn、request、invocation 和题目 fingerprint。锁外通过固定 codec、Session 真实信封和 Provider 单项原生输出快照预检，锁内只复核身份及接收。接收不等于提交；接收后遇取消仍先履行结果提交义务，Sync 不确定则 poison，不能发布成功。
+
+完整答案 preview 最多 128 KiB，文字合计 16 KiB，计入 sample 512 KiB/turn 2 MiB；预算拒绝不扣账、不写盘、不丢草稿，成功回答不截断。目录九项定义参与稳定 fingerprint，题目、答案、请求 ID 和终端尺寸只影响动态历史。两家原生结果保持各自 function_call_output/tool_result，保留 opaque reasoning、phase、signature。
+
+原生恢复与离线 reader 还会核对 Session ready/result 的完整题目和冻结输出；`RestoreRecord.WithQuestionFacts` 只传递已验证的内存事实，不增加 record 或正文副本。仅分别验证两套合法数据不足以证明它们相同，native/shared 题目或答案错配必须整体拒绝并保留原日志。
+
+恢复不重新执行提问：ready 尾部补取消，started 无结果补 outcome_uncertain，result/output 缺口复用冻结答案。正文仅在现有结果 preview 保存；临时 request ID 与 UI 草稿不持久化。TUI 复核提交、单独说明编辑、窄屏滚动和 Ctrl+O 回看共用既有分页/四页缓存；实现与验证见 `internal/tui/user_questions.go`、`internal/runtime/user_question.go`、`internal/app/questions_e2e_test.go`、`internal/session/question_fixture_test.go` 和 `scripts/user-question-smoke.py`。
+
 ## 命令输出存储与查询
 
-`add-command-output-artifacts` 增加第八项能力 `artifact.read`，两家 facade 都命名为 `ReadArtifact`。输入为不透明 `artifact_id`、raw-byte `offset` 和 `limit`，单页最多 65,536 bytes；它不接受文件路径，不生成工作区 Read 证据。目录稳定排序与 schema 估算包括八项工具。
+`artifact.read` 的两家 facade 都命名为 `ReadArtifact`。输入为不透明 `artifact_id`、raw-byte `offset` 和 `limit`，单页最多 65,536 bytes；它不接受文件路径，不生成工作区 Read 证据。当前目录稳定排序与 schema 估算包括九项工具。
 
 `session/artifact` 在 Session 根的 `artifacts/<thread-id>/<invocation-id>/` 保存 stdout/stderr/search_result。每对象最多 16 MiB 连续前缀，Exec 原子预留 32 MiB，Glob/Grep 单文本预留 16 MiB，thread/root 分别为 256 MiB/1 GiB。内存仍是每流 512 KiB 头尾，模型预览连同引用提示不超过 256 KiB。确认 EOF 的空流和完整内联小输出为 not_needed；其他结果分别记录 complete、partial、unavailable，不覆盖 exit/timeout/cancelled。
 
@@ -30,7 +44,7 @@ Session 当前 canary 为 7，native revision 为 3，headless JSONL 为 v1。�
 
 ## 当前独占执行不变量
 
-八项工具的 JSON 输入统一经过 codec 检查。Read/Glob/Grep 的缺省字段保留默认值，显式 null、重复键与有损 Unicode 失败关闭；Patch 的 custom freeform 保留独立语法解析器。
+九项工具的 JSON 输入统一经过 codec 检查。Read/Glob/Grep 的缺省字段保留默认值，显式 null、重复键与有损 Unicode 失败关闭；Patch 的 custom freeform 保留独立语法解析器。
 
 `runtime/exclusive.go` 持有 typed strategy，统一 Patch/Write/Exec 的 started admission、执行一次、关联验证与结果持久化。started 接收前取消不调用 executor；接收后等待确定提交结果，只有成功 Sync 后才执行。健康取消不 poison，无法确认 durable 结果才 poison。
 
@@ -47,7 +61,7 @@ Patch/Write grant 仅满足各自 capability 的 ask，不覆盖 deny，且只�
 
 本文固定 Tool 系统的完整大图、长期边界和分阶段实现顺序，避免多个长周期 change 各自发明一套调用、权限、恢复或结果协议。
 
-本文同时记录已实现基线与后续目标。当前 `internal/tool` 与 `internal/tool/builtin` 提供 Read、Glob、Grep、单个已有 UTF-8 工作区文件 Patch、structured `Write(file_path, content)`，以及 Darwin 前台 Exec、ReadArtifact 和本地 Skill。八项能力具有强类型输入/结果、双 Provider facade 和有序调度；Patch/Write/Exec 都是 exclusive 屏障。Anthropic 使用 structured `Edit`/`Write`/`Bash`，OpenAI 使用 custom freeform `apply_patch`、structured `Write` 与 function `exec_command`。交互式 Patch 显示完整 diff，Write 区分创建与覆盖，二者默认聚焦 No；Exec 始终只允许单次批准；headless `ask` 以 `approval_required` 失败关闭。非 Darwin 命令执行明确返回 `unsupported_platform`，不得无 sandbox 降级。PTY、后台进程控制、全工具 artifact、跨能力通用 SandboxPlanner 和完整 Tool UI 尚未实现。新增 Tool schema、Session record、权限协议或跨包接口仍须独立 OpenSpec change，经过 `propose -> review/confirm -> apply -> verify -> archive`。
+本文同时记录已实现基线与后续目标。当前 `internal/tool` 与 `internal/tool/builtin` 提供 Read、Glob、Grep、单个已有 UTF-8 工作区文件 Patch、structured `Write(file_path, content)`，以及 Darwin 前台 Exec、ReadArtifact、本地 Skill 和结构化用户提问。九项能力具有强类型输入/结果、双 Provider facade 和有序调度；Patch/Write/Exec/Question 都是 exclusive 屏障，只有前三者需要批准。Anthropic 使用 structured `Edit`/`Write`/`Bash`，OpenAI 使用 custom freeform `apply_patch`、structured `Write` 与 function `exec_command`。交互式 Patch 显示完整 diff，Write 区分创建与覆盖，二者默认聚焦 No；Exec 始终只允许单次批准；headless `ask` 以 `approval_required` 失败关闭。非 Darwin 命令执行明确返回 `unsupported_platform`，不得无 sandbox 降级。PTY、后台进程控制、全工具 artifact、跨能力通用 SandboxPlanner 和完整 Tool UI 尚未实现。新增 Tool schema、Session record、权限协议或跨包接口仍须独立 OpenSpec change，经过 `propose -> review/confirm -> apply -> verify -> archive`。
 
 参考工程的使用原则如下：
 
@@ -424,7 +438,7 @@ Runtime 的观察表仅由 turn owner 操作，上限 1024，按输出提交顺�
 - Exec：已实现 Darwin 前台执行、单次批准、sandbox、取消/timeout、输出预算、进度与详情；非 Darwin 失败关闭。
 - `write_stdin`、PTY、后台进程控制：待各自定义输入、授权和资源所有权后实现。
 - allow/ask/deny、approval：已实现 Patch/Write/Exec 闭环；SandboxPlan 当前只覆盖 Exec，不等于通用策略引擎。
-- ledger 与配对恢复：八项能力均已实现；通用结果预算和非命令工具 artifact 仍未实现。
+- ledger、配对恢复和通用结果预算：九项能力均已实现；覆盖所有工具输出的统一 artifact 仍属于后续范围。
 - 完整工具输出后的 sampling safe point 已接入 same-turn steer；只领取队首自动输入前缀，strict-next 保持屏障，输入提交不重置 sample/call 上限。
 
 ### 13.2 后续阶段能力

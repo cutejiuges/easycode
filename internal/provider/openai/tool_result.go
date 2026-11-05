@@ -24,33 +24,11 @@ func prepareToolOutputsEntry(history []nativeHistoryEntry, results []tool.Invoca
 	}
 	outputs := make([]NativeItem, len(results))
 	for index, result := range results {
-		if err := result.Validate(); err != nil {
-			return nativeHistoryEntry{}, fmt.Errorf("OpenAI tool result %d is invalid: %w", index, err)
-		}
-		if string(result.ProviderCallID()) != calls[index].CallID {
-			return nativeHistoryEntry{}, fmt.Errorf("OpenAI tool result order does not match pending calls")
-		}
-		if result.Capability() != openAICapabilityForName(calls[index].Name) {
-			return nativeHistoryEntry{}, fmt.Errorf("OpenAI tool result capability does not match pending call")
-		}
-		wantWire := tool.WireStructured
-		if calls[index].Type == "custom_tool_call" {
-			wantWire = tool.WireCustomFreeform
-		}
-		if result.WireKind() != wantWire {
-			return nativeHistoryEntry{}, fmt.Errorf("OpenAI result wire does not match call")
-		}
-		payload, err := codec.MarshalStable(functionOutputPayload{
-			Status: result.Status(), Code: result.Code(), Content: result.Preview().Text(),
-		})
+		item, err := encodeToolResult(calls[index], result)
 		if err != nil {
-			return nativeHistoryEntry{}, fmt.Errorf("encode OpenAI tool result: %w", err)
+			return nativeHistoryEntry{}, err
 		}
-		outputType := "function_call_output"
-		if calls[index].Type == "custom_tool_call" {
-			outputType = "custom_tool_call_output"
-		}
-		outputs[index] = NativeItem{Type: outputType, CallID: calls[index].CallID, Output: string(payload)}
+		outputs[index] = item
 	}
 	entry := nativeHistoryEntry{Kind: nativeHistoryToolOutputs, TurnID: history[len(history)-1].TurnID, ToolOutputs: outputs}
 	if err := validateNativeHistoryEntry(entry); err != nil {
@@ -63,6 +41,8 @@ func openAICapabilityForName(name string) tool.CapabilityID {
 	switch name {
 	case "exec_command":
 		return tool.CapabilityExec
+	case "request_user_input":
+		return tool.CapabilityQuestion
 	case "Skill":
 		return tool.CapabilitySkill
 	case "ReadArtifact":
@@ -186,6 +166,24 @@ func matchFunctionOutputs(calls []NativeItem, outputs []NativeItem) error {
 		}
 		if _, exists := seen[output.CallID]; exists {
 			return fmt.Errorf("OpenAI function output call ID is duplicated")
+		}
+		if calls[index].Name == "request_user_input" {
+			input, err := tool.DecodeQuestionInput([]byte(calls[index].Arguments))
+			if err != nil {
+				return err
+			}
+			var payload functionOutputPayload
+			if codec.UnmarshalRecord([]byte(output.Output), &payload) != nil || !payload.Status.Valid() {
+				return fmt.Errorf("invalid native question output")
+			}
+			if payload.Status == tool.ResultSuccess {
+				if payload.Code != "ok" {
+					return fmt.Errorf("invalid question success code")
+				}
+				if _, err := tool.DecodeQuestionPreview(input, []byte(payload.Content)); err != nil {
+					return err
+				}
+			}
 		}
 		seen[output.CallID] = struct{}{}
 	}

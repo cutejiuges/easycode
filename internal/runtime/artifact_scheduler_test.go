@@ -21,7 +21,7 @@ type gatedArtifactExecutor struct {
 
 type artifactBarrierOperations struct{ trace []string }
 
-func (o *artifactBarrierOperations) executeApproved(_ context.Context, _ Emitter, _ domain.TurnID, v tool.Invocation) (tool.InvocationResult, bool, error) {
+func (o *artifactBarrierOperations) executeExclusiveCall(_ context.Context, _ Emitter, _ domain.TurnID, v tool.Invocation) (tool.InvocationResult, bool, error) {
 	o.trace = append(o.trace, "exclusive:"+string(v.Capability()))
 	return tool.NewInvocationErrorResult(v, tool.ResultDenied, "approval_required", "Tool denied"), false, nil
 }
