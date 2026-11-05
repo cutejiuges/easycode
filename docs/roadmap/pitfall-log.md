@@ -791,3 +791,11 @@
 - 交互：初次加载失败不显示空列表；陈旧列表注明原范围；短屏保留错误、确认选项，目录和预览可滚动；超长搜索明确提示。
 - 回归：`internal/app/picker_owner_test.go` 的已取消接收；`session_preview_test.go` 的双 Provider 校验 barrier、lease 释放与 bytes 不变；`session_picker_test.go` 的真实追加后重读和 clean/compensation/repair 失败分类；`internal/tui/session_picker_test.go` 的精确预算与窄屏状态。
 - 架构与缓存：不增加 goroutine、公共协议或存储版本，不从预览反向生成 Provider 请求；完整原生校验与既有 request golden 保持。
+
+
+## 本地 Skills：冻结附件与权限边界
+
+- 显式正文必须在 admission 前准备，原文与附件分别保存；队列重试和恢复不得再次替换参数或读盘。两家原生消息的第二个文本块必须与 `input_metadata.skills` 的附件一致。
+- `disable-model-invocation` 的显式例外只允许当前 turn 已 durable 的同来源、同 revision 辅助资源读取；不能凭 queued 输入、旧 turn 或模型猜名授权主文档。
+- 新增 Skill 后必须一起更新八能力目录、request golden、缓存六来源快照和工具结果 strict union。metadata 的 struct canonical bytes 应走既有 `MarshalCanonical`，不能用按 map 键重新排序的 `ParseCanonical` 校验器误拒绝自身结构序列。
+- 回归入口：`internal/extension/skill/local_test.go`、`secure_unix_test.go`、`internal/runtime/skills_test.go`、`internal/app/skills_test.go`、`internal/provider/{openai,anthropic}/skill_test.go`、`internal/session/skill_test.go`、`internal/tui/skills_test.go`。

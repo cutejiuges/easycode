@@ -8,6 +8,7 @@ import (
 
 // InputMetadata 是两家原生存储共用的关联元数据，不属于模型 wire。
 type InputMetadata struct {
+	Skills      []InputSkillMetadata  `json:"skills,omitempty"`
 	TurnID      domain.TurnID         `json:"turn_id"`
 	Placement   domain.InputPlacement `json:"placement"`
 	SampleIndex uint32                `json:"target_sample_index"`
@@ -24,6 +25,13 @@ func NewInputMetadata(a domain.InputAssociation) (InputMetadata, error) {
 
 // Association 严格校验并返回独立领域关联。
 func (m InputMetadata) Association() (domain.InputAssociation, error) {
+	seen := make(map[domain.InputID]bool)
+	for _, v := range m.Skills {
+		if !slices.Contains(m.InputIDs, v.InputID) || seen[v.InputID] || v.Attachment.Validate() != nil {
+			return domain.InputAssociation{}, fmt.Errorf("invalid input skill metadata")
+		}
+		seen[v.InputID] = true
+	}
 	return domain.NewInputAssociation(m.TurnID, m.Placement, m.SampleIndex, m.InputIDs)
 }
 
@@ -48,4 +56,20 @@ func ValidateUserInputs(a domain.InputAssociation, inputs []domain.UserInput) er
 		}
 	}
 	return nil
+}
+
+// InputSkillMetadata 关联原生用户消息中的独立技能文本块。
+type InputSkillMetadata struct {
+	InputID    domain.InputID         `json:"input_id"`
+	Attachment domain.SkillAttachment `json:"attachment"`
+}
+
+// Skill 返回对应输入的冻结附件副本。
+func (m InputMetadata) Skill(id domain.InputID) (domain.SkillAttachment, bool) {
+	for _, v := range m.Skills {
+		if v.InputID == id {
+			return v.Attachment, true
+		}
+	}
+	return domain.SkillAttachment{}, false
 }

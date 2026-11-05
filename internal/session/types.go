@@ -153,6 +153,7 @@ type ExecInputPayload struct {
 
 // ToolCallReadyPayload 保存执行前已经durable的完整调用事实。
 type ToolCallReadyPayload struct {
+	SkillInput        *SkillInputPayload        `json:"skill_input,omitempty"`
 	ReadArtifactInput *ReadArtifactInputPayload `json:"read_artifact_input,omitempty"`
 	InvocationID      tool.InvocationID         `json:"invocation_id"`
 	ProviderCallID    tool.ProviderCallID       `json:"provider_call_id"`
@@ -248,6 +249,7 @@ type PatchResultMetadataPayload struct {
 
 // ToolCallResultPayload 保存无需重新执行即可恢复的冻结结果。
 type ToolCallResultPayload struct {
+	SkillMetadata        *SkillResultPayload         `json:"skill_metadata,omitempty"`
 	Budget               tool.ResultBudgetMetadata   `json:"budget"`
 	ReadArtifactMetadata *ReadArtifactResultPayload  `json:"read_artifact_metadata,omitempty"`
 	InvocationID         tool.InvocationID           `json:"invocation_id"`

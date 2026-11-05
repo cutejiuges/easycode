@@ -81,6 +81,9 @@ func (b *ResultBudget) Allowance(capability CapabilityID) (int, error) {
 		return 0, errors.New("invalid result budget call")
 	}
 	cap := MaxModelPreviewBytes
+	if capability == CapabilitySkill {
+		cap = 128 << 10
+	}
 	if capability == CapabilityGlob || capability == CapabilityGrep {
 		cap = MaxSearchPreviewBytes
 	}
@@ -135,6 +138,9 @@ func (r InvocationResult) Budget() ResultBudgetMetadata { return r.budget }
 
 func initializeResultBudget(r InvocationResult) (InvocationResult, error) {
 	cap := MaxModelPreviewBytes
+	if r.capability == CapabilitySkill {
+		cap = 128 << 10
+	}
 	if r.capability == CapabilityGlob || r.capability == CapabilityGrep {
 		cap = MaxSearchPreviewBytes
 		r.searchSaving = ArtifactSaving{status: ArtifactNotNeeded}

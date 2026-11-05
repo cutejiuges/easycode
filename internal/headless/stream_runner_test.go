@@ -285,8 +285,9 @@ func TestStreamRunnerBrokenOutputStopsWithoutAppendingError(t *testing.T) {
 	writerDone := make(chan error, 1)
 	go func() {
 		_, err := io.WriteString(inputWriter, `{"version":1,"type":"input.submit","request_id":"input-1","text":"hello"}`+"\n")
-		if err == nil {
-			_, err = io.WriteString(inputWriter, strings.Repeat("x", 1<<20))
+		// 持续写入直到 transport 关闭，避免有限数据被 reader 提前读完造成调度相关误报。
+		for err == nil {
+			_, err = io.WriteString(inputWriter, strings.Repeat(" \n", 1<<19))
 		}
 		writerDone <- err
 	}()

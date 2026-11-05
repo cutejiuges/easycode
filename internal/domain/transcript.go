@@ -26,6 +26,8 @@ type TranscriptPosition struct {
 
 // TranscriptItem 只包含允许展示的内容与调用关联；调用名称仅用于核验身份。
 type TranscriptItem struct {
+	Skill    SkillAttachment    `json:"skill,omitempty,omitzero"`
+	HasSkill bool               `json:"has_skill,omitempty"`
 	Kind     TranscriptKind     `json:"kind"`
 	Position TranscriptPosition `json:"position"`
 	TurnID   TurnID             `json:"turn_id"`
@@ -55,6 +57,13 @@ func NewTranscriptCall(position TranscriptPosition, turn TurnID, callID, name st
 
 // Validate 拒绝未知种类、无效身份和跨种类字段，不改变正文。
 func (v TranscriptItem) Validate() error {
+	if v.HasSkill {
+		if v.Kind != TranscriptUser || v.Skill.Validate() != nil {
+			return errors.New("invalid transcript skill")
+		}
+	} else if v.Skill != (SkillAttachment{}) {
+		return errors.New("unexpected transcript skill")
+	}
 	if !v.TurnID.Valid() || !utf8.ValidString(v.Text) {
 		return errors.New("invalid transcript item")
 	}

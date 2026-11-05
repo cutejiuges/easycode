@@ -21,9 +21,11 @@ const (
 
 // SemanticMessage 保留 turn 内消息顺序；InputID 只用于用户消息关联。
 type SemanticMessage struct {
-	Role    SemanticRole `json:"role"`
-	InputID InputID      `json:"input_id,omitempty"`
-	Text    string       `json:"text"`
+	Skill    SkillAttachment `json:"skill,omitempty,omitzero"`
+	HasSkill bool            `json:"has_skill,omitempty"`
+	Role     SemanticRole    `json:"role"`
+	InputID  InputID         `json:"input_id,omitempty"`
+	Text     string          `json:"text"`
 }
 
 // NewSemanticUserMessage 创建有身份的用户正文投影。
@@ -40,6 +42,13 @@ func NewSemanticAssistantMessage(text string) (SemanticMessage, error) {
 
 // Validate 校验封闭角色与输入身份，允许没有可见正文的消息。
 func (m SemanticMessage) Validate() error {
+	if m.HasSkill {
+		if m.Role != SemanticUser || m.Skill.Validate() != nil {
+			return fmt.Errorf("invalid semantic skill")
+		}
+	} else if m.Skill != (SkillAttachment{}) {
+		return fmt.Errorf("unexpected semantic skill")
+	}
 	if !utf8.ValidString(m.Text) {
 		return fmt.Errorf("semantic message text is invalid")
 	}

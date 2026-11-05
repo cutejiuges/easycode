@@ -2,7 +2,7 @@
 
 ## 当前契约与生命周期基线
 
-命令输出存储位于 `internal/session/artifact`；Runtime 在 durable result 后授权引用并更新七工具事实投影，app 装配 typed 宿主查询，TUI 不读文件。ReadArtifact 是第七项真实能力，命令预览与保存前缀分离；保存文件缺失不影响 Provider 原生恢复。预算、目录隔离和 owner 细节见 [ADR-0005](adr/0005-private-command-output-and-host-queries.md) 与 [Tool 输出存储](tool-system.md#命令输出存储与查询)。
+命令输出存储位于 `internal/session/artifact`；Runtime 在 durable result 后授权引用并更新八工具事实投影，app 装配 typed 宿主查询，TUI 不读文件。ReadArtifact 是第七项真实能力，命令预览与保存前缀分离；保存文件缺失不影响 Provider 原生恢复。预算、目录隔离和 owner 细节见 [ADR-0005](adr/0005-private-command-output-and-host-queries.md) 与 [Tool 输出存储](tool-system.md#命令输出存储与查询)。
 
 Session envelope 不含版本字段；双 Provider native envelope 与 headless JSONL 分别遵循自己的独立契约，不得把它们的字段类推到 Session。prepared sample/tool outputs 仅提供显式 finalize/discard 构造器，回调完成后才能报告 finalized。
 
@@ -128,7 +128,7 @@ Runtime 构造时深拷贝该快照，并在每轮把同一值分别交给 Conte
 
 ### 4.1 建议的 Go Module 结构
 
-下列结构同时包含当前实现与目标边界。`tool` 已实现 ReadArtifact、Read、Glob、Grep、Patch、Write、Exec 七项能力；`extension`、`subagent`、`telemetry` 仍保留经批准的结构化 TODO 占位，分别等待 P6/P7/P8 的 OpenSpec 提供真实消费者、验证与测试；不得从目录存在推断能力已经可用。
+下列结构同时包含当前实现与目标边界。`tool` 已实现 ReadArtifact、Read、Glob、Grep、Patch、Write、Exec、Skill 八项能力；`extension/skill` 已接入；其他扩展、`subagent`、`telemetry` 仍保留经批准的结构化 TODO 占位，分别等待 P6/P7/P8 的 OpenSpec 提供真实消费者、验证与测试；不得从目录存在推断能力已经可用。
 
 ```text
 cmd/
@@ -149,7 +149,7 @@ internal/
   context/                  上下文分层、token budget、compact、cache plan
   session/                  JSONL、artifact、resume/fork
     catalog/                可重建 SQLite Catalog 与前台 reconciliation
-  extension/                P6 目标：hooks、skills、plugins、MCP
+  extension/                本地 skills；P6 后续目标：hooks、plugins、MCP
   subagent/                 P7 目标：thread tree、mailbox、后台任务和限流
   tui/                      Bubble Tea、输入、消息 view、overlay 和 diff
   telemetry/                P8 目标：slog、redaction、metrics 和 diagnostics
@@ -337,7 +337,7 @@ OpenAI payload v1 保存用户 Responses item、有序 output items 和原始 us
 
 ### 6.2 上下文分段
 
-当前已实现不可变、强类型且可验证的 `CachePlan`、stable-prefix fingerprint 和 ContextPlanner。计划依次输出 `provider_profile`、`tool_catalog`、可选 `project_instructions`、`committed_history`、`current_input`；七项真实工具的稳定 facade/schema 进入 catalog segment、估算与 fingerprint，实际 command、workdir、approval 和宿主环境不得污染稳定前缀。项目快照非空时以 `replace + project-stable` 进入稳定前缀，history 为 turn-stable，当前输入为 volatile。下列其余分段仍是 P4/P6 随真实消费者逐项扩展的目标，不能从目录或设计推断为已实现：
+当前已实现不可变、强类型且可验证的 `CachePlan`、stable-prefix fingerprint 和 ContextPlanner。计划依次输出 `provider_profile`、`tool_catalog`、可选 `project_instructions`、可选 `skill_catalog`、`committed_history`、`current_input`；八项真实工具的稳定 facade/schema 进入 catalog segment、估算与 fingerprint，实际 command、workdir、approval 和宿主环境不得污染稳定前缀。项目快照非空时以 `replace + project-stable` 进入稳定前缀，history 为 turn-stable，当前输入为 volatile。下列其余分段仍是 P4/P6 随真实消费者逐项扩展的目标，不能从目录或设计推断为已实现：
 
 ```text
 CachePlan
@@ -556,7 +556,7 @@ Skill 与 hooks/plugins 属于 P6；MCP 和 Agent/Subagent 属于 P7；完整跨
 当前已接入 Runtime 的来源只有：
 
 - `provider_profile`：family、model、schema revision，`replace + stable`。
-- `tool_catalog`：七项工具的确定性 schema，`replace + stable`。
+- `tool_catalog`：八项工具的确定性 schema，`replace + stable`。
 - `project_instructions`：启动时发现的有界结构化快照，存在文档时为 `replace + project-stable`，空快照省略。
 - `committed_history`：`ActiveContextView` 中的独立摘要与增量历史，结合不含 opaque 正文的 Provider footprint，`append + turn-stable`。
 - `current_input`：采样标记，`replace + volatile`；正文已进入有效原生历史，排队和 staging 输入不重复计量。
@@ -981,3 +981,10 @@ ADR 存放在 `docs/architecture/adr/`，模板见该目录的 `README.md`，并
 选择理由、参考工程版本、预算和验证方案见 [OpenSpec 变更](../../openspec/changes/archive/2026-11-04-add-interactive-session-picker/design.md)。这是一块恢复入口的完整切片，不代表 P5 的 Markdown、reasoning、补全或 fork picker 已完成。
 
 选择器接收以 owner 锁内对操作/父取消 done channel 的非阻塞检查为线性化点；此前已取消的结果不能进入 Chat。资源仍由同一 worker 持有到最终关闭，不在锁内调用 context 实现或执行关闭。预览的原文预算和安全展示预算分别裁剪，任何省略都保留可见标记；展示不会持有被截掉的大字符串 backing storage。短屏确认保留当前选项并允许滚动目录，短屏预览允许滚过状态头部。
+
+
+### 本地 Skills 当前边界
+
+`extension/skill.Local.Load` 显式建立有界来源快照，使用 no-follow 描述符逐段打开、实际句柄类型校验和全文摘要检测文件变化。`domain.SkillCatalog` 只持有元数据；`skill_catalog` 是 project-stable 来源，正文通过用户附件或 `skill.read` 工具进入历史尾部。
+
+宿主在 AgentLoop admission 前调用共享准备服务；队列保存原文与单份 `SkillAttachment`，预算同时计费。两家 Provider 保存独立文本块与 `input_metadata.skills` 关联，不从展示投影重建请求。Skill 的工具事实复用 `tool_call_ready`、`tool_execution_started`、`tool_call_result` 和原生 outputs；当前结果字段为 `skill_input` / `skill_metadata`。附件/结果在 Sync 后可见，恢复不访问来源文件。Runtime 从当前 turn 已提交输入派生短期资源资格，不写独立授权 record，结束 turn 即清除。

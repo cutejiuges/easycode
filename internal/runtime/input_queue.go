@@ -114,7 +114,7 @@ func (state *agentLoopRunState) handleInputResolution(resolution inputResolution
 		}
 		if matches {
 			for _, input := range claim {
-				state.queuedBytes -= len(input.text)
+				state.queuedBytes -= input.value.ByteSize()
 				state.emitInputStatus(input, resolution.turnID, resolution.state, resolution.reason)
 				if input.requestID != state.active.input.requestID {
 					state.completeRequest(input.requestID)
@@ -133,7 +133,7 @@ func (state *agentLoopRunState) returnAutomatic(reason protocol.InputReason) {
 	kept := state.queue[:0]
 	for _, input := range state.queue {
 		if input.automatic {
-			state.queuedBytes -= len(input.text)
+			state.queuedBytes -= input.value.ByteSize()
 			state.emitInputStatus(input, "", protocol.InputReturned, reason)
 			state.completeRequest(input.requestID)
 		} else {
@@ -167,7 +167,7 @@ func (state *agentLoopRunState) retract(request loopCommandRequest) {
 	kept := state.queue[:0]
 	for _, input := range state.queue {
 		if targets[input.value.ID()] {
-			state.queuedBytes -= len(input.text)
+			state.queuedBytes -= input.value.ByteSize()
 			state.emitInputStatus(input, "", protocol.InputReturned, protocol.InputReasonRetracted)
 			state.completeRequest(input.requestID)
 		} else {

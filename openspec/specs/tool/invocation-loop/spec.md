@@ -10,12 +10,12 @@
 
 每次 Provider sample SHALL 使用一个不可变 Tool Catalog snapshot。snapshot 中每个 facade MUST 关联唯一当前、已注册且可执行的 capability、强类型 input/result、Provider facade及其wire kind、validator、policy、sandbox planner、executor 和结果 renderer；系统 MUST NOT 暴露缺少任一真实消费者的 schema或freeform定义，也 MUST NOT 通过 input revision、result codec revision 或版本后缀类型选择实现。
 
-当前 snapshot SHALL 恰好包含 `fs.read`、`fs.glob`、`fs.grep`、`fs.patch`、`fs.write`、`process.exec` 与 `artifact.read`；Anthropic SHALL 将 patch/command 分别暴露为 structured `Edit`/`Bash`，OpenAI SHALL 将同一 patch/command 能力分别暴露为 custom freeform `apply_patch` 与 structured `exec_command`。facade 按稳定 capability ID、wire kind 与 facade name 确定性排序。snapshot SHALL 具有非空内容派生 source revision、canonical definition bytes 和 fingerprint；调用方修改 getter 返回值不得改变 snapshot。时间戳、cwd、Session/thread/turn identity、随机 invocation/approval ID、权限临时状态、base evidence、diff、命令环境实际值和文件系统枚举顺序 MUST NOT 进入 definition bytes 或 fingerprint。
+当前 snapshot SHALL 恰好包含 `fs.read`、`fs.glob`、`fs.grep`、`fs.patch`、`fs.write`、`process.exec`、`artifact.read` 与 `skill.read`；Anthropic SHALL 将 patch/command 分别暴露为 structured `Edit`/`Bash`，OpenAI SHALL 将同一 patch/command 能力分别暴露为 custom freeform `apply_patch` 与 structured `exec_command`。facade 按稳定 capability ID、wire kind 与 facade name 确定性排序。snapshot SHALL 具有非空内容派生 source revision、canonical definition bytes 和 fingerprint；调用方修改 getter 返回值不得改变 snapshot。时间戳、cwd、Session/thread/turn identity、随机 invocation/approval ID、权限临时状态、base evidence、diff、命令环境实际值和文件系统枚举顺序 MUST NOT 进入 definition bytes 或 fingerprint。
 
 两个 Provider SHALL 都以 structured Write 暴露 fs.write。Write 的 request、strict decoder、native restore、result codec、候选、policy、executor 和审批展示缺一不可；创建/覆盖证据和 Read observation MUST NOT 进入稳定 definition bytes。
 
 #### Scenario: Build the same catalog twice
-- **WHEN** 两次使用相同 Read、ReadArtifact、Glob、Grep、Write、Edit、apply_patch、Bash和exec_command描述与定义创建catalog snapshot
+- **WHEN** 两次使用相同 Skill、Read、ReadArtifact、Glob、Grep、Write、Edit、apply_patch、Bash和exec_command描述与定义创建catalog snapshot
 - **THEN** facade顺序、wire kind、canonical bytes、source revision和fingerprint完全相同
 
 #### Scenario: Reject a facade without an executor
@@ -24,15 +24,15 @@
 
 #### Scenario: Expose the complete current catalog
 - **WHEN** Runtime为本变更编译一次Provider请求
-- **THEN** catalog只声明Read、ReadArtifact、Glob、Grep、Write、对应Provider的Edit或apply_patch以及Bash或exec_command，不声明Skill、MCP、Agent、后台进程或write_stdin
+- **THEN** catalog只声明Read、ReadArtifact、Glob、Grep、Write、对应Provider的Edit或apply_patch以及Bash或exec_command，额外声明 structured Skill，不声明MCP、Agent、后台进程或write_stdin
 
 #### Scenario: Expose the complete read-only catalog
 - **WHEN** 将当前catalog中的只读子集投影给审计或测试
-- **THEN** 该子集仍恰好包含Read、ReadArtifact、Glob、Grep，Patch、Write与Exec作为独立exclusive能力存在且不冒充只读工具
+- **THEN** 该子集仍恰好包含Read、ReadArtifact、Glob、Grep、Skill，Patch、Write与Exec作为独立exclusive能力存在且不冒充只读工具
 
 #### Scenario: Expose only current contracts
 - **WHEN** 将当前catalog与早期开发期catalog比较
-- **THEN** 当前唯一catalog直接包含七项能力且不保留旧catalog、旧schema或兼容分支
+- **THEN** 当前唯一catalog直接包含八项能力且不保留旧catalog、旧schema或兼容分支
 
 #### Scenario: Expose Provider-specific mutation wire
 - **WHEN** 分别读取Anthropic与OpenAI catalog view
@@ -40,7 +40,7 @@
 
 #### Scenario: Expose only Read
 - **WHEN** 将当前catalog与最早只暴露Read的开发期catalog比较
-- **THEN** 当前唯一catalog直接包含Read、Glob、Grep、Patch、Write、Exec与ReadArtifact且不保留旧catalog分支
+- **THEN** 当前唯一catalog直接包含Read、Glob、Grep、Patch、Write、Exec、ReadArtifact与Skill且不保留旧catalog分支
 
 #### Scenario: Expose Provider-specific patch wire
 - **WHEN** 分别读取Anthropic与OpenAI catalog view
@@ -55,11 +55,17 @@
 
 #### Scenario: Expose executable artifact reading
 - **WHEN** 构造两家 Provider 当前 catalog
-- **THEN** 恰好七项能力，ReadArtifact 具有完整 request、reducer、native restore、policy、executor 和 result codec
+- **THEN** 恰好八项能力，ReadArtifact 具有完整 request、reducer、native restore、policy、executor 和 result codec
+
+两家 Provider SHALL 以 structured Skill 暴露 skill.read，具备完整读取、validator、policy、来源范围约束、renderer 与恢复实现。目录为空仍保留真实 executor，未知名称返回安全错误，不暴露未来来源能力。
+
+#### Scenario: Expose executable Skill loading
+- **WHEN** 两家 Provider 构造当前目录
+- **THEN** 均恰好八项能力，Skill 的主文档与资源分支都有 typed input/result，定义不包含实际目录正文或绝对路径
 
 ### Requirement: Completed samples produce typed ready calls
 
-Provider completed sample SHALL 将原生 native commit、normalized usage 与按模型 item 顺序排列的 ready calls 作为一个不可分割的 prepared value 交给 Runtime。每个 ready call MUST 包含合法 Provider call ID、非空 facade identity、已解析 capability 以及 `ReadInput`、`GlobInput`、`GrepInput`、`PatchInput`、`WriteInput`、`ExecInput` 或 `ReadArtifactInput` 封闭联合中的恰好一种；核心导出边界 MUST NOT 接受或返回 `any`、无约束动态 map 或 input revision router。
+Provider completed sample SHALL 将原生 native commit、normalized usage 与按模型 item 顺序排列的 ready calls 作为一个不可分割的 prepared value 交给 Runtime。每个 ready call MUST 包含合法 Provider call ID、非空 facade identity、已解析 capability 以及 `ReadInput`、`GlobInput`、`GrepInput`、`PatchInput`、`WriteInput`、`ExecInput`、`ReadArtifactInput` 或 `SkillInput` 封闭联合中的恰好一种；核心导出边界 MUST NOT 接受或返回 `any`、无约束动态 map 或 input revision router。
 
 Anthropic patch与command参数必须由完整structured JSON strict decode；OpenAI patch输入必须由完整custom freeform parser消费，command参数必须由完整structured JSON strict decode。参数delta、未闭合原生item、未知工具、重复Provider call ID、capability与typed input不匹配、未知字段、尾随JSON/patch文本、未支持操作或超限输入 MUST 使sample失败，不得产生ready call、native commit、sample usage、approval或工具I/O。
 
@@ -97,6 +103,12 @@ Write SHALL 只由完整 structured JSON strict decode 产生 ready call；调�
 #### Scenario: Decode a complete artifact call
 - **WHEN** Provider 完成包含 ReadArtifact 的 sample
 - **THEN** 完整参数以唯一 typed input 验证，未 ready 前不打开输出文件
+
+SkillInput SHALL 是主文档加载与资源读取的封闭联合；skill 必填，args/resource 互斥，所有字段 strict decode。
+
+#### Scenario: Reject an ambiguous Skill call
+- **WHEN** Skill 同时提供 args 与 resource、重复键、未知字段或不完整参数
+- **THEN** sample 失败且 Skill 读取次数为零
 
 ### Requirement: Durable sample facts precede tool execution
 

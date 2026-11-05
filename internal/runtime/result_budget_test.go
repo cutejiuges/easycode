@@ -33,6 +33,20 @@ func (r *budgetGateReader) Execute(_ context.Context, inv tool.ReadInvocation) t
 	return execution
 }
 
+type budgetGateSkill struct{ gate *budgetGateReader }
+
+func (s budgetGateSkill) Execute(_ context.Context, inv tool.SkillInvocation, _ []domain.SkillAttachment) tool.InvocationResult {
+	s.gate.entered <- inv.ProviderCallID()
+	<-s.gate.gates[inv.ProviderCallID()]
+	body := strings.Repeat("s", 100<<10)
+	source, _ := domain.NewSkillSource("project", ".", "easycode")
+	attachment, _ := domain.NewSkillAttachment(source, "demo", domain.SkillDigest("document"), "", body)
+	preview, _ := tool.NewModelPreview(body)
+	result, _ := tool.NewSkillInvocationResult(inv, tool.ResultSuccess, "ok", preview, attachment)
+	s.gate.finished <- inv.ProviderCallID()
+	return result
+}
+
 func TestOrderedBudgetIndependentOfEightWorkerCompletionOrder(t *testing.T) {
 	var baseline []tool.InvocationResult
 	for _, reverse := range []bool{false, true} {
@@ -41,10 +55,15 @@ func TestOrderedBudgetIndependentOfEightWorkerCompletionOrder(t *testing.T) {
 			rt := newTestRuntime(t, &fakeToolConversation{fakeConversation: &fakeConversation{}}, journal)
 			reader := &budgetGateReader{entered: make(chan tool.ProviderCallID, 8), finished: make(chan tool.ProviderCallID, 8), gates: make(map[tool.ProviderCallID]chan struct{})}
 			rt.readExecutor = reader
+			rt.skillExecutor = budgetGateSkill{gate: reader}
 			calls := make([]tool.Invocation, 8)
 			for i := range calls {
 				input, _ := tool.NewReadInput("same.txt", 1, 300)
 				ready, _ := tool.NewReadReadyCall(tool.ProviderCallID(fmt.Sprintf("call-%d", i)), input)
+				if i%2 == 1 {
+					skillInput, _ := tool.NewSkillLoadInput("demo", "")
+					ready, _ = tool.NewSkillReadyCall(ready.ProviderCallID(), skillInput)
+				}
 				id, _ := tool.GenerateInvocationID()
 				calls[i], _ = tool.NewInvocation(id, ready)
 				reader.gates[ready.ProviderCallID()] = make(chan struct{})
@@ -84,6 +103,9 @@ func TestOrderedBudgetIndependentOfEightWorkerCompletionOrder(t *testing.T) {
 				used += result.Budget().ActualBytes()
 				if result.Status() == tool.ResultSuccess {
 					success++
+					if result.Capability() == tool.CapabilitySkill && result.Preview().Text() != strings.Repeat("s", 100<<10) {
+						t.Fatal("successful Skill body was truncated")
+					}
 				} else if result.Code() == "result_budget_exceeded" {
 					rejected++
 				} else {
@@ -109,6 +131,10 @@ func TestOrderedBudgetIndependentOfEightWorkerCompletionOrder(t *testing.T) {
 			}
 			if resultIndex != 8 {
 				t.Fatal("missing terminal fact")
+			}
+			turnUsed := rt.resultBudget.TurnUsed()
+			if err := rt.resultBudget.BeginSample(1); err != nil || rt.resultBudget.TurnUsed() != turnUsed {
+				t.Fatal("next sample reset turn budget")
 			}
 			if !reverse {
 				baseline = outcome.results

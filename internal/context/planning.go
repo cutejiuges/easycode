@@ -24,6 +24,7 @@ type SourceKind string
 const (
 	SourceProviderProfile     SourceKind = "provider_profile"
 	SourceToolCatalog         SourceKind = "tool_catalog"
+	SourceSkillCatalog        SourceKind = "skill_catalog"
 	SourceProjectInstructions SourceKind = "project_instructions"
 	SourceCommittedHistory    SourceKind = "committed_history"
 	SourceCurrentInput        SourceKind = "current_input"
@@ -155,6 +156,7 @@ func (profile ProviderProfile) Validate() error {
 
 // PlanningInput 是纯内存 planner 所需的完整强类型输入快照。
 type PlanningInput struct {
+	skillCatalog        domain.SkillCatalog
 	profile             ProviderProfile
 	toolCatalog         tool.CatalogSnapshot
 	projectInstructions domain.ProjectInstructionsSnapshot
@@ -191,6 +193,9 @@ func NewPlanningInput(
 
 // Validate 校验来源之间的 Provider 和估算方法不变量。
 func (input PlanningInput) Validate() error {
+	if err := input.skillCatalog.Validate(); err != nil {
+		return err
+	}
 	if err := input.profile.Validate(); err != nil {
 		return err
 	}
@@ -302,16 +307,20 @@ func (plan ContextPlan) Decision() BudgetDecision { return plan.decision }
 
 // Validate 校验来源顺序、cache plan 和判定状态。
 func (plan ContextPlan) Validate() error {
-	var wantKinds []SourceKind
-	var wantLifecycles []SourceLifecycle
-	switch len(plan.sources) {
-	case 4:
-		wantKinds = []SourceKind{SourceProviderProfile, SourceToolCatalog, SourceCommittedHistory, SourceCurrentInput}
-		wantLifecycles = []SourceLifecycle{SourceLifecycleReplace, SourceLifecycleReplace, SourceLifecycleAppend, SourceLifecycleReplace}
-	case 5:
-		wantKinds = []SourceKind{SourceProviderProfile, SourceToolCatalog, SourceProjectInstructions, SourceCommittedHistory, SourceCurrentInput}
-		wantLifecycles = []SourceLifecycle{SourceLifecycleReplace, SourceLifecycleReplace, SourceLifecycleReplace, SourceLifecycleAppend, SourceLifecycleReplace}
-	default:
+	wantKinds := []SourceKind{SourceProviderProfile, SourceToolCatalog}
+	wantLifecycles := []SourceLifecycle{SourceLifecycleReplace, SourceLifecycleReplace}
+	for _, kind := range []SourceKind{SourceProjectInstructions, SourceSkillCatalog} {
+		for _, source := range plan.sources {
+			if source.kind == kind {
+				wantKinds = append(wantKinds, kind)
+				wantLifecycles = append(wantLifecycles, SourceLifecycleReplace)
+				break
+			}
+		}
+	}
+	wantKinds = append(wantKinds, SourceCommittedHistory, SourceCurrentInput)
+	wantLifecycles = append(wantLifecycles, SourceLifecycleAppend, SourceLifecycleReplace)
+	if len(plan.sources) != len(wantKinds) {
 		return fmt.Errorf("context plan source count is invalid")
 	}
 	seen := make(map[SourceKind]struct{}, len(plan.sources))
@@ -377,7 +386,11 @@ func (*Planner) Plan(input PlanningInput) (ContextPlan, error) {
 	if input.projectInstructions.HasDocuments() {
 		projectEstimate = estimate.String(input.projectInstructions.RenderedText())
 	}
-	totalEstimate := sumEstimates(profileEstimate, toolEstimate, projectEstimate, historyEstimate, currentEstimate)
+	skillEstimate := mustEstimated(0)
+	if input.skillCatalog.HasEntries() {
+		skillEstimate = estimate.String(input.skillCatalog.RenderedText())
+	}
+	totalEstimate := sumEstimates(profileEstimate, toolEstimate, projectEstimate, skillEstimate, historyEstimate, currentEstimate)
 
 	sources := []PlannedSource{
 		{kind: SourceProviderProfile, lifecycle: SourceLifecycleReplace, revision: providerProfileRevision, estimate: profileEstimate},
@@ -388,6 +401,9 @@ func (*Planner) Plan(input PlanningInput) (ContextPlan, error) {
 			kind: SourceProjectInstructions, lifecycle: SourceLifecycleReplace,
 			revision: input.projectInstructions.Revision(), estimate: projectEstimate,
 		})
+	}
+	if input.skillCatalog.HasEntries() {
+		sources = append(sources, PlannedSource{kind: SourceSkillCatalog, lifecycle: SourceLifecycleReplace, revision: input.skillCatalog.Revision(), estimate: skillEstimate})
 	}
 	sources = append(sources,
 		PlannedSource{kind: SourceCommittedHistory, lifecycle: SourceLifecycleAppend, revision: strconv.FormatUint(input.footprint.Revision(), 10), estimate: historyEstimate},
@@ -477,6 +493,17 @@ func buildCachePlan(input PlanningInput) (Plan, error) {
 		}
 		segments = append(segments, project)
 	}
+	if input.skillCatalog.HasEntries() {
+		raw, e := codec.MarshalCanonical(json.RawMessage(input.skillCatalog.CanonicalJSON()), MaxSegmentBytes)
+		if e != nil {
+			return Plan{}, e
+		}
+		segment, e := NewSegment(string(SourceSkillCatalog), StabilityProjectStable, input.skillCatalog.Revision(), raw)
+		if e != nil {
+			return Plan{}, e
+		}
+		segments = append(segments, segment)
+	}
 	history, err := NewSegment(string(SourceCommittedHistory), StabilityTurnStable, strconv.FormatUint(input.footprint.Revision(), 10), historyJSON)
 	if err != nil {
 		return Plan{}, err
@@ -493,7 +520,11 @@ func estimateSemanticHistory(history domain.SemanticHistoryView) domain.TokenEst
 	var tokens uint64
 	for _, turn := range history.Turns {
 		for _, message := range turn.Messages {
-			value, _ := estimate.String(message.Text).Tokens()
+			text := message.Text
+			if message.HasSkill {
+				text += "\n" + message.Skill.Content
+			}
+			value, _ := estimate.String(text).Tokens()
 			tokens = estimate.SaturatingAdd(tokens, value)
 		}
 	}
@@ -502,6 +533,7 @@ func estimateSemanticHistory(history domain.SemanticHistoryView) domain.TokenEst
 
 // semanticContentMessage 只保留 cache 内容，不包含展示或恢复身份。
 type semanticContentMessage struct {
+	Kind semanticContentKind `json:"kind"`
 	Role domain.SemanticRole `json:"role"`
 	Text string              `json:"text"`
 }
@@ -510,7 +542,10 @@ func semanticContent(history domain.SemanticHistoryView) []semanticContentMessag
 	messages := make([]semanticContentMessage, 0)
 	for _, turn := range history.Turns {
 		for _, message := range turn.Messages {
-			messages = append(messages, semanticContentMessage{Role: message.Role, Text: message.Text})
+			messages = append(messages, semanticContentMessage{Kind: semanticText, Role: message.Role, Text: message.Text})
+			if message.HasSkill {
+				messages = append(messages, semanticContentMessage{Kind: semanticSkillAttachment, Role: message.Role, Text: message.Skill.Content})
+			}
 		}
 	}
 	return messages
@@ -584,10 +619,27 @@ func hasTokenValue(value domain.TokenEstimate) bool {
 }
 
 func knownSourceKind(kind SourceKind) bool {
-	return kind == SourceProviderProfile || kind == SourceToolCatalog || kind == SourceProjectInstructions ||
+	return kind == SourceProviderProfile || kind == SourceToolCatalog || kind == SourceProjectInstructions || kind == SourceSkillCatalog ||
 		kind == SourceCommittedHistory || kind == SourceCurrentInput
 }
 
 func knownSourceLifecycle(lifecycle SourceLifecycle) bool {
 	return lifecycle == SourceLifecycleReplace || lifecycle == SourceLifecycleAppend
 }
+
+// WithSkillCatalog 返回绑定稳定元数据目录的计划输入。
+func (input PlanningInput) WithSkillCatalog(c domain.SkillCatalog) (PlanningInput, error) {
+	if err := c.Validate(); err != nil {
+		return PlanningInput{}, err
+	}
+	input.skillCatalog = c.Clone()
+	return input, nil
+}
+
+// semanticContentKind 区分原文和附件；摘要由独立 summary 字段承载。
+type semanticContentKind string
+
+const (
+	semanticText            semanticContentKind = "text"
+	semanticSkillAttachment semanticContentKind = "skill_attachment"
+)

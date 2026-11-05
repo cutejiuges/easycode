@@ -86,7 +86,7 @@ func TestCacheProtocolStrictCurrentContract(t *testing.T) {
 			t.Fatal("invalid source array count accepted", count)
 		}
 	}
-	for _, mutate := range []func(*CacheSnapshotPayload){func(p *CacheSnapshotPayload) { p.Scope = "session" }, func(p *CacheSnapshotPayload) { p.Sources[0].Kind = "future" }, func(p *CacheSnapshotPayload) { p.Sources[0].Revision = "/private/path" }, func(p *CacheSnapshotPayload) { p.Policy.Fingerprint = "bad" }, func(p *CacheSnapshotPayload) { p.LastFailure = "private provider response" }, func(p *CacheSnapshotPayload) { p.Model = "bad\x1b[2J" }, func(p *CacheSnapshotPayload) { p.Sources[3].Fingerprint = "" }} {
+	for _, mutate := range []func(*CacheSnapshotPayload){func(p *CacheSnapshotPayload) { p.Scope = "session" }, func(p *CacheSnapshotPayload) { p.Sources[0].Kind = "future" }, func(p *CacheSnapshotPayload) { p.Sources[0].Revision = "/private/path" }, func(p *CacheSnapshotPayload) { p.Policy.Fingerprint = "bad" }, func(p *CacheSnapshotPayload) { p.LastFailure = "private provider response" }, func(p *CacheSnapshotPayload) { p.Model = "bad\x1b[2J" }, func(p *CacheSnapshotPayload) { p.Sources[4].Fingerprint = "" }} {
 		p := payload
 		mutate(&p)
 		if p.Validate() == nil {

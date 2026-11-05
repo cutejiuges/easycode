@@ -24,7 +24,7 @@ type StreamCacheSnapshot struct {
 	Wire                string                            `json:"wire"`
 	Model               string                            `json:"model"`
 	Policy              protocol.CachePolicyPayload       `json:"policy"`
-	Sources             [5]protocol.CacheSourcePayload    `json:"sources"`
+	Sources             [6]protocol.CacheSourcePayload    `json:"sources"`
 	StableFingerprint   string                            `json:"stable_fingerprint"`
 	ContentFingerprint  string                            `json:"content_fingerprint"`
 	ChangeReason        string                            `json:"change_reason"`

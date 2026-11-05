@@ -2,7 +2,7 @@
 
 ## 命令输出存储与查询
 
-`add-command-output-artifacts` 增加第七项能力 `artifact.read`，两家 facade 都命名为 `ReadArtifact`。输入为不透明 `artifact_id`、raw-byte `offset` 和 `limit`，单页最多 65,536 bytes；它不接受文件路径，不生成工作区 Read 证据。目录稳定排序与 schema 估算包括七项工具。
+`add-command-output-artifacts` 增加第八项能力 `artifact.read`，两家 facade 都命名为 `ReadArtifact`。输入为不透明 `artifact_id`、raw-byte `offset` 和 `limit`，单页最多 65,536 bytes；它不接受文件路径，不生成工作区 Read 证据。目录稳定排序与 schema 估算包括八项工具。
 
 `session/artifact` 在 Session 根的 `artifacts/<thread-id>/<invocation-id>/` 保存 stdout/stderr/search_result。每对象最多 16 MiB 连续前缀，Exec 原子预留 32 MiB，Glob/Grep 单文本预留 16 MiB，thread/root 分别为 256 MiB/1 GiB。内存仍是每流 512 KiB 头尾，模型预览连同引用提示不超过 256 KiB。确认 EOF 的空流和完整内联小输出为 not_needed；其他结果分别记录 complete、partial、unavailable，不覆盖 exit/timeout/cancelled。
 
@@ -30,7 +30,7 @@ Session 当前 canary 为 7，native revision 为 3，headless JSONL 为 v1。�
 
 ## 当前独占执行不变量
 
-七项工具的 JSON 输入统一经过 codec 检查。Read/Glob/Grep 的缺省字段保留默认值，显式 null、重复键与有损 Unicode 失败关闭；Patch 的 custom freeform 保留独立语法解析器。
+八项工具的 JSON 输入统一经过 codec 检查。Read/Glob/Grep 的缺省字段保留默认值，显式 null、重复键与有损 Unicode 失败关闭；Patch 的 custom freeform 保留独立语法解析器。
 
 `runtime/exclusive.go` 持有 typed strategy，统一 Patch/Write/Exec 的 started admission、执行一次、关联验证与结果持久化。started 接收前取消不调用 executor；接收后等待确定提交结果，只有成功 Sync 后才执行。健康取消不 poison，无法确认 durable 结果才 poison。
 
@@ -47,7 +47,7 @@ Patch/Write grant 仅满足各自 capability 的 ask，不覆盖 deny，且只�
 
 本文固定 Tool 系统的完整大图、长期边界和分阶段实现顺序，避免多个长周期 change 各自发明一套调用、权限、恢复或结果协议。
 
-本文同时记录已实现基线与后续目标。当前 `internal/tool` 与 `internal/tool/builtin` 提供 Read、Glob、Grep、单个已有 UTF-8 工作区文件 Patch、structured `Write(file_path, content)`，以及 Darwin 前台 Exec 和 ReadArtifact。七项能力具有强类型输入/结果、双 Provider facade 和有序调度；Patch/Write/Exec 都是 exclusive 屏障。Anthropic 使用 structured `Edit`/`Write`/`Bash`，OpenAI 使用 custom freeform `apply_patch`、structured `Write` 与 function `exec_command`。交互式 Patch 显示完整 diff，Write 区分创建与覆盖，二者默认聚焦 No；Exec 始终只允许单次批准；headless `ask` 以 `approval_required` 失败关闭。非 Darwin 命令执行明确返回 `unsupported_platform`，不得无 sandbox 降级。PTY、后台进程控制、全工具 artifact、跨能力通用 SandboxPlanner 和完整 Tool UI 尚未实现。新增 Tool schema、Session record、权限协议或跨包接口仍须独立 OpenSpec change，经过 `propose -> review/confirm -> apply -> verify -> archive`。
+本文同时记录已实现基线与后续目标。当前 `internal/tool` 与 `internal/tool/builtin` 提供 Read、Glob、Grep、单个已有 UTF-8 工作区文件 Patch、structured `Write(file_path, content)`，以及 Darwin 前台 Exec、ReadArtifact 和本地 Skill。八项能力具有强类型输入/结果、双 Provider facade 和有序调度；Patch/Write/Exec 都是 exclusive 屏障。Anthropic 使用 structured `Edit`/`Write`/`Bash`，OpenAI 使用 custom freeform `apply_patch`、structured `Write` 与 function `exec_command`。交互式 Patch 显示完整 diff，Write 区分创建与覆盖，二者默认聚焦 No；Exec 始终只允许单次批准；headless `ask` 以 `approval_required` 失败关闭。非 Darwin 命令执行明确返回 `unsupported_platform`，不得无 sandbox 降级。PTY、后台进程控制、全工具 artifact、跨能力通用 SandboxPlanner 和完整 Tool UI 尚未实现。新增 Tool schema、Session record、权限协议或跨包接口仍须独立 OpenSpec change，经过 `propose -> review/confirm -> apply -> verify -> archive`。
 
 参考工程的使用原则如下：
 
@@ -424,12 +424,12 @@ Runtime 的观察表仅由 turn owner 操作，上限 1024，按输出提交顺�
 - Exec：已实现 Darwin 前台执行、单次批准、sandbox、取消/timeout、输出预算、进度与详情；非 Darwin 失败关闭。
 - `write_stdin`、PTY、后台进程控制：待各自定义输入、授权和资源所有权后实现。
 - allow/ask/deny、approval：已实现 Patch/Write/Exec 闭环；SandboxPlan 当前只覆盖 Exec，不等于通用策略引擎。
-- ledger 与配对恢复：七项能力均已实现；通用结果预算和非命令工具 artifact 仍未实现。
+- ledger 与配对恢复：八项能力均已实现；通用结果预算和非命令工具 artifact 仍未实现。
 - 完整工具输出后的 sampling safe point 已接入 same-turn steer；只领取队首自动输入前缀，strict-next 保持屏障，输入提交不重置 sample/call 上限。
 
 ### 13.2 后续阶段能力
 
-- Skill：属于 P6 的上下文与指令装载能力，不在 P3 提前伪装成可执行工具。
+- Skill：已通过 `add-local-skills` 接入 `skill.read`，两家 structured facade 均为 `Skill`，复用只读调度和 durable ledger；不执行脚本，不提升权限。
 - MCP tools：属于 P7 的远程 catalog、trust、认证和动态 schema 能力。
 - Agent/Subagent：属于 P7 的 thread、budget、completion envelope 和取消传播能力。
 - hooks/plugins：属于 P6，不能借 Tool callback 绕过版本化 manifest 和权限边界。
@@ -491,3 +491,8 @@ Runtime 的观察表仅由 turn owner 操作，上限 1024，按输出提交顺�
 在对应 change 批准前，不得通过隐藏默认、占位配置或未消费的 event kind 抢先实现这些选择。
 
 输入召回复用已有语义视图，独立限制为 100 条和 8 MiB，不能用 transcript 短预览作为召回正文。Shell 详情查询完整命令与冻结结果，存在引用时异步预取首个保存页；预取同样计入最多四页的缓存，失败不替换原冻结结果。
+
+
+### Skill 完整正文预算
+
+`Skill` 接受 `{skill,args?}` 或 `{skill,resource}`，两种输入互斥，资源限制为同来源的规范相对路径。主文档和资源各最多 64 KiB，参数最多 16 KiB，最终包装正文最多 128 KiB；成功预览必须完整，sample/turn 额度不足时返回 `result_budget_exceeded`，不截断技能指令，也不保存为隐藏 artifact。资源结果明确标为资源读取。

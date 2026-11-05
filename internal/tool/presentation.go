@@ -24,6 +24,14 @@ func ActivityText(text string, limit int) string {
 func ProjectActivity(invocation Invocation) protocol.ToolActivityPayload {
 	p := protocol.ToolActivityPayload{InvocationID: string(invocation.InvocationID()), Status: "waiting"}
 	switch invocation.Capability() {
+	case CapabilitySkill:
+		v, _ := invocation.Skill()
+		p.Tool = protocol.ToolSkill
+		p.Target = v.Input().Name()
+		p.Summary = p.Target
+		if v.Input().Resource() != "" {
+			p.Summary += " / " + v.Input().Resource()
+		}
 	case CapabilityRead:
 		v, _ := invocation.Read()
 		p.Tool = protocol.ToolRead
@@ -84,4 +92,17 @@ func ProjectOutputSaving(saving ArtifactSaving, observed int64) protocol.ToolOut
 		info.Reference = &protocol.ToolOutputReference{ID: string(d.ID()), ThreadID: d.ThreadID(), InvocationID: string(d.InvocationID()), Source: protocol.ToolOutputSource(d.Stream()), SavedBytes: d.SavedBytes(), ObservedBytes: d.ObservedBytes(), SHA256: d.Digest(), Complete: d.Complete()}
 	}
 	return info
+}
+
+// SkillResultSummary 生成不包含正文的已提交状态，资源读取不冒充主文档激活。
+func SkillResultSummary(r InvocationResult) string {
+	a, ok := r.SkillAttachment()
+	if !ok {
+		return ActivityText(r.Preview().Text(), 160)
+	}
+	action := "Loaded Skill " + a.Name
+	if r.SkillInput().Resource() != "" {
+		action = "Read Skill resource " + a.Name + "/" + r.SkillInput().Resource()
+	}
+	return ActivityText(action+" ("+a.Source.ID()+")", 160)
 }

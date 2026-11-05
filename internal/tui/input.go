@@ -87,6 +87,7 @@ func (model Model) projectControlItem(item protocol.ControlItem) (tea.Model, tea
 				model.errorSummary = string(summary.Code()) + ": " + summary.Message()
 			}
 			model.pending = nil
+			model.pendingCancel = nil
 			model.refreshState()
 		case protocol.CommandRetractInputs:
 			if model.retracting == nil {
