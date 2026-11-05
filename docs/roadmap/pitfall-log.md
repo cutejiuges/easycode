@@ -2,6 +2,13 @@
 
 > 本文按事件发生时记录事实，不作为当前功能清单。版本数字、工具数量、平台验收和当时未实现项需结合后续条目与[当前能力清单](capability-status.md)阅读；当前内部格式没有 canary/schema_version 等版本门禁。
 
+### [P6][2026-11-06] 平台专属实现和测试辅助函数放在通用文件
+
+- 现象：Darwin 的完整质量门通过，但 PR Linux CI 在 Staticcheck 阶段因无消费者的 launch policy 与测试函数报 U1000。
+- 根因：仅在 Darwin 编译的调用方，其专属策略和辅助函数却留在通用文件；交叉编译单一 package 不能替代跨平台静态检查。
+- 修复：将专属代码移入 `sandbox_launch_darwin.go` 与 `hook_fixture_darwin_test.go`，共用计划及配置辅助函数保持通用；不加 lint 忽略或跳过测试。
+- 验证：宿主 Staticcheck 二进制按 Linux 目标检查全仓库通过，再执行相同 `make verify` 与 Linux CI；Windows 全库静态检查仍有主干同样的既有诊断，未宣称通过。命令与 Hook 的真实执行平台仍仅为 Darwin。
+
 ### [文档][2026-11-06] 阶段目标、历史状态和当前能力混写
 
 - 现象：README 把缓存/选择器仍列为未实现，Tool 被标为占位；架构流程包含未实现 UserPromptSubmit/Stop，Tool 章节保留旧 canary，Roadmap 的工具数、命令和配置描述跨多个切片漂移。

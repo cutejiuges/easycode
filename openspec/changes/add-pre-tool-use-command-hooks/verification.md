@@ -75,3 +75,10 @@ ADR 保留原始决策并补当前对照；归档 change 只修复一个失效�
 - `openspec validate --specs`：50 项通过，0 失败；`openspec validate add-pre-tool-use-command-hooks --strict`：通过。
 - 文档核对后的 `make verify`：exit 0；提交前同时缩短 Hook 会话信任选项，避免窄屏标签跨行和 golden 行尾空格，三组信任 snapshot 与 Hook 专项测试通过；pre-commit 再执行同一完整质量门。
 - `git diff --check`、无冲突 index、分支语义规则与全部原未跟踪文件恢复核对通过。Linux/Windows 运行验证限制仍按上文披露。
+
+
+## PR Linux 质量门修复（2026-11-06）
+
+PR 首轮 Linux CI 的 Staticcheck 发现仅供 Darwin 调用的 launch policy 与 E2E 辅助函数放在通用文件中，产生 U1000。将启动策略移至 `sandbox_launch_darwin.go`，双 Provider 场景辅助函数移至 `hook_fixture_darwin_test.go`；共用 SandboxPlan/Planner 与跨平台配置辅助函数仍保留通用文件，没有删除测试或忽略检查，执行/信任/恢复契约不变。使用宿主平台编译的 Staticcheck 二进制按 `GOOS=linux GOARCH=amd64` 检查全仓库，已通过；Darwin 再由 pre-commit 执行完整 `make verify`，Linux CI 继续复验。
+
+补充检查 `GOOS=windows GOARCH=amd64` 全仓库 Staticcheck 未通过，包含既有的 picker 测试辅助函数缺失及不支持平台上的 U1000。对 `origin/main` 只读源码快照执行同一检查，两份输出均为 56 行，归一化位置行号后完全一致，没有本变更新增诊断；未修改无关主干问题，也不声称 Windows 全库质量门通过。既有 builtin 适配器交叉编译结论仍有效。这些检查不扩大 Linux/Windows 的命令执行能力。
