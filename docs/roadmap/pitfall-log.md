@@ -660,7 +660,7 @@
 - 状态：已解决（`add-command-execution`）
 - 现象与根因：容量 1 的进度通知会合并中间帧；把近期输出拼成“完整结果”既不可靠，也会使 UI 和模型看到不同字节。只有两行摘要则无法检查长命令与截断结果。
 - 修复方案：Ctrl+O 详情复用批准中的完整命令，运行时显示有界近期输出，终态只接收 result 成功 Sync 后的 typed preview（UTF-8、至多 256 KiB）。完整预览禁止出现在 started/progress；外部 headless JSONL 不新增命令事件。当前无 artifact，省略部分不可恢复，必须保留截断标记。
-- 回归测试：`internal/protocol/command_activity_test.go`、`internal/tui/command_detail_test.go`、`internal/app/exec_interactive_darwin_test.go`；覆盖事件 kind/预算、窄屏/滚动/resize、取消期间键盘路由和真实双 Provider 结果展示。
+- 回归测试：`internal/protocol/tool_activity_test.go`、`internal/tui/command_detail_test.go`、`internal/app/exec_interactive_darwin_test.go`；覆盖事件 kind/预算、窄屏/滚动/resize、取消期间键盘路由和真实双 Provider 结果展示。
 - 后续行动：完整输出 artifact 必须另行定义存储、权限、清理与恢复语义；不能让 UI 展开操作触发磁盘读取或重跑命令。
 
 ## 7. P4 缓存与上下文强化
@@ -807,3 +807,13 @@
 - `disable-model-invocation` 的显式例外只允许当前 turn 已 durable 的同来源、同 revision 辅助资源读取；不能凭 queued 输入、旧 turn 或模型猜名授权主文档。
 - 新增 Skill 后必须一起更新八能力目录、request golden、缓存六来源快照和工具结果 strict union。metadata 的 struct canonical bytes 应走既有 `MarshalCanonical`，不能用按 map 键重新排序的 `ParseCanonical` 校验器误拒绝自身结构序列。
 - 回归入口：`internal/extension/skill/local_test.go`、`secure_unix_test.go`、`internal/runtime/skills_test.go`、`internal/app/skills_test.go`、`internal/provider/{openai,anthropic}/skill_test.go`、`internal/session/skill_test.go`、`internal/tui/skills_test.go`。
+
+### [P3/P5][2026-11-05] 提问接收不等于落盘，独占不等于批准
+
+- 现象：把提问塞进批准工具会意外生成 grant；收到回答立即关闭问卷会在 Sync 失败或取消竞态下误报成功。
+- 原因：调度 exclusive、用户决定和副作用授权具有不同语义，控制命令接收与持久化成功也有不同线性化点。
+- 修复：分离 `Exclusive` 与 `RequiresApproval`；既有 turn worker 拥有等待、started/result 提交和清理。回答在锁外预检真实 Session/Provider 编码，锁内复核身份接收；accepted 只表示义务接收，result Sync 后才发布 resolved。恢复只补配对，不重弹问卷。
+- 回归：`internal/runtime/user_question_test.go` 的取消、预算、Sync 失败和阻塞清理；`internal/session/question_replay_test.go` 的跨进程 lease/崩溃；`internal/app/question_workflow_darwin_test.go` 的双 Provider Read/Question/Write/Question/Patch/Exec 链。
+- 终端经验：满屏视图末尾额外换行会使 Bubble Tea 裁掉首行。固定尺寸 snapshot 还须配合真实 PTY，使用独立事件/窗口握手区分文本增量和 turn terminal，不能用 sleep 或看到部分正文判断已空闲。`scripts/user-question-smoke.py` 覆盖选择、其他文字、停止、无色和 resize，并检查终端模式恢复。
+
+- 恢复核对补充：原生题目/答案和共享 ready/result 即使分别合法，也可能互相不同。通过纯内存 `RestoreRecord.WithQuestionFacts` 绑定二者，在 Provider/offline reader 安装前核对；`internal/app/question_recovery_test.go` 与固定 `question_*_native_*_mismatch.jsonl` 覆盖拒绝及 journal bytes 不变。

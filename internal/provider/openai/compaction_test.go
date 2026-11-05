@@ -79,7 +79,7 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 	if err := codec.Unmarshal(request.Bytes(), &wire); err != nil {
 		t.Fatal(err)
 	}
-	if wire.ToolChoice != "none" || wire.MaxOutputTokens != 4096 || len(wire.Tools) != 8 || !strings.Contains(string(request.Bytes()), "preserve test failures") {
+	if wire.ToolChoice != "none" || wire.MaxOutputTokens != 4096 || len(wire.Tools) != 9 || !strings.Contains(string(request.Bytes()), "preserve test failures") {
 		t.Fatal("summary request protection or sources missing")
 	}
 	generation := nativeHistoryEntry{Kind: nativeHistorySample, Outputs: []NativeItem{{Type: "reasoning", EncryptedContent: "summary-generation-only"}, {Type: "message", Role: "assistant", Content: []ContentPart{{Type: "output_text", Text: "goal; completed tests; next task"}}}}}

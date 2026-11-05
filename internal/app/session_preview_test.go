@@ -224,6 +224,9 @@ func TestSessionPreviewBudget(t *testing.T) {
 // validPreviewFixture 显式区分完整 Provider 契约样本与仅供日志层重放的样本。
 func validPreviewFixture(name string) bool {
 	switch name {
+	case "question_openai_ready.jsonl", "question_openai_started.jsonl", "question_openai_result.jsonl", "question_openai_complete.jsonl", "question_openai_skip.jsonl", "question_openai_unavailable.jsonl",
+		"question_anthropic_ready.jsonl", "question_anthropic_started.jsonl", "question_anthropic_result.jsonl", "question_anthropic_complete.jsonl", "question_anthropic_skip.jsonl", "question_anthropic_unavailable.jsonl":
+		return true
 	case "root.jsonl", "input_only_openai.jsonl", "input_only_anthropic.jsonl", "compaction_completed_openai.jsonl", "compaction_completed_anthropic.jsonl", "auto_compaction_completed_openai.jsonl", "auto_compaction_completed_anthropic.jsonl", "artifact_result_openai.jsonl", "artifact_result_anthropic.jsonl", "heterogeneous_exec_openai.jsonl", "heterogeneous_exec_anthropic.jsonl", "steering_tail_openai.jsonl", "steering_tail_anthropic.jsonl":
 		return true
 	default:

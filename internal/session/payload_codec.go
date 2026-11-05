@@ -81,6 +81,9 @@ func DecodeToolCallReadyPayload(record Record) (ToolCallReadyPayload, error) {
 
 // Domain 重建已经分配 identity 的八工具 typed invocation。
 func (payload ToolCallReadyPayload) Domain() (tool.Invocation, error) {
+	if payload.Capability != tool.CapabilityQuestion && payload.QuestionInput != nil {
+		return tool.Invocation{}, fmt.Errorf("unexpected question input")
+	}
 	if payload.Capability != tool.CapabilitySkill && payload.SkillInput != nil {
 		return tool.Invocation{}, fmt.Errorf("unexpected Skill input")
 	}
@@ -99,6 +102,11 @@ func (payload ToolCallReadyPayload) Domain() (tool.Invocation, error) {
 	var ready tool.ReadyCall
 	var err error
 	switch payload.Capability {
+	case tool.CapabilityQuestion:
+		if payload.QuestionInput == nil || payload.WireKind != tool.WireStructured || payload.SkillInput != nil || payload.ReadArtifactInput != nil || payload.ReadInput != nil || payload.GlobInput != nil || payload.GrepInput != nil || payload.PatchInput != nil || payload.WriteInput != nil || payload.ExecInput != nil {
+			return tool.Invocation{}, fmt.Errorf("invalid question input union")
+		}
+		ready, err = tool.NewQuestionReadyCall(payload.ProviderCallID, *payload.QuestionInput)
 	case tool.CapabilitySkill:
 		if payload.SkillInput == nil || payload.WireKind != tool.WireStructured || payload.ReadArtifactInput != nil || payload.ReadInput != nil || payload.GlobInput != nil || payload.GrepInput != nil || payload.PatchInput != nil || payload.ExecInput != nil || payload.WriteInput != nil {
 			return tool.Invocation{}, fmt.Errorf("invalid Skill input union")
@@ -285,6 +293,9 @@ func searchPayloadSaving(payload ToolCallResultPayload) *tool.ArtifactSaving {
 }
 
 func validateToolCallResultPayload(payload ToolCallResultPayload) error {
+	if payload.Capability == tool.CapabilityQuestion {
+		return validateQuestionResultPayload(payload)
+	}
 	if payload.Budget.Validate() != nil || !payload.InvocationID.Valid() || !payload.Capability.Valid() || !payload.WireKind.Valid() || !payload.Status.Valid() || payload.Code == "" || !utf8.ValidString(payload.Preview) {
 		return fmt.Errorf("tool call result payload is invalid")
 	}
@@ -312,6 +323,9 @@ func (payload ToolCallResultPayload) Domain(invocation tool.Invocation) (tool.In
 }
 
 func decodeResultPayload(payload ToolCallResultPayload, invocation tool.Invocation) (tool.InvocationResult, error) {
+	if payload.Capability != tool.CapabilityQuestion && payload.QuestionMetadata != nil {
+		return tool.InvocationResult{}, fmt.Errorf("unexpected question metadata")
+	}
 	if payload.Capability != tool.CapabilitySkill && payload.SkillMetadata != nil {
 		return tool.InvocationResult{}, fmt.Errorf("unexpected Skill metadata")
 	}
@@ -330,6 +344,12 @@ func decodeResultPayload(payload ToolCallResultPayload, invocation tool.Invocati
 	}
 	var result tool.InvocationResult
 	switch payload.Capability {
+	case tool.CapabilityQuestion:
+		if err := validateQuestionResultPayload(payload); err != nil {
+			return tool.InvocationResult{}, err
+		}
+		v, _ := invocation.Question()
+		result, err = tool.RestoreQuestionInvocationResult(v, payload.Status, payload.Code, preview, *payload.QuestionMetadata)
 	case tool.CapabilitySkill:
 		if payload.SkillMetadata == nil || payload.ReadArtifactMetadata != nil || payload.ReadMetadata != nil || payload.GlobMetadata != nil || payload.GrepMetadata != nil || payload.PatchMetadata != nil || payload.WriteMetadata != nil || payload.ExecMetadata != nil {
 			return tool.InvocationResult{}, fmt.Errorf("invalid Skill result union")

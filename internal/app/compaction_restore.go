@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"sort"
 
+	"easycode/internal/domain"
 	"easycode/internal/protocol"
 	"easycode/internal/provider"
 	"easycode/internal/session"
+	"easycode/internal/tool"
 )
 
 // orderedRestoreRecords 保留原生 ordinal，并将来源校验与 checkpoint 按 journal seq 插入。
@@ -21,7 +23,31 @@ func orderedRestoreRecords(plan session.ReplayPlan) ([]provider.RestoreRecord, e
 		record   provider.RestoreRecord
 	}
 	entries := make([]entry, 0, len(ordinary)+len(plan.Compactions)*2+1)
+	type questionFacts struct {
+		questions []tool.QuestionInvocation
+		results   []tool.InvocationResult
+	}
+	questionsBySequence := make(map[uint64]questionFacts)
+	for _, entry := range plan.Tools {
+		q, ok := entry.Invocation.Question()
+		if !ok {
+			continue
+		}
+		facts := questionsBySequence[entry.NativeSequence]
+		facts.questions = append(facts.questions, q)
+		if entry.HasResult {
+			facts.results = append(facts.results, entry.Result)
+		}
+		questionsBySequence[entry.NativeSequence] = facts
+	}
 	for i, record := range ordinary {
+		if record.Role() == domain.NativeCommitSample {
+			facts := questionsBySequence[plan.NativeCommits[i].Sequence]
+			record, err = record.WithQuestionFacts(facts.questions, facts.results)
+			if err != nil {
+				return nil, err
+			}
+		}
 		entries = append(entries, entry{plan.NativeCommits[i].Sequence, record})
 	}
 	compactions := append([]session.ReplayedCompaction{}, plan.Compactions...)

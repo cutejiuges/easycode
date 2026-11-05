@@ -11,7 +11,7 @@ import (
 
 // orderedToolScheduler 以只读批次和独占屏障调度同一 sample，按调用顺序提交结果。
 type toolScheduleOperations interface {
-	executeApproved(context.Context, Emitter, domain.TurnID, tool.Invocation) (tool.InvocationResult, bool, error)
+	executeExclusiveCall(context.Context, Emitter, domain.TurnID, tool.Invocation) (tool.InvocationResult, bool, error)
 	executeReadBatch(context.Context, domain.TurnID, []tool.Invocation) ([]tool.InvocationResult, error)
 	persistToolResult(context.Context, domain.TurnID, *tool.InvocationResult) error
 }
@@ -31,7 +31,7 @@ func (scheduler orderedToolScheduler) execute(ctx context.Context, turnID domain
 	results := make([]tool.InvocationResult, len(invocations))
 	for index := 0; index < len(invocations); {
 		if invocations[index].Capability().Exclusive() {
-			result, aborted, err := operations.executeApproved(ctx, emit, turnID, invocations[index])
+			result, aborted, err := operations.executeExclusiveCall(ctx, emit, turnID, invocations[index])
 			if err != nil {
 				if result.Validate() != nil {
 					return nil, err

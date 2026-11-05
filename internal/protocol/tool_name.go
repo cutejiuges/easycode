@@ -4,6 +4,7 @@ package protocol
 type ToolName string
 
 const (
+	ToolQuestion     ToolName = "Question"
 	ToolRead         ToolName = "Read"
 	ToolGlob         ToolName = "Glob"
 	ToolGrep         ToolName = "Grep"
@@ -17,7 +18,7 @@ const (
 // Valid 只接受实际实现且具有消费者的能力名称。
 func (name ToolName) Valid() bool {
 	switch name {
-	case ToolRead, ToolGlob, ToolGrep, ToolPatch, ToolWrite, ToolShell, ToolReadArtifact, ToolSkill:
+	case ToolRead, ToolGlob, ToolGrep, ToolPatch, ToolWrite, ToolShell, ToolReadArtifact, ToolSkill, ToolQuestion:
 		return true
 	default:
 		return false

@@ -10,7 +10,7 @@
 
 每条 JSONL record SHALL 使用唯一当前、强类型的 envelope，至少包含单调 seq、UTC timestamp、session/thread/turn identity、event kind、batch 边界、checksum 和受控 typed payload。所有当前 records 均为恢复必需事实；envelope MUST NOT 携带 `required`/`optional` 选择字段，也不得透传未知 kind 或未知 payload 为 opaque Session record。
 
-当前记录词汇中的 `tool_call_ready`、`tool_approval_decided`、`tool_execution_started` 和 `tool_call_result` SHALL 具有专属 typed constructor、strict decoder 与 validator。`tool_call_ready` SHALL 保存 invocation ID、Provider call ID、Provider wire kind、sample/call index、capability，以及与 `Read`、`Glob`、`Grep`、`Patch`、`Write`、`Exec` 或 `ReadArtifact` 匹配的完整 typed input；`tool_approval_decided` SHALL 保存 request/invocation identity、candidate fingerprint、typed outcome、decision source、仅适用于 deny 的有界反馈与不含绝对路径、正文、环境值或命令输出的安全 metadata；`tool_execution_started` SHALL 引用同一 invocation 并表示 executor 接收线性化点；`tool_call_result` SHALL 保存终态 status、稳定 code、完整有界模型 preview 与 capability 对应的非敏感 typed metadata。Exec metadata SHALL包含相对workdir、exit/timeout/cancelled/truncated状态、duration、stdout/stderr计数及各流 typed 保存状态与 descriptor 和必需预算元数据，不得包含PID、绝对路径或环境。工具 records MUST NOT 保存 input revision、result codec revision、执行器额外采集的完整 base/final 文件快照、完整 diff、临时文件路径或可执行 Provider wire item。
+当前记录词汇中的 `tool_call_ready`、`tool_approval_decided`、`tool_execution_started` 和 `tool_call_result` SHALL 具有专属 typed constructor、strict decoder 与 validator。`tool_call_ready` SHALL 保存 invocation ID、Provider call ID、Provider wire kind、sample/call index、capability，以及与 `Read`、`Glob`、`Grep`、`Patch`、`Write`、`Exec` 、`ReadArtifact`、`Skill` 或 `Question` 匹配的完整 typed input；`tool_approval_decided` SHALL 保存 request/invocation identity、candidate fingerprint、typed outcome、decision source、仅适用于 deny 的有界反馈与不含绝对路径、正文、环境值或命令输出的安全 metadata；`tool_execution_started` SHALL 引用同一 invocation 并表示 executor 接收线性化点；`tool_call_result` SHALL 保存终态 status、稳定 code、完整有界模型 preview 与 capability 对应的非敏感 typed metadata。Exec metadata SHALL包含相对workdir、exit/timeout/cancelled/truncated状态、duration、stdout/stderr计数及各流 typed 保存状态与 descriptor 和必需预算元数据，不得包含PID、绝对路径或环境。工具 records MUST NOT 保存 input revision、result codec revision、执行器额外采集的完整 base/final 文件快照、完整 diff、临时文件路径或可执行 Provider wire item。
 
 Session envelope MUST NOT 包含 schema_version、payload_version、canary、format revision 或同义版本标记，不得按版本选择 decoder。completed sample 的 Provider entry 仍作为 native commit 并紧邻配对 `sample_usage`；tool results 编码为 tool-output native commit 时不生成 sample usage。高频参数 delta、approval request/焦点/按键、命令输出progress、elapsed tick、UI 状态和文件系统瞬时信息 MUST NOT 进入 JSONL。
 
@@ -105,6 +105,12 @@ Session envelope SHALL 不携带格式版本字段；Provider native/checkpoint 
 #### Scenario: Reject superseded current fixtures
 - **WHEN** journal 使用 非法附加版本字段、缺失必需 scope 字段的记录，或 native/checkpoint 包含非法 payload_version 字段
 - **THEN** 在 repair/append/网络前失败关闭，不保留旧 reader，不迁移既有 bytes
+
+提问 SHALL 复用 tool_call_ready、tool_execution_started 与 tool_call_result，不新增问卷 UI/回答 admission record 或 approval_decided。ready 保存完整题目/选项和对应 Provider call；result 保存完整冻结回答 preview 与必要的强类型关联/计数 metadata。模型预填答案、未知字段、非当前 shape、题目/回答错配及超限内容必须拒绝。答案正文不额外复制到 SQLite、diagnostic 或 telemetry；焦点、按键、未提交文字和临时 request identity 不成为恢复事实。
+
+#### Scenario: Persist a question without approval
+- **WHEN** 用户提交一个合法问卷
+- **THEN** 当前唯一记录结构保存 ready/started/result 和匹配 native outputs，不出现该调用的 approval record 或 UI 草稿
 
 ### Requirement: A single writer assigns order and durably appends batches
 
@@ -201,7 +207,7 @@ Loader 完成字节、envelope 和 batch 校验后，ReplayPlanner SHALL 在创�
 
 文本 turn SHALL 在 turn_started 后先完成 initial 输入 batch，才可通过 [provider_native_commit(sample), sample_usage, turn_completed] 完成；单个 turn_failed 可在输入提交前或后收口，保留此前全部已提交事实。Tool Loop 中，一个含 calls 的 sample batch MUST 严格为 `[provider_native_commit, sample_usage, tool_call_ready...]`，ready records 的 sample/call index 连续且 identity 唯一。ReplayPlanner SHALL 按 capability 验证每个 call slot：自动允许的读取正常为 `ready -> execution_started -> result`；Patch 可为 `ready -> approval_decided(allow*) -> execution_started -> result`、`ready -> [approval_decided(deny), result(denied)]`，或在候选准备失败/取消时从 ready 直接进入匹配的 error/cancelled result。`abort` SHALL 使当前及尚未完成 slots 按取消契约收口。approval identity、candidate fingerprint、outcome 和 decision source MUST 与同一 invocation 一致，且每个 Patch 至多一个 approval fact。
 
-调度 records SHALL 符合连续 `parallel_read` batch 与 `exclusive` Patch 屏障：一个 read batch 的 starts 按 call index先于该 batch 的 results，Patch 的 started/result 位于前后 batch 之间；全部 result records仍按原 call index单调提交。全部 results 存在后，恰好一个按 call index与原 wire kind 配对的 tool-output `provider_native_commit` 关闭该 call group，之后才可出现可选 steering 输入 batch、下一 sample 或 turn failure。
+调度 records SHALL 符合连续 `parallel_read` batch 与 `exclusive` 屏障：一个 read batch 的 starts 按 call index先于该 batch 的 results，Patch 的 started/result 位于前后 batch 之间；全部 result records仍按原 call index单调提交。全部 results 存在后，恰好一个按 call index与原 wire kind 配对的 tool-output `provider_native_commit` 关闭该 call group，之后才可出现可选 steering 输入 batch、下一 sample 或 turn failure。
 
 ReplayPlanner MUST 拒绝孤立/重复 approval、result 或 started、allow 后缺失 candidate fingerprint、deny 后出现 started、started 早于必需 allow、started/result index 非法、越过 exclusive 屏障、ready 后直接开始下一 sample、outputs 数量/wire kind/call identity 不匹配、sample usage 缺失/重复、tool-output commit 携带 usage、terminal 后 records 或新 turn 覆盖活动 turn。只有 journal 末尾已承诺的活动状态可作为显式 reconciliation 计划返回；它不是可由 Loader 截断的文件损坏。
 
@@ -302,6 +308,16 @@ ReplayPlanner MUST 拒绝孤立/重复 approval、result 或 started、allow 后
 #### Scenario: Reject invalid compaction terminals
 - **WHEN** completion 无 started、身份错配、重复 terminal、缺失 checkpoint/usage 或 failed 含可安装窗口
 - **THEN** strict decoder/replay 拒绝，不通过默认值修复
+
+独占调度 SHALL 与需要审批分开验证。Question 的正常语法为 ready -> started -> result，started 必须晚于前序结果且不需要 allow；Question 携带任何 approval fact 必须拒绝。ready 可直接关闭为取消或无交互/预算错误，但 success 和 outcome_uncertain 必须有 started。仅 ready 的提问恢复为 session_interrupted_before_execution；started 无结果恢复为 outcome_uncertain；已有 result 不重新生成回答。后序调用越过等待问卷或其 result、答案与题目不匹配、重复 resolution 或伪造权限都必须失败关闭。
+
+#### Scenario: Validate a nonapproval exclusive call
+- **WHEN** journal 为 Read result、Question started/result、Write allow/started/result 的合法有序事实
+- **THEN** replay 接受提问无需 approval，但仍验证 Write 的完整批准前置条件
+
+#### Scenario: Reject question approval facts
+- **WHEN** journal 为 user.question 记录了 tool_approval_decided
+- **THEN** 恢复整体拒绝且不 repair，不把提问选择视为副作用授权
 
 ### Requirement: Tail repair never rewrites committed history
 

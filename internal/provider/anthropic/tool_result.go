@@ -17,19 +17,11 @@ func prepareToolOutputsEntry(history []nativeHistoryEntry, results []tool.Invoca
 	}
 	blocks := make([]NativeItem, len(results))
 	for index, result := range results {
-		if err := result.Validate(); err != nil {
-			return nativeHistoryEntry{}, fmt.Errorf("anthropic tool result %d is invalid: %w", index, err)
+		item, err := encodeToolResult(calls[index], result)
+		if err != nil {
+			return nativeHistoryEntry{}, err
 		}
-		if string(result.ProviderCallID()) != calls[index].ID {
-			return nativeHistoryEntry{}, fmt.Errorf("anthropic tool result order does not match pending calls")
-		}
-		if result.WireKind() != tool.WireStructured || result.Capability() != anthropicCapabilityForName(calls[index].Name) {
-			return nativeHistoryEntry{}, fmt.Errorf("anthropic tool result capability does not match pending call")
-		}
-		blocks[index] = NativeItem{
-			Type: blockTypeToolResult, ToolUseID: calls[index].ID,
-			Content: result.Preview().Text(), IsError: result.Status() != tool.ResultSuccess,
-		}
+		blocks[index] = item
 	}
 	entry := nativeHistoryEntry{
 		Kind: nativeHistoryToolOutputs, TurnID: history[len(history)-1].TurnID,
@@ -45,6 +37,8 @@ func anthropicCapabilityForName(name string) tool.CapabilityID {
 	switch name {
 	case "Bash":
 		return tool.CapabilityExec
+	case "AskUserQuestion":
+		return tool.CapabilityQuestion
 	case "Skill":
 		return tool.CapabilitySkill
 	case "ReadArtifact":
@@ -160,6 +154,15 @@ func matchToolResults(calls []NativeItem, results []NativeItem) error {
 	for index, result := range results {
 		if result.Type != blockTypeToolResult || result.ToolUseID != calls[index].ID {
 			return fmt.Errorf("anthropic tool result order does not match pending calls")
+		}
+		if calls[index].Name == "AskUserQuestion" && !result.IsError {
+			input, err := tool.DecodeQuestionInput(calls[index].Input)
+			if err != nil {
+				return err
+			}
+			if _, err := tool.DecodeQuestionPreview(input, []byte(result.Content)); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

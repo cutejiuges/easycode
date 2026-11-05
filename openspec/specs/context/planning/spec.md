@@ -48,7 +48,7 @@ Skill metadata SHALL 只包含实际发送的稳定名称、描述、调用策�
 
 上下文计划 SHALL 使用唯一当前的强类型 shape，并深拷贝所有调用方可变输入；纯内存 plan MUST NOT 携带固定 format revision 或按 revision 选择 validator。计划 MUST 拒绝未知来源 kind、重复来源、非法顺序、空 source revision、非法 Tool Catalog、非法项目指令快照、非法 Skill 目录、非法估算状态、Provider family 不匹配及无效缓存计划。所有返回 slice、bytes 或嵌套值的读取操作 MUST 返回独立副本。
 
-计划 SHALL 把 `provider_profile` 与包含 Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill 的完整 `tool_catalog` 映射为 stable cache segments，把可选 `project_instructions` 映射为 project-stable cache segment，把可选 `skill_catalog` 映射为 project-stable segment，把 `committed_history` 映射为 turn-stable segment，把 `current_input` 映射为 volatile segment，并复用 `context/cache-plan` 的 canonical JSON、排序和 stable prefix fingerprint 契约。Tool Catalog 估算 SHALL 覆盖实际发送给对应 Provider 的全部 facade schema/description；Exec动态command、workdir、timeout、approval、sandbox临时状态与环境实际值不得进入catalog source。来源生命周期、source revision 与缓存稳定级别 MUST 保持为不同的强类型概念。
+计划 SHALL 把 `provider_profile` 与包含 Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill、Question 的完整 `tool_catalog` 映射为 stable cache segments，把可选 `project_instructions` 映射为 project-stable cache segment，把可选 `skill_catalog` 映射为 project-stable segment，把 `committed_history` 映射为 turn-stable segment，把 `current_input` 映射为 volatile segment，并复用 `context/cache-plan` 的 canonical JSON、排序和 stable prefix fingerprint 契约。Tool Catalog 估算 SHALL 覆盖实际发送给对应 Provider 的全部 facade schema/description；Exec动态command、workdir、timeout、approval、sandbox临时状态与环境实际值不得进入catalog source。来源生命周期、source revision 与缓存稳定级别 MUST 保持为不同的强类型概念。
 
 #### Scenario: Mutate caller-owned planning inputs
 - **WHEN** 调用方在计划创建后修改原 Tool Catalog bytes、项目指令、语义 turn slice、有序消息 buffer 或 getter 返回的数据
@@ -110,6 +110,16 @@ committed_history source revision SHALL 使用独立单调 context revision；�
 #### Scenario: Load a body into the history tail
 - **WHEN** 同一目录下成功调用 Skill
 - **THEN** 正文只计入有效历史一次，不改变 metadata 或稳定工具 schema，不再通过 current_input 重复计量
+
+Question 的静态 schema/description SHALL 纳入同一 tool_catalog source；新增定义改变该来源 revision/fingerprint 和其下游稳定前缀，不能伪称新增工具后 prefix 不变。动态问题、选择、说明、提问 request identity、结果 allowance 和窗口焦点不得进入稳定 catalog；已提交原生调用/结果由原生 footprint 覆盖，不以额外 current_input 或 skill_catalog 重复计量。
+
+#### Scenario: Separate question definitions from answers
+- **WHEN** catalog 定义不变，仅问题、回答、UI、身份或剩余额度变化
+- **THEN** 稳定 catalog bytes/revision/fingerprint 不变，实际已提交历史按内容改变尾部和完整请求 fingerprint
+
+#### Scenario: Add a question definition deterministically
+- **WHEN** 将提问定义加入当前完整 catalog 并以不同注册顺序构造
+- **THEN** 两次得到同一九能力定义 bytes 与新 fingerprint，失效来源明确为 tool_catalog
 
 ### Requirement: Token estimates preserve method and uncertainty
 

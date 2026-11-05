@@ -30,6 +30,8 @@ func transcriptListItem(node transcriptNode, entry session.ToolHistoryEntry) pro
 		item.Activity.Status, item.Activity.Code = string(r.Status()), r.Code()
 		item.ModelShortened = r.Budget().Reason() != tool.BudgetPreserved
 		switch r.Capability() {
+		case tool.CapabilityQuestion:
+			item.Preview = tool.QuestionResultSummary(r)
 		case tool.CapabilitySkill:
 			item.Preview = tool.SkillResultSummary(r)
 		case tool.CapabilityRead:
@@ -147,7 +149,9 @@ func (q *transcriptQueries) ReadTranscriptBody(ctx context.Context, query protoc
 	} else {
 		switch query.Source {
 		case protocol.TranscriptInput:
-			if invocation, ok := entry.Invocation.Exec(); ok {
+			if question, ok := entry.Invocation.Question(); ok {
+				text = tool.QuestionInputText(question.Input())
+			} else if invocation, ok := entry.Invocation.Exec(); ok {
 				text = invocation.Input().Command()
 			} else {
 				activity := tool.ProjectActivity(entry.Invocation)
@@ -158,6 +162,9 @@ func (q *transcriptQueries) ReadTranscriptBody(ctx context.Context, query protoc
 				return protocol.TranscriptBodyPage{}, tool.ArtifactReadUnavailable
 			}
 			text = entry.Result.Preview().Text()
+			if question, ok := entry.Invocation.Question(); ok {
+				text = tool.QuestionResultText(question.Input(), entry.Result)
+			}
 		default:
 			return protocol.TranscriptBodyPage{}, tool.ArtifactReadInvalidRange
 		}

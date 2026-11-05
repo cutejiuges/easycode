@@ -4,7 +4,7 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 
 用户只需要提供 `base_url`、`api_key` 和模型名称即可连接服务，不需要账号登录、OAuth、设备码或订阅鉴权。
 
-> 项目正在推进 P3 Coding Tools。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、原生多轮 Session、`--resume`/`--continue`、headless/FIFO 输入、离线 `sessions list`，以及 Read、Glob、Grep、需批准的单文件 Patch、整文件 Write 和 Darwin 前台命令执行。已支持工具原文 artifact、统一工具详情、手动上下文压缩与查询；已增加启动会话选择器和只读预览；Hook 和完整推理界面仍按 Roadmap 分阶段推进。
+> 项目按纵向切片持续推进。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、原生多轮 Session、`--resume`/`--continue`、headless/FIFO 输入、离线 `sessions list`，以及九项工具能力：Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill 和结构化用户提问。命令执行当前支持 Darwin；Hook 和完整推理界面仍按 Roadmap 分阶段推进。
 
 ## 交互式恢复会话
 
@@ -15,6 +15,14 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 预览严格校验原生历史，只显示前 128 条非空用户/assistant 文本，正文总量最多 32768 UTF-8 bytes，安全转义后的展示最多 196608 bytes。预览不访问模型、不执行工具、不修复日志；不完整尾部显示已提交前缀并明确提示。工具详情、opaque reasoning 和压缩摘要不伪装成原始消息，正文不进入索引或日志，关闭即丢弃。
 
 不兼容配置可浏览和预览，但不能直接恢复。跨目录恢复默认返回，明确确认后仍使用当前工作目录和项目指令。预览不是恢复缓存：正式恢复重新获取独占 lease 并校验日志。正常取消浏览退出 0，启动中断退出 130；配置、不可确定的恢复或清理失败退出 1，非法参数或非终端调用退出 2。
+
+## 结构化用户提问
+
+模型可通过 Anthropic `AskUserQuestion` 或 OpenAI `request_user_input` 提出 1–4 个问题，每题 2–4 项选择，支持单选、多选、“其他”文字和补充说明。上下键选择，单选 Enter 确认，多选 Space 切换后 Enter 确认；Tab 编辑说明，Shift+Tab 返回上一题，PgUp/PgDn 滚动。全部回答进入复核页，明确提交后继续任务；未答题必须明确跳过，界面不会按默认焦点代答。
+
+编辑文字时 Esc 返回选择；其余 Esc 或 Ctrl+C 停止当前任务。聊天草稿与问卷分别保存。接收回答后仍显示提交中，结果成功 Sync 后才关闭问卷。提问独占当前工具位置，回答不授予文件或命令权限；依赖答案的新参数应由模型在下一次采样生成。Ctrl+O 可只读回看原题、所有选项和冻结答案，左右键切换输入与结果。
+
+回答文字合计最多 16 KiB，完整结果最多 128 KiB，并受当前 sample/turn 剩余额度约束；超限拒绝并保留草稿。`--print`、`--json`、stream-json 不等待 stdin，立即返回配对的 `denied/user_input_unavailable` 工具结果。恢复不会重新提问：started 前取消配对；started 后没有结果标为 `outcome_uncertain`；已有结果按原字节复用。未提交草稿不写入 Session。 详细取舍见[设计方案](openspec/changes/archive/2026-11-05-add-structured-user-questions/design.md)，测试与平台记录见[验收报告](openspec/changes/archive/2026-11-05-add-structured-user-questions/verification.md)。
 
 ## 多行聊天输入
 
@@ -45,7 +53,7 @@ TUI 将 CRLF/CR 规范化为 LF，保留缩进、Tab、尾空格及尾换行；�
 | JSON 与缓存 | 已建立不可变 canonical JSON、Provider request compiler 和 cache segment fingerprint；完整 Provider CachePlanner 尚未接入 |
 | Runtime | 已实现多 sample 工具循环、同轮自动追加与严格 FIFO 屏障、原子取回、定向停止和 durable-before-memory 输入提交 |
 | 安全配置 | 已实现 JSON 配置、环境变量覆盖、API key 脱敏，以及 macOS/Linux 上绑定实际句柄的 no-follow 校验；其他平台当前安全失败关闭 |
-| Tools | 已实现 Read/Glob/Grep、Anthropic Edit / OpenAI custom apply_patch、双 Provider structured Write，以及 Darwin 前台 Exec（Anthropic Bash / OpenAI exec_command）；只读最多 8 路并行，Patch/Write/Exec 独占、有序提交并需批准 |
+| Tools | 九项能力包含 Read/Glob/Grep、Edit/apply_patch、Write、Darwin Exec、ReadArtifact、Skill 和结构化提问；连续只读最多 8 路并行，Patch/Write/Exec 需批准，Question 独占但不进入权限批准 |
 | Session | 已实现 append-only JSONL、唯一当前无版本格式的强类型 draft/decoder、UUIDv7、跨进程 lease、同句柄 load/repair/write、`Sync`、尾部修复、fixture、显式恢复，以及可从 JSONL 重建的 SQLite Catalog、`--continue` 与离线 `sessions list`，以及 `resume` 启动选择器和有界元数据搜索/只读文本预览；全文搜索尚未实现 |
 | 扩展系统 | P6 目标；本地 Skills 已实现发现、显式调用、按需工具读取和原生恢复；Hooks、Plugins 和 MCP 仍为经批准的 TODO 占位 |
 | Subagent | P7 目标；当前仅为经批准的 TODO 控制边界，调度、线程树和生命周期尚未实现 |

@@ -153,6 +153,7 @@ type ExecInputPayload struct {
 
 // ToolCallReadyPayload 保存执行前已经durable的完整调用事实。
 type ToolCallReadyPayload struct {
+	QuestionInput     *tool.QuestionInput       `json:"question_input,omitempty"`
 	SkillInput        *SkillInputPayload        `json:"skill_input,omitempty"`
 	ReadArtifactInput *ReadArtifactInputPayload `json:"read_artifact_input,omitempty"`
 	InvocationID      tool.InvocationID         `json:"invocation_id"`
@@ -249,21 +250,22 @@ type PatchResultMetadataPayload struct {
 
 // ToolCallResultPayload 保存无需重新执行即可恢复的冻结结果。
 type ToolCallResultPayload struct {
-	SkillMetadata        *SkillResultPayload         `json:"skill_metadata,omitempty"`
-	Budget               tool.ResultBudgetMetadata   `json:"budget"`
-	ReadArtifactMetadata *ReadArtifactResultPayload  `json:"read_artifact_metadata,omitempty"`
-	InvocationID         tool.InvocationID           `json:"invocation_id"`
-	Capability           tool.CapabilityID           `json:"capability"`
-	WireKind             tool.ProviderWireKind       `json:"wire_kind"`
-	Status               tool.ResultStatus           `json:"status"`
-	Code                 string                      `json:"code"`
-	Preview              string                      `json:"preview"`
-	ReadMetadata         *ReadResultMetadataPayload  `json:"read_metadata,omitempty"`
-	GlobMetadata         *GlobResultMetadataPayload  `json:"glob_metadata,omitempty"`
-	GrepMetadata         *GrepResultMetadataPayload  `json:"grep_metadata,omitempty"`
-	PatchMetadata        *PatchResultMetadataPayload `json:"patch_metadata,omitempty"`
-	WriteMetadata        *WriteResultMetadataPayload `json:"write_metadata,omitempty"`
-	ExecMetadata         *ExecResultMetadataPayload  `json:"exec_metadata,omitempty"`
+	QuestionMetadata     *tool.QuestionResultMetadata `json:"question_metadata,omitempty"`
+	SkillMetadata        *SkillResultPayload          `json:"skill_metadata,omitempty"`
+	Budget               tool.ResultBudgetMetadata    `json:"budget"`
+	ReadArtifactMetadata *ReadArtifactResultPayload   `json:"read_artifact_metadata,omitempty"`
+	InvocationID         tool.InvocationID            `json:"invocation_id"`
+	Capability           tool.CapabilityID            `json:"capability"`
+	WireKind             tool.ProviderWireKind        `json:"wire_kind"`
+	Status               tool.ResultStatus            `json:"status"`
+	Code                 string                       `json:"code"`
+	Preview              string                       `json:"preview"`
+	ReadMetadata         *ReadResultMetadataPayload   `json:"read_metadata,omitempty"`
+	GlobMetadata         *GlobResultMetadataPayload   `json:"glob_metadata,omitempty"`
+	GrepMetadata         *GrepResultMetadataPayload   `json:"grep_metadata,omitempty"`
+	PatchMetadata        *PatchResultMetadataPayload  `json:"patch_metadata,omitempty"`
+	WriteMetadata        *WriteResultMetadataPayload  `json:"write_metadata,omitempty"`
+	ExecMetadata         *ExecResultMetadataPayload   `json:"exec_metadata,omitempty"`
 }
 
 // ReadArtifactInputPayload 保存完整默认化范围，不在恢复时重新应用默认值。

@@ -2,7 +2,11 @@
 
 ## 当前契约与生命周期基线
 
-命令输出存储位于 `internal/session/artifact`；Runtime 在 durable result 后授权引用并更新八工具事实投影，app 装配 typed 宿主查询，TUI 不读文件。ReadArtifact 是第七项真实能力，命令预览与保存前缀分离；保存文件缺失不影响 Provider 原生恢复。预算、目录隔离和 owner 细节见 [ADR-0005](adr/0005-private-command-output-and-host-queries.md) 与 [Tool 输出存储](tool-system.md#命令输出存储与查询)。
+当前九项工具包括 Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill、Question。结构化问题和回答的不可变值位于 `protocol/question_values.go`，tool 使用类型别名组合 Invocation/Result，避免 protocol 反向依赖 tool。Provider 只处理各自原生 wire；Runtime 拥有等待与回答接收；TUI 仅编辑草稿和提交 typed 控制命令。恢复时 app 按原生提交 seq 把已验证的 ready/result 绑定为纯内存 RestoreRecord 事实，两家在安装历史前核对完整题目及冻结输出一致，防止两套事实各自合法却彼此不同。
+
+`Exclusive()` 是有序调度屏障，`RequiresApproval()` 只对 Patch/Write/Exec 为真。Question 在 started Sync 后发布 `user_question_requested`；回答通过 `resolve_user_question` 接收前验证完整 Session/Provider 编码和预算，result Sync 后才发布 `user_question_resolved`。不可变 `ToolOutputPreflight` 只持有单项原生调用快照，不在控制 owner 上访问活动 Conversation。取消接收后的回答义务由既有 turn worker 完成，关闭仍等待同一个 owner。
+
+命令输出存储位于 `internal/session/artifact`；Runtime 在 durable result 后授权引用并更新工具事实投影，app 装配 typed 宿主查询，TUI 不读文件。ReadArtifact 的命令预览与保存前缀分离；保存文件缺失不影响 Provider 原生恢复。预算、目录隔离和 owner 细节见 [ADR-0005](adr/0005-private-command-output-and-host-queries.md) 与 [Tool 输出存储](tool-system.md#命令输出存储与查询)。
 
 Session envelope 不含版本字段；双 Provider native envelope 与 headless JSONL 分别遵循自己的独立契约，不得把它们的字段类推到 Session。prepared sample/tool outputs 仅提供显式 finalize/discard 构造器，回调完成后才能报告 finalized。
 
@@ -13,7 +17,7 @@ TUI 与一次性 headless 由显式 `ChatSession.Start` 启动 AgentLoop adapter
 Runtime 的有序调度、实例审批状态和独占执行骨架分别位于 `tool_scheduler.go`、`approval.go`、`exclusive.go`。骨架持有强类型策略，统一 started 接收、结果关联验证与 durable 收口；各工具保留候选、安全和展示规则。架构守卫覆盖 tool 核心 API、codec 越界及构造器可解析调用链；动态接口与第三方实现另由边界生命周期测试验证。
 
 > 状态：持续演进
-> 更新时间：2026-11-01
+> 更新时间：2026-11-05
 > 适用范围：EasyCode CLI、Agent Runtime、Provider、工具、扩展系统、会话存储和 TUI
 
 ## 1. 背景与目标
@@ -128,7 +132,7 @@ Runtime 构造时深拷贝该快照，并在每轮把同一值分别交给 Conte
 
 ### 4.1 建议的 Go Module 结构
 
-下列结构同时包含当前实现与目标边界。`tool` 已实现 ReadArtifact、Read、Glob、Grep、Patch、Write、Exec、Skill 八项能力；`extension/skill` 已接入；其他扩展、`subagent`、`telemetry` 仍保留经批准的结构化 TODO 占位，分别等待 P6/P7/P8 的 OpenSpec 提供真实消费者、验证与测试；不得从目录存在推断能力已经可用。
+下列结构同时包含当前实现与目标边界。`tool` 已实现 ReadArtifact、Read、Glob、Grep、Patch、Write、Exec、Skill、Question 九项能力；`extension/skill` 已接入；其他扩展、`subagent`、`telemetry` 仍保留经批准的结构化 TODO 占位，分别等待 P6/P7/P8 的 OpenSpec 提供真实消费者、验证与测试；不得从目录存在推断能力已经可用。
 
 ```text
 cmd/
@@ -337,7 +341,7 @@ OpenAI payload v1 保存用户 Responses item、有序 output items 和原始 us
 
 ### 6.2 上下文分段
 
-当前已实现不可变、强类型且可验证的 `CachePlan`、stable-prefix fingerprint 和 ContextPlanner。计划依次输出 `provider_profile`、`tool_catalog`、可选 `project_instructions`、可选 `skill_catalog`、`committed_history`、`current_input`；八项真实工具的稳定 facade/schema 进入 catalog segment、估算与 fingerprint，实际 command、workdir、approval 和宿主环境不得污染稳定前缀。项目快照非空时以 `replace + project-stable` 进入稳定前缀，history 为 turn-stable，当前输入为 volatile。下列其余分段仍是 P4/P6 随真实消费者逐项扩展的目标，不能从目录或设计推断为已实现：
+当前已实现不可变、强类型且可验证的 `CachePlan`、stable-prefix fingerprint 和 ContextPlanner。计划依次输出 `provider_profile`、`tool_catalog`、可选 `project_instructions`、可选 `skill_catalog`、`committed_history`、`current_input`；九项真实工具的稳定 facade/schema 进入 catalog segment、估算与 fingerprint，实际 command、workdir、approval 和宿主环境不得污染稳定前缀。项目快照非空时以 `replace + project-stable` 进入稳定前缀，history 为 turn-stable，当前输入为 volatile。下列其余分段仍是 P4/P6 随真实消费者逐项扩展的目标，不能从目录或设计推断为已实现：
 
 ```text
 CachePlan
@@ -556,7 +560,7 @@ Skill 与 hooks/plugins 属于 P6；MCP 和 Agent/Subagent 属于 P7；完整跨
 当前已接入 Runtime 的来源只有：
 
 - `provider_profile`：family、model、schema revision，`replace + stable`。
-- `tool_catalog`：八项工具的确定性 schema，`replace + stable`。
+- `tool_catalog`：九项工具的确定性 schema，`replace + stable`。
 - `project_instructions`：启动时发现的有界结构化快照，存在文档时为 `replace + project-stable`，空快照省略。
 - `committed_history`：`ActiveContextView` 中的独立摘要与增量历史，结合不含 opaque 正文的 Provider footprint，`append + turn-stable`。
 - `current_input`：采样标记，`replace + volatile`；正文已进入有效原生历史，排队和 staging 输入不重复计量。

@@ -141,7 +141,7 @@ func (plan ToolRecoveryPlan) Validate() error {
 			return fmt.Errorf("tool recovery ready sequence is invalid")
 		}
 		lastReadySequence = call.ReadySequence
-		if !call.Invocation.Capability().Exclusive() {
+		if !call.Invocation.Capability().RequiresApproval() {
 			if call.ApprovalSequence != 0 || call.ApprovalOutcome != "" || call.CandidateFingerprint != "" {
 				return fmt.Errorf("read-only tool recovery call has approval facts")
 			}
@@ -228,10 +228,10 @@ func (plan ToolRecoveryPlan) Validate() error {
 				return fmt.Errorf("result tool recovery call is invalid")
 			}
 			if call.StartedSequence == 0 {
-				closedExclusive := call.Invocation.Capability().Exclusive() &&
+				closedExclusive := call.Invocation.Capability().RequiresApproval() &&
 					((call.ApprovalOutcome == tool.ApprovalOutcomeDeny && call.Result.Status() == tool.ResultDenied) ||
 						(call.ApprovalOutcome == tool.ApprovalOutcomeAbort && call.Result.Status() == tool.ResultCancelled))
-				preparedFailure := call.Invocation.Capability().Exclusive() && call.ApprovalSequence == 0 && (call.Result.Status() == tool.ResultError || (call.Invocation.Capability() == tool.CapabilityWrite && call.Result.Status() == tool.ResultConflict))
+				preparedFailure := call.Invocation.Capability().Exclusive() && call.ApprovalSequence == 0 && (call.Result.Status() == tool.ResultError || (call.Invocation.Capability() == tool.CapabilityQuestion && call.Result.Status() == tool.ResultDenied) || (call.Invocation.Capability() == tool.CapabilityWrite && call.Result.Status() == tool.ResultConflict))
 				if call.Result.Status() != tool.ResultCancelled && !closedExclusive && !preparedFailure {
 					return fmt.Errorf("tool result before execution start is not cancelled")
 				}
@@ -541,7 +541,7 @@ func (active *activeReplayTurn) acceptStarted(record Record) error {
 			return replayCorrupt("tool execution order is invalid")
 		}
 		if call.Invocation.Capability().Exclusive() {
-			if call.ApprovalSequence == 0 || (call.ApprovalOutcome != tool.ApprovalOutcomeAllowOnce && call.ApprovalOutcome != tool.ApprovalOutcomeAllowSession && call.ApprovalOutcome != tool.ApprovalOutcomeAllowFromSession) {
+			if call.Invocation.Capability().RequiresApproval() && (call.ApprovalSequence == 0 || (call.ApprovalOutcome != tool.ApprovalOutcomeAllowOnce && call.ApprovalOutcome != tool.ApprovalOutcomeAllowSession && call.ApprovalOutcome != tool.ApprovalOutcomeAllowFromSession)) {
 				return replayCorrupt("exclusive execution started without approval")
 			}
 			for previous := 0; previous < index; previous++ {
@@ -578,7 +578,7 @@ func (active *activeReplayTurn) acceptApproval(batch []Record) error {
 		if call.Invocation.InvocationID() != payload.InvocationID {
 			continue
 		}
-		if !call.Invocation.Capability().Exclusive() || call.State != ReplayedToolCallReady || call.ApprovalSequence != 0 {
+		if !call.Invocation.Capability().RequiresApproval() || call.State != ReplayedToolCallReady || call.ApprovalSequence != 0 {
 			return replayCorrupt("tool approval does not match a pending exclusive call")
 		}
 		metadata, metadataErr := NewApprovalMetadata(call.Invocation)
@@ -637,7 +637,7 @@ func (active *activeReplayTurn) acceptResult(record Record) error {
 		}
 		if call.State == ReplayedToolCallReady {
 			if call.Invocation.Capability().Exclusive() {
-				if call.ApprovalSequence == 0 && result.Status() != tool.ResultError && result.Status() != tool.ResultCancelled && !(call.Invocation.Capability() == tool.CapabilityWrite && result.Status() == tool.ResultConflict) {
+				if call.ApprovalSequence == 0 && result.Status() != tool.ResultError && result.Status() != tool.ResultCancelled && !(call.Invocation.Capability() == tool.CapabilityQuestion && result.Status() == tool.ResultDenied) && !(call.Invocation.Capability() == tool.CapabilityWrite && result.Status() == tool.ResultConflict) {
 					return replayCorrupt("exclusive result before approval is invalid")
 				}
 				if call.ApprovalSequence != 0 && (call.ApprovalOutcome == tool.ApprovalOutcomeAllowOnce || call.ApprovalOutcome == tool.ApprovalOutcomeAllowSession || call.ApprovalOutcome == tool.ApprovalOutcomeAllowFromSession) {

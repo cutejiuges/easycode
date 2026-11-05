@@ -240,6 +240,11 @@ func validateAssistantBlock(block NativeItem) error {
 	case blockTypeText, blockTypeThinking, blockTypeRedactedThinking:
 		return nil
 	case blockTypeToolUse:
+		if block.Name == "AskUserQuestion" {
+			if _, err := tool.DecodeQuestionInput(block.Input); err != nil {
+				return fmt.Errorf("invalid native question input")
+			}
+		}
 		if block.Name == "Write" {
 			if _, err := tool.DecodeWriteInput(block.Input); err != nil {
 				return fmt.Errorf("invalid native Write input")

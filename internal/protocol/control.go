@@ -287,7 +287,7 @@ func (item ControlItem) Validate() error {
 }
 
 func validCommandKind(kind CommandKind) bool {
-	return kind == CommandQueryCache || kind == CommandQueryContext || kind == CommandCompactContext || kind == CommandCancelCompaction || kind == CommandSubmitConversationalInput || kind == CommandRetractInputs || kind == CommandStopTurn || kind == CommandSubmitInput || kind == CommandInterrupt || kind == CommandShutdown || kind == CommandResolveToolApproval
+	return kind == CommandResolveUserQuestion || kind == CommandQueryCache || kind == CommandQueryContext || kind == CommandCompactContext || kind == CommandCancelCompaction || kind == CommandSubmitConversationalInput || kind == CommandRetractInputs || kind == CommandStopTurn || kind == CommandSubmitInput || kind == CommandInterrupt || kind == CommandShutdown || kind == CommandResolveToolApproval
 }
 
 func dispositionMatches(kind CommandKind, disposition CommandDisposition) bool {
@@ -308,7 +308,7 @@ func dispositionMatches(kind CommandKind, disposition CommandDisposition) bool {
 		return disposition == CommandDispositionInterrupting
 	case CommandShutdown:
 		return disposition == CommandDispositionClosing
-	case CommandResolveToolApproval:
+	case CommandResolveUserQuestion, CommandResolveToolApproval:
 		return disposition == CommandDispositionResolving
 	default:
 		return false
@@ -317,6 +317,12 @@ func dispositionMatches(kind CommandKind, disposition CommandDisposition) bool {
 
 func controlErrorMessage(code ControlErrorCode) (string, bool) {
 	switch code {
+	case ControlErrorNoActiveQuestion:
+		return "there is no active user question", true
+	case ControlErrorQuestionMismatch:
+		return "active user question does not match the response", true
+	case ControlErrorQuestionAnswerInvalid:
+		return "answer is invalid or exceeds the current result budget", true
 	case ControlErrorSessionBusy:
 		return "session has active or queued work", true
 	case ControlErrorNothingToCompact:

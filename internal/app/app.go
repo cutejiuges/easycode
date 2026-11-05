@@ -471,8 +471,9 @@ func openChatResourcesWithSnapshot(
 		return nil, err
 	}
 	skillReader := skillExecutor{skillSource}
+	questionExecutor := builtin.NewQuestionExecutor()
 	toolCatalog, err := builtin.NewCatalog(
-		readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, writePreparer, writeExecutor, execPreparer, execExecutor, tool.RenderExecOutput, toolPolicy, readArtifactExecutor, skillReader,
+		readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, writePreparer, writeExecutor, execPreparer, execExecutor, tool.RenderExecOutput, toolPolicy, readArtifactExecutor, skillReader, questionExecutor,
 	)
 	if err != nil {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "tool catalog is invalid")
@@ -503,7 +504,8 @@ func openChatResourcesWithSnapshot(
 		ToolHistory:        queries,
 		SessionID:          assembled.identity.SessionID, ThreadID: assembled.identity.ThreadID,
 		Journal: assembled.writer, ContextProfile: contextProfile, CachePolicy: applicationConfig.CachePolicy(), RestoredCacheBaseline: resumeThreadID != "",
-		ToolCatalog:          toolCatalog,
+		ToolCatalog:      toolCatalog,
+		QuestionExecutor: questionExecutor, InteractiveQuestions: hooks.interactiveApprovals,
 		ReadExecutor:         readExecutor,
 		ReadArtifactExecutor: readArtifactExecutor,
 		SkillExecutor:        skillReader, SkillPreparer: skillInputPreparer{skillSource}, SkillCatalog: skillSource.Catalog(),

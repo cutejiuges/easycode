@@ -99,6 +99,11 @@ func facadeIdentity(family domain.ProviderFamily, capability CapabilityID) (stri
 		prefix = "anthropic:"
 	}
 	switch capability {
+	case CapabilityQuestion:
+		if family == domain.ProviderAnthropic {
+			return "AskUserQuestion", FacadeID(prefix + "AskUserQuestion")
+		}
+		return "request_user_input", FacadeID(prefix + "request_user_input")
 	case CapabilitySkill:
 		return "Skill", FacadeID(prefix + "Skill")
 	case CapabilityReadArtifact:
@@ -139,7 +144,7 @@ func (view FacadeView) Facades() []Facade             { return cloneFacades(view
 func (view FacadeView) CanonicalJSON() []byte         { return view.canonical.Bytes() }
 func (view FacadeView) Fingerprint() string           { return view.fingerprint }
 
-// CatalogSnapshot 保存 ReadArtifact、Read、Glob、Grep、Patch、Write、Exec、Skill 八项真实能力的确定性目录。
+// CatalogSnapshot 保存 ReadArtifact、Read、Glob、Grep、Patch、Write、Exec、Skill、Question 九项真实能力的确定性目录。
 type CatalogSnapshot struct {
 	facades     []Facade
 	canonical   codec.CanonicalJSON
@@ -304,9 +309,9 @@ func buildFileFacades() ([]Facade, error) {
 	return facades, nil
 }
 
-// NewCatalogSnapshot 创建当前八能力唯一目录，要求所有消费者已显式装配。
-func NewCatalogSnapshot(readExecutor ReadExecutor, globExecutor GlobExecutor, grepExecutor GrepExecutor, preparer PatchPreparer, patchExecutor PatchExecutor, writePreparer WritePreparer, writeExecutor WriteExecutor, execPreparer ExecPreparer, execExecutor ExecExecutor, renderer ExecOutputRenderer, policy Policy, artifactExecutor ReadArtifactExecutor, skillExecutor SkillExecutor) (CatalogSnapshot, error) {
-	if readExecutor == nil || globExecutor == nil || grepExecutor == nil || preparer == nil || patchExecutor == nil || writePreparer == nil || writeExecutor == nil || execPreparer == nil || execExecutor == nil || renderer == nil || policy == nil || artifactExecutor == nil || skillExecutor == nil {
+// NewCatalogSnapshot 创建当前九能力唯一目录，要求所有消费者已显式装配。
+func NewCatalogSnapshot(readExecutor ReadExecutor, globExecutor GlobExecutor, grepExecutor GrepExecutor, preparer PatchPreparer, patchExecutor PatchExecutor, writePreparer WritePreparer, writeExecutor WriteExecutor, execPreparer ExecPreparer, execExecutor ExecExecutor, renderer ExecOutputRenderer, policy Policy, artifactExecutor ReadArtifactExecutor, skillExecutor SkillExecutor, questionExecutor QuestionExecutor) (CatalogSnapshot, error) {
+	if readExecutor == nil || globExecutor == nil || grepExecutor == nil || preparer == nil || patchExecutor == nil || writePreparer == nil || writeExecutor == nil || execPreparer == nil || execExecutor == nil || renderer == nil || policy == nil || artifactExecutor == nil || skillExecutor == nil || questionExecutor == nil {
 		return CatalogSnapshot{}, errors.New("all tool components are required")
 	}
 	facades, err := buildFileFacades()
@@ -336,6 +341,15 @@ func NewCatalogSnapshot(readExecutor ReadExecutor, globExecutor GlobExecutor, gr
 	for _, family := range []domain.ProviderFamily{domain.ProviderAnthropic, domain.ProviderOpenAI} {
 		name, id := facadeIdentity(family, CapabilitySkill)
 		facades = append(facades, Facade{id: id, family: family, name: name, description: "Loads complete local skill instructions by name, or reads a relative supporting resource from the same source. Does not grant tool permissions. args and resource are mutually exclusive.", capability: CapabilitySkill, wireKind: WireStructured, schema: skillSchema.Clone()})
+	}
+
+	questionSchema, err := buildQuestionSchema()
+	if err != nil {
+		return CatalogSnapshot{}, err
+	}
+	for _, family := range []domain.ProviderFamily{domain.ProviderAnthropic, domain.ProviderOpenAI} {
+		name, id := facadeIdentity(family, CapabilityQuestion)
+		facades = append(facades, Facade{id: id, family: family, name: name, description: "Asks the user one to four questions with single or multiple choices and optional notes, then waits for explicit answers. The client adds Other. Put a recommended choice first with (Recommended) in its label. Ask before generating tool calls whose parameters depend on the answer. Answers never grant tool permissions. Requires an interactive host.", capability: CapabilityQuestion, wireKind: WireStructured, schema: questionSchema.Clone()})
 	}
 	return newCatalogSnapshot(facades)
 }
@@ -426,7 +440,7 @@ func buildGrepSchema() (codec.CanonicalJSON, error) {
 }
 
 func newCatalogSnapshot(facades []Facade) (CatalogSnapshot, error) {
-	if len(facades) != 16 {
+	if len(facades) != 18 {
 		return CatalogSnapshot{}, errors.New("tool catalog requires a complete Provider facade set")
 	}
 	owned := cloneFacades(facades)
@@ -486,7 +500,7 @@ func (snapshot CatalogSnapshot) View(family domain.ProviderFamily) (FacadeView, 
 			selected = append(selected, facade.clone())
 		}
 	}
-	if len(selected) != 8 {
+	if len(selected) != 9 {
 		return FacadeView{}, errors.New("tool catalog has incomplete Provider facade set")
 	}
 	canonical, err := encodeFacades(selected)
@@ -514,6 +528,12 @@ func (snapshot CatalogSnapshot) DecodeReadyCall(family domain.ProviderFamily, na
 		return ReadyCall{}, errors.New("tool facade is not advertised")
 	}
 	switch selected.capability {
+	case CapabilityQuestion:
+		input, err := DecodeQuestionInput(arguments)
+		if err != nil {
+			return ReadyCall{}, err
+		}
+		return NewQuestionReadyCall(callID, input)
 	case CapabilitySkill:
 		input, err := DecodeSkillInput(arguments)
 		if err != nil {
@@ -575,7 +595,7 @@ func (snapshot CatalogSnapshot) DecodeReadyCall(family domain.ProviderFamily, na
 
 // Validate 重新计算 canonical bytes 与 fingerprint。
 func (snapshot CatalogSnapshot) Validate() error {
-	if len(snapshot.facades) != 16 || snapshot.fingerprint == "" {
+	if len(snapshot.facades) != 18 || snapshot.fingerprint == "" {
 		return errors.New("tool catalog snapshot is invalid")
 	}
 	rebuilt, err := newCatalogSnapshot(snapshot.facades)
