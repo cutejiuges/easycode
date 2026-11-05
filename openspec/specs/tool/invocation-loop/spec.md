@@ -153,6 +153,8 @@ Write 的目标/目录检查与候选读取 SHALL 遵循上述 Patch 的 ready d
 
 本条的 exclusive 屏障和串行审批语义 SHALL 同样适用于 Write；不能将非 Patch 调用默认视作 parallel_read。
 
+存在匹配 PreToolUse 时，Patch/Write/Exec SHALL 在同一 exclusive 屏障内先冻结并 durable 保存完整 Hook 计划，串行完成检查，再准备候选与普通审批。Hook 的计划、信任、进程及结果不得越过前序 result 或与后序工具重叠；只读调用不触发本切片 Hook。无匹配时 SHALL 保持原调度、九能力目录与 Provider facade 不变。单个 Hook denied/error 只阻断原 call slot，后序 independent sibling 仍按原序执行；取消、cleanup 不确定或 writer poison 才停止整个 turn。
+
 #### Scenario: Complete a two-sample search turn
 - **WHEN** 首个sample请求Glob与Grep，结果提交后第二个sample返回最终文本且不再调用工具
 - **THEN** turn只产生一个开始和一个成功终态，并在两次sample之间保持合法native call/output顺序
@@ -222,6 +224,15 @@ Runtime SHALL 在同一 turn owner 持有 tool/result-budget 的纯内存账本�
 - **WHEN** sample 按 Read、Question、Write、Question 排列
 - **THEN** 两个问题逐个处理且不重叠，Write 仍需单独批准，所有结果和 outputs 保持原 index
 
+#### Scenario: Keep a hook inside the exclusive barrier
+- **WHEN** 调用组为 Read、Write、Read，Write 命中检查
+- **THEN** 前序 Read result durable 后才可写 Hook plan；Write result durable 前后序 Read 不开始
+- **THEN** Hook 阻断不会创建额外模型 tool call，普通 denied/error 不取消后序独立调用
+
+#### Scenario: Never hook a parallel read
+- **WHEN** 同一 sample 包含 Read、Glob、Grep、Skill 或 ReadArtifact
+- **THEN** 它们保持原并发与来源规则，Hook 计划和进程启动次数为零
+
 ### Requirement: Execution ledger provides at-most-once automatic execution
 
 自动允许调用的正常路径 SHALL 遵循`ready_durable -> execution_started_durable -> result_durable`；需要审批的调用 SHALL 遵循`ready_durable -> approval_decided_durable -> execution_started_durable -> result_durable`。拒绝路径 SHALL为`ready_durable -> [approval_decided(deny), result(denied)]_durable`且不得出现started。Runtime SHALL在启动任何worker前按调度顺序为每个仍可执行调用单独append/Sync`tool_execution_started`；该append被接受的成功点是该调用的执行接收线性化点。在它之前观察到取消的调用 SHALL被分类为cancelled且不得进入executor；在它之后Runtime MUST恰好调用一次匹配executor，即使turn context已取消。
@@ -231,6 +242,12 @@ Runtime SHALL 在同一 turn owner 持有 tool/result-budget 的纯内存账本�
 同一invocation ID MUST NOT自动执行两次。恢复阶段 MUST NOT执行任何invocation：patch ready且没有approval的调用关闭为`cancelled/session_interrupted_before_approval`；已有allow但没有started的调用关闭为`cancelled/session_interrupted_before_execution`；started但没有result的调用关闭为`outcome_uncertain`。Read、Glob、Grep与Patch均不声明可恢复重试例外。
 
 Write SHALL 与 Patch 使用相同的审批 ledger、accepted started、至多一次执行与三种崩溃补偿边界。恢复不得扫描目录、查询文件存在性、清理暂存项或自动重试 Write。
+
+本条中的 execution started SHALL 专指目标工具，不得兼作 Hook started。已选 Hook MUST 在独立 plan/started/finished/gate facts 中表达；有计划的调用只有 gate continue 后才允许准备候选、普通 approval 或 tool started。Hook started 与工具 started 各有独立的 writer admission/Sync 线性化点：接收前取消零对应 runner 调用，接收后等确定提交结果，只有成功 Sync 才恰好调用一次对应 runner，并传入当前 context。
+
+上述 ready/approval/tool-started 恢复矩阵 SHALL 在没有未收口 Hook 门禁时适用；存在 Hook 子状态时，系统 MUST 优先按冻结计划补偿，禁止重新选择或执行检查。Hook started 无 finished 不能被解释为没有外部操作，也不能伪造目标工具 started：必须记录 Hook outcome_uncertain，并让尚未执行工具得到 cancelled/hook_outcome_uncertain 配对结果。正常运行中无法确认 Hook cleanup 或 runner 返回错配结果时 MUST poison Runtime、停止后续副作用并保留唯一清理 owner。
+
+已有 durable tool result 的重复消费 MUST 直接复用 frozen result，不得再次请求信任、运行 Hook、重分配预算或执行工具。Hook 的安全摘要 SHALL 进入原有结果预算且最多 1 KiB；预算已不足时不得先运行 Hook 再以丢弃反馈掩盖事实。
 
 #### Scenario: Replay a completed invocation
 - **WHEN** Runtime再次遇到已有durable result的invocation ID
@@ -269,6 +286,23 @@ Write SHALL 与 Patch 使用相同的审批 ledger、accepted started、至多�
 #### Scenario: Do not replay a published Write after a crash
 - **WHEN** Write 已 started 且可能已发布文件，但 result 缺失
 - **THEN** 恢复补偿 outcome_uncertain，文件和目录 executor 调用次数均为零
+
+#### Scenario: Cancel before hook admission
+- **WHEN** Hook plan 已 durable，但 Hook started 尚未被 writer 接收时取消
+- **THEN** 对应 Hook runner 与目标工具 executor 调用次数为零，门禁与原 call slot 被取消收口
+
+#### Scenario: Cancel after accepted hook admission
+- **WHEN** Hook started append 已接收后 context 取消，且最终 Sync 成功
+- **THEN** Hook runner 恰好接收一次已取消 context，返回确定取消或清理结果；不要求强行创建 OS 进程
+- **THEN** 目标工具不 started，清理完成前 owner 和 lease 不释放
+
+#### Scenario: Reuse a hook-denied invocation
+- **WHEN** 同一 invocation 已有 durable Hook 阻断 result，被重复消费
+- **THEN** result bytes 与 code 不变，信任请求、Hook 和工具调用次数均不增加
+
+#### Scenario: Recover an uncertain hook without inventing a tool start
+- **WHEN** 只有 Hook started，没有 Hook finished、tool approval 或 tool started
+- **THEN** 本地补偿 Hook 不确定与工具 cancelled/hook_outcome_uncertain，零重跑，旧 turn 失败关闭
 
 ### Requirement: Every durable call receives a durable Provider output
 
@@ -312,7 +346,7 @@ Exec artifact 状态/引用与 ReadArtifact 页结果 SHALL 随 preview 一次�
 - **WHEN** Exec 与 ReadArtifact results 已 durable，native output 未提交且文件已删除
 - **THEN** 恢复得到与不中断路径相同的 preview、native item 顺序、canonical request 与 fingerprint，不执行 artifact I/O
 
-预算不足、保存失败及恢复补偿 SHALL 同样获得有界 typed result 与匹配 output；预算元数据与最终 preview/保存决定在 result Sync 前冻结。已有 results 恢复时不重新分配预算或访问保存对象，补偿只为缺失 result 使用当前安全有界策略。七工具与 search_result 均遵守上述规则。
+预算不足、保存失败及恢复补偿 SHALL 同样获得有界 typed result 与匹配 output；预算元数据与最终 preview/保存决定在 result Sync 前冻结。已有 results 恢复时不重新分配预算或访问保存对象，补偿只为缺失 result 使用当前安全有界策略。已实现工具与 search_result 均遵守上述规则。
 
 #### Scenario: Recover a reduced search result
 - **WHEN** 搜索缩短结果与保存引用已 durable 而 native output 未提交，保存文件随后丢失

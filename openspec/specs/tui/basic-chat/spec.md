@@ -286,7 +286,7 @@ TUI 只能消费 typed RuntimeEvent 和宿主 typed transcript/detail 查询结�
 - **WHEN** artifact 只保存前段而预览包含末尾
 - **THEN** 详情明确标注保存范围，stored EOF 不被显示为完整输出结束
 
-主线 SHALL 按 tui/tool-transcript 覆盖全部七工具，提供确定性 Read/Search 分组和明显异常状态，并移除持续调试式 Status 行。审批焦点高于 transcript；浏览不得改变 composer、原生请求或工具执行事实。列表中的正文按 64 KiB UTF-8 页查询，不为折叠或 resize 构建全部历史行。旧 Ctrl+O 命令列表入口 SHALL 被本交互替换，不并存第二套浏览状态。
+主线 SHALL 按 tui/tool-transcript 覆盖全部已实现工具，提供确定性 Read/Search 分组和明显异常状态，并移除持续调试式 Status 行。审批焦点高于 transcript；浏览不得改变 composer、原生请求或工具执行事实。列表中的正文按 64 KiB UTF-8 页查询，不为折叠或 resize 构建全部历史行。旧 Ctrl+O 命令列表入口 SHALL 被本交互替换，不并存第二套浏览状态。
 
 #### Scenario: Preserve draft across transcript and approval
 - **WHEN** 用户带草稿浏览 Read/Search 组时出现审批

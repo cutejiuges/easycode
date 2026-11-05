@@ -27,3 +27,8 @@ func (runtime *Runtime) emitTranscriptCommit(turnID domain.TurnID, sequence uint
 type CompactionHistoryObserver interface {
 	CompactionCommitted(uint64, domain.CompactionID, domain.ContextSummary) error
 }
+
+// HookHistoryObserver 只接收已 Sync 的安全统计，不持有命令、输出或信任状态。
+type HookHistoryObserver interface {
+	HookFinished(domain.HookReference, domain.HookRunResult)
+}

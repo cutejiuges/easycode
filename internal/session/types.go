@@ -20,21 +20,25 @@ const (
 type EventKind string
 
 const (
-	EventCompactionStarted    EventKind = "compaction_started"
-	EventCompactionCompleted  EventKind = "compaction_completed"
-	EventCompactionFailed     EventKind = "compaction_failed"
-	EventSessionMeta          EventKind = "session_meta"
-	EventThreadMeta           EventKind = "thread_meta"
-	EventTurnInputsCommitted  EventKind = "turn_inputs_committed"
-	EventTurnStarted          EventKind = "turn_started"
-	EventProviderNativeCommit EventKind = "provider_native_commit"
-	EventSampleUsage          EventKind = "sample_usage"
-	EventToolCallReady        EventKind = "tool_call_ready"
-	EventToolApprovalDecided  EventKind = "tool_approval_decided"
-	EventToolExecutionStarted EventKind = "tool_execution_started"
-	EventToolCallResult       EventKind = "tool_call_result"
-	EventTurnCompleted        EventKind = "turn_completed"
-	EventTurnFailed           EventKind = "turn_failed"
+	EventToolHookGatePlanned   EventKind = "tool_hook_gate_planned"
+	EventHookExecutionStarted  EventKind = "hook_execution_started"
+	EventHookExecutionFinished EventKind = "hook_execution_finished"
+	EventToolHookGateDecided   EventKind = "tool_hook_gate_decided"
+	EventCompactionStarted     EventKind = "compaction_started"
+	EventCompactionCompleted   EventKind = "compaction_completed"
+	EventCompactionFailed      EventKind = "compaction_failed"
+	EventSessionMeta           EventKind = "session_meta"
+	EventThreadMeta            EventKind = "thread_meta"
+	EventTurnInputsCommitted   EventKind = "turn_inputs_committed"
+	EventTurnStarted           EventKind = "turn_started"
+	EventProviderNativeCommit  EventKind = "provider_native_commit"
+	EventSampleUsage           EventKind = "sample_usage"
+	EventToolCallReady         EventKind = "tool_call_ready"
+	EventToolApprovalDecided   EventKind = "tool_approval_decided"
+	EventToolExecutionStarted  EventKind = "tool_execution_started"
+	EventToolCallResult        EventKind = "tool_call_result"
+	EventTurnCompleted         EventKind = "turn_completed"
+	EventTurnFailed            EventKind = "turn_failed"
 )
 
 // Record 是一行可独立校验的当前 JSONL 信封。
@@ -309,7 +313,8 @@ type TurnFailedPayload struct {
 }
 
 type recordPayload interface {
-	CompactionStartedPayload | CompactionCompletedPayload | CompactionFailedPayload |
+	domain.HookPlan | domain.HookRunIdentity | domain.HookRunResult | domain.HookGateDecision |
+		CompactionStartedPayload | CompactionCompletedPayload | CompactionFailedPayload |
 		TurnInputsPayload |
 		SessionMetaPayload | ThreadMetaPayload | TurnStartedPayload | NativeCommitPayload |
 		SampleUsagePayload | ToolCallReadyPayload | ToolExecutionStartedPayload |

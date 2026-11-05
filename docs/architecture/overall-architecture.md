@@ -1,5 +1,7 @@
 # EasyCode 总体架构设计
 
+当前能力及平台证据见[当前能力清单](../roadmap/capability-status.md)。本文中的“后续目标”不代表已经暴露的 schema、事件或命令；当前行为契约以 [OpenSpec 主规格](../../openspec/specs/) 和代码为准。
+
 ## 当前契约与生命周期基线
 
 当前九项工具包括 Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill、Question。结构化问题和回答的不可变值位于 `protocol/question_values.go`，tool 使用类型别名组合 Invocation/Result，避免 protocol 反向依赖 tool。Provider 只处理各自原生 wire；Runtime 拥有等待与回答接收；TUI 仅编辑草稿和提交 typed 控制命令。恢复时 app 按原生提交 seq 把已验证的 ready/result 绑定为纯内存 RestoreRecord 事实，两家在安装历史前核对完整题目及冻结输出一致，防止两套事实各自合法却彼此不同。
@@ -8,7 +10,7 @@
 
 命令输出存储位于 `internal/session/artifact`；Runtime 在 durable result 后授权引用并更新工具事实投影，app 装配 typed 宿主查询，TUI 不读文件。ReadArtifact 的命令预览与保存前缀分离；保存文件缺失不影响 Provider 原生恢复。预算、目录隔离和 owner 细节见 [ADR-0005](adr/0005-private-command-output-and-host-queries.md) 与 [Tool 输出存储](tool-system.md#命令输出存储与查询)。
 
-Session envelope 不含版本字段；双 Provider native envelope 与 headless JSONL 分别遵循自己的独立契约，不得把它们的字段类推到 Session。prepared sample/tool outputs 仅提供显式 finalize/discard 构造器，回调完成后才能报告 finalized。
+Session/native/checkpoint envelope 均不含格式版本字段；headless JSONL 独立使用外部 v1，不得类推到内部持久化。prepared sample/tool outputs 仅提供显式 finalize/discard 构造器，回调完成后才能报告 finalized。
 
 `internal/codec` 从固定 Sonic 配置值编码，不读取可替换的第三方默认 codec。封闭 JSON 对象拒绝重复键、大小写别名、未知字段、尾随内容和有损 Unicode。工具缺省参数保留默认值，显式 null 失败；持久化 record 按 json 标签要求非 omitempty 字段存在，标量与对象不接受 null，当前 nil 集合仍允许编码为 null。自定义联合 decoder 负责分支字段；Provider opaque 原生项保留独立扩展规则和原始字节。
 
@@ -17,7 +19,7 @@ TUI 与一次性 headless 由显式 `ChatSession.Start` 启动 AgentLoop adapter
 Runtime 的有序调度、实例审批状态和独占执行骨架分别位于 `tool_scheduler.go`、`approval.go`、`exclusive.go`。骨架持有强类型策略，统一 started 接收、结果关联验证与 durable 收口；各工具保留候选、安全和展示规则。架构守卫覆盖 tool 核心 API、codec 越界及构造器可解析调用链；动态接口与第三方实现另由边界生命周期测试验证。
 
 > 状态：持续演进
-> 更新时间：2026-11-05
+> 更新时间：2026-11-06
 > 适用范围：EasyCode CLI、Agent Runtime、Provider、工具、扩展系统、会话存储和 TUI
 
 ## 1. 背景与目标
@@ -145,15 +147,16 @@ internal/
   protocol/                 进程内 Command 与 RuntimeEvent
   runtime/                  session、turn loop、队列、取消和恢复协调
   provider/                 ProviderKernel 契约和能力模型
-    transport/              Resty HTTP/SSE 公共基础设施
+    transport/              Resty HTTP/SSE 与可选 WebSocket 公共传输
     anthropic/              Anthropic Messages 实现
     openai/                 OpenAI Responses 实现
   tool/                     当前强类型输入、Facade、Executor、Policy 与 ResultCodec
-    builtin/                当前 Read、Glob、Grep、Patch、Write、Exec 安全执行边界
+    builtin/                九项工具的已实现执行/准备边界
   context/                  上下文分层、token budget、compact、cache plan
-  session/                  JSONL、artifact、resume/fork
+  session/                  JSONL、artifact、root-thread resume；fork 未实现
     catalog/                可重建 SQLite Catalog 与前台 reconciliation
-  extension/                本地 skills；P6 后续目标：hooks、plugins、MCP
+  executor/process/         Exec/Hook 共用进程生命周期
+  extension/                本地 Skills 与 PreToolUse Hooks；P6 后续目标：Plugins、MCP
   subagent/                 P7 目标：thread tree、mailbox、后台任务和限流
   tui/                      Bubble Tea、输入、消息 view、overlay 和 diff
   telemetry/                P8 目标：slog、redaction、metrics 和 diagnostics
@@ -181,7 +184,7 @@ app      -> runtime + tui + headless
 cmd      -> app
 ```
 
-当前运行路径为 `domain/protocol <- provider|tool|context|session <- runtime <- app/tui/headless/cmd`。`context` 已通过纯内存 ContextPlanner 接入 Runtime，Provider 只向共享层暴露不含原生正文的 HistoryFootprint；Tool 已接入 Read/Glob/Grep 和需批准的单文件 Patch/Write，extension、Subagent 和 telemetry 仍不可从 Runtime/app 到达。
+当前依赖方向为 `domain/protocol <- provider|tool|context|session|extension <- runtime <- app/tui/headless/cmd`。Skill/Hook 已有真实消费者，宿主显式 Load 后注入 Runtime；共享 `executor/process` 与 `extension/localfile` 不依赖业务层。Subagent、Plugin/MCP、telemetry 及 extension 根占位仍未接入 Runtime/app。TUI/headless 通过宿主接口通信，不直接导入 Runtime 实现。
 
 禁止：
 
@@ -207,7 +210,7 @@ cmd      -> app
 | 日志 | 标准库 `log/slog` | 结构化字段、分组、handler 和敏感字段过滤 |
 | ID | UUID v7 实现 | 全局唯一且大致按时间有序 |
 | Secret | 自定义不可打印值对象 | 防止 String/GoString/日志意外泄漏 |
-| 文件监听 | `fsnotify` | skills/plugins/hooks 热加载 |
+| 文件监听 | 后续选择，当前未引入 | Skills/Hook 启动冻结，Plugins/MCP 与热加载尚未实现 |
 | Golden/Snapshot | 标准库 testing + `testdata` golden files | 避免测试依赖过重，便于审阅 wire 差异 |
 
 Resty v3 当前使用 `resty.dev/v3` 导入路径；在项目初始化时最新可用版本为 `v3.0.0-rc.4`，升级到稳定版前必须重新运行 provider/SSE 契约测试。Streaming 请求使用 Resty raw body，不使用 RC `SSESource` 作为工程契约；`internal/provider/transport` 自行处理 LF/CRLF、任意 chunk、UTF-8 边界、4 MiB 默认 event 上限、取消和 idle watchdog。Sonic 与 Resty 的自动 JSON 行为不得混用：只有无内部依赖的 `internal/codec` 可以直接导入 Sonic，并由其统一提供 map key 排序、字符串校验、严格解码与 canonical JSON；domain/protocol 可依赖该基础设施包，Provider 与 Session 通过它生成确定字节后再交给 Resty 或存储边界。
@@ -222,17 +225,19 @@ Provider HTTP 层不直接依赖官方模型 SDK。原因是 EasyCode 需要支�
 
 ### 5.1 模板方法边界
 
-共享 `TurnRuntime` 是模板化流程：
+共享 Runtime 的当前采样流程：
 
-1. 接收用户输入或 continuation。
-2. 执行 UserPromptSubmit 等前置 hook。
-3. 构建上下文和 cache plan。
-4. 由 Provider Kernel 编译原生请求。
-5. 消费 provider stream，并归并为原生 item 与 RuntimeEvent。
-6. 执行已完成的工具调用。
-7. 将工具结果编码成 provider 原生输入。
-8. 根据 stop/tool/end-turn 状态决定继续采样或结束。
-9. 执行 stop hook，持久化 turn boundary 和 usage。
+1. AgentLoop 按 FIFO/strict-next 领取用户输入，冻结独立 InputID。
+2. 准备输入候选、上下文预算及适用的阈值摘要；输入 batch 成功 Sync 后 finalize。
+3. 由当前 ContextPlan 和 Provider 策略编译原生请求及缓存证据。
+4. 消费 stream，归并原生 item 与瞬态语义事件，验证完整 PreparedSample。
+5. 原子提交 native sample、usage 与 ready calls 或最终 terminal，成功后 finalize。
+6. 工具按只读批次/exclusive 屏障执行；三项 mutation 先过适用 PreToolUse 门禁，再候选/普通批准；Question 单独等待回答。
+7. 按 call index 冻结并 Sync results，提交各 Provider 匹配的原生 outputs。
+8. outputs 完整后开放同轮输入安全点，继续下一 sample 或结束 turn。
+9. 发布已提交的 usage、context/cache 与 transcript 投影；关闭仍等待唯一 owner。
+
+UserPromptSubmit、Stop、PostToolUse 等其他 Hook 事件尚未实现，不能在上述流程中视作已执行步骤。
 
 Provider Kernel 不是单个庞大 interface，而是以下策略的组合：
 
@@ -325,7 +330,7 @@ RequestCompiler、NativeHistory、Session 事实源和 Provider resume 只能使
 
 当前文本会话使用两阶段提交。Provider 在成功终态生成同时携带 opaque `NativeCommitEnvelope` 与 normalized `SampleUsage` 的 `PreparedSample`，不立即修改 committed native history。Runtime 重新验证两者，将 `[provider_native_commit(sample), sample_usage, turn_completed]` 作为同一 JSONL batch 写入并执行 `Sync`，随后调用一次性 finalizer，最后才发布携带聚合 turn usage 的成功终态。持久化失败会 poison 当前 Runtime，未 finalize 的 staging 不得进入下一请求。
 
-OpenAI payload v1 保存用户 Responses item、有序 output items 和原始 usage；Anthropic payload v1 保存 user/assistant message、最终 metadata 和原始 usage。两者都显式保留 known/unknown 状态，归一化结果由独立 `sample_usage` 保存。恢复时对应 Provider 先事务式解码全部 commits，任一错误都不返回部分历史。共享 Session、Runtime 和 TUI 不解析具体 Provider wire。
+OpenAI 当前 native payload 保存用户 Responses item、有序 output items 和原始 usage；Anthropic 当前 native payload 保存 user/assistant message、最终 metadata 和原始 usage。两者都显式保留 known/unknown 状态，归一化结果由独立 `sample_usage` 保存。恢复时对应 Provider 先事务式解码全部 commits，任一错误都不返回部分历史。共享 Session、Runtime 和 TUI 不解析具体 Provider wire。
 
 ## 6. 缓存架构
 
@@ -341,30 +346,18 @@ OpenAI payload v1 保存用户 Responses item、有序 output items 和原始 us
 
 ### 6.2 上下文分段
 
-当前已实现不可变、强类型且可验证的 `CachePlan`、stable-prefix fingerprint 和 ContextPlanner。计划依次输出 `provider_profile`、`tool_catalog`、可选 `project_instructions`、可选 `skill_catalog`、`committed_history`、`current_input`；九项真实工具的稳定 facade/schema 进入 catalog segment、估算与 fingerprint，实际 command、workdir、approval 和宿主环境不得污染稳定前缀。项目快照非空时以 `replace + project-stable` 进入稳定前缀，history 为 turn-stable，当前输入为 volatile。下列其余分段仍是 P4/P6 随真实消费者逐项扩展的目标，不能从目录或设计推断为已实现：
+当前已实现不可变、强类型且可验证的 `CachePlan`、stable-prefix fingerprint 和 ContextPlanner。计划依次输出 `provider_profile`、`tool_catalog`、可选 `project_instructions`、可选 `skill_catalog`、`committed_history`、`current_input`；九项真实工具的稳定 facade/schema 进入 catalog segment、估算与 fingerprint，实际 command、workdir、approval 和宿主环境不得污染稳定前缀。项目快照非空时以 `replace + project-stable` 进入稳定前缀，history 为 turn-stable，当前输入为 volatile。当前分段如下：
 
 ```text
-CachePlan
-  Segment 0: provider/model base instructions       stable
-  Segment 1: built-in tool schemas                  stable
-  Segment 2: project instructions                   project-stable
-  Segment 3: skill/plugin metadata catalog          session-stable
-  Segment 4: native conversation history            append-only
-  Segment 5: active skill bodies / restored context turn-stable
-  Segment 6: cwd/git/env/world-state diff            volatile
-  Segment 7: current user input                      volatile
+provider_profile       replace / stable
+tool_catalog           replace / stable
+[project_instructions] replace / project-stable
+[skill_catalog]        replace / project-stable
+committed_history      append / turn-stable
+current_input          replace / volatile
 ```
 
-每个 segment 至少包含：
-
-```text
-segment_id
-stability_class
-canonical_bytes_hash
-source_revision
-invalidation_reason
-provider_cache_policy
-```
+来源和 segment 使用强类型身份、lifecycle/stability、内容 revision、canonical bytes 与 fingerprint；`CacheSources` 单独提供内容/稳定 fingerprint 和失效解释。Provider 的最终 marker/key/增量收据独立于共享分段，不把服务商缓存命中视为本地可保证结果。Skill 正文进入显式输入或工具结果的历史尾部；Hook 配置和 trust 不进入 prompt。Plugin/MCP metadata、动态 cwd/git/env/world-state diff 及自动 rehydrate 尚未形成可执行来源。
 
 ### 6.3 稳定序列化
 
@@ -393,23 +386,23 @@ token 估算当前使用版本化本地 `byte_heuristic_v1`，明确标记 `esti
 
 ### 6.6 缓存失效矩阵
 
-| 变更 | 应失效范围 |
-|---|---|
-| base instructions 或模型能力变化 | 从 Segment 0 开始 |
-| 内置工具 schema/描述变化 | 从 Segment 1 开始 |
-| 项目指令文件变化 | 从 Segment 2 开始 |
-| plugin/skill catalog 变化 | 从 Segment 3 开始 |
-| 新增对话 item | 只追加 Segment 4 |
-| 激活 skill 正文 | Segment 5 及之后 |
-| cwd/git/status 变化 | Segment 6 及之后 |
-| UI 主题、窗口尺寸、spinner | 不得影响请求缓存 |
-| 日志级别变化 | 不得影响请求缓存 |
+| 变更 | 当前失效范围 |
+| --- | --- |
+| Provider/model/profile 内容变化 | 从 `provider_profile` 开始 |
+| 内置工具 schema/描述变化 | 从 `tool_catalog` 开始 |
+| 项目指令内容/相对来源变化 | 从可选 `project_instructions` 开始 |
+| Skill metadata catalog 变化 | 从可选 `skill_catalog` 开始 |
+| 新增已提交对话 item、Skill 正文或工具输出 | `committed_history` 尾部变化 |
+| 当前采样标记变化 | `current_input`；不改变稳定前缀 |
+| cwd/git/status、Hook trust、UI 尺寸或日志级别 | 当前不直接进入这些来源；不得污染稳定前缀 |
+
+Plugin/MCP 动态目录和 world-state 来源尚未实现，其失效规则应随实际来源另行设计，不能套用不存在的 segment 编号。
 
 ### 6.7 缓存可观测性
 
-当前 `/cache` 与 stream-json `cache.query` 提供 process 级已提交快照：provider/wire/model、显式策略与独立策略 fingerprint、五种有序来源的 revision/content fingerprint、stable-prefix fingerprint、首个来源变化、原生 digest/关系、完整逻辑请求 fingerprint、最近实际 transport/full/incremental/reset/fallback，以及最近成功 sample/turn/摘要的 normalized usage。正文、真实缓存 key、URL、路径、凭据和原生 reasoning 不进入诊断。没有 cache plan 版本或原始 usage 日志。
+当前 `/cache` 与 stream-json `cache.query` 提供 process 级已提交快照：provider/wire/model、显式策略与独立策略 fingerprint、六种有序来源的 revision/content fingerprint、stable-prefix fingerprint、首个来源变化、原生 digest/关系、完整逻辑请求 fingerprint、最近实际 transport/full/incremental/reset/fallback，以及最近成功 sample/turn/摘要的 normalized usage。正文、真实缓存 key、URL、路径、凭据和原生 reasoning 不进入诊断。没有 cache plan 版本或原始 usage 日志。
 
-Runtime 在实际采样前冻结同一 ContextPlan 的有界元数据，收据在 append 前验证，Sync/finalize 后发布给单 owner。候选预检与查询不推进观测；摘要独立计量，失败后保留已提交 sample，不伪造成功 turn。恢复显示 restored_baseline，不重建进程外历史统计。状态只保存固定五来源与最近三项观测，编码上限 64 KiB。
+Runtime 在实际采样前冻结同一 ContextPlan 的有界元数据，收据在 append 前验证，Sync/finalize 后发布给单 owner。候选预检与查询不推进观测；摘要独立计量，失败后保留已提交 sample，不伪造成功 turn。恢复显示 restored_baseline，不重建进程外历史统计。状态只保存固定六来源与最近三项观测，编码上限 64 KiB。
 
 Anthropic input_tokens 是 uncached 输入；OpenAI total 包含 cached 子集，只有二者 known 才相减。使用统一 input_uncached/cache_read/cache_write/output/reasoning_output 的 known、unknown、not_applicable。所有适用输入分量已知、和无溢出且大于零才计算 cache_read_ratio；N/A 不贡献数值，unknown 不作零。cache_read>0 才表示观察到读取；相同指纹不证明命中。无已解释客户端变化的读取降低只显示 unexplained_cache_read_drop，不确定推断 TTL 或驱逐。费用、累计遥测和实际远端收益未验证。
 
@@ -427,16 +420,14 @@ Anthropic input_tokens 是 uncached 输入；OpenAI total 包含 cached 子集�
 
 ### 7.1 RuntimeEvent 当前范围
 
-```text
-TurnStarted
-AssistantTextDelta { text }
-TurnCompleted { usage }
-TurnFailed
-ToolApprovalRequested / ToolApprovalResolved
-ToolReady / ToolStarted / ToolProgress / ToolTerminal / TranscriptCommitted
-```
+当前已消费的进程内事件包括：
 
-当前进程内 RuntimeEvent 声明上述具有封闭 payload、producer、consumer 和 validator 的事件，并携带匹配的 `session_id/thread_id/turn_id`。`turn_completed` 必须携带所有 sample 聚合的五项三态 turn usage。批准 payload 是 Patch/Write/Exec 封闭联合；命令进度是有界瞬时快照，不写 Session，只有 terminal payload 携带 result durable 后的冻结 preview、保存状态和授权 descriptor。TUI 通过统一 transcript/detail 查询显示完整命令和冻结结果，取消中仍等待 owner 清理。独立 usage 更新、reasoning、patch delta 和 compaction kind 尚未实现，不能提前保留空枚举。外部 headless JSONL 词汇不因这些内部事件扩张。
+- `turn_started`、`assistant_text_delta`、`turn_completed`、`turn_failed`、`user_input_committed`。
+- `tool_approval_requested/resolved`、`tool_ready/started/progress/terminal`、`transcript_committed`。
+- `user_question_requested/resolved`、`hook_trust_requested/resolved`、`hook_activity`。
+- `context_snapshot`、`cache_snapshot`、`compaction_started/completed/failed`。
+
+这些事件有 typed 构造、validator 和实际消费者。工具 running、结果/回答收口及 Hook activity 分别受对应 durable 边界约束，事件本身不替代 Session/native facts。普通 usage、摘要 usage 与来源证据在成功 Sync/finalize 后才可投影；独立实时 usage、reasoning 和 patch delta 事件尚未实现。外部 headless DTO 的词汇独立于本枚举，不自动公开所有内部事件。
 
 ### 7.2 Headless JSONL v1
 
@@ -444,11 +435,11 @@ ToolReady / ToolStarted / ToolProgress / ToolTerminal / TranscriptCommitted
 
 `--print` 在内存中聚合文本，仅在 Runtime 已 durable 发布 `turn_completed` 且事件流正常闭合后输出最终值。`--json` 可实时输出 delta，但同样不从 channel close 或已见文本推断成功。取消、短写和断管会触发幂等 Interrupt 并 drain Runtime；已 durable 完成后的输出失败只改变进程交付状态，不回滚 Session。
 
-一次性 headless prompt 在应用装配前解析：无位置参数或显式 `-` 时读取 stdin；显式 prompt 与非终端 stdin 同时存在时使用稳定 `<stdin>` 边界追加；组合内容必须是合法 UTF-8、非空且不超过 4 MiB。流式模式只由 `--json --input-format stream-json` 显式启用，要求可关闭的非终端 stdin/stdout transport，以不超过 32 MiB 的单行 NDJSON 接收严格 `input.submit`、自动 `input.append`、按 InputID 原子 `input.retract`、定向 `turn.stop`/`turn.interrupt` 、`context.query/compact/cancel` 和 `session.shutdown`。`--continue` 会在当前 cwd、Provider family/wire 和 model 完全匹配时恢复最近 root Session，并与 `--resume` 互斥。当前仍不支持独立 usage 更新或 reasoning/tool 事件。
+一次性 headless prompt 在应用装配前解析：无位置参数或显式 `-` 时读取 stdin；显式 prompt 与非终端 stdin 同时存在时使用稳定 `<stdin>` 边界追加；组合内容必须是合法 UTF-8、非空且不超过 4 MiB。流式模式只由 `--json --input-format stream-json` 显式启用，要求可关闭的非终端 stdin/stdout transport，以不超过 32 MiB 的单行 NDJSON 接收严格 `input.submit`、自动 `input.append`、按 InputID 原子 `input.retract`、定向 `turn.stop`/`turn.interrupt` 、`cache.query`、`context.query/compact/cancel` 和 `session.shutdown`。`--continue` 会在当前 cwd、Provider family/wire 和 model 完全匹配时恢复最近 root Session，并与 `--resume` 互斥。当前仍不支持独立 usage 更新或 reasoning/tool 事件。
 
 ### 7.3 AgentLoop 输入控制
 
-`runtime.AgentLoop` 位于单 turn `Runtime.RunTurn` 之上，是 Session 实例级的唯一 admission owner。空闲 submit 得到 `starting`，活动期间的 submit 进入同时受条数和 UTF-8 字节约束的 FIFO，并得到 `queued`；每条输入仍独立形成一个 durable turn，绝不拼接、并行或注入当前 Provider stream。command result 只确认进程内 obligation，只有关联的 `turn.started` 表示 `turn_started(v1)` 已成功 `Sync`。外部 request identity、queue 状态与 control metadata 都不写 Session，也不进入 Provider request/cache fingerprint。
+`runtime.AgentLoop` 位于单 turn `Runtime.RunTurn` 之上，是 Session 实例级的唯一 admission owner。空闲 submit 得到 `starting`，活动期间的 submit 进入同时受条数和 UTF-8 字节约束的 FIFO，并得到 `queued`；strict-next 输入独立形成 durable turn，自动输入可在完整工具 outputs 后进入同轮后续 sample；两者均不注入正在运行的 Provider stream。command result 只确认进程内 obligation，只有关联的 `turn.started` 表示 `turn_started` 已成功 `Sync`。外部 request identity、queue 状态与 control metadata 都不写 Session，也不进入 Provider request/cache fingerprint。
 
 queue 是有界、非 durable 的进程内状态。stdin EOF 只停止新 admission，并按 FIFO 排空已经接受的输入；显式 shutdown 则停止 admission、取消活动 turn、为所有尚未开始的输入发布 `session_shutdown` discard，并等待 Runtime durable terminal 与 worker cleanup。interrupt 必须携带当前活动 `turn_id`，过期目标不得误取消下一 turn。普通 Provider failure 后 loop 可以继续；journal poisoned 或 durable 结果不确定时停止所有后续 Provider 副作用。
 
@@ -475,12 +466,12 @@ Runtime 为每次 Provider stream 创建派生 context，逐项验证事件并�
 - function/custom tool input delta
 - message phase、usage、end_turn 和 server response id
 
-只在完整 tool call 已得到可靠参数后执行副作用。可以在整个模型流尚未结束时启动已经完成的工具 block，但不能根据不完整参数提前执行。
+当前等待完整 sample 的 native commit、usage 与 ready calls 成功 Sync 后执行工具；流内已完整的单个 block 也不会提前产生副作用。
 
 ### 7.5 背压与渲染节流
 
 - 原始网络 delta 可以高频进入 reducer。
-- TUI projection 按 16-33ms 合并纯文本刷新，降低闪烁和 CPU 占用。
+- 当前 TUI 按有序事件增量更新 Markdown projection，并复用解析/布局缓存；没有独立的 16–33 ms 刷新调度承诺。
 - 工具边界、权限请求、错误和 item 完成事件不得被合并丢失。
 - 高频 delta 不进入 session writer；成功终态和副作用边界必须等待 durable batch，不能为降低延迟而越过 `Sync` 确认。
 
@@ -488,7 +479,7 @@ Runtime 为每次 Provider stream 创建派生 context，逐项验证事件并�
 
 完整设计、参考工程取舍、恢复语义和分 change 推进顺序见 [Tool 系统架构设计](tool-system.md)。本章只保留总体架构必须遵守的边界。
 
-本章同时描述已实现的 P3 基线与长期目标。当前 `internal/tool` 与 `internal/tool/builtin` 已由 Runtime/app 真实消费，提供 Read、Glob、Grep、需批准的单文件 Patch/Write 和 Darwin 前台 Exec；未在能力分期中明确标记已实现的其他内容仍是目标，不得由接口或文档描述推断为可用。
+本章同时描述已实现的 P3 基线与长期目标。当前 `internal/tool` 与 `internal/tool/builtin` 已由 Runtime/app 真实消费，提供 Read、Glob、Grep、需批准的单文件 Patch/Write、Darwin 前台 Exec、ReadArtifact、Skill 与 Question；未在能力分期中明确标记已实现的其他内容仍是目标，不得由接口或文档描述推断为可用。
 
 ### 8.1 分层
 
@@ -517,14 +508,9 @@ fs.patch
   Executor:  shared PatchExecutor
 ```
 
-流式参数由 `ToolInputStreamDecoder` 处理：
+两家 Provider 各自归并完整参数，并通过各自 Tool WireCodec 解析 structured Edit 或 freeform apply_patch，生成共享 typed Patch 输入。当前没有通用 `ToolInputStreamDecoder`、`PatchDraftUpdated` 或渐进 diff 事件；完整候选 diff 由工具准备边界生成，供普通批准界面读取。
 
-- `AnthropicJsonEditDecoder`
-- `OpenAiFreeformPatchDecoder`
-
-两者都可以产生共享 `PatchDraftUpdated`，但不得共享错误的解析假设。
-
-只有参数完整、strict decode 和语义验证全部通过后才能形成 `ToolCallReady`。参数 delta 和 diff draft 只用于展示，不得产生副作用。
+只有参数完整、strict decode 和语义验证全部通过后才能形成 `ToolCallReady`；副作用还必须等待整个 sample 的 durable batch、Hook gate、普通批准与执行开始事实。
 
 ### 8.3 Durable 边界、调度与幂等
 
@@ -536,7 +522,7 @@ fs.patch
 - ledger 保证 EasyCode 自动执行至多一次，不宣称任意外部副作用 exactly-once；已 durable 开始但结果未知的调用恢复为 `outcome_uncertain`，默认不得自动重试。
 - 每个 call 最终都必须得到成功、拒绝、取消、失败或恢复补偿 output，不能留下悬空 Provider 配对。
 - 取消必须以 durable `execution_started` append是否被接受为线性化点：接受前直接记录cancelled且零工具I/O，接受后恰好调用一次executor并传入取消context。
-- resume只做本地配对补偿：ready关闭为 `session_interrupted_before_execution`，started-without-result关闭为 `outcome_uncertain`，已有result复用持久化preview；恢复阶段禁止executor和Provider网络调用，并以唯一 `turn_failed`结束旧turn。
+- resume 只做本地配对补偿：普通 ready 调用关闭为 `session_interrupted_before_execution`，尚未批准的 mutation 为 `session_interrupted_before_approval`，started-without-result 为 `outcome_uncertain`；Question 与 Hook 按专用中断事实收口。已有 result 复用持久化 preview；恢复阶段禁止 executor 和 Provider 网络调用，以唯一 `turn_failed` 结束旧 turn。
 
 ### 8.4 权限与结果
 
@@ -549,11 +535,11 @@ fs.patch
 
 P3 当前已实现 Read、Glob、Grep、Anthropic structured Edit/OpenAI custom freeform apply_patch、Anthropic Bash/OpenAI exec_command、双 Provider structured Write、durable approval/ledger、最多 8 路只读并发、Patch/Write/Exec 独占屏障、有序结果提交和本地恢复补偿。Patch 限于一个已有 UTF-8 工作区常规文件，在 Unix 使用 descriptor-relative 重验与同目录原子替换；其他平台失败关闭。Write 的 structured facade 支持原子创建/整文件覆盖：覆盖要求先前已回传的完整 Read，新目录链通过私有树和 no-replace 发布；审批展示区分 create/overwrite，独立 Write grant 不在 resume 恢复。详见 [Tool 已实现边界](tool-system.md#101-write-已实现边界)。Exec 限于 Darwin 前台 non-login `/bin/sh`：每次单独批准、最小环境、workspace 写入、禁止网络、确定性头尾输出、原进程组清理与唯一最终 Wait；非 Darwin 返回 `unsupported_platform`，不降级。`setsid` 等脱离组后代不属于保证清理范围，但仍受继承的 sandbox 限制；输出收口不确定时 poison Runtime。详细预算与测试边界见 [Tool 系统架构](tool-system.md#93-进程工具)。write_stdin、PTY/后台进程控制、全工具 artifact、跨能力通用 sandbox 和跨平台等价执行仍按独立 change 增加。
 
-Skill 与 hooks/plugins 属于 P6；MCP 和 Agent/Subagent 属于 P7；完整跨平台 sandbox 矩阵属于 P8。未到对应阶段前不得提前暴露空 schema、event kind、facade 或 capability flag。
+本地 Skill 和 PreToolUse Hook 已交付；其余 Hooks、Plugins/MCP 属于 P6 后续范围，Agent/Subagent 属于 P7；完整跨平台 sandbox 矩阵属于 P8。未到对应阶段前不得提前暴露空 schema、event kind、facade 或 capability flag。
 
 ## 9. Context 与 Compaction
 
-本章同时描述当前 P2 基线和 P4 目标。当前已实现包含 Tool Catalog 的确定性 ContextPlanner、可选项目指令、本地 token estimate、Provider-private HistoryFootprint、可选显式 token budget 和请求前超限守卫；手动 compaction、有效窗口查询与 durable checkpoint 已实现；阈值自动压缩已实现；动态扩展/skill 来源、真实 Provider cache policy 及跨 Provider fork 尚未实现。
+本章同时描述当前 P2 基线和 P4 目标。当前已实现包含 Tool Catalog 的确定性 ContextPlanner、可选项目指令、本地 token estimate、Provider-private HistoryFootprint、可选显式 token budget 和请求前超限守卫；手动 compaction、有效窗口查询与 durable checkpoint 已实现；阈值自动压缩已实现；本地 Skill catalog 与双 Provider cache policy 已实现；动态 Plugin/MCP 来源和跨 Provider fork 尚未实现。
 
 ### 9.1 上下文来源
 
@@ -562,19 +548,11 @@ Skill 与 hooks/plugins 属于 P6；MCP 和 Agent/Subagent 属于 P7；完整跨
 - `provider_profile`：family、model、schema revision，`replace + stable`。
 - `tool_catalog`：九项工具的确定性 schema，`replace + stable`。
 - `project_instructions`：启动时发现的有界结构化快照，存在文档时为 `replace + project-stable`，空快照省略。
+- `skill_catalog`：冻结的本地 Skill metadata，非空时为 `replace + project-stable`；正文不进入此来源。
 - `committed_history`：`ActiveContextView` 中的独立摘要与增量历史，结合不含 opaque 正文的 Provider footprint，`append + turn-stable`。
 - `current_input`：采样标记，`replace + volatile`；正文已进入有效原生历史，排队和 staging 输入不重复计量。
 
-后续阶段将在存在真实消费者、验证和测试时逐项增加以下来源：
-
-- base/developer instructions
-- provider/model/collaboration mode
-- plugin/skill catalog
-- 已激活 skill 正文
-- 原生 conversation history
-- retained context
-- cwd、workspace roots、git 和权限 world state
-- 当前用户输入与排队消息
+后续候选来源包括 Plugin/MCP metadata、动态 cwd/git/env/world-state 与自动文件 rehydrate，必须在存在真实消费者、验证和测试时另行接入。Skill 正文已通过显式输入或工具结果进入原生历史，不是独立来源；排队/草稿不计入已提交上下文。
 
 ContextPlanner 必须明确每一项的来源、优先级、稳定性、token 估算和生命周期；来源生命周期与 cache stability 是两个正交强类型概念，不能复用一个字符串表达。
 
@@ -583,8 +561,8 @@ ContextPlanner 必须明确每一项的来源、优先级、稳定性、token �
 - tool call 必须有对应 output。
 - orphan output 在发送前被拒绝或修复，并留下诊断。
 - 不能丢失 thinking signature、encrypted reasoning 或 provider item 顺序。
-- 大工具结果在进入历史前截断，并将完整内容存入 artifact。
-- 图像、音频和其他 modality 按模型能力过滤。
+- 大工具结果按能力预算冻结模型预览；当前仅命令/搜索原文按策略保存 artifact，不能承诺所有工具保存完整内容。
+- 当前用户与工具闭环为文本；图像、音频等输入须随真实 capability 另行实现，不能由 opaque 原生保留推定可用。
 
 ### 9.3 手动 Compaction
 
@@ -596,7 +574,7 @@ AgentLoop 只允许空闲且队列为空时接收压缩。预检通过才生成 
 
 恢复按 seq 验证全部原生记录、来源 digest、模型、前驱与 checkpoint 包装，再修复物理尾部。started-only 只追加本地 interrupted 终态，不联网、重执行工具或读取旧 artifact 内容。摘要不恢复审批 grant、文件观察或 artifact 授权。新进程重新发现当前项目指令。详见 [ADR-0008](adr/0008-durable-context-checkpoints.md)。
 
-TUI 提供 `/context`、`/compact [instructions]`、定向取消及 Ctrl+O 完整历史；headless stream v1 提供 `context.query/compact/cancel`。完成后等待显式输入，已有队列则清理完成后继续；失败返还 auto，保留 strict-next。自动阈值压缩、Hook、Skills/MCP、跨 Provider fork 与自动文件 rehydrate 仍是后续能力。
+TUI 提供 `/context`、`/compact [instructions]`、定向取消及 Ctrl+O 完整历史；headless stream v1 提供 `context.query/compact/cancel`。完成后等待显式输入，已有队列则清理完成后继续；失败返还 auto，保留 strict-next。自动阈值压缩、本地 Skills 和 PreToolUse Hooks 已有独立切片；其余 Hook、MCP、跨 Provider fork 与自动文件 rehydrate 仍是后续能力。
 
 ## 10. Session 与存储
 
@@ -609,18 +587,20 @@ TUI 提供 `/context`、`/compact [instructions]`、定向取消及 Ctrl+O 完�
 
 `session_id` 用于定位逻辑会话，`thread_id` 用于定位具体执行链；EventEnvelope 同时携带二者，不能只用其中一个替代另一个。线程树决策见 [ADR-0003](adr/0003-session-thread-tree.md)。
 
-### 10.1 目录
+### 10.1 当前默认目录
 
 ```text
+~/.config/easycode/config.json       主配置（或 --config PATH）
+~/.config/easycode/hooks.json        用户 Hook 来源
+~/.config/easycode/skills/           一种用户 Skill 根
 ~/.easycode/
-  config.toml
   sessions/YYYY/MM/DD/<thread-id>.jsonl
-  state.sqlite
-  logs/easycode.log.*
-  sessions/artifacts/<thread-id>/<invocation-id>/<artifact-id>
-  skills/
-  plugins/
+  sessions/artifacts/<thread-id>/... 私有已保存输出
+  state.sqlite                      可重建索引与受控 sidecar/lock
+<workspace>/.easycode/hooks.json     项目 Hook 来源
 ```
+
+其他 Skill 来源和项目指令按各自发现规则加载，见 README 与能力清单。当前没有 TOML 主配置、默认诊断日志文件、plugin 安装器或 watcher；设计中的日志/插件目录不是已创建资源。
 
 ### 10.2 JSONL 事实源
 
@@ -640,17 +620,19 @@ EventEnvelope
   checksum
 ```
 
-当前必需记录包括：
+当前理解的记录词汇如下；每条路径只要求其适用的 facts：
 
 - `session_meta` 与 `thread_meta`；
-- `turn_started`；
+- `turn_started`、`turn_inputs_committed`；
 - `provider_native_commit`、`sample_usage` 与 `turn_completed`；
 - `tool_call_ready`、`tool_approval_decided`、`tool_execution_started` 与 `tool_call_result`；
-- `turn_failed`。
+- `turn_failed`；
+- `compaction_started`、`compaction_completed`、`compaction_failed`；
+- `tool_hook_gate_planned`、`hook_execution_started`、`hook_execution_finished`、`tool_hook_gate_decided`。
 
 Session envelope 只使用唯一当前字段结构，不包含 schema_version、payload_version、canary 或同义版本标记。decoder 只按 event_kind 选择唯一 strict decoder，字段/类型、checksum 和 replay 状态机共同校验恢复事实；未知 kind、未知字段与损坏在 repair、Provider 恢复和 append 前失败关闭。
 
-Provider native commit 只记录 Provider 已验证的原生增量和 raw usage；紧邻的 `sample_usage` 记录共享五项三态指标。无工具的成功 sample 仍以 native commit、usage 与 terminal 原子提交；带调用的 sample 则把有序 ready facts 放入同一 durable batch，随后按需要 durable 批准决定，再提交 started、result 和 Provider 原生 tool outputs。当前 approval fact 保存 decision source、candidate fingerprint 与安全展示 metadata；Exec 不持久化 PID、宿主环境、输出 chunk 或底层 cause。缺失 usage、错序、遗漏配对或重复调用身份一律 fail closed。hook、subagent、cache 与 compaction checkpoint 仍需按各自恢复语义定义记录；不能把 RuntimeEvent 或 UI transcript 当作 native history。
+Provider native commit 只记录 Provider 已验证的原生增量和 raw usage；紧邻的 `sample_usage` 记录共享五项三态指标。无工具的成功 sample 仍以 native commit、usage 与 terminal 原子提交；带调用的 sample 则把有序 ready facts 放入同一 durable batch，随后按需要 durable 批准决定，再提交 started、result 和 Provider 原生 tool outputs。当前 approval fact 保存 decision source、candidate fingerprint 与安全展示 metadata；Exec 不持久化 PID、宿主环境、输出 chunk 或底层 cause。缺失 usage、错序、遗漏配对或重复调用身份一律 fail closed。其余 Hook 与 Subagent 仍需按各自恢复语义定义记录；cache/compaction checkpoint 与当前 PreToolUse facts 使用各自当前强类型契约；不能把 RuntimeEvent 或 UI transcript 当作 native history。
 
 Session、Provider native/checkpoint 和压缩来源不承担格式版本管理。Catalog 不设置或校验 user_version，按实际结构与完整性重建派生索引。当前没有存量用户或业务数据，直接修改唯一当前格式与 current fixture。未经用户明确指示，禁止引入多版本兼容、历史 reader、迁移器或以 canary/revision 为同义替代的版本门禁；即使未来发布也不能推定获得授权。headless JSONL 是独立外部协议。
 
@@ -684,7 +666,7 @@ Open Catalog lock
 
 `sessions list` 新增独立发现入口：`cmd/easycode/sessions.go -> app.ListSessions -> catalog.Reconcile/List`，不进入聊天配置、项目指令、Provider 或 Runtime 装配。`ListQuery` 明确区分规范化创建目录和全部目录，使用原 schema 按 committed `updated_at`/thread ID 双降序、先筛选后 limit+1，返回至多 200 条及 HasMore。查询不依赖 Provider selector，`LatestCompatible` 仍保留原四字段精确匹配。
 
-列表沿用上述只读 journal 协调，随后先关闭 Catalog/Repository，再格式化和输出。busy/invalid 是全存储扫描报告，stderr 明确提示元数据可能未刷新或会话缺席；列表不补偿未完成 turn，也不把可见条目当作恢复事实。CLI 采用紧凑文本、完整 ID、受限并转义的字段，不读取对话正文作标题。当前目录不等于项目/worktree，limit 不是扫描预算；这些扩展与交互 picker 仍需后续 change。
+列表沿用上述只读 journal 协调，随后先关闭 Catalog/Repository，再格式化和输出。busy/invalid 是全存储扫描报告，stderr 明确提示元数据可能未刷新或会话缺席；列表不补偿未完成 turn，也不把可见条目当作恢复事实。CLI 采用紧凑文本、完整 ID、受限并转义的字段，不读取对话正文作标题。当前目录不等于项目/worktree，limit 不是扫描预算；project/worktree 聚合、title/tag/全文检索仍是后续能力；交互 picker 已交付并复用相同只读协调。
 
 ### 10.4 写入与权限
 
@@ -694,7 +676,7 @@ Open Catalog lock
 - Loader 严格校验 canonical UUIDv7、UTC 时间、checksum、ID 归属、序号和 batch 完整性；只读返回完整 committed 前缀及待修复凭据。显式 Repair 绑定 lease、原始大小与 digest，只允许在完整语义/Provider 校验后截去 EOF 尾部半行或未完成尾批次；截断接收后必须等待 Sync 确定结果，失败 poison lease，不允许跳过中段损坏。
 - ReplayPlanner 只重放完整 batch。普通文本turn尾部直接追加 `turn_failed(code=session_interrupted)`；工具turn先按ledger在本地补齐cancelled/outcome-uncertain result与缺失Provider output，再追加唯一失败终态。两类恢复都不自动发起Provider请求。
 - 当前 `--resume <thread-id>` 通过日期编码的 UUIDv7 定位文件，恢复 native history 和只读语义视图；不恢复旧 API key、base URL、cwd 或其他动态 world state。
-- 仓库已建立不可变的当前文本与 Tool Loop fixture，用于验证 Loader/ReplayPlanner 的读取、续写 prefix 不变、账本顺序和双 Provider 恢复等价性；项目没有线上历史格式，因此开发期旧 fixture 与旧 reader 已删除。未来真实 schema/payload revision 的版本专属转换仍未实现，也不得在 resume 时原地改写既有 records。
+- 仓库已建立不可变的当前文本与 Tool Loop fixture，用于验证 Loader/ReplayPlanner 的读取、续写 prefix 不变、账本顺序和双 Provider 恢复等价性；项目没有线上历史格式，因此开发期旧 fixture 与旧 reader 已删除。未经用户明确要求和新 OpenSpec，不引入历史 reader、迁移器或兼容窗口；不得在 resume 原地改写既有 records。
 - exclusive lease 是协作进程间的 advisory lock，不能阻止旧版 EasyCode 或非协作进程绕过锁直接写文件；混合版本运行前必须确保目标 thread 没有其他 owner，绕过锁产生的损坏继续由 checksum、seq 和完整回放校验发现。
 - SQLite Catalog、`--continue`、离线 `sessions list` 与启动 `resume` picker 已实现；worktree/project catalog、title/tag、全文搜索、实时索引和全工具 artifact 尚未实现。内部格式继续保持唯一当前契约，不预设未来兼容授权。
 - 手动与阈值自动 compaction 追加独立 checkpoint，保留原始 JSONL；跨 Provider fork 与 child-thread 元数据仍为后续目标。摘要是可辨识的历史参考，不构成新的用户输入或授权。
@@ -733,29 +715,25 @@ Session 的 compaction_started/completed/failed 具有强类型 scope（manual�
 
 ## 12. Hooks、Skills、Plugins 与 MCP
 
-本章描述 P6 目标架构。当前相关 package 仅保留经批准的 TODO 边界，未被 Runtime/app 导入，不执行 Hook、不发现或加载 Skill/Plugin，也不启动 MCP server。
+本章区分当前交付与 P6 后续目标。本地 Skills 与同步 PreToolUse 命令 Hook 已接入 Runtime/app；Plugin、MCP 仍保留经批准的 TODO 边界，不接入运行。
 
-### 12.1 Hooks
+### 12.1 当前 PreToolUse 命令 Hook
 
-首批兼容事件：
+`extension/hook.Loader.Load` 在旧 turn reconciliation 之后显式捕获 user/project 两来源；`extension/localfile` 与 Skills 共享逐段 no-follow/同 FD 校验，保留各自来源权限策略。配置是严格有界 JSON，matcher 只映射 Patch、Write、Exec，声明与 source revision 不含绝对路径、环境值或授权状态。
 
-- PreToolUse / PostToolUse / PostToolUseFailure
-- PermissionRequest
-- UserPromptSubmit
-- SessionStart / SessionEnd / Stop
-- SubagentStart / SubagentStop
-- PreCompact / PostCompact
+Runtime 在现有 exclusive 屏障内、候选准备之前冻结计划并 Sync。AgentLoop 是信任响应和空闲 reset 的唯一授权 owner；授权绑定 Runtime、Session/workspace、来源 revision、声明指纹，只保存在实例内存。用户与项目声明均默认拒绝，Hook 信任与普通工具 grant 分离。headless 匹配项直接得到 `hook_trust_required`；无匹配不新增 Hook facts。
 
-支持 command hook、matcher、timeout、同步/异步、block/allow、输入改写、additional context 和 result rewrite。项目/plugin hook 启用前必须进行 trust review。
+Exec 与 Hook 共用 `executor/process.Owner`，由窄 launcher/handle/clock 注入平台策略，保持独立业务结果、输出与 artifact 策略。Darwin Hook adapter 复用目录 FD、内部 helper、kqueue 注册后放行的启动屏障，采用工作区只读、禁网及最小环境；不存在未受限 fallback。Owner 同时持有 stdin writer、双流 reader、退出观察、原组清理和直接 Wait，Done 只在 owned 清理结束后关闭。此保证不等价于任意脱离子孙进程容器。
 
-### 12.2 Skills
+Session 当前词汇增加 `tool_hook_gate_planned`、`hook_execution_started`、`hook_execution_finished`、`tool_hook_gate_decided`。计划与 started 各自单批；最后成功 finished/gate 同批，终止 finished/gate/result 同批，信任拒绝 gate/result 同批。计划没有 command，结果没有 stdout/stderr/reason、PID 或环境。恢复先消费冻结计划：未开始/成功前缀补取消；started 无 finished 补 Hook 不确定和目标工具 cancelled；不把 Hook started 当作目标工具 started。恢复从 frozen results 补齐原生 outputs，最后关闭旧 turn，不加载配置、询问信任或执行脚本；当前快照随后只服务未来调用。
 
-- 支持 system/user/project/plugin 多层发现。
-- prompt 只注入稳定排序的 metadata catalog。
-- 显式调用或模型决定使用后，再完整加载 `SKILL.md`。
-- 支持 `$skill`、Skill tool、path activation 和隐式资源访问检测。
-- 兼容 allowed-tools、model、hooks、context=fork、agent 等常用 frontmatter。
-- 资源读取绑定 source authority，不能从一个 provider 枚举、再绕过它从其他通道读取。
+TUI `/hooks` 从内存快照浏览与滚动审查；`resolve_hook_trust`、`reset_hook_trust` 使用强类型身份。瞬态 `hook_trust_requested`、`hook_trust_resolved`、`hook_activity` 分别投影审查、确认和已 durable 的检查统计，不能替代 ledger。`HookHistoryObserver` 与 Session `HookHistoryEntry` 在成功 Sync 后提供历史安全详情，和模型 frozen preview 分开；没有保存或读取脚本输出 artifact 的入口。
+
+单项 timeout 默认 5 秒/最大 30 秒，每调用总执行预算 30 秒，信任等待可取消但不计执行预算。stdin 最大 512 KiB，双输出各 16 KiB，模型安全摘要最多 1 KiB。只接受 exit 0 空输出/空对象和严格 structured deny、exit 2；其他行为失败关闭。其余 Hook 事件、async、改写、additional context 和 plugin hooks 是后续目标，不能按当前已实现能力暴露。
+
+### 12.2 当前本地 Skills
+
+固定 user/project 根提供严格静态 frontmatter、稳定 metadata catalog、`/skills`、显式附件与按需 Skill/同来源资源读取。附件和工具结果保持双 Provider 原生恢复；技能不授权命令。system/plugin 来源、path activation、allowed-tools、model、context=fork 和隐式资源激活仍为后续目标。来源读取与 Hooks 共用 `extension/localfile`，正文加载、authority 和 catalog 生命周期仍由 Skill 自己持有。
 
 ### 12.3 Plugins
 
@@ -793,23 +771,17 @@ manifest adapter 可以统一扩展描述，但不能用于统一 provider 对�
 
 采用 Bubble Tea。TUI 的 Model/Update/View 只消费 RuntimeEvent 和 SessionService command，不直接调用 provider 或工具 executor；耗时 I/O 通过 `tea.Cmd` 转换为消息返回更新循环。历史回放消费 `HistoryProjector` 生成的语义视图，不直接解析 Provider-native item。
 
-### 13.2 主要视图
+### 13.2 当前视图与剩余目标
 
-- 用户、assistant、commentary/final message。
-- thinking/reasoning summary 折叠块。
-- tool use、tool result、并行工具组。
-- Bash 实时输出和后台任务。
-- Edit/apply_patch 渐进 diff。
-- permission、AskUser、MCP elicitation overlay。
-- compact boundary、usage 和 cache 状态。
-- subagent/task 状态。
-- resume/fork/session picker。
+当前提供用户/assistant 流式 Markdown、代码/表格/原文阅读、紧凑工具主线、前台 Shell 进度、完整 Patch/Write/Exec 批准、结构化问卷、Hook 浏览/信任、context/cache 面板、压缩边界、Ctrl+O 分页详情和启动 resume picker。视图保持无 I/O，按需查询由宿主处理并用身份/generation 拒绝迟到响应。
+
+完整 thinking/reasoning 折叠、后台任务、渐进 patch delta、MCP elicitation、Subagent/task 与 fork picker 尚未实现。测试中使用真实 PTY 验收界面，不表示模型命令工具支持 PTY。
 
 ### 13.3 REPL 行为
 
 当前多行输入由 `internal/tui/composer.go`、`composer_input.go`、`composer_layout.go` 和 `composer_history.go` 组合实现。composer 拥有 UTF-8 正文与字素边界光标；同一不可变布局供视觉行移动、视口和无色光标渲染复用，普通移动与重复 View 不重建布局。历史以写时复制保留至多 100 条/8 MiB，直接消费 SemanticHistoryView，不执行 Session I/O。编辑和输入校验共享 `replace`，没有通用 editor registry 或新的宿主接口。
 
-Model 将审批、详情、提交等待、composer 依次路由；普通活动 turn 期间可编辑并 Enter 自动追加。ChatSession 的交互模式只有一个长期 Outputs 消费者，Append 返回不是正式 transcript 事实。pending 快照冻结到 admission response：拒绝保留正文/光标/历史，接受后记入 recall 并清空草稿；只有 UserInputCommitted 才将对应 InputID 的正文移入 transcript。Up（空草稿首行）/普通 Esc 原子取回 queued 项，Ctrl+C 或无 queued 的 Esc 定向停止；Ctrl+R 逐条取回 returned，Ctrl+D 逐条丢弃，不自动执行。状态副本与 returned 共用 64 条/16 MiB 本地保留额度，uncertain 不允许取回重试。布局与用户 transcript 的控制字符只在显示副本转义，实际输入除 TUI 的 CRLF/CR → LF 外保真；headless 保留原换行。
+Model 将问卷、Hook 信任/浏览、普通审批、详情和提交状态按焦点优先路由，最后才由 composer 消费输入；普通活动 turn 期间可编辑并 Enter 自动追加。ChatSession 的交互模式只有一个长期 Outputs 消费者，Append 返回不是正式 transcript 事实。pending 快照冻结到 admission response：拒绝保留正文/光标/历史，接受后记入 recall 并清空草稿；只有 UserInputCommitted 才将对应 InputID 的正文移入 transcript。Up（空草稿首行）/普通 Esc 原子取回 queued 项，Ctrl+C 或无 queued 的 Esc 定向停止；Ctrl+R 逐条取回 returned，Ctrl+D 逐条丢弃，不自动执行。状态副本与 returned 共用 64 条/16 MiB 本地保留额度，uncertain 不允许取回重试。布局与用户 transcript 的控制字符只在显示副本转义，实际输入除 TUI 的 CRLF/CR → LF 外保真；headless 保留原换行。
 
 #### 同轮输入与持久化边界
 
@@ -822,13 +794,7 @@ Provider 当前 native kind 封闭为 `user_inputs`/`sample`/`tool_outputs`，sa
 input-only 崩溃尾部先在本地 durable 收口；工具安全点的 steering 尾部复用现有工具补偿路径，不重跑工具或自动联网。内存队列与 returned tray 不持久化，重启不猜测未保存输入。外部 headless JSONL 仍为 v1，自动 admission 增加 entry_id，input.status 不含正文；一次性 text/JSON 过滤新增内部输入事件。
 
 
-已实现多行、字素编辑、显式 decoded paste 与有界历史；原始终端缓冲/RuneError 的框架限制见 README。以下列表仍包含后续目标，补全与 slash command 尚未实现。
-
-
-- 多行输入、paste 保护、历史和补全。
-- Ctrl+C/Esc 中断当前 turn，不能误杀整个进程。
-- 支持 `/help`、`/clear`、`/compact`、`/resume`、`/fork`、`/model`、`/provider`、`/permissions`、`/skills`、`/plugins`、`/hooks`、`/agents`、`/cost`、`/doctor`。
-- 同一 runtime 同时支持 TUI、`--print` 和稳定 JSON event stream。
+已实现多行、字素编辑、显式 decoded paste 与有界历史；原始终端缓冲/RuneError 的框架限制见 README。当前本地命令为 `/cache`、`/context`、`/compact [instructions]`、`/skills`、`/hooks`，显式 Skill 使用 `/<name>` / `$name`。尚无输入补全及 `/help`、`/clear`、`/resume`、`/fork`、`/model`、`/provider`、`/permissions`、`/plugins`、`/mcp`、`/agents`、`/cost`、`/doctor`；`easycode resume` 是独立 CLI 入口。
 
 ## 14. 配置与密钥
 
@@ -847,7 +813,7 @@ input-only 崩溃尾部先在本地 durable 收口；工具安全点的 steering
 - 包含明文 API key 的 Unix 配置文件必须使用用户私有权限，例如 `0600`；读取后立即包装为 secret type，并在 String/GoString/slog/JSON diagnostic 中脱敏。
 - macOS/Linux 配置文件使用 no-follow opener，并从同一实际 handle 校验普通文件类型、大小和权限后读取；Windows 等未实现等价 secure opener 的平台当前明确失败关闭，不回退到 `Lstat` 后再 `Open`。
 - 配置文件路径、JSON 正文和 key 不进入 Provider 请求错误或 TUI snapshot；显式配置文件缺失时不得静默回退。
-- base URL、额外 header 和 query 参数需要校验，错误信息不能回显 secret。
+- base_url 拒绝 userinfo/query/fragment；当前不提供自定义 header/query 配置面。错误不回显地址中的敏感内容。
 - 不实现账号登录、设备码、OAuth 或订阅系统。
 
 ## 15. 日志与可观测性
@@ -891,7 +857,7 @@ session -> turn -> sampling attempt -> provider request
 - thinking signature/encrypted reasoning 的无损 round-trip。
 - tool call/result 顺序。
 - cache marker/key 和 prefix fingerprint。
-- session schema 与 migration。
+- 唯一当前 Session 结构、固定 bytes 与损坏恢复；仅在用户另行要求并批准兼容设计后增加迁移测试。
 
 ### 16.3 集成测试
 
@@ -902,7 +868,7 @@ session -> turn -> sampling attempt -> provider request
 - hooks、skills、plugins、MCP 生命周期。
 - subagent 并发、限制和取消传播。
 
-以上条目按对应 Roadmap 阶段启用。当前已落地双 Provider 文本 stream、Session/restore/headless、可重建 SQLite Catalog 与 `--continue`、descriptor-bound 配置与 journal 安全、迁移 fixture，以及架构静态门禁；不得把未来条目视作现有测试覆盖。
+以上条目按对应 Roadmap 阶段启用。当前已落地双 Provider 文本 stream、Session/restore/headless、可重建 SQLite Catalog 与 `--continue`、descriptor-bound 配置与 journal 安全、不可变当前 fixture，以及架构静态门禁；不得把未来条目视作现有测试覆盖。
 
 ### 16.4 TUI 测试
 
@@ -982,7 +948,7 @@ ADR 存放在 `docs/architecture/adr/`，模板见该目录的 `README.md`，并
 
 列表与独立 `sessions list` 共用 `loadSessionCatalog` 生命周期；首次和刷新协调，成功后的切范围仅查询，最多 200 条，正文不入 Catalog。`previewSession` 在 descriptor-bound lease 下 Load/Replay、恢复顺序及压缩用量校验，关闭句柄后才发布预览；不用 resume、writer、Repair、artifact 或 Runtime。`provider.StoredHistoryReader` 是有实际消费者的单向离线接口，两家独立 reader 与正式恢复共享私有 native 校验和压缩来源计算，无连接、凭据或新增 capability。
 
-选择理由、参考工程版本、预算和验证方案见 [OpenSpec 变更](../../openspec/changes/archive/2026-11-04-add-interactive-session-picker/design.md)。这是一块恢复入口的完整切片，不代表 P5 的 Markdown、reasoning、补全或 fork picker 已完成。
+选择理由、参考工程版本、预算和验证方案见 [OpenSpec 变更](../../openspec/changes/archive/2026-11-04-add-interactive-session-picker/design.md)。这是一块恢复入口的完整切片，不代表 P5 整体完成；Markdown 已由独立切片交付，reasoning、补全和 fork picker 仍未实现。
 
 选择器接收以 owner 锁内对操作/父取消 done channel 的非阻塞检查为线性化点；此前已取消的结果不能进入 Chat。资源仍由同一 worker 持有到最终关闭，不在锁内调用 context 实现或执行关闭。预览的原文预算和安全展示预算分别裁剪，任何省略都保留可见标记；展示不会持有被截掉的大字符串 backing storage。短屏确认保留当前选项并允许滚动目录，短屏预览允许滚过状态头部。
 

@@ -45,10 +45,14 @@ func commandSandboxProfile(plan SandboxPlan) string {
 }
 
 func (launcher *darwinProcessLauncher) start(ctx context.Context, candidate tool.ExecCandidate) (processHandle, error) {
+	return launcher.startSpec(ctx, commandLaunchSpec{command: candidate.Invocation().Input().Command(), workdir: candidate.Invocation().Input().Workdir(), policy: execLaunchPolicy{candidate}})
+}
+
+func (launcher *darwinProcessLauncher) startSpec(ctx context.Context, spec commandLaunchSpec) (processHandle, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	directory, err := launcher.workspace.handle.openDirectory(candidate.Invocation().Input().Workdir(), launcher.workspace.hooks)
+	directory, err := launcher.workspace.handle.openDirectory(spec.workdir, launcher.workspace.hooks)
 	if err != nil {
 		return nil, errors.New("command workdir unavailable")
 	}
@@ -71,7 +75,7 @@ func (launcher *darwinProcessLauncher) start(ctx context.Context, candidate tool
 		return nil, errSandboxUnavailable
 	}
 	root := unix.ByteSliceToString(pathBuffer[:])
-	plan, err := NewSandboxPlanner().Plan(candidate, root)
+	plan, err := spec.policy.Plan(root)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +86,7 @@ func (launcher *darwinProcessLauncher) start(ctx context.Context, candidate tool
 	if launcher.sandboxProfile != nil {
 		profile = launcher.sandboxProfile
 	}
-	command := exec.Command(launcher.environment.executable, "--internal-command-child", profile(plan), candidate.Invocation().Input().Command())
+	command := exec.Command(launcher.environment.executable, "--internal-command-child", profile(plan), spec.command)
 	readyRead, readyWrite, err := os.Pipe()
 	if err != nil {
 		return nil, errSandboxUnavailable
@@ -126,6 +130,25 @@ func (launcher *darwinProcessLauncher) start(ctx context.Context, candidate tool
 	// 因而启动失败的宿主路径不会进入瞬态progress或最终工具结果。
 	command.Stdout = outWrite
 	command.ExtraFiles = []*os.File{node.handle, gateRead, readyWrite, errWrite}
+	var inRead, inWrite *os.File
+	inputOwned := true
+	if spec.pipeInput {
+		inRead, inWrite, err = os.Pipe()
+		if err != nil {
+			_ = outRead.Close()
+			_ = outWrite.Close()
+			_ = errRead.Close()
+			_ = errWrite.Close()
+			return nil, errSandboxUnavailable
+		}
+		defer inRead.Close()
+		defer func() {
+			if inputOwned {
+				_ = inWrite.Close()
+			}
+		}()
+		command.Stdin = inRead
+	}
 	err = command.Start()
 	if err == nil && launcher.beforeRelease != nil {
 		err = launcher.beforeRelease(command.Process.Pid, outWrite, errWrite)
@@ -142,7 +165,7 @@ func (launcher *darwinProcessLauncher) start(ctx context.Context, candidate tool
 		_ = errRead.Close()
 		return nil, errSandboxUnavailable
 	}
-	process := &darwinProcess{command: command, out: outRead, errout: errRead, group: command.Process.Pid, queue: queue, sandboxReady: readyRead}
+	process := &darwinProcess{command: command, out: outRead, errout: errRead, group: command.Process.Pid, queue: queue, sandboxReady: readyRead, input: inWrite}
 	register := launcher.registerExit
 	if register == nil {
 		register = registerDarwinExit
@@ -161,6 +184,7 @@ func (launcher *darwinProcessLauncher) start(ctx context.Context, candidate tool
 	}
 	queueOwned = false
 	readyOwned = false
+	inputOwned = false
 	return process, nil
 }
 
@@ -203,6 +227,7 @@ func RunCommandChild(arguments []string) (bool, error) {
 }
 
 type darwinProcess struct {
+	input        *os.File
 	command      *exec.Cmd
 	out, errout  *os.File
 	group        int

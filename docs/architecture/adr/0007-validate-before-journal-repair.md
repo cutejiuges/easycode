@@ -1,5 +1,7 @@
 # ADR-0007：完整验证后才修复 Session 尾部
 
+> 当前对照（2026-11-06）：验证先于 repair 的顺序继续适用，并覆盖当前 Hook 与 Question 的严格 replay/native 绑定。Hook 恢复先补偿旧事实再 Load 当前来源；本文的旧格式数字仅为历史关联。 [当前能力清单](../../roadmap/capability-status.md)。
+
 > 后续决策：`add-threshold-auto-compaction` 已删除 Session/native/checkpoint 格式版本、固定压缩 prompt revision 和 Catalog user_version 门禁；本文涉及这些内部格式的版本数字仅为历史背景，当前实现以单一无版本内部契约为准。外部 headless 协议与实际内容 revision 保留。
 
 - 状态：accepted

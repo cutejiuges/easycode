@@ -48,12 +48,19 @@ func writeExecCommandSample(writer io.Writer, family domain.ProviderFamily, comm
 	}
 }
 
-func TestExecHeadlessModesFailClosedForBothProviders(t *testing.T) {
+func TestExecHeadlessModesFailClosedForBothProviders(t *testing.T) { runExecHeadlessModes(t, false) }
+func TestHookHeadlessModesFailClosedForBothProviders(t *testing.T) { runExecHeadlessModes(t, true) }
+func runExecHeadlessModes(t *testing.T, withHook bool) {
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		for _, mode := range []headless.Mode{headless.ModeText, headless.ModeJSON, headless.ModeStreamJSON} {
 			t.Run(fmt.Sprintf("%s/mode-%d", family, mode), func(t *testing.T) {
 				workspace := t.TempDir()
 				t.Chdir(workspace)
+				wantCode := "approval_required"
+				if withHook {
+					writeHookConfig(t, workspace, "printf forbidden > hook-marker")
+					wantCode = "hook_trust_required"
+				}
 				var mu sync.Mutex
 				var requests [][]byte
 				server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -93,8 +100,11 @@ func TestExecHeadlessModesFailClosedForBothProviders(t *testing.T) {
 					wire = "tool_result"
 				}
 				continuation := string(captured[1])
-				if !strings.Contains(continuation, wire) || !strings.Contains(continuation, "approval_required") || !strings.Contains(continuation, "call-exec") {
+				if !strings.Contains(continuation, wire) || !strings.Contains(continuation, wantCode) || !strings.Contains(continuation, "call-exec") {
 					t.Fatalf("denial not paired: %s", continuation)
+				}
+				if _, err := os.Stat(filepath.Join(workspace, "hook-marker")); !errors.Is(err, os.ErrNotExist) {
+					t.Fatal("headless hook executed")
 				}
 				if _, err := os.Stat(filepath.Join(workspace, "exec-marker")); !errors.Is(err, os.ErrNotExist) {
 					t.Fatal("headless command produced side effect")
@@ -114,7 +124,7 @@ func TestExecHeadlessModesFailClosedForBothProviders(t *testing.T) {
 						}
 						if record.EventKind == session.EventToolCallResult {
 							result, err := session.DecodeToolCallResultPayload(record)
-							if err != nil || result.Code != "approval_required" {
+							if err != nil || result.Code != wantCode {
 								t.Fatalf("unexpected result: %#v %v", result, err)
 							}
 							denied++

@@ -13,6 +13,9 @@ import (
 type EventKind string
 
 const (
+	EventHookTrustRequested    EventKind = "hook_trust_requested"
+	EventHookTrustResolved     EventKind = "hook_trust_resolved"
+	EventHookActivity          EventKind = "hook_activity"
 	EventCacheSnapshot         EventKind = "cache_snapshot"
 	EventContextSnapshot       EventKind = "context_snapshot"
 	EventCompactionStarted     EventKind = "compaction_started"
@@ -99,6 +102,28 @@ func (event Event) Validate() error {
 	case EventUserQuestionResolved:
 		_, err := DecodeUserQuestionResolved(event)
 		return err
+
+	case EventHookTrustRequested, EventHookTrustResolved, EventHookActivity:
+		if !hasIdentity {
+			return fmt.Errorf("hook event identity is required")
+		}
+		switch event.Kind {
+		case EventHookTrustRequested:
+			_, err := DecodeHookTrustRequested(event)
+			return err
+		case EventHookTrustResolved:
+			p, err := DecodeHookTrustResolved(event)
+			if err != nil {
+				return err
+			}
+			if p.SessionID != event.SessionID || p.ThreadID != event.ThreadID || p.TurnID != event.TurnID {
+				return fmt.Errorf("hook resolution scope mismatch")
+			}
+			return nil
+		default:
+			_, err := DecodeHookActivity(event)
+			return err
+		}
 	case EventTranscriptCommitted:
 		if !hasIdentity {
 			return fmt.Errorf("transcript event identity is required")

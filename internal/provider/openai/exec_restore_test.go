@@ -3,11 +3,13 @@ package openai
 import (
 	"bytes"
 	contextplan "easycode/internal/context"
+	"easycode/internal/domain"
 	"easycode/internal/provider"
 	"easycode/internal/secret"
 	"easycode/internal/tool"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -31,12 +33,22 @@ func TestExecNativeResultsRestoreExactly(t *testing.T) {
 		{"zero", tool.ResultSuccess, "ok", 0, true, false, false},
 		{"nonzero", tool.ResultSuccess, "ok", 2, true, false, false},
 		{"denied", tool.ResultDenied, "approval_required", 0, false, false, false},
+		{"hook-denied", tool.ResultDenied, "hook_denied", 0, false, false, false},
+		{"hook-uncertain", tool.ResultCancelled, "hook_outcome_uncertain", 0, false, false, true},
 		{"cancelled", tool.ResultCancelled, "cancelled", 143, true, false, true},
 		{"timeout", tool.ResultError, "timed_out", 137, true, true, false},
 		{"uncertain", tool.ResultOutcomeUncertain, "process_cleanup_uncertain", 0, false, false, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			preview, _ := tool.NewModelPreview("frozen " + test.name + "\n你好\n")
+			text := "frozen " + test.name + "\n你好\n"
+			if strings.HasPrefix(test.name, "hook-") {
+				d, err := domain.NewHookDeclaration(domain.HookSourceProject, strings.Repeat("a", 64), "check", 7, "true", 5)
+				if err != nil {
+					t.Fatal(err)
+				}
+				text = domain.HookSummary(d.Reference, domain.HookExec, domain.HookCode(test.code))
+			}
+			preview, _ := tool.NewModelPreview(text)
 			metadata, err := tool.NewExecResultMetadata("src", test.exit, test.known, 0, tool.ExecStreamStats{}, tool.ExecStreamStats{}, test.timeout, test.cancelled, false)
 			if err != nil {
 				t.Fatal(err)
@@ -99,8 +111,12 @@ func TestExecNativeResultsRestoreExactly(t *testing.T) {
 			if !bytes.Equal(first.Bytes(), second.Bytes()) || firstSegment.Fingerprint() != secondSegment.Fingerprint() {
 				t.Fatal("Exec restore changed canonical request or fingerprint")
 			}
-			if test.name == "zero" {
-				want, err := os.ReadFile("testdata/exec_continuation.golden.json")
+			if test.name == "zero" || test.name == "hook-denied" {
+				golden := "testdata/exec_continuation.golden.json"
+				if test.name == "hook-denied" {
+					golden = "testdata/hook_denied_continuation.golden.json"
+				}
+				want, err := os.ReadFile(golden)
 				if err != nil {
 					t.Fatal(err)
 				}

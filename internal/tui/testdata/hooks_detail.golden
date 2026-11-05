@@ -1,0 +1,12 @@
+Hook details · Esc: back · ↑/↓: scroll · r: reset trust
+Source: project · check [untrusted]
+Matcher: fs.patch|fs.write|process.exec
+Timeout: 5 seconds
+Workspace: . · read-only · network denied
+Workspace scripts can change after review.
+Reset only removes trust; the next tool call asks again.
+Detailed hook output is not recorded.
+
+Command:
+cat >/dev/null
+printf '{}'

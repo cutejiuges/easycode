@@ -1,0 +1,98 @@
+{
+  "planned": {
+    "next": 10,
+    "completed": 0,
+    "started": false,
+    "gate": "",
+    "tool_state": "ready",
+    "outputs": false
+  },
+  "started": {
+    "next": 11,
+    "completed": 0,
+    "started": true,
+    "gate": "",
+    "tool_state": "ready",
+    "outputs": false
+  },
+  "prefix": {
+    "next": 12,
+    "completed": 1,
+    "started": false,
+    "gate": "",
+    "tool_state": "ready",
+    "outputs": false
+  },
+  "continued": {
+    "next": 15,
+    "completed": 2,
+    "started": false,
+    "gate": "continue",
+    "tool_state": "ready",
+    "outputs": false
+  },
+  "denied": {
+    "next": 14,
+    "completed": 1,
+    "started": false,
+    "gate": "denied",
+    "tool_state": "result",
+    "outputs": false
+  },
+  "error": {
+    "next": 14,
+    "completed": 1,
+    "started": false,
+    "gate": "error",
+    "tool_state": "result",
+    "outputs": false
+  },
+  "headless": {
+    "next": 12,
+    "completed": 0,
+    "started": false,
+    "gate": "denied",
+    "tool_state": "result",
+    "outputs": false
+  },
+  "recovered": {
+    "next": 14,
+    "completed": 1,
+    "started": false,
+    "gate": "outcome_uncertain",
+    "tool_state": "result",
+    "outputs": false
+  },
+  "tool_allowed": {
+    "next": 16,
+    "completed": 2,
+    "started": false,
+    "gate": "continue",
+    "tool_state": "ready",
+    "outputs": false
+  },
+  "tool_started": {
+    "next": 17,
+    "completed": 2,
+    "started": false,
+    "gate": "continue",
+    "tool_state": "started",
+    "outputs": false
+  },
+  "tool_result": {
+    "next": 18,
+    "completed": 2,
+    "started": false,
+    "gate": "continue",
+    "tool_state": "result",
+    "outputs": false
+  },
+  "outputs": {
+    "next": 19,
+    "completed": 2,
+    "started": false,
+    "gate": "",
+    "tool_state": "",
+    "outputs": true
+  }
+}

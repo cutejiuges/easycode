@@ -2,6 +2,7 @@ package builtin
 
 import (
 	"context"
+	"easycode/internal/executor/process"
 	"errors"
 	"io"
 	"sync"
@@ -108,118 +109,37 @@ func (execution *ProcessExecution) Run(ctx context.Context) tool.InvocationResul
 			defer func() { _ = capture.Close() }()
 		}
 	}
-	process, err := execution.launcher.start(ctx, execution.candidate)
+
+	outWriter := &processOutputWriter{progress: execution.progress, clock: execution.clock, started: started}
+	errWriter := &processOutputWriter{progress: execution.progress, stderr: true, clock: execution.clock, started: started}
+	if capture != nil {
+		outWriter.save = capture.WriteStdout
+		errWriter.save = capture.WriteStderr
+	}
+	owner, err := process.New(process.Config{Launcher: execOwnerLauncher{execution.launcher, execution.candidate}, Clock: ownerClock{execution.clock}, Stdout: outWriter, Stderr: errWriter, Timeout: time.Duration(execution.candidate.Invocation().Input().TimeoutMillis()) * time.Millisecond})
 	if err != nil {
-		if errors.Is(err, errExecUnsupported) {
+		return failed(tool.ResultError, "process_start_failed")
+	}
+	owned := owner.Run(ctx)
+	if owned.StartError != nil {
+		if errors.Is(owned.StartError, process.Unsupported) {
 			return failed(tool.ResultError, "unsupported_platform")
 		}
-		if errors.Is(err, errSandboxUnavailable) {
+		if errors.Is(owned.StartError, process.SandboxUnavailable) {
 			return failed(tool.ResultError, "sandbox_unavailable")
 		}
 		return failed(tool.ResultError, "process_start_failed")
 	}
-	stdout, stderr := process.stdout(), process.stderr()
-	outDone, errDone := make(chan processReadResult, 1), make(chan processReadResult, 1)
-	// reader只交付一次结果；channel由创建它的owner在接收后关闭。
-	read := func(source io.ReadCloser, target chan processReadResult, isStderr bool) {
-		writer := processOutputWriter{progress: execution.progress, stderr: isStderr, clock: execution.clock, started: started}
-		if capture != nil {
-			if isStderr {
-				writer.save = capture.WriteStderr
-			} else {
-				writer.save = capture.WriteStdout
-			}
-		}
-		_, readErr := io.Copy(&writer, source)
-		target <- processReadResult{output: writer.buffer.Snapshot(), err: readErr}
+	if !owned.Started {
+		return failed(tool.ResultCancelled, "cancelled")
 	}
-	go read(stdout, outDone, false)
-	go read(stderr, errDone, true)
-	exitDone := make(chan error, 1)
-	go func() {
-		exitDone <- process.observeExit()
-	}()
-	timeout := execution.clock.timer(time.Duration(execution.candidate.Invocation().Input().TimeoutMillis()) * time.Millisecond)
-	defer timeout.stop()
-	observed := false
-	cancelled, timedOut, uncertain := false, false, false
-	select {
-	case err := <-exitDone:
-		observed, uncertain = true, err != nil
-	case <-ctx.Done():
-		cancelled = true
-	case <-timeout.channel():
-		timedOut = true
-	}
-	// 即使leader正常退出，也必须处理原组的残留成员。
-	alive, probeErr := process.groupAlive()
-	uncertain = uncertain || probeErr != nil
-	if cancelled || timedOut || alive || uncertain {
-		if err := process.terminate(false); err != nil {
-			uncertain = true
-		}
-		grace := execution.clock.timer(250 * time.Millisecond)
-		<-grace.channel()
-		grace.stop()
-		alive, probeErr = process.groupAlive()
-		uncertain = uncertain || probeErr != nil
-		// TERM已清空活动组时不再向仅含僵尸的组发送KILL。
-		if alive || probeErr != nil {
-			if err := process.terminate(true); err != nil {
-				uncertain = true
-			}
-		}
-	}
-	if !observed {
-		uncertain = (<-exitDone) != nil || uncertain
-	}
-	close(exitDone)
-	// 此时leader尚未回收，组编号不能复用；给已发出的KILL有界收口时间。
-	for attempt := 0; ; attempt++ {
-		alive, probeErr = process.groupAlive()
-		if probeErr != nil || !alive || attempt == 40 {
-			uncertain = uncertain || alive || probeErr != nil
-			break
-		}
-		settle := execution.clock.timer(25 * time.Millisecond)
-		<-settle.channel()
-		settle.stop()
-	}
-	// 最终回收之后禁止任何组探测或信号操作。
-	exit, waitErr := process.wait()
-	waited := processWaitResult{exit: exit, err: waitErr}
-	sandboxFailed := errors.Is(waitErr, errSandboxUnavailable)
-	uncertain = uncertain || (waitErr != nil && !sandboxFailed)
-	// 输出与进程退出分别收口，脱离writer不能无限阻塞reader。
-	drain := execution.clock.timer(time.Second)
-	var outResult, errResult processReadResult
-	outChannel, errChannel := (<-chan processReadResult)(outDone), (<-chan processReadResult)(errDone)
-	drainExpired := false
-	for outChannel != nil || errChannel != nil {
-		select {
-		case outResult = <-outChannel:
-			outChannel = nil
-		case errResult = <-errChannel:
-			errChannel = nil
-		case <-drain.channel():
-			drainExpired = true
-			_ = stdout.Close()
-			_ = stderr.Close()
-			if outChannel != nil {
-				outResult = <-outChannel
-				outChannel = nil
-			}
-			if errChannel != nil {
-				errResult = <-errChannel
-				errChannel = nil
-			}
-		}
-	}
-	drain.stop()
-	close(outDone)
-	close(errDone)
-	_ = stdout.Close()
-	_ = stderr.Close()
+	cancelled, timedOut, uncertain := owned.Cancelled, owned.TimedOut, owned.Uncertain
+	drainExpired := owned.DrainExpired
+	waited := processWaitResult{exit: owned.ExitCode, err: owned.WaitError}
+	sandboxFailed := errors.Is(owned.WaitError, process.SandboxUnavailable)
+	outResult := processReadResult{output: outWriter.buffer.Snapshot(), err: owned.StdoutError}
+	errResult := processReadResult{output: errWriter.buffer.Snapshot(), err: owned.StderrError}
+
 	execution.progress.update(nil, false, max(0, execution.clock.now().Sub(started).Milliseconds()))
 	uncertain = uncertain || drainExpired || outResult.err != nil || errResult.err != nil
 	if sandboxFailed && !uncertain {

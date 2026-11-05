@@ -3,6 +3,7 @@ package skill
 import (
 	"context"
 	"easycode/internal/domain"
+	"easycode/internal/extension/localfile"
 	"errors"
 	"io"
 	"os"
@@ -258,33 +259,27 @@ func (l *Local) Read(ctx context.Context, name, args, resource string, explicit 
 	return domain.NewSkillAttachment(e.view.Source, name, e.digest, "", "Skill resource "+resource+" (source "+e.view.Source.ID()+")\n\n"+body)
 }
 func readFile(ctx context.Context, p string, hook func(string)) (string, error) {
-	if e := ctx.Err(); e != nil {
-		return "", e
+	b, err := localfile.Read(ctx, p, domain.MaxSkillDocumentBytes, localfile.Options{BeforeOpen: hook})
+	if err != nil {
+		switch {
+		case errors.Is(err, localfile.Unsafe):
+			return "", failure("skill_path_unsafe")
+		case errors.Is(err, localfile.LimitExceeded):
+			return "", failure("skill_document_limit")
+		case errors.Is(err, localfile.ReadFailed):
+			return "", failure("skill_read_failed")
+		case errors.Is(err, localfile.Unsupported):
+			return "", failure("skill_platform_unsupported")
+		default:
+			return "", err
+		}
 	}
-	f, e := openSecure(p, false, hook)
-	if e != nil {
-		return "", e
-	}
-	defer f.Close()
-	info, e := f.Stat()
-	if e != nil || !info.Mode().IsRegular() {
-		return "", failure("skill_path_unsafe")
-	}
-	if info.Size() > domain.MaxSkillDocumentBytes {
-		return "", failure("skill_document_limit")
-	}
-	b, e := io.ReadAll(io.LimitReader(f, domain.MaxSkillDocumentBytes+1))
-	if e != nil {
-		return "", failure("skill_read_failed")
-	}
-	if e = ctx.Err(); e != nil {
-		return "", e
-	}
-	if len(b) > domain.MaxSkillDocumentBytes || !utf8.Valid(b) {
+	if !utf8.Valid(b) {
 		return "", failure("skill_document_invalid")
 	}
 	return string(b), nil
 }
+
 func listDirectory(p string, hook func(string)) ([]string, error) {
 	f, e := openSecure(p, true, hook)
 	if e != nil {

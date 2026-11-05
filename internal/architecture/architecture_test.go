@@ -22,7 +22,6 @@ var placeholderFiles = map[string]string{
 	"internal/protocol/event.go":          "P3",
 	"internal/domain/types.go":            "P3",
 	"internal/extension/extension.go":     "P6",
-	"internal/extension/hook/hook.go":     "P6",
 	"internal/extension/mcp/mcp.go":       "P6",
 	"internal/extension/plugin/plugin.go": "P6",
 	"internal/subagent/control.go":        "P7",
@@ -31,7 +30,6 @@ var placeholderFiles = map[string]string{
 
 var placeholderOnlyPackages = map[string]struct{}{
 	"easycode/internal/extension":        {},
-	"easycode/internal/extension/hook":   {},
 	"easycode/internal/extension/mcp":    {},
 	"easycode/internal/extension/plugin": {},
 	"easycode/internal/subagent":         {},
@@ -467,6 +465,10 @@ func dependencyViolations(packages map[string]*sourcePackage) []string {
 }
 
 func forbiddenDependencyReason(packagePath string, imported string) string {
+	if (strings.HasPrefix(packagePath, "easycode/internal/executor/process") || strings.HasPrefix(packagePath, "easycode/internal/extension/localfile")) && strings.HasPrefix(imported, "easycode/internal/") {
+		return "共享进程与文件边界不得依赖业务层"
+	}
+
 	if packagePath == "easycode/internal/session/catalog" && strings.HasPrefix(imported, "easycode/internal/") &&
 		imported != "easycode/internal/session" && imported != "easycode/internal/domain" {
 		return "session/catalog 只能依赖 session/domain"

@@ -23,6 +23,7 @@ func (runtime *Runtime) emitToolStarted(turn domain.TurnID, invocation tool.Invo
 
 // notifyToolResult 只在 result Sync 成功后发布；进度永远不能替代此终态。
 func (runtime *Runtime) notifyToolResult(turn domain.TurnID, result tool.InvocationResult) {
+	runtime.rememberHookResult(result)
 	if runtime.toolHistory != nil {
 		runtime.toolHistory.ToolResult(result)
 	}

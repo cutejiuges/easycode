@@ -180,4 +180,4 @@ terminal SHALL 携带冻结的各流保存状态和授权 descriptor，不携带
 - **WHEN** 命令完成且 stdout 仅保存前段
 - **THEN** 主线明确显示部分保存，详情展示保存长度；不把保存失败显示为命令执行失败
 
-progress SHALL 是仅对 Exec 合法的有界变体；ready/started/terminal 以对应 durable 事实为依据。显示名 Shell 不随 Provider facade 改变。完整 transcript 快捷键与七工具主线遵守 tui/tool-transcript，不维护旧命令浏览入口。
+progress SHALL 是仅对 Exec 合法的有界变体；ready/started/terminal 以对应 durable 事实为依据。显示名 Shell 不随 Provider facade 改变。完整 transcript 快捷键与已实现工具主线遵守 tui/tool-transcript，不维护旧命令浏览入口。

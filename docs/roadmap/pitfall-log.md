@@ -1,5 +1,22 @@
 # EasyCode 踩坑与经验记录
 
+> 本文按事件发生时记录事实，不作为当前功能清单。版本数字、工具数量、平台验收和当时未实现项需结合后续条目与[当前能力清单](capability-status.md)阅读；当前内部格式没有 canary/schema_version 等版本门禁。
+
+### [P6][2026-11-06] 平台专属实现和测试辅助函数放在通用文件
+
+- 现象：Darwin 的完整质量门通过，但 PR Linux CI 在 Staticcheck 阶段因无消费者的 launch policy 与测试函数报 U1000。
+- 根因：仅在 Darwin 编译的调用方，其专属策略和辅助函数却留在通用文件；交叉编译单一 package 不能替代跨平台静态检查。
+- 修复：将专属代码移入 `sandbox_launch_darwin.go` 与 `hook_fixture_darwin_test.go`，共用计划及配置辅助函数保持通用；不加 lint 忽略或跳过测试。
+- 验证：宿主 Staticcheck 二进制按 Linux 目标检查全仓库通过，再执行相同 `make verify` 与 Linux CI；Windows 全库静态检查仍有主干同样的既有诊断，未宣称通过。命令与 Hook 的真实执行平台仍仅为 Darwin。
+
+### [文档][2026-11-06] 阶段目标、历史状态和当前能力混写
+
+- 现象：README 把缓存/选择器仍列为未实现，Tool 被标为占位；架构流程包含未实现 UserPromptSubmit/Stop，Tool 章节保留旧 canary，Roadmap 的工具数、命令和配置描述跨多个切片漂移。
+- 根因：纵向变更追加说明后，没有同步正文的旧状态和依赖图；ADR 历史范围被误读为当前能力。
+- 处理：新增带代码/测试证据的能力清单，更新 README、架构、Tool 与阶段进度；ADR 保留原决策并补当前对照，归档仅修正失效引用，不将未来目标写成已交付。
+- 核对：九项模型工具与独立 Hook、六类上下文来源、已实现 CLI/TUI 入口、无版本内部格式、真实默认存储和平台验证限制；本地 Markdown 链接与 OpenSpec 主规格同步校验。
+
+
 ### [P4][2026-11-03] 关闭清理测试把 turn 事件误当作 Provider 启动屏障
 
 - 状态：已修复测试同步，生产契约不变。
@@ -817,3 +834,16 @@
 - 终端经验：满屏视图末尾额外换行会使 Bubble Tea 裁掉首行。固定尺寸 snapshot 还须配合真实 PTY，使用独立事件/窗口握手区分文本增量和 turn terminal，不能用 sleep 或看到部分正文判断已空闲。`scripts/user-question-smoke.py` 覆盖选择、其他文字、停止、无色和 resize，并检查终端模式恢复。
 
 - 恢复核对补充：原生题目/答案和共享 ready/result 即使分别合法，也可能互相不同。通过纯内存 `RestoreRecord.WithQuestionFacts` 绑定二者，在 Provider/offline reader 安装前核对；`internal/app/question_recovery_test.go` 与固定 `question_*_native_*_mismatch.jsonl` 覆盖拒绝及 journal bytes 不变。
+
+
+## PreToolUse 的信任、计划与恢复边界
+
+- 现象：把本地检查塞入普通工具批准或直接执行配置命令，会让 session grant 绕过检查、崩溃后重跑脚本，或把 Hook started 误认为文件已修改。
+- 根因：信任、执行接收和目标工具审批是不同事实；脚本输出即使声称安全也不能成为任意模型上下文。
+- 处理：user/project 均默认拒绝，授权只绑定当前实例的精确声明；在候选前冻结有序计划，每次 started 成功 Sync 后恰好交付一次 runner。最后 finished/gate/result 原子收口，取消和不确定分别表达。
+- 生命周期：Exec/Hook 共享唯一进程 owner，保留各自 sandbox/输出策略；Shutdown 超时不丢失 stdin/双流/Wait/lease 所有权。Darwin 必须在 helper 注册观察后放行，没有无沙箱 fallback；原组收口不宣称任意脱离子孙容器。
+- 隐私：退出码和严格 deny 只产生安全 code/统计；stdout/stderr/reason 不进模型、JSONL、日志、snapshot 或 artifact，审查完整命令仅限本地瞬态 UI。
+- 恢复：先使用旧冻结计划本地补偿并关闭旧 turn，随后才 Load 当前来源。未运行或成功前缀取消；started 无 finish 为 Hook 不确定、目标工具 cancelled，不查询 PID、不重跑命令。半行不能掩盖先前完整记录的语义损坏。
+- 缓存影响：配置与 trust 不进入 prompt/catalog 段；只有实际工具结果进入历史尾部。恢复保持冻结 preview、原生 item 次序、footprint 与 canonical request。
+- 回归入口：`internal/session/hook_fixture_test.go`、`internal/runtime/hook_recovery_test.go`、`internal/runtime/hook_shutdown_test.go`、`internal/app/hook_resume_test.go`、`internal/app/hook_cache_test.go`、`internal/app/hook_host_owner_test.go`、`internal/tui/hooks_test.go`；真实终端由 `scripts/smoke-hooks.py` 验证。
+- 关联变更：`add-pre-tool-use-command-hooks`；完整验收见该 change 的 `verification.md`。

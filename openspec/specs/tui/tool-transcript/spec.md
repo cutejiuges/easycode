@@ -1,7 +1,7 @@
 # tui/tool-transcript Specification
 
 ## Purpose
-定义 Claude Code 风格的七工具紧凑会话主线、详细 transcript 和按需保存输出查询，使用户能辨认执行进展、失败与模型可见范围，同时保持草稿、审批、原生历史及资源所有权隔离。
+定义 Claude Code 风格的已实现工具紧凑会话主线、详细 transcript 和按需保存输出查询，使用户能辨认执行进展、失败与模型可见范围，同时保持草稿、审批、原生历史及资源所有权隔离。
 
 ## Requirements
 
@@ -33,7 +33,7 @@ Read、Glob、Grep、Patch、Write、Exec、ReadArtifact SHALL 有稳定身份�
 
 ### Requirement: Ctrl O opens the detailed conversation transcript
 
-Ctrl+O SHALL 切换当前会话详细 transcript，包含用户、assistant 与全部七工具的稳定位置；不再打开独立命令列表。进入时定位当前主线锚点或最新活动，退出恢复草稿、光标和主线浏览位置。方向键用于浏览，Enter 仅在活动具有详情时打开二级详情；Esc 从详情回 transcript，再回主线。完整命令与冻结结果可以查看，历史 Patch/Write 仅展示已知摘要，不重读当前文件生成历史 diff。
+Ctrl+O SHALL 切换当前会话详细 transcript，包含用户、assistant 与全部已实现工具的稳定位置；不再打开独立命令列表。进入时定位当前主线锚点或最新活动，退出恢复草稿、光标和主线浏览位置。方向键用于浏览，Enter 仅在活动具有详情时打开二级详情；Esc 从详情回 transcript，再回主线。完整命令与冻结结果可以查看，历史 Patch/Write 仅展示已知摘要，不重读当前文件生成历史 diff。
 
 完整助手正文详情 SHALL 支持局部 r 切换 Markdown/安全原文，并尽量保持源位置锚点；分页片段固定安全原文。resize 和审批返回 SHALL 保持阅读锚点，无法保持时说明原因并定位最近保留位置；模式切换不修改草稿或触发查询。
 

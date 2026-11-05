@@ -1,0 +1,5 @@
+Hooks · PreToolUse
+Enter: details · Esc: back
+> project · check · fs.patch|fs.write|process.exec [untrusted]
+  user ·  ·  [invalid]
+  hook_config_invalid

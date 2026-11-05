@@ -71,7 +71,17 @@ func renderTranscript(messages []transcriptMessage, width int) []string {
 		if a.Code != "" && a.Code != "ok" {
 			title += " · " + a.Code
 		}
+		if message.hook != nil && message.hook.State != "continue" {
+			title += " · check " + message.hook.State
+		}
 		lines = append(lines, wrapApprovalDiff(title, width)...)
+		if h := message.hook; h != nil {
+			lines = append(lines, wrapApprovalDiff(fmt.Sprintf("  Check %s:%s · %s · timeout %ds · stdout %d bytes · stderr %d bytes", h.Reference.Source, h.Reference.ID, h.State, h.Reference.TimeoutSeconds, h.StdoutBytes, h.StderrBytes), width)...)
+			if h.State != "checking" {
+				lines = append(lines, wrapApprovalDiff("  Detailed hook output was not recorded.", width)...)
+			}
+		}
+
 		if message.saving != "" {
 			lines = append(lines, wrapApprovalDiff("  "+message.saving, width)...)
 		}

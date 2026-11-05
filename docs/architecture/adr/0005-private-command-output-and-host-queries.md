@@ -1,5 +1,7 @@
 # ADR-0005：私有命令输出与独立宿主查询
 
+> 当前对照（2026-11-06）：私有存储与宿主查询边界继续适用；搜索保存和统一结果预算已由 ADR-0006 扩展，现有模型目录为九项能力。本文当时的 command-only 范围及 4/1 格式数字已被后续单当前契约收敛，不代表现有 schema 或 reader。 [当前能力清单](../../roadmap/capability-status.md)。
+
 > 后续决策：`add-threshold-auto-compaction` 已删除 Session/native/checkpoint 格式版本、固定压缩 prompt revision 和 Catalog user_version 门禁；本文涉及这些内部格式的版本数字仅为历史背景，当前实现以单一无版本内部契约为准。外部 headless 协议与实际内容 revision 保留。
 
 - 状态：accepted
@@ -23,7 +25,7 @@ Session 私有根与 workspace 不得相同或互为祖先，也不得位于 san
 
 文件 Sync、no-replace 发布、目录 Sync、result Sync、native output Sync 顺序固定。只有 durable descriptor 可以授权；持有 thread lease、完成全量 replay 后才能回收本线程未引用文件。对象删除或损坏仅影响读取，不改变冻结预览和原生恢复。
 
-## Provider、缓存与当前格式
+## Provider、缓存与决策当时的格式
 
 两家 Provider 都增加 structured ReadArtifact。catalog 共七项能力，稳定 schema 进入 fingerprint；对象 ID、路径、配额使用量、时间和查询动作不进入稳定前缀。ReadArtifact 属于 parallel_read，不产生 workspace ReadObservation。
 

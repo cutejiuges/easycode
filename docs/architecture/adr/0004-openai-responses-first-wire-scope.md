@@ -1,5 +1,7 @@
 # ADR-0004：首版 OpenAI Wire 仅支持 Responses
 
+> 当前对照（2026-11-06）：当前支持 Anthropic Messages 与 OpenAI Responses；没有隐式 Chat Completions、provider probe 或 doctor。Session metadata 保存 family/wire/model，本文讨论的 capability revision 不等于现有持久化字段；跨 wire fork 尚未实现。 [当前能力清单](../../roadmap/capability-status.md)。
+
 - 状态：accepted
 - 日期：2026-09-18
 - Roadmap 阶段：P0-P1
