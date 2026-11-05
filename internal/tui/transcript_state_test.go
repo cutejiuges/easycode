@@ -57,7 +57,7 @@ func TestMainTranscriptReplacesProvisionalExactlyOnceAndRejectsLateReplies(t *te
 	failed, _ := protocol.NewTurnFailed("turn_failed", "failed", false)
 	failed.TurnID = turn
 	model = updateModel(t, model, RuntimeEventMsg{Event: failed})
-	if !strings.Contains(model.View(), "Assistant (unfinished): next provisional") {
+	if !strings.Contains(model.View(), "Assistant (unfinished)") || !strings.Contains(model.View(), "next provisional") {
 		t.Fatal("unfinished text claimed committed")
 	}
 	restored := NewModel(context.Background(), "test", &fakeChatSession{}).WithTranscriptQueries(thread, q)

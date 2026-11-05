@@ -1,0 +1,181 @@
+goos: darwin
+goarch: arm64
+pkg: easycode/internal/tui
+cpu: Apple M1 Pro
+BenchmarkHighlight/language1/bytes1024-10         	  119744	     10098 ns/op	 101.41 MB/s	     25600 reserved-B/op	      6624 steps/op	       370.0 tokens/op	   12096 B/op	       6 allocs/op
+BenchmarkHighlight/language1/bytes1024-10         	  118513	     10136 ns/op	 101.03 MB/s	     25600 reserved-B/op	      6624 steps/op	       370.0 tokens/op	   12096 B/op	       6 allocs/op
+BenchmarkHighlight/language1/bytes1024-10         	  119790	     10165 ns/op	 100.74 MB/s	     25600 reserved-B/op	      6624 steps/op	       370.0 tokens/op	   12096 B/op	       6 allocs/op
+BenchmarkHighlight/language1/bytes1024-10         	  119776	     10132 ns/op	 101.06 MB/s	     25600 reserved-B/op	      6624 steps/op	       370.0 tokens/op	   12096 B/op	       6 allocs/op
+BenchmarkHighlight/language1/bytes1024-10         	  116750	     10224 ns/op	 100.16 MB/s	     25600 reserved-B/op	      6624 steps/op	       370.0 tokens/op	   12096 B/op	       6 allocs/op
+BenchmarkHighlight/language1/bytes8192-10         	   14832	     80774 ns/op	 101.42 MB/s	     90112 reserved-B/op	     53664 steps/op	      3030 tokens/op	   98114 B/op	       9 allocs/op
+BenchmarkHighlight/language1/bytes8192-10         	   14917	     80504 ns/op	 101.76 MB/s	     90112 reserved-B/op	     53664 steps/op	      3030 tokens/op	   98114 B/op	       9 allocs/op
+BenchmarkHighlight/language1/bytes8192-10         	   13998	     83891 ns/op	  97.65 MB/s	     90112 reserved-B/op	     53664 steps/op	      3030 tokens/op	   98114 B/op	       9 allocs/op
+BenchmarkHighlight/language1/bytes8192-10         	   15196	     79101 ns/op	 103.56 MB/s	     90112 reserved-B/op	     53664 steps/op	      3030 tokens/op	   98114 B/op	       9 allocs/op
+BenchmarkHighlight/language1/bytes8192-10         	   15276	     78818 ns/op	 103.94 MB/s	     90112 reserved-B/op	     53664 steps/op	      3030 tokens/op	   98114 B/op	       9 allocs/op
+BenchmarkHighlight/language1/bytes32768-10        	    3868	    309469 ns/op	 105.88 MB/s	    311296 reserved-B/op	    214752 steps/op	     12130 tokens/op	  393032 B/op	      11 allocs/op
+BenchmarkHighlight/language1/bytes32768-10        	    3885	    308257 ns/op	 106.30 MB/s	    311296 reserved-B/op	    214752 steps/op	     12130 tokens/op	  393032 B/op	      11 allocs/op
+BenchmarkHighlight/language1/bytes32768-10        	    3897	    309784 ns/op	 105.78 MB/s	    311296 reserved-B/op	    214752 steps/op	     12130 tokens/op	  393031 B/op	      11 allocs/op
+BenchmarkHighlight/language1/bytes32768-10        	    3896	    306951 ns/op	 106.75 MB/s	    311296 reserved-B/op	    214752 steps/op	     12130 tokens/op	  393032 B/op	      11 allocs/op
+BenchmarkHighlight/language1/bytes32768-10        	    3891	    307756 ns/op	 106.47 MB/s	    311296 reserved-B/op	    214752 steps/op	     12130 tokens/op	  393032 B/op	      11 allocs/op
+BenchmarkHighlight/language1/bytes65536-10        	    1952	    614029 ns/op	 106.73 MB/s	    606208 reserved-B/op	    429600 steps/op	     24270 tokens/op	  786256 B/op	      12 allocs/op
+BenchmarkHighlight/language1/bytes65536-10        	    1969	    614525 ns/op	 106.65 MB/s	    606208 reserved-B/op	    429600 steps/op	     24270 tokens/op	  786255 B/op	      12 allocs/op
+BenchmarkHighlight/language1/bytes65536-10        	    1935	    654237 ns/op	 100.17 MB/s	    606208 reserved-B/op	    429600 steps/op	     24270 tokens/op	  786254 B/op	      12 allocs/op
+BenchmarkHighlight/language1/bytes65536-10        	    1893	    628017 ns/op	 104.35 MB/s	    606208 reserved-B/op	    429600 steps/op	     24270 tokens/op	  786254 B/op	      12 allocs/op
+BenchmarkHighlight/language1/bytes65536-10        	    1944	    617382 ns/op	 106.15 MB/s	    606208 reserved-B/op	    429600 steps/op	     24270 tokens/op	  786255 B/op	      12 allocs/op
+BenchmarkHighlight/language2/bytes1024-10         	  113617	     11028 ns/op	  92.85 MB/s	     25600 reserved-B/op	      6997 steps/op	       282.0 tokens/op	   12096 B/op	       6 allocs/op
+BenchmarkHighlight/language2/bytes1024-10         	  115333	     10416 ns/op	  98.31 MB/s	     25600 reserved-B/op	      6997 steps/op	       282.0 tokens/op	   12096 B/op	       6 allocs/op
+BenchmarkHighlight/language2/bytes1024-10         	  116960	     10506 ns/op	  97.47 MB/s	     25600 reserved-B/op	      6997 steps/op	       282.0 tokens/op	   12096 B/op	       6 allocs/op
+BenchmarkHighlight/language2/bytes1024-10         	  113436	     10495 ns/op	  97.57 MB/s	     25600 reserved-B/op	      6997 steps/op	       282.0 tokens/op	   12096 B/op	       6 allocs/op
+BenchmarkHighlight/language2/bytes1024-10         	  115369	     11887 ns/op	  86.14 MB/s	     25600 reserved-B/op	      6997 steps/op	       282.0 tokens/op	   12096 B/op	       6 allocs/op
+BenchmarkHighlight/language2/bytes8192-10         	    6490	    155757 ns/op	  52.59 MB/s	     90112 reserved-B/op	     56165 steps/op	      2258 tokens/op	   98114 B/op	       9 allocs/op
+BenchmarkHighlight/language2/bytes8192-10         	   10000	    108131 ns/op	  75.76 MB/s	     90112 reserved-B/op	     56165 steps/op	      2258 tokens/op	   98114 B/op	       9 allocs/op
+BenchmarkHighlight/language2/bytes8192-10         	   12811	    101865 ns/op	  80.42 MB/s	     90112 reserved-B/op	     56165 steps/op	      2258 tokens/op	   98114 B/op	       9 allocs/op
+BenchmarkHighlight/language2/bytes8192-10         	   10000	    101144 ns/op	  80.99 MB/s	     90112 reserved-B/op	     56165 steps/op	      2258 tokens/op	   98114 B/op	       9 allocs/op
+BenchmarkHighlight/language2/bytes8192-10         	   12718	     92514 ns/op	  88.55 MB/s	     90112 reserved-B/op	     56165 steps/op	      2258 tokens/op	   98113 B/op	       9 allocs/op
+BenchmarkHighlight/language2/bytes32768-10        	    3610	    544186 ns/op	  60.21 MB/s	    311296 reserved-B/op	    224757 steps/op	      9034 tokens/op	  393031 B/op	      11 allocs/op
+BenchmarkHighlight/language2/bytes32768-10        	    1974	    700130 ns/op	  46.80 MB/s	    311296 reserved-B/op	    224757 steps/op	      9034 tokens/op	  393031 B/op	      11 allocs/op
+BenchmarkHighlight/language2/bytes32768-10        	    1729	    691838 ns/op	  47.36 MB/s	    311296 reserved-B/op	    224757 steps/op	      9034 tokens/op	  393031 B/op	      11 allocs/op
+BenchmarkHighlight/language2/bytes32768-10        	    1711	    676840 ns/op	  48.41 MB/s	    311296 reserved-B/op	    224757 steps/op	      9034 tokens/op	  393031 B/op	      11 allocs/op
+BenchmarkHighlight/language2/bytes32768-10        	    2115	    679345 ns/op	  48.23 MB/s	    311296 reserved-B/op	    224757 steps/op	      9034 tokens/op	  393031 B/op	      11 allocs/op
+BenchmarkHighlight/language2/bytes65536-10        	     727	   1379896 ns/op	  47.49 MB/s	    606208 reserved-B/op	    449621 steps/op	     18074 tokens/op	  786254 B/op	      12 allocs/op
+BenchmarkHighlight/language2/bytes65536-10        	     848	   1414974 ns/op	  46.32 MB/s	    606208 reserved-B/op	    449621 steps/op	     18074 tokens/op	  786256 B/op	      12 allocs/op
+BenchmarkHighlight/language2/bytes65536-10        	     744	   1460262 ns/op	  44.88 MB/s	    606208 reserved-B/op	    449621 steps/op	     18074 tokens/op	  786256 B/op	      12 allocs/op
+BenchmarkHighlight/language2/bytes65536-10        	     957	   1372796 ns/op	  47.74 MB/s	    606208 reserved-B/op	    449621 steps/op	     18074 tokens/op	  786257 B/op	      12 allocs/op
+BenchmarkHighlight/language2/bytes65536-10        	    1002	   1548746 ns/op	  42.32 MB/s	    606208 reserved-B/op	    449621 steps/op	     18074 tokens/op	  786257 B/op	      12 allocs/op
+BenchmarkHighlight/language3/bytes1024-10         	   70651	     16988 ns/op	  60.28 MB/s	     20992 reserved-B/op	      6368 steps/op	       256.0 tokens/op	    5952 B/op	       5 allocs/op
+BenchmarkHighlight/language3/bytes1024-10         	   89476	     15324 ns/op	  66.82 MB/s	     20992 reserved-B/op	      6368 steps/op	       256.0 tokens/op	    5952 B/op	       5 allocs/op
+BenchmarkHighlight/language3/bytes1024-10         	   67692	     14927 ns/op	  68.60 MB/s	     20992 reserved-B/op	      6368 steps/op	       256.0 tokens/op	    5952 B/op	       5 allocs/op
+BenchmarkHighlight/language3/bytes1024-10         	   81254	     14313 ns/op	  71.54 MB/s	     20992 reserved-B/op	      6368 steps/op	       256.0 tokens/op	    5952 B/op	       5 allocs/op
+BenchmarkHighlight/language3/bytes1024-10         	   93100	     13166 ns/op	  77.77 MB/s	     20992 reserved-B/op	      6368 steps/op	       256.0 tokens/op	    5952 B/op	       5 allocs/op
+BenchmarkHighlight/language3/bytes8192-10         	    7758	    156575 ns/op	  52.32 MB/s	     90112 reserved-B/op	     51768 steps/op	      2112 tokens/op	   98113 B/op	       9 allocs/op
+BenchmarkHighlight/language3/bytes8192-10         	   10000	    135577 ns/op	  60.42 MB/s	     90112 reserved-B/op	     51768 steps/op	      2112 tokens/op	   98113 B/op	       9 allocs/op
+BenchmarkHighlight/language3/bytes8192-10         	   10000	    120377 ns/op	  68.05 MB/s	     90112 reserved-B/op	     51768 steps/op	      2112 tokens/op	   98114 B/op	       9 allocs/op
+BenchmarkHighlight/language3/bytes8192-10         	   10000	    134013 ns/op	  61.13 MB/s	     90112 reserved-B/op	     51768 steps/op	      2112 tokens/op	   98113 B/op	       9 allocs/op
+BenchmarkHighlight/language3/bytes8192-10         	    9226	    132576 ns/op	  61.79 MB/s	     90112 reserved-B/op	     51768 steps/op	      2112 tokens/op	   98113 B/op	       9 allocs/op
+BenchmarkHighlight/language3/bytes32768-10        	    2271	    530132 ns/op	  61.81 MB/s	    311296 reserved-B/op	    207072 steps/op	      8448 tokens/op	  393032 B/op	      11 allocs/op
+BenchmarkHighlight/language3/bytes32768-10        	    2828	    560103 ns/op	  58.50 MB/s	    311296 reserved-B/op	    207072 steps/op	      8448 tokens/op	  393032 B/op	      11 allocs/op
+BenchmarkHighlight/language3/bytes32768-10        	    2281	    558402 ns/op	  58.68 MB/s	    311296 reserved-B/op	    207072 steps/op	      8448 tokens/op	  393032 B/op	      11 allocs/op
+BenchmarkHighlight/language3/bytes32768-10        	    2438	    556568 ns/op	  58.88 MB/s	    311296 reserved-B/op	    207072 steps/op	      8448 tokens/op	  393032 B/op	      11 allocs/op
+BenchmarkHighlight/language3/bytes32768-10        	    3951	    284986 ns/op	 114.98 MB/s	    311296 reserved-B/op	    207072 steps/op	      8448 tokens/op	  393032 B/op	      11 allocs/op
+BenchmarkHighlight/language3/bytes65536-10        	    2396	    503703 ns/op	 130.11 MB/s	    606208 reserved-B/op	    414350 steps/op	     16912 tokens/op	  786255 B/op	      12 allocs/op
+BenchmarkHighlight/language3/bytes65536-10        	    2403	    502501 ns/op	 130.42 MB/s	    606208 reserved-B/op	    414350 steps/op	     16912 tokens/op	  786257 B/op	      12 allocs/op
+BenchmarkHighlight/language3/bytes65536-10        	    2223	    533704 ns/op	 122.79 MB/s	    606208 reserved-B/op	    414350 steps/op	     16912 tokens/op	  786256 B/op	      12 allocs/op
+BenchmarkHighlight/language3/bytes65536-10        	    2384	    500463 ns/op	 130.95 MB/s	    606208 reserved-B/op	    414350 steps/op	     16912 tokens/op	  786256 B/op	      12 allocs/op
+BenchmarkHighlight/language3/bytes65536-10        	    2443	    497849 ns/op	 131.64 MB/s	    606208 reserved-B/op	    414350 steps/op	     16912 tokens/op	  786256 B/op	      12 allocs/op
+BenchmarkHighlight/language4/bytes1024-10         	  105117	     11589 ns/op	  88.36 MB/s	     25600 reserved-B/op	      7040 steps/op	       288.0 tokens/op	   12096 B/op	       6 allocs/op
+BenchmarkHighlight/language4/bytes1024-10         	  102642	     11511 ns/op	  88.96 MB/s	     25600 reserved-B/op	      7040 steps/op	       288.0 tokens/op	   12096 B/op	       6 allocs/op
+BenchmarkHighlight/language4/bytes1024-10         	  103314	     11831 ns/op	  86.56 MB/s	     25600 reserved-B/op	      7040 steps/op	       288.0 tokens/op	   12096 B/op	       6 allocs/op
+BenchmarkHighlight/language4/bytes1024-10         	  102824	     12153 ns/op	  84.26 MB/s	     25600 reserved-B/op	      7040 steps/op	       288.0 tokens/op	   12096 B/op	       6 allocs/op
+BenchmarkHighlight/language4/bytes1024-10         	  103580	     11581 ns/op	  88.42 MB/s	     25600 reserved-B/op	      7040 steps/op	       288.0 tokens/op	   12096 B/op	       6 allocs/op
+BenchmarkHighlight/language4/bytes8192-10         	   13114	     91514 ns/op	  89.52 MB/s	     90112 reserved-B/op	     57312 steps/op	      2376 tokens/op	   98114 B/op	       9 allocs/op
+BenchmarkHighlight/language4/bytes8192-10         	   13015	     92269 ns/op	  88.78 MB/s	     90112 reserved-B/op	     57312 steps/op	      2376 tokens/op	   98114 B/op	       9 allocs/op
+BenchmarkHighlight/language4/bytes8192-10         	   13054	     92035 ns/op	  89.01 MB/s	     90112 reserved-B/op	     57312 steps/op	      2376 tokens/op	   98114 B/op	       9 allocs/op
+BenchmarkHighlight/language4/bytes8192-10         	   13155	     91683 ns/op	  89.35 MB/s	     90112 reserved-B/op	     57312 steps/op	      2376 tokens/op	   98114 B/op	       9 allocs/op
+BenchmarkHighlight/language4/bytes8192-10         	   13336	     90036 ns/op	  90.99 MB/s	     90112 reserved-B/op	     57312 steps/op	      2376 tokens/op	   98114 B/op	       9 allocs/op
+BenchmarkHighlight/language4/bytes32768-10        	    3375	    350791 ns/op	  93.41 MB/s	    311296 reserved-B/op	    229248 steps/op	      9504 tokens/op	  393032 B/op	      11 allocs/op
+BenchmarkHighlight/language4/bytes32768-10        	    3502	    350583 ns/op	  93.47 MB/s	    311296 reserved-B/op	    229248 steps/op	      9504 tokens/op	  393032 B/op	      11 allocs/op
+BenchmarkHighlight/language4/bytes32768-10        	    3405	    350213 ns/op	  93.57 MB/s	    311296 reserved-B/op	    229248 steps/op	      9504 tokens/op	  393032 B/op	      11 allocs/op
+BenchmarkHighlight/language4/bytes32768-10        	    3429	    353504 ns/op	  92.69 MB/s	    311296 reserved-B/op	    229248 steps/op	      9504 tokens/op	  393032 B/op	      11 allocs/op
+BenchmarkHighlight/language4/bytes32768-10        	    3428	    360264 ns/op	  90.96 MB/s	    311296 reserved-B/op	    229248 steps/op	      9504 tokens/op	  393032 B/op	      11 allocs/op
+BenchmarkHighlight/language4/bytes65536-10        	    1677	    730092 ns/op	  89.76 MB/s	    606208 reserved-B/op	    458744 steps/op	     19026 tokens/op	  786255 B/op	      12 allocs/op
+BenchmarkHighlight/language4/bytes65536-10        	    1394	    810094 ns/op	  80.90 MB/s	    606208 reserved-B/op	    458744 steps/op	     19026 tokens/op	  786255 B/op	      12 allocs/op
+BenchmarkHighlight/language4/bytes65536-10        	    1528	    744534 ns/op	  88.02 MB/s	    606208 reserved-B/op	    458744 steps/op	     19026 tokens/op	  786255 B/op	      12 allocs/op
+BenchmarkHighlight/language4/bytes65536-10        	    1602	    737055 ns/op	  88.92 MB/s	    606208 reserved-B/op	    458744 steps/op	     19026 tokens/op	  786256 B/op	      12 allocs/op
+BenchmarkHighlight/language4/bytes65536-10        	    1564	    734624 ns/op	  89.21 MB/s	    606208 reserved-B/op	    458744 steps/op	     19026 tokens/op	  786257 B/op	      12 allocs/op
+BenchmarkHighlight/language5/bytes1024-10         	   93304	     13127 ns/op	  78.01 MB/s	     25600 reserved-B/op	      6712 steps/op	       480.0 tokens/op	   12096 B/op	       6 allocs/op
+BenchmarkHighlight/language5/bytes1024-10         	   93272	     12892 ns/op	  79.43 MB/s	     25600 reserved-B/op	      6712 steps/op	       480.0 tokens/op	   12096 B/op	       6 allocs/op
+BenchmarkHighlight/language5/bytes1024-10         	   94521	     12563 ns/op	  81.51 MB/s	     25600 reserved-B/op	      6712 steps/op	       480.0 tokens/op	   12096 B/op	       6 allocs/op
+BenchmarkHighlight/language5/bytes1024-10         	   97984	     12394 ns/op	  82.62 MB/s	     25600 reserved-B/op	      6712 steps/op	       480.0 tokens/op	   12096 B/op	       6 allocs/op
+BenchmarkHighlight/language5/bytes1024-10         	   96804	     12951 ns/op	  79.06 MB/s	     25600 reserved-B/op	      6712 steps/op	       480.0 tokens/op	   12096 B/op	       6 allocs/op
+BenchmarkHighlight/language5/bytes8192-10         	   12091	     98849 ns/op	  82.87 MB/s	     90112 reserved-B/op	     54333 steps/op	      3924 tokens/op	   98114 B/op	       9 allocs/op
+BenchmarkHighlight/language5/bytes8192-10         	   10000	    100265 ns/op	  81.70 MB/s	     90112 reserved-B/op	     54333 steps/op	      3924 tokens/op	   98114 B/op	       9 allocs/op
+BenchmarkHighlight/language5/bytes8192-10         	   10000	    100252 ns/op	  81.71 MB/s	     90112 reserved-B/op	     54333 steps/op	      3924 tokens/op	   98114 B/op	       9 allocs/op
+BenchmarkHighlight/language5/bytes8192-10         	   10000	    100038 ns/op	  81.89 MB/s	     90112 reserved-B/op	     54333 steps/op	      3924 tokens/op	   98114 B/op	       9 allocs/op
+BenchmarkHighlight/language5/bytes8192-10         	   12010	     99894 ns/op	  82.01 MB/s	     90112 reserved-B/op	     54333 steps/op	      3924 tokens/op	   98114 B/op	       9 allocs/op
+BenchmarkHighlight/language5/bytes32768-10        	    3054	    391406 ns/op	  83.72 MB/s	    311296 reserved-B/op	    217514 steps/op	     15720 tokens/op	  393032 B/op	      11 allocs/op
+BenchmarkHighlight/language5/bytes32768-10        	    3070	    392600 ns/op	  83.46 MB/s	    311296 reserved-B/op	    217514 steps/op	     15720 tokens/op	  393032 B/op	      11 allocs/op
+BenchmarkHighlight/language5/bytes32768-10        	    3030	    391737 ns/op	  83.65 MB/s	    311296 reserved-B/op	    217514 steps/op	     15720 tokens/op	  393032 B/op	      11 allocs/op
+BenchmarkHighlight/language5/bytes32768-10        	    3044	    392659 ns/op	  83.45 MB/s	    311296 reserved-B/op	    217514 steps/op	     15720 tokens/op	  393031 B/op	      11 allocs/op
+BenchmarkHighlight/language5/bytes32768-10        	    3051	    392199 ns/op	  83.55 MB/s	    311296 reserved-B/op	    217514 steps/op	     15720 tokens/op	  393031 B/op	      11 allocs/op
+BenchmarkHighlight/language5/bytes65536-10        	    1527	    788462 ns/op	  83.12 MB/s	    606208 reserved-B/op	    435119 steps/op	     31452 tokens/op	  786253 B/op	      12 allocs/op
+BenchmarkHighlight/language5/bytes65536-10        	    1524	    789823 ns/op	  82.98 MB/s	    606208 reserved-B/op	    435119 steps/op	     31452 tokens/op	  786254 B/op	      12 allocs/op
+BenchmarkHighlight/language5/bytes65536-10        	    1509	    791319 ns/op	  82.82 MB/s	    606208 reserved-B/op	    435119 steps/op	     31452 tokens/op	  786254 B/op	      12 allocs/op
+BenchmarkHighlight/language5/bytes65536-10        	    1514	    788536 ns/op	  83.11 MB/s	    606208 reserved-B/op	    435119 steps/op	     31452 tokens/op	  786254 B/op	      12 allocs/op
+BenchmarkHighlight/language5/bytes65536-10        	    1515	    791025 ns/op	  82.85 MB/s	    606208 reserved-B/op	    435119 steps/op	     31452 tokens/op	  786254 B/op	      12 allocs/op
+BenchmarkHighlight/language6/bytes1024-10         	  136662	      8703 ns/op	 117.66 MB/s	     25600 reserved-B/op	      6816 steps/op	       312.0 tokens/op	   12096 B/op	       6 allocs/op
+BenchmarkHighlight/language6/bytes1024-10         	  136989	      8749 ns/op	 117.04 MB/s	     25600 reserved-B/op	      6816 steps/op	       312.0 tokens/op	   12096 B/op	       6 allocs/op
+BenchmarkHighlight/language6/bytes1024-10         	  137726	      8692 ns/op	 117.82 MB/s	     25600 reserved-B/op	      6816 steps/op	       312.0 tokens/op	   12096 B/op	       6 allocs/op
+BenchmarkHighlight/language6/bytes1024-10         	  137919	      8734 ns/op	 117.24 MB/s	     25600 reserved-B/op	      6816 steps/op	       312.0 tokens/op	   12096 B/op	       6 allocs/op
+BenchmarkHighlight/language6/bytes1024-10         	  139113	      8698 ns/op	 117.73 MB/s	     25600 reserved-B/op	      6816 steps/op	       312.0 tokens/op	   12096 B/op	       6 allocs/op
+BenchmarkHighlight/language6/bytes8192-10         	   17566	     68105 ns/op	 120.29 MB/s	     90112 reserved-B/op	     54816 steps/op	      2520 tokens/op	   98114 B/op	       9 allocs/op
+BenchmarkHighlight/language6/bytes8192-10         	   17773	     67743 ns/op	 120.93 MB/s	     90112 reserved-B/op	     54816 steps/op	      2520 tokens/op	   98114 B/op	       9 allocs/op
+BenchmarkHighlight/language6/bytes8192-10         	   17679	     67864 ns/op	 120.71 MB/s	     90112 reserved-B/op	     54816 steps/op	      2520 tokens/op	   98114 B/op	       9 allocs/op
+BenchmarkHighlight/language6/bytes8192-10         	   17626	     68040 ns/op	 120.40 MB/s	     90112 reserved-B/op	     54816 steps/op	      2520 tokens/op	   98114 B/op	       9 allocs/op
+BenchmarkHighlight/language6/bytes8192-10         	   17815	     67644 ns/op	 121.10 MB/s	     90112 reserved-B/op	     54816 steps/op	      2520 tokens/op	   98114 B/op	       9 allocs/op
+BenchmarkHighlight/language6/bytes32768-10        	    4585	    261580 ns/op	 125.27 MB/s	    311296 reserved-B/op	    219264 steps/op	     10080 tokens/op	  393032 B/op	      11 allocs/op
+BenchmarkHighlight/language6/bytes32768-10        	    4580	    262241 ns/op	 124.95 MB/s	    311296 reserved-B/op	    219264 steps/op	     10080 tokens/op	  393031 B/op	      11 allocs/op
+BenchmarkHighlight/language6/bytes32768-10        	    4472	    265206 ns/op	 123.56 MB/s	    311296 reserved-B/op	    219264 steps/op	     10080 tokens/op	  393031 B/op	      11 allocs/op
+BenchmarkHighlight/language6/bytes32768-10        	    4603	    264382 ns/op	 123.94 MB/s	    311296 reserved-B/op	    219264 steps/op	     10080 tokens/op	  393032 B/op	      11 allocs/op
+BenchmarkHighlight/language6/bytes32768-10        	    4423	    262056 ns/op	 125.04 MB/s	    311296 reserved-B/op	    219264 steps/op	     10080 tokens/op	  393031 B/op	      11 allocs/op
+BenchmarkHighlight/language6/bytes65536-10        	    2278	    528518 ns/op	 124.00 MB/s	    606208 reserved-B/op	    438528 steps/op	     20160 tokens/op	  786255 B/op	      12 allocs/op
+BenchmarkHighlight/language6/bytes65536-10        	    2304	    529865 ns/op	 123.68 MB/s	    606208 reserved-B/op	    438528 steps/op	     20160 tokens/op	  786254 B/op	      12 allocs/op
+BenchmarkHighlight/language6/bytes65536-10        	    2248	    529699 ns/op	 123.72 MB/s	    606208 reserved-B/op	    438528 steps/op	     20160 tokens/op	  786254 B/op	      12 allocs/op
+BenchmarkHighlight/language6/bytes65536-10        	    2259	    537704 ns/op	 121.88 MB/s	    606208 reserved-B/op	    438528 steps/op	     20160 tokens/op	  786254 B/op	      12 allocs/op
+BenchmarkHighlight/language6/bytes65536-10        	    2269	    531319 ns/op	 123.35 MB/s	    606208 reserved-B/op	    438528 steps/op	     20160 tokens/op	  786255 B/op	      12 allocs/op
+BenchmarkMarkdownSmallDeltas/step1-10             	     578	   2075280 ns/op	  30.84 MB/s	  998273 B/op	   12183 allocs/op
+BenchmarkMarkdownSmallDeltas/step1-10             	     578	   2071349 ns/op	  30.90 MB/s	  998272 B/op	   12183 allocs/op
+BenchmarkMarkdownSmallDeltas/step1-10             	     582	   2083798 ns/op	  30.72 MB/s	  998270 B/op	   12183 allocs/op
+BenchmarkMarkdownSmallDeltas/step1-10             	     578	   2075724 ns/op	  30.84 MB/s	  998270 B/op	   12183 allocs/op
+BenchmarkMarkdownSmallDeltas/step1-10             	     577	   2074103 ns/op	  30.86 MB/s	  998273 B/op	   12183 allocs/op
+BenchmarkMarkdownSmallDeltas/step8-10             	    1356	    878605 ns/op	  72.85 MB/s	  998272 B/op	   12183 allocs/op
+BenchmarkMarkdownSmallDeltas/step8-10             	    1375	    876140 ns/op	  73.06 MB/s	  998275 B/op	   12183 allocs/op
+BenchmarkMarkdownSmallDeltas/step8-10             	    1345	    878136 ns/op	  72.89 MB/s	  998274 B/op	   12183 allocs/op
+BenchmarkMarkdownSmallDeltas/step8-10             	    1338	    883445 ns/op	  72.45 MB/s	  998277 B/op	   12183 allocs/op
+BenchmarkMarkdownSmallDeltas/step8-10             	    1330	    941305 ns/op	  68.00 MB/s	  998277 B/op	   12183 allocs/op
+BenchmarkMarkdownSmallDeltas/step32-10            	    1784	    673926 ns/op	  94.98 MB/s	  902901 B/op	    6182 allocs/op
+BenchmarkMarkdownSmallDeltas/step32-10            	    1789	    666035 ns/op	  96.11 MB/s	  902901 B/op	    6182 allocs/op
+BenchmarkMarkdownSmallDeltas/step32-10            	    1788	    667758 ns/op	  95.86 MB/s	  902900 B/op	    6182 allocs/op
+BenchmarkMarkdownSmallDeltas/step32-10            	    1851	    663714 ns/op	  96.44 MB/s	  902901 B/op	    6182 allocs/op
+BenchmarkMarkdownSmallDeltas/step32-10            	    1804	    664966 ns/op	  96.26 MB/s	  902902 B/op	    6182 allocs/op
+BenchmarkHighlightAdversarial/dense-10            	    1512	    798657 ns/op	  82.06 MB/s	         1.000 failure/op	    606208 reserved-B/op	    425997 steps/op	  786258 B/op	      12 allocs/op
+BenchmarkHighlightAdversarial/dense-10            	    1506	    794092 ns/op	  82.53 MB/s	         1.000 failure/op	    606208 reserved-B/op	    425997 steps/op	  786257 B/op	      12 allocs/op
+BenchmarkHighlightAdversarial/dense-10            	    1521	    795841 ns/op	  82.35 MB/s	         1.000 failure/op	    606208 reserved-B/op	    425997 steps/op	  786257 B/op	      12 allocs/op
+BenchmarkHighlightAdversarial/dense-10            	    1515	    788213 ns/op	  83.15 MB/s	         1.000 failure/op	    606208 reserved-B/op	    425997 steps/op	  786257 B/op	      12 allocs/op
+BenchmarkHighlightAdversarial/dense-10            	    1534	    794407 ns/op	  82.50 MB/s	         1.000 failure/op	    606208 reserved-B/op	    425997 steps/op	  786257 B/op	      12 allocs/op
+BenchmarkHighlightAdversarial/deep-10             	 1000000	      1116 ns/op	  62.73 MB/s	         1.000 failure/op	         0 reserved-B/op	       339.0 steps/op	       0 B/op	       0 allocs/op
+BenchmarkHighlightAdversarial/deep-10             	 1000000	      1114 ns/op	  62.82 MB/s	         1.000 failure/op	         0 reserved-B/op	       339.0 steps/op	       0 B/op	       0 allocs/op
+BenchmarkHighlightAdversarial/deep-10             	 1000000	      1106 ns/op	  63.31 MB/s	         1.000 failure/op	         0 reserved-B/op	       339.0 steps/op	       0 B/op	       0 allocs/op
+BenchmarkHighlightAdversarial/deep-10             	 1000000	      1097 ns/op	  63.79 MB/s	         1.000 failure/op	         0 reserved-B/op	       339.0 steps/op	       0 B/op	       0 allocs/op
+BenchmarkHighlightAdversarial/deep-10             	 1000000	      1118 ns/op	  62.59 MB/s	         1.000 failure/op	         0 reserved-B/op	       339.0 steps/op	       0 B/op	       0 allocs/op
+BenchmarkHighlightAdversarial/unterminated-10     	    3862	    312044 ns/op	 209.98 MB/s	         0 failure/op	     16576 reserved-B/op	    458653 steps/op	     192 B/op	       1 allocs/op
+BenchmarkHighlightAdversarial/unterminated-10     	    3846	    313574 ns/op	 208.96 MB/s	         0 failure/op	     16576 reserved-B/op	    458653 steps/op	     192 B/op	       1 allocs/op
+BenchmarkHighlightAdversarial/unterminated-10     	    3843	    311920 ns/op	 210.07 MB/s	         0 failure/op	     16576 reserved-B/op	    458653 steps/op	     192 B/op	       1 allocs/op
+BenchmarkHighlightAdversarial/unterminated-10     	    3846	    315091 ns/op	 207.95 MB/s	         0 failure/op	     16576 reserved-B/op	    458653 steps/op	     192 B/op	       1 allocs/op
+BenchmarkHighlightAdversarial/unterminated-10     	    3810	    313047 ns/op	 209.31 MB/s	         0 failure/op	     16576 reserved-B/op	    458653 steps/op	     192 B/op	       1 allocs/op
+BenchmarkHighlightAdversarial/terminator-10       	    2428	    490747 ns/op	 126.22 MB/s	         0 failure/op	     16576 reserved-B/op	    555278 steps/op	    1728 B/op	       2 allocs/op
+BenchmarkHighlightAdversarial/terminator-10       	    2448	    489405 ns/op	 126.57 MB/s	         0 failure/op	     16576 reserved-B/op	    555278 steps/op	    1728 B/op	       2 allocs/op
+BenchmarkHighlightAdversarial/terminator-10       	    2409	    489393 ns/op	 126.57 MB/s	         0 failure/op	     16576 reserved-B/op	    555278 steps/op	    1728 B/op	       2 allocs/op
+BenchmarkHighlightAdversarial/terminator-10       	    2475	    497722 ns/op	 124.45 MB/s	         0 failure/op	     16576 reserved-B/op	    555278 steps/op	    1728 B/op	       2 allocs/op
+BenchmarkHighlightAdversarial/terminator-10       	    2457	    492443 ns/op	 125.79 MB/s	         0 failure/op	     16576 reserved-B/op	    555278 steps/op	    1728 B/op	       2 allocs/op
+BenchmarkMarkdownDocuments/single-line-10         	     609	   1964590 ns/op	  33.36 MB/s	    156256 retained-B/op	         3.000 retained-nodes/op	  352534 B/op	    1005 allocs/op
+BenchmarkMarkdownDocuments/single-line-10         	     608	   1961048 ns/op	  33.42 MB/s	    156256 retained-B/op	         3.000 retained-nodes/op	  352536 B/op	    1005 allocs/op
+BenchmarkMarkdownDocuments/single-line-10         	     614	   1922638 ns/op	  34.09 MB/s	    156256 retained-B/op	         3.000 retained-nodes/op	  352535 B/op	    1005 allocs/op
+BenchmarkMarkdownDocuments/single-line-10         	     633	   1896971 ns/op	  34.55 MB/s	    156256 retained-B/op	         3.000 retained-nodes/op	  352535 B/op	    1005 allocs/op
+BenchmarkMarkdownDocuments/single-line-10         	     634	   1952197 ns/op	  33.57 MB/s	    156256 retained-B/op	         3.000 retained-nodes/op	  352534 B/op	    1005 allocs/op
+BenchmarkMarkdownDocuments/table-10               	     100	  11106758 ns/op	   5.67 MB/s	    259879 retained-B/op	      8507 retained-nodes/op	 8945801 B/op	   63122 allocs/op
+BenchmarkMarkdownDocuments/table-10               	     100	  11038830 ns/op	   5.70 MB/s	    259879 retained-B/op	      8507 retained-nodes/op	 8945857 B/op	   63122 allocs/op
+BenchmarkMarkdownDocuments/table-10               	     100	  11370590 ns/op	   5.53 MB/s	    259879 retained-B/op	      8507 retained-nodes/op	 8945813 B/op	   63122 allocs/op
+BenchmarkMarkdownDocuments/table-10               	     100	  11124232 ns/op	   5.66 MB/s	    259879 retained-B/op	      8507 retained-nodes/op	 8945808 B/op	   63122 allocs/op
+BenchmarkMarkdownDocuments/table-10               	     100	  10922502 ns/op	   5.76 MB/s	    259879 retained-B/op	      8507 retained-nodes/op	 8945824 B/op	   63122 allocs/op
+BenchmarkMarkdownDocuments/controls-10            	    4844	    251397 ns/op	 260.69 MB/s	       352.0 retained-B/op	         0 retained-nodes/op	   47019 B/op	    1187 allocs/op
+BenchmarkMarkdownDocuments/controls-10            	    4687	    255914 ns/op	 256.09 MB/s	       352.0 retained-B/op	         0 retained-nodes/op	   47019 B/op	    1187 allocs/op
+BenchmarkMarkdownDocuments/controls-10            	    4740	    267071 ns/op	 245.39 MB/s	       352.0 retained-B/op	         0 retained-nodes/op	   47018 B/op	    1187 allocs/op
+BenchmarkMarkdownDocuments/controls-10            	    4522	    261305 ns/op	 250.80 MB/s	       352.0 retained-B/op	         0 retained-nodes/op	   47019 B/op	    1187 allocs/op
+BenchmarkMarkdownDocuments/controls-10            	    4872	    254209 ns/op	 257.80 MB/s	       352.0 retained-B/op	         0 retained-nodes/op	   47018 B/op	    1187 allocs/op
+BenchmarkMarkdownDocuments/fifty-hot-10           	   16392	     72964 ns/op	   74901 B/op	     666 allocs/op
+BenchmarkMarkdownDocuments/fifty-hot-10           	   15861	     76179 ns/op	   74902 B/op	     666 allocs/op
+BenchmarkMarkdownDocuments/fifty-hot-10           	   15310	     77970 ns/op	   74903 B/op	     666 allocs/op
+BenchmarkMarkdownDocuments/fifty-hot-10           	   15688	     76960 ns/op	   74902 B/op	     666 allocs/op
+BenchmarkMarkdownDocuments/fifty-hot-10           	   15439	     77174 ns/op	   74903 B/op	     666 allocs/op
+PASS
+ok  	easycode/internal/tui	211.319s

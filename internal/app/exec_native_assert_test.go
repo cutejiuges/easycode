@@ -23,12 +23,16 @@ func assertExecLoopNativeOrder(t *testing.T, plan session.ReplayPlan, family dom
 		var entry struct {
 			Kind    string `json:"kind"`
 			Outputs []struct {
-				CallID string `json:"call_id"`
-				Phase  string `json:"phase"`
+				CallID  string `json:"call_id"`
+				Phase   string `json:"phase"`
+				Content []struct {
+					Text string `json:"text"`
+				} `json:"content"`
 			} `json:"outputs"`
 			Assistant struct {
 				Content []struct {
-					ID string `json:"id"`
+					ID   string `json:"id"`
+					Text string `json:"text"`
 				} `json:"content"`
 			} `json:"assistant"`
 			ToolOutputs json.RawMessage `json:"tool_outputs"`
@@ -47,11 +51,20 @@ func assertExecLoopNativeOrder(t *testing.T, plan session.ReplayPlan, family dom
 				continue
 			}
 			got := ""
-			if family == domain.ProviderOpenAI && len(entry.Outputs) == 1 {
-				got = entry.Outputs[0].CallID
-			}
-			if family == domain.ProviderAnthropic && len(entry.Assistant.Content) == 1 {
-				got = entry.Assistant.Content[0].ID
+			if index == 0 {
+				if family == domain.ProviderOpenAI && len(entry.Outputs) == 3 && len(entry.Outputs[0].Content) == 1 && len(entry.Outputs[2].Content) == 1 && entry.Outputs[0].Content[0].Text == "# Inspect inputs" && entry.Outputs[2].Content[0].Text == "**Inputs reviewed**" {
+					got = entry.Outputs[1].CallID
+				}
+				if family == domain.ProviderAnthropic && len(entry.Assistant.Content) == 3 && entry.Assistant.Content[0].Text == "# Inspect inputs" && entry.Assistant.Content[2].Text == "**Inputs reviewed**" {
+					got = entry.Assistant.Content[1].ID
+				}
+			} else {
+				if family == domain.ProviderOpenAI && len(entry.Outputs) == 1 {
+					got = entry.Outputs[0].CallID
+				}
+				if family == domain.ProviderAnthropic && len(entry.Assistant.Content) == 1 {
+					got = entry.Assistant.Content[0].ID
+				}
 			}
 			if got != ids[index/2] {
 				t.Fatal("native call ordering changed")

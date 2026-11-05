@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -60,7 +61,7 @@ func runCacheReadPatchExecApprovedLoopForBothProviders(t *testing.T, cacheEnable
 				if family == domain.ProviderOpenAI {
 					switch sample {
 					case 1:
-						writeOpenAIToolLoopSample(writer, 1)
+						writeMarkdownReadSample(writer, family)
 					case 2:
 						writeOpenAIPatchSample(writer, 1)
 					case 3:
@@ -71,7 +72,7 @@ func runCacheReadPatchExecApprovedLoopForBothProviders(t *testing.T, cacheEnable
 				} else {
 					switch sample {
 					case 1:
-						writeAnthropicToolLoopSample(writer, 1)
+						writeMarkdownReadSample(writer, family)
 					case 2:
 						writeAnthropicPatchSample(writer, 1)
 					case 3:
@@ -167,9 +168,16 @@ func runCacheReadPatchExecApprovedLoopForBothProviders(t *testing.T, cacheEnable
 			if strings.Contains(ui.View(), "Status:") || !strings.Contains(ui.View(), "answer-4") || !strings.Contains(ui.View(), "Shell(") {
 				t.Fatalf("final TUI lost completed command: %s", ui.View())
 			}
+			view := ui.View()
+			before, read, after := strings.Index(view, "Inspect inputs"), strings.Index(view, "Read 1 files"), strings.Index(view, "Inputs reviewed")
+			if before < 0 || read <= before || after <= read || strings.Count(view, "Inputs reviewed") != 1 {
+				t.Fatalf("interleaved Markdown projection: %s", view)
+			}
 			var query tea.Cmd
 			ui, query = ui.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
-			ui, _ = ui.Update(query())
+			if query != nil {
+				ui, _ = ui.Update(query())
+			}
 			page, err := resources.transcriptQueries.ListTranscript(context.Background(), protocol.TranscriptListQuery{ThreadID: resources.identity.ThreadID, Limit: 50})
 			if err != nil {
 				t.Fatal(err)
@@ -377,5 +385,30 @@ func runCacheReadPatchExecApprovedLoopForBothProviders(t *testing.T, cacheEnable
 				})
 			}
 		})
+	}
+}
+
+// 同一采样依次提交正文、读取调用和正文，验证两种原生结构的投影顺序。
+func writeMarkdownReadSample(w io.Writer, family domain.ProviderFamily) {
+	text := func(index int, value string) {
+		if family == domain.ProviderOpenAI {
+			fmt.Fprintf(w, "data: {\"type\":\"response.output_text.delta\",\"output_index\":%d,\"delta\":%q}\n\n", index, value)
+			fmt.Fprintf(w, "data: {\"type\":\"response.output_item.done\",\"output_index\":%d,\"item\":{\"type\":\"message\",\"id\":\"msg-read-%d\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":%q}]}}\n\n", index, index, value)
+		} else {
+			fmt.Fprintf(w, "data: {\"type\":\"content_block_start\",\"index\":%d,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":%d,\"delta\":{\"type\":\"text_delta\",\"text\":%q}}\n\ndata: {\"type\":\"content_block_stop\",\"index\":%d}\n\n", index, index, value, index)
+		}
+	}
+	if family == domain.ProviderOpenAI {
+		io.WriteString(w, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-tool\"}}\n\n")
+		text(0, "# Inspect inputs")
+		writeOpenAIFunctionCall(w, 1, "fc-1", "call-1", "Read", `{"file_path":"README.md"}`)
+		text(2, "**Inputs reviewed**")
+		io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-tool\"}}\n\n")
+	} else {
+		io.WriteString(w, "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg-tool\",\"model\":\"claude-test\"}}\n\n")
+		text(0, "# Inspect inputs")
+		writeAnthropicToolUse(w, 1, "toolu-1", "Read", `{"file_path":"README.md"}`)
+		text(2, "**Inputs reviewed**")
+		io.WriteString(w, "data: {\"type\":\"message_stop\"}\n\n")
 	}
 }

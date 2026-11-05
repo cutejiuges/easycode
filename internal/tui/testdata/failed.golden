@@ -1,7 +1,7 @@
 EasyCode test
 
 User: previous
-Assistant: kept
+● kept
 User: hello
 Error: provider_request_failed: provider request failed
 

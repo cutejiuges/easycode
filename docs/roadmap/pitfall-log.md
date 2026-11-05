@@ -671,6 +671,14 @@
 
 ## 8. P5 Claude 风格 TUI
 
+### [P5][2026-11-05] 逐前缀验证流式边界和瞬时容量
+
+- 空列表项的正文可能从后续缩进行开始。用首个文字节点猜块边界会切断列表，空围栏也可能没有正文节点。适配层记录块解析器实际的 Open 和闭合事件。
+- 未闭合代码内的控制字符要先净化再按列换行，否则相同字节在流式与收口时的行边界不同。最小失败输入保存在 `internal/tui/testdata/fuzz/FuzzMarkdownStreamingFinal/`。
+- 各块布局都在限额内时，合并仍可能需要新行数组。合并前预留输入数组与新数组同时存活的容量。窄屏原文详情仅物化可见行，使用原字节位置重新定位。
+- 回归入口为 internal/tui 下的 `markdown_stream_test.go`、`markdown_test.go` 和 `transcript_viewport_test.go`。
+
+
 ### [P5][2026-09-19] 先交付 text-only Chat 薄切片，不提前扩张完整 TUI
 
 - 状态：已采用

@@ -97,7 +97,9 @@ func (snapshotTranscriptQueries) ReadToolOutput(context.Context, protocol.ToolOu
 func openSnapshotCommandDetail(t *testing.T, model Model) Model {
 	t.Helper()
 	model, cmd := browserKey(t, model, tea.KeyCtrlO)
-	model = updateModel(t, model, cmd())
+	if cmd != nil {
+		model = updateModel(t, model, cmd())
+	}
 	model, cmd = browserKey(t, model, tea.KeyEnter)
 	if cmd != nil {
 		model = updateModel(t, model, cmd())

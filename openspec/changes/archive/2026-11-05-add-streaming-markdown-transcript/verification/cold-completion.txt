@@ -1,0 +1,21 @@
+goos: darwin
+goarch: arm64
+pkg: easycode/internal/tui
+cpu: Apple M1 Pro
+BenchmarkMarkdownColdStreamCompletion/step1-10         	     230	   5161572 ns/op	  12.70 MB/s	     65542 parsed-B/op	    606184 reserved-B/op	    405423 steps/op	     32760 tokens/op	 2718867 B/op	   16624 allocs/op
+BenchmarkMarkdownColdStreamCompletion/step1-10         	     231	   5149023 ns/op	  12.73 MB/s	     65542 parsed-B/op	    606184 reserved-B/op	    405423 steps/op	     32760 tokens/op	 2718777 B/op	   16623 allocs/op
+BenchmarkMarkdownColdStreamCompletion/step1-10         	     232	   5142079 ns/op	  12.75 MB/s	     65542 parsed-B/op	    606184 reserved-B/op	    405423 steps/op	     32760 tokens/op	 2718776 B/op	   16623 allocs/op
+BenchmarkMarkdownColdStreamCompletion/step1-10         	     232	   5123980 ns/op	  12.79 MB/s	     65542 parsed-B/op	    606184 reserved-B/op	    405423 steps/op	     32760 tokens/op	 2718780 B/op	   16624 allocs/op
+BenchmarkMarkdownColdStreamCompletion/step1-10         	     234	   5116572 ns/op	  12.81 MB/s	     65542 parsed-B/op	    606184 reserved-B/op	    405423 steps/op	     32760 tokens/op	 2718804 B/op	   16624 allocs/op
+BenchmarkMarkdownColdStreamCompletion/step8-10         	     308	   3876677 ns/op	  16.91 MB/s	     65542 parsed-B/op	    606184 reserved-B/op	    405423 steps/op	     32760 tokens/op	 2718731 B/op	   16621 allocs/op
+BenchmarkMarkdownColdStreamCompletion/step8-10         	     309	   3887660 ns/op	  16.86 MB/s	     65542 parsed-B/op	    606184 reserved-B/op	    405423 steps/op	     32760 tokens/op	 2718732 B/op	   16621 allocs/op
+BenchmarkMarkdownColdStreamCompletion/step8-10         	     308	   3887341 ns/op	  16.86 MB/s	     65542 parsed-B/op	    606184 reserved-B/op	    405423 steps/op	     32760 tokens/op	 2718727 B/op	   16620 allocs/op
+BenchmarkMarkdownColdStreamCompletion/step8-10         	     307	   3887298 ns/op	  16.86 MB/s	     65542 parsed-B/op	    606184 reserved-B/op	    405423 steps/op	     32760 tokens/op	 2718733 B/op	   16621 allocs/op
+BenchmarkMarkdownColdStreamCompletion/step8-10         	     308	   3908178 ns/op	  16.77 MB/s	     65542 parsed-B/op	    606184 reserved-B/op	    405423 steps/op	     32760 tokens/op	 2718731 B/op	   16621 allocs/op
+BenchmarkMarkdownColdStreamCompletion/step32-10        	     321	   3684192 ns/op	  17.79 MB/s	     65558 parsed-B/op	    606184 reserved-B/op	    405423 steps/op	     32760 tokens/op	 2621046 B/op	   10475 allocs/op
+BenchmarkMarkdownColdStreamCompletion/step32-10        	     327	   3629850 ns/op	  18.05 MB/s	     65558 parsed-B/op	    606184 reserved-B/op	    405423 steps/op	     32760 tokens/op	 2621045 B/op	   10475 allocs/op
+BenchmarkMarkdownColdStreamCompletion/step32-10        	     336	   3614859 ns/op	  18.13 MB/s	     65558 parsed-B/op	    606184 reserved-B/op	    405423 steps/op	     32760 tokens/op	 2621050 B/op	   10475 allocs/op
+BenchmarkMarkdownColdStreamCompletion/step32-10        	     332	   3783423 ns/op	  17.32 MB/s	     65558 parsed-B/op	    606184 reserved-B/op	    405423 steps/op	     32760 tokens/op	 2621047 B/op	   10475 allocs/op
+BenchmarkMarkdownColdStreamCompletion/step32-10        	     333	   3599331 ns/op	  18.21 MB/s	     65558 parsed-B/op	    606184 reserved-B/op	    405423 steps/op	     32760 tokens/op	 2621045 B/op	   10475 allocs/op
+PASS
+ok  	easycode/internal/tui	18.371s

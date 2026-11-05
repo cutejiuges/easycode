@@ -988,3 +988,11 @@ ADR 存放在 `docs/architecture/adr/`，模板见该目录的 `README.md`，并
 `extension/skill.Local.Load` 显式建立有界来源快照，使用 no-follow 描述符逐段打开、实际句柄类型校验和全文摘要检测文件变化。`domain.SkillCatalog` 只持有元数据；`skill_catalog` 是 project-stable 来源，正文通过用户附件或 `skill.read` 工具进入历史尾部。
 
 宿主在 AgentLoop admission 前调用共享准备服务；队列保存原文与单份 `SkillAttachment`，预算同时计费。两家 Provider 保存独立文本块与 `input_metadata.skills` 关联，不从展示投影重建请求。Skill 的工具事实复用 `tool_call_ready`、`tool_execution_started`、`tool_call_result` 和原生 outputs；当前结果字段为 `skill_input` / `skill_metadata`。附件/结果在 Sync 后可见，恢复不访问来源文件。Runtime 从当前 turn 已提交输入派生短期资源资格，不写独立授权 record，结束 turn 即清除。
+
+### 助手正文的流式 Markdown 投影
+
+TUI 在 Update 中按消息身份准备布局。未提交文字按本地身份追加，持久化正文按 transcript cursor 读取。两种来源按已提交序号交接，查询等待期间保留可见行。阅读位置使用原文 UTF-8 偏移，缩放终端和切换原文时按新行宽定位。
+
+Goldmark 的块起点与围栏闭合事件决定稳定前缀。未闭合围栏先展示代码，收口后由实例词法扫描器着色。扫描器和语法树共享 32768 个节点预算，布局、映射和高亮容量共享 2 MiB。主线、历史列表、正文与命令附页共享四个查询缓存位置。超出单页的持久化正文通过原文字节范围查询浏览。
+
+展示状态由 TUI 实例拥有。继续采样时由 Provider 自身的 native history 还原请求。交互与缓存契约见 [Markdown transcript 规格](../../openspec/specs/tui/markdown-transcript/spec.md)。

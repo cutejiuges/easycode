@@ -19,6 +19,7 @@ const (
 )
 
 type transcriptPageKey struct {
+	through  uint64
 	backward bool
 	kind     transcriptPageKind
 	cursor   protocol.TranscriptCursor
@@ -47,6 +48,14 @@ type transcriptDetailPosition struct {
 }
 
 type transcriptBrowser struct {
+	mainListKey        transcriptPageKey
+	mainListPinned     bool
+	listKey            transcriptPageKey
+	listPinned         bool
+	entryCursor        protocol.TranscriptCursor
+	markdown           transcriptMarkdownDetail
+	anchorCursor       protocol.TranscriptCursor
+	visibleCursors     []protocol.TranscriptCursor
 	positions          [6]transcriptDetailPosition
 	queries            protocol.TranscriptQueries
 	thread             domain.ThreadID
@@ -69,6 +78,12 @@ type transcriptBrowser struct {
 // WithTranscriptQueries 只装配宿主端口，首个查询通过 Init 或按键命令显式执行。
 func (model Model) WithTranscriptQueries(thread domain.ThreadID, queries protocol.TranscriptQueries) Model {
 	model.browser.invalidate()
+	color := model.markdown.color
+	model.markdown = newMarkdownViewCache()
+	model.markdown.color = color
+	if model.main.hydrationCancel != nil {
+		model.main.hydrationCancel()
+	}
 	model.browser = transcriptBrowser{thread: thread, queries: queries, generation: model.browser.generation}
 	model.detailOpen = false
 	if model.main.cancel != nil {
@@ -95,7 +110,30 @@ func (b *transcriptBrowser) remember(page cachedTranscriptPage) {
 		}
 	}
 	if len(b.cache) == 4 {
-		b.cache = append([]cachedTranscriptPage(nil), b.cache[1:]...)
+		victim := -1
+		for pass := 0; pass < 2 && victim < 0; pass++ {
+			for i, cached := range b.cache {
+				if b.protected(cached.key) {
+					continue
+				}
+				visible := false
+				for _, cursor := range b.visibleCursors {
+					if cursor == cached.key.cursor {
+						visible = true
+						break
+					}
+				}
+				if pass == 0 && visible {
+					continue
+				}
+				victim = i
+				break
+			}
+		}
+		if victim < 0 {
+			return
+		}
+		b.cache = append(b.cache[:victim:victim], b.cache[victim+1:]...)
 	}
 	b.cache = append(b.cache, page)
 }
@@ -103,21 +141,32 @@ func (b *transcriptBrowser) remember(page cachedTranscriptPage) {
 func (model Model) openTranscriptBrowser() (tea.Model, tea.Cmd) {
 	model.browser.invalidate()
 	model.detailOpen = !model.detailOpen
+	model.browser.listPinned = model.detailOpen
+	model.main.resetHydration()
 	model.detailScroll = 0
 	if !model.detailOpen {
 		model.browser.page = nil
-		model.browser.cache = nil
+		model.browser.markdown = transcriptMarkdownDetail{}
 		model.browser.items = nil
 		return model, nil
 	}
 	model.browser.detail = false
-	return model.loadTranscriptPage(transcriptPageKey{kind: transcriptListPage})
+	model.browser.entryCursor = protocol.TranscriptCursor{}
+	if model.reading.detached {
+		model.browser.entryCursor = model.reading.anchor.key.cursor
+	}
+	through := model.main.sequence
+	if through == 0 && model.browser.mainListPinned {
+		through = model.browser.mainListKey.through
+	}
+	return model.loadTranscriptPage(transcriptPageKey{kind: transcriptListPage, through: through})
 }
 
 func (model Model) loadTranscriptPage(key transcriptPageKey) (tea.Model, tea.Cmd) {
 	b := &model.browser
 	b.invalidate()
 	b.page = nil
+	b.markdown = transcriptMarkdownDetail{}
 	model.detailScroll = 0
 	if b.queries == nil {
 		b.errorText = "Transcript unavailable"
@@ -125,6 +174,7 @@ func (model Model) loadTranscriptPage(key transcriptPageKey) (tea.Model, tea.Cmd
 	}
 	if key.kind == transcriptListPage {
 		b.before = key.cursor
+		b.listKey = key
 		b.detail = false
 		b.selected = 0
 	}
@@ -148,7 +198,7 @@ func (model Model) loadTranscriptPage(key transcriptPageKey) (tea.Model, tea.Cmd
 		reply := transcriptReply{generation: generation, page: cachedTranscriptPage{key: key}}
 		switch key.kind {
 		case transcriptListPage:
-			reply.page.list, reply.err = queries.ListTranscript(ctx, protocol.TranscriptListQuery{ThreadID: thread, Before: key.cursor, Newer: key.backward, Limit: 50})
+			reply.page.list, reply.err = queries.ListTranscript(ctx, protocol.TranscriptListQuery{ThreadID: thread, Before: key.cursor, Newer: key.backward, Through: key.through, Limit: 50})
 		case transcriptBodyPage:
 			reply.page.body, reply.err = queries.ReadTranscriptBody(ctx, protocol.TranscriptBodyQuery{ThreadID: thread, Cursor: key.cursor, Source: key.source, Offset: key.offset, Backward: key.backward, Limit: 64 << 10})
 		case transcriptOutputPage:
@@ -203,7 +253,11 @@ func (model Model) receiveTranscriptPage(reply transcriptReply) (tea.Model, tea.
 		if b.selected < len(b.items) {
 			selected = b.items[b.selected].Cursor
 		}
-		b.items = append([]protocol.TranscriptListItem(nil), p.list.Items...)
+		if b.entryCursor.Valid() {
+			selected = b.entryCursor
+			b.entryCursor = protocol.TranscriptCursor{}
+		}
+		b.items = p.list.Items
 		b.nextBefore = p.list.NextBefore
 		b.selected = 0
 		for i, item := range b.items {
@@ -234,6 +288,18 @@ func (model Model) receiveTranscriptPage(reply transcriptReply) (tea.Model, tea.
 		b.errorText = "Saved output unavailable"
 	}
 	b.remember(p)
+	for _, extra := range reply.extras {
+		found := false
+		for _, cached := range b.cache {
+			if cached.key == extra.key {
+				found = true
+				break
+			}
+		}
+		if !found {
+			b.errorText = "Some detail content collapsed: display cache budget"
+		}
+	}
 	return model, nil
 }
 
@@ -242,8 +308,14 @@ func (model Model) refreshTranscriptBrowser() (Model, tea.Cmd) {
 	if b.detail {
 		return model, nil
 	}
-	b.cache = nil
-	updated, cmd := model.loadTranscriptPage(transcriptPageKey{kind: transcriptListPage, cursor: b.before})
+	key := transcriptPageKey{kind: transcriptListPage, cursor: b.before}
+	for i, page := range b.cache {
+		if page.key == key && page.key != b.mainListKey {
+			b.cache = append(b.cache[:i:i], b.cache[i+1:]...)
+			break
+		}
+	}
+	updated, cmd := model.loadTranscriptPage(key)
 	return updated.(Model), cmd
 }
 
@@ -300,17 +372,18 @@ func (model Model) handleTranscriptBrowserKey(key tea.KeyMsg) (tea.Model, tea.Cm
 			return model, nil
 		}
 		b.invalidate()
-		return model, tea.Quit
+		return model.quitTranscript()
 	}
 	if key.Type == tea.KeyEsc {
 		b.invalidate()
 		if b.detail {
 			b.detail = false
 			b.page = nil
+			b.markdown = transcriptMarkdownDetail{}
 		} else {
 			model.detailOpen = false
+			b.listPinned = false
 			b.items = nil
-			b.cache = nil
 		}
 		return model, nil
 	}
@@ -322,17 +395,18 @@ func (model Model) handleTranscriptBrowserKey(key tea.KeyMsg) (tea.Model, tea.Cm
 			b.selected = min(max(0, len(b.items)-1), b.selected+1)
 		case tea.KeyPgDown:
 			if b.nextBefore.Valid() {
-				return model.loadTranscriptPage(transcriptPageKey{kind: transcriptListPage, cursor: b.nextBefore})
+				return model.loadTranscriptPage(transcriptPageKey{kind: transcriptListPage, cursor: b.nextBefore, through: b.listKey.through})
 			}
 		case tea.KeyPgUp:
 			if b.before.Valid() && len(b.items) > 0 {
-				return model.loadTranscriptPage(transcriptPageKey{kind: transcriptListPage, cursor: b.items[0].Cursor, backward: true})
+				return model.loadTranscriptPage(transcriptPageKey{kind: transcriptListPage, cursor: b.items[0].Cursor, backward: true, through: b.listKey.through})
 			}
 		case tea.KeyEnter:
 			if len(b.items) > 0 {
 				item := b.items[b.selected]
 
 				b.detail = true
+				b.markdown = transcriptMarkdownDetail{}
 				b.positions = [6]transcriptDetailPosition{}
 				b.stream = ""
 				b.offset = 0
@@ -350,6 +424,11 @@ func (model Model) handleTranscriptBrowserKey(key tea.KeyMsg) (tea.Model, tea.Cm
 		return model, nil
 	}
 	item := b.items[b.selected]
+	if key.Type == tea.KeyRunes && string(key.Runes) == "r" && item.Kind == domain.TranscriptAssistant && b.page != nil && b.page.body.Offset == 0 && b.page.body.NextOffset == b.page.body.TotalBytes {
+		b.markdown.raw = !b.markdown.raw
+		b.markdown.preserveAnchor = true
+		return model, nil
+	}
 	switch key.Type {
 	case tea.KeyTab:
 		if item.Activity.Tool == protocol.ToolShell {
@@ -411,8 +490,10 @@ func (model Model) handleTranscriptBrowserKey(key tea.KeyMsg) (tea.Model, tea.Cm
 			return model.loadTranscriptDetail()
 		}
 	case tea.KeyUp:
+		b.markdown.anchorKnown = false
 		model.detailScroll = max(0, model.detailScroll-1)
 	case tea.KeyDown:
+		b.markdown.anchorKnown = false
 		model.detailScroll++
 	}
 	return model, nil
@@ -481,9 +562,27 @@ func (model Model) renderTranscriptBrowser() string {
 			body += "\n\n" + activity.Recent
 		}
 	}
-	lines := wrapApprovalDiff(commandDisplayText(body), width)
+	var lines []string
+	if item.Kind == domain.TranscriptAssistant && b.page != nil {
+		lines = make([]string, len(b.markdown.rows))
+		for i, row := range b.markdown.rows {
+			lines[i] = row.text
+		}
+		if b.page.body.Offset != 0 || b.page.body.NextOffset != b.page.body.TotalBytes {
+			title += fmt.Sprintf(" · Raw excerpt %d–%d/%d", b.page.body.Offset, b.page.body.NextOffset, b.page.body.TotalBytes)
+		} else if b.markdown.raw {
+			title += " · Raw · r: Markdown"
+		} else {
+			title += " · Markdown · r: raw"
+		}
+	} else {
+		lines = wrapApprovalDiff(commandDisplayText(body), width)
+	}
 
 	headers := []string{title}
+	if b.markdown.notice != "" {
+		headers = append(headers, b.markdown.notice)
+	}
 	if item.Activity.Tool == protocol.ToolShell {
 		activity := item.Activity
 		if live, ok := model.toolActivities[activity.InvocationID]; ok {
@@ -534,6 +633,10 @@ func (model Model) renderTranscriptBrowser() string {
 		headers[i] = truncateRunes(headers[i], width)
 	}
 	visible = max(1, model.heightOrDefault()-len(headers)-2)
-	scroll := min(model.detailScroll, max(0, len(lines)-visible))
+	scroll := min(model.detailScroll-b.markdown.first, max(0, len(lines)-visible))
 	return strings.Join(headers, "\n") + "\n" + strings.Join(lines[scroll:min(len(lines), scroll+visible)], "\n") + "\n" + truncateRunes("←/→: input/result/saved · PgUp/PgDn: page", width) + "\n" + truncateRunes("Esc: transcript · Ctrl+O: close", width) + "\n"
+}
+
+func (b *transcriptBrowser) protected(key transcriptPageKey) bool {
+	return b.mainListPinned && key == b.mainListKey || b.listPinned && key == b.listKey || key.kind == transcriptBodyPage && key.source == protocol.TranscriptText && key.cursor == b.anchorCursor && b.anchorCursor.Valid() || b.page != nil && key == b.page.key
 }

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/term"
 
 	"easycode/internal/config"
 	contextplan "easycode/internal/context"
@@ -733,5 +734,10 @@ func assembleChatModel(ctx context.Context, resources *chatResources) (tui.Model
 		return tui.Model{}, err
 	}
 	resources.session = control
-	return tui.NewModel(ctx, Version, control).WithSkills(resources.skills).WithInputHistory(resources.history).WithTranscriptQueries(resources.identity.ThreadID, resources.transcriptQueries), nil
+	return tui.NewModel(ctx, Version, control).WithSkills(resources.skills).WithMarkdownColor(markdownColorEnabled(os.Getenv("NO_COLOR"), os.Getenv("TERM"), term.IsTerminal(os.Stdout.Fd()))).WithInputHistory(resources.history).WithTranscriptQueries(resources.identity.ThreadID, resources.transcriptQueries), nil
+}
+
+// markdownColorEnabled 由启动边界的显式环境和终端事实选择样式。
+func markdownColorEnabled(noColor, terminal string, isTerminal bool) bool {
+	return noColor == "" && terminal != "dumb" && isTerminal
 }

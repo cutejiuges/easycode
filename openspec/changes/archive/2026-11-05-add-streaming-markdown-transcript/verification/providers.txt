@@ -1,0 +1,52 @@
+=== RUN   TestReadPatchExecApprovedLoopForBothProviders
+=== RUN   TestReadPatchExecApprovedLoopForBothProviders/openai
+=== RUN   TestReadPatchExecApprovedLoopForBothProviders/openai/recover-tool_call_ready
+=== RUN   TestReadPatchExecApprovedLoopForBothProviders/openai/recover-tool_approval_decided
+=== RUN   TestReadPatchExecApprovedLoopForBothProviders/openai/recover-tool_execution_started
+=== RUN   TestReadPatchExecApprovedLoopForBothProviders/openai/recover-tool_call_result
+=== RUN   TestReadPatchExecApprovedLoopForBothProviders/anthropic
+=== RUN   TestReadPatchExecApprovedLoopForBothProviders/anthropic/recover-tool_call_ready
+=== RUN   TestReadPatchExecApprovedLoopForBothProviders/anthropic/recover-tool_approval_decided
+=== RUN   TestReadPatchExecApprovedLoopForBothProviders/anthropic/recover-tool_execution_started
+=== RUN   TestReadPatchExecApprovedLoopForBothProviders/anthropic/recover-tool_call_result
+--- PASS: TestReadPatchExecApprovedLoopForBothProviders (0.83s)
+    --- PASS: TestReadPatchExecApprovedLoopForBothProviders/openai (0.46s)
+        --- PASS: TestReadPatchExecApprovedLoopForBothProviders/openai/recover-tool_call_ready (0.04s)
+        --- PASS: TestReadPatchExecApprovedLoopForBothProviders/openai/recover-tool_approval_decided (0.04s)
+        --- PASS: TestReadPatchExecApprovedLoopForBothProviders/openai/recover-tool_execution_started (0.04s)
+        --- PASS: TestReadPatchExecApprovedLoopForBothProviders/openai/recover-tool_call_result (0.04s)
+    --- PASS: TestReadPatchExecApprovedLoopForBothProviders/anthropic (0.37s)
+        --- PASS: TestReadPatchExecApprovedLoopForBothProviders/anthropic/recover-tool_call_ready (0.04s)
+        --- PASS: TestReadPatchExecApprovedLoopForBothProviders/anthropic/recover-tool_approval_decided (0.03s)
+        --- PASS: TestReadPatchExecApprovedLoopForBothProviders/anthropic/recover-tool_execution_started (0.04s)
+        --- PASS: TestReadPatchExecApprovedLoopForBothProviders/anthropic/recover-tool_call_result (0.05s)
+=== RUN   TestCachedReadPatchExecApprovedLoopForBothProviders
+=== RUN   TestCachedReadPatchExecApprovedLoopForBothProviders/openai
+=== RUN   TestCachedReadPatchExecApprovedLoopForBothProviders/openai/recover-tool_call_ready
+=== RUN   TestCachedReadPatchExecApprovedLoopForBothProviders/openai/recover-tool_approval_decided
+=== RUN   TestCachedReadPatchExecApprovedLoopForBothProviders/openai/recover-tool_execution_started
+=== RUN   TestCachedReadPatchExecApprovedLoopForBothProviders/openai/recover-tool_call_result
+=== RUN   TestCachedReadPatchExecApprovedLoopForBothProviders/anthropic
+=== RUN   TestCachedReadPatchExecApprovedLoopForBothProviders/anthropic/recover-tool_call_ready
+=== RUN   TestCachedReadPatchExecApprovedLoopForBothProviders/anthropic/recover-tool_approval_decided
+=== RUN   TestCachedReadPatchExecApprovedLoopForBothProviders/anthropic/recover-tool_execution_started
+=== RUN   TestCachedReadPatchExecApprovedLoopForBothProviders/anthropic/recover-tool_call_result
+--- PASS: TestCachedReadPatchExecApprovedLoopForBothProviders (0.74s)
+    --- PASS: TestCachedReadPatchExecApprovedLoopForBothProviders/openai (0.37s)
+        --- PASS: TestCachedReadPatchExecApprovedLoopForBothProviders/openai/recover-tool_call_ready (0.04s)
+        --- PASS: TestCachedReadPatchExecApprovedLoopForBothProviders/openai/recover-tool_approval_decided (0.03s)
+        --- PASS: TestCachedReadPatchExecApprovedLoopForBothProviders/openai/recover-tool_execution_started (0.03s)
+        --- PASS: TestCachedReadPatchExecApprovedLoopForBothProviders/openai/recover-tool_call_result (0.03s)
+    --- PASS: TestCachedReadPatchExecApprovedLoopForBothProviders/anthropic (0.37s)
+        --- PASS: TestCachedReadPatchExecApprovedLoopForBothProviders/anthropic/recover-tool_call_ready (0.05s)
+        --- PASS: TestCachedReadPatchExecApprovedLoopForBothProviders/anthropic/recover-tool_approval_decided (0.04s)
+        --- PASS: TestCachedReadPatchExecApprovedLoopForBothProviders/anthropic/recover-tool_execution_started (0.04s)
+        --- PASS: TestCachedReadPatchExecApprovedLoopForBothProviders/anthropic/recover-tool_call_result (0.03s)
+=== RUN   TestMarkdownBothProvidersRestoreAndContinueUnchanged
+=== RUN   TestMarkdownBothProvidersRestoreAndContinueUnchanged/OpenAI_Responses
+=== RUN   TestMarkdownBothProvidersRestoreAndContinueUnchanged/Anthropic_Messages
+--- PASS: TestMarkdownBothProvidersRestoreAndContinueUnchanged (0.62s)
+    --- PASS: TestMarkdownBothProvidersRestoreAndContinueUnchanged/OpenAI_Responses (0.25s)
+    --- PASS: TestMarkdownBothProvidersRestoreAndContinueUnchanged/Anthropic_Messages (0.37s)
+PASS
+ok  	easycode/internal/app	2.626s

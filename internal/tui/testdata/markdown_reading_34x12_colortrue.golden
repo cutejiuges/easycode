@@ -1,0 +1,53 @@
+stream
+EasyCode test
+
+● Opening [reference]
+
+> |
+Enter: send | Alt+Enter/Ctrl+J: ne
+
+reading
+EasyCode test
+
+Reading history · PgDn to return …
+  next paragraph
+  next paragraph
+  next paragraph
+  next paragraph
+
+> |
+Enter: send | Alt+Enter/Ctrl+J: ne
+
+new output
+EasyCode test
+
+New content · PgDn to return to l…
+  next paragraph
+  next paragraph
+  next paragraph
+  next paragraph
+
+> |
+Enter: send | Alt+Enter/Ctrl+J: ne
+
+handoff
+EasyCode test
+
+  next paragraph
+  next paragraph
+  next paragraph
+  next paragraph
+  New output
+
+> |
+Enter: send | Alt+Enter/Ctrl+J: ne
+
+committed
+EasyCode test
+
+● [1mRestored[0m
+  Stable [1mbody[0m
+
+> |
+Enter: send | Alt+Enter/Ctrl+J: ne
+

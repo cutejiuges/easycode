@@ -148,7 +148,7 @@ make verify
 - 已完成双 Provider 共享 `StreamEvent` 的封闭构造与纯内存验证；Runtime 在消费端协议错误时取消派生 context并同步排空到 producer 关闭，AgentLoop 只在前一 stream 清理完成后启动下一 turn。
 - 已完成双 Provider 的 committed-only 文本 `HistoryProjector`：投影保留 turn 边界和可见文本，但不暴露 thinking/signature、redacted thinking、reasoning summary、encrypted content、phase、usage 或未知扩展，也不参与后续请求编译。
 - Anthropic 当前声明 streaming、thinking-signature 原生保留与 structured tools（含 Edit/Write/Bash），OpenAI 当前声明 streaming、encrypted reasoning 原生保留、function tools（含 Write/exec_command）与 custom freeform apply_patch。P2 已落地 completed-sample usage、原生历史 footprint、JSONL Session、resume/headless 和 ContextPlanner；P3 已补充 Read/Glob/Grep/Patch/Write/Exec Tool Loop 与 approval，但通用 tool UI、完整 CachePlanner、usage 成本/TUI、prompt cache key、`previous_response_id` 和自动重试仍留在后续阶段。
-- TUI 只消费 typed RuntimeEvent 和 ChatSession facade；已提供 Patch diff/Write、Exec approval overlay、命令进度和 Ctrl+O 历史列表与分页详情，多行 composer、字素编辑、显式 decoded paste 和有界历史；Markdown、slash command、通用 permission 面板仍未实现；启动 session picker 已于 2026-11-04 接入。
+- TUI 只消费 typed RuntimeEvent 和 ChatSession facade；已提供 Patch diff/Write、Exec approval overlay、命令进度和 Ctrl+O 历史列表与分页详情，多行 composer、字素编辑、显式 decoded paste 和有界历史；助手流式 Markdown 已接入，slash command、通用 permission 面板留待后续；启动 session picker 已于 2026-11-04 接入。
 
 #### OpenAI Responses（首要 Provider）
 
@@ -465,7 +465,7 @@ Skill、hooks/plugins、MCP 和 Agent/Subagent 不属于 P3 内置工具清单�
 
 ### 9.3 工作内容
 
-2026-09-19 已先交付验证 RuntimeEvent 边界的薄切片；2026-10-11 又交付了与 Patch candidate 精确关联的 diff approval overlay，包含默认 No、一次/本 Runtime session 允许、拒绝反馈、小窗口滚动、按键隔离和固定 snapshot。它不改变 P5 的完整范围，2026-10-28 已补充多行 composer、字素编辑、显式 decoded paste、有界 recall 与提交拒绝恢复。补全、slash command、Markdown、通用工具 cell、reasoning 与 fork picker 仍按本节后续实施；启动 resume picker 已于 2026-11-04 作为独立切片交付。
+2026-09-19 已先交付验证 RuntimeEvent 边界的薄切片；2026-10-11 又交付了与 Patch candidate 精确关联的 diff approval overlay，包含默认 No、一次/本 Runtime session 允许、拒绝反馈、小窗口滚动、按键隔离和固定 snapshot。它不改变 P5 的完整范围，2026-10-28 已补充多行 composer、字素编辑、显式 decoded paste、有界 recall 与提交拒绝恢复。补全、slash command、通用工具 cell、reasoning 与 fork picker 仍按本节后续实施；启动 resume picker 已于 2026-11-04 作为独立切片交付。
 
 - composer、多行输入、paste 保护、历史、补全和 slash command。
 - assistant commentary/final、thinking/reasoning 折叠。
@@ -758,3 +758,7 @@ Turn 1 建立稳定前缀
 交付范围包含最近 200 条元数据搜索、跨目录默认返回确认、128 条/32 KiB 文本预览、离线严格原生校验和唯一 owner 清理。无标题/正文索引、自动模型切换、worktree 聚合、活动会话切换或 fork；P5 仍未整体完成。对应变更：`add-interactive-session-picker`。
 
 2026-11-04 复核补强：修复选择器父取消接收窗口、预览预算和窄屏/失败展示，补充真实 journal 追加后恢复、双 Provider 校验中取消以及无变更/补偿后失败分类的直接断言。范围仍为现有启动选择器；跟踪变更 `harden-session-picker-review`。
+
+### 2026-11-05：助手 Markdown 阅读
+
+P5 的助手阅读切片覆盖流式消息、已提交主线和历史正文。PgUp/PgDn 在最近 50 项内回看和恢复跟随，Ctrl+O 可进入完整历史，r 在完整助手详情切换安全原文。超过 64 KiB 的正文按原文分页浏览。无限虚拟滚动、跨页富文本与可配置主题属于后续独立范围。

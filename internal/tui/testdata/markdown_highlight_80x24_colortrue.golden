@@ -1,0 +1,14 @@
+EasyCode test
+
+●   [35mvar[0m n = [36m42[0m
+    {[33m"ok"[0m:[35mtrue[0m}
+    [35mreturn[0m [32mf'{n}'[0m
+    [35mconst[0m x = [32m/a/g[0m;
+    [35mtype[0m Count = [35mnumber[0m;
+    echo [32m"[0m[33m$HOME[0m[32m"[0m
+  Highlighting unavailable: budget exceeded
+    `x${(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((v))))))
+    )))))))))))))))))))))))))))))))))))))))))))))))))))))))))))}`
+
+> |
+Enter: send | Alt+Enter/Ctrl+J: newline
