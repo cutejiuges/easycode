@@ -11,6 +11,11 @@ import (
 // WithSkills 接收启动时冻结的列表快照，不在渲染或按键时访问来源。
 func (model Model) WithSkills(entries []domain.SkillListEntry) Model {
 	model.skills = append([]domain.SkillListEntry(nil), entries...)
+	catalog, err := newCompletionCatalog(model.skills)
+	model.completion = completionState{catalog: catalog}
+	if err != nil {
+		model.errorSummary = "completion_unavailable: " + err.Error()
+	}
 	return model
 }
 func (model Model) handleSkillsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -28,7 +33,7 @@ func (model Model) handleSkillsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyEnter:
 		if len(model.skills) > 0 {
 			entry := model.skills[model.skillSelection]
-			if entry.Status == "available" && entry.Metadata.UserInvocable {
+			if explicitSkillEntry(entry) {
 				text := "/" + entry.Name + " "
 				if err := model.composer.replace(0, len(model.composer.text), text); err == nil {
 					model.skillsOpen = false

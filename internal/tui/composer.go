@@ -11,6 +11,7 @@ import (
 
 // composer 的布局和历史切片发布后不可变，值复制即为独立的编辑快照。
 type composer struct {
+	revision      uint64
 	text          string
 	cursor        int
 	preferred     int
@@ -41,6 +42,7 @@ func (c *composer) replace(start, end int, inserted string) error {
 	if start == end && inserted == "" {
 		return nil
 	}
+	c.revision++
 	c.text = c.text[:start] + inserted + c.text[end:]
 	c.cursor = start + len(inserted)
 	c.preferred = -1
@@ -130,10 +132,22 @@ func (c *composer) erase(backward bool) error {
 }
 
 func (c *composer) clear() {
+	c.revision++
 	c.text = ""
 	c.cursor = 0
 	c.top = 0
 	c.preferred = -1
 	c.history.endNavigation()
 	c.relayout()
+}
+
+// restoreComposer 恢复草稿内容与光标，布局始终使用当前终端尺寸。
+func (model *Model) restoreComposer(draft composer) {
+	model.composer = draft
+	width, height := model.widthOrDefault(), model.heightOrDefault()
+	if draft.width != width || draft.height != height {
+		model.composer.resize(width, height)
+	}
+	// 编辑序号属于各自的草稿快照，恢复不能复用另一快照的解析缓存。
+	model.completion.parsed = false
 }

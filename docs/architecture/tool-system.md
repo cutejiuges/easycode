@@ -455,6 +455,7 @@ Runtime 的观察表仅由 turn owner 操作，上限 1024，按输出提交顺�
 ### 13.2 已交付扩展与后续范围
 
 - Skill：已通过 `add-local-skills` 接入 `skill.read`，两家 structured facade 均为 `Skill`，复用只读调度和 durable ledger；不执行脚本，不提升权限。
+- TUI 命令/Skill 首词补全只读取冻结展示元数据并编辑草稿，不调用 `skill.read` 或加载正文；正式提交继续使用原有显式附件准备与来源校验。没有新增模型工具、执行权限或持久化字段，见[输入补全规格](../../openspec/specs/tui/input-completion/spec.md)。
 - MCP tools：属于 P6 的远程 catalog、trust、认证和动态 schema 能力。
 - Agent/Subagent：属于 P7 的 thread、budget、completion envelope 和取消传播能力。
 - PreToolUse command Hook 已交付；其余 Hook、Plugins 与热加载属于 P6 后续范围，不能借 Tool callback 绕过 manifest/trust 和权限边界。

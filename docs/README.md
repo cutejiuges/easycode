@@ -2,7 +2,9 @@
 
 ## 当前能力与阅读顺序
 
-先阅读[当前能力清单](roadmap/capability-status.md)了解已实现功能、平台限制和代码/测试证据，再用 [README](../README.md) 查使用方式。Roadmap 的目标与 ADR 的历史决定不自动表示已交付；当前行为契约位于 [OpenSpec 主规格](../openspec/specs/)，进行中的变更与验收记录位于 [changes](../openspec/changes/)。本轮核对日期：2026-11-06。
+先阅读[当前能力清单](roadmap/capability-status.md)了解已实现功能、平台限制和代码/测试证据，再用 [README](../README.md) 查使用方式。Roadmap 的目标与 ADR 的历史决定不自动表示已交付；当前行为契约位于 [OpenSpec 主规格](../openspec/specs/)，进行中的变更位于 [changes](../openspec/changes/)，已归档变更及其验收证据位于 [archive](../openspec/changes/archive/)。本轮核对日期：2026-11-06。
+
+命令与 Skill 首词补全已完成实现、追加验证和归档：交互规则见 [README 补全说明](../README.md#命令与-skill-补全)，行为契约见 [输入补全规格](../openspec/specs/tui/input-completion/spec.md)，测试与文档同步证据见 [归档核对记录](../openspec/changes/archive/2026-11-06-add-command-and-skill-completion/archive.md)。
 
 ## 架构
 

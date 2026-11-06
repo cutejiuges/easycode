@@ -1,0 +1,37 @@
+{
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "cases": [
+    {
+      "no_color": false,
+      "requests": 2,
+      "resizes": [
+        [
+          28,
+          10
+        ],
+        [
+          80,
+          24
+        ]
+      ],
+      "terminal_restored": true,
+      "approval_denied": true
+    },
+    {
+      "no_color": true,
+      "requests": 2,
+      "resizes": [
+        [
+          28,
+          10
+        ],
+        [
+          80,
+          24
+        ]
+      ],
+      "terminal_restored": true,
+      "approval_denied": true
+    }
+  ]
+}

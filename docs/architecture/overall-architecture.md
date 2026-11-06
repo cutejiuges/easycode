@@ -51,7 +51,7 @@ EasyCode 是一个本地优先的 coding agent。产品体验主要参考 Claude
 
 参考目录：`../codex`
 
-- 当前参考提交为 `c248f6d48b`。
+- 当前本地参考快照提交为 `6f8bf683cee83ed4d580a2e106b587d8451db936`（命令/Skill 补全调研核对）。
 - 主要用于参考 Rust workspace、Responses API、事件协议、工具执行、权限与 sandbox、session rollout、subagent control、Ratatui 和可观测性设计。
 - Codex 当前只支持 Responses wire，不能直接作为 Anthropic provider 抽象。
 
@@ -794,7 +794,7 @@ Provider 当前 native kind 封闭为 `user_inputs`/`sample`/`tool_outputs`，sa
 input-only 崩溃尾部先在本地 durable 收口；工具安全点的 steering 尾部复用现有工具补偿路径，不重跑工具或自动联网。内存队列与 returned tray 不持久化，重启不猜测未保存输入。外部 headless JSONL 仍为 v1，自动 admission 增加 entry_id，input.status 不含正文；一次性 text/JSON 过滤新增内部输入事件。
 
 
-已实现多行、字素编辑、显式 decoded paste 与有界历史；原始终端缓冲/RuneError 的框架限制见 README。当前本地命令为 `/cache`、`/context`、`/compact [instructions]`、`/skills`、`/hooks`，显式 Skill 使用 `/<name>` / `$name`。尚无输入补全及 `/help`、`/clear`、`/resume`、`/fork`、`/model`、`/provider`、`/permissions`、`/plugins`、`/mcp`、`/agents`、`/cost`、`/doctor`；`easycode resume` 是独立 CLI 入口。
+已实现多行、字素编辑、显式 decoded paste 与有界历史；原始终端缓冲/RuneError 的框架限制见 README。当前本地命令为 `/cache`、`/context`、`/compact [instructions]`、`/skills`、`/hooks`，显式 Skill 使用 `/<name>` / `$name`。已支持命令和显式 Skill 的首词补全；尚无 `/help`、`/clear`、`/resume`、`/fork`、`/model`、`/provider`、`/permissions`、`/plugins`、`/mcp`、`/agents`、`/cost`、`/doctor`；`easycode resume` 是独立 CLI 入口。
 
 ## 14. 配置与密钥
 
@@ -948,7 +948,7 @@ ADR 存放在 `docs/architecture/adr/`，模板见该目录的 `README.md`，并
 
 列表与独立 `sessions list` 共用 `loadSessionCatalog` 生命周期；首次和刷新协调，成功后的切范围仅查询，最多 200 条，正文不入 Catalog。`previewSession` 在 descriptor-bound lease 下 Load/Replay、恢复顺序及压缩用量校验，关闭句柄后才发布预览；不用 resume、writer、Repair、artifact 或 Runtime。`provider.StoredHistoryReader` 是有实际消费者的单向离线接口，两家独立 reader 与正式恢复共享私有 native 校验和压缩来源计算，无连接、凭据或新增 capability。
 
-选择理由、参考工程版本、预算和验证方案见 [OpenSpec 变更](../../openspec/changes/archive/2026-11-04-add-interactive-session-picker/design.md)。这是一块恢复入口的完整切片，不代表 P5 整体完成；Markdown 已由独立切片交付，reasoning、补全和 fork picker 仍未实现。
+选择理由、参考工程版本、预算和验证方案见 [OpenSpec 变更](../../openspec/changes/archive/2026-11-04-add-interactive-session-picker/design.md)。这是一块恢复入口的完整切片，不代表 P5 整体完成；Markdown 已由独立切片交付，reasoning 和 fork picker 仍未实现；命令/Skill 补全已由独立切片交付。
 
 选择器接收以 owner 锁内对操作/父取消 done channel 的非阻塞检查为线性化点；此前已取消的结果不能进入 Chat。资源仍由同一 worker 持有到最终关闭，不在锁内调用 context 实现或执行关闭。预览的原文预算和安全展示预算分别裁剪，任何省略都保留可见标记；展示不会持有被截掉的大字符串 backing storage。短屏确认保留当前选项并允许滚动目录，短屏预览允许滚过状态头部。
 
@@ -966,3 +966,12 @@ TUI 在 Update 中按消息身份准备布局。未提交文字按本地身份�
 Goldmark 的块起点与围栏闭合事件决定稳定前缀。未闭合围栏先展示代码，收口后由实例词法扫描器着色。扫描器和语法树共享 32768 个节点预算，布局、映射和高亮容量共享 2 MiB。主线、历史列表、正文与命令附页共享四个查询缓存位置。超出单页的持久化正文通过原文字节范围查询浏览。
 
 展示状态由 TUI 实例拥有。继续采样时由 Provider 自身的 native history 还原请求。交互与缓存契约见 [Markdown transcript 规格](../../openspec/specs/tui/markdown-transcript/spec.md)。
+
+
+### 命令与 Skill 输入补全
+
+`internal/tui/completion.go`、`completion_state.go` 和 `completion_view.go` 分别负责不可变候选/范围/匹配、实例焦点状态及安全有界布局。`WithSkills` 使用冻结展示条目，过滤不可显式调用及非获胜来源，保留 manual-only Skill；模型 SkillCatalog 不承担手动补全目录职责。
+
+Model 在 Update 中先准备补全占用，再准备 Markdown 与 hydration；主线高度扣除实际候选行数。composer 的内存编辑 revision 和字节光标标识解析缓存，不持有旧完整草稿。恢复草稿统一经 `restoreComposer` 按当前终端尺寸准备布局并失效解析缓存，不能把不同快照的相同编辑序号当作相同正文。Esc、paste 与 modal 返回有短 token 抑制，流式增量和 resize 不清除抑制。新状态与发布后不可变切片随 Model 值复制，未引入全局 registry、后台 worker 或公共协议。
+
+名称替换使用既有 `composer.replace`；内置 Enter 交回共享 `submitComposer`，Skill Enter 与 Tab 只编辑。进入 Skills/Hooks 浏览时保留打开前草稿，返回不被尾部补全空格改写。只有正式提交才进入原有 Prepare/admission/Sync 链；UI 的候选、选择和布局不进入 Provider 请求、Session 或稳定缓存前缀。验证依据见 [补全设计](../../openspec/changes/archive/2026-11-06-add-command-and-skill-completion/design.md) 与同 change 的验收记录。

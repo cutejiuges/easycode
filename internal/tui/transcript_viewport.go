@@ -29,7 +29,7 @@ func (model Model) transcriptHeight() int {
 	if model.compactionStatus != "" {
 		status += strings.Count(ansi.Hardwrap(model.compactionStatus, model.widthOrDefault(), true), "\n") + 1
 	}
-	return max(1, model.heightOrDefault()-strings.Count(model.composer.view(true), "\n")-strings.Count(model.renderInputs(), "\n")-5-status)
+	return max(1, model.heightOrDefault()-strings.Count(model.composer.view(true), "\n")-strings.Count(model.renderInputs(), "\n")-5-status-model.completion.rows)
 }
 func (model Model) navigateTranscript(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	model.main.resetHydration()

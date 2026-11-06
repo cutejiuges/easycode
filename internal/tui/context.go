@@ -135,7 +135,7 @@ func (model Model) projectContextResult(result protocol.CommandResult) (tea.Mode
 			model.compactionStatus = "Compacting conversation…"
 		}
 	} else {
-		model.composer = *model.pending
+		model.restoreComposer(*model.pending)
 		summary, _ := result.Error()
 		model.errorSummary = string(summary.Code()) + ": " + summary.Message()
 	}

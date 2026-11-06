@@ -34,14 +34,14 @@
 
 ### Requirement: User can submit and observe a streaming text turn
 
-空闲或普通运行状态下，用户 SHALL 能编辑多行文本，并通过普通 Enter 提交合法非空白输入；换行快捷键与反斜杠换行规则 SHALL 优先于提交。正文 SHALL 保留输入规范化后的缩进、内部换行、尾部空格和尾换行，不得以 trim 改写；空白判断仅用于拒绝空输入。等待本次 admission 时 MUST 保留并冻结提交草稿，不能重复提交；接收成功后运行中允许继续编辑并提交自动输入。
+空闲或普通运行状态下，用户 SHALL 能编辑多行文本；未激活输入补全时，通过普通 Enter 提交合法非空白输入。补全激活时普通 Enter SHALL 按 tui/input-completion 的命令/Skill 接受规则处理；换行快捷键与反斜杠换行规则 SHALL 优先于补全和提交。正文 SHALL 保留输入规范化后的缩进、内部换行、尾部空格和尾换行，不得以 trim 改写；空白判断仅用于拒绝空输入。等待本次 admission 时 MUST 保留并冻结提交草稿，不能重复提交；接收成功后运行中允许继续编辑并提交自动输入。
 
 提交接收成功后 TUI SHALL 显示未保存的队列预览，收到 committed 事件才按 InputID 在正式 transcript 显示恰好一条用户消息，并按 RuntimeEvent 顺序增量显示 assistant 文本。接收仅表示进程内 admission，不得声称 Session 已 durable。接收失败 SHALL 恢复原草稿、光标和历史浏览状态，且不增加已接收用户消息或输入历史。接收成功后的 turn 失败 MUST NOT 自动恢复 pending 草稿、重新提交或重试工具。
 
 Runtime发布`tool_approval_requested`时，TUI SHALL暂停聊天composer的键盘路由并进入与该request identity绑定的modal approval overlay。overlay解决前的普通字符、Enter、方向键、Tab和粘贴不得修改或提交聊天草稿；已有草稿、光标和历史浏览状态必须保留，并在overlay关闭后恢复。TUI只通过强类型`resolve_tool_approval`或定向interrupt响应当前request，不得直接调用Policy、Session、Provider或Patch executor。
 
 #### Scenario: Submit a non-empty prompt
-- **WHEN** 用户在空闲状态输入文本并按普通 Enter，且不匹配换行规则
+- **WHEN** 用户在空闲状态输入文本并按普通 Enter，既不匹配换行规则，也没有激活补全
 - **THEN** 输入进入等待接收状态，最多发起一次提交
 - **THEN** 接收成功后显示队列预览，持续消费控制流；输入 committed 后 transcript 增加该用户消息
 
@@ -84,8 +84,16 @@ Runtime发布`tool_approval_requested`时，TUI SHALL暂停聊天composer的键�
 committed 用户消息 SHALL 结束前一个 assistant 文本 cell，后续 delta 创建新 cell；全部控制反馈与 RuntimeEvent 由同一长期有序消费者处理。
 
 #### Scenario: Queue while a tool turn runs
-- **WHEN** 普通工具运行期间用户编辑并 Enter 提交
+- **WHEN** 普通工具运行期间用户编辑，且无激活补全时 Enter 提交
 - **THEN** 草稿接收成功才清除，队列显示 queued，安全点提交后准确移入 transcript，不建立并发 stream
+
+#### Scenario: Route completion acceptance through the existing submission path
+- **WHEN** 用户用普通 Enter 接受一个内置命令候选
+- **THEN** 补全完整名称后沿用本地命令的既有校验与控制路径，最多执行一次，不把部分命令提交给模型
+
+#### Scenario: Keep Skill acceptance separate from admission
+- **WHEN** 用户用普通 Enter 接受一个 Skill 候选
+- **THEN** 只填入草稿，后续独立 Enter 才进入正常准备和 admission
 
 ### Requirement: Conversation continues in memory
 
@@ -129,10 +137,10 @@ committed 用户消息 SHALL 结束前一个 assistant 文本 cell，后续 delt
 
 ### Requirement: Cancel and quit behavior is unambiguous
 
-普通活动 turn 期间，Esc SHALL 优先取回 queued auto；没有可取回输入时定向 stop。Ctrl+C SHALL 定向 stop 当前 turn 而不退出进程。局部浮层先按自身 Esc 规则处理。approval overlay活跃时，Esc或Ctrl+C SHALL发送与显示中turn identity匹配的定向 stop，并立即禁用重复决定；TUI必须等待Runtime的resolved/terminal事件后关闭overlay，不得本地伪造批准、拒绝或文件结果。空闲且输入为空时，Ctrl+C SHALL退出应用。普通字符`q` MUST作为当前聚焦控件的输入处理，不能作为全局退出快捷键。
+普通聊天中输入补全可见且激活时，Esc SHALL 仅关闭候选并保留草稿、队列和活动 turn；相同名称未编辑时不得由流式事件或 resize 立即重开。没有激活补全的普通活动 turn 期间，Esc SHALL 优先取回 queued auto；没有可取回输入时定向 stop。Ctrl+C SHALL 定向 stop 当前 turn 而不退出进程。局部浮层先按自身 Esc 规则处理。approval overlay活跃时，Esc或Ctrl+C SHALL发送与显示中turn identity匹配的定向 stop，并立即禁用重复决定；TUI必须等待Runtime的resolved/terminal事件后关闭overlay，不得本地伪造批准、拒绝或文件结果。空闲且输入为空时，Ctrl+C SHALL退出应用。普通字符`q` MUST作为当前聚焦控件的输入处理，不能作为全局退出快捷键。
 
 #### Scenario: Interrupt a streaming turn
-- **WHEN** assistant 正在 streaming，用户按 Ctrl+C，或没有可取回队列时按 Esc
+- **WHEN** assistant 正在 streaming，用户按 Ctrl+C，或没有激活补全及可取回队列时按 Esc
 - **THEN** TUI请求取消当前turn并保留已经显示的transcript
 - **THEN** 清理结束后TUI返回可输入状态
 
@@ -154,6 +162,14 @@ stop SHALL 返还未消费 auto，保留严格下一 turn；claimed 输入等待
 #### Scenario: Return more than one draft can hold
 - **WHEN** 停止返还多条合计超过 4 MiB 的输入
 - **THEN** 托盘保留每条完整文本，用户逐条取回；当前草稿不变，不自动执行
+
+#### Scenario: Close completion before retracting or stopping
+- **WHEN** 活动 turn 中有 queued auto 和可见补全，用户连续按两次独立 Esc
+- **THEN** 首次只关闭补全，第二次才按既有规则取回 queued auto；首次不产生停止或取回请求
+
+#### Scenario: Keep direct control C cancellation
+- **WHEN** 活动 turn 中有可见补全，用户按 Ctrl+C
+- **THEN** 直接沿用当前 turn 定向停止规则，不吞掉中断或退出请求
 
 ### Requirement: Failure is visible and recoverable
 
@@ -294,16 +310,16 @@ TUI 只能消费 typed RuntimeEvent 和宿主 typed transcript/detail 查询结�
 
 ### Requirement: Composer editing preserves grapheme boundaries
 
-聊天 composer SHALL 支持在光标处插入文本、按扩展字素移动左右光标、用 Backspace 删除前一字素和 Delete 删除后一字素。光标 MUST 始终处于合法字素边界。Home/End 与 Ctrl+A/E SHALL 移到逻辑行首/尾，Ctrl+B/F SHALL 等价于左/右。上下键 SHALL 优先在软折行后的视觉行之间移动并保留目标显示列；较短行不得使光标越界或落在字素中间。水平移动、修改文本、resize 和历史切换 SHALL 重置目标列。
+聊天 composer SHALL 支持在光标处插入文本、按扩展字素移动左右光标、用 Backspace 删除前一字素和 Delete 删除后一字素。光标 MUST 始终处于合法字素边界。Home/End 与 Ctrl+A/E SHALL 移到逻辑行首/尾，Ctrl+B/F SHALL 等价于左/右。输入补全激活时上下键 SHALL 选择候选；未激活补全时，上下键 SHALL 优先在软折行后的视觉行之间移动并保留目标显示列；较短行不得使光标越界或落在字素中间。水平移动、修改文本、resize 和历史切换 SHALL 重置目标列。
 
-Alt+Enter 与 Ctrl+J SHALL 插入 LF。普通 Enter 且光标前一字素为反斜杠时 SHALL 以 LF 替换该反斜杠，不提交。输入中的 CRLF 和独立 CR SHALL 规范化为 LF，不做其他 Unicode 规范化。手动 Tab SHALL 保持无操作；粘贴中的 Tab 属于正文。空闲 Esc 和空闲非空草稿 Ctrl+C SHALL 保持草稿，空闲空草稿 Ctrl+C 的退出语义不变。
+Alt+Enter 与 Ctrl+J SHALL 插入 LF。普通 Enter 且光标前一字素为反斜杠时 SHALL 以 LF 替换该反斜杠，不提交。输入中的 CRLF 和独立 CR SHALL 规范化为 LF，不做其他 Unicode 规范化。输入补全可见且激活时手动 Tab SHALL 只接受候选；当前合法目标因 Esc、粘贴或 modal 返回而被抑制且有可显示匹配时，手动 Tab SHALL 只重新打开列表；其他未激活补全时手动 Tab SHALL 保持无操作。粘贴中的 Tab 属于正文，不接受候选。空闲 Esc SHALL 先关闭激活补全并保留草稿；无激活补全的空闲 Esc 和空闲非空草稿 Ctrl+C SHALL 保持草稿，空闲空草稿 Ctrl+C 的退出语义不变。
 
 #### Scenario: Edit inside a Unicode line
 - **WHEN** 用户在中文、组合重音或 ZWJ emoji 之间移动、插入和前后删除
 - **THEN** 操作以完整字素为单位，结果为合法 UTF-8，其他正文保持不变
 
 #### Scenario: Preserve a preferred column
-- **WHEN** 用户从长视觉行向下经过短行后继续进入长行
+- **WHEN** 无激活补全，用户从长视觉行向下经过短行后继续进入长行
 - **THEN** 短行光标停在合法可达边界，下一长行恢复原目标显示列
 
 #### Scenario: Insert newlines without submitting
@@ -313,6 +329,14 @@ Alt+Enter 与 Ctrl+J SHALL 插入 LF。普通 Enter 且光标前一字素为反�
 #### Scenario: Keep multiline editing separate from exit
 - **WHEN** 用户空闲且无 queued 输入时在非空草稿按 Esc 或 Ctrl+C
 - **THEN** 草稿保持原样，应用不退出且不提交
+
+#### Scenario: Complete only with an active visible candidate
+- **WHEN** 聊天 composer 收到手动 Tab
+- **THEN** 有激活可见候选时只完成当前选择；合法被抑制目标存在可显示匹配时只重开列表；其他无候选或候选因极小尺寸不可见时保持无操作；不提交或加载 Skill
+
+#### Scenario: Keep newline keys literal while completing
+- **WHEN** 补全期间按 Alt+Enter 或 Ctrl+J
+- **THEN** 按既有规则插入 LF，不接受候选、不提交
 
 ### Requirement: Explicit text paste is atomic and bounded
 
@@ -345,10 +369,10 @@ TUI SHALL 提供当前 thread 的内存输入历史：以已有恢复语义视�
 
 历史 SHALL 同时限制为最多 100 条及正文合计 8 MiB；相邻完全相同的输入折叠，超过任一预算按最旧优先淘汰。历史淘汰不影响 Session 事实。
 
-空草稿首视觉行按 Up SHALL 优先取回 queued auto；无 queued auto 时，以及其他符合 recall 条件的首视觉行 Up，才进入较旧历史，在末视觉行按 Down SHALL 进入较新历史；普通上下移动优先。首次浏览 SHALL 保存当前草稿与光标，包括纯空白草稿。越过最新条目 SHALL 恢复保存的草稿与光标。上翻召回后光标放在首视觉行最后一个可停靠位置，下翻召回后放在正文末尾。编辑召回文本 SHALL 结束浏览并将其作为当前工作草稿，不改写历史条目；这时之前保存的浏览前草稿被放弃。无条目、最旧边界以及非浏览状态底部 Down SHALL 无操作。
+输入补全激活时上下键 SHALL 仅选择候选，不进入 recall 或取回队列。未激活补全时，空草稿首视觉行按 Up SHALL 优先取回 queued auto；无 queued auto 时，以及其他符合 recall 条件的首视觉行 Up，才进入较旧历史，在末视觉行按 Down SHALL 进入较新历史；普通上下移动优先。首次浏览 SHALL 保存当前草稿与光标，包括纯空白草稿。越过最新条目 SHALL 恢复保存的草稿与光标。上翻召回后光标放在首视觉行最后一个可停靠位置，下翻召回后放在正文末尾。编辑召回文本 SHALL 结束浏览并将其作为当前工作草稿，不改写历史条目；这时之前保存的浏览前草稿被放弃。无条目、最旧边界以及非浏览状态底部 Down SHALL 无操作。
 
 #### Scenario: Return from history to the original draft
-- **WHEN** 用户浏览历史且没有修改召回文本，然后下翻越过最新条目
+- **WHEN** 用户浏览历史且没有修改召回文本，候选关闭后下翻越过最新条目
 - **THEN** 原草稿包括空白、光标位置均恢复，不自动提交
 
 #### Scenario: Adopt an edited recalled prompt
@@ -369,6 +393,10 @@ recall SHALL 从有序已提交用户消息初始化；accepted live 输入加�
 #### Scenario: Lose a retract race without losing the draft
 - **WHEN** 取回前输入已经被 claim
 - **THEN** 显示 input_not_queued，原草稿/光标/队列事实不变，不复制已被消费的正文
+
+#### Scenario: Navigate suggestions without changing recall
+- **WHEN** composer 正在浏览一条召回输入且候选激活，用户按上下键
+- **THEN** 只改变候选选择，历史条目、浏览前保存草稿和当前光标不变；接受补全作为正常编辑结束 recall
 
 ### Requirement: Composer layout is safe deterministic and cursor aware
 

@@ -66,7 +66,8 @@ const (
 
 // Model 保存纯 UI 投影状态，不依赖 Provider 或 transport。
 type Model struct {
-	question *questionOverlay
+	completion completionState
+	question   *questionOverlay
 
 	hooks                hookBrowser
 	hookTrust            *hookTrustOverlay
@@ -131,9 +132,11 @@ func NewModel(
 	version string,
 	session ChatSession,
 ) Model {
+	catalog, _ := newCompletionCatalog(nil)
 	model := Model{
-		markdown: newMarkdownViewCache(),
-		version:  version, session: session, submitContext: submitContext, assistantItem: -1, composer: newComposer(),
+		completion: completionState{catalog: catalog},
+		markdown:   newMarkdownViewCache(),
+		version:    version, session: session, submitContext: submitContext, assistantItem: -1, composer: newComposer(),
 	}
 	if session != nil {
 		model.outputs = session.Outputs()
@@ -162,6 +165,7 @@ func (model Model) Init() tea.Cmd {
 func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	next, cmd := model.update(message)
 	updated := next.(Model)
+	updated.prepareCompletion()
 	updated.prepareMarkdownView()
 	updated.prepareMarkdownDetail()
 	if _, resize := message.(tea.WindowSizeMsg); !resize {
@@ -241,8 +245,7 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if model.state != stateSubmitting || model.pending == nil {
 			return model, nil
 		}
-		model.composer = *model.pending
-		model.composer.resize(model.widthOrDefault(), model.heightOrDefault())
+		model.restoreComposer(*model.pending)
 		model.pending = nil
 		model.pendingContext = ""
 		model.refreshState()
@@ -279,6 +282,16 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if key.Paste && len(key.Runes) == 0 {
+		return model, nil
+	}
+	model.prepareCompletion()
+	if key.Paste {
+		key.Type, key.Alt = tea.KeyRunes, false
+	}
+	if key.Type == tea.KeyCtrlC {
+		model.completion.suppress(completionCancelled)
+	}
 	if model.question != nil {
 		return model.handleQuestionKey(key)
 	}
@@ -301,7 +314,7 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if (key.Type == tea.KeyEsc || key.Type == tea.KeyCtrlC) && (model.pendingContext == protocol.CommandQueryCache || model.pendingContext == protocol.CommandQueryContext) {
 		if model.pending != nil {
-			model.composer = *model.pending
+			model.restoreComposer(*model.pending)
 		}
 		model.pending = nil
 		model.pendingContext = ""
@@ -375,6 +388,18 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return model, nil
 	}
+	originalDraft := model.composer
+	if handled, submit := model.handleCompletionKey(key); handled {
+		if submit {
+			next, command := model.submitComposer()
+			updated := next.(Model)
+			if updated.skillsOpen || updated.hooks.open {
+				updated.restoreComposer(originalDraft)
+			}
+			return updated, command
+		}
+		return model, nil
+	}
 	if key.Type == tea.KeyCtrlR || key.Type == tea.KeyCtrlD {
 		return model.handleReturnedInput(key.Type == tea.KeyCtrlR)
 	}
@@ -397,6 +422,9 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		model.errorSummary = "invalid_input: " + err.Error()
 		return model, nil
 	}
+	if key.Paste {
+		model.completion.suppressPastedInput(model.composer)
+	}
 	switch intent {
 	case composerQuit:
 		if model.activeTurnID.Valid() || model.activeCompactionID.Valid() || model.composer.text != "" {
@@ -404,55 +432,59 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return model.quitTranscript()
 	case composerSubmit:
-		if words := strings.Fields(model.composer.text); len(words) > 0 && words[0] == "/hooks" {
-			if len(words) != 1 {
-				model.errorSummary = "invalid_command: /hooks does not accept arguments"
-				return model, nil
-			}
-			return model.openHooks()
-		}
-		if words := strings.Fields(model.composer.text); len(words) > 0 && words[0] == "/skills" {
-			if len(words) != 1 {
-				model.errorSummary = "invalid_command: /skills does not accept arguments"
-			} else {
-				model.skillsOpen = true
-				model.skillSelection = 0
-			}
-			return model, nil
-		}
-		if model.session == nil {
-			return model, nil
-		}
-		if command, local, err := parseContextCommand(model.composer.text); local {
-			if err != nil {
-				model.errorSummary = "invalid_command: " + err.Error()
-				return model, nil
-			}
-			return model.submitContextCommand(command)
-		}
-		if !model.canRetainInput(model.composer.text) {
-			model.errorSummary = "input_queue_full: take or discard returned inputs first"
-			return model, nil
-		}
-		snapshot := model.composer
-		model.pending = &snapshot
-		model.state = stateSubmitting
-		model.errorSummary = ""
-		ctx, cancel := context.WithCancel(model.submitContext)
-		model.pendingCancel = cancel
-		model.submissionGeneration++
-		generation := model.submissionGeneration
-		target := model.session
-		return model, func() tea.Msg {
-			defer cancel()
-			_, err := target.Append(ctx, snapshot.text)
-			if err != nil {
-				return submissionFailedMsg{err: err, generation: generation}
-			}
-			return nil
-		}
+		return model.submitComposer()
 	}
 	return model, nil
+}
+
+func (model Model) submitComposer() (tea.Model, tea.Cmd) {
+	if words := strings.Fields(model.composer.text); len(words) > 0 && words[0] == "/hooks" {
+		if len(words) != 1 {
+			model.errorSummary = "invalid_command: /hooks does not accept arguments"
+			return model, nil
+		}
+		return model.openHooks()
+	}
+	if words := strings.Fields(model.composer.text); len(words) > 0 && words[0] == "/skills" {
+		if len(words) != 1 {
+			model.errorSummary = "invalid_command: /skills does not accept arguments"
+		} else {
+			model.skillsOpen = true
+			model.skillSelection = 0
+		}
+		return model, nil
+	}
+	if model.session == nil {
+		return model, nil
+	}
+	if command, local, err := parseContextCommand(model.composer.text); local {
+		if err != nil {
+			model.errorSummary = "invalid_command: " + err.Error()
+			return model, nil
+		}
+		return model.submitContextCommand(command)
+	}
+	if !model.canRetainInput(model.composer.text) {
+		model.errorSummary = "input_queue_full: take or discard returned inputs first"
+		return model, nil
+	}
+	snapshot := model.composer
+	model.pending = &snapshot
+	model.state = stateSubmitting
+	model.errorSummary = ""
+	ctx, cancel := context.WithCancel(model.submitContext)
+	model.pendingCancel = cancel
+	model.submissionGeneration++
+	generation := model.submissionGeneration
+	target := model.session
+	return model, func() tea.Msg {
+		defer cancel()
+		_, err := target.Append(ctx, snapshot.text)
+		if err != nil {
+			return submissionFailedMsg{err: err, generation: generation}
+		}
+		return nil
+	}
 }
 
 func (model Model) widthOrDefault() int {
@@ -810,6 +842,7 @@ func (model Model) View() string {
 	}
 	view.WriteString("\n")
 	view.WriteString(model.renderInputs())
+	view.WriteString(model.completion.view)
 	view.WriteString(model.composer.view(model.pending == nil && model.retracting == nil && !model.cancelling))
 	return view.String()
 }
