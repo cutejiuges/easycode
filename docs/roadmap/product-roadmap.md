@@ -13,7 +13,7 @@
 
 ## 当前状态总览（2026-11-06）
 
-实现与测试逐项核对见[当前能力清单](capability-status.md)。P0–P8 是并行推进的阶段目标，不以某个后期切片交付推定整个阶段完成。当前已交付九项模型工具、本地 Skills、同步 PreToolUse、结构化提问、流式 Markdown、启动会话选择、Provider 缓存与手动/自动压缩；仍缺少 reasoning UI、补全、跨 Provider fork、后台进程、Plugins/MCP、Subagent 与完整发布矩阵。
+实现与测试逐项核对见[当前能力清单](capability-status.md)。P0–P8 是并行推进的阶段目标，不以某个后期切片交付推定整个阶段完成。当前已交付九项模型工具、本地 Skills、同步 PreToolUse、结构化提问、流式 Markdown、命令/Skill 首词补全、启动会话选择、Provider 缓存与手动/自动压缩；仍缺少 reasoning UI、跨 Provider fork、后台进程、Plugins/MCP、Subagent 与完整发布矩阵。
 
 下文“工作内容/交付物/验收标准”保留阶段的完整目标；已完成状态以本总览、各节进度和当前能力清单为准。所有迁移、历史 reader 或兼容窗口必须先有用户明确要求及新 OpenSpec，不因路线图提到未来发布而预先授权。
 
@@ -454,7 +454,9 @@ Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘�
 
 ### 9.0 当前进度（2026-11-06）
 
-已交付多行/字素输入、同轮追加与返还、流式 Markdown 与代码/表格/原文阅读、紧凑工具主线及 Ctrl+O 分页详情、完整 Patch/Write/Exec 审批、结构化问卷、Hook 信任、context/cache 面板和启动 resume picker。当前本地命令为 `/cache`、`/context`、`/compact`、`/skills`、`/hooks`，以及 Skill 显式入口。reasoning 折叠、输入补全、fork picker、后台任务 UI、cost/综合状态面板与其余命令尚未实现。
+已交付多行/字素输入、同轮追加与返还、流式 Markdown 与代码/表格/原文阅读、紧凑工具主线及 Ctrl+O 分页详情、完整 Patch/Write/Exec 审批、结构化问卷、Hook 信任、context/cache 面板和启动 resume picker。当前本地命令为 `/cache`、`/context`、`/compact`、`/skills`、`/hooks`，以及 Skill 显式入口。命令/Skill 首词补全已交付；reasoning 折叠、fork picker、后台任务 UI、cost/综合状态面板与其余命令尚未实现。
+
+补全复用冻结 Skill 展示列表、字素编辑和既有命令提交；Tab 只填入、Skill Enter 只选择、Esc 优先关闭，粘贴不接受候选。验收覆盖双 Provider 原生请求/恢复/缓存等价、固定尺寸和 Darwin PTY，见 [验收记录](../../openspec/changes/archive/2026-11-06-add-command-and-skill-completion/verification.md)。本切片不包含文件/参数值补全、正文 mentions 或动态目录。
 
 ### 9.1 目标
 
@@ -471,7 +473,7 @@ Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘�
 
 ### 9.3 工作内容
 
-2026-09-19 已先交付验证 RuntimeEvent 边界的薄切片；2026-10-11 又交付了与 Patch candidate 精确关联的 diff approval overlay，包含默认 No、一次/本 Runtime session 允许、拒绝反馈、小窗口滚动、按键隔离和固定 snapshot。它不改变 P5 的完整范围，2026-10-28 已补充多行 composer、字素编辑、显式 decoded paste、有界 recall 与提交拒绝恢复。本地 slash commands、通用工具主线/详情、Markdown 与启动 resume picker 已有各自切片；补全、reasoning 与 fork picker 仍是后续目标。
+2026-09-19 已先交付验证 RuntimeEvent 边界的薄切片；2026-10-11 又交付了与 Patch candidate 精确关联的 diff approval overlay，包含默认 No、一次/本 Runtime session 允许、拒绝反馈、小窗口滚动、按键隔离和固定 snapshot。它不改变 P5 的完整范围，2026-10-28 已补充多行 composer、字素编辑、显式 decoded paste、有界 recall 与提交拒绝恢复。本地 slash commands、通用工具主线/详情、Markdown 与启动 resume picker 已有各自切片；命令/Skill 首词补全由 `add-command-and-skill-completion` 交付；reasoning 与 fork picker 仍是后续目标。
 
 - composer、多行输入、paste 保护、历史、补全和 slash command。
 - assistant commentary/final、thinking/reasoning 折叠。

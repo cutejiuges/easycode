@@ -847,3 +847,22 @@
 - 缓存影响：配置与 trust 不进入 prompt/catalog 段；只有实际工具结果进入历史尾部。恢复保持冻结 preview、原生 item 次序、footprint 与 canonical request。
 - 回归入口：`internal/session/hook_fixture_test.go`、`internal/runtime/hook_recovery_test.go`、`internal/runtime/hook_shutdown_test.go`、`internal/app/hook_resume_test.go`、`internal/app/hook_cache_test.go`、`internal/app/hook_host_owner_test.go`、`internal/tui/hooks_test.go`；真实终端由 `scripts/smoke-hooks.py` 验证。
 - 关联变更：`add-pre-tool-use-command-hooks`；完整验收见该 change 的 `verification.md`。
+
+
+## [P5][2026-11-06] 补全选择不能改写被保护的草稿或抢占控制键
+
+- 现象：新增接受补全时附加的分隔空格会改变 `/skills`、`/hooks` 浏览返回后的原草稿；候选若在普通 Esc 分支后处理，会先取回队列或停止任务。
+- 处理：候选按键在普通队列 Esc/Up 之前接收，保留审批等独占焦点；内置命令共用原提交路径，进入 Skills/Hooks 浏览后还原打开前的 composer 快照。显式 paste 统一作为文本事件处理，关闭抑制不会被流式回复或 resize 清除。
+- 性能边界：用 composer revision/字节光标复用名称解析、匹配和布局，关闭身份只克隆至多 65 字节 token，避免短 substring 留住旧 4 MiB 草稿。候选最多 261 个身份、五行选择和一行提示；无可见行时不能吞键。
+- 终端经验：一次写入含空格的文字可能解码为多个 KeyMsg；PTY 验收等待最终反馈视图，而不假设原始写入对应单个消息。退出要检查进程实际状态，不能把输出就绪检查超时当作进程仍未退出。
+- 回归入口：`internal/tui/completion*_test.go`、`internal/app/completion_e2e_test.go`、`internal/app/completion_terminal_test.go` 和 `scripts/completion-smoke.py`。请求对照固定相同 thread，不删除 cache key 或原生字段来制造等价。
+- 关联变更：`add-command-and-skill-completion`。
+
+
+### 补全追加验证：组合空白、空粘贴与恢复窗口
+
+- 组合字符可附着到普通或全角空格；按 rune 跳过分隔符会让光标落在同一个字素内部，下一次退格拆开该字素。补全改用既有字素导航跳过完整分隔字素，原文不变。
+- 已解码空 paste 是无操作，不能触发候选抑制；在聊天输入路由入口直接保留当前状态。
+- 提交冻结期间 resize 后，拒绝接收或取消查询不能直接恢复旧布局。各恢复路径共用 `restoreComposer`，按当前尺寸调整并失效草稿解析缓存；内容与合法光标保留。
+- 1×1 不能替代 1×24 等极窄但有高度的测试。候选不能只剩省略号仍接收 Tab；不足 13 列时关闭候选按键，恢复宽度后重新显示原选择。
+- 回归入口：`internal/tui/completion_revalidation_test.go`；随机编辑序列性质检查为 `completion_fuzz_test.go`。真实 PTY 加入空 bracketed paste、8×24、组合空白补全及退格；双 Provider 逐字节请求/恢复对照增加组合字符、中文和 ZWJ emoji 参数。

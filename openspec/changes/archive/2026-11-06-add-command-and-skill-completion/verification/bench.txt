@@ -1,0 +1,15 @@
+goos: darwin
+goarch: arm64
+pkg: easycode/internal/tui
+cpu: Apple M1 Pro
+BenchmarkCompletion/match/0/1-10         	     100	       241.7 ns/op	     168 B/op	       4 allocs/op
+BenchmarkCompletion/match/0/3-10         	     100	       133.3 ns/op	     104 B/op	       2 allocs/op
+BenchmarkCompletion/match/0/65-10        	     100	       106.2 ns/op	     105 B/op	       2 allocs/op
+BenchmarkCompletion/match/256/1-10       	     100	      3709 ns/op	    4952 B/op	       4 allocs/op
+BenchmarkCompletion/match/256/3-10       	     100	      3734 ns/op	    4952 B/op	       4 allocs/op
+BenchmarkCompletion/match/256/65-10      	     100	      3460 ns/op	    4889 B/op	       2 allocs/op
+BenchmarkCompletion/large-draft/1024-10  	     100	        41.67 ns/op	       8 B/op	       2 allocs/op
+BenchmarkCompletion/large-draft/4194304-10         	     100	        47.50 ns/op	       8 B/op	       2 allocs/op
+BenchmarkCompletion/unchanged-stream-update-10     	     100	       382.5 ns/op	      32 B/op	       1 allocs/op
+PASS
+ok  	easycode/internal/tui	0.307s

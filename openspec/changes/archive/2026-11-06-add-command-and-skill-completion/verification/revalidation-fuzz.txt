@@ -1,0 +1,11 @@
+fuzz: elapsed: 0s, gathering baseline coverage: 0/5 completed
+fuzz: elapsed: 0s, gathering baseline coverage: 5/5 completed, now fuzzing with 2 workers
+fuzz: elapsed: 3s, execs: 20451 (6816/sec), new interesting: 121 (total: 126)
+fuzz: elapsed: 6s, execs: 46437 (8664/sec), new interesting: 182 (total: 187)
+fuzz: elapsed: 9s, execs: 61380 (4980/sec), new interesting: 214 (total: 219)
+fuzz: elapsed: 12s, execs: 75424 (4681/sec), new interesting: 249 (total: 254)
+fuzz: elapsed: 15s, execs: 87485 (4020/sec), new interesting: 271 (total: 276)
+fuzz: elapsed: 18s, execs: 115052 (9189/sec), new interesting: 297 (total: 302)
+fuzz: elapsed: 20s, execs: 130177 (7307/sec), new interesting: 315 (total: 320)
+PASS
+ok  	easycode/internal/tui	21.139s

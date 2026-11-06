@@ -1,0 +1,9 @@
+ok  	easycode/internal/provider	0.429s
+ok  	easycode/internal/provider/anthropic	2.278s
+ok  	easycode/internal/provider/openai	2.085s
+ok  	easycode/internal/provider/transport	0.492s
+ok  	easycode/internal/session	12.491s
+ok  	easycode/internal/session/artifact	3.220s
+ok  	easycode/internal/session/catalog	3.446s
+ok  	easycode/internal/runtime	2.818s
+ok  	easycode/internal/headless	0.802s

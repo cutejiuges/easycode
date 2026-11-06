@@ -1,0 +1,2 @@
+ok  	easycode/internal/tui	1.466s
+ok  	easycode/internal/app	7.877s

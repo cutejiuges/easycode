@@ -71,6 +71,7 @@ func (c *composer) recall(delta int) {
 		c.text = h.entries[target]
 		c.cursor = len(c.text)
 	}
+	c.revision++
 	c.preferred = -1
 	c.relayout()
 	if h.browsing && delta < 0 {

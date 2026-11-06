@@ -82,7 +82,7 @@ func (model Model) projectControlItem(item protocol.ControlItem) (tea.Model, tea
 				model.composer.clear()
 			} else {
 				model.interruptNext = false
-				model.composer = *model.pending
+				model.restoreComposer(*model.pending)
 				summary, _ := result.Error()
 				model.errorSummary = string(summary.Code()) + ": " + summary.Message()
 			}
@@ -94,8 +94,7 @@ func (model Model) projectControlItem(item protocol.ControlItem) (tea.Model, tea
 				return model, nil
 			}
 			if result.Status() == protocol.CommandStatusAccepted {
-				model.composer = model.retracting.draft
-				model.composer.resize(model.widthOrDefault(), model.heightOrDefault())
+				model.restoreComposer(model.retracting.draft)
 			} else {
 				summary, _ := result.Error()
 				model.errorSummary = string(summary.Code()) + ": " + summary.Message()

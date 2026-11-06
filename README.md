@@ -4,7 +4,7 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 
 用户只需要提供 `base_url`、`api_key` 和模型名称即可连接服务，不需要账号登录、OAuth、设备码或订阅鉴权。
 
-> 项目按纵向切片持续推进。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、原生多轮 Session、`--resume`/`--continue`、headless/FIFO 输入、离线 `sessions list`，以及九项工具能力：Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill 和结构化用户提问。命令执行当前支持 Darwin；已支持同步 PreToolUse 命令 Hook，其余 Hook 事件和完整推理界面仍按 Roadmap 分阶段推进。
+> 项目按纵向切片持续推进。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、命令/Skill 首词补全、原生多轮 Session、`--resume`/`--continue`、headless/FIFO 输入、离线 `sessions list`，以及九项工具能力：Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill 和结构化用户提问。命令执行当前支持 Darwin；已支持同步 PreToolUse 命令 Hook，其余 Hook 事件和完整推理界面仍按 Roadmap 分阶段推进。
 
 ## 交互式恢复会话
 
@@ -24,11 +24,21 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 
 回答文字合计最多 16 KiB，完整结果最多 128 KiB，并受当前 sample/turn 剩余额度约束；超限拒绝并保留草稿。`--print`、`--json`、stream-json 不等待 stdin，立即返回配对的 `denied/user_input_unavailable` 工具结果。恢复不会重新提问：started 前取消配对；started 后没有结果标为 `outcome_uncertain`；已有结果按原字节复用。未提交草稿不写入 Session。 详细取舍见[设计方案](openspec/changes/archive/2026-11-05-add-structured-user-questions/design.md)，测试与平台记录见[验收报告](openspec/changes/archive/2026-11-05-add-structured-user-questions/verification.md)。
 
+## 命令与 Skill 补全
+
+聊天输入的首词输入 `/` 可浏览内置命令和可显式调用的 Skill，输入 `$` 只浏览 Skill。候选显示说明、参数提示和来源，按名称精确、前缀、子序列及说明匹配筛选；↑/↓ 选择，Tab 填入。Enter 选择内置命令后执行其现有操作，选择 Skill 后只填入调用，再输入参数并按独立 Enter 提交。已有参数、空白与换行保留，参数提示不会写入正文。
+
+候选打开时 Esc 先关闭，后续独立 Esc 沿用队列取回或任务停止规则；关闭后可用 Tab 重新打开，再次 Tab 填入。Ctrl+C 仍直接按当前任务停止/空闲退出规则处理。输入进入参数区后候选关闭；窗口不足 13 列或没有候选行空间时隐藏候选并恢复普通编辑。审批、问卷和详情界面使用各自按键。
+
+目录使用启动时冻结的 Skill 来源规则，只有有效且允许用户调用的获胜条目参与补全；禁止模型自行调用的手动 Skill 仍可选择。同名内置 slash 优先，Skill 可用 `$name` 调用。显式粘贴只插入原文并暂时关闭候选，后续独立 Enter 提交实际文本；编辑名称或按 Tab 可重新请求候选。
+
+本次范围仅覆盖命令与 Skill 首词，不包含文件、参数值、正文 mentions 或动态目录补全。设计及双 Provider、恢复、缓存与终端验证证据见[归档核对记录](openspec/changes/archive/2026-11-06-add-command-and-skill-completion/archive.md)和[追加验证报告](openspec/changes/archive/2026-11-06-add-command-and-skill-completion/revalidation.md)。
+
 ## 多行聊天输入
 
-Enter 提交；Alt+Enter、Ctrl+J 或光标前的反斜杠加 Enter 换行。左右键按字素移动，Backspace/Delete 删除前后字素；Home/End、Ctrl+A/E 到逻辑行首尾。上下键先移动视觉行，到顶部/底部后浏览当前会话输入历史，再向下越过最新记录恢复原草稿及光标。编辑召回内容后脱离历史浏览。手动 Tab 不插入，粘贴中的 Tab 保留。
+未激活补全时 Enter 提交；Alt+Enter、Ctrl+J 或光标前的反斜杠加 Enter 换行，优先于补全接受。左右键按字素移动，Backspace/Delete 删除前后字素；Home/End、Ctrl+A/E 到逻辑行首尾。上下键在候选激活时选择候选，其余时候先移动视觉行，到顶部/底部后浏览当前会话输入历史，再向下越过最新记录恢复原草稿及光标。编辑召回内容后脱离历史浏览。手动 Tab 仅按上述补全规则重开或接受候选，其他情况无操作；粘贴中的 Tab 保留为正文。
 
-输入视口最多 8 行，按窗口大小缩放；草稿上限 4 MiB，超限整次拒绝。历史最多 100 条、8 MiB，折叠相邻重复，最旧优先淘汰；resume 由当前 thread 语义历史初始化。提交被会话接收后才清空草稿并记录历史；接收失败恢复草稿，已接收后的 turn 失败不自动重提。审批、命令详情、提交等待和执行期间保持独立焦点；Esc/Ctrl+C 中断活动任务并等待清理，空闲空草稿 Ctrl+C 退出。
+输入视口最多 8 行，按窗口大小缩放；草稿上限 4 MiB，超限整次拒绝。历史最多 100 条、8 MiB，折叠相邻重复，最旧优先淘汰；resume 由当前 thread 语义历史初始化。提交被会话接收后才清空草稿并记录历史；接收失败恢复草稿，已接收后的 turn 失败不自动重提。审批、命令详情、提交等待和取消清理期间由各自状态处理按键；候选关闭后 Esc 按队列/任务规则处理，Ctrl+C 中断活动任务并等待清理，空闲空草稿 Ctrl+C 退出。
 
 TUI 将 CRLF/CR 规范化为 LF，保留缩进、Tab、尾空格及尾换行；双 Provider 和 headless 不再裁剪有效正文，headless 不额外规范化换行。全空白输入仍被拒绝。控制字符在输入区和用户 transcript 中显示为可见转义，提交正文不因显示而改变。
 
@@ -49,7 +59,7 @@ TUI 将 CRLF/CR 规范化为 LF，保留缩进、Tab、尾空格及尾换行；�
 
 | 领域 | 当前状态 |
 |---|---|
-| CLI/TUI 入口 | 已实现流式 Markdown Chat、多行/FIFO 输入、工具/问卷/Hook 审查、历史详情与 resume 选择器；支持一次性 text/JSON 和 stream-json 控制 |
+| CLI/TUI 入口 | 已实现流式 Markdown Chat、多行/FIFO 输入、命令/Skill 首词补全、工具/问卷/Hook 审查、历史详情与 resume 选择器；支持一次性 text/JSON 和 stream-json 控制 |
 | 双 Provider | Anthropic Messages 与 OpenAI Responses 已支持流式文本多轮、各自原生历史及 committed-only 文本历史投影 |
 | HTTP/SSE | 已建立基于 Resty v3 的公共传输层 |
 | JSON 与缓存 | 已实现不可变 canonical JSON、Context/CachePlan、来源 fingerprint、Anthropic 显式断点/TTL、OpenAI thread key/可选 WebSocket 增量及缓存查询 |
@@ -417,7 +427,7 @@ make install-hooks
 | P2 | Session 与 Headless Loop | root Session、JSONL/SQLite、恢复、三种 headless 与 FIFO 已交付；全文索引/子线程待实现 |
 | P3 | Coding Tools | 九项工具与批准/恢复/预算已交付；PTY、后台进程、通用跨平台 sandbox 待实现 |
 | P4 | 缓存与上下文 | 缓存、usage 归一、手动/自动压缩已交付；费用、精确计数与跨 Provider fork 待实现 |
-| P5 | Claude 风格 TUI | Markdown、输入、审批/问卷/Hook、详情和 resume picker 已交付；reasoning/补全/fork picker 待实现 |
+| P5 | Claude 风格 TUI | Markdown、输入及命令/Skill 补全、审批/问卷/Hook、详情和 resume picker 已交付；reasoning/fork picker 待实现 |
 | P6 | 扩展系统 | 本地 Skills、同步 PreToolUse 已交付；其余 Hook、Plugins/MCP/热加载待实现 |
 | P7 | Subagent | 尚未实现；保留批准占位，未接入 Runtime/app |
 | P8 | 发布强化 | 部分安全/故障验证已落地；全平台发布矩阵、诊断、遥测待实现；兼容迁移须另行明确授权 |
@@ -456,9 +466,9 @@ make install-hooks
 
 ### 运行中追加和取回输入
 
-任务运行时仍可编辑草稿，Enter 将输入排队；完整工具结果保存后，追加内容可以进入同一轮的下一次模型请求。没有下一次工具采样时，输入按顺序开启新轮。queued/claimed 表示尚未保存；正文进入对话记录才表示 committed。
+任务运行时仍可编辑草稿；没有激活补全且不匹配换行规则时，Enter 将输入排队。完整工具结果保存后，追加内容可以进入同一轮的下一次模型请求。没有下一次工具采样时，输入按顺序开启新轮。queued/claimed 表示尚未保存；正文进入对话记录才表示 committed。
 
-空草稿首行 Up 或普通 Esc 将尚未领取的排队输入取回编辑；Ctrl+C（或无可取回输入时 Esc）停止当前轮。停止后返还的内容使用 Ctrl+R 逐条放回草稿，Ctrl+D 逐条丢弃，均不会自动发送。审批和命令详情优先使用各自快捷键。队列和返还区只在本进程保留；已保存的输入可以恢复，未保存内容不会在重启后自动执行。
+补全激活时 Up 选择候选，Esc 只关闭候选；其余时候，空草稿首行 Up 或普通 Esc 将尚未领取的排队输入取回编辑。Ctrl+C（或无补全和可取回输入时 Esc）停止当前轮。停止后返还的内容使用 Ctrl+R 逐条放回草稿，Ctrl+D 逐条丢弃，均不会自动发送。审批和命令详情优先使用各自快捷键。队列和返还区只在本进程保留；已保存的输入可以恢复，未保存内容不会在重启后自动执行。
 
 
 ### 上下文查询与手动压缩
@@ -466,7 +476,7 @@ make install-hooks
 - `/cache`：查看进程内最近已提交的缓存观测、来源变化、三态 usage 与实际 transport；上下滚动，Esc 关闭。不创建 turn 或输入回忆。
 - `/context`：查看显式缓存策略，以及已提交窗口的分类 token 估算、模型、revision、窗口与预留；运行中可查询，排队输入和 staging 不计入。估算不是 usage，未配置窗口时不显示比例。
 - `/compact` 或 `/compact 保留失败测试与下一步`：空闲且没有排队输入时总结当前窗口。完成后显示简短边界，Ctrl+O 查看摘要与全部旧历史。没有后续输入时保持等待。
-- 压缩期间仍可编辑和排队；Ctrl+C 取消当前压缩。Esc 优先关闭详情、取回 queued auto，再取消压缩。失败保持旧窗口并返还自动输入，strict-next 保留。
+- 压缩期间仍可编辑和排队；Ctrl+C 取消当前压缩。Esc 先按当前焦点关闭详情或补全，再取回 queued auto，无可取回输入时取消压缩。失败保持旧窗口并返还自动输入，strict-next 保留。
 
 JSON 配置可设置 `"compaction_output_tokens": 4096`，范围 1–65536，不提供环境变量覆盖；这是摘要输出上限，与普通输出预留独立。网络期限为 120 秒；超预算、摘要无效或无法缩减时明确失败，不重试或自动删历史。默认 4096 与小窗口冲突只拒绝压缩，不阻断普通启动。
 

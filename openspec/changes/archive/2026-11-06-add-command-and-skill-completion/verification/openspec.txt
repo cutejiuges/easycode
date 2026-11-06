@@ -1,0 +1,1 @@
+Change 'add-command-and-skill-completion' is valid
