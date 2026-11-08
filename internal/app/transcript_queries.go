@@ -36,7 +36,32 @@ func transcriptListItem(node transcriptNode, entry session.ToolHistoryEntry) pro
 		item.More = len(item.Text) < len(node.item.Text) || node.item.HasSkill
 		return item
 	}
+	item.DetailSequence = entry.DetailSequence
 	item.Activity = tool.ProjectActivity(entry.Invocation)
+	if g := entry.PostHooks; g != nil && entry.HasResult && (g.Terminal != nil || entry.Result.Status() == tool.ResultSuccess) {
+		ref := g.Plan.Plan.Hooks[min(len(g.Finished), len(g.Plan.Plan.Hooks)-1)]
+		summary := protocol.HookActivityPayload{InvocationID: string(entry.Invocation.InvocationID()), Reference: ref, State: protocol.HookActivityChecking, Code: domain.HookOK}
+		if g.Terminal != nil {
+			summary.Code = g.Terminal.Code
+			switch g.Terminal.Disposition {
+			case domain.PostHookCompleted:
+				summary.State = protocol.HookActivityCompleted
+				for _, f := range g.Finished {
+					if f.Result.Code == summary.Code {
+						summary.Reference = f.Feedback.Reference
+						break
+					}
+				}
+			case domain.PostHookSkipped:
+				summary.State = protocol.HookActivitySkipped
+			case domain.PostHookCancelled:
+				summary.State = protocol.HookActivityState(domain.HookCancel)
+			case domain.PostHookUncertain:
+				summary.State = protocol.HookActivityState(domain.HookUncertain)
+			}
+		}
+		item.PostHook = summary
+	}
 	if entry.HasResult {
 		r := entry.Result
 		item.Preview = tool.ActivityText(r.Preview().Text(), 4096)
@@ -111,6 +136,10 @@ func (q *transcriptQueries) ListTranscript(ctx context.Context, query protocol.T
 		var entry session.ToolHistoryEntry
 		if node.toolIndex >= 0 {
 			entry = q.entries[node.toolIndex]
+			if entry.PostHooks != nil {
+				g := entry.PostHooks.Clone()
+				entry.PostHooks = &g
+			}
 		}
 		selected = append(selected, selectedNode{node, entry})
 	}
@@ -148,8 +177,15 @@ func (q *transcriptQueries) ReadTranscriptBody(ctx context.Context, query protoc
 	var entry session.ToolHistoryEntry
 	if node.toolIndex >= 0 {
 		entry = q.entries[node.toolIndex]
+		if entry.PostHooks != nil {
+			g := entry.PostHooks.Clone()
+			entry.PostHooks = &g
+		}
 	}
 	q.mu.Unlock()
+	if query.Source == protocol.TranscriptPostHooks && query.DetailSequence != entry.DetailSequence {
+		return protocol.TranscriptBodyPage{}, protocol.TranscriptChanged
+	}
 	if err := ctx.Err(); err != nil {
 		return protocol.TranscriptBodyPage{}, err
 	}
@@ -198,8 +234,31 @@ func (q *transcriptQueries) ReadTranscriptBody(ctx context.Context, query protoc
 				text = tool.QuestionResultText(question.Input(), entry.Result)
 			}
 			for _, h := range entry.Hooks {
+				if h.Result.Identity.Event != domain.HookPreToolUse {
+					continue
+				}
 				text += fmt.Sprintf("\n\nCheck %s:%s · %s (%s) · timeout %ds · stdout %d bytes · stderr %d bytes\nDetailed hook output was not recorded.", h.Reference.Source, h.Reference.ID, h.Result.Status, h.Result.Code, h.Reference.TimeoutSeconds, h.Result.StdoutBytes, h.Result.StderrBytes)
 			}
+		case protocol.TranscriptPostHooks:
+			if entry.PostHooks == nil {
+				return protocol.TranscriptBodyPage{}, tool.ArtifactReadUnavailable
+			}
+			g := entry.PostHooks
+			text = "PostToolUse checks · feedback delivery: " + string(g.Plan.Delivery)
+			for _, f := range g.Finished {
+				text += fmt.Sprintf("\n\nCheck %s:%s · %s (%s) · stdout %d bytes · stderr %d bytes", f.Feedback.Reference.Source, f.Feedback.Reference.ID, f.Result.Status, f.Result.Code, f.Result.StdoutBytes, f.Result.StderrBytes)
+			}
+			if g.Started != nil {
+				text += "\n\nCheck in progress"
+			}
+			if g.Terminal != nil {
+				text += fmt.Sprintf("\n\nPostToolUse: %s (%s) · processed %d/%d", g.Terminal.Disposition, g.Terminal.Code, g.Terminal.Processed, len(g.Plan.Plan.Hooks))
+			}
+			feedback, err := tool.RenderPostFeedback(g.Feedback())
+			if err != nil {
+				return protocol.TranscriptBodyPage{}, err
+			}
+			text += feedback
 		default:
 			return protocol.TranscriptBodyPage{}, tool.ArtifactReadInvalidRange
 		}
@@ -222,5 +281,9 @@ func (q *transcriptQueries) ReadTranscriptBody(ctx context.Context, query protoc
 	if end == start && end < uint64(len(text)) {
 		return protocol.TranscriptBodyPage{}, tool.ArtifactReadInvalidRange
 	}
-	return protocol.NewTranscriptBodyPage(protocol.TranscriptBodyPage{Offset: start, NextOffset: end, TotalBytes: uint64(len(text)), Text: strings.Clone(text[start:end])})
+	detailSequence := uint64(0)
+	if query.Source == protocol.TranscriptPostHooks {
+		detailSequence = entry.DetailSequence
+	}
+	return protocol.NewTranscriptBodyPage(protocol.TranscriptBodyPage{DetailSequence: detailSequence, Offset: start, NextOffset: end, TotalBytes: uint64(len(text)), Text: strings.Clone(text[start:end])})
 }

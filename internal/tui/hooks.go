@@ -128,11 +128,11 @@ func hookPanel(lines []string, width, height, scroll int) string {
 	return strings.Join(wrapped[scroll:min(len(wrapped), scroll+max(1, height))], "\n")
 }
 func (m Model) renderHooks() string {
-	lines := []string{"Hooks · PreToolUse", "Enter: details · Esc: back"}
+	lines := []string{"Hooks · PreToolUse / PostToolUse", "Enter: details · Esc: back"}
 	if m.hooks.detail && len(m.hooks.entries) > 0 {
 		e := m.hooks.entries[m.hooks.selected]
 		d := e.Declaration
-		lines = []string{"Hook details · Esc: back · ↑/↓: scroll · r: reset trust", fmt.Sprintf("Source: %s · %s [%s]", d.Reference.Source, d.Reference.ID, e.State), "Matcher: " + d.Matcher.String(), fmt.Sprintf("Timeout: %d seconds", d.Reference.TimeoutSeconds), "Workspace: . · read-only · network denied", "Workspace scripts can change after review.", "Reset only removes trust; the next tool call asks again.", "Detailed hook output is not recorded.", "", "Command:", d.Command}
+		lines = []string{"Hook details · Esc: back · ↑/↓: scroll · r: reset trust", fmt.Sprintf("Source: %s · %s [%s]", d.Reference.Source, d.Reference.ID, e.State), "Event: " + string(d.Reference.Event) + " · feedback: " + string(d.Reference.Feedback), "Matcher: " + d.Matcher.String(), fmt.Sprintf("Timeout: %d seconds", d.Reference.TimeoutSeconds), "Workspace: . · read-only · network denied", "Workspace scripts can change after review.", "Reset only removes trust; the next tool call asks again.", "Raw output is discarded. Only trusted model feedback is sent and saved.", "", "Command:", d.Command}
 		if e.State == "invalid" || e.State == "unsupported" {
 			lines = append(lines, "Unavailable: "+string(e.Code))
 		}
@@ -148,7 +148,11 @@ func (m Model) renderHooks() string {
 			marker = "> "
 			selectedRow = len(lines)
 		}
-		lines = append(lines, fmt.Sprintf("%s%s · %s · %s [%s]", marker, e.Declaration.Reference.Source, e.Declaration.Reference.ID, e.Declaration.Matcher.String(), e.State))
+		if e.Declaration.Validate() != nil {
+			lines = append(lines, fmt.Sprintf("%s%s [%s]", marker, e.Declaration.Reference.Source, e.State))
+		} else {
+			lines = append(lines, fmt.Sprintf("%s%s:%s · %s · %s [%s]", marker, e.Declaration.Reference.Source, e.Declaration.Reference.ID, e.Declaration.Reference.Event, e.Declaration.Reference.Feedback, e.State))
+		}
 		if e.Code != domain.HookOK {
 			lines = append(lines, "  "+string(e.Code))
 		}
@@ -217,7 +221,10 @@ func (m Model) renderHookTrust() string {
 	if o.trust {
 		trust, deny = "> Trust for this session", "  Deny"
 	}
-	lines := []string{"Trust this hook?", fmt.Sprintf("Source: %s · %s", d.Reference.Source, d.Reference.ID), "PreToolUse: " + d.Matcher.String(), fmt.Sprintf("Timeout: %d seconds", d.Reference.TimeoutSeconds), "Workspace: . · read-only · network denied", "This does not approve the model's tool call.", "Workspace scripts can change after review.", "PgUp/PgDn: full command · Tab/↑/↓: choose · Esc: deny", "", trust, deny, "", "Command:", d.Command}
+	lines := []string{"Trust this hook?", fmt.Sprintf("Source: %s · %s", d.Reference.Source, d.Reference.ID), string(d.Reference.Event) + ": " + d.Matcher.String(), "Feedback: " + string(d.Reference.Feedback), fmt.Sprintf("Timeout: %d seconds", d.Reference.TimeoutSeconds), "Workspace: . · read-only · network denied", "This does not approve the model's tool call.", "Workspace scripts can change after review.", "PgUp/PgDn: full command · Tab/↑/↓: choose · Esc: deny", "", trust, deny, "", "Command:", d.Command}
+	if d.Reference.Event == domain.HookPostToolUse {
+		lines = append(lines[:1], append([]string{"Runs only after the tool succeeds.", "feedback=model sends additionalContext to the provider and saves it in Session."}, lines[1:]...)...)
+	}
 	if o.submitted {
 		lines = append(lines, "Waiting for confirmation")
 	}
@@ -231,6 +238,8 @@ func (m Model) projectHookEvent(e protocol.Event) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch e.Kind {
+	case protocol.EventPostHookCommitted:
+		return m.projectPostHookCommit(e)
 	case protocol.EventHookTrustRequested:
 		p, err := protocol.DecodeHookTrustRequested(e)
 		if err != nil || m.approval != nil || m.question != nil || m.hookTrust != nil {
@@ -266,8 +275,14 @@ func (m Model) projectHookEvent(e protocol.Event) (tea.Model, tea.Cmd) {
 		if !ok || index >= len(m.transcript) {
 			return m, nil
 		}
-		if p.State == "checking" && m.toolClosed[p.InvocationID] {
+		if m.toolClosed[p.InvocationID] && p.Reference.Event == domain.HookPreToolUse {
 			return m, nil
+		}
+		if p.State == "checking" && m.toolClosed[p.InvocationID] {
+			post, ok := m.postHooks[p.InvocationID]
+			if !ok || post.Phase != protocol.PostHookStarted {
+				return m, nil
+			}
 		}
 		m.transcript[index].hook = &p
 	}

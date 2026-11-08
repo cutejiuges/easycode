@@ -69,6 +69,19 @@ func (runtime *Runtime) executeExclusive(ctx context.Context, turnID domain.Turn
 }
 
 func (runtime *Runtime) executeApproved(ctx context.Context, emit Emitter, turnID domain.TurnID, invocation tool.Invocation) (tool.InvocationResult, bool, error) {
+	if state := runtime.hooks.post[invocation.InvocationID()]; state != nil {
+		runtime.hooks.mu.Lock()
+		cached, ok := runtime.hooks.completed[invocation.InvocationID()]
+		runtime.hooks.mu.Unlock()
+		if ok {
+			ready, readyErr := session.NewToolCallReadyDraft(turnID, invocation, 0, 0)
+			frozen, resultErr := session.NewToolCallResultDraft(turnID, cached)
+			if readyErr != nil || resultErr != nil || domain.HookDigest(ready.PayloadBytes()) != state.invocationFingerprint || domain.HookDigest(frozen.PayloadBytes()) != state.resultFingerprint || cached.ProviderCallID() != invocation.ProviderCallID() || cached.Capability() != invocation.Capability() || cached.WireKind() != invocation.WireKind() {
+				return tool.InvocationResult{}, false, fault.New(fault.CodeStreamProtocol, "post hook invocation replay mismatch")
+			}
+			return cached, false, runtime.runPostHooks(ctx, turnID, invocation, cached, state)
+		}
+	}
 	if runtime.resultBudget.BodyExhausted() {
 		result := tool.NewInvocationErrorResult(invocation, tool.ResultError, "result_budget_exceeded", "Tool not executed: turn result budget exhausted")
 		err := runtime.persistToolResult(context.WithoutCancel(ctx), turnID, &result)
@@ -78,14 +91,51 @@ func (runtime *Runtime) executeApproved(ctx context.Context, emit Emitter, turnI
 		return result, false, err
 	}
 
+	state, code, prepareErr := runtime.preparePostHooks(ctx, emit, turnID, invocation)
+	if code != domain.HookOK || prepareErr != nil {
+		if runtime.journal.Poisoned() || runtime.poisoned.Load() {
+			return tool.InvocationResult{}, false, prepareErr
+		}
+		status := tool.ResultError
+		if code == domain.HookTrustDenied || code == domain.HookTrustRequired {
+			status = tool.ResultDenied
+		}
+		if code == domain.HookCancelled {
+			status = tool.ResultCancelled
+		}
+		result := tool.NewInvocationErrorResult(invocation, status, string(code), "Hook stopped: "+string(code))
+		if err := runtime.persistToolResult(context.WithoutCancel(ctx), turnID, &result); err != nil {
+			return tool.InvocationResult{}, false, err
+		}
+		if err := runtime.runPostHooks(ctx, turnID, invocation, result, state); err != nil {
+			return result, false, err
+		}
+		if prepareErr != nil {
+			return result, false, prepareErr
+		}
+		if code == domain.HookCancelled {
+			return result, false, fault.Wrap(fault.CodeUserCancelled, "post hook trust cancelled", context.Canceled)
+		}
+		return result, false, nil
+	}
+	var result tool.InvocationResult
+	var aborted bool
+	var err error
 	switch invocation.Capability() {
 	case tool.CapabilityPatch:
-		return runtime.executePatchCall(ctx, emit, turnID, invocation)
+		result, aborted, err = runtime.executePatchCall(ctx, emit, turnID, invocation)
 	case tool.CapabilityWrite:
-		return runtime.executeWriteCall(ctx, emit, turnID, invocation)
+		result, aborted, err = runtime.executeWriteCall(ctx, emit, turnID, invocation)
 	case tool.CapabilityExec:
-		return runtime.executeExecCall(ctx, emit, turnID, invocation)
+		result, aborted, err = runtime.executeExecCall(ctx, emit, turnID, invocation)
 	default:
 		return tool.InvocationResult{}, false, fault.New(fault.CodeTurnFailed, "exclusive capability is unsupported")
 	}
+	if result.Validate() != nil || runtime.poisoned.Load() || runtime.journal.Poisoned() {
+		return result, aborted, err
+	}
+	if postErr := runtime.runPostHooks(ctx, turnID, invocation, result, state); postErr != nil {
+		return result, aborted, postErr
+	}
+	return result, aborted, err
 }

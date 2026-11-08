@@ -109,6 +109,7 @@ type Model struct {
 	interruptNext  bool
 	approval       *approvalOverlay
 	activeTurnID   domain.TurnID
+	postHooks      map[string]protocol.PostHookCommittedPayload
 	toolItems      map[string]int
 	toolClosed     map[string]bool
 	toolActivities map[string]toolActivityState
@@ -593,7 +594,7 @@ func (model *Model) submitApproval() tea.Cmd {
 }
 
 func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd) {
-	if event.Kind == protocol.EventHookTrustRequested || event.Kind == protocol.EventHookTrustResolved || event.Kind == protocol.EventHookActivity {
+	if event.Kind == protocol.EventHookTrustRequested || event.Kind == protocol.EventHookTrustResolved || event.Kind == protocol.EventHookActivity || event.Kind == protocol.EventPostHookCommitted {
 		return model.projectHookEvent(event)
 	}
 
@@ -670,6 +671,7 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 		model.transcript = append(model.transcript, transcriptMessage{role: "User", text: text})
 		model.assistantItem = -1
 	case protocol.EventTurnStarted:
+		model.postHooks = make(map[string]protocol.PostHookCommittedPayload)
 		if event.TurnID.Valid() {
 			notice := ""
 			if model.reasoning.failed {

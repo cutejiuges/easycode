@@ -101,7 +101,8 @@ func (r *Runtime) acceptQuestionAnswer(turnID domain.TurnID, response protocol.U
 		return protocol.ControlErrorQuestionAnswerInvalid
 	}
 	result, err = tool.FinalizeResult(result, p.request.ResultAllowance, tool.BudgetPreserved)
-	if err != nil || session.PreflightQuestionResult(session.Identity{SessionID: r.sessionID, ThreadID: r.threadID}, turnID, result) != nil || p.preflight.Validate(result) != nil {
+	output, outputErr := tool.NewModelOutput(result, nil)
+	if err != nil || outputErr != nil || session.PreflightQuestionResult(session.Identity{SessionID: r.sessionID, ThreadID: r.threadID}, turnID, result) != nil || p.preflight.Validate(output) != nil {
 		return protocol.ControlErrorQuestionAnswerInvalid
 	}
 	r.questions.mu.Lock()

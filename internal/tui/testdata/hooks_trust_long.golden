@@ -1,6 +1,7 @@
 Trust this hook?
 Source: project · check
 PreToolUse: fs.patch|fs.write|process.exec
+Feedback: none
 Timeout: 5 seconds
 Workspace: . · read-only · network denied
 This does not approve the model's tool call.
@@ -11,7 +12,6 @@ PgUp/PgDn: full command · Tab/↑/↓: choose · Esc: deny
 > Deny
 
 Command:
-printf 'review every line'
 printf 'review every line'
 printf 'review every line'
 printf 'review every line'

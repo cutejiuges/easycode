@@ -118,7 +118,7 @@ type heldToolOutputsConversation struct {
 	prepared *provider.PreparedToolOutputs
 }
 
-func (c *heldToolOutputsConversation) PrepareToolOutputs(results []tool.InvocationResult) (*provider.PreparedToolOutputs, error) {
+func (c *heldToolOutputsConversation) PrepareToolOutputs(results []tool.ModelOutput) (*provider.PreparedToolOutputs, error) {
 	p, err := c.fakeToolConversation.PrepareToolOutputs(results)
 	c.prepared = p
 	return p, err

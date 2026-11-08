@@ -7,7 +7,7 @@ import (
 	"easycode/internal/tool"
 )
 
-func prepareToolOutputsEntry(history []nativeHistoryEntry, results []tool.InvocationResult) (nativeHistoryEntry, error) {
+func prepareToolOutputsEntry(history []nativeHistoryEntry, results []tool.ModelOutput) (nativeHistoryEntry, error) {
 	calls, err := pendingToolUses(history)
 	if err != nil {
 		return nativeHistoryEntry{}, err

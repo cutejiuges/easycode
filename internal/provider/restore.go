@@ -8,6 +8,7 @@ import (
 
 // RestoreRecord 将 opaque 原生增量绑定到已校验的 turn 和提交角色。
 type RestoreRecord struct {
+	toolOutputs     []tool.ModelOutput
 	questions       []tool.QuestionInvocation
 	questionResults []tool.InvocationResult
 	source          *CompactionSource
@@ -40,8 +41,18 @@ func NewSampleRestoreRecord(turnID domain.TurnID, envelope NativeCommitEnvelope)
 }
 
 // NewToolOutputRestoreRecord 创建工具结果的恢复记录。
-func NewToolOutputRestoreRecord(turnID domain.TurnID, envelope NativeCommitEnvelope) (RestoreRecord, error) {
-	return newRestoreRecord(turnID, domain.NativeCommitToolOutputs, envelope)
+func NewToolOutputRestoreRecord(turnID domain.TurnID, envelope NativeCommitEnvelope, outputs []tool.ModelOutput) (RestoreRecord, error) {
+	record, err := newRestoreRecord(turnID, domain.NativeCommitToolOutputs, envelope)
+	if err != nil {
+		return RestoreRecord{}, err
+	}
+	record.toolOutputs = append([]tool.ModelOutput(nil), outputs...)
+	return record, record.Validate()
+}
+
+// ToolOutputs 返回已校验事实生成的输出证据，不读取原生文本标签。
+func (record RestoreRecord) ToolOutputs() []tool.ModelOutput {
+	return append([]tool.ModelOutput(nil), record.toolOutputs...)
 }
 
 func newRestoreRecord(turnID domain.TurnID, role domain.NativeCommitRole, envelope NativeCommitEnvelope) (RestoreRecord, error) {
@@ -85,6 +96,21 @@ func (record RestoreRecord) Association() (domain.InputAssociation, bool) {
 
 // Validate 拒绝零值或不匹配的恢复角色。
 func (record RestoreRecord) Validate() error {
+	if record.role == domain.NativeCommitToolOutputs {
+		if len(record.toolOutputs) == 0 {
+			return fmt.Errorf("tool output restore evidence is required")
+		}
+		seen := make(map[tool.ProviderCallID]bool)
+		for _, output := range record.toolOutputs {
+			if output.Validate() != nil || tool.ValidateFrozenResult(output.Result()) != nil || seen[output.Result().ProviderCallID()] {
+				return fmt.Errorf("invalid tool output restore evidence")
+			}
+			seen[output.Result().ProviderCallID()] = true
+		}
+	} else if len(record.toolOutputs) != 0 {
+		return fmt.Errorf("unrelated tool output restore evidence")
+	}
+
 	if len(record.questions) > 0 || len(record.questionResults) > 0 {
 		if record.source != nil || record.checkpoint != nil || record.role != domain.NativeCommitSample {
 			return fmt.Errorf("question facts require a sample restore record")

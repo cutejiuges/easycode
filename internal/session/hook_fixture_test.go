@@ -148,7 +148,8 @@ func TestHookLeaseAcrossProcessesRecoveryAndMonotonicAppend(t *testing.T) {
 			} else {
 				id, _ := domain.NewHookRunIdentity(call, 0)
 				r := domain.HookRunResult{Identity: id, Status: domain.HookContinue, Code: domain.HookOK, ExitKnown: true, CleanupConfirmed: true, Origin: "execution"}
-				d, _ := NewHookExecutionFinishedDraft(testTurnID, r)
+				finished, _ := domain.NewEmptyHookFinished(r, call.Hooks[0])
+				d, _ := NewHookExecutionFinishedDraft(testTurnID, finished)
 				drafts = []RecordDraft{d}
 			}
 			records, err := writer.AppendBatch(context.Background(), drafts)

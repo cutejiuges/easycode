@@ -1,5 +1,5 @@
-Hooks · PreToolUse
+Hooks · PreToolUse / PostToo
+lUse
 Enter: details · Esc: back
-> project · check · fs.patch
-|fs.write|process.exec [untr
-usted]
+> project:check · PreToolUse
+ · none [untrusted]

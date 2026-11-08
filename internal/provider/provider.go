@@ -329,12 +329,12 @@ type Conversation interface {
 // ToolResultPreparer 由具体 Provider 在纯内存中完成原生结果配对和编码。
 // ToolOutputPreflight 验证一项输出的不可变原生配对快照。
 type ToolOutputPreflight interface {
-	Validate(tool.InvocationResult) error
+	Validate(tool.ModelOutput) error
 }
 
 type ToolResultPreparer interface {
 	PrepareToolOutputPreflight(tool.Invocation) (ToolOutputPreflight, error)
-	PrepareToolOutputs([]tool.InvocationResult) (*PreparedToolOutputs, error)
+	PrepareToolOutputs([]tool.ModelOutput) (*PreparedToolOutputs, error)
 }
 
 // NativeCommitEnvelope 是共享层可复制但不可解释的 Provider 原生历史增量。

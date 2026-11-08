@@ -27,14 +27,28 @@ import (
 	"easycode/internal/tool/builtin"
 )
 
-type appHookRunner struct{ runs atomic.Int32 }
+type appHookRunner struct {
+	runs     atomic.Int32
+	feedback bool
+}
 
 func (*appHookRunner) Preflight(context.Context) domain.HookCode { return domain.HookOK }
-func (r *appHookRunner) Run(_ context.Context, id domain.HookRunIdentity, _ domain.HookDeclaration, _ domain.HookInput, _ time.Duration) domain.HookRunResult {
+func (r *appHookRunner) Run(_ context.Context, id domain.HookRunIdentity, _ domain.HookDeclaration, _ domain.HookInput, _ time.Duration) domain.HookExecution {
 	r.runs.Add(1)
-	return domain.HookRunResult{Identity: id, Status: domain.HookContinue, Code: domain.HookOK, ExitKnown: true, CleanupConfirmed: true, Origin: "execution"}
+	candidate := domain.HookFeedbackCandidate{}
+	if r.feedback && id.Event == domain.HookPostToolUse {
+		candidate, _ = domain.NewHookFeedbackCandidate("explicit check feedback")
+	}
+	return domain.HookExecution{Result: domain.HookRunResult{Identity: id, Status: domain.HookContinue, Code: domain.HookOK, ExitKnown: true, CleanupConfirmed: true, Origin: "execution"}, Feedback: candidate}
 }
 func TestHookResumeReconcilesEveryBatchBeforeLoadingNewSnapshot(t *testing.T) {
+	testHookResumeReconcilesEveryBatch(t, domain.HookPreToolUse)
+}
+func TestPostHookResumeReconcilesEveryBatchBeforeLoadingNewSnapshot(t *testing.T) {
+	testHookResumeReconcilesEveryBatch(t, domain.HookPostToolUse)
+}
+func testHookResumeReconcilesEveryBatch(t *testing.T, event domain.HookEvent) {
+	t.Helper()
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		t.Run(string(family), func(t *testing.T) {
 			workspace := t.TempDir()
@@ -57,6 +71,10 @@ func TestHookResumeReconcilesEveryBatchBeforeLoadingNewSnapshot(t *testing.T) {
 			second := bytes.Replace(entry, []byte(`"id":"first"`), []byte(`"id":"second"`), 1)
 			cfgObject.Hooks.PreToolUse[0].Hooks = append(cfgObject.Hooks.PreToolUse[0].Hooks, second)
 			b, _ = json.Marshal(cfgObject)
+			if event == domain.HookPostToolUse {
+				b = bytes.ReplaceAll(b, []byte(`"PreToolUse"`), []byte(`"PostToolUse"`))
+				b = bytes.ReplaceAll(b, []byte(`"type":"command"`), []byte(`"type":"command","feedback":"model"`))
+			}
 			if err := os.WriteFile(file, b, 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -81,7 +99,7 @@ func TestHookResumeReconcilesEveryBatchBeforeLoadingNewSnapshot(t *testing.T) {
 			defer server.Close()
 			cfg := config.Config{Provider: config.Provider{Family: family, Model: "fixture-model", BaseURL: server.URL, APIKey: secret.New("fixture-key")}}
 			root := filepath.Join(t.TempDir(), "sessions")
-			runner := &appHookRunner{}
+			runner := &appHookRunner{feedback: event == domain.HookPostToolUse}
 			makeRunner := func(*builtin.Workspace, builtin.CommandEnvironment, builtin.HookOutputParser) (chatRuntime.HookRunner, error) {
 				return runner, nil
 			}
@@ -232,7 +250,16 @@ func TestHookResumeReconcilesEveryBatchBeforeLoadingNewSnapshot(t *testing.T) {
 								t.Fatal("second recovery rewrote committed prefix", err)
 							}
 							_, secondPlan := loadToolLoopPlan(t, root, thread)
-							if secondPlan.ToolRecovery != nil || len(secondPlan.Tools) != 1 || secondPlan.Tools[0].Result.Code() != string(domain.HookOutcomeUncertain) {
+							uncertain := false
+							if len(secondPlan.Tools) == 1 {
+								if event == domain.HookPreToolUse {
+									uncertain = secondPlan.Tools[0].Result.Code() == string(domain.HookOutcomeUncertain)
+								} else {
+									g := secondPlan.Tools[0].PostHooks
+									uncertain = g != nil && g.Terminal != nil && g.Terminal.Disposition == domain.PostHookUncertain && secondPlan.Tools[0].Result.Code() == "ok"
+								}
+							}
+							if secondPlan.ToolRecovery != nil || !uncertain {
 								t.Fatal("second recovery lost frozen uncertainty")
 							}
 							if runner.runs.Load() != beforeRuns || requests.Load() != beforeRequests {
@@ -240,7 +267,7 @@ func TestHookResumeReconcilesEveryBatchBeforeLoadingNewSnapshot(t *testing.T) {
 							}
 						}
 					}
-					if checkpoint.EventKind == session.EventToolCallResult || checkpoint.EventKind == session.EventProviderNativeCommit {
+					if event == domain.HookPreToolUse && checkpoint.EventKind == session.EventToolCallResult || event == domain.HookPostToolUse && checkpoint.EventKind == session.EventToolPostHookCompleted || checkpoint.EventKind == session.EventProviderNativeCommit {
 						future, err := openChatResources(context.Background(), cfg, root, string(thread), workspace)
 						if err != nil {
 							t.Fatal(err)

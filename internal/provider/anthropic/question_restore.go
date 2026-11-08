@@ -44,7 +44,11 @@ func validateQuestionRestoredOutputs(sample, entry nativeHistoryEntry, results [
 				if string(r.ProviderCallID()) != item.ID {
 					continue
 				}
-				expected, err := encodeToolResult(item, r)
+				output, err := tool.NewModelOutput(r, nil)
+				if err != nil {
+					return err
+				}
+				expected, err := encodeToolResult(item, output)
 				actual := outputs[callIndex]
 				if err != nil || actual.Type != expected.Type || actual.ToolUseID != expected.ToolUseID || actual.Content != expected.Content || actual.IsError != expected.IsError {
 					return fmt.Errorf("native question output differs from committed result")

@@ -252,13 +252,24 @@ func TestHookBothProvidersRealSandboxAndThreeCapabilities(t *testing.T) {
 }
 
 func TestHookExclusiveBarrierKeepsReadSiblingsAndNativePairing(t *testing.T) {
+	testHookExclusiveBarrier(t, domain.HookPreToolUse)
+}
+func TestPostHookExclusiveBarrierKeepsReadWriteReadExecPairing(t *testing.T) {
+	testHookExclusiveBarrier(t, domain.HookPostToolUse)
+}
+func testHookExclusiveBarrier(t *testing.T, event domain.HookEvent) {
+	t.Helper()
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		t.Run(string(family), func(t *testing.T) {
 			workspace := t.TempDir()
 			if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("unchanged\n"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			writeHookConfig(t, workspace, "cat >/dev/null; exit 2")
+			if event == domain.HookPostToolUse {
+				writePostHookConfig(t, workspace, "cat >/dev/null; exit 2", domain.HookFeedbackNone)
+			} else {
+				writeHookConfig(t, workspace, "cat >/dev/null; exit 2")
+			}
 			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				io.Copy(io.Discard, r.Body)
@@ -267,6 +278,13 @@ func TestHookExclusiveBarrierKeepsReadSiblingsAndNativePairing(t *testing.T) {
 				var calls []writeScenarioCall
 				if n == 1 {
 					calls = []writeScenarioCall{{"Read", `{"file_path":"README.md"}`}, {"Write", `{"file_path":"marker","content":"blocked"}`}, {"Read", `{"file_path":"README.md"}`}}
+					if event == domain.HookPostToolUse {
+						name := "exec_command"
+						if family == domain.ProviderAnthropic {
+							name = "Bash"
+						}
+						calls = append(calls, writeScenarioCall{name, `{"command":"printf executed > exec-marker; exit 7","timeout_ms":1000}`})
+					}
 				}
 				serveWriteScenarioSample(w, family, int(n), calls)
 			}))
@@ -293,7 +311,13 @@ func TestHookExclusiveBarrierKeepsReadSiblingsAndNativePairing(t *testing.T) {
 						t.Fatal(err)
 					}
 				case protocol.EventToolApprovalRequested:
-					t.Fatal("blocked tool reached approval")
+					if event == domain.HookPreToolUse {
+						t.Fatal("blocked tool reached approval")
+					}
+					p, _ := protocol.DecodeToolApprovalRequested(e)
+					if err := control.ResolveApproval(context.Background(), e.TurnID, p, protocol.ApprovalAllowOnce, ""); err != nil {
+						t.Fatal(err)
+					}
 				case protocol.EventTurnFailed:
 					t.Fatal(string(e.Payload))
 				}
@@ -306,10 +330,15 @@ func TestHookExclusiveBarrierKeepsReadSiblingsAndNativePairing(t *testing.T) {
 				t.Fatal(err)
 			}
 			loaded, plan := loadToolLoopPlan(t, root, thread)
-			if len(plan.Tools) != 3 {
+			wantTools, wantRuns := 3, 1
+			wantMutation := tool.ResultDenied
+			if event == domain.HookPostToolUse {
+				wantTools, wantRuns, wantMutation = 4, 2, tool.ResultSuccess
+			}
+			if len(plan.Tools) != wantTools {
 				t.Fatal("missing ordered tools")
 			}
-			var priorResult, hookPlan, blockedResult, laterStart uint64
+			var priorResult, hookPlan, blockedResult, laterStart, postTerminal uint64
 			var hookRuns int
 			for _, record := range loaded.Records {
 				switch record.EventKind {
@@ -323,6 +352,16 @@ func TestHookExclusiveBarrierKeepsReadSiblingsAndNativePairing(t *testing.T) {
 					}
 				case session.EventToolHookGatePlanned:
 					hookPlan = record.Sequence
+				case session.EventToolPostHookPlanned:
+					p, _ := session.DecodeToolPostHookPlanned(record)
+					if p.Plan.InvocationID == string(plan.Tools[1].Invocation.InvocationID()) {
+						hookPlan = record.Sequence
+					}
+				case session.EventToolPostHookCompleted:
+					p, _ := session.DecodeToolPostHookCompleted(record)
+					if p.InvocationID == string(plan.Tools[1].Invocation.InvocationID()) {
+						postTerminal = record.Sequence
+					}
 				case session.EventHookExecutionStarted:
 					hookRuns++
 				case session.EventToolExecutionStarted:
@@ -332,8 +371,14 @@ func TestHookExclusiveBarrierKeepsReadSiblingsAndNativePairing(t *testing.T) {
 					}
 				}
 			}
-			if len(plan.Tools) != 3 || plan.Tools[0].Result.Status() != tool.ResultSuccess || plan.Tools[1].Result.Status() != tool.ResultDenied || plan.Tools[2].Result.Status() != tool.ResultSuccess || hookRuns != 1 || !(priorResult < hookPlan && hookPlan < blockedResult && blockedResult < laterStart) {
+			if len(plan.Tools) != wantTools || plan.Tools[0].Result.Status() != tool.ResultSuccess || plan.Tools[1].Result.Status() != wantMutation || plan.Tools[2].Result.Status() != tool.ResultSuccess || hookRuns != wantRuns || !(priorResult < hookPlan && hookPlan < blockedResult && blockedResult < laterStart) {
 				t.Fatal("hook crossed exclusive barrier or cancelled sibling")
+			}
+			if event == domain.HookPostToolUse {
+				exit, known := plan.Tools[3].Result.ExecMetadata().ExitCode()
+				if !(blockedResult < postTerminal && postTerminal < laterStart) || plan.Tools[3].Result.Status() != tool.ResultSuccess || !known || exit != 7 || plan.Tools[1].PostHooks.Terminal.Code != domain.HookExitFailed || plan.Tools[3].PostHooks.Terminal.Code != domain.HookExitFailed {
+					t.Fatal("ordinary post error crossed barrier or rewrote nonzero exec success")
+				}
 			}
 			if requests.Load() != 2 {
 				t.Fatal("hook created extra provider tool calls")

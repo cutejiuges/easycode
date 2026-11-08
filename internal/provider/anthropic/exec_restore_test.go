@@ -42,7 +42,7 @@ func TestExecNativeResultsRestoreExactly(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			text := "frozen " + test.name + "\n你好\n"
 			if strings.HasPrefix(test.name, "hook-") {
-				d, err := domain.NewHookDeclaration(domain.HookSourceProject, strings.Repeat("a", 64), "check", 7, "true", 5)
+				d, err := domain.NewHookDeclaration(domain.HookSourceProject, domain.HookPreToolUse, domain.HookFeedbackNone, strings.Repeat("a", 64), "check", 7, "true", 5)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -58,7 +58,7 @@ func TestExecNativeResultsRestoreExactly(t *testing.T) {
 				t.Fatal(err)
 			}
 			history := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, newUserMessage("test")), {Kind: nativeHistorySample, Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeThinking, Thinking: "private", Signature: "opaque-signature"}, {Type: blockTypeToolUse, ID: "call-exec", Name: "Bash", Input: json.RawMessage(`{"command":"printf '你好'","workdir":"src","timeout_ms":1000}`)}}}, Metadata: messageMetadata{ID: "msg-exec", Model: "fixture-model"}}})
-			output, err := prepareToolOutputsEntry(history, []tool.InvocationResult{result})
+			output, err := prepareToolOutputsEntry(history, testModelOutputs(t, result))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -80,7 +80,7 @@ func TestExecNativeResultsRestoreExactly(t *testing.T) {
 				}
 				commits = append(commits, commit)
 			}
-			restoredValue, err := testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", testRestoreRecords(t, commits))
+			restoredValue, err := testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", testRestoreRecords(t, commits, testModelOutputs(t, result)))
 			if err != nil {
 				t.Fatal(err)
 			}

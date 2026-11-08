@@ -29,9 +29,23 @@ func TestHookTerminalHelper(t *testing.T) {
 	for _, key := range []string{"EASYCODE_PROVIDER", "EASYCODE_BASE_URL", "EASYCODE_API_KEY", "EASYCODE_MODEL"} {
 		t.Setenv(key, "")
 	}
+	event := domain.HookEvent(os.Getenv("EASYCODE_HOOK_TERMINAL_EVENT"))
+	if event == "" {
+		event = domain.HookPreToolUse
+	}
+	if !event.Valid() {
+		t.Fatal("invalid terminal hook event")
+	}
 	workspace := t.TempDir()
 	t.Chdir(workspace)
-	writeHookConfig(t, workspace, `payload=$(cat); case "$payload" in *cancel*) /bin/sleep 5;; *) printf '{}' ;; esac`)
+	if event == domain.HookPostToolUse {
+		if err := os.WriteFile(filepath.Join(workspace, "main.go"), []byte("// TODO\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		writePostHookConfig(t, workspace, `payload=$(cat); case "$payload" in *cancel*) /bin/sleep 5;; *) `+postReadOnlyExample()+` ;; esac`, domain.HookFeedbackModel)
+	} else {
+		writeHookConfig(t, workspace, `payload=$(cat); case "$payload" in *cancel*) /bin/sleep 5;; *) printf '{}' ;; esac`)
+	}
 	hookPath := filepath.Join(workspace, ".easycode", "hooks.json")
 	hookBytes, err := os.ReadFile(hookPath)
 	if err != nil {
@@ -52,7 +66,11 @@ func TestHookTerminalHelper(t *testing.T) {
 			if n == 5 {
 				content = "cancel"
 			}
-			tools = []writeScenarioCall{{"Write", fmt.Sprintf(`{"file_path":"terminal-marker","content":%q}`, content)}}
+			path := "terminal-marker"
+			if n == 5 && event == domain.HookPostToolUse {
+				path = "terminal-cancel"
+			}
+			tools = []writeScenarioCall{{"Write", fmt.Sprintf(`{"file_path":%q,"content":%q}`, path, content)}}
 		}
 		serveWriteScenarioSample(w, family, int(n), tools)
 	}))

@@ -14,6 +14,7 @@ import (
 	"easycode/internal/domain"
 	"easycode/internal/provider"
 	"easycode/internal/secret"
+	"easycode/internal/tool"
 )
 
 func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
@@ -87,7 +88,7 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 		}
 		commits = append(commits, commit)
 	}
-	restoredValue, err := testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", testRestoreRecords(t, commits))
+	restoredValue, err := testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", testRestoreRecords(t, commits, testRestoreFixtureOutputs(t, "toolu-", tool.WireStructured)...))
 	if err != nil {
 		t.Fatal(err)
 	}

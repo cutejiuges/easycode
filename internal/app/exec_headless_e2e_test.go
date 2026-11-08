@@ -50,7 +50,18 @@ func writeExecCommandSample(writer io.Writer, family domain.ProviderFamily, comm
 
 func TestExecHeadlessModesFailClosedForBothProviders(t *testing.T) { runExecHeadlessModes(t, false) }
 func TestHookHeadlessModesFailClosedForBothProviders(t *testing.T) { runExecHeadlessModes(t, true) }
+func TestPostHookHeadlessModesFailClosedForBothProviders(t *testing.T) {
+	runExecHeadlessModeEvent(t, domain.HookPostToolUse)
+}
 func runExecHeadlessModes(t *testing.T, withHook bool) {
+	event := domain.HookEvent("")
+	if withHook {
+		event = domain.HookPreToolUse
+	}
+	runExecHeadlessModeEvent(t, event)
+}
+func runExecHeadlessModeEvent(t *testing.T, event domain.HookEvent) {
+	withHook := event.Valid()
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		for _, mode := range []headless.Mode{headless.ModeText, headless.ModeJSON, headless.ModeStreamJSON} {
 			t.Run(fmt.Sprintf("%s/mode-%d", family, mode), func(t *testing.T) {
@@ -58,7 +69,11 @@ func runExecHeadlessModes(t *testing.T, withHook bool) {
 				t.Chdir(workspace)
 				wantCode := "approval_required"
 				if withHook {
-					writeHookConfig(t, workspace, "printf forbidden > hook-marker")
+					if event == domain.HookPostToolUse {
+						writePostHookConfig(t, workspace, "printf forbidden > hook-marker", domain.HookFeedbackModel)
+					} else {
+						writeHookConfig(t, workspace, "printf forbidden > hook-marker")
+					}
 					wantCode = "hook_trust_required"
 				}
 				var mu sync.Mutex
@@ -109,7 +124,7 @@ func runExecHeadlessModes(t *testing.T, withHook bool) {
 				if _, err := os.Stat(filepath.Join(workspace, "exec-marker")); !errors.Is(err, os.ErrNotExist) {
 					t.Fatal("headless command produced side effect")
 				}
-				for _, forbidden := range []string{"tool_started", "tool_progress", "tool_terminal", workspace} {
+				for _, forbidden := range []string{"tool_started", "tool_progress", "tool_terminal", "post_hook_committed", workspace} {
 					if strings.Contains(output.String(), forbidden) {
 						t.Fatalf("headless exposed %q", forbidden)
 					}

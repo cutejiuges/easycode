@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"easycode/internal/domain"
 	"fmt"
 	"strings"
 
@@ -71,14 +72,36 @@ func renderTranscript(messages []transcriptMessage, width int) []string {
 		if a.Code != "" && a.Code != "ok" {
 			title += " · " + a.Code
 		}
-		if message.hook != nil && message.hook.State != "continue" {
-			title += " · check " + message.hook.State
+		if h := message.hook; h != nil && h.State != "continue" {
+			label := string(h.State)
+			if h.Reference.Event == domain.HookPostToolUse {
+				switch h.State {
+				case protocol.HookActivityCompleted:
+					label = "checks passed"
+					if h.Code != domain.HookOK {
+						label = "checks failed"
+					}
+				case protocol.HookActivitySkipped:
+					label = "checks skipped"
+				case protocol.HookActivityChecking:
+					label = "checking"
+				default:
+					label = "checks " + label
+				}
+			} else {
+				label = "check " + label
+			}
+			title += " · " + label
 		}
 		lines = append(lines, wrapApprovalDiff(title, width)...)
 		if h := message.hook; h != nil {
-			lines = append(lines, wrapApprovalDiff(fmt.Sprintf("  Check %s:%s · %s · timeout %ds · stdout %d bytes · stderr %d bytes", h.Reference.Source, h.Reference.ID, h.State, h.Reference.TimeoutSeconds, h.StdoutBytes, h.StderrBytes), width)...)
-			if h.State != "checking" {
-				lines = append(lines, wrapApprovalDiff("  Detailed hook output was not recorded.", width)...)
+			if h.Reference.Event == domain.HookPostToolUse && (h.State == protocol.HookActivityCompleted || h.State == protocol.HookActivitySkipped) {
+				lines = append(lines, wrapApprovalDiff("  PostToolUse checks: "+string(h.Code)+" · Ctrl+O: details", width)...)
+			} else {
+				lines = append(lines, wrapApprovalDiff(fmt.Sprintf("  %s check %s:%s · %s · timeout %ds · stdout %d bytes · stderr %d bytes", h.Reference.Event, h.Reference.Source, h.Reference.ID, h.State, h.Reference.TimeoutSeconds, h.StdoutBytes, h.StderrBytes), width)...)
+				if h.State != "checking" {
+					lines = append(lines, wrapApprovalDiff("  Raw hook output was not recorded.", width)...)
+				}
 			}
 		}
 

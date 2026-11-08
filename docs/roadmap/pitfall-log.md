@@ -873,3 +873,13 @@
 - 提交冻结期间 resize 后，拒绝接收或取消查询不能直接恢复旧布局。各恢复路径共用 `restoreComposer`，按当前尺寸调整并失效草稿解析缓存；内容与合法光标保留。
 - 1×1 不能替代 1×24 等极窄但有高度的测试。候选不能只剩省略号仍接收 Tab；不足 13 列时关闭候选按键，恢复宽度后重新显示原选择。
 - 回归入口：`internal/tui/completion_revalidation_test.go`；随机编辑序列性质检查为 `completion_fuzz_test.go`。真实 PTY 加入空 bracketed paste、8×24、组合空白补全及退格；双 Provider 逐字节请求/恢复对照增加组合字符、中文和 ZWJ emoji 参数。
+
+## PostToolUse 的真实成功、预算与详情修订
+
+- 现象：沿用 Pre 的单一 ordinal、在结果前执行后置脚本，或复用一次 Commit 给反馈扣账，会混淆成功与检查失败、重复退休调用，恢复时也容易把尚未启动项误记成 uncertain execution。
+- 处理：Pre/Post 按 invocation/event/plan/ordinal 关联；真实 result 先 Sync，后置 terminal 关闭独占屏障。ticket 分 reserve/base/feedback/close，反馈绑定 durable sequence，原 A/R 与实际内容由回放交叉验证，terminal 同时绑定规范反馈摘要。
+- 发现：仅用原生 output 自身作为恢复证据会放过正文伪造；当前 Anthropic 三份手工 fixture 还显式保存了 encoder 不产生的 success is_error=false。当前 fixture 已替换成唯一 encoder 形状，不引入兼容 reader；RestoreRecord 必须携带独立 typed result/feedback 证据。
+- 详情：工具 terminal 后仍可合法检查；完成或跳过要产生聚合投影。post_hook_committed 在快照安装后刷新 post_hooks source，sequence 进入页键并推进 generation，旧页不能覆盖新正文。
+- 主线：仅保存瞬态 HookActivity 会使 native outputs 提交后的查询重建或 resume 丢失检查状态。list 增加与 invocation/detail_sequence 绑定的 typed PostHook 聚合摘要，不含正文与原始统计；双 Provider actual transport、恢复查询及 TUI hydration 回归覆盖该窗口。toolClosed 还必须拒绝全部迟到 Pre 活动，而非仅拒绝 checking，避免旧 deny 覆盖 Post 终态。
+- 终端：answer 文本可早于最后 native commit 完成显示，PTY 验收不能假定最新列表的固定行号；应在已加载列表中识别稳定工具位置。
+- 回归：`internal/session/post_hook_fixture_test.go`、`post_hook_replay_test.go`，`internal/runtime/post_hooks_test.go`，两家 `post_output_test.go` 与 OpenAI `post_websocket_test.go`，`internal/app/post_hook_e2e_darwin_test.go`、`hook_resume_test.go`、`post_hook_query_test.go`，`internal/tui/post_hook_commit_test.go`；真实终端使用 `scripts/smoke-hooks.py --event PostToolUse`。详见[归档验收](../../openspec/changes/archive/2026-11-08-add-post-tool-use-command-hooks/verification.md)和[归档核对](../../openspec/changes/archive/2026-11-08-add-post-tool-use-command-hooks/archive.md)。

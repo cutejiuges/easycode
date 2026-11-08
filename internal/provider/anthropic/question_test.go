@@ -82,7 +82,7 @@ func TestQuestionPreflightNativeRestoreAndForgery(t *testing.T) {
 	before := c.historySnapshot()
 	footprint, _ := c.HistoryFootprint()
 	p, err := c.PrepareToolOutputPreflight(inv)
-	if err != nil || p.Validate(result) != nil {
+	if err != nil || p.Validate(testModelOutputs(t, result)[0]) != nil {
 		t.Fatal("preflight rejected valid answer", err)
 	}
 	if after, _ := c.HistoryFootprint(); after != footprint || !reflect.DeepEqual(before, c.historySnapshot()) {
@@ -92,7 +92,7 @@ func TestQuestionPreflightNativeRestoreAndForgery(t *testing.T) {
 	wrongInv, _ := tool.NewInvocation(wrongID, ready)
 	wrongQ, _ := wrongInv.Question()
 	wrongResult, _ := tool.NewQuestionInvocationResult(wrongQ, a)
-	if p.Validate(wrongResult) == nil {
+	if p.Validate(testModelOutputs(t, wrongResult)[0]) == nil {
 		t.Fatal("accepted wrong invocation")
 	}
 	wrongReady, _ := tool.NewQuestionReadyCall("other-call", input)
@@ -100,7 +100,7 @@ func TestQuestionPreflightNativeRestoreAndForgery(t *testing.T) {
 	if _, err := c.PrepareToolOutputPreflight(wrongInv); err == nil {
 		t.Fatal("accepted wrong call")
 	}
-	entry, err := prepareToolOutputsEntry(before, []tool.InvocationResult{result})
+	entry, err := prepareToolOutputsEntry(before, testModelOutputs(t, result))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestQuestionPreflightNativeRestoreAndForgery(t *testing.T) {
 		}
 		commits = append(commits, commit)
 	}
-	restored, err := testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", testRestoreRecords(t, commits))
+	restored, err := testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", testRestoreRecords(t, commits, testModelOutputs(t, result)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,14 +161,14 @@ func TestQuestionPreflightNativeRestoreAndForgery(t *testing.T) {
 	if a, b := original.history.revision, c.history.revision; a != b {
 		t.Fatal("restored revision changed")
 	}
-	if err := p.Validate(result); err != nil {
+	if err := p.Validate(testModelOutputs(t, result)[0]); err != nil {
 		t.Fatal("preflight borrowed mutable history", err)
 	}
 	sampling, err := provider.NewSamplingInput().WithToolCatalog(testAnthropicToolCatalog(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertCompactionAfterToolSteering(t, instance, original, sampling, commits)
+	assertCompactionAfterToolSteering(t, instance, original, sampling, commits, testModelOutputs(t, result))
 
 }
 

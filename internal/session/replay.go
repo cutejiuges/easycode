@@ -12,11 +12,12 @@ import (
 
 // NativeCommitRecord 将通过 lifecycle 校验的 opaque commit 与顺序绑定。
 type NativeCommitRecord struct {
-	Role     domain.NativeCommitRole
-	Inputs   domain.InputAssociation
-	Sequence uint64
-	TurnID   domain.TurnID
-	Commit   NativeCommitPayload
+	ToolOutputs []tool.ModelOutput
+	Role        domain.NativeCommitRole
+	Inputs      domain.InputAssociation
+	Sequence    uint64
+	TurnID      domain.TurnID
+	Commit      NativeCommitPayload
 }
 
 // SampleUsageRecord 将通过 lifecycle 校验的 normalized usage 与顺序绑定。
@@ -57,6 +58,7 @@ const (
 
 // ReplayedToolCall 保存恢复所需的typed调用、结果和事实顺序。
 type ReplayedToolCall struct {
+	PostHooks            *ReplayedPostHooks
 	Hooks                *ReplayedHookGate
 	ReadySequence        uint64
 	StartedSequence      uint64
@@ -141,6 +143,17 @@ func (plan ToolRecoveryPlan) Validate() error {
 		if call.ReadySequence <= lastReadySequence {
 			return fmt.Errorf("tool recovery ready sequence is invalid")
 		}
+		if call.PostHooks != nil {
+			if err := call.PostHooks.Validate(call); err != nil {
+				return err
+			}
+			for previous := 0; previous < index; previous++ {
+				sequence := callCompletionSequence(plan.calls[previous])
+				if sequence == 0 || sequence >= call.PostHooks.PlanSequence {
+					return fmt.Errorf("post hook recovery plan crossed unfinished call")
+				}
+			}
+		}
 		if call.Hooks != nil {
 			if err := call.Hooks.Validate(string(call.Invocation.InvocationID()), domain.HookCapability(call.Invocation.Capability())); err != nil {
 				return err
@@ -161,7 +174,7 @@ func (plan ToolRecoveryPlan) Validate() error {
 				}
 			}
 			for previous := 0; previous < index; previous++ {
-				if prior := plan.calls[previous]; prior.ResultSequence == 0 || prior.ResultSequence >= g.PlanSequence {
+				if prior := callCompletionSequence(plan.calls[previous]); prior == 0 || prior >= g.PlanSequence {
 					return fmt.Errorf("hook gate crossed an unfinished call")
 				}
 			}
@@ -221,10 +234,14 @@ func (plan ToolRecoveryPlan) Validate() error {
 		// 独占调用之间的 result/started 可交错；只读组内部仍须先完成全部准入。
 		for previous := 0; previous < index; previous++ {
 			prior := plan.calls[previous]
-			if call.ApprovalSequence != 0 && (prior.ResultSequence == 0 || prior.ResultSequence >= call.ApprovalSequence) {
+			completedSequence := callCompletionSequence(prior)
+			if call.ResultSequence != 0 && prior.PostHooks != nil && (completedSequence == 0 || completedSequence >= call.ResultSequence) {
+				return fmt.Errorf("tool result crossed unfinished post hook barrier")
+			}
+			if call.ApprovalSequence != 0 && (completedSequence == 0 || completedSequence >= call.ApprovalSequence) {
 				return fmt.Errorf("tool recovery approval crossed an unfinished call")
 			}
-			if call.StartedSequence != 0 && (call.Invocation.Capability().Exclusive() || prior.Invocation.Capability().Exclusive()) && (prior.ResultSequence == 0 || prior.ResultSequence >= call.StartedSequence) {
+			if call.StartedSequence != 0 && (call.Invocation.Capability().Exclusive() || prior.Invocation.Capability().Exclusive()) && (completedSequence == 0 || completedSequence >= call.StartedSequence) {
 				return fmt.Errorf("tool recovery start crossed an unfinished exclusive barrier")
 			}
 		}
@@ -258,7 +275,7 @@ func (plan ToolRecoveryPlan) Validate() error {
 					((call.ApprovalOutcome == tool.ApprovalOutcomeDeny && call.Result.Status() == tool.ResultDenied) ||
 						(call.ApprovalOutcome == tool.ApprovalOutcomeAbort && call.Result.Status() == tool.ResultCancelled))
 				preparedFailure := call.Invocation.Capability().Exclusive() && call.ApprovalSequence == 0 && (call.Result.Status() == tool.ResultError || (call.Invocation.Capability() == tool.CapabilityQuestion && call.Result.Status() == tool.ResultDenied) || (call.Invocation.Capability() == tool.CapabilityWrite && call.Result.Status() == tool.ResultConflict))
-				if call.Result.Status() != tool.ResultCancelled && !closedExclusive && !preparedFailure && !validHookDeniedResult(call, call.Result) {
+				if call.Result.Status() != tool.ResultCancelled && !closedExclusive && !preparedFailure && !validHookDeniedResult(call, call.Result) && !validPostTrustResult(call, call.Result) {
 					return fmt.Errorf("tool result before execution start is not cancelled")
 				}
 			} else if call.ResultSequence <= call.StartedSequence {
@@ -388,7 +405,7 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 				plan.Turns = append(plan.Turns, ReplayedTurn{TurnID: active.turnID, State: ReplayedTurnCompleted})
 				active = nil
 			}
-		case EventToolHookGatePlanned, EventHookExecutionStarted, EventHookExecutionFinished, EventToolHookGateDecided:
+		case EventToolPostHookPlanned, EventToolPostHookCompleted, EventToolHookGatePlanned, EventHookExecutionStarted, EventHookExecutionFinished, EventToolHookGateDecided:
 			if active == nil {
 				return ReplayPlan{}, replayCorrupt("hook facts outside active turn")
 			}
@@ -410,11 +427,16 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 				return ReplayPlan{}, err
 			}
 		case EventToolCallResult:
-			if active == nil || len(batch) != 1 || batch[0].TurnID != active.turnID {
+			if active == nil || (len(batch) != 1 && (len(batch) != 2 || batch[1].EventKind != EventToolPostHookCompleted)) || !batchHasTurn(batch, active.turnID) {
 				return ReplayPlan{}, replayCorrupt("tool_call_result placement is invalid")
 			}
 			if err := active.acceptResult(batch[0]); err != nil {
 				return ReplayPlan{}, err
+			}
+			if len(batch) == 2 {
+				if err := active.acceptPostHookBatch(batch[1:]); err != nil {
+					return ReplayPlan{}, err
+				}
 			}
 		case EventTurnFailed:
 			if active == nil || len(batch) != 1 || batch[0].TurnID != active.turnID || active.pendingCalls != nil {
@@ -457,6 +479,8 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 }
 
 type activeReplayTurn struct {
+	budget               *tool.ResultBudget
+	budgetTicket         *tool.ResultBudgetTicket
 	autoCompactedSample  bool
 	initialInputs        bool
 	inputAtSample        bool
@@ -525,6 +549,12 @@ func acceptSampleBatch(plan *ReplayPlan, active *activeReplayTurn, batch []Recor
 			Invocation: invocation, State: ReplayedToolCallReady,
 		})
 	}
+	if active.budget == nil {
+		active.budget = tool.NewResultBudget()
+	}
+	if err := active.budget.BeginSample(len(calls)); err != nil {
+		return false, replayCorrupt("invalid tool result budget sample")
+	}
 	active.pendingCalls = calls
 	active.hadToolSample = true
 	active.toolOutputsCommitted = false
@@ -540,16 +570,28 @@ func acceptToolOutputs(plan *ReplayPlan, active *activeReplayTurn, record Record
 		return replayCorrupt("tool output commit placement is invalid")
 	}
 	for _, call := range active.pendingCalls {
-		if call.State != ReplayedToolCallResult {
+		if !callComplete(call) {
 			return replayCorrupt("tool output commit appears before all results")
 		}
+	}
+	outputs := make([]tool.ModelOutput, len(active.pendingCalls))
+	for i, call := range active.pendingCalls {
+		var feedback []domain.FrozenHookFeedback
+		if call.PostHooks != nil {
+			feedback = call.PostHooks.Feedback()
+		}
+		output, err := tool.NewModelOutput(call.Result, feedback)
+		if err != nil {
+			return replayCorrupt("invalid model output evidence")
+		}
+		outputs[i] = output
 	}
 	commit, err := DecodeNativeCommitPayload(record)
 	if err != nil {
 		return replayCorrupt("provider native commit payload is invalid")
 	}
 	plan.NativeCommits = append(plan.NativeCommits, NativeCommitRecord{
-		Sequence: record.Sequence, TurnID: active.turnID, Role: domain.NativeCommitToolOutputs, Commit: cloneNativeCommit(commit),
+		ToolOutputs: outputs, Sequence: record.Sequence, TurnID: active.turnID, Role: domain.NativeCommitToolOutputs, Commit: cloneNativeCommit(commit),
 	})
 	active.pendingCalls = nil
 	active.toolOutputsCommitted = true
@@ -578,14 +620,14 @@ func (active *activeReplayTurn) acceptStarted(record Record) error {
 				return replayCorrupt("exclusive execution started without approval")
 			}
 			for previous := 0; previous < index; previous++ {
-				if active.pendingCalls[previous].State != ReplayedToolCallResult {
+				if !callComplete(active.pendingCalls[previous]) {
 					return replayCorrupt("exclusive execution crossed an unfinished call")
 				}
 			}
 		} else {
 			for previous := 0; previous < index; previous++ {
 				prior := active.pendingCalls[previous]
-				if prior.Invocation.Capability().Exclusive() && prior.State != ReplayedToolCallResult {
+				if prior.Invocation.Capability().Exclusive() && !callComplete(prior) {
 					return replayCorrupt("read execution crossed an unfinished exclusive call")
 				}
 				if !prior.Invocation.Capability().Exclusive() && prior.State == ReplayedToolCallReady {
@@ -625,7 +667,7 @@ func (active *activeReplayTurn) acceptApproval(batch []Record) error {
 			return replayCorrupt("Exec cannot use session approval")
 		}
 		for previous := 0; previous < index; previous++ {
-			if active.pendingCalls[previous].State != ReplayedToolCallResult {
+			if !callComplete(active.pendingCalls[previous]) {
 				return replayCorrupt("tool approval crossed an unfinished call")
 			}
 		}
@@ -659,6 +701,9 @@ func (active *activeReplayTurn) acceptResult(record Record) error {
 	for index := range active.pendingCalls {
 		call := &active.pendingCalls[index]
 		if call.State == ReplayedToolCallResult {
+			if !callComplete(*call) {
+				return replayCorrupt("tool result crossed unfinished post hooks")
+			}
 			continue
 		}
 		if call.Invocation.InvocationID() != payload.InvocationID {
@@ -676,7 +721,7 @@ func (active *activeReplayTurn) acceptResult(record Record) error {
 		}
 		if call.State == ReplayedToolCallReady {
 			if call.Invocation.Capability().Exclusive() {
-				if call.ApprovalSequence == 0 && !validHookDeniedResult(*call, result) && result.Status() != tool.ResultError && result.Status() != tool.ResultCancelled && !(call.Invocation.Capability() == tool.CapabilityQuestion && result.Status() == tool.ResultDenied) && !(call.Invocation.Capability() == tool.CapabilityWrite && result.Status() == tool.ResultConflict) {
+				if call.ApprovalSequence == 0 && !validPostTrustResult(*call, result) && !validHookDeniedResult(*call, result) && result.Status() != tool.ResultError && result.Status() != tool.ResultCancelled && !(call.Invocation.Capability() == tool.CapabilityQuestion && result.Status() == tool.ResultDenied) && !(call.Invocation.Capability() == tool.CapabilityWrite && result.Status() == tool.ResultConflict) {
 					return replayCorrupt("exclusive result before approval is invalid")
 				}
 				if call.ApprovalSequence != 0 && (call.ApprovalOutcome == tool.ApprovalOutcomeAllowOnce || call.ApprovalOutcome == tool.ApprovalOutcomeAllowSession || call.ApprovalOutcome == tool.ApprovalOutcomeAllowFromSession) {
@@ -696,6 +741,23 @@ func (active *activeReplayTurn) acceptResult(record Record) error {
 		}
 		if call.State != ReplayedToolCallReady && call.State != ReplayedToolCallStarted {
 			return replayCorrupt("tool result order is invalid")
+		}
+		if active.budget == nil {
+			return replayCorrupt("tool result has no budget owner")
+		}
+		if call.PostHooks != nil {
+			if active.budgetTicket == nil || active.budgetTicket.CommitBase(result.Budget()) != nil {
+				return replayCorrupt("post hook base budget mismatch")
+			}
+		} else {
+			allowance, err := active.budget.Allowance(result.Capability())
+			if err != nil {
+				return replayCorrupt("invalid result budget admission")
+			}
+			accounting, err := tool.NewResultBudgetMetadata(allowance, result.Budget().ActualBytes(), result.Budget().Reason())
+			if err != nil || active.budget.Commit(result.Capability(), accounting) != nil {
+				return replayCorrupt("tool results exceed shared budget")
+			}
 		}
 		call.State = ReplayedToolCallResult
 		call.ResultSequence = record.Sequence
@@ -726,6 +788,10 @@ func cloneReplayedToolCalls(calls []ReplayedToolCall) []ReplayedToolCall {
 	cloned := make([]ReplayedToolCall, len(calls))
 	copy(cloned, calls)
 	for i := range cloned {
+		if cloned[i].PostHooks != nil {
+			g := cloned[i].PostHooks.Clone()
+			cloned[i].PostHooks = &g
+		}
 		if cloned[i].Hooks != nil {
 			g := cloned[i].Hooks.Clone()
 			cloned[i].Hooks = &g
@@ -806,6 +872,7 @@ func cloneNativeCommitRecords(records []NativeCommitRecord) []NativeCommitRecord
 	for index, record := range records {
 		cloned[index] = record
 		cloned[index].Commit = cloneNativeCommit(record.Commit)
+		cloned[index].ToolOutputs = append([]tool.ModelOutput(nil), record.ToolOutputs...)
 	}
 	return cloned
 }

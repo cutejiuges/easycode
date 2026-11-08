@@ -1,6 +1,6 @@
 # 当前能力与实现边界
 
-> 核对日期：2026-11-08。基线：当前仓库实现与已同步的 OpenSpec 主规格，包含结构化用户提问、PreToolUse Hook、命令/Skill 首词补全与已验收归档的双 Provider 被动推理阅读。
+> 核对日期：2026-11-08。基线：当前仓库实现与已同步的 OpenSpec 主规格，包含结构化用户提问、PreToolUse/PostToolUse Hook、命令/Skill 首词补全与已验收归档的双 Provider 被动推理阅读。
 > 本文记录当前代码可执行的能力；[产品 Roadmap](product-roadmap.md)保留阶段目标与剩余工作。已接受的 ADR 和归档 change 记录各自当时的决策，不能单独作为现有功能清单。
 
 ## 用户入口
@@ -30,7 +30,7 @@
 
 九项工具共享原生 call/output 配对、结果预算和恢复。连续只读批次最多 8 路；Patch/Write/Exec/Question 为独占屏障，只有前三项需要普通副作用批准。验证入口包括 `internal/tool/builtin/specs_test.go`、`internal/app/question_workflow_darwin_test.go` 与 `internal/app/hook_e2e_darwin_test.go`。
 
-PreToolUse Hook 是三项 mutation 的前置门禁，**不是第十项模型工具**。它读取 user/project 冻结严格 JSON、逐项默认拒绝的内存信任，并在候选和普通批准前执行；Darwin 只读工作区、禁网，每项默认 5 秒/最大 30 秒，每调用总执行预算 30 秒，stdin 最大 512 KiB、双输出各 16 KiB。headless 匹配项返回 `hook_trust_required`，无匹配沿用普通 `approval_required`。四类 durable facts 保证恢复只补偿、不重跑；不保存输出正文或 reason。其余事件、async、allow/ask、改写、附加上下文、plugin hooks 和热加载尚未实现。
+PreToolUse Hook 是三项 mutation 的前置门禁，**不是第十项模型工具**。它读取 user/project 冻结严格 JSON、逐项默认拒绝的内存信任，并在候选和普通批准前执行；Darwin 只读工作区、禁网，每项默认 5 秒/最大 30 秒，每调用总执行预算 30 秒，stdin 最大 512 KiB、双输出各 16 KiB。headless 匹配项返回 `hook_trust_required`，无匹配沿用普通 `approval_required`。四类 durable facts 保证恢复只补偿、不重跑；不保存输出正文或 reason。PostToolUse 已支持成功 Patch/Write/Exec 的同步只读检查：执行前独立信任，真实结果先 Sync，默认 none、显式 model 结构化反馈，4 KiB/项与 16 KiB/调用、分段预算及零重跑恢复。后置错误保持工具真实成功，Ctrl+O 后置详情按 durable sequence 刷新。其余事件、async、allow/ask、参数/结果改写、plugin hooks 和热加载尚未实现。
 
 ## 历史、上下文、缓存与展示
 
@@ -65,13 +65,14 @@ PreToolUse Hook 是三项 mutation 的前置门禁，**不是第十项模型工�
 
 ## 后续能力与审阅入口
 
-P6 当前交付本地 Skills 和同步 PreToolUse；MCP、本地 Plugins、manifest importer 与热加载仍是 P6 后续目标。P7 Subagent 和 P8 telemetry/诊断/发布强化的批准占位尚未接入 Runtime/app。doctor、模型/Provider 动态切换、后台任务、通用迁移设计不得仅因出现在路线图或 ADR 中就视作已经实现。
+P6 当前交付本地 Skills 和同步 PreToolUse/PostToolUse；MCP、本地 Plugins、manifest importer 与热加载仍是 P6 后续目标。P7 Subagent 和 P8 telemetry/诊断/发布强化的批准占位尚未接入 Runtime/app。doctor、模型/Provider 动态切换、后台任务、通用迁移设计不得仅因出现在路线图或 ADR 中就视作已经实现。
 
 - 功能使用和配置：[README](../../README.md)。
 - 长期目标及剩余验收：[产品 Roadmap](product-roadmap.md)。
 - 实现边界：[总体架构](../architecture/overall-architecture.md)、[Tool 系统](../architecture/tool-system.md)。
 - 必须遵循的规约：[AGENTS.md](../../AGENTS.md)。
-- 当前 Hook 验收：[verification.md](../../openspec/changes/add-pre-tool-use-command-hooks/verification.md)。
+- PostToolUse 验收：[verification.md](../../openspec/changes/archive/2026-11-08-add-post-tool-use-command-hooks/verification.md)。
+- PreToolUse 验收：[verification.md](../../openspec/changes/add-pre-tool-use-command-hooks/verification.md)。
 - 命令/Skill 补全：[归档核对记录](../../openspec/changes/archive/2026-11-06-add-command-and-skill-completion/archive.md)、[追加验证报告](../../openspec/changes/archive/2026-11-06-add-command-and-skill-completion/revalidation.md)。
 
 推理展示只读取 Anthropic thinking 与 OpenAI summary_text 白名单，opaque-only 为 unavailable；签名、密文、raw 和未知扩展不进入显示或 headless。主线不累计完成推理行，活动显示共用 64 KiB/50 项，查询正文与其他详情共用四页缓存。提交来源与 sample/block 映射仅在内存中存在，Session/native/checkpoint 当前格式不变。验证入口为 `internal/provider/*/reasoning_stream_test.go`、`internal/provider/*/reasoning_restore_test.go`、`internal/runtime/reasoning_test.go`、`internal/tui/reasoning_test.go`、`internal/headless/reasoning_test.go`、`internal/app/reasoning_e2e_test.go` 与 Darwin `scripts/reasoning-smoke.py`。

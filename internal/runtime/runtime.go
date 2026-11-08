@@ -114,6 +114,10 @@ type Runtime struct {
 	activityEmitter              Emitter
 	activityInvocations          map[tool.InvocationID]tool.Invocation
 	resultBudget                 *tool.ResultBudget
+	resultTicket                 *tool.ResultBudgetTicket
+	resultTicketInvocation       tool.InvocationID
+	resultTicketCapability       tool.CapabilityID
+	resultTicketPost             bool
 	textOutputStore              tool.TextOutputStore
 	toolHistory                  ToolHistoryObserver
 	hookHistory                  HookHistoryObserver
@@ -282,7 +286,13 @@ func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, 
 	defer func() { runtime.turnEmitter = nil }()
 	defer runtime.clearTurnObservations()
 	runtime.resultBudget = tool.NewResultBudget()
-	defer func() { runtime.resultBudget = nil }()
+	defer func() {
+		runtime.resultBudget = nil
+		runtime.resultTicket = nil
+		runtime.resultTicketInvocation = ""
+		runtime.resultTicketCapability = ""
+		runtime.resultTicketPost = false
+	}()
 
 	turnID, err := runtime.beginTurn(ctx, emit)
 	if err != nil {
@@ -417,6 +427,10 @@ func (runtime *Runtime) ReconcileToolTurn(ctx context.Context, plan session.Tool
 	results := make([]tool.InvocationResult, 0, len(calls))
 	outcomeUncertain := false
 	for _, call := range calls {
+		recoveryAllowance := tool.SafetyResultBytes
+		if call.PostHooks != nil {
+			recoveryAllowance = call.PostHooks.Plan.Allowance - call.PostHooks.Plan.Reservation
+		}
 		if call.Hooks != nil && call.Hooks.Decision == nil {
 			result, err := runtime.reconcileHookGate(reconcileContext, plan.TurnID(), call)
 			if err != nil {
@@ -441,7 +455,7 @@ func (runtime *Runtime) ReconcileToolTurn(ctx context.Context, plan session.Tool
 			result = tool.NewInvocationErrorResult(
 				call.Invocation, tool.ResultCancelled, code, preview,
 			)
-			result, _ = tool.FinalizeResult(result, tool.SafetyResultBytes, tool.BudgetRecovery)
+			result, _ = tool.FinalizeResult(result, recoveryAllowance, tool.BudgetRecovery)
 			if err := runtime.persistToolResult(reconcileContext, plan.TurnID(), &result); err != nil {
 				return err
 			}
@@ -450,7 +464,7 @@ func (runtime *Runtime) ReconcileToolTurn(ctx context.Context, plan session.Tool
 				call.Invocation, tool.ResultOutcomeUncertain, "outcome_uncertain",
 				"Tool failed: execution outcome is uncertain",
 			)
-			result, _ = tool.FinalizeResult(result, tool.SafetyResultBytes, tool.BudgetRecovery)
+			result, _ = tool.FinalizeResult(result, recoveryAllowance, tool.BudgetRecovery)
 			if err := runtime.persistToolResult(reconcileContext, plan.TurnID(), &result); err != nil {
 				return err
 			}
@@ -461,6 +475,11 @@ func (runtime *Runtime) ReconcileToolTurn(ctx context.Context, plan session.Tool
 		default:
 			return fault.New(fault.CodeSessionCorruption, "tool recovery call state is invalid")
 		}
+		postUncertain, err := runtime.reconcilePostHooks(reconcileContext, plan.TurnID(), call, result)
+		if err != nil {
+			return err
+		}
+		outcomeUncertain = outcomeUncertain || postUncertain
 		results = append(results, result)
 	}
 	if !plan.ToolOutputsCommitted() {
@@ -1080,6 +1099,10 @@ func (runtime *Runtime) persistToolResult(ctx context.Context, turnID domain.Tur
 			return fault.New(fault.CodeSessionWrite, "artifact authorization failed")
 		}
 	}
+	if err := runtime.commitResultBudget(result); err != nil {
+		runtime.poisoned.Store(true)
+		return err
+	}
 	runtime.notifyToolResult(turnID, result)
 
 	return nil
@@ -1091,7 +1114,22 @@ func (runtime *Runtime) commitToolOutputs(ctx context.Context, turnID domain.Tur
 		runtime.poisoned.Store(true)
 		return fault.New(fault.CodeStreamProtocol, "provider does not support tool result preparation")
 	}
-	prepared, err := preparer.PrepareToolOutputs(results)
+	outputs := make([]tool.ModelOutput, len(results))
+	for i, result := range results {
+		var feedback []domain.FrozenHookFeedback
+		if state := runtime.hooks.post[result.InvocationID()]; state != nil {
+			if state.terminal == nil {
+				return fault.New(fault.CodeStreamProtocol, "post hooks are incomplete")
+			}
+			feedback = postFeedback(state)
+		}
+		output, err := tool.NewModelOutput(result, feedback)
+		if err != nil {
+			return err
+		}
+		outputs[i] = output
+	}
+	prepared, err := preparer.PrepareToolOutputs(outputs)
 	if err != nil {
 		runtime.poisoned.Store(true)
 		return fault.Wrap(fault.CodeStreamProtocol, "prepare provider tool outputs failed", err)

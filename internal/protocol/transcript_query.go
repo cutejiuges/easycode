@@ -54,6 +54,8 @@ func DecodeTranscriptListQuery(data []byte) (TranscriptListQuery, error) {
 // TranscriptListItem 只携带短摘要，完整正文必须通过范围查询获取。
 type TranscriptListItem struct {
 	Reasoning          *ReasoningSummaryPayload `json:"reasoning,omitempty"`
+	PostHook           HookActivityPayload      `json:"post_hook"`
+	DetailSequence     uint64                   `json:"detail_sequence"`
 	CompactionID       domain.CompactionID      `json:"compaction_id,omitempty"`
 	Preview            string                   `json:"preview"`
 	Stdout             ToolOutputSummary        `json:"stdout"`
@@ -72,6 +74,19 @@ type TranscriptListItem struct {
 }
 
 func (v TranscriptListItem) Validate() error {
+	if v.PostHook != (HookActivityPayload{}) {
+		if v.Kind != domain.TranscriptCall || v.DetailSequence == 0 || v.PostHook.Validate() != nil || v.PostHook.InvocationID != v.Activity.InvocationID || v.PostHook.Reference.Event != domain.HookPostToolUse || v.PostHook.StdoutBytes != 0 || v.PostHook.StderrBytes != 0 || v.Activity.Tool != ToolPatch && v.Activity.Tool != ToolWrite && v.Activity.Tool != ToolShell || v.PostHook.State != HookActivitySkipped && v.Activity.Status != "success" {
+			return errors.New("invalid transcript post hook summary")
+		}
+		switch v.PostHook.State {
+		case HookActivityChecking, HookActivityCompleted, HookActivitySkipped, HookActivityState(domain.HookCancel), HookActivityState(domain.HookUncertain):
+		default:
+			return errors.New("invalid transcript post hook state")
+		}
+	}
+	if v.Kind != domain.TranscriptCall && v.DetailSequence != 0 {
+		return errors.New("invalid transcript detail sequence")
+	}
 	if len(v.Preview) > 4096 || !utf8.ValidString(v.Preview) {
 		return errors.New("invalid transcript preview")
 	}
@@ -171,25 +186,30 @@ func DecodeTranscriptListPage(data []byte) (TranscriptListPage, error) {
 type TranscriptBodySource string
 
 const (
-	TranscriptText   TranscriptBodySource = "text"
-	TranscriptInput  TranscriptBodySource = "input"
-	TranscriptResult TranscriptBodySource = "result"
+	TranscriptText      TranscriptBodySource = "text"
+	TranscriptInput     TranscriptBodySource = "input"
+	TranscriptResult    TranscriptBodySource = "result"
+	TranscriptPostHooks TranscriptBodySource = "post_hooks"
 )
 
 func (s TranscriptBodySource) Valid() bool {
-	return s == TranscriptText || s == TranscriptInput || s == TranscriptResult
+	return s == TranscriptText || s == TranscriptInput || s == TranscriptResult || s == TranscriptPostHooks
 }
 
 type TranscriptBodyQuery struct {
-	ThreadID domain.ThreadID      `json:"thread_id"`
-	Cursor   TranscriptCursor     `json:"cursor"`
-	Source   TranscriptBodySource `json:"source"`
-	Offset   uint64               `json:"offset"`
-	Backward bool                 `json:"backward"`
-	Limit    uint32               `json:"limit"`
+	DetailSequence uint64               `json:"detail_sequence"`
+	ThreadID       domain.ThreadID      `json:"thread_id"`
+	Cursor         TranscriptCursor     `json:"cursor"`
+	Source         TranscriptBodySource `json:"source"`
+	Offset         uint64               `json:"offset"`
+	Backward       bool                 `json:"backward"`
+	Limit          uint32               `json:"limit"`
 }
 
 func (q TranscriptBodyQuery) Validate() error {
+	if q.Source == TranscriptPostHooks && q.DetailSequence == 0 || q.Source != TranscriptPostHooks && q.DetailSequence != 0 {
+		return errors.New("invalid transcript detail sequence")
+	}
 	if !q.ThreadID.Valid() || !q.Cursor.Valid() || !q.Source.Valid() || q.Limit == 0 || q.Limit > 64<<10 {
 		return errors.New("invalid transcript body query")
 	}
@@ -204,10 +224,11 @@ func DecodeTranscriptBodyQuery(data []byte) (TranscriptBodyQuery, error) {
 
 // TranscriptBodyPage 保持 UTF-8 边界与实际正文偏移，不以屏幕行号分页。
 type TranscriptBodyPage struct {
-	Offset     uint64 `json:"offset"`
-	NextOffset uint64 `json:"next_offset"`
-	TotalBytes uint64 `json:"total_bytes"`
-	Text       string `json:"text"`
+	DetailSequence uint64 `json:"detail_sequence"`
+	Offset         uint64 `json:"offset"`
+	NextOffset     uint64 `json:"next_offset"`
+	TotalBytes     uint64 `json:"total_bytes"`
+	Text           string `json:"text"`
 }
 
 func (p TranscriptBodyPage) Validate() error {
@@ -235,3 +256,10 @@ func decodeTranscriptValue[T interface{ Validate() error }](data []byte) (T, err
 	}
 	return value, value.Validate()
 }
+
+// TranscriptQueryError 是稳定查询分类，不依赖错误文本匹配。
+type TranscriptQueryError string
+
+const TranscriptChanged TranscriptQueryError = "transcript_changed"
+
+func (e TranscriptQueryError) Error() string { return string(e) }

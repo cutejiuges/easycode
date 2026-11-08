@@ -9,7 +9,7 @@ import (
 
 // NewToolHookGatePlannedDraft 冻结当前调用的有序检查引用，不保存可执行命令。
 func NewToolHookGatePlannedDraft(turn domain.TurnID, p domain.HookPlan) (RecordDraft, error) {
-	if !turn.Valid() || p.Validate() != nil {
+	if !turn.Valid() || p.Validate() != nil || p.Event != domain.HookPreToolUse {
 		return RecordDraft{}, fmt.Errorf("invalid hook plan")
 	}
 	return encodeDraft(EventToolHookGatePlanned, "", turn, p.Clone())
@@ -40,7 +40,7 @@ func NewHookExecutionStartedDraft(turn domain.TurnID, id domain.HookRunIdentity)
 	}
 	return encodeDraft(EventHookExecutionStarted, "", turn, id)
 }
-func NewHookExecutionFinishedDraft(turn domain.TurnID, r domain.HookRunResult) (RecordDraft, error) {
+func NewHookExecutionFinishedDraft(turn domain.TurnID, r domain.HookFinished) (RecordDraft, error) {
 	if !turn.Valid() || r.Validate() != nil {
 		return RecordDraft{}, fmt.Errorf("invalid hook execution result")
 	}
@@ -56,7 +56,11 @@ func DecodeToolHookGatePlanned(record Record) (domain.HookPlan, error) {
 	if record.EventKind != EventToolHookGatePlanned {
 		return domain.HookPlan{}, fmt.Errorf("invalid hook plan kind")
 	}
-	return domain.DecodeHookPlan(record.Payload)
+	p, err := domain.DecodeHookPlan(record.Payload)
+	if err != nil || p.Event != domain.HookPreToolUse {
+		return domain.HookPlan{}, fmt.Errorf("invalid pre hook plan event")
+	}
+	return p, nil
 }
 func DecodeHookExecutionStarted(record Record) (domain.HookRunIdentity, error) {
 	v, err := decodeKnownPayload[domain.HookRunIdentity](record, EventHookExecutionStarted)
@@ -65,11 +69,11 @@ func DecodeHookExecutionStarted(record Record) (domain.HookRunIdentity, error) {
 	}
 	return v, v.Validate()
 }
-func DecodeHookExecutionFinished(record Record) (domain.HookRunResult, error) {
+func DecodeHookExecutionFinished(record Record) (domain.HookFinished, error) {
 	if record.EventKind != EventHookExecutionFinished {
-		return domain.HookRunResult{}, fmt.Errorf("invalid hook result kind")
+		return domain.HookFinished{}, fmt.Errorf("invalid hook result kind")
 	}
-	return domain.DecodeHookRunResult(record.Payload)
+	return domain.DecodeHookFinished(record.Payload)
 }
 func DecodeToolHookGateDecided(record Record) (domain.HookGateDecision, error) {
 	if record.EventKind != EventToolHookGateDecided {
@@ -103,7 +107,7 @@ func (g ReplayedHookGate) Clone() ReplayedHookGate {
 	return g
 }
 func (g ReplayedHookGate) Validate(invocation string, cap domain.HookCapability) error {
-	if g.Plan.Validate() != nil || g.Plan.InvocationID != invocation || g.Plan.Capability != cap || g.PlanSequence == 0 || len(g.Results) > len(g.Plan.Hooks) {
+	if g.Plan.Validate() != nil || g.Plan.Event != domain.HookPreToolUse || g.Plan.InvocationID != invocation || g.Plan.Capability != cap || g.PlanSequence == 0 || len(g.Results) > len(g.Plan.Hooks) {
 		return fmt.Errorf("invalid hook recovery plan")
 	}
 	for i, r := range g.Results {
@@ -142,11 +146,11 @@ func (active *activeReplayTurn) hookCall(invocation string) (*ReplayedToolCall, 
 		if string(call.Invocation.InvocationID()) != invocation {
 			continue
 		}
-		if !call.Invocation.Capability().Exclusive() || call.State != ReplayedToolCallReady || call.ApprovalSequence != 0 {
+		if !call.Invocation.Capability().Exclusive() || call.State != ReplayedToolCallReady || call.ApprovalSequence != 0 || call.PostHooks != nil {
 			return nil, replayCorrupt("hook gate has no pending mutation")
 		}
 		for j := 0; j < i; j++ {
-			if active.pendingCalls[j].State != ReplayedToolCallResult {
+			if !callComplete(active.pendingCalls[j]) {
 				return nil, replayCorrupt("hook gate crossed an unfinished call")
 			}
 		}
@@ -160,6 +164,27 @@ func (active *activeReplayTurn) acceptHookBatch(batch []Record) error {
 		return replayCorrupt("hook facts have invalid turn")
 	}
 	first := batch[0]
+	if first.EventKind == EventToolPostHookPlanned || first.EventKind == EventToolPostHookCompleted {
+		return active.acceptPostHookBatch(batch)
+	}
+	if first.EventKind == EventHookExecutionStarted {
+		id, err := DecodeHookExecutionStarted(first)
+		if err != nil {
+			return err
+		}
+		if id.Event == domain.HookPostToolUse {
+			return active.acceptPostHookBatch(batch)
+		}
+	}
+	if first.EventKind == EventHookExecutionFinished {
+		f, err := DecodeHookExecutionFinished(first)
+		if err != nil {
+			return err
+		}
+		if f.Result.Identity.Event == domain.HookPostToolUse {
+			return active.acceptPostHookBatch(batch)
+		}
+	}
 	switch first.EventKind {
 	case EventToolHookGatePlanned:
 		p, err := DecodeToolHookGatePlanned(first)
@@ -194,7 +219,8 @@ func (active *activeReplayTurn) acceptHookBatch(batch []Record) error {
 		g.Started = &id
 		g.StartedSequence = first.Sequence
 	case EventHookExecutionFinished:
-		r, err := DecodeHookExecutionFinished(first)
+		finished, err := DecodeHookExecutionFinished(first)
+		r := finished.Result
 		if err != nil {
 			return replayCorrupt("invalid hook finish payload")
 		}
@@ -203,7 +229,7 @@ func (active *activeReplayTurn) acceptHookBatch(batch []Record) error {
 			return err
 		}
 		g := call.Hooks
-		if g == nil || g.Decision != nil || g.Started == nil || *g.Started != r.Identity {
+		if g == nil || g.Decision != nil || g.Started == nil || *g.Started != r.Identity || finished.Feedback.Reference != g.Plan.Hooks[r.Identity.Ordinal] {
 			return replayCorrupt("invalid hook finish transition")
 		}
 		g.Results = append(g.Results, r)

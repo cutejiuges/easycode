@@ -24,7 +24,7 @@ func hookReplayFixture(t *testing.T, n int) (*replayFixture, tool.Invocation, do
 	f.appendBatch(mustDraft(t, EventProviderNativeCommit, testTurnID, validNativeCommit()), mustDraft(t, EventSampleUsage, testTurnID, testSampleUsage(t)), ready)
 	refs := make([]domain.HookReference, n)
 	for i := range refs {
-		d, err := domain.NewHookDeclaration(domain.HookSourceProject, strings.Repeat("a", 64), "check-"+string(rune('a'+i)), 7, "cat >/dev/null", 5)
+		d, err := domain.NewHookDeclaration(domain.HookSourceProject, domain.HookPreToolUse, domain.HookFeedbackNone, strings.Repeat("a", 64), "check-"+string(rune('a'+i)), 7, "cat >/dev/null", 5)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -53,13 +53,17 @@ func hookStarted(t *testing.T, p domain.HookPlan, n int) (RecordDraft, domain.Ho
 	}
 	return d, id
 }
-func hookFinished(t *testing.T, id domain.HookRunIdentity, status domain.HookOutcome, code domain.HookCode) RecordDraft {
+func hookFinished(t *testing.T, p domain.HookPlan, id domain.HookRunIdentity, status domain.HookOutcome, code domain.HookCode) RecordDraft {
 	t.Helper()
 	r := domain.HookRunResult{Identity: id, Status: status, Code: code, ExitKnown: true, Origin: "execution", CleanupConfirmed: true}
 	if status == domain.HookBlock {
 		r.ExitCode = 2
 	}
-	d, err := NewHookExecutionFinishedDraft(testTurnID, r)
+	finished, err := domain.NewEmptyHookFinished(r, p.Hooks[id.Ordinal])
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := NewHookExecutionFinishedDraft(testTurnID, finished)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +90,7 @@ func TestHookReplayKeepsStartedAndSuccessfulPrefixesDistinct(t *testing.T) {
 				start, id := hookStarted(t, p, 0)
 				f.appendBatch(start)
 				if phase != "started" {
-					finish := hookFinished(t, id, domain.HookContinue, domain.HookOK)
+					finish := hookFinished(t, p, id, domain.HookContinue, domain.HookOK)
 					f.appendBatch(finish)
 				}
 			}
@@ -94,14 +98,14 @@ func TestHookReplayKeepsStartedAndSuccessfulPrefixesDistinct(t *testing.T) {
 				start, id := hookStarted(t, p, 1)
 				f.appendBatch(start)
 				if phase == "continued" {
-					f.appendBatch(hookFinished(t, id, domain.HookContinue, domain.HookOK), hookDecision(t, p, domain.HookContinue, domain.HookOK, 2, -1))
+					f.appendBatch(hookFinished(t, p, id, domain.HookContinue, domain.HookOK), hookDecision(t, p, domain.HookContinue, domain.HookOK, 2, -1))
 				} else {
 					result := tool.NewInvocationErrorResult(inv, tool.ResultDenied, string(domain.HookDenied), "Hook stopped")
 					d, err := NewToolCallResultDraft(testTurnID, result)
 					if err != nil {
 						t.Fatal(err)
 					}
-					f.appendBatch(hookFinished(t, id, domain.HookBlock, domain.HookDenied), hookDecision(t, p, domain.HookBlock, domain.HookDenied, 2, 1), d)
+					f.appendBatch(hookFinished(t, p, id, domain.HookBlock, domain.HookDenied), hookDecision(t, p, domain.HookBlock, domain.HookDenied, 2, 1), d)
 				}
 			}
 			if phase == "trust-denied" {
@@ -159,7 +163,7 @@ func TestHookReplayRejectsSkippedDuplicatedAndNonAtomicFacts(t *testing.T) {
 				f.appendBatch(hookDecision(t, p, domain.HookContinue, domain.HookOK, 2, -1))
 			case "finish-without-start":
 				_, id := hookStarted(t, p, 0)
-				f.appendBatch(hookFinished(t, id, domain.HookContinue, domain.HookOK))
+				f.appendBatch(hookFinished(t, p, id, domain.HookContinue, domain.HookOK))
 			case "split-denial":
 				f.appendBatch(hookDecision(t, p, domain.HookBlock, domain.HookTrustDenied, 0, 0))
 			case "approval-before-gate":
@@ -187,7 +191,7 @@ func TestHookReplayRejectsSkippedDuplicatedAndNonAtomicFacts(t *testing.T) {
 func TestHookRecordCodecsRejectRawOutputAndUnknownFields(t *testing.T) {
 	_, _, p := hookReplayFixture(t, 1)
 	start, id := hookStarted(t, p, 0)
-	finish := hookFinished(t, id, domain.HookContinue, domain.HookOK)
+	finish := hookFinished(t, p, id, domain.HookContinue, domain.HookOK)
 	decision := hookDecision(t, p, domain.HookContinue, domain.HookOK, 1, -1)
 	planned, _ := NewToolHookGatePlannedDraft(testTurnID, p)
 	for _, d := range []RecordDraft{planned, start, finish, decision} {

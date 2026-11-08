@@ -28,6 +28,19 @@ func reasoningFixtureStream(family domain.ProviderFamily, sample int, withTool b
 		} else {
 			writeOpenAIAppTurn(&stream, sample)
 		}
+	} else {
+		if withTool {
+			writeAnthropicToolLoopSample(&stream, sample)
+		} else {
+			writeAnthropicAppTurn(&stream, sample)
+		}
+	}
+	return withReasoningFixture(family, stream.Bytes())
+}
+
+// withReasoningFixture 为已有工具或文本样本复用同一允许正文与 opaque 测试边界。
+func withReasoningFixture(family domain.ProviderFamily, wire []byte) []byte {
+	if family == domain.ProviderOpenAI {
 		frames := `data: {"type":"response.output_item.added","output_index":3,"item":{"type":"reasoning","id":"reasoning-fixture","summary":[]}}
 
 data: {"type":"response.reasoning_summary_part.added","output_index":3,"item_id":"reasoning-fixture","summary_index":0,"part":{"type":"summary_text","text":""}}
@@ -39,12 +52,7 @@ data: {"type":"response.reasoning_summary_text.done","output_index":3,"item_id":
 data: {"type":"response.output_item.done","output_index":3,"item":{"type":"reasoning","id":"reasoning-fixture","summary":[{"type":"summary_text","text":"# allowed-reasoning-sentinel 中文🙂\n\n\u0060\u0060\u0060go\nreason()\n\u0060\u0060\u0060\n"}],"encrypted_content":"opaque-reasoning-sentinel","content":[{"type":"reasoning_text","text":"raw-reasoning-sentinel"}]}}
 
 `
-		return bytes.Replace(stream.Bytes(), []byte(`data: {"type":"response.completed"`), []byte(frames+`data: {"type":"response.completed"`), 1)
-	}
-	if withTool {
-		writeAnthropicToolLoopSample(&stream, sample)
-	} else {
-		writeAnthropicAppTurn(&stream, sample)
+		return bytes.Replace(wire, []byte(`data: {"type":"response.completed"`), []byte(frames+`data: {"type":"response.completed"`), 1)
 	}
 	frames := `data: {"type":"content_block_start","index":3,"content_block":{"type":"thinking","thinking":"ignored-start-sentinel","signature":"ignored-signature-sentinel"}}
 
@@ -55,7 +63,7 @@ data: {"type":"content_block_delta","index":3,"delta":{"type":"signature_delta",
 data: {"type":"content_block_stop","index":3}
 
 `
-	return bytes.Replace(stream.Bytes(), []byte(`data: {"type":"message_stop"`), []byte(frames+`data: {"type":"message_stop"`), 1)
+	return bytes.Replace(wire, []byte(`data: {"type":"message_stop"`), []byte(frames+`data: {"type":"message_stop"`), 1)
 }
 
 func TestReasoningHeadlessBothProvidersAllModesWithToolAndEOF(t *testing.T) {

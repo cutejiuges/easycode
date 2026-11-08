@@ -23,16 +23,27 @@ import (
 type blockingAppHook struct{ entered, cancelled, release chan struct{} }
 
 func (*blockingAppHook) Preflight(context.Context) domain.HookCode { return domain.HookOK }
-func (r *blockingAppHook) Run(ctx context.Context, id domain.HookRunIdentity, _ domain.HookDeclaration, _ domain.HookInput, _ time.Duration) domain.HookRunResult {
+func (r *blockingAppHook) Run(ctx context.Context, id domain.HookRunIdentity, _ domain.HookDeclaration, _ domain.HookInput, _ time.Duration) domain.HookExecution {
 	close(r.entered)
 	<-ctx.Done()
 	close(r.cancelled)
 	<-r.release
-	return domain.HookRunResult{Identity: id, Status: domain.HookCancel, Code: domain.HookCancelled, Cancelled: true, CleanupConfirmed: true, Origin: "execution"}
+	return domain.HookExecution{Result: domain.HookRunResult{Identity: id, Status: domain.HookCancel, Code: domain.HookCancelled, Cancelled: true, CleanupConfirmed: true, Origin: "execution"}}
 }
 func TestHookHostRetainsWorkspaceAndCrossProcessLeaseDuringCleanup(t *testing.T) {
+	testHookHostRetainsLease(t, domain.HookPreToolUse)
+}
+func TestPostHookHostRetainsWorkspaceAndCrossProcessLeaseDuringCleanup(t *testing.T) {
+	testHookHostRetainsLease(t, domain.HookPostToolUse)
+}
+func testHookHostRetainsLease(t *testing.T, event domain.HookEvent) {
+	t.Helper()
 	workspace := t.TempDir()
-	writeHookConfig(t, workspace, "never executed by fake runner")
+	if event == domain.HookPostToolUse {
+		writePostHookConfig(t, workspace, "never executed by fake runner", domain.HookFeedbackNone)
+	} else {
+		writeHookConfig(t, workspace, "never executed by fake runner")
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.Copy(io.Discard, r.Body)
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -65,8 +76,17 @@ func TestHookHostRetainsWorkspaceAndCrossProcessLeaseDuringCleanup(t *testing.T)
 		if e.Kind == protocol.EventHookActivity {
 			break
 		}
-		if e.Kind == protocol.EventToolApprovalRequested || e.Kind == protocol.EventToolStarted {
-			t.Fatal("tool escaped hook")
+		if e.Kind == protocol.EventToolApprovalRequested {
+			if event == domain.HookPreToolUse {
+				t.Fatal("tool escaped pre hook")
+			}
+			p, _ := protocol.DecodeToolApprovalRequested(e)
+			if err := resources.session.ResolveApproval(context.Background(), e.TurnID, p, protocol.ApprovalAllowOnce, ""); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if e.Kind == protocol.EventToolStarted && event == domain.HookPreToolUse {
+			t.Fatal("tool escaped pre hook")
 		}
 	}
 	<-runner.entered
@@ -100,7 +120,12 @@ func TestHookHostRetainsWorkspaceAndCrossProcessLeaseDuringCleanup(t *testing.T)
 	probe("free")
 	for range events {
 	}
-	if _, err := os.Stat(filepath.Join(workspace, "marker")); !os.IsNotExist(err) {
-		t.Fatal("target executed during cleanup")
+	content, err := os.ReadFile(filepath.Join(workspace, "marker"))
+	if event == domain.HookPreToolUse {
+		if !os.IsNotExist(err) {
+			t.Fatal("target executed during pre cleanup")
+		}
+	} else if err != nil || string(content) != "must-not-write" {
+		t.Fatal("post cleanup changed real successful effect", err)
 	}
 }

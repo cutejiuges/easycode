@@ -4,7 +4,7 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 
 用户只需要提供 `base_url`、`api_key` 和模型名称即可连接服务，不需要账号登录、OAuth、设备码或订阅鉴权。
 
-> 项目按纵向切片持续推进。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、命令/Skill 首词补全、原生多轮 Session、`--resume`/`--continue`、headless/FIFO 输入、离线 `sessions list`，以及九项工具能力：Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill 和结构化用户提问。命令执行当前支持 Darwin；已支持同步 PreToolUse 命令 Hook，已支持被动推理阅读；其余 Hook 事件、主动推理配置等能力仍按 Roadmap 分阶段推进。
+> 项目按纵向切片持续推进。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、命令/Skill 首词补全、原生多轮 Session、`--resume`/`--continue`、headless/FIFO 输入、离线 `sessions list`，以及九项工具能力：Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill 和结构化用户提问。命令执行当前支持 Darwin；已支持同步 PreToolUse/PostToolUse 命令 Hook，已支持被动推理阅读；其余 Hook 事件、主动推理配置等能力仍按 Roadmap 分阶段推进。
 
 ## 交互式恢复会话
 
@@ -68,7 +68,7 @@ TUI 将 CRLF/CR 规范化为 LF，保留缩进、Tab、尾空格及尾换行；�
 | 安全配置 | 已实现 JSON 配置、环境变量覆盖、API key 脱敏，以及 macOS/Linux 上绑定实际句柄的 no-follow 校验；其他平台当前安全失败关闭 |
 | Tools | 九项能力包含 Read/Glob/Grep、Edit/apply_patch、Write、Darwin Exec、ReadArtifact、Skill 和结构化提问；连续只读最多 8 路并行，Patch/Write/Exec 需批准，Question 独占但不进入权限批准 |
 | Session | 已实现 append-only JSONL、唯一当前无版本格式的强类型 draft/decoder、UUIDv7、跨进程 lease、同句柄 load/repair/write、`Sync`、尾部修复、fixture、显式恢复，以及可从 JSONL 重建的 SQLite Catalog、`--continue` 与离线 `sessions list`，以及 `resume` 启动选择器和有界元数据搜索/只读文本预览；全文搜索尚未实现 |
-| 扩展系统 | P6 目标；本地 Skills 已实现发现、显式调用、按需工具读取和原生恢复；同步 PreToolUse command Hooks 已实现；Plugins、MCP 和其余 Hook 事件待后续推进 |
+| 扩展系统 | P6 目标；本地 Skills 已实现发现、显式调用、按需工具读取和原生恢复；同步 PreToolUse/PostToolUse command Hooks 已实现；Plugins、MCP 和其余 Hook 事件待后续推进 |
 | Subagent | P7 目标；当前仅为经批准的 TODO 控制边界，调度、线程树和生命周期尚未实现 |
 | Telemetry | P8 目标；当前 logger 仅为经批准的 TODO 占位，未接入请求正文、Session 或运行时链路 |
 
@@ -281,7 +281,7 @@ P3+ 目标：Tool Policy / Executor、扩展系统与 Subagent
 
 Provider-native item 是恢复会话和构建下次请求的事实依据，RuntimeEvent 只用于 UI、日志及宿主投影，二者不能相互替代。
 
-共享层需要读取历史时使用 Provider 提供的单向 `HistoryProjector` 和 `SemanticHistoryView`。当前已实现 committed-only 文本投影和 resume 后的 TUI 历史回放；ContextPlanner/token 估算已接入，Stop Hook 文本和 Subagent completion 消费者将在后续阶段接入；当前 PreToolUse 只消费三种强类型工具输入。该视图不可反向生成 Provider 请求。
+共享层需要读取历史时使用 Provider 提供的单向 `HistoryProjector` 和 `SemanticHistoryView`。当前已实现 committed-only 文本投影和 resume 后的 TUI 历史回放；ContextPlanner/token 估算已接入，Stop Hook 文本和 Subagent completion 消费者将在后续阶段接入；当前 PreToolUse 消费三种强类型工具输入，PostToolUse 另接收成功结果的封闭元数据投影。该视图不可反向生成 Provider 请求。
 
 更完整的设计见[总体架构文档](docs/architecture/overall-architecture.md)。
 
@@ -295,7 +295,7 @@ Write 输入（原始 JSON 与规范编码）上限 1 MiB，审批完整展示�
 
 创建使用禁止覆盖的原子发布，缺失目录链先在私有树中准备，再一次发布；审批后目标或祖先变化返回 conflict。发布后的目录 Sync 或清理失败报告不确定结果并停止后续工具。进程被强制杀死可能留下 `.easycode-write-*` 私有暂存项，resume 不扫描、不清理、不重放这些写入。macOS 文件系统与故障注入已验收；Linux adapter 已交叉编译，但当前开发环境无 Linux runner，真实 Linux 文件系统验证尚待补充；不支持安全发布的平台失败关闭。
 
-## 本地 PreToolUse Hooks
+## 本地工具 Hooks
 
 启动时读取用户 `~/.config/easycode/hooks.json` 和工作区 `.easycode/hooks.json`，当前进程使用冻结快照。两个来源均默认未信任，用户来源先于项目来源执行。例如：
 
@@ -320,19 +320,67 @@ Write 输入（原始 JSON 与规范编码）上限 1 MiB，审批完整展示�
 | 边界 | 当前行为 |
 | --- | --- |
 | 匹配 | `*` 或字面 `Edit/apply_patch`、`Write`、`Bash/exec_command`，以 `|` 分隔；别名只执行一次；读取工具不触发 |
-| 来源 | 严格 JSON、no-follow/实际 FD 校验；每来源 64 KiB、32 项，单调用最多 8 项；任一已存在来源无效则阻断全部三项 mutation |
+| 来源 | 严格 JSON、no-follow/实际 FD 校验；每来源 64 KiB，两个事件合计 32 项/来源、64 项/两来源，每事件每调用最多 8 项；任一已存在来源无效则阻断全部三项 mutation |
 | 执行 | Darwin，非 login `/bin/sh`，最小环境，工作区只读、禁网；仅 `/dev/null` 写入；其他平台失败关闭 |
 | 预算 | 单项默认 5 秒，可设整数 1..30；每次工具调用总执行预算 30 秒，信任等待不计费；stdin 最大 512 KiB，stdout/stderr 各 16 KiB |
-| 放行 | exit 0 且空输出或 `{}`；放行后仍进入普通工具审批 |
-| 拒绝 | exit 2，或 exit 0 返回下列严格结构；其他非零退出、无效输出、超时或 I/O 错误阻断该调用 |
+| Pre 放行 | exit 0 且空输出或 `{}`；放行后仍进入普通工具审批 |
+| Pre 拒绝 | exit 2，或 exit 0 返回下列严格结构；其他非零退出、无效输出、超时或 I/O 错误阻断该调用 |
 | headless | 匹配项返回 `denied/hook_trust_required`，不运行脚本或目标工具，不等待交互；无匹配保持 `approval_required` |
-| 隐私与恢复 | 只保存安全 code、检查引用和统计；原始 stdout/stderr/reason 不进入模型、Session、日志或 artifact；恢复仅补偿，不重新运行检查或工具 |
+| 隐私与恢复 | 默认只保存安全 code、引用和统计；显式 model 反馈另经信任与预算接纳。原始 stdout/stderr/reason 不自动进入模型、Session、日志或 artifact；恢复仅补偿，不重新运行检查或工具 |
 
 ```json
 {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Local check failed"}}
 ```
 
-stdin 提供真实 `tool_name`、会话/回合/调用身份、cwd 与规范 `tool_input`：Patch 使用 `file_path/replacements`，Write 使用 `file_path/content`，Exec 使用 `command/workdir/timeout_ms`。参数只通过 stdin 传递。拒绝 reason 必须非空且最多 4 KiB，但仅用于校验，不作为模型反馈。未实现其他事件、async、allow/ask、参数改写、附加上下文、输出改写或 plugin hooks。
+stdin 提供真实 `tool_name`、会话/回合/调用身份、cwd 与规范 `tool_input`：Patch 使用 `file_path/replacements`，Write 使用 `file_path/content`，Exec 使用 `command/workdir/timeout_ms`。参数只通过 stdin 传递。拒绝 reason 必须非空且最多 4 KiB，但仅用于校验，不作为模型反馈。Pre 不允许 feedback 字段。其余事件、async、allow/ask、参数/结果改写和 plugin hooks 尚未实现。
+
+### 成功后的 PostToolUse 检查
+
+PostToolUse 只检查真实执行成功的 Edit/apply_patch、Write 和 Bash/exec_command；正常非零 Exec exit 也按现有成功语义触发。完整后置计划在工具候选与普通批准之前审查，Pre/Post 信任相互隔离。真实工具结果先 Sync，随后检查；后置失败不会撤销或改写工具成功，下一工具和模型采样等待检查收口。主线保留工具成功并显示检查状态；Ctrl+O 中按右键进入独立 `post_hooks` 详情。
+
+在同一配置的 `hooks` 对象内增加以下数组；id 在同一来源的两个事件之间也必须唯一：
+
+```json
+"PostToolUse": [{
+  "matcher": "Edit|apply_patch|Write|Bash|exec_command",
+  "hooks": [{
+    "id": "check-todo",
+    "type": "command",
+    "command": "cat >/dev/null; if /usr/bin/grep -q TODO main.go; then printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"Read-only check: main.go still contains TODO.\"}}'; else status=$?; case \"$status\" in 1) printf '{}' ;; *) exit \"$status\" ;; esac; fi",
+    "timeout": 5,
+    "feedback": "model"
+  }]
+}]
+```
+
+`feedback` 缺省为 `none`。只有显式 `model` 并经当前会话信任的严格 `additionalContext` 才发送给服务端并保存到 Session。空白或 `{}` 表示无反馈；Post 的任意非零退出（包括 2）是检查错误，不使用 Pre 的 deny 语义。普通 stdout、stderr、未知控制字段和未授权正文均丢弃，只保留安全分类。每项正文至多 4 KiB，最终反馈段含来源与包装至多 16 KiB；超额整块拒绝，不驱逐先前已保存正文。
+
+下面是配置中同一命令的多行写法，可用 `/bin/sh` 执行。发现 TODO 返回 exit 0 的结构化上下文，grep 执行异常才非零；它只读文件、不写工作区或缓存、不联网。`main.go` 应当存在；更换检查对象时也需要审查完整命令。
+
+```sh
+cat >/dev/null
+if /usr/bin/grep -q TODO main.go; then
+  printf '%s' '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"Read-only check: main.go still contains TODO."}}'
+else
+  status=$?
+  case "$status" in
+    1) printf '{}' ;;
+    *) exit "$status" ;;
+  esac
+fi
+```
+
+Post stdin 的固定顶层字段为 `hook_event_name/session_id/thread_id/turn_id/tool_use_id/tool_name/cwd/tool_input/tool_response`。`tool_use_id` 是 Provider call ID，`cwd` 仅发送给本地检查。`tool_input` 沿用三个封闭分支，`tool_response` 只包含 `capability/status/code/metadata`，其中 status/code 固定为 success/ok：
+
+| 能力 | metadata 完整字段 |
+| --- | --- |
+| Patch | `file_path/replacement_count/added_lines/removed_lines` |
+| Write | `file_path/operation/bytes/lines/created_directories` |
+| Exec | `workdir/exit_known/exit_code/stdout_bytes/stderr_bytes/output_truncated/timed_out/cancelled` |
+
+不传递原 preview、输出正文、artifact ID、PID、Provider opaque 数据或私有存储路径。合并 stdin 超过 512 KiB 时不启动后置脚本，保留工具成功并明确跳过后缀。两阶段共用每调用 30 秒执行预算；预算耗尽的未启动项不会伪造 timeout 或执行记录。
+
+有 model 项时，从原调用额度 A 预留 `R=min(16 KiB,max(0,A−1 KiB))`，原结果按 A−R 冻结；检查返回 `{}` 也不会重读、扩展原预览。例如 A=256 KiB 时原预览额度为 240 KiB。没有匹配或全部 none 时保持既有模型输出 bytes。小额度连安全提示槽都不足时标记 `budget_unavailable`，只执行检查，不披露正文或模型提示。恢复重用已保存前缀，不补发新的提示，不自动重试工具或脚本。
 
 ## 工程结构
 
@@ -436,7 +484,7 @@ make install-hooks
 | P3 | Coding Tools | 九项工具与批准/恢复/预算已交付；PTY、后台进程、通用跨平台 sandbox 待实现 |
 | P4 | 缓存与上下文 | 缓存、usage 归一、手动/自动压缩已交付；费用、精确计数与跨 Provider fork 待实现 |
 | P5 | Claude 风格 TUI | Markdown、输入及命令/Skill 补全、审批/问卷/Hook、详情、被动推理阅读和 resume picker 已交付；fork picker 待实现 |
-| P6 | 扩展系统 | 本地 Skills、同步 PreToolUse 已交付；其余 Hook、Plugins/MCP/热加载待实现 |
+| P6 | 扩展系统 | 本地 Skills、同步 PreToolUse/PostToolUse 已交付；其余 Hook、Plugins/MCP/热加载待实现 |
 | P7 | Subagent | 尚未实现；保留批准占位，未接入 Runtime/app |
 | P8 | 发布强化 | 部分安全/故障验证已落地；全平台发布矩阵、诊断、遥测待实现；兼容迁移须另行明确授权 |
 

@@ -35,7 +35,7 @@ func TestPrepareToolOutputsPairsResultsInModelOrder(t *testing.T) {
 			Type: "function_call", ID: "fc-1", CallID: "call-1", Name: "Read", Arguments: `{"file_path":"README.md"}`,
 		}},
 	}})
-	entry, err := prepareToolOutputsEntry(history, []tool.InvocationResult{result})
+	entry, err := prepareToolOutputsEntry(history, testModelOutputs(t, result))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestPrepareCustomPatchOutputPreservesWireKind(t *testing.T) {
 	result := tool.NewPatchErrorResult(invocation, tool.ResultDenied, "approval_required", "Patch denied: approval_required")
 	patch := "*** Begin Patch\n*** Update File: main.go\n@@\n-old\n+new\n*** End Patch\n"
 	history := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, NewUserItem("edit it")), {Kind: nativeHistorySample, Outputs: []NativeItem{{Type: "custom_tool_call", ID: "ctc-1", CallID: "call-patch", Name: "apply_patch", Input: patch}}}})
-	entry, err := prepareToolOutputsEntry(history, []tool.InvocationResult{result})
+	entry, err := prepareToolOutputsEntry(history, testModelOutputs(t, result))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestPrepareToolOutputsRejectsMismatchedCallID(t *testing.T) {
 			Type: "function_call", ID: "fc-1", CallID: "call-1", Name: "Read", Arguments: `{"file_path":"README.md"}`,
 		}},
 	}})
-	if _, err := prepareToolOutputsEntry(history, []tool.InvocationResult{result}); err == nil {
+	if _, err := prepareToolOutputsEntry(history, testModelOutputs(t, result)); err == nil {
 		t.Fatal("mismatched tool result unexpectedly accepted")
 	}
 }
@@ -102,7 +102,7 @@ func TestPrepareToolOutputsAcceptsOrderedHeterogeneousResultsAndRejectsCapabilit
 		testGrepProviderResult(t, "call-1"),
 		testReadProviderResult(t, "call-2"),
 	}
-	entry, err := prepareToolOutputsEntry(history, results)
+	entry, err := prepareToolOutputsEntry(history, testModelOutputs(t, results...))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestPrepareToolOutputsAcceptsOrderedHeterogeneousResultsAndRejectsCapabilit
 	}
 	mismatched := append([]tool.InvocationResult(nil), results...)
 	mismatched[0] = testReadProviderResult(t, "call-0")
-	if _, err := prepareToolOutputsEntry(history, mismatched); err == nil {
+	if _, err := prepareToolOutputsEntry(history, testModelOutputs(t, mismatched...)); err == nil {
 		t.Fatal("capability 与 pending call 错配未被拒绝")
 	}
 }

@@ -17,7 +17,7 @@ type execOutputFaultConversation struct {
 	prepared *provider.PreparedToolOutputs
 }
 
-func (conversation *execOutputFaultConversation) PrepareToolOutputs(results []tool.InvocationResult) (*provider.PreparedToolOutputs, error) {
+func (conversation *execOutputFaultConversation) PrepareToolOutputs(results []tool.ModelOutput) (*provider.PreparedToolOutputs, error) {
 	prepared, err := conversation.fakeToolConversation.PrepareToolOutputs(results)
 	conversation.prepared = prepared
 	return prepared, err
