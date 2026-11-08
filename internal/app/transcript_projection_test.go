@@ -92,7 +92,7 @@ func TestTranscriptBodyForwardBackwardUTF8AndThroughSnapshot(t *testing.T) {
 		query.Offset = page.Offset
 	}
 	q.nodes = append(q.nodes, transcriptNode{cursor: protocol.TranscriptCursor{Sequence: 3}, item: item, toolIndex: -1})
-	page, err := q.ListTranscript(context.Background(), protocol.TranscriptListQuery{ThreadID: thread, Through: 1, Limit: 50})
+	page, err := q.ListTranscript(context.Background(), protocol.TranscriptListQuery{Mode: protocol.TranscriptDetail, ThreadID: thread, Through: 1, Limit: 50})
 	if err != nil || len(page.Items) != 1 || page.Items[0].Cursor.Sequence != 1 {
 		t.Fatal("future commit leaked into snapshot")
 	}

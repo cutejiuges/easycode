@@ -36,7 +36,7 @@ func TestMainTranscriptReplacesProvisionalExactlyOnceAndRejectsLateReplies(t *te
 	if !strings.Contains(model.View(), "committed answer") {
 		t.Fatal("provisional missing")
 	}
-	event, _ := protocol.NewTranscriptCommitted(3)
+	event, _ := protocol.NewInputTranscriptCommitted(3)
 	event.TurnID = turn
 	next, cmd := model.Update(RuntimeEventMsg{Event: event})
 	model = next.(Model)

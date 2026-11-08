@@ -1,0 +1,14 @@
+Reasoning · OpenAI summ…
+  var 中文 = 42
+  var 中文 = 42
+  var 中文 = 42
+  var 中文 = 42
+  var 中文 = 42
+  var 中文 = 42
+  var 中文 = 42
+  var 中文 = 42
+  var 中文 = 42
+  var 中文 = 42
+  var 中文 = 42
+←/→: input/result/saved…
+Esc: transcript · Ctrl+…

@@ -1,0 +1,6 @@
+EasyCode test
+Thinking · Ctrl+O to inspect
+
+
+> kept draft|
+Enter: send | Alt+Enter/Ctrl+J: newline

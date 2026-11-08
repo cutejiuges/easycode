@@ -2,6 +2,13 @@
 
 > 本文按事件发生时记录事实，不作为当前功能清单。版本数字、工具数量、平台验收和当时未实现项需结合后续条目与[当前能力清单](capability-status.md)阅读；当前内部格式没有 canary/schema_version 等版本门禁。
 
+### [P5][2026-11-08] 展示预算遗漏宿主适配缓冲
+
+- 现象：推理事件按 Provider/AgentLoop 各 16 项计算时，ChatSession 的转发层仍另有 16 项，实际排队容量会叠加。
+- 根因：只检查生产和控制队列，未沿宿主转发完整追踪 payload 的持有与背压。
+- 修复：Provider/AgentLoop 保留各 16 项，ChatSession 交互和单 turn 适配改为直接背压；不新增 owner 或按 delta 启动 goroutine。
+- 验证：`internal/runtime/reasoning_test.go` 的队列容量/逐片取消回归、既有 host detach 与 shutdown 门闩测试，以及双 Provider × 三种 headless 的取消/断管矩阵和真实 PTY。FIFO 测试改为并发收集全部有限输出，保留完整顺序断言，不再以缓冲容量充当消费屏障。
+
 ### [P6][2026-11-06] 平台专属实现和测试辅助函数放在通用文件
 
 - 现象：Darwin 的完整质量门通过，但 PR Linux CI 在 Staticcheck 阶段因无消费者的 launch policy 与测试函数报 U1000。

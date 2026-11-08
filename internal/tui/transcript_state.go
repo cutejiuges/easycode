@@ -41,7 +41,7 @@ func (model Model) queryMainTranscript(generation, sequence uint64, ctx context.
 		ctx = context.Background()
 	}
 	return func() tea.Msg {
-		page, err := queries.ListTranscript(ctx, protocol.TranscriptListQuery{ThreadID: thread, Through: sequence, Limit: 50})
+		page, err := queries.ListTranscript(ctx, protocol.TranscriptListQuery{Mode: protocol.TranscriptMain, ThreadID: thread, Through: sequence, Limit: 50})
 		return mainTranscriptReply{generation: generation, page: page, err: err}
 	}
 }
@@ -128,7 +128,7 @@ func (model Model) receiveMainTranscript(reply mainTranscriptReply) (tea.Model, 
 	if through == 0 && len(reply.page.Items) > 0 {
 		through = reply.page.Items[0].Cursor.Sequence
 	}
-	model.browser.mainListKey = transcriptPageKey{kind: transcriptListPage, through: through}
+	model.browser.mainListKey = transcriptPageKey{mode: protocol.TranscriptMain, kind: transcriptListPage, through: through}
 	model.browser.mainListPinned = true
 	model.browser.remember(cachedTranscriptPage{key: model.browser.mainListKey, list: reply.page})
 	model.main.items = messages
@@ -176,6 +176,10 @@ func (model Model) quitTranscript() (tea.Model, tea.Cmd) {
 		model.main.cancel()
 		model.main.cancel = nil
 	}
+	model.reasoning = activeReasoning{}
+	model.browser.page = nil
+	model.browser.items = nil
+	model.browser.markdown = transcriptMarkdownDetail{}
 	model.browser.queries = nil
 	model.main.awaitingProjection = false
 	model.main.handoff = nil

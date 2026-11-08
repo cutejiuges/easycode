@@ -20,7 +20,7 @@ const MaxNativeCommitBytes = 16 << 20
 // Capabilities 描述服务端实际支持的能力，不能仅由厂商名称推断。
 type Capabilities struct {
 	Streaming          bool
-	ReasoningSummary   bool
+	ReasoningSummary   bool // 表示主动编译摘要请求的能力，被动展示不会启用它。
 	RawReasoning       bool
 	EncryptedReasoning bool
 	ThinkingSignature  bool
@@ -129,10 +129,11 @@ func (kind StreamEventKind) Terminal() bool {
 
 // NewSemanticStreamEvent 创建 Provider 可发布的共享语义事件。
 func NewSemanticStreamEvent(event protocol.Event) (StreamEvent, error) {
-	streamEvent := StreamEvent{kind: StreamEventSemantic, semantic: cloneProtocolEvent(event)}
+	streamEvent := StreamEvent{kind: StreamEventSemantic, semantic: event}
 	if err := streamEvent.Validate(); err != nil {
 		return StreamEvent{}, err
 	}
+	streamEvent.semantic = cloneProtocolEvent(event)
 	return streamEvent, nil
 }
 
@@ -216,8 +217,14 @@ func (event StreamEvent) Validate() error {
 		if eventHasNoSemantic(event) || protocolEventEmpty(event.semantic) {
 			return fmt.Errorf("semantic stream event payload is invalid")
 		}
-		if event.semantic.Kind != protocol.EventAssistantTextDelta {
+		if event.semantic.Kind != protocol.EventAssistantTextDelta && event.semantic.Kind != protocol.EventAssistantReasoning {
 			return fmt.Errorf("semantic stream event kind is invalid")
+		}
+		if event.semantic.Kind == protocol.EventAssistantReasoning {
+			p, err := protocol.DecodeAssistantReasoning(event.semantic)
+			if err != nil || p.SampleIndex != 0 || event.semantic.SessionID != "" || event.semantic.ThreadID != "" || event.semantic.TurnID != "" {
+				return fmt.Errorf("provider reasoning event has invalid scope")
+			}
 		}
 		if err := event.semantic.Validate(); err != nil {
 			return fmt.Errorf("semantic stream event is invalid: %w", err)
@@ -244,6 +251,9 @@ func (event StreamEvent) Validate() error {
 		}
 		if _, err := event.prepared.ReadyCalls(); err != nil {
 			return fmt.Errorf("completed stream event sample is invalid: %w", err)
+		}
+		if _, err := event.prepared.Presentation(); err != nil {
+			return fmt.Errorf("completed stream event presentation is invalid: %w", err)
 		}
 	case StreamEventFailed, StreamEventCancelled:
 		if !protocolEventEmpty(event.semantic) || !nativeItemNil(event.native) || event.prepared != nil || streamErrorNil(event.err) {
@@ -379,14 +389,15 @@ func (envelope NativeCommitEnvelope) Clone() (NativeCommitEnvelope, error) {
 
 // PreparedSample 封装一次已校验增量及其恰好一次的纯内存 finalizer。
 type PreparedSample struct {
-	envelope NativeCommitEnvelope
-	receipt  domain.RequestReceipt
-	usage    domain.SampleUsage
-	ready    []tool.ReadyCall
-	finalize func()
-	discard  func()
-	state    atomic.Uint32
-	resolved chan struct{}
+	presentation domain.SamplePresentation
+	envelope     NativeCommitEnvelope
+	receipt      domain.RequestReceipt
+	usage        domain.SampleUsage
+	ready        []tool.ReadyCall
+	finalize     func()
+	discard      func()
+	state        atomic.Uint32
+	resolved     chan struct{}
 }
 
 // NewPreparedSample 创建具有显式提交和丢弃路径的当前 sample。
@@ -394,6 +405,7 @@ func NewPreparedSample(
 	envelope NativeCommitEnvelope,
 	usage domain.SampleUsage,
 	receipt domain.RequestReceipt,
+	presentation domain.SamplePresentation,
 	finalize func(),
 	discard func(),
 	ready ...tool.ReadyCall,
@@ -414,11 +426,31 @@ func NewPreparedSample(
 	if receipt.Family != cloned.Family() || receipt.Purpose != domain.RequestSample {
 		return nil, fmt.Errorf("prepared request receipt mismatch")
 	}
+	ownedPresentation, err := presentation.Clone()
+	if err != nil {
+		return nil, err
+	}
+	for _, binding := range ownedPresentation.Bindings() {
+		if !binding.Source.MatchesProvider(cloned.Family()) {
+			return nil, fmt.Errorf("sample reasoning source does not match provider")
+		}
+	}
+	if int(presentation.ItemCount()) < len(ready) {
+		return nil, fmt.Errorf("sample presentation has fewer items than ready calls")
+	}
 	clonedReady, err := cloneReadyCalls(ready)
 	if err != nil {
 		return nil, err
 	}
-	return &PreparedSample{receipt: receipt, envelope: cloned, usage: usage, ready: clonedReady, finalize: finalize, discard: discard, resolved: make(chan struct{})}, nil
+	return &PreparedSample{presentation: ownedPresentation, receipt: receipt, envelope: cloned, usage: usage, ready: clonedReady, finalize: finalize, discard: discard, resolved: make(chan struct{})}, nil
+}
+
+// Presentation 返回尚未解析 sample 的独立展示附属值。
+func (sample *PreparedSample) Presentation() (domain.SamplePresentation, error) {
+	if sample == nil || sample.finalize == nil || sample.state.Load() != 0 {
+		return domain.SamplePresentation{}, fmt.Errorf("prepared sample is invalid or resolved")
+	}
+	return sample.presentation.Clone()
 }
 
 // ReadyCalls 返回按模型 item 顺序排列的独立 typed 调用切片。

@@ -68,7 +68,7 @@ func TestMarkdownViewportAndDetailRawPreserveDraft(t *testing.T) {
 	body := "# title\n\n**bold** text"
 	model.detailOpen = true
 	model.browser.detail = true
-	model.browser.items = []protocol.TranscriptListItem{{Cursor: cursor, Kind: domain.TranscriptAssistant}}
+	model.browser.items = detailItems([]protocol.TranscriptListItem{{Cursor: cursor, Kind: domain.TranscriptAssistant}})
 	model.browser.page = &cachedTranscriptPage{body: protocol.TranscriptBodyPage{Text: body, NextOffset: uint64(len(body)), TotalBytes: uint64(len(body))}}
 	model = updateModel(t, model, tea.WindowSizeMsg{Width: 34, Height: 12})
 	if !strings.Contains(model.View(), "bold text") {

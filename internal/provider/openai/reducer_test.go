@@ -20,7 +20,7 @@ func TestResponsesStreamReducerAcceptsOrderedSample(t *testing.T) {
 		t.Fatalf("created result/state = %#v/%q", result, reducer.responseIdentity())
 	}
 	result = reduceOpenAIEvent(t, reducer, `{"type":"response.future.delta","delta":"ignored"}`)
-	if result != (reducerResult{}) {
+	if result.semantic != nil || result.native != nil || result.completed {
 		t.Fatalf("unknown active event result = %#v", result)
 	}
 	result = reduceOpenAIEvent(t, reducer, `{"type":"response.output_text.delta","delta":"hello"}`)

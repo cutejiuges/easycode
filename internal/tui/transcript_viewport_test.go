@@ -90,7 +90,7 @@ func TestMarkdownDetailSourceAnchorAcrossModeAndWidth(t *testing.T) {
 		model := NewModel(context.Background(), "test", nil)
 		model.detailOpen = true
 		model.browser.detail = true
-		model.browser.items = []protocol.TranscriptListItem{{Cursor: protocol.TranscriptCursor{Sequence: 1}, Kind: domain.TranscriptAssistant}}
+		model.browser.items = detailItems([]protocol.TranscriptListItem{{Cursor: protocol.TranscriptCursor{Sequence: 1}, Kind: domain.TranscriptAssistant}})
 		model.browser.page = &cachedTranscriptPage{body: protocol.TranscriptBodyPage{Text: source, NextOffset: uint64(len(source)), TotalBytes: uint64(len(source))}}
 		model = updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 12})
 		for range 8 {

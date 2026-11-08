@@ -107,7 +107,7 @@ func TestSteeringInputsPreviewCommitRestoreAndRequestEquivalence(t *testing.T) {
 	if !reflect.DeepEqual(liveTranscript, restoredTranscript) {
 		t.Fatal("restored transcript differs")
 	}
-	if len(liveTranscript.Items) != 5 || liveTranscript.Items[2].Kind != domain.TranscriptCall || liveTranscript.Items[3].InputID != ids[1] || liveTranscript.Items[4].InputID != ids[2] || liveTranscript.Items[3].Position.Entry != 3 || liveTranscript.Items[3].TurnID != turnID {
+	if len(liveTranscript.Items) != 6 || liveTranscript.Items[1].Kind != domain.TranscriptReasoning || liveTranscript.Items[3].Kind != domain.TranscriptCall || liveTranscript.Items[4].InputID != ids[1] || liveTranscript.Items[5].InputID != ids[2] || liveTranscript.Items[4].Position.Entry != 3 || liveTranscript.Items[4].TurnID != turnID {
 		t.Fatalf("steering transcript order changed: %#v", liveTranscript)
 	}
 

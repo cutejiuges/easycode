@@ -30,7 +30,7 @@ func TestPreparedResolutionCompletesCallbackBeforeFinalized(t *testing.T) {
 			reject = value.Discard
 			finalized = value.Finalized
 		} else {
-			value, err := NewPreparedSample(envelope, testSampleUsage(t), syntheticRequestReceipt(domain.RequestSample), finalize, discard)
+			value, err := NewPreparedSample(envelope, testSampleUsage(t), syntheticRequestReceipt(domain.RequestSample), domain.EmptySamplePresentation(0), finalize, discard)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -81,7 +81,7 @@ func TestPreparedFinalizeDiscardCompetition(t *testing.T) {
 			finalize = value.Finalize
 			discard = value.Discard
 		} else {
-			value, err := NewPreparedSample(envelope, testSampleUsage(t), syntheticRequestReceipt(domain.RequestSample), callback, callback)
+			value, err := NewPreparedSample(envelope, testSampleUsage(t), syntheticRequestReceipt(domain.RequestSample), domain.EmptySamplePresentation(0), callback, callback)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -110,7 +110,7 @@ func TestPreparedFinalizeDiscardCompetition(t *testing.T) {
 			t.Fatal("lifecycle resolved more than once")
 		}
 	}
-	if _, err := NewPreparedSample(envelope, testSampleUsage(t), syntheticRequestReceipt(domain.RequestSample), func() {}, nil); err == nil {
+	if _, err := NewPreparedSample(envelope, testSampleUsage(t), syntheticRequestReceipt(domain.RequestSample), domain.EmptySamplePresentation(0), func() {}, nil); err == nil {
 		t.Fatal("missing discard accepted")
 	}
 	if _, err := NewPreparedToolOutputs(envelope, func() {}, nil); err == nil {

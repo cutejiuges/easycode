@@ -26,6 +26,7 @@ const (
 	EventUserInputCommitted    EventKind = "user_input_committed"
 	EventTurnStarted           EventKind = "turn_started"
 	EventAssistantTextDelta    EventKind = "assistant_text_delta"
+	EventAssistantReasoning    EventKind = "assistant_reasoning"
 	EventTurnCompleted         EventKind = "turn_completed"
 	EventTurnFailed            EventKind = "turn_failed"
 	EventToolApprovalRequested EventKind = "tool_approval_requested"
@@ -145,6 +146,9 @@ func (event Event) Validate() error {
 		return err
 	case EventTurnStarted:
 		return ValidateTurnStarted(event)
+	case EventAssistantReasoning:
+		_, err := DecodeAssistantReasoning(event)
+		return err
 	case EventAssistantTextDelta:
 		_, err := DecodeAssistantTextDelta(event)
 		return err

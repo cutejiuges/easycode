@@ -119,7 +119,9 @@ func TestPostBothProvidersRealSandboxThreeCapabilitiesAndDisclosure(t *testing.T
 						mu.Unlock()
 						w.Header().Set("Content-Type", "text/event-stream")
 						if n == 1 {
-							serveHookToolSample(w, family, capability)
+							var wire bytes.Buffer
+							serveHookToolSample(&wire, family, capability)
+							_, _ = w.Write(withReasoningFixture(family, wire.Bytes()))
 						} else {
 							serveWriteScenarioSample(w, family, n, nil)
 						}
@@ -179,9 +181,32 @@ func TestPostBothProvidersRealSandboxThreeCapabilitiesAndDisclosure(t *testing.T
 						t.Fatal(err)
 					}
 					thread := resources.identity.ThreadID
-					livePage, err := resources.transcriptQueries.ListTranscript(context.Background(), protocol.TranscriptListQuery{ThreadID: thread, Limit: 50})
+					livePage, err := resources.transcriptQueries.ListTranscript(context.Background(), protocol.TranscriptListQuery{Mode: protocol.TranscriptDetail, ThreadID: thread, Limit: 50})
 					if err != nil {
 						t.Fatal(err)
+					}
+					seenReasoning := false
+					for _, item := range livePage.Items {
+						if item.Kind != domain.TranscriptReasoning {
+							continue
+						}
+						seenReasoning = true
+						body, queryErr := resources.transcriptQueries.ReadTranscriptBody(context.Background(), protocol.TranscriptBodyQuery{ThreadID: thread, Cursor: item.Cursor, Source: protocol.TranscriptText, Limit: 64 << 10})
+						if queryErr != nil || !strings.Contains(body.Text, "allowed-reasoning-sentinel") || strings.Contains(body.Text, "opaque-reasoning-sentinel") || strings.Contains(body.Text, "raw-reasoning-sentinel") || body.DetailSequence != 0 {
+							t.Fatal("reasoning/post detail sources mixed or leaked opaque", queryErr)
+						}
+					}
+					if !seenReasoning {
+						t.Fatal("post tool sample lost reasoning projection")
+					}
+					mainPage, queryErr := resources.transcriptQueries.ListTranscript(context.Background(), protocol.TranscriptListQuery{Mode: protocol.TranscriptMain, ThreadID: thread, Limit: 50})
+					if queryErr != nil {
+						t.Fatal(queryErr)
+					}
+					for _, item := range mainPage.Items {
+						if item.Kind == domain.TranscriptReasoning {
+							t.Fatal("reasoning consumed main transcript slots")
+						}
 					}
 					path, _ := resources.service.repository.JournalPath(thread)
 					if err := resources.close(context.Background()); err != nil {
@@ -208,7 +233,7 @@ func TestPostBothProvidersRealSandboxThreeCapabilitiesAndDisclosure(t *testing.T
 					mu.Lock()
 					captured := append([][]byte(nil), requests...)
 					mu.Unlock()
-					if len(captured) != 2 || !containsHookPreview(captured[1], model.Text()) {
+					if len(captured) != 2 || !bytes.Contains(captured[1], []byte("allowed-reasoning-sentinel")) || !bytes.Contains(captured[1], []byte("opaque-reasoning-sentinel")) || !containsHookPreview(captured[1], model.Text()) {
 						t.Fatal("provider did not receive frozen composition")
 					}
 					disclosed := strings.Contains(model.Text(), "Read-only check:")
@@ -239,12 +264,18 @@ func TestPostBothProvidersRealSandboxThreeCapabilitiesAndDisclosure(t *testing.T
 					if err != nil {
 						t.Fatal(err)
 					}
-					restoredPage, err := resumed.transcriptQueries.ListTranscript(context.Background(), protocol.TranscriptListQuery{ThreadID: thread, Limit: 50})
+					restoredPage, err := resumed.transcriptQueries.ListTranscript(context.Background(), protocol.TranscriptListQuery{Mode: protocol.TranscriptDetail, ThreadID: thread, Limit: 50})
 					if err != nil || len(restoredPage.Items) != len(livePage.Items) {
 						t.Fatal("restored post list differs", err)
 					}
 					found := false
 					for i, item := range restoredPage.Items {
+						if item.Kind == domain.TranscriptReasoning {
+							previous := livePage.Items[i]
+							if item.Reasoning == nil || previous.Reasoning == nil || *item.Reasoning != *previous.Reasoning || item.Text != previous.Text || item.Cursor != previous.Cursor {
+								t.Fatal("restored reasoning changed alongside post feedback")
+							}
+						}
 						if item.Kind == domain.TranscriptCall {
 							found = true
 							if item.PostHook.State != protocol.HookActivityCompleted || item.PostHook.Code != want || item.Activity.Status != "success" || item.PostHook != livePage.Items[i].PostHook || item.Cursor != livePage.Items[i].Cursor || item.Preview != livePage.Items[i].Preview {

@@ -19,6 +19,18 @@ func transcriptListItem(node transcriptNode, entry session.ToolHistoryEntry) pro
 	}
 
 	item := protocol.TranscriptListItem{Cursor: node.cursor, Kind: node.item.Kind, TurnID: node.item.TurnID, InputID: node.item.InputID}
+	if node.item.Kind == domain.TranscriptReasoning && node.item.Reasoning != nil {
+		body := node.item.Reasoning
+		item.Reasoning = &protocol.ReasoningSummaryPayload{Source: body.Source(), Availability: body.Availability(), TotalBytes: body.Len()}
+		if body.Availability() == domain.ReasoningReadable {
+			page, err := body.ReadRange(0, 512, false)
+			if err == nil {
+				item.Text = page.Text
+				item.More = page.NextOffset < page.TotalBytes
+			}
+		}
+		return item
+	}
 	if node.toolIndex < 0 {
 		item.Text = tool.ActivityText(node.item.Text, 512)
 		item.More = len(item.Text) < len(node.item.Text) || node.item.HasSkill
@@ -98,23 +110,29 @@ func (q *transcriptQueries) ListTranscript(ctx context.Context, query protocol.T
 	}
 	defer done()
 	q.mu.Lock()
-	end := len(q.nodes)
+	nodes := q.nodes
+	if query.Mode == protocol.TranscriptMain {
+		nodes = q.mainNodes
+	}
+	end := len(nodes)
 	if query.Through > 0 {
-		end = sort.Search(end, func(i int) bool { return q.nodes[i].cursor.Sequence > query.Through })
+		end = sort.Search(end, func(i int) bool { return nodes[i].cursor.Sequence > query.Through })
 	}
+	lower := 0
 	if query.Newer && query.Before.Valid() {
-		start := sort.Search(end, func(i int) bool { return query.Before.Before(q.nodes[i].cursor) })
-		end = min(end, start+int(query.Limit))
+		lower = sort.Search(end, func(i int) bool { return query.Before.Before(nodes[i].cursor) })
+		end = min(end, lower+int(query.Limit))
 	} else if query.Before.Valid() {
-		end = sort.Search(end, func(i int) bool { return !q.nodes[i].cursor.Before(query.Before) })
+		end = sort.Search(end, func(i int) bool { return !nodes[i].cursor.Before(query.Before) })
 	}
+	lower = max(lower, end-int(query.Limit))
 	type selectedNode struct {
 		node  transcriptNode
 		entry session.ToolHistoryEntry
 	}
 	selected := make([]selectedNode, 0, query.Limit)
-	for i := end - 1; i >= 0 && len(selected) < int(query.Limit); i-- {
-		node := q.nodes[i]
+	for i := end - 1; i >= lower && len(selected) < int(query.Limit); i-- {
+		node := nodes[i]
 		var entry session.ToolHistoryEntry
 		if node.toolIndex >= 0 {
 			entry = q.entries[node.toolIndex]
@@ -170,6 +188,19 @@ func (q *transcriptQueries) ReadTranscriptBody(ctx context.Context, query protoc
 	}
 	if err := ctx.Err(); err != nil {
 		return protocol.TranscriptBodyPage{}, err
+	}
+	if node.item.Kind == domain.TranscriptReasoning {
+		if query.Source != protocol.TranscriptText {
+			return protocol.TranscriptBodyPage{}, tool.ArtifactReadInvalidRange
+		}
+		if node.item.Reasoning == nil || node.item.Reasoning.Availability() != domain.ReasoningReadable {
+			return protocol.TranscriptBodyPage{}, tool.ArtifactReadUnavailable
+		}
+		page, err := node.item.Reasoning.ReadRange(query.Offset, query.Limit, query.Backward)
+		if err != nil {
+			return protocol.TranscriptBodyPage{}, tool.ArtifactReadInvalidRange
+		}
+		return protocol.NewTranscriptBodyPage(protocol.TranscriptBodyPage{Offset: page.Offset, NextOffset: page.NextOffset, TotalBytes: page.TotalBytes, Text: page.Text})
 	}
 	text := ""
 	if node.toolIndex < 0 {

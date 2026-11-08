@@ -19,6 +19,7 @@ const (
 )
 
 type transcriptPageKey struct {
+	mode           protocol.TranscriptListMode
 	detailSequence uint64
 	through        uint64
 	backward       bool
@@ -49,6 +50,7 @@ type transcriptDetailPosition struct {
 }
 
 type transcriptBrowser struct {
+	preferLive         bool
 	mainListKey        transcriptPageKey
 	mainListPinned     bool
 	listKey            transcriptPageKey
@@ -62,7 +64,7 @@ type transcriptBrowser struct {
 	thread             domain.ThreadID
 	generation         uint64
 	cancel             context.CancelFunc
-	items              []protocol.TranscriptListItem
+	items              []transcriptDetailItem
 	selected           int
 	before, nextBefore protocol.TranscriptCursor
 	detail             bool
@@ -152,6 +154,7 @@ func (model Model) openTranscriptBrowser() (tea.Model, tea.Cmd) {
 		return model, nil
 	}
 	model.browser.detail = false
+	model.browser.preferLive = true
 	model.browser.entryCursor = protocol.TranscriptCursor{}
 	if model.reading.detached {
 		model.browser.entryCursor = model.reading.anchor.key.cursor
@@ -160,7 +163,7 @@ func (model Model) openTranscriptBrowser() (tea.Model, tea.Cmd) {
 	if through == 0 && model.browser.mainListPinned {
 		through = model.browser.mainListKey.through
 	}
-	return model.loadTranscriptPage(transcriptPageKey{kind: transcriptListPage, through: through})
+	return model.loadTranscriptPage(transcriptPageKey{mode: protocol.TranscriptDetail, kind: transcriptListPage, through: through})
 }
 
 func (model Model) loadTranscriptPage(key transcriptPageKey) (tea.Model, tea.Cmd) {
@@ -191,7 +194,7 @@ func (model Model) loadTranscriptPage(key transcriptPageKey) (tea.Model, tea.Cmd
 	invocation := ""
 	var selected protocol.TranscriptListItem
 	if b.selected < len(b.items) {
-		selected = b.items[b.selected]
+		selected = b.items[b.selected].TranscriptListItem
 		invocation = selected.Activity.InvocationID
 	}
 	return model, func() tea.Msg {
@@ -199,7 +202,7 @@ func (model Model) loadTranscriptPage(key transcriptPageKey) (tea.Model, tea.Cmd
 		reply := transcriptReply{generation: generation, page: cachedTranscriptPage{key: key}}
 		switch key.kind {
 		case transcriptListPage:
-			reply.page.list, reply.err = queries.ListTranscript(ctx, protocol.TranscriptListQuery{ThreadID: thread, Before: key.cursor, Newer: key.backward, Through: key.through, Limit: 50})
+			reply.page.list, reply.err = queries.ListTranscript(ctx, protocol.TranscriptListQuery{Mode: key.mode, ThreadID: thread, Before: key.cursor, Newer: key.backward, Through: key.through, Limit: 50})
 		case transcriptBodyPage:
 			reply.page.body, reply.err = queries.ReadTranscriptBody(ctx, protocol.TranscriptBodyQuery{ThreadID: thread, Cursor: key.cursor, Source: key.source, DetailSequence: key.detailSequence, Offset: key.offset, Backward: key.backward, Limit: 64 << 10})
 		case transcriptOutputPage:
@@ -252,13 +255,13 @@ func (model Model) receiveTranscriptPage(reply transcriptReply) (tea.Model, tea.
 		}
 		selected := protocol.TranscriptCursor{}
 		if b.selected < len(b.items) {
-			selected = b.items[b.selected].Cursor
+			selected = b.items[b.selected].TranscriptListItem.Cursor
 		}
 		if b.entryCursor.Valid() {
 			selected = b.entryCursor
 			b.entryCursor = protocol.TranscriptCursor{}
 		}
-		b.items = p.list.Items
+		b.items = detailItems(p.list.Items)
 		b.nextBefore = p.list.NextBefore
 		b.selected = 0
 		for i, item := range b.items {
@@ -289,6 +292,7 @@ func (model Model) receiveTranscriptPage(reply transcriptReply) (tea.Model, tea.
 		b.errorText = "Saved output unavailable"
 	}
 	b.remember(p)
+	model.mergeLiveReasoning()
 	for _, extra := range reply.extras {
 		found := false
 		for _, cached := range b.cache {
@@ -309,7 +313,7 @@ func (model Model) refreshTranscriptBrowser() (Model, tea.Cmd) {
 	if b.detail {
 		return model, nil
 	}
-	key := transcriptPageKey{kind: transcriptListPage, cursor: b.before}
+	key := transcriptPageKey{mode: protocol.TranscriptDetail, kind: transcriptListPage, cursor: b.before}
 	for i, page := range b.cache {
 		if page.key == key && page.key != b.mainListKey {
 			b.cache = append(b.cache[:i:i], b.cache[i+1:]...)
@@ -323,6 +327,16 @@ func (model Model) refreshTranscriptBrowser() (Model, tea.Cmd) {
 func (model Model) loadTranscriptDetail() (tea.Model, tea.Cmd) {
 	b := &model.browser
 	if b.selected < 0 || b.selected >= len(b.items) {
+		return model, nil
+	}
+	if model.reasoningPreviewForItem(b.items[b.selected]) != nil {
+		b.invalidate()
+		model.prepareLiveReasoningPage()
+		return model, nil
+	}
+	if b.items[b.selected].Reasoning != nil && b.items[b.selected].Reasoning.Availability == domain.ReasoningUnavailable {
+		b.page = nil
+		b.errorText = "Reasoning text unavailable"
 		return model, nil
 	}
 	key := transcriptPageKey{kind: transcriptBodyPage, cursor: b.items[b.selected].Cursor, source: b.source, offset: b.offset}
@@ -401,11 +415,11 @@ func (model Model) handleTranscriptBrowserKey(key tea.KeyMsg) (tea.Model, tea.Cm
 			b.selected = min(max(0, len(b.items)-1), b.selected+1)
 		case tea.KeyPgDown:
 			if b.nextBefore.Valid() {
-				return model.loadTranscriptPage(transcriptPageKey{kind: transcriptListPage, cursor: b.nextBefore, through: b.listKey.through})
+				return model.loadTranscriptPage(transcriptPageKey{mode: protocol.TranscriptDetail, kind: transcriptListPage, cursor: b.nextBefore, through: b.listKey.through})
 			}
 		case tea.KeyPgUp:
 			if b.before.Valid() && len(b.items) > 0 {
-				return model.loadTranscriptPage(transcriptPageKey{kind: transcriptListPage, cursor: b.items[0].Cursor, backward: true, through: b.listKey.through})
+				return model.loadTranscriptPage(transcriptPageKey{mode: protocol.TranscriptDetail, kind: transcriptListPage, cursor: b.items[0].Cursor, backward: true, through: b.listKey.through})
 			}
 		case tea.KeyEnter:
 			if len(b.items) > 0 {
@@ -430,7 +444,7 @@ func (model Model) handleTranscriptBrowserKey(key tea.KeyMsg) (tea.Model, tea.Cm
 		return model, nil
 	}
 	item := b.items[b.selected]
-	if key.Type == tea.KeyRunes && string(key.Runes) == "r" && item.Kind == domain.TranscriptAssistant && b.page != nil && b.page.body.Offset == 0 && b.page.body.NextOffset == b.page.body.TotalBytes {
+	if key.Type == tea.KeyRunes && string(key.Runes) == "r" && (item.Kind == domain.TranscriptAssistant || item.Kind == domain.TranscriptReasoning) && b.page != nil && b.page.body.Offset == 0 && b.page.body.NextOffset == b.page.body.TotalBytes {
 		b.markdown.raw = !b.markdown.raw
 		b.markdown.preserveAnchor = true
 		return model, nil
@@ -468,6 +482,9 @@ func (model Model) handleTranscriptBrowserKey(key tea.KeyMsg) (tea.Model, tea.Cm
 			return model.loadTranscriptDetail()
 		}
 	case tea.KeyPgDown:
+		if model.reasoningPreviewForItem(item) != nil {
+			return model, nil
+		}
 		if b.page != nil {
 			next, total := b.page.body.NextOffset, b.page.body.TotalBytes
 			if b.stream != "" {
@@ -483,6 +500,9 @@ func (model Model) handleTranscriptBrowserKey(key tea.KeyMsg) (tea.Model, tea.Cm
 			}
 		}
 	case tea.KeyPgUp:
+		if model.reasoningPreviewForItem(item) != nil {
+			return model, nil
+		}
 		if b.offset > 0 {
 			if len(b.previous) == 0 {
 				pageKey := transcriptPageKey{kind: transcriptBodyPage, cursor: item.Cursor, source: b.source, stream: b.stream, offset: b.offset, backward: true}
@@ -515,6 +535,9 @@ func (model Model) renderTranscriptBrowser() string {
 	width, visible := max(8, model.width-4), max(1, model.height-8)
 	if !b.detail {
 		lines := []string{"Transcript"}
+		if model.cancelling {
+			lines = append(lines, "Cancelling — waiting for cleanup")
+		}
 		start := max(0, b.selected-visible+1)
 		for i := start; i < min(len(b.items), start+visible); i++ {
 			item := b.items[i]
@@ -523,6 +546,12 @@ func (model Model) renderTranscriptBrowser() string {
 				marker = "> "
 			}
 			text := string(item.Kind) + ": " + item.Text
+			if item.Kind == domain.TranscriptReasoning && item.Reasoning != nil {
+				text = "Reasoning · " + reasoningSourceLabel(item.Reasoning.Source) + " · " + string(item.Reasoning.Availability)
+				if item.temporary.live {
+					text += " · live"
+				}
+			}
 			if item.Kind == domain.TranscriptCall {
 				text = string(item.Activity.Tool) + " · " + item.Activity.Status + " · " + item.Activity.Summary
 			}
@@ -543,6 +572,14 @@ func (model Model) renderTranscriptBrowser() string {
 	}
 	item := b.items[b.selected]
 	title := string(item.Kind)
+	if item.Kind == domain.TranscriptReasoning && item.Reasoning != nil {
+		title = "Reasoning · " + reasoningSourceLabel(item.Reasoning.Source)
+		if model.cancelling {
+			title += " · Cancelling — waiting for cleanup"
+		} else if model.reasoningPreviewForItem(item) != nil {
+			title += " · " + model.reasoning.status
+		}
+	}
 	if item.Kind == domain.TranscriptCall {
 		title = string(item.Activity.Tool) + " · " + item.Activity.Status
 		if item.Activity.ExitKnown {
@@ -574,7 +611,7 @@ func (model Model) renderTranscriptBrowser() string {
 		}
 	}
 	var lines []string
-	if item.Kind == domain.TranscriptAssistant && b.page != nil {
+	if (item.Kind == domain.TranscriptAssistant || item.Kind == domain.TranscriptReasoning) && b.page != nil {
 		lines = make([]string, len(b.markdown.rows))
 		for i, row := range b.markdown.rows {
 			lines[i] = row.text
@@ -638,7 +675,11 @@ func (model Model) renderTranscriptBrowser() string {
 		headers = append(headers, "Loading…")
 	}
 	if b.errorText != "" {
-		headers = append(headers, b.errorText+" · ← returns to model result")
+		if item.Kind == domain.TranscriptReasoning {
+			headers = append(headers, b.errorText)
+		} else {
+			headers = append(headers, b.errorText+" · ← returns to model result")
+		}
 	}
 	for i := range headers {
 		headers[i] = truncateRunes(headers[i], width)

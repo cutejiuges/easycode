@@ -23,17 +23,27 @@ func (q *postBrowserQueries) ReadTranscriptBody(ctx context.Context, query proto
 	return protocol.TranscriptBodyPage{DetailSequence: q.sequence, Text: "new explicit feedback", NextOffset: 21, TotalBytes: 21}, nil
 }
 func TestOpenPostDetailsRefreshesFirstPageAndDiscardsOldRevision(t *testing.T) {
+	for _, withReasoning := range []bool{false, true} {
+		t.Run(map[bool]string{false: "tool-only", true: "with-reasoning"}[withReasoning], func(t *testing.T) { testOpenPostDetailsRefresh(t, withReasoning) })
+	}
+}
+func testOpenPostDetailsRefresh(t *testing.T, withReasoning bool) {
 	m, _, _ := browserModel(t)
 	queries := &postBrowserQueries{sequence: 21}
 	m.browser.queries = queries
-	list, err := queries.ListTranscript(context.Background(), protocol.TranscriptListQuery{})
+	list, err := queries.ListTranscript(context.Background(), protocol.TranscriptListQuery{Mode: protocol.TranscriptDetail})
 	if err != nil {
 		t.Fatal(err)
 	}
 	item := list.Items[0]
 	item.DetailSequence = 20
-	m.browser.items = []protocol.TranscriptListItem{item}
+	m.browser.items = detailItems([]protocol.TranscriptListItem{item})
 	m.browser.selected = 0
+	if withReasoning {
+		reasoning := protocol.TranscriptListItem{Cursor: protocol.TranscriptCursor{Sequence: item.Cursor.Sequence + 1}, Kind: domain.TranscriptReasoning, TurnID: item.TurnID, Text: "visible", Reasoning: &protocol.ReasoningSummaryPayload{Source: domain.ReasoningOpenAISummary, Availability: domain.ReasoningReadable, TotalBytes: 7}}
+		m.browser.items = detailItems([]protocol.TranscriptListItem{reasoning, item})
+		m.browser.selected = 1
+	}
 	m.detailOpen = true
 	m.browser.detail = true
 	m.browser.source = protocol.TranscriptPostHooks
@@ -53,7 +63,7 @@ func TestOpenPostDetailsRefreshesFirstPageAndDiscardsOldRevision(t *testing.T) {
 	event.TurnID = item.TurnID
 	updated, cmd := m.projectHookEvent(event)
 	m = updated.(Model)
-	if cmd == nil || m.browser.generation <= 7 || m.browser.offset != 0 || len(m.browser.previous) != 0 || m.browser.items[0].Cursor != item.Cursor || m.composer.text != "kept draft" {
+	if cmd == nil || m.browser.generation <= 7 || m.browser.offset != 0 || len(m.browser.previous) != 0 || m.browser.items[m.browser.selected].Cursor != item.Cursor || m.composer.text != "kept draft" {
 		t.Fatal("post refresh lost source position or draft")
 	}
 	if len(m.browser.cache) != 1 || m.browser.cache[0].key != stablePage.key {

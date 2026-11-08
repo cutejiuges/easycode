@@ -88,6 +88,7 @@ type Model struct {
 	contextPanel         *protocol.ContextSnapshotPayload
 	main                 mainTranscript
 	browser              transcriptBrowser
+	reasoning            activeReasoning
 	version              string
 	width                int
 	height               int
@@ -605,7 +606,13 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 			model.errorSummary = "stream_protocol_error: invalid transcript commit"
 			return model, nil
 		}
-		return model.commitMainTranscript(payload.Sequence)
+		updated, detailCmd, commitErr := model.commitReasoning(payload)
+		if commitErr != nil {
+			model.errorSummary = "stream_protocol_error: invalid reasoning commit"
+			return model, nil
+		}
+		next, mainCmd := updated.commitMainTranscript(payload.Sequence)
+		return next, tea.Batch(detailCmd, mainCmd)
 	case protocol.EventToolReady, protocol.EventToolStarted, protocol.EventToolProgress, protocol.EventToolTerminal:
 		payload, err := protocol.DecodeToolActivity(event)
 		if err != nil || event.TurnID != model.activeTurnID || model.toolClosed[payload.InvocationID] {
@@ -666,6 +673,25 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 	case protocol.EventTurnStarted:
 		model.postHooks = make(map[string]protocol.PostHookCommittedPayload)
 		if event.TurnID.Valid() {
+			notice := ""
+			if model.reasoning.failed {
+				switch model.reasoning.disposition {
+				case protocol.SampleNotCommitted:
+					notice = "Previous unsaved reasoning excerpt released"
+				case protocol.SampleUncertain:
+					notice = "Previous uncertain reasoning excerpt released"
+				case protocol.SampleDurable:
+					notice = "Previous saved reasoning preview released"
+				}
+			}
+			model.reasoning = activeReasoning{notice: notice}
+			if model.detailOpen {
+				model.browser.invalidate()
+				model.browser.detail = false
+				model.browser.page = nil
+				model.browser.markdown = transcriptMarkdownDetail{}
+				model.browser.items = nil
+			}
 			model.activeTurnID = event.TurnID
 			model.refreshState()
 			if model.interruptNext {
@@ -673,6 +699,10 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 				model.cancelling = true
 				return model, interruptSession(model.session)
 			}
+		}
+	case protocol.EventAssistantReasoning:
+		if err := model.acceptReasoning(event); err != nil {
+			model.errorSummary = "stream_protocol_error: invalid reasoning event"
 		}
 	case protocol.EventAssistantTextDelta:
 		payload, err := protocol.DecodeAssistantTextDelta(event)
@@ -694,6 +724,10 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 		item.text = appendProvisionalText(item.text, payload.Text)
 		item.sourceStart += total - len(item.text)
 	case protocol.EventTurnCompleted:
+		if model.reasoning.stream.Pending() {
+			model.errorSummary = "stream_protocol_error: unresolved reasoning sample"
+			return model, nil
+		}
 		if _, err := protocol.DecodeTurnCompleted(event); err != nil {
 			model.state = stateIdle
 			model.assistantItem = -1
@@ -714,6 +748,9 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 			model.errorSummary = "turn_failed: invalid failure event"
 		} else {
 			model.errorSummary = payload.Code + ": " + payload.Message
+			if err := model.resolveReasoning(payload); err != nil {
+				model.errorSummary = "stream_protocol_error: invalid reasoning resolution"
+			}
 		}
 		model.state = stateIdle
 		model.assistantItem = -1
@@ -818,6 +855,12 @@ func (model Model) View() string {
 	if model.compactionStatus != "" {
 		view.WriteString(ansi.Hardwrap(model.compactionStatus, model.widthOrDefault(), true))
 		view.WriteByte('\n')
+	}
+	if model.reasoning.notice != "" {
+		view.WriteString(ansi.Truncate(model.reasoning.notice, model.widthOrDefault(), "…") + "\n")
+	}
+	if status := model.reasoningStatus(); status != "" {
+		view.WriteString(ansi.Truncate(status, model.widthOrDefault(), "…") + "\n")
 	}
 	view.WriteString("\n")
 	lines := model.markdown.lines

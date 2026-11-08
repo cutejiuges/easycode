@@ -1,0 +1,16 @@
+Trust this hook?
+Source: project · check
+PreToolUse: fs.patch|fs.write|process.exec
+Feedback: none
+Timeout: 5 seconds
+Workspace: . · read-only · network denied
+This does not approve the model's tool call.
+Workspace scripts can change after review.
+PgUp/PgDn: full command · Tab/↑/↓: choose · Esc: deny
+
+  Trust for this session
+> Deny
+
+Command:
+cat >/dev/null
+printf '{}'

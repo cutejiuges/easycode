@@ -14,10 +14,10 @@ type ToolHistoryObserver interface {
 }
 
 func (runtime *Runtime) emitTranscriptCommit(turnID domain.TurnID, sequence uint64) {
-	if runtime.toolHistory == nil || runtime.turnEmitter == nil {
+	if runtime.turnEmitter == nil {
 		return
 	}
-	event, err := protocol.NewTranscriptCommitted(sequence)
+	event, err := protocol.NewInputTranscriptCommitted(sequence)
 	if err == nil {
 		runtime.turnEmitter(runtime.decorate(event, turnID))
 	}

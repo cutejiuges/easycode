@@ -75,3 +75,32 @@ func TestTranscriptPostSummaryRejectsCrossCallAndRawStatistics(t *testing.T) {
 		}
 	}
 }
+
+func TestReasoningAndPostSummaryKeepSeparateTranscriptKinds(t *testing.T) {
+	const id = "01900000-0000-7000-8000-000000000001"
+	d, _ := domain.NewHookDeclaration(domain.HookSourceProject, domain.HookPostToolUse, domain.HookFeedbackModel, strings.Repeat("a", 64), "check", 7, "true", 5)
+	post := HookActivityPayload{InvocationID: id, Reference: d.Reference, State: HookActivityCompleted, Code: domain.HookOK}
+	reasoning := ReasoningSummaryPayload{Source: domain.ReasoningOpenAISummary, Availability: domain.ReasoningReadable, TotalBytes: 7}
+	item := TranscriptListItem{Cursor: TranscriptCursor{Sequence: 1}, Kind: domain.TranscriptReasoning, TurnID: domain.TurnID(id), Text: "visible", Reasoning: &reasoning}
+	if item.Validate() != nil {
+		t.Fatal("valid reasoning list item rejected")
+	}
+	bad := item
+	bad.PostHook, bad.DetailSequence = post, 2
+	if bad.Validate() == nil {
+		t.Fatal("reasoning item accepted post hook metadata")
+	}
+	bad = item
+	bad.DetailSequence = 2
+	if bad.Validate() == nil {
+		t.Fatal("reasoning item accepted a post detail revision")
+	}
+	bad = TranscriptListItem{Cursor: item.Cursor, Kind: domain.TranscriptCall, TurnID: item.TurnID, DetailSequence: 2, PostHook: post, Activity: ToolActivityPayload{InvocationID: id, Tool: ToolWrite, Summary: "a", Status: "success", Code: "ok"}}
+	if bad.Validate() != nil {
+		t.Fatal("valid post tool item rejected")
+	}
+	bad.Reasoning = &reasoning
+	if bad.Validate() == nil {
+		t.Fatal("tool item accepted reasoning metadata")
+	}
+}

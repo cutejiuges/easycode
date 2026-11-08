@@ -38,6 +38,12 @@ func projectTranscript(history []nativeHistoryEntry) (domain.TranscriptView, err
 			var v domain.TranscriptItem
 			var err error
 			switch item.Type {
+			case "reasoning":
+				body, bodyErr := reasoningBody(item)
+				if bodyErr != nil {
+					return domain.TranscriptView{}, bodyErr
+				}
+				v, err = domain.NewTranscriptReasoning(position, entry.TurnID, body)
 			case "message":
 				if item.Role != "assistant" {
 					continue

@@ -116,7 +116,7 @@ func TestArtifactResumeKeepsNativeRequestAndReadOnlyHistory(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			list, err := resources.transcriptQueries.ListTranscript(ctx, protocol.TranscriptListQuery{ThreadID: thread, Limit: 50})
+			list, err := resources.transcriptQueries.ListTranscript(ctx, protocol.TranscriptListQuery{Mode: protocol.TranscriptDetail, ThreadID: thread, Limit: 50})
 			if err != nil || len(list.Items) < 1 {
 				t.Fatalf("history: %v", err)
 			}
@@ -215,7 +215,7 @@ func TestArtifactResumeKeepsNativeRequestAndReadOnlyHistory(t *testing.T) {
 			if _, err := os.Stat(orphan); !os.IsNotExist(err) {
 				t.Fatal("validated resume did not remove orphan")
 			}
-			list, err = resumed.transcriptQueries.ListTranscript(ctx, protocol.TranscriptListQuery{ThreadID: thread, Limit: 50})
+			list, err = resumed.transcriptQueries.ListTranscript(ctx, protocol.TranscriptListQuery{Mode: protocol.TranscriptDetail, ThreadID: thread, Limit: 50})
 			if err != nil || len(list.Items) < 1 {
 				t.Fatal("missing objects changed restored command history")
 			}

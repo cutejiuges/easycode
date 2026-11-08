@@ -422,12 +422,14 @@ Anthropic input_tokens 是 uncached 输入；OpenAI total 包含 cached 子集�
 
 当前已消费的进程内事件包括：
 
-- `turn_started`、`assistant_text_delta`、`turn_completed`、`turn_failed`、`user_input_committed`。
+- `turn_started`、`assistant_text_delta`、`assistant_reasoning`、`turn_completed`、`turn_failed`、`user_input_committed`。
 - `tool_approval_requested/resolved`、`tool_ready/started/progress/terminal`、`transcript_committed`。
 - `user_question_requested/resolved`、`hook_trust_requested/resolved`、`hook_activity`。
 - `context_snapshot`、`cache_snapshot`、`compaction_started/completed/failed`。
 
-这些事件有 typed 构造、validator 和实际消费者。工具 running、结果/回答收口及 Hook activity 分别受对应 durable 边界约束，事件本身不替代 Session/native facts。普通 usage、摘要 usage 与来源证据在成功 Sync/finalize 后才可投影；独立实时 usage、reasoning 和 patch delta 事件尚未实现。外部 headless DTO 的词汇独立于本枚举，不自动公开所有内部事件。
+这些事件有 typed 构造、validator 和实际消费者。工具 running、结果/回答收口及 Hook activity 分别受对应 durable 边界约束，事件本身不替代 Session/native facts。普通 usage、摘要 usage 与来源证据在成功 Sync/finalize 后才可投影；`assistant_reasoning` 已通过 `started/delta/completed` 三阶段消费被动推理展示；独立实时 usage 和 patch delta 事件尚未实现。外部 headless DTO 的词汇独立于本枚举，不自动公开所有内部事件。
+
+内部 `transcript_committed.origin` 使用 `input/sample`，sample 分支携带 `sample_index/item_count/bindings`；内部 `turn_failed.sample_resolution.disposition` 使用 `not_committed/durable/uncertain`。这些展示/提交解析不增加 Session record kind 或 Session `turn_failed` 字段，也不扩展外部 headless JSONL 词汇。
 
 ### 7.2 Headless JSONL v1
 
@@ -787,7 +789,7 @@ manifest adapter 可以统一扩展描述，但不能用于统一 provider 对�
 
 当前提供用户/assistant 流式 Markdown、代码/表格/原文阅读、紧凑工具主线、前台 Shell 进度、完整 Patch/Write/Exec 批准、结构化问卷、Hook 浏览/信任、context/cache 面板、压缩边界、Ctrl+O 分页详情和启动 resume picker。视图保持无 I/O，按需查询由宿主处理并用身份/generation 拒绝迟到响应。
 
-完整 thinking/reasoning 折叠、后台任务、渐进 patch delta、MCP elicitation、Subagent/task 与 fork picker 尚未实现。测试中使用真实 PTY 验收界面，不表示模型命令工具支持 PTY。
+主动 thinking/effort/budget/summary 请求、后台任务、渐进 patch delta、MCP elicitation、Subagent/task 与 fork picker 尚未实现。测试中使用真实 PTY 验收界面，不表示模型命令工具支持 PTY。
 
 ### 13.3 REPL 行为
 
@@ -960,7 +962,7 @@ ADR 存放在 `docs/architecture/adr/`，模板见该目录的 `README.md`，并
 
 列表与独立 `sessions list` 共用 `loadSessionCatalog` 生命周期；首次和刷新协调，成功后的切范围仅查询，最多 200 条，正文不入 Catalog。`previewSession` 在 descriptor-bound lease 下 Load/Replay、恢复顺序及压缩用量校验，关闭句柄后才发布预览；不用 resume、writer、Repair、artifact 或 Runtime。`provider.StoredHistoryReader` 是有实际消费者的单向离线接口，两家独立 reader 与正式恢复共享私有 native 校验和压缩来源计算，无连接、凭据或新增 capability。
 
-选择理由、参考工程版本、预算和验证方案见 [OpenSpec 变更](../../openspec/changes/archive/2026-11-04-add-interactive-session-picker/design.md)。这是一块恢复入口的完整切片，不代表 P5 整体完成；Markdown 已由独立切片交付，reasoning 和 fork picker 仍未实现；命令/Skill 补全已由独立切片交付。
+选择理由、参考工程版本、预算和验证方案见 [OpenSpec 变更](../../openspec/changes/archive/2026-11-04-add-interactive-session-picker/design.md)。这是一块恢复入口的完整切片，不代表 P5 整体完成；Markdown 已由独立切片交付，被动推理阅读和命令/Skill 补全已由独立切片交付；fork picker 仍未实现。
 
 选择器接收以 owner 锁内对操作/父取消 done channel 的非阻塞检查为线性化点；此前已取消的结果不能进入 Chat。资源仍由同一 worker 持有到最终关闭，不在锁内调用 context 实现或执行关闭。预览的原文预算和安全展示预算分别裁剪，任何省略都保留可见标记；展示不会持有被截掉的大字符串 backing storage。短屏确认保留当前选项并允许滚动目录，短屏预览允许滚过状态头部。
 
@@ -987,3 +989,15 @@ Goldmark 的块起点与围栏闭合事件决定稳定前缀。未闭合围栏�
 Model 在 Update 中先准备补全占用，再准备 Markdown 与 hydration；主线高度扣除实际候选行数。composer 的内存编辑 revision 和字节光标标识解析缓存，不持有旧完整草稿。恢复草稿统一经 `restoreComposer` 按当前终端尺寸准备布局并失效解析缓存，不能把不同快照的相同编辑序号当作相同正文。Esc、paste 与 modal 返回有短 token 抑制，流式增量和 resize 不清除抑制。新状态与发布后不可变切片随 Model 值复制，未引入全局 registry、后台 worker 或公共协议。
 
 名称替换使用既有 `composer.replace`；内置 Enter 交回共享 `submitComposer`，Skill Enter 与 Tab 只编辑。进入 Skills/Hooks 浏览时保留打开前草稿，返回不被尾部补全空格改写。只有正式提交才进入原有 Prepare/admission/Sync 链；UI 的候选、选择和布局不进入 Provider 请求、Session 或稳定缓存前缀。验证依据见 [补全设计](../../openspec/changes/archive/2026-11-06-add-command-and-skill-completion/design.md) 与同 change 的验收记录。
+
+## 双 Provider 被动推理展示
+
+`internal/domain/reasoning.go` 保存不可变白名单 parts 与虚拟范围；Anthropic 只投影 Thinking，OpenAI 只投影非零字节 summary_text，段间两个 LF，空白保持原样。签名、redacted、encrypted、raw、Provider ID/phase 和未知字段仍只属于 native history；SemanticHistoryView 不含推理。Provider 请求策略和 ReasoningSummary/RawReasoning 能力位不因展示改变。
+
+两家 reducer 产生最多两个纯内存逻辑 draft，`internal/provider/reasoning.go` 沿既有 stream owner 惰性分片为最多 16 KiB 的 Delta 和最多 64 KiB 的 Completed 尾快照。每 sample source/scratch 各有 16 MiB 上限，item/block 与 part 合计 4096、元数据 1 MiB；OpenAI 在完整数组解码前预检节点，累计字段在写入 staging 前检查。serialized 推理/提交/失败解析 payload 上限 512 KiB；绑定在提交 admission 前预检。Provider 与 AgentLoop 输出各 16 项，ChatSession 适配通道直接背压，不叠加第三份排队容量；处理路径最多八份有界 payload 副本另占最多 4 MiB。没有新增后台 owner 或 per-delta goroutine。
+
+PreparedSample 持有 `domain.SamplePresentation`，将展示 block 绑定到完成时的 native item ordinal，不进入 envelope 或 Session。Runtime 为每次真实采样绑定 sample_index，核对全部块完成和映射后进入既有 WithoutCancel 提交；成功 Sync/finalize/宿主投影后发 sample 来源的 `transcript_committed`，输入来源单独发布。失败可带当前 sample 的 not_committed/durable/uncertain 解析，Session turn_failed record 不增加该字段。取消抑制 Delta，仍验证和转发生命周期边界，completed 胜出时不遗留活动块。
+
+`protocol.IsTransientPresentation` 同时用于 publication 生产和 AgentLoop 消费，Started/Delta/Completed 都沿用 committed context/cache。app 的 main 查询先排除 reasoning 再分页，detail 包含全部真实 cursor；两个模式必填并分别缓存。TUI 的活动组件共享 64 KiB/50 项，使用 typed 临时键，提交时立刻升级准确 cursor，慢查询期间保留有界画面和源偏移。活动正文与浏览器共享字符串，已提交正文、工具页和列表共用四页缓存；构造、View/resize 不执行 I/O。headless 三模式共用严格 projector，消费内部状态但保持外部词汇不变。
+
+证据为 `internal/provider/{anthropic,openai}/reasoning_stream_test.go`、固定 `testdata/reasoning_restore.current.jsonl`、`reasoning_restore_test.go`、`internal/runtime/reasoning_test.go`、`internal/tui/reasoning_test.go`、`internal/headless/reasoning_test.go`、`internal/app/reasoning_e2e_test.go` 与 Darwin `scripts/reasoning-smoke.py`；完整执行记录见 [实施验收](../../openspec/changes/archive/2026-11-08-add-reasoning-transcript/verification.md)。

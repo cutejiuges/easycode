@@ -150,6 +150,7 @@ type Runtime struct {
 	planner                      ContextPlanner
 	active                       atomic.Bool
 	poisoned                     atomic.Bool
+	samplePresentation           *samplePresentationState
 }
 
 type runtimeApproval struct {
@@ -269,6 +270,8 @@ func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, 
 		return fault.New(fault.CodeTurnFailed, "conversation already has an active turn")
 	}
 	defer runtime.active.Store(false)
+	runtime.samplePresentation = nil
+	defer func() { runtime.samplePresentation = nil }()
 	runtime.resetHookTurn()
 	runtime.explicitSkills = nil
 	defer func() { runtime.explicitSkills = nil }()
@@ -318,6 +321,7 @@ func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, 
 			failure := fault.New(fault.CodeTurnFailed, "tool_loop_limit_exceeded")
 			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, failure)
 		}
+		runtime.startSamplePresentation(uint32(sampleIndex))
 		terminal, sampleErr := runtime.runProviderSample(ctx, emit, turnID, currentInput)
 		if sampleErr != nil {
 			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, sampleErr)
@@ -327,6 +331,9 @@ func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, 
 		}
 		sample := terminal.PreparedSample()
 		ready, usage, inspectErr := inspectPreparedSample(sample)
+		if inspectErr == nil {
+			inspectErr = runtime.prepareSamplePresentation(sample)
+		}
 		if inspectErr != nil {
 			discardPreparedSample(sample)
 			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, inspectErr)
@@ -575,6 +582,9 @@ func (runtime *Runtime) consumeProviderStream(
 
 	for event := range stream {
 		if firstErr != nil {
+			if event.Kind() == provider.StreamEventCompleted {
+				discardPreparedSample(event.PreparedSample())
+			}
 			continue
 		}
 		if err := event.Validate(); err != nil {
@@ -583,6 +593,9 @@ func (runtime *Runtime) consumeProviderStream(
 			continue
 		}
 		if terminalSeen {
+			if event.Kind() == provider.StreamEventCompleted {
+				discardPreparedSample(event.PreparedSample())
+			}
 			firstErr = fault.New(fault.CodeStreamProtocol, "provider emitted an event after terminal")
 			cancel()
 			continue
@@ -594,8 +607,20 @@ func (runtime *Runtime) consumeProviderStream(
 		}
 		switch event.Kind() {
 		case provider.StreamEventSemantic:
-			if ctx.Err() == nil {
-				emit(runtime.decorate(event.Semantic(), turnID))
+			semantic := event.Semantic()
+			if semantic.Kind == protocol.EventAssistantReasoning {
+				bound, err := runtime.bindReasoning(semantic)
+				if err != nil {
+					firstErr = fault.Wrap(fault.CodeStreamProtocol, "provider reasoning is invalid", err)
+					cancel()
+					continue
+				}
+				payload, _ := protocol.DecodeAssistantReasoning(bound)
+				if ctx.Err() == nil || payload.Stage != protocol.ReasoningDelta {
+					emit(runtime.decorate(bound, turnID))
+				}
+			} else if ctx.Err() == nil {
+				emit(runtime.decorate(semantic, turnID))
 			}
 		case provider.StreamEventNative:
 			// Provider 原生 item 只由 Conversation staging 持有，Runtime 不解释 wire。
@@ -603,6 +628,7 @@ func (runtime *Runtime) consumeProviderStream(
 	}
 
 	if firstErr != nil {
+		discardPreparedSample(terminal.PreparedSample())
 		return provider.StreamEvent{}, firstErr
 	}
 	if !terminalSeen {
@@ -736,9 +762,16 @@ func (runtime *Runtime) commitFinalSample(
 	}
 	records, err := runtime.journal.AppendBatch(context.WithoutCancel(ctx), []session.RecordDraft{commitDraft, usageDraft, completedDraft})
 	if err != nil {
+		runtime.sampleWriteFailed()
 		discardPreparedSample(sample)
 		failure := fault.Wrap(fault.CodeSessionWrite, "persist completed turn failed", err)
 		runtime.poisoned.Store(true)
+		runtime.emitFailure(emit, turnID, failure)
+		return failure
+	}
+	if err := runtime.sampleDurable(records[0].Sequence); err != nil {
+		runtime.poisoned.Store(true)
+		failure := fault.Wrap(fault.CodeStreamProtocol, "durable sample identity is invalid", err)
 		runtime.emitFailure(emit, turnID, failure)
 		return failure
 	}
@@ -760,7 +793,7 @@ func (runtime *Runtime) commitFinalSample(
 			return failure
 		}
 	}
-	runtime.emitTranscriptCommit(turnID, records[0].Sequence)
+	runtime.emitSampleCommit(turnID, records[0].Sequence)
 	emit(runtime.decorate(completedEvent, turnID))
 	return nil
 }
@@ -829,9 +862,14 @@ func (runtime *Runtime) commitCallSample(
 	}
 	records, err := runtime.journal.AppendBatch(context.WithoutCancel(ctx), drafts)
 	if err != nil {
+		runtime.sampleWriteFailed()
 		discardPreparedSample(sample)
 		runtime.poisoned.Store(true)
 		return nil, fault.Wrap(fault.CodeSessionWrite, "persist tool call sample failed", err)
+	}
+	if err := runtime.sampleDurable(records[0].Sequence); err != nil {
+		runtime.poisoned.Store(true)
+		return nil, fault.Wrap(fault.CodeStreamProtocol, "durable sample identity is invalid", err)
 	}
 	if err := sample.Finalize(); err != nil {
 		runtime.poisoned.Store(true)
@@ -849,7 +887,7 @@ func (runtime *Runtime) commitCallSample(
 			return nil, err
 		}
 	}
-	runtime.emitTranscriptCommit(turnID, records[0].Sequence)
+	runtime.emitSampleCommit(turnID, records[0].Sequence)
 	return invocations, nil
 }
 
@@ -1175,6 +1213,11 @@ func (runtime *Runtime) decorate(event protocol.Event, turnID domain.TurnID) pro
 func (runtime *Runtime) emitFailure(emit Emitter, turnID domain.TurnID, err error) {
 	code, message, cancelled := failureSummary(err)
 	event, buildErr := protocol.NewTurnFailed(string(code), message, cancelled)
+	if runtime.samplePresentation != nil {
+		state := runtime.samplePresentation
+		event, buildErr = protocol.NewTurnSampleFailed(string(code), message, cancelled, state.resolution)
+		runtime.samplePresentation = nil
+	}
 	if buildErr != nil {
 		return
 	}

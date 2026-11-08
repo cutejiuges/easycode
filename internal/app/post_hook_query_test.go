@@ -29,7 +29,7 @@ func TestPostDetailQueryBindsSnapshotAndKeepsOriginalBody(t *testing.T) {
 	if err := q.PostHooksCommitted(entry.Invocation.InvocationID(), 4, snapshot); err != nil {
 		t.Fatal(err)
 	}
-	list, err := q.ListTranscript(context.Background(), protocol.TranscriptListQuery{ThreadID: thread, Limit: 1})
+	list, err := q.ListTranscript(context.Background(), protocol.TranscriptListQuery{Mode: protocol.TranscriptDetail, ThreadID: thread, Limit: 1})
 	if err != nil || list.Items[0].DetailSequence != 4 || list.Items[0].PostHook.State != protocol.HookActivityChecking || list.Items[0].PostHook.InvocationID != string(entry.Invocation.InvocationID()) {
 		t.Fatal("list omitted durable post sequence", err)
 	}
@@ -77,7 +77,7 @@ func TestPostDetailQueryBindsSnapshotAndKeepsOriginalBody(t *testing.T) {
 	if err := q.PostHooksCommitted(entry.Invocation.InvocationID(), 9, snapshot); err != nil {
 		t.Fatal(err)
 	}
-	list, err = q.ListTranscript(context.Background(), protocol.TranscriptListQuery{ThreadID: thread, Limit: 1})
+	list, err = q.ListTranscript(context.Background(), protocol.TranscriptListQuery{Mode: protocol.TranscriptDetail, ThreadID: thread, Limit: 1})
 	if err != nil || list.Items[0].PostHook.State != protocol.HookActivityState(domain.HookCancel) || list.Items[0].PostHook.Code != domain.HookPostInterrupted || list.Items[0].Activity.Status != "success" || list.Items[0].Preview != "frozen preview" {
 		t.Fatal("history refresh lost original success or post terminal", err)
 	}

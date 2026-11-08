@@ -10,7 +10,7 @@ import (
 
 func TestTranscriptQueriesStrictCurrentShapes(t *testing.T) {
 	thread := domain.ThreadID("018f1d8a-7b5c-7def-8123-456789abcdef")
-	list := TranscriptListQuery{ThreadID: thread, Limit: 50, Through: 5}
+	list := TranscriptListQuery{Mode: TranscriptDetail, ThreadID: thread, Limit: 50, Through: 5}
 	data, err := codec.MarshalStable(list)
 	if err != nil {
 		t.Fatal(err)
@@ -18,7 +18,7 @@ func TestTranscriptQueriesStrictCurrentShapes(t *testing.T) {
 	if _, err = DecodeTranscriptListQuery(data); err != nil {
 		t.Fatal(err)
 	}
-	for _, invalid := range []string{strings.Replace(string(data), `"limit":50`, `"limit":51`, 1), strings.Replace(string(data), `"through":5,`, "", 1), strings.TrimSuffix(string(data), "}") + `,"unknown":true}`} {
+	for _, invalid := range []string{strings.Replace(string(data), `"mode":"detail",`, "", 1), strings.Replace(string(data), `"mode":"detail"`, `"mode":null`, 1), strings.Replace(string(data), `"mode":"detail"`, `"mode":"all"`, 1), strings.Replace(string(data), `"limit":50`, `"limit":51`, 1), strings.Replace(string(data), `"through":5,`, "", 1), strings.TrimSuffix(string(data), "}") + `,"unknown":true}`} {
 		if _, err := DecodeTranscriptListQuery([]byte(invalid)); err == nil {
 			t.Fatalf("invalid query accepted: %s", invalid)
 		}
@@ -84,10 +84,10 @@ func TestSevenToolActivityVariantsAndTranscriptMetadata(t *testing.T) {
 }
 
 func TestTranscriptCommitRequiresStrictSequenceAndIdentity(t *testing.T) {
-	if _, err := NewTranscriptCommitted(0); err == nil {
+	if _, err := NewInputTranscriptCommitted(0); err == nil {
 		t.Fatal("zero sequence")
 	}
-	event, err := NewTranscriptCommitted(3)
+	event, err := NewInputTranscriptCommitted(3)
 	if err != nil {
 		t.Fatal(err)
 	}

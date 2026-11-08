@@ -22,6 +22,8 @@ type projector struct {
 	turnID    domain.TurnID
 	started   bool
 	terminal  bool
+	sample    uint32
+	reasoning protocol.ReasoningStreamState
 }
 
 func newProjector(sessionID domain.SessionID, threadID domain.ThreadID) *projector {
@@ -68,7 +70,16 @@ func (projector *projector) project(event protocol.Event) (projection, error) {
 		if err := projector.validateActiveTurn(event); err != nil {
 			return projection{}, err
 		}
-		_, err := protocol.DecodeTranscriptCommitted(event)
+		payload, err := protocol.DecodeTranscriptCommitted(event)
+		if err == nil && payload.Origin == protocol.TranscriptCommitSample {
+			if payload.Sample.SampleIndex != projector.sample {
+				return projection{}, fmt.Errorf("runtime sample commit index is invalid")
+			}
+			err = projector.reasoning.Commit(*payload.Sample)
+			if err == nil {
+				projector.sample++
+			}
+		}
 		return projection{}, err
 	case protocol.EventUserInputCommitted:
 		if err := projector.validateActiveTurn(event); err != nil {
@@ -76,6 +87,18 @@ func (projector *projector) project(event protocol.Event) (projection, error) {
 		}
 		_, err := protocol.DecodeUserInputCommitted(event)
 		return projection{}, err
+	case protocol.EventAssistantReasoning:
+		if err := projector.validateActiveTurn(event); err != nil {
+			return projection{}, err
+		}
+		payload, err := protocol.DecodeAssistantReasoning(event)
+		if err != nil {
+			return projection{}, err
+		}
+		if payload.SampleIndex != projector.sample {
+			return projection{}, fmt.Errorf("runtime reasoning sample index is invalid")
+		}
+		return projection{}, projector.reasoning.Accept(payload)
 	case protocol.EventAssistantTextDelta:
 		if err := projector.validateActiveTurn(event); err != nil {
 			return projection{}, err
@@ -88,6 +111,12 @@ func (projector *projector) project(event protocol.Event) (projection, error) {
 		return projection{event: external, text: payload.Text}, err
 	case protocol.EventTurnCompleted:
 		if err := projector.validateActiveTurn(event); err != nil {
+			return projection{}, err
+		}
+		if projector.reasoning.Pending() {
+			return projection{}, fmt.Errorf("runtime reasoning sample is unresolved")
+		}
+		if err := projector.reasoning.Complete(); err != nil {
 			return projection{}, err
 		}
 		payload, err := protocol.DecodeTurnCompleted(event)
@@ -107,6 +136,18 @@ func (projector *projector) project(event protocol.Event) (projection, error) {
 		}
 		payload, err := protocol.DecodeTurnFailed(event)
 		if err != nil {
+			return projection{}, err
+		}
+		if payload.Resolution != nil {
+			if payload.Resolution.SampleIndex != projector.sample {
+				return projection{}, fmt.Errorf("runtime failure sample index is invalid")
+			}
+			if err := projector.reasoning.Resolve(*payload.Resolution); err != nil {
+				return projection{}, err
+			}
+		} else if projector.reasoning.Pending() {
+			return projection{}, fmt.Errorf("runtime reasoning failure resolution is missing")
+		} else if err := projector.reasoning.Complete(); err != nil {
 			return projection{}, err
 		}
 		failure := fault.Summary{

@@ -1,4 +1,6 @@
-# 推送前完整功能与回归验证
+# 首次推送前完整功能与回归验证
+
+本记录对应首次推送；后续合并 main 与创建 PR 的验证见 [merge-verification.md](merge-verification.md)。
 
 日期：2026-11-08。平台：Darwin arm64 / Go 1.24.13。分支：`feat/add-post-tool-use-hooks`，实现基线：`d7af3c9`。本轮按用户要求重新执行完整功能与回归验证，通过后提交并推送该分支，不创建 PR。
 
