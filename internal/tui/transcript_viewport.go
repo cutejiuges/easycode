@@ -23,6 +23,12 @@ type transcriptViewport struct {
 
 func (model Model) transcriptHeight() int {
 	status := 0
+	if model.reasoning.notice != "" {
+		status++
+	}
+	if model.reasoningStatus() != "" {
+		status++
+	}
 	if model.reading.detached || model.reading.notice != "" {
 		status++
 	}

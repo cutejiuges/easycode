@@ -172,7 +172,7 @@ func (runtime *Runtime) publishContext(event protocol.Event) runtimePublication 
 		runtime.cache.snapshot.LastFailure = "compaction_failed"
 	}
 	publication := runtimePublication{event: event, cacheSnapshot: runtime.cache.snapshot}
-	if event.Kind != protocol.EventAssistantTextDelta {
+	if !protocol.IsTransientPresentation(event.Kind) {
 		publication.snapshot, publication.snapshotErr = runtime.contextSnapshot()
 	}
 	return publication

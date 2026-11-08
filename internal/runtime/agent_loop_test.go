@@ -169,6 +169,9 @@ func TestAgentLoopFIFOQueueCapacityDedupeAndDrain(t *testing.T) {
 	runDone := make(chan error, 1)
 	go func() { runDone <- loop.Run(context.Background()) }()
 	<-loop.Ready()
+	collected := make(chan []protocol.ControlItem, 1)
+	go func() { collected <- drainControlItems(loop.Outputs()) }()
+	t.Cleanup(func() { _ = loop.Stop(context.Background()) })
 
 	firstResult := submitLoopCommand(t, loop, "input-1", "first")
 	if firstResult.Disposition() != protocol.CommandDispositionStarting {
@@ -199,7 +202,7 @@ func TestAgentLoopFIFOQueueCapacityDedupeAndDrain(t *testing.T) {
 	if err := <-runDone; err != nil {
 		t.Fatal(err)
 	}
-	items := drainControlItems(loop.Outputs())
+	items := <-collected
 	assertTurnOrdering(t, items, []protocol.RequestID{"input-1", "input-2", "input-3"})
 	if conversation.maxActive.Load() != 1 || conversation.active.Load() != 0 {
 		t.Fatalf("provider concurrency max=%d active=%d", conversation.maxActive.Load(), conversation.active.Load())

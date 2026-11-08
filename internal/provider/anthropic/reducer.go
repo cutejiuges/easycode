@@ -8,6 +8,7 @@ import (
 	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
+	"easycode/internal/provider"
 	"easycode/internal/provider/transport"
 	"easycode/internal/tool"
 )
@@ -61,25 +62,29 @@ type usageEventWire struct {
 }
 
 type blockState struct {
-	item      NativeItem
-	toolInput string
-	ready     *tool.ReadyCall
-	stopped   bool
+	item           NativeItem
+	toolInput      string
+	ready          *tool.ReadyCall
+	stopped        bool
+	reasoningBlock uint32
 }
 
 type reducerResult struct {
-	semantic *protocol.Event
-	native   *NativeItem
-	complete bool
+	semantic  *protocol.Event
+	reasoning provider.ReasoningDrafts
+	native    *NativeItem
+	complete  bool
 }
 
 // streamReducer 只属于单个 turn，按 block index 归并 Messages 事件。
 type streamReducer struct {
-	messageStarted bool
-	completed      bool
-	blocks         map[int]*blockState
-	metadata       messageMetadata
-	catalog        tool.CatalogSnapshot
+	messageStarted  bool
+	completed       bool
+	blocks          map[int]*blockState
+	metadata        messageMetadata
+	catalog         tool.CatalogSnapshot
+	reasoningBudget provider.ReasoningBudget
+	reasoningCount  uint32
 }
 
 func newStreamReducer(catalog ...tool.CatalogSnapshot) *streamReducer {
@@ -163,17 +168,31 @@ func (reducer *streamReducer) reduceBlockStart(index *int, raw json.RawMessage) 
 	if len(raw) == 0 || string(raw) == "null" {
 		return reducerResult{}, protocolError("Anthropic content block is required")
 	}
+	if err := reducer.reasoningBudget.CheckScratch(len(raw)); err != nil {
+		return reducerResult{}, protocolError(err.Error())
+	}
 	var wire contentBlockWire
 	if err := codec.Unmarshal(raw, &wire); err != nil {
 		return reducerResult{}, fault.Wrap(fault.CodeStreamProtocol, "Anthropic content block is invalid", err)
 	}
 	item := NativeItem{Type: wire.Type}
+	if wire.Type == blockTypeThinking || wire.Type == blockTypeRedactedThinking {
+		if err := reducer.reasoningBudget.ReserveNode(0); err != nil {
+			return reducerResult{}, protocolError(err.Error())
+		}
+	}
 	switch wire.Type {
 	case blockTypeText:
 		// start 中的 text 可能由 SDK/网关在 delta 中重复，统一只累计 delta。
 	case blockTypeThinking:
 		// thinking 和 signature 同样只由后续 delta 累计。
 	case blockTypeRedactedThinking:
+		if err := reducer.reasoningBudget.ReplaceSource(0, len(wire.Data)); err != nil {
+			return reducerResult{}, protocolError(err.Error())
+		}
+		if err := reducer.reasoningBudget.ReplaceScratch(0, len(raw)); err != nil {
+			return reducerResult{}, protocolError(err.Error())
+		}
 		item.RedactedData = wire.Data
 		item.Raw = append(json.RawMessage(nil), raw...)
 	case blockTypeToolUse:
@@ -190,8 +209,22 @@ func (reducer *streamReducer) reduceBlockStart(index *int, raw json.RawMessage) 
 	default:
 		return reducerResult{}, protocolError("Anthropic content block type is unsupported")
 	}
-	reducer.blocks[resolved] = &blockState{item: item}
-	return reducerResult{}, nil
+	state := &blockState{item: item}
+	result := reducerResult{}
+	if wire.Type == blockTypeThinking || wire.Type == blockTypeRedactedThinking {
+		state.reasoningBlock = reducer.reasoningCount
+		reducer.reasoningCount++
+		draft, err := provider.NewReasoningStartDraft(state.reasoningBlock, domain.ReasoningAnthropicThinking)
+		if err != nil {
+			return reducerResult{}, err
+		}
+		result.reasoning, err = provider.NewReasoningDrafts(draft)
+		if err != nil {
+			return reducerResult{}, err
+		}
+	}
+	reducer.blocks[resolved] = state
+	return result, nil
 }
 
 func (reducer *streamReducer) reduceBlockDelta(index *int, raw json.RawMessage) (reducerResult, error) {
@@ -225,11 +258,26 @@ func (reducer *streamReducer) reduceBlockDelta(index *int, raw json.RawMessage) 
 		if state.item.Type != blockTypeThinking {
 			return reducerResult{}, protocolError("Anthropic thinking delta does not match content block")
 		}
+		old := len(state.item.Thinking)
+		if err := reducer.reasoningBudget.ReplaceSource(old, old+len(delta.Thinking)); err != nil {
+			return reducerResult{}, protocolError(err.Error())
+		}
 		state.item.Thinking += delta.Thinking
-		return reducerResult{}, nil
+		if delta.Thinking == "" {
+			return reducerResult{}, nil
+		}
+		draft, err := provider.NewReasoningTextDraft(state.reasoningBlock, domain.ReasoningAnthropicThinking, uint64(old), delta.Thinking)
+		if err != nil {
+			return reducerResult{}, err
+		}
+		drafts, err := provider.NewReasoningDrafts(draft)
+		return reducerResult{reasoning: drafts}, err
 	case "signature_delta":
 		if state.item.Type != blockTypeThinking {
 			return reducerResult{}, protocolError("Anthropic signature delta does not match content block")
+		}
+		if err := reducer.reasoningBudget.ReplaceSource(len(state.item.Signature), len(delta.Signature)); err != nil {
+			return reducerResult{}, protocolError(err.Error())
 		}
 		state.item.Signature = delta.Signature
 		return reducerResult{}, nil
@@ -267,7 +315,22 @@ func (reducer *streamReducer) reduceBlockStop(index *int) (reducerResult, error)
 	}
 	state.stopped = true
 	item := state.item.clone()
-	return reducerResult{native: &item}, nil
+	result := reducerResult{native: &item}
+	if item.Type == blockTypeThinking || item.Type == blockTypeRedactedThinking {
+		body, err := reasoningBody(item)
+		if err != nil {
+			return reducerResult{}, err
+		}
+		draft, err := provider.NewReasoningCompletionDraft(state.reasoningBlock, body)
+		if err != nil {
+			return reducerResult{}, err
+		}
+		result.reasoning, err = provider.NewReasoningDrafts(draft)
+		if err != nil {
+			return reducerResult{}, err
+		}
+	}
+	return result, nil
 }
 
 func (reducer *streamReducer) reduceMessageDelta(deltaRaw json.RawMessage, usageRaw json.RawMessage) (reducerResult, error) {
@@ -367,7 +430,7 @@ func (reducer *streamReducer) sampleUsage() (domain.SampleUsage, error) {
 }
 
 func requireBlockIndex(index *int) (int, error) {
-	if index == nil || *index < 0 {
+	if index == nil || *index < 0 || *index >= domain.MaxReasoningNodes {
 		return 0, protocolError("Anthropic content block index is invalid")
 	}
 	return *index, nil
@@ -401,4 +464,30 @@ func setPositiveInt(target *optionalUint, value *uint64) {
 
 func protocolError(message string) error {
 	return fault.New(fault.CodeStreamProtocol, message)
+}
+
+// presentation 将到达顺序的展示块绑定到排序后的原生位置。
+func (reducer *streamReducer) presentation() (domain.SamplePresentation, error) {
+	indexes := make([]int, 0, len(reducer.blocks))
+	for index := range reducer.blocks {
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+	bindings := make([]domain.ReasoningBinding, reducer.reasoningCount)
+	for ordinal, index := range indexes {
+		state := reducer.blocks[index]
+		if state.item.Type != blockTypeThinking && state.item.Type != blockTypeRedactedThinking {
+			continue
+		}
+		body, err := reasoningBody(state.item)
+		if err != nil {
+			return domain.SamplePresentation{}, err
+		}
+		binding, err := domain.NewReasoningBinding(state.reasoningBlock, uint32(ordinal), body.Source(), body.Availability())
+		if err != nil {
+			return domain.SamplePresentation{}, err
+		}
+		bindings[state.reasoningBlock] = binding
+	}
+	return domain.NewSamplePresentation(uint32(len(indexes)), bindings)
 }

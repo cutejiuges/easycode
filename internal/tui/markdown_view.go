@@ -8,6 +8,7 @@ import (
 )
 
 type markdownViewKey struct {
+	reasoning  reasoningKey
 	cursor     protocol.TranscriptCursor
 	generation uint64
 	local      uint64
@@ -126,7 +127,7 @@ func (model *Model) prepareMarkdownView() {
 	// 先固定本窗口的四份派生文档，避免逐项 LRU 使长历史每帧全部重解析。
 	selected := make(map[markdownViewKey]bool)
 	if model.detailOpen && model.browser.detail && model.browser.selected < len(model.browser.items) {
-		selected[markdownViewKey{cursor: model.browser.items[model.browser.selected].Cursor}] = true
+		selected[markdownViewKey{cursor: model.browser.items[model.browser.selected].Cursor, reasoning: model.browser.items[model.browser.selected].temporary}] = true
 	}
 	keyFor := func(index int, message transcriptMessage) markdownViewKey {
 		key := markdownViewKey{cursor: message.cursor}

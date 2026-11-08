@@ -70,7 +70,7 @@ Write SHALL 严格归并完整 structured 参数，未知/重复字段、null、
 
 #### Scenario: Preserve thinking and its signature
 - **WHEN** thinking/signature或redacted block合法完成
-- **THEN** thinking与signature按既有规则保存在原生history且不作为可见文本
+- **THEN** thinking 与 signature 按既有规则保存在 native history；只有 thinking 白名单文字可作为独立推理展示，signature 不可见，两者均不混入普通 assistant 文本
 
 #### Scenario: Preserve redacted thinking
 - **WHEN** redacted thinking block合法完成
@@ -103,6 +103,12 @@ Write SHALL 严格归并完整 structured 参数，未知/重复字段、null、
 #### Scenario: Interrupt partial Write input
 - **WHEN** content 未完成时 stream 被取消或断开
 - **THEN** staging 丢弃，没有 ready、approval、文件读取或写入
+
+Anthropic 推理展示 SHALL 遵守 provider/reasoning-display 的 start/delta/stop 口径：start 的 thinking/signature 初值仍忽略，delta 累计，stop 产生有界完成展示与原生 item。不得为完成快照读取 start 初值或创建新的服务端 completion-only 分支；redacted 仅有无正文状态，完整历史恢复直接使用已保存 native 值。
+
+#### Scenario: Ignore repeated start thinking content
+- **WHEN** thinking start 含初值，后续 thinking_delta 重复该文字
+- **THEN** 原生与展示只累计 delta 一次；没有 delta 时不得从 start 补出可阅读正文
 
 ### Requirement: Native Messages history commits transactionally
 
@@ -151,7 +157,7 @@ Write 的完整调用参数与冻结结果 SHALL 无损保存和恢复；Read ob
 
 ### Requirement: Completion and capabilities match implemented Anthropic behavior
 
-Anthropic Provider MUST仅在合法`message_stop`后产生一次completed terminal；失败、取消、timeout、oversized frame、非法序列或EOF继续遵守唯一terminal和不自动重放契约。Provider只有在Read/Glob/Grep/Edit/Write request编译、tool reducer、native codec/restore、result codec和golden全部通过后才声明function tools可用；parallel tools、custom/freeform tools、prompt cache key、previous response 和未实现 reasoning 展示 MUST 保持 unsupported。PromptCacheControl 只有在两种 TTL 的 request 编译、stream usage 归并、native persistence/restore 及 golden 全部验证后，且当前显式策略开启时才能声明；disabled 必须为 false，不推断任意 base_url 服务端支持。
+Anthropic Provider MUST仅在合法`message_stop`后产生一次completed terminal；失败、取消、timeout、oversized frame、非法序列或EOF继续遵守唯一terminal和不自动重放契约。Provider只有在Read/Glob/Grep/Edit/Write request编译、tool reducer、native codec/restore、result codec和golden全部通过后才声明function tools可用；parallel tools、custom/freeform tools、prompt cache key、previous response 和主动请求 reasoning/summary 的未实现能力 MUST 保持 unsupported。PromptCacheControl 只有在两种 TTL 的 request 编译、stream usage 归并、native persistence/restore 及 golden 全部验证后，且当前显式策略开启时才能声明；disabled 必须为 false，不推断任意 base_url 服务端支持。
 
 Write SHALL 只有在 request、stream、native persistence/restore、result codec 与 golden 全部存在后可用；不得借本变更声明额外 apply_patch 操作、命令或未完成能力。
 
@@ -175,6 +181,12 @@ Write SHALL 只有在 request、stream、native persistence/restore、result cod
 #### Scenario: Keep a disabled cache capability false
 - **WHEN** Anthropic 缓存策略为 disabled
 - **THEN** PromptCacheControl 为 false，请求无 cache_control，已实现工具能力保持原样
+
+ThinkingSignature SHALL 只表示已实现的原生 thinking/signature 保存；ReasoningSummary 表示主动编译 summary 请求，RawReasoning 表示 raw reasoning 能力，两者在本切片保持 false。被动白名单展示由已实现事件与投影契约表达，不从显示正文推断服务端能力，也不新增空能力位。
+
+#### Scenario: Display returned thinking without enabling request reasoning
+- **WHEN** 合法响应已经返回 thinking，用户阅读其白名单文字
+- **THEN** 原请求 thinking 配置、max_tokens、缓存策略和能力声明不因阅读改变，signature/redacted 不可见
 
 ### Requirement: Anthropic usage reduces to a validated sample fact
 

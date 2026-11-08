@@ -41,6 +41,15 @@ func TestManualCompactionProvidersResumeEquivalent(t *testing.T) {
 					answer = 2
 				}
 				w.Header().Set("Content-Type", "text/event-stream")
+				if compact {
+					wire := reasoningFixtureStream(family, answer, false)
+					if family == domain.ProviderAnthropic {
+						wire = bytes.Replace(wire, []byte(`data: {"type":"message_stop"}`), []byte("data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\ndata: {\"type\":\"message_stop\"}"), 1)
+					}
+					_, _ = w.Write(wire)
+					return
+				}
+
 				if family == domain.ProviderOpenAI {
 					writeOpenAIAppTurn(w, answer)
 				} else {
@@ -95,6 +104,9 @@ func TestManualCompactionProvidersResumeEquivalent(t *testing.T) {
 				}
 				started, completed := 0, 0
 				for item := range resources.session.Outputs() {
+					if event, ok := item.TurnEvent(); ok && event.Kind == protocol.EventAssistantReasoning {
+						t.Fatal("compaction reasoning entered ordinary turn")
+					}
 					model, _ = model.Update(item)
 					event, ok := item.ContextEvent()
 					if !ok {
@@ -121,7 +133,7 @@ func TestManualCompactionProvidersResumeEquivalent(t *testing.T) {
 					t.Fatal("TUI completion boundary missing")
 				}
 				waitCompactionIdle(t, resources)
-				page, err := resources.transcriptQueries.ListTranscript(context.Background(), protocol.TranscriptListQuery{ThreadID: resources.identity.ThreadID, Limit: 50})
+				page, err := resources.transcriptQueries.ListTranscript(context.Background(), protocol.TranscriptListQuery{Mode: protocol.TranscriptDetail, ThreadID: resources.identity.ThreadID, Limit: 50})
 				if err != nil {
 					t.Fatal(err)
 				}

@@ -19,6 +19,7 @@ type transcriptQueries struct {
 	facades         []tool.Facade
 	nativeSequences []uint64
 	nodes           []transcriptNode
+	mainNodes       []transcriptNode
 	mu              sync.Mutex
 	thread          domain.ThreadID
 	reader          tool.ArtifactRangeReader

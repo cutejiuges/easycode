@@ -4,7 +4,7 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 
 用户只需要提供 `base_url`、`api_key` 和模型名称即可连接服务，不需要账号登录、OAuth、设备码或订阅鉴权。
 
-> 项目按纵向切片持续推进。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、命令/Skill 首词补全、原生多轮 Session、`--resume`/`--continue`、headless/FIFO 输入、离线 `sessions list`，以及九项工具能力：Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill 和结构化用户提问。命令执行当前支持 Darwin；已支持同步 PreToolUse 命令 Hook，其余 Hook 事件和完整推理界面仍按 Roadmap 分阶段推进。
+> 项目按纵向切片持续推进。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、命令/Skill 首词补全、原生多轮 Session、`--resume`/`--continue`、headless/FIFO 输入、离线 `sessions list`，以及九项工具能力：Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill 和结构化用户提问。命令执行当前支持 Darwin；已支持同步 PreToolUse 命令 Hook，已支持被动推理阅读；其余 Hook 事件、主动推理配置等能力仍按 Roadmap 分阶段推进。
 
 ## 交互式恢复会话
 
@@ -239,7 +239,15 @@ export EASYCODE_MODEL=your-model
 
 配置优先级为：JSON 文件提供基础值，非空 `EASYCODE_*` 环境变量覆盖对应字段，最后统一校验。`base_url` 是 API 路径前缀，不会自动补 `/v1`，且不能包含 userinfo、query 或 fragment。
 
-当前 TUI 和 headless 模式都支持 Anthropic Messages 与 OpenAI Responses 的文本会话。成功文本回合会把 Provider-native commit、五项三态 normalized sample usage 和完成边界作为同一 batch 写入权限受控的 append-only JSONL；`--json` 的 `turn.completed` v1 同步输出该 usage，`--print` 仍只输出最终文本。显式 `--resume <thread-id>` 在连续 exclusive lease 下恢复同一 Provider 的原生历史，`--continue` 则通过可重建 SQLite Catalog 选择当前 cwd 与 Provider 配置完全兼容的最近 root Session，再进入同一恢复路径。TUI 通过只读 `SemanticHistoryView` 重建可见 transcript，headless 则不消费或回放旧 transcript。Anthropic thinking/signature/redacted thinking 与 OpenAI encrypted reasoning 会保留在各自原生历史中，不进入当前文本投影。`/cache` 已显示最近已提交的三态 usage 与缓存证据，启动 `resume` 已支持元数据搜索和预览。Anthropic cache TTL、OpenAI prompt cache key 和可选 WebSocket 原生增量已实现；独立 usage 流、费用/配额、外部 reasoning/tool JSON 事件、主动 thinking 配置、高级 reasoning UI、正文全文搜索与 fork 尚未实现。
+当前 TUI 和 headless 模式都支持 Anthropic Messages 与 OpenAI Responses 的文本会话。成功文本回合会把 Provider-native commit、五项三态 normalized sample usage 和完成边界作为同一 batch 写入权限受控的 append-only JSONL；`--json` 的 `turn.completed` v1 同步输出该 usage，`--print` 仍只输出最终文本。显式 `--resume <thread-id>` 在连续 exclusive lease 下恢复同一 Provider 的原生历史，`--continue` 则通过可重建 SQLite Catalog 选择当前 cwd 与 Provider 配置完全兼容的最近 root Session，再进入同一恢复路径。TUI 通过单向 `TranscriptProjector` 与宿主范围查询重建记录，headless 不回放旧 transcript。`SemanticHistoryView` 始终排除全部推理。已返回的 Anthropic thinking 文字和 OpenAI summary_text 可在 Ctrl+O 中阅读；签名、redacted data、密文、raw reasoning 和未知扩展只保留在原生历史中。`/cache` 已显示最近已提交的三态 usage 与缓存证据，启动 `resume` 已支持元数据搜索和预览。Anthropic cache TTL、OpenAI prompt cache key 和可选 WebSocket 原生增量已实现；独立 usage 流、费用/配额、外部 reasoning/tool JSON 事件、主动 thinking/effort/budget/summary 配置、正文全文搜索与 fork 尚未实现。
+
+### 推理阅读
+
+只有服务端实际返回推理项时，主线才出现紧凑提示；块完成后等待保存，sample 成功保存后撤下提示。Ctrl+O 的统一记录可查看活动项和已保存推理，上下选择、Enter 阅读、Esc 返回、r 切换完整正文的 Markdown/安全原文。长正文按 64 KiB 原文范围分页，片段固定原文；只有签名或密文时显示 unavailable，不提供正文。
+
+活动内容共享 64 KiB/50 项显示预算，选中项优先保留。取消或失败按真实结果提示未保存、已保存但刷新失败、保存状态不确定；下一 turn 释放上一份失败快照。主线先排除推理再取最近 50 项，完整历史仍在详情分页。阅读、原文切换和 resize 不新增模型请求，不改变缓存策略。EasyCode 不主动开启推理，也不发送 sequential_cutoff；ReasoningSummary 能力位仍表示主动请求能力，保持 false。
+
+本地验证入口为 `scripts/reasoning-smoke.py`（Darwin 双 Provider 真实 PTY）与 `internal/app/reasoning_e2e_test.go`（双 Provider 三种 headless 模式）；不以 Darwin 验收宣称其他平台的原生终端支持。
 
 ## 架构概览
 
@@ -427,7 +435,7 @@ make install-hooks
 | P2 | Session 与 Headless Loop | root Session、JSONL/SQLite、恢复、三种 headless 与 FIFO 已交付；全文索引/子线程待实现 |
 | P3 | Coding Tools | 九项工具与批准/恢复/预算已交付；PTY、后台进程、通用跨平台 sandbox 待实现 |
 | P4 | 缓存与上下文 | 缓存、usage 归一、手动/自动压缩已交付；费用、精确计数与跨 Provider fork 待实现 |
-| P5 | Claude 风格 TUI | Markdown、输入及命令/Skill 补全、审批/问卷/Hook、详情和 resume picker 已交付；reasoning/fork picker 待实现 |
+| P5 | Claude 风格 TUI | Markdown、输入及命令/Skill 补全、审批/问卷/Hook、详情、被动推理阅读和 resume picker 已交付；fork picker 待实现 |
 | P6 | 扩展系统 | 本地 Skills、同步 PreToolUse 已交付；其余 Hook、Plugins/MCP/热加载待实现 |
 | P7 | Subagent | 尚未实现；保留批准占位，未接入 Runtime/app |
 | P8 | 发布强化 | 部分安全/故障验证已落地；全平台发布矩阵、诊断、遥测待实现；兼容迁移须另行明确授权 |

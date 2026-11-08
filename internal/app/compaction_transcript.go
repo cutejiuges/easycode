@@ -70,8 +70,9 @@ func (q *transcriptQueries) CompactionCommitted(sequence uint64, id domain.Compa
 	boundary := compactionTranscript{sequence: sequence, id: id, summary: summary}
 	next := append(append([]compactionTranscript{}, existing...), boundary)
 	updated := append(append([]transcriptNode{}, nodes...), transcriptNode{cursor: protocol.TranscriptCursor{Sequence: sequence}, compaction: &boundary, toolIndex: -1})
+	mainNodes := mainTranscriptNodes(updated)
 	q.mu.Lock()
-	q.compactions, q.nodes = next, updated
+	q.compactions, q.nodes, q.mainNodes = next, updated, mainNodes
 	q.mu.Unlock()
 	return nil
 }
