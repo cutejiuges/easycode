@@ -16,6 +16,14 @@ Runtime 的实例 pending 状态与 AgentLoop owner 接收 `resolve_user_questio
 
 恢复不重新执行提问：ready 尾部补取消，started 无结果补 outcome_uncertain，result/output 缺口复用冻结答案。正文仅在现有结果 preview 保存；临时 request ID 与 UI 草稿不持久化。TUI 复核提交、单独说明编辑、窄屏滚动和 Ctrl+O 回看共用既有分页/四页缓存；实现与验证见 `internal/tui/user_questions.go`、`internal/runtime/user_question.go`、`internal/app/questions_e2e_test.go`、`internal/session/question_fixture_test.go` 和 `scripts/user-question-smoke.py`。
 
+## PostToolUse 成功后检查
+
+后置计划与全部命令信任先于候选/普通审批，真实 result 先 Sync，Post 再在同一 exclusive 屏障执行。ordinary error 不改写成功或取消独立 sibling，取消/cleanup uncertain 才停止后续工具。stdin 从真实 Patch/Write/Exec metadata 构造，不读取 preview 或 artifact；Post exit 2 是错误，不是门禁拒绝。
+
+工具层拥有 canonical 反馈包装、4 KiB 单项/16 KiB 最终限制、失败提示预留及调用级预算 ticket；domain 的冻结值不依赖 tool。只有 model 且已信任的 additionalContext 能成为 `ModelOutput` 的独立尾部，Provider 只负责原生配对。none/no-match 保持旧 bytes；model 空输出仍保留 A−R 冻结预览。每段按 Sync 后的 sequence 计费，terminal durable 后只退休一次调用。
+
+Session 独立保存 Post plan、finished 前缀和 completed terminal；后序 start/result/output/steering 不得跨越屏障。恢复零重跑，下一项未 started 不伪造 uncertain finished。详情与原工具成功正交，后置批次刷新有序快照；实现与证据见[PostToolUse 变更](../../openspec/changes/archive/2026-11-08-add-post-tool-use-command-hooks/design.md)。
+
 ## PreToolUse 执行前门禁
 
 当前 user/project command Hook 只匹配 Patch/Write/Exec，在现有 exclusive 屏障内、候选准备和普通审批前运行；Question、Skill 与其他只读能力不触发。Hook 信任是按当前 Runtime/Session/workspace/来源 revision/命令指纹保存的独立内存状态，不能从工具批准、问卷回答或恢复记录推导。headless 匹配项以 `hook_trust_required` 拒绝，无匹配保持普通审批规则。
@@ -60,7 +68,7 @@ Patch/Write grant 仅满足各自 capability 的 ask，不覆盖 deny，且只�
 
 执行结果必须匹配 invocation ID、Provider call ID、capability、wire kind 与候选 metadata。错配或非法结果保存为原调用的 outcome_uncertain/invalid_tool_result，停止后续副作用并按模型顺序取消剩余调用；健康 journal 仍完成 native output pairing 与唯一失败 terminal，不重试执行。
 
-> 状态：九项模型工具及三项 mutation 的 PreToolUse 门禁已实现；后台进程、通用 sandbox 和全工具 artifact 仍待后续推进
+> 状态：九项模型工具及三项 mutation 的 PreToolUse 门禁、PostToolUse 检查已实现；后台进程、通用 sandbox 和全工具 artifact 仍待后续推进
 > 更新时间：2026-11-06
 > 适用范围：Tool Catalog、Provider Tool Wire、Agent Tool Loop、权限与 sandbox、执行调度、结果预算、Session 恢复和宿主展示
 > 前置阅读：[总体架构设计](overall-architecture.md)、[产品阶段路线图](../roadmap/product-roadmap.md)、[踩坑与经验记录](../roadmap/pitfall-log.md)
@@ -458,7 +466,7 @@ Runtime 的观察表仅由 turn owner 操作，上限 1024，按输出提交顺�
 - TUI 命令/Skill 首词补全只读取冻结展示元数据并编辑草稿，不调用 `skill.read` 或加载正文；正式提交继续使用原有显式附件准备与来源校验。没有新增模型工具、执行权限或持久化字段，见[输入补全规格](../../openspec/specs/tui/input-completion/spec.md)。
 - MCP tools：属于 P6 的远程 catalog、trust、认证和动态 schema 能力。
 - Agent/Subagent：属于 P7 的 thread、budget、completion envelope 和取消传播能力。
-- PreToolUse command Hook 已交付；其余 Hook、Plugins 与热加载属于 P6 后续范围，不能借 Tool callback 绕过 manifest/trust 和权限边界。
+- PreToolUse/PostToolUse command Hooks 已交付；其余 Hook、Plugins 与热加载属于 P6 后续范围，不能借 Tool callback 绕过 manifest/trust 和权限边界。
 - 完整跨平台 sandbox 矩阵：P8；P3 只实现已验证平台能力并对其他平台失败关闭。
 
 ## 14. 推荐的 OpenSpec 纵向切片

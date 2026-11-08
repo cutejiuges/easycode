@@ -20,10 +20,21 @@ import (
 )
 
 func TestHookCacheStableSourcesAndRestoredNativeRequests(t *testing.T) {
+	testHookCacheStableSources(t, domain.HookPreToolUse)
+}
+func TestPostHookCacheStableSourcesAndRestoredNativeRequests(t *testing.T) {
+	testHookCacheStableSources(t, domain.HookPostToolUse)
+}
+func testHookCacheStableSources(t *testing.T, event domain.HookEvent) {
+	t.Helper()
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		t.Run(string(family), func(t *testing.T) {
 			workspace := t.TempDir()
-			writeHookConfig(t, workspace, "printf never-run")
+			if event == domain.HookPostToolUse {
+				writePostHookConfig(t, workspace, "printf never-run", domain.HookFeedbackNone)
+			} else {
+				writeHookConfig(t, workspace, "printf never-run")
+			}
 			var mu sync.Mutex
 			var requests [][]byte
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -53,7 +64,11 @@ func TestHookCacheStableSourcesAndRestoredNativeRequests(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			writeHookConfig(t, workspace, "printf changed-config-must-not-affect-prompt")
+			if event == domain.HookPostToolUse {
+				writePostHookConfig(t, workspace, "printf changed-config-must-not-affect-prompt", domain.HookFeedbackModel)
+			} else {
+				writeHookConfig(t, workspace, "printf changed-config-must-not-affect-prompt")
+			}
 			copied := filepath.Join(t.TempDir(), "sessions")
 			repo, err := session.OpenOrCreateRepository(copied)
 			if err != nil {

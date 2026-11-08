@@ -8,7 +8,11 @@ import (
 	"easycode/internal/tool"
 )
 
-func encodeToolResult(call NativeItem, result tool.InvocationResult) (NativeItem, error) {
+func encodeToolResult(call NativeItem, output tool.ModelOutput) (NativeItem, error) {
+	if output.Validate() != nil {
+		return NativeItem{}, fmt.Errorf("invalid model tool output")
+	}
+	result := output.Result()
 	if tool.ValidateFrozenResult(result) != nil || string(result.ProviderCallID()) != call.ID || result.Capability() != anthropicCapabilityForName(call.Name) || result.WireKind() != tool.WireStructured {
 		return NativeItem{}, fmt.Errorf("anthropic tool output does not match call")
 	}
@@ -23,7 +27,7 @@ func encodeToolResult(call NativeItem, result tool.InvocationResult) (NativeItem
 			}
 		}
 	}
-	return NativeItem{Type: blockTypeToolResult, ToolUseID: call.ID, Content: result.Preview().Text(), IsError: result.Status() != tool.ResultSuccess}, nil
+	return NativeItem{Type: blockTypeToolResult, ToolUseID: call.ID, Content: output.Text(), IsError: result.Status() != tool.ResultSuccess}, nil
 }
 
 type toolOutputPreflight struct {
@@ -31,11 +35,12 @@ type toolOutputPreflight struct {
 	invocationID tool.InvocationID
 }
 
-func (p toolOutputPreflight) Validate(r tool.InvocationResult) error {
+func (p toolOutputPreflight) Validate(output tool.ModelOutput) error {
+	r := output.Result()
 	if r.InvocationID() != p.invocationID {
 		return fmt.Errorf("tool output invocation mismatch")
 	}
-	item, err := encodeToolResult(p.call, r)
+	item, err := encodeToolResult(p.call, output)
 	if err != nil {
 		return err
 	}

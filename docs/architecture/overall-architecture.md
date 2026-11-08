@@ -156,7 +156,7 @@ internal/
   session/                  JSONL、artifact、root-thread resume；fork 未实现
     catalog/                可重建 SQLite Catalog 与前台 reconciliation
   executor/process/         Exec/Hook 共用进程生命周期
-  extension/                本地 Skills 与 PreToolUse Hooks；P6 后续目标：Plugins、MCP
+  extension/                本地 Skills 与 PreToolUse/PostToolUse Hooks；P6 后续目标：Plugins、MCP
   subagent/                 P7 目标：thread tree、mailbox、后台任务和限流
   tui/                      Bubble Tea、输入、消息 view、overlay 和 diff
   telemetry/                P8 目标：slog、redaction、metrics 和 diagnostics
@@ -232,12 +232,12 @@ Provider HTTP 层不直接依赖官方模型 SDK。原因是 EasyCode 需要支�
 3. 由当前 ContextPlan 和 Provider 策略编译原生请求及缓存证据。
 4. 消费 stream，归并原生 item 与瞬态语义事件，验证完整 PreparedSample。
 5. 原子提交 native sample、usage 与 ready calls 或最终 terminal，成功后 finalize。
-6. 工具按只读批次/exclusive 屏障执行；三项 mutation 先过适用 PreToolUse 门禁，再候选/普通批准；Question 单独等待回答。
+6. 工具按只读批次/exclusive 屏障执行；三项 mutation 先过适用 PreToolUse 门禁和 PostToolUse 独立信任，再候选/普通批准；Question 单独等待回答。
 7. 按 call index 冻结并 Sync results，提交各 Provider 匹配的原生 outputs。
 8. outputs 完整后开放同轮输入安全点，继续下一 sample 或结束 turn。
 9. 发布已提交的 usage、context/cache 与 transcript 投影；关闭仍等待唯一 owner。
 
-UserPromptSubmit、Stop、PostToolUse 等其他 Hook 事件尚未实现，不能在上述流程中视作已执行步骤。
+UserPromptSubmit、Stop 等其余 Hook 事件尚未实现，不能在上述流程中视作已执行步骤。
 
 Provider Kernel 不是单个庞大 interface，而是以下策略的组合：
 
@@ -535,7 +535,7 @@ fs.patch
 
 P3 当前已实现 Read、Glob、Grep、Anthropic structured Edit/OpenAI custom freeform apply_patch、Anthropic Bash/OpenAI exec_command、双 Provider structured Write、durable approval/ledger、最多 8 路只读并发、Patch/Write/Exec 独占屏障、有序结果提交和本地恢复补偿。Patch 限于一个已有 UTF-8 工作区常规文件，在 Unix 使用 descriptor-relative 重验与同目录原子替换；其他平台失败关闭。Write 的 structured facade 支持原子创建/整文件覆盖：覆盖要求先前已回传的完整 Read，新目录链通过私有树和 no-replace 发布；审批展示区分 create/overwrite，独立 Write grant 不在 resume 恢复。详见 [Tool 已实现边界](tool-system.md#101-write-已实现边界)。Exec 限于 Darwin 前台 non-login `/bin/sh`：每次单独批准、最小环境、workspace 写入、禁止网络、确定性头尾输出、原进程组清理与唯一最终 Wait；非 Darwin 返回 `unsupported_platform`，不降级。`setsid` 等脱离组后代不属于保证清理范围，但仍受继承的 sandbox 限制；输出收口不确定时 poison Runtime。详细预算与测试边界见 [Tool 系统架构](tool-system.md#93-进程工具)。write_stdin、PTY/后台进程控制、全工具 artifact、跨能力通用 sandbox 和跨平台等价执行仍按独立 change 增加。
 
-本地 Skill 和 PreToolUse Hook 已交付；其余 Hooks、Plugins/MCP 属于 P6 后续范围，Agent/Subagent 属于 P7；完整跨平台 sandbox 矩阵属于 P8。未到对应阶段前不得提前暴露空 schema、event kind、facade 或 capability flag。
+本地 Skill 和 PreToolUse/PostToolUse Hook 已交付；其余 Hooks、Plugins/MCP 属于 P6 后续范围，Agent/Subagent 属于 P7；完整跨平台 sandbox 矩阵属于 P8。未到对应阶段前不得提前暴露空 schema、event kind、facade 或 capability flag。
 
 ## 9. Context 与 Compaction
 
@@ -574,7 +574,7 @@ AgentLoop 只允许空闲且队列为空时接收压缩。预检通过才生成 
 
 恢复按 seq 验证全部原生记录、来源 digest、模型、前驱与 checkpoint 包装，再修复物理尾部。started-only 只追加本地 interrupted 终态，不联网、重执行工具或读取旧 artifact 内容。摘要不恢复审批 grant、文件观察或 artifact 授权。新进程重新发现当前项目指令。详见 [ADR-0008](adr/0008-durable-context-checkpoints.md)。
 
-TUI 提供 `/context`、`/compact [instructions]`、定向取消及 Ctrl+O 完整历史；headless stream v1 提供 `context.query/compact/cancel`。完成后等待显式输入，已有队列则清理完成后继续；失败返还 auto，保留 strict-next。自动阈值压缩、本地 Skills 和 PreToolUse Hooks 已有独立切片；其余 Hook、MCP、跨 Provider fork 与自动文件 rehydrate 仍是后续能力。
+TUI 提供 `/context`、`/compact [instructions]`、定向取消及 Ctrl+O 完整历史；headless stream v1 提供 `context.query/compact/cancel`。完成后等待显式输入，已有队列则清理完成后继续；失败返还 auto，保留 strict-next。自动阈值压缩、本地 Skills 和 PreToolUse/PostToolUse Hooks 已有独立切片；其余 Hook、MCP、跨 Provider fork 与自动文件 rehydrate 仍是后续能力。
 
 ## 10. Session 与存储
 
@@ -632,7 +632,7 @@ EventEnvelope
 
 Session envelope 只使用唯一当前字段结构，不包含 schema_version、payload_version、canary 或同义版本标记。decoder 只按 event_kind 选择唯一 strict decoder，字段/类型、checksum 和 replay 状态机共同校验恢复事实；未知 kind、未知字段与损坏在 repair、Provider 恢复和 append 前失败关闭。
 
-Provider native commit 只记录 Provider 已验证的原生增量和 raw usage；紧邻的 `sample_usage` 记录共享五项三态指标。无工具的成功 sample 仍以 native commit、usage 与 terminal 原子提交；带调用的 sample 则把有序 ready facts 放入同一 durable batch，随后按需要 durable 批准决定，再提交 started、result 和 Provider 原生 tool outputs。当前 approval fact 保存 decision source、candidate fingerprint 与安全展示 metadata；Exec 不持久化 PID、宿主环境、输出 chunk 或底层 cause。缺失 usage、错序、遗漏配对或重复调用身份一律 fail closed。其余 Hook 与 Subagent 仍需按各自恢复语义定义记录；cache/compaction checkpoint 与当前 PreToolUse facts 使用各自当前强类型契约；不能把 RuntimeEvent 或 UI transcript 当作 native history。
+Provider native commit 只记录 Provider 已验证的原生增量和 raw usage；紧邻的 `sample_usage` 记录共享五项三态指标。无工具的成功 sample 仍以 native commit、usage 与 terminal 原子提交；带调用的 sample 则把有序 ready facts 放入同一 durable batch，随后按需要 durable 批准决定，再提交 started、result 和 Provider 原生 tool outputs。当前 approval fact 保存 decision source、candidate fingerprint 与安全展示 metadata；Exec 不持久化 PID、宿主环境、输出 chunk 或底层 cause。缺失 usage、错序、遗漏配对或重复调用身份一律 fail closed。其余 Hook 与 Subagent 仍需按各自恢复语义定义记录；cache/compaction checkpoint 与当前 PreToolUse/PostToolUse facts 使用各自当前强类型契约；不能把 RuntimeEvent 或 UI transcript 当作 native history。
 
 Session、Provider native/checkpoint 和压缩来源不承担格式版本管理。Catalog 不设置或校验 user_version，按实际结构与完整性重建派生索引。当前没有存量用户或业务数据，直接修改唯一当前格式与 current fixture。未经用户明确指示，禁止引入多版本兼容、历史 reader、迁移器或以 canary/revision 为同义替代的版本门禁；即使未来发布也不能推定获得授权。headless JSONL 是独立外部协议。
 
@@ -715,7 +715,7 @@ Session 的 compaction_started/completed/failed 具有强类型 scope（manual�
 
 ## 12. Hooks、Skills、Plugins 与 MCP
 
-本章区分当前交付与 P6 后续目标。本地 Skills 与同步 PreToolUse 命令 Hook 已接入 Runtime/app；Plugin、MCP 仍保留经批准的 TODO 边界，不接入运行。
+本章区分当前交付与 P6 后续目标。本地 Skills 与同步 PreToolUse/PostToolUse 命令 Hook 已接入 Runtime/app；Plugin、MCP 仍保留经批准的 TODO 边界，不接入运行。
 
 ### 12.1 当前 PreToolUse 命令 Hook
 
@@ -729,7 +729,19 @@ Session 当前词汇增加 `tool_hook_gate_planned`、`hook_execution_started`�
 
 TUI `/hooks` 从内存快照浏览与滚动审查；`resolve_hook_trust`、`reset_hook_trust` 使用强类型身份。瞬态 `hook_trust_requested`、`hook_trust_resolved`、`hook_activity` 分别投影审查、确认和已 durable 的检查统计，不能替代 ledger。`HookHistoryObserver` 与 Session `HookHistoryEntry` 在成功 Sync 后提供历史安全详情，和模型 frozen preview 分开；没有保存或读取脚本输出 artifact 的入口。
 
-单项 timeout 默认 5 秒/最大 30 秒，每调用总执行预算 30 秒，信任等待可取消但不计执行预算。stdin 最大 512 KiB，双输出各 16 KiB，模型安全摘要最多 1 KiB。只接受 exit 0 空输出/空对象和严格 structured deny、exit 2；其他行为失败关闭。其余 Hook 事件、async、改写、additional context 和 plugin hooks 是后续目标，不能按当前已实现能力暴露。
+单项 timeout 默认 5 秒/最大 30 秒，每调用总执行预算 30 秒，信任等待可取消但不计执行预算。stdin 最大 512 KiB，双输出各 16 KiB，模型安全摘要最多 1 KiB。只接受 exit 0 空输出/空对象和严格 structured deny、exit 2；其他行为失败关闭。上述拒绝规则只适用于 Pre；当前 PostToolUse 的边界见 12.1.1。其余事件、async、改写和 plugin hooks 仍是后续目标。
+
+#### 12.1.1 当前 PostToolUse 与显式反馈
+
+成功后的检查复用同一 Loader/localfile/进程 owner，不增加调度器或模型工具。domain 中事件与 none/model 策略进入声明、信任、计划和运行身份。Post 计划包含有序引用及冻结预算，整体 digest 同时绑定二者；工具候选/普通批准之前完成全部后置信任，headless 仍先返回 hook_trust_required。两阶段每调用合计 30 秒执行预算，信任等待不计时。
+
+exclusive owner 先 Sync 唯一真实 result，再运行 Post；原 status/code 不受检查失败影响。`tool_post_hook_planned` 和 `tool_post_hook_completed` 独立于 Pre gate，复用的 started/finished 显式关联事件/plan/ordinal。finished 分开保存无正文统计与 content/code/empty 冻结选择；terminal 保存前缀计数、未运行后缀、安全 suffix_feedback、预算终值、规范反馈内容摘要及自身摘要。中间 finished 单批，最后 finished/terminal 同批；未启动后缀不生成运行统计。恢复区分下一项未 started 的 cancelled terminal 与已 started 的 recovery uncertain finished/terminal，保留原成功和已有反馈，不补发后缀提示。
+
+Post stdin 仅投影当前三种工具的真实成功元数据，禁止透传含 artifact 提示的 preview。默认 none 丢弃正文；model 仅接收严格 additionalContext，单项 4 KiB，最终段含来源/包装 16 KiB。ResultBudget ticket 以 reserve/base/feedback/close 分段核算，只在 Sync 后计费；反馈以 durable sequence 去重，close 恰好退休一次调用。Session 从此前事实重算计划 A/R，交叉核验原 result、冻结内容、预算增量与 terminal feedback_digest。
+
+`tool.ModelOutput` 组合冻结真实结果与反馈，Provider 当前唯一 Preparer/Preflight 接口均使用该值。RestoreRecord 的 tool_outputs 必须带经回放校验的输出证据；两家在纯内存中重编码并核对原生输出，保持 kind、call ID、status/is_error、opaque 数据和顺序。反馈只改变历史尾部，不改变工具目录、Skill 元数据或稳定缓存前缀；model 空反馈不扩展已因预留缩短的预览。
+
+`post_hook_committed` 在每个后置批次 Sync、宿主快照安装后发布一次，headless 校验后忽略。HookActivity 的 Post completed/skipped 是聚合投影，不能充当 execution finished；工具主线保留真实终态；列表携带受控 PostHook 摘要，原生提交刷新与恢复不丢失检查状态，迟到的 Pre 活动不能覆盖工具后的检查。详情使用 post_hooks source 与 detail_sequence，旧修订返回 transcript_changed，TUI 失效对应旧页、推进 generation、从该 source 首屏重载并保留工具锚点，仍最多四页且每页 64 KiB。完整设计见[归档变更](../../openspec/changes/archive/2026-11-08-add-post-tool-use-command-hooks/design.md)。
 
 ### 12.2 当前本地 Skills
 

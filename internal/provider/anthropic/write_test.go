@@ -70,7 +70,7 @@ func TestWriteOutputPairsOnlyMatchingToolUse(t *testing.T) {
 	v, _ := tool.NewWriteInvocation(id, ready)
 	result := tool.NewWriteErrorResult(v, tool.ResultDenied, "approval_required", "Write denied: approval_required")
 	history := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, newUserMessage("write")), {Kind: nativeHistorySample, Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeToolUse, ID: "call-write", Name: "Write", Input: []byte(`{"file_path":"a","content":"secret-body"}`)}}}, Metadata: messageMetadata{ID: "write", Model: "claude-test"}}})
-	entry, err := prepareToolOutputsEntry(history, []tool.InvocationResult{result})
+	entry, err := prepareToolOutputsEntry(history, testModelOutputs(t, result))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestWriteOutputPairsOnlyMatchingToolUse(t *testing.T) {
 		changed := history[1]
 		changed.Assistant.Content = append([]NativeItem(nil), history[1].Assistant.Content...)
 		mutation(&changed.Assistant.Content[0])
-		if _, err := prepareToolOutputsEntry([]nativeHistoryEntry{changed}, []tool.InvocationResult{result}); err == nil {
+		if _, err := prepareToolOutputsEntry([]nativeHistoryEntry{changed}, testModelOutputs(t, result)); err == nil {
 			t.Fatal("接受错配 output")
 		}
 	}

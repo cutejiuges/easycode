@@ -37,7 +37,7 @@ func (s *fakeHookSession) ResetHookTrust(_ context.Context, ref domain.HookRefer
 }
 func hookUIEntries(t *testing.T) []domain.HookListEntry {
 	t.Helper()
-	d, err := domain.NewHookDeclaration(domain.HookSourceProject, strings.Repeat("a", 64), "check", 7, "cat >/dev/null\nprintf '{}'", 5)
+	d, err := domain.NewHookDeclaration(domain.HookSourceProject, domain.HookPreToolUse, domain.HookFeedbackNone, strings.Repeat("a", 64), "check", 7, "cat >/dev/null\nprintf '{}'", 5)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,9 +53,37 @@ func hookUIRequest(t *testing.T, model Model) protocol.Event {
 	e.TurnID = model.activeTurnID
 	return e
 }
+func hookUIRequestForEvent(t *testing.T, model Model, event domain.HookEvent) protocol.Event {
+	t.Helper()
+	e := hookUIRequest(t, model)
+	if event == domain.HookPreToolUse {
+		return e
+	}
+	p, _ := protocol.DecodeHookTrustRequested(e)
+	d := p.Declaration
+	var err error
+	p.Declaration, err = domain.NewHookDeclaration(d.Reference.Source, event, domain.HookFeedbackModel, d.Reference.Revision, d.Reference.ID, d.Matcher, d.Command, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err = protocol.NewHookTrustRequested(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.TurnID = model.activeTurnID
+	return e
+}
 func hookSnapshotModel(t *testing.T, name string) Model {
 	t.Helper()
 	s := &fakeHookSession{entries: hookUIEntries(t)}
+	if strings.Contains(name, "post") {
+		d := s.entries[0].Declaration
+		d, err := domain.NewHookDeclaration(d.Reference.Source, domain.HookPostToolUse, domain.HookFeedbackModel, d.Reference.Revision, d.Reference.ID, d.Matcher, d.Command, 5)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.entries[0].Declaration = d
+	}
 	m := NewModel(context.Background(), "test", s).WithHooks(s.entries)
 	width := 80
 	if strings.Contains(name, "narrow") {
@@ -67,11 +95,11 @@ func hookSnapshotModel(t *testing.T, name string) Model {
 		if strings.Contains(name, "long") {
 			d := m.hooks.entries[0].Declaration
 			d.Command = strings.Repeat("printf 'review every line'\n", 50)
-			d, _ = domain.NewHookDeclaration(d.Reference.Source, d.Reference.Revision, d.Reference.ID, d.Matcher, d.Command, 5)
+			d, _ = domain.NewHookDeclaration(d.Reference.Source, domain.HookPreToolUse, domain.HookFeedbackNone, d.Reference.Revision, d.Reference.ID, d.Matcher, d.Command, 5)
 			s.entries[0].Declaration = d
 		}
 		e := hookUIRequest(t, m)
-		if strings.Contains(name, "long") {
+		if strings.Contains(name, "long") || strings.Contains(name, "post") {
 			p, _ := protocol.DecodeHookTrustRequested(e)
 			p.Declaration = s.entries[0].Declaration
 			e, _ = protocol.NewHookTrustRequested(p)
@@ -92,14 +120,14 @@ func hookSnapshotModel(t *testing.T, name string) Model {
 		if cmd != nil || len(s.submits) != 0 {
 			t.Fatal("browser caused I/O")
 		}
-		if name == "hooks_detail" {
+		if name == "hooks_detail" || name == "hooks_post_detail" {
 			m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 		}
 	}
 	return m
 }
 func TestHookSnapshots(t *testing.T) {
-	for _, name := range []string{"hooks", "hooks_empty", "hooks_invalid", "hooks_detail", "hooks_narrow", "hooks_trust", "hooks_trust_narrow", "hooks_trust_long"} {
+	for _, name := range []string{"hooks", "hooks_empty", "hooks_invalid", "hooks_detail", "hooks_narrow", "hooks_trust", "hooks_trust_narrow", "hooks_trust_long", "hooks_post_detail", "hooks_post_narrow", "hooks_post_trust", "hooks_post_trust_narrow"} {
 		t.Run(name, func(t *testing.T) {
 			m := hookSnapshotModel(t, name)
 			want, err := os.ReadFile(filepath.Join("testdata", name+".golden"))
@@ -142,12 +170,17 @@ func TestHookBrowserResetPreservesDraftAndNeverGrants(t *testing.T) {
 	}
 }
 func TestHookTrustDefaultDenyInputIsolationAndCancellation(t *testing.T) {
+	for _, event := range []domain.HookEvent{domain.HookPreToolUse, domain.HookPostToolUse} {
+		t.Run(string(event), func(t *testing.T) { testHookTrustDefaultDenyInputIsolationAndCancellation(t, event) })
+	}
+}
+func testHookTrustDefaultDenyInputIsolationAndCancellation(t *testing.T, event domain.HookEvent) {
 	for _, key := range []tea.KeyType{tea.KeyEnter, tea.KeyEsc} {
 		s := &fakeHookSession{entries: hookUIEntries(t)}
 		m := NewModel(context.Background(), "test", s)
 		m.activeTurnID = "01900000-0000-7000-8000-000000000001"
 		m.composer.replace(0, 0, "keep draft")
-		m = updateModel(t, m, RuntimeEventMsg{Event: hookUIRequest(t, m)})
+		m = updateModel(t, m, RuntimeEventMsg{Event: hookUIRequestForEvent(t, m, event)})
 		m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/hooks")})
 		m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyEnter, Paste: true})
 		if m.composer.text != "keep draft" || m.hookTrust.trust || m.hookTrust.submitted || m.hooks.open {
@@ -180,19 +213,24 @@ func TestHookTrustDefaultDenyInputIsolationAndCancellation(t *testing.T) {
 }
 
 func TestHookOverlayMutualExclusionAndCheckingProjection(t *testing.T) {
+	for _, event := range []domain.HookEvent{domain.HookPreToolUse, domain.HookPostToolUse} {
+		t.Run(string(event), func(t *testing.T) { testHookOverlayMutualExclusionAndCheckingProjection(t, event) })
+	}
+}
+func testHookOverlayMutualExclusionAndCheckingProjection(t *testing.T, event domain.HookEvent) {
 	s := &fakeHookSession{entries: hookUIEntries(t)}
 	m := NewModel(context.Background(), "test", s)
 	m.activeTurnID = "01900000-0000-7000-8000-000000000001"
 	approval := mustApprovalRequested(t)
 	approval.TurnID = m.activeTurnID
 	m = updateModel(t, m, RuntimeEventMsg{Event: approval})
-	next, cmd := m.Update(RuntimeEventMsg{Event: hookUIRequest(t, m)})
+	next, cmd := m.Update(RuntimeEventMsg{Event: hookUIRequestForEvent(t, m, event)})
 	m = next.(Model)
 	if cmd == nil || m.hookTrust != nil || m.approval == nil {
 		t.Fatal("overlapping overlays accepted")
 	}
 	m.approval = nil
-	m = updateModel(t, m, RuntimeEventMsg{Event: hookUIRequest(t, m)})
+	m = updateModel(t, m, RuntimeEventMsg{Event: hookUIRequestForEvent(t, m, event)})
 	next, cmd = m.Update(RuntimeEventMsg{Event: approval})
 	m = next.(Model)
 	if cmd == nil || m.hookTrust == nil || m.approval != nil {

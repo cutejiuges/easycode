@@ -2,7 +2,7 @@
 
 ## Purpose
 
-定义可长期演进的 append-only JSONL Session 事实源，使当前文本对话与未来 Tool、MCP、Hook、Compaction 和 Subagent 记录共享稳定日志机制，而不把 SQLite 或 UI 事件变成恢复依据。
+定义 append-only JSONL Session 事实源，使已交付的文本对话、Tool、Hook、Compaction 与未来 MCP、Subagent 记录共享稳定日志机制，而不把 SQLite 或 UI 事件变成恢复依据。
 
 ## Requirements
 
@@ -225,11 +225,14 @@ ReplayPlanner MUST 拒绝孤立/重复 approval、result 或 started、allow 后
 
 本条中 Patch 的 approval/started/result、exclusive 屏障和恢复规则 SHALL 同样适用于 Write。Write 准备失败可从 ready 进入 error/conflict/cancelled，但 success 或 outcome_uncertain 必须具有合法 started；write_no_changes 为 error。Write input/result 联合与 operation 的已知/未知状态必须严格验证，恢复不通过文件系统补齐。
 
-对于有 Hook plan 的 call slot，ReplayPlanner SHALL 先验证独立 Hook 前缀：每调用至多一个 plan/decision，ordinal 连续且匹配计划，每项至多一个 started/finished，前项 continue 才可启动下一项。全计划成功完成才允许 gate continue；trust 拒绝可在未 started 的下一项处短路。任一 Hook 阻断、error 或 cancelled 只结束该 call slot；cleanup 不确定另行记录，目标工具不得出现 started。普通 approval/候选执行事实不得先于 gate continue，后序 call 不得越过当前 exclusive result。
+对于有 PreToolUse Hook plan 的 call slot，ReplayPlanner SHALL 先验证独立 Hook 前缀：每调用至多一个 plan/decision，ordinal 连续且匹配计划，每项至多一个 started/finished，前项 continue 才可启动下一项。全计划成功完成才允许 gate continue；trust 拒绝可在未 started 的下一项处短路。任一 Hook 阻断、error 或 cancelled 只结束该 call slot；cleanup 不确定另行记录，目标工具不得出现 started。普通 approval/候选执行事实不得先于 gate continue，后序 call 不得越过当前 exclusive result。
 
 计划和每项 started SHALL 单独 batch；中间成功 finished 单独 batch；最后成功 finished 与 gate continue MUST 同批；executed 阻断/错误/取消的 finished、gate decision 和冻结 tool result MUST 同批，trust 拒绝则 gate decision/result 同批，不伪造执行记录。正常 gate 终止状态与 result code/status MUST 一致。恢复补偿 Hook 不确定时，finished(origin=recovery, cleanup_confirmed=false, exit unknown)、gate outcome_uncertain 与工具 cancelled/hook_outcome_uncertain MUST 同批。完整 committed 记录违反上述组合为 corruption，不得当成合法活动尾部。
 
 正常路径 started 后 cleanup 不确定或 runner 结果错配 MUST 记录 gate outcome_uncertain、工具 cancelled/hook_outcome_uncertain，并停止后续工具；健康 journal 按 call index 完成剩余取消配对，owner 未真正清理完成前不能释放 lease。缺失 finished 的合法末尾 SHALL 投影为独立 Hook recovery 状态，不得退化为普通 ready-before-approval 或目标工具 started。
+
+
+存在 tool_post_hook_planned 时，call slot 的真实 result 与 Post 状态 SHALL 分别验证。前述每调用一个 gate/decision 及其执行前批次限制仅指 Pre；后置 plan/terminal 独立且至多一次。真实成功 result 后才可出现同事件/plan 的 Hook started；后序 call admission 和 outputs MUST 等待 Post terminal，不以 result 存在推断检查完成。后置 finished 只能携带已授权且符合预算的冻结反馈；普通后置 error 允许下一 ordinal 开始，不适用 Pre 的 continue-only 前缀规则；无成功 result、事件/ordinal 错配、缺少必要证据或后置 terminal 后再执行均作为 corruption。
 
 #### Scenario: Build a valid approved patch replay plan
 - **WHEN** journal 包含 Patch ready、matching allow、started、result、custom或tool-result output与最终 sample completion
@@ -608,3 +611,43 @@ compaction_started SHALL 在摘要网络请求前成功 Sync；completion SHALL 
 #### Scenario: Retain lease during cleanup
 - **WHEN** 压缩清理阻塞且另一个进程尝试 resume/repair
 - **THEN** 竞争进程 session_busy 且 journal bytes 不变，lease 直到最终 Sync/Close 才释放
+
+### Requirement: Post hook facts preserve results and explicitly freeze disclosed feedback
+
+唯一当前 Session vocabulary SHALL 新增 tool_post_hook_planned、tool_post_hook_completed，并使 hook_execution_started/finished 的当前身份显式包含事件/plan/ordinal。所有 kind MUST 有专属 typed draft/strict decoder/validator；Pre 的统计事实及未授权字段不能承载正文。不得新增内部格式版本、历史 reader、optional record 或迁移。
+
+Post plan SHALL 单记录 Sync；有匹配 Pre 时必须在其 continue 后，无匹配 Pre 时不要求或伪造 Pre plan/continue，始终位于候选/普通批准前。它保存有序声明引用、披露策略及调用预算 ticket，不保存命令。真实 tool result SHALL 只写一次并先确定 Sync，Post started 单独 Sync 且仅在输入/剩余期限前检通过后接收；started 表示执行尝试准入，不保证 OS 启动成功。每项 finished 与 content/code/empty 反馈选择及预算增量原子保存，中间 finished 独立 batch，最后正常项 finished 与 completed terminal 同批。
+
+terminal SHALL 保存 invocation/event/plan digest、origin=execution/recovery、disposition、code、processed、unstarted_from、suffix_feedback、最终预算事实、绑定最终规范反馈段的 feedback_digest 与绑定完整终态的 digest，不重复前缀正文。processed 等于已 finished 前缀数量，unstarted_from=processed，未启动后缀为 [processed,N)；无后缀时二者=N。completed 要求前缀完整且无 pending started，允许普通错误项，code 为 ok 或最早错误项 code；skipped 要求存在未启动后缀，原因为 tool_not_successful、hook_trust_denied、hook_trust_required、hook_input_limit 或 hook_execution_budget_exhausted。未启动后缀只写 terminal，不伪造 started/finished/exit/timed_out/cleanup 统计；terminal 可独立 batch 或与尚未保存的原拒绝/取消 result 同批。
+
+取消发生在项间时以 cancelled terminal 单独收口，原因为 cancelled 或 session_interrupted_before_post_hook；已 started 的取消项必须先有其 cancelled finished，并与 terminal 同批。uncertain 要求存在最后 uncertain finished，并与 terminal 同批，后缀未启动；不得将纯粹尚未 started 的下一项标记 uncertain。原结果始终只写一次。origin=execution 且原工具成功、Post 全部信任、对应声明为 model 且提示预算可用时，suffix_feedback 只允许为未启动后缀冻结有序来源/code，不允许正文或运行统计，processed 不因此增加；在 terminal Sync 时计入反馈实际 bytes。origin=recovery、原工具不成功、未完成信任、none 或 budget_unavailable 的 suffix_feedback 必须为空，不能借恢复补发内容。
+
+预算终值 SHALL 验证原 A/R、base allowance=A-R、真实结果 bytes、最终规范反馈段 bytes、released=R-feedback bytes；原 A SHALL 从同 sample/turn 已有事实重建，不能仅信任记录自述；反馈增量绑定单调 durable sequence，拒绝重复计费。分段只在确定 Sync 后计费，整个 call 在 terminal durable 后 close 一次。已保存前缀反馈不能为后续错误提示让位；所有提示槽须提前预留，delivery=budget_unavailable 时不得存在正文或模型提示。
+
+#### Scenario: Persist output separately from its check
+- **WHEN** 工具 success 已 Sync 随后后置 finished 的 Sync 失败
+- **THEN** 原 result 保留，反馈不被宣称 durable，Runtime poison 且不发起下一 sample
+
+#### Scenario: Validate the current fixed fixture bytes
+- **WHEN** 加载两事件正常、跳过、反馈关闭、每崩溃点、伪造内容与越限 current fixtures
+- **THEN** 使用仓库固定 bytes 和生产 decoder/replay 验证；不在测试运行时由 encoder 生成输入
+
+#### Scenario: Reject a cross-event run identity
+- **WHEN** 同 invocation/ordinal 的 Post finished 指向 Pre plan 或错误 digest
+- **THEN** committed 前缀作为 corruption 拒绝，即使另有半行也不先 repair
+
+#### Scenario: Record an unstarted suffix without fake execution
+- **WHEN** Post 第 0 项已 finished，而剩余预算不足以准入第 1 项
+- **THEN** 只追加 skipped terminal，processed/unstarted_from 均为 1，原因 hook_execution_budget_exhausted，后缀无 started/finished/实际超时统计
+
+#### Scenario: Start no post runs for an oversized input
+- **WHEN** 成功工具之后的共享 stdin 超限且 Post 共有两项
+- **THEN** 保存 processed=0/unstarted_from=0 的 skipped terminal/hook_input_limit，原成功不变
+
+#### Scenario: Continue after an ordinary post failure
+- **WHEN** 后置第 0 项为普通解析错误且 cleanup confirmed，随后第 1 项成功
+- **THEN** 回放接受两个已运行项的有序前缀及 completed terminal，不要求第 0 项 continue，不改写工具成功
+
+#### Scenario: Reject inconsistent call budget facts
+- **WHEN** terminal 的 A/R/base allowance、分段 bytes、释放余额或 delivery 与前序事实不符
+- **THEN** 严格回放拒绝，不用当前配置重分配或削减已保存反馈

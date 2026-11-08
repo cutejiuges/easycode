@@ -109,6 +109,10 @@ func (model Model) receiveMainTranscript(reply mainTranscriptReply) (tea.Model, 
 		case domain.TranscriptCall:
 			activity := item.Activity
 			message.activity = &activity
+			if item.PostHook != (protocol.HookActivityPayload{}) {
+				summary := item.PostHook
+				message.hook = &summary
+			}
 			message.preview = item.Preview
 			message.saving = savingNotice(item.Stdout, item.Stderr, item.Search)
 		}

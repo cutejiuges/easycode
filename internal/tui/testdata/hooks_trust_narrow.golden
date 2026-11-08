@@ -2,6 +2,7 @@ Trust this hook?
 Source: project · check
 PreToolUse: fs.patch|fs.writ
 e|process.exec
+Feedback: none
 Timeout: 5 seconds
 Workspace: . · read-only · n
 etwork denied

@@ -55,6 +55,7 @@ func (v ResultBudgetMetadata) Validate() error {
 
 // ResultBudget 由单一 turn owner 顺序使用，worker 不共享可变账本。
 type ResultBudget struct {
+	active          *ResultBudgetTicket
 	exhausted       bool
 	turnUsed        int
 	processed       int
@@ -67,7 +68,7 @@ func NewResultBudget() *ResultBudget { return &ResultBudget{} }
 
 // BeginSample 在前一调用组已全部冻结后开始下一组，不重置 turn 额度。
 func (b *ResultBudget) BeginSample(calls int) error {
-	if b == nil || calls < 0 || calls > MaxBudgetCalls || b.sampleRemaining != 0 || calls > MaxBudgetCalls-b.processed {
+	if b == nil || calls < 0 || calls > MaxBudgetCalls || b.sampleRemaining != 0 || b.active != nil || calls > MaxBudgetCalls-b.processed {
 		return errors.New("invalid result budget sample")
 	}
 	b.sampleUsed = 0
@@ -77,7 +78,7 @@ func (b *ResultBudget) BeginSample(calls int) error {
 
 // Allowance 为当前调用计算额度，后续空间按原始调用顺序预留。
 func (b *ResultBudget) Allowance(capability CapabilityID) (int, error) {
-	if b == nil || !capability.Valid() || b.sampleRemaining < 1 || b.processed >= MaxBudgetCalls {
+	if b == nil || !capability.Valid() || b.sampleRemaining < 1 || b.processed >= MaxBudgetCalls || b.active != nil {
 		return 0, errors.New("invalid result budget call")
 	}
 	cap := MaxModelPreviewBytes
@@ -96,24 +97,23 @@ func (b *ResultBudget) Allowance(capability CapabilityID) (int, error) {
 	return allowance, nil
 }
 
-// Commit 仅在最终预览形成后扣除实际 bytes，拒绝重复或超额提交。
+// Commit 为没有后置阶段的单段 durable 结果执行 reserve/base/close。
 func (b *ResultBudget) Commit(capability CapabilityID, metadata ResultBudgetMetadata) error {
 	allowance, err := b.Allowance(capability)
 	if err != nil {
 		return err
 	}
-	if err := metadata.Validate(); err != nil {
-		return err
-	}
-	if metadata.allowance != allowance {
+	if metadata.Validate() != nil || metadata.allowance != allowance {
 		return errors.New("result budget allowance mismatch")
 	}
-	b.turnUsed += metadata.actual
-	b.sampleUsed += metadata.actual
-	b.processed++
-	b.sampleRemaining--
-	b.exhausted = b.exhausted || TurnPreviewBytes-b.turnUsed <= SafetyResultBytes*(MaxBudgetCalls-b.processed)
-	return nil
+	ticket, err := b.Reserve(capability, false)
+	if err != nil {
+		return err
+	}
+	if err = ticket.CommitBase(metadata); err != nil {
+		return err
+	}
+	return ticket.Close()
 }
 
 // BodyExhausted 判断是否只剩每个后续调用的安全终态空间。

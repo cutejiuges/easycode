@@ -93,7 +93,7 @@ func TestRestoreRecordKeepsExplicitRoleAndTurn(t *testing.T) {
 	if (RestoreRecord{}).Validate() == nil {
 		t.Fatal("zero restore record accepted")
 	}
-	if _, err := NewToolOutputRestoreRecord("", envelope); err == nil {
+	if _, err := NewToolOutputRestoreRecord("", envelope, nil); err == nil {
 		t.Fatal("invalid turn accepted")
 	}
 }

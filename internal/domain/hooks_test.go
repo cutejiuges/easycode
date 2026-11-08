@@ -18,7 +18,7 @@ func TestHookValuesAreBoundedImmutableAndStrict(t *testing.T) {
 			t.Fatalf("accepted matcher %q", s)
 		}
 	}
-	d, err := NewHookDeclaration(HookSourceUser, strings.Repeat("a", 64), "check", m, "printf '{}'", 5)
+	d, err := NewHookDeclaration(HookSourceUser, HookPreToolUse, HookFeedbackNone, strings.Repeat("a", 64), "check", m, "printf '{}'", 5)
 	if err != nil || d.Validate() != nil {
 		t.Fatal(err)
 	}
@@ -130,20 +130,20 @@ func TestHookInputBranchesAndMatchLimit(t *testing.T) {
 	}
 	var declarations []HookDeclaration
 	for n := range 9 {
-		d, err := NewHookDeclaration(HookSourceUser, strings.Repeat("a", 64), "check-"+string(rune('a'+n)), 7, "true", 5)
+		d, err := NewHookDeclaration(HookSourceUser, HookPreToolUse, HookFeedbackNone, strings.Repeat("a", 64), "check-"+string(rune('a'+n)), 7, "true", 5)
 		if err != nil {
 			t.Fatal(err)
 		}
 		declarations = append(declarations, d)
 	}
 	s, _ := NewHookSnapshot(declarations, nil)
-	if _, err := s.Match(HookExec); err != HookMatchLimit {
+	if _, err := s.Match(HookPreToolUse, HookExec); err != HookMatchLimit {
 		t.Fatal("matched too many hooks", err)
 	}
 }
 
 func TestHookExecutionStatisticsRejectContradictoryFlags(t *testing.T) {
-	d, _ := NewHookDeclaration(HookSourceProject, strings.Repeat("a", 64), "check", 7, "true", 5)
+	d, _ := NewHookDeclaration(HookSourceProject, HookPreToolUse, HookFeedbackNone, strings.Repeat("a", 64), "check", 7, "true", 5)
 	p, _ := NewHookPlan("018f1d8a-7b5c-7def-8123-456789abcdef", HookPatch, []HookReference{d.Reference})
 	id, _ := NewHookRunIdentity(p, 0)
 	base := HookRunResult{Identity: id, Status: HookContinue, Code: HookOK, ExitKnown: true, CleanupConfirmed: true, Origin: "execution"}

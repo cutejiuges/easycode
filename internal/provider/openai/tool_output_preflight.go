@@ -8,7 +8,11 @@ import (
 	"easycode/internal/tool"
 )
 
-func encodeToolResult(call NativeItem, result tool.InvocationResult) (NativeItem, error) {
+func encodeToolResult(call NativeItem, output tool.ModelOutput) (NativeItem, error) {
+	if output.Validate() != nil {
+		return NativeItem{}, fmt.Errorf("invalid model tool output")
+	}
+	result := output.Result()
 	if err := tool.ValidateFrozenResult(result); err != nil {
 		return NativeItem{}, fmt.Errorf("invalid OpenAI tool result")
 	}
@@ -32,7 +36,7 @@ func encodeToolResult(call NativeItem, result tool.InvocationResult) (NativeItem
 			}
 		}
 	}
-	b, err := codec.MarshalStable(functionOutputPayload{Status: result.Status(), Code: result.Code(), Content: result.Preview().Text()})
+	b, err := codec.MarshalStable(functionOutputPayload{Status: result.Status(), Code: result.Code(), Content: output.Text()})
 	if err != nil {
 		return NativeItem{}, fmt.Errorf("encode OpenAI tool output failed")
 	}
@@ -44,11 +48,12 @@ type toolOutputPreflight struct {
 	invocationID tool.InvocationID
 }
 
-func (p toolOutputPreflight) Validate(r tool.InvocationResult) error {
+func (p toolOutputPreflight) Validate(output tool.ModelOutput) error {
+	r := output.Result()
 	if r.InvocationID() != p.invocationID {
 		return fmt.Errorf("tool output invocation mismatch")
 	}
-	item, err := encodeToolResult(p.call, r)
+	item, err := encodeToolResult(p.call, output)
 	if err != nil {
 		return err
 	}

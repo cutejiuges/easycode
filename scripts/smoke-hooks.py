@@ -13,12 +13,12 @@ import termios
 import time
 
 
-def smoke(binary, provider, root):
+def smoke(binary, provider, root, event="PreToolUse"):
     pid, fd = pty.fork()
     if pid == 0:
         os.chdir(root / "internal/app")
         os.environ.update(EASYCODE_HOOK_TERMINAL_SMOKE=provider,
-                          TERM="xterm-256color", NO_COLOR="1")
+                          TERM="xterm-256color", NO_COLOR="1", EASYCODE_HOOK_TERMINAL_EVENT=event)
         os.execv(binary, [binary, "-test.run=^TestHookTerminalHelper$", "-test.timeout=90s"])
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 32, 100, 0, 0))
     raw = bytearray()
@@ -70,7 +70,27 @@ def smoke(binary, provider, root):
         wait("Create file", "ordinary-tool-approval")
         send(b"\x1b[A\x1b[A\r")
         wait("answer-4", "approved-tool-completed")
+        if event == "PostToolUse":
+            send(b"\x0f")
+            wait("Transcript", "transcript-browser")
+            wait("Write · success", "tool-row-loaded")
+            plain = re.sub(rb"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))", b"", bytes(raw)).decode("utf-8", "replace")
+            frame = plain.rsplit("Transcript", 1)[-1]
+            selected = re.search(r"^> ([^\r\n]*)", frame, re.MULTILINE)
+            if selected is None:
+                raise RuntimeError(f"{provider}: missing selected transcript row")
+            send(b"\r" if "Write · success" in selected.group(1) else b"\x1b[B\r")
+            wait("Write · success", "original-success-details")
+            send(b"\x1b[C")
+            wait("Read-only check:", "explicit-post-feedback")
+            send(b"\x1b")
+            wait("Transcript", "details-back")
+            send(b"\x0f")
+            wait("EasyCode", "details-anchor-return")
         send(b"cancel\r")
+        if event == "PostToolUse":
+            wait("Create file", "cancel-tool-approval")
+            send(b"\x1b[A\x1b[A\r")
         wait("checking", "checking-distinct-from-running")
         send(b"\x03")
         wait("user_cancelled", "cancel-cleaned-up")
@@ -79,7 +99,7 @@ def smoke(binary, provider, root):
         _, status = os.waitpid(pid, 0)
         if os.waitstatus_to_exitcode(status) != 0:
             raise RuntimeError(f"{provider}: terminal helper failed")
-        print(provider + ": " + ", ".join(stages))
+        print(provider + "/" + event + ": " + ", ".join(stages))
     except BaseException:
         os.kill(pid, signal.SIGKILL)
         os.waitpid(pid, 0)
@@ -91,7 +111,8 @@ def smoke(binary, provider, root):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", help="go test -c ./internal/app 生成的测试二进制绝对路径")
+    parser.add_argument("--event", choices=("PreToolUse", "PostToolUse"), default="PreToolUse")
     args = parser.parse_args()
     repo = pathlib.Path(__file__).resolve().parents[1]
     for family in ("openai", "anthropic"):
-        smoke(os.path.abspath(args.binary), family, repo)
+        smoke(os.path.abspath(args.binary), family, repo,args.event)

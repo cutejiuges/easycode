@@ -14,7 +14,7 @@ type functionOutputPayload struct {
 	Content string            `json:"content"`
 }
 
-func prepareToolOutputsEntry(history []nativeHistoryEntry, results []tool.InvocationResult) (nativeHistoryEntry, error) {
+func prepareToolOutputsEntry(history []nativeHistoryEntry, results []tool.ModelOutput) (nativeHistoryEntry, error) {
 	calls, err := pendingFunctionCalls(history)
 	if err != nil {
 		return nativeHistoryEntry{}, err

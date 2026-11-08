@@ -34,7 +34,7 @@ func TestConfigurationIsStrictAndNormalizesAliases(t *testing.T) {
 		t.Fatal("alias order changed revision")
 	}
 	for _, bad := range []string{
-		`null`, `{}`, `{"hooks":null}`, `{"hooks":{"PreToolUse":null}}`, `{"hooks":{"PostToolUse":[]}}`, valid + ` {}`,
+		`null`, `{}`, `{"hooks":null}`, `{"hooks":{"PreToolUse":null}}`, `{"hooks":{"PostToolUse":null}}`, valid + ` {}`,
 		strings.Replace(valid, `"id":`, `"id":"duplicate","id":`, 1), strings.Replace(valid, `"type":"command"`, `"type":"http"`, 1),
 		strings.Replace(valid, `"matcher":"Bash|exec_command"`, `"matcher":"Read"`, 1), strings.Replace(valid, `"command":`, `"timeout":null,"command":`, 1),
 		strings.Replace(valid, `"command":`, `"timeout":0,"command":`, 1), strings.Replace(valid, `"command":`, `"timeout":31,"command":`, 1),
@@ -64,12 +64,12 @@ func TestLoadFreezesSourcesAndInvalidSourceBlocksAllMutations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ds, err := s.Match(domain.HookExec)
+	ds, err := s.Match(domain.HookPreToolUse, domain.HookExec)
 	if err != nil || len(ds) != 2 || ds[0].Reference.Source != domain.HookSourceUser {
 		t.Fatal("source order", err)
 	}
 	putHookConfig(t, project, `{"hooks":{"PreToolUse":null}}`)
-	if old, err := s.Match(domain.HookExec); err != nil || len(old) != 2 {
+	if old, err := s.Match(domain.HookPreToolUse, domain.HookExec); err != nil || len(old) != 2 {
 		t.Fatal("snapshot reloaded")
 	}
 	bad, err := l.Load(context.Background(), root, home)
@@ -77,7 +77,7 @@ func TestLoadFreezesSourcesAndInvalidSourceBlocksAllMutations(t *testing.T) {
 		t.Fatal("diagnostics lost", err)
 	}
 	for _, cap := range []domain.HookCapability{domain.HookPatch, domain.HookWrite, domain.HookExec} {
-		if _, err := bad.Match(cap); err != domain.HookConfigInvalid {
+		if _, err := bad.Match(domain.HookPreToolUse, cap); err != domain.HookConfigInvalid {
 			t.Fatal("partial source allowed")
 		}
 	}

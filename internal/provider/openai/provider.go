@@ -383,7 +383,7 @@ func (conversation *Conversation) historySnapshot() []nativeHistoryEntry {
 }
 
 // PrepareToolOutputs 在纯内存中编码与最后一组function calls配对的结果。
-func (conversation *Conversation) PrepareToolOutputs(results []tool.InvocationResult) (*provider.PreparedToolOutputs, error) {
+func (conversation *Conversation) PrepareToolOutputs(results []tool.ModelOutput) (*provider.PreparedToolOutputs, error) {
 	if conversation == nil || conversation.active.Load() {
 		return nil, fmt.Errorf("OpenAI conversation cannot prepare tool outputs while active")
 	}

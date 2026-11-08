@@ -72,9 +72,10 @@ func testCommitUserInput(t *testing.T, conversation *Conversation, text string) 
 		t.Fatal(err)
 	}
 }
-func testRestoreRecords(t *testing.T, envelopes []provider.NativeCommitEnvelope) []provider.RestoreRecord {
+func testRestoreRecords(t *testing.T, envelopes []provider.NativeCommitEnvelope, outputEvidence ...[]tool.ModelOutput) []provider.RestoreRecord {
 	t.Helper()
 	var turnID domain.TurnID
+	outputIndex := 0
 	records := make([]provider.RestoreRecord, 0, len(envelopes))
 	for envelopeIndex, envelope := range envelopes {
 		entry, err := decodeNativeCommit(envelope)
@@ -114,7 +115,11 @@ func testRestoreRecords(t *testing.T, envelopes []provider.NativeCommitEnvelope)
 				record, err = record.WithQuestionFacts(questions, testQuestionRestoreResults(t, envelopes[envelopeIndex+1:], questions))
 			}
 		case nativeHistoryToolOutputs:
-			record, err = provider.NewToolOutputRestoreRecord(turnID, envelope)
+			if outputIndex >= len(outputEvidence) {
+				t.Fatal("missing explicit frozen tool output test evidence")
+			}
+			record, err = provider.NewToolOutputRestoreRecord(turnID, envelope, outputEvidence[outputIndex])
+			outputIndex++
 		}
 		if err != nil {
 			t.Fatal(err)

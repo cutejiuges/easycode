@@ -104,6 +104,10 @@ func (runtime *Runtime) executePatchCall(ctx context.Context, emit Emitter, turn
 			runtime.poisoned.Store(true)
 			return tool.InvocationResult{}, false, fault.Wrap(fault.CodeSessionWrite, "persist Patch denial failed", appendErr)
 		}
+		if err := runtime.commitResultBudget(result); err != nil {
+			runtime.poisoned.Store(true)
+			return tool.InvocationResult{}, false, err
+		}
 		runtime.notifyToolResult(turnID, result)
 		runtime.emitApprovalResolved(emit, turnID, request, outcome)
 		return result, outcome == tool.ApprovalOutcomeAbort, nil

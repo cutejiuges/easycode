@@ -10,6 +10,9 @@
 
 存在匹配 PreToolUse 时，Patch/Write/Exec SHALL 在同一 exclusive 屏障内先冻结并 durable 保存完整 Hook 计划，串行完成检查，再准备候选与普通审批。Hook 的计划、信任、进程及结果不得越过前序 result 或与后序工具重叠；只读调用不触发本切片 Hook。无匹配时 SHALL 保持原调度、九能力目录与 Provider facade 不变。单个 Hook denied/error 只阻断原 call slot，后序 independent sibling 仍按原序执行；取消、cleanup 不确定或 writer poison 才停止整个 turn。
 
+
+匹配 PostToolUse 的调用 SHALL 在同一 exclusive slot 内先冻结计划并审查信任，再沿用普通候选/审批/执行。真实结果先冻结并成功 Sync；成功且真实执行的调用随后串行收口 Post，其他结果将已存在计划标记 skipped。前序 result 已 durable 但 Post 尚未 terminal 时，后序工具、整组 native outputs、steering 与下一 sample MUST 继续等待。Post 普通检查失败不能改写原结果或取消独立 sibling；取消、cleanup 不确定或 writer poison 按既有强制收口规则处理。Pre/Post 对同调用共享 30 秒检查执行预算。未开始的后缀用明确 skipped/cancelled disposition 收口，不伪造超时运行；已准入的普通 Post 错误可继续下一项，未关闭的调用预算 ticket 与未 terminal 的 Post 一样阻止后序 admission。
+
 #### Scenario: Complete a two-sample search turn
 - **WHEN** 首个sample请求Glob与Grep，结果提交后第二个sample返回最终文本且不再调用工具
 - **THEN** turn只产生一个开始和一个成功终态，并在两次sample之间保持合法native call/output顺序
@@ -87,6 +90,26 @@ Runtime SHALL 在同一 turn owner 持有 tool/result-budget 的纯内存账本�
 #### Scenario: Never hook a parallel read
 - **WHEN** 同一 sample 包含 Read、Glob、Grep、Skill 或 ReadArtifact
 - **THEN** 它们保持原并发与来源规则，Hook 计划和进程启动次数为零
+
+#### Scenario: Hold the barrier after a successful result
+- **WHEN** Read、Write、Read 依次 ready，Write 已保存 success 且 Post 仍运行
+- **THEN** 后序 Read、native outputs 和 steering 均不开始，检查收口后仍按原 index 继续
+
+#### Scenario: Preserve success after a failed check
+- **WHEN** Write 成功后 Post 普通非零退出或输出无效
+- **THEN** 只记录检查失败，原 result/status/code 不变且后序独立调用可继续
+
+#### Scenario: Skip post processing for a declined operation
+- **WHEN** 已规划 Post 的调用被普通审批拒绝或 executor 返回 conflict
+- **THEN** 零 Post 进程，计划明确 skipped，再允许后序工具继续
+
+#### Scenario: Finish a post phase without running its suffix
+- **WHEN** 成功调用的前置检查已经消耗全部共用检查预算
+- **THEN** 后置零 started/finished，以 hook_execution_budget_exhausted 记录未启动后缀并关闭预算 ticket，原成功保留
+
+#### Scenario: Publish only durable post details
+- **WHEN** Post plan/started/finished/terminal 批次成功 Sync 并安装查询快照
+- **THEN** 发布匹配 invocation/event/plan 和递增 detail_sequence 的进程内更新；失败 Sync 不发布，headless 校验后忽略且外部协议不扩张
 
 ### Requirement: Execution ledger provides at-most-once automatic execution
 

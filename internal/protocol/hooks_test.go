@@ -11,7 +11,7 @@ import (
 
 func TestHookTrustContractsAreStrictAndIdentityBound(t *testing.T) {
 	const id = "01900000-0000-7000-8000-000000000001"
-	d, err := domain.NewHookDeclaration(domain.HookSourceProject, strings.Repeat("a", 64), "check", 7, "cat >/dev/null", 5)
+	d, err := domain.NewHookDeclaration(domain.HookSourceProject, domain.HookPreToolUse, domain.HookFeedbackNone, strings.Repeat("a", 64), "check", 7, "cat >/dev/null", 5)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestHookTrustContractsAreStrictAndIdentityBound(t *testing.T) {
 		if state == "denied" {
 			code = domain.HookDenied
 		}
-		p := HookActivityPayload{InvocationID: id, Reference: d.Reference, State: state, Code: code}
+		p := HookActivityPayload{InvocationID: id, Reference: d.Reference, State: HookActivityState(state), Code: code}
 		e, err := NewHookActivity(p)
 		if err != nil {
 			t.Fatal(err)

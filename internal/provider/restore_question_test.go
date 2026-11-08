@@ -39,7 +39,7 @@ func TestQuestionRestoreFactsAreTypedAndImmutable(t *testing.T) {
 			t.Fatal("invalid restore bindings accepted")
 		}
 	}
-	output, _ := NewToolOutputRestoreRecord(record.TurnID(), envelope)
+	output, _ := NewToolOutputRestoreRecord(record.TurnID(), envelope, nil)
 	if _, err := output.WithQuestionFacts([]tool.QuestionInvocation{q}, nil); err == nil {
 		t.Fatal("question facts bound to output role")
 	}

@@ -20,7 +20,7 @@ func TestPrepareToolOutputsPairsResultsInModelOrder(t *testing.T) {
 		}}},
 		Metadata: messageMetadata{ID: "msg-1", Model: "claude-test"},
 	}})
-	entry, err := prepareToolOutputsEntry(history, []tool.InvocationResult{result})
+	entry, err := prepareToolOutputsEntry(history, testModelOutputs(t, result))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestPreparePatchToolOutputPreservesEditPairing(t *testing.T) {
 	invocation, _ := tool.NewPatchInvocation(invocationID, ready)
 	result := tool.NewPatchErrorResult(invocation, tool.ResultDenied, "approval_required", "Patch denied: approval_required")
 	history := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, newUserMessage("edit it")), {Kind: nativeHistorySample, Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeToolUse, ID: "toolu-edit", Name: "Edit", Input: []byte(`{"file_path":"main.go","old_string":"old","new_string":"new"}`)}}}, Metadata: messageMetadata{ID: "msg-edit", Model: "claude-test"}}})
-	entry, err := prepareToolOutputsEntry(history, []tool.InvocationResult{result})
+	entry, err := prepareToolOutputsEntry(history, testModelOutputs(t, result))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestPrepareToolOutputsRejectsMismatchedCallID(t *testing.T) {
 		}}},
 		Metadata: messageMetadata{ID: "msg-1", Model: "claude-test"},
 	}})
-	if _, err := prepareToolOutputsEntry(history, []tool.InvocationResult{result}); err == nil {
+	if _, err := prepareToolOutputsEntry(history, testModelOutputs(t, result)); err == nil {
 		t.Fatal("mismatched tool result unexpectedly accepted")
 	}
 }
@@ -91,7 +91,7 @@ func TestPrepareToolOutputsRejectsCapabilityMismatch(t *testing.T) {
 		}}},
 		Metadata: messageMetadata{ID: "msg-1", Model: "claude-test"},
 	}})
-	if _, err := prepareToolOutputsEntry(history, []tool.InvocationResult{result}); err == nil {
+	if _, err := prepareToolOutputsEntry(history, testModelOutputs(t, result)); err == nil {
 		t.Fatal("capability 与 pending call 错配未被拒绝")
 	}
 }

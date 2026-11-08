@@ -1,0 +1,18 @@
+Trust this hook?
+Runs only after the tool succeeds.
+feedback=model sends additionalContext to the provider and saves it in Session.
+Source: project · check
+PostToolUse: fs.patch|fs.write|process.exec
+Feedback: model
+Timeout: 5 seconds
+Workspace: . · read-only · network denied
+This does not approve the model's tool call.
+Workspace scripts can change after review.
+PgUp/PgDn: full command · Tab/↑/↓: choose · Esc: deny
+
+  Trust for this session
+> Deny
+
+Command:
+cat >/dev/null
+printf '{}'

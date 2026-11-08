@@ -19,13 +19,14 @@ const (
 )
 
 type transcriptPageKey struct {
-	through  uint64
-	backward bool
-	kind     transcriptPageKind
-	cursor   protocol.TranscriptCursor
-	source   protocol.TranscriptBodySource
-	stream   protocol.ToolOutputSource
-	offset   uint64
+	detailSequence uint64
+	through        uint64
+	backward       bool
+	kind           transcriptPageKind
+	cursor         protocol.TranscriptCursor
+	source         protocol.TranscriptBodySource
+	stream         protocol.ToolOutputSource
+	offset         uint64
 }
 type cachedTranscriptPage struct {
 	key    transcriptPageKey
@@ -56,7 +57,7 @@ type transcriptBrowser struct {
 	markdown           transcriptMarkdownDetail
 	anchorCursor       protocol.TranscriptCursor
 	visibleCursors     []protocol.TranscriptCursor
-	positions          [6]transcriptDetailPosition
+	positions          [7]transcriptDetailPosition
 	queries            protocol.TranscriptQueries
 	thread             domain.ThreadID
 	generation         uint64
@@ -200,7 +201,7 @@ func (model Model) loadTranscriptPage(key transcriptPageKey) (tea.Model, tea.Cmd
 		case transcriptListPage:
 			reply.page.list, reply.err = queries.ListTranscript(ctx, protocol.TranscriptListQuery{ThreadID: thread, Before: key.cursor, Newer: key.backward, Through: key.through, Limit: 50})
 		case transcriptBodyPage:
-			reply.page.body, reply.err = queries.ReadTranscriptBody(ctx, protocol.TranscriptBodyQuery{ThreadID: thread, Cursor: key.cursor, Source: key.source, Offset: key.offset, Backward: key.backward, Limit: 64 << 10})
+			reply.page.body, reply.err = queries.ReadTranscriptBody(ctx, protocol.TranscriptBodyQuery{ThreadID: thread, Cursor: key.cursor, Source: key.source, DetailSequence: key.detailSequence, Offset: key.offset, Backward: key.backward, Limit: 64 << 10})
 		case transcriptOutputPage:
 			reply.page.output, reply.err = queries.ReadToolOutput(ctx, protocol.ToolOutputQuery{ThreadID: thread, InvocationID: invocation, Stream: key.stream, Offset: key.offset, Backward: key.backward, Limit: 64 << 10})
 		}
@@ -267,7 +268,7 @@ func (model Model) receiveTranscriptPage(reply transcriptReply) (tea.Model, tea.
 			}
 		}
 	case transcriptBodyPage:
-		if !b.detail || p.body.Validate() != nil || (!p.key.backward && p.body.Offset != p.key.offset) || (p.key.backward && p.body.NextOffset != p.key.offset) {
+		if !b.detail || p.body.Validate() != nil || p.body.DetailSequence != p.key.detailSequence || (!p.key.backward && p.body.Offset != p.key.offset) || (p.key.backward && p.body.NextOffset != p.key.offset) {
 			b.errorText = "Invalid transcript body"
 			return model, nil
 		}
@@ -325,6 +326,9 @@ func (model Model) loadTranscriptDetail() (tea.Model, tea.Cmd) {
 		return model, nil
 	}
 	key := transcriptPageKey{kind: transcriptBodyPage, cursor: b.items[b.selected].Cursor, source: b.source, offset: b.offset}
+	if b.source == protocol.TranscriptPostHooks {
+		key.detailSequence = b.items[b.selected].DetailSequence
+	}
 	if b.stream != "" {
 		key.kind = transcriptOutputPage
 		key.stream = b.stream
@@ -344,6 +348,8 @@ func detailPositionIndex(source protocol.TranscriptBodySource, stream protocol.T
 	switch source {
 	case protocol.TranscriptInput:
 		return 1
+	case protocol.TranscriptPostHooks:
+		return 6
 	case protocol.TranscriptResult:
 		return 2
 	default:
@@ -407,7 +413,7 @@ func (model Model) handleTranscriptBrowserKey(key tea.KeyMsg) (tea.Model, tea.Cm
 
 				b.detail = true
 				b.markdown = transcriptMarkdownDetail{}
-				b.positions = [6]transcriptDetailPosition{}
+				b.positions = [7]transcriptDetailPosition{}
 				b.stream = ""
 				b.offset = 0
 				b.previous = nil
@@ -443,6 +449,8 @@ func (model Model) handleTranscriptBrowserKey(key tea.KeyMsg) (tea.Model, tea.Cm
 		if item.Kind == domain.TranscriptCall {
 			if b.source == protocol.TranscriptInput && b.stream == "" {
 				b.switchDetail(protocol.TranscriptResult, "")
+			} else if b.source == protocol.TranscriptResult && b.stream == "" && item.DetailSequence > 0 {
+				b.switchDetail(protocol.TranscriptPostHooks, "")
 			} else if item.Search.Readable {
 				b.switchDetail(b.source, protocol.ToolSearchResult)
 			} else if item.Stdout.Readable {
@@ -452,7 +460,7 @@ func (model Model) handleTranscriptBrowserKey(key tea.KeyMsg) (tea.Model, tea.Cm
 		}
 	case tea.KeyLeft:
 		if item.Kind == domain.TranscriptCall {
-			if b.stream != "" {
+			if b.stream != "" || b.source == protocol.TranscriptPostHooks {
 				b.switchDetail(protocol.TranscriptResult, "")
 			} else {
 				b.switchDetail(protocol.TranscriptInput, "")
@@ -478,6 +486,9 @@ func (model Model) handleTranscriptBrowserKey(key tea.KeyMsg) (tea.Model, tea.Cm
 		if b.offset > 0 {
 			if len(b.previous) == 0 {
 				pageKey := transcriptPageKey{kind: transcriptBodyPage, cursor: item.Cursor, source: b.source, stream: b.stream, offset: b.offset, backward: true}
+				if b.source == protocol.TranscriptPostHooks {
+					pageKey.detailSequence = item.DetailSequence
+				}
 				if b.stream != "" {
 					pageKey.kind = transcriptOutputPage
 				}

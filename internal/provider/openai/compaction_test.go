@@ -12,6 +12,7 @@ import (
 	"easycode/internal/domain"
 	"easycode/internal/provider"
 	"easycode/internal/secret"
+	"easycode/internal/tool"
 )
 
 func TestCheckpointWindowAndRestoredRequest(t *testing.T) {
@@ -213,9 +214,9 @@ func TestCompactionRejectsInvalidOutput(t *testing.T) {
 	}
 }
 
-func assertCompactionAfterToolSteering(t *testing.T, instance *Provider, conversation *Conversation, sampling provider.TurnInput, envelopes []provider.NativeCommitEnvelope) {
+func assertCompactionAfterToolSteering(t *testing.T, instance *Provider, conversation *Conversation, sampling provider.TurnInput, envelopes []provider.NativeCommitEnvelope, outputs []tool.ModelOutput) {
 	t.Helper()
-	records := testRestoreRecords(t, envelopes)
+	records := testRestoreRecords(t, envelopes, outputs)
 	original, _ := conversation.ProjectTranscript()
 	input, _ := provider.NewCompactionInput(sampling, "preserve tool observations", 4096)
 	for iteration, id := range []domain.CompactionID{"01900000-0000-7000-8000-000000000080", "01900000-0000-7000-8000-000000000081"} {
@@ -322,7 +323,7 @@ func assertCompactionAfterToolSteering(t *testing.T, instance *Provider, convers
 		}
 		tailEnvelopes = append(tailEnvelopes, envelope)
 	}
-	records = append(records, testRestoreRecords(t, tailEnvelopes)...)
+	records = append(records, testRestoreRecords(t, tailEnvelopes, []tool.ModelOutput{testReadOutput(t, "call-next", "next", "done")})...)
 	restoredValue, err := testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", records)
 	if err != nil {
 		t.Fatal(err)

@@ -17,9 +17,12 @@ reconciliation MUST保持原call index、capability、Provider call identity、w
 
 上述常规 ready/approval/started 矩阵 SHALL 在没有未收口 Hook 子状态时适用。有 Hook plan 时 MUST 先消费已验证的冻结计划，且不读取当前 hooks.json、不重新选择 matcher、不请求信任、不调用 Hook runner：plan 尚未开始或仅完成成功前缀时，追加 gate cancelled 与原工具 cancelled/session_interrupted_before_hook；Hook started 无 finished 时，以同 batch 追加 recovery finished(outcome_uncertain, exit unknown, cleanup_confirmed=false)、gate outcome_uncertain 与原工具 cancelled/hook_outcome_uncertain。系统 MUST NOT 将 Hook 不确定冒充目标工具已执行或宣称旧进程已清理。
 
-gate continue 后的未审批/allow 未 tool-started 状态 SHALL 沿用本条常规取消；gate 阻断和 result 已 durable 时直接复用 result；tool started 无 result 则仍按目标工具 outcome_uncertain 补偿。所有缺失 outputs 只由 frozen results 编码，结束旧 turn 后不自动采样。reconciliation 再次中断不得重复已 durable 的 Hook completion、gate、result、outputs 或 terminal。
+gate continue 后的未审批/allow 未 tool-started 状态 SHALL 沿用本条常规取消；gate 阻断和 result 已 durable 时直接复用 result；tool started 无 result 则仍按目标工具 outcome_uncertain 补偿。所有缺失 outputs 只由 frozen results 与已收口 Post 的冻结反馈编码，结束旧 turn 后不自动采样。reconciliation 再次中断不得重复已 durable 的 Hook completion、gate、result、outputs 或 terminal。
 
 旧 turn reconciliation SHALL 在当前 Hook 来源 Load/install 之前完成，并始终持有原连续 lease；当前配置只服务未来调用。已删除或损坏配置不得改变历史补偿或恢复 bytes；旧事实不建立当前 trust。完成补偿后新 turn 重新接受当前配置和信任检查。与同一 reconciled history 的不中断路径比较时，双 Provider canonical request、native item 顺序、opaque bytes、context footprint 与 cache fingerprints MUST 相同；旧门禁恢复的配置 loader、信任、进程、工具与 Provider 网络调用次数均为零。
+
+
+已规划 Post 的恢复 SHALL 区分真实结果与检查状态：原工具未 started/result 时按既有状态补偿并收口 skipped；tool started 无 result 时仍为原工具 outcome_uncertain，零 Post；成功 result 无 Post started 时保留成功并收口 Post interrupted；Post started 无 finished 时追加 recovery-origin uncertain finished 和对应 Post terminal，不声称旧进程 cleanup 已确认。已 durable 的前缀反馈保持不变，未开始项不执行。部分 finished 后下一项尚未 started 时只追加 cancelled/session_interrupted_before_post_hook terminal，processed/unstarted_from 等于已有 finished 数量，不能生成 uncertain finished；下一项确实 started 未 finished 时，才为该项追加 recovery-origin uncertain finished 并与 uncertain terminal 同批，剩余后缀不伪造执行。已收口 skipped 后缀完全复用其原因和已冻结 suffix_feedback，不重新判断输入或预算。恢复新建的 terminal 明确 origin=recovery、suffix_feedback 为空；只组合已经 durable 的前缀/后缀模型 bytes，不为未开始项补发提示。完整 Post terminal 而 native outputs 缺失时只用真实结果与冻结反馈编码；outputs 已存在时只关闭旧 turn。所有状态均不读当前配置/脚本/artifact，不重建信任，不查询旧 PID，不重跑工具/Hook、不自动采样。第二次恢复不得重复任何已保存事实。
 
 #### Scenario: Close a patch before approval
 - **WHEN** journal在Patch ready durable后、approval fact前结束
@@ -113,3 +116,31 @@ gate continue 后的未审批/allow 未 tool-started 状态 SHALL 沿用本条�
 #### Scenario: Retain lease while a competing process attempts repair
 - **WHEN** 持有者正在补偿 Hook，真实竞争进程请求同一 journal
 - **THEN** 竞争者 session_busy，不能读取后 repair 或追加；持有者续写 seq 单调，失败路径 bytes 不变
+
+#### Scenario: Recover after success but before the post check
+- **WHEN** result=success 已 durable，Post plan 存在而无 Post started
+- **THEN** 保留唯一 success，Post 记 interrupted 并补齐输出；原工具及 Hook 执行次数为零
+
+#### Scenario: Recover an uncertain post run
+- **WHEN** 成功 result 之后只有 Post started 而无 finished
+- **THEN** 只补偿 Post uncertain，保留工具 success 及已完成反馈前缀，关闭旧 turn
+
+#### Scenario: Recover frozen feedback without its source
+- **WHEN** 结果、Post finished/completed 和反馈已 durable 而 output 缺失，配置/脚本随后消失
+- **THEN** 离线生成相同配对 output、canonical bytes/原生顺序/fingerprint，不重算预算
+
+#### Scenario: Preserve lease and idempotency during repeated recovery
+- **WHEN** 真实竞争进程在 Post 补偿期间尝试打开/repair，且持有者补偿后再次崩溃
+- **THEN** 竞争者 session_busy、失败 bytes 不变；二次恢复不重复 result/finished/completed/output/terminal，seq 单调
+
+#### Scenario: Recover between post items without uncertainty
+- **WHEN** 第 0 项 finished 已保存，第 1 项从未 started 而进程退出
+- **THEN** 保留第 0 项及反馈，仅追加 cancelled/session_interrupted_before_post_hook terminal；第 1 项没有补偿 finished 或 cleanup 声明
+
+#### Scenario: Recover a started next item separately from its suffix
+- **WHEN** 第 0 项已 finished，第 1 项 started 未 finished，第 2 项尚未 started
+- **THEN** 只为第 1 项补 recovery-origin uncertain finished，和 uncertain terminal 同批；第 2 项仍是未启动后缀
+
+#### Scenario: Reuse a durable skipped suffix and closed budget
+- **WHEN** skipped terminal 及最终预算已保存而 native outputs 缺失
+- **THEN** 原因/前缀/反馈/释放余额不变，离线补输出不重复关闭调用或扣账

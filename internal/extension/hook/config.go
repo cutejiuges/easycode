@@ -1,4 +1,4 @@
-// Package hook 实现有界本地 PreToolUse 配置与严格输出解析。
+// Package hook 实现有界本地工具检查配置与严格输出解析。
 package hook
 
 import (
@@ -59,17 +59,19 @@ type configFile struct {
 	Hooks configEvents `json:"hooks"`
 }
 type configEvents struct {
-	PreToolUse []configGroup `json:"PreToolUse,omitempty"`
+	PreToolUse  []configGroup `json:"PreToolUse,omitempty"`
+	PostToolUse []configGroup `json:"PostToolUse,omitempty"`
 }
 type configGroup struct {
 	Matcher string          `json:"matcher"`
 	Hooks   []configCommand `json:"hooks"`
 }
 type configCommand struct {
-	ID      string `json:"id"`
-	Type    string `json:"type"`
-	Command string `json:"command"`
-	Timeout *int   `json:"timeout,omitempty"`
+	ID       string                     `json:"id"`
+	Type     string                     `json:"type"`
+	Command  string                     `json:"command"`
+	Timeout  *int                       `json:"timeout,omitempty"`
+	Feedback *domain.HookFeedbackPolicy `json:"feedback,omitempty"`
 }
 
 func (v *configEvents) UnmarshalJSON(b []byte) error {
@@ -82,8 +84,10 @@ func (v *configEvents) UnmarshalJSON(b []byte) error {
 	if err != nil {
 		return domain.HookConfigInvalid
 	}
-	if raw, ok := m["PreToolUse"]; ok && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		return domain.HookConfigInvalid
+	for _, event := range []string{"PreToolUse", "PostToolUse"} {
+		if raw, ok := m[event]; ok && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			return domain.HookConfigInvalid
+		}
 	}
 	*v = configEvents(f)
 	return nil
@@ -108,11 +112,13 @@ func (v *configCommand) UnmarshalJSON(b []byte) error {
 }
 
 type normalizedCommand struct {
-	ID      string `json:"id"`
-	Command string `json:"command"`
-	Timeout int    `json:"timeout"`
+	ID       string                    `json:"id"`
+	Command  string                    `json:"command"`
+	Timeout  int                       `json:"timeout"`
+	Feedback domain.HookFeedbackPolicy `json:"feedback"`
 }
 type normalizedGroup struct {
+	Event   domain.HookEvent    `json:"event"`
 	Matcher domain.HookMatcher  `json:"matcher"`
 	Hooks   []normalizedCommand `json:"hooks"`
 }
@@ -128,28 +134,40 @@ func decodeConfig(source domain.HookSource, b []byte) ([]domain.HookDeclaration,
 	normalized := make([]normalizedGroup, 0, len(f.Hooks.PreToolUse))
 	seen := make(map[string]bool)
 	count := 0
-	for _, g := range f.Hooks.PreToolUse {
-		matcher, err := domain.ParseHookMatcher(g.Matcher)
-		if err != nil {
-			return nil, domain.HookConfigInvalid
-		}
-		n := normalizedGroup{Matcher: matcher, Hooks: make([]normalizedCommand, 0, len(g.Hooks))}
-		for _, h := range g.Hooks {
-			count++
-			timeout := 5
-			if h.Timeout != nil {
-				timeout = *h.Timeout
-			}
-			if h.Type != "command" || seen[h.ID] || count > 32 {
+	for _, phase := range []struct {
+		event  domain.HookEvent
+		groups []configGroup
+	}{{domain.HookPreToolUse, f.Hooks.PreToolUse}, {domain.HookPostToolUse, f.Hooks.PostToolUse}} {
+		for _, g := range phase.groups {
+			matcher, err := domain.ParseHookMatcher(g.Matcher)
+			if err != nil {
 				return nil, domain.HookConfigInvalid
 			}
-			seen[h.ID] = true
-			if _, err := domain.NewHookDeclaration(source, domain.HookDigest(nil), h.ID, matcher, h.Command, timeout); err != nil {
-				return nil, err
+			n := normalizedGroup{Event: phase.event, Matcher: matcher, Hooks: make([]normalizedCommand, 0, len(g.Hooks))}
+			for _, h := range g.Hooks {
+				count++
+				timeout := 5
+				if h.Timeout != nil {
+					timeout = *h.Timeout
+				}
+				feedback := domain.HookFeedbackNone
+				if h.Feedback != nil {
+					if phase.event != domain.HookPostToolUse {
+						return nil, domain.HookConfigInvalid
+					}
+					feedback = *h.Feedback
+				}
+				if h.Type != "command" || seen[h.ID] || count > 32 {
+					return nil, domain.HookConfigInvalid
+				}
+				seen[h.ID] = true
+				if _, err := domain.NewHookDeclaration(source, phase.event, feedback, domain.HookDigest(nil), h.ID, matcher, h.Command, timeout); err != nil {
+					return nil, err
+				}
+				n.Hooks = append(n.Hooks, normalizedCommand{h.ID, h.Command, timeout, feedback})
 			}
-			n.Hooks = append(n.Hooks, normalizedCommand{h.ID, h.Command, timeout})
+			normalized = append(normalized, n)
 		}
-		normalized = append(normalized, n)
 	}
 	canonical, err := codec.MarshalStable(normalized)
 	if err != nil {
@@ -159,7 +177,7 @@ func decodeConfig(source domain.HookSource, b []byte) ([]domain.HookDeclaration,
 	out := make([]domain.HookDeclaration, 0, count)
 	for _, g := range normalized {
 		for _, h := range g.Hooks {
-			d, err := domain.NewHookDeclaration(source, revision, h.ID, g.Matcher, h.Command, h.Timeout)
+			d, err := domain.NewHookDeclaration(source, g.Event, h.Feedback, revision, h.ID, g.Matcher, h.Command, h.Timeout)
 			if err != nil {
 				return nil, err
 			}

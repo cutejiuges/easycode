@@ -9,13 +9,14 @@ import (
 	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
+	"easycode/internal/session"
 	"easycode/internal/tool"
 )
 
 // HookRunner 只接收已经 durable started 的检查，不接触 Provider wire。
 type HookRunner interface {
 	Preflight(context.Context) domain.HookCode
-	Run(context.Context, domain.HookRunIdentity, domain.HookDeclaration, domain.HookInput, time.Duration) domain.HookRunResult
+	Run(context.Context, domain.HookRunIdentity, domain.HookDeclaration, domain.HookInput, time.Duration) domain.HookExecution
 }
 type hookTrustWait struct {
 	request   protocol.HookTrustRequestedPayload
@@ -36,6 +37,8 @@ type hookState struct {
 	planned      map[tool.InvocationID]domain.HookPlan
 	completed    map[tool.InvocationID]tool.InvocationResult
 	now          func() time.Time
+	post         map[tool.InvocationID]*postHookCall
+	remaining    map[tool.InvocationID]time.Duration
 }
 
 // InstallHooks 在离线恢复之后、宿主 Start 之前安装未来调用的冻结来源。
@@ -56,6 +59,8 @@ func (r *Runtime) InstallHooks(snapshot domain.HookSnapshot, runner HookRunner, 
 	r.hooks.trust = make(map[string]protocol.HookTrustDecision)
 	r.hooks.planned = make(map[tool.InvocationID]domain.HookPlan)
 	r.hooks.completed = make(map[tool.InvocationID]tool.InvocationResult)
+	r.hooks.post = make(map[tool.InvocationID]*postHookCall)
+	r.hooks.remaining = make(map[tool.InvocationID]time.Duration)
 	r.hooks.now = time.Now
 	return nil
 }
@@ -90,12 +95,31 @@ func (r *Runtime) resetHookTurn() {
 	r.hooks.mu.Lock()
 	r.hooks.planned = make(map[tool.InvocationID]domain.HookPlan)
 	r.hooks.completed = make(map[tool.InvocationID]tool.InvocationResult)
+	r.hooks.post = make(map[tool.InvocationID]*postHookCall)
+	r.hooks.remaining = make(map[tool.InvocationID]time.Duration)
 	r.hooks.mu.Unlock()
 }
-func (r *Runtime) rememberHookResult(result tool.InvocationResult) {
+func (r *Runtime) rememberHookResult(turn domain.TurnID, result tool.InvocationResult) {
 	r.hooks.mu.Lock()
-	if _, ok := r.hooks.planned[result.InvocationID()]; ok {
-		r.hooks.completed[result.InvocationID()] = result
-	}
+	_, pre := r.hooks.planned[result.InvocationID()]
+	state := r.hooks.post[result.InvocationID()]
 	r.hooks.mu.Unlock()
+	if !pre && state == nil {
+		return
+	}
+	fingerprint := ""
+	if state != nil {
+		draft, err := session.NewToolCallResultDraft(turn, result)
+		if err != nil {
+			r.poisoned.Store(true)
+			return
+		}
+		fingerprint = domain.HookDigest(draft.PayloadBytes())
+	}
+	r.hooks.mu.Lock()
+	defer r.hooks.mu.Unlock()
+	r.hooks.completed[result.InvocationID()] = result
+	if state != nil {
+		state.resultFingerprint = fingerprint
+	}
 }

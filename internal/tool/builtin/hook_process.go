@@ -10,7 +10,7 @@ import (
 )
 
 // HookOutputParser 是纯内存输出策略；受控字节不传播到执行结果。
-type HookOutputParser func(int, []byte) (domain.HookOutcome, domain.HookCode)
+type HookOutputParser func(domain.HookEvent, domain.HookFeedbackPolicy, int, []byte) domain.HookParsedOutput
 type hookProcessLauncher interface {
 	startHook(context.Context, domain.HookDeclaration) (process.Handle, error)
 	preflight(context.Context) domain.HookCode
@@ -57,35 +57,43 @@ func (b *hookOutputBuffer) Write(p []byte) (int, error) {
 }
 
 // Run 在已 durable 的 Hook started 后接收一次检查；返回前完成全部 owned 清理。
-func (r *HookRunner) Run(ctx context.Context, id domain.HookRunIdentity, d domain.HookDeclaration, input domain.HookInput, timeout time.Duration) domain.HookRunResult {
+func (r *HookRunner) Run(ctx context.Context, id domain.HookRunIdentity, d domain.HookDeclaration, input domain.HookInput, timeout time.Duration) domain.HookExecution {
 	result := domain.HookRunResult{Identity: id, Status: domain.HookError, Code: domain.HookStartFailed, CleanupConfirmed: true, Origin: "execution"}
-	if id.Validate() != nil || d.Validate() != nil || input.Validate() != nil || timeout <= 0 || timeout > time.Duration(d.Reference.TimeoutSeconds)*time.Second {
-		return result
+	if id.Validate() != nil || d.Validate() != nil || input.Validate() != nil || input.Event != id.Event || d.Reference.Event != id.Event || timeout <= 0 || timeout > time.Duration(d.Reference.TimeoutSeconds)*time.Second {
+		return domain.HookExecution{Result: result}
 	}
 	if ctx == nil || ctx.Err() != nil {
 		result.Status = domain.HookCancel
 		result.Code = domain.HookCancelled
 		result.Cancelled = true
-		return result
+		return domain.HookExecution{Result: result}
 	}
 	b, err := input.Bytes()
 	if err != nil {
 		result.Code = domain.HookInputLimit
-		return result
+		return domain.HookExecution{Result: result}
 	}
 	out, stderr := &hookOutputBuffer{}, &hookOutputBuffer{}
 	owner, err := process.New(process.Config{Launcher: hookProcessStart{r.launcher, d}, Clock: r.clock, Input: b, Stdout: out, Stderr: stderr, Timeout: timeout})
 	if err != nil {
-		return result
+		return domain.HookExecution{Result: result}
 	}
 	owned := owner.Run(ctx)
+	owned.Cancelled = owned.Cancelled || ctx.Err() != nil
+	return classifyHookExecution(id, d.Reference.Feedback, owned, out.data, out.observed, stderr.observed, r.parse)
+}
+
+// classifyHookExecution 固定故障优先级，只有可确认的正常退出才解析 stdout。
+func classifyHookExecution(id domain.HookRunIdentity, policy domain.HookFeedbackPolicy, owned process.Result, stdout []byte, stdoutBytes, stderrBytes int64, parse HookOutputParser) domain.HookExecution {
+	result := domain.HookRunResult{Identity: id, Status: domain.HookError, Code: domain.HookStartFailed, CleanupConfirmed: true, Origin: "execution"}
+	var feedback domain.HookFeedbackCandidate
 	result.ExitKnown = owned.ExitKnown
 	if owned.ExitKnown {
 		result.ExitCode = owned.ExitCode
 	}
-	result.Cancelled = owned.Cancelled || ctx.Err() != nil
+	result.Cancelled = owned.Cancelled
 	result.TimedOut = owned.TimedOut
-	result.StdoutBytes, result.StderrBytes = out.observed, stderr.observed
+	result.StdoutBytes, result.StderrBytes = stdoutBytes, stderrBytes
 	switch {
 	case owned.Uncertain || owned.AlreadyAccepted:
 		result.Status, result.Code, result.CleanupConfirmed = domain.HookUncertain, domain.HookOutcomeUncertain, false
@@ -93,7 +101,7 @@ func (r *HookRunner) Run(ctx context.Context, id domain.HookRunIdentity, d domai
 		result.Status, result.Code = domain.HookCancel, domain.HookCancelled
 	case owned.TimedOut:
 		result.Code = domain.HookTimedOut
-	case out.observed > domain.MaxHookOutputBytes || stderr.observed > domain.MaxHookOutputBytes:
+	case stdoutBytes > domain.MaxHookOutputBytes || stderrBytes > domain.MaxHookOutputBytes:
 		result.Code = domain.HookOutputLimit
 	case owned.StdinError != nil || owned.StdoutError != nil || owned.StderrError != nil:
 		result.Code = domain.HookIOFailed
@@ -104,10 +112,13 @@ func (r *HookRunner) Run(ctx context.Context, id domain.HookRunIdentity, d domai
 	case owned.StartError != nil:
 		result.Code = domain.HookStartFailed
 	default:
-		result.Status, result.Code = r.parse(owned.ExitCode, out.data)
+		parsed := parse(id.Event, policy, owned.ExitCode, stdout)
+		result.Status, result.Code = parsed.Status, parsed.Code
+		feedback = parsed.Feedback
 	}
-	if result.Validate() != nil {
-		return domain.HookRunResult{Identity: id, Status: domain.HookUncertain, Code: domain.HookOutcomeUncertain, Origin: "execution"}
+	execution, validationErr := domain.NewHookExecution(result, policy, feedback)
+	if validationErr != nil {
+		return domain.HookExecution{Result: domain.HookRunResult{Identity: id, Status: domain.HookUncertain, Code: domain.HookOutcomeUncertain, Origin: "execution"}}
 	}
-	return result
+	return execution
 }

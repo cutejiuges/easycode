@@ -73,7 +73,7 @@ func TestWriteOutputPairsOnlyMatchingStructuredCall(t *testing.T) {
 	v, _ := tool.NewWriteInvocation(id, ready)
 	result := tool.NewWriteErrorResult(v, tool.ResultDenied, "approval_required", "Write denied: approval_required")
 	history := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, NewUserItem("write")), {Kind: nativeHistorySample, Outputs: []NativeItem{{Type: "function_call", ID: "item-write", CallID: "call-write", Name: "Write", Arguments: `{"file_path":"a","content":"secret-body"}`}}}})
-	entry, err := prepareToolOutputsEntry(history, []tool.InvocationResult{result})
+	entry, err := prepareToolOutputsEntry(history, testModelOutputs(t, result))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestWriteOutputPairsOnlyMatchingStructuredCall(t *testing.T) {
 		changed := history[1]
 		changed.Outputs = append([]NativeItem(nil), history[1].Outputs...)
 		mutation(&changed.Outputs[0])
-		if _, err := prepareToolOutputsEntry([]nativeHistoryEntry{changed}, []tool.InvocationResult{result}); err == nil {
+		if _, err := prepareToolOutputsEntry([]nativeHistoryEntry{changed}, testModelOutputs(t, result)); err == nil {
 			t.Fatal("接受错配 output")
 		}
 	}

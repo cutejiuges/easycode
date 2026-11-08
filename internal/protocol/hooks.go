@@ -126,11 +126,20 @@ func DecodeHookTrustResolved(e Event) (HookTrustResponse, error) {
 	return p, p.Validate()
 }
 
+// HookActivityState 将瞬态检查投影与持久化执行 outcome 分开。
+type HookActivityState string
+
+const (
+	HookActivityChecking  HookActivityState = "checking"
+	HookActivityCompleted HookActivityState = "completed"
+	HookActivitySkipped   HookActivityState = "skipped"
+)
+
 // HookActivityPayload 是由 durable 检查边界产生的安全投影，不能冒充工具 started。
 type HookActivityPayload struct {
 	InvocationID string               `json:"invocation_id"`
 	Reference    domain.HookReference `json:"reference"`
-	State        string               `json:"state"`
+	State        HookActivityState    `json:"state"`
 	Code         domain.HookCode      `json:"code"`
 	StdoutBytes  int64                `json:"stdout_bytes"`
 	StderrBytes  int64                `json:"stderr_bytes"`
@@ -145,6 +154,24 @@ func (p HookActivityPayload) Validate() error {
 			return fmt.Errorf("invalid hook start activity")
 		}
 		return nil
+	}
+	if p.Reference.Event == domain.HookPostToolUse {
+		switch p.State {
+		case HookActivityCompleted:
+			if p.Code == domain.HookOK || domain.HookError.ValidCode(p.Code) {
+				return nil
+			}
+			return fmt.Errorf("invalid post hook completion activity")
+		case HookActivitySkipped:
+			switch p.Code {
+			case domain.HookToolNotSuccessful, domain.HookTrustDenied, domain.HookTrustRequired, domain.HookInputLimit, domain.HookExecutionBudgetExhausted:
+				return nil
+			}
+			return fmt.Errorf("invalid post hook skipped activity")
+		}
+		if p.State == HookActivityState(domain.HookCancel) && p.Code == domain.HookPostInterrupted {
+			return nil
+		}
 	}
 	if !domain.HookOutcome(p.State).ValidCode(p.Code) {
 		return fmt.Errorf("invalid hook activity outcome")

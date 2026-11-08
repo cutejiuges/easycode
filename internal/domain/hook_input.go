@@ -142,22 +142,26 @@ func DecodeHookToolInput(cap HookCapability, b []byte) (HookToolInput, error) {
 
 // HookInput 是只发送给已信任本地检查的临时 stdin，不进入 Session。
 type HookInput struct {
-	Event     string        `json:"hook_event_name"`
-	SessionID SessionID     `json:"session_id"`
-	ThreadID  ThreadID      `json:"thread_id"`
-	TurnID    TurnID        `json:"turn_id"`
-	ToolUseID string        `json:"tool_use_id"`
-	ToolName  string        `json:"tool_name"`
-	CWD       string        `json:"cwd"`
-	Input     HookToolInput `json:"tool_input"`
+	Event     HookEvent         `json:"hook_event_name"`
+	SessionID SessionID         `json:"session_id"`
+	ThreadID  ThreadID          `json:"thread_id"`
+	TurnID    TurnID            `json:"turn_id"`
+	ToolUseID string            `json:"tool_use_id"`
+	ToolName  string            `json:"tool_name"`
+	CWD       string            `json:"cwd"`
+	Input     HookToolInput     `json:"tool_input"`
+	Response  *HookToolResponse `json:"tool_response,omitempty"`
 }
 
 func NewHookInput(session SessionID, thread ThreadID, turn TurnID, call, name, cwd string, input HookToolInput) (HookInput, error) {
-	v := HookInput{"PreToolUse", session, thread, turn, call, name, cwd, input.Clone()}
+	v := HookInput{Event: HookPreToolUse, SessionID: session, ThreadID: thread, TurnID: turn, ToolUseID: call, ToolName: name, CWD: cwd, Input: input.Clone()}
 	return v, v.Validate()
 }
 func (v HookInput) Validate() error {
-	if v.Event != "PreToolUse" || !v.SessionID.Valid() || !v.ThreadID.Valid() || !v.TurnID.Valid() || v.ToolUseID == "" || len(v.ToolUseID) > 256 || !utf8.ValidString(v.ToolUseID) || !filepath.IsAbs(v.CWD) || !utf8.ValidString(v.CWD) || strings.ContainsRune(v.CWD, 0) {
+	if !v.Event.Valid() || !v.SessionID.Valid() || !v.ThreadID.Valid() || !v.TurnID.Valid() || v.ToolUseID == "" || len(v.ToolUseID) > 256 || !utf8.ValidString(v.ToolUseID) || !filepath.IsAbs(v.CWD) || !utf8.ValidString(v.CWD) || strings.ContainsRune(v.CWD, 0) {
+		return HookConfigInvalid
+	}
+	if v.Event == HookPreToolUse && v.Response != nil || v.Event == HookPostToolUse && (v.Response == nil || v.Response.Validate() != nil || v.Response.Capability() != v.Input.Capability()) {
 		return HookConfigInvalid
 	}
 	valid := v.Input.capability == HookPatch && (v.ToolName == "Edit" || v.ToolName == "apply_patch") || v.Input.capability == HookWrite && v.ToolName == "Write" || v.Input.capability == HookExec && (v.ToolName == "Bash" || v.ToolName == "exec_command")
@@ -178,4 +182,10 @@ func (v HookInput) Bytes() ([]byte, error) {
 		return nil, err
 	}
 	return codec.MarshalStable(v)
+}
+
+// NewPostHookInput 将真实成功结果投影与调用输入绑定，仅用于受信任的 stdin。
+func NewPostHookInput(session SessionID, thread ThreadID, turn TurnID, call, name, cwd string, input HookToolInput, response HookToolResponse) (HookInput, error) {
+	v := HookInput{Event: HookPostToolUse, SessionID: session, ThreadID: thread, TurnID: turn, ToolUseID: call, ToolName: name, CWD: cwd, Input: input.Clone(), Response: &response}
+	return v, v.Validate()
 }

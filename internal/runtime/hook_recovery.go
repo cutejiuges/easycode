@@ -20,7 +20,11 @@ func (r *Runtime) reconcileHookGate(ctx context.Context, turn domain.TurnID, cal
 		completed++
 		blocking = g.Started.Ordinal
 		result := domain.HookRunResult{Identity: *g.Started, Status: status, Code: code, Origin: "recovery"}
-		draft, err := session.NewHookExecutionFinishedDraft(turn, result)
+		frozen, err := domain.NewEmptyHookFinished(result, g.Plan.Hooks[result.Identity.Ordinal])
+		if err != nil {
+			return tool.InvocationResult{}, err
+		}
+		draft, err := session.NewHookExecutionFinishedDraft(turn, frozen)
 		if err != nil {
 			return tool.InvocationResult{}, err
 		}

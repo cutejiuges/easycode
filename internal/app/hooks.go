@@ -26,12 +26,12 @@ func (b hookArtifactBoundary) Preflight(ctx context.Context) domain.HookCode {
 	}
 	return b.runner.Preflight(ctx)
 }
-func (b hookArtifactBoundary) Run(ctx context.Context, id domain.HookRunIdentity, d domain.HookDeclaration, input domain.HookInput, timeout time.Duration) domain.HookRunResult {
+func (b hookArtifactBoundary) Run(ctx context.Context, id domain.HookRunIdentity, d domain.HookDeclaration, input domain.HookInput, timeout time.Duration) domain.HookExecution {
 	if b.layout.Check(ctx) != nil {
 		if ctx.Err() != nil {
-			return domain.HookRunResult{Identity: id, Status: domain.HookCancel, Code: domain.HookCancelled, Cancelled: true, CleanupConfirmed: true, Origin: "execution"}
+			return domain.HookExecution{Result: domain.HookRunResult{Identity: id, Status: domain.HookCancel, Code: domain.HookCancelled, Cancelled: true, CleanupConfirmed: true, Origin: "execution"}}
 		}
-		return domain.HookRunResult{Identity: id, Status: domain.HookError, Code: domain.HookSandboxUnavailable, CleanupConfirmed: true, Origin: "execution"}
+		return domain.HookExecution{Result: domain.HookRunResult{Identity: id, Status: domain.HookError, Code: domain.HookSandboxUnavailable, CleanupConfirmed: true, Origin: "execution"}}
 	}
 	return b.runner.Run(ctx, id, d, input, timeout)
 }
@@ -46,9 +46,9 @@ func installChatHooks(ctx context.Context, r *chatRuntime.Runtime, workspace *bu
 	}
 	var runner chatRuntime.HookRunner
 	if hooks.newHookRunner != nil {
-		runner, err = hooks.newHookRunner(workspace, builtin.OpenCommandEnvironment(), hook.ParseOutput)
+		runner, err = hooks.newHookRunner(workspace, builtin.OpenCommandEnvironment(), hook.ParseExecution)
 	} else {
-		runner, err = builtin.NewHookRunner(workspace, builtin.OpenCommandEnvironment(), hook.ParseOutput)
+		runner, err = builtin.NewHookRunner(workspace, builtin.OpenCommandEnvironment(), hook.ParseExecution)
 	}
 	if err != nil {
 		return err

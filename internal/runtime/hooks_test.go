@@ -31,11 +31,11 @@ func (f *fakeHookRunner) Preflight(context.Context) domain.HookCode {
 	}
 	return domain.HookOK
 }
-func (f *fakeHookRunner) Run(ctx context.Context, id domain.HookRunIdentity, _ domain.HookDeclaration, _ domain.HookInput, timeout time.Duration) domain.HookRunResult {
+func (f *fakeHookRunner) Run(ctx context.Context, id domain.HookRunIdentity, _ domain.HookDeclaration, _ domain.HookInput, timeout time.Duration) domain.HookExecution {
 	f.runs++
 	f.timeouts = append(f.timeouts, timeout)
 	if f.onRun != nil {
-		return f.onRun(ctx, id)
+		return domain.HookExecution{Result: f.onRun(ctx, id)}
 	}
 	status, code := f.status, f.code
 	if status == "" {
@@ -45,7 +45,7 @@ func (f *fakeHookRunner) Run(ctx context.Context, id domain.HookRunIdentity, _ d
 	if status == domain.HookBlock {
 		r.ExitCode = 2
 	}
-	return r
+	return domain.HookExecution{Result: r}
 }
 func hookRuntimeFixture(t *testing.T, journal Journal, count int) (*Runtime, tool.Invocation, *fakeHookRunner, []domain.HookDeclaration) {
 	t.Helper()
@@ -54,7 +54,7 @@ func hookRuntimeFixture(t *testing.T, journal Journal, count int) (*Runtime, too
 	inv, _ := runtimePatchInvocation(t)
 	var declarations []domain.HookDeclaration
 	for i := range count {
-		d, err := domain.NewHookDeclaration(domain.HookSourceProject, strings.Repeat("a", 64), "check-"+string(rune('a'+i)), 7, "cat >/dev/null; printf '{}'", 5)
+		d, err := domain.NewHookDeclaration(domain.HookSourceProject, domain.HookPreToolUse, domain.HookFeedbackNone, strings.Repeat("a", 64), "check-"+string(rune('a'+i)), 7, "cat >/dev/null; printf '{}'", 5)
 		if err != nil {
 			t.Fatal(err)
 		}

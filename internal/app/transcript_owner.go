@@ -36,6 +36,10 @@ func newTranscriptQueries(thread domain.ThreadID, reader tool.ArtifactRangeReade
 	q.entries = append([]session.ToolHistoryEntry(nil), entries...)
 	for i := range q.entries {
 		q.entries[i].Hooks = append([]session.HookHistoryEntry(nil), q.entries[i].Hooks...)
+		if q.entries[i].PostHooks != nil {
+			g := q.entries[i].PostHooks.Clone()
+			q.entries[i].PostHooks = &g
+		}
 	}
 	for i, e := range q.entries {
 		q.indices[e.Invocation.InvocationID()] = i
@@ -187,9 +191,48 @@ func (q *transcriptQueries) HookFinished(ref domain.HookReference, result domain
 		return
 	}
 	hooks := q.entries[index].Hooks
-	if result.Identity.Ordinal != len(hooks) {
+	ordinal := 0
+	for _, h := range hooks {
+		if h.Result.Identity.Event == result.Identity.Event && h.Result.Identity.PlanDigest == result.Identity.PlanDigest {
+			ordinal++
+		}
+	}
+	if result.Identity.Ordinal != ordinal {
 		q.invalid = true
 		return
 	}
 	q.entries[index].Hooks = append(append([]session.HookHistoryEntry(nil), hooks...), session.HookHistoryEntry{Reference: ref, Result: result})
+}
+
+// PostHooksCommitted 安装已确定持久化的同一调用快照，并保留原工具锚点。
+func (q *transcriptQueries) PostHooksCommitted(invocation tool.InvocationID, sequence uint64, snapshot session.ReplayedPostHooks) error {
+	if sequence == 0 || snapshot.Plan.Validate() != nil || snapshot.Plan.Plan.InvocationID != string(invocation) || len(snapshot.Finished) > len(snapshot.Plan.Plan.Hooks) {
+		return errors.New("invalid post hook history snapshot")
+	}
+	cloned := snapshot.Clone()
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	index, ok := q.indices[invocation]
+	if !ok || sequence <= q.entries[index].DetailSequence {
+		q.invalid = true
+		return errors.New("post hook history order mismatch")
+	}
+	entry := &q.entries[index]
+	if entry.PostHooks != nil && entry.PostHooks.Plan.Digest != snapshot.Plan.Digest {
+		q.invalid = true
+		return errors.New("post hook history plan mismatch")
+	}
+	entry.PostHooks = &cloned
+	entry.DetailSequence = sequence
+	hooks := make([]session.HookHistoryEntry, 0, len(entry.Hooks)+len(snapshot.Finished))
+	for _, h := range entry.Hooks {
+		if h.Result.Identity.Event == domain.HookPreToolUse {
+			hooks = append(hooks, h)
+		}
+	}
+	for _, f := range snapshot.Finished {
+		hooks = append(hooks, session.HookHistoryEntry{Reference: f.Feedback.Reference, Result: f.Result, Feedback: f.Feedback})
+	}
+	entry.Hooks = hooks
+	return nil
 }

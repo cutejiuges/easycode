@@ -192,9 +192,12 @@ type fakeToolConversation struct {
 	onFinalize   func()
 }
 
-func (conversation *fakeToolConversation) PrepareToolOutputs(results []tool.InvocationResult) (*provider.PreparedToolOutputs, error) {
+func (conversation *fakeToolConversation) PrepareToolOutputs(results []tool.ModelOutput) (*provider.PreparedToolOutputs, error) {
 	conversation.prepareCalls.Add(1)
-	conversation.results = append([]tool.InvocationResult(nil), results...)
+	conversation.results = make([]tool.InvocationResult, len(results))
+	for i, v := range results {
+		conversation.results[i] = v.Result()
+	}
 	envelope, err := provider.NewNativeCommitEnvelope(
 		domain.ProviderOpenAI, "responses", json.RawMessage(`{"shape":"tool_outputs"}`),
 	)
@@ -268,7 +271,17 @@ func (journal *fakeJournal) AppendBatch(_ context.Context, drafts []session.Reco
 	if hook != nil {
 		hook(cloned)
 	}
-	return make([]session.Record, len(drafts)), nil
+	records := make([]session.Record, len(drafts))
+	sequence := 0
+	journal.mu.Lock()
+	for _, batch := range journal.batches {
+		sequence += len(batch)
+	}
+	journal.mu.Unlock()
+	for i, d := range drafts {
+		records[i] = session.Record{Sequence: uint64(sequence - len(drafts) + i + 1), TurnID: d.TurnID(), EventKind: d.EventKind(), Payload: d.PayloadBytes()}
+	}
+	return records, nil
 }
 
 func (journal *fakeJournal) Poisoned() bool {
@@ -2181,7 +2194,8 @@ func (catalogWriteExecutor) Execute(context.Context, tool.WriteCandidate) tool.I
 // fakeToolOutputPreflight 为内存测试执行与生产相同的身份校验。
 type fakeToolOutputPreflight struct{ invocation tool.Invocation }
 
-func (p fakeToolOutputPreflight) Validate(r tool.InvocationResult) error {
+func (p fakeToolOutputPreflight) Validate(output tool.ModelOutput) error {
+	r := output.Result()
 	if r.Validate() != nil || r.InvocationID() != p.invocation.InvocationID() || r.ProviderCallID() != p.invocation.ProviderCallID() || r.Capability() != p.invocation.Capability() {
 		return fmt.Errorf("invalid fake output")
 	}

@@ -1,6 +1,7 @@
 package anthropic
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 
@@ -110,6 +111,21 @@ func restoreNativeHistory(ctx context.Context, model string, commits []provider.
 			questionResults = commit.QuestionResults()
 		}
 		if entry.Kind == nativeHistoryToolOutputs {
+			expected, err := prepareToolOutputsEntry(entries, commit.ToolOutputs())
+			if err != nil {
+				return err
+			}
+			expectedEnvelope, err := encodeNativeCommit(expected)
+			if err != nil {
+				return err
+			}
+			actualEnvelope, err := encodeNativeCommit(entry)
+			if err != nil {
+				return err
+			}
+			if !bytes.Equal(expectedEnvelope.Payload(), actualEnvelope.Payload()) {
+				return fmt.Errorf("native tool output differs from committed evidence")
+			}
 			if len(entries) == 0 {
 				return fmt.Errorf("tool outputs have no sample")
 			}

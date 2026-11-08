@@ -242,7 +242,7 @@ func nativeRestoreRecords(records []session.NativeCommitRecord) ([]provider.Rest
 		case domain.NativeCommitSample:
 			restored, buildErr = provider.NewSampleRestoreRecord(record.TurnID, commit)
 		case domain.NativeCommitToolOutputs:
-			restored, buildErr = provider.NewToolOutputRestoreRecord(record.TurnID, commit)
+			restored, buildErr = provider.NewToolOutputRestoreRecord(record.TurnID, commit, record.ToolOutputs)
 		default:
 			return nil, fault.New(fault.CodeSessionCorruption, "unknown native commit role")
 		}

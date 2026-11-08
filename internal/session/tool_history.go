@@ -16,6 +16,8 @@ type ToolHistoryEntry struct {
 	Result         tool.InvocationResult
 	HasResult      bool
 	Hooks          []HookHistoryEntry
+	PostHooks      *ReplayedPostHooks
+	DetailSequence uint64
 }
 
 func projectToolHistory(records []Record) ([]ToolHistoryEntry, error) {
@@ -46,18 +48,68 @@ func projectToolHistory(records []Record) ([]ToolHistoryEntry, error) {
 			if err != nil {
 				return nil, err
 			}
-			plans[p.InvocationID] = p
-		case EventHookExecutionFinished:
-			r, err := DecodeHookExecutionFinished(record)
+			plans[string(p.Event)+":"+p.InvocationID+":"+p.Digest] = p
+		case EventToolPostHookPlanned:
+			p, err := DecodeToolPostHookPlanned(record)
 			if err != nil {
 				return nil, err
 			}
-			p, ok := plans[r.Identity.InvocationID]
+			index, ok := indices[tool.InvocationID(p.Plan.InvocationID)]
+			if !ok {
+				return nil, replayCorrupt("post hook has no ready projection")
+			}
+			entries[index].PostHooks = &ReplayedPostHooks{Plan: p, PlanSequence: record.Sequence}
+			entries[index].DetailSequence = record.Sequence
+			plans[string(p.Plan.Event)+":"+p.Plan.InvocationID+":"+p.Digest] = p.Plan
+		case EventHookExecutionStarted:
+			id, err := DecodeHookExecutionStarted(record)
+			if err != nil {
+				return nil, err
+			}
+			if id.Event == domain.HookPostToolUse {
+				index, ok := indices[tool.InvocationID(id.InvocationID)]
+				if !ok || entries[index].PostHooks == nil {
+					return nil, replayCorrupt("post hook has no plan projection")
+				}
+				g := entries[index].PostHooks
+				g.Started = &id
+				g.StartedSequence = record.Sequence
+				entries[index].DetailSequence = record.Sequence
+			}
+		case EventToolPostHookCompleted:
+			terminal, err := DecodeToolPostHookCompleted(record)
+			if err != nil {
+				return nil, err
+			}
+			index, ok := indices[tool.InvocationID(terminal.InvocationID)]
+			if !ok || entries[index].PostHooks == nil {
+				return nil, replayCorrupt("post hook has no plan projection")
+			}
+			entries[index].PostHooks.Terminal = &terminal
+			entries[index].PostHooks.TerminalSequence = record.Sequence
+			entries[index].DetailSequence = record.Sequence
+		case EventHookExecutionFinished:
+			finished, err := DecodeHookExecutionFinished(record)
+			r := finished.Result
+			if err != nil {
+				return nil, err
+			}
+			p, ok := plans[string(r.Identity.Event)+":"+r.Identity.InvocationID+":"+r.Identity.PlanDigest]
 			index, found := indices[tool.InvocationID(r.Identity.InvocationID)]
 			if !ok || !found || r.Identity.Ordinal >= len(p.Hooks) {
 				return nil, replayCorrupt("hook result has no plan projection")
 			}
-			entries[index].Hooks = append(entries[index].Hooks, HookHistoryEntry{Reference: p.Hooks[r.Identity.Ordinal], Result: r})
+			entries[index].Hooks = append(entries[index].Hooks, HookHistoryEntry{Reference: p.Hooks[r.Identity.Ordinal], Result: r, Feedback: finished.Feedback})
+			if r.Identity.Event == domain.HookPostToolUse {
+				g := entries[index].PostHooks
+				if g == nil {
+					return nil, replayCorrupt("post hook has no plan projection")
+				}
+				g.Finished = append(g.Finished, finished)
+				g.Started = nil
+				g.StartedSequence = 0
+				entries[index].DetailSequence = record.Sequence
+			}
 		case EventToolCallResult:
 			p, err := DecodeToolCallResultPayload(record)
 			if err != nil {
@@ -94,4 +146,5 @@ func ToolArtifactReferences(entries []ToolHistoryEntry) []tool.ArtifactDescripto
 type HookHistoryEntry struct {
 	Reference domain.HookReference
 	Result    domain.HookRunResult
+	Feedback  domain.FrozenHookFeedback
 }
