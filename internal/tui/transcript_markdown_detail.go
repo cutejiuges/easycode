@@ -17,7 +17,7 @@ type transcriptMarkdownDetail struct {
 
 func (model *Model) prepareMarkdownDetail() {
 	b := &model.browser
-	if !model.detailOpen || !b.detail || b.page == nil || b.selected >= len(b.items) || b.items[b.selected].Kind != domain.TranscriptAssistant || b.stream != "" {
+	if !model.detailOpen || !b.detail || b.page == nil || b.selected >= len(b.items) || (b.items[b.selected].Kind != domain.TranscriptAssistant && b.items[b.selected].Kind != domain.TranscriptReasoning) || b.stream != "" {
 		b.markdown.rows = nil
 		return
 	}
@@ -60,7 +60,7 @@ func (model *Model) prepareMarkdownDetail() {
 			}
 		} else {
 			b.markdown.first = 0
-			key := markdownViewKey{cursor: b.items[b.selected].Cursor}
+			key := markdownViewKey{cursor: b.items[b.selected].Cursor, reasoning: b.items[b.selected].temporary}
 			lines := model.markdown.prepare(key, page.Text, max(1, model.widthOrDefault()-4), true)
 			b.markdown.rows = make([]markdownRow, len(lines))
 			for i, line := range lines {

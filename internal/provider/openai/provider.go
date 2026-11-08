@@ -254,6 +254,12 @@ func (conversation *Conversation) consumeStream(
 				sendTerminal(provider.StreamEventFailed, nil, err)
 				return
 			}
+			if err := provider.PublishReasoning(ctx, output, result.reasoning); err != nil {
+				stopTransport()
+				kind, terminalErr := mapTransportTerminal(ctx, err)
+				sendTerminal(kind, nil, terminalErr)
+				return
+			}
 			if result.semantic != nil {
 				event, eventErr := provider.NewSemanticStreamEvent(*result.semantic)
 				if eventErr != nil {
@@ -302,8 +308,13 @@ func (conversation *Conversation) consumeStream(
 					sendTerminal(provider.StreamEventFailed, nil, baselineErr)
 					return
 				}
+				presentation, presentationErr := reducer.presentation()
+				if presentationErr != nil {
+					sendTerminal(provider.StreamEventFailed, nil, presentationErr)
+					return
+				}
 				conversation.pending.Store(true)
-				prepared, prepareErr := provider.NewPreparedSample(envelope, usage, receipt, func() {
+				prepared, prepareErr := provider.NewPreparedSample(envelope, usage, receipt, presentation, func() {
 					conversation.baseline = baseline
 					if selection.transport == domain.TransportWebSocket && conversation.socket != nil && !conversation.socket.Closed() {
 						conversation.wsResponseID = reducer.responseIdentity()

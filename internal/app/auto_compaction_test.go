@@ -61,6 +61,15 @@ func runCacheAutomaticCompactionRealProvidersAndResume(t *testing.T, cacheEnable
 						}
 					}
 					w.Header().Set("Content-Type", "text/event-stream")
+					if isSummary {
+						wire := reasoningFixtureStream(family, n, false)
+						if family == domain.ProviderAnthropic {
+							wire = bytes.Replace(wire, []byte(`data: {"type":"message_stop"}`), []byte("data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\ndata: {\"type\":\"message_stop\"}"), 1)
+						}
+						_, _ = w.Write(wire)
+						return
+					}
+
 					if family == domain.ProviderOpenAI {
 						writeOpenAIAppTurn(w, n)
 					} else {

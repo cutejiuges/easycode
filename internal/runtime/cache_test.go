@@ -142,7 +142,7 @@ func TestCacheFrozenPolicyMismatchFailsBeforeAppend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sample, err := provider.NewPreparedSample(envelope, testRuntimeUsage(t), syntheticRequestReceipt(domain.RequestSample), func() { t.Error("invalid sample finalized") }, func() { discarded++ })
+	sample, err := provider.NewPreparedSample(envelope, testRuntimeUsage(t), syntheticRequestReceipt(domain.RequestSample), domain.EmptySamplePresentation(0), func() { t.Error("invalid sample finalized") }, func() { discarded++ })
 	if err != nil {
 		t.Fatal(err)
 	}

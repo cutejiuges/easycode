@@ -178,7 +178,7 @@ func runCacheReadPatchExecApprovedLoopForBothProviders(t *testing.T, cacheEnable
 			if query != nil {
 				ui, _ = ui.Update(query())
 			}
-			page, err := resources.transcriptQueries.ListTranscript(context.Background(), protocol.TranscriptListQuery{ThreadID: resources.identity.ThreadID, Limit: 50})
+			page, err := resources.transcriptQueries.ListTranscript(context.Background(), protocol.TranscriptListQuery{Mode: protocol.TranscriptDetail, ThreadID: resources.identity.ThreadID, Limit: 50})
 			if err != nil {
 				t.Fatal(err)
 			}

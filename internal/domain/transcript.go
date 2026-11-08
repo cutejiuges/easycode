@@ -15,6 +15,7 @@ const (
 	TranscriptCompaction TranscriptKind = "compaction"
 	TranscriptAssistant  TranscriptKind = "assistant"
 	TranscriptCall       TranscriptKind = "call"
+	TranscriptReasoning  TranscriptKind = "reasoning"
 )
 
 // TranscriptPosition 用原生提交序号及提交内位置定位内容，均从零开始。
@@ -26,15 +27,16 @@ type TranscriptPosition struct {
 
 // TranscriptItem 只包含允许展示的内容与调用关联；调用名称仅用于核验身份。
 type TranscriptItem struct {
-	Skill    SkillAttachment    `json:"skill,omitempty,omitzero"`
-	HasSkill bool               `json:"has_skill,omitempty"`
-	Kind     TranscriptKind     `json:"kind"`
-	Position TranscriptPosition `json:"position"`
-	TurnID   TurnID             `json:"turn_id"`
-	InputID  InputID            `json:"input_id"`
-	Text     string             `json:"text"`
-	CallID   string             `json:"call_id"`
-	CallName string             `json:"call_name"`
+	Reasoning *ReasoningBody     `json:"reasoning,omitempty"`
+	Skill     SkillAttachment    `json:"skill,omitempty,omitzero"`
+	HasSkill  bool               `json:"has_skill,omitempty"`
+	Kind      TranscriptKind     `json:"kind"`
+	Position  TranscriptPosition `json:"position"`
+	TurnID    TurnID             `json:"turn_id"`
+	InputID   InputID            `json:"input_id"`
+	Text      string             `json:"text"`
+	CallID    string             `json:"call_id"`
+	CallName  string             `json:"call_name"`
 }
 
 // NewTranscriptUser 构造保留原始空白的用户正文投影。
@@ -55,6 +57,12 @@ func NewTranscriptCall(position TranscriptPosition, turn TurnID, callID, name st
 	return v, v.Validate()
 }
 
+// NewTranscriptReasoning 构造仅含允许正文或不可用状态的推理项。
+func NewTranscriptReasoning(position TranscriptPosition, turn TurnID, body ReasoningBody) (TranscriptItem, error) {
+	v := TranscriptItem{Kind: TranscriptReasoning, Position: position, TurnID: turn, Reasoning: &body}
+	return v, v.Validate()
+}
+
 // Validate 拒绝未知种类、无效身份和跨种类字段，不改变正文。
 func (v TranscriptItem) Validate() error {
 	if v.HasSkill {
@@ -67,7 +75,14 @@ func (v TranscriptItem) Validate() error {
 	if !v.TurnID.Valid() || !utf8.ValidString(v.Text) {
 		return errors.New("invalid transcript item")
 	}
+	if v.Kind != TranscriptReasoning && v.Reasoning != nil {
+		return errors.New("unexpected transcript reasoning")
+	}
 	switch v.Kind {
+	case TranscriptReasoning:
+		if v.Reasoning == nil || v.Reasoning.Validate() != nil || v.Text != "" || v.InputID != "" || v.CallID != "" || v.CallName != "" {
+			return errors.New("invalid transcript reasoning")
+		}
 	case TranscriptUser:
 		if !v.InputID.Valid() || v.CallID != "" || v.CallName != "" {
 			return errors.New("invalid transcript user")
@@ -104,6 +119,19 @@ func DecodeTranscriptItem(data []byte) (TranscriptItem, error) {
 	if err := codec.DecodeObject(data, &v, "kind", "position", "turn_id", "input_id", "text", "call_id", "call_name"); err != nil {
 		return TranscriptItem{}, errors.New("invalid transcript encoding")
 	}
+	if v.Kind == TranscriptReasoning {
+		raw, exists := fields["reasoning"]
+		if !exists {
+			return TranscriptItem{}, errors.New("transcript reasoning is required")
+		}
+		body, err := DecodeReasoningBody(raw)
+		if err != nil {
+			return TranscriptItem{}, err
+		}
+		v.Reasoning = &body
+	} else if _, exists := fields["reasoning"]; exists {
+		return TranscriptItem{}, errors.New("unexpected transcript reasoning")
+	}
 	if err := v.Validate(); err != nil {
 		return TranscriptItem{}, err
 	}
@@ -119,6 +147,12 @@ type TranscriptView struct {
 // NewTranscriptView 校验顺序并复制条目集合，字符串无需重复复制。
 func NewTranscriptView(family ProviderFamily, items []TranscriptItem) (TranscriptView, error) {
 	v := TranscriptView{Provider: family, Items: append([]TranscriptItem{}, items...)}
+	for i := range v.Items {
+		if v.Items[i].Reasoning != nil {
+			body := *v.Items[i].Reasoning
+			v.Items[i].Reasoning = &body
+		}
+	}
 	if err := v.Validate(); err != nil {
 		return TranscriptView{}, err
 	}

@@ -108,6 +108,16 @@ Write SHALL 严格归并完整 structured 参数，未知/重复字段、null、
 - **WHEN** content 未完成时 stream 被取消或断开
 - **THEN** staging 丢弃，没有 ready、approval、文件读取或写入
 
+Responses reasoning SHALL 按 provider/reasoning-display 的默认增量、段完成快照与完整 item 接受矩阵处理，不协商 sequential_cutoff。summary parts 在 Provider 内独立关联并仅发布有序前缀，完成快照与已知文字一致，raw reasoning 不展示。合法 item-only 路径在 native item 前产生有界 Started/Completed 序列。相同重复段完成幂等，已关闭已知 item 的迟到 text.done/part.done 在 Provider 边界丢弃；未知引用、错误 index、冲突文字或关闭后新 delta 失败。这些已知语义不适用“未知且格式正确事件忽略”的分支，内部非法事件不得被忽略。
+
+#### Scenario: Assemble nonsequential summary parts before publication
+- **WHEN** 后段先有文字，前段随后结束或由完整 item 确认为空
+- **THEN** 共享事件按真实段序发布确定前缀，最终展示与 native 投影一致，native items 仍保持 wire 完成顺序
+
+#### Scenario: Distinguish completion-only and stale completion
+- **WHEN** 完整 reasoning item 首次提供 summary，随后该已关闭项的迟到 done 到达
+- **THEN** 前者只形成一份正文，后者不产生内部事件、不改变 native、不挂接其他活动 item
+
 ### Requirement: Native history commits transactionally
 
 系统 SHALL 保持原生 message/item 边界与字段。用户输入独立 prepare、Sync、finalize 为 user_inputs。sample staging 仅保存完成模型输出、metadata、raw usage 和 ready calls，合法 Provider terminal 后形成 prepared sample；失败、取消、timeout、协议错误或 EOF 丢弃本 sample staging，但不得删除先前已提交的用户输入。
@@ -155,7 +165,7 @@ Write 的完整调用参数与冻结结果 SHALL 无损保存和恢复；Read ob
 
 ### Requirement: Advertised capabilities match implemented behavior
 
-OpenAI Provider SHALL只声明已经完整实现并通过测试的能力。Read/Glob/Grep/Write function tools以及custom apply_patch的request编译、stream归并、native persistence/restore和result codec全部存在后，function tools和custom tools SHALL准确报告可用；其他 custom tools、parallel tool calls 和未实现 reasoning 展示 MUST 保持 unsupported。PromptCacheKey 只有在 key 编译、原生流归并、持久化/恢复和 golden 全部验证后且 thread 策略开启时才能声明；PreviousResponse 只有在 WebSocket 全链路及故障/恢复验证完成、websocket_auto 开启且未发生会话级 HTTP 回退时才能声明。禁用策略或未实现能力不得用空策略置为 true。
+OpenAI Provider SHALL只声明已经完整实现并通过测试的能力。Read/Glob/Grep/Write function tools以及custom apply_patch的request编译、stream归并、native persistence/restore和result codec全部存在后，function tools和custom tools SHALL准确报告可用；其他 custom tools、parallel tool calls 和主动请求 reasoning/summary 的未实现能力 MUST 保持 unsupported。PromptCacheKey 只有在 key 编译、原生流归并、持久化/恢复和 golden 全部验证后且 thread 策略开启时才能声明；PreviousResponse 只有在 WebSocket 全链路及故障/恢复验证完成、websocket_auto 开启且未发生会话级 HTTP 回退时才能声明。禁用策略或未实现能力不得用空策略置为 true。
 
 Write SHALL 只有在 request、stream、native persistence/restore、result codec 与 golden 全部存在后可用；不得借本变更声明额外 apply_patch 操作、命令或未完成能力。
 
@@ -167,6 +177,12 @@ Write SHALL 只有在 request、stream、native persistence/restore、result cod
 #### Scenario: Distinguish configured transport from a fallback
 - **WHEN** websocket_auto 会话在发送生成请求前安全回退到 HTTP
 - **THEN** 有效 PreviousResponse 为 false，缓存 key 的有效能力仍按独立配置判断，快照解释回退
+
+EncryptedReasoning SHALL 只声明已实现的原生保留；ReasoningSummary 明确表示主动编译 summary 请求的能力，本切片未新增该请求策略，仍为 false；RawReasoning 仍为 false。被动接收并展示允许 summary 不等于主动请求或服务端必支持，不新增空能力位、占位策略或按模型名称推断。
+
+#### Scenario: Read a returned summary without advertising request support
+- **WHEN** 服务端自行返回 summary_text 与 encrypted_content
+- **THEN** 只展示允许文字，ReasoningSummary/RawReasoning 保持 false，原请求、include、缓存及 transport 字段不变
 
 ### Requirement: Responses completion preserves and normalizes usage
 

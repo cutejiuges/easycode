@@ -69,7 +69,7 @@ func TestCommandQueryCursorAndIsolation(t *testing.T) {
 	q := newTranscriptQueries(thread, reader, entries)
 	projector := bindQueryTestTranscript(t, q, entries)
 	defer func() { _ = q.Close() }()
-	page, err := q.ListTranscript(context.Background(), protocol.TranscriptListQuery{ThreadID: thread, Limit: 50})
+	page, err := q.ListTranscript(context.Background(), protocol.TranscriptListQuery{Mode: protocol.TranscriptDetail, ThreadID: thread, Limit: 50})
 	if err != nil || len(page.Items) != 50 || page.Items[0].Cursor.Sequence != 105 || page.NextBefore.Sequence != 7 {
 		t.Fatalf("first page: %+v %v", page, err)
 	}
@@ -84,11 +84,11 @@ func TestCommandQueryCursorAndIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	q.ToolResult(newEntry.Result)
-	older, err := q.ListTranscript(context.Background(), protocol.TranscriptListQuery{ThreadID: thread, Before: page.NextBefore, Limit: 50})
+	older, err := q.ListTranscript(context.Background(), protocol.TranscriptListQuery{Mode: protocol.TranscriptDetail, ThreadID: thread, Before: page.NextBefore, Limit: 50})
 	if err != nil || len(older.Items) != 3 || older.Items[0].Cursor.Sequence != 5 || older.NextBefore.Valid() {
 		t.Fatalf("stable cursor: %+v %v", older, err)
 	}
-	newest, _ := q.ListTranscript(context.Background(), protocol.TranscriptListQuery{ThreadID: thread, Limit: 1})
+	newest, _ := q.ListTranscript(context.Background(), protocol.TranscriptListQuery{Mode: protocol.TranscriptDetail, ThreadID: thread, Limit: 1})
 	if newest.Items[0].Cursor.Sequence != 107 || newest.Items[0].Activity.Summary != "printf test" || !newest.Items[0].Stdout.Readable {
 		t.Fatal("live durable facts missing")
 	}
@@ -102,7 +102,7 @@ func TestCommandQueryCursorAndIsolation(t *testing.T) {
 	if !errors.Is(err, tool.ArtifactReadUnauthorized) || reader.calls != 0 {
 		t.Fatal("query crossed thread boundary")
 	}
-	_, err = q.ListTranscript(context.Background(), protocol.TranscriptListQuery{ThreadID: thread, Limit: 51})
+	_, err = q.ListTranscript(context.Background(), protocol.TranscriptListQuery{Mode: protocol.TranscriptDetail, ThreadID: thread, Limit: 51})
 	if err == nil {
 		t.Fatal("unbounded list accepted")
 	}

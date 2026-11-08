@@ -7,6 +7,7 @@ import (
 	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
+	"easycode/internal/provider"
 	"easycode/internal/provider/transport"
 	"easycode/internal/tool"
 )
@@ -14,14 +15,17 @@ import (
 const maxFunctionArgumentsBytes = 1 << 20
 
 type responsesEventEnvelope struct {
-	Type        string          `json:"type"`
-	Delta       *string         `json:"delta,omitempty"`
-	Arguments   *string         `json:"arguments,omitempty"`
-	Input       *string         `json:"input,omitempty"`
-	ItemID      string          `json:"item_id,omitempty"`
-	OutputIndex *int            `json:"output_index,omitempty"`
-	Item        json.RawMessage `json:"item,omitempty"`
-	Response    json.RawMessage `json:"response,omitempty"`
+	Type         string          `json:"type"`
+	Delta        *string         `json:"delta,omitempty"`
+	Arguments    *string         `json:"arguments,omitempty"`
+	Input        *string         `json:"input,omitempty"`
+	ItemID       string          `json:"item_id,omitempty"`
+	SummaryIndex *int            `json:"summary_index,omitempty"`
+	Text         *string         `json:"text,omitempty"`
+	Part         json.RawMessage `json:"part,omitempty"`
+	OutputIndex  *int            `json:"output_index,omitempty"`
+	Item         json.RawMessage `json:"item,omitempty"`
+	Response     json.RawMessage `json:"response,omitempty"`
 }
 
 type responseReference struct {
@@ -51,11 +55,17 @@ type outputTokensDetailsWire struct {
 
 type reducerResult struct {
 	semantic  *protocol.Event
+	reasoning provider.ReasoningDrafts
 	native    *NativeItem
 	completed bool
 }
 
 type responsesStreamReducer struct {
+	reasoning           map[string]*reasoningItemState
+	reasoningIndexes    map[int]*reasoningItemState
+	reasoningBudget     provider.ReasoningBudget
+	reasoningCount      uint32
+	bindings            []domain.ReasoningBinding
 	created             bool
 	responseID          string
 	terminal            bool
@@ -86,7 +96,7 @@ type customCallState struct {
 
 func newResponsesStreamReducer(catalog ...tool.CatalogSnapshot) *responsesStreamReducer {
 	reducer := &responsesStreamReducer{
-		items: make([]NativeItem, 0), functions: make(map[string]*functionCallState), customs: make(map[string]*customCallState),
+		reasoning: make(map[string]*reasoningItemState), reasoningIndexes: make(map[int]*reasoningItemState), bindings: make([]domain.ReasoningBinding, 0), items: make([]NativeItem, 0), functions: make(map[string]*functionCallState), customs: make(map[string]*customCallState),
 		ready: make([]tool.ReadyCall, 0), lastToolOutputIndex: -1,
 	}
 	if len(catalog) == 1 {
@@ -127,6 +137,8 @@ func (reducer *responsesStreamReducer) reduce(event transport.SSEEvent) (reducer
 	}
 
 	switch envelope.Type {
+	case "response.reasoning_summary_part.added", "response.reasoning_summary_part.done", "response.reasoning_summary_text.delta", "response.reasoning_summary_text.done":
+		return reducer.reduceReasoningPart(envelope)
 	case "response.output_text.delta":
 		if envelope.Delta == nil {
 			return reducerResult{}, fault.New(fault.CodeStreamProtocol, "Responses text delta is required")
@@ -153,9 +165,15 @@ func (reducer *responsesStreamReducer) reduce(event transport.SSEEvent) (reducer
 		if len(envelope.Item) == 0 || string(envelope.Item) == "null" {
 			return reducerResult{}, fault.New(fault.CodeStreamProtocol, "Responses output item is required")
 		}
+		if err := reducer.preflightReasoningItem(envelope.Item); err != nil {
+			return reducerResult{}, err
+		}
 		var item NativeItem
 		if err := codec.Unmarshal(envelope.Item, &item); err != nil {
 			return reducerResult{}, fault.Wrap(fault.CodeStreamProtocol, "Responses output item is invalid", err)
+		}
+		if item.Type == "reasoning" {
+			return reducer.completeReasoning(envelope.OutputIndex, item)
 		}
 		item = item.clone()
 		if item.Type == "function_call" {
@@ -216,6 +234,11 @@ func (reducer *responsesStreamReducer) acceptCompleted(raw json.RawMessage) erro
 			return fault.New(fault.CodeStreamProtocol, "Responses custom tool call is incomplete")
 		}
 	}
+	for _, state := range reducer.reasoning {
+		if !state.closed {
+			return fault.New(fault.CodeStreamProtocol, "Responses reasoning item is incomplete")
+		}
+	}
 	usage := decodeResponsesUsage(response.Usage)
 	if _, err := usage.normalized(); err != nil {
 		return fault.Wrap(fault.CodeStreamProtocol, "Responses usage is invalid", err)
@@ -229,15 +252,24 @@ func (reducer *responsesStreamReducer) reduceOutputItemAdded(index *int, raw jso
 	if len(raw) == 0 || string(raw) == "null" {
 		return reducerResult{}, fault.New(fault.CodeStreamProtocol, "Responses output item is required")
 	}
+	if err := reducer.preflightReasoningItem(raw); err != nil {
+		return reducerResult{}, err
+	}
 	var item NativeItem
 	if err := codec.Unmarshal(raw, &item); err != nil {
 		return reducerResult{}, fault.Wrap(fault.CodeStreamProtocol, "Responses output item is invalid", err)
+	}
+	if item.Type == "reasoning" {
+		return reducer.startReasoning(index, item)
 	}
 	if item.Type != "function_call" && item.Type != "custom_tool_call" {
 		return reducerResult{}, nil
 	}
 	if index == nil || *index < 0 || item.ID == "" || item.CallID == "" || item.Name == "" {
 		return reducerResult{}, fault.New(fault.CodeStreamProtocol, "Responses tool call identity is invalid")
+	}
+	if reducer.reasoning[item.ID] != nil {
+		return reducerResult{}, reasoningError()
 	}
 	if _, exists := reducer.functions[item.ID]; exists {
 		return reducerResult{}, fault.New(fault.CodeStreamProtocol, "Responses tool call item is duplicated")
@@ -259,6 +291,9 @@ func (reducer *responsesStreamReducer) reduceOutputItemAdded(index *int, raw jso
 }
 
 func (reducer *responsesStreamReducer) toolIdentityConflicts(callID string, index int) bool {
+	if reducer.reasoningIndexes[index] != nil {
+		return true
+	}
 	for _, state := range reducer.functions {
 		if state.callID == callID || state.outputIndex == index {
 			return true

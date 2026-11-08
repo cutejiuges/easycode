@@ -148,7 +148,7 @@ func TestSevenToolTranscriptBudgetAndRestoredRequestForBothProviders(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			page, err := resources.transcriptQueries.ListTranscript(ctx, protocol.TranscriptListQuery{ThreadID: thread, Limit: 50})
+			page, err := resources.transcriptQueries.ListTranscript(ctx, protocol.TranscriptListQuery{Mode: protocol.TranscriptDetail, ThreadID: thread, Limit: 50})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -226,7 +226,7 @@ func TestSevenToolTranscriptBudgetAndRestoredRequestForBothProviders(t *testing.
 				t.Fatal(err)
 			}
 			defer resumed.close(ctx)
-			restoredPage, err := resumed.transcriptQueries.ListTranscript(ctx, protocol.TranscriptListQuery{ThreadID: thread, Limit: 50})
+			restoredPage, err := resumed.transcriptQueries.ListTranscript(ctx, protocol.TranscriptListQuery{Mode: protocol.TranscriptDetail, ThreadID: thread, Limit: 50})
 			if err != nil || !reflect.DeepEqual(page, restoredPage) {
 				t.Fatal("restored transcript changed")
 			}

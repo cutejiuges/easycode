@@ -113,6 +113,7 @@ func (q *transcriptQueries) bindTranscript(projector provider.TranscriptProjecto
 	q.facades = catalog.Facades()
 	q.nativeSequences = sequences
 	q.nodes = mergeCompactionTranscript(nodes, q.compactions)
+	q.mainNodes = mainTranscriptNodes(q.nodes)
 	return nil
 }
 
@@ -143,8 +144,20 @@ func (q *transcriptQueries) NativeCommitted(sequence uint64, ready []session.Too
 		indices[entry.Invocation.InvocationID()] = i
 	}
 	nodes = mergeCompactionTranscript(nodes, compactions)
+	mainNodes := mainTranscriptNodes(nodes)
 	q.mu.Lock()
-	q.entries, q.nativeSequences, q.nodes, q.indices = entries, sequences, nodes, indices
+	q.entries, q.nativeSequences, q.nodes, q.indices, q.mainNodes = entries, sequences, nodes, indices, mainNodes
 	q.mu.Unlock()
 	return nil
+}
+
+// mainTranscriptNodes 在发布前生成主线索引，查询锁内不扫描隐藏历史。
+func mainTranscriptNodes(nodes []transcriptNode) []transcriptNode {
+	result := make([]transcriptNode, 0, len(nodes))
+	for _, node := range nodes {
+		if node.item.Kind != domain.TranscriptReasoning {
+			result = append(result, node)
+		}
+	}
+	return result
 }

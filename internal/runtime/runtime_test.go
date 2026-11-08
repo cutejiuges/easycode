@@ -127,6 +127,7 @@ type startedFailureJournal struct {
 	poisoned        bool
 	poisonOnFailure bool
 	batches         [][]session.RecordDraft
+	sequence        uint64
 }
 
 func (journal *startedFailureJournal) AppendBatch(_ context.Context, drafts []session.RecordDraft) ([]session.Record, error) {
@@ -141,7 +142,12 @@ func (journal *startedFailureJournal) AppendBatch(_ context.Context, drafts []se
 		return nil, errors.New("fixture started append failure")
 	}
 	journal.batches = append(journal.batches, append([]session.RecordDraft(nil), drafts...))
-	return make([]session.Record, len(drafts)), nil
+	records := make([]session.Record, len(drafts))
+	for i := range records {
+		journal.sequence++
+		records[i].Sequence = journal.sequence
+	}
+	return records, nil
 }
 
 func (journal *startedFailureJournal) Poisoned() bool {
@@ -246,6 +252,7 @@ func (conversation *fakeConversation) Stream(ctx context.Context, input provider
 type fakeJournal struct {
 	mu       sync.Mutex
 	batches  [][]session.RecordDraft
+	sequence uint64
 	calls    int
 	failAt   int
 	poisoned bool
@@ -264,11 +271,16 @@ func (journal *fakeJournal) AppendBatch(_ context.Context, drafts []session.Reco
 		return nil, errors.New("fixture journal failure")
 	}
 	journal.batches = append(journal.batches, cloned)
+	records := make([]session.Record, len(drafts))
+	for i := range records {
+		journal.sequence++
+		records[i].Sequence = journal.sequence
+	}
 	journal.mu.Unlock()
 	if hook != nil {
 		hook(cloned)
 	}
-	return make([]session.Record, len(drafts)), nil
+	return records, nil
 }
 
 func (journal *fakeJournal) Poisoned() bool {
@@ -325,8 +337,8 @@ func TestRunTurnDurableSuccessOrderingAndIdentity(t *testing.T) {
 		}
 	}
 	wantTimeline := []string{
-		"append:turn_started", "emit:turn_started", "append:turn_inputs_committed", "emit:user_input_committed", "provider", "emit:assistant_text_delta",
-		"append:provider_native_commit", "finalize", "emit:turn_completed",
+		"append:turn_started", "emit:turn_started", "append:turn_inputs_committed", "emit:user_input_committed", "emit:transcript_committed", "provider", "emit:assistant_text_delta",
+		"append:provider_native_commit", "finalize", "emit:transcript_committed", "emit:turn_completed",
 	}
 	if fmt.Sprint(timeline) != fmt.Sprint(wantTimeline) {
 		t.Fatalf("timeline = %#v, want %#v", timeline, wantTimeline)
@@ -740,7 +752,7 @@ func TestRunTurnToolDurabilityFailuresPreventLaterSideEffects(t *testing.T) {
 		var finalized atomic.Int32
 		var discarded atomic.Int32
 		sample, err := provider.NewPreparedSample(
-			envelope, testRuntimeUsage(t), syntheticRequestReceipt(domain.RequestSample), func() { finalized.Add(1) }, func() { discarded.Add(1) }, ready,
+			envelope, testRuntimeUsage(t), syntheticRequestReceipt(domain.RequestSample), domain.EmptySamplePresentation(1), func() { finalized.Add(1) }, func() { discarded.Add(1) }, ready,
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -1796,7 +1808,7 @@ func newPreparedSample(t *testing.T, finalize func()) *provider.PreparedSample {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := provider.NewPreparedSample(envelope, testRuntimeUsage(t), syntheticRequestReceipt(domain.RequestSample), finalize, func() {})
+	prepared, err := provider.NewPreparedSample(envelope, testRuntimeUsage(t), syntheticRequestReceipt(domain.RequestSample), domain.EmptySamplePresentation(0), finalize, func() {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1811,7 +1823,7 @@ func newPreparedSampleWithReady(t *testing.T, ready ...tool.ReadyCall) *provider
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := provider.NewPreparedSample(envelope, testRuntimeUsage(t), syntheticRequestReceipt(domain.RequestSample), func() {}, func() {}, ready...)
+	prepared, err := provider.NewPreparedSample(envelope, testRuntimeUsage(t), syntheticRequestReceipt(domain.RequestSample), domain.EmptySamplePresentation(uint32(len(ready))), func() {}, func() {}, ready...)
 	if err != nil {
 		t.Fatal(err)
 	}

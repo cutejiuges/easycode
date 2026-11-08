@@ -644,7 +644,7 @@ func (state *agentLoopRunState) handleTurnEvent(publication runtimePublication, 
 		state.cancelActive()
 		return
 	}
-	if event.Kind != protocol.EventAssistantTextDelta {
+	if !protocol.IsTransientPresentation(event.Kind) {
 		state.contextSnapshot, state.contextSnapshotErr = publication.snapshot, publication.snapshotErr
 		state.cacheSnapshot = publication.cacheSnapshot
 	}

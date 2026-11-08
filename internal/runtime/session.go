@@ -33,7 +33,7 @@ type ChatSession struct {
 
 // NewChatSession 只构造 AgentLoop 的宿主适配器；Start 显式取得运行所有权。
 func NewChatSession(runtimeValue *Runtime) *ChatSession {
-	return &ChatSession{runtime: runtimeValue, outputs: make(chan protocol.ControlItem, 16), streams: make(map[protocol.RequestID]chan protocol.Event), stop: make(chan struct{}), done: make(chan struct{}), interrupts: make(chan domain.TurnID, 1)}
+	return &ChatSession{runtime: runtimeValue, outputs: make(chan protocol.ControlItem), streams: make(map[protocol.RequestID]chan protocol.Event), stop: make(chan struct{}), done: make(chan struct{}), interrupts: make(chan domain.TurnID, 1)}
 }
 
 // StartInteractive 显式选择长期控制输出并启动会话。
@@ -182,7 +182,8 @@ func (session *ChatSession) Submit(ctx context.Context, text string) (<-chan pro
 	if err != nil {
 		return nil, err
 	}
-	events := make(chan protocol.Event, 16)
+	// 宿主适配层直接背压，避免在 Provider 和 AgentLoop 之外重复排队正文。
+	events := make(chan protocol.Event)
 	session.mu.Lock()
 	if len(session.streams) != 0 || session.closed || session.interactive {
 		session.mu.Unlock()

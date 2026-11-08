@@ -55,9 +55,10 @@ type AssistantTextDeltaPayload struct {
 
 // TurnFailedPayload 保存可供宿主安全展示的 turn 失败摘要。
 type TurnFailedPayload struct {
-	Code      string `json:"code"`
-	Message   string `json:"message"`
-	Cancelled bool   `json:"cancelled,omitempty"`
+	Resolution *SampleResolution `json:"sample_resolution,omitempty"`
+	Code       string            `json:"code"`
+	Message    string            `json:"message"`
+	Cancelled  bool              `json:"cancelled,omitempty"`
 }
 
 // TurnCompletedPayload 保存成功 turn 的归一化 usage。
@@ -125,7 +126,7 @@ func NewTurnFailed(code string, message string, cancelled bool) (Event, error) {
 
 // DecodeTurnFailed 解码并校验 turn 失败事件。
 func DecodeTurnFailed(event Event) (TurnFailedPayload, error) {
-	if event.Kind != EventTurnFailed {
+	if event.Kind != EventTurnFailed || len(event.Payload) > MaxReasoningPayloadBytes {
 		return TurnFailedPayload{}, fmt.Errorf("event kind is not turn_failed")
 	}
 	var payload TurnFailedPayload
@@ -134,6 +135,9 @@ func DecodeTurnFailed(event Event) (TurnFailedPayload, error) {
 	}
 	if strings.TrimSpace(payload.Code) == "" || strings.TrimSpace(payload.Message) == "" {
 		return TurnFailedPayload{}, fmt.Errorf("turn failure payload is incomplete")
+	}
+	if payload.Resolution != nil && payload.Resolution.Validate() != nil {
+		return TurnFailedPayload{}, fmt.Errorf("invalid sample failure resolution")
 	}
 	return payload, nil
 }

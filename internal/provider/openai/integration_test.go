@@ -357,7 +357,7 @@ func TestConversationProjectionMatchesLiveTextAndHidesActiveTurn(t *testing.T) {
 
 func decodeOpenAILiveText(t *testing.T, event provider.StreamEvent) string {
 	t.Helper()
-	if event.Kind() != provider.StreamEventSemantic {
+	if event.Kind() != provider.StreamEventSemantic || event.Semantic().Kind != protocol.EventAssistantTextDelta {
 		return ""
 	}
 	payload, err := protocol.DecodeAssistantTextDelta(event.Semantic())

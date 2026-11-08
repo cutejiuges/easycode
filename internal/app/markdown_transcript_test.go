@@ -28,6 +28,12 @@ func TestMarkdownBothProvidersRestoreAndContinueUnchanged(t *testing.T) {
 		}
 		apply(tea.KeyMsg{Type: tea.KeyCtrlO})
 		apply(tea.KeyMsg{Type: tea.KeyEnter})
+		if !strings.Contains(model.View(), "Reasoning text unavailable") {
+			t.Fatalf("opaque-only reasoning was not discoverable: %s", model.View())
+		}
+		apply(tea.KeyMsg{Type: tea.KeyEsc})
+		apply(tea.KeyMsg{Type: tea.KeyDown})
+		apply(tea.KeyMsg{Type: tea.KeyEnter})
 		if !strings.Contains(model.View(), "var value = 42") {
 			t.Fatalf("rich detail missing code: %s", model.View())
 		}

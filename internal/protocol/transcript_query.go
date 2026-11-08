@@ -20,17 +20,26 @@ func (c TranscriptCursor) Before(other TranscriptCursor) bool {
 	return c.Sequence < other.Sequence || (c.Sequence == other.Sequence && c.Item < other.Item)
 }
 
+// TranscriptListMode 将默认主线与详细记录的筛选语义分开。
+type TranscriptListMode string
+
+const (
+	TranscriptMain   TranscriptListMode = "main"
+	TranscriptDetail TranscriptListMode = "detail"
+)
+
 // TranscriptListQuery 的零 Before 指向最新逻辑页。
 type TranscriptListQuery struct {
-	ThreadID domain.ThreadID  `json:"thread_id"`
-	Before   TranscriptCursor `json:"before"`
-	Newer    bool             `json:"newer"`
-	Through  uint64           `json:"through"`
-	Limit    uint32           `json:"limit"`
+	Mode     TranscriptListMode `json:"mode"`
+	ThreadID domain.ThreadID    `json:"thread_id"`
+	Before   TranscriptCursor   `json:"before"`
+	Newer    bool               `json:"newer"`
+	Through  uint64             `json:"through"`
+	Limit    uint32             `json:"limit"`
 }
 
 func (q TranscriptListQuery) Validate() error {
-	if !q.ThreadID.Valid() || q.Limit == 0 || q.Limit > 50 || (q.Before.Sequence == 0 && q.Before.Item != 0) {
+	if (q.Mode != TranscriptMain && q.Mode != TranscriptDetail) || !q.ThreadID.Valid() || q.Limit == 0 || q.Limit > 50 || (q.Before.Sequence == 0 && q.Before.Item != 0) {
 		return errors.New("invalid transcript list query")
 	}
 	return nil
@@ -44,21 +53,22 @@ func DecodeTranscriptListQuery(data []byte) (TranscriptListQuery, error) {
 
 // TranscriptListItem 只携带短摘要，完整正文必须通过范围查询获取。
 type TranscriptListItem struct {
-	CompactionID       domain.CompactionID   `json:"compaction_id,omitempty"`
-	Preview            string                `json:"preview"`
-	Stdout             ToolOutputSummary     `json:"stdout"`
-	Stderr             ToolOutputSummary     `json:"stderr"`
-	Search             ToolOutputSummary     `json:"search"`
-	ModelShortened     bool                  `json:"model_shortened"`
-	CoverageIncomplete bool                  `json:"coverage_incomplete"`
-	SummaryOnly        bool                  `json:"summary_only"`
-	Cursor             TranscriptCursor      `json:"cursor"`
-	Kind               domain.TranscriptKind `json:"kind"`
-	TurnID             domain.TurnID         `json:"turn_id"`
-	InputID            domain.InputID        `json:"input_id"`
-	Text               string                `json:"text"`
-	More               bool                  `json:"more"`
-	Activity           ToolActivityPayload   `json:"activity"`
+	Reasoning          *ReasoningSummaryPayload `json:"reasoning,omitempty"`
+	CompactionID       domain.CompactionID      `json:"compaction_id,omitempty"`
+	Preview            string                   `json:"preview"`
+	Stdout             ToolOutputSummary        `json:"stdout"`
+	Stderr             ToolOutputSummary        `json:"stderr"`
+	Search             ToolOutputSummary        `json:"search"`
+	ModelShortened     bool                     `json:"model_shortened"`
+	CoverageIncomplete bool                     `json:"coverage_incomplete"`
+	SummaryOnly        bool                     `json:"summary_only"`
+	Cursor             TranscriptCursor         `json:"cursor"`
+	Kind               domain.TranscriptKind    `json:"kind"`
+	TurnID             domain.TurnID            `json:"turn_id"`
+	InputID            domain.InputID           `json:"input_id"`
+	Text               string                   `json:"text"`
+	More               bool                     `json:"more"`
+	Activity           ToolActivityPayload      `json:"activity"`
 }
 
 func (v TranscriptListItem) Validate() error {
@@ -71,6 +81,9 @@ func (v TranscriptListItem) Validate() error {
 	if v.Stdout.Validate() != nil || v.Stderr.Validate() != nil || v.Search.Validate() != nil || !v.Cursor.Valid() || len(v.Text) > 512 || !utf8.ValidString(v.Text) {
 		return errors.New("invalid transcript list item")
 	}
+	if v.Kind != domain.TranscriptReasoning && v.Reasoning != nil {
+		return errors.New("unexpected reasoning transcript metadata")
+	}
 	if v.Kind == domain.TranscriptCompaction {
 		if !v.CompactionID.Valid() || v.TurnID != "" || v.InputID != "" || v.Activity != (ToolActivityPayload{}) {
 			return errors.New("invalid compaction transcript item")
@@ -81,6 +94,13 @@ func (v TranscriptListItem) Validate() error {
 		return errors.New("invalid transcript identity")
 	}
 	switch v.Kind {
+	case domain.TranscriptReasoning:
+		if v.Reasoning == nil || v.Reasoning.Validate() != nil || v.InputID != "" || v.Activity != (ToolActivityPayload{}) || v.Reasoning.TotalBytes < uint64(len(v.Text)) || v.More != (v.Reasoning.TotalBytes > uint64(len(v.Text))) {
+			return errors.New("invalid reasoning transcript item")
+		}
+		if v.Reasoning.Availability == domain.ReasoningUnavailable && (v.Text != "" || v.More) {
+			return errors.New("unavailable reasoning has text")
+		}
 	case domain.TranscriptUser:
 		if !v.InputID.Valid() || v.Activity != (ToolActivityPayload{}) {
 			return errors.New("invalid user transcript item")

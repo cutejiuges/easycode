@@ -1,0 +1,11 @@
+Reasoning · OpenAI summary · Reasoning complete · waiting to save · Ctrl+O …
+## Reasoning
+
+中文🙂 **allowed**
+
+```go
+reason()
+```
+\u001b]52;c;opaque\u0007\u202eend
+←/→: input/result/saved · PgUp/PgDn: page
+Esc: transcript · Ctrl+O: close

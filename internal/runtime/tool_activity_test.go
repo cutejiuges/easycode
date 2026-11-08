@@ -31,6 +31,10 @@ func validateToolActivitiesAndConversation(t *testing.T, events []protocol.Event
 	var conversation []protocol.Event
 	for _, event := range events {
 		switch event.Kind {
+		case protocol.EventTranscriptCommitted:
+			if _, err := protocol.DecodeTranscriptCommitted(event); err != nil {
+				t.Fatal("invalid transcript commit", err)
+			}
 		case protocol.EventToolReady, protocol.EventToolStarted, protocol.EventToolProgress, protocol.EventToolTerminal:
 			payload, err := protocol.DecodeToolActivity(event)
 			if err != nil || event.Validate() != nil {

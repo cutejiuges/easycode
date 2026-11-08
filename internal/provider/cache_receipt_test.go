@@ -10,11 +10,11 @@ func TestPreparedSampleRequiresAndFreezesReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = NewPreparedSample(envelope, testSampleUsage(t), domain.RequestReceipt{}, func() {}, func() {}); err == nil {
+	if _, err = NewPreparedSample(envelope, testSampleUsage(t), domain.RequestReceipt{}, domain.EmptySamplePresentation(0), func() {}, func() {}); err == nil {
 		t.Fatal("missing receipt accepted")
 	}
 	receipt := syntheticRequestReceipt(domain.RequestSample)
-	sample, err := NewPreparedSample(envelope, testSampleUsage(t), receipt, func() {}, func() {})
+	sample, err := NewPreparedSample(envelope, testSampleUsage(t), receipt, domain.EmptySamplePresentation(0), func() {}, func() {})
 	if err != nil {
 		t.Fatal(err)
 	}

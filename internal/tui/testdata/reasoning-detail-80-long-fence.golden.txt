@@ -1,0 +1,14 @@
+Reasoning · OpenAI summary · Reasoning complete · waiting to save · Ctrl+O …
+  var 中文 = 42
+  var 中文 = 42
+  var 中文 = 42
+  var 中文 = 42
+  var 中文 = 42
+  var 中文 = 42
+  var 中文 = 42
+  var 中文 = 42
+  var 中文 = 42
+  var 中文 = 42
+  var 中文 = 42
+←/→: input/result/saved · PgUp/PgDn: page
+Esc: transcript · Ctrl+O: close

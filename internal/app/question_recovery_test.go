@@ -85,7 +85,7 @@ func TestQuestionRecoveryNeverReasksAndRetainsFrozenAnswers(t *testing.T) {
 					t.Fatal(err)
 				}
 				query := resources.transcriptQueries
-				page, err := query.ListTranscript(context.Background(), protocol.TranscriptListQuery{ThreadID: thread, Limit: 50})
+				page, err := query.ListTranscript(context.Background(), protocol.TranscriptListQuery{Mode: protocol.TranscriptDetail, ThreadID: thread, Limit: 50})
 				if err != nil {
 					t.Fatal(err)
 				}
