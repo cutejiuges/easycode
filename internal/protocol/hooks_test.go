@@ -80,3 +80,57 @@ func TestHookTrustContractsAreStrictAndIdentityBound(t *testing.T) {
 		}
 	}
 }
+
+func TestHookTrustRequestPreservesMaximumRawCommandAfterJSONEscaping(t *testing.T) {
+	const uuid = "01900000-0000-7000-8000-000000000001"
+	for _, event := range []domain.HookEvent{domain.HookPreToolUse, domain.HookPostToolUse, domain.HookPostToolUseFailure} {
+		for _, escaped := range []bool{false, true} {
+			t.Run(string(event)+map[bool]string{false: "/ascii", true: "/json-expanded"}[escaped], func(t *testing.T) {
+				command := strings.Repeat("x", domain.MaxHookCommandBytes)
+				if escaped {
+					command = strings.Repeat("<", domain.MaxHookCommandBytes)
+				}
+				policy := domain.HookFeedbackNone
+				if event.Post() {
+					policy = domain.HookFeedbackModel
+				}
+				d, err := domain.NewHookDeclaration(domain.HookSourceProject, event, policy, strings.Repeat("a", 64), "check", 7, command, 30)
+				if err != nil {
+					t.Fatal(err)
+				}
+				expected := HookTrustRequestedPayload{RequestID: uuid, InvocationID: uuid, Capability: domain.HookExec, Declaration: d}
+				request, err := NewHookTrustRequested(expected)
+				if err != nil {
+					t.Fatal(err)
+				}
+				request.SessionID = domain.SessionID(uuid)
+				request.ThreadID = domain.ThreadID(uuid)
+				request.TurnID = domain.TurnID(uuid)
+				if escaped && len(request.Payload) <= 16<<10 {
+					t.Fatal("fixture does not exercise encoded request expansion")
+				}
+				if err := request.Validate(); err != nil {
+					t.Fatal("legal full command broke its control event", err)
+				}
+				decoded, err := DecodeHookTrustRequested(request)
+				if err != nil || decoded != expected || decoded.Declaration.Command != command {
+					t.Fatal("complete command changed during trust review", err)
+				}
+				// 扩展编码预算仍必须拒绝未知字段与超出原始命令上限的声明。
+				bad := request
+				bad.Payload = append(bytes.TrimSuffix(bytes.Clone(request.Payload), []byte("}")), []byte(`,"extra":"REJECTED-SECRET"}`)...)
+				if _, err := DecodeHookTrustRequested(bad); err == nil {
+					t.Fatal("unknown trust field accepted")
+				}
+				if _, err := domain.NewHookDeclaration(domain.HookSourceProject, event, policy, strings.Repeat("a", 64), "check", 7, command+"x", 30); err == nil {
+					t.Fatal("raw command limit increased")
+				}
+				oversized := request
+				oversized.Payload = append(bytes.Clone(request.Payload), bytes.Repeat([]byte(" "), maxHookTrustRequestBytes-len(request.Payload)+1)...)
+				if _, err := DecodeHookTrustRequested(oversized); err == nil {
+					t.Fatal("encoded trust request became unbounded")
+				}
+			})
+		}
+	}
+}

@@ -44,7 +44,7 @@ func validateQuestionRestoredOutputs(sample, entry nativeHistoryEntry, results [
 				if string(r.ProviderCallID()) != item.CallID {
 					continue
 				}
-				output, err := tool.NewModelOutput(r, nil)
+				output, err := tool.NewModelOutput(r)
 				if err != nil {
 					return err
 				}

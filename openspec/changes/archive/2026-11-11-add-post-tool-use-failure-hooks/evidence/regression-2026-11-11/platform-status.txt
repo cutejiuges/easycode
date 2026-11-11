@@ -1,0 +1,3 @@
+linux_compile=0
+windows_build=0
+windows_test_compile=1

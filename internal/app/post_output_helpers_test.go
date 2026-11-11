@@ -9,7 +9,7 @@ func testModelOutputs(t *testing.T, results ...tool.InvocationResult) []tool.Mod
 	t.Helper()
 	out := make([]tool.ModelOutput, len(results))
 	for i, result := range results {
-		v, err := tool.NewModelOutput(result, nil)
+		v, err := tool.NewModelOutput(result)
 		if err != nil {
 			t.Fatal(err)
 		}

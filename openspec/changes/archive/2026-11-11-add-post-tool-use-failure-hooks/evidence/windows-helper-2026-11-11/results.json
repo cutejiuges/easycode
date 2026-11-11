@@ -1,0 +1,82 @@
+{
+  "date": "2026-11-11",
+  "host": "darwin/arm64",
+  "go": "go1.24.13",
+  "quality_gate": {
+    "command": "EASYCODE_REGRESSION_GO=<actual-go> make verify GO=<go-uncached.sh>",
+    "exit_code": 0,
+    "test_result_cache_disabled": true,
+    "app_test_seconds": 98.55,
+    "app_race_seconds": 479.09
+  },
+  "focused": {
+    "command": "go test -count=1 ./internal/app -run 'TestListSessions|Test.*Picker'",
+    "exit_code": 0
+  },
+  "e2e": {
+    "command": "go test -race -json -count=1 -shuffle=20261111 ./internal/app -run 'TestFailureBothProvidersRealHookSandboxAndFrozenRestore|TestPostBothBranchesRealExec' -timeout 240s",
+    "exit_code": 0,
+    "passed_leaf_cases": 72,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 62.168
+  },
+  "cross_platform": [
+    {
+      "name": "linux-amd64-build",
+      "command": "GOOS=linux GOARCH=amd64 go build ./...",
+      "exit_code": 0,
+      "seconds": 1.571
+    },
+    {
+      "name": "linux-amd64-test-compile",
+      "command": "GOOS=linux GOARCH=amd64 go test -exec=true ./...",
+      "exit_code": 0,
+      "seconds": 2.878
+    },
+    {
+      "name": "linux-arm64-build",
+      "command": "GOOS=linux GOARCH=arm64 go build ./...",
+      "exit_code": 0,
+      "seconds": 2.646
+    },
+    {
+      "name": "linux-arm64-test-compile",
+      "command": "GOOS=linux GOARCH=arm64 go test -exec=true ./...",
+      "exit_code": 0,
+      "seconds": 5.431
+    },
+    {
+      "name": "windows-amd64-build",
+      "command": "GOOS=windows GOARCH=amd64 go build ./...",
+      "exit_code": 0,
+      "seconds": 0.73
+    },
+    {
+      "name": "windows-amd64-test-compile",
+      "command": "GOOS=windows GOARCH=amd64 go test -exec=true ./...",
+      "exit_code": 0
+    },
+    {
+      "name": "windows-arm64-build",
+      "command": "GOOS=windows GOARCH=arm64 go build ./...",
+      "exit_code": 0,
+      "seconds": 7.17
+    },
+    {
+      "name": "windows-arm64-test-compile",
+      "command": "GOOS=windows GOARCH=arm64 go test -exec=true ./...",
+      "exit_code": 0,
+      "seconds": 5.508
+    }
+  ],
+  "openspec": {
+    "change_exit_code": 0,
+    "main_specs_exit_code": 0,
+    "main_specs_passed": 55
+  },
+  "limitations": [
+    "Cross-platform tests were compiled and linked with -exec=true, not executed on Linux/Windows.",
+    "No real cloud model API or production credentials used."
+  ]
+}

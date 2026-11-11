@@ -1,0 +1,15 @@
+fuzz: elapsed: 0s, gathering baseline coverage: 0/304 completed
+fuzz: elapsed: 0s, gathering baseline coverage: 304/304 completed, now fuzzing with 2 workers
+fuzz: elapsed: 3s, execs: 96232 (32066/sec), new interesting: 10 (total: 314)
+fuzz: elapsed: 6s, execs: 197788 (33852/sec), new interesting: 19 (total: 323)
+fuzz: elapsed: 9s, execs: 268491 (23532/sec), new interesting: 24 (total: 328)
+fuzz: elapsed: 12s, execs: 493899 (75270/sec), new interesting: 33 (total: 337)
+fuzz: elapsed: 15s, execs: 666472 (57526/sec), new interesting: 45 (total: 349)
+fuzz: elapsed: 18s, execs: 826068 (53193/sec), new interesting: 50 (total: 354)
+fuzz: elapsed: 21s, execs: 978880 (50921/sec), new interesting: 78 (total: 382)
+fuzz: elapsed: 24s, execs: 1125147 (48773/sec), new interesting: 81 (total: 385)
+fuzz: elapsed: 27s, execs: 1288749 (54500/sec), new interesting: 86 (total: 390)
+fuzz: elapsed: 30s, execs: 1429208 (46847/sec), new interesting: 89 (total: 393)
+fuzz: elapsed: 31s, execs: 1429208 (0/sec), new interesting: 89 (total: 393)
+PASS
+ok  	easycode/internal/extension/hook	31.454s

@@ -245,3 +245,63 @@ func TestOwnerDrainsFloodAndSplitUTF8Independently(t *testing.T) {
 		t.Fatal("flood lost raw bytes", result)
 	}
 }
+
+// stoppedGroup 按探测阶段发布退出，强制 I/O 错误先于退出观察。
+type stoppedGroup struct {
+	*fakeHandle
+	once           sync.Once
+	signals        int
+	initiallyAlive bool
+	probes         int
+}
+
+func (h *stoppedGroup) GroupAlive() (bool, error) {
+	h.probes++
+	if h.initiallyAlive && h.probes == 1 {
+		return true, nil
+	}
+	h.once.Do(func() { h.exits <- exitValue{code: 0} })
+	return false, nil
+}
+func (h *stoppedGroup) Terminate(bool) error {
+	h.signals++
+	return errors.New("operation not permitted")
+}
+
+type rejectedOutput struct{}
+
+func (rejectedOutput) Write([]byte) (int, error) { return 0, errors.New("bounded output rejected") }
+func TestOwnerDoesNotSignalConfirmedStoppedGroupAfterIOFailure(t *testing.T) {
+	for _, initiallyAlive := range []bool{false, true} {
+		t.Run(map[bool]string{false: "already-stopped", true: "exits-before-signal"}[initiallyAlive], func(t *testing.T) {
+			h := &stoppedGroup{initiallyAlive: initiallyAlive, fakeHandle: &fakeHandle{out: io.NopCloser(strings.NewReader("output")), stderr: io.NopCloser(strings.NewReader("")), exits: make(chan exitValue, 1)}}
+			c := &fakeClock{timers: make(chan *fakeTimer, 8)}
+			owner, err := New(Config{Launcher: fixedStoppedLauncher{h}, Clock: c, Stdout: rejectedOutput{}, Stderr: io.Discard, Timeout: time.Second})
+			if err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan Result, 1)
+			go func() { done <- owner.Run(context.Background()); close(done) }()
+			<-c.timers
+			next := <-c.timers
+			// 假时钟必须释放已有 owner，业务断言在收口后执行。
+			if next.duration == 250*time.Millisecond {
+				next.ticks <- time.Unix(1, 0)
+				next = <-c.timers
+			}
+			result := <-done
+			<-owner.Done()
+			wantSignals := 0
+			if initiallyAlive {
+				wantSignals = 1
+			}
+			if next.duration != time.Second || result.Uncertain || result.StdoutError == nil || !result.ExitKnown || h.signals != wantSignals || h.waits != 1 {
+				t.Fatal("exit race lost confirmed cleanup", result, h.signals)
+			}
+		})
+	}
+}
+
+type fixedStoppedLauncher struct{ handle Handle }
+
+func (l fixedStoppedLauncher) Start(context.Context) (Handle, error) { return l.handle, nil }

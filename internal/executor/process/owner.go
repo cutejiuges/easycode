@@ -178,19 +178,17 @@ wait:
 	}
 	alive, probeErr := h.GroupAlive()
 	r.Uncertain = r.Uncertain || probeErr != nil
-	if r.Cancelled || r.TimedOut || alive || r.Uncertain || r.StdinError != nil || r.StdoutError != nil || r.StderrError != nil {
-		if err := h.Terminate(false); err != nil {
-			r.Uncertain = true
-		}
+	// 已确认停止的原组无需再发信号，避免 Darwin 对僵尸组返回 EPERM 而伪造清理不确定。
+	if alive || probeErr != nil {
+		// 信号请求可能与自然退出并发；清理事实由原组探测、最终 Wait 和流收口确认。
+		_ = h.Terminate(false)
 		grace := o.config.Clock.Timer(250 * time.Millisecond)
 		<-grace.Channel()
 		grace.Stop()
 		alive, probeErr = h.GroupAlive()
 		r.Uncertain = r.Uncertain || probeErr != nil
 		if alive || probeErr != nil {
-			if err := h.Terminate(true); err != nil {
-				r.Uncertain = true
-			}
+			_ = h.Terminate(true)
 		}
 	}
 	if !observed {

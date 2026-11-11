@@ -38,29 +38,31 @@ func transcriptListItem(node transcriptNode, entry session.ToolHistoryEntry) pro
 	}
 	item.DetailSequence = entry.DetailSequence
 	item.Activity = tool.ProjectActivity(entry.Invocation)
-	if g := entry.PostHooks; g != nil && entry.HasResult && (g.Terminal != nil || entry.Result.Status() == tool.ResultSuccess) {
-		ref := g.Plan.Plan.Hooks[min(len(g.Finished), len(g.Plan.Plan.Hooks)-1)]
-		summary := protocol.HookActivityPayload{InvocationID: string(entry.Invocation.InvocationID()), Reference: ref, State: protocol.HookActivityChecking, Code: domain.HookOK}
-		if g.Terminal != nil {
-			summary.Code = g.Terminal.Code
-			switch g.Terminal.Disposition {
-			case domain.PostHookCompleted:
-				summary.State = protocol.HookActivityCompleted
-				for _, f := range g.Finished {
-					if f.Result.Code == summary.Code {
-						summary.Reference = f.Feedback.Reference
-						break
+	if g := entry.PostHooks; g != nil && entry.HasResult {
+		if branch, selected := g.SelectedBranch(); selected {
+			ref := branch.Hooks[min(len(g.Finished), len(branch.Hooks)-1)]
+			summary := protocol.HookActivityPayload{InvocationID: string(entry.Invocation.InvocationID()), Reference: ref, State: protocol.HookActivityChecking, Code: domain.HookOK}
+			if g.Terminal != nil {
+				summary.Code = g.Terminal.Code
+				switch g.Terminal.Disposition {
+				case domain.PostHookCompleted:
+					summary.State = protocol.HookActivityCompleted
+					for _, f := range g.Finished {
+						if f.Result.Code == summary.Code {
+							summary.Reference = f.Feedback.Reference
+							break
+						}
 					}
+				case domain.PostHookSkipped:
+					summary.State = protocol.HookActivitySkipped
+				case domain.PostHookCancelled:
+					summary.State = protocol.HookActivityState(domain.HookCancel)
+				case domain.PostHookUncertain:
+					summary.State = protocol.HookActivityState(domain.HookUncertain)
 				}
-			case domain.PostHookSkipped:
-				summary.State = protocol.HookActivitySkipped
-			case domain.PostHookCancelled:
-				summary.State = protocol.HookActivityState(domain.HookCancel)
-			case domain.PostHookUncertain:
-				summary.State = protocol.HookActivityState(domain.HookUncertain)
 			}
+			item.PostHook = summary
 		}
-		item.PostHook = summary
 	}
 	if entry.HasResult {
 		r := entry.Result
@@ -244,7 +246,11 @@ func (q *transcriptQueries) ReadTranscriptBody(ctx context.Context, query protoc
 				return protocol.TranscriptBodyPage{}, tool.ArtifactReadUnavailable
 			}
 			g := entry.PostHooks
-			text = "PostToolUse checks · feedback delivery: " + string(g.Plan.Delivery)
+			branch, selected := g.SelectedBranch()
+			text = "Post-tool checks · plan saved"
+			if selected {
+				text = string(branch.Event) + " checks · feedback delivery: " + string(branch.Delivery)
+			}
 			for _, f := range g.Finished {
 				text += fmt.Sprintf("\n\nCheck %s:%s · %s (%s) · stdout %d bytes · stderr %d bytes", f.Feedback.Reference.Source, f.Feedback.Reference.ID, f.Result.Status, f.Result.Code, f.Result.StdoutBytes, f.Result.StderrBytes)
 			}
@@ -252,7 +258,7 @@ func (q *transcriptQueries) ReadTranscriptBody(ctx context.Context, query protoc
 				text += "\n\nCheck in progress"
 			}
 			if g.Terminal != nil {
-				text += fmt.Sprintf("\n\nPostToolUse: %s (%s) · processed %d/%d", g.Terminal.Disposition, g.Terminal.Code, g.Terminal.Processed, len(g.Plan.Plan.Hooks))
+				text += fmt.Sprintf("\n\nPost-tool %s: %s (%s) · processed %d/%d", g.Terminal.Route, g.Terminal.Disposition, g.Terminal.Code, g.Terminal.Processed, len(branch.Hooks))
 			}
 			feedback, err := tool.RenderPostFeedback(g.Feedback())
 			if err != nil {

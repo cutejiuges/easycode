@@ -74,7 +74,7 @@ func renderTranscript(messages []transcriptMessage, width int) []string {
 		}
 		if h := message.hook; h != nil && h.State != "continue" {
 			label := string(h.State)
-			if h.Reference.Event == domain.HookPostToolUse {
+			if h.Reference.Event.Post() {
 				switch h.State {
 				case protocol.HookActivityCompleted:
 					label = "checks passed"
@@ -95,8 +95,8 @@ func renderTranscript(messages []transcriptMessage, width int) []string {
 		}
 		lines = append(lines, wrapApprovalDiff(title, width)...)
 		if h := message.hook; h != nil {
-			if h.Reference.Event == domain.HookPostToolUse && (h.State == protocol.HookActivityCompleted || h.State == protocol.HookActivitySkipped) {
-				lines = append(lines, wrapApprovalDiff("  PostToolUse checks: "+string(h.Code)+" · Ctrl+O: details", width)...)
+			if h.Reference.Event.Post() && (h.State == protocol.HookActivityCompleted || h.State == protocol.HookActivitySkipped) {
+				lines = append(lines, wrapApprovalDiff("  "+string(h.Reference.Event)+" checks: "+string(h.Code)+" · Ctrl+O: details", width)...)
 			} else {
 				lines = append(lines, wrapApprovalDiff(fmt.Sprintf("  %s check %s:%s · %s · timeout %ds · stdout %d bytes · stderr %d bytes", h.Reference.Event, h.Reference.Source, h.Reference.ID, h.State, h.Reference.TimeoutSeconds, h.StdoutBytes, h.StderrBytes), width)...)
 				if h.State != "checking" {

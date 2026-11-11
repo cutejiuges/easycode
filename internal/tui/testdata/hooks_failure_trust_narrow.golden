@@ -1,0 +1,24 @@
+Trust this hook?
+Runs only after a definite e
+xecution-attempt failure.
+Admission does not prove the
+ process started. Normal non
+zero exits use PostToolUse.
+feedback=model sends additio
+nalContext to the provider a
+nd saves it in Session.
+Source: project · check
+PostToolUseFailure: fs.patch
+|fs.write|process.exec
+Feedback: model
+Timeout: 5 seconds
+Workspace: . · read-only · n
+etwork denied
+This does not approve the mo
+del's tool call.
+Workspace scripts can change
+ after review.
+PgUp/PgDn: full command · Ta
+b/↑/↓: choose · Esc: deny
+
+  Trust for this session

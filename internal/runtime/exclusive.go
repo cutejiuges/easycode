@@ -28,18 +28,24 @@ func (action exclusiveAction) Matches(result tool.InvocationResult) bool {
 	return action.matches(result)
 }
 
+type exclusiveResult struct {
+	Result    tool.InvocationResult
+	Admission tool.ExecutionAdmission
+}
+
 // executeExclusive 把 started 接收作为取消线性化点，返回前持久化唯一关联结果。
-func (runtime *Runtime) executeExclusive(ctx context.Context, turnID domain.TurnID, invocation tool.Invocation, strategy exclusiveStrategy) (tool.InvocationResult, error) {
-	finish := func(result tool.InvocationResult) (tool.InvocationResult, error) {
+func (runtime *Runtime) executeExclusive(ctx context.Context, turnID domain.TurnID, invocation tool.Invocation, strategy exclusiveStrategy) (exclusiveResult, error) {
+	var admission tool.ExecutionAdmission
+	finish := func(result tool.InvocationResult) (exclusiveResult, error) {
 		if err := runtime.persistToolResult(context.WithoutCancel(ctx), turnID, &result); err != nil {
-			return tool.InvocationResult{}, err
+			return exclusiveResult{}, err
 		}
 		if result.Status() == tool.ResultOutcomeUncertain {
-			return result, fault.New(fault.CodeSessionWrite, "tool execution outcome is uncertain")
+			return exclusiveResult{Result: result, Admission: admission}, fault.New(fault.CodeSessionWrite, "tool execution outcome is uncertain")
 		}
-		return result, nil
+		return exclusiveResult{Result: result, Admission: admission}, nil
 	}
-	cancelled := func() (tool.InvocationResult, error) {
+	cancelled := func() (exclusiveResult, error) {
 		return finish(tool.NewInvocationErrorResult(invocation, tool.ResultCancelled, "cancelled_before_execution", "Tool cancelled before execution"))
 	}
 	if ctx.Err() != nil {
@@ -47,14 +53,27 @@ func (runtime *Runtime) executeExclusive(ctx context.Context, turnID domain.Turn
 	}
 	started, err := session.NewToolExecutionStartedDraft(turnID, invocation.InvocationID())
 	if err != nil {
-		return tool.InvocationResult{}, err
+		return exclusiveResult{}, err
 	}
-	if _, err = runtime.journal.AppendBatch(ctx, []session.RecordDraft{started}); err != nil {
+	records, err := runtime.journal.AppendBatch(ctx, []session.RecordDraft{started})
+	if err != nil {
 		if (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) && !runtime.journal.Poisoned() {
 			return cancelled()
 		}
 		runtime.poisoned.Store(true)
-		return tool.InvocationResult{}, fault.Wrap(fault.CodeSessionWrite, "persist tool execution start failed", err)
+		return exclusiveResult{}, fault.Wrap(fault.CodeSessionWrite, "persist tool execution start failed", err)
+	}
+	if len(records) != 1 {
+		runtime.poisoned.Store(true)
+		return exclusiveResult{}, fault.New(fault.CodeSessionWrite, "execution start has no durable sequence")
+	}
+	admission, err = tool.NewExecutionAdmission(invocation.InvocationID(), records[0].Sequence)
+	if err != nil {
+		runtime.poisoned.Store(true)
+		return exclusiveResult{}, err
+	}
+	if state := runtime.hooks.post[invocation.InvocationID()]; state != nil {
+		state.admission = admission
 	}
 	runtime.emitToolStarted(turnID, invocation)
 	result := strategy.Execute(ctx)
@@ -69,6 +88,9 @@ func (runtime *Runtime) executeExclusive(ctx context.Context, turnID domain.Turn
 }
 
 func (runtime *Runtime) executeApproved(ctx context.Context, emit Emitter, turnID domain.TurnID, invocation tool.Invocation) (tool.InvocationResult, bool, error) {
+	if runtime.poisoned.Load() || runtime.journal.Poisoned() {
+		return tool.InvocationResult{}, false, fault.New(fault.CodeSessionWrite, "session journal is poisoned")
+	}
 	if state := runtime.hooks.post[invocation.InvocationID()]; state != nil {
 		runtime.hooks.mu.Lock()
 		cached, ok := runtime.hooks.completed[invocation.InvocationID()]
@@ -93,6 +115,9 @@ func (runtime *Runtime) executeApproved(ctx context.Context, emit Emitter, turnI
 
 	state, code, prepareErr := runtime.preparePostHooks(ctx, emit, turnID, invocation)
 	if code != domain.HookOK || prepareErr != nil {
+		if state != nil {
+			state.stopCode = code
+		}
 		if runtime.journal.Poisoned() || runtime.poisoned.Load() {
 			return tool.InvocationResult{}, false, prepareErr
 		}

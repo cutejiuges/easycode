@@ -59,8 +59,9 @@ type configFile struct {
 	Hooks configEvents `json:"hooks"`
 }
 type configEvents struct {
-	PreToolUse  []configGroup `json:"PreToolUse,omitempty"`
-	PostToolUse []configGroup `json:"PostToolUse,omitempty"`
+	PreToolUse         []configGroup `json:"PreToolUse,omitempty"`
+	PostToolUse        []configGroup `json:"PostToolUse,omitempty"`
+	PostToolUseFailure []configGroup `json:"PostToolUseFailure,omitempty"`
 }
 type configGroup struct {
 	Matcher string          `json:"matcher"`
@@ -84,7 +85,7 @@ func (v *configEvents) UnmarshalJSON(b []byte) error {
 	if err != nil {
 		return domain.HookConfigInvalid
 	}
-	for _, event := range []string{"PreToolUse", "PostToolUse"} {
+	for _, event := range []string{"PreToolUse", "PostToolUse", "PostToolUseFailure"} {
 		if raw, ok := m[event]; ok && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 			return domain.HookConfigInvalid
 		}
@@ -137,7 +138,7 @@ func decodeConfig(source domain.HookSource, b []byte) ([]domain.HookDeclaration,
 	for _, phase := range []struct {
 		event  domain.HookEvent
 		groups []configGroup
-	}{{domain.HookPreToolUse, f.Hooks.PreToolUse}, {domain.HookPostToolUse, f.Hooks.PostToolUse}} {
+	}{{domain.HookPreToolUse, f.Hooks.PreToolUse}, {domain.HookPostToolUse, f.Hooks.PostToolUse}, {domain.HookPostToolUseFailure, f.Hooks.PostToolUseFailure}} {
 		for _, g := range phase.groups {
 			matcher, err := domain.ParseHookMatcher(g.Matcher)
 			if err != nil {
@@ -152,7 +153,7 @@ func decodeConfig(source domain.HookSource, b []byte) ([]domain.HookDeclaration,
 				}
 				feedback := domain.HookFeedbackNone
 				if h.Feedback != nil {
-					if phase.event != domain.HookPostToolUse {
+					if !phase.event.Post() {
 						return nil, domain.HookConfigInvalid
 					}
 					feedback = *h.Feedback

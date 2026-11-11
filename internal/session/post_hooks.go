@@ -68,47 +68,69 @@ func (v ReplayedPostHooks) Feedback() []domain.FrozenHookFeedback {
 func callComplete(call ReplayedToolCall) bool {
 	return call.State == ReplayedToolCallResult && (call.PostHooks == nil || call.PostHooks.Terminal != nil)
 }
-func (v ReplayedPostHooks) Validate(call ReplayedToolCall) error {
-	p := v.Plan.Plan
-	if v.Plan.Validate() != nil || v.PlanSequence <= call.ReadySequence || p.InvocationID != string(call.Invocation.InvocationID()) || string(p.Capability) != string(call.Invocation.Capability()) || len(v.Finished) > len(p.Hooks) {
-		return fmt.Errorf("invalid post hook recovery plan")
+
+// SelectedBranch 只从已提交的检查身份或终态读取事件，计划本身不预选成功。
+func (v ReplayedPostHooks) SelectedBranch() (domain.PostHookBranch, bool) {
+	var event domain.HookEvent
+	if v.Terminal != nil {
+		event, _ = v.Terminal.Route.Event()
+	} else if v.Started != nil {
+		event = v.Started.Event
+	} else if len(v.Finished) > 0 {
+		event = v.Finished[0].Result.Identity.Event
 	}
-	expectedDelivery := domain.HookDeliveryNone
-	model := false
-	for _, ref := range p.Hooks {
-		model = model || ref.Feedback == domain.HookFeedbackModel
-	}
-	if model {
-		expectedDelivery = domain.HookDeliveryUnavailable
-		if tool.PostFeedbackAvailable(p, v.Plan.Reservation) {
-			expectedDelivery = domain.HookDeliveryAvailable
+	return v.Plan.Branch(event)
+}
+
+// Selection 将已验证的原工具准入与结果绑定到后置输出证据。
+func (v ReplayedPostHooks) Selection(call ReplayedToolCall) (tool.PostHookSelection, error) {
+	var admission tool.ExecutionAdmission
+	if call.StartedSequence > 0 {
+		var err error
+		admission, err = tool.NewExecutionAdmission(call.Invocation.InvocationID(), call.StartedSequence)
+		if err != nil {
+			return tool.PostHookSelection{}, err
 		}
 	}
-	if v.Plan.Delivery != expectedDelivery {
-		return fmt.Errorf("invalid post hook delivery reservation")
+	return tool.NewPostHookSelection(v.Plan, admission, call.Result)
+}
+
+func (v ReplayedPostHooks) Validate(call ReplayedToolCall) error {
+	p := v.Plan
+	if p.Validate() != nil || v.PlanSequence <= call.ReadySequence || p.InvocationID != string(call.Invocation.InvocationID()) || string(p.Capability) != string(call.Invocation.Capability()) {
+		return fmt.Errorf("invalid post hook recovery plan")
 	}
 	if call.Hooks != nil && (call.Hooks.Decision == nil || call.Hooks.Decision.Status != domain.HookContinue || call.Hooks.DecisionSequence >= v.PlanSequence) || call.ApprovalSequence != 0 && call.ApprovalSequence <= v.PlanSequence || call.StartedSequence != 0 && call.StartedSequence <= v.PlanSequence || call.ResultSequence != 0 && call.ResultSequence <= v.PlanSequence {
 		return fmt.Errorf("post hook plan order is invalid")
 	}
-	if call.State == ReplayedToolCallResult && call.Result.Budget().Allowance() != v.Plan.Allowance-v.Plan.Reservation {
-		return fmt.Errorf("post hook base allowance mismatch")
-	}
-	if len(v.Finished) > 0 || v.Started != nil {
-		if call.State != ReplayedToolCallResult || call.StartedSequence == 0 || call.Result.Status() != tool.ResultSuccess {
-			return fmt.Errorf("post hook has no executed successful result")
+	hasResult := call.State == ReplayedToolCallResult
+	route := domain.PostHookRouteNone
+	if hasResult {
+		selection, err := v.Selection(call)
+		if err != nil {
+			return err
 		}
+		route = selection.Route()
+		if call.Result.Budget().Allowance() != p.Allowance-p.Reservation {
+			return fmt.Errorf("post hook base allowance mismatch")
+		}
+	}
+	event, _ := route.Event()
+	branch, matched := p.Branch(event)
+	if len(v.Finished) > len(branch.Hooks) || (len(v.Finished) > 0 || v.Started != nil) && (!hasResult || !matched) {
+		return fmt.Errorf("post hook has no selected executed result")
 	}
 	var prior []domain.FrozenHookFeedback
 	for i, f := range v.Finished {
-		id, _ := domain.NewPostHookRunIdentity(v.Plan, i)
-		if f.Validate() != nil || f.Result.Identity != id || f.Feedback.Reference != p.Hooks[i] || i < len(v.Finished)-1 && (f.Result.Status == domain.HookCancel || f.Result.Status == domain.HookUncertain) {
+		id, _ := domain.NewPostHookRunIdentity(p, event, i)
+		if f.Validate() != nil || f.Result.Identity != id || f.Feedback.Reference != branch.Hooks[i] || i < len(v.Finished)-1 && (f.Result.Status == domain.HookCancel || f.Result.Status == domain.HookUncertain) {
 			return fmt.Errorf("invalid post hook execution prefix")
 		}
 		candidate := domain.HookFeedbackCandidate{}
 		if f.Feedback.Kind == domain.HookFeedbackContent {
 			candidate, _ = domain.NewHookFeedbackCandidate(f.Feedback.Content)
 		}
-		expected, err := tool.FreezePostFeedback(v.Plan, prior, f.Result, candidate)
+		expected, err := tool.FreezePostFeedback(p, prior, f.Result, candidate)
 		if err != nil || expected != f {
 			return fmt.Errorf("invalid frozen post hook feedback")
 		}
@@ -118,19 +140,19 @@ func (v ReplayedPostHooks) Validate(call ReplayedToolCall) error {
 		return fmt.Errorf("orphan post hook sequence")
 	}
 	if v.Started != nil {
-		id, err := domain.NewPostHookRunIdentity(v.Plan, len(v.Finished))
+		id, err := domain.NewPostHookRunIdentity(p, event, len(v.Finished))
 		if err != nil || *v.Started != id || v.StartedSequence <= call.ResultSequence || v.Terminal != nil {
 			return fmt.Errorf("invalid pending post hook identity")
 		}
 	}
 	if v.Terminal == nil {
-		if len(v.Finished) == len(p.Hooks) || len(v.Finished) > 0 && (v.Finished[len(v.Finished)-1].Result.Status == domain.HookCancel || v.Finished[len(v.Finished)-1].Result.Status == domain.HookUncertain) {
+		if matched && len(v.Finished) == len(branch.Hooks) || len(v.Finished) > 0 && (v.Finished[len(v.Finished)-1].Result.Status == domain.HookCancel || v.Finished[len(v.Finished)-1].Result.Status == domain.HookUncertain) {
 			return fmt.Errorf("post hook finish requires atomic terminal")
 		}
 		return nil
 	}
 	t := v.Terminal
-	if t.Validate() != nil || t.InvocationID != p.InvocationID || t.PlanDigest != v.Plan.Digest || t.Processed != len(v.Finished) || v.Started != nil || call.State != ReplayedToolCallResult || v.TerminalSequence <= call.ResultSequence {
+	if t.Validate() != nil || !hasResult || t.InvocationID != p.InvocationID || t.PlanDigest != p.Digest || t.Route != route || t.Processed != len(v.Finished) || v.Started != nil || v.TerminalSequence <= call.ResultSequence {
 		return fmt.Errorf("invalid post hook terminal evidence")
 	}
 	if len(v.Finished) > 0 {
@@ -140,7 +162,7 @@ func (v ReplayedPostHooks) Validate(call ReplayedToolCall) error {
 		}
 	}
 	if t.Origin == "recovery" {
-		if t.Disposition == domain.PostHookCompleted || t.Disposition == domain.PostHookSkipped && t.Code != domain.HookToolNotSuccessful || t.Disposition == domain.PostHookCancelled && t.Code != domain.HookPostInterrupted || t.Disposition == domain.PostHookUncertain && (len(v.Finished) == 0 || v.Finished[len(v.Finished)-1].Result.Origin != "recovery") {
+		if t.Disposition == domain.PostHookCompleted || t.Disposition == domain.PostHookSkipped && t.Code != domain.HookToolNotSuccessful && t.Code != domain.HookEventUnmatched || t.Disposition == domain.PostHookCancelled && t.Code != domain.HookPostInterrupted || t.Disposition == domain.PostHookUncertain && (len(v.Finished) == 0 || v.Finished[len(v.Finished)-1].Result.Origin != "recovery") {
 			return fmt.Errorf("invalid recovery post hook terminal")
 		}
 	} else if t.Code == domain.HookPostInterrupted {
@@ -148,7 +170,7 @@ func (v ReplayedPostHooks) Validate(call ReplayedToolCall) error {
 	}
 	switch t.Disposition {
 	case domain.PostHookCompleted:
-		if len(v.Finished) != len(p.Hooks) {
+		if !matched || len(v.Finished) != len(branch.Hooks) {
 			return fmt.Errorf("incomplete post hook terminal")
 		}
 		code := domain.HookOK
@@ -164,11 +186,16 @@ func (v ReplayedPostHooks) Validate(call ReplayedToolCall) error {
 			return fmt.Errorf("post hook aggregate code mismatch")
 		}
 	case domain.PostHookSkipped:
-		if len(v.Finished) >= len(p.Hooks) {
+		if route == domain.PostHookRouteNone {
+			if t.Code != domain.HookToolNotSuccessful && t.Code != domain.HookTrustDenied && t.Code != domain.HookTrustRequired {
+				return fmt.Errorf("post hook none skip reason mismatch")
+			}
+		} else if !matched {
+			if t.Code != domain.HookEventUnmatched {
+				return fmt.Errorf("post hook unmatched reason mismatch")
+			}
+		} else if len(v.Finished) >= len(branch.Hooks) || t.Code != domain.HookInputLimit && t.Code != domain.HookExecutionBudgetExhausted {
 			return fmt.Errorf("post hook skip has no suffix")
-		}
-		if t.Code == domain.HookToolNotSuccessful && call.Result.Status() == tool.ResultSuccess || (t.Code == domain.HookInputLimit || t.Code == domain.HookExecutionBudgetExhausted) && (call.Result.Status() != tool.ResultSuccess || call.StartedSequence == 0) {
-			return fmt.Errorf("post hook skip reason mismatch")
 		}
 		if t.Code == domain.HookTrustDenied || t.Code == domain.HookTrustRequired {
 			if len(v.Finished) != 0 || call.StartedSequence != 0 || call.ApprovalSequence != 0 || call.Result.Code() != string(t.Code) || call.Result.Status() != tool.ResultDenied {
@@ -176,18 +203,18 @@ func (v ReplayedPostHooks) Validate(call ReplayedToolCall) error {
 			}
 		}
 	case domain.PostHookUncertain:
-		if len(v.Finished) == 0 || v.Finished[len(v.Finished)-1].Result.Status != domain.HookUncertain {
+		if !matched || len(v.Finished) == 0 || v.Finished[len(v.Finished)-1].Result.Status != domain.HookUncertain {
 			return fmt.Errorf("post hook uncertainty has no accepted run")
 		}
 	case domain.PostHookCancelled:
-		if call.Result.Status() != tool.ResultSuccess || call.StartedSequence == 0 {
-			return fmt.Errorf("post hook cancellation has no successful tool")
+		if !matched && (route != domain.PostHookRouteNone || t.Code != domain.HookCancelled) {
+			return fmt.Errorf("post hook cancellation has no selected branch")
 		}
 	}
-	eligible := t.Origin == "execution" && call.Result.Status() == tool.ResultSuccess && call.StartedSequence != 0 && v.Plan.Delivery == domain.HookDeliveryAvailable
+	eligible := t.Origin == "execution" && matched && branch.Delivery == domain.HookDeliveryAvailable
 	expectedSuffix := 0
 	if eligible {
-		for _, ref := range p.Hooks[len(v.Finished):] {
+		for _, ref := range branch.Hooks[len(v.Finished):] {
 			if ref.Feedback == domain.HookFeedbackModel {
 				expectedSuffix++
 			}
@@ -198,8 +225,8 @@ func (v ReplayedPostHooks) Validate(call ReplayedToolCall) error {
 	}
 	for _, f := range t.SuffixFeedback {
 		i := f.Identity.Ordinal
-		id, err := domain.NewPostHookRunIdentity(v.Plan, i)
-		if err != nil || f.Identity != id || f.Reference != p.Hooks[i] || i < len(v.Finished) || f.Kind != domain.HookFeedbackCode || f.Code != t.Code {
+		id, err := domain.NewPostHookRunIdentity(p, event, i)
+		if err != nil || f.Identity != id || f.Reference != branch.Hooks[i] || i < len(v.Finished) || f.Kind != domain.HookFeedbackCode || f.Code != t.Code {
 			return fmt.Errorf("invalid post hook suffix feedback")
 		}
 		before, err := tool.RenderPostFeedback(prior)
@@ -216,7 +243,7 @@ func (v ReplayedPostHooks) Validate(call ReplayedToolCall) error {
 	if err != nil {
 		return err
 	}
-	budget, err := domain.NewPostHookBudget(v.Plan.Allowance, v.Plan.Reservation, call.Result.Budget().ActualBytes(), len(text))
+	budget, err := domain.NewPostHookBudget(p.Allowance, p.Reservation, call.Result.Budget().ActualBytes(), len(text))
 	if err != nil || budget != t.Budget || t.FeedbackDigest != domain.HookDigest([]byte(text)) {
 		return fmt.Errorf("post hook terminal budget mismatch")
 	}
@@ -253,7 +280,7 @@ func (active *activeReplayTurn) acceptPostHookBatch(batch []Record) error {
 		if err != nil || len(batch) != 1 {
 			return replayCorrupt("invalid post hook plan batch")
 		}
-		call, err := active.postCall(p.Plan.InvocationID)
+		call, err := active.postCall(p.InvocationID)
 		if err != nil {
 			return err
 		}
@@ -267,11 +294,7 @@ func (active *activeReplayTurn) acceptPostHookBatch(batch []Record) error {
 		if err != nil || allowance != p.Allowance {
 			return replayCorrupt("post hook plan allowance differs from prior facts")
 		}
-		model := false
-		for _, ref := range p.Plan.Hooks {
-			model = model || ref.Feedback == domain.HookFeedbackModel
-		}
-		ticket, err := active.budget.Reserve(call.Invocation.Capability(), model)
+		ticket, err := active.budget.Reserve(call.Invocation.Capability(), p.ModelFeedback())
 		if err != nil {
 			return replayCorrupt("post hook budget ticket admission failed")
 		}
@@ -284,13 +307,13 @@ func (active *activeReplayTurn) acceptPostHookBatch(batch []Record) error {
 		return nil
 	case EventHookExecutionStarted:
 		id, err := DecodeHookExecutionStarted(first)
-		if err != nil || len(batch) != 1 || id.Event != domain.HookPostToolUse {
+		if err != nil || len(batch) != 1 || !id.Event.Post() {
 			return replayCorrupt("invalid post hook start batch")
 		}
 		invocation = id.InvocationID
 	case EventHookExecutionFinished:
 		f, err := DecodeHookExecutionFinished(first)
-		if err != nil || f.Result.Identity.Event != domain.HookPostToolUse {
+		if err != nil || !f.Result.Identity.Event.Post() {
 			return replayCorrupt("invalid post hook finish")
 		}
 		invocation = f.Result.Identity.InvocationID
@@ -327,7 +350,8 @@ func (active *activeReplayTurn) acceptPostHookBatch(batch []Record) error {
 		g.Finished = append(g.Finished, f)
 		g.Started = nil
 		g.StartedSequence = 0
-		final := len(g.Finished) == len(g.Plan.Plan.Hooks) || f.Result.Status == domain.HookCancel || f.Result.Status == domain.HookUncertain
+		branch, _ := g.Plan.Branch(f.Result.Identity.Event)
+		final := len(g.Finished) == len(branch.Hooks) || f.Result.Status == domain.HookCancel || f.Result.Status == domain.HookUncertain
 		if final {
 			if len(batch) != 2 || batch[1].EventKind != EventToolPostHookCompleted {
 				return replayCorrupt("post hook finish requires atomic terminal")

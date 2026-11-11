@@ -1,0 +1,21 @@
+{
+  "provider": "openai",
+  "event": "PreToolUse",
+  "exit_code": 0,
+  "stages": [
+    "startup",
+    "default-deny-review",
+    "denied-tool-paired",
+    "browser",
+    "details",
+    "reset",
+    "back-to-browser",
+    "draft-return",
+    "review-after-reset",
+    "ordinary-tool-approval",
+    "approved-tool-completed",
+    "checking-distinct-from-running",
+    "cancel-cleaned-up",
+    "clean-terminal-exit"
+  ]
+}

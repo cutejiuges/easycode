@@ -13,6 +13,9 @@ import (
 
 type postHookCall struct {
 	plan                  domain.PostHookPlan
+	admission             tool.ExecutionAdmission
+	route                 domain.PostHookRoute
+	stopCode              domain.HookCode
 	declarations          []domain.HookDeclaration
 	trusted               bool
 	finished              []domain.HookFinished
@@ -30,13 +33,17 @@ func (r *Runtime) preparePostHooks(ctx context.Context, emit Emitter, turn domai
 	if runner == nil {
 		return nil, domain.HookOK, nil
 	}
-	ds, err := snapshot.Match(domain.HookPostToolUse, domain.HookCapability(inv.Capability()))
-	if err != nil {
-		code := domain.HookConfigInvalid
-		if hookCode, ok := err.(domain.HookCode); ok {
-			code = hookCode
+	var ds []domain.HookDeclaration
+	for _, event := range []domain.HookEvent{domain.HookPostToolUse, domain.HookPostToolUseFailure} {
+		matched, err := snapshot.Match(event, domain.HookCapability(inv.Capability()))
+		if err != nil {
+			code := domain.HookConfigInvalid
+			if hookCode, ok := err.(domain.HookCode); ok {
+				code = hookCode
+			}
+			return nil, code, err
 		}
-		return nil, code, err
+		ds = append(ds, matched...)
 	}
 	if len(ds) == 0 {
 		return nil, domain.HookOK, nil
@@ -46,15 +53,9 @@ func (r *Runtime) preparePostHooks(ctx context.Context, emit Emitter, turn domai
 			return nil, code, nil
 		}
 	}
-	refs := make([]domain.HookReference, len(ds))
 	model := false
-	for i, d := range ds {
-		refs[i] = d.Reference
+	for _, d := range ds {
 		model = model || d.Reference.Feedback == domain.HookFeedbackModel
-	}
-	p, err := domain.NewHookPlan(string(inv.InvocationID()), domain.HookCapability(inv.Capability()), refs)
-	if err != nil {
-		return nil, domain.HookConfigInvalid, err
 	}
 	allowance, err := r.resultAllowance(inv.Capability())
 	if err != nil {
@@ -71,14 +72,24 @@ func (r *Runtime) preparePostHooks(ctx context.Context, emit Emitter, turn domai
 	r.resultTicketInvocation = inv.InvocationID()
 	r.resultTicketCapability = inv.Capability()
 	r.resultTicketPost = true
-	delivery := domain.HookDeliveryNone
-	if model {
-		delivery = domain.HookDeliveryUnavailable
-		if tool.PostFeedbackAvailable(p, ticket.Reservation()) {
-			delivery = domain.HookDeliveryAvailable
+	var branches []domain.PostHookBranch
+	for _, event := range []domain.HookEvent{domain.HookPostToolUse, domain.HookPostToolUseFailure} {
+		var refs []domain.HookReference
+		for _, d := range ds {
+			if d.Reference.Event == event {
+				refs = append(refs, d.Reference)
+			}
 		}
+		if len(refs) == 0 {
+			continue
+		}
+		branch, err := domain.NewPostHookBranch(event, refs, ticket.Reservation())
+		if err != nil {
+			return nil, domain.HookConfigInvalid, err
+		}
+		branches = append(branches, branch)
 	}
-	plan, err := domain.NewPostHookPlan(p, allowance, ticket.Reservation(), delivery)
+	plan, err := domain.NewPostHookPlan(string(inv.InvocationID()), domain.HookCapability(inv.Capability()), branches, allowance, ticket.Reservation())
 	if err != nil {
 		return nil, domain.HookConfigInvalid, err
 	}
@@ -135,6 +146,9 @@ func (r *Runtime) postHookInput(turn domain.TurnID, inv tool.Invocation, result 
 	if err != nil {
 		return domain.HookInput{}, err
 	}
+	if state := r.hooks.post[inv.InvocationID()]; state != nil && state.route == domain.PostHookRouteFailure {
+		return domain.NewFailureHookInput(base.SessionID, base.ThreadID, base.TurnID, base.ToolUseID, base.ToolName, base.CWD, base.Input, result.Code())
+	}
 	var response domain.HookToolResponse
 	switch result.Capability() {
 	case tool.CapabilityPatch:
@@ -169,12 +183,12 @@ func postFeedback(state *postHookCall) []domain.FrozenHookFeedback {
 func postSuffix(state *postHookCall, code domain.HookCode) ([]domain.FrozenHookFeedback, error) {
 	prior := postFeedback(state)
 	suffix := make([]domain.FrozenHookFeedback, 0)
-	for i := len(state.finished); i < len(state.plan.Plan.Hooks); i++ {
-		ref := state.plan.Plan.Hooks[i]
+	for i := len(state.finished); i < len(state.branch().Hooks); i++ {
+		ref := state.branch().Hooks[i]
 		if ref.Feedback != domain.HookFeedbackModel {
 			continue
 		}
-		id, _ := domain.NewPostHookRunIdentity(state.plan, i)
+		id, _ := domain.NewPostHookRunIdentity(state.plan, state.event(), i)
 		f, err := domain.NewFrozenHookFeedback(id, ref, domain.HookFeedbackCode, "", code, 1)
 		if err != nil {
 			return nil, err
@@ -197,7 +211,7 @@ func postSuffix(state *postHookCall, code domain.HookCode) ([]domain.FrozenHookF
 
 func (r *Runtime) completePostHooks(ctx context.Context, turn domain.TurnID, result tool.InvocationResult, state *postHookCall, disposition domain.PostHookDisposition, code domain.HookCode, origin string, prefix []session.RecordDraft) error {
 	suffix := []domain.FrozenHookFeedback{}
-	if origin == "execution" && result.Status() == tool.ResultSuccess && state.trusted && state.plan.Delivery == domain.HookDeliveryAvailable {
+	if origin == "execution" && state.branch().Event.Post() && state.trusted && state.branch().Delivery == domain.HookDeliveryAvailable {
 		var err error
 		suffix, err = postSuffix(state, code)
 		if err != nil {
@@ -213,7 +227,7 @@ func (r *Runtime) completePostHooks(ctx context.Context, turn domain.TurnID, res
 	if err != nil {
 		return err
 	}
-	terminal, err := domain.NewPostHookTerminal(state.plan, origin, disposition, code, len(state.finished), suffix, budget, domain.HookDigest([]byte(text)))
+	terminal, err := domain.NewPostHookTerminal(state.plan, state.route, origin, disposition, code, len(state.finished), suffix, budget, domain.HookDigest([]byte(text)))
 	if err != nil {
 		return err
 	}
@@ -251,7 +265,11 @@ func (r *Runtime) completePostHooks(ctx context.Context, turn domain.TurnID, res
 	case domain.PostHookUncertain:
 		activityState = protocol.HookActivityState(domain.HookUncertain)
 	}
-	ref := state.plan.Plan.Hooks[min(len(state.finished), len(state.plan.Plan.Hooks)-1)]
+	branch := state.branch()
+	if len(branch.Hooks) == 0 {
+		return nil
+	}
+	ref := branch.Hooks[min(len(state.finished), len(branch.Hooks)-1)]
 	if disposition == domain.PostHookCompleted && code != domain.HookOK {
 		for _, f := range state.finished {
 			if f.Result.Code == code {
@@ -271,15 +289,20 @@ func (r *Runtime) runPostHooks(ctx context.Context, turn domain.TurnID, inv tool
 	complete := func(disposition domain.PostHookDisposition, code domain.HookCode, prefix []session.RecordDraft) error {
 		return r.completePostHooks(ctx, turn, result, state, disposition, code, "execution", prefix)
 	}
-	if result.Status() != tool.ResultSuccess {
+	route, err := tool.SelectPostHookRoute(result, state.admission)
+	if err != nil {
+		return err
+	}
+	state.route = route
+	if route == domain.PostHookRouteNone {
 		code := domain.HookToolNotSuccessful
-		if result.Code() == string(domain.HookTrustDenied) {
-			code = domain.HookTrustDenied
-		}
-		if result.Code() == string(domain.HookTrustRequired) {
-			code = domain.HookTrustRequired
+		if state.stopCode == domain.HookTrustDenied || state.stopCode == domain.HookTrustRequired {
+			code = state.stopCode
 		}
 		return complete(domain.PostHookSkipped, code, nil)
+	}
+	if len(state.branch().Hooks) == 0 {
+		return complete(domain.PostHookSkipped, domain.HookEventUnmatched, nil)
 	}
 	if !state.trusted {
 		return errors.New("post hook trust is incomplete")
@@ -312,7 +335,13 @@ func (r *Runtime) runPostHooks(ctx context.Context, turn domain.TurnID, inv tool
 			remaining = 30 * time.Second
 		}
 	}
-	for ordinal := len(state.finished); ordinal < len(state.declarations); ordinal++ {
+	declarations := make([]domain.HookDeclaration, 0, len(state.branch().Hooks))
+	for _, d := range state.declarations {
+		if d.Reference.Event == state.event() {
+			declarations = append(declarations, d)
+		}
+	}
+	for ordinal := len(state.finished); ordinal < len(declarations); ordinal++ {
 		if ctx.Err() != nil {
 			if err := complete(domain.PostHookCancelled, domain.HookCancelled, nil); err != nil {
 				return err
@@ -322,8 +351,8 @@ func (r *Runtime) runPostHooks(ctx context.Context, turn domain.TurnID, inv tool
 		if remaining <= 0 {
 			return complete(domain.PostHookSkipped, domain.HookExecutionBudgetExhausted, nil)
 		}
-		d := state.declarations[ordinal]
-		id, _ := domain.NewPostHookRunIdentity(state.plan, ordinal)
+		d := declarations[ordinal]
+		id, _ := domain.NewPostHookRunIdentity(state.plan, state.event(), ordinal)
 		started, _ := session.NewHookExecutionStartedDraft(turn, id)
 		if err = r.appendPostFacts(ctx, turn, state, protocol.PostHookStarted, []session.RecordDraft{started}); err != nil {
 			if (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) && !r.journal.Poisoned() {
@@ -351,7 +380,7 @@ func (r *Runtime) runPostHooks(ctx context.Context, turn domain.TurnID, inv tool
 		}
 		state.finished = append(state.finished, frozen)
 		resultStatus := frozen.Result.Status
-		final := ordinal == len(state.declarations)-1 || resultStatus == domain.HookCancel || resultStatus == domain.HookUncertain
+		final := ordinal == len(declarations)-1 || resultStatus == domain.HookCancel || resultStatus == domain.HookUncertain
 		if final {
 			disposition, code := domain.PostHookCompleted, domain.HookOK
 			for _, f := range state.finished {
@@ -389,3 +418,7 @@ func (r *Runtime) runPostHooks(ctx context.Context, turn domain.TurnID, inv tool
 	}
 	return nil
 }
+
+// event 和 branch 只读取已选事实，不从当前取消状态推测事件。
+func (s *postHookCall) event() domain.HookEvent       { event, _ := s.route.Event(); return event }
+func (s *postHookCall) branch() domain.PostHookBranch { b, _ := s.plan.Branch(s.event()); return b }

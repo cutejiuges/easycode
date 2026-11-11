@@ -207,7 +207,7 @@ func (q *transcriptQueries) HookFinished(ref domain.HookReference, result domain
 
 // PostHooksCommitted 安装已确定持久化的同一调用快照，并保留原工具锚点。
 func (q *transcriptQueries) PostHooksCommitted(invocation tool.InvocationID, sequence uint64, snapshot session.ReplayedPostHooks) error {
-	if sequence == 0 || snapshot.Plan.Validate() != nil || snapshot.Plan.Plan.InvocationID != string(invocation) || len(snapshot.Finished) > len(snapshot.Plan.Plan.Hooks) {
+	if sequence == 0 || snapshot.Plan.Validate() != nil || snapshot.Plan.InvocationID != string(invocation) || len(snapshot.Finished) > domain.MaxHookMatches {
 		return errors.New("invalid post hook history snapshot")
 	}
 	cloned := snapshot.Clone()
@@ -222,6 +222,33 @@ func (q *transcriptQueries) PostHooksCommitted(invocation tool.InvocationID, seq
 	if entry.PostHooks != nil && entry.PostHooks.Plan.Digest != snapshot.Plan.Digest {
 		q.invalid = true
 		return errors.New("post hook history plan mismatch")
+	}
+	if string(snapshot.Plan.Capability) != string(entry.Invocation.Capability()) {
+		return errors.New("post hook history capability mismatch")
+	}
+	if branch, selected := snapshot.SelectedBranch(); selected {
+		if !entry.HasResult || branch.Event == domain.HookPostToolUse && entry.Result.Status() != tool.ResultSuccess || branch.Event == domain.HookPostToolUseFailure && entry.Result.Status() != tool.ResultError && entry.Result.Status() != tool.ResultConflict {
+			return errors.New("post hook history selected event mismatch")
+		}
+		for i, finished := range snapshot.Finished {
+			id, err := domain.NewPostHookRunIdentity(snapshot.Plan, branch.Event, i)
+			if err != nil || finished.Validate() != nil || finished.Result.Identity != id || finished.Feedback.Reference != branch.Hooks[i] {
+				return errors.New("post hook history execution mismatch")
+			}
+		}
+		if snapshot.Started != nil {
+			id, err := domain.NewPostHookRunIdentity(snapshot.Plan, branch.Event, len(snapshot.Finished))
+			if err != nil || *snapshot.Started != id {
+				return errors.New("post hook history pending identity mismatch")
+			}
+		}
+	} else if len(snapshot.Finished) > 0 || snapshot.Started != nil {
+		return errors.New("post hook history has no selected branch")
+	}
+	if terminal := snapshot.Terminal; terminal != nil {
+		if !entry.HasResult || terminal.Validate() != nil || terminal.InvocationID != string(invocation) || terminal.PlanDigest != snapshot.Plan.Digest || terminal.Processed != len(snapshot.Finished) || snapshot.Started != nil {
+			return errors.New("post hook history terminal mismatch")
+		}
 	}
 	entry.PostHooks = &cloned
 	entry.DetailSequence = sequence

@@ -125,7 +125,7 @@ func (runtime *Runtime) executeExecCall(ctx context.Context, emit Emitter, turnI
 	activity := protocol.ToolActivityPayload{Tool: protocol.ToolShell, InvocationID: string(invocation.InvocationID()), Summary: summary, Workdir: execInvocation.Input().Workdir(), Status: "running"}
 
 	runningActivity := activity
-	result, err := runtime.executeExclusive(ctx, turnID, invocation, exclusiveAction{
+	execution, err := runtime.executeExclusive(ctx, turnID, invocation, exclusiveAction{
 		execute: func(ctx context.Context) tool.InvocationResult {
 			return executeWithProgress(ctx, runtime.execExecutor, candidate, func(progress tool.ExecProgress) {
 				activity.Recent = progress.Recent()
@@ -148,6 +148,7 @@ func (runtime *Runtime) executeExecCall(ctx context.Context, emit Emitter, turnI
 			return result.ExecMetadata().Workdir() == candidate.Invocation().Input().Workdir()
 		},
 	})
+	result := execution.Result
 	if result.Validate() != nil {
 		return result, false, err
 	}

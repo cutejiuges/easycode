@@ -54,19 +54,25 @@ func projectToolHistory(records []Record) ([]ToolHistoryEntry, error) {
 			if err != nil {
 				return nil, err
 			}
-			index, ok := indices[tool.InvocationID(p.Plan.InvocationID)]
+			index, ok := indices[tool.InvocationID(p.InvocationID)]
 			if !ok {
 				return nil, replayCorrupt("post hook has no ready projection")
 			}
 			entries[index].PostHooks = &ReplayedPostHooks{Plan: p, PlanSequence: record.Sequence}
 			entries[index].DetailSequence = record.Sequence
-			plans[string(p.Plan.Event)+":"+p.Plan.InvocationID+":"+p.Digest] = p.Plan
+			for _, branch := range p.Branches {
+				plan, err := domain.NewHookPlan(p.InvocationID, p.Capability, branch.Hooks)
+				if err != nil {
+					return nil, err
+				}
+				plans[string(branch.Event)+":"+p.InvocationID+":"+p.Digest] = plan
+			}
 		case EventHookExecutionStarted:
 			id, err := DecodeHookExecutionStarted(record)
 			if err != nil {
 				return nil, err
 			}
-			if id.Event == domain.HookPostToolUse {
+			if id.Event.Post() {
 				index, ok := indices[tool.InvocationID(id.InvocationID)]
 				if !ok || entries[index].PostHooks == nil {
 					return nil, replayCorrupt("post hook has no plan projection")
@@ -100,7 +106,7 @@ func projectToolHistory(records []Record) ([]ToolHistoryEntry, error) {
 				return nil, replayCorrupt("hook result has no plan projection")
 			}
 			entries[index].Hooks = append(entries[index].Hooks, HookHistoryEntry{Reference: p.Hooks[r.Identity.Ordinal], Result: r, Feedback: finished.Feedback})
-			if r.Identity.Event == domain.HookPostToolUse {
+			if r.Identity.Event.Post() {
 				g := entries[index].PostHooks
 				if g == nil {
 					return nil, replayCorrupt("post hook has no plan projection")

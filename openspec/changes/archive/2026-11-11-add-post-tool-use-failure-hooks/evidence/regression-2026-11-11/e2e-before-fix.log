@@ -1,0 +1,17 @@
+-test.shuffle 20261111
+--- FAIL: TestFailureBothProvidersRealHookSandboxAndFrozenRestore (10.54s)
+    --- FAIL: TestFailureBothProvidersRealHookSandboxAndFrozenRestore/openai/fs.patch/escaped-budget (0.10s)
+        failure_hook_e2e_darwin_test.go:137: failure check broke turn: {"code":"user_cancelled","message":"turn was cancelled","cancelled":true}
+    --- FAIL: TestFailureBothProvidersRealHookSandboxAndFrozenRestore/openai/fs.write/escaped-budget (0.11s)
+        failure_hook_e2e_darwin_test.go:137: failure check broke turn: {"code":"user_cancelled","message":"turn was cancelled","cancelled":true}
+    --- FAIL: TestFailureBothProvidersRealHookSandboxAndFrozenRestore/openai/process.exec/escaped-budget (0.11s)
+        failure_hook_e2e_darwin_test.go:141: turn_failed: runtime emitted an invalid control event
+    --- FAIL: TestFailureBothProvidersRealHookSandboxAndFrozenRestore/anthropic/fs.patch/escaped-budget (0.11s)
+        failure_hook_e2e_darwin_test.go:141: turn_failed: runtime emitted an invalid control event
+    --- FAIL: TestFailureBothProvidersRealHookSandboxAndFrozenRestore/anthropic/fs.write/escaped-budget (0.10s)
+        failure_hook_e2e_darwin_test.go:137: failure check broke turn: {"code":"user_cancelled","message":"turn was cancelled","cancelled":true}
+    --- FAIL: TestFailureBothProvidersRealHookSandboxAndFrozenRestore/anthropic/process.exec/escaped-budget (0.11s)
+        failure_hook_e2e_darwin_test.go:141: turn_failed: runtime emitted an invalid control event
+FAIL
+FAIL	easycode/internal/app	12.909s
+FAIL

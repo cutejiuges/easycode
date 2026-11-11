@@ -1,0 +1,14 @@
+{
+  "algorithm": "sha256",
+  "files": 1121,
+  "scope": [
+    "AGENTS.md",
+    "Makefile",
+    "go.mod",
+    "go.sum",
+    "internal/**",
+    "cmd/**",
+    "scripts/**"
+  ],
+  "digest": "71da1df4d5ddf40d47059e1e9afbc5415e1544f88536e1cb8183a915eebfea3c"
+}

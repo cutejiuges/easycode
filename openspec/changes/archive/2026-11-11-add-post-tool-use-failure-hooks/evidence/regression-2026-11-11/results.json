@@ -1,0 +1,42 @@
+{
+  "date": "2026-11-11",
+  "platform": "darwin/arm64",
+  "quality_gates": {
+    "command": "EASYCODE_REGRESSION_GO=<actual-go> make verify GO=<go-uncached.sh>",
+    "exit_code": 0,
+    "test_flags": [
+      "-count=1"
+    ],
+    "log": "quality-gates.log"
+  },
+  "fixed_e2e": {
+    "exit_code": 0,
+    "cases": 72,
+    "race": true,
+    "shuffle_seed": 20261111
+  },
+  "core_stress": {
+    "exit_code": 0,
+    "count": 10,
+    "race": true,
+    "shuffle_seed": 20261111
+  },
+  "fuzz": {
+    "exit_code": 0,
+    "executions": 1429208,
+    "duration_seconds": 30
+  },
+  "pty": {
+    "exit_code": 0,
+    "runs": 6
+  },
+  "before_fix": {
+    "e2e_exit_code": 1,
+    "trust_exit_code": 1
+  },
+  "cross_compile": {
+    "linux_test_compile": 0,
+    "windows_production_build": 0,
+    "windows_test_compile": 1
+  }
+}

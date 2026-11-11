@@ -20,7 +20,9 @@ func feedbackPlan(t *testing.T, policies ...domain.HookFeedbackPolicy) domain.Po
 	if err != nil {
 		t.Fatal(err)
 	}
-	post, err := domain.NewPostHookPlan(p, 256<<10, 16<<10, domain.HookDeliveryAvailable)
+	currentPostBranch1, _ := domain.NewPostHookBranch(p.Event, p.Hooks, 16<<10)
+	currentPostBranch1.Delivery = domain.HookDeliveryAvailable
+	post, err := domain.NewPostHookPlan(p.InvocationID, p.Capability, []domain.PostHookBranch{currentPostBranch1}, 256<<10, 16<<10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +30,7 @@ func feedbackPlan(t *testing.T, policies ...domain.HookFeedbackPolicy) domain.Po
 }
 func postResult(t *testing.T, p domain.PostHookPlan, i int, status domain.HookOutcome, code domain.HookCode) domain.HookRunResult {
 	t.Helper()
-	id, err := domain.NewPostHookRunIdentity(p, i)
+	id, err := domain.NewPostHookRunIdentity(p, domain.HookPostToolUse, i)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +82,8 @@ func TestPostFeedbackEscapingAndBudgetUnavailable(t *testing.T) {
 	if err != nil || f.Result.Code != domain.HookFeedbackBudgetExceeded || f.Feedback.Kind != domain.HookFeedbackCode || f.Feedback.Content != "" {
 		t.Fatal("escaped body not rejected whole", err)
 	}
-	unavailable, err := domain.NewPostHookPlan(p.Plan, 1524, 500, domain.HookDeliveryUnavailable)
+	smallBranch, _ := domain.NewPostHookBranch(domain.HookPostToolUse, p.Branches[0].Hooks, 500)
+	unavailable, err := domain.NewPostHookPlan(p.InvocationID, p.Capability, []domain.PostHookBranch{smallBranch}, 1524, 500)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,8 +100,8 @@ func TestPostFeedbackEscapingAndBudgetUnavailable(t *testing.T) {
 func TestPostNoticeWorstCaseFitsReservedSlot(t *testing.T) {
 	p := feedbackPlan(t, domain.HookFeedbackModel)
 	for _, code := range []domain.HookCode{domain.HookFeedbackBudgetExceeded, domain.HookExecutionBudgetExhausted, domain.HookPostInterrupted, domain.HookSandboxUnavailable} {
-		id, _ := domain.NewPostHookRunIdentity(p, 0)
-		f, err := domain.NewFrozenHookFeedback(id, p.Plan.Hooks[0], domain.HookFeedbackCode, "", code, 1)
+		id, _ := domain.NewPostHookRunIdentity(p, domain.HookPostToolUse, 0)
+		f, err := domain.NewFrozenHookFeedback(id, p.Branches[0].Hooks[0], domain.HookFeedbackCode, "", code, 1)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -178,7 +181,7 @@ func TestModelEmptyFeedbackDoesNotExpandReservedExecPreview(t *testing.T) {
 	}
 	input, _ := NewExecInput("printf large", "", 1000)
 	ready, _ := NewExecReadyCall("call", input)
-	inv, _ := NewExecInvocation(InvocationID(plan.Plan.InvocationID), ready)
+	inv, _ := NewExecInvocation(InvocationID(plan.InvocationID), ready)
 	result, err := NewExecInvocationResult(inv, ResultSuccess, "ok", preview, meta)
 	if err != nil {
 		t.Fatal(err)
@@ -197,7 +200,12 @@ func TestModelEmptyFeedbackDoesNotExpandReservedExecPreview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	output, err := NewModelOutput(result, []domain.FrozenHookFeedback{frozen.Feedback})
+	admission, _ := NewExecutionAdmission(result.InvocationID(), 1)
+	selection, err := NewPostHookSelection(plan, admission, result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := NewPostModelOutput(result, selection, []domain.FrozenHookFeedback{frozen.Feedback})
 	if err != nil || output.Text() != preview.Text() || result.Status() != ResultSuccess || result.Code() != "ok" {
 		t.Fatal("empty feedback expanded/reclassified result", err)
 	}
@@ -231,7 +239,7 @@ func TestResultTicketZeroFeedbackReservationRemainsClosedToBodies(t *testing.T) 
 	if err != nil || ticket.Reservation() != 0 || ticket.BaseAllowance() != SafetyResultBytes {
 		t.Fatal("zero reservation boundary", err)
 	}
-	if PostFeedbackAvailable(feedbackPlan(t, domain.HookFeedbackModel).Plan, ticket.Reservation()) {
+	if PostFeedbackAvailable(feedbackPlan(t, domain.HookFeedbackModel).Branches[0], ticket.Reservation()) {
 		t.Fatal("unavailable notice space accepted bodies")
 	}
 	metadata, _ := NewResultBudgetMetadata(ticket.BaseAllowance(), 30, BudgetRejected)

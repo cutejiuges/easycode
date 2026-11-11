@@ -120,6 +120,7 @@ const (
 	HookFeedbackBudgetExceeded   HookCode = "hook_feedback_budget_exceeded"
 	HookExecutionBudgetExhausted HookCode = "hook_execution_budget_exhausted"
 	HookToolNotSuccessful        HookCode = "tool_not_successful"
+	HookEventUnmatched           HookCode = "hook_event_unmatched"
 )
 
 func (c HookCode) Error() string { return string(c) }
@@ -128,7 +129,7 @@ func (c HookCode) Valid() bool {
 	case HookOK, HookConfigInvalid, HookInputLimit, HookMatchLimit, HookTrustRequired, HookTrustDenied,
 		HookDenied, HookExitFailed, HookStartFailed, HookOutputInvalid, HookOutputLimit, HookIOFailed,
 		HookTimedOut, HookUnsupported, HookSandboxUnavailable, HookCancelled, HookOutcomeUncertain, HookInterrupted,
-		HookPostInterrupted, HookFeedbackNotAllowed, HookFeedbackBudgetExceeded, HookExecutionBudgetExhausted, HookToolNotSuccessful:
+		HookPostInterrupted, HookFeedbackNotAllowed, HookFeedbackBudgetExceeded, HookExecutionBudgetExhausted, HookToolNotSuccessful, HookEventUnmatched:
 		return true
 	default:
 		return false
@@ -220,17 +221,8 @@ func NewHookPlan(invocation string, capability HookCapability, refs []HookRefere
 	if _, err := parseUUIDv7(invocation); err != nil || !capability.Valid() || len(refs) == 0 || len(refs) > MaxHookMatches {
 		return HookPlan{}, HookConfigInvalid
 	}
-	seen := make(map[string]bool)
-	revisions := make(map[HookSource]string)
-	projectSeen := false
-	for _, r := range refs {
-		key := string(r.Source) + ":" + r.ID
-		if r.Validate() != nil || r.Event != refs[0].Event || seen[key] || (revisions[r.Source] != "" && revisions[r.Source] != r.Revision) || projectSeen && r.Source == HookSourceUser {
-			return HookPlan{}, HookConfigInvalid
-		}
-		seen[key] = true
-		revisions[r.Source] = r.Revision
-		projectSeen = projectSeen || r.Source == HookSourceProject
+	if err := validateHookReferences(refs[0].Event, refs); err != nil {
+		return HookPlan{}, err
 	}
 	p := HookPlan{invocation, refs[0].Event, capability, append([]HookReference(nil), refs...), ""}
 	b, err := codec.MarshalStable(p)
@@ -239,6 +231,21 @@ func NewHookPlan(invocation string, capability HookCapability, refs []HookRefere
 	}
 	p.Digest = HookDigest(b)
 	return p, nil
+}
+func validateHookReferences(event HookEvent, refs []HookReference) error {
+	seen := make(map[string]bool)
+	revisions := make(map[HookSource]string)
+	projectSeen := false
+	for _, r := range refs {
+		key := string(r.Source) + ":" + r.ID
+		if r.Validate() != nil || r.Event != event || seen[key] || (revisions[r.Source] != "" && revisions[r.Source] != r.Revision) || projectSeen && r.Source == HookSourceUser {
+			return HookConfigInvalid
+		}
+		seen[key] = true
+		revisions[r.Source] = r.Revision
+		projectSeen = projectSeen || r.Source == HookSourceProject
+	}
+	return nil
 }
 func (p HookPlan) Clone() HookPlan { p.Hooks = append([]HookReference(nil), p.Hooks...); return p }
 func (p HookPlan) Validate() error {
@@ -330,7 +337,7 @@ func (r HookRunResult) Validate() error {
 		(!r.ExitKnown && r.ExitCode != 0) || r.ExitCode < -1 || r.ExitCode > 255 || (r.Origin != "execution" && r.Origin != "recovery") {
 		return HookConfigInvalid
 	}
-	if r.Identity.Event == HookPostToolUse && r.Status == HookBlock || r.Identity.Event == HookPreToolUse && (r.Code == HookFeedbackNotAllowed || r.Code == HookFeedbackBudgetExceeded) {
+	if r.Identity.Event.Post() && r.Status == HookBlock || r.Identity.Event == HookPreToolUse && (r.Code == HookFeedbackNotAllowed || r.Code == HookFeedbackBudgetExceeded) {
 		return HookConfigInvalid
 	}
 	if r.Origin == "recovery" && (r.Status != HookUncertain || r.ExitKnown || r.TimedOut || r.Cancelled || r.StdoutBytes != 0 || r.StderrBytes != 0 || r.CleanupConfirmed) {

@@ -101,7 +101,7 @@ func (r *Runtime) acceptQuestionAnswer(turnID domain.TurnID, response protocol.U
 		return protocol.ControlErrorQuestionAnswerInvalid
 	}
 	result, err = tool.FinalizeResult(result, p.request.ResultAllowance, tool.BudgetPreserved)
-	output, outputErr := tool.NewModelOutput(result, nil)
+	output, outputErr := tool.NewModelOutput(result)
 	if err != nil || outputErr != nil || session.PreflightQuestionResult(session.Identity{SessionID: r.sessionID, ThreadID: r.threadID}, turnID, result) != nil || p.preflight.Validate(output) != nil {
 		return protocol.ControlErrorQuestionAnswerInvalid
 	}
@@ -185,12 +185,13 @@ func (r *Runtime) executeExclusiveCall(ctx context.Context, emit Emitter, turnID
 	}
 	responder := &questionResponder{runtime: r, turnID: turnID, emit: emit, allowance: allowance, preflight: preflight}
 	defer func() { r.closeQuestion(responder.pending) }()
-	result, err := r.executeExclusive(ctx, turnID, inv, exclusiveAction{
+	execution, err := r.executeExclusive(ctx, turnID, inv, exclusiveAction{
 		execute: func(ctx context.Context) tool.InvocationResult { return r.questionExecutor.Execute(ctx, v, responder) },
 		matches: func(result tool.InvocationResult) bool {
 			return result.QuestionMetadata().Fingerprint == v.Input().Fingerprint()
 		},
 	})
+	result := execution.Result
 	if err == nil && responder.pending != nil {
 		resolution := protocol.QuestionCancelled
 		if result.Status() == tool.ResultSuccess {

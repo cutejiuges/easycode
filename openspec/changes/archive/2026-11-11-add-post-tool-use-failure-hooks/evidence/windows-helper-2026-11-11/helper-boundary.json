@@ -1,0 +1,41 @@
+{
+  "helper_implementation_unchanged_except_trailing_blank_line": true,
+  "original_test_file_unchanged_except_helper_removal": true,
+  "platforms": [
+    {
+      "goos": "darwin",
+      "goarch": "arm64",
+      "shared_helpers_included": true,
+      "picker_tests_included": true,
+      "list_platform_constraint_preserved": true
+    },
+    {
+      "goos": "linux",
+      "goarch": "amd64",
+      "shared_helpers_included": true,
+      "picker_tests_included": true,
+      "list_platform_constraint_preserved": true
+    },
+    {
+      "goos": "linux",
+      "goarch": "arm64",
+      "shared_helpers_included": true,
+      "picker_tests_included": true,
+      "list_platform_constraint_preserved": true
+    },
+    {
+      "goos": "windows",
+      "goarch": "amd64",
+      "shared_helpers_included": true,
+      "picker_tests_included": true,
+      "list_platform_constraint_preserved": true
+    },
+    {
+      "goos": "windows",
+      "goarch": "arm64",
+      "shared_helpers_included": true,
+      "picker_tests_included": true,
+      "list_platform_constraint_preserved": true
+    }
+  ]
+}

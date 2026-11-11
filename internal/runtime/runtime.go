@@ -1123,7 +1123,17 @@ func (runtime *Runtime) commitToolOutputs(ctx context.Context, turnID domain.Tur
 			}
 			feedback = postFeedback(state)
 		}
-		output, err := tool.NewModelOutput(result, feedback)
+		var output tool.ModelOutput
+		var err error
+		if state := runtime.hooks.post[result.InvocationID()]; state != nil {
+			var selection tool.PostHookSelection
+			selection, err = tool.NewPostHookSelection(state.plan, state.admission, result)
+			if err == nil {
+				output, err = tool.NewPostModelOutput(result, selection, feedback)
+			}
+		} else {
+			output, err = tool.NewModelOutput(result)
+		}
 		if err != nil {
 			return err
 		}

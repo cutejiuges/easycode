@@ -195,15 +195,27 @@ func TestPostEverySyncFailurePreservesRealResultAndStops(t *testing.T) {
 }
 
 func TestPreAndPostShareExecutionBudgetAndKeepFrozenPrefix(t *testing.T) {
+	testPrePostSharedExecutionBudget(t, false)
+}
+func TestPreAndFailureShareExecutionBudgetAndKeepFrozenPrefix(t *testing.T) {
+	testPrePostSharedExecutionBudget(t, true)
+}
+func testPrePostSharedExecutionBudget(t *testing.T, failed bool) {
 	j := &fakeJournal{}
 	r, inv, runner, _, executor := postRuntimeFixture(t, j, domain.HookFeedbackModel, domain.HookFeedbackModel)
 	declarations := r.hooks.snapshot.Declarations()
+	event, wantStatus := domain.HookPostToolUse, tool.ResultSuccess
+	if failed {
+		event = domain.HookPostToolUseFailure
+		wantStatus = tool.ResultError
+		executor.outcome = wantStatus
+	}
 	pre, err := domain.NewHookDeclaration(domain.HookSourceProject, domain.HookPreToolUse, domain.HookFeedbackNone, strings.Repeat("a", 64), "pre", 7, "true", 30)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for i, d := range declarations {
-		declarations[i], err = domain.NewHookDeclaration(d.Reference.Source, d.Reference.Event, d.Reference.Feedback, d.Reference.Revision, d.Reference.ID, d.Matcher, d.Command, 30)
+		declarations[i], err = domain.NewHookDeclaration(d.Reference.Source, event, d.Reference.Feedback, d.Reference.Revision, d.Reference.ID, d.Matcher, d.Command, 30)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -240,13 +252,13 @@ func TestPreAndPostShareExecutionBudgetAndKeepFrozenPrefix(t *testing.T) {
 	result, _, err := r.executeApproved(context.Background(), func(e protocol.Event) {
 		if e.Kind == protocol.EventHookTrustRequested {
 			p, _ := protocol.DecodeHookTrustRequested(e)
-			if p.Declaration.Reference.Event == domain.HookPostToolUse {
+			if p.Declaration.Reference.Event.Post() {
 				now = now.Add(100 * time.Second)
 			}
 		}
 		base(e)
 	}, runtimeTurnID, inv)
-	if err != nil || result.Status() != tool.ResultSuccess || len(events) != 2 || events[0] != domain.HookPreToolUse || events[1] != domain.HookPostToolUse {
+	if err != nil || result.Status() != wantStatus || len(events) != 2 || events[0] != domain.HookPreToolUse || events[1] != event {
 		t.Fatal("combined phase execution failed", err, events)
 	}
 	state := r.hooks.post[inv.InvocationID()]

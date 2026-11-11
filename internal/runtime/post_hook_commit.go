@@ -27,7 +27,7 @@ func (r *Runtime) appendPostFacts(ctx context.Context, turn domain.TurnID, state
 		snapshot.Plan = state.plan.Clone()
 		snapshot.PlanSequence = sequence
 	case protocol.PostHookStarted:
-		id, _ := domain.NewPostHookRunIdentity(state.plan, len(state.finished))
+		id, _ := domain.NewPostHookRunIdentity(state.plan, state.event(), len(state.finished))
 		snapshot.Started = &id
 		snapshot.StartedSequence = sequence
 	case protocol.PostHookFinished:
@@ -48,13 +48,13 @@ func (r *Runtime) appendPostFacts(ctx context.Context, turn domain.TurnID, state
 	}
 	state.history = snapshot.Clone()
 	if r.hookHistory != nil {
-		if err := r.hookHistory.PostHooksCommitted(tool.InvocationID(state.plan.Plan.InvocationID), sequence, snapshot); err != nil {
+		if err := r.hookHistory.PostHooksCommitted(tool.InvocationID(state.plan.InvocationID), sequence, snapshot); err != nil {
 			r.poisoned.Store(true)
 			return err
 		}
 	}
 	if r.activityEmitter != nil {
-		event, err := protocol.NewPostHookCommitted(protocol.PostHookCommittedPayload{InvocationID: state.plan.Plan.InvocationID, Event: domain.HookPostToolUse, PlanDigest: state.plan.Digest, DetailSequence: sequence, Phase: phase})
+		event, err := protocol.NewPostHookCommitted(protocol.PostHookCommittedPayload{InvocationID: state.plan.InvocationID, PlanDigest: state.plan.Digest, DetailSequence: sequence, Phase: phase})
 		if err != nil {
 			r.poisoned.Store(true)
 			return err

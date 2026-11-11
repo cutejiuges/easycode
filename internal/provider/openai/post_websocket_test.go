@@ -18,6 +18,12 @@ import (
 )
 
 func TestPostFeedbackWebSocketDurableSuffixDiscardAndRestoreReset(t *testing.T) {
+	testPostFeedbackWebSocket(t, false)
+}
+func TestFailureFeedbackWebSocketDurableSuffixDiscardAndRestoreReset(t *testing.T) {
+	testPostFeedbackWebSocket(t, true)
+}
+func testPostFeedbackWebSocket(t *testing.T, failed bool) {
 	requests := make(chan []byte, 8)
 	var count, connections atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -79,6 +85,9 @@ func TestPostFeedbackWebSocketDurableSuffixDiscardAndRestoreReset(t *testing.T) 
 		t.Fatal(err)
 	}
 	result, _ := postProviderFixture(t, domain.HookExec)
+	if failed {
+		result = postFailureProviderResult(t, result)
+	}
 	output := postProviderOutput(t, result)
 	before := len(conversation.history.snapshot())
 	prepared, err := conversation.PrepareToolOutputs([]tool.ModelOutput{output})

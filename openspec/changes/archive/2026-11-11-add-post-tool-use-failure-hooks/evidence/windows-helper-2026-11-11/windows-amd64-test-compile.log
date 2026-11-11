@@ -1,0 +1,33 @@
+ok  	easycode/cmd/easycode	0.003s
+ok  	easycode/internal/app	0.006s
+ok  	easycode/internal/architecture	0.003s
+ok  	easycode/internal/codec	0.010s
+ok  	easycode/internal/config	0.012s
+ok  	easycode/internal/context	0.012s
+ok  	easycode/internal/context/estimate	0.010s
+?   	easycode/internal/context/projectinstructions	[no test files]
+ok  	easycode/internal/domain	0.010s
+ok  	easycode/internal/executor/process	0.006s
+?   	easycode/internal/extension	[no test files]
+ok  	easycode/internal/extension/hook	0.010s
+ok  	easycode/internal/extension/localfile	0.004s
+?   	easycode/internal/extension/mcp	[no test files]
+?   	easycode/internal/extension/plugin	[no test files]
+ok  	easycode/internal/extension/skill	0.010s
+ok  	easycode/internal/fault	0.006s
+ok  	easycode/internal/headless	0.006s
+ok  	easycode/internal/protocol	0.012s
+ok  	easycode/internal/provider	0.013s
+ok  	easycode/internal/provider/anthropic	0.011s
+ok  	easycode/internal/provider/openai	0.003s
+ok  	easycode/internal/provider/transport	0.006s
+ok  	easycode/internal/runtime	0.007s
+ok  	easycode/internal/secret	0.010s
+ok  	easycode/internal/session	0.008s
+?   	easycode/internal/session/artifact	[no test files]
+ok  	easycode/internal/session/catalog	0.005s
+?   	easycode/internal/subagent	[no test files]
+?   	easycode/internal/telemetry	[no test files]
+ok  	easycode/internal/tool	0.005s
+ok  	easycode/internal/tool/builtin	0.003s
+ok  	easycode/internal/tui	0.003s

@@ -47,7 +47,7 @@ func (v FrozenHookFeedback) Validate() error {
 	default:
 		return HookConfigInvalid
 	}
-	if v.Kind != HookFeedbackEmpty && (v.Identity.Event != HookPostToolUse || v.Reference.Feedback != HookFeedbackModel) {
+	if v.Kind != HookFeedbackEmpty && (!v.Identity.Event.Post() || v.Reference.Feedback != HookFeedbackModel) {
 		return HookConfigInvalid
 	}
 	return nil

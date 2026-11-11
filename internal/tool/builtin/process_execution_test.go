@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"easycode/internal/domain"
 	"easycode/internal/tool"
 )
 
@@ -87,7 +88,7 @@ func (process *fakeOwnedProcess) terminate(force bool) error {
 		return errors.New("reused process identity")
 	}
 	process.signals = append(process.signals, force)
-	if force && !process.keepAlive {
+	if force && !process.keepAlive && process.terminateError == nil {
 		process.alive = false
 	}
 	process.mu.Unlock()
@@ -200,6 +201,16 @@ func TestProcessExecutionCancellationAndTimeout(t *testing.T) {
 		}
 		if result.Code() != want || len(process.signals) != 2 || process.signals[0] || !process.signals[1] || process.waits != 1 || process.staleOperations != 0 {
 			t.Fatalf("incorrect termination: %s %#v", result.Code(), process.signals)
+		}
+		<-execution.Done()
+		admission, _ := tool.NewExecutionAdmission(result.InvocationID(), 1)
+		route, err := tool.SelectPostHookRoute(result, admission)
+		expected := domain.PostHookRouteFailure
+		if cancelTurn {
+			expected = domain.PostHookRouteNone
+		}
+		if err != nil || route != expected {
+			t.Fatal("confirmed process outcome selected wrong post event", route, err)
 		}
 	}
 }

@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"path"
 	"path/filepath"
 	"strings"
@@ -142,15 +143,17 @@ func DecodeHookToolInput(cap HookCapability, b []byte) (HookToolInput, error) {
 
 // HookInput 是只发送给已信任本地检查的临时 stdin，不进入 Session。
 type HookInput struct {
-	Event     HookEvent         `json:"hook_event_name"`
-	SessionID SessionID         `json:"session_id"`
-	ThreadID  ThreadID          `json:"thread_id"`
-	TurnID    TurnID            `json:"turn_id"`
-	ToolUseID string            `json:"tool_use_id"`
-	ToolName  string            `json:"tool_name"`
-	CWD       string            `json:"cwd"`
-	Input     HookToolInput     `json:"tool_input"`
-	Response  *HookToolResponse `json:"tool_response,omitempty"`
+	Event       HookEvent         `json:"hook_event_name"`
+	SessionID   SessionID         `json:"session_id"`
+	ThreadID    ThreadID          `json:"thread_id"`
+	TurnID      TurnID            `json:"turn_id"`
+	ToolUseID   string            `json:"tool_use_id"`
+	ToolName    string            `json:"tool_name"`
+	CWD         string            `json:"cwd"`
+	Input       HookToolInput     `json:"tool_input"`
+	Response    *HookToolResponse `json:"tool_response,omitempty"`
+	Error       string            `json:"error,omitempty"`
+	IsInterrupt *bool             `json:"is_interrupt,omitempty"`
 }
 
 func NewHookInput(session SessionID, thread ThreadID, turn TurnID, call, name, cwd string, input HookToolInput) (HookInput, error) {
@@ -162,6 +165,13 @@ func (v HookInput) Validate() error {
 		return HookConfigInvalid
 	}
 	if v.Event == HookPreToolUse && v.Response != nil || v.Event == HookPostToolUse && (v.Response == nil || v.Response.Validate() != nil || v.Response.Capability() != v.Input.Capability()) {
+		return HookConfigInvalid
+	}
+	if v.Event == HookPostToolUseFailure {
+		if v.Response != nil || v.IsInterrupt == nil || *v.IsInterrupt || !strings.HasPrefix(v.Error, "Tool execution failed: ") || !safeHookFailureCode(strings.TrimPrefix(v.Error, "Tool execution failed: ")) {
+			return HookConfigInvalid
+		}
+	} else if v.Error != "" || v.IsInterrupt != nil {
 		return HookConfigInvalid
 	}
 	valid := v.Input.capability == HookPatch && (v.ToolName == "Edit" || v.ToolName == "apply_patch") || v.Input.capability == HookWrite && v.ToolName == "Write" || v.Input.capability == HookExec && (v.ToolName == "Bash" || v.ToolName == "exec_command")
@@ -187,5 +197,82 @@ func (v HookInput) Bytes() ([]byte, error) {
 // NewPostHookInput 将真实成功结果投影与调用输入绑定，仅用于受信任的 stdin。
 func NewPostHookInput(session SessionID, thread ThreadID, turn TurnID, call, name, cwd string, input HookToolInput, response HookToolResponse) (HookInput, error) {
 	v := HookInput{Event: HookPostToolUse, SessionID: session, ThreadID: thread, TurnID: turn, ToolUseID: call, ToolName: name, CWD: cwd, Input: input.Clone(), Response: &response}
+	return v, v.Validate()
+}
+
+func safeHookFailureCode(code string) bool {
+	if len(code) == 0 || len(code) > 128 {
+		return false
+	}
+	for _, c := range code {
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+// NewFailureHookInput 只从稳定错误分类生成本地摘要，不复制原错误或模型预览。
+func NewFailureHookInput(session SessionID, thread ThreadID, turn TurnID, call, name, cwd string, input HookToolInput, code string) (HookInput, error) {
+	if !safeHookFailureCode(code) {
+		code = "tool_execution_failed"
+	}
+	interrupt := false
+	v := HookInput{Event: HookPostToolUseFailure, SessionID: session, ThreadID: thread, TurnID: turn, ToolUseID: call, ToolName: name, CWD: cwd, Input: input.Clone(), Error: "Tool execution failed: " + code, IsInterrupt: &interrupt}
+	return v, v.Validate()
+}
+
+// DecodeHookInput 严格解码各当前事件独有的输入形状，扩展字节仅用于封闭分支解码。
+func DecodeHookInput(b []byte) (HookInput, error) {
+	if len(b) > MaxHookInputBytes {
+		return HookInput{}, HookInputLimit
+	}
+	var w struct {
+		Event       HookEvent       `json:"hook_event_name"`
+		SessionID   SessionID       `json:"session_id"`
+		ThreadID    ThreadID        `json:"thread_id"`
+		TurnID      TurnID          `json:"turn_id"`
+		ToolUseID   string          `json:"tool_use_id"`
+		ToolName    string          `json:"tool_name"`
+		CWD         string          `json:"cwd"`
+		Input       json.RawMessage `json:"tool_input"`
+		Response    json.RawMessage `json:"tool_response,omitempty"`
+		Error       string          `json:"error,omitempty"`
+		IsInterrupt *bool           `json:"is_interrupt,omitempty"`
+	}
+	if codec.UnmarshalRecord(b, &w) != nil || !w.Event.Valid() {
+		return HookInput{}, HookConfigInvalid
+	}
+	m, err := codec.ObjectMembers(b)
+	if err != nil {
+		return HookInput{}, HookConfigInvalid
+	}
+	_, response := m["tool_response"]
+	_, failure := m["error"]
+	_, interrupt := m["is_interrupt"]
+	if response != (w.Event == HookPostToolUse) || failure != (w.Event == HookPostToolUseFailure) || interrupt != failure {
+		return HookInput{}, HookConfigInvalid
+	}
+	capability := HookCapability("")
+	switch w.ToolName {
+	case "Edit", "apply_patch":
+		capability = HookPatch
+	case "Write":
+		capability = HookWrite
+	case "Bash", "exec_command":
+		capability = HookExec
+	}
+	input, err := DecodeHookToolInput(capability, w.Input)
+	if err != nil {
+		return HookInput{}, err
+	}
+	v := HookInput{Event: w.Event, SessionID: w.SessionID, ThreadID: w.ThreadID, TurnID: w.TurnID, ToolUseID: w.ToolUseID, ToolName: w.ToolName, CWD: w.CWD, Input: input, Error: w.Error, IsInterrupt: w.IsInterrupt}
+	if response {
+		r, err := DecodeHookToolResponse(w.Response)
+		if err != nil {
+			return HookInput{}, err
+		}
+		v.Response = &r
+	}
 	return v, v.Validate()
 }

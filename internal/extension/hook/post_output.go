@@ -49,7 +49,7 @@ func ParseExecution(event domain.HookEvent, policy domain.HookFeedbackPolicy, ex
 			Content string           `json:"additionalContext"`
 		} `json:"hookSpecificOutput"`
 	}
-	if codec.UnmarshalRecord(stdout, &out) != nil || out.Specific.Event != domain.HookPostToolUse || strings.TrimSpace(out.Specific.Content) == "" {
+	if codec.UnmarshalRecord(stdout, &out) != nil || out.Specific.Event != event || strings.TrimSpace(out.Specific.Content) == "" {
 		return result
 	}
 	feedback, err := domain.NewHookFeedbackCandidate(out.Specific.Content)

@@ -141,7 +141,7 @@ func (runtime *Runtime) executeWriteCall(ctx context.Context, emit Emitter, turn
 		runtime.approvals.writeGrant.Store(true)
 	}
 	runtime.emitApprovalResolved(emit, turnID, request, outcome)
-	result, err := runtime.executeExclusive(ctx, turnID, invocation, exclusiveAction{
+	execution, err := runtime.executeExclusive(ctx, turnID, invocation, exclusiveAction{
 		execute: func(ctx context.Context) tool.InvocationResult {
 			runtime.readObservations.invalidate(candidate.RelativePath())
 			return runtime.writeExecutor.Execute(ctx, candidate)
@@ -150,5 +150,6 @@ func (runtime *Runtime) executeWriteCall(ctx context.Context, emit Emitter, turn
 			return result.Status() != tool.ResultSuccess || result.WriteMetadata() == candidate.ResultMetadata()
 		},
 	})
+	result := execution.Result
 	return result, false, err
 }

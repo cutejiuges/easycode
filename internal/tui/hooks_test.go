@@ -76,9 +76,13 @@ func hookUIRequestForEvent(t *testing.T, model Model, event domain.HookEvent) pr
 func hookSnapshotModel(t *testing.T, name string) Model {
 	t.Helper()
 	s := &fakeHookSession{entries: hookUIEntries(t)}
-	if strings.Contains(name, "post") {
+	if strings.Contains(name, "post") || strings.Contains(name, "failure") {
+		event := domain.HookPostToolUse
+		if strings.Contains(name, "failure") {
+			event = domain.HookPostToolUseFailure
+		}
 		d := s.entries[0].Declaration
-		d, err := domain.NewHookDeclaration(d.Reference.Source, domain.HookPostToolUse, domain.HookFeedbackModel, d.Reference.Revision, d.Reference.ID, d.Matcher, d.Command, 5)
+		d, err := domain.NewHookDeclaration(d.Reference.Source, event, domain.HookFeedbackModel, d.Reference.Revision, d.Reference.ID, d.Matcher, d.Command, 5)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -99,7 +103,7 @@ func hookSnapshotModel(t *testing.T, name string) Model {
 			s.entries[0].Declaration = d
 		}
 		e := hookUIRequest(t, m)
-		if strings.Contains(name, "long") || strings.Contains(name, "post") {
+		if strings.Contains(name, "long") || strings.Contains(name, "post") || strings.Contains(name, "failure") {
 			p, _ := protocol.DecodeHookTrustRequested(e)
 			p.Declaration = s.entries[0].Declaration
 			e, _ = protocol.NewHookTrustRequested(p)
@@ -120,14 +124,14 @@ func hookSnapshotModel(t *testing.T, name string) Model {
 		if cmd != nil || len(s.submits) != 0 {
 			t.Fatal("browser caused I/O")
 		}
-		if name == "hooks_detail" || name == "hooks_post_detail" {
+		if name == "hooks_detail" || name == "hooks_post_detail" || name == "hooks_failure_detail" {
 			m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 		}
 	}
 	return m
 }
 func TestHookSnapshots(t *testing.T) {
-	for _, name := range []string{"hooks", "hooks_empty", "hooks_invalid", "hooks_detail", "hooks_narrow", "hooks_trust", "hooks_trust_narrow", "hooks_trust_long", "hooks_post_detail", "hooks_post_narrow", "hooks_post_trust", "hooks_post_trust_narrow"} {
+	for _, name := range []string{"hooks", "hooks_empty", "hooks_invalid", "hooks_detail", "hooks_narrow", "hooks_trust", "hooks_trust_narrow", "hooks_trust_long", "hooks_post_detail", "hooks_post_narrow", "hooks_post_trust", "hooks_post_trust_narrow", "hooks_failure", "hooks_failure_detail", "hooks_failure_trust", "hooks_failure_trust_narrow"} {
 		t.Run(name, func(t *testing.T) {
 			m := hookSnapshotModel(t, name)
 			want, err := os.ReadFile(filepath.Join("testdata", name+".golden"))

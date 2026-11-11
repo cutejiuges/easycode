@@ -53,6 +53,9 @@ func TestHookHeadlessModesFailClosedForBothProviders(t *testing.T) { runExecHead
 func TestPostHookHeadlessModesFailClosedForBothProviders(t *testing.T) {
 	runExecHeadlessModeEvent(t, domain.HookPostToolUse)
 }
+func TestFailureHookHeadlessModesFailClosedForBothProviders(t *testing.T) {
+	runExecHeadlessModeEvent(t, domain.HookPostToolUseFailure)
+}
 func runExecHeadlessModes(t *testing.T, withHook bool) {
 	event := domain.HookEvent("")
 	if withHook {
@@ -69,7 +72,9 @@ func runExecHeadlessModeEvent(t *testing.T, event domain.HookEvent) {
 				t.Chdir(workspace)
 				wantCode := "approval_required"
 				if withHook {
-					if event == domain.HookPostToolUse {
+					if event == domain.HookPostToolUseFailure {
+						writeFailureHookConfig(t, workspace, "printf forbidden > hook-marker", domain.HookFeedbackModel)
+					} else if event == domain.HookPostToolUse {
 						writePostHookConfig(t, workspace, "printf forbidden > hook-marker", domain.HookFeedbackModel)
 					} else {
 						writeHookConfig(t, workspace, "printf forbidden > hook-marker")

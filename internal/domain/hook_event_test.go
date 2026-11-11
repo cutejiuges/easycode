@@ -54,12 +54,12 @@ func TestHookEventsIsolatePlansRunsAndTrust(t *testing.T) {
 }
 
 func TestHookExitTwoValidationDependsOnEvent(t *testing.T) {
-	for _, event := range []HookEvent{HookPreToolUse, HookPostToolUse} {
+	for _, event := range []HookEvent{HookPreToolUse, HookPostToolUse, HookPostToolUseFailure} {
 		d, _ := NewHookDeclaration(HookSourceProject, event, HookFeedbackNone, strings.Repeat("a", 64), "check", 7, "true", 5)
 		p, _ := NewHookPlan("018f1d8a-7b5c-7def-8abc-456789abcdef", HookExec, []HookReference{d.Reference})
 		id, _ := NewHookRunIdentity(p, 0)
 		r := HookRunResult{Identity: id, Status: HookError, Code: HookExitFailed, ExitKnown: true, ExitCode: 2, CleanupConfirmed: true, Origin: "execution"}
-		if (r.Validate() == nil) != (event == HookPostToolUse) {
+		if (r.Validate() == nil) != (event.Post()) {
 			t.Fatal("wrong exit-two classification", event)
 		}
 		r.Status, r.Code = HookBlock, HookDenied

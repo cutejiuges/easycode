@@ -94,11 +94,20 @@ func TestPostChecksNeverRunForUnsuccessfulMutationOutcomes(t *testing.T) {
 					t.Fatal("unsuccessful mutation ran post checks or changed status", err, result.Status(), runner.calls)
 				}
 				state := r.hooks.post[inv.InvocationID()]
+				expectedCode := domain.HookToolNotSuccessful
+				expectedRoute := domain.PostHookRouteNone
+				if mode == "error" || mode == "conflict" {
+					expectedCode = domain.HookEventUnmatched
+					expectedRoute = domain.PostHookRouteFailure
+				}
+				if mode != "uncertain" && state.route != expectedRoute {
+					t.Fatal("original outcome route mismatch", state.route)
+				}
 				if mode == "uncertain" {
 					if err == nil || !r.poisoned.Load() || state.terminal != nil {
 						t.Fatal("uncertain effect crossed owner recovery barrier")
 					}
-				} else if err != nil || state.terminal == nil || state.terminal.Disposition != domain.PostHookSkipped || state.terminal.Code != domain.HookToolNotSuccessful || len(postFeedback(state)) != 0 || r.resultTicket != nil {
+				} else if err != nil || state.terminal == nil || state.terminal.Disposition != domain.PostHookSkipped || state.terminal.Code != expectedCode || len(postFeedback(state)) != 0 || r.resultTicket != nil {
 					t.Fatal("unsuccessful mutation did not close without disclosure", err)
 				}
 				count := 0
