@@ -37,7 +37,7 @@ type HookParsedOutput struct {
 
 func NewHookParsedOutput(event HookEvent, policy HookFeedbackPolicy, status HookOutcome, code HookCode, feedback HookFeedbackCandidate) (HookParsedOutput, error) {
 	v := HookParsedOutput{status, code, feedback}
-	if !policy.ValidFor(event) || !status.ValidCode(code) || feedback.Validate() != nil || event == HookPostToolUse && status == HookBlock || !feedback.Empty() && (event != HookPostToolUse || policy != HookFeedbackModel || status != HookContinue) {
+	if !policy.ValidFor(event) || !status.ValidCode(code) || feedback.Validate() != nil || event.Post() && status == HookBlock || !feedback.Empty() && (!event.Post() || policy != HookFeedbackModel || status != HookContinue) {
 		return HookParsedOutput{}, HookConfigInvalid
 	}
 	return v, nil

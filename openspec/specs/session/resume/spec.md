@@ -293,7 +293,13 @@ gate continue 后的未审批/allow 未 tool-started 状态 SHALL 沿用本条�
 旧 turn reconciliation SHALL 在当前 Hook 来源 Load/install 之前完成，并始终持有原连续 lease；当前配置只服务未来调用。已删除或损坏配置不得改变历史补偿或恢复 bytes；旧事实不建立当前 trust。完成补偿后新 turn 重新接受当前配置和信任检查。与同一 reconciled history 的不中断路径比较时，双 Provider canonical request、native item 顺序、opaque bytes、context footprint 与 cache fingerprints MUST 相同；旧门禁恢复的配置 loader、信任、进程、工具与 Provider 网络调用次数均为零。
 
 
-已规划 Post 的恢复 SHALL 区分真实结果与检查状态：原工具未 started/result 时按既有状态补偿并收口 skipped；tool started 无 result 时仍为原工具 outcome_uncertain，零 Post；成功 result 无 Post started 时保留成功并收口 Post interrupted；Post started 无 finished 时追加 recovery-origin uncertain finished 和对应 Post terminal，不声称旧进程 cleanup 已确认。已 durable 的前缀反馈保持不变，未开始项不执行。部分 finished 后下一项尚未 started 时只追加 cancelled/session_interrupted_before_post_hook terminal，processed/unstarted_from 等于已有 finished 数量，不能生成 uncertain finished；下一项确实 started 未 finished 时，才为该项追加 recovery-origin uncertain finished 并与 uncertain terminal 同批，剩余后缀不伪造执行。已收口 skipped 后缀完全复用其原因和已冻结 suffix_feedback，不重新判断输入或预算。恢复新建的 terminal 明确 origin=recovery、suffix_feedback 为空；只组合已经 durable 的前缀/后缀模型 bytes，不为未开始项补发提示。完整 Post terminal 而 native outputs 缺失时只用真实结果与冻结反馈编码；outputs 已存在时只关闭旧 turn。所有状态均不读当前配置/脚本/artifact，不重建信任，不查询旧 PID，不重跑工具/Hook、不自动采样。第二次恢复不得重复任何已保存事实。
+已规划 Post 的恢复 SHALL 区分真实结果与检查状态：原工具未 started/result 时按既有状态补偿并收口 skipped；tool started 无 result 时仍为原工具 outcome_uncertain，零 Post；成功 result 且有对应分支、无 Post started 时保留成功并收口 Post interrupted；Post started 无 finished 时追加 recovery-origin uncertain finished 和对应 Post terminal，不声称旧进程 cleanup 已确认。已 durable 的前缀反馈保持不变，未开始项不执行。部分 finished 后下一项尚未 started 时只追加 cancelled/session_interrupted_before_post_hook terminal，processed/unstarted_from 等于已有 finished 数量，不能生成 uncertain finished；下一项确实 started 未 finished 时，才为该项追加 recovery-origin uncertain finished 并与 uncertain terminal 同批，剩余后缀不伪造执行。已收口 skipped 后缀完全复用其原因和已冻结 suffix_feedback，不重新判断输入或预算。恢复新建的 terminal 明确 origin=recovery、suffix_feedback 为空；只组合已经 durable 的前缀/后缀模型 bytes，不为未开始项补发提示。完整 Post terminal 而 native outputs 缺失时只用真实结果与冻结反馈编码；outputs 已存在时只关闭旧 turn。所有状态均不读当前配置/脚本/artifact，不重建信任，不查询旧 PID，不重跑工具/Hook、不自动采样。第二次恢复不得重复任何已保存事实。
+
+上述 Post 本地恢复 SHALL 同样适用于执行尝试准入后原 error/conflict 已 durable、选择 PostToolUseFailure 的调用，保留原错误与 failure 选择且不执行任何脚本。恢复必须先按同调用的准入/原结果验证 success/failure/none；当前 context、配置、预算和恢复模式不得改变选择。tool_execution_started 只代表执行尝试准入，准入后确定的启动失败仍选 failure；准入前准备错误、原结果 denied/cancelled/outcome_uncertain 为 none。none 不表示原工具没执行。确定失败且存在失败分支、无 Hook started 时只补 recovery cancelled/session_interrupted_before_post_hook terminal；已有 finished 前缀保持原 bytes；只有 Hook started 无 finished 的项补 recovery uncertain，和 terminal 同批。未选中分支没有运行补偿或反馈。
+
+恢复生成 terminal 的 suffix_feedback MUST 为空；既有 terminal 的冻结前缀/后缀完全复用。所有 current 结构验证、双 Provider 事务式恢复和本地 reconciliation 始终持有连续 lease，早于当前来源 Load 与新输入。再次恢复不得重复 result、finished、terminal、outputs 或计费；canonical request/native order/opaque bytes/footprint/cache fingerprint 须等价于同一已补偿历史的不中断路径。
+
+恢复时 route=none SHALL 保持零 Hook started/finished/反馈，并按已验证原事实补适用终态；工具尝试准入但 result 缺失时先沿既有规则补原 outcome_uncertain，再按 none 收口。success/failure 的对应事件未配置时 SHALL 保留该选择并补 recovery skipped/hook_event_unmatched，processed/unstarted_from=0、反馈为空，不要求不存在的分支有后缀。已经 durable 的实时取消 terminal 只复用，不用恢复原因替换：原 error 后当前取消形成的 failure/cancelled 不得重分类成 none。
 
 #### Scenario: Close a patch before approval
 - **WHEN** journal在Patch ready durable后、approval fact前结束
@@ -389,7 +395,7 @@ gate continue 后的未审批/allow 未 tool-started 状态 SHALL 沿用本条�
 - **THEN** 竞争者 session_busy，不能读取后 repair 或追加；持有者续写 seq 单调，失败路径 bytes 不变
 
 #### Scenario: Recover after success but before the post check
-- **WHEN** result=success 已 durable，Post plan 存在而无 Post started
+- **WHEN** result=success 已 durable，Post plan 存在且包含成功分支，而无 Post started
 - **THEN** 保留唯一 success，Post 记 interrupted 并补齐输出；原工具及 Hook 执行次数为零
 
 #### Scenario: Recover an uncertain post run
@@ -415,6 +421,38 @@ gate continue 后的未审批/allow 未 tool-started 状态 SHALL 沿用本条�
 #### Scenario: Reuse a durable skipped suffix and closed budget
 - **WHEN** skipped terminal 及最终预算已保存而 native outputs 缺失
 - **THEN** 原因/前缀/反馈/释放余额不变，离线补输出不重复关闭调用或扣账
+
+#### Scenario: Recover a definite failure before its diagnostic starts
+- **WHEN** 原 error/conflict result 与双分支计划均已 durable，失败项未 started
+- **THEN** 保留原错误，仅补失败分支 interrupted terminal 和配对 output；工具、Hook、信任和 Provider 网络调用次数为零
+
+#### Scenario: Recover a started failure diagnostic
+- **WHEN** 失败分支第 0 项 finished、第 1 项 started 未 finished、第 2 项未开始
+- **THEN** 保留第 0 项反馈，只为第 1 项补 uncertain finished 并与 terminal 同批，第 2 项与成功分支无伪运行或新提示
+
+#### Scenario: Recover without failure configuration or artifacts
+- **WHEN** 失败反馈已 durable、native output 缺失，原配置/脚本/artifact 已删除
+- **THEN** 只用冻结 bytes 补 output，恢复后 canonical request、原生顺序和 fingerprint 等价，不访问消失来源
+
+#### Scenario: Keep a competing process outside failure reconciliation
+- **WHEN** 恢复正在追加失败检查补偿，真实子进程竞争同一 journal 并尝试 repair
+- **THEN** 竞争者 session_busy、失败路径 bytes 不变；持有者 seq 单调，崩溃释放后再次恢复不重复事实
+
+#### Scenario: Preserve a live cancellation after a durable error
+- **WHEN** 原工具准入与 error 已保存，当前取消又保存了 failure/cancelled terminal，之后恢复
+- **THEN** 保留原错误、failure 选择和原 terminal/code，只补缺失 outputs；二次恢复不重复 terminal、output 或计费
+
+#### Scenario: Recover an unmatched selected event
+- **WHEN** 已准入 success 只有失败分支，或已准入 error/conflict 只有成功分支，而 terminal 缺失
+- **THEN** 保留 success/failure 并补 recovery skipped/hook_event_unmatched，零计数/反馈且不要求伪后缀，不借用另一分支
+
+#### Scenario: Do not infer a failed process from attempt admission
+- **WHEN** tool_execution_started 已保存但原 result 缺失，进程是否启动或文件是否修改未知
+- **THEN** 补原 outcome_uncertain，选择 none 并零诊断脚本，不推测原操作失败或未发生
+
+#### Scenario: Select failure for a saved launch error offline
+- **WHEN** 准入后进程尚未启动便形成确定 process_start_failed，原 error result 已保存且存在失败分支
+- **THEN** 恢复仍选 failure，仅补检查中断终态和配对输出，不尝试启动原命令或诊断脚本
 
 ### Requirement: Resume restores checkpoints and locally closes interrupted compaction
 

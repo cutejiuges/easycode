@@ -59,8 +59,10 @@ func TestPostReadOnlyDocumentationExampleClassifiesFindingEmptyAndFailure(t *tes
 			id := "018f1d8a-7b5c-7def-8abc-456789abcdef"
 			d, _ := domain.NewHookDeclaration(domain.HookSourceProject, domain.HookPostToolUse, domain.HookFeedbackModel, strings.Repeat("a", 64), "example", 7, postReadOnlyExample(), 5)
 			plan, _ := domain.NewHookPlan(id, domain.HookExec, []domain.HookReference{d.Reference})
-			post, _ := domain.NewPostHookPlan(plan, 256<<10, 16<<10, domain.HookDeliveryAvailable)
-			run, _ := domain.NewPostHookRunIdentity(post, 0)
+			currentPostBranch1, _ := domain.NewPostHookBranch(plan.Event, plan.Hooks, 16<<10)
+			currentPostBranch1.Delivery = domain.HookDeliveryAvailable
+			post, _ := domain.NewPostHookPlan(plan.InvocationID, plan.Capability, []domain.PostHookBranch{currentPostBranch1}, 256<<10, 16<<10)
+			run, _ := domain.NewPostHookRunIdentity(post, domain.HookPostToolUse, 0)
 			input, _ := domain.NewHookExecInput("true", "", 1000)
 			response, _ := domain.NewHookExecResponse(domain.HookExecMetadata{ExitKnown: true})
 			stdin, err := domain.NewPostHookInput(domain.SessionID(id), domain.ThreadID(id), domain.TurnID(id), "call", "exec_command", root, input, response)
@@ -226,7 +228,18 @@ func TestPostBothProvidersRealSandboxThreeCapabilitiesAndDisclosure(t *testing.T
 					if post.Terminal.Code != want || len(post.Finished) != 1 || post.Finished[0].Result.Code != want {
 						t.Fatal("wrong disclosure outcome", post.Terminal.Code)
 					}
-					model, err := tool.NewModelOutput(entry.Result, post.Feedback())
+					var admitted uint64
+					for _, record := range loaded.Records {
+						if record.EventKind == session.EventToolExecutionStarted {
+							admitted = record.Sequence
+						}
+					}
+					admission, _ := tool.NewExecutionAdmission(entry.Invocation.InvocationID(), admitted)
+					selection, err := tool.NewPostHookSelection(post.Plan, admission, entry.Result)
+					if err != nil {
+						t.Fatal(err)
+					}
+					model, err := tool.NewPostModelOutput(entry.Result, selection, post.Feedback())
 					if err != nil {
 						t.Fatal(err)
 					}

@@ -580,7 +580,17 @@ func acceptToolOutputs(plan *ReplayPlan, active *activeReplayTurn, record Record
 		if call.PostHooks != nil {
 			feedback = call.PostHooks.Feedback()
 		}
-		output, err := tool.NewModelOutput(call.Result, feedback)
+		var output tool.ModelOutput
+		var err error
+		if call.PostHooks != nil {
+			var selection tool.PostHookSelection
+			selection, err = call.PostHooks.Selection(call)
+			if err == nil {
+				output, err = tool.NewPostModelOutput(call.Result, selection, feedback)
+			}
+		} else {
+			output, err = tool.NewModelOutput(call.Result)
+		}
 		if err != nil {
 			return replayCorrupt("invalid model output evidence")
 		}

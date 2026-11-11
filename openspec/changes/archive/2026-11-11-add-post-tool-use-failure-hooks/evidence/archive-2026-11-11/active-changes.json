@@ -1,0 +1,15 @@
+{
+  "changes": [
+    {
+      "name": "add-pre-tool-use-command-hooks",
+      "completedTasks": 43,
+      "totalTasks": 43,
+      "lastModified": "2026-11-08T14:17:21.159Z",
+      "status": "complete"
+    }
+  ],
+  "root": {
+    "path": "/Users/cutejiuge/.codex/worktrees/d052/easycode",
+    "source": "nearest"
+  }
+}

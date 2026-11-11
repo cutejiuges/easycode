@@ -7,6 +7,9 @@ import (
 	"easycode/internal/domain"
 )
 
+// 信任请求必须容纳合法原始命令的最坏 JSON 转义及封闭身份、引用元数据。
+const maxHookTrustRequestBytes = 6*domain.MaxHookCommandBytes + (4 << 10)
+
 type HookTrustDecision string
 
 const (
@@ -107,7 +110,7 @@ func NewHookTrustRequested(p HookTrustRequestedPayload) (Event, error) {
 }
 func DecodeHookTrustRequested(e Event) (HookTrustRequestedPayload, error) {
 	var p HookTrustRequestedPayload
-	if e.Kind != EventHookTrustRequested || len(e.Payload) > 16<<10 || codec.UnmarshalRecord(e.Payload, &p) != nil {
+	if e.Kind != EventHookTrustRequested || len(e.Payload) > maxHookTrustRequestBytes || codec.UnmarshalRecord(e.Payload, &p) != nil {
 		return p, fmt.Errorf("invalid hook trust request")
 	}
 	return p, p.Validate()
@@ -155,7 +158,7 @@ func (p HookActivityPayload) Validate() error {
 		}
 		return nil
 	}
-	if p.Reference.Event == domain.HookPostToolUse {
+	if p.Reference.Event.Post() {
 		switch p.State {
 		case HookActivityCompleted:
 			if p.Code == domain.HookOK || domain.HookError.ValidCode(p.Code) {
@@ -164,7 +167,7 @@ func (p HookActivityPayload) Validate() error {
 			return fmt.Errorf("invalid post hook completion activity")
 		case HookActivitySkipped:
 			switch p.Code {
-			case domain.HookToolNotSuccessful, domain.HookTrustDenied, domain.HookTrustRequired, domain.HookInputLimit, domain.HookExecutionBudgetExhausted:
+			case domain.HookToolNotSuccessful, domain.HookTrustDenied, domain.HookTrustRequired, domain.HookInputLimit, domain.HookExecutionBudgetExhausted, domain.HookEventUnmatched:
 				return nil
 			}
 			return fmt.Errorf("invalid post hook skipped activity")

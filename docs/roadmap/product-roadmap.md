@@ -13,7 +13,7 @@
 
 ## 当前状态总览（2026-11-11）
 
-实现与测试逐项核对见[当前能力清单](capability-status.md)。P0–P8 是并行推进的阶段目标，不以某个后期切片交付推定整个阶段完成。当前已交付九项模型工具、本地 Skills、同步 PreToolUse/PostToolUse、结构化提问、流式 Markdown、命令/Skill 首词补全、启动会话选择、Provider 缓存、手动/自动压缩、双 Provider 推理阅读及启动推理/display/输出配置；仍缺少运行中推理切换、跨 Provider fork、后台进程、Plugins/MCP、Subagent 与完整发布矩阵。
+实现与测试逐项核对见[当前能力清单](capability-status.md)。P0–P8 是并行推进的阶段目标，不以某个后期切片交付推定整个阶段完成。当前已交付九项模型工具、本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure、结构化提问、流式 Markdown、命令/Skill 首词补全、启动会话选择、Provider 缓存、手动/自动压缩、双 Provider 推理阅读及启动推理/display/输出配置；仍缺少运行中推理切换、跨 Provider fork、后台进程、Plugins/MCP、Subagent 与完整发布矩阵。
 
 下文“工作内容/交付物/验收标准”保留阶段的完整目标；已完成状态以本总览、各节进度和当前能力清单为准。所有迁移、历史 reader 或兼容窗口必须先有用户明确要求及新 OpenSpec，不因路线图提到未来发布而预先授权。
 
@@ -342,7 +342,7 @@ Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘�
 - 实现 PatchDraftUpdated、ToolProgress 和有序 result collection。
 - 实现 tool call/result pairing 修复与拒绝策略。
 
-本地 Skill 作为第八项模型工具、PreToolUse/PostToolUse 作为三项 mutation 的前置门禁与成功后检查，已在 P6 切片接入；结构化 Question 为第九项模型工具。其余 Hooks、Plugins/MCP 与 Agent/Subagent 仍在 P6/P7 建立真实契约后接入。
+本地 Skill 作为第八项模型工具、PreToolUse/PostToolUse/PostToolUseFailure 分别作为三项 mutation 的前置门禁、成功后检查与执行尝试失败诊断，已在 P6 切片接入；结构化 Question 为第九项模型工具。其余 Hooks、Plugins/MCP 与 Agent/Subagent 仍在 P6/P7 建立真实契约后接入。
 
 ### 7.5 交付物
 
@@ -522,13 +522,17 @@ Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘�
 
 支持 Claude 风格 hooks、渐进披露 skills、MCP 和本地 plugins，并保证来源权限、信任、缓存稳定和热加载安全。
 
-当前已交付本地 Skills 首个切片：固定 user/project 根发现、严格静态 frontmatter、`/skills` 列表、`/name` / `$name` 显式附件、Skill 主文档/同来源资源读取、缓存元数据来源与双 Provider 原生恢复。同步 PreToolUse/PostToolUse command Hooks 已交付；其余 Hook 事件、Plugins、MCP、plugin/system skills、path activation、allowed-tools、fork 与热加载仍未实现，不能将本切片视为 P6 退出。
+当前已交付本地 Skills 首个切片：固定 user/project 根发现、严格静态 frontmatter、`/skills` 列表、`/name` / `$name` 显式附件、Skill 主文档/同来源资源读取、缓存元数据来源与双 Provider 原生恢复。同步 PreToolUse/PostToolUse/PostToolUseFailure command Hooks 已交付；其余 Hook 事件、Plugins、MCP、plugin/system skills、path activation、allowed-tools、fork 与热加载仍未实现，不能将本切片视为 P6 退出。
 
 ### PostToolUse 同步检查与显式模型反馈
 
 `add-post-tool-use-command-hooks` 交付三种真实成功 mutation 的后置检查。复用已有 FD 来源、只读/禁网沙箱与进程 owner，先信任后置计划、再批准原工具；真实结果与后置生命周期分别保存。默认 none 不披露正文；model 只接收严格 additionalContext，并与原结果共享有序预算 ticket。原 status/code、Provider native pairing 和稳定前缀保持，错误后不自动重试。
 
-后置计划/运行/terminal 支持严格当前回放、部分前缀恢复和内容/预算拒伪造；恢复不重读配置/脚本/artifact，不给未启动项制造运行记录或新的模型提示。TUI 保留真实工具成功并刷新后置详情，headless 不增加外部事件。P6 仍未退出：PostToolUseFailure、其余事件、async、改写、Plugins/MCP 和热加载继续待实现。主规格已同步，change 已归档；验证见[验收记录](../../openspec/changes/archive/2026-11-08-add-post-tool-use-command-hooks/verification.md)与[归档核对](../../openspec/changes/archive/2026-11-08-add-post-tool-use-command-hooks/archive.md)。
+后置计划/运行/terminal 支持严格当前回放、部分前缀恢复和内容/预算拒伪造；恢复不重读配置/脚本/artifact，不给未启动项制造运行记录或新的模型提示。TUI 保留真实工具成功并刷新后置详情，headless 不增加外部事件。P6 仍未退出：其余事件、async、改写、Plugins/MCP 和热加载继续待实现。主规格已同步，change 已归档；验证见[验收记录](../../openspec/changes/archive/2026-11-08-add-post-tool-use-command-hooks/verification.md)与[归档核对](../../openspec/changes/archive/2026-11-08-add-post-tool-use-command-hooks/archive.md)。
+
+### PostToolUseFailure 执行尝试失败诊断
+
+本切片在既有后置生命周期内加入 failure 分支，优先补齐三种 mutation 的确定失败诊断。产品保持 Claude Code 的精确事件、默认拒绝、独立检查和显式反馈；内核保留双 Provider 原生历史、强类型边界、durable 执行尝试证据和零重跑恢复。正常非零退出不按命令文字推断测试失败，不做自动修复。双分支在候选前冻结/信任，单预算预留，事件选择与当前取消分离；失败/冲突主线和检查状态并列，中性计划通知不假定成功。详见[实现验收](../../openspec/changes/archive/2026-11-11-add-post-tool-use-failure-hooks/verification.md)。主规格已同步，change 已归档；最终契约、文档及证据核对见[归档记录](../../openspec/changes/archive/2026-11-11-add-post-tool-use-failure-hooks/archive.md)。P6 其余事件、Plugins/MCP 与热加载仍未交付。
 
 ### PreToolUse 首个切片的交付边界
 

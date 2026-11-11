@@ -89,6 +89,9 @@ func TestArtifactBlockingIOPreservesProcessCleanupOwner(t *testing.T) {
 			// seal 必须先观察退出；write 则由测试在取消准入后明确交付退出，避免随机 select 分支。
 			if mode == "seal" {
 				process.waitResult <- processWaitResult{exit: 0}
+			} else {
+				// 阻塞写入时进程仍活跃，不能把尚未交付退出的假进程声明为停止。
+				process.alive = true
 			}
 			clock := &fakeProcessClock{timers: make(chan *fakeProcessTimer, 20)}
 			execution, err := newProcessExecution(&fakeProcessLauncher{process: process}, clock, processTestCandidate(t), tool.RenderExecOutput)
@@ -112,6 +115,9 @@ func TestArtifactBlockingIOPreservesProcessCleanupOwner(t *testing.T) {
 					t.Fatal("missing cancellation grace")
 				}
 				// 假时钟只由测试推进，不能等待永远不会自动触发的宽限期。
+				process.mu.Lock()
+				process.alive = false
+				process.mu.Unlock()
 				process.waitResult <- processWaitResult{exit: 0}
 				grace.ticks <- time.Unix(1, 0)
 			}

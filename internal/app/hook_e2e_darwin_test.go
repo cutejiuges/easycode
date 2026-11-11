@@ -354,7 +354,7 @@ func testHookExclusiveBarrier(t *testing.T, event domain.HookEvent) {
 					hookPlan = record.Sequence
 				case session.EventToolPostHookPlanned:
 					p, _ := session.DecodeToolPostHookPlanned(record)
-					if p.Plan.InvocationID == string(plan.Tools[1].Invocation.InvocationID()) {
+					if p.InvocationID == string(plan.Tools[1].Invocation.InvocationID()) {
 						hookPlan = record.Sequence
 					}
 				case session.EventToolPostHookCompleted:

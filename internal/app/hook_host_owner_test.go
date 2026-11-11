@@ -36,10 +36,15 @@ func TestHookHostRetainsWorkspaceAndCrossProcessLeaseDuringCleanup(t *testing.T)
 func TestPostHookHostRetainsWorkspaceAndCrossProcessLeaseDuringCleanup(t *testing.T) {
 	testHookHostRetainsLease(t, domain.HookPostToolUse)
 }
+func TestFailureHookHostRetainsWorkspaceAndCrossProcessLeaseDuringCleanup(t *testing.T) {
+	testHookHostRetainsLease(t, domain.HookPostToolUseFailure)
+}
 func testHookHostRetainsLease(t *testing.T, event domain.HookEvent) {
 	t.Helper()
 	workspace := t.TempDir()
-	if event == domain.HookPostToolUse {
+	if event == domain.HookPostToolUseFailure {
+		writeFailureHookConfig(t, workspace, "never executed by fake runner", domain.HookFeedbackNone)
+	} else if event == domain.HookPostToolUse {
 		writePostHookConfig(t, workspace, "never executed by fake runner", domain.HookFeedbackNone)
 	} else {
 		writeHookConfig(t, workspace, "never executed by fake runner")
@@ -79,6 +84,11 @@ func testHookHostRetainsLease(t *testing.T, event domain.HookEvent) {
 		if e.Kind == protocol.EventToolApprovalRequested {
 			if event == domain.HookPreToolUse {
 				t.Fatal("tool escaped pre hook")
+			}
+			if event == domain.HookPostToolUseFailure {
+				if err := os.WriteFile(filepath.Join(workspace, "marker"), []byte("external change"), 0600); err != nil {
+					t.Fatal(err)
+				}
 			}
 			p, _ := protocol.DecodeToolApprovalRequested(e)
 			if err := resources.session.ResolveApproval(context.Background(), e.TurnID, p, protocol.ApprovalAllowOnce, ""); err != nil {
@@ -124,6 +134,10 @@ func testHookHostRetainsLease(t *testing.T, event domain.HookEvent) {
 	if event == domain.HookPreToolUse {
 		if !os.IsNotExist(err) {
 			t.Fatal("target executed during pre cleanup")
+		}
+	} else if event == domain.HookPostToolUseFailure {
+		if err != nil || string(content) != "external change" {
+			t.Fatal("failure cleanup rewrote conflicting file", err)
 		}
 	} else if err != nil || string(content) != "must-not-write" {
 		t.Fatal("post cleanup changed real successful effect", err)

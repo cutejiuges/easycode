@@ -18,6 +18,20 @@ func TestCurrentPostHookFixturesAreFixedAndStrict(t *testing.T) {
 		code      domain.HookCode
 		suffix    int
 	}{
+		{"failure_exec_start_failed", 0, false, "", "", 0},
+		{"failure_feedback_unavailable", 1, false, domain.PostHookCompleted, domain.HookOK, 0},
+		{"failure_result", 0, false, "", "", 0},
+		{"failure_started", 0, true, "", "", 0},
+		{"failure_prefix", 1, false, "", "", 0},
+		{"failure_prefix_started", 1, true, "", "", 0},
+		{"failure_completed", 2, false, domain.PostHookCompleted, domain.HookExitFailed, 0},
+		{"failure_none", 1, false, domain.PostHookCompleted, domain.HookOK, 0},
+		{"failure_budget_suffix", 1, false, domain.PostHookSkipped, domain.HookExecutionBudgetExhausted, 1},
+		{"failure_recovered_started", 2, false, domain.PostHookUncertain, domain.HookOutcomeUncertain, 0},
+		{"failure_recovered_unstarted", 1, false, domain.PostHookCancelled, domain.HookPostInterrupted, 0},
+		{"failure_route_none", 0, false, domain.PostHookSkipped, domain.HookToolNotSuccessful, 0},
+		{"failure_unmatched", 0, false, domain.PostHookSkipped, domain.HookEventUnmatched, 0},
+		{"failure_cancelled", 0, false, domain.PostHookCancelled, domain.HookCancelled, 2},
 		{"planned", 0, false, "", "", 0}, {"result", 0, false, "", "", 0}, {"started", 0, true, "", "", 0}, {"prefix", 1, false, "", "", 0}, {"prefix_started", 1, true, "", "", 0},
 		{"completed", 2, false, domain.PostHookCompleted, domain.HookExitFailed, 0},
 		{"none", 1, false, domain.PostHookCompleted, domain.HookOK, 0},
@@ -50,10 +64,15 @@ func TestCurrentPostHookFixturesAreFixedAndStrict(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if plan.ToolRecovery == nil || len(plan.Tools) != 1 {
+			wantCalls := 1
+			if test.name == "failure_feedback_unavailable" {
+				wantCalls = 3
+			}
+			if plan.ToolRecovery == nil || len(plan.Tools) != wantCalls {
 				t.Fatal("lost post recovery/history")
 			}
-			call := plan.ToolRecovery.Calls()[0]
+			calls := plan.ToolRecovery.Calls()
+			call := calls[len(calls)-1]
 			g := call.PostHooks
 			if g == nil || len(g.Finished) != test.processed || (g.Started != nil) != test.pending {
 				t.Fatal("collapsed post prefix or admission")
@@ -64,6 +83,12 @@ func TestCurrentPostHookFixturesAreFixedAndStrict(t *testing.T) {
 				}
 			} else if g.Terminal == nil || g.Terminal.Disposition != test.terminal || g.Terminal.Code != test.code || len(g.Terminal.SuffixFeedback) != test.suffix {
 				t.Fatal("wrong post terminal")
+			}
+			if test.name == "failure_feedback_unavailable" && (g.Plan.Allowance != 1524 || g.Plan.Reservation != 500 || g.Plan.Branches[0].Delivery != domain.HookDeliveryUnavailable || g.Finished[0].Feedback.Kind != domain.HookFeedbackEmpty || g.Terminal.Budget.FeedbackActual != 0) {
+				t.Fatal("small reservation disclosed feedback")
+			}
+			if test.name == "failure_exec_start_failed" && (call.StartedSequence == 0 || call.Result.Status() != tool.ResultError || call.Result.Code() != "process_start_failed") {
+				t.Fatal("launch failure lost execution attempt evidence")
 			}
 			if test.name == "budget_suffix" && (g.Finished[0].Result.TimedOut || g.Terminal.Processed != 1 || g.Terminal.UnstartedFrom != 1) {
 				t.Fatal("invented suffix execution statistics")
@@ -86,7 +111,13 @@ func TestCurrentPostHookFixturesAreFixedAndStrict(t *testing.T) {
 	}
 }
 func TestPostSemanticCorruptionPrecedesTornTailRepair(t *testing.T) {
-	content := append(readCurrentFixture(t, "post_hook_invalid.jsonl"), []byte(`{"seq":`)...)
+	testPostCorruptionBeforeRepair(t, "post_hook_invalid.jsonl")
+}
+func TestFailureSemanticCorruptionPrecedesTornTailRepair(t *testing.T) {
+	testPostCorruptionBeforeRepair(t, "post_hook_failure_invalid.jsonl")
+}
+func testPostCorruptionBeforeRepair(t *testing.T, name string) {
+	content := append(readCurrentFixture(t, name), []byte(`{"seq":`)...)
 	repo, lease := installCurrentFixture(t, content)
 	defer repo.Close()
 	defer lease.Close()
@@ -104,7 +135,7 @@ func TestPostSemanticCorruptionPrecedesTornTailRepair(t *testing.T) {
 	}
 }
 func TestPostLeaseCrashReleaseRepairAndMonotonicAppend(t *testing.T) {
-	for _, name := range []string{"result", "prefix_started"} {
+	for _, name := range []string{"result", "prefix_started", "failure_result", "failure_prefix_started"} {
 		t.Run(name, func(t *testing.T) {
 			fixed := readCurrentFixture(t, "post_hook_"+name+".jsonl")
 			content := append(bytes.Clone(fixed), []byte(`{"seq":`)...)
@@ -146,12 +177,18 @@ func TestPostLeaseCrashReleaseRepairAndMonotonicAppend(t *testing.T) {
 			g := call.PostHooks
 			var drafts []RecordDraft
 			if g.Started == nil {
-				id, _ := domain.NewPostHookRunIdentity(g.Plan, len(g.Finished))
+				selection, err := g.Selection(call)
+				if err != nil {
+					t.Fatal(err)
+				}
+				event, _ := selection.Route().Event()
+				id, _ := domain.NewPostHookRunIdentity(g.Plan, event, len(g.Finished))
 				d, _ := NewHookExecutionStartedDraft(testTurnID, id)
 				drafts = []RecordDraft{d}
 			} else {
 				stats := domain.HookRunResult{Identity: *g.Started, Status: domain.HookUncertain, Code: domain.HookOutcomeUncertain, Origin: "recovery"}
-				frozen, _ := domain.NewEmptyHookFinished(stats, g.Plan.Plan.Hooks[g.Started.Ordinal])
+				branch, _ := g.Plan.Branch(g.Started.Event)
+				frozen, _ := domain.NewEmptyHookFinished(stats, branch.Hooks[g.Started.Ordinal])
 				finished, _ := NewHookExecutionFinishedDraft(testTurnID, frozen)
 				prefix := append(append([]domain.HookFinished(nil), g.Finished...), frozen)
 				terminal := postTerminalDraft(t, g.Plan, call.Result, prefix, domain.PostHookUncertain, domain.HookOutcomeUncertain, "recovery")

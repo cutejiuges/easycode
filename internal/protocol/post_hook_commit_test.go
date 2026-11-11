@@ -9,7 +9,7 @@ import (
 
 func TestPostHookCommitScopeAndStrictPayload(t *testing.T) {
 	const id = "01900000-0000-7000-8000-000000000001"
-	payload := PostHookCommittedPayload{InvocationID: id, Event: domain.HookPostToolUse, PlanDigest: strings.Repeat("a", 64), DetailSequence: 12, Phase: PostHookFinished}
+	payload := PostHookCommittedPayload{InvocationID: id, PlanDigest: strings.Repeat("a", 64), DetailSequence: 12, Phase: PostHookFinished}
 	event, err := NewPostHookCommitted(payload)
 	if err != nil {
 		t.Fatal(err)
@@ -28,7 +28,7 @@ func TestPostHookCommitScopeAndStrictPayload(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, bad := range [][]byte{
-		bytes.Replace(event.Payload, []byte(`"PostToolUse"`), []byte(`"PreToolUse"`), 1),
+		append(bytes.TrimSuffix(event.Payload, []byte("}")), []byte(`,"event":"PostToolUse"}`)...),
 		bytes.Replace(event.Payload, []byte(`"detail_sequence":12`), []byte(`"detail_sequence":0`), 1),
 		bytes.Replace(event.Payload, []byte(`"phase":"finished"`), []byte(`"phase":"future"`), 1),
 		bytes.Replace(event.Payload, []byte(`"phase":"finished"`), []byte(`"phase":"finished","phase":"started"`), 1),

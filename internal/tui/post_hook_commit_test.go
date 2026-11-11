@@ -56,7 +56,7 @@ func testOpenPostDetailsRefresh(t *testing.T, withReasoning bool) {
 	stablePage := cachedTranscriptPage{key: transcriptPageKey{kind: transcriptBodyPage, cursor: item.Cursor, source: protocol.TranscriptResult}, body: protocol.TranscriptBodyPage{Text: "stable", NextOffset: 6, TotalBytes: 6}}
 	m.browser.page = &oldPage
 	m.browser.cache = []cachedTranscriptPage{oldPage, stablePage}
-	event, err := protocol.NewPostHookCommitted(protocol.PostHookCommittedPayload{InvocationID: item.Activity.InvocationID, Event: domain.HookPostToolUse, PlanDigest: strings.Repeat("a", 64), DetailSequence: 21, Phase: protocol.PostHookFinished})
+	event, err := protocol.NewPostHookCommitted(protocol.PostHookCommittedPayload{InvocationID: item.Activity.InvocationID, PlanDigest: strings.Repeat("a", 64), DetailSequence: 21, Phase: protocol.PostHookFinished})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,16 +97,25 @@ func testOpenPostDetailsRefresh(t *testing.T, withReasoning bool) {
 	}
 }
 func TestPostCheckingAndAggregatePreserveToolSuccess(t *testing.T) {
+	testPostCheckingAndAggregate(t, domain.HookPostToolUse, "success")
+}
+func TestFailureCheckingAndAggregatePreserveToolError(t *testing.T) {
+	testPostCheckingAndAggregate(t, domain.HookPostToolUseFailure, "error")
+}
+func TestFailureCheckingAndAggregatePreserveToolConflict(t *testing.T) {
+	testPostCheckingAndAggregate(t, domain.HookPostToolUseFailure, "conflict")
+}
+func testPostCheckingAndAggregate(t *testing.T, selected domain.HookEvent, original string) {
 	m, _, _ := browserModel(t)
 	turn := domain.TurnID("018f1d8a-7b5c-7def-8123-456789abcdea")
 	id := "018f1d8a-7b5c-7def-8123-456789abcdeb"
 	m.activeTurnID = turn
-	activity := protocol.ToolActivityPayload{Tool: protocol.ToolWrite, InvocationID: id, Summary: "a.go", Status: "success", Code: "ok"}
+	activity := protocol.ToolActivityPayload{Tool: protocol.ToolWrite, InvocationID: id, Summary: "a.go", Status: original, Code: "ok"}
 	m.transcript = []transcriptMessage{{activity: &activity}}
 	m.toolItems = map[string]int{id: 0}
 	m.toolClosed = map[string]bool{id: true}
-	post, _ := domain.NewHookDeclaration(domain.HookSourceProject, domain.HookPostToolUse, domain.HookFeedbackModel, strings.Repeat("a", 64), "post", 7, "true", 5)
-	event, _ := protocol.NewPostHookCommitted(protocol.PostHookCommittedPayload{InvocationID: id, Event: domain.HookPostToolUse, PlanDigest: strings.Repeat("b", 64), DetailSequence: 5, Phase: protocol.PostHookStarted})
+	post, _ := domain.NewHookDeclaration(domain.HookSourceProject, selected, domain.HookFeedbackModel, strings.Repeat("a", 64), "post", 7, "true", 5)
+	event, _ := protocol.NewPostHookCommitted(protocol.PostHookCommittedPayload{InvocationID: id, PlanDigest: strings.Repeat("b", 64), DetailSequence: 5, Phase: protocol.PostHookStarted})
 	event.TurnID = turn
 	updated, _ := m.projectHookEvent(event)
 	m = updated.(Model)
@@ -114,14 +123,14 @@ func TestPostCheckingAndAggregatePreserveToolSuccess(t *testing.T) {
 	checking.TurnID = turn
 	updated, _ = m.projectHookEvent(checking)
 	m = updated.(Model)
-	if m.transcript[0].hook == nil || m.transcript[0].hook.State != protocol.HookActivityChecking || m.transcript[0].activity.Status != "success" {
+	if m.transcript[0].hook == nil || m.transcript[0].hook.State != protocol.HookActivityChecking || m.transcript[0].activity.Status != original {
 		t.Fatal("post checking discarded after tool terminal")
 	}
 	completed, _ := protocol.NewHookActivity(protocol.HookActivityPayload{InvocationID: id, Reference: post.Reference, State: protocol.HookActivityCompleted, Code: domain.HookExitFailed})
 	completed.TurnID = turn
 	updated, _ = m.projectHookEvent(completed)
 	m = updated.(Model)
-	if !strings.Contains(strings.Join(renderTranscript(m.transcript, 80), "\n"), "checks failed") || m.transcript[0].activity.Status != "success" {
+	if !strings.Contains(strings.Join(renderTranscript(m.transcript, 80), "\n"), "checks failed") || m.transcript[0].activity.Status != original {
 		t.Fatal("aggregate check failure rewrote/hid original success", m.View())
 	}
 	pre, _ := domain.NewHookDeclaration(domain.HookSourceProject, domain.HookPreToolUse, domain.HookFeedbackNone, strings.Repeat("a", 64), "pre", 7, "true", 5)
@@ -136,7 +145,32 @@ func TestPostCheckingAndAggregatePreserveToolSuccess(t *testing.T) {
 	stale.TurnID = turn
 	updated, _ = m.projectHookEvent(stale)
 	m = updated.(Model)
-	if m.transcript[0].hook.State != protocol.HookActivityCompleted || m.transcript[0].hook.Reference.Event != domain.HookPostToolUse {
+	if m.transcript[0].hook.State != protocol.HookActivityCompleted || m.transcript[0].hook.Reference.Event != selected {
 		t.Fatal("late pre terminal overwrote post summary")
+	}
+}
+
+func TestPostActivitiesCannotSelectAnEventBeforeOriginalResult(t *testing.T) {
+	m, _, _ := browserModel(t)
+	turn := domain.TurnID("018f1d8a-7b5c-7def-8123-456789abcdea")
+	id := "018f1d8a-7b5c-7def-8123-456789abcdeb"
+	m.activeTurnID = turn
+	activity := protocol.ToolActivityPayload{Tool: protocol.ToolWrite, InvocationID: id, Summary: "a.go", Status: "running"}
+	m.transcript = []transcriptMessage{{activity: &activity}}
+	m.toolItems = map[string]int{id: 0}
+	m.toolClosed = map[string]bool{}
+	planned, _ := protocol.NewPostHookCommitted(protocol.PostHookCommittedPayload{InvocationID: id, PlanDigest: strings.Repeat("b", 64), DetailSequence: 5, Phase: protocol.PostHookPlanned})
+	planned.TurnID = turn
+	updated, _ := m.projectHookEvent(planned)
+	m = updated.(Model)
+	for _, event := range []domain.HookEvent{domain.HookPostToolUse, domain.HookPostToolUseFailure} {
+		d, _ := domain.NewHookDeclaration(domain.HookSourceProject, event, domain.HookFeedbackModel, strings.Repeat("a", 64), "post", 7, "true", 5)
+		checking, _ := protocol.NewHookActivity(protocol.HookActivityPayload{InvocationID: id, Reference: d.Reference, State: protocol.HookActivityChecking, Code: domain.HookOK})
+		checking.TurnID = turn
+		updated, _ := m.projectHookEvent(checking)
+		m = updated.(Model)
+		if m.transcript[0].hook != nil || m.transcript[0].activity.Status != "running" || m.postHooks[id].Phase != protocol.PostHookPlanned {
+			t.Fatal("unknown original result selected a post event")
+		}
 	}
 }

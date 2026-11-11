@@ -128,7 +128,7 @@ func hookPanel(lines []string, width, height, scroll int) string {
 	return strings.Join(wrapped[scroll:min(len(wrapped), scroll+max(1, height))], "\n")
 }
 func (m Model) renderHooks() string {
-	lines := []string{"Hooks · PreToolUse / PostToolUse", "Enter: details · Esc: back"}
+	lines := []string{"Hooks · PreToolUse / PostToolUse / PostToolUseFailure", "Enter: details · Esc: back"}
 	if m.hooks.detail && len(m.hooks.entries) > 0 {
 		e := m.hooks.entries[m.hooks.selected]
 		d := e.Declaration
@@ -225,6 +225,9 @@ func (m Model) renderHookTrust() string {
 	if d.Reference.Event == domain.HookPostToolUse {
 		lines = append(lines[:1], append([]string{"Runs only after the tool succeeds.", "feedback=model sends additionalContext to the provider and saves it in Session."}, lines[1:]...)...)
 	}
+	if d.Reference.Event == domain.HookPostToolUseFailure {
+		lines = append(lines[:1], append([]string{"Runs only after a definite execution-attempt failure.", "Admission does not prove the process started. Normal nonzero exits use PostToolUse.", "feedback=model sends additionalContext to the provider and saves it in Session."}, lines[1:]...)...)
+	}
 	if o.submitted {
 		lines = append(lines, "Waiting for confirmation")
 	}
@@ -281,6 +284,18 @@ func (m Model) projectHookEvent(e protocol.Event) (tea.Model, tea.Cmd) {
 		if p.State == "checking" && m.toolClosed[p.InvocationID] {
 			post, ok := m.postHooks[p.InvocationID]
 			if !ok || post.Phase != protocol.PostHookStarted {
+				return m, nil
+			}
+		}
+		if p.Reference.Event.Post() {
+			if !m.toolClosed[p.InvocationID] {
+				return m, nil
+			}
+			activity := m.transcript[index].activity
+			if activity == nil {
+				return m, nil
+			}
+			if p.Reference.Event == domain.HookPostToolUse && activity.Status != "success" || p.Reference.Event == domain.HookPostToolUseFailure && activity.Status != "error" && activity.Status != "conflict" {
 				return m, nil
 			}
 		}

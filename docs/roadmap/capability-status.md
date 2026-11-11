@@ -1,6 +1,6 @@
 # 当前能力与实现边界
 
-> 核对日期：2026-11-11。基线：当前仓库实现及已同步主规格，包含启动推理控制及本轮回归修复、结构化用户提问、PreToolUse/PostToolUse Hook、命令/Skill 首词补全与已验收归档的双 Provider 被动推理阅读。
+> 核对日期：2026-11-11。基线：当前仓库实现及已同步主规格，包含启动推理控制及本轮回归修复、结构化用户提问、PreToolUse/PostToolUse/PostToolUseFailure Hook、命令/Skill 首词补全与已验收归档的双 Provider 被动推理阅读。
 > 本文记录当前代码可执行的能力；[产品 Roadmap](product-roadmap.md)保留阶段目标与剩余工作。已接受的 ADR 和归档 change 记录各自当时的决策，不能单独作为现有功能清单。
 
 ## 用户入口
@@ -31,7 +31,7 @@
 
 九项工具共享原生 call/output 配对、结果预算和恢复。连续只读批次最多 8 路；Patch/Write/Exec/Question 为独占屏障，只有前三项需要普通副作用批准。验证入口包括 `internal/tool/builtin/specs_test.go`、`internal/app/question_workflow_darwin_test.go` 与 `internal/app/hook_e2e_darwin_test.go`。
 
-PreToolUse Hook 是三项 mutation 的前置门禁，**不是第十项模型工具**。它读取 user/project 冻结严格 JSON、逐项默认拒绝的内存信任，并在候选和普通批准前执行；Darwin 只读工作区、禁网，每项默认 5 秒/最大 30 秒，每调用总执行预算 30 秒，stdin 最大 512 KiB、双输出各 16 KiB。headless 匹配项返回 `hook_trust_required`，无匹配沿用普通 `approval_required`。四类 durable facts 保证恢复只补偿、不重跑；不保存输出正文或 reason。PostToolUse 已支持成功 Patch/Write/Exec 的同步只读检查：执行前独立信任，真实结果先 Sync，默认 none、显式 model 结构化反馈，4 KiB/项与 16 KiB/调用、分段预算及零重跑恢复。后置错误保持工具真实成功，Ctrl+O 后置详情按 durable sequence 刷新。其余事件、async、allow/ask、参数/结果改写、plugin hooks 和热加载尚未实现。
+PreToolUse Hook 是三项 mutation 的前置门禁，**不是第十项模型工具**。它读取 user/project 冻结严格 JSON、逐项默认拒绝的内存信任，并在候选和普通批准前执行；Darwin 只读工作区、禁网，每项默认 5 秒/最大 30 秒，每调用总执行预算 30 秒，stdin 最大 512 KiB、双输出各 16 KiB。headless 匹配项返回 `hook_trust_required`，无匹配沿用普通 `approval_required`。四类 durable facts 保证恢复只补偿、不重跑；不保存输出正文或 reason。PostToolUse 已支持成功 Patch/Write/Exec 的同步只读检查：执行前独立信任，真实结果先 Sync，默认 none、显式 model 结构化反馈，4 KiB/项与 16 KiB/调用、分段预算及零重跑恢复。后置错误保持工具真实成功，Ctrl+O 后置详情按 durable sequence 刷新。PostToolUseFailure 已覆盖已准入 error/conflict、启动失败和确认清理超时；正常非零 exit 仍走成功分支。success/failure/none 与检查 disposition 独立，双分支先信任、只 reserve 一次，失败输入只含安全摘要。取消不改写原错误，恢复零外部副作用，计划通知中性。其余事件、async、allow/ask、参数/结果改写、plugin hooks 和热加载尚未实现。
 
 ## 历史、上下文、缓存与展示
 
@@ -66,7 +66,7 @@ PreToolUse Hook 是三项 mutation 的前置门禁，**不是第十项模型工�
 
 ## 后续能力与审阅入口
 
-P6 当前交付本地 Skills 和同步 PreToolUse/PostToolUse；MCP、本地 Plugins、manifest importer 与热加载仍是 P6 后续目标。P7 Subagent 和 P8 telemetry/诊断/发布强化的批准占位尚未接入 Runtime/app。doctor、模型/Provider 动态切换、后台任务、通用迁移设计不得仅因出现在路线图或 ADR 中就视作已经实现。
+P6 当前交付本地 Skills 和同步 PreToolUse/PostToolUse/PostToolUseFailure；MCP、本地 Plugins、manifest importer 与热加载仍是 P6 后续目标。P7 Subagent 和 P8 telemetry/诊断/发布强化的批准占位尚未接入 Runtime/app。doctor、模型/Provider 动态切换、后台任务、通用迁移设计不得仅因出现在路线图或 ADR 中就视作已经实现。
 
 - 功能使用和配置：[README](../../README.md)。
 - 长期目标及剩余验收：[产品 Roadmap](product-roadmap.md)。
@@ -81,3 +81,11 @@ P6 当前交付本地 Skills 和同步 PreToolUse/PostToolUse；MCP、本地 Plu
 启动控制与观测分开：display omitted/空 thinking 仍可有正值 usage，summarized 不保证正文。摘要保留同一冻结策略及独立额度，manual 冲突在 started 前拒绝；成功/候选失败计量分别归属 CompactionID。`internal/app/reasoning_usage_restore_test.go` 验证固定正值/零/unknown、raw/normalized 不一致及旧 shape 在 repair 前拒绝；`internal/runtime/anthropic_usage_test.go` 覆盖 Sync 与候选失败计量，`scripts/reasoning-controls-smoke.py` 覆盖 Darwin 双 Provider、NO_COLOR、/context、/cache、工具后摘要/预算拒绝、阅读和取消。外部 JSONL v1 字段不增加，reasoning_output 的值/状态按新计量契约更新。
 
 2026-11-11 全面回归补齐双 Provider 完整事件帧校验，重复成员不能覆盖 usage 或响应 ID，异常样本不提交成功事实或执行工具，合法未知扩展和连续零值观测保持原义。测试入口为两家 `usage_validation_regression_test.go`、`internal/app/reasoning_malformed_stream_test.go`、`internal/app/reasoning_cli_e2e_test.go`；24 组真实 CLI、32 个 PTY 场景、5 轮乱序 race、421,051 次 fuzz 与完整质量门证据见[归档回归记录](../../openspec/changes/archive/2026-11-11-add-provider-reasoning-controls/regression-2026-11-11.md)。启动控制的主规格已同步；运行中设置切换、真实模型服务和全平台终端验收仍不在该交付范围。
+
+- PostToolUseFailure 验收：[verification.md](../../openspec/changes/archive/2026-11-11-add-post-tool-use-failure-hooks/verification.md)。
+
+- PostToolUseFailure 独立回归与审查编码修复：[regression-2026-11-11.md](../../openspec/changes/archive/2026-11-11-add-post-tool-use-failure-hooks/regression-2026-11-11.md)。
+
+- Windows 共用测试 helper 标签修复与跨平台编译追加验收：[windows-helper-regression-2026-11-11.md](../../openspec/changes/archive/2026-11-11-add-post-tool-use-failure-hooks/windows-helper-regression-2026-11-11.md)。
+
+- PostToolUseFailure 最终契约核对与归档：[archive.md](../../openspec/changes/archive/2026-11-11-add-post-tool-use-failure-hooks/archive.md)。

@@ -1,0 +1,8 @@
+ok  	easycode/internal/domain	7.684s
+ok  	easycode/internal/extension/hook	4.973s
+ok  	easycode/internal/tool	1.566s
+ok  	easycode/internal/runtime	113.220s
+ok  	easycode/internal/session	200.360s
+ok  	easycode/internal/executor/process	1.541s
+ok  	easycode/internal/protocol	9.099s
+ok  	easycode/internal/tui	3.536s

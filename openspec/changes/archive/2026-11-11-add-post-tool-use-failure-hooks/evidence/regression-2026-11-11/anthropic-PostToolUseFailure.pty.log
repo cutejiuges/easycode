@@ -1,0 +1,392 @@
+]11;?\[6nHOOK_TERMINAL_WORKSPACE=/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/TestHookTerminalHelper586224812/001
+[?25l[?2004hEasyCode 0.0.0-dev[K
+[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[5A
+
+
+[claimed] first[K
+Up/Esc: edit queued · Ctrl+R: take returned · Ctrl+D: discard returned[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[7A
+
+User: first[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[J[6ATrust this hook?[K
+Runs only after a definite execution-attempt failure.[K
+Admission does not prove the process started. Normal nonzero exits use PostToolUse.[K
+feedback=model sends additionalContext to the provider and saves it in Session.[K
+Source: project · check[K
+PostToolUseFailure: fs.patch|fs.write|process.exec[K
+Feedback: model[K
+Timeout: 5 seconds[K
+Workspace: . · read-only · network denied[K
+This does not approve the model's tool call.[K
+Workspace scripts can change after review.[K
+PgUp/PgDn: full command · Tab/↑/↓: choose · Esc: deny[K
+[K
+  Trust for this session[K
+> Deny[K
+[K
+Command:[K
+payload=$(cat); case "$payload" in *cancel*) /bin/sleep 5;; *) printf '%s' '{"hookSpecificOutput":{"
+hookEventName":"PostToolUseFailure","additionalContext":"Authorized failure diagnosis: inspect origi
+nal conflict."}}' ;; esac[K[19AEasyCode 0.0.0-dev[K
+[K
+User: first[K
+● Write(terminal-marker) · denied · hook_trust_denied[K
+  Hook stopped: hook_trust_denied[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[J[8A
+
+
+
+
+● answer-2[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[9AHooks · PreToolUse / PostToolUse / PostToolUseFailure[K
+Enter: details · Esc: back[K
+> project:check · PostToolUseFailure · model [denied][K[J[2AHook details · Esc: back · ↑/↓: scroll · r: reset trust[K
+Source: project · check [denied][K
+Event: PostToolUseFailure · feedback: model[K
+Matcher: fs.patch|fs.write|process.exec[K
+Timeout: 5 seconds[K
+Workspace: . · read-only · network denied[K
+Workspace scripts can change after review.[K
+Reset only removes trust; the next tool call asks again.[K
+Raw output is discarded. Only trusted model feedback is sent and saved.[K
+[K
+Command:[K
+payload=$(cat); case "$payload" in *cancel*) /bin/sleep 5;; *) printf '%s' '{"hookSpecificOutput":{"
+hookEventName":"PostToolUseFailure","additionalContext":"Authorized failure diagnosis: inspect origi
+nal conflict."}}' ;; esac[K[13A
+Source: project · check [untrusted][K
+
+
+
+
+
+
+
+
+
+
+
+[13AHooks · PreToolUse / PostToolUse / PostToolUseFailure[K
+Enter: details · Esc: back[K
+> project:check · PostToolUseFailure · model [untrusted][K[J[2AEasyCode 0.0.0-dev[K
+[K
+User: first[K
+● Write(terminal-marker) · denied · hook_trust_denied[K
+  Hook stopped: hook_trust_denied[K
+● answer-2[K
+[K
+> /hooks|[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[9A
+
+
+
+
+
+
+[claimed] second[K
+Up/Esc: edit queued · Ctrl+R: take returned · Ctrl+D: discard returned[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[11A
+
+
+
+
+
+User: second[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[J[10ATrust this hook?[K
+Runs only after a definite execution-attempt failure.[K
+Admission does not prove the process started. Normal nonzero exits use PostToolUse.[K
+feedback=model sends additionalContext to the provider and saves it in Session.[K
+Source: project · check[K
+PostToolUseFailure: fs.patch|fs.write|process.exec[K
+Feedback: model[K
+Timeout: 5 seconds[K
+Workspace: . · read-only · network denied[K
+This does not approve the model's tool call.[K
+Workspace scripts can change after review.[K
+PgUp/PgDn: full command · Tab/↑/↓: choose · Esc: deny[K
+[K
+  Trust for this session[K
+> Deny[K
+[K
+Command:[K
+payload=$(cat); case "$payload" in *cancel*) /bin/sleep 5;; *) printf '%s' '{"hookSpecificOutput":{"
+hookEventName":"PostToolUseFailure","additionalContext":"Authorized failure diagnosis: inspect origi
+nal conflict."}}' ;; esac[K[19A   ┌─ Create file ──────────────────────────────────────────────────────────────────────────────┐[K
+   │ Path: terminal-marker                                                                      │[K
+   │ Risk: Create a workspace file and its listed parent directories.                           │[K
+   │ Diff 1-7 of 7                                                                              │[K
+   │ 8 bytes, 1 lines                                                                           │[K
+   │ --- a/terminal-marker                                                                      │[K
+   │ +++ b/terminal-marker                                                                      │[K
+   │ @@ -0,0 +1,1 @@                                                                            │[K
+   │ +reviewed                                                                                  │[K
+   │ \\ No newline at end of file                                                               │[K
+   │                                                                                            │[K
+   │   Yes                                                                                      │[K
+   │   Yes, allow creating and overwriting files this session                                   │[K
+   │ > No                                                                                       │[K
+   │ Tab: add feedback · Enter: deny · Esc: interrupt                                           │[K
+   └────────────────────────────────────────────────────────────────────────────────────────────┘[K
+[K[J[16AEasyCode 0.0.0-dev[K
+[K
+User: first[K
+● Write(terminal-marker) · denied · hook_trust_denied[K
+  Hook stopped: hook_trust_denied[K
+● answer-2[K
+User: second[K
+● Write(terminal-marker) · waiting[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[J[11A
+
+
+
+
+
+
+● Write(terminal-marker) · conflict · write_conflict[K
+  Write failed: write_conflict[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[12A
+
+
+
+
+
+
+● Write(terminal-marker) · conflict · write_conflict · checking[K
+  PostToolUseFailure check project:check · checking · timeout 5s · stdout 0 bytes · stderr 0 bytes[K
+  Write failed: write_conflict[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[13A
+
+
+
+
+
+
+● Write(terminal-marker) · conflict · write_conflict · checks passed[K
+  PostToolUseFailure checks: ok · Ctrl+O: details[K
+
+● answer-4[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[14ATranscript[K
+> Write · conflict · terminal-marker[K
+  user: second[K
+  assistant: answer-2[K
+  Write · denied · terminal-marker[K
+  user: first[K
+↑/↓: select · Enter: details · PgUp/PgDn: page[K
+Ctrl+O/Esc: close[K
+[K[J[8AWrite · conflict[K
+Historical change summary; no saved diff[K
+Write failed: write_conflict[K
+←/→: input/result/saved · PgUp/PgDn: page[K
+Esc: transcript · Ctrl+O: close[K
+[K[J[5A
+
+PostToolUseFailure checks · feedback delivery: available[K
+[K
+Check project:check · continue (ok) · stdout 140 bytes · stderr 0 bytes[K
+
+Post-tool failure: completed (ok) · processed 1/1[K
+[K
+<post_tool_use_feedback>[K
+[{"event":"PostToolUseFailure","source":"project","id":"check","ordinal":0,"content":"Authorized[K
+ failure diagnosis: inspect original conflict."}][K
+</post_tool_use_feedback>[K
+←/→: input/result/saved · PgUp/PgDn: page[K
+Esc: transcript · Ctrl+O: close[K
+[K[14ATranscript[K
+> Write · conflict · terminal-marker[K
+  user: second[K
+  assistant: answer-2[K
+  Write · denied · terminal-marker[K
+  user: first[K
+↑/↓: select · Enter: details · PgUp/PgDn: page[K
+Ctrl+O/Esc: close[K
+[K[J[8AEasyCode 0.0.0-dev[K
+[K
+User: first[K
+● Write(terminal-marker) · denied · hook_trust_denied[K
+  Hook stopped: hook_trust_denied[K
+● answer-2[K
+User: second[K
+● Write(terminal-marker) · conflict · write_conflict · checks passed[K
+  PostToolUseFailure checks: ok · Ctrl+O: details[K
+  Write failed: write_conflict[K
+● answer-4[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[14A
+
+
+
+
+
+
+
+
+
+
+User: cancel[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[15A
+
+
+
+
+
+
+
+
+
+
+
+● Write(terminal-cancel) · waiting[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[16A   ┌─ Create file ──────────────────────────────────────────────────────────────────────────────┐[K
+   │ Path: terminal-cancel                                                                      │[K
+   │ Risk: Create a workspace file and its listed parent directories.                           │[K
+   │ Diff 1-7 of 7                                                                              │[K
+   │ 6 bytes, 1 lines                                                                           │[K
+   │ --- a/terminal-cancel                                                                      │[K
+   │ +++ b/terminal-cancel                                                                      │[K
+   │ @@ -0,0 +1,1 @@                                                                            │[K
+   │ +cancel                                                                                    │[K
+   │ \\ No newline at end of file                                                               │[K
+   │                                                                                            │[K
+   │   Yes                                                                                      │[K
+   │   Yes, allow creating and overwriting files this session                                   │[K
+   │ > No                                                                                       │[K
+   │ Tab: add feedback · Enter: deny · Esc: interrupt                                           │[K
+   └────────────────────────────────────────────────────────────────────────────────────────────┘[K
+[16AEasyCode 0.0.0-dev[K
+[K
+User: first[K
+● Write(terminal-marker) · denied · hook_trust_denied[K
+  Hook stopped: hook_trust_denied[K
+● answer-2[K
+User: second[K
+● Write(terminal-marker) · conflict · write_conflict · checks passed[K
+  PostToolUseFailure checks: ok · Ctrl+O: details[K
+  Write failed: write_conflict[K
+● answer-4[K
+User: cancel[K
+● Write(terminal-cancel) · running[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[16A
+
+
+
+
+
+
+
+
+
+
+
+● Write(terminal-cancel) · conflict · write_conflict · checking[K
+  PostToolUseFailure check project:check · checking · timeout 5s · stdout 0 bytes · stderr 0 bytes[K
+  Write failed: write_conflict[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[18A
+Cancelling — waiting for cleanup[K
+[K
+User: first[K
+● Write(terminal-marker) · denied · hook_trust_denied[K
+  Hook stopped: hook_trust_denied[K
+● answer-2[K
+User: second[K
+● Write(terminal-marker) · conflict · write_conflict · checks passed[K
+  PostToolUseFailure checks: ok · Ctrl+O: details[K
+  Write failed: write_conflict[K
+● answer-4[K
+User: cancel[K
+● Write(terminal-cancel) · conflict · write_conflict · checking[K
+  PostToolUseFailure check project:check · checking · timeout 5s · stdout 0 bytes · stderr 0 bytes[K
+  Write failed: write_conflict[K
+[K
+> [K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[19A
+
+
+
+
+
+
+
+
+
+
+
+
+● Write(terminal-cancel) · conflict · write_conflict · checks cancelled[K
+  PostToolUseFailure check project:check · cancelled · timeout 5s · stdout 0 bytes · stderr 0 bytes[K
+  Raw hook output was not recorded.[K
+  Write failed: write_conflict[K
+[K
+> [K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[20A
+[K
+User: first[K
+● Write(terminal-marker) · denied · hook_trust_denied[K
+  Hook stopped: hook_trust_denied[K
+● answer-2[K
+User: second[K
+● Write(terminal-marker) · conflict · write_conflict · checks passed[K
+  PostToolUseFailure checks: ok · Ctrl+O: details[K
+  Write failed: write_conflict[K
+● answer-4[K
+User: cancel[K
+● Write(terminal-cancel) · conflict · write_conflict · checks cancelled[K
+  PostToolUseFailure check project:check · cancelled · timeout 5s · stdout 0 bytes · stderr 0 bytes[K
+  Raw hook output was not recorded.[K
+  Write failed: write_conflict[K
+Error: user_cancelled: turn was cancelled[K
+
+> |[K
+
+[2K[?2004l[?25h[?1002l[?1003l[?1006lHOOK_FAILURE_FACTS=conflict/failure/cancelled
+
+HOOK_TERMINAL_EXIT=0 REQUESTS=5

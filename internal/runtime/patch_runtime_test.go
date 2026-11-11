@@ -26,6 +26,7 @@ func (preparer *fixedPatchPreparer) Prepare(context.Context, tool.PatchInvocatio
 }
 
 type fixedPatchExecutor struct {
+	outcome   tool.ResultStatus
 	calls     int
 	onExecute func()
 }
@@ -34,6 +35,9 @@ func (executor *fixedPatchExecutor) Execute(_ context.Context, candidate tool.Pa
 	executor.calls++
 	if executor.onExecute != nil {
 		executor.onExecute()
+	}
+	if executor.outcome != "" {
+		return postPatchOutcome{executor.outcome}.Execute(context.Background(), candidate)
 	}
 	return tool.NewPatchSuccessResult(candidate)
 }

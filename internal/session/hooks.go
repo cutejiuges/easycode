@@ -172,7 +172,7 @@ func (active *activeReplayTurn) acceptHookBatch(batch []Record) error {
 		if err != nil {
 			return err
 		}
-		if id.Event == domain.HookPostToolUse {
+		if id.Event.Post() {
 			return active.acceptPostHookBatch(batch)
 		}
 	}
@@ -181,7 +181,7 @@ func (active *activeReplayTurn) acceptHookBatch(batch []Record) error {
 		if err != nil {
 			return err
 		}
-		if f.Result.Identity.Event == domain.HookPostToolUse {
+		if f.Result.Identity.Event.Post() {
 			return active.acceptPostHookBatch(batch)
 		}
 	}

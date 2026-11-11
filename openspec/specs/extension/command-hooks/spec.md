@@ -8,14 +8,14 @@
 
 ### Requirement: Command hook configuration is bounded strict and frozen
 
-系统 SHALL 显式加载用户 `~/.config/easycode/hooks.json` 与启动 workspace 根 `.easycode/hooks.json`，只接受顶层 hooks 对象中的 PreToolUse 与 PostToolUse 数组、每项 matcher/hooks 以及每条 id/type/command/timeout，以及仅 PostToolUse 支持的 feedback；type MUST 为 command。缺失文件表示空来源；重复/未知字段、非 UTF-8、大小写别名、null、尾随 JSON、错误类型与未支持事件或行为 MUST 使整个来源无效。timeout 省略为 5 秒，只允许整数 1..30；id 为 1..64 字节小写 ASCII 字母/数字/单连字符、首尾字母数字且来源内唯一，command 非空且最多 8 KiB。
+系统 SHALL 显式加载用户 `~/.config/easycode/hooks.json` 与启动 workspace 根 `.easycode/hooks.json`，只接受顶层 hooks 对象中的 PreToolUse、PostToolUse 与 PostToolUseFailure 数组、每项 matcher/hooks 以及每条 id/type/command/timeout，以及仅两个后置事件支持的 feedback；type MUST 为 command。缺失文件表示空来源；重复/未知字段、非 UTF-8、大小写别名、null、尾随 JSON、错误类型与未支持事件或行为 MUST 使整个来源无效。timeout 省略为 5 秒，只允许整数 1..30；id 为 1..64 字节小写 ASCII 字母/数字/单连字符、首尾字母数字且来源内唯一，command 非空且最多 8 KiB。
 
 每来源 SHALL 最多 64 KiB 和 32 条 Hook，合并最多 64 条；单调用每事件最多匹配 8 条。matcher MUST 是 `*` 或以 `|` 分隔的非重复字面名称：Edit/apply_patch 对应 fs.patch，Write 对应 fs.write，Bash/exec_command 对应 process.exec。空分支、未知名称或正则语法 MUST 拒绝；别名命中相同能力不得重复执行一条声明。`*` SHALL 仅指上述三项能力。
 
 同一事件的全部匹配项 MUST 按用户来源、项目来源、配置数组位置稳定执行。source revision SHALL 由完整规范内容派生；绝对路径、时间、inode、执行或信任身份不得参与内容 revision。相同内容和数组顺序 MUST 产生相同 bytes/revision，getter 返回值修改不得改变快照。快照只在启动时建立，后续磁盘编辑不改变当前运行语义。
 
 
-PostToolUse 的 feedback SHALL 仅接受 none/model，省略规范化为 none；PreToolUse 出现 feedback MUST 拒绝。每来源 32 条和合并 64 条上限按两个事件合计，id 在来源全部事件中唯一；规范配置显式按 PreToolUse、PostToolUse 排序，不以对象键插入顺序决定 revision。未知事件继续失败关闭。source revision 覆盖两事件全部声明，command fingerprint SHALL 绑定事件与披露策略。
+PostToolUse/PostToolUseFailure 的 feedback SHALL 仅接受 none/model，省略规范化为 none；PreToolUse 出现 feedback MUST 拒绝。每来源 32 条和合并 64 条上限按三个事件合计，id 在来源全部事件中唯一；规范配置显式按 PreToolUse、PostToolUse、PostToolUseFailure 排序，不以对象键插入顺序决定 revision。未知事件继续失败关闭。source revision 覆盖三事件全部声明，command fingerprint SHALL 绑定事件与披露策略。
 
 #### Scenario: Load two ordered sources
 - **WHEN** 用户和项目各有合法的匹配 Hook，文件对象键顺序不同
@@ -38,8 +38,16 @@ PostToolUse 的 feedback SHALL 仅接受 none/model，省略规范化为 none；
 - **THEN** 首次规范值为 none，第二次 source revision/command fingerprint 改变，旧信任不适用；对象键顺序不影响 bytes
 
 #### Scenario: Reject frontloaded disclosure on PreToolUse
-- **WHEN** PreToolUse 声明包含 feedback 或两个事件合计超出来源数量上限
+- **WHEN** PreToolUse 声明包含 feedback 或三个事件合计超出来源数量上限
 - **THEN** 整个来源无效且工具与 Hook 均不执行
+
+#### Scenario: Freeze failure declarations in the same source
+- **WHEN** 同一来源同时配置三事件，失败声明使用 feedback=model，且对象键顺序不同
+- **THEN** 规范顺序固定、revision 相同；三事件合计数量/id 约束和每事件匹配上限均生效
+
+#### Scenario: Reject duplicate ids across success and failure
+- **WHEN** 同来源成功和失败声明使用相同 id
+- **THEN** 整个来源无效，不以另一事件或合法来源部分放行 mutation
 
 ### Requirement: Hook source checks bind to opened descriptors
 
@@ -93,7 +101,9 @@ Hook SHALL 只在三项 mutation 调用完整 ready 且对应事件计划和 Hoo
 唯一 owner MUST 管理 stdin writer、stdout/stderr readers、退出观察、直接进程 Wait 与受控进程组清理。取消/超时先 TERM，250 ms 后需要时升级 KILL，保留有界原组检查和 1 秒输出排空；清理完成前不得报告最终 Done、释放 thread lease 或接收下一 turn。不得把受控进程组描述为任意脱离子孙进程容器。
 
 
-PreToolUse 保持候选/普通审批前门禁；PostToolUse started SHALL 另要求原 tool_execution_started 与成功 tool_call_result 已确定 Sync。每调用全部 Hook 的 30 秒执行预算由 Pre/Post 共用，不因事件切换重新计时。正常非零 Exec exit 仍按其真实 ResultSuccess 处理。Hook input 过大或执行错误在 Post 阶段只记录检查失败，MUST NOT 重写真实工具结果。
+PreToolUse 保持候选/普通审批前门禁；后置 started SHALL 另要求原工具执行尝试准入与和该事件一致的确定 tool_call_result 已 Sync：PostToolUse 为 success，PostToolUseFailure 为 error/conflict，且失败事件不选择原结果 cancelled 或 outcome_uncertain。tool_execution_started 只证明尝试准入，不证明进程已经启动；准入后的启动错误仍可形成确定 failure。事件选择仅依赖原工具 durable 事实，当前取消、恢复模式、输入及时间预算只影响检查启动与终态，不改变 success/failure/none 选择。每调用全部 Hook 的 30 秒执行预算由 Pre 与实际选中的后置事件共用，不因事件切换重新计时。正常非零 Exec exit 仍按其真实 ResultSuccess 处理。Hook input 过大或执行错误在 Post 阶段只记录检查失败，MUST NOT 重写真实工具结果。
+
+PostToolUseFailure SHALL 使用同一只读/禁网进程生命周期、输入/输出上限、故障优先级和最终完成信号，不为失败分支重置执行预算或创建独立 cleanup owner。准备失败、拒绝、当前 turn 取消、poison 和原结果不确定均不启动失败检查。原 error 已 durable 后的当前取消保留 failure 选择，只收口 cancelled；原 result 自身 cancelled 才选择 none。正常非零退出的 Exec 仍只运行 PostToolUse。当前两个后置分支都 SHALL 串行运行所选分支的连续前缀，不引入并发执行或异步回写。
 
 #### Scenario: Run a read-only local check
 - **WHEN** 已信任 Hook 在具备安全 adapter 的平台运行
@@ -111,6 +121,14 @@ PreToolUse 保持候选/普通审批前门禁；PostToolUse started SHALL 另要
 - **WHEN** 前置检查已消耗同调用执行预算而成功工具之后到达 PostToolUse
 - **THEN** 后置执行期限只使用剩余预算，耗尽项不启动且保留工具成功
 
+#### Scenario: Keep one budget and cleanup owner for failure checks
+- **WHEN** 原工具确定失败后进入已信任失败检查，而 Pre 已消耗部分时间额度
+- **THEN** 仅使用剩余额度；取消时仍等待所有 owned 资源，不启动另一后置分支
+
+#### Scenario: Cancel admission without reclassifying the original error
+- **WHEN** 执行尝试准入与原 error 已 durable，当前 turn 在匹配失败检查启动前取消
+- **THEN** failure 选择保持，零新脚本，仅保存适用的取消终态，不能改成 none 或以不可取消 context 继续启动
+
 ### Requirement: Hook wire uses a typed input and a strict denial subset
 
 PreToolUse stdin SHALL 是最多 512 KiB 的 UTF-8 JSON，含 PreToolUse 事件、session/thread/turn、tool_use_id、真实 tool_name、安全 cwd 和三分支 typed tool_input。Patch SHALL 包含 file_path 与有序 replacements 的 old_text/new_text/replace_all/line_based，Write 为 file_path/content，Exec 为 command/workdir/timeout_ms。不得发送 transcript 路径、完整历史、opaque reasoning 或凭据；超限以 hook_input_limit 阻断，不截断输入或启动进程。
@@ -122,7 +140,9 @@ PreToolUse stdin SHALL 是最多 512 KiB 的 UTF-8 JSON，含 PreToolUse 事件�
 原始 stdout/stderr/自由文本 reason MUST NOT 自动进入 Session、diagnostic、错误、模型 preview 或 artifact；只发布由宿主生成、最多 1 KiB 的检查身份与稳定 code 摘要。超过任一输出上限 MUST 清理进程并报告 hook_output_limit，不得将截断后恰好合法的 JSON 当作成功。该输入和输出 SHALL 声明为 EasyCode 支持子集，不承诺完整 Claude/Codex 脚本兼容。
 
 
-以上 permissionDecision/exit 2 阻断语义及后续阻断场景仅适用于 PreToolUse。PostToolUse exit 2 SHALL 为 error/hook_exit_failed，其 validator 必须接受已知 exit_code=2；Pre 的相同组合仍必须拒绝，不能为共享 parser 全局放宽。两事件均按 cleanup 不确定、取消、实际超时、输出超限/I/O、普通退出与解析的优先级校验。未启动后缀使用独立 disposition，不伪造执行统计。PostToolUse SHALL 遵循 extension/post-tool-use 的独立成功后事件和结构化披露规则；只有显式 feedback=model、已信任且完整通过预算/身份验证的 additionalContext 可以成为冻结模型反馈。原始 stdout/stderr、未授权正文与执行错误仍 MUST NOT 被当成反馈保存或回显；PreToolUse 仍拒绝任何 additionalContext。
+以上 permissionDecision/exit 2 阻断语义及后续阻断场景仅适用于 PreToolUse。PostToolUse exit 2 SHALL 为 error/hook_exit_failed，其 validator 必须接受已知 exit_code=2；Pre 的相同组合仍必须拒绝，不能为共享 parser 全局放宽。三个事件均按 cleanup 不确定、取消、实际超时、输出超限/I/O、普通退出与解析的优先级校验。未启动后缀使用独立 disposition，不伪造执行统计。PostToolUse SHALL 遵循 extension/post-tool-use 的独立成功后事件和结构化披露规则；只有显式 feedback=model、已信任且完整通过预算/身份验证的 additionalContext 可以成为冻结模型反馈。原始 stdout/stderr、未授权正文与执行错误仍 MUST NOT 被当成反馈保存或回显；PreToolUse 仍拒绝任何 additionalContext。
+
+PostToolUseFailure SHALL 使用 extension/post-tool-use-failure 定义的独立严格 stdin，而不是成功 tool_response。该事件与成功 Post 共享输出与披露约束，但 hookEventName 必须精确等于实际执行事件。PreToolUse 继续只支持 denial 子集；不得因共享解析器扩大其输出权限。失败检查 exit 2 只表示 hook_exit_failed，不自动重试、拦截或改写已保存原结果。
 
 #### Scenario: Continue with empty output
 - **WHEN** exit 0 且 stdout 只有空白或为一个严格空对象
@@ -147,3 +167,7 @@ PreToolUse stdin SHALL 是最多 512 KiB 的 UTF-8 JSON，含 PreToolUse 事件�
 #### Scenario: Separate execution failure from an unstarted budget suffix
 - **WHEN** Post 尚未 started 时同调用检查预算已经耗尽
 - **THEN** 不构造 timed_out 运行结果，不启动进程，只以 hook_execution_budget_exhausted 收口未启动后缀
+
+#### Scenario: Validate all three events independently
+- **WHEN** 相同退出码 2 或带 additionalContext 的 stdout 分别用于三个事件
+- **THEN** Pre 保持原 deny/拒绝正文规则，两个 Post 只按各自事件接收显式 model 内容，非零退出均为检查失败

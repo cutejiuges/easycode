@@ -1,0 +1,25 @@
+{
+  "archive_present": true,
+  "active_change_absent": true,
+  "metadata_preserved": true,
+  "synced_capabilities": [
+    "extension/command-hooks",
+    "extension/post-tool-use-failure",
+    "session/jsonl-store",
+    "session/resume",
+    "tool/result-budget",
+    "tui/hooks"
+  ],
+  "delta_main_exact_match": true,
+  "resolved_markdown_links": 152,
+  "fixed_post_fixtures": 28,
+  "plan_field_sets_verified": 28,
+  "terminal_field_sets_verified": 18,
+  "live_document_references_migrated": true,
+  "tested_source_fingerprint_unchanged": "2279345e75a1e5fc0d8f96683eefa4ee1a0cb50602b7de493e19f8311de14d1a",
+  "latest_quality_gate_evidence_checksums_valid": true,
+  "architecture_post_archive_exit_code": 0,
+  "strict_specs_post_archive_passed": 55,
+  "strict_specs_post_archive_failed": 0,
+  "other_active_change_preserved": "add-pre-tool-use-command-hooks"
+}

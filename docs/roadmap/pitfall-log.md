@@ -905,3 +905,29 @@
 - 主线：仅保存瞬态 HookActivity 会使 native outputs 提交后的查询重建或 resume 丢失检查状态。list 增加与 invocation/detail_sequence 绑定的 typed PostHook 聚合摘要，不含正文与原始统计；双 Provider actual transport、恢复查询及 TUI hydration 回归覆盖该窗口。toolClosed 还必须拒绝全部迟到 Pre 活动，而非仅拒绝 checking，避免旧 deny 覆盖 Post 终态。
 - 终端：answer 文本可早于最后 native commit 完成显示，PTY 验收不能假定最新列表的固定行号；应在已加载列表中识别稳定工具位置。
 - 回归：`internal/session/post_hook_fixture_test.go`、`post_hook_replay_test.go`，`internal/runtime/post_hooks_test.go`，两家 `post_output_test.go` 与 OpenAI `post_websocket_test.go`，`internal/app/post_hook_e2e_darwin_test.go`、`hook_resume_test.go`、`post_hook_query_test.go`，`internal/tui/post_hook_commit_test.go`；真实终端使用 `scripts/smoke-hooks.py --event PostToolUse`。详见[归档验收](../../openspec/changes/archive/2026-11-08-add-post-tool-use-command-hooks/verification.md)和[归档核对](../../openspec/changes/archive/2026-11-08-add-post-tool-use-command-hooks/archive.md)。
+
+
+## PostToolUseFailure 的准入、选择与取消
+
+- 执行尝试 started 成功 Sync 不等于 OS 进程启动。将同调用准入作为显式值传递和缓存，原 error/conflict 才选 failure；准备错误、原 cancelled/outcome_uncertain 不借用失败事件。正常 exit=1 不解析命令语义。
+- 当前取消只能阻止启动，不能把已经保存的原 error 改选 none。所选分支缺失固定 unmatched，无运行统计、反馈和伪后缀；恢复沿用同一纯选择。
+- 两个备选分支的反馈提示槽不能相加，调用只预留一次 R；未选择分支需要 model 时，原 base 仍为 A−R。分支不复制 invocation/capability，terminal 保存 route，中性通知不保存固定 event。
+- Sync 失败后仅阻止新 turn 不够，缓存调用也需要 poisoned 门禁。新增故障注入覆盖计划、原结果、started/finished/terminal 前后 Sync 失败及缓存重入，原工具结果与副作用保持唯一。
+- 回归入口：domain/failure_hook_test.go 与 post_branch_test.go、tool/post_selection_test.go、runtime/failure_hooks_test.go 与 failure_recovery_test.go、session/post_hook_fixture_test.go、两家 failure_output_test.go 与 OpenAI post_websocket_test.go、app/failure_hook_e2e_darwin_test.go 与 hook_resume_test.go、tui/post_hook_commit_test.go。上述路径均位于 internal/。真实终端使用 scripts/smoke-hooks.py --event PostToolUseFailure，验收见[记录](../../openspec/changes/archive/2026-11-11-add-post-tool-use-failure-hooks/verification.md)。
+
+- 全量 race 暴露了已确认停止组的多余信号：输出超限先于退出观察时，owner 即使 probe 已返回 false 仍发送 TERM，Darwin 对已退出组的 EPERM 会伪造 cleanup uncertain。现在仅在组仍活跃或探测失败时启动 TERM/KILL；信号与自然退出并发时，由最终原组探测、唯一 Wait 和流收口确认结果，仍活跃/探测失败/Wait 或排空不确定继续失败关闭。`executor/process/owner_test.go` 通过先 I/O、后退出的通道屏障证明停止组绝不接收信号；原真实 18 KiB 输出断言保持，50 轮 race 重复通过。阻塞 I/O 的假进程显式按运行/交付退出转换状态，永久信号失败的假进程保留活跃组，原清理不确定断言保持。该路径未放宽真实清理不确定的优先级。
+
+
+## Hook 信任请求的原始长度与编码长度
+
+- 2026-11-11 独立回归发现：合法命令中较多的少于号在 canonical JSON 中按六字节转义，完整审查消息超过原来的 16 KiB 假设；AgentLoop 错判控制事件，导致原回合取消，实际反馈预算检查尚未开始。
+- 修复：信任请求 decoder 预算由 8 KiB 原始命令的最坏六倍转义加有界元数据导出；原始限制、未知字段拒绝、默认拒绝及精确声明身份不放宽。三事件最大命令往返和实际端到端编码预算拒绝同时回归，不用截断命令或缩小用例掩盖失败。
+- 证据：internal/protocol/hooks_test.go、internal/app/failure_hook_e2e_darwin_test.go、internal/app/post_branch_regression_darwin_test.go；[本轮独立回归](../../openspec/changes/archive/2026-11-11-add-post-tool-use-failure-hooks/regression-2026-11-11.md)。
+
+
+### [测试][2026-11-11] 共用测试 helper 被平台标签隐藏
+
+- 现象：Windows 全量测试编译失败，平台无关的 session picker 用例找不到 listCatalogStub/listWriterFunc；生产代码构建正常。
+- 根因：两个纯内存共用 helper 定义在带 darwin/linux 标签的 session_list_test.go 内，Windows 构建排除了定义但保留了调用方。
+- 修复：将 helper 原样移到无标签的 session_list_helpers_test.go；保留平台专属列表测试的标签和业务断言，不复制实现、不跳过 picker 测试。
+- 验证：核对五个目标的测试文件选择，重新执行 Darwin 全量质量门、双 Provider E2E race，以及 Linux/Windows amd64/arm64 全库生产构建和测试编译；实际结果及原生运行限制见[追加验收报告](../../openspec/changes/archive/2026-11-11-add-post-tool-use-failure-hooks/windows-helper-regression-2026-11-11.md)。

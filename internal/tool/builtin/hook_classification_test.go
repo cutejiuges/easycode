@@ -9,7 +9,7 @@ import (
 )
 
 func TestHookClassificationPriorityAndEventExitTwo(t *testing.T) {
-	for _, event := range []domain.HookEvent{domain.HookPreToolUse, domain.HookPostToolUse} {
+	for _, event := range []domain.HookEvent{domain.HookPreToolUse, domain.HookPostToolUse, domain.HookPostToolUseFailure} {
 		d, err := domain.NewHookDeclaration(domain.HookSourceProject, event, domain.HookFeedbackNone, strings.Repeat("a", 64), "check", 7, "true", 5)
 		if err != nil {
 			t.Fatal(err)

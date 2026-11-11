@@ -35,3 +35,17 @@ func writePostHookConfig(t *testing.T, workspace, command string, policy domain.
 		t.Fatal(err)
 	}
 }
+
+func writeFailureHookConfig(t *testing.T, workspace, command string, policy domain.HookFeedbackPolicy) {
+	t.Helper()
+	writePostHookConfig(t, workspace, command, policy)
+	path := filepath.Join(workspace, ".easycode", "hooks.json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b = bytes.ReplaceAll(b, []byte(`"PostToolUse"`), []byte(`"PostToolUseFailure"`))
+	if err := os.WriteFile(path, b, 0600); err != nil {
+		t.Fatal(err)
+	}
+}

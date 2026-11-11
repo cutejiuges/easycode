@@ -53,30 +53,25 @@ func RenderPostFeedback(items []domain.FrozenHookFeedback) (string, error) {
 }
 
 // PostFeedbackAvailable 先为所有 model 项及固定包装保留失败提示空间。
-func PostFeedbackAvailable(plan domain.HookPlan, reservation int) bool {
-	if plan.Validate() != nil || plan.Event != domain.HookPostToolUse || reservation < 0 {
+func PostFeedbackAvailable(plan domain.PostHookBranch, reservation int) bool {
+	if plan.Validate() != nil || !plan.Event.Post() || reservation < 0 {
 		return false
 	}
-	models := 0
-	for _, ref := range plan.Hooks {
-		if ref.Feedback == domain.HookFeedbackModel {
-			models++
-		}
-	}
-	return models > 0 && reservation >= models*PostFeedbackNoticeBytes+len("\n\n<post_tool_use_feedback>\n[]\n</post_tool_use_feedback>")
+	expected, err := domain.NewPostHookBranch(plan.Event, plan.Hooks, reservation)
+	return err == nil && expected.Delivery == domain.HookDeliveryAvailable
 }
 
 // FreezePostFeedback 保留前序事实和后续提示槽；正文只能整块接受或拒绝。
 func FreezePostFeedback(postPlan domain.PostHookPlan, prior []domain.FrozenHookFeedback, result domain.HookRunResult, candidate domain.HookFeedbackCandidate) (domain.HookFinished, error) {
-	plan := postPlan.Plan
+	plan, matched := postPlan.Branch(result.Identity.Event)
 	reservation := postPlan.Reservation
 	ordinal := len(prior)
-	id, err := domain.NewPostHookRunIdentity(postPlan, ordinal)
-	if err != nil || plan.Event != domain.HookPostToolUse || result.Identity != id {
+	id, err := domain.NewPostHookRunIdentity(postPlan, result.Identity.Event, ordinal)
+	if err != nil || !matched || !plan.Event.Post() || result.Identity != id {
 		return domain.HookFinished{}, domain.HookConfigInvalid
 	}
 	for i, v := range prior {
-		expected, _ := domain.NewPostHookRunIdentity(postPlan, i)
+		expected, _ := domain.NewPostHookRunIdentity(postPlan, result.Identity.Event, i)
 		if v.Validate() != nil || v.Identity != expected || v.Reference != plan.Hooks[i] {
 			return domain.HookFinished{}, domain.HookConfigInvalid
 		}

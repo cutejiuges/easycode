@@ -75,7 +75,7 @@ type TranscriptListItem struct {
 
 func (v TranscriptListItem) Validate() error {
 	if v.PostHook != (HookActivityPayload{}) {
-		if v.Kind != domain.TranscriptCall || v.DetailSequence == 0 || v.PostHook.Validate() != nil || v.PostHook.InvocationID != v.Activity.InvocationID || v.PostHook.Reference.Event != domain.HookPostToolUse || v.PostHook.StdoutBytes != 0 || v.PostHook.StderrBytes != 0 || v.Activity.Tool != ToolPatch && v.Activity.Tool != ToolWrite && v.Activity.Tool != ToolShell || v.PostHook.State != HookActivitySkipped && v.Activity.Status != "success" {
+		if v.Kind != domain.TranscriptCall || v.DetailSequence == 0 || v.PostHook.Validate() != nil || v.PostHook.InvocationID != v.Activity.InvocationID || !v.PostHook.Reference.Event.Post() || v.PostHook.StdoutBytes != 0 || v.PostHook.StderrBytes != 0 || v.Activity.Tool != ToolPatch && v.Activity.Tool != ToolWrite && v.Activity.Tool != ToolShell || v.PostHook.Reference.Event == domain.HookPostToolUse && v.Activity.Status != "success" || v.PostHook.Reference.Event == domain.HookPostToolUseFailure && v.Activity.Status != "error" && v.Activity.Status != "conflict" {
 			return errors.New("invalid transcript post hook summary")
 		}
 		switch v.PostHook.State {

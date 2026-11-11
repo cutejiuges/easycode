@@ -1,0 +1,12 @@
+{
+  "active-changes.json": "ff2e198392bb83562ee795df2cfe45cc80f66f52ad6b892a9059193b7d6e66cb",
+  "architecture-post-archive.log": "d4ffb42626dc07d3c000548c5255d29adc850666ba101d72ddb288116d22eee2",
+  "architecture.log": "09c870608736ac98029cbfe63e4194c4910bccc983862ced48d0f4b2e2bc0049",
+  "archive-cli.json": "0740d75f439099d500db507151cf18ae9f246f27c200e5fb57eac9d8ceaa810b",
+  "change-validation.log": "f03fb052443073806da9ab052d5c939d2f66a21bdcadf35d26f6fd98ff9a9579",
+  "contracts.log": "85c5d11ad6aeacc65aa7ad1d87a591ea7f75def4ff0947f09f9201dea8008442",
+  "post-archive-audit.json": "828fe8eae487e0688efc30395f3268876625d4beed98c72a17092bfbc8bde18d",
+  "pre-archive-audit.json": "af71914d58a66e73eb81555624aa5d920d5945f3e3b0413af448cb0650cca259",
+  "spec-validation-post-archive.log": "cc938bb94c11ecbeee74508b9709c9a101280ea63e584b1a8a9bcb46130ef9c9",
+  "spec-validation.log": "cc938bb94c11ecbeee74508b9709c9a101280ea63e584b1a8a9bcb46130ef9c9"
+}

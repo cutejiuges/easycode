@@ -25,12 +25,17 @@ func TestHookCacheStableSourcesAndRestoredNativeRequests(t *testing.T) {
 func TestPostHookCacheStableSourcesAndRestoredNativeRequests(t *testing.T) {
 	testHookCacheStableSources(t, domain.HookPostToolUse)
 }
+func TestFailureHookCacheStableSourcesAndRestoredNativeRequests(t *testing.T) {
+	testHookCacheStableSources(t, domain.HookPostToolUseFailure)
+}
 func testHookCacheStableSources(t *testing.T, event domain.HookEvent) {
 	t.Helper()
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		t.Run(string(family), func(t *testing.T) {
 			workspace := t.TempDir()
-			if event == domain.HookPostToolUse {
+			if event == domain.HookPostToolUseFailure {
+				writeFailureHookConfig(t, workspace, "printf never-run", domain.HookFeedbackModel)
+			} else if event == domain.HookPostToolUse {
 				writePostHookConfig(t, workspace, "printf never-run", domain.HookFeedbackNone)
 			} else {
 				writeHookConfig(t, workspace, "printf never-run")
@@ -64,7 +69,9 @@ func testHookCacheStableSources(t *testing.T, event domain.HookEvent) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if event == domain.HookPostToolUse {
+			if event == domain.HookPostToolUseFailure {
+				writeFailureHookConfig(t, workspace, "printf never-run", domain.HookFeedbackModel)
+			} else if event == domain.HookPostToolUse {
 				writePostHookConfig(t, workspace, "printf changed-config-must-not-affect-prompt", domain.HookFeedbackModel)
 			} else {
 				writeHookConfig(t, workspace, "printf changed-config-must-not-affect-prompt")

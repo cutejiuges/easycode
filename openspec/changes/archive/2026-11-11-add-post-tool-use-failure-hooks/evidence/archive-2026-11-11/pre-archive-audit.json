@@ -1,0 +1,57 @@
+{
+  "spec_sync": [
+    {
+      "capability": "extension/command-hooks",
+      "delta_requirements": 3,
+      "delta_scenarios": 21,
+      "exactly_synced": true,
+      "unrelated_requirements_preserved": 2,
+      "original_affected_scenarios_preserved": 16
+    },
+    {
+      "capability": "extension/post-tool-use-failure",
+      "delta_requirements": 4,
+      "delta_scenarios": 16,
+      "exactly_synced": true,
+      "unrelated_requirements_preserved": 0,
+      "original_affected_scenarios_preserved": 0
+    },
+    {
+      "capability": "session/jsonl-store",
+      "delta_requirements": 1,
+      "delta_scenarios": 13,
+      "exactly_synced": true,
+      "unrelated_requirements_preserved": 12,
+      "original_affected_scenarios_preserved": 7
+    },
+    {
+      "capability": "session/resume",
+      "delta_requirements": 1,
+      "delta_scenarios": 36,
+      "exactly_synced": true,
+      "unrelated_requirements_preserved": 15,
+      "original_affected_scenarios_preserved": 28
+    },
+    {
+      "capability": "tool/result-budget",
+      "delta_requirements": 1,
+      "delta_scenarios": 11,
+      "exactly_synced": true,
+      "unrelated_requirements_preserved": 5,
+      "original_affected_scenarios_preserved": 6
+    },
+    {
+      "capability": "tui/hooks",
+      "delta_requirements": 2,
+      "delta_scenarios": 14,
+      "exactly_synced": true,
+      "unrelated_requirements_preserved": 2,
+      "original_affected_scenarios_preserved": 6
+    }
+  ],
+  "completed_tasks": 40,
+  "incomplete_tasks": 0,
+  "source_fingerprint_unchanged": true,
+  "source_fingerprint": "2279345e75a1e5fc0d8f96683eefa4ee1a0cb50602b7de493e19f8311de14d1a",
+  "latest_quality_gate_evidence_checksums_valid": true
+}

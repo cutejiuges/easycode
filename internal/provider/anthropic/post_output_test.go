@@ -54,32 +54,80 @@ func postProviderFixture(t *testing.T, capability domain.HookCapability) (tool.I
 	}
 	return result, call
 }
-func postProviderOutput(t *testing.T, result tool.InvocationResult) tool.ModelOutput {
+func postProviderOutputAtCut(t *testing.T, result tool.InvocationResult, cut string) tool.ModelOutput {
 	t.Helper()
-	d, err := domain.NewHookDeclaration(domain.HookSourceProject, domain.HookPostToolUse, domain.HookFeedbackModel, strings.Repeat("a", 64), "check", 7, "true", 5)
+	event := domain.HookPostToolUse
+	if result.Status() == tool.ResultError || result.Status() == tool.ResultConflict {
+		event = domain.HookPostToolUseFailure
+	}
+	d, err := domain.NewHookDeclaration(domain.HookSourceProject, event, domain.HookFeedbackModel, strings.Repeat("a", 64), "check", 7, "true", 5)
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, _ := domain.NewHookPlan(string(result.InvocationID()), domain.HookCapability(result.Capability()), []domain.HookReference{d.Reference})
-	plan, _ := domain.NewPostHookPlan(p, 256<<10, 16<<10, domain.HookDeliveryAvailable)
-	id, _ := domain.NewPostHookRunIdentity(plan, 0)
+	refs := []domain.HookReference{d.Reference}
+	if cut == "between" {
+		next, err := domain.NewHookDeclaration(domain.HookSourceProject, event, domain.HookFeedbackModel, d.Reference.Revision, "next", 7, "true", 5)
+		if err != nil {
+			t.Fatal(err)
+		}
+		refs = append(refs, next.Reference)
+	}
+	p, _ := domain.NewHookPlan(string(result.InvocationID()), domain.HookCapability(result.Capability()), refs)
+	currentPostBranch1, _ := domain.NewPostHookBranch(p.Event, p.Hooks, 16<<10)
+	currentPostBranch1.Delivery = domain.HookDeliveryAvailable
+	plan, _ := domain.NewPostHookPlan(p.InvocationID, p.Capability, []domain.PostHookBranch{currentPostBranch1}, 256<<10, 16<<10)
+	id, _ := domain.NewPostHookRunIdentity(plan, event, 0)
 	stats := domain.HookRunResult{Identity: id, Status: domain.HookContinue, Code: domain.HookOK, ExitKnown: true, CleanupConfirmed: true, Origin: "execution", StdoutBytes: 100}
 	candidate, _ := domain.NewHookFeedbackCandidate("Read-only check: keep TODO visible.")
 	frozen, err := tool.FreezePostFeedback(plan, nil, stats, candidate)
 	if err != nil {
 		t.Fatal(err)
 	}
-	output, err := tool.NewModelOutput(result, []domain.FrozenHookFeedback{frozen.Feedback})
+	admission, _ := tool.NewExecutionAdmission(result.InvocationID(), 1)
+	selection, err := tool.NewPostHookSelection(plan, admission, result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	feedback := frozen.Feedback
+	if cut == "cancelled" {
+		feedback, err = domain.NewFrozenHookFeedback(id, d.Reference, domain.HookFeedbackCode, "", domain.HookCancelled, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text, err := tool.RenderPostFeedback([]domain.FrozenHookFeedback{feedback})
+		if err != nil {
+			t.Fatal(err)
+		}
+		feedback.BudgetDelta = len(text)
+	}
+	output, err := tool.NewPostModelOutput(result, selection, []domain.FrozenHookFeedback{feedback})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return output
 }
 func TestPostOutputGoldenRestoreAndForgedBody(t *testing.T) {
+	testPostOutputGoldenRestore(t, false, "completed")
+}
+func TestFailureOutputGoldenRestoreAndForgedBody(t *testing.T) {
+	for _, cut := range []string{"completed", "between", "start-failed", "cancelled"} {
+		t.Run(cut, func(t *testing.T) { testPostOutputGoldenRestore(t, true, cut) })
+	}
+}
+func testPostOutputGoldenRestore(t *testing.T, failed bool, cut string) {
 	for _, capability := range []domain.HookCapability{domain.HookPatch, domain.HookWrite, domain.HookExec} {
+		if cut == "start-failed" && capability != domain.HookExec {
+			continue
+		}
 		t.Run(string(capability), func(t *testing.T) {
 			result, call := postProviderFixture(t, capability)
-			output := postProviderOutput(t, result)
+			if failed {
+				result = postFailureProviderResult(t, result)
+				if cut == "start-failed" {
+					result = postFailureProviderResultWithCode(t, result, "process_start_failed")
+				}
+			}
+			output := postProviderOutputAtCut(t, result, cut)
 			history := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, newUserMessage("inspect post")), {Kind: nativeHistorySample, Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeThinking, Thinking: "private post", Signature: "opaque-post"}, call}}, Metadata: messageMetadata{ID: "post-message", Model: "fixture-model"}}})
 			entry, err := prepareToolOutputsEntry(history, []tool.ModelOutput{output})
 			if err != nil {
@@ -90,11 +138,14 @@ func TestPostOutputGoldenRestoreAndForgedBody(t *testing.T) {
 				t.Fatal(err)
 			}
 			path := "testdata/post_" + string(capability) + "_output.golden.json"
+			if failed {
+				path = strings.Replace(path, "testdata/post_", "testdata/failure_", 1)
+			}
 			want, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !bytes.Equal(bytes.TrimSpace(want), envelope.Payload()) {
+			if cut == "completed" && !bytes.Equal(bytes.TrimSpace(want), envelope.Payload()) {
 				t.Fatalf("post output golden changed: %s", envelope.Payload())
 			}
 			instance, err := New(Config{BaseURL: "https://example.invalid", APIKey: secret.New("fixture-key"), Model: "fixture-model"})
@@ -131,8 +182,8 @@ func TestPostOutputGoldenRestoreAndForgedBody(t *testing.T) {
 			if before != after || !bytes.Contains(second.Bytes(), []byte("opaque-post")) {
 				t.Fatal("post restore changed fingerprint/order/opaque evidence")
 			}
-			plain, err := tool.NewModelOutput(result, nil)
-			if err != nil || plain.Text() != result.Preview().Text() || output.Result().Status() != tool.ResultSuccess || !strings.Contains(output.Text(), "Read-only check:") {
+			plain, err := tool.NewModelOutput(result)
+			if err != nil || plain.Text() != result.Preview().Text() || output.Result().Status() != result.Status() || !(strings.Contains(output.Text(), "Read-only check:") || cut == "cancelled" && strings.Contains(output.Text(), "cancelled")) {
 				t.Fatal("composition rewrote result", err)
 			}
 			forged := entry.clone()
@@ -165,7 +216,7 @@ func TestPostOutputGoldenRestoreAndForgedBody(t *testing.T) {
 				t.Fatal(err)
 			}
 			request, err := live.compileCompactionRequest(compact)
-			if err != nil || !bytes.Contains(request.Bytes(), []byte("Read-only check:")) {
+			if err != nil || !(bytes.Contains(request.Bytes(), []byte("Read-only check:")) || cut == "cancelled" && bytes.Contains(request.Bytes(), []byte("cancelled"))) {
 				t.Fatal("post feedback missing from compaction source", err)
 			}
 			assertCompactionAfterToolSteering(t, instance, live, sampling, envelopes, []tool.ModelOutput{output})

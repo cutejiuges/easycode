@@ -1,0 +1,251 @@
+]11;?\[6n[?25l[?2004hEasyCode 0.0.0-dev[K
+[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[5A
+
+User: first[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[6ATrust this hook?[K
+Source: project · check[K
+PreToolUse: fs.patch|fs.write|process.exec[K
+Feedback: none[K
+Timeout: 5 seconds[K
+Workspace: . · read-only · network denied[K
+This does not approve the model's tool call.[K
+Workspace scripts can change after review.[K
+PgUp/PgDn: full command · Tab/↑/↓: choose · Esc: deny[K
+[K
+  Trust for this session[K
+> Deny[K
+[K
+Command:[K
+payload=$(cat); case "$payload" in *cancel*) /bin/sleep 5;; *) printf '{}' ;; esac[K[14AEasyCode 0.0.0-dev[K
+[K
+User: first[K
+● Write(terminal-marker) · denied · hook_trust_denied[K
+  Hook project:check stopped fs.write: hook_trust_denied. Detailed hook output was not recorded.[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[J[8A
+
+
+
+
+● answer-2[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[9AHooks · PreToolUse / PostToolUse / PostToolUseFailure[K
+Enter: details · Esc: back[K
+> project:check · PreToolUse · none [denied][K[J[2AHook details · Esc: back · ↑/↓: scroll · r: reset trust[K
+Source: project · check [denied][K
+Event: PreToolUse · feedback: none[K
+Matcher: fs.patch|fs.write|process.exec[K
+Timeout: 5 seconds[K
+Workspace: . · read-only · network denied[K
+Workspace scripts can change after review.[K
+Reset only removes trust; the next tool call asks again.[K
+Raw output is discarded. Only trusted model feedback is sent and saved.[K
+[K
+Command:[K
+payload=$(cat); case "$payload" in *cancel*) /bin/sleep 5;; *) printf '{}' ;; esac[K[11A
+Source: project · check [untrusted][K
+
+
+
+
+
+
+
+
+
+[11AHooks · PreToolUse / PostToolUse / PostToolUseFailure[K
+Enter: details · Esc: back[K
+> project:check · PreToolUse · none [untrusted][K[J[2AEasyCode 0.0.0-dev[K
+[K
+User: first[K
+● Write(terminal-marker) · denied · hook_trust_denied[K
+  Hook project:check stopped fs.write: hook_trust_denied. Detailed hook output was not recorded.[K
+● answer-2[K
+[K
+> /hooks|[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[9A
+
+
+
+
+
+User: second[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[10ATrust this hook?[K
+Source: project · check[K
+PreToolUse: fs.patch|fs.write|process.exec[K
+Feedback: none[K
+Timeout: 5 seconds[K
+Workspace: . · read-only · network denied[K
+This does not approve the model's tool call.[K
+Workspace scripts can change after review.[K
+PgUp/PgDn: full command · Tab/↑/↓: choose · Esc: deny[K
+[K
+  Trust for this session[K
+> Deny[K
+[K
+Command:[K
+payload=$(cat); case "$payload" in *cancel*) /bin/sleep 5;; *) printf '{}' ;; esac[K[14AEasyCode 0.0.0-dev[K
+[K
+User: first[K
+● Write(terminal-marker) · denied · hook_trust_denied[K
+  Hook project:check stopped fs.write: hook_trust_denied. Detailed hook output was not recorded.[K
+● answer-2[K
+User: second[K
+● Write(terminal-marker) · waiting · check checking[K
+  PreToolUse check project:check · checking · timeout 5s · stdout 0 bytes · stderr 0 bytes[K
+
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[J[12A   ┌─ Create file ──────────────────────────────────────────────────────────────────────────────┐[K
+   │ Path: terminal-marker                                                                      │[K
+   │ Risk: Create a workspace file and its listed parent directories.                           │[K
+   │ Diff 1-7 of 7                                                                              │[K
+   │ 8 bytes, 1 lines                                                                           │[K
+   │ --- a/terminal-marker                                                                      │[K
+   │ +++ b/terminal-marker                                                                      │[K
+   │ @@ -0,0 +1,1 @@                                                                            │[K
+   │ +reviewed                                                                                  │[K
+   │ \\ No newline at end of file                                                               │[K
+   │                                                                                            │[K
+   │   Yes                                                                                      │[K
+   │   Yes, allow creating and overwriting files this session                                   │[K
+   │ > No                                                                                       │[K
+   │ Tab: add feedback · Enter: deny · Esc: interrupt                                           │[K
+   └────────────────────────────────────────────────────────────────────────────────────────────┘[K
+[K[16AEasyCode 0.0.0-dev[K
+[K
+User: first[K
+● Write(terminal-marker) · denied · hook_trust_denied[K
+  Hook project:check stopped fs.write: hook_trust_denied. Detailed hook output was not recorded.[K
+● answer-2[K
+User: second[K
+● Write(terminal-marker) · running[K
+  PreToolUse check project:check · continue · timeout 5s · stdout 2 bytes · stderr 0 bytes[K
+  Raw hook output was not recorded.[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[J[13A
+
+
+
+
+
+
+● Write(terminal-marker)[K
+  Created terminal-marker (8 bytes, 1 lines, 0 directories created)[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[J[12A
+
+
+
+
+
+
+
+
+● answer-4[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[13A
+
+
+
+
+
+
+
+
+
+User: cancel[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[14A
+
+
+
+
+
+
+
+
+
+
+● Write(terminal-marker) · waiting · check checking[K
+  PreToolUse check project:check · checking · timeout 5s · stdout 0 bytes · stderr 0 bytes[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[16A
+Cancelling — waiting for cleanup[K
+[K
+User: first[K
+● Write(terminal-marker) · denied · hook_trust_denied[K
+  Hook project:check stopped fs.write: hook_trust_denied. Detailed hook output was not recorded.[K
+● answer-2[K
+User: second[K
+● Write(terminal-marker)[K
+  Created terminal-marker (8 bytes, 1 lines, 0 directories created)[K
+● answer-4[K
+User: cancel[K
+● Write(terminal-marker) · waiting · check checking[K
+  PreToolUse check project:check · checking · timeout 5s · stdout 0 bytes · stderr 0 bytes[K
+[K
+> [K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[17A
+
+
+
+
+
+
+
+
+
+
+
+● Write(terminal-marker) · cancelled · cancelled · check checking[K
+
+  Hook project:check stopped fs.write: cancelled. Detailed hook output was not recorded.[K
+[K
+> [K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[18A
+[K
+User: first[K
+● Write(terminal-marker) · denied · hook_trust_denied[K
+  Hook project:check stopped fs.write: hook_trust_denied. Detailed hook output was not recorded.[K
+● answer-2[K
+User: second[K
+● Write(terminal-marker)[K
+  Created terminal-marker (8 bytes, 1 lines, 0 directories created)[K
+● answer-4[K
+User: cancel[K
+● Write(terminal-marker) · cancelled · cancelled[K
+  Hook project:check stopped fs.write: cancelled. Detailed hook output was not recorded.[K
+Error: user_cancelled: turn was cancelled[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[J[2K[?2004l[?25h[?1002l[?1003l[?1006l
+HOOK_TERMINAL_EXIT=0 REQUESTS=5

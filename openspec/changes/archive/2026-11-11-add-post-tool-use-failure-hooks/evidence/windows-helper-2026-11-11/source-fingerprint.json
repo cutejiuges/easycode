@@ -1,0 +1,15 @@
+{
+  "algorithm": "sha256",
+  "framing": "uint64be(path byte length) + path UTF-8 + uint64be(content byte length) + content, sorted path order",
+  "files": 1122,
+  "scope": [
+    "AGENTS.md",
+    "Makefile",
+    "go.mod",
+    "go.sum",
+    "internal/**",
+    "cmd/**",
+    "scripts/**"
+  ],
+  "digest": "2279345e75a1e5fc0d8f96683eefa4ee1a0cb50602b7de493e19f8311de14d1a"
+}

@@ -1,0 +1,409 @@
+]11;?\[6n[?25l[?2004hEasyCode 0.0.0-dev[K
+[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[5A
+
+User: first[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[6ATrust this hook?[K
+Runs only after the tool succeeds.[K
+feedback=model sends additionalContext to the provider and saves it in Session.[K
+Source: project · check[K
+PostToolUse: fs.patch|fs.write|process.exec[K
+Feedback: model[K
+Timeout: 5 seconds[K
+Workspace: . · read-only · network denied[K
+This does not approve the model's tool call.[K
+Workspace scripts can change after review.[K
+PgUp/PgDn: full command · Tab/↑/↓: choose · Esc: deny[K
+[K
+  Trust for this session[K
+> Deny[K
+[K
+Command:[K
+payload=$(cat); case "$payload" in *cancel*) /bin/sleep 5;; *) cat >/dev/null[K
+if /usr/bin/grep -q TODO main.go; then[K
+  printf '%s' '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"Read-only c
+heck: main.go still contains TODO."}}'[K
+else[K
+  status=$?[K
+  case "$status" in[K
+    1) printf '{}' ;;[K
+    *) exit "$status" ;;[K
+  esac[K
+fi ;; esac[K[26AEasyCode 0.0.0-dev[K
+[K
+User: first[K
+● Write(terminal-marker) · denied · hook_trust_denied[K
+  Hook stopped: hook_trust_denied[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[J[8A
+
+
+
+
+● answer-2[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[9AHooks · PreToolUse / PostToolUse / PostToolUseFailure[K
+Enter: details · Esc: back[K
+> project:check · PostToolUse · model [denied][K[J[2AHook details · Esc: back · ↑/↓: scroll · r: reset trust[K
+Source: project · check [denied][K
+Event: PostToolUse · feedback: model[K
+Matcher: fs.patch|fs.write|process.exec[K
+Timeout: 5 seconds[K
+Workspace: . · read-only · network denied[K
+Workspace scripts can change after review.[K
+Reset only removes trust; the next tool call asks again.[K
+Raw output is discarded. Only trusted model feedback is sent and saved.[K
+[K
+Command:[K
+payload=$(cat); case "$payload" in *cancel*) /bin/sleep 5;; *) cat >/dev/null[K
+if /usr/bin/grep -q TODO main.go; then[K
+  printf '%s' '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"Read-only c
+heck: main.go still contains TODO."}}'[K
+else[K
+  status=$?[K
+  case "$status" in[K
+    1) printf '{}' ;;[K
+    *) exit "$status" ;;[K
+  esac[K
+fi ;; esac[K[21A
+Source: project · check [untrusted][K
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[21AHooks · PreToolUse / PostToolUse / PostToolUseFailure[K
+Enter: details · Esc: back[K
+> project:check · PostToolUse · model [untrusted][K[J[2AEasyCode 0.0.0-dev[K
+[K
+User: first[K
+● Write(terminal-marker) · denied · hook_trust_denied[K
+  Hook stopped: hook_trust_denied[K
+● answer-2[K
+[K
+> /hooks|[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[9A
+
+
+
+
+
+User: second[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[10ATrust this hook?[K
+Runs only after the tool succeeds.[K
+feedback=model sends additionalContext to the provider and saves it in Session.[K
+Source: project · check[K
+PostToolUse: fs.patch|fs.write|process.exec[K
+Feedback: model[K
+Timeout: 5 seconds[K
+Workspace: . · read-only · network denied[K
+This does not approve the model's tool call.[K
+Workspace scripts can change after review.[K
+PgUp/PgDn: full command · Tab/↑/↓: choose · Esc: deny[K
+[K
+  Trust for this session[K
+> Deny[K
+[K
+Command:[K
+payload=$(cat); case "$payload" in *cancel*) /bin/sleep 5;; *) cat >/dev/null[K
+if /usr/bin/grep -q TODO main.go; then[K
+  printf '%s' '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"Read-only c
+heck: main.go still contains TODO."}}'[K
+else[K
+  status=$?[K
+  case "$status" in[K
+    1) printf '{}' ;;[K
+    *) exit "$status" ;;[K
+  esac[K
+fi ;; esac[K[26A   ┌─ Create file ──────────────────────────────────────────────────────────────────────────────┐[K
+   │ Path: terminal-marker                                                                      │[K
+   │ Risk: Create a workspace file and its listed parent directories.                           │[K
+   │ Diff 1-7 of 7                                                                              │[K
+   │ 8 bytes, 1 lines                                                                           │[K
+   │ --- a/terminal-marker                                                                      │[K
+   │ +++ b/terminal-marker                                                                      │[K
+   │ @@ -0,0 +1,1 @@                                                                            │[K
+   │ +reviewed                                                                                  │[K
+   │ \\ No newline at end of file                                                               │[K
+   │                                                                                            │[K
+   │   Yes                                                                                      │[K
+   │   Yes, allow creating and overwriting files this session                                   │[K
+   │ > No                                                                                       │[K
+   │ Tab: add feedback · Enter: deny · Esc: interrupt                                           │[K
+   └────────────────────────────────────────────────────────────────────────────────────────────┘[K
+[K[J[16AEasyCode 0.0.0-dev[K
+[K
+User: first[K
+● Write(terminal-marker) · denied · hook_trust_denied[K
+  Hook stopped: hook_trust_denied[K
+● answer-2[K
+User: second[K
+● Write(terminal-marker) · running[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[J[11A
+
+
+
+
+
+
+● Write(terminal-marker) · checking[K
+  PostToolUse check project:check · checking · timeout 5s · stdout 0 bytes · stderr 0 bytes[K
+  Created terminal-marker (8 bytes, 1 lines, 0 directories created)[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[13A
+
+
+
+
+
+
+● Write(terminal-marker) · checks passed[K
+  PostToolUse checks: ok · Ctrl+O: details[K
+
+● answer-4[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[14ATranscript[K
+> assistant: answer-4[K
+  Write · success · terminal-marker[K
+  user: second[K
+  assistant: answer-2[K
+  Write · denied · terminal-marker[K
+  user: first[K
+↑/↓: select · Enter: details · PgUp/PgDn: page[K
+Ctrl+O/Esc: close[K
+[K[J[9AWrite · success[K
+Historical change summary; no saved diff[K
+Created terminal-marker (8 bytes, 1 lines, 0 directories created)[K
+←/→: input/result/saved · PgUp/PgDn: page[K
+Esc: transcript · Ctrl+O: close[K
+[K[J[5A
+
+PostToolUse checks · feedback delivery: available[K
+[K
+Check project:check · continue (ok) · stdout 122 bytes · stderr 0 bytes[K
+
+Post-tool success: completed (ok) · processed 1/1[K
+[K
+<post_tool_use_feedback>[K
+[{"event":"PostToolUse","source":"project","id":"check","ordinal":0,"content":"Read-only check: [K
+main.go still contains TODO."}][K
+</post_tool_use_feedback>[K
+←/→: input/result/saved · PgUp/PgDn: page[K
+Esc: transcript · Ctrl+O: close[K
+[K[14ATranscript[K
+  assistant: answer-4[K
+> Write · success · terminal-marker[K
+  user: second[K
+  assistant: answer-2[K
+  Write · denied · terminal-marker[K
+  user: first[K
+↑/↓: select · Enter: details · PgUp/PgDn: page[K
+Ctrl+O/Esc: close[K
+[K[J[9AEasyCode 0.0.0-dev[K
+[K
+User: first[K
+● Write(terminal-marker) · denied · hook_trust_denied[K
+  Hook stopped: hook_trust_denied[K
+● answer-2[K
+User: second[K
+● Write(terminal-marker) · checks passed[K
+  PostToolUse checks: ok · Ctrl+O: details[K
+  Created terminal-marker (8 bytes, 1 lines, 0 directories created)[K
+● answer-4[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[14A
+
+
+
+
+
+
+
+
+
+
+User: cancel[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[15A
+
+
+
+
+
+
+
+
+
+
+
+● Write(terminal-cancel) · waiting[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[16A   ┌─ Create file ──────────────────────────────────────────────────────────────────────────────┐[K
+   │ Path: terminal-cancel                                                                      │[K
+   │ Risk: Create a workspace file and its listed parent directories.                           │[K
+   │ Diff 1-7 of 7                                                                              │[K
+   │ 6 bytes, 1 lines                                                                           │[K
+   │ --- a/terminal-cancel                                                                      │[K
+   │ +++ b/terminal-cancel                                                                      │[K
+   │ @@ -0,0 +1,1 @@                                                                            │[K
+   │ +cancel                                                                                    │[K
+   │ \\ No newline at end of file                                                               │[K
+   │                                                                                            │[K
+   │   Yes                                                                                      │[K
+   │   Yes, allow creating and overwriting files this session                                   │[K
+   │ > No                                                                                       │[K
+   │ Tab: add feedback · Enter: deny · Esc: interrupt                                           │[K
+   └────────────────────────────────────────────────────────────────────────────────────────────┘[K
+[16AEasyCode 0.0.0-dev[K
+[K
+User: first[K
+● Write(terminal-marker) · denied · hook_trust_denied[K
+  Hook stopped: hook_trust_denied[K
+● answer-2[K
+User: second[K
+● Write(terminal-marker) · checks passed[K
+  PostToolUse checks: ok · Ctrl+O: details[K
+  Created terminal-marker (8 bytes, 1 lines, 0 directories created)[K
+● answer-4[K
+User: cancel[K
+● Write(terminal-cancel) · running[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[16A
+
+
+
+
+
+
+
+
+
+
+
+● Write(terminal-cancel)[K
+  Created terminal-cancel (6 bytes, 1 lines, 0 directories created)[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[17A
+
+
+
+
+
+
+
+
+
+
+
+● Write(terminal-cancel) · checking[K
+  PostToolUse check project:check · checking · timeout 5s · stdout 0 bytes · stderr 0 bytes[K
+  Created terminal-cancel (6 bytes, 1 lines, 0 directories created)[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[18A
+Cancelling — waiting for cleanup[K
+[K
+User: first[K
+● Write(terminal-marker) · denied · hook_trust_denied[K
+  Hook stopped: hook_trust_denied[K
+● answer-2[K
+User: second[K
+● Write(terminal-marker) · checks passed[K
+  PostToolUse checks: ok · Ctrl+O: details[K
+  Created terminal-marker (8 bytes, 1 lines, 0 directories created)[K
+● answer-4[K
+User: cancel[K
+● Write(terminal-cancel) · checking[K
+  PostToolUse check project:check · checking · timeout 5s · stdout 0 bytes · stderr 0 bytes[K
+  Created terminal-cancel (6 bytes, 1 lines, 0 directories created)[K
+[K
+> [K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[19A
+
+
+
+
+
+
+
+
+
+
+
+
+● Write(terminal-cancel) · checks cancelled[K
+  PostToolUse check project:check · cancelled · timeout 5s · stdout 0 bytes · stderr 0 bytes[K
+  Raw hook output was not recorded.[K
+  Created terminal-cancel (6 bytes, 1 lines, 0 directories created)[K
+[K
+> [K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[20A
+[K
+User: first[K
+● Write(terminal-marker) · denied · hook_trust_denied[K
+  Hook stopped: hook_trust_denied[K
+● answer-2[K
+User: second[K
+● Write(terminal-marker) · checks passed[K
+  PostToolUse checks: ok · Ctrl+O: details[K
+  Created terminal-marker (8 bytes, 1 lines, 0 directories created)[K
+● answer-4[K
+User: cancel[K
+● Write(terminal-cancel) · checks cancelled[K
+  PostToolUse check project:check · cancelled · timeout 5s · stdout 0 bytes · stderr 0 bytes[K
+  Raw hook output was not recorded.[K
+  Created terminal-cancel (6 bytes, 1 lines, 0 directories created)[K
+Error: user_cancelled: turn was cancelled[K
+
+> |[K
+
+[2K[?2004l[?25h[?1002l[?1003l[?1006l
+HOOK_TERMINAL_EXIT=0 REQUESTS=5

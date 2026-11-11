@@ -1,0 +1,6 @@
+{
+  "command": "make verify",
+  "exit_code": 0,
+  "platform": "darwin/arm64",
+  "log": "quality-gates.log"
+}

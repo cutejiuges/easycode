@@ -66,6 +66,12 @@ func runHookFixtureForEvent(t *testing.T, root, command string, event domain.Hoo
 			t.Fatal(err)
 		}
 	}
+	if event == domain.HookPostToolUseFailure {
+		input, err = domain.NewFailureHookInput(domain.SessionID(id), domain.ThreadID(id), domain.TurnID(id), "call", "exec_command", root, i, "process_start_failed")
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	result := r.Run(context.Background(), run, d, input, 5*time.Second).Result
 	if result.Validate() != nil {
 		t.Fatal("invalid hook result")
@@ -77,6 +83,9 @@ func TestHookProcessReceivesStdinWithoutGrantingWritesOrNetwork(t *testing.T) {
 }
 func TestPostHookProcessReceivesMetadataWithoutGrantingWritesOrNetwork(t *testing.T) {
 	testHookProcessIsolation(t, domain.HookPostToolUse)
+}
+func TestFailureHookProcessReceivesSafeErrorWithoutGrantingWritesOrNetwork(t *testing.T) {
+	testHookProcessIsolation(t, domain.HookPostToolUseFailure)
 }
 func testHookProcessIsolation(t *testing.T, event domain.HookEvent) {
 	t.Helper()

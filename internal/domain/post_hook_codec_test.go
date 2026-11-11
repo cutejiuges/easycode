@@ -13,13 +13,15 @@ func TestPostCurrentCodecsRejectIncompleteAndAmbiguousObjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	plan, _ := NewHookPlan("018f1d8a-7b5c-7def-8abc-456789abcdef", HookExec, []HookReference{declaration.Reference})
-	post, _ := NewPostHookPlan(plan, 256<<10, 16<<10, HookDeliveryAvailable)
-	id, _ := NewPostHookRunIdentity(post, 0)
+	currentPostBranch1, _ := NewPostHookBranch(plan.Event, plan.Hooks, 16<<10)
+	currentPostBranch1.Delivery = HookDeliveryAvailable
+	post, _ := NewPostHookPlan(plan.InvocationID, plan.Capability, []PostHookBranch{currentPostBranch1}, 256<<10, 16<<10)
+	id, _ := NewPostHookRunIdentity(post, HookPostToolUse, 0)
 	stats := HookRunResult{Identity: id, Status: HookContinue, Code: HookOK, ExitKnown: true, CleanupConfirmed: true, Origin: "execution", StdoutBytes: 100}
 	feedback, _ := NewFrozenHookFeedback(id, declaration.Reference, HookFeedbackContent, "explicit body", HookOK, 100)
 	finished, _ := NewHookFinished(stats, feedback)
 	budget, _ := NewPostHookBudget(post.Allowance, post.Reservation, 20, 100)
-	terminal, _ := NewPostHookTerminal(post, "execution", PostHookCompleted, HookOK, 1, nil, budget, HookDigest([]byte("explicit body")))
+	terminal, _ := NewPostHookTerminal(post, PostHookRouteSuccess, "execution", PostHookCompleted, HookOK, 1, nil, budget, HookDigest([]byte("explicit body")))
 	planBytes, _ := codec.MarshalStable(post)
 	feedbackBytes, _ := codec.MarshalStable(feedback)
 	finishedBytes, _ := codec.MarshalStable(finished)

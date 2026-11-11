@@ -40,7 +40,9 @@ func postReplayFixture(t *testing.T, policies ...domain.HookFeedbackPolicy) (*re
 		reserved = 16 << 10
 		delivery = domain.HookDeliveryAvailable
 	}
-	p, err := domain.NewPostHookPlan(plan, 256<<10, reserved, delivery)
+	currentPostBranch1, _ := domain.NewPostHookBranch(plan.Event, plan.Hooks, reserved)
+	currentPostBranch1.Delivery = delivery
+	p, err := domain.NewPostHookPlan(plan.InvocationID, plan.Capability, []domain.PostHookBranch{currentPostBranch1}, 256<<10, reserved)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +87,7 @@ func appendPostToolSuccess(t *testing.T, f *replayFixture, inv tool.Invocation, 
 }
 func postFinished(t *testing.T, p domain.PostHookPlan, prior []domain.FrozenHookFeedback, status domain.HookOutcome, code domain.HookCode, body string) domain.HookFinished {
 	t.Helper()
-	id, _ := domain.NewPostHookRunIdentity(p, len(prior))
+	id, _ := domain.NewPostHookRunIdentity(p, domain.HookPostToolUse, len(prior))
 	exit := 0
 	if code == domain.HookExitFailed {
 		exit = 2
@@ -107,7 +109,7 @@ func postFinished(t *testing.T, p domain.PostHookPlan, prior []domain.FrozenHook
 }
 func appendPostStart(t *testing.T, f *replayFixture, p domain.PostHookPlan, ordinal int) {
 	t.Helper()
-	id, err := domain.NewPostHookRunIdentity(p, ordinal)
+	id, err := domain.NewPostHookRunIdentity(p, domain.HookPostToolUse, ordinal)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +133,12 @@ func postTerminalDraft(t *testing.T, p domain.PostHookPlan, result tool.Invocati
 	if err != nil {
 		t.Fatal(err)
 	}
-	terminal, err := domain.NewPostHookTerminal(p, origin, disposition, code, len(finished), nil, budget, domain.HookDigest([]byte(text)))
+	admission, _ := tool.NewExecutionAdmission(result.InvocationID(), 1)
+	route, err := tool.SelectPostHookRoute(result, admission)
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminal, err := domain.NewPostHookTerminal(p, route, origin, disposition, code, len(finished), nil, budget, domain.HookDigest([]byte(text)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +167,11 @@ func TestPostReplayIndependentErrorPrefixAndFrozenEvidence(t *testing.T) {
 	if call.Result.Status() != tool.ResultSuccess || call.PostHooks == nil || len(call.PostHooks.Finished) != 2 || call.PostHooks.Terminal == nil || len(plan.Tools[0].Hooks) != 2 || plan.Tools[0].DetailSequence == 0 {
 		t.Fatal("lost post lifecycle/result")
 	}
-	outputs, err := tool.NewModelOutput(call.Result, call.PostHooks.Feedback())
+	selection, err := call.PostHooks.Selection(call)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputs, err := tool.NewPostModelOutput(call.Result, selection, call.PostHooks.Feedback())
 	if err != nil || !strings.Contains(outputs.Text(), "accepted feedback") {
 		t.Fatal("lost output", err)
 	}
@@ -185,7 +196,7 @@ func TestPostReplayRejectsInvalidAdmissionAndAtomicBatches(t *testing.T) {
 				terminal := postTerminalDraft(t, p, result, nil, domain.PostHookCancelled, domain.HookPostInterrupted, "recovery")
 				value, _ := domain.DecodePostHookTerminal(terminal.PayloadBytes())
 				budget, _ := domain.NewPostHookBudget(p.Allowance, p.Reservation, result.Budget().ActualBytes()+1, 0)
-				value, _ = domain.NewPostHookTerminal(p, "recovery", value.Disposition, value.Code, 0, nil, budget, domain.HookDigest(nil))
+				value, _ = domain.NewPostHookTerminal(p, domain.PostHookRouteSuccess, "recovery", value.Disposition, value.Code, 0, nil, budget, domain.HookDigest(nil))
 				d, _ := NewToolPostHookCompletedDraft(testTurnID, value)
 				f.appendBatch(d)
 			case "outputs-before-terminal":
@@ -193,7 +204,8 @@ func TestPostReplayRejectsInvalidAdmissionAndAtomicBatches(t *testing.T) {
 				f.appendBatch(mustDraft(t, EventProviderNativeCommit, testTurnID, validNativeCommit()))
 			case "cross-event":
 				appendPostToolSuccess(t, f, inv, p)
-				id, _ := domain.NewHookRunIdentity(p.Plan, 0)
+				wrongPlan, _ := domain.NewHookPlan(p.InvocationID, p.Capability, p.Branches[0].Hooks)
+				id, _ := domain.NewHookRunIdentity(wrongPlan, 0)
 				d, _ := NewHookExecutionStartedDraft(testTurnID, id)
 				f.appendBatch(d)
 			case "denial-with-start":
@@ -218,7 +230,7 @@ func TestPostReplayRejectsInvalidAdmissionAndAtomicBatches(t *testing.T) {
 					terminal := postTerminalDraft(t, p, result, []domain.HookFinished{finished}, domain.PostHookCompleted, domain.HookOK, "execution")
 					if bad == "wrong-feedback-digest" {
 						value, _ := domain.DecodePostHookTerminal(terminal.PayloadBytes())
-						value, err := domain.NewPostHookTerminal(p, "execution", value.Disposition, value.Code, value.Processed, value.SuffixFeedback, value.Budget, domain.HookDigest(nil))
+						value, err := domain.NewPostHookTerminal(p, domain.PostHookRouteSuccess, "execution", value.Disposition, value.Code, value.Processed, value.SuffixFeedback, value.Budget, domain.HookDigest(nil))
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -268,7 +280,9 @@ func TestPreZeroAndPostZeroHaveIndependentHistoryAssociations(t *testing.T) {
 		t.Fatal(err)
 	}
 	plan, _ := domain.NewHookPlan(string(inv.InvocationID()), domain.HookPatch, []domain.HookReference{d.Reference})
-	post, _ := domain.NewPostHookPlan(plan, 256<<10, 16<<10, domain.HookDeliveryAvailable)
+	currentPostBranch2, _ := domain.NewPostHookBranch(plan.Event, plan.Hooks, 16<<10)
+	currentPostBranch2.Delivery = domain.HookDeliveryAvailable
+	post, _ := domain.NewPostHookPlan(plan.InvocationID, plan.Capability, []domain.PostHookBranch{currentPostBranch2}, 256<<10, 16<<10)
 	draft, _ := NewToolPostHookPlannedDraft(testTurnID, post)
 	f.appendBatch(draft)
 	result := appendPostToolSuccess(t, f, inv, post)

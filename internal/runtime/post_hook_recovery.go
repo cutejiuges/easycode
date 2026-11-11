@@ -13,7 +13,19 @@ func (r *Runtime) reconcilePostHooks(ctx context.Context, turn domain.TurnID, ca
 		return false, nil
 	}
 	g := call.PostHooks
-	state := &postHookCall{plan: g.Plan.Clone(), finished: append([]domain.HookFinished(nil), g.Finished...), history: g.Clone()}
+	var admission tool.ExecutionAdmission
+	if call.StartedSequence > 0 {
+		var err error
+		admission, err = tool.NewExecutionAdmission(call.Invocation.InvocationID(), call.StartedSequence)
+		if err != nil {
+			return false, err
+		}
+	}
+	route, err := tool.SelectPostHookRoute(result, admission)
+	if err != nil {
+		return false, err
+	}
+	state := &postHookCall{admission: admission, route: route, plan: g.Plan.Clone(), finished: append([]domain.HookFinished(nil), g.Finished...), history: g.Clone()}
 	if r.hooks.post == nil {
 		r.hooks.post = make(map[tool.InvocationID]*postHookCall)
 	}
@@ -25,12 +37,15 @@ func (r *Runtime) reconcilePostHooks(ctx context.Context, turn domain.TurnID, ca
 	}
 	disposition, code := domain.PostHookSkipped, domain.HookToolNotSuccessful
 	var prefix []session.RecordDraft
-	if result.Status() == tool.ResultSuccess {
+	if route != domain.PostHookRouteNone && len(state.branch().Hooks) == 0 {
+		code = domain.HookEventUnmatched
+	}
+	if len(state.branch().Hooks) > 0 {
 		disposition, code = domain.PostHookCancelled, domain.HookPostInterrupted
 		if g.Started != nil {
 			disposition, code = domain.PostHookUncertain, domain.HookOutcomeUncertain
 			stats := domain.HookRunResult{Identity: *g.Started, Status: domain.HookUncertain, Code: domain.HookOutcomeUncertain, Origin: "recovery"}
-			frozen, err := domain.NewEmptyHookFinished(stats, g.Plan.Plan.Hooks[g.Started.Ordinal])
+			frozen, err := domain.NewEmptyHookFinished(stats, state.branch().Hooks[g.Started.Ordinal])
 			if err != nil {
 				return false, err
 			}
@@ -42,6 +57,6 @@ func (r *Runtime) reconcilePostHooks(ctx context.Context, turn domain.TurnID, ca
 			prefix = append(prefix, finished)
 		}
 	}
-	err := r.completePostHooks(ctx, turn, result, state, disposition, code, "recovery", prefix)
+	err = r.completePostHooks(ctx, turn, result, state, disposition, code, "recovery", prefix)
 	return disposition == domain.PostHookUncertain, err
 }

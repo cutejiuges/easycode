@@ -17,7 +17,7 @@ func TestPostHookUpdateIsValidatedAndNeverExternallyProjected(t *testing.T) {
 	if _, err := owner.project(started); err != nil {
 		t.Fatal(err)
 	}
-	event, err := protocol.NewPostHookCommitted(protocol.PostHookCommittedPayload{InvocationID: id, Event: domain.HookPostToolUse, PlanDigest: strings.Repeat("a", 64), DetailSequence: 3, Phase: protocol.PostHookPlanned})
+	event, err := protocol.NewPostHookCommitted(protocol.PostHookCommittedPayload{InvocationID: id, PlanDigest: strings.Repeat("a", 64), DetailSequence: 3, Phase: protocol.PostHookPlanned})
 	if err != nil {
 		t.Fatal(err)
 	}
