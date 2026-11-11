@@ -45,6 +45,7 @@ func TestQuestionEndToEndBothProviders(t *testing.T) {
 				}
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					body, _ := io.ReadAll(r.Body)
+					assertReasoningRequest(t, family, body, false)
 					mu.Lock()
 					requests = append(requests, body)
 					sample := len(requests)
@@ -60,7 +61,7 @@ func TestQuestionEndToEndBothProviders(t *testing.T) {
 					var encoded bytes.Buffer
 					serveWriteScenarioSample(&encoded, family, sample, calls)
 					// 固定变化的字节切片故意切断 UTF-8 和 SSE 边界。
-					data := encoded.Bytes()
+					data := withReasoningFixture(family, encoded.Bytes())
 					for offset := 0; offset < len(data); {
 						n := min(1+offset%23, len(data)-offset)
 						if _, err := w.Write(data[offset : offset+n]); err != nil {
@@ -71,6 +72,7 @@ func TestQuestionEndToEndBothProviders(t *testing.T) {
 				}))
 				defer server.Close()
 				cfg := cacheFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, APIKey: secret.New("question-fixture"), Model: model}}, true)
+				cfg = reasoningFixtureConfig(t, cfg)
 				resources, err := openChatResourcesWithHooks(ctx, cfg, dataPaths{sessionRoot: root}, "", false, workspace, chatResourceHooks{interactiveApprovals: mode != "unavailable"})
 				if err != nil {
 					t.Fatal(err)

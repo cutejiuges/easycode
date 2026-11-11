@@ -42,6 +42,7 @@ type Config struct {
 	compactionOutput optionalUint64
 	autoCompact      optionalBool
 	cachePolicy      domain.CachePolicy
+	inference        inferenceFields
 }
 
 type fileConfig struct {
@@ -53,6 +54,7 @@ type fileConfig struct {
 	compactionOutput optionalUint64
 	autoCompact      optionalBool
 	cachePolicy      domain.CachePolicy
+	inference        inferenceFields
 }
 
 type optionalUint64 struct {
@@ -186,6 +188,29 @@ func decodeFile(content []byte) (fileConfig, error) {
 	anthropic, cacheKey, transport := string(domain.AnthropicCacheDisabled), string(domain.OpenAICacheOmit), string(domain.OpenAIHTTPSSE)
 	for key, rawValue := range members {
 		switch key {
+		case "anthropic_thinking":
+			decoded.inference.thinking, err = decodeThinking(rawValue)
+		case "anthropic_effort", "openai_reasoning_effort", "openai_reasoning_summary":
+			var value string
+			value, err = decodeStringField(rawValue)
+			if err == nil && value == "" {
+				err = invalidInference()
+			}
+			switch key {
+			case "anthropic_effort":
+				decoded.inference.anthropicEffort = domain.AnthropicEffort(value)
+			case "openai_reasoning_effort":
+				decoded.inference.openaiEffort = domain.OpenAIEffort(value)
+			case "openai_reasoning_summary":
+				decoded.inference.summary = domain.ReasoningSummary(value)
+			}
+		case "max_output_tokens":
+			var output optionalUint64
+			output, err = decodeUint64Field(rawValue)
+			if err == nil && (output.value == 0 || output.value > domain.MaxInferenceOutputTokens) {
+				err = invalidInference()
+			}
+			decoded.inference.output = output.value
 		case "anthropic_prompt_cache":
 			anthropic, err = decodeStringField(rawValue)
 		case "openai_prompt_cache_key":
@@ -292,7 +317,7 @@ func (values fileConfig) toConfig() Config {
 		BaseURL: strings.TrimSpace(values.baseURL),
 		APIKey:  secret.New(strings.TrimSpace(values.apiKey)),
 		Model:   strings.TrimSpace(values.model),
-	}, ContextBudget: values.budget, compactionOutput: values.compactionOutput, autoCompact: values.autoCompact, cachePolicy: values.cachePolicy}
+	}, ContextBudget: values.budget, compactionOutput: values.compactionOutput, autoCompact: values.autoCompact, cachePolicy: values.cachePolicy, inference: values.inference}
 }
 
 func mergeEnvironment(base Config) Config {
@@ -313,6 +338,9 @@ func mergeEnvironment(base Config) Config {
 
 // ValidateProvider 校验启动真实模型请求前必须具备的字段。
 func (config Config) ValidateProvider() error {
+	if _, err := config.InferenceSettings(); err != nil {
+		return err
+	}
 	if err := config.CachePolicy().ValidateFamily(config.Provider.Family); err != nil {
 		return fault.New(fault.CodeInvalidConfiguration, "cache policy does not match provider")
 	}

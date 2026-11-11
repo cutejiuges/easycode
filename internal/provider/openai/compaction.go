@@ -56,21 +56,26 @@ func nativeCompactionSource(snapshot nativeWindowSnapshot, model string) (provid
 }
 
 func (conversation *Conversation) compileCompactionRequest(input provider.CompactionInput) (codec.CanonicalJSON, error) {
-	if err := input.Validate(); err != nil {
-		return codec.CanonicalJSON{}, err
-	}
-	ordinary, err := conversation.compileSamplingRequest(conversation.history.snapshot(), input.Sampling())
+	plan, err := conversation.planCompactionRequest(input)
 	if err != nil {
 		return codec.CanonicalJSON{}, err
 	}
-	var request responsesRequest
-	if err := codec.Unmarshal(ordinary.Bytes(), &request); err != nil {
-		return codec.CanonicalJSON{}, err
+	return plan.body()
+}
+
+func (conversation *Conversation) planCompactionRequest(input provider.CompactionInput) (samplingRequestPlan, error) {
+	if err := input.Validate(); err != nil {
+		return samplingRequestPlan{}, err
 	}
-	request.ToolChoice = "none"
-	request.MaxOutputTokens = input.OutputTokens()
-	request.Input = append(request.Input, NewUserItem(provider.CompactionPrompt(input.Instructions())))
-	return codec.MarshalCanonical(request, maxResponsesRequestBytes)
+	plan, err := conversation.planSamplingRequest(conversation.history.snapshot(), input.Sampling())
+	if err != nil {
+		return samplingRequestPlan{}, err
+	}
+	plan.purpose = domain.RequestSummary
+	plan.request.ToolChoice = "none"
+	plan.request.MaxOutputTokens = input.OutputTokens()
+	plan.request.Input = append(plan.request.Input, NewUserItem(provider.CompactionPrompt(input.Instructions())))
+	return plan, nil
 }
 
 // PreflightCompaction 只编译和估算当前完整有效窗口，不产生副作用。
@@ -105,17 +110,21 @@ func (conversation *Conversation) RunCompaction(ctx context.Context, id domain.C
 	if err != nil || source != preview.Source() {
 		return nil, provider.NewCompactionError(provider.CompactionSourceChanged)
 	}
-	request, err := conversation.compileCompactionRequest(preview.Input())
+	plan, err := conversation.planCompactionRequest(preview.Input())
+	if err != nil {
+		return nil, err
+	}
+	request, err := plan.body()
 	if err != nil {
 		return nil, provider.NewCompactionError(provider.CompactionRequestFailed)
 	}
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	evidence, evidenceErr := conversation.requestEvidence(preview.Input().Sampling())
+	evidence, evidenceErr := plan.evidence()
 	if evidenceErr != nil {
 		return nil, evidenceErr
 	}
-	stream, selection, cleanup, err := conversation.startRequest(streamCtx, request, evidence, domain.RequestSummary)
+	stream, selection, cleanup, err := conversation.startRequest(streamCtx, request, evidence, plan.purpose)
 	defer cleanup()
 	if err != nil {
 		return nil, compactionNetworkError(ctx)
@@ -151,11 +160,7 @@ func (conversation *Conversation) RunCompaction(ctx context.Context, id domain.C
 			return nil, compactionNetworkError(ctx)
 		}
 		generation := nativeHistoryEntry{Kind: nativeHistorySample, Outputs: reducer.outputItems(), Usage: reducer.rawUsage()}
-		evidence, evidenceErr := conversation.requestEvidence(preview.Input().Sampling())
-		if evidenceErr != nil {
-			return nil, evidenceErr
-		}
-		receipt, receiptErr := conversation.describeRequest(request, evidence, domain.RequestSummary)
+		receipt, receiptErr := conversation.describeRequest(request, evidence, plan.purpose)
 		if receiptErr == nil {
 			receipt, receiptErr = selection.apply(receipt)
 		}

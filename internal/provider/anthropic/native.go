@@ -178,6 +178,7 @@ type rawUsage struct {
 	CacheCreationInputTokens optionalUint
 	CacheReadInputTokens     optionalUint
 	OutputTokens             optionalUint
+	ThinkingTokens           optionalUint
 }
 
 func (usage rawUsage) clone() rawUsage {
@@ -185,12 +186,15 @@ func (usage rawUsage) clone() rawUsage {
 }
 
 func (usage rawUsage) normalized() (domain.SampleUsage, error) {
+	if usage.OutputTokens.Known && usage.ThinkingTokens.Known && usage.ThinkingTokens.Value > usage.OutputTokens.Value {
+		return domain.SampleUsage{}, fmt.Errorf("thinking usage exceeds output tokens")
+	}
 	return domain.NewSampleUsage(
 		anthropicUsageMetric(usage.InputTokens),
 		anthropicUsageMetric(usage.CacheReadInputTokens),
 		anthropicUsageMetric(usage.CacheCreationInputTokens),
 		anthropicUsageMetric(usage.OutputTokens),
-		domain.NotApplicableUsageMetric(),
+		anthropicUsageMetric(usage.ThinkingTokens),
 	)
 }
 

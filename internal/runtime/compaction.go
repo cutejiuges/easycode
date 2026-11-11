@@ -98,6 +98,8 @@ func (runtime *Runtime) preflightCompaction(instructions string) (compactionAdmi
 			switch failure.Code() {
 			case provider.CompactionNothing:
 				return compactionAdmission{}, protocol.ControlErrorNothingToCompact
+			case provider.CompactionBudgetExceeded:
+				return compactionAdmission{}, protocol.ControlErrorCompactionBudgetExceeded
 			case provider.CompactionBusy:
 				return compactionAdmission{}, protocol.ControlErrorSessionBusy
 			}

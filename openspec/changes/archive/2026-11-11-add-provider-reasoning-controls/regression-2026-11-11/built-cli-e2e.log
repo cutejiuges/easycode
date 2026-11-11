@@ -1,0 +1,52 @@
+=== RUN   TestReasoningControlsBuiltCLIEndToEnd
+=== RUN   TestReasoningControlsBuiltCLIEndToEnd/anthropic/print/healthy
+=== RUN   TestReasoningControlsBuiltCLIEndToEnd/anthropic/print/duplicate-usage
+=== RUN   TestReasoningControlsBuiltCLIEndToEnd/anthropic/print/parameter-rejected
+=== RUN   TestReasoningControlsBuiltCLIEndToEnd/anthropic/print/invalid-config
+=== RUN   TestReasoningControlsBuiltCLIEndToEnd/anthropic/json/healthy
+=== RUN   TestReasoningControlsBuiltCLIEndToEnd/anthropic/json/duplicate-usage
+=== RUN   TestReasoningControlsBuiltCLIEndToEnd/anthropic/json/parameter-rejected
+=== RUN   TestReasoningControlsBuiltCLIEndToEnd/anthropic/json/invalid-config
+=== RUN   TestReasoningControlsBuiltCLIEndToEnd/anthropic/stream-json/healthy
+=== RUN   TestReasoningControlsBuiltCLIEndToEnd/anthropic/stream-json/duplicate-usage
+=== RUN   TestReasoningControlsBuiltCLIEndToEnd/anthropic/stream-json/parameter-rejected
+=== RUN   TestReasoningControlsBuiltCLIEndToEnd/anthropic/stream-json/invalid-config
+=== RUN   TestReasoningControlsBuiltCLIEndToEnd/openai/print/healthy
+=== RUN   TestReasoningControlsBuiltCLIEndToEnd/openai/print/duplicate-usage
+=== RUN   TestReasoningControlsBuiltCLIEndToEnd/openai/print/parameter-rejected
+=== RUN   TestReasoningControlsBuiltCLIEndToEnd/openai/print/invalid-config
+=== RUN   TestReasoningControlsBuiltCLIEndToEnd/openai/json/healthy
+=== RUN   TestReasoningControlsBuiltCLIEndToEnd/openai/json/duplicate-usage
+=== RUN   TestReasoningControlsBuiltCLIEndToEnd/openai/json/parameter-rejected
+=== RUN   TestReasoningControlsBuiltCLIEndToEnd/openai/json/invalid-config
+=== RUN   TestReasoningControlsBuiltCLIEndToEnd/openai/stream-json/healthy
+=== RUN   TestReasoningControlsBuiltCLIEndToEnd/openai/stream-json/duplicate-usage
+=== RUN   TestReasoningControlsBuiltCLIEndToEnd/openai/stream-json/parameter-rejected
+=== RUN   TestReasoningControlsBuiltCLIEndToEnd/openai/stream-json/invalid-config
+--- PASS: TestReasoningControlsBuiltCLIEndToEnd (4.23s)
+    --- PASS: TestReasoningControlsBuiltCLIEndToEnd/anthropic/print/healthy (0.80s)
+    --- PASS: TestReasoningControlsBuiltCLIEndToEnd/anthropic/print/duplicate-usage (0.16s)
+    --- PASS: TestReasoningControlsBuiltCLIEndToEnd/anthropic/print/parameter-rejected (0.13s)
+    --- PASS: TestReasoningControlsBuiltCLIEndToEnd/anthropic/print/invalid-config (0.02s)
+    --- PASS: TestReasoningControlsBuiltCLIEndToEnd/anthropic/json/healthy (0.30s)
+    --- PASS: TestReasoningControlsBuiltCLIEndToEnd/anthropic/json/duplicate-usage (0.15s)
+    --- PASS: TestReasoningControlsBuiltCLIEndToEnd/anthropic/json/parameter-rejected (0.15s)
+    --- PASS: TestReasoningControlsBuiltCLIEndToEnd/anthropic/json/invalid-config (0.02s)
+    --- PASS: TestReasoningControlsBuiltCLIEndToEnd/anthropic/stream-json/healthy (0.17s)
+    --- PASS: TestReasoningControlsBuiltCLIEndToEnd/anthropic/stream-json/duplicate-usage (0.10s)
+    --- PASS: TestReasoningControlsBuiltCLIEndToEnd/anthropic/stream-json/parameter-rejected (0.12s)
+    --- PASS: TestReasoningControlsBuiltCLIEndToEnd/anthropic/stream-json/invalid-config (0.02s)
+    --- PASS: TestReasoningControlsBuiltCLIEndToEnd/openai/print/healthy (0.19s)
+    --- PASS: TestReasoningControlsBuiltCLIEndToEnd/openai/print/duplicate-usage (0.10s)
+    --- PASS: TestReasoningControlsBuiltCLIEndToEnd/openai/print/parameter-rejected (0.11s)
+    --- PASS: TestReasoningControlsBuiltCLIEndToEnd/openai/print/invalid-config (0.01s)
+    --- PASS: TestReasoningControlsBuiltCLIEndToEnd/openai/json/healthy (0.21s)
+    --- PASS: TestReasoningControlsBuiltCLIEndToEnd/openai/json/duplicate-usage (0.09s)
+    --- PASS: TestReasoningControlsBuiltCLIEndToEnd/openai/json/parameter-rejected (0.10s)
+    --- PASS: TestReasoningControlsBuiltCLIEndToEnd/openai/json/invalid-config (0.01s)
+    --- PASS: TestReasoningControlsBuiltCLIEndToEnd/openai/stream-json/healthy (0.16s)
+    --- PASS: TestReasoningControlsBuiltCLIEndToEnd/openai/stream-json/duplicate-usage (0.12s)
+    --- PASS: TestReasoningControlsBuiltCLIEndToEnd/openai/stream-json/parameter-rejected (0.12s)
+    --- PASS: TestReasoningControlsBuiltCLIEndToEnd/openai/stream-json/invalid-config (0.02s)
+PASS
+ok  	easycode/internal/app	6.790s

@@ -135,7 +135,7 @@ func testConsumeStream(t *testing.T, conversation *Conversation, ctx context.Con
 		conversation.history.commit(testInputEntry(t, *user))
 	}
 	if conversation.provider == nil {
-		conversation.provider = &Provider{config: Config{Model: "fixture-model", CachePolicy: domain.DefaultCachePolicy(), MaxOutputTokens: 4096}}
+		conversation.provider = &Provider{config: Config{Model: "fixture-model", CachePolicy: domain.DefaultCachePolicy(), Inference: testInference(t, 4096)}}
 	}
 	input, err := provider.NewSamplingInput().WithToolCatalog(catalog)
 	if err != nil {
@@ -176,4 +176,12 @@ func testSampleRestoreSequence(t *testing.T, envelopes ...provider.NativeCommitE
 		records = append(records, record)
 	}
 	return records
+}
+
+func (conversation *Conversation) requestEvidence(input provider.TurnInput) (requestEvidence, error) {
+	plan, err := conversation.planSamplingRequest(conversation.history.snapshot(), input)
+	if err != nil {
+		return requestEvidence{}, err
+	}
+	return plan.evidence()
 }

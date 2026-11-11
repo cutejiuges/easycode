@@ -1,0 +1,15 @@
+fuzz: elapsed: 0s, gathering baseline coverage: 0/111 completed
+fuzz: elapsed: 0s, gathering baseline coverage: 111/111 completed, now fuzzing with 2 workers
+fuzz: elapsed: 3s, execs: 34592 (11527/sec), new interesting: 34 (total: 145)
+fuzz: elapsed: 6s, execs: 84448 (16619/sec), new interesting: 57 (total: 168)
+fuzz: elapsed: 9s, execs: 132388 (15980/sec), new interesting: 72 (total: 183)
+fuzz: elapsed: 12s, execs: 179200 (15604/sec), new interesting: 80 (total: 191)
+fuzz: elapsed: 15s, execs: 226864 (15891/sec), new interesting: 107 (total: 218)
+fuzz: elapsed: 18s, execs: 272111 (15080/sec), new interesting: 114 (total: 225)
+fuzz: elapsed: 21s, execs: 318225 (15370/sec), new interesting: 116 (total: 227)
+fuzz: elapsed: 24s, execs: 366795 (16196/sec), new interesting: 121 (total: 232)
+fuzz: elapsed: 27s, execs: 413741 (15643/sec), new interesting: 133 (total: 244)
+fuzz: elapsed: 30s, execs: 421051 (2437/sec), new interesting: 142 (total: 253)
+fuzz: elapsed: 31s, execs: 421051 (0/sec), new interesting: 142 (total: 253)
+PASS
+ok  	easycode/internal/provider/anthropic	31.486s

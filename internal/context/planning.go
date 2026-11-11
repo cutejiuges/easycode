@@ -110,8 +110,9 @@ func (budget Budget) Validate() error {
 
 // ProviderProfile 保存会影响稳定上下文身份的非敏感模型信息。
 type ProviderProfile struct {
-	family domain.ProviderFamily
-	model  string
+	family    domain.ProviderFamily
+	model     string
+	inference domain.InferenceSettings
 }
 
 // CurrentInput 表达没有额外正文的当前采样状态。
@@ -130,11 +131,43 @@ func (input CurrentInput) Validate() error {
 
 // NewProviderProfile 创建不包含连接凭据的 Provider profile。
 func NewProviderProfile(family domain.ProviderFamily, model string) (ProviderProfile, error) {
-	profile := ProviderProfile{family: family, model: strings.TrimSpace(model)}
+	settings, err := domain.DefaultInferenceSettings(family)
+	if err != nil {
+		return ProviderProfile{}, err
+	}
+	profile := ProviderProfile{family: family, model: strings.TrimSpace(model), inference: settings}
 	if err := profile.Validate(); err != nil {
 		return ProviderProfile{}, err
 	}
 	return profile, nil
+}
+
+// WithInferenceSettings 将同一冻结策略组合到 profile，不包含显示来源。
+func (profile ProviderProfile) WithInferenceSettings(settings domain.InferenceSettings) (ProviderProfile, error) {
+	resolved, err := domain.ResolveInferenceSettings(profile.family, settings)
+	if err != nil {
+		return ProviderProfile{}, err
+	}
+	profile.inference = resolved
+	return profile, profile.Validate()
+}
+
+func (profile ProviderProfile) canonical() (codec.CanonicalJSON, string, error) {
+	identity, err := profile.inference.RequestPolicyIdentity()
+	if err != nil {
+		return codec.CanonicalJSON{}, "", err
+	}
+	value, err := codec.MarshalCanonical(struct {
+		Family         domain.ProviderFamily `json:"family"`
+		Model          string                `json:"model"`
+		SchemaRevision string                `json:"schema_revision"`
+		Policy         json.RawMessage       `json:"request_policy,omitempty"`
+	}{profile.family, profile.model, providerProfileRevision, identity}, MaxSegmentBytes)
+	revision := providerProfileRevision
+	if len(identity) != 0 {
+		revision = domain.ContentFingerprint(value.Bytes())
+	}
+	return value, revision, err
 }
 
 // Family 返回 Provider 家族。
@@ -151,7 +184,8 @@ func (profile ProviderProfile) Validate() error {
 	if strings.TrimSpace(profile.model) == "" {
 		return fmt.Errorf("provider profile model is required")
 	}
-	return nil
+	_, err := domain.ResolveInferenceSettings(profile.family, profile.inference)
+	return err
 }
 
 // PlanningInput 是纯内存 planner 所需的完整强类型输入快照。
@@ -369,6 +403,10 @@ func (*Planner) Plan(input PlanningInput) (ContextPlan, error) {
 		return ContextPlan{}, err
 	}
 
+	_, profileRevision, err := input.profile.canonical()
+	if err != nil {
+		return ContextPlan{}, err
+	}
 	profileEstimate := mustEstimated(0)
 	toolView, err := input.toolCatalog.View(input.profile.family)
 	if err != nil {
@@ -393,7 +431,7 @@ func (*Planner) Plan(input PlanningInput) (ContextPlan, error) {
 	totalEstimate := sumEstimates(profileEstimate, toolEstimate, projectEstimate, skillEstimate, historyEstimate, currentEstimate)
 
 	sources := []PlannedSource{
-		{kind: SourceProviderProfile, lifecycle: SourceLifecycleReplace, revision: providerProfileRevision, estimate: profileEstimate},
+		{kind: SourceProviderProfile, lifecycle: SourceLifecycleReplace, revision: profileRevision, estimate: profileEstimate},
 		{kind: SourceToolCatalog, lifecycle: SourceLifecycleReplace, revision: toolView.Fingerprint(), estimate: toolEstimate},
 	}
 	if input.projectInstructions.HasDocuments() {
@@ -425,11 +463,7 @@ func (*Planner) Plan(input PlanningInput) (ContextPlan, error) {
 }
 
 func buildCachePlan(input PlanningInput) (Plan, error) {
-	profileJSON, err := codec.MarshalCanonical(struct {
-		Family         domain.ProviderFamily `json:"family"`
-		Model          string                `json:"model"`
-		SchemaRevision string                `json:"schema_revision"`
-	}{input.profile.family, input.profile.model, providerProfileRevision}, MaxSegmentBytes)
+	profileJSON, profileRevision, err := input.profile.canonical()
 	if err != nil {
 		return Plan{}, err
 	}
@@ -468,7 +502,7 @@ func buildCachePlan(input PlanningInput) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	profile, err := NewSegment(string(SourceProviderProfile), StabilityStable, providerProfileRevision, profileJSON)
+	profile, err := NewSegment(string(SourceProviderProfile), StabilityStable, profileRevision, profileJSON)
 	if err != nil {
 		return Plan{}, err
 	}

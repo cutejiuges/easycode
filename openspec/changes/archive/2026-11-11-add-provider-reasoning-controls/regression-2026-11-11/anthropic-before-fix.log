@@ -1,0 +1,10 @@
+--- FAIL: TestThinkingUsageDuplicateDetailsCannotOverrideInvalidFacts (0.00s)
+    --- FAIL: TestThinkingUsageDuplicateDetailsCannotOverrideInvalidFacts/{"output_tokens":40,"output_tokens_details":{"thinking_tokens":null},"output_tokens_details":{"thinking_tokens":30}} (0.00s)
+        usage_validation_regression_test.go:33: ambiguous usage accepted
+    --- FAIL: TestThinkingUsageDuplicateDetailsCannotOverrideInvalidFacts/{"output_tokens":40,"output_tokens_details":{"thinking_tokens":30},"output_tokens_details":{"thinking_tokens":0}} (0.00s)
+        usage_validation_regression_test.go:33: ambiguous usage accepted
+    --- FAIL: TestThinkingUsageDuplicateDetailsCannotOverrideInvalidFacts/{"output_tokens":20,"output_tokens":40,"output_tokens_details":{"thinking_tokens":30}} (0.00s)
+        usage_validation_regression_test.go:33: ambiguous usage accepted
+FAIL
+FAIL	easycode/internal/provider/anthropic	0.383s
+FAIL

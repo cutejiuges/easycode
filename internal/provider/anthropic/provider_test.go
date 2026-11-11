@@ -34,10 +34,10 @@ func TestNewProviderValidatesAndNormalizesConfiguration(t *testing.T) {
 		{
 			name: "explicit output tokens",
 			config: Config{
-				BaseURL:         "https://example.com/v1",
-				APIKey:          secret.New("test-key"),
-				Model:           " claude-test ",
-				MaxOutputTokens: 8192,
+				BaseURL:   "https://example.com/v1",
+				APIKey:    secret.New("test-key"),
+				Model:     " claude-test ",
+				Inference: testInference(t, 8192),
 			},
 			wantTokens: 8192,
 		},
@@ -57,8 +57,8 @@ func TestNewProviderValidatesAndNormalizesConfiguration(t *testing.T) {
 			wantCode: fault.CodeInvalidConfiguration,
 		},
 		{
-			name:     "negative output tokens",
-			config:   Config{BaseURL: "https://example.com", APIKey: secret.New("test-key"), Model: "claude-test", MaxOutputTokens: -1},
+			name:     "wrong family inference",
+			config:   Config{BaseURL: "https://example.com", APIKey: secret.New("test-key"), Model: "claude-test", Inference: testWrongFamilyInference(t)},
 			wantCode: fault.CodeInvalidConfiguration,
 		},
 	}
@@ -80,7 +80,7 @@ func TestNewProviderValidatesAndNormalizesConfiguration(t *testing.T) {
 				t.Fatalf("new provider: %v", err)
 			}
 			defer closeAnthropicProvider(t, instance)
-			if instance.config.MaxOutputTokens != test.wantTokens || instance.config.Model != "claude-test" {
+			if int(instance.config.Inference.MaxOutputTokens()) != test.wantTokens || instance.config.Model != "claude-test" {
 				t.Fatalf("normalized config: %#v", instance.config)
 			}
 		})

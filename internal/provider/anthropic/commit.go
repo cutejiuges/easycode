@@ -46,6 +46,7 @@ type rawUsageCommit struct {
 	CacheCreationInputTokens optionalUintCommit `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     optionalUintCommit `json:"cache_read_input_tokens"`
 	OutputTokens             optionalUintCommit `json:"output_tokens"`
+	ThinkingTokens           optionalUintCommit `json:"thinking_tokens"`
 }
 
 func encodeNativeCommit(entry nativeHistoryEntry) (provider.NativeCommitEnvelope, error) {
@@ -122,7 +123,7 @@ func decodeNativeCommit(envelope provider.NativeCommitEnvelope) (nativeHistoryEn
 
 func validateRawUsageCommit(usage rawUsageCommit) error {
 	fields := [...]optionalUintCommit{
-		usage.InputTokens, usage.CacheCreationInputTokens, usage.CacheReadInputTokens, usage.OutputTokens,
+		usage.InputTokens, usage.CacheCreationInputTokens, usage.CacheReadInputTokens, usage.OutputTokens, usage.ThinkingTokens,
 	}
 	for _, field := range fields {
 		if field.Known != (field.Value != nil) {
@@ -275,6 +276,7 @@ func encodeMetadata(metadata messageMetadata) messageMetadataCommit {
 			CacheCreationInputTokens: encodeOptionalInt(metadata.Usage.CacheCreationInputTokens),
 			CacheReadInputTokens:     encodeOptionalInt(metadata.Usage.CacheReadInputTokens),
 			OutputTokens:             encodeOptionalInt(metadata.Usage.OutputTokens),
+			ThinkingTokens:           encodeOptionalInt(metadata.Usage.ThinkingTokens),
 		},
 	}
 }
@@ -288,6 +290,7 @@ func decodeMetadata(metadata messageMetadataCommit) messageMetadata {
 			CacheCreationInputTokens: decodeOptionalInt(metadata.Usage.CacheCreationInputTokens),
 			CacheReadInputTokens:     decodeOptionalInt(metadata.Usage.CacheReadInputTokens),
 			OutputTokens:             decodeOptionalInt(metadata.Usage.OutputTokens),
+			ThinkingTokens:           decodeOptionalInt(metadata.Usage.ThinkingTokens),
 		},
 	}
 }

@@ -36,13 +36,14 @@ func TestManualCompactionProvidersResumeEquivalent(t *testing.T) {
 				requests = append(requests, body)
 				mu.Unlock()
 				compact := bytes.Contains(body, []byte(`"tool_choice"`))
+				assertReasoningRequest(t, family, body, compact)
 				answer := 1
 				if compact {
 					answer = 2
 				}
 				w.Header().Set("Content-Type", "text/event-stream")
 				if compact {
-					wire := reasoningFixtureStream(family, answer, false)
+					wire := activeReasoningFixture(family, answer, false)
 					if family == domain.ProviderAnthropic {
 						wire = bytes.Replace(wire, []byte(`data: {"type":"message_stop"}`), []byte("data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\ndata: {\"type\":\"message_stop\"}"), 1)
 					}
@@ -60,8 +61,9 @@ func TestManualCompactionProvidersResumeEquivalent(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			budget, _ := contextplan.NewBudget(200000, 1000, 100)
+			budget, _ := contextplan.NewBudget(200000, 16384, 100)
 			cfg := config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, APIKey: secret.New("compaction-secret"), Model: "claude-test"}, ContextBudget: budget}
+			cfg = reasoningFixtureConfig(t, cfg)
 			var nextRequests [][]byte
 			for _, resume := range []bool{false, true} {
 				root, cwd := filepath.Join(t.TempDir(), "sessions"), t.TempDir()

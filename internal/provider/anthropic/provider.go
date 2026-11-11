@@ -22,8 +22,8 @@ import (
 )
 
 const (
-	// DefaultMaxOutputTokens 是未显式覆盖时的保守 Messages 输出上限。
-	DefaultMaxOutputTokens = 4096
+	// DefaultMaxOutputTokens 是固定请求基线采用的缺省值。
+	DefaultMaxOutputTokens = domain.DefaultAnthropicOutputTokens
 	apiVersion             = "2023-06-01"
 )
 
@@ -32,7 +32,7 @@ type Config struct {
 	BaseURL           string
 	APIKey            secret.Value
 	Model             string
-	MaxOutputTokens   int
+	Inference         domain.InferenceSettings
 	StreamIdleTimeout time.Duration
 	CachePolicy       domain.CachePolicy
 }
@@ -82,11 +82,10 @@ func New(config Config) (*Provider, error) {
 	if strings.TrimSpace(config.APIKey.Reveal()) == "" {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "Anthropic API key is required")
 	}
-	if config.MaxOutputTokens < 0 {
-		return nil, fault.New(fault.CodeInvalidConfiguration, "Anthropic max output tokens must be positive")
-	}
-	if config.MaxOutputTokens == 0 {
-		config.MaxOutputTokens = DefaultMaxOutputTokens
+	var settingsErr error
+	config.Inference, settingsErr = domain.ResolveInferenceSettings(domain.ProviderAnthropic, config.Inference)
+	if settingsErr != nil {
+		return nil, fault.New(fault.CodeInvalidConfiguration, "inference configuration is invalid")
 	}
 	client, err := transport.NewClient(config.BaseURL)
 	if err != nil {
@@ -172,12 +171,17 @@ func (conversation *Conversation) Stream(
 		conversation.active.Store(false)
 		return nil, fault.New(fault.CodeProviderRequest, "tool catalog is required")
 	}
-	request, err := conversation.compileSamplingRequest(history, input)
+	plan, err := conversation.planSamplingRequest(history, input)
+	if err != nil {
+		conversation.active.Store(false)
+		return nil, err
+	}
+	request, err := plan.body(conversation.provider.config.CachePolicy.Anthropic())
 	if err != nil {
 		conversation.active.Store(false)
 		return nil, fault.Wrap(fault.CodeProviderRequest, "compile provider request failed", err)
 	}
-	evidence, err := conversation.requestEvidence(input)
+	evidence, err := plan.evidence()
 	if err != nil {
 		conversation.active.Store(false)
 		return nil, err

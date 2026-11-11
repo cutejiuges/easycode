@@ -133,6 +133,9 @@ func (service *sessionService) resume(
 	if metadata.Provider != factory.Family() || metadata.ProviderWire != wire || metadata.Model != model {
 		return assembledSession{}, fault.New(fault.CodeSessionIncompatible, "session provider configuration is incompatible")
 	}
+	if err := validateSampleUsageEvidence(plan); err != nil {
+		return assembledSession{}, fault.Wrap(fault.CodeSessionCorruption, "sample usage is invalid", err)
+	}
 	commits, err := orderedRestoreRecords(plan)
 	if err != nil {
 		return assembledSession{}, err

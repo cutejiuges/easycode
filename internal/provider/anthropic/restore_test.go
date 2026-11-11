@@ -117,11 +117,11 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 	if uninterruptedToolView.Fingerprint() != restoredToolView.Fingerprint() {
 		t.Fatal("restored tool catalog fingerprint differs")
 	}
-	uninterruptedRequest, err := compileMessagesRequest(instance.config.Model, instance.config.MaxOutputTokens, append(uninterrupted.historySnapshot(), testInputEntry(t, next)), &projectInstructions, uninterruptedToolView)
+	uninterruptedRequest, err := compileMessagesRequest(instance.config.Model, int(instance.config.Inference.MaxOutputTokens()), append(uninterrupted.historySnapshot(), testInputEntry(t, next)), &projectInstructions, uninterruptedToolView)
 	if err != nil {
 		t.Fatal(err)
 	}
-	restoredRequest, err := compileMessagesRequest(instance.config.Model, instance.config.MaxOutputTokens, append(restored.historySnapshot(), testInputEntry(t, next)), &projectInstructions, restoredToolView)
+	restoredRequest, err := compileMessagesRequest(instance.config.Model, int(instance.config.Inference.MaxOutputTokens()), append(restored.historySnapshot(), testInputEntry(t, next)), &projectInstructions, restoredToolView)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restoredShape := buildMessagesRequest(instance.config.Model, instance.config.MaxOutputTokens, append(restored.historySnapshot(), testInputEntry(t, next)), &projectInstructions, restoredToolView)
+	restoredShape := buildMessagesRequest(instance.config.Model, int(instance.config.Inference.MaxOutputTokens()), append(restored.historySnapshot(), testInputEntry(t, next)), &projectInstructions, restoredToolView)
 	if first.Fingerprint() != second.Fingerprint() || len(restoredShape.Messages) != 15 ||
 		restoredShape.Messages[0].Content[0].Text != projectInstructions.RenderedText() ||
 		restoredShape.Messages[4].Content[0].Type != "future_block" ||
@@ -162,11 +162,11 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 	}
 
 	changedProjectInstructions := testAnthropicProjectInstructions(t, "AGENTS.md", "changed-startup-snapshot")
-	changedRequest, err := compileMessagesRequest(instance.config.Model, instance.config.MaxOutputTokens, append(restored.historySnapshot(), testInputEntry(t, next)), &changedProjectInstructions, testAnthropicToolView(t))
+	changedRequest, err := compileMessagesRequest(instance.config.Model, int(instance.config.Inference.MaxOutputTokens()), append(restored.historySnapshot(), testInputEntry(t, next)), &changedProjectInstructions, testAnthropicToolView(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	changedShape := buildMessagesRequest(instance.config.Model, instance.config.MaxOutputTokens, append(restored.historySnapshot(), testInputEntry(t, next)), &changedProjectInstructions, testAnthropicToolView(t))
+	changedShape := buildMessagesRequest(instance.config.Model, int(instance.config.Inference.MaxOutputTokens()), append(restored.historySnapshot(), testInputEntry(t, next)), &changedProjectInstructions, testAnthropicToolView(t))
 	if bytes.Equal(changedRequest.Bytes(), restoredRequest.Bytes()) ||
 		!reflect.DeepEqual(changedShape.Messages[1:], restoredShape.Messages[1:]) ||
 		changedShape.Messages[0].Content[0].Text == restoredShape.Messages[0].Content[0].Text {
@@ -238,7 +238,7 @@ func TestRestoreConversationRejectsEntireHistoryOnOneBadCommit(t *testing.T) {
 		}
 	}
 	bad, err := provider.NewNativeCommitEnvelope(
-		domain.ProviderAnthropic, messagesWire, json.RawMessage(`{"kind":"sample","input":{"role":"assistant","content":[]},"assistant":{"role":"assistant","content":[]},"metadata":{"id":"msg-2","model":"claude-test","stop_reason":{"known":false},"usage":{"input_tokens":{"known":false},"cache_creation_input_tokens":{"known":false},"cache_read_input_tokens":{"known":false},"output_tokens":{"known":false}}}}`),
+		domain.ProviderAnthropic, messagesWire, json.RawMessage(`{"kind":"sample","input":{"role":"assistant","content":[]},"assistant":{"role":"assistant","content":[]},"metadata":{"id":"msg-2","model":"claude-test","stop_reason":{"known":false},"usage":{"input_tokens":{"known":false},"cache_creation_input_tokens":{"known":false},"cache_read_input_tokens":{"known":false},"output_tokens":{"known":false},"thinking_tokens":{"known":false}}}}`),
 	)
 	if err != nil {
 		t.Fatal(err)

@@ -1,0 +1,26 @@
+[
+  {
+    "case": "search_preview_cross_directory_resize",
+    "exit_code": 130,
+    "terminal_restored": true,
+    "kernel_lflag_delta": 536870912
+  },
+  {
+    "case": "normal_escape",
+    "exit_code": 0,
+    "terminal_restored": true,
+    "kernel_lflag_delta": 536870912
+  },
+  {
+    "case": "no_color_interrupt",
+    "exit_code": 130,
+    "terminal_restored": true,
+    "kernel_lflag_delta": 536870912
+  },
+  {
+    "case": "resume_then_chat_exit",
+    "exit_code": 0,
+    "terminal_restored": true,
+    "kernel_lflag_delta": 536870912
+  }
+]

@@ -160,6 +160,7 @@ func (model Model) projectContextEvent(event protocol.Event) (tea.Model, tea.Cmd
 			return model, nil
 		}
 		model.contextPanel = &payload
+		model.contextScroll = 0
 	case protocol.EventCompactionStarted:
 		payload, err := protocol.DecodeCompactionStarted(event)
 		if err != nil {
@@ -212,12 +213,14 @@ func formatContextEstimate(value protocol.ContextEstimatePayload) string {
 	return fmt.Sprintf("%d", *value.Tokens)
 }
 
-func (model Model) renderContextPanel() string {
+func (model Model) contextPanelLines() []string {
 	payload := model.contextPanel
 	if payload == nil {
-		return ""
+		return nil
 	}
 	lines := []string{"Context · committed snapshot", fmt.Sprintf("Model: %s · revision %d · %s", safeComposerText(payload.Model), payload.Revision, payload.Activity), ""}
+	lines = append(lines, model.inferenceLines()...)
+	lines = append(lines, "")
 	for _, source := range payload.Sources {
 		lines = append(lines, strings.ReplaceAll(source.Kind, "_", " ")+": "+formatContextEstimate(source.Estimate)+" tokens ("+string(source.Estimate.State)+")")
 	}
@@ -234,15 +237,33 @@ func (model Model) renderContextPanel() string {
 	if payload.AutoCompactionThreshold != nil {
 		auto += fmt.Sprintf(" at %d tokens", *payload.AutoCompactionThreshold)
 	}
-	lines = append(lines, auto, "Budget: "+payload.BudgetState, fmt.Sprintf("Cache: %s · key %s · %s", payload.CachePolicy.Anthropic, payload.CachePolicy.Key, payload.CachePolicy.Transport), "Esc: close")
-	width, height := max(1, model.widthOrDefault()), max(1, model.heightOrDefault())
-	rendered := make([]string, 0, height)
+	lines = append(lines, auto, "Budget: "+payload.BudgetState, fmt.Sprintf("Cache: %s · key %s · %s", payload.CachePolicy.Anthropic, payload.CachePolicy.Key, payload.CachePolicy.Transport))
+	width := max(1, model.widthOrDefault())
+	rendered := make([]string, 0, len(lines))
 	for _, line := range lines {
 		rendered = append(rendered, strings.Split(ansi.Hardwrap(line, width, true), "\n")...)
 	}
-	if len(rendered) > height {
-		rendered = rendered[:height]
-		rendered[height-1] = ansi.Truncate("Esc: close", width, "")
+	return rendered
+}
+
+func (model Model) contextScrollLimit() int {
+	return max(0, len(model.contextPanelLines())-max(0, model.heightOrDefault()-1))
+}
+
+func (model Model) renderContextPanel() string {
+	lines := model.contextPanelLines()
+	if lines == nil {
+		return ""
 	}
+	width, height := max(1, model.widthOrDefault()), max(1, model.heightOrDefault())
+	capacity := height - 1
+	start := min(model.contextScroll, max(0, len(lines)-capacity))
+	end := min(len(lines), start+capacity)
+	rendered := append([]string(nil), lines[start:end]...)
+	footer := "Esc: close"
+	if len(lines) > capacity {
+		footer += " · ↑/↓ PgUp/PgDn: scroll"
+	}
+	rendered = append(rendered, ansi.Truncate(footer, width, ""))
 	return strings.Join(rendered, "\n")
 }

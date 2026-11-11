@@ -86,6 +86,8 @@ type Model struct {
 	activeCompactionID   domain.CompactionID
 	compactionStatus     string
 	contextPanel         *protocol.ContextSnapshotPayload
+	inference            domain.InferenceSettings
+	contextScroll        int
 	main                 mainTranscript
 	browser              transcriptBrowser
 	reasoning            activeReasoning
@@ -212,6 +214,7 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.browser.markdown.preserveAnchor = true
 		model.width = value.Width
 		model.height = value.Height
+		model.contextScroll = min(model.contextScroll, model.contextScrollLimit())
 		model.composer.resize(value.Width, value.Height)
 		if model.question != nil {
 			model.question.resize(value.Width, value.Height)
@@ -328,6 +331,22 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return model.handleKey(key)
 		}
 		return model, nil
+	}
+	if model.contextPanel != nil {
+		switch key.Type {
+		case tea.KeyDown:
+			model.contextScroll = min(model.contextScroll+1, model.contextScrollLimit())
+		case tea.KeyUp:
+			model.contextScroll = max(0, model.contextScroll-1)
+		case tea.KeyPgDown:
+			model.contextScroll = min(model.contextScroll+min(model.contextScrollLimit(), max(1, model.heightOrDefault()-2)), model.contextScrollLimit())
+		case tea.KeyPgUp:
+			model.contextScroll = max(0, model.contextScroll-max(1, model.heightOrDefault()-2))
+		case tea.KeyHome:
+			model.contextScroll = 0
+		case tea.KeyEnd:
+			model.contextScroll = model.contextScrollLimit()
+		}
 	}
 	if model.cachePanel != nil {
 		switch key.Type {
