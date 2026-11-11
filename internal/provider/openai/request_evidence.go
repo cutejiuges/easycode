@@ -13,15 +13,8 @@ type requestEvidence struct {
 	nativeFingerprint string
 }
 
-func (conversation *Conversation) requestEvidence(input provider.TurnInput) (requestEvidence, error) {
-	full, err := conversation.compileSamplingRequest(conversation.history.snapshot(), input)
-	if err != nil {
-		return requestEvidence{}, err
-	}
-	var request responsesRequest
-	if err = codec.Unmarshal(full.Bytes(), &request); err != nil {
-		return requestEvidence{}, err
-	}
+func (plan samplingRequestPlan) evidence() (requestEvidence, error) {
+	request := plan.request
 	items := make([]codec.CanonicalJSON, 0, len(request.Input))
 	raw := make([]json.RawMessage, 0, len(request.Input))
 	for _, item := range request.Input {
@@ -38,6 +31,15 @@ func (conversation *Conversation) requestEvidence(input provider.TurnInput) (req
 	}
 	request.Input = nil
 	properties, err := codec.MarshalCanonical(request, maxResponsesRequestBytes)
+	if err != nil {
+		return requestEvidence{}, err
+	}
+	members, err := codec.ObjectMembers(properties.Bytes())
+	if err != nil {
+		return requestEvidence{}, err
+	}
+	delete(members, "input")
+	properties, err = codec.MarshalCanonical(members, maxResponsesRequestBytes)
 	if err != nil {
 		return requestEvidence{}, err
 	}

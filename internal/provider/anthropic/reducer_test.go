@@ -265,7 +265,7 @@ func TestStreamReducerProducesNormalizedUsage(t *testing.T) {
 	assertAnthropicMetric(t, usage.CacheRead(), domain.UsageMetricKnown, 7, true)
 	assertAnthropicMetric(t, usage.CacheWrite(), domain.UsageMetricKnown, 3, true)
 	assertAnthropicMetric(t, usage.Output(), domain.UsageMetricKnown, 0, true)
-	assertAnthropicMetric(t, usage.ReasoningOutput(), domain.UsageMetricNotApplicable, 0, false)
+	assertAnthropicMetric(t, usage.ReasoningOutput(), domain.UsageMetricUnknown, 0, false)
 }
 
 func TestStreamReducerRejectsInvalidUsageNumbers(t *testing.T) {

@@ -27,6 +27,7 @@ type Config struct {
 	Model             string
 	StreamIdleTimeout time.Duration
 	CachePolicy       domain.CachePolicy
+	Inference         domain.InferenceSettings
 }
 
 // Provider 持有不可变 OpenAI 配置和共享 Resty transport。
@@ -78,6 +79,11 @@ func New(config Config) (*Provider, error) {
 	if config.APIKey.Empty() {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "OpenAI API key is required")
 	}
+	var settingsErr error
+	config.Inference, settingsErr = domain.ResolveInferenceSettings(domain.ProviderOpenAI, config.Inference)
+	if settingsErr != nil {
+		return nil, fault.New(fault.CodeInvalidConfiguration, "inference configuration is invalid")
+	}
 	client, err := transport.NewClient(config.BaseURL)
 	if err != nil {
 		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "OpenAI base URL is invalid", err)
@@ -101,6 +107,7 @@ func (instance *Provider) Capabilities() provider.Capabilities {
 		PreviousResponse:   instance.config.CachePolicy.Transport() == domain.OpenAIWebSocketAuto,
 		Streaming:          true,
 		EncryptedReasoning: true,
+		ReasoningSummary:   instance.config.Inference.Summary() != "",
 		FunctionTools:      true,
 		CustomTools:        true,
 		FilePatch:          true,
@@ -170,18 +177,23 @@ func (conversation *Conversation) Stream(
 		conversation.active.Store(false)
 		return nil, fault.New(fault.CodeProviderRequest, "tool catalog is required")
 	}
-	request, err := conversation.compileSamplingRequest(history, input)
+	plan, err := conversation.planSamplingRequest(history, input)
+	if err != nil {
+		conversation.active.Store(false)
+		return nil, err
+	}
+	request, err := plan.body()
 	if err != nil {
 		conversation.active.Store(false)
 		return nil, fault.Wrap(fault.CodeProviderRequest, "compile provider request failed", err)
 	}
-	evidence, err := conversation.requestEvidence(input)
+	evidence, err := plan.evidence()
 	if err != nil {
 		conversation.active.Store(false)
 		return nil, err
 	}
 	streamContext, cancelStream := context.WithCancel(ctx)
-	stream, selection, cleanup, err := conversation.startRequest(streamContext, request, evidence, domain.RequestSample)
+	stream, selection, cleanup, err := conversation.startRequest(streamContext, request, evidence, plan.purpose)
 	if err != nil {
 		cancelStream()
 		conversation.active.Store(false)

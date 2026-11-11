@@ -112,8 +112,13 @@ func (reducer *responsesStreamReducer) reduce(event transport.SSEEvent) (reducer
 	if reducer.terminal {
 		return reducerResult{}, fault.New(fault.CodeStreamProtocol, "Responses event arrived after terminal")
 	}
+	data := []byte(event.Data)
+	// 在归并或确认 terminal 前校验完整帧，禁止重复成员覆盖计量与响应身份。
+	if err := codec.ValidateJSON(data); err != nil {
+		return reducerResult{}, fault.New(fault.CodeStreamProtocol, "Responses event is invalid JSON")
+	}
 	var envelope responsesEventEnvelope
-	if err := codec.Unmarshal([]byte(event.Data), &envelope); err != nil {
+	if err := codec.Unmarshal(data, &envelope); err != nil {
 		return reducerResult{}, fault.Wrap(fault.CodeStreamProtocol, "Responses event is invalid JSON", err)
 	}
 	if envelope.Type == "" {

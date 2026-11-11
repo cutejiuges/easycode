@@ -64,10 +64,27 @@ func (conversation *Conversation) PrepareUserInputs(a domain.InputAssociation, i
 
 // compileSamplingRequest 是预检与实际采样共用的纯内存编译入口。
 func (conversation *Conversation) compileSamplingRequest(history []nativeHistoryEntry, input provider.TurnInput) (codec.CanonicalJSON, error) {
+	plan, err := conversation.planSamplingRequest(history, input)
+	if err != nil {
+		return codec.CanonicalJSON{}, err
+	}
+	return plan.body()
+}
+
+type samplingRequestPlan struct {
+	request responsesRequest
+	purpose domain.RequestPurpose
+}
+
+func (plan samplingRequestPlan) body() (codec.CanonicalJSON, error) {
+	return codec.MarshalCanonical(plan.request, maxResponsesRequestBytes)
+}
+
+func (conversation *Conversation) planSamplingRequest(history []nativeHistoryEntry, input provider.TurnInput) (samplingRequestPlan, error) {
 	history = conversation.windowRequestEntries(history)
 	snapshot, exists, err := input.ProjectInstructions()
 	if err != nil {
-		return codec.CanonicalJSON{}, err
+		return samplingRequestPlan{}, err
 	}
 	var instructions *domain.ProjectInstructionsSnapshot
 	if exists {
@@ -75,13 +92,14 @@ func (conversation *Conversation) compileSamplingRequest(history []nativeHistory
 	}
 	catalog, exists, err := input.ToolCatalog()
 	if err != nil || !exists {
-		return codec.CanonicalJSON{}, fmt.Errorf("tool catalog is required")
+		return samplingRequestPlan{}, fmt.Errorf("tool catalog is required")
 	}
 	view, err := catalog.View(domain.ProviderOpenAI)
 	if err != nil {
-		return codec.CanonicalJSON{}, err
+		return samplingRequestPlan{}, err
 	}
 	request := buildResponsesRequest(conversation.provider.config.Model, history, instructions, view)
+	request.applyInference(conversation.provider.config.Inference)
 	if c := input.SkillCatalog(); c.HasEntries() {
 		index := 0
 		if instructions != nil && instructions.HasDocuments() {
@@ -94,10 +112,10 @@ func (conversation *Conversation) compileSamplingRequest(history []nativeHistory
 	if conversation.provider.config.CachePolicy.Key() == domain.OpenAICacheThread {
 		request.PromptCacheKey, err = domain.ThreadCacheKey(conversation.threadID)
 		if err != nil {
-			return codec.CanonicalJSON{}, err
+			return samplingRequestPlan{}, err
 		}
 	}
-	return codec.MarshalCanonical(request, maxResponsesRequestBytes)
+	return samplingRequestPlan{request: request, purpose: domain.RequestSample}, nil
 }
 
 // EncodeUserInputs 不读取会话状态，仅验证用户消息的可表示性。

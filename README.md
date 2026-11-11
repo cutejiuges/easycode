@@ -4,7 +4,7 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 
 用户只需要提供 `base_url`、`api_key` 和模型名称即可连接服务，不需要账号登录、OAuth、设备码或订阅鉴权。
 
-> 项目按纵向切片持续推进。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、命令/Skill 首词补全、原生多轮 Session、`--resume`/`--continue`、headless/FIFO 输入、离线 `sessions list`，以及九项工具能力：Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill 和结构化用户提问。命令执行当前支持 Darwin；已支持同步 PreToolUse/PostToolUse/PostToolUseFailure 命令 Hook，已支持被动推理阅读；其余 Hook 事件、主动推理配置等能力仍按 Roadmap 分阶段推进。
+> 项目按纵向切片持续推进。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、命令/Skill 首词补全、原生多轮 Session、`--resume`/`--continue`、headless/FIFO 输入、离线 `sessions list`，以及九项工具能力：Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill 和结构化用户提问。命令执行当前支持 Darwin；已支持同步 PreToolUse/PostToolUse/PostToolUseFailure 命令 Hook、被动推理阅读和启动推理/display/输出配置；其余 Hook 事件、运行中推理切换等能力仍按 Roadmap 分阶段推进。
 
 ## 交互式恢复会话
 
@@ -239,15 +239,37 @@ export EASYCODE_MODEL=your-model
 
 配置优先级为：JSON 文件提供基础值，非空 `EASYCODE_*` 环境变量覆盖对应字段，最后统一校验。`base_url` 是 API 路径前缀，不会自动补 `/v1`，且不能包含 userinfo、query 或 fragment。
 
-当前 TUI 和 headless 模式都支持 Anthropic Messages 与 OpenAI Responses 的文本会话。成功文本回合会把 Provider-native commit、五项三态 normalized sample usage 和完成边界作为同一 batch 写入权限受控的 append-only JSONL；`--json` 的 `turn.completed` v1 同步输出该 usage，`--print` 仍只输出最终文本。显式 `--resume <thread-id>` 在连续 exclusive lease 下恢复同一 Provider 的原生历史，`--continue` 则通过可重建 SQLite Catalog 选择当前 cwd 与 Provider 配置完全兼容的最近 root Session，再进入同一恢复路径。TUI 通过单向 `TranscriptProjector` 与宿主范围查询重建记录，headless 不回放旧 transcript。`SemanticHistoryView` 始终排除全部推理。已返回的 Anthropic thinking 文字和 OpenAI summary_text 可在 Ctrl+O 中阅读；签名、redacted data、密文、raw reasoning 和未知扩展只保留在原生历史中。`/cache` 已显示最近已提交的三态 usage 与缓存证据，启动 `resume` 已支持元数据搜索和预览。Anthropic cache TTL、OpenAI prompt cache key 和可选 WebSocket 原生增量已实现；独立 usage 流、费用/配额、外部 reasoning/tool JSON 事件、主动 thinking/effort/budget/summary 配置、正文全文搜索与 fork 尚未实现。
+当前 TUI 和 headless 模式都支持 Anthropic Messages 与 OpenAI Responses 的文本会话。成功文本回合会把 Provider-native commit、五项三态 normalized sample usage 和完成边界作为同一 batch 写入权限受控的 append-only JSONL；`--json` 的 `turn.completed` v1 同步输出该 usage，`--print` 仍只输出最终文本。显式 `--resume <thread-id>` 在连续 exclusive lease 下恢复同一 Provider 的原生历史，`--continue` 则通过可重建 SQLite Catalog 选择当前 cwd 与 Provider 配置完全兼容的最近 root Session，再进入同一恢复路径。TUI 通过单向 `TranscriptProjector` 与宿主范围查询重建记录，headless 不回放旧 transcript。`SemanticHistoryView` 始终排除全部推理。已返回的 Anthropic thinking 文字和 OpenAI summary_text 可在 Ctrl+O 中阅读；签名、redacted data、密文、raw reasoning 和未知扩展只保留在原生历史中。`/cache` 已显示最近已提交的三态 usage 与缓存证据，启动 `resume` 已支持元数据搜索和预览。Anthropic cache TTL、OpenAI prompt cache key、可选 WebSocket 原生增量及下述启动推理控制已实现；独立 usage 流、费用/配额、外部 reasoning/tool JSON 事件、正文全文搜索与 fork 尚未实现。
+
+### 启动推理与普通输出
+
+以下五个字段仅通过 JSON 配置，在启动时冻结；TUI 和全部 headless 请求共用同一策略。新字段全部省略时，保留既有请求：Anthropic 普通 `max_tokens=4096`，OpenAI 不发送普通输出上限，也不补推理强度或 summary。
+
+| 字段 | 允许值与规则 |
+| --- | --- |
+| `anthropic_thinking` | `{"type":"disabled"}`；`{"type":"adaptive","display":"summarized"}`；或 `{"type":"enabled","budget_tokens":8192,"display":"omitted"}`。display 可省略，仅 adaptive/enabled 允许 summarized/omitted；manual budget 为整数且 `1024 <= budget < 普通上限` |
+| `anthropic_effort` | low/medium/high/xhigh/max；独立于 thinking。显式 disabled 与 xhigh/max 不相容 |
+| `openai_reasoning_effort` | none/minimal/low/medium/high/xhigh/max |
+| `openai_reasoning_summary` | auto/concise/detailed；可独立于 effort 配置 |
+| `max_output_tokens` | 普通每 sample 输出上限，整数 1..65536；Anthropic 映射为 max_tokens，OpenAI 映射为 max_output_tokens |
+
+例如在 Anthropic 配置中加入 `"anthropic_thinking":{"type":"adaptive","display":"omitted"},"anthropic_effort":"high","max_output_tokens":16384`；OpenAI 可加入 `"openai_reasoning_effort":"high","openai_reasoning_summary":"auto","max_output_tokens":16384`。不要同时配置两家的专属字段；最终 family 在环境覆盖后校验，即使 disabled/none 也不能跨 family。空值、未知/重复字段、大小写别名及非整数预算均拒绝，不静默改写。
+
+若配置 context window，显式普通输出上限必须由 reserved_output_tokens 覆盖；显式 Anthropic 推理也须覆盖实际普通上限（缺省 4096）。显式 OpenAI 推理加窗口时还必须提供普通上限。无窗口不推断容量；全部新字段省略时保留既有小窗口行为。
+
+手动和自动摘要沿用同一 thinking/display/effort/summary，独立使用 compaction_output_tokens。manual budget 大于或等于摘要上限时，在 started/网络前返回 compaction_budget_exceeded，不夹取或自动扩大预算。例如 budget=8192、普通上限=16384 可以正常启动，但默认摘要上限 4096 会拒绝摘要。自动预检拒绝会抑制同来源重试，旧窗口仍可请求才继续原任务。高 effort 仍可能耗尽摘要额度，不能保证可见回答。
+
+`/context` 只读展示冻结值和 explicit/default/未发送来源，内容超屏可上下/PageUp/PageDown 滚动，Esc 关闭。修改配置后需重启；resume 使用新进程的当前设置，旧 journal 保持原样。只有显式 OpenAI summary 的实例声明本地 ReasoningSummary 能力，不能视作 endpoint 支持证明；400 等错误不会删参数后重试。
+
+Anthropic 最终 thinking_tokens 明确报告时归一为 reasoning_output 的 known（包括零），缺失为 unknown；output 已包含 thinking，不能相加。display omitted、空正文和 usage 独立，summarized 也不保证返回文字。当前 native usage 必须保存 thinking_tokens 状态；旧开发格式直接拒绝，不提供历史 reader 或迁移。
 
 ### 推理阅读
 
 只有服务端实际返回推理项时，主线才出现紧凑提示；块完成后等待保存，sample 成功保存后撤下提示。Ctrl+O 的统一记录可查看活动项和已保存推理，上下选择、Enter 阅读、Esc 返回、r 切换完整正文的 Markdown/安全原文。长正文按 64 KiB 原文范围分页，片段固定原文；只有签名或密文时显示 unavailable，不提供正文。
 
-活动内容共享 64 KiB/50 项显示预算，选中项优先保留。取消或失败按真实结果提示未保存、已保存但刷新失败、保存状态不确定；下一 turn 释放上一份失败快照。主线先排除推理再取最近 50 项，完整历史仍在详情分页。阅读、原文切换和 resize 不新增模型请求，不改变缓存策略。EasyCode 不主动开启推理，也不发送 sequential_cutoff；ReasoningSummary 能力位仍表示主动请求能力，保持 false。
+活动内容共享 64 KiB/50 项显示预算，选中项优先保留。取消或失败按真实结果提示未保存、已保存但刷新失败、保存状态不确定；下一 turn 释放上一份失败快照。主线先排除推理再取最近 50 项，完整历史仍在详情分页。阅读、原文切换和 resize 不新增模型请求，不改变冻结推理或缓存策略。不发送 sequential_cutoff，也不因展开详情而请求替代正文。
 
-本地验证入口为 `scripts/reasoning-smoke.py`（Darwin 双 Provider 真实 PTY）与 `internal/app/reasoning_e2e_test.go`（双 Provider 三种 headless 模式）；不以 Darwin 验收宣称其他平台的原生终端支持。
+本地验证入口为 `scripts/reasoning-smoke.py`、`scripts/reasoning-controls-smoke.py`（Darwin 双 Provider 真实 PTY），以及 `internal/app/reasoning_e2e_test.go`、`internal/app/reasoning_controls_e2e_test.go`（双 Provider 三种 headless 模式）。新增 `internal/app/reasoning_cli_e2e_test.go` 使用真实二进制验证工具续写、跨进程恢复、参数拒绝和非法配置，`internal/app/reasoning_malformed_stream_test.go` 验证重复 JSON 成员不会变成成功样本或工具执行；完整结果见[回归记录](openspec/changes/archive/2026-11-11-add-provider-reasoning-controls/regression-2026-11-11.md)。不以 Darwin 验收宣称其他平台的原生终端支持。
 
 ## 架构概览
 
@@ -270,7 +292,7 @@ Anthropic   OpenAI
 P3+ 目标：Tool Policy / Executor、扩展系统与 Subagent
 ```
 
-当前共享层负责多 sample Tool Loop、最多 8 路只读并行、独占写入屏障、批准/ledger、Session 和宿主事件；通用 sandbox、其余 Hook 事件与 Subagent 是后续阶段目标。每个 Provider 当前独立负责原生请求、流归并、原生历史和语义投影；当前两家 Provider 均已有以下请求、归并、持久化、工具、压缩、缓存和计量接缝；高级 reasoning 配置等剩余能力仍按 Roadmap 推进：
+当前共享层负责多 sample Tool Loop、最多 8 路只读并行、独占写入屏障、批准/ledger、Session 和宿主事件；通用 sandbox、其余 Hook 事件与 Subagent 是后续阶段目标。每个 Provider 当前独立负责原生请求、流归并、原生历史和语义投影；当前两家 Provider 均已有以下请求、归并、持久化、工具、压缩、缓存和计量接缝；运行中推理切换等剩余能力仍按 Roadmap 推进：
 
 - 原生请求编译与 Header 策略。
 - SSE 事件归并和状态机。
@@ -504,7 +526,7 @@ make install-hooks
 | 阶段 | 主题 | 当前交付与剩余范围 |
 |---|---|---|
 | P0 | 工程与协议基线 | 工程、协议与质量门已落地；doctor 等诊断入口待实现 |
-| P1 | 双 Provider Kernel | 双 wire 流式、原生历史/工具/缓存已交付；高级推理控制待实现 |
+| P1 | 双 Provider Kernel | 双 wire 流式、原生历史/工具/缓存及启动推理控制已交付；运行中推理切换待实现 |
 | P2 | Session 与 Headless Loop | root Session、JSONL/SQLite、恢复、三种 headless 与 FIFO 已交付；全文索引/子线程待实现 |
 | P3 | Coding Tools | 九项工具与批准/恢复/预算已交付；PTY、后台进程、通用跨平台 sandbox 待实现 |
 | P4 | 缓存与上下文 | 缓存、usage 归一、手动/自动压缩已交付；费用、精确计数与跨 Provider fork 待实现 |

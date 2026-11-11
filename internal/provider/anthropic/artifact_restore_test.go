@@ -12,7 +12,7 @@ import (
 )
 
 func TestReadArtifactNativeResultsRestoreExactly(t *testing.T) {
-	instance, err := New(Config{BaseURL: "https://example.invalid/v1", APIKey: secret.New("fixture-key"), Model: "fixture-model", MaxOutputTokens: 1024})
+	instance, err := New(Config{BaseURL: "https://example.invalid/v1", APIKey: secret.New("fixture-key"), Model: "fixture-model", Inference: testInference(t, 1024)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,11 +74,11 @@ func TestReadArtifactNativeResultsRestoreExactly(t *testing.T) {
 				t.Fatal(err)
 			}
 			restored := restoredValue.(*Conversation)
-			first, err := compileMessagesRequest(instance.config.Model, instance.config.MaxOutputTokens, uninterrupted.historySnapshot(), nil, testAnthropicToolView(t))
+			first, err := compileMessagesRequest(instance.config.Model, int(instance.config.Inference.MaxOutputTokens()), uninterrupted.historySnapshot(), nil, testAnthropicToolView(t))
 			if err != nil {
 				t.Fatal(err)
 			}
-			second, err := compileMessagesRequest(instance.config.Model, instance.config.MaxOutputTokens, restored.historySnapshot(), nil, testAnthropicToolView(t))
+			second, err := compileMessagesRequest(instance.config.Model, int(instance.config.Inference.MaxOutputTokens()), restored.historySnapshot(), nil, testAnthropicToolView(t))
 			if err != nil {
 				t.Fatal(err)
 			}

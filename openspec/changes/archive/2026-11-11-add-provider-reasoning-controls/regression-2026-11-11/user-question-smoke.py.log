@@ -1,0 +1,33 @@
+{
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "cases": [
+    {
+      "case": "selection",
+      "no_color": false,
+      "exit_code": 0,
+      "terminal_restored": true,
+      "requests": 2
+    },
+    {
+      "case": "resize_other",
+      "no_color": true,
+      "exit_code": 0,
+      "terminal_restored": true,
+      "requests": 2
+    },
+    {
+      "case": "stop",
+      "no_color": true,
+      "exit_code": 0,
+      "terminal_restored": true,
+      "requests": 1
+    },
+    {
+      "case": "picker_cancel",
+      "no_color": true,
+      "exit_code": 130,
+      "terminal_restored": true,
+      "requests": 0
+    }
+  ]
+}

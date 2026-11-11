@@ -75,6 +75,7 @@ type providerResource interface {
 }
 
 type chatResources struct {
+	inference         domain.InferenceSettings
 	skills            []domain.SkillListEntry
 	identity          session.Identity
 	provider          providerResource
@@ -348,6 +349,10 @@ func openChatResourcesWithSnapshot(
 	if err := applicationConfig.ValidateProvider(); err != nil {
 		return nil, err
 	}
+	inference, err := applicationConfig.InferenceSettings()
+	if err != nil {
+		return nil, err
+	}
 	wire, err := providerWire(applicationConfig.Provider.Family)
 	if err != nil {
 		return nil, err
@@ -486,6 +491,10 @@ func openChatResourcesWithSnapshot(
 	if err != nil {
 		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "context profile is invalid", err)
 	}
+	contextProfile, err = contextProfile.WithInferenceSettings(inference)
+	if err != nil {
+		return nil, err
+	}
 	autoPolicy, err := applicationConfig.AutoCompactionPolicy()
 	if err != nil {
 		return nil, err
@@ -540,7 +549,7 @@ func openChatResourcesWithSnapshot(
 	if err := installChatHooks(ctx, runtimeInstance, workspace, artifactLayout, creationCWD, home, hooks); err != nil {
 		return nil, err
 	}
-	resources = &chatResources{
+	resources = &chatResources{inference: inference,
 		artifactLayout: artifactLayout, artifactStore: artifactStore, transcriptQueries: queries,
 		identity: assembled.identity,
 		provider: providerInstance, workspace: workspace, service: service, writer: assembled.writer,
@@ -597,6 +606,13 @@ func selectContinueThread(
 }
 
 func newProviderResource(applicationConfig config.Config) (providerResource, error) {
+	if !applicationConfig.Provider.Family.Valid() {
+		return nil, fault.New(fault.CodeProviderUnavailable, "provider is unavailable")
+	}
+	inference, err := applicationConfig.InferenceSettings()
+	if err != nil {
+		return nil, err
+	}
 	switch applicationConfig.Provider.Family {
 	case domain.ProviderOpenAI:
 		instance, err := openai.New(openai.Config{
@@ -604,7 +620,12 @@ func newProviderResource(applicationConfig config.Config) (providerResource, err
 			APIKey:      applicationConfig.Provider.APIKey,
 			Model:       applicationConfig.Provider.Model,
 			CachePolicy: applicationConfig.CachePolicy(),
+			Inference:   inference,
 		})
+		if err == nil && instance.Capabilities().ReasoningSummary != (inference.Summary() != "") {
+			_ = instance.Close()
+			return nil, fault.New(fault.CodeInvalidConfiguration, "reasoning capability is inconsistent")
+		}
 		return instance, err
 	case domain.ProviderAnthropic:
 		instance, err := anthropic.New(anthropic.Config{
@@ -612,6 +633,7 @@ func newProviderResource(applicationConfig config.Config) (providerResource, err
 			APIKey:      applicationConfig.Provider.APIKey,
 			Model:       applicationConfig.Provider.Model,
 			CachePolicy: applicationConfig.CachePolicy(),
+			Inference:   inference,
 		})
 		return instance, err
 	default:
@@ -742,7 +764,7 @@ func assembleChatModel(ctx context.Context, resources *chatResources) (tui.Model
 		return tui.Model{}, err
 	}
 	resources.session = control
-	return tui.NewModel(ctx, Version, control).WithSkills(resources.skills).WithHooks(resources.session.HookEntries()).WithMarkdownColor(markdownColorEnabled(os.Getenv("NO_COLOR"), os.Getenv("TERM"), term.IsTerminal(os.Stdout.Fd()))).WithInputHistory(resources.history).WithTranscriptQueries(resources.identity.ThreadID, resources.transcriptQueries), nil
+	return tui.NewModel(ctx, Version, control).WithInferenceSettings(resources.inference).WithSkills(resources.skills).WithHooks(resources.session.HookEntries()).WithMarkdownColor(markdownColorEnabled(os.Getenv("NO_COLOR"), os.Getenv("TERM"), term.IsTerminal(os.Stdout.Fd()))).WithInputHistory(resources.history).WithTranscriptQueries(resources.identity.ThreadID, resources.transcriptQueries), nil
 }
 
 // markdownColorEnabled 由启动边界的显式环境和终端事实选择样式。

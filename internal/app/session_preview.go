@@ -89,6 +89,9 @@ func previewSession(ctx context.Context, root string, thread domain.ThreadID, de
 	if err != nil {
 		return result, false, err
 	}
+	if err := validateSampleUsageEvidence(plan); err != nil {
+		return result, false, err
+	}
 	records, err := orderedRestoreRecords(plan)
 	if err != nil {
 		return result, false, err

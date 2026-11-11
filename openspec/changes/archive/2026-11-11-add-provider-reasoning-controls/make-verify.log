@@ -1,0 +1,71 @@
+Branch name policy tests passed.
+go vet ./...
+go tool staticcheck ./...
+go test ./...
+ok  	easycode/cmd/easycode	3.188s
+ok  	easycode/internal/app	80.914s
+ok  	easycode/internal/architecture	2.955s
+ok  	easycode/internal/codec	(cached)
+ok  	easycode/internal/config	(cached)
+ok  	easycode/internal/context	(cached)
+ok  	easycode/internal/context/estimate	(cached)
+ok  	easycode/internal/context/projectinstructions	(cached)
+ok  	easycode/internal/domain	(cached)
+ok  	easycode/internal/executor/process	(cached)
+?   	easycode/internal/extension	[no test files]
+ok  	easycode/internal/extension/hook	(cached)
+ok  	easycode/internal/extension/localfile	(cached)
+?   	easycode/internal/extension/mcp	[no test files]
+?   	easycode/internal/extension/plugin	[no test files]
+ok  	easycode/internal/extension/skill	(cached)
+ok  	easycode/internal/fault	(cached)
+ok  	easycode/internal/headless	(cached)
+ok  	easycode/internal/protocol	(cached)
+ok  	easycode/internal/provider	2.197s
+ok  	easycode/internal/provider/anthropic	(cached)
+ok  	easycode/internal/provider/openai	2.396s
+ok  	easycode/internal/provider/transport	(cached)
+ok  	easycode/internal/runtime	3.414s
+ok  	easycode/internal/secret	(cached)
+ok  	easycode/internal/session	(cached)
+ok  	easycode/internal/session/artifact	(cached)
+ok  	easycode/internal/session/catalog	(cached)
+?   	easycode/internal/subagent	[no test files]
+?   	easycode/internal/telemetry	[no test files]
+ok  	easycode/internal/tool	(cached)
+ok  	easycode/internal/tool/builtin	(cached)
+ok  	easycode/internal/tui	1.069s
+go test -race ./...
+ok  	easycode/cmd/easycode	13.180s
+ok  	easycode/internal/app	421.014s
+ok  	easycode/internal/architecture	11.222s
+ok  	easycode/internal/codec	2.535s
+ok  	easycode/internal/config	1.692s
+ok  	easycode/internal/context	2.035s
+ok  	easycode/internal/context/estimate	1.441s
+ok  	easycode/internal/context/projectinstructions	1.563s
+ok  	easycode/internal/domain	2.867s
+ok  	easycode/internal/executor/process	(cached)
+?   	easycode/internal/extension	[no test files]
+ok  	easycode/internal/extension/hook	1.667s
+ok  	easycode/internal/extension/localfile	(cached)
+?   	easycode/internal/extension/mcp	[no test files]
+?   	easycode/internal/extension/plugin	[no test files]
+ok  	easycode/internal/extension/skill	2.318s
+ok  	easycode/internal/fault	(cached)
+ok  	easycode/internal/headless	6.737s
+ok  	easycode/internal/protocol	2.019s
+ok  	easycode/internal/provider	5.039s
+ok  	easycode/internal/provider/anthropic	44.453s
+ok  	easycode/internal/provider/openai	36.417s
+ok  	easycode/internal/provider/transport	(cached)
+ok  	easycode/internal/runtime	46.262s
+ok  	easycode/internal/secret	(cached)
+ok  	easycode/internal/session	134.474s
+ok  	easycode/internal/session/artifact	3.339s
+ok  	easycode/internal/session/catalog	14.976s
+?   	easycode/internal/subagent	[no test files]
+?   	easycode/internal/telemetry	[no test files]
+ok  	easycode/internal/tool	3.196s
+ok  	easycode/internal/tool/builtin	9.704s
+ok  	easycode/internal/tui	11.182s

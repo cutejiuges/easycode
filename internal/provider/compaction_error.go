@@ -4,6 +4,7 @@ package provider
 type CompactionErrorCode string
 
 const (
+	CompactionBudgetExceeded  CompactionErrorCode = "compaction_budget_exceeded"
 	CompactionBusy            CompactionErrorCode = "session_busy"
 	CompactionNothing         CompactionErrorCode = "nothing_to_compact"
 	CompactionSourceChanged   CompactionErrorCode = "compaction_source_changed"
@@ -19,7 +20,7 @@ type CompactionError struct{ code CompactionErrorCode }
 // NewCompactionError 创建固定分类的压缩失败。
 func NewCompactionError(code CompactionErrorCode) *CompactionError {
 	switch code {
-	case CompactionBusy, CompactionNothing, CompactionSourceChanged, CompactionInvalidResponse, CompactionRequestFailed, CompactionCancelled, CompactionTimedOut:
+	case CompactionBudgetExceeded, CompactionBusy, CompactionNothing, CompactionSourceChanged, CompactionInvalidResponse, CompactionRequestFailed, CompactionCancelled, CompactionTimedOut:
 		return &CompactionError{code: code}
 	default:
 		return &CompactionError{code: CompactionInvalidResponse}

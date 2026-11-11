@@ -49,6 +49,10 @@ func testCompactionCacheStreams(t *testing.T, policy domain.CachePolicy) {
 				}
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					requests.Add(1)
+					body, _ := io.ReadAll(r.Body)
+					if !strings.Contains(string(body), `"thinking":{"type":"adaptive","display":"omitted"}`) || !strings.Contains(string(body), `"output_config":{"effort":"high"}`) || !strings.Contains(string(body), `"max_tokens":4096`) {
+						t.Error("summary lost frozen settings")
+					}
 					if mode == "http" {
 						http.Error(w, "private-secret", http.StatusBadRequest)
 						return
@@ -63,7 +67,9 @@ func testCompactionCacheStreams(t *testing.T, policy domain.CachePolicy) {
 					}
 				}))
 				defer server.Close()
-				instance, err := New(Config{CachePolicy: policy, BaseURL: server.URL, APIKey: secret.New("private-secret"), Model: "model"})
+				thinking, _ := domain.NewThinkingSettings(domain.ThinkingAdaptive, 0, domain.DisplayOmitted)
+				settings, _ := domain.NewAnthropicInference(thinking, "high", 16384)
+				instance, err := New(Config{Inference: settings, CachePolicy: policy, BaseURL: server.URL, APIKey: secret.New("private-secret"), Model: "model"})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -131,7 +137,9 @@ func testCompactionStreamCancellation(t *testing.T, policy domain.CachePolicy) {
 		close(released)
 	}))
 	defer server.Close()
-	instance, err := New(Config{CachePolicy: policy, BaseURL: server.URL, APIKey: secret.New("private-secret"), Model: "model"})
+	thinking, _ := domain.NewThinkingSettings(domain.ThinkingAdaptive, 0, domain.DisplayOmitted)
+	settings, _ := domain.NewAnthropicInference(thinking, "high", 16384)
+	instance, err := New(Config{Inference: settings, CachePolicy: policy, BaseURL: server.URL, APIKey: secret.New("private-secret"), Model: "model"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -169,11 +169,11 @@ func testPostOutputGoldenRestore(t *testing.T, failed bool, cut string) {
 				t.Fatal(err)
 			}
 			restored := restoredValue.(*Conversation)
-			first, err := compileMessagesRequest("fixture-model", instance.config.MaxOutputTokens, live.historySnapshot(), nil, testAnthropicToolView(t))
+			first, err := compileMessagesRequest("fixture-model", int(instance.config.Inference.MaxOutputTokens()), live.historySnapshot(), nil, testAnthropicToolView(t))
 			if err != nil {
 				t.Fatal(err)
 			}
-			second, err := compileMessagesRequest("fixture-model", instance.config.MaxOutputTokens, restored.historySnapshot(), nil, testAnthropicToolView(t))
+			second, err := compileMessagesRequest("fixture-model", int(instance.config.Inference.MaxOutputTokens()), restored.historySnapshot(), nil, testAnthropicToolView(t))
 			if err != nil || !bytes.Equal(first.Bytes(), second.Bytes()) {
 				t.Fatal("post restore changed canonical request", err)
 			}

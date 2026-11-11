@@ -1,0 +1,784 @@
+{
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "cpu": "arm",
+  "results": [
+    {
+      "no_color": false,
+      "p95_ms": 2.980417,
+      "max_ms": 3.316125,
+      "passed": true,
+      "terminal_restored": true,
+      "samples": [
+        {
+          "kind": "startup_input",
+          "ms": 2.760542,
+          "ack": "ACK 1 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 1.09275,
+          "ack": "ACK 2 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 1.47275,
+          "ack": "ACK 3 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.983417,
+          "ack": "ACK 4 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 1.33125,
+          "ack": "ACK 5 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 1.217459,
+          "ack": "ACK 6 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.883167,
+          "ack": "ACK 7 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 1.187375,
+          "ack": "ACK 8 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.895458,
+          "ack": "ACK 9 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 1.04325,
+          "ack": "ACK 10 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.925833,
+          "ack": "ACK 11 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 1.047209,
+          "ack": "ACK 12 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.811458,
+          "ack": "ACK 13 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.741292,
+          "ack": "ACK 14 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 1.08275,
+          "ack": "ACK 15 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.78975,
+          "ack": "ACK 16 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.982083,
+          "ack": "ACK 17 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 1.009417,
+          "ack": "ACK 18 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.801958,
+          "ack": "ACK 19 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.937917,
+          "ack": "ACK 20 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.883083,
+          "ack": "ACK 21 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.77125,
+          "ack": "ACK 22 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 1.099208,
+          "ack": "ACK 23 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.707,
+          "ack": "ACK 24 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 1.024584,
+          "ack": "ACK 25 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.703125,
+          "ack": "ACK 26 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.946416,
+          "ack": "ACK 27 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.986833,
+          "ack": "ACK 28 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.732709,
+          "ack": "ACK 29 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.948041,
+          "ack": "ACK 30 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.895584,
+          "ack": "ACK 31 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.676959,
+          "ack": "ACK 32 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.99975,
+          "ack": "ACK 33 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.717917,
+          "ack": "ACK 34 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.908584,
+          "ack": "ACK 35 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.636584,
+          "ack": "ACK 36 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.947542,
+          "ack": "ACK 37 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.636,
+          "ack": "ACK 38 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.945375,
+          "ack": "ACK 39 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.642667,
+          "ack": "ACK 40 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.843167,
+          "ack": "ACK 41 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "page_up",
+          "ms": 0.957333,
+          "ack": "ACK 42 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "page_down",
+          "ms": 0.702333,
+          "ack": "ACK 43 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "open_code",
+          "ms": 3.316125,
+          "ack": "ACK 44 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "stop_acceptance",
+          "ms": 0.859792,
+          "ack": "ACK 45 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=true"
+        },
+        {
+          "kind": "reset",
+          "ms": 2.683083,
+          "ack": "ACK 46 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "open_code",
+          "ms": 3.230125,
+          "ack": "ACK 47 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "close_code_cold_scan",
+          "ms": 0.55125,
+          "ack": "ACK 48 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "open_code",
+          "ms": 2.946458,
+          "ack": "ACK 49 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "close_code_cold_scan",
+          "ms": 2.697625,
+          "ack": "ACK 50 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "open_code",
+          "ms": 2.774375,
+          "ack": "ACK 51 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "close_code_cold_scan",
+          "ms": 2.599583,
+          "ack": "ACK 52 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "open_code",
+          "ms": 2.727041,
+          "ack": "ACK 53 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "close_code_cold_scan",
+          "ms": 2.535166,
+          "ack": "ACK 54 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "open_code",
+          "ms": 2.694791,
+          "ack": "ACK 55 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "close_code_cold_scan",
+          "ms": 2.57275,
+          "ack": "ACK 56 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "open_code",
+          "ms": 2.68675,
+          "ack": "ACK 57 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input_queued_at_cold_close",
+          "ms": 2.578417,
+          "ack": "ACK 59 draft=2 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "approval_queued_at_budget_fallback",
+          "ms": 3.157417,
+          "ack": "ACK 61 draft=2 detached=true approval=true detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "approval_close",
+          "ms": 1.62975,
+          "ack": "ACK 62 draft=2 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "stop_queued_at_budget_fallback",
+          "ms": 2.980417,
+          "ack": "ACK 64 draft=2 detached=true approval=false detail=false raw=false handoff=false cancelling=true"
+        },
+        {
+          "kind": "reset",
+          "ms": 1.732833,
+          "ack": "ACK 65 draft=2 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "approval_open",
+          "ms": 0.36025,
+          "ack": "ACK 66 draft=2 detached=true approval=true detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "approval_focus",
+          "ms": 0.29225,
+          "ack": "ACK 67 draft=2 detached=true approval=true detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "approval_close",
+          "ms": 0.506291,
+          "ack": "ACK 68 draft=2 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input_after_resize",
+          "ms": 0.363,
+          "ack": "ACK 69 draft=3 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input_after_resize",
+          "ms": 0.343125,
+          "ack": "ACK 70 draft=4 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input_after_resize",
+          "ms": 0.221791,
+          "ack": "ACK 71 draft=5 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "history_open",
+          "ms": 0.376,
+          "ack": "ACK 72 draft=5 detached=true approval=false detail=true raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "detail_open",
+          "ms": 0.243417,
+          "ack": "ACK 73 draft=5 detached=true approval=false detail=true raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "raw_toggle",
+          "ms": 0.440834,
+          "ack": "ACK 74 draft=5 detached=true approval=false detail=true raw=true handoff=false cancelling=false"
+        },
+        {
+          "kind": "markdown_toggle",
+          "ms": 0.266375,
+          "ack": "ACK 75 draft=5 detached=true approval=false detail=true raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "history_close",
+          "ms": 0.238667,
+          "ack": "ACK 76 draft=5 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "commit_blocked_projection",
+          "ms": 0.07625,
+          "ack": "ACK 77 draft=5 detached=true approval=false detail=false raw=false handoff=true cancelling=false"
+        },
+        {
+          "kind": "input_during_handoff",
+          "ms": 0.057959,
+          "ack": "ACK 78 draft=6 detached=true approval=false detail=false raw=false handoff=true cancelling=false"
+        },
+        {
+          "kind": "release_projection",
+          "ms": 0.092334,
+          "ack": "ACK 79 draft=6 detached=true approval=false detail=false raw=false handoff=true cancelling=false"
+        }
+      ]
+    },
+    {
+      "no_color": true,
+      "p95_ms": 3.017917,
+      "max_ms": 3.255292,
+      "passed": true,
+      "terminal_restored": true,
+      "samples": [
+        {
+          "kind": "startup_input",
+          "ms": 1.675208,
+          "ack": "ACK 1 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.632709,
+          "ack": "ACK 2 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.896208,
+          "ack": "ACK 3 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.564334,
+          "ack": "ACK 4 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.831167,
+          "ack": "ACK 5 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.550542,
+          "ack": "ACK 6 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.786375,
+          "ack": "ACK 7 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.866958,
+          "ack": "ACK 8 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.587333,
+          "ack": "ACK 9 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.922583,
+          "ack": "ACK 10 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.608,
+          "ack": "ACK 11 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.833625,
+          "ack": "ACK 12 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.589292,
+          "ack": "ACK 13 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.827084,
+          "ack": "ACK 14 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.780375,
+          "ack": "ACK 15 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.548459,
+          "ack": "ACK 16 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.828541,
+          "ack": "ACK 17 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.566833,
+          "ack": "ACK 18 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.856792,
+          "ack": "ACK 19 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.560958,
+          "ack": "ACK 20 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.764667,
+          "ack": "ACK 21 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.616792,
+          "ack": "ACK 22 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.818625,
+          "ack": "ACK 23 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.563334,
+          "ack": "ACK 24 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.734583,
+          "ack": "ACK 25 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.822958,
+          "ack": "ACK 26 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.671417,
+          "ack": "ACK 27 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.627708,
+          "ack": "ACK 28 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.863625,
+          "ack": "ACK 29 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.562708,
+          "ack": "ACK 30 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.84825,
+          "ack": "ACK 31 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.54175,
+          "ack": "ACK 32 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.824042,
+          "ack": "ACK 33 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.566042,
+          "ack": "ACK 34 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.808917,
+          "ack": "ACK 35 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.582417,
+          "ack": "ACK 36 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.784209,
+          "ack": "ACK 37 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.832084,
+          "ack": "ACK 38 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.774125,
+          "ack": "ACK 39 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input",
+          "ms": 0.729875,
+          "ack": "ACK 40 draft=2 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "backspace",
+          "ms": 0.806625,
+          "ack": "ACK 41 draft=1 detached=false approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "page_up",
+          "ms": 0.62425,
+          "ack": "ACK 42 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "page_down",
+          "ms": 0.904833,
+          "ack": "ACK 43 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "open_code",
+          "ms": 2.812625,
+          "ack": "ACK 44 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "stop_acceptance",
+          "ms": 0.581,
+          "ack": "ACK 45 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=true"
+        },
+        {
+          "kind": "reset",
+          "ms": 3.031791,
+          "ack": "ACK 46 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "open_code",
+          "ms": 2.376542,
+          "ack": "ACK 47 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "close_code_cold_scan",
+          "ms": 3.099667,
+          "ack": "ACK 48 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "open_code",
+          "ms": 2.871209,
+          "ack": "ACK 49 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "close_code_cold_scan",
+          "ms": 2.761834,
+          "ack": "ACK 50 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "open_code",
+          "ms": 2.703625,
+          "ack": "ACK 51 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "close_code_cold_scan",
+          "ms": 2.717417,
+          "ack": "ACK 52 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "open_code",
+          "ms": 2.704166,
+          "ack": "ACK 53 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "close_code_cold_scan",
+          "ms": 2.923709,
+          "ack": "ACK 54 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "open_code",
+          "ms": 2.8415,
+          "ack": "ACK 55 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "close_code_cold_scan",
+          "ms": 2.952625,
+          "ack": "ACK 56 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "open_code",
+          "ms": 2.759625,
+          "ack": "ACK 57 draft=1 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input_queued_at_cold_close",
+          "ms": 3.255292,
+          "ack": "ACK 59 draft=2 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "approval_queued_at_budget_fallback",
+          "ms": 3.017917,
+          "ack": "ACK 61 draft=2 detached=true approval=true detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "approval_close",
+          "ms": 1.643375,
+          "ack": "ACK 62 draft=2 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "stop_queued_at_budget_fallback",
+          "ms": 2.366167,
+          "ack": "ACK 64 draft=2 detached=true approval=false detail=false raw=false handoff=false cancelling=true"
+        },
+        {
+          "kind": "reset",
+          "ms": 1.603083,
+          "ack": "ACK 65 draft=2 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "approval_open",
+          "ms": 0.406917,
+          "ack": "ACK 66 draft=2 detached=true approval=true detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "approval_focus",
+          "ms": 0.229667,
+          "ack": "ACK 67 draft=2 detached=true approval=true detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "approval_close",
+          "ms": 0.233375,
+          "ack": "ACK 68 draft=2 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input_after_resize",
+          "ms": 0.483833,
+          "ack": "ACK 69 draft=3 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input_after_resize",
+          "ms": 0.329,
+          "ack": "ACK 70 draft=4 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "input_after_resize",
+          "ms": 0.462583,
+          "ack": "ACK 71 draft=5 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "history_open",
+          "ms": 0.242333,
+          "ack": "ACK 72 draft=5 detached=true approval=false detail=true raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "detail_open",
+          "ms": 0.227583,
+          "ack": "ACK 73 draft=5 detached=true approval=false detail=true raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "raw_toggle",
+          "ms": 0.368417,
+          "ack": "ACK 74 draft=5 detached=true approval=false detail=true raw=true handoff=false cancelling=false"
+        },
+        {
+          "kind": "markdown_toggle",
+          "ms": 0.371083,
+          "ack": "ACK 75 draft=5 detached=true approval=false detail=true raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "history_close",
+          "ms": 0.250166,
+          "ack": "ACK 76 draft=5 detached=true approval=false detail=false raw=false handoff=false cancelling=false"
+        },
+        {
+          "kind": "commit_blocked_projection",
+          "ms": 0.1035,
+          "ack": "ACK 77 draft=5 detached=true approval=false detail=false raw=false handoff=true cancelling=false"
+        },
+        {
+          "kind": "input_during_handoff",
+          "ms": 0.098583,
+          "ack": "ACK 78 draft=6 detached=true approval=false detail=false raw=false handoff=true cancelling=false"
+        },
+        {
+          "kind": "release_projection",
+          "ms": 0.062,
+          "ack": "ACK 79 draft=6 detached=true approval=false detail=false raw=false handoff=true cancelling=false"
+        }
+      ]
+    }
+  ]
+}

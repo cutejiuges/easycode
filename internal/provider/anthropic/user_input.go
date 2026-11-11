@@ -68,10 +68,15 @@ func (conversation *Conversation) compileSamplingRequest(history []nativeHistory
 	if err != nil {
 		return codec.CanonicalJSON{}, err
 	}
-	return compileCachedMessagesRequest(plan, false, conversation.provider.config.CachePolicy.Anthropic())
+	return plan.body(conversation.provider.config.CachePolicy.Anthropic())
+}
+
+func (plan samplingRequestPlan) body(mode domain.AnthropicCacheMode) (codec.CanonicalJSON, error) {
+	return compileCachedMessagesRequest(plan, plan.purpose == domain.RequestSummary, mode)
 }
 
 type samplingRequestPlan struct {
+	purpose domain.RequestPurpose
 	request messagesRequest
 	history []nativeHistoryEntry
 	project bool
@@ -96,7 +101,8 @@ func (conversation *Conversation) planSamplingRequest(history []nativeHistoryEnt
 	if err != nil {
 		return samplingRequestPlan{}, err
 	}
-	plan := samplingRequestPlan{request: buildMessagesRequest(conversation.provider.config.Model, conversation.provider.config.MaxOutputTokens, history, instructions, view), history: history, project: instructions != nil && instructions.HasDocuments()}
+	plan := samplingRequestPlan{purpose: domain.RequestSample, request: buildMessagesRequest(conversation.provider.config.Model, int(conversation.provider.config.Inference.MaxOutputTokens()), history, instructions, view), history: history, project: instructions != nil && instructions.HasDocuments()}
+	plan.request.applyInference(conversation.provider.config.Inference)
 	if c := input.SkillCatalog(); c.HasEntries() {
 		index := 0
 		if plan.project {

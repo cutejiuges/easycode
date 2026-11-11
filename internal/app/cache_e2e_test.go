@@ -38,14 +38,11 @@ func TestCachedProvidersSameThreadLiveAndRestoredCanonicalRequests(t *testing.T)
 				n := len(requests)
 				mu.Unlock()
 				w.Header().Set("Content-Type", "text/event-stream")
-				if family == domain.ProviderOpenAI {
-					writeOpenAIAppTurn(w, n)
-				} else {
-					writeAnthropicAppTurn(w, n)
-				}
+				_, _ = w.Write(activeReasoningFixture(family, n, false))
 			}))
 			defer server.Close()
 			cfg := cacheFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, Model: "fixture-model", BaseURL: server.URL, APIKey: secret.New("cache-secret")}}, true)
+			cfg = reasoningFixtureConfig(t, cfg)
 			live, err := openChatResources(context.Background(), cfg, filepath.Join(t.TempDir(), "sessions"), "", t.TempDir())
 			if err != nil {
 				t.Fatal(err)

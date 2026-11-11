@@ -27,6 +27,7 @@ func (s requestSelection) apply(r domain.RequestReceipt) (domain.RequestReceipt,
 }
 
 type websocketCreate struct {
+	Reasoning          *reasoningWire `json:"reasoning,omitempty"`
 	Type               string         `json:"type"`
 	PreviousResponseID string         `json:"previous_response_id,omitempty"`
 	PromptCacheKey     string         `json:"prompt_cache_key,omitempty"`
@@ -47,7 +48,7 @@ func websocketBody(request codec.CanonicalJSON, responseID string, offset int) (
 	if offset < 0 || offset > len(r.Input) {
 		return codec.CanonicalJSON{}, fmt.Errorf("incremental request offset is invalid")
 	}
-	return codec.MarshalCanonical(websocketCreate{Type: "response.create", PreviousResponseID: responseID, PromptCacheKey: r.PromptCacheKey, ToolChoice: r.ToolChoice, MaxOutputTokens: r.MaxOutputTokens, Model: r.Model, Input: r.Input[offset:], Tools: r.Tools, Store: false, Include: r.Include}, maxResponsesRequestBytes)
+	return codec.MarshalCanonical(websocketCreate{Reasoning: r.Reasoning, Type: "response.create", PreviousResponseID: responseID, PromptCacheKey: r.PromptCacheKey, ToolChoice: r.ToolChoice, MaxOutputTokens: r.MaxOutputTokens, Model: r.Model, Input: r.Input[offset:], Tools: r.Tools, Store: false, Include: r.Include}, maxResponsesRequestBytes)
 }
 func classifyWebsocketFrame(data []byte) (transport.WSFrameInfo, error) {
 	var event struct {

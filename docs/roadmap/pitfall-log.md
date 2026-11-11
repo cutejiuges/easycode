@@ -2,6 +2,28 @@
 
 > 本文按事件发生时记录事实，不作为当前功能清单。版本数字、工具数量、平台验收和当时未实现项需结合后续条目与[当前能力清单](capability-status.md)阅读；当前内部格式没有 canary/schema_version 等版本门禁。
 
+### [P1/P2][2026-11-11] 类型反序列化前遗漏完整事件帧校验
+
+- 现象：两家 Provider 的重复 usage/details/token 成员可由后值覆盖，掩盖 null、超总量关系或已报告计量；OpenAI 重复响应 ID 还可能掩盖终态身份冲突。完整工具参数先到达时，不能只凭参数有效就允许后续异常样本执行工具。
+- 根因：直接类型反序列化完整 SSE 帧，局部字段校验只能看到覆盖后的值，无法还原重复成员造成的歧义。
+- 修复：在两个 reducer 的任何状态更新与终态接纳前复用 `codec.ValidateJSON`，拒绝重复成员、尾随内容和有损 Unicode，再执行现有类型解码。合法未知扩展仍受控接受；不同事件的计量更新不是重复成员，thinking 明确零和缺失继续遵循独立观测规则。
+- 未采用：不使用后值优先、不以零修复异常、不隐式重试，也不把整个服务端事件改为封闭对象从而拒绝全部未知扩展；没有新增 codec、依赖、owner 或兼容 reader。
+- 验证：两家 `usage_validation_regression_test.go` 的 8 个修复前失败用例、`internal/app/reasoning_malformed_stream_test.go` 的 6 组失败隔离、`internal/app/reasoning_cli_e2e_test.go` 的 24 组真实 CLI，以及 32 个 PTY 场景、5 轮乱序 race、421,051 次 fuzz 和全量质量门均记录于[全面回归报告](../../openspec/changes/archive/2026-11-11-add-provider-reasoning-controls/regression-2026-11-11.md)。本地模拟服务与 Darwin 验证不代表真实 endpoint 或其他平台验收。
+
+### [P1/P4][2026-11-08] 摘要请求证据与真实 body 分离
+
+- 现象：摘要独立覆盖输出上限、禁用工具并追加指导，但原 evidence 从普通 sampling 路径重编译，输入 hash 与请求属性可能描述错误的用途。
+- 根因：编译 body 和产生 receipt 分别取普通配置，手写缓存/WS 派生结构也容易漏掉新增字段。
+- 修复：两家各自持有原生用途计划，从同一执行计划导出 body/properties/输入 hash；摘要保留冻结推理策略，manual budget 与摘要上限冲突时在 started 前拒绝。logical input hash 包含指导但排除 Anthropic marker，与 committed source digest 分开。
+- 验证：两家 `reasoning_request_test.go` 固定请求/证据和 stale source、OpenAI `websocket_test.go` full/incremental/fallback、`internal/app/reasoning_auto_compaction_test.go` 工具后的真实摘要与预算拒绝。
+
+### [P1/P2][2026-11-08] 空推理正文不能替代计量事实
+
+- 现象：Anthropic 旧实现固定 reasoning_output=not_applicable，无法表达已报告的 thinking_tokens；普通恢复还缺少 native/normalized 逐项核对。
+- 根因：以旧 wire 的四项 raw usage 和可见正文能力推定独立计量不适用，遗漏嵌套 checkpoint/provenance 的当前 shape。
+- 修复：thinking_tokens 明确报告为 known（含零），缺失为 unknown；必需原生状态、同批 Sync/finalize、repair 前交叉验证。固定 current fixtures 直接替换，保留 HTML 转义和逐行 checksum，不生成兼容 reader 或运行时 encoder fixture。
+- 验证：`internal/provider/anthropic/usage_test.go`、`internal/app/reasoning_usage_restore_test.go` 与 `internal/runtime/anthropic_usage_test.go`；/cache 使用原有五指标，headless 无新增正文/opaque 字段。
+
 ### [P5][2026-11-08] 展示预算遗漏宿主适配缓冲
 
 - 现象：推理事件按 Provider/AgentLoop 各 16 项计算时，ChatSession 的转发层仍另有 16 项，实际排队容量会叠加。

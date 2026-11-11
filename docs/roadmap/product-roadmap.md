@@ -7,13 +7,13 @@
 当前契约治理变更 `unify-current-contract-lifecycle` 收敛了固定 codec、prepared commit、宿主 owner 与副作用 admission。TUI、一次性 headless、stream-json 共用 AgentLoop；关闭期间排空事件，活动 transport 可显式取消，journal lease 保留至清理完成。Patch/Write grant 仅在批准 Sync 后生效，三种副作用工具统一验证结果关联并以 uncertain 收口错配结果。本次未引入迁移或兼容 reader，后续 P4/P6/P7/P8 能力及占位退出条件保持原有范围。
 
 > 状态：持续演进（各阶段按纵向切片验收）
-> 更新时间：2026-11-08
+> 更新时间：2026-11-11
 > 依赖设计：[`../architecture/overall-architecture.md`](../architecture/overall-architecture.md)
 > Tool 专题设计：[`../architecture/tool-system.md`](../architecture/tool-system.md)
 
-## 当前状态总览（2026-11-08）
+## 当前状态总览（2026-11-11）
 
-实现与测试逐项核对见[当前能力清单](capability-status.md)。P0–P8 是并行推进的阶段目标，不以某个后期切片交付推定整个阶段完成。当前已交付九项模型工具、本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure、结构化提问、流式 Markdown、命令/Skill 首词补全、启动会话选择、Provider 缓存、手动/自动压缩及双 Provider 被动推理阅读；仍缺少主动推理配置、跨 Provider fork、后台进程、Plugins/MCP、Subagent 与完整发布矩阵。
+实现与测试逐项核对见[当前能力清单](capability-status.md)。P0–P8 是并行推进的阶段目标，不以某个后期切片交付推定整个阶段完成。当前已交付九项模型工具、本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure、结构化提问、流式 Markdown、命令/Skill 首词补全、启动会话选择、Provider 缓存、手动/自动压缩、双 Provider 推理阅读及启动推理/display/输出配置；仍缺少运行中推理切换、跨 Provider fork、后台进程、Plugins/MCP、Subagent 与完整发布矩阵。
 
 下文“工作内容/交付物/验收标准”保留阶段的完整目标；已完成状态以本总览、各节进度和当前能力清单为准。所有迁移、历史 reader 或兼容窗口必须先有用户明确要求及新 OpenSpec，不因路线图提到未来发布而预先授权。
 
@@ -155,7 +155,7 @@ make verify
 - 已完成 Anthropic Messages text-only request、indexed content-block reducer、会话级 native history、thinking/signature/redacted thinking 无损回放、显式 `message_stop` terminal、两种 API prefix 的双轮回归，并接入同一基础 TUI Chat。
 - 已完成双 Provider 共享 `StreamEvent` 的封闭构造与纯内存验证；Runtime 在消费端协议错误时取消派生 context并同步排空到 producer 关闭，AgentLoop 只在前一 stream 清理完成后启动下一 turn。
 - 已完成双 Provider 的 committed-only 文本 `HistoryProjector`：投影保留 turn 边界和可见文本，但不暴露 thinking/signature、redacted thinking、reasoning summary、encrypted content、phase、usage 或未知扩展，也不参与后续请求编译。
-- Anthropic 当前声明 streaming、thinking-signature 原生保留与 structured tools（含 Edit/Write/Bash），OpenAI 当前声明 streaming、encrypted reasoning 原生保留、function tools（含 Write/exec_command）与 custom freeform apply_patch。P2 已落地 completed-sample usage、原生历史 footprint、JSONL Session、resume/headless 和 ContextPlanner；P3 已补充 Read/Glob/Grep/Patch/Write/Exec Tool Loop 与 approval，后续已交付通用工具主线/详情、CachePlanner、三态 usage/cache UI、prompt cache key 与可选 WebSocket `previous_response_id`；被动 thinking/summary 阅读已由 P5 独立切片交付；成本、主动推理配置和通用自动重试仍未实现。
+- Anthropic 当前声明 streaming、thinking-signature 原生保留与 structured tools（含 Edit/Write/Bash），OpenAI 当前声明 streaming、encrypted reasoning 原生保留、function tools（含 Write/exec_command）与 custom freeform apply_patch。P2 已落地 completed-sample usage、原生历史 footprint、JSONL Session、resume/headless 和 ContextPlanner；P3 已补充 Read/Glob/Grep/Patch/Write/Exec Tool Loop 与 approval，后续已交付通用工具主线/详情、CachePlanner、三态 usage/cache UI、prompt cache key 与可选 WebSocket `previous_response_id`；被动 thinking/summary 阅读已由 P5 独立切片交付；启动冻结的推理配置、Anthropic thinking 计量和同源请求证据已实现；成本、运行中推理切换和通用自动重试仍未实现。
 - TUI 只消费 typed RuntimeEvent 和 ChatSession facade；已提供 Patch diff/Write、Exec approval overlay、命令进度和 Ctrl+O 历史列表与分页详情，多行 composer、字素编辑、显式 decoded paste 和有界历史；助手流式 Markdown 已接入，本地 `/cache`、`/context`、`/compact`、`/skills`、`/hooks` 已接入，通用 permission 面板仍待实现；启动 session picker 已于 2026-11-04 接入。
 
 #### OpenAI Responses（首要 Provider）
@@ -454,7 +454,7 @@ Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘�
 
 ### 9.0 当前进度（2026-11-08）
 
-已交付多行/字素输入、同轮追加与返还、流式 Markdown 与代码/表格/原文阅读、紧凑工具主线及 Ctrl+O 分页详情、完整 Patch/Write/Exec 审批、结构化问卷、Hook 信任、context/cache 面板和启动 resume picker。当前本地命令为 `/cache`、`/context`、`/compact`、`/skills`、`/hooks`，以及 Skill 显式入口。命令/Skill 首词补全和被动 thinking/summary 活动提示及 Ctrl+O 阅读已交付；主动推理配置、fork picker、后台任务 UI、cost/综合状态面板与其余命令尚未实现。
+已交付多行/字素输入、同轮追加与返还、流式 Markdown 与代码/表格/原文阅读、紧凑工具主线及 Ctrl+O 分页详情、完整 Patch/Write/Exec 审批、结构化问卷、Hook 信任、context/cache 面板和启动 resume picker。当前本地命令为 `/cache`、`/context`、`/compact`、`/skills`、`/hooks`，以及 Skill 显式入口。命令/Skill 首词补全和被动 thinking/summary 活动提示及 Ctrl+O 阅读已交付；启动推理配置与 /context 只读设置已实现；运行中推理切换、fork picker、后台任务 UI、cost/综合状态面板与其余命令尚未实现。
 
 补全复用冻结 Skill 展示列表、字素编辑和既有命令提交；Tab 只填入、Skill Enter 只选择、Esc 优先关闭，粘贴不接受候选。验收覆盖双 Provider 原生请求/恢复/缓存等价、固定尺寸和 Darwin PTY，见 [验收记录](../../openspec/changes/archive/2026-11-06-add-command-and-skill-completion/verification.md)。本切片不包含文件/参数值补全、正文 mentions 或动态目录。
 
@@ -473,7 +473,7 @@ Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘�
 
 ### 9.3 工作内容
 
-2026-09-19 已先交付验证 RuntimeEvent 边界的薄切片；2026-10-11 又交付了与 Patch candidate 精确关联的 diff approval overlay，包含默认 No、一次/本 Runtime session 允许、拒绝反馈、小窗口滚动、按键隔离和固定 snapshot。它不改变 P5 的完整范围，2026-10-28 已补充多行 composer、字素编辑、显式 decoded paste、有界 recall 与提交拒绝恢复。本地 slash commands、通用工具主线/详情、Markdown 与启动 resume picker 已有各自切片；命令/Skill 首词补全由 `add-command-and-skill-completion` 交付；被动 thinking/summary 阅读已由 `add-reasoning-transcript` 交付；主动推理配置与 fork picker 仍是后续目标。
+2026-09-19 已先交付验证 RuntimeEvent 边界的薄切片；2026-10-11 又交付了与 Patch candidate 精确关联的 diff approval overlay，包含默认 No、一次/本 Runtime session 允许、拒绝反馈、小窗口滚动、按键隔离和固定 snapshot。它不改变 P5 的完整范围，2026-10-28 已补充多行 composer、字素编辑、显式 decoded paste、有界 recall 与提交拒绝恢复。本地 slash commands、通用工具主线/详情、Markdown 与启动 resume picker 已有各自切片；命令/Skill 首词补全由 `add-command-and-skill-completion` 交付；被动 thinking/summary 阅读已由 `add-reasoning-transcript` 交付；启动推理配置已由 `add-provider-reasoning-controls` 交付；运行中推理切换与 fork picker 仍是后续目标。
 
 - composer、多行输入、paste 保护、历史、补全和 slash command。
 - assistant commentary/final、thinking/reasoning 折叠。
@@ -792,3 +792,11 @@ P5 的助手阅读切片覆盖流式消息、已提交主线和历史正文。Pg
 `add-reasoning-transcript` 接入双 Provider 被动推理阅读：主线仅保留当前活动/等待保存提示，Ctrl+O 查看允许正文或 unavailable；已保存推理不占主线 50 项窗口。Started/Delta/Completed、输入/sample 提交来源、纯内存 native ordinal 绑定与 typed failure resolution 保持阅读身份和真实保存状态。活动缓冲共享 64 KiB/50 项，全文按原文分页；同一高频事件分类在 publication 生产和 AgentLoop 消费两侧复用 committed 快照。
 
 交付不包含主动 thinking/effort/budget/summary 请求、sequential_cutoff、raw reasoning、外部推理 JSON 事件或 fork。两家当前 native/Session/checkpoint 格式和恢复/缓存语义保持不变；该切片不代表完整 P5。验证见[归档验收记录](../../openspec/changes/archive/2026-11-08-add-reasoning-transcript/verification.md)，本地入口为 `scripts/reasoning-smoke.py`、`internal/app/reasoning_e2e_test.go` 以及两家 `reasoning_restore_test.go`；真实 PTY 证据限 Darwin。
+
+### 2026-11-08 启动推理控制切片
+
+`add-provider-reasoning-controls` 复用已有原生推理、缓存、工具和恢复，实现 JSON-only 冻结 thinking/display/effort/summary 与普通输出额度。摘要沿用策略并独立预检 manual budget；Anthropic thinking_tokens 进入五指标和唯一当前 native shape，raw/normalized 在 repair 前核对；请求计划统一 body/evidence/receipt。/context 显示来源并支持受限终端滚动。主规格已同步，change 已归档，验收矩阵见[归档验收记录](../../openspec/changes/archive/2026-11-11-add-provider-reasoning-controls/verification.md)。该切片不代表 P1/P5/P6 整体退出，运行中 /effort、远端模型发现、自动降级和额外推理模式仍未交付。
+
+### 2026-11-11 启动推理控制全面回归与归档
+
+两家 Provider 已在完整事件帧校验后才归并，拒绝重复成员覆盖计量或响应身份，保留合法未知扩展和连续 thinking 零值语义。新增 24 组真实 CLI、6 组异常流端到端与计量边界/fuzz 回归；八套 32 个 PTY 场景、5 轮乱序 race、421,051 次 fuzz 及清除测试缓存后的完整 `make verify` 均通过。实现、架构、主规格、实际 record vocabulary、测试路径与 pitfall 的归档核对见[归档记录](../../openspec/changes/archive/2026-11-11-add-provider-reasoning-controls/archive.md)，原始结果见[全面回归报告](../../openspec/changes/archive/2026-11-11-add-provider-reasoning-controls/regression-2026-11-11.md)。验证范围为 macOS 与本地模拟服务，不新增平台或真实模型支持承诺。

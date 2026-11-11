@@ -1,0 +1,8 @@
+ok  	easycode/internal/domain	2.370s	coverage: 77.7% of statements
+ok  	easycode/internal/config	1.209s	coverage: 89.7% of statements
+ok  	easycode/internal/context	1.162s	coverage: 83.0% of statements
+ok  	easycode/internal/provider/anthropic	2.424s	coverage: 80.9% of statements
+ok  	easycode/internal/provider/openai	2.190s	coverage: 81.1% of statements
+ok  	easycode/internal/runtime	3.241s	coverage: 78.3% of statements
+ok  	easycode/internal/tui	1.264s	coverage: 86.7% of statements
+ok  	easycode/internal/headless	0.805s	coverage: 76.3% of statements

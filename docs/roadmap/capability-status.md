@@ -1,6 +1,6 @@
 # 当前能力与实现边界
 
-> 核对日期：2026-11-11。基线：当前仓库实现与已同步的 OpenSpec 主规格，包含结构化用户提问、PreToolUse/PostToolUse/PostToolUseFailure Hook、命令/Skill 首词补全与已验收归档的双 Provider 被动推理阅读。
+> 核对日期：2026-11-11。基线：当前仓库实现及已同步主规格，包含启动推理控制及本轮回归修复、结构化用户提问、PreToolUse/PostToolUse/PostToolUseFailure Hook、命令/Skill 首词补全与已验收归档的双 Provider 被动推理阅读。
 > 本文记录当前代码可执行的能力；[产品 Roadmap](product-roadmap.md)保留阶段目标与剩余工作。已接受的 ADR 和归档 change 记录各自当时的决策，不能单独作为现有功能清单。
 
 ## 用户入口
@@ -12,6 +12,7 @@
 | 会话发现 | `sessions list [--all] [--limit N]`；`resume [--all] [--config PATH]` 启动选择器 | 离线 list 无需模型配置；picker 需要配置及终端。搜索限最近至多 200 条元数据，非正文全文搜索；`internal/app/session_*_test.go` |
 | 本地 slash commands | `/cache`、`/context`、`/compact [instructions]`、`/skills`、`/hooks`，以及可调用 Skill 的 `/<name>` / `$name` | TUI 命令与 Skill 附件入口，支持 `/` / `$` 首词补全及冻结来源筛选；stream-json 使用独立 typed 控制消息，普通文字不执行 slash。`/help`、`/fork`、`/model`、`/plugins`、`/mcp`、`/cost` 尚未实现 |
 | 命令/Skill 补全 | 确定性筛选、上下键选择、Tab 填入、内置 Enter 执行及 Skill Enter 只填入；Esc 关闭、paste 抑制、窄屏停用 | 仅首词名称，不含文件/参数值补全、正文 mentions 或动态目录；`internal/tui/completion*_test.go`、`internal/app/completion_e2e_test.go`；候选不进入 Session 或缓存前缀 |
+| 启动推理控制 | 五个严格 JSON 字段；Anthropic thinking/display/独立 effort、OpenAI effort/summary、普通输出上限；/context 只读来源 | 启动冻结、窗口预留和摘要 manual budget 预检；不探测模型、不降级或重试，无 /effort；`internal/config/reasoning_test.go`、两家 `reasoning_request_test.go`、`internal/app/reasoning_auto_compaction_test.go` |
 | 输入控制 | 多行、字素编辑、decoded paste、有界历史、同轮追加、FIFO strict-next、原子取回、停止返还 | 未提交队列/草稿只在内存；同轮追加只在完整工具 outputs 后的采样安全点提交；`internal/runtime/agent_loop_test.go`、`internal/tui/composer*_test.go` |
 
 ## 九项模型工具与执行前检查
@@ -41,9 +42,9 @@ PreToolUse Hook 是三项 mutation 的前置门禁，**不是第十项模型工�
 | 上下文 | `provider_profile -> tool_catalog -> [project_instructions] -> [skill_catalog] -> committed_history -> current_input`，确定性 CachePlan、来源 fingerprint、本地 `byte_heuristic_v1`、显式窗口预算 | 远端精确 token count、自动文件 rehydrate、动态 git/env/world-state 注入 |
 | 项目指令 | 从启动 cwd 显式冻结层级 AGENTS.md/CLAUDE.md，相对来源、预算截断、临时注入双 Provider 请求，不写原生历史 | 全局用户指令、includes、`.claude/rules`、热加载 |
 | 缓存 | Anthropic disabled/5m/1h 显式断点；OpenAI omit/thread key；可选 WebSocket durable 前缀增量与受限回退；`/cache`/`cache.query` | 费用/价格、长期累计遥测、动态 plugin/MCP 目录策略；不能保证服务端命中 |
-| Usage | raw usage 保留于各 Provider native facts；共享五项三态指标及 turn 聚合，区分未知/不适用；最近 sample/turn/summary 有界缓存观测 | 实时独立 usage 流、cost 面板、配额与完整 metrics/tracing |
+| Usage | raw usage 保留于各 Provider native facts；共享五项三态指标及 turn 聚合，区分未知/不适用；最近 sample/turn/summary 有界缓存观测；Anthropic thinking_tokens 为 known/unknown，output 已包含 thinking | 实时独立 usage 流、cost 面板、配额与完整 metrics/tracing |
 | 压缩 | 手动 `/compact`、显式窗口下阈值自动摘要、独立 CompactionID/checkpoint、失败保留旧窗口、完整历史可读、取消/恢复 | 删除旧 JSONL、跨 Provider fork、PreCompact/PostCompact Hook、通用分块摘要 |
-| TUI | 流式 Markdown、代码/表格/原文阅读、resize/窄屏/NO_COLOR、普通批准/问卷/Hook 审查、紧凑工具主线、Ctrl+O 分页详情、context/cache、resume picker、命令/Skill 补全、thinking/summary 活动提示及 Ctrl+O 阅读 | 主动推理配置、fork picker、后台任务 UI、通用命令管理面板 |
+| TUI | 流式 Markdown、代码/表格/原文阅读、resize/窄屏/NO_COLOR、普通批准/问卷/Hook 审查、紧凑工具主线、Ctrl+O 分页详情、context/cache、resume picker、命令/Skill 补全、thinking/summary 活动提示及 Ctrl+O 阅读、冻结设置查询与有界滚动 | 运行中推理切换、fork picker、后台任务 UI、通用命令管理面板 |
 | 输出保存 | Exec stdout/stderr 与搜索连续前缀、授权 descriptor、ReadArtifact、独立宿主详情查询；恢复不重读 artifact | Read/Patch/Write/Skill/Question 的通用自动 artifact、自动过期、远程 artifact 服务 |
 
 补全验证入口为 `internal/tui/completion*_test.go`、`internal/app/completion_e2e_test.go` 与 `scripts/completion-smoke.py`。候选状态只在 TUI 内存；正式提交仍执行 Skill 来源校验及既有输入生命周期，手输/补全/恢复保持双 Provider 请求和缓存等价。
@@ -75,7 +76,11 @@ P6 当前交付本地 Skills 和同步 PreToolUse/PostToolUse/PostToolUseFailure
 - PreToolUse 验收：[verification.md](../../openspec/changes/add-pre-tool-use-command-hooks/verification.md)。
 - 命令/Skill 补全：[归档核对记录](../../openspec/changes/archive/2026-11-06-add-command-and-skill-completion/archive.md)、[追加验证报告](../../openspec/changes/archive/2026-11-06-add-command-and-skill-completion/revalidation.md)。
 
-推理展示只读取 Anthropic thinking 与 OpenAI summary_text 白名单，opaque-only 为 unavailable；签名、密文、raw 和未知扩展不进入显示或 headless。主线不累计完成推理行，活动显示共用 64 KiB/50 项，查询正文与其他详情共用四页缓存。提交来源与 sample/block 映射仅在内存中存在，Session/native/checkpoint 当前格式不变。验证入口为 `internal/provider/*/reasoning_stream_test.go`、`internal/provider/*/reasoning_restore_test.go`、`internal/runtime/reasoning_test.go`、`internal/tui/reasoning_test.go`、`internal/headless/reasoning_test.go`、`internal/app/reasoning_e2e_test.go` 与 Darwin `scripts/reasoning-smoke.py`。
+推理展示只读取 Anthropic thinking 与 OpenAI summary_text 白名单，opaque-only 为 unavailable；签名、密文、raw 和未知扩展不进入显示或 headless。主线不累计完成推理行，活动显示共用 64 KiB/50 项，查询正文与其他详情共用四页缓存。提交来源与 sample/block 映射仅在内存中存在，这部分展示不改变存储；启动推理控制另将 Anthropic raw usage 当前 shape 扩展为必需 thinking_tokens 状态，并替换固定 current bytes，旧开发 shape 拒绝。验证入口为 `internal/provider/*/reasoning_stream_test.go`、`internal/provider/*/reasoning_restore_test.go`、`internal/runtime/reasoning_test.go`、`internal/tui/reasoning_test.go`、`internal/headless/reasoning_test.go`、`internal/app/reasoning_e2e_test.go` 与 Darwin `scripts/reasoning-smoke.py`。
+
+启动控制与观测分开：display omitted/空 thinking 仍可有正值 usage，summarized 不保证正文。摘要保留同一冻结策略及独立额度，manual 冲突在 started 前拒绝；成功/候选失败计量分别归属 CompactionID。`internal/app/reasoning_usage_restore_test.go` 验证固定正值/零/unknown、raw/normalized 不一致及旧 shape 在 repair 前拒绝；`internal/runtime/anthropic_usage_test.go` 覆盖 Sync 与候选失败计量，`scripts/reasoning-controls-smoke.py` 覆盖 Darwin 双 Provider、NO_COLOR、/context、/cache、工具后摘要/预算拒绝、阅读和取消。外部 JSONL v1 字段不增加，reasoning_output 的值/状态按新计量契约更新。
+
+2026-11-11 全面回归补齐双 Provider 完整事件帧校验，重复成员不能覆盖 usage 或响应 ID，异常样本不提交成功事实或执行工具，合法未知扩展和连续零值观测保持原义。测试入口为两家 `usage_validation_regression_test.go`、`internal/app/reasoning_malformed_stream_test.go`、`internal/app/reasoning_cli_e2e_test.go`；24 组真实 CLI、32 个 PTY 场景、5 轮乱序 race、421,051 次 fuzz 与完整质量门证据见[归档回归记录](../../openspec/changes/archive/2026-11-11-add-provider-reasoning-controls/regression-2026-11-11.md)。启动控制的主规格已同步；运行中设置切换、真实模型服务和全平台终端验收仍不在该交付范围。
 
 - PostToolUseFailure 验收：[verification.md](../../openspec/changes/archive/2026-11-11-add-post-tool-use-failure-hooks/verification.md)。
 

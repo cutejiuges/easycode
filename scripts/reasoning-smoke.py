@@ -15,7 +15,7 @@ import termios
 import time
 
 
-def run_case(binary, root, family, no_color, cancel):
+def run_case(binary, root, family, no_color, cancel, controls=False):
     master, slave = pty.openpty()
     read_fd, write_fd = os.pipe()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
@@ -23,6 +23,7 @@ def run_case(binary, root, family, no_color, cancel):
     env = os.environ.copy()
     env.update(EASYCODE_REASONING_TERMINAL_SMOKE="1", EASYCODE_REASONING_FAMILY=family,
                EASYCODE_REASONING_ACK_FD=str(write_fd), TERM="xterm-256color")
+    env["EASYCODE_REASONING_CONTROLS_SMOKE"] = "1" if controls else "0"
     if no_color:
         env["NO_COLOR"] = "1"
     else:
@@ -61,6 +62,13 @@ def run_case(binary, root, family, no_color, cancel):
 
     try:
         receive(b"READY")
+        if controls:
+            send(b"/context")
+            send(b"\r")
+            context = receive(b"CONTEXT ")
+            if not all(field in context for field in ["frozen=true", "explicit=true", "cap=true"]):
+                raise RuntimeError(f"frozen settings missing: {context}")
+            send(b"\x1b")
         send(b"work")
         send(b"\r")
         receive(b"LIVE")
@@ -90,13 +98,50 @@ def run_case(binary, root, family, no_color, cancel):
             if commit[1:] != read[1:3]:
                 raise RuntimeError(f"cursor handoff drifted: {commit} / {read}")
             receive(b"COMPLETE")
+            if controls:
+                if receive(b"USAGE ") != "USAGE 60 80":
+                    raise RuntimeError("tool loop thinking usage incorrect")
+                send(b"\x0f")
+                send(b"/cache")
+                send(b"\r")
+                cache = receive(b"CACHE ")
+                if "known=true" not in cache:
+                    raise RuntimeError("reported thinking usage missing from committed snapshot")
+                if "observed=true" not in cache:
+                    for _ in range(120):
+                        if "observed=true" in send(b"\x1b[B"):
+                            break
+                    else:
+                        raise RuntimeError("reported thinking usage unreachable in cache panel")
+                send(b"\x1b")
+                deadline = time.monotonic() + 10
+                while True:
+                    send(b"/context")
+                    send(b"\r")
+                    context = receive(b"CONTEXT ")
+                    send(b"\x1b")
+                    if "idle=true" in context:
+                        break
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError("turn owner did not finish cleanup")
+                send(b"/compact preserve unfinished work")
+                send(b"\r")
+                if family == "anthropic":
+                    if receive(b"BUDGET ") != "BUDGET compaction_budget_exceeded":
+                        raise RuntimeError("manual summary budget was not rejected")
+                else:
+                    receive(b"SUMMARY")
             ack = send(b"\x0f")
             if "thinking=true" in ack:
                 raise RuntimeError("committed reasoning left active status")
-            if "uncertain=true" not in send(b"\x1b[19~"):
+            if not controls and "uncertain=true" not in send(b"\x1b[19~"):
                 raise RuntimeError("uncertain save state missing")
         os.write(master, b"\x1b[21~")
         receive(b"CLOSED")
+        if controls:
+            expected = 1 if cancel else (2 if family == "anthropic" else 3)
+            if receive(b"REQUESTS ") != f"REQUESTS {expected}":
+                raise RuntimeError("unexpected model retry or summary request")
         process.wait(timeout=5)
         if process.returncode:
             raise RuntimeError(f"helper failed: {output[-2000:]!r}")
@@ -110,7 +155,7 @@ def run_case(binary, root, family, no_color, cancel):
             if private in output:
                 raise RuntimeError("opaque data reached terminal")
         return {"provider": family, "no_color": no_color, "cancel": cancel,
-                "cursor_handoff": not cancel, "terminal_restored": True, "passed": True}
+                "cursor_handoff": not cancel, "controls": controls, "terminal_restored": True, "passed": True}
     finally:
         if process.poll() is None:
             process.kill()
