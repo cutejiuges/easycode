@@ -1,0 +1,77 @@
+{
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "cases": [
+    {
+      "provider": "openai",
+      "no_color": false,
+      "cancel": false,
+      "cursor_handoff": true,
+      "controls": true,
+      "terminal_restored": true,
+      "passed": true
+    },
+    {
+      "provider": "openai",
+      "no_color": false,
+      "cancel": true,
+      "cursor_handoff": false,
+      "controls": true,
+      "terminal_restored": true,
+      "passed": true
+    },
+    {
+      "provider": "openai",
+      "no_color": true,
+      "cancel": false,
+      "cursor_handoff": true,
+      "controls": true,
+      "terminal_restored": true,
+      "passed": true
+    },
+    {
+      "provider": "openai",
+      "no_color": true,
+      "cancel": true,
+      "cursor_handoff": false,
+      "controls": true,
+      "terminal_restored": true,
+      "passed": true
+    },
+    {
+      "provider": "anthropic",
+      "no_color": false,
+      "cancel": false,
+      "cursor_handoff": true,
+      "controls": true,
+      "terminal_restored": true,
+      "passed": true
+    },
+    {
+      "provider": "anthropic",
+      "no_color": false,
+      "cancel": true,
+      "cursor_handoff": false,
+      "controls": true,
+      "terminal_restored": true,
+      "passed": true
+    },
+    {
+      "provider": "anthropic",
+      "no_color": true,
+      "cancel": false,
+      "cursor_handoff": true,
+      "controls": true,
+      "terminal_restored": true,
+      "passed": true
+    },
+    {
+      "provider": "anthropic",
+      "no_color": true,
+      "cancel": true,
+      "cursor_handoff": false,
+      "controls": true,
+      "terminal_restored": true,
+      "passed": true
+    }
+  ]
+}

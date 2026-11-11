@@ -67,7 +67,7 @@ func TestNativeCommitCanonicalGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `{"kind":"sample","assistant":{"role":"assistant","content":[{"type":"text","text":"world"}]},"metadata":{"id":"msg-1","model":"claude-test","stop_reason":{"known":true,"value":"end_turn"},"usage":{"input_tokens":{"known":true,"value":3},"cache_creation_input_tokens":{"known":false},"cache_read_input_tokens":{"known":false},"output_tokens":{"known":false}}}}`
+	const want = `{"kind":"sample","assistant":{"role":"assistant","content":[{"type":"text","text":"world"}]},"metadata":{"id":"msg-1","model":"claude-test","stop_reason":{"known":true,"value":"end_turn"},"usage":{"input_tokens":{"known":true,"value":3},"cache_creation_input_tokens":{"known":false},"cache_read_input_tokens":{"known":false},"output_tokens":{"known":false},"thinking_tokens":{"known":false}}}}`
 	if got := string(envelope.Payload()); got != want {
 		t.Fatalf("Anthropic native commit golden changed:\n%s", got)
 	}
@@ -75,7 +75,7 @@ func TestNativeCommitCanonicalGolden(t *testing.T) {
 
 func TestNativeCommitRejectsIncompatibleAndCorruptPayloads(t *testing.T) {
 	t.Parallel()
-	validPayload := json.RawMessage(`{"kind":"sample","assistant":{"role":"assistant","content":[{"type":"text","text":"world"}]},"metadata":{"id":"msg-1","model":"claude-test","stop_reason":{"known":false},"usage":{"input_tokens":{"known":false},"cache_creation_input_tokens":{"known":false},"cache_read_input_tokens":{"known":false},"output_tokens":{"known":false}}}}`)
+	validPayload := json.RawMessage(`{"kind":"sample","assistant":{"role":"assistant","content":[{"type":"text","text":"world"}]},"metadata":{"id":"msg-1","model":"claude-test","stop_reason":{"known":false},"usage":{"input_tokens":{"known":false},"cache_creation_input_tokens":{"known":false},"cache_read_input_tokens":{"known":false},"output_tokens":{"known":false},"thinking_tokens":{"known":false}}}}`)
 	fixtures := []struct {
 		name    string
 		family  domain.ProviderFamily

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -20,6 +21,12 @@ import (
 )
 
 func TestWebSocketDurableIncrementalAndReset(t *testing.T) {
+	runWebSocketDurableIncrementalAndReset(t, false)
+}
+func TestReasoningWebSocketDurableIncrementalAndReset(t *testing.T) {
+	runWebSocketDurableIncrementalAndReset(t, true)
+}
+func runWebSocketDurableIncrementalAndReset(t *testing.T, active bool) {
 	requests := make(chan []byte, 8)
 	var connects atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -48,7 +55,11 @@ func TestWebSocketDurableIncrementalAndReset(t *testing.T) {
 	}))
 	defer server.Close()
 	policy, _ := domain.NewCachePolicy(domain.AnthropicCacheDisabled, domain.OpenAICacheThread, domain.OpenAIWebSocketAuto)
-	instance, err := New(Config{BaseURL: server.URL + "/v1/", APIKey: secret.New("ws-test"), Model: "gpt-test", CachePolicy: policy})
+	settings, _ := domain.DefaultInferenceSettings(domain.ProviderOpenAI)
+	if active {
+		settings, _ = domain.NewOpenAIInference("high", "auto", 16384)
+	}
+	instance, err := New(Config{Inference: settings, BaseURL: server.URL + "/v1/", APIKey: secret.New("ws-test"), Model: "gpt-test", CachePolicy: policy})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +80,11 @@ func TestWebSocketDurableIncrementalAndReset(t *testing.T) {
 		t.Fatal(receipt)
 	}
 	wire1 := <-requests
-	golden, err := os.ReadFile("testdata/websocket_full.golden.json")
+	goldenPath := "testdata/websocket_full.golden.json"
+	if active {
+		goldenPath = "testdata/reasoning_websocket_full.golden.json"
+	}
+	golden, err := os.ReadFile(goldenPath)
 	if err != nil || !bytes.Equal(wire1, bytes.TrimSpace(golden)) {
 		t.Fatalf("full wire golden mismatch: %v", err)
 	}
@@ -97,7 +112,11 @@ func TestWebSocketDurableIncrementalAndReset(t *testing.T) {
 		t.Fatal(second.Error())
 	}
 	wire2 := <-requests
-	golden, err = os.ReadFile("testdata/websocket_incremental.golden.json")
+	goldenPath = "testdata/websocket_incremental.golden.json"
+	if active {
+		goldenPath = "testdata/reasoning_websocket_incremental.golden.json"
+	}
+	golden, err = os.ReadFile(goldenPath)
 	if err != nil || !bytes.Equal(wire2, bytes.TrimSpace(golden)) {
 		t.Fatalf("incremental wire golden mismatch: %v", err)
 	}
@@ -196,6 +215,10 @@ func TestWebSocketDurableIncrementalAndReset(t *testing.T) {
 func websocketCacheSources(t *testing.T, c *Conversation) contextplan.CacheSources {
 	t.Helper()
 	profile, _ := contextplan.NewProviderProfile(domain.ProviderOpenAI, c.provider.config.Model)
+	profile, err := profile.WithInferenceSettings(c.provider.config.Inference)
+	if err != nil {
+		t.Fatal(err)
+	}
 	project, _ := domain.NewEmptyProjectInstructionsSnapshot(32 << 10)
 	view, err := c.ProjectActiveContext()
 	if err != nil {
@@ -221,9 +244,10 @@ func websocketCacheSources(t *testing.T, c *Conversation) contextplan.CacheSourc
 }
 
 func TestWebSocketHandshakeFallbackIsSticky(t *testing.T) {
-	for _, status := range []int{404, 405, 426, 401, 403, 307} {
+	for _, status := range []int{404, 405, 426, 400, 401, 403, 429, 307} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			var handshakes, posts atomic.Int32
+			hashes := make(chan string, 2)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodGet {
 					handshakes.Add(1)
@@ -231,12 +255,19 @@ func TestWebSocketHandshakeFallbackIsSticky(t *testing.T) {
 					return
 				}
 				posts.Add(1)
+				body, _ := io.ReadAll(r.Body)
+				var logical responsesRequest
+				if codec.Unmarshal(body, &logical) != nil || logical.Reasoning == nil || logical.Reasoning.Effort != "high" || logical.Reasoning.Summary != "auto" || logical.MaxOutputTokens != 16384 {
+					t.Error("fallback lost frozen settings")
+				}
+				hashes <- domain.ContentFingerprint(body)
 				w.Header().Set("Content-Type", "text/event-stream")
 				fmt.Fprint(w, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"r\"}}\n\ndata: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"done\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"r\"}}\n\n")
 			}))
 			defer server.Close()
 			policy, _ := domain.NewCachePolicy(domain.AnthropicCacheDisabled, domain.OpenAICacheOmit, domain.OpenAIWebSocketAuto)
-			instance, err := New(Config{BaseURL: server.URL, APIKey: secret.New("key"), Model: "m", CachePolicy: policy})
+			settings, _ := domain.NewOpenAIInference("high", "auto", 16384)
+			instance, err := New(Config{Inference: settings, BaseURL: server.URL, APIKey: secret.New("key"), Model: "m", CachePolicy: policy})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -262,7 +293,7 @@ func TestWebSocketHandshakeFallbackIsSticky(t *testing.T) {
 					t.Fatal(terminal.Error())
 				}
 				receipt, _ := terminal.PreparedSample().Receipt()
-				if receipt.Transport != domain.TransportHTTP || receipt.Fallback != domain.FallbackHandshake {
+				if receipt.RequestFingerprint != <-hashes || receipt.Transport != domain.TransportHTTP || receipt.Fallback != domain.FallbackHandshake {
 					t.Fatal(receipt)
 				}
 				_ = terminal.PreparedSample().Finalize()
@@ -295,6 +326,9 @@ func TestWebSocketPostCreateErrorDoesNotRetry(t *testing.T) {
 		if codec.Unmarshal(body, &request) != nil {
 			return
 		}
+		if request.Reasoning == nil || request.Reasoning.Effort != "high" || request.Reasoning.Summary != "auto" || request.MaxOutputTokens != 16384 {
+			t.Error("create lost frozen settings")
+		}
 		if request.PreviousResponseID != "" {
 			t.Error("failed connection reused")
 		}
@@ -310,7 +344,8 @@ func TestWebSocketPostCreateErrorDoesNotRetry(t *testing.T) {
 	}))
 	defer server.Close()
 	policy, _ := domain.NewCachePolicy(domain.AnthropicCacheDisabled, domain.OpenAICacheOmit, domain.OpenAIWebSocketAuto)
-	instance, err := New(Config{BaseURL: server.URL, APIKey: secret.New("private-key"), Model: "m", CachePolicy: policy})
+	settings, _ := domain.NewOpenAIInference("high", "auto", 16384)
+	instance, err := New(Config{Inference: settings, BaseURL: server.URL, APIKey: secret.New("private-key"), Model: "m", CachePolicy: policy})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -470,6 +505,7 @@ func TestEveryLogicalPropertyChangeInvalidatesContinuation(t *testing.T) {
 		name  string
 		apply func(*responsesRequest)
 	}{
+		{"Reasoning", func(r *responsesRequest) { r.Reasoning = &reasoningWire{Effort: "high", Summary: "auto"} }},
 		{"Model", func(r *responsesRequest) { r.Model = "other" }}, {"PromptCacheKey", func(r *responsesRequest) { r.PromptCacheKey = "other" }},
 		{"ToolChoice", func(r *responsesRequest) { r.ToolChoice = "none" }}, {"MaxOutputTokens", func(r *responsesRequest) { r.MaxOutputTokens = 1 }},
 		{"Tools", func(r *responsesRequest) {

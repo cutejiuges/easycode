@@ -50,12 +50,14 @@ type cachedTool struct {
 	CacheControl *cacheControl   `json:"cache_control,omitempty"`
 }
 type cachedMessagesRequest struct {
-	ToolChoice *summaryToolChoice `json:"tool_choice,omitempty"`
-	Model      string             `json:"model"`
-	Messages   []cachedMessage    `json:"messages"`
-	MaxTokens  int                `json:"max_tokens"`
-	Tools      []cachedTool       `json:"tools"`
-	Stream     bool               `json:"stream"`
+	Thinking     *thinkingWire      `json:"thinking,omitempty"`
+	OutputConfig *outputConfigWire  `json:"output_config,omitempty"`
+	ToolChoice   *summaryToolChoice `json:"tool_choice,omitempty"`
+	Model        string             `json:"model"`
+	Messages     []cachedMessage    `json:"messages"`
+	MaxTokens    int                `json:"max_tokens"`
+	Tools        []cachedTool       `json:"tools"`
+	Stream       bool               `json:"stream"`
 }
 type cachePosition struct {
 	message int
@@ -155,7 +157,7 @@ func compileCachedMessagesRequest(plan samplingRequestPlan, summary bool, mode d
 		marker.TTL = "1h"
 	}
 	r := plan.request
-	wire := cachedMessagesRequest{ToolChoice: r.ToolChoice, Model: r.Model, MaxTokens: r.MaxTokens, Stream: r.Stream, Messages: make([]cachedMessage, len(r.Messages)), Tools: make([]cachedTool, len(r.Tools))}
+	wire := cachedMessagesRequest{Thinking: plan.request.Thinking, OutputConfig: plan.request.OutputConfig, ToolChoice: r.ToolChoice, Model: r.Model, MaxTokens: r.MaxTokens, Stream: r.Stream, Messages: make([]cachedMessage, len(r.Messages)), Tools: make([]cachedTool, len(r.Tools))}
 	for i, m := range r.Messages {
 		wire.Messages[i] = cachedMessage{Role: m.Role, Content: make([]cachedBlock, len(m.Content))}
 		for j, item := range m.Content {

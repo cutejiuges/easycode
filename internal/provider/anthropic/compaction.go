@@ -61,17 +61,30 @@ func nativeCompactionSource(snapshot nativeWindowSnapshot, model string) (provid
 }
 
 func (conversation *Conversation) compileCompactionRequest(input provider.CompactionInput) (codec.CanonicalJSON, error) {
-	if err := input.Validate(); err != nil {
-		return codec.CanonicalJSON{}, err
-	}
-	plan, err := conversation.planSamplingRequest(conversation.history.snapshot(), input.Sampling())
+	plan, err := conversation.planCompactionRequest(input)
 	if err != nil {
 		return codec.CanonicalJSON{}, err
 	}
+	return plan.body(conversation.provider.config.CachePolicy.Anthropic())
+}
+
+func (conversation *Conversation) planCompactionRequest(input provider.CompactionInput) (samplingRequestPlan, error) {
+	if err := input.Validate(); err != nil {
+		return samplingRequestPlan{}, err
+	}
+	t := conversation.provider.config.Inference.Thinking()
+	if t.Mode() == domain.ThinkingEnabled && t.BudgetTokens() >= input.OutputTokens() {
+		return samplingRequestPlan{}, provider.NewCompactionError(provider.CompactionBudgetExceeded)
+	}
+	plan, err := conversation.planSamplingRequest(conversation.history.snapshot(), input.Sampling())
+	if err != nil {
+		return samplingRequestPlan{}, err
+	}
+	plan.purpose = domain.RequestSummary
 	plan.request.ToolChoice = &summaryToolChoice{Type: "none"}
 	plan.request.MaxTokens = int(input.OutputTokens())
 	plan.request.Messages = append(plan.request.Messages, newUserMessage(provider.CompactionPrompt(input.Instructions())))
-	return compileCachedMessagesRequest(plan, true, conversation.provider.config.CachePolicy.Anthropic())
+	return plan, nil
 }
 
 // PreflightCompaction 只编译和估算当前完整有效窗口，不产生副作用。
@@ -106,9 +119,17 @@ func (conversation *Conversation) RunCompaction(ctx context.Context, id domain.C
 	if err != nil || source != preview.Source() {
 		return nil, provider.NewCompactionError(provider.CompactionSourceChanged)
 	}
-	request, err := conversation.compileCompactionRequest(preview.Input())
+	plan, err := conversation.planCompactionRequest(preview.Input())
+	if err != nil {
+		return nil, err
+	}
+	request, err := plan.body(conversation.provider.config.CachePolicy.Anthropic())
 	if err != nil {
 		return nil, provider.NewCompactionError(provider.CompactionRequestFailed)
+	}
+	evidence, evidenceErr := plan.evidence()
+	if evidenceErr != nil {
+		return nil, evidenceErr
 	}
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -146,11 +167,7 @@ func (conversation *Conversation) RunCompaction(ctx context.Context, id domain.C
 			return nil, compactionNetworkError(ctx)
 		}
 		generation := nativeHistoryEntry{Kind: nativeHistorySample, Assistant: reducer.assistantMessage(), Metadata: reducer.messageMetadata()}
-		evidence, evidenceErr := conversation.requestEvidence(preview.Input().Sampling())
-		if evidenceErr != nil {
-			return nil, evidenceErr
-		}
-		receipt, receiptErr := conversation.describeRequest(request, evidence, domain.RequestSummary)
+		receipt, receiptErr := conversation.describeRequest(request, evidence, plan.purpose)
 		if receiptErr != nil {
 			return nil, receiptErr
 		}
@@ -297,7 +314,7 @@ func validateCompactionUsage(envelope provider.NativeCommitEnvelope, expected do
 	if err := codec.UnmarshalRecord(envelope.Payload(), &record); err != nil {
 		return fmt.Errorf("compaction usage encoding is invalid")
 	}
-	for _, field := range []optionalUintCommit{record.InputTokens, record.CacheCreationInputTokens, record.CacheReadInputTokens, record.OutputTokens} {
+	for _, field := range []optionalUintCommit{record.InputTokens, record.CacheCreationInputTokens, record.CacheReadInputTokens, record.OutputTokens, record.ThinkingTokens} {
 		if field.Known != (field.Value != nil) {
 			return fmt.Errorf("compaction raw usage state is invalid")
 		}

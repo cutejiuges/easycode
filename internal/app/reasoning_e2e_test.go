@@ -157,7 +157,7 @@ func TestReasoningHeadlessCancelAndBrokenPipeMatrix(t *testing.T) {
 					}))
 					defer server.Close()
 					root := filepath.Join(privateAppTempDir(t), "sessions")
-					configPath := writeAppConfig(t, t.TempDir(), family, server.URL)
+					configPath := withReasoningConfig(t, writeAppConfig(t, t.TempDir(), family, server.URL), reasoningFields(family))
 					output := &appWriteCloser{}
 					options := Options{Mode: mode, Prompt: "work", ConfigPath: configPath, SessionDataRoot: root, Output: output}
 					if mode == headless.ModeStreamJSON {

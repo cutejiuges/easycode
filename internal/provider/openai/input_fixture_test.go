@@ -177,3 +177,11 @@ func testSampleRestoreSequence(t *testing.T, envelopes ...provider.NativeCommitE
 	}
 	return records
 }
+
+func (conversation *Conversation) requestEvidence(input provider.TurnInput) (requestEvidence, error) {
+	plan, err := conversation.planSamplingRequest(conversation.history.snapshot(), input)
+	if err != nil {
+		return requestEvidence{}, err
+	}
+	return plan.evidence()
+}

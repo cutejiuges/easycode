@@ -1,0 +1,14 @@
+--- FAIL: TestReasoningUsageDuplicateFieldsCannotBecomeSuccessfulSample (0.00s)
+    --- FAIL: TestReasoningUsageDuplicateFieldsCannotBecomeSuccessfulSample/{"id":"usage-regression","usage":{"output_tokens":40,"output_tokens_details":{"reasoning_tokens":null},"output_tokens_details":{"reasoning_tokens":30}}} (0.00s)
+        usage_validation_regression_test.go:22: ambiguous completed response became a trusted terminal
+    --- FAIL: TestReasoningUsageDuplicateFieldsCannotBecomeSuccessfulSample/{"id":"usage-regression","usage":{"output_tokens":40,"output_tokens_details":{"reasoning_tokens":30,"reasoning_tokens":0}}} (0.00s)
+        usage_validation_regression_test.go:22: ambiguous completed response became a trusted terminal
+    --- FAIL: TestReasoningUsageDuplicateFieldsCannotBecomeSuccessfulSample/{"id":"usage-regression","usage":{"output_tokens":20,"output_tokens":40,"output_tokens_details":{"reasoning_tokens":30}}} (0.00s)
+        usage_validation_regression_test.go:22: ambiguous completed response became a trusted terminal
+    --- FAIL: TestReasoningUsageDuplicateFieldsCannotBecomeSuccessfulSample/{"id":"wrong-response","id":"usage-regression","usage":{"output_tokens":40}} (0.00s)
+        usage_validation_regression_test.go:22: ambiguous completed response became a trusted terminal
+    --- FAIL: TestReasoningUsageDuplicateFieldsCannotBecomeSuccessfulSample/{"id":"usage-regression","usage":{"input_tokens":100,"input_tokens_details":{"cached_tokens":120},"input_tokens_details":{"cached_tokens":10}}} (0.00s)
+        usage_validation_regression_test.go:22: ambiguous completed response became a trusted terminal
+FAIL
+FAIL	easycode/internal/provider/openai	0.395s
+FAIL

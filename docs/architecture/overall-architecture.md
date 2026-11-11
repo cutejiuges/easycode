@@ -282,7 +282,25 @@ openai.Provider
 - remote compaction
 - usage/cached token reporting
 
-默认能力按 wire 提供，用户配置可以覆盖。运行时遇到服务端不支持时要产生可诊断的 capability downgrade，而不是静默丢失数据。当前两个 Provider reducer 已把完成响应的原始 usage 保存在各自 native payload 中，并投影为共享的 `input_uncached`、`cache_read`、`cache_write`、`output`、`reasoning_output` 五项三态指标；缺失字段保持 unknown，Provider 不存在的独立概念才使用 not-applicable。
+能力只声明当前已完成且本实例启用的路径，不推断任意 endpoint 支持；显式推理参数被拒绝时返回安全错误，不自动删字段、降低强度或重发。当前两个 Provider reducer 已把完成响应的原始 usage 保存在各自 native payload 中，并投影为共享的 `input_uncached`、`cache_read`、`cache_write`、`output`、`reasoning_output` 五项三态指标；缺失字段保持 unknown，Provider 不存在的独立概念才使用 not-applicable。
+
+### 5.2.1 启动冻结的推理控制
+
+`internal/domain/inference_settings.go` 提供私有字段的不可变 thinking 联合和双 Provider InferenceSettings。config 只在真实 JSON 边界严格解码五个新顶层字段，环境覆盖 family 后验证，再由 app 将同一值装配给 Provider、profile 和 TUI；没有配置热读、额外 goroutine 或可执行空策略。普通输出上限与窗口预留、独立摘要上限分别校验。Anthropic 原先的独立输出配置已替换，不保留双真源。
+
+Anthropic 编译 thinking/type/budget/display 及独立 output_config.effort，display 仅支持 adaptive/enabled 的 summarized/omitted；OpenAI 编译独立可省略的 reasoning.effort/summary。默认不发送推理字段；普通 Anthropic 缺省上限 4096，OpenAI 缺省不发上限。ReasoningSummary 只在显式 OpenAI summary 的本地完整路径启用时为 true，Anthropic 和 RawReasoning 仍为 false，不代表已探测 endpoint。
+
+两家分别组合自己的原生请求计划，同一执行计划产生 body、非输入 properties、输入 fingerprint 和 receipt。Anthropic 逻辑输入 hash 排除 cache marker；两家均包含临时项目/Skill 及摘要指导。窗口来源 digest 与逻辑输入 hash 分开；WS 的 full/incremental 只是完整逻辑 body 的传输派生，receipt 不改用 suffix hash。执行前核对摘要预检来源，失败不安装普通 baseline；完成 Sync 后才建立 compacted boundary。
+
+手动和自动摘要保留冻结 thinking/display/effort/summary，只改 tool choice none、独立输出额度及摘要指导。manual budget 必须严格小于摘要上限，否则 Provider CompactionBudgetExceeded 映射既有 Runtime compaction_budget_exceeded，在 started/网络前拒绝。自动路径使用既有来源抑制/预算收口；工具结果 durable 不构成远端 assistant turn 结束或切换推理模式的许可。
+
+profile 的 request_policy 只记录实际非默认普通 wire 设置；默认 canonical bytes/revision 不变，显式 Anthropic 4096 与缺省等价，显式 disabled 与省略不同。非默认 source revision 内容派生；UI 来源标签、配置路径、usage 与动态 identity 不进入指纹。所有模式、省略行为和输出边界见 [README](../../README.md#启动推理与普通输出)。
+
+Anthropic 从最终 message_delta 的 output_tokens_details.thinking_tokens 归并计量：明确零/正值为 known，缺失为 unknown，不从 display/正文/预算推断；已观测值不被缺失擦除。总 output 已包含 thinking，双方 known 时验证 thinking<=output，只有 thinking 时保留独立 known 与 output unknown。raw usage 当前结构必须含 thinking_tokens 的 known/value 状态，sample、checkpoint generation 和失败 provenance 使用同一严格 codec；恢复在 repair 前交叉核对 normalized sample usage，不提供旧四字段 reader、版本标记或迁移。outer Session/checkpoint、SQLite、OpenAI native 和 headless 外部字段/版本保持。
+
+两家 reducer 在任何事件归并或终态接纳前复用固定 `codec.ValidateJSON` 校验完整帧，拒绝任意对象层级的重复成员、尾随内容和有损 Unicode；不能让后值覆盖非法 usage、总量关系或响应 ID。类型解码与原有受控未知扩展处理随后执行，合法扩展保持可用；不同合法 delta 的明确零可更新旧 thinking 正值，缺失不擦除。修复不增加 owner、goroutine、公共接口或 native 格式。两家 `usage_validation_regression_test.go`、`internal/app/reasoning_malformed_stream_test.go` 和 `internal/app/reasoning_cli_e2e_test.go` 验证失败时零成功样本/工具执行、真实恢复和请求等价，详见[全面回归](../../openspec/changes/archive/2026-11-11-add-provider-reasoning-controls/regression-2026-11-11.md)。
+
+`/context` 从应用装配的冻结值显示 explicit/default/未发送来源，并以本地有界滚动呈现；动态窗口仍取 committed snapshot。设置不进入 ContextSnapshotPayload 或外部 context.snapshot，真实正文与 usage 继续使用现有观测。阅读、缩放、Ctrl+O 和查询不发起采样或改变策略。Darwin PTY 入口为 `scripts/reasoning-controls-smoke.py`，其他平台的真实终端矩阵不由此推定。
 
 ### 5.3 Wire 范围
 
@@ -368,13 +386,13 @@ current_input          replace / volatile
 - 工具描述、system prompt 和 catalog 的变更必须显式提高 revision 或改变 fingerprint。
 - Provider request golden test 应覆盖最终 wire JSON，而不仅是中间领域对象。
 
-当前 ContextPlanner 的 `provider_profile` 只包含 family、model 和固定 schema revision，不包含 API key、base URL、预算、cwd、Session identity 或其他动态状态。`project_instructions` 使用结构化快照的内容派生 revision 和 canonical bytes，不包含绝对项目根、mtime、inode 或 Session identity；正文或项目根相对来源变化才改变该 segment。`committed_history` 的 source revision 来自 Provider committed native revision，而不是语义 turn 数；Provider footprint 与语义历史估算是包含关系，使用 `max(semantic_visible, provider_native)` 合并，禁止相加造成可见文本重复计数。
+当前 ContextPlanner 的 `provider_profile` 包含 family、model、既有固定 schema revision 和可省略的非默认 request_policy 身份，不包含 API key、base URL、预算、cwd、Session identity 或其他动态状态。`project_instructions` 使用结构化快照的内容派生 revision 和 canonical bytes，不包含绝对项目根、mtime、inode 或 Session identity；正文或项目根相对来源变化才改变该 segment。`committed_history` 的 source revision 来自 Provider committed native revision，而不是语义 turn 数；Provider footprint 与语义历史估算是包含关系，使用 `max(semantic_visible, provider_native)` 合并，禁止相加造成可见文本重复计数。
 
 token 估算当前使用版本化本地 `byte_heuristic_v1`，明确标记 `estimated` 或 `unknown`。显式 JSON 配置可以提供 context window、输出预留和安全余量；未配置窗口或估算 unknown 时不执行硬拒绝，也不根据模型名猜测窗口。明确超限只在 durable `turn_started` 后、Provider stream 前以既有 `turn_failed` 收口，计划本身不写 Session、不新增 RuntimeEvent。
 
 ### 6.4 Anthropic 缓存策略
 
-已实现 disabled、ephemeral_5m 与 ephemeral_1h。策略在构造时冻结；5m 省略 ttl，1h 显式 ttl=1h。最终请求副本选择最多四个断点：最后内置工具、非空项目指令、满足至少 20 blocks 距离的先前普通输入边界、最新合法可复用内容。只标记 text/tool_use/tool_result，不标记 thinking、redacted、未知 block 或一次性摘要后缀；Raw 包装保留未知字段且拒绝冲突标记。普通、候选预检与手动/自动摘要共享最终编译入口，原生持久化结构不变。动态 MCP/插件工具尚未实现。
+已实现 disabled、ephemeral_5m 与 ephemeral_1h。策略在构造时冻结；5m 省略 ttl，1h 显式 ttl=1h。最终请求副本选择最多四个断点：最后内置工具、非空项目指令、满足至少 20 blocks 距离的先前普通输入边界、最新合法可复用内容。只标记 text/tool_use/tool_result，不标记 thinking、redacted、未知 block 或一次性摘要后缀；Raw 包装保留未知字段且拒绝冲突标记。普通、候选预检与手动/自动摘要共享最终编译入口，marker 不进入原生持久化；推理 usage 的当前结构独立遵守下述契约。动态 MCP/插件工具尚未实现。
 
 ### 6.5 OpenAI 缓存与瞬态连接
 
@@ -547,7 +565,7 @@ P3 当前已实现 Read、Glob、Grep、Anthropic structured Edit/OpenAI custom 
 
 当前已接入 Runtime 的来源只有：
 
-- `provider_profile`：family、model、schema revision，`replace + stable`。
+- `provider_profile`：family、model、schema revision、非默认 request_policy，`replace + stable`。
 - `tool_catalog`：九项工具的确定性 schema，`replace + stable`。
 - `project_instructions`：启动时发现的有界结构化快照，存在文档时为 `replace + project-stable`，空快照省略。
 - `skill_catalog`：冻结的本地 Skill metadata，非空时为 `replace + project-stable`；正文不进入此来源。
@@ -789,7 +807,7 @@ manifest adapter 可以统一扩展描述，但不能用于统一 provider 对�
 
 当前提供用户/assistant 流式 Markdown、代码/表格/原文阅读、紧凑工具主线、前台 Shell 进度、完整 Patch/Write/Exec 批准、结构化问卷、Hook 浏览/信任、context/cache 面板、压缩边界、Ctrl+O 分页详情和启动 resume picker。视图保持无 I/O，按需查询由宿主处理并用身份/generation 拒绝迟到响应。
 
-主动 thinking/effort/budget/summary 请求、后台任务、渐进 patch delta、MCP elicitation、Subagent/task 与 fork picker 尚未实现。测试中使用真实 PTY 验收界面，不表示模型命令工具支持 PTY。
+启动 thinking/display/effort/summary 与普通输出配置已经实现，`/context` 只读展示冻结值；运行中推理切换、后台任务、渐进 patch delta、MCP elicitation、Subagent/task 与 fork picker 尚未实现。测试中使用真实 PTY 验收界面，不表示模型命令工具支持 PTY。
 
 ### 13.3 REPL 行为
 

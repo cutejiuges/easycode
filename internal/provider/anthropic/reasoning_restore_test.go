@@ -19,7 +19,7 @@ func TestReasoningFixedNativeRestoreAndCacheBytesIgnoreReading(t *testing.T) {
 	}
 	for _, mode := range []domain.AnthropicCacheMode{domain.AnthropicCacheDisabled, domain.AnthropicCache5m, domain.AnthropicCache1h} {
 		policy, _ := domain.NewCachePolicy(mode, domain.OpenAICacheOmit, domain.OpenAIHTTPSSE)
-		instance, err := New(Config{BaseURL: "https://example.invalid", Model: "claude-test", APIKey: secret.New("fixture-key"), CachePolicy: policy, MaxOutputTokens: 4096})
+		instance, err := New(Config{BaseURL: "https://example.invalid", Model: "claude-test", APIKey: secret.New("fixture-key"), CachePolicy: policy, Inference: reasoningRestoreSettings(t)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -49,6 +49,11 @@ func TestReasoningFixedNativeRestoreAndCacheBytesIgnoreReading(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			beforeEvidence, err := live.requestEvidence(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			beforeSources := reasoningCacheSources(t, live)
 			before, err := live.compileSamplingRequest(live.history.snapshot(), input)
 			if err != nil {
 				t.Fatal(err)
@@ -83,6 +88,13 @@ func TestReasoningFixedNativeRestoreAndCacheBytesIgnoreReading(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				afterEvidence, err := conversation.requestEvidence(input)
+				if err != nil || afterEvidence.nativeFingerprint != beforeEvidence.nativeFingerprint || !bytes.Equal(afterEvidence.properties.Bytes(), beforeEvidence.properties.Bytes()) {
+					t.Fatal("restored request evidence differs", err)
+				}
+				if reasoningCacheSources(t, conversation) != beforeSources {
+					t.Fatal("restored profile/source fingerprint differs")
+				}
 				if !bytes.Equal(before.Bytes(), after.Bytes()) {
 					t.Fatal("reading or restore changed cached request")
 				}
@@ -102,4 +114,54 @@ func TestReasoningFixedNativeRestoreAndCacheBytesIgnoreReading(t *testing.T) {
 			}
 		}()
 	}
+}
+
+func reasoningRestoreSettings(t *testing.T) domain.InferenceSettings {
+	t.Helper()
+	thinking, err := domain.NewThinkingSettings(domain.ThinkingAdaptive, 0, domain.DisplayOmitted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := domain.NewAnthropicInference(thinking, "high", 16384)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return settings
+}
+
+func reasoningCacheSources(t *testing.T, c *Conversation) contextplan.CacheSources {
+	t.Helper()
+	profile, err := contextplan.NewProviderProfile(c.Family(), c.provider.config.Model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile, err = profile.WithInferenceSettings(c.provider.config.Inference)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := domain.NewEmptyProjectInstructionsSnapshot(32 << 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := c.ProjectActiveContext()
+	if err != nil {
+		t.Fatal(err)
+	}
+	footprint, err := c.HistoryFootprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := contextplan.NewPlanningInput(profile, testAnthropicToolCatalog(t), project, view, footprint, contextplan.NewSamplingInput(), contextplan.DisabledBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := contextplan.NewPlanner().Plan(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sources, err := contextplan.NewCacheSources(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sources
 }

@@ -19,7 +19,8 @@ func TestReasoningFixedNativeRestoreAndCacheBytesIgnoreReading(t *testing.T) {
 	}
 	for _, key := range []domain.OpenAICacheKeyMode{domain.OpenAICacheOmit, domain.OpenAICacheThread} {
 		policy, _ := domain.NewCachePolicy(domain.AnthropicCacheDisabled, key, domain.OpenAIHTTPSSE)
-		instance, err := New(Config{BaseURL: "https://example.invalid", Model: "gpt-test", APIKey: secret.New("fixture-key"), CachePolicy: policy})
+		settings, _ := domain.NewOpenAIInference("high", "auto", 16384)
+		instance, err := New(Config{Inference: settings, BaseURL: "https://example.invalid", Model: "gpt-test", APIKey: secret.New("fixture-key"), CachePolicy: policy})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -49,6 +50,11 @@ func TestReasoningFixedNativeRestoreAndCacheBytesIgnoreReading(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			beforeEvidence, err := live.requestEvidence(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			beforeSources := reasoningCacheSources(t, live)
 			before, err := live.compileSamplingRequest(live.history.snapshot(), input)
 			if err != nil {
 				t.Fatal(err)
@@ -83,6 +89,13 @@ func TestReasoningFixedNativeRestoreAndCacheBytesIgnoreReading(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				afterEvidence, err := conversation.requestEvidence(input)
+				if err != nil || afterEvidence.nativeFingerprint != beforeEvidence.nativeFingerprint || !bytes.Equal(afterEvidence.properties.Bytes(), beforeEvidence.properties.Bytes()) {
+					t.Fatal("restored request evidence differs", err)
+				}
+				if reasoningCacheSources(t, conversation) != beforeSources {
+					t.Fatal("restored profile/source fingerprint differs")
+				}
 				if !bytes.Equal(before.Bytes(), after.Bytes()) {
 					t.Fatal("reading or restore changed cached request")
 				}
@@ -102,4 +115,9 @@ func TestReasoningFixedNativeRestoreAndCacheBytesIgnoreReading(t *testing.T) {
 			}
 		}()
 	}
+}
+
+func reasoningCacheSources(t *testing.T, c *Conversation) contextplan.CacheSources {
+	t.Helper()
+	return websocketCacheSources(t, c)
 }

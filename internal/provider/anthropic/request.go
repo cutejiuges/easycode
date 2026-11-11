@@ -12,13 +12,25 @@ import (
 const maxMessagesRequestBytes = 16 << 20
 
 // messagesRequest 是当前文本切片发送给 Messages API 的稳定请求。
+type thinkingWire struct {
+	Type    domain.ThinkingMode    `json:"type"`
+	Budget  uint64                 `json:"budget_tokens,omitempty"`
+	Display domain.ThinkingDisplay `json:"display,omitempty"`
+}
+
+type outputConfigWire struct {
+	Effort domain.AnthropicEffort `json:"effort"`
+}
+
 type messagesRequest struct {
-	ToolChoice *summaryToolChoice `json:"tool_choice,omitempty"`
-	Model      string             `json:"model"`
-	Messages   []nativeMessage    `json:"messages"`
-	MaxTokens  int                `json:"max_tokens"`
-	Tools      []anthropicTool    `json:"tools"`
-	Stream     bool               `json:"stream"`
+	Thinking     *thinkingWire      `json:"thinking,omitempty"`
+	OutputConfig *outputConfigWire  `json:"output_config,omitempty"`
+	ToolChoice   *summaryToolChoice `json:"tool_choice,omitempty"`
+	Model        string             `json:"model"`
+	Messages     []nativeMessage    `json:"messages"`
+	MaxTokens    int                `json:"max_tokens"`
+	Tools        []anthropicTool    `json:"tools"`
+	Stream       bool               `json:"stream"`
 }
 
 type summaryToolChoice struct {
@@ -92,4 +104,15 @@ func compileMessagesRequest(
 		buildMessagesRequest(model, maxTokens, history, projectInstructions, toolView),
 		maxMessagesRequestBytes,
 	)
+}
+
+func (request *messagesRequest) applyInference(settings domain.InferenceSettings) {
+	request.MaxTokens = int(settings.MaxOutputTokens())
+	t := settings.Thinking()
+	if t.Mode() != domain.ThinkingOmit {
+		request.Thinking = &thinkingWire{t.Mode(), t.BudgetTokens(), t.Display()}
+	}
+	if settings.AnthropicEffort() != "" {
+		request.OutputConfig = &outputConfigWire{settings.AnthropicEffort()}
+	}
 }

@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 
 	"easycode/internal/codec"
@@ -55,10 +56,11 @@ type messageDeltaWire struct {
 }
 
 type usageEventWire struct {
-	InputTokens              *uint64 `json:"input_tokens,omitempty"`
-	CacheCreationInputTokens *uint64 `json:"cache_creation_input_tokens,omitempty"`
-	CacheReadInputTokens     *uint64 `json:"cache_read_input_tokens,omitempty"`
-	OutputTokens             *uint64 `json:"output_tokens,omitempty"`
+	OutputDetails            json.RawMessage `json:"output_tokens_details,omitempty"`
+	InputTokens              *uint64         `json:"input_tokens,omitempty"`
+	CacheCreationInputTokens *uint64         `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     *uint64         `json:"cache_read_input_tokens,omitempty"`
+	OutputTokens             *uint64         `json:"output_tokens,omitempty"`
 }
 
 type blockState struct {
@@ -100,8 +102,13 @@ func (reducer *streamReducer) reduce(event transport.SSEEvent) (reducerResult, e
 		return reducerResult{}, protocolError("Anthropic event received after message_stop")
 	}
 
+	data := []byte(event.Data)
+	// 在任何归并前拒绝重复键和有损 Unicode，避免后值覆盖已经失真的计量或调用身份。
+	if err := codec.ValidateJSON(data); err != nil {
+		return reducerResult{}, protocolError("Anthropic event is invalid JSON")
+	}
 	var envelope messagesEventEnvelope
-	if err := codec.Unmarshal([]byte(event.Data), &envelope); err != nil {
+	if err := codec.Unmarshal(data, &envelope); err != nil {
 		return reducerResult{}, fault.Wrap(fault.CodeStreamProtocol, "Anthropic event is invalid JSON", err)
 	}
 	if envelope.Type == "" {
@@ -351,6 +358,13 @@ func (reducer *streamReducer) reduceMessageDelta(deltaRaw json.RawMessage, usage
 		if err := codec.Unmarshal(usageRaw, &usage); err != nil {
 			return reducerResult{}, fault.Wrap(fault.CodeStreamProtocol, "Anthropic message usage is invalid", err)
 		}
+		thinking, err := decodeThinkingUsage(usage.OutputDetails)
+		if err != nil {
+			return reducerResult{}, protocolError("Anthropic thinking usage is invalid")
+		}
+		if thinking.Known {
+			reducer.metadata.Usage.ThinkingTokens = thinking
+		}
 		mergeDeltaUsage(&reducer.metadata.Usage, usage)
 	}
 	return reducerResult{}, nil
@@ -490,4 +504,24 @@ func (reducer *streamReducer) presentation() (domain.SamplePresentation, error) 
 		bindings[state.reasoningBlock] = binding
 	}
 	return domain.NewSamplePresentation(uint32(len(indexes)), bindings)
+}
+
+// decodeThinkingUsage 对已知细分字段严格解码；缺失不擦除先前观测。
+func decodeThinkingUsage(raw json.RawMessage) (optionalUint, error) {
+	if len(raw) == 0 {
+		return optionalUint{}, nil
+	}
+	members, err := codec.ObjectMembers(raw)
+	if err != nil {
+		return optionalUint{}, err
+	}
+	value, present := members["thinking_tokens"]
+	if !present {
+		return optionalUint{}, nil
+	}
+	var count uint64
+	if string(value) == "null" || codec.Unmarshal(value, &count) != nil {
+		return optionalUint{}, fmt.Errorf("thinking tokens must be an unsigned integer")
+	}
+	return optionalUint{Known: true, Value: count}, nil
 }

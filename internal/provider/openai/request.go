@@ -12,7 +12,13 @@ import (
 const maxResponsesRequestBytes = 16 << 20
 
 // responsesRequest 是当前文本切片发送给 Responses API 的稳定请求。
+type reasoningWire struct {
+	Effort  domain.OpenAIEffort     `json:"effort,omitempty"`
+	Summary domain.ReasoningSummary `json:"summary,omitempty"`
+}
+
 type responsesRequest struct {
+	Reasoning       *reasoningWire `json:"reasoning,omitempty"`
 	PromptCacheKey  string         `json:"prompt_cache_key,omitempty"`
 	ToolChoice      string         `json:"tool_choice,omitempty"`
 	MaxOutputTokens uint64         `json:"max_output_tokens,omitempty"`
@@ -108,4 +114,11 @@ func compileResponsesRequest(
 		buildResponsesRequest(model, history, projectInstructions, toolView),
 		maxResponsesRequestBytes,
 	)
+}
+
+func (request *responsesRequest) applyInference(settings domain.InferenceSettings) {
+	request.MaxOutputTokens = settings.MaxOutputTokens()
+	if settings.OpenAIEffort() != "" || settings.Summary() != "" {
+		request.Reasoning = &reasoningWire{settings.OpenAIEffort(), settings.Summary()}
+	}
 }

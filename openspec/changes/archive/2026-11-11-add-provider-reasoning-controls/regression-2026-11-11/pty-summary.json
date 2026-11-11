@@ -1,0 +1,44 @@
+[
+  {
+    "script": "reasoning-controls-smoke.py",
+    "exit": 0,
+    "log": "reasoning-controls-smoke.py.log"
+  },
+  {
+    "script": "reasoning-smoke.py",
+    "exit": 0,
+    "log": "reasoning-smoke.py.log"
+  },
+  {
+    "script": "completion-smoke.py",
+    "exit": 0,
+    "log": "completion-smoke.py.log"
+  },
+  {
+    "script": "markdown-transcript-smoke.py",
+    "exit": 0,
+    "log": "markdown-transcript-smoke.py.log"
+  },
+  {
+    "script": "session-picker-smoke.py",
+    "exit": 0,
+    "log": "session-picker-smoke.py.log"
+  },
+  {
+    "script": "user-question-smoke.py",
+    "exit": 0,
+    "log": "user-question-smoke.py.log"
+  },
+  {
+    "script": "smoke-hooks.py",
+    "event": "PreToolUse",
+    "exit": 0,
+    "log": "hooks-PreToolUse.log"
+  },
+  {
+    "script": "smoke-hooks.py",
+    "event": "PostToolUse",
+    "exit": 0,
+    "log": "hooks-PostToolUse.log"
+  }
+]
