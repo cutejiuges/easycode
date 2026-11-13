@@ -159,3 +159,9 @@ App 三轮 race 重复运行最初设置了 4 分钟包级总预算，在第三�
 暂存完整检查发现新增 40×16 信任快照的一处尾空格；将同义提示缩短为 `Earlier tool effects are not undone.`，按真实 View 一次更新三种尺寸的固定 trust 快照，随后删除临时生成入口。普通测试仍逐字节读取固定快照，未增加运行时生成分支；暂存检查无尾空格，九份 Stop snapshot 与默认拒绝行为保持验证。
 
 本节记录冲突解决和定向实测；发布前完整质量门由正常 pre-commit/pre-push 钩子继续执行，其最终结果与实际平台端到端回归随 PR 报告。此次合并不增加 Hook 事件、插件执行贡献、格式版本或历史 reader。
+
+合并提交 `f9af0c5` 的完整 pre-commit 已退出 0，app 普通测试 141.681 秒、race 715.550 秒，日志 `/tmp/easycode-stop-main-merge-commit.log`。Linux amd64 Staticcheck、Linux/Windows × amd64/arm64 的生产构建与测试编译均通过；跨目标结果只说明编译，不宣称命令执行支持。
+
+真实 PTY 并发复测另暴露旧 Stop 脚本的同步缺口：看到 `stop-fixed-answer` 不表示最后的完成检查已结束，随后输入可能仍排队，Ctrl+C 会取消上一回合。原始失败保留于 `/tmp/easycode-stop-main-merge-Stop-pty.log`。脚本现通过独立有界事件管道等待真实 turn_completed、新 TurnID 和该 target 的 durable Stop started；取消后要求相同 TurnID 的 cancelled 终态。测试宿主复用正常 App 装配，并在退出后用生产 Loader/ReplayPlanner 验证唯一 started/finished 与 cancelled 决定，不放宽为接受普通 user_cancelled。原有浏览、授权、原生反馈与终端退出断言保留，返回 /hooks 草稿后显式清空命令再输入下一请求。
+
+修订后的普通与 race 终端二进制在两家 Provider 各通过 28 阶段；原始结果位于 `/tmp/easycode-stop-publish-pty`、`/tmp/easycode-stop-publish-race-pty`。其他三类 Hook 使用同一脚本重新通过六条 PTY 流程；main 的插件脚本另通过八条真实 CLI 与四条 PTY 流程（`/tmp/easycode-stop-main-merge-plugin-smoke.json`）。本次修订仅涉及测试握手与验收记录，不改变产品协议或运行状态机。

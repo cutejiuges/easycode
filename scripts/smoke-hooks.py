@@ -15,6 +15,7 @@ import time
 
 
 def smoke(binary, provider, root, event="PreToolUse", output_dir=None):
+    ack_read, ack_write = os.pipe() if event == "Stop" else (None, None)
     pid, fd = pty.fork()
     if pid == 0:
         os.chdir(root / "internal/app")
@@ -23,15 +24,57 @@ def smoke(binary, provider, root, event="PreToolUse", output_dir=None):
         helper = "TestHookTerminalHelper"
         if event == "Stop":
             os.environ["EASYCODE_STOP_TERMINAL_SMOKE"] = provider
+            os.close(ack_read)
+            os.set_inheritable(ack_write, True)
+            os.environ["EASYCODE_STOP_TERMINAL_ACK_FD"] = str(ack_write)
             helper = "TestStopTerminalHelper"
         os.execv(binary, [binary, "-test.run=^" + helper + "$", "-test.timeout=90s"])
+    if ack_write is not None:
+        os.close(ack_write)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 32, 100, 0, 0))
     raw = bytearray()
     cursor = 0
     stages = []
+    acknowledgements, pending_ack = [], bytearray()
+    ack_open = ack_read is not None
 
     def send(value):
         os.write(fd, value)
+
+    def pump(timeout):
+        nonlocal ack_open
+        ready, _, _ = select.select([fd] + ([ack_read] if ack_open else []), [], [], timeout)
+        for source in ready:
+            try:
+                chunk = os.read(source, 65536)
+            except OSError:
+                return False
+            if not chunk:
+                if source == ack_read:
+                    ack_open = False
+                    continue
+                return False
+            if source == fd:
+                raw.extend(chunk)
+            else:
+                pending_ack.extend(chunk)
+                while b"\n" in pending_ack:
+                    line, _, rest = pending_ack.partition(b"\n")
+                    pending_ack[:] = rest
+                    acknowledgements.append(json.loads(line))
+        return True
+
+    def wait_ack(predicate, label):
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            while acknowledgements:
+                acknowledgement = acknowledgements.pop(0)
+                if predicate(acknowledgement):
+                    stages.append(label)
+                    return acknowledgement
+            if not pump(0.25):
+                break
+        raise RuntimeError(f"{provider}: missing {label}: terminal={bytes(raw)[-1600:]!r}")
 
     def wait(text, label):
         nonlocal cursor
@@ -42,15 +85,8 @@ def smoke(binary, provider, root, event="PreToolUse", output_dir=None):
                 cursor = plain.index(text, cursor) + len(text)
                 stages.append(label)
                 return
-            ready, _, _ = select.select([fd], [], [], 0.25)
-            if ready:
-                try:
-                    chunk = os.read(fd, 65536)
-                except OSError:
-                    break
-                if not chunk:
-                    break
-                raw.extend(chunk)
+            if not pump(0.25):
+                break
         raise RuntimeError(f"{provider}: missing {label}: {bytes(raw)[-2500:]!r}")
 
     try:
@@ -61,6 +97,7 @@ def smoke(binary, provider, root, event="PreToolUse", output_dir=None):
             wait("saved answer", "completion-scope-disclosure")
             send(b"\r")
             wait("hook_trust_denied", "default-deny-terminal")
+            wait_ack(lambda ack: ack["event"] == "turn_failed" and ack.get("code") == "hook_trust_denied", "durable-default-denial")
             send(b"/hooks\r")
             wait("Hooks", "browser")
             send(b"\r")
@@ -72,10 +109,11 @@ def smoke(binary, provider, root, event="PreToolUse", output_dir=None):
             wait("Hooks", "back-to-browser")
             send(b"\x1b")
             wait("EasyCode", "draft-return")
-            send(b"second\r")
+            send(b"\x7f" * 6 + b"second\r")
             wait("Trust this hook?", "review-after-reset")
             send(b"\t\r")
             wait("stop-fixed-answer", "same-turn-continuation")
+            completed = wait_ack(lambda ack: ack["event"] == "turn_completed", "same-turn-completed")
             send(b"\x0f")
             wait("Transcript", "transcript-browser")
             wait("hook:", "independent-hook-row")
@@ -91,10 +129,18 @@ def smoke(binary, provider, root, event="PreToolUse", output_dir=None):
             send(b"\x0f")
             wait("EasyCode", "details-anchor-return")
             send(b"cancel\r")
+            target = wait_ack(lambda ack: ack["event"] == "turn_started", "cancel-turn-started")
+            assert target["turn_id"] != completed["turn_id"]
+            wait_ack(lambda ack: ack["event"] == "stop_hook_committed" and ack.get("phase") == "started"
+                     and ack["turn_id"] == target["turn_id"] and ack["sample_index"] == 0, "cancel-check-started")
             wait("Checking completion", "saved-answer-checking")
             send(b"\x03")
+            cancelled = wait_ack(lambda ack: ack["event"] == "turn_failed"
+                                 and ack["turn_id"] == target["turn_id"], "durable-check-cancellation")
+            assert cancelled["code"] == "cancelled", cancelled
             wait("Completion check stopped: cancelled", "cancel-cleaned-up")
             send(b"\x03")
+            wait("STOP_CANCEL_FACTS=cancelled/started", "durable-started-cancelled-facts")
             wait("STOP_TERMINAL_EXIT=0 REQUESTS=4", "clean-terminal-exit")
         else:
             wait("EasyCode", "startup")
@@ -170,6 +216,8 @@ def smoke(binary, provider, root, event="PreToolUse", output_dir=None):
         raise
     finally:
         os.close(fd)
+        if ack_read is not None:
+            os.close(ack_read)
 
 
 if __name__ == "__main__":
