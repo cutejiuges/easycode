@@ -25,7 +25,7 @@ func TestPostSummarySurvivesNativeCommitRefreshAndRestore(t *testing.T) {
 		{protocol.HookActivityState(domain.HookUncertain), domain.HookOutcomeUncertain, "checks outcome_uncertain"},
 	} {
 		t.Run(test.label, func(t *testing.T) {
-			item := protocol.TranscriptListItem{Cursor: protocol.TranscriptCursor{Sequence: 2}, Kind: domain.TranscriptCall, TurnID: domain.TurnID(id), DetailSequence: 7, Activity: protocol.ToolActivityPayload{InvocationID: id, Tool: protocol.ToolWrite, Summary: "a.go", Status: "success", Code: "ok"}, Preview: "original preview", PostHook: protocol.HookActivityPayload{InvocationID: id, Reference: declaration.Reference, State: test.state, Code: test.code}}
+			item := protocol.TranscriptListItem{Cursor: protocol.TranscriptCursor{Sequence: 2}, Kind: domain.TranscriptCall, TurnID: domain.TurnID(id), DetailSequence: 7, Activity: protocol.ToolActivityPayload{InvocationID: id, Tool: protocol.ToolWrite, Summary: "a.go", Status: "success", Code: "ok"}, Preview: "original preview", PostHook: &protocol.HookActivityPayload{Target: testHookTarget(t, id, domain.HookWrite), PlanDigest: strings.Repeat("b", 64), Reference: declaration.Reference, State: test.state, Code: test.code}}
 			queries := &mainTestQueries{page: protocol.TranscriptListPage{Items: []protocol.TranscriptListItem{item}}}
 			m := NewModel(context.Background(), "test", &fakeChatSession{}).WithTranscriptQueries(domain.ThreadID(id), queries)
 			m = updateModel(t, m, m.initialTranscriptQuery()())

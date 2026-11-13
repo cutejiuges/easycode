@@ -67,12 +67,16 @@ func (r *Runtime) appendHookFacts(ctx context.Context, drafts []session.RecordDr
 	return err
 }
 func (r *Runtime) emitHookActivity(turn domain.TurnID, p protocol.HookActivityPayload) {
-	if !r.interactiveApprovals || r.activityEmitter == nil {
+	emitter := r.activityEmitter
+	if p.Reference.Event == domain.HookStop {
+		emitter = r.turnEmitter
+	}
+	if !r.interactiveApprovals || emitter == nil {
 		return
 	}
 	e, err := protocol.NewHookActivity(p)
 	if err == nil {
-		r.activityEmitter(r.decorate(e, turn))
+		emitter(r.decorate(e, turn))
 	}
 }
 
@@ -226,7 +230,7 @@ func (r *Runtime) checkToolHooks(ctx context.Context, emit Emitter, turn domain.
 		if ctx.Err() != nil {
 			return r.finishHookGate(ctx, turn, inv, p, domain.HookCancel, domain.HookCancelled, ordinal, ordinal, nil)
 		}
-		code, err := r.trustHook(ctx, emit, turn, inv, d)
+		code, err := r.trustHook(ctx, emit, turn, p.Target(), p.Digest, d)
 		if err != nil {
 			result, blocked, persistErr := r.finishHookGate(ctx, turn, inv, p, domain.HookBlock, domain.HookTrustDenied, ordinal, ordinal, nil)
 			if persistErr != nil {
@@ -252,7 +256,7 @@ func (r *Runtime) checkToolHooks(ctx context.Context, emit Emitter, turn domain.
 			}
 			return tool.InvocationResult{}, true, err
 		}
-		r.emitHookActivity(turn, protocol.HookActivityPayload{InvocationID: string(inv.InvocationID()), Reference: d.Reference, State: "checking", Code: domain.HookOK})
+		r.emitHookActivity(turn, protocol.HookActivityPayload{Target: p.Target(), PlanDigest: p.Digest, Reference: d.Reference, State: "checking", Code: domain.HookOK})
 		start := now()
 		execution := runner.Run(ctx, id, d, input, min(time.Duration(d.Reference.TimeoutSeconds)*time.Second, remaining))
 		result := execution.Result
@@ -272,7 +276,7 @@ func (r *Runtime) checkToolHooks(ctx context.Context, emit Emitter, turn domain.
 		if result.Status != domain.HookContinue {
 			out, blocked, err := r.finishHookGate(ctx, turn, inv, p, result.Status, result.Code, ordinal+1, ordinal, []session.RecordDraft{finished})
 			if err == nil || out.Validate() == nil {
-				r.emitHookActivity(turn, protocol.HookActivityPayload{InvocationID: string(inv.InvocationID()), Reference: d.Reference, State: protocol.HookActivityState(result.Status), Code: result.Code, StdoutBytes: result.StdoutBytes, StderrBytes: result.StderrBytes})
+				r.emitHookActivity(turn, protocol.HookActivityPayload{Target: p.Target(), PlanDigest: p.Digest, Reference: d.Reference, State: protocol.HookActivityState(result.Status), Code: result.Code, StdoutBytes: result.StdoutBytes, StderrBytes: result.StderrBytes})
 			}
 			return out, blocked, err
 		}
@@ -288,7 +292,7 @@ func (r *Runtime) checkToolHooks(ctx context.Context, emit Emitter, turn domain.
 		if r.hookHistory != nil {
 			r.hookHistory.HookFinished(d.Reference, result)
 		}
-		r.emitHookActivity(turn, protocol.HookActivityPayload{InvocationID: string(inv.InvocationID()), Reference: d.Reference, State: protocol.HookActivityState(result.Status), Code: result.Code, StdoutBytes: result.StdoutBytes, StderrBytes: result.StderrBytes})
+		r.emitHookActivity(turn, protocol.HookActivityPayload{Target: p.Target(), PlanDigest: p.Digest, Reference: d.Reference, State: protocol.HookActivityState(result.Status), Code: result.Code, StdoutBytes: result.StdoutBytes, StderrBytes: result.StderrBytes})
 	}
 	return tool.InvocationResult{}, false, nil
 }

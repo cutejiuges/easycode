@@ -1,6 +1,6 @@
 ## Context
 
-选型动机见 [proposal.md](proposal.md)。本设计处于规划阶段，以下新增类型、文件和测试均为拟实施内容，不能据此宣称已实现。
+选型动机见 [proposal.md](proposal.md)。以下保留 PreToolUse 切片最初的设计依据与规划路径；实际实施落点及验收见文末说明与 [verification.md](verification.md)。2026-11-13 已将本变更覆盖的 delta 需求完整对齐当前主规格，后续已交付能力不再被旧 delta 覆盖；当前契约以同步后的规格及唯一当前实现为准。
 
 ### 现有接缝与必须修正的冲突
 
@@ -286,3 +286,9 @@ Apply 时同步 README 的配置样例/安全反馈说明、总体架构第 12 �
 `HookHistoryObserver` 只在 finished 所属 batch 成功 Sync 后更新 app 内存投影；离线 `session.HookHistoryEntry` 从四类事实重建相同统计。历史结果详情附加身份/code/timeout/字节数与输出未收录说明，不改写 frozen model preview，不添加原始输出 artifact。`hook_activity` 仅给交互宿主投影 checking/terminal，严格 decoder 拒绝任意原始输出字段；它既不是持久事实，也不授权工具或恢复执行。
 
 验证矩阵中进程故障与资源 owner 用例落在 `executor/process/owner_test.go`，Hook Sync 故障用例集中于 `runtime/hooks_test.go`，宿主真实 lease/阻塞清理用例位于 `app/hook_host_owner_test.go`，固定恢复窗口位于 `session/testdata/current/hook_*.jsonl`。真实 PTY 入口为 `app/hook_terminal_test.go` 与 `scripts/smoke-hooks.py`；不引入生产依赖或新外部协议。
+
+### 后续已交付能力的规格保留（2026-11-13）
+
+旧 delta 覆盖的 11 项需求遗漏了后续 30 个场景，现以当前主规格完整需求块为基线恢复，并保持原有场景及 ADDED/MODIFIED 归属。共享架构规则同时明确四类已交付同步 command Hook，未实现事件或行为仍须失败关闭；不得再将已交付 Post/Failure/Stop 误称为未实现入口。
+
+第 8 节的四类事实仍说明 Pre 的职责，不恢复 invocation-only 旧 shape。当前共享运行身份使用封闭的 tool_call/turn_stop target；Stop 另有独立计划、决定和交付事实。恢复、原生历史、压缩与自动输入安全点保留后续变更的现行约束，修订不增加 reader、迁移器、版本字段或执行消费者。原 43 项实施任务保持完成，本轮仅修复文档与 delta 的漂移。

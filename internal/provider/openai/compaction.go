@@ -43,6 +43,9 @@ func nativeCompactionSource(snapshot nativeWindowSnapshot, model string) (provid
 	}
 	items := make([]NativeItem, 0)
 	for _, entry := range snapshot.requestEntries() {
+		if entry.FeedbackInput != nil {
+			items = append(items, *entry.FeedbackInput)
+		}
 		items = append(items, entry.UserInputs...)
 		items = append(items, entry.Outputs...)
 		items = append(items, entry.ToolOutputs...)

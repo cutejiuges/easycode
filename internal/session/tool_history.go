@@ -73,7 +73,7 @@ func projectToolHistory(records []Record) ([]ToolHistoryEntry, error) {
 				return nil, err
 			}
 			if id.Event.Post() {
-				index, ok := indices[tool.InvocationID(id.InvocationID)]
+				index, ok := indices[tool.InvocationID(id.InvocationID())]
 				if !ok || entries[index].PostHooks == nil {
 					return nil, replayCorrupt("post hook has no plan projection")
 				}
@@ -100,8 +100,11 @@ func projectToolHistory(records []Record) ([]ToolHistoryEntry, error) {
 			if err != nil {
 				return nil, err
 			}
-			p, ok := plans[string(r.Identity.Event)+":"+r.Identity.InvocationID+":"+r.Identity.PlanDigest]
-			index, found := indices[tool.InvocationID(r.Identity.InvocationID)]
+			if r.Identity.Event == domain.HookStop {
+				continue
+			}
+			p, ok := plans[string(r.Identity.Event)+":"+r.Identity.InvocationID()+":"+r.Identity.PlanDigest]
+			index, found := indices[tool.InvocationID(r.Identity.InvocationID())]
 			if !ok || !found || r.Identity.Ordinal >= len(p.Hooks) {
 				return nil, replayCorrupt("hook result has no plan projection")
 			}

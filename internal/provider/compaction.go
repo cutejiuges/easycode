@@ -195,7 +195,7 @@ func NewPreparedCompaction(checkpoint CheckpointEnvelope, view domain.ActiveCont
 }
 
 func (prepared *PreparedCompaction) pending() bool {
-	return prepared != nil && prepared.commit != nil && prepared.commit.state.Load() == 0
+	return prepared != nil && prepared.commit != nil && prepared.commit.resolution.pending()
 }
 
 // Checkpoint 返回待 durable 提交的独立快照。
@@ -240,7 +240,7 @@ func (prepared *PreparedCompaction) Discard() error {
 
 // Finalized 判断候选是否已经安装。
 func (prepared *PreparedCompaction) Finalized() bool {
-	return prepared != nil && prepared.commit != nil && prepared.commit.state.Load() == 1
+	return prepared != nil && prepared.commit != nil && prepared.commit.resolution.finalized()
 }
 
 // WrapContextSummary 为 Provider 原生窗口提供确定性摘要包装，不产生输入身份或授权。

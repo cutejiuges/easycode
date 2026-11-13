@@ -134,6 +134,13 @@ func restoreNativeHistory(ctx context.Context, model string, commits []provider.
 			}
 			questionResults = nil
 		}
+		if entry.Kind == nativeHistoryHookFeedback {
+			expected, ok := commit.StopFeedback()
+			actual, err := entryStopFeedback(entry)
+			if !ok || err != nil || actual != expected {
+				return fmt.Errorf("native hook feedback differs from committed evidence")
+			}
+		}
 		entry.TurnID = commit.TurnID()
 		if entry.Kind == nativeHistoryUserInputs {
 			a, ok := commit.Association()

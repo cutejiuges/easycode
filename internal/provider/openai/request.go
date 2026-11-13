@@ -57,6 +57,9 @@ func buildResponsesRequest(
 		itemCount++
 	}
 	for _, entry := range history {
+		if entry.FeedbackInput != nil {
+			itemCount++
+		}
 		itemCount += len(entry.UserInputs)
 		itemCount += len(entry.Outputs) + len(entry.ToolOutputs)
 	}
@@ -65,6 +68,9 @@ func buildResponsesRequest(
 		input = append(input, NewUserItem(projectInstructions.RenderedText()))
 	}
 	for _, entry := range history {
+		if entry.FeedbackInput != nil {
+			input = append(input, entry.FeedbackInput.clone())
+		}
 		for _, item := range entry.UserInputs {
 			input = append(input, item.clone())
 		}

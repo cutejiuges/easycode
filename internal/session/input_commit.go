@@ -37,6 +37,10 @@ func DecodeTurnInputsPayload(record Record) (TurnInputsPayload, error) {
 }
 
 func acceptInputBatch(plan *ReplayPlan, active *activeReplayTurn, batch []Record, seen map[domain.InputID]struct{}) error {
+	return acceptBoundInputBatch(plan, active, batch, seen, false)
+}
+
+func acceptBoundInputBatch(plan *ReplayPlan, active *activeReplayTurn, batch []Record, seen map[domain.InputID]struct{}, stopDelivery bool) error {
 	if active == nil || len(batch) != 2 || !batchHasTurn(batch, active.turnID) || batch[1].EventKind != EventProviderNativeCommit || active.pendingCalls != nil {
 		return replayCorrupt("input batch placement is invalid")
 	}
@@ -45,10 +49,10 @@ func acceptInputBatch(plan *ReplayPlan, active *activeReplayTurn, batch []Record
 		return replayCorrupt("input association is invalid")
 	}
 	if payload.Placement == domain.InputInitial {
-		if active.initialInputs || active.nextSampleIndex != 0 {
+		if stopDelivery || active.initialInputs || active.nextSampleIndex != 0 {
 			return replayCorrupt("initial inputs are duplicated")
 		}
-	} else if !active.initialInputs || !active.toolOutputsCommitted || active.inputAtSample || payload.TargetSampleIndex != active.nextSampleIndex {
+	} else if !active.initialInputs || (!stopDelivery && !active.toolOutputsCommitted) || stopDelivery && (active.stop == nil || !active.stop.PendingFeedback()) || active.inputAtSample || payload.TargetSampleIndex != active.nextSampleIndex {
 		return replayCorrupt("steering input target is invalid")
 	}
 	for _, id := range payload.InputIDs {
@@ -68,6 +72,7 @@ func acceptInputBatch(plan *ReplayPlan, active *activeReplayTurn, batch []Record
 		seen[id] = struct{}{}
 	}
 	plan.NativeCommits = append(plan.NativeCommits, NativeCommitRecord{Sequence: batch[1].Sequence, TurnID: active.turnID, Role: domain.NativeCommitUserInputs, Inputs: a, Commit: cloneNativeCommit(commit)})
+	active.nextSampleReady = true
 	active.initialInputs = true
 	active.inputAtSample = true
 	active.lastSequence = batch[1].Sequence

@@ -119,14 +119,14 @@ func testPostCheckingAndAggregate(t *testing.T, selected domain.HookEvent, origi
 	event.TurnID = turn
 	updated, _ := m.projectHookEvent(event)
 	m = updated.(Model)
-	checking, _ := protocol.NewHookActivity(protocol.HookActivityPayload{InvocationID: id, Reference: post.Reference, State: protocol.HookActivityChecking, Code: domain.HookOK})
+	checking, _ := protocol.NewHookActivity(protocol.HookActivityPayload{Target: testHookTarget(t, id, domain.HookWrite), PlanDigest: strings.Repeat("b", 64), Reference: post.Reference, State: protocol.HookActivityChecking, Code: domain.HookOK})
 	checking.TurnID = turn
 	updated, _ = m.projectHookEvent(checking)
 	m = updated.(Model)
 	if m.transcript[0].hook == nil || m.transcript[0].hook.State != protocol.HookActivityChecking || m.transcript[0].activity.Status != original {
 		t.Fatal("post checking discarded after tool terminal")
 	}
-	completed, _ := protocol.NewHookActivity(protocol.HookActivityPayload{InvocationID: id, Reference: post.Reference, State: protocol.HookActivityCompleted, Code: domain.HookExitFailed})
+	completed, _ := protocol.NewHookActivity(protocol.HookActivityPayload{Target: testHookTarget(t, id, domain.HookWrite), PlanDigest: strings.Repeat("b", 64), Reference: post.Reference, State: protocol.HookActivityCompleted, Code: domain.HookExitFailed})
 	completed.TurnID = turn
 	updated, _ = m.projectHookEvent(completed)
 	m = updated.(Model)
@@ -134,14 +134,14 @@ func testPostCheckingAndAggregate(t *testing.T, selected domain.HookEvent, origi
 		t.Fatal("aggregate check failure rewrote/hid original success", m.View())
 	}
 	pre, _ := domain.NewHookDeclaration(domain.HookSourceProject, domain.HookPreToolUse, domain.HookFeedbackNone, strings.Repeat("a", 64), "pre", 7, "true", 5)
-	stale, _ := protocol.NewHookActivity(protocol.HookActivityPayload{InvocationID: id, Reference: pre.Reference, State: protocol.HookActivityChecking, Code: domain.HookOK})
+	stale, _ := protocol.NewHookActivity(protocol.HookActivityPayload{Target: testHookTarget(t, id, domain.HookWrite), PlanDigest: strings.Repeat("b", 64), Reference: pre.Reference, State: protocol.HookActivityChecking, Code: domain.HookOK})
 	stale.TurnID = turn
 	updated, _ = m.projectHookEvent(stale)
 	m = updated.(Model)
 	if m.transcript[0].hook.State != protocol.HookActivityCompleted {
 		t.Fatal("old pre phase reopened closed tool")
 	}
-	stale, _ = protocol.NewHookActivity(protocol.HookActivityPayload{InvocationID: id, Reference: pre.Reference, State: protocol.HookActivityState(domain.HookBlock), Code: domain.HookDenied})
+	stale, _ = protocol.NewHookActivity(protocol.HookActivityPayload{Target: testHookTarget(t, id, domain.HookWrite), PlanDigest: strings.Repeat("b", 64), Reference: pre.Reference, State: protocol.HookActivityState(domain.HookBlock), Code: domain.HookDenied})
 	stale.TurnID = turn
 	updated, _ = m.projectHookEvent(stale)
 	m = updated.(Model)
@@ -165,7 +165,7 @@ func TestPostActivitiesCannotSelectAnEventBeforeOriginalResult(t *testing.T) {
 	m = updated.(Model)
 	for _, event := range []domain.HookEvent{domain.HookPostToolUse, domain.HookPostToolUseFailure} {
 		d, _ := domain.NewHookDeclaration(domain.HookSourceProject, event, domain.HookFeedbackModel, strings.Repeat("a", 64), "post", 7, "true", 5)
-		checking, _ := protocol.NewHookActivity(protocol.HookActivityPayload{InvocationID: id, Reference: d.Reference, State: protocol.HookActivityChecking, Code: domain.HookOK})
+		checking, _ := protocol.NewHookActivity(protocol.HookActivityPayload{Target: testHookTarget(t, id, domain.HookWrite), PlanDigest: strings.Repeat("b", 64), Reference: d.Reference, State: protocol.HookActivityChecking, Code: domain.HookOK})
 		checking.TurnID = turn
 		updated, _ := m.projectHookEvent(checking)
 		m = updated.(Model)

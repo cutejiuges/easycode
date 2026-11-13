@@ -121,7 +121,8 @@ func TestHookTrustCancellationRejectsStaleAndCrossIdentityResponses(t *testing.T
 		case "request":
 			bad.RequestID = id
 		case "invocation":
-			bad.InvocationID = id
+			_, cap, _ := bad.Target.ToolCall()
+			bad.Target, _ = domain.NewToolHookTarget(id, cap)
 		case "revision":
 			bad.Reference.Revision = domain.HookDigest([]byte("other"))
 		case "fingerprint":

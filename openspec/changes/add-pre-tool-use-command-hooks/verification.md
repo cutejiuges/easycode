@@ -82,3 +82,15 @@ ADR 保留原始决策并补当前对照；归档 change 只修复一个失效�
 PR 首轮 Linux CI 的 Staticcheck 发现仅供 Darwin 调用的 launch policy 与 E2E 辅助函数放在通用文件中，产生 U1000。将启动策略移至 `sandbox_launch_darwin.go`，双 Provider 场景辅助函数移至 `hook_fixture_darwin_test.go`；共用 SandboxPlan/Planner 与跨平台配置辅助函数仍保留通用文件，没有删除测试或忽略检查，执行/信任/恢复契约不变。使用宿主平台编译的 Staticcheck 二进制按 `GOOS=linux GOARCH=amd64` 检查全仓库，已通过；Darwin 再由 pre-commit 执行完整 `make verify`，Linux CI 继续复验。
 
 补充检查 `GOOS=windows GOARCH=amd64` 全仓库 Staticcheck 未通过，包含既有的 picker 测试辅助函数缺失及不支持平台上的 U1000。对 `origin/main` 只读源码快照执行同一检查，两份输出均为 56 行，归一化位置行号后完全一致，没有本变更新增诊断；未修改无关主干问题，也不声称 Windows 全库质量门通过。既有 builtin 适配器交叉编译结论仍有效。这些检查不扩大 Linux/Windows 的命令执行能力。
+
+## 后续能力交付后的规格漂移修复（2026-11-13）
+
+本变更仍为活动状态，原 43 项实施任务保持完成；用户此次只要求修复旧 delta，随后归档 Stop，不归档本变更。
+
+- 按 CLI 返回的七份现有 delta 路径逐项对照主规格，修复 11 项落后需求，补回后续已交付的 30 个场景；保留原全部需求、场景及 ADDED/MODIFIED 归属。所有 16 项需求块现与相应主规格一致，重复对齐无差异。
+- 修正共享架构规则中仅 PreToolUse 的过时措辞，明确四类已交付 command Hook 仍需完整消费者/严格协议/测试；未实现事件与行为继续禁止暴露。共同配置主规格的 Purpose 同步四事件范围，不新增执行能力。
+- Proposal/design/tasks 明确区分原始 Pre 实施归属和当前需求基线，不将后续 Post/Failure/Stop 归为本变更新增，不改变业务代码、依赖、格式版本或恢复消费者。
+- 修复前 `openspec validate --all --strict --json` 为 58/59；修复后为 59/59，两个活动变更均零 issue，原始结果 `/tmp/easycode-pre-drift-before.json` 与 `/tmp/easycode-pre-drift-after.json`。原 ADDED 已存在的归档冲突提示也已消除。
+- Stop 的 12 份 delta、42 项需求及 295 个场景均已与主规格同步，48 项任务完整；后续按用户要求独立归档，不移动或删除本变更。
+
+完成后再次与 HEAD 对比：七份 delta 的 16 项需求名称和顺序均保留，原 158 个场景完整保留，当前共 188 个，补回 30 个、删除 0 个。Stop 已通过正常 CLI 归档至 `openspec/changes/archive/2026-11-13-add-stop-command-hooks`，主规格内容在归档操作前后不变；本变更仍活动。归档后全仓库 strict 为 58/58，通过；普通 `make verify` 完整退出 0（`/tmp/easycode-stop-archive-make-verify.log`），本轮没有改动业务代码或依赖。

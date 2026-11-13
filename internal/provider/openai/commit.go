@@ -14,12 +14,14 @@ const (
 )
 
 type nativeHistoryCommit struct {
-	Kind          nativeHistoryEntryKind  `json:"kind"`
-	UserInputs    []NativeItem            `json:"user_inputs,omitempty"`
-	InputMetadata *provider.InputMetadata `json:"input_metadata,omitempty"`
-	Outputs       []NativeItem            `json:"outputs,omitempty"`
-	ToolOutputs   []NativeItem            `json:"tool_outputs,omitempty"`
-	Usage         *rawUsageCommit         `json:"usage,omitempty"`
+	FeedbackInput    *NativeItem                    `json:"feedback_input,omitempty"`
+	FeedbackMetadata *provider.HookFeedbackMetadata `json:"feedback_metadata,omitempty"`
+	Kind             nativeHistoryEntryKind         `json:"kind"`
+	UserInputs       []NativeItem                   `json:"user_inputs,omitempty"`
+	InputMetadata    *provider.InputMetadata        `json:"input_metadata,omitempty"`
+	Outputs          []NativeItem                   `json:"outputs,omitempty"`
+	ToolOutputs      []NativeItem                   `json:"tool_outputs,omitempty"`
+	Usage            *rawUsageCommit                `json:"usage,omitempty"`
 }
 
 type optionalUintCommit struct {
@@ -41,7 +43,7 @@ func encodeNativeCommit(entry nativeHistoryEntry) (provider.NativeCommitEnvelope
 		return provider.NativeCommitEnvelope{}, err
 	}
 	commit := nativeHistoryCommit{
-		Kind: cloned.Kind, UserInputs: cloned.UserInputs, InputMetadata: cloned.InputMetadata, Outputs: cloned.Outputs,
+		Kind: cloned.Kind, UserInputs: cloned.UserInputs, InputMetadata: cloned.InputMetadata, FeedbackInput: cloned.FeedbackInput, FeedbackMetadata: cloned.FeedbackMetadata, Outputs: cloned.Outputs,
 		ToolOutputs: cloned.ToolOutputs,
 	}
 	if cloned.Kind == nativeHistorySample {
@@ -75,6 +77,8 @@ func decodeNativeCommit(envelope provider.NativeCommitEnvelope) (nativeHistoryEn
 		Kind: commit.Kind, Outputs: cloneNativeItems(commit.Outputs),
 		ToolOutputs: cloneNativeItems(commit.ToolOutputs),
 	}
+	entry.FeedbackInput = commit.FeedbackInput
+	entry.FeedbackMetadata = commit.FeedbackMetadata
 	entry.UserInputs = commit.UserInputs
 	entry.InputMetadata = commit.InputMetadata
 	if commit.InputMetadata != nil {
@@ -97,7 +101,17 @@ func decodeNativeCommit(envelope provider.NativeCommitEnvelope) (nativeHistoryEn
 }
 
 func validateNativeHistoryEntry(entry nativeHistoryEntry) error {
+	if entry.Kind != nativeHistoryHookFeedback && (entry.FeedbackInput != nil || entry.FeedbackMetadata != nil) {
+		return fmt.Errorf("unrelated hook feedback fields")
+	}
 	switch entry.Kind {
+	case nativeHistoryHookFeedback:
+		if len(entry.UserInputs) != 0 || entry.InputMetadata != nil || len(entry.Outputs) != 0 || len(entry.ToolOutputs) != 0 || entry.Usage != (rawUsage{}) {
+			return fmt.Errorf("hook feedback contains unrelated fields")
+		}
+		if _, err := entryStopFeedback(entry); err != nil {
+			return err
+		}
 	case nativeHistoryUserInputs:
 		if entry.InputMetadata == nil || len(entry.UserInputs) == 0 || len(entry.Outputs) != 0 || len(entry.ToolOutputs) != 0 {
 			return fmt.Errorf("user input entry fields are invalid")

@@ -1,0 +1,19 @@
+Trust this hook?
+Checks the saved answer before this turn completes.
+Earlier tool effects are not undone.
+feedback=model sends a blocking reason to the provider and saves it in Session.
+Source: project · completion
+Stop: Turn completion
+Feedback: model
+Timeout: 5 seconds
+Workspace: . · read-only · network denied
+This does not approve the model's tool call.
+Workspace scripts can change after review.
+PgUp/PgDn: full command · Tab/↑/↓: choose · Esc: deny
+
+  Trust for this session
+> Deny
+
+Command:
+cat >/dev/null
+printf '%s' '{"decision":"block","reason":"Verify the result."}'

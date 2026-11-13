@@ -291,7 +291,7 @@ func TestPostBothProvidersRealSandboxThreeCapabilitiesAndDisclosure(t *testing.T
 						}
 						if item.Kind == domain.TranscriptCall {
 							found = true
-							if item.PostHook.State != protocol.HookActivityCompleted || item.PostHook.Code != want || item.Activity.Status != "success" || item.PostHook != livePage.Items[i].PostHook || item.Cursor != livePage.Items[i].Cursor || item.Preview != livePage.Items[i].Preview {
+							if item.PostHook == nil || livePage.Items[i].PostHook == nil || item.PostHook.State != protocol.HookActivityCompleted || item.PostHook.Code != want || item.Activity.Status != "success" || *item.PostHook != *livePage.Items[i].PostHook || item.Cursor != livePage.Items[i].Cursor || item.Preview != livePage.Items[i].Preview {
 								t.Fatal("native commit/restore lost post summary or tool position")
 							}
 						}

@@ -1,6 +1,9 @@
 package tui
 
-import "easycode/internal/domain"
+import (
+	"easycode/internal/domain"
+	"easycode/internal/protocol"
+)
 
 type transcriptMarkdownDetail struct {
 	first, height  int
@@ -17,7 +20,7 @@ type transcriptMarkdownDetail struct {
 
 func (model *Model) prepareMarkdownDetail() {
 	b := &model.browser
-	if !model.detailOpen || !b.detail || b.page == nil || b.selected >= len(b.items) || (b.items[b.selected].Kind != domain.TranscriptAssistant && b.items[b.selected].Kind != domain.TranscriptReasoning) || b.stream != "" {
+	if !model.detailOpen || !b.detail || b.page == nil || b.selected >= len(b.items) || (b.items[b.selected].Kind != domain.TranscriptAssistant && b.items[b.selected].Kind != domain.TranscriptReasoning) || b.stream != "" || b.source == protocol.TranscriptStopHooks {
 		b.markdown.rows = nil
 		return
 	}

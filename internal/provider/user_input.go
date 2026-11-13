@@ -2,7 +2,6 @@ package provider
 
 import (
 	"fmt"
-	"sync/atomic"
 
 	"easycode/internal/domain"
 )
@@ -40,7 +39,7 @@ func NewPreparedUserInputs(association domain.InputAssociation, envelope NativeC
 
 // Association 返回不共享可变存储的输入关联。
 func (inputs *PreparedUserInputs) Association() (domain.InputAssociation, error) {
-	if inputs == nil || inputs.commit == nil || inputs.commit.state.Load() != 0 {
+	if inputs == nil || inputs.commit == nil || !inputs.commit.resolution.pending() {
 		return domain.InputAssociation{}, fmt.Errorf("prepared user inputs are not pending")
 	}
 	a := inputs.association
@@ -73,16 +72,13 @@ func (inputs *PreparedUserInputs) Discard() error {
 
 // Finalized 判断输入是否完成内存提交。
 func (inputs *PreparedUserInputs) Finalized() bool {
-	return inputs != nil && inputs.commit != nil && inputs.commit.state.Load() == 1
+	return inputs != nil && inputs.commit != nil && inputs.commit.resolution.finalized()
 }
 
-// preparedNativeCommit 组合复用不携带 sample usage 的提交生命周期。
+// preparedNativeCommit 组合单信封存储与恰好一次的提交生命周期。
 type preparedNativeCommit struct {
-	envelope NativeCommitEnvelope
-	finalize func()
-	discard  func()
-	state    atomic.Uint32
-	resolved chan struct{}
+	envelope   NativeCommitEnvelope
+	resolution *preparedResolution
 }
 
 func newPreparedNativeCommit(envelope NativeCommitEnvelope, finalize, discard func()) (*preparedNativeCommit, error) {
@@ -90,36 +86,23 @@ func newPreparedNativeCommit(envelope NativeCommitEnvelope, finalize, discard fu
 	if err != nil {
 		return nil, err
 	}
-	if finalize == nil || discard == nil {
-		return nil, fmt.Errorf("native commit lifecycle callbacks are required")
+	r, err := newPreparedResolution(finalize, discard)
+	if err != nil {
+		return nil, err
 	}
-	return &preparedNativeCommit{envelope: cloned, finalize: finalize, discard: discard, resolved: make(chan struct{})}, nil
+	return &preparedNativeCommit{cloned, r}, nil
 }
-
 func (commit *preparedNativeCommit) envelopeCopy() (NativeCommitEnvelope, error) {
-	if commit == nil || commit.finalize == nil || commit.state.Load() != 0 {
+	if commit == nil || !commit.resolution.pending() {
 		return NativeCommitEnvelope{}, fmt.Errorf("native commit is not pending")
 	}
 	return commit.envelope.Clone()
 }
-
 func (commit *preparedNativeCommit) resolve(finalize bool) error {
-	if commit == nil || commit.finalize == nil || commit.discard == nil {
+	if commit == nil {
 		return fmt.Errorf("native commit is invalid")
 	}
-	if !commit.state.CompareAndSwap(0, 3) {
-		<-commit.resolved
-		return fmt.Errorf("native commit is already resolved")
-	}
-	if finalize {
-		commit.finalize()
-		commit.state.Store(1)
-	} else {
-		commit.discard()
-		commit.state.Store(2)
-	}
-	close(commit.resolved)
-	return nil
+	return commit.resolution.resolve(finalize)
 }
 
 // InputPreview 保存同一候选原生历史的只读估算快照和纯内存请求校验策略。
@@ -148,7 +131,7 @@ func NewInputPreview(history domain.ActiveContextView, footprint domain.NativeHi
 
 // Preview 返回候选视图和原生 footprint，绝不发布到 committed history。
 func (inputs *PreparedUserInputs) Preview() (domain.ActiveContextView, domain.NativeHistoryFootprint, error) {
-	if inputs == nil || inputs.commit == nil || inputs.commit.state.Load() != 0 {
+	if inputs == nil || inputs.commit == nil || !inputs.commit.resolution.pending() {
 		return domain.ActiveContextView{}, domain.NativeHistoryFootprint{}, fmt.Errorf("prepared inputs are not pending")
 	}
 	return inputs.preview.history.Clone(), inputs.preview.footprint, nil
@@ -156,7 +139,7 @@ func (inputs *PreparedUserInputs) Preview() (domain.ActiveContextView, domain.Na
 
 // CheckRequest 使用绑定的候选原生快照纯内存编译完整请求。
 func (inputs *PreparedUserInputs) CheckRequest(input TurnInput) error {
-	if inputs == nil || inputs.commit == nil || inputs.commit.state.Load() != 0 {
+	if inputs == nil || inputs.commit == nil || !inputs.commit.resolution.pending() {
 		return fmt.Errorf("prepared inputs are not pending")
 	}
 	return inputs.preview.checkRequest(input)

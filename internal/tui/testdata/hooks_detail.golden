@@ -5,7 +5,7 @@ Matcher: fs.patch|fs.write|process.exec
 Timeout: 5 seconds
 Workspace: . · read-only · network denied
 Workspace scripts can change after review.
-Reset only removes trust; the next tool call asks again.
+Reset only removes trust; the next matching check asks again.
 Raw output is discarded. Only trusted model feedback is sent and saved.
 
 Command:

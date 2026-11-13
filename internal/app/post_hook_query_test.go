@@ -32,7 +32,7 @@ func TestPostDetailQueryBindsSnapshotAndKeepsOriginalBody(t *testing.T) {
 		t.Fatal(err)
 	}
 	list, err := q.ListTranscript(context.Background(), protocol.TranscriptListQuery{Mode: protocol.TranscriptDetail, ThreadID: thread, Limit: 1})
-	if err != nil || list.Items[0].DetailSequence != 4 || list.Items[0].PostHook.InvocationID != "" {
+	if err != nil || list.Items[0].DetailSequence != 4 || list.Items[0].PostHook != nil {
 		t.Fatal("planned snapshot selected an event or lost its sequence", err)
 	}
 	cursor := list.Items[0].Cursor
@@ -119,7 +119,7 @@ func TestPostSnapshotRejectsOtherBranchWithoutReplacingNeutralPlan(t *testing.T)
 		t.Fatal("wrong selected branch accepted")
 	}
 	page, err := q.ListTranscript(context.Background(), protocol.TranscriptListQuery{Mode: protocol.TranscriptDetail, ThreadID: thread, Limit: 1})
-	if err != nil || page.Items[0].DetailSequence != 4 || page.Items[0].PostHook.InvocationID != "" {
+	if err != nil || page.Items[0].DetailSequence != 4 || page.Items[0].PostHook != nil {
 		t.Fatal("rejected snapshot changed neutral plan", err)
 	}
 }

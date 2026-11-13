@@ -46,15 +46,17 @@ func TestPostHookCommitScopeAndStrictPayload(t *testing.T) {
 func TestTranscriptPostSummaryRejectsCrossCallAndRawStatistics(t *testing.T) {
 	const id = "01900000-0000-7000-8000-000000000001"
 	d, _ := domain.NewHookDeclaration(domain.HookSourceProject, domain.HookPostToolUse, domain.HookFeedbackModel, strings.Repeat("a", 64), "check", 7, "true", 5)
-	item := TranscriptListItem{Cursor: TranscriptCursor{Sequence: 1}, Kind: domain.TranscriptCall, TurnID: domain.TurnID(id), DetailSequence: 5, Activity: ToolActivityPayload{InvocationID: id, Tool: ToolWrite, Summary: "a", Status: "success", Code: "ok"}, PostHook: HookActivityPayload{InvocationID: id, Reference: d.Reference, State: HookActivityCompleted, Code: domain.HookOK}}
+	item := TranscriptListItem{Cursor: TranscriptCursor{Sequence: 1}, Kind: domain.TranscriptCall, TurnID: domain.TurnID(id), DetailSequence: 5, Activity: ToolActivityPayload{InvocationID: id, Tool: ToolWrite, Summary: "a", Status: "success", Code: "ok"}, PostHook: &HookActivityPayload{Target: testHookTarget(t, id, domain.HookWrite), PlanDigest: strings.Repeat("b", 64), Reference: d.Reference, State: HookActivityCompleted, Code: domain.HookOK}}
 	if item.Validate() != nil {
 		t.Fatal("valid post summary rejected")
 	}
 	for _, mode := range []string{"wrong-call", "pre-reference", "bytes", "no-sequence", "non-tool", "read-tool", "failed-tool", "per-item-outcome"} {
 		bad := item
+		post := *item.PostHook
+		bad.PostHook = &post
 		switch mode {
 		case "wrong-call":
-			bad.PostHook.InvocationID = "01900000-0000-7000-8000-000000000002"
+			bad.PostHook.Target = testHookTarget(t, "01900000-0000-7000-8000-000000000002", domain.HookWrite)
 		case "pre-reference":
 			bad.PostHook.Reference.Event = domain.HookPreToolUse
 		case "bytes":
@@ -79,14 +81,14 @@ func TestTranscriptPostSummaryRejectsCrossCallAndRawStatistics(t *testing.T) {
 func TestReasoningAndPostSummaryKeepSeparateTranscriptKinds(t *testing.T) {
 	const id = "01900000-0000-7000-8000-000000000001"
 	d, _ := domain.NewHookDeclaration(domain.HookSourceProject, domain.HookPostToolUse, domain.HookFeedbackModel, strings.Repeat("a", 64), "check", 7, "true", 5)
-	post := HookActivityPayload{InvocationID: id, Reference: d.Reference, State: HookActivityCompleted, Code: domain.HookOK}
+	post := HookActivityPayload{Target: testHookTarget(t, id, domain.HookWrite), PlanDigest: strings.Repeat("b", 64), Reference: d.Reference, State: HookActivityCompleted, Code: domain.HookOK}
 	reasoning := ReasoningSummaryPayload{Source: domain.ReasoningOpenAISummary, Availability: domain.ReasoningReadable, TotalBytes: 7}
 	item := TranscriptListItem{Cursor: TranscriptCursor{Sequence: 1}, Kind: domain.TranscriptReasoning, TurnID: domain.TurnID(id), Text: "visible", Reasoning: &reasoning}
 	if item.Validate() != nil {
 		t.Fatal("valid reasoning list item rejected")
 	}
 	bad := item
-	bad.PostHook, bad.DetailSequence = post, 2
+	bad.PostHook, bad.DetailSequence = &post, 2
 	if bad.Validate() == nil {
 		t.Fatal("reasoning item accepted post hook metadata")
 	}
@@ -95,7 +97,7 @@ func TestReasoningAndPostSummaryKeepSeparateTranscriptKinds(t *testing.T) {
 	if bad.Validate() == nil {
 		t.Fatal("reasoning item accepted a post detail revision")
 	}
-	bad = TranscriptListItem{Cursor: item.Cursor, Kind: domain.TranscriptCall, TurnID: item.TurnID, DetailSequence: 2, PostHook: post, Activity: ToolActivityPayload{InvocationID: id, Tool: ToolWrite, Summary: "a", Status: "success", Code: "ok"}}
+	bad = TranscriptListItem{Cursor: item.Cursor, Kind: domain.TranscriptCall, TurnID: item.TurnID, DetailSequence: 2, PostHook: &post, Activity: ToolActivityPayload{InvocationID: id, Tool: ToolWrite, Summary: "a", Status: "success", Code: "ok"}}
 	if bad.Validate() != nil {
 		t.Fatal("valid post tool item rejected")
 	}

@@ -15,7 +15,7 @@ func TestHookTrustContractsAreStrictAndIdentityBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := HookTrustRequestedPayload{RequestID: id, InvocationID: id, Capability: domain.HookPatch, Declaration: d}
+	p := HookTrustRequestedPayload{RequestID: id, Target: testHookTarget(t, id, domain.HookPatch), PlanDigest: strings.Repeat("b", 64), Declaration: d}
 	requested, err := NewHookTrustRequested(p)
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +66,7 @@ func TestHookTrustContractsAreStrictAndIdentityBound(t *testing.T) {
 		if state == "denied" {
 			code = domain.HookDenied
 		}
-		p := HookActivityPayload{InvocationID: id, Reference: d.Reference, State: HookActivityState(state), Code: code}
+		p := HookActivityPayload{Target: testHookTarget(t, id, domain.HookWrite), PlanDigest: strings.Repeat("b", 64), Reference: d.Reference, State: HookActivityState(state), Code: code}
 		e, err := NewHookActivity(p)
 		if err != nil {
 			t.Fatal(err)
@@ -98,7 +98,7 @@ func TestHookTrustRequestPreservesMaximumRawCommandAfterJSONEscaping(t *testing.
 				if err != nil {
 					t.Fatal(err)
 				}
-				expected := HookTrustRequestedPayload{RequestID: uuid, InvocationID: uuid, Capability: domain.HookExec, Declaration: d}
+				expected := HookTrustRequestedPayload{RequestID: uuid, Target: testHookTarget(t, uuid, domain.HookExec), PlanDigest: strings.Repeat("b", 64), Declaration: d}
 				request, err := NewHookTrustRequested(expected)
 				if err != nil {
 					t.Fatal(err)
@@ -133,4 +133,14 @@ func TestHookTrustRequestPreservesMaximumRawCommandAfterJSONEscaping(t *testing.
 			})
 		}
 	}
+}
+
+// testHookTarget 创建严格的真实工具目标，避免测试复用旧身份形状。
+func testHookTarget(t *testing.T, id string, cap domain.HookCapability) domain.HookTarget {
+	t.Helper()
+	target, err := domain.NewToolHookTarget(id, cap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return target
 }

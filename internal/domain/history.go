@@ -17,15 +17,17 @@ type SemanticRole string
 const (
 	SemanticUser      SemanticRole = "user"
 	SemanticAssistant SemanticRole = "assistant"
+	SemanticHook      SemanticRole = "hook"
 )
 
 // SemanticMessage 保留 turn 内消息顺序；InputID 只用于用户消息关联。
 type SemanticMessage struct {
-	Skill    SkillAttachment `json:"skill,omitempty,omitzero"`
-	HasSkill bool            `json:"has_skill,omitempty"`
-	Role     SemanticRole    `json:"role"`
-	InputID  InputID         `json:"input_id,omitempty"`
-	Text     string          `json:"text"`
+	HookSource *HookMessageSource `json:"hook_source,omitempty"`
+	Skill      SkillAttachment    `json:"skill,omitempty,omitzero"`
+	HasSkill   bool               `json:"has_skill,omitempty"`
+	Role       SemanticRole       `json:"role"`
+	InputID    InputID            `json:"input_id,omitempty"`
+	Text       string             `json:"text"`
 }
 
 // NewSemanticUserMessage 创建有身份的用户正文投影。
@@ -42,6 +44,9 @@ func NewSemanticAssistantMessage(text string) (SemanticMessage, error) {
 
 // Validate 校验封闭角色与输入身份，允许没有可见正文的消息。
 func (m SemanticMessage) Validate() error {
+	if m.Role != SemanticHook && m.HookSource != nil {
+		return fmt.Errorf("unexpected semantic hook source")
+	}
 	if m.HasSkill {
 		if m.Role != SemanticUser || m.Skill.Validate() != nil {
 			return fmt.Errorf("invalid semantic skill")
@@ -56,6 +61,10 @@ func (m SemanticMessage) Validate() error {
 	case SemanticUser:
 		if !m.InputID.Valid() {
 			return fmt.Errorf("semantic user identity is invalid")
+		}
+	case SemanticHook:
+		if m.InputID != "" || m.HookSource == nil || m.HookSource.Validate() != nil {
+			return fmt.Errorf("invalid semantic hook source")
 		}
 	case SemanticAssistant:
 		if m.InputID != "" {
@@ -75,7 +84,7 @@ type SemanticTurn struct {
 
 // NewSemanticTurn 创建独立的有序消息快照。
 func NewSemanticTurn(id TurnID, messages []SemanticMessage) (SemanticTurn, error) {
-	turn := SemanticTurn{TurnID: id, Messages: append([]SemanticMessage{}, messages...)}
+	turn := SemanticTurn{TurnID: id, Messages: cloneSemanticMessages(messages)}
 	if err := turn.Validate(); err != nil {
 		return SemanticTurn{}, err
 	}
@@ -89,6 +98,12 @@ func (turn SemanticTurn) Validate() error {
 	}
 	seen := make(map[InputID]struct{})
 	for _, m := range turn.Messages {
+		if m.HookSource != nil {
+			sample, _ := m.HookSource.Identity.Target.AssistantSample()
+			if sample.TurnID != turn.TurnID {
+				return fmt.Errorf("semantic hook turn mismatch")
+			}
+		}
 		if err := m.Validate(); err != nil {
 			return err
 		}
@@ -106,7 +121,28 @@ func (turn SemanticTurn) Validate() error {
 func (view SemanticHistoryView) Clone() SemanticHistoryView {
 	copy := SemanticHistoryView{Provider: view.Provider, Turns: make([]SemanticTurn, len(view.Turns))}
 	for i, t := range view.Turns {
-		copy.Turns[i] = SemanticTurn{TurnID: t.TurnID, Messages: append([]SemanticMessage{}, t.Messages...)}
+		copy.Turns[i] = SemanticTurn{TurnID: t.TurnID, Messages: cloneSemanticMessages(t.Messages)}
 	}
 	return copy
+}
+
+// NewSemanticHookMessage 将已授权反馈投影为独立来源，不创建真实用户身份。
+func NewSemanticHookMessage(feedback StopFeedback) (SemanticMessage, error) {
+	source, err := NewHookMessageSource(feedback)
+	if err != nil {
+		return SemanticMessage{}, err
+	}
+	v := SemanticMessage{Role: SemanticHook, Text: feedback.Text, HookSource: &source}
+	return v, v.Validate()
+}
+
+func cloneSemanticMessages(messages []SemanticMessage) []SemanticMessage {
+	out := append([]SemanticMessage{}, messages...)
+	for i := range out {
+		if out[i].HookSource != nil {
+			source := *out[i].HookSource
+			out[i].HookSource = &source
+		}
+	}
+	return out
 }

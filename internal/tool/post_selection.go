@@ -82,7 +82,7 @@ func (v PostHookSelection) validate(result InvocationResult, feedback []domain.F
 	}
 	for _, f := range feedback {
 		i := f.Identity.Ordinal
-		if f.Validate() != nil || f.Identity.Event != event || f.Identity.PlanDigest != v.plan.Digest || f.Identity.InvocationID != v.plan.InvocationID || i < 0 || i >= len(branch.Hooks) || f.Reference != branch.Hooks[i] {
+		if f.Validate() != nil || f.Identity.Event != event || f.Identity.PlanDigest != v.plan.Digest || f.Identity.InvocationID() != v.plan.InvocationID || i < 0 || i >= len(branch.Hooks) || f.Reference != branch.Hooks[i] {
 			return errors.New("post hook feedback ownership mismatch")
 		}
 		if f.Kind != domain.HookFeedbackEmpty && branch.Delivery != domain.HookDeliveryAvailable {

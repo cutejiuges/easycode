@@ -53,6 +53,10 @@ func joinTranscript(view domain.TranscriptView, sequences []uint64, entries []se
 		}
 		sequence := sequences[item.Position.Entry]
 		node := transcriptNode{cursor: protocol.TranscriptCursor{Sequence: sequence, Item: item.Position.Item}, item: item, toolIndex: -1}
+		if item.Kind == domain.TranscriptHook {
+			sample, _ := item.HookSource.Identity.Target.AssistantSample()
+			samples[item.TurnID] = sample.SampleIndex + 1
+		}
 		if item.Kind == domain.TranscriptCall {
 			index, ok := indices[transcriptCallKey{sequence, tool.ProviderCallID(item.CallID)}]
 			if !ok || seen[index] {
@@ -119,6 +123,15 @@ func (q *transcriptQueries) bindTranscript(projector provider.TranscriptProjecto
 
 // NativeCommitted 由唯一 Runtime owner 在 finalize 后发布一个原生提交与对应 ready 批次。
 func (q *transcriptQueries) NativeCommitted(sequence uint64, ready []session.ToolHistoryEntry) error {
+	return q.nativeBatchCommitted([]uint64{sequence}, ready)
+}
+
+// StopFeedbackCommitted 一次发布一或两个已原子 finalize 的原生位置。
+func (q *transcriptQueries) StopFeedbackCommitted(sequences []uint64) error {
+	return q.nativeBatchCommitted(sequences, nil)
+}
+
+func (q *transcriptQueries) nativeBatchCommitted(batch []uint64, ready []session.ToolHistoryEntry) error {
 	q.mu.Lock()
 	if q.invalid {
 		q.mu.Unlock()
@@ -127,7 +140,7 @@ func (q *transcriptQueries) NativeCommitted(sequence uint64, ready []session.Too
 	entries, sequences, compactions := q.entries, q.nativeSequences, q.compactions
 	q.mu.Unlock()
 	entries = append(append([]session.ToolHistoryEntry(nil), entries...), ready...)
-	sequences = append(append([]uint64(nil), sequences...), sequence)
+	sequences = append(append([]uint64(nil), sequences...), batch...)
 	view, err := q.projector.ProjectTranscript()
 	if err != nil {
 		return err

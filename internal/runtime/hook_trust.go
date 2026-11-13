@@ -5,7 +5,6 @@ import (
 	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
-	"easycode/internal/tool"
 )
 
 func (r *Runtime) ResolveHookTrust(response protocol.HookTrustResponse) error {
@@ -15,7 +14,7 @@ func (r *Runtime) ResolveHookTrust(response protocol.HookTrustResponse) error {
 	r.hooks.mu.Lock()
 	defer r.hooks.mu.Unlock()
 	w := r.hooks.wait
-	if w == nil || w.resolved || response.TurnID != w.turn || response.RequestID != w.request.RequestID || response.InvocationID != w.request.InvocationID || response.Reference != w.request.Declaration.Reference {
+	if w == nil || w.resolved || response.TurnID != w.turn || response.RequestID != w.request.RequestID || response.Target != w.request.Target || response.PlanDigest != w.request.PlanDigest || response.Reference != w.request.Declaration.Reference {
 		return fault.New(fault.CodeInvalidInput, "hook trust response mismatch")
 	}
 	select {
@@ -46,7 +45,7 @@ func (r *Runtime) ResetHookTrust(target protocol.HookTrustTarget) error {
 	return fault.New(fault.CodeInvalidInput, "hook trust target mismatch")
 }
 
-func (r *Runtime) trustHook(ctx context.Context, emit Emitter, turn domain.TurnID, inv tool.Invocation, d domain.HookDeclaration) (domain.HookCode, error) {
+func (r *Runtime) trustHook(ctx context.Context, emit Emitter, turn domain.TurnID, target domain.HookTarget, planDigest string, d domain.HookDeclaration) (domain.HookCode, error) {
 	r.hooks.mu.Lock()
 	decision := r.hooks.trust[d.Reference.Key()]
 	r.hooks.mu.Unlock()
@@ -60,7 +59,7 @@ func (r *Runtime) trustHook(ctx context.Context, emit Emitter, turn domain.TurnI
 	if err != nil {
 		return domain.HookTrustDenied, err
 	}
-	p := protocol.HookTrustRequestedPayload{RequestID: string(id), InvocationID: string(inv.InvocationID()), Capability: domain.HookCapability(inv.Capability()), Declaration: d}
+	p := protocol.HookTrustRequestedPayload{RequestID: string(id), Target: target, PlanDigest: planDigest, Declaration: d}
 	event, err := protocol.NewHookTrustRequested(p)
 	if err != nil {
 		return domain.HookTrustDenied, err

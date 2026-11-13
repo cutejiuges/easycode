@@ -29,6 +29,12 @@
 - **WHEN** 同一真实 turn 依次提交用户、assistant sample、中途用户和最终 assistant
 - **THEN** 投影保持四者消息顺序与同一 turn 归属，恢复不能以每条用户消息推断新 turn
 
+已提交 hook_feedback SHALL 具有独立的 Hook 来源语义角色及真实 turn/source sample 关联，不能制造 InputID、用户召回文本或助手完成。其正文只来自已验证 native 事实，不重新读取脚本。既有用户/assistant 消息的原始顺序与身份保持。仅有 continued 冻结决定而 native 尚未交付时，语义历史不得提前出现反馈；真实纠正随三记录交付保存后，保留原 InputID/Skill 附件归属，不与 Hook 来源合并。
+
+#### Scenario: Keep a hook message distinct from real user input
+- **WHEN** 同一 turn 的候选答复后保存 Stop 反馈与真实纠正，再保存模型续答
+- **THEN** 投影保持 assistant/Hook/user/assistant 顺序及真实用户身份；反馈不成为真实 user 或 recall 条目
+
 ### Requirement: Provider projectors preserve visible text semantics
 
 Anthropic 投影 SHALL 按原生 message 与 content block 顺序投影独立消息，仅在同一消息内部连接属于原始正文的 text blocks。OpenAI 投影 SHALL 按真实 turn、原生 item 与 content part 顺序投影独立用户和 assistant 消息，仅在同一消息内部连接属于原始正文的文本。连接 MUST 精确保留各文本片段的内容和接收顺序，不得自行插入、删除或规范化空格与换行。
@@ -80,6 +86,12 @@ Anthropic 投影 SHALL 按原生 message 与 content block 顺序投影独立消
 
 - **WHEN** 对一份已提交原生历史执行一次或多次语义投影后再编译下一轮请求
 - **THEN** 请求的原生 item 顺序、canonical bytes 和 fingerprint 与未执行投影时完全相同
+
+上述隐私排除 SHALL 同样适用于按 sample 的 Stop 正文读取；已授权 hook_feedback 的公开正文及受控语义来源可以投影，但不得带入其原始 stdout/stderr、原生 wire 或 Provider-private 字段。
+
+#### Scenario: Keep hook text separate from opaque data
+- **WHEN** 同一历史含明确 model 反馈、thinking/summary、签名、密文与未知扩展
+- **THEN** Hook 语义只提供已授权正文与受控来源，opaque 数据仍只在 native 中
 
 ### Requirement: Projection returns an independent read-only snapshot
 
@@ -158,3 +170,19 @@ Provider RequestCompiler、原生 resume 和未来 Session 恢复 MUST 继续消
 #### Scenario: Mutate a preview projection
 - **WHEN** 消费者修改或丢弃离线返回视图后再次投影或正常恢复
 - **THEN** 原始记录、其他视图、原生续写与 opaque 数据不受影响
+
+### Requirement: Completion hooks project the exact committed assistant sample
+
+每个 Provider SHALL 提供按真实 turn/sample identity 读取已提交 assistant 正文的单向、纯内存、只读投影，验证目标存在且返回独立副本。只能读取目标 sample 内的 assistant 可见 text，保持原字节语义和顺序，不依赖 phase、正文相等、工具 ready 或可见列表长度推测位置。目标不存在必须明确失败；目标无 text 返回合法空字符串，不回退前一次非空答复。投影不读取 staged 数据、不更改后续请求/指纹、不访问磁盘或网络。
+
+#### Scenario: Read an empty committed sample
+- **WHEN** 前一 sample 含文本而指定 sample 只有不可展示原生内容
+- **THEN** 返回同一目标的空正文，不泄漏 thinking/summary 或复制前一 sample
+
+#### Scenario: Preserve whitespace and duplicate text
+- **WHEN** 两个不同 sample 正文相同且含前后空白
+- **THEN** 每次读取仍按各自身份准确返回原正文，不按内容去重或 trim
+
+#### Scenario: Reject a staged or wrong target
+- **WHEN** 指定 sample 尚未提交、属于另一 turn 或不存在
+- **THEN** 返回明确错误，无部分投影或原生历史变化

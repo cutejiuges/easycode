@@ -1,0 +1,13 @@
+Hook details · Esc: back · ↑/↓: scroll · r: reset trust
+Source: project · completion [untrusted]
+Event: Stop · feedback: model
+Scope: Turn completion
+Timeout: 5 seconds
+Workspace: . · read-only · network denied
+Workspace scripts can change after review.
+Reset only removes trust; the next matching check asks again.
+Raw output is discarded. Only trusted model feedback is sent and saved.
+
+Command:
+cat >/dev/null
+printf '%s' '{"decision":"block","reason":"Verify the result."}'

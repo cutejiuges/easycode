@@ -53,29 +53,40 @@ func DecodeTranscriptListQuery(data []byte) (TranscriptListQuery, error) {
 
 // TranscriptListItem 只携带短摘要，完整正文必须通过范围查询获取。
 type TranscriptListItem struct {
-	Reasoning          *ReasoningSummaryPayload `json:"reasoning,omitempty"`
-	PostHook           HookActivityPayload      `json:"post_hook"`
-	DetailSequence     uint64                   `json:"detail_sequence"`
-	CompactionID       domain.CompactionID      `json:"compaction_id,omitempty"`
-	Preview            string                   `json:"preview"`
-	Stdout             ToolOutputSummary        `json:"stdout"`
-	Stderr             ToolOutputSummary        `json:"stderr"`
-	Search             ToolOutputSummary        `json:"search"`
-	ModelShortened     bool                     `json:"model_shortened"`
-	CoverageIncomplete bool                     `json:"coverage_incomplete"`
-	SummaryOnly        bool                     `json:"summary_only"`
-	Cursor             TranscriptCursor         `json:"cursor"`
-	Kind               domain.TranscriptKind    `json:"kind"`
-	TurnID             domain.TurnID            `json:"turn_id"`
-	InputID            domain.InputID           `json:"input_id"`
-	Text               string                   `json:"text"`
-	More               bool                     `json:"more"`
-	Activity           ToolActivityPayload      `json:"activity"`
+	HookSource         *domain.HookMessageSource `json:"hook_source,omitempty"`
+	StopHook           *StopHookCommittedPayload `json:"stop_hook,omitempty"`
+	Reasoning          *ReasoningSummaryPayload  `json:"reasoning,omitempty"`
+	PostHook           *HookActivityPayload      `json:"post_hook,omitempty"`
+	DetailSequence     uint64                    `json:"detail_sequence"`
+	CompactionID       domain.CompactionID       `json:"compaction_id,omitempty"`
+	Preview            string                    `json:"preview"`
+	Stdout             ToolOutputSummary         `json:"stdout"`
+	Stderr             ToolOutputSummary         `json:"stderr"`
+	Search             ToolOutputSummary         `json:"search"`
+	ModelShortened     bool                      `json:"model_shortened"`
+	CoverageIncomplete bool                      `json:"coverage_incomplete"`
+	SummaryOnly        bool                      `json:"summary_only"`
+	Cursor             TranscriptCursor          `json:"cursor"`
+	Kind               domain.TranscriptKind     `json:"kind"`
+	TurnID             domain.TurnID             `json:"turn_id"`
+	InputID            domain.InputID            `json:"input_id"`
+	Text               string                    `json:"text"`
+	More               bool                      `json:"more"`
+	Activity           ToolActivityPayload       `json:"activity"`
 }
 
 func (v TranscriptListItem) Validate() error {
-	if v.PostHook != (HookActivityPayload{}) {
-		if v.Kind != domain.TranscriptCall || v.DetailSequence == 0 || v.PostHook.Validate() != nil || v.PostHook.InvocationID != v.Activity.InvocationID || !v.PostHook.Reference.Event.Post() || v.PostHook.StdoutBytes != 0 || v.PostHook.StderrBytes != 0 || v.Activity.Tool != ToolPatch && v.Activity.Tool != ToolWrite && v.Activity.Tool != ToolShell || v.PostHook.Reference.Event == domain.HookPostToolUse && v.Activity.Status != "success" || v.PostHook.Reference.Event == domain.HookPostToolUseFailure && v.Activity.Status != "error" && v.Activity.Status != "conflict" {
+	if v.StopHook != nil {
+		sample, _ := v.StopHook.Target.AssistantSample()
+		if v.StopHook.Validate() != nil || sample.TurnID != v.TurnID || v.DetailSequence != v.StopHook.DetailSequence || (v.Kind != domain.TranscriptAssistant && v.Kind != domain.TranscriptReasoning && v.Kind != domain.TranscriptHook) {
+			return errors.New("invalid transcript stop summary")
+		}
+	}
+	if (v.HookSource != nil) != (v.Kind == domain.TranscriptHook) {
+		return errors.New("invalid transcript hook source")
+	}
+	if v.PostHook != nil {
+		if v.Kind != domain.TranscriptCall || v.DetailSequence == 0 || v.PostHook.Validate() != nil || v.PostHook.InvocationID() != v.Activity.InvocationID || !v.PostHook.Reference.Event.Post() || v.PostHook.StdoutBytes != 0 || v.PostHook.StderrBytes != 0 || v.Activity.Tool != ToolPatch && v.Activity.Tool != ToolWrite && v.Activity.Tool != ToolShell || v.PostHook.Reference.Event == domain.HookPostToolUse && v.Activity.Status != "success" || v.PostHook.Reference.Event == domain.HookPostToolUseFailure && v.Activity.Status != "error" && v.Activity.Status != "conflict" {
 			return errors.New("invalid transcript post hook summary")
 		}
 		switch v.PostHook.State {
@@ -84,7 +95,7 @@ func (v TranscriptListItem) Validate() error {
 			return errors.New("invalid transcript post hook state")
 		}
 	}
-	if v.Kind != domain.TranscriptCall && v.DetailSequence != 0 {
+	if v.Kind != domain.TranscriptCall && v.StopHook == nil && v.DetailSequence != 0 {
 		return errors.New("invalid transcript detail sequence")
 	}
 	if len(v.Preview) > 4096 || !utf8.ValidString(v.Preview) {
@@ -109,6 +120,14 @@ func (v TranscriptListItem) Validate() error {
 		return errors.New("invalid transcript identity")
 	}
 	switch v.Kind {
+	case domain.TranscriptHook:
+		if v.InputID != "" || v.Activity != (ToolActivityPayload{}) || v.HookSource.Validate() != nil {
+			return errors.New("invalid hook transcript item")
+		}
+		sample, _ := v.HookSource.Identity.Target.AssistantSample()
+		if sample.TurnID != v.TurnID || v.StopHook != nil && (v.HookSource.Identity.Target != v.StopHook.Target || v.HookSource.Identity.PlanDigest != v.StopHook.PlanDigest) {
+			return errors.New("hook transcript scope mismatch")
+		}
 	case domain.TranscriptReasoning:
 		if v.Reasoning == nil || v.Reasoning.Validate() != nil || v.InputID != "" || v.Activity != (ToolActivityPayload{}) || v.Reasoning.TotalBytes < uint64(len(v.Text)) || v.More != (v.Reasoning.TotalBytes > uint64(len(v.Text))) {
 			return errors.New("invalid reasoning transcript item")
@@ -190,13 +209,28 @@ const (
 	TranscriptInput     TranscriptBodySource = "input"
 	TranscriptResult    TranscriptBodySource = "result"
 	TranscriptPostHooks TranscriptBodySource = "post_hooks"
+	TranscriptStopHooks TranscriptBodySource = "stop_hooks"
 )
 
 func (s TranscriptBodySource) Valid() bool {
-	return s == TranscriptText || s == TranscriptInput || s == TranscriptResult || s == TranscriptPostHooks
+	return s == TranscriptText || s == TranscriptInput || s == TranscriptResult || s == TranscriptPostHooks || s == TranscriptStopHooks
+}
+
+// StopHookQueryTarget 把详情读取绑定到保存的计划与精确答复身份。
+type StopHookQueryTarget struct {
+	Target     domain.HookTarget `json:"target"`
+	PlanDigest string            `json:"plan_digest"`
+}
+
+func (v StopHookQueryTarget) Validate() error {
+	if !v.Target.ValidFor(domain.HookStop) || !domain.ValidHookDigest(v.PlanDigest) {
+		return errors.New("invalid stop query target")
+	}
+	return nil
 }
 
 type TranscriptBodyQuery struct {
+	StopHook       *StopHookQueryTarget `json:"stop_hook,omitempty"`
 	DetailSequence uint64               `json:"detail_sequence"`
 	ThreadID       domain.ThreadID      `json:"thread_id"`
 	Cursor         TranscriptCursor     `json:"cursor"`
@@ -207,7 +241,10 @@ type TranscriptBodyQuery struct {
 }
 
 func (q TranscriptBodyQuery) Validate() error {
-	if q.Source == TranscriptPostHooks && q.DetailSequence == 0 || q.Source != TranscriptPostHooks && q.DetailSequence != 0 {
+	if (q.StopHook != nil) != (q.Source == TranscriptStopHooks) || q.StopHook != nil && q.StopHook.Validate() != nil {
+		return errors.New("invalid stop query binding")
+	}
+	if (q.Source == TranscriptPostHooks || q.Source == TranscriptStopHooks) && q.DetailSequence == 0 || q.Source != TranscriptPostHooks && q.Source != TranscriptStopHooks && q.DetailSequence != 0 {
 		return errors.New("invalid transcript detail sequence")
 	}
 	if !q.ThreadID.Valid() || !q.Cursor.Valid() || !q.Source.Valid() || q.Limit == 0 || q.Limit > 64<<10 {

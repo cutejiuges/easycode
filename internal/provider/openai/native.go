@@ -179,20 +179,23 @@ func (item NativeItem) clone() NativeItem {
 type nativeHistoryEntryKind string
 
 const (
-	nativeHistorySample      nativeHistoryEntryKind = "sample"
-	nativeHistoryUserInputs  nativeHistoryEntryKind = "user_inputs"
-	nativeHistoryToolOutputs nativeHistoryEntryKind = "tool_outputs"
+	nativeHistoryHookFeedback nativeHistoryEntryKind = "hook_feedback"
+	nativeHistorySample       nativeHistoryEntryKind = "sample"
+	nativeHistoryUserInputs   nativeHistoryEntryKind = "user_inputs"
+	nativeHistoryToolOutputs  nativeHistoryEntryKind = "tool_outputs"
 )
 
 // nativeHistoryEntry 是 Responses 原生历史唯一的当前内存模型。
 type nativeHistoryEntry struct {
-	Kind          nativeHistoryEntryKind
-	TurnID        domain.TurnID
-	UserInputs    []NativeItem
-	InputMetadata *provider.InputMetadata
-	Outputs       []NativeItem
-	ToolOutputs   []NativeItem
-	Usage         rawUsage
+	FeedbackInput    *NativeItem
+	FeedbackMetadata *provider.HookFeedbackMetadata
+	Kind             nativeHistoryEntryKind
+	TurnID           domain.TurnID
+	UserInputs       []NativeItem
+	InputMetadata    *provider.InputMetadata
+	Outputs          []NativeItem
+	ToolOutputs      []NativeItem
+	Usage            rawUsage
 }
 
 func (entry nativeHistoryEntry) clone() nativeHistoryEntry {
@@ -201,6 +204,14 @@ func (entry nativeHistoryEntry) clone() nativeHistoryEntry {
 		ToolOutputs: cloneNativeItems(entry.ToolOutputs), Usage: entry.Usage.clone(),
 	}
 	cloned.TurnID = entry.TurnID
+	if entry.FeedbackInput != nil {
+		v := entry.FeedbackInput.clone()
+		cloned.FeedbackInput = &v
+	}
+	if entry.FeedbackMetadata != nil {
+		v := *entry.FeedbackMetadata
+		cloned.FeedbackMetadata = &v
+	}
 	cloned.UserInputs = make([]NativeItem, len(entry.UserInputs))
 	for i, input := range entry.UserInputs {
 		cloned.UserInputs[i] = input.clone()

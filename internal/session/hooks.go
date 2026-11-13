@@ -38,11 +38,17 @@ func NewHookExecutionStartedDraft(turn domain.TurnID, id domain.HookRunIdentity)
 	if !turn.Valid() || id.Validate() != nil {
 		return RecordDraft{}, fmt.Errorf("invalid hook execution start")
 	}
+	if sample, ok := id.Target.AssistantSample(); ok && sample.TurnID != turn {
+		return RecordDraft{}, fmt.Errorf("hook execution target mismatch")
+	}
 	return encodeDraft(EventHookExecutionStarted, "", turn, id)
 }
 func NewHookExecutionFinishedDraft(turn domain.TurnID, r domain.HookFinished) (RecordDraft, error) {
 	if !turn.Valid() || r.Validate() != nil {
 		return RecordDraft{}, fmt.Errorf("invalid hook execution result")
+	}
+	if sample, ok := r.Result.Identity.Target.AssistantSample(); ok && sample.TurnID != turn {
+		return RecordDraft{}, fmt.Errorf("hook result target mismatch")
 	}
 	return encodeDraft(EventHookExecutionFinished, "", turn, r)
 }
@@ -67,13 +73,20 @@ func DecodeHookExecutionStarted(record Record) (domain.HookRunIdentity, error) {
 	if err != nil {
 		return v, err
 	}
+	if sample, ok := v.Target.AssistantSample(); ok && sample.TurnID != record.TurnID {
+		return v, fmt.Errorf("hook start target mismatch")
+	}
 	return v, v.Validate()
 }
 func DecodeHookExecutionFinished(record Record) (domain.HookFinished, error) {
 	if record.EventKind != EventHookExecutionFinished {
 		return domain.HookFinished{}, fmt.Errorf("invalid hook result kind")
 	}
-	return domain.DecodeHookFinished(record.Payload)
+	v, err := domain.DecodeHookFinished(record.Payload)
+	if sample, ok := v.Result.Identity.Target.AssistantSample(); ok && sample.TurnID != record.TurnID {
+		return v, fmt.Errorf("hook result target mismatch")
+	}
+	return v, err
 }
 func DecodeToolHookGateDecided(record Record) (domain.HookGateDecision, error) {
 	if record.EventKind != EventToolHookGateDecided {
@@ -204,7 +217,7 @@ func (active *activeReplayTurn) acceptHookBatch(batch []Record) error {
 		if err != nil || len(batch) != 1 {
 			return replayCorrupt("invalid hook start batch")
 		}
-		call, err := active.hookCall(id.InvocationID)
+		call, err := active.hookCall(id.InvocationID())
 		if err != nil {
 			return err
 		}
@@ -224,7 +237,7 @@ func (active *activeReplayTurn) acceptHookBatch(batch []Record) error {
 		if err != nil {
 			return replayCorrupt("invalid hook finish payload")
 		}
-		call, err := active.hookCall(r.Identity.InvocationID)
+		call, err := active.hookCall(r.Identity.InvocationID())
 		if err != nil {
 			return err
 		}

@@ -157,9 +157,10 @@ func (association InputAssociation) Validate() error {
 type NativeCommitRole string
 
 const (
-	NativeCommitUserInputs  NativeCommitRole = "user_inputs"
-	NativeCommitSample      NativeCommitRole = "sample"
-	NativeCommitToolOutputs NativeCommitRole = "tool_outputs"
+	NativeCommitHookFeedback NativeCommitRole = "hook_feedback"
+	NativeCommitUserInputs   NativeCommitRole = "user_inputs"
+	NativeCommitSample       NativeCommitRole = "sample"
+	NativeCommitToolOutputs  NativeCommitRole = "tool_outputs"
 )
 
 // WithSkillAttachment 将准备好的正文冻结到输入，不执行 I/O。

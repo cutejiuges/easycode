@@ -276,6 +276,10 @@ func testHookResumeReconcilesEveryBatch(t *testing.T, event domain.HookEvent) {
 						}
 					}
 					if event == domain.HookPreToolUse && checkpoint.EventKind == session.EventToolCallResult || event.Post() && checkpoint.EventKind == session.EventToolPostHookCompleted || checkpoint.EventKind == session.EventProviderNativeCommit {
+						// 新 turn 的完成检查会拒绝坏来源；此处仅比较旧恢复生成的请求，先移除测试故障来源。
+						if err := os.Remove(file); err != nil && !os.IsNotExist(err) {
+							t.Fatal(err)
+						}
 						future, err := openChatResources(context.Background(), cfg, root, string(thread), workspace)
 						if err != nil {
 							t.Fatal(err)

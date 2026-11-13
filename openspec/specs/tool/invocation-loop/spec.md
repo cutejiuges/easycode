@@ -147,7 +147,7 @@ Write 的目标/目录检查与候选读取 SHALL 遵循上述 Patch 的 ready d
 
 ### Requirement: Tool turns use a bounded ordered multi-sample loop
 
-一个用户turn SHALL支持最多16个Provider samples和累计最多64个tool calls。completed sample不含tool calls时 SHALL结束turn；含calls时，Scheduler SHALL按call index把连续`parallel_read`调用组成最大8并发的批次，并把每个`exclusive` Patch、Write、Exec 或 Question 作为前后屏障。Runtime SHALL在到达每个调用或批次时完成其policy；Patch候选准备和所需approval只能在其前序批次结果durable后发生，matching decision收口后才可越过该屏障。结果收集到固定call slot并按call index durable提交全部results和匹配Provider-native outputs，outputs durable后才可开始下一sample。
+一个用户turn SHALL支持最多16个Provider samples和累计最多64个tool calls。completed sample 不含 tool calls 时 SHALL 进入完成边界：合法无 Stop 沿原路径结束，有 Stop 时先保存 sample/usage/plan，检查通过才完成，正常授权阻断则按 Stop 契约继续同 turn；含calls时，Scheduler SHALL按call index把连续`parallel_read`调用组成最大8并发的批次，并把每个`exclusive` Patch、Write、Exec 或 Question 作为前后屏障。Runtime SHALL在到达每个调用或批次时完成其policy；Patch候选准备和所需approval只能在其前序批次结果durable后发生，matching decision收口后才可越过该屏障。结果收集到固定call slot并按call index durable提交全部results和匹配Provider-native outputs，outputs durable后才可开始下一sample。
 
 当前Read、Glob、Grep、ReadArtifact、Skill属于`parallel_read`，Patch、Write、Exec与Question属于`exclusive`。单个调用的普通执行错误、拒绝、冲突或无匹配结果不得取消independent sibling；`abort`、turn取消或poisoned状态按取消契约收口。goroutine完成顺序、approval响应时间和实际执行时间不得影响Session seq、Provider output顺序、preview bytes或后续请求。超过sample/call上限 SHALL以稳定英文`tool_loop_limit_exceeded`失败，并且已经durable的sample、approval、ledger和outputs不得被删除或改写。
 
@@ -201,14 +201,14 @@ Write 的目标/目录检查与候选读取 SHALL 遵循上述 Patch 的 ready d
 - **WHEN** ReadArtifact、Exec、ReadArtifact 按此顺序 ready
 - **THEN** 后一个读取等待 exclusive Exec 结果，所有 result/native output 按原 call index 提交
 
-自动追加安全点 SHALL 仅在整组 results 与匹配 native outputs 均 durable/finalize 后开放；上限、取消、poison 或无 calls 最终决策后不得领取。输入提交不占用 sample、不重置 16/64 上限，不改变工具执行权限与 pairing。
+自动追加安全点 SHALL 在整组 results 与匹配 native outputs 均 durable/finalize 后，或无 calls sample 的 Stop continued 冻结决定已闭合且下一 sample 仍有余量后开放。只有前者要求工具 outputs，不为后者伪造调用或结果。两种安全点均由原唯一输入 owner 尝试领取一次队首连续 auto，允许空前缀，保持 strict-next 屏障；取消、poison、无采样余量或已选择结束 turn 的最终决定后不得领取。输入提交不占用 sample、不重置 16/64 上限及工具结果预算，不改变工具执行权限与 pairing。Stop 通过或终止拒绝后未续轮的队列仍等待后续 turn；无 calls sample/plan 已保存本身不表示已选择成功终态。
 
 #### Scenario: Consume steering after complete outputs
 - **WHEN** 并行调用乱序完成且存在排队自动输入
 - **THEN** 全部结果仍按原 call index 提交，outputs 成功后才可提交追加输入并开始下一 sample
 
 #### Scenario: Leave late input for the next turn
-- **WHEN** 无 calls sample 已选择提交最终边界后输入到达
+- **WHEN** 无 calls sample 已选择提交结束 turn 的最终 terminal（含 Stop 通过或终止拒绝）后输入到达
 - **THEN** 当前 turn 正常完成，输入保留 FIFO 等待新 turn
 
 Runtime SHALL 在同一 turn owner 持有 tool/result-budget 的纯内存账本，sample 512 KiB、turn 2 MiB，按调用 index 最终分配而非 worker 完成时间。每个当前及后续允许调用保留 1 KiB 安全结果空间，已冻结实际 preview bytes 扣账。steering 不重置额度；只读 worker 返回有界执行材料，由 owner 按序 finalization、result Sync 和 native outputs 提交；exclusive 屏障前不得延迟前序 result durable。
@@ -255,6 +255,20 @@ Runtime SHALL 在同一 turn owner 持有 tool/result-budget 的纯内存账本�
 #### Scenario: Publish only durable post details
 - **WHEN** Post plan/started/finished/terminal 批次成功 Sync 并安装查询快照
 - **THEN** 发布匹配 invocation/event/plan 和递增 detail_sequence 的进程内更新；失败 Sync 不发布，headless 校验后忽略且外部协议不扩张
+
+Stop 自动续轮 SHALL 先按真实阻断项检查独立续轮与下一普通 sample 余量，continued 决定只冻结最终反馈及交付义务；可选自动摘要只处理旧 committed 窗口。反馈单独或与真实用户纠正同批交付 Sync/finalize 后才可继续，首次请求前不再摘要新反馈。第 16 个 sample 的检查仍可通过；正常 model 阻断且没有下一 sample 时以 tool_loop_limit_exceeded 结束，无虚假 continued/claim/摘要。已累计 64 calls 本身不禁止剩余额度内的纯文本 sample；任何新 ready call 仍按原上限拒绝。
+
+#### Scenario: Continue a checked answer without a fake tool
+- **WHEN** 无 calls 答复命中正常 model 阻断且队列为 auto A、strict-next B、auto C
+- **THEN** 原 turn 只领取 A，原子交付反馈与真实 A 后再采样；不制造工具 output，B/C 保持 FIFO，原调用/结果额度不重置
+
+#### Scenario: Check the final allowed sample
+- **WHEN** 第 16 个 sample 无 calls 且 Stop 检查通过或正常 model 阻断
+- **THEN** 通过可完成；需要续轮则以 tool_loop_limit_exceeded 关闭，不保存 continued、不领取或摘要
+
+#### Scenario: Preserve a text continuation after the call limit
+- **WHEN** 64 个已配对 calls 后仍有 sample 余量和其他正常预算，Stop 请求续轮且后续 sample 只有文本
+- **THEN** 文本采样可继续同 turn，但若出现新 ready call 则在调用准入前拒绝，不能重置 calls 上限
 
 ### Requirement: Execution ledger provides at-most-once automatic execution
 

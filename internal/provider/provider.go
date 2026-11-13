@@ -309,6 +309,7 @@ func streamErrorNil(err error) bool {
 // HistoryProjector 将 Provider 原生历史单向投影为只读语义快照。
 type HistoryProjector interface {
 	ProjectHistory() domain.SemanticHistoryView
+	ProjectAssistantSample(domain.AssistantSampleReference) (domain.AssistantSampleText, error)
 }
 
 // HistoryFootprinter 返回 Provider 已提交原生历史的不透明数值摘要。
@@ -580,7 +581,7 @@ func (outputs *PreparedToolOutputs) Discard() error {
 
 // Finalized 判断工具结果提交是否已进入内存历史。
 func (outputs *PreparedToolOutputs) Finalized() bool {
-	return outputs != nil && outputs.commit != nil && outputs.commit.state.Load() == 1
+	return outputs != nil && outputs.commit != nil && outputs.commit.resolution.finalized()
 }
 
 // Factory 创建相互隔离的会话级 Provider Conversation。

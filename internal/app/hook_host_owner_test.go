@@ -39,10 +39,15 @@ func TestPostHookHostRetainsWorkspaceAndCrossProcessLeaseDuringCleanup(t *testin
 func TestFailureHookHostRetainsWorkspaceAndCrossProcessLeaseDuringCleanup(t *testing.T) {
 	testHookHostRetainsLease(t, domain.HookPostToolUseFailure)
 }
+func TestStopHookHostRetainsWorkspaceAndCrossProcessLeaseDuringCleanup(t *testing.T) {
+	testHookHostRetainsLease(t, domain.HookStop)
+}
 func testHookHostRetainsLease(t *testing.T, event domain.HookEvent) {
 	t.Helper()
 	workspace := t.TempDir()
-	if event == domain.HookPostToolUseFailure {
+	if event == domain.HookStop {
+		writeStopHookConfig(t, workspace, "never executed by fake runner", domain.HookFeedbackNone)
+	} else if event == domain.HookPostToolUseFailure {
 		writeFailureHookConfig(t, workspace, "never executed by fake runner", domain.HookFeedbackNone)
 	} else if event == domain.HookPostToolUse {
 		writePostHookConfig(t, workspace, "never executed by fake runner", domain.HookFeedbackNone)
@@ -52,7 +57,12 @@ func testHookHostRetainsLease(t *testing.T, event domain.HookEvent) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.Copy(io.Discard, r.Body)
 		w.Header().Set("Content-Type", "text/event-stream")
-		serveWriteScenarioSample(w, domain.ProviderOpenAI, 1, []writeScenarioCall{{"Write", `{"file_path":"marker","content":"must-not-write"}`}})
+		sample := 1
+		if event == domain.HookStop {
+			serveWriteScenarioSample(w, domain.ProviderOpenAI, 2, nil)
+			return
+		}
+		serveWriteScenarioSample(w, domain.ProviderOpenAI, sample, []writeScenarioCall{{"Write", `{"file_path":"marker","content":"must-not-write"}`}})
 	}))
 	defer server.Close()
 	root := filepath.Join(t.TempDir(), "sessions")
@@ -72,6 +82,9 @@ func testHookHostRetainsLease(t *testing.T, event domain.HookEvent) {
 		t.Fatal(err)
 	}
 	for e := range events {
+		if e.Kind == protocol.EventTurnFailed {
+			t.Fatal("turn failed before blocked hook", string(e.Payload))
+		}
 		if e.Kind == protocol.EventHookTrustRequested {
 			p, _ := protocol.DecodeHookTrustRequested(e)
 			if err := resources.session.ResolveHookTrust(context.Background(), e.TurnID, p, protocol.HookTrustSession); err != nil {
@@ -131,7 +144,7 @@ func testHookHostRetainsLease(t *testing.T, event domain.HookEvent) {
 	for range events {
 	}
 	content, err := os.ReadFile(filepath.Join(workspace, "marker"))
-	if event == domain.HookPreToolUse {
+	if event == domain.HookPreToolUse || event == domain.HookStop {
 		if !os.IsNotExist(err) {
 			t.Fatal("target executed during pre cleanup")
 		}

@@ -10,9 +10,9 @@ Session envelope MUST NOT 包含 schema_version、payload_version、canary、for
 
 Write 的必要 typed input SHALL 保存 file_path/content，并与原生调用参数一致；该 content 是调用事实，不是额外采集的磁盘文件快照。Write result SHALL 只保存冻结的有界摘要与 typed metadata，不回显正文。Read observation、目录/file identity、暂存路径与 grant MUST NOT 保存。
 
-当前词汇 SHALL 增加 tool_hook_gate_planned、hook_execution_started、hook_execution_finished、tool_hook_gate_decided；四类事实均使用当前 envelope、真实 turn/invocation 身份及各自 typed constructor/strict decoder/validator，不能以 opaque payload、optional record 或版本字段代替。计划只保存有序 1..8 个来源种类/revision、Hook id、命令 fingerprint、timeout、能力及 plan digest；started/finished 保存匹配 ordinal 与 HookRunID。finished SHALL 保存封闭 status/code、exit known/value、timeout/cancelled、输出字节数、cleanup confirmed 及 execution/recovery origin；决定保存聚合状态、完成数量和适用时的阻断 ordinal。
+当前词汇 SHALL 增加 tool_hook_gate_planned、hook_execution_started、hook_execution_finished、tool_hook_gate_decided；四类事实均使用当前 envelope、真实 turn 与封闭 Hook target 身份（工具目标仍必须含真实 invocation/capability）及各自 typed constructor/strict decoder/validator，不能以 opaque payload、optional record 或版本字段代替。计划只保存有序 1..8 个来源种类/revision、Hook id、命令 fingerprint、timeout、能力及 plan digest；started/finished 保存匹配 ordinal 与 HookRunID。finished SHALL 保存封闭 status/code、exit known/value、timeout/cancelled、输出字节数、cleanup confirmed 及 execution/recovery origin；决定保存聚合状态、完成数量和适用时的阻断 ordinal。
 
-新增事实 MUST NOT 保存完整 command、配置路径、stdin、stdout/stderr、自由文本 reason、绝对 cwd、环境实际值、PID、信任响应或 grant。source revision、fingerprint、plan digest 是内容关联，不是格式版本。无匹配时没有 Hook facts 是合法当前路径；实际存在的新 facts 全部是必须理解的恢复事实。
+新增事实 MUST NOT 保存完整 command、配置路径、stdin、stdout/stderr、未授权自由文本 reason、绝对 cwd、环境实际值、PID、信任响应或 grant。仅 Stop continued 决定可按 extension/stop-hooks 保存已授权、有界且有来源的规范模型反馈，并与后续唯一 native 交付的角色/来源/最终字节交叉验证；工具 gate 统计事实不承载该正文。source revision、fingerprint、plan digest 是内容关联，不是格式版本。无匹配时没有 Hook facts 是合法当前路径；实际存在的新 facts 全部是必须理解的恢复事实。
 
 #### Scenario: Encode the current record vocabulary
 - **WHEN** 一个 root thread 完成包含 Read、Glob、Grep、获批 Patch 与获批 Exec 的 Tool Loop
@@ -118,11 +118,21 @@ Session envelope SHALL 不携带格式版本字段；Provider native/checkpoint 
 - **WHEN** Hook record 缺失当前必需字段、包含版本标记、未知 kind 或 raw output
 - **THEN** strict 校验在 repair/append/副作用前失败，不跳过记录或使用历史 reader
 
+当前词汇 SHALL 增加 turn_stop_hook_planned、turn_stop_hook_decided，复用带 tool_call/turn_stop 目标联合的 Hook started/finished；每个当前 kind 都具有 typed constructor/strict decoder/validator。Stop 计划为 checks/unavailable 封闭联合，包含真实 turn/sample、续轮次数、digest，以及有序声明引用（含 Stop 事件及 none/model 披露策略）或明确来源/匹配错误，不保存命令或伪 invocation。决定包含同 target/plan、processed、disposition/code、origin 与续轮计量；仅 continued 含冻结模型文本及来源/bytes/digest。旧 invocation-only 运行身份直接失败，不增加格式版本、optional record 或兼容 reader。
+
+#### Scenario: Encode a current stop target
+- **WHEN** 成功无 calls sample 进入 Stop 检查
+- **THEN** 当前 typed facts 使用真实 turn/sample target，无 tool capability、Provider call ID 或假 invocation
+
+#### Scenario: Reject unapproved text in a stop fact
+- **WHEN** plan/运行统计或非 continued 决定含脚本原文，或反馈缺少 model 来源/预算
+- **THEN** 当前 decoder/replay 在 repair/append 前拒绝，不透传正文
+
 ### Requirement: Replay validation enforces record state transitions
 
 Loader 完成字节、envelope 和 batch 校验后，ReplayPlanner SHALL 在创建 Provider Conversation 前对全部当前 typed records 执行语义回放。首个 batch MUST 恰好建立唯一 `session_meta` 与 root `thread_meta`；同一 root thread 最多有一个活动 turn。
 
-文本 turn SHALL 在 turn_started 后先完成 initial 输入 batch，才可通过 [provider_native_commit(sample), sample_usage, turn_completed] 完成；单个 turn_failed 可在输入提交前或后收口，保留此前全部已提交事实。Tool Loop 中，一个含 calls 的 sample batch MUST 严格为 `[provider_native_commit, sample_usage, tool_call_ready...]`，ready records 的 sample/call index 连续且 identity 唯一。ReplayPlanner SHALL 按 capability 验证每个 call slot：自动允许的读取正常为 `ready -> execution_started -> result`；Patch 可为 `ready -> approval_decided(allow*) -> execution_started -> result`、`ready -> [approval_decided(deny), result(denied)]`，或在候选准备失败/取消时从 ready 直接进入匹配的 error/cancelled result。`abort` SHALL 使当前及尚未完成 slots 按取消契约收口。approval identity、candidate fingerprint、outcome 和 decision source MUST 与同一 invocation 一致，且每个 Patch 至多一个 approval fact。
+文本 turn SHALL 在 turn_started 后先完成 initial 输入 batch；无 Stop 时才可通过 [provider_native_commit(sample), sample_usage, turn_completed] 完成，有 Stop 时必须先按独立完成检查 grammar 保存 sample/usage/plan 再收口；单个 turn_failed 可在输入提交前或后收口，保留此前全部已提交事实。Tool Loop 中，一个含 calls 的 sample batch MUST 严格为 `[provider_native_commit, sample_usage, tool_call_ready...]`，ready records 的 sample/call index 连续且 identity 唯一。ReplayPlanner SHALL 按 capability 验证每个 call slot：自动允许的读取正常为 `ready -> execution_started -> result`；Patch 可为 `ready -> approval_decided(allow*) -> execution_started -> result`、`ready -> [approval_decided(deny), result(denied)]`，或在候选准备失败/取消时从 ready 直接进入匹配的 error/cancelled result。`abort` SHALL 使当前及尚未完成 slots 按取消契约收口。approval identity、candidate fingerprint、outcome 和 decision source MUST 与同一 invocation 一致，且每个 Patch 至多一个 approval fact。
 
 调度 records SHALL 符合连续 `parallel_read` batch 与 `exclusive` 屏障：一个 read batch 的 starts 按 call index先于该 batch 的 results，Patch 的 started/result 位于前后 batch 之间；全部 result records仍按原 call index单调提交。全部 results 存在后，恰好一个按 call index与原 wire kind 配对的 tool-output `provider_native_commit` 关闭该 call group，之后才可出现可选 steering 输入 batch、下一 sample 或 turn failure。
 
@@ -211,7 +221,7 @@ ReplayPlanner MUST 拒绝孤立/重复 approval、result 或 started、allow 后
 - **WHEN** Write 在准备时发现完整读取证据与当前文件不匹配
 - **THEN** ready 后的 conflict result 合法且不存在 started，后续配对 output 仍必须出现
 
-输入 batch SHALL 严格为 [turn_inputs_committed, provider_native_commit(user_inputs)]。initial/target=0 只能在 start 后首 sample 前出现一次；steering/target=n 只能在 sample n-1 整组 outputs 闭合后、sample n 前出现至多一次。sample 索引从 0 连续递增，输入提交不增加 sample 计数。同一 InputID 不得重复提交。回放必须给 native restore 提供真实 turn、期望角色和关联，不得按 batch 长度猜测 opaque kind。
+普通 initial/工具 steering 输入 batch SHALL 严格为 [turn_inputs_committed, provider_native_commit(user_inputs)]；Stop 的真实追加输入仅可作为其三记录交付 batch 内紧邻的同一 pair。initial/target=0 只能在 start 后首 sample 前出现一次；steering/target=n 只能在 sample n-1 完整工具 outputs 闭合后，或匹配 Stop continued 冻结决定的受控交付中、sample n 前出现至多一次。sample 索引从 0 连续递增，输入提交不增加 sample 计数。同一 InputID 不得重复提交；回放必须给 native restore 提供真实 turn、期望角色和关联，不得按 batch 长度猜测 opaque kind。
 
 #### Scenario: Reject illegal input placement
 - **WHEN** checksum 正确但输入在未闭合工具组内、terminal 后、重复 target 或 initial 缺失时出现
@@ -221,7 +231,7 @@ ReplayPlanner MUST 拒绝孤立/重复 approval、result 或 started、allow 后
 - **WHEN** journal 在完整 initial 或 steering 输入 batch 后中断
 - **THEN** 回放保留输入及关联，并返回本地 lifecycle reconciliation，不请求模型或执行工具
 
-普通 turn grammar 保持以上规则；手动压缩是与 turn 互斥的独立生命周期。compaction_started 必须为单记录 batch，绑定当前来源 revisions/前驱/digest 和 scope。manual 仅在 idle 开始；auto 仅在关联 turn 的首次输入提交前，或完整工具 outputs 已提交且下一 sample 尚未开始时允许，target sample_index 必须精确匹配。同一 sample 最多一次 auto started，未闭合调用、已保存当前 sample 输入或重复自动摘要必须拒绝。started 之后恰好一个同身份、同 scope 的 completed 或 failed 才允许普通事实继续，期间不能插入 turn/input/sample/tool 记录。completed 必须含有界 checkpoint envelope、normalized usage、前后估算并原子提交；failed 必须含 typed 原因和 observed/unavailable 计量状态。compaction record 的 envelope TurnID 始终为空，普通 turn 关联只在 scope 中表达，不冒充普通 native sample/usage。
+普通 turn grammar 保持以上规则；手动压缩是与 turn 互斥的独立生命周期。compaction_started 必须为单记录 batch，绑定当前来源 revisions/前驱/digest 和 scope。manual 仅在 idle 开始；auto 仅在关联 turn 的首次输入提交前、完整工具 outputs 已提交，或 Stop continued 冻结决定已保存、native 交付缺失且 prepared 候选已 discard、下一 sample 尚未开始时允许，target sample_index 必须精确匹配。同一 sample 最多一次 auto started，未闭合调用、已保存当前 sample 输入或重复自动摘要必须拒绝。started 之后恰好一个同身份、同 scope 的 completed 或 failed 才允许普通事实继续，期间不能插入 turn/input/sample/tool 记录。completed 必须含有界 checkpoint envelope、normalized usage、前后估算并原子提交；failed 必须含 typed 原因和 observed/unavailable 计量状态。compaction record 的 envelope TurnID 始终为空，普通 turn 关联只在 scope 中表达，不冒充普通 native sample/usage。
 
 #### Scenario: Replay a compacted thread
 - **WHEN** 完整 turn 之后记录 started/completed，再记录新 turn
@@ -260,3 +270,9 @@ ReplayPlanner MUST 拒绝孤立/重复 approval、result 或 started、allow 后
 #### Scenario: Reject corruption even with a torn suffix
 - **WHEN** 计划/ordinal/身份非法的完整前缀后另有半行
 - **THEN** 恢复失败且全部 journal bytes 不变，禁止先截断再校验
+
+Stop 候选 SHALL 消耗真实 sample index；continued 后的下一 sample 必须使用连续 index，不能用空工具组假装闭合。Stop plan 开放时不得插入新 sample、输入、工具或压缩。完整 Stop 计划/运行/决定按新增 grammar 验证，不复用 tool slot 的 approval/output 配对，也不允许凭 batch 长度推断 native role。
+
+#### Scenario: Reject a premature checked completion
+- **WHEN** checks plan 存在未完成项却出现 turn_completed、新 sample 或 auto compaction
+- **THEN** 作为语义 corruption 拒绝，不能以半行修复或默认通过放行

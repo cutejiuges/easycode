@@ -37,7 +37,7 @@ func TestBothEventConfigurationAndDisclosure(t *testing.T) {
 		`{"hooks":{"PreToolUse":` + strings.Replace(pre, `"id":"pre"`, `"id":"pre","feedback":"none"`, 1) + `}}`,
 		`{"hooks":{"PostToolUse":` + strings.Replace(post, `"id":"post"`, `"id":"post","feedback":"unknown"`, 1) + `}}`,
 		`{"hooks":{"PreToolUse":` + pre + `,"PostToolUse":` + strings.Replace(post, `"post"`, `"pre"`, 1) + `}}`,
-		`{"hooks":{"PostToolUse":null}}`, `{"hooks":{"Stop":[]}}`,
+		`{"hooks":{"PostToolUse":null}}`, `{"hooks":{"StopFailure":[]}}`,
 	} {
 		if _, err := decodeConfig(domain.HookSourceUser, []byte(bad)); err == nil {
 			t.Fatal("invalid event configuration accepted", bad)

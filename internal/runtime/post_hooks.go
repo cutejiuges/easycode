@@ -126,7 +126,7 @@ func (r *Runtime) preparePostHooks(ctx context.Context, emit Emitter, turn domai
 		if ctx.Err() != nil {
 			return state, domain.HookCancelled, nil
 		}
-		code, err := r.trustHook(ctx, emit, turn, inv, d)
+		code, err := r.trustHook(ctx, emit, turn, plan.Target(), plan.Digest, d)
 		if err != nil {
 			return state, domain.HookTrustDenied, err
 		}
@@ -278,7 +278,7 @@ func (r *Runtime) completePostHooks(ctx context.Context, turn domain.TurnID, res
 			}
 		}
 	}
-	r.emitHookActivity(turn, protocol.HookActivityPayload{InvocationID: string(result.InvocationID()), Reference: ref, State: activityState, Code: code})
+	r.emitHookActivity(turn, protocol.HookActivityPayload{Target: state.plan.Target(), PlanDigest: state.plan.Digest, Reference: ref, State: activityState, Code: code})
 	return nil
 }
 
@@ -362,7 +362,7 @@ func (r *Runtime) runPostHooks(ctx context.Context, turn domain.TurnID, inv tool
 			}
 			return err
 		}
-		r.emitHookActivity(turn, protocol.HookActivityPayload{InvocationID: string(inv.InvocationID()), Reference: d.Reference, State: "checking", Code: domain.HookOK})
+		r.emitHookActivity(turn, protocol.HookActivityPayload{Target: state.plan.Target(), PlanDigest: state.plan.Digest, Reference: d.Reference, State: "checking", Code: domain.HookOK})
 		start := now()
 		execution := runner.Run(ctx, id, d, input, min(time.Duration(d.Reference.TimeoutSeconds)*time.Second, remaining))
 		remaining -= max(0, now().Sub(start))
@@ -406,7 +406,7 @@ func (r *Runtime) runPostHooks(ctx context.Context, turn domain.TurnID, inv tool
 			return err
 		}
 		if !final {
-			r.emitHookActivity(turn, protocol.HookActivityPayload{InvocationID: string(inv.InvocationID()), Reference: d.Reference, State: protocol.HookActivityState(resultStatus), Code: frozen.Result.Code, StdoutBytes: frozen.Result.StdoutBytes, StderrBytes: frozen.Result.StderrBytes})
+			r.emitHookActivity(turn, protocol.HookActivityPayload{Target: state.plan.Target(), PlanDigest: state.plan.Digest, Reference: d.Reference, State: protocol.HookActivityState(resultStatus), Code: frozen.Result.Code, StdoutBytes: frozen.Result.StdoutBytes, StderrBytes: frozen.Result.StderrBytes})
 		}
 		if resultStatus == domain.HookUncertain {
 			r.poisoned.Store(true)

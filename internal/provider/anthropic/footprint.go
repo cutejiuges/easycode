@@ -15,6 +15,13 @@ func (conversation *Conversation) HistoryFootprint() (domain.NativeHistoryFootpr
 func historyFootprint(entries []nativeHistoryEntry, revision uint64) (domain.NativeHistoryFootprint, error) {
 	var bytes uint64
 	for _, entry := range entries {
+		if entry.FeedbackInput != nil {
+			encoded, err := codec.MarshalStable(*entry.FeedbackInput)
+			if err != nil {
+				return unknownHistoryFootprint(revision)
+			}
+			bytes = estimate.SaturatingAdd(bytes, uint64(len(encoded)))
+		}
 		for _, userInput := range entry.UserInputs {
 			input, err := codec.MarshalStable(userInput)
 			if err != nil {
@@ -22,7 +29,7 @@ func historyFootprint(entries []nativeHistoryEntry, revision uint64) (domain.Nat
 			}
 			bytes = estimate.SaturatingAdd(bytes, uint64(len(input)))
 		}
-		if entry.Kind == nativeHistoryUserInputs {
+		if entry.Kind == nativeHistoryUserInputs || entry.Kind == nativeHistoryHookFeedback {
 			continue
 		}
 		var message nativeMessage

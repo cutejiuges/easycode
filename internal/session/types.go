@@ -20,6 +20,8 @@ const (
 type EventKind string
 
 const (
+	EventTurnStopHookPlanned   EventKind = "turn_stop_hook_planned"
+	EventTurnStopHookDecided   EventKind = "turn_stop_hook_decided"
 	EventToolPostHookPlanned   EventKind = "tool_post_hook_planned"
 	EventToolPostHookCompleted EventKind = "tool_post_hook_completed"
 	EventToolHookGatePlanned   EventKind = "tool_hook_gate_planned"
@@ -315,7 +317,7 @@ type TurnFailedPayload struct {
 }
 
 type recordPayload interface {
-	domain.HookPlan | domain.HookRunIdentity | domain.HookFinished | domain.PostHookPlan | domain.PostHookTerminal | domain.HookGateDecision |
+	domain.StopPlan | domain.StopDecision | domain.HookPlan | domain.HookRunIdentity | domain.HookFinished | domain.PostHookPlan | domain.PostHookTerminal | domain.HookGateDecision |
 		CompactionStartedPayload | CompactionCompletedPayload | CompactionFailedPayload |
 		TurnInputsPayload |
 		SessionMetaPayload | ThreadMetaPayload | TurnStartedPayload | NativeCommitPayload |

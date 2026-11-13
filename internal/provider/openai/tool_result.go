@@ -66,6 +66,7 @@ func validateNativeHistory(entries []nativeHistoryEntry) error {
 	var pending []NativeItem
 	var turnID domain.TurnID
 	var nextSample uint32
+	stopCount := 0
 	sampleAllowed := false
 	steeringAllowed := false
 	seenInputs := make(map[domain.InputID]struct{})
@@ -93,6 +94,7 @@ func validateNativeHistory(entries []nativeHistoryEntry) error {
 				seenTurns[a.TurnID()] = struct{}{}
 				turnID = a.TurnID()
 				nextSample = 0
+				stopCount = 0
 			} else if !steeringAllowed || turnID != a.TurnID() || nextSample != a.SampleIndex() {
 				return fmt.Errorf("steering input position is invalid")
 			}
@@ -112,6 +114,18 @@ func validateNativeHistory(entries []nativeHistoryEntry) error {
 			steeringAllowed = false
 			nextSample++
 			pending = functionCalls(entry.Outputs)
+		case nativeHistoryHookFeedback:
+			feedback, err := entryStopFeedback(entry)
+			if err != nil {
+				return err
+			}
+			sample, _ := feedback.Identity.Target.AssistantSample()
+			if len(pending) != 0 || sampleAllowed || turnID != entry.TurnID || nextSample == 0 || sample.TurnID != turnID || sample.SampleIndex+1 != nextSample || nextSample >= 16 || index == 0 || entries[index-1].Kind != nativeHistorySample || stopCount >= domain.MaxStopContinuations {
+				return fmt.Errorf("invalid hook feedback history position")
+			}
+			stopCount++
+			sampleAllowed = true
+			steeringAllowed = true
 		case nativeHistoryToolOutputs:
 			if len(pending) == 0 || entry.TurnID != turnID {
 				return fmt.Errorf("tool outputs have no matching pending calls")

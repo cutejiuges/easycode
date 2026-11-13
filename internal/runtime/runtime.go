@@ -57,6 +57,7 @@ type Config struct {
 	TextOutputStore           tool.TextOutputStore
 	ToolHistory               ToolHistoryObserver
 	HookHistory               HookHistoryObserver
+	StopHistory               StopHistoryObserver
 	ReadArtifactExecutor      tool.ReadArtifactExecutor
 	ArtifactReferences        *tool.ArtifactReferences
 	SessionID                 domain.SessionID
@@ -120,6 +121,7 @@ type Runtime struct {
 	textOutputStore              tool.TextOutputStore
 	toolHistory                  ToolHistoryObserver
 	hookHistory                  HookHistoryObserver
+	stopHistory                  StopHistoryObserver
 	readArtifactExecutor         tool.ReadArtifactExecutor
 	artifactReferences           *tool.ArtifactReferences
 	conversation                 provider.Conversation
@@ -237,6 +239,7 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 		compactionOutputTokens: config.CompactionOutputTokens,
 		toolHistory:            config.ToolHistory,
 		hookHistory:            config.HookHistory,
+		stopHistory:            config.StopHistory,
 		readArtifactExecutor:   config.ReadArtifactExecutor,
 		questionExecutor:       config.QuestionExecutor, interactiveQuestions: config.InteractiveQuestions, newQuestionRequestID: config.GenerateQuestionRequestID,
 		skillExecutor:      config.SkillExecutor,
@@ -312,6 +315,7 @@ func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, 
 	currentInput := provider.NewSamplingInput()
 	usages := make([]domain.SampleUsage, 0, maxSamplesPerTurn)
 	totalCalls := 0
+	stopBudget := stopTurnBudget{remaining: 30 * time.Second}
 	seenInvocationIDs := make(map[tool.InvocationID]struct{})
 	for sampleIndex := 0; ; sampleIndex++ {
 		if sampleIndex >= maxSamplesPerTurn {
@@ -337,7 +341,30 @@ func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, 
 		}
 		if len(ready) == 0 {
 			usages = append(usages, usage)
-			return runtime.commitFinalSample(ctx, emit, turnID, sample, usages)
+			check, err := runtime.completionCheck(domain.AssistantSampleReference{TurnID: turnID, SampleIndex: uint32(sampleIndex)}, stopBudget)
+			if err != nil {
+				discardPreparedSample(sample)
+				return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, err)
+			}
+			if check == nil {
+				return runtime.commitFinalSample(ctx, emit, turnID, sample, usages)
+			}
+			if err := runtime.commitStopSample(ctx, turnID, sample, check); err != nil {
+				runtime.emitFailure(emit, turnID, err)
+				return err
+			}
+			continued, err := runtime.runStopCheck(ctx, emit, check, &stopBudget, usages)
+			if !continued {
+				if err != nil && check.state.Decision == nil {
+					runtime.emitFailure(emit, turnID, err)
+				}
+				return err
+			}
+			if err := runtime.deliverStopContinuation(ctx, emit, check, control); err != nil {
+				return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, err)
+			}
+			currentInput = provider.NewSamplingInput()
+			continue
 		}
 		if totalCalls+len(ready) > maxToolCallsPerTurn {
 			discardPreparedSample(sample)

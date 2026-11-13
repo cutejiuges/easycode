@@ -60,6 +60,9 @@ func buildMessagesRequest(
 		messages = append(messages, newUserMessage(projectInstructions.RenderedText()))
 	}
 	for _, entry := range history {
+		if entry.FeedbackInput != nil {
+			messages = append(messages, entry.FeedbackInput.clone())
+		}
 		for _, message := range entry.UserInputs {
 			messages = append(messages, message.clone())
 		}

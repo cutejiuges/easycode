@@ -56,6 +56,20 @@ func (runtime *Runtime) prepareAutomaticSample(ctx context.Context, turn domain.
 		}
 		view, footprint = candidate, candidateFootprint
 	}
+	return runtime.prepareAutomaticWindow(ctx, turn, index, view, footprint, revision, emit)
+}
+
+// prepareAutomaticWindow 只接收已丢弃 prepared 的候选投影；摘要仍读取旧提交窗口。
+func (runtime *Runtime) prepareAutomaticWindow(ctx context.Context, turn domain.TurnID, index uint32, view domain.ActiveContextView, footprint domain.NativeHistoryFootprint, revision uint64, emit Emitter) error {
+	if _, enabled := runtime.autoCompactionPolicy.Threshold(); !enabled {
+		return nil
+	}
+	if runtime.autoCompactionFailures >= 3 || (runtime.autoCompactionFailures > 0 && runtime.autoCompactionFailedRevision == revision) {
+		return nil
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	plan, err := runtime.planWindow(view, footprint)
 	if err != nil {
 		return err

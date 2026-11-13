@@ -59,7 +59,7 @@ func (b *hookOutputBuffer) Write(p []byte) (int, error) {
 // Run 在已 durable 的 Hook started 后接收一次检查；返回前完成全部 owned 清理。
 func (r *HookRunner) Run(ctx context.Context, id domain.HookRunIdentity, d domain.HookDeclaration, input domain.HookInput, timeout time.Duration) domain.HookExecution {
 	result := domain.HookRunResult{Identity: id, Status: domain.HookError, Code: domain.HookStartFailed, CleanupConfirmed: true, Origin: "execution"}
-	if id.Validate() != nil || d.Validate() != nil || input.Validate() != nil || input.Event != id.Event || d.Reference.Event != id.Event || timeout <= 0 || timeout > time.Duration(d.Reference.TimeoutSeconds)*time.Second {
+	if id.Validate() != nil || d.Validate() != nil || input.Validate() != nil || input.Event != id.Event || !input.MatchesTarget(id.Target) || d.Reference.Event != id.Event || timeout <= 0 || timeout > time.Duration(d.Reference.TimeoutSeconds)*time.Second {
 		return domain.HookExecution{Result: result}
 	}
 	if ctx == nil || ctx.Err() != nil {

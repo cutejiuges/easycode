@@ -4,6 +4,8 @@ SHELL := /bin/sh
 
 GO ?= go
 GOFLAGS ?=
+# 全量真实进程、恢复矩阵和 race 共用有界包级总预算，不改变操作级 deadline。
+TEST_TIMEOUT ?= 20m
 APP_NAME ?= easycode
 CMD_PATH := ./cmd/easycode
 BIN_DIR ?= bin
@@ -31,10 +33,10 @@ lint:
 	$(GO) tool staticcheck $(PACKAGES)
 
 test:
-	$(GO) test $(PACKAGES)
+	$(GO) test -timeout=$(TEST_TIMEOUT) $(PACKAGES)
 
 test-race:
-	$(GO) test -race $(PACKAGES)
+	$(GO) test -timeout=$(TEST_TIMEOUT) -race $(PACKAGES)
 
 branch-check:
 	@./scripts/check-branch-name.sh

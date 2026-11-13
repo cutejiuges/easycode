@@ -128,11 +128,11 @@ func hookPanel(lines []string, width, height, scroll int) string {
 	return strings.Join(wrapped[scroll:min(len(wrapped), scroll+max(1, height))], "\n")
 }
 func (m Model) renderHooks() string {
-	lines := []string{"Hooks · PreToolUse / PostToolUse / PostToolUseFailure", "Enter: details · Esc: back"}
+	lines := []string{"Hooks · Local checks", "Enter: details · Esc: back"}
 	if m.hooks.detail && len(m.hooks.entries) > 0 {
 		e := m.hooks.entries[m.hooks.selected]
 		d := e.Declaration
-		lines = []string{"Hook details · Esc: back · ↑/↓: scroll · r: reset trust", fmt.Sprintf("Source: %s · %s [%s]", d.Reference.Source, d.Reference.ID, e.State), "Event: " + string(d.Reference.Event) + " · feedback: " + string(d.Reference.Feedback), "Matcher: " + d.Matcher.String(), fmt.Sprintf("Timeout: %d seconds", d.Reference.TimeoutSeconds), "Workspace: . · read-only · network denied", "Workspace scripts can change after review.", "Reset only removes trust; the next tool call asks again.", "Raw output is discarded. Only trusted model feedback is sent and saved.", "", "Command:", d.Command}
+		lines = []string{"Hook details · Esc: back · ↑/↓: scroll · r: reset trust", fmt.Sprintf("Source: %s · %s [%s]", d.Reference.Source, d.Reference.ID, e.State), "Event: " + string(d.Reference.Event) + " · feedback: " + string(d.Reference.Feedback), hookScopeLabel(d), fmt.Sprintf("Timeout: %d seconds", d.Reference.TimeoutSeconds), "Workspace: . · read-only · network denied", "Workspace scripts can change after review.", "Reset only removes trust; the next matching check asks again.", "Raw output is discarded. Only trusted model feedback is sent and saved.", "", "Command:", d.Command}
 		if e.State == "invalid" || e.State == "unsupported" {
 			lines = append(lines, "Unavailable: "+string(e.Code))
 		}
@@ -221,7 +221,10 @@ func (m Model) renderHookTrust() string {
 	if o.trust {
 		trust, deny = "> Trust for this session", "  Deny"
 	}
-	lines := []string{"Trust this hook?", fmt.Sprintf("Source: %s · %s", d.Reference.Source, d.Reference.ID), string(d.Reference.Event) + ": " + d.Matcher.String(), "Feedback: " + string(d.Reference.Feedback), fmt.Sprintf("Timeout: %d seconds", d.Reference.TimeoutSeconds), "Workspace: . · read-only · network denied", "This does not approve the model's tool call.", "Workspace scripts can change after review.", "PgUp/PgDn: full command · Tab/↑/↓: choose · Esc: deny", "", trust, deny, "", "Command:", d.Command}
+	lines := []string{"Trust this hook?", fmt.Sprintf("Source: %s · %s", d.Reference.Source, d.Reference.ID), string(d.Reference.Event) + ": " + d.Scope.String(), "Feedback: " + string(d.Reference.Feedback), fmt.Sprintf("Timeout: %d seconds", d.Reference.TimeoutSeconds), "Workspace: . · read-only · network denied", "This does not approve the model's tool call.", "Workspace scripts can change after review.", "PgUp/PgDn: full command · Tab/↑/↓: choose · Esc: deny", "", trust, deny, "", "Command:", d.Command}
+	if d.Reference.Event == domain.HookStop {
+		lines = append(lines[:1], append([]string{"Checks the saved answer before this turn completes.", "Earlier tool effects are not undone.", "feedback=model sends a blocking reason to the provider and saves it in Session."}, lines[1:]...)...)
+	}
 	if d.Reference.Event == domain.HookPostToolUse {
 		lines = append(lines[:1], append([]string{"Runs only after the tool succeeds.", "feedback=model sends additionalContext to the provider and saves it in Session."}, lines[1:]...)...)
 	}
@@ -241,6 +244,8 @@ func (m Model) projectHookEvent(e protocol.Event) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch e.Kind {
+	case protocol.EventStopHookCommitted:
+		return m.projectStopHookCommit(e)
 	case protocol.EventPostHookCommitted:
 		return m.projectPostHookCommit(e)
 	case protocol.EventHookTrustRequested:
@@ -256,7 +261,7 @@ func (m Model) projectHookEvent(e protocol.Event) (tea.Model, tea.Cmd) {
 			m.errorSummary = "stream_protocol_error: invalid hook trust resolution"
 			return m, nil
 		}
-		if m.hookTrust == nil || p.RequestID != m.hookTrust.request.RequestID || p.InvocationID != m.hookTrust.request.InvocationID || p.Reference != m.hookTrust.request.Declaration.Reference {
+		if m.hookTrust == nil || p.RequestID != m.hookTrust.request.RequestID || p.Target != m.hookTrust.request.Target || p.PlanDigest != m.hookTrust.request.PlanDigest || p.Reference != m.hookTrust.request.Declaration.Reference {
 			return m, nil
 		}
 		m.hookTrust = nil
@@ -274,21 +279,31 @@ func (m Model) projectHookEvent(e protocol.Event) (tea.Model, tea.Cmd) {
 			m.errorSummary = "stream_protocol_error: invalid hook activity"
 			return m, nil
 		}
-		index, ok := m.toolItems[p.InvocationID]
+		if p.Reference.Event == domain.HookStop {
+			if m.stopCommit == nil || m.stopCommit.Target != p.Target || m.stopCommit.PlanDigest != p.PlanDigest {
+				return m, nil
+			}
+			return m, nil
+		}
+		index, ok := m.toolItems[p.InvocationID()]
 		if !ok || index >= len(m.transcript) {
 			return m, nil
 		}
-		if m.toolClosed[p.InvocationID] && p.Reference.Event == domain.HookPreToolUse {
+		if m.toolClosed[p.InvocationID()] && p.Reference.Event == domain.HookPreToolUse {
 			return m, nil
 		}
-		if p.State == "checking" && m.toolClosed[p.InvocationID] {
-			post, ok := m.postHooks[p.InvocationID]
+		if p.State == "checking" && m.toolClosed[p.InvocationID()] {
+			post, ok := m.postHooks[p.InvocationID()]
 			if !ok || post.Phase != protocol.PostHookStarted {
 				return m, nil
 			}
 		}
 		if p.Reference.Event.Post() {
-			if !m.toolClosed[p.InvocationID] {
+			post, exists := m.postHooks[p.InvocationID()]
+			if !exists || post.PlanDigest != p.PlanDigest {
+				return m, nil
+			}
+			if !m.toolClosed[p.InvocationID()] {
 				return m, nil
 			}
 			activity := m.transcript[index].activity
@@ -302,4 +317,11 @@ func (m Model) projectHookEvent(e protocol.Event) (tea.Model, tea.Cmd) {
 		m.transcript[index].hook = &p
 	}
 	return m, nil
+}
+
+func hookScopeLabel(d domain.HookDeclaration) string {
+	if d.Reference.Event == domain.HookStop {
+		return "Scope: Turn completion"
+	}
+	return "Matcher: " + d.Scope.String()
 }

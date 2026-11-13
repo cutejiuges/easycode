@@ -104,13 +104,15 @@ func (model Model) receiveMainTranscript(reply mainTranscriptReply) (tea.Model, 
 			message.role = "Compaction"
 		case domain.TranscriptUser:
 			message.role = "User"
+		case domain.TranscriptHook:
+			message.role = "Hook"
 		case domain.TranscriptAssistant:
 			message.role = "Assistant"
 		case domain.TranscriptCall:
 			activity := item.Activity
 			message.activity = &activity
-			if item.PostHook != (protocol.HookActivityPayload{}) {
-				summary := item.PostHook
+			if item.PostHook != nil {
+				summary := *item.PostHook
 				message.hook = &summary
 			}
 			message.preview = item.Preview

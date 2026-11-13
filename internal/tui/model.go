@@ -66,6 +66,8 @@ const (
 
 // Model 保存纯 UI 投影状态，不依赖 Provider 或 transport。
 type Model struct {
+	stopCommit *protocol.StopHookCommittedPayload
+	stopStatus string
 	completion completionState
 	question   *questionOverlay
 
@@ -626,7 +628,7 @@ func (model *Model) submitApproval() tea.Cmd {
 }
 
 func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd) {
-	if event.Kind == protocol.EventHookTrustRequested || event.Kind == protocol.EventHookTrustResolved || event.Kind == protocol.EventHookActivity || event.Kind == protocol.EventPostHookCommitted {
+	if event.Kind == protocol.EventHookTrustRequested || event.Kind == protocol.EventHookTrustResolved || event.Kind == protocol.EventHookActivity || event.Kind == protocol.EventPostHookCommitted || event.Kind == protocol.EventStopHookCommitted {
 		return model.projectHookEvent(event)
 	}
 
@@ -703,6 +705,8 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 		model.transcript = append(model.transcript, transcriptMessage{role: "User", text: text})
 		model.assistantItem = -1
 	case protocol.EventTurnStarted:
+		model.stopCommit = nil
+		model.stopStatus = ""
 		model.postHooks = make(map[string]protocol.PostHookCommittedPayload)
 		if event.TurnID.Valid() {
 			notice := ""
@@ -756,6 +760,7 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 		item.text = appendProvisionalText(item.text, payload.Text)
 		item.sourceStart += total - len(item.text)
 	case protocol.EventTurnCompleted:
+		model.stopStatus = ""
 		if model.reasoning.stream.Pending() {
 			model.errorSummary = "stream_protocol_error: unresolved reasoning sample"
 			return model, nil
@@ -772,6 +777,7 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 		model.interruptNext = false
 		terminal = true
 	case protocol.EventTurnFailed:
+		model.stopStatus = ""
 		if model.assistantItem >= 0 {
 			model.transcript[model.assistantItem].unfinished = true
 		}
@@ -886,6 +892,9 @@ func (model Model) View() string {
 	_, _ = fmt.Fprintf(&view, "EasyCode %s\n", model.version)
 	if model.cancelling {
 		view.WriteString("Cancelling — waiting for cleanup\n")
+	}
+	if model.stopStatus != "" {
+		view.WriteString(ansi.Truncate(model.stopStatus, model.widthOrDefault(), "…") + "\n")
 	}
 	if model.compactionStatus != "" {
 		view.WriteString(ansi.Hardwrap(model.compactionStatus, model.widthOrDefault(), true))

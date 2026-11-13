@@ -35,3 +35,7 @@
 主要涉及 `internal/extension/hook`、`internal/domain`、`internal/protocol`、`internal/runtime`、`internal/session`、`internal/app`、`internal/tui` 和现有 `internal/tool/builtin` 进程执行边界；新增职责明确的 `internal/executor/process` 共享生命周期包，并将 Skills 与 Hooks 实际共用的 no-follow 文件打开骨架收敛到 `internal/extension/localfile`。Provider wire、九项 Tool Catalog 与 headless 外部 JSONL 契约保持现有形状；Provider golden/cache tests 必须证明这一点。
 
 不新增第三方依赖，不修改两个参考工程，不添加内部格式版本或兼容 reader。设计依据为 EasyCode `1a327e7`、Claude Code sourcemap `a8a678cb` 与 Codex `6f8bf683` 的本地只读快照，具体证据、取舍和验收映射见 design.md。
+
+### 当前规格对齐说明（2026-11-13）
+
+上述范围保留本变更最初交付 PreToolUse 的历史归属。PostToolUse、PostToolUseFailure 和 Stop 已由后续独立变更交付；本变更尚未归档，其 delta 现已完整对齐所覆盖需求的当前主规格，保留后续已交付场景、强类型 target 与恢复/输入安全点，避免将来同步或归档时覆盖现有能力。这是规格漂移修复，不将后续能力归为本变更新增，不改变业务代码、实施范围或完成任务数；实际核对结果见 verification.md。

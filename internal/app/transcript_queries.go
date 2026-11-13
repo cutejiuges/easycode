@@ -18,7 +18,11 @@ func transcriptListItem(node transcriptNode, entry session.ToolHistoryEntry) pro
 		return protocol.TranscriptListItem{Cursor: node.cursor, Kind: domain.TranscriptCompaction, CompactionID: node.compaction.id, Text: "Conversation compacted", More: true}
 	}
 
-	item := protocol.TranscriptListItem{Cursor: node.cursor, Kind: node.item.Kind, TurnID: node.item.TurnID, InputID: node.item.InputID}
+	item := protocol.TranscriptListItem{Cursor: node.cursor, Kind: node.item.Kind, TurnID: node.item.TurnID, InputID: node.item.InputID, HookSource: node.item.HookSource}
+	if item.HookSource != nil {
+		source := *item.HookSource
+		item.HookSource = &source
+	}
 	if node.item.Kind == domain.TranscriptReasoning && node.item.Reasoning != nil {
 		body := node.item.Reasoning
 		item.Reasoning = &protocol.ReasoningSummaryPayload{Source: body.Source(), Availability: body.Availability(), TotalBytes: body.Len()}
@@ -41,7 +45,7 @@ func transcriptListItem(node transcriptNode, entry session.ToolHistoryEntry) pro
 	if g := entry.PostHooks; g != nil && entry.HasResult {
 		if branch, selected := g.SelectedBranch(); selected {
 			ref := branch.Hooks[min(len(g.Finished), len(branch.Hooks)-1)]
-			summary := protocol.HookActivityPayload{InvocationID: string(entry.Invocation.InvocationID()), Reference: ref, State: protocol.HookActivityChecking, Code: domain.HookOK}
+			summary := protocol.HookActivityPayload{Target: g.Plan.Target(), PlanDigest: g.Plan.Digest, Reference: ref, State: protocol.HookActivityChecking, Code: domain.HookOK}
 			if g.Terminal != nil {
 				summary.Code = g.Terminal.Code
 				switch g.Terminal.Disposition {
@@ -61,7 +65,7 @@ func transcriptListItem(node transcriptNode, entry session.ToolHistoryEntry) pro
 					summary.State = protocol.HookActivityState(domain.HookUncertain)
 				}
 			}
-			item.PostHook = summary
+			item.PostHook = &summary
 		}
 	}
 	if entry.HasResult {
@@ -131,6 +135,7 @@ func (q *transcriptQueries) ListTranscript(ctx context.Context, query protocol.T
 	type selectedNode struct {
 		node  transcriptNode
 		entry session.ToolHistoryEntry
+		stop  *session.ReplayedStop
 	}
 	selected := make([]selectedNode, 0, query.Limit)
 	for i := end - 1; i >= lower && len(selected) < int(query.Limit); i-- {
@@ -143,12 +148,17 @@ func (q *transcriptQueries) ListTranscript(ctx context.Context, query protocol.T
 				entry.PostHooks = &g
 			}
 		}
-		selected = append(selected, selectedNode{node, entry})
+		selected = append(selected, selectedNode{node, entry, q.stopForNodeLocked(node)})
 	}
 	q.mu.Unlock()
 	items := make([]protocol.TranscriptListItem, len(selected))
 	for i, value := range selected {
 		items[i] = transcriptListItem(value.node, value.entry)
+		if value.stop != nil {
+			summary := stopSummary(*value.stop)
+			items[i].StopHook = &summary
+			items[i].DetailSequence = summary.DetailSequence
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return protocol.TranscriptListPage{}, err
@@ -176,6 +186,7 @@ func (q *transcriptQueries) ReadTranscriptBody(ctx context.Context, query protoc
 		return protocol.TranscriptBodyPage{}, tool.ArtifactReadUnavailable
 	}
 	node := q.nodes[index]
+	stop := q.stopForNodeLocked(node)
 	var entry session.ToolHistoryEntry
 	if node.toolIndex >= 0 {
 		entry = q.entries[node.toolIndex]
@@ -191,7 +202,12 @@ func (q *transcriptQueries) ReadTranscriptBody(ctx context.Context, query protoc
 	if err := ctx.Err(); err != nil {
 		return protocol.TranscriptBodyPage{}, err
 	}
-	if node.item.Kind == domain.TranscriptReasoning {
+	if query.Source == protocol.TranscriptStopHooks {
+		if stop == nil || query.StopHook.Target != stop.Plan.Target() || query.StopHook.PlanDigest != stop.Plan.Digest() || query.DetailSequence != stop.DetailSequence {
+			return protocol.TranscriptBodyPage{}, protocol.TranscriptChanged
+		}
+	}
+	if node.item.Kind == domain.TranscriptReasoning && query.Source != protocol.TranscriptStopHooks {
 		if query.Source != protocol.TranscriptText {
 			return protocol.TranscriptBodyPage{}, tool.ArtifactReadInvalidRange
 		}
@@ -205,7 +221,9 @@ func (q *transcriptQueries) ReadTranscriptBody(ctx context.Context, query protoc
 		return protocol.NewTranscriptBodyPage(protocol.TranscriptBodyPage{Offset: page.Offset, NextOffset: page.NextOffset, TotalBytes: page.TotalBytes, Text: page.Text})
 	}
 	text := ""
-	if node.toolIndex < 0 {
+	if query.Source == protocol.TranscriptStopHooks {
+		text = stopDetail(*stop)
+	} else if node.toolIndex < 0 {
 		if query.Source != protocol.TranscriptText {
 			return protocol.TranscriptBodyPage{}, tool.ArtifactReadInvalidRange
 		}
@@ -290,6 +308,9 @@ func (q *transcriptQueries) ReadTranscriptBody(ctx context.Context, query protoc
 	detailSequence := uint64(0)
 	if query.Source == protocol.TranscriptPostHooks {
 		detailSequence = entry.DetailSequence
+	}
+	if query.Source == protocol.TranscriptStopHooks {
+		detailSequence = stop.DetailSequence
 	}
 	return protocol.NewTranscriptBodyPage(protocol.TranscriptBodyPage{DetailSequence: detailSequence, Offset: start, NextOffset: end, TotalBytes: uint64(len(text)), Text: strings.Clone(text[start:end])})
 }

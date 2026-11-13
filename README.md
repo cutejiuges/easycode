@@ -4,7 +4,7 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 
 用户只需要提供 `base_url`、`api_key` 和模型名称即可连接服务，不需要账号登录、OAuth、设备码或订阅鉴权。
 
-> 项目按纵向切片持续推进。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、命令/Skill 首词补全、原生多轮 Session、`--resume`/`--continue`、headless/FIFO 输入、离线 `sessions list`，以及九项工具能力：Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill 和结构化用户提问。命令执行当前支持 Darwin；已支持同步 PreToolUse/PostToolUse/PostToolUseFailure 命令 Hook、被动推理阅读和启动推理/display/输出配置；本地 Plugin 技能包已支持显式目录加载和只读浏览；其余 Hook 事件、运行中推理切换等能力仍按 Roadmap 分阶段推进。
+> 项目按纵向切片持续推进。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、命令/Skill 首词补全、原生多轮 Session、`--resume`/`--continue`、headless/FIFO 输入、离线 `sessions list`，以及九项工具能力：Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill 和结构化用户提问。命令执行当前支持 Darwin；已支持同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop 命令 Hook、被动推理阅读和启动推理/display/输出配置；本地 Plugin 技能包已支持显式目录加载和只读浏览；其余 Hook 事件、运行中推理切换等能力仍按 Roadmap 分阶段推进。
 
 ## 交互式恢复会话
 
@@ -68,7 +68,7 @@ TUI 将 CRLF/CR 规范化为 LF，保留缩进、Tab、尾空格及尾换行；�
 | 安全配置 | 已实现 JSON 配置、环境变量覆盖、API key 脱敏，以及 macOS/Linux 上绑定实际句柄的 no-follow 校验；其他平台当前安全失败关闭 |
 | Tools | 九项能力包含 Read/Glob/Grep、Edit/apply_patch、Write、Darwin Exec、ReadArtifact、Skill 和结构化提问；连续只读最多 8 路并行，Patch/Write/Exec 需批准，Question 独占但不进入权限批准 |
 | Session | 已实现 append-only JSONL、唯一当前无版本格式的强类型 draft/decoder、UUIDv7、跨进程 lease、同句柄 load/repair/write、`Sync`、尾部修复、fixture、显式恢复，以及可从 JSONL 重建的 SQLite Catalog、`--continue` 与离线 `sessions list`，以及 `resume` 启动选择器和有界元数据搜索/只读文本预览；全文搜索尚未实现 |
-| 扩展系统 | P6 目标；本地 Skills 已实现发现、显式调用、按需工具读取和原生恢复；同步 PreToolUse/PostToolUse/PostToolUseFailure command Hooks、本地 Plugin 技能包及四种受限 manifest 导入已实现；MCP、插件可执行贡献和其余 Hook 事件待后续推进 |
+| 扩展系统 | P6 目标；本地 Skills 已实现发现、显式调用、按需工具读取和原生恢复；同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop command Hooks、本地 Plugin 技能包及四种受限 manifest 导入已实现；MCP、插件可执行贡献和其余 Hook 事件待后续推进 |
 | Subagent | P7 目标；当前仅为经批准的 TODO 控制边界，调度、线程树和生命周期尚未实现 |
 | Telemetry | P8 目标；当前 logger 仅为经批准的 TODO 占位，未接入请求正文、Session 或运行时链路 |
 
@@ -277,7 +277,7 @@ export EASYCODE_MODEL=your-model
 
 配置优先级为：JSON 文件提供基础值，非空 `EASYCODE_*` 环境变量覆盖对应字段，最后统一校验。`base_url` 是 API 路径前缀，不会自动补 `/v1`，且不能包含 userinfo、query 或 fragment。
 
-当前 TUI 和 headless 模式都支持 Anthropic Messages 与 OpenAI Responses 的文本会话。成功文本回合会把 Provider-native commit、五项三态 normalized sample usage 和完成边界作为同一 batch 写入权限受控的 append-only JSONL；`--json` 的 `turn.completed` v1 同步输出该 usage，`--print` 仍只输出最终文本。显式 `--resume <thread-id>` 在连续 exclusive lease 下恢复同一 Provider 的原生历史，`--continue` 则通过可重建 SQLite Catalog 选择当前 cwd 与 Provider 配置完全兼容的最近 root Session，再进入同一恢复路径。TUI 通过单向 `TranscriptProjector` 与宿主范围查询重建记录，headless 不回放旧 transcript。`SemanticHistoryView` 始终排除全部推理。已返回的 Anthropic thinking 文字和 OpenAI summary_text 可在 Ctrl+O 中阅读；签名、redacted data、密文、raw reasoning 和未知扩展只保留在原生历史中。`/cache` 已显示最近已提交的三态 usage 与缓存证据，启动 `resume` 已支持元数据搜索和预览。Anthropic cache TTL、OpenAI prompt cache key、可选 WebSocket 原生增量及下述启动推理控制已实现；独立 usage 流、费用/配额、外部 reasoning/tool JSON 事件、正文全文搜索与 fork 尚未实现。
+当前 TUI 和 headless 模式都支持 Anthropic Messages 与 OpenAI Responses 的文本会话。合法无 Stop 的成功文本回合会把 Provider-native commit、五项三态 normalized sample usage 和完成边界作为同一 batch 写入权限受控的 append-only JSONL；`--json` 的 `turn.completed` v1 同步输出该 usage，`--print` 仍只输出最终文本。显式 `--resume <thread-id>` 在连续 exclusive lease 下恢复同一 Provider 的原生历史，`--continue` 则通过可重建 SQLite Catalog 选择当前 cwd 与 Provider 配置完全兼容的最近 root Session，再进入同一恢复路径。TUI 通过单向 `TranscriptProjector` 与宿主范围查询重建记录，headless 不回放旧 transcript。`SemanticHistoryView` 始终排除全部推理。已返回的 Anthropic thinking 文字和 OpenAI summary_text 可在 Ctrl+O 中阅读；签名、redacted data、密文、raw reasoning 和未知扩展只保留在原生历史中。`/cache` 已显示最近已提交的三态 usage 与缓存证据，启动 `resume` 已支持元数据搜索和预览。Anthropic cache TTL、OpenAI prompt cache key、可选 WebSocket 原生增量及下述启动推理控制已实现；独立 usage 流、费用/配额、外部 reasoning/tool JSON 事件、正文全文搜索与 fork 尚未实现。
 
 ### 启动推理与普通输出
 
@@ -341,7 +341,7 @@ P3+ 目标：Tool Policy / Executor、扩展系统与 Subagent
 
 Provider-native item 是恢复会话和构建下次请求的事实依据，RuntimeEvent 只用于 UI、日志及宿主投影，二者不能相互替代。
 
-共享层需要读取历史时使用 Provider 提供的单向 `HistoryProjector` 和 `SemanticHistoryView`。当前已实现 committed-only 文本投影和 resume 后的 TUI 历史回放；ContextPlanner/token 估算已接入，Stop Hook 文本和 Subagent completion 消费者将在后续阶段接入；当前 PreToolUse 消费三种强类型工具输入，PostToolUse 另接收成功结果的封闭元数据投影。该视图不可反向生成 Provider 请求。
+共享层需要读取历史时使用 Provider 提供的单向 `HistoryProjector` 和 `SemanticHistoryView`。当前已实现 committed-only 文本投影和 resume 后的 TUI 历史回放；ContextPlanner/token 估算已接入，Stop Hook 已按真实 turn/sample 精确读取 assistant 正文；Subagent completion 消费者将在后续阶段接入；当前 PreToolUse 消费三种强类型工具输入，PostToolUse 另接收成功结果的封闭元数据投影。该视图不可反向生成 Provider 请求。
 
 更完整的设计见[总体架构文档](docs/architecture/overall-architecture.md)。
 
@@ -355,7 +355,7 @@ Write 输入（原始 JSON 与规范编码）上限 1 MiB，审批完整展示�
 
 创建使用禁止覆盖的原子发布，缺失目录链先在私有树中准备，再一次发布；审批后目标或祖先变化返回 conflict。发布后的目录 Sync 或清理失败报告不确定结果并停止后续工具。进程被强制杀死可能留下 `.easycode-write-*` 私有暂存项，resume 不扫描、不清理、不重放这些写入。macOS 文件系统与故障注入已验收；Linux adapter 已交叉编译，但当前开发环境无 Linux runner，真实 Linux 文件系统验证尚待补充；不支持安全发布的平台失败关闭。
 
-## 本地工具 Hooks
+## 本地 Hooks
 
 启动时读取用户 `~/.config/easycode/hooks.json` 和工作区 `.easycode/hooks.json`，当前进程使用冻结快照。两个来源均默认未信任，用户来源先于项目来源执行。例如：
 
@@ -375,12 +375,12 @@ Write 输入（原始 JSON 与规范编码）上限 1 MiB，审批完整展示�
 }
 ```
 
-`/hooks` 提供本地目录、完整命令与限制详情；空闲时按 `r` 清除选中项的信任或拒绝，下一次真实工具调用会重新审查。首次运行的审查默认拒绝，只允许本会话信任；普通工具仍按原规则审批。信任不会跨重启或 resume 恢复，也不冻结脚本依赖，审查后脚本文件仍可能变化。
+`/hooks` 提供本地目录、完整命令与限制详情；空闲时按 `r` 清除选中项的信任或拒绝，下一次匹配检查会重新审查。首次运行的审查默认拒绝，只允许本会话信任；普通工具仍按原规则审批。信任不会跨重启或 resume 恢复，也不冻结脚本依赖，审查后脚本文件仍可能变化。
 
 | 边界 | 当前行为 |
 | --- | --- |
 | 匹配 | `*` 或字面 `Edit/apply_patch`、`Write`、`Bash/exec_command`，以 `|` 分隔；别名只执行一次；读取工具不触发 |
-| 来源 | 严格 JSON、no-follow/实际 FD 校验；每来源 64 KiB，三个事件合计 32 项/来源、64 项/两来源，每事件每调用最多 8 项；任一已存在来源无效则阻断全部三项 mutation |
+| 来源 | 严格 JSON、no-follow/实际 FD 校验；每来源 64 KiB，四个事件合计 32 项/来源、64 项/两来源，每事件每调用最多 8 项；任一已存在来源无效则阻断全部三项 mutation，并拒绝最终完成检查 |
 | 执行 | Darwin，非 login `/bin/sh`，最小环境，工作区只读、禁网；仅 `/dev/null` 写入；其他平台失败关闭 |
 | 预算 | 单项默认 5 秒，可设整数 1..30；每次工具调用总执行预算 30 秒，信任等待不计费；stdin 最大 512 KiB，stdout/stderr 各 16 KiB |
 | Pre 放行 | exit 0 且空输出或 `{}`；放行后仍进入普通工具审批 |
@@ -398,7 +398,7 @@ stdin 提供真实 `tool_name`、会话/回合/调用身份、cwd 与规范 `too
 
 PostToolUse 只检查真实执行成功的 Edit/apply_patch、Write 和 Bash/exec_command；正常非零 Exec exit 也按现有成功语义触发。完整后置计划在工具候选与普通批准之前审查，Pre/Post 信任相互隔离。真实工具结果先 Sync，随后检查；后置失败不会撤销或改写工具成功，下一工具和模型采样等待检查收口。主线保留工具成功并显示检查状态；Ctrl+O 中按右键进入独立 `post_hooks` 详情。
 
-在同一配置的 `hooks` 对象内增加以下数组；id 在同一来源的三个事件之间也必须唯一：
+在同一配置的 `hooks` 对象内增加以下数组；id 在同一来源的四个事件之间也必须唯一：
 
 ```json
 "PostToolUse": [{
@@ -466,6 +466,38 @@ PostToolUseFailure 复用同一配置、信任审查、只读沙箱与后置详�
 候选前冻结成功、失败两个可能的非空分支，逐项审查最多 16 个精确声明。任何分支需要 model 时只预留一次 R，各分支独立判断提示槽是否足够。即使选择另一分支，原预览仍按 A−R 冻结。选择固定为 success/failure/none：none 不表示工具没执行；所选事件未配置时以 skipped/hook_event_unmatched 收口，零脚本、反馈或伪后缀。原错误 Sync 后再取消仍为 failure/cancelled，零新脚本。检查状态与原工具 Error/Conflict 并列，检查通过不会显示为已修复。
 
 `post_hook_committed` 只携带调用、计划摘要、详情序列和阶段。计划保存时显示中性状态，不提前声称运行 PostToolUse；实际事件从已提交快照读取。恢复复用同一选择和冻结前缀，不执行工具、脚本，不读旧配置或 artifact，不新增模型提示。
+
+### 回合完成前的 Stop 检查
+
+Stop 在 root 用户回合成功返回无工具调用的答复并保存后执行；通过后才宣布完成。模型/API 错误、取消和摘要不触发普通 Stop。检查不会撤销先前工具的实际效果，也不会授权修复工具。`/hooks` 显示回合范围；审查默认拒绝。单个 Stop 计划最多 8 项，全部声明审查通过后才运行第一项。
+
+在 `hooks` 对象增加无 `matcher` 的 Stop 分支，例如只读检查已有文件中的 TODO：
+
+```json
+"Stop": [{
+  "hooks": [{
+    "id": "check-completion",
+    "type": "command",
+    "command": "cat >/dev/null; if /usr/bin/grep -q TODO main.go; then printf '%s' '{\"decision\":\"block\",\"reason\":\"main.go still contains TODO.\"}'; else status=$?; case \"$status\" in 1) printf '{}' ;; *) exit \"$status\" ;; esac; fi",
+    "timeout": 5,
+    "feedback": "model"
+  }]
+}]
+```
+
+stdin 仅含 `hook_event_name=Stop`、`session_id/thread_id/turn_id/sample_index`、`cwd`、`stop_hook_active` 与本次精确的 `last_assistant_message`。空答复保持为空，不回退上一条；不提供工具字段、transcript 路径或私有推理。
+
+exit 0 的空白或 `{}` 表示通过；只有严格 `{"decision":"block","reason":"..."}` 表示阻断。reason 必须非空且至多 4 KiB。默认 `feedback=none` 的阻断会终止回合；只有显式 model、正常 exit 0 且清理确认的实际阻断项，才能把授权 reason 发送给 Provider 并保存在 Session，要求模型在同一回合继续。exit 2 同样阻断，但不转发 stdout/stderr。其他退出、非法输出、超时和 I/O 错误均失败关闭。
+
+同一回合最多续轮两次，`stop_hook_active` 为 false/true/true，不重置原 16 sample/64 call 上限；最后一个 sample 可以通过，但不能再续轮。Stop 共用每回合累计 30 秒执行预算，单项默认 5 秒、最大 30 秒。stdin 编码后至多 512 KiB，双流各 16 KiB；最终反馈至多 8 KiB/次、16 KiB/回合。检查只读、禁网，不适合会写缓存或产物的测试命令。
+
+阻断后，下一请求前只领取一次队首连续 auto 输入，保留真实输入身份、冻结 Skill 附件与 strict-next 屏障。自动摘要只覆盖旧提交窗口，随后原字节交付反馈和纠正；反馈以独立 Hook 来源显示在主线和 Ctrl+O 中，不进入用户输入召回。界面依次显示 Checking completion、Preparing continuation，实际交付后才显示 Continuing after completion check。
+
+决定保存后即形成本地交付义务；取消或恢复仍补齐反馈，但不联网自动续写。恢复先关闭中断摘要，再按原冻结字节交付并关闭旧回合，不重跑检查或工具、不读取旧配置/脚本/artifact、不恢复信任。坏来源会在已保存答复之后以配置错误失败，合法无 Stop 保持原完成路径。三个 headless 入口匹配 Stop 时返回 `hook_trust_required`，不投影 Stop 专用输入、运行脚本或等待交互；stream-json 继续沿用现有外部事件格式。
+
+实现及验证见[Stop 验收记录](openspec/changes/archive/2026-11-13-add-stop-command-hooks/verification.md)。真实 PTY 入口为 `scripts/stop-hook-smoke.py`，命令执行仍仅支持 Darwin；其他平台失败关闭。
+
+完整质量门使用 `make verify`，包含格式、vet、Staticcheck、架构边界、全量测试和 race。包级测试总时限默认为 20 分钟（`TEST_TIMEOUT`）；它只控制测试进程的总预算，不修改各操作的取消或超时断言。
 
 ## 工程结构
 
@@ -569,7 +601,7 @@ make install-hooks
 | P3 | Coding Tools | 九项工具与批准/恢复/预算已交付；PTY、后台进程、通用跨平台 sandbox 待实现 |
 | P4 | 缓存与上下文 | 缓存、usage 归一、手动/自动压缩已交付；费用、精确计数与跨 Provider fork 待实现 |
 | P5 | Claude 风格 TUI | Markdown、输入及命令/Skill 补全、审批/问卷/Hook、详情、被动推理阅读和 resume picker 已交付；fork picker 待实现 |
-| P6 | 扩展系统 | 本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure、本地 Plugin 技能包已交付；其余 Hook、插件可执行贡献、MCP/热加载待实现 |
+| P6 | 扩展系统 | 本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop、本地 Plugin 技能包已交付；其余 Hook、插件可执行贡献、MCP/热加载待实现 |
 | P7 | Subagent | 尚未实现；保留批准占位，未接入 Runtime/app |
 | P8 | 发布强化 | 部分安全/故障验证已落地；全平台发布矩阵、诊断、遥测待实现；兼容迁移须另行明确授权 |
 

@@ -97,6 +97,10 @@ func (m HookMatcher) String() string {
 type HookCode string
 
 const (
+	HookStopLimitExceeded        HookCode = "stop_hook_limit_exceeded"
+	HookSampleLimitExceeded      HookCode = "tool_loop_limit_exceeded"
+	HookStopInterrupted          HookCode = "session_interrupted_before_stop_hook"
+	HookFeedbackEncodingFailed   HookCode = "hook_feedback_encoding_failed"
 	HookOK                       HookCode = "ok"
 	HookConfigInvalid            HookCode = "hook_config_invalid"
 	HookInputLimit               HookCode = "hook_input_limit"
@@ -126,7 +130,7 @@ const (
 func (c HookCode) Error() string { return string(c) }
 func (c HookCode) Valid() bool {
 	switch c {
-	case HookOK, HookConfigInvalid, HookInputLimit, HookMatchLimit, HookTrustRequired, HookTrustDenied,
+	case HookStopLimitExceeded, HookSampleLimitExceeded, HookStopInterrupted, HookFeedbackEncodingFailed, HookOK, HookConfigInvalid, HookInputLimit, HookMatchLimit, HookTrustRequired, HookTrustDenied,
 		HookDenied, HookExitFailed, HookStartFailed, HookOutputInvalid, HookOutputLimit, HookIOFailed,
 		HookTimedOut, HookUnsupported, HookSandboxUnavailable, HookCancelled, HookOutcomeUncertain, HookInterrupted,
 		HookPostInterrupted, HookFeedbackNotAllowed, HookFeedbackBudgetExceeded, HookExecutionBudgetExhausted, HookToolNotSuccessful, HookEventUnmatched:
@@ -165,12 +169,25 @@ func (r HookReference) Key() string {
 // HookDeclaration 只在当前进程保存受审查的命令，不进入 Session。
 type HookDeclaration struct {
 	Reference HookReference `json:"reference"`
-	Matcher   HookMatcher   `json:"matcher"`
+	Scope     HookScope     `json:"scope"`
 	Command   string        `json:"command"`
 }
 
 func NewHookDeclaration(source HookSource, event HookEvent, feedback HookFeedbackPolicy, revision, id string, matcher HookMatcher, command string, timeout int) (HookDeclaration, error) {
-	if !feedback.ValidFor(event) || !source.Valid() || !ValidHookDigest(revision) || ValidateSkillName(id) != nil || !matcher.Valid() ||
+	scope, err := NewToolHookScope(matcher)
+	if err != nil || event == HookStop {
+		return HookDeclaration{}, HookConfigInvalid
+	}
+	return newScopedHookDeclaration(source, event, feedback, revision, id, scope, command, timeout)
+}
+
+// NewStopHookDeclaration 构造无工具 matcher 的回合检查声明。
+func NewStopHookDeclaration(source HookSource, feedback HookFeedbackPolicy, revision, id, command string, timeout int) (HookDeclaration, error) {
+	return newScopedHookDeclaration(source, HookStop, feedback, revision, id, NewStopHookScope(), command, timeout)
+}
+
+func newScopedHookDeclaration(source HookSource, event HookEvent, feedback HookFeedbackPolicy, revision, id string, scope HookScope, command string, timeout int) (HookDeclaration, error) {
+	if !feedback.ValidFor(event) || !source.Valid() || !ValidHookDigest(revision) || ValidateSkillName(id) != nil || !scope.ValidFor(event) ||
 		strings.TrimSpace(command) == "" || len(command) > MaxHookCommandBytes || !utf8.ValidString(command) || strings.ContainsRune(command, 0) || timeout < 1 || timeout > 30 {
 		return HookDeclaration{}, HookConfigInvalid
 	}
@@ -179,19 +196,19 @@ func NewHookDeclaration(source HookSource, event HookEvent, feedback HookFeedbac
 		Feedback                    HookFeedbackPolicy `json:"feedback"`
 		Source                      HookSource         `json:"source"`
 		ID                          string             `json:"id"`
-		Matcher                     HookMatcher        `json:"matcher"`
+		Scope                       HookScope          `json:"scope"`
 		Command                     string             `json:"command"`
 		Timeout                     int                `json:"timeout"`
 		Shell, Environment, Sandbox string
-	}{event, feedback, source, id, matcher, command, timeout, HookShellPolicy, HookEnvironmentPolicy, HookSandboxPolicy}
+	}{event, feedback, source, id, scope, command, timeout, HookShellPolicy, HookEnvironmentPolicy, HookSandboxPolicy}
 	b, err := codec.MarshalStable(w)
 	if err != nil {
 		return HookDeclaration{}, HookConfigInvalid
 	}
-	return HookDeclaration{HookReference{Event: event, Feedback: feedback, Source: source, Revision: revision, ID: id, Fingerprint: HookDigest(b), TimeoutSeconds: timeout}, matcher, command}, nil
+	return HookDeclaration{HookReference{Event: event, Feedback: feedback, Source: source, Revision: revision, ID: id, Fingerprint: HookDigest(b), TimeoutSeconds: timeout}, scope, command}, nil
 }
 func (d HookDeclaration) Validate() error {
-	v, err := NewHookDeclaration(d.Reference.Source, d.Reference.Event, d.Reference.Feedback, d.Reference.Revision, d.Reference.ID, d.Matcher, d.Command, d.Reference.TimeoutSeconds)
+	v, err := newScopedHookDeclaration(d.Reference.Source, d.Reference.Event, d.Reference.Feedback, d.Reference.Revision, d.Reference.ID, d.Scope, d.Command, d.Reference.TimeoutSeconds)
 	if err != nil || v != d {
 		return HookConfigInvalid
 	}
@@ -219,6 +236,9 @@ type HookPlan struct {
 
 func NewHookPlan(invocation string, capability HookCapability, refs []HookReference) (HookPlan, error) {
 	if _, err := parseUUIDv7(invocation); err != nil || !capability.Valid() || len(refs) == 0 || len(refs) > MaxHookMatches {
+		return HookPlan{}, HookConfigInvalid
+	}
+	if refs[0].Event == HookStop {
 		return HookPlan{}, HookConfigInvalid
 	}
 	if err := validateHookReferences(refs[0].Event, refs); err != nil {
@@ -265,26 +285,37 @@ func DecodeHookPlan(b []byte) (HookPlan, error) {
 
 // HookRunIdentity 精确关联一次检查；ordinal 来源于已冻结计划。
 type HookRunIdentity struct {
-	Event        HookEvent `json:"event"`
-	InvocationID string    `json:"invocation_id"`
-	PlanDigest   string    `json:"plan_digest"`
-	Ordinal      int       `json:"ordinal"`
-	RunID        string    `json:"run_id"`
+	Event      HookEvent  `json:"event"`
+	Target     HookTarget `json:"target"`
+	PlanDigest string     `json:"plan_digest"`
+	Ordinal    int        `json:"ordinal"`
+	RunID      string     `json:"run_id"`
 }
 
 func NewHookRunIdentity(p HookPlan, ordinal int) (HookRunIdentity, error) {
 	if p.Validate() != nil || ordinal < 0 || ordinal >= len(p.Hooks) {
 		return HookRunIdentity{}, HookConfigInvalid
 	}
-	return HookRunIdentity{Event: p.Event, InvocationID: p.InvocationID, PlanDigest: p.Digest, Ordinal: ordinal, RunID: p.InvocationID + ":" + string(p.Event) + ":" + p.Digest + ":" + strconv.Itoa(ordinal)}, nil
+	target, err := NewToolHookTarget(p.InvocationID, p.Capability)
+	if err != nil {
+		return HookRunIdentity{}, err
+	}
+	return newHookRunIdentity(target, p.Event, p.Digest, ordinal)
+}
+func newHookRunIdentity(target HookTarget, event HookEvent, digest string, ordinal int) (HookRunIdentity, error) {
+	v := HookRunIdentity{Event: event, Target: target, PlanDigest: digest, Ordinal: ordinal}
+	v.RunID = target.Key() + ":" + string(event) + ":" + digest + ":" + strconv.Itoa(ordinal)
+	return v, v.Validate()
 }
 func (r HookRunIdentity) Validate() error {
-	_, err := parseUUIDv7(r.InvocationID)
-	if err != nil || !r.Event.Valid() || !ValidHookDigest(r.PlanDigest) || r.Ordinal < 0 || r.Ordinal >= MaxHookMatches || r.RunID != r.InvocationID+":"+string(r.Event)+":"+r.PlanDigest+":"+strconv.Itoa(r.Ordinal) {
+	if !r.Target.ValidFor(r.Event) || !ValidHookDigest(r.PlanDigest) || r.Ordinal < 0 || r.Ordinal >= MaxHookMatches || r.RunID != r.Target.Key()+":"+string(r.Event)+":"+r.PlanDigest+":"+strconv.Itoa(r.Ordinal) {
 		return HookConfigInvalid
 	}
 	return nil
 }
+
+// InvocationID 仅供已验证工具事件读取其真实调用，Stop 不制造工具身份。
+func (r HookRunIdentity) InvocationID() string { id, _, _ := r.Target.ToolCall(); return id }
 
 // HookOutcome 区分检查结果与目标工具执行结果。
 type HookOutcome string
@@ -364,7 +395,7 @@ func (r HookRunResult) Validate() error {
 			return HookConfigInvalid
 		}
 	case HookExitFailed:
-		if !r.ExitKnown || r.ExitCode == 0 || r.ExitCode == 2 && r.Identity.Event == HookPreToolUse {
+		if !r.ExitKnown || r.ExitCode == 0 || r.ExitCode == 2 && (r.Identity.Event == HookPreToolUse || r.Identity.Event == HookStop) {
 			return HookConfigInvalid
 		}
 	case HookOutputInvalid:
@@ -495,7 +526,7 @@ func (s HookSnapshot) Clone() HookSnapshot {
 	return s
 }
 func (s HookSnapshot) Match(event HookEvent, cap HookCapability) ([]HookDeclaration, error) {
-	if !event.Valid() || !cap.Valid() {
+	if !event.Valid() || event == HookStop || !cap.Valid() {
 		return nil, HookConfigInvalid
 	}
 	if len(s.diagnostics) > 0 {
@@ -503,7 +534,7 @@ func (s HookSnapshot) Match(event HookEvent, cap HookCapability) ([]HookDeclarat
 	}
 	var result []HookDeclaration
 	for _, d := range s.declarations {
-		if d.Reference.Event == event && d.Matcher.Matches(cap) {
+		if d.Reference.Event == event && d.Scope.Matches(cap) {
 			result = append(result, d)
 		}
 	}
@@ -513,10 +544,33 @@ func (s HookSnapshot) Match(event HookEvent, cap HookCapability) ([]HookDeclarat
 	return result, nil
 }
 
+// StopChecks 返回完整冻结的完成检查；坏来源不能以部分配置放行。
+func (s HookSnapshot) StopChecks() ([]HookDeclaration, error) {
+	if len(s.diagnostics) > 0 {
+		return nil, HookConfigInvalid
+	}
+	var out []HookDeclaration
+	for _, d := range s.declarations {
+		if d.Reference.Event == HookStop {
+			out = append(out, d)
+		}
+	}
+	if len(out) > MaxHookMatches {
+		return nil, HookMatchLimit
+	}
+	return out, nil
+}
+
 // HookSummary 仅由已验证标识生成不含脚本正文的模型反馈。
 func HookSummary(ref HookReference, cap HookCapability, code HookCode) string {
 	if ref.Validate() != nil || !cap.Valid() || !code.Valid() {
 		return "Hook stopped: hook_config_invalid"
 	}
 	return fmt.Sprintf("Hook %s:%s stopped %s: %s. Detailed hook output was not recorded.", ref.Source, ref.ID, cap, code)
+}
+
+// Target 返回工具计划的真实目标；无效计划返回不可执行的零值。
+func (p HookPlan) Target() HookTarget {
+	v, _ := NewToolHookTarget(p.InvocationID, p.Capability)
+	return v
 }
