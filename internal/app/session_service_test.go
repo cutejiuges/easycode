@@ -689,3 +689,8 @@ func loadAppPlan(t *testing.T, service *sessionService, threadID domain.ThreadID
 	}
 	return loaded, plan
 }
+
+// ProjectAssistantSample 在不模拟原生采样的测试替身中明确失败，不猜测展示列表。
+func (*fakeAppConversation) ProjectAssistantSample(domain.AssistantSampleReference) (domain.AssistantSampleText, error) {
+	return domain.AssistantSampleText{}, domain.HookConfigInvalid
+}

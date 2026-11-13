@@ -281,7 +281,7 @@ func validateDraftPlacement(draft RecordDraft) error {
 		if draft.turnID != "" {
 			return fmt.Errorf("thread metadata draft placement is invalid")
 		}
-	case EventToolPostHookPlanned, EventToolPostHookCompleted, EventToolHookGatePlanned, EventHookExecutionStarted, EventHookExecutionFinished, EventToolHookGateDecided, EventTurnInputsCommitted, EventTurnStarted, EventProviderNativeCommit, EventSampleUsage, EventToolCallReady,
+	case EventTurnStopHookPlanned, EventTurnStopHookDecided, EventToolPostHookPlanned, EventToolPostHookCompleted, EventToolHookGatePlanned, EventHookExecutionStarted, EventHookExecutionFinished, EventToolHookGateDecided, EventTurnInputsCommitted, EventTurnStarted, EventProviderNativeCommit, EventSampleUsage, EventToolCallReady,
 		EventToolApprovalDecided, EventToolExecutionStarted, EventToolCallResult, EventTurnCompleted, EventTurnFailed:
 		if draft.parentThreadID != "" || !draft.turnID.Valid() {
 			return fmt.Errorf("turn draft placement is invalid")
@@ -298,6 +298,12 @@ func validateDraftPayload(draft RecordDraft) error {
 		EventKind: draft.descriptor.Kind, Payload: draft.PayloadBytes(),
 	}
 	switch draft.descriptor.Kind {
+	case EventTurnStopHookPlanned:
+		_, err := DecodeTurnStopHookPlanned(record)
+		return err
+	case EventTurnStopHookDecided:
+		_, err := DecodeTurnStopHookDecided(record)
+		return err
 	case EventToolPostHookPlanned:
 		_, err := DecodeToolPostHookPlanned(record)
 		return err

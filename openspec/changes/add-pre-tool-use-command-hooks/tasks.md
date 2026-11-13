@@ -67,3 +67,5 @@
 - [x] 9.2 更新 README 配置样例和支持/失败/反馈隐私矩阵、总体架构第 12 章的真实状态、Roadmap P6 切片与 pitfall 的信任/计划/恢复边界；逐项核对实际 vocabulary/测试路径，不把其余 Hook/Plugins/MCP 写成已实现。
 - [x] 9.3 执行 `make verify` 与 `openspec validate add-pre-tool-use-command-hooks --strict`，保存实际命令、平台和结果到 change 的验收记录；未执行项逐项说明原因与风险，不用基线结果替代新能力验收。
 - [x] 9.4 对照七份 delta specs 和 design 验证矩阵核验交付，确认 no-dead-code/无兼容 reader/无新增依赖/无 secret/无重复副作用；同步主 specs 后再按归档流程处理，提案阶段不得勾选实施任务或归档。
+
+2026-11-13 状态补记：43 项原实施任务保持完成。后续已交付 Hook 能力造成的 delta 漂移已按当前主规格修复，保留全部既有场景和契约；本轮不新增业务实施任务，也不归档本变更。规格校验与无损对齐结果见 verification.md。

@@ -15,6 +15,9 @@ func ParseExecution(event domain.HookEvent, policy domain.HookFeedbackPolicy, ex
 		result.Code = domain.HookConfigInvalid
 		return result
 	}
+	if event == domain.HookStop {
+		return parseStopOutput(policy, exit, stdout)
+	}
 	if event == domain.HookPreToolUse {
 		result.Status, result.Code = ParseOutput(exit, stdout)
 		return result

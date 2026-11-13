@@ -12,6 +12,7 @@ import (
 
 // NativeCommitRecord 将通过 lifecycle 校验的 opaque commit 与顺序绑定。
 type NativeCommitRecord struct {
+	Feedback    *domain.StopFeedback
 	ToolOutputs []tool.ModelOutput
 	Role        domain.NativeCommitRole
 	Inputs      domain.InputAssociation
@@ -291,6 +292,8 @@ func (plan ToolRecoveryPlan) Validate() error {
 
 // ReplayPlan 是创建 Provider Conversation 前的不可变语义恢复计划。
 type ReplayPlan struct {
+	Stops                 []ReplayedStop
+	StopRecovery          *StopRecoveryPlan
 	Compactions           []ReplayedCompaction
 	InterruptedCompaction *ReplayedCompaction
 	Tools                 []ToolHistoryEntry
@@ -370,6 +373,19 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 		}
 		if compaction.active != nil {
 			return ReplayPlan{}, replayCorrupt("turn record overlaps compaction")
+		}
+		if active != nil && active.stop != nil {
+			handled, terminal, err := acceptStopBatch(&plan, active, batch, seenInputs)
+			if err != nil {
+				return ReplayPlan{}, err
+			}
+			if terminal != "" {
+				plan.Turns = append(plan.Turns, ReplayedTurn{TurnID: active.turnID, State: terminal})
+				active = nil
+			}
+			if handled {
+				continue
+			}
 		}
 		switch batch[0].EventKind {
 		case EventTurnStarted:
@@ -456,7 +472,14 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 		if loaded.Records[len(loaded.Records)-1].Sequence != active.lastSequence {
 			return ReplayPlan{}, replayCorrupt("active turn is not the journal tail")
 		}
-		if !active.hadToolSample {
+		if active.stop != nil {
+			recovery, err := NewStopRecoveryPlan(*active.stop)
+			if err != nil {
+				return ReplayPlan{}, replayCorrupt("stop recovery plan is invalid")
+			}
+			plan.StopRecovery = &recovery
+			plan.Stops = append(plan.Stops, active.stop.Clone())
+		} else if !active.hadToolSample {
 			plan.InterruptedTail = &InterruptedTail{TurnID: active.turnID, Sequence: active.startSequence}
 		} else {
 			recovery, recoveryErr := active.recoveryPlan()
@@ -479,6 +502,10 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 }
 
 type activeReplayTurn struct {
+	stop                 *ReplayedStop
+	stopContinuations    uint8
+	stopFeedbackBytes    int
+	nextSampleReady      bool
 	budget               *tool.ResultBudget
 	budgetTicket         *tool.ResultBudgetTicket
 	autoCompactedSample  bool
@@ -495,7 +522,7 @@ type activeReplayTurn struct {
 }
 
 func acceptSampleBatch(plan *ReplayPlan, active *activeReplayTurn, batch []Record, seenInvocations map[tool.InvocationID]struct{}) (bool, error) {
-	if !active.initialInputs || active.pendingCalls != nil || (active.hadToolSample && !active.toolOutputsCommitted) || len(batch) < 3 ||
+	if !active.initialInputs || !active.nextSampleReady || active.pendingCalls != nil || len(batch) < 3 ||
 		batch[1].EventKind != EventSampleUsage {
 		return false, replayCorrupt("sample batch placement is invalid")
 	}
@@ -517,6 +544,17 @@ func acceptSampleBatch(plan *ReplayPlan, active *activeReplayTurn, batch []Recor
 	plan.SampleUsages = append(plan.SampleUsages, SampleUsageRecord{
 		Sequence: batch[1].Sequence, TurnID: active.turnID, Usage: usage,
 	})
+	if len(batch) == 3 && batch[2].EventKind == EventTurnStopHookPlanned {
+		if err := beginStopCheck(active, batch[2]); err != nil {
+			return false, err
+		}
+		active.nextSampleIndex++
+		active.nextSampleReady = false
+		active.inputAtSample = false
+		active.autoCompactedSample = false
+		active.lastSequence = batch[2].Sequence
+		return false, nil
+	}
 	if len(batch) == 3 && batch[2].EventKind == EventTurnCompleted {
 		if _, err := DecodeTurnCompletedPayload(batch[2]); err != nil {
 			return false, replayCorrupt("turn_completed payload is invalid")
@@ -555,6 +593,7 @@ func acceptSampleBatch(plan *ReplayPlan, active *activeReplayTurn, batch []Recor
 	if err := active.budget.BeginSample(len(calls)); err != nil {
 		return false, replayCorrupt("invalid tool result budget sample")
 	}
+	active.nextSampleReady = false
 	active.pendingCalls = calls
 	active.hadToolSample = true
 	active.toolOutputsCommitted = false
@@ -605,6 +644,7 @@ func acceptToolOutputs(plan *ReplayPlan, active *activeReplayTurn, record Record
 	})
 	active.pendingCalls = nil
 	active.toolOutputsCommitted = true
+	active.nextSampleReady = true
 	active.lastSequence = record.Sequence
 	return nil
 }
@@ -882,6 +922,10 @@ func cloneNativeCommitRecords(records []NativeCommitRecord) []NativeCommitRecord
 	for index, record := range records {
 		cloned[index] = record
 		cloned[index].Commit = cloneNativeCommit(record.Commit)
+		if record.Feedback != nil {
+			f := *record.Feedback
+			cloned[index].Feedback = &f
+		}
 		cloned[index].ToolOutputs = append([]tool.ModelOutput(nil), record.ToolOutputs...)
 	}
 	return cloned

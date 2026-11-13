@@ -104,7 +104,7 @@ func previewSession(ctx context.Context, root string, thread domain.ThreadID, de
 		return result, false, err
 	}
 	result = boundSessionPreview(view)
-	result.Incomplete = loaded.NeedsRepair() || plan.InterruptedTail != nil || plan.ToolRecovery != nil || plan.InterruptedCompaction != nil
+	result.Incomplete = loaded.NeedsRepair() || plan.InterruptedTail != nil || plan.ToolRecovery != nil || plan.StopRecovery != nil || plan.InterruptedCompaction != nil
 	return result, false, ctx.Err()
 }
 

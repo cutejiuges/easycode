@@ -215,7 +215,8 @@ func testPrePostSharedExecutionBudget(t *testing.T, failed bool) {
 		t.Fatal(err)
 	}
 	for i, d := range declarations {
-		declarations[i], err = domain.NewHookDeclaration(d.Reference.Source, event, d.Reference.Feedback, d.Reference.Revision, d.Reference.ID, d.Matcher, d.Command, 30)
+		matcher, _ := d.Scope.ToolMatcher()
+		declarations[i], err = domain.NewHookDeclaration(d.Reference.Source, event, d.Reference.Feedback, d.Reference.Revision, d.Reference.ID, matcher, d.Command, 30)
 		if err != nil {
 			t.Fatal(err)
 		}

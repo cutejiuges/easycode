@@ -40,7 +40,7 @@ func newModelOutput(result InvocationResult, feedback []domain.FrozenHookFeedbac
 	digest := ""
 	encodedBytes := 0
 	for i, f := range feedback {
-		if f.Validate() != nil || f.Identity.InvocationID != string(result.InvocationID()) || !f.Identity.Event.Post() || f.Identity.Ordinal <= previous || digest != "" && digest != f.Identity.PlanDigest {
+		if f.Validate() != nil || f.Identity.InvocationID() != string(result.InvocationID()) || !f.Identity.Event.Post() || f.Identity.Ordinal <= previous || digest != "" && digest != f.Identity.PlanDigest {
 			return ModelOutput{}, errors.New("invalid model tool feedback")
 		}
 		previous = f.Identity.Ordinal

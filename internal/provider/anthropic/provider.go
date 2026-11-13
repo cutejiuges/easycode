@@ -162,7 +162,7 @@ func (conversation *Conversation) Stream(
 	}
 
 	history := conversation.history.snapshot()
-	if len(history) == 0 || validateNativeHistory(history) != nil || (history[len(history)-1].Kind != nativeHistoryUserInputs && history[len(history)-1].Kind != nativeHistoryToolOutputs) {
+	if len(history) == 0 || validateNativeHistory(history) != nil || (history[len(history)-1].Kind != nativeHistoryUserInputs && history[len(history)-1].Kind != nativeHistoryToolOutputs && history[len(history)-1].Kind != nativeHistoryHookFeedback) {
 		conversation.active.Store(false)
 		return nil, fault.New(fault.CodeTurnFailed, "native history is not ready for sampling")
 	}

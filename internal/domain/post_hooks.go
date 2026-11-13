@@ -2,7 +2,6 @@ package domain
 
 import (
 	"easycode/internal/codec"
-	"strconv"
 )
 
 // HookFeedbackDelivery 固定该调用是否有足够空间保存模型反馈。
@@ -278,7 +277,7 @@ func (v PostHookTerminal) Validate() error {
 	last := v.Processed - 1
 	for _, f := range v.SuffixFeedback {
 		event, _ := v.Route.Event()
-		if f.Validate() != nil || f.Kind != HookFeedbackCode || f.Code != v.Code || f.Identity.Event != event || f.Identity.InvocationID != v.InvocationID || f.Identity.PlanDigest != v.PlanDigest || f.Identity.Ordinal <= last {
+		if f.Validate() != nil || f.Kind != HookFeedbackCode || f.Code != v.Code || f.Identity.Event != event || f.Identity.InvocationID() != v.InvocationID || f.Identity.PlanDigest != v.PlanDigest || f.Identity.Ordinal <= last {
 			return HookConfigInvalid
 		}
 		last = f.Identity.Ordinal
@@ -312,7 +311,15 @@ func NewPostHookRunIdentity(p PostHookPlan, event HookEvent, ordinal int) (HookR
 	if !ok || ordinal < 0 || ordinal >= len(branch.Hooks) {
 		return HookRunIdentity{}, HookConfigInvalid
 	}
-	id := HookRunIdentity{InvocationID: p.InvocationID, Event: event, PlanDigest: p.Digest, Ordinal: ordinal}
-	id.RunID = id.InvocationID + ":" + string(id.Event) + ":" + id.PlanDigest + ":" + strconv.Itoa(ordinal)
-	return id, id.Validate()
+	target, err := NewToolHookTarget(p.InvocationID, p.Capability)
+	if err != nil {
+		return HookRunIdentity{}, err
+	}
+	return newHookRunIdentity(target, event, p.Digest, ordinal)
+}
+
+// Target 返回后置计划的真实工具身份，不赋予完成检查能力。
+func (p PostHookPlan) Target() HookTarget {
+	v, _ := NewToolHookTarget(p.InvocationID, p.Capability)
+	return v
 }

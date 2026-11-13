@@ -1,0 +1,16 @@
+Hook details · Esc: back · ↑/↓: scroll ·
+ r: reset trust
+Source: project · completion [untrusted]
+Event: Stop · feedback: model
+Scope: Turn completion
+Timeout: 5 seconds
+Workspace: . · read-only · network denie
+d
+Workspace scripts can change after revie
+w.
+Reset only removes trust; the next match
+ing check asks again.
+Raw output is discarded. Only trusted mo
+del feedback is sent and saved.
+
+Command:

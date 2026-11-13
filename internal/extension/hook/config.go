@@ -59,14 +59,29 @@ type configFile struct {
 	Hooks configEvents `json:"hooks"`
 }
 type configEvents struct {
-	PreToolUse         []configGroup `json:"PreToolUse,omitempty"`
-	PostToolUse        []configGroup `json:"PostToolUse,omitempty"`
-	PostToolUseFailure []configGroup `json:"PostToolUseFailure,omitempty"`
+	PreToolUse         []configGroup     `json:"PreToolUse,omitempty"`
+	PostToolUse        []configGroup     `json:"PostToolUse,omitempty"`
+	PostToolUseFailure []configGroup     `json:"PostToolUseFailure,omitempty"`
+	Stop               []configStopGroup `json:"Stop,omitempty"`
 }
 type configGroup struct {
 	Matcher string          `json:"matcher"`
 	Hooks   []configCommand `json:"hooks"`
 }
+type configStopGroup struct {
+	Hooks []configCommand `json:"hooks"`
+}
+
+func (v *configStopGroup) UnmarshalJSON(b []byte) error {
+	type fields configStopGroup
+	var f fields
+	if codec.DecodeObject(b, &f, "hooks") != nil || len(f.Hooks) == 0 {
+		return domain.HookConfigInvalid
+	}
+	*v = configStopGroup(f)
+	return nil
+}
+
 type configCommand struct {
 	ID       string                     `json:"id"`
 	Type     string                     `json:"type"`
@@ -85,7 +100,7 @@ func (v *configEvents) UnmarshalJSON(b []byte) error {
 	if err != nil {
 		return domain.HookConfigInvalid
 	}
-	for _, event := range []string{"PreToolUse", "PostToolUse", "PostToolUseFailure"} {
+	for _, event := range []string{"PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"} {
 		if raw, ok := m[event]; ok && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 			return domain.HookConfigInvalid
 		}
@@ -119,9 +134,9 @@ type normalizedCommand struct {
 	Feedback domain.HookFeedbackPolicy `json:"feedback"`
 }
 type normalizedGroup struct {
-	Event   domain.HookEvent    `json:"event"`
-	Matcher domain.HookMatcher  `json:"matcher"`
-	Hooks   []normalizedCommand `json:"hooks"`
+	Event domain.HookEvent    `json:"event"`
+	Scope domain.HookScope    `json:"scope"`
+	Hooks []normalizedCommand `json:"hooks"`
 }
 
 func decodeConfig(source domain.HookSource, b []byte) ([]domain.HookDeclaration, error) {
@@ -135,16 +150,27 @@ func decodeConfig(source domain.HookSource, b []byte) ([]domain.HookDeclaration,
 	normalized := make([]normalizedGroup, 0, len(f.Hooks.PreToolUse))
 	seen := make(map[string]bool)
 	count := 0
+	stopGroups := make([]configGroup, len(f.Hooks.Stop))
+	for i, g := range f.Hooks.Stop {
+		stopGroups[i] = configGroup{Hooks: g.Hooks}
+	}
 	for _, phase := range []struct {
 		event  domain.HookEvent
 		groups []configGroup
-	}{{domain.HookPreToolUse, f.Hooks.PreToolUse}, {domain.HookPostToolUse, f.Hooks.PostToolUse}, {domain.HookPostToolUseFailure, f.Hooks.PostToolUseFailure}} {
+	}{{domain.HookPreToolUse, f.Hooks.PreToolUse}, {domain.HookPostToolUse, f.Hooks.PostToolUse}, {domain.HookPostToolUseFailure, f.Hooks.PostToolUseFailure}, {domain.HookStop, stopGroups}} {
 		for _, g := range phase.groups {
-			matcher, err := domain.ParseHookMatcher(g.Matcher)
-			if err != nil {
-				return nil, domain.HookConfigInvalid
+			scope := domain.NewStopHookScope()
+			if phase.event != domain.HookStop {
+				matcher, err := domain.ParseHookMatcher(g.Matcher)
+				if err != nil {
+					return nil, domain.HookConfigInvalid
+				}
+				scope, err = domain.NewToolHookScope(matcher)
+				if err != nil {
+					return nil, err
+				}
 			}
-			n := normalizedGroup{Event: phase.event, Matcher: matcher, Hooks: make([]normalizedCommand, 0, len(g.Hooks))}
+			n := normalizedGroup{Event: phase.event, Scope: scope, Hooks: make([]normalizedCommand, 0, len(g.Hooks))}
 			for _, h := range g.Hooks {
 				count++
 				timeout := 5
@@ -153,7 +179,7 @@ func decodeConfig(source domain.HookSource, b []byte) ([]domain.HookDeclaration,
 				}
 				feedback := domain.HookFeedbackNone
 				if h.Feedback != nil {
-					if !phase.event.Post() {
+					if !phase.event.Post() && phase.event != domain.HookStop {
 						return nil, domain.HookConfigInvalid
 					}
 					feedback = *h.Feedback
@@ -162,7 +188,7 @@ func decodeConfig(source domain.HookSource, b []byte) ([]domain.HookDeclaration,
 					return nil, domain.HookConfigInvalid
 				}
 				seen[h.ID] = true
-				if _, err := domain.NewHookDeclaration(source, phase.event, feedback, domain.HookDigest(nil), h.ID, matcher, h.Command, timeout); err != nil {
+				if _, err := configDeclaration(source, phase.event, feedback, domain.HookDigest(nil), h.ID, scope, h.Command, timeout); err != nil {
 					return nil, err
 				}
 				n.Hooks = append(n.Hooks, normalizedCommand{h.ID, h.Command, timeout, feedback})
@@ -178,7 +204,7 @@ func decodeConfig(source domain.HookSource, b []byte) ([]domain.HookDeclaration,
 	out := make([]domain.HookDeclaration, 0, count)
 	for _, g := range normalized {
 		for _, h := range g.Hooks {
-			d, err := domain.NewHookDeclaration(source, g.Event, h.Feedback, revision, h.ID, g.Matcher, h.Command, h.Timeout)
+			d, err := configDeclaration(source, g.Event, h.Feedback, revision, h.ID, g.Scope, h.Command, h.Timeout)
 			if err != nil {
 				return nil, err
 			}
@@ -186,4 +212,16 @@ func decodeConfig(source domain.HookSource, b []byte) ([]domain.HookDeclaration,
 		}
 	}
 	return out, nil
+}
+
+// configDeclaration 共用规范声明构造，完成事件不经过工具 matcher。
+func configDeclaration(source domain.HookSource, event domain.HookEvent, feedback domain.HookFeedbackPolicy, revision, id string, scope domain.HookScope, command string, timeout int) (domain.HookDeclaration, error) {
+	if event == domain.HookStop {
+		return domain.NewStopHookDeclaration(source, feedback, revision, id, command, timeout)
+	}
+	matcher, ok := scope.ToolMatcher()
+	if !ok {
+		return domain.HookDeclaration{}, domain.HookConfigInvalid
+	}
+	return domain.NewHookDeclaration(source, event, feedback, revision, id, matcher, command, timeout)
 }

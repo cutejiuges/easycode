@@ -45,7 +45,7 @@ func hookUIEntries(t *testing.T) []domain.HookListEntry {
 }
 func hookUIRequest(t *testing.T, model Model) protocol.Event {
 	t.Helper()
-	p := protocol.HookTrustRequestedPayload{RequestID: "01900000-0000-7000-8000-000000000011", InvocationID: "01900000-0000-7000-8000-000000000012", Capability: domain.HookPatch, Declaration: hookUIEntries(t)[0].Declaration}
+	p := protocol.HookTrustRequestedPayload{RequestID: "01900000-0000-7000-8000-000000000011", Target: testHookTarget(t, "01900000-0000-7000-8000-000000000012", domain.HookPatch), PlanDigest: strings.Repeat("b", 64), Declaration: hookUIEntries(t)[0].Declaration}
 	e, err := protocol.NewHookTrustRequested(p)
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +62,7 @@ func hookUIRequestForEvent(t *testing.T, model Model, event domain.HookEvent) pr
 	p, _ := protocol.DecodeHookTrustRequested(e)
 	d := p.Declaration
 	var err error
-	p.Declaration, err = domain.NewHookDeclaration(d.Reference.Source, event, domain.HookFeedbackModel, d.Reference.Revision, d.Reference.ID, d.Matcher, d.Command, 5)
+	p.Declaration, err = domain.NewHookDeclaration(d.Reference.Source, event, domain.HookFeedbackModel, d.Reference.Revision, d.Reference.ID, testToolHookMatcher(t, d), d.Command, 5)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func hookSnapshotModel(t *testing.T, name string) Model {
 			event = domain.HookPostToolUseFailure
 		}
 		d := s.entries[0].Declaration
-		d, err := domain.NewHookDeclaration(d.Reference.Source, event, domain.HookFeedbackModel, d.Reference.Revision, d.Reference.ID, d.Matcher, d.Command, 5)
+		d, err := domain.NewHookDeclaration(d.Reference.Source, event, domain.HookFeedbackModel, d.Reference.Revision, d.Reference.ID, testToolHookMatcher(t, d), d.Command, 5)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -99,7 +99,7 @@ func hookSnapshotModel(t *testing.T, name string) Model {
 		if strings.Contains(name, "long") {
 			d := m.hooks.entries[0].Declaration
 			d.Command = strings.Repeat("printf 'review every line'\n", 50)
-			d, _ = domain.NewHookDeclaration(d.Reference.Source, domain.HookPreToolUse, domain.HookFeedbackNone, d.Reference.Revision, d.Reference.ID, d.Matcher, d.Command, 5)
+			d, _ = domain.NewHookDeclaration(d.Reference.Source, domain.HookPreToolUse, domain.HookFeedbackNone, d.Reference.Revision, d.Reference.ID, testToolHookMatcher(t, d), d.Command, 5)
 			s.entries[0].Declaration = d
 		}
 		e := hookUIRequest(t, m)
@@ -249,7 +249,7 @@ func testHookOverlayMutualExclusionAndCheckingProjection(t *testing.T, event dom
 	}
 	ready.TurnID = m.activeTurnID
 	m = updateModel(t, m, RuntimeEventMsg{Event: ready})
-	h := protocol.HookActivityPayload{InvocationID: id, Reference: s.entries[0].Declaration.Reference, State: "checking", Code: domain.HookOK}
+	h := protocol.HookActivityPayload{Target: testHookTarget(t, id, domain.HookWrite), PlanDigest: strings.Repeat("b", 64), Reference: s.entries[0].Declaration.Reference, State: "checking", Code: domain.HookOK}
 	e, err := protocol.NewHookActivity(h)
 	if err != nil {
 		t.Fatal(err)
@@ -292,4 +292,24 @@ func TestHookAndQuestionOverlaysRemainMutuallyExclusive(t *testing.T) {
 			}
 		})
 	}
+}
+
+// testToolHookMatcher 保证原工具声明测试不混入回合检查范围。
+func testToolHookMatcher(t *testing.T, d domain.HookDeclaration) domain.HookMatcher {
+	t.Helper()
+	m, ok := d.Scope.ToolMatcher()
+	if !ok {
+		t.Fatal("expected tool hook scope")
+	}
+	return m
+}
+
+// testHookTarget 创建严格的真实工具目标，避免测试复用旧身份形状。
+func testHookTarget(t *testing.T, id string, cap domain.HookCapability) domain.HookTarget {
+	t.Helper()
+	target, err := domain.NewToolHookTarget(id, cap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return target
 }

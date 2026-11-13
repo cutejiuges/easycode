@@ -16,6 +16,18 @@ func projectTranscript(history []nativeHistoryEntry) (domain.TranscriptView, err
 		if entry.Kind == nativeHistoryToolOutputs {
 			continue
 		}
+		if entry.Kind == nativeHistoryHookFeedback {
+			feedback, err := entryStopFeedback(entry)
+			if err != nil {
+				return domain.TranscriptView{}, err
+			}
+			item, err := domain.NewTranscriptHook(domain.TranscriptPosition{Entry: uint64(ordinal)}, feedback)
+			if err != nil {
+				return domain.TranscriptView{}, err
+			}
+			items = append(items, item)
+			continue
+		}
 		if entry.Kind == nativeHistoryUserInputs {
 			if entry.InputMetadata == nil || len(entry.InputMetadata.InputIDs) != len(entry.UserInputs) {
 				return domain.TranscriptView{}, errors.New("invalid transcript input association")

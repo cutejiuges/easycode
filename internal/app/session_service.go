@@ -45,6 +45,8 @@ type assembledSession struct {
 	history       domain.SemanticHistoryView
 	repair        session.RepairReport
 	toolRecovery  *session.ToolRecoveryPlan
+	stopRecovery  *session.StopRecoveryPlan
+	stops         []session.ReplayedStop
 }
 
 func openSessionService(dataRoot string) (*sessionService, error) {
@@ -208,6 +210,11 @@ func (service *sessionService) resume(
 			fault.CodeSessionWrite, "session journal ownership was not transferred", closeErr,
 		)
 	}
+	var stopRecovery *session.StopRecoveryPlan
+	if plan.StopRecovery != nil {
+		cloned := plan.StopRecovery.Clone()
+		stopRecovery = &cloned
+	}
 	var toolRecovery *session.ToolRecoveryPlan
 	if plan.ToolRecovery != nil {
 		cloned := plan.ToolRecovery.Clone()
@@ -215,7 +222,8 @@ func (service *sessionService) resume(
 	}
 	return assembledSession{
 		compactions: compactions, identity: plan.Identity, conversation: conversation, writer: writer,
-		tools:         plan.Tools,
+		tools: plan.Tools,
+		stops: plan.Stops, stopRecovery: stopRecovery,
 		nativeCommits: plan.NativeCommits,
 		history:       conversation.ProjectHistory(), repair: loaded.Repair, toolRecovery: toolRecovery,
 	}, nil
@@ -244,6 +252,11 @@ func nativeRestoreRecords(records []session.NativeCommitRecord) ([]provider.Rest
 			restored, buildErr = provider.NewInputRestoreRecord(record.Inputs, commit)
 		case domain.NativeCommitSample:
 			restored, buildErr = provider.NewSampleRestoreRecord(record.TurnID, commit)
+		case domain.NativeCommitHookFeedback:
+			if record.Feedback == nil {
+				return nil, fault.New(fault.CodeSessionCorruption, "missing stop feedback evidence")
+			}
+			restored, buildErr = provider.NewStopFeedbackRestoreRecord(*record.Feedback, commit)
 		case domain.NativeCommitToolOutputs:
 			restored, buildErr = provider.NewToolOutputRestoreRecord(record.TurnID, commit, record.ToolOutputs)
 		default:

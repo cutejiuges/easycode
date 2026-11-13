@@ -906,3 +906,8 @@ type catalogWriteExecutor struct{}
 func (catalogWriteExecutor) Execute(context.Context, tool.WriteCandidate) tool.InvocationResult {
 	return tool.InvocationResult{}
 }
+
+// ProjectAssistantSample 在不模拟原生采样的测试替身中明确失败，不猜测展示列表。
+func (*orderedConversation) ProjectAssistantSample(domain.AssistantSampleReference) (domain.AssistantSampleText, error) {
+	return domain.AssistantSampleText{}, domain.HookConfigInvalid
+}

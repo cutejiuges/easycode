@@ -310,13 +310,13 @@ func (active *activeReplayTurn) acceptPostHookBatch(batch []Record) error {
 		if err != nil || len(batch) != 1 || !id.Event.Post() {
 			return replayCorrupt("invalid post hook start batch")
 		}
-		invocation = id.InvocationID
+		invocation = id.InvocationID()
 	case EventHookExecutionFinished:
 		f, err := DecodeHookExecutionFinished(first)
 		if err != nil || !f.Result.Identity.Event.Post() {
 			return replayCorrupt("invalid post hook finish")
 		}
-		invocation = f.Result.Identity.InvocationID
+		invocation = f.Result.Identity.InvocationID()
 	case EventToolPostHookCompleted:
 		t, err := DecodeToolPostHookCompleted(first)
 		if err != nil || len(batch) != 1 {

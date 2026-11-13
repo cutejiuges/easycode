@@ -37,7 +37,7 @@ type HookParsedOutput struct {
 
 func NewHookParsedOutput(event HookEvent, policy HookFeedbackPolicy, status HookOutcome, code HookCode, feedback HookFeedbackCandidate) (HookParsedOutput, error) {
 	v := HookParsedOutput{status, code, feedback}
-	if !policy.ValidFor(event) || !status.ValidCode(code) || feedback.Validate() != nil || event.Post() && status == HookBlock || !feedback.Empty() && (!event.Post() || policy != HookFeedbackModel || status != HookContinue) {
+	if !policy.ValidFor(event) || !status.ValidCode(code) || feedback.Validate() != nil || event.Post() && status == HookBlock || !feedback.Empty() && (policy != HookFeedbackModel || !(event.Post() && status == HookContinue || event == HookStop && status == HookBlock && code == HookDenied)) {
 		return HookParsedOutput{}, HookConfigInvalid
 	}
 	return v, nil
@@ -51,7 +51,7 @@ type HookExecution struct {
 
 func NewHookExecution(result HookRunResult, policy HookFeedbackPolicy, feedback HookFeedbackCandidate) (HookExecution, error) {
 	v := HookExecution{result, feedback}
-	if result.Validate() != nil {
+	if result.Validate() != nil || !feedback.Empty() && result.Identity.Event == HookStop && (!result.ExitKnown || result.ExitCode != 0 || !result.CleanupConfirmed || result.Cancelled || result.TimedOut || result.Origin != "execution") {
 		return HookExecution{}, HookConfigInvalid
 	}
 	_, err := NewHookParsedOutput(result.Identity.Event, policy, result.Status, result.Code, feedback)

@@ -220,7 +220,7 @@ func (state *compactionReplay) accept(plan *ReplayPlan, batch []Record, turn *ac
 				return replayCorrupt("manual compaction overlaps turn")
 			}
 		} else {
-			if turn == nil || payload.Scope.TurnID != turn.turnID || payload.Scope.SampleIndex != turn.nextSampleIndex || turn.inputAtSample || turn.autoCompactedSample || turn.pendingCalls != nil || (turn.initialInputs && (!turn.hadToolSample || !turn.toolOutputsCommitted)) {
+			if turn == nil || payload.Scope.TurnID != turn.turnID || payload.Scope.SampleIndex != turn.nextSampleIndex || turn.inputAtSample || turn.autoCompactedSample || turn.pendingCalls != nil || (turn.stop != nil && !turn.stop.PendingFeedback()) || (turn.initialInputs && turn.stop == nil && (!turn.hadToolSample || !turn.toolOutputsCommitted)) {
 				return replayCorrupt("automatic compaction boundary is invalid")
 			}
 			turn.autoCompactedSample = true

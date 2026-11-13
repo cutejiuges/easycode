@@ -2,20 +2,20 @@
 
 ## Purpose
 
-定义本地同步 PreToolUse/PostToolUse 命令 Hook 的共同来源、配置、信任、受限执行与失败行为，使修改前门禁与成功后检查保持双 Provider 行为、权限隔离、隐私和取消清理的一致性。
+定义本地同步 PreToolUse、PostToolUse、PostToolUseFailure 与 Stop 命令 Hook 的共同来源、配置、信任、受限执行与失败行为，使工具前后检查与回合完成门禁保持双 Provider 行为、权限隔离、隐私和取消清理的一致性。
 
 ## Requirements
 
 ### Requirement: Command hook configuration is bounded strict and frozen
 
-系统 SHALL 显式加载用户 `~/.config/easycode/hooks.json` 与启动 workspace 根 `.easycode/hooks.json`，只接受顶层 hooks 对象中的 PreToolUse、PostToolUse 与 PostToolUseFailure 数组、每项 matcher/hooks 以及每条 id/type/command/timeout，以及仅两个后置事件支持的 feedback；type MUST 为 command。缺失文件表示空来源；重复/未知字段、非 UTF-8、大小写别名、null、尾随 JSON、错误类型与未支持事件或行为 MUST 使整个来源无效。timeout 省略为 5 秒，只允许整数 1..30；id 为 1..64 字节小写 ASCII 字母/数字/单连字符、首尾字母数字且来源内唯一，command 非空且最多 8 KiB。
+系统 SHALL 显式加载用户 `~/.config/easycode/hooks.json` 与启动 workspace 根 `.easycode/hooks.json`，只接受顶层 hooks 对象中的 PreToolUse、PostToolUse、PostToolUseFailure、Stop 数组；前三种工具事件的 group 含 matcher/hooks，Stop group 只含 hooks 且 MUST 拒绝任何 matcher；每条含 id/type/command/timeout，两个后置事件及 Stop 支持 feedback；type MUST 为 command。缺失文件表示空来源；重复/未知字段、非 UTF-8、大小写别名、null、尾随 JSON、错误类型与未支持事件或行为 MUST 使整个来源无效。timeout 省略为 5 秒，只允许整数 1..30；id 为 1..64 字节小写 ASCII 字母/数字/单连字符、首尾字母数字且来源内唯一，command 非空且最多 8 KiB。
 
 每来源 SHALL 最多 64 KiB 和 32 条 Hook，合并最多 64 条；单调用每事件最多匹配 8 条。matcher MUST 是 `*` 或以 `|` 分隔的非重复字面名称：Edit/apply_patch 对应 fs.patch，Write 对应 fs.write，Bash/exec_command 对应 process.exec。空分支、未知名称或正则语法 MUST 拒绝；别名命中相同能力不得重复执行一条声明。`*` SHALL 仅指上述三项能力。
 
 同一事件的全部匹配项 MUST 按用户来源、项目来源、配置数组位置稳定执行。source revision SHALL 由完整规范内容派生；绝对路径、时间、inode、执行或信任身份不得参与内容 revision。相同内容和数组顺序 MUST 产生相同 bytes/revision，getter 返回值修改不得改变快照。快照只在启动时建立，后续磁盘编辑不改变当前运行语义。
 
 
-PostToolUse/PostToolUseFailure 的 feedback SHALL 仅接受 none/model，省略规范化为 none；PreToolUse 出现 feedback MUST 拒绝。每来源 32 条和合并 64 条上限按三个事件合计，id 在来源全部事件中唯一；规范配置显式按 PreToolUse、PostToolUse、PostToolUseFailure 排序，不以对象键插入顺序决定 revision。未知事件继续失败关闭。source revision 覆盖三事件全部声明，command fingerprint SHALL 绑定事件与披露策略。
+PostToolUse/PostToolUseFailure/Stop 的 feedback SHALL 仅接受 none/model，省略规范化为 none；PreToolUse 出现 feedback MUST 拒绝。每来源 32 条和合并 64 条上限按四个事件合计，id 在来源全部事件中唯一；规范配置显式按 PreToolUse、PostToolUse、PostToolUseFailure、Stop 排序，不以对象键插入顺序决定 revision。未知事件继续失败关闭。source revision 覆盖四事件全部声明，command fingerprint SHALL 绑定事件与披露策略。
 
 #### Scenario: Load two ordered sources
 - **WHEN** 用户和项目各有合法的匹配 Hook，文件对象键顺序不同
@@ -23,7 +23,7 @@ PostToolUse/PostToolUseFailure 的 feedback SHALL 仅接受 none/model，省略�
 
 #### Scenario: Refuse a partial snapshot
 - **WHEN** 一个已存在来源损坏、超限或包含未支持事件，另一个来源合法
-- **THEN** 三项 mutation 调用以 hook_config_invalid 阻断，不从合法来源组成部分放行；普通聊天、只读工具与配置浏览仍可用
+- **THEN** 三项 mutation 调用以 hook_config_invalid 阻断，不从合法来源组成部分放行；已保存答复、只读工具与配置浏览仍可用，但最终完成边界 MUST 以 hook_config_invalid 失败且零 Stop 执行，不能通过损坏来源推断没有 Stop
 
 #### Scenario: Match aliases only once
 - **WHEN** matcher 为 Bash|exec_command，当前 ready 调用属于 process.exec
@@ -49,6 +49,16 @@ PostToolUse/PostToolUseFailure 的 feedback SHALL 仅接受 none/model，省略�
 - **WHEN** 同来源成功和失败声明使用相同 id
 - **THEN** 整个来源无效，不以另一事件或合法来源部分放行 mutation
 
+Stop SHALL 仅按回合完成事件选择，不与任一工具能力匹配。每候选最多 8 项，保持 user/project 和数组顺序；四事件共享来源计数/id 唯一规则。合法无诊断且 Stop 为空时保留无 Stop 快速路径，既有工具 matcher 的 * 仍只指三种 mutation。
+
+#### Scenario: Load a completion hook without a matcher
+- **WHEN** Stop group 只含合法 hooks，feedback 省略
+- **THEN** 规范化为 feedback=none 并保持顺序；任何 matcher、四事件重复 id 或合计超限使来源无效
+
+#### Scenario: Preserve a valid tool-only configuration
+- **WHEN** 两来源合法且未配置 Stop
+- **THEN** 聊天完成沿既有无 Stop 路径，不新增 Stop facts 或请求内容
+
 ### Requirement: Hook source checks bind to opened descriptors
 
 配置读取 MUST 逐段拒绝 symlink，并由同一实际 FD 校验常规文件、大小及权限；源文件与受信任来源目录不得允许 group/other 写入。特殊文件、目录穿越、读取失败或捕获过程中检测到变化 MUST 使来源无效，不回显路径目标或内容，不退回普通路径读取。支持平台的既有系统路径别名可按固定规则处理，其他平台无法提供安全打开时 MUST 失败关闭。
@@ -65,7 +75,7 @@ PostToolUse/PostToolUseFailure 的 feedback SHALL 仅接受 none/model，省略�
 
 用户及项目来源 SHALL 均默认未信任。每条信任 MUST 绑定当前 Session/workspace 实例、来源身份与 revision、Hook id、事件、feedback 策略、命令 fingerprint 以及 shell/environment/sandbox 身份；不得从项目打开、Skill 使用、普通工具批准、其他 Hook 或历史 Session 推导授权。指纹 SHALL 包含规范 matcher、命令和 timeout，不含宿主环境实际值。
 
-首次运行前 MUST 提供完整命令、来源、事件、作用能力、超时、只读/禁网限制和脚本依赖可变化的审查；仅接受本进程会话信任或拒绝，默认拒绝。响应 MUST 关联活动 request/session/thread/turn/invocation 和快照身份；过期、重复、错配或取消后的响应在授权和执行前拒绝。拒绝状态保持至该项被显式 reset 或进程结束；reset 仅在无活动 turn 且目标身份匹配时清除状态，不建立信任、不重试工具。
+首次运行前 MUST 提供完整命令、来源、事件、作用能力或回合完成范围、超时、只读/禁网限制和脚本依赖可变化的审查；仅接受本进程会话信任或拒绝，默认拒绝。响应 MUST 关联活动 request/session/thread/turn、封闭 tool_call 或 turn_stop 目标及快照身份；过期、重复、错配或取消后的响应在授权和执行前拒绝。拒绝状态保持至该项被显式 reset 或进程结束；reset 仅在无活动 turn 且目标身份匹配时清除状态，不建立信任、不重试工具。
 
 信任和拒绝 MUST 由实例持有，不写配置或 Session，不跨重启、resume、Provider/workspace/Session 实例复用。信任不冻结所引用脚本的完整依赖内容，不得声称命令摘要证明了所有未来脚本 bytes。
 
@@ -92,9 +102,21 @@ PostToolUse 的全部匹配声明 SHALL 在原工具候选准备及副作用前�
 - **WHEN** PreToolUse 同一命令已获信任而 PostToolUse 或其 feedback 策略尚未信任
 - **THEN** 仍须独立审查；拒绝时原工具执行次数为零
 
+Stop 的 mode/platform/input/执行额度前检 SHALL 遵循 extension/stop-hooks 的固定顺序；headless 在门禁不新增 Stop 专用正文投影或平台检查；既有启动 availability 探测不计入该门禁，已保存平台不可用快照不能覆盖 headless 的 hook_trust_required。其信任始终是已配置声明的进程内授权，不因 pending 用户输入、摘要或反馈交付产生任何普通工具权限。
+
+Stop SHALL 在本次成功无 calls sample 与计划已 Sync/finalize、输入及平台预检通过后审查全部声明，全部信任前零 Stop 命令。Stop response MUST 精确关联 sample target 和 plan，不能复用工具信任响应。审查明确读取最终答复、model 内容将发送给 Provider 并存入 Session，以及先前已执行工具不会回滚。headless 无交互直接以 hook_trust_required 失败；信任不从历史恢复。
+
+#### Scenario: Deny a completion review
+- **WHEN** 用户在 Stop 审查接受默认拒绝
+- **THEN** 已提交答复保留，零 Stop/后续采样，以唯一失败终态结束；此前工具事实不改写
+
+#### Scenario: Reject a tool response for a stop target
+- **WHEN** 用同一声明的旧 tool_call 响应回答 turn_stop 请求
+- **THEN** 授权和执行次数不变，不能把 TurnID 作为 invocation 接受
+
 ### Requirement: Hook commands execute with explicit restricted lifecycle
 
-Hook SHALL 只在三项 mutation 调用完整 ready 且对应事件计划和 Hook 执行 started 已成功 Sync 后启动。执行 MUST 使用非 login `/bin/sh`、最小环境、实际目录 FD 绑定的 workspace 根、工作区只读且禁网 sandbox；仅 `/dev/null` 必需行为允许文件写入。不得继承 Provider 凭据、敏感 Header/Cookie、Session 路径、内部控制变量或真实 home 写权限。命令参数不得由模型输入或环境插值形成；工具参数只通过 stdin 传递。
+三种工具 Hook SHALL 只在 mutation 调用完整 ready 且对应事件计划和 Hook 执行 started 已成功 Sync 后启动；Stop SHALL 另要求成功无 calls sample、回合计划及对应 Hook started 均已 Sync，且 sample 已 finalize。执行 MUST 使用非 login `/bin/sh`、最小环境、实际目录 FD 绑定的 workspace 根、工作区只读且禁网 sandbox；仅 `/dev/null` 必需行为允许文件写入。不得继承 Provider 凭据、敏感 Header/Cookie、Session 路径、内部控制变量或真实 home 写权限。命令参数不得由模型输入或环境插值形成；工具参数只通过 stdin 传递。
 
 首批真实执行平台 SHALL 为 Darwin；交互运行路径中其他平台或 sandbox 不可兑现时 MUST 在信任请求与命令启动前返回 unsupported_platform 或 sandbox_unavailable，禁止无 sandbox fallback。headless 匹配项 SHALL 先按无交互信任规则返回 hook_trust_required，不进入平台执行前检。每条工具调用全部 Hook 的执行时间预算 SHALL 为 30 秒；单项期限不超过配置值及剩余预算，信任等待不计入执行预算但必须可取消。
 
@@ -128,6 +150,12 @@ PostToolUseFailure SHALL 使用同一只读/禁网进程生命周期、输入/�
 #### Scenario: Cancel admission without reclassifying the original error
 - **WHEN** 执行尝试准入与原 error 已 durable，当前 turn 在匹配失败检查启动前取消
 - **THEN** failure 选择保持，零新脚本，仅保存适用的取消终态，不能改成 none 或以不可取消 context 继续启动
+
+Stop SHALL 复用同一只读/禁网执行和清理 owner，但具有同 turn 全部候选累计 30 秒执行额度，续轮不重置；不是单工具 30 秒额度的延长或共享授权。未启动时额度耗尽不伪造 timeout/started。已接收的执行必须交付一次真实结果并清理，shutdown 超时不能释放 lease 或交给新 turn。Stop 读取不生成 Write 的完整 Read 证据。
+
+#### Scenario: Bound completion checks across continuations
+- **WHEN** 首次 Stop 消耗部分 30 秒额度，反馈后再次检查
+- **THEN** 只使用剩余额度，耗尽则零新执行且失败，不悄悄跳过检查宣告通过
 
 ### Requirement: Hook wire uses a typed input and a strict denial subset
 
@@ -171,3 +199,9 @@ PostToolUseFailure SHALL 使用 extension/post-tool-use-failure 定义的独立�
 #### Scenario: Validate all three events independently
 - **WHEN** 相同退出码 2 或带 additionalContext 的 stdout 分别用于三个事件
 - **THEN** Pre 保持原 deny/拒绝正文规则，两个 Post 只按各自事件接收显式 model 内容，非零退出均为检查失败
+
+本条三个工具事件 wire 约束 SHALL 保持事件隔离；Stop 输入/输出仅按 extension/stop-hooks 校验。Stop 的结构化 block 不能放宽 Pre 的 additionalContext 拒绝，也不能把两个 Post 的 exit 2 重分类为阻断。只有已信任 Stop 的显式 model reason 可成为独立冻结反馈；原始双流和未授权 reason 仍不得持久化或展示。
+
+#### Scenario: Keep all four parsers independent
+- **WHEN** 同一 stdout JSON/退出码用于四事件
+- **THEN** 各按实际事件严格验证，不以新增 Stop block 规则改变现有三事件结果

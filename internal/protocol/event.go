@@ -15,6 +15,7 @@ type EventKind string
 const (
 	EventHookTrustRequested    EventKind = "hook_trust_requested"
 	EventHookTrustResolved     EventKind = "hook_trust_resolved"
+	EventStopHookCommitted     EventKind = "stop_hook_committed"
 	EventPostHookCommitted     EventKind = "post_hook_committed"
 	EventHookActivity          EventKind = "hook_activity"
 	EventCacheSnapshot         EventKind = "cache_snapshot"
@@ -105,11 +106,14 @@ func (event Event) Validate() error {
 		_, err := DecodeUserQuestionResolved(event)
 		return err
 
-	case EventHookTrustRequested, EventHookTrustResolved, EventHookActivity, EventPostHookCommitted:
+	case EventHookTrustRequested, EventHookTrustResolved, EventHookActivity, EventPostHookCommitted, EventStopHookCommitted:
 		if !hasIdentity {
 			return fmt.Errorf("hook event identity is required")
 		}
 		switch event.Kind {
+		case EventStopHookCommitted:
+			_, err := DecodeStopHookCommitted(event)
+			return err
 		case EventPostHookCommitted:
 			_, err := DecodePostHookCommitted(event)
 			return err

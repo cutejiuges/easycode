@@ -766,3 +766,8 @@ func terminalCount(items []protocol.ControlItem, requestID protocol.RequestID) i
 func (conversation *controlledConversation) callsRemaining() int {
 	return len(conversation.calls)
 }
+
+// ProjectAssistantSample 在不模拟原生采样的测试替身中明确失败，不猜测展示列表。
+func (*controlledConversation) ProjectAssistantSample(domain.AssistantSampleReference) (domain.AssistantSampleText, error) {
+	return domain.AssistantSampleText{}, domain.HookConfigInvalid
+}

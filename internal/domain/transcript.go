@@ -11,6 +11,7 @@ import (
 type TranscriptKind string
 
 const (
+	TranscriptHook       TranscriptKind = "hook"
 	TranscriptUser       TranscriptKind = "user"
 	TranscriptCompaction TranscriptKind = "compaction"
 	TranscriptAssistant  TranscriptKind = "assistant"
@@ -27,16 +28,17 @@ type TranscriptPosition struct {
 
 // TranscriptItem 只包含允许展示的内容与调用关联；调用名称仅用于核验身份。
 type TranscriptItem struct {
-	Reasoning *ReasoningBody     `json:"reasoning,omitempty"`
-	Skill     SkillAttachment    `json:"skill,omitempty,omitzero"`
-	HasSkill  bool               `json:"has_skill,omitempty"`
-	Kind      TranscriptKind     `json:"kind"`
-	Position  TranscriptPosition `json:"position"`
-	TurnID    TurnID             `json:"turn_id"`
-	InputID   InputID            `json:"input_id"`
-	Text      string             `json:"text"`
-	CallID    string             `json:"call_id"`
-	CallName  string             `json:"call_name"`
+	HookSource *HookMessageSource `json:"hook_source,omitempty"`
+	Reasoning  *ReasoningBody     `json:"reasoning,omitempty"`
+	Skill      SkillAttachment    `json:"skill,omitempty,omitzero"`
+	HasSkill   bool               `json:"has_skill,omitempty"`
+	Kind       TranscriptKind     `json:"kind"`
+	Position   TranscriptPosition `json:"position"`
+	TurnID     TurnID             `json:"turn_id"`
+	InputID    InputID            `json:"input_id"`
+	Text       string             `json:"text"`
+	CallID     string             `json:"call_id"`
+	CallName   string             `json:"call_name"`
 }
 
 // NewTranscriptUser 构造保留原始空白的用户正文投影。
@@ -65,6 +67,9 @@ func NewTranscriptReasoning(position TranscriptPosition, turn TurnID, body Reaso
 
 // Validate 拒绝未知种类、无效身份和跨种类字段，不改变正文。
 func (v TranscriptItem) Validate() error {
+	if v.Kind != TranscriptHook && v.HookSource != nil {
+		return errors.New("unexpected transcript hook source")
+	}
 	if v.HasSkill {
 		if v.Kind != TranscriptUser || v.Skill.Validate() != nil {
 			return errors.New("invalid transcript skill")
@@ -82,6 +87,14 @@ func (v TranscriptItem) Validate() error {
 	case TranscriptReasoning:
 		if v.Reasoning == nil || v.Reasoning.Validate() != nil || v.Text != "" || v.InputID != "" || v.CallID != "" || v.CallName != "" {
 			return errors.New("invalid transcript reasoning")
+		}
+	case TranscriptHook:
+		if v.HookSource == nil || v.HookSource.Validate() != nil || v.InputID != "" || v.CallID != "" || v.CallName != "" {
+			return errors.New("invalid transcript hook source")
+		}
+		sample, _ := v.HookSource.Identity.Target.AssistantSample()
+		if sample.TurnID != v.TurnID {
+			return errors.New("transcript hook turn mismatch")
 		}
 	case TranscriptUser:
 		if !v.InputID.Valid() || v.CallID != "" || v.CallName != "" {
@@ -148,6 +161,10 @@ type TranscriptView struct {
 func NewTranscriptView(family ProviderFamily, items []TranscriptItem) (TranscriptView, error) {
 	v := TranscriptView{Provider: family, Items: append([]TranscriptItem{}, items...)}
 	for i := range v.Items {
+		if v.Items[i].HookSource != nil {
+			source := *v.Items[i].HookSource
+			v.Items[i].HookSource = &source
+		}
 		if v.Items[i].Reasoning != nil {
 			body := *v.Items[i].Reasoning
 			v.Items[i].Reasoning = &body
@@ -183,4 +200,15 @@ func (v TranscriptView) Validate() error {
 		}
 	}
 	return nil
+}
+
+// NewTranscriptHook 保留反馈的真实原生位置及检查来源。
+func NewTranscriptHook(position TranscriptPosition, feedback StopFeedback) (TranscriptItem, error) {
+	source, err := NewHookMessageSource(feedback)
+	if err != nil {
+		return TranscriptItem{}, err
+	}
+	sample, _ := source.Identity.Target.AssistantSample()
+	v := TranscriptItem{Kind: TranscriptHook, Position: position, TurnID: sample.TurnID, Text: feedback.Text, HookSource: &source}
+	return v, v.Validate()
 }

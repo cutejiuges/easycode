@@ -8,6 +8,7 @@ import (
 
 // RestoreRecord 将 opaque 原生增量绑定到已校验的 turn 和提交角色。
 type RestoreRecord struct {
+	feedback        *domain.StopFeedback
 	toolOutputs     []tool.ModelOutput
 	questions       []tool.QuestionInvocation
 	questionResults []tool.InvocationResult
@@ -96,6 +97,15 @@ func (record RestoreRecord) Association() (domain.InputAssociation, bool) {
 
 // Validate 拒绝零值或不匹配的恢复角色。
 func (record RestoreRecord) Validate() error {
+	if (record.role == domain.NativeCommitHookFeedback) != (record.feedback != nil) {
+		return fmt.Errorf("unrelated hook feedback restore evidence")
+	}
+	if record.feedback != nil {
+		sample, _ := record.feedback.Identity.Target.AssistantSample()
+		if record.feedback.Validate() != nil || sample.TurnID != record.turnID {
+			return fmt.Errorf("invalid hook feedback restore evidence")
+		}
+	}
 	if record.role == domain.NativeCommitToolOutputs {
 		if len(record.toolOutputs) == 0 {
 			return fmt.Errorf("tool output restore evidence is required")
@@ -166,7 +176,7 @@ func (record RestoreRecord) Validate() error {
 		if record.association.Validate() != nil || record.association.TurnID() != record.turnID {
 			return fmt.Errorf("restore input association is invalid")
 		}
-	case domain.NativeCommitSample, domain.NativeCommitToolOutputs:
+	case domain.NativeCommitSample, domain.NativeCommitToolOutputs, domain.NativeCommitHookFeedback:
 		if record.association.TurnID() != "" {
 			return fmt.Errorf("restore record has unrelated input association")
 		}
@@ -230,4 +240,26 @@ func (record RestoreRecord) CompactionSource() (CompactionSource, bool) {
 		return CompactionSource{}, false
 	}
 	return *record.source, true
+}
+
+// NewStopFeedbackRestoreRecord 绑定已验证决定的最终字节，不从展示或配置补全反馈。
+func NewStopFeedbackRestoreRecord(feedback domain.StopFeedback, envelope NativeCommitEnvelope) (RestoreRecord, error) {
+	if feedback.Validate() != nil {
+		return RestoreRecord{}, fmt.Errorf("invalid stop feedback restore evidence")
+	}
+	sample, _ := feedback.Identity.Target.AssistantSample()
+	record, err := newRestoreRecord(sample.TurnID, domain.NativeCommitHookFeedback, envelope)
+	if err != nil {
+		return RestoreRecord{}, err
+	}
+	record.feedback = &feedback
+	return record, record.Validate()
+}
+
+// StopFeedback 返回已验证持久化决定的独立证据。
+func (record RestoreRecord) StopFeedback() (domain.StopFeedback, bool) {
+	if record.feedback == nil {
+		return domain.StopFeedback{}, false
+	}
+	return *record.feedback, true
 }

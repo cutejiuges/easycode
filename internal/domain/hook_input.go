@@ -143,6 +143,7 @@ func DecodeHookToolInput(cap HookCapability, b []byte) (HookToolInput, error) {
 
 // HookInput 是只发送给已信任本地检查的临时 stdin，不进入 Session。
 type HookInput struct {
+	stop        *StopInput
 	Event       HookEvent         `json:"hook_event_name"`
 	SessionID   SessionID         `json:"session_id"`
 	ThreadID    ThreadID          `json:"thread_id"`
@@ -161,6 +162,12 @@ func NewHookInput(session SessionID, thread ThreadID, turn TurnID, call, name, c
 	return v, v.Validate()
 }
 func (v HookInput) Validate() error {
+	if v.Event == HookStop {
+		return v.validateStop()
+	}
+	if v.stop != nil {
+		return HookConfigInvalid
+	}
 	if !v.Event.Valid() || !v.SessionID.Valid() || !v.ThreadID.Valid() || !v.TurnID.Valid() || v.ToolUseID == "" || len(v.ToolUseID) > 256 || !utf8.ValidString(v.ToolUseID) || !filepath.IsAbs(v.CWD) || !utf8.ValidString(v.CWD) || strings.ContainsRune(v.CWD, 0) {
 		return HookConfigInvalid
 	}
@@ -224,6 +231,24 @@ func NewFailureHookInput(session SessionID, thread ThreadID, turn TurnID, call, 
 
 // DecodeHookInput 严格解码各当前事件独有的输入形状，扩展字节仅用于封闭分支解码。
 func DecodeHookInput(b []byte) (HookInput, error) {
+	if len(b) > MaxHookInputBytes {
+		return HookInput{}, HookInputLimit
+	}
+	members, err := codec.ObjectMembers(b)
+	if err != nil {
+		return HookInput{}, HookConfigInvalid
+	}
+	var event HookEvent
+	if codec.UnmarshalRecord(members["hook_event_name"], &event) != nil {
+		return HookInput{}, HookConfigInvalid
+	}
+	if event == HookStop {
+		input, err := DecodeStopInput(b)
+		if err != nil {
+			return HookInput{}, err
+		}
+		return NewStopHookInput(input)
+	}
 	if len(b) > MaxHookInputBytes {
 		return HookInput{}, HookInputLimit
 	}

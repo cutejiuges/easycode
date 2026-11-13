@@ -1,6 +1,6 @@
 # 当前能力与实现边界
 
-> 核对日期：2026-11-11。基线：当前仓库实现及已同步主规格，包含启动推理控制及本轮回归修复、结构化用户提问、PreToolUse/PostToolUse/PostToolUseFailure Hook、命令/Skill 首词补全与已验收归档的双 Provider 被动推理阅读。
+> 核对日期：2026-11-13。基线：当前仓库实现及已同步主规格，包含启动推理控制及本轮回归修复、结构化用户提问、PreToolUse/PostToolUse/PostToolUseFailure/Stop Hook、命令/Skill 首词补全与已验收归档的双 Provider 被动推理阅读。
 > 本文记录当前代码可执行的能力；[产品 Roadmap](product-roadmap.md)保留阶段目标与剩余工作。已接受的 ADR 和归档 change 记录各自当时的决策，不能单独作为现有功能清单。
 
 ## 用户入口
@@ -13,7 +13,7 @@
 | 本地 slash commands | `/cache`、`/context`、`/compact [instructions]`、`/skills`、`/hooks`，以及可调用 Skill 的 `/<name>` / `$name` | TUI 命令与 Skill 附件入口，支持 `/` / `$` 首词补全及冻结来源筛选；stream-json 使用独立 typed 控制消息，普通文字不执行 slash。`/help`、`/fork`、`/model`、`/plugins`、`/mcp`、`/cost` 尚未实现 |
 | 命令/Skill 补全 | 确定性筛选、上下键选择、Tab 填入、内置 Enter 执行及 Skill Enter 只填入；Esc 关闭、paste 抑制、窄屏停用 | 仅首词名称，不含文件/参数值补全、正文 mentions 或动态目录；`internal/tui/completion*_test.go`、`internal/app/completion_e2e_test.go`；候选不进入 Session 或缓存前缀 |
 | 启动推理控制 | 五个严格 JSON 字段；Anthropic thinking/display/独立 effort、OpenAI effort/summary、普通输出上限；/context 只读来源 | 启动冻结、窗口预留和摘要 manual budget 预检；不探测模型、不降级或重试，无 /effort；`internal/config/reasoning_test.go`、两家 `reasoning_request_test.go`、`internal/app/reasoning_auto_compaction_test.go` |
-| 输入控制 | 多行、字素编辑、decoded paste、有界历史、同轮追加、FIFO strict-next、原子取回、停止返还 | 未提交队列/草稿只在内存；同轮追加只在完整工具 outputs 后的采样安全点提交；`internal/runtime/agent_loop_test.go`、`internal/tui/composer*_test.go` |
+| 输入控制 | 多行、字素编辑、decoded paste、有界历史、同轮追加、FIFO strict-next、原子取回、停止返还 | 未提交队列/草稿只在内存；同轮追加在完整工具 outputs 后，或 Stop continued 决定闭合后的交付安全点提交；`internal/runtime/agent_loop_test.go`、`internal/tui/composer*_test.go` |
 
 ## 九项模型工具与执行前检查
 
@@ -32,6 +32,8 @@
 九项工具共享原生 call/output 配对、结果预算和恢复。连续只读批次最多 8 路；Patch/Write/Exec/Question 为独占屏障，只有前三项需要普通副作用批准。验证入口包括 `internal/tool/builtin/specs_test.go`、`internal/app/question_workflow_darwin_test.go` 与 `internal/app/hook_e2e_darwin_test.go`。
 
 PreToolUse Hook 是三项 mutation 的前置门禁，**不是第十项模型工具**。它读取 user/project 冻结严格 JSON、逐项默认拒绝的内存信任，并在候选和普通批准前执行；Darwin 只读工作区、禁网，每项默认 5 秒/最大 30 秒，每调用总执行预算 30 秒，stdin 最大 512 KiB、双输出各 16 KiB。headless 匹配项返回 `hook_trust_required`，无匹配沿用普通 `approval_required`。四类 durable facts 保证恢复只补偿、不重跑；不保存输出正文或 reason。PostToolUse 已支持成功 Patch/Write/Exec 的同步只读检查：执行前独立信任，真实结果先 Sync，默认 none、显式 model 结构化反馈，4 KiB/项与 16 KiB/调用、分段预算及零重跑恢复。后置错误保持工具真实成功，Ctrl+O 后置详情按 durable sequence 刷新。PostToolUseFailure 已覆盖已准入 error/conflict、启动失败和确认清理超时；正常非零 exit 仍走成功分支。success/failure/none 与检查 disposition 独立，双分支先信任、只 reserve 一次，失败输入只含安全摘要。取消不改写原错误，恢复零外部副作用，计划通知中性。其余事件、async、allow/ask、参数/结果改写、plugin hooks 和热加载尚未实现。
+
+Stop 已支持精确答复的完成前检查、同回合最多两次续轮、累计 30 秒及原 16/64 限额。默认 none 不转发阻断文本；显式 model 的正常 exit0 阻断才可续轮。决定和本地交付独立，必要时先摘要旧窗口，随后交付冻结反馈及真实纠正；恢复零重跑、零网络，先补反馈再结束旧回合。Hook 来源独立于用户 recall，headless 匹配要求信任，坏来源拒绝完成。证据为 `internal/app/stop_hook*_test.go`、双 Provider `stop_hook_cache_test.go`、`scripts/stop-hook-smoke.py` 和[验收记录](../../openspec/changes/archive/2026-11-13-add-stop-command-hooks/verification.md)。
 
 ## 历史、上下文、缓存与展示
 
@@ -66,7 +68,7 @@ PreToolUse Hook 是三项 mutation 的前置门禁，**不是第十项模型工�
 
 ## 后续能力与审阅入口
 
-P6 当前交付本地 Skills 和同步 PreToolUse/PostToolUse/PostToolUseFailure；MCP、本地 Plugins、manifest importer 与热加载仍是 P6 后续目标。P7 Subagent 和 P8 telemetry/诊断/发布强化的批准占位尚未接入 Runtime/app。doctor、模型/Provider 动态切换、后台任务、通用迁移设计不得仅因出现在路线图或 ADR 中就视作已经实现。
+P6 当前交付本地 Skills 和同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop；MCP、本地 Plugins、manifest importer 与热加载仍是 P6 后续目标。P7 Subagent 和 P8 telemetry/诊断/发布强化的批准占位尚未接入 Runtime/app。doctor、模型/Provider 动态切换、后台任务、通用迁移设计不得仅因出现在路线图或 ADR 中就视作已经实现。
 
 - 功能使用和配置：[README](../../README.md)。
 - 长期目标及剩余验收：[产品 Roadmap](product-roadmap.md)。

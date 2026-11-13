@@ -21,40 +21,47 @@ func (d HookTrustDecision) Valid() bool { return d == HookTrustSession || d == H
 
 // HookTrustRequestedPayload 是完整但仅限本地瞬态展示的审查声明。
 type HookTrustRequestedPayload struct {
-	RequestID    string                 `json:"request_id"`
-	InvocationID string                 `json:"invocation_id"`
-	Capability   domain.HookCapability  `json:"capability"`
-	Declaration  domain.HookDeclaration `json:"declaration"`
+	RequestID   string                 `json:"request_id"`
+	Target      domain.HookTarget      `json:"target"`
+	PlanDigest  string                 `json:"plan_digest"`
+	Declaration domain.HookDeclaration `json:"declaration"`
 }
 
 func (p HookTrustRequestedPayload) Validate() error {
-	if !validUUIDv7Text(p.RequestID) || !validUUIDv7Text(p.InvocationID) || !p.Capability.Valid() || p.Declaration.Validate() != nil || !p.Declaration.Matcher.Matches(p.Capability) {
+	if !validUUIDv7Text(p.RequestID) || !domain.ValidHookDigest(p.PlanDigest) || p.Declaration.Validate() != nil || !p.Target.ValidFor(p.Declaration.Reference.Event) {
 		return fmt.Errorf("invalid hook trust request")
+	}
+	if _, cap, ok := p.Target.ToolCall(); ok && !p.Declaration.Scope.Matches(cap) {
+		return fmt.Errorf("hook trust capability mismatch")
 	}
 	return nil
 }
 
 // HookTrustResponse 绑定当前真实调用和快照，不能授权其他来源或会话。
 type HookTrustResponse struct {
-	SessionID    domain.SessionID     `json:"session_id"`
-	ThreadID     domain.ThreadID      `json:"thread_id"`
-	TurnID       domain.TurnID        `json:"turn_id"`
-	RequestID    string               `json:"request_id"`
-	InvocationID string               `json:"invocation_id"`
-	Reference    domain.HookReference `json:"reference"`
-	Decision     HookTrustDecision    `json:"decision"`
+	SessionID  domain.SessionID     `json:"session_id"`
+	ThreadID   domain.ThreadID      `json:"thread_id"`
+	TurnID     domain.TurnID        `json:"turn_id"`
+	RequestID  string               `json:"request_id"`
+	Target     domain.HookTarget    `json:"target"`
+	PlanDigest string               `json:"plan_digest"`
+	Reference  domain.HookReference `json:"reference"`
+	Decision   HookTrustDecision    `json:"decision"`
 }
 
 func NewHookTrustResponse(session domain.SessionID, thread domain.ThreadID, turn domain.TurnID, p HookTrustRequestedPayload, decision HookTrustDecision) (HookTrustResponse, error) {
 	if p.Validate() != nil {
 		return HookTrustResponse{}, fmt.Errorf("invalid hook trust request")
 	}
-	r := HookTrustResponse{session, thread, turn, p.RequestID, p.InvocationID, p.Declaration.Reference, decision}
+	r := HookTrustResponse{session, thread, turn, p.RequestID, p.Target, p.PlanDigest, p.Declaration.Reference, decision}
 	return r, r.Validate()
 }
 func (r HookTrustResponse) Validate() error {
-	if !r.SessionID.Valid() || !r.ThreadID.Valid() || !r.TurnID.Valid() || !validUUIDv7Text(r.RequestID) || !validUUIDv7Text(r.InvocationID) || r.Reference.Validate() != nil || !r.Decision.Valid() {
+	if !r.SessionID.Valid() || !r.ThreadID.Valid() || !r.TurnID.Valid() || !validUUIDv7Text(r.RequestID) || !r.Target.ValidFor(r.Reference.Event) || !domain.ValidHookDigest(r.PlanDigest) || r.Reference.Validate() != nil || !r.Decision.Valid() {
 		return fmt.Errorf("invalid hook trust response")
+	}
+	if sample, ok := r.Target.AssistantSample(); ok && sample.TurnID != r.TurnID {
+		return fmt.Errorf("hook trust turn mismatch")
 	}
 	return nil
 }
@@ -113,6 +120,9 @@ func DecodeHookTrustRequested(e Event) (HookTrustRequestedPayload, error) {
 	if e.Kind != EventHookTrustRequested || len(e.Payload) > maxHookTrustRequestBytes || codec.UnmarshalRecord(e.Payload, &p) != nil {
 		return p, fmt.Errorf("invalid hook trust request")
 	}
+	if sample, ok := p.Target.AssistantSample(); ok && e.TurnID != "" && sample.TurnID != e.TurnID {
+		return p, fmt.Errorf("hook trust target scope mismatch")
+	}
 	return p, p.Validate()
 }
 func NewHookTrustResolved(p HookTrustResponse) (Event, error) {
@@ -140,16 +150,17 @@ const (
 
 // HookActivityPayload 是由 durable 检查边界产生的安全投影，不能冒充工具 started。
 type HookActivityPayload struct {
-	InvocationID string               `json:"invocation_id"`
-	Reference    domain.HookReference `json:"reference"`
-	State        HookActivityState    `json:"state"`
-	Code         domain.HookCode      `json:"code"`
-	StdoutBytes  int64                `json:"stdout_bytes"`
-	StderrBytes  int64                `json:"stderr_bytes"`
+	Target      domain.HookTarget    `json:"target"`
+	PlanDigest  string               `json:"plan_digest"`
+	Reference   domain.HookReference `json:"reference"`
+	State       HookActivityState    `json:"state"`
+	Code        domain.HookCode      `json:"code"`
+	StdoutBytes int64                `json:"stdout_bytes"`
+	StderrBytes int64                `json:"stderr_bytes"`
 }
 
 func (p HookActivityPayload) Validate() error {
-	if !validUUIDv7Text(p.InvocationID) || p.Reference.Validate() != nil || p.StdoutBytes < 0 || p.StderrBytes < 0 {
+	if !p.Target.ValidFor(p.Reference.Event) || !domain.ValidHookDigest(p.PlanDigest) || p.Reference.Validate() != nil || p.StdoutBytes < 0 || p.StderrBytes < 0 {
 		return fmt.Errorf("invalid hook activity")
 	}
 	if p.State == "checking" {
@@ -192,5 +203,14 @@ func DecodeHookActivity(e Event) (HookActivityPayload, error) {
 	if e.Kind != EventHookActivity || len(e.Payload) > 16<<10 || codec.UnmarshalRecord(e.Payload, &p) != nil {
 		return p, fmt.Errorf("invalid hook activity")
 	}
+	if sample, ok := p.Target.AssistantSample(); ok && e.TurnID != "" && sample.TurnID != e.TurnID {
+		return p, fmt.Errorf("hook activity target scope mismatch")
+	}
 	return p, p.Validate()
 }
+
+// InvocationID 只投影工具目标；Stop 消费者必须读取真实 sample target。
+func (p HookActivityPayload) InvocationID() string { id, _, _ := p.Target.ToolCall(); return id }
+
+func (p HookTrustRequestedPayload) InvocationID() string { id, _, _ := p.Target.ToolCall(); return id }
+func (p HookTrustResponse) InvocationID() string         { id, _, _ := p.Target.ToolCall(); return id }

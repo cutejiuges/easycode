@@ -931,3 +931,12 @@
 - 根因：两个纯内存共用 helper 定义在带 darwin/linux 标签的 session_list_test.go 内，Windows 构建排除了定义但保留了调用方。
 - 修复：将 helper 原样移到无标签的 session_list_helpers_test.go；保留平台专属列表测试的标签和业务断言，不复制实现、不跳过 picker 测试。
 - 验证：核对五个目标的测试文件选择，重新执行 Darwin 全量质量门、双 Provider E2E race，以及 Linux/Windows amd64/arm64 全库生产构建和测试编译；实际结果及原生运行限制见[追加验收报告](../../openspec/changes/archive/2026-11-11-add-post-tool-use-failure-hooks/windows-helper-regression-2026-11-11.md)。
+
+
+## [Hooks][2026-11-13] Stop 决定、交付和首次消费必须分开
+
+- 问题：若先把阻断 reason 写入 native，再做覆盖整窗的自动摘要，合法摘要即使没有 reason 也能通过；checkpoint offset 会跨过未消费反馈，下一请求丢失刚接收的要求。摘要提示词不能证明不会丢失。
+- 处理：sample/usage/plan 先原子保存；最后 finished/continued 冻结最终字节，形成独立交付义务。prepared 候选先 discard，摘要只看旧窗口；随后以一个 owner 原子交付一/两个 native entry。用户候选超限可返还，已接受反馈不能抛弃。交付到首个目标请求之间禁止再压缩。
+- 取消与恢复：continued 接纳前取消保存真实结果和 cancelled 决定；接纳后取消仍本地交付。复合用户输入只能由带取消的 admission 接收，未接纳返还，已 Sync 不返还，不确定 poison。恢复先收口摘要，再纯编码冻结反馈并结束旧回合，重复崩溃不重跑脚本、不重新渲染或计费。
+- 集成回归：Stop finished 不能写入以 invocation 为键的工具 Hook 索引；复合 finalize 后宿主必须一次发布两个 native sequence；压缩来源 digest 必须纳入已交付反馈。精确 sample 投影保留空白/空答复并排除全部 opaque，不能从最后非空 transcript 猜测。
+- 证据：runtime/stop_fault_test.go、stop_compaction_test.go、stop_input_test.go；session/stop_fixture_test.go；两家 stop_hook_cache_test.go；app/stop_hook_compaction_test.go、stop_hook_resume_test.go；tui/stop_hook_history_test.go（上述 Go 路径均位于 internal/）。真实 PTY 使用 scripts/stop-hook-smoke.py，[验收记录](../../openspec/changes/archive/2026-11-13-add-stop-command-hooks/verification.md)保存平台与检查结果。

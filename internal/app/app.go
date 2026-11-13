@@ -501,6 +501,11 @@ func openChatResourcesWithSnapshot(
 	}
 	queries := newTranscriptQueries(assembled.identity.ThreadID, artifactRangeReader{store: artifactStore, references: artifactReferences}, assembled.tools)
 	queries.compactions = append([]compactionTranscript(nil), assembled.compactions...)
+	for _, state := range assembled.stops {
+		if err := queries.StopHooksCommitted(state); err != nil {
+			return nil, err
+		}
+	}
 	projector, ok := assembled.conversation.(provider.TranscriptProjector)
 	if !ok {
 		return nil, fault.New(fault.CodeStreamProtocol, "transcript projection is unavailable")
@@ -514,6 +519,7 @@ func openChatResourcesWithSnapshot(
 		TextOutputStore:    artifactOutputStore{store: artifactStore},
 		ToolHistory:        queries,
 		HookHistory:        queries,
+		StopHistory:        queries,
 		SessionID:          assembled.identity.SessionID, ThreadID: assembled.identity.ThreadID,
 		Journal: assembled.writer, ContextProfile: contextProfile, CachePolicy: applicationConfig.CachePolicy(), RestoredCacheBaseline: resumeThreadID != "",
 		ToolCatalog:      toolCatalog,
@@ -538,6 +544,13 @@ func openChatResourcesWithSnapshot(
 	})
 	if err != nil {
 		return nil, err
+	}
+	if assembled.stopRecovery != nil {
+		hooks.recovery.mutating()
+		if err := runtimeInstance.ReconcileStopTurn(ctx, assembled.stopRecovery.Clone()); err != nil {
+			return nil, err
+		}
+		assembled.history = assembled.conversation.ProjectHistory()
 	}
 	if assembled.toolRecovery != nil {
 		hooks.recovery.mutating()

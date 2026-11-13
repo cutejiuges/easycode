@@ -14,6 +14,8 @@ import (
 
 // transcriptQueries 拥有当前线程查询与事实投影，关闭时取消并等待所有已接收查询。
 type transcriptQueries struct {
+	stopSequences   map[uint64]domain.AssistantSampleReference
+	stops           map[domain.AssistantSampleReference]session.ReplayedStop
 	compactions     []compactionTranscript
 	projector       provider.TranscriptProjector
 	facades         []tool.Facade
@@ -186,7 +188,7 @@ func (q *transcriptQueries) HookFinished(ref domain.HookReference, result domain
 	invalid := ref.Validate() != nil || result.Validate() != nil
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	index, ok := q.indices[tool.InvocationID(result.Identity.InvocationID)]
+	index, ok := q.indices[tool.InvocationID(result.Identity.InvocationID())]
 	if invalid || !ok {
 		q.invalid = true
 		return

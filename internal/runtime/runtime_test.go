@@ -2206,3 +2206,8 @@ func (p fakeToolOutputPreflight) Validate(output tool.ModelOutput) error {
 func (c *fakeToolConversation) PrepareToolOutputPreflight(inv tool.Invocation) (provider.ToolOutputPreflight, error) {
 	return fakeToolOutputPreflight{inv}, inv.Validate()
 }
+
+// ProjectAssistantSample 在不模拟原生采样的测试替身中明确失败，不猜测展示列表。
+func (*fakeConversation) ProjectAssistantSample(domain.AssistantSampleReference) (domain.AssistantSampleText, error) {
+	return domain.AssistantSampleText{}, domain.HookConfigInvalid
+}

@@ -731,6 +731,12 @@ func validateTurnFailedPayload(payload TurnFailedPayload) error {
 
 func decodeKnownRecord(record Record) error {
 	switch record.EventKind {
+	case EventTurnStopHookPlanned:
+		_, err := DecodeTurnStopHookPlanned(record)
+		return err
+	case EventTurnStopHookDecided:
+		_, err := DecodeTurnStopHookDecided(record)
+		return err
 	case EventToolPostHookPlanned:
 		_, err := DecodeToolPostHookPlanned(record)
 		return err
