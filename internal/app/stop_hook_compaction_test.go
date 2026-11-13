@@ -51,6 +51,16 @@ func serveStopAssistant(w io.Writer, family domain.ProviderFamily, text string) 
 }
 
 func TestStopCompactionKeepsFrozenFeedbackAndGenuineSkillCorrection(t *testing.T) {
+	testStopCompactionKeepsFrozenCorrection(t, false)
+}
+
+func TestStopCompactionKeepsFrozenPluginCorrectionAfterSourceRemoval(t *testing.T) {
+	testStopCompactionKeepsFrozenCorrection(t, true)
+}
+
+// testStopCompactionKeepsFrozenCorrection 复用同一状态矩阵验证本地与插件附件，不从缺失来源重建输入。
+func testStopCompactionKeepsFrozenCorrection(t *testing.T, pluginSkill bool) {
+	t.Helper()
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		for _, mode := range []string{"summary", "failed-summary", "empty-summary", "cancel-summary"} {
 			t.Run(string(family)+"/"+mode, func(t *testing.T) {
@@ -58,6 +68,14 @@ func TestStopCompactionKeepsFrozenFeedbackAndGenuineSkillCorrection(t *testing.T
 				root := filepath.Join(t.TempDir(), "sessions")
 				writeStopHookConfig(t, workspace, "true", domain.HookFeedbackModel)
 				skillPath := filepath.Join(workspace, ".easycode", "skills", "review", "SKILL.md")
+				var pluginDirs []string
+				correctionText := "/review exact-user-correction\n  preserve this indentation"
+				if pluginSkill {
+					pluginRoot := appPluginFixture(t, "claude")
+					pluginDirs = []string{pluginRoot}
+					skillPath = filepath.Join(pluginRoot, "skills", "review", "SKILL.md")
+					correctionText = "$claudeqa:review exact-user-correction\n  preserve this indentation"
+				}
 				if err := os.MkdirAll(filepath.Dir(skillPath), 0700); err != nil {
 					t.Fatal(err)
 				}
@@ -112,7 +130,7 @@ func TestStopCompactionKeepsFrozenFeedbackAndGenuineSkillCorrection(t *testing.T
 				budget, _ := contextplan.NewBudget(20000, 0, 0)
 				cfg := cacheFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, Model: "fixture-model", BaseURL: server.URL, APIKey: secret.New("fixture-key")}, ContextBudget: budget}, true)
 				runner := &appStopRunner{}
-				hooks := chatResourceHooks{interactiveApprovals: true, newHookRunner: func(*builtin.Workspace, builtin.CommandEnvironment, builtin.HookOutputParser) (chatRuntime.HookRunner, error) {
+				hooks := chatResourceHooks{interactiveApprovals: true, pluginDirs: pluginDirs, newHookRunner: func(*builtin.Workspace, builtin.CommandEnvironment, builtin.HookOutputParser) (chatRuntime.HookRunner, error) {
 					return runner, nil
 				}}
 				resources, err := openChatResourcesWithHooks(context.Background(), cfg, dataPaths{sessionRoot: root}, "", false, workspace, hooks)
@@ -134,7 +152,7 @@ func TestStopCompactionKeepsFrozenFeedbackAndGenuineSkillCorrection(t *testing.T
 				for event := range events {
 					switch event.Kind {
 					case protocol.EventHookTrustRequested:
-						input, err := host.Append(context.Background(), "/review exact-user-correction\n  preserve this indentation")
+						input, err := host.Append(context.Background(), correctionText)
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -143,12 +161,27 @@ func TestStopCompactionKeepsFrozenFeedbackAndGenuineSkillCorrection(t *testing.T
 						if err := host.ResolveHookTrust(context.Background(), event.TurnID, p, protocol.HookTrustSession); err != nil {
 							t.Fatal(err)
 						}
-						if err := os.WriteFile(skillPath, []byte("---\ndescription: Changed\n---\nCHANGED-AFTER-CLAIM"), 0600); err != nil {
-							t.Fatal(err)
+						var mutationErr error
+						if pluginSkill {
+							mutationErr = os.RemoveAll(pluginDirs[0])
+						} else {
+							mutationErr = os.WriteFile(skillPath, []byte("---\ndescription: Changed\n---\nCHANGED-AFTER-CLAIM"), 0600)
+						}
+						if mutationErr != nil {
+							t.Fatal(mutationErr)
 						}
 					case protocol.EventUserInputCommitted:
-						p, _ := protocol.DecodeUserInputCommitted(event)
+						p, err := protocol.DecodeUserInputCommitted(event)
+						if err != nil {
+							t.Fatal(err)
+						}
 						if p.InputID == correction {
+							if p.Text != correctionText || p.Skill == nil || !strings.Contains(p.Skill.Content, "Frozen correction instructions") {
+								t.Fatal("committed correction lost its frozen identity or attachment")
+							}
+							if pluginSkill && (p.Skill.Name != "claudeqa:review" || p.Skill.Source.Scope != "plugin" || p.Skill.Source.Directory != "claudeqa") {
+								t.Fatal("committed correction lost its plugin authority")
+							}
 							committed++
 						}
 					}
@@ -189,6 +222,9 @@ func TestStopCompactionKeepsFrozenFeedbackAndGenuineSkillCorrection(t *testing.T
 					}
 					if mode == "summary" && bytes.Contains(captured[2], []byte("historical work")) {
 						t.Fatal("checkpoint did not replace old window")
+					}
+					if pluginSkill && (!bytes.Contains(captured[2], []byte("claudeqa:review")) || bytes.Contains(captured[2], []byte(pluginDirs[0]))) {
+						t.Fatal("plugin reference lost or private source path leaked")
 					}
 				}
 				if len(plan.Compactions) != 1 {

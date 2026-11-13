@@ -78,6 +78,7 @@ type Model struct {
 	markdown             markdownViewCache
 	skills               []domain.SkillListEntry
 	skillsOpen           bool
+	plugins              pluginBrowser
 	skillSelection       int
 	queryGeneration      uint64
 	queryRequestID       protocol.RequestID
@@ -378,6 +379,9 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if model.approval != nil {
 		return model.handleApprovalKey(key)
 	}
+	if model.plugins.open {
+		return model.handlePluginsKey(key)
+	}
 	if key.Type == tea.KeyCtrlO {
 		return model.openTranscriptBrowser()
 	}
@@ -416,7 +420,7 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if submit {
 			next, command := model.submitComposer()
 			updated := next.(Model)
-			if updated.skillsOpen || updated.hooks.open {
+			if updated.skillsOpen || updated.hooks.open || updated.plugins.open {
 				updated.restoreComposer(originalDraft)
 			}
 			return updated, command
@@ -461,6 +465,15 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (model Model) submitComposer() (tea.Model, tea.Cmd) {
+	if words := strings.Fields(model.composer.text); len(words) > 0 && words[0] == "/plugins" {
+		if len(words) != 1 {
+			model.errorSummary = "invalid_command: /plugins does not accept arguments"
+			return model, nil
+		}
+		model.plugins.open, model.plugins.detail = true, false
+		model.plugins.selected, model.plugins.skill = 0, 0
+		return model, nil
+	}
 	if words := strings.Fields(model.composer.text); len(words) > 0 && words[0] == "/hooks" {
 		if len(words) != 1 {
 			model.errorSummary = "invalid_command: /hooks does not accept arguments"
@@ -865,6 +878,9 @@ func (model Model) View() string {
 	}
 	if model.approval != nil {
 		return model.renderApproval()
+	}
+	if model.plugins.open {
+		return model.renderPlugins()
 	}
 	if model.detailOpen {
 		return model.renderTranscriptBrowser()

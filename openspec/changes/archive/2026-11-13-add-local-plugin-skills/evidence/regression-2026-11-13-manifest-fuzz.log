@@ -1,0 +1,25 @@
+fuzz: elapsed: 0s, gathering baseline coverage: 0/7 completed
+fuzz: elapsed: 0s, gathering baseline coverage: 7/7 completed, now fuzzing with 2 workers
+fuzz: elapsed: 3s, execs: 137602 (45860/sec), new interesting: 83 (total: 90)
+fuzz: elapsed: 6s, execs: 284799 (49073/sec), new interesting: 134 (total: 141)
+fuzz: elapsed: 9s, execs: 422550 (45904/sec), new interesting: 160 (total: 167)
+fuzz: elapsed: 12s, execs: 538673 (38714/sec), new interesting: 195 (total: 202)
+fuzz: elapsed: 15s, execs: 619971 (27096/sec), new interesting: 220 (total: 227)
+fuzz: elapsed: 18s, execs: 696614 (25536/sec), new interesting: 266 (total: 273)
+fuzz: elapsed: 21s, execs: 976081 (93160/sec), new interesting: 294 (total: 301)
+fuzz: elapsed: 24s, execs: 1139735 (54570/sec), new interesting: 295 (total: 302)
+fuzz: elapsed: 27s, execs: 1297115 (52471/sec), new interesting: 299 (total: 306)
+fuzz: elapsed: 30s, execs: 1431736 (44856/sec), new interesting: 311 (total: 318)
+fuzz: elapsed: 33s, execs: 1616847 (61696/sec), new interesting: 325 (total: 332)
+fuzz: elapsed: 36s, execs: 1760129 (47760/sec), new interesting: 359 (total: 366)
+fuzz: elapsed: 39s, execs: 1841744 (27205/sec), new interesting: 363 (total: 370)
+fuzz: elapsed: 42s, execs: 1925537 (27942/sec), new interesting: 363 (total: 370)
+fuzz: elapsed: 45s, execs: 2005539 (26657/sec), new interesting: 363 (total: 370)
+fuzz: elapsed: 48s, execs: 2071937 (22141/sec), new interesting: 364 (total: 371)
+fuzz: elapsed: 51s, execs: 2071937 (0/sec), new interesting: 364 (total: 371)
+fuzz: elapsed: 54s, execs: 2071937 (0/sec), new interesting: 364 (total: 371)
+fuzz: elapsed: 57s, execs: 2071937 (0/sec), new interesting: 364 (total: 371)
+fuzz: elapsed: 1m0s, execs: 2071937 (0/sec), new interesting: 364 (total: 371)
+fuzz: elapsed: 1m1s, execs: 2071937 (0/sec), new interesting: 364 (total: 371)
+PASS
+ok  	easycode/internal/extension/plugin	61.347s

@@ -13,7 +13,7 @@
 
 ## 当前状态总览（2026-11-11）
 
-实现与测试逐项核对见[当前能力清单](capability-status.md)。P0–P8 是并行推进的阶段目标，不以某个后期切片交付推定整个阶段完成。当前已交付九项模型工具、本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop、结构化提问、流式 Markdown、命令/Skill 首词补全、启动会话选择、Provider 缓存、手动/自动压缩、双 Provider 推理阅读及启动推理/display/输出配置；仍缺少运行中推理切换、跨 Provider fork、后台进程、Plugins/MCP、Subagent 与完整发布矩阵。
+实现与测试逐项核对见[当前能力清单](capability-status.md)。P0–P8 是并行推进的阶段目标，不以某个后期切片交付推定整个阶段完成。当前已交付九项模型工具、本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop、结构化提问、流式 Markdown、命令/Skill 首词补全、启动会话选择、Provider 缓存、手动/自动压缩、双 Provider 推理阅读及启动推理/display/输出配置；本地 Plugin 技能包及受限 importer 已交付；仍缺少运行中推理切换、跨 Provider fork、后台进程、插件可执行贡献/MCP、Subagent 与完整发布矩阵。
 
 下文“工作内容/交付物/验收标准”保留阶段的完整目标；已完成状态以本总览、各节进度和当前能力清单为准。所有迁移、历史 reader 或兼容窗口必须先有用户明确要求及新 OpenSpec，不因路线图提到未来发布而预先授权。
 
@@ -156,7 +156,7 @@ make verify
 - 已完成双 Provider 共享 `StreamEvent` 的封闭构造与纯内存验证；Runtime 在消费端协议错误时取消派生 context并同步排空到 producer 关闭，AgentLoop 只在前一 stream 清理完成后启动下一 turn。
 - 已完成双 Provider 的 committed-only 文本 `HistoryProjector`：投影保留 turn 边界和可见文本，但不暴露 thinking/signature、redacted thinking、reasoning summary、encrypted content、phase、usage 或未知扩展，也不参与后续请求编译。
 - Anthropic 当前声明 streaming、thinking-signature 原生保留与 structured tools（含 Edit/Write/Bash），OpenAI 当前声明 streaming、encrypted reasoning 原生保留、function tools（含 Write/exec_command）与 custom freeform apply_patch。P2 已落地 completed-sample usage、原生历史 footprint、JSONL Session、resume/headless 和 ContextPlanner；P3 已补充 Read/Glob/Grep/Patch/Write/Exec Tool Loop 与 approval，后续已交付通用工具主线/详情、CachePlanner、三态 usage/cache UI、prompt cache key 与可选 WebSocket `previous_response_id`；被动 thinking/summary 阅读已由 P5 独立切片交付；启动冻结的推理配置、Anthropic thinking 计量和同源请求证据已实现；成本、运行中推理切换和通用自动重试仍未实现。
-- TUI 只消费 typed RuntimeEvent 和 ChatSession facade；已提供 Patch diff/Write、Exec approval overlay、命令进度和 Ctrl+O 历史列表与分页详情，多行 composer、字素编辑、显式 decoded paste 和有界历史；助手流式 Markdown 已接入，本地 `/cache`、`/context`、`/compact`、`/skills`、`/hooks` 已接入，通用 permission 面板仍待实现；启动 session picker 已于 2026-11-04 接入。
+- TUI 只消费 typed RuntimeEvent 和 ChatSession facade；已提供 Patch diff/Write、Exec approval overlay、命令进度和 Ctrl+O 历史列表与分页详情，多行 composer、字素编辑、显式 decoded paste 和有界历史；助手流式 Markdown 已接入，本地 `/cache`、`/context`、`/compact`、`/skills`、`/hooks`、`/plugins` 已接入，通用 permission 面板仍待实现；启动 session picker 已于 2026-11-04 接入。
 
 #### OpenAI Responses（首要 Provider）
 
@@ -252,7 +252,7 @@ P2 后续范围为更完整的会话检索/线程组织、费用与配额、后�
 - 已实现 `--resume <thread-id>`、`--continue`、单 turn `--print`/JSONL v1 `--json`，以及独立 `stream-json` 双向控制模式的同进程多 turn。
 - 已实现当前文本 Chat 的用户中断、依赖有序 shutdown 和中断 turn 补偿；后台任务的完整 shutdown 随对应能力补充。
 - 提供 transcript/debug log 分离。
-- 九项 Tool、RuntimeCommand、Skill/Hook 已有真实消费者、validator 与测试。仅 extension 根、plugin、MCP、Subagent、telemetry 及预留 ItemID/CallID 仍在 AGENTS.md 精确 TODO allowlist；Skill/Hook 已退出占位并接入宿主。
+- 九项 Tool、RuntimeCommand、Skill/Hook 已有真实消费者、validator 与测试。仅 MCP、Subagent、telemetry 及预留 ItemID/CallID 仍在 AGENTS.md 精确 TODO allowlist；extension 根和 plugin 已由真实技能贡献替换并退出占位。
 
 ### 6.4 交付物
 
@@ -342,7 +342,7 @@ Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘�
 - 实现 PatchDraftUpdated、ToolProgress 和有序 result collection。
 - 实现 tool call/result pairing 修复与拒绝策略。
 
-本地 Skill 作为第八项模型工具、PreToolUse/PostToolUse/PostToolUseFailure/Stop 分别作为三项 mutation 的前置门禁、成功后检查与执行尝试失败诊断，已在 P6 切片接入；结构化 Question 为第九项模型工具。其余 Hooks、Plugins/MCP 与 Agent/Subagent 仍在 P6/P7 建立真实契约后接入。
+本地 Skill 为第八项模型工具；PreToolUse/PostToolUse/PostToolUseFailure 分别作为三项 mutation 的前置门禁、成功后检查与执行尝试失败诊断，Stop 作为成功无 calls 答复的完成检查与有界续轮，均已在 P6 接入；本地 Plugin 技能包提供静态技能贡献，结构化 Question 为第九项模型工具。其余 Hooks、插件可执行贡献/MCP 与 Agent/Subagent 仍在 P6/P7 建立真实契约后接入。
 
 ### 7.5 交付物
 
@@ -454,7 +454,7 @@ Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘�
 
 ### 9.0 当前进度（2026-11-08）
 
-已交付多行/字素输入、同轮追加与返还、流式 Markdown 与代码/表格/原文阅读、紧凑工具主线及 Ctrl+O 分页详情、完整 Patch/Write/Exec 审批、结构化问卷、Hook 信任、context/cache 面板和启动 resume picker。当前本地命令为 `/cache`、`/context`、`/compact`、`/skills`、`/hooks`，以及 Skill 显式入口。命令/Skill 首词补全和被动 thinking/summary 活动提示及 Ctrl+O 阅读已交付；启动推理配置与 /context 只读设置已实现；运行中推理切换、fork picker、后台任务 UI、cost/综合状态面板与其余命令尚未实现。
+已交付多行/字素输入、同轮追加与返还、流式 Markdown 与代码/表格/原文阅读、紧凑工具主线及 Ctrl+O 分页详情、完整 Patch/Write/Exec 审批、结构化问卷、Hook 信任、context/cache 面板和启动 resume picker。当前本地命令为 `/cache`、`/context`、`/compact`、`/skills`、`/hooks`、`/plugins`，以及 Skill 显式入口。命令/Skill 首词补全和被动 thinking/summary 活动提示及 Ctrl+O 阅读已交付；启动推理配置与 /context 只读设置已实现；运行中推理切换、fork picker、后台任务 UI、cost/综合状态面板与其余命令尚未实现。
 
 补全复用冻结 Skill 展示列表、字素编辑和既有命令提交；Tab 只填入、Skill Enter 只选择、Esc 优先关闭，粘贴不接受候选。验收覆盖双 Provider 原生请求/恢复/缓存等价、固定尺寸和 Darwin PTY，见 [验收记录](../../openspec/changes/archive/2026-11-06-add-command-and-skill-completion/verification.md)。本切片不包含文件/参数值补全、正文 mentions 或动态目录。
 
@@ -522,17 +522,17 @@ Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘�
 
 支持 Claude 风格 hooks、渐进披露 skills、MCP 和本地 plugins，并保证来源权限、信任、缓存稳定和热加载安全。
 
-当前已交付本地 Skills 首个切片：固定 user/project 根发现、严格静态 frontmatter、`/skills` 列表、`/name` / `$name` 显式附件、Skill 主文档/同来源资源读取、缓存元数据来源与双 Provider 原生恢复。同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop command Hooks 已交付；其余 Hook 事件、Plugins、MCP、plugin/system skills、path activation、allowed-tools、fork 与热加载仍未实现，不能将本切片视为 P6 退出。
+当前已交付本地 Skills 首个切片：固定 user/project 根发现、严格静态 frontmatter、`/skills` 列表、`/name` / `$name` 显式附件、Skill 主文档/同来源资源读取、缓存元数据来源与双 Provider 原生恢复。同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop command Hooks 已交付；本地 Plugin 技能包与 plugin skills 已由后续切片交付；其余 Hook 事件、MCP、system skills、path activation、allowed-tools、fork 与热加载仍未实现，不能将本切片视为 P6 退出。
 
 ### PostToolUse 同步检查与显式模型反馈
 
 `add-post-tool-use-command-hooks` 交付三种真实成功 mutation 的后置检查。复用已有 FD 来源、只读/禁网沙箱与进程 owner，先信任后置计划、再批准原工具；真实结果与后置生命周期分别保存。默认 none 不披露正文；model 只接收严格 additionalContext，并与原结果共享有序预算 ticket。原 status/code、Provider native pairing 和稳定前缀保持，错误后不自动重试。
 
-后置计划/运行/terminal 支持严格当前回放、部分前缀恢复和内容/预算拒伪造；恢复不重读配置/脚本/artifact，不给未启动项制造运行记录或新的模型提示。TUI 保留真实工具成功并刷新后置详情，headless 不增加外部事件。P6 仍未退出：其余事件、async、改写、Plugins/MCP 和热加载继续待实现。主规格已同步，change 已归档；验证见[验收记录](../../openspec/changes/archive/2026-11-08-add-post-tool-use-command-hooks/verification.md)与[归档核对](../../openspec/changes/archive/2026-11-08-add-post-tool-use-command-hooks/archive.md)。
+后置计划/运行/terminal 支持严格当前回放、部分前缀恢复和内容/预算拒伪造；恢复不重读配置/脚本/artifact，不给未启动项制造运行记录或新的模型提示。TUI 保留真实工具成功并刷新后置详情，headless 不增加外部事件。P6 仍未退出：其余事件、async、改写、插件可执行贡献/MCP 和热加载继续待实现。主规格已同步，change 已归档；验证见[验收记录](../../openspec/changes/archive/2026-11-08-add-post-tool-use-command-hooks/verification.md)与[归档核对](../../openspec/changes/archive/2026-11-08-add-post-tool-use-command-hooks/archive.md)。
 
 ### PostToolUseFailure 执行尝试失败诊断
 
-本切片在既有后置生命周期内加入 failure 分支，优先补齐三种 mutation 的确定失败诊断。产品保持 Claude Code 的精确事件、默认拒绝、独立检查和显式反馈；内核保留双 Provider 原生历史、强类型边界、durable 执行尝试证据和零重跑恢复。正常非零退出不按命令文字推断测试失败，不做自动修复。双分支在候选前冻结/信任，单预算预留，事件选择与当前取消分离；失败/冲突主线和检查状态并列，中性计划通知不假定成功。详见[实现验收](../../openspec/changes/archive/2026-11-11-add-post-tool-use-failure-hooks/verification.md)。主规格已同步，change 已归档；最终契约、文档及证据核对见[归档记录](../../openspec/changes/archive/2026-11-11-add-post-tool-use-failure-hooks/archive.md)。P6 其余事件、Plugins/MCP 与热加载仍未交付。
+本切片在既有后置生命周期内加入 failure 分支，优先补齐三种 mutation 的确定失败诊断。产品保持 Claude Code 的精确事件、默认拒绝、独立检查和显式反馈；内核保留双 Provider 原生历史、强类型边界、durable 执行尝试证据和零重跑恢复。正常非零退出不按命令文字推断测试失败，不做自动修复。双分支在候选前冻结/信任，单预算预留，事件选择与当前取消分离；失败/冲突主线和检查状态并列，中性计划通知不假定成功。详见[实现验收](../../openspec/changes/archive/2026-11-11-add-post-tool-use-failure-hooks/verification.md)。主规格已同步，change 已归档；最终契约、文档及证据核对见[归档记录](../../openspec/changes/archive/2026-11-11-add-post-tool-use-failure-hooks/archive.md)。P6 其余事件、插件可执行贡献/MCP 与热加载仍未交付。
 
 ### Stop 完成检查与有界同回合续轮
 
@@ -544,7 +544,13 @@ Stop 反馈及真实 Skill 纠正在必要摘要后原字节交付；恢复先�
 
 `add-pre-tool-use-command-hooks` 完成 user/project 冻结来源、三种 mutation 字面匹配、默认拒绝的单项内存信任、Darwin 只读/禁网命令、30 秒总预算、`/hooks` 浏览/reset/审查及四类 durable facts。两个 Provider 复用相同 gate，并保留原生 function/custom/tool_result 配对、普通审批和缓存前缀。恢复不重跑脚本，先补偿旧事实再 Load 新来源；无匹配保持旧行为。Exec 与 Hook 共用进程资源 owner，Skills 与 Hooks 共用 FD 安全打开骨架。
 
-P6 尚未退出：下面的其他 Hook 事件、async、rewrite/result、其他 context 扩展、Plugins、MCP 与热加载仍是后续计划。验收入口为 change 的 `verification.md`；实现测试分布于 `extension/hook`、`executor/process`、`runtime/hook*_test.go`、`session/hook*_test.go`、`app/hook*_test.go` 与 `tui/hooks_test.go`。
+P6 尚未退出：下面的其他 Hook 事件、async、rewrite/result、其他 context 扩展、插件可执行贡献、MCP 与热加载仍是后续计划。验收入口为 change 的 `verification.md`；实现测试分布于 `extension/hook`、`executor/process`、`runtime/hook*_test.go`、`session/hook*_test.go`、`app/hook*_test.go` 与 `tui/hooks_test.go`。
+
+### 2026-11-12：本地 Plugin 技能包
+
+`add-local-plugin-skills` 用可重复 `--plugin-dir` 提供进程级显式来源，支持 EasyCode、Claude、Codex JSON 和 Agent Plugins 的静态技能子集，复用 Skill 准备、工具、预算、权限和双 Provider 原生恢复。`/plugins` 只读列表/详情和 `/skills`、补全共享最终快照；限定名保留两家引用规则，Codex 副文件调用限制按更严格结果合并。
+
+manifest ID 冲突先于扫描，原始枚举、候选、读取和合并目录均有界。根/manifest/正文/副文件变化拒绝新读取；来源关闭覆盖 pre-admission Prepare，超时不放弃 FD/清理 owner。恢复先收口旧事实再安装未来快照；无新 Session record、模型工具、内部版本或旧 reader。验证入口见[验收记录](../../openspec/changes/archive/2026-11-13-add-local-plugin-skills/verification.md)。主规格已同步，change 已归档；最终核对见[归档记录](../../openspec/changes/archive/2026-11-13-add-local-plugin-skills/archive.md)。本切片不表示 P6 退出，marketplace、安装/更新、插件脚本/Hook/MCP/Agent 贡献、热加载仍待独立设计。
 
 ### 10.2 架构选择
 
@@ -552,7 +558,7 @@ P6 尚未退出：下面的其他 Hook 事件、async、rewrite/result、其他 
 - Stop hook 需要的 assistant 文本来自 HistoryProjector，不解析或拼接 Provider-native item。
 - Skill catalog 只注入 metadata，正文按需加载。
 - 每个 skill/resource 绑定 authority 和 source。
-- Plugin 内部归一化为 PluginContribution；Claude/Codex manifest 只作为 importer。
+- Plugin 技能包在读取边界归一化为 extension.Contribution；四种 manifest 只作为受限 importer，不统一 Provider 对话协议。
 - 扩展变更通过 revision/fingerprint 精确失效缓存。
 
 ### 10.3 工作内容

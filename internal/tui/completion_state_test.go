@@ -40,7 +40,7 @@ func TestCompletionAcceptDismissAndSingleDispatch(t *testing.T) {
 			t.Fatal("cache was not queried exactly once")
 		}
 	}
-	for _, command := range []string{"/context bad", "/cache bad", "/skills bad", "/hooks bad"} {
+	for _, command := range []string{"/context bad", "/cache bad", "/skills bad", "/hooks bad", "/plugins bad"} {
 		m := completionModel(t, command)
 		m.composer.moveTo(strings.IndexByte(command, ' '))
 		m.prepareCompletion()
@@ -134,7 +134,7 @@ func TestCompletionSuppressionReopenAndPaste(t *testing.T) {
 }
 
 func TestCompletionBuiltinBrowsersPreservePartialDraft(t *testing.T) {
-	for _, name := range []string{"/sk", "/ho"} {
+	for _, name := range []string{"/sk", "/ho", "/plug"} {
 		s := &fakeHookSession{}
 		m := NewModel(context.Background(), "test", s)
 		if err := m.composer.replace(0, 0, name); err != nil {
@@ -142,7 +142,7 @@ func TestCompletionBuiltinBrowsersPreservePartialDraft(t *testing.T) {
 		}
 		before := m.composer
 		m, cmd := updateModelWithCommand(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-		if cmd != nil || (!m.skillsOpen && !m.hooks.open) {
+		if cmd != nil || (!m.skillsOpen && !m.hooks.open && !m.plugins.open) {
 			t.Fatal("browser command did not open", name)
 		}
 		m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyEsc})

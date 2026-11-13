@@ -149,3 +149,13 @@ App 三轮 race 重复运行最初设置了 4 分钟包级总预算，在第三�
 归档后 `openspec validate --all --strict --json` 退出 0，58/58 通过：57 份主规格与仍活动的 PreToolUse 变更均有效，原始结果 `/tmp/easycode-stop-postarchive-validation.json`。数量减少一项是已完成 Stop 退出活动变更集合；PreToolUse 没有被移动或归档。README、总体架构、能力清单、Roadmap、pitfall 的 Stop 引用均已改为归档路径；45 份 Markdown 中 158 个本地文件链接全部有效，24 个实际测试路径、PTY 入口及 15 份固定 Stop journal 已核对。
 
 归档后普通 `make verify` 已完整退出 0，日志 `/tmp/easycode-stop-archive-make-verify.log`；包含分支规约回归、gofmt、go vet、Staticcheck、架构边界、全量测试与 race。app 普通测试为 114.673 秒；本阶段没有改动 Go 代码，app race 复用同代码上轮已通过的 Go 缓存，其余逐包状态保留在日志中。旧 Pre delta 的原 158 个场景全部保留，当前共 188 个，恢复 30 个且删除 0 个；需求名称与顺序均保留。本阶段仅修改规格、文档及归档位置，业务代码、依赖和工具权限不变。未提交或推送。
+
+## 合并远端 main 与发布前组合验证（2026-11-13）
+
+用户后续要求合并远端 main、解决冲突并推送创建 PR。Stop 首先保存为本地提交 `4debb76`，pre-commit 完整通过；随后合入 `origin/main@35a4ede`（本地 Plugin Skills，PR #38）。README 与四份架构/路线图文档的冲突按两项能力并存解决，不覆盖已交付的 Plugin 技能包；核心源码自动合并后，另核对了旧 Stop/Tool reconciliation 始终先于当前 Plugin/Skill/Hook 来源加载。
+
+复用既有压缩矩阵新增 `TestStopCompactionKeepsFrozenPluginCorrectionAfterSourceRemoval`：两家 Provider 分别验证正常/失败/空/取消摘要，排队的限定名插件附件准备后删除整个插件目录；实际交付保留 InputID、原文、plugin scope/namespace 与冻结正文，私有来源路径不进入请求，取消时未接纳输入不激活，重复恢复不重读旧来源。与原本地 Skill 的八组场景合计十六组均通过（7.144 秒）；原有恢复窗口断言保留。Runtime、双 Provider、TUI 与架构的 Stop/Plugin 定向回归通过，全仓库 strict 为 60/60。
+
+暂存完整检查发现新增 40×16 信任快照的一处尾空格；将同义提示缩短为 `Earlier tool effects are not undone.`，按真实 View 一次更新三种尺寸的固定 trust 快照，随后删除临时生成入口。普通测试仍逐字节读取固定快照，未增加运行时生成分支；暂存检查无尾空格，九份 Stop snapshot 与默认拒绝行为保持验证。
+
+本节记录冲突解决和定向实测；发布前完整质量门由正常 pre-commit/pre-push 钩子继续执行，其最终结果与实际平台端到端回归随 PR 报告。此次合并不增加 Hook 事件、插件执行贡献、格式版本或历史 reader。

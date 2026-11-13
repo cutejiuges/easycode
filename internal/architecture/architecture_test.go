@@ -19,21 +19,17 @@ const modulePath = "easycode"
 const sonicImportPath = "github.com/bytedance/sonic"
 
 var placeholderFiles = map[string]string{
-	"internal/protocol/event.go":          "P3",
-	"internal/domain/types.go":            "P3",
-	"internal/extension/extension.go":     "P6",
-	"internal/extension/mcp/mcp.go":       "P6",
-	"internal/extension/plugin/plugin.go": "P6",
-	"internal/subagent/control.go":        "P7",
-	"internal/telemetry/logger.go":        "P8",
+	"internal/protocol/event.go":    "P3",
+	"internal/domain/types.go":      "P3",
+	"internal/extension/mcp/mcp.go": "P6",
+	"internal/subagent/control.go":  "P7",
+	"internal/telemetry/logger.go":  "P8",
 }
 
 var placeholderOnlyPackages = map[string]struct{}{
-	"easycode/internal/extension":        {},
-	"easycode/internal/extension/mcp":    {},
-	"easycode/internal/extension/plugin": {},
-	"easycode/internal/subagent":         {},
-	"easycode/internal/telemetry":        {},
+	"easycode/internal/extension/mcp": {},
+	"easycode/internal/subagent":      {},
+	"easycode/internal/telemetry":     {},
 }
 
 // context 是已有 OpenSpec 覆盖且具备完整行为测试的独立契约根，不属于占位能力。

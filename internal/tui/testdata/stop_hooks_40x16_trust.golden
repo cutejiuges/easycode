@@ -1,8 +1,7 @@
 Trust this hook?
 Checks the saved answer before this turn
  completes.
-Earlier tool effects are retained; this 
-check does not roll them back.
+Earlier tool effects are not undone.
 feedback=model sends a blocking reason t
 o the provider and saves it in Session.
 Source: project · completion
@@ -14,3 +13,4 @@ d
 This does not approve the model's tool c
 all.
 Workspace scripts can change after revie
+w.

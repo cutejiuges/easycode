@@ -932,6 +932,17 @@
 - 修复：将 helper 原样移到无标签的 session_list_helpers_test.go；保留平台专属列表测试的标签和业务断言，不复制实现、不跳过 picker 测试。
 - 验证：核对五个目标的测试文件选择，重新执行 Darwin 全量质量门、双 Provider E2E race，以及 Linux/Windows amd64/arm64 全库生产构建和测试编译；实际结果及原生运行限制见[追加验收报告](../../openspec/changes/archive/2026-11-11-add-post-tool-use-failure-hooks/windows-helper-regression-2026-11-11.md)。
 
+## [扩展][2026-11-12] 本地 Plugin 的来源、策略与关闭
+
+- Claude 的实际调用名来自目录，frontmatter.name 是展示名；Codex 则采用 frontmatter 引用名。按 importer 分别决定命名和布局，不能把 Agent Plugins DirectChildren 当作单技能根；用四份固定包及命名对照测试锁定行为。
+- 忽略 agents/openai.yaml 会把手动工作流暴露给模型。只导入 allow_implicit_invocation 限制，按更严格结果合并；损坏、未知依赖/产品策略拒绝。副文件 absent/present、digest 和有效策略绑定来源，新读取不能被主文档重解析重新启用。
+- 限制技能候选不能限制巨量无关条目；按 root/插件/全局计原始枚举并只取上限加一，副文件计入总读取额度。先完成全部 manifest ID 冲突，再扫描；非法但无歧义 ID 也保留冲突资格。硬链接主文档不能把不同资源目录合并。
+- 一致性检查失败后不能把“正文不可用”当成“没有读取”。受控读取结果单独保留实际字节消耗，错误时正文仍为空；主文档与副文件都按消耗计费。确定性在读取后修改文件或取消，证明失败读取也耗尽总额度并阻止下一次读取。
+- ChatSession.Done 不覆盖发生在 admission 前的 Prepare。用同一来源 owner 跟踪全部借用；Close 超时仍持有原根和唯一 worker，等待文件关闭和读取栈真实结束。每个关闭者用状态门与固定 done 协调，不能在锁或 sync.Once 回调中执行阻塞 Close；Load 取消只同步回滚临时资源。
+- Go flag.Value.Set 返回错误会自动回显原值。收集器仅保留安全分类，Parse 后拒绝；String/帮助不显示已配置路径，应用入口也复核参数。
+- /plug 补全进入浏览器后取消，应恢复真实补全前草稿并沿用当前窗口尺寸；/skills 选择 plugins 等保留名必须填 $name。真实 PTY 还发现窄屏会截断返回/停止提示，现用紧凑提示并覆盖 28×10 和 8×2。
+- 来源 revision 不等于请求内容 fingerprint。只改插件版本或 sidecar interface 注解可以改变私有绑定，但相同 Content/有效 metadata 应保持 wire、footprint 和历史内容指纹；请求不能注入 digest 强制失效。
+- 回归：internal/extension/plugin/source_owner_test.go、internal/extension/skill/plugin_safety_test.go、internal/app/plugin_freeze_test.go、plugins_test.go、plugin_websocket_test.go、两家 plugin_restore_test.go、internal/context/plugin_skills_test.go、internal/tui/plugins_test.go 与 scripts/plugins-smoke.py。完整矩阵见[验收记录](../../openspec/changes/archive/2026-11-13-add-local-plugin-skills/verification.md)。
 
 ## [Hooks][2026-11-13] Stop 决定、交付和首次消费必须分开
 

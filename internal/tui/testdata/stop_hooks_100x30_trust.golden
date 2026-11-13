@@ -1,6 +1,6 @@
 Trust this hook?
 Checks the saved answer before this turn completes.
-Earlier tool effects are retained; this check does not roll them back.
+Earlier tool effects are not undone.
 feedback=model sends a blocking reason to the provider and saves it in Session.
 Source: project · completion
 Stop: Turn completion

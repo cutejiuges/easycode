@@ -15,7 +15,7 @@ type document struct {
 
 // parseDocument 只解析严格支持的 frontmatter，不执行正文中的表达式。
 func parseDocument(source domain.SkillSource, name, text string) (document, error) {
-	if !utf8.ValidString(text) || len(text) > domain.MaxSkillDocumentBytes {
+	if len(text) > domain.MaxSkillDocumentBytes {
 		return document{}, failure("skill_document_invalid")
 	}
 	normalized := strings.ReplaceAll(text, "\r\n", "\n")
@@ -42,21 +42,44 @@ func parseDocument(source domain.SkillSource, name, text string) (document, erro
 			return document{}, failure("skill_frontmatter_invalid")
 		}
 		values[k.Value] = v
-		switch k.Value {
+	}
+	leaf := name
+	if v := values["name"]; v != nil {
+		if v.Kind != yaml.ScalarNode || v.Tag != "!!str" || domain.ValidateSkillName(v.Value) != nil {
+			return document{}, failure("skill_metadata_invalid")
+		}
+		if source.Scope == "plugin" && (source.Kind == "codex" || source.Kind == "agentplugins") {
+			leaf = v.Value
+		} else if v.Value != name {
+			return document{}, failure("skill_name_mismatch")
+		}
+	}
+	reference := leaf
+	if source.Scope == "plugin" {
+		reference = source.Directory + ":" + leaf
+	}
+	partial := document{metadata: domain.SkillMetadata{Source: source, Name: reference}}
+	if !utf8.ValidString(text) {
+		return partial, failure("skill_document_invalid")
+	}
+	for i := 0; i < len(root.Content); i += 2 {
+		key := root.Content[i].Value
+		v := values[key]
+		switch key {
 		case "name", "description", "argument-hint", "license":
 			if v.Kind != yaml.ScalarNode || v.Tag != "!!str" || v.Anchor != "" || v.Style&yaml.TaggedStyle != 0 {
-				return document{}, failure("skill_frontmatter_invalid")
+				return partial, failure("skill_frontmatter_invalid")
 			}
 		case "user-invocable", "disable-model-invocation":
 			if v.Kind != yaml.ScalarNode || v.Tag != "!!bool" || v.Anchor != "" || v.Style&yaml.TaggedStyle != 0 || (v.Value != "true" && v.Value != "false") {
-				return document{}, failure("skill_frontmatter_invalid")
+				return partial, failure("skill_frontmatter_invalid")
 			}
 		case "metadata":
 			if !stringMapping(v) {
-				return document{}, failure("skill_frontmatter_invalid")
+				return partial, failure("skill_frontmatter_invalid")
 			}
 		default:
-			return document{}, failure("skill_unsupported_field")
+			return partial, failure("skill_unsupported_field")
 		}
 	}
 	value := func(k string) string {
@@ -65,17 +88,14 @@ func parseDocument(source domain.SkillSource, name, text string) (document, erro
 		}
 		return ""
 	}
-	if v := values["name"]; v != nil && v.Value != name {
-		return document{}, failure("skill_name_mismatch")
-	}
 	user := values["user-invocable"] == nil || value("user-invocable") == "true"
-	m, e := domain.NewSkillMetadata(source, name, value("description"), value("argument-hint"), user, value("disable-model-invocation") == "true")
+	m, e := domain.NewSkillMetadata(source, reference, value("description"), value("argument-hint"), user, value("disable-model-invocation") == "true")
 	if e != nil {
-		return document{}, failure("skill_metadata_invalid")
+		return partial, failure("skill_metadata_invalid")
 	}
 	body := normalized[end+5:]
 	if strings.TrimSpace(body) == "" {
-		return document{}, failure("skill_document_invalid")
+		return partial, failure("skill_document_invalid")
 	}
 	return document{m, body}, nil
 }

@@ -77,7 +77,7 @@ func TestPreviewBusyProcessCrashAndNoRepair(t *testing.T) {
 	if err == nil || cleanup || len(result.Messages) != 0 {
 		t.Fatal("busy preview succeeded")
 	}
-	execute := newPickerExecutor(config.Config{Provider: config.Provider{Family: domain.ProviderOpenAI, Model: "fixture-model", BaseURL: "https://example.invalid", APIKey: secret.New("fixture")}}, dataPaths{sessionRoot: root}, t.TempDir())
+	execute := newPickerExecutor(config.Config{Provider: config.Provider{Family: domain.ProviderOpenAI, Model: "fixture-model", BaseURL: "https://example.invalid", APIKey: secret.New("fixture")}}, dataPaths{sessionRoot: root}, t.TempDir(), nil)
 	rejected := execute(context.Background(), tui.PickerRequest{ID: 1, Operation: tui.PickerResume, ThreadID: thread})
 	if !strings.Contains(rejected.result.Error, "session_busy") || rejected.result.Fatal || rejected.resources != nil {
 		t.Fatal("busy recovery was not rejected before mutation")

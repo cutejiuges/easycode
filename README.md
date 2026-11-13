@@ -4,7 +4,7 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 
 用户只需要提供 `base_url`、`api_key` 和模型名称即可连接服务，不需要账号登录、OAuth、设备码或订阅鉴权。
 
-> 项目按纵向切片持续推进。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、命令/Skill 首词补全、原生多轮 Session、`--resume`/`--continue`、headless/FIFO 输入、离线 `sessions list`，以及九项工具能力：Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill 和结构化用户提问。命令执行当前支持 Darwin；已支持同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop 命令 Hook、被动推理阅读和启动推理/display/输出配置；其余 Hook 事件、运行中推理切换等能力仍按 Roadmap 分阶段推进。
+> 项目按纵向切片持续推进。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、命令/Skill 首词补全、原生多轮 Session、`--resume`/`--continue`、headless/FIFO 输入、离线 `sessions list`，以及九项工具能力：Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill 和结构化用户提问。命令执行当前支持 Darwin；已支持同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop 命令 Hook、被动推理阅读和启动推理/display/输出配置；本地 Plugin 技能包已支持显式目录加载和只读浏览；其余 Hook 事件、运行中推理切换等能力仍按 Roadmap 分阶段推进。
 
 ## 交互式恢复会话
 
@@ -68,7 +68,7 @@ TUI 将 CRLF/CR 规范化为 LF，保留缩进、Tab、尾空格及尾换行；�
 | 安全配置 | 已实现 JSON 配置、环境变量覆盖、API key 脱敏，以及 macOS/Linux 上绑定实际句柄的 no-follow 校验；其他平台当前安全失败关闭 |
 | Tools | 九项能力包含 Read/Glob/Grep、Edit/apply_patch、Write、Darwin Exec、ReadArtifact、Skill 和结构化提问；连续只读最多 8 路并行，Patch/Write/Exec 需批准，Question 独占但不进入权限批准 |
 | Session | 已实现 append-only JSONL、唯一当前无版本格式的强类型 draft/decoder、UUIDv7、跨进程 lease、同句柄 load/repair/write、`Sync`、尾部修复、fixture、显式恢复，以及可从 JSONL 重建的 SQLite Catalog、`--continue` 与离线 `sessions list`，以及 `resume` 启动选择器和有界元数据搜索/只读文本预览；全文搜索尚未实现 |
-| 扩展系统 | P6 目标；本地 Skills 已实现发现、显式调用、按需工具读取和原生恢复；同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop command Hooks 已实现；Plugins、MCP 和其余 Hook 事件待后续推进 |
+| 扩展系统 | P6 目标；本地 Skills 已实现发现、显式调用、按需工具读取和原生恢复；同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop command Hooks、本地 Plugin 技能包及四种受限 manifest 导入已实现；MCP、插件可执行贡献和其余 Hook 事件待后续推进 |
 | Subagent | P7 目标；当前仅为经批准的 TODO 控制边界，调度、线程树和生命周期尚未实现 |
 | Telemetry | P8 目标；当前 logger 仅为经批准的 TODO 占位，未接入请求正文、Session 或运行时链路 |
 
@@ -84,6 +84,44 @@ Review $ARGUMENTS. Explain findings and run the relevant tests.
 ```
 
 仅支持静态 frontmatter：`name`、`description`、`argument-hint`、`user-invocable`、`disable-model-invocation`、`license` 和字符串 `metadata`。不支持的行为字段会禁用该条目。模型目录只包含元数据；Skill 工具加载完整正文或同来源相对资源，不提升工具权限。manual-only 技能仅在当前 turn 的显式附件成功持久化后，允许同来源、同 revision 的辅助资源读取。参数仅作字面量替换，不执行 shell。目录在启动时冻结，修改后重启；已提交附件和工具正文从 Session 恢复，不重读文件。
+
+### 本地 Plugin 技能包
+
+使用可重复的 `--plugin-dir PATH` 明确加载本次进程的本地技能包。TUI 输入 `/plugins` 浏览最终状态与诊断，Enter 进入详情，选择技能后只填入输入框，补充参数并再次 Enter 才提交。`/skills` 与 `/`、`$` 补全共享同一冻结目录；与内置命令同名的本地技能通过 `$plugins` 等形式调用。
+
+```sh
+# 使用仓库内已被真实入口测试消费的 Claude 最小示例
+bin/easycode --plugin-dir ./internal/extension/plugin/testdata/claude
+# 显式调用，单引号保留美元号
+bin/easycode --print --plugin-dir ./internal/extension/plugin/testdata/claude '$claudeqa:review current diff'
+# 恢复选择器仍需明确提供本次要使用的目录
+bin/easycode resume --plugin-dir ./internal/extension/plugin/testdata/claude
+```
+
+同一目录按以下顺序选择首个存在的 manifest；存在但损坏、不安全或不支持时禁用该插件，不回退、不合并，也不从目录名猜插件 ID。
+
+| 优先级与格式 | manifest | 技能布局与调用名 |
+| --- | --- | --- |
+| 1 EasyCode | `.easycode-plugin/plugin.json` | 默认 `skills`；集合直接子目录或根 `SKILL.md`；frontmatter.name 必须等于实际技能目录名 |
+| 2 Agent Plugins | 根 `plugin.json`，精确 `$schema` 为 `https://agent-plugins.org/schemas/1.0.0/plugin.schema.json` | 只接受 `skills` 的直接子目录，根 `skills/SKILL.md` 明确拒绝；采用合法 frontmatter.name，缺省目录名 |
+| 3 Codex JSON | `.codex-plugin/plugin.json` | 默认 `skills`；集合直接子目录或单技能根，本轮不递归；采用合法 frontmatter.name，缺省目录名 |
+| 4 Claude JSON | `.claude-plugin/plugin.json` | 同 EasyCode；Claude 展示名与目录名不同的文件不属于当前受限子集 |
+
+| manifest 字段 | 当前受限契约 |
+| --- | --- |
+| `name` | 必填，1–64 bytes 小写字母/数字/单连字符 slug；插件技能仅以 `plugin:skill` 提供，不生成裸名别名 |
+| `version` / `description` | 可选；version 非空且最多 128 bytes，description 最多 1024 bytes；version 不参与格式兼容判断 |
+| `author` | 只接受 name/email/url 字符串对象；注解只校验、不访问 URL |
+| `homepage` / `repository` / `license` / `keywords` | 有界注解；字符串最多 2048 bytes，keywords 最多 32 项、单项 64 bytes |
+| `skills` | 非 Agent Plugins 格式可用 `./...` 字符串或最多 8 项非空数组；显式 roots 替代默认根，排序去重，不展开 glob/环境变量，不允许越界路径 |
+| `extensions` | 仅 Agent Plugins 可省略或为空对象；非空贡献拒绝 |
+| hooks/MCP/agents/commands/outputStyles/lspServers/apps 等行为字段 | 即使为空也拒绝整插件；不执行脚本、不隐式安装工具，其他未知字段同样拒绝 |
+
+Codex/Agent Plugins 技能还会校验技能目录内可选的 `agents/openai.yaml`。仅导入 `policy.allow_implicit_invocation`：false 排除模型目录并拒绝模型自行加载主文档；true 不能覆盖主文档已有的禁止。用户调用性仍由主文档决定。interface 的六项字符串只作有界注解，dependencies、policy.products 和未知策略明确拒绝；损坏或不安全的副文件不会被忽略。
+
+每次最多 32 个目录参数、单项 4096 UTF-8 bytes。manifest/主文档/副文件各最多 64 KiB；manifest/副文件最大嵌套 16 层。扫描有原始条目、候选和总读取额度，合并目录最多 256 个技能、模型 metadata 最多 64 KiB；超过合并额度时整插件拒绝，保留已有本地技能。重复实际目录合并，不同目录声明相同 ID 时全部禁用，不按参数顺序选胜者。`/plugins` 显示 available/partial/empty/unavailable/invalid/conflict、真实数量及安全错误码，不显示宿主路径。
+
+目录仅在启动时加载；新读取校验原根、manifest、主文档与副文件的冻结绑定，变化返回 `skill_source_changed`。已准备的排队附件和已保存结果保持原文，恢复不重读旧来源。来源读取使用描述符绑定和私有存储隔离；静态指令不授予写入、进程、网络或 Hook 信任。没有 marketplace、安装/更新、热加载、启停、插件脚本或 MCP 贡献。完整设计与测试映射见[变更设计](openspec/changes/archive/2026-11-13-add-local-plugin-skills/design.md)及[验收记录](openspec/changes/archive/2026-11-13-add-local-plugin-skills/verification.md)。
 
 完整阶段和验收标准见[产品 Roadmap](docs/roadmap/product-roadmap.md)。
 
@@ -473,7 +511,7 @@ exit 0 的空白或 `{}` 表示通过；只有严格 `{"decision":"block","reaso
 │   ├── context/               上下文和缓存规划
 │   ├── domain/                核心值对象与领域语义
 │   ├── executor/process/      Exec/Hook 共用的受控进程生命周期
-│   ├── extension/             本地 Skills 与 PreToolUse Hooks；Plugins、MCP 为 P6 批准占位
+│   ├── extension/             本地 Skills、同步 Hooks 与 Plugin 技能包；MCP 为 P6 批准占位
 │   ├── headless/              prompt 解析、最终文本与 JSONL v1 宿主
 │   ├── protocol/              Command 与 RuntimeEvent 协议
 │   ├── provider/              Provider Kernel 与 HTTP/SSE/WebSocket 传输
@@ -563,7 +601,7 @@ make install-hooks
 | P3 | Coding Tools | 九项工具与批准/恢复/预算已交付；PTY、后台进程、通用跨平台 sandbox 待实现 |
 | P4 | 缓存与上下文 | 缓存、usage 归一、手动/自动压缩已交付；费用、精确计数与跨 Provider fork 待实现 |
 | P5 | Claude 风格 TUI | Markdown、输入及命令/Skill 补全、审批/问卷/Hook、详情、被动推理阅读和 resume picker 已交付；fork picker 待实现 |
-| P6 | 扩展系统 | 本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop 已交付；其余 Hook、Plugins/MCP/热加载待实现 |
+| P6 | 扩展系统 | 本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop、本地 Plugin 技能包已交付；其余 Hook、插件可执行贡献、MCP/热加载待实现 |
 | P7 | Subagent | 尚未实现；保留批准占位，未接入 Runtime/app |
 | P8 | 发布强化 | 部分安全/故障验证已落地；全平台发布矩阵、诊断、遥测待实现；兼容迁移须另行明确授权 |
 

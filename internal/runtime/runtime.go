@@ -51,8 +51,6 @@ type Config struct {
 	InteractiveQuestions      bool
 	GenerateQuestionRequestID func() (domain.QuestionRequestID, error)
 	SkillExecutor             tool.SkillExecutor
-	SkillPreparer             SkillPreparer
-	SkillCatalog              domain.SkillCatalog
 	AutoCompactionPolicy      contextplan.AutoCompactionPolicy
 	CompactionHistory         CompactionHistoryObserver
 	CompactionOutputTokens    uint64
@@ -97,6 +95,7 @@ type Runtime struct {
 	questions            questionState
 
 	hooks                        hookState
+	skillInstallation            skillInstallation
 	skillExecutor                tool.SkillExecutor
 	skillPreparer                SkillPreparer
 	skillCatalog                 domain.SkillCatalog
@@ -192,9 +191,6 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 	if _, err := config.ToolCatalog.View(conversation.Family()); err != nil {
 		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "runtime tool catalog Provider view is invalid", err)
 	}
-	if config.SkillCatalog.Validate() != nil {
-		return nil, fault.New(fault.CodeInvalidConfiguration, "runtime skill catalog is invalid")
-	}
 	if config.QuestionExecutor == nil || config.SkillExecutor == nil || config.ReadArtifactExecutor == nil || config.ReadExecutor == nil || config.GlobExecutor == nil || config.GrepExecutor == nil {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "runtime read-only executors are not configured")
 	}
@@ -246,7 +242,7 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 		stopHistory:            config.StopHistory,
 		readArtifactExecutor:   config.ReadArtifactExecutor,
 		questionExecutor:       config.QuestionExecutor, interactiveQuestions: config.InteractiveQuestions, newQuestionRequestID: config.GenerateQuestionRequestID,
-		skillExecutor: config.SkillExecutor, skillPreparer: config.SkillPreparer, skillCatalog: config.SkillCatalog.Clone(),
+		skillExecutor:      config.SkillExecutor,
 		textOutputStore:    config.TextOutputStore,
 		artifactReferences: config.ArtifactReferences,
 		conversation:       conversation, journal: config.Journal,
@@ -269,6 +265,7 @@ func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, 
 	if err := runtime.validateTurnRequest(ctx, emit); err != nil {
 		return err
 	}
+	runtime.markSkillsStarted()
 	if !runtime.active.CompareAndSwap(false, true) {
 		return fault.New(fault.CodeTurnFailed, "conversation already has an active turn")
 	}

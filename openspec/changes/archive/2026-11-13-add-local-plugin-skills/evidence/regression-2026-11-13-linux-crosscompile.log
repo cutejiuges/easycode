@@ -1,0 +1,13 @@
+Linux amd64 production build: passed
+?   	easycode/internal/extension	[no test files]
+cross-compiled: easycode/internal/extension
+cross-compiled: easycode/internal/extension/hook
+cross-compiled: easycode/internal/extension/localfile
+?   	easycode/internal/extension/mcp	[no test files]
+cross-compiled: easycode/internal/extension/mcp
+cross-compiled: easycode/internal/extension/plugin
+cross-compiled: easycode/internal/extension/skill
+cross-compiled: easycode/internal/session/artifact
+cross-compiled: easycode/internal/app
+cross-compiled: easycode/cmd/easycode
+Linux native execution was not performed.

@@ -51,7 +51,7 @@ func TestUnsafeProjectBoundaryPreservesUserSource(t *testing.T) {
 	}
 	writeSkill(t, home, "claude", "user-skill", "---\ndescription: valid user\n---\nbody")
 	local := NewLocal()
-	if err := local.Load(context.Background(), root, home); err != nil {
+	if err := local.Load(context.Background(), root, home, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(local.Catalog().Entries()) != 1 || local.Entries()[0].Code != "skill_root_unavailable" {

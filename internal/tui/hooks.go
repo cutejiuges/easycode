@@ -223,7 +223,7 @@ func (m Model) renderHookTrust() string {
 	}
 	lines := []string{"Trust this hook?", fmt.Sprintf("Source: %s · %s", d.Reference.Source, d.Reference.ID), string(d.Reference.Event) + ": " + d.Scope.String(), "Feedback: " + string(d.Reference.Feedback), fmt.Sprintf("Timeout: %d seconds", d.Reference.TimeoutSeconds), "Workspace: . · read-only · network denied", "This does not approve the model's tool call.", "Workspace scripts can change after review.", "PgUp/PgDn: full command · Tab/↑/↓: choose · Esc: deny", "", trust, deny, "", "Command:", d.Command}
 	if d.Reference.Event == domain.HookStop {
-		lines = append(lines[:1], append([]string{"Checks the saved answer before this turn completes.", "Earlier tool effects are retained; this check does not roll them back.", "feedback=model sends a blocking reason to the provider and saves it in Session."}, lines[1:]...)...)
+		lines = append(lines[:1], append([]string{"Checks the saved answer before this turn completes.", "Earlier tool effects are not undone.", "feedback=model sends a blocking reason to the provider and saves it in Session."}, lines[1:]...)...)
 	}
 	if d.Reference.Event == domain.HookPostToolUse {
 		lines = append(lines[:1], append([]string{"Runs only after the tool succeeds.", "feedback=model sends additionalContext to the provider and saves it in Session."}, lines[1:]...)...)

@@ -1,11 +1,11 @@
 EasyCode test
 
 
-  /compact [command] [instructions] Compact conversation context
   /context [command] Inspect context budget
   /hooks [command] Browse command hooks
+  /plugins [command] Browse local plugins
   /skills [command] Browse local skills
 > /review [skill project:easycode:.] [args] Review changes
-6/6 · Up/Down: select · Tab: fill · Enter: choose · Esc: close
+7/7 · Up/Down: select · Tab: fill · Enter: choose · Esc: close
 > /|
 Enter: send | Alt+Enter/Ctrl+J: newline
