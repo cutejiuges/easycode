@@ -1,6 +1,6 @@
 # 当前能力与实现边界
 
-> 核对日期：2026-11-11。基线：当前仓库实现及已同步主规格，包含启动推理控制及本轮回归修复、结构化用户提问、PreToolUse/PostToolUse/PostToolUseFailure Hook、命令/Skill 首词补全与已验收归档的双 Provider 被动推理阅读。
+> 核对日期：2026-11-13。基线：当前仓库实现及已同步主规格，包含本地 Plugin 技能包、启动推理控制及本轮回归修复、结构化用户提问、PreToolUse/PostToolUse/PostToolUseFailure Hook、命令/Skill 首词补全与已验收归档的双 Provider 被动推理阅读。
 > 本文记录当前代码可执行的能力；[产品 Roadmap](product-roadmap.md)保留阶段目标与剩余工作。已接受的 ADR 和归档 change 记录各自当时的决策，不能单独作为现有功能清单。
 
 ## 用户入口
@@ -8,10 +8,11 @@
 | 能力 | 当前实现 | 边界与证据 |
 | --- | --- | --- |
 | 双 Provider | Anthropic Messages、OpenAI Responses；HTTP/SSE，OpenAI 可显式启用 WebSocket | 不隐式支持 Chat Completions，不实现登录/OAuth/订阅鉴权；`cmd/easycode/main.go`、`internal/provider/{anthropic,openai,transport}` |
-| CLI | 默认 TUI、`--version`、`--config`、`--resume ID`、`--continue`、`--print`、`--json`、`--json --input-format stream-json` | `--resume` 与 `--continue` 互斥；没有 `doctor`、`provider probe`、fork 或模型切换命令；`cmd/easycode/*_test.go` |
+| CLI | 默认 TUI、`--version`、`--config`、`--plugin-dir PATH`、`--resume ID`、`--continue`、`--print`、`--json`、`--json --input-format stream-json` | `--resume` 与 `--continue` 互斥；没有 `doctor`、`provider probe`、fork 或模型切换命令；`cmd/easycode/*_test.go` |
 | 会话发现 | `sessions list [--all] [--limit N]`；`resume [--all] [--config PATH]` 启动选择器 | 离线 list 无需模型配置；picker 需要配置及终端。搜索限最近至多 200 条元数据，非正文全文搜索；`internal/app/session_*_test.go` |
-| 本地 slash commands | `/cache`、`/context`、`/compact [instructions]`、`/skills`、`/hooks`，以及可调用 Skill 的 `/<name>` / `$name` | TUI 命令与 Skill 附件入口，支持 `/` / `$` 首词补全及冻结来源筛选；stream-json 使用独立 typed 控制消息，普通文字不执行 slash。`/help`、`/fork`、`/model`、`/plugins`、`/mcp`、`/cost` 尚未实现 |
+| 本地 slash commands | `/cache`、`/context`、`/compact [instructions]`、`/skills`、`/hooks`、`/plugins`，以及可调用 Skill 的 `/<name>` / `$name` | TUI 命令与 Skill 附件入口，支持 `/` / `$` 首词补全及冻结来源筛选；stream-json 使用独立 typed 控制消息，普通文字不执行 slash。`/help`、`/fork`、`/model`、`/mcp`、`/cost` 尚未实现 |
 | 命令/Skill 补全 | 确定性筛选、上下键选择、Tab 填入、内置 Enter 执行及 Skill Enter 只填入；Esc 关闭、paste 抑制、窄屏停用 | 仅首词名称，不含文件/参数值补全、正文 mentions 或动态目录；`internal/tui/completion*_test.go`、`internal/app/completion_e2e_test.go`；候选不进入 Session 或缓存前缀 |
+| 本地插件 | `--plugin-dir`，只读 `/plugins`，限定 Skill 调用与补全；Codex 副文件调用限制 | 复用同一 Skill 工具、权限和原生恢复；无 marketplace/安装、脚本/MCP/Agent 贡献或热加载；`internal/app/plugins_test.go`、`cmd/easycode/plugin_integration_test.go`、`scripts/plugins-smoke.py` |
 | 启动推理控制 | 五个严格 JSON 字段；Anthropic thinking/display/独立 effort、OpenAI effort/summary、普通输出上限；/context 只读来源 | 启动冻结、窗口预留和摘要 manual budget 预检；不探测模型、不降级或重试，无 /effort；`internal/config/reasoning_test.go`、两家 `reasoning_request_test.go`、`internal/app/reasoning_auto_compaction_test.go` |
 | 输入控制 | 多行、字素编辑、decoded paste、有界历史、同轮追加、FIFO strict-next、原子取回、停止返还 | 未提交队列/草稿只在内存；同轮追加只在完整工具 outputs 后的采样安全点提交；`internal/runtime/agent_loop_test.go`、`internal/tui/composer*_test.go` |
 
@@ -53,7 +54,7 @@ PreToolUse Hook 是三项 mutation 的前置门禁，**不是第十项模型工�
 
 ## 配置、存储与平台
 
-主配置为 `~/.config/easycode/config.json` 或显式 `--config PATH`，Provider 四字段可由非空 `EASYCODE_PROVIDER`、`EASYCODE_BASE_URL`、`EASYCODE_API_KEY`、`EASYCODE_MODEL` 覆盖。窗口、压缩和缓存选项只通过 JSON 配置；没有项目级主配置合并、TOML 主配置或额外凭据登录。Skills 与 Hooks 使用各自独立来源规则。
+主配置为 `~/.config/easycode/config.json` 或显式 `--config PATH`，Provider 四字段可由非空 `EASYCODE_PROVIDER`、`EASYCODE_BASE_URL`、`EASYCODE_API_KEY`、`EASYCODE_MODEL` 覆盖。窗口、压缩和缓存选项只通过 JSON 配置；没有项目级主配置合并、TOML 主配置或额外凭据登录。Skills、Hooks 与显式 Plugin 目录使用各自来源规则；插件只贡献受限技能，不借用 Hook 信任。
 
 默认数据根为 `~/.easycode`：journal 为 `sessions/YYYY/MM/DD/<thread-id>.jsonl`，Catalog 为 `state.sqlite`，私有输出位于 `sessions/artifacts`。其权限、实际 descriptor 身份和 sandbox 读写根关系均在装配/执行边界检查；不向模型暴露存储路径。没有启用默认 diagnostic 日志文件、plugin 安装目录或文件 watcher。
 
@@ -66,7 +67,7 @@ PreToolUse Hook 是三项 mutation 的前置门禁，**不是第十项模型工�
 
 ## 后续能力与审阅入口
 
-P6 当前交付本地 Skills 和同步 PreToolUse/PostToolUse/PostToolUseFailure；MCP、本地 Plugins、manifest importer 与热加载仍是 P6 后续目标。P7 Subagent 和 P8 telemetry/诊断/发布强化的批准占位尚未接入 Runtime/app。doctor、模型/Provider 动态切换、后台任务、通用迁移设计不得仅因出现在路线图或 ADR 中就视作已经实现。
+P6 当前交付本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure 和显式本地 Plugin 技能包（EasyCode、Claude、Codex JSON、Agent Plugins 四种受限 manifest）。MCP、插件可执行贡献、marketplace/安装与热加载仍是后续目标。P7 Subagent 和 P8 telemetry/诊断/发布强化的批准占位尚未接入 Runtime/app。doctor、模型/Provider 动态切换、后台任务、通用迁移设计不得仅因出现在路线图或 ADR 中就视作已经实现。
 
 - 功能使用和配置：[README](../../README.md)。
 - 长期目标及剩余验收：[产品 Roadmap](product-roadmap.md)。
@@ -89,3 +90,5 @@ P6 当前交付本地 Skills 和同步 PreToolUse/PostToolUse/PostToolUseFailure
 - Windows 共用测试 helper 标签修复与跨平台编译追加验收：[windows-helper-regression-2026-11-11.md](../../openspec/changes/archive/2026-11-11-add-post-tool-use-failure-hooks/windows-helper-regression-2026-11-11.md)。
 
 - PostToolUseFailure 最终契约核对与归档：[archive.md](../../openspec/changes/archive/2026-11-11-add-post-tool-use-failure-hooks/archive.md)。
+
+- 本地 Plugin 技能包：[使用与受限字段](../../README.md#本地-plugin-技能包)、[设计与参考源码](../../openspec/changes/archive/2026-11-13-add-local-plugin-skills/design.md)、[验证记录](../../openspec/changes/archive/2026-11-13-add-local-plugin-skills/verification.md)。

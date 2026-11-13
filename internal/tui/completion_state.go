@@ -37,7 +37,7 @@ type completionState struct {
 }
 
 func (m Model) completionBlocked() bool {
-	return m.question != nil || m.hookTrust != nil || m.hooks.open || m.skillsOpen ||
+	return m.question != nil || m.hookTrust != nil || m.hooks.open || m.skillsOpen || m.plugins.open ||
 		m.approval != nil || m.cachePanel != nil || m.contextPanel != nil || m.detailOpen ||
 		m.pending != nil || m.retracting != nil || m.cancelling || m.pendingContext != ""
 }

@@ -1,0 +1,52 @@
+{
+  "ability": {
+    "passedEntries": 116,
+    "leafExecutions": 107,
+    "topLevelExecutions": 27,
+    "failed": 0,
+    "skipped": 0,
+    "packages": 9
+  },
+  "focused-race": {
+    "passedEntries": 250,
+    "leafExecutions": 210,
+    "topLevelExecutions": 80,
+    "failed": 0,
+    "skipped": 0,
+    "packages": 4
+  },
+  "fuzz": {
+    "manifestExecutions": 2071937,
+    "sidecarExecutions": 690003,
+    "secondsEach": 60,
+    "passed": true
+  },
+  "binaryE2E": {
+    "cliCases": 8,
+    "requests": 40,
+    "offlineResume": 16,
+    "ptyCases": 4
+  },
+  "writeStreamRace": {
+    "leafExecutions": 16,
+    "failed": 0,
+    "elapsedSeconds": 50.048,
+    "exitCode": 0
+  },
+  "qualityGate": {
+    "exitCode": 0,
+    "firstSuiteTimeout": true,
+    "timeoutChanged": false,
+    "testsRemoved": false
+  },
+  "specValidation": {
+    "changePassed": 1,
+    "specsPassed": 58,
+    "failed": 0
+  },
+  "linux": {
+    "productionBuild": true,
+    "extensionArtifactAppCLITestCompile": true,
+    "nativeExecution": false
+  }
+}

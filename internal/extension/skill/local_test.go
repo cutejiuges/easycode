@@ -54,7 +54,7 @@ func TestPriorityFrozenRevisionAndExplicitResourcePermission(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := NewLocal()
-	if err := l.Load(ctx, root, home); err != nil {
+	if err := l.Load(ctx, root, home, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if l.Catalog().HasEntries() || len(l.Entries()) != 2 || l.Entries()[1].Status != "shadowed" {
@@ -95,7 +95,7 @@ func TestInvalidWinnerAndFirstToken(t *testing.T) {
 	writeSkill(t, root, "easycode", "demo", "---\ndescription: broken\nhooks: nope\n---\nbody")
 	writeSkill(t, home, "claude", "demo", "---\ndescription: lower\n---\nbody")
 	l := NewLocal()
-	if err := l.Load(context.Background(), root, home); err != nil {
+	if err := l.Load(context.Background(), root, home, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := l.Prepare(context.Background(), "/demo"); err == nil {
@@ -111,7 +111,7 @@ func TestInvalidWinnerAndFirstToken(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := l.Load(ctx, root, home); err != context.Canceled {
+	if err := l.Load(ctx, root, home, nil, nil); err != context.Canceled {
 		t.Fatalf("cancellation %v", err)
 	}
 }
@@ -122,7 +122,7 @@ func TestCatalogStableAcrossAbsoluteRoots(t *testing.T) {
 		writeSkill(t, root, "agents", "zeta", "---\ndescription: last\n---\nbody")
 		writeSkill(t, root, "easycode", "alpha", "---\ndescription: first\n---\nbody")
 		l := NewLocal()
-		if err := l.Load(context.Background(), root, home); err != nil {
+		if err := l.Load(context.Background(), root, home, nil, nil); err != nil {
 			t.Fatal(err)
 		}
 		c := l.Catalog()
@@ -150,7 +150,7 @@ func TestDiscoveryLimitsKeepOtherRootsAndDisableMergedCatalog(t *testing.T) {
 	}
 	writeSkill(t, root, "agents", "good", "---\ndescription: valid\n---\nbody")
 	local := NewLocal()
-	if err := local.Load(context.Background(), root, home); err != nil {
+	if err := local.Load(context.Background(), root, home, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(local.Catalog().Entries()) != 1 || local.Entries()[0].Code != "skill_catalog_limit" {
@@ -161,7 +161,7 @@ func TestDiscoveryLimitsKeepOtherRootsAndDisableMergedCatalog(t *testing.T) {
 		writeSkill(t, root, "easycode", fmt.Sprintf("demo-%03d", i), "---\ndescription: valid\n---\nbody")
 	}
 	local = NewLocal()
-	if err := local.Load(context.Background(), root, home); err != nil {
+	if err := local.Load(context.Background(), root, home, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if local.Catalog().HasEntries() {
@@ -176,7 +176,7 @@ func TestModelOnlyAndResourceMainDocumentRejection(t *testing.T) {
 	writeSkill(t, root, "easycode", "model-only", "---\ndescription: valid\nuser-invocable: false\n---\nbody")
 	writeSkill(t, root, "easycode", "manual", "---\ndescription: manual\ndisable-model-invocation: true\n---\nbody")
 	local := NewLocal()
-	if err := local.Load(context.Background(), root, home); err != nil {
+	if err := local.Load(context.Background(), root, home, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := local.Prepare(context.Background(), "$model-only"); ErrorCode(err) != "skill_not_user_invocable" {

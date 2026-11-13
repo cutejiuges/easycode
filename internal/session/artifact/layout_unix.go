@@ -108,6 +108,25 @@ func (l *Layout) Check(ctx context.Context) error {
 	return nil
 }
 
+// CheckSource 验证本次实际来源目录与私有存储互不包含，不重新按来源路径打开。
+func (l *Layout) CheckSource(ctx context.Context, source *os.File) error {
+	if l == nil || l.storage == nil || ctx == nil || ctx.Err() != nil || source == nil {
+		return errUnsafeLayout
+	}
+	if err := l.Check(ctx); err != nil {
+		return err
+	}
+	inside, err := descendsFrom(source, l.storage)
+	if err != nil || inside {
+		return errUnsafeLayout
+	}
+	inside, err = descendsFrom(l.storage, source)
+	if err != nil || inside {
+		return errUnsafeLayout
+	}
+	return nil
+}
+
 // Close 释放布局持有的目录，调用方必须先等待使用者退出。
 func (l *Layout) Close() error {
 	if l == nil {

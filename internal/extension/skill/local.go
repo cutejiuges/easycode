@@ -3,6 +3,7 @@ package skill
 import (
 	"context"
 	"easycode/internal/domain"
+	"easycode/internal/extension"
 	"easycode/internal/extension/localfile"
 	"errors"
 	"io"
@@ -29,6 +30,10 @@ func ErrorCode(e error) string {
 	if errors.Is(e, context.Canceled) {
 		return "cancelled"
 	}
+	var source extension.SourceError
+	if errors.As(e, &source) {
+		return source.Code()
+	}
 	return "skill_read_failed"
 }
 
@@ -38,6 +43,8 @@ type Entry = domain.SkillListEntry
 type localEntry struct {
 	view         Entry
 	path, digest string
+	revision     string
+	plugin       *pluginBinding
 }
 
 // Local 是进程内冻结目录；每次读取重新验证实际文件描述符。
@@ -45,6 +52,8 @@ type Local struct {
 	entries    []localEntry
 	catalog    domain.SkillCatalog
 	beforeOpen func(string)
+	namespaces map[string]bool
+	plugins    []extension.PluginSummary
 }
 
 // NewLocal 创建无 I/O 的本地来源。
@@ -59,7 +68,22 @@ func (l *Local) Entries() []Entry {
 func (l *Local) Catalog() domain.SkillCatalog { return l.catalog.Clone() }
 
 // Load 从明确的启动目录与用户目录加载一次快照。
-func (l *Local) Load(ctx context.Context, cwd, home string) error {
+func (l *Local) Load(ctx context.Context, cwd, home string, contributions []extension.Contribution, sources []extension.PluginSource) error {
+	if l == nil || ctx == nil {
+		return failure("skill_root_invalid")
+	}
+	next := NewLocal()
+	next.beforeOpen = l.beforeOpen
+	if err := next.loadLocal(ctx, cwd, home); err != nil {
+		return err
+	}
+	if err := next.loadPlugins(ctx, contributions, sources); err != nil {
+		return err
+	}
+	*l = *next
+	return nil
+}
+func (l *Local) loadLocal(ctx context.Context, cwd, home string) error {
 	if l == nil || !filepath.IsAbs(cwd) || !filepath.IsAbs(home) {
 		return failure("skill_root_invalid")
 	}
@@ -139,7 +163,8 @@ func (l *Local) Load(ctx context.Context, cwd, home string) error {
 					metadata = append(metadata, d.metadata)
 				}
 			}
-			entries = append(entries, localEntry{v, p, domain.SkillDigest(text)})
+			digest := domain.SkillDigest(text)
+			entries = append(entries, localEntry{view: v, path: p, digest: digest, revision: digest})
 		}
 	}
 	catalog, e := domain.NewSkillCatalog(metadata)
@@ -165,29 +190,37 @@ func (l *Local) find(name string) (localEntry, error) {
 			return e, nil
 		}
 	}
+	if ref, err := domain.ParseSkillReference(name); err == nil && ref.Qualified() {
+		if enabled, known := l.namespaces[ref.Namespace()]; known && !enabled {
+			return localEntry{}, failure("skill_unavailable")
+		}
+	}
 	return localEntry{}, failure("skill_not_found")
 }
-func (l *Local) load(ctx context.Context, name string) (localEntry, document, error) {
+func (l *Local) load(ctx context.Context, name string) (localEntry, document, extension.SourceHandle, error) {
 	e, err := l.find(name)
 	if err != nil {
-		return e, document{}, err
+		return e, document{}, nil, err
+	}
+	if e.plugin != nil {
+		return l.loadPlugin(ctx, e)
 	}
 	text, err := readFile(ctx, e.path, l.beforeOpen)
 	if err != nil {
 		if ctx.Err() != nil {
-			return e, document{}, ctx.Err()
+			return e, document{}, nil, ctx.Err()
 		}
-		return e, document{}, failure("skill_read_failed")
+		return e, document{}, nil, failure("skill_read_failed")
 	}
 	if domain.SkillDigest(text) != e.digest {
-		return e, document{}, failure("skill_source_changed")
+		return e, document{}, nil, failure("skill_source_changed")
 	}
 	d, err := parseDocument(e.view.Source, name, text)
-	return e, d, err
+	return e, d, nil, err
 }
 
 // Prepare 将显式首词调用转为独立附件，普通正文不变。
-func (l *Local) Prepare(ctx context.Context, text string) (domain.SkillAttachment, bool, error) {
+func (l *Local) Prepare(ctx context.Context, text string) (attachment domain.SkillAttachment, prepared bool, resultErr error) {
 	words := strings.Fields(text)
 	if len(words) == 0 {
 		return domain.SkillAttachment{}, false, nil
@@ -198,13 +231,14 @@ func (l *Local) Prepare(ctx context.Context, text string) (domain.SkillAttachmen
 	}
 	name := first[1:]
 	switch name {
-	case "skills", "context", "cache", "compact":
+	case "skills", "context", "cache", "compact", "hooks", "plugins":
 		if first[0] == '/' {
 			return domain.SkillAttachment{}, false, nil
 		}
 	}
 	_, err := l.find(name)
-	if err != nil && first[0] == '/' {
+	ref, refErr := domain.ParseSkillReference(name)
+	if err != nil && first[0] == '/' && (refErr != nil || !ref.Qualified()) {
 		found := false
 		for _, e := range l.entries {
 			if e.view.Name == name {
@@ -215,29 +249,43 @@ func (l *Local) Prepare(ctx context.Context, text string) (domain.SkillAttachmen
 			return domain.SkillAttachment{}, false, nil
 		}
 	}
-	e, d, err := l.load(ctx, name)
+	e, d, handle, err := l.load(ctx, name)
 	if err != nil {
 		return domain.SkillAttachment{}, false, err
+	}
+	if handle != nil {
+		defer func() {
+			if err := handle.Close(); err != nil {
+				attachment, prepared, resultErr = domain.SkillAttachment{}, false, err
+			}
+		}()
 	}
 	if !d.metadata.UserInvocable {
 		return domain.SkillAttachment{}, false, failure("skill_not_user_invocable")
 	}
 	args := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(text), first))
-	a, err := expand(d, e.digest, args)
+	a, err := expand(d, e.revision, args)
 	return a, err == nil, err
 }
 
 // Read 执行模型主文档或辅助资源读取，显式资格必须由运行时从已提交事实提供。
-func (l *Local) Read(ctx context.Context, name, args, resource string, explicit []domain.SkillAttachment) (domain.SkillAttachment, error) {
-	e, d, err := l.load(ctx, name)
+func (l *Local) Read(ctx context.Context, name, args, resource string, explicit []domain.SkillAttachment) (attachment domain.SkillAttachment, resultErr error) {
+	e, d, handle, err := l.load(ctx, name)
 	if err != nil {
 		return domain.SkillAttachment{}, err
+	}
+	if handle != nil {
+		defer func() {
+			if err := handle.Close(); err != nil {
+				attachment, resultErr = domain.SkillAttachment{}, err
+			}
+		}()
 	}
 	if d.metadata.DisableModelInvocation {
 		allowed := false
 		if resource != "" {
 			for _, a := range explicit {
-				if a.Validate() == nil && a.Source == e.view.Source && a.Name == name && a.Revision == e.digest {
+				if a.Validate() == nil && a.Source == e.view.Source && a.Name == name && a.Revision == e.revision {
 					allowed = true
 				}
 			}
@@ -247,16 +295,29 @@ func (l *Local) Read(ctx context.Context, name, args, resource string, explicit 
 		}
 	}
 	if resource == "" {
-		return expand(d, e.digest, args)
+		return expand(d, e.revision, args)
 	}
 	if args != "" || strings.EqualFold(resource, "SKILL.md") || domain.ValidateSkillResource(resource) != nil {
 		return domain.SkillAttachment{}, failure("skill_resource_invalid")
 	}
-	body, err := readFile(ctx, filepath.Join(filepath.Dir(e.path), filepath.FromSlash(resource)), l.beforeOpen)
+	var body string
+	if handle != nil {
+		value, readErr := handle.Read(ctx, resource, domain.MaxSkillDocumentBytes)
+		err = readErr
+		if err == nil && value.Identity == e.plugin.documentID {
+			return domain.SkillAttachment{}, failure("skill_resource_invalid")
+		}
+		if !utf8.Valid(value.Bytes) {
+			err = failure("skill_document_invalid")
+		}
+		body = string(value.Bytes)
+	} else {
+		body, err = readFile(ctx, filepath.Join(filepath.Dir(e.path), filepath.FromSlash(resource)), l.beforeOpen)
+	}
 	if err != nil {
 		return domain.SkillAttachment{}, failure("skill_resource_unavailable")
 	}
-	return domain.NewSkillAttachment(e.view.Source, name, e.digest, "", "Skill resource "+resource+" (source "+e.view.Source.ID()+")\n\n"+body)
+	return domain.NewSkillAttachment(e.view.Source, name, e.revision, "", "Skill resource "+resource+" (source "+e.view.Source.ID()+")\n\n"+body)
 }
 func readFile(ctx context.Context, p string, hook func(string)) (string, error) {
 	b, err := localfile.Read(ctx, p, domain.MaxSkillDocumentBytes, localfile.Options{BeforeOpen: hook})

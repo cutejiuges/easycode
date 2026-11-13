@@ -1,0 +1,501 @@
+Branch name policy tests passed.
+go vet ./...
+go tool staticcheck ./...
+go test ./...
+ok  	easycode/cmd/easycode	8.122s
+ok  	easycode/internal/app	122.950s
+ok  	easycode/internal/architecture	3.392s
+ok  	easycode/internal/codec	0.369s
+ok  	easycode/internal/config	0.529s
+ok  	easycode/internal/context	0.368s
+ok  	easycode/internal/context/estimate	0.339s
+ok  	easycode/internal/context/projectinstructions	0.366s
+ok  	easycode/internal/domain	1.539s
+ok  	easycode/internal/executor/process	0.337s
+?   	easycode/internal/extension	[no test files]
+ok  	easycode/internal/extension/hook	0.371s
+ok  	easycode/internal/extension/localfile	0.330s
+?   	easycode/internal/extension/mcp	[no test files]
+ok  	easycode/internal/extension/plugin	0.417s
+ok  	easycode/internal/extension/skill	6.999s
+ok  	easycode/internal/fault	0.321s
+ok  	easycode/internal/headless	0.964s
+ok  	easycode/internal/protocol	0.437s
+ok  	easycode/internal/provider	2.039s
+ok  	easycode/internal/provider/anthropic	3.573s
+ok  	easycode/internal/provider/openai	3.171s
+ok  	easycode/internal/provider/transport	0.498s
+ok  	easycode/internal/runtime	5.410s
+ok  	easycode/internal/secret	0.478s
+ok  	easycode/internal/session	15.440s
+ok  	easycode/internal/session/artifact	4.038s
+ok  	easycode/internal/session/catalog	3.430s
+?   	easycode/internal/subagent	[no test files]
+?   	easycode/internal/telemetry	[no test files]
+ok  	easycode/internal/tool	0.359s
+ok  	easycode/internal/tool/builtin	5.579s
+ok  	easycode/internal/tui	1.187s
+go test -race ./...
+ok  	easycode/cmd/easycode	32.405s
+panic: test timed out after 10m0s
+	running tests:
+		TestWriteSSEChunksCancellationEOFAndLimitsPrecedeSideEffects (34s)
+		TestWriteSSEChunksCancellationEOFAndLimitsPrecedeSideEffects/anthropic/aggregate-limit (8s)
+
+goroutine 15390 [running]:
+testing.(*M).startAlarm.func1()
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:2484 +0x4d8
+created by time.goFunc
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/time/sleep.go:215 +0x44
+
+goroutine 1 [chan receive]:
+testing.(*T).Run(0xc0001028c0, {0x101a2444b, 0x3c}, 0x101fb7828)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1859 +0x6a4
+testing.runTests.func1(0xc0001028c0)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:2279 +0x80
+testing.tRunner(0xc0001028c0, 0xc00035fa68)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1792 +0x184
+testing.runTests(0xc000247cb0, {0x1025e9460, 0xd4, 0xd4}, {0xc00035fb08?, 0x100e5fe88?, 0x1025ed2e0?})
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:2277 +0x780
+testing.(*M).Run(0xc0002fe6e0)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:2142 +0xb6c
+easycode/internal/app.TestMain(0xc0002fe6e0)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/app/main_test.go:25 +0xf4
+main.main()
+	_testmain.go:469 +0x118
+
+goroutine 63 [chan receive, 9 minutes]:
+testing.(*T).Parallel(0xc00018ddc0)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1577 +0x35c
+easycode/internal/app.TestProviderResourceCreationAndWireMapping(0xc00018ddc0)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/app/app_test.go:193 +0x34
+testing.tRunner(0xc00018ddc0, 0x101fb7540)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1792 +0x184
+created by testing.(*T).Run in goroutine 1
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1851 +0x688
+
+goroutine 216 [chan receive, 9 minutes]:
+testing.(*T).Parallel(0xc00042ddc0)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1577 +0x35c
+easycode/internal/app.TestChatResourcesWriterCloseFailureStillClosesProvider(0xc00042ddc0)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/app/app_test.go:454 +0x30
+testing.tRunner(0xc00042ddc0, 0x101fb7228)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1792 +0x184
+created by testing.(*T).Run in goroutine 1
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1851 +0x688
+
+goroutine 215 [chan receive, 9 minutes]:
+testing.(*T).Parallel(0xc00042dc00)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1577 +0x35c
+easycode/internal/app.TestChatResourcesCloseOrdersSessionJournalAndProvider(0xc00042dc00)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/app/app_test.go:400 +0x34
+testing.tRunner(0xc00042dc00, 0x101fb7218)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1792 +0x184
+created by testing.(*T).Run in goroutine 1
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1851 +0x688
+
+goroutine 13269 [chan receive, 1 minutes]:
+testing.(*T).Parallel(0xc00039f180)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1577 +0x35c
+easycode/internal/app.TestSessionServiceCreatesPrivateRootMetadataWithoutNetwork(0xc00039f180)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/app/session_service_test.go:83 +0x34
+testing.tRunner(0xc00039f180, 0x101fb7730)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1792 +0x184
+created by testing.(*T).Run in goroutine 1
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1851 +0x688
+
+goroutine 218 [chan receive, 9 minutes]:
+testing.(*T).Parallel(0xc0001de380)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1577 +0x35c
+easycode/internal/app.TestResourceCleanupReleaseTransfersOwnership(0xc0001de380)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/app/app_test.go:515 +0x30
+testing.tRunner(0xc0001de380, 0x101fb7630)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1792 +0x184
+created by testing.(*T).Run in goroutine 1
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1851 +0x688
+
+goroutine 119 [syscall, 9 minutes]:
+os/signal.signal_recv()
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/runtime/sigqueue.go:149 +0x2c
+os/signal.loop()
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/os/signal/signal_unix.go:23 +0x24
+created by os/signal.Notify.func1.1 in goroutine 113
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/os/signal/signal.go:152 +0x50
+
+goroutine 219 [chan receive, 9 minutes]:
+testing.(*T).Parallel(0xc0001de540)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1577 +0x35c
+easycode/internal/app.TestChatResourcesShutdownTimeoutEscalatesAndClosesDependencies(0xc0001de540)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/app/app_test.go:529 +0x34
+testing.tRunner(0xc0001de540, 0x101fb7220)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1792 +0x184
+created by testing.(*T).Run in goroutine 1
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1851 +0x688
+
+goroutine 217 [chan receive, 9 minutes]:
+testing.(*T).Parallel(0xc0001de1c0)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1577 +0x35c
+easycode/internal/app.TestResourceCleanupClosesInReverseOrderAndJoinsErrors(0xc0001de1c0)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/app/app_test.go:481 +0x30
+testing.tRunner(0xc0001de1c0, 0x101fb7628)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1792 +0x184
+created by testing.(*T).Run in goroutine 1
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1851 +0x688
+
+goroutine 11126 [chan receive, 4 minutes]:
+testing.(*T).Parallel(0xc000728e00)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1577 +0x35c
+easycode/internal/app.TestProjectInstructionDiscoveryFailsBeforeApplicationResourcesOpen(0xc000728e00)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/app/project_instructions_test.go:24 +0x34
+testing.tRunner(0xc000728e00, 0x101fb7530)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1792 +0x184
+created by testing.(*T).Run in goroutine 1
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1851 +0x688
+
+goroutine 13270 [chan receive, 1 minutes]:
+testing.(*T).Parallel(0xc00039f6c0)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1577 +0x35c
+easycode/internal/app.TestSessionServiceResumesCompatibleRootWithoutNetwork(0xc00039f6c0)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/app/session_service_test.go:107 +0x34
+testing.tRunner(0xc00039f6c0, 0x101fb7770)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1792 +0x184
+created by testing.(*T).Run in goroutine 1
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1851 +0x688
+
+goroutine 15364 [select]:
+easycode/internal/session.(*JournalWriter).run(0xc000236480, 0x1)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/session/writer.go:197 +0x130
+created by easycode/internal/session.startOwnedJournalWriter in goroutine 15362
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/session/writer.go:118 +0x2e4
+
+goroutine 15263 [chan receive]:
+easycode/internal/app.submitInteractiveFixture.func1()
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/app/input_fixture_test.go:74 +0xd4
+created by easycode/internal/app.submitInteractiveFixture in goroutine 15362
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/app/input_fixture_test.go:72 +0x1ec
+
+goroutine 15359 [IO wait]:
+internal/poll.runtime_pollWait(0x1291867e0, 0x77)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/runtime/netpoll.go:351 +0xa0
+internal/poll.(*pollDesc).wait(0xc000486020, 0x77, 0x0)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/internal/poll/fd_poll_runtime.go:84 +0xb8
+internal/poll.(*pollDesc).waitWrite(...)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/internal/poll/fd_poll_runtime.go:93
+internal/poll.(*FD).Write(0xc000486000, {0xc008cbaf82, 0x10fff8b, 0x203f07e})
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/internal/poll/fd_unix.go:397 +0x38c
+net.(*netFD).Write(0xc000486000, {0xc008cbaf82, 0x10fff8b, 0x203f07e})
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/net/fd_posix.go:96 +0x48
+net.(*conn).Write(0xc00007e118, {0xc008cbaf82, 0x10fff8b, 0x203f07e})
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/net/net.go:206 +0x88
+net/http.checkConnErrorWriter.Write({0xc000562780?}, {0xc008cbaf82, 0x10fff8b, 0x203f07e})
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/net/http/server.go:4027 +0x64
+bufio.(*Writer).Write(0xc000562780, {0xc008cba000, 0x1100f0d, 0x2040000})
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/bufio/bufio.go:683 +0x12c
+net/http.(*chunkWriter).Write(0xc000c6a040, {0xc008cba000, 0x1100f0d, 0x2040000})
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/net/http/server.go:389 +0x308
+bufio.(*Writer).Write(0xc0005632c0, {0xc008cba000, 0x1100f0d, 0x2040000})
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/bufio/bufio.go:683 +0x12c
+net/http.(*response).write(0xc000c6a000, 0x1100f0d, {0xc008cba000, 0x1100f0d, 0x2040000}, {0x0, 0x0})
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/net/http/server.go:1702 +0x354
+net/http.(*response).Write(0xc000c6a000, {0xc008cba000, 0x1100f0d, 0x2040000})
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/net/http/server.go:1665 +0x50
+easycode/internal/app.TestWriteSSEChunksCancellationEOFAndLimitsPrecedeSideEffects.func1.1({0x101fc6528, 0xc000c6a000}, 0xc0002a12c0)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/app/write_stream_test.go:75 +0x990
+net/http.HandlerFunc.ServeHTTP(0xc000414390, {0x101fc6528, 0xc000c6a000}, 0xc0002a12c0)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/net/http/server.go:2294 +0x4c
+net/http.serverHandler.ServeHTTP({0x101fc42e8?}, {0x101fc6528, 0xc000c6a000}, 0xc0002a12c0)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/net/http/server.go:3301 +0x29c
+net/http.(*conn).serve(0xc0001b8000, {0x101fc6dc8, 0xc0002c13e0})
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/net/http/server.go:2102 +0xeb8
+created by net/http.(*Server).Serve in goroutine 15363
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/net/http/server.go:3454 +0x678
+
+goroutine 13278 [chan receive, 1 minutes]:
+testing.(*T).Parallel(0xc000729340)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1577 +0x35c
+easycode/internal/app.TestSessionServiceInterruptedCompensationFailureDoesNotBecomeUsable(0xc000729340)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/app/session_service_test.go:478 +0x34
+testing.tRunner(0xc000729340, 0x101fb7740)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1792 +0x184
+created by testing.(*T).Run in goroutine 1
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1851 +0x688
+
+goroutine 13277 [chan receive, 1 minutes]:
+testing.(*T).Parallel(0xc000728a80)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1577 +0x35c
+easycode/internal/app.TestSessionServiceReturnsSealedToolRecoveryWithoutExternalCalls(0xc000728a80)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/app/session_service_test.go:394 +0x34
+testing.tRunner(0xc000728a80, 0x101fb7778)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1792 +0x184
+created by testing.(*T).Run in goroutine 1
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1851 +0x688
+
+goroutine 13276 [chan receive, 1 minutes]:
+testing.(*T).Parallel(0xc0007288c0)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1577 +0x35c
+easycode/internal/app.TestSessionServiceClosesInterruptedTailBeforeReturning(0xc0007288c0)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/app/session_service_test.go:346 +0x34
+testing.tRunner(0xc0007288c0, 0x101fb7720)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1792 +0x184
+created by testing.(*T).Run in goroutine 1
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1851 +0x688
+
+goroutine 15360 [IO wait]:
+internal/poll.runtime_pollWait(0x1291867e0, 0x72)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/runtime/netpoll.go:351 +0xa0
+internal/poll.(*pollDesc).wait(0xc000486020, 0x72, 0x0)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/internal/poll/fd_poll_runtime.go:84 +0xb8
+internal/poll.(*pollDesc).waitRead(...)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/internal/poll/fd_poll_runtime.go:89
+internal/poll.(*FD).Read(0xc000486000, {0xc00060ca31, 0x1, 0x1})
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/internal/poll/fd_unix.go:165 +0x320
+net.(*netFD).Read(0xc000486000, {0xc00060ca31, 0x1, 0x1})
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/net/fd_posix.go:55 +0x48
+net.(*conn).Read(0xc00007e118, {0xc00060ca31, 0x1, 0x1})
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/net/net.go:194 +0x88
+net/http.(*connReader).backgroundRead(0xc00060ca20)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/net/http/server.go:690 +0x74
+created by net/http.(*connReader).startBackgroundRead in goroutine 15359
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/net/http/server.go:686 +0x15c
+
+goroutine 15357 [select]:
+easycode/internal/runtime.(*ChatSession).runInterrupts(0xc000236680, {0x101fc6e00, 0xc000060370})
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/runtime/session.go:336 +0xd4
+easycode/internal/runtime.(*ChatSession).Start.func1.1()
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/runtime/session.go:125 +0x94
+created by easycode/internal/runtime.(*ChatSession).Start.func1 in goroutine 15356
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/runtime/session.go:125 +0x154
+
+goroutine 12957 [chan receive, 2 minutes]:
+testing.(*T).Parallel(0xc00039f500)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1577 +0x35c
+easycode/internal/app.TestResumeRepairsHalfLineOnceAndKeepsCommittedHistory(0xc00039f500)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/app/resume_e2e_test.go:621 +0x34
+testing.tRunner(0xc00039f500, 0x101fb7640)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1792 +0x184
+created by testing.(*T).Run in goroutine 1
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1851 +0x688
+
+goroutine 15358 [select]:
+easycode/internal/runtime.(*AgentLoop).Run(0xc0004065a0, {0x101fc6e00, 0xc000060370})
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/runtime/agent_loop.go:737 +0x7cc
+easycode/internal/runtime.(*ChatSession).Start.func1.2()
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/runtime/session.go:126 +0x50
+created by easycode/internal/runtime.(*ChatSession).Start.func1 in goroutine 15356
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/runtime/session.go:126 +0x234
+
+goroutine 15367 [runnable]:
+encoding/json.stateInString(0xc000276ac0, 0x78)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/encoding/json/scanner.go:337 +0x27c
+encoding/json.(*Decoder).readValue(0xc000276a00)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/encoding/json/stream.go:103 +0x25c
+encoding/json.(*Decoder).Decode(0xc000276a00, {0x101e3c240, 0xc005c58170})
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/encoding/json/stream.go:63 +0x88
+encoding/json.(*Decoder).Token(0xc000276a00)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/encoding/json/stream.go:454 +0x778
+easycode/internal/codec.scanValue(0xc000276a00, 0x1, 0x0, 0x0)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/codec/validation.go:37 +0x40
+easycode/internal/codec.scanValue(0xc000276a00, 0x0, 0x0, 0x0)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/codec/validation.go:62 +0x36c
+easycode/internal/codec.validateJSONDepth({0xc001962000, 0xfffbf, 0x100000}, 0x0, 0x0)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/codec/validation.go:30 +0x1f4
+easycode/internal/codec.ValidateJSON(...)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/codec/validation.go:14
+easycode/internal/codec.ValidateObjectFields({0xc001962000, 0xfffbf, 0x100000}, {0xc00043e3e0, 0x2, 0x100e5d018?})
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/codec/object_fields.go:12 +0x54
+easycode/internal/codec.DecodeObject({0xc001962000, 0xfffbf, 0x100000}, {0x101e52760, 0xc000d8d9c0}, {0xc00043e3e0, 0x2, 0x2})
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/codec/validation.go:82 +0x64
+easycode/internal/tool.DecodeWriteInput({0xc001962000, 0xfffbf, 0x100000})
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/tool/write_input.go:82 +0x164
+easycode/internal/tool.CatalogSnapshot.DecodeReadyCall({{_, _, _}, {{_, _, _}}, {_, _}}, {_, _}, ...)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/tool/catalog.go:574 +0x6d0
+easycode/internal/provider/anthropic.(*streamReducer).reduceBlockStop(_, _)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/provider/anthropic/reducer.go:316 +0x548
+easycode/internal/provider/anthropic.(*streamReducer).reduce(_, {{_, _}, {_, _}, {_, _}})
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/provider/anthropic/reducer.go:126 +0xadc
+easycode/internal/provider/anthropic.(*Conversation).consumeStream(0xc0002e4000, {0x101fc6e00, 0xc000060230}, 0xc000055dd0, {{0xc0006e8c08, 0x12, 0x12}, {{0xc0005f6000, 0x3617, 0x3800}}, ...}, ...)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/provider/anthropic/provider.go:253 +0x2a4
+created by easycode/internal/provider/anthropic.(*Conversation).Stream in goroutine 15385
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/provider/anthropic/provider.go:211 +0x1458
+
+goroutine 15362 [chan receive]:
+easycode/internal/app.TestWriteSSEChunksCancellationEOFAndLimitsPrecedeSideEffects.func1(0xc00039efc0)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/app/write_stream_test.go:111 +0x810
+testing.tRunner(0xc00039efc0, 0xc0000a2380)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1792 +0x184
+created by testing.(*T).Run in goroutine 15028
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1851 +0x688
+
+goroutine 13315 [chan receive, 1 minutes]:
+testing.(*T).Parallel(0xc000729500)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1577 +0x35c
+easycode/internal/app.TestSessionServiceRejectsUnknownThreadWithoutCreatingReplacement(0xc000729500)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/app/session_service_test.go:587 +0x34
+testing.tRunner(0xc000729500, 0x101fb7760)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1792 +0x184
+created by testing.(*T).Run in goroutine 1
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1851 +0x688
+
+goroutine 15028 [chan receive]:
+testing.(*T).Run(0xc00039fc00, {0xc000198620, 0x19}, 0xc0000a2380)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1859 +0x6a4
+easycode/internal/app.TestWriteSSEChunksCancellationEOFAndLimitsPrecedeSideEffects(0xc00039fc00)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/app/write_stream_test.go:26 +0x260
+testing.tRunner(0xc00039fc00, 0x101fb7828)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1792 +0x184
+created by testing.(*T).Run in goroutine 1
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1851 +0x688
+
+goroutine 15385 [chan receive]:
+easycode/internal/runtime.(*Runtime).consumeProviderStream(0xc0003fb008, {0x101fc6e00, 0xc000060140}, _, _, _, {_, _})
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/runtime/runtime.go:580 +0xc0
+easycode/internal/runtime.(*Runtime).runProviderSample(_, {_, _}, _, {_, _}, {{{0x0, 0x0, 0x0}, {0x0, ...}, ...}, ...})
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/runtime/runtime.go:660 +0x394
+easycode/internal/runtime.(*Runtime).runTurn(0xc0003fb008, {0x101fc6e00, 0xc000060140}, {0xc00037b680, 0x1, 0x1}, {0x101fc4040, 0xc0003aec48}, 0xc0003aec60)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/runtime/runtime.go:322 +0xaf4
+easycode/internal/runtime.(*agentLoopRunState).startTurn.func1()
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/runtime/agent_loop.go:368 +0x314
+created by easycode/internal/runtime.(*agentLoopRunState).startTurn in goroutine 15358
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/runtime/agent_loop.go:364 +0x32c
+
+goroutine 12955 [chan receive, 2 minutes]:
+testing.(*T).Parallel(0xc00039ee00)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1577 +0x35c
+easycode/internal/app.TestResumeWithDifferentCWDAndRefreshedConnectionDoesNotChangeProcessCWD(0xc00039ee00)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/app/resume_e2e_test.go:488 +0x34
+testing.tRunner(0xc00039ee00, 0x101fb7650)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1792 +0x184
+created by testing.(*T).Run in goroutine 1
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1851 +0x688
+
+goroutine 13271 [chan receive, 1 minutes]:
+testing.(*T).Parallel(0xc00039f880)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1577 +0x35c
+easycode/internal/app.TestSessionServiceMismatchDoesNotModifyJournalOrRestoreProvider(0xc00039f880)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/app/session_service_test.go:135 +0x34
+testing.tRunner(0xc00039f880, 0x101fb7748)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1792 +0x184
+created by testing.(*T).Run in goroutine 1
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1851 +0x688
+
+goroutine 15363 [IO wait]:
+internal/poll.runtime_pollWait(0x129186498, 0x72)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/runtime/netpoll.go:351 +0xa0
+internal/poll.(*pollDesc).wait(0xc000236020, 0x72, 0x0)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/internal/poll/fd_poll_runtime.go:84 +0xb8
+internal/poll.(*pollDesc).waitRead(...)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/internal/poll/fd_poll_runtime.go:89
+internal/poll.(*FD).Accept(0xc000236000)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/internal/poll/fd_unix.go:620 +0x3a8
+net.(*netFD).accept(0xc000236000)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/net/fd_unix.go:172 +0x38
+net.(*TCPListener).accept(0xc00091c180)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/net/tcpsock_posix.go:159 +0x40
+net.(*TCPListener).Accept(0xc00091c180)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/net/tcpsock.go:380 +0x68
+net/http.(*Server).Serve(0xc000326300, {0x101fc67a0, 0xc00091c180})
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/net/http/server.go:3424 +0x488
+net/http/httptest.(*Server).goServe.func1()
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/net/http/httptest/server.go:311 +0xb4
+created by net/http/httptest.(*Server).goServe in goroutine 15362
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/net/http/httptest/server.go:309 +0x9c
+
+goroutine 15389 [select]:
+net/http.(*persistConn).writeLoop(0xc0000d97a0)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/net/http/transport.go:2593 +0x120
+created by net/http.(*Transport).dialConn in goroutine 15386
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/net/http/transport.go:1948 +0x21f8
+
+goroutine 15366 [select]:
+easycode/internal/provider/transport.superviseSSE.func2()
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/provider/transport/sse.go:112 +0x388
+created by easycode/internal/provider/transport.superviseSSE in goroutine 15385
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/provider/transport/sse.go:68 +0x450
+
+goroutine 11128 [chan receive, 4 minutes]:
+testing.(*T).Parallel(0xc000729180)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1577 +0x35c
+easycode/internal/app.TestResumeUsesEquivalentSnapshotFromCurrentAbsoluteCWD(0xc000729180)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/app/project_instructions_test.go:186 +0x34
+testing.tRunner(0xc000729180, 0x101fb7648)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1792 +0x184
+created by testing.(*T).Run in goroutine 1
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1851 +0x688
+
+goroutine 12956 [chan receive, 2 minutes]:
+testing.(*T).Parallel(0xc00039f340)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1577 +0x35c
+easycode/internal/app.TestCancelledSampleRetainsCommittedInputAfterResume(0xc00039f340)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/app/resume_e2e_test.go:547 +0x34
+testing.tRunner(0xc00039f340, 0x101fb7208)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1792 +0x184
+created by testing.(*T).Run in goroutine 1
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1851 +0x688
+
+goroutine 15388 [select]:
+net/http.(*persistConn).readLoop(0xc0000d97a0)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/net/http/transport.go:2398 +0xf68
+created by net/http.(*Transport).dialConn in goroutine 15386
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/net/http/transport.go:1947 +0x218c
+
+goroutine 15356 [chan receive]:
+easycode/internal/runtime.(*ChatSession).dispatchOutputs(0xc000236680)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/runtime/session.go:246 +0x10c
+easycode/internal/runtime.(*ChatSession).Start.func1()
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/runtime/session.go:127 +0x23c
+created by easycode/internal/runtime.(*ChatSession).Start in goroutine 15362
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/runtime/session.go:122 +0x57c
+
+goroutine 15365 [select]:
+easycode/internal/provider/transport.parseSSE.func1()
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/provider/transport/sse.go:156 +0x2a0
+easycode/internal/provider/transport.parseSSE({0x101fc6e00, 0xc000450140}, {0x101fc10e0, 0xc00091c240}, 0x400000, 0xc00067ee70, 0xc00026c850)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/provider/transport/sse.go:179 +0x494
+easycode/internal/provider/transport.superviseSSE.func1()
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/provider/transport/sse.go:61 +0x100
+created by easycode/internal/provider/transport.superviseSSE in goroutine 15385
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/provider/transport/sse.go:59 +0x220
+
+goroutine 11127 [chan receive, 4 minutes]:
+testing.(*T).Parallel(0xc000728fc0)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1577 +0x35c
+easycode/internal/app.TestProjectInstructionsAreStartupScopedAndNeverJournaled(0xc000728fc0)
+	/Users/cutejiuge/.codex/worktrees/293f/easycode/internal/app/project_instructions_test.go:72 +0x34
+testing.tRunner(0xc000728fc0, 0x101fb7538)
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1792 +0x184
+created by testing.(*T).Run in goroutine 1
+	/Users/cutejiuge/.local/share/mise/installs/go/1.24.13/src/testing/testing.go:1851 +0x688
+FAIL	easycode/internal/app	600.507s
+ok  	easycode/internal/architecture	17.030s
+ok  	easycode/internal/codec	2.744s
+ok  	easycode/internal/config	1.965s
+ok  	easycode/internal/context	2.638s
+ok  	easycode/internal/context/estimate	1.399s
+ok  	easycode/internal/context/projectinstructions	1.402s
+ok  	easycode/internal/domain	3.227s
+ok  	easycode/internal/executor/process	1.405s
+?   	easycode/internal/extension	[no test files]
+ok  	easycode/internal/extension/hook	1.729s
+ok  	easycode/internal/extension/localfile	1.373s
+?   	easycode/internal/extension/mcp	[no test files]
+ok  	easycode/internal/extension/plugin	1.458s
+ok  	easycode/internal/extension/skill	4.592s
+ok  	easycode/internal/fault	1.356s
+ok  	easycode/internal/headless	8.869s
+ok  	easycode/internal/protocol	3.238s
+ok  	easycode/internal/provider	5.680s
+ok  	easycode/internal/provider/anthropic	72.916s
+ok  	easycode/internal/provider/openai	60.468s
+ok  	easycode/internal/provider/transport	1.744s
+ok  	easycode/internal/runtime	64.694s
+ok  	easycode/internal/secret	1.335s
+ok  	easycode/internal/session	151.545s
+ok  	easycode/internal/session/artifact	3.009s
+ok  	easycode/internal/session/catalog	20.472s
+?   	easycode/internal/subagent	[no test files]
+?   	easycode/internal/telemetry	[no test files]
+ok  	easycode/internal/tool	3.748s
+ok  	easycode/internal/tool/builtin	9.621s
+ok  	easycode/internal/tui	15.728s
+FAIL
+make: *** [test-race] Error 1

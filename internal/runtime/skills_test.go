@@ -9,7 +9,17 @@ import (
 
 func TestExplicitSkillPermissionRequiresDurableInput(t *testing.T) {
 	source, _ := domain.NewSkillSource("project", ".", "easycode")
-	attachment, _ := domain.NewSkillAttachment(source, "demo", domain.SkillDigest("body"), "", "frozen body")
+	testExplicitSkillPermissionRequiresDurableInput(t, source, "demo")
+}
+
+func TestPluginExplicitSkillPermissionRequiresDurableInput(t *testing.T) {
+	source, _ := domain.NewSkillSource("plugin", "qa", "codex")
+	testExplicitSkillPermissionRequiresDurableInput(t, source, "qa:demo")
+}
+
+func testExplicitSkillPermissionRequiresDurableInput(t *testing.T, source domain.SkillSource, name string) {
+	t.Helper()
+	attachment, _ := domain.NewSkillAttachment(source, name, domain.SkillDigest("body"), "", "frozen body")
 	for _, fail := range []bool{false, true} {
 		t.Run(map[bool]string{false: "committed", true: "sync failure"}[fail], func(t *testing.T) {
 			journal := &startedFailureJournal{}
@@ -18,7 +28,7 @@ func TestExplicitSkillPermissionRequiresDurableInput(t *testing.T) {
 				journal.poisonOnFailure = true
 			}
 			runtime := newTestRuntime(t, &fakeConversation{stream: fixedStream()}, journal)
-			inputs := runtimeInputs("/demo")
+			inputs := runtimeInputs("/" + name)
 			inputs[0], _ = inputs[0].WithSkillAttachment(attachment)
 			if len(runtime.explicitSkills) != 0 {
 				t.Fatal("queued input granted permission")

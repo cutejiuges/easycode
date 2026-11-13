@@ -1,0 +1,109 @@
+{
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "binary_cli_cases": [
+    {
+      "family": "openai",
+      "format": "easycode",
+      "requests": 1,
+      "explicit_content": true,
+      "invalid_source_isolated": true
+    },
+    {
+      "family": "openai",
+      "format": "claude",
+      "requests": 1,
+      "explicit_content": true,
+      "invalid_source_isolated": true
+    },
+    {
+      "family": "openai",
+      "format": "codex",
+      "requests": 1,
+      "explicit_content": true,
+      "invalid_source_isolated": true
+    },
+    {
+      "family": "openai",
+      "format": "agentplugins",
+      "requests": 1,
+      "explicit_content": true,
+      "invalid_source_isolated": true
+    },
+    {
+      "family": "anthropic",
+      "format": "easycode",
+      "requests": 1,
+      "explicit_content": true,
+      "invalid_source_isolated": true
+    },
+    {
+      "family": "anthropic",
+      "format": "claude",
+      "requests": 1,
+      "explicit_content": true,
+      "invalid_source_isolated": true
+    },
+    {
+      "family": "anthropic",
+      "format": "codex",
+      "requests": 1,
+      "explicit_content": true,
+      "invalid_source_isolated": true
+    },
+    {
+      "family": "anthropic",
+      "format": "agentplugins",
+      "requests": 1,
+      "explicit_content": true,
+      "invalid_source_isolated": true
+    }
+  ],
+  "cases": [
+    {
+      "no_color": false,
+      "requests": 2,
+      "draft_restored": true,
+      "reserved_skill": true,
+      "paste_isolated": true,
+      "active_stop": true,
+      "sizes": [
+        [
+          80,
+          24
+        ],
+        [
+          28,
+          10
+        ],
+        [
+          8,
+          2
+        ]
+      ],
+      "terminal_restored": true
+    },
+    {
+      "no_color": true,
+      "requests": 2,
+      "draft_restored": true,
+      "reserved_skill": true,
+      "paste_isolated": true,
+      "active_stop": true,
+      "sizes": [
+        [
+          80,
+          24
+        ],
+        [
+          28,
+          10
+        ],
+        [
+          8,
+          2
+        ]
+      ],
+      "terminal_restored": true
+    }
+  ]
+}

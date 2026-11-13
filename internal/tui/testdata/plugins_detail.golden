@@ -1,0 +1,8 @@
+Plugin details · Skills only
+Enter: use in composer · Esc: back · Ctrl+C: stop
+qa 0.1.0 · codex [partial] · 1 skills
+Review workflows
+> qa:review [scope] [available · manual] Review changes
+  qa:broken  [invalid]
+  skill_unsupported_field
+qa:broken skill_unsupported_field

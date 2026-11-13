@@ -11,15 +11,25 @@ import (
 )
 
 func TestSkillAttachmentFrozenNativeRestore(t *testing.T) {
+	source, _ := domain.NewSkillSource("project", ".", "easycode")
+	testSkillAttachmentFrozenNativeRestore(t, source, "demo", "testdata/skill_input.golden.json")
+}
+
+func TestPluginSkillAttachmentFrozenNativeRestore(t *testing.T) {
+	source, _ := domain.NewSkillSource("plugin", "qa", "codex")
+	testSkillAttachmentFrozenNativeRestore(t, source, "qa:demo", "testdata/plugin_skill_input.golden.json")
+}
+
+func testSkillAttachmentFrozenNativeRestore(t *testing.T, source domain.SkillSource, name, goldenPath string) {
+	t.Helper()
 	instance, err := New(Config{BaseURL: "https://example.invalid", APIKey: secret.New("fixture-key"), Model: "fixture-model"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer instance.Close()
 	conversation := testConversation(t, instance)
-	source, _ := domain.NewSkillSource("project", ".", "easycode")
-	a, _ := domain.NewSkillAttachment(source, "demo", domain.SkillDigest("source"), "args", "Frozen skill instructions")
-	user, _ := domain.NewUserInput("01900000-0000-7000-8000-000000000011", " /demo args ")
+	a, _ := domain.NewSkillAttachment(source, name, domain.SkillDigest("source"), "args", "Frozen skill instructions")
+	user, _ := domain.NewUserInput("01900000-0000-7000-8000-000000000011", " /"+name+" args ")
 	user, err = user.WithSkillAttachment(a)
 	if err != nil {
 		t.Fatal(err)
@@ -33,7 +43,7 @@ func TestSkillAttachmentFrozenNativeRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	golden, err := os.ReadFile("testdata/skill_input.golden.json")
+	golden, err := os.ReadFile(goldenPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +72,7 @@ func TestSkillAttachmentFrozenNativeRestore(t *testing.T) {
 	if m.Text != user.Text() || !m.HasSkill || m.Skill != a {
 		t.Fatal("raw input and attachment projection mismatch")
 	}
-	catalogMetadata, _ := domain.NewSkillMetadata(source, "demo", "on demand", "", true, false)
+	catalogMetadata, _ := domain.NewSkillMetadata(source, name, "on demand", "", true, false)
 	catalog, _ := domain.NewSkillCatalog([]domain.SkillMetadata{catalogMetadata})
 	sampling, _ := provider.NewSamplingInput().WithToolCatalog(testOpenAIToolCatalog(t))
 	sampling, _ = sampling.WithSkillCatalog(catalog)

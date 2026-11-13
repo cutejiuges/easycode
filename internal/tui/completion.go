@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	maxCompletionCandidates = domain.MaxSkills + 5
+	maxCompletionCandidates = domain.MaxSkills + 6
 	maxCompletionBytes      = 2 << 20
 	maxCompletionLineBytes  = 16 << 10
 )
@@ -52,6 +52,7 @@ func builtinCompletionCandidates() []completionCandidate {
 		{id: completionIdentity{kind: completionBuiltin, name: "compact"}, description: "Compact conversation context", hint: "[instructions]"},
 		{id: completionIdentity{kind: completionBuiltin, name: "context"}, description: "Inspect context budget"},
 		{id: completionIdentity{kind: completionBuiltin, name: "hooks"}, description: "Browse command hooks"},
+		{id: completionIdentity{kind: completionBuiltin, name: "plugins"}, description: "Browse local plugins"},
 		{id: completionIdentity{kind: completionBuiltin, name: "skills"}, description: "Browse local skills"},
 	}
 }
@@ -116,13 +117,20 @@ func findCompletionTarget(text string, cursor int) (completionTarget, bool) {
 		return completionTarget{}, false
 	}
 	end := start + 1
+	segment, colon := 0, false
 	for end < len(text) {
 		b := text[end]
 		if b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '-' {
 			end++
-			if end-start > 65 {
+			segment++
+			if segment > 64 {
 				return completionTarget{}, false
 			}
+			continue
+		}
+		if b == ':' && !colon && segment > 0 {
+			colon, segment = true, 0
+			end++
 			continue
 		}
 		r, _ := utf8.DecodeRuneInString(text[end:])
@@ -185,7 +193,7 @@ func (c *completionCatalog) match(target completionTarget) []completionMatch {
 
 func isBuiltinCompletionName(name string) bool {
 	switch name {
-	case "cache", "compact", "context", "hooks", "skills":
+	case "cache", "compact", "context", "hooks", "skills", "plugins":
 		return true
 	}
 	return false

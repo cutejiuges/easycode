@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"easycode/internal/config"
+	"easycode/internal/extension/plugin"
 	"easycode/internal/fault"
 	"easycode/internal/session"
 	"easycode/internal/tui"
@@ -17,6 +18,10 @@ import (
 
 // RunSessionPicker 冻结配置和目录，在单一终端程序内发现并恢复会话。
 func RunSessionPicker(ctx context.Context, options Options, all bool) Outcome {
+	if err := plugin.ValidateDirectories(options.PluginDirs); err != nil {
+		return usageFailure(err.Error())
+	}
+	options.PluginDirs = append([]string(nil), options.PluginDirs...)
 	if options.Input == nil || options.Output == nil {
 		return usageFailure("session picker input and output are required")
 	}
@@ -45,7 +50,7 @@ func RunSessionPicker(ctx context.Context, options Options, all bool) Outcome {
 	}
 	location := time.Now().Location()
 	_, _ = time.Now().In(location).Zone()
-	return runPickerProgram(ctx, options, tui.PickerConfig{Location: location, Family: applicationConfig.Provider.Family, Wire: wire, Model: applicationConfig.Provider.Model, CWD: cwd, All: all}, newPickerExecutor(applicationConfig, paths, cwd))
+	return runPickerProgram(ctx, options, tui.PickerConfig{Location: location, Family: applicationConfig.Provider.Family, Wire: wire, Model: applicationConfig.Provider.Model, CWD: cwd, All: all}, newPickerExecutor(applicationConfig, paths, cwd, options.PluginDirs))
 }
 
 type pickerOutput struct {

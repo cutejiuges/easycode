@@ -138,17 +138,49 @@ func completionCacheSnapshot(t *testing.T, ctx context.Context, resources *chatR
 }
 
 func TestCompletionManualAndRestoredRequestsBothProviders(t *testing.T) {
+	testCompletionManualAndRestoredRequests(t, false, "completion")
+}
+
+func TestPluginBrowserManualAndRestoredRequestsBothProviders(t *testing.T) {
+	for _, selection := range []string{"completion", "plugins", "skills"} {
+		t.Run(selection, func(t *testing.T) { testCompletionManualAndRestoredRequests(t, true, selection) })
+	}
+}
+
+func testCompletionManualAndRestoredRequests(t *testing.T, pluginPackage bool, selection string) {
+	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		for _, manualOnly := range []bool{false, true} {
 			for _, inputCase := range []struct{ name, args string }{{"ascii", "exact args"}, {"unicode", "\u0301中文 👩‍💻 args"}} {
 				t.Run(fmt.Sprintf("%s/manual-only-%t/%s", family, manualOnly, inputCase.name), func(t *testing.T) {
 					args := inputCase.args
-					inputText := "$review " + args
+					name, sigil := "review", "$"
+					var pluginDirs []string
+					if pluginPackage {
+						name = "codexqa:review"
+						if selection != "completion" {
+							sigil = "/"
+						}
+					}
+					inputText := sigil + name + " " + args
 					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 					defer cancel()
 					workspace := t.TempDir()
-					writeCompletionSkill(t, workspace, manualOnly, "Frozen $ARGUMENTS")
+					if pluginPackage {
+						pack := appPluginFixture(t, "codex")
+						main := filepath.Join(pack, "skills", "directory-name", "SKILL.md")
+						text := fmt.Sprintf("---\nname: review\ndescription: Review local changes\nargument-hint: '[args]'\ndisable-model-invocation: %t\n---\nFrozen $ARGUMENTS", manualOnly)
+						if err := os.WriteFile(main, []byte(text), 0600); err != nil {
+							t.Fatal(err)
+						}
+						if err := os.WriteFile(filepath.Join(pack, "skills", "directory-name", "agents", "openai.yaml"), []byte(fmt.Sprintf("policy: {allow_implicit_invocation: %t}\n", !manualOnly)), 0600); err != nil {
+							t.Fatal(err)
+						}
+						pluginDirs = []string{pack}
+					} else {
+						writeCompletionSkill(t, workspace, manualOnly, "Frozen $ARGUMENTS")
+					}
 					var mu sync.Mutex
 					var requests [][]byte
 					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -161,7 +193,7 @@ func TestCompletionManualAndRestoredRequestsBothProviders(t *testing.T) {
 						requests = append(requests, body)
 						mu.Unlock()
 						n := 1
-						if bytes.Contains(body, []byte("$review")) {
+						if bytes.Contains(body, []byte(sigil+name)) {
 							n = 2
 						}
 						if bytes.Contains(body, []byte("follow-up")) {
@@ -176,7 +208,10 @@ func TestCompletionManualAndRestoredRequestsBothProviders(t *testing.T) {
 					}))
 					defer server.Close()
 					cfg := cacheFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, APIKey: secret.New("completion-fixture"), Model: "fixture-model"}}, true)
-					seed, err := openChatResources(ctx, cfg, filepath.Join(t.TempDir(), "sessions"), "", workspace)
+					open := func(root, thread string) (*chatResources, error) {
+						return openChatResourcesWithHooks(ctx, cfg, dataPaths{sessionRoot: root}, thread, false, workspace, chatResourceHooks{pluginDirs: pluginDirs})
+					}
+					seed, err := open(filepath.Join(t.TempDir(), "sessions"), "")
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -188,7 +223,7 @@ func TestCompletionManualAndRestoredRequestsBothProviders(t *testing.T) {
 					}
 					var model tea.Model = seedModel
 					completionKey(t, &model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("$")})
-					if !strings.Contains(model.View(), "$review") {
+					if !strings.Contains(model.View(), "$"+name) {
 						t.Fatal("fresh assembly omitted explicit Skill")
 					}
 					completionKey(t, &model, tea.KeyMsg{Type: tea.KeyBackspace})
@@ -209,7 +244,7 @@ func TestCompletionManualAndRestoredRequestsBothProviders(t *testing.T) {
 					var models [2]tea.Model
 					var snapshots [2]protocol.CacheSnapshotPayload
 					for branch := 0; branch < 2; branch++ {
-						res, err := openChatResources(ctx, cfg, roots[branch], string(thread), workspace)
+						res, err := open(roots[branch], string(thread))
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -230,10 +265,22 @@ func TestCompletionManualAndRestoredRequestsBothProviders(t *testing.T) {
 						mu.Unlock()
 						if branch == 0 {
 							completionKey(t, &models[branch], tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(inputText), Paste: true})
+						} else if pluginPackage && selection != "completion" {
+							completionKey(t, &models[branch], tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/" + selection)})
+							completionKey(t, &models[branch], tea.KeyMsg{Type: tea.KeyEnter})
+							if selection == "plugins" {
+								completionKey(t, &models[branch], tea.KeyMsg{Type: tea.KeyEnter})
+							}
+							completionKey(t, &models[branch], tea.KeyMsg{Type: tea.KeyEnter})
+							completionKey(t, &models[branch], tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(args), Paste: true})
 						} else {
-							completionKey(t, &models[branch], tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("$rev " + args)})
+							prefix := "$rev"
+							if pluginPackage {
+								prefix = "$codexqa:rev"
+							}
+							completionKey(t, &models[branch], tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(prefix + " " + args)})
 							completionKey(t, &models[branch], tea.KeyMsg{Type: tea.KeyCtrlA})
-							for i := 0; i < 4; i++ {
+							for i := 0; i < len(prefix); i++ {
 								completionKey(t, &models[branch], tea.KeyMsg{Type: tea.KeyRight})
 							}
 							for _, key := range []tea.KeyMsg{{Type: tea.KeyEsc}, {Type: tea.KeyTab}, {Type: tea.KeyTab}} {
@@ -283,7 +330,7 @@ func TestCompletionManualAndRestoredRequestsBothProviders(t *testing.T) {
 					if err := resources[1].close(ctx); err != nil {
 						t.Fatal(err)
 					}
-					resumed, err := openChatResources(ctx, cfg, roots[1], string(thread), workspace)
+					resumed, err := open(roots[1], string(thread))
 					if err != nil {
 						t.Fatal(err)
 					}

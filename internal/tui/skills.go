@@ -34,7 +34,7 @@ func (model Model) handleSkillsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(model.skills) > 0 {
 			entry := model.skills[model.skillSelection]
 			if explicitSkillEntry(entry) {
-				text := "/" + entry.Name + " "
+				text := skillInvocationText(entry.Name)
 				if err := model.composer.replace(0, len(model.composer.text), text); err == nil {
 					model.skillsOpen = false
 				}
@@ -42,6 +42,13 @@ func (model Model) handleSkillsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return model, nil
+}
+
+func skillInvocationText(name string) string {
+	if isBuiltinCompletionName(name) {
+		return "$" + name + " "
+	}
+	return "/" + name + " "
 }
 func (model Model) renderSkills() string {
 	width, height := model.widthOrDefault(), model.heightOrDefault()

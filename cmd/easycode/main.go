@@ -49,6 +49,7 @@ func run(
 	}
 	flags := flag.NewFlagSet("easycode", flag.ContinueOnError)
 	flags.SetOutput(errorOutput)
+	pluginDirs := pluginDirectoryFlags(flags)
 	showVersion := flags.Bool("version", false, "print version and exit")
 	printMode := flags.Bool("print", false, "print only the final assistant text")
 	jsonMode := flags.Bool("json", false, "stream versioned JSONL events")
@@ -60,8 +61,13 @@ func run(
 		"",
 		"configuration file selected by --config (default: "+config.DefaultPathDisplay+")",
 	)
-	if err := flags.Parse(arguments); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
+	parseErr := flags.Parse(arguments)
+	if pluginDirs.err != nil {
+		_, _ = fmt.Fprintln(errorOutput, "error: "+pluginDirs.err.Error())
+		return 2
+	}
+	if parseErr != nil {
+		if errors.Is(parseErr, flag.ErrHelp) {
 			return 0
 		}
 		return 2
@@ -127,6 +133,7 @@ func run(
 		Mode:            mode,
 		Prompt:          prompt,
 		ConfigPath:      *configPath,
+		PluginDirs:      pluginDirs.Values(),
 		ResumeThreadID:  *resumeThreadID,
 		ContinueSession: *continueSession,
 		Input:           input,

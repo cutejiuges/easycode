@@ -108,6 +108,7 @@ func (session *ChatSession) Start(ctx context.Context) error {
 			return ctx.Err()
 		}
 	}
+	session.runtime.markSkillsStarted()
 	loop, err := NewAgentLoop(session.runtime, DefaultAgentLoopConfig())
 	if err != nil {
 		session.mu.Unlock()

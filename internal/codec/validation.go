@@ -11,25 +11,43 @@ import (
 
 // ValidateJSON 拒绝重复键、尾随内容和有损 Unicode，保留合法扩展字段。
 func ValidateJSON(data []byte) error {
+	return validateJSONDepth(data, 0, false)
+}
+
+// ValidateBoundedJSON 在递归解析前施加大小、深度和 null 策略。
+func ValidateBoundedJSON(data []byte, maxBytes, maxDepth int, rejectNull bool) error {
+	if maxBytes < 1 || maxDepth < 1 || len(data) > maxBytes {
+		return errors.New("JSON exceeds limit")
+	}
+	return validateJSONDepth(data, maxDepth, rejectNull)
+}
+func validateJSONDepth(data []byte, maxDepth int, rejectNull bool) error {
 	if !utf8.Valid(data) || !losslessJSONUnicode(data) {
 		return errors.New("invalid JSON Unicode")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
-	if err := scanValue(decoder); err != nil {
+	if err := scanValue(decoder, 0, maxDepth, rejectNull); err != nil {
 		return err
 	}
 	return requireJSONEOF(decoder)
 }
 
-func scanValue(decoder *json.Decoder) error {
+func scanValue(decoder *json.Decoder, depth, maxDepth int, rejectNull bool) error {
 	token, err := decoder.Token()
 	if err != nil {
 		return err
 	}
+	if token == nil && rejectNull {
+		return errors.New("JSON null is not supported")
+	}
 	delimiter, ok := token.(json.Delim)
 	if !ok {
 		return nil
+	}
+	depth++
+	if maxDepth > 0 && depth > maxDepth {
+		return errors.New("JSON exceeds depth limit")
 	}
 	switch delimiter {
 	case '{':
@@ -41,13 +59,13 @@ func scanValue(decoder *json.Decoder) error {
 				return errors.New("duplicate or invalid JSON field")
 			}
 			seen[name] = true
-			if err := scanValue(decoder); err != nil {
+			if err := scanValue(decoder, depth, maxDepth, rejectNull); err != nil {
 				return err
 			}
 		}
 	case '[':
 		for decoder.More() {
-			if err := scanValue(decoder); err != nil {
+			if err := scanValue(decoder, depth, maxDepth, rejectNull); err != nil {
 				return err
 			}
 		}

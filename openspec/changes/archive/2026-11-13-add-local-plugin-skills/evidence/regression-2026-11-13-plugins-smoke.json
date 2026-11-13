@@ -1,0 +1,191 @@
+{
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "binary_cli_cases": [
+    {
+      "family": "openai",
+      "format": "easycode",
+      "requests": 5,
+      "explicit_content": true,
+      "invalid_source_isolated": true,
+      "model_main": "loaded",
+      "supporting_resource": true,
+      "offline_resume": 2
+    },
+    {
+      "family": "openai",
+      "format": "claude",
+      "requests": 5,
+      "explicit_content": true,
+      "invalid_source_isolated": true,
+      "model_main": "loaded",
+      "supporting_resource": true,
+      "offline_resume": 2
+    },
+    {
+      "family": "openai",
+      "format": "codex",
+      "requests": 5,
+      "explicit_content": true,
+      "invalid_source_isolated": true,
+      "model_main": "denied_by_policy",
+      "supporting_resource": true,
+      "offline_resume": 2
+    },
+    {
+      "family": "openai",
+      "format": "agentplugins",
+      "requests": 5,
+      "explicit_content": true,
+      "invalid_source_isolated": true,
+      "model_main": "loaded",
+      "supporting_resource": true,
+      "offline_resume": 2
+    },
+    {
+      "family": "anthropic",
+      "format": "easycode",
+      "requests": 5,
+      "explicit_content": true,
+      "invalid_source_isolated": true,
+      "model_main": "loaded",
+      "supporting_resource": true,
+      "offline_resume": 2
+    },
+    {
+      "family": "anthropic",
+      "format": "claude",
+      "requests": 5,
+      "explicit_content": true,
+      "invalid_source_isolated": true,
+      "model_main": "loaded",
+      "supporting_resource": true,
+      "offline_resume": 2
+    },
+    {
+      "family": "anthropic",
+      "format": "codex",
+      "requests": 5,
+      "explicit_content": true,
+      "invalid_source_isolated": true,
+      "model_main": "denied_by_policy",
+      "supporting_resource": true,
+      "offline_resume": 2
+    },
+    {
+      "family": "anthropic",
+      "format": "agentplugins",
+      "requests": 5,
+      "explicit_content": true,
+      "invalid_source_isolated": true,
+      "model_main": "loaded",
+      "supporting_resource": true,
+      "offline_resume": 2
+    }
+  ],
+  "cases": [
+    {
+      "family": "openai",
+      "no_color": false,
+      "requests": 2,
+      "provider_wire": true,
+      "turn_completed": true,
+      "draft_restored": true,
+      "reserved_skill": true,
+      "paste_isolated": true,
+      "active_stop": true,
+      "sizes": [
+        [
+          80,
+          24
+        ],
+        [
+          28,
+          10
+        ],
+        [
+          8,
+          2
+        ]
+      ],
+      "terminal_restored": true
+    },
+    {
+      "family": "openai",
+      "no_color": true,
+      "requests": 2,
+      "provider_wire": true,
+      "turn_completed": true,
+      "draft_restored": true,
+      "reserved_skill": true,
+      "paste_isolated": true,
+      "active_stop": true,
+      "sizes": [
+        [
+          80,
+          24
+        ],
+        [
+          28,
+          10
+        ],
+        [
+          8,
+          2
+        ]
+      ],
+      "terminal_restored": true
+    },
+    {
+      "family": "anthropic",
+      "no_color": false,
+      "requests": 2,
+      "provider_wire": true,
+      "turn_completed": true,
+      "draft_restored": true,
+      "reserved_skill": true,
+      "paste_isolated": true,
+      "active_stop": true,
+      "sizes": [
+        [
+          80,
+          24
+        ],
+        [
+          28,
+          10
+        ],
+        [
+          8,
+          2
+        ]
+      ],
+      "terminal_restored": true
+    },
+    {
+      "family": "anthropic",
+      "no_color": true,
+      "requests": 2,
+      "provider_wire": true,
+      "turn_completed": true,
+      "draft_restored": true,
+      "reserved_skill": true,
+      "paste_isolated": true,
+      "active_stop": true,
+      "sizes": [
+        [
+          80,
+          24
+        ],
+        [
+          28,
+          10
+        ],
+        [
+          8,
+          2
+        ]
+      ],
+      "terminal_restored": true
+    }
+  ]
+}
