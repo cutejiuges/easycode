@@ -203,8 +203,9 @@ func (o *pickerOwner) run(ctx context.Context) {
 		}
 	}
 }
-func newPickerExecutor(applicationConfig config.Config, paths dataPaths, cwd string) pickerExecutor {
+func newPickerExecutor(applicationConfig config.Config, paths dataPaths, cwd string, pluginDirs []string) pickerExecutor {
 	discovery := &pickerDiscovery{paths: paths, cwd: cwd}
+	pluginDirs = append([]string(nil), pluginDirs...)
 	return func(ctx context.Context, request tui.PickerRequest) pickerExecution {
 		result := tui.PickerResult{Request: request}
 		if ctx.Err() != nil {
@@ -226,7 +227,7 @@ func newPickerExecutor(applicationConfig config.Config, paths dataPaths, cwd str
 			}
 		case tui.PickerResume:
 			attempt := &recoveryAttempt{}
-			resources, err := openChatResourcesWithHooks(ctx, applicationConfig, paths, string(request.ThreadID), false, cwd, chatResourceHooks{interactiveApprovals: true, recovery: attempt})
+			resources, err := openChatResourcesWithHooks(ctx, applicationConfig, paths, string(request.ThreadID), false, cwd, chatResourceHooks{interactiveApprovals: true, recovery: attempt, pluginDirs: pluginDirs, pluginCWD: discovery.cwd})
 			if err != nil {
 				failure := fault.Project(err)
 				result.Error = string(failure.Code) + ": " + failure.Message

@@ -32,6 +32,12 @@ func NewSkillSource(scope, directory, kind string) (SkillSource, error) {
 	return s, s.Validate()
 }
 func (s SkillSource) Validate() error {
+	if s.Scope == "plugin" {
+		if !IsPluginKind(s.Kind) || ValidateSkillName(s.Directory) != nil {
+			return fmt.Errorf("invalid plugin skill source")
+		}
+		return nil
+	}
 	if s.Scope != "user" && s.Scope != "project" {
 		return fmt.Errorf("invalid skill scope")
 	}
@@ -90,7 +96,7 @@ func NewSkillMetadata(source SkillSource, name, description, hint string, user, 
 	return m, m.Validate()
 }
 func (m SkillMetadata) Validate() error {
-	if m.Source.Validate() != nil || ValidateSkillName(m.Name) != nil || !utf8.ValidString(m.Description) || strings.TrimSpace(m.Description) == "" || len(m.Description) > 1024 || !utf8.ValidString(m.ArgumentHint) || len(m.ArgumentHint) > 1024 {
+	if m.Source.ValidateName(m.Name) != nil || !utf8.ValidString(m.Description) || strings.TrimSpace(m.Description) == "" || len(m.Description) > 1024 || !utf8.ValidString(m.ArgumentHint) || len(m.ArgumentHint) > 1024 {
 		return fmt.Errorf("invalid skill metadata")
 	}
 	return nil
@@ -110,7 +116,7 @@ func NewSkillAttachment(source SkillSource, name, revision, args, content string
 	return a, a.Validate()
 }
 func (a SkillAttachment) Validate() error {
-	if a.Source.Validate() != nil || ValidateSkillName(a.Name) != nil || len(a.Revision) != 64 || strings.ToLower(a.Revision) != a.Revision {
+	if a.Source.ValidateName(a.Name) != nil || len(a.Revision) != 64 || strings.ToLower(a.Revision) != a.Revision {
 		return fmt.Errorf("invalid skill attachment")
 	}
 	if _, e := hex.DecodeString(a.Revision); e != nil {

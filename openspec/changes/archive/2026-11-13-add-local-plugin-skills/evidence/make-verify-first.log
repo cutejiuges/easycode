@@ -1,0 +1,45 @@
+Branch name policy tests passed.
+go vet ./...
+go tool staticcheck ./...
+go test ./...
+ok  	easycode/cmd/easycode	(cached)
+--- FAIL: TestSessionPreviewCurrentFixturesAreReadOnly (5.06s)
+    --- FAIL: TestSessionPreviewCurrentFixturesAreReadOnly/plugin_input_anthropic.jsonl (0.02s)
+        session_preview_test.go:79: preview validity=false: <nil> cleanup=false
+    --- FAIL: TestSessionPreviewCurrentFixturesAreReadOnly/plugin_input_openai.jsonl (0.03s)
+        session_preview_test.go:79: preview validity=false: <nil> cleanup=false
+FAIL
+FAIL	easycode/internal/app	114.780s
+ok  	easycode/internal/architecture	3.255s
+ok  	easycode/internal/codec	(cached)
+ok  	easycode/internal/config	1.334s
+ok  	easycode/internal/context	(cached)
+ok  	easycode/internal/context/estimate	1.252s
+ok  	easycode/internal/context/projectinstructions	1.249s
+ok  	easycode/internal/domain	(cached)
+ok  	easycode/internal/executor/process	(cached)
+?   	easycode/internal/extension	[no test files]
+ok  	easycode/internal/extension/hook	(cached)
+ok  	easycode/internal/extension/localfile	(cached)
+?   	easycode/internal/extension/mcp	[no test files]
+ok  	easycode/internal/extension/plugin	(cached)
+ok  	easycode/internal/extension/skill	(cached)
+ok  	easycode/internal/fault	(cached)
+ok  	easycode/internal/headless	1.352s
+ok  	easycode/internal/protocol	0.849s
+ok  	easycode/internal/provider	2.172s
+ok  	easycode/internal/provider/anthropic	(cached)
+ok  	easycode/internal/provider/openai	(cached)
+ok  	easycode/internal/provider/transport	0.703s
+ok  	easycode/internal/runtime	(cached)
+ok  	easycode/internal/secret	(cached)
+ok  	easycode/internal/session	(cached)
+ok  	easycode/internal/session/artifact	2.175s
+ok  	easycode/internal/session/catalog	2.348s
+?   	easycode/internal/subagent	[no test files]
+?   	easycode/internal/telemetry	[no test files]
+ok  	easycode/internal/tool	(cached)
+ok  	easycode/internal/tool/builtin	5.359s
+ok  	easycode/internal/tui	(cached)
+FAIL
+make: *** [test] Error 1

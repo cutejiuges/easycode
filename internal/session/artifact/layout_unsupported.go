@@ -5,6 +5,7 @@ package artifact
 import (
 	"context"
 	"errors"
+	"os"
 )
 
 // Layout 在缺少描述符绑定实现的平台上拒绝启动存储。
@@ -17,6 +18,10 @@ func OpenLayout(context.Context, string, string, []string, []string) (*Layout, e
 
 // Check 在不支持的平台上失败关闭。
 func (*Layout) Check(context.Context) error { return errors.New("unsafe_storage_layout") }
+
+func (*Layout) CheckSource(context.Context, *os.File) error {
+	return errors.New("unsafe_storage_layout")
+}
 
 // Close 不支持的平台没有已获取资源。
 func (*Layout) Close() error { return nil }

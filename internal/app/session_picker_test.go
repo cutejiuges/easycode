@@ -208,7 +208,7 @@ func TestPickerLateRealRecoveryReleasesLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	root, _, thread := installPreviewFixture(t, data)
-	execute := newPickerExecutor(config.Config{Provider: config.Provider{Family: domain.ProviderOpenAI, Model: "fixture-model", BaseURL: "https://example.invalid", APIKey: secret.New("fixture")}}, dataPaths{sessionRoot: root}, t.TempDir())
+	execute := newPickerExecutor(config.Config{Provider: config.Provider{Family: domain.ProviderOpenAI, Model: "fixture-model", BaseURL: "https://example.invalid", APIKey: secret.New("fixture")}}, dataPaths{sessionRoot: root}, t.TempDir(), nil)
 	restored := make(chan pickerExecution, 1)
 	release := make(chan struct{})
 	owner := newPickerOwner(func(ctx context.Context, r tui.PickerRequest) pickerExecution {
@@ -310,7 +310,7 @@ func TestPickerResumeReadsJournalAppendedAfterPreview(t *testing.T) {
 	if err != nil || !bytes.HasPrefix(appended, original) || bytes.Equal(appended, original) {
 		t.Fatal("writer did not append facts", err)
 	}
-	execute := newPickerExecutor(configuration, dataPaths{sessionRoot: root}, t.TempDir())
+	execute := newPickerExecutor(configuration, dataPaths{sessionRoot: root}, t.TempDir(), nil)
 	got := execute(ctx, tui.PickerRequest{ID: 1, Operation: tui.PickerResume, ThreadID: thread})
 	if got.resources == nil {
 		t.Fatal("fresh resume failed", got.result.Error)

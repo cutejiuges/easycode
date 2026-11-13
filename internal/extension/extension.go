@@ -1,26 +1,57 @@
-// Package extension 定义 Hooks、Skills、Plugins 和 MCP 的统一贡献边界。
+// Package extension 定义本轮真实消费的插件技能来源边界。
 package extension
 
-// TODO(P6): 扩展贡献与加载边界仅为扩展系统阶段保留，当前不得接入 Runtime/app；由后续 OpenSpec 同时提供真实消费者、验证与测试时启用，否则删除。
+import (
+	"context"
+	"easycode/internal/domain"
+	"easycode/internal/extension/localfile"
+)
 
-// Contribution 是扩展加载器生成的内部快照项。
+// SourceError 是来源边界只含稳定英文码的失败。
+type SourceError string
+
+func (e SourceError) Error() string { return string(e) }
+func (e SourceError) Code() string  { return string(e) }
+
+// SourceHandle 拥有一次来源借用及该次所有文件，Close 完成后才归还借用。
+type SourceHandle interface {
+	Read(context.Context, string, int) (localfile.Content, error)
+	Entries(context.Context, int) ([]localfile.Entry, error)
+	Identity() localfile.Identity
+	Close() error
+}
+
+// SourceOpener 显式验证冻结来源并打开一个受限相对目录。
+type SourceOpener interface {
+	Open(context.Context, string) (SourceHandle, error)
+}
+
+// Contribution 是经过 manifest 校验的单插件技能根快照。
 type Contribution struct {
-	Source     string
-	Revision   string
-	Skills     []string
-	Agents     []string
-	Hooks      []string
-	MCPServers []string
-	Commands   []string
+	Source   domain.SkillSource
+	Revision string
+	Roots    []string
+	Default  bool
+	Opener   SourceOpener
 }
 
-// Snapshot 是按稳定规则排序后的不可变扩展视图。
-type Snapshot struct {
-	Revision      string
-	Contributions []Contribution
+func (c Contribution) Clone() Contribution {
+	c.Roots = append([]string(nil), c.Roots...)
+	return c
 }
 
-// Loader 从受信任来源读取并校验扩展快照。
-type Loader interface {
-	Load() (Snapshot, error)
+// PluginSource 保留成功和失败 manifest 的安全身份，不包含宿主路径。
+type PluginSource struct {
+	ID, Kind, Version, Description, Code string
+	Argument                             int
+	Conflict                             bool
+}
+
+// PluginSummary 是 Skill 发现、冲突及目录纳入之后的最终汇总。
+type PluginSummary struct {
+	ID          string
+	Status      domain.PluginStatus
+	Available   int
+	Diagnostics []domain.PluginDiagnostic
+	Omitted     int
 }

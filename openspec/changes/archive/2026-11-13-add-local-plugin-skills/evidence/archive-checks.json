@@ -1,0 +1,36 @@
+{
+  "date": "2026-11-13",
+  "timezone": "Asia/Shanghai",
+  "change": "add-local-plugin-skills",
+  "schema": "spec-driven",
+  "archive": "openspec/changes/archive/2026-11-13-add-local-plugin-skills",
+  "artifacts": "all done",
+  "tasks": {
+    "complete": 45,
+    "total": 45
+  },
+  "syncedCapabilities": [
+    "extension/local-plugins",
+    "extension/local-skills",
+    "provider/native-history-persistence",
+    "tui/input-completion",
+    "tui/plugins"
+  ],
+  "deltaRequirements": 26,
+  "deltaScenarios": 107,
+  "mainSpecsValidation": {
+    "items": 58,
+    "passed": 58,
+    "failed": 0
+  },
+  "archiveMakeVerifyExitCode": 0,
+  "metadataPreserved": true,
+  "sourceFixtureSpecFilesUnchanged": 1285,
+  "relativeLinksChecked": 148,
+  "activeChangeAbsent": true,
+  "otherActiveChanges": [
+    "add-pre-tool-use-command-hooks"
+  ],
+  "nativeLinuxWindowsRun": false,
+  "realModelServiceRun": false
+}

@@ -86,7 +86,7 @@ EasyCode 是一个本地优先的 coding agent。产品体验主要参考 Claude
 
 ### 3.3 缓存优先
 
-所有可能进入请求前缀的内容都必须具有稳定顺序、稳定序列化和明确失效规则。缓存不是网络层的附加功能，而是 ContextPlanner、ToolCatalog、SkillCatalog、PluginManager 和 Provider Kernel 的共同约束。
+所有可能进入请求前缀的内容都必须具有稳定顺序、稳定序列化和明确失效规则。缓存是 ContextPlanner、ToolCatalog、SkillCatalog、插件来源快照和 Provider Kernel 的共同约束。
 
 ### 3.4 事件驱动，副作用集中
 
@@ -101,7 +101,7 @@ EasyCode 是一个本地优先的 coding agent。产品体验主要参考 Claude
 ### 3.6 安全默认值
 
 - API key 默认从环境变量读取，日志必须脱敏。
-- 项目级 hooks/plugins 首次启用需要信任确认。
+- 项目级命令 Hook 首次匹配需要独立信任确认。本地 Plugin 只按显式目录加载静态技能，不产生 Hook 信任或工具执行授权；插件可执行贡献仍待独立设计。
 - 有副作用工具必须经过权限策略和 sandbox capability。P3 只要求 capability flag 和当前开发平台的最小实现，其他平台可以安全降级并明确报告；完整跨平台 sandbox 放到 P8 发布强化。
 - 网络流重试不得导致工具重复执行。
 
@@ -156,7 +156,7 @@ internal/
   session/                  JSONL、artifact、root-thread resume；fork 未实现
     catalog/                可重建 SQLite Catalog 与前台 reconciliation
   executor/process/         Exec/Hook 共用进程生命周期
-  extension/                本地 Skills 与 PreToolUse/PostToolUse/PostToolUseFailure Hooks；P6 后续目标：Plugins、MCP
+  extension/                本地 Skills、Plugin 技能包与 PreToolUse/PostToolUse/PostToolUseFailure Hooks；P6 后续目标：插件可执行贡献、MCP
   subagent/                 P7 目标：thread tree、mailbox、后台任务和限流
   tui/                      Bubble Tea、输入、消息 view、overlay 和 diff
   telemetry/                P8 目标：slog、redaction、metrics 和 diagnostics
@@ -184,7 +184,7 @@ app      -> runtime + tui + headless
 cmd      -> app
 ```
 
-当前依赖方向为 `domain/protocol <- provider|tool|context|session|extension <- runtime <- app/tui/headless/cmd`。Skill/Hook 已有真实消费者，宿主显式 Load 后注入 Runtime；共享 `executor/process` 与 `extension/localfile` 不依赖业务层。Subagent、Plugin/MCP、telemetry 及 extension 根占位仍未接入 Runtime/app。TUI/headless 通过宿主接口通信，不直接导入 Runtime 实现。
+当前依赖方向为 `domain/protocol <- provider|tool|context|session|extension <- runtime <- app/tui/headless/cmd`。Skill/Hook 已有真实消费者，宿主显式 Load 后注入 Runtime；共享 `executor/process` 与 `extension/localfile` 不依赖业务层。Plugin 技能贡献已由 app 装配给 Skill，Runtime/Provider/Session 不依赖插件 loader；只有 MCP、Subagent 和 telemetry 等批准占位尚未接入。TUI/headless 通过宿主接口通信，不直接导入 Runtime 实现。
 
 禁止：
 
@@ -210,7 +210,7 @@ cmd      -> app
 | 日志 | 标准库 `log/slog` | 结构化字段、分组、handler 和敏感字段过滤 |
 | ID | UUID v7 实现 | 全局唯一且大致按时间有序 |
 | Secret | 自定义不可打印值对象 | 防止 String/GoString/日志意外泄漏 |
-| 文件监听 | 后续选择，当前未引入 | Skills/Hook 启动冻结，Plugins/MCP 与热加载尚未实现 |
+| 文件监听 | 后续选择，当前未引入 | Skills/Hook/本地 Plugin 启动冻结；MCP 与热加载尚未实现 |
 | Golden/Snapshot | 标准库 testing + `testdata` golden files | 避免测试依赖过重，便于审阅 wire 差异 |
 
 Resty v3 当前使用 `resty.dev/v3` 导入路径；在项目初始化时最新可用版本为 `v3.0.0-rc.4`，升级到稳定版前必须重新运行 provider/SSE 契约测试。Streaming 请求使用 Resty raw body，不使用 RC `SSESource` 作为工程契约；`internal/provider/transport` 自行处理 LF/CRLF、任意 chunk、UTF-8 边界、4 MiB 默认 event 上限、取消和 idle watchdog。Sonic 与 Resty 的自动 JSON 行为不得混用：只有无内部依赖的 `internal/codec` 可以直接导入 Sonic，并由其统一提供 map key 排序、字符串校验、严格解码与 canonical JSON；domain/protocol 可依赖该基础设施包，Provider 与 Session 通过它生成确定字节后再交给 Resty 或存储边界。
@@ -375,7 +375,7 @@ committed_history      append / turn-stable
 current_input          replace / volatile
 ```
 
-来源和 segment 使用强类型身份、lifecycle/stability、内容 revision、canonical bytes 与 fingerprint；`CacheSources` 单独提供内容/稳定 fingerprint 和失效解释。Provider 的最终 marker/key/增量收据独立于共享分段，不把服务商缓存命中视为本地可保证结果。Skill 正文进入显式输入或工具结果的历史尾部；Hook 配置和 trust 不进入 prompt。Plugin/MCP metadata、动态 cwd/git/env/world-state diff 及自动 rehydrate 尚未形成可执行来源。
+来源和 segment 使用强类型身份、lifecycle/stability、内容 revision、canonical bytes 与 fingerprint；`CacheSources` 单独提供内容/稳定 fingerprint 和失效解释。Provider 的最终 marker/key/增量收据独立于共享分段，不把服务商缓存命中视为本地可保证结果。Skill 正文进入显式输入或工具结果的历史尾部；Hook 配置和 trust 不进入 prompt。本地 Plugin 技能 metadata 并入同一 skill_catalog；独立 Plugin/MCP 动态来源、cwd/git/env/world-state diff 及自动 rehydrate 尚未形成可执行来源。
 
 ### 6.3 稳定序列化
 
@@ -555,7 +555,7 @@ fs.patch
 
 P3 当前已实现 Read、Glob、Grep、Anthropic structured Edit/OpenAI custom freeform apply_patch、Anthropic Bash/OpenAI exec_command、双 Provider structured Write、durable approval/ledger、最多 8 路只读并发、Patch/Write/Exec 独占屏障、有序结果提交和本地恢复补偿。Patch 限于一个已有 UTF-8 工作区常规文件，在 Unix 使用 descriptor-relative 重验与同目录原子替换；其他平台失败关闭。Write 的 structured facade 支持原子创建/整文件覆盖：覆盖要求先前已回传的完整 Read，新目录链通过私有树和 no-replace 发布；审批展示区分 create/overwrite，独立 Write grant 不在 resume 恢复。详见 [Tool 已实现边界](tool-system.md#101-write-已实现边界)。Exec 限于 Darwin 前台 non-login `/bin/sh`：每次单独批准、最小环境、workspace 写入、禁止网络、确定性头尾输出、原进程组清理与唯一最终 Wait；非 Darwin 返回 `unsupported_platform`，不降级。`setsid` 等脱离组后代不属于保证清理范围，但仍受继承的 sandbox 限制；输出收口不确定时 poison Runtime。详细预算与测试边界见 [Tool 系统架构](tool-system.md#93-进程工具)。write_stdin、PTY/后台进程控制、全工具 artifact、跨能力通用 sandbox 和跨平台等价执行仍按独立 change 增加。
 
-本地 Skill 和 PreToolUse/PostToolUse/PostToolUseFailure Hook 已交付；其余 Hooks、Plugins/MCP 属于 P6 后续范围，Agent/Subagent 属于 P7；完整跨平台 sandbox 矩阵属于 P8。未到对应阶段前不得提前暴露空 schema、event kind、facade 或 capability flag。
+本地 Skill 和 PreToolUse/PostToolUse/PostToolUseFailure Hook 已交付；其余 Hooks、插件可执行贡献/MCP 属于 P6 后续范围，Agent/Subagent 属于 P7；完整跨平台 sandbox 矩阵属于 P8。未到对应阶段前不得提前暴露空 schema、event kind、facade 或 capability flag。
 
 ## 9. Context 与 Compaction
 
@@ -568,11 +568,11 @@ P3 当前已实现 Read、Glob、Grep、Anthropic structured Edit/OpenAI custom 
 - `provider_profile`：family、model、schema revision、非默认 request_policy，`replace + stable`。
 - `tool_catalog`：九项工具的确定性 schema，`replace + stable`。
 - `project_instructions`：启动时发现的有界结构化快照，存在文档时为 `replace + project-stable`，空快照省略。
-- `skill_catalog`：冻结的本地 Skill metadata，非空时为 `replace + project-stable`；正文不进入此来源。
+- `skill_catalog`：冻结的本地与插件 Skill metadata，非空时为 `replace + project-stable`；正文不进入此来源。
 - `committed_history`：`ActiveContextView` 中的独立摘要与增量历史，结合不含 opaque 正文的 Provider footprint，`append + turn-stable`。
 - `current_input`：采样标记，`replace + volatile`；正文已进入有效原生历史，排队和 staging 输入不重复计量。
 
-后续候选来源包括 Plugin/MCP metadata、动态 cwd/git/env/world-state 与自动文件 rehydrate，必须在存在真实消费者、验证和测试时另行接入。Skill 正文已通过显式输入或工具结果进入原生历史，不是独立来源；排队/草稿不计入已提交上下文。
+后续候选来源包括独立动态 Plugin/MCP metadata、动态 cwd/git/env/world-state 与自动文件 rehydrate，必须在存在真实消费者、验证和测试时另行接入。静态 Plugin 技能 metadata 已并入 skill_catalog；Skill 正文已通过显式输入或工具结果进入原生历史，不是独立来源；排队/草稿不计入已提交上下文。
 
 ContextPlanner 必须明确每一项的来源、优先级、稳定性、token 估算和生命周期；来源生命周期与 cache stability 是两个正交强类型概念，不能复用一个字符串表达。
 
@@ -735,7 +735,7 @@ Session 的 compaction_started/completed/failed 具有强类型 scope（manual�
 
 ## 12. Hooks、Skills、Plugins 与 MCP
 
-本章区分当前交付与 P6 后续目标。本地 Skills 与同步 PreToolUse/PostToolUse/PostToolUseFailure 命令 Hook 已接入 Runtime/app；Plugin、MCP 仍保留经批准的 TODO 边界，不接入运行。
+本章区分当前交付与 P6 后续目标。本地 Skills 与同步 PreToolUse/PostToolUse/PostToolUseFailure 命令 Hook 已接入 Runtime/app；本地 Plugin 已交付静态技能贡献；MCP 仍保留经批准的 TODO 边界，不接入运行。
 
 ### 12.1 当前 PreToolUse 命令 Hook
 
@@ -777,30 +777,23 @@ PostHookPlan 当前仅包含 invocation_id/capability/branches/allowance/reserva
 
 ### 12.2 当前本地 Skills
 
-固定 user/project 根提供严格静态 frontmatter、稳定 metadata catalog、`/skills`、显式附件与按需 Skill/同来源资源读取。附件和工具结果保持双 Provider 原生恢复；技能不授权命令。system/plugin 来源、path activation、allowed-tools、model、context=fork 和隐式资源激活仍为后续目标。来源读取与 Hooks 共用 `extension/localfile`，正文加载、authority 和 catalog 生命周期仍由 Skill 自己持有。
+固定 user/project 根提供严格静态 frontmatter、稳定 metadata catalog、`/skills`、显式附件与按需 Skill/同来源资源读取。附件和工具结果保持双 Provider 原生恢复；技能不授权命令。显式 plugin 来源已并入同一 Skill 入口；system 来源、path activation、allowed-tools、model、context=fork 和隐式资源激活仍为后续目标。来源读取与 Hooks 共用 `extension/localfile`，正文加载、authority 和 catalog 生命周期仍由 Skill 自己持有。
 
-### 12.3 Plugins
+### 12.3 当前本地 Plugin 技能包
 
-内部使用统一 `PluginContribution`：
+`plugin.Sources.Load` 只消费用户本次明确提供的最多 32 个目录，逐段 no-follow 打开并持有实际根 FD。首个存在的 `.easycode-plugin/plugin.json`、根 Agent Plugins plugin.json、`.codex-plugin/plugin.json`、`.claude-plugin/plugin.json` 阻断其后格式；不合并、不猜名、不联网。受限 importer 共用严格 metadata 校验，外部声明归一化为 `extension.Contribution`（逻辑来源、贡献 revision、规范 roots 与窄 opener），无未来贡献空字段。`extension/skill` 消费边界且不导入 plugin。
 
-```text
-skills
-agents
-hooks
-mcp_servers
-commands
-output_styles
-lsp_servers
-apps/channels
-```
+本地与插件在旧 turn reconciliation 后发现，`Runtime.InstallSkills` 在开始工作前恰好一次安装 catalog/preparer。app 在最终策略、冲突及目录纳入结束后组合 `PluginListEntry`；模型、`/plugins`、`/skills` 与补全共享一次发布。所有 New/getter/render 无 I/O。来源 owner 最多 16 个在途借用，受控 handle 持有本次同一 Skill 目录与所有文件，实际身份、类型、manifest/主文档/副文件摘要和私有存储祖先关系均绑定 FD；插件根不能扩大为任意资源根。
 
-外部提供：
+主文档和副文件共用 16 MiB 启动读取额度；受控结果将实际读取量与可用正文分开，一致性失败或读取后取消仍保留计费依据，不返回被拒绝的正文。原始枚举和候选另有分层额度，无效条目不能绕过总预算。
 
-- EasyCode native manifest loader。
-- Claude plugin importer。
-- Codex plugin importer。
+首次显式 Close 关闭接收门并启动唯一 cleanup worker，取消并强制关闭在途常规文件，等读取栈和全部已启动关闭完成，再关闭原根并发出固定 Done。每个文件与 handle 通过有界内存状态选唯一关闭者，锁外执行回调、I/O 和等待；不在 sync.Once 回调中隐藏阻塞关闭。Load 取消同步回滚临时资源，不启动 worker。app 先停止宿主/Runtime，再等待来源 Done，最后释放 artifact.Layout；覆盖尚未进入 admission 的 PrepareInput。
 
-manifest adapter 可以统一扩展描述，但不能用于统一 provider 对话协议。V1 优先本地插件，远程 marketplace 和安装缓存后置。
+EasyCode/Claude 使用实际目录调用名；Codex/Agent Plugins 保留合法 frontmatter 引用名。Agent Plugins 只扫描默认 skills 的直接子目录；其他格式支持集合或单技能根，均不递归。本地裸名优先级不变，插件只有一层 `plugin:leaf`。Codex 副文件 `agents/openai.yaml` 的 allow_implicit_invocation=false 与主文档禁止取或；interface 注解不执行，依赖/产品策略拒绝。副文件存在性与原始 digest 参与新读取校验及复合附件 revision，不能覆盖冻结有效 metadata。
+
+原始 manifest/main/sidecar digest 只用于来源校验；目录相对绑定和有效策略构成附件 revision；模型目录仍只包含实际发送的 Skill metadata。正文未调用前不污染前缀，只有真实 Content 或有效 metadata 变化才改变相应请求指纹；仅私有 revision 变化保持模型 bytes 与历史内容指纹。恢复只消费冻结附件/result，不加载旧来源，不新增 schema、工具、事件或安装 record。详细字段、额度与可运行示例见 README；回归见 `internal/extension/skill/plugin*_test.go`、两家 `plugin_restore_test.go`、`internal/app/plugins_test.go`、`plugin_freeze_test.go`、`plugin_websocket_test.go` 和 `scripts/plugins-smoke.py`。
+
+marketplace、安装/更新、插件脚本/Hook/MCP/Agent/commands 贡献、热加载和启停仍未实现；manifest 显式声明这些贡献时失败关闭。它们需要独立 OpenSpec，不能恢复原来的无消费者通用扩展容器。 本切片已完成归档，规格、文档与验证证据核对见[归档记录](../../openspec/changes/archive/2026-11-13-add-local-plugin-skills/archive.md)。
 
 ### 12.4 MCP
 
@@ -838,7 +831,7 @@ Provider 当前 native kind 封闭为 `user_inputs`/`sample`/`tool_outputs`，sa
 input-only 崩溃尾部先在本地 durable 收口；工具安全点的 steering 尾部复用现有工具补偿路径，不重跑工具或自动联网。内存队列与 returned tray 不持久化，重启不猜测未保存输入。外部 headless JSONL 仍为 v1，自动 admission 增加 entry_id，input.status 不含正文；一次性 text/JSON 过滤新增内部输入事件。
 
 
-已实现多行、字素编辑、显式 decoded paste 与有界历史；原始终端缓冲/RuneError 的框架限制见 README。当前本地命令为 `/cache`、`/context`、`/compact [instructions]`、`/skills`、`/hooks`，显式 Skill 使用 `/<name>` / `$name`。已支持命令和显式 Skill 的首词补全；尚无 `/help`、`/clear`、`/resume`、`/fork`、`/model`、`/provider`、`/permissions`、`/plugins`、`/mcp`、`/agents`、`/cost`、`/doctor`；`easycode resume` 是独立 CLI 入口。
+已实现多行、字素编辑、显式 decoded paste 与有界历史；原始终端缓冲/RuneError 的框架限制见 README。当前本地命令为 `/cache`、`/context`、`/compact [instructions]`、`/skills`、`/hooks`、`/plugins`，显式 Skill 使用 `/<name>` / `$name`。已支持命令和显式 Skill 的首词补全；尚无 `/help`、`/clear`、`/resume`、`/fork`、`/model`、`/provider`、`/permissions`、`/mcp`、`/agents`、`/cost`、`/doctor`；`easycode resume` 是独立 CLI 入口。
 
 ## 14. 配置与密钥
 

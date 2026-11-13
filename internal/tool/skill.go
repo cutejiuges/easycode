@@ -28,7 +28,7 @@ func (v SkillInput) Name() string      { return v.name }
 func (v SkillInput) Arguments() string { return v.args }
 func (v SkillInput) Resource() string  { return v.resource }
 func (v SkillInput) Validate() error {
-	if domain.ValidateSkillName(v.name) != nil || !utf8.ValidString(v.args) || len(v.args) > domain.MaxSkillArgumentBytes {
+	if _, err := domain.ParseSkillReference(v.name); err != nil || !utf8.ValidString(v.args) || len(v.args) > domain.MaxSkillArgumentBytes {
 		return fmt.Errorf("invalid Skill input")
 	}
 	if v.resource != "" && (v.args != "" || domain.ValidateSkillResource(v.resource) != nil) {

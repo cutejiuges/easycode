@@ -60,7 +60,7 @@ func TestCompletionCatalogPermissionsAndDeterminism(t *testing.T) {
 	}
 	slash, _ := findCompletionTarget("/", 1)
 	dollar, _ := findCompletionTarget("$", 1)
-	if got := completionNames(first, first.match(slash)); !reflect.DeepEqual(got, []string{"cache", "compact", "context", "hooks", "skills", "manual"}) {
+	if got := completionNames(first, first.match(slash)); !reflect.DeepEqual(got, []string{"cache", "compact", "context", "hooks", "plugins", "skills", "manual"}) {
 		t.Fatal(got)
 	}
 	if got := completionNames(first, first.match(dollar)); !reflect.DeepEqual(got, []string{"cache", "manual"}) {
@@ -192,7 +192,7 @@ func TestCompletionSelectionAndCopyIsolation(t *testing.T) {
 	if m.completion.catalog.entries[m.completion.matches[m.completion.selected].index].id != selected {
 		t.Fatal("selection drifted")
 	}
-	if len(original.completion.matches) != 6 {
+	if len(original.completion.matches) != 7 {
 		t.Fatal("old matches were overwritten")
 	}
 	before := m.completion

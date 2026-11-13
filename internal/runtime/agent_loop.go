@@ -713,6 +713,7 @@ func (loop *AgentLoop) Run(ctx context.Context) error {
 	if !loop.state.CompareAndSwap(agentLoopNew, agentLoopRunning) {
 		return fault.New(fault.CodeTurnFailed, "agent loop already ran")
 	}
+	loop.runtime.markSkillsStarted()
 	close(loop.ready)
 	defer func() {
 		loop.runtime.clearFileState()

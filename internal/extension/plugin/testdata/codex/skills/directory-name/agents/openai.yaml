@@ -1,0 +1,5 @@
+interface:
+  display_name: Local review
+  short_description: Review local changes
+policy:
+  allow_implicit_invocation: false

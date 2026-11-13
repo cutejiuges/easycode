@@ -41,31 +41,49 @@ func Read(ctx context.Context, p string, limit int, options Options) ([]byte, er
 		return nil, err
 	}
 	defer f.Close()
+	content, err := ReadOpened(ctx, f, limit, options)
+	return content.Bytes, err
+}
+
+// ReadOpened 从调用方持有的同一描述符读取；资源仍由调用方关闭。
+func ReadOpened(ctx context.Context, f *os.File, limit int, options Options) (Content, error) {
+	if ctx == nil || f == nil || limit < 1 {
+		return Content{}, Unsafe
+	}
+	if err := ctx.Err(); err != nil {
+		return Content{}, err
+	}
 	before, err := f.Stat()
 	if err != nil || !before.Mode().IsRegular() {
-		return nil, Unsafe
+		return Content{}, Unsafe
 	}
 	if before.Size() > int64(limit) {
-		return nil, LimitExceeded
+		return Content{}, LimitExceeded
+	}
+	identity, err := FileIdentity(f)
+	if err != nil {
+		return Content{}, err
 	}
 	b, err := io.ReadAll(io.LimitReader(f, int64(limit)+1))
+	content := Content{Identity: identity, ReadBytes: len(b)}
 	if err != nil {
-		return nil, ReadFailed
+		return content, ReadFailed
 	}
 	if options.AfterRead != nil {
 		options.AfterRead()
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return content, err
 	}
 	if len(b) > limit {
-		return nil, LimitExceeded
+		return content, LimitExceeded
 	}
 	if options.Consistent {
 		after, err := f.Stat()
 		if err != nil || !os.SameFile(before, after) || before.Size() != after.Size() || int64(len(b)) != after.Size() || before.Mode() != after.Mode() || !before.ModTime().Equal(after.ModTime()) {
-			return nil, Changed
+			return content, Changed
 		}
 	}
-	return b, nil
+	content.Bytes = b
+	return content, nil
 }

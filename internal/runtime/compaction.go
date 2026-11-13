@@ -121,6 +121,7 @@ func (runtime *Runtime) preflightCompaction(instructions string) (compactionAdmi
 }
 
 func (runtime *Runtime) runCompaction(ctx context.Context, id domain.CompactionID, admission compactionAdmission, emit Emitter) error {
+	runtime.markSkillsStarted()
 	if !runtime.active.CompareAndSwap(false, true) {
 		return runtime.failCompaction(id, protocol.CompactionFailureSession, false, nil, emit)
 	}

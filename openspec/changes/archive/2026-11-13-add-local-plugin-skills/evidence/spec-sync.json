@@ -1,0 +1,57 @@
+[
+  {
+    "capability": "extension/local-plugins",
+    "new": true,
+    "addedRequirements": 10,
+    "modifiedRequirements": 0,
+    "untouchedRequirements": 0,
+    "retainedOriginalScenarioCount": 0,
+    "addedScenarios": 44,
+    "idempotent": true,
+    "sha256": "0a3d05c28e5a97adb3c936fc6d6cb3893af595e18a935d0bf857b1c27fff6b87"
+  },
+  {
+    "capability": "extension/local-skills",
+    "new": false,
+    "addedRequirements": 2,
+    "modifiedRequirements": 6,
+    "untouchedRequirements": 0,
+    "retainedOriginalScenarioCount": 15,
+    "addedScenarios": 10,
+    "idempotent": true,
+    "sha256": "b92cfc24de48cd9376a116b69c773232bd2a8a276546fce7be2e072f50118d07"
+  },
+  {
+    "capability": "provider/native-history-persistence",
+    "new": false,
+    "addedRequirements": 0,
+    "modifiedRequirements": 1,
+    "untouchedRequirements": 15,
+    "retainedOriginalScenarioCount": 72,
+    "addedScenarios": 5,
+    "idempotent": true,
+    "sha256": "ab07c13f236142feda2187ed22e0af58aef31d5761d78287dbd8969ab5c06bef"
+  },
+  {
+    "capability": "tui/input-completion",
+    "new": false,
+    "addedRequirements": 0,
+    "modifiedRequirements": 3,
+    "untouchedRequirements": 4,
+    "retainedOriginalScenarioCount": 23,
+    "addedScenarios": 5,
+    "idempotent": true,
+    "sha256": "1f5446669b0b72528bb3c88e7a11b3ec372e4d2311e6fd250896b63e732590e3"
+  },
+  {
+    "capability": "tui/plugins",
+    "new": true,
+    "addedRequirements": 4,
+    "modifiedRequirements": 0,
+    "untouchedRequirements": 0,
+    "retainedOriginalScenarioCount": 0,
+    "addedScenarios": 14,
+    "idempotent": true,
+    "sha256": "4bd26646c30f7b3ee3b237e6ca3e52e3ea63c6af87d6532143c5314e1d2dcc06"
+  }
+]

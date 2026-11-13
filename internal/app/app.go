@@ -18,6 +18,7 @@ import (
 	contextplan "easycode/internal/context"
 	"easycode/internal/context/projectinstructions"
 	"easycode/internal/domain"
+	"easycode/internal/extension/plugin"
 	"easycode/internal/extension/skill"
 	"easycode/internal/fault"
 	"easycode/internal/headless"
@@ -50,6 +51,7 @@ type Options struct {
 	ContinueSession    bool
 	SessionDataRoot    string
 	SessionCatalogPath string
+	PluginDirs         []string
 	Input              io.Reader
 	Output             io.Writer
 }
@@ -60,6 +62,9 @@ type dataPaths struct {
 }
 
 type chatResourceHooks struct {
+	pluginDirs             []string
+	pluginCWD              string
+	pluginOptions          plugin.Options
 	loadHooks              func(context.Context, string, string) (domain.HookSnapshot, error)
 	newHookRunner          func(*builtin.Workspace, builtin.CommandEnvironment, builtin.HookOutputParser) (chatRuntime.HookRunner, error)
 	recovery               *recoveryAttempt
@@ -77,6 +82,8 @@ type providerResource interface {
 type chatResources struct {
 	inference         domain.InferenceSettings
 	skills            []domain.SkillListEntry
+	plugins           []domain.PluginListEntry
+	pluginSources     *plugin.Sources
 	identity          session.Identity
 	provider          providerResource
 	workspace         *builtin.Workspace
@@ -123,6 +130,10 @@ func Run(ctx context.Context, options Options) Outcome {
 	if options.Output == nil {
 		return runtimeFailure(fault.New(fault.CodeTurnFailed, "output is required"))
 	}
+	if err := plugin.ValidateDirectories(options.PluginDirs); err != nil {
+		return usageFailure(err.Error())
+	}
+	options.PluginDirs = append([]string(nil), options.PluginDirs...)
 	if options.ShowVersion {
 		_, err := fmt.Fprintf(options.Output, "easycode %s\n", Version)
 		if err != nil {
@@ -167,7 +178,7 @@ func Run(ctx context.Context, options Options) Outcome {
 	}
 	resources, err := openChatResourcesWithHooks(
 		ctx, applicationConfig, paths, options.ResumeThreadID, options.ContinueSession, creationCWD,
-		chatResourceHooks{interactiveApprovals: options.Mode == headless.ModeInteractive},
+		chatResourceHooks{interactiveApprovals: options.Mode == headless.ModeInteractive, pluginDirs: options.PluginDirs, pluginCWD: creationCWD},
 	)
 	if err != nil {
 		return runtimeFailure(err)
@@ -314,6 +325,9 @@ func openChatResourcesWithHooks(
 	creationCWD string,
 	hooks chatResourceHooks,
 ) (*chatResources, error) {
+	if err := plugin.ValidateDirectories(hooks.pluginDirs); err != nil {
+		return nil, fault.New(fault.CodeInvalidInput, err.Error())
+	}
 	loader, err := projectinstructions.NewLoader(projectinstructions.DefaultMaxBytes)
 	if err != nil {
 		return nil, fault.New(fault.CodeProjectInstructionsRead, "project instruction loader is invalid")
@@ -474,9 +488,6 @@ func openChatResourcesWithSnapshot(
 	if homeErr != nil {
 		return nil, homeErr
 	}
-	if err := skillSource.Load(ctx, creationCWD, home); err != nil {
-		return nil, err
-	}
 	skillReader := skillExecutor{skillSource}
 	questionExecutor := builtin.NewQuestionExecutor()
 	toolCatalog, err := builtin.NewCatalog(
@@ -520,7 +531,7 @@ func openChatResourcesWithSnapshot(
 		QuestionExecutor: questionExecutor, InteractiveQuestions: hooks.interactiveApprovals,
 		ReadExecutor:         readExecutor,
 		ReadArtifactExecutor: readArtifactExecutor,
-		SkillExecutor:        skillReader, SkillPreparer: skillInputPreparer{skillSource}, SkillCatalog: skillSource.Catalog(),
+		SkillExecutor:        skillReader,
 		GlobExecutor:         globExecutor,
 		GrepExecutor:         grepExecutor,
 		PatchPreparer:        patchPreparer,
@@ -546,10 +557,33 @@ func openChatResourcesWithSnapshot(
 		}
 		assembled.history = assembled.conversation.ProjectHistory()
 	}
+	pluginOptions := hooks.pluginOptions
+	pluginOptions.Boundary = artifactLayout.CheckSource
+	pluginSources := plugin.NewSources(pluginOptions)
+	cleanup.add(func() error { return pluginSources.Close(context.Background()) })
+	pluginCWD := hooks.pluginCWD
+	if pluginCWD == "" {
+		pluginCWD = creationCWD
+	}
+	pluginViews, contributions, err := pluginSources.Load(ctx, pluginCWD, hooks.pluginDirs)
+	if err != nil {
+		return nil, err
+	}
+	if err := skillSource.Load(ctx, creationCWD, home, contributions, pluginViews); err != nil {
+		return nil, err
+	}
+	if err := runtimeInstance.InstallSkills(skillSource.Catalog(), skillInputPreparer{skillSource}); err != nil {
+		return nil, err
+	}
+	plugins, err := pluginList(pluginViews, skillSource.PluginSummaries())
+	if err != nil {
+		return nil, err
+	}
 	if err := installChatHooks(ctx, runtimeInstance, workspace, artifactLayout, creationCWD, home, hooks); err != nil {
 		return nil, err
 	}
 	resources = &chatResources{inference: inference,
+		pluginSources: pluginSources, plugins: plugins,
 		artifactLayout: artifactLayout, artifactStore: artifactStore, transcriptQueries: queries,
 		identity: assembled.identity,
 		provider: providerInstance, workspace: workspace, service: service, writer: assembled.writer,
@@ -717,6 +751,13 @@ func (resources *chatResources) close(ctx context.Context) error {
 	if ctx.Err() != nil {
 		closeContext = context.Background()
 	}
+	var sourceErr error
+	if resources.pluginSources != nil {
+		sourceErr = resources.pluginSources.Close(closeContext)
+		if sourceErr != nil {
+			sourceErr = errors.Join(sourceErr, resources.pluginSources.Close(context.Background()))
+		}
+	}
 	var queryErr error
 	if resources.transcriptQueries != nil {
 		queryErr = resources.transcriptQueries.Close()
@@ -744,7 +785,7 @@ func (resources *chatResources) close(ctx context.Context) error {
 	if resources.service != nil {
 		repositoryErr = errors.Join(repositoryErr, resources.service.close())
 	}
-	resources.closeErr = errors.Join(shutdownErr, queryErr, artifactErr, writerErr, providerErr, workspaceErr, repositoryErr)
+	resources.closeErr = errors.Join(shutdownErr, sourceErr, queryErr, artifactErr, writerErr, providerErr, workspaceErr, repositoryErr)
 	close(resources.closeDone)
 	return resources.closeErr
 }
@@ -764,7 +805,7 @@ func assembleChatModel(ctx context.Context, resources *chatResources) (tui.Model
 		return tui.Model{}, err
 	}
 	resources.session = control
-	return tui.NewModel(ctx, Version, control).WithInferenceSettings(resources.inference).WithSkills(resources.skills).WithHooks(resources.session.HookEntries()).WithMarkdownColor(markdownColorEnabled(os.Getenv("NO_COLOR"), os.Getenv("TERM"), term.IsTerminal(os.Stdout.Fd()))).WithInputHistory(resources.history).WithTranscriptQueries(resources.identity.ThreadID, resources.transcriptQueries), nil
+	return tui.NewModel(ctx, Version, control).WithInferenceSettings(resources.inference).WithSkills(resources.skills).WithPlugins(resources.plugins).WithHooks(resources.session.HookEntries()).WithMarkdownColor(markdownColorEnabled(os.Getenv("NO_COLOR"), os.Getenv("TERM"), term.IsTerminal(os.Stdout.Fd()))).WithInputHistory(resources.history).WithTranscriptQueries(resources.identity.ThreadID, resources.transcriptQueries), nil
 }
 
 // markdownColorEnabled 由启动边界的显式环境和终端事实选择样式。

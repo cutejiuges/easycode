@@ -20,14 +20,20 @@ func outputIsTerminal(output io.Writer) bool {
 func runResume(ctx context.Context, args []string, input io.Reader, output, errorOutput io.Writer, stdinTerminal, stdoutTerminal bool) int {
 	flags := flag.NewFlagSet("easycode resume", flag.ContinueOnError)
 	flags.SetOutput(errorOutput)
+	pluginDirs := pluginDirectoryFlags(flags)
 	all := flags.Bool("all", false, "show sessions from all creation directories")
 	configPath := flags.String("config", "", "configuration file path")
 	flags.Usage = func() {
 		fmt.Fprintln(errorOutput, "Usage: easycode resume [--all] [--config PATH]\n\nSelect a session interactively; Ctrl+V opens a read-only text preview.")
 		flags.PrintDefaults()
 	}
-	if err := flags.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
+	parseErr := flags.Parse(args)
+	if pluginDirs.err != nil {
+		_, _ = fmt.Fprintln(errorOutput, "error: "+pluginDirs.err.Error())
+		return 2
+	}
+	if parseErr != nil {
+		if errors.Is(parseErr, flag.ErrHelp) {
 			return 0
 		}
 		return 2
@@ -40,5 +46,5 @@ func runResume(ctx context.Context, args []string, input io.Reader, output, erro
 		fmt.Fprintln(errorOutput, "error: resume requires terminal stdin and stdout")
 		return 2
 	}
-	return renderOutcome(app.RunSessionPicker(ctx, app.Options{ConfigPath: *configPath, Input: input, Output: output}, *all), headless.ModeInteractive, output, errorOutput)
+	return renderOutcome(app.RunSessionPicker(ctx, app.Options{ConfigPath: *configPath, PluginDirs: pluginDirs.Values(), Input: input, Output: output}, *all), headless.ModeInteractive, output, errorOutput)
 }

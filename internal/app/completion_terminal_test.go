@@ -22,6 +22,7 @@ type completionTerminalAck struct {
 	View   string `json:"view"`
 	Width  int    `json:"width"`
 	Height int    `json:"height"`
+	Event  string `json:"event,omitempty"`
 }
 
 type completionTerminalModel struct {
@@ -48,8 +49,11 @@ func (m completionTerminalModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		ack.Height = value.Height
 	case protocol.ControlItem:
 		ack.Kind = "control"
-		if event, ok := value.TurnEvent(); ok && event.Kind == protocol.EventTurnCompleted {
-			ack.Kind = "idle"
+		if event, ok := value.TurnEvent(); ok {
+			ack.Event = string(event.Kind)
+			if event.Kind == protocol.EventTurnCompleted {
+				ack.Kind = "idle"
+			}
 		}
 	}
 	if ack.Kind != "" {
