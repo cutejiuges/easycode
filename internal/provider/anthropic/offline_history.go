@@ -104,7 +104,7 @@ func restoreNativeHistory(ctx context.Context, model string, commits []provider.
 		if string(entry.Kind) != string(commit.Role()) {
 			return fmt.Errorf("native commit role mismatch")
 		}
-		if err := validateQuestionRestoreFacts(entry, commit.QuestionInvocations()); err != nil {
+		if err := validateNativeReadyFacts(entry, commit.ReadyInvocations()); err != nil {
 			return err
 		}
 		if entry.Kind == nativeHistorySample {

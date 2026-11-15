@@ -134,11 +134,16 @@ func TestHookSnapshots(t *testing.T) {
 	for _, name := range []string{"hooks", "hooks_empty", "hooks_invalid", "hooks_detail", "hooks_narrow", "hooks_trust", "hooks_trust_narrow", "hooks_trust_long", "hooks_post_detail", "hooks_post_narrow", "hooks_post_trust", "hooks_post_trust_narrow", "hooks_failure", "hooks_failure_detail", "hooks_failure_trust", "hooks_failure_trust_narrow"} {
 		t.Run(name, func(t *testing.T) {
 			m := hookSnapshotModel(t, name)
+			if os.Getenv("EASYCODE_UPDATE_HOOK_SNAPSHOTS") == "1" {
+				if err := os.WriteFile(filepath.Join("testdata", name+".golden"), []byte(m.View()), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			want, err := os.ReadFile(filepath.Join("testdata", name+".golden"))
 			if err != nil {
 				t.Fatal(err)
 			}
-			if m.View()+"\n" != string(want) {
+			if m.View() != string(want) {
 				t.Fatalf("snapshot mismatch:\n%s", m.View())
 			}
 		})

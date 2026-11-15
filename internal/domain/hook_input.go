@@ -144,6 +144,7 @@ func DecodeHookToolInput(cap HookCapability, b []byte) (HookToolInput, error) {
 // HookInput 是只发送给已信任本地检查的临时 stdin，不进入 Session。
 type HookInput struct {
 	stop        *StopInput
+	rewrite     HookRewriteContext
 	Event       HookEvent         `json:"hook_event_name"`
 	SessionID   SessionID         `json:"session_id"`
 	ThreadID    ThreadID          `json:"thread_id"`
@@ -157,15 +158,29 @@ type HookInput struct {
 	IsInterrupt *bool             `json:"is_interrupt,omitempty"`
 }
 
-func NewHookInput(session SessionID, thread ThreadID, turn TurnID, call, name, cwd string, input HookToolInput) (HookInput, error) {
-	v := HookInput{Event: HookPreToolUse, SessionID: session, ThreadID: thread, TurnID: turn, ToolUseID: call, ToolName: name, CWD: cwd, Input: input.Clone()}
+func NewHookInput(session SessionID, thread ThreadID, turn TurnID, call, name, cwd string, input HookToolInput, profile HookInputProfile) (HookInput, error) {
+	context, err := NewHookRewriteContext(input, profile)
+	if err != nil {
+		return HookInput{}, err
+	}
+	v := HookInput{Event: HookPreToolUse, SessionID: session, ThreadID: thread, TurnID: turn, ToolUseID: call, ToolName: name, CWD: cwd, Input: input.Clone(), rewrite: context}
 	return v, v.Validate()
+}
+func (v HookInput) RewriteContext() HookRewriteContext {
+	return HookRewriteContext{v.rewrite.Input(), v.rewrite.profile}
 }
 func (v HookInput) Validate() error {
 	if v.Event == HookStop {
 		return v.validateStop()
 	}
 	if v.stop != nil {
+		return HookConfigInvalid
+	}
+	if v.Event == HookPreToolUse {
+		if v.rewrite.Validate() != nil || !v.Input.Equal(v.rewrite.Input()) {
+			return HookConfigInvalid
+		}
+	} else if !v.rewrite.Empty() {
 		return HookConfigInvalid
 	}
 	if !v.Event.Valid() || !v.SessionID.Valid() || !v.ThreadID.Valid() || !v.TurnID.Valid() || v.ToolUseID == "" || len(v.ToolUseID) > 256 || !utf8.ValidString(v.ToolUseID) || !filepath.IsAbs(v.CWD) || !utf8.ValidString(v.CWD) || strings.ContainsRune(v.CWD, 0) {
@@ -183,6 +198,9 @@ func (v HookInput) Validate() error {
 	}
 	valid := v.Input.capability == HookPatch && (v.ToolName == "Edit" || v.ToolName == "apply_patch") || v.Input.capability == HookWrite && v.ToolName == "Write" || v.Input.capability == HookExec && (v.ToolName == "Bash" || v.ToolName == "exec_command")
 	if !valid {
+		return HookConfigInvalid
+	}
+	if v.Event == HookPreToolUse && (v.ToolName == "Edit" && v.rewrite.profile != HookSubstringPatch || v.ToolName == "apply_patch" && v.rewrite.profile != HookLinePatch || v.Input.Capability() == HookWrite && v.rewrite.profile != HookWriteProfile || v.Input.Capability() == HookExec && v.rewrite.profile != HookExecProfile) {
 		return HookConfigInvalid
 	}
 	if err := v.Input.Validate(); err != nil {
@@ -292,6 +310,24 @@ func DecodeHookInput(b []byte) (HookInput, error) {
 		return HookInput{}, err
 	}
 	v := HookInput{Event: w.Event, SessionID: w.SessionID, ThreadID: w.ThreadID, TurnID: w.TurnID, ToolUseID: w.ToolUseID, ToolName: w.ToolName, CWD: w.CWD, Input: input, Error: w.Error, IsInterrupt: w.IsInterrupt}
+	if w.Event == HookPreToolUse {
+		// stdin 解码只识别当前封闭工具名；实际运行的 profile 由 tool 从原调用建立。
+		var profile HookInputProfile
+		switch w.ToolName {
+		case "Edit":
+			profile = HookSubstringPatch
+		case "apply_patch":
+			profile = HookLinePatch
+		case "Write":
+			profile = HookWriteProfile
+		case "Bash", "exec_command":
+			profile = HookExecProfile
+		}
+		v.rewrite, err = NewHookRewriteContext(input, profile)
+		if err != nil {
+			return HookInput{}, err
+		}
+	}
 	if response {
 		r, err := DecodeHookToolResponse(w.Response)
 		if err != nil {

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"easycode/internal/domain"
+	"easycode/internal/tool"
 )
 
 func TestCurrentHookFixturesAndCanonicalBytes(t *testing.T) {
@@ -49,13 +50,13 @@ func TestCurrentHookFixturesAndCanonicalBytes(t *testing.T) {
 				t.Fatal("lost frozen plan")
 			}
 			counts := map[string]int{"planned": 0, "started": 0, "prefix": 1, "continued": 2, "denied": 1, "error": 1, "headless": 0, "recovered": 1, "tool_allowed": 2, "tool_started": 2, "tool_result": 2}
-			if len(g.Results) != counts[phase] || len(plan.Tools[0].Hooks) != counts[phase] {
+			if len(g.Finished) != counts[phase] || len(plan.Tools[0].Hooks) != counts[phase] {
 				t.Fatal("lost hook statistics")
 			}
 			if (phase == "started") != (g.Started != nil) {
 				t.Fatal("wrong active hook")
 			}
-			if phase == "recovered" && (g.Results[0].Origin != "recovery" || g.Decision.Status != domain.HookUncertain) {
+			if phase == "recovered" && (g.Finished[0].Result.Origin != "recovery" || g.Decision.Status != domain.HookUncertain) {
 				t.Fatal("uncertain recovery changed")
 			}
 		})
@@ -88,9 +89,10 @@ func TestHookSemanticCorruptionPrecedesTornTailRepair(t *testing.T) {
 }
 
 func TestHookLeaseAcrossProcessesRecoveryAndMonotonicAppend(t *testing.T) {
-	for _, phase := range []string{"planned", "started", "prefix"} {
-		t.Run(phase, func(t *testing.T) {
-			content := append(readCurrentFixture(t, "hook_"+phase+".jsonl"), []byte(`{"seq":`)...)
+	for _, fixture := range []struct{ phase, name string }{{"planned", "hook_planned.jsonl"}, {"started", "hook_started.jsonl"}, {"prefix", "hook_prefix.jsonl"}, {"prefix", "rewrite_prefix.jsonl"}} {
+		t.Run(fixture.name, func(t *testing.T) {
+			phase := fixture.phase
+			content := append(readCurrentFixture(t, fixture.name), []byte(`{"seq":`)...)
 			root := createLeaseProcessJournal(t, content)
 			repo, err := OpenOrCreateRepository(root)
 			if err != nil {
@@ -129,13 +131,14 @@ func TestHookLeaseAcrossProcessesRecoveryAndMonotonicAppend(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			call := func() domain.HookPlan {
+			replayed := func() ReplayedToolCall {
 				plan, err := NewReplayPlanner().Plan(loaded)
 				if err != nil {
 					t.Fatal(err)
 				}
-				return plan.ToolRecovery.Calls()[0].Hooks.Plan
+				return plan.ToolRecovery.Calls()[0]
 			}()
+			call := replayed.Hooks.Plan
 			var drafts []RecordDraft
 			if phase == "planned" || phase == "prefix" {
 				ordinal := 0
@@ -148,7 +151,12 @@ func TestHookLeaseAcrossProcessesRecoveryAndMonotonicAppend(t *testing.T) {
 			} else {
 				id, _ := domain.NewHookRunIdentity(call, 0)
 				r := domain.HookRunResult{Identity: id, Status: domain.HookContinue, Code: domain.HookOK, ExitKnown: true, CleanupConfirmed: true, Origin: "execution"}
-				finished, _ := domain.NewEmptyHookFinished(r, call.Hooks[0])
+				input, inputErr := tool.CheckingHookInput(replayed.Invocation, call, replayed.Hooks.Finished)
+				if inputErr != nil {
+					t.Fatal(inputErr)
+				}
+				effect, _ := domain.NewUnchangedHookInputEffect(input)
+				finished, _ := domain.NewPreHookFinished(r, call.Hooks[0], effect)
 				d, _ := NewHookExecutionFinishedDraft(testTurnID, finished)
 				drafts = []RecordDraft{d}
 			}
@@ -160,7 +168,7 @@ func TestHookLeaseAcrossProcessesRecoveryAndMonotonicAppend(t *testing.T) {
 				t.Fatal(err)
 			}
 			after, err := os.ReadFile(path)
-			prefix := readCurrentFixture(t, "hook_"+phase+".jsonl")
+			prefix := readCurrentFixture(t, fixture.name)
 			if err != nil || !bytes.HasPrefix(after, prefix) {
 				t.Fatal("append rewrote committed prefix")
 			}

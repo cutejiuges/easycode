@@ -333,11 +333,11 @@ func TestPostCachedFactsRejectChangedInputAndForgedResult(t *testing.T) {
 	if _, _, err := r.executeApproved(context.Background(), emit, runtimeTurnID, changed); err == nil {
 		t.Fatal("same identity with changed input reused result")
 	}
-	r.hooks.completed[inv.InvocationID()] = tool.NewInvocationErrorResult(inv, tool.ResultError, "forged", "forged cached result")
+	r.toolCalls[inv.InvocationID()].result = tool.NewInvocationErrorResult(inv, tool.ResultError, "forged", "forged cached result")
 	if _, _, err := r.executeApproved(context.Background(), emit, runtimeTurnID, inv); err == nil {
 		t.Fatal("forged cached result accepted")
 	}
-	r.hooks.completed[inv.InvocationID()] = result
+	r.toolCalls[inv.InvocationID()].result = result
 	if runner.calls != 1 || executor.calls != 1 || len(j.snapshot()) != before {
 		t.Fatal("cache mismatch produced new side effects/facts")
 	}

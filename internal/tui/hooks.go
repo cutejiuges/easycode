@@ -133,6 +133,9 @@ func (m Model) renderHooks() string {
 		e := m.hooks.entries[m.hooks.selected]
 		d := e.Declaration
 		lines = []string{"Hook details · Esc: back · ↑/↓: scroll · r: reset trust", fmt.Sprintf("Source: %s · %s [%s]", d.Reference.Source, d.Reference.ID, e.State), "Event: " + string(d.Reference.Event) + " · feedback: " + string(d.Reference.Feedback), hookScopeLabel(d), fmt.Sprintf("Timeout: %d seconds", d.Reference.TimeoutSeconds), "Workspace: . · read-only · network denied", "Workspace scripts can change after review.", "Reset only removes trust; the next matching check asks again.", "Raw output is discarded. Only trusted model feedback is sent and saved.", "", "Command:", d.Command}
+		if d.Reference.Event == domain.HookPreToolUse {
+			lines = append(lines[:1], append([]string{"May replace complete tool parameters before ordinary permission.", "Changed candidates and execution facts are saved in Session.", "Results disclose the effective input or a note about execution."}, lines[1:]...)...)
+		}
 		if e.State == "invalid" || e.State == "unsupported" {
 			lines = append(lines, "Unavailable: "+string(e.Code))
 		}
@@ -164,6 +167,9 @@ func (m Model) renderHooks() string {
 	return hookPanel(lines, m.widthOrDefault(), m.heightOrDefault(), scroll)
 }
 func (m Model) handleHookTrustKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.hookTrust != nil && m.hookTrust.request.Declaration.Reference.Event == domain.HookPreToolUse && (m.widthOrDefault() < 20 || m.heightOrDefault() < 6) && key.Type != tea.KeyEsc && key.Type != tea.KeyCtrlC {
+		return m, nil
+	}
 	if key.Paste {
 		return m, nil
 	}
@@ -216,12 +222,18 @@ func (m *Model) submitHookTrust() tea.Cmd {
 }
 func (m Model) renderHookTrust() string {
 	o := m.hookTrust
+	if o.request.Declaration.Reference.Event == domain.HookPreToolUse && (m.widthOrDefault() < 20 || m.heightOrDefault() < 6) {
+		return hookPanel([]string{"Hook approval disabled: resize terminal to review.", "Esc: deny."}, m.widthOrDefault(), m.heightOrDefault(), 0)
+	}
 	d := o.request.Declaration
 	trust, deny := "  Trust for this session", "> Deny"
 	if o.trust {
 		trust, deny = "> Trust for this session", "  Deny"
 	}
 	lines := []string{"Trust this hook?", fmt.Sprintf("Source: %s · %s", d.Reference.Source, d.Reference.ID), string(d.Reference.Event) + ": " + d.Scope.String(), "Feedback: " + string(d.Reference.Feedback), fmt.Sprintf("Timeout: %d seconds", d.Reference.TimeoutSeconds), "Workspace: . · read-only · network denied", "This does not approve the model's tool call.", "Workspace scripts can change after review.", "PgUp/PgDn: full command · Tab/↑/↓: choose · Esc: deny", "", trust, deny, "", "Command:", d.Command}
+	if d.Reference.Event == domain.HookPreToolUse {
+		lines = append(lines[:1], append([]string{"May replace complete tool parameters before ordinary permission.", "Changed candidates and execution facts are saved in Session.", "Results disclose the effective input or a note about execution."}, lines[1:]...)...)
+	}
 	if d.Reference.Event == domain.HookStop {
 		lines = append(lines[:1], append([]string{"Checks the saved answer before this turn completes.", "Earlier tool effects are not undone.", "feedback=model sends a blocking reason to the provider and saves it in Session."}, lines[1:]...)...)
 	}
@@ -284,6 +296,12 @@ func (m Model) projectHookEvent(e protocol.Event) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, nil
+		}
+		if p.Reference.Event == domain.HookPreToolUse {
+			if m.toolClosed[p.InvocationID()] {
+				return m, nil
+			}
+			return m.projectPreInput(p)
 		}
 		index, ok := m.toolItems[p.InvocationID()]
 		if !ok || index >= len(m.transcript) {

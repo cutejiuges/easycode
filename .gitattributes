@@ -1,0 +1,5 @@
+# 终端快照逐字节保留自动折行产生的行尾空格。
+internal/tui/testdata/pre_input_*.golden -text whitespace=-blank-at-eol
+
+# 原始终端记录保留回车和 ANSI 序列，作为二进制附件保存。
+openspec/changes/archive/2026-11-15-add-pre-tool-use-input-rewrite/evidence/**/*.pty.log binary

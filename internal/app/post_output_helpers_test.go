@@ -1,15 +1,22 @@
 package app
 
 import (
+	"easycode/internal/session"
 	"easycode/internal/tool"
 	"testing"
 )
 
-func testModelOutputs(t *testing.T, results ...tool.InvocationResult) []tool.ModelOutput {
+func testModelOutputs(t *testing.T, call session.ReplayedToolCall, results ...tool.InvocationResult) []tool.ModelOutput {
 	t.Helper()
 	out := make([]tool.ModelOutput, len(results))
 	for i, result := range results {
-		v, err := tool.NewModelOutput(result)
+		copy := call
+		copy.Result = result
+		evidence, err := copy.InputResultEvidence()
+		if err != nil {
+			t.Fatal(err)
+		}
+		v, err := tool.NewModelOutput(result, evidence)
 		if err != nil {
 			t.Fatal(err)
 		}

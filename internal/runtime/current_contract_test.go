@@ -33,7 +33,7 @@ func TestPatchGrantRequiresDurableApproval(t *testing.T) {
 					t.Error("grant installed before Sync")
 				}
 			}
-			_, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, []tool.Invocation{invocation}, approveWrite(t, runtime, tool.ApprovalAllowSession))
+			_, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, []tool.Invocation{invocation}, approveWrite(t, runtime, tool.ApprovalAllowSession))
 			if (err != nil) != fail || runtime.approvals.patchGrant.Load() == fail || runtime.approvals.writeGrant.Load() {
 				t.Fatalf("grant outcome: %v", err)
 			}
@@ -59,7 +59,7 @@ func TestFileGrantCannotOverridePolicyDeny(t *testing.T) {
 			runtime.approvals.patchGrant.Store(true)
 			runtime.approvals.writeGrant.Store(true)
 			runtime.toolPolicy = denyCurrentPolicy{}
-			results, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, []tool.Invocation{invocation})
+			results, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, []tool.Invocation{invocation})
 			if err != nil || results[0].Status() != tool.ResultDenied || patchExecutor.calls != 0 || (writeExecutor != nil && writeExecutor.calls != 0) {
 				t.Fatalf("deny overridden: %v", err)
 			}
@@ -80,7 +80,7 @@ func TestPatchStartedCancellationLinearization(t *testing.T) {
 		journal := &execAdmissionCancelJournal{cancel: cancel, accepted: accepted}
 		runtime, invocation, executor := patchContractRuntime(t, journal)
 		runtime.toolPolicy = allowPatchPolicy{}
-		results, err := runtime.executeToolCalls(ctx, runtimeTurnID, []tool.Invocation{invocation})
+		results, err := executeReadyFixtureCalls(t, runtime, ctx, runtimeTurnID, []tool.Invocation{invocation})
 		if err != nil || runtime.poisoned.Load() {
 			t.Fatalf("healthy cancellation poisoned: %v", err)
 		}
@@ -104,17 +104,16 @@ func (executor *mismatchedPatchExecutor) Execute(context.Context, tool.PatchCand
 }
 
 func TestPatchInvalidResultPoisonsAndPairsRemainingCalls(t *testing.T) {
-	journal := &fakeJournal{}
-	runtime, invocation, _ := patchContractRuntime(t, journal)
-	runtime.toolPolicy = allowPatchPolicy{}
 	// 合法的其他 capability 结果不能冒充当前已执行调用。
 	read := testRuntimeInvocations(t, 1)[0]
 	wrong := tool.NewInvocationErrorResult(read, tool.ResultError, "bad", "bad")
 	for _, result := range []tool.InvocationResult{wrong, tool.InvocationResult{}} {
+		journal := &fakeJournal{}
+		runtime, invocation, _ := patchContractRuntime(t, journal)
+		runtime.toolPolicy = allowPatchPolicy{}
 		executor := &mismatchedPatchExecutor{result: result}
 		runtime.patchExecutor = executor
-		runtime.poisoned.Store(false)
-		results, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, []tool.Invocation{invocation, read}, func(protocol.Event) {})
+		results, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, []tool.Invocation{invocation, read}, func(protocol.Event) {})
 		if err == nil || !runtime.poisoned.Load() || executor.calls != 1 || len(results) != 2 || results[0].Status() != tool.ResultOutcomeUncertain || results[0].Code() != "invalid_tool_result" || results[0].InvocationID() != invocation.InvocationID() || results[1].Status() != tool.ResultCancelled {
 			t.Fatalf("invalid result did not close safely: %v %#v", err, results)
 		}
@@ -181,7 +180,7 @@ func TestWriteAndExecRejectMismatchedExecutionResults(t *testing.T) {
 					emit = execApprovalEmitter(t, runtime, tool.ApprovalAllowOnce, &events)
 				}
 				read := testRuntimeInvocations(t, 1)[0]
-				results, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, []tool.Invocation{invocation, read}, emit)
+				results, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, []tool.Invocation{invocation, read}, emit)
 				if err == nil || calls() != 1 || !runtime.poisoned.Load() || len(results) != 2 || results[0].Status() != tool.ResultOutcomeUncertain || results[0].Code() != "invalid_tool_result" || results[0].ProviderCallID() != invocation.ProviderCallID() || results[1].Status() != tool.ResultCancelled {
 					t.Fatalf("wrong result handling: %v %#v", err, results)
 				}

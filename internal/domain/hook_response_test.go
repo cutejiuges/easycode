@@ -57,7 +57,7 @@ func TestFeedbackCandidateAuthorization(t *testing.T) {
 	}
 	for _, event := range []HookEvent{HookPreToolUse, HookPostToolUse} {
 		for _, policy := range []HookFeedbackPolicy{HookFeedbackNone, HookFeedbackModel} {
-			_, err := NewHookParsedOutput(event, policy, HookContinue, HookOK, feedback)
+			_, err := NewHookParsedOutput(event, policy, HookContinue, HookOK, feedback, HookInputReplacement{})
 			if (err == nil) != (event == HookPostToolUse && policy == HookFeedbackModel) {
 				t.Fatal("wrong disclosure admission", event, policy)
 			}

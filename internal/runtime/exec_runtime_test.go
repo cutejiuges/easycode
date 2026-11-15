@@ -54,6 +54,7 @@ func runtimeExecFixture(t *testing.T, journal Journal) (*Runtime, tool.Invocatio
 	}
 	components := &fixedExecComponents{candidate: candidate}
 	runtime := &Runtime{journal: journal, sessionID: runtimeSessionID, threadID: runtimeThreadID, execPreparer: components, execExecutor: components, newApprovalRequestID: tool.GenerateApprovalRequestID, interactiveApprovals: true}
+	seedRuntimeToolCall(t, runtime, runtimeTurnID, invocation, 0, 0)
 	return runtime, invocation, components
 }
 

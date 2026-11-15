@@ -12,7 +12,7 @@ import (
 func (r *Runtime) reconcileHookGate(ctx context.Context, turn domain.TurnID, call session.ReplayedToolCall) (tool.InvocationResult, error) {
 	g := call.Hooks
 	status, code := domain.HookCancel, domain.HookInterrupted
-	completed := len(g.Results)
+	completed := len(g.Finished)
 	blocking := min(completed, len(g.Plan.Hooks)-1)
 	var prefix []session.RecordDraft
 	if g.Started != nil {
@@ -20,7 +20,15 @@ func (r *Runtime) reconcileHookGate(ctx context.Context, turn domain.TurnID, cal
 		completed++
 		blocking = g.Started.Ordinal
 		result := domain.HookRunResult{Identity: *g.Started, Status: status, Code: code, Origin: "recovery"}
-		frozen, err := domain.NewEmptyHookFinished(result, g.Plan.Hooks[result.Identity.Ordinal])
+		input, inputErr := tool.CheckingHookInput(call.Invocation, g.Plan, g.Finished)
+		if inputErr != nil {
+			return tool.InvocationResult{}, inputErr
+		}
+		effect, effectErr := domain.NewUnchangedHookInputEffect(input)
+		if effectErr != nil {
+			return tool.InvocationResult{}, effectErr
+		}
+		frozen, err := domain.NewPreHookFinished(result, g.Plan.Hooks[result.Identity.Ordinal], effect)
 		if err != nil {
 			return tool.InvocationResult{}, err
 		}

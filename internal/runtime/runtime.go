@@ -112,6 +112,7 @@ type Runtime struct {
 	compactionDeadline           func(context.Context, time.Duration) (context.Context, context.CancelFunc)
 	turnEmitter                  Emitter
 	activityEmitter              Emitter
+	toolCalls                    map[tool.InvocationID]*toolExecutionCall
 	activityInvocations          map[tool.InvocationID]tool.Invocation
 	resultBudget                 *tool.ResultBudget
 	resultTicket                 *tool.ResultBudgetTicket
@@ -272,7 +273,7 @@ func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, 
 	defer runtime.active.Store(false)
 	runtime.samplePresentation = nil
 	defer func() { runtime.samplePresentation = nil }()
-	runtime.resetHookTurn()
+	runtime.resetToolTurn()
 	runtime.explicitSkills = nil
 	defer func() { runtime.explicitSkills = nil }()
 	defer func() {
@@ -448,6 +449,30 @@ func (runtime *Runtime) ReconcileToolTurn(ctx context.Context, plan session.Tool
 	reconcileContext := context.WithoutCancel(ctx)
 	runtime.clearFileState()
 	calls := plan.Calls()
+	for _, call := range calls {
+		if err := runtime.registerToolCall(call.Origin, call.Invocation); err != nil {
+			return err
+		}
+		state := runtime.toolCalls[call.Invocation.InvocationID()]
+		state.resultOrigin = tool.InputResultRecovery
+		if call.Hooks != nil {
+			g := call.Hooks.Clone()
+			state.pre = &g
+		}
+		admission, err := call.ExecutionAdmission()
+		if err != nil {
+			return err
+		}
+		state.admission = admission
+		if call.State == session.ReplayedToolCallResult {
+			if call.Result.Budget().Reason() != tool.BudgetRecovery {
+				state.resultOrigin = tool.InputResultExecution
+			}
+			if err := runtime.rememberToolResult(plan.TurnID(), call.Result); err != nil {
+				return err
+			}
+		}
+	}
 	results := make([]tool.InvocationResult, 0, len(calls))
 	outcomeUncertain := false
 	for _, call := range calls {
@@ -464,6 +489,10 @@ func (runtime *Runtime) ReconcileToolTurn(ctx context.Context, plan session.Tool
 			outcomeUncertain = outcomeUncertain || call.Hooks.Started != nil
 			continue
 		}
+		effective, effectiveErr := call.ResultInvocation()
+		if effectiveErr != nil {
+			return effectiveErr
+		}
 		var result tool.InvocationResult
 		switch call.State {
 		case session.ReplayedToolCallReady:
@@ -477,7 +506,7 @@ func (runtime *Runtime) ReconcileToolTurn(ctx context.Context, plan session.Tool
 				}
 			}
 			result = tool.NewInvocationErrorResult(
-				call.Invocation, tool.ResultCancelled, code, preview,
+				effective, tool.ResultCancelled, code, preview,
 			)
 			result, _ = tool.FinalizeResult(result, recoveryAllowance, tool.BudgetRecovery)
 			if err := runtime.persistToolResult(reconcileContext, plan.TurnID(), &result); err != nil {
@@ -485,7 +514,7 @@ func (runtime *Runtime) ReconcileToolTurn(ctx context.Context, plan session.Tool
 			}
 		case session.ReplayedToolCallStarted:
 			result = tool.NewInvocationErrorResult(
-				call.Invocation, tool.ResultOutcomeUncertain, "outcome_uncertain",
+				effective, tool.ResultOutcomeUncertain, "outcome_uncertain",
 				"Tool failed: execution outcome is uncertain",
 			)
 			result, _ = tool.FinalizeResult(result, recoveryAllowance, tool.BudgetRecovery)
@@ -901,10 +930,21 @@ func (runtime *Runtime) commitCallSample(
 	}
 	runtime.commitSampleObservation(observation)
 	runtime.publishCacheSnapshot()
+	for index, invocation := range invocations {
+		origin, err := tool.NewToolCallOrigin(runtime.sessionID, runtime.threadID, turnID, sampleIndex, uint32(index))
+		if err != nil {
+			runtime.poisoned.Store(true)
+			return nil, err
+		}
+		if err := runtime.registerToolCall(origin, invocation); err != nil {
+			runtime.poisoned.Store(true)
+			return nil, err
+		}
+	}
 	if runtime.toolHistory != nil {
 		entries := make([]session.ToolHistoryEntry, len(invocations))
 		for index, invocation := range invocations {
-			entries[index] = session.ToolHistoryEntry{Sequence: records[index+2].Sequence, NativeSequence: records[0].Sequence, TurnID: turnID, SampleIndex: sampleIndex, CallIndex: uint32(index), Invocation: invocation}
+			entries[index] = session.ToolHistoryEntry{Origin: runtime.toolCalls[invocation.InvocationID()].origin, Sequence: records[index+2].Sequence, NativeSequence: records[0].Sequence, TurnID: turnID, SampleIndex: sampleIndex, CallIndex: uint32(index), Invocation: invocation}
 		}
 		if err := runtime.toolHistory.NativeCommitted(records[0].Sequence, entries); err != nil {
 			runtime.poisoned.Store(true)
@@ -969,7 +1009,8 @@ func (runtime *Runtime) executeReadBatch(ctx context.Context, turnID domain.Turn
 		if err != nil {
 			return nil, fault.Wrap(fault.CodeStreamProtocol, "tool execution start is invalid", err)
 		}
-		if _, err := runtime.journal.AppendBatch(ctx, []session.RecordDraft{startedDraft}); err != nil {
+		records, err := runtime.journal.AppendBatch(ctx, []session.RecordDraft{startedDraft})
+		if err != nil {
 			if errors.Is(err, context.Canceled) && !runtime.journal.Poisoned() {
 				results[index] = tool.NewInvocationErrorResult(invocation, tool.ResultCancelled, "cancelled", "Tool cancelled")
 				continue
@@ -980,6 +1021,14 @@ func (runtime *Runtime) executeReadBatch(ctx context.Context, turnID domain.Turn
 			persistCount = index
 			admissionErr = fault.Wrap(fault.CodeSessionWrite, "persist tool execution start failed", err)
 			break
+		}
+		if len(records) != 1 {
+			runtime.poisoned.Store(true)
+			return nil, fault.New(fault.CodeSessionWrite, "tool start has no durable sequence")
+		}
+		if _, err := runtime.registerExecutionAdmission(invocation, records[0].Sequence); err != nil {
+			runtime.poisoned.Store(true)
+			return nil, err
 		}
 		started[index] = true
 		runtime.emitToolStarted(turnID, invocation)
@@ -1127,9 +1176,7 @@ func (runtime *Runtime) persistToolResult(ctx context.Context, turnID domain.Tur
 		runtime.poisoned.Store(true)
 		return err
 	}
-	runtime.notifyToolResult(turnID, result)
-
-	return nil
+	return runtime.notifyToolResult(turnID, result)
 }
 
 func (runtime *Runtime) commitToolOutputs(ctx context.Context, turnID domain.TurnID, results []tool.InvocationResult) error {
@@ -1140,6 +1187,10 @@ func (runtime *Runtime) commitToolOutputs(ctx context.Context, turnID domain.Tur
 	}
 	outputs := make([]tool.ModelOutput, len(results))
 	for i, result := range results {
+		evidence, evidenceErr := runtime.resultEvidence(result)
+		if evidenceErr != nil {
+			return evidenceErr
+		}
 		var feedback []domain.FrozenHookFeedback
 		if state := runtime.hooks.post[result.InvocationID()]; state != nil {
 			if state.terminal == nil {
@@ -1153,10 +1204,10 @@ func (runtime *Runtime) commitToolOutputs(ctx context.Context, turnID domain.Tur
 			var selection tool.PostHookSelection
 			selection, err = tool.NewPostHookSelection(state.plan, state.admission, result)
 			if err == nil {
-				output, err = tool.NewPostModelOutput(result, selection, feedback)
+				output, err = tool.NewPostModelOutput(result, evidence, selection, feedback)
 			}
 		} else {
-			output, err = tool.NewModelOutput(result)
+			output, err = tool.NewModelOutput(result, evidence)
 		}
 		if err != nil {
 			return err

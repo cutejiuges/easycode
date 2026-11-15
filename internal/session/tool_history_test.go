@@ -37,6 +37,10 @@ func TestToolHistoryProjectsAllTurnsAndTerminalStates(t *testing.T) {
 		}
 		records = append(records, Record{Sequence: uint64(3*i + 1), TurnID: turn, EventKind: EventProviderNativeCommit}, Record{Sequence: uint64(3*i + 2), TurnID: turn, EventKind: EventToolCallReady, Payload: call.PayloadBytes()}, Record{Sequence: uint64(3*i + 3), TurnID: turn, EventKind: EventToolCallResult, Payload: terminal.PayloadBytes()})
 	}
+	for i := range records {
+		records[i].SessionID = testSessionID
+		records[i].ThreadID = testThreadID
+	}
 	commands, err := projectToolHistory(records)
 	if err != nil || len(commands) != len(states) {
 		t.Fatalf("projection: %v", err)

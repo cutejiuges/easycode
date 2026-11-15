@@ -7,17 +7,21 @@ import (
 
 // ToolHistoryEntry 保存已验证工具事实的纯内存投影，不保存文件句柄或实时进度。
 type ToolHistoryEntry struct {
-	NativeSequence uint64
-	TurnID         domain.TurnID
-	SampleIndex    uint32
-	CallIndex      uint32
-	Sequence       uint64
-	Invocation     tool.Invocation
-	Result         tool.InvocationResult
-	HasResult      bool
-	Hooks          []HookHistoryEntry
-	PostHooks      *ReplayedPostHooks
-	DetailSequence uint64
+	PreDetailSequence uint64
+	Origin            tool.ToolCallOrigin
+	PreHooks          *ReplayedHookGate
+	Admission         tool.ExecutionAdmission
+	NativeSequence    uint64
+	TurnID            domain.TurnID
+	SampleIndex       uint32
+	CallIndex         uint32
+	Sequence          uint64
+	Invocation        tool.Invocation
+	Result            tool.InvocationResult
+	HasResult         bool
+	Hooks             []HookHistoryEntry
+	PostHooks         *ReplayedPostHooks
+	DetailSequence    uint64
 }
 
 func projectToolHistory(records []Record) ([]ToolHistoryEntry, error) {
@@ -42,13 +46,50 @@ func projectToolHistory(records []Record) ([]ToolHistoryEntry, error) {
 				return nil, replayCorrupt("invalid tool ready projection")
 			}
 			indices[inv.InvocationID()] = len(entries)
-			entries = append(entries, ToolHistoryEntry{NativeSequence: nativeSequence, TurnID: record.TurnID, SampleIndex: p.SampleIndex, CallIndex: p.CallIndex, Sequence: record.Sequence, Invocation: inv})
+			origin, err := tool.NewToolCallOrigin(record.SessionID, record.ThreadID, record.TurnID, p.SampleIndex, p.CallIndex)
+			if err != nil {
+				return nil, err
+			}
+			entries = append(entries, ToolHistoryEntry{Origin: origin, NativeSequence: nativeSequence, TurnID: record.TurnID, SampleIndex: p.SampleIndex, CallIndex: p.CallIndex, Sequence: record.Sequence, Invocation: inv})
 		case EventToolHookGatePlanned:
 			p, err := DecodeToolHookGatePlanned(record)
 			if err != nil {
 				return nil, err
 			}
 			plans[string(p.Event)+":"+p.InvocationID+":"+p.Digest] = p
+			index, ok := indices[tool.InvocationID(p.InvocationID)]
+			if !ok || entries[index].PreHooks != nil {
+				return nil, replayCorrupt("pre hook has no unique ready projection")
+			}
+			entries[index].PreHooks = &ReplayedHookGate{Plan: p.Clone(), PlanSequence: record.Sequence}
+			entries[index].PreDetailSequence = record.Sequence
+			entries[index].DetailSequence = record.Sequence
+		case EventToolHookGateDecided:
+			d, err := DecodeToolHookGateDecided(record)
+			if err != nil {
+				return nil, err
+			}
+			index, ok := indices[tool.InvocationID(d.InvocationID)]
+			if !ok || entries[index].PreHooks == nil {
+				return nil, replayCorrupt("pre decision has no plan projection")
+			}
+			entries[index].PreHooks.Decision = &d
+			entries[index].PreHooks.DecisionSequence = record.Sequence
+			entries[index].PreDetailSequence = record.Sequence
+			entries[index].DetailSequence = record.Sequence
+		case EventToolExecutionStarted:
+			p, err := DecodeToolExecutionStartedPayload(record)
+			if err != nil {
+				return nil, err
+			}
+			index, ok := indices[p.InvocationID]
+			if !ok {
+				return nil, replayCorrupt("tool admission has no ready projection")
+			}
+			entries[index].Admission, err = tool.NewExecutionAdmission(p.InvocationID, record.Sequence)
+			if err != nil {
+				return nil, err
+			}
 		case EventToolPostHookPlanned:
 			p, err := DecodeToolPostHookPlanned(record)
 			if err != nil {
@@ -81,6 +122,15 @@ func projectToolHistory(records []Record) ([]ToolHistoryEntry, error) {
 				g.Started = &id
 				g.StartedSequence = record.Sequence
 				entries[index].DetailSequence = record.Sequence
+			} else if id.Event == domain.HookPreToolUse {
+				index, ok := indices[tool.InvocationID(id.InvocationID())]
+				if !ok || entries[index].PreHooks == nil {
+					return nil, replayCorrupt("pre start has no plan projection")
+				}
+				entries[index].PreHooks.Started = &id
+				entries[index].PreHooks.StartedSequence = record.Sequence
+				entries[index].PreDetailSequence = record.Sequence
+				entries[index].DetailSequence = record.Sequence
 			}
 		case EventToolPostHookCompleted:
 			terminal, err := DecodeToolPostHookCompleted(record)
@@ -109,6 +159,17 @@ func projectToolHistory(records []Record) ([]ToolHistoryEntry, error) {
 				return nil, replayCorrupt("hook result has no plan projection")
 			}
 			entries[index].Hooks = append(entries[index].Hooks, HookHistoryEntry{Reference: p.Hooks[r.Identity.Ordinal], Result: r, Feedback: finished.Feedback})
+			if r.Identity.Event == domain.HookPreToolUse {
+				g := entries[index].PreHooks
+				if g == nil {
+					return nil, replayCorrupt("pre finish has no plan projection")
+				}
+				g.Finished = append(g.Finished, finished.Clone())
+				entries[index].PreDetailSequence = record.Sequence
+				g.Started = nil
+				g.StartedSequence = 0
+				entries[index].DetailSequence = record.Sequence
+			}
 			if r.Identity.Event.Post() {
 				g := entries[index].PostHooks
 				if g == nil {
@@ -128,15 +189,35 @@ func projectToolHistory(records []Record) ([]ToolHistoryEntry, error) {
 			if !ok || entries[index].HasResult {
 				return nil, replayCorrupt("tool result has no ready fact")
 			}
-			result, err := p.Domain(entries[index].Invocation)
+			selection, err := entries[index].InputSelection()
+			if err != nil {
+				return nil, err
+			}
+			effective, err := selection.ResultInvocation()
+			if err != nil {
+				return nil, err
+			}
+			result, err := p.Domain(effective)
 			if err != nil {
 				return nil, err
 			}
 			entries[index].Result = result
 			entries[index].HasResult = true
+			if _, err := entries[index].InputResultEvidence(); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return entries, nil
+}
+
+// InputSelection 保留原 Invocation，不把中间 C 覆盖到原始历史。
+func (entry ToolHistoryEntry) InputSelection() (tool.InputSelection, error) {
+	return (ReplayedToolCall{Origin: entry.Origin, Invocation: entry.Invocation, Hooks: entry.PreHooks}).InputSelection()
+}
+
+func (entry ToolHistoryEntry) InputResultEvidence() (tool.InputResultEvidence, error) {
+	return (ReplayedToolCall{Origin: entry.Origin, Invocation: entry.Invocation, Hooks: entry.PreHooks, StartedSequence: entry.Admission.Sequence(), Result: entry.Result}).InputResultEvidence()
 }
 
 // ToolArtifactReferences 只投影已提交工具结果中的授权引用，不访问对象。

@@ -7,13 +7,13 @@
 当前契约治理变更 `unify-current-contract-lifecycle` 收敛了固定 codec、prepared commit、宿主 owner 与副作用 admission。TUI、一次性 headless、stream-json 共用 AgentLoop；关闭期间排空事件，活动 transport 可显式取消，journal lease 保留至清理完成。Patch/Write grant 仅在批准 Sync 后生效，三种副作用工具统一验证结果关联并以 uncertain 收口错配结果。本次未引入迁移或兼容 reader，后续 P4/P6/P7/P8 能力及占位退出条件保持原有范围。
 
 > 状态：持续演进（各阶段按纵向切片验收）
-> 更新时间：2026-11-11
+> 更新时间：2026-11-15
 > 依赖设计：[`../architecture/overall-architecture.md`](../architecture/overall-architecture.md)
 > Tool 专题设计：[`../architecture/tool-system.md`](../architecture/tool-system.md)
 
-## 当前状态总览（2026-11-11）
+## 当前状态总览（2026-11-15）
 
-实现与测试逐项核对见[当前能力清单](capability-status.md)。P0–P8 是并行推进的阶段目标，不以某个后期切片交付推定整个阶段完成。当前已交付九项模型工具、本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop、结构化提问、流式 Markdown、命令/Skill 首词补全、启动会话选择、Provider 缓存、手动/自动压缩、双 Provider 推理阅读及启动推理/display/输出配置；本地 Plugin 技能包及受限 importer 已交付；仍缺少运行中推理切换、跨 Provider fork、后台进程、插件可执行贡献/MCP、Subagent 与完整发布矩阵。
+实现与测试逐项核对见[当前能力清单](capability-status.md)。P0–P8 是并行推进的阶段目标，不以某个后期切片交付推定整个阶段完成。当前已交付九项模型工具、本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop、三能力 PreToolUse 完整参数改写、结构化提问、流式 Markdown、命令/Skill 首词补全、启动会话选择、Provider 缓存、手动/自动压缩、双 Provider 推理阅读及启动推理/display/输出配置；本地 Plugin 技能包及受限 importer 已交付；仍缺少运行中推理切换、跨 Provider fork、后台进程、插件可执行贡献/MCP、Subagent 与完整发布矩阵。
 
 下文“工作内容/交付物/验收标准”保留阶段的完整目标；已完成状态以本总览、各节进度和当前能力清单为准。所有迁移、历史 reader 或兼容窗口必须先有用户明确要求及新 OpenSpec，不因路线图提到未来发布而预先授权。
 
@@ -540,11 +540,17 @@ Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘�
 
 Stop 反馈及真实 Skill 纠正在必要摘要后原字节交付；恢复先关闭中断摘要，再本地交付冻结反馈并结束旧回合，零脚本/网络重跑。TUI 显示完成检查、准备续轮、交付后继续，独立 Hook 条目支持只读详情；headless 匹配直接要求信任。坏来源不能冒充无 Stop；合法无 Stop 保持旧行为。P6 未整体退出：其余事件、async、Plugins/MCP、热加载与跨平台 sandbox 仍待独立变更。[实现验收](../../openspec/changes/archive/2026-11-13-add-stop-command-hooks/verification.md)记录测试、固定参考快照和归档状态。
 
+### 2026-11-14：PreToolUse 完整参数改写
+
+`add-pre-tool-use-input-rewrite` 补齐当前 P6 的三能力 block/rewrite 闭环，复用既有 runner、exclusive、普通审批、单结果预算、原生输出及恢复 owner。原始调用 O 不变；已 Sync 的候选 C 按冻结顺序传递，全通过后选 E，重新执行源 profile、目标证据、policy 和批准校验。必要 effect 与执行事实保存，模型说明优先按真实 bytes 计入原 ticket；低预算及未准入失败不制造副作用或伪 Post。界面和离线恢复消费同一不可变证明。
+
+边界是完整规范替换 16 KiB、Edit/apply_patch 来源语义固定、三项 mutation 和既有 Darwin sandbox；不含 allow/ask、async、结果改写、新事件、MCP 或完整跨平台支持。验收及未运行平台范围见 [verification.md](../../openspec/changes/archive/2026-11-15-add-pre-tool-use-input-rewrite/verification.md)。
+
 ### PreToolUse 首个切片的交付边界
 
 `add-pre-tool-use-command-hooks` 完成 user/project 冻结来源、三种 mutation 字面匹配、默认拒绝的单项内存信任、Darwin 只读/禁网命令、30 秒总预算、`/hooks` 浏览/reset/审查及四类 durable facts。两个 Provider 复用相同 gate，并保留原生 function/custom/tool_result 配对、普通审批和缓存前缀。恢复不重跑脚本，先补偿旧事实再 Load 新来源；无匹配保持旧行为。Exec 与 Hook 共用进程资源 owner，Skills 与 Hooks 共用 FD 安全打开骨架。
 
-P6 尚未退出：下面的其他 Hook 事件、async、rewrite/result、其他 context 扩展、插件可执行贡献、MCP 与热加载仍是后续计划。验收入口为 change 的 `verification.md`；实现测试分布于 `extension/hook`、`executor/process`、`runtime/hook*_test.go`、`session/hook*_test.go`、`app/hook*_test.go` 与 `tui/hooks_test.go`。
+P6 尚未退出：下面的其他 Hook 事件、async、result 改写、其他 context 扩展、插件可执行贡献、MCP 与热加载仍是后续计划。验收入口为 change 的 `verification.md`；实现测试分布于 `extension/hook`、`executor/process`、`runtime/hook*_test.go`、`session/hook*_test.go`、`app/hook*_test.go` 与 `tui/hooks_test.go`。
 
 ### 2026-11-12：本地 Plugin 技能包
 

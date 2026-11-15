@@ -17,6 +17,7 @@ type questionState struct {
 	active *pendingQuestion
 }
 type pendingQuestion struct {
+	evidence   tool.InputResultEvidence
 	request    protocol.UserQuestionRequestedPayload
 	turnID     domain.TurnID
 	invocation tool.QuestionInvocation
@@ -50,7 +51,15 @@ func (r *questionResponder) Answer(ctx context.Context, v tool.QuestionInvocatio
 	if err != nil {
 		return tool.QuestionAnswerSet{}, err
 	}
-	p := &pendingQuestion{request: request, turnID: r.turnID, invocation: v, preflight: r.preflight, parentDone: ctx.Done(), done: make(chan struct{})}
+	state := r.runtime.toolCalls[v.InvocationID()]
+	if state == nil {
+		return tool.QuestionAnswerSet{}, fmt.Errorf("question has no ready source")
+	}
+	evidence, err := state.evidence()
+	if err != nil {
+		return tool.QuestionAnswerSet{}, err
+	}
+	p := &pendingQuestion{evidence: evidence.Clone(), request: request, turnID: r.turnID, invocation: v, preflight: r.preflight, parentDone: ctx.Done(), done: make(chan struct{})}
 	r.runtime.questions.mu.Lock()
 	if r.runtime.questions.active != nil {
 		r.runtime.questions.mu.Unlock()
@@ -101,7 +110,7 @@ func (r *Runtime) acceptQuestionAnswer(turnID domain.TurnID, response protocol.U
 		return protocol.ControlErrorQuestionAnswerInvalid
 	}
 	result, err = tool.FinalizeResult(result, p.request.ResultAllowance, tool.BudgetPreserved)
-	output, outputErr := tool.NewModelOutput(result)
+	output, outputErr := tool.NewModelOutput(result, p.evidence)
 	if err != nil || outputErr != nil || session.PreflightQuestionResult(session.Identity{SessionID: r.sessionID, ThreadID: r.threadID}, turnID, result) != nil || p.preflight.Validate(output) != nil {
 		return protocol.ControlErrorQuestionAnswerInvalid
 	}

@@ -171,7 +171,11 @@ func TestPostReplayIndependentErrorPrefixAndFrozenEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	outputs, err := tool.NewPostModelOutput(call.Result, selection, call.PostHooks.Feedback())
+	evidence, evidenceErr := call.InputResultEvidence()
+	if evidenceErr != nil {
+		t.Fatal(evidenceErr)
+	}
+	outputs, err := tool.NewPostModelOutput(call.Result, evidence, selection, call.PostHooks.Feedback())
 	if err != nil || !strings.Contains(outputs.Text(), "accepted feedback") {
 		t.Fatal("lost output", err)
 	}
@@ -274,7 +278,7 @@ func TestPreZeroAndPostZeroHaveIndependentHistoryAssociations(t *testing.T) {
 	f, inv, pre := hookReplayFixture(t, 1)
 	started, id := hookStarted(t, pre, 0)
 	f.appendBatch(started)
-	f.appendBatch(hookFinished(t, pre, id, domain.HookContinue, domain.HookOK), hookDecision(t, pre, domain.HookContinue, domain.HookOK, 1, -1))
+	f.appendBatch(hookFinished(t, inv, pre, id, domain.HookContinue, domain.HookOK), hookDecision(t, pre, domain.HookContinue, domain.HookOK, 1, -1))
 	d, err := domain.NewHookDeclaration(domain.HookSourceProject, domain.HookPostToolUse, domain.HookFeedbackModel, strings.Repeat("a", 64), "post", 7, "true", 5)
 	if err != nil {
 		t.Fatal(err)

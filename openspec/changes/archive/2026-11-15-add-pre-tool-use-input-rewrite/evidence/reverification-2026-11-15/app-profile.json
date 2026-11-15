@@ -1,0 +1,15 @@
+{
+  "command": [
+    "go",
+    "test",
+    "-json",
+    "-count=1",
+    "-timeout=20m",
+    "-cpuprofile=/tmp/easycode-rewrite-app-normal.pprof",
+    "./internal/app"
+  ],
+  "started_at": "2026-11-15T08:13:08.488345+00:00",
+  "state": "finished",
+  "duration_seconds": 157.948,
+  "exit_code": 0
+}

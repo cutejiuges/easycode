@@ -53,6 +53,7 @@ func TestFailureRecoveryAllFrozenCutsNeverRunExternalCapabilities(t *testing.T) 
 			plan, next := loadFailureRecovery(t, name)
 			j := &fakeJournal{sequence: next - 1}
 			r, _, runner, preparer, executor := postRuntimeFixture(t, j, domain.HookFeedbackModel)
+			bindRuntimeRecoveryFixture(t, r, plan)
 			if err := r.ReconcileToolTurn(context.Background(), plan); err != nil {
 				t.Fatal(err)
 			}
@@ -97,6 +98,7 @@ func TestFailureRecoverySyncFaultsPoisonBeforeNewAdmission(t *testing.T) {
 				plan, next := loadFailureRecovery(t, "failure_prefix_started")
 				j := &hookFaultJournal{fakeJournal: fakeJournal{sequence: next - 1}, kind: kind, after: after, failure: errors.New("injected Sync failure")}
 				r, _, runner, preparer, executor := postRuntimeFixture(t, j, domain.HookFeedbackModel)
+				bindRuntimeRecoveryFixture(t, r, plan)
 				if err := r.ReconcileToolTurn(context.Background(), plan); err == nil || !r.poisoned.Load() {
 					t.Fatal("unconfirmed recovery did not poison", err)
 				}

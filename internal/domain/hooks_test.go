@@ -70,12 +70,12 @@ func TestHookValuesAreBoundedImmutableAndStrict(t *testing.T) {
 }
 
 func TestHookInputDoesNotEvaluateOrTruncateArguments(t *testing.T) {
-	v, err := NewHookExecInput("printf '$SECRET $(touch outside)'", ".", 1000)
+	v, err := NewHookExecInput("printf '$SECRET $(touch outside)'", "", 1000)
 	if err != nil {
 		t.Fatal(err)
 	}
 	id := "018f1d8a-7b5c-7def-8abc-456789abcdef"
-	i, err := NewHookInput(SessionID(id), ThreadID(id), TurnID(id), "call", "exec_command", "/workspace", v)
+	i, err := NewHookInput(SessionID(id), ThreadID(id), TurnID(id), "call", "exec_command", "/workspace", v, HookExecProfile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,13 +102,15 @@ func TestHookInputDoesNotEvaluateOrTruncateArguments(t *testing.T) {
 
 func TestHookInputBranchesAndMatchLimit(t *testing.T) {
 	id := "018f1d8a-7b5c-7def-8abc-456789abcdef"
-	patch, _ := NewHookPatchInput("f", []HookReplacement{{OldText: "a", NewText: "b", LineBased: true}})
+	patch, _ := NewHookPatchInput("f", []HookReplacement{{OldText: "a", NewText: "b"}})
+	linePatch, _ := NewHookPatchInput("f", []HookReplacement{{OldText: "a\n", NewText: "b\n", LineBased: true}})
 	write, _ := NewHookWriteInput("f", "body")
-	exec, _ := NewHookExecInput("echo hello", ".", 1000)
+	exec, _ := NewHookExecInput("echo hello", "", 1000)
 	for _, test := range []struct {
-		input HookToolInput
-		names []string
-	}{{patch, []string{"Edit", "apply_patch"}}, {write, []string{"Write"}}, {exec, []string{"Bash", "exec_command"}}} {
+		input   HookToolInput
+		names   []string
+		profile HookInputProfile
+	}{{patch, []string{"Edit"}, HookSubstringPatch}, {linePatch, []string{"apply_patch"}, HookLinePatch}, {write, []string{"Write"}, HookWriteProfile}, {exec, []string{"Bash", "exec_command"}, HookExecProfile}} {
 		b, err := test.input.MarshalJSON()
 		if err != nil {
 			t.Fatal(err)
@@ -118,7 +120,7 @@ func TestHookInputBranchesAndMatchLimit(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, name := range test.names {
-			input, err := NewHookInput(SessionID(id), ThreadID(id), TurnID(id), "call", name, "/workspace", restored)
+			input, err := NewHookInput(SessionID(id), ThreadID(id), TurnID(id), "call", name, "/workspace", restored, test.profile)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -185,7 +187,7 @@ func TestHookExecutionStatisticsRejectContradictoryFlags(t *testing.T) {
 func TestHookInputUsesNativeAbsoluteWorkspacePath(t *testing.T) {
 	id := "018f1d8a-7b5c-7def-8123-456789abcdef"
 	input, _ := NewHookWriteInput("marker", "content")
-	v, err := NewHookInput(SessionID(id), ThreadID(id), TurnID(id), "call", "Write", t.TempDir(), input)
+	v, err := NewHookInput(SessionID(id), ThreadID(id), TurnID(id), "call", "Write", t.TempDir(), input, HookWriteProfile)
 	if err != nil || v.Validate() != nil {
 		t.Fatal("native absolute workspace rejected", err)
 	}

@@ -12,25 +12,29 @@ type ModelOutput struct {
 	text      string
 	selection PostHookSelection
 	post      bool
+	evidence  InputResultEvidence
 }
 
-func NewModelOutput(result InvocationResult) (ModelOutput, error) {
-	return newModelOutput(result, nil)
+func NewModelOutput(result InvocationResult, evidence InputResultEvidence) (ModelOutput, error) {
+	return newModelOutput(result, evidence, nil)
 }
 
 // NewPostModelOutput 先验证所选计划的调用归属，再组合冻结的工具数据。
-func NewPostModelOutput(result InvocationResult, selection PostHookSelection, feedback []domain.FrozenHookFeedback) (ModelOutput, error) {
+func NewPostModelOutput(result InvocationResult, evidence InputResultEvidence, selection PostHookSelection, feedback []domain.FrozenHookFeedback) (ModelOutput, error) {
 	if err := selection.validate(result, feedback); err != nil {
 		return ModelOutput{}, err
 	}
-	v, err := newModelOutput(result, feedback)
+	if evidence.admission != selection.admission {
+		return ModelOutput{}, errors.New("post and input admission differ")
+	}
+	v, err := newModelOutput(result, evidence, feedback)
 	v.selection = selection
 	v.post = true
 	return v, err
 }
 
-func newModelOutput(result InvocationResult, feedback []domain.FrozenHookFeedback) (ModelOutput, error) {
-	if result.Validate() != nil {
+func newModelOutput(result InvocationResult, evidence InputResultEvidence, feedback []domain.FrozenHookFeedback) (ModelOutput, error) {
+	if result.Validate() != nil || evidence.ValidateResult(result) != nil {
 		return ModelOutput{}, errors.New("invalid model tool result")
 	}
 	if len(feedback) > 0 && result.Capability() != CapabilityPatch && result.Capability() != CapabilityWrite && result.Capability() != CapabilityExec {
@@ -65,16 +69,20 @@ func newModelOutput(result InvocationResult, feedback []domain.FrozenHookFeedbac
 	if totalDelta != len(tail) {
 		return ModelOutput{}, errors.New("model output feedback budget mismatch")
 	}
-	return ModelOutput{result: result, feedback: append([]domain.FrozenHookFeedback(nil), feedback...), text: result.Preview().Text() + tail}, nil
+	return ModelOutput{result: result, evidence: evidence.Clone(), feedback: append([]domain.FrozenHookFeedback(nil), feedback...), text: result.Preview().Text() + tail}, nil
 }
-func (v ModelOutput) Result() InvocationResult { return v.result }
+func (v ModelOutput) Evidence() InputResultEvidence { return v.evidence.Clone() }
+func (v ModelOutput) Result() InvocationResult      { return v.result }
 func (v ModelOutput) Feedback() []domain.FrozenHookFeedback {
 	return append([]domain.FrozenHookFeedback(nil), v.feedback...)
 }
 func (v ModelOutput) Text() string { return v.text }
 func (v ModelOutput) Validate() error {
-	expected, err := newModelOutput(v.result, v.feedback)
+	expected, err := newModelOutput(v.result, v.evidence, v.feedback)
 	if v.post {
+		if v.evidence.admission != v.selection.admission {
+			return errors.New("post and input admission differ")
+		}
 		if e := v.selection.validate(v.result, v.feedback); e != nil {
 			return e
 		}

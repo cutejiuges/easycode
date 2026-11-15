@@ -26,8 +26,15 @@ func (runtime *Runtime) resultAllowance(capability tool.CapabilityID) (int, erro
 
 // freezeResult 由 turn owner 在提交前执行一次；恢复只重用已有预算事实。
 func (runtime *Runtime) freezeResult(result tool.InvocationResult) (tool.InvocationResult, error) {
+	evidence, err := runtime.resultEvidence(result)
+	if err != nil {
+		return tool.InvocationResult{}, err
+	}
+	return runtime.freezeResultUsingEvidence(result, evidence)
+}
+func (runtime *Runtime) freezeResultUsingEvidence(result tool.InvocationResult, evidence tool.InputResultEvidence) (tool.InvocationResult, error) {
 	if runtime.resultBudget == nil {
-		return result, result.Validate()
+		return tool.FreezeInputRewriteResult(result, evidence, result.Budget().Allowance(), result.Budget().Reason())
 	}
 	if runtime.resultTicket == nil {
 		ticket, err := runtime.resultBudget.Reserve(result.Capability(), false)
@@ -42,7 +49,23 @@ func (runtime *Runtime) freezeResult(result tool.InvocationResult) (tool.Invocat
 	if runtime.resultTicketInvocation != result.InvocationID() || runtime.resultTicketCapability != result.Capability() {
 		return tool.InvocationResult{}, errors.New("result ticket invocation mismatch")
 	}
-	return tool.FinalizeResult(result, runtime.resultTicket.BaseAllowance(), result.Budget().Reason())
+	return tool.FreezeInputRewriteResult(result, evidence, runtime.resultTicket.BaseAllowance(), result.Budget().Reason())
+}
+
+func (runtime *Runtime) resultBodyAllowance(invocation tool.Invocation) (int, error) {
+	allowance, err := runtime.resultAllowance(invocation.Capability())
+	if err != nil {
+		return 0, err
+	}
+	state := runtime.toolCalls[invocation.InvocationID()]
+	if state == nil {
+		return 0, errors.New("tool input has no source")
+	}
+	selection, err := state.selection()
+	if err != nil {
+		return 0, err
+	}
+	return tool.InputRewriteBodyAllowance(selection, allowance)
 }
 
 func (runtime *Runtime) commitResultBudget(result tool.InvocationResult) error {

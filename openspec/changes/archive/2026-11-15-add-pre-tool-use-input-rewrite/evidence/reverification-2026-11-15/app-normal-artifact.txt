@@ -1,0 +1,45 @@
+File: easycode-rewrite-app-profile.test
+Type: cpu
+Time: 2026-11-15 16:13:09 CST
+Duration: 156.43s, Total samples = 72.68s (46.46%)
+Active filters:
+   focus=easycode/internal/session/artifact
+Showing nodes accounting for 10.18s, 14.01% of 72.68s total
+Dropped 219 nodes (cum <= 0.36s)
+Showing top 35 nodes out of 164
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%      9.43s 12.97%  testing.tRunner
+         0     0%     0%      9.15s 12.59%  easycode/internal/session/artifact.(*Layout).Check
+         0     0%     0%         9s 12.38%  easycode/internal/app.openChatResourcesWithHooks
+         0     0%     0%         9s 12.38%  easycode/internal/app.openChatResourcesWithSnapshot
+         0     0%     0%      7.79s 10.72%  golang.org/x/sys/unix.Openat
+     7.79s 10.72% 10.72%      7.79s 10.72%  syscall.syscall6
+         0     0% 10.72%      6.08s  8.37%  easycode/internal/session/artifact.descendsFrom
+         0     0% 10.72%      3.47s  4.77%  easycode/internal/session/artifact.openDirectoryPath
+         0     0% 10.72%      2.57s  3.54%  easycode/internal/app.hookArtifactBoundary.Preflight
+         0     0% 10.72%      2.53s  3.48%  easycode/internal/app.openCommandArtifactBoundary
+         0     0% 10.72%      2.53s  3.48%  easycode/internal/session/artifact.OpenLayout
+         0     0% 10.72%      2.50s  3.44%  easycode/internal/session/artifact.Open
+     2.39s  3.29% 14.01%      2.39s  3.29%  syscall.syscall
+         0     0% 14.01%      2.29s  3.15%  easycode/internal/app.installChatHooks
+         0     0% 14.01%      1.83s  2.52%  easycode/internal/app.openChatResources
+         0     0% 14.01%      1.83s  2.52%  easycode/internal/app.openChatResourcesWithSelection (inline)
+         0     0% 14.01%      1.70s  2.34%  easycode/internal/session/artifact.(*Layout).CheckSource
+         0     0% 14.01%      1.68s  2.31%  easycode/internal/app.testCompletionManualAndRestoredRequests.func1
+         0     0% 14.01%      1.56s  2.15%  easycode/internal/app.testCompletionManualAndRestoredRequests.func1.2 (inline)
+         0     0% 14.01%      1.37s  1.88%  easycode/internal/extension/plugin.(*sourceOpener).Open
+         0     0% 14.01%      1.37s  1.88%  easycode/internal/extension/plugin.(*sourceOpener).checkBoundary (inline)
+         0     0% 14.01%      1.37s  1.88%  easycode/internal/extension/plugin.(*sourceOpener).open
+         0     0% 14.01%      1.15s  1.58%  easycode/internal/app.testHookResumeReconcilesEveryBatch.func1.3
+         0     0% 14.01%         1s  1.38%  easycode/internal/extension/skill.(*Local).Load
+         0     0% 14.01%         1s  1.38%  easycode/internal/extension/skill.(*Local).loadPlugins
+         0     0% 14.01%         1s  1.38%  easycode/internal/extension/skill.scanPlugin
+         0     0% 14.01%      0.93s  1.28%  easycode/internal/app.testStopRecoveryWindows.func1
+         0     0% 14.01%      0.91s  1.25%  easycode/internal/app.Run
+         0     0% 14.01%      0.74s  1.02%  golang.org/x/sys/unix.Fstat
+         0     0% 14.01%      0.73s  1.00%  easycode/internal/session/artifact.identity
+         0     0% 14.01%      0.68s  0.94%  easycode/internal/runtime.(*Runtime).runTurn
+         0     0% 14.01%      0.68s  0.94%  easycode/internal/runtime.(*agentLoopRunState).startTurn.func1
+         0     0% 14.01%      0.63s  0.87%  easycode/internal/app.TestPluginSkillLifecycleBothProvidersAndHosts.func1
+         0     0% 14.01%      0.53s  0.73%  easycode/internal/runtime.(*Runtime).executeToolCalls
+         0     0% 14.01%      0.53s  0.73%  easycode/internal/runtime.orderedToolScheduler.execute

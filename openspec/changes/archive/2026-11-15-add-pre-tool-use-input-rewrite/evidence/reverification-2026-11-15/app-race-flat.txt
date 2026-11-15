@@ -1,0 +1,48 @@
+File: easycode-rewrite-reverify-race.test
+Type: cpu
+Time: 2026-11-15 16:20:53 CST
+Duration: 855.87s, Total samples = 1291.42s (150.89%)
+Showing nodes accounting for 1195.29s, 92.56% of 1291.42s total
+Dropped 2292 nodes (cum <= 6.46s)
+Showing top 40 nodes out of 162
+      flat  flat%   sum%        cum   cum%
+   197.83s 15.32% 15.32%    197.83s 15.32%  runtime.pthread_kill
+   188.23s 14.58% 29.89%    188.32s 14.58%  runtime.usleep
+   162.25s 12.56% 42.46%    162.26s 12.56%  runtime.madvise
+   153.46s 11.88% 54.34%    153.46s 11.88%  runtime._ExternalCode
+    69.31s  5.37% 59.71%     69.31s  5.37%  runtime.pthread_cond_wait
+    42.07s  3.26% 62.97%     42.07s  3.26%  __tsan::MemoryRangeSet
+    39.03s  3.02% 65.99%     39.03s  3.02%  runtime.pthread_cond_signal
+    34.38s  2.66% 68.65%     34.38s  2.66%  __tsan_read
+    32.32s  2.50% 71.15%     32.32s  2.50%  __tsan::MemoryAccessRangeT
+    31.75s  2.46% 73.61%     52.96s  4.10%  runtime.mProf_FlushLocked
+    29.57s  2.29% 75.90%     29.57s  2.29%  racecalladdr
+    21.23s  1.64% 77.54%     21.23s  1.64%  runtime.(*bucket).mp
+    21.20s  1.64% 79.19%     55.55s  4.30%  runtime.scanobject
+    16.81s  1.30% 80.49%     17.08s  1.32%  runtime.greyobject
+    15.15s  1.17% 81.66%     15.15s  1.17%  racecall
+    13.02s  1.01% 82.67%     13.02s  1.01%  runtime.kevent
+    12.36s  0.96% 83.63%     18.10s  1.40%  runtime.unlock2
+    12.24s  0.95% 84.57%     12.25s  0.95%  syscall.syscall
+    12.02s  0.93% 85.51%     19.88s  1.54%  encoding/json.stateInString
+    11.76s  0.91% 86.42%     11.76s  0.91%  syscall.syscall6
+     9.83s  0.76% 87.18%     34.93s  2.70%  encoding/json.(*Decoder).readValue
+     9.21s  0.71% 87.89%      9.21s  0.71%  runtime.findObject
+     8.90s  0.69% 88.58%      8.90s  0.69%  __tsan::MetaMap::FreeRange
+     8.60s  0.67% 89.25%      8.64s  0.67%  runtime.typePointers.next
+     8.36s  0.65% 89.89%     26.12s  2.02%  encoding/json.appendCompact
+     7.30s  0.57% 90.46%     68.33s  5.29%  runtime.bgsweep
+     5.79s  0.45% 90.91%    193.72s 15.00%  runtime.lock2
+     5.21s   0.4% 91.31%    162.96s 12.62%  runtime.gcDrain
+     4.77s  0.37% 91.68%     10.57s  0.82%  runtime.(*sweepLocked).sweep
+     2.76s  0.21% 91.89%      8.11s  0.63%  runtime.stealWork
+     2.44s  0.19% 92.08%     13.53s  1.05%  runtime.sweepone
+     2.14s  0.17% 92.25%     39.20s  3.04%  runtime.freeSomeWbufs
+     1.04s 0.081% 92.33%    103.84s  8.04%  runtime.findRunnable
+     0.58s 0.045% 92.37%    123.05s  9.53%  runtime.gcBgMarkWorker
+     0.50s 0.039% 92.41%     90.54s  7.01%  runtime.(*gcControllerState).enlistWorker
+     0.45s 0.035% 92.45%     15.59s  1.21%  github.com/bytedance/sonic/internal/encoder/vm.Execute
+     0.40s 0.031% 92.48%     37.83s  2.93%  runtime.wakep
+     0.35s 0.027% 92.50%    146.19s 11.32%  runtime.goschedImpl
+     0.35s 0.027% 92.53%     15.98s  1.24%  runtime.mallocgc
+     0.32s 0.025% 92.56%     33.21s  2.57%  encoding/json.(*Decoder).Token

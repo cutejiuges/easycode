@@ -1,0 +1,45 @@
+File: easycode-rewrite-app-profile.test
+Type: cpu
+Time: 2026-11-15 16:13:09 CST
+Duration: 156.43s, Total samples = 72.68s (46.46%)
+Active filters:
+   focus=easycode/internal/codec
+Showing nodes accounting for 4.71s, 6.48% of 72.68s total
+Dropped 563 nodes (cum <= 0.36s)
+Showing top 35 nodes out of 386
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%      9.26s 12.74%  testing.tRunner
+         0     0%     0%      8.62s 11.86%  easycode/internal/codec.UnmarshalRecord
+         0     0%     0%      7.68s 10.57%  easycode/internal/codec.ObjectMembers
+     0.03s 0.041% 0.041%      7.45s 10.25%  encoding/json.(*Decoder).Decode
+         0     0% 0.041%      6.96s  9.58%  easycode/internal/codec.ValidateObjectFields
+         0     0% 0.041%      6.83s  9.40%  easycode/internal/codec.validateRecordShape
+     0.05s 0.069%  0.11%      6.39s  8.79%  encoding/json.(*Decoder).Token
+         0     0%  0.11%      6.29s  8.65%  easycode/internal/codec.ValidateJSON (inline)
+     0.01s 0.014%  0.12%      6.29s  8.65%  easycode/internal/codec.validateJSONDepth
+         0     0%  0.12%      6.06s  8.34%  easycode/internal/codec.UnmarshalStrict
+         0     0%  0.12%      5.76s  7.93%  easycode/internal/codec.scanValue
+         0     0%  0.12%      5.56s  7.65%  easycode/internal/runtime.(*Runtime).runTurn
+         0     0%  0.12%      5.56s  7.65%  easycode/internal/runtime.(*agentLoopRunState).startTurn.func1
+     0.25s  0.34%  0.47%      5.23s  7.20%  runtime.mallocgc
+     1.34s  1.84%  2.31%      4.77s  6.56%  encoding/json.(*Decoder).readValue
+         0     0%  2.31%      4.07s  5.60%  easycode/internal/session.(*ReplayPlanner).Plan
+         0     0%  2.31%      4.02s  5.53%  easycode/internal/app.openChatResourcesWithHooks
+         0     0%  2.31%      4.02s  5.53%  easycode/internal/app.openChatResourcesWithSnapshot
+         0     0%  2.31%      3.70s  5.09%  easycode/internal/app.(*sessionService).resume
+         0     0%  2.31%      3.57s  4.91%  easycode/internal/runtime.(*Runtime).planWindow
+         0     0%  2.31%      3.42s  4.71%  easycode/internal/codec.MarshalStable
+         0     0%  2.31%      3.39s  4.66%  github.com/bytedance/sonic.frozenConfig.Marshal
+         0     0%  2.31%      3.39s  4.66%  github.com/bytedance/sonic/internal/encoder.Encode
+         0     0%  2.31%      3.25s  4.47%  easycode/internal/runtime.(*Runtime).contextPlan
+         0     0%  2.31%      3.06s  4.21%  easycode/internal/runtime.(*Runtime).contextSnapshot
+         0     0%  2.31%      3.04s  4.18%  easycode/internal/codec.MarshalCanonical
+     3.03s  4.17%  6.48%      3.03s  4.17%  runtime.memclrNoHeapPointers
+         0     0%  6.48%      2.87s  3.95%  easycode/internal/runtime.(*Runtime).publishContext
+         0     0%  6.48%      2.87s  3.95%  easycode/internal/runtime.(*agentLoopRunState).startTurn.func1.2
+         0     0%  6.48%      2.80s  3.85%  easycode/internal/tool.CatalogSnapshot.Validate
+         0     0%  6.48%      2.80s  3.85%  github.com/bytedance/sonic.frozenConfig.Unmarshal
+         0     0%  6.48%      2.78s  3.82%  easycode/internal/session.DecodeRecord
+         0     0%  6.48%      2.68s  3.69%  easycode/internal/context.(*Planner).Plan
+         0     0%  6.48%      2.67s  3.67%  easycode/internal/tool.encodeFacades
+         0     0%  6.48%      2.67s  3.67%  github.com/bytedance/sonic.frozenConfig.UnmarshalFromString

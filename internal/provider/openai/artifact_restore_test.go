@@ -47,7 +47,8 @@ func TestReadArtifactNativeResultsRestoreExactly(t *testing.T) {
 				t.Fatal(err)
 			}
 			history := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, NewUserItem("test")), {Kind: nativeHistorySample, Outputs: []NativeItem{{Type: "reasoning", ID: "reason-exec", EncryptedContent: "opaque-reason"}, {Type: "function_call", ID: "fc-exec", CallID: "call-exec", Name: "ReadArtifact", Arguments: `{"artifact_id":"0123456789abcdef0123456789abcdef","offset":0,"limit":3}`}}}})
-			output, err := prepareToolOutputsEntry(history, testModelOutputs(t, result))
+			evidence := testModelOutputs(t, history, result)
+			output, err := prepareToolOutputsEntry(history, evidence)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -76,7 +77,7 @@ func TestReadArtifactNativeResultsRestoreExactly(t *testing.T) {
 				}
 				commits = append(commits, commit)
 			}
-			restoredValue, err := testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", testRestoreRecords(t, commits, testModelOutputs(t, result)))
+			restoredValue, err := testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", testRestoreRecords(t, commits, evidence))
 			if err != nil {
 				t.Fatal(err)
 			}

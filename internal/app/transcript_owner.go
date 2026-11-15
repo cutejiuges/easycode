@@ -38,6 +38,11 @@ func newTranscriptQueries(thread domain.ThreadID, reader tool.ArtifactRangeReade
 	q := &transcriptQueries{thread: thread, reader: reader, indices: make(map[tool.InvocationID]int), active: make(map[uint64]context.CancelFunc)}
 	q.entries = append([]session.ToolHistoryEntry(nil), entries...)
 	for i := range q.entries {
+		q.entries[i].Invocation = q.entries[i].Invocation.Clone()
+		if q.entries[i].PreHooks != nil {
+			g := q.entries[i].PreHooks.Clone()
+			q.entries[i].PreHooks = &g
+		}
 		q.entries[i].Hooks = append([]session.HookHistoryEntry(nil), q.entries[i].Hooks...)
 		if q.entries[i].PostHooks != nil {
 			g := q.entries[i].PostHooks.Clone()
@@ -50,22 +55,59 @@ func newTranscriptQueries(thread domain.ThreadID, reader tool.ArtifactRangeReade
 	return q
 }
 
-func (q *transcriptQueries) ToolResult(result tool.InvocationResult) {
-	invalid := tool.ValidateFrozenResult(result) != nil
+func (q *transcriptQueries) ToolResult(result tool.InvocationResult, evidence tool.InputResultEvidence) error {
+	invalid := tool.ValidateFrozenResult(result) != nil || evidence.ValidateResult(result) != nil
+	original, origin, admission := evidence.Selection().Original(), evidence.Selection().Origin(), evidence.Admission()
+	q.mu.Lock()
+	index, exists := q.indices[result.InvocationID()]
+	var entry session.ToolHistoryEntry
+	if exists {
+		entry = q.entries[index]
+	}
+	q.mu.Unlock()
+	selection, err := entry.InputSelection()
+	if invalid || !exists || err != nil || !selection.Equal(evidence.Selection()) || entry.HasResult || entry.Origin != origin || !entry.Invocation.Equal(original) || entry.Admission != admission || entry.Invocation.ProviderCallID() != result.ProviderCallID() || entry.Invocation.Capability() != result.Capability() || entry.Invocation.WireKind() != result.WireKind() {
+		q.mu.Lock()
+		q.invalid = true
+		q.mu.Unlock()
+		return errors.New("invalid tool result history evidence")
+	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	index, exists := q.indices[result.InvocationID()]
-	if invalid || !exists {
+	if q.closed || q.invalid || q.entries[index].HasResult || q.entries[index].DetailSequence != entry.DetailSequence || q.entries[index].Admission != entry.Admission {
 		q.invalid = true
-		return
-	}
-	entry := q.entries[index]
-	if entry.HasResult || entry.Invocation.ProviderCallID() != result.ProviderCallID() || entry.Invocation.Capability() != result.Capability() || entry.Invocation.WireKind() != result.WireKind() {
-		q.invalid = true
-		return
+		return errors.New("tool result history snapshot is stale")
 	}
 	q.entries[index].Result = result
 	q.entries[index].HasResult = true
+	return nil
+}
+
+// ToolStarted 只安装成功 Sync 的真实准入，不把检查或批准当作运行状态。
+func (q *transcriptQueries) ToolStarted(invocation tool.InvocationID, admission tool.ExecutionAdmission) error {
+	if !invocation.Valid() || admission.InvocationID() != invocation || admission.Sequence() == 0 {
+		return errors.New("invalid tool admission history")
+	}
+	q.mu.Lock()
+	index, ok := q.indices[invocation]
+	var previous session.ToolHistoryEntry
+	if ok {
+		previous = q.entries[index]
+	}
+	q.mu.Unlock()
+	selection, err := previous.InputSelection()
+	_, selected := selection.EffectiveInvocation()
+	if !ok || err != nil || !selected || admission.Sequence() <= previous.Sequence || admission.Sequence() <= previous.DetailSequence {
+		return errors.New("tool admission history has no selected source")
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.closed || q.invalid || q.entries[index].HasResult || q.entries[index].Admission.Sequence() != 0 || q.entries[index].DetailSequence != previous.DetailSequence {
+		q.invalid = true
+		return errors.New("tool admission history order mismatch")
+	}
+	q.entries[index].Admission = admission
+	return nil
 }
 
 func (q *transcriptQueries) begin(ctx context.Context) (context.Context, func(), error) {
@@ -181,30 +223,6 @@ func (q *transcriptQueries) ReadToolOutput(ctx context.Context, query protocol.T
 		return protocol.ToolOutputPage{}, tool.ArtifactReadUnavailable
 	}
 	return protocol.ToolOutputPage{Offset: page.Offset(), NextOffset: page.NextOffset(), StoredBytes: page.SavedBytes(), StoredEOF: page.EOF(), SourceComplete: page.SourceComplete(), Text: page.Text()}, nil
-}
-
-// HookFinished 在唯一事实 owner 成功提交后安装独立副本。
-func (q *transcriptQueries) HookFinished(ref domain.HookReference, result domain.HookRunResult) {
-	invalid := ref.Validate() != nil || result.Validate() != nil
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	index, ok := q.indices[tool.InvocationID(result.Identity.InvocationID())]
-	if invalid || !ok {
-		q.invalid = true
-		return
-	}
-	hooks := q.entries[index].Hooks
-	ordinal := 0
-	for _, h := range hooks {
-		if h.Result.Identity.Event == result.Identity.Event && h.Result.Identity.PlanDigest == result.Identity.PlanDigest {
-			ordinal++
-		}
-	}
-	if result.Identity.Ordinal != ordinal {
-		q.invalid = true
-		return
-	}
-	q.entries[index].Hooks = append(append([]session.HookHistoryEntry(nil), hooks...), session.HookHistoryEntry{Reference: ref, Result: result})
 }
 
 // PostHooksCommitted 安装已确定持久化的同一调用快照，并保留原工具锚点。

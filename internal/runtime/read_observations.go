@@ -88,6 +88,7 @@ func (table *readObservations) clear() { *table = readObservations{} }
 
 // clearTurnObservations 由唯一 turn owner 在退出时清理未提交与 poisoned 证据。
 func (runtime *Runtime) clearTurnObservations() {
+	runtime.toolCalls = make(map[tool.InvocationID]*toolExecutionCall)
 	if runtime.poisoned.Load() || runtime.journal.Poisoned() {
 		runtime.readObservations.clear()
 		return
@@ -98,6 +99,7 @@ func (runtime *Runtime) clearTurnObservations() {
 
 // clearFileState 在会话 owner 完全停止后清空瞬态证据和能力授权。
 func (runtime *Runtime) clearFileState() {
+	runtime.resetToolTurn()
 	runtime.readObservations.clear()
 	runtime.approvals.writeGrant.Store(false)
 	runtime.approvals.patchGrant.Store(false)

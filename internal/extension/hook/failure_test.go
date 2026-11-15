@@ -67,7 +67,7 @@ func TestFailureOutputUsesItsOwnClosedEvent(t *testing.T) {
 	for _, event := range []domain.HookEvent{domain.HookPostToolUse, domain.HookPostToolUseFailure} {
 		valid := `{"hookSpecificOutput":{"hookEventName":"` + string(event) + `","additionalContext":"diagnostic"}}`
 		for _, text := range []string{"", "{}", valid} {
-			r := ParseExecution(event, domain.HookFeedbackModel, 0, []byte(text))
+			r := ParseExecution(event, domain.HookFeedbackModel, 0, []byte(text), domain.HookRewriteContext{})
 			if r.Code != domain.HookOK || r.Status != domain.HookContinue {
 				t.Fatal("valid output rejected", event, r)
 			}
@@ -79,20 +79,20 @@ func TestFailureOutputUsesItsOwnClosedEvent(t *testing.T) {
 			strings.Replace(valid, `"diagnostic"`, `"`+strings.Repeat("x", 4097)+`"`, 1),
 			valid + ` {}`, `{"decision":"block"}`, `{"continue":false}`,
 		} {
-			if r := ParseExecution(event, domain.HookFeedbackModel, 0, []byte(text)); r.Code != domain.HookOutputInvalid || !r.Feedback.Empty() {
+			if r := ParseExecution(event, domain.HookFeedbackModel, 0, []byte(text), domain.HookRewriteContext{}); r.Code != domain.HookOutputInvalid || !r.Feedback.Empty() {
 				t.Fatal("invalid failure output accepted", r)
 			}
 		}
-		if r := ParseExecution(event, domain.HookFeedbackNone, 0, []byte(valid)); r.Code != domain.HookFeedbackNotAllowed || !r.Feedback.Empty() {
+		if r := ParseExecution(event, domain.HookFeedbackNone, 0, []byte(valid), domain.HookRewriteContext{}); r.Code != domain.HookFeedbackNotAllowed || !r.Feedback.Empty() {
 			t.Fatal("none disclosure", r)
 		}
 		for _, exit := range []int{1, 2, 255} {
-			if r := ParseExecution(event, domain.HookFeedbackModel, exit, []byte(valid)); r.Code != domain.HookExitFailed || !r.Feedback.Empty() {
+			if r := ParseExecution(event, domain.HookFeedbackModel, exit, []byte(valid), domain.HookRewriteContext{}); r.Code != domain.HookExitFailed || !r.Feedback.Empty() {
 				t.Fatal("post exit changed", r)
 			}
 		}
 	}
-	if r := ParseExecution(domain.HookPreToolUse, domain.HookFeedbackNone, 2, nil); r.Code != domain.HookDenied {
+	if r := ParseExecution(domain.HookPreToolUse, domain.HookFeedbackNone, 2, nil, domain.HookRewriteContext{}); r.Code != domain.HookDenied {
 		t.Fatal("pre exit-two changed")
 	}
 }

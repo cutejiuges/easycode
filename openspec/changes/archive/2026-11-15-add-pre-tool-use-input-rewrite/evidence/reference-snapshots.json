@@ -1,0 +1,10 @@
+{
+  "claude_local_version": "2.1.88",
+  "sha256": {
+    "/Users/cutejiuge/IdeaProjects/claude-code-sourcemap/restored-src/src/services/tools/toolExecution.ts": "77aae23a5b8b68aa1ee32b99eb25c6360071d7a4c4c46e6d2c95d584fb6e25e0",
+    "/Users/cutejiuge/IdeaProjects/claude-code-sourcemap/restored-src/src/services/tools/toolHooks.ts": "a2c02fca0f84cfa8995a5c6dfa11f8527ad5bc3cfe39b355a98d2f166c3e034a",
+    "/Users/cutejiuge/IdeaProjects/claude-code-sourcemap/restored-src/src/types/hooks.ts": "d64920bda327934c117546b3ffc55cefb1cf567656e8ea3e8f2fbaeefb6ff6c1"
+  },
+  "codex_head": "c0cc9fc820f62e4dbdde68214dd6d792d6c8a7ee",
+  "read_only": true
+}

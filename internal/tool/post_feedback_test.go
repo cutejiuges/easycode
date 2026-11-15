@@ -205,7 +205,9 @@ func TestModelEmptyFeedbackDoesNotExpandReservedExecPreview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	output, err := NewPostModelOutput(result, selection, []domain.FrozenHookFeedback{frozen.Feedback})
+	invocation, _ := NewInvocation(inv.InvocationID(), ready)
+	evidence := directInputResultEvidence(t, invocation, admission)
+	output, err := NewPostModelOutput(result, evidence, selection, []domain.FrozenHookFeedback{frozen.Feedback})
 	if err != nil || output.Text() != preview.Text() || result.Status() != ResultSuccess || result.Code() != "ok" {
 		t.Fatal("empty feedback expanded/reclassified result", err)
 	}

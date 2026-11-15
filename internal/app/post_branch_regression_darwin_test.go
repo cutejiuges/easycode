@@ -176,7 +176,7 @@ func TestPostBothBranchesRealExecNormalExitsKeepSuccessForBothProviders(t *testi
 				if err != nil {
 					t.Fatal(err)
 				}
-				output, err := tool.NewPostModelOutput(entry.Result, selection, g.Feedback())
+				output, err := tool.NewPostModelOutput(entry.Result, mustEntryInputEvidence(t, entry), selection, g.Feedback())
 				if err != nil {
 					t.Fatal(err)
 				}

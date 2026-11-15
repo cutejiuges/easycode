@@ -12,18 +12,16 @@ import (
 )
 
 type postHookCall struct {
-	plan                  domain.PostHookPlan
-	admission             tool.ExecutionAdmission
-	route                 domain.PostHookRoute
-	stopCode              domain.HookCode
-	declarations          []domain.HookDeclaration
-	trusted               bool
-	finished              []domain.HookFinished
-	terminal              *domain.PostHookTerminal
-	history               session.ReplayedPostHooks
-	detailSequence        uint64
-	invocationFingerprint string
-	resultFingerprint     string
+	plan           domain.PostHookPlan
+	admission      tool.ExecutionAdmission
+	route          domain.PostHookRoute
+	stopCode       domain.HookCode
+	declarations   []domain.HookDeclaration
+	trusted        bool
+	finished       []domain.HookFinished
+	terminal       *domain.PostHookTerminal
+	history        session.ReplayedPostHooks
+	detailSequence uint64
 }
 
 func (r *Runtime) preparePostHooks(ctx context.Context, emit Emitter, turn domain.TurnID, inv tool.Invocation) (*postHookCall, domain.HookCode, error) {
@@ -97,11 +95,7 @@ func (r *Runtime) preparePostHooks(ctx context.Context, emit Emitter, turn domai
 	if err != nil {
 		return nil, domain.HookConfigInvalid, err
 	}
-	ready, err := session.NewToolCallReadyDraft(turn, inv, 0, 0)
-	if err != nil {
-		return nil, domain.HookConfigInvalid, err
-	}
-	state := &postHookCall{plan: plan, declarations: append([]domain.HookDeclaration(nil), ds...), invocationFingerprint: domain.HookDigest(ready.PayloadBytes())}
+	state := &postHookCall{plan: plan, declarations: append([]domain.HookDeclaration(nil), ds...)}
 	if err = r.appendPostFacts(ctx, turn, state, protocol.PostHookPlanned, []session.RecordDraft{draft}); err != nil {
 		if !r.poisoned.Load() && !r.journal.Poisoned() {
 			if abortErr := ticket.AbortReservation(); abortErr != nil {
@@ -367,7 +361,7 @@ func (r *Runtime) runPostHooks(ctx context.Context, turn domain.TurnID, inv tool
 		execution := runner.Run(ctx, id, d, input, min(time.Duration(d.Reference.TimeoutSeconds)*time.Second, remaining))
 		remaining -= max(0, now().Sub(start))
 		r.hooks.remaining[inv.InvocationID()] = remaining
-		if _, validationErr := domain.NewHookExecution(execution.Result, d.Reference.Feedback, execution.Feedback); validationErr != nil || execution.Result.Identity != id || execution.Result.Origin != "execution" {
+		if _, validationErr := domain.NewHookExecution(execution.Result, d.Reference.Feedback, execution.Feedback, execution.Replacement); validationErr != nil || execution.Result.Identity != id || execution.Result.Origin != "execution" {
 			execution = domain.HookExecution{Result: domain.HookRunResult{Identity: id, Status: domain.HookUncertain, Code: domain.HookOutcomeUncertain, Origin: "execution"}}
 		}
 		frozen, err := tool.FreezePostFeedback(state.plan, postFeedback(state), execution.Result, execution.Feedback)

@@ -10,7 +10,7 @@ import (
 )
 
 // HookOutputParser 是纯内存输出策略；受控字节不传播到执行结果。
-type HookOutputParser func(domain.HookEvent, domain.HookFeedbackPolicy, int, []byte) domain.HookParsedOutput
+type HookOutputParser func(domain.HookEvent, domain.HookFeedbackPolicy, int, []byte, domain.HookRewriteContext) domain.HookParsedOutput
 type hookProcessLauncher interface {
 	startHook(context.Context, domain.HookDeclaration) (process.Handle, error)
 	preflight(context.Context) domain.HookCode
@@ -80,13 +80,14 @@ func (r *HookRunner) Run(ctx context.Context, id domain.HookRunIdentity, d domai
 	}
 	owned := owner.Run(ctx)
 	owned.Cancelled = owned.Cancelled || ctx.Err() != nil
-	return classifyHookExecution(id, d.Reference.Feedback, owned, out.data, out.observed, stderr.observed, r.parse)
+	return classifyHookExecution(id, d.Reference.Feedback, owned, out.data, out.observed, stderr.observed, r.parse, input.RewriteContext())
 }
 
 // classifyHookExecution 固定故障优先级，只有可确认的正常退出才解析 stdout。
-func classifyHookExecution(id domain.HookRunIdentity, policy domain.HookFeedbackPolicy, owned process.Result, stdout []byte, stdoutBytes, stderrBytes int64, parse HookOutputParser) domain.HookExecution {
+func classifyHookExecution(id domain.HookRunIdentity, policy domain.HookFeedbackPolicy, owned process.Result, stdout []byte, stdoutBytes, stderrBytes int64, parse HookOutputParser, context domain.HookRewriteContext) domain.HookExecution {
 	result := domain.HookRunResult{Identity: id, Status: domain.HookError, Code: domain.HookStartFailed, CleanupConfirmed: true, Origin: "execution"}
 	var feedback domain.HookFeedbackCandidate
+	var replacement domain.HookInputReplacement
 	result.ExitKnown = owned.ExitKnown
 	if owned.ExitKnown {
 		result.ExitCode = owned.ExitCode
@@ -112,11 +113,15 @@ func classifyHookExecution(id domain.HookRunIdentity, policy domain.HookFeedback
 	case owned.StartError != nil:
 		result.Code = domain.HookStartFailed
 	default:
-		parsed := parse(id.Event, policy, owned.ExitCode, stdout)
+		parsed := parse(id.Event, policy, owned.ExitCode, stdout, context)
 		result.Status, result.Code = parsed.Status, parsed.Code
 		feedback = parsed.Feedback
+		replacement = parsed.Replacement
 	}
-	execution, validationErr := domain.NewHookExecution(result, policy, feedback)
+	execution, validationErr := domain.NewHookExecution(result, policy, feedback, replacement)
+	if !replacement.Empty() && replacement.ValidateAgainst(context) != nil {
+		validationErr = domain.HookConfigInvalid
+	}
 	if validationErr != nil {
 		return domain.HookExecution{Result: domain.HookRunResult{Identity: id, Status: domain.HookUncertain, Code: domain.HookOutcomeUncertain, Origin: "execution"}}
 	}

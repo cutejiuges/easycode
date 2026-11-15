@@ -10,7 +10,7 @@ import (
 type RestoreRecord struct {
 	feedback        *domain.StopFeedback
 	toolOutputs     []tool.ModelOutput
-	questions       []tool.QuestionInvocation
+	readyCalls      []tool.Invocation
 	questionResults []tool.InvocationResult
 	source          *CompactionSource
 	checkpoint      *CheckpointEnvelope
@@ -121,14 +121,14 @@ func (record RestoreRecord) Validate() error {
 		return fmt.Errorf("unrelated tool output restore evidence")
 	}
 
-	if len(record.questions) > 0 || len(record.questionResults) > 0 {
+	if len(record.readyCalls) > 0 || len(record.questionResults) > 0 {
 		if record.source != nil || record.checkpoint != nil || record.role != domain.NativeCommitSample {
-			return fmt.Errorf("question facts require a sample restore record")
+			return fmt.Errorf("ready facts require a sample restore record")
 		}
-		seen := make(map[tool.ProviderCallID]bool, len(record.questions))
-		for _, q := range record.questions {
+		seen := make(map[tool.ProviderCallID]bool, len(record.readyCalls))
+		for _, q := range record.readyCalls {
 			if q.Validate() != nil || seen[q.ProviderCallID()] {
-				return fmt.Errorf("invalid question restore facts")
+				return fmt.Errorf("invalid ready restore facts")
 			}
 			seen[q.ProviderCallID()] = true
 		}
@@ -138,8 +138,9 @@ func (record RestoreRecord) Validate() error {
 				return fmt.Errorf("invalid question restore result")
 			}
 			matched := false
-			for _, q := range record.questions {
-				if q.ProviderCallID() == result.ProviderCallID() && q.InvocationID() == result.InvocationID() && q.Input().Fingerprint() == result.QuestionMetadata().Fingerprint {
+			for _, inv := range record.readyCalls {
+				q, ok := inv.Question()
+				if ok && q.ProviderCallID() == result.ProviderCallID() && q.InvocationID() == result.InvocationID() && q.Input().Fingerprint() == result.QuestionMetadata().Fingerprint {
 					matched = true
 					break
 				}
@@ -186,16 +187,26 @@ func (record RestoreRecord) Validate() error {
 	return nil
 }
 
-// WithQuestionFacts 绑定同一 sample 的已验证 ready/result 事实，不改变原生信封。
-func (record RestoreRecord) WithQuestionFacts(questions []tool.QuestionInvocation, results []tool.InvocationResult) (RestoreRecord, error) {
-	record.questions = append([]tool.QuestionInvocation(nil), questions...)
+// WithReadyFacts 绑定同一 sample 的完整原始 ready 与已提交提问结果，不改变原生信封。
+func (record RestoreRecord) WithReadyFacts(calls []tool.Invocation, results []tool.InvocationResult) (RestoreRecord, error) {
+	if record.role != domain.NativeCommitSample || record.source != nil || record.checkpoint != nil {
+		return RestoreRecord{}, fmt.Errorf("ready facts require a sample restore record")
+	}
+	record.readyCalls = cloneReadyInvocations(calls)
 	record.questionResults = append([]tool.InvocationResult(nil), results...)
 	return record, record.Validate()
 }
+func cloneReadyInvocations(calls []tool.Invocation) []tool.Invocation {
+	out := make([]tool.Invocation, len(calls))
+	for i, call := range calls {
+		out[i] = call.Clone()
+	}
+	return out
+}
 
-// QuestionInvocations 返回独立的强类型题目关联，仅供原生恢复核验。
-func (record RestoreRecord) QuestionInvocations() []tool.QuestionInvocation {
-	return append([]tool.QuestionInvocation(nil), record.questions...)
+// ReadyInvocations 返回完整原始调用副本，不能以有效参数替换该证据。
+func (record RestoreRecord) ReadyInvocations() []tool.Invocation {
+	return cloneReadyInvocations(record.readyCalls)
 }
 
 // QuestionResults 返回独立的已提交答案关联，不包含未提交草稿。

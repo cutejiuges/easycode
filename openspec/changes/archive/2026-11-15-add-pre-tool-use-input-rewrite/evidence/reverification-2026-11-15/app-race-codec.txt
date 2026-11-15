@@ -1,0 +1,45 @@
+File: easycode-rewrite-reverify-race.test
+Type: cpu
+Time: 2026-11-15 16:20:53 CST
+Duration: 855.87s, Total samples = 1291.42s (150.89%)
+Active filters:
+   focus=easycode/internal/codec
+Showing nodes accounting for 59.13s, 4.58% of 1291.42s total
+Dropped 879 nodes (cum <= 6.46s)
+Showing top 35 nodes out of 347
+      flat  flat%   sum%        cum   cum%
+     0.20s 0.015% 0.015%     50.01s  3.87%  encoding/json.(*Decoder).Decode
+         0     0% 0.015%     47.52s  3.68%  easycode/internal/codec.UnmarshalRecord
+     0.01s 0.00077% 0.016%     43.63s  3.38%  easycode/internal/codec.ObjectMembers
+         0     0% 0.016%     43.41s  3.36%  testing.tRunner
+     0.09s 0.007% 0.023%     42.13s  3.26%  easycode/internal/codec.ValidateObjectFields
+         0     0% 0.023%     41.22s  3.19%  easycode/internal/runtime.(*Runtime).runTurn
+         0     0% 0.023%     41.22s  3.19%  easycode/internal/runtime.(*agentLoopRunState).startTurn.func1
+     0.04s 0.0031% 0.026%        40s  3.10%  easycode/internal/codec.validateRecordShape
+     0.02s 0.0015% 0.028%     38.93s  3.01%  easycode/internal/codec.MarshalStable
+         0     0% 0.028%     38.89s  3.01%  github.com/bytedance/sonic.(*frozenConfig).Marshal
+     0.01s 0.00077% 0.029%     38.89s  3.01%  github.com/bytedance/sonic/internal/encoder.Encode
+     0.01s 0.00077% 0.029%     37.76s  2.92%  github.com/bytedance/sonic/internal/encoder.encodeIntoCheckRace
+     0.01s 0.00077%  0.03%     35.49s  2.75%  easycode/internal/codec.validateJSONDepth
+     9.83s  0.76%  0.79%     34.93s  2.70%  encoding/json.(*Decoder).readValue
+         0     0%  0.79%     34.04s  2.64%  easycode/internal/codec.UnmarshalStrict
+     0.32s 0.025%  0.82%     33.21s  2.57%  encoding/json.(*Decoder).Token
+     0.15s 0.012%  0.83%     32.33s  2.50%  easycode/internal/codec.scanValue
+         0     0%  0.83%     29.20s  2.26%  easycode/internal/codec.MarshalCanonical
+    27.76s  2.15%  2.98%     27.76s  2.15%  racecalladdr
+     8.36s  0.65%  3.62%     26.12s  2.02%  encoding/json.appendCompact
+         0     0%  3.62%     24.98s  1.93%  easycode/internal/runtime.(*Runtime).planWindow
+         0     0%  3.62%     24.60s  1.90%  easycode/internal/tool.encodeFacades
+         0     0%  3.62%     22.89s  1.77%  easycode/internal/runtime.(*Runtime).contextPlan
+     0.02s 0.0015%  3.63%     22.18s  1.72%  encoding/json.Marshal
+         0     0%  3.63%     22.18s  1.72%  github.com/bytedance/sonic/internal/encoder.helpDetectDataRace
+         0     0%  3.63%     21.66s  1.68%  encoding/json.(*encodeState).marshal
+         0     0%  3.63%     21.65s  1.68%  easycode/internal/runtime.(*Runtime).contextSnapshot
+     0.01s 0.00077%  3.63%     21.63s  1.67%  encoding/json.(*encodeState).reflectValue
+     0.27s 0.021%  3.65%     20.49s  1.59%  encoding/json.structEncoder.encode
+         0     0%  3.65%     20.44s  1.58%  easycode/internal/runtime.(*Runtime).publishContext
+         0     0%  3.65%     20.41s  1.58%  easycode/internal/runtime.(*agentLoopRunState).startTurn.func1.2
+    12.02s  0.93%  4.58%     19.88s  1.54%  encoding/json.stateInString
+         0     0%  4.58%     19.19s  1.49%  easycode/internal/tool.newCatalogSnapshot
+         0     0%  4.58%     19.17s  1.48%  easycode/internal/app.openChatResourcesWithHooks
+         0     0%  4.58%     19.15s  1.48%  easycode/internal/app.openChatResourcesWithSnapshot

@@ -1,0 +1,13 @@
+{
+  "standalone_application_package_seconds": 156.43,
+  "rewrite_top_level_tests_seconds": {
+    "TestInputRewriteBothProvidersRealEffectsAndOfflineRestore": 8.6,
+    "TestPreInputRewriteResumeReconcilesEveryBatchBeforeLoadingNewSnapshot": 2.46,
+    "TestPreInputRewriteHeadlessModesRequireTrustAndKeepExternalJSONLV1": 0.79,
+    "TestPreCommittedHistoryKeepsOriginalAndRefreshesBoundedDetails": 0.07,
+    "TestInputRewriteTerminalHelper": 0
+  },
+  "sum_seconds": 11.92,
+  "fraction_of_package_wall_time": 0.0762,
+  "interpretation": "top-level elapsed sum; comparison within this profiled run; not a controlled benchmark"
+}

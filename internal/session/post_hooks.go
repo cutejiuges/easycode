@@ -131,7 +131,7 @@ func (v ReplayedPostHooks) Validate(call ReplayedToolCall) error {
 			candidate, _ = domain.NewHookFeedbackCandidate(f.Feedback.Content)
 		}
 		expected, err := tool.FreezePostFeedback(p, prior, f.Result, candidate)
-		if err != nil || expected != f {
+		if err != nil || !expected.Equal(f) {
 			return fmt.Errorf("invalid frozen post hook feedback")
 		}
 		prior = append(prior, f.Feedback)

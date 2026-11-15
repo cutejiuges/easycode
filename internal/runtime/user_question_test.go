@@ -248,6 +248,7 @@ func TestQuestionRejectsOversizedAnswerWithoutChangingLedger(t *testing.T) {
 	call, _ := tool.NewQuestionReadyCall("question-call", input)
 	inv, _ := tool.NewInvocation("01900000-0000-7000-8000-000000000002", call)
 	before := r.resultBudget.SampleUsed()
+	seedRuntimeToolCall(t, r, runtimeTurnID, inv, 0, 0)
 	result, _, err := r.executeExclusiveCall(context.Background(), func(e protocol.Event) {
 		if e.Kind != protocol.EventUserQuestionRequested {
 			return

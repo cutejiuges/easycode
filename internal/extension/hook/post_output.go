@@ -9,18 +9,20 @@ import (
 )
 
 // ParseExecution 按事件解析封闭输出；只有显式 model 策略可以返回正文候选。
-func ParseExecution(event domain.HookEvent, policy domain.HookFeedbackPolicy, exit int, stdout []byte) domain.HookParsedOutput {
+func ParseExecution(event domain.HookEvent, policy domain.HookFeedbackPolicy, exit int, stdout []byte, context domain.HookRewriteContext) domain.HookParsedOutput {
 	result := domain.HookParsedOutput{Status: domain.HookError, Code: domain.HookOutputInvalid}
 	if !policy.ValidFor(event) {
 		result.Code = domain.HookConfigInvalid
+		return result
+	}
+	if event != domain.HookPreToolUse && !context.Empty() {
 		return result
 	}
 	if event == domain.HookStop {
 		return parseStopOutput(policy, exit, stdout)
 	}
 	if event == domain.HookPreToolUse {
-		result.Status, result.Code = ParseOutput(exit, stdout)
-		return result
+		return ParseOutput(exit, stdout, context)
 	}
 	if len(stdout) > domain.MaxHookOutputBytes {
 		result.Code = domain.HookOutputLimit

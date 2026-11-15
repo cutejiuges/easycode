@@ -53,13 +53,21 @@ func hookStarted(t *testing.T, p domain.HookPlan, n int) (RecordDraft, domain.Ho
 	}
 	return d, id
 }
-func hookFinished(t *testing.T, p domain.HookPlan, id domain.HookRunIdentity, status domain.HookOutcome, code domain.HookCode) RecordDraft {
+func hookFinished(t *testing.T, inv tool.Invocation, p domain.HookPlan, id domain.HookRunIdentity, status domain.HookOutcome, code domain.HookCode) RecordDraft {
 	t.Helper()
 	r := domain.HookRunResult{Identity: id, Status: status, Code: code, ExitKnown: true, Origin: "execution", CleanupConfirmed: true}
 	if status == domain.HookBlock {
 		r.ExitCode = 2
 	}
-	finished, err := domain.NewEmptyHookFinished(r, p.Hooks[id.Ordinal])
+	input, err := tool.HookInputForInvocation(inv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	effect, err := domain.NewUnchangedHookInputEffect(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished, err := domain.NewPreHookFinished(r, p.Hooks[id.Ordinal], effect)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +98,7 @@ func TestHookReplayKeepsStartedAndSuccessfulPrefixesDistinct(t *testing.T) {
 				start, id := hookStarted(t, p, 0)
 				f.appendBatch(start)
 				if phase != "started" {
-					finish := hookFinished(t, p, id, domain.HookContinue, domain.HookOK)
+					finish := hookFinished(t, inv, p, id, domain.HookContinue, domain.HookOK)
 					f.appendBatch(finish)
 				}
 			}
@@ -98,14 +106,14 @@ func TestHookReplayKeepsStartedAndSuccessfulPrefixesDistinct(t *testing.T) {
 				start, id := hookStarted(t, p, 1)
 				f.appendBatch(start)
 				if phase == "continued" {
-					f.appendBatch(hookFinished(t, p, id, domain.HookContinue, domain.HookOK), hookDecision(t, p, domain.HookContinue, domain.HookOK, 2, -1))
+					f.appendBatch(hookFinished(t, inv, p, id, domain.HookContinue, domain.HookOK), hookDecision(t, p, domain.HookContinue, domain.HookOK, 2, -1))
 				} else {
 					result := tool.NewInvocationErrorResult(inv, tool.ResultDenied, string(domain.HookDenied), "Hook stopped")
 					d, err := NewToolCallResultDraft(testTurnID, result)
 					if err != nil {
 						t.Fatal(err)
 					}
-					f.appendBatch(hookFinished(t, p, id, domain.HookBlock, domain.HookDenied), hookDecision(t, p, domain.HookBlock, domain.HookDenied, 2, 1), d)
+					f.appendBatch(hookFinished(t, inv, p, id, domain.HookBlock, domain.HookDenied), hookDecision(t, p, domain.HookBlock, domain.HookDenied, 2, 1), d)
 				}
 			}
 			if phase == "trust-denied" {
@@ -131,7 +139,7 @@ func TestHookReplayKeepsStartedAndSuccessfulPrefixesDistinct(t *testing.T) {
 			if phase == "started" && (g.Started == nil || calls[0].StartedSequence != 0) {
 				t.Fatal("hook start became tool start")
 			}
-			if phase == "prefix" && (len(g.Results) != 1 || g.Decision != nil) {
+			if phase == "prefix" && (len(g.Finished) != 1 || g.Decision != nil) {
 				t.Fatal("lost prefix")
 			}
 			if phase == "continued" && (g.Decision == nil || g.Decision.Status != domain.HookContinue) {
@@ -163,7 +171,7 @@ func TestHookReplayRejectsSkippedDuplicatedAndNonAtomicFacts(t *testing.T) {
 				f.appendBatch(hookDecision(t, p, domain.HookContinue, domain.HookOK, 2, -1))
 			case "finish-without-start":
 				_, id := hookStarted(t, p, 0)
-				f.appendBatch(hookFinished(t, p, id, domain.HookContinue, domain.HookOK))
+				f.appendBatch(hookFinished(t, inv, p, id, domain.HookContinue, domain.HookOK))
 			case "split-denial":
 				f.appendBatch(hookDecision(t, p, domain.HookBlock, domain.HookTrustDenied, 0, 0))
 			case "approval-before-gate":
@@ -189,9 +197,9 @@ func TestHookReplayRejectsSkippedDuplicatedAndNonAtomicFacts(t *testing.T) {
 }
 
 func TestHookRecordCodecsRejectRawOutputAndUnknownFields(t *testing.T) {
-	_, _, p := hookReplayFixture(t, 1)
+	_, inv, p := hookReplayFixture(t, 1)
 	start, id := hookStarted(t, p, 0)
-	finish := hookFinished(t, p, id, domain.HookContinue, domain.HookOK)
+	finish := hookFinished(t, inv, p, id, domain.HookContinue, domain.HookOK)
 	decision := hookDecision(t, p, domain.HookContinue, domain.HookOK, 1, -1)
 	planned, _ := NewToolHookGatePlannedDraft(testTurnID, p)
 	for _, d := range []RecordDraft{planned, start, finish, decision} {

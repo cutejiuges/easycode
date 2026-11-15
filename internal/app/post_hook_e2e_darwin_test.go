@@ -239,7 +239,7 @@ func TestPostBothProvidersRealSandboxThreeCapabilitiesAndDisclosure(t *testing.T
 					if err != nil {
 						t.Fatal(err)
 					}
-					model, err := tool.NewPostModelOutput(entry.Result, selection, post.Feedback())
+					model, err := tool.NewPostModelOutput(entry.Result, mustEntryInputEvidence(t, entry), selection, post.Feedback())
 					if err != nil {
 						t.Fatal(err)
 					}

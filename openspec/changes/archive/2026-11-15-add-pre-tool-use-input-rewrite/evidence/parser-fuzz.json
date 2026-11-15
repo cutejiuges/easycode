@@ -1,0 +1,16 @@
+{
+  "command": [
+    "go",
+    "test",
+    "./internal/extension/hook",
+    "-run",
+    "^$",
+    "-fuzz",
+    "^FuzzPreInputReplacement$",
+    "-fuzztime=15s",
+    "-parallel=4"
+  ],
+  "started_at": "2026-11-14T15:35:45.907356+00:00",
+  "duration_seconds": 17.877,
+  "exit_code": 0
+}

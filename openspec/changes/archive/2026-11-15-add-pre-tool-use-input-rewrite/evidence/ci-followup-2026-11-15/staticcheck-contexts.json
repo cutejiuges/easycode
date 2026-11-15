@@ -1,0 +1,47 @@
+{
+  "executed_at": "2026-11-15T10:18:24.172973+00:00",
+  "results": [
+    {
+      "command": [
+        "/tmp/easycode-pr40-host-staticcheck",
+        "./..."
+      ],
+      "GOOS": "darwin",
+      "GOARCH": "arm64",
+      "CGO_ENABLED": 0,
+      "exit_code": 0,
+      "duration_seconds": 11.036,
+      "stdout": "",
+      "stderr": "",
+      "native_execution": false
+    },
+    {
+      "command": [
+        "/tmp/easycode-pr40-host-staticcheck",
+        "./..."
+      ],
+      "GOOS": "linux",
+      "GOARCH": "amd64",
+      "CGO_ENABLED": 0,
+      "exit_code": 0,
+      "duration_seconds": 7.912,
+      "stdout": "",
+      "stderr": "",
+      "native_execution": false
+    },
+    {
+      "command": [
+        "/tmp/easycode-pr40-host-staticcheck",
+        "./..."
+      ],
+      "GOOS": "windows",
+      "GOARCH": "amd64",
+      "CGO_ENABLED": 0,
+      "exit_code": 1,
+      "duration_seconds": 11.485,
+      "stdout": "internal/context/projectinstructions/loader.go:25:2: field beforeOpenName is unused (U1000)\ninternal/context/projectinstructions/loader.go:26:2: field afterOpenFile is unused (U1000)\ninternal/context/projectinstructions/loader.go:112:6: func readInstructionFile is unused (U1000)\ninternal/context/projectinstructions/loader.go:153:6: func missing is unused (U1000)\ninternal/extension/localfile/relative.go:10:23: field device is unused (U1000)\ninternal/extension/localfile/relative.go:10:31: field inode is unused (U1000)\ninternal/extension/localfile/relative.go:26:6: func validRelative is unused (U1000)\ninternal/session/artifact/reservation.go:6:6: type reservationSpec is unused (U1000)\ninternal/session/artifact/reservation.go:12:6: func commandReservation is unused (U1000)\ninternal/session/artifact/reservation.go:16:6: func searchReservation is unused (U1000)\ninternal/session/artifact/reservation.go:20:6: func decodeReservation is unused (U1000)\ninternal/session/repository.go:30:2: field beforeOpenRoot is unused (U1000)\ninternal/session/repository.go:31:2: field afterOpenRoot is unused (U1000)\ninternal/session/repository.go:32:2: field beforeOpenComponent is unused (U1000)\ninternal/session/repository.go:33:2: field afterOpenComponent is unused (U1000)\ninternal/session/repository.go:34:2: field beforeOpenJournal is unused (U1000)\ninternal/session/repository.go:35:2: field afterOpenJournal is unused (U1000)\ninternal/session/repository.go:257:6: func splitPath is unused (U1000)\ninternal/tool/builtin/patch.go:21:2: field write is unused (U1000)\ninternal/tool/builtin/patch.go:22:2: field fileSync is unused (U1000)\ninternal/tool/builtin/patch.go:23:2: field beforeRename is unused (U1000)\ninternal/tool/builtin/patch.go:24:2: field rename is unused (U1000)\ninternal/tool/builtin/patch.go:25:2: field directorySync is unused (U1000)\ninternal/tool/builtin/patch.go:26:2: field cleanup is unused (U1000)\ninternal/tool/builtin/read.go:35:2: field beforeOpenComponent is unused (U1000)\ninternal/tool/builtin/read.go:36:2: field afterOpenComponent is unused (U1000)\ninternal/tool/builtin/read_observation.go:11:2: field modified is unused (U1000)\ninternal/tool/builtin/workspace_unsupported.go:7:6: type unsupportedWorkspaceHandle is unused (U1000)\ninternal/tool/builtin/workspace_unsupported.go:8:6: type unsupportedWorkspaceDirectory is unused (U1000)\ninternal/tool/builtin/workspace_unsupported.go:9:6: type unsupportedWorkspaceChild is unused (U1000)\ninternal/tool/builtin/workspace_unsupported.go:11:35: func unsupportedWorkspaceHandle.openPatchFile is unused (U1000)\ninternal/tool/builtin/workspace_unsupported.go:16:35: func unsupportedWorkspaceHandle.openFile is unused (U1000)\ninternal/tool/builtin/workspace_unsupported.go:19:35: func unsupportedWorkspaceHandle.openDirectory is unused (U1000)\ninternal/tool/builtin/workspace_unsupported.go:22:35: func unsupportedWorkspaceHandle.close is unused (U1000)\ninternal/tool/builtin/workspace_unsupported.go:23:38: func unsupportedWorkspaceDirectory.readEntryNames is unused (U1000)\ninternal/tool/builtin/workspace_unsupported.go:26:38: func unsupportedWorkspaceDirectory.openChild is unused (U1000)\ninternal/tool/builtin/workspace_unsupported.go:29:38: func unsupportedWorkspaceDirectory.close is unused (U1000)\ninternal/tool/builtin/workspace_unsupported.go:30:34: func unsupportedWorkspaceChild.kind is unused (U1000)\ninternal/tool/builtin/workspace_unsupported.go:31:34: func unsupportedWorkspaceChild.size is unused (U1000)\ninternal/tool/builtin/workspace_unsupported.go:32:34: func unsupportedWorkspaceChild.file is unused (U1000)\ninternal/tool/builtin/workspace_unsupported.go:33:34: func unsupportedWorkspaceChild.directory is unused (U1000)\ninternal/tool/builtin/workspace_unsupported.go:34:34: func unsupportedWorkspaceChild.close is unused (U1000)\ninternal/tool/builtin/workspace_unsupported.go:36:35: func unsupportedWorkspaceHandle.openWritePath is unused (U1000)\ninternal/tool/builtin/write.go:54:2: field write is unused (U1000)\ninternal/tool/builtin/write.go:55:2: field chmod is unused (U1000)\ninternal/tool/builtin/write.go:56:2: field fileSync is unused (U1000)\ninternal/tool/builtin/write.go:57:2: field directorySync is unused (U1000)\ninternal/tool/builtin/write.go:58:2: field beforePublish is unused (U1000)\ninternal/tool/builtin/write.go:59:2: field afterPublish is unused (U1000)\ninternal/tool/builtin/write.go:60:2: field publish is unused (U1000)\ninternal/tool/builtin/write.go:61:2: field beforeCleanup is unused (U1000)\ninternal/tool/builtin/write.go:62:2: field unlink is unused (U1000)\ninternal/tool/builtin/write.go:63:2: field close is unused (U1000)\n",
+      "stderr": "",
+      "native_execution": false
+    }
+  ]
+}

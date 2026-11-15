@@ -61,7 +61,7 @@ type transcriptBrowser struct {
 	markdown           transcriptMarkdownDetail
 	anchorCursor       protocol.TranscriptCursor
 	visibleCursors     []protocol.TranscriptCursor
-	positions          [8]transcriptDetailPosition
+	positions          [9]transcriptDetailPosition
 	queries            protocol.TranscriptQueries
 	thread             domain.ThreadID
 	generation         uint64
@@ -356,6 +356,9 @@ func (model Model) loadTranscriptDetail() (tea.Model, tea.Cmd) {
 	if b.source == protocol.TranscriptPostHooks {
 		key.detailSequence = b.items[b.selected].DetailSequence
 	}
+	if b.source == protocol.TranscriptPreHooks && b.items[b.selected].PreHook != nil {
+		key.detailSequence = b.items[b.selected].PreHook.PreInput.Sequence()
+	}
 	if b.stream != "" {
 		key.kind = transcriptOutputPage
 		key.stream = b.stream
@@ -377,6 +380,8 @@ func detailPositionIndex(source protocol.TranscriptBodySource, stream protocol.T
 		return 1
 	case protocol.TranscriptStopHooks:
 		return 7
+	case protocol.TranscriptPreHooks:
+		return 8
 	case protocol.TranscriptPostHooks:
 		return 6
 	case protocol.TranscriptResult:
@@ -442,7 +447,7 @@ func (model Model) handleTranscriptBrowserKey(key tea.KeyMsg) (tea.Model, tea.Cm
 
 				b.detail = true
 				b.markdown = transcriptMarkdownDetail{}
-				b.positions = [8]transcriptDetailPosition{}
+				b.positions = [9]transcriptDetailPosition{}
 				b.stream = ""
 				b.offset = 0
 				b.previous = nil
@@ -480,9 +485,11 @@ func (model Model) handleTranscriptBrowserKey(key tea.KeyMsg) (tea.Model, tea.Cm
 			return model.loadTranscriptDetail()
 		}
 		if item.Kind == domain.TranscriptCall {
-			if b.source == protocol.TranscriptInput && b.stream == "" {
+			if b.source == protocol.TranscriptInput && b.stream == "" && item.PreHook != nil {
+				b.switchDetail(protocol.TranscriptPreHooks, "")
+			} else if (b.source == protocol.TranscriptInput || b.source == protocol.TranscriptPreHooks) && b.stream == "" {
 				b.switchDetail(protocol.TranscriptResult, "")
-			} else if b.source == protocol.TranscriptResult && b.stream == "" && item.DetailSequence > 0 {
+			} else if b.source == protocol.TranscriptResult && b.stream == "" && item.DetailSequence > 0 && (item.PreHook == nil || item.PostHook != nil || item.DetailSequence > item.PreHook.PreInput.Sequence()) {
 				b.switchDetail(protocol.TranscriptPostHooks, "")
 			} else if item.Search.Readable {
 				b.switchDetail(b.source, protocol.ToolSearchResult)
@@ -499,6 +506,8 @@ func (model Model) handleTranscriptBrowserKey(key tea.KeyMsg) (tea.Model, tea.Cm
 		if item.Kind == domain.TranscriptCall {
 			if b.stream != "" || b.source == protocol.TranscriptPostHooks {
 				b.switchDetail(protocol.TranscriptResult, "")
+			} else if b.source == protocol.TranscriptResult && item.PreHook != nil {
+				b.switchDetail(protocol.TranscriptPreHooks, "")
 			} else {
 				b.switchDetail(protocol.TranscriptInput, "")
 			}
@@ -531,6 +540,9 @@ func (model Model) handleTranscriptBrowserKey(key tea.KeyMsg) (tea.Model, tea.Cm
 				pageKey := transcriptPageKey{kind: transcriptBodyPage, cursor: item.Cursor, source: b.source, stream: b.stream, offset: b.offset, backward: true}
 				if b.source == protocol.TranscriptPostHooks {
 					pageKey.detailSequence = item.DetailSequence
+				}
+				if b.source == protocol.TranscriptPreHooks && item.PreHook != nil {
+					pageKey.detailSequence = item.PreHook.PreInput.Sequence()
 				}
 				if b.stream != "" {
 					pageKey.kind = transcriptOutputPage

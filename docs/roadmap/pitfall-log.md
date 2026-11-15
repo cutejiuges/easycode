@@ -951,3 +951,17 @@
 - 取消与恢复：continued 接纳前取消保存真实结果和 cancelled 决定；接纳后取消仍本地交付。复合用户输入只能由带取消的 admission 接收，未接纳返还，已 Sync 不返还，不确定 poison。恢复先收口摘要，再纯编码冻结反馈并结束旧回合，重复崩溃不重跑脚本、不重新渲染或计费。
 - 集成回归：Stop finished 不能写入以 invocation 为键的工具 Hook 索引；复合 finalize 后宿主必须一次发布两个 native sequence；压缩来源 digest 必须纳入已交付反馈。精确 sample 投影保留空白/空答复并排除全部 opaque，不能从最后非空 transcript 猜测。
 - 证据：runtime/stop_fault_test.go、stop_compaction_test.go、stop_input_test.go；session/stop_fixture_test.go；两家 stop_hook_cache_test.go；app/stop_hook_compaction_test.go、stop_hook_resume_test.go；tui/stop_hook_history_test.go（上述 Go 路径均位于 internal/）。真实 PTY 使用 scripts/stop-hook-smoke.py，[验收记录](../../openspec/changes/archive/2026-11-13-add-stop-command-hooks/verification.md)保存平台与检查结果。
+
+
+## PreToolUse 改写的表示、选择和准入不能混用
+
+2026-11-14，`add-pre-tool-use-input-rewrite`：
+
+- 原始 stdout 在 16 KiB 内不代表规范输入合格。Sonic EscapeHTML 探针的原始 Write 输出为 12,108 bytes，规范对象为 72,039 bytes。分别限制 raw、canonical、finished、stdin、模型说明和 UI 编码，不能用字符数或前一种表示的长度替代。精确边界与 fuzz 见 `internal/domain/hook_input_rewrite_test.go`、`internal/domain/hook_input_effect_test.go`、`internal/extension/hook/input_rewrite_test.go`。
+- 同能力不等于同来源语义。Edit 单项子串与 apply_patch 有界 LF 行 profile 必须从 O 的真实 wire 导出，保存、恢复和反向适配共享纯规则。候选 C 不是 E；后项拒绝不能把部分 C 的目标塞入结果 metadata。固定合法/损坏样本及 repair 前 bytes 不变见 `internal/session/hook_input_rewrite_test.go`。
+- 完整 E 不能无条件前缀到每个结果。准入前的低预算、Post 信任拒绝或取消只需要有界短说明；实际 started Sync 才是共享准入证据，不能从 success/code、正文标签或 Post state 猜测。`internal/runtime/hook_input_rewrite_boundaries_test.go` 覆盖取消交界、单 ticket 和安装/Sync 故障。
+- 原生历史仍保存 O，结果和审批使用 E。两家 native 恢复需要同时验证完整原 ready 与输出证明，不能接受 E 冒充原 sample；用 `internal/provider/openai/hook_input_rewrite_test.go` 与 `internal/provider/anthropic/hook_input_rewrite_test.go` 固定 request/cache bytes。
+- 新的计划活动会先于信任请求。测试等待 runner 时必须先响应真实 trust，不能把第一条 checking 当作已经启动脚本；完成 gate 的真实 sequence 才能覆盖中间候选。`internal/app/pre_hook_history_test.go` 与 `internal/tui/hook_input_rewrite_test.go` 验证长原输入分页、旧页隔离、阅读锚点和窄屏停用批准。
+- 用同一 invocation ID 测试第二次会话内授权会命中合法幂等缓存。第二次业务调用必须使用新 ID 和同样候选内容，不得为了测试 grant 清空生产缓存或移除重复副作用保护。
+
+- domain 接纳的替换必须能按同一 canonical 参数往返到 tool。Exec 的根目录是显式空串，`.` 不是合法规范路径；在 parser/profile 层拒绝，避免把脚本输入错误误归类为 runner 不确定。反向适配后重新投影比较完整输入，不允许构造器静默默认化。

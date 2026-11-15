@@ -150,6 +150,7 @@ const (
 
 // HookActivityPayload 是由 durable 检查边界产生的安全投影，不能冒充工具 started。
 type HookActivityPayload struct {
+	PreInput    PreInputProjection   `json:"-"`
 	Target      domain.HookTarget    `json:"target"`
 	PlanDigest  string               `json:"plan_digest"`
 	Reference   domain.HookReference `json:"reference"`
@@ -160,6 +161,23 @@ type HookActivityPayload struct {
 }
 
 func (p HookActivityPayload) Validate() error {
+	if p.PreInput.Validate() != nil || p.Reference.Event != domain.HookPreToolUse && p.PreInput != (PreInputProjection{}) {
+		return fmt.Errorf("invalid hook pre input projection")
+	}
+	switch p.PreInput.Kind() {
+	case PreInputCandidate:
+		if p.State != HookActivityChecking && p.State != HookActivityState(domain.HookContinue) {
+			return fmt.Errorf("candidate input has a final hook state")
+		}
+	case PreInputSelected:
+		if p.State != HookActivityState(domain.HookContinue) || p.Code != domain.HookOK {
+			return fmt.Errorf("selected input has no continuing gate")
+		}
+	case PreInputRejected:
+		if p.State == HookActivityChecking || p.State == HookActivityState(domain.HookContinue) {
+			return fmt.Errorf("rejected input has no rejected gate")
+		}
+	}
 	if !p.Target.ValidFor(p.Reference.Event) || !domain.ValidHookDigest(p.PlanDigest) || p.Reference.Validate() != nil || p.StdoutBytes < 0 || p.StderrBytes < 0 {
 		return fmt.Errorf("invalid hook activity")
 	}
@@ -196,7 +214,11 @@ func NewHookActivity(p HookActivityPayload) (Event, error) {
 	if p.Validate() != nil {
 		return Event{}, fmt.Errorf("invalid hook activity")
 	}
-	return newEventWithPayload(EventHookActivity, p)
+	e, err := newEventWithPayload(EventHookActivity, p)
+	if err != nil || len(e.Payload) > 16<<10 {
+		return Event{}, fmt.Errorf("hook activity exceeds limit")
+	}
+	return e, nil
 }
 func DecodeHookActivity(e Event) (HookActivityPayload, error) {
 	var p HookActivityPayload

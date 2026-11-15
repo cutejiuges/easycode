@@ -28,7 +28,7 @@ func runHookFixtureForEvent(t *testing.T, root, command string, event domain.Hoo
 	defer w.Close()
 	env := filterCommandEnvironment([]string{"PATH=/usr/bin:/bin", "API_KEY=secret-sentinel", "HTTPS_PROXY=proxy-secret"})
 	env.executable, _ = os.Executable()
-	parse := func(_ domain.HookEvent, _ domain.HookFeedbackPolicy, exit int, b []byte) domain.HookParsedOutput {
+	parse := func(_ domain.HookEvent, _ domain.HookFeedbackPolicy, exit int, b []byte, _ domain.HookRewriteContext) domain.HookParsedOutput {
 		if exit == 2 && (event == domain.HookPreToolUse || event == domain.HookStop) {
 			return domain.HookParsedOutput{Status: domain.HookBlock, Code: domain.HookDenied}
 		}
@@ -59,8 +59,8 @@ func runHookFixtureForEvent(t *testing.T, root, command string, event domain.Hoo
 	id := "018f1d8a-7b5c-7def-8abc-456789abcdef"
 	p, _ := domain.NewHookPlan(id, domain.HookExec, []domain.HookReference{d.Reference})
 	run, _ := domain.NewHookRunIdentity(p, 0)
-	i, _ := domain.NewHookExecInput("echo model-command", ".", 1000)
-	input, err := domain.NewHookInput(domain.SessionID(id), domain.ThreadID(id), domain.TurnID(id), "call", "exec_command", root, i)
+	i, _ := domain.NewHookExecInput("echo model-command", "", 1000)
+	input, err := domain.NewHookInput(domain.SessionID(id), domain.ThreadID(id), domain.TurnID(id), "call", "exec_command", root, i, domain.HookExecProfile)
 	if err != nil {
 		t.Fatal(err)
 	}

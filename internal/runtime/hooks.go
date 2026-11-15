@@ -9,7 +9,6 @@ import (
 	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
-	"easycode/internal/session"
 	"easycode/internal/tool"
 )
 
@@ -34,8 +33,6 @@ type hookState struct {
 	availability domain.HookCode
 	trust        map[string]protocol.HookTrustDecision
 	wait         *hookTrustWait
-	planned      map[tool.InvocationID]domain.HookPlan
-	completed    map[tool.InvocationID]tool.InvocationResult
 	now          func() time.Time
 	post         map[tool.InvocationID]*postHookCall
 	remaining    map[tool.InvocationID]time.Duration
@@ -57,8 +54,6 @@ func (r *Runtime) InstallHooks(snapshot domain.HookSnapshot, runner HookRunner, 
 	r.hooks.workspace = workspace
 	r.hooks.availability = availability
 	r.hooks.trust = make(map[string]protocol.HookTrustDecision)
-	r.hooks.planned = make(map[tool.InvocationID]domain.HookPlan)
-	r.hooks.completed = make(map[tool.InvocationID]tool.InvocationResult)
 	r.hooks.post = make(map[tool.InvocationID]*postHookCall)
 	r.hooks.remaining = make(map[tool.InvocationID]time.Duration)
 	r.hooks.now = time.Now
@@ -93,33 +88,7 @@ func (r *Runtime) HookEntries() []domain.HookListEntry {
 
 func (r *Runtime) resetHookTurn() {
 	r.hooks.mu.Lock()
-	r.hooks.planned = make(map[tool.InvocationID]domain.HookPlan)
-	r.hooks.completed = make(map[tool.InvocationID]tool.InvocationResult)
 	r.hooks.post = make(map[tool.InvocationID]*postHookCall)
 	r.hooks.remaining = make(map[tool.InvocationID]time.Duration)
 	r.hooks.mu.Unlock()
-}
-func (r *Runtime) rememberHookResult(turn domain.TurnID, result tool.InvocationResult) {
-	r.hooks.mu.Lock()
-	_, pre := r.hooks.planned[result.InvocationID()]
-	state := r.hooks.post[result.InvocationID()]
-	r.hooks.mu.Unlock()
-	if !pre && state == nil {
-		return
-	}
-	fingerprint := ""
-	if state != nil {
-		draft, err := session.NewToolCallResultDraft(turn, result)
-		if err != nil {
-			r.poisoned.Store(true)
-			return
-		}
-		fingerprint = domain.HookDigest(draft.PayloadBytes())
-	}
-	r.hooks.mu.Lock()
-	defer r.hooks.mu.Unlock()
-	r.hooks.completed[result.InvocationID()] = result
-	if state != nil {
-		state.resultFingerprint = fingerprint
-	}
 }

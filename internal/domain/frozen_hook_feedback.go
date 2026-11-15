@@ -1,7 +1,9 @@
 package domain
 
 import (
+	"bytes"
 	"easycode/internal/codec"
+	"encoding/json"
 )
 
 // HookFeedbackKind 区分明确保存的正文、安全分类与空选择。
@@ -62,12 +64,13 @@ func DecodeFrozenHookFeedback(b []byte) (FrozenHookFeedback, error) {
 
 // HookFinished 保存一次执行统计及独立的已冻结反馈选择。
 type HookFinished struct {
-	Result   HookRunResult      `json:"result"`
-	Feedback FrozenHookFeedback `json:"feedback"`
+	Result      HookRunResult      `json:"result"`
+	Feedback    FrozenHookFeedback `json:"feedback"`
+	InputEffect HookInputEffect    `json:"-"`
 }
 
 func NewHookFinished(result HookRunResult, feedback FrozenHookFeedback) (HookFinished, error) {
-	v := HookFinished{result, feedback}
+	v := HookFinished{Result: result, Feedback: feedback}
 	return v, v.Validate()
 }
 func (v HookFinished) Validate() error {
@@ -80,12 +83,86 @@ func (v HookFinished) Validate() error {
 	if v.Result.Origin == "recovery" && v.Feedback.Kind != HookFeedbackEmpty {
 		return HookConfigInvalid
 	}
+	if v.Result.Identity.Event == HookPreToolUse {
+		_, capability, ok := v.Result.Identity.Target.ToolCall()
+		if !ok || v.InputEffect.Validate(capability) != nil || v.Feedback.Kind != HookFeedbackEmpty {
+			return HookConfigInvalid
+		}
+		if v.InputEffect.Kind() == HookInputReplaced && (v.Result.Origin != "execution" || v.Result.Status != HookContinue || v.Result.Code != HookOK || !v.Result.ExitKnown || v.Result.ExitCode != 0 || v.Result.Cancelled || v.Result.TimedOut || !v.Result.CleanupConfirmed) {
+			return HookConfigInvalid
+		}
+	} else if !v.InputEffect.Empty() {
+		return HookConfigInvalid
+	}
+	b, err := v.MarshalJSON()
+	if err != nil || len(b) > MaxHookConfigBytes {
+		return HookConfigInvalid
+	}
 	return nil
 }
+
+// NewPreHookFinished 显式冻结输入证据，不能把缺失字段按无变化兼容读取。
+func NewPreHookFinished(result HookRunResult, ref HookReference, effect HookInputEffect) (HookFinished, error) {
+	feedback, err := NewFrozenHookFeedback(result.Identity, ref, HookFeedbackEmpty, "", HookOK, 0)
+	if err != nil || result.Identity.Event != HookPreToolUse {
+		return HookFinished{}, HookConfigInvalid
+	}
+	v := HookFinished{Result: result, Feedback: feedback, InputEffect: effect.Clone()}
+	return v, v.Validate()
+}
+func (v HookFinished) Clone() HookFinished { v.InputEffect = v.InputEffect.Clone(); return v }
+func (v HookFinished) Equal(other HookFinished) bool {
+	if v.Validate() != nil || other.Validate() != nil {
+		return false
+	}
+	left, le := v.MarshalJSON()
+	right, re := other.MarshalJSON()
+	return le == nil && re == nil && bytes.Equal(left, right)
+}
+func (v HookFinished) MarshalJSON() ([]byte, error) {
+	if v.Result.Identity.Event == HookPreToolUse {
+		return codec.MarshalStable(struct {
+			Result      HookRunResult      `json:"result"`
+			Feedback    FrozenHookFeedback `json:"feedback"`
+			InputEffect HookInputEffect    `json:"input_effect"`
+		}{v.Result, v.Feedback, v.InputEffect})
+	}
+	return codec.MarshalStable(struct {
+		Result   HookRunResult      `json:"result"`
+		Feedback FrozenHookFeedback `json:"feedback"`
+	}{v.Result, v.Feedback})
+}
 func DecodeHookFinished(b []byte) (HookFinished, error) {
-	var v HookFinished
-	if len(b) > MaxHookConfigBytes || codec.UnmarshalRecord(b, &v) != nil {
-		return v, HookConfigInvalid
+	if len(b) > MaxHookConfigBytes {
+		return HookFinished{}, HookConfigInvalid
+	}
+	members, err := codec.ObjectMembers(b)
+	if err != nil {
+		return HookFinished{}, HookConfigInvalid
+	}
+	result, err := DecodeHookRunResult(members["result"])
+	if err != nil {
+		return HookFinished{}, HookConfigInvalid
+	}
+	var wire struct {
+		Result      HookRunResult      `json:"result"`
+		Feedback    FrozenHookFeedback `json:"feedback"`
+		InputEffect json.RawMessage    `json:"input_effect,omitempty"`
+	}
+	if codec.UnmarshalRecord(b, &wire) != nil {
+		return HookFinished{}, HookConfigInvalid
+	}
+	_, has := members["input_effect"]
+	if has != (result.Identity.Event == HookPreToolUse) {
+		return HookFinished{}, HookConfigInvalid
+	}
+	v := HookFinished{Result: result, Feedback: wire.Feedback}
+	if has {
+		_, capability, _ := result.Identity.Target.ToolCall()
+		v.InputEffect, err = DecodeHookInputEffect(capability, wire.InputEffect)
+		if err != nil {
+			return HookFinished{}, HookConfigInvalid
+		}
 	}
 	return v, v.Validate()
 }

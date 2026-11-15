@@ -4,7 +4,7 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 
 用户只需要提供 `base_url`、`api_key` 和模型名称即可连接服务，不需要账号登录、OAuth、设备码或订阅鉴权。
 
-> 项目按纵向切片持续推进。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、命令/Skill 首词补全、原生多轮 Session、`--resume`/`--continue`、headless/FIFO 输入、离线 `sessions list`，以及九项工具能力：Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill 和结构化用户提问。命令执行当前支持 Darwin；已支持同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop 命令 Hook、被动推理阅读和启动推理/display/输出配置；本地 Plugin 技能包已支持显式目录加载和只读浏览；其余 Hook 事件、运行中推理切换等能力仍按 Roadmap 分阶段推进。
+> 项目按纵向切片持续推进。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、命令/Skill 首词补全、原生多轮 Session、`--resume`/`--continue`、headless/FIFO 输入、离线 `sessions list`，以及九项工具能力：Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill 和结构化用户提问。命令执行当前支持 Darwin；已支持同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop 命令 Hook、PreToolUse 参数完整改写、被动推理阅读和启动推理/display/输出配置；本地 Plugin 技能包已支持显式目录加载和只读浏览；其余 Hook 事件、运行中推理切换等能力仍按 Roadmap 分阶段推进。
 
 ## 交互式恢复会话
 
@@ -383,16 +383,38 @@ Write 输入（原始 JSON 与规范编码）上限 1 MiB，审批完整展示�
 | 来源 | 严格 JSON、no-follow/实际 FD 校验；每来源 64 KiB，四个事件合计 32 项/来源、64 项/两来源，每事件每调用最多 8 项；任一已存在来源无效则阻断全部三项 mutation，并拒绝最终完成检查 |
 | 执行 | Darwin，非 login `/bin/sh`，最小环境，工作区只读、禁网；仅 `/dev/null` 写入；其他平台失败关闭 |
 | 预算 | 单项默认 5 秒，可设整数 1..30；每次工具调用总执行预算 30 秒，信任等待不计费；stdin 最大 512 KiB，stdout/stderr 各 16 KiB |
-| Pre 放行 | exit 0 且空输出或 `{}`；放行后仍进入普通工具审批 |
+| Pre 放行/改写 | exit 0 且空输出、`{}` 或独立 `updatedInput` 完整对象；串行保存后选参，仍重新进行普通候选、权限及审批 |
 | Pre 拒绝 | exit 2，或 exit 0 返回下列严格结构；其他非零退出、无效输出、超时或 I/O 错误阻断该调用 |
 | headless | 匹配项返回 `denied/hook_trust_required`，不运行脚本或目标工具，不等待交互；无匹配保持 `approval_required` |
-| 隐私与恢复 | 默认只保存安全 code、引用和统计；显式 model 反馈另经信任与预算接纳。原始 stdout/stderr/reason 不自动进入模型、Session、日志或 artifact；恢复仅补偿，不重新运行检查或工具 |
+| 隐私与恢复 | 保存安全 code、引用、统计和必要的 typed 输入变化；显式 model 反馈另经信任与预算接纳。原始 stdout/stderr/reason 不自动进入模型、Session、日志或 artifact；恢复仅补偿，不重新运行检查或工具 |
 
 ```json
 {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Local check failed"}}
 ```
 
-stdin 提供真实 `tool_name`、会话/回合/调用身份、cwd 与规范 `tool_input`：Patch 使用 `file_path/replacements`，Write 使用 `file_path/content`，Exec 使用 `command/workdir/timeout_ms`。参数只通过 stdin 传递。拒绝 reason 必须非空且最多 4 KiB，但仅用于校验，不作为模型反馈。Pre 不允许 feedback 字段。其余事件、async、allow/ask、参数/结果改写和 plugin hooks 尚未实现。
+stdin 提供真实 `tool_name`、会话/回合/调用身份、cwd 与规范 `tool_input`：Patch 使用 `file_path/replacements`，Write 使用 `file_path/content`，Exec 使用 `command/workdir/timeout_ms`。参数只通过 stdin 传递。拒绝 reason 必须非空且最多 4 KiB，但仅用于校验，不作为模型反馈。Pre 不允许 feedback 字段。其余事件、async、allow/ask、结果改写和 plugin hooks 尚未实现。
+
+### PreToolUse 完整参数改写
+
+可信脚本可以在 exit 0 时返回以下独立对象；`updatedInput` 必须完整替换 stdin 中的规范 `tool_input`，不合并字段，也不是 Provider 的原始工具参数：
+
+```json
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":"go test ./...","workdir":"","timeout_ms":120000}}}
+```
+
+| 能力 | 必需成员与来源约束 |
+| --- | --- |
+| Patch | `file_path`、`replacements`；每项完整含 `old_text/new_text/replace_all/line_based`。Edit 保持单项子串语义；apply_patch 保持 1..1024 项 LF 行替换，`line_based=true`、`replace_all=false`，不得切换来源语义 |
+| Write | `file_path/content`，内容可为空；改到已有文件仍须该实际目标的完整 Read 证据 |
+| Exec | `command/workdir/timeout_ms`，根目录的 `workdir` 必须显式为空，超时 1000..600000 ms；仍只允许本次普通批准 |
+
+未知、缺失、重复、null、错误类型、非法路径/UTF-8、跨能力或与 deny/allow/ask/additionalContext/async 混用均拒绝。原始双流各 16 KiB，**规范编码后的完整替换另限 16 KiB**；JSON 转义也计费，超限对象整块拒绝，不能截断冒充完整输入。其余三个事件不接收 `updatedInput`。
+
+执行顺序为用户来源、项目来源及各自声明顺序。下一项读取上一项成功 Sync 的候选；只有全部放行才选择最终有效输入。后项无变化不会丢失前项修改，改回原值仍保留检查证据。任一后项拒绝时，候选只留审计，不作为执行或模型结果参数。这个串行规则是 EasyCode 的明确选择，与 Claude 2.1.88 的共享 stdin 并行检查、参考 Codex 快照的最后完成项规则不同。
+
+原始调用保留在 Provider 原生历史中；普通审批展示最终目标、完整内容/diff 或命令及 Hook 来源。Hook 信任不授予工具权限。Ctrl+O 的原请求、`pre_hooks` 候选/选择和真实执行准入分别展示；详情按已提交 sequence 刷新，恢复不读取旧脚本。改写后的普通批准要求至少 32×18，28×10 或 8×2 时会停用并提示 resize，不能通过盲按 Enter 批准；Pre 信任审查在小于 20×6 时同样停用，Esc 仍可拒绝或取消。
+
+模型说明使用同一结果预算：实际 `tool_execution_started` Sync 后返回的结果携带完整有效输入及有界来源，表示已准入的执行尝试，不保证 OS 进程已启动；准入前拒绝/取消、恢复补偿仅发送至多 256 bytes 的摘要/状态说明。完整说明预检不足返回 `hook_rewrite_budget_exceeded`，不会创建普通候选、批准或工具准入。无变化、改回原值和 gate 拒绝保持旧模型正文不变。原始输出 artifact、Post typed stdin 和诊断日志不混入该说明。必要候选事实会保存到 Session，信任审查会说明这一用途。
 
 ### 成功后的 PostToolUse 检查
 

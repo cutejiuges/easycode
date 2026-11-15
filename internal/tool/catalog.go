@@ -527,7 +527,12 @@ func (snapshot CatalogSnapshot) DecodeReadyCall(family domain.ProviderFamily, na
 	if selected == nil {
 		return ReadyCall{}, errors.New("tool facade is not advertised")
 	}
-	switch selected.capability {
+	return decodeFacadeInput(selected.capability, selected.wireKind, callID, arguments)
+}
+
+// decodeFacadeInput 由目录解码及原生调用核验共用，不创建执行绑定。
+func decodeFacadeInput(capability CapabilityID, wireKind ProviderWireKind, callID ProviderCallID, arguments []byte) (ReadyCall, error) {
+	switch capability {
 	case CapabilityQuestion:
 		input, err := DecodeQuestionInput(arguments)
 		if err != nil {
@@ -579,7 +584,7 @@ func (snapshot CatalogSnapshot) DecodeReadyCall(family domain.ProviderFamily, na
 	case CapabilityPatch:
 		var input PatchInput
 		var decodeErr error
-		if selected.wireKind == WireStructured {
+		if wireKind == WireStructured {
 			input, decodeErr = DecodeAnthropicEditInput(arguments)
 		} else {
 			input, decodeErr = ParseOpenAIApplyPatchInput(arguments)
@@ -587,7 +592,7 @@ func (snapshot CatalogSnapshot) DecodeReadyCall(family domain.ProviderFamily, na
 		if decodeErr != nil {
 			return ReadyCall{}, decodeErr
 		}
-		return NewPatchReadyCall(callID, selected.wireKind, input)
+		return NewPatchReadyCall(callID, wireKind, input)
 	default:
 		return ReadyCall{}, errors.New("tool facade capability is unsupported")
 	}

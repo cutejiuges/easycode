@@ -74,6 +74,10 @@ func TestPostOutputRejectsOtherBranchEvenAtSameOrdinal(t *testing.T) {
 	r := selectionExec(t, p, ResultError, "process_start_failed", 0)
 	admission, _ := NewExecutionAdmission(r.InvocationID(), 19)
 	selection, _ := NewPostHookSelection(p, admission, r)
+	input, _ := NewExecInput("go test ./...", "", 1000)
+	ready, _ := NewExecReadyCall("call", input)
+	invocation, _ := NewInvocation(r.InvocationID(), ready)
+	evidence := directInputResultEvidence(t, invocation, admission)
 	candidate, _ := domain.NewHookFeedbackCandidate("authorized failure feedback")
 	freeze := func(event domain.HookEvent) domain.FrozenHookFeedback {
 		id, _ := domain.NewPostHookRunIdentity(p, event, 0)
@@ -84,15 +88,15 @@ func TestPostOutputRejectsOtherBranchEvenAtSameOrdinal(t *testing.T) {
 		}
 		return f.Feedback
 	}
-	if _, err := NewPostModelOutput(r, selection, []domain.FrozenHookFeedback{freeze(domain.HookPostToolUse)}); err == nil {
+	if _, err := NewPostModelOutput(r, evidence, selection, []domain.FrozenHookFeedback{freeze(domain.HookPostToolUse)}); err == nil {
 		t.Fatal("other branch ordinal zero accepted")
 	}
-	output, err := NewPostModelOutput(r, selection, []domain.FrozenHookFeedback{freeze(domain.HookPostToolUseFailure)})
+	output, err := NewPostModelOutput(r, evidence, selection, []domain.FrozenHookFeedback{freeze(domain.HookPostToolUseFailure)})
 	if err != nil || output.Validate() != nil || output.Result().Status() != ResultError || !strings.Contains(output.Text(), "authorized failure feedback") {
 		t.Fatal("valid failure feedback lost", err)
 	}
 	withoutAdmission, _ := NewPostHookSelection(p, ExecutionAdmission{}, r)
-	if _, err := NewPostModelOutput(r, withoutAdmission, output.Feedback()); err == nil {
+	if _, err := NewPostModelOutput(r, evidence, withoutAdmission, output.Feedback()); err == nil {
 		t.Fatal("feedback without attempt admitted")
 	}
 }

@@ -152,7 +152,12 @@ func (observer *reasoningProjectionFailure) NativeCommitted(uint64, []session.To
 	}
 	return errors.New("fixture projection failed")
 }
-func (*reasoningProjectionFailure) ToolResult(tool.InvocationResult) {}
+func (*reasoningProjectionFailure) ToolResult(tool.InvocationResult, tool.InputResultEvidence) error {
+	return nil
+}
+func (*reasoningProjectionFailure) ToolStarted(tool.InvocationID, tool.ExecutionAdmission) error {
+	return nil
+}
 
 func TestReasoningCancellationValidatesBoundariesAndSuppressesDelta(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())

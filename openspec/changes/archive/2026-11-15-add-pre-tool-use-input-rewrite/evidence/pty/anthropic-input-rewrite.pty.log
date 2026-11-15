@@ -1,0 +1,567 @@
+]11;?\[6nREWRITE_WORKSPACE=/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/TestInputRewriteTerminalHelper2847011403/001
+[?25l[?2004hEasyCode 0.0.0-dev[K
+[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[5A
+
+User: first[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[6ATrust this hook?[K
+May replace complete tool parameters before ordinary permission.[K
+Changed candidates and execution facts are saved in Session.[K
+Results disclose the effective input or a note about execution.[K
+Source: project · rewrite[K
+PreToolUse: fs.patch|fs.write|process.exec[K
+Feedback: none[K
+Timeout: 30 seconds[K
+Workspace: . · read-only · network denied[K
+This does not approve the model's tool call.[K
+Workspace scripts can change after review.[K
+PgUp/PgDn: full command · Tab/↑/↓: choose · Esc: deny[K
+[K
+  Trust for this session[K
+> Deny[K
+[K
+Command:[K
+payload=$(cat); case "$payload" in *cancel*) /bin/sleep 30 ;; *) printf '%s' '{"
+hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"file_path":"t
+erminal-effective","content":"界\nline\u001b[31m\n"}}}'; printf 'RAW-REWRITE-PRI
+VATE' >&2 ;; esac[K[20AEasyCode 0.0.0-dev[K
+[K
+User: first[K
+● Write(terminal-original) · denied · hook_trust_denied · check denied[K
+  Candidate rejected · tool not executed · Ctrl+O: original and candidates[K
+  PreToolUse check project:rewrite · denied · timeout 30s · stdout 0 bytes · std
+err 0 bytes[K
+  Raw hook output was not recorded.[K
+  Hook project:rewrite stopped fs.write: hook_trust_denied. Detailed hook output
+   was not recorded.[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[J[13A
+
+
+
+
+
+
+
+
+
+● answer-2[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[14AHooks · Local checks[K
+Enter: details · Esc: back[K
+> project:rewrite · PreToolUse · none [denied][K[J[2AHook details · Esc: back · ↑/↓: scroll · r: reset trust[K
+May replace complete tool parameters before ordinary permission.[K
+Changed candidates and execution facts are saved in Session.[K
+Results disclose the effective input or a note about execution.[K
+Source: project · rewrite [denied][K
+Event: PreToolUse · feedback: none[K
+Matcher: fs.patch|fs.write|process.exec[K
+Timeout: 30 seconds[K
+Workspace: . · read-only · network denied[K
+Workspace scripts can change after review.[K
+Reset only removes trust; the next matching check asks again.[K
+Raw output is discarded. Only trusted model feedback is sent and saved.[K
+[K
+Command:[K
+payload=$(cat); case "$payload" in *cancel*) /bin/sleep 30 ;; *) printf '%s' '{"
+hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"file_path":"t
+erminal-effective","content":"界\nline\u001b[31m\n"}}}'; printf 'RAW-REWRITE-PRI
+VATE' >&2 ;; esac[K[17A
+
+
+
+Source: project · rewrite [untrusted][K
+
+
+
+
+
+
+
+
+
+
+
+
+[17AHooks · Local checks[K
+Enter: details · Esc: back[K
+> project:rewrite · PreToolUse · none [untrusted][K[J[2AEasyCode 0.0.0-dev[K
+[K
+User: first[K
+● Write(terminal-original) · denied · hook_trust_denied · check denied[K
+  Candidate rejected · tool not executed · Ctrl+O: original and candidates[K
+  PreToolUse check project:rewrite · denied · timeout 30s · stdout 0 bytes · std
+err 0 bytes[K
+  Raw hook output was not recorded.[K
+  Hook project:rewrite stopped fs.write: hook_trust_denied. Detailed hook output
+   was not recorded.[K
+● answer-2[K
+[K
+> /hooks|[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[14A
+
+
+
+
+
+
+
+
+
+
+User: /hookssecond[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[15A
+
+
+
+
+
+
+
+
+
+
+
+● Write(terminal-original) · waiting[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[16ATrust this hook?[K
+May replace complete tool parameters before ordinary permission.[K
+Changed candidates and execution facts are saved in Session.[K
+Results disclose the effective input or a note about execution.[K
+Source: project · rewrite[K
+PreToolUse: fs.patch|fs.write|process.exec[K
+Feedback: none[K
+Timeout: 30 seconds[K
+Workspace: . · read-only · network denied[K
+This does not approve the model's tool call.[K
+Workspace scripts can change after review.[K
+PgUp/PgDn: full command · Tab/↑/↓: choose · Esc: deny[K
+[K
+  Trust for this session[K
+> Deny[K
+[K
+Command:[K
+payload=$(cat); case "$payload" in *cancel*) /bin/sleep 30 ;; *) printf '%s' '{"
+hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"file_path":"t
+erminal-effective","content":"界\nline\u001b[31m\n"}}}'; printf 'RAW-REWRITE-PRI
+VATE' >&2 ;; esac[K[20AEasyCode 0.0.0-dev[K
+[K
+User: first[K
+● Write(terminal-original) · denied · hook_trust_denied · check denied[K
+  Candidate rejected · tool not executed · Ctrl+O: original and candidates[K
+  PreToolUse check project:rewrite · denied · timeout 30s · stdout 0 bytes · std
+err 0 bytes[K
+  Raw hook output was not recorded.[K
+  Hook project:rewrite stopped fs.write: hook_trust_denied. Detailed hook output
+   was not recorded.[K
+● answer-2[K
+User: /hookssecond[K
+● Write(terminal-original) · waiting · check checking[K
+  Saved candidate · not selected · tool not admitted · Ctrl+O: original and cand
+idates[K
+  PreToolUse check project:rewrite · checking · timeout 30s · stdout 0 bytes · s
+tderr 0 bytes[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[20A  ┌─ Create file ────────────────────────────────────────────────────────────┐[K
+  │ Path: terminal-effective                                                 │[K
+  │ Risk: Create a workspace file and its listed parent directories. PreToo… │[K
+  │ Diff 1-9 of 9                                                            │[K
+  │ Create a workspace file and its listed parent directories. PreToolUse in │[K
+  │ put sources: project:rewrite                                             │[K
+  │ 14 bytes, 2 lines                                                        │[K
+  │ --- a/terminal-effective                                                 │[K
+  │ +++ b/terminal-effective                                                 │[K
+  │ @@ -0,0 +1,2 @@                                                          │[K
+  │ +界                                                                      │[K
+  │ +line\u{001B}[31m                                                        │[K
+  │                                                                          │[K
+  │   Yes                                                                    │[K
+  │   Yes, allow creating and overwriting files this session                 │[K
+  │ > No                                                                     │[K
+  │ Tab: add feedback · Enter: deny · Esc: interrupt                         │[K
+  └──────────────────────────────────────────────────────────────────────────┘[K
+[K[J[18AApproval disabled: resize te
+rminal to at least 32×18.[K
+Esc: cancel. Full effective 
+input review is required.[K[J[3AApproval
+ disable[J[A  ┌─ Create file ────────────────────────────────────────────────────────────┐[K
+  │ Path: terminal-effective                                                 │[K
+  │ Risk: Create a workspace file and its listed parent directories. PreToo… │[K
+  │ Diff 1-9 of 9                                                            │[K
+  │ Create a workspace file and its listed parent directories. PreToolUse in │[K
+  │ put sources: project:rewrite                                             │[K
+  │ 14 bytes, 2 lines                                                        │[K
+  │ --- a/terminal-effective                                                 │[K
+  │ +++ b/terminal-effective                                                 │[K
+  │ @@ -0,0 +1,2 @@                                                          │[K
+  │ +界                                                                      │[K
+  │ +line\u{001B}[31m                                                        │[K
+  │                                                                          │[K
+  │   Yes                                                                    │[K
+  │   Yes, allow creating and overwriting files this session                 │[K
+  │ > No                                                                     │[K
+  │ Tab: add feedback · Enter: deny · Esc: interrupt                         │[K
+  └──────────────────────────────────────────────────────────────────────────┘[K
+[K[18AEasyCode 0.0.0-dev[K
+[K
+  Candidate rejected · tool not executed · Ctrl+O: original and candidates[K
+  PreToolUse check project:rewrite · denied · timeout 30s · stdout 0 bytes · std
+err 0 bytes[K
+  Raw hook output was not recorded.[K
+  Hook project:rewrite stopped fs.write: hook_trust_denied. Detailed hook output
+   was not recorded.[K
+● answer-2[K
+User: /hookssecond[K
+● Write(terminal-effective) · denied · approval_denied[K
+  Effective input selected · ordinary permission applies · Ctrl+O: original and 
+candidates[K
+  PreToolUse check project:rewrite · continue · timeout 30s · stdout 137 bytes ·
+ stderr 19 bytes[K
+  Raw hook output was not recorded.[K
+  PreToolUse changed input; tool was not executed. input_digest=5d86f6cc135aaab4
+  4c41b66f48b9814d6b6c9602cedd1d194fac5a95d7af15ba; status=denied[K
+  Write denied: approval_denied[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[22A
+
+  PreToolUse check project:rewrite · denied · timeout 30s · stdout 0 bytes · std
+err 0 bytes[K
+  Raw hook output was not recorded.[K
+  Hook project:rewrite stopped fs.write: hook_trust_denied. Detailed hook output
+   was not recorded.[K
+● answer-2[K
+User: /hookssecond[K
+● Write(terminal-effective) · denied · approval_denied[K
+  Effective input selected · ordinary permission applies · Ctrl+O: original and 
+candidates[K
+  PreToolUse check project:rewrite · continue · timeout 30s · stdout 137 bytes ·
+ stderr 19 bytes[K
+  Raw hook output was not recorded.[K
+  PreToolUse changed input; tool was not executed. input_digest=5d86f6cc135aaab4
+  4c41b66f48b9814d6b6c9602cedd1d194fac5a95d7af15ba; status=denied[K
+  Write denied: approval_denied[K
+● answer-4[K
+
+
+
+[22A
+
+err 0 bytes[K
+  Raw hook output was not recorded.[K
+  Hook project:rewrite stopped fs.write: hook_trust_denied. Detailed hook output
+   was not recorded.[K
+● answer-2[K
+User: /hookssecond[K
+● Write(terminal-effective) · denied · approval_denied[K
+  Effective input selected · ordinary permission applies · Ctrl+O: original and 
+candidates[K
+  PreToolUse check project:rewrite · continue · timeout 30s · stdout 137 bytes ·
+ stderr 19 bytes[K
+  Raw hook output was not recorded.[K
+  PreToolUse changed input; tool was not executed. input_digest=5d86f6cc135aaab4
+  4c41b66f48b9814d6b6c9602cedd1d194fac5a95d7af15ba; status=denied[K
+  Write denied: approval_denied[K
+● answer-4[K
+User: third[K
+
+
+
+[22A
+
+User: /hookssecond[K
+● Write(terminal-effective) · denied · approval_denied[K
+  Effective input selected · ordinary permission applies · Ctrl+O: original and 
+candidates[K
+  PreToolUse check project:rewrite · continue · timeout 30s · stdout 137 bytes ·
+ stderr 19 bytes[K
+  Raw hook output was not recorded.[K
+  PreToolUse changed input; tool was not executed. input_digest=5d86f6cc135aaab4
+  4c41b66f48b9814d6b6c9602cedd1d194fac5a95d7af15ba; status=denied[K
+  Write denied: approval_denied[K
+● answer-4[K
+User: third[K
+● Write(terminal-original) · waiting · check checking[K
+  Saved candidate · not selected · tool not admitted · Ctrl+O: original and cand
+idates[K
+  PreToolUse check project:rewrite · checking · timeout 30s · stdout 0 bytes · s
+tderr 0 bytes[K
+
+
+
+[22A  ┌─ Create file ────────────────────────────────────────────────────────────┐[K
+  │ Path: terminal-effective                                                 │[K
+  │ Risk: Create a workspace file and its listed parent directories. PreToo… │[K
+  │ Diff 1-9 of 9                                                            │[K
+  │ Create a workspace file and its listed parent directories. PreToolUse in │[K
+  │ put sources: project:rewrite                                             │[K
+  │ 14 bytes, 2 lines                                                        │[K
+  │ --- a/terminal-effective                                                 │[K
+  │ +++ b/terminal-effective                                                 │[K
+  │ @@ -0,0 +1,2 @@                                                          │[K
+  │ +界                                                                      │[K
+  │ +line\u{001B}[31m                                                        │[K
+  │                                                                          │[K
+  │   Yes                                                                    │[K
+  │   Yes, allow creating and overwriting files this session                 │[K
+  │ > No                                                                     │[K
+  │ Tab: add feedback · Enter: deny · Esc: interrupt                         │[K
+  └──────────────────────────────────────────────────────────────────────────┘[K
+[K[J[18AEasyCode 0.0.0-dev[K
+[K
+● Write(terminal-effective) · denied · approval_denied[K
+  Effective input selected · ordinary permission applies · Ctrl+O: original and 
+candidates[K
+  PreToolUse check project:rewrite · continue · timeout 30s · stdout 137 bytes ·
+ stderr 19 bytes[K
+  Raw hook output was not recorded.[K
+  PreToolUse changed input; tool was not executed. input_digest=5d86f6cc135aaab4
+  4c41b66f48b9814d6b6c9602cedd1d194fac5a95d7af15ba; status=denied[K
+  Write denied: approval_denied[K
+● answer-4[K
+User: third[K
+● Write(terminal-effective) · waiting[K
+  Effective input selected · ordinary permission applies · Ctrl+O: original and 
+candidates[K
+  PreToolUse check project:rewrite · continue · timeout 30s · stdout 137 bytes ·
+ stderr 19 bytes[K
+  Raw hook output was not recorded.[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[22A
+
+
+
+
+
+
+
+
+
+
+
+
+● Write(terminal-effective) · running[K
+  Effective input selected · execution attempt admitted · Ctrl+O: original and c
+andidates[K
+
+
+
+
+
+
+[22A
+
+  Raw hook output was not recorded.[K
+  PreToolUse changed input; tool was not executed. input_digest=5d86f6cc135aaab4
+  4c41b66f48b9814d6b6c9602cedd1d194fac5a95d7af15ba; status=denied[K
+  Write denied: approval_denied[K
+● answer-4[K
+User: third[K
+● Write(terminal-effective)[K
+  Effective input selected · execution attempt admitted · Ctrl+O: original and c
+andidates[K
+  PreToolUse check project:rewrite · continue · timeout 30s · stdout 137 bytes ·
+ stderr 19 bytes[K
+  Raw hook output was not recorded.[K
+  [PreToolUse input rewrite][K
+  Admitted tool attempt used this effective input; admission does not confirm pr
+  ocess startup.[K
+  … Ctrl+O for details[K
+● answer-6[K
+
+
+
+[22ATranscript[K
+> assistant: answer-6[K
+  Write · success · terminal-effective[K
+  user: third[K
+  assistant: answer-4[K
+  Write · denied · terminal-effective[K
+  user: /hookssecond[K
+  assistant: answer-2[K
+  Write · denied · terminal-original[K
+  user: first[K
+↑/↓: select · Enter: details · PgUp/PgDn: page[K
+Ctrl+O/Esc: close[K
+[K[J[12AWrite · success[K
+Historical change summary; no saved diff[K
+[PreToolUse input rewrite][K
+Admitted tool attempt used this effective input; admission does not confirm [K
+process startup.[K
+{"input_digest":"5d86f6cc135aaab44c41b66f48b9814d6b6c9602cedd1d194fac5a95d7a[K
+f15ba","sources":[{"source":"project","id":"rewrite"}]}[K
+{"file_path":"terminal-effective","content":"界\nline\u001b[31m\n"}[K
+[/PreToolUse input rewrite][K
+Created terminal-effective (14 bytes, 2 lines, 0 directories created)[K
+[K
+Check project:rewrite · continue (ok) · timeout 30s · stdout 137 bytes · std[K
+err 19 bytes[K
+Detailed hook output was not recorded.[K
+←/→: input/result/saved · PgUp/PgDn: page[K
+Esc: transcript · Ctrl+O: close[K
+[K[16A
+
+PreToolUse · original request O[K
+{"file_path":"terminal-original","content":"original"}[K
+[K
+Saved candidate C1 · project:rewrite · continue (ok)[K
+input 5d86f6cc135aaab44c41b66f48b9814d6b6c9602cedd1d194fac5a95d7af15ba · std[K
+out 137 bytes · stderr 19 bytes[K
+{"file_path":"terminal-effective","content":"界\nline\u001b[31m\n"}[K
+[K
+Gate selected effective input E[K
+{"file_path":"terminal-effective","content":"界\nline\u001b[31m\n"}[K
+Execution attempt admitted at sequence 43. Admission does not confirm proces[K
+s startup.[K
+[K
+Raw hook output and reasons were not recorded.[K
+←/→: input/result/saved · PgUp/PgDn: page[K
+Esc: transcript · Ctrl+O: close[K
+[K[18ATranscript[K
+  assistant: answer-6[K
+> Write · success · terminal-effective[K
+  user: third[K
+  assistant: answer-4[K
+  Write · denied · terminal-effective[K
+  user: /hookssecond[K
+  assistant: answer-2[K
+  Write · denied · terminal-original[K
+  user: first[K
+↑/↓: select · Enter: details · PgUp/PgDn: page[K
+Ctrl+O/Esc: close[K
+[K[J[12AEasyCode 0.0.0-dev[K
+[K
+  Raw hook output was not recorded.[K
+  PreToolUse changed input; tool was not executed. input_digest=5d86f6cc135aaab4
+  4c41b66f48b9814d6b6c9602cedd1d194fac5a95d7af15ba; status=denied[K
+  Write denied: approval_denied[K
+● answer-4[K
+User: third[K
+● Write(terminal-effective)[K
+  Effective input selected · execution attempt admitted · Ctrl+O: original and c
+andidates[K
+  PreToolUse check project:rewrite · continue · timeout 30s · stdout 137 bytes ·
+ stderr 19 bytes[K
+  Raw hook output was not recorded.[K
+  [PreToolUse input rewrite][K
+  Admitted tool attempt used this effective input; admission does not confirm pr
+  ocess startup.[K
+  … Ctrl+O for details[K
+● answer-6[K
+[K
+> |[K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[22A
+
+  PreToolUse changed input; tool was not executed. input_digest=5d86f6cc135aaab4
+  4c41b66f48b9814d6b6c9602cedd1d194fac5a95d7af15ba; status=denied[K
+  Write denied: approval_denied[K
+● answer-4[K
+User: third[K
+● Write(terminal-effective)[K
+  Effective input selected · execution attempt admitted · Ctrl+O: original and c
+andidates[K
+  PreToolUse check project:rewrite · continue · timeout 30s · stdout 137 bytes ·
+ stderr 19 bytes[K
+  Raw hook output was not recorded.[K
+  [PreToolUse input rewrite][K
+  Admitted tool attempt used this effective input; admission does not confirm pr
+  ocess startup.[K
+  … Ctrl+O for details[K
+● answer-6[K
+User: cancel[K
+
+
+
+[22A
+
+● Write(terminal-effective)[K
+  Effective input selected · execution attempt admitted · Ctrl+O: original and c
+andidates[K
+  PreToolUse check project:rewrite · continue · timeout 30s · stdout 137 bytes ·
+ stderr 19 bytes[K
+  Raw hook output was not recorded.[K
+  [PreToolUse input rewrite][K
+  Admitted tool attempt used this effective input; admission does not confirm pr
+  ocess startup.[K
+  … Ctrl+O for details[K
+● answer-6[K
+User: cancel[K
+● Write(terminal-original) · waiting · check checking[K
+  Saved candidate · not selected · tool not admitted · Ctrl+O: original and cand
+idates[K
+  PreToolUse check project:rewrite · checking · timeout 30s · stdout 0 bytes · s
+tderr 0 bytes[K
+
+
+
+[22A
+Cancelling — waiting for cleanup[K
+[K
+andidates[K
+  PreToolUse check project:rewrite · continue · timeout 30s · stdout 137 bytes ·
+ stderr 19 bytes[K
+  Raw hook output was not recorded.[K
+  [PreToolUse input rewrite][K
+  Admitted tool attempt used this effective input; admission does not confirm pr
+  ocess startup.[K
+  … Ctrl+O for details[K
+● answer-6[K
+User: cancel[K
+● Write(terminal-original) · cancelled · cancelled · check cancelled[K
+  Candidate rejected · tool not executed · Ctrl+O: original and candidates[K
+  PreToolUse check project:rewrite · cancelled · timeout 30s · stdout 0 bytes · 
+stderr 0 bytes[K
+  Raw hook output was not recorded.[K
+  Hook project:rewrite stopped fs.write: cancelled. Detailed hook output was not
+   recorded.[K
+[K
+> [K
+Enter: send | Alt+Enter/Ctrl+J: newline[K
+[K[23A
+[K
+andidates[K
+  PreToolUse check project:rewrite · continue · timeout 30s · stdout 137 bytes ·
+ stderr 19 bytes[K
+  Raw hook output was not recorded.[K
+  [PreToolUse input rewrite][K
+  Admitted tool attempt used this effective input; admission does not confirm pr
+  ocess startup.[K
+  … Ctrl+O for details[K
+● answer-6[K
+User: cancel[K
+● Write(terminal-original) · cancelled · cancelled · check cancelled[K
+  Candidate rejected · tool not executed · Ctrl+O: original and candidates[K
+  PreToolUse check project:rewrite · cancelled · timeout 30s · stdout 0 bytes · 
+stderr 0 bytes[K
+  Raw hook output was not recorded.[K
+  Hook project:rewrite stopped fs.write: cancelled. Detailed hook output was not
+   recorded.[K
+Error: user_cancelled: turn was cancelled[K
+
+> |[K
+
+[2K[?2004l[?25h[?1002l[?1003l[?1006l
+REWRITE_TERMINAL_FACTS=denied/denied/success/cancelled
+REWRITE_TERMINAL_EXIT=0 REQUESTS=7

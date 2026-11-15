@@ -42,6 +42,7 @@ type eventStreamClosedMsg struct{}
 type approvalSubmitErrorMsg struct{ err error }
 
 type transcriptMessage struct {
+	admitted    bool
 	hook        *protocol.HookActivityPayload
 	unfinished  bool
 	local       uint64
@@ -114,6 +115,7 @@ type Model struct {
 	interruptNext  bool
 	approval       *approvalOverlay
 	activeTurnID   domain.TurnID
+	preInputs      map[string]protocol.HookActivityPayload
 	postHooks      map[string]protocol.PostHookCommittedPayload
 	toolItems      map[string]int
 	toolClosed     map[string]bool
@@ -538,6 +540,9 @@ func (model Model) heightOrDefault() int {
 }
 
 func (model Model) handleApprovalKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if model.rewriteApprovalTooSmall() && key.Type != tea.KeyEsc && key.Type != tea.KeyCtrlC {
+		return model, nil
+	}
 	overlay := model.approval
 	if overlay.submitted {
 		if key.Type == tea.KeyEsc || key.Type == tea.KeyCtrlC {
@@ -674,6 +679,9 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 			model.toolClosed[payload.InvocationID] = true
 		}
 		model.transcript[index].activity = &payload
+		if event.Kind == protocol.EventToolStarted {
+			model.transcript[index].admitted = true
+		}
 		if event.Kind == protocol.EventToolTerminal {
 			terminalPayload, decodeErr := protocol.DecodeToolTerminal(event)
 			if decodeErr != nil {
@@ -707,6 +715,7 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 	case protocol.EventTurnStarted:
 		model.stopCommit = nil
 		model.stopStatus = ""
+		model.preInputs = make(map[string]protocol.HookActivityPayload)
 		model.postHooks = make(map[string]protocol.PostHookCommittedPayload)
 		if event.TurnID.Valid() {
 			notice := ""
@@ -941,6 +950,9 @@ func (model Model) renderApproval() string {
 	if overlay == nil {
 		return ""
 	}
+	if model.rewriteApprovalTooSmall() {
+		return hookPanel([]string{"Approval disabled: resize terminal to at least 32×18.", "Esc: cancel. Full effective input review is required."}, model.widthOrDefault(), model.heightOrDefault(), 0)
+	}
 	if overlay.request.Capability == "process.exec" {
 		return model.renderCommandApproval()
 	}
@@ -957,6 +969,9 @@ func (model Model) renderApproval() string {
 		height = 2
 	}
 	lines := wrapApprovalDiff(overlay.request.Presentation.Text(), contentWidth)
+	if overlay.request.InputRewrite.Kind() == protocol.PreInputSelected {
+		lines = append(wrapApprovalDiff(overlay.request.Reason, contentWidth), lines...)
+	}
 	maxScroll := len(lines) - height
 	if maxScroll < 0 {
 		maxScroll = 0

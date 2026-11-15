@@ -74,7 +74,7 @@ func TestOrderedBudgetIndependentOfEightWorkerCompletionOrder(t *testing.T) {
 			}
 			done := make(chan completion, 1)
 			go func() {
-				results, err := rt.executeToolCalls(context.Background(), runtimeTurnID, calls)
+				results, err := executeReadyFixtureCalls(t, rt, context.Background(), runtimeTurnID, calls)
 				done <- completion{results, err}
 			}()
 			for range calls {
@@ -166,7 +166,7 @@ func TestBudgetExhaustionStopsNewAdmissionAndPreservesFrozenAccounting(t *testin
 	id, _ := tool.GenerateInvocationID()
 	inv, _ := tool.NewInvocation(id, ready)
 	var activities []protocol.Event
-	results, err := rt.executeToolCalls(context.Background(), runtimeTurnID, []tool.Invocation{inv}, func(event protocol.Event) { activities = append(activities, event) })
+	results, err := executeReadyFixtureCalls(t, rt, context.Background(), runtimeTurnID, []tool.Invocation{inv}, func(event protocol.Event) { activities = append(activities, event) })
 	if err != nil || len(results) != 1 || results[0].Code() != "result_budget_exceeded" {
 		t.Fatalf("admission: %v", err)
 	}

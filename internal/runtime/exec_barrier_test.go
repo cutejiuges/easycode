@@ -63,7 +63,7 @@ func TestExecBarrierWaitsForPriorDurabilityAndPreservesResultOrder(t *testing.T)
 			want = []string{"patch", "durable:fs.patch", "exec", "durable:process.exec"}
 		}
 		var events []protocol.Event
-		results, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, invocations, execApprovalEmitter(t, runtime, tool.ApprovalAllowOnce, &events))
+		results, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, invocations, execApprovalEmitter(t, runtime, tool.ApprovalAllowOnce, &events))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -88,7 +88,7 @@ func TestExecAbortCancelsRemainingCallsWithoutPatchSpecificPreview(t *testing.T)
 	runtime.readExecutor = timelineReadExecutor{mu: &mu, timeline: &reads}
 	following := testRuntimeInvocations(t, 1)[0]
 	var events []protocol.Event
-	results, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, []tool.Invocation{invocation, following}, execApprovalEmitter(t, runtime, tool.ApprovalAbort, &events))
+	results, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, []tool.Invocation{invocation, following}, execApprovalEmitter(t, runtime, tool.ApprovalAbort, &events))
 	if err == nil || len(results) != 2 || executor.calls != 0 || len(reads) != 0 {
 		t.Fatalf("abort did not close both calls without execution: %v, %v", results, err)
 	}

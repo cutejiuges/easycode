@@ -1,28 +1,28 @@
 package anthropic
 
 import (
+	"easycode/internal/domain"
 	"easycode/internal/tool"
 	"fmt"
 )
 
-// validateQuestionRestoreFacts 在安装历史前核对原生题目与共享 ready，不从展示值反向构造请求。
-func validateQuestionRestoreFacts(entry nativeHistoryEntry, questions []tool.QuestionInvocation) error {
+// validateNativeReadyFacts 在安装历史前核对全部原始 ready，不访问执行环境。
+func validateNativeReadyFacts(entry nativeHistoryEntry, ready []tool.Invocation) error {
 	index := 0
 	for _, item := range entry.Assistant.Content {
-		if item.Type != blockTypeToolUse || item.Name != "AskUserQuestion" {
+		if item.Type != blockTypeToolUse {
 			continue
 		}
-		if index >= len(questions) {
-			return fmt.Errorf("native question has no matching ready fact")
+		if index >= len(ready) {
+			return fmt.Errorf("native call has no matching ready fact")
 		}
-		input, err := tool.DecodeQuestionInput(item.Input)
-		if err != nil || string(questions[index].ProviderCallID()) != item.ID || questions[index].Input() != input {
-			return fmt.Errorf("native question does not match ready fact")
+		if err := tool.ValidateNativeCallInput(ready[index], domain.ProviderAnthropic, item.Name, tool.ProviderCallID(item.ID), tool.WireStructured, item.Input); err != nil {
+			return err
 		}
 		index++
 	}
-	if index != len(questions) {
-		return fmt.Errorf("question ready fact has no native call")
+	if index != len(ready) {
+		return fmt.Errorf("ready fact has no native call")
 	}
 	return nil
 }
@@ -44,11 +44,7 @@ func validateQuestionRestoredOutputs(sample, entry nativeHistoryEntry, results [
 				if string(r.ProviderCallID()) != item.ID {
 					continue
 				}
-				output, err := tool.NewModelOutput(r)
-				if err != nil {
-					return err
-				}
-				expected, err := encodeToolResult(item, output)
+				expected, err := encodeToolResultData(item, r, r.Preview().Text())
 				actual := outputs[callIndex]
 				if err != nil || actual.Type != expected.Type || actual.ToolUseID != expected.ToolUseID || actual.Content != expected.Content || actual.IsError != expected.IsError {
 					return fmt.Errorf("native question output differs from committed result")

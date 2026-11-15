@@ -1,0 +1,13 @@
+{
+  "command": [
+    "go",
+    "test",
+    "./internal/app",
+    "-count=1",
+    "-run",
+    "^(TestPostBothProvidersRealSandboxThreeCapabilitiesAndDisclosure|TestPostBothBranchesRealExecNormalExitsKeepSuccessForBothProviders)$"
+  ],
+  "executed_at": "2026-11-15T10:20:07.170610+00:00",
+  "duration_seconds": 6.397,
+  "exit_code": 0
+}

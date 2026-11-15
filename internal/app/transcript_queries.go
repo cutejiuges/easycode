@@ -13,9 +13,9 @@ import (
 	"easycode/internal/tool"
 )
 
-func transcriptListItem(node transcriptNode, entry session.ToolHistoryEntry) protocol.TranscriptListItem {
+func transcriptListItem(node transcriptNode, entry session.ToolHistoryEntry) (protocol.TranscriptListItem, error) {
 	if node.compaction != nil {
-		return protocol.TranscriptListItem{Cursor: node.cursor, Kind: domain.TranscriptCompaction, CompactionID: node.compaction.id, Text: "Conversation compacted", More: true}
+		return protocol.TranscriptListItem{Cursor: node.cursor, Kind: domain.TranscriptCompaction, CompactionID: node.compaction.id, Text: "Conversation compacted", More: true}, nil
 	}
 
 	item := protocol.TranscriptListItem{Cursor: node.cursor, Kind: node.item.Kind, TurnID: node.item.TurnID, InputID: node.item.InputID, HookSource: node.item.HookSource}
@@ -33,15 +33,35 @@ func transcriptListItem(node transcriptNode, entry session.ToolHistoryEntry) pro
 				item.More = page.NextOffset < page.TotalBytes
 			}
 		}
-		return item
+		return item, nil
 	}
 	if node.toolIndex < 0 {
 		item.Text = tool.ActivityText(node.item.Text, 512)
 		item.More = len(item.Text) < len(node.item.Text) || node.item.HasSkill
-		return item
+		return item, nil
 	}
 	item.DetailSequence = entry.DetailSequence
+	item.ExecutionAdmitted = entry.Admission.Sequence() != 0
 	item.Activity = tool.ProjectActivity(entry.Invocation)
+	if g := entry.PreHooks; g != nil {
+		if err := g.Validate(entry.Invocation); err != nil {
+			return protocol.TranscriptListItem{}, err
+		}
+		summary, err := tool.ProjectPreActivity(entry.Invocation, g.Plan, g.Finished, g.Started, g.Decision, entry.PreDetailSequence)
+		if err != nil {
+			return protocol.TranscriptListItem{}, err
+		}
+		item.PreHook = &summary
+		if g.Decision != nil {
+			selection, err := entry.InputSelection()
+			if err != nil {
+				return protocol.TranscriptListItem{}, err
+			}
+			if effective, ok := selection.EffectiveInvocation(); ok {
+				item.Activity = tool.ProjectActivity(effective)
+			}
+		}
+	}
 	if g := entry.PostHooks; g != nil && entry.HasResult {
 		if branch, selected := g.SelectedBranch(); selected {
 			ref := branch.Hooks[min(len(g.Finished), len(branch.Hooks)-1)]
@@ -103,7 +123,7 @@ func transcriptListItem(node transcriptNode, entry session.ToolHistoryEntry) pro
 			item.SummaryOnly = true
 		}
 	}
-	return item
+	return item, nil
 }
 
 func (q *transcriptQueries) ListTranscript(ctx context.Context, query protocol.TranscriptListQuery) (protocol.TranscriptListPage, error) {
@@ -153,7 +173,11 @@ func (q *transcriptQueries) ListTranscript(ctx context.Context, query protocol.T
 	q.mu.Unlock()
 	items := make([]protocol.TranscriptListItem, len(selected))
 	for i, value := range selected {
-		items[i] = transcriptListItem(value.node, value.entry)
+		item, err := transcriptListItem(value.node, value.entry)
+		if err != nil {
+			return protocol.TranscriptListPage{}, err
+		}
+		items[i] = item
 		if value.stop != nil {
 			summary := stopSummary(*value.stop)
 			items[i].StopHook = &summary
@@ -196,6 +220,9 @@ func (q *transcriptQueries) ReadTranscriptBody(ctx context.Context, query protoc
 		}
 	}
 	q.mu.Unlock()
+	if query.Source == protocol.TranscriptPreHooks && (entry.PreHooks == nil || query.DetailSequence != entry.PreDetailSequence) {
+		return protocol.TranscriptBodyPage{}, protocol.TranscriptChanged
+	}
 	if query.Source == protocol.TranscriptPostHooks && query.DetailSequence != entry.DetailSequence {
 		return protocol.TranscriptBodyPage{}, protocol.TranscriptChanged
 	}
@@ -237,7 +264,17 @@ func (q *transcriptQueries) ReadTranscriptBody(ctx context.Context, query protoc
 	} else {
 		switch query.Source {
 		case protocol.TranscriptInput:
-			if question, ok := entry.Invocation.Question(); ok {
+			if entry.PreHooks != nil {
+				input, err := tool.HookInputForInvocation(entry.Invocation)
+				if err != nil {
+					return protocol.TranscriptBodyPage{}, err
+				}
+				encoded, err := input.MarshalJSON()
+				if err != nil {
+					return protocol.TranscriptBodyPage{}, err
+				}
+				text = "Original request O\n" + string(encoded)
+			} else if question, ok := entry.Invocation.Question(); ok {
 				text = tool.QuestionInputText(question.Input())
 			} else if invocation, ok := entry.Invocation.Exec(); ok {
 				text = invocation.Input().Command()
@@ -258,6 +295,12 @@ func (q *transcriptQueries) ReadTranscriptBody(ctx context.Context, query protoc
 					continue
 				}
 				text += fmt.Sprintf("\n\nCheck %s:%s · %s (%s) · timeout %ds · stdout %d bytes · stderr %d bytes\nDetailed hook output was not recorded.", h.Reference.Source, h.Reference.ID, h.Result.Status, h.Result.Code, h.Reference.TimeoutSeconds, h.Result.StdoutBytes, h.Result.StderrBytes)
+			}
+		case protocol.TranscriptPreHooks:
+			var err error
+			text, err = preHookDetail(entry)
+			if err != nil {
+				return protocol.TranscriptBodyPage{}, err
 			}
 		case protocol.TranscriptPostHooks:
 			if entry.PostHooks == nil {
@@ -308,6 +351,9 @@ func (q *transcriptQueries) ReadTranscriptBody(ctx context.Context, query protoc
 	detailSequence := uint64(0)
 	if query.Source == protocol.TranscriptPostHooks {
 		detailSequence = entry.DetailSequence
+	}
+	if query.Source == protocol.TranscriptPreHooks {
+		detailSequence = entry.PreDetailSequence
 	}
 	if query.Source == protocol.TranscriptStopHooks {
 		detailSequence = stop.DetailSequence

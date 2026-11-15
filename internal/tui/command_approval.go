@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"easycode/internal/protocol"
 	"fmt"
 	"strings"
 )
@@ -18,6 +19,9 @@ func (model Model) renderCommandApproval() string {
 	metadata = append(metadata, wrapApprovalDiff(fmt.Sprintf("Timeout: %d ms", overlay.request.TimeoutMillis), contentWidth)...)
 	metadata = append(metadata, wrapApprovalDiff("Workspace writes; no network. Detached processes may survive.", contentWidth)...)
 	body := wrapApprovalDiff(commandDisplayText(overlay.request.Command), contentWidth)
+	if overlay.request.InputRewrite.Kind() == protocol.PreInputSelected {
+		body = append(wrapApprovalDiff(overlay.request.Reason, contentWidth), body...)
+	}
 	// 边框、标题、位置、三项决定和提示共占八行，其余交给正文。
 	visible := max(1, model.height-len(metadata)-8)
 	scroll := min(max(0, overlay.scroll), max(0, len(body)-visible))
