@@ -46,7 +46,7 @@ func TestReasoningFixedNativeRestoreAndCacheBytesIgnoreReading(t *testing.T) {
 				t.Fatal(err)
 			}
 			restored := restoredValue.(*Conversation)
-			input, err := provider.NewSamplingInput().WithToolCatalog(testOpenAIToolCatalog(t))
+			input, err := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testOpenAIToolCatalog(t))
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -67,10 +67,16 @@ const (
 
 // Model 保存纯 UI 投影状态，不依赖 Provider 或 transport。
 type Model struct {
-	stopCommit *protocol.StopHookCommittedPayload
-	stopStatus string
-	completion completionState
-	question   *questionOverlay
+	effortOperationGeneration uint64
+	queryOperationGeneration  uint64
+	effortGeneration          uint64
+	effortFeedback            *effortFeedback
+	effortSelection           *effortSelectionObservation
+	effortNotice              []string
+	stopCommit                *protocol.StopHookCommittedPayload
+	stopStatus                string
+	completion                completionState
+	question                  *questionOverlay
 
 	hooks                hookBrowser
 	hookTrust            *hookTrustOverlay
@@ -240,6 +246,12 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return model, nil
 	case RuntimeEventMsg:
+		if value.Event.Kind == protocol.EventTurnStarted || value.Event.Kind == protocol.EventTurnCompleted || value.Event.Kind == protocol.EventTurnFailed {
+			model.effortOperationGeneration++
+		}
+		if value.Event.Kind == protocol.EventUserQuestionRequested || value.Event.Kind == protocol.EventToolApprovalRequested || value.Event.Kind == protocol.EventHookTrustRequested {
+			model.clearEffortFeedback()
+		}
 		next, cmd := model.projectRuntimeEvent(value.Event)
 		updated := next.(Model)
 		if value.Event.Kind == protocol.EventToolTerminal && updated.detailOpen && updated.browser.queries != nil && updated.errorSummary == "" {
@@ -279,6 +291,13 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		model.errorSummary = safeErrorSummary(value.err)
 		return model, nil
+	case effortFailedMsg:
+		if model.effortFeedback == nil || value.generation != model.effortFeedback.generation {
+			return model, nil
+		}
+		model.effortFeedback = nil
+		model.errorSummary = safeErrorSummary(value.err)
+		return model, nil
 	case cacheQueryFailedMsg:
 		if value.generation != model.queryGeneration {
 			return model, nil
@@ -301,6 +320,9 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if key.Type == tea.KeyCtrlC {
 		model.completion.suppress(completionCancelled)
+	}
+	if key.Type == tea.KeyEsc || key.Type == tea.KeyCtrlC {
+		model.clearEffortFeedback()
 	}
 	if model.question != nil {
 		return model.handleQuestionKey(key)
@@ -385,12 +407,14 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return model.handlePluginsKey(key)
 	}
 	if key.Type == tea.KeyCtrlO {
+		model.clearEffortFeedback()
 		return model.openTranscriptBrowser()
 	}
 	if model.detailOpen {
 		return model.handleTranscriptBrowserKey(key)
 	}
 	if key.Type == tea.KeyPgUp || key.Type == tea.KeyPgDown {
+		model.clearEffortFeedback()
 		return model.navigateTranscript(key)
 	}
 	if key.Type == tea.KeyCtrlC && model.activeCompactionID.Valid() {
@@ -417,8 +441,17 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return model, nil
 	}
+	if key.Type == tea.KeyEnter && !key.Alt && !key.Paste {
+		if _, local, _ := parseEffortCommand(model.composer.text); local {
+			model.completion.suppress(completionCancelled)
+			return model.submitComposer()
+		}
+	}
 	originalDraft := model.composer
 	if handled, submit := model.handleCompletionKey(key); handled {
+		if model.composer.text != originalDraft.text || model.composer.cursor != originalDraft.cursor {
+			model.clearEffortFeedback()
+		}
 		if submit {
 			next, command := model.submitComposer()
 			updated := next.(Model)
@@ -430,10 +463,12 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return model, nil
 	}
 	if key.Type == tea.KeyCtrlR || key.Type == tea.KeyCtrlD {
+		model.clearEffortFeedback()
 		return model.handleReturnedInput(key.Type == tea.KeyCtrlR)
 	}
 	if key.Type == tea.KeyEsc || (key.Type == tea.KeyUp && model.composer.text == "" && model.composer.rowIndex() == 0) {
 		if model.hasQueuedInput() {
+			model.clearEffortFeedback()
 			return model.retractQueuedInputs()
 		}
 		if key.Type == tea.KeyEsc && model.activeCompactionID.Valid() {
@@ -446,7 +481,11 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	beforeText, beforeCursor := model.composer.text, model.composer.cursor
 	intent, err := model.composer.input(key)
+	if model.composer.text != beforeText || model.composer.cursor != beforeCursor {
+		model.clearEffortFeedback()
+	}
 	if err != nil {
 		model.errorSummary = "invalid_input: " + err.Error()
 		return model, nil
@@ -467,6 +506,14 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (model Model) submitComposer() (tea.Model, tea.Cmd) {
+	model.clearEffortFeedback()
+	if command, local, err := parseEffortCommand(model.composer.text); local {
+		if err != nil {
+			model.errorSummary = "invalid_command: " + err.Error()
+			return model, nil
+		}
+		return model.submitEffortCommand(command)
+	}
 	if words := strings.Fields(model.composer.text); len(words) > 0 && words[0] == "/plugins" {
 		if len(words) != 1 {
 			model.errorSummary = "invalid_command: /plugins does not accept arguments"
@@ -894,8 +941,8 @@ func (model Model) View() string {
 	if model.detailOpen {
 		return model.renderTranscriptBrowser()
 	}
-	if model.composer.height < 5 && model.state == stateIdle {
-		return model.composer.view(true)
+	if model.composer.height <= 5 {
+		return model.composer.view(model.pending == nil && model.retracting == nil && !model.cancelling)
 	}
 	var view strings.Builder
 	_, _ = fmt.Fprintf(&view, "EasyCode %s\n", model.version)
@@ -907,6 +954,10 @@ func (model Model) View() string {
 	}
 	if model.compactionStatus != "" {
 		view.WriteString(ansi.Hardwrap(model.compactionStatus, model.widthOrDefault(), true))
+		view.WriteByte('\n')
+	}
+	for _, line := range model.effortNoticeLines() {
+		view.WriteString(line)
 		view.WriteByte('\n')
 	}
 	if model.reasoning.notice != "" {
@@ -939,10 +990,8 @@ func (model Model) View() string {
 		_, _ = fmt.Fprintf(&view, "Error: %s\n", model.errorSummary)
 	}
 	view.WriteString("\n")
-	view.WriteString(model.renderInputs())
-	view.WriteString(model.completion.view)
-	view.WriteString(model.composer.view(model.pending == nil && model.retracting == nil && !model.cancelling))
-	return view.String()
+	footer := model.renderInputs() + model.completion.view + model.composer.view(model.pending == nil && model.retracting == nil && !model.cancelling)
+	return model.fitChatView(view.String(), footer)
 }
 
 func (model Model) renderApproval() string {

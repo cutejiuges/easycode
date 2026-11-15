@@ -1,0 +1,32 @@
+[
+  {
+    "capability": "context/compaction",
+    "requirements": 1,
+    "exact_current_text": true
+  },
+  {
+    "capability": "headless/stream-control",
+    "requirements": 2,
+    "exact_current_text": true
+  },
+  {
+    "capability": "provider/reasoning-control",
+    "requirements": 1,
+    "exact_current_text": true
+  },
+  {
+    "capability": "runtime/effort-control",
+    "requirements": 7,
+    "exact_current_text": true
+  },
+  {
+    "capability": "tui/context-commands",
+    "requirements": 2,
+    "exact_current_text": true
+  },
+  {
+    "capability": "tui/input-completion",
+    "requirements": 1,
+    "exact_current_text": true
+  }
+]

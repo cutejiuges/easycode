@@ -45,7 +45,7 @@ func TestPluginFixedNativeRestorePreservesOpaqueOrderCacheAndPrivateRevision(t *
 	source, _ := domain.NewSkillSource("plugin", "qa", "codex")
 	metadata, _ := domain.NewSkillMetadata(source, "qa:demo", "on demand", "", true, false)
 	catalog, _ := domain.NewSkillCatalog([]domain.SkillMetadata{metadata})
-	sampling, _ := provider.NewSamplingInput().WithToolCatalog(testAnthropicToolCatalog(t))
+	sampling, _ := testSamplingInput(t, restored.provider.config.Inference).WithToolCatalog(testAnthropicToolCatalog(t))
 	sampling, _ = sampling.WithSkillCatalog(catalog)
 	before, err := live.compileSamplingRequest(live.history.snapshot(), sampling)
 	if err != nil {

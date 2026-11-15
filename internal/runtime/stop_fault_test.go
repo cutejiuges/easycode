@@ -91,7 +91,7 @@ func TestStopCancellationAndSyncLinearization(t *testing.T) {
 			}
 			var terminals int
 			trust := hookTrustEmitter(t, r, protocol.HookTrustSession, nil)
-			err := r.runTurn(ctx, []domain.UserInput{input}, control, func(e protocol.Event) {
+			err := r.runTurn(ctx, []domain.UserInput{input}, r.profile, control, func(e protocol.Event) {
 				trust(e)
 				if e.Kind == protocol.EventTurnCompleted || e.Kind == protocol.EventTurnFailed {
 					terminals++

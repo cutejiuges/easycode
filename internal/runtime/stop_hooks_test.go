@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -32,10 +33,17 @@ func (f *stopRunnerFixture) Run(ctx context.Context, id domain.HookRunIdentity, 
 	return f.run(ctx, id, d)
 }
 func newStopRuntimeFixture(t *testing.T, journal Journal) (*Runtime, *stopRunnerFixture, *atomic.Int32) {
+	return newStopRuntimeRequestFixture(t, journal, nil)
+}
+func newStopRuntimeRequestFixture(t *testing.T, journal Journal, inspect func([]byte)) (*Runtime, *stopRunnerFixture, *atomic.Int32) {
 	t.Helper()
 	requests := new(atomic.Int32)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
+		body, _ := io.ReadAll(r.Body)
+		if inspect != nil {
+			inspect(body)
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = fmt.Fprint(w, "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"response-test\"}}\n\nevent: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"  answer\\n\"}]}}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"response-test\"}}\n\n")
 	}))

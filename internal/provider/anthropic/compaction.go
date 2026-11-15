@@ -75,7 +75,7 @@ func (conversation *Conversation) planCompactionRequest(input provider.Compactio
 	if err := input.Validate(); err != nil {
 		return samplingRequestPlan{}, err
 	}
-	t := conversation.provider.config.Inference.Thinking()
+	t := input.Sampling().InferenceSettings().Thinking()
 	if t.Mode() == domain.ThinkingEnabled && t.BudgetTokens() >= input.OutputTokens() {
 		return samplingRequestPlan{}, provider.NewCompactionError(provider.CompactionBudgetExceeded)
 	}

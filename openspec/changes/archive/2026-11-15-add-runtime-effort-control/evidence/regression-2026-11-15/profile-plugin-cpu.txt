@@ -1,0 +1,27 @@
+File: app.test
+Type: cpu
+Time: 2026-11-15 16:16:08 CST
+Duration: 1.51s, Total samples = 1.61s (106.59%)
+Showing nodes accounting for 1.44s, 89.44% of 1.61s total
+Showing top 20 nodes out of 225
+      flat  flat%   sum%        cum   cum%
+     0.29s 18.01% 18.01%      0.29s 18.01%  runtime.madvise
+     0.20s 12.42% 30.43%      0.20s 12.42%  runtime._ExternalCode
+     0.15s  9.32% 39.75%      0.15s  9.32%  __tsan::MemoryRangeSet
+     0.15s  9.32% 49.07%      0.15s  9.32%  runtime.pthread_cond_wait
+     0.12s  7.45% 56.52%      0.12s  7.45%  runtime.pthread_kill
+     0.11s  6.83% 63.35%      0.11s  6.83%  runtime.usleep
+     0.05s  3.11% 66.46%      0.05s  3.11%  runtime.pthread_cond_signal
+     0.05s  3.11% 69.57%      0.05s  3.11%  syscall.syscall
+     0.04s  2.48% 72.05%      0.04s  2.48%  __tsan::MemoryAccessRangeT
+     0.04s  2.48% 74.53%      0.04s  2.48%  __tsan_read
+     0.04s  2.48% 77.02%      0.04s  2.48%  racecall
+     0.04s  2.48% 79.50%      0.04s  2.48%  runtime.kevent
+     0.04s  2.48% 81.99%      0.04s  2.48%  syscall.syscall6
+     0.03s  1.86% 83.85%      0.03s  1.86%  runtime.greyobject
+     0.02s  1.24% 85.09%      0.02s  1.24%  __tsan_write
+     0.02s  1.24% 86.34%      0.06s  3.73%  encoding/json.appendCompact
+     0.02s  1.24% 87.58%      0.02s  1.24%  racecalladdr
+     0.01s  0.62% 88.20%      0.01s  0.62%  __tsan::MetaMap::FreeRange
+     0.01s  0.62% 88.82%      0.01s  0.62%  __tsan::TraceSwitchPart
+     0.01s  0.62% 89.44%      0.01s  0.62%  __tsan_func_enter

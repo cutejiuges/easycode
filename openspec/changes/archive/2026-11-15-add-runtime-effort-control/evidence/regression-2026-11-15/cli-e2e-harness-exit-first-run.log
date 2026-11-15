@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/evidence/regression-2026-11-15/cli-acceptance-runner.txt", line 235, in <module>
+    main()
+  File "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/evidence/regression-2026-11-15/cli-acceptance-runner.txt", line 229, in main
+    cases.append(run_family(binary,family,path))
+  File "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/evidence/regression-2026-11-15/cli-acceptance-runner.txt", line 196, in run_family
+    child.finish(1)
+  File "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/evidence/regression-2026-11-15/cli-acceptance-runner.txt", line 86, in finish
+    assert actual==code, (actual, code, self.stderr.decode())
+AssertionError: (0, 1, '')

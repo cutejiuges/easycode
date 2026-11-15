@@ -1,0 +1,64 @@
+package tui
+
+import (
+	"strings"
+
+	"github.com/charmbracelet/x/ansi"
+)
+
+func renderedChatRows(value string) int {
+	if value == "" {
+		return 0
+	}
+	return strings.Count(strings.TrimSuffix(value, "\n"), "\n") + 1
+}
+
+// nonEffortStatusRows 为主线、通知和补全共用现有状态的真实行预算。
+func (model Model) nonEffortStatusRows() int {
+	rows := 0
+	for _, present := range []bool{model.cancelling, model.stopStatus != "", model.reasoning.notice != "", model.reasoningStatus() != "", model.reading.detached || model.reading.notice != "" || model.reading.newContent, model.errorSummary != ""} {
+		if present {
+			rows++
+		}
+	}
+	if model.compactionStatus != "" {
+		rows += renderedChatRows(ansi.Hardwrap(model.compactionStatus, model.widthOrDefault(), true))
+	}
+	return rows
+}
+
+func (model Model) composerChatRows() int { return renderedChatRows(model.composer.view(true)) }
+
+// chatContentRows 优先预留输入、队列、固定标题和分隔，剩余空间由正文及短通知使用。
+func (model Model) chatContentRows() int {
+	return max(0, model.heightOrDefault()-model.composerChatRows()-renderedChatRows(model.renderInputs())-model.nonEffortStatusRows()-3)
+}
+
+// fitChatView 在极端状态组合下裁去空行和较后的主线内容，始终保留已预算的输入区。
+func (model Model) fitChatView(prefix, footer string) string {
+	height, width := max(1, model.heightOrDefault()), max(1, model.widthOrDefault())
+	if renderedChatRows(footer) > height {
+		return model.composer.view(model.pending == nil && model.retracting == nil && !model.cancelling)
+	}
+	lines := strings.Split(strings.TrimSuffix(prefix, "\n"), "\n")
+	capacity := height - renderedChatRows(footer)
+	if len(lines) > capacity {
+		compact := make([]string, 0, len(lines))
+		remove := len(lines) - capacity
+		for _, line := range lines {
+			if line == "" && remove > 0 {
+				remove--
+				continue
+			}
+			compact = append(compact, line)
+		}
+		lines = compact[:min(len(compact), capacity)]
+	}
+	if footer != "" {
+		lines = append(lines, strings.Split(strings.TrimSuffix(footer, "\n"), "\n")...)
+	}
+	for i, line := range lines {
+		lines[i] = ansi.Truncate(line, width, "")
+	}
+	return strings.Join(lines, "\n") + "\n"
+}

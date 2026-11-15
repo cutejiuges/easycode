@@ -1,0 +1,28 @@
+File: preview-app.test
+Type: cpu
+Time: 2026-11-15 16:32:48 CST
+Duration: 5.17s, Total samples = 4460ms (86.21%)
+Showing nodes accounting for 1270ms, 28.48% of 4460ms total
+Dropped 60 nodes (cum <= 22.30ms)
+Showing top 20 nodes out of 78
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%     2220ms 49.78%  testing.tRunner
+         0     0%     0%     2210ms 49.55%  easycode/internal/app.TestSessionPreviewCurrentFixturesAreReadOnly.func1
+         0     0%     0%     2210ms 49.55%  easycode/internal/app.previewSession
+         0     0%     0%     2020ms 45.29%  easycode/internal/codec.UnmarshalRecord
+         0     0%     0%     2000ms 44.84%  easycode/internal/session.DecodeToolCallReadyPayload
+         0     0%     0%     2000ms 44.84%  easycode/internal/session.decodeKnownPayload[go.shape.57e850e0e2ff3cb6b7abbe4d8f6bd1ae78b4b32a390ff592963022485967d068]
+         0     0%     0%     1980ms 44.39%  encoding/json.(*Decoder).Decode
+         0     0%     0%     1870ms 41.93%  easycode/internal/codec.ObjectMembers
+         0     0%     0%     1860ms 41.70%  easycode/internal/codec.ValidateObjectFields
+         0     0%     0%     1750ms 39.24%  easycode/internal/codec.validateRecordShape
+         0     0%     0%     1400ms 31.39%  runtime._System
+     420ms  9.42%  9.42%     1390ms 31.17%  encoding/json.(*Decoder).readValue
+         0     0%  9.42%     1370ms 30.72%  easycode/internal/session.(*ReplayPlanner).Plan
+         0     0%  9.42%     1030ms 23.09%  easycode/internal/codec.validateJSONDepth
+         0     0%  9.42%      970ms 21.75%  easycode/internal/codec.UnmarshalStrict
+         0     0%  9.42%      880ms 19.73%  easycode/internal/codec.scanValue
+         0     0%  9.42%      880ms 19.73%  encoding/json.(*Decoder).Token
+     850ms 19.06% 28.48%      850ms 19.06%  racecalladdr
+         0     0% 28.48%      840ms 18.83%  easycode/internal/session.(*Loader).Load
+         0     0% 28.48%      840ms 18.83%  easycode/internal/session.DecodeRecord

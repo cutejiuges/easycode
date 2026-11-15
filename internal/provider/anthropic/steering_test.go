@@ -67,7 +67,7 @@ func TestSteeringInputsPreviewCommitRestoreAndRequestEquivalence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sampling, err := provider.NewSamplingInput().WithToolCatalog(testAnthropicToolCatalog(t))
+	sampling, err := testSamplingInput(t, conversation.provider.config.Inference).WithToolCatalog(testAnthropicToolCatalog(t))
 	if err != nil {
 		t.Fatal(err)
 	}

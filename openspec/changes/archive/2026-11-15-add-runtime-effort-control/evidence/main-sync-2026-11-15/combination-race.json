@@ -1,0 +1,7 @@
+{
+  "command": "go test -race ./internal/app -run TestRuntimeEffortInputRewriteKeepsCapturedPolicy -count=1 -timeout=90s",
+  "started_at": "2026-11-15T12:05:29.079326+00:00",
+  "exit_code": 0,
+  "elapsed_seconds": 16.58,
+  "log": "combination-race.log"
+}

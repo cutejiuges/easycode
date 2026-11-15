@@ -48,7 +48,7 @@ func TestStopRequestBudgetReturnsOnlyUnadmittedSteeringAndStillDeliversFeedback(
 			control := &stopInputFixture{inputs: []domain.UserInput{correction}}
 			trust := hookTrustEmitter(t, r, protocol.HookTrustSession, nil)
 			commits := 0
-			err := r.runTurn(context.Background(), []domain.UserInput{input}, control, func(e protocol.Event) {
+			err := r.runTurn(context.Background(), []domain.UserInput{input}, r.profile, control, func(e protocol.Event) {
 				trust(e)
 				if e.Kind == protocol.EventUserInputCommitted {
 					p, _ := protocol.DecodeUserInputCommitted(e)

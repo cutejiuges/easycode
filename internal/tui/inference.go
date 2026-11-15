@@ -24,16 +24,16 @@ func (model Model) inferenceLines() []string {
 		}
 		return value + " (explicit)"
 	}
-	lines := []string{"Inference · " + string(s.Family()) + " · frozen at startup"}
+	lines := []string{"Inference · " + string(s.Family()) + " · startup constraints"}
 	if s.Family() == domain.ProviderAnthropic {
 		t := s.Thinking()
 		lines = append(lines, "Thinking: "+choice(string(t.Mode())))
 		if t.Mode() == domain.ThinkingEnabled {
 			lines = append(lines, fmt.Sprintf("Thinking budget: %d (explicit)", t.BudgetTokens()))
 		}
-		lines = append(lines, "Display: "+choice(string(t.Display())), "Effort: "+choice(string(s.AnthropicEffort())))
+		lines = append(lines, "Display: "+choice(string(t.Display())), "Startup effort: "+choice(string(s.AnthropicEffort())))
 	} else {
-		lines = append(lines, "Effort: "+choice(string(s.OpenAIEffort())), "Summary: "+choice(string(s.Summary())))
+		lines = append(lines, "Startup effort: "+choice(string(s.OpenAIEffort())), "Summary: "+choice(string(s.Summary())))
 	}
 	if value, explicit := s.ExplicitOutput(); explicit {
 		lines = append(lines, fmt.Sprintf("Ordinary output cap: %d (explicit)", value))

@@ -36,7 +36,7 @@ func TestReasoningRequestsSummaryAndWebsocketGolden(t *testing.T) {
 		}
 		c := testConversation(t, instance)
 		c.history.commit(testInputEntry(t, NewUserItem("hello")))
-		sampling, _ := provider.NewSamplingInput().WithToolCatalog(testOpenAIToolCatalog(t))
+		sampling, _ := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testOpenAIToolCatalog(t))
 		ordinary, err := c.planSamplingRequest(c.history.snapshot(), sampling)
 		if err != nil {
 			t.Fatal(err)
@@ -131,7 +131,7 @@ func TestFrozenPlanAndChangedCompactionSourceRejectsBeforeNetwork(t *testing.T) 
 	c := testConversation(t, instance)
 	entry := testInputEntry(t, NewUserItem("hello"))
 	c.history.commit(entry)
-	sampling, _ := provider.NewSamplingInput().WithToolCatalog(testOpenAIToolCatalog(t))
+	sampling, _ := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testOpenAIToolCatalog(t))
 	compact, _ := provider.NewCompactionInput(sampling, "preserve failures", 4096)
 	preview, err := c.PreflightCompaction(compact)
 	if err != nil {

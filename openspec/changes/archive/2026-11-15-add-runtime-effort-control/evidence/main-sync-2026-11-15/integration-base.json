@@ -1,0 +1,15 @@
+{
+  "base_main": "5c02ae6c6489fbfd9b28623a804cb56b7a4e6d7b",
+  "feature_original_base": "8492ec25c489605f7ef6a3b42f15b86842f8717e",
+  "branch": "feat/runtime-effort-control",
+  "worktree_checkpoint_available": true,
+  "text_conflicts": [
+    "docs/roadmap/capability-status.md",
+    "docs/roadmap/pitfall-log.md"
+  ],
+  "sampling_callers_updated": [
+    "internal/provider/openai/hook_input_rewrite_test.go",
+    "internal/provider/anthropic/hook_input_rewrite_test.go"
+  ],
+  "new_integration_test": "internal/app/effort_rewrite_darwin_test.go"
+}

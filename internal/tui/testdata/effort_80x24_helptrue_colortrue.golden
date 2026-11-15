@@ -1,0 +1,11 @@
+EasyCode test
+/effort [current|status] · inspect captured and next effort
+/effort <level> · select for the next operation
+OpenAI: none minimal low medium high xhigh max
+Anthropic: low medium high xhigh max
+auto / unset: omit effort; reset: startup configuration
+Process only · thinking, output cap and model stay fixed
+
+
+> next draft|
+Enter: send | Alt+Enter/Ctrl+J: newline

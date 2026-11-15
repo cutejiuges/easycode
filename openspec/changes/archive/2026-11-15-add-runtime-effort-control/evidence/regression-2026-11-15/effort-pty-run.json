@@ -1,0 +1,7 @@
+{
+  "command": "python3 scripts/effort-smoke.py --output openspec/changes/add-runtime-effort-control/evidence/regression-2026-11-15/effort-pty.json",
+  "started_at": "2026-11-15T08:23:27.282674+00:00",
+  "exit_code": 0,
+  "elapsed_seconds": 4.05,
+  "log": "effort-pty-run.log"
+}

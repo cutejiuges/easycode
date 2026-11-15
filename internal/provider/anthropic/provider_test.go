@@ -257,7 +257,7 @@ func TestConversationAllowsOnlyOneActiveTurn(t *testing.T) {
 	}
 	<-requestStarted
 
-	second, err := conversation.Stream(context.Background(), provider.NewSamplingInput())
+	second, err := conversation.Stream(context.Background(), testSamplingInput(t, instance.config.Inference))
 	if second != nil {
 		t.Fatalf("concurrent turn returned stream: %#v", second)
 	}
@@ -497,7 +497,7 @@ func testAnthropicTurnInputWithProject(t *testing.T, conversation provider.Conve
 	t.Helper()
 	testCommitUserInput(t, conversation.(*Conversation), text)
 	snapshot := testAnthropicProjectInstructions(t, "AGENTS.md", "project-only-marker")
-	input, err := provider.NewSamplingInput().WithProjectInstructions(snapshot)
+	input, err := testSamplingInput(t, conversation.(*Conversation).provider.config.Inference).WithProjectInstructions(snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}

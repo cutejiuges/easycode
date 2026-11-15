@@ -3,3 +3,7 @@ internal/tui/testdata/pre_input_*.golden -text whitespace=-blank-at-eol
 
 # 原始终端记录保留回车和 ANSI 序列，作为二进制附件保存。
 openspec/changes/archive/2026-11-15-add-pre-tool-use-input-rewrite/evidence/**/*.pty.log binary
+
+# 归档验收证据在 PR 中默认折叠，并排除语言统计。
+openspec/changes/archive/2026-11-15-add-runtime-effort-control/evidence/** linguist-generated=true
+openspec/changes/archive/2026-11-15-add-runtime-effort-control/evidence/**/*.pty.log binary

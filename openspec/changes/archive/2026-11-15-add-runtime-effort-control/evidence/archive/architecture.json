@@ -1,0 +1,7 @@
+{
+  "command": "go test ./internal/architecture -count=1",
+  "started_at": "2026-11-15T08:53:25.527306+00:00",
+  "exit_code": 0,
+  "elapsed_seconds": 3.52,
+  "log": "architecture.log"
+}

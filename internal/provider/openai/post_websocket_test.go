@@ -110,7 +110,7 @@ func testPostFeedbackWebSocket(t *testing.T, failed, rewrite bool) {
 	if err := prepared.Finalize(); err != nil {
 		t.Fatal(err)
 	}
-	sampling, err := provider.NewSamplingInput().WithToolCatalog(testOpenAIToolCatalog(t))
+	sampling, err := testSamplingInput(t, conversation.provider.config.Inference).WithToolCatalog(testOpenAIToolCatalog(t))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -172,7 +172,15 @@ func (runtime *Runtime) planHistory(view domain.ActiveContextView, footprint dom
 
 // samplingInput 为预检、普通采样与压缩共用稳定来源快照。
 func (runtime *Runtime) samplingInput() (provider.TurnInput, error) {
-	sampling, err := provider.NewSamplingInput().WithProjectInstructions(runtime.projectInstructions)
+	return runtime.samplingInputFor(runtime.operationProfile)
+}
+
+func (runtime *Runtime) samplingInputFor(profile contextplan.ProviderProfile) (provider.TurnInput, error) {
+	sampling, err := provider.NewSamplingInput(profile.InferenceSettings())
+	if err != nil {
+		return provider.TurnInput{}, err
+	}
+	sampling, err = sampling.WithProjectInstructions(runtime.projectInstructions)
 	if err != nil {
 		return provider.TurnInput{}, err
 	}

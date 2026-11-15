@@ -33,26 +33,7 @@ func safeCompletionText(value string) string {
 }
 
 func (m Model) completionSpace() int {
-	c := m.composer
-	composerRows := min(len(c.layout.rows)-c.top, c.visibleRows())
-	if c.width == 1 {
-		composerRows = 1
-	}
-	if c.height >= 5 && c.width >= 24 {
-		composerRows++
-	}
-	status := 0
-	if m.reading.detached || m.reading.notice != "" {
-		status++
-	}
-	if m.compactionStatus != "" {
-		status += strings.Count(ansi.Hardwrap(m.compactionStatus, m.widthOrDefault(), true), "\n") + 1
-	}
-	if m.errorSummary != "" {
-		status++
-	}
-	// 保留主线至少一行，以及已有标题、空行和状态区域。
-	return max(0, m.heightOrDefault()-composerRows-strings.Count(m.renderInputs(), "\n")-6-status)
+	return max(0, m.heightOrDefault()-m.composerChatRows()-renderedChatRows(m.renderInputs())-6-m.nonEffortStatusRows()-len(m.effortNoticeLines()))
 }
 
 func (m *Model) layoutCompletion() {

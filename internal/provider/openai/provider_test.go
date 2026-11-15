@@ -350,7 +350,7 @@ func testOpenAITurnInputWithProject(t *testing.T, conversation provider.Conversa
 	t.Helper()
 	testCommitUserInput(t, conversation.(*Conversation), text)
 	snapshot := testOpenAIProjectInstructions(t, "AGENTS.md", "project-only-marker")
-	input, err := provider.NewSamplingInput().WithProjectInstructions(snapshot)
+	input, err := testSamplingInput(t, conversation.(*Conversation).provider.config.Inference).WithProjectInstructions(snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}

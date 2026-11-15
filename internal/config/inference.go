@@ -82,13 +82,8 @@ func (config Config) InferenceSettings() (domain.InferenceSettings, error) {
 	if err != nil {
 		return domain.InferenceSettings{}, invalidInference()
 	}
-	if config.ContextBudget.Enabled() {
-		if config.Provider.Family == domain.ProviderOpenAI && settings.HasReasoning() && f.output == 0 {
-			return domain.InferenceSettings{}, invalidInference()
-		}
-		if (f.output != 0 || settings.HasReasoning()) && config.ContextBudget.ReservedOutput() < settings.MaxOutputTokens() {
-			return domain.InferenceSettings{}, invalidInference()
-		}
+	if config.ContextBudget.ValidateInference(settings) != nil {
+		return domain.InferenceSettings{}, invalidInference()
 	}
 	return settings, nil
 }

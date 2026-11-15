@@ -1,6 +1,6 @@
 # 当前能力与实现边界
 
-> 核对日期：2026-11-15。基线：当前仓库实现及已同步主规格，包含本地 Plugin 技能包、启动推理控制及本轮回归修复、结构化用户提问、PreToolUse/PostToolUse/PostToolUseFailure/Stop Hook、命令/Skill 首词补全与已验收归档的双 Provider 被动推理阅读。
+> 核对日期：2026-11-15。基线：当前仓库实现及已同步主规格，包含本地 Plugin 技能包、启动推理控制、会话内 effort 选择及本轮回归修复、结构化用户提问、PreToolUse 参数改写、PreToolUse/PostToolUse/PostToolUseFailure/Stop Hook、命令/Skill 首词补全与已验收归档的双 Provider 被动推理阅读。
 > 本文记录当前代码可执行的能力；[产品 Roadmap](product-roadmap.md)保留阶段目标与剩余工作。已接受的 ADR 和归档 change 记录各自当时的决策，不能单独作为现有功能清单。
 
 ## 用户入口
@@ -10,10 +10,11 @@
 | 双 Provider | Anthropic Messages、OpenAI Responses；HTTP/SSE，OpenAI 可显式启用 WebSocket | 不隐式支持 Chat Completions，不实现登录/OAuth/订阅鉴权；`cmd/easycode/main.go`、`internal/provider/{anthropic,openai,transport}` |
 | CLI | 默认 TUI、`--version`、`--config`、`--plugin-dir PATH`、`--resume ID`、`--continue`、`--print`、`--json`、`--json --input-format stream-json` | `--resume` 与 `--continue` 互斥；没有 `doctor`、`provider probe`、fork 或模型切换命令；`cmd/easycode/*_test.go` |
 | 会话发现 | `sessions list [--all] [--limit N]`；`resume [--all] [--config PATH]` 启动选择器 | 离线 list 无需模型配置；picker 需要配置及终端。搜索限最近至多 200 条元数据，非正文全文搜索；`internal/app/session_*_test.go` |
-| 本地 slash commands | `/cache`、`/context`、`/compact [instructions]`、`/skills`、`/hooks`、`/plugins`，以及可调用 Skill 的 `/<name>` / `$name` | TUI 命令与 Skill 附件入口，支持 `/` / `$` 首词补全及冻结来源筛选；stream-json 使用独立 typed 控制消息，普通文字不执行 slash。`/help`、`/fork`、`/model`、`/mcp`、`/cost` 尚未实现 |
+| 本地 slash commands | `/cache`、`/context`、`/compact [instructions]`、`/effort [level|auto|reset]`、`/skills`、`/hooks`、`/plugins`，以及可调用 Skill 的 `/<name>` / `$name` | TUI 命令与 Skill 附件入口，支持 `/` / `$` 首词补全及冻结来源筛选；stream-json 使用独立 typed 控制消息，普通文字不执行 slash。`/help`、`/fork`、`/model`、`/mcp`、`/cost` 尚未实现 |
 | 命令/Skill 补全 | 确定性筛选、上下键选择、Tab 填入、内置 Enter 执行及 Skill Enter 只填入；Esc 关闭、paste 抑制、窄屏停用 | 仅首词名称，不含文件/参数值补全、正文 mentions 或动态目录；`internal/tui/completion*_test.go`、`internal/app/completion_e2e_test.go`；候选不进入 Session 或缓存前缀 |
 | 本地插件 | `--plugin-dir`，只读 `/plugins`，限定 Skill 调用与补全；Codex 副文件调用限制 | 复用同一 Skill 工具、权限和原生恢复；无 marketplace/安装、脚本/MCP/Agent 贡献或热加载；`internal/app/plugins_test.go`、`cmd/easycode/plugin_integration_test.go`、`scripts/plugins-smoke.py` |
-| 启动推理控制 | 五个严格 JSON 字段；Anthropic thinking/display/独立 effort、OpenAI effort/summary、普通输出上限；/context 只读来源 | 启动冻结、窗口预留和摘要 manual budget 预检；不探测模型、不降级或重试，无 /effort；`internal/config/reasoning_test.go`、两家 `reasoning_request_test.go`、`internal/app/reasoning_auto_compaction_test.go` |
+| 启动推理控制 | 五个严格 JSON 字段；Anthropic thinking/display/独立 effort、OpenAI effort/summary、普通输出上限；/context 只读来源 | thinking/display/summary/输出额度启动冻结，effort 按完整操作捕获；窗口预留和摘要 manual budget 预检；不探测模型、不降级或重试；`internal/config/reasoning_test.go`、两家 `reasoning_request_test.go`、`internal/app/reasoning_auto_compaction_test.go` |
+| 会话内 effort | `/effort` 短通知、auto/unset/reset、七项内置补全；stream-json effort.query/set/snapshot | 下一操作生效，工具/Question/审批/Stop/自动摘要冻结，独立摘要接纳时捕获；纯进程选择和序号不写 Session/配置，活动 starting/finishing 可查；`internal/runtime/effort*_test.go`、`internal/app/effort_e2e_test.go`、`scripts/effort-smoke.py` |
 | 输入控制 | 多行、字素编辑、decoded paste、有界历史、同轮追加、FIFO strict-next、原子取回、停止返还 | 未提交队列/草稿只在内存；同轮追加在完整工具 outputs 后，或 Stop continued 决定闭合后的交付安全点提交；`internal/runtime/agent_loop_test.go`、`internal/tui/composer*_test.go` |
 
 ## 九项模型工具与执行前检查

@@ -68,7 +68,7 @@ func stopTestConversation(t *testing.T) (*Conversation, domain.InputAssociation,
 func TestStopProjectionUsesExactSampleAndLeavesRequestsUnchanged(t *testing.T) {
 	conversation, _, _ := stopTestConversation(t)
 	first := domain.AssistantSampleReference{TurnID: stopTestTurn}
-	input, err := provider.NewSamplingInput().WithToolCatalog(testAnthropicToolCatalog(t))
+	input, err := testSamplingInput(t, conversation.provider.config.Inference).WithToolCatalog(testAnthropicToolCatalog(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestStopNativeContinuationCommitsBothSourcesAndRestoresExactly(t *testing.T
 			if view.Revision() != wantRevision || footprint.Revision() != wantRevision {
 				t.Fatal("revision not based on actual entries")
 			}
-			sampling, err := provider.NewSamplingInput().WithToolCatalog(testAnthropicToolCatalog(t))
+			sampling, err := testSamplingInput(t, conversation.provider.config.Inference).WithToolCatalog(testAnthropicToolCatalog(t))
 			if err != nil {
 				t.Fatal(err)
 			}

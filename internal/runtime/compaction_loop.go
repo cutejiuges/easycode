@@ -3,25 +3,37 @@ package runtime
 import (
 	"context"
 
+	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
 )
 
 type activeLoopCompaction struct {
-	id           domain.CompactionID
-	requestID    protocol.RequestID
-	cancel       context.CancelFunc
-	events       <-chan runtimePublication
-	finished     <-chan error
-	terminalSeen bool
-	succeeded    bool
+	profile           contextplan.ProviderProfile
+	selectionRevision uint64
+	started           bool
+	cancelRequested   bool
+	id                domain.CompactionID
+	requestID         protocol.RequestID
+	cancel            context.CancelFunc
+	events            <-chan runtimePublication
+	finished          <-chan error
+	terminalSeen      bool
+	succeeded         bool
 }
 
 func (state *agentLoopRunState) refreshContextSnapshot() {
-	state.contextSnapshot, state.contextSnapshotErr = state.loop.runtime.contextSnapshot()
-	state.cacheSnapshot, state.cacheSnapshotErr = state.loop.runtime.initialCacheSnapshot()
-	state.loop.runtime.cache.snapshot = state.cacheSnapshot
+	state.contextSnapshot, state.contextSnapshotErr = state.loop.runtime.contextSnapshotFor(state.selectedProfile)
+	if state.cacheSnapshot.Scope == "" {
+		plan, err := state.loop.runtime.contextPlanFor(state.selectedProfile)
+		if err != nil {
+			state.cacheSnapshotErr = err
+			return
+		}
+		state.cacheSnapshot, state.cacheSnapshotErr = state.loop.runtime.cacheSnapshotForPlan(plan)
+		state.loop.runtime.cache.snapshot = state.cacheSnapshot
+	}
 }
 
 func (state *agentLoopRunState) queryContext(request loopCommandRequest) {
@@ -29,7 +41,12 @@ func (state *agentLoopRunState) queryContext(request loopCommandRequest) {
 		state.reject(request, protocol.ControlErrorInvalidCommand, true)
 		return
 	}
-	payload := state.contextSnapshot
+	effort, err := state.effortSnapshot(state.selectedProfile, state.choice, state.selectionRevision)
+	if err != nil {
+		state.reject(request, protocol.ControlErrorInvalidCommand, true)
+		return
+	}
+	payload := protocol.ContextSnapshotPayload{ContextMetricsPayload: state.contextSnapshot, Effort: effort}
 	if state.active != nil {
 		payload.Activity = "turn"
 		if state.active.compactionID.Valid() {
@@ -57,7 +74,7 @@ func (state *agentLoopRunState) compactContext(request loopCommandRequest) {
 		state.reject(request, protocol.ControlErrorSessionBusy, true)
 		return
 	}
-	admission, code := state.loop.runtime.preflightCompaction(request.command.Instructions())
+	admission, code := state.loop.runtime.preflightCompactionFor(state.selectedProfile, request.command.Instructions())
 	if code != "" {
 		state.reject(request, code, true)
 		return
@@ -76,7 +93,7 @@ func (state *agentLoopRunState) compactContext(request loopCommandRequest) {
 	operationCtx, cancel := context.WithCancel(state.ctx)
 	events := make(chan runtimePublication)
 	finished := make(chan error, 1)
-	state.compaction = &activeLoopCompaction{id: id, requestID: request.command.RequestID(), cancel: cancel, events: events, finished: finished}
+	state.compaction = &activeLoopCompaction{profile: state.selectedProfile, selectionRevision: state.selectionRevision, id: id, requestID: request.command.RequestID(), cancel: cancel, events: events, finished: finished}
 	go func() {
 		state.loop.runtime.cachePublisher = func(snapshot protocol.CacheSnapshotPayload) {
 			events <- runtimePublication{cacheOnly: true, cacheSnapshot: snapshot}
@@ -101,6 +118,7 @@ func (state *agentLoopRunState) cancelCompaction(request loopCommandRequest) {
 	result, _ := protocol.NewAcceptedCommandResult(request.command, protocol.CommandDispositionCancelling)
 	state.emitResult(request, result)
 	state.completeRequest(request.command.RequestID())
+	state.compaction.cancelRequested = true
 	state.compaction.cancel()
 }
 
@@ -129,6 +147,9 @@ func (state *agentLoopRunState) handleCompactionEvent(publication runtimePublica
 		state.cancelActive()
 		return
 	}
+	if event.Kind == protocol.EventCompactionStarted {
+		state.compaction.started = true
+	}
 	if event.Kind == protocol.EventCompactionCompleted || event.Kind == protocol.EventCompactionFailed {
 		state.compaction.terminalSeen = true
 		state.compaction.succeeded = event.Kind == protocol.EventCompactionCompleted
@@ -153,6 +174,7 @@ func (state *agentLoopRunState) handleCompactionFinished(workerErr error, open b
 	}
 	state.completeRequest(state.compaction.requestID)
 	state.compaction = nil
+	state.refreshContextSnapshot()
 }
 
 // runtimePublication 将同一提交边界的事件与只读快照一起交给控制 owner。
@@ -160,7 +182,7 @@ type runtimePublication struct {
 	cacheOnly     bool
 	cacheSnapshot protocol.CacheSnapshotPayload
 	event         protocol.Event
-	snapshot      protocol.ContextSnapshotPayload
+	snapshot      protocol.ContextMetricsPayload
 	snapshotErr   error
 }
 

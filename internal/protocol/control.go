@@ -19,6 +19,7 @@ type CommandDisposition string
 
 const (
 	CommandDispositionQueried      CommandDisposition = "queried"
+	CommandDispositionUpdated      CommandDisposition = "updated"
 	CommandDispositionCompacting   CommandDisposition = "compacting"
 	CommandDispositionCancelling   CommandDisposition = "cancelling"
 	CommandDispositionRetracted    CommandDisposition = "retracted"
@@ -44,6 +45,8 @@ const (
 	ControlErrorInputEncodingLimit       ControlErrorCode = "input_encoding_limit"
 	ControlErrorInputStopping            ControlErrorCode = "input_stopping"
 	ControlErrorInvalidCommand           ControlErrorCode = "invalid_command"
+	ControlErrorInvalidEffort            ControlErrorCode = "invalid_effort"
+	ControlErrorEffortConflict           ControlErrorCode = "effort_conflict"
 	ControlErrorInvalidInput             ControlErrorCode = "invalid_input"
 	ControlErrorInputQueueFull           ControlErrorCode = "input_queue_full"
 	ControlErrorDuplicateRequest         ControlErrorCode = "duplicate_request"
@@ -268,7 +271,7 @@ func (item ControlItem) Validate() error {
 			return fmt.Errorf("command result item is invalid")
 		}
 	case ControlItemContextEvent:
-		if item.result != (CommandResult{}) || item.discard != (ControlError{}) || item.event.Validate() != nil || (item.event.Kind != EventCacheSnapshot && item.event.Kind != EventContextSnapshot && item.event.Kind != EventCompactionStarted && item.event.Kind != EventCompactionCompleted && item.event.Kind != EventCompactionFailed) {
+		if item.result != (CommandResult{}) || item.discard != (ControlError{}) || item.event.Validate() != nil || (item.event.Kind != EventCacheSnapshot && item.event.Kind != EventContextSnapshot && item.event.Kind != EventEffortSnapshot && item.event.Kind != EventCompactionStarted && item.event.Kind != EventCompactionCompleted && item.event.Kind != EventCompactionFailed) {
 			return fmt.Errorf("correlated context item is invalid")
 		}
 	case ControlItemTurnEvent:
@@ -287,13 +290,15 @@ func (item ControlItem) Validate() error {
 }
 
 func validCommandKind(kind CommandKind) bool {
-	return kind == CommandResolveUserQuestion || kind == CommandResolveHookTrust || kind == CommandResetHookTrust || kind == CommandQueryCache || kind == CommandQueryContext || kind == CommandCompactContext || kind == CommandCancelCompaction || kind == CommandSubmitConversationalInput || kind == CommandRetractInputs || kind == CommandStopTurn || kind == CommandSubmitInput || kind == CommandInterrupt || kind == CommandShutdown || kind == CommandResolveToolApproval
+	return kind == CommandResolveUserQuestion || kind == CommandResolveHookTrust || kind == CommandResetHookTrust || kind == CommandQueryEffort || kind == CommandSetEffort || kind == CommandQueryCache || kind == CommandQueryContext || kind == CommandCompactContext || kind == CommandCancelCompaction || kind == CommandSubmitConversationalInput || kind == CommandRetractInputs || kind == CommandStopTurn || kind == CommandSubmitInput || kind == CommandInterrupt || kind == CommandShutdown || kind == CommandResolveToolApproval
 }
 
 func dispositionMatches(kind CommandKind, disposition CommandDisposition) bool {
 	switch kind {
-	case CommandQueryCache, CommandQueryContext:
+	case CommandQueryCache, CommandQueryContext, CommandQueryEffort:
 		return disposition == CommandDispositionQueried
+	case CommandSetEffort:
+		return disposition == CommandDispositionUpdated
 	case CommandCompactContext:
 		return disposition == CommandDispositionCompacting
 	case CommandCancelCompaction:
@@ -341,6 +346,10 @@ func controlErrorMessage(code ControlErrorCode) (string, bool) {
 		return "input exceeds encoding limits", true
 	case ControlErrorInputStopping:
 		return "automatic input is unavailable while stopping", true
+	case ControlErrorInvalidEffort:
+		return "effort is invalid for this provider", true
+	case ControlErrorEffortConflict:
+		return "effort conflicts with startup inference or context settings", true
 	case ControlErrorInvalidCommand:
 		return "command is invalid", true
 	case ControlErrorInvalidInput:

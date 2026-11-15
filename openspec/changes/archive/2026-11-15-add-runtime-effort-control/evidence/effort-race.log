@@ -1,0 +1,8 @@
+ok  	easycode/internal/app	24.176s
+ok  	easycode/internal/runtime	4.861s
+ok  	easycode/internal/tui	1.435s
+ok  	easycode/internal/headless	1.445s
+ok  	easycode/internal/provider	1.367s [no tests to run]
+ok  	easycode/internal/provider/anthropic	2.303s
+ok  	easycode/internal/provider/openai	2.131s
+ok  	easycode/internal/provider/transport	1.354s [no tests to run]

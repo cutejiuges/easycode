@@ -1,0 +1,54 @@
+{
+  "date": "2026-11-15",
+  "kind": "compiled_cli",
+  "api": "local_http_sse_only",
+  "binary_sha256": "1dd6b3d67f0366d10e174f04f480d5500afd133f750681871be0293365e50db3",
+  "cases": [
+    {
+      "provider": "openai",
+      "passed": true,
+      "actual_request_efforts": [
+        "high",
+        "low",
+        null,
+        "high",
+        "low",
+        "low"
+      ],
+      "operation_frozen": true,
+      "queued_next_policy": true,
+      "auto_and_reset": true,
+      "duplicate_request_rejected": true,
+      "query_only_resume_zero_requests": true,
+      "startup_revision_restored": true,
+      "journal_prefix_preserved": true,
+      "config_unchanged": true,
+      "endpoint_400_no_implicit_retry": true,
+      "explicit_retry_preserves_low": true,
+      "healthy_stream_exit_zero": true
+    },
+    {
+      "provider": "anthropic",
+      "passed": true,
+      "actual_request_efforts": [
+        "high",
+        "low",
+        null,
+        "high",
+        "low",
+        "low"
+      ],
+      "operation_frozen": true,
+      "queued_next_policy": true,
+      "auto_and_reset": true,
+      "duplicate_request_rejected": true,
+      "query_only_resume_zero_requests": true,
+      "startup_revision_restored": true,
+      "journal_prefix_preserved": true,
+      "config_unchanged": true,
+      "endpoint_400_no_implicit_retry": true,
+      "explicit_retry_preserves_low": true,
+      "healthy_stream_exit_zero": true
+    }
+  ]
+}

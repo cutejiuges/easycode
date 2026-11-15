@@ -81,7 +81,7 @@ func (t ThinkingSettings) Mode() ThinkingMode       { return t.mode }
 func (t ThinkingSettings) BudgetTokens() uint64     { return t.budget }
 func (t ThinkingSettings) Display() ThinkingDisplay { return t.display }
 
-// InferenceSettings 是启动时冻结的唯一普通请求策略；显式来源不进入规范身份。
+// InferenceSettings 是每个完整操作捕获的不可变请求策略；来源不进入规范身份。
 type InferenceSettings struct {
 	family          ProviderFamily
 	thinking        ThinkingSettings

@@ -35,6 +35,7 @@ type Capabilities struct {
 
 // TurnInput 是共享 turn 模板交给 Provider Kernel 的最小输入。
 type TurnInput struct {
+	inference              domain.InferenceSettings
 	skillCatalog           domain.SkillCatalog
 	projectInstructions    domain.ProjectInstructionsSnapshot
 	hasProjectInstructions bool
@@ -43,10 +44,16 @@ type TurnInput struct {
 }
 
 // NewSamplingInput 创建仅使用已提交原生历史的采样输入。
-func NewSamplingInput() TurnInput { return TurnInput{} }
+func NewSamplingInput(settings domain.InferenceSettings) (TurnInput, error) {
+	input := TurnInput{inference: settings}
+	return input, input.Validate()
+}
+
+// InferenceSettings 返回本次操作捕获的完整不可变策略。
+func (input TurnInput) InferenceSettings() domain.InferenceSettings { return input.inference }
 
 // Validate 校验纯采样输入；用户正文只通过独立输入提交传递。
-func (input TurnInput) Validate() error { return nil }
+func (input TurnInput) Validate() error { return input.inference.Validate() }
 
 // WithProjectInstructions 返回附着了项目指令快照的输入副本。
 func (input TurnInput) WithProjectInstructions(

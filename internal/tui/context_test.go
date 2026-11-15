@@ -102,12 +102,12 @@ func TestContextPanelSnapshotsAndPureRender(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload := protocol.ContextSnapshotPayload{CachePolicy: policy, AutoCompactionState: "disabled", AutoCompactionReason: "disabled", Scope: "committed", Revision: 3, Activity: "compacting", Model: "fixture-model", Sources: []protocol.ContextSourcePayload{
+	payload := protocol.ContextSnapshotPayload{ContextMetricsPayload: protocol.ContextMetricsPayload{CachePolicy: policy, AutoCompactionState: "disabled", AutoCompactionReason: "disabled", Scope: "committed", Revision: 3, Activity: "compacting", Model: "fixture-model", Sources: []protocol.ContextSourcePayload{
 		{Kind: "provider_profile", Revision: "profile", Estimate: estimate},
 		{Kind: "tool_catalog", Revision: "tools", Estimate: estimate},
 		{Kind: "committed_history", Revision: "history", Estimate: estimate},
 		{Kind: "current_input", Revision: "input", Estimate: estimate},
-	}, Total: estimate, BudgetState: "not_enforced"}
+	}, Total: estimate, BudgetState: "not_enforced"}, Effort: testEffortSnapshot("compacting")}
 	for _, test := range []struct {
 		name          string
 		width, height int
@@ -151,6 +151,11 @@ func TestContextPanelSnapshotsAndPureRender(t *testing.T) {
 			}
 		}
 		path := filepath.Join("testdata", test.name+".golden")
+		if os.Getenv("EASYCODE_UPDATE_CONTEXT_SNAPSHOTS") == "1" {
+			if err := os.WriteFile(path, []byte(got), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
 		want, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
@@ -267,4 +272,14 @@ func TestAutomaticCompactionKeepsActiveTaskAndCancelsTurn(t *testing.T) {
 	if session.interrupts != 1 || session.cancelled != "" {
 		t.Fatal("automatic cancellation used manual operation")
 	}
+}
+
+func testEffortSnapshot(activity string) protocol.EffortSnapshotPayload {
+	value := protocol.EffortValuePayload{State: "omitted"}
+	result := protocol.EffortSnapshotPayload{Scope: "process", Family: domain.ProviderOpenAI, Startup: value, Selected: value, Source: "startup", Activity: activity, AllowedLevels: []domain.EffortLevel{"none", "minimal", "low", "medium", "high", "xhigh", "max"}}
+	if activity != "idle" {
+		active, _ := protocol.NewTurnEffortActive("01900000-0000-7000-8000-000000000001", "running", value, 0, false)
+		result.Active = &active
+	}
+	return result
 }

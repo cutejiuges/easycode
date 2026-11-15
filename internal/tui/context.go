@@ -64,6 +64,7 @@ func (model Model) submitContextCommand(command localContextCommand) (tea.Model,
 		model.errorSummary = "invalid_command: context control is unavailable"
 		return model, nil
 	}
+	model.queryOperationGeneration = model.effortOperationGeneration
 	model.queryGeneration++
 	model.queryRequestID = protocol.RequestID(fmt.Sprintf("tui-context-%d", model.queryGeneration))
 	model.queryKind = command.kind
@@ -159,9 +160,13 @@ func (model Model) projectContextEvent(event protocol.Event) (tea.Model, tea.Cmd
 			model.errorSummary = "stream_protocol_error: invalid context snapshot"
 			return model, nil
 		}
+		if !model.observeEffort(payload.Effort, true) {
+			return model, nil
+		}
 		model.contextPanel = &payload
 		model.contextScroll = 0
 	case protocol.EventCompactionStarted:
+		model.effortOperationGeneration++
 		payload, err := protocol.DecodeCompactionStarted(event)
 		if err != nil {
 			model.errorSummary = "stream_protocol_error: invalid compaction start"
@@ -175,6 +180,7 @@ func (model Model) projectContextEvent(event protocol.Event) (tea.Model, tea.Cmd
 		}
 		model.compactionStatus = "Compacting conversation…"
 	case protocol.EventCompactionCompleted:
+		model.effortOperationGeneration++
 		if event.CompactionID != model.activeCompactionID {
 			return model, nil
 		}
@@ -191,6 +197,7 @@ func (model Model) projectContextEvent(event protocol.Event) (tea.Model, tea.Cmd
 			return model, model.queryMainTranscript(model.main.generation, 0, model.submitContext)
 		}
 	case protocol.EventCompactionFailed:
+		model.effortOperationGeneration++
 		if event.CompactionID != model.activeCompactionID {
 			return model, nil
 		}
@@ -220,6 +227,16 @@ func (model Model) contextPanelLines() []string {
 	}
 	lines := []string{"Context · committed snapshot", fmt.Sprintf("Model: %s · revision %d · %s", safeComposerText(payload.Model), payload.Revision, payload.Activity), ""}
 	lines = append(lines, model.inferenceLines()...)
+	lines = append(lines, effortSummary(payload.Effort)...)
+	lines = append(lines, fmt.Sprintf("Selection revision: %d", payload.Effort.SelectionRevision))
+	if payload.Effort.Active != nil {
+		lines = append(lines, fmt.Sprintf("Captured revision: %d", payload.Effort.Active.SelectionRevision()))
+	}
+	allowed := make([]string, len(payload.Effort.AllowedLevels))
+	for i, level := range payload.Effort.AllowedLevels {
+		allowed[i] = string(level)
+	}
+	lines = append(lines, "Locally allowed levels: "+strings.Join(allowed, " "), "Captured configuration; transmission not implied")
 	lines = append(lines, "")
 	for _, source := range payload.Sources {
 		lines = append(lines, strings.ReplaceAll(source.Kind, "_", " ")+": "+formatContextEstimate(source.Estimate)+" tokens ("+string(source.Estimate.State)+")")
@@ -241,7 +258,9 @@ func (model Model) contextPanelLines() []string {
 	width := max(1, model.widthOrDefault())
 	rendered := make([]string, 0, len(lines))
 	for _, line := range lines {
-		rendered = append(rendered, strings.Split(ansi.Hardwrap(line, width, true), "\n")...)
+		for _, wrapped := range strings.Split(ansi.Hardwrap(line, width, true), "\n") {
+			rendered = append(rendered, strings.TrimRight(wrapped, " "))
+		}
 	}
 	return rendered
 }

@@ -15,6 +15,9 @@ import (
 
 // contextPlan 读取已提交有效窗口，不包含待处理输入和流式 staging。
 func (runtime *Runtime) contextPlan() (contextplan.ContextPlan, error) {
+	return runtime.contextPlanFor(runtime.operationProfile)
+}
+func (runtime *Runtime) contextPlanFor(profile contextplan.ProviderProfile) (contextplan.ContextPlan, error) {
 	view, err := runtime.conversation.ProjectActiveContext()
 	if err != nil {
 		return contextplan.ContextPlan{}, err
@@ -23,10 +26,13 @@ func (runtime *Runtime) contextPlan() (contextplan.ContextPlan, error) {
 	if err != nil {
 		return contextplan.ContextPlan{}, err
 	}
-	return runtime.planWindow(view, footprint)
+	return runtime.planWindowFor(profile, view, footprint)
 }
 func (runtime *Runtime) planWindow(view domain.ActiveContextView, footprint domain.NativeHistoryFootprint) (contextplan.ContextPlan, error) {
-	input, err := contextplan.NewPlanningInput(runtime.profile, runtime.toolCatalog, runtime.projectInstructions, view, footprint, contextplan.NewSamplingInput(), runtime.budget)
+	return runtime.planWindowFor(runtime.operationProfile, view, footprint)
+}
+func (runtime *Runtime) planWindowFor(profile contextplan.ProviderProfile, view domain.ActiveContextView, footprint domain.NativeHistoryFootprint) (contextplan.ContextPlan, error) {
+	input, err := contextplan.NewPlanningInput(profile, runtime.toolCatalog, runtime.projectInstructions, view, footprint, contextplan.NewSamplingInput(), runtime.budget)
 	if err != nil {
 		return contextplan.ContextPlan{}, err
 	}
@@ -36,36 +42,39 @@ func (runtime *Runtime) planWindow(view domain.ActiveContextView, footprint doma
 	}
 	return runtime.planner.Plan(input)
 }
-func (runtime *Runtime) contextSnapshot() (protocol.ContextSnapshotPayload, error) {
-	plan, err := runtime.contextPlan()
+func (runtime *Runtime) contextSnapshot() (protocol.ContextMetricsPayload, error) {
+	return runtime.contextSnapshotFor(runtime.operationProfile)
+}
+func (runtime *Runtime) contextSnapshotFor(profile contextplan.ProviderProfile) (protocol.ContextMetricsPayload, error) {
+	plan, err := runtime.contextPlanFor(profile)
 	if err != nil {
-		return protocol.ContextSnapshotPayload{}, err
+		return protocol.ContextMetricsPayload{}, err
 	}
 	view, err := runtime.conversation.ProjectActiveContext()
 	if err != nil {
-		return protocol.ContextSnapshotPayload{}, err
+		return protocol.ContextMetricsPayload{}, err
 	}
 	total, err := protocol.NewContextEstimatePayload(plan.TotalEstimate())
 	if err != nil {
-		return protocol.ContextSnapshotPayload{}, err
+		return protocol.ContextMetricsPayload{}, err
 	}
 	suppressed := runtime.autoCompactionFailures >= 3 || (runtime.autoCompactionFailures > 0 && runtime.autoCompactionFailedRevision == view.Revision())
 	decision, err := runtime.autoCompactionPolicy.Decide(plan.TotalEstimate(), suppressed)
 	if err != nil {
-		return protocol.ContextSnapshotPayload{}, err
+		return protocol.ContextMetricsPayload{}, err
 	}
 	policy, err := protocol.NewCachePolicyPayload(runtime.cachePolicy)
 	if err != nil {
-		return protocol.ContextSnapshotPayload{}, err
+		return protocol.ContextMetricsPayload{}, err
 	}
-	snapshot := protocol.ContextSnapshotPayload{CachePolicy: policy, AutoCompactionState: string(decision), AutoCompactionReason: runtime.autoCompactionPolicy.UnavailableReason(), Scope: "committed", Revision: view.Revision(), Activity: "idle", Model: runtime.profile.Model(), Sources: make([]protocol.ContextSourcePayload, 0), Total: total, WindowConfigured: runtime.budget.Enabled(), Window: runtime.budget.Window(), ReservedOutput: runtime.budget.ReservedOutput(), SafetyMargin: runtime.budget.SafetyMargin(), BudgetState: string(plan.Decision().State())}
+	snapshot := protocol.ContextMetricsPayload{CachePolicy: policy, AutoCompactionState: string(decision), AutoCompactionReason: runtime.autoCompactionPolicy.UnavailableReason(), Scope: "committed", Revision: view.Revision(), Activity: "idle", Model: profile.Model(), Sources: make([]protocol.ContextSourcePayload, 0), Total: total, WindowConfigured: runtime.budget.Enabled(), Window: runtime.budget.Window(), ReservedOutput: runtime.budget.ReservedOutput(), SafetyMargin: runtime.budget.SafetyMargin(), BudgetState: string(plan.Decision().State())}
 	if threshold, enabled := runtime.autoCompactionPolicy.Threshold(); enabled {
 		snapshot.AutoCompactionThreshold = &threshold
 	}
 	for _, source := range plan.Sources() {
 		estimate, err := protocol.NewContextEstimatePayload(source.Estimate())
 		if err != nil {
-			return protocol.ContextSnapshotPayload{}, err
+			return protocol.ContextMetricsPayload{}, err
 		}
 		snapshot.Sources = append(snapshot.Sources, protocol.ContextSourcePayload{Kind: string(source.Kind()), Revision: source.Revision(), Estimate: estimate})
 	}
@@ -73,17 +82,21 @@ func (runtime *Runtime) contextSnapshot() (protocol.ContextSnapshotPayload, erro
 }
 
 type compactionAdmission struct {
+	profile contextplan.ProviderProfile
 	kernel  provider.CompactionKernel
 	preview provider.CompactionPreview
 	before  contextplan.ContextPlan
 }
 
 func (runtime *Runtime) preflightCompaction(instructions string) (compactionAdmission, protocol.ControlErrorCode) {
+	return runtime.preflightCompactionFor(runtime.operationProfile, instructions)
+}
+func (runtime *Runtime) preflightCompactionFor(profile contextplan.ProviderProfile, instructions string) (compactionAdmission, protocol.ControlErrorCode) {
 	kernel, ok := runtime.conversation.(provider.CompactionKernel)
 	if !ok {
 		return compactionAdmission{}, protocol.ControlErrorInvalidCommand
 	}
-	sampling, err := runtime.samplingInput()
+	sampling, err := runtime.samplingInputFor(profile)
 	if err != nil {
 		return compactionAdmission{}, protocol.ControlErrorInvalidCommand
 	}
@@ -113,19 +126,22 @@ func (runtime *Runtime) preflightCompaction(instructions string) (compactionAdmi
 		}
 		return compactionAdmission{}, protocol.ControlErrorCompactionBudgetExceeded
 	}
-	before, err := runtime.contextPlan()
+	before, err := runtime.contextPlanFor(profile)
 	if err != nil {
 		return compactionAdmission{}, protocol.ControlErrorInvalidCommand
 	}
-	return compactionAdmission{kernel: kernel, preview: preview, before: before}, ""
+	return compactionAdmission{profile: profile, kernel: kernel, preview: preview, before: before}, ""
 }
 
-func (runtime *Runtime) runCompaction(ctx context.Context, id domain.CompactionID, admission compactionAdmission, emit Emitter) error {
+func (runtime *Runtime) runCompaction(ctx context.Context, id domain.CompactionID, admission compactionAdmission, emit Emitter) (resultErr error) {
 	runtime.markSkillsStarted()
 	if !runtime.active.CompareAndSwap(false, true) {
 		return runtime.failCompaction(id, protocol.CompactionFailureSession, false, nil, emit)
 	}
 	defer runtime.active.Store(false)
+	runtime.operationProfile = admission.profile
+	defer func() { runtime.operationProfile = runtime.profile }()
+	defer func() { runtime.releaseFailedContinuation(ctx, resultErr) }()
 	return runtime.runCompactionOwned(ctx, id, admission, domain.ManualCompactionScope(), emit)
 }
 

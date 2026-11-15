@@ -1,0 +1,67 @@
+{
+  "user_route": "Sync anyway, then archive",
+  "spec_rule_snapshot_fetched_once": true,
+  "artifact_rules_present": false,
+  "capabilities": [
+    {
+      "capability": "context/compaction",
+      "requirements": 1,
+      "status": "synced",
+      "main_sha256": "26c04774a65c6eb9adfea58951473fcd8fb2275f2668fd0fe088da87a338c9d1",
+      "main_written": false,
+      "reason": "All added/modified requirements already match; existing Purpose and other requirements retained.",
+      "unrelated_requirements_retained": 7
+    },
+    {
+      "capability": "headless/stream-control",
+      "requirements": 2,
+      "status": "synced",
+      "main_sha256": "006bdcf787249a92f4bafffadf1594ca68537c274550052100c278e7a99764e6",
+      "main_written": false,
+      "reason": "All added/modified requirements already match; existing Purpose and other requirements retained.",
+      "unrelated_requirements_retained": 9
+    },
+    {
+      "capability": "provider/reasoning-control",
+      "requirements": 1,
+      "status": "synced",
+      "main_sha256": "19b15a76f0e5e552937c76db7a669a2ab9eeb5483fbdad5c3270e1a48a5b7d78",
+      "main_written": false,
+      "reason": "All added/modified requirements already match; existing Purpose and other requirements retained.",
+      "unrelated_requirements_retained": 5
+    },
+    {
+      "capability": "runtime/effort-control",
+      "requirements": 7,
+      "status": "synced",
+      "main_sha256": "a1f3fd3eafb650bd314625448ac7d37ce3acbd4390a099b4680ce59c69126e7d",
+      "main_written": false,
+      "reason": "All added/modified requirements already match; existing Purpose and other requirements retained.",
+      "unrelated_requirements_retained": 0
+    },
+    {
+      "capability": "tui/context-commands",
+      "requirements": 2,
+      "status": "synced",
+      "main_sha256": "e1ca48f7050d71b0f0f85507263a74bb2e3f1c928a7b197e0b422d9e6f330111",
+      "main_written": false,
+      "reason": "All added/modified requirements already match; existing Purpose and other requirements retained.",
+      "unrelated_requirements_retained": 5
+    },
+    {
+      "capability": "tui/input-completion",
+      "requirements": 1,
+      "status": "synced",
+      "main_sha256": "7877265391e46ad91969e3ce0b6137e928e4364fe45cb4233f194e5a3e380f4f",
+      "main_written": false,
+      "reason": "All added/modified requirements already match; existing Purpose and other requirements retained.",
+      "unrelated_requirements_retained": 6
+    }
+  ],
+  "main_requirement_count": 14,
+  "main_specs_written": 0,
+  "validation_command": "openspec validate --specs --strict",
+  "validation_exit": 0,
+  "validation_seconds": 30.24,
+  "validation_log": "pre-sync-specs-strict.log"
+}

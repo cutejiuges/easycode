@@ -131,7 +131,7 @@ func testConsumeStream(t *testing.T, conversation *Conversation, ctx context.Con
 	if conversation.provider == nil {
 		conversation.provider = &Provider{config: Config{Model: "fixture-model", CachePolicy: domain.DefaultCachePolicy(), Inference: testInference(t, 4096)}}
 	}
-	input, err := provider.NewSamplingInput().WithToolCatalog(catalog)
+	input, err := testSamplingInput(t, conversation.provider.config.Inference).WithToolCatalog(catalog)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -17,6 +17,7 @@ import (
 )
 
 type compactionConversation struct {
+	policies chan domain.InferenceSettings
 	*fakeConversation
 	generated       atomic.Int32
 	installed       atomic.Bool
@@ -55,6 +56,9 @@ func (conversation *compactionConversation) ProjectActiveContext() (domain.Activ
 	return domain.NewActiveContextView(history, summary, revision)
 }
 func (conversation *compactionConversation) PreflightCompaction(input provider.CompactionInput) (provider.CompactionPreview, error) {
+	if conversation.policies != nil {
+		conversation.policies <- input.Sampling().InferenceSettings()
+	}
 	if conversation.installed.Load() {
 		return provider.CompactionPreview{}, provider.NewCompactionError(provider.CompactionNothing)
 	}
@@ -67,6 +71,9 @@ func (conversation *compactionConversation) PreflightCompaction(input provider.C
 }
 func (conversation *compactionConversation) RunCompaction(ctx context.Context, id domain.CompactionID, preview provider.CompactionPreview) (*provider.PreparedCompaction, error) {
 	conversation.generated.Add(1)
+	if conversation.policies != nil {
+		conversation.policies <- preview.Input().Sampling().InferenceSettings()
+	}
 	if conversation.entered != nil {
 		close(conversation.entered)
 	}

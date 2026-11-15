@@ -52,7 +52,7 @@ func TestReasoningRequestsAndSummaryEvidenceGolden(t *testing.T) {
 			}
 			conversation := testConversation(t, instance)
 			conversation.history.commit(testInputEntry(t, newUserMessage("hello")))
-			sampling, _ := provider.NewSamplingInput().WithToolCatalog(testAnthropicToolCatalog(t))
+			sampling, _ := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testAnthropicToolCatalog(t))
 			ordinary, err := conversation.planSamplingRequest(conversation.history.snapshot(), sampling)
 			if err != nil {
 				t.Fatal(err)
@@ -149,7 +149,7 @@ func TestManualSummaryBudgetRejectedBeforeNetwork(t *testing.T) {
 	defer instance.Close()
 	c := testConversation(t, instance)
 	c.history.commit(testInputEntry(t, newUserMessage(strings.Repeat("history ", 50))))
-	sampling, _ := provider.NewSamplingInput().WithToolCatalog(testAnthropicToolCatalog(t))
+	sampling, _ := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testAnthropicToolCatalog(t))
 	before, _ := codec.MarshalStable(c.history.snapshot())
 	for _, output := range []uint64{4096, 8192, 8193} {
 		compact, _ := provider.NewCompactionInput(sampling, "", output)
@@ -178,7 +178,7 @@ func TestFrozenPlanAndChangedCompactionSourceRejectsBeforeNetwork(t *testing.T) 
 	c := testConversation(t, instance)
 	entry := testInputEntry(t, newUserMessage("hello"))
 	c.history.commit(entry)
-	sampling, _ := provider.NewSamplingInput().WithToolCatalog(testAnthropicToolCatalog(t))
+	sampling, _ := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testAnthropicToolCatalog(t))
 	compact, _ := provider.NewCompactionInput(sampling, "preserve failures", 4096)
 	preview, err := c.PreflightCompaction(compact)
 	if err != nil {
