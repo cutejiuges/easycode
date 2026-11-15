@@ -24,12 +24,3 @@ func testModelOutputs(t *testing.T, call session.ReplayedToolCall, results ...to
 	}
 	return out
 }
-
-func mustEntryInputEvidence(t *testing.T, entry session.ToolHistoryEntry) tool.InputResultEvidence {
-	t.Helper()
-	evidence, err := entry.InputResultEvidence()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return evidence
-}

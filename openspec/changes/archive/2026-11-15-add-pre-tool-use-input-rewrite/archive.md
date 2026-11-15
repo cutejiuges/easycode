@@ -16,3 +16,7 @@
 ## 归档后验证
 
 `make verify` 已通过（exit 0），包含默认正常全量与 race 测试，详见 [命令与退出码](evidence/archive/make-verify.json)、[完整日志](evidence/archive/make-verify.log)。归档后全库 strict 61/61、归档检查 41/41 均通过，详见 [validation.json](evidence/archive/validation.json)。15 份相关 Markdown 链接有效；967 份源码、测试及脚本、六份主规格、61 份原始非 Markdown 附件及原 metadata 字节均复核一致。
+
+## CI 后续验证
+
+首次 Ubuntu CI 的平台构建范围问题及修复、跨目标静态分析和 Windows 既有检查边界见 [ci-followup-2026-11-15.md](ci-followup-2026-11-15.md)。该记录补充原验收事实，原始证据未改写。
