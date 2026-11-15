@@ -23,7 +23,8 @@ func TestOutputSubsetAndNoFreeTextFeedback(t *testing.T) {
 		{0, `{"hookSpecificOutput":null}`, domain.HookOutputInvalid}, {0, "{} {}", domain.HookOutputInvalid},
 		{0, string([]byte{0xff}), domain.HookOutputInvalid}, {0, strings.Repeat(" ", domain.MaxHookOutputBytes) + "{}", domain.HookOutputLimit},
 	} {
-		status, code := ParseOutput(test.exit, []byte(test.out))
+		parsed := ParseOutput(test.exit, []byte(test.out), domain.HookRewriteContext{})
+		status, code := parsed.Status, parsed.Code
 		if code != test.code || !status.ValidCode(code) {
 			t.Fatalf("exit %d output %.30q got %s/%s", test.exit, test.out, status, code)
 		}

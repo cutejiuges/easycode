@@ -573,7 +573,7 @@ func TestParallelToolSchedulerBoundsConcurrency(t *testing.T) {
 			}
 			done := make(chan outcome, 1)
 			go func() {
-				results, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, invocations)
+				results, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, invocations)
 				done <- outcome{results: results, err: err}
 			}()
 			initial := callCount
@@ -623,7 +623,7 @@ func TestParallelToolSchedulerPersistsCallOrderAfterOutOfOrderCompletion(t *test
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		results, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, invocations)
+		results, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, invocations)
 		done <- outcome{results: results, err: err}
 	}()
 	for range 3 {
@@ -665,7 +665,7 @@ func TestParallelToolSchedulerDoesNotCancelSiblingsOnToolError(t *testing.T) {
 	executor := &mixedReadExecutor{}
 	journal := &fakeJournal{}
 	runtime := newRuntimeWithReadExecutor(t, journal, executor)
-	results, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, testRuntimeInvocations(t, 3))
+	results, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, testRuntimeInvocations(t, 3))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1007,6 +1007,9 @@ func TestReconcileToolTurnClosesCrashPointsWithoutExternalCalls(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			for i := range test.calls {
+				test.calls[i].Origin = runtimeFixtureOrigin(t, test.calls[i].SampleIndex, test.calls[i].CallIndex)
+			}
 			plan, err := session.NewToolRecoveryPlan(runtimeTurnID, 1, test.calls, test.outputsCommitted)
 			if err != nil {
 				t.Fatal(err)

@@ -108,7 +108,9 @@ func (runtime *Runtime) executePatchCall(ctx context.Context, emit Emitter, turn
 			runtime.poisoned.Store(true)
 			return tool.InvocationResult{}, false, err
 		}
-		runtime.notifyToolResult(turnID, result)
+		if err := runtime.notifyToolResult(turnID, result); err != nil {
+			return result, false, err
+		}
 		runtime.emitApprovalResolved(emit, turnID, request, outcome)
 		return result, outcome == tool.ApprovalOutcomeAbort, nil
 	}

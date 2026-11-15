@@ -58,7 +58,8 @@ func TestExecNativeResultsRestoreExactly(t *testing.T) {
 				t.Fatal(err)
 			}
 			history := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, newUserMessage("test")), {Kind: nativeHistorySample, Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeThinking, Thinking: "private", Signature: "opaque-signature"}, {Type: blockTypeToolUse, ID: "call-exec", Name: "Bash", Input: json.RawMessage(`{"command":"printf '你好'","workdir":"src","timeout_ms":1000}`)}}}, Metadata: messageMetadata{ID: "msg-exec", Model: "fixture-model"}}})
-			output, err := prepareToolOutputsEntry(history, testModelOutputs(t, result))
+			evidence := testModelOutputs(t, history, result)
+			output, err := prepareToolOutputsEntry(history, evidence)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -80,7 +81,7 @@ func TestExecNativeResultsRestoreExactly(t *testing.T) {
 				}
 				commits = append(commits, commit)
 			}
-			restoredValue, err := testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", testRestoreRecords(t, commits, testModelOutputs(t, result)))
+			restoredValue, err := testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", testRestoreRecords(t, commits, evidence))
 			if err != nil {
 				t.Fatal(err)
 			}

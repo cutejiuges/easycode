@@ -136,7 +136,11 @@ func TestProjectorUsesToolTailRecencyWithoutCopyingLedgerDetails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	recovery, err := session.NewToolRecoveryPlan(turnID, 1, []session.ReplayedToolCall{{
+	origin, err := tool.NewToolCallOrigin(identity.SessionID, identity.ThreadID, turnID, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovery, err := session.NewToolRecoveryPlan(turnID, 1, []session.ReplayedToolCall{{Origin: origin,
 		ReadySequence: 3, SampleIndex: 0, CallIndex: 0,
 		Invocation: invocation, State: session.ReplayedToolCallReady,
 	}}, false)

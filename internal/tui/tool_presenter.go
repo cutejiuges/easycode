@@ -95,6 +95,19 @@ func renderTranscript(messages []transcriptMessage, width int) []string {
 		}
 		lines = append(lines, wrapApprovalDiff(title, width)...)
 		if h := message.hook; h != nil {
+			if h.Reference.Event == domain.HookPreToolUse && h.PreInput.Kind() != protocol.PreInputNone {
+				label := "Saved candidate · not selected · tool not admitted"
+				if h.PreInput.Kind() == protocol.PreInputSelected {
+					label = "Effective input selected · ordinary permission applies"
+					if message.admitted {
+						label = "Effective input selected · execution attempt admitted"
+					}
+				}
+				if h.PreInput.Kind() == protocol.PreInputRejected {
+					label = "Candidate rejected · tool not executed"
+				}
+				lines = append(lines, wrapApprovalDiff("  "+label+" · Ctrl+O: original and candidates", width)...)
+			}
 			if h.Reference.Event.Post() && (h.State == protocol.HookActivityCompleted || h.State == protocol.HookActivitySkipped) {
 				lines = append(lines, wrapApprovalDiff("  "+string(h.Reference.Event)+" checks: "+string(h.Code)+" · Ctrl+O: details", width)...)
 			} else {

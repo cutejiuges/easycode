@@ -101,14 +101,18 @@ type ReplayedHookGate struct {
 	PlanSequence     uint64
 	Started          *domain.HookRunIdentity
 	StartedSequence  uint64
-	Results          []domain.HookRunResult
+	Finished         []domain.HookFinished
 	Decision         *domain.HookGateDecision
 	DecisionSequence uint64
 }
 
 func (g ReplayedHookGate) Clone() ReplayedHookGate {
 	g.Plan = g.Plan.Clone()
-	g.Results = append([]domain.HookRunResult(nil), g.Results...)
+	finished := g.Finished
+	g.Finished = make([]domain.HookFinished, len(finished))
+	for i, f := range finished {
+		g.Finished[i] = f.Clone()
+	}
 	if g.Started != nil {
 		v := *g.Started
 		g.Started = &v
@@ -119,13 +123,18 @@ func (g ReplayedHookGate) Clone() ReplayedHookGate {
 	}
 	return g
 }
-func (g ReplayedHookGate) Validate(invocation string, cap domain.HookCapability) error {
-	if g.Plan.Validate() != nil || g.Plan.Event != domain.HookPreToolUse || g.Plan.InvocationID != invocation || g.Plan.Capability != cap || g.PlanSequence == 0 || len(g.Results) > len(g.Plan.Hooks) {
+func (g ReplayedHookGate) Validate(original tool.Invocation) error {
+	invocation, cap := string(original.InvocationID()), domain.HookCapability(original.Capability())
+	if _, err := tool.CheckingHookInput(original, g.Plan, g.Finished); err != nil {
+		return err
+	}
+	if g.Plan.Validate() != nil || g.Plan.Event != domain.HookPreToolUse || g.Plan.InvocationID != invocation || g.Plan.Capability != cap || g.PlanSequence == 0 || len(g.Finished) > len(g.Plan.Hooks) {
 		return fmt.Errorf("invalid hook recovery plan")
 	}
-	for i, r := range g.Results {
+	for i, f := range g.Finished {
+		r := f.Result
 		id, _ := domain.NewHookRunIdentity(g.Plan, i)
-		if r.Validate() != nil || r.Identity != id || i < len(g.Results)-1 && r.Status != domain.HookContinue {
+		if r.Validate() != nil || r.Identity != id || i < len(g.Finished)-1 && r.Status != domain.HookContinue {
 			return fmt.Errorf("invalid hook result prefix")
 		}
 	}
@@ -133,21 +142,21 @@ func (g ReplayedHookGate) Validate(invocation string, cap domain.HookCapability)
 		return fmt.Errorf("orphan hook recovery sequence")
 	}
 	if g.Started != nil {
-		id, err := domain.NewHookRunIdentity(g.Plan, len(g.Results))
+		id, err := domain.NewHookRunIdentity(g.Plan, len(g.Finished))
 		if err != nil || *g.Started != id || g.StartedSequence <= g.PlanSequence {
 			return fmt.Errorf("invalid pending hook identity")
 		}
 	}
 	if g.Decision != nil {
 		d := g.Decision
-		if d.Validate() != nil || g.Started != nil || g.DecisionSequence <= g.PlanSequence || d.InvocationID != invocation || d.PlanDigest != g.Plan.Digest || d.Completed != len(g.Results) {
+		if d.Validate() != nil || g.Started != nil || g.DecisionSequence <= g.PlanSequence || d.InvocationID != invocation || d.PlanDigest != g.Plan.Digest || d.Completed != len(g.Finished) {
 			return fmt.Errorf("invalid hook recovery decision")
 		}
 		if err := validateHookDecisionPrefix(g, *d); err != nil {
 			return err
 		}
 	}
-	if g.Decision == nil && (len(g.Results) == len(g.Plan.Hooks) || len(g.Results) > 0 && g.Results[len(g.Results)-1].Status != domain.HookContinue) {
+	if g.Decision == nil && (len(g.Finished) == len(g.Plan.Hooks) || len(g.Finished) > 0 && g.Finished[len(g.Finished)-1].Result.Status != domain.HookContinue) {
 		return fmt.Errorf("hook result has no atomic gate decision")
 	}
 	return nil
@@ -222,10 +231,10 @@ func (active *activeReplayTurn) acceptHookBatch(batch []Record) error {
 			return err
 		}
 		g := call.Hooks
-		if g == nil || g.Decision != nil || g.Started != nil || len(g.Results) > 0 && g.Results[len(g.Results)-1].Status != domain.HookContinue {
+		if g == nil || g.Decision != nil || g.Started != nil || len(g.Finished) > 0 && g.Finished[len(g.Finished)-1].Result.Status != domain.HookContinue {
 			return replayCorrupt("invalid hook start transition")
 		}
-		expected, err := domain.NewHookRunIdentity(g.Plan, len(g.Results))
+		expected, err := domain.NewHookRunIdentity(g.Plan, len(g.Finished))
 		if err != nil || id != expected {
 			return replayCorrupt("hook start identity mismatch")
 		}
@@ -245,10 +254,13 @@ func (active *activeReplayTurn) acceptHookBatch(batch []Record) error {
 		if g == nil || g.Decision != nil || g.Started == nil || *g.Started != r.Identity || finished.Feedback.Reference != g.Plan.Hooks[r.Identity.Ordinal] {
 			return replayCorrupt("invalid hook finish transition")
 		}
-		g.Results = append(g.Results, r)
+		g.Finished = append(g.Finished, finished.Clone())
+		if _, err := tool.CheckingHookInput(call.Invocation, g.Plan, g.Finished); err != nil {
+			return replayCorrupt("invalid hook input effect chain")
+		}
 		g.Started = nil
 		g.StartedSequence = 0
-		if r.Status == domain.HookContinue && len(g.Results) < len(g.Plan.Hooks) {
+		if r.Status == domain.HookContinue && len(g.Finished) < len(g.Plan.Hooks) {
 			if len(batch) != 1 {
 				return replayCorrupt("invalid intermediate hook batch")
 			}
@@ -282,11 +294,11 @@ func (active *activeReplayTurn) acceptHookBatch(batch []Record) error {
 func (active *activeReplayTurn) acceptHookDecision(batch []Record, call *ReplayedToolCall) error {
 	d, err := DecodeToolHookGateDecided(batch[0])
 	g := call.Hooks
-	if err != nil || g == nil || g.Decision != nil || g.Started != nil || d.InvocationID != g.Plan.InvocationID || d.PlanDigest != g.Plan.Digest || d.Completed != len(g.Results) {
+	if err != nil || g == nil || g.Decision != nil || g.Started != nil || d.InvocationID != g.Plan.InvocationID || d.PlanDigest != g.Plan.Digest || d.Completed != len(g.Finished) {
 		return replayCorrupt("invalid hook gate decision transition")
 	}
 	if d.Status == domain.HookContinue {
-		if len(batch) != 1 || len(g.Results) != len(g.Plan.Hooks) || g.Results[len(g.Results)-1].Status != domain.HookContinue {
+		if len(batch) != 1 || len(g.Finished) != len(g.Plan.Hooks) || g.Finished[len(g.Finished)-1].Result.Status != domain.HookContinue {
 			return replayCorrupt("incomplete hook gate continued")
 		}
 	} else {
@@ -308,19 +320,19 @@ func (active *activeReplayTurn) acceptHookDecision(batch []Record, call *Replaye
 // validateHookDecisionPrefix 供离线构造与顺序 replay 共用相同前缀语义。
 func validateHookDecisionPrefix(g ReplayedHookGate, d domain.HookGateDecision) error {
 	if d.Status == domain.HookContinue {
-		if len(g.Results) != len(g.Plan.Hooks) || g.Results[len(g.Results)-1].Status != domain.HookContinue {
+		if len(g.Finished) != len(g.Plan.Hooks) || g.Finished[len(g.Finished)-1].Result.Status != domain.HookContinue {
 			return fmt.Errorf("incomplete hook gate continued")
 		}
 		return nil
 	}
-	if len(g.Results) > 0 && g.Results[len(g.Results)-1].Status != domain.HookContinue {
-		last := g.Results[len(g.Results)-1]
-		if d.Status != last.Status || d.Code != last.Code || *d.BlockingOrdinal != len(g.Results)-1 {
+	if len(g.Finished) > 0 && g.Finished[len(g.Finished)-1].Result.Status != domain.HookContinue {
+		last := g.Finished[len(g.Finished)-1].Result
+		if d.Status != last.Status || d.Code != last.Code || *d.BlockingOrdinal != len(g.Finished)-1 {
 			return fmt.Errorf("hook decision differs from execution")
 		}
 		return nil
 	}
-	if len(g.Results) >= len(g.Plan.Hooks) || *d.BlockingOrdinal != len(g.Results) {
+	if len(g.Finished) >= len(g.Plan.Hooks) || *d.BlockingOrdinal != len(g.Finished) {
 		return fmt.Errorf("hook blocking ordinal differs from plan")
 	}
 	if d.Status == domain.HookBlock && (d.Code == domain.HookTrustRequired || d.Code == domain.HookTrustDenied) || d.Status == domain.HookCancel && (d.Code == domain.HookCancelled || d.Code == domain.HookInterrupted) || d.Status == domain.HookError && d.Code == domain.HookTimedOut {

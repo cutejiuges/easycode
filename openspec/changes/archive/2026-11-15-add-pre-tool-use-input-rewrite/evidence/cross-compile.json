@@ -1,0 +1,962 @@
+{
+  "targets": [
+    "linux/amd64",
+    "windows/amd64"
+  ],
+  "package_count": 33,
+  "duration_seconds": 42.886,
+  "commands": [
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "build",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux-easycode",
+        "./cmd/easycode"
+      ],
+      "duration_seconds": 4.478,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/cmd/easycode"
+      ],
+      "duration_seconds": 1.022,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/app"
+      ],
+      "duration_seconds": 1.79,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/architecture"
+      ],
+      "duration_seconds": 0.26,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/codec"
+      ],
+      "duration_seconds": 1.406,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/config"
+      ],
+      "duration_seconds": 0.357,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/context"
+      ],
+      "duration_seconds": 0.411,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/context/estimate"
+      ],
+      "duration_seconds": 0.331,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/context/projectinstructions"
+      ],
+      "duration_seconds": 0.35,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/domain"
+      ],
+      "duration_seconds": 0.645,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/executor/process"
+      ],
+      "duration_seconds": 0.229,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/extension"
+      ],
+      "duration_seconds": 0.123,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/extension/hook"
+      ],
+      "duration_seconds": 0.359,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/extension/localfile"
+      ],
+      "duration_seconds": 0.236,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/extension/mcp"
+      ],
+      "duration_seconds": 0.09,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/extension/plugin"
+      ],
+      "duration_seconds": 0.35,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/extension/skill"
+      ],
+      "duration_seconds": 0.41,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/fault"
+      ],
+      "duration_seconds": 0.209,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/headless"
+      ],
+      "duration_seconds": 0.428,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/protocol"
+      ],
+      "duration_seconds": 0.506,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/provider"
+      ],
+      "duration_seconds": 0.775,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/provider/anthropic"
+      ],
+      "duration_seconds": 0.887,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/provider/openai"
+      ],
+      "duration_seconds": 0.9,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/provider/transport"
+      ],
+      "duration_seconds": 0.52,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/runtime"
+      ],
+      "duration_seconds": 1.368,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/secret"
+      ],
+      "duration_seconds": 0.292,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/session"
+      ],
+      "duration_seconds": 0.897,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/session/artifact"
+      ],
+      "duration_seconds": 0.388,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/session/catalog"
+      ],
+      "duration_seconds": 0.501,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/subagent"
+      ],
+      "duration_seconds": 0.131,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/telemetry"
+      ],
+      "duration_seconds": 0.092,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/tool"
+      ],
+      "duration_seconds": 0.762,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/tool/builtin"
+      ],
+      "duration_seconds": 0.58,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "linux/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/linux.test",
+        "easycode/internal/tui"
+      ],
+      "duration_seconds": 0.939,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "build",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows-easycode.exe",
+        "./cmd/easycode"
+      ],
+      "duration_seconds": 2.658,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/cmd/easycode"
+      ],
+      "duration_seconds": 0.777,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/app"
+      ],
+      "duration_seconds": 1.403,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/architecture"
+      ],
+      "duration_seconds": 0.261,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/codec"
+      ],
+      "duration_seconds": 1.411,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/config"
+      ],
+      "duration_seconds": 0.353,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/context"
+      ],
+      "duration_seconds": 0.42,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/context/estimate"
+      ],
+      "duration_seconds": 0.298,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/context/projectinstructions"
+      ],
+      "duration_seconds": 0.123,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/domain"
+      ],
+      "duration_seconds": 0.622,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/executor/process"
+      ],
+      "duration_seconds": 0.229,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/extension"
+      ],
+      "duration_seconds": 0.121,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/extension/hook"
+      ],
+      "duration_seconds": 0.363,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/extension/localfile"
+      ],
+      "duration_seconds": 0.207,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/extension/mcp"
+      ],
+      "duration_seconds": 0.09,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/extension/plugin"
+      ],
+      "duration_seconds": 0.353,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/extension/skill"
+      ],
+      "duration_seconds": 0.386,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/fault"
+      ],
+      "duration_seconds": 0.203,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/headless"
+      ],
+      "duration_seconds": 0.441,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/protocol"
+      ],
+      "duration_seconds": 0.506,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/provider"
+      ],
+      "duration_seconds": 0.783,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/provider/anthropic"
+      ],
+      "duration_seconds": 0.898,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/provider/openai"
+      ],
+      "duration_seconds": 0.925,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/provider/transport"
+      ],
+      "duration_seconds": 0.486,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/runtime"
+      ],
+      "duration_seconds": 1.378,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/secret"
+      ],
+      "duration_seconds": 0.304,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/session"
+      ],
+      "duration_seconds": 0.891,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/session/artifact"
+      ],
+      "duration_seconds": 0.129,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/session/catalog"
+      ],
+      "duration_seconds": 0.391,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/subagent"
+      ],
+      "duration_seconds": 0.13,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/telemetry"
+      ],
+      "duration_seconds": 0.091,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/tool"
+      ],
+      "duration_seconds": 0.769,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/tool/builtin"
+      ],
+      "duration_seconds": 0.485,
+      "exit_code": 0,
+      "executed_tests": false
+    },
+    {
+      "platform": "windows/amd64",
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-rewrite-cross-hnvalhry/windows.test",
+        "easycode/internal/tui"
+      ],
+      "duration_seconds": 0.97,
+      "exit_code": 0,
+      "executed_tests": false
+    }
+  ],
+  "native_execution": false,
+  "exit_code": 0
+}

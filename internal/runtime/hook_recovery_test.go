@@ -17,10 +17,16 @@ func TestHookRecoveryMatrixNeverCallsExternalCapabilities(t *testing.T) {
 			refs := []domain.HookReference{ds[0].Reference, ds[1].Reference}
 			p, _ := domain.NewHookPlan(string(inv.InvocationID()), domain.HookPatch, refs)
 			g := &session.ReplayedHookGate{Plan: p, PlanSequence: 5}
-			call := session.ReplayedToolCall{ReadySequence: 4, Invocation: inv, State: session.ReplayedToolCallReady, Hooks: g}
+			call := session.ReplayedToolCall{Origin: r.toolCalls[inv.InvocationID()].origin, ReadySequence: 4, Invocation: inv, State: session.ReplayedToolCallReady, Hooks: g}
 			if phase == "prefix" || phase == "continued" || phase == "result" {
 				id, _ := domain.NewHookRunIdentity(p, 0)
-				g.Results = append(g.Results, domain.HookRunResult{Identity: id, Status: domain.HookContinue, Code: domain.HookOK, ExitKnown: true, CleanupConfirmed: true, Origin: "execution"})
+				input, _ := tool.HookInputForInvocation(inv)
+				effect, _ := domain.NewUnchangedHookInputEffect(input)
+				frozen, err := domain.NewPreHookFinished(domain.HookRunResult{Identity: id, Status: domain.HookContinue, Code: domain.HookOK, ExitKnown: true, CleanupConfirmed: true, Origin: "execution"}, refs[0], effect)
+				if err != nil {
+					t.Fatal(err)
+				}
+				g.Finished = append(g.Finished, frozen)
 			}
 			if phase == "started" {
 				id, _ := domain.NewHookRunIdentity(p, 0)
@@ -29,7 +35,13 @@ func TestHookRecoveryMatrixNeverCallsExternalCapabilities(t *testing.T) {
 			}
 			if phase == "continued" {
 				id, _ := domain.NewHookRunIdentity(p, 1)
-				g.Results = append(g.Results, domain.HookRunResult{Identity: id, Status: domain.HookContinue, Code: domain.HookOK, ExitKnown: true, CleanupConfirmed: true, Origin: "execution"})
+				input, _ := tool.HookInputForInvocation(inv)
+				effect, _ := domain.NewUnchangedHookInputEffect(input)
+				frozen, err := domain.NewPreHookFinished(domain.HookRunResult{Identity: id, Status: domain.HookContinue, Code: domain.HookOK, ExitKnown: true, CleanupConfirmed: true, Origin: "execution"}, refs[1], effect)
+				if err != nil {
+					t.Fatal(err)
+				}
+				g.Finished = append(g.Finished, frozen)
 				d, _ := domain.NewHookGateDecision(p, domain.HookContinue, domain.HookOK, 2, -1)
 				g.Decision = &d
 				g.DecisionSequence = 10
@@ -39,7 +51,7 @@ func TestHookRecoveryMatrixNeverCallsExternalCapabilities(t *testing.T) {
 				g.Decision = &d
 				g.DecisionSequence = 9
 				result := tool.NewInvocationErrorResult(inv, tool.ResultDenied, string(domain.HookTrustDenied), "frozen safe preview")
-				result, _ = tool.FinalizeResult(result, tool.SafetyResultBytes, tool.BudgetRecovery)
+				result, _ = tool.FinalizeResult(result, tool.SafetyResultBytes, tool.BudgetPreserved)
 				call.State = session.ReplayedToolCallResult
 				call.ResultSequence = 10
 				call.Result = result
@@ -52,6 +64,7 @@ func TestHookRecoveryMatrixNeverCallsExternalCapabilities(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			journal.sequence = max(call.ReadySequence, g.PlanSequence, g.StartedSequence, g.DecisionSequence, call.ResultSequence)
 			if err := r.ReconcileToolTurn(context.Background(), plan); err != nil {
 				t.Fatal(err)
 			}

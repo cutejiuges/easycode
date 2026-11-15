@@ -59,6 +59,7 @@ const (
 
 // ReplayedToolCall 保存恢复所需的typed调用、结果和事实顺序。
 type ReplayedToolCall struct {
+	Origin               tool.ToolCallOrigin
 	PostHooks            *ReplayedPostHooks
 	Hooks                *ReplayedHookGate
 	ReadySequence        uint64
@@ -141,6 +142,9 @@ func (plan ToolRecoveryPlan) Validate() error {
 			call.CallIndex != uint32(index) || call.Invocation.Validate() != nil {
 			return fmt.Errorf("tool recovery call is invalid")
 		}
+		if call.Origin.Validate() != nil || call.Origin.TurnID != plan.turnID || call.Origin.SampleIndex != call.SampleIndex || call.Origin.CallIndex != call.CallIndex {
+			return fmt.Errorf("tool recovery call origin is invalid")
+		}
 		if call.ReadySequence <= lastReadySequence {
 			return fmt.Errorf("tool recovery ready sequence is invalid")
 		}
@@ -156,7 +160,7 @@ func (plan ToolRecoveryPlan) Validate() error {
 			}
 		}
 		if call.Hooks != nil {
-			if err := call.Hooks.Validate(string(call.Invocation.InvocationID()), domain.HookCapability(call.Invocation.Capability())); err != nil {
+			if err := call.Hooks.Validate(call.Invocation); err != nil {
 				return err
 			}
 			g := call.Hooks
@@ -265,6 +269,9 @@ func (plan ToolRecoveryPlan) Validate() error {
 			}
 			resultGapSeen = true
 		case ReplayedToolCallResult:
+			if _, err := call.InputResultEvidence(); err != nil {
+				return fmt.Errorf("invalid tool recovery input evidence")
+			}
 			if resultGapSeen || call.ResultSequence <= lastResultSequence || call.Result.Validate() != nil ||
 				call.Result.InvocationID() != call.Invocation.InvocationID() ||
 				call.Result.ProviderCallID() != call.Invocation.ProviderCallID() ||
@@ -582,7 +589,12 @@ func acceptSampleBatch(plan *ReplayPlan, active *activeReplayTurn, batch []Recor
 		}
 		seenInvocations[invocation.InvocationID()] = struct{}{}
 		active.providerCallIDs[invocation.ProviderCallID()] = struct{}{}
+		origin, originErr := tool.NewToolCallOrigin(record.SessionID, record.ThreadID, record.TurnID, payload.SampleIndex, payload.CallIndex)
+		if originErr != nil {
+			return false, replayCorrupt("tool call origin is invalid")
+		}
 		calls = append(calls, ReplayedToolCall{
+			Origin:        origin,
 			ReadySequence: record.Sequence, SampleIndex: payload.SampleIndex, CallIndex: payload.CallIndex,
 			Invocation: invocation, State: ReplayedToolCallReady,
 		})
@@ -615,6 +627,10 @@ func acceptToolOutputs(plan *ReplayPlan, active *activeReplayTurn, record Record
 	}
 	outputs := make([]tool.ModelOutput, len(active.pendingCalls))
 	for i, call := range active.pendingCalls {
+		evidence, evidenceErr := call.InputResultEvidence()
+		if evidenceErr != nil {
+			return replayCorrupt("invalid input result evidence")
+		}
 		var feedback []domain.FrozenHookFeedback
 		if call.PostHooks != nil {
 			feedback = call.PostHooks.Feedback()
@@ -625,10 +641,10 @@ func acceptToolOutputs(plan *ReplayPlan, active *activeReplayTurn, record Record
 			var selection tool.PostHookSelection
 			selection, err = call.PostHooks.Selection(call)
 			if err == nil {
-				output, err = tool.NewPostModelOutput(call.Result, selection, feedback)
+				output, err = tool.NewPostModelOutput(call.Result, evidence, selection, feedback)
 			}
 		} else {
-			output, err = tool.NewModelOutput(call.Result)
+			output, err = tool.NewModelOutput(call.Result, evidence)
 		}
 		if err != nil {
 			return replayCorrupt("invalid model output evidence")
@@ -706,7 +722,11 @@ func (active *activeReplayTurn) acceptApproval(batch []Record) error {
 		if !call.Invocation.Capability().RequiresApproval() || call.State != ReplayedToolCallReady || call.ApprovalSequence != 0 || call.Hooks != nil && (call.Hooks.Decision == nil || call.Hooks.Decision.Status != domain.HookContinue) {
 			return replayCorrupt("tool approval does not match a pending exclusive call")
 		}
-		metadata, metadataErr := NewApprovalMetadata(call.Invocation)
+		effective, effectiveErr := call.ResultInvocation()
+		if effectiveErr != nil {
+			return replayCorrupt("approval has no selected input")
+		}
+		metadata, metadataErr := NewApprovalMetadata(effective)
 		if metadataErr != nil || metadata != payload.Metadata {
 			return replayCorrupt("tool approval metadata does not match invocation")
 		}
@@ -759,9 +779,18 @@ func (active *activeReplayTurn) acceptResult(record Record) error {
 		if call.Invocation.InvocationID() != payload.InvocationID {
 			return replayCorrupt("tool result order is invalid")
 		}
-		result, decodeErr := payload.Domain(call.Invocation)
+		effective, effectiveErr := call.ResultInvocation()
+		if effectiveErr != nil {
+			return replayCorrupt("result has no input selection")
+		}
+		result, decodeErr := payload.Domain(effective)
 		if decodeErr != nil {
 			return replayCorrupt("tool_call_result does not match ready call")
+		}
+		proofCall := *call
+		proofCall.Result = result
+		if _, proofErr := proofCall.InputResultEvidence(); proofErr != nil {
+			return replayCorrupt("tool result input evidence is invalid")
 		}
 		if call.Hooks != nil && call.Hooks.Decision == nil {
 			return replayCorrupt("tool result preceded hook decision")

@@ -258,21 +258,21 @@ func TestStopExecutionDoesNotRelaxOtherEvents(t *testing.T) {
 	p := stopDomainPlan(t, 0, 0, HookFeedbackModel)
 	blocked := stopDomainFinished(t, p, 0, HookBlock, 0).Result
 	c, _ := NewHookFeedbackCandidate("repair")
-	if _, err := NewHookExecution(blocked, HookFeedbackModel, c); err != nil {
+	if _, err := NewHookExecution(blocked, HookFeedbackModel, c, HookInputReplacement{}); err != nil {
 		t.Fatal(err)
 	}
 	for _, mutate := range []func(*HookRunResult){func(r *HookRunResult) { r.ExitCode = 2 }, func(r *HookRunResult) { r.Status = HookContinue; r.Code = HookOK }, func(r *HookRunResult) { r.Origin = "recovery" }} {
 		r := blocked
 		mutate(&r)
-		if _, err := NewHookExecution(r, HookFeedbackModel, c); err == nil {
+		if _, err := NewHookExecution(r, HookFeedbackModel, c, HookInputReplacement{}); err == nil {
 			t.Fatal("non-normal block feedback accepted")
 		}
 	}
-	if _, err := NewHookExecution(blocked, HookFeedbackNone, c); err == nil {
+	if _, err := NewHookExecution(blocked, HookFeedbackNone, c, HookInputReplacement{}); err == nil {
 		t.Fatal("none disclosed reason")
 	}
 	for _, event := range []HookEvent{HookPreToolUse, HookPostToolUse, HookPostToolUseFailure} {
-		if _, err := NewHookParsedOutput(event, HookFeedbackModel, HookBlock, HookDenied, c); err == nil {
+		if _, err := NewHookParsedOutput(event, HookFeedbackModel, HookBlock, HookDenied, c, HookInputReplacement{}); err == nil {
 			t.Fatal("tool event received stop block", event)
 		}
 	}

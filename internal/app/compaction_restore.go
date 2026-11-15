@@ -23,27 +23,24 @@ func orderedRestoreRecords(plan session.ReplayPlan) ([]provider.RestoreRecord, e
 		record   provider.RestoreRecord
 	}
 	entries := make([]entry, 0, len(ordinary)+len(plan.Compactions)*2+1)
-	type questionFacts struct {
-		questions []tool.QuestionInvocation
-		results   []tool.InvocationResult
+	type readyFacts struct {
+		calls   []tool.Invocation
+		results []tool.InvocationResult
 	}
-	questionsBySequence := make(map[uint64]questionFacts)
+	callsBySequence := make(map[uint64]readyFacts)
 	for _, entry := range plan.Tools {
-		q, ok := entry.Invocation.Question()
-		if !ok {
-			continue
-		}
-		facts := questionsBySequence[entry.NativeSequence]
-		facts.questions = append(facts.questions, q)
-		if entry.HasResult {
+		_, isQuestion := entry.Invocation.Question()
+		facts := callsBySequence[entry.NativeSequence]
+		facts.calls = append(facts.calls, entry.Invocation.Clone())
+		if isQuestion && entry.HasResult {
 			facts.results = append(facts.results, entry.Result)
 		}
-		questionsBySequence[entry.NativeSequence] = facts
+		callsBySequence[entry.NativeSequence] = facts
 	}
 	for i, record := range ordinary {
 		if record.Role() == domain.NativeCommitSample {
-			facts := questionsBySequence[plan.NativeCommits[i].Sequence]
-			record, err = record.WithQuestionFacts(facts.questions, facts.results)
+			facts := callsBySequence[plan.NativeCommits[i].Sequence]
+			record, err = record.WithReadyFacts(facts.calls, facts.results)
 			if err != nil {
 				return nil, err
 			}

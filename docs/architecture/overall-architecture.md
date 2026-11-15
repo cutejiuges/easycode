@@ -751,7 +751,15 @@ TUI `/hooks` 从内存快照浏览与滚动审查；`resolve_hook_trust`、`rese
 
 信任审查携带完整声明时，hook_trust_requested 的有界编码预算按 8 KiB 原始 command 的最坏 JSON 转义及封闭元数据计算，不能把合法大命令误作无效事件。只有该请求需要完整命令预算；响应、reset、统计活动、原始长度及精确信任 validator 保持各自限制。
 
-单项 timeout 默认 5 秒/最大 30 秒，每调用总执行预算 30 秒，信任等待可取消但不计执行预算。stdin 最大 512 KiB，双输出各 16 KiB，模型安全摘要最多 1 KiB。只接受 exit 0 空输出/空对象和严格 structured deny、exit 2；其他行为失败关闭。上述拒绝规则只适用于 Pre；当前 PostToolUse 的边界见 12.1.1，PostToolUseFailure 见 12.1.2。其余未支持事件、async、改写和 plugin hooks 仍是后续目标。
+单项 timeout 默认 5 秒/最大 30 秒，每调用总执行预算 30 秒，信任等待可取消但不计执行预算。stdin 最大 512 KiB，双输出各 16 KiB，门禁失败的安全摘要最多 1 KiB。Pre 接受 exit 0 空输出/空对象、严格 structured deny、独立完整 updatedInput，以及 exit 2 拒绝；其他行为失败关闭。上述拒绝规则只适用于 Pre；当前 PostToolUse 的边界见 12.1.1，PostToolUseFailure 见 12.1.2。其余未支持事件、async、结果改写和 plugin hooks 仍是后续目标。
+
+当前参数改写使用 `domain.HookRewriteContext`/`HookInputEffect` 的封闭 profile 与严格完整对象；`extension/hook` 不依赖 tool 或 Provider。`tool` 提供 O/C/E 纯适配、`InputSelection` 与 `InputResultEvidence`，绑定真实 Session/thread/turn/sample/call，保留原 invocation/call ID、capability 和 wire。Runtime 的 turn owner 持有九能力原调用来源和冻结结果；只有三项 mutation 进入 Pre，后项只能读取已 Sync 的 C，全通过后 E 才进入候选、policy、普通审批、执行及 Post。完成重入只取同一冻结结果，跨 turn/Close 退役。
+
+唯一当前 Pre `hook_execution_finished` 必需 `input_effect`，unchanged 保存相等前后摘要，replaced 另保存至多 16 KiB 的完整规范输入；其他事件禁止 effect。最后成功 finished 与 continue 保持原子，即使返回后取消也不能改写真实 Hook 结果。Session 在 repair 前验证摘要链、来源 profile、门禁/批准/准入、结果 metadata 和说明；两家 Provider 另将原始 ready 与 native 参数逐一对照，使用同一执行证明验证 stored output。没有新增 record kind、格式数字、旧 reader 或迁移器。
+
+`tool_execution_started` Sync 后、executor 前登记唯一真实 `ExecutionAdmission`，Post 与模型说明共享该值，不能以 Post 是否存在推断执行。说明格式与冻结属于 tool 的纯策略，沿同一 base/feedback ticket 核算；候选前预检完整说明与安全终态额度，正常准入结果包含 E，未准入/恢复只含有界状态说明，无变化保持原 bytes。原始 artifact 与 Post typed stdin 使用原结果元数据，不包含说明。
+
+宿主 `PreHooksCommitted` 返回错误并接收不可变计划/前缀/选择，原 ready 只读。成功安装后才发送既有 HookActivity，Pre 分支封闭为 none/candidate/selected/rejected，canonical 块 4 KiB、整体 16 KiB、摘要 160 rune。真实 sequence 使 Ctrl+O 的 `pre_hooks` 页失效，沿用异步 generation 与四页缓存；完整参数只经内存分页和审批自身完整展示提供。宿主安装失败 poison 并停止后续普通副作用，不回滚或重跑已提交检查。理由见 [ADR-0010](adr/0010-pre-tool-use-input-selection.md)。
 
 #### 12.1.1 当前 PostToolUse 与显式反馈
 

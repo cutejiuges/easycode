@@ -51,19 +51,22 @@ func writeExecCommandSample(writer io.Writer, family domain.ProviderFamily, comm
 func TestExecHeadlessModesFailClosedForBothProviders(t *testing.T) { runExecHeadlessModes(t, false) }
 func TestHookHeadlessModesFailClosedForBothProviders(t *testing.T) { runExecHeadlessModes(t, true) }
 func TestPostHookHeadlessModesFailClosedForBothProviders(t *testing.T) {
-	runExecHeadlessModeEvent(t, domain.HookPostToolUse)
+	runExecHeadlessModeEvent(t, domain.HookPostToolUse, false)
 }
 func TestFailureHookHeadlessModesFailClosedForBothProviders(t *testing.T) {
-	runExecHeadlessModeEvent(t, domain.HookPostToolUseFailure)
+	runExecHeadlessModeEvent(t, domain.HookPostToolUseFailure, false)
 }
 func runExecHeadlessModes(t *testing.T, withHook bool) {
 	event := domain.HookEvent("")
 	if withHook {
 		event = domain.HookPreToolUse
 	}
-	runExecHeadlessModeEvent(t, event)
+	runExecHeadlessModeEvent(t, event, false)
 }
-func runExecHeadlessModeEvent(t *testing.T, event domain.HookEvent) {
+func TestPreInputRewriteHeadlessModesRequireTrustAndKeepExternalJSONLV1(t *testing.T) {
+	runExecHeadlessModeEvent(t, domain.HookPreToolUse, true)
+}
+func runExecHeadlessModeEvent(t *testing.T, event domain.HookEvent, rewrite bool) {
 	withHook := event.Valid()
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		for _, mode := range []headless.Mode{headless.ModeText, headless.ModeJSON, headless.ModeStreamJSON} {
@@ -77,7 +80,11 @@ func runExecHeadlessModeEvent(t *testing.T, event domain.HookEvent) {
 					} else if event == domain.HookPostToolUse {
 						writePostHookConfig(t, workspace, "printf forbidden > hook-marker", domain.HookFeedbackModel)
 					} else {
-						writeHookConfig(t, workspace, "printf forbidden > hook-marker")
+						command := "printf forbidden > hook-marker"
+						if rewrite {
+							command += `; printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":"printf forbidden > rewritten-marker","workdir":"","timeout_ms":1000}}}'`
+						}
+						writeHookConfig(t, workspace, command)
 					}
 					wantCode = "hook_trust_required"
 				}
@@ -129,7 +136,7 @@ func runExecHeadlessModeEvent(t *testing.T, event domain.HookEvent) {
 				if _, err := os.Stat(filepath.Join(workspace, "exec-marker")); !errors.Is(err, os.ErrNotExist) {
 					t.Fatal("headless command produced side effect")
 				}
-				for _, forbidden := range []string{"tool_started", "tool_progress", "tool_terminal", "post_hook_committed", workspace} {
+				for _, forbidden := range []string{"tool_started", "tool_progress", "tool_terminal", "post_hook_committed", "pre_input", "input_rewrite", "execution_admitted", "hook_activity", workspace} {
 					if strings.Contains(output.String(), forbidden) {
 						t.Fatalf("headless exposed %q", forbidden)
 					}
@@ -139,7 +146,7 @@ func runExecHeadlessModeEvent(t *testing.T, event domain.HookEvent) {
 					loaded := loadHeadlessJournal(t, root, started.ThreadID)
 					var denied int
 					for _, record := range loaded.Records {
-						if record.EventKind == session.EventToolExecutionStarted {
+						if record.EventKind == session.EventToolExecutionStarted || rewrite && record.EventKind == session.EventHookExecutionStarted {
 							t.Fatal("headless admitted process execution")
 						}
 						if record.EventKind == session.EventToolCallResult {

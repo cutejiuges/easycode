@@ -88,6 +88,10 @@ func TestReadObservationActivatesAfterOutputDurabilityAndFinalization(t *testing
 			runtime := newTestRuntime(t, conversation, journal)
 			r, o := completeObservation(t, "a")
 			runtime.readObservations.beginGroup()
+			input, _ := tool.NewReadInput("a", 1, 2000)
+			ready, _ := tool.NewReadReadyCall(r.ProviderCallID(), input)
+			original, _ := tool.NewInvocation(r.InvocationID(), ready)
+			seedRuntimeToolCall(t, runtime, runtimeTurnID, original, 0, 0)
 			if err := runtime.persistToolResult(context.Background(), runtimeTurnID, &r); err != nil {
 				t.Fatal(err)
 			}
@@ -130,6 +134,13 @@ func TestReadObservationDoesNotActivateWhenOutputFinalizeFails(t *testing.T) {
 	result, observation := completeObservation(t, "a")
 	r.readObservations.beginGroup()
 	r.readObservations.stage(result, observation)
+	input, _ := tool.NewReadInput("a", 1, 2000)
+	ready, _ := tool.NewReadReadyCall(result.ProviderCallID(), input)
+	invocation, _ := tool.NewInvocation(result.InvocationID(), ready)
+	seedRuntimeToolCall(t, r, runtimeTurnID, invocation, 0, 0)
+	if err := r.persistToolResult(context.Background(), runtimeTurnID, &result); err != nil {
+		t.Fatal(err)
+	}
 	journal.hook = func(batch []session.RecordDraft) {
 		if batch[0].EventKind() == session.EventProviderNativeCommit {
 			if err := conversation.prepared.Discard(); err != nil {

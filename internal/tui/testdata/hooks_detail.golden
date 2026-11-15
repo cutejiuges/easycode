@@ -1,4 +1,7 @@
 Hook details · Esc: back · ↑/↓: scroll · r: reset trust
+May replace complete tool parameters before ordinary permission.
+Changed candidates and execution facts are saved in Session.
+Results disclose the effective input or a note about execution.
 Source: project · check [untrusted]
 Event: PreToolUse · feedback: none
 Matcher: fs.patch|fs.write|process.exec

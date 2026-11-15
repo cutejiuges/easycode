@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"easycode/internal/codec"
+	"easycode/internal/domain"
 	"easycode/internal/provider"
 	"easycode/internal/tool"
 )
@@ -13,6 +14,15 @@ func encodeToolResult(call NativeItem, output tool.ModelOutput) (NativeItem, err
 		return NativeItem{}, fmt.Errorf("invalid model tool output")
 	}
 	result := output.Result()
+	original := output.Evidence().Selection().Original()
+	if err := tool.ValidateNativeCallInput(original, domain.ProviderAnthropic, call.Name, tool.ProviderCallID(call.ID), tool.WireStructured, call.Input); err != nil {
+		return NativeItem{}, err
+	}
+	return encodeToolResultData(call, result, output.Text())
+}
+
+// encodeToolResultData 是纯 wire 编码，也供已验证提问事实的离线正文比对复用。
+func encodeToolResultData(call NativeItem, result tool.InvocationResult, text string) (NativeItem, error) {
 	if tool.ValidateFrozenResult(result) != nil || string(result.ProviderCallID()) != call.ID || result.Capability() != anthropicCapabilityForName(call.Name) || result.WireKind() != tool.WireStructured {
 		return NativeItem{}, fmt.Errorf("anthropic tool output does not match call")
 	}
@@ -27,7 +37,7 @@ func encodeToolResult(call NativeItem, output tool.ModelOutput) (NativeItem, err
 			}
 		}
 	}
-	return NativeItem{Type: blockTypeToolResult, ToolUseID: call.ID, Content: output.Text(), IsError: result.Status() != tool.ResultSuccess}, nil
+	return NativeItem{Type: blockTypeToolResult, ToolUseID: call.ID, Content: text, IsError: result.Status() != tool.ResultSuccess}, nil
 }
 
 type toolOutputPreflight struct {

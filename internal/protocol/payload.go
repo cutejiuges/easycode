@@ -27,6 +27,7 @@ func (decision ApprovalDecision) Valid() bool {
 
 // ToolApprovalRequestedPayload 保存不含Provider wire与完整文件正文的批准视图。
 type ToolApprovalRequestedPayload struct {
+	InputRewrite   PreInputProjection    `json:"input_rewrite"`
 	RequestID      string                `json:"request_id"`
 	InvocationID   string                `json:"invocation_id"`
 	ProviderCallID string                `json:"provider_call_id"`
@@ -190,6 +191,9 @@ func DecodeToolApprovalRequested(event Event) (ToolApprovalRequestedPayload, err
 }
 
 func validateApprovalRequested(payload ToolApprovalRequestedPayload) error {
+	if payload.InputRewrite.Validate() != nil || payload.InputRewrite.Kind() != PreInputNone && payload.InputRewrite.Kind() != PreInputSelected {
+		return fmt.Errorf("invalid approval input rewrite")
+	}
 	if !validUUIDv7Text(payload.RequestID) || !validUUIDv7Text(payload.InvocationID) || payload.ProviderCallID == "" || len(payload.ProviderCallID) > 256 || strings.TrimSpace(payload.Reason) == "" || len(payload.Reason) > 1024 || !validFingerprint(payload.Fingerprint) {
 		return fmt.Errorf("tool approval request payload is invalid")
 	}

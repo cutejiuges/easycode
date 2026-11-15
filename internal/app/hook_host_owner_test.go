@@ -81,17 +81,19 @@ func testHookHostRetainsLease(t *testing.T, event domain.HookEvent) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	reviewed := false
 	for e := range events {
 		if e.Kind == protocol.EventTurnFailed {
 			t.Fatal("turn failed before blocked hook", string(e.Payload))
 		}
 		if e.Kind == protocol.EventHookTrustRequested {
+			reviewed = true
 			p, _ := protocol.DecodeHookTrustRequested(e)
 			if err := resources.session.ResolveHookTrust(context.Background(), e.TurnID, p, protocol.HookTrustSession); err != nil {
 				t.Fatal(err)
 			}
 		}
-		if e.Kind == protocol.EventHookActivity {
+		if e.Kind == protocol.EventHookActivity && reviewed {
 			break
 		}
 		if e.Kind == protocol.EventToolApprovalRequested {

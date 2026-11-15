@@ -313,6 +313,9 @@ func (payload ToolCallResultPayload) Domain(invocation tool.Invocation) (tool.In
 	if err != nil {
 		return tool.InvocationResult{}, err
 	}
+	if tool.ValidateResultInput(invocation, result) != nil {
+		return tool.InvocationResult{}, fmt.Errorf("tool result does not match selected input")
+	}
 	if value, ok := invocation.Write(); ok && result.Status() == tool.ResultSuccess {
 		m := result.WriteMetadata()
 		if m.Bytes() != len(value.Input().Content()) || m.Lines() != tool.WriteLineCount(value.Input().Content()) {

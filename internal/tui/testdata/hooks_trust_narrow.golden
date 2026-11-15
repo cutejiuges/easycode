@@ -1,4 +1,13 @@
 Trust this hook?
+May replace complete tool pa
+rameters before ordinary per
+mission.
+Changed candidates and execu
+tion facts are saved in Sess
+ion.
+Results disclose the effecti
+ve input or a note about exe
+cution.
 Source: project · check
 PreToolUse: fs.patch|fs.writ
 e|process.exec
@@ -12,10 +21,3 @@ Workspace scripts can change
  after review.
 PgUp/PgDn: full command · Ta
 b/↑/↓: choose · Esc: deny
-
-  Trust for this session
-> Deny
-
-Command:
-cat >/dev/null
-printf '{}'

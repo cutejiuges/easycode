@@ -77,7 +77,7 @@ func FreezePostFeedback(postPlan domain.PostHookPlan, prior []domain.FrozenHookF
 		}
 	}
 	ref := plan.Hooks[ordinal]
-	if _, err := domain.NewHookExecution(result, ref.Feedback, candidate); err != nil {
+	if _, err := domain.NewHookExecution(result, ref.Feedback, candidate, domain.HookInputReplacement{}); err != nil {
 		return domain.HookFinished{}, err
 	}
 	empty, _ := domain.NewFrozenHookFeedback(id, ref, domain.HookFeedbackEmpty, "", domain.HookOK, 0)

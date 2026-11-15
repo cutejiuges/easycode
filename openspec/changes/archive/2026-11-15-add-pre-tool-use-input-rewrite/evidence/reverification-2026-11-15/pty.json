@@ -1,0 +1,28 @@
+{
+  "executed_at": "2026-11-15T08:13:57.938388+00:00",
+  "commands": [
+    {
+      "command": [
+        "go",
+        "test",
+        "-c",
+        "-o",
+        "/tmp/easycode-rewrite-reverify-app.test",
+        "./internal/app"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 1.03
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/input-rewrite-smoke.py",
+        "/tmp/easycode-rewrite-reverify-app.test",
+        "--output-dir",
+        "openspec/changes/add-pre-tool-use-input-rewrite/evidence/reverification-2026-11-15/pty"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 13.571
+    }
+  ]
+}

@@ -367,9 +367,10 @@ func TestReplayPlannerAcceptsCancellationBeforeExecutorStart(t *testing.T) {
 }
 
 func TestToolRecoveryPlanOwnsAndValidatesCalls(t *testing.T) {
+	origin, _ := tool.NewToolCallOrigin(testSessionID, testThreadID, testTurnID, 0, 0)
 	invocation := testReplayInvocation(t, "01890f3e-7bcd-7abc-8abc-0123456789ab", "call-1")
 	calls := []ReplayedToolCall{{
-		ReadySequence: 4, SampleIndex: 0, CallIndex: 0,
+		Origin: origin, ReadySequence: 4, SampleIndex: 0, CallIndex: 0,
 		Invocation: invocation, State: ReplayedToolCallReady,
 	}}
 	plan, err := NewToolRecoveryPlan(testTurnID, 1, calls, false)

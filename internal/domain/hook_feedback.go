@@ -30,14 +30,18 @@ func (v HookFeedbackCandidate) Validate() error {
 
 // HookParsedOutput 是输出策略的纯内存结果，原始双流永不进入该值。
 type HookParsedOutput struct {
-	Status   HookOutcome
-	Code     HookCode
-	Feedback HookFeedbackCandidate
+	Status      HookOutcome
+	Code        HookCode
+	Feedback    HookFeedbackCandidate
+	Replacement HookInputReplacement
 }
 
-func NewHookParsedOutput(event HookEvent, policy HookFeedbackPolicy, status HookOutcome, code HookCode, feedback HookFeedbackCandidate) (HookParsedOutput, error) {
-	v := HookParsedOutput{status, code, feedback}
+func NewHookParsedOutput(event HookEvent, policy HookFeedbackPolicy, status HookOutcome, code HookCode, feedback HookFeedbackCandidate, replacement HookInputReplacement) (HookParsedOutput, error) {
+	v := HookParsedOutput{status, code, feedback, replacement}
 	if !policy.ValidFor(event) || !status.ValidCode(code) || feedback.Validate() != nil || event.Post() && status == HookBlock || !feedback.Empty() && (policy != HookFeedbackModel || !(event.Post() && status == HookContinue || event == HookStop && status == HookBlock && code == HookDenied)) {
+		return HookParsedOutput{}, HookConfigInvalid
+	}
+	if replacement.Validate() != nil || !replacement.Empty() && (event != HookPreToolUse || status != HookContinue || code != HookOK || !feedback.Empty()) {
 		return HookParsedOutput{}, HookConfigInvalid
 	}
 	return v, nil
@@ -45,15 +49,19 @@ func NewHookParsedOutput(event HookEvent, policy HookFeedbackPolicy, status Hook
 
 // HookExecution 将无正文统计与待接纳反馈保持为两个明确字段。
 type HookExecution struct {
-	Result   HookRunResult
-	Feedback HookFeedbackCandidate
+	Result      HookRunResult
+	Feedback    HookFeedbackCandidate
+	Replacement HookInputReplacement
 }
 
-func NewHookExecution(result HookRunResult, policy HookFeedbackPolicy, feedback HookFeedbackCandidate) (HookExecution, error) {
-	v := HookExecution{result, feedback}
+func NewHookExecution(result HookRunResult, policy HookFeedbackPolicy, feedback HookFeedbackCandidate, replacement HookInputReplacement) (HookExecution, error) {
+	v := HookExecution{result, feedback, replacement}
 	if result.Validate() != nil || !feedback.Empty() && result.Identity.Event == HookStop && (!result.ExitKnown || result.ExitCode != 0 || !result.CleanupConfirmed || result.Cancelled || result.TimedOut || result.Origin != "execution") {
 		return HookExecution{}, HookConfigInvalid
 	}
-	_, err := NewHookParsedOutput(result.Identity.Event, policy, result.Status, result.Code, feedback)
+	if !replacement.Empty() && (result.Origin != "execution" || !result.ExitKnown || result.ExitCode != 0 || !result.CleanupConfirmed || result.Cancelled || result.TimedOut) {
+		return HookExecution{}, HookConfigInvalid
+	}
+	_, err := NewHookParsedOutput(result.Identity.Event, policy, result.Status, result.Code, feedback, replacement)
 	return v, err
 }

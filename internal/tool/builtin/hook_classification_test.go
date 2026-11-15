@@ -32,7 +32,7 @@ func TestHookClassificationPriorityAndEventExitTwo(t *testing.T) {
 		} {
 			t.Run(string(event)+"/"+test.name, func(t *testing.T) {
 				parsed := false
-				parse := func(e domain.HookEvent, p domain.HookFeedbackPolicy, exit int, _ []byte) domain.HookParsedOutput {
+				parse := func(e domain.HookEvent, p domain.HookFeedbackPolicy, exit int, _ []byte, _ domain.HookRewriteContext) domain.HookParsedOutput {
 					parsed = true
 					if e != event || p != domain.HookFeedbackNone || exit != 2 {
 						t.Fatal("parser identity changed")
@@ -42,7 +42,7 @@ func TestHookClassificationPriorityAndEventExitTwo(t *testing.T) {
 					}
 					return domain.HookParsedOutput{Status: domain.HookError, Code: domain.HookExitFailed}
 				}
-				execution := classifyHookExecution(id, domain.HookFeedbackNone, test.owned, []byte("secret-sentinel"), test.output, 0, parse)
+				execution := classifyHookExecution(id, domain.HookFeedbackNone, test.owned, []byte("secret-sentinel"), test.output, 0, parse, domain.HookRewriteContext{})
 				want := test.code
 				if event == domain.HookPreToolUse && test.parsed {
 					want = domain.HookDenied

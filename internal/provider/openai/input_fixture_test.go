@@ -95,24 +95,18 @@ func testRestoreRecords(t *testing.T, envelopes []provider.NativeCommitEnvelope,
 			record, err = provider.NewSampleRestoreRecord(turnID, envelope)
 			if err == nil {
 				var questions []tool.QuestionInvocation
+				var calls []tool.Invocation
 				for _, item := range entry.Outputs {
-					if item.Type == "function_call" && item.Name == "request_user_input" {
-						input, e := tool.DecodeQuestionInput([]byte(item.Arguments))
-						if e != nil {
-							t.Fatal(e)
-						}
-						ready, e := tool.NewQuestionReadyCall(tool.ProviderCallID(item.CallID), input)
-						if e != nil {
-							t.Fatal(e)
-						}
-						q, e := tool.NewQuestionInvocation(tool.InvocationID(testInputID("question/"+item.CallID)), ready)
-						if e != nil {
-							t.Fatal(e)
-						}
+					if item.Type != "function_call" && item.Type != "custom_tool_call" {
+						continue
+					}
+					invocation := testNativeInvocation(t, item, tool.InvocationID(testInputID("question/"+item.CallID)), tool.ProviderCallID(item.CallID))
+					calls = append(calls, invocation)
+					if q, ok := invocation.Question(); ok {
 						questions = append(questions, q)
 					}
 				}
-				record, err = record.WithQuestionFacts(questions, testQuestionRestoreResults(t, envelopes[envelopeIndex+1:], questions))
+				record, err = record.WithReadyFacts(calls, testQuestionRestoreResults(t, envelopes[envelopeIndex+1:], questions))
 			}
 		case nativeHistoryToolOutputs:
 			if outputIndex >= len(outputEvidence) {

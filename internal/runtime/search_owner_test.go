@@ -64,7 +64,10 @@ func TestSearchOwnerRetainsCaptureAcrossCancellationAndBlockedPublication(t *tes
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			done := make(chan error, 1)
-			go func() { _, err := rt.executeToolCalls(ctx, runtimeTurnID, []tool.Invocation{inv}); done <- err }()
+			go func() {
+				_, err := executeReadyFixtureCalls(t, rt, ctx, runtimeTurnID, []tool.Invocation{inv})
+				done <- err
+			}()
 			<-capture.entered
 			cancel()
 			select {

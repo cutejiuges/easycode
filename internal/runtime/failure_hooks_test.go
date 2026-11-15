@@ -111,6 +111,7 @@ func TestFailureBranchesRespectOriginalOutcomesForAllCapabilities(t *testing.T) 
 					feedback, _ := domain.NewHookFeedbackCandidate("authorized diagnosis")
 					return domain.HookExecution{Result: domain.HookRunResult{Identity: id, Status: domain.HookContinue, Code: domain.HookOK, ExitKnown: true, CleanupConfirmed: true, Origin: "execution"}, Feedback: feedback}
 				}
+				resetRuntimeReadyFixture(t, r, runtimeTurnID, inv)
 				approval := tool.ApprovalAllowOnce
 				if mode == "denied" {
 					approval = tool.ApprovalDeny

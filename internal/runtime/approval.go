@@ -48,6 +48,26 @@ func (runtime *Runtime) ResolveToolApproval(response tool.ApprovalResponse) erro
 }
 
 func (runtime *Runtime) waitForApproval(ctx context.Context, emit Emitter, turnID domain.TurnID, request tool.ApprovalRequest) (tool.ApprovalResponse, error) {
+	reason := request.Reason()
+	var rewrite protocol.PreInputProjection
+	if state := runtime.toolCalls[request.InvocationID()]; state != nil && state.pre != nil {
+		selection, err := state.selection()
+		if err != nil {
+			return tool.ApprovalResponse{}, err
+		}
+		if selection.Changed() {
+			rewrite, err = tool.ProjectPreInput(state.original, state.pre.Plan, state.pre.Finished, state.pre.Decision, state.detailSequence)
+			if err != nil {
+				return tool.ApprovalResponse{}, err
+			}
+			reason += " PreToolUse input sources:"
+			for _, f := range state.pre.Finished {
+				if f.InputEffect.Kind() == domain.HookInputReplaced {
+					reason += " " + string(f.Feedback.Reference.Source) + ":" + f.Feedback.Reference.ID
+				}
+			}
+		}
+	}
 	active := &runtimeApproval{request: request, done: make(chan struct{})}
 	runtime.approvals.mu.Lock()
 	if runtime.approvals.active != nil {
@@ -72,7 +92,7 @@ func (runtime *Runtime) waitForApproval(ctx context.Context, emit Emitter, turnI
 	for index, decision := range request.Decisions() {
 		decisions[index] = protocol.ApprovalDecision(decision)
 	}
-	event, err := protocol.NewToolApprovalRequested(protocol.ToolApprovalRequestedPayload{RequestID: string(request.RequestID()), InvocationID: string(request.InvocationID()), ProviderCallID: string(request.ProviderCallID()), Capability: string(request.Capability()), Reason: request.Reason(), RelativePath: request.RelativePath(), Fingerprint: string(request.Fingerprint()), Presentation: presentation, Decisions: decisions, Command: request.ExecInput().Command(), TimeoutMillis: request.ExecInput().TimeoutMillis()})
+	event, err := protocol.NewToolApprovalRequested(protocol.ToolApprovalRequestedPayload{InputRewrite: rewrite, RequestID: string(request.RequestID()), InvocationID: string(request.InvocationID()), ProviderCallID: string(request.ProviderCallID()), Capability: string(request.Capability()), Reason: reason, RelativePath: request.RelativePath(), Fingerprint: string(request.Fingerprint()), Presentation: presentation, Decisions: decisions, Command: request.ExecInput().Command(), TimeoutMillis: request.ExecInput().TimeoutMillis()})
 	if err != nil {
 		runtime.approvals.mu.Lock()
 		active.closed = true

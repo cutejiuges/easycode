@@ -10,7 +10,8 @@ import (
 // ToolHistoryObserver 接收已成功 Sync 且已 finalize 的事实，消费者仅更新内存投影。
 type ToolHistoryObserver interface {
 	NativeCommitted(uint64, []session.ToolHistoryEntry) error
-	ToolResult(tool.InvocationResult)
+	ToolStarted(tool.InvocationID, tool.ExecutionAdmission) error
+	ToolResult(tool.InvocationResult, tool.InputResultEvidence) error
 }
 
 func (runtime *Runtime) emitTranscriptCommit(turnID domain.TurnID, sequence uint64) {
@@ -30,6 +31,6 @@ type CompactionHistoryObserver interface {
 
 // HookHistoryObserver 只接收已 Sync 的统计及显式授权反馈，不持有命令、原始双流或信任状态。
 type HookHistoryObserver interface {
-	HookFinished(domain.HookReference, domain.HookRunResult)
+	PreHooksCommitted(tool.Invocation, uint64, session.ReplayedHookGate) error
 	PostHooksCommitted(tool.InvocationID, uint64, session.ReplayedPostHooks) error
 }

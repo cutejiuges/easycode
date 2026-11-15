@@ -28,7 +28,7 @@ func FuzzPostHookOutputDisclosureBoundary(f *testing.F) {
 		}
 		for _, event := range []domain.HookEvent{domain.HookPostToolUse, domain.HookPostToolUseFailure} {
 			for _, policy := range []domain.HookFeedbackPolicy{domain.HookFeedbackNone, domain.HookFeedbackModel} {
-				result := ParseExecution(event, policy, exit, body)
+				result := ParseExecution(event, policy, exit, body, domain.HookRewriteContext{})
 				if !result.Code.Valid() {
 					t.Fatal("unclassified output exposed a free-form error")
 				}

@@ -57,6 +57,8 @@ type TranscriptListItem struct {
 	StopHook           *StopHookCommittedPayload `json:"stop_hook,omitempty"`
 	Reasoning          *ReasoningSummaryPayload  `json:"reasoning,omitempty"`
 	PostHook           *HookActivityPayload      `json:"post_hook,omitempty"`
+	PreHook            *HookActivityPayload      `json:"pre_hook,omitempty"`
+	ExecutionAdmitted  bool                      `json:"execution_admitted"`
 	DetailSequence     uint64                    `json:"detail_sequence"`
 	CompactionID       domain.CompactionID       `json:"compaction_id,omitempty"`
 	Preview            string                    `json:"preview"`
@@ -75,7 +77,37 @@ type TranscriptListItem struct {
 	Activity           ToolActivityPayload       `json:"activity"`
 }
 
+// UnmarshalJSON 保持可选活动对象的缺省语义，显式 null 不得伪装成没有该分支。
+func (v *TranscriptListItem) UnmarshalJSON(data []byte) error {
+	members, err := codec.ObjectMembers(data)
+	if err != nil {
+		return err
+	}
+	for _, name := range []string{"pre_hook", "post_hook"} {
+		if _, present := members[name]; present {
+			if err := codec.ValidateObjectFields(data, name); err != nil {
+				return err
+			}
+		}
+	}
+	type current TranscriptListItem
+	var value current
+	if err := codec.UnmarshalRecord(data, &value); err != nil {
+		return err
+	}
+	*v = TranscriptListItem(value)
+	return v.Validate()
+}
+
 func (v TranscriptListItem) Validate() error {
+	if v.Kind != domain.TranscriptCall && v.ExecutionAdmitted {
+		return errors.New("non-call transcript has execution admission")
+	}
+	if v.PreHook != nil {
+		if v.Kind != domain.TranscriptCall || v.PreHook.Reference.Event != domain.HookPreToolUse || v.PreHook.Validate() != nil || v.PreHook.InvocationID() != v.Activity.InvocationID || v.PreHook.PreInput.Sequence() == 0 || v.DetailSequence < v.PreHook.PreInput.Sequence() {
+			return errors.New("invalid transcript pre hook summary")
+		}
+	}
 	if v.StopHook != nil {
 		sample, _ := v.StopHook.Target.AssistantSample()
 		if v.StopHook.Validate() != nil || sample.TurnID != v.TurnID || v.DetailSequence != v.StopHook.DetailSequence || (v.Kind != domain.TranscriptAssistant && v.Kind != domain.TranscriptReasoning && v.Kind != domain.TranscriptHook) {
@@ -209,11 +241,12 @@ const (
 	TranscriptInput     TranscriptBodySource = "input"
 	TranscriptResult    TranscriptBodySource = "result"
 	TranscriptPostHooks TranscriptBodySource = "post_hooks"
+	TranscriptPreHooks  TranscriptBodySource = "pre_hooks"
 	TranscriptStopHooks TranscriptBodySource = "stop_hooks"
 )
 
 func (s TranscriptBodySource) Valid() bool {
-	return s == TranscriptText || s == TranscriptInput || s == TranscriptResult || s == TranscriptPostHooks || s == TranscriptStopHooks
+	return s == TranscriptText || s == TranscriptInput || s == TranscriptResult || s == TranscriptPostHooks || s == TranscriptPreHooks || s == TranscriptStopHooks
 }
 
 // StopHookQueryTarget 把详情读取绑定到保存的计划与精确答复身份。
@@ -244,7 +277,7 @@ func (q TranscriptBodyQuery) Validate() error {
 	if (q.StopHook != nil) != (q.Source == TranscriptStopHooks) || q.StopHook != nil && q.StopHook.Validate() != nil {
 		return errors.New("invalid stop query binding")
 	}
-	if (q.Source == TranscriptPostHooks || q.Source == TranscriptStopHooks) && q.DetailSequence == 0 || q.Source != TranscriptPostHooks && q.Source != TranscriptStopHooks && q.DetailSequence != 0 {
+	if (q.Source == TranscriptPostHooks || q.Source == TranscriptPreHooks || q.Source == TranscriptStopHooks) && q.DetailSequence == 0 || q.Source != TranscriptPostHooks && q.Source != TranscriptPreHooks && q.Source != TranscriptStopHooks && q.DetailSequence != 0 {
 		return errors.New("invalid transcript detail sequence")
 	}
 	if !q.ThreadID.Valid() || !q.Cursor.Valid() || !q.Source.Valid() || q.Limit == 0 || q.Limit > 64<<10 {

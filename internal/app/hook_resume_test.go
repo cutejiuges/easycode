@@ -30,27 +30,36 @@ import (
 type appHookRunner struct {
 	runs     atomic.Int32
 	feedback bool
+	rewrite  bool
 }
 
 func (*appHookRunner) Preflight(context.Context) domain.HookCode { return domain.HookOK }
-func (r *appHookRunner) Run(_ context.Context, id domain.HookRunIdentity, _ domain.HookDeclaration, _ domain.HookInput, _ time.Duration) domain.HookExecution {
+func (r *appHookRunner) Run(_ context.Context, id domain.HookRunIdentity, _ domain.HookDeclaration, input domain.HookInput, _ time.Duration) domain.HookExecution {
 	r.runs.Add(1)
 	candidate := domain.HookFeedbackCandidate{}
 	if r.feedback && id.Event.Post() {
 		candidate, _ = domain.NewHookFeedbackCandidate("explicit check feedback")
 	}
-	return domain.HookExecution{Result: domain.HookRunResult{Identity: id, Status: domain.HookContinue, Code: domain.HookOK, ExitKnown: true, CleanupConfirmed: true, Origin: "execution"}, Feedback: candidate}
+	var replacement domain.HookInputReplacement
+	if r.rewrite && id.Event == domain.HookPreToolUse {
+		next, _ := domain.NewHookWriteInput("effective-marker", "changed")
+		replacement, _ = domain.NewHookInputReplacement(next, input.RewriteContext().Profile())
+	}
+	return domain.HookExecution{Replacement: replacement, Result: domain.HookRunResult{Identity: id, Status: domain.HookContinue, Code: domain.HookOK, ExitKnown: true, CleanupConfirmed: true, Origin: "execution"}, Feedback: candidate}
 }
 func TestHookResumeReconcilesEveryBatchBeforeLoadingNewSnapshot(t *testing.T) {
-	testHookResumeReconcilesEveryBatch(t, domain.HookPreToolUse)
+	testHookResumeReconcilesEveryBatch(t, domain.HookPreToolUse, false)
 }
 func TestPostHookResumeReconcilesEveryBatchBeforeLoadingNewSnapshot(t *testing.T) {
-	testHookResumeReconcilesEveryBatch(t, domain.HookPostToolUse)
+	testHookResumeReconcilesEveryBatch(t, domain.HookPostToolUse, false)
 }
 func TestFailureHookResumeReconcilesEveryBatchBeforeLoadingNewSnapshot(t *testing.T) {
-	testHookResumeReconcilesEveryBatch(t, domain.HookPostToolUseFailure)
+	testHookResumeReconcilesEveryBatch(t, domain.HookPostToolUseFailure, false)
 }
-func testHookResumeReconcilesEveryBatch(t *testing.T, event domain.HookEvent) {
+func TestPreInputRewriteResumeReconcilesEveryBatchBeforeLoadingNewSnapshot(t *testing.T) {
+	testHookResumeReconcilesEveryBatch(t, domain.HookPreToolUse, true)
+}
+func testHookResumeReconcilesEveryBatch(t *testing.T, event domain.HookEvent, rewrite bool) {
 	t.Helper()
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		t.Run(string(family), func(t *testing.T) {
@@ -102,7 +111,7 @@ func testHookResumeReconcilesEveryBatch(t *testing.T, event domain.HookEvent) {
 			defer server.Close()
 			cfg := config.Config{Provider: config.Provider{Family: family, Model: "fixture-model", BaseURL: server.URL, APIKey: secret.New("fixture-key")}}
 			root := filepath.Join(t.TempDir(), "sessions")
-			runner := &appHookRunner{feedback: event.Post()}
+			runner := &appHookRunner{feedback: event.Post(), rewrite: rewrite}
 			makeRunner := func(*builtin.Workspace, builtin.CommandEnvironment, builtin.HookOutputParser) (chatRuntime.HookRunner, error) {
 				return runner, nil
 			}
@@ -146,6 +155,15 @@ func testHookResumeReconcilesEveryBatch(t *testing.T, event domain.HookEvent) {
 			path, _ := resources.service.repository.JournalPath(thread)
 			if err := resources.close(context.Background()); err != nil {
 				t.Fatal(err)
+			}
+			if rewrite {
+				if _, err := os.Stat(filepath.Join(workspace, "marker")); !os.IsNotExist(err) {
+					t.Fatal("original write happened", err)
+				}
+				b, err := os.ReadFile(filepath.Join(workspace, "effective-marker"))
+				if err != nil || string(b) != "changed" {
+					t.Fatal("effective write missing", err)
+				}
 			}
 			baseline, err := os.ReadFile(path)
 			if err != nil {

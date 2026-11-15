@@ -26,6 +26,7 @@ NNNN-short-decision-title.md
 - [ADR-0007：完整验证后才修复 Session 尾部](0007-validate-before-journal-repair.md)
 - [ADR-0008：保留完整原生历史，以 durable checkpoint 切换有效窗口](0008-durable-context-checkpoints.md)
 - [ADR-0009：缓存策略与原生瞬态续写分离](0009-provider-cache-and-transient-continuation.md)
+- [ADR-0010：原始调用、检查候选与有效执行输入分别建模](0010-pre-tool-use-input-selection.md)
 
 ## 模板
 

@@ -82,6 +82,8 @@ Stop SHALL 仅按回合完成事件选择，不与任一工具能力匹配。每
 
 PostToolUse 的全部匹配声明 SHALL 在原工具候选准备及副作用前独立审查；审查明确成功后执行以及 feedback=model 的内容将发送给 Provider 并保存到 Session。前置信任不能授权后置事件，即使 shell 命令相同。拒绝或无交互信任 MUST 在原工具执行前失败关闭，不能先修改后再询问。
 
+PreToolUse 审查 SHALL 明确脚本可以在原 facade 匹配范围内提出三能力规范参数的完整替换，已接纳候选会作为必要事实保存，只有 gate 通过才选择工具有效参数；原调用结果按真实准入/恢复状态提供完整或有界短说明。该能力不授予普通工具权限、不恢复 grant、不允许审批中编辑。拒绝、headless 或未完成信任时不能接纳替换或启动对应脚本。
+
 #### Scenario: Trust one declaration
 - **WHEN** 用户信任一条合法请求，随后相同快照的另一 Hook 被匹配
 - **THEN** 另一 Hook 仍未信任，且普通 Patch/Write/Exec 审批均未因此授权
@@ -113,6 +115,10 @@ Stop SHALL 在本次成功无 calls sample 与计划已 Sync/finalize、输入�
 #### Scenario: Reject a tool response for a stop target
 - **WHEN** 用同一声明的旧 tool_call 响应回答 turn_stop 请求
 - **THEN** 授权和执行次数不变，不能把 TurnID 作为 invocation 接受
+
+#### Scenario: Review input replacement authority
+- **WHEN** 用户首次审查一个 PreToolUse 声明
+- **THEN** 可查看参数替换及保存/模型说明用途，Enter/Esc 仍默认拒绝，普通工具权限独立
 
 ### Requirement: Hook commands execute with explicit restricted lifecycle
 
@@ -157,27 +163,31 @@ Stop SHALL 复用同一只读/禁网执行和清理 owner，但具有同 turn �
 - **WHEN** 首次 Stop 消耗部分 30 秒额度，反馈后再次检查
 - **THEN** 只使用剩余额度，耗尽则零新执行且失败，不悄悄跳过检查宣告通过
 
-### Requirement: Hook wire uses a typed input and a strict denial subset
+### Requirement: Hook wire uses typed input and strict bounded control output
 
 PreToolUse stdin SHALL 是最多 512 KiB 的 UTF-8 JSON，含 PreToolUse 事件、session/thread/turn、tool_use_id、真实 tool_name、安全 cwd 和三分支 typed tool_input。Patch SHALL 包含 file_path 与有序 replacements 的 old_text/new_text/replace_all/line_based，Write 为 file_path/content，Exec 为 command/workdir/timeout_ms。不得发送 transcript 路径、完整历史、opaque reasoning 或凭据；超限以 hook_input_limit 阻断，不截断输入或启动进程。
 
-各事件 stdout/stderr SHALL 各最多捕获 16 KiB。PreToolUse exit 0 且 stdout 为空白或严格空对象表示继续；唯一非空支持输出为 hookSpecificOutput 中 hookEventName=PreToolUse、permissionDecision=deny 与非空且最多 4 KiB 的 UTF-8 permissionDecisionReason。在清理确认且 I/O 正常有界时，PreToolUse exit 2 SHALL 以 hook_denied 阻断且不解析 stdout JSON；PreToolUse 其他非零退出 SHALL 以 hook_exit_failed 阻断。PreToolUse exit 0 的 allow/ask、updatedInput、additionalContext、旧 decision shape、async、未知/重复字段、尾随值和非法 UTF-8 MUST 以 hook_output_invalid 阻断。
+各事件 stdout/stderr SHALL 各最多捕获 16 KiB。PreToolUse exit 0 且 stdout 为空白或严格空对象表示继续；非空输出 SHALL 仅接受两个互斥分支：hookSpecificOutput 中 hookEventName=PreToolUse、permissionDecision=deny 与非空且最多 4 KiB 的 UTF-8 permissionDecisionReason；或者同一 hookEventName 加唯一 updatedInput 完整规范参数对象，语义遵循 extension/pre-tool-use-input-rewrite。在清理确认且 I/O 正常有界时，PreToolUse exit 2 SHALL 以 hook_denied 阻断且不解析 stdout JSON；PreToolUse 其他非零退出 SHALL 以 hook_exit_failed 阻断。PreToolUse exit 0 的 allow/ask、additionalContext、旧 decision shape、async、未知/重复字段、尾随值和非法 UTF-8 MUST 以 hook_output_invalid 阻断。
 
 多原因同时出现时 MUST 按 cleanup 不确定、turn 取消、timeout、输出超限/I/O 失败、exit 2、其他非零、exit 0 输出解析的顺序选择唯一分类，不能因退出码 2 掩盖清理不确定或因截断后的 JSON 放行。
 
-原始 stdout/stderr/自由文本 reason MUST NOT 自动进入 Session、diagnostic、错误、模型 preview 或 artifact；只发布由宿主生成、最多 1 KiB 的检查身份与稳定 code 摘要。超过任一输出上限 MUST 清理进程并报告 hook_output_limit，不得将截断后恰好合法的 JSON 当作成功。该输入和输出 SHALL 声明为 EasyCode 支持子集，不承诺完整 Claude/Codex 脚本兼容。
+原始 stdout/stderr/自由文本 reason MUST NOT 自动进入 Session、diagnostic、错误、模型 preview 或 artifact。对未被严格接纳为必要执行参数的输出，仅发布宿主生成、最多 1 KiB 的检查身份与稳定 code 摘要；已接纳参数的说明另遵循 extension/pre-tool-use-input-rewrite 的封闭选择与预算规则。超过任一输出上限 MUST 清理进程并报告 hook_output_limit，不得将截断后恰好合法的 JSON 当作成功。该输入和输出 SHALL 声明为 EasyCode 支持子集，不承诺完整 Claude/Codex 脚本兼容。
 
 
 以上 permissionDecision/exit 2 阻断语义及后续阻断场景仅适用于 PreToolUse。PostToolUse exit 2 SHALL 为 error/hook_exit_failed，其 validator 必须接受已知 exit_code=2；Pre 的相同组合仍必须拒绝，不能为共享 parser 全局放宽。三个事件均按 cleanup 不确定、取消、实际超时、输出超限/I/O、普通退出与解析的优先级校验。未启动后缀使用独立 disposition，不伪造执行统计。PostToolUse SHALL 遵循 extension/post-tool-use 的独立成功后事件和结构化披露规则；只有显式 feedback=model、已信任且完整通过预算/身份验证的 additionalContext 可以成为冻结模型反馈。原始 stdout/stderr、未授权正文与执行错误仍 MUST NOT 被当成反馈保存或回显；PreToolUse 仍拒绝任何 additionalContext。
 
-PostToolUseFailure SHALL 使用 extension/post-tool-use-failure 定义的独立严格 stdin，而不是成功 tool_response。该事件与成功 Post 共享输出与披露约束，但 hookEventName 必须精确等于实际执行事件。PreToolUse 继续只支持 denial 子集；不得因共享解析器扩大其输出权限。失败检查 exit 2 只表示 hook_exit_failed，不自动重试、拦截或改写已保存原结果。
+PostToolUseFailure SHALL 使用 extension/post-tool-use-failure 定义的独立严格 stdin，而不是成功 tool_response。该事件与成功 Post 共享输出与披露约束，但 hookEventName 必须精确等于实际执行事件。PreToolUse 仅支持本条拒绝与完整参数替换子集；其他事件 MUST NOT 接受 updatedInput，不得因共享解析器扩大其输出权限。失败检查 exit 2 只表示 hook_exit_failed，不自动重试、拦截或改写已保存原结果。
+
+原始双流禁存规则不禁止已严格接纳的规范参数作为必要执行事实及冻结结果说明保存；该例外 SHALL 仅限实际三能力 typed input，不能保存整个 stdin、未知输出字段、reason 或 additionalContext。完整替换与 deny 混合、对象字段不完整或类型错误 MUST 使用 hook_output_invalid，目标工具零执行。
+
+updatedInput 的来源 profile、规范 16 KiB 大小及当前 finished 完整编码 SHALL 在 effect 接纳前核验；原始流计数不替代规范大小，HTML/Unicode 转义不能扩大持久化额度。本文的替换子集 SHALL 明确区别于 Claude 并行共享输入及 Codex allow+updatedInput 的 wire 规则，不按同名字段声称脚本可直接通用，也不自动接受 allow/ask。
 
 #### Scenario: Continue with empty output
 - **WHEN** exit 0 且 stdout 只有空白或为一个严格空对象
 - **THEN** 当前 Hook 继续，但不授予普通工具执行权限
 
 #### Scenario: Reject unsupported approval output
-- **WHEN** PreToolUse stdout 含 permissionDecision=allow、updatedInput 或 additionalContext
+- **WHEN** PreToolUse stdout 含 permissionDecision=allow/ask 或 additionalContext
 - **THEN** 当前调用以 hook_output_invalid 阻断，没有参数改写或工具自动批准
 
 #### Scenario: Do not persist secret-looking output
@@ -198,10 +208,18 @@ PostToolUseFailure SHALL 使用 extension/post-tool-use-failure 定义的独立�
 
 #### Scenario: Validate all three events independently
 - **WHEN** 相同退出码 2 或带 additionalContext 的 stdout 分别用于三个事件
-- **THEN** Pre 保持原 deny/拒绝正文规则，两个 Post 只按各自事件接收显式 model 内容，非零退出均为检查失败
+- **THEN** Pre 保持 deny/拒绝自由文本反馈规则，两个 Post 只按各自事件接收显式 model 内容，非零退出均为检查失败
 
 本条三个工具事件 wire 约束 SHALL 保持事件隔离；Stop 输入/输出仅按 extension/stop-hooks 校验。Stop 的结构化 block 不能放宽 Pre 的 additionalContext 拒绝，也不能把两个 Post 的 exit 2 重分类为阻断。只有已信任 Stop 的显式 model reason 可成为独立冻结反馈；原始双流和未授权 reason 仍不得持久化或展示。
 
 #### Scenario: Keep all four parsers independent
 - **WHEN** 同一 stdout JSON/退出码用于四事件
 - **THEN** 各按实际事件严格验证，不以新增 Stop block 规则改变现有三事件结果
+
+#### Scenario: Accept a bounded standalone replacement
+- **WHEN** 已信任 Pre 正常 exit 0，仅返回正确事件和同能力完整 updatedInput，全部输入/输出边界合法
+- **THEN** 参数进入严格验证与 durable 接纳路径，尚不表示原工具已获批准或执行
+
+#### Scenario: Reject control output in another event
+- **WHEN** PostToolUse、PostToolUseFailure 或 Stop 输出 updatedInput，或 Pre 将 deny 与替换混用
+- **THEN** 按真实事件拒绝非法输出，不改写参数或扩大其他事件权限

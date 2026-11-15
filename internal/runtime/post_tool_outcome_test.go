@@ -85,6 +85,7 @@ func TestPostChecksNeverRunForUnsuccessfulMutationOutcomes(t *testing.T) {
 						r.execPreparer = postFailedExecPreparation{}
 					}
 				}
+				resetRuntimeReadyFixture(t, r, runtimeTurnID, inv)
 				approval := tool.ApprovalAllowOnce
 				if mode == "denied" {
 					approval = tool.ApprovalDeny

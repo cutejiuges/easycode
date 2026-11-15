@@ -66,7 +66,7 @@ func runCacheImmutableExecFixtureRestoresRealProviderNativePairs(t *testing.T, c
 				t.Fatal(err)
 			}
 			defer factory.Close()
-			commits, err := nativeRestoreRecords(plan.NativeCommits)
+			commits, err := orderedRestoreRecords(plan)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -85,7 +85,7 @@ func runCacheImmutableExecFixtureRestoresRealProviderNativePairs(t *testing.T, c
 			if !ok {
 				t.Fatal("restored Provider has no tool result codec")
 			}
-			prepared, err := preparer.PrepareToolOutputs(testModelOutputs(t, result))
+			prepared, err := preparer.PrepareToolOutputs(testModelOutputs(t, call, result))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -99,7 +99,7 @@ func runCacheImmutableExecFixtureRestoresRealProviderNativePairs(t *testing.T, c
 			if err := prepared.Finalize(); err != nil {
 				t.Fatal(err)
 			}
-			outputRecord, err := provider.NewToolOutputRestoreRecord(plan.ToolRecovery.TurnID(), envelope, testModelOutputs(t, result))
+			outputRecord, err := provider.NewToolOutputRestoreRecord(plan.ToolRecovery.TurnID(), envelope, testModelOutputs(t, call, result))
 			if err != nil {
 				t.Fatal(err)
 			}

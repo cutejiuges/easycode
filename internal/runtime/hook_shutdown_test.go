@@ -44,14 +44,16 @@ func TestHookShutdownRetainsTurnUntilRunnerCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	reviewed := false
 	for e := range events {
 		if e.Kind == protocol.EventHookTrustRequested {
+			reviewed = true
 			p, _ := protocol.DecodeHookTrustRequested(e)
 			if err := facade.ResolveHookTrust(context.Background(), e.TurnID, p, protocol.HookTrustSession); err != nil {
 				t.Fatal(err)
 			}
 		}
-		if e.Kind == protocol.EventHookActivity {
+		if e.Kind == protocol.EventHookActivity && reviewed {
 			break
 		}
 		if e.Kind == protocol.EventToolStarted || e.Kind == protocol.EventToolApprovalRequested {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"easycode/internal/codec"
+	"easycode/internal/domain"
 	"easycode/internal/provider"
 	"easycode/internal/tool"
 )
@@ -13,6 +14,21 @@ func encodeToolResult(call NativeItem, output tool.ModelOutput) (NativeItem, err
 		return NativeItem{}, fmt.Errorf("invalid model tool output")
 	}
 	result := output.Result()
+	original := output.Evidence().Selection().Original()
+	wire := tool.WireStructured
+	arguments := []byte(call.Arguments)
+	if call.Type == "custom_tool_call" {
+		wire = tool.WireCustomFreeform
+		arguments = []byte(call.Input)
+	}
+	if err := tool.ValidateNativeCallInput(original, domain.ProviderOpenAI, call.Name, tool.ProviderCallID(call.CallID), wire, arguments); err != nil {
+		return NativeItem{}, err
+	}
+	return encodeToolResultData(call, result, output.Text())
+}
+
+// encodeToolResultData 是纯 wire 编码，也供已验证提问事实的离线正文比对复用。
+func encodeToolResultData(call NativeItem, result tool.InvocationResult, text string) (NativeItem, error) {
 	if err := tool.ValidateFrozenResult(result); err != nil {
 		return NativeItem{}, fmt.Errorf("invalid OpenAI tool result")
 	}
@@ -36,7 +52,7 @@ func encodeToolResult(call NativeItem, output tool.ModelOutput) (NativeItem, err
 			}
 		}
 	}
-	b, err := codec.MarshalStable(functionOutputPayload{Status: result.Status(), Code: result.Code(), Content: output.Text()})
+	b, err := codec.MarshalStable(functionOutputPayload{Status: result.Status(), Code: result.Code(), Content: text})
 	if err != nil {
 		return NativeItem{}, fmt.Errorf("encode OpenAI tool output failed")
 	}

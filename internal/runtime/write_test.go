@@ -125,7 +125,7 @@ func TestWriteGrantAndExecutionRespectEveryDurableBoundary(t *testing.T) {
 					t.Error("Write grant 缺失或扩大到 Patch")
 				}
 			}
-			results, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, []tool.Invocation{invocation}, approveWrite(t, runtime, tool.ApprovalAllowSession))
+			results, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, []tool.Invocation{invocation}, approveWrite(t, runtime, tool.ApprovalAllowSession))
 			if (err != nil) != (failAt != 0) {
 				t.Fatalf("durability 失败结果错误 %v", err)
 			}
@@ -152,20 +152,20 @@ func TestWriteGrantIsIndependentAndHeadlessFailsClosed(t *testing.T) {
 	runtime := writeTestRuntime(t, &fakeJournal{}, c, executor)
 	runtime.approvals.patchGrant.Store(true)
 	runtime.interactiveApprovals = false
-	results, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, []tool.Invocation{invocation})
+	results, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, []tool.Invocation{invocation})
 	if err != nil || results[0].Code() != "approval_required" || executor.calls != 0 {
 		t.Fatal("Patch grant 授权了 Write", err)
 	}
 	runtime.interactiveApprovals = true
 	invocation, c = runtimeWriteInvocation(t)
 	runtime.writePreparer = &fixedWritePreparer{candidate: c}
-	if _, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, []tool.Invocation{invocation}, approveWrite(t, runtime, tool.ApprovalAllowSession)); err != nil {
+	if _, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, []tool.Invocation{invocation}, approveWrite(t, runtime, tool.ApprovalAllowSession)); err != nil {
 		t.Fatal(err)
 	}
 	runtime.interactiveApprovals = false
 	invocation, c = runtimeWriteInvocation(t)
 	runtime.writePreparer = &fixedWritePreparer{candidate: c}
-	if _, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, []tool.Invocation{invocation}, func(event protocol.Event) {
+	if _, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, []tool.Invocation{invocation}, func(event protocol.Event) {
 		if event.Kind == protocol.EventToolApprovalRequested {
 			t.Fatal("已有 Write grant 仍发出请求")
 		}
@@ -201,7 +201,7 @@ func TestWriteAcceptedStartedCallsExecutorOnceEvenAfterCancellation(t *testing.T
 					cancel()
 				}
 			}
-			results, err := runtime.executeToolCalls(ctx, runtimeTurnID, []tool.Invocation{invocation})
+			results, err := executeReadyFixtureCalls(t, runtime, ctx, runtimeTurnID, []tool.Invocation{invocation})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -229,7 +229,7 @@ func TestWriteUncertainStopsSiblingsButPersistsFrozenOutput(t *testing.T) {
 	reader := &recordingReadExecutor{}
 	runtime.readExecutor = reader
 	read := testRuntimeInvocations(t, 1)[0]
-	results, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, []tool.Invocation{invocation, read})
+	results, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, []tool.Invocation{invocation, read})
 	if err == nil || len(results) != 2 || !runtime.poisoned.Load() || reader.calls.Load() != 0 || results[0].Status() != tool.ResultOutcomeUncertain || results[1].Status() != tool.ResultCancelled {
 		t.Fatal("uncertain 未停止后续执行", err)
 	}
@@ -249,7 +249,7 @@ func TestWriteRecoveryNeverCallsPreparerOrExecutor(t *testing.T) {
 			}
 			t.Run(string(state)+fmt.Sprint(approved), func(t *testing.T) {
 				invocation, c := runtimeWriteInvocation(t)
-				call := session.ReplayedToolCall{Invocation: invocation, State: state, ReadySequence: 2}
+				call := session.ReplayedToolCall{Origin: runtimeFixtureOrigin(t, 0, 0), Invocation: invocation, State: state, ReadySequence: 2}
 				if approved {
 					call.ApprovalSequence = 3
 					call.ApprovalOutcome = tool.ApprovalOutcomeAllowSession

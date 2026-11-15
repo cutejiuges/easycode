@@ -103,7 +103,10 @@ func postProviderOutputAtCut(t *testing.T, result tool.InvocationResult, cut str
 		}
 		feedback.BudgetDelta = len(text)
 	}
-	output, err := tool.NewPostModelOutput(result, selection, []domain.FrozenHookFeedback{feedback})
+	_, native := postProviderFixture(t, domain.HookCapability(result.Capability()))
+	original := testNativeInvocation(t, native, result.InvocationID(), result.ProviderCallID())
+	direct := testDirectModelOutput(t, original, result, admission)
+	output, err := tool.NewPostModelOutput(result, direct.Evidence(), selection, []domain.FrozenHookFeedback{feedback})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +188,7 @@ func testPostOutputGoldenRestore(t *testing.T, failed bool, cut string) {
 			if before != after || !bytes.Contains(second.Bytes(), []byte("opaque-post")) {
 				t.Fatal("post restore changed fingerprint/order/opaque evidence")
 			}
-			plain, err := tool.NewModelOutput(result)
+			plain, err := tool.NewModelOutput(result, output.Evidence())
 			if err != nil || plain.Text() != result.Preview().Text() || output.Result().Status() != result.Status() || !(strings.Contains(output.Text(), "Read-only check:") || cut == "cancelled" && strings.Contains(output.Text(), "cancelled")) {
 				t.Fatal("composition rewrote result", err)
 			}

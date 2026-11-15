@@ -117,7 +117,7 @@ func TestArtifactSchedulerBoundsWorkersAndPreservesResultOrder(t *testing.T) {
 			defer cancel()
 			done := make(chan error, 1)
 			go func() {
-				_, err := runtime.executeToolCalls(ctx, domain.TurnID("018f1d8a-7b5c-7def-8123-456789abcdef"), invocations)
+				_, err := executeReadyFixtureCalls(t, runtime, ctx, domain.TurnID("018f1d8a-7b5c-7def-8123-456789abcdef"), invocations)
 				done <- err
 			}()
 			for i := 0; i < maxParallelReadWorkers; i++ {

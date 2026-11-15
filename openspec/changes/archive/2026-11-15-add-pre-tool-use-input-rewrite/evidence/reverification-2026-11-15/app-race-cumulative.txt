@@ -1,0 +1,53 @@
+File: easycode-rewrite-reverify-race.test
+Type: cpu
+Time: 2026-11-15 16:20:53 CST
+Duration: 855.87s, Total samples = 1291.42s (150.89%)
+Showing nodes accounting for 888.68s, 68.81% of 1291.42s total
+Dropped 2292 nodes (cum <= 6.46s)
+Showing top 45 nodes out of 162
+      flat  flat%   sum%        cum   cum%
+     0.10s 0.0077% 0.0077%    470.43s 36.43%  runtime.systemstack
+         0     0% 0.0077%    287.55s 22.27%  runtime._System
+     0.16s 0.012%  0.02%    198.14s 15.34%  runtime.preemptM
+   197.83s 15.32% 15.34%    197.83s 15.32%  runtime.pthread_kill
+     0.05s 0.0039% 15.34%    194.63s 15.07%  runtime.preemptone
+     5.79s  0.45% 15.79%    193.72s 15.00%  runtime.lock2
+   188.23s 14.58% 30.37%    188.32s 14.58%  runtime.usleep
+     0.09s 0.007% 30.37%    163.32s 12.65%  runtime.gcBgMarkWorker.func2
+     5.21s   0.4% 30.78%    162.96s 12.62%  runtime.gcDrain
+   162.25s 12.56% 43.34%    162.26s 12.56%  runtime.madvise
+     0.07s 0.0054% 43.35%    156.12s 12.09%  runtime.(*mheap).allocSpan
+   153.46s 11.88% 55.23%    153.46s 11.88%  runtime._ExternalCode
+     0.01s 0.00077% 55.23%    151.16s 11.70%  runtime.(*mheap).alloc.func1
+     0.35s 0.027% 55.26%    146.19s 11.32%  runtime.goschedImpl
+     0.22s 0.017% 55.27%    143.68s 11.13%  runtime.newstack
+         0     0% 55.27%    142.80s 11.06%  runtime.morestack
+     0.58s 0.045% 55.32%    123.05s  9.53%  runtime.gcBgMarkWorker
+     0.28s 0.022% 55.34%    121.14s  9.38%  runtime.schedule
+     0.02s 0.0015% 55.34%    119.04s  9.22%  runtime.mcall
+     0.18s 0.014% 55.36%    114.01s  8.83%  runtime.park_m
+     0.03s 0.0023% 55.36%    108.82s  8.43%  runtime.forEachPInternal
+     0.01s 0.00077% 55.36%    105.68s  8.18%  runtime.gcMarkTermination.forEachP.func6
+         0     0% 55.36%    104.59s  8.10%  runtime.preemptall
+     1.04s 0.081% 55.44%    103.84s  8.04%  runtime.findRunnable
+     0.22s 0.017% 55.46%     95.80s  7.42%  runtime.(*gcWork).balance
+     0.50s 0.039% 55.50%     90.54s  7.01%  runtime.(*gcControllerState).enlistWorker
+     0.01s 0.00077% 55.50%     72.94s  5.65%  runtime.semasleep
+     0.01s 0.00077% 55.50%     71.12s  5.51%  runtime.stopm
+    69.31s  5.37% 60.86%     69.31s  5.37%  runtime.pthread_cond_wait
+     7.30s  0.57% 61.43%     68.33s  5.29%  runtime.bgsweep
+     0.01s 0.00077% 61.43%     66.28s  5.13%  runtime.notesleep
+         0     0% 61.43%        65s  5.03%  testing.tRunner
+    21.20s  1.64% 63.07%     55.55s  4.30%  runtime.scanobject
+         0     0% 63.07%     53.70s  4.16%  runtime.gcMarkDone
+         0     0% 63.07%     53.61s  4.15%  runtime.gcMarkTermination
+         0     0% 63.07%     52.98s  4.10%  runtime.mProf_Flush
+    31.75s  2.46% 65.53%     52.96s  4.10%  runtime.mProf_FlushLocked
+     0.20s 0.015% 65.55%     50.01s  3.87%  encoding/json.(*Decoder).Decode
+         0     0% 65.55%     47.52s  3.68%  easycode/internal/codec.UnmarshalRecord
+         0     0% 65.55%     43.74s  3.39%  easycode/internal/runtime.(*Runtime).runTurn
+         0     0% 65.55%     43.74s  3.39%  easycode/internal/runtime.(*agentLoopRunState).startTurn.func1
+     0.01s 0.00077% 65.55%     43.63s  3.38%  easycode/internal/codec.ObjectMembers
+     0.09s 0.007% 65.55%     42.13s  3.26%  easycode/internal/codec.ValidateObjectFields
+    42.07s  3.26% 68.81%     42.07s  3.26%  __tsan::MemoryRangeSet
+     0.04s 0.0031% 68.81%        40s  3.10%  easycode/internal/codec.validateRecordShape

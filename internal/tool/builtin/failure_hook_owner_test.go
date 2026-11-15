@@ -52,7 +52,7 @@ func TestFailureHookRunnerRetainsOwnerAcrossDeterministicFaults(t *testing.T) {
 			}
 			launcher := &failureHookLauncher{handle: ownerHandle{handle: h, input: stdin}}
 			clock := &fakeProcessClock{timers: make(chan *fakeProcessTimer, 8)}
-			runner := &HookRunner{launcher: launcher, clock: ownerClock{clock}, parse: func(domain.HookEvent, domain.HookFeedbackPolicy, int, []byte) domain.HookParsedOutput {
+			runner := &HookRunner{launcher: launcher, clock: ownerClock{clock}, parse: func(domain.HookEvent, domain.HookFeedbackPolicy, int, []byte, domain.HookRewriteContext) domain.HookParsedOutput {
 				t.Error("fault reached output parser")
 				return domain.HookParsedOutput{}
 			}}

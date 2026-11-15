@@ -109,8 +109,13 @@ func (model Model) receiveMainTranscript(reply mainTranscriptReply) (tea.Model, 
 		case domain.TranscriptAssistant:
 			message.role = "Assistant"
 		case domain.TranscriptCall:
+			message.admitted = item.ExecutionAdmitted
 			activity := item.Activity
 			message.activity = &activity
+			if item.PreHook != nil {
+				summary := *item.PreHook
+				message.hook = &summary
+			}
 			if item.PostHook != nil {
 				summary := *item.PostHook
 				message.hook = &summary

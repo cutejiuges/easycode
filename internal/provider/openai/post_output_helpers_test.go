@@ -1,26 +1,68 @@
 package openai
 
 import (
+	"easycode/internal/domain"
 	"easycode/internal/tool"
 	"testing"
 )
 
-func testModelOutputs(t *testing.T, results ...tool.InvocationResult) []tool.ModelOutput {
+func testDirectModelOutput(t *testing.T, invocation tool.Invocation, result tool.InvocationResult, admission tool.ExecutionAdmission) tool.ModelOutput {
 	t.Helper()
+	const id = "01900000-0000-7000-8000-000000000001"
+	origin, err := tool.NewToolCallOrigin(domain.SessionID(id), domain.ThreadID(id), domain.TurnID(id), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection, err := tool.NewUnhookedInputSelection(origin, invocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := tool.NewInputResultEvidence(selection, admission, tool.InputResultExecution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := tool.NewModelOutput(result, evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return output
+}
+func testNativeInvocation(t *testing.T, item NativeItem, id tool.InvocationID, callID tool.ProviderCallID) tool.Invocation {
+	t.Helper()
+	arguments := []byte(item.Arguments)
+	if item.Type == "custom_tool_call" {
+		arguments = []byte(item.Input)
+	}
+	ready, err := testOpenAIToolCatalog(t).DecodeReadyCall(domain.ProviderOpenAI, item.Name, callID, arguments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invocation, err := tool.NewInvocation(id, ready)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return invocation
+}
+func testModelOutputs(t *testing.T, history []nativeHistoryEntry, results ...tool.InvocationResult) []tool.ModelOutput {
+	t.Helper()
+	calls, err := pendingFunctionCalls(history)
+	if err != nil {
+		t.Fatal(err)
+	}
 	out := make([]tool.ModelOutput, len(results))
 	for i, result := range results {
-		v, err := tool.NewModelOutput(result)
-		if err != nil {
-			t.Fatal(err)
+		if i >= len(calls) {
+			t.Fatal("missing native fixture input")
 		}
-		out[i] = v
+		invocation := testNativeInvocation(t, calls[i], result.InvocationID(), result.ProviderCallID())
+		out[i] = testDirectModelOutput(t, invocation, result, tool.ExecutionAdmission{})
 	}
 	return out
 }
 
 func testReadOutput(t *testing.T, call, path, text string) tool.ModelOutput {
 	t.Helper()
-	input, err := tool.NewReadInput(path, 1, 20)
+	input, err := tool.NewReadInput(path, 1, 2000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,12 +87,16 @@ func testReadOutput(t *testing.T, call, path, text string) tool.ModelOutput {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return testModelOutputs(t, result)[0]
+	invocation, err := tool.NewInvocation(id, ready)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return testDirectModelOutput(t, invocation, result, tool.ExecutionAdmission{})
 }
 func testRestoreFixtureOutputs(t *testing.T, prefix string, wire tool.ProviderWireKind) [][]tool.ModelOutput {
 	t.Helper()
 	id, _ := tool.ParseInvocationID("018f1d8a-7b5c-7def-8abc-456789abcdef")
-	globInput, _ := tool.NewGlobInput("**/*.go", "", 10)
+	globInput, _ := tool.DecodeGlobInput([]byte(`{"pattern":"**/*.go"}`))
 	globReady, _ := tool.NewGlobReadyCall(tool.ProviderCallID(prefix+"glob"), globInput)
 	globInv, _ := tool.NewGlobInvocation(id, globReady)
 	globMeta, _ := tool.NewGlobResultMetadata(nil, false, 0, 0, tool.SearchComplete, tool.SearchSkipCounts{})
@@ -59,7 +105,7 @@ func testRestoreFixtureOutputs(t *testing.T, prefix string, wire tool.ProviderWi
 	if err != nil {
 		t.Fatal(err)
 	}
-	grepInput, _ := tool.NewGrepInput("TODO", "", "", tool.GrepOutputFilesWithMatches, false, 0, 0, 10)
+	grepInput, _ := tool.DecodeGrepInput([]byte(`{"pattern":"TODO"}`))
 	grepReady, _ := tool.NewGrepReadyCall(tool.ProviderCallID(prefix+"grep"), grepInput)
 	grepInv, _ := tool.NewGrepInvocation(id, grepReady)
 	grepMeta, _ := tool.NewGrepResultMetadata(tool.GrepOutputFilesWithMatches, nil, 0, false, 0, 0, 0, 0, tool.SearchComplete, tool.SearchSkipCounts{})
@@ -69,6 +115,9 @@ func testRestoreFixtureOutputs(t *testing.T, prefix string, wire tool.ProviderWi
 		t.Fatal(err)
 	}
 	replacement, _ := tool.NewPatchReplacement("old", "new", false)
+	if wire == tool.WireCustomFreeform {
+		replacement, _ = tool.NewPatchLineReplacement([]string{"old"}, []string{"new"})
+	}
 	patchInput, _ := tool.NewPatchInput("main.go", []tool.PatchReplacement{replacement})
 	patchReady, _ := tool.NewPatchReadyCall(tool.ProviderCallID(prefix+"edit"), wire, patchInput)
 	patchInv, _ := tool.NewPatchInvocation(id, patchReady)
@@ -88,5 +137,9 @@ func testRestoreFixtureOutputs(t *testing.T, prefix string, wire tool.ProviderWi
 		t.Fatal(err)
 	}
 	read := testReadOutput(t, prefix+"read", "README.md", "frozen read")
-	return [][]tool.ModelOutput{append(testModelOutputs(t, glob, grep), read), testModelOutputs(t, patch), testModelOutputs(t, write)}
+	globInvocation, _ := tool.NewInvocation(id, globReady)
+	grepInvocation, _ := tool.NewInvocation(id, grepReady)
+	patchInvocation, _ := tool.NewInvocation(id, patchReady)
+	writeInvocation, _ := tool.NewInvocation(id, writeReady)
+	return [][]tool.ModelOutput{{testDirectModelOutput(t, globInvocation, glob, tool.ExecutionAdmission{}), testDirectModelOutput(t, grepInvocation, grep, tool.ExecutionAdmission{}), read}, {testDirectModelOutput(t, patchInvocation, patch, tool.ExecutionAdmission{})}, {testDirectModelOutput(t, writeInvocation, write, tool.ExecutionAdmission{})}}
 }

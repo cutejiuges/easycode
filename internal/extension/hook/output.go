@@ -17,34 +17,60 @@ type hookOutput struct {
 	} `json:"hookSpecificOutput"`
 }
 
-// ParseOutput 只返回安全分类；脚本输出和自由文本原因不越过此边界。
-func ParseOutput(exit int, stdout []byte) (domain.HookOutcome, domain.HookCode) {
+// ParseOutput 只返回封闭候选与安全分类，原始输出和自由文本原因不越过此边界。
+func ParseOutput(exit int, stdout []byte, context domain.HookRewriteContext) domain.HookParsedOutput {
+	result := domain.HookParsedOutput{Status: domain.HookError, Code: domain.HookOutputInvalid}
 	if len(stdout) > domain.MaxHookOutputBytes {
-		return domain.HookError, domain.HookOutputLimit
+		result.Code = domain.HookOutputLimit
+		return result
 	}
 	if exit == 2 {
-		return domain.HookBlock, domain.HookDenied
+		result.Status, result.Code = domain.HookBlock, domain.HookDenied
+		return result
 	}
 	if exit != 0 {
-		return domain.HookError, domain.HookExitFailed
+		result.Code = domain.HookExitFailed
+		return result
 	}
 	if !utf8.Valid(stdout) {
-		return domain.HookError, domain.HookOutputInvalid
+		return result
 	}
 	stdout = bytes.TrimSpace(stdout)
 	if len(stdout) == 0 {
-		return domain.HookContinue, domain.HookOK
+		result.Status, result.Code = domain.HookContinue, domain.HookOK
+		return result
 	}
 	m, err := codec.ObjectMembers(stdout)
 	if err != nil {
-		return domain.HookError, domain.HookOutputInvalid
+		return result
 	}
 	if len(m) == 0 {
-		return domain.HookContinue, domain.HookOK
+		result.Status, result.Code = domain.HookContinue, domain.HookOK
+		return result
+	}
+	if len(m) != 1 {
+		return result
+	}
+	specific, err := codec.ObjectMembers(m["hookSpecificOutput"])
+	if err != nil {
+		return result
+	}
+	if raw, present := specific["updatedInput"]; present {
+		var event string
+		if len(specific) != 2 || codec.UnmarshalRecord(specific["hookEventName"], &event) != nil || event != "PreToolUse" {
+			return result
+		}
+		replacement, err := domain.DecodeHookReplacement(context, raw)
+		if err != nil {
+			return result
+		}
+		result.Status, result.Code, result.Replacement = domain.HookContinue, domain.HookOK, replacement
+		return result
 	}
 	var out hookOutput
 	if codec.UnmarshalRecord(stdout, &out) != nil || out.Specific.Event != "PreToolUse" || out.Specific.Decision != "deny" || strings.TrimSpace(out.Specific.Reason) == "" || len(out.Specific.Reason) > 4096 {
-		return domain.HookError, domain.HookOutputInvalid
+		return result
 	}
-	return domain.HookBlock, domain.HookDenied
+	result.Status, result.Code = domain.HookBlock, domain.HookDenied
+	return result
 }

@@ -40,6 +40,8 @@ func TestArtifactAuthorizationFollowsDurableResult(t *testing.T) {
 			journal.failAt = 1
 		}
 		runtime := &Runtime{threadID: thread, journal: journal, artifactReferences: refs}
+		full, _ := tool.NewInvocation(id, ready)
+		seedRuntimeToolCall(t, runtime, turn, full, 0, 0)
 		err := runtime.persistToolResult(context.Background(), turn, &result)
 		_, exists := refs.Lookup(d.ID())
 		if fail {
@@ -54,6 +56,8 @@ func TestArtifactAuthorizationFollowsDurableResult(t *testing.T) {
 	refs, _ := tool.NewArtifactReferences(wrongThread, nil)
 	journal := &fakeJournal{}
 	runtime := &Runtime{threadID: wrongThread, journal: journal, artifactReferences: refs}
+	full, _ := tool.NewInvocation(id, ready)
+	seedRuntimeToolCall(t, runtime, turn, full, 0, 0)
 	if err := runtime.persistToolResult(context.Background(), turn, &result); err == nil || len(journal.snapshot()) != 0 {
 		t.Fatal("foreign descriptor reached journal")
 	}
@@ -93,6 +97,8 @@ func TestArtifactPageRequiresCommittedReferenceBeforeJournal(t *testing.T) {
 			}
 			journal := &fakeJournal{}
 			runtime := &Runtime{threadID: thread, journal: journal, artifactReferences: refs}
+			full, _ := tool.NewInvocation(id, ready)
+			seedRuntimeToolCall(t, runtime, turn, full, 0, 0)
 			err = runtime.persistToolResult(context.Background(), turn, &result)
 			if test.wantOK {
 				if err != nil || len(journal.snapshot()) != 1 {
@@ -128,6 +134,8 @@ func TestSearchReferenceAuthorizedOnlyAfterResultSync(t *testing.T) {
 				journal.failAt = 1
 			}
 			runtime := &Runtime{threadID: thread, journal: journal, artifactReferences: refs}
+			full, _ := tool.NewInvocation(id, call)
+			seedRuntimeToolCall(t, runtime, runtimeTurnID, full, 0, 0)
 			if _, ok := refs.Lookup(descriptor.ID()); ok {
 				t.Fatal("reference authorized before result")
 			}

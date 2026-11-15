@@ -255,7 +255,7 @@ func (r *Runtime) runStopCheck(ctx context.Context, emit Emitter, check *stopChe
 		execution := check.runner.Run(ctx, id, declaration, input, min(budget.remaining, time.Duration(declaration.Reference.TimeoutSeconds)*time.Second))
 		budget.remaining -= max(0, check.now().Sub(start))
 		result := execution.Result
-		if _, err := domain.NewHookExecution(result, declaration.Reference.Feedback, execution.Feedback); err != nil || result.Identity != id || result.Origin != "execution" {
+		if _, err := domain.NewHookExecution(result, declaration.Reference.Feedback, execution.Feedback, execution.Replacement); err != nil || result.Identity != id || result.Origin != "execution" {
 			result = domain.HookRunResult{Identity: id, Status: domain.HookUncertain, Code: domain.HookOutcomeUncertain, Origin: "execution"}
 			execution.Feedback = domain.HookFeedbackCandidate{}
 		}

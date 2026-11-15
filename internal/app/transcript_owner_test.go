@@ -56,7 +56,10 @@ func queryTestEntry(t *testing.T, thread domain.ThreadID, sequence uint64) sessi
 	if err != nil {
 		t.Fatal(err)
 	}
-	return session.ToolHistoryEntry{Sequence: sequence * 2, NativeSequence: sequence*2 - 1, TurnID: domain.TurnID("018f1d8a-7b5c-7def-8123-456789abcdea"), SampleIndex: uint32(sequence - 1), Invocation: invocation, Result: result, HasResult: true}
+	turn := domain.TurnID("018f1d8a-7b5c-7def-8123-456789abcdea")
+	origin, _ := tool.NewToolCallOrigin(domain.SessionID("018f1d8a-7b5c-7def-8123-456789abcde9"), thread, turn, uint32(sequence-1), 0)
+	admission, _ := tool.NewExecutionAdmission(id, sequence*2+1)
+	return session.ToolHistoryEntry{Origin: origin, Admission: admission, Sequence: sequence * 2, NativeSequence: sequence*2 - 1, TurnID: turn, SampleIndex: uint32(sequence - 1), Invocation: invocation, Result: result, HasResult: true}
 }
 
 func TestCommandQueryCursorAndIsolation(t *testing.T) {
@@ -80,10 +83,24 @@ func TestCommandQueryCursorAndIsolation(t *testing.T) {
 	ready := newEntry
 	ready.HasResult = false
 	ready.Result = tool.InvocationResult{}
+	ready.Admission = tool.ExecutionAdmission{}
 	if err := q.NativeCommitted(newEntry.NativeSequence, []session.ToolHistoryEntry{ready}); err != nil {
 		t.Fatal(err)
 	}
-	q.ToolResult(newEntry.Result)
+	if err := q.ToolStarted(newEntry.Invocation.InvocationID(), newEntry.Admission); err != nil {
+		t.Fatal(err)
+	}
+	selection, err := tool.NewUnhookedInputSelection(newEntry.Origin, newEntry.Invocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := tool.NewInputResultEvidence(selection, newEntry.Admission, tool.InputResultExecution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := q.ToolResult(newEntry.Result, evidence); err != nil {
+		t.Fatal(err)
+	}
 	older, err := q.ListTranscript(context.Background(), protocol.TranscriptListQuery{Mode: protocol.TranscriptDetail, ThreadID: thread, Before: page.NextBefore, Limit: 50})
 	if err != nil || len(older.Items) != 3 || older.Items[0].Cursor.Sequence != 5 || older.NextBefore.Valid() {
 		t.Fatalf("stable cursor: %+v %v", older, err)

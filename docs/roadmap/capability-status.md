@@ -1,6 +1,6 @@
 # 当前能力与实现边界
 
-> 核对日期：2026-11-13。基线：当前仓库实现及已同步主规格，包含本地 Plugin 技能包、启动推理控制及本轮回归修复、结构化用户提问、PreToolUse/PostToolUse/PostToolUseFailure/Stop Hook、命令/Skill 首词补全与已验收归档的双 Provider 被动推理阅读。
+> 核对日期：2026-11-15。基线：当前仓库实现及已同步主规格，包含本地 Plugin 技能包、启动推理控制及本轮回归修复、结构化用户提问、PreToolUse/PostToolUse/PostToolUseFailure/Stop Hook、命令/Skill 首词补全与已验收归档的双 Provider 被动推理阅读。
 > 本文记录当前代码可执行的能力；[产品 Roadmap](product-roadmap.md)保留阶段目标与剩余工作。已接受的 ADR 和归档 change 记录各自当时的决策，不能单独作为现有功能清单。
 
 ## 用户入口
@@ -32,7 +32,7 @@
 
 九项工具共享原生 call/output 配对、结果预算和恢复。连续只读批次最多 8 路；Patch/Write/Exec/Question 为独占屏障，只有前三项需要普通副作用批准。验证入口包括 `internal/tool/builtin/specs_test.go`、`internal/app/question_workflow_darwin_test.go` 与 `internal/app/hook_e2e_darwin_test.go`。
 
-PreToolUse Hook 是三项 mutation 的前置门禁，**不是第十项模型工具**。它读取 user/project 冻结严格 JSON、逐项默认拒绝的内存信任，并在候选和普通批准前执行；Darwin 只读工作区、禁网，每项默认 5 秒/最大 30 秒，每调用总执行预算 30 秒，stdin 最大 512 KiB、双输出各 16 KiB。headless 匹配项返回 `hook_trust_required`，无匹配沿用普通 `approval_required`。四类 durable facts 保证恢复只补偿、不重跑；不保存输出正文或 reason。PostToolUse 已支持成功 Patch/Write/Exec 的同步只读检查：执行前独立信任，真实结果先 Sync，默认 none、显式 model 结构化反馈，4 KiB/项与 16 KiB/调用、分段预算及零重跑恢复。后置错误保持工具真实成功，Ctrl+O 后置详情按 durable sequence 刷新。PostToolUseFailure 已覆盖已准入 error/conflict、启动失败和确认清理超时；正常非零 exit 仍走成功分支。success/failure/none 与检查 disposition 独立，双分支先信任、只 reserve 一次，失败输入只含安全摘要。取消不改写原错误，恢复零外部副作用，计划通知中性。其余事件、async、allow/ask、参数/结果改写、plugin hooks 和热加载尚未实现。
+PreToolUse Hook 是三项 mutation 的前置门禁，**不是第十项模型工具**。它读取 user/project 冻结严格 JSON、逐项默认拒绝的内存信任，并在候选和普通批准前执行；Darwin 只读工作区、禁网，每项默认 5 秒/最大 30 秒，每调用总执行预算 30 秒，stdin 最大 512 KiB、双输出各 16 KiB。headless 匹配项返回 `hook_trust_required`，无匹配沿用普通 `approval_required`。四类 durable facts 保证恢复只补偿、不重跑；不保存原始 stdout/stderr 或自由文本 reason。PostToolUse 已支持成功 Patch/Write/Exec 的同步只读检查：执行前独立信任，真实结果先 Sync，默认 none、显式 model 结构化反馈，4 KiB/项与 16 KiB/调用、分段预算及零重跑恢复。后置错误保持工具真实成功，Ctrl+O 后置详情按 durable sequence 刷新。PostToolUseFailure 已覆盖已准入 error/conflict、启动失败和确认清理超时；正常非零 exit 仍走成功分支。success/failure/none 与检查 disposition 独立，双分支先信任、只 reserve 一次，失败输入只含安全摘要。取消不改写原错误，恢复零外部副作用，计划通知中性。PreToolUse 已增加三项 mutation 的完整参数改写：唯一当前 finished 保存 unchanged/replaced input_effect，串行 O/C/E 选择，重新验证目标与普通审批，执行准入独立于 Post，模型说明按真实准入和恢复事实计费；原生调用保持 O，恢复验证后零重跑。活动摘要与 Ctrl+O 详情区分候选、选择和拒绝，极窄屏停用无法完整审查的批准。其余事件、async、allow/ask、结果改写、plugin hooks 和热加载尚未实现。
 
 Stop 已支持精确答复的完成前检查、同回合最多两次续轮、累计 30 秒及原 16/64 限额。默认 none 不转发阻断文本；显式 model 的正常 exit0 阻断才可续轮。决定和本地交付独立，必要时先摘要旧窗口，随后交付冻结反馈及真实纠正；恢复零重跑、零网络，先补反馈再结束旧回合。Hook 来源独立于用户 recall，headless 匹配要求信任，坏来源拒绝完成。证据为 `internal/app/stop_hook*_test.go`、双 Provider `stop_hook_cache_test.go`、`scripts/stop-hook-smoke.py` 和[验收记录](../../openspec/changes/archive/2026-11-13-add-stop-command-hooks/verification.md)。
 
@@ -77,6 +77,7 @@ P6 当前交付本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/
 - 必须遵循的规约：[AGENTS.md](../../AGENTS.md)。
 - PostToolUse 验收：[verification.md](../../openspec/changes/archive/2026-11-08-add-post-tool-use-command-hooks/verification.md)。
 - PreToolUse 验收：[verification.md](../../openspec/changes/add-pre-tool-use-command-hooks/verification.md)。
+- PreToolUse 参数改写验收：[verification.md](../../openspec/changes/archive/2026-11-15-add-pre-tool-use-input-rewrite/verification.md)。
 - 命令/Skill 补全：[归档核对记录](../../openspec/changes/archive/2026-11-06-add-command-and-skill-completion/archive.md)、[追加验证报告](../../openspec/changes/archive/2026-11-06-add-command-and-skill-completion/revalidation.md)。
 
 推理展示只读取 Anthropic thinking 与 OpenAI summary_text 白名单，opaque-only 为 unavailable；签名、密文、raw 和未知扩展不进入显示或 headless。主线不累计完成推理行，活动显示共用 64 KiB/50 项，查询正文与其他详情共用四页缓存。提交来源与 sample/block 映射仅在内存中存在，这部分展示不改变存储；启动推理控制另将 Anthropic raw usage 当前 shape 扩展为必需 thinking_tokens 状态，并替换固定 current bytes，旧开发 shape 拒绝。验证入口为 `internal/provider/*/reasoning_stream_test.go`、`internal/provider/*/reasoning_restore_test.go`、`internal/runtime/reasoning_test.go`、`internal/tui/reasoning_test.go`、`internal/headless/reasoning_test.go`、`internal/app/reasoning_e2e_test.go` 与 Darwin `scripts/reasoning-smoke.py`。

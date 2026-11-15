@@ -67,13 +67,10 @@ func (runtime *Runtime) executeExclusive(ctx context.Context, turnID domain.Turn
 		runtime.poisoned.Store(true)
 		return exclusiveResult{}, fault.New(fault.CodeSessionWrite, "execution start has no durable sequence")
 	}
-	admission, err = tool.NewExecutionAdmission(invocation.InvocationID(), records[0].Sequence)
+	admission, err = runtime.registerExecutionAdmission(invocation, records[0].Sequence)
 	if err != nil {
 		runtime.poisoned.Store(true)
 		return exclusiveResult{}, err
-	}
-	if state := runtime.hooks.post[invocation.InvocationID()]; state != nil {
-		state.admission = admission
 	}
 	runtime.emitToolStarted(turnID, invocation)
 	result := strategy.Execute(ctx)
@@ -91,25 +88,42 @@ func (runtime *Runtime) executeApproved(ctx context.Context, emit Emitter, turnI
 	if runtime.poisoned.Load() || runtime.journal.Poisoned() {
 		return tool.InvocationResult{}, false, fault.New(fault.CodeSessionWrite, "session journal is poisoned")
 	}
-	if state := runtime.hooks.post[invocation.InvocationID()]; state != nil {
-		runtime.hooks.mu.Lock()
-		cached, ok := runtime.hooks.completed[invocation.InvocationID()]
-		runtime.hooks.mu.Unlock()
-		if ok {
-			ready, readyErr := session.NewToolCallReadyDraft(turnID, invocation, 0, 0)
-			frozen, resultErr := session.NewToolCallResultDraft(turnID, cached)
-			if readyErr != nil || resultErr != nil || domain.HookDigest(ready.PayloadBytes()) != state.invocationFingerprint || domain.HookDigest(frozen.PayloadBytes()) != state.resultFingerprint || cached.ProviderCallID() != invocation.ProviderCallID() || cached.Capability() != invocation.Capability() || cached.WireKind() != invocation.WireKind() {
-				return tool.InvocationResult{}, false, fault.New(fault.CodeStreamProtocol, "post hook invocation replay mismatch")
-			}
-			return cached, false, runtime.runPostHooks(ctx, turnID, invocation, cached, state)
-		}
+	call, sourceErr := runtime.executionCall(turnID, invocation)
+	if sourceErr != nil {
+		return tool.InvocationResult{}, false, sourceErr
 	}
+	if call.running {
+		return tool.InvocationResult{}, false, fault.New(fault.CodeStreamProtocol, "tool invocation is already in flight")
+	}
+	if call.hasResult {
+		cached, err := call.cachedResult()
+		return cached, false, err
+	}
+	call.running = true
+	defer func() { call.running = false }()
 	if runtime.resultBudget.BodyExhausted() {
 		result := tool.NewInvocationErrorResult(invocation, tool.ResultError, "result_budget_exceeded", "Tool not executed: turn result budget exhausted")
 		err := runtime.persistToolResult(context.WithoutCancel(ctx), turnID, &result)
 		return result, false, err
 	}
 	if result, blocked, err := runtime.checkToolHooks(ctx, emit, turnID, invocation); blocked || err != nil {
+		return result, false, err
+	}
+	selection, selectionErr := call.selection()
+	if selectionErr != nil {
+		return tool.InvocationResult{}, false, selectionErr
+	}
+	effective, selected := selection.EffectiveInvocation()
+	if !selected {
+		return tool.InvocationResult{}, false, fault.New(fault.CodeStreamProtocol, "tool input was not selected")
+	}
+	invocation = effective
+	if runtime.activityInvocations != nil {
+		runtime.activityInvocations[invocation.InvocationID()] = invocation.Clone()
+	}
+	if ctx.Err() != nil {
+		result := tool.NewInvocationErrorResult(invocation, tool.ResultCancelled, "cancelled_before_execution", "Tool cancelled before execution")
+		err := runtime.persistToolResult(context.WithoutCancel(ctx), turnID, &result)
 		return result, false, err
 	}
 
@@ -142,6 +156,39 @@ func (runtime *Runtime) executeApproved(ctx context.Context, emit Emitter, turnI
 			return result, false, fault.Wrap(fault.CodeUserCancelled, "post hook trust cancelled", context.Canceled)
 		}
 		return result, false, nil
+	}
+	finishBeforeExecution := func(result tool.InvocationResult) (tool.InvocationResult, bool, error) {
+		if err := runtime.persistToolResult(context.WithoutCancel(ctx), turnID, &result); err != nil {
+			return tool.InvocationResult{}, false, err
+		}
+		if err := runtime.runPostHooks(ctx, turnID, invocation, result, state); err != nil {
+			return result, false, err
+		}
+		return result, false, nil
+	}
+	if ctx.Err() != nil {
+		return finishBeforeExecution(tool.NewInvocationErrorResult(invocation, tool.ResultCancelled, "cancelled_before_execution", "Tool cancelled before execution"))
+	}
+	allowance, allowanceErr := runtime.resultAllowance(invocation.Capability())
+	if allowanceErr != nil {
+		return tool.InvocationResult{}, false, allowanceErr
+	}
+	if _, budgetErr := tool.InputRewriteBodyAllowance(selection, allowance); budgetErr != nil {
+		var exceeded tool.InputRewriteBudgetError
+		if !errors.As(budgetErr, &exceeded) {
+			runtime.poisoned.Store(true)
+			return tool.InvocationResult{}, false, budgetErr
+		}
+		return finishBeforeExecution(tool.NewInvocationErrorResult(invocation, tool.ResultError, tool.HookRewriteBudgetExceeded, "Tool not executed: effective input disclosure exceeds result budget"))
+	}
+	if selection.Changed() {
+		ready, readyErr := invocation.ReadyCall()
+		if readyErr != nil {
+			return tool.InvocationResult{}, false, readyErr
+		}
+		if runtime.toolPolicy.Decide(ready) == tool.PolicyDeny {
+			return finishBeforeExecution(tool.NewInvocationErrorResult(invocation, tool.ResultError, "tool_denied", "Tool not executed: effective input is denied by policy"))
+		}
 	}
 	var result tool.InvocationResult
 	var aborted bool

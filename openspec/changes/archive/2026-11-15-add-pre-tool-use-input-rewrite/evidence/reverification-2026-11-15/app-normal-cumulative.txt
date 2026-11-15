@@ -1,0 +1,68 @@
+File: easycode-rewrite-app-profile.test
+Type: cpu
+Time: 2026-11-15 16:13:09 CST
+Duration: 156.43s, Total samples = 72.68s (46.46%)
+Showing nodes accounting for 44.20s, 60.81% of 72.68s total
+Dropped 1654 nodes (cum <= 0.36s)
+Showing top 60 nodes out of 367
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%     27.64s 38.03%  testing.tRunner
+     0.01s 0.014% 0.014%     25.71s 35.37%  runtime.systemstack
+         0     0% 0.014%     16.77s 23.07%  easycode/internal/app.openChatResourcesWithHooks
+         0     0% 0.014%     16.45s 22.63%  easycode/internal/app.openChatResourcesWithSnapshot
+         0     0% 0.014%     11.70s 16.10%  runtime.semawakeup
+    11.67s 16.06% 16.07%     11.67s 16.06%  runtime.pthread_cond_signal
+     0.03s 0.041% 16.11%     11.56s 15.91%  runtime.wakep
+     0.01s 0.014% 16.13%     11.53s 15.86%  runtime.notewakeup
+         0     0% 16.13%     11.51s 15.84%  runtime.startm
+    10.11s 13.91% 30.04%     10.11s 13.91%  syscall.syscall6
+         0     0% 30.04%      9.80s 13.48%  golang.org/x/sys/unix.Openat
+     9.17s 12.62% 42.65%      9.17s 12.62%  syscall.syscall
+         0     0% 42.65%      9.15s 12.59%  easycode/internal/session/artifact.(*Layout).Check
+         0     0% 42.65%      8.62s 11.86%  easycode/internal/codec.UnmarshalRecord
+         0     0% 42.65%      8.55s 11.76%  runtime.ready
+     0.04s 0.055% 42.71%      7.85s 10.80%  runtime.(*mheap).allocSpan
+         0     0% 42.71%      7.75s 10.66%  runtime.send.goready.func1
+         0     0% 42.71%      7.72s 10.62%  runtime.(*mheap).alloc.func1
+         0     0% 42.71%      7.68s 10.57%  easycode/internal/codec.ObjectMembers
+     7.63s 10.50% 53.21%      7.63s 10.50%  runtime.madvise
+     0.03s 0.041% 53.25%      7.45s 10.25%  encoding/json.(*Decoder).Decode
+         0     0% 53.25%      7.34s 10.10%  runtime.sysUsed (inline)
+         0     0% 53.25%      7.34s 10.10%  runtime.sysUsedOS (inline)
+         0     0% 53.25%      7.33s 10.09%  easycode/internal/runtime.(*Runtime).runTurn
+         0     0% 53.25%      7.33s 10.09%  easycode/internal/runtime.(*agentLoopRunState).startTurn.func1
+         0     0% 53.25%      6.96s  9.58%  easycode/internal/codec.ValidateObjectFields
+         0     0% 53.25%      6.83s  9.40%  easycode/internal/codec.validateRecordShape
+     0.05s 0.069% 53.32%      6.39s  8.79%  encoding/json.(*Decoder).Token
+         0     0% 53.32%      6.29s  8.65%  easycode/internal/codec.ValidateJSON (inline)
+     0.01s 0.014% 53.33%      6.29s  8.65%  easycode/internal/codec.validateJSONDepth
+         0     0% 53.33%      6.08s  8.37%  easycode/internal/session/artifact.descendsFrom
+     0.26s  0.36% 53.69%      6.07s  8.35%  runtime.mallocgc
+         0     0% 53.69%      6.06s  8.34%  easycode/internal/codec.UnmarshalStrict
+         0     0% 53.69%      5.76s  7.93%  easycode/internal/codec.scanValue
+         0     0% 53.69%      5.14s  7.07%  runtime.schedule
+         0     0% 53.69%      5.10s  7.02%  runtime.mcall
+     0.01s 0.014% 53.70%      4.91s  6.76%  runtime.park_m
+         0     0% 53.70%      4.88s  6.71%  easycode/internal/app.(*sessionService).resume
+     1.34s  1.84% 55.54%      4.77s  6.56%  encoding/json.(*Decoder).readValue
+         0     0% 55.54%      4.48s  6.16%  easycode/internal/session.(*ReplayPlanner).Plan
+         0     0% 55.54%      4.46s  6.14%  easycode/internal/app.openChatResources
+         0     0% 55.54%      4.46s  6.14%  easycode/internal/app.openChatResourcesWithSelection (inline)
+         0     0% 55.54%      4.29s  5.90%  runtime.gcBgMarkWorker.func2
+     0.12s  0.17% 55.71%      4.29s  5.90%  runtime.gcDrain
+         0     0% 55.71%      4.13s  5.68%  runtime.findRunnable
+         0     0% 55.71%      3.97s  5.46%  easycode/internal/runtime.(*Runtime).planWindow
+         0     0% 55.71%      3.94s  5.42%  easycode/internal/session.(*Loader).Load
+         0     0% 55.71%      3.94s  5.42%  easycode/internal/session.loadJournal
+     3.71s  5.10% 60.81%      3.71s  5.10%  runtime.memclrNoHeapPointers
+         0     0% 60.81%      3.62s  4.98%  easycode/internal/runtime.(*Runtime).contextPlan
+         0     0% 60.81%      3.48s  4.79%  easycode/internal/runtime.(*Runtime).contextSnapshot
+         0     0% 60.81%      3.47s  4.77%  easycode/internal/session/artifact.openDirectoryPath
+         0     0% 60.81%      3.46s  4.76%  easycode/internal/app.loadToolLoopPlan
+         0     0% 60.81%      3.43s  4.72%  easycode/internal/app.testHookResumeReconcilesEveryBatch.func1.3
+         0     0% 60.81%      3.43s  4.72%  easycode/internal/app.testStopRecoveryWindows.func1
+         0     0% 60.81%      3.42s  4.71%  easycode/internal/codec.MarshalStable
+         0     0% 60.81%      3.39s  4.66%  github.com/bytedance/sonic.frozenConfig.Marshal
+         0     0% 60.81%      3.39s  4.66%  github.com/bytedance/sonic/internal/encoder.Encode
+         0     0% 60.81%      3.28s  4.51%  easycode/internal/runtime.(*Runtime).publishContext
+         0     0% 60.81%      3.28s  4.51%  easycode/internal/runtime.(*agentLoopRunState).startTurn.func1.2

@@ -18,12 +18,15 @@ import (
 )
 
 func TestPostFeedbackWebSocketDurableSuffixDiscardAndRestoreReset(t *testing.T) {
-	testPostFeedbackWebSocket(t, false)
+	testPostFeedbackWebSocket(t, false, false)
 }
 func TestFailureFeedbackWebSocketDurableSuffixDiscardAndRestoreReset(t *testing.T) {
-	testPostFeedbackWebSocket(t, true)
+	testPostFeedbackWebSocket(t, true, false)
 }
-func testPostFeedbackWebSocket(t *testing.T, failed bool) {
+func TestPreInputRewriteWebSocketDurableSuffixDiscardAndRestoreReset(t *testing.T) {
+	testPostFeedbackWebSocket(t, false, true)
+}
+func testPostFeedbackWebSocket(t *testing.T, failed, rewrite bool) {
 	requests := make(chan []byte, 8)
 	var count, connections atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -89,6 +92,13 @@ func testPostFeedbackWebSocket(t *testing.T, failed bool) {
 		result = postFailureProviderResult(t, result)
 	}
 	output := postProviderOutput(t, result)
+	needle := "Read-only check:"
+	if rewrite {
+		_, native := postProviderFixture(t, domain.HookExec)
+		original := testNativeInvocation(t, native, result.InvocationID(), result.ProviderCallID())
+		output = rewriteProviderOutput(t, original, "selected")
+		needle = "Admitted tool attempt"
+	}
 	before := len(conversation.history.snapshot())
 	prepared, err := conversation.PrepareToolOutputs([]tool.ModelOutput{output})
 	if err != nil {
@@ -116,7 +126,7 @@ func testPostFeedbackWebSocket(t *testing.T, failed bool) {
 	if err := codec.Unmarshal(<-requests, &suffix); err != nil {
 		t.Fatal(err)
 	}
-	if suffix.PreviousResponseID != "post-resp-1" || len(suffix.Input) != 1 || suffix.Input[0].Type != "function_call_output" || !strings.Contains(suffix.Input[0].Output, "Read-only check:") {
+	if suffix.PreviousResponseID != "post-resp-1" || len(suffix.Input) != 1 || suffix.Input[0].Type != "function_call_output" || !strings.Contains(suffix.Input[0].Output, needle) {
 		t.Fatal("post feedback not sent as sole durable suffix")
 	}
 	if err := second.PreparedSample().Discard(); err != nil {
@@ -133,7 +143,7 @@ func testPostFeedbackWebSocket(t *testing.T, failed bool) {
 	wire := <-requests
 	var reset websocketCreate
 	_ = codec.Unmarshal(wire, &reset)
-	if reset.PreviousResponseID != "" || connections.Load() != 2 || !bytes.Contains(wire, []byte("opaque-post")) || !bytes.Contains(wire, []byte("Read-only check:")) {
+	if reset.PreviousResponseID != "" || connections.Load() != 2 || !bytes.Contains(wire, []byte("opaque-post")) || !bytes.Contains(wire, []byte(needle)) {
 		t.Fatal("discard reset lost frozen feedback or opaque native order")
 	}
 	if err := third.PreparedSample().Finalize(); err != nil {

@@ -68,6 +68,7 @@ func hookRuntimeFixture(t *testing.T, journal Journal, count int) (*Runtime, too
 	if err := r.InstallHooks(s, runner, "/workspace", domain.HookOK); err != nil {
 		t.Fatal(err)
 	}
+	seedRuntimeToolCall(t, r, runtimeTurnID, inv, 0, 0)
 	return r, inv, runner, declarations
 }
 func hookTrustEmitter(t *testing.T, r *Runtime, decision protocol.HookTrustDecision, count *int) Emitter {
@@ -334,6 +335,7 @@ func TestHookDenialPrecedesExistingMutationGrantAndCandidate(t *testing.T) {
 				ready, _ := tool.NewWriteReadyCall("call-write", input)
 				inv, _ = tool.NewInvocation(inv.InvocationID(), ready)
 			}
+			resetRuntimeReadyFixture(t, r, runtimeTurnID, inv)
 			r.approvals.patchGrant.Store(true)
 			r.approvals.writeGrant.Store(true)
 			runner.status, runner.code = domain.HookBlock, domain.HookDenied

@@ -1,4 +1,7 @@
 Trust this hook?
+May replace complete tool parameters before ordinary permission.
+Changed candidates and execution facts are saved in Session.
+Results disclose the effective input or a note about execution.
 Source: project · check
 PreToolUse: fs.patch|fs.write|process.exec
 Feedback: none
@@ -12,9 +15,6 @@ PgUp/PgDn: full command · Tab/↑/↓: choose · Esc: deny
 > Deny
 
 Command:
-printf 'review every line'
-printf 'review every line'
-printf 'review every line'
 printf 'review every line'
 printf 'review every line'
 printf 'review every line'

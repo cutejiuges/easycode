@@ -15,7 +15,7 @@ func TestReadArtifactRecoveryNeverReopensSavedOutput(t *testing.T) {
 			input, _ := tool.NewReadArtifactInput("0123456789abcdef0123456789abcdef", 0, 3)
 			ready, _ := tool.NewReadArtifactReadyCall("artifact", input)
 			invocation, _ := tool.NewInvocation(id, ready)
-			call := session.ReplayedToolCall{Invocation: invocation, State: state, ReadySequence: 2}
+			call := session.ReplayedToolCall{Origin: runtimeFixtureOrigin(t, 0, 0), Invocation: invocation, State: state, ReadySequence: 2}
 			if state != session.ReplayedToolCallReady {
 				call.StartedSequence = 3
 			}

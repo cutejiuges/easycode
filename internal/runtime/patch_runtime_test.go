@@ -66,7 +66,7 @@ func (executor timelineReadExecutor) Execute(_ context.Context, invocation tool.
 
 func runtimePatchInvocation(t *testing.T) (tool.Invocation, tool.PatchCandidate) {
 	t.Helper()
-	replacement, _ := tool.NewPatchReplacement("old", "new", false)
+	replacement, _ := tool.NewPatchLineReplacement([]string{"old"}, []string{"new"})
 	input, _ := tool.NewPatchInput("main.go", []tool.PatchReplacement{replacement})
 	callID, _ := tool.ParseProviderCallID("call-patch")
 	ready, _ := tool.NewPatchReadyCall(callID, tool.WireCustomFreeform, input)
@@ -99,7 +99,7 @@ func TestPatchApprovalDurabilityPrecedesExecution(t *testing.T) {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		results, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, []tool.Invocation{invocation}, func(event protocol.Event) {
+		results, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, []tool.Invocation{invocation}, func(event protocol.Event) {
 			if event.Kind == protocol.EventToolApprovalRequested || event.Kind == protocol.EventToolApprovalResolved {
 				events <- event
 			}
@@ -147,7 +147,7 @@ func TestHeadlessPatchAskFailsClosedWithoutExecution(t *testing.T) {
 	executor := &fixedPatchExecutor{}
 	approvalID, _ := tool.ParseApprovalRequestID("018f1d8a-7b5c-7def-8abc-456789abcdef")
 	runtime := &Runtime{journal: journal, sessionID: runtimeSessionID, threadID: runtimeThreadID, patchPreparer: &fixedPatchPreparer{candidate: candidate}, patchExecutor: executor, toolPolicy: tool.NewApprovalPolicy(), newApprovalRequestID: func() (tool.ApprovalRequestID, error) { return approvalID, nil }}
-	results, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, []tool.Invocation{invocation})
+	results, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, []tool.Invocation{invocation})
 	if err != nil || len(results) != 1 || results[0].Status() != tool.ResultDenied || results[0].Code() != "approval_required" || executor.calls != 0 {
 		t.Fatalf("results=%#v error=%v calls=%d", results, err, executor.calls)
 	}
@@ -175,7 +175,7 @@ func TestPatchCreatesExclusiveBarrierBetweenReadBatches(t *testing.T) {
 		patchExecutor: &fixedPatchExecutor{onExecute: func() { appendTimeline("patch") }},
 		toolPolicy:    allowPatchPolicy{}, newApprovalRequestID: tool.GenerateApprovalRequestID,
 	}
-	results, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, invocations)
+	results, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, invocations)
 	if err != nil || len(results) != 3 {
 		t.Fatalf("results=%#v error=%v", results, err)
 	}
@@ -203,7 +203,7 @@ func TestPatchDurableAdmissionFailuresNeverCrossBoundary(t *testing.T) {
 				patchPreparer: &fixedPatchPreparer{candidate: candidate}, patchExecutor: executor,
 				toolPolicy: allowPatchPolicy{}, newApprovalRequestID: tool.GenerateApprovalRequestID,
 			}
-			if _, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, []tool.Invocation{invocation}); err == nil {
+			if _, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, []tool.Invocation{invocation}); err == nil {
 				t.Fatal("durable failure was not returned")
 			}
 			if executor.calls != test.wantExecute || !runtime.poisoned.Load() {
@@ -226,7 +226,7 @@ func TestPatchApprovalCancellationWinsBeforeResponse(t *testing.T) {
 	events := make(chan protocol.Event, 2)
 	done := make(chan error, 1)
 	go func() {
-		_, err := runtime.executeToolCalls(ctx, runtimeTurnID, []tool.Invocation{invocation}, func(event protocol.Event) {
+		_, err := executeReadyFixtureCalls(t, runtime, ctx, runtimeTurnID, []tool.Invocation{invocation}, func(event protocol.Event) {
 			if event.Kind == protocol.EventToolApprovalRequested || event.Kind == protocol.EventToolApprovalResolved {
 				events <- event
 			}
@@ -261,7 +261,7 @@ func TestPatchAllowSessionGrantStaysRuntimeLocal(t *testing.T) {
 	events := make(chan protocol.Event, 4)
 	firstDone := make(chan error, 1)
 	go func() {
-		_, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, []tool.Invocation{invocation}, func(event protocol.Event) {
+		_, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, []tool.Invocation{invocation}, func(event protocol.Event) {
 			if event.Kind == protocol.EventToolApprovalRequested || event.Kind == protocol.EventToolApprovalResolved {
 				events <- event
 			}
@@ -282,8 +282,16 @@ func TestPatchAllowSessionGrantStaysRuntimeLocal(t *testing.T) {
 	if err := <-firstDone; err != nil {
 		t.Fatal(err)
 	}
+	secondReady, _ := tool.NewPatchReadyCall("call-patch-second", invocation.WireKind(), candidate.Input())
+	second, _ := tool.NewInvocation("018f1d8a-7b5c-7def-8abc-456789abcd00", secondReady)
+	secondPatch, _ := second.Patch()
+	secondCandidate, err := tool.NewPatchCandidate(secondPatch, candidate.Evidence(), candidate.FinalBytes(), candidate.Diff(), candidate.Fingerprint(), candidate.ResultMetadata())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.patchPreparer = &fixedPatchPreparer{candidate: secondCandidate}
 	secondEvents := make([]protocol.Event, 0, 1)
-	if _, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, []tool.Invocation{invocation}, func(event protocol.Event) { secondEvents = append(secondEvents, event) }); err != nil {
+	if _, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, []tool.Invocation{second}, func(event protocol.Event) { secondEvents = append(secondEvents, event) }); err != nil {
 		t.Fatal(err)
 	}
 	secondEvents = validateToolActivitiesAndConversation(t, secondEvents)
@@ -313,7 +321,7 @@ func TestPatchApprovalAbortClosesAllRemainingCallsInOrder(t *testing.T) {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		results, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, []tool.Invocation{patchInvocation, read}, func(event protocol.Event) {
+		results, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, []tool.Invocation{patchInvocation, read}, func(event protocol.Event) {
 			if event.Kind == protocol.EventToolApprovalRequested || event.Kind == protocol.EventToolApprovalResolved {
 				events <- event
 			}

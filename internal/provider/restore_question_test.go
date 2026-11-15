@@ -18,29 +18,30 @@ func TestQuestionRestoreFactsAreTypedAndImmutable(t *testing.T) {
 	result, _ := tool.NewQuestionInvocationResult(q, a)
 	envelope, _ := NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", []byte(`{"kind":"sample"}`))
 	record, _ := NewSampleRestoreRecord("01900000-0000-7000-8000-000000000002", envelope)
-	questions := []tool.QuestionInvocation{q}
+	invocation, _ := tool.NewInvocation(q.InvocationID(), ready)
+	questions := []tool.Invocation{invocation}
 	results := []tool.InvocationResult{result}
-	bound, err := record.WithQuestionFacts(questions, results)
+	bound, err := record.WithReadyFacts(questions, results)
 	if err != nil {
 		t.Fatal(err)
 	}
-	questions[0] = tool.QuestionInvocation{}
+	questions[0] = tool.Invocation{}
 	results[0] = tool.InvocationResult{}
-	bound.QuestionInvocations()[0] = tool.QuestionInvocation{}
+	bound.ReadyInvocations()[0] = tool.Invocation{}
 	bound.QuestionResults()[0] = tool.InvocationResult{}
-	if bound.QuestionInvocations()[0] != q || bound.QuestionResults()[0].Preview() != result.Preview() || len(record.QuestionInvocations()) != 0 {
+	if !bound.ReadyInvocations()[0].Equal(invocation) || bound.QuestionResults()[0].Preview() != result.Preview() || len(record.ReadyInvocations()) != 0 {
 		t.Fatal("mutable restore bindings")
 	}
 	for _, test := range []struct {
-		questions []tool.QuestionInvocation
+		questions []tool.Invocation
 		results   []tool.InvocationResult
-	}{{nil, []tool.InvocationResult{result}}, {[]tool.QuestionInvocation{q, q}, nil}, {[]tool.QuestionInvocation{{}}, nil}, {[]tool.QuestionInvocation{q}, []tool.InvocationResult{result, result}}, {[]tool.QuestionInvocation{q}, []tool.InvocationResult{{}}}} {
-		if _, err := record.WithQuestionFacts(test.questions, test.results); err == nil {
+	}{{nil, []tool.InvocationResult{result}}, {[]tool.Invocation{invocation, invocation}, nil}, {[]tool.Invocation{{}}, nil}, {[]tool.Invocation{invocation}, []tool.InvocationResult{result, result}}, {[]tool.Invocation{invocation}, []tool.InvocationResult{{}}}} {
+		if _, err := record.WithReadyFacts(test.questions, test.results); err == nil {
 			t.Fatal("invalid restore bindings accepted")
 		}
 	}
 	output, _ := NewToolOutputRestoreRecord(record.TurnID(), envelope, nil)
-	if _, err := output.WithQuestionFacts([]tool.QuestionInvocation{q}, nil); err == nil {
+	if _, err := output.WithReadyFacts([]tool.Invocation{invocation}, nil); err == nil {
 		t.Fatal("question facts bound to output role")
 	}
 }

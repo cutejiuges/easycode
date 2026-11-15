@@ -67,7 +67,7 @@ func TestWritePatchReadGrepBarriersPromoteOnlyFreshRead(t *testing.T) {
 			runtime.grepExecutor = timelineGrep{appendEvent}
 			runtime.patchPreparer = &fixedPatchPreparer{candidate: pc, onPrepare: func() { appendEvent("patch-prepare") }}
 			runtime.patchExecutor = &fixedPatchExecutor{onExecute: func() { appendEvent("patch") }}
-			results, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, calls)
+			results, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, calls)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -130,7 +130,7 @@ func TestWriteDenialAndConflictDoNotCancelIndependentSibling(t *testing.T) {
 			runtime.readObservations.beginGroup()
 			runtime.readObservations.stage(result, observation)
 			runtime.readObservations.activate()
-			results, err := runtime.executeToolCalls(context.Background(), runtimeTurnID, []tool.Invocation{invocation, testRuntimeInvocations(t, 1)[0]}, emit)
+			results, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, []tool.Invocation{invocation, testRuntimeInvocations(t, 1)[0]}, emit)
 			if err != nil || len(results) != 2 || results[0].Status() != status || reader.calls.Load() != 1 || results[1].Status() != tool.ResultSuccess {
 				t.Fatal("拒绝或冲突取消独立 sibling", err)
 			}
