@@ -52,7 +52,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Validate source branch
-        run: ./scripts/check-branch-name.sh "${{ github.head_ref }}"
+        run: ./scripts/check-branch-name.sh "$GITHUB_HEAD_REF"
 
   verify:
     if: ${{ !inputs.diagnostic_profile }}
@@ -81,7 +81,6 @@ jobs:
     env:
       GOMAXPROCS: '2'
       PROFILE_TEST: ${{ inputs.profile_test }}
-      PROFILE_DIR: ${{ runner.temp }}/easycode-profile
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -89,6 +88,8 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Profile native race tests
+        env:
+          PROFILE_DIR: ${{ runner.temp }}/easycode-profile
         run: |
           mkdir -p "$PROFILE_DIR"
           go env -json GOOS GOARCH GOVERSION GOROOT GOCACHE > "$PROFILE_DIR/environment.txt"
@@ -97,6 +98,8 @@ jobs:
           go test -json -race -count=1 -p=1 -parallel=2 -timeout=8m -run "$PROFILE_TEST" ./internal/app -cpuprofile="$PROFILE_DIR/cpu.pprof" -memprofile="$PROFILE_DIR/mem.pprof" -o "$PROFILE_DIR/app.test" > "$PROFILE_DIR/tests.jsonl" 2>&1
       - name: Summarize profile
         if: always()
+        env:
+          PROFILE_DIR: ${{ runner.temp }}/easycode-profile
         run: |
           go tool pprof -top -nodecount=40 "$PROFILE_DIR/app.test" "$PROFILE_DIR/cpu.pprof" > "$PROFILE_DIR/cpu-top.txt"
           go tool pprof -top -cum -nodecount=40 "$PROFILE_DIR/app.test" "$PROFILE_DIR/cpu.pprof" > "$PROFILE_DIR/cpu-cumulative.txt"
