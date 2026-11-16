@@ -2,6 +2,32 @@ name: Verify
 
 on:
   workflow_dispatch:
+    inputs:
+      test_jobs:
+        description: Maximum active test commands
+        type: choice
+        options:
+          - '2'
+          - '4'
+          - '8'
+        default: '8'
+      app_shards:
+        description: App test process shards
+        type: choice
+        options:
+          - '1'
+          - '2'
+          - '4'
+          - '8'
+          - '16'
+        default: '4'
+      diagnostic_budget:
+        description: Total seconds (600 is diagnostic only; acceptance remains below 300)
+        type: choice
+        options:
+          - '300'
+          - '600'
+        default: '300'
   pull_request:
   push:
     branches:
@@ -29,7 +55,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Run repository verification
-        run: make verify TEST_OPTIONS="--output=${{ runner.temp }}/easycode-verification"
+        run: make verify TEST_BUDGET=${{ inputs.diagnostic_budget || '300' }} TEST_OPTIONS="--jobs=${{ inputs.test_jobs || '8' }} --shards=${{ inputs.app_shards || '4' }} --output=${{ runner.temp }}/easycode-verification"
       - name: Upload verification timings and test events
         if: always()
         uses: actions/upload-artifact@v4

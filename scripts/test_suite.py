@@ -356,9 +356,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("normal", "race", "all", "verify"), default="all")
     parser.add_argument("--go", default="go")
-    parser.add_argument("--jobs", type=int, default=min(8, os.cpu_count() or 1))
+    # 子进程清理及真实 I/O 会等待；有界超配允许其他包利用空闲执行时间。
+    parser.add_argument("--jobs", type=int, default=min(8, 2 * (os.cpu_count() or 1)))
     parser.add_argument("--parallel", type=int, default=2)
-    parser.add_argument("--shards", type=int, default=16)
+    # Darwin 的重矩阵需要细分；其他平台减少独立进程中的重复初始化。
+    parser.add_argument("--shards", type=int, default=16 if sys.platform == "darwin" else 4)
     parser.add_argument("--timeout", default="20m")
     parser.add_argument("--budget", type=float, default=300)
     parser.add_argument("--output")
