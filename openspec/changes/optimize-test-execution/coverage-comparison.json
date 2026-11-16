@@ -1,9 +1,9 @@
 {
-  "implementation_commit": "e147d1d0e99339282b16f5be2335eec9c437acbf",
-  "source_digest": "a2ec041d278f1517e657d71d297619e5f1169f26892f1540f32f905b1a128cf8",
+  "implementation_commit": "dd3749eca75b2b034a2dee07f040827c4a32e959",
+  "source_digest": "f7d22b476f99e398a817c32cd686f12f311019ac9f22449d177cee6ae64ffa3a",
   "normal": {
     "baseline_results": 4707,
-    "final_results": 4730,
+    "final_results": 4745,
     "missing": [],
     "added": [
       "easycode/internal/codec/FuzzStrictJSONScanner",
@@ -28,13 +28,28 @@
       "easycode/internal/codec/TestRecordKeepsUnknownFieldPrecedenceOverMissingFields",
       "easycode/internal/codec/TestScannedDepthNullAndNumberBoundaries",
       "easycode/internal/codec/TestScannedObjectRangesAndOwnership",
-      "easycode/internal/codec/TestValidationDoesNotMaterializeArrayValues"
+      "easycode/internal/codec/TestValidationDoesNotMaterializeArrayValues",
+      "easycode/internal/session/FuzzRecordEncodingMatchesSonic",
+      "easycode/internal/session/FuzzRecordEncodingMatchesSonic/seed#0",
+      "easycode/internal/session/FuzzRecordEncodingMatchesSonic/seed#1",
+      "easycode/internal/session/FuzzRecordEncodingMatchesSonic/seed#2",
+      "easycode/internal/session/FuzzRecordEncodingMatchesSonic/seed#3",
+      "easycode/internal/session/FuzzRecordEncodingMatchesSonic/seed#4",
+      "easycode/internal/session/TestRecordEncodedSizeIncludesChecksum",
+      "easycode/internal/session/TestRecordEncodingMatchesSonic",
+      "easycode/internal/session/TestRecordEncodingMatchesSonic/array",
+      "easycode/internal/session/TestRecordEncodingMatchesSonic/escaped_unicode",
+      "easycode/internal/session/TestRecordEncodingMatchesSonic/invalid_json",
+      "easycode/internal/session/TestRecordEncodingMatchesSonic/minimal",
+      "easycode/internal/session/TestRecordEncodingMatchesSonic/null",
+      "easycode/internal/session/TestRecordEncodingMatchesSonic/optional_fields",
+      "easycode/internal/session/TestRecordEncodingMatchesSonic/scalar"
     ],
     "status_changes": {}
   },
   "race": {
     "baseline_results": 4707,
-    "final_results": 4730,
+    "final_results": 4745,
     "missing": [],
     "added": [
       "easycode/internal/codec/FuzzStrictJSONScanner",
@@ -59,7 +74,22 @@
       "easycode/internal/codec/TestRecordKeepsUnknownFieldPrecedenceOverMissingFields",
       "easycode/internal/codec/TestScannedDepthNullAndNumberBoundaries",
       "easycode/internal/codec/TestScannedObjectRangesAndOwnership",
-      "easycode/internal/codec/TestValidationDoesNotMaterializeArrayValues"
+      "easycode/internal/codec/TestValidationDoesNotMaterializeArrayValues",
+      "easycode/internal/session/FuzzRecordEncodingMatchesSonic",
+      "easycode/internal/session/FuzzRecordEncodingMatchesSonic/seed#0",
+      "easycode/internal/session/FuzzRecordEncodingMatchesSonic/seed#1",
+      "easycode/internal/session/FuzzRecordEncodingMatchesSonic/seed#2",
+      "easycode/internal/session/FuzzRecordEncodingMatchesSonic/seed#3",
+      "easycode/internal/session/FuzzRecordEncodingMatchesSonic/seed#4",
+      "easycode/internal/session/TestRecordEncodedSizeIncludesChecksum",
+      "easycode/internal/session/TestRecordEncodingMatchesSonic",
+      "easycode/internal/session/TestRecordEncodingMatchesSonic/array",
+      "easycode/internal/session/TestRecordEncodingMatchesSonic/escaped_unicode",
+      "easycode/internal/session/TestRecordEncodingMatchesSonic/invalid_json",
+      "easycode/internal/session/TestRecordEncodingMatchesSonic/minimal",
+      "easycode/internal/session/TestRecordEncodingMatchesSonic/null",
+      "easycode/internal/session/TestRecordEncodingMatchesSonic/optional_fields",
+      "easycode/internal/session/TestRecordEncodingMatchesSonic/scalar"
     ],
     "status_changes": {}
   }

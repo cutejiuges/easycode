@@ -987,3 +987,5 @@ app 的环境敏感测试不能批量加 t.Parallel；统一入口自动分片�
 Linux CI 回归补充：TurnStarted 只证明回合接纳，不能证明输入已经提交或 Provider Stream 已进入。关闭顺序测试必须等待 fixture 的真实 started 信号后才调用 shutdown；扩大 deadline 无法修正错误前置条件。原关闭顺序断言与操作级 deadline 保持。
 
 2026-11-17 补充：Session 写入先整体编码 checksum envelope，又整体编码含 checksum 的 Record，重复压紧同一大 payload；Sonic 在 race 下的标准库读检查进一步放大了重复工作。编码现在保留全部输入校验，仅编码一次 envelope，散列后追加当前结构固定的末尾 checksum 字段；完整 record 大小仍在追加后校验。`internal/session/codec_equivalence_test.go` 用原 Sonic 整体编码逐字节对照，并覆盖可选字段、转义、所有权和完整大小边界。测试替身也须如实返回取消：强制关闭后返回 nil 会让结果依赖 transport 通知的调度次序，不能靠重试或放宽断言处理。
+
+测试二进制复用补充：标准 `go test` 会把实际选中的 `GOROOT/bin` 放到测试进程 PATH 首位。直接执行二进制必须保留该语义和选中工具链的 GOROOT，否则 setup-go 先安装 go.mod 的最低版本、Go 再按 toolchain 指令切换时，测试里的离线 `go build` 会重新选择旧工具链并触发 GOSUMDB=off 错误。调度回归通过真实嵌套命令验证所选工具链，不能通过开放测试外网或关闭校验绕过。

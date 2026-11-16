@@ -55,3 +55,5 @@ Linux 的 16 分片还放大了多个进程的独立初始化。CI 将比较 4/8
 2026-11-17 追加修正：`escalationStreamLoop` 在 context 已取消后被强制释放时仍返回 nil，导致最终结果取决于 transport 取消通知和 loop 完成通知的调度次序。fixture 改为在完成原有清理后返回 `ctx.Err()`；保留生产行为、错误码和全部关闭顺序断言。三项相关关闭测试以固定种子 `20261117` 连续执行 30 轮 race，通过（5.951 秒）。
 
 追加编码差异 fuzz：30 秒共 819146 次执行、122 份语料通过；表格与完整 16 MiB 大小边界在 race 下通过。大批次测试的相同单进程 race profile 从 34.556 秒降至 23.804 秒；当前累计分配为 2453.88 MB，具体 profile 摘要见 `session-encoding-profile.txt`。全部最终质量门需在本次编码与二进制复用改动后重新取得。
+
+二进制复用后的本地连续质量门为 225.308/211.478 秒（`dd3749e`）。Linux 两轮在普通 CLI 构建测试发现 PATH 未保留标准 Go 工具链选择语义，分别在 78.695/87.184 秒失败，见 [ci-toolchain-failure.json](ci-toolchain-failure.json)。修正 runner 的选中 GOROOT/PATH 后重新执行完整验收，失败结果不计为达标。

@@ -51,15 +51,22 @@ class InventoryTests(unittest.TestCase):
 
 
 class SuiteTests(unittest.TestCase):
-    def test_normal_and_race_discover_their_own_build_tag_inventory(self):
+    def test_build_tag_inventory_and_nested_build_keep_selected_toolchain(self):
         with tempfile.TemporaryDirectory(prefix="easycode-inventory-test-") as directory:
             root = Path(directory)
+            toolchain_bin = root / "selected toolchain" / "bin"
+            toolchain_bin.mkdir(parents=True)
+            if os.name == "posix":
+                nested_go = toolchain_bin / "go"
+                nested_go.write_text("#!/bin/sh\nprintf 'fixture-selected-toolchain\\n'\n")
+                nested_go.chmod(0o700)
             fake = root / "fake_go.py"
-            fake.write_text('''import hashlib,json,os,re,shlex,sys
+            fake.write_text('''import hashlib,json,os,re,shlex,subprocess,sys
 from pathlib import Path
 args = sys.argv[1:]
+goroot = str(Path(__file__).parent.resolve()/'selected toolchain')
 if args[0] == 'env':
- print(json.dumps({'GOOS': 'fixture', 'GOARCH': 'fixture', 'GOVERSION': 'fixture', 'GOCACHE': 'fixture'}))
+ print(json.dumps({'GOOS': 'fixture', 'GOARCH': 'fixture', 'GOVERSION': 'fixture', 'GOROOT': goroot, 'GOCACHE': 'fixture'}))
  sys.exit(0)
 if args[0] == 'list':
  print('fixture/package '+str(Path(__file__).parent.resolve()))
@@ -76,6 +83,9 @@ else:
  race = binary.read_text() == 'race'
  assert str(Path.cwd()) == str(Path(__file__).parent.resolve())
  assert os.environ['PWD'] == str(Path.cwd())
+ assert os.environ['GOROOT'] == goroot
+ if os.name == 'posix':
+  assert subprocess.check_output(['go'], text=True).strip() == 'fixture-selected-toolchain'
  assert '-test.paniconexit0' in args and '-test.count=1' in args
 names = ['Example', 'FuzzInput', 'TestRaceOnly' if race else 'TestNormalOnly']
 for name in names:

@@ -1,0 +1,33 @@
+test_failed_parent_cannot_leave_an_orphan_in_its_session (test_suite_test.ProcessTests) ... orphan: exit=7 0.133s
+ok
+test_deadline_escalates_ignored_termination_with_controlled_clock (test_suite_test.ProcessTests) ... first: exit=-9 0.158s
+second: exit=-9 0.157s
+ok
+test_start_failure_stops_queued_work (test_suite_test.ProcessTests) ... missing: exit=1 0.000s
+queued: exit=130 0.000s
+ok
+test_failure_cancels_sibling_and_reaps_independent_child_group (test_suite_test.ProcessTests) ... first: exit=7 0.038s
+queued: exit=130 0.000s
+second: exit=-15 0.061s
+ok
+test_expired_budget_starts_no_process (test_suite_test.ProcessTests) ... expired: exit=130 0.000s
+ok
+test_inventory_includes_examples_fuzz_and_empty_packages (test_suite_test.InventoryTests) ... ok
+test_normal_and_race_discover_their_own_build_tag_inventory (test_suite_test.SuiteTests) ... ok
+test_disappeared_group_permission_error_does_not_hide_failure (test_suite_test.ProcessTests) ... ok
+test_interrupt_cancels_running_work (test_suite_test.ProcessTests) ... second: exit=-15 0.129s
+first: exit=-15 0.129s
+ok
+test_parallel_limit_and_all_results (test_suite_test.ProcessTests) ... 1: exit=0 0.039s
+0: exit=0 0.043s
+2: exit=0 0.042s
+3: exit=0 0.040s
+ok
+test_partition_is_deterministic_complete_and_disjoint (test_suite_test.InventoryTests) ... ok
+test_capture_preserves_cwd_arguments_exit_and_isolates_duplicate_package_names (test_suite_test.BinaryCaptureTests) ... ok
+test_missing_duplicate_and_unexpected_results_fail (test_suite_test.InventoryTests) ... ok
+
+----------------------------------------------------------------------
+Ran 13 tests in 2.512s
+
+OK

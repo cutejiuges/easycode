@@ -50,7 +50,7 @@
 
 ### Requirement: Refactoring preserves assertions and data semantics
 
-测试重构 SHALL 以业务断言与故障边界为单位保留覆盖。合并重复测试前 MUST 记录原断言到保留测试的映射；真实子进程竞争、崩溃释放、故障注入、当前固定 fixture、双 Provider 原生恢复与 cache 等价不得被空实现或仅检查返回成功的测试取代。共享解码性能重构 MUST 保持现有严格拒绝规则、当前固定 bytes、原生顺序、checksum 与 fingerprint。
+测试重构 SHALL 以业务断言与故障边界为单位保留覆盖。合并重复测试前 MUST 记录原断言到保留测试的映射；真实子进程竞争、崩溃释放、故障注入、当前固定 fixture、双 Provider 原生恢复与 cache 等价不得被空实现或仅检查返回成功的测试取代。共享编解码性能重构 MUST 保持现有严格拒绝规则、当前固定 bytes、原生顺序、checksum 与 fingerprint。
 
 #### Scenario: Optimize repeated decoding
 - **WHEN** 对重复扫描、临时字段对象或解码装配进行性能优化
@@ -61,3 +61,8 @@
 - **WHEN** 多个用例共享测试装配或将纯逻辑矩阵下沉到所属包
 - **THEN** 原有边界场景具有明确覆盖映射，并保留必要的真实 I/O 集成验证
 - **THEN** 测试代码行数减少本身不作为覆盖充分或性能达标的依据
+
+#### Scenario: Reuse record encoding without changing bytes
+- **WHEN** 写入方复用已编码的 checksum envelope 生成最终 Session record
+- **THEN** 保留全部输入拒绝规则、完整 record 大小检查、原字段顺序和 SHA-256 计算范围
+- **THEN** 与原 Sonic 整体编码路径的差异回归、固定 golden 和当前 fixture 均证明输出及 checksum 逐字节一致

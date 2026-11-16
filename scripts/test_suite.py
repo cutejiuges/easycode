@@ -276,8 +276,12 @@ def run_suite(args):
 
     try:
         report["source_digest"] = source_digest(root)
-        metadata = execute([("environment", [*go, "env", "-json", "GOOS", "GOARCH", "GOVERSION", "GOCACHE"], root)], 1)[0]
+        metadata = execute([("environment", [*go, "env", "-json", "GOOS", "GOARCH", "GOVERSION", "GOROOT", "GOCACHE"], root)], 1)[0]
         report["go_environment"] = json.loads(Path(metadata["log"]).read_text(encoding="utf-8"))
+        # go test 会把所选工具链置于 PATH 首位；直接运行二进制也须让嵌套 go build 使用同一版本。
+        environment["GOROOT"] = report["go_environment"]["GOROOT"]
+        environment["PATH"] = os.pathsep.join(part for part in
+                                              (str(Path(environment["GOROOT"]) / "bin"), environment.get("PATH")) if part)
         if args.mode == "verify":
             execute([("static", ["make", "--no-print-directory", "-j1", "branch-policy-test", "fmt-check",
                                   "vet", "lint", "test-runner-test", "GO=" + args.go], root)], 1)
