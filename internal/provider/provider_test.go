@@ -16,7 +16,14 @@ import (
 
 func TestTurnInputProjectInstructionsAreOptionalAndImmutable(t *testing.T) {
 	t.Parallel()
-	plain := NewSamplingInput()
+	settings, err := domain.DefaultInferenceSettings(domain.ProviderOpenAI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := NewSamplingInput(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, exists, err := plain.ProjectInstructions(); err != nil || exists {
 		t.Fatalf("plain project instructions = exists %t, err %v", exists, err)
 	}
@@ -55,7 +62,15 @@ func TestTurnInputAcceptsExplicitEmptyProjectInstructions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := (NewSamplingInput()).WithProjectInstructions(snapshot)
+	settings, err := domain.DefaultInferenceSettings(domain.ProviderOpenAI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := NewSamplingInput(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := plain.WithProjectInstructions(snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}

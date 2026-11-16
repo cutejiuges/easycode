@@ -1,0 +1,235 @@
+"""真实 CLI 的双 Provider、操作冻结、重启和显式失败重试验收；所有请求仅到本地服务。"""
+import hashlib
+import http.server
+import json
+import os
+from pathlib import Path
+import queue
+import selectors
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+
+ROOT = Path.cwd()
+OUTPUT = ROOT / 'openspec/changes/add-runtime-effort-control/evidence/regression-2026-11-15/cli-e2e.json'
+
+class CLI:
+    def __init__(self, binary, config, home, workspace, thread=None):
+        env = {k:v for k,v in os.environ.items() if not k.startswith(('EASYCODE_', 'OPENAI_', 'ANTHROPIC_')) and k not in ('HOME','XDG_CONFIG_HOME')}
+        env.update(HOME=str(home), XDG_CONFIG_HOME=str(home/'config'))
+        argv = [str(binary), '--config', str(config), '--json', '--input-format', 'stream-json']
+        if thread:
+            argv += ['--resume', thread]
+        self.process = subprocess.Popen(argv, cwd=workspace, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
+        self.selector = selectors.DefaultSelector()
+        self.selector.register(self.process.stdout, selectors.EVENT_READ, 'stdout')
+        self.selector.register(self.process.stderr, selectors.EVENT_READ, 'stderr')
+        self.pending = bytearray()
+        self.events, self.seen = [], []
+        self.stderr = bytearray()
+
+    def send(self, kind, identity, **fields):
+        data = dict(version=1, type=kind, request_id=identity, **fields)
+        self.process.stdin.write(json.dumps(data).encode()+b'\n')
+        self.process.stdin.flush()
+
+    def pump(self, wait):
+        for key, _ in self.selector.select(wait):
+            raw = os.read(key.fileobj.fileno(), 65536)
+            if not raw:
+                self.selector.unregister(key.fileobj)
+                continue
+            if key.data == 'stderr':
+                self.stderr.extend(raw)
+                continue
+            self.pending.extend(raw)
+            while b'\n' in self.pending:
+                line, _, rest = self.pending.partition(b'\n')
+                self.pending[:] = rest
+                event = json.loads(line)
+                assert event['version'] == 1
+                self.events.append(event)
+                self.seen.append(event)
+
+    def event(self, kind, identity=None):
+        deadline = time.monotonic()+15
+        while True:
+            for i, event in enumerate(self.events):
+                if event['type']==kind and (identity is None or event.get('input_id' if kind.startswith('turn.') else 'request_id')==identity):
+                    return self.events.pop(i)
+            if time.monotonic() >= deadline:
+                raise AssertionError(f'missing {kind}/{identity}: last events={self.seen[-3:]} stderr={self.stderr!r}')
+            self.pump(max(0, deadline-time.monotonic()))
+
+    def effort(self, identity, mode=None, level=None):
+        if mode is None:
+            self.send('effort.query', identity)
+        else:
+            fields = {'mode':mode}
+            if level is not None:
+                fields['level'] = level
+            self.send('effort.set', identity, **fields)
+        result = self.event('control.response', identity)
+        assert result['status']=='accepted', result
+        return self.event('effort.snapshot', identity)['snapshot']
+
+    def finish(self, code=0):
+        self.process.stdin.close()
+        deadline = time.monotonic()+15
+        while self.selector.get_map():
+            assert time.monotonic()<deadline, 'CLI cleanup did not finish'
+            self.pump(min(1,deadline-time.monotonic()))
+        assert not self.pending, 'partial JSONL line on exit'
+        actual = self.process.wait(timeout=2)
+        assert actual==code, (actual, code, self.stderr.decode())
+        assert b'fixture-cli-key' not in self.stderr
+        self.selector.close()
+        for stream in (self.process.stdout,self.process.stderr):
+            stream.close()
+
+    def abort(self):
+        if self.process.poll() is None:
+            self.process.kill()
+            self.process.wait(timeout=3)
+        self.selector.close()
+        for stream in (self.process.stdin,self.process.stdout,self.process.stderr):
+            if not stream.closed:
+                stream.close()
+
+
+def run_family(binary, family, directory):
+    first_gate = threading.Event()
+    bodies = queue.Queue()
+    captured = []
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+            n = len(captured)+1
+            captured.append(body)
+            bodies.put(body)
+            if n==1:
+                assert first_gate.wait(15), 'first request was never released'
+            if n==5:
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(b'fixture endpoint rejection')
+                return
+            answer = f'answer-{n}'
+            if family=='openai':
+                frames=[{'type':'response.created','response':{'id':f'resp-{n}'}}, {'type':'response.output_text.delta','delta':answer}, {'type':'response.output_item.done','item':{'type':'message','id':f'msg-{n}','role':'assistant','phase':'final','content':[{'type':'output_text','text':answer}]}}, {'type':'response.completed','response':{'id':f'resp-{n}'}}]
+            else:
+                frames=[{'type':'message_start','message':{'id':f'msg-{n}','model':'claude-test'}}, {'type':'content_block_start','index':0,'content_block':{'type':'text','text':''}}, {'type':'content_block_delta','index':0,'delta':{'type':'text_delta','text':answer}}, {'type':'content_block_stop','index':0}, {'type':'message_stop'}]
+            self.send_response(200)
+            self.send_header('Content-Type','text/event-stream')
+            self.end_headers()
+            for frame in frames:
+                self.wfile.write(b'data: '+json.dumps(frame).encode()+b'\n\n')
+            self.wfile.flush()
+    server = http.server.ThreadingHTTPServer(('127.0.0.1',0), Handler)
+    server.daemon_threads=False
+    owner = threading.Thread(target=server.serve_forever)
+    owner.start()
+    home, workspace = directory/'home', directory/'workspace'
+    home.mkdir(parents=True)
+    workspace.mkdir()
+    config = directory/'config.json'
+    settings = dict(provider=family,base_url=f'http://127.0.0.1:{server.server_port}',api_key='fixture-cli-key',model='gpt-test' if family=='openai' else 'claude-test',max_output_tokens=16384,openai_transport='http_sse')
+    if family=='openai':
+        settings.update(openai_reasoning_effort='high',openai_reasoning_summary='auto')
+    else:
+        settings.update(anthropic_thinking={'type':'adaptive','display':'omitted'},anthropic_effort='high')
+    config.write_text(json.dumps(settings))
+    config.chmod(0o600)
+    initial_config=config.read_bytes()
+    child=None
+    try:
+        child=CLI(binary,config,home,workspace)
+        thread=child.event('thread.started')['thread_id']
+        initial=child.effort('initial')
+        assert initial['selection_revision']==0 and initial['source']=='startup' and initial['selected']['value']=='high'
+        child.send('input.submit','first',text='first frozen high task')
+        bodies.get(timeout=15)
+        pending=child.effort('next-low','value','low')
+        assert pending['pending'] and pending['active']['effort']['value']=='high' and pending['selected']['value']=='low', pending
+        child.send('input.submit','next',text='second low task')
+        first_gate.set()
+        child.event('turn.completed','first')
+        child.event('turn.completed','next')
+        automatic=child.effort('auto','auto')
+        assert automatic['selected']['state']=='omitted'
+        child.send('input.submit','automatic',text='automatic effort task')
+        child.event('turn.completed','automatic')
+        reset=child.effort('reset','reset')
+        assert reset['selected']['value']=='high' and reset['source']=='startup'
+        child.send('input.submit','reset-task',text='reset startup high task')
+        child.event('turn.completed','reset-task')
+        child.send('effort.query','auto')
+        rejected=child.event('control.response','auto')
+        assert rejected['status']=='rejected' and rejected['error']['code']=='duplicate_request', rejected
+        after=child.effort('after-reject')
+        assert after['selection_revision']==reset['selection_revision'] and after['selected']==reset['selected']
+        child.finish()
+        journal=list((home/'.easycode/sessions').rglob('*.jsonl'))
+        assert len(journal)==1, journal
+        previous=journal[0].read_bytes()
+        assert b'selection_revision' not in previous and b'effort_snapshot' not in previous
+        assert config.read_bytes()==initial_config
+        child=CLI(binary,config,home,workspace,thread)
+        assert child.event('thread.started')['resumed']
+        resumed=child.effort('resume-query')
+        assert resumed['selection_revision']==0 and resumed['source']=='startup' and resumed['selected']['value']=='high'
+        child.finish()
+        assert journal[0].read_bytes()==previous and len(captured)==4
+        child=CLI(binary,config,home,workspace,thread)
+        child.event('thread.started')
+        child.effort('low-on-resume','value','low')
+        child.send('input.submit','rejected-endpoint',text='single endpoint rejection')
+        child.event('turn.failed','rejected-endpoint')
+        after_failure=child.effort('after-endpoint-failure')
+        assert after_failure['selected']['value']=='low'
+        child.send('input.submit','explicit-retry',text='explicit retry')
+        child.event('turn.completed','explicit-retry')
+        child.finish()
+        assert journal[0].read_bytes().startswith(previous) and config.read_bytes()==initial_config
+        actual=[]
+        for body in captured:
+            selected=body.get('reasoning',{}).get('effort') if family=='openai' else body.get('output_config',{}).get('effort')
+            actual.append(selected)
+            assert body.get('max_output_tokens',body.get('max_tokens'))==16384
+            assert 'selection_revision' not in json.dumps(body)
+            if family=='openai':
+                assert body['reasoning']['summary']=='auto' and body['store'] is False
+            else:
+                assert body['thinking']=={'type':'adaptive','display':'omitted'}
+        assert actual==['high','low',None,'high','low','low'], actual
+        return dict(provider=family,passed=True,actual_request_efforts=actual,operation_frozen=True,queued_next_policy=True,auto_and_reset=True,duplicate_request_rejected=True,query_only_resume_zero_requests=True,startup_revision_restored=True,journal_prefix_preserved=True,config_unchanged=True,endpoint_400_no_implicit_retry=True,explicit_retry_preserves_low=True,healthy_stream_exit_zero=True)
+    finally:
+        first_gate.set()
+        if child:
+            child.abort()
+        server.shutdown()
+        owner.join(timeout=3)
+        assert not owner.is_alive()
+        server.server_close()
+
+
+def main():
+    with tempfile.TemporaryDirectory(prefix='easycode-real-effort-cli-') as temporary:
+        directory=Path(temporary)
+        binary=directory/'easycode'
+        subprocess.run(['go','build','-o',str(binary),'./cmd/easycode'],cwd=ROOT,check=True,timeout=120)
+        cases=[]
+        for family in ('openai','anthropic'):
+            path=directory/family
+            path.mkdir()
+            cases.append(run_family(binary,family,path))
+        result={'date':'2026-11-15','kind':'compiled_cli','api':'local_http_sse_only','binary_sha256':hashlib.sha256(binary.read_bytes()).hexdigest(),'cases':cases}
+        OUTPUT.write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n')
+        print(json.dumps(result,ensure_ascii=False,indent=2))
+
+if __name__=='__main__':
+    main()

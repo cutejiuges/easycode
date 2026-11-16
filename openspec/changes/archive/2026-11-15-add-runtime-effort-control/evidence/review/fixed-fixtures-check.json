@@ -1,0 +1,22 @@
+{
+  "baseline_files": 403,
+  "unchanged_files": 394,
+  "intentional_display_snapshot_changes": [
+    "internal/tui/testdata/effort_28x10_helptrue_colorfalse.golden",
+    "internal/tui/testdata/effort_28x10_helptrue_colortrue.golden",
+    "internal/tui/testdata/markdown_12x6_colorfalse.golden",
+    "internal/tui/testdata/markdown_12x6_colortrue.golden",
+    "internal/tui/testdata/markdown_highlight_12x6_colorfalse.golden",
+    "internal/tui/testdata/markdown_highlight_12x6_colortrue.golden",
+    "internal/tui/testdata/markdown_reading_12x6_colorfalse.golden",
+    "internal/tui/testdata/markdown_reading_12x6_colortrue.golden",
+    "internal/tui/testdata/reasoning-status-28.golden.txt"
+  ],
+  "intentional_display_snapshot_reason": "Bound physical width and stacked state/queue height; reuse available space for help. No persistence or provider fixture changed.",
+  "new_display_snapshots": [
+    "internal/tui/testdata/effort_busy_queue_28x10.golden"
+  ],
+  "unexpected_changes": [],
+  "native_and_session_fixture_bytes_unchanged": true,
+  "passed": true
+}

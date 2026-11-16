@@ -1,0 +1,6 @@
+File: preview-app.test
+Type: delay
+Time: 2026-11-15 16:32:54 CST
+Showing nodes accounting for 10.31ms, 100% of 10.31ms total
+      flat  flat%   sum%        cum   cum%
+   10.31ms   100%   100%    10.31ms   100%  runtime._LostContendedRuntimeLock

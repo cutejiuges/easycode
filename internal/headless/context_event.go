@@ -9,12 +9,12 @@ import (
 
 // StreamContextSnapshotEvent 是只读查询的外部 v1 数值快照。
 type StreamContextSnapshotEvent struct {
-	Version   int                             `json:"version"`
-	Type      string                          `json:"type"`
-	RequestID protocol.RequestID              `json:"request_id"`
-	SessionID domain.SessionID                `json:"session_id"`
-	ThreadID  domain.ThreadID                 `json:"thread_id"`
-	Snapshot  protocol.ContextSnapshotPayload `json:"snapshot"`
+	Version   int                            `json:"version"`
+	Type      string                         `json:"type"`
+	RequestID protocol.RequestID             `json:"request_id"`
+	SessionID domain.SessionID               `json:"session_id"`
+	ThreadID  domain.ThreadID                `json:"thread_id"`
+	Snapshot  protocol.ContextMetricsPayload `json:"snapshot"`
 }
 
 // StreamCompactionStartedEvent 表示 started 已成功 Sync。
@@ -62,6 +62,12 @@ func (projectorValue *StreamProjector) projectContext(item protocol.ControlItem)
 		return nil, fmt.Errorf("context event identity mismatch")
 	}
 	switch event.Kind {
+	case protocol.EventEffortSnapshot:
+		payload, err := protocol.DecodeEffortSnapshot(event)
+		if err != nil {
+			return nil, err
+		}
+		return StreamEffortSnapshotEvent{Version: eventVersion, Type: "effort.snapshot", RequestID: item.RequestID(), SessionID: event.SessionID, ThreadID: event.ThreadID, Snapshot: newStreamEffortSnapshot(payload)}, nil
 	case protocol.EventCacheSnapshot:
 		payload, err := protocol.DecodeCacheSnapshot(event)
 		if err != nil {
@@ -73,7 +79,7 @@ func (projectorValue *StreamProjector) projectContext(item protocol.ControlItem)
 		if err != nil {
 			return nil, err
 		}
-		return StreamContextSnapshotEvent{Version: eventVersion, Type: "context.snapshot", RequestID: item.RequestID(), SessionID: event.SessionID, ThreadID: event.ThreadID, Snapshot: payload}, nil
+		return StreamContextSnapshotEvent{Version: eventVersion, Type: "context.snapshot", RequestID: item.RequestID(), SessionID: event.SessionID, ThreadID: event.ThreadID, Snapshot: payload.ContextMetricsPayload}, nil
 	case protocol.EventCompactionStarted:
 		payload, err := protocol.DecodeCompactionStarted(event)
 		if err != nil {

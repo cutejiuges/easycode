@@ -73,7 +73,7 @@ func TestExecSSEChunkingAndRejectedSamples(t *testing.T) {
 				defer instance.Close()
 				conversation := testConversation(t, instance)
 				testCommitUserInput(t, conversation, "test")
-				turn, err := provider.NewSamplingInput().WithToolCatalog(testAnthropicToolCatalog(t))
+				turn, err := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testAnthropicToolCatalog(t))
 				if err != nil {
 					t.Fatal(err)
 				}

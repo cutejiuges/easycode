@@ -81,6 +81,12 @@ func (plan samplingRequestPlan) body() (codec.CanonicalJSON, error) {
 }
 
 func (conversation *Conversation) planSamplingRequest(history []nativeHistoryEntry, input provider.TurnInput) (samplingRequestPlan, error) {
+	if err := input.Validate(); err != nil {
+		return samplingRequestPlan{}, err
+	}
+	if input.InferenceSettings().Family() != conversation.Family() {
+		return samplingRequestPlan{}, fmt.Errorf("sampling inference family mismatch")
+	}
 	history = conversation.windowRequestEntries(history)
 	snapshot, exists, err := input.ProjectInstructions()
 	if err != nil {
@@ -99,7 +105,7 @@ func (conversation *Conversation) planSamplingRequest(history []nativeHistoryEnt
 		return samplingRequestPlan{}, err
 	}
 	request := buildResponsesRequest(conversation.provider.config.Model, history, instructions, view)
-	request.applyInference(conversation.provider.config.Inference)
+	request.applyInference(input.InferenceSettings())
 	if c := input.SkillCatalog(); c.HasEntries() {
 		index := 0
 		if instructions != nil && instructions.HasDocuments() {

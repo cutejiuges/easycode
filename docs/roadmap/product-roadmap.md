@@ -813,8 +813,16 @@ P5 的助手阅读切片覆盖流式消息、已提交主线和历史正文。Pg
 
 ### 2026-11-08 启动推理控制切片
 
-`add-provider-reasoning-controls` 复用已有原生推理、缓存、工具和恢复，实现 JSON-only 冻结 thinking/display/effort/summary 与普通输出额度。摘要沿用策略并独立预检 manual budget；Anthropic thinking_tokens 进入五指标和唯一当前 native shape，raw/normalized 在 repair 前核对；请求计划统一 body/evidence/receipt。/context 显示来源并支持受限终端滚动。主规格已同步，change 已归档，验收矩阵见[归档验收记录](../../openspec/changes/archive/2026-11-11-add-provider-reasoning-controls/verification.md)。该切片不代表 P1/P5/P6 整体退出，运行中 /effort、远端模型发现、自动降级和额外推理模式仍未交付。
+`add-provider-reasoning-controls` 复用已有原生推理、缓存、工具和恢复，实现 JSON-only 冻结 thinking/display/effort/summary 与普通输出额度。摘要沿用策略并独立预检 manual budget；Anthropic thinking_tokens 进入五指标和唯一当前 native shape，raw/normalized 在 repair 前核对；请求计划统一 body/evidence/receipt。/context 显示来源并支持受限终端滚动。主规格已同步，change 已归档，验收矩阵见[归档验收记录](../../openspec/changes/archive/2026-11-11-add-provider-reasoning-controls/verification.md)。该切片不代表 P1/P5/P6 整体退出，远端模型发现、自动降级和额外推理模式仍未交付；运行中 effort 由后续已实现切片补齐。
 
 ### 2026-11-11 启动推理控制全面回归与归档
 
 两家 Provider 已在完整事件帧校验后才归并，拒绝重复成员覆盖计量或响应身份，保留合法未知扩展和连续 thinking 零值语义。新增 24 组真实 CLI、6 组异常流端到端与计量边界/fuzz 回归；八套 32 个 PTY 场景、5 轮乱序 race、421,051 次 fuzz 及清除测试缓存后的完整 `make verify` 均通过。实现、架构、主规格、实际 record vocabulary、测试路径与 pitfall 的归档核对见[归档记录](../../openspec/changes/archive/2026-11-11-add-provider-reasoning-controls/archive.md)，原始结果见[全面回归报告](../../openspec/changes/archive/2026-11-11-add-provider-reasoning-controls/regression-2026-11-11.md)。验证范围为 macOS 与本地模拟服务，不新增平台或真实模型支持承诺。
+
+### 会话内 effort 选择切片（已实现，P5 未整体退出）
+
+`add-runtime-effort-control` 在现有输入 owner 接入 `/effort` 与 stream-json typed 控制，支持原生档位、明确省略、恢复启动值、只读状态及七项内置补全。复用不可变 InferenceSettings、context 预算与小型 Provider 计划；完整操作捕获覆盖工具、Question/审批、Stop 和自动摘要，独立手动摘要在接纳时捕获。选择/序号只在内存，不改 native/Session schema，不探测或猜测模型默认，不引入 Codex configuration_update/pin 专路。
+
+Claude 风格的短通知、静态帮助和既有 `/context` 提供当前捕获与后续选择；终态后真实清理、请求序号及 UI 操作世代分别约束并发和迟到反馈。验收含双 Provider canonical 恢复、三种 Anthropic cache、OpenAI WS 属性变化/增量/失败重建、输出背压与跨进程 lease；整合 main 前的回归通过 24 组真实 PTY 和 10 组脚本化真实 CLI。47/47 项任务完成，六项主规格已同步，change 已归档；详见[实现验收](../../openspec/changes/archive/2026-11-15-add-runtime-effort-control/verification.md)。模型切换、其他推理字段热切换、远端能力发现、fork 和完整 P5 仍待独立变更。
+
+2026-11-15 整合 main 的 PreToolUse 参数改写后，新增双 Provider 真实组合回归：改写目标及审批使用 E，当前工具回合保持原 effort，下一操作才应用新选择；恢复同时保留原生 O 和改写结果。整合验收扩展为 26 组 Darwin PTY 与 10 组脚本化真实 CLI，当前验证见[main 同步记录](../../openspec/changes/archive/2026-11-15-add-runtime-effort-control/main-sync-2026-11-15.md)。

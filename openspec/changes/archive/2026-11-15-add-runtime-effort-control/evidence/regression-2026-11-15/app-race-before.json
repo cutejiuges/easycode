@@ -1,0 +1,7 @@
+{
+  "command": "go test -json -race -count=1 -run TestPluginBrowserManualAndRestoredRequestsBothProviders|TestReasoningControlsBuiltCLIEndToEnd|TestExecFailurePathsEndToEndForBothProviders -timeout=5m ./internal/app",
+  "started_at": "2026-11-15T08:13:31.944594+00:00",
+  "exit_code": 0,
+  "elapsed_seconds": 54.29,
+  "log": "app-race-before.log"
+}

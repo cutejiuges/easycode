@@ -164,7 +164,7 @@ func TestQuestionPreflightNativeRestoreAndForgery(t *testing.T) {
 	if err := p.Validate(testModelOutputs(t, before, result)[0]); err != nil {
 		t.Fatal("preflight borrowed mutable history", err)
 	}
-	sampling, err := provider.NewSamplingInput().WithToolCatalog(testOpenAIToolCatalog(t))
+	sampling, err := testSamplingInput(t, c.provider.config.Inference).WithToolCatalog(testOpenAIToolCatalog(t))
 	if err != nil {
 		t.Fatal(err)
 	}

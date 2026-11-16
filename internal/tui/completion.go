@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	maxCompletionCandidates = domain.MaxSkills + 6
+	maxCompletionCandidates = domain.MaxSkills + 7
 	maxCompletionBytes      = 2 << 20
 	maxCompletionLineBytes  = 16 << 10
 )
@@ -51,6 +51,7 @@ func builtinCompletionCandidates() []completionCandidate {
 		{id: completionIdentity{kind: completionBuiltin, name: "cache"}, description: "Inspect prompt cache"},
 		{id: completionIdentity{kind: completionBuiltin, name: "compact"}, description: "Compact conversation context", hint: "[instructions]"},
 		{id: completionIdentity{kind: completionBuiltin, name: "context"}, description: "Inspect context budget"},
+		{id: completionIdentity{kind: completionBuiltin, name: "effort"}, description: "Set next operation reasoning effort", hint: "[level|auto|reset]"},
 		{id: completionIdentity{kind: completionBuiltin, name: "hooks"}, description: "Browse command hooks"},
 		{id: completionIdentity{kind: completionBuiltin, name: "plugins"}, description: "Browse local plugins"},
 		{id: completionIdentity{kind: completionBuiltin, name: "skills"}, description: "Browse local skills"},
@@ -191,13 +192,7 @@ func (c *completionCatalog) match(target completionTarget) []completionMatch {
 	return matches
 }
 
-func isBuiltinCompletionName(name string) bool {
-	switch name {
-	case "cache", "compact", "context", "hooks", "skills", "plugins":
-		return true
-	}
-	return false
-}
+func isBuiltinCompletionName(name string) bool { return domain.IsReservedSkillSlashName(name) }
 
 func (c *composer) complete(target completionTarget, candidate completionCandidate) error {
 	inserted := string(target.sigil) + candidate.id.name

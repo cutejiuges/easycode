@@ -195,3 +195,21 @@ func TestModelOnlyAndResourceMainDocumentRejection(t *testing.T) {
 		}
 	}
 }
+
+func TestEffortSlashReservationPreservesExplicitSkill(t *testing.T) {
+	root, home := t.TempDir(), t.TempDir()
+	writeSkill(t, root, "easycode", "effort", "---\ndescription: same name skill\n---\nreserved-effort-marker $ARGUMENTS")
+	local := NewLocal()
+	if err := local.Load(context.Background(), root, home, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{"/effort", "/effort low", "/effort help"} {
+		if _, prepared, err := local.Prepare(context.Background(), text); err != nil || prepared {
+			t.Fatalf("reserved slash attached Skill: %q, %v", text, err)
+		}
+	}
+	a, prepared, err := local.Prepare(context.Background(), "$effort keep args")
+	if err != nil || !prepared || !strings.Contains(a.Content, "reserved-effort-marker keep args") {
+		t.Fatal("explicit same-name Skill became unreachable", err)
+	}
+}

@@ -4,15 +4,15 @@ Model: fixture-model · r
 evision 3 · compacting
 
 Inference: unavailable
-
-provider profile: 120 to
-kens (estimated)
-tool catalog: 120 tokens
- (estimated)
-committed history: 120 t
-okens (estimated)
-current input: 120 token
-s (estimated)
-
-Total: 480 tokens · byte
+Effort: omitted (server
+default unknown) · start
+up · revision 0
+Captured: omitted (serve
+r default unknown) · tur
+n/running
+Selection revision: 0
+Captured revision: 0
+Locally allowed levels:
+none minimal low medium
+high xhigh max
 Esc: close · ↑/↓ PgUp/Pg

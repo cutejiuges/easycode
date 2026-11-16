@@ -79,7 +79,7 @@ func testCompactionCacheStreams(t *testing.T, policy domain.CachePolicy) {
 					conversation.history.commit(entry)
 				}
 				before, _ := conversation.HistoryFootprint()
-				input, _ := provider.NewSamplingInput().WithToolCatalog(testAnthropicToolCatalog(t))
+				input, _ := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testAnthropicToolCatalog(t))
 				compact, _ := provider.NewCompactionInput(input, "", 4096)
 				if trigger == domain.CompactionAuto {
 					scope, _ := domain.NewAutoCompactionScope("01900000-0000-7000-8000-000000000099", 1)
@@ -148,7 +148,7 @@ func testCompactionStreamCancellation(t *testing.T, policy domain.CachePolicy) {
 	for _, entry := range testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, newUserMessage(strings.Repeat("old history ", 100)))}) {
 		conversation.history.commit(entry)
 	}
-	input, _ := provider.NewSamplingInput().WithToolCatalog(testAnthropicToolCatalog(t))
+	input, _ := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testAnthropicToolCatalog(t))
 	compact, _ := provider.NewCompactionInput(input, "", 4096)
 	preview, _ := conversation.PreflightCompaction(compact)
 	ctx, cancel := context.WithCancel(context.Background())

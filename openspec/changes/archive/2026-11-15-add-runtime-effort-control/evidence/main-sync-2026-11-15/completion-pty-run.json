@@ -1,0 +1,7 @@
+{
+  "command": "python3 scripts/completion-smoke.py",
+  "started_at": "2026-11-15T12:03:24.250455+00:00",
+  "exit_code": 0,
+  "elapsed_seconds": 3.94,
+  "log": "completion-pty-run.log"
+}

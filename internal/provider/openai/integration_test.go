@@ -226,7 +226,7 @@ func TestConversationKeepsProjectInstructionsOutOfNativeHistory(t *testing.T) {
 	snapshot := testOpenAIProjectInstructions(t, "AGENTS.md", projectMarker)
 	for _, text := range []string{"first", "second"} {
 		testCommitUserInput(t, conversation, text)
-		input, attachErr := provider.NewSamplingInput().WithProjectInstructions(snapshot)
+		input, attachErr := testSamplingInput(t, instance.config.Inference).WithProjectInstructions(snapshot)
 		if attachErr != nil {
 			t.Fatal(attachErr)
 		}

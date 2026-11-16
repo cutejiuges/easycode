@@ -1,0 +1,7 @@
+{
+  "command": "python3 scripts/effort-smoke.py --output openspec/changes/archive/2026-11-15-add-runtime-effort-control/evidence/main-sync-2026-11-15/effort-pty.json",
+  "started_at": "2026-11-15T12:03:24.252997+00:00",
+  "exit_code": 0,
+  "elapsed_seconds": 4.55,
+  "log": "effort-pty-run.log"
+}

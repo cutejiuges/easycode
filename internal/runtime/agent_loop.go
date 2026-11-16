@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
@@ -45,8 +46,9 @@ func (config AgentLoopConfig) validate() error {
 
 // AgentLoop 是一个 Session-bound 的单 owner 输入控制循环。
 type AgentLoop struct {
-	runtime *Runtime
-	config  AgentLoopConfig
+	runtime        *Runtime
+	effortSnapshot func(domain.SessionID, domain.ThreadID, protocol.EffortSnapshotPayload) (protocol.Event, error)
+	config         AgentLoopConfig
 
 	claims      chan inputClaimRequest
 	resolutions chan inputResolution
@@ -67,7 +69,7 @@ func NewAgentLoop(runtime *Runtime, config AgentLoopConfig) (*AgentLoop, error) 
 		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "agent loop configuration is invalid", err)
 	}
 	return &AgentLoop{
-		runtime: runtime, config: config,
+		runtime: runtime, config: config, effortSnapshot: protocol.NewEffortSnapshot,
 		claims: make(chan inputClaimRequest), resolutions: make(chan inputResolution),
 		requests: make(chan loopCommandRequest), lifecycle: make(chan loopLifecycleRequest),
 		outputs: make(chan protocol.ControlItem, agentLoopOutputBuffer), ready: make(chan struct{}), done: make(chan struct{}),
@@ -234,6 +236,8 @@ type queuedInput struct {
 }
 
 type activeLoopTurn struct {
+	profile            contextplan.ProviderProfile
+	selectionRevision  uint64
 	autoCompactionSeen bool
 	compactionID       domain.CompactionID
 	claim              []queuedInput
@@ -276,10 +280,13 @@ func (ledger *recentRequestLedger) add(requestID protocol.RequestID) {
 }
 
 type agentLoopRunState struct {
+	choice             domain.EffortChoice
+	selectedProfile    contextplan.ProviderProfile
+	selectionRevision  uint64
 	compaction         *activeLoopCompaction
 	cacheSnapshot      protocol.CacheSnapshotPayload
 	cacheSnapshotErr   error
-	contextSnapshot    protocol.ContextSnapshotPayload
+	contextSnapshot    protocol.ContextMetricsPayload
 	contextSnapshotErr error
 	loop               *AgentLoop
 	ctx                context.Context
@@ -296,6 +303,7 @@ type agentLoopRunState struct {
 func newAgentLoopRunState(loop *AgentLoop, ctx context.Context) *agentLoopRunState {
 	return &agentLoopRunState{
 		loop: loop, ctx: ctx, mode: loopModeAccepting,
+		choice: domain.NewResetEffortChoice(), selectedProfile: loop.runtime.profile,
 		queue:       make([]queuedInput, 0, loop.config.MaxQueuedInputs),
 		outstanding: make(map[protocol.RequestID]struct{}, loop.config.MaxQueuedInputs+1),
 		recent:      newRecentRequestLedger(loop.config.RecentRequests), runContextDone: ctx.Done(),
@@ -360,18 +368,20 @@ func (state *agentLoopRunState) startTurn(inputs []queuedInput) *activeLoopTurn 
 	turnContext, cancel := context.WithCancel(state.ctx)
 	events := make(chan runtimePublication)
 	finished := make(chan error, 1)
+	profile, revision := state.selectedProfile, state.selectionRevision
+	state.refreshContextSnapshot()
 	control := &loopInputControl{loop: state.loop, reply: make(chan []domain.UserInput, 1), resolved: make(chan struct{}, 1)}
 	go func() {
 		state.loop.runtime.cachePublisher = func(snapshot protocol.CacheSnapshotPayload) {
 			events <- runtimePublication{cacheOnly: true, cacheSnapshot: snapshot}
 		}
-		err := state.loop.runtime.runTurn(turnContext, queuedDomainInputs(inputs), control, func(event protocol.Event) { events <- state.loop.runtime.publishContext(event) })
+		err := state.loop.runtime.runTurn(turnContext, queuedDomainInputs(inputs), profile, control, func(event protocol.Event) { events <- state.loop.runtime.publishContext(event) })
 		state.loop.runtime.cachePublisher = nil
 		close(events)
 		finished <- err
 		close(finished)
 	}()
-	return &activeLoopTurn{input: inputs[0], claim: inputs, cancel: cancel, events: events, finished: finished}
+	return &activeLoopTurn{profile: profile, selectionRevision: revision, input: inputs[0], claim: inputs, cancel: cancel, events: events, finished: finished}
 }
 
 func (state *agentLoopRunState) startNext() {
@@ -422,6 +432,8 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 	}
 
 	switch request.command.Kind() {
+	case protocol.CommandQueryEffort, protocol.CommandSetEffort:
+		state.controlEffort(request)
 	case protocol.CommandQueryCache:
 		state.queryCache(request)
 	case protocol.CommandQueryContext:
@@ -584,6 +596,7 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 
 func (state *agentLoopRunState) cancelActive() {
 	if state.compaction != nil {
+		state.compaction.cancelRequested = true
 		state.compaction.cancel()
 	}
 	if state.active != nil && !state.active.cancelRequested {
@@ -692,6 +705,7 @@ func (state *agentLoopRunState) handleTurnFinished(workerErr error, open bool) {
 	state.active.claim = nil
 	state.completeRequest(state.active.input.requestID)
 	state.active = nil
+	state.refreshContextSnapshot()
 }
 
 func (state *agentLoopRunState) handleContextDone() {

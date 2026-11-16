@@ -7,6 +7,7 @@ import (
 	"easycode/internal/domain"
 	"easycode/internal/protocol"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // inputPreview 只保存本地可编辑副本，不能驱动运行时执行。
@@ -47,6 +48,9 @@ func (model Model) projectControlItem(item protocol.ControlItem) (tea.Model, tea
 		return model, nil
 	}
 	if event, ok := item.ContextEvent(); ok {
+		if event.Kind == protocol.EventEffortSnapshot {
+			return model.projectEffortEvent(item.RequestID(), event)
+		}
 		if event.Kind == protocol.EventCacheSnapshot || event.Kind == protocol.EventContextSnapshot {
 			if item.RequestID() != model.queryRequestID || model.queryRequestID == "" {
 				return model, nil
@@ -56,6 +60,12 @@ func (model Model) projectControlItem(item protocol.ControlItem) (tea.Model, tea
 					return model, nil
 				}
 				return model.projectCacheEvent(event)
+			}
+			if model.queryOperationGeneration != model.effortOperationGeneration {
+				if payload, err := protocol.DecodeContextSnapshot(event); err == nil {
+					model.observeEffort(payload.Effort, false)
+				}
+				return model, nil
 			}
 			if model.queryKind != protocol.CommandQueryContext {
 				return model, nil
@@ -68,6 +78,8 @@ func (model Model) projectControlItem(item protocol.ControlItem) (tea.Model, tea
 	}
 	if result, ok := item.CommandResult(); ok {
 		switch result.CommandKind() {
+		case protocol.CommandQueryEffort, protocol.CommandSetEffort:
+			return model.projectEffortResult(result)
 		case protocol.CommandQueryCache, protocol.CommandQueryContext, protocol.CommandCompactContext, protocol.CommandCancelCompaction:
 			return model.projectContextResult(result)
 		case protocol.CommandSubmitConversationalInput:
@@ -190,17 +202,45 @@ func (model Model) handleReturnedInput(take bool) (tea.Model, tea.Cmd) {
 }
 
 func (model Model) renderInputs() string {
+	if len(model.inputs) == 0 {
+		return ""
+	}
+	budget := max(0, model.heightOrDefault()-model.composerChatRows()-model.nonEffortStatusRows()-4)
+	if budget == 0 {
+		return ""
+	}
+	hint := budget >= 2
+	visible := budget
+	if hint {
+		visible--
+	}
+	summary := len(model.inputs) > visible && budget >= 3
+	if summary {
+		visible--
+	}
+	visible = min(len(model.inputs), visible)
 	var view strings.Builder
-	for _, input := range model.inputs {
+	line := func(text string) {
+		view.WriteString(ansi.Truncate(text, max(1, model.widthOrDefault()), "…"))
+		view.WriteByte('\n')
+	}
+	for _, input := range model.inputs[:visible] {
 		state := string(input.state)
 		if state == "" {
 			state = "queued"
 		}
-		preview := truncateRunes(strings.ReplaceAll(safeComposerText(input.text), "\n", " ↵ "), max(20, model.widthOrDefault()-18))
-		fmt.Fprintf(&view, "[%s] %s\n", state, strings.TrimRight(preview, " "))
+		preview := truncateRunes(strings.ReplaceAll(safeComposerText(input.text), "\n", " ↵ "), max(1, model.widthOrDefault()-12))
+		line(fmt.Sprintf("[%s] %s", state, strings.TrimRight(preview, " ")))
 	}
-	if len(model.inputs) > 0 {
-		view.WriteString("Up/Esc: edit queued · Ctrl+R: take returned · Ctrl+D: discard returned\n")
+	if summary {
+		line(fmt.Sprintf("%d more queued or returned inputs", len(model.inputs)-visible))
+	}
+	if hint {
+		text := "Up/Esc: edit queued · Ctrl+R: take returned · Ctrl+D: discard returned"
+		if model.widthOrDefault() < 64 {
+			text = "Esc edit · ^R take · ^D drop"
+		}
+		line(text)
 	}
 	return view.String()
 }

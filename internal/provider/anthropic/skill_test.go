@@ -74,7 +74,7 @@ func testSkillAttachmentFrozenNativeRestore(t *testing.T, source domain.SkillSou
 	}
 	catalogMetadata, _ := domain.NewSkillMetadata(source, name, "on demand", "", true, false)
 	catalog, _ := domain.NewSkillCatalog([]domain.SkillMetadata{catalogMetadata})
-	sampling, _ := provider.NewSamplingInput().WithToolCatalog(testAnthropicToolCatalog(t))
+	sampling, _ := testSamplingInput(t, restored.provider.config.Inference).WithToolCatalog(testAnthropicToolCatalog(t))
 	sampling, _ = sampling.WithSkillCatalog(catalog)
 	live, err := conversation.compileSamplingRequest(conversation.history.snapshot(), sampling)
 	if err != nil {

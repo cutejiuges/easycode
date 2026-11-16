@@ -404,3 +404,21 @@ func (session *ChatSession) ResolveQuestion(ctx context.Context, turnID domain.T
 	}
 	return nil
 }
+
+// QueryEffort 通过既有控制 owner 查询进程设置。
+func (session *ChatSession) QueryEffort(ctx context.Context, requestID protocol.RequestID) (protocol.CommandResult, error) {
+	command, err := protocol.NewQueryEffortCommand(requestID)
+	if err != nil {
+		return protocol.CommandResult{}, err
+	}
+	return session.submitInteractive(ctx, command)
+}
+
+// SetEffort 通过既有控制 owner 更新后续操作策略。
+func (session *ChatSession) SetEffort(ctx context.Context, requestID protocol.RequestID, choice domain.EffortChoice) (protocol.CommandResult, error) {
+	command, err := protocol.NewSetEffortCommand(requestID, choice)
+	if err != nil {
+		return protocol.CommandResult{}, err
+	}
+	return session.submitInteractive(ctx, command)
+}

@@ -1,0 +1,27 @@
+File: preview-app.test
+Type: delay
+Time: 2026-11-15 16:32:54 CST
+Showing nodes accounting for 15.23s, 100% of 15.23s total
+Dropped 16 nodes (cum <= 0.08s)
+Showing top 20 nodes out of 21
+      flat  flat%   sum%        cum   cum%
+    15.23s   100%   100%     15.23s   100%  runtime.chanrecv1
+         0     0%   100%      5.18s 34.00%  easycode/internal/app.TestMain
+         0     0%   100%      5.03s 33.02%  easycode/internal/app.TestSessionPreviewCurrentFixturesAreReadOnly
+         0     0%   100%      5.18s 34.00%  main.main
+         0     0%   100%      0.13s  0.86%  runtime.deferreturn
+         0     0%   100%      5.18s 34.00%  runtime.main
+         0     0%   100%      5.02s 32.98%  runtime.unique_runtime_registerUniqueMapCleanup.func2
+         0     0%   100%      0.13s  0.86%  runtime/pprof.StopCPUProfile
+         0     0%   100%      0.13s  0.86%  sync.(*Once).Do
+         0     0%   100%      0.13s  0.86%  sync.(*Once).doSlow
+         0     0%   100%      5.18s 34.00%  testing.(*M).Run
+         0     0%   100%      0.13s  0.86%  testing.(*M).Run.deferwrap1
+         0     0%   100%      0.13s  0.86%  testing.(*M).after
+         0     0%   100%      0.13s  0.86%  testing.(*M).after.func1
+         0     0%   100%      0.13s  0.86%  testing.(*M).writeProfiles
+         0     0%   100%     10.08s 66.17%  testing.(*T).Run
+         0     0%   100%      5.03s 33.02%  testing.(*T).Run.gowrap1
+         0     0%   100%      5.05s 33.15%  testing.runTests
+         0     0%   100%      5.05s 33.15%  testing.runTests.func1
+         0     0%   100%     10.08s 66.17%  testing.tRunner

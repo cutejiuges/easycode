@@ -260,6 +260,10 @@ func streamCommandType(kind protocol.CommandKind) (string, bool) {
 	switch kind {
 	case protocol.CommandQueryCache:
 		return "cache.query", true
+	case protocol.CommandQueryEffort:
+		return "effort.query", true
+	case protocol.CommandSetEffort:
+		return "effort.set", true
 	case protocol.CommandQueryContext:
 		return "context.query", true
 	case protocol.CommandCompactContext:
@@ -289,6 +293,14 @@ func validateStreamEvent(event StreamEvent) error {
 	case StreamCacheSnapshotEvent:
 		if value.Version != eventVersion || value.Type != "cache.snapshot" || !value.RequestID.Valid() {
 			return fmt.Errorf("cache snapshot envelope is invalid")
+		}
+		if err := validateThreadIdentity(value.SessionID, value.ThreadID); err != nil {
+			return err
+		}
+		return value.Snapshot.validate()
+	case StreamEffortSnapshotEvent:
+		if value.Version != eventVersion || value.Type != "effort.snapshot" || !value.RequestID.Valid() {
+			return fmt.Errorf("effort snapshot envelope is invalid")
 		}
 		if err := validateThreadIdentity(value.SessionID, value.ThreadID); err != nil {
 			return err
@@ -338,7 +350,7 @@ func validateStreamEvent(event StreamEvent) error {
 		if value.Version != eventVersion || value.Type != "control.response" || !value.RequestID.Valid() {
 			return fmt.Errorf("stream control.response envelope is invalid")
 		}
-		if value.CommandType != "cache.query" && value.CommandType != "context.query" && value.CommandType != "context.compact" && value.CommandType != "context.cancel" && value.CommandType != "input.append" && value.CommandType != "input.retract" && value.CommandType != "turn.stop" && value.CommandType != "input.submit" && value.CommandType != "turn.interrupt" && value.CommandType != "session.shutdown" {
+		if value.CommandType != "effort.query" && value.CommandType != "effort.set" && value.CommandType != "cache.query" && value.CommandType != "context.query" && value.CommandType != "context.compact" && value.CommandType != "context.cancel" && value.CommandType != "input.append" && value.CommandType != "input.retract" && value.CommandType != "turn.stop" && value.CommandType != "input.submit" && value.CommandType != "turn.interrupt" && value.CommandType != "session.shutdown" {
 			return fmt.Errorf("stream control.response command type is invalid")
 		}
 		if value.Status == protocol.CommandStatusAccepted {
@@ -346,6 +358,9 @@ func validateStreamEvent(event StreamEvent) error {
 				return fmt.Errorf("compaction response identity is invalid")
 			}
 
+			if value.CommandType == "effort.query" && value.Disposition != protocol.CommandDispositionQueried || value.CommandType == "effort.set" && value.Disposition != protocol.CommandDispositionUpdated {
+				return fmt.Errorf("effort response disposition is invalid")
+			}
 			if value.Error != nil || value.Disposition == "" || (value.CommandType == "input.append") != value.EntryID.Valid() {
 				return fmt.Errorf("stream accepted response is invalid")
 			}

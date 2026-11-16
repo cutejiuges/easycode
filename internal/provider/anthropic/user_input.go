@@ -84,6 +84,12 @@ type samplingRequestPlan struct {
 }
 
 func (conversation *Conversation) planSamplingRequest(history []nativeHistoryEntry, input provider.TurnInput) (samplingRequestPlan, error) {
+	if err := input.Validate(); err != nil {
+		return samplingRequestPlan{}, err
+	}
+	if input.InferenceSettings().Family() != conversation.Family() {
+		return samplingRequestPlan{}, fmt.Errorf("sampling inference family mismatch")
+	}
 	history = conversation.windowRequestEntries(history)
 	snapshot, exists, err := input.ProjectInstructions()
 	if err != nil {
@@ -101,8 +107,8 @@ func (conversation *Conversation) planSamplingRequest(history []nativeHistoryEnt
 	if err != nil {
 		return samplingRequestPlan{}, err
 	}
-	plan := samplingRequestPlan{purpose: domain.RequestSample, request: buildMessagesRequest(conversation.provider.config.Model, int(conversation.provider.config.Inference.MaxOutputTokens()), history, instructions, view), history: history, project: instructions != nil && instructions.HasDocuments()}
-	plan.request.applyInference(conversation.provider.config.Inference)
+	plan := samplingRequestPlan{purpose: domain.RequestSample, request: buildMessagesRequest(conversation.provider.config.Model, int(input.InferenceSettings().MaxOutputTokens()), history, instructions, view), history: history, project: instructions != nil && instructions.HasDocuments()}
+	plan.request.applyInference(input.InferenceSettings())
 	if c := input.SkillCatalog(); c.HasEntries() {
 		index := 0
 		if plan.project {

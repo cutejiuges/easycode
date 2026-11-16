@@ -1,0 +1,27 @@
+File: hook-app.test
+Type: delay
+Time: 2026-11-15 16:19:48 CST
+Showing nodes accounting for 48707.82us, 100% of 48707.82us total
+Dropped 47 nodes (cum <= 243.54us)
+Showing top 20 nodes out of 25
+      flat  flat%   sum%        cum   cum%
+47853.61us 98.25% 98.25% 47853.61us 98.25%  runtime._LostContendedRuntimeLock
+  854.21us  1.75%   100%   854.21us  1.75%  sync.(*Mutex).Unlock
+         0     0%   100%   499.38us  1.03%  easycode/internal/codec.UnmarshalRecord
+         0     0%   100%   499.38us  1.03%  easycode/internal/codec.UnmarshalStrict
+         0     0%   100%      510us  1.05%  easycode/internal/runtime.(*Runtime).executeApproved
+         0     0%   100%   499.38us  1.03%  easycode/internal/runtime.(*Runtime).executeExclusive
+         0     0%   100%      510us  1.05%  easycode/internal/runtime.(*Runtime).executeExclusiveCall
+         0     0%   100%   499.38us  1.03%  easycode/internal/runtime.(*Runtime).executeExecCall
+         0     0%   100%      510us  1.05%  easycode/internal/runtime.(*Runtime).executeToolCalls
+         0     0%   100%      510us  1.05%  easycode/internal/runtime.(*Runtime).runTurn
+         0     0%   100%      510us  1.05%  easycode/internal/runtime.(*agentLoopRunState).startTurn.func1
+         0     0%   100%      510us  1.05%  easycode/internal/runtime.orderedToolScheduler.execute
+         0     0%   100%   499.38us  1.03%  easycode/internal/session.(*JournalWriter).AppendBatch
+         0     0%   100%   499.38us  1.03%  easycode/internal/session.DecodeToolExecutionStartedPayload
+         0     0%   100%   499.38us  1.03%  easycode/internal/session.RecordDraft.validate
+         0     0%   100%   499.38us  1.03%  easycode/internal/session.decodeKnownPayload[go.shape.struct { InvocationID easycode/internal/tool.InvocationID "json:\"invocation_id\"" }]
+         0     0%   100%   499.38us  1.03%  easycode/internal/session.validateDraftPayload
+         0     0%   100%   499.38us  1.03%  github.com/bytedance/sonic.frozenConfig.Unmarshal
+         0     0%   100%   499.38us  1.03%  github.com/bytedance/sonic.frozenConfig.UnmarshalFromString
+         0     0%   100%   499.38us  1.03%  github.com/bytedance/sonic/internal/caching.(*ProgramCache).Compute

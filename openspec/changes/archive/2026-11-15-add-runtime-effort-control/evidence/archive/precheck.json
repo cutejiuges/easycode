@@ -1,0 +1,150 @@
+{
+  "change": "add-runtime-effort-control",
+  "schema": "spec-driven",
+  "artifact_statuses": [
+    {
+      "id": "proposal",
+      "outputPath": "proposal.md",
+      "status": "done",
+      "requires": []
+    },
+    {
+      "id": "specs",
+      "outputPath": "specs/**/*.md",
+      "status": "done",
+      "requires": [
+        "proposal"
+      ]
+    },
+    {
+      "id": "design",
+      "outputPath": "design.md",
+      "status": "done",
+      "requires": [
+        "proposal"
+      ]
+    },
+    {
+      "id": "tasks",
+      "outputPath": "tasks.md",
+      "status": "done",
+      "requires": [
+        "specs",
+        "design"
+      ]
+    }
+  ],
+  "completed_tasks": 47,
+  "incomplete_tasks": 0,
+  "delta_sync": [
+    {
+      "capability": "context/compaction",
+      "requirements": 1,
+      "requirement_names": [
+        "Summary requests preserve frozen reasoning with independent output budgets"
+      ],
+      "all_current_text_matches": true
+    },
+    {
+      "capability": "headless/stream-control",
+      "requirements": 2,
+      "requirement_names": [
+        "Streaming stdin uses a strict bounded NDJSON protocol",
+        "Effort controls return ordered process-local snapshots"
+      ],
+      "all_current_text_matches": true
+    },
+    {
+      "capability": "provider/reasoning-control",
+      "requirements": 1,
+      "requirement_names": [
+        "Compile frozen reasoning settings through every ordinary request path"
+      ],
+      "all_current_text_matches": true
+    },
+    {
+      "capability": "runtime/effort-control",
+      "requirements": 7,
+      "requirement_names": [
+        "Effort selection preserves provider semantics and startup constraints",
+        "One owner accepts process-local effort commands",
+        "Every operation captures one immutable inference policy",
+        "Effort snapshots distinguish selection from an active operation",
+        "Selection revisions order process-local observations",
+        "Setting admission is atomic and independent from observation failures",
+        "Restart restores native history and initializes a new selection"
+      ],
+      "all_current_text_matches": true
+    },
+    {
+      "capability": "tui/context-commands",
+      "requirements": 2,
+      "requirement_names": [
+        "Context inspection explains frozen ordinary inference settings",
+        "Local effort commands change only the next operation selection"
+      ],
+      "all_current_text_matches": true
+    },
+    {
+      "capability": "tui/input-completion",
+      "requirements": 1,
+      "requirement_names": [
+        "Completion offers only available explicit actions"
+      ],
+      "all_current_text_matches": true
+    }
+  ],
+  "main_requirement_count": 14,
+  "source_matches_last_verified": true,
+  "source_drift": [],
+  "latest_make_verify": {
+    "command": "make verify GO=/tmp/easycode-go-timed-20261115",
+    "started_at": "2026-11-15T08:18:46.001414+00:00",
+    "source_input_files": 1368,
+    "source_before_sha256": "6d80929b274c674bd9444ce9f3fc1199fba4734218ede90709b7f14085e5a2cc",
+    "test_observation": "Wrapper only adds -json -count=1 to both go test commands; vet/staticcheck and all package/race/timeout arguments remain unchanged.",
+    "exit_code": 0,
+    "elapsed_seconds": 937.83,
+    "source_after_sha256": "6d80929b274c674bd9444ce9f3fc1199fba4734218ede90709b7f14085e5a2cc",
+    "source_inputs_unchanged": true,
+    "finished_at": "2026-11-15T08:34:23.840258+00:00"
+  },
+  "latest_final_audit": {
+    "date": "2026-11-15",
+    "make_verify_exit": 0,
+    "make_verify_seconds": 937.83,
+    "test_cache_disabled": true,
+    "normal_phase_seconds": 153.968,
+    "race_phase_seconds": 781.182,
+    "source_inputs_unchanged": true,
+    "source_files": 1368,
+    "source_sha256": "6d80929b274c674bd9444ce9f3fc1199fba4734218ede90709b7f14085e5a2cc",
+    "fixed_fixtures": {
+      "fixed_files": 404,
+      "changed": [],
+      "passed": true
+    },
+    "openspec_state": "all_done",
+    "progress": {
+      "total": 47,
+      "complete": 47,
+      "remaining": 0
+    },
+    "pty_cases": 24,
+    "scripted_binary_cli_cases": 10,
+    "main_specs_exact": true,
+    "document_links": {
+      "checked": 178,
+      "missing": [],
+      "passed": true
+    },
+    "git_diff_check_exit": 0,
+    "production_or_test_source_changed_this_run": false,
+    "functional_defects_found": [],
+    "benchmark_limit": "Another worktree was running app race with CPU profiling concurrently."
+  },
+  "archive_target": "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/archive/2026-11-15-add-runtime-effort-control",
+  "archive_target_exists": false,
+  "openspec_config_present": true,
+  "archive_optional_context": {}
+}

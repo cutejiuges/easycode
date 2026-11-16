@@ -1,11 +1,11 @@
 EasyCode test
 
 
-  /context [command] Inspect context budget
+  /effort [command] [level|auto|reset] Set next operation reasoning effort
   /hooks [command] Browse command hooks
   /plugins [command] Browse local plugins
   /skills [command] Browse local skills
 > /review [skill project:easycode:.] [args] Review changes
-7/7 · Up/Down: select · Tab: fill · Enter: choose · Esc: close
+8/8 · Up/Down: select · Tab: fill · Enter: choose · Esc: close
 > /|
 Enter: send | Alt+Enter/Ctrl+J: newline

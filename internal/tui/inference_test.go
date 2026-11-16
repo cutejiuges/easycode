@@ -17,7 +17,7 @@ func TestInferencePanelBoundedScrollAndReadOnlyKeys(t *testing.T) {
 	for _, size := range [][2]int{{80, 24}, {24, 10}, {3, 2}, {1, 1}} {
 		model := NewModel(context.Background(), "fixture", &contextFixtureSession{}).WithInferenceSettings(settings)
 		model.width, model.height = size[0], size[1]
-		model.contextPanel = &protocol.ContextSnapshotPayload{Model: "hostile\x1b[31m\x00model", Revision: 3}
+		model.contextPanel = &protocol.ContextSnapshotPayload{ContextMetricsPayload: protocol.ContextMetricsPayload{Model: "hostile\x1b[31m\x00model", Revision: 3}}
 		original := model.inference
 		all := strings.Join(model.contextPanelLines(), "\n")
 		for _, field := range []string{"enabled", "8192", "omitted", "high", "16384", "explicit", "endpoint support not verified", "independent observations"} {

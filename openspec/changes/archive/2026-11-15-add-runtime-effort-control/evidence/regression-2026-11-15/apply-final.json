@@ -1,0 +1,272 @@
+{
+  "changeName": "add-runtime-effort-control",
+  "changeDir": "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control",
+  "schemaName": "spec-driven",
+  "contextFiles": {
+    "proposal": [
+      "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/proposal.md"
+    ],
+    "specs": [
+      "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/specs/context/compaction/spec.md",
+      "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/specs/headless/stream-control/spec.md",
+      "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/specs/provider/reasoning-control/spec.md",
+      "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/specs/runtime/effort-control/spec.md",
+      "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/specs/tui/context-commands/spec.md",
+      "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/specs/tui/input-completion/spec.md"
+    ],
+    "design": [
+      "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/design.md"
+    ],
+    "tasks": [
+      "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/tasks.md"
+    ]
+  },
+  "progress": {
+    "total": 47,
+    "complete": 47,
+    "remaining": 0
+  },
+  "tasks": [
+    {
+      "id": "1",
+      "description": "1.1 在 domain 实现 reset/auto/value 的封闭 effort 值和纯解析，复用 InferenceSettings；单测覆盖两家档位、auto/reset/显式 none 区别、跨 family、原值及其他字段不变，特别验证有效默认输出额度不被反填成显式来源、不派发猜测的模型默认 effort。",
+      "done": true
+    },
+    {
+      "id": "2",
+      "description": "1.2 将现有推理与窗口/输出预留组合校验提取到 context 的纯边界，由 config 和 runtime 共用；验证原启动合法/非法矩阵不变，运行中相同组合得到一致结论，且无反向依赖。",
+      "done": true
+    },
+    {
+      "id": "3",
+      "description": "1.3 补充设置/profile 身份回归，验证只有实际 effort wire 变化才改变 RequestPolicyIdentity/provider_profile，同值不同来源和 auto 的省略语义正确，目录/native fingerprint 不受影响。",
+      "done": true
+    },
+    {
+      "id": "4",
+      "description": "2.1 实现 query_effort/set_effort 专属强类型构造、validator、updated disposition、invalid_effort/effort_conflict 安全错误；协议测试拒绝 kind/payload 混合、非法枚举、未知/null/重复字段，且无 any 或内部版本字段。",
+      "done": true
+    },
+    {
+      "id": "5",
+      "description": "2.2 实现有界 EffortSnapshot、专属事件及关联 ControlItem；固定 golden 覆盖 omitted/explicit、来源、allowed_levels、pending、16 KiB 限制，以及 turn_starting/turn/manual_compaction 的专属构造、strict decoder、phase/cancel_requested 和排他身份。",
+      "done": true
+    },
+    {
+      "id": "6",
+      "description": "2.3 将内部 context 的数值与 effort 快照组合，并让外部 context.snapshot 显式投影原数值 shape；更新全部内部消费者，严格拒绝旧内部 shape，验证既有外部 golden bytes 不变，无兼容 reader。",
+      "done": true
+    },
+    {
+      "id": "7",
+      "description": "2.4 实现必需整数 selection_revision 与 active 捕获序号校验；单测拒绝未来捕获序号、混合/空身份、null/溢出，验证这是进程设置顺序而非格式版本，且不进入 Provider/Session 身份。",
+      "done": true
+    },
+    {
+      "id": "8",
+      "description": "3.1 将当前 TurnInput 构造/验证改为必需携带有效操作 InferenceSettings，同批更新所有调用点与预检闭包；验证零值、错误 family 和缺失策略在发送前失败，生产路径没有回读 config 的可选分支。",
+      "done": true
+    },
+    {
+      "id": "9",
+      "description": "3.2 将 Anthropic sampling/摘要计划统一改为读取输入策略，manual 摘要预算检查同源；请求 golden 覆盖 disabled/adaptive/manual、display、effort、auto/reset、disabled/5m/1h cache 和独立摘要输出额度。",
+      "done": true
+    },
+    {
+      "id": "10",
+      "description": "3.3 将 OpenAI HTTP/WebSocket full/incremental/既有安全回退和摘要计划改为读取同一输入策略；golden 验证 reasoning 字段位置、auto 保留 summary、include/encrypted、store=false 和摘要工具禁用。",
+      "done": true
+    },
+    {
+      "id": "11",
+      "description": "3.4 补充两家 body/properties/input fingerprint/receipt 同源回归；验证旧默认请求逐字节保持，新策略只改变预期字段，不生成 configuration_update、合成消息或新的 capability 声明。",
+      "done": true
+    },
+    {
+      "id": "12",
+      "description": "4.1 在既有 AgentLoop owner 中持有启动值、最新选择和序号；确定性测试覆盖 set/submit 顺序、handoff 前后取消、重复 identity、closing/draining/poisoned 拒绝、同值幂等/来源变化/序号上限及零 journal/config 写入。",
+      "done": true
+    },
+    {
+      "id": "13",
+      "description": "4.2 新 turn worker 启动前捕获完整策略，并将同一派生 profile/采样输入用于首次候选、全部 sample、工具后续写、auto 输入及 Stop 续轮；门闩测试验证活动 high 不因 low 更新改变，下一 turn 使用 low，FIFO 和调用次数保持。",
+      "done": true
+    },
+    {
+      "id": "14",
+      "description": "4.3 独立手动摘要在预检接纳时捕获策略，自动及 Stop 后摘要继承活动 turn；测试预检后更新不改变 body/receipt，摘要成功不在当前 turn 应用后续设置，失败来源抑制/三次熔断不重置。",
+      "done": true
+    },
+    {
+      "id": "15",
+      "description": "4.4 由 owner 组合权威 effort/context 查询，活动时只读已发布且匹配捕获 profile 的数值，idle 按选定 profile 纯规划；验证所选/捕获/发送含义分开、pending 与身份一致，查询不访问活动 Provider 或额外 I/O。",
+      "done": true
+    },
+    {
+      "id": "16",
+      "description": "4.5 在状态交换前预检候选设置、accepted result 和关联快照；注入构造/编码失败证明旧状态/序号不变，注入 context 观测失败证明已接收设置不回滚、effort.query 仍可用且不显示旧 profile 数值。",
+      "done": true
+    },
+    {
+      "id": "17",
+      "description": "4.6 用确定性屏障暂停 started Sync、启动失败后的收口、terminal 后最终 cleanup；验证 turn_starting/request_id、durable turn 身份转换、finishing/cancel_requested、捕获策略保持以及 join 前不启动后续操作。",
+      "done": true
+    },
+    {
+      "id": "18",
+      "description": "5.1 在现有 ChatSession 控制适配器提供小型 effort 查询/设置接口，复用同一 owner 和输出分发；宿主测试验证不新增直接 RunTurn 通道、后台 goroutine 或资源 owner。",
+      "done": true
+    },
+    {
+      "id": "19",
+      "description": "5.2 实现精确 /effort、current/status、原生 level、auto/unset、reset 及 help/-h/--help；测试边界归一化、未知/多参数拒绝、非精确正文保持、帮助零控制提交、草稿/光标保真，以及帮助不弱化质量门。",
+      "done": true
+    },
+    {
+      "id": "20",
+      "description": "5.3 让 /context 结合启动不变字段与 owner 当前/后续 effort 展示，复用已有有界面板和查询身份；测试关闭后迟到回复、新查询覆盖、idle/活动/摘要一致性及 View 零 I/O。",
+      "done": true
+    },
+    {
+      "id": "21",
+      "description": "5.4 在现有补全与保留名 helper 增加第七项 effort，保留 256 项 Skill 容量；测试 Tab 只填入、内置 Enter 只执行一次、$effort 与 /skills 选择仍调用 Skill、限定插件和 catalog fingerprint 不变。",
+      "done": true
+    },
+    {
+      "id": "22",
+      "description": "5.5 添加短通知、帮助与 /context 的 80x24、28x10、20x5、1x1/NO_COLOR 固定 snapshot；验证通知两行/帮助六行上限、单份保留、显式编辑清除、流式/resize 不重弹，Esc/Ctrl+C 及原 overlay 焦点保持。",
+      "done": true
+    },
+    {
+      "id": "23",
+      "description": "5.6 分离选择缓存与局部反馈请求；注入乱序/重复回执验证低序号不回退、同序号仍校验 request/操作身份、调用成功返回不重复消费 ControlItem；取消反馈或迟到回复不撤回设置、清除新草稿或关闭新 Question。",
+      "done": true
+    },
+    {
+      "id": "24",
+      "description": "6.1 实现 effort.query/effort.set 严格 v1 解码与内部转换；测试 4 KiB 专属行上限、mode/level 分支、必需字段/大小写/null/重复/未知字段、分片 UTF-8/EOF，确认 TUI 别名不扩展外部 wire，错误不回显正文。",
+      "done": true
+    },
+    {
+      "id": "25",
+      "description": "6.2 增加 effort.snapshot 的显式安全外部 DTO、validator 和固定 golden，接入既有唯一 writer；验证 response 在 snapshot 前、updated/queried 关联正确、拒绝无成功快照、旧 context 与一次性输出 bytes 不变。",
+      "done": true
+    },
+    {
+      "id": "26",
+      "description": "6.3 验证活动流中控制仍可响应、只在显式新命令后输出快照、slash 正文保持；覆盖 EOF drain、重复 request、shutdown 和断管，确认无额外请求/磁盘写入且 cleanup owner 最终完成。",
+      "done": true
+    },
+    {
+      "id": "27",
+      "description": "6.4 通过真实控制适配器验证 started 前查询、response 后 snapshot 短写、有限输出缓冲已满时 host detach/shutdown；断言接收前可取消、接收后不回滚/重发、dispatcher 排空、worker/lease 最终清理，无第二控制 goroutine。",
+      "done": true
+    },
+    {
+      "id": "28",
+      "description": "7.1 使用 app 现有本地双 Provider 服务和工具 helpers 验证完整会话，包含设置前后两个回合、工具等待、Question/审批、Stop 续轮及当前/后续状态；断言每个真实发送 body、输入顺序和执行次数。",
+      "done": true
+    },
+    {
+      "id": "29",
+      "description": "7.2 验证 endpoint 400、断流、取消及 summary 失败不降档、不重发、不改变已捕获策略；用确定性故障注入断言 partial sample 不提交、旧窗口/权限保持且 shutdown 超时不提前释放 lease。",
+      "done": true
+    },
+    {
+      "id": "30",
+      "description": "7.3 用固定 current native/journal bytes 验证 override 重启后回到本次配置、选择序号归零；重选相同设置但序号不同仍 canonical request/原生顺序/request-native-profile fingerprint 等价；含 opaque、pairing、checkpoint，恢复零网络/工具/Hook，旧 journal 前缀不变。",
+      "done": true
+    },
+    {
+      "id": "31",
+      "description": "7.4 在固定窗口/候选输入的对照中完成缓存矩阵：Anthropic 三路径、OpenAI 属性变化 full/后续增量/安全回退、无中间操作的同值或 high→low→high 不重置；断言首次策略变化来源、稳定目录及选择序号不进入身份。",
+      "done": true
+    },
+    {
+      "id": "32",
+      "description": "7.5 新增 scripts/effort-smoke.py 并在 Darwin 真实 PTY 验收双 Provider：流式时设置、下一轮生效、/context 对照、auto/reset、非法输入恢复、补全/同名 Skill、窄屏/NO_COLOR 和取消退出；使用就绪信号而非 sleep 证明时序，保留可复核证据。",
+      "done": true
+    },
+    {
+      "id": "33",
+      "description": "7.6 验证中间 low 操作已经开始后失败/取消、摘要失败及 WS 重连，再选回 high 仍按既有 full/reset 规则；断言不恢复旧 response ID、不回滚后续选择，不把“未安装新 baseline”误当成旧连接仍有效。",
+      "done": true
+    },
+    {
+      "id": "34",
+      "description": "7.7 在 app/PTY 集成中验证 capture 后但首次网络前拒绝、starting/finishing 查询及查询反馈后新 overlay；确认零请求时不显示已发送、通知不抢键、current/status/unset/help 行为一致，恢复的新输出流允许序号从 0 建立水位。",
+      "done": true
+    },
+    {
+      "id": "35",
+      "description": "8.1 功能验收后同步 README、capability-status、架构、Roadmap 和六项主规格的新增/修改内容，更新相关 Purpose 与“effort 启动冻结”旧措辞；核对实际文件路径及 record vocabulary，不将其他推理切换或整个 P5 写成已完成。",
+      "done": true
+    },
+    {
+      "id": "36",
+      "description": "8.2 执行最终 make verify，确认包含 gofmt、go vet、Staticcheck、架构边界、全量测试和 race；记录命令、退出码和日志，不绕过 hooks，不以交叉编译替代原生平台验收。",
+      "done": true
+    },
+    {
+      "id": "37",
+      "description": "8.3 执行本 change 及全部主规格严格校验，并检查文档引用与变更范围；验证 proposal/spec/design/tasks 和实现一致，没有失效链接、额外工具/事件、旧契约 reader、可变全局或无消费者代码。",
+      "done": true
+    },
+    {
+      "id": "38",
+      "description": "8.4 生成本 change 的 verification.md，逐项记录功能/故障/恢复/缓存/PTY 结果与实际平台范围，区分基线和新增能力证据；完成职责、secret、幂等、副作用、owner、引用目录只读和未执行检查审计，交付可评审结果，不自动提交或发布。",
+      "done": true
+    },
+    {
+      "id": "39",
+      "description": "9.1 逐项核对原 38 项任务、六项规格与 AGENTS.md 七组约束，重新只读核对两个参考工程，记录实际证据、实现差异和可复现缺口。",
+      "done": true
+    },
+    {
+      "id": "40",
+      "description": "9.2 统一 Skill 解析与 TUI 的内置保留名，修复 effort 漏项；覆盖同名 Skill 的裸 slash、$、/skills 及 headless 正文/缓存边界。",
+      "done": true
+    },
+    {
+      "id": "41",
+      "description": "9.3 核对独立摘要从接纳、started、失败到 cleanup 的连接所有权；修复已启动但首次网络前取消的 continuation 失效，使用真实 WebSocket 证明下一操作 full 且不恢复旧 response ID。",
+      "done": true
+    },
+    {
+      "id": "42",
+      "description": "9.4 修复 TUI 复审确认的状态叠加高度、帮助错误残留和选择缓存边界；补充异步/重复回执、正文/状态/输入队列叠加及窄屏固定快照与真实 PTY。",
+      "done": true
+    },
+    {
+      "id": "43",
+      "description": "9.5 补齐封闭活动状态校验与操作冻结/恢复/缓存的缺失业务断言，覆盖实际 owner 的同值、未执行中间选择以及取消后的新操作。",
+      "done": true
+    },
+    {
+      "id": "44",
+      "description": "9.6 在最终源码冻结后重新执行 make verify、完整功能验收、Darwin PTY 和全部 OpenSpec 严格检查；更新复审记录、验收证据、任务状态及必要文档，保留当前 change 供评审。",
+      "done": true
+    },
+    {
+      "id": "45",
+      "description": "10.1 对普通/race 测试记录未命中缓存的包级、顶层/子测试耗时，采集代表性 CPU/阻塞 profile，核对慢矩阵、实际进程和循环/等待的退出路径；记录超过十分钟的具体来源，不降低 race、安全、恢复或进程验收范围。",
+      "done": true
+    },
+    {
+      "id": "46",
+      "description": "10.2 在冻结源码上重新执行完整 make verify，并以本地双 Provider 服务验证真实 CLI 的 effort 控制、生效时点、恢复和拒绝行为；重新执行 effort、推理控制和补全真实 PTY，记录新发现及修复后的复验结果。",
+      "done": true
+    },
+    {
+      "id": "47",
+      "description": "10.3 汇总本轮回归及性能排查记录，核对源码/固定 fixture、主规格与文档链接，执行 OpenSpec 严格校验，更新任务和验收状态；明确实际平台及未执行范围，保留 change 未归档。",
+      "done": true
+    }
+  ],
+  "state": "all_done",
+  "instruction": "All tasks are complete! This change is ready to be archived.\nConsider running tests and reviewing the changes before archiving.",
+  "root": {
+    "path": "/Users/cutejiuge/.codex/worktrees/62a7/easycode",
+    "source": "nearest"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "command": "python3 scripts/completion-smoke.py --output openspec/changes/add-runtime-effort-control/evidence/review/completion-pty.json",
+  "started_at": "2026-11-14T15:15:23.023020+00:00",
+  "exit_code": 0,
+  "elapsed_seconds": 2.95,
+  "log": "completion-pty-run.log",
+  "structured_stdout_file": "completion-pty.json",
+  "structured_stdout_cases": 2,
+  "structured_stdout_capture": "Exact copy of the validated JSON stdout log; this existing script emits stdout only."
+}

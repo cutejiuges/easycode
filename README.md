@@ -281,7 +281,7 @@ export EASYCODE_MODEL=your-model
 
 ### 启动推理与普通输出
 
-以下五个字段仅通过 JSON 配置，在启动时冻结；TUI 和全部 headless 请求共用同一策略。新字段全部省略时，保留既有请求：Anthropic 普通 `max_tokens=4096`，OpenAI 不发送普通输出上限，也不补推理强度或 summary。
+以下五个字段通过 JSON 配置建立启动值；thinking、display、summary、普通输出额度保持启动冻结，effort 可通过会话内控制为后续操作单独调整。TUI 和全部 headless 请求共用同一完整操作策略。新字段全部省略时，保留既有请求：Anthropic 普通 `max_tokens=4096`，OpenAI 不发送普通输出上限，也不补推理强度或 summary。
 
 | 字段 | 允许值与规则 |
 | --- | --- |
@@ -295,11 +295,30 @@ export EASYCODE_MODEL=your-model
 
 若配置 context window，显式普通输出上限必须由 reserved_output_tokens 覆盖；显式 Anthropic 推理也须覆盖实际普通上限（缺省 4096）。显式 OpenAI 推理加窗口时还必须提供普通上限。无窗口不推断容量；全部新字段省略时保留既有小窗口行为。
 
-手动和自动摘要沿用同一 thinking/display/effort/summary，独立使用 compaction_output_tokens。manual budget 大于或等于摘要上限时，在 started/网络前返回 compaction_budget_exceeded，不夹取或自动扩大预算。例如 budget=8192、普通上限=16384 可以正常启动，但默认摘要上限 4096 会拒绝摘要。自动预检拒绝会抑制同来源重试，旧窗口仍可请求才继续原任务。高 effort 仍可能耗尽摘要额度，不能保证可见回答。
+手动和自动摘要沿用操作捕获的同一 thinking/display/effort/summary，独立使用 compaction_output_tokens。manual budget 大于或等于摘要上限时，在 started/网络前返回 compaction_budget_exceeded，不夹取或自动扩大预算。例如 budget=8192、普通上限=16384 可以正常启动，但默认摘要上限 4096 会拒绝摘要。自动预检拒绝会抑制同来源重试，旧窗口仍可请求才继续原任务。高 effort 仍可能耗尽摘要额度，不能保证可见回答。
 
-`/context` 只读展示冻结值和 explicit/default/未发送来源，内容超屏可上下/PageUp/PageDown 滚动，Esc 关闭。修改配置后需重启；resume 使用新进程的当前设置，旧 journal 保持原样。只有显式 OpenAI summary 的实例声明本地 ReasoningSummary 能力，不能视作 endpoint 支持证明；400 等错误不会删参数后重试。
+`/context` 只读展示启动约束、最新选择、活动操作捕获值、选择序号及 explicit/default/未发送来源；窗口数值对应当前已提交窗口和活动策略，idle 时按下一操作策略规划。内容超屏可上下/PageUp/PageDown 滚动，Esc 关闭。修改磁盘配置后需重启；resume 使用新进程的当前配置，effort override 和选择序号不从 journal 恢复，旧 journal 保持原样。只有显式 OpenAI summary 的实例声明本地 ReasoningSummary 能力，不能视作 endpoint 支持证明；400 等错误不会删参数后重试。
 
 Anthropic 最终 thinking_tokens 明确报告时归一为 reasoning_output 的 known（包括零），缺失为 unknown；output 已包含 thinking，不能相加。display omitted、空正文和 usage 独立，summarized 也不保证返回文字。当前 native usage 必须保存 thinking_tokens 状态；旧开发格式直接拒绝，不提供历史 reader 或迁移。
+
+### 会话内推理强度
+
+`/effort`、`/effort current`、`/effort status` 显示简短非模态状态。`/effort low` 等原生档位选择只影响下一个启动的回合或独立手动摘要；当前回合的工具续写、同轮输入、Stop 续轮和自动摘要始终保留原捕获策略，terminal 后也等待真实清理完成。`/effort auto` / `unset` 省略原生 effort，服务端默认未知；`reset` 恢复本次启动值，显式 OpenAI `none` 与省略不同。`help` / `-h` / `--help` 只显示本地帮助。命令名精确小写，TUI 参数接受 ASCII 大小写，非法或多参数保留草稿。
+
+选择仅存在当前进程，既不写配置也不写 Session，不改变 thinking、display、summary、输出上限、模型、权限或工具预算。Anthropic disabled 与 xhigh/max 冲突、OpenAI 已配窗口却没有显式普通输出上限等组合在接收前拒绝。`allowed_levels` 是本地合法档位列表，不代表 endpoint 已确认支持；400、断流和摘要失败不会降档或重发。选择来源或序号变化不影响等价请求的缓存身份。
+
+stream-json v1 使用专属控制行（完整行最多 4 KiB）：
+
+```json
+{"version":1,"type":"effort.query","request_id":"inspect"}
+{"version":1,"type":"effort.set","request_id":"choose-low","mode":"value","level":"low"}
+{"version":1,"type":"effort.set","request_id":"omit","mode":"auto"}
+{"version":1,"type":"effort.set","request_id":"startup","mode":"reset"}
+```
+
+成功 `control.response`（queried / updated）后恰好跟随一次同 request_id 的 `effort.snapshot`；拒绝无成功快照，错误为 `invalid_effort` 或 `effort_conflict`。快照包含 process scope、启动/选定值、来源、进程序号及活动捕获/阶段/取消标记，最多 16 KiB；捕获配置不证明已经发送、采用或计费。重启后序号从 0 开始。旧外部 `context.snapshot` 和一次性输出格式保持不变；headless 文本中的 `/effort` 仍是正文。
+
+验收见 [运行中 effort 验收](openspec/changes/archive/2026-11-15-add-runtime-effort-control/verification.md)，真实 Darwin PTY 入口为 `scripts/effort-smoke.py`。
 
 ### 推理阅读
 

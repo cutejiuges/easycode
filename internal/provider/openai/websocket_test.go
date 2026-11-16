@@ -441,7 +441,7 @@ func TestWebSocketSummaryUsesSeparateFullConnectionAndResets(t *testing.T) {
 			}
 			_ = first.PreparedSample().Finalize()
 			<-bodies
-			input, _ := provider.NewSamplingInput().WithToolCatalog(testOpenAIToolCatalog(t))
+			input, _ := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testOpenAIToolCatalog(t))
 			compact, _ := provider.NewCompactionInput(input, "preserve tests", 4096)
 			preview, err := c.PreflightCompaction(compact)
 			if err != nil {

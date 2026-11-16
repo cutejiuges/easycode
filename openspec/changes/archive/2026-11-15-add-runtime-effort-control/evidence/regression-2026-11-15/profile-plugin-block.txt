@@ -1,0 +1,27 @@
+File: app.test
+Type: delay
+Time: 2026-11-15 16:16:09 CST
+Showing nodes accounting for 15.22s, 100% of 15.22s total
+Dropped 125 nodes (cum <= 0.08s)
+Showing top 20 nodes out of 45
+      flat  flat%   sum%        cum   cum%
+     8.03s 52.76% 52.76%      8.03s 52.76%  runtime.selectgo
+     5.52s 36.29% 89.05%      5.52s 36.29%  runtime.chanrecv1
+     1.66s 10.93%   100%      1.66s 10.93%  runtime.chanrecv2
+         0     0%   100%      1.52s  9.99%  easycode/internal/app.TestMain
+         0     0%   100%      1.33s  8.71%  easycode/internal/app.TestPluginBrowserManualAndRestoredRequestsBothProviders
+         0     0%   100%      1.32s  8.69%  easycode/internal/app.TestPluginBrowserManualAndRestoredRequestsBothProviders.func1
+         0     0%   100%      0.73s  4.78%  easycode/internal/app.awaitCompletionTurn
+         0     0%   100%      0.09s  0.58%  easycode/internal/app.completionKey
+         0     0%   100%      0.09s  0.58%  easycode/internal/app.runCompletionCommand
+         0     0%   100%      1.32s  8.69%  easycode/internal/app.testCompletionManualAndRestoredRequests
+         0     0%   100%      0.89s  5.83%  easycode/internal/app.testCompletionManualAndRestoredRequests.func1
+         0     0%   100%      1.33s  8.74%  easycode/internal/runtime.(*AgentLoop).Run
+         0     0%   100%      0.12s  0.81%  easycode/internal/runtime.(*AgentLoop).Submit
+         0     0%   100%      0.09s  0.58%  easycode/internal/runtime.(*ChatSession).Append
+         0     0%   100%      1.67s 10.97%  easycode/internal/runtime.(*ChatSession).Start.func1
+         0     0%   100%      1.66s 10.90%  easycode/internal/runtime.(*ChatSession).Start.func1.1
+         0     0%   100%      1.33s  8.74%  easycode/internal/runtime.(*ChatSession).Start.func1.2
+         0     0%   100%      1.67s 10.97%  easycode/internal/runtime.(*ChatSession).dispatchOutputs
+         0     0%   100%      1.66s 10.90%  easycode/internal/runtime.(*ChatSession).runInterrupts
+         0     0%   100%      0.12s  0.81%  easycode/internal/runtime.(*ChatSession).submitInteractive

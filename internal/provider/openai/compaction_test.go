@@ -48,7 +48,7 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := provider.NewSamplingInput().WithToolCatalog(testOpenAIToolCatalog(t))
+	input, err := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testOpenAIToolCatalog(t))
 	if err != nil {
 		t.Fatal(err)
 	}

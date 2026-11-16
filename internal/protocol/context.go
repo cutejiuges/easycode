@@ -44,8 +44,8 @@ type ContextSourcePayload struct {
 	Estimate ContextEstimatePayload `json:"estimate"`
 }
 
-// ContextSnapshotPayload 保存已提交窗口的纯数值快照。
-type ContextSnapshotPayload struct {
+// ContextMetricsPayload 保存已提交窗口的纯数值投影。
+type ContextMetricsPayload struct {
 	CachePolicy             CachePolicyPayload     `json:"cache_policy"`
 	AutoCompactionState     string                 `json:"auto_compaction_state"`
 	AutoCompactionReason    string                 `json:"auto_compaction_reason"`
@@ -64,7 +64,7 @@ type ContextSnapshotPayload struct {
 }
 
 // Validate 拒绝伪实时窗口、未知分类与不一致预算。
-func (payload ContextSnapshotPayload) Validate() error {
+func (payload ContextMetricsPayload) Validate() error {
 	if _, err := payload.CachePolicy.Domain(); err != nil {
 		return err
 	}
@@ -134,6 +134,26 @@ func (payload ContextSnapshotPayload) Validate() error {
 		default:
 			return fmt.Errorf("context budget state is invalid")
 		}
+	}
+	return nil
+}
+
+// ContextSnapshotPayload 组合相同 owner 视图下的窗口数值与进程设置。
+type ContextSnapshotPayload struct {
+	ContextMetricsPayload
+	Effort EffortSnapshotPayload `json:"effort"`
+}
+
+// Validate 拒绝缺失设置以及活动状态不一致的内部旧结构。
+func (payload ContextSnapshotPayload) Validate() error {
+	if err := payload.ContextMetricsPayload.Validate(); err != nil {
+		return err
+	}
+	if err := payload.Effort.Validate(); err != nil {
+		return err
+	}
+	if payload.Activity != payload.Effort.Activity {
+		return fmt.Errorf("context and effort activities differ")
 	}
 	return nil
 }

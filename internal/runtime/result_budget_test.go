@@ -293,7 +293,7 @@ func TestScriptedTurnExhaustionCommitsOutputsBeforeFailureAndStopsSteering(t *te
 		steering.inputs = append(steering.inputs, input)
 	}
 	var events []protocol.Event
-	err := rt.runTurn(context.Background(), runtimeInputs("start"), steering, func(event protocol.Event) { events = append(events, event) })
+	err := rt.runTurn(context.Background(), runtimeInputs("start"), rt.profile, steering, func(event protocol.Event) { events = append(events, event) })
 	if fault.Project(err).Code != fault.CodeToolResultBudgetExceeded {
 		t.Fatalf("turn failure: %v", err)
 	}

@@ -230,11 +230,8 @@ func (l *Local) Prepare(ctx context.Context, text string) (attachment domain.Ski
 		return domain.SkillAttachment{}, false, nil
 	}
 	name := first[1:]
-	switch name {
-	case "skills", "context", "cache", "compact", "hooks", "plugins":
-		if first[0] == '/' {
-			return domain.SkillAttachment{}, false, nil
-		}
+	if first[0] == '/' && domain.IsReservedSkillSlashName(name) {
+		return domain.SkillAttachment{}, false, nil
 	}
 	_, err := l.find(name)
 	ref, refErr := domain.ParseSkillReference(name)

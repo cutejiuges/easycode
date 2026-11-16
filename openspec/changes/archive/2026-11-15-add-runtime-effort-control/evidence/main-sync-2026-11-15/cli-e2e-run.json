@@ -1,0 +1,7 @@
+{
+  "command": "python3 openspec/changes/archive/2026-11-15-add-runtime-effort-control/evidence/main-sync-2026-11-15/cli-acceptance-runner.txt",
+  "started_at": "2026-11-15T12:03:24.250176+00:00",
+  "exit_code": 0,
+  "elapsed_seconds": 4.4,
+  "log": "cli-e2e-run.log"
+}

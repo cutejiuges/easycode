@@ -1,0 +1,7 @@
+{
+  "command": "python3 scripts/plugins-smoke.py",
+  "started_at": "2026-11-15T12:03:24.247026+00:00",
+  "exit_code": 0,
+  "elapsed_seconds": 11.86,
+  "log": "plugins-pty-run.log"
+}

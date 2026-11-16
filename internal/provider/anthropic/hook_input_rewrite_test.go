@@ -191,7 +191,7 @@ func TestPreInputRewriteNativeGoldenRestoreAndCache(t *testing.T) {
 					t.Fatal(err)
 				}
 				restored := restoredValue.(*Conversation)
-				sampling, err := provider.NewSamplingInput().WithToolCatalog(testAnthropicToolCatalog(t))
+				sampling, err := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testAnthropicToolCatalog(t))
 				if err != nil {
 					t.Fatal(err)
 				}

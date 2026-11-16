@@ -29,6 +29,8 @@ const (
 	CommandInterrupt                 CommandKind = "interrupt"
 	CommandQueryCache                CommandKind = "query_cache"
 	CommandQueryContext              CommandKind = "query_context"
+	CommandQueryEffort               CommandKind = "query_effort"
+	CommandSetEffort                 CommandKind = "set_effort"
 	CommandCompactContext            CommandKind = "compact_context"
 	CommandCancelCompaction          CommandKind = "cancel_compaction"
 	CommandShutdown                  CommandKind = "shutdown"
@@ -59,6 +61,7 @@ func (id RequestID) Valid() bool {
 
 // Command 是封闭的 Runtime 输入命令值对象。
 type Command struct {
+	effortChoice     domain.EffortChoice
 	questionResponse UserQuestionResponse
 
 	hookTrust            HookTrustResponse
@@ -134,6 +137,13 @@ func (command Command) Feedback() string                   { return command.feed
 
 // Validate 验证命令 kind 和专属 payload。
 func (command Command) Validate() error {
+	if command.kind == CommandSetEffort {
+		if err := command.effortChoice.Validate(); err != nil {
+			return err
+		}
+	} else if command.effortChoice != (domain.EffortChoice{}) {
+		return fmt.Errorf("command contains unrelated effort choice")
+	}
 	if command.kind != CommandResolveUserQuestion && command.questionResponse != (UserQuestionResponse{}) {
 		return fmt.Errorf("unexpected question response")
 	}
@@ -179,7 +189,7 @@ func (command Command) Validate() error {
 		if !command.expectedTurnID.Valid() || command.questionResponse.Validate() != nil || command.text != "" || command.approvalRequestID != "" || command.invocationID != "" || command.fingerprint != "" || command.decision != "" || command.feedback != "" {
 			return fmt.Errorf("invalid question command payload")
 		}
-	case CommandQueryCache, CommandQueryContext, CommandCompactContext, CommandCancelCompaction:
+	case CommandQueryCache, CommandQueryContext, CommandQueryEffort, CommandSetEffort, CommandCompactContext, CommandCancelCompaction:
 		if command.text != "" || command.expectedTurnID != "" || command.approvalRequestID != "" || command.invocationID != "" || command.fingerprint != "" || command.decision != "" || command.feedback != "" {
 			return fmt.Errorf("context command contains unrelated payload")
 		}
@@ -279,6 +289,21 @@ func NewQueryContextCommand(requestID RequestID) (Command, error) {
 	command := Command{kind: CommandQueryContext, requestID: requestID}
 	return command, command.Validate()
 }
+
+// NewQueryEffortCommand 创建进程内推理强度查询。
+func NewQueryEffortCommand(requestID RequestID) (Command, error) {
+	command := Command{kind: CommandQueryEffort, requestID: requestID}
+	return command, command.Validate()
+}
+
+// NewSetEffortCommand 创建只影响后续操作的推理强度选择。
+func NewSetEffortCommand(requestID RequestID, choice domain.EffortChoice) (Command, error) {
+	command := Command{kind: CommandSetEffort, requestID: requestID, effortChoice: choice}
+	return command, command.Validate()
+}
+
+// EffortChoice 返回设置命令的不可变选择。
+func (command Command) EffortChoice() domain.EffortChoice { return command.effortChoice }
 
 // NewCompactContextCommand 创建独立摘要请求，不分配输入身份。
 func NewCompactContextCommand(requestID RequestID, instructions string) (Command, error) {

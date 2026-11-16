@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/evidence/regression-2026-11-15/cli-acceptance-runner.txt", line 235, in <module>
+    main()
+  File "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/evidence/regression-2026-11-15/cli-acceptance-runner.txt", line 229, in main
+    cases.append(run_family(binary,family,path))
+  File "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/evidence/regression-2026-11-15/cli-acceptance-runner.txt", line 160, in run_family
+    child.event('turn.completed','first')
+  File "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/evidence/regression-2026-11-15/cli-acceptance-runner.txt", line 63, in event
+    raise AssertionError(f'missing {kind}/{identity}: last events={self.seen[-3:]} stderr={self.stderr!r}')
+AssertionError: missing turn.completed/first: last events=[{'version': 1, 'type': 'turn.started', 'input_id': 'next', 'session_id': '01a1de4d-1ed8-70c1-815e-22f711e94fb3', 'thread_id': '01a1de4d-1ed8-74a8-aa30-bd4a173a3cfe', 'turn_id': '01a1de4d-1f23-7e46-a4df-add37605b934'}, {'version': 1, 'type': 'assistant.text.delta', 'input_id': 'next', 'session_id': '01a1de4d-1ed8-70c1-815e-22f711e94fb3', 'thread_id': '01a1de4d-1ed8-74a8-aa30-bd4a173a3cfe', 'turn_id': '01a1de4d-1f23-7e46-a4df-add37605b934', 'text': 'answer-2'}, {'version': 1, 'type': 'turn.completed', 'input_id': 'next', 'session_id': '01a1de4d-1ed8-70c1-815e-22f711e94fb3', 'thread_id': '01a1de4d-1ed8-74a8-aa30-bd4a173a3cfe', 'turn_id': '01a1de4d-1f23-7e46-a4df-add37605b934', 'usage': {'input_uncached': {'state': 'unknown'}, 'cache_read': {'state': 'unknown'}, 'cache_write': {'state': 'unknown'}, 'output': {'state': 'unknown'}, 'reasoning_output': {'state': 'unknown'}}}] stderr=bytearray(b'')

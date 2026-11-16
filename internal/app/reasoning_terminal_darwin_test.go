@@ -124,7 +124,7 @@ func (m reasoningTerminalModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			case protocol.EventContextSnapshot:
 				view := m.inner.View()
 				snapshot, _ := protocol.DecodeContextSnapshot(event)
-				fmt.Fprintf(m.ack, "CONTEXT frozen=%t explicit=%t cap=%t idle=%t\n", strings.Contains(view, "frozen at startup"), strings.Contains(view, "explicit"), strings.Contains(view, "16384"), snapshot.Activity == "idle")
+				fmt.Fprintf(m.ack, "CONTEXT frozen=%t explicit=%t cap=%t idle=%t\n", strings.Contains(view, "startup constraints"), strings.Contains(view, "explicit"), strings.Contains(view, "16384"), snapshot.Activity == "idle")
 			case protocol.EventCompactionCompleted:
 				fmt.Fprintln(m.ack, "SUMMARY")
 			case protocol.EventCompactionFailed:

@@ -1,0 +1,7 @@
+{
+  "command": "GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go test -c -o <temporary directory> ./...",
+  "exit_code": 0,
+  "elapsed_seconds": 7.39,
+  "compiled_test_binaries": 29,
+  "execution": "compile_only_no_linux_native_tests"
+}

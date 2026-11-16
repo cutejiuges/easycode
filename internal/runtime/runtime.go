@@ -132,6 +132,7 @@ type Runtime struct {
 	newTurnID                    TurnIDGenerator
 	newInvocationID              InvocationIDGenerator
 	profile                      contextplan.ProviderProfile
+	operationProfile             contextplan.ProviderProfile
 	toolCatalog                  tool.CatalogSnapshot
 	readExecutor                 tool.ReadExecutor
 	globExecutor                 tool.GlobExecutor
@@ -208,7 +209,7 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 	if err != nil {
 		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "runtime project instructions are invalid", err)
 	}
-	if err := config.ContextBudget.Validate(); err != nil {
+	if err := config.ContextBudget.ValidateInference(config.ContextProfile.InferenceSettings()); err != nil {
 		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "runtime context budget is invalid", err)
 	}
 	if config.ContextPlanner == nil {
@@ -250,7 +251,7 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 		sessionID: config.SessionID, threadID: config.ThreadID, newTurnID: config.GenerateTurnID,
 		newInvocationID: config.GenerateInvocationID,
 		cachePolicy:     domain.WithDefaultCachePolicy(config.CachePolicy), restoredCacheBaseline: config.RestoredCacheBaseline,
-		profile: config.ContextProfile, toolCatalog: config.ToolCatalog.Clone(),
+		profile: config.ContextProfile, operationProfile: config.ContextProfile, toolCatalog: config.ToolCatalog.Clone(),
 		readExecutor: config.ReadExecutor, globExecutor: config.GlobExecutor, grepExecutor: config.GrepExecutor,
 		patchPreparer: config.PatchPreparer, patchExecutor: config.PatchExecutor, writePreparer: config.WritePreparer, writeExecutor: config.WriteExecutor, execPreparer: config.ExecPreparer, execExecutor: config.ExecExecutor, toolPolicy: config.ToolPolicy, newApprovalRequestID: config.GenerateApprovalRequestID, interactiveApprovals: config.InteractiveApprovals, projectInstructions: projectInstructions,
 		budget: config.ContextBudget, planner: config.ContextPlanner,
@@ -259,10 +260,10 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 
 // RunTurn 执行一次文本 turn，并等待 Provider terminal 后的 durable 收口。
 func (runtime *Runtime) RunTurn(ctx context.Context, inputs []domain.UserInput, emit Emitter) error {
-	return runtime.runTurn(ctx, inputs, nil, emit)
+	return runtime.runTurn(ctx, inputs, runtime.profile, nil, emit)
 }
 
-func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, control turnInputControl, emit Emitter) (resultErr error) {
+func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, profile contextplan.ProviderProfile, control turnInputControl, emit Emitter) (resultErr error) {
 	if err := runtime.validateTurnRequest(ctx, emit); err != nil {
 		return err
 	}
@@ -271,18 +272,14 @@ func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, 
 		return fault.New(fault.CodeTurnFailed, "conversation already has an active turn")
 	}
 	defer runtime.active.Store(false)
+	runtime.operationProfile = profile
+	defer func() { runtime.operationProfile = runtime.profile }()
 	runtime.samplePresentation = nil
 	defer func() { runtime.samplePresentation = nil }()
 	runtime.resetToolTurn()
 	runtime.explicitSkills = nil
 	defer func() { runtime.explicitSkills = nil }()
-	defer func() {
-		if resultErr != nil || ctx.Err() != nil {
-			if resetter, ok := runtime.conversation.(provider.ContinuationResetter); ok {
-				resetter.ResetContinuation()
-			}
-		}
-	}()
+	defer func() { runtime.releaseFailedContinuation(ctx, resultErr) }()
 	runtime.turnEmitter = emit
 	defer func() { runtime.turnEmitter = nil }()
 	defer runtime.clearTurnObservations()
@@ -313,7 +310,6 @@ func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, 
 	if result.err != nil {
 		return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, result.err)
 	}
-	currentInput := provider.NewSamplingInput()
 	usages := make([]domain.SampleUsage, 0, maxSamplesPerTurn)
 	totalCalls := 0
 	stopBudget := stopTurnBudget{remaining: 30 * time.Second}
@@ -324,7 +320,7 @@ func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, 
 			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, failure)
 		}
 		runtime.startSamplePresentation(uint32(sampleIndex))
-		terminal, sampleErr := runtime.runProviderSample(ctx, emit, turnID, currentInput)
+		terminal, sampleErr := runtime.runProviderSample(ctx, emit, turnID)
 		if sampleErr != nil {
 			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, sampleErr)
 		}
@@ -364,7 +360,6 @@ func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, 
 			if err := runtime.deliverStopContinuation(ctx, emit, check, control); err != nil {
 				return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, err)
 			}
-			currentInput = provider.NewSamplingInput()
 			continue
 		}
 		if totalCalls+len(ready) > maxToolCallsPerTurn {
@@ -422,7 +417,16 @@ func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, 
 				}
 			}
 		}
-		currentInput = provider.NewSamplingInput()
+	}
+}
+
+// releaseFailedContinuation 在失败或取消的操作收口时，由原 worker 清除瞬态续写资格。
+func (runtime *Runtime) releaseFailedContinuation(ctx context.Context, operationErr error) {
+	if operationErr == nil && ctx.Err() == nil {
+		return
+	}
+	if resetter, ok := runtime.conversation.(provider.ContinuationResetter); ok {
+		resetter.ResetContinuation()
 	}
 }
 
@@ -610,7 +614,7 @@ func (runtime *Runtime) beginTurn(ctx context.Context, emit Emitter) (domain.Tur
 	return turnID, nil
 }
 
-func (runtime *Runtime) planTurnInput(input provider.TurnInput) (provider.TurnInput, contextplan.ContextPlan, error) {
+func (runtime *Runtime) planTurnInput() (provider.TurnInput, contextplan.ContextPlan, error) {
 	footprint, err := runtime.conversation.HistoryFootprint()
 	if err != nil {
 		return provider.TurnInput{}, contextplan.ContextPlan{}, err
@@ -694,9 +698,8 @@ func (runtime *Runtime) runProviderSample(
 	ctx context.Context,
 	emit Emitter,
 	turnID domain.TurnID,
-	input provider.TurnInput,
 ) (provider.StreamEvent, error) {
-	providerInput, plan, err := runtime.planTurnInput(input)
+	providerInput, plan, err := runtime.planTurnInput()
 	if err != nil {
 		return provider.StreamEvent{}, err
 	}

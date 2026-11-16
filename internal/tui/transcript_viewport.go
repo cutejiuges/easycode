@@ -2,8 +2,6 @@ package tui
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/x/ansi"
-	"strings"
 )
 
 type transcriptAnchor struct {
@@ -22,21 +20,12 @@ type transcriptViewport struct {
 }
 
 func (model Model) transcriptHeight() int {
-	status := 0
-	if model.reasoning.notice != "" {
-		status++
-	}
-	if model.reasoningStatus() != "" {
-		status++
-	}
-	if model.reading.detached || model.reading.notice != "" {
-		status++
-	}
-	if model.compactionStatus != "" {
-		status += strings.Count(ansi.Hardwrap(model.compactionStatus, model.widthOrDefault(), true), "\n") + 1
-	}
-	return max(1, model.heightOrDefault()-strings.Count(model.composer.view(true), "\n")-strings.Count(model.renderInputs(), "\n")-5-status-model.completion.rows)
+	status := model.nonEffortStatusRows() + len(model.effortNoticeLines())
+	desired := max(1, model.heightOrDefault()-model.composerChatRows()-renderedChatRows(model.renderInputs())-5-status-model.completion.rows)
+	actual := max(0, model.chatContentRows()-len(model.effortNoticeLines())-model.completion.rows)
+	return min(desired, actual)
 }
+
 func (model Model) navigateTranscript(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	model.main.resetHydration()
 	view := &model.reading

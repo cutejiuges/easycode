@@ -17,10 +17,11 @@ import (
 )
 
 type controlledInvocation struct {
-	history domain.SemanticHistoryView
-	input   string
-	ctx     context.Context
-	release chan provider.StreamEvent
+	settings domain.InferenceSettings
+	history  domain.SemanticHistoryView
+	input    string
+	ctx      context.Context
+	release  chan provider.StreamEvent
 }
 
 type controlledConversation struct {
@@ -63,7 +64,7 @@ func (conversation *controlledConversation) Stream(ctx context.Context, input pr
 		}
 	}
 	stream := make(chan provider.StreamEvent, 1)
-	invocation := controlledInvocation{history: conversation.history.Clone(), input: conversation.history.Turns[len(conversation.history.Turns)-1].Messages[0].Text, ctx: ctx, release: make(chan provider.StreamEvent, 1)}
+	invocation := controlledInvocation{settings: input.InferenceSettings(), history: conversation.history.Clone(), input: conversation.history.Turns[len(conversation.history.Turns)-1].Messages[0].Text, ctx: ctx, release: make(chan provider.StreamEvent, 1)}
 	conversation.calls <- invocation
 	go func() {
 		defer conversation.active.Add(-1)
@@ -462,6 +463,7 @@ func TestAgentLoopShutdownDiscardsQueueAndRetainsCleanupOwner(t *testing.T) {
 func TestAgentLoopRunStateOwnsQueueLedgerAndClosingTransitions(t *testing.T) {
 	t.Parallel()
 	loop := &AgentLoop{
+		runtime: &Runtime{},
 		config:  AgentLoopConfig{MaxQueuedInputs: 2, MaxQueuedBytes: 16, RecentRequests: 4},
 		outputs: make(chan protocol.ControlItem, 4),
 	}

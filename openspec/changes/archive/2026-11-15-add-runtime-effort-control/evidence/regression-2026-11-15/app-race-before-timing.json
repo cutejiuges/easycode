@@ -1,0 +1,26 @@
+{
+  "root_tests": 3,
+  "subtests": 65,
+  "root_results": [
+    {
+      "test": "TestPluginBrowserManualAndRestoredRequestsBothProviders",
+      "seconds": 34.54
+    },
+    {
+      "test": "TestExecFailurePathsEndToEndForBothProviders",
+      "seconds": 11.89
+    },
+    {
+      "test": "TestReasoningControlsBuiltCLIEndToEnd",
+      "seconds": 4.43
+    }
+  ],
+  "package_results": [
+    {
+      "Time": "2026-11-15T16:14:26.190233+08:00",
+      "Action": "pass",
+      "Package": "easycode/internal/app",
+      "Elapsed": 52.436
+    }
+  ]
+}

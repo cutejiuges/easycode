@@ -965,3 +965,13 @@
 - 用同一 invocation ID 测试第二次会话内授权会命中合法幂等缓存。第二次业务调用必须使用新 ID 和同样候选内容，不得为了测试 grant 清空生产缓存或移除重复副作用保护。
 
 - domain 接纳的替换必须能按同一 canonical 参数往返到 tool。Exec 的根目录是显式空串，`.` 不是合法规范路径；在 parser/profile 层拒绝，避免把脚本输入错误误归类为 runner 不确定。反向适配后重新投影比较完整输入，不允许构造器静默默认化。
+
+## 运行中 effort：区分选择、捕获与发送
+
+进程序号和 UI 来源只用于观测顺序，不能进入 request/profile/native 指纹。auto 是省略，不应解析为猜测的模型默认；reset 是恢复本次配置，不能把有效默认输出额度反填为显式值。Body、预检、properties 与 receipt 必须从同一个操作输入编译，工具输出 Sync、Stop continued 和摘要成功都不是应用新选择的边界。
+
+started Sync 前只有原输入 request_id；terminal 后直到 worker/stream 清理完成仍是 finishing，不能提前清空捕获策略、释放 lease 或启动下一操作。UI 除选择序号外还需请求/草稿/操作世代：同序号的旧操作回复也可能过期。设置交换前校验结果及 snapshot，交换后 context 观测失败不能回滚设置，也不能显示旧 profile 的数值。WebSocket 未建立新 baseline 不代表旧 socket 仍有效，真实中间失败/摘要/重连后选回旧 effort 仍须遵守 reset/full。回归入口：`internal/runtime/effort*_test.go`、`internal/provider/openai/effort_websocket_test.go`、`internal/app/effort_e2e_test.go`、`scripts/effort-smoke.py`。
+
+2026-11-14 复审补充：独立摘要在首次 started 写入前取消时不会进入 Provider，不能只依赖 Kernel 的 summary 连接清理；普通 turn 与摘要的原 worker 必须共用失败/取消收口，再发布最终完成。新增真实 AgentLoop + WebSocket 回归证明无中间操作的 high→low→high 保持增量，而已接纳但网络前取消的摘要之后必须 full，旧 response ID 不得复活。Skill 与补全各自保存保留名会漏掉新命令，改为 domain 的同一纯 switch。窄屏通知预算还要扣除状态、可见队列与 composer 的实际行数；64 条队列只裁剪展示，不删除待执行事实，保留 FIFO 头及输入区。权威选择缓存只保存选择字段，不能夹带旧活动身份和窗口数值。复审与完整验证见 `openspec/changes/archive/2026-11-15-add-runtime-effort-control/review.md`。
+
+2026-11-15 回归计时补充：排查“测试超过十分钟”时，先区分普通 `make test` 和顺序执行普通/race 的 `make verify`，使用 `-json -count=1` 分包、分顶层/子测试记录。此次 Darwin/Go 1.24.13 普通全量约 154 秒，race 约 781 秒；主要是 app 的大规模安全/恢复矩阵及大型 fixture 的重复 JSON 校验，不是 effort idle 查询死循环。其他 worktree 同时运行 race/profile 会影响墙钟时间，不能据此宣称隔离性能。profile 的多个 goroutine 累计阻塞也不能直接当成单用例等待。保留全部安全/恢复断言和 race，不用减少矩阵、改 GORACE 或扩大 timeout 掩盖慢路径；后续优化从测得的 JSON/恢复热点及实例环境隔离着手。证据与边界见 `openspec/changes/archive/2026-11-15-add-runtime-effort-control/regression-2026-11-15.md`。

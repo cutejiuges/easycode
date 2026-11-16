@@ -1,0 +1,9 @@
+{
+  "command": "make verify",
+  "exit_code": 2,
+  "duration_seconds": 189.92,
+  "scope": "superseded by local navigation/cancellation feedback isolation regression; intentionally interrupted and excluded from acceptance",
+  "source_sha256_before": "fd9edec501a44a9e39264556de0e4c2f9489186737c9a792edc4ab5923cfa51f",
+  "source_sha256_after": "1973da1afd76a9e1391537cb8fd57af291e09cae077817c154319ed3af4e0b6b",
+  "sources_unchanged": false
+}

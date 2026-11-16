@@ -284,7 +284,7 @@ openai.Provider
 
 能力只声明当前已完成且本实例启用的路径，不推断任意 endpoint 支持；显式推理参数被拒绝时返回安全错误，不自动删字段、降低强度或重发。当前两个 Provider reducer 已把完成响应的原始 usage 保存在各自 native payload 中，并投影为共享的 `input_uncached`、`cache_read`、`cache_write`、`output`、`reasoning_output` 五项三态指标；缺失字段保持 unknown，Provider 不存在的独立概念才使用 not-applicable。
 
-### 5.2.1 启动冻结的推理控制
+### 5.2.1 启动约束与操作捕获的推理控制
 
 `internal/domain/inference_settings.go` 提供私有字段的不可变 thinking 联合和双 Provider InferenceSettings。config 只在真实 JSON 边界严格解码五个新顶层字段，环境覆盖 family 后验证，再由 app 将同一值装配给 Provider、profile 和 TUI；没有配置热读、额外 goroutine 或可执行空策略。普通输出上限与窗口预留、独立摘要上限分别校验。Anthropic 原先的独立输出配置已替换，不保留双真源。
 
@@ -292,15 +292,23 @@ Anthropic 编译 thinking/type/budget/display 及独立 output_config.effort，d
 
 两家分别组合自己的原生请求计划，同一执行计划产生 body、非输入 properties、输入 fingerprint 和 receipt。Anthropic 逻辑输入 hash 排除 cache marker；两家均包含临时项目/Skill 及摘要指导。窗口来源 digest 与逻辑输入 hash 分开；WS 的 full/incremental 只是完整逻辑 body 的传输派生，receipt 不改用 suffix hash。执行前核对摘要预检来源，失败不安装普通 baseline；完成 Sync 后才建立 compacted boundary。
 
-手动和自动摘要保留冻结 thinking/display/effort/summary，只改 tool choice none、独立输出额度及摘要指导。manual budget 必须严格小于摘要上限，否则 Provider CompactionBudgetExceeded 映射既有 Runtime compaction_budget_exceeded，在 started/网络前拒绝。自动路径使用既有来源抑制/预算收口；工具结果 durable 不构成远端 assistant turn 结束或切换推理模式的许可。
+手动和自动摘要保留操作捕获的 thinking/display/effort/summary，只改 tool choice none、独立输出额度及摘要指导。manual budget 必须严格小于摘要上限，否则 Provider CompactionBudgetExceeded 映射既有 Runtime compaction_budget_exceeded，在 started/网络前拒绝。自动路径使用既有来源抑制/预算收口；工具结果 durable 不构成远端 assistant turn 结束或切换推理模式的许可。
 
 profile 的 request_policy 只记录实际非默认普通 wire 设置；默认 canonical bytes/revision 不变，显式 Anthropic 4096 与缺省等价，显式 disabled 与省略不同。非默认 source revision 内容派生；UI 来源标签、配置路径、usage 与动态 identity 不进入指纹。所有模式、省略行为和输出边界见 [README](../../README.md#启动推理与普通输出)。
+
+`internal/domain/effort.go` 的 reset/auto/value 仅派生 effort，`internal/context/inference.go` 共享启动及运行中组合校验并保留输出额度原始来源。现有 AgentLoop owner 持有最新选择与 uint64 进程序号，接收前完成候选、结果和有界观测编码校验，交换后 context 观测失败独立处理；不增加设置 writer 或控制 goroutine。每个 turn 在 worker 启动前捕获完整 ProviderProfile，独立摘要在预检接纳时捕获；worker 的 operationProfile 供所有候选、工具/Stop/自动摘要后续请求使用，owner 活动查询只读取已发布数值，idle 按选定 profile 纯规划。
+
+`provider.NewSamplingInput` 必须携带有效 InferenceSettings，双 Kernel 的 body/properties/evidence/receipt 全部读取输入，不回读启动配置作为请求 fallback。仅实际 wire 属性改变才改变 profile 和请求身份；source/selection_revision 不进入 Provider、Session 或缓存。WebSocket 按既有属性比较选择 full/incremental，失败、取消、独立摘要和重连保留既有 reset 生命周期，不实现 configuration_update/pin 路径。
+
+`protocol.EffortSnapshotPayload` 描述所选与捕获，active 仅允许 turn_starting/request_id、durable turn/turn_id 或 manual_compaction/compaction_id，各自具有 phase、cancel_requested 和捕获序号；turn_starting 不能表示自动摘要，同一选择序号的捕获值必须与所选值相同。terminal 到达后直到 join 仍保留 finishing。内部 ContextSnapshotPayload 组合 ContextMetricsPayload 与必需 effort，headless 只向既有 context.snapshot 投影数值；新 effort.snapshot 使用显式安全 DTO。TUI 只缓存所选值、来源和选择序号三项权威水位，用 request/generation/操作世代隔离草稿及反馈，不缓存活动身份和窗口数值；短通知不拥有 overlay 焦点。重启新 owner 和新 UI 从序号 0 重新建立观察，native/checkpoint/current journal 结构均不变。
+
+普通 turn 和独立摘要共用 worker 的失败/取消收口；已接纳的摘要即使在 started 的首次 Sync 前取消，也必须先清除旧 continuation，再完成 worker join。操作 profile 在资源清理后恢复启动基础值，最新选择始终由控制 owner 独立持有。裸 slash 的内置保留名由 `domain.IsReservedSkillSlashName` 同时供 Skill 解析和 TUI 使用；`$effort`、`/skills` 选中同名项仍通过真实 Skill 路径。聊天布局由 `internal/tui/chat_space.go` 统一预算状态、队列、通知与 composer 行数；队列只裁剪展示并保持 FIFO 头可见，输入区优先，最终宽度和高度受物理窗口约束。
 
 Anthropic 从最终 message_delta 的 output_tokens_details.thinking_tokens 归并计量：明确零/正值为 known，缺失为 unknown，不从 display/正文/预算推断；已观测值不被缺失擦除。总 output 已包含 thinking，双方 known 时验证 thinking<=output，只有 thinking 时保留独立 known 与 output unknown。raw usage 当前结构必须含 thinking_tokens 的 known/value 状态，sample、checkpoint generation 和失败 provenance 使用同一严格 codec；恢复在 repair 前交叉核对 normalized sample usage，不提供旧四字段 reader、版本标记或迁移。outer Session/checkpoint、SQLite、OpenAI native 和 headless 外部字段/版本保持。
 
 两家 reducer 在任何事件归并或终态接纳前复用固定 `codec.ValidateJSON` 校验完整帧，拒绝任意对象层级的重复成员、尾随内容和有损 Unicode；不能让后值覆盖非法 usage、总量关系或响应 ID。类型解码与原有受控未知扩展处理随后执行，合法扩展保持可用；不同合法 delta 的明确零可更新旧 thinking 正值，缺失不擦除。修复不增加 owner、goroutine、公共接口或 native 格式。两家 `usage_validation_regression_test.go`、`internal/app/reasoning_malformed_stream_test.go` 和 `internal/app/reasoning_cli_e2e_test.go` 验证失败时零成功样本/工具执行、真实恢复和请求等价，详见[全面回归](../../openspec/changes/archive/2026-11-11-add-provider-reasoning-controls/regression-2026-11-11.md)。
 
-`/context` 从应用装配的冻结值显示 explicit/default/未发送来源，并以本地有界滚动呈现；动态窗口仍取 committed snapshot。设置不进入 ContextSnapshotPayload 或外部 context.snapshot，真实正文与 usage 继续使用现有观测。阅读、缩放、Ctrl+O 和查询不发起采样或改变策略。Darwin PTY 入口为 `scripts/reasoning-controls-smoke.py`，其他平台的真实终端矩阵不由此推定。
+`/context` 从应用装配的冻结值显示 thinking/display/summary/输出额度的 explicit/default/未发送来源，effort 则使用 owner 的当前及后续选择；面板以本地有界滚动呈现，动态窗口仍取 committed snapshot。内部 ContextSnapshotPayload 必须包含 effort，既有外部 context.snapshot 仍只投影数值，真实正文与 usage 继续使用现有观测。阅读、缩放、Ctrl+O 和查询不发起采样或改变策略。Darwin PTY 入口为 `scripts/reasoning-controls-smoke.py` 和 `scripts/effort-smoke.py`，其他平台的真实终端矩阵不由此推定。
 
 ### 5.3 Wire 范围
 

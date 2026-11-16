@@ -21,7 +21,7 @@ func TestCompletionFixedSnapshotsAndSafeLayout(t *testing.T) {
 				m := completionModel(t, "/").WithMarkdownColor(color)
 				m = updateModel(t, m, size)
 				if m.completion.rows > 0 {
-					for i := 0; i < 6; i++ {
+					for i := 0; i < len(m.completion.matches)-1; i++ {
 						m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyDown})
 					}
 				}

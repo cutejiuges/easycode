@@ -129,9 +129,13 @@ func testConsumeStream(t *testing.T, conversation *Conversation, ctx context.Con
 		conversation.history.commit(testInputEntry(t, *user))
 	}
 	if conversation.provider == nil {
-		conversation.provider = &Provider{config: Config{Model: "fixture-model", CachePolicy: domain.DefaultCachePolicy()}}
+		settings, err := domain.DefaultInferenceSettings(domain.ProviderOpenAI)
+		if err != nil {
+			t.Fatal(err)
+		}
+		conversation.provider = &Provider{config: Config{Model: "fixture-model", CachePolicy: domain.DefaultCachePolicy(), Inference: settings}}
 	}
-	input, err := provider.NewSamplingInput().WithToolCatalog(catalog)
+	input, err := testSamplingInput(t, conversation.provider.config.Inference).WithToolCatalog(catalog)
 	if err != nil {
 		t.Fatal(err)
 	}

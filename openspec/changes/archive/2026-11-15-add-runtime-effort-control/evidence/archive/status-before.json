@@ -1,0 +1,109 @@
+{
+  "changeName": "add-runtime-effort-control",
+  "schemaName": "spec-driven",
+  "planningHome": {
+    "kind": "repo",
+    "root": "/Users/cutejiuge/.codex/worktrees/62a7/easycode",
+    "changesDir": "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes",
+    "defaultSchema": "spec-driven"
+  },
+  "changeRoot": "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control",
+  "artifactPaths": {
+    "proposal": {
+      "outputPath": "proposal.md",
+      "resolvedOutputPath": "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/proposal.md",
+      "existingOutputPaths": [
+        "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/proposal.md"
+      ]
+    },
+    "specs": {
+      "outputPath": "specs/**/*.md",
+      "resolvedOutputPath": "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/specs/**/*.md",
+      "existingOutputPaths": [
+        "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/specs/context/compaction/spec.md",
+        "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/specs/headless/stream-control/spec.md",
+        "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/specs/provider/reasoning-control/spec.md",
+        "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/specs/runtime/effort-control/spec.md",
+        "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/specs/tui/context-commands/spec.md",
+        "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/specs/tui/input-completion/spec.md"
+      ]
+    },
+    "design": {
+      "outputPath": "design.md",
+      "resolvedOutputPath": "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/design.md",
+      "existingOutputPaths": [
+        "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/design.md"
+      ]
+    },
+    "tasks": {
+      "outputPath": "tasks.md",
+      "resolvedOutputPath": "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/tasks.md",
+      "existingOutputPaths": [
+        "/Users/cutejiuge/.codex/worktrees/62a7/easycode/openspec/changes/add-runtime-effort-control/tasks.md"
+      ]
+    }
+  },
+  "isPlanningComplete": true,
+  "isComplete": true,
+  "applyRequires": [
+    "tasks"
+  ],
+  "nextSteps": [
+    "All planning artifacts are complete. Run openspec instructions apply --change \"add-runtime-effort-control\" --json to inspect implementation progress."
+  ],
+  "actionContext": {
+    "mode": "repo-local",
+    "sourceOfTruth": "repo",
+    "planningArtifacts": [
+      "proposal",
+      "specs",
+      "design",
+      "tasks"
+    ],
+    "linkedContext": [],
+    "allowedEditRoots": [
+      "/Users/cutejiuge/.codex/worktrees/62a7/easycode"
+    ],
+    "requiresAffectedAreaSelection": false,
+    "constraints": [
+      "Repo-local change artifacts and implementation edits are scoped to this project."
+    ]
+  },
+  "artifacts": [
+    {
+      "id": "proposal",
+      "outputPath": "proposal.md",
+      "status": "done",
+      "requires": []
+    },
+    {
+      "id": "specs",
+      "outputPath": "specs/**/*.md",
+      "status": "done",
+      "requires": [
+        "proposal"
+      ]
+    },
+    {
+      "id": "design",
+      "outputPath": "design.md",
+      "status": "done",
+      "requires": [
+        "proposal"
+      ]
+    },
+    {
+      "id": "tasks",
+      "outputPath": "tasks.md",
+      "status": "done",
+      "requires": [
+        "specs",
+        "design"
+      ]
+    }
+  ],
+  "root": {
+    "path": "/Users/cutejiuge/.codex/worktrees/62a7/easycode",
+    "source": "nearest"
+  }
+}

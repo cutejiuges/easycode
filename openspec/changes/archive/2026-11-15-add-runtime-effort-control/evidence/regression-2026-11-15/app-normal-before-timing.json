@@ -1,0 +1,934 @@
+{
+  "root_tests": 230,
+  "subtests": 975,
+  "root_results": [
+    {
+      "test": "TestHookBothProvidersRealSandboxAndThreeCapabilities",
+      "seconds": 12.97
+    },
+    {
+      "test": "TestFailureBothProvidersRealHookSandboxAndFrozenRestore",
+      "seconds": 12.92
+    },
+    {
+      "test": "TestPluginBrowserManualAndRestoredRequestsBothProviders",
+      "seconds": 8.3
+    },
+    {
+      "test": "TestSessionPreviewCurrentFixturesAreReadOnly",
+      "seconds": 6.44
+    },
+    {
+      "test": "TestExecFailurePathsEndToEndForBothProviders",
+      "seconds": 5.26
+    },
+    {
+      "test": "TestStopSampleAndCallLimitsKeepTextContinuationAvailable",
+      "seconds": 4.89
+    },
+    {
+      "test": "TestPluginSkillLifecycleBothProvidersAndHosts",
+      "seconds": 4.67
+    },
+    {
+      "test": "TestStopBothProvidersRealRunnerSameTurnAndRestore",
+      "seconds": 4.25
+    },
+    {
+      "test": "TestPostBothProvidersRealSandboxThreeCapabilitiesAndDisclosure",
+      "seconds": 4.24
+    },
+    {
+      "test": "TestWriteSSEChunksCancellationEOFAndLimitsPrecedeSideEffects",
+      "seconds": 4.16
+    },
+    {
+      "test": "TestStopCompactionKeepsFrozenPluginCorrectionAfterSourceRemoval",
+      "seconds": 3.7
+    },
+    {
+      "test": "TestStopCompactionKeepsFrozenFeedbackAndGenuineSkillCorrection",
+      "seconds": 3.63
+    },
+    {
+      "test": "TestReasoningControlsBuiltCLIEndToEnd",
+      "seconds": 3.23
+    },
+    {
+      "test": "TestSevenToolTranscriptBudgetAndRestoredRequestForBothProviders",
+      "seconds": 3.23
+    },
+    {
+      "test": "TestQuestionEndToEndBothProviders",
+      "seconds": 2.47
+    },
+    {
+      "test": "TestHookResumeReconcilesEveryBatchBeforeLoadingNewSnapshot",
+      "seconds": 2.24
+    },
+    {
+      "test": "TestCompletionManualAndRestoredRequestsBothProviders",
+      "seconds": 2.17
+    },
+    {
+      "test": "TestPostHookResumeReconcilesEveryBatchBeforeLoadingNewSnapshot",
+      "seconds": 2.03
+    },
+    {
+      "test": "TestFailureHookResumeReconcilesEveryBatchBeforeLoadingNewSnapshot",
+      "seconds": 2.03
+    },
+    {
+      "test": "TestWriteEndToEndPreparationDenialAndConflict",
+      "seconds": 1.34
+    },
+    {
+      "test": "TestPostBothBranchesRealExecNormalExitsKeepSuccessForBothProviders",
+      "seconds": 1.31
+    },
+    {
+      "test": "TestAutomaticCompactionHeadlessModes",
+      "seconds": 1.24
+    },
+    {
+      "test": "TestArtifactResumeKeepsNativeRequestAndReadOnlyHistory",
+      "seconds": 1.22
+    },
+    {
+      "test": "TestCachedCompactionFixedFixturesResumeAndRepair",
+      "seconds": 1.13
+    },
+    {
+      "test": "TestReasoningAutomaticSummaryAfterToolAndManualRejection",
+      "seconds": 1.12
+    },
+    {
+      "test": "TestToolLoopCrashPointsReconcileLocallyForBothProviders",
+      "seconds": 1.12
+    },
+    {
+      "test": "TestCompactionFixedFixturesResumeAndRepair",
+      "seconds": 1.1
+    },
+    {
+      "test": "TestCachedAutomaticCompactionRealProvidersAndResume",
+      "seconds": 1.07
+    },
+    {
+      "test": "TestAutomaticCompactionRealProvidersAndResume",
+      "seconds": 1.02
+    },
+    {
+      "test": "TestWriteRecoveryPairsEveryTailWithoutReplayingFilesOrGrants",
+      "seconds": 1.01
+    },
+    {
+      "test": "TestPreviewCommittedBatchPrefixesStayReadOnly",
+      "seconds": 0.97
+    },
+    {
+      "test": "TestLocalSkillToolAndExplicitInputRestoreBothProviders",
+      "seconds": 0.96
+    },
+    {
+      "test": "TestQuestionRecoveryNeverReasksAndRetainsFrozenAnswers",
+      "seconds": 0.95
+    },
+    {
+      "test": "TestReasoningHeadlessCancelAndBrokenPipeMatrix",
+      "seconds": 0.94
+    },
+    {
+      "test": "TestCachedReadPatchExecApprovedLoopForBothProviders",
+      "seconds": 0.88
+    },
+    {
+      "test": "TestReadPatchExecApprovedLoopForBothProviders",
+      "seconds": 0.85
+    },
+    {
+      "test": "TestPostHookHeadlessModesFailClosedForBothProviders",
+      "seconds": 0.8
+    },
+    {
+      "test": "TestFailureHookHeadlessModesFailClosedForBothProviders",
+      "seconds": 0.79
+    },
+    {
+      "test": "TestQuestionHeadlessAllModesDoNotReadStdin",
+      "seconds": 0.78
+    },
+    {
+      "test": "TestQuestionReadWritePatchExecWorkflowKeepsApprovalIndependent",
+      "seconds": 0.77
+    },
+    {
+      "test": "TestPostHookExclusiveBarrierKeepsReadWriteReadExecPairing",
+      "seconds": 0.76
+    },
+    {
+      "test": "TestStopNeverChecksFailedOrCancelledProviderSamples",
+      "seconds": 0.76
+    },
+    {
+      "test": "TestHookHeadlessModesFailClosedForBothProviders",
+      "seconds": 0.74
+    },
+    {
+      "test": "TestExecHeadlessModesFailClosedForBothProviders",
+      "seconds": 0.73
+    },
+    {
+      "test": "TestRuntimeEffortRestoredRequestIgnoresProcessRevision",
+      "seconds": 0.69
+    },
+    {
+      "test": "TestReasoningControlsHeadlessToolLoopAndUsage",
+      "seconds": 0.69
+    },
+    {
+      "test": "TestWriteHeadlessAllModesRequireApprovalWithoutCreatingDirectories",
+      "seconds": 0.68
+    },
+    {
+      "test": "TestRuntimeEffortCaptureCanFailBeforeFirstNetwork",
+      "seconds": 0.67
+    },
+    {
+      "test": "TestMarkdownBothProvidersRestoreAndContinueUnchanged",
+      "seconds": 0.67
+    },
+    {
+      "test": "TestChangedSidecarOnlyChangesFutureCatalogOnRestore",
+      "seconds": 0.67
+    },
+    {
+      "test": "TestHeadlessProvidersPreserveResumeRequestAndOutputBoundaries",
+      "seconds": 0.65
+    },
+    {
+      "test": "TestManualCompactionProvidersResumeEquivalent",
+      "seconds": 0.63
+    },
+    {
+      "test": "TestReasoningHeadlessBothProvidersAllModesWithToolAndEOF",
+      "seconds": 0.63
+    },
+    {
+      "test": "TestComposerHeadlessPreservesWhitespaceForBothProviders",
+      "seconds": 0.62
+    },
+    {
+      "test": "TestWriteEndToEndCreateReadOverwriteAndVerify",
+      "seconds": 0.62
+    },
+    {
+      "test": "TestCachedWriteEndToEndCreateReadOverwriteAndVerify",
+      "seconds": 0.6
+    },
+    {
+      "test": "TestProvidersPersistResumeReplayAndContinueEndToEnd",
+      "seconds": 0.59
+    },
+    {
+      "test": "TestPostHookCacheStableSourcesAndRestoredNativeRequests",
+      "seconds": 0.58
+    },
+    {
+      "test": "TestStopHeadlessModesKeepSavedAnswerAndRequireTrust",
+      "seconds": 0.58
+    },
+    {
+      "test": "TestArtifactShutdownRetainsRealLeaseWhileDiskBlocked",
+      "seconds": 0.57
+    },
+    {
+      "test": "TestResumeUsesEquivalentSnapshotFromCurrentAbsoluteCWD",
+      "seconds": 0.56
+    },
+    {
+      "test": "TestFailureHookCacheStableSourcesAndRestoredNativeRequests",
+      "seconds": 0.55
+    },
+    {
+      "test": "TestRuntimeEffortDualProviderToolsRecoveryAndRestart",
+      "seconds": 0.54
+    },
+    {
+      "test": "TestQuestionHookQuestionKeepsIndependentAuthorizationAndPairing",
+      "seconds": 0.53
+    },
+    {
+      "test": "TestInteractivePatchDenyFeedbackAndConflictForBothProviders",
+      "seconds": 0.53
+    },
+    {
+      "test": "TestStreamJSONProvidersPreserveSameProcessNativeHistory",
+      "seconds": 0.52
+    },
+    {
+      "test": "TestHookCacheStableSourcesAndRestoredNativeRequests",
+      "seconds": 0.5
+    },
+    {
+      "test": "TestReasoningParameterFailuresNeverRetryOrDowngrade",
+      "seconds": 0.49
+    },
+    {
+      "test": "TestComposerProvidersPersistExactTextAcrossResizeAndResume",
+      "seconds": 0.47
+    },
+    {
+      "test": "TestAmbiguousReasoningUsageNeverCommitsSampleOrRunsTool",
+      "seconds": 0.45
+    },
+    {
+      "test": "TestProjectInstructionsAreStartupScopedAndNeverJournaled",
+      "seconds": 0.45
+    },
+    {
+      "test": "TestQuestionIncompleteSamplesNeverRequestInput",
+      "seconds": 0.43
+    },
+    {
+      "test": "TestHookExclusiveBarrierKeepsReadSiblingsAndNativePairing",
+      "seconds": 0.42
+    },
+    {
+      "test": "TestCancelledSampleRetainsCommittedInputAfterResume",
+      "seconds": 0.42
+    },
+    {
+      "test": "TestResumeWithDifferentCWDAndRefreshedConnectionDoesNotChangeProcessCWD",
+      "seconds": 0.42
+    },
+    {
+      "test": "TestContinueSelectionIsRevalidatedWithoutFallback",
+      "seconds": 0.4
+    },
+    {
+      "test": "TestRuntimeEffortQuestionAndApprovalKeepCapturedPolicy",
+      "seconds": 0.4
+    },
+    {
+      "test": "TestCompletionPreparationFailuresRemainEditable",
+      "seconds": 0.39
+    },
+    {
+      "test": "TestCachedProvidersSameThreadLiveAndRestoredCanonicalRequests",
+      "seconds": 0.38
+    },
+    {
+      "test": "TestRuntimeEffortDisconnectAndCancelKeepFutureSelection",
+      "seconds": 0.38
+    },
+    {
+      "test": "TestParallelSearchToolLoopCompletesEndToEndForBothProviders",
+      "seconds": 0.36
+    },
+    {
+      "test": "TestCachedParallelSearchToolLoopCompletesEndToEndForBothProviders",
+      "seconds": 0.36
+    },
+    {
+      "test": "TestHeadlessCompactionRealSessionLifecycle",
+      "seconds": 0.35
+    },
+    {
+      "test": "TestRunContinueReportsNotFoundWithoutProviderRequestOrReplacement",
+      "seconds": 0.33
+    },
+    {
+      "test": "TestInteractivePatchAllowOnceForBothProviders",
+      "seconds": 0.33
+    },
+    {
+      "test": "TestResumeRepairsHalfLineOnceAndKeepsCommittedHistory",
+      "seconds": 0.32
+    },
+    {
+      "test": "TestListThenResumeBothProviders",
+      "seconds": 0.29
+    },
+    {
+      "test": "TestPickerRecoveryReloadsFactsAndClassifiesMutation",
+      "seconds": 0.29
+    },
+    {
+      "test": "TestQuestionRestoreRejectsNativeAndSharedFactMismatchReadOnly",
+      "seconds": 0.28
+    },
+    {
+      "test": "TestStreamJSONFailedSampleRetainsCommittedInputInNextHistory",
+      "seconds": 0.27
+    },
+    {
+      "test": "TestSameTurnSteeringThroughBothProviderTransports",
+      "seconds": 0.26
+    },
+    {
+      "test": "TestReadToolLoopCompletesEndToEndForBothProviders",
+      "seconds": 0.26
+    },
+    {
+      "test": "TestCachedReadToolLoopCompletesEndToEndForBothProviders",
+      "seconds": 0.25
+    },
+    {
+      "test": "TestStreamJSONResumeAndContinue",
+      "seconds": 0.24
+    },
+    {
+      "test": "TestRuntimeEffortHeadlessLiteralSlashWithSameNameSkill",
+      "seconds": 0.23
+    },
+    {
+      "test": "TestQueuedPluginAttachmentDoesNotRereadDeletedSource",
+      "seconds": 0.23
+    },
+    {
+      "test": "TestReasoningResumeUsesNewStartupSettingsWithoutRewritingHistory",
+      "seconds": 0.23
+    },
+    {
+      "test": "TestSessionListInterruptedTailAndInvalidJournal",
+      "seconds": 0.23
+    },
+    {
+      "test": "TestRunStartsTUIFromSupportedConfigurationSourcesWithoutNetwork",
+      "seconds": 0.22
+    },
+    {
+      "test": "TestHeadlessPatchFailsClosedForBothProviders",
+      "seconds": 0.22
+    },
+    {
+      "test": "TestSessionServiceReturnsSealedToolRecoveryWithoutExternalCalls",
+      "seconds": 0.22
+    },
+    {
+      "test": "TestPostHookHostRetainsWorkspaceAndCrossProcessLeaseDuringCleanup",
+      "seconds": 0.21
+    },
+    {
+      "test": "TestHookOpenAIIncrementalAndRestoredFullDeriveFromSameNativeHistory",
+      "seconds": 0.21
+    },
+    {
+      "test": "TestThinkingUsageFixedCurrentRestoreAndRejectBeforeRepair",
+      "seconds": 0.21
+    },
+    {
+      "test": "TestSteeringFixturesRestoreLocallyAndCloseOldTurn",
+      "seconds": 0.21
+    },
+    {
+      "test": "TestFailureHookHostRetainsWorkspaceAndCrossProcessLeaseDuringCleanup",
+      "seconds": 0.2
+    },
+    {
+      "test": "TestReasoningStartupValueSurvivesConfigurationFileEdits",
+      "seconds": 0.2
+    },
+    {
+      "test": "TestHookHostRetainsWorkspaceAndCrossProcessLeaseDuringCleanup",
+      "seconds": 0.19
+    },
+    {
+      "test": "TestPluginWebSocketIncrementalPairingAndRestoredFullRequest",
+      "seconds": 0.19
+    },
+    {
+      "test": "TestReasoningOutputTerminalDoesNotChangePolicy",
+      "seconds": 0.19
+    },
+    {
+      "test": "TestStopHookHostRetainsWorkspaceAndCrossProcessLeaseDuringCleanup",
+      "seconds": 0.17
+    },
+    {
+      "test": "TestWebSocketToolsAndCacheQueryEndToEnd",
+      "seconds": 0.15
+    },
+    {
+      "test": "TestRunJSONContinueReportsOriginalIdentityAsResumed",
+      "seconds": 0.15
+    },
+    {
+      "test": "TestSessionServiceInterruptedCompensationFailureDoesNotBecomeUsable",
+      "seconds": 0.15
+    },
+    {
+      "test": "TestRunPrintModeUsesExistingChatResources",
+      "seconds": 0.13
+    },
+    {
+      "test": "TestContinueSelectionMatrixUsesExactCompatibilityAndStableTieBreak",
+      "seconds": 0.13
+    },
+    {
+      "test": "TestSessionServiceOwnershipFailuresReleaseTheCurrentOwner",
+      "seconds": 0.13
+    },
+    {
+      "test": "TestSessionServiceCreatesPrivateRootMetadataWithoutNetwork",
+      "seconds": 0.13
+    },
+    {
+      "test": "TestSessionServiceClosesInterruptedTailBeforeReturning",
+      "seconds": 0.13
+    },
+    {
+      "test": "TestSessionServiceResumesCompatibleRootWithoutNetwork",
+      "seconds": 0.13
+    },
+    {
+      "test": "TestEffortHostShutdownRetainsRealLeaseUntilTerminalCleanup",
+      "seconds": 0.12
+    },
+    {
+      "test": "TestSessionServiceMismatchDoesNotModifyJournalOrRestoreProvider",
+      "seconds": 0.12
+    },
+    {
+      "test": "TestImmutableExecFixtureRestoresRealProviderNativePairs",
+      "seconds": 0.11
+    },
+    {
+      "test": "TestStreamJSONQueueFullAndShutdownAreReported",
+      "seconds": 0.11
+    },
+    {
+      "test": "TestHeadlessJSONBrokenPipeCancelsAndReleasesLease",
+      "seconds": 0.11
+    },
+    {
+      "test": "TestSessionPreviewFailureAndCancellationKeepBytes",
+      "seconds": 0.11
+    },
+    {
+      "test": "TestHeadlessProviderFailureDoesNotPublishPartialText",
+      "seconds": 0.1
+    },
+    {
+      "test": "TestHeadlessCancellationWaitsForDurableFailureAndReleasesLease",
+      "seconds": 0.1
+    },
+    {
+      "test": "TestHostShutdownRetainsRealLeaseUntilTerminalCleanup",
+      "seconds": 0.1
+    },
+    {
+      "test": "TestPostReadOnlyDocumentationExampleClassifiesFindingEmptyAndFailure",
+      "seconds": 0.1
+    },
+    {
+      "test": "TestNewChatResourcesBuildsOpenAIConversationWithoutNetwork",
+      "seconds": 0.09
+    },
+    {
+      "test": "TestCompactionDoesNotRehydrateArtifactsOrAuthorizeSummaryClaims",
+      "seconds": 0.09
+    },
+    {
+      "test": "TestStreamJSONBrokenOutputCancelsAgentLoopAndReleasesLease",
+      "seconds": 0.09
+    },
+    {
+      "test": "TestSessionServiceResumeAcrossProcesses",
+      "seconds": 0.09
+    },
+    {
+      "test": "TestRunAcceptsExplicitContextBudgetDuringApplicationAssembly",
+      "seconds": 0.08
+    },
+    {
+      "test": "TestExecOmittedOutputCanBeReadByToolAndHost",
+      "seconds": 0.08
+    },
+    {
+      "test": "TestExecConstructionFailureClosesWorkspaceBeforeReturning",
+      "seconds": 0.08
+    },
+    {
+      "test": "TestCachedImmutableExecFixtureRestoresRealProviderNativePairs",
+      "seconds": 0.08
+    },
+    {
+      "test": "TestSourceCloseWaitsForPreadmissionPluginPreparation",
+      "seconds": 0.08
+    },
+    {
+      "test": "TestForgedFixedPluginHistoryFailsBeforeSourcesOrRepair",
+      "seconds": 0.08
+    },
+    {
+      "test": "TestPickerKeepsExplicitPluginPathsBoundToLaunchDirectory",
+      "seconds": 0.08
+    },
+    {
+      "test": "TestRunContinueRejectsUnindexedBusyJournal",
+      "seconds": 0.07
+    },
+    {
+      "test": "TestRuntimeEffortBrokenSnapshotReleasesRealLeaseWithoutRetry",
+      "seconds": 0.07
+    },
+    {
+      "test": "TestResumeRejectsBeforeRepair",
+      "seconds": 0.07
+    },
+    {
+      "test": "TestSessionListReportsBusyAcrossProcesses",
+      "seconds": 0.07
+    },
+    {
+      "test": "TestSkillPreparationFailureLeavesJournalAndProviderUntouched",
+      "seconds": 0.07
+    },
+    {
+      "test": "TestProjectInstructionDiscoveryFailsBeforeApplicationResourcesOpen",
+      "seconds": 0.07
+    },
+    {
+      "test": "TestQuestionCatalogUsesOnlyMetadata",
+      "seconds": 0.06
+    },
+    {
+      "test": "TestPreviewBusyProcessCrashAndNoRepair",
+      "seconds": 0.06
+    },
+    {
+      "test": "TestPickerLateRealRecoveryReleasesLease",
+      "seconds": 0.06
+    },
+    {
+      "test": "TestPickerResumeReadsJournalAppendedAfterPreview",
+      "seconds": 0.06
+    },
+    {
+      "test": "TestNewChatResourcesBuildsAnthropicConversationWithoutNetwork",
+      "seconds": 0.05
+    },
+    {
+      "test": "TestLoadedConfigurationStaysTypedAcrossAppBoundary",
+      "seconds": 0.05
+    },
+    {
+      "test": "TestRunCanRecoverAfterConfigurationError",
+      "seconds": 0.05
+    },
+    {
+      "test": "TestCurrentSessionFixtureRestoresVisibleHistoryWithoutNetwork",
+      "seconds": 0.05
+    },
+    {
+      "test": "TestBusyResumeDoesNotExposeChatResourcesOrCallProvider",
+      "seconds": 0.05
+    },
+    {
+      "test": "TestPreviewCancellationDuringNativeValidationReleasesLease",
+      "seconds": 0.05
+    },
+    {
+      "test": "TestSessionServiceBusyFailsBeforeRestoreAndKeepsBytes",
+      "seconds": 0.05
+    },
+    {
+      "test": "TestSessionServiceRejectsUnknownThreadWithoutCreatingReplacement",
+      "seconds": 0.05
+    },
+    {
+      "test": "TestSessionListSyncFailureDoesNotPrintSuccessOrRetainLease",
+      "seconds": 0.04
+    },
+    {
+      "test": "TestListSessionsWithoutChatConfiguration",
+      "seconds": 0.04
+    },
+    {
+      "test": "TestPickerDiscoveryScopeAndRefresh",
+      "seconds": 0.04
+    },
+    {
+      "test": "TestSessionServiceInterruptedAppendFailureReleasesLease",
+      "seconds": 0.04
+    },
+    {
+      "test": "TestSessionServiceCorruptionIsNotBusyOrWriteFailure",
+      "seconds": 0.03
+    },
+    {
+      "test": "TestPreviewDescriptorBoundPathReplacement",
+      "seconds": 0.02
+    },
+    {
+      "test": "TestPreviewRejectsUnknownContractWithoutRepair",
+      "seconds": 0.02
+    },
+    {
+      "test": "TestSessionServiceRejectsSupersededEnvelopeBeforeProviderRestore",
+      "seconds": 0.02
+    },
+    {
+      "test": "TestCommandArtifactBoundaryRechecksBeforeDelegation",
+      "seconds": 0.01
+    },
+    {
+      "test": "TestRunContinueCatalogErrorIsSanitized",
+      "seconds": 0.01
+    },
+    {
+      "test": "TestInvalidReasoningConfigurationBeforeAnyResources",
+      "seconds": 0.01
+    },
+    {
+      "test": "TestChatResourcesShutdownTimeoutEscalatesAndClosesDependencies",
+      "seconds": 0.01
+    },
+    {
+      "test": "TestChatResourcesCloseOrdersSessionJournalAndProvider",
+      "seconds": 0.01
+    },
+    {
+      "test": "TestRunVersionDoesNotReadConfiguration",
+      "seconds": 0
+    },
+    {
+      "test": "TestRunRejectsInvalidResolvedPromptBeforeConfigurationOrSession",
+      "seconds": 0
+    },
+    {
+      "test": "TestRunRejectsMissingExplicitConfiguration",
+      "seconds": 0
+    },
+    {
+      "test": "TestRunRejectsInvalidConfigurationWithoutLeakingSecret",
+      "seconds": 0
+    },
+    {
+      "test": "TestRunRejectsInvalidContextBudgetBeforeSessionOrProviderRequest",
+      "seconds": 0
+    },
+    {
+      "test": "TestNewChatResourcesRejectsMissingConfiguration",
+      "seconds": 0
+    },
+    {
+      "test": "TestNewChatResourcesRejectsUnknownProviderWithoutNetwork",
+      "seconds": 0
+    },
+    {
+      "test": "TestStreamEscalationClosesProviderBeforeLoopAndJournal",
+      "seconds": 0
+    },
+    {
+      "test": "TestCommandArtifactBoundaryRejectsNestedStorage",
+      "seconds": 0
+    },
+    {
+      "test": "TestCommandArtifactBoundaryRejectsPrivateAncestorAlias",
+      "seconds": 0
+    },
+    {
+      "test": "TestInvalidCacheConfigurationHasNoNetworkOrSessionSideEffects",
+      "seconds": 0
+    },
+    {
+      "test": "TestCompletionTerminalHelper",
+      "seconds": 0
+    },
+    {
+      "test": "TestResolveDataPathsHasNoExternalEffect",
+      "seconds": 0
+    },
+    {
+      "test": "TestResolveDataPathsAllowsIndependentInjection",
+      "seconds": 0
+    },
+    {
+      "test": "TestEffortTerminalHelper",
+      "seconds": 0
+    },
+    {
+      "test": "TestHookTerminalHelper",
+      "seconds": 0
+    },
+    {
+      "test": "TestHostLeaseProbe",
+      "seconds": 0
+    },
+    {
+      "test": "TestMarkdownColorSelection",
+      "seconds": 0
+    },
+    {
+      "test": "TestPickerOwnerCoalescesAndWaitsForCancellation",
+      "seconds": 0
+    },
+    {
+      "test": "TestPickerOwnerCancelledBeforeStart",
+      "seconds": 0
+    },
+    {
+      "test": "TestRecoveryAttemptStages",
+      "seconds": 0
+    },
+    {
+      "test": "TestPickerOwnerResourceHandoffAndLateSuccess",
+      "seconds": 0
+    },
+    {
+      "test": "TestPickerOwnerParentCancellationWaitsForWorker",
+      "seconds": 0
+    },
+    {
+      "test": "TestPickerOwnerFatalFailureStopsAdmission",
+      "seconds": 0
+    },
+    {
+      "test": "TestPickerOwnerRejectsCancelledHandoff",
+      "seconds": 0
+    },
+    {
+      "test": "TestPluginsTerminalHelper",
+      "seconds": 0
+    },
+    {
+      "test": "TestDirectApplicationPluginArgumentsFailBeforeConfigurationOrStorage",
+      "seconds": 0
+    },
+    {
+      "test": "TestPostDetailQueryBindsSnapshotAndKeepsOriginalBody",
+      "seconds": 0
+    },
+    {
+      "test": "TestPostSnapshotRejectsOtherBranchWithoutReplacingNeutralPlan",
+      "seconds": 0
+    },
+    {
+      "test": "TestQuestionTerminalHelper",
+      "seconds": 0
+    },
+    {
+      "test": "TestQuestionNativeArgumentsRejectModelAnswers",
+      "seconds": 0
+    },
+    {
+      "test": "TestReasoningQueriesFilterBeforePagingAndKeepExactBodyRanges",
+      "seconds": 0
+    },
+    {
+      "test": "TestReasoningTerminalHelper",
+      "seconds": 0
+    },
+    {
+      "test": "TestThinkingUsageAggregatesWithoutAddingToOutput",
+      "seconds": 0
+    },
+    {
+      "test": "TestSessionListRejectsUnsafeStore",
+      "seconds": 0
+    },
+    {
+      "test": "TestSessionListTextGolden",
+      "seconds": 0
+    },
+    {
+      "test": "TestSessionListFieldEscapingAndBudgets",
+      "seconds": 0
+    },
+    {
+      "test": "TestListSessionsLifecycleFailuresAndCancellation",
+      "seconds": 0
+    },
+    {
+      "test": "TestListSessionsClosesBeforeOutputAndReportsGlobalWarnings",
+      "seconds": 0
+    },
+    {
+      "test": "TestListSessionsRejectsBeforeIO",
+      "seconds": 0
+    },
+    {
+      "test": "TestPreviewLeaseProcess",
+      "seconds": 0
+    },
+    {
+      "test": "TestPickerProgramExitAndOutputFailure",
+      "seconds": 0
+    },
+    {
+      "test": "TestPickerTerminalHelper",
+      "seconds": 0
+    },
+    {
+      "test": "TestPickerDiscoveryRetriesCancelledReconcileAndKeepsWarning",
+      "seconds": 0
+    },
+    {
+      "test": "TestPickerDiscoveryCancellationAtCleanupDoesNotInitialize",
+      "seconds": 0
+    },
+    {
+      "test": "TestSessionPreviewBudget",
+      "seconds": 0
+    },
+    {
+      "test": "TestSessionPreviewDoesNotAddEmptyTruncatedMessage",
+      "seconds": 0
+    },
+    {
+      "test": "TestAppSessionHelperProcess",
+      "seconds": 0
+    },
+    {
+      "test": "TestStopDetailsBindExactTargetPlanSequenceAndKeepIndependentCursor",
+      "seconds": 0
+    },
+    {
+      "test": "TestStopTerminalHelper",
+      "seconds": 0
+    },
+    {
+      "test": "TestCommandQueryCursorAndIsolation",
+      "seconds": 0
+    },
+    {
+      "test": "TestTranscriptQueriesCloseCancelsAndWaits",
+      "seconds": 0
+    },
+    {
+      "test": "TestTranscriptJoinPreservesNativeTextCallTextAndRejectsBrokenAnchors",
+      "seconds": 0
+    },
+    {
+      "test": "TestTranscriptBodyForwardBackwardUTF8AndThroughSnapshot",
+      "seconds": 0
+    },
+    {
+      "test": "TestResourceCleanupClosesInReverseOrderAndJoinsErrors",
+      "seconds": 0
+    },
+    {
+      "test": "TestResourceCleanupReleaseTransfersOwnership",
+      "seconds": 0
+    },
+    {
+      "test": "TestChatResourcesWriterCloseFailureStillClosesProvider",
+      "seconds": 0
+    },
+    {
+      "test": "TestProviderResourceCreationAndWireMapping",
+      "seconds": 0
+    }
+  ],
+  "package_results": [
+    {
+      "Time": "2026-11-15T16:15:17.931703+08:00",
+      "Action": "pass",
+      "Package": "easycode/internal/app",
+      "Elapsed": 147.564
+    }
+  ]
+}

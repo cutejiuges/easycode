@@ -1,0 +1,225 @@
+{
+  "platform": "macOS-27.2.1-arm64-arm-64bit",
+  "cases": [
+    {
+      "provider": "openai",
+      "no_color": false,
+      "cancel": false,
+      "bodies": [
+        "high",
+        "high",
+        "low",
+        "",
+        "high",
+        "high"
+      ],
+      "narrow_sizes": [
+        [
+          28,
+          10
+        ],
+        [
+          20,
+          5
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "same_name_skill": true,
+      "terminal_restored": true,
+      "passed": true
+    },
+    {
+      "provider": "openai",
+      "no_color": false,
+      "cancel": true,
+      "bodies": [
+        "high"
+      ],
+      "narrow_sizes": [
+        [
+          28,
+          10
+        ],
+        [
+          20,
+          5
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "same_name_skill": false,
+      "terminal_restored": true,
+      "passed": true
+    },
+    {
+      "provider": "openai",
+      "no_color": true,
+      "cancel": false,
+      "bodies": [
+        "high",
+        "high",
+        "low",
+        "",
+        "high",
+        "high"
+      ],
+      "narrow_sizes": [
+        [
+          28,
+          10
+        ],
+        [
+          20,
+          5
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "same_name_skill": true,
+      "terminal_restored": true,
+      "passed": true
+    },
+    {
+      "provider": "openai",
+      "no_color": true,
+      "cancel": true,
+      "bodies": [
+        "high"
+      ],
+      "narrow_sizes": [
+        [
+          28,
+          10
+        ],
+        [
+          20,
+          5
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "same_name_skill": false,
+      "terminal_restored": true,
+      "passed": true
+    },
+    {
+      "provider": "anthropic",
+      "no_color": false,
+      "cancel": false,
+      "bodies": [
+        "high",
+        "high",
+        "low",
+        "",
+        "high",
+        "high"
+      ],
+      "narrow_sizes": [
+        [
+          28,
+          10
+        ],
+        [
+          20,
+          5
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "same_name_skill": true,
+      "terminal_restored": true,
+      "passed": true
+    },
+    {
+      "provider": "anthropic",
+      "no_color": false,
+      "cancel": true,
+      "bodies": [
+        "high"
+      ],
+      "narrow_sizes": [
+        [
+          28,
+          10
+        ],
+        [
+          20,
+          5
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "same_name_skill": false,
+      "terminal_restored": true,
+      "passed": true
+    },
+    {
+      "provider": "anthropic",
+      "no_color": true,
+      "cancel": false,
+      "bodies": [
+        "high",
+        "high",
+        "low",
+        "",
+        "high",
+        "high"
+      ],
+      "narrow_sizes": [
+        [
+          28,
+          10
+        ],
+        [
+          20,
+          5
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "same_name_skill": true,
+      "terminal_restored": true,
+      "passed": true
+    },
+    {
+      "provider": "anthropic",
+      "no_color": true,
+      "cancel": true,
+      "bodies": [
+        "high"
+      ],
+      "narrow_sizes": [
+        [
+          28,
+          10
+        ],
+        [
+          20,
+          5
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "same_name_skill": false,
+      "terminal_restored": true,
+      "passed": true
+    }
+  ]
+}

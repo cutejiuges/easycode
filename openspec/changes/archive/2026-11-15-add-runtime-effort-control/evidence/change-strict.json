@@ -1,0 +1,4 @@
+{
+  "command": "openspec validate add-runtime-effort-control --strict",
+  "exit_code": 0
+}

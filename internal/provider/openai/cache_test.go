@@ -28,7 +28,7 @@ func TestThreadCacheKeySurvivesNativeRestore(t *testing.T) {
 	}
 	conversation := testConversation(t, instance)
 	testCommitUserInput(t, conversation, "  preserved text\n")
-	input, err := provider.NewSamplingInput().WithToolCatalog(testOpenAIToolCatalog(t))
+	input, err := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testOpenAIToolCatalog(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestOpenAICacheRequestGolden(t *testing.T) {
 	defer instance.Close()
 	conversation := testConversation(t, instance)
 	testCommitUserInput(t, conversation, "hello")
-	input, err := provider.NewSamplingInput().WithToolCatalog(testOpenAIToolCatalog(t))
+	input, err := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testOpenAIToolCatalog(t))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -111,7 +111,15 @@ func completeTurnAndProject(t *testing.T, conversation provider.Conversation, te
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := provider.NewSamplingInput().WithToolCatalog(catalog)
+	settings, err := domain.DefaultInferenceSettings(conversation.Family())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sampling, err := provider.NewSamplingInput(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := sampling.WithToolCatalog(catalog)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -66,7 +66,7 @@ func stopGoldenValues(t *testing.T) map[string][]byte {
 	if err := restoreNativeHistory(context.Background(), "model", records, &restored.history); err != nil {
 		t.Fatal(err)
 	}
-	sampling, err := provider.NewSamplingInput().WithToolCatalog(testOpenAIToolCatalog(t))
+	sampling, err := testSamplingInput(t, c.provider.config.Inference).WithToolCatalog(testOpenAIToolCatalog(t))
 	if err != nil {
 		t.Fatal(err)
 	}

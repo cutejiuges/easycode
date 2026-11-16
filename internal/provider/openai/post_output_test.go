@@ -213,7 +213,7 @@ func testPostOutputGoldenRestore(t *testing.T, failed bool, cut string) {
 				t.Fatal("duplicate frozen evidence accepted")
 			}
 			// 反馈必须进入真实摘要请求；连续压缩与恢复仍保存原工具位置、opaque 和缓存证据。
-			sampling, err := provider.NewSamplingInput().WithToolCatalog(testOpenAIToolCatalog(t))
+			sampling, err := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testOpenAIToolCatalog(t))
 			if err != nil {
 				t.Fatal(err)
 			}
