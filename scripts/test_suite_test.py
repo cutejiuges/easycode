@@ -15,6 +15,7 @@ import unittest
 from unittest import mock
 
 import test_suite
+from test_binary import binary_path
 
 
 class InventoryTests(unittest.TestCase):
@@ -54,17 +55,34 @@ class SuiteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="easycode-inventory-test-") as directory:
             root = Path(directory)
             fake = root / "fake_go.py"
-            fake.write_text('''import json,re,sys
+            fake.write_text('''import hashlib,json,os,re,shlex,sys
+from pathlib import Path
 args = sys.argv[1:]
 if args[0] == 'env':
  print(json.dumps({'GOOS': 'fixture', 'GOARCH': 'fixture', 'GOVERSION': 'fixture', 'GOCACHE': 'fixture'}))
  sys.exit(0)
-names = ['Example', 'FuzzInput', 'TestRaceOnly' if '-race' in args else 'TestNormalOnly']
+if args[0] == 'list':
+ print('fixture/package '+str(Path(__file__).parent.resolve()))
+ sys.exit(0)
+if '-list=.' in args:
+ directory = shlex.split(next(arg[6:] for arg in args if arg.startswith('-exec=')))[-1]
+ name = hashlib.sha256(os.fsencode(Path(__file__).parent.resolve())).hexdigest()
+ binary = Path(directory)/(name+('.exe' if os.name == 'nt' else '.test'))
+ binary.write_text('race' if '-race' in args else 'normal')
+ race = '-race' in args
+else:
+ assert args[:2] == ['tool', 'test2json']
+ binary = Path(args[args.index('-p')+2])
+ race = binary.read_text() == 'race'
+ assert str(Path.cwd()) == str(Path(__file__).parent.resolve())
+ assert os.environ['PWD'] == str(Path.cwd())
+ assert '-test.paniconexit0' in args and '-test.count=1' in args
+names = ['Example', 'FuzzInput', 'TestRaceOnly' if race else 'TestNormalOnly']
 for name in names:
  if '-list=.' in args:
   print(json.dumps({'Package': 'fixture/package', 'Output': name+'\\n'}))
  else:
-  pattern = next(arg[5:] for arg in args if arg.startswith('-run='))
+  pattern = next(arg[10:] for arg in args if arg.startswith('-test.run='))
   if re.fullmatch(pattern, name):
    print(json.dumps({'Package': 'fixture/package', 'Action': 'pass', 'Test': name}))
 print(json.dumps({'Package': 'fixture/package', 'Action': 'pass'}))
@@ -82,6 +100,37 @@ print(json.dumps({'Package': 'fixture/package', 'Action': 'pass'}))
                 completed = next(run["completed"] for run in summary["runs"]
                                  if run["label"] == mode + "-fixture-package-1")
                 self.assertEqual(completed, expected)
+            binaries = [Path(run['command'][run['command'].index('-p') + 2]) for run in summary['runs']
+                        if 'test2json' in run.get('command', [])]
+            self.assertEqual(len(binaries), 2)
+            self.assertNotEqual(binaries[0], binaries[1])
+            self.assertTrue(all(not binary.parent.exists() for binary in binaries))
+
+
+@unittest.skipUnless(os.name == "posix", "Executable script fixture requires a native POSIX host")
+class BinaryCaptureTests(unittest.TestCase):
+    def test_capture_preserves_cwd_arguments_exit_and_isolates_duplicate_package_names(self):
+        with tempfile.TemporaryDirectory(prefix="easycode-binary-test-") as directory:
+            root = Path(directory)
+            cwd = root / "with spaces" / "package"
+            cwd.mkdir(parents=True)
+            original = root / "original.test"
+            original.write_text("#!" + sys.executable + "\nimport json,os,sys\n"
+                                "print(json.dumps([os.getcwd(), sys.argv[1:]]))\nsys.exit(7)\n")
+            original.chmod(0o700)
+            cache = root / "binaries"
+            wrapper = Path(test_suite.__file__).with_name("test_binary.py").resolve()
+            result = subprocess.run([sys.executable, str(wrapper), str(cache), str(original), "-test.list=.", "arg with spaces"],
+                                    cwd=cwd, capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 7, result.stderr)
+            self.assertEqual(json.loads(result.stdout), [str(cwd.resolve()), ["-test.list=.", "arg with spaces"]])
+            binary = binary_path(cache, cwd)
+            self.assertTrue(binary.is_file())
+            self.assertNotEqual(binary, binary_path(cache, root / "another" / "package"))
+            original.unlink()
+            replay = subprocess.run([str(binary), "retained"], cwd=cwd, capture_output=True, text=True, timeout=5)
+            self.assertEqual(replay.returncode, 7, replay.stderr)
+            self.assertEqual(json.loads(replay.stdout), [str(cwd.resolve()), ["retained"]])
 
 
 @unittest.skipUnless(os.name == "posix", "POSIX process-group lifecycle requires a native POSIX host")

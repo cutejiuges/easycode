@@ -6,6 +6,7 @@
 
 - 建立统一测试执行与计时入口，区分构建、普通、race、包与顶层测试耗时；性能验收强制执行测试，不能用结果缓存证明达标。
 - 优化 `internal/codec` 严格解码中重复 JSON 扫描、字段拆分和形状遍历，保留现有公开函数、非法输入拒绝规则、canonical bytes、checksum 与 fingerprint。
+- 复用 Session checksum envelope 的唯一编码结果生成当前 record，消除同一 payload 的第二次编码；保留校验、字段顺序、checksum 和固定字节，以原 Sonic 整体编码作为差异回归参考。
 - 基于实测为重量级测试采用有界调度和独立进程隔离；禁止在使用 `t.Setenv` 的测试上直接增加并行。让 Makefile、CI、pre-commit 与 pre-push 使用同一完整质量门。
 - 审核重复测试装配和大数据构造，将纯逻辑断言放在相应层级。只有存在明确等价覆盖映射时才合并重复工作，保留真实进程、故障注入和恢复矩阵。
 - 记录参考机器、完整执行集合、失败传播、资源峰值和前后耗时，更新测试策略与踩坑文档。
@@ -22,7 +23,7 @@
 
 ## Impact
 
-- 主要涉及 `Makefile`、测试调度/计时脚本及其测试、`internal/codec` 与相邻回归/benchmark；按实测涉及 `internal/app` 等包的测试装配。
+- 主要涉及 `Makefile`、测试调度/计时脚本及其测试、`internal/codec`、Session 内部 record 编码与相邻回归/benchmark；按实测涉及 `internal/app` 等包的测试装配。
 - 更新 `.github/workflows/verify.yml`、README、总体架构测试策略和 pitfall；hooks 继续调用 `make verify`。
 - 不改变 Provider、Runtime、Tool、Session 的公开行为或持久化格式，不引入历史 reader、共享可变全局 codec 或外网测试依赖。
 - 所有改动需在 proposal 审阅后由后续明确 apply 请求触发。此处保留提案阶段范围；实施证据见 [verification.md](verification.md)。

@@ -985,3 +985,5 @@ started Sync 前只有原输入 request_id；terminal 后直到 worker/stream �
 app 的环境敏感测试不能批量加 t.Parallel；统一入口自动分片到独立进程，所有包共用有限执行槽并核对实际完成清单。worker 必须在交回执行槽前标记失败，否则调度线程尚未读取结果时可能启动排队工作。取消需要覆盖测试派生的独立进程组，并保留升级与最终等待；真实子进程和可控时钟验证此边界。完整计时、覆盖集合和平台结论以 `optimize-test-execution` 的验收报告为准。
 
 Linux CI 回归补充：TurnStarted 只证明回合接纳，不能证明输入已经提交或 Provider Stream 已进入。关闭顺序测试必须等待 fixture 的真实 started 信号后才调用 shutdown；扩大 deadline 无法修正错误前置条件。原关闭顺序断言与操作级 deadline 保持。
+
+2026-11-17 补充：Session 写入先整体编码 checksum envelope，又整体编码含 checksum 的 Record，重复压紧同一大 payload；Sonic 在 race 下的标准库读检查进一步放大了重复工作。编码现在保留全部输入校验，仅编码一次 envelope，散列后追加当前结构固定的末尾 checksum 字段；完整 record 大小仍在追加后校验。`internal/session/codec_equivalence_test.go` 用原 Sonic 整体编码逐字节对照，并覆盖可选字段、转义、所有权和完整大小边界。测试替身也须如实返回取消：强制关闭后返回 nil 会让结果依赖 transport 通知的调度次序，不能靠重试或放宽断言处理。

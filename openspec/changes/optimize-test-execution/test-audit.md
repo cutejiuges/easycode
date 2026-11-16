@@ -12,6 +12,6 @@
 | provider `TestWriteAggregateNativeAndRequestBudgetsRemainSixteenMiB` | 单调用合法、17 个调用聚合超限、native 与 wire 均拒绝，真实 16 MiB 常量 | 完整保留；共享 codec 减少重复扫描，无 race 专用宽松实现 |
 | runtime 与 session 的恢复/取消/失败矩阵 | durable 次序、失败 bytes 不变、无重复副作用、原生恢复与 fingerprint 等价 | 全包普通与 race 继续执行；自动清单核对确保新入口不会漏掉 |
 
-本轮没有删除、合并或移动原有业务测试，没有修改已有测试的业务输入、断言或 skip。Linux CI 暴露 `TestChatResourcesCloseOrdersSessionJournalAndProvider` 把 TurnStarted 当成 Stream 已启动；该测试改用已有 started 信号等待真实前置条件，完整 timeline 断言不变。唯一新增 Go 测试入口位于 codec；因此原测试到保留测试的映射为同一文件、同一入口、同一断言的一一映射。全量入口及子测试结果另由最终验收与基线清单比较确认。
+本轮没有删除、合并或移动原有业务测试，没有修改已有测试的业务输入、断言或 skip。Linux CI 暴露 `TestChatResourcesCloseOrdersSessionJournalAndProvider` 把 TurnStarted 当成 Stream 已启动；该测试改用已有 started 信号等待真实前置条件，完整 timeline 断言不变。`TestStreamEscalationClosesProviderBeforeLoopAndJournal` 的 fixture 在取消后返回 `ctx.Err()`，使取消失败结果与原有清理顺序保持确定。新增 Go 测试入口位于 codec 与 Session 编码等价性回归；因此原测试到保留测试的映射为同一文件、同一入口、同一断言的一一映射。全量入口及子测试结果另由最终验收与基线清单比较确认。
 
 代码行数不作为删测依据。主要收益来自消除公共解码路径的重复扫描/临时分配和重包分片，不需要继续抽象已隔离的装配、跨用例缓存实例或缩减安全矩阵。

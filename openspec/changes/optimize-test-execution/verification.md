@@ -4,7 +4,7 @@
 
 从已同步的 `origin/main` `b0387c4bb3b833082beb1d077767885ecf46acdd` 开始，开发分支为 `fix/test-execution-performance`。参考机器：Darwin/arm64、Apple M1 Pro、10 核、32 GiB、Go 1.24.13。计时从 `make verify` 启动到结束，包含静态检查、测试枚举及编译/链接、完整普通和 race；工具链/依赖准备不计入。使用正常 Go 构建缓存，所有实际测试强制 `-count=1`。
 
-最终默认设置为最多 `min(8, 2 × CPU 数)` 个活动命令、每个进程 `GOMAXPROCS=2`/`-parallel=2`，app 在 Darwin 自动分为 16 个互斥分片、其他平台为 4 个，普通/race 顺序执行；其他包同样共享该并发上限。两个阶段分别按实际构建模式枚举 Test/Example/Fuzz，执行集合必须精确匹配。`make test` 是普通测试，`make test-race` 是 race，`make test-all` 顺序执行两者，hooks/CI 保持调用 `make verify`。
+最终默认设置为最多 `min(8, 2 × CPU 数)` 个活动命令、每个进程 `GOMAXPROCS=2`/`-parallel=2`，app 在 Darwin 自动分为 16 个互斥分片、其他平台为 8 个，普通/race 顺序执行；其他包同样共享该并发上限。两个阶段分别按实际构建模式枚举 Test/Example/Fuzz，执行集合必须精确匹配。`make test` 是普通测试，`make test-race` 是 race，`make test-all` 顺序执行两者，hooks/CI 保持调用 `make verify`。
 
 ## 根因与处理
 
@@ -21,11 +21,13 @@
 | main 隔离源码快照 | 150.704 s | 961.605 s | 1114.245 s | 通过 |
 | 最终参数试跑：8 命令、2 并行、16 分片 | 66.996 s | 167.409 s | 238.204 s | 通过 |
 | 首版实现：pre-commit | 65.821 s | 167.239 s | **237.077 s** | 通过 |
-| 首版实现：pre-push | 66.950 s | 168.715 s | **239.901 s** | 通过 |
+| 首版实现：pre-push | 66.950 s | 168.715 s | 239.901 s | 通过 |
+| Session 编码复用前：pre-commit | 68.258 s | 171.170 s | **246.022 s** | 通过 |
+| Session 编码复用前：pre-push | 67.214 s | 167.445 s | **238.941 s** | 通过 |
 
 阶段数据包含当前模式的测试枚举/构建。试跑的最大单个子进程 RSS 为 1202601984 bytes，累计子进程 CPU 为 1144.871 秒；RSS 不是并发进程内存总和。试跑过程中无其他 worktree 重测试，只有文档/证据整理与只读检查。4 命令/4 分片及 6 命令/1 并行/12 分片均触及 300 秒预算，不能作为通过结果；具体见 [concurrency-comparison.json](concurrency-comparison.json)。
 
-首版实现连续两轮 hook 验收通过，两轮源码摘要均为 `8a876c089981fdfad940bdcafdc7facee1a727f947d4d3d8852400b874f237fa`，覆盖同一实现提交 `06e0ad3` 的实际代码。每轮均执行完整静态检查、1602 个顶层入口及 4730 条父子结果，普通/race 分别核对清单；原有 4707 条结果的通过/跳过状态完全一致。完整环境、阶段、资源及清单摘要见 [local-verification.json](local-verification.json)，逐项覆盖差异见 [coverage-comparison.json](coverage-comparison.json)。
+首版实现连续两轮 hook 验收通过，两轮源码摘要均为 `8a876c089981fdfad940bdcafdc7facee1a727f947d4d3d8852400b874f237fa`，覆盖同一实现提交 `06e0ad3` 的实际代码。每轮均执行完整静态检查、1602 个顶层入口及 4730 条父子结果，普通/race 分别核对清单；原有 4707 条结果的通过/跳过状态完全一致。完整环境、阶段、资源及清单摘要见 [local-verification-initial.json](local-verification-initial.json)，逐项覆盖差异见 [coverage-comparison.json](coverage-comparison.json)。
 
 第二轮测试本身通过，但 SSH 连接在长钩子期间被远端关闭，Git push 以 141 退出；这是传输失败。后续推送使用 SSH 保活重试，继续执行完整 pre-push，在 **240.163 秒**通过后推送成功。Linux 原生 CI [43895186714](https://github.com/cutejiuges/easycode/actions/runs/43895186714) 已触发，发现关闭顺序测试的调度假设，普通阶段通过，race 阶段失败；不作为验收通过证据。详见 [ci-first-failure.json](ci-first-failure.json)。
 
@@ -48,4 +50,8 @@ Darwin 运行包含现有真实 sandbox/Exec 集成场景。Linux 需要原生 C
 
 首轮 Linux 为 4 核、约 16 GiB、amd64、Go 1.24.13。`TurnStarted` 事件早于输入提交与 Provider Stream；关闭测试立即触发 shutdown 时允许在输入提交前取消，原测试却要求已存在 stream 时间线。改为等待 fixture 已有的 `started` 信号后再关闭，保留原 1 秒关闭 deadline 与全部六条顺序断言，不修改生产行为。两项关闭/强制回收测试以固定乱序种子执行 20 轮 race，通过。
 
-Linux 的 16 分片还放大了多个进程的独立初始化。CI 将比较 4/8 活动命令及 4/8 分片；手动 workflow 提供有界参数和 600 秒诊断预算，但默认及验收阈值始终为 300 秒，诊断超时放宽不算达标。后续同一最终源码的两轮本地与 Linux 验收待补充。
+Linux 的 16 分片还放大了多个进程的独立初始化。CI 将比较 4/8 活动命令及 4/8 分片；手动 workflow 提供有界参数和 600 秒诊断预算，但默认及验收阈值始终为 300 秒，诊断超时放宽不算达标。Session 编码复用前实现 `e147d1d0e99339282b16f5be2335eec9c437acbf` 两轮本地质量门分别 **246.022 / 238.941 秒**，源码摘要同为 `a2ec041d278f1517e657d71d297619e5f1169f26892f1540f32f905b1a128cf8`。每阶段仍为 1602 个入口、4730 条结果，原有结果和 skip 状态不变；见 [local-verification.json](local-verification.json)。Linux 正式验收 [43899583414](https://github.com/cutejiuges/easycode/actions/runs/43899583414) 在 300.100 秒触及预算；四命令对照 [43899592867](https://github.com/cutejiuges/easycode/actions/runs/43899592867) 在 250.232 秒因关闭 fixture 的取消结果不确定而失败。两轮均不能作为通过证据，完整阶段与资源摘要见 [ci-comparison.json](ci-comparison.json)。
+
+2026-11-17 追加修正：`escalationStreamLoop` 在 context 已取消后被强制释放时仍返回 nil，导致最终结果取决于 transport 取消通知和 loop 完成通知的调度次序。fixture 改为在完成原有清理后返回 `ctx.Err()`；保留生产行为、错误码和全部关闭顺序断言。三项相关关闭测试以固定种子 `20261117` 连续执行 30 轮 race，通过（5.951 秒）。
+
+追加编码差异 fuzz：30 秒共 819146 次执行、122 份语料通过；表格与完整 16 MiB 大小边界在 race 下通过。大批次测试的相同单进程 race profile 从 34.556 秒降至 23.804 秒；当前累计分配为 2453.88 MB，具体 profile 摘要见 `session-encoding-profile.txt`。全部最终质量门需在本次编码与二进制复用改动后重新取得。

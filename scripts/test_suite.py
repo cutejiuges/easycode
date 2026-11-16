@@ -16,6 +16,8 @@ import tempfile
 import threading
 import time
 
+from test_binary import binary_path
+
 try:
     import resource
 except ImportError:
@@ -108,7 +110,7 @@ class ProcessOwner:
             return {"label": label, "exit": 130, "seconds": 0, "events": []}
         # 启动与磁盘操作在锁外；登记后再次检查取消，关闭启动和取消交错的窗口。
         try:
-            process = subprocess.Popen(command, cwd=cwd, env=self.environment,
+            process = subprocess.Popen(command, cwd=cwd, env=dict(self.environment, PWD=str(cwd)),
                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                        text=True, errors="replace", start_new_session=os.name != "nt",
                                        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0)
@@ -261,6 +263,7 @@ def run_suite(args):
     report = {"mode": args.mode, "jobs": args.jobs, "parallel": args.parallel, "shards": args.shards,
               "exit": 1, "platform": sys.platform, "cpu_count": os.cpu_count(),
               "budget_seconds": args.budget, "test_result_cache": False, "phases": [], "runs": []}
+    binary_directories = []
     if hasattr(os, "sysconf"):
         report["memory_bytes"] = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
 
@@ -282,7 +285,16 @@ def run_suite(args):
         modes = [args.mode] if args.mode in ("normal", "race") else ["normal", "race"]
         for mode in modes:
             phase_start = time.monotonic()
-            discovery = [*go, "test", "-json", "-list=.", "-p", str(args.jobs)]
+            listing = [*go, "list", "-f", '{{.ImportPath}} {{.Dir}}']
+            if mode == "race":
+                listing.append("-race")
+            listed = execute([(mode + "-packages", [*listing, "./..."], root)], 1)[0]
+            package_dirs = dict(line.split(" ", 1) for line in Path(listed["log"]).read_text(encoding="utf-8").splitlines())
+            binary_directory = tempfile.TemporaryDirectory(prefix="easycode-" + mode + "-binaries-")
+            binary_directories.append(binary_directory)
+            binaries = Path(binary_directory.name)
+            capture = shlex.join([sys.executable, "-B", str(root / "scripts/test_binary.py"), str(binaries)])
+            discovery = [*go, "test", "-json", "-list=.", "-p", str(args.jobs), "-exec=" + capture]
             if mode == "race":
                 discovery.append("-race")
             discovery.append("./...")
@@ -297,12 +309,22 @@ def run_suite(args):
                 shards = partition(tests, count) or [[]]
                 for index, shard in enumerate(shards):
                     label = mode + "-" + package.replace("/", "-") + f"-{index + 1}"
-                    command = [*go, "test", "-json", "-count=1", "-p=1", "-parallel=" + str(args.parallel),
-                               "-timeout=" + args.timeout]
-                    if mode == "race":
-                        command.append("-race")
-                    command.extend(["-run=" + selection(shard), package])
-                    jobs.append((label, command, root))
+                    cwd = Path(package_dirs[package])
+                    binary = binary_path(binaries, cwd)
+                    if binary.is_file():
+                        command = [*go, "tool", "test2json", "-t", "-p", package, str(binary),
+                                   "-test.v=test2json", "-test.paniconexit0", "-test.count=1",
+                                   "-test.parallel=" + str(args.parallel), "-test.timeout=" + args.timeout,
+                                   "-test.run=" + selection(shard)]
+                    elif tests:
+                        raise RuntimeError("missing compiled test binary for " + package)
+                    else:
+                        # 无测试文件的包仍交给 Go 检查；有 TestMain 的空清单已在上面保留二进制。
+                        command = [*go, "test", "-json", "-count=1", "-p=1"]
+                        if mode == "race":
+                            command.append("-race")
+                        command.append(package)
+                    jobs.append((label, command, cwd))
                     expected[label] = shard
             # 先派发关键路径；其他包按名称确定排序，所有进程共享同一并发上限。
             jobs.sort(key=lambda job: ("-internal-app-" not in job[0], job[0]))
@@ -310,6 +332,7 @@ def run_suite(args):
             report["runs"].extend(results)
             for result in results:
                 verify_execution(result, expected[result["label"]])
+            binary_directory.cleanup()
             failed = owner.cancelled.is_set() or any(result["exit"] for result in results)
             report["phases"].append({"mode": mode, "seconds": round(time.monotonic() - phase_start, 3),
                                      "exit": int(failed)})
@@ -331,6 +354,8 @@ def run_suite(args):
             print(f"{result['label']}: {result['log']}", file=sys.stderr)
             print(Path(result["log"]).read_text(encoding="utf-8")[-4000:], file=sys.stderr)
     finally:
+        for binary_directory in binary_directories:
+            binary_directory.cleanup()
         for sig, handler in previous.items():
             signal.signal(sig, handler)
         report["seconds"] = round(time.monotonic() - started, 3)
@@ -360,7 +385,7 @@ def main():
     parser.add_argument("--jobs", type=int, default=min(8, 2 * (os.cpu_count() or 1)))
     parser.add_argument("--parallel", type=int, default=2)
     # Darwin 的重矩阵需要细分；其他平台减少独立进程中的重复初始化。
-    parser.add_argument("--shards", type=int, default=16 if sys.platform == "darwin" else 4)
+    parser.add_argument("--shards", type=int, default=16 if sys.platform == "darwin" else 8)
     parser.add_argument("--timeout", default="20m")
     parser.add_argument("--budget", type=float, default=300)
     parser.add_argument("--output")

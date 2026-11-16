@@ -657,7 +657,7 @@ func newEscalationStreamLoop(release <-chan struct{}, add func(string)) *escalat
 	}
 }
 
-func (loop *escalationStreamLoop) Run(context.Context) error {
+func (loop *escalationStreamLoop) Run(ctx context.Context) error {
 	close(loop.ready)
 	<-loop.release
 	if loop.add != nil {
@@ -665,7 +665,8 @@ func (loop *escalationStreamLoop) Run(context.Context) error {
 	}
 	close(loop.outputs)
 	close(loop.done)
-	return nil
+	// 强制关闭已取消的循环必须返回取消结果，不能依赖 transport 通知的调度次序。
+	return ctx.Err()
 }
 
 func (loop *escalationStreamLoop) Ready() <-chan struct{} { return loop.ready }

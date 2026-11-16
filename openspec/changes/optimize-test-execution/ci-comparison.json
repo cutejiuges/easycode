@@ -1,0 +1,1078 @@
+[
+  {
+    "source_digest": "a2ec041d278f1517e657d71d297619e5f1169f26892f1540f32f905b1a128cf8",
+    "go_environment": {
+      "GOARCH": "amd64",
+      "GOCACHE": "/home/runner/.cache/go-build",
+      "GOOS": "linux",
+      "GOVERSION": "go1.24.13"
+    },
+    "cpu_count": 4,
+    "memory_bytes": 16463405056,
+    "jobs": 8,
+    "shards": 4,
+    "parallel": 2,
+    "budget_seconds": 300.0,
+    "exit": 1,
+    "error": "verification exceeded time budget",
+    "seconds": 300.1,
+    "phases": [
+      {
+        "mode": "normal",
+        "seconds": 42.509,
+        "exit": 0
+      },
+      {
+        "mode": "race",
+        "seconds": 217.247,
+        "exit": 1
+      }
+    ],
+    "max_child_rss_bytes": 887328768,
+    "child_cpu_seconds": 606.542,
+    "slow_tests": [
+      {
+        "phase": "race",
+        "package": "easycode/internal/provider/openai",
+        "test": "TestPreInputRewriteNativeGoldenRestoreAndCache",
+        "seconds": 77.8
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/provider/anthropic",
+        "test": "TestPreInputRewriteNativeGoldenRestoreAndCache",
+        "seconds": 77.38
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/session",
+        "test": "TestInputDraftBudgetIncludesCanonicalEnvelopeAndNewlines",
+        "seconds": 70.45
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestPluginBrowserManualAndRestoredRequestsBothProviders",
+        "seconds": 66.02
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestHookResumeReconcilesEveryBatchBeforeLoadingNewSnapshot",
+        "seconds": 46.81
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestStopCompactionKeepsFrozenFeedbackAndGenuineSkillCorrection",
+        "seconds": 34.73
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/runtime",
+        "test": "TestPreRewriteThreeCapabilitiesUseOnlySelectedInput",
+        "seconds": 33.99
+      },
+      {
+        "phase": "race",
+        "package": "easycode/cmd/easycode",
+        "test": "TestCLIPluginPackagesBothProvidersAndHeadlessModes",
+        "seconds": 25.71
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestListThenResumeBothProviders",
+        "seconds": 23.83
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestRunContinueReportsNotFoundWithoutProviderRequestOrReplacement",
+        "seconds": 22.44
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestCompletionManualAndRestoredRequestsBothProviders",
+        "seconds": 21.45
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestRunJSONContinueReportsOriginalIdentityAsResumed",
+        "seconds": 20.76
+      },
+      {
+        "phase": "race",
+        "package": "easycode/cmd/easycode",
+        "test": "TestRunContinueWithoutCandidateReturnsNotFoundWithoutJournal",
+        "seconds": 19.2
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestCachedAutomaticCompactionRealProvidersAndResume",
+        "seconds": 17.82
+      },
+      {
+        "phase": "race",
+        "package": "easycode/cmd/easycode",
+        "test": "TestHeadlessProcessExitCodesAndJSONStdout",
+        "seconds": 17.78
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/architecture",
+        "test": "TestAllConstructorsHaveExplicitLifecycle",
+        "seconds": 17.7
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestPostHookResumeReconcilesEveryBatchBeforeLoadingNewSnapshot",
+        "seconds": 17.38
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestRunContinueRejectsUnindexedBusyJournal",
+        "seconds": 17.33
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestAutomaticCompactionHeadlessModes",
+        "seconds": 16.29
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestFailureHookResumeReconcilesEveryBatchBeforeLoadingNewSnapshot",
+        "seconds": 16.12
+      }
+    ],
+    "url": "https://github.com/cutejiuges/easycode/actions/runs/43899583414",
+    "commit": "e147d1d0e99339282b16f5be2335eec9c437acbf",
+    "runs": [
+      {
+        "label": "environment",
+        "exit": 0,
+        "seconds": 0.005
+      },
+      {
+        "label": "static",
+        "exit": 0,
+        "seconds": 40.3
+      },
+      {
+        "label": "normal-inventory",
+        "exit": 0,
+        "seconds": 14.434
+      },
+      {
+        "label": "normal-easycode-internal-config-1",
+        "exit": 0,
+        "seconds": 1.05
+      },
+      {
+        "label": "normal-easycode-internal-codec-1",
+        "exit": 0,
+        "seconds": 1.119
+      },
+      {
+        "label": "normal-easycode-internal-context-estimate-1",
+        "exit": 0,
+        "seconds": 0.92
+      },
+      {
+        "label": "normal-easycode-internal-context-1",
+        "exit": 0,
+        "seconds": 1.222
+      },
+      {
+        "label": "normal-easycode-internal-context-projectinstructions-1",
+        "exit": 0,
+        "seconds": 1.07
+      },
+      {
+        "label": "normal-easycode-internal-executor-process-1",
+        "exit": 0,
+        "seconds": 0.532
+      },
+      {
+        "label": "normal-easycode-internal-extension-1",
+        "exit": 0,
+        "seconds": 0.336
+      },
+      {
+        "label": "normal-easycode-internal-extension-hook-1",
+        "exit": 0,
+        "seconds": 0.806
+      },
+      {
+        "label": "normal-easycode-internal-domain-1",
+        "exit": 0,
+        "seconds": 3.163
+      },
+      {
+        "label": "normal-easycode-internal-extension-localfile-1",
+        "exit": 0,
+        "seconds": 0.674
+      },
+      {
+        "label": "normal-easycode-internal-extension-mcp-1",
+        "exit": 0,
+        "seconds": 0.213
+      },
+      {
+        "label": "normal-easycode-internal-extension-plugin-1",
+        "exit": 0,
+        "seconds": 1.013
+      },
+      {
+        "label": "normal-easycode-internal-fault-1",
+        "exit": 0,
+        "seconds": 0.331
+      },
+      {
+        "label": "normal-easycode-internal-extension-skill-1",
+        "exit": 0,
+        "seconds": 2.06
+      },
+      {
+        "label": "normal-easycode-internal-architecture-1",
+        "exit": 0,
+        "seconds": 8.356
+      },
+      {
+        "label": "normal-easycode-internal-headless-1",
+        "exit": 0,
+        "seconds": 1.852
+      },
+      {
+        "label": "normal-easycode-internal-protocol-1",
+        "exit": 0,
+        "seconds": 1.731
+      },
+      {
+        "label": "normal-easycode-cmd-easycode-1",
+        "exit": 0,
+        "seconds": 9.705
+      },
+      {
+        "label": "normal-easycode-internal-provider-transport-1",
+        "exit": 0,
+        "seconds": 1.376
+      },
+      {
+        "label": "normal-easycode-internal-provider-1",
+        "exit": 0,
+        "seconds": 3.024
+      },
+      {
+        "label": "normal-easycode-internal-secret-1",
+        "exit": 0,
+        "seconds": 0.691
+      },
+      {
+        "label": "normal-easycode-internal-provider-anthropic-1",
+        "exit": 0,
+        "seconds": 7.632
+      },
+      {
+        "label": "normal-easycode-internal-provider-openai-1",
+        "exit": 0,
+        "seconds": 7.906
+      },
+      {
+        "label": "normal-easycode-internal-session-artifact-1",
+        "exit": 0,
+        "seconds": 1.584
+      },
+      {
+        "label": "normal-easycode-internal-subagent-1",
+        "exit": 0,
+        "seconds": 0.281
+      },
+      {
+        "label": "normal-easycode-internal-telemetry-1",
+        "exit": 0,
+        "seconds": 0.157
+      },
+      {
+        "label": "normal-easycode-internal-tool-1",
+        "exit": 0,
+        "seconds": 1.787
+      },
+      {
+        "label": "normal-easycode-internal-tool-builtin-1",
+        "exit": 0,
+        "seconds": 1.862
+      },
+      {
+        "label": "normal-easycode-internal-session-1",
+        "exit": 0,
+        "seconds": 10.52
+      },
+      {
+        "label": "normal-easycode-internal-app-4",
+        "exit": 0,
+        "seconds": 22.648
+      },
+      {
+        "label": "normal-easycode-internal-session-catalog-1",
+        "exit": 0,
+        "seconds": 5.895
+      },
+      {
+        "label": "normal-easycode-internal-runtime-1",
+        "exit": 0,
+        "seconds": 12.819
+      },
+      {
+        "label": "normal-easycode-internal-tui-1",
+        "exit": 0,
+        "seconds": 2.708
+      },
+      {
+        "label": "normal-easycode-internal-app-2",
+        "exit": 0,
+        "seconds": 24.923
+      },
+      {
+        "label": "normal-easycode-internal-app-3",
+        "exit": 0,
+        "seconds": 25.617
+      },
+      {
+        "label": "normal-easycode-internal-app-1",
+        "exit": 0,
+        "seconds": 28.068
+      },
+      {
+        "label": "race-inventory",
+        "exit": 0,
+        "seconds": 44.461
+      },
+      {
+        "label": "race-easycode-internal-config-1",
+        "exit": 0,
+        "seconds": 3.183
+      },
+      {
+        "label": "race-easycode-internal-codec-1",
+        "exit": 0,
+        "seconds": 4.524
+      },
+      {
+        "label": "race-easycode-internal-context-estimate-1",
+        "exit": 0,
+        "seconds": 1.884
+      },
+      {
+        "label": "race-easycode-internal-context-projectinstructions-1",
+        "exit": 0,
+        "seconds": 2.785
+      },
+      {
+        "label": "race-easycode-internal-context-1",
+        "exit": 0,
+        "seconds": 7.321
+      },
+      {
+        "label": "race-easycode-internal-executor-process-1",
+        "exit": 0,
+        "seconds": 2.084
+      },
+      {
+        "label": "race-easycode-internal-extension-1",
+        "exit": 0,
+        "seconds": 0.378
+      },
+      {
+        "label": "race-easycode-internal-extension-hook-1",
+        "exit": 0,
+        "seconds": 4.476
+      },
+      {
+        "label": "race-easycode-internal-extension-localfile-1",
+        "exit": 0,
+        "seconds": 2.043
+      },
+      {
+        "label": "race-easycode-internal-extension-mcp-1",
+        "exit": 0,
+        "seconds": 0.173
+      },
+      {
+        "label": "race-easycode-internal-domain-1",
+        "exit": 0,
+        "seconds": 11.344
+      },
+      {
+        "label": "race-easycode-internal-extension-plugin-1",
+        "exit": 0,
+        "seconds": 2.871
+      },
+      {
+        "label": "race-easycode-internal-fault-1",
+        "exit": 0,
+        "seconds": 1.823
+      },
+      {
+        "label": "race-easycode-internal-extension-skill-1",
+        "exit": 0,
+        "seconds": 5.723
+      },
+      {
+        "label": "race-easycode-internal-headless-1",
+        "exit": 0,
+        "seconds": 11.893
+      },
+      {
+        "label": "race-easycode-internal-protocol-1",
+        "exit": 0,
+        "seconds": 10.424
+      },
+      {
+        "label": "race-easycode-internal-architecture-1",
+        "exit": 0,
+        "seconds": 38.613
+      },
+      {
+        "label": "race-easycode-internal-provider-1",
+        "exit": 0,
+        "seconds": 8.577
+      },
+      {
+        "label": "race-easycode-internal-provider-transport-1",
+        "exit": 0,
+        "seconds": 4.228
+      },
+      {
+        "label": "race-easycode-cmd-easycode-1",
+        "exit": 0,
+        "seconds": 67.37
+      },
+      {
+        "label": "race-easycode-internal-secret-1",
+        "exit": 0,
+        "seconds": 2.182
+      },
+      {
+        "label": "race-easycode-internal-app-3",
+        "exit": 0,
+        "seconds": 161.404
+      },
+      {
+        "label": "race-easycode-internal-session-artifact-1",
+        "exit": 0,
+        "seconds": 3.547
+      },
+      {
+        "label": "race-easycode-internal-tool-builtin-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-subagent-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-tui-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-telemetry-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-tool-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-session-catalog-1",
+        "exit": -15,
+        "seconds": 7.804
+      },
+      {
+        "label": "race-easycode-internal-session-1",
+        "exit": -15,
+        "seconds": 103.204
+      },
+      {
+        "label": "race-easycode-internal-runtime-1",
+        "exit": -15,
+        "seconds": 123.7
+      },
+      {
+        "label": "race-easycode-internal-app-1",
+        "exit": -15,
+        "seconds": 172.76
+      },
+      {
+        "label": "race-easycode-internal-provider-openai-1",
+        "exit": -15,
+        "seconds": 134.152
+      },
+      {
+        "label": "race-easycode-internal-app-2",
+        "exit": -15,
+        "seconds": 172.772
+      },
+      {
+        "label": "race-easycode-internal-provider-anthropic-1",
+        "exit": -15,
+        "seconds": 136.088
+      },
+      {
+        "label": "race-easycode-internal-app-4",
+        "exit": -15,
+        "seconds": 172.774
+      }
+    ]
+  },
+  {
+    "source_digest": "a2ec041d278f1517e657d71d297619e5f1169f26892f1540f32f905b1a128cf8",
+    "go_environment": {
+      "GOARCH": "amd64",
+      "GOCACHE": "/home/runner/.cache/go-build",
+      "GOOS": "linux",
+      "GOVERSION": "go1.24.13"
+    },
+    "cpu_count": 4,
+    "memory_bytes": 16759439360,
+    "jobs": 4,
+    "shards": 4,
+    "parallel": 2,
+    "budget_seconds": 600.0,
+    "exit": 1,
+    "error": "test execution failed, was cancelled, or did not match inventory",
+    "seconds": 250.232,
+    "phases": [
+      {
+        "mode": "normal",
+        "seconds": 42.635,
+        "exit": 0
+      },
+      {
+        "mode": "race",
+        "seconds": 168.733,
+        "exit": 1
+      }
+    ],
+    "max_child_rss_bytes": 932630528,
+    "child_cpu_seconds": 597.871,
+    "slow_tests": [
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestPluginBrowserManualAndRestoredRequestsBothProviders",
+        "seconds": 39.77
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestHookResumeReconcilesEveryBatchBeforeLoadingNewSnapshot",
+        "seconds": 29.47
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestPluginSkillLifecycleBothProvidersAndHosts",
+        "seconds": 19.67
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestStopCompactionKeepsFrozenFeedbackAndGenuineSkillCorrection",
+        "seconds": 19.51
+      },
+      {
+        "phase": "race",
+        "package": "easycode/cmd/easycode",
+        "test": "TestRunContinueWithoutCandidateReturnsNotFoundWithoutJournal",
+        "seconds": 13.03
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestListThenResumeBothProviders",
+        "seconds": 12.79
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestCompletionManualAndRestoredRequestsBothProviders",
+        "seconds": 12.77
+      },
+      {
+        "phase": "race",
+        "package": "easycode/cmd/easycode",
+        "test": "TestHeadlessProcessExitCodesAndJSONStdout",
+        "seconds": 12.13
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestRunJSONContinueReportsOriginalIdentityAsResumed",
+        "seconds": 12.06
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestRunContinueReportsNotFoundWithoutProviderRequestOrReplacement",
+        "seconds": 11.77
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestRunContinueRejectsUnindexedBusyJournal",
+        "seconds": 11.44
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestPostHookResumeReconcilesEveryBatchBeforeLoadingNewSnapshot",
+        "seconds": 10.59
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestFailureHookResumeReconcilesEveryBatchBeforeLoadingNewSnapshot",
+        "seconds": 10.55
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestCachedAutomaticCompactionRealProvidersAndResume",
+        "seconds": 9.47
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestAutomaticCompactionRealProvidersAndResume",
+        "seconds": 9.44
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestAutomaticCompactionHeadlessModes",
+        "seconds": 9.02
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestReasoningControlsBuiltCLIEndToEnd",
+        "seconds": 6.58
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestToolLoopCrashPointsReconcileLocallyForBothProviders",
+        "seconds": 6.05
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestWriteRecoveryPairsEveryTailWithoutReplayingFilesOrGrants",
+        "seconds": 5.89
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestFailureHookHostRetainsWorkspaceAndCrossProcessLeaseDuringCleanup",
+        "seconds": 5.56
+      }
+    ],
+    "url": "https://github.com/cutejiuges/easycode/actions/runs/43899592867",
+    "commit": "e147d1d0e99339282b16f5be2335eec9c437acbf",
+    "runs": [
+      {
+        "label": "environment",
+        "exit": 0,
+        "seconds": 0.005
+      },
+      {
+        "label": "static",
+        "exit": 0,
+        "seconds": 38.818
+      },
+      {
+        "label": "normal-inventory",
+        "exit": 0,
+        "seconds": 14.526
+      },
+      {
+        "label": "normal-easycode-internal-app-4",
+        "exit": 0,
+        "seconds": 11.39
+      },
+      {
+        "label": "normal-easycode-internal-app-3",
+        "exit": 0,
+        "seconds": 14.167
+      },
+      {
+        "label": "normal-easycode-internal-app-2",
+        "exit": 0,
+        "seconds": 14.236
+      },
+      {
+        "label": "normal-easycode-internal-codec-1",
+        "exit": 0,
+        "seconds": 0.538
+      },
+      {
+        "label": "normal-easycode-internal-config-1",
+        "exit": 0,
+        "seconds": 0.51
+      },
+      {
+        "label": "normal-easycode-internal-context-1",
+        "exit": 0,
+        "seconds": 0.58
+      },
+      {
+        "label": "normal-easycode-cmd-easycode-1",
+        "exit": 0,
+        "seconds": 4.783
+      },
+      {
+        "label": "normal-easycode-internal-context-estimate-1",
+        "exit": 0,
+        "seconds": 0.396
+      },
+      {
+        "label": "normal-easycode-internal-context-projectinstructions-1",
+        "exit": 0,
+        "seconds": 0.527
+      },
+      {
+        "label": "normal-easycode-internal-executor-process-1",
+        "exit": 0,
+        "seconds": 0.294
+      },
+      {
+        "label": "normal-easycode-internal-extension-1",
+        "exit": 0,
+        "seconds": 0.182
+      },
+      {
+        "label": "normal-easycode-internal-extension-hook-1",
+        "exit": 0,
+        "seconds": 0.491
+      },
+      {
+        "label": "normal-easycode-internal-extension-localfile-1",
+        "exit": 0,
+        "seconds": 0.313
+      },
+      {
+        "label": "normal-easycode-internal-extension-mcp-1",
+        "exit": 0,
+        "seconds": 0.092
+      },
+      {
+        "label": "normal-easycode-internal-domain-1",
+        "exit": 0,
+        "seconds": 1.905
+      },
+      {
+        "label": "normal-easycode-internal-architecture-1",
+        "exit": 0,
+        "seconds": 4.24
+      },
+      {
+        "label": "normal-easycode-internal-extension-plugin-1",
+        "exit": 0,
+        "seconds": 0.515
+      },
+      {
+        "label": "normal-easycode-internal-fault-1",
+        "exit": 0,
+        "seconds": 0.258
+      },
+      {
+        "label": "normal-easycode-internal-protocol-1",
+        "exit": 0,
+        "seconds": 0.665
+      },
+      {
+        "label": "normal-easycode-internal-extension-skill-1",
+        "exit": 0,
+        "seconds": 1.257
+      },
+      {
+        "label": "normal-easycode-internal-headless-1",
+        "exit": 0,
+        "seconds": 0.866
+      },
+      {
+        "label": "normal-easycode-internal-app-1",
+        "exit": 0,
+        "seconds": 20.116
+      },
+      {
+        "label": "normal-easycode-internal-provider-transport-1",
+        "exit": 0,
+        "seconds": 0.901
+      },
+      {
+        "label": "normal-easycode-internal-provider-1",
+        "exit": 0,
+        "seconds": 2.136
+      },
+      {
+        "label": "normal-easycode-internal-secret-1",
+        "exit": 0,
+        "seconds": 0.423
+      },
+      {
+        "label": "normal-easycode-internal-provider-openai-1",
+        "exit": 0,
+        "seconds": 3.88
+      },
+      {
+        "label": "normal-easycode-internal-provider-anthropic-1",
+        "exit": 0,
+        "seconds": 4.195
+      },
+      {
+        "label": "normal-easycode-internal-session-artifact-1",
+        "exit": 0,
+        "seconds": 1.017
+      },
+      {
+        "label": "normal-easycode-internal-subagent-1",
+        "exit": 0,
+        "seconds": 0.198
+      },
+      {
+        "label": "normal-easycode-internal-telemetry-1",
+        "exit": 0,
+        "seconds": 0.103
+      },
+      {
+        "label": "normal-easycode-internal-tool-1",
+        "exit": 0,
+        "seconds": 0.816
+      },
+      {
+        "label": "normal-easycode-internal-tool-builtin-1",
+        "exit": 0,
+        "seconds": 0.957
+      },
+      {
+        "label": "normal-easycode-internal-session-catalog-1",
+        "exit": 0,
+        "seconds": 3.199
+      },
+      {
+        "label": "normal-easycode-internal-session-1",
+        "exit": 0,
+        "seconds": 5.705
+      },
+      {
+        "label": "normal-easycode-internal-runtime-1",
+        "exit": 0,
+        "seconds": 6.809
+      },
+      {
+        "label": "normal-easycode-internal-tui-1",
+        "exit": 0,
+        "seconds": 1.677
+      },
+      {
+        "label": "race-inventory",
+        "exit": 0,
+        "seconds": 48.816
+      },
+      {
+        "label": "race-easycode-internal-app-3",
+        "exit": 0,
+        "seconds": 89.538
+      },
+      {
+        "label": "race-easycode-internal-context-projectinstructions-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-runtime-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-domain-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-secret-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-executor-process-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-session-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-protocol-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-session-artifact-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-extension-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-session-catalog-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-extension-hook-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-subagent-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-extension-localfile-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-telemetry-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-app-4",
+        "exit": 1,
+        "seconds": 119.875
+      },
+      {
+        "label": "race-easycode-internal-extension-mcp-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-tool-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-extension-plugin-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-tool-builtin-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-extension-skill-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-tui-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-fault-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-architecture-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-headless-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-provider-transport-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-provider-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-config-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-provider-anthropic-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-context-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-codec-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-provider-openai-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-context-estimate-1",
+        "exit": 130,
+        "seconds": 0
+      },
+      {
+        "label": "race-easycode-internal-app-1",
+        "exit": -15,
+        "seconds": 119.907
+      },
+      {
+        "label": "race-easycode-internal-app-2",
+        "exit": -15,
+        "seconds": 119.909
+      },
+      {
+        "label": "race-easycode-cmd-easycode-1",
+        "exit": -15,
+        "seconds": 30.373
+      }
+    ]
+  }
+]

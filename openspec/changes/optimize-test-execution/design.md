@@ -41,13 +41,21 @@
 
 替代方案：只调低 `GOMAXPROCS` 已被本轮对照否定为主要解法；扩展 timeout 不减少工作量；更换第三方库或修改其全局池会扩大范围。当前方案优先减少调用次数和临时数据，保留项目既定 JSON 边界。
 
+### 1.1 复用 Session checksum envelope 的编码结果
+
+2026-11-17 用户补充批准此内部扩展并继续 apply。Linux 原生验收仍超时，单独对 `TestInputDraftBudgetIncludesCanonicalEnvelopeAndNewlines` 采样发现约 44% CPU 在 JSON 压紧路径、累计分配约 3.35 GB；`EncodeRecord` 先通过 checksum envelope 编码 payload，再编码最终 Record，race 下 Sonic 同时用标准库检测数据竞争，两次调用重复处理同一大 payload。
+
+保留 `validateRecord` 的全部拒绝规则和公开接口，将 checksum envelope 作为单次序列化来源。计算 SHA-256 后，在该完整 JSON 对象的结尾添加当前契约唯一的末尾 checksum 字段，避免再次编码已序列化的 payload。checksum 仍是原 envelope 的散列；新增后缀只包含固定字段名及 64 位小写十六进制值。最终仍检查完整 record 大小。读取路径、draft 验证、durable 生命周期、字段顺序、omitempty 与持久化词汇保持。
+
+必须用固定 golden、带父 thread/turn 可选字段与 escaped/Unicode/嵌套 RawMessage 的表格测试、受限 fuzz 验证，与保留在测试中的原 Sonic 整体编码路径逐字节等价，并校验 checksum 相同及输入所有权。不得更改 Sonic 的 race 检查、降低 record/batch 边界、信任未经校验的公共输入或增加历史格式。`recordChecksum` 与写入方共享同一内部 envelope 编码函数，避免形成两套字段映射。
+
 ### 2. 使用同一执行入口管理测试阶段与有界分片
 
 保留 `make test` 为普通测试、`make test-race` 为 race，增加清晰的两阶段完整测试入口供 `make verify` 复用。完整质量门不受 `make -j` 影响而将普通/race 两阶段无界重叠。正常构建缓存允许复用，完整验收通过 `-count=1` 强制测试执行。
 
 先对优化后的重包计时，再设置保守的活动测试进程上限和每进程并行度。重包优先按顶层测试在独立进程中分片，保持子测试、TestMain、真实 helper、环境修改和资源 owner 的原有语义。对 app 不采用批量 `t.Parallel`。轻包仍使用标准 Go 测试执行方式。
 
-分片按当前平台实际枚举的 Test、Example、Fuzz seed 入口生成确定性清单，精确匹配名称；新测试自动加入，清单互斥且完备。不使用会静默遗漏新测试的手写正向名单。编译工作尽量复用，不能用多次重复编译抵消分片收益。
+分片按当前平台实际枚举的 Test、Example、Fuzz seed 入口生成确定性清单，精确匹配名称；新测试自动加入，清单互斥且完备。不使用会静默遗漏新测试的手写正向名单。编译工作复用当前阶段枚举时链接的二进制，以 Go 的 exec 包装器保留文件，再由标准 test2json 执行分片。普通/race 分别构建，路径按完整包目录的摘要隔离；保留包工作目录、TestMain 与参数，阶段结束或失败后清理文件，不把大型二进制加入 CI 诊断产物。不能用多次重复链接抵消分片收益。
 
 只有一个调度 owner 启动和回收子进程，输出阶段、包/分片、退出状态、测试事件和耗时；失败或取消停止派发并清理所有已启动的工作。避免引入通用任务框架，脚本/辅助工具只承担本仓库质量门所需职责。
 
