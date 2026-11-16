@@ -1,0 +1,145 @@
+File: app-final-race.test
+Type: alloc_space
+Time: 2026-11-16 23:02:26 CST
+Showing nodes accounting for 261.88MB, 97.19% of 269.45MB total
+Dropped 64 nodes (cum <= 1.35MB)
+      flat  flat%   sum%        cum   cum%
+  168.85MB 62.67% 62.67%   168.85MB 62.67%  github.com/bytedance/sonic/internal/decoder/optdec.init.func1
+   26.46MB  9.82% 72.49%    26.46MB  9.82%  bytes.growSlice
+   10.25MB  3.80% 76.29%      193MB 71.63%  github.com/bytedance/sonic.frozenConfig.Unmarshal
+    7.40MB  2.75% 79.04%     7.40MB  2.75%  github.com/bytedance/sonic/internal/encoder/vars.init.func1
+    7.13MB  2.65% 81.69%     7.13MB  2.65%  github.com/bytedance/sonic/internal/decoder/optdec.Node.AsStr
+    4.42MB  1.64% 83.33%    28.81MB 10.69%  github.com/bytedance/sonic/internal/encoder.Encode
+    4.30MB  1.60% 84.92%     4.30MB  1.60%  os.readFileContents
+    3.44MB  1.28% 86.20%   257.37MB 95.52%  easycode/internal/app.TestSessionPreviewCurrentFixturesAreReadOnly.func1
+    3.42MB  1.27% 87.46%     3.42MB  1.27%  easycode/internal/session.cloneRecord (inline)
+    3.06MB  1.14% 88.60%     7.13MB  2.65%  encoding/json.Marshal
+    3.01MB  1.12% 89.72%     3.01MB  1.12%  runtime.allocm
+    2.56MB  0.95% 90.67%     2.56MB  0.95%  encoding/json.(*RawMessage).UnmarshalJSON
+    2.56MB  0.95% 91.62%    86.08MB 31.95%  github.com/bytedance/sonic/internal/decoder/optdec.(*unmarshalJSONDecoder).FromDom
+    2.19MB  0.81% 92.43%     2.19MB  0.81%  github.com/bytedance/sonic/internal/caching.(*_ProgramMap).copy (inline)
+    2.13MB  0.79% 93.22%     2.13MB  0.79%  github.com/bytedance/sonic/internal/rt.GrowSlice
+       2MB  0.74% 93.97%        2MB  0.74%  regexp/syntax.(*compiler).inst (inline)
+    1.71MB  0.63% 94.60%     2.21MB  0.82%  easycode/internal/codec.ObjectMembers
+    1.71MB  0.63% 95.24%    19.13MB  7.10%  easycode/internal/session.readBoundedLine
+    1.71MB  0.63% 95.87%     7.69MB  2.85%  github.com/bytedance/sonic/internal/encoder/prim.Compact
+    1.56MB  0.58% 96.45%     1.56MB  0.58%  github.com/bytedance/sonic/internal/native/types.init.func1
+    1.50MB  0.56% 97.01%     1.50MB  0.56%  sync.(*Pool).pinSlow
+    0.50MB  0.19% 97.19%     1.50MB  0.56%  regexp.makeOnePass
+         0     0% 97.19%     8.54MB  3.17%  bytes.(*Buffer).Grow (inline)
+         0     0% 97.19%    17.92MB  6.65%  bytes.(*Buffer).Write
+         0     0% 97.19%    26.46MB  9.82%  bytes.(*Buffer).grow
+         0     0% 97.19%     5.01MB  1.86%  easycode/internal/app.TestSessionPreviewCurrentFixturesAreReadOnly
+         0     0% 97.19%     2.81MB  1.04%  easycode/internal/app.installPreviewFixture
+         0     0% 97.19%   246.82MB 91.60%  easycode/internal/app.previewSession
+         0     0% 97.19%    49.73MB 18.46%  easycode/internal/codec.DecodeObject
+         0     0% 97.19%    28.81MB 10.69%  easycode/internal/codec.MarshalStable
+         0     0% 97.19%    37.76MB 14.01%  easycode/internal/codec.Unmarshal
+         0     0% 97.19%   155.25MB 57.62%  easycode/internal/codec.UnmarshalRecord
+         0     0% 97.19%     1.56MB  0.58%  easycode/internal/codec.Valid
+         0     0% 97.19%   155.25MB 57.62%  easycode/internal/codec.unmarshalValidated
+         0     0% 97.19%    58.98MB 21.89%  easycode/internal/domain.(*HookTarget).UnmarshalJSON
+         0     0% 97.19%    58.98MB 21.89%  easycode/internal/domain.DecodeHookTarget
+         0     0% 97.19%     6.24MB  2.32%  easycode/internal/domain.DecodePostHookPlan
+         0     0% 97.19%    75.03MB 27.85%  easycode/internal/domain.DecodePostHookTerminal
+         0     0% 97.19%     5.05MB  1.88%  easycode/internal/domain.HookTarget.MarshalJSON
+         0     0% 97.19%     6.06MB  2.25%  easycode/internal/domain.PostHookTerminal.Validate
+         0     0% 97.19%   135.64MB 50.34%  easycode/internal/session.(*Loader).Load
+         0     0% 97.19%   110.66MB 41.07%  easycode/internal/session.(*ReplayPlanner).Plan
+         0     0% 97.19%    47.71MB 17.71%  easycode/internal/session.(*activeReplayTurn).acceptHookBatch
+         0     0% 97.19%    47.71MB 17.71%  easycode/internal/session.(*activeReplayTurn).acceptPostHookBatch
+         0     0% 97.19%    10.41MB  3.86%  easycode/internal/session.(*activeReplayTurn).acceptResult
+         0     0% 97.19%     1.57MB  0.58%  easycode/internal/session.(*activeReplayTurn).recoveryPlan (inline)
+         0     0% 97.19%     4.63MB  1.72%  easycode/internal/session.DecodeNativeCommitPayload
+         0     0% 97.19%   117.12MB 43.47%  easycode/internal/session.DecodeRecord
+         0     0% 97.19%     2.31MB  0.86%  easycode/internal/session.DecodeSampleUsagePayload
+         0     0% 97.19%     4.63MB  1.72%  easycode/internal/session.DecodeToolApprovalDecidedPayload
+         0     0% 97.19%    20.65MB  7.66%  easycode/internal/session.DecodeToolCallReadyPayload
+         0     0% 97.19%    25.44MB  9.44%  easycode/internal/session.DecodeToolCallResultPayload
+         0     0% 97.19%     8.10MB  3.00%  easycode/internal/session.DecodeToolExecutionStartedPayload
+         0     0% 97.19%    75.03MB 27.85%  easycode/internal/session.DecodeToolPostHookCompleted
+         0     0% 97.19%     6.24MB  2.32%  easycode/internal/session.DecodeToolPostHookPlanned
+         0     0% 97.19%     6.94MB  2.58%  easycode/internal/session.DecodeTurnInputsPayload
+         0     0% 97.19%     5.17MB  1.92%  easycode/internal/session.DecodeTurnStartedPayload (inline)
+         0     0% 97.19%     1.57MB  0.58%  easycode/internal/session.NewToolRecoveryPlan
+         0     0% 97.19%     3.71MB  1.38%  easycode/internal/session.ReplayedPostHooks.Validate
+         0     0% 97.19%     1.57MB  0.58%  easycode/internal/session.ToolRecoveryPlan.Validate
+         0     0% 97.19%     2.31MB  0.86%  easycode/internal/session.acceptBoundInputBatch
+         0     0% 97.19%     2.31MB  0.86%  easycode/internal/session.acceptInputBatch (inline)
+         0     0% 97.19%     8.21MB  3.05%  easycode/internal/session.acceptSampleBatch
+         0     0% 97.19%     1.71MB  0.63%  easycode/internal/session.cloneRecords (inline)
+         0     0% 97.19%    20.65MB  7.66%  easycode/internal/session.decodeKnownPayload[go.shape.57e850e0e2ff3cb6b7abbe4d8f6bd1ae78b4b32a390ff592963022485967d068]
+         0     0% 97.19%     4.63MB  1.72%  easycode/internal/session.decodeKnownPayload[go.shape.a55115796818c77e2e11cea50283957622b3e65ec8a6e1ded3801a7affa5f6dc]
+         0     0% 97.19%    25.44MB  9.44%  easycode/internal/session.decodeKnownPayload[go.shape.a873f8719570d209a36b61b4d569b9b81db41107e94d6ca3ce100350d1269a10]
+         0     0% 97.19%     2.31MB  0.86%  easycode/internal/session.decodeKnownPayload[go.shape.struct { InputUncached easycode/internal/session.UsageMetricPayload "json:\"input_uncached\""; CacheRead easycode/internal/session.UsageMetricPayload "json:\"cache_read\""; CacheWrite easycode/internal/session.UsageMetricPayload "json:\"cache_write\""; Output easycode/internal/session.UsageMetricPayload "json:\"output\""; ReasoningOutput easycode/internal/session.UsageMetricPayload "json:\"reasoning_output\"" }]
+         0     0% 97.19%     8.10MB  3.00%  easycode/internal/session.decodeKnownPayload[go.shape.struct { InvocationID easycode/internal/tool.InvocationID "json:\"invocation_id\"" }]
+         0     0% 97.19%     6.94MB  2.58%  easycode/internal/session.decodeKnownPayload[go.shape.struct { Placement easycode/internal/domain.InputPlacement "json:\"placement\""; TargetSampleIndex uint32 "json:\"target_sample_index\""; InputIDs []easycode/internal/domain.InputID "json:\"input_ids\"" }]
+         0     0% 97.19%     4.63MB  1.72%  easycode/internal/session.decodeKnownPayload[go.shape.struct { Provider easycode/internal/domain.ProviderFamily "json:\"provider\""; Wire string "json:\"wire\""; Payload encoding/json.RawMessage "json:\"payload\"" }]
+         0     0% 97.19%     5.17MB  1.92%  easycode/internal/session.decodeKnownPayload[go.shape.struct {}]
+         0     0% 97.19%    54.47MB 20.21%  easycode/internal/session.decodeKnownRecord
+         0     0% 97.19%     1.71MB  0.63%  easycode/internal/session.finalLoadResult (inline)
+         0     0% 97.19%   135.64MB 50.34%  easycode/internal/session.loadJournal
+         0     0% 97.19%    33.51MB 12.44%  easycode/internal/session.projectToolHistory
+         0     0% 97.19%    19.93MB  7.40%  easycode/internal/session.recordChecksum
+         0     0% 97.19%     2.21MB  0.82%  easycode/internal/session.scanEnvelope
+         0     0% 97.19%     2.31MB  0.86%  easycode/internal/session.validateArtifactHistory
+         0     0% 97.19%    21.97MB  8.16%  easycode/internal/tool.(*ResultBudgetMetadata).UnmarshalJSON
+         0     0% 97.19%    21.97MB  8.16%  easycode/internal/tool.DecodeResultBudgetMetadata
+         0     0% 97.19%     1.64MB  0.61%  easycode/internal/tool.RenderPostFeedback
+         0     0% 97.19%     3.56MB  1.32%  encoding/json.(*encodeState).marshal
+         0     0% 97.19%     3.56MB  1.32%  encoding/json.(*encodeState).reflectValue
+         0     0% 97.19%     5.98MB  2.22%  encoding/json.Compact
+         0     0% 97.19%     3.06MB  1.14%  encoding/json.condAddrEncoder.encode
+         0     0% 97.19%     2.56MB  0.95%  encoding/json.marshalerEncoder
+         0     0% 97.19%     3.56MB  1.32%  encoding/json.structEncoder.encode
+         0     0% 97.19%    28.81MB 10.69%  github.com/bytedance/sonic.frozenConfig.Marshal
+         0     0% 97.19%   182.75MB 67.82%  github.com/bytedance/sonic.frozenConfig.UnmarshalFromString
+         0     0% 97.19%     1.56MB  0.58%  github.com/bytedance/sonic.frozenConfig.Valid
+         0     0% 97.19%     2.19MB  0.81%  github.com/bytedance/sonic/internal/caching.(*ProgramCache).Compute
+         0     0% 97.19%     2.19MB  0.81%  github.com/bytedance/sonic/internal/caching.(*_ProgramMap).add
+         0     0% 97.19%   182.75MB 67.82%  github.com/bytedance/sonic/internal/decoder/api.(*Decoder).Decode
+         0     0% 97.19%     7.18MB  2.66%  github.com/bytedance/sonic/internal/decoder/optdec.(*ptrDecoder).FromDom
+         0     0% 97.19%    67.21MB 24.94%  github.com/bytedance/sonic/internal/decoder/optdec.(*recuriveDecoder).FromDom
+         0     0% 97.19%    67.21MB 24.94%  github.com/bytedance/sonic/internal/decoder/optdec.(*sliceDecoder).FromDom
+         0     0% 97.19%     7.13MB  2.65%  github.com/bytedance/sonic/internal/decoder/optdec.(*stringDecoder).FromDom
+         0     0% 97.19%    94.31MB 35.00%  github.com/bytedance/sonic/internal/decoder/optdec.(*structDecoder).FromDom
+         0     0% 97.19%   182.75MB 67.82%  github.com/bytedance/sonic/internal/decoder/optdec.Decode
+         0     0% 97.19%   168.85MB 62.67%  github.com/bytedance/sonic/internal/decoder/optdec.NewContext
+         0     0% 97.19%     1.65MB  0.61%  github.com/bytedance/sonic/internal/decoder/optdec.findOrCompile
+         0     0% 97.19%   168.85MB 62.67%  github.com/bytedance/sonic/internal/decoder/optdec.newParser
+         0     0% 97.19%     2.13MB  0.79%  github.com/bytedance/sonic/internal/encoder.HTMLEscape (inline)
+         0     0% 97.19%     1.56MB  0.58%  github.com/bytedance/sonic/internal/encoder.Valid
+         0     0% 97.19%     2.13MB  0.79%  github.com/bytedance/sonic/internal/encoder.encodeFinishWithPool
+         0     0% 97.19%    15.64MB  5.80%  github.com/bytedance/sonic/internal/encoder.encodeInto
+         0     0% 97.19%    22.77MB  8.45%  github.com/bytedance/sonic/internal/encoder.encodeIntoCheckRace
+         0     0% 97.19%     7.13MB  2.65%  github.com/bytedance/sonic/internal/encoder.helpDetectDataRace
+         0     0% 97.19%     2.13MB  0.79%  github.com/bytedance/sonic/internal/encoder/alg.HtmlEscape
+         0     0% 97.19%     1.56MB  0.58%  github.com/bytedance/sonic/internal/encoder/alg.Valid
+         0     0% 97.19%    12.24MB  4.54%  github.com/bytedance/sonic/internal/encoder/prim.EncodeJsonMarshaler
+         0     0% 97.19%     7.40MB  2.75%  github.com/bytedance/sonic/internal/encoder/vars.NewStack (inline)
+         0     0% 97.19%    12.79MB  4.75%  github.com/bytedance/sonic/internal/encoder/vm.EncodeTypedPointer
+         0     0% 97.19%    12.24MB  4.54%  github.com/bytedance/sonic/internal/encoder/vm.Execute
+         0     0% 97.19%     1.56MB  0.58%  github.com/bytedance/sonic/internal/native/types.NewStateMachine (inline)
+         0     0% 97.19%     4.30MB  1.60%  os.ReadFile
+         0     0% 97.19%     5.01MB  1.86%  regexp.Compile (inline)
+         0     0% 97.19%     5.01MB  1.86%  regexp.compile
+         0     0% 97.19%     2.50MB  0.93%  regexp.compileOnePass
+         0     0% 97.19%        2MB  0.74%  regexp/syntax.(*compiler).compile
+         0     0% 97.19%     1.50MB  0.56%  regexp/syntax.(*compiler).rune
+         0     0% 97.19%        2MB  0.74%  regexp/syntax.Compile
+         0     0% 97.19%     2.18MB  0.81%  runtime.main
+         0     0% 97.19%        2MB  0.74%  runtime.mstart
+         0     0% 97.19%        2MB  0.74%  runtime.mstart0
+         0     0% 97.19%        2MB  0.74%  runtime.mstart1
+         0     0% 97.19%     3.01MB  1.12%  runtime.newm
+         0     0% 97.19%     3.01MB  1.12%  runtime.resetspinning
+         0     0% 97.19%     3.01MB  1.12%  runtime.schedule
+         0     0% 97.19%     3.01MB  1.12%  runtime.startm
+         0     0% 97.19%     3.01MB  1.12%  runtime.wakep
+         0     0% 97.19%   179.31MB 66.55%  sync.(*Pool).Get
+         0     0% 97.19%     1.50MB  0.56%  sync.(*Pool).pin
+         0     0% 97.19%     5.01MB  1.86%  testing.(*T).Run
+         0     0% 97.19%     5.01MB  1.86%  testing.(*matcher).fullName
+         0     0% 97.19%     5.01MB  1.86%  testing.simpleMatch.matches
+         0     0% 97.19%   262.38MB 97.38%  testing.tRunner
+         0     0% 97.19%     5.01MB  1.86%  testing/internal/testdeps.TestDeps.MatchString

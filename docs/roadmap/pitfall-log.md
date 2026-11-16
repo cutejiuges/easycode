@@ -975,3 +975,11 @@ started Sync 前只有原输入 request_id；terminal 后直到 worker/stream �
 2026-11-14 复审补充：独立摘要在首次 started 写入前取消时不会进入 Provider，不能只依赖 Kernel 的 summary 连接清理；普通 turn 与摘要的原 worker 必须共用失败/取消收口，再发布最终完成。新增真实 AgentLoop + WebSocket 回归证明无中间操作的 high→low→high 保持增量，而已接纳但网络前取消的摘要之后必须 full，旧 response ID 不得复活。Skill 与补全各自保存保留名会漏掉新命令，改为 domain 的同一纯 switch。窄屏通知预算还要扣除状态、可见队列与 composer 的实际行数；64 条队列只裁剪展示，不删除待执行事实，保留 FIFO 头及输入区。权威选择缓存只保存选择字段，不能夹带旧活动身份和窗口数值。复审与完整验证见 `openspec/changes/archive/2026-11-15-add-runtime-effort-control/review.md`。
 
 2026-11-15 回归计时补充：排查“测试超过十分钟”时，先区分普通 `make test` 和顺序执行普通/race 的 `make verify`，使用 `-json -count=1` 分包、分顶层/子测试记录。此次 Darwin/Go 1.24.13 普通全量约 154 秒，race 约 781 秒；主要是 app 的大规模安全/恢复矩阵及大型 fixture 的重复 JSON 校验，不是 effort idle 查询死循环。其他 worktree 同时运行 race/profile 会影响墙钟时间，不能据此宣称隔离性能。profile 的多个 goroutine 累计阻塞也不能直接当成单用例等待。保留全部安全/恢复断言和 race，不用减少矩阵、改 GORACE 或扩大 timeout 掩盖慢路径；后续优化从测得的 JSON/恢复热点及实例环境隔离着手。证据与边界见 `openspec/changes/archive/2026-11-15-add-runtime-effort-control/regression-2026-11-15.md`。
+
+## 严格 JSON 重复解析与测试调度
+
+2026-11-16 定位：UnmarshalRecord 原先重复执行基础校验和两次形状遍历，ObjectMembers 又重复扫描并调用 Sonic 物化字段。arm64 的 Sonic optdec 每次创建 parser 约分配 2 MiB 缓冲区，Go 1.24 的 race 模式会随机丢弃 sync.Pool 条目；因此小对象的重复解码也会引起大量分配与 GC。两个约 624 KB 的预览 fixture 在 race 抽样中累计分配约 1330 MB，这不是峰值 RSS。仅调整 GOMAXPROCS 从 10 到 2/4 未明显改善代表性重测试。
+
+修复把严格校验合并为一次扫描与调用局部字段索引，保留固定 Sonic typed 解码、重复键/未知字段/Unicode/null 拒绝以及 canonical bytes。纯验证不物化数组值；公开 ObjectMembers 仍返回独立副本。测试增加独立 token 差异 fuzz、边界/所有权回归与分配 benchmark，不使用 race 专用替代 codec 或放宽解析规则。
+
+app 的环境敏感测试不能批量加 t.Parallel；统一入口自动分片到独立进程，所有包共用有限执行槽并核对实际完成清单。worker 必须在交回执行槽前标记失败，否则调度线程尚未读取结果时可能启动排队工作。取消需要覆盖测试派生的独立进程组，并保留升级与最终等待；真实子进程和可控时钟验证此边界。完整计时、覆盖集合和平台结论以 `optimize-test-execution` 的验收报告为准。

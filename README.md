@@ -538,7 +538,11 @@ exit 0 的空白或 `{}` 表示通过；只有严格 `{"decision":"block","reaso
 
 实现及验证见[Stop 验收记录](openspec/changes/archive/2026-11-13-add-stop-command-hooks/verification.md)。真实 PTY 入口为 `scripts/stop-hook-smoke.py`，命令执行仍仅支持 Darwin；其他平台失败关闭。
 
-完整质量门使用 `make verify`，包含格式、vet、Staticcheck、架构边界、全量测试和 race。包级测试总时限默认为 20 分钟（`TEST_TIMEOUT`）；它只控制测试进程的总预算，不修改各操作的取消或超时断言。
+完整质量门使用 `make verify`，包含分支策略、格式、vet、Staticcheck、架构边界、测试调度器自检、全量普通测试和 race。质量门需要 Python 3.9+，默认总预算为 300 秒（`TEST_BUDGET`），每次强制重新执行测试。Go 的正常构建缓存仍可复用；依赖和工具链需提前准备好。`TEST_TIMEOUT` 保留单个测试进程的失败上限，不修改各业务操作的取消或超时断言。
+
+测试入口默认最多运行 8 个命令（不超过可见 CPU 数），每个 Go 进程使用 2 路 CPU/测试并行度；app 的顶层测试自动分为 16 个隔离分片。其余包同样受总并发上限约束，普通与 race 阶段顺序执行，`make -j` 不会同时启动两个阶段。全部 Test、Example 和默认 fuzz seed 都从当前平台自动枚举，实际完成清单必须匹配；不会跳过慢包或重测试。
+
+执行开始时会打印临时报告目录，`summary.json` 保存阶段耗时、慢测试、执行清单、退出码、输入摘要与最大单个子进程 RSS（不是所有并发进程 RSS 之和），各分片保留原始 Go JSON 事件。失败、中断或预算超时会停止新工作并回收本次进程树。CI 上传相同报告，提供手动触发入口；性能验收以禁用测试结果缓存的完整流程为准。
 
 ## 工程结构
 
@@ -581,6 +585,12 @@ make verify
 # 分别执行普通测试或竞态测试
 make test
 make test-race
+
+# 顺序执行完整普通与 race，并指定报告目录
+make test-all TEST_OPTIONS="--output=/tmp/easycode-tests"
+
+# 在资源受限的机器上调整有界并发
+make verify TEST_OPTIONS="--jobs=2 --parallel=2 --shards=16"
 
 # 执行固定版本 Staticcheck
 make lint
