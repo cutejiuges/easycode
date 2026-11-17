@@ -1,61 +1,51 @@
 # 测试执行优化验收
 
-## 实现与测量范围
+## 当前结论
 
-从已同步的 `origin/main` `b0387c4bb3b833082beb1d077767885ecf46acdd` 开始，开发分支为 `fix/test-execution-performance`。参考机器：Darwin/arm64、Apple M1 Pro、10 核、32 GiB、Go 1.24.13。计时从 `make verify` 启动到结束，包含静态检查、测试枚举及编译/链接、完整普通和 race；工具链/依赖准备不计入。使用正常 Go 构建缓存，所有实际测试强制 `-count=1`。
+**整体目标尚未完成。** 本机完整质量门连续两轮为 **207.763 / 206.927 秒**，Linux 最短完整对照仍为 **359.663 秒**。原有业务测试、race、安全与恢复断言全部保留；不能用 600 秒诊断运行的成功状态代替五分钟验收。Hook 编码复用已获用户批准并完成实现与定向回归，完整验收正在重跑。
 
-最终默认设置为最多 `min(8, 2 × CPU 数)` 个活动命令、每个进程 `GOMAXPROCS=2`/`-parallel=2`，app 在 Darwin 自动分为 16 个互斥分片、其他平台为 8 个，普通/race 顺序执行；其他包同样共享该并发上限。两个阶段分别按实际构建模式枚举 Test/Example/Fuzz，执行集合必须精确匹配。`make test` 是普通测试，`make test-race` 是 race，`make test-all` 顺序执行两者，hooks/CI 保持调用 `make verify`。
+已同步 `origin/main` 的 `b0387c4bb3b833082beb1d077767885ecf46acdd`，开发分支为 `fix/test-execution-performance`。当前实现提交 `1056639f1abb17c3a0395612be2d398d33e8a635`，执行输入摘要为 `821c8bcd1c0ba23e89d124dab319d0b49d07af3dcc0eb0e1d98492703694ea13`。最终并发参数及验收任务保持未完成，变更未归档。
 
-## 根因与处理
+## 计时与覆盖口径
 
-基线完整验证为 **1114.245 秒**，普通 **150.704 秒**、race **961.605 秒**。主要成本是严格 JSON 的重复扫描、字段物化与多轮形状校验；在 arm64 Sonic optdec 与 race 的池丢弃机制下产生大量临时分配。单独改变 GOMAXPROCS 的五组对照没有显著收益，profile 没有提供死锁证据。该 backend 归因不直接推广到 amd64。诊断期间与隔离基线的竞争条件分别见 [diagnosis.json](diagnosis.json)、[baseline.json](baseline.json)。
+参考本机为 Darwin/arm64、Apple M1 Pro、10 核、32 GiB、Go 1.24.13；原生 Linux runner 为 amd64、4 核、约 16 GiB、Go 1.24.13。工具链与依赖准备不计入；计时包含静态检查、枚举、测试编译/链接、全量普通及 race。允许正常构建缓存，实际测试全部强制 `-count=1`。阶段时间包括该阶段的枚举及构建。
 
-`UnmarshalRecord`/`UnmarshalStrict`/`ObjectMembers` 复用当前调用的字段范围，纯验证不物化数组，公开返回值保持独立所有权；typed 解码仍使用固定 Sonic 配置，保留未知字段优先于缺失字段的错误次序、自定义 decoder 与严格 Unicode/重复键/null 规则。超过标准快速检查深度上限的合法 JSON 继续使用既有流式语法语义。没有共享可变缓存或 race 专用替代实现。
-
-调度由 `scripts/test_suite.py` 的单一 owner 管理，失败在 worker 交还执行槽之前停止派发；取消识别独立进程组和同 session 孤儿，处理父进程退出而后代仍持有 stdout 的情况。预算超限返回失败，并保存未完成范围。真实 race 套件用 12 秒预算故意触发取消，在 **12.144 秒**返回明确预算错误，退出后没有遗留本次 Go/测试进程。
-
-## 全流程计时
-
-| 运行 | 普通阶段 | race 阶段 | 总墙钟 | 结果 |
+| 环境与运行 | 普通 | race | 完整质量门 | 判定 |
 |---|---:|---:|---:|---|
-| main 隔离源码快照 | 150.704 s | 961.605 s | 1114.245 s | 通过 |
-| 最终参数试跑：8 命令、2 并行、16 分片 | 66.996 s | 167.409 s | 238.204 s | 通过 |
-| 首版实现：pre-commit | 65.821 s | 167.239 s | **237.077 s** | 通过 |
-| 首版实现：pre-push | 66.950 s | 168.715 s | 239.901 s | 通过 |
-| Session 编码复用前：pre-commit | 68.258 s | 171.170 s | **246.022 s** | 通过 |
-| Session 编码复用前：pre-push | 67.214 s | 167.445 s | **238.941 s** | 通过 |
+| main 独立源码快照 | 150.704 s | 961.605 s | 1114.245 s | 基线通过 |
+| 当前本机 pre-commit | 57.057 s | 146.051 s | 207.763 s | 通过，低于 300 s |
+| 当前本机 pre-push | 56.431 s | 146.032 s | 206.927 s | 通过，低于 300 s |
+| Linux，2 命令 / 1 分片 | 39.729 s | 386.643 s | 444.570 s | 完整通过，性能未达标 |
+| Linux，4 命令 / 2 分片 | 33.876 s | 306.810 s | 359.663 s | 完整通过，性能未达标 |
+| Linux，4 命令 / 4 分片 | 38.788 s | 449.121 s | 512.676 s | 完整通过，性能未达标 |
+| Linux，4 命令 / 8 分片 | 49.353 s | 429.551 s | 525.382 s | 完整通过，性能未达标 |
 
-阶段数据包含当前模式的测试枚举/构建。试跑的最大单个子进程 RSS 为 1202601984 bytes，累计子进程 CPU 为 1144.871 秒；RSS 不是并发进程内存总和。试跑过程中无其他 worktree 重测试，只有文档/证据整理与只读检查。4 命令/4 分片及 6 命令/1 并行/12 分片均触及 300 秒预算，不能作为通过结果；具体见 [concurrency-comparison.json](concurrency-comparison.json)。
+本机两轮使用相同源码摘要，未观察到其他重测试套件竞争；期间继续进行只读分析与文档整理。两轮各执行普通/race **1605 个顶层入口、4745 条父子测试结果**；基线每阶段 **1597 个入口、4707 条结果**的通过/跳过状态逐项一致。两轮最大单个子进程 RSS 分别为 1131692032 / 1232912384 bytes，这不是并发进程内存之和。详见 [local-verification.json](local-verification.json)、[coverage-comparison.json](coverage-comparison.json)、[baseline.json](baseline.json)。
 
-首版实现连续两轮 hook 验收通过，两轮源码摘要均为 `8a876c089981fdfad940bdcafdc7facee1a727f947d4d3d8852400b874f237fa`，覆盖同一实现提交 `06e0ad3` 的实际代码。每轮均执行完整静态检查、1602 个顶层入口及 4730 条父子结果，普通/race 分别核对清单；原有 4707 条结果的通过/跳过状态完全一致。完整环境、阶段、资源及清单摘要见 [local-verification-initial.json](local-verification-initial.json)，逐项覆盖差异见 [coverage-comparison.json](coverage-comparison.json)。
+Linux 对照基于 `32efe87`；当前提交相对该版本只增加和修正诊断 workflow，Go 实现及测试调度相同。对照均为独立原生 runner，不假定不同 VM 的绝对速度完全一致。8 命令 / 8 分片在 300.258 秒触及预算，未跑完。完整配置、资源、慢测试和运行链接见 [ci-low-shards.json](ci-low-shards.json)、[ci-v4-complete-slow.json](ci-v4-complete-slow.json)、[ci-v4-timeout.json](ci-v4-timeout.json)。
 
-第二轮测试本身通过，但 SSH 连接在长钩子期间被远端关闭，Git push 以 141 退出；这是传输失败。后续推送使用 SSH 保活重试，继续执行完整 pre-push，在 **240.163 秒**通过后推送成功。Linux 原生 CI [43895186714](https://github.com/cutejiuges/easycode/actions/runs/43895186714) 已触发，发现关闭顺序测试的调度假设，普通阶段通过，race 阶段失败；不作为验收通过证据。详见 [ci-first-failure.json](ci-first-failure.json)。
+## 根因证据与已实施处理
 
-## 覆盖与专门验证
+1. **严格解码重复扫描和分配。** 原 `UnmarshalRecord` 重复执行基础校验、严格解码与两套形状检查，嵌套字段又经 `ObjectMembers` 重复验证及物化。现用调用局部的已验证字节范围减少重复工作，纯校验不物化数组；最终强类型解码仍用固定 Sonic 配置。保持 Unicode、重复/未知字段、null、必需字段、自定义 decoder、未知字段优先级和公开返回值所有权。两个大预览 fixture 的 race 累计分配从 1330.34 降至 269.45 MB，进程时间从 11.150 降至 3.056 秒；见 [targeted-final.json](targeted-final.json)、[preview-after-alloc.txt](preview-after-alloc.txt)。
+2. **Session payload 重复编码。** 经用户补充批准，`EncodeRecord` 复用 checksum envelope 已编码字节，计算原 SHA-256 后附加唯一当前 checksum 字段，避免对相同大 payload 再编码。全部校验及完整 record 大小检查保留。相同大 record/batch race profile 从 34.556 降至 23.804 秒，累计分配降至 2453.88 MB；见 [session-encoding-profile.txt](session-encoding-profile.txt)。
+3. **race 放大频繁编码的内存成本。** 原生 Linux 的输入重写恢复 profile 为 39.19 秒、46.04 CPU 采样秒，累计分配 12761.37 MB，其中 Sonic 编码栈池为 10546.50 MB（82.64%）；TSAN 内存范围检查占 CPU 样本约 49.93%。嵌套 `MarshalJSON` 和重复校验继续触发编码。Sonic race 路径额外用标准库读取值以检测竞态，Go race 又会随机丢弃池对象，放大频繁申请编码栈的成本。用户已批准并实施 Hook 编码复用；本次完整性能验收尚未结束。见 [原生 Linux profile](linux-hook-profile.txt) 与 [本机 Provider profile](hook-encoding-before.txt)。alloc_space 为累计分配；CPU cumulative 含祖先重叠，不能相加。
+4. **分片必须有界，不能只增加并发。** GOMAXPROCS 单独调整的五轮对照未显著改善重矩阵；Linux 更多分片也没有稳定收益。当前 runner 在普通/race 各自枚举实际 Test、Example、Fuzz seed，确定性生成互斥完备清单，每阶段保留并复用已链接二进制，避免每个分片重新链接。默认候选仍为最多 8 个活动命令、每进程 2 并行、Darwin app 16 分片、Linux app 8 分片；Linux 默认配置尚待完成性能验收。没有证据表明慢路径来自业务死锁，现有证据支持重复工作、内存与 race 开销及并发放大。
 
-- 原有业务测试未删除、跳过、移动或弱化，未修改 GORACE。基线每阶段有 1597 个顶层入口、4707 条含子测试结果；最终集合由报告逐项比较。[重测试审核](test-audit.md)说明每个重路径保留的业务边界。
-- 仓库内 **447 个 testdata 文件**与 main 逐字节相同，见 [fixture-integrity.json](fixture-integrity.json)。完整质量门保留 native/golden/cache、恢复请求 canonical bytes、fingerprint、有序副作用、真实 lease 竞争和架构守卫。
-- 独立 token 参考实现的第一轮差异 fuzz 执行 1261464 次；补充 10001 层深度边界后最终 fuzz 通过，执行 18721 次、总语料 289，见 [fuzz-final.txt](fuzz-final.txt)。codec 用固定乱序种子 `20261116` 执行两轮 race，通过。
-- 调度器 12 项回归覆盖完整/互斥分片、Example 无后缀名称、普通/race 不同构建标签清单、峰值并发、失败/启动失败停止排队、外部取消、可控时钟强制升级、独立子进程组与失败父进程的孤儿清理。11 项进程/清单测试另以乱序执行通过，随后新增的构建模式集成回归通过。
-- `make -j8 test test-race` 用可观测 runner 验证顺序为 normal start/end、race start/end，没有重叠。
-- 两个大预览 fixture 的 race profile：累计分配 **1330.34 → 269.45 MB**，进程时间 **11.150 → 3.056 秒**。七工具恢复＋Stop 压缩两组重测试同样保留 30 条父子结果，乱序复测 **31.549 秒**（原五轮约 68–81 秒）。早期探针存在另一 worktree 的 race，绝对时间只能作为诊断对照，不替代隔离全量验收；累计分配也不能当作峰值 RSS。见 [targeted-final.json](targeted-final.json) 与 [分配 profile](preview-after-alloc.txt)。
-- benchmark 保持相同输入和 100 ms 采样参数：race 小对象 536201 → 76367 ns/op，嵌套 12358392 → 326019 ns/op，大文本 434508750 → 25432719 ns/op；嵌套累计 B/op 77799508 → 561003。结果见 `benchmark-before-*.txt` 和 `benchmark-after-*.txt`，单次短 benchmark 存在池采样波动。
-- change strict 校验通过；同步后的 **62 项 main specs** strict 校验全部通过；全部 OpenSpec 的最终 strict 验证为 **64 项通过、0 失败**；`git diff --check` 通过。
+`make test`、`test-race`、`test-all`、`verify` 共用同一执行器；普通/race 不受外层 `make -j` 影响而无界叠加。hooks/CI 执行完整 `make verify`。运行失败、超时或取消由唯一 owner 停止派发、取消并回收已启动进程，保留日志和未完成范围；直接执行二进制保留标准 Go 的所选 GOROOT/PATH、包工作目录和 TestMain 语义。诊断 profile 是独立手动模式，不代替默认质量门。
 
-## 平台边界
+## 回归与契约核对
 
-Darwin 运行包含现有真实 sandbox/Exec 集成场景。Linux 需要原生 CI 实测，尚未完成时不以交叉编译代替。Windows 未做原生执行；调度器的 POSIX 进程组回归仅在 POSIX 主机运行，本次不扩大产品平台支持承诺。OpenSpec 已同步主规格，变更保持未归档。
+- 原业务测试未删除、合并、跳过或弱化；没有修改 GORACE，也没有 race 专用替代 codec。447 个固定 testdata 文件与 main 逐字节一致。[测试审核](test-audit.md)、[fixture-integrity.json](fixture-integrity.json)。
+- scanner differential fuzz 首轮 1261464 次；补充 10001 层边界后的最终轮 18721 次、总语料 289，通过。codec 固定乱序两轮 race 通过。[fuzz-final.txt](fuzz-final.txt)。
+- Session 新编码与原 Sonic 整体编码逐字节表格对照、完整 16 MiB / 超一字节边界通过；fuzz 30 秒共 819146 次、122 份语料通过。固定 golden、双 Provider native/cache、uninterrupted/restored 请求、checksum 和 fingerprint 由完整普通/race 继续验证。
+- runner 13 项回归及乱序验证通过，覆盖完整/互斥清单、不同构建标签、编译二进制复用、选中工具链传递、并发上限、失败停止排队、取消、强制升级和真实后代/孤儿回收。真实 race 用 15 秒预算触发取消，在 15.058 秒以预算错误退出，临时二进制目录清理，无本次残留测试进程。[runner-shuffled.txt](runner-shuffled.txt)、[cancellation-final.json](cancellation-final.json)。
+- Linux 首轮暴露两个测试 fixture 的时序假设：关闭顺序测试改用已有 Stream started 信号建立前置条件；取消 fixture 在清理后返回 `ctx.Err()`。原关闭 deadline、错误码与六项顺序断言保留，相关三项测试 30 轮乱序 race 通过。另修正 runner 的 GOROOT/PATH 传递，CLI 离线嵌套构建已随 Linux 全量对照通过。历史失败证据保留在相应 `ci-*.json`。
+- 当前 `make verify` 包含分支策略、gofmt、vet、Staticcheck、架构守卫及全量普通/race；`make -j8 test test-race` 的阶段互斥已验证。workflow 经 actionlint 1.7.12 校验通过。全部 OpenSpec strict 校验 **64 项通过、0 失败**；主规格已同步已批准范围；`git diff --check` 通过。
 
-## Linux 时序回归与后续验收
+## 尚未完成与平台限制
 
-首轮 Linux 为 4 核、约 16 GiB、amd64、Go 1.24.13。`TurnStarted` 事件早于输入提交与 Provider Stream；关闭测试立即触发 shutdown 时允许在输入提交前取消，原测试却要求已存在 stream 时间线。改为等待 fixture 已有的 `started` 信号后再关闭，保留原 1 秒关闭 deadline 与全部六条顺序断言，不修改生产行为。两项关闭/强制回收测试以固定乱序种子执行 20 轮 race，通过。
+需完成Hook 编码复用的完整验收、选定可复跑的 Linux 默认参数，并在最终源码上重新取得连续两轮低于 300 秒的完整质量门及原生 Linux 证据，之后才能完成任务 3.4、5.1、5.2、5.4。当前不可声称 CI 五分钟目标已实现。
 
-Linux 的 16 分片还放大了多个进程的独立初始化。CI 将比较 4/8 活动命令及 4/8 分片；手动 workflow 提供有界参数和 600 秒诊断预算，但默认及验收阈值始终为 300 秒，诊断超时放宽不算达标。Session 编码复用前实现 `e147d1d0e99339282b16f5be2335eec9c437acbf` 两轮本地质量门分别 **246.022 / 238.941 秒**，源码摘要同为 `a2ec041d278f1517e657d71d297619e5f1169f26892f1540f32f905b1a128cf8`。每阶段仍为 1602 个入口、4730 条结果，原有结果和 skip 状态不变；见 [local-verification.json](local-verification.json)。Linux 正式验收 [43899583414](https://github.com/cutejiuges/easycode/actions/runs/43899583414) 在 300.100 秒触及预算；四命令对照 [43899592867](https://github.com/cutejiuges/easycode/actions/runs/43899592867) 在 250.232 秒因关闭 fixture 的取消结果不确定而失败。两轮均不能作为通过证据，完整阶段与资源摘要见 [ci-comparison.json](ci-comparison.json)。
+Darwin 覆盖现有真实 sandbox/Exec 集成；Linux 已真实执行上述完整对照。Windows 未原生执行，POSIX 进程组回归只在 POSIX 运行，本次不扩大产品平台支持承诺。变更保持未归档，未创建 PR。
 
-2026-11-17 追加修正：`escalationStreamLoop` 在 context 已取消后被强制释放时仍返回 nil，导致最终结果取决于 transport 取消通知和 loop 完成通知的调度次序。fixture 改为在完成原有清理后返回 `ctx.Err()`；保留生产行为、错误码和全部关闭顺序断言。三项相关关闭测试以固定种子 `20261117` 连续执行 30 轮 race，通过（5.951 秒）。
-
-追加编码差异 fuzz：30 秒共 819146 次执行、122 份语料通过；表格与完整 16 MiB 大小边界在 race 下通过。大批次测试的相同单进程 race profile 从 34.556 秒降至 23.804 秒；当前累计分配为 2453.88 MB，具体 profile 摘要见 `session-encoding-profile.txt`。全部最终质量门需在本次编码与二进制复用改动后重新取得。
-
-二进制复用后的本地连续质量门为 225.308/211.478 秒（`dd3749e`）。Linux 两轮在普通 CLI 构建测试发现 PATH 未保留标准 Go 工具链选择语义，分别在 78.695/87.184 秒失败，见 [ci-toolchain-failure.json](ci-toolchain-failure.json)。修正 runner 的选中 GOROOT/PATH 后重新执行完整验收，失败结果不计为达标。
-
-最新实现 `32efe87` 本地为 214.100/228.648 秒，第二轮 race 期间另一个 worktree（7b26）启动了普通和 race 测试，不能称为无竞争验收。Linux 8 命令/8 分片在 300.258 秒超时；4 命令/8 分片虽完整通过仍超过五分钟。当前目标保持未完成，进一步以原生 CPU profile 与较少分片定位 amd64 初始化成本。
+额外预览采样 [43917045557](https://github.com/cutejiuges/easycode/actions/runs/43917045557) 在平台显示 queued 且没有 job；普通和强制取消 API 均以 409 拒绝，原因是尚未进入调度队列。它没有产出，也不计为验证证据。重复触发的 [43918045098](https://github.com/cutejiuges/easycode/actions/runs/43918045098) 已确认取消；已完成的输入重写 profile 为 [43917045673](https://github.com/cutejiuges/easycode/actions/runs/43917045673)。

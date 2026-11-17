@@ -957,6 +957,8 @@ make verify
 
 严格 JSON 在 `internal/codec/scan.go` 中先完成标准语法及无损校验，再按需要索引调用局部的字段范围。基础验证不物化数组值，字段枚举只保留一层；typed record 校验复用嵌套索引，最后仍使用固定 Sonic 配置解码。索引不跨调用缓存，公开字段结果独立复制，canonical 编码和所有权契约保持。`scan_test.go` 使用独立 token 参考实现做差异 fuzz，`benchmark_test.go` 观测小对象、嵌套记录和大文本的普通/race 成本。
 
+Session record 写入复用 checksum envelope 的 Sonic 字节，追加固定 checksum 字段后仍检查完整大小。HookToolInput 在同一次调用中复用已校验的 Sonic 编码计算规范 digest；能力为封闭常量，摘要 envelope 只补齐固定字段结构。HookInputEffect 和 HookFinished 的嵌套编码使用局部 RawMessage，避免反复调用子对象编码；不跨调用缓存，不修改 Sonic/race 检测。原编码路径的逐字节对照、坏输入、边界与 fuzz 位于 `internal/session/codec_equivalence_test.go` 和 `internal/domain/hook_encoding_test.go`，固定 fixture 和双 Provider 恢复/cache 继续由完整质量门覆盖。
+
 ## 17. 设计模式使用边界
 
 推荐模式：

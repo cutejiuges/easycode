@@ -49,6 +49,14 @@
 
 必须用固定 golden、带父 thread/turn 可选字段与 escaped/Unicode/嵌套 RawMessage 的表格测试、受限 fuzz 验证，与保留在测试中的原 Sonic 整体编码路径逐字节等价，并校验 checksum 相同及输入所有权。不得更改 Sonic 的 race 检查、降低 record/batch 边界、信任未经校验的公共输入或增加历史格式。`recordChecksum` 与写入方共享同一内部 envelope 编码函数，避免形成两套字段映射。
 
+### 1.2 在 Hook 值对象内部复用单次编码
+
+2026-11-17 用户批准更新此范围并继续 apply。原生 Linux 输入重写恢复 profile 的累计分配为 12761.37 MB，其中 Sonic 编码栈池为 10546.50 MB（82.64%），TSAN 内存范围检查占 CPU 样本约 49.93%；本机 Provider 恢复矩阵也出现约 14.8 GB 累计分配。证据见 `linux-hook-profile.txt` 与 `hook-encoding-before.txt`。这些是累计分配与采样占比，不是峰值内存，也不能将 cumulative 祖先相加。
+
+范围限定为 HookToolInput、HookInputEffect、HookFinished 内部的重复编码。HookToolInput 的校验与 Digest 通过私有函数复用一次输入编码；HookInputEffect 的校验同时复用这些字节及 digest；HookInputEffect、HookFinished 在自身嵌套编码中先取得子对象的合法编码字节，再以局部 RawMessage 写入同一 Sonic envelope，避免父层多次回调子对象的 MarshalJSON。所有校验和大小限制保持原含义，错误分类、字段顺序、escaping、digest 与公共接口不变。
+
+复用只存在于当前调用，不持久化缓存、不创建全局状态，不改变 Sonic 或 Go race 的检测机制，不更换 encoder/backend。新增表格对照和受限 fuzz，保留原 Sonic 嵌套编码结构作为测试参考，逐字节比较输入、effect、finished 与 digest；覆盖三种能力、Pre/Post/Stop、非法值、Unicode/HTML/转义、边界及返回字节所有权。后续再次执行固定 fixture、双 Provider 恢复/cache、完整普通/race 和原生 Linux 验收，不能用单项 profile 改善代替完整五分钟目标。
+
 ### 2. 使用同一执行入口管理测试阶段与有界分片
 
 保留 `make test` 为普通测试、`make test-race` 为 race，增加清晰的两阶段完整测试入口供 `make verify` 复用。完整质量门不受 `make -j` 影响而将普通/race 两阶段无界重叠。正常构建缓存允许复用，完整验收通过 `-count=1` 强制测试执行。

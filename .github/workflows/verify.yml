@@ -19,7 +19,14 @@ on:
           - '2'
           - '4'
           - '8'
-        default: '8'
+        default: '4'
+      test_parallel:
+        description: GOMAXPROCS and parallel tests per process
+        type: choice
+        options:
+          - '1'
+          - '2'
+        default: '2'
       app_shards:
         description: App test process shards
         type: choice
@@ -29,7 +36,7 @@ on:
           - '4'
           - '8'
           - '16'
-        default: '8'
+        default: '2'
       diagnostic_budget:
         description: Total seconds (600 is diagnostic only; acceptance remains below 300)
         type: choice
@@ -57,7 +64,7 @@ jobs:
   verify:
     if: ${{ !inputs.diagnostic_profile }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: ${{ inputs.diagnostic_budget == '600' && 12 || 10 }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -65,7 +72,12 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Run repository verification
-        run: make verify TEST_BUDGET=${{ inputs.diagnostic_budget || '300' }} TEST_OPTIONS="--jobs=${{ inputs.test_jobs || '8' }} --shards=${{ inputs.app_shards || '8' }} --output=${{ runner.temp }}/easycode-verification"
+        env:
+          TEST_BUDGET: ${{ inputs.diagnostic_budget || '300' }}
+          TEST_JOBS: ${{ inputs.test_jobs || '4' }}
+          TEST_PARALLEL: ${{ inputs.test_parallel || '2' }}
+          APP_SHARDS: ${{ inputs.app_shards || '2' }}
+        run: make verify TEST_BUDGET="$TEST_BUDGET" TEST_OPTIONS="--jobs=$TEST_JOBS --parallel=$TEST_PARALLEL --shards=$APP_SHARDS --output=$RUNNER_TEMP/easycode-verification"
       - name: Upload verification timings and test events
         if: always()
         uses: actions/upload-artifact@v4

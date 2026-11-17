@@ -1,0 +1,27 @@
+File: easycode-rewrite-final.test
+Type: alloc_space
+Time: 2026-11-17 09:02:00 CST
+Showing nodes accounting for 11057.19MB, 98.49% of 11226.49MB total
+Dropped 206 nodes (cum <= 56.13MB)
+Showing top 20 nodes out of 143
+      flat  flat%   sum%        cum   cum%
+ 6133.53MB 54.63% 54.63%  6133.53MB 54.63%  github.com/bytedance/sonic/internal/encoder/vars.init.func1
+ 3987.36MB 35.52% 90.15%  3987.36MB 35.52%  github.com/bytedance/sonic/internal/decoder/optdec.init.func1
+  371.44MB  3.31% 93.46%   371.94MB  3.31%  github.com/bytedance/sonic/internal/encoder/vars.NewBytes
+  237.54MB  2.12% 95.58%   237.54MB  2.12%  github.com/bytedance/sonic/internal/native/types.init.func1
+  114.46MB  1.02% 96.60%   114.46MB  1.02%  bytes.growSlice
+   57.72MB  0.51% 97.11%    58.22MB  0.52%  github.com/bytedance/sonic/internal/encoder/vars.NewBuffer
+   51.68MB  0.46% 97.57%   408.23MB  3.64%  encoding/json.Marshal
+   50.64MB  0.45% 98.02%  6842.81MB 60.95%  github.com/bytedance/sonic/internal/encoder.Encode
+   13.15MB  0.12% 98.14%   291.02MB  2.59%  easycode/internal/codec.MarshalCanonical
+   12.15MB  0.11% 98.25%    71.37MB  0.64%  github.com/bytedance/sonic/internal/encoder/prim.Compact
+       5MB 0.045% 98.29%  2150.82MB 19.16%  easycode/internal/domain.HookFinished.MarshalJSON
+    4.50MB  0.04% 98.33%  3135.54MB 27.93%  easycode/internal/domain.HookToolInput.MarshalJSON
+       4MB 0.036% 98.37%  1371.43MB 12.22%  easycode/internal/domain.HookTarget.MarshalJSON
+    2.51MB 0.022% 98.39%   151.84MB  1.35%  easycode/internal/tool.encodeFacades
+    2.50MB 0.022% 98.41%  3992.86MB 35.57%  github.com/bytedance/sonic.frozenConfig.Unmarshal
+    2.50MB 0.022% 98.43%   584.56MB  5.21%  easycode/internal/domain.HookToolInput.encodingAndDigest
+       2MB 0.018% 98.45%   149.27MB  1.33%  easycode/internal/tool.CatalogSnapshot.View
+    1.50MB 0.013% 98.47%    58.16MB  0.52%  easycode/internal/provider.NewNativeCommitEnvelope
+    1.50MB 0.013% 98.48%   460.82MB  4.10%  easycode/internal/domain.NewHookPlan
+    1.50MB 0.013% 98.49%   115.96MB  1.03%  bytes.(*Buffer).grow

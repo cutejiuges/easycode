@@ -1,6 +1,6 @@
 {
-  "implementation_commit": "32efe87f49b2b5770acbf04f988587a25c281282",
-  "source_digest": "134ad56cb73e0022e44e02fc05efd2f8aa277cb550eb1a1da0d4d5db5666610a",
+  "implementation_commit": "1056639f1abb17c3a0395612be2d398d33e8a635",
+  "source_digest": "821c8bcd1c0ba23e89d124dab319d0b49d07af3dcc0eb0e1d98492703694ea13",
   "normal": {
     "baseline_results": 4707,
     "final_results": 4745,
@@ -45,7 +45,7 @@
       "easycode/internal/session/TestRecordEncodingMatchesSonic/optional_fields",
       "easycode/internal/session/TestRecordEncodingMatchesSonic/scalar"
     ],
-    "status_changes": {}
+    "changed_status": []
   },
   "race": {
     "baseline_results": 4707,
@@ -91,6 +91,6 @@
       "easycode/internal/session/TestRecordEncodingMatchesSonic/optional_fields",
       "easycode/internal/session/TestRecordEncodingMatchesSonic/scalar"
     ],
-    "status_changes": {}
+    "changed_status": []
   }
 }

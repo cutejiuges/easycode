@@ -121,11 +121,15 @@ func (v HookFinished) Equal(other HookFinished) bool {
 }
 func (v HookFinished) MarshalJSON() ([]byte, error) {
 	if v.Result.Identity.Event == HookPreToolUse {
+		effect, err := v.InputEffect.MarshalJSON()
+		if err != nil {
+			return nil, err
+		}
 		return codec.MarshalStable(struct {
 			Result      HookRunResult      `json:"result"`
 			Feedback    FrozenHookFeedback `json:"feedback"`
-			InputEffect HookInputEffect    `json:"input_effect"`
-		}{v.Result, v.Feedback, v.InputEffect})
+			InputEffect json.RawMessage    `json:"input_effect"`
+		}{v.Result, v.Feedback, effect})
 	}
 	return codec.MarshalStable(struct {
 		Result   HookRunResult      `json:"result"`

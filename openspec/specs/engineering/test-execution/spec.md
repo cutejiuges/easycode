@@ -66,3 +66,9 @@
 - **WHEN** 写入方复用已编码的 checksum envelope 生成最终 Session record
 - **THEN** 保留全部输入拒绝规则、完整 record 大小检查、原字段顺序和 SHA-256 计算范围
 - **THEN** 与原 Sonic 整体编码路径的差异回归、固定 golden 和当前 fixture 均证明输出及 checksum 逐字节一致
+
+#### Scenario: Reuse Hook encoding without changing validation or identity
+- **WHEN** HookToolInput、HookInputEffect 与 HookFinished 内部复用当前调用的编码字节
+- **THEN** 保留全部输入校验、大小限制、错误分类、字段顺序、escaping、canonical bytes 与 digest，不新增公开绕过入口或全局缓存
+- **THEN** 与原 Sonic 嵌套编码的差异回归、坏输入与受限 fuzz 证明等价，完整普通/race、固定 fixture 和双 Provider 恢复/cache 继续通过
+- **THEN** 不修改 Sonic 或 Go race 的检测机制，不以单项 profile 提速代替完整性能验收

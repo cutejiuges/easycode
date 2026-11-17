@@ -1,6 +1,6 @@
 {
-  "implementation_commit": "32efe87f49b2b5770acbf04f988587a25c281282",
-  "source_digest": "134ad56cb73e0022e44e02fc05efd2f8aa277cb550eb1a1da0d4d5db5666610a",
+  "implementation_commit": "1056639f1abb17c3a0395612be2d398d33e8a635",
+  "source_digest": "821c8bcd1c0ba23e89d124dab319d0b49d07af3dcc0eb0e1d98492703694ea13",
   "environment": {
     "platform": "darwin",
     "cpu_count": 10,
@@ -14,20 +14,20 @@
     }
   },
   "build_cache": "Normal Go build cache reused; compiled test binaries reused within each phase; all tests forced with -test.count=1",
-  "competition": "Run 1: no other heavy tests observed. Run 2: worktree 7b26 started normal and then race tests during this race phase. Run 2 is not uncontended evidence.",
+  "competition": "No other heavy test suite observed in either run. Read-only analysis and documentation edits continued; verification inputs were unchanged.",
   "runs": [
     {
-      "seconds": 214.1,
+      "seconds": 207.763,
       "exit": 0,
       "phases": [
         {
           "mode": "normal",
-          "seconds": 59.514,
+          "seconds": 57.057,
           "exit": 0
         },
         {
           "mode": "race",
-          "seconds": 149.628,
+          "seconds": 146.051,
           "exit": 0
         }
       ],
@@ -35,128 +35,80 @@
       "parallel": 2,
       "shards": 16,
       "peak_active_commands": 8,
-      "max_child_rss_bytes": 1243168768,
-      "child_cpu_seconds": 1035.699,
+      "max_child_rss_bytes": 1131692032,
+      "child_cpu_seconds": 1026.929,
       "slow_tests": [
         {
           "phase": "race",
           "package": "easycode/internal/app",
           "test": "TestFailureBothProvidersRealHookSandboxAndFrozenRestore",
-          "seconds": 45.22
+          "seconds": 45.4
         },
         {
           "phase": "race",
           "package": "easycode/internal/app",
           "test": "TestInputRewriteBothProvidersRealEffectsAndOfflineRestore",
-          "seconds": 43.65
+          "seconds": 43.27
         },
         {
           "phase": "race",
           "package": "easycode/internal/app",
           "test": "TestPluginBrowserManualAndRestoredRequestsBothProviders",
-          "seconds": 30.96
+          "seconds": 30.36
         },
         {
           "phase": "normal",
           "package": "easycode/internal/app",
           "test": "TestFailureBothProvidersRealHookSandboxAndFrozenRestore",
-          "seconds": 27.58
+          "seconds": 28.06
         },
         {
           "phase": "race",
           "package": "easycode/internal/app",
           "test": "TestHookBothProvidersRealSandboxAndThreeCapabilities",
-          "seconds": 27.32
+          "seconds": 27.01
         },
         {
           "phase": "race",
           "package": "easycode/internal/session",
           "test": "TestInputDraftBudgetIncludesCanonicalEnvelopeAndNewlines",
-          "seconds": 22.79
-        },
-        {
-          "phase": "race",
-          "package": "easycode/internal/app",
-          "test": "TestStopSampleAndCallLimitsKeepTextContinuationAvailable",
-          "seconds": 22.47
+          "seconds": 22.8
         },
         {
           "phase": "race",
           "package": "easycode/internal/app",
           "test": "TestSessionPreviewCurrentFixturesAreReadOnly",
-          "seconds": 22.41
+          "seconds": 22.17
+        },
+        {
+          "phase": "race",
+          "package": "easycode/internal/app",
+          "test": "TestStopSampleAndCallLimitsKeepTextContinuationAvailable",
+          "seconds": 22.05
         },
         {
           "phase": "race",
           "package": "easycode/internal/app",
           "test": "TestWriteSSEChunksCancellationEOFAndLimitsPrecedeSideEffects",
-          "seconds": 21.75
+          "seconds": 21.72
         },
         {
           "phase": "race",
           "package": "easycode/internal/app",
           "test": "TestPreInputRewriteResumeReconcilesEveryBatchBeforeLoadingNewSnapshot",
-          "seconds": 21.11
+          "seconds": 20.81
         },
         {
           "phase": "normal",
           "package": "easycode/internal/app",
           "test": "TestPluginBrowserManualAndRestoredRequestsBothProviders",
-          "seconds": 21
-        },
-        {
-          "phase": "normal",
-          "package": "easycode/internal/app",
-          "test": "TestHookBothProvidersRealSandboxAndThreeCapabilities",
-          "seconds": 19.71
+          "seconds": 19.83
         },
         {
           "phase": "race",
           "package": "easycode/internal/app",
           "test": "TestSevenToolTranscriptBudgetAndRestoredRequestForBothProviders",
-          "seconds": 18.96
-        },
-        {
-          "phase": "race",
-          "package": "easycode/internal/provider/anthropic",
-          "test": "TestPreInputRewriteNativeGoldenRestoreAndCache",
-          "seconds": 17.68
-        },
-        {
-          "phase": "race",
-          "package": "easycode/internal/provider/openai",
-          "test": "TestPreInputRewriteNativeGoldenRestoreAndCache",
-          "seconds": 17.45
-        },
-        {
-          "phase": "race",
-          "package": "easycode/internal/app",
-          "test": "TestStopBothProvidersRealRunnerSameTurnAndRestore",
-          "seconds": 16.46
-        },
-        {
-          "phase": "normal",
-          "package": "easycode/internal/app",
-          "test": "TestInputRewriteBothProvidersRealEffectsAndOfflineRestore",
-          "seconds": 16.34
-        },
-        {
-          "phase": "race",
-          "package": "easycode/internal/app",
-          "test": "TestPluginSkillLifecycleBothProvidersAndHosts",
-          "seconds": 15.83
-        },
-        {
-          "phase": "race",
-          "package": "easycode/internal/app",
-          "test": "TestStopCompactionKeepsFrozenFeedbackAndGenuineSkillCorrection",
-          "seconds": 15.35
-        },
-        {
-          "phase": "race",
-          "package": "easycode/internal/app",
-          "test": "TestHookResumeReconcilesEveryBatchBeforeLoadingNewSnapshot",
-          "seconds": 15.02
+          "seconds": 18.63
         }
       ],
       "root_tests": {
@@ -166,20 +118,21 @@
       "all_test_results": {
         "normal": 4745,
         "race": 4745
-      }
+      },
+      "raw_report": "/tmp/easycode-profile-path-fix-1"
     },
     {
-      "seconds": 228.648,
+      "seconds": 206.927,
       "exit": 0,
       "phases": [
         {
           "mode": "normal",
-          "seconds": 56.757,
+          "seconds": 56.431,
           "exit": 0
         },
         {
           "mode": "race",
-          "seconds": 165.798,
+          "seconds": 146.032,
           "exit": 0
         }
       ],
@@ -187,128 +140,80 @@
       "parallel": 2,
       "shards": 16,
       "peak_active_commands": 8,
-      "max_child_rss_bytes": 1282129920,
-      "child_cpu_seconds": 1046.196,
+      "max_child_rss_bytes": 1232912384,
+      "child_cpu_seconds": 1030.683,
       "slow_tests": [
         {
           "phase": "race",
           "package": "easycode/internal/app",
           "test": "TestFailureBothProvidersRealHookSandboxAndFrozenRestore",
-          "seconds": 58.69
+          "seconds": 44.88
         },
         {
           "phase": "race",
           "package": "easycode/internal/app",
           "test": "TestInputRewriteBothProvidersRealEffectsAndOfflineRestore",
-          "seconds": 56.16
+          "seconds": 42.7
         },
         {
           "phase": "race",
           "package": "easycode/internal/app",
           "test": "TestPluginBrowserManualAndRestoredRequestsBothProviders",
-          "seconds": 33.86
-        },
-        {
-          "phase": "race",
-          "package": "easycode/internal/app",
-          "test": "TestSessionPreviewCurrentFixturesAreReadOnly",
-          "seconds": 30.57
-        },
-        {
-          "phase": "race",
-          "package": "easycode/internal/app",
-          "test": "TestHookBothProvidersRealSandboxAndThreeCapabilities",
-          "seconds": 28.58
+          "seconds": 30.75
         },
         {
           "phase": "normal",
           "package": "easycode/internal/app",
           "test": "TestFailureBothProvidersRealHookSandboxAndFrozenRestore",
-          "seconds": 27.43
+          "seconds": 27.53
         },
         {
           "phase": "race",
           "package": "easycode/internal/app",
-          "test": "TestHookResumeReconcilesEveryBatchBeforeLoadingNewSnapshot",
-          "seconds": 27.18
-        },
-        {
-          "phase": "race",
-          "package": "easycode/internal/app",
-          "test": "TestWriteSSEChunksCancellationEOFAndLimitsPrecedeSideEffects",
-          "seconds": 23.85
-        },
-        {
-          "phase": "race",
-          "package": "easycode/internal/app",
-          "test": "TestStopSampleAndCallLimitsKeepTextContinuationAvailable",
-          "seconds": 23.47
+          "test": "TestHookBothProvidersRealSandboxAndThreeCapabilities",
+          "seconds": 27.16
         },
         {
           "phase": "race",
           "package": "easycode/internal/session",
           "test": "TestInputDraftBudgetIncludesCanonicalEnvelopeAndNewlines",
-          "seconds": 22.75
+          "seconds": 22.94
+        },
+        {
+          "phase": "race",
+          "package": "easycode/internal/app",
+          "test": "TestStopSampleAndCallLimitsKeepTextContinuationAvailable",
+          "seconds": 22.35
+        },
+        {
+          "phase": "race",
+          "package": "easycode/internal/app",
+          "test": "TestSessionPreviewCurrentFixturesAreReadOnly",
+          "seconds": 21.97
+        },
+        {
+          "phase": "race",
+          "package": "easycode/internal/app",
+          "test": "TestWriteSSEChunksCancellationEOFAndLimitsPrecedeSideEffects",
+          "seconds": 21.52
         },
         {
           "phase": "race",
           "package": "easycode/internal/app",
           "test": "TestPreInputRewriteResumeReconcilesEveryBatchBeforeLoadingNewSnapshot",
-          "seconds": 21.91
-        },
-        {
-          "phase": "race",
-          "package": "easycode/internal/app",
-          "test": "TestStopBothProvidersRealRunnerSameTurnAndRestore",
-          "seconds": 20.82
+          "seconds": 21.28
         },
         {
           "phase": "normal",
           "package": "easycode/internal/app",
           "test": "TestPluginBrowserManualAndRestoredRequestsBothProviders",
-          "seconds": 19.84
-        },
-        {
-          "phase": "race",
-          "package": "easycode/internal/app",
-          "test": "TestSevenToolTranscriptBudgetAndRestoredRequestForBothProviders",
           "seconds": 19.5
         },
         {
-          "phase": "normal",
-          "package": "easycode/internal/app",
-          "test": "TestHookBothProvidersRealSandboxAndThreeCapabilities",
-          "seconds": 18.72
-        },
-        {
-          "phase": "race",
-          "package": "easycode/internal/provider/anthropic",
-          "test": "TestPreInputRewriteNativeGoldenRestoreAndCache",
-          "seconds": 17.94
-        },
-        {
-          "phase": "race",
-          "package": "easycode/internal/provider/openai",
-          "test": "TestPreInputRewriteNativeGoldenRestoreAndCache",
-          "seconds": 17.57
-        },
-        {
           "phase": "race",
           "package": "easycode/internal/app",
-          "test": "TestStopCompactionKeepsFrozenFeedbackAndGenuineSkillCorrection",
-          "seconds": 16.67
-        },
-        {
-          "phase": "race",
-          "package": "easycode/internal/app",
-          "test": "TestPluginSkillLifecycleBothProvidersAndHosts",
-          "seconds": 16.66
-        },
-        {
-          "phase": "normal",
-          "package": "easycode/internal/app",
-          "test": "TestInputRewriteBothProvidersRealEffectsAndOfflineRestore",
-          "seconds": 16.21
+          "test": "TestSevenToolTranscriptBudgetAndRestoredRequestForBothProviders",
+          "seconds": 19.06
         }
       ],
       "root_tests": {
@@ -318,7 +223,8 @@
       "all_test_results": {
         "normal": 4745,
         "race": 4745
-      }
+      },
+      "raw_report": "/tmp/easycode-profile-path-fix-2"
     }
   ]
 }

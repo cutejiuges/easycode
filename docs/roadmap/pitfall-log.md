@@ -989,3 +989,5 @@ Linux CI 回归补充：TurnStarted 只证明回合接纳，不能证明输入�
 2026-11-17 补充：Session 写入先整体编码 checksum envelope，又整体编码含 checksum 的 Record，重复压紧同一大 payload；Sonic 在 race 下的标准库读检查进一步放大了重复工作。编码现在保留全部输入校验，仅编码一次 envelope，散列后追加当前结构固定的末尾 checksum 字段；完整 record 大小仍在追加后校验。`internal/session/codec_equivalence_test.go` 用原 Sonic 整体编码逐字节对照，并覆盖可选字段、转义、所有权和完整大小边界。测试替身也须如实返回取消：强制关闭后返回 nil 会让结果依赖 transport 通知的调度次序，不能靠重试或放宽断言处理。
 
 测试二进制复用补充：标准 `go test` 会把实际选中的 `GOROOT/bin` 放到测试进程 PATH 首位。直接执行二进制必须保留该语义和选中工具链的 GOROOT，否则 setup-go 先安装 go.mod 的最低版本、Go 再按 toolchain 指令切换时，测试里的离线 `go build` 会重新选择旧工具链并触发 GOSUMDB=off 错误。调度回归通过真实嵌套命令验证所选工具链，不能通过开放测试外网或关闭校验绕过。
+
+原生 Linux profile 进一步定位到 Hook 值对象重复编码：输入重写恢复矩阵累计分配约 12.8 GB，其中 Sonic 编码栈池占 82.64%，TSAN 内存范围检查占约一半 CPU 样本。嵌套 MarshalJSON 在 Sonic race 路径额外的标准库读检查中再次执行，频繁校验又重复编码同一输入。HookToolInput 的校验、digest 与 HookInputEffect 的大小/摘要校验现在复用调用局部的编码；HookInputEffect 和 HookFinished 复用子对象字节，保持原错误分类、canonical bytes 和 digest。优化不能修改池、关闭 race 或改变固定 fixture；累计分配也不能当作峰值内存。Linux 多分片对照并未稳定提速，默认改用 4 命令 / 2 分片，最终是否达标仍以完整验收报告为准。
