@@ -21,6 +21,22 @@ from test_binary import binary_path
 
 
 class InventoryTests(unittest.TestCase):
+    def test_timings_include_parallel_children_but_exclude_parent_pause(self):
+        events = [
+            {"Action": "run", "Time": "2026-11-17T00:00:00.1Z"},
+            {"Action": "pause", "Time": "2026-11-17T00:00:01.10000Z"},
+            {"Action": "cont", "Time": "2026-11-17T08:00:10.100000000+08:00"},
+            {"Action": "run", "Time": "2026-11-17T00:00:11.1Z", "Test": "TestParent/child"},
+            {"Action": "pass", "Time": "2026-11-17T00:00:14.1Z", "Test": "TestParent/child", "Elapsed": 3},
+            {"Action": "pass", "Time": "2026-11-17T00:00:15.1Z", "Elapsed": 1},
+        ]
+        events = [{"Package": "fixture/p", "Test": "TestParent", **event} for event in events]
+        self.assertEqual(test_suite.test_timings(events), [{"package": "fixture/p", "test": "TestParent", "seconds": 6}])
+        for stamp in (None, "invalid timestamp"):
+            self.assertEqual(test_suite.test_timings([{"Package": "fixture/p", "Test": "TestMissingTime",
+                                                       "Action": "pass", "Time": stamp, "Elapsed": 2}]),
+                             [{"package": "fixture/p", "test": "TestMissingTime", "seconds": 2}])
+
     def test_inventory_includes_examples_fuzz_and_empty_packages(self):
         events = [{"Package": "example/p", "Output": name + "\n"} for name in
                   ["TestOne", "TestTwo", "Example", "ExampleOutput", "FuzzInput", "BenchmarkCost", "ok example/p"]]
@@ -62,6 +78,11 @@ class SuiteTests(unittest.TestCase):
                 nested_go = toolchain_bin / "go"
                 nested_go.write_text("#!/bin/sh\nprintf 'fixture-selected-toolchain\\n'\n")
                 nested_go.chmod(0o700)
+                static = toolchain_bin / "make"
+                static.write_text("#!" + sys.executable + "\nimport os,sys\n"
+                                  "assert os.environ['GOMAXPROCS'] == str(min(2, os.cpu_count() or 1))\n"
+                                  "assert all(x in sys.argv for x in ['branch-policy-test', 'fmt-check', 'vet', 'lint', 'test-runner-test'])\n")
+                static.chmod(0o700)
             fake = root / "fake_go.py"
             fake.write_text('''import hashlib,json,os,re,shlex,subprocess,sys
 from pathlib import Path
@@ -103,10 +124,10 @@ print(json.dumps({'Package': 'fixture/package', 'Action': 'pass'}))
 ''')
             report = root / "report"
             runner = Path(test_suite.__file__).resolve()
-            result = subprocess.run([sys.executable, "-B", str(runner), "--mode=all", "--jobs=2",
-                                     "--parallel=1",
-                                     "--go=" + shlex.join([sys.executable, str(fake)]),
-                                     "--output=" + str(report)], capture_output=True, text=True, timeout=10)
+            mode = "verify" if os.name == "posix" else "all"
+            command = [sys.executable, "-B", str(runner), "--mode=" + mode, "--jobs=2", "--parallel=1",
+                       "--go=" + shlex.join([sys.executable, str(fake)]), "--output=" + str(report)]
+            result = subprocess.run(command, capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             summary = json.loads((report / "summary.json").read_text())
             for mode, name in (("normal", "TestNormalOnly"), ("race", "TestRaceOnly")):
@@ -120,6 +141,16 @@ print(json.dumps({'Package': 'fixture/package', 'Action': 'pass'}))
             self.assertEqual(len(binaries), 2)
             self.assertNotEqual(binaries[0], binaries[1])
             self.assertTrue(all(not binary.parent.exists() for binary in binaries))
+            if os.name == "posix":
+                self.assertEqual(next(run["exit"] for run in summary["runs"] if run["label"] == "static"), 0)
+                self.assertLessEqual(summary["peak_active_commands"], 2)
+                static.write_text("#!" + sys.executable + "\nimport sys\nsys.exit(7)\n")
+                failed = root / "failed-report"
+                result = subprocess.run([*command[:-1], "--output=" + str(failed)], capture_output=True, text=True, timeout=10)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                summary = json.loads((failed / "summary.json").read_text())
+                self.assertEqual(next(run["exit"] for run in summary["runs"] if run["label"] == "static"), 7)
+                self.assertNotIn("race", summary["inventory"])
 
 
 @unittest.skipUnless(os.name == "posix", "Executable script fixture requires a native POSIX host")

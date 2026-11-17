@@ -49,3 +49,9 @@ Linux 对照基于 `32efe87`；这些属于 Hook 编码复用前的历史对照�
 Darwin 覆盖现有真实 sandbox/Exec 集成；Linux 已真实执行上述完整对照。Windows 未原生执行，POSIX 进程组回归只在 POSIX 运行，本次不扩大产品平台支持承诺。变更保持未归档，未创建 PR。
 
 额外预览采样 [43917045557](https://github.com/cutejiuges/easycode/actions/runs/43917045557) 曾长时间没有进入平台队列、取消 API 返回 409；平台后来完成执行，已下载真实 profile，见 [linux-preview-profile.txt](linux-preview-profile.txt)。此结果来自 Hook 优化前的提交，不能作为新实现验收。重复触发的 [43918045098](https://github.com/cutejiuges/easycode/actions/runs/43918045098) 已确认取消。
+
+## 进程树内存测量与后续调度
+
+用户追加内存排查后，以 0.25 秒间隔采样整个测试进程树：原 8 命令配置为 246.440 秒 / 3086.4 MiB 峰值 RSS；只降为 6 命令为 252.368 秒 / 3633.0 MiB；分离构建上限并限制两个高 RSS 包交错执行后为 257.232 秒 / 3038.7 MiB。主要峰值来自大包同时膨胀，单纯降低总进程数不能保证降低峰值。上述测量期间另一 worktree 运行 race，耗时不得视作隔离验收；RSS 之和会重复计算共享页。完整数据见 [memory-comparison.json](memory-comparison.json)。
+
+新增调度回归共 15 项通过，验证重包限流仍允许轻包执行、无遗漏、失败停止派发、最终回收、硬链接保留及跨文件系统回退。七个独立 Hook/Stop 矩阵的子用例现使用既有包内并发上限；两轮固定乱序 race 125.817 秒通过，所有断言及单用例内部崩溃点顺序保留，见 [isolated-matrix-race.txt](isolated-matrix-race.txt) 和 [审核映射](test-audit.md)。新调度及子用例并行的完整普通/race 与原生 Linux 验收仍待完成。

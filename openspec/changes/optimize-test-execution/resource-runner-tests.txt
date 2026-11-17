@@ -1,20 +1,20 @@
-.....second: exit=-9 0.145s
-first: exit=-9 0.145s
-...orphan: exit=7 0.128s
-.first: exit=7 0.038s
-second: exit=-15 0.059s
-.heavy-first: exit=0 0.035s
-light: exit=0 0.034s
-heavy-second: exit=0 0.035s
-.second: exit=-15 0.130s
-first: exit=-15 0.131s
-.0: exit=0 0.035s
-1: exit=0 0.034s
+......first: exit=-9 0.148s
+second: exit=-9 0.148s
+...orphan: exit=7 0.125s
+.second: exit=7 0.035s
+first: exit=-15 0.057s
+.light: exit=0 0.033s
+heavy-first: exit=0 0.035s
+heavy-second: exit=0 0.033s
+.first: exit=-15 0.131s
+second: exit=-15 0.130s
+.1: exit=0 0.035s
+0: exit=0 0.035s
+2: exit=0 0.034s
 3: exit=0 0.034s
-2: exit=0 0.036s
 .missing: exit=1 0.000s
 ..
 ----------------------------------------------------------------------
-Ran 15 tests in 1.831s
+Ran 16 tests in 3.480s
 
 OK

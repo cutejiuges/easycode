@@ -3,6 +3,7 @@
 
 import argparse
 import concurrent.futures
+from datetime import datetime
 import hashlib
 import json
 import os
@@ -103,14 +104,15 @@ class ProcessOwner:
         self.groups = set()
         self.peak_active = 0
 
-    def execute(self, label, command, cwd):
+    def execute(self, label, command, cwd, environment=None):
         start = time.monotonic()
         path = self.directory / (label + ".jsonl")
         if self.cancelled.is_set():
             return {"label": label, "exit": 130, "seconds": 0, "events": []}
         # 启动与磁盘操作在锁外；登记后再次检查取消，关闭启动和取消交错的窗口。
         try:
-            process = subprocess.Popen(command, cwd=cwd, env=dict(self.environment, PWD=str(cwd)),
+            child_environment = {**self.environment, **(environment or {}), "PWD": str(cwd)}
+            process = subprocess.Popen(command, cwd=cwd, env=child_environment,
                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                        text=True, errors="replace", start_new_session=os.name != "nt",
                                        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0)
@@ -219,8 +221,8 @@ def run_jobs(owner, jobs, workers, deadline, interrupted, clock=time.monotonic,
                 cancelled_at = clock()
                 owner.cancel(failed_pid)
             if cancelled_at is not None:
-                for label, _, _ in queued:
-                    results.append({"label": label, "exit": 130, "seconds": 0, "events": []})
+                for job in queued:
+                    results.append({"label": job[0], "exit": 130, "seconds": 0, "events": []})
                 queued.clear()
             else:
                 # 重包共享额外的并发限额；暂时满额时仍可启动后面的轻包，避免空闲槽被排队占住。
@@ -265,6 +267,35 @@ def verify_execution(result, expected):
     result["completed"] = completed
 
 
+def test_timings(events):
+    """包含父测试等待并行子用例的时间，排除顶层测试自身的 pause 排队时间。"""
+    started, elapsed, timings = {}, {}, []
+    for event in events:
+        name = event.get("Test")
+        if not name or "/" in name:
+            continue
+        now = None
+        if event.get("Time"):
+            # Go 输出 RFC3339Nano；Python 3.9 需要把小数秒规范为六位。
+            stamp = re.sub(r"\.(\d+)", lambda match: "." + match[1][:6].ljust(6, "0"), event["Time"])
+            try:
+                now = datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                pass
+        action = event.get("Action")
+        if now is not None:
+            if action in ("run", "cont"):
+                started[name] = now
+            elif action in ("pause", "pass") and name in started:
+                elapsed[name] = elapsed.get(name, 0) + max(0, now - started.pop(name))
+        if action == "pass":
+            seconds = event.get("Elapsed", 0)
+            if now is not None:
+                seconds = max(seconds, elapsed.get(name, 0))
+            timings.append({"package": event["Package"], "test": name, "seconds": round(seconds, 3)})
+    return timings
+
+
 def run_suite(args):
     started = time.monotonic()
     root = Path(__file__).resolve().parent.parent
@@ -302,9 +333,6 @@ def run_suite(args):
         environment["GOROOT"] = report["go_environment"]["GOROOT"]
         environment["PATH"] = os.pathsep.join(part for part in
                                               (str(Path(environment["GOROOT"]) / "bin"), environment.get("PATH")) if part)
-        if args.mode == "verify":
-            execute([("static", ["make", "--no-print-directory", "-j1", "branch-policy-test", "fmt-check",
-                                  "vet", "lint", "test-runner-test", "GO=" + args.go], root)], 1)
         report["inventory"] = {}
         modes = [args.mode] if args.mode in ("normal", "race") else ["normal", "race"]
         for mode in modes:
@@ -358,12 +386,18 @@ def run_suite(args):
                         heavy_labels.add(label)
             # 让高 RSS 包提前且有界地与 app 分片交错，避免这些包全部堆到尾段同时膨胀。
             jobs.sort(key=lambda job: (job[0] not in heavy_labels, "-internal-app-" not in job[0], job[0]))
+            if args.mode == "verify" and mode == "normal":
+                # 静态检查占用相同的调度槽；失败同样取消整个阶段，成功后才允许进入 race。
+                jobs.insert(0, ("static", ["make", "--no-print-directory", "-j1", "branch-policy-test", "fmt-check",
+                                          "vet", "lint", "test-runner-test", "GO=" + args.go], root,
+                                {"GOMAXPROCS": str(build_jobs)}))
             environment["GOMAXPROCS"] = str(args.parallel)
             results = run_jobs(owner, jobs, args.jobs, deadline, lambda: bool(stopped),
                                heavy_labels=heavy_labels, heavy_limit=args.heavy_jobs)
             report["runs"].extend(results)
             for result in results:
-                verify_execution(result, expected[result["label"]])
+                if result["label"] in expected:
+                    verify_execution(result, expected[result["label"]])
             binary_directory.cleanup()
             failed = owner.cancelled.is_set() or any(result["exit"] for result in results)
             report["phases"].append({"mode": mode, "seconds": round(time.monotonic() - phase_start, 3),
@@ -398,10 +432,8 @@ def run_suite(args):
             report["child_cpu_seconds"] = round(usage.ru_utime + usage.ru_stime, 3)
         slow = []
         for result in report["runs"]:
-            for event in result["events"]:
-                if event.get("Action") == "pass" and event.get("Test") and "/" not in event["Test"]:
-                    slow.append({"phase": result["label"].split("-", 1)[0], "package": event["Package"],
-                                 "test": event["Test"], "seconds": event.get("Elapsed", 0)})
+            for timing in test_timings(result["events"]):
+                slow.append({"phase": result["label"].split("-", 1)[0], **timing})
             result.pop("events", None)
         report["slow_tests"] = sorted(slow, key=lambda item: item["seconds"], reverse=True)[:20]
         (directory / "summary.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

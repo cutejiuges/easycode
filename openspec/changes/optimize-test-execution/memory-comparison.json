@@ -1,0 +1,174 @@
+{
+  "metric": "Sampled process-tree RSS sum, including shared pages; not unique physical memory or cumulative allocations. Sampling can miss brief peaks.",
+  "competition": "Concurrent race tests were observed in worktree 7b26 and left running. They are excluded from this process tree; elapsed time is not an isolated measurement.",
+  "runs": [
+    {
+      "measurement": "eight",
+      "source_digest": "8b9d45fd47f8ff4c6911867129c56b8d515a7b7d7a563f042bf9466b548a815d",
+      "seconds": 246.44,
+      "exit": 0,
+      "jobs": 8,
+      "parallel": 2,
+      "shards": 16,
+      "build_jobs": null,
+      "heavy_jobs": null,
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 63.599,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 176.913,
+          "exit": 0
+        }
+      ],
+      "max_child_rss_bytes": 1257717760,
+      "child_cpu_seconds": 1064.686,
+      "tree_rss_peak_bytes": 3236331520,
+      "sample_interval_seconds": 0.25,
+      "peak_processes": 14
+    },
+    {
+      "measurement": "six",
+      "source_digest": "8b9d45fd47f8ff4c6911867129c56b8d515a7b7d7a563f042bf9466b548a815d",
+      "seconds": 252.368,
+      "exit": 0,
+      "jobs": 6,
+      "parallel": 2,
+      "shards": 16,
+      "build_jobs": null,
+      "heavy_jobs": null,
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 63.193,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 182.792,
+          "exit": 0
+        }
+      ],
+      "max_child_rss_bytes": 1212645376,
+      "child_cpu_seconds": 1028.94,
+      "tree_rss_peak_bytes": 3809492992,
+      "sample_interval_seconds": 0.25,
+      "peak_processes": 22
+    },
+    {
+      "measurement": "bounded-six",
+      "source_digest": "d2fed512d311cdbfe1dada291cfe1f3dddd218e5c88699a323903a52b4de78f5",
+      "seconds": 257.232,
+      "exit": 0,
+      "jobs": 6,
+      "parallel": 2,
+      "shards": 16,
+      "build_jobs": 4,
+      "heavy_jobs": 2,
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 65.147,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 187.305,
+          "exit": 0
+        }
+      ],
+      "max_child_rss_bytes": 1192034304,
+      "child_cpu_seconds": 1010.674,
+      "tree_rss_peak_bytes": 3186327552,
+      "sample_interval_seconds": 0.25,
+      "peak_processes": 20
+    },
+    {
+      "measurement": "heavy-one",
+      "source_digest": "74636b3887f2bf5fc49ab9119c0f234cf684763fc65ea2bd3b64679ac3c67cd2",
+      "seconds": 254.784,
+      "exit": 0,
+      "jobs": 6,
+      "parallel": 2,
+      "shards": 16,
+      "build_jobs": 4,
+      "heavy_jobs": 1,
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 62.706,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 186.681,
+          "exit": 0
+        }
+      ],
+      "max_child_rss_bytes": 1362280448,
+      "child_cpu_seconds": 973.706,
+      "tree_rss_peak_bytes": 3248635904,
+      "sample_interval_seconds": 0.25,
+      "peak_processes": 23
+    },
+    {
+      "measurement": "resource-pre-commit",
+      "source_digest": "74636b3887f2bf5fc49ab9119c0f234cf684763fc65ea2bd3b64679ac3c67cd2",
+      "seconds": 262.94,
+      "exit": 0,
+      "jobs": 6,
+      "parallel": 2,
+      "shards": 16,
+      "build_jobs": 4,
+      "heavy_jobs": 2,
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 64.728,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 191.658,
+          "exit": 0
+        }
+      ],
+      "max_child_rss_bytes": 1246052352,
+      "child_cpu_seconds": 1071.624,
+      "tree_rss_peak_bytes": 3103768576,
+      "sample_interval_seconds": 0.25,
+      "peak_processes": 22
+    },
+    {
+      "measurement": "resource-pre-push",
+      "source_digest": "74636b3887f2bf5fc49ab9119c0f234cf684763fc65ea2bd3b64679ac3c67cd2",
+      "seconds": 246.794,
+      "exit": 0,
+      "jobs": 6,
+      "parallel": 2,
+      "shards": 16,
+      "build_jobs": 4,
+      "heavy_jobs": 2,
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 65.439,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 176.205,
+          "exit": 0
+        }
+      ],
+      "max_child_rss_bytes": 1196769280,
+      "child_cpu_seconds": 997.176,
+      "tree_rss_peak_bytes": 3203547136,
+      "sample_interval_seconds": 0.25,
+      "peak_processes": 24
+    }
+  ]
+}
