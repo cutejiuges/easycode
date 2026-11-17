@@ -32,7 +32,7 @@
 
 ## 5. 完整验收与规格沉淀
 
-- [ ] 5.1 在最终源码上连续两轮执行全部测试结果不命中缓存的 make verify，按全量普通及审核后的 race 验收并记录精简前后耗时，不再使用总时限作为门禁；记录静态检查、普通/race 分阶段及合计时间、全覆盖清单与退出码。
-- [ ] 5.2 在 Linux 原生 CI runner 上取得同一最终实现的完整质量门计时与通过证据，记录 runner 配置；没有实际执行证据时保持未验证，不把交叉编译标记为完成。
+- [x] 5.1 在最终源码上连续两轮执行全部测试结果不命中缓存的 make verify，按全量普通及审核后的 race 验收并记录精简前后耗时，不再使用总时限作为门禁；记录静态检查、普通/race 分阶段及合计时间、全覆盖清单与退出码。
+- [x] 5.2 在 Linux 原生 CI runner 上取得同一最终实现的完整质量门计时与通过证据，记录 runner 配置；没有实际执行证据时保持未验证，不把交叉编译标记为完成。
 - [x] 5.3 对 codec、调度器和受影响测试执行针对性的随机顺序/race 回归，确认未改变 fixed fixture bytes、canonical/native 顺序、权限和资源清理边界；记录剩余平台限制。
-- [ ] 5.4 编写 verification 报告并同步 engineering/test-execution 主规格，执行 change/main specs 的严格验证及 git diff --check；逐项核对 AGENTS、文档和实际测试入口，只有全部目标达成后标记任务完成。
+- [x] 5.4 编写 verification 报告并同步 engineering/test-execution 主规格，执行 change/main specs 的严格验证及 git diff --check；逐项核对 AGENTS、文档和实际测试入口，只有全部目标达成后标记任务完成。

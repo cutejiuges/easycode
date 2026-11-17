@@ -4,7 +4,7 @@
 
 2026-11-18 用户最终批准：全量普通测试保留，race 按并发风险精简，撤销默认总耗时硬限制，验证通过后推送并创建 PR。`scripts/race_policy.json` 登记 161 个精确排除入口及理由；新增入口默认参加 race，手动 `make test-race-full` 不应用清单。补全/插件浏览矩阵保留两家 Provider 和所有入口的真实生命周期代表场景，复用原 helper；新增集中 codec 并发及返回值所有权回归。原普通用例和断言未删除。
 
-执行提交 `6a87a03` 的真实 pre-commit/pre-push 两轮质量门已通过，输入摘要均为 `5aa4a462d7d22e90a5fdacb43dd1778697e94e6bd1597160d362bed223511040`；普通均 1611 个入口、4786 条父子结果，race 均选中并完成 1450 个入口、4383 条结果，无失败或 skip。精简前 4772 条普通结果逐项零缺失、零状态变化；新增 14 条来自代表场景和 codec 并发回归。首次原生 Linux [44134522709](https://github.com/cutejiuges/easycode/actions/runs/44134522709) 在 134.200 秒因清单引用 Darwin 专用必保留入口而失败；普通阶段已通过，race 尚未执行。引用已改为现有跨平台 `TestPreInputRewriteResumeReconcilesEveryBatchBeforeLoadingNewSnapshot`，以两平台真实枚举验证：排除项仍为 161，所选集合未变。最终配置正在重新验证。调度器 20 项回归、集中 codec 两轮乱序 race、64 项 OpenSpec strict 与 actionlint 已通过。[当前计时与覆盖证据](focused-race-verification.json)。
+执行提交 `6a87a03` 的真实 pre-commit/pre-push 两轮质量门已通过，输入摘要均为 `5aa4a462d7d22e90a5fdacb43dd1778697e94e6bd1597160d362bed223511040`；普通均 1611 个入口、4786 条父子结果，race 均选中并完成 1450 个入口、4383 条结果，无失败或 skip。精简前 4772 条普通结果逐项零缺失、零状态变化；新增 14 条来自代表场景和 codec 并发回归。首次原生 Linux [44134522709](https://github.com/cutejiuges/easycode/actions/runs/44134522709) 在 134.200 秒因清单引用 Darwin 专用必保留入口而失败；普通阶段已通过，race 尚未执行。引用已改为现有跨平台 `TestPreInputRewriteResumeReconcilesEveryBatchBeforeLoadingNewSnapshot`，以两平台真实枚举验证：排除项仍为 161，所选集合未变。最终配置 `0d3490f` 的两轮本机质量门已通过，执行摘要均为 `7103099d0ea130b9820f4364658653016c96a895e01abc21605b135344ac4450`，覆盖数量与前两轮一致；原生 Linux 复验 [44137389472](https://github.com/cutejiuges/easycode/actions/runs/44137389472) 已完整通过，源码摘要相同。普通完成 1573 个入口、4505 条结果，race 完成 1412 个入口、4102 条结果；均无失败或 skip，原 Linux 4491 条普通结果逐项保留且状态不变。调度器 20 项回归、集中 codec 两轮乱序 race、64 项 OpenSpec strict 与 actionlint 已通过。[当前计时与覆盖证据](focused-race-verification.json)。
 
 以下为精简前参考记录：已同步 main `b0387c4bb3b833082beb1d077767885ecf46acdd`，执行提交 `18863cb15784dc677fca6ef07c20cadcc402c4f3`，摘要 `84f8c4bceeff66a1a72952677b72e0d8e71062025f9238afcaf5f323aecf9dbc`。两轮本机完整质量门通过 **238.270 / 234.915 秒**；普通/race 各 **1609 个顶层入口、4772 条父子结果**，原始 4707 条结果无缺失，447 个固定 testdata 文件与 main 一致。Linux 在 **360.074 秒**被旧预算取消，未完成 12 个 race 入口，历史失败状态保持。[精简前记录](final-verification.json)。
 
@@ -23,12 +23,15 @@
 | 18863cb，Linux 原生 | 64.520 s | 295.509 s（未完成） | 360.074 s | 总预算超时 |
 | 6a87a03，精简 race / pre-commit | 65.918 s | 171.593 s | 237.676 s | 通过；无总时限 |
 | 6a87a03，精简 race / pre-push | 64.359 s | 171.569 s | 236.102 s | 通过；无总时限 |
+| 0d3490f，最终配置 / pre-commit | 63.650 s | 170.412 s | 234.221 s | 通过；无总时限 |
+| 0d3490f，最终配置 / pre-push | 68.332 s | 177.490 s | 245.994 s | 通过；其他 worktree 并行重测 |
+| 0d3490f，原生 Linux | 80.964 s | 284.639 s | 365.714 s | 通过；无总时限 |
 
 精简前两轮测试执行窗口（不含枚举/构建）普通 57.698 / 57.425 秒，race 159.411 / 159.123 秒，合计 **217.109 / 216.548 秒**。原始报告 `/tmp/easycode-budget-full-1`、`/tmp/easycode-budget-full-2`。未观察到其他重测试套件竞争；期间仅进行文档整理和轻量只读核对。
 
 历史 Linux 最短完整对照为 359.663 秒，来自 Hook 复用前的 `32efe87`，不代表最终代码。其后 f79c12a 的 [44119606565](https://github.com/cutejiuges/easycode/actions/runs/44119606565) 在旧的 300 秒预算下超时：普通 89.185 秒、race 已运行 210.835 秒；未出现业务断言失败。不同原生 VM 的观测耗时差异明显，不能只凭核数归因或把一次快运行推广到所有机器。历史配置对照保留在 [ci-low-shards.json](ci-low-shards.json)、[ci-hook-comparison.json](ci-hook-comparison.json)、[ci-resource-comparison.json](ci-resource-comparison.json)。
 
-精简后本机整体时长与精简前相近，不能宣称有显著额外提速。两轮分别观测到其他 `01b8` worktree 的 Runtime/Context/Headless race 和 Session race，均未终止；这些进程不计入本次 RSS 树。测试用例和并发分配的变化同样会影响墙钟，不把差异单独归因于竞争。
+最终配置的两轮完整耗时为 234.221 / 245.994 秒，race 为 170.412 / 177.490 秒；本机整体时长与精简前相近，不能宣称有显著额外提速。最终第一轮进程快照未见其他 Go 测试，第二轮观测到 `01b8` worktree 同时执行 app 普通与 race；快照不等于持续的外部负载记录。两轮分别观测到其他 `01b8` worktree 的 Runtime/Context/Headless race 和 Session race，均未终止；这些进程不计入本次 RSS 树。测试用例和并发分配的变化同样会影响墙钟，不把差异单独归因于竞争。
 
 ## 根因与实现
 
@@ -43,7 +46,7 @@
 
 以 0.25 秒间隔采样本次测试进程树的 RSS 之和。共享页可能重复计数，短峰值可能漏采；这不是独占物理内存。pprof alloc_space 是累计分配，不能当成峰值或把调用祖先 cumulative 相加。结束时的小 Go live heap 也不能证明不存在所有形式的泄漏或代表 TSAN 内存。
 
-既有采样中，只把 8 个活动命令降为 6 个，峰值反而从 3086.4 增至 3633.0 MiB；增加重包限额并交错执行后观测为 3038.7 MiB。上述轮次有其他 worktree 竞争，不能声称为隔离的耗时对照。f79c12a 两轮为 2873.4 / 3065.8 MiB；81507f6 本轮为 **3117.7 MiB（约 3.04 GiB）**。最终 360 秒两轮为 **3021.2 / 3109.2 MiB（约 2.95 / 3.04 GiB）**。精简后两轮采样为 **2445.8 / 2603.7 MiB（约 2.39 / 2.54 GiB）**；本次观测较前两轮低，但运行负载不同，不能等同严格隔离的内存基准或保证所有机器同比下降。[内存对照](memory-comparison.json)。
+既有采样中，只把 8 个活动命令降为 6 个，峰值反而从 3086.4 增至 3633.0 MiB；增加重包限额并交错执行后观测为 3038.7 MiB。上述轮次有其他 worktree 竞争，不能声称为隔离的耗时对照。f79c12a 两轮为 2873.4 / 3065.8 MiB；81507f6 本轮为 **3117.7 MiB（约 3.04 GiB）**。最终 360 秒两轮为 **3021.2 / 3109.2 MiB（约 2.95 / 3.04 GiB）**。精简后两轮采样为 **2445.8 / 2603.7 MiB（约 2.39 / 2.54 GiB）**；最终配置两轮为 **2432.5 / 2457.3 MiB（约 2.38 / 2.40 GiB）**。本次观测较精简前两轮低，但运行负载不同，不能等同严格隔离的内存基准或保证所有机器同比下降。[内存对照](memory-comparison.json)。
 
 本次 runner 只负责自己启动的进程树，其他 worktree 的旧 `go test -race ./...` 不计入本分支采样且未被终止。测试结束后的资源回收单独核对；系统文件缓存与其他应用占用不等于测试泄漏。
 
@@ -55,6 +58,8 @@
 - runner 20 项回归通过，涵盖清单、二进制复用、工具链传递、总并发及重包上限、失败/取消/超时/强制升级、真实后代及孤儿清理、硬链接回退和计时；新增精确 race 筛选、新入口默认纳入、失效/重复排除、缺失替代覆盖、显式平台范围、手动全量及无默认总预算的回归。实际取消实验在 15.058 秒退出并清理临时二进制。[取消证据](cancellation-final.json)。
 - 本次修正两个 fixture 的时序假设，保留原 deadline、错误码与完整清理顺序断言；相关三项 30 轮乱序 race 通过。七个独立矩阵两轮乱序 race 通过。[矩阵结果](isolated-matrix-race.txt)。
 - `make verify` 继续包含分支策略、gofmt、vet、Staticcheck、架构守卫、runner 自检及全量普通与经审计的必要 race，pre-commit/pre-push/CI 使用相同入口。actionlint 通过；全部 OpenSpec strict 64 项通过、0 失败；主规格已同步；`git diff --check` 通过。
+
+最终原生 Linux 的完整质量门为 365.714 秒，含构建与静态检查，race 为 284.639 秒。它超过原先的固定 300/360 秒门槛，但本轮按用户最终批准的无总时限契约验收；所有所选入口实际完成。最大单个子进程 RSS 为 1204727808 bytes；没有 Linux 进程树采样，不能与本机 RSS 之和直接比较。此前被取消的 race 不完整，无法算出相同最终代码的全量 race 精确提速比例。
 
 ## 精简前的 Linux 失败与平台限制
 
