@@ -991,3 +991,5 @@ Linux CI 回归补充：TurnStarted 只证明回合接纳，不能证明输入�
 测试二进制复用补充：标准 `go test` 会把实际选中的 `GOROOT/bin` 放到测试进程 PATH 首位。直接执行二进制必须保留该语义和选中工具链的 GOROOT，否则 setup-go 先安装 go.mod 的最低版本、Go 再按 toolchain 指令切换时，测试里的离线 `go build` 会重新选择旧工具链并触发 GOSUMDB=off 错误。调度回归通过真实嵌套命令验证所选工具链，不能通过开放测试外网或关闭校验绕过。
 
 原生 Linux profile 进一步定位到 Hook 值对象重复编码：输入重写恢复矩阵累计分配约 12.8 GB，其中 Sonic 编码栈池占 82.64%，TSAN 内存范围检查占约一半 CPU 样本。嵌套 MarshalJSON 在 Sonic race 路径额外的标准库读检查中再次执行，频繁校验又重复编码同一输入。HookToolInput 的校验、digest 与 HookInputEffect 的大小/摘要校验现在复用调用局部的编码；HookInputEffect 和 HookFinished 复用子对象字节，保持原错误分类、canonical bytes 和 digest。优化不能修改池、关闭 race 或改变固定 fixture；累计分配也不能当作峰值内存。Linux 多分片对照并未稳定提速，默认改用 4 命令 / 2 分片，最终是否达标仍以完整验收报告为准。
+
+内存测量补充：只减少总命令数不能保证降低峰值；高 RSS 包如果在 app 分片后集中运行，6 路峰值仍可能高于 8 路。调度器为两个 Provider、Runtime、Session、Tool、TUI 设置共享重包限额并提前交错执行，避免排队的重包阻止可运行的轻包。编译/静态检查必须独立于测试的 GOMAXPROCS，否则测试降为单核会把静态检查一同拖慢。二进制优先硬链接以避免重复复制文件缓存；峰值 RSS、累计分配、系统可回收缓存必须分别解释。

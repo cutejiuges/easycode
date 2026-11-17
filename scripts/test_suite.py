@@ -200,20 +200,38 @@ class ProcessOwner:
         self.signal_groups(self.groups, 9)
 
 
-def run_jobs(owner, jobs, workers, deadline, interrupted, clock=time.monotonic):
+def run_jobs(owner, jobs, workers, deadline, interrupted, clock=time.monotonic,
+             heavy_labels=(), heavy_limit=2):
     results = []
+    queued = list(jobs)
+    heavy_labels = set(heavy_labels)
     cancelled_at = None
     escalated = False
     if interrupted() or clock() >= deadline:
         cancelled_at = clock()
         owner.cancel()
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-        pending = {pool.submit(owner.execute, *job): job[0] for job in jobs}
-        while pending:
+        pending = {}
+        while queued or pending:
             failed_pid = owner.failed_pid()
-            if cancelled_at is None and (interrupted() or clock() >= deadline or failed_pid is not None):
+            if cancelled_at is None and (interrupted() or clock() >= deadline or failed_pid is not None
+                                         or owner.cancelled.is_set()):
                 cancelled_at = clock()
                 owner.cancel(failed_pid)
+            if cancelled_at is not None:
+                for label, _, _ in queued:
+                    results.append({"label": label, "exit": 130, "seconds": 0, "events": []})
+                queued.clear()
+            else:
+                # 重包共享额外的并发限额；暂时满额时仍可启动后面的轻包，避免空闲槽被排队占住。
+                while len(pending) < workers:
+                    heavy_active = sum(label in heavy_labels for label in pending.values())
+                    index = next((index for index, job in enumerate(queued)
+                                  if job[0] not in heavy_labels or heavy_active < heavy_limit), None)
+                    if index is None or owner.cancelled.is_set():
+                        break
+                    job = queued.pop(index)
+                    pending[pool.submit(owner.execute, *job)] = job[0]
             if cancelled_at is not None and not escalated and clock() - cancelled_at >= 1:
                 owner.escalate()
                 escalated = True
@@ -253,7 +271,8 @@ def run_suite(args):
     directory = Path(args.output).resolve() if args.output else Path(tempfile.mkdtemp(prefix="easycode-tests-"))
     directory.mkdir(parents=True, exist_ok=True)
     print(f"Test report: {directory}", flush=True)
-    environment = dict(os.environ, GOMAXPROCS=str(args.parallel))
+    build_jobs = min(4, args.jobs, os.cpu_count() or 1)
+    environment = dict(os.environ, GOMAXPROCS=str(build_jobs))
     owner = ProcessOwner(directory, environment)
     go = shlex.split(args.go)
     deadline = started + args.budget
@@ -261,6 +280,7 @@ def run_suite(args):
     previous = {sig: signal.signal(sig, lambda received, _: stopped.append(received))
                 for sig in (signal.SIGINT, signal.SIGTERM)}
     report = {"mode": args.mode, "jobs": args.jobs, "parallel": args.parallel, "shards": args.shards,
+              "build_jobs": build_jobs, "heavy_jobs": args.heavy_jobs,
               "exit": 1, "platform": sys.platform, "cpu_count": os.cpu_count(),
               "budget_seconds": args.budget, "test_result_cache": False, "phases": [], "runs": []}
     binary_directories = []
@@ -289,6 +309,8 @@ def run_suite(args):
         modes = [args.mode] if args.mode in ("normal", "race") else ["normal", "race"]
         for mode in modes:
             phase_start = time.monotonic()
+            # 构建和静态分析使用独立上限，降低测试并发不会把编译器一同限为单核。
+            environment["GOMAXPROCS"] = str(build_jobs)
             listing = [*go, "list", "-f", '{{.ImportPath}} {{.Dir}}']
             if mode == "race":
                 listing.append("-race")
@@ -298,7 +320,7 @@ def run_suite(args):
             binary_directories.append(binary_directory)
             binaries = Path(binary_directory.name)
             capture = shlex.join([sys.executable, "-B", str(root / "scripts/test_binary.py"), str(binaries)])
-            discovery = [*go, "test", "-json", "-list=.", "-p", str(args.jobs), "-exec=" + capture]
+            discovery = [*go, "test", "-json", "-list=.", "-p", str(build_jobs), "-exec=" + capture]
             if mode == "race":
                 discovery.append("-race")
             discovery.append("./...")
@@ -307,7 +329,7 @@ def run_suite(args):
             if not names:
                 raise RuntimeError("empty package inventory")
             report["inventory"][mode] = names
-            jobs, expected = [], {}
+            jobs, expected, heavy_labels = [], {}, set()
             for package, tests in names.items():
                 count = args.shards if package == "easycode/internal/app" else 1
                 shards = partition(tests, count) or [[]]
@@ -330,9 +352,15 @@ def run_suite(args):
                         command.append(package)
                     jobs.append((label, command, cwd))
                     expected[label] = shard
-            # 先派发关键路径；其他包按名称确定排序，所有进程共享同一并发上限。
-            jobs.sort(key=lambda job: ("-internal-app-" not in job[0], job[0]))
-            results = run_jobs(owner, jobs, args.jobs, deadline, lambda: bool(stopped))
+                    if package in ("easycode/internal/provider/anthropic", "easycode/internal/provider/openai",
+                                   "easycode/internal/runtime", "easycode/internal/session",
+                                   "easycode/internal/tool", "easycode/internal/tui"):
+                        heavy_labels.add(label)
+            # 让高 RSS 包提前且有界地与 app 分片交错，避免这些包全部堆到尾段同时膨胀。
+            jobs.sort(key=lambda job: (job[0] not in heavy_labels, "-internal-app-" not in job[0], job[0]))
+            environment["GOMAXPROCS"] = str(args.parallel)
+            results = run_jobs(owner, jobs, args.jobs, deadline, lambda: bool(stopped),
+                               heavy_labels=heavy_labels, heavy_limit=args.heavy_jobs)
             report["runs"].extend(results)
             for result in results:
                 verify_execution(result, expected[result["label"]])
@@ -387,15 +415,16 @@ def main():
     parser.add_argument("--go", default="go")
     # Darwin 的真实进程测试有清理等待；Linux 对照使用较少进程限制重复编码的资源竞争。
     cpu_count = os.cpu_count() or 1
-    parser.add_argument("--jobs", type=int, default=min(8, 2 * cpu_count) if sys.platform == "darwin" else min(4, cpu_count))
+    parser.add_argument("--jobs", type=int, default=min(6, 2 * cpu_count) if sys.platform == "darwin" else min(4, cpu_count))
     parser.add_argument("--parallel", type=int, default=2)
+    parser.add_argument("--heavy-jobs", type=int, default=2)
     # Darwin 的重矩阵需要细分；其他平台减少独立进程中的重复初始化。
     parser.add_argument("--shards", type=int, default=16 if sys.platform == "darwin" else 2)
     parser.add_argument("--timeout", default="20m")
     parser.add_argument("--budget", type=float, default=300)
     parser.add_argument("--output")
     args = parser.parse_args()
-    if min(args.jobs, args.parallel, args.shards, args.budget) <= 0:
+    if min(args.jobs, args.parallel, args.heavy_jobs, args.shards, args.budget) <= 0:
         parser.error("resource limits and budget must be positive")
     return run_suite(args)
 

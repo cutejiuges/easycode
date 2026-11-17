@@ -1,0 +1,108 @@
+原生 Linux/amd64 诊断；非完整质量门验收。
+运行：https://github.com/cutejiuges/easycode/actions/runs/43917045557
+提交：1056639f1abb17c3a0395612be2d398d33e8a635
+测试：TestPluginBrowserManualAndRestoredRequestsBothProviders 与 TestSessionPreviewCurrentFixturesAreReadOnly；race、count=1、GOMAXPROCS=2、parallel=2。
+原始 profile：/tmp/easycode-linux-preview-profile
+累计分配不等于峰值内存，CPU cumulative 含祖先重叠。
+
+environment.txt
+{
+	"GOARCH": "amd64",
+	"GOCACHE": "/home/runner/.cache/go-build",
+	"GOOS": "linux",
+	"GOROOT": "/home/runner/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.24.13.linux-amd64",
+	"GOVERSION": "go1.24.13"
+}
+4
+
+cpu-top.txt
+File: app.test
+Build ID: 9ac586cabef62f405824bbd6bef24fd37ee767d5
+Type: cpu
+Time: 2026-11-16 18:32:01 UTC
+Duration: 41.77s, Total samples = 45.15s (108.09%)
+Showing nodes accounting for 38s, 84.16% of 45.15s total
+Dropped 1026 nodes (cum <= 0.23s)
+Showing top 40 nodes out of 206
+      flat  flat%   sum%        cum   cum%
+    12.60s 27.91% 27.91%     12.60s 27.91%  __tsan::MemoryAccessRangeT
+     5.55s 12.29% 40.20%      5.55s 12.29%  racecall
+     4.12s  9.13% 49.32%      4.12s  9.13%  __tsan_read
+     1.39s  3.08% 52.40%      1.39s  3.08%  runtime.findObject
+     1.29s  2.86% 55.26%      1.29s  2.86%  __sanitizer::internal_mmap
+     1.24s  2.75% 58.01%      2.88s  6.38%  runtime.scanobject
+     1.23s  2.72% 60.73%      2.74s  6.07%  encoding/json.appendCompact
+     0.99s  2.19% 62.92%      0.99s  2.19%  __tsan_write
+     0.79s  1.75% 64.67%      0.79s  1.75%  __tsan::MetaMap::FreeRange
+     0.71s  1.57% 66.25%      0.71s  1.57%  runtime.memclrNoHeapPointers
+     0.68s  1.51% 67.75%      0.80s  1.77%  runtime.(*sweepLocked).sweep
+     0.66s  1.46% 69.21%      0.66s  1.46%  __tsan::ShadowSet
+     0.62s  1.37% 70.59%      0.62s  1.37%  runtime.typePointers.next
+     0.61s  1.35% 71.94%      0.72s  1.59%  encoding/json.stateInString
+     0.60s  1.33% 73.27%      0.60s  1.33%  internal/runtime/syscall.Syscall6
+     0.56s  1.24% 74.51%      0.56s  1.24%  __tsan_func_enter
+     0.52s  1.15% 75.66%      0.52s  1.15%  __tsan_func_exit
+     0.52s  1.15% 76.81%      0.52s  1.15%  runtime.raceread
+     0.41s  0.91% 77.72%      0.41s  0.91%  racecalladdr
+     0.28s  0.62% 78.34%      0.39s  0.86%  encoding/json.appendString[go.shape.string]
+     0.27s   0.6% 78.94%      0.27s   0.6%  runtime.(*bucket).mp
+     0.26s  0.58% 79.51%      0.26s  0.58%  _validate_one
+     0.26s  0.58% 80.09%      0.26s  0.58%  runtime.greyobject
+     0.25s  0.55% 80.64%      0.52s  1.15%  runtime.scanblock
+     0.23s  0.51% 81.15%      0.23s  0.51%  __sanitizer::internal_madvise
+     0.23s  0.51% 81.66%      0.23s  0.51%  runtime.futex
+     0.23s  0.51% 82.17%      0.23s  0.51%  runtime.memmove
+     0.14s  0.31% 82.48%      0.41s  0.91%  runtime.mProf_FlushLocked
+     0.11s  0.24% 82.72%      2.62s  5.80%  encoding/json.structEncoder.encode
+     0.09s   0.2% 82.92%      0.50s  1.11%  runtime.checkptrBase
+     0.09s   0.2% 83.12%      0.27s   0.6%  runtime.mallocgcSmallNoscan
+     0.07s  0.16% 83.28%      0.69s  1.53%  github.com/bytedance/sonic/internal/encoder/vars.init.func1
+     0.07s  0.16% 83.43%      0.30s  0.66%  github.com/twitchyliquid64/golang-asm/obj/x86.(*AsmBuf).doasm
+     0.07s  0.16% 83.59%      1.22s  2.70%  runtime.newobject
+     0.05s  0.11% 83.70%      0.30s  0.66%  encoding/json.checkValid
+     0.05s  0.11% 83.81%      0.43s  0.95%  runtime.slicecopy
+     0.04s 0.089% 83.90%      0.23s  0.51%  easycode/internal/codec.(*jsonScanner).value
+     0.04s 0.089% 83.99%      0.41s  0.91%  runtime.checkptrAlignment
+     0.04s 0.089% 84.08%      0.39s  0.86%  runtime.checkptrStraddles
+     0.04s 0.089% 84.16%      3.84s  8.50%  runtime.gcDrain
+
+alloc-top.txt
+File: app.test
+Build ID: 9ac586cabef62f405824bbd6bef24fd37ee767d5
+Type: alloc_space
+Time: 2026-11-16 18:32:42 UTC
+Showing nodes accounting for 11354.99MB, 95.35% of 11908.98MB total
+Dropped 898 nodes (cum <= 59.54MB)
+Showing top 30 nodes out of 299
+      flat  flat%   sum%        cum   cum%
+ 4179.54MB 35.10% 35.10%  4179.54MB 35.10%  github.com/bytedance/sonic/internal/encoder/vars.init.func1
+ 2204.41MB 18.51% 53.61%  2204.41MB 18.51%  github.com/bytedance/sonic/internal/native/types.init.func1
+ 1909.99MB 16.04% 69.64%  1910.49MB 16.04%  github.com/bytedance/sonic/internal/decoder/jitdec.newStack (inline)
+  760.17MB  6.38% 76.03%   760.17MB  6.38%  easycode/internal/codec.CanonicalJSON.Bytes (inline)
+  546.54MB  4.59% 80.62%   546.54MB  4.59%  bytes.growSlice
+  242.94MB  2.04% 82.66%   243.94MB  2.05%  github.com/bytedance/sonic/internal/encoder/vars.NewBytes
+  235.92MB  1.98% 84.64%   237.92MB  2.00%  github.com/bytedance/sonic/internal/encoder/vars.NewBuffer
+  221.76MB  1.86% 86.50%  6054.38MB 50.84%  github.com/bytedance/sonic/internal/encoder.Encode
+  202.95MB  1.70% 88.20%   202.95MB  1.70%  github.com/bytedance/sonic/internal/rt.GrowSlice
+  193.87MB  1.63% 89.83%   977.38MB  8.21%  encoding/json.Marshal
+  171.96MB  1.44% 91.28%  3018.62MB 25.35%  easycode/internal/codec.MarshalCanonical
+  154.25MB  1.30% 92.57%   433.44MB  3.64%  github.com/bytedance/sonic/internal/encoder/prim.Compact
+  111.56MB  0.94% 93.51%   111.56MB  0.94%  easycode/internal/codec.(*jsonScanner).value
+   45.90MB  0.39% 93.89%  2151.85MB 18.07%  github.com/bytedance/sonic.frozenConfig.Unmarshal
+   32.09MB  0.27% 94.16%   133.66MB  1.12%  easycode/internal/tool.cloneFacades (inline)
+   26.06MB  0.22% 94.38%  2193.38MB 18.42%  easycode/internal/tool.encodeFacades
+   26.05MB  0.22% 94.60%  2701.03MB 22.68%  easycode/internal/tool.CatalogSnapshot.View
+   17.28MB  0.15% 94.75%  1171.80MB  9.84%  github.com/bytedance/sonic/internal/decoder/jitdec.decodeTypedPointer
+   15.10MB  0.13% 94.87%  3171.60MB 26.63%  easycode/internal/context.(*Planner).Plan
+   10.50MB 0.088% 94.96%  1064.22MB  8.94%  decode_
+    7.68MB 0.064% 95.03%   273.03MB  2.29%  easycode/internal/provider/anthropic.NativeItem.MarshalJSON
+    7.58MB 0.064% 95.09%    91.77MB  0.77%  easycode/internal/provider.NewNativeCommitEnvelope
+    6.12MB 0.051% 95.14%   205.73MB  1.73%  easycode/internal/provider/openai.NativeItem.MarshalJSON
+    5.70MB 0.048% 95.19%  4954.67MB 41.60%  easycode/internal/app.TestSessionPreviewCurrentFixturesAreReadOnly.func1
+    5.52MB 0.046% 95.23%    89.67MB  0.75%  easycode/internal/tui.Model.Update
+    3.50MB 0.029% 95.26%   550.04MB  4.62%  bytes.(*Buffer).grow
+    3.50MB 0.029% 95.29%  4756.52MB 39.94%  github.com/bytedance/sonic/internal/encoder.encodeInto
+    2.55MB 0.021% 95.31%   105.42MB  0.89%  easycode/internal/session.DecodeNativeCommitPayload
+       2MB 0.017% 95.33%   137.40MB  1.15%  easycode/internal/app.orderedRestoreRecords
+       2MB 0.017% 95.35%   109.45MB  0.92%  easycode/internal/domain.NewSkillCatalog
+

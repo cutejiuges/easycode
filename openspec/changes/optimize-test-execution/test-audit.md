@@ -15,3 +15,12 @@
 本轮没有删除、合并或移动原有业务测试，没有修改已有测试的业务输入、断言或 skip。Linux CI 暴露 `TestChatResourcesCloseOrdersSessionJournalAndProvider` 把 TurnStarted 当成 Stream 已启动；该测试改用已有 started 信号等待真实前置条件，完整 timeline 断言不变。`TestStreamEscalationClosesProviderBeforeLoopAndJournal` 的 fixture 在取消后返回 `ctx.Err()`，使取消失败结果与原有清理顺序保持确定。新增 Go 测试入口位于 codec 与 Session 编码等价性回归；因此原测试到保留测试的映射为同一文件、同一入口、同一断言的一一映射。全量入口及子测试结果另由最终验收与基线清单比较确认。
 
 代码行数不作为删测依据。主要收益来自消除公共解码路径的重复扫描/临时分配和重包分片，不需要继续抽象已隔离的装配、跨用例缓存实例或缩减安全矩阵。
+
+## 独立矩阵子用例的调度审核
+
+`hook_resume_test.go` 的 `testHookResumeReconcilesEveryBatch`（Pre、Post、Failure、输入重写四个入口）、`stop_hook_compaction_test.go` 的 `testStopCompactionKeepsFrozenCorrection`（本地/插件两个入口）、`stop_hook_limits_test.go` 的 `TestStopSampleAndCallLimitsKeepTextContinuationAvailable` 共七个顶层入口，仅将已有独立子用例交给 `-parallel` 上限调度。原测试名称、所有模式、输入、崩溃点和断言位置完全不变，原断言到保留断言为一一映射。
+
+- 每个子用例在其函数内创建 workspace、Session root、HTTP server、runner、请求计数/互斥锁和收口 owner，没有跨子用例可变引用。`appPluginFixture`、`cacheFixtureConfig`、`writeHookConfig`、`writeStopHookConfig`、`loadToolLoopPlan` 均使用传入或独立临时路径。
+- 这些用例及所调用的 fixture 不执行 Setenv/Chdir；只读取 TestMain 一次创建的私有 HOME。其他修改环境的顶层测试仍顺序执行，不与其子用例交错。
+- Hook 的同一家 Provider 下全部恢复检查点及二次崩溃仍保持原有顺序；没有把共享 baseline、captured requests 或 compensated request 的检查点拆成并发任务。
+- 清理仍在子用例返回前等待原 control、resources、server；没有把父测试提前返回后的 defer 当成子用例资源 owner。实际效果须经乱序 race 和全量质量门验证。

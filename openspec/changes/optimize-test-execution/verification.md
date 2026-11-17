@@ -2,9 +2,9 @@
 
 ## 当前结论
 
-**整体目标尚未完成。** 本机完整质量门连续两轮为 **207.763 / 206.927 秒**，Linux 最短完整对照仍为 **359.663 秒**。原有业务测试、race、安全与恢复断言全部保留；不能用 600 秒诊断运行的成功状态代替五分钟验收。Hook 编码复用已获用户批准并完成实现与定向回归，完整验收正在重跑。
+**整体目标尚未完成。** 本机完整质量门连续两轮为 **239.377 / 212.452 秒**，Linux 最短完整对照仍为 **359.663 秒**。原有业务测试、race、安全与恢复断言全部保留；不能用 600 秒诊断运行的成功状态代替五分钟验收。Hook 编码复用已通过本机与原生 Linux 定向回归；新的 Linux 全量 300 秒运行仍超时。
 
-已同步 `origin/main` 的 `b0387c4bb3b833082beb1d077767885ecf46acdd`，开发分支为 `fix/test-execution-performance`。当前实现提交 `1056639f1abb17c3a0395612be2d398d33e8a635`，执行输入摘要为 `821c8bcd1c0ba23e89d124dab319d0b49d07af3dcc0eb0e1d98492703694ea13`。最终并发参数及验收任务保持未完成，变更未归档。
+已同步 `origin/main` 的 `b0387c4bb3b833082beb1d077767885ecf46acdd`，开发分支为 `fix/test-execution-performance`。当前实现提交 `a923dae75962ca1f8f99e67809bb922c0d0a5d14`，执行输入摘要为 `8b9d45fd47f8ff4c6911867129c56b8d515a7b7d7a563f042bf9466b548a815d`。最终并发参数及验收任务保持未完成，变更未归档。
 
 ## 计时与覆盖口径
 
@@ -13,23 +13,23 @@
 | 环境与运行 | 普通 | race | 完整质量门 | 判定 |
 |---|---:|---:|---:|---|
 | main 独立源码快照 | 150.704 s | 961.605 s | 1114.245 s | 基线通过 |
-| 当前本机 pre-commit | 57.057 s | 146.051 s | 207.763 s | 通过，低于 300 s |
-| 当前本机 pre-push | 56.431 s | 146.032 s | 206.927 s | 通过，低于 300 s |
+| 当前本机 pre-commit | 60.931 s | 155.750 s | 239.377 s | 通过，低于 300 s |
+| 当前本机 pre-push | 57.819 s | 148.265 s | 212.452 s | 通过，低于 300 s |
 | Linux，2 命令 / 1 分片 | 39.729 s | 386.643 s | 444.570 s | 完整通过，性能未达标 |
 | Linux，4 命令 / 2 分片 | 33.876 s | 306.810 s | 359.663 s | 完整通过，性能未达标 |
 | Linux，4 命令 / 4 分片 | 38.788 s | 449.121 s | 512.676 s | 完整通过，性能未达标 |
 | Linux，4 命令 / 8 分片 | 49.353 s | 429.551 s | 525.382 s | 完整通过，性能未达标 |
 
-本机两轮使用相同源码摘要，未观察到其他重测试套件竞争；期间继续进行只读分析与文档整理。两轮各执行普通/race **1605 个顶层入口、4745 条父子测试结果**；基线每阶段 **1597 个入口、4707 条结果**的通过/跳过状态逐项一致。两轮最大单个子进程 RSS 分别为 1131692032 / 1232912384 bytes，这不是并发进程内存之和。详见 [local-verification.json](local-verification.json)、[coverage-comparison.json](coverage-comparison.json)、[baseline.json](baseline.json)。
+本机两轮使用相同源码摘要，未观察到其他重测试套件竞争；期间继续进行只读分析与文档整理。两轮各执行普通/race **1608 个顶层入口、4764 条父子测试结果**；基线每阶段 **1597 个入口、4707 条结果**的通过/跳过状态逐项一致。两轮最大单个子进程 RSS 分别为 1155743744 bytes（pre-commit），这不是并发进程内存之和。当前两轮原始报告为 `/tmp/easycode-hook-full-1`、`/tmp/easycode-hook-full-2`，基线 4707 条结果逐项对照均无缺失、无状态变化。历史轮次见 [local-verification.json](local-verification.json)、[coverage-comparison.json](coverage-comparison.json)、[baseline.json](baseline.json)。
 
-Linux 对照基于 `32efe87`；当前提交相对该版本只增加和修正诊断 workflow，Go 实现及测试调度相同。对照均为独立原生 runner，不假定不同 VM 的绝对速度完全一致。8 命令 / 8 分片在 300.258 秒触及预算，未跑完。完整配置、资源、慢测试和运行链接见 [ci-low-shards.json](ci-low-shards.json)、[ci-v4-complete-slow.json](ci-v4-complete-slow.json)、[ci-v4-timeout.json](ci-v4-timeout.json)。
+Linux 对照基于 `32efe87`；这些属于 Hook 编码复用前的历史对照，不代表当前实现。对照均为独立原生 runner，不假定不同 VM 的绝对速度完全一致。8 命令 / 8 分片在 300.258 秒触及预算，未跑完。完整配置、资源、慢测试和运行链接见 [ci-low-shards.json](ci-low-shards.json)、[ci-v4-complete-slow.json](ci-v4-complete-slow.json)、[ci-v4-timeout.json](ci-v4-timeout.json)。
 
 ## 根因证据与已实施处理
 
 1. **严格解码重复扫描和分配。** 原 `UnmarshalRecord` 重复执行基础校验、严格解码与两套形状检查，嵌套字段又经 `ObjectMembers` 重复验证及物化。现用调用局部的已验证字节范围减少重复工作，纯校验不物化数组；最终强类型解码仍用固定 Sonic 配置。保持 Unicode、重复/未知字段、null、必需字段、自定义 decoder、未知字段优先级和公开返回值所有权。两个大预览 fixture 的 race 累计分配从 1330.34 降至 269.45 MB，进程时间从 11.150 降至 3.056 秒；见 [targeted-final.json](targeted-final.json)、[preview-after-alloc.txt](preview-after-alloc.txt)。
 2. **Session payload 重复编码。** 经用户补充批准，`EncodeRecord` 复用 checksum envelope 已编码字节，计算原 SHA-256 后附加唯一当前 checksum 字段，避免对相同大 payload 再编码。全部校验及完整 record 大小检查保留。相同大 record/batch race profile 从 34.556 降至 23.804 秒，累计分配降至 2453.88 MB；见 [session-encoding-profile.txt](session-encoding-profile.txt)。
-3. **race 放大频繁编码的内存成本。** 原生 Linux 的输入重写恢复 profile 为 39.19 秒、46.04 CPU 采样秒，累计分配 12761.37 MB，其中 Sonic 编码栈池为 10546.50 MB（82.64%）；TSAN 内存范围检查占 CPU 样本约 49.93%。嵌套 `MarshalJSON` 和重复校验继续触发编码。Sonic race 路径额外用标准库读取值以检测竞态，Go race 又会随机丢弃池对象，放大频繁申请编码栈的成本。用户已批准并实施 Hook 编码复用；本次完整性能验收尚未结束。见 [原生 Linux profile](linux-hook-profile.txt) 与 [本机 Provider profile](hook-encoding-before.txt)。alloc_space 为累计分配；CPU cumulative 含祖先重叠，不能相加。
-4. **分片必须有界，不能只增加并发。** GOMAXPROCS 单独调整的五轮对照未显著改善重矩阵；Linux 更多分片也没有稳定收益。当前 runner 在普通/race 各自枚举实际 Test、Example、Fuzz seed，确定性生成互斥完备清单，每阶段保留并复用已链接二进制，避免每个分片重新链接。默认候选仍为最多 8 个活动命令、每进程 2 并行、Darwin app 16 分片、Linux app 8 分片；Linux 默认配置尚待完成性能验收。没有证据表明慢路径来自业务死锁，现有证据支持重复工作、内存与 race 开销及并发放大。
+3. **race 放大频繁编码的内存成本。** 原生 Linux 的输入重写恢复 profile 为 39.19 秒、46.04 CPU 采样秒，累计分配 12761.37 MB，其中 Sonic 编码栈池为 10546.50 MB（82.64%）；TSAN 内存范围检查占 CPU 样本约 49.93%。嵌套 `MarshalJSON` 和重复校验继续触发编码。Sonic race 路径额外用标准库读取值以检测竞态，Go race 又会随机丢弃池对象，放大频繁申请编码栈的成本。Hook 编码复用后同一 Linux 矩阵累计分配为 9478.08 MB（降低 25.73%），采样时长为 29.99 秒；见 [优化后原生 profile](linux-hook-after.txt)。本次完整性能验收尚未结束。见 [原生 Linux profile](linux-hook-profile.txt) 与 [本机 Provider profile](hook-encoding-before.txt)。alloc_space 为累计分配；CPU cumulative 含祖先重叠，不能相加。
+4. **分片必须有界，不能只增加并发。** GOMAXPROCS 单独调整的五轮对照未显著改善重矩阵；Linux 更多分片也没有稳定收益。当前 runner 在普通/race 各自枚举实际 Test、Example、Fuzz seed，确定性生成互斥完备清单，每阶段保留并复用已链接二进制，避免每个分片重新链接。默认候选为 Darwin 最多 8 个活动命令 / app 16 分片，Linux 最多 4 个活动命令 / app 2 分片，每进程 2 并行；Linux 默认配置尚待完成性能验收。没有证据表明慢路径来自业务死锁，现有证据支持重复工作、内存与 race 开销及并发放大。
 
 `make test`、`test-race`、`test-all`、`verify` 共用同一执行器；普通/race 不受外层 `make -j` 影响而无界叠加。hooks/CI 执行完整 `make verify`。运行失败、超时或取消由唯一 owner 停止派发、取消并回收已启动进程，保留日志和未完成范围；直接执行二进制保留标准 Go 的所选 GOROOT/PATH、包工作目录和 TestMain 语义。诊断 profile 是独立手动模式，不代替默认质量门。
 
@@ -44,8 +44,8 @@ Linux 对照基于 `32efe87`；当前提交相对该版本只增加和修正诊�
 
 ## 尚未完成与平台限制
 
-需完成Hook 编码复用的完整验收、选定可复跑的 Linux 默认参数，并在最终源码上重新取得连续两轮低于 300 秒的完整质量门及原生 Linux 证据，之后才能完成任务 3.4、5.1、5.2、5.4。当前不可声称 CI 五分钟目标已实现。
+需选定可复跑且兼顾内存的默认参数，并在最终源码上重新取得连续两轮低于 300 秒的完整质量门及原生 Linux 证据，之后才能完成任务 3.4、5.1、5.2、5.4。当前不可声称 CI 五分钟目标已实现。
 
 Darwin 覆盖现有真实 sandbox/Exec 集成；Linux 已真实执行上述完整对照。Windows 未原生执行，POSIX 进程组回归只在 POSIX 运行，本次不扩大产品平台支持承诺。变更保持未归档，未创建 PR。
 
-额外预览采样 [43917045557](https://github.com/cutejiuges/easycode/actions/runs/43917045557) 在平台显示 queued 且没有 job；普通和强制取消 API 均以 409 拒绝，原因是尚未进入调度队列。它没有产出，也不计为验证证据。重复触发的 [43918045098](https://github.com/cutejiuges/easycode/actions/runs/43918045098) 已确认取消；已完成的输入重写 profile 为 [43917045673](https://github.com/cutejiuges/easycode/actions/runs/43917045673)。
+额外预览采样 [43917045557](https://github.com/cutejiuges/easycode/actions/runs/43917045557) 曾长时间没有进入平台队列、取消 API 返回 409；平台后来完成执行，已下载真实 profile，见 [linux-preview-profile.txt](linux-preview-profile.txt)。此结果来自 Hook 优化前的提交，不能作为新实现验收。重复触发的 [43918045098](https://github.com/cutejiuges/easycode/actions/runs/43918045098) 已确认取消。

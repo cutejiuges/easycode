@@ -12,7 +12,7 @@
 - [x] 2.4 运行固定 Session、Provider native/golden/cache 和 uninterrupted/restored 等价测试，并复测 benchmark/预览 profile；记录 canonical bytes、fingerprint、累计分配和耗时的前后比较。
 - [x] 2.5 复用 Session checksum envelope 生成最终 record，保留全部校验；补充原 Sonic 整体编码的逐字节表格/fuzz 对照，复测大 record/batch profile 并确认字段顺序、checksum、所有权和固定 fixture 不变。
 
-- [ ] 2.6 在 HookToolInput 校验/Digest、HookInputEffect 校验及 HookInputEffect/HookFinished 嵌套编码中复用调用局部字节；通过原 Sonic 嵌套编码的逐字节表格/fuzz 对照、坏输入与边界回归，复测本机和原生 Linux profile，保持错误分类、digest、固定 fixture 和全部 race 检查。
+- [x] 2.6 在 HookToolInput 校验/Digest、HookInputEffect 校验及 HookInputEffect/HookFinished 嵌套编码中复用调用局部字节；通过原 Sonic 嵌套编码的逐字节表格/fuzz 对照、坏输入与边界回归，复测本机和原生 Linux profile，保持错误分类、digest、固定 fixture 和全部 race 检查。
 
 ## 3. 有界执行与测试装配重构
 

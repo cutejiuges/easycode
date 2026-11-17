@@ -1,5 +1,6 @@
 """验证测试清单、并发上限和真实子进程取消，不使用延时猜测调度结果。"""
 
+import errno
 import json
 import os
 from pathlib import Path
@@ -15,6 +16,7 @@ import unittest
 from unittest import mock
 
 import test_suite
+import test_binary
 from test_binary import binary_path
 
 
@@ -65,6 +67,7 @@ class SuiteTests(unittest.TestCase):
 from pathlib import Path
 args = sys.argv[1:]
 goroot = str(Path(__file__).parent.resolve()/'selected toolchain')
+assert os.environ['GOMAXPROCS'] == ('1' if args[:2] == ['tool', 'test2json'] else str(min(2, os.cpu_count() or 1)))
 if args[0] == 'env':
  print(json.dumps({'GOOS': 'fixture', 'GOARCH': 'fixture', 'GOVERSION': 'fixture', 'GOROOT': goroot, 'GOCACHE': 'fixture'}))
  sys.exit(0)
@@ -87,6 +90,7 @@ else:
  if os.name == 'posix':
   assert subprocess.check_output(['go'], text=True).strip() == 'fixture-selected-toolchain'
  assert '-test.paniconexit0' in args and '-test.count=1' in args
+ assert '-test.parallel=1' in args
 names = ['Example', 'FuzzInput', 'TestRaceOnly' if race else 'TestNormalOnly']
 for name in names:
  if '-list=.' in args:
@@ -100,6 +104,7 @@ print(json.dumps({'Package': 'fixture/package', 'Action': 'pass'}))
             report = root / "report"
             runner = Path(test_suite.__file__).resolve()
             result = subprocess.run([sys.executable, "-B", str(runner), "--mode=all", "--jobs=2",
+                                     "--parallel=1",
                                      "--go=" + shlex.join([sys.executable, str(fake)]),
                                      "--output=" + str(report)], capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -136,11 +141,30 @@ class BinaryCaptureTests(unittest.TestCase):
             self.assertEqual(json.loads(result.stdout), [str(cwd.resolve()), ["-test.list=.", "arg with spaces"]])
             binary = binary_path(cache, cwd)
             self.assertTrue(binary.is_file())
+            self.assertEqual(original.stat().st_ino, binary.stat().st_ino)
             self.assertNotEqual(binary, binary_path(cache, root / "another" / "package"))
             original.unlink()
             replay = subprocess.run([str(binary), "retained"], cwd=cwd, capture_output=True, text=True, timeout=5)
             self.assertEqual(replay.returncode, 7, replay.stderr)
             self.assertEqual(json.loads(replay.stdout), [str(cwd.resolve()), ["retained"]])
+
+    def test_copy_fallback_retains_bytes_and_permissions_and_propagates_other_failures(self):
+        with tempfile.TemporaryDirectory(prefix="easycode-link-test-") as directory:
+            root = Path(directory)
+            original = root / "original"
+            original.write_bytes(b"compiled binary fixture")
+            original.chmod(0o700)
+            for code in (errno.EXDEV, errno.EPERM, errno.ENOTSUP):
+                with self.subTest(code=code):
+                    retained = root / str(code)
+                    with mock.patch.object(test_binary.os, "link", side_effect=OSError(code, "fixture")):
+                        test_binary.retain_binary(original, retained)
+                    self.assertEqual(retained.read_bytes(), original.read_bytes())
+                    self.assertEqual(retained.stat().st_mode, original.stat().st_mode)
+            with mock.patch.object(test_binary.os, "link", side_effect=OSError(errno.ENOSPC, "fixture")):
+                with self.assertRaises(OSError), mock.patch.object(test_binary.shutil, "copy2") as copy:
+                    test_binary.retain_binary(original, root / "failed")
+                copy.assert_not_called()
 
 
 @unittest.skipUnless(os.name == "posix", "POSIX process-group lifecycle requires a native POSIX host")
@@ -165,7 +189,7 @@ if mode in ('child', 'orphan'):
  child = subprocess.Popen([sys.executable, '-c', 'import signal; signal.pause()'],
                           start_new_session=mode == 'child', preexec_fn=os.setpgrp if mode == 'orphan' else None)
 s = socket.create_connection(('127.0.0.1', int(sys.argv[1])))
-s.sendall((json.dumps({'pid': os.getpid(), 'child': child.pid if child else None})+'\\n').encode())
+s.sendall((json.dumps({'pid': os.getpid(), 'child': child.pid if child else None, 'label': sys.argv[3]})+'\\n').encode())
 command = s.recv(1)
 if child and mode != 'orphan':
  child.terminate()
@@ -182,6 +206,9 @@ sys.exit(7 if command == b'f' else 0)
             command.append(child if isinstance(child, str) else "child")
         elif ignore:
             command.append("ignore")
+        else:
+            command.append("")
+        command.append(name)
         return name, command, self.root
 
     def accept(self):
@@ -193,13 +220,13 @@ sys.exit(7 if command == b'f' else 0)
             data += connection.recv(1024)
         return connection, json.loads(data)
 
-    def start(self, jobs, interrupted=lambda: False, clock=time.monotonic):
+    def start(self, jobs, interrupted=lambda: False, clock=time.monotonic, **limits):
         results = []
         errors = []
 
         def run():
             try:
-                results.extend(test_suite.run_jobs(self.owner, jobs, 2, clock() + 10, interrupted, clock))
+                results.extend(test_suite.run_jobs(self.owner, jobs, 2, clock() + 10, interrupted, clock, **limits))
             except Exception as error:
                 errors.append(error)
 
@@ -226,6 +253,24 @@ sys.exit(7 if command == b'f' else 0)
             second.sendall(b"x")
         results = self.assert_finished(state)
         self.assertEqual(len(results), 4)
+        self.assertTrue(all(result["exit"] == 0 for result in results))
+
+    def test_heavy_limit_keeps_light_work_running_without_omissions(self):
+        jobs = [self.job("heavy-first"), self.job("heavy-second"), self.job("light")]
+        state = self.start(jobs, heavy_labels=("heavy-first", "heavy-second"), heavy_limit=1)
+        first, first_info = self.accept()
+        second, second_info = self.accept()
+        with self.owner.lock:
+            active = set(self.owner.active)
+        self.assertEqual(len(active), 2)
+        # 两个连接建立后主进程仍被握手阻塞；只有轻包允许越过排队的第二个重包。
+        self.assertEqual({first_info["label"], second_info["label"]}, {"heavy-first", "light"})
+        first.sendall(b"x")
+        second.sendall(b"x")
+        third, _ = self.accept()
+        third.sendall(b"x")
+        results = self.assert_finished(state)
+        self.assertEqual({result["label"] for result in results}, {job[0] for job in jobs})
         self.assertTrue(all(result["exit"] == 0 for result in results))
 
     def test_failure_cancels_sibling_and_reaps_independent_child_group(self):
