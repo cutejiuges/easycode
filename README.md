@@ -538,7 +538,7 @@ exit 0 的空白或 `{}` 表示通过；只有严格 `{"decision":"block","reaso
 
 实现及验证见[Stop 验收记录](openspec/changes/archive/2026-11-13-add-stop-command-hooks/verification.md)。真实 PTY 入口为 `scripts/stop-hook-smoke.py`，命令执行仍仅支持 Darwin；其他平台失败关闭。
 
-完整质量门使用 `make verify`，包含分支策略、格式、vet、Staticcheck、架构边界、测试调度器自检、全量普通测试和 race。质量门需要 Python 3.9+，默认总预算为 300 秒（`TEST_BUDGET`），每次强制重新执行测试。Go 的正常构建缓存仍可复用；依赖和工具链需提前准备好。`TEST_TIMEOUT` 保留单个测试进程的失败上限，不修改各业务操作的取消或超时断言。
+完整质量门使用 `make verify`，包含分支策略、格式、vet、Staticcheck、架构边界、测试调度器自检、全量普通测试和 race。质量门需要 Python 3.9+，默认总预算为 360 秒（`TEST_BUDGET`），每次强制重新执行测试。Go 的正常构建缓存仍可复用；依赖和工具链需提前准备好。`TEST_TIMEOUT` 保留单个测试进程的失败上限，不修改各业务操作的取消或超时断言。
 
 测试入口在 Darwin 默认最多运行 6 个命令（不超过可见 CPU 数的两倍），其他平台最多 4 个且不超过可见 CPU 数；每个测试进程使用 2 路 CPU/测试并行度。编译与静态分析独立使用最多 4 路 CPU，测试枚举的构建命令也最多并行 4 个包。app 的顶层测试在 Darwin 自动分为 16 个隔离分片，其他平台默认 2 个。Linux CI 使用 4 个命令、2 个 app 分片，手动 workflow 可比较进程数、分片数和进程内并行度。Provider、Session、Runtime、Tool、TUI 六个高 RSS 包额外共享最多 2 个执行槽，并提前与 app 分片交错；`--heavy-jobs` 可调整该上限。其余包同样受总并发上限约束，普通与 race 阶段顺序执行，`make -j` 不会同时启动两个阶段。枚举时为每个包链接一次测试二进制，同一阶段的分片复用该文件并保持包目录与 TestMain 生命周期，结束后删除临时二进制。全部 Test、Example 和默认 fuzz seed 都从当前平台自动枚举，实际完成清单必须匹配；不会跳过慢包或重测试。
 

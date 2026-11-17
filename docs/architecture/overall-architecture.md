@@ -953,7 +953,7 @@ make verify
 
 涉及 provider、context 或缓存时还必须执行对应 golden/cache regression suite。
 
-质量门由 `scripts/test_suite.py` 统一计时和管理测试进程，普通与 race 顺序执行并强制每个测试运行一次。各阶段通过 Go 枚举并保留当前构建模式的二进制，以标准 `test2json` 执行分片；保持包目录、TestMain、参数和失败退出语义，阶段结束或失败后清理临时二进制，避免重复链接。app 按当前平台自动发现的顶层入口分片，保留 TestMain、子测试与环境隔离；其他包共享同一有界调度；高 RSS 的两个 Provider、Runtime、Session、Tool、TUI 包另有限额并提前交错执行，构建与测试分别限制 CPU 并行度。同设备以硬链接保留二进制，跨设备或不支持时复制。完成清单必须与 Test/Example/Fuzz seed 清单一致。失败、取消与超时停止派发并由唯一 owner 终止和等待进程；调度器的真实子进程回归位于 `scripts/test_suite_test.py`。完整流程的默认预算为 300 秒，不能用结果缓存、缺失平台或跳过重测试证明达标。
+质量门由 `scripts/test_suite.py` 统一计时和管理测试进程，普通与 race 顺序执行并强制每个测试运行一次。各阶段通过 Go 枚举并保留当前构建模式的二进制，以标准 `test2json` 执行分片；保持包目录、TestMain、参数和失败退出语义，阶段结束或失败后清理临时二进制，避免重复链接。app 按当前平台自动发现的顶层入口分片，保留 TestMain、子测试与环境隔离；其他包共享同一有界调度；高 RSS 的两个 Provider、Runtime、Session、Tool、TUI 包另有限额并提前交错执行，构建与测试分别限制 CPU 并行度。同设备以硬链接保留二进制，跨设备或不支持时复制。完成清单必须与 Test/Example/Fuzz seed 清单一致。失败、取消与超时停止派发并由唯一 owner 终止和等待进程；调度器的真实子进程回归位于 `scripts/test_suite_test.py`。完整流程的默认预算为 360 秒，不能用结果缓存、缺失平台或跳过重测试证明达标。
 
 严格 JSON 在 `internal/codec/scan.go` 中先完成标准语法及无损校验，再按需要索引调用局部的字段范围。基础验证不物化数组值，字段枚举只保留一层；typed record 校验复用嵌套索引，最后仍使用固定 Sonic 配置解码。索引不跨调用缓存，公开字段结果独立复制，canonical 编码和所有权契约保持。`scan_test.go` 使用独立 token 参考实现做差异 fuzz，`benchmark_test.go` 观测小对象、嵌套记录和大文本的普通/race 成本。
 

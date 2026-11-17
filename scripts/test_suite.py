@@ -453,7 +453,7 @@ def main():
     # Darwin 的重矩阵需要细分；其他平台减少独立进程中的重复初始化。
     parser.add_argument("--shards", type=int, default=16 if sys.platform == "darwin" else 2)
     parser.add_argument("--timeout", default="20m")
-    parser.add_argument("--budget", type=float, default=300)
+    parser.add_argument("--budget", type=float, default=360)
     parser.add_argument("--output")
     args = parser.parse_args()
     if min(args.jobs, args.parallel, args.heavy_jobs, args.shards, args.budget) <= 0:

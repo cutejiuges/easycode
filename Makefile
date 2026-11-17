@@ -7,7 +7,7 @@ GOFLAGS ?=
 PYTHON ?= python3
 # 全量真实进程、恢复矩阵和 race 共用有界包级总预算，不改变操作级 deadline。
 TEST_TIMEOUT ?= 20m
-TEST_BUDGET ?= 300
+TEST_BUDGET ?= 360
 TEST_OPTIONS ?=
 TEST_RUNNER := $(PYTHON) -B scripts/test_suite.py --go "$(GO)" --timeout=$(TEST_TIMEOUT) --budget=$(TEST_BUDGET) $(TEST_OPTIONS)
 APP_NAME ?= easycode

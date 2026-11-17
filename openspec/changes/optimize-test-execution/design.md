@@ -15,11 +15,13 @@
 
 已有完整套件 profile 和断言解释保留在 `../archive/2026-11-15-add-runtime-effort-control/regression-2026-11-15.md` 与 `../archive/2026-11-15-add-pre-tool-use-input-rewrite/regression-2026-11-15.md`。本轮紧凑证据见 [diagnosis.json](diagnosis.json)，原始临时输出路径也记在其中；不把大型二进制/profile 加入仓库。
 
+2026-11-18 用户明确接受当前耗时压缩结果，并要求本轮收尾后将总时限由 300 秒调整为 360 秒。以下目标与验收按新的 360 秒预算执行；历史诊断报告保持原始预算与失败状态，不把旧超时记录改写为通过。
+
 ## Goals / Non-Goals
 
 **Goals:**
 
-- 最终 `make verify` 的未缓存测试全流程在参考环境中低于 300 秒；同时报告普通与 race 的合计时间。
+- 最终 `make verify` 的未缓存测试全流程在参考环境中低于 360 秒；同时报告普通与 race 的合计时间。
 - 优化共享重复工作，建立可定位回归的耗时与执行集合报告；完整检查项及业务断言保持。
 - 限制活动进程总量，隔离环境敏感测试，明确失败、取消、超时与资源回收。
 
@@ -55,7 +57,7 @@
 
 范围限定为 HookToolInput、HookInputEffect、HookFinished 内部的重复编码。HookToolInput 的校验与 Digest 通过私有函数复用一次输入编码；HookInputEffect 的校验同时复用这些字节及 digest；HookInputEffect、HookFinished 在自身嵌套编码中先取得子对象的合法编码字节，再以局部 RawMessage 写入同一 Sonic envelope，避免父层多次回调子对象的 MarshalJSON。所有校验和大小限制保持原含义，错误分类、字段顺序、escaping、digest 与公共接口不变。
 
-复用只存在于当前调用，不持久化缓存、不创建全局状态，不改变 Sonic 或 Go race 的检测机制，不更换 encoder/backend。新增表格对照和受限 fuzz，保留原 Sonic 嵌套编码结构作为测试参考，逐字节比较输入、effect、finished 与 digest；覆盖三种能力、Pre/Post/Stop、非法值、Unicode/HTML/转义、边界及返回字节所有权。后续再次执行固定 fixture、双 Provider 恢复/cache、完整普通/race 和原生 Linux 验收，不能用单项 profile 改善代替完整五分钟目标。
+复用只存在于当前调用，不持久化缓存、不创建全局状态，不改变 Sonic 或 Go race 的检测机制，不更换 encoder/backend。新增表格对照和受限 fuzz，保留原 Sonic 嵌套编码结构作为测试参考，逐字节比较输入、effect、finished 与 digest；覆盖三种能力、Pre/Post/Stop、非法值、Unicode/HTML/转义、边界及返回字节所有权。后续再次执行固定 fixture、双 Provider 恢复/cache、完整普通/race 和原生 Linux 验收，不能用单项 profile 改善代替完整六分钟目标。
 
 ### 2. 使用同一执行入口管理测试阶段与有界分片
 
@@ -81,9 +83,9 @@
 
 ### 4. 验收预算覆盖完整流程
 
-参考本地环境为本轮 10 核、32 GiB、Darwin/arm64、Go 1.24.13；Linux 以仓库 GitHub Actions 原生 runner 实际配置为准。工具链与依赖下载属于环境准备，验收计时包含后续编译/链接、静态检查、普通和 race。禁止用缓存测试结果报五分钟。
+参考本地环境为本轮 10 核、32 GiB、Darwin/arm64、Go 1.24.13；Linux 以仓库 GitHub Actions 原生 runner 实际配置为准。工具链与依赖下载属于环境准备，验收计时包含后续编译/链接、静态检查、普通和 race。禁止用缓存测试结果报六分钟。
 
-记录阶段和最慢顶层用例，父测试包含子测试时不重复求和；记录实际执行清单、峰值资源和其他 worktree 竞争。最终同一提交在无竞争参考环境连续两轮完整质量门均需低于 300 秒；Linux 需要原生运行证据，交叉编译不能算性能验收。没有可用 Linux runner 时保持未验证状态，不声称 CI 达标。
+记录阶段和最慢顶层用例，父测试包含子测试时不重复求和；记录实际执行清单、峰值资源和其他 worktree 竞争。最终同一提交在无竞争参考环境连续两轮完整质量门均需低于 360 秒；Linux 需要原生运行证据，交叉编译不能算性能验收。没有可用 Linux runner 时保持未验证状态，不声称 CI 达标。
 
 ## Risks / Trade-offs
 
@@ -92,7 +94,7 @@
 - [并发使峰值内存与 FD 增加] → 从有界进程数开始实测，同时记录资源峰值；不能只根据核数盲目扩大并发。
 - [分片漏测、重复测或失去清理] → 用自动枚举集合和故障注入测试覆盖分片、退出码、信号、超时及所有子进程回收。
 - [新 runner 维护成本] → 保持小入口、使用标准 Go 测试语义，避免独立维护业务测试列表和新的通用框架。
-- [目标尚无实现证据] → 当前诊断不是五分钟达标证明；apply 必须持续验证，不能在预算未达成时勾选完成。
+- [目标尚无实现证据] → 当前诊断不是六分钟达标证明；apply 必须持续验证，不能在预算未达成时勾选完成。
 
 ## Migration Plan
 

@@ -38,12 +38,12 @@ on:
           - '16'
         default: '2'
       diagnostic_budget:
-        description: Total seconds (600 is diagnostic only; acceptance remains below 300)
+        description: Total seconds (600 is diagnostic only; acceptance remains below 360)
         type: choice
         options:
-          - '300'
+          - '360'
           - '600'
-        default: '300'
+        default: '360'
   pull_request:
   push:
     branches:
@@ -73,7 +73,7 @@ jobs:
           cache: true
       - name: Run repository verification
         env:
-          TEST_BUDGET: ${{ inputs.diagnostic_budget || '300' }}
+          TEST_BUDGET: ${{ inputs.diagnostic_budget || '360' }}
           TEST_JOBS: ${{ inputs.test_jobs || '4' }}
           TEST_PARALLEL: ${{ inputs.test_parallel || '2' }}
           APP_SHARDS: ${{ inputs.app_shards || '2' }}
