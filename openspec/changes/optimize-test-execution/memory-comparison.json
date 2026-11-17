@@ -1,6 +1,6 @@
 {
   "metric": "Sampled process-tree RSS sum, including shared pages; not unique physical memory or cumulative allocations. Sampling can miss brief peaks.",
-  "competition": "Concurrent race tests were observed in worktree 7b26 and left running. They are excluded from this process tree; elapsed time is not an isolated measurement.",
+  "competition": "Earlier eight/six/bounded-six runs observed competing worktree tests. Later runs record competition per entry; RSS includes only the owned process tree.",
   "runs": [
     {
       "measurement": "eight",
@@ -169,6 +169,156 @@
       "tree_rss_peak_bytes": 3203547136,
       "sample_interval_seconds": 0.25,
       "peak_processes": 24
+    },
+    {
+      "measurement": "overlap-pre-commit",
+      "source_digest": "4f96b93789d79d6e0672a19727ffd91204e2904bdd9da322582e36922e24122e",
+      "seconds": 240.2,
+      "exit": 0,
+      "budget_seconds": 300.0,
+      "jobs": 6,
+      "parallel": 2,
+      "shards": 16,
+      "build_jobs": 4,
+      "heavy_jobs": 2,
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 63.626,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 176.392,
+          "exit": 0
+        }
+      ],
+      "max_child_rss_bytes": 1288896512,
+      "child_cpu_seconds": 982.712,
+      "tree_rss_peak_bytes": 3012984832,
+      "sample_interval_seconds": 0.25,
+      "peak_processes": 22,
+      "competing_test_suite_observed": false
+    },
+    {
+      "measurement": "overlap-pre-push",
+      "source_digest": "4f96b93789d79d6e0672a19727ffd91204e2904bdd9da322582e36922e24122e",
+      "seconds": 261.441,
+      "exit": 0,
+      "budget_seconds": 300.0,
+      "jobs": 6,
+      "parallel": 2,
+      "shards": 16,
+      "build_jobs": 4,
+      "heavy_jobs": 2,
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 63.825,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 197.446,
+          "exit": 0
+        }
+      ],
+      "max_child_rss_bytes": 1281949696,
+      "child_cpu_seconds": 1005.558,
+      "tree_rss_peak_bytes": 3214671872,
+      "sample_interval_seconds": 0.25,
+      "peak_processes": 23,
+      "competing_test_suite_observed": true
+    },
+    {
+      "measurement": "hook-target-pre-commit",
+      "source_digest": "ab118d4c952834f24d3e3edcee35c0d2f51d67645cdb790a7ac1fb6548806126",
+      "seconds": 244.996,
+      "exit": 0,
+      "budget_seconds": 300.0,
+      "jobs": 6,
+      "parallel": 2,
+      "shards": 16,
+      "build_jobs": 4,
+      "heavy_jobs": 2,
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 62.235,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 182.589,
+          "exit": 0
+        }
+      ],
+      "max_child_rss_bytes": 1275101184,
+      "child_cpu_seconds": 996.62,
+      "tree_rss_peak_bytes": 3269181440,
+      "sample_interval_seconds": 0.25,
+      "peak_processes": 21,
+      "competing_test_suite_observed": false
+    },
+    {
+      "measurement": "budget-pre-commit",
+      "source_digest": "84f8c4bceeff66a1a72952677b72e0d8e71062025f9238afcaf5f323aecf9dbc",
+      "seconds": 238.27,
+      "exit": 0,
+      "budget_seconds": 360.0,
+      "jobs": 6,
+      "parallel": 2,
+      "shards": 16,
+      "build_jobs": 4,
+      "heavy_jobs": 2,
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 64.738,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 173.359,
+          "exit": 0
+        }
+      ],
+      "max_child_rss_bytes": 1150074880,
+      "child_cpu_seconds": 964.232,
+      "tree_rss_peak_bytes": 3167944704,
+      "sample_interval_seconds": 0.25,
+      "peak_processes": 21,
+      "competing_test_suite_observed": false
+    },
+    {
+      "measurement": "budget-pre-push",
+      "source_digest": "84f8c4bceeff66a1a72952677b72e0d8e71062025f9238afcaf5f323aecf9dbc",
+      "seconds": 234.915,
+      "exit": 0,
+      "budget_seconds": 360.0,
+      "jobs": 6,
+      "parallel": 2,
+      "shards": 16,
+      "build_jobs": 4,
+      "heavy_jobs": 2,
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 62.277,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 172.469,
+          "exit": 0
+        }
+      ],
+      "max_child_rss_bytes": 1239203840,
+      "child_cpu_seconds": 964.454,
+      "tree_rss_peak_bytes": 3260186624,
+      "sample_interval_seconds": 0.25,
+      "peak_processes": 24,
+      "competing_test_suite_observed": false
     }
   ]
 }

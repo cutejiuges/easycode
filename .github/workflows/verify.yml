@@ -37,13 +37,6 @@ on:
           - '8'
           - '16'
         default: '2'
-      diagnostic_budget:
-        description: Total seconds (600 is diagnostic only; acceptance remains below 360)
-        type: choice
-        options:
-          - '360'
-          - '600'
-        default: '360'
   pull_request:
   push:
     branches:
@@ -64,7 +57,6 @@ jobs:
   verify:
     if: ${{ !inputs.diagnostic_profile }}
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ inputs.diagnostic_budget == '600' && 12 || 10 }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -73,11 +65,10 @@ jobs:
           cache: true
       - name: Run repository verification
         env:
-          TEST_BUDGET: ${{ inputs.diagnostic_budget || '360' }}
           TEST_JOBS: ${{ inputs.test_jobs || '4' }}
           TEST_PARALLEL: ${{ inputs.test_parallel || '2' }}
           APP_SHARDS: ${{ inputs.app_shards || '2' }}
-        run: make verify TEST_BUDGET="$TEST_BUDGET" TEST_OPTIONS="--jobs=$TEST_JOBS --parallel=$TEST_PARALLEL --shards=$APP_SHARDS --output=$RUNNER_TEMP/easycode-verification"
+        run: make verify TEST_OPTIONS="--jobs=$TEST_JOBS --parallel=$TEST_PARALLEL --shards=$APP_SHARDS --output=$RUNNER_TEMP/easycode-verification"
       - name: Upload verification timings and test events
         if: always()
         uses: actions/upload-artifact@v4

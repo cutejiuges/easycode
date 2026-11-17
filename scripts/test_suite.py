@@ -6,6 +6,7 @@ import concurrent.futures
 from datetime import datetime
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -18,6 +19,7 @@ import threading
 import time
 
 from test_binary import binary_path
+from race_policy import load_policy, select_race
 
 try:
     import resource
@@ -306,11 +308,12 @@ def run_suite(args):
     environment = dict(os.environ, GOMAXPROCS=str(build_jobs))
     owner = ProcessOwner(directory, environment)
     go = shlex.split(args.go)
-    deadline = started + args.budget
+    deadline = started + args.budget if args.budget else math.inf
     stopped = []
     previous = {sig: signal.signal(sig, lambda received, _: stopped.append(received))
                 for sig in (signal.SIGINT, signal.SIGTERM)}
-    report = {"mode": args.mode, "jobs": args.jobs, "parallel": args.parallel, "shards": args.shards,
+    report = {"mode": args.mode, "race_scope": args.race_scope,
+              "jobs": args.jobs, "parallel": args.parallel, "shards": args.shards,
               "build_jobs": build_jobs, "heavy_jobs": args.heavy_jobs,
               "exit": 1, "platform": sys.platform, "cpu_count": os.cpu_count(),
               "budget_seconds": args.budget, "test_result_cache": False, "phases": [], "runs": []}
@@ -334,6 +337,8 @@ def run_suite(args):
         environment["PATH"] = os.pathsep.join(part for part in
                                               (str(Path(environment["GOROOT"]) / "bin"), environment.get("PATH")) if part)
         report["inventory"] = {}
+        report["selected_inventory"] = {}
+        report["race_exclusions"] = []
         modes = [args.mode] if args.mode in ("normal", "race") else ["normal", "race"]
         for mode in modes:
             phase_start = time.monotonic()
@@ -357,8 +362,15 @@ def run_suite(args):
             if not names:
                 raise RuntimeError("empty package inventory")
             report["inventory"][mode] = names
+            selected = names
+            if mode == "race" and args.race_scope == "focused":
+                selected, report["race_exclusions"] = select_race(
+                    names, load_policy(root / "scripts/race_policy.json"), report["go_environment"]["GOOS"])
+            report["selected_inventory"][mode] = selected
             jobs, expected, heavy_labels = [], {}, set()
-            for package, tests in names.items():
+            for package, tests in selected.items():
+                if names[package] and not tests:
+                    continue
                 count = args.shards if package == "easycode/internal/app" else 1
                 shards = partition(tests, count) or [[]]
                 for index, shard in enumerate(shards):
@@ -411,7 +423,7 @@ def run_suite(args):
         if source_digest(root) != report["source_digest"]:
             raise RuntimeError("verification inputs changed during execution")
         report["exit"] = 0
-    except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+    except (RuntimeError, ValueError, KeyError, OSError, subprocess.SubprocessError) as error:
         report["exit"] = 1
         report["error"] = str(error)
         print(str(error), file=sys.stderr)
@@ -444,6 +456,7 @@ def run_suite(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("normal", "race", "all", "verify"), default="all")
+    parser.add_argument("--race-scope", choices=("focused", "full"), default="focused")
     parser.add_argument("--go", default="go")
     # Darwin 的真实进程测试有清理等待；Linux 对照使用较少进程限制重复编码的资源竞争。
     cpu_count = os.cpu_count() or 1
@@ -453,11 +466,13 @@ def main():
     # Darwin 的重矩阵需要细分；其他平台减少独立进程中的重复初始化。
     parser.add_argument("--shards", type=int, default=16 if sys.platform == "darwin" else 2)
     parser.add_argument("--timeout", default="20m")
-    parser.add_argument("--budget", type=float, default=360)
+    parser.add_argument("--budget", type=float, default=0, help="optional total seconds; 0 disables the limit")
     parser.add_argument("--output")
     args = parser.parse_args()
-    if min(args.jobs, args.parallel, args.heavy_jobs, args.shards, args.budget) <= 0:
-        parser.error("resource limits and budget must be positive")
+    if min(args.jobs, args.parallel, args.heavy_jobs, args.shards) <= 0:
+        parser.error("resource limits must be positive")
+    if not math.isfinite(args.budget) or args.budget < 0:
+        parser.error("budget must be finite and nonnegative")
     return run_suite(args)
 
 

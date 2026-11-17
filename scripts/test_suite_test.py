@@ -1,6 +1,7 @@
 """验证测试清单、并发上限和真实子进程取消，不使用延时猜测调度结果。"""
 
 import errno
+import copy
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,7 @@ from unittest import mock
 
 import test_suite
 import test_binary
+from race_policy import select_race
 from test_binary import binary_path
 
 
@@ -69,6 +71,14 @@ class InventoryTests(unittest.TestCase):
 
 
 class SuiteTests(unittest.TestCase):
+    def test_invalid_diagnostic_budgets_are_rejected(self):
+        runner = Path(test_suite.__file__).resolve()
+        for budget in ("-1", "nan", "inf"):
+            result = subprocess.run([sys.executable, "-B", str(runner), "--budget=" + budget],
+                                    capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("budget must be finite and nonnegative", result.stderr)
+
     def test_build_tag_inventory_and_nested_build_keep_selected_toolchain(self):
         with tempfile.TemporaryDirectory(prefix="easycode-inventory-test-") as directory:
             root = Path(directory)
@@ -126,10 +136,15 @@ print(json.dumps({'Package': 'fixture/package', 'Action': 'pass'}))
             runner = Path(test_suite.__file__).resolve()
             mode = "verify" if os.name == "posix" else "all"
             command = [sys.executable, "-B", str(runner), "--mode=" + mode, "--jobs=2", "--parallel=1",
+                       "--race-scope=full",
                        "--go=" + shlex.join([sys.executable, str(fake)]), "--output=" + str(report)]
             result = subprocess.run(command, capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             summary = json.loads((report / "summary.json").read_text())
+            self.assertEqual(summary["budget_seconds"], 0)
+            self.assertEqual(summary["race_scope"], "full")
+            self.assertEqual(summary["race_exclusions"], [])
+            self.assertEqual(summary["selected_inventory"], summary["inventory"])
             for mode, name in (("normal", "TestNormalOnly"), ("race", "TestRaceOnly")):
                 expected = ["Example", "FuzzInput", name]
                 self.assertEqual(summary["inventory"][mode]["fixture/package"], expected)
@@ -151,6 +166,46 @@ print(json.dumps({'Package': 'fixture/package', 'Action': 'pass'}))
                 summary = json.loads((failed / "summary.json").read_text())
                 self.assertEqual(next(run["exit"] for run in summary["runs"] if run["label"] == "static"), 7)
                 self.assertNotIn("race", summary["inventory"])
+
+
+class RacePolicyTests(unittest.TestCase):
+    def setUp(self):
+        self.inventory = {"fixture/p": ["TestSerial", "TestConcurrent", "TestNew", "FuzzNew", "Example"]}
+        self.policy = [{"package": "fixture/p", "tests": ["TestSerial"], "source": "serial_test.go",
+                        "reason": "串行格式校验保留普通测试", "retained_race": [
+                            {"package": "fixture/p", "test": "TestConcurrent"}]}]
+
+    def test_exact_exclusion_keeps_new_entries_and_original_inventory(self):
+        original = copy.deepcopy(self.inventory)
+        selected, excluded = select_race(self.inventory, self.policy, "linux")
+        self.assertEqual(selected["fixture/p"], ["TestConcurrent", "TestNew", "FuzzNew", "Example"])
+        self.assertEqual(self.inventory, original)
+        self.assertEqual([item["test"] for item in excluded], ["TestSerial"])
+        self.assertEqual(excluded[0]["reason"], self.policy[0]["reason"])
+        self.assertEqual(excluded[0]["retained_race"], self.policy[0]["retained_race"])
+
+    def test_duplicate_stale_and_missing_retained_coverage_fail(self):
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            select_race(self.inventory, self.policy * 2, "linux")
+        self.policy[0]["tests"] = ["TestRemoved"]
+        with self.assertRaisesRegex(ValueError, "stale"):
+            select_race(self.inventory, self.policy, "linux")
+        self.policy[0]["tests"] = ["TestConcurrent"]
+        with self.assertRaisesRegex(ValueError, "missing retained"):
+            select_race(self.inventory, self.policy, "linux")
+        self.policy[0]["tests"] = ["TestSerial"]
+        self.policy[0]["retained_race"][0]["test"] = "TestRemoved"
+        with self.assertRaisesRegex(ValueError, "missing retained"):
+            select_race(self.inventory, self.policy, "linux")
+
+    def test_platform_absence_requires_explicit_scope(self):
+        inventory = {"fixture/p": ["TestNew"]}
+        with self.assertRaisesRegex(ValueError, "stale"):
+            select_race(inventory, self.policy, "windows")
+        self.policy[0]["platforms"] = ["darwin", "linux"]
+        selected, excluded = select_race(inventory, self.policy, "windows")
+        self.assertEqual(selected, inventory)
+        self.assertEqual(excluded, [])
 
 
 @unittest.skipUnless(os.name == "posix", "Executable script fixture requires a native POSIX host")

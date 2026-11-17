@@ -6,13 +6,13 @@
 
 ### Requirement: Verification preserves the complete test contract
 
-完整质量门 SHALL 执行分支策略测试、格式检查、vet、Staticcheck、架构边界、当前平台的全部普通测试与全部 race 测试。本地、pre-commit、pre-push 与 CI MUST 复用同一质量门定义。性能验收 MUST 强制重新执行测试，不能以测试结果缓存命中、仅运行修改包、排除慢包、关闭 race 或缩减安全断言证明达标。
+完整质量门 SHALL 执行分支策略测试、格式检查、vet、Staticcheck、架构边界、当前平台的全部普通测试与经审计的必要 race 测试。本地、pre-commit、pre-push 与 CI MUST 复用同一质量门定义。性能验收 MUST 强制重新执行测试，不能以测试结果缓存命中、仅运行修改包、未经审计排除慢测试、关闭 race 或缩减普通测试断言证明达标。
 
 #### Scenario: Match the platform test inventory
 - **WHEN** 完整质量门采用分片或有界并行执行测试
-- **THEN** 普通与 race 阶段分别覆盖当前平台默认测试集合中的所有包、顶层测试、Example 和默认执行的 fuzz seed
+- **THEN** 普通阶段覆盖当前平台所有包、Test、Example 和默认 fuzz seed；race 默认覆盖相同集合，仅移出有明确理由的已审计串行入口
 - **THEN** 分片集合不重叠且不遗漏，包内子测试仍由原顶层测试执行
-- **THEN** 沿用既有平台限制的 skip 必须可见，不能新增性能用途的 skip
+- **THEN** 沿用既有平台限制的 skip 必须可见；race 排除清单另行报告，不能伪装为通过或改变普通集合
 
 #### Scenario: Keep hooks and CI equivalent
 - **WHEN** 同一提交通过本地、Git hooks 或 CI 触发完整质量门
@@ -38,19 +38,32 @@
 - **THEN** 整体质量门失败，指出对应阶段和分片，保留已完成和未完成的范围
 - **THEN** 已启动进程得到取消并完成回收，不留下后台测试继续占用资源
 
-### Requirement: Performance acceptance measures the whole workflow
+### Requirement: Race selection remains explicit and reviewable
 
-性能验收 SHALL 记录提交、平台、Go 版本、CPU/内存、并发配置、命令、退出码、是否存在竞争工作负载及计时范围。在 Go 工具链与依赖已准备好的参考环境中，从完整质量门开始至结束的墙钟时间 MUST 小于 360 秒，且同时包含普通与 race、测试编译/链接以及静态质量检查。测试结果缓存 MUST 被禁用；允许使用正常构建缓存，但必须记录其状态。纯测试两阶段合计时间 SHALL 同时报告，不能把每阶段各六分钟误作总流程六分钟。
+默认 race SHALL 保留真实并发、共享状态、取消/提交交错、资源关闭、stream、writer、lease 与恢复生命周期。只验证串行值、字节、大小或静态源码的测试 MAY 从默认 race 移出，但 MUST 保留普通测试和所有原断言，并以精确包/测试名记录理由及相关保留覆盖。新增测试 MUST 默认进入 race，手动全量 race MUST 可用。
 
-#### Scenario: Accept a reproducible six-minute run
-- **WHEN** 同一最终提交在无其他重测试竞争的参考环境中连续执行两次完整质量门
-- **THEN** 两次均通过，均重新运行全部测试，且各自总墙钟时间小于 360 秒
-- **THEN** 报告同时包含普通/race 分阶段时间、慢包/慢测试、实际覆盖集合和资源记录
+#### Scenario: Audit a race exclusion
+- **WHEN** 已审核的串行测试或完整数据矩阵退出默认 race
+- **THEN** 报告列出完整清单、所选集合、排除项与理由，普通测试仍完整执行
+- **THEN** 复杂矩阵的并发/生命周期代表场景沿用原 helper 和实质断言
+- **THEN** 清单重复、无效名称或替代覆盖被排除必须使质量门失败
 
-#### Scenario: Expose a performance miss
-- **WHEN** 性能验收超过 360 秒，或无法取得目标平台的实际执行证据
-- **THEN** 报告明确标记未达标或未验证，并保存计时与失败证据
-- **THEN** 不得以增加超时、缓存命中或交叉编译替代运行验收
+#### Scenario: Include new and manually requested coverage
+- **WHEN** 新测试尚未审核，或用户选择手动全量 race
+- **THEN** 新测试默认纳入，手动全量模式不应用排除清单
+
+### Requirement: Performance reporting measures the whole workflow
+
+完整质量门 SHALL 记录提交、平台、Go 版本、CPU/内存、并发配置、命令、退出码、竞争工作负载、完整普通与所选 race 的耗时和执行集合。计时包含编译/链接及静态检查。测试结果缓存 MUST 禁用；正常构建缓存允许复用。默认 MUST NOT 因固定的总耗时阈值中断质量门，单进程超时、业务 deadline 与取消/失败清理保持有效。
+
+#### Scenario: Record reproducible timings without a hard performance gate
+- **WHEN** 同一最终实现连续两轮运行完整质量门
+- **THEN** 完整普通和所选 race 均通过，报告阶段、合计时间及覆盖变化
+- **THEN** 耗时超过历史 300/360 秒目标不会单独判定失败，历史超时记录不被追认为成功
+
+#### Scenario: Opt into a diagnostic budget
+- **WHEN** 调用方显式设置正值总预算，或发生失败、中断或测试进程超时
+- **THEN** 达到所选限制时保留原取消与进程回收语义，返回失败并记录未完成范围
 
 ### Requirement: Refactoring preserves assertions and data semantics
 

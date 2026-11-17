@@ -28,3 +28,18 @@
 ## 超限 SSE 装配的内存审核
 
 `write_stream_test.go` 的两个 Provider、八种场景及全部文件副作用/批准/完成/失败断言保持原位置。`oversize-input` 与 `aggregate-limit` 使用原 `serveWriteScenarioSample` 直接写入 HTTP 响应，不再预先把完整 SSE 放入 `bytes.Buffer`；17 个接近 1 MiB 的调用、独立路径、事件顺序与参数字节不变。相同的大文本模板在一次 handler 调用内复用；每个调用仍有独立参数字符串。随机 chunk、单字节、半包、取消与缺失终止事件场景继续使用原装配。没有降低真实边界或共享跨用例状态。
+
+## 2026-11-18 默认 race 范围审计
+
+用户明确批准全量普通保留、race 精简和撤销总时限。逐项入口见 `scripts/race_policy.json`（161 项）；运行报告将保存完整枚举、所选集合及理由。普通断言全部保留，测试命名没有作为运行时筛选规则，新入口默认参加 race。
+
+| 移出默认 race 的范围 | 审计依据 | 保留覆盖 |
+|---|---|---|
+| domain/protocol 串行值对象，codec 格式矩阵 | 无 goroutine/后台 owner；t.Parallel 仅使各自私有输入并行 | 完整普通；Hook 编码对照仍参加 race；集中 codec 共享输入与并发修改返回副本；Runtime/app 的实际交付 |
+| architecture AST/import graph 守卫 | 解析源码，不执行待检业务 | 普通阶段全部守卫，不重复做 race |
+| Session 16/64 MiB 与 Provider 17 项聚合预算 | 直接构造/编码/编译，无 writer、transport 或工具执行 | 普通保留原阈值；writer、stream 超限及其副作用断言继续 race |
+| 双 Provider 输入重写 golden/cache 矩阵 | 离线顺序提交、恢复和字节对照 | 普通全矩阵；并发历史快照、cancel/completed 交错、真实输入重写恢复继续 race |
+| completion/plugin browser 文本及策略组合 | ASCII/Unicode 和 manual-only 只改变数据；资源生命周期相同 | 普通保留 32 个原叶场景；race 新入口用原 helper 保留 8 个场景：两家 Provider × local/completion/plugins/skills，包含真实请求、提交、恢复、关闭和全部 canonical/cache 断言 |
+| 自行构建普通 CLI 的 reasoning 矩阵 | 父进程 race 不会给 `go build` 的普通子程序加检测 | 普通保留 24 个 CLI 场景；同进程 headless、参数失败和取消继续 race；重执行当前 race 二进制的其他 CLI helper 保留 |
+
+预览 fixture 虽含串行解码，也实际持有 lease 并关闭 Repository，因此仍保留完整 race。Hook/Stop/七工具恢复矩阵、真实子进程 lease 竞争、Sync 故障、取消和资源清理全部保留；不因耗时高而从默认 race 移出。
