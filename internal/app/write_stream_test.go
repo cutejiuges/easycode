@@ -47,9 +47,15 @@ func TestWriteSSEChunksCancellationEOFAndLimitsPrecedeSideEffects(t *testing.T) 
 					calls := []writeScenarioCall{{"Write", input}}
 					if scenario == "aggregate-limit" {
 						calls = nil
+						content := strings.Repeat("x", (1<<20)-100)
 						for i := 0; i < 17; i++ {
-							calls = append(calls, writeScenarioCall{"Write", fmt.Sprintf(`{"file_path":"new/%d","content":%q}`, i, strings.Repeat("x", (1<<20)-100))})
+							calls = append(calls, writeScenarioCall{"Write", fmt.Sprintf(`{"file_path":"new/%d","content":%q}`, i, content)})
 						}
+					}
+					if scenario == "oversize-input" || scenario == "aggregate-limit" {
+						// 大数据用例验证真实阈值，直接发送相同事件，避免额外保留整段 SSE 的副本。
+						serveWriteScenarioSample(w, family, 1, calls)
+						return
 					}
 					var buffer bytes.Buffer
 					serveWriteScenarioSample(&buffer, family, 1, calls)

@@ -20,6 +20,12 @@
 - **WHEN** 同一提交通过本地、Git hooks 或 CI 触发完整质量门
 - **THEN** 检查项目和覆盖范围相同，环境参数只调整有界资源分配
 
+#### Scenario: Overlap static checks without weakening the gate
+- **WHEN** 静态检查与普通测试交错执行
+- **THEN** 两者共享同一活动命令上限，且全部成功后才进入 race
+- **THEN** 静态失败使完整质量门失败，并由同一 owner 停止派发和回收工作
+- **THEN** 总墙钟包含重叠区间，不重复相加或扣除静态检查时间
+
 ### Requirement: Test work has bounded resources and owned cleanup
 
 测试执行入口 SHALL 显式限制活动测试进程与包内并发，避免普通和 race 阶段因外层并行调用无界叠加。使用进程级环境变量或工作目录的测试 MUST 保持隔离。执行失败、超时或用户中断 SHALL 返回失败状态、停止派发新工作，并由唯一 owner 取消和等待已启动的工作，保留能够定位失败的输出。

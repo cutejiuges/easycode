@@ -213,6 +213,56 @@ func TestHookDigestPreservesInputAndReplacementLimits(t *testing.T) {
 	}
 }
 
+func TestHookFinishedEncodingPreservesEveryFieldAndInvalidIdentity(t *testing.T) {
+	base := hookEncodingFinished(t, HookWrite)
+	identity, err := newHookRunIdentity(base.Result.Identity.Target, HookPostToolUse, base.Result.Identity.PlanDigest, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.Result.Identity = identity
+	base.Feedback.Identity = base.Result.Identity
+	base.Feedback.Reference.Event = HookPostToolUse
+	base.Feedback.Reference.Feedback = HookFeedbackModel
+	base.Feedback.Kind = HookFeedbackContent
+	base.Feedback.Content = "中文 <>&\u2028\"\\\n"
+	base.Feedback.BudgetDelta = 77
+	for name, mutate := range map[string]func(*HookFinished){
+		"content": func(*HookFinished) {},
+		"statistics": func(v *HookFinished) {
+			v.Result.Status, v.Result.Code = HookCancel, HookCancelled
+			v.Result.ExitKnown, v.Result.ExitCode = true, 137
+			v.Result.Cancelled, v.Result.TimedOut = true, true
+			v.Result.StdoutBytes, v.Result.StderrBytes = 12345, 98765
+			v.Result.CleanupConfirmed, v.Result.Origin = false, "recovery"
+			v.Feedback.Kind, v.Feedback.Code = HookFeedbackCode, HookCancelled
+		},
+		"different-identity-fields": func(v *HookFinished) {
+			v.Feedback.Identity.Event = HookPostToolUseFailure
+			v.Feedback.Identity.PlanDigest = HookDigest([]byte("other"))
+			v.Feedback.Identity.Ordinal = 4
+			v.Feedback.Identity.RunID = "different <&> identity"
+		},
+		"different-valid-target": func(v *HookFinished) {
+			v.Feedback.Identity.Target.invocation = "018f1d8a-7b5c-7def-8abc-456789abcdee"
+		},
+		"invalid-result-target":   func(v *HookFinished) { v.Result.Identity.Target = HookTarget{} },
+		"invalid-feedback-target": func(v *HookFinished) { v.Feedback.Identity.Target = HookTarget{} },
+		"equal-invalid-targets": func(v *HookFinished) {
+			v.Result.Identity.Target = HookTarget{}
+			v.Feedback.Identity.Target = HookTarget{}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			v := base
+			mutate(&v)
+			assertHookEncoding(t, v, nestedHookFinished(v))
+			if (v.Validate() == nil) != (name == "content") {
+				t.Fatal("finished validation classification changed")
+			}
+		})
+	}
+}
+
 func FuzzHookEncodingMatchesNestedSonic(f *testing.F) {
 	for _, seed := range []string{"", "中文 <>&\u2028\u2029", "\"\\\n\x00", "\xff"} {
 		f.Add("f", seed, uint8(0))

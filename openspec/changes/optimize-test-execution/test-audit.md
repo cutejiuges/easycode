@@ -24,3 +24,7 @@
 - 这些用例及所调用的 fixture 不执行 Setenv/Chdir；只读取 TestMain 一次创建的私有 HOME。其他修改环境的顶层测试仍顺序执行，不与其子用例交错。
 - Hook 的同一家 Provider 下全部恢复检查点及二次崩溃仍保持原有顺序；没有把共享 baseline、captured requests 或 compensated request 的检查点拆成并发任务。
 - 清理仍在子用例返回前等待原 control、resources、server；没有把父测试提前返回后的 defer 当成子用例资源 owner。实际效果须经乱序 race 和全量质量门验证。
+
+## 超限 SSE 装配的内存审核
+
+`write_stream_test.go` 的两个 Provider、八种场景及全部文件副作用/批准/完成/失败断言保持原位置。`oversize-input` 与 `aggregate-limit` 使用原 `serveWriteScenarioSample` 直接写入 HTTP 响应，不再预先把完整 SSE 放入 `bytes.Buffer`；17 个接近 1 MiB 的调用、独立路径、事件顺序与参数字节不变。相同的大文本模板在一次 handler 调用内复用；每个调用仍有独立参数字符串。随机 chunk、单字节、半包、取消与缺失终止事件场景继续使用原装配。没有降低真实边界或共享跨用例状态。

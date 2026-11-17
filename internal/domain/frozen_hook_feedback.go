@@ -120,21 +120,43 @@ func (v HookFinished) Equal(other HookFinished) bool {
 	return le == nil && re == nil && bytes.Equal(left, right)
 }
 func (v HookFinished) MarshalJSON() ([]byte, error) {
+	var effect json.RawMessage
 	if v.Result.Identity.Event == HookPreToolUse {
-		effect, err := v.InputEffect.MarshalJSON()
+		encoded, err := v.InputEffect.MarshalJSON()
 		if err != nil {
 			return nil, err
 		}
-		return codec.MarshalStable(struct {
-			Result      HookRunResult      `json:"result"`
-			Feedback    FrozenHookFeedback `json:"feedback"`
-			InputEffect json.RawMessage    `json:"input_effect"`
-		}{v.Result, v.Feedback, effect})
+		effect = encoded
 	}
+	resultTarget, err := v.Result.Identity.Target.MarshalJSON()
+	if err != nil {
+		return nil, err
+	}
+	feedbackTarget := resultTarget
+	if v.Feedback.Identity.Target != v.Result.Identity.Target {
+		feedbackTarget, err = v.Feedback.Identity.Target.MarshalJSON()
+		if err != nil {
+			return nil, err
+		}
+	}
+	// 两份身份的其余字段仍分别编码；只复用相等且已验证的目标字节，不修复非法的身份差异。
 	return codec.MarshalStable(struct {
-		Result   HookRunResult      `json:"result"`
-		Feedback FrozenHookFeedback `json:"feedback"`
-	}{v.Result, v.Feedback})
+		Result      hookFinishedResult   `json:"result"`
+		Feedback    hookFinishedFeedback `json:"feedback"`
+		InputEffect json.RawMessage      `json:"input_effect,omitempty"`
+	}{
+		Result: hookFinishedResult{
+			Identity: finishedIdentity(v.Result.Identity, resultTarget), Status: v.Result.Status, Code: v.Result.Code,
+			ExitKnown: v.Result.ExitKnown, ExitCode: v.Result.ExitCode, TimedOut: v.Result.TimedOut,
+			Cancelled: v.Result.Cancelled, StdoutBytes: v.Result.StdoutBytes, StderrBytes: v.Result.StderrBytes,
+			CleanupConfirmed: v.Result.CleanupConfirmed, Origin: v.Result.Origin,
+		},
+		Feedback: hookFinishedFeedback{
+			Identity: finishedIdentity(v.Feedback.Identity, feedbackTarget), Reference: v.Feedback.Reference,
+			Kind: v.Feedback.Kind, Content: v.Feedback.Content, Code: v.Feedback.Code, BudgetDelta: v.Feedback.BudgetDelta,
+		},
+		InputEffect: effect,
+	})
 }
 func DecodeHookFinished(b []byte) (HookFinished, error) {
 	if len(b) > MaxHookConfigBytes {
