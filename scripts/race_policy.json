@@ -254,7 +254,7 @@
   {
     "package": "easycode/internal/provider/openai",
     "source": "internal/provider/openai/hook_input_rewrite_test.go",
-    "reason": "离线依次提交、恢复、编译和对照的输入重写 golden/cache 数据组合；没有并发提交或网络。普通保留全矩阵，race 保留真实改写恢复与共享历史交错。",
+    "reason": "离线依次提交、恢复、编译和对照的输入重写 golden/cache 数据组合；没有并发提交或网络。普通保留全矩阵，race 保留跨平台改写恢复矩阵与共享历史交错；Darwin 另保留真实 sandbox 场景。",
     "tests": [
       "TestPreInputRewriteNativeGoldenRestoreAndCache"
     ],
@@ -269,7 +269,7 @@
       },
       {
         "package": "easycode/internal/app",
-        "test": "TestInputRewriteBothProvidersRealEffectsAndOfflineRestore"
+        "test": "TestPreInputRewriteResumeReconcilesEveryBatchBeforeLoadingNewSnapshot"
       }
     ]
   },
@@ -290,7 +290,7 @@
   {
     "package": "easycode/internal/provider/anthropic",
     "source": "internal/provider/anthropic/hook_input_rewrite_test.go",
-    "reason": "离线依次提交、恢复、编译和对照的输入重写 golden/cache 数据组合；没有并发提交或网络。普通保留全矩阵，race 保留真实改写恢复与共享历史交错。",
+    "reason": "离线依次提交、恢复、编译和对照的输入重写 golden/cache 数据组合；没有并发提交或网络。普通保留全矩阵，race 保留跨平台改写恢复矩阵与共享历史交错；Darwin 另保留真实 sandbox 场景。",
     "tests": [
       "TestPreInputRewriteNativeGoldenRestoreAndCache"
     ],
@@ -305,7 +305,7 @@
       },
       {
         "package": "easycode/internal/app",
-        "test": "TestInputRewriteBothProvidersRealEffectsAndOfflineRestore"
+        "test": "TestPreInputRewriteResumeReconcilesEveryBatchBeforeLoadingNewSnapshot"
       }
     ]
   },
