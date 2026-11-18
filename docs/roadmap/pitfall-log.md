@@ -975,3 +975,23 @@ started Sync 前只有原输入 request_id；terminal 后直到 worker/stream �
 2026-11-14 复审补充：独立摘要在首次 started 写入前取消时不会进入 Provider，不能只依赖 Kernel 的 summary 连接清理；普通 turn 与摘要的原 worker 必须共用失败/取消收口，再发布最终完成。新增真实 AgentLoop + WebSocket 回归证明无中间操作的 high→low→high 保持增量，而已接纳但网络前取消的摘要之后必须 full，旧 response ID 不得复活。Skill 与补全各自保存保留名会漏掉新命令，改为 domain 的同一纯 switch。窄屏通知预算还要扣除状态、可见队列与 composer 的实际行数；64 条队列只裁剪展示，不删除待执行事实，保留 FIFO 头及输入区。权威选择缓存只保存选择字段，不能夹带旧活动身份和窗口数值。复审与完整验证见 `openspec/changes/archive/2026-11-15-add-runtime-effort-control/review.md`。
 
 2026-11-15 回归计时补充：排查“测试超过十分钟”时，先区分普通 `make test` 和顺序执行普通/race 的 `make verify`，使用 `-json -count=1` 分包、分顶层/子测试记录。此次 Darwin/Go 1.24.13 普通全量约 154 秒，race 约 781 秒；主要是 app 的大规模安全/恢复矩阵及大型 fixture 的重复 JSON 校验，不是 effort idle 查询死循环。其他 worktree 同时运行 race/profile 会影响墙钟时间，不能据此宣称隔离性能。profile 的多个 goroutine 累计阻塞也不能直接当成单用例等待。保留全部安全/恢复断言和 race，不用减少矩阵、改 GORACE 或扩大 timeout 掩盖慢路径；后续优化从测得的 JSON/恢复热点及实例环境隔离着手。证据与边界见 `openspec/changes/archive/2026-11-15-add-runtime-effort-control/regression-2026-11-15.md`。
+
+## 严格 JSON 重复解析与测试调度
+
+2026-11-16 定位：UnmarshalRecord 原先重复执行基础校验和两次形状遍历，ObjectMembers 又重复扫描并调用 Sonic 物化字段。arm64 的 Sonic optdec 每次创建 parser 约分配 2 MiB 缓冲区，Go 1.24 的 race 模式会随机丢弃 sync.Pool 条目；因此小对象的重复解码也会引起大量分配与 GC。两个约 624 KB 的预览 fixture 在 race 抽样中累计分配约 1330 MB，这不是峰值 RSS。仅调整 GOMAXPROCS 从 10 到 2/4 未明显改善代表性重测试。
+
+修复把严格校验合并为一次扫描与调用局部字段索引，保留固定 Sonic typed 解码、重复键/未知字段/Unicode/null 拒绝以及 canonical bytes。纯验证不物化数组值；公开 ObjectMembers 仍返回独立副本。测试增加独立 token 差异 fuzz、边界/所有权回归与分配 benchmark，不使用 race 专用替代 codec 或放宽解析规则。
+
+app 的环境敏感测试不能批量加 t.Parallel；统一入口自动分片到独立进程，所有包共用有限执行槽并核对实际完成清单。worker 必须在交回执行槽前标记失败，否则调度线程尚未读取结果时可能启动排队工作。取消需要覆盖测试派生的独立进程组，并保留升级与最终等待；真实子进程和可控时钟验证此边界。完整计时、覆盖集合和平台结论以 `optimize-test-execution` 的验收报告为准。
+
+Linux CI 回归补充：TurnStarted 只证明回合接纳，不能证明输入已经提交或 Provider Stream 已进入。关闭顺序测试必须等待 fixture 的真实 started 信号后才调用 shutdown；扩大 deadline 无法修正错误前置条件。原关闭顺序断言与操作级 deadline 保持。
+
+2026-11-17 补充：Session 写入先整体编码 checksum envelope，又整体编码含 checksum 的 Record，重复压紧同一大 payload；Sonic 在 race 下的标准库读检查进一步放大了重复工作。编码现在保留全部输入校验，仅编码一次 envelope，散列后追加当前结构固定的末尾 checksum 字段；完整 record 大小仍在追加后校验。`internal/session/codec_equivalence_test.go` 用原 Sonic 整体编码逐字节对照，并覆盖可选字段、转义、所有权和完整大小边界。测试替身也须如实返回取消：强制关闭后返回 nil 会让结果依赖 transport 通知的调度次序，不能靠重试或放宽断言处理。
+
+测试二进制复用补充：标准 `go test` 会把实际选中的 `GOROOT/bin` 放到测试进程 PATH 首位。直接执行二进制必须保留该语义和选中工具链的 GOROOT，否则 setup-go 先安装 go.mod 的最低版本、Go 再按 toolchain 指令切换时，测试里的离线 `go build` 会重新选择旧工具链并触发 GOSUMDB=off 错误。调度回归通过真实嵌套命令验证所选工具链，不能通过开放测试外网或关闭校验绕过。
+
+原生 Linux profile 进一步定位到 Hook 值对象重复编码：输入重写恢复矩阵累计分配约 12.8 GB，其中 Sonic 编码栈池占 82.64%，TSAN 内存范围检查占约一半 CPU 样本。嵌套 MarshalJSON 在 Sonic race 路径额外的标准库读检查中再次执行，频繁校验又重复编码同一输入。HookToolInput 的校验、digest 与 HookInputEffect 的大小/摘要校验现在复用调用局部的编码；HookInputEffect 和 HookFinished 复用子对象字节，保持原错误分类、canonical bytes 和 digest。优化不能修改池、关闭 race 或改变固定 fixture；累计分配也不能当作峰值内存。Linux 多分片对照并未稳定提速，默认改用 4 命令 / 2 分片，最终是否达标仍以完整验收报告为准。
+
+内存测量补充：只减少总命令数不能保证降低峰值；高 RSS 包如果在 app 分片后集中运行，6 路峰值仍可能高于 8 路。调度器为两个 Provider、Runtime、Session、Tool、TUI 设置共享重包限额并提前交错执行，避免排队的重包阻止可运行的轻包。编译/静态检查必须独立于测试的 GOMAXPROCS，否则测试降为单核会把静态检查一同拖慢。二进制优先硬链接以避免重复复制文件缓存；峰值 RSS、累计分配、系统可回收缓存必须分别解释。
+
+2026-11-18 用户批准调整 race 范围：普通测试和原断言全量保留，默认 race 移出精确审计的串行值/格式/大小/AST 断言与重复数据组合。不能按测试名关键词或正向名单筛选，否则新测试可能漏测；排除清单必须显式解释理由、保留覆盖并检查名称失效。浏览器矩阵的代表场景复用原 helper，覆盖两家 Provider 和每种入口的真实提交、恢复及关闭；codec 用共享输入与并发修改返回副本验证所有权。自行 `go build` 普通 CLI 的测试不会因父进程使用 race 而自动检测 CLI，重执行当前 race 测试二进制的 helper 则不同，不能一概移除 CLI 测试。总时限已撤销，仍保留每测试进程超时和失败清理；历史 300/360 秒超时不追认为通过。

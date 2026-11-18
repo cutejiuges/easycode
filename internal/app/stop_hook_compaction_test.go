@@ -64,6 +64,8 @@ func testStopCompactionKeepsFrozenCorrection(t *testing.T, pluginSkill bool) {
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		for _, mode := range []string{"summary", "failed-summary", "empty-summary", "cancel-summary"} {
 			t.Run(string(family)+"/"+mode, func(t *testing.T) {
+				// 每项都有独立目录、服务和 runner，使用测试入口统一设置的并行上限。
+				t.Parallel()
 				workspace := t.TempDir()
 				root := filepath.Join(t.TempDir(), "sessions")
 				writeStopHookConfig(t, workspace, "true", domain.HookFeedbackModel)

@@ -406,7 +406,8 @@ func TestChatResourcesCloseOrdersSessionJournalAndProvider(t *testing.T) {
 		mu.Unlock()
 	}
 	journal := &orderedManagedJournal{add: add}
-	conversation := &orderedConversation{add: add}
+	streamStarted := make(chan struct{})
+	conversation := &orderedConversation{add: add, started: streamStarted}
 	runtimeInstance, err := chatRuntime.New(conversation, chatRuntime.Config{
 		SessionID: runtimeSessionIDForApp, ThreadID: runtimeThreadIDForApp, Journal: journal,
 		GenerateTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
@@ -432,6 +433,8 @@ func TestChatResourcesCloseOrdersSessionJournalAndProvider(t *testing.T) {
 	if event := <-events; event.Kind != protocol.EventTurnStarted {
 		t.Fatalf("first event = %s", event.Kind)
 	}
+	// TurnStarted 早于输入提交及 Stream；关闭顺序必须从真实进入 stream 后开始验证。
+	<-streamStarted
 	providerResource := &orderedProviderResource{factory: fakeProviderFactory{family: domain.ProviderOpenAI}, add: add}
 	resources := &chatResources{provider: providerResource, writer: journal, session: chat}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -654,7 +657,7 @@ func newEscalationStreamLoop(release <-chan struct{}, add func(string)) *escalat
 	}
 }
 
-func (loop *escalationStreamLoop) Run(context.Context) error {
+func (loop *escalationStreamLoop) Run(ctx context.Context) error {
 	close(loop.ready)
 	<-loop.release
 	if loop.add != nil {
@@ -662,7 +665,8 @@ func (loop *escalationStreamLoop) Run(context.Context) error {
 	}
 	close(loop.outputs)
 	close(loop.done)
-	return nil
+	// 强制关闭已取消的循环必须返回取消结果，不能依赖 transport 通知的调度次序。
+	return ctx.Err()
 }
 
 func (loop *escalationStreamLoop) Ready() <-chan struct{} { return loop.ready }

@@ -1,6 +1,42 @@
 name: Verify
+run-name: ${{ inputs.diagnostic_profile && 'Test CPU profile (diagnostic only)' || 'Verify' }}
 
 on:
+  workflow_dispatch:
+    inputs:
+      diagnostic_profile:
+        description: Collect a native CPU profile instead of an acceptance run
+        type: boolean
+        default: false
+      profile_test:
+        description: App test expression for the diagnostic profile
+        type: string
+        default: '^(TestPluginBrowserManualAndRestoredRequestsBothProviders|TestSessionPreviewCurrentFixturesAreReadOnly)$'
+      test_jobs:
+        description: Maximum active test commands
+        type: choice
+        options:
+          - '2'
+          - '4'
+          - '8'
+        default: '4'
+      test_parallel:
+        description: GOMAXPROCS and parallel tests per process
+        type: choice
+        options:
+          - '1'
+          - '2'
+        default: '2'
+      app_shards:
+        description: App test process shards
+        type: choice
+        options:
+          - '1'
+          - '2'
+          - '4'
+          - '8'
+          - '16'
+        default: '2'
   pull_request:
   push:
     branches:
@@ -16,9 +52,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Validate source branch
-        run: ./scripts/check-branch-name.sh "${{ github.head_ref }}"
+        run: ./scripts/check-branch-name.sh "$GITHUB_HEAD_REF"
 
   verify:
+    if: ${{ !inputs.diagnostic_profile }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,4 +64,56 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Run repository verification
-        run: make verify
+        env:
+          TEST_JOBS: ${{ inputs.test_jobs || '4' }}
+          TEST_PARALLEL: ${{ inputs.test_parallel || '2' }}
+          APP_SHARDS: ${{ inputs.app_shards || '2' }}
+        run: make verify TEST_OPTIONS="--jobs=$TEST_JOBS --parallel=$TEST_PARALLEL --shards=$APP_SHARDS --output=$RUNNER_TEMP/easycode-verification"
+      - name: Upload verification timings and test events
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-report
+          path: ${{ runner.temp }}/easycode-verification
+          retention-days: 7
+
+  profile:
+    if: ${{ inputs.diagnostic_profile }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GOMAXPROCS: '2'
+      PROFILE_TEST: ${{ inputs.profile_test }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Profile native race tests
+        env:
+          PROFILE_DIR: ${{ runner.temp }}/easycode-profile
+        run: |
+          mkdir -p "$PROFILE_DIR"
+          go env -json GOOS GOARCH GOVERSION GOROOT GOCACHE > "$PROFILE_DIR/environment.txt"
+          getconf _NPROCESSORS_ONLN >> "$PROFILE_DIR/environment.txt"
+          if [ -f /sys/fs/cgroup/cpu.max ]; then cat /sys/fs/cgroup/cpu.max >> "$PROFILE_DIR/environment.txt"; fi
+          go test -json -race -count=1 -p=1 -parallel=2 -timeout=8m -run "$PROFILE_TEST" ./internal/app -cpuprofile="$PROFILE_DIR/cpu.pprof" -memprofile="$PROFILE_DIR/mem.pprof" -o "$PROFILE_DIR/app.test" > "$PROFILE_DIR/tests.jsonl" 2>&1
+      - name: Summarize profile
+        if: always()
+        env:
+          PROFILE_DIR: ${{ runner.temp }}/easycode-profile
+        run: |
+          go tool pprof -top -nodecount=40 "$PROFILE_DIR/app.test" "$PROFILE_DIR/cpu.pprof" > "$PROFILE_DIR/cpu-top.txt"
+          go tool pprof -top -cum -nodecount=40 "$PROFILE_DIR/app.test" "$PROFILE_DIR/cpu.pprof" > "$PROFILE_DIR/cpu-cumulative.txt"
+          go tool pprof -top -alloc_space -nodecount=30 "$PROFILE_DIR/app.test" "$PROFILE_DIR/mem.pprof" > "$PROFILE_DIR/alloc-top.txt"
+      - name: Upload diagnostic profile
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-profile
+          path: |
+            ${{ runner.temp }}/easycode-profile/*.txt
+            ${{ runner.temp }}/easycode-profile/*.jsonl
+            ${{ runner.temp }}/easycode-profile/*.pprof
+          retention-days: 7

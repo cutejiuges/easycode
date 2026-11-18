@@ -61,9 +61,8 @@ func (v HookInputEffect) Validate(capability HookCapability) error {
 			return HookConfigInvalid
 		}
 	case HookInputReplaced:
-		b, err := v.input.MarshalJSON()
-		digest, digestErr := v.input.Digest()
-		if err != nil || digestErr != nil || len(b) > MaxHookRewriteBytes || v.input.capability != capability || v.before == v.after || digest != v.after {
+		b, digest, err := v.input.encodingAndDigest()
+		if err != nil || len(b) > MaxHookRewriteBytes || v.input.capability != capability || v.before == v.after || digest != v.after {
 			return HookConfigInvalid
 		}
 	default:
@@ -97,12 +96,16 @@ func (v HookInputEffect) MarshalJSON() ([]byte, error) {
 	if v.kind != HookInputReplaced {
 		return nil, HookConfigInvalid
 	}
+	input, err := v.input.MarshalJSON()
+	if err != nil {
+		return nil, err
+	}
 	return codec.MarshalStable(struct {
 		Kind   HookInputEffectKind `json:"kind"`
 		Before string              `json:"before_digest"`
 		After  string              `json:"after_digest"`
-		Input  HookToolInput       `json:"input"`
-	}{v.kind, v.before, v.after, v.input})
+		Input  json.RawMessage     `json:"input"`
+	}{v.kind, v.before, v.after, input})
 }
 func DecodeHookInputEffect(capability HookCapability, b []byte) (HookInputEffect, error) {
 	if len(b) > MaxHookConfigBytes {

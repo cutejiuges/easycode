@@ -113,7 +113,8 @@ explore -> propose -> review/confirm -> apply -> verify -> archive
 - Session 当前 fixture 必须逐字节固定且不得在测试运行时由当前 encoder 生成；用户明确要求并批准 migration fixture 后，同样必须使用仓库内不可变历史 bytes。
 - symlink/TOCTOU、Sync 失败、阻塞 stream 和 shutdown timeout 必须使用确定性故障注入，禁止依赖 sleep 或概率竞态证明正确性。
 - 禁止通过删除、跳过、弱化测试或编写无业务断言的测试掩盖失败；单测不得使用真实 API key 或默认访问外网。
-- 完成前必须执行 `make verify`，其范围不得弱于 gofmt、go vet、Staticcheck、架构边界测试、全量测试和 race test；pre-commit 必须执行同一质量门。仅通过语言工具和单测不能替代 AGENTS/OpenSpec 契约检查。
+- 完成前必须执行 `make verify`，其范围不得弱于 gofmt、go vet、Staticcheck、架构边界测试、全量普通测试和经审计的必要 race test；pre-commit 必须执行同一质量门。仅通过语言工具和单测不能替代 AGENTS/OpenSpec 契约检查。
+- 默认 race 保留真实并发、共享状态、取消/提交交错、stream、writer、lease 和资源关闭/恢复；只有经审计的串行入口或已保留生命周期代表场景的数据矩阵可登记到 `scripts/race_policy.json`，普通测试及原断言必须保留。新增入口默认参加 race，失效清单必须报错；`make test-race-full` 保留全量入口。默认不设置总耗时硬门禁，单进程超时及失败/取消清理仍生效。
 - OpenSpec 归档前必须核对 specs、架构、Roadmap、pitfall、测试文件路径和实际 record vocabulary；不得把延期能力写成已实现，也不得保留失效文档引用。
 - 无法执行的检查必须在交付说明中列出原因和风险，不能声称全部通过。
 

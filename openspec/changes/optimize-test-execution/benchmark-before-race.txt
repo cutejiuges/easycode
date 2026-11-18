@@ -1,0 +1,9 @@
+goos: darwin
+goarch: arm64
+pkg: easycode/internal/codec
+cpu: Apple M1 Pro
+BenchmarkStrictRecord/small-10         	     222	    536201 ns/op	   0.07 MB/s	 3555800 B/op	     422 allocs/op
+BenchmarkStrictRecord/nested-10        	      10	  12358392 ns/op	   0.10 MB/s	77799508 B/op	   11538 allocs/op
+BenchmarkStrictRecord/large-10         	       1	 434508750 ns/op	   1.21 MB/s	43187192 B/op	     540 allocs/op
+PASS
+ok  	easycode/internal/codec	2.242s
