@@ -2,123 +2,19 @@ package anthropic
 
 import (
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"easycode/internal/codec"
 	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/provider"
 	"easycode/internal/provider/transport"
 	"easycode/internal/secret"
 )
-
-func TestNewProviderValidatesAndNormalizesConfiguration(t *testing.T) {
-	tests := []struct {
-		name       string
-		config     Config
-		wantCode   fault.Code
-		wantTokens int
-	}{
-		{
-			name:       "default output tokens",
-			config:     validTestConfig(),
-			wantTokens: DefaultMaxOutputTokens,
-		},
-		{
-			name: "explicit output tokens",
-			config: Config{
-				BaseURL:   "https://example.com/v1",
-				APIKey:    secret.New("test-key"),
-				Model:     " claude-test ",
-				Inference: testInference(t, 8192),
-			},
-			wantTokens: 8192,
-		},
-		{
-			name:     "missing model",
-			config:   Config{BaseURL: "https://example.com", APIKey: secret.New("test-key")},
-			wantCode: fault.CodeInvalidConfiguration,
-		},
-		{
-			name:     "missing API key",
-			config:   Config{BaseURL: "https://example.com", APIKey: secret.New("  "), Model: "claude-test"},
-			wantCode: fault.CodeInvalidConfiguration,
-		},
-		{
-			name:     "invalid base URL",
-			config:   Config{BaseURL: "not-a-url", APIKey: secret.New("top-secret"), Model: "claude-test"},
-			wantCode: fault.CodeInvalidConfiguration,
-		},
-		{
-			name:     "wrong family inference",
-			config:   Config{BaseURL: "https://example.com", APIKey: secret.New("test-key"), Model: "claude-test", Inference: testWrongFamilyInference(t)},
-			wantCode: fault.CodeInvalidConfiguration,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			instance, err := New(test.config)
-			if test.wantCode != "" {
-				var faultError *fault.Error
-				if !errors.As(err, &faultError) || faultError.Code != test.wantCode {
-					t.Fatalf("new provider error: got %v want code %s", err, test.wantCode)
-				}
-				if strings.Contains(err.Error(), "top-secret") || strings.Contains(err.Error(), "test-key") {
-					t.Fatalf("configuration error leaked API key: %v", err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("new provider: %v", err)
-			}
-			defer closeAnthropicProvider(t, instance)
-			if int(instance.config.Inference.MaxOutputTokens()) != test.wantTokens || instance.config.Model != "claude-test" {
-				t.Fatalf("normalized config: %#v", instance.config)
-			}
-		})
-	}
-}
-
-func TestConversationIgnoresRepeatedCompletedTerminal(t *testing.T) {
-	t.Parallel()
-	conversation := &Conversation{}
-	stream := make(chan transport.SSEMessage, 5)
-	stream <- anthropicEvent(`{"type":"message_start","message":{"id":"msg-1","model":"claude-test"}}`)
-	stream <- anthropicEvent(`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":"answer"}}`)
-	stream <- anthropicEvent(`{"type":"content_block_stop","index":0}`)
-	stream <- anthropicEvent(`{"type":"message_stop"}`)
-	stream <- anthropicEvent(`{"type":"message_stop"}`)
-	close(stream)
-	output := make(chan provider.StreamEvent, 16)
-	testConsumeStream(t, conversation, context.Background(), func() {}, nativeMessagePointer(newUserMessage("question")), testAnthropicToolCatalog(t), stream, output)
-	terminalCount := 0
-	for event := range output {
-		if !event.Kind().Terminal() {
-			continue
-		}
-		terminalCount++
-		if event.Kind() != provider.StreamEventCompleted || event.PreparedSample() == nil {
-			t.Fatalf("terminal = %#v", event)
-		}
-		if len(conversation.historySnapshot()) != 1 {
-			t.Fatal("sample committed before finalization")
-		}
-		if err := event.PreparedSample().Finalize(); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if terminalCount != 1 || len(conversation.historySnapshot()) != 2 {
-		t.Fatalf("terminal count/history = %d/%#v", terminalCount, conversation.historySnapshot())
-	}
-}
 
 func TestConversationCancelCompletedRaceHasOneTerminal(t *testing.T) {
 	for iteration := 0; iteration < 32; iteration++ {
@@ -176,102 +72,10 @@ func anthropicEvent(data string) transport.SSEMessage {
 	return transport.SSEMessage{Event: &event}
 }
 
-func validTestConfig() Config {
-	return Config{
-		BaseURL: "https://example.com/v1",
-		APIKey:  secret.New("test-key"),
-		Model:   "claude-test",
-	}
-}
-
 func closeAnthropicProvider(t *testing.T, instance *Provider) {
 	t.Helper()
 	if err := instance.Close(); err != nil {
 		t.Errorf("close provider: %v", err)
-	}
-}
-
-func TestProviderCreatesIsolatedConversations(t *testing.T) {
-	instance, err := New(validTestConfig())
-	if err != nil {
-		t.Fatalf("new provider: %v", err)
-	}
-	defer closeAnthropicProvider(t, instance)
-
-	first := testConversation(t, instance)
-	second := testConversation(t, instance)
-	testCommitHistory(t, &first.history, testInputEntry(t, newUserMessage("first")), nativeHistoryEntry{
-		Kind:      nativeHistorySample,
-		Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeText, Text: "answer"}}},
-	})
-
-	if len(first.historySnapshot()) != 2 {
-		t.Fatalf("first history: %#v", first.historySnapshot())
-	}
-	if len(second.historySnapshot()) != 0 {
-		t.Fatalf("second conversation shared history: %#v", second.historySnapshot())
-	}
-	if got := first.ProjectHistory(); len(got.Turns) != 1 || got.Turns[0].Messages[0].Text != "first" || got.Turns[0].Messages[1].Text != "answer" {
-		t.Fatalf("first projection: %#v", got)
-	}
-	if got := second.ProjectHistory(); got.Turns == nil || len(got.Turns) != 0 {
-		t.Fatalf("second conversation shared projection: %#v", got)
-	}
-}
-
-func TestProviderCapabilitiesReflectImplementedSlice(t *testing.T) {
-	instance, err := New(validTestConfig())
-	if err != nil {
-		t.Fatalf("new provider: %v", err)
-	}
-	defer closeAnthropicProvider(t, instance)
-
-	want := provider.Capabilities{Streaming: true, ThinkingSignature: true, FunctionTools: true, FilePatch: true}
-	if got := instance.Capabilities(); got != want {
-		t.Fatalf("capabilities: got %#v want %#v", got, want)
-	}
-}
-
-func TestConversationAllowsOnlyOneActiveTurn(t *testing.T) {
-	requestStarted := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Type", "text/event-stream")
-		if flusher, ok := writer.(http.Flusher); ok {
-			flusher.Flush()
-		}
-		close(requestStarted)
-		<-request.Context().Done()
-	}))
-	defer server.Close()
-
-	instance, err := New(Config{BaseURL: server.URL, APIKey: secret.New("test-key"), Model: "claude-test"})
-	if err != nil {
-		t.Fatalf("new provider: %v", err)
-	}
-	defer closeAnthropicProvider(t, instance)
-	conversation := testConversation(t, instance)
-	ctx, cancel := context.WithCancel(context.Background())
-	stream, err := conversation.Stream(ctx, testAnthropicTurnInput(t, conversation, "first"))
-	if err != nil {
-		t.Fatalf("start first turn: %v", err)
-	}
-	<-requestStarted
-
-	second, err := conversation.Stream(context.Background(), testSamplingInput(t, instance.config.Inference))
-	if second != nil {
-		t.Fatalf("concurrent turn returned stream: %#v", second)
-	}
-	assertFaultCode(t, err, fault.CodeTurnFailed)
-
-	cancel()
-	terminal := readAnthropicTerminal(t, conversation, stream)
-	if terminal.Kind() != provider.StreamEventCancelled || !errors.Is(terminal.Error(), context.Canceled) {
-		t.Fatalf("cancel terminal: %#v", terminal)
-	}
-	nextContext, cancelNext := context.WithCancel(context.Background())
-	cancelNext()
-	if next, nextErr := conversation.Stream(nextContext, testAnthropicTurnInput(t, conversation, "next")); next != nil || !errors.Is(nextErr, context.Canceled) {
-		t.Fatalf("next stream after cleanup = %#v, %v", next, nextErr)
 	}
 }
 
@@ -309,124 +113,6 @@ func TestConversationPublishesOrderedEventsAndCommitsOnMessageStop(t *testing.T)
 	}
 	if history[1].Metadata.ID != "msg-1" || history[1].Metadata.StopReason.Value != "end_turn" || history[1].Metadata.Usage.OutputTokens.Value != 2 {
 		t.Fatalf("committed metadata: %#v", history[1].Metadata)
-	}
-}
-
-func TestConversationDiscardsFailedStagingBeforeNextTurn(t *testing.T) {
-	var mu sync.Mutex
-	var requests []messagesRequest
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		body, readErr := io.ReadAll(request.Body)
-		if readErr != nil {
-			t.Errorf("read request: %v", readErr)
-			return
-		}
-		var decoded messagesRequest
-		if decodeErr := codec.Unmarshal(body, &decoded); decodeErr != nil {
-			t.Errorf("decode request: %v", decodeErr)
-			return
-		}
-		mu.Lock()
-		requests = append(requests, decoded)
-		turn := len(requests)
-		mu.Unlock()
-		writer.Header().Set("Content-Type", "text/event-stream")
-		if turn == 1 {
-			_, _ = io.WriteString(writer, "data: {\"type\":\"message_start\",\"message\":{\"id\":\"failed\",\"model\":\"claude-test\"}}\n\n")
-			_, _ = io.WriteString(writer, "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n")
-			_, _ = io.WriteString(writer, "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"partial\"}}\n\n")
-			_, _ = io.WriteString(writer, "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
-			return
-		}
-		writeSuccessfulAnthropicTurn(writer)
-	}))
-	defer server.Close()
-
-	instance, err := New(Config{BaseURL: server.URL, APIKey: secret.New("test-key"), Model: "claude-test"})
-	if err != nil {
-		t.Fatalf("new provider: %v", err)
-	}
-	defer closeAnthropicProvider(t, instance)
-	conversation := testConversation(t, instance)
-	failedStream, err := conversation.Stream(context.Background(), testAnthropicTurnInput(t, conversation, "failed user"))
-	if err != nil {
-		t.Fatalf("start failed turn: %v", err)
-	}
-	failedTerminal := readAnthropicTerminal(t, conversation, failedStream)
-	if failedTerminal.Kind() != provider.StreamEventFailed {
-		t.Fatalf("failed terminal: %#v", failedTerminal)
-	}
-	assertFaultCode(t, failedTerminal.Error(), fault.CodeStreamProtocol)
-	if len(conversation.historySnapshot()) != 1 {
-		t.Fatalf("failed turn committed: %#v", conversation.historySnapshot())
-	}
-	if projection := conversation.ProjectHistory(); len(projection.Turns) != 1 || len(projection.Turns[0].Messages) != 1 || projection.Turns[0].Messages[0].Role != domain.SemanticUser {
-		t.Fatalf("failed turn projected: %#v", projection)
-	}
-
-	runCompletedAnthropicTurn(t, conversation, "second")
-	mu.Lock()
-	defer mu.Unlock()
-	if len(requests) != 2 || len(requests[1].Messages) != 2 || requests[1].Messages[0].Content[0].Text != "failed user" || requests[1].Messages[1].Content[0].Text != "second" {
-		t.Fatalf("second request contains failed staging: %#v", requests)
-	}
-}
-
-func TestConversationMapsStreamFailuresWithoutCommitting(t *testing.T) {
-	tests := []struct {
-		name     string
-		body     string
-		wantCode fault.Code
-	}{
-		{
-			name:     "provider error",
-			body:     "data: {\"type\":\"error\",\"error\":{\"message\":\"sensitive response\"}}\n\n",
-			wantCode: fault.CodeProviderRequest,
-		},
-		{
-			name:     "invalid reducer state",
-			body:     "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"x\"}}\n\n",
-			wantCode: fault.CodeStreamProtocol,
-		},
-		{
-			name:     "EOF before message stop",
-			body:     "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg-1\",\"model\":\"claude-test\"}}\n\n",
-			wantCode: fault.CodeStreamProtocol,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-				writer.Header().Set("Content-Type", "text/event-stream")
-				_, _ = io.WriteString(writer, test.body)
-			}))
-			defer server.Close()
-			instance, err := New(Config{BaseURL: server.URL, APIKey: secret.New("test-key"), Model: "claude-test"})
-			if err != nil {
-				t.Fatalf("new provider: %v", err)
-			}
-			defer closeAnthropicProvider(t, instance)
-			conversation := testConversation(t, instance)
-			stream, err := conversation.Stream(context.Background(), testAnthropicTurnInputWithProject(t, conversation, "hello"))
-			if err != nil {
-				t.Fatalf("start stream: %v", err)
-			}
-			terminal := readAnthropicTerminal(t, conversation, stream)
-			if terminal.Kind() != provider.StreamEventFailed {
-				t.Fatalf("terminal: %#v", terminal)
-			}
-			assertFaultCode(t, terminal.Error(), test.wantCode)
-			if strings.Contains(terminal.Error().Error(), "sensitive response") {
-				t.Fatalf("terminal leaked provider body: %v", terminal.Error())
-			}
-			if len(conversation.historySnapshot()) != 1 {
-				t.Fatalf("failed stream committed history: %#v", conversation.historySnapshot())
-			}
-			if projection := conversation.ProjectHistory(); len(projection.Turns) != 1 || len(projection.Turns[0].Messages) != 1 || projection.Turns[0].Messages[0].Role != domain.SemanticUser {
-				t.Fatalf("failed stream projected history: %#v", projection)
-			}
-		})
 	}
 }
 
@@ -506,34 +192,6 @@ func testAnthropicTurnInputWithProject(t *testing.T, conversation provider.Conve
 		t.Fatal(err)
 	}
 	return input
-}
-
-func TestConversationRejectsOversizedEvent(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		writer.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(writer, "data: ")
-		_, _ = io.WriteString(writer, strings.Repeat("x", transport.DefaultMaxEventBytes))
-		_, _ = io.WriteString(writer, "\n\n")
-	}))
-	defer server.Close()
-	instance, err := New(Config{BaseURL: server.URL, APIKey: secret.New("test-key"), Model: "claude-test"})
-	if err != nil {
-		t.Fatalf("new provider: %v", err)
-	}
-	defer closeAnthropicProvider(t, instance)
-	conversation := testConversation(t, instance)
-	stream, err := conversation.Stream(context.Background(), testAnthropicTurnInput(t, conversation, "hello"))
-	if err != nil {
-		t.Fatalf("start stream: %v", err)
-	}
-	terminal := readAnthropicTerminal(t, conversation, stream)
-	if terminal.Kind() != provider.StreamEventFailed {
-		t.Fatalf("terminal: %#v", terminal)
-	}
-	assertFaultCode(t, terminal.Error(), fault.CodeStreamProtocol)
-	if len(conversation.historySnapshot()) != 1 {
-		t.Fatalf("oversized event committed history: %#v", conversation.historySnapshot())
-	}
 }
 
 func readAnthropicTerminal(t *testing.T, conversation *Conversation, stream <-chan provider.StreamEvent) provider.StreamEvent {

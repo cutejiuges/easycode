@@ -13,10 +13,6 @@ import (
 	"easycode/internal/session"
 )
 
-// contextPlan 读取已提交有效窗口，不包含待处理输入和流式 staging。
-func (runtime *Runtime) contextPlan() (contextplan.ContextPlan, error) {
-	return runtime.contextPlanFor(runtime.operationProfile)
-}
 func (runtime *Runtime) contextPlanFor(profile contextplan.ProviderProfile) (contextplan.ContextPlan, error) {
 	view, err := runtime.conversation.ProjectActiveContext()
 	if err != nil {

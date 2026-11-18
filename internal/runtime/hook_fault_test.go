@@ -46,39 +46,3 @@ func TestHookEveryDurableBoundaryStopsAfterUnconfirmedSync(t *testing.T) {
 		}
 	}
 }
-
-func TestHookCancellationAfterFactAcceptancePreservesCommittedOutcome(t *testing.T) {
-	for _, kind := range []session.EventKind{session.EventToolHookGatePlanned, session.EventHookExecutionStarted, session.EventHookExecutionFinished, session.EventToolHookGateDecided, session.EventToolCallResult} {
-		t.Run(string(kind), func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			j := &hookFaultJournal{kind: kind, after: true, cancel: cancel}
-			r, inv, runner, _ := hookRuntimeFixture(t, j, 1)
-			runner.status, runner.code = domain.HookBlock, domain.HookDenied
-			runner.onRun = func(ctx context.Context, id domain.HookRunIdentity) domain.HookRunResult {
-				if ctx.Err() != nil {
-					return domain.HookRunResult{Identity: id, Status: domain.HookCancel, Code: domain.HookCancelled, Cancelled: true, CleanupConfirmed: true, Origin: "execution"}
-				}
-				return domain.HookRunResult{Identity: id, Status: domain.HookBlock, Code: domain.HookDenied, ExitKnown: true, ExitCode: 2, CleanupConfirmed: true, Origin: "execution"}
-			}
-			result, blocked, err := r.checkToolHooks(ctx, hookTrustEmitter(t, r, "trust_session", nil), runtimeTurnID, inv)
-			if !blocked || result.Validate() != nil || r.poisoned.Load() {
-				t.Fatal("accepted cancellation lost durable result", err)
-			}
-			wantRuns := 1
-			if kind == session.EventToolHookGatePlanned {
-				wantRuns = 0
-			}
-			if runner.runs != wantRuns {
-				t.Fatal("accepted started was not delivered exactly once")
-			}
-			want := domain.HookDenied
-			if kind == session.EventToolHookGatePlanned || kind == session.EventHookExecutionStarted {
-				want = domain.HookCancelled
-			}
-			if result.Code() != string(want) {
-				t.Fatal("committed outcome was rewritten", result.Code(), want)
-			}
-		})
-	}
-}

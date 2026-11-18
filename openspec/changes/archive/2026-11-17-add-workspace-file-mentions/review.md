@@ -1,5 +1,7 @@
 # 文件引用实现代码复审
 
+> 历史日志、运行清单和诊断转储已清理，仅保留文字结论；当前验收以现存测试及质量门为准。
+
 日期：2026-11-17。分支：`feat/workspace-file-mentions`。复审依据为仓库 AGENTS.md、本 change 的 proposal/design/tasks/六份 delta、当前源码与固定 fixture。原 47 项任务保持完成；本轮修复原契约中的实现遗漏。
 
 最终结论：三个生产缺陷与一处 PTY 验收同步问题均已修复。最终代码的完整 `make verify` 退出码 0，全量普通与 race 通过；14/14 PTY、4/4 回执单测及 64/64 OpenSpec 严格校验通过。没有遗留已确认而未修复的问题。
@@ -58,15 +60,15 @@
 
 | 检查 | 结果 |
 | --- | --- |
-| 修复前反证 | 预期退出 1，三个缺口均触发新增断言；[原始输出](evidence/review/before-fixes.txt) |
-| 新增回归 `-race -count=3` | 通过；[原始输出](evidence/review/regressions-race.txt) |
-| 回执单测 | 4/4 通过；[原始输出](evidence/review/smoke-unit.txt) |
-| 文件引用真实 PTY | 4/4 通过，双 Provider × 普通/NO_COLOR，每组 3 次请求、4 次正文读取、5 次扫描，终端恢复；[JSON](evidence/review/file-smoke.json) |
-| effort 与原有补全 PTY | 8/8、2/2 通过，全部终端恢复；[effort](evidence/review/effort-smoke.json)、[completion](evidence/review/completion-smoke.json) |
-| OpenSpec 全部严格校验 | 64/64 通过，其中 62 specs、2 changes；[JSON](evidence/review/openspec-all.json) |
-| Linux/Windows amd64 app 测试二进制 | 两项目标编译成功，只编译未原生执行；[JSON](evidence/review/platform-compilation.json) |
-| 完整 `make verify` | 通过，退出码 0；branch policy、gofmt、vet、Staticcheck、架构、全量普通与 race。app 普通 151.245 秒、race 1055.594 秒；[完整日志](evidence/review/make-verify.txt)、[退出码](evidence/review/make-verify.exit) |
+| 修复前反证 | 预期退出 1，三个缺口均触发新增断言；原始输出 |
+| 新增回归 `-race -count=3` | 通过；原始输出 |
+| 回执单测 | 4/4 通过；原始输出 |
+| 文件引用真实 PTY | 4/4 通过，双 Provider × 普通/NO_COLOR，每组 3 次请求、4 次正文读取、5 次扫描，终端恢复；JSON |
+| effort 与原有补全 PTY | 8/8、2/2 通过，全部终端恢复；effort、completion |
+| OpenSpec 全部严格校验 | 64/64 通过，其中 62 specs、2 changes；JSON |
+| Linux/Windows amd64 app 测试二进制 | 两项目标编译成功，只编译未原生执行；JSON |
+| 完整 `make verify` | 通过，退出码 0；branch policy、gofmt、vet、Staticcheck、架构、全量普通与 race。app 普通 151.245 秒、race 1055.594 秒；完整日志、退出码 |
 
-新回归显式使用 `-count=3` 执行 race；全量质量门按 Go 的输入校验复用部分未变更包的测试缓存，app 与 builtin 在最终代码上实际运行。CLI apply 状态为 all_done、47/47，见 [apply-final.json](evidence/review/apply-final.json)。
+新回归显式使用 `-count=3` 执行 race；全量质量门按 Go 的输入校验复用部分未变更包的测试缓存，app 与 builtin 在最终代码上实际运行。CLI apply 状态为 all_done、47/47，见 apply-final.json。
 
 本轮实际运行平台为 Darwin/arm64，使用本地 HTTP/SSE/WebSocket 假服务；没有真实远端模型调用。Linux/amd64 与 Windows/amd64 只做测试二进制交叉编译，不声明原生运行验收。复审阶段未归档、提交或推送；随后按用户确认于 2026-11-17 归档，记录见 [archive.md](archive.md)。

@@ -18,13 +18,13 @@
 | 检查 | 结果/证据 |
 | --- | --- |
 | TUI 完整测试 | 新增四类修复后通过；最终结果同时纳入完整质量门。 |
-| 重点回归重复五次 | 已通过，[输出](verification/revalidation-regressions.txt)，包括补全、取消、过期回复、取回和 Hooks 草稿。 |
-| 状态机 fuzz，20 秒、两个 worker | 已通过，130177 组序列；[输出](verification/revalidation-fuzz.txt)。逐步检查 UTF-8、字素边界、布局正文、不可变候选快照、匹配/选择范围、焦点可见性、行宽和确定性渲染。 |
-| 双 Provider 请求/恢复对照 | 八个组合均通过；扩展到普通/手动 Skill 和 ASCII/组合重音/中文/ZWJ emoji 参数，验证手输与已有参数中的名称补全、原文附件、原生顺序、canonical bytes、来源/缓存指纹及恢复等价；[输出](verification/revalidation-providers.txt)。 |
-| Darwin 真实 PTY | 普通配色与 NO_COLOR 均通过；增加空 bracketed paste、8×24、组合空白后的补全/退格，保留 28×10/80×24、审批隔离、拒绝零文件写入及完整终端模式恢复；[输出](verification/revalidation-pty.json)。 |
-| Provider/Session/Runtime/headless 无缓存回归 | `go test ./internal/provider/... ./internal/session/... ./internal/runtime ./internal/headless -count=1` 已通过；[输出](verification/revalidation-kernel.txt)。 |
-| 最终 `make verify` | 全部通过，退出码 0；包含分支策略回归、gofmt、vet、Staticcheck、全量测试、架构守卫和全量 race；[输出](verification/revalidation-make-verify.txt)。 |
-| OpenSpec 契约检查 | change 严格校验及全部 51 项主规格通过；[输出](verification/revalidation-openspec.txt)。 |
+| 重点回归重复五次 | 已通过，输出，包括补全、取消、过期回复、取回和 Hooks 草稿。 |
+| 状态机 fuzz，20 秒、两个 worker | 已通过，130177 组序列；输出。逐步检查 UTF-8、字素边界、布局正文、不可变候选快照、匹配/选择范围、焦点可见性、行宽和确定性渲染。 |
+| 双 Provider 请求/恢复对照 | 八个组合均通过；扩展到普通/手动 Skill 和 ASCII/组合重音/中文/ZWJ emoji 参数，验证手输与已有参数中的名称补全、原文附件、原生顺序、canonical bytes、来源/缓存指纹及恢复等价；输出。 |
+| Darwin 真实 PTY | 普通配色与 NO_COLOR 均通过；增加空 bracketed paste、8×24、组合空白后的补全/退格，保留 28×10/80×24、审批隔离、拒绝零文件写入及完整终端模式恢复；输出。 |
+| Provider/Session/Runtime/headless 无缓存回归 | `go test ./internal/provider/... ./internal/session/... ./internal/runtime ./internal/headless -count=1` 已通过；输出。 |
+| 最终 `make verify` | 全部通过，退出码 0；包含分支策略回归、gofmt、vet、Staticcheck、全量测试、架构守卫和全量 race；输出。 |
+| OpenSpec 契约检查 | change 严格校验及全部 51 项主规格通过；输出。 |
 
 fuzz 是补充探索；四项缺陷的正确性由固定输入和确定事件序列的回归测试证明，不以随机运行或 sleep 代替取消/恢复断言。
 

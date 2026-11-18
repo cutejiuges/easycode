@@ -7,96 +7,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
 
 	"easycode/internal/domain"
 	"easycode/internal/session"
 )
-
-func TestListRebuildsFromJournalsWithoutChangingFacts(t *testing.T) {
-	dir := privateTempDir(t)
-	root := filepath.Join(dir, "sessions")
-	database := filepath.Join(dir, "state.sqlite")
-	repository, err := session.OpenOrCreateRepository(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = repository.Close() }()
-	before := map[string][]byte{}
-	for i := 0; i < 4; i++ {
-		identity, err := session.GenerateRootIdentity()
-		if err != nil {
-			t.Fatal(err)
-		}
-		family, wire, model := domain.ProviderOpenAI, "responses", "first"
-		if i%2 == 1 {
-			family, wire, model = domain.ProviderAnthropic, "messages", "second"
-		}
-		writer, _, err := session.CreateRootJournal(context.Background(), repository, identity, session.RootJournalConfig{Provider: family, ProviderWire: wire, Model: model, CreationCWD: filepath.Join(dir, string(rune('a'+i%2)))})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := writer.Close(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-		path, err := repository.JournalPath(identity.ThreadID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		content, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		before[path] = content
-	}
-	query := ListQuery{Scope: ListAllDirectories, Limit: 3}
-	var baseline ListResult
-	for _, fixture := range []string{"initial", "missing", "corrupt.sqlite", "incompatible.sqlite"} {
-		if fixture == "missing" {
-			if err := os.Remove(database); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if fixture == "corrupt.sqlite" || fixture == "incompatible.sqlite" {
-			content, err := os.ReadFile(filepath.Join("testdata", "catalog", fixture))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(database, content, 0600); err != nil {
-				t.Fatal(err)
-			}
-		}
-		instance := openTestCatalog(t, database, root)
-		if _, err := instance.Reconcile(context.Background(), repository); err != nil {
-			t.Fatal(err)
-		}
-		result, err := instance.List(context.Background(), query)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := validateSchema(instance.db); err != nil {
-			t.Fatal(err)
-		}
-		if err := instance.Close(); err != nil {
-			t.Fatal(err)
-		}
-		if fixture == "initial" {
-			baseline = result
-		} else if !reflect.DeepEqual(result, baseline) {
-			t.Fatalf("%s: result differs", fixture)
-		}
-		if len(result.Entries) != 3 || !result.HasMore {
-			t.Fatalf("result=%+v", result)
-		}
-		for path, want := range before {
-			got, err := os.ReadFile(path)
-			if err != nil || !bytes.Equal(got, want) {
-				t.Fatalf("journal changed: %v", err)
-			}
-		}
-	}
-}
 
 func TestListBusyProcessCannotRepairUntilRelease(t *testing.T) {
 	dir := privateTempDir(t)

@@ -1,7 +1,0 @@
-{
-  "command": "python3 scripts/reasoning-controls-smoke.py",
-  "started_at": "2026-11-15T12:03:24.247034+00:00",
-  "exit_code": 0,
-  "elapsed_seconds": 4.13,
-  "log": "reasoning-controls-pty-run.log"
-}

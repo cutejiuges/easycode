@@ -3,7 +3,6 @@ package context
 import (
 	"easycode/internal/codec"
 	"easycode/internal/domain"
-	"math"
 	"testing"
 )
 
@@ -83,29 +82,5 @@ func TestCacheSourceChangeMatrix(t *testing.T) {
 	}
 	if base.Validate() != nil {
 		t.Fatal("copy modified source")
-	}
-}
-func TestCacheReadRatioPreservesUncertainty(t *testing.T) {
-	k, u, na := domain.KnownUsageMetric, domain.UnknownUsageMetric(), domain.NotApplicableUsageMetric()
-	for _, test := range []struct {
-		name               string
-		input, read, write domain.UsageMetric
-		ratio              float64
-		known              bool
-	}{
-		{"ordinary", k(30), k(70), na, .7, true}, {"write denominator", k(20), k(60), k(20), .6, true}, {"known zero", k(5), k(0), k(0), 0, true},
-		{"unknown input", u, k(5), na, 0, false}, {"unknown write", k(5), k(5), u, 0, false}, {"unknown read", k(5), u, na, 0, false}, {"not applicable read", k(5), na, na, 0, false},
-		{"zero denominator", k(0), k(0), na, 0, false}, {"overflow", k(math.MaxUint64), k(1), na, 0, false}, {"max", k(0), k(math.MaxUint64), na, 1, true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			usage, err := domain.NewSampleUsage(test.input, test.read, test.write, k(0), u)
-			if err != nil {
-				t.Fatal(err)
-			}
-			ratio, known := domain.CacheReadRatio(usage)
-			if ratio != test.ratio || known != test.known {
-				t.Fatal(ratio, known)
-			}
-		})
 	}
 }

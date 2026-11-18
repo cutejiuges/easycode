@@ -1,5 +1,7 @@
 # 本地 Plugin 技能包验收记录
 
+> 历史日志、运行清单和诊断转储已清理，仅保留文字结论；当前验收以现存测试及质量门为准。
+
 日期：2026-11-12–13。实际运行平台：macOS 27.0.1 / Darwin arm64，Go 1.24.13。分支：`feat/local-plugin-skills`。本文只记录本变更新增实现的验收；design 中的实施前基线不是本功能通过的证据。
 
 ## 已完成的功能验证
@@ -15,9 +17,9 @@
 | 真实 WS | `internal/app/plugin_websocket_test.go` | 两次工具输出以匹配 call ID 的增量 suffix 提交，恢复新连接使用完整请求，保留指令、资源及 opaque reasoning，通过 |
 | UI 路径等价 | `internal/app/completion_e2e_test.go::TestPluginBrowserManualAndRestoredRequestsBothProviders` | 补全、/plugins、/skills，各双 Provider × manual-only 开关 × ASCII/Unicode 参数，逐字节对照手输与恢复请求，通过 |
 | CLI 运行入口 | `cmd/easycode/plugin_integration_test.go`、`plugin_dirs_test.go` | 四格式 × 双 Provider × print/json/stream 共 24 组，另含 16 次 continue/resume；无效来源隔离、无额外 stdout 协议、参数隐私与帮助通过；非法参数先于后续帮助/版本分支拒绝 |
-| 实际二进制与 PTY | `scripts/plugins-smoke.py`、[独立回归证据](evidence/regression-2026-11-13-plugins-smoke.json) | 实际 CLI 二进制 8 组、40 次请求、16 次删除来源后的跨进程恢复；双 Provider × 普通颜色/NO_COLOR 四组真实 PTY，浏览/详情/选择/草稿/保留名/paste/活动停止及 80×24、28×10、8×2 与终端模式恢复通过 |
+| 实际二进制与 PTY | `scripts/plugins-smoke.py`、独立回归证据 | 实际 CLI 二进制 8 组、40 次请求、16 次删除来源后的跨进程恢复；双 Provider × 普通颜色/NO_COLOR 四组真实 PTY，浏览/详情/选择/草稿/保留名/paste/活动停止及 80×24、28×10、8×2 与终端模式恢复通过 |
 | TUI | `internal/tui/plugins_test.go`、新增固定 goldens 与 completion goldens | 六类状态、窄屏控制、恶意 metadata 可见转义、独占焦点、4 MiB 原子拒绝通过 |
-| Linux 构建与测试编译 | `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./...`；相同目标平台 `go test -c` 编译 extension、artifact、app 与 CLI | 全库生产构建和上述测试二进制交叉编译通过，见 [linux-crosscompile.log](evidence/linux-crosscompile.log)；未在 Linux 原生执行，不据此宣称 Linux 完整运行验收 |
+| Linux 构建与测试编译 | `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./...`；相同目标平台 `go test -c` 编译 extension、artifact、app 与 CLI | 全库生产构建和上述测试二进制交叉编译通过，见 linux-crosscompile.log；未在 Linux 原生执行，不据此宣称 Linux 完整运行验收 |
 
 模型交互全部使用本地 HTTP/SSE/WebSocket fixture server 和不可用的固定测试 key；没有真实模型服务或外网访问。PTY 通过 ACK/窗口/事件屏障驱动，不以固定 sleep 证明正确。
 
@@ -60,17 +62,17 @@ git diff --check
 
 已按本地 OpenSpec 的 status 所列五项 delta 同步，写入前取得当前 specs 指令；新增 `extension/local-plugins`、`tui/plugins`，更新 `extension/local-skills`、`tui/input-completion`、`provider/native-history-persistence`。共新增 16 项、修改 10 项需求；新增 78 个场景，三份既有规格中的 110 个场景均保留，19 项未涉及需求的正文未改。新规格 Purpose 来自批准的 delta，既有 Purpose 保持原文；重复合并的内存校验结果相同，没有 delta 操作标题进入正式规格。
 
-同步与保留检查见 [spec-sync.json](evidence/spec-sync.json)。`openspec validate --specs --strict --json` 实际结果为 **58 passed / 0 failed**，见 [specs-validation.json](evidence/specs-validation.json)；本 change 的严格校验通过，见 [change-validation.json](evidence/change-validation.json)。
+同步与保留检查见 spec-sync.json。`openspec validate --specs --strict --json` 实际结果为 **58 passed / 0 failed**，见 specs-validation.json；本 change 的严格校验通过，见 change-validation.json。
 
 ## 最终质量门
 
-第一轮全量测试仅发现两份新增合法 fixture 未列入既有预览测试的白名单，见 [make-verify-first.log](evidence/make-verify-first.log)。已补齐白名单，保留原有预览内容、只读 bytes、lease 与伪造 fixture 拒绝断言；对应回归通过。随后完整 `make verify` 通过，见 [make-verify-before-final-argument-check.log](evidence/make-verify-before-final-argument-check.log)。
+第一轮全量测试仅发现两份新增合法 fixture 未列入既有预览测试的白名单，见 make-verify-first.log。已补齐白名单，保留原有预览内容、只读 bytes、lease 与伪造 fixture 拒绝断言；对应回归通过。随后完整 `make verify` 通过，见 make-verify-before-final-argument-check.log。
 
-补充非法插件参数不能被后续帮助/版本分支掩盖的前置校验后，全量质量门再次通过，见 [make-verify-before-rejected-read-accounting.log](evidence/make-verify-before-rejected-read-accounting.log)。最终预算审计进一步发现：一致性检查失败时原读取边界会丢弃正文，也一并丢失累计计费依据。现在受控读取值保留实际读取量，错误时仍不披露正文；主文档和副文件失败都计入 16 MiB，耗尽后不再读取。确定性修改/取消及主文档/副文件额度回归、extension 全套与架构测试均通过。
+补充非法插件参数不能被后续帮助/版本分支掩盖的前置校验后，全量质量门再次通过，见 make-verify-before-rejected-read-accounting.log。最终预算审计进一步发现：一致性检查失败时原读取边界会丢弃正文，也一并丢失累计计费依据。现在受控读取值保留实际读取量，错误时仍不披露正文；主文档和副文件失败都计入 16 MiB，耗尽后不再读取。确定性修改/取消及主文档/副文件额度回归、extension 全套与架构测试均通过。
 
-上述最终代码对应的完整 **`make verify` 已通过（exit 0）**，见 [make-verify.log](evidence/make-verify.log)。实际执行分支策略测试、gofmt 检查、`go vet ./...`、Staticcheck、`go test ./...` 和 `go test -race ./...`，包含架构边界、现有 Skills/Hooks/Question、真实子进程 lease/崩溃与 fixture 恢复回归。分支 `feat/local-plugin-skills` 检查及 `git diff --check` 通过；新增源码/文档空白、注释语言、文档和测试名称引用也已核对。没有跳过或弱化测试，没有新增依赖或改动参考工程。
+上述最终代码对应的完整 **`make verify` 已通过（exit 0）**，见 make-verify.log。实际执行分支策略测试、gofmt 检查、`go vet ./...`、Staticcheck、`go test ./...` 和 `go test -race ./...`，包含架构边界、现有 Skills/Hooks/Question、真实子进程 lease/崩溃与 fixture 恢复回归。分支 `feat/local-plugin-skills` 检查及 `git diff --check` 通过；新增源码/文档空白、注释语言、文档和测试名称引用也已核对。没有跳过或弱化测试，没有新增依赖或改动参考工程。
 
-实现收尾时以最终源码重建 CLI 与 PTY helper，运行 `python3 scripts/plugins-smoke.py`，**exit 0**；当时 8 组二进制 CLI 与普通颜色/NO_COLOR 两组真实终端全部通过，终端模式均恢复。[plugins-smoke.json](evidence/plugins-smoke.json) 保存该阶段结果，修正读取计费前的结果另存为 `plugins-smoke-before-read-accounting.json`。45/45 项任务均已有对应验证。
+实现收尾时以最终源码重建 CLI 与 PTY helper，运行 `python3 scripts/plugins-smoke.py`，**exit 0**；当时 8 组二进制 CLI 与普通颜色/NO_COLOR 两组真实终端全部通过，终端模式均恢复。plugins-smoke.json 保存该阶段结果，修正读取计费前的结果另存为 `plugins-smoke-before-read-accounting.json`。45/45 项任务均已有对应验证。
 
 用户随后要求再次独立全面验收，本轮补充模糊测试、10 轮乱序 race、双 Provider 四组真实 PTY，以及二进制模型工具续写和删除来源后的跨进程恢复；最新结果见 [2026-11-13 独立全面回归](regression-2026-11-13.md)。
 

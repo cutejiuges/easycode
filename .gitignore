@@ -8,3 +8,5 @@
 /config.json
 .idea
 __pycache__/
+
+.test-results/

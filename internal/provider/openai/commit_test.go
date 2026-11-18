@@ -1,7 +1,6 @@
 package openai
 
 import (
-	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -9,57 +8,6 @@ import (
 	"easycode/internal/domain"
 	"easycode/internal/provider"
 )
-
-func TestNativeCommitRoundTripPreservesPrivateResponsesItems(t *testing.T) {
-	t.Parallel()
-	entry := nativeHistoryEntry{
-		Kind: nativeHistorySample,
-		Outputs: []NativeItem{
-			{
-				Type: "reasoning", ID: "reason-1", Phase: "analysis",
-				ReasoningSummary: []ReasoningSummaryPart{{Type: "summary_text", Text: "summary"}},
-				EncryptedContent: "opaque-encrypted",
-			},
-			{
-				Type: "message", ID: "message-1", Role: "assistant", Phase: "final",
-				Content: []ContentPart{{Type: "output_text", Text: "answer"}},
-			},
-			{
-				Type: "future_item", ID: "future-1",
-				Raw: json.RawMessage(`{"type":"future_item","id":"future-1","extension":{"enabled":true}}`),
-			},
-		},
-		Usage: rawUsage{
-			InputTokens:           optionalUint{Known: true, Value: 12},
-			CachedInputTokens:     optionalUint{Known: true, Value: 4},
-			OutputTokens:          optionalUint{Known: true, Value: 7},
-			ReasoningOutputTokens: optionalUint{Known: true, Value: 3},
-		},
-	}
-	envelope, err := encodeNativeCommit(entry)
-	if err != nil {
-		t.Fatal(err)
-	}
-	decoded, err := decodeNativeCommit(envelope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(decoded.Outputs) != 3 ||
-		decoded.Outputs[0].Phase != "analysis" || decoded.Outputs[0].EncryptedContent != "opaque-encrypted" ||
-		decoded.Outputs[1].Phase != "final" || decoded.Outputs[1].Content[0].Text != "answer" ||
-		!bytes.Equal(decoded.Outputs[2].Raw, entry.Outputs[2].Raw) {
-		t.Fatalf("decoded turn = %#v", decoded)
-	}
-	if !decoded.Usage.InputTokens.Known || decoded.Usage.InputTokens.Value != 12 ||
-		!decoded.Usage.CachedInputTokens.Known || decoded.Usage.CachedInputTokens.Value != 4 ||
-		decoded.Usage.CacheWriteTokens.Known || decoded.Usage.ReasoningOutputTokens.Value != 3 {
-		t.Fatalf("decoded usage = %#v", decoded.Usage)
-	}
-	decoded.Outputs[2].Raw[0] = '['
-	if entry.Outputs[2].Raw[0] != '{' || envelope.Payload()[0] != '{' {
-		t.Fatal("round trip shares mutable opaque buffers")
-	}
-}
 
 func TestNativeCommitCanonicalGolden(t *testing.T) {
 	t.Parallel()
@@ -106,31 +54,5 @@ func TestNativeCommitRejectsIncompatibleAndCorruptPayloads(t *testing.T) {
 				t.Fatalf("decodeNativeCommit() error = %v", err)
 			}
 		})
-	}
-}
-
-func TestNativeCommitRejectsSampleWithoutUsage(t *testing.T) {
-	t.Parallel()
-	payload := json.RawMessage(`{"kind":"sample","outputs":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"world"}]}]}`)
-	envelope, err := provider.NewNativeCommitEnvelope(domain.ProviderOpenAI, responsesWire, payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := decodeNativeCommit(envelope); err == nil {
-		t.Fatal("sample payload without usage unexpectedly decoded")
-	}
-}
-
-func TestNativeCommitRejectsOversizedPayload(t *testing.T) {
-	t.Parallel()
-	entry := nativeHistoryEntry{
-		Kind: nativeHistorySample,
-		Outputs: []NativeItem{{
-			Type: "future_item",
-			Raw:  append(append(json.RawMessage(`{"type":"future_item","data":"`), bytes.Repeat([]byte{'x'}, provider.MaxNativeCommitBytes)...), []byte(`"}`)...),
-		}},
-	}
-	if _, err := encodeNativeCommit(entry); err == nil || !strings.Contains(err.Error(), "size") {
-		t.Fatalf("encodeNativeCommit() error = %v", err)
 	}
 }

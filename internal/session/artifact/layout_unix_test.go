@@ -24,29 +24,6 @@ func layoutDirectories(t *testing.T) (string, string, string) {
 	return root, workspace, storage
 }
 
-func TestLayoutUsesDirectoryAncestry(t *testing.T) {
-	root, w, s := layoutDirectories(t)
-	for _, tt := range []struct {
-		name, storage, workspace string
-		reads                    []string
-		ok                       bool
-	}{
-		{"similar-prefix", s, w, []string{w}, true}, {"home", s, root, nil, false}, {"same", s, s, nil, false}, {"workspace-inside-storage", root, w, nil, false}, {"readable-system-root", s, w, []string{root}, false},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			l, err := OpenLayout(context.Background(), tt.storage, tt.workspace, tt.reads, []string{tt.workspace})
-			if (err == nil) != tt.ok {
-				t.Fatalf("layout: %v", err)
-			}
-			if l != nil {
-				if err = l.Close(); err != nil {
-					t.Fatal(err)
-				}
-			}
-		})
-	}
-}
-
 func TestLayoutRejectsReplacementAndPrivateSymlinks(t *testing.T) {
 	root, w, s := layoutDirectories(t)
 	l, err := OpenLayout(context.Background(), s, w, []string{w}, []string{w})

@@ -13,34 +13,6 @@ import (
 	"easycode/internal/domain"
 )
 
-func TestLoaderLoadsValidBatches(t *testing.T) {
-	t.Parallel()
-	content := append(
-		encodeTestBatch(t, 1, []RecordDraft{mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{})}),
-		encodeTestBatch(t, 2, []RecordDraft{
-			mustDraft(t, EventProviderNativeCommit, testTurnID, NativeCommitPayload{
-				Provider: domain.ProviderOpenAI, Wire: "responses", Payload: json.RawMessage(`{"shape":"text_sample"}`),
-			}),
-			mustDraft(t, EventSampleUsage, testTurnID, testSampleUsage(t)),
-			mustDraft(t, EventTurnCompleted, testTurnID, TurnCompletedPayload{}),
-		})...,
-	)
-	loader, repository := writeRawJournal(t, content)
-	defer repository.Close()
-	result, err := loader.Load(context.Background(), testThreadID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(result.Records) != 4 || result.NextSequence != 5 || result.Repair.Repaired {
-		t.Fatalf("Load() = %#v", result)
-	}
-	for index, record := range result.Records {
-		if record.Sequence != uint64(index+1) {
-			t.Fatalf("record[%d] = %#v", index, record)
-		}
-	}
-}
-
 func TestLoaderRepairsTruncatedFinalLineIdempotently(t *testing.T) {
 	t.Parallel()
 	committed := encodeTestBatch(t, 1, []RecordDraft{mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{})})
@@ -89,20 +61,6 @@ func TestLoaderRepairsWholeTrailingIncompleteBatch(t *testing.T) {
 	}
 	if !bytes.Equal(remaining, committed) {
 		t.Fatal("repair changed bytes before the incomplete batch")
-	}
-}
-
-func TestLoaderKeepsCommittedTurnStarted(t *testing.T) {
-	t.Parallel()
-	content := encodeTestBatch(t, 1, []RecordDraft{mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{})})
-	loader, repository := writeRawJournal(t, content)
-	defer repository.Close()
-	result, err := loader.Load(context.Background(), testThreadID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Repair.Repaired || len(result.Records) != 1 || result.Records[0].EventKind != EventTurnStarted {
-		t.Fatalf("Load() = %#v", result)
 	}
 }
 

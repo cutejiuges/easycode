@@ -1,6 +1,0 @@
-{
-  "command": "make verify",
-  "exit_code": 2,
-  "duration_seconds": 233.6,
-  "scope": "superseded by the deterministic busy 20x5 viewport regression; intentionally interrupted and excluded from acceptance"
-}

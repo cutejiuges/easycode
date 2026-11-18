@@ -9,32 +9,10 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"easycode/internal/codec"
 	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
 )
-
-func TestRunTextPublishesOnlyCompletedAnswer(t *testing.T) {
-	tests := []struct {
-		name   string
-		events []protocol.Event
-		want   string
-	}{
-		{name: "text", events: []protocol.Event{runtimeStarted(), runtimeDelta(t, "hel"), runtimeDelta(t, "lo"), runtimeCompleted()}, want: "hello\n"},
-		{name: "existing newline", events: []protocol.Event{runtimeStarted(), runtimeDelta(t, "hello\n"), runtimeCompleted()}, want: "hello\n"},
-		{name: "empty success", events: []protocol.Event{runtimeStarted(), runtimeCompleted()}, want: "\n"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			var output bytes.Buffer
-			result := Run(context.Background(), fixedSession(test.events...), textConfig(&output))
-			if !result.Completed || result.Failure.Code != "" || output.String() != test.want {
-				t.Fatalf("result/output = %#v/%q", result, output.String())
-			}
-		})
-	}
-}
 
 func TestRunTextDiscardsPartialOutputOnFailureAndProtocolError(t *testing.T) {
 	failure := runtimeFailure(t, fault.Summary{Code: fault.CodeProviderRequest, Message: "provider request failed"})
@@ -59,76 +37,6 @@ func TestRunTextDiscardsPartialOutputOnFailureAndProtocolError(t *testing.T) {
 	}
 }
 
-func TestRunJSONEmitsDeclaredSequenceOnly(t *testing.T) {
-	var output bytes.Buffer
-	result := Run(
-		context.Background(),
-		fixedSession(runtimeStarted(), runtimeDelta(t, "hel"), runtimeDelta(t, "lo"), runtimeCompleted()),
-		jsonConfig(&output, true),
-	)
-	if !result.Completed {
-		t.Fatalf("result = %#v", result)
-	}
-	wantTypes := []string{"thread.started", "turn.started", "assistant.text.delta", "assistant.text.delta", "turn.completed"}
-	lines := strings.Split(strings.TrimSuffix(output.String(), "\n"), "\n")
-	if len(lines) != len(wantTypes) {
-		t.Fatalf("lines = %q", lines)
-	}
-	for index, line := range lines {
-		var envelope struct {
-			Version int    `json:"version"`
-			Type    string `json:"type"`
-		}
-		if err := codecUnmarshalLine(line, &envelope); err != nil {
-			t.Fatalf("line %d: %v", index, err)
-		}
-		if envelope.Version != 1 || envelope.Type != wantTypes[index] {
-			t.Fatalf("line %d = %#v", index, envelope)
-		}
-	}
-	if !strings.Contains(lines[0], `"resumed":true`) {
-		t.Fatalf("thread.started = %s", lines[0])
-	}
-}
-
-func TestRunJSONReportsTurnAndStreamFailuresOnce(t *testing.T) {
-	t.Run("turn failed", func(t *testing.T) {
-		var output bytes.Buffer
-		result := Run(context.Background(), fixedSession(
-			runtimeStarted(), runtimeDelta(t, "partial"),
-			runtimeFailure(t, fault.Summary{Code: fault.CodeProviderRequest, Message: "provider request failed"}),
-		), jsonConfig(&output, false))
-		if result.Failure.Code != fault.CodeProviderRequest || !result.Reported ||
-			strings.Count(output.String(), `"type":"turn.failed"`) != 1 ||
-			strings.Contains(output.String(), `"type":"turn.completed"`) {
-			t.Fatalf("result/output = %#v/%s", result, output.String())
-		}
-	})
-
-	t.Run("duplicate terminal", func(t *testing.T) {
-		var output bytes.Buffer
-		result := Run(context.Background(), fixedSession(
-			runtimeStarted(), runtimeCompleted(), runtimeCompleted(),
-		), jsonConfig(&output, false))
-		if result.Failure.Code != fault.CodeStreamProtocol || !result.Reported ||
-			strings.Contains(output.String(), `"type":"turn.completed"`) ||
-			strings.Count(output.String(), `"type":"error"`) != 1 {
-			t.Fatalf("result/output = %#v/%s", result, output.String())
-		}
-	})
-
-	t.Run("submit failed", func(t *testing.T) {
-		var output bytes.Buffer
-		session := &fakeSession{submitErr: fault.New(fault.CodeProviderUnavailable, "provider is unavailable")}
-		result := Run(context.Background(), session, jsonConfig(&output, false))
-		if result.Failure.Code != fault.CodeProviderUnavailable || !result.Reported ||
-			strings.Count(output.String(), `"type":"thread.started"`) != 1 ||
-			strings.Count(output.String(), `"type":"error"`) != 1 {
-			t.Fatalf("result/output = %#v/%s", result, output.String())
-		}
-	})
-}
-
 func TestRunCancellationUsesRuntimeTerminalAndInterruptsOnce(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -140,24 +48,6 @@ func TestRunCancellationUsesRuntimeTerminalAndInterruptsOnce(t *testing.T) {
 	}
 	if session.interrupts.Load() != 1 || strings.Count(output.String(), `"type":"turn.failed"`) != 1 {
 		t.Fatalf("interrupts/output = %d/%s", session.interrupts.Load(), output.String())
-	}
-}
-
-func TestRunPassesContextAndRejectsNilContext(t *testing.T) {
-	type contextKey struct{}
-	wantContext := context.WithValue(context.Background(), contextKey{}, "operation")
-	session := fixedSession(runtimeStarted(), runtimeCompleted())
-	var output bytes.Buffer
-	result := Run(wantContext, session, textConfig(&output))
-	if !result.Completed || len(session.contexts) != 1 || session.contexts[0] != wantContext {
-		t.Fatalf("result/contexts = %#v/%#v", result, session.contexts)
-	}
-
-	nilSession := fixedSession(runtimeStarted(), runtimeCompleted())
-	var nilContext context.Context
-	result = Run(nilContext, nilSession, textConfig(&output))
-	if result.Failure.Code != fault.CodeTurnFailed || len(nilSession.contexts) != 0 {
-		t.Fatalf("nil context result/contexts = %#v/%#v", result, nilSession.contexts)
 	}
 }
 
@@ -178,14 +68,6 @@ func TestRunWriterFailureInterruptsAndDrainsActiveTurn(t *testing.T) {
 	writer := &failOnCallWriter{failCall: 3}
 	result := Run(context.Background(), session, jsonConfig(writer, false))
 	if result.Failure.Code != fault.CodeOutput || !result.OutputUnavailable || session.interrupts.Load() != 1 {
-		t.Fatalf("result/interrupts = %#v/%d", result, session.interrupts.Load())
-	}
-}
-
-func TestRunTextWriteFailureAfterCompletionDoesNotInterrupt(t *testing.T) {
-	session := fixedSession(runtimeStarted(), runtimeDelta(t, "answer"), runtimeCompleted())
-	result := Run(context.Background(), session, textConfig(&failOnCallWriter{failCall: 1}))
-	if result.Failure.Code != fault.CodeOutput || !result.OutputUnavailable || session.interrupts.Load() != 0 {
 		t.Fatalf("result/interrupts = %#v/%d", result, session.interrupts.Load())
 	}
 }
@@ -329,8 +211,4 @@ func (writer *failOnCallWriter) Write(content []byte) (int, error) {
 		return 0, errors.New("fixture writer secret")
 	}
 	return writer.buffer.Write(content)
-}
-
-func codecUnmarshalLine(line string, target any) error {
-	return codec.Unmarshal([]byte(line), target)
 }

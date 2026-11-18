@@ -1,4 +1,0 @@
-		- Exit after first reported error. (Current Value: false)
-	atexit_sleep_ms
-		- Sleep in main thread before exiting for that many ms (useful to catch "at exit" races). (Current Value: 1000)
-	profile_memory

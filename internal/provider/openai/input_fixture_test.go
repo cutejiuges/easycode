@@ -45,14 +45,7 @@ func testCommitHistory(t *testing.T, history *nativeHistory, entries ...nativeHi
 		history.commit(entry)
 	}
 }
-func testSemanticTurn(user, assistant string) domain.SemanticTurn {
-	id := testInputID(user)
-	messages := []domain.SemanticMessage{{Role: domain.SemanticUser, InputID: id, Text: user}}
-	if assistant != "" {
-		messages = append(messages, domain.SemanticMessage{Role: domain.SemanticAssistant, Text: assistant})
-	}
-	return domain.SemanticTurn{TurnID: domain.TurnID(id), Messages: messages}
-}
+
 func testCommitUserInput(t *testing.T, conversation *Conversation, text string) {
 	t.Helper()
 	id := testInputID(text)

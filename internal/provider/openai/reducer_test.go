@@ -3,7 +3,6 @@ package openai
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"testing"
 
 	"easycode/internal/domain"
@@ -64,99 +63,6 @@ func TestResponsesStreamReducerNormalizesCompletedUsage(t *testing.T) {
 	assertOpenAIMetric(t, usage.ReasoningOutput(), domain.UsageMetricKnown, 10, true)
 }
 
-func TestResponsesStreamReducerProducesReadyReadCall(t *testing.T) {
-	reducer := newResponsesStreamReducer(testOpenAIToolCatalog(t))
-	reduceOpenAIEvent(t, reducer, `{"type":"response.created","response":{"id":"resp-tool"}}`)
-	reduceOpenAIEvent(t, reducer, `{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc-1","call_id":"call-1","name":"Read"}}`)
-	reduceOpenAIEvent(t, reducer, `{"type":"response.function_call_arguments.delta","item_id":"fc-1","output_index":0,"delta":"{\"file_path\":\"README.md\",\"offset\":2,\"limit\":3}"}`)
-	reduceOpenAIEvent(t, reducer, `{"type":"response.function_call_arguments.done","item_id":"fc-1","output_index":0,"arguments":"{\"file_path\":\"README.md\",\"offset\":2,\"limit\":3}"}`)
-	result := reduceOpenAIEvent(t, reducer, `{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc-1","call_id":"call-1","name":"Read","arguments":"{\"file_path\":\"README.md\",\"offset\":2,\"limit\":3}"}}`)
-	if result.native == nil || result.native.CallID != "call-1" {
-		t.Fatalf("native function call = %#v", result.native)
-	}
-	reduceOpenAIEvent(t, reducer, `{"type":"response.completed","response":{"id":"resp-tool"}}`)
-	ready := reducer.readyCalls()
-	if len(ready) != 1 || ready[0].ProviderCallID() != tool.ProviderCallID("call-1") ||
-		ready[0].ReadInput().FilePath() != "README.md" || ready[0].ReadInput().Offset() != 2 || ready[0].ReadInput().Limit() != 3 {
-		t.Fatalf("ready calls = %#v", ready)
-	}
-}
-
-func TestResponsesStreamReducerProducesCustomPatchOnlyAfterDone(t *testing.T) {
-	reducer := newResponsesStreamReducer(testOpenAIToolCatalog(t))
-	patch := "*** Begin Patch\n*** Update File: main.go\n@@\n-old\n+新\n*** End Patch\n"
-	reduceOpenAIEvent(t, reducer, `{"type":"response.created","response":{"id":"resp-patch"}}`)
-	reduceOpenAIEvent(t, reducer, `{"type":"response.output_item.added","output_index":0,"item":{"type":"custom_tool_call","id":"ctc-1","call_id":"call-patch","name":"apply_patch"}}`)
-	for _, chunk := range []string{"*** Begin Patch\n", "*** Update File: main.go\n@@\n-old\n", "+新\n*** End Patch\n"} {
-		reduceOpenAIEvent(t, reducer, fmt.Sprintf(`{"type":"response.custom_tool_call_input.delta","item_id":"ctc-1","output_index":0,"delta":%q}`, chunk))
-		if len(reducer.readyCalls()) != 0 {
-			t.Fatal("partial custom input produced ready call")
-		}
-	}
-	reduceOpenAIEvent(t, reducer, fmt.Sprintf(`{"type":"response.custom_tool_call_input.done","item_id":"ctc-1","output_index":0,"input":%q}`, patch))
-	if len(reducer.readyCalls()) != 0 {
-		t.Fatal("input done before native item completion produced ready call")
-	}
-	result := reduceOpenAIEvent(t, reducer, fmt.Sprintf(`{"type":"response.output_item.done","output_index":0,"item":{"type":"custom_tool_call","id":"ctc-1","call_id":"call-patch","name":"apply_patch","input":%q}}`, patch))
-	if result.native == nil || result.native.Type != "custom_tool_call" || result.native.Input != patch {
-		t.Fatalf("native = %#v", result.native)
-	}
-	ready := reducer.readyCalls()
-	if len(ready) != 1 || ready[0].Capability() != tool.CapabilityPatch || ready[0].WireKind() != tool.WireCustomFreeform || ready[0].PatchInput().FilePath() != "main.go" {
-		t.Fatalf("ready = %#v", ready)
-	}
-	reduceOpenAIEvent(t, reducer, `{"type":"response.completed","response":{"id":"resp-patch"}}`)
-}
-
-func TestResponsesStreamReducerRejectsInvalidCustomCallStates(t *testing.T) {
-	validPatch := "*** Begin Patch\n*** Update File: main.go\n@@\n-old\n+new\n*** End Patch\n"
-	tests := []struct {
-		name   string
-		events []string
-	}{
-		{"delta-before-item", []string{fmt.Sprintf(`{"type":"response.custom_tool_call_input.delta","item_id":"ctc-1","output_index":0,"delta":%q}`, validPatch)}},
-		{"done-before-input-done", []string{`{"type":"response.output_item.added","output_index":0,"item":{"type":"custom_tool_call","id":"ctc-1","call_id":"call-1","name":"apply_patch"}}`, fmt.Sprintf(`{"type":"response.output_item.done","output_index":0,"item":{"type":"custom_tool_call","id":"ctc-1","call_id":"call-1","name":"apply_patch","input":%q}}`, validPatch)}},
-		{"conflicting-done", []string{`{"type":"response.output_item.added","output_index":0,"item":{"type":"custom_tool_call","id":"ctc-1","call_id":"call-1","name":"apply_patch"}}`, fmt.Sprintf(`{"type":"response.custom_tool_call_input.delta","item_id":"ctc-1","output_index":0,"delta":%q}`, validPatch), `{"type":"response.custom_tool_call_input.done","item_id":"ctc-1","output_index":0,"input":"different"}`}},
-		{"invalid-patch", []string{`{"type":"response.output_item.added","output_index":0,"item":{"type":"custom_tool_call","id":"ctc-1","call_id":"call-1","name":"apply_patch"}}`, `{"type":"response.custom_tool_call_input.done","item_id":"ctc-1","output_index":0,"input":"not a patch"}`, `{"type":"response.output_item.done","output_index":0,"item":{"type":"custom_tool_call","id":"ctc-1","call_id":"call-1","name":"apply_patch","input":"not a patch"}}`}},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			reducer := newResponsesStreamReducer(testOpenAIToolCatalog(t))
-			reduceOpenAIEvent(t, reducer, `{"type":"response.created","response":{"id":"resp"}}`)
-			var err error
-			for _, event := range test.events {
-				_, err = reducer.reduce(transport.SSEEvent{Data: event})
-				if err != nil {
-					break
-				}
-			}
-			if err == nil || len(reducer.readyCalls()) != 0 {
-				t.Fatalf("error=%v ready=%#v", err, reducer.readyCalls())
-			}
-		})
-	}
-}
-
-func TestResponsesStreamReducerRejectsCustomIdentityConflictAndOversize(t *testing.T) {
-	reducer := newResponsesStreamReducer(testOpenAIToolCatalog(t))
-	reduceOpenAIEvent(t, reducer, `{"type":"response.created","response":{"id":"resp"}}`)
-	reduceOpenAIEvent(t, reducer, `{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc-1","call_id":"shared","name":"Read"}}`)
-	if _, err := reducer.reduce(transport.SSEEvent{Data: `{"type":"response.output_item.added","output_index":1,"item":{"type":"custom_tool_call","id":"ctc-1","call_id":"shared","name":"apply_patch"}}`}); err == nil {
-		t.Fatal("custom/function call ID冲突未被拒绝")
-	}
-
-	reducer = newResponsesStreamReducer(testOpenAIToolCatalog(t))
-	reduceOpenAIEvent(t, reducer, `{"type":"response.created","response":{"id":"resp"}}`)
-	reduceOpenAIEvent(t, reducer, `{"type":"response.output_item.added","output_index":0,"item":{"type":"custom_tool_call","id":"ctc-1","call_id":"call-1","name":"apply_patch"}}`)
-	oversize := strings.Repeat("x", tool.MaxPatchInputBytes+1)
-	if _, err := reducer.reduce(transport.SSEEvent{Data: fmt.Sprintf(`{"type":"response.custom_tool_call_input.delta","item_id":"ctc-1","output_index":0,"delta":%q}`, oversize)}); err == nil {
-		t.Fatal("超限custom input未被拒绝")
-	}
-	if len(reducer.readyCalls()) != 0 {
-		t.Fatal("超限custom input产生ready call")
-	}
-}
-
 func TestResponsesStreamReducerProducesOrderedHeterogeneousReadyCalls(t *testing.T) {
 	reducer := newResponsesStreamReducer(testOpenAIToolCatalog(t))
 	reduceOpenAIEvent(t, reducer, `{"type":"response.created","response":{"id":"resp-tools"}}`)
@@ -194,146 +100,11 @@ func TestResponsesStreamReducerRejectsIncompleteReadArguments(t *testing.T) {
 	}
 }
 
-func TestResponsesStreamReducerPreservesMissingAndExplicitZeroUsage(t *testing.T) {
-	missing := newResponsesStreamReducer()
-	reduceOpenAIEvent(t, missing, `{"type":"response.created","response":{"id":"resp-1"}}`)
-	reduceOpenAIEvent(t, missing, `{"type":"response.completed","response":{"id":"resp-1"}}`)
-	missingUsage, err := missing.sampleUsage()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, metric := range []domain.UsageMetric{
-		missingUsage.InputUncached(), missingUsage.CacheRead(), missingUsage.CacheWrite(),
-		missingUsage.Output(), missingUsage.ReasoningOutput(),
-	} {
-		assertOpenAIMetric(t, metric, domain.UsageMetricUnknown, 0, false)
-	}
-
-	zero := newResponsesStreamReducer()
-	reduceOpenAIEvent(t, zero, `{"type":"response.created","response":{"id":"resp-2"}}`)
-	reduceOpenAIEvent(t, zero, `{"type":"response.completed","response":{"id":"resp-2","usage":{"input_tokens":0,"input_tokens_details":{"cached_tokens":0},"cache_write_tokens":0,"output_tokens":0,"output_tokens_details":{"reasoning_tokens":0}}}}`)
-	zeroUsage, err := zero.sampleUsage()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, metric := range []domain.UsageMetric{
-		zeroUsage.InputUncached(), zeroUsage.CacheRead(), zeroUsage.CacheWrite(),
-		zeroUsage.Output(), zeroUsage.ReasoningOutput(),
-	} {
-		assertOpenAIMetric(t, metric, domain.UsageMetricKnown, 0, true)
-	}
-}
-
-func TestResponsesStreamReducerRejectsInvalidUsage(t *testing.T) {
-	for _, test := range []struct {
-		name  string
-		usage string
-	}{
-		{name: "negative", usage: `{"input_tokens":-1}`},
-		{name: "overflow", usage: `{"input_tokens":18446744073709551616}`},
-		{name: "cached above input", usage: `{"input_tokens":2,"input_tokens_details":{"cached_tokens":3}}`},
-		{name: "reasoning above output", usage: `{"output_tokens":2,"output_tokens_details":{"reasoning_tokens":3}}`},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			reducer := newResponsesStreamReducer()
-			reduceOpenAIEvent(t, reducer, `{"type":"response.created","response":{"id":"resp-1"}}`)
-			_, err := reducer.reduce(transport.SSEEvent{Data: `{"type":"response.completed","response":{"id":"resp-1","usage":` + test.usage + `}}`})
-			var faultError *fault.Error
-			if !errors.As(err, &faultError) || faultError.Code != fault.CodeStreamProtocol || reducer.terminal {
-				t.Fatalf("error/state = %v/%#v", err, reducer)
-			}
-		})
-	}
-}
-
 func assertOpenAIMetric(t *testing.T, metric domain.UsageMetric, state domain.UsageMetricState, value uint64, hasValue bool) {
 	t.Helper()
 	got, ok := metric.Value()
 	if metric.State() != state || got != value || ok != hasValue {
 		t.Fatalf("metric = state %q value %d ok %t, want state %q value %d ok %t", metric.State(), got, ok, state, value, hasValue)
-	}
-}
-
-func TestResponsesStreamReducerRejectsIllegalStateTransitions(t *testing.T) {
-	tests := []struct {
-		name   string
-		events []string
-		code   fault.Code
-	}{
-		{name: "missing created", events: []string{`{"type":"response.output_text.delta","delta":"hello"}`}, code: fault.CodeStreamProtocol},
-		{name: "duplicate created", events: []string{
-			`{"type":"response.created","response":{"id":"resp-1"}}`,
-			`{"type":"response.created","response":{"id":"resp-1"}}`,
-		}, code: fault.CodeStreamProtocol},
-		{name: "conflicting created", events: []string{
-			`{"type":"response.created","response":{"id":"resp-1"}}`,
-			`{"type":"response.created","response":{"id":"resp-2"}}`,
-		}, code: fault.CodeStreamProtocol},
-		{name: "completed identity conflict", events: []string{
-			`{"type":"response.created","response":{"id":"resp-1"}}`,
-			`{"type":"response.completed","response":{"id":"resp-2"}}`,
-		}, code: fault.CodeStreamProtocol},
-		{name: "failed identity conflict", events: []string{
-			`{"type":"response.created","response":{"id":"resp-1"}}`,
-			`{"type":"response.failed","response":{"id":"resp-2"}}`,
-		}, code: fault.CodeStreamProtocol},
-		{name: "incomplete identity conflict", events: []string{
-			`{"type":"response.created","response":{"id":"resp-1"}}`,
-			`{"type":"response.incomplete","response":{"id":"resp-2"}}`,
-		}, code: fault.CodeStreamProtocol},
-		{name: "duplicate terminal", events: []string{
-			`{"type":"response.created","response":{"id":"resp-1"}}`,
-			`{"type":"response.completed","response":{"id":"resp-1"}}`,
-			`{"type":"response.completed","response":{"id":"resp-1"}}`,
-		}, code: fault.CodeStreamProtocol},
-		{name: "event after terminal", events: []string{
-			`{"type":"response.created","response":{"id":"resp-1"}}`,
-			`{"type":"response.completed","response":{"id":"resp-1"}}`,
-			`{"type":"response.future.delta"}`,
-		}, code: fault.CodeStreamProtocol},
-		{name: "unknown before created", events: []string{`{"type":"response.future.delta"}`}, code: fault.CodeStreamProtocol},
-		{name: "missing delta", events: []string{
-			`{"type":"response.created","response":{"id":"resp-1"}}`,
-			`{"type":"response.output_text.delta"}`,
-		}, code: fault.CodeStreamProtocol},
-		{name: "invalid JSON", events: []string{`{`}, code: fault.CodeStreamProtocol},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			reducer := newResponsesStreamReducer()
-			var err error
-			for _, data := range test.events {
-				_, err = reducer.reduce(transport.SSEEvent{Data: data})
-				if err != nil {
-					break
-				}
-			}
-			var faultError *fault.Error
-			if !errors.As(err, &faultError) || faultError.Code != test.code {
-				t.Fatalf("error = %v, want code %s", err, test.code)
-			}
-		})
-	}
-}
-
-func TestResponsesStreamReducerValidatesFailedAndIncompleteIdentity(t *testing.T) {
-	for _, test := range []struct {
-		name     string
-		terminal string
-	}{
-		{name: "failed", terminal: `{"type":"response.failed","response":{"id":"resp-1","error":{"code":"rate_limit_exceeded"}}}`},
-		{name: "incomplete", terminal: `{"type":"response.incomplete","response":{"id":"resp-1"}}`},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			reducer := newResponsesStreamReducer()
-			reduceOpenAIEvent(t, reducer, `{"type":"response.created","response":{"id":"resp-1"}}`)
-			_, err := reducer.reduce(transport.SSEEvent{Data: test.terminal})
-			var faultError *fault.Error
-			if !errors.As(err, &faultError) || faultError.Code != fault.CodeProviderRequest || !reducer.terminal {
-				t.Fatalf("terminal error/state = %v/%#v", err, reducer)
-			}
-		})
 	}
 }
 

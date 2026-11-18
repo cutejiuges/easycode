@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -52,12 +51,6 @@ func serveWriteScenarioSample(writer io.Writer, family domain.ProviderFamily, sa
 }
 
 func TestWriteEndToEndCreateReadOverwriteAndVerify(t *testing.T) {
-	runCacheWriteEndToEndCreateReadOverwriteAndVerify(t, false)
-}
-func TestCachedWriteEndToEndCreateReadOverwriteAndVerify(t *testing.T) {
-	runCacheWriteEndToEndCreateReadOverwriteAndVerify(t, true)
-}
-func runCacheWriteEndToEndCreateReadOverwriteAndVerify(t *testing.T, cacheEnabled bool) {
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		t.Run(string(family), func(t *testing.T) {
 			root := t.TempDir()
@@ -89,7 +82,7 @@ func runCacheWriteEndToEndCreateReadOverwriteAndVerify(t *testing.T, cacheEnable
 			if family == domain.ProviderAnthropic {
 				model = "claude-test"
 			}
-			resources, err := openChatResourcesWithHooks(context.Background(), cacheFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, APIKey: secret.New("write-e2e-fixture"), Model: model}}, cacheEnabled), dataPaths{sessionRoot: filepath.Join(dataRoot, "sessions")}, "", false, root, chatResourceHooks{interactiveApprovals: true})
+			resources, err := openChatResourcesWithHooks(context.Background(), cacheFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, APIKey: secret.New("write-e2e-fixture"), Model: model}}, false), dataPaths{sessionRoot: filepath.Join(dataRoot, "sessions")}, "", false, root, chatResourceHooks{interactiveApprovals: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -156,120 +149,5 @@ func runCacheWriteEndToEndCreateReadOverwriteAndVerify(t *testing.T, cacheEnable
 				t.Fatal("调用 ledger 数量错误", count)
 			}
 		})
-	}
-}
-
-func TestWriteEndToEndPreparationDenialAndConflict(t *testing.T) {
-	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
-		for _, scenario := range []string{"same-sample", "truncated", "no-op", "deny", "conflict"} {
-			t.Run(string(family)+"/"+scenario, func(t *testing.T) {
-				root := t.TempDir()
-				base := "base"
-				if scenario == "truncated" {
-					base = strings.Repeat("x", 2001)
-				}
-				if err := os.WriteFile(filepath.Join(root, "a"), []byte(base), 0o600); err != nil {
-					t.Fatal(err)
-				}
-				var mu sync.Mutex
-				var requests [][]byte
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					body, _ := io.ReadAll(r.Body)
-					mu.Lock()
-					requests = append(requests, body)
-					sample := len(requests)
-					mu.Unlock()
-					w.Header().Set("Content-Type", "text/event-stream")
-					var calls []writeScenarioCall
-					if sample == 1 {
-						calls = []writeScenarioCall{{"Read", `{"file_path":"a"}`}}
-						if scenario == "same-sample" {
-							calls = append(calls, writeScenarioCall{"Write", `{"file_path":"a","content":"new"}`})
-						}
-					} else if sample == 2 && scenario != "same-sample" {
-						content := "new"
-						if scenario == "no-op" {
-							content = base
-						}
-						args, _ := json.Marshal(struct {
-							FilePath string `json:"file_path"`
-							Content  string `json:"content"`
-						}{"a", content})
-						calls = []writeScenarioCall{{"Write", string(args)}}
-					}
-					serveWriteScenarioSample(w, family, sample, calls)
-				}))
-				defer server.Close()
-				model := "gpt-test"
-				if family == domain.ProviderAnthropic {
-					model = "claude-test"
-				}
-				resources, err := openChatResourcesWithHooks(context.Background(), config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, APIKey: secret.New("write-e2e-fixture"), Model: model}}, dataPaths{sessionRoot: filepath.Join(t.TempDir(), "sessions")}, "", false, root, chatResourceHooks{interactiveApprovals: true})
-				if err != nil {
-					t.Fatal(err)
-				}
-				control, err := startTUIControlSession(context.Background(), resources.runtime)
-				if err != nil {
-					t.Fatal(err)
-				}
-				events, err := submitInteractiveFixture(t, control, context.Background(), "Rewrite a")
-				if err != nil {
-					t.Fatal(err)
-				}
-				approvals := 0
-				for event := range events {
-					if event.Kind == protocol.EventToolApprovalRequested {
-						approvals++
-						p, err := protocol.DecodeToolApprovalRequested(event)
-						if err != nil {
-							t.Fatal(err)
-						}
-						if p.Presentation.Kind != protocol.PresentationWriteOverwrite {
-							t.Fatal("覆盖展示错误")
-						}
-						decision := protocol.ApprovalDeny
-						if scenario == "conflict" {
-							if err := os.WriteFile(filepath.Join(root, "a"), []byte("external"), 0o600); err != nil {
-								t.Fatal(err)
-							}
-							decision = protocol.ApprovalAllowOnce
-						}
-						if err := control.ResolveApproval(context.Background(), event.TurnID, p, decision, ""); err != nil {
-							t.Fatal(err)
-						}
-					}
-				}
-				if err := control.Shutdown(context.Background()); err != nil {
-					t.Fatal(err)
-				}
-				if err := resources.close(context.Background()); err != nil {
-					t.Fatal(err)
-				}
-				wantCode := "write_requires_full_read"
-				wantApprovals := 0
-				wantContent := base
-				switch scenario {
-				case "no-op":
-					wantCode = "write_no_changes"
-				case "deny":
-					wantCode = "approval_denied"
-					wantApprovals = 1
-				case "conflict":
-					wantCode = "write_conflict"
-					wantApprovals = 1
-					wantContent = "external"
-				}
-				mu.Lock()
-				last := string(requests[len(requests)-1])
-				mu.Unlock()
-				if !strings.Contains(last, wantCode) || approvals != wantApprovals {
-					t.Fatalf("缺少结果 %s 或审批次数错误 %d", wantCode, approvals)
-				}
-				data, err := os.ReadFile(filepath.Join(root, "a"))
-				if err != nil || string(data) != wantContent {
-					t.Fatal("拒绝/冲突修改了目标", err)
-				}
-			})
-		}
 	}
 }

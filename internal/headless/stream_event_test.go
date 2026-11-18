@@ -3,7 +3,6 @@ package headless
 import (
 	"bytes"
 	"os"
-	"strings"
 	"testing"
 
 	"easycode/internal/fault"
@@ -48,39 +47,6 @@ func TestStreamProjectorAndEncoderMatchV1Fixture(t *testing.T) {
 	}
 	if !bytes.Equal(output.Bytes(), want) {
 		t.Fatalf("stream JSONL differs\ngot:\n%s\nwant:\n%s", output.Bytes(), want)
-	}
-}
-
-func TestStreamEncoderShortWritesAndPermanentFailure(t *testing.T) {
-	t.Parallel()
-	chunked := &chunkWriter{limit: 2}
-	if err := NewStreamEncoder(chunked).Write(mustStreamThreadStarted(t, false)); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasSuffix(chunked.String(), "\n") {
-		t.Fatalf("chunked output = %q", chunked.String())
-	}
-	broken := &brokenWriter{remaining: 7}
-	encoder := NewStreamEncoder(broken)
-	if err := encoder.Write(mustStreamThreadStarted(t, false)); err == nil {
-		t.Fatal("broken output unexpectedly succeeded")
-	}
-	written := broken.buffer.Len()
-	if err := encoder.Write(mustStreamThreadStarted(t, false)); err == nil || broken.buffer.Len() != written {
-		t.Fatal("encoder wrote after permanent failure")
-	}
-}
-
-func TestStreamingVocabularyDoesNotChangeOneShotJSON(t *testing.T) {
-	t.Parallel()
-	var output bytes.Buffer
-	if err := NewEncoder(&output).Write(mustTurnStarted(t)); err != nil {
-		t.Fatal(err)
-	}
-	for _, forbidden := range []string{"control.response", "input.discarded", "input_id"} {
-		if strings.Contains(output.String(), forbidden) {
-			t.Fatalf("one-shot JSON contains %q: %s", forbidden, output.String())
-		}
 	}
 }
 

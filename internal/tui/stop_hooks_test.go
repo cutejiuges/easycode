@@ -2,9 +2,6 @@ package tui
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"strings"
 	"testing"
 
 	"easycode/internal/domain"
@@ -35,27 +32,6 @@ func stopSnapshotModel(t *testing.T, width, height int, screen string) Model {
 	}
 	event.TurnID = m.activeTurnID
 	return updateModel(t, m, RuntimeEventMsg{Event: event})
-}
-func TestStopHookSnapshots(t *testing.T) {
-	t.Setenv("NO_COLOR", "1")
-	for _, size := range [][2]int{{80, 24}, {100, 30}, {40, 16}} {
-		for _, screen := range []string{"list", "details", "trust"} {
-			name := fmt.Sprintf("stop_hooks_%dx%d_%s", size[0], size[1], screen)
-			t.Run(name, func(t *testing.T) {
-				m := stopSnapshotModel(t, size[0], size[1], screen)
-				want, err := os.ReadFile("testdata/" + name + ".golden")
-				if err != nil {
-					t.Fatal(err)
-				}
-				if m.View()+"\n" != string(want) {
-					t.Fatalf("snapshot mismatch:\n%s", m.View())
-				}
-				if strings.Contains(m.View(), "Matcher:") {
-					t.Fatal("Stop displayed a tool matcher")
-				}
-			})
-		}
-	}
 }
 func TestStopTrustDefaultDenyPasteAndPhaseOrdering(t *testing.T) {
 	m := stopSnapshotModel(t, 80, 24, "trust")

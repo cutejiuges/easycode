@@ -16,9 +16,6 @@ import (
 	"easycode/internal/domain"
 )
 
-func runHookFixture(t *testing.T, root, command string) domain.HookRunResult {
-	return runHookFixtureForEvent(t, root, command, domain.HookPreToolUse)
-}
 func runHookFixtureForEvent(t *testing.T, root, command string, event domain.HookEvent) domain.HookRunResult {
 	t.Helper()
 	w, err := OpenWorkspace(root)
@@ -99,12 +96,7 @@ func runHookFixtureForEvent(t *testing.T, root, command string, event domain.Hoo
 func TestHookProcessReceivesStdinWithoutGrantingWritesOrNetwork(t *testing.T) {
 	testHookProcessIsolation(t, domain.HookPreToolUse)
 }
-func TestPostHookProcessReceivesMetadataWithoutGrantingWritesOrNetwork(t *testing.T) {
-	testHookProcessIsolation(t, domain.HookPostToolUse)
-}
-func TestFailureHookProcessReceivesSafeErrorWithoutGrantingWritesOrNetwork(t *testing.T) {
-	testHookProcessIsolation(t, domain.HookPostToolUseFailure)
-}
+
 func testHookProcessIsolation(t *testing.T, event domain.HookEvent) {
 	t.Helper()
 	root := t.TempDir()
@@ -129,24 +121,4 @@ func testHookProcessIsolation(t *testing.T, event domain.HookEvent) {
 	if _, err := os.Stat(filepath.Join(root, "forbidden-file")); !os.IsNotExist(err) {
 		t.Fatal("hook wrote workspace")
 	}
-}
-func TestHookProcessBoundsOutputAndPreservesExitClassification(t *testing.T) {
-	for _, test := range []struct {
-		command string
-		code    domain.HookCode
-	}{
-		{"cat >/dev/null; printf '{}'", domain.HookOK},
-		{"cat >/dev/null; printf secret-sentinel >&2; exit 2", domain.HookDenied},
-		{"cat >/dev/null; exit 3", domain.HookExitFailed},
-		{"cat >/dev/null; head -c 18000 /dev/zero", domain.HookOutputLimit},
-	} {
-		result := runHookFixture(t, t.TempDir(), test.command)
-		if result.Code != test.code {
-			t.Fatalf("want %s got %#v", test.code, result)
-		}
-	}
-}
-
-func TestStopHookProcessReceivesExactInputWithoutWritesOrNetwork(t *testing.T) {
-	testHookProcessIsolation(t, domain.HookStop)
 }

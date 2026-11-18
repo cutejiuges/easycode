@@ -1,4 +1,0 @@
-{
-  "command": "openspec validate --specs --strict",
-  "exit_code": 0
-}

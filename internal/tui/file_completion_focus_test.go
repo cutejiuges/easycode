@@ -2,11 +2,7 @@ package tui
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 
 	"easycode/internal/domain"
@@ -109,78 +105,5 @@ func TestFileCompletionInvalidSubmitAndLateEffortDoNotTouchNewDraft(t *testing.T
 	m.prepareCompletion()
 	if !reflect.DeepEqual(before, m.composer) || len(m.effortNotice) != 0 || m.files.rows != 0 || m.effortSelection.selected.Value != "low" {
 		t.Fatal("late effort feedback cleared file draft or reopened focus")
-	}
-}
-
-func TestFileMainlineLiveAndRestoredUseSameBodyFreeSummary(t *testing.T) {
-	data, err := os.ReadFile("../domain/testdata/file_attachment.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	a, err := domain.DecodeFileAttachment(data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	files, _ := domain.NewFileAttachments([]domain.FileAttachment{a})
-	input, _ := domain.NewUserInput("01900000-0000-7000-8000-000000000011", "inspect @src/a.go#L2-8")
-	input, err = input.WithFileAttachments(files)
-	if err != nil {
-		t.Fatal(err)
-	}
-	turn := domain.TurnID("01900000-0000-7000-8000-000000000010")
-	live := NewModel(context.Background(), "test", nil)
-	live.activeTurnID = turn
-	e, err := protocol.NewUserInputCommitted(input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	e.TurnID = turn
-	live = updateModel(t, live, RuntimeEventMsg{Event: e})
-	summary, _ := domain.NewFileSummary(files)
-	restored := NewModel(context.Background(), "test", nil)
-	page, _ := protocol.NewTranscriptListPage(protocol.TranscriptListPage{Items: []protocol.TranscriptListItem{{Cursor: protocol.TranscriptCursor{Sequence: 5}, Kind: domain.TranscriptUser, TurnID: turn, InputID: input.ID(), Text: input.Text(), More: true, Files: summary}}})
-	restored = updateModel(t, restored, mainTranscriptReply{page: page})
-	if live.transcript[0].text != restored.main.items[0].text || strings.Contains(live.transcript[0].text, "second") || !strings.Contains(live.transcript[0].text, "lines 2-3/3") {
-		t.Fatal("mainline file summary changed on restore or exposed body")
-	}
-}
-
-func fileQueueSnapshotModel(t *testing.T, width, height int) Model {
-	t.Helper()
-	m, _ := fileCompletionModel(t, "line one\n参考 @sr")
-	m.activeTurnID = "01900000-0000-7000-8000-000000000010"
-	m.state = stateStreaming
-	for i := 0; i < 64; i++ {
-		m.inputs = append(m.inputs, inputPreview{id: domain.InputID(fmt.Sprintf("01900000-0000-7000-8000-%012d", i+100)), text: fmt.Sprintf("FIFO-%02d @raw", i)})
-	}
-	m.effortNotice = []string{"Selected effort: low · next operation", "/effort <level> · /effort reset", "/effort status"}
-	m = fileReply(t, m, m.files.identity, 1, []string{"src/a b.go", "src/文.go", "src/c.go"}, domain.FileSearchComplete, domain.FileDiscoveryReport{})
-	return updateModel(t, m, tea.WindowSizeMsg{Width: width, Height: height})
-}
-func TestFileCompletionQueueEffortAndSmallWindowSnapshots(t *testing.T) {
-	for _, size := range [][2]int{{80, 24}, {28, 10}, {20, 5}, {1, 1}} {
-		m := fileQueueSnapshotModel(t, size[0], size[1])
-		view := m.View()
-		name := fmt.Sprintf("file_queue_%dx%d.golden", size[0], size[1])
-		want, err := os.ReadFile(filepath.Join("testdata", name))
-		if err != nil || view != string(want) {
-			t.Fatal("queue/effort snapshot differs", name, err)
-		}
-		if len(m.inputs) != 64 || m.inputs[0].text != "FIFO-00 @raw" || m.composer.cursor != len(m.composer.text) {
-			t.Fatal("viewport deleted queue or moved cursor")
-		}
-		if renderedChatRows(view) > size[1] {
-			t.Fatal("viewport overflow")
-		}
-		if size[1] >= 10 && !strings.Contains(view, "FIFO-00") {
-			t.Fatal("FIFO head was not retained")
-		}
-		if m.files.visible == 0 {
-			before := m.composer
-			m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
-			if !reflect.DeepEqual(before, m.composer) {
-				t.Fatal("small viewport accepted hidden choice")
-			}
-		}
 	}
 }

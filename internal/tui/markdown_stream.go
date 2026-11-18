@@ -207,9 +207,6 @@ func markdownLastBlockStart(doc markdownDocument) int {
 	start := strings.LastIndexByte(string(doc.source[:first]), '\n') + 1
 	return doc.originalOffset(start)
 }
-func (s *markdownStream) layout(width int, color bool) markdownLayout {
-	return s.layoutBudget(width, color, markdownMemoryLimit, markdownNodeLimit)
-}
 
 // merge 先预留行数组扩容时同时存活的容量，正文字符串直接移交。
 func (result *markdownLayout) merge(part markdownLayout, offset, limit int) {

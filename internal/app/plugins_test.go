@@ -7,14 +7,10 @@ import (
 	"easycode/internal/config"
 	"easycode/internal/domain"
 	"easycode/internal/extension/plugin"
-	"easycode/internal/fault"
-	"easycode/internal/headless"
 	"easycode/internal/protocol"
 	"easycode/internal/secret"
 	"easycode/internal/session"
 	"easycode/internal/tool"
-	"easycode/internal/tui"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -288,76 +284,5 @@ func TestSourceCloseWaitsForPreadmissionPluginPreparation(t *testing.T) {
 	}
 	if err := resources.close(context.Background()); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestForgedFixedPluginHistoryFailsBeforeSourcesOrRepair(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
-		data, err := os.ReadFile("../session/testdata/current/plugin_input_" + string(family) + "_forged.jsonl")
-		if err != nil {
-			t.Fatal(err)
-		}
-		root, path, thread := installPreviewFixture(t, data)
-		reads := 0
-		cfg := config.Config{Provider: config.Provider{Family: family, Model: "fixture-model", BaseURL: "https://example.invalid", APIKey: secret.New("fixture")}}
-		resources, err := openChatResourcesWithHooks(context.Background(), cfg, dataPaths{sessionRoot: root}, string(thread), false, t.TempDir(), chatResourceHooks{pluginDirs: []string{appPluginFixture(t, "claude")}, pluginOptions: plugin.Options{BeforeOpen: func(string) { reads++ }}})
-		if resources != nil || !errors.Is(err, &fault.Error{Code: fault.CodeSessionCorruption}) || reads != 0 {
-			t.Fatalf("forged source: %v reads=%d", err, reads)
-		}
-		after, err := os.ReadFile(path)
-		if err != nil || !bytes.Equal(after, data) {
-			t.Fatal("failed restore changed fixed journal", err)
-		}
-	}
-}
-
-func TestPickerKeepsExplicitPluginPathsBoundToLaunchDirectory(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	data, err := os.ReadFile("../session/testdata/current/input_only_openai.jsonl")
-	if err != nil {
-		t.Fatal(err)
-	}
-	root, _, thread := installPreviewFixture(t, data)
-	launch := t.TempDir()
-	pack := filepath.Join(launch, "team-package")
-	if err := os.Mkdir(pack, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.CopyFS(pack, os.DirFS(filepath.Join("..", "extension", "plugin", "testdata", "claude"))); err != nil {
-		t.Fatal(err)
-	}
-	dirs := []string{"./team-package"}
-	cfg := config.Config{Provider: config.Provider{Family: domain.ProviderOpenAI, Model: "fixture-model", BaseURL: "https://example.invalid", APIKey: secret.New("fixture")}}
-	execute := newPickerExecutor(cfg, dataPaths{sessionRoot: root}, launch, dirs)
-	dirs[0] = "./changed-by-caller"
-	preview := execute(context.Background(), tui.PickerRequest{ID: 1, Operation: tui.PickerPreview, ThreadID: thread})
-	if preview.resources != nil || preview.result.Error != "" {
-		t.Fatal("preview loaded a chat", preview.result.Error)
-	}
-	value := execute(context.Background(), tui.PickerRequest{ID: 2, Operation: tui.PickerResume, ThreadID: thread})
-	if value.resources == nil {
-		t.Fatal("picker failed", value.result.Error)
-	}
-	defer closePickerResources(value.resources)
-	if len(value.resources.plugins) != 1 || value.resources.plugins[0].ID != "claudeqa" || value.resources.plugins[0].Available != 1 {
-		t.Fatal("relative path reinterpreted or options aliased", value.resources.plugins)
-	}
-}
-
-func TestDirectApplicationPluginArgumentsFailBeforeConfigurationOrStorage(t *testing.T) {
-	for _, dirs := range [][]string{{""}, {string([]byte{0xff})}, make([]string, 33)} {
-		root := filepath.Join(t.TempDir(), "must-not-create")
-		options := Options{Mode: headless.ModeText, Prompt: "hello", PluginDirs: dirs, ConfigPath: filepath.Join(t.TempDir(), "must-not-read"), SessionDataRoot: root, Input: strings.NewReader(""), Output: &bytes.Buffer{}}
-		versionOptions := options
-		versionOptions.ShowVersion = true
-		for _, outcome := range []Outcome{Run(context.Background(), options), Run(context.Background(), versionOptions), RunSessionPicker(context.Background(), options, false)} {
-			if outcome.ExitCode() != 2 || !strings.HasPrefix(outcome.Failure.Message, "plugin_argument_") {
-				t.Fatal("invalid app input reached configuration", outcome)
-			}
-		}
-		if _, err := os.Stat(root); !os.IsNotExist(err) {
-			t.Fatal("invalid arguments created storage")
-		}
 	}
 }

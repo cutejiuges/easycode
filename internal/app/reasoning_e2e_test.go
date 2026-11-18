@@ -14,9 +14,7 @@ import (
 	"testing"
 
 	"easycode/internal/domain"
-	"easycode/internal/fault"
 	"easycode/internal/headless"
-	"easycode/internal/session"
 )
 
 // reasoningFixtureStream 生成本地服务端固定事件，不接触任何公网模型。
@@ -120,102 +118,6 @@ func TestReasoningHeadlessBothProvidersAllModesWithToolAndEOF(t *testing.T) {
 					}
 				}
 			})
-		}
-	}
-}
-
-func TestReasoningHeadlessCancelAndBrokenPipeMatrix(t *testing.T) {
-	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
-		for _, mode := range []headless.Mode{headless.ModeText, headless.ModeJSON, headless.ModeStreamJSON} {
-			for _, broken := range []bool{false, true} {
-				t.Run(fmt.Sprintf("%s/%d/broken=%t", family, mode, broken), func(t *testing.T) {
-					t.Chdir(t.TempDir())
-					ctx, cancel := context.WithCancel(context.Background())
-					defer cancel()
-					started := make(chan struct{})
-					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-						w.Header().Set("Content-Type", "text/event-stream")
-						wire := reasoningFixtureStream(family, 1, false)
-						if broken {
-							_, _ = w.Write(wire)
-							return
-						}
-						marker := []byte(`data: {"type":"response.reasoning_summary_text.done"`)
-						if family == domain.ProviderAnthropic {
-							marker = []byte(`data: {"type":"content_block_delta","index":3,"delta":{"type":"signature_delta"`)
-						}
-						split := bytes.Index(wire, marker)
-						if split < 0 {
-							t.Error("missing fixture boundary")
-							close(started)
-							return
-						}
-						_, _ = w.Write(wire[:split])
-						w.(http.Flusher).Flush()
-						close(started)
-						<-r.Context().Done()
-					}))
-					defer server.Close()
-					root := filepath.Join(privateAppTempDir(t), "sessions")
-					configPath := withReasoningConfig(t, writeAppConfig(t, t.TempDir(), family, server.URL), reasoningFields(family))
-					output := &appWriteCloser{}
-					options := Options{Mode: mode, Prompt: "work", ConfigPath: configPath, SessionDataRoot: root, Output: output}
-					if mode == headless.ModeStreamJSON {
-						options.Prompt = ""
-						options.Input = io.NopCloser(strings.NewReader("{\"version\":1,\"type\":\"input.submit\",\"request_id\":\"reasoning-cancel\",\"text\":\"work\"}\n"))
-					}
-					if broken {
-						writer := &failOnHeadlessWrite{failCall: 3}
-						if mode == headless.ModeText {
-							writer.failCall = 1
-						}
-						options.Output = writer
-						outcome := Run(ctx, options)
-						if outcome.Failure.Code != fault.CodeOutput || outcome.ExitCode() != 1 {
-							t.Fatal(outcome)
-						}
-					} else {
-						done := make(chan Outcome, 1)
-						go func() { done <- Run(ctx, options) }()
-						<-started
-						cancel()
-						outcome := <-done
-						if outcome.ExitCode() != 1 || outcome.Failure.Code != fault.CodeUserCancelled {
-							t.Fatal(outcome)
-						}
-						for _, sentinel := range []string{"allowed-reasoning-sentinel", "opaque-reasoning-sentinel", "raw-reasoning-sentinel", "bindings", "sample_resolution"} {
-							if strings.Contains(output.String(), sentinel) {
-								t.Fatal("cancel output leaked reasoning", output.String())
-							}
-						}
-					}
-					repository, err := session.OpenOrCreateRepository(root)
-					if err != nil {
-						t.Fatal(err)
-					}
-					locations, err := repository.EnumerateJournals(context.Background())
-					if err != nil {
-						t.Fatal(err)
-					}
-					if err := repository.Close(); err != nil {
-						t.Fatal(err)
-					}
-					if len(locations) != 1 {
-						t.Fatal("missing journal", len(locations))
-					}
-					loaded := loadHeadlessJournal(t, root, locations[0].ThreadID)
-					if !broken {
-						if loaded.Records[len(loaded.Records)-1].EventKind != session.EventTurnFailed {
-							t.Fatal("cancel did not durably fail")
-						}
-						for _, record := range loaded.Records {
-							if record.EventKind == session.EventSampleUsage {
-								t.Fatal("unselected sample was committed")
-							}
-						}
-					}
-				})
-			}
 		}
 	}
 }

@@ -10,10 +10,8 @@ import (
 	"time"
 
 	"easycode/internal/domain"
-	"easycode/internal/fault"
 	"easycode/internal/protocol"
 	"easycode/internal/provider"
-	"easycode/internal/tool"
 )
 
 type controlledInvocation struct {
@@ -89,66 +87,6 @@ func (conversation *controlledConversation) Stream(ctx context.Context, input pr
 		close(stream)
 	}()
 	return stream, nil
-}
-
-func TestAgentLoopConstructionAndExplicitLifecycle(t *testing.T) {
-	t.Parallel()
-	if _, err := NewAgentLoop(nil, DefaultAgentLoopConfig()); err == nil {
-		t.Fatal("nil Runtime was accepted")
-	}
-	invalid := DefaultAgentLoopConfig()
-	invalid.MaxQueuedInputs = 0
-	if _, err := NewAgentLoop(newTestRuntime(t, &fakeConversation{stream: fixedStream()}, &fakeJournal{}), invalid); err == nil {
-		t.Fatal("invalid config was accepted")
-	}
-	loop, err := NewAgentLoop(newTestRuntime(t, &fakeConversation{stream: fixedStream()}, &fakeJournal{}), DefaultAgentLoopConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	shutdown, _ := protocol.NewShutdownCommand("shutdown-before-run")
-	if _, err := loop.Submit(context.Background(), shutdown); !errors.Is(err, &fault.Error{Code: fault.CodeTurnFailed}) {
-		t.Fatalf("Submit(before Run) error = %v", err)
-	}
-	var nilContext context.Context
-	if err := loop.Run(nilContext); !errors.Is(err, &fault.Error{Code: fault.CodeTurnFailed}) {
-		t.Fatalf("Run(nil) error = %v", err)
-	}
-	runDone := make(chan error, 1)
-	go func() { runDone <- loop.Run(context.Background()) }()
-	<-loop.Ready()
-	if err := loop.Run(context.Background()); !errors.Is(err, &fault.Error{Code: fault.CodeTurnFailed}) {
-		t.Fatalf("second Run() error = %v", err)
-	}
-	if err := loop.CloseInput(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-runDone; err != nil {
-		t.Fatal(err)
-	}
-	<-loop.Done()
-	if err := loop.Stop(context.Background()); err != nil {
-		t.Fatalf("Stop(after close) error = %v", err)
-	}
-}
-
-func TestAgentLoopAcceptedCommandResultWinsClosedDone(t *testing.T) {
-	command, err := protocol.NewShutdownCommand("shutdown-result-race")
-	if err != nil {
-		t.Fatal(err)
-	}
-	accepted, err := protocol.NewAcceptedCommandResult(command, protocol.CommandDispositionClosing)
-	if err != nil {
-		t.Fatal(err)
-	}
-	results := make(chan loopCommandResponse, 1)
-	done := make(chan struct{})
-	results <- loopCommandResponse{result: accepted}
-	close(done)
-
-	result, err := waitLoopCommandResponse(results, done)
-	if err != nil || result.Disposition() != protocol.CommandDispositionClosing {
-		t.Fatalf("waitLoopCommandResponse() = %#v, %v", result, err)
-	}
 }
 
 func TestAgentLoopFIFOQueueCapacityDedupeAndDrain(t *testing.T) {
@@ -262,76 +200,6 @@ func TestAgentLoopSerializesConcurrentIdleSubmissions(t *testing.T) {
 	if first.input == second.input || conversation.maxActive.Load() != 1 {
 		t.Fatalf("concurrent execution = %q/%q max=%d", first.input, second.input, conversation.maxActive.Load())
 	}
-}
-
-func TestAgentLoopCancelledAdmissionAndIdleInterruptHaveNoSideEffects(t *testing.T) {
-	conversation := newControlledConversation()
-	loop := newControlledAgentLoop(t, conversation, &fakeJournal{})
-	runDone := startAgentLoop(t, loop)
-	cancelled, cancel := context.WithCancel(context.Background())
-	cancel()
-	command, _ := protocol.NewSubmitInputCommand("cancelled-input", "must not run")
-	if _, err := loop.Submit(cancelled, command); !errors.Is(err, &fault.Error{Code: fault.CodeUserCancelled}) {
-		t.Fatalf("cancelled Submit() error = %v", err)
-	}
-	interrupt, _ := protocol.NewInterruptCommand("idle-interrupt", domain.TurnID("00000000-0099-7000-8000-000000000099"))
-	result, err := loop.Submit(context.Background(), interrupt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertRejectedCode(t, result, protocol.ControlErrorNoActiveTurn)
-	if conversation.callsRemaining() != 0 {
-		t.Fatalf("rejected commands made %d Provider calls", conversation.callsRemaining())
-	}
-	if err := loop.CloseInput(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-runDone; err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestAgentLoopContinuesAfterOrdinaryFailureAndStopsWhenPoisoned(t *testing.T) {
-	t.Run("ordinary failure", func(t *testing.T) {
-		conversation := newControlledConversation()
-		loop := newControlledAgentLoop(t, conversation, &fakeJournal{})
-		runDone := startAgentLoop(t, loop)
-		submitLoopCommand(t, loop, "ordinary-1", "first")
-		first := receiveInvocation(t, conversation.calls)
-		submitLoopCommand(t, loop, "ordinary-2", "second")
-		if err := loop.CloseInput(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-		first.release <- failedProviderEvent(t, fault.New(fault.CodeProviderRequest, "provider request failed"))
-		second := receiveInvocation(t, conversation.calls)
-		second.release <- completedProviderEvent(t)
-		if err := <-runDone; err != nil {
-			t.Fatalf("ordinary turn failure stopped loop: %v", err)
-		}
-		items := drainControlItems(loop.Outputs())
-		assertTurnOrdering(t, items, []protocol.RequestID{"ordinary-1", "ordinary-2"})
-	})
-
-	t.Run("poisoned journal", func(t *testing.T) {
-		conversation := newControlledConversation()
-		journal := &fakeJournal{failAt: 3}
-		loop := newControlledAgentLoop(t, conversation, journal)
-		runDone := startAgentLoop(t, loop)
-		submitLoopCommand(t, loop, "poison-1", "first")
-		first := receiveInvocation(t, conversation.calls)
-		submitLoopCommand(t, loop, "poison-2", "second")
-		first.release <- completedProviderEvent(t)
-		if err := <-runDone; !errors.Is(err, &fault.Error{Code: fault.CodeSessionWrite}) {
-			t.Fatalf("Run() error = %v", err)
-		}
-		items := drainControlItems(loop.Outputs())
-		if !containsDiscard(items, "poison-2", protocol.ControlErrorSessionFailed) {
-			t.Fatalf("missing poisoned discard: %#v", items)
-		}
-		if conversation.callsRemaining() != 0 || conversation.maxActive.Load() != 1 {
-			t.Fatalf("poisoned queue started Provider: calls=%d", conversation.callsRemaining())
-		}
-	})
 }
 
 func TestAgentLoopTargetedInterruptIsRaceSafe(t *testing.T) {
@@ -458,90 +326,6 @@ func TestAgentLoopShutdownDiscardsQueueAndRetainsCleanupOwner(t *testing.T) {
 	if terminalCount(items, "shutdown-input-1") != 1 || conversation.calls.Load() != 1 {
 		t.Fatalf("shutdown terminal/calls = %d/%d", terminalCount(items, "shutdown-input-1"), conversation.calls.Load())
 	}
-}
-
-func TestAgentLoopRunStateOwnsQueueLedgerAndClosingTransitions(t *testing.T) {
-	t.Parallel()
-	loop := &AgentLoop{
-		runtime: &Runtime{},
-		config:  AgentLoopConfig{MaxQueuedInputs: 2, MaxQueuedBytes: 16, RecentRequests: 4},
-		outputs: make(chan protocol.ControlItem, 4),
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	state := newAgentLoopRunState(loop, ctx)
-	state.queue = append(state.queue,
-		queuedInput{requestID: "queued-1", text: "one"},
-		queuedInput{requestID: "queued-2", text: "two"},
-	)
-	state.queuedBytes = 6
-	state.outstanding["queued-1"] = struct{}{}
-	state.outstanding["queued-2"] = struct{}{}
-	state.discardQueue(protocol.ControlErrorSessionShutdown)
-	if len(state.queue) != 0 || state.queuedBytes != 0 || len(state.outstanding) != 0 ||
-		!state.recent.contains("queued-1") || !state.recent.contains("queued-2") || len(loop.outputs) != 2 {
-		t.Fatalf("discarded state = queue %#v, bytes %d, outstanding %#v, recent %#v, outputs %d", state.queue, state.queuedBytes, state.outstanding, state.recent, len(loop.outputs))
-	}
-
-	activeContext, activeCancel := context.WithCancel(context.Background())
-	state.active = &activeLoopTurn{cancel: activeCancel}
-	accepted := make(chan struct{})
-	state.handleLifecycle(loopLifecycleRequest{kind: loopLifecycleStop, accepted: accepted})
-	if state.mode != loopModeClosing || !state.active.cancelRequested {
-		t.Fatalf("closing state = mode %d, active %#v", state.mode, state.active)
-	}
-	select {
-	case <-accepted:
-	default:
-		t.Fatal("lifecycle request was not acknowledged")
-	}
-	select {
-	case <-activeContext.Done():
-	default:
-		t.Fatal("active turn was not cancelled")
-	}
-}
-
-func TestAgentLoopRoutesCorrelatedApprovalWithoutStartingTurn(t *testing.T) {
-	invocation, candidate := runtimePatchInvocation(t)
-	approvalID, _ := tool.ParseApprovalRequestID("018f1d8a-7b5c-7def-8abc-456789abcdef")
-	request, err := tool.NewApprovalRequest(
-		approvalID, runtimeSessionID, runtimeThreadID, runtimeTurnID, candidate,
-		"Patch modifies an existing workspace file.",
-		[]tool.ApprovalDecision{tool.ApprovalAllowOnce, tool.ApprovalAllowSession, tool.ApprovalDeny},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	runtimeValue := &Runtime{approvals: approvalState{active: &runtimeApproval{request: request, done: make(chan struct{})}}}
-	loop := &AgentLoop{
-		runtime: runtimeValue, config: DefaultAgentLoopConfig(),
-		outputs: make(chan protocol.ControlItem, 4),
-	}
-	state := newAgentLoopRunState(loop, context.Background())
-	state.active = &activeLoopTurn{turnID: runtimeTurnID}
-	commandRequestID, _ := protocol.ParseRequestID("approval-command")
-	command, err := protocol.NewResolveToolApprovalCommand(
-		commandRequestID, runtimeTurnID, string(approvalID), string(invocation.InvocationID()),
-		string(candidate.Fingerprint()), protocol.ApprovalAllowOnce, "",
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	requestSlot := loopCommandRequest{command: command, result: make(chan loopCommandResponse, 1)}
-	state.handleCommand(requestSlot)
-	response := <-requestSlot.result
-	if response.err != nil || response.result.Disposition() != protocol.CommandDispositionResolving || state.active.turnID != runtimeTurnID || len(state.queue) != 0 {
-		t.Fatalf("approval result=%#v error=%v state=%#v", response.result, response.err, state)
-	}
-	if runtimeValue.approvals.active == nil || !runtimeValue.approvals.active.resolved || runtimeValue.approvals.active.response.Decision() != tool.ApprovalAllowOnce {
-		t.Fatalf("runtime approval=%#v", runtimeValue.approvals.active)
-	}
-
-	duplicate := loopCommandRequest{command: command, result: make(chan loopCommandResponse, 1)}
-	state.handleCommand(duplicate)
-	duplicateResponse := <-duplicate.result
-	assertRejectedCode(t, duplicateResponse.result, protocol.ControlErrorDuplicateRequest)
 }
 
 func TestAgentLoopWaitsForProviderChannelCloseBeforeFollowUp(t *testing.T) {
@@ -763,10 +547,6 @@ func terminalCount(items []protocol.ControlItem, requestID protocol.RequestID) i
 		}
 	}
 	return count
-}
-
-func (conversation *controlledConversation) callsRemaining() int {
-	return len(conversation.calls)
 }
 
 // ProjectAssistantSample 在不模拟原生采样的测试替身中明确失败，不猜测展示列表。

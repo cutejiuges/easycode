@@ -306,7 +306,7 @@ profile 的 request_policy 只记录实际非默认普通 wire 设置；默认 c
 
 Anthropic 从最终 message_delta 的 output_tokens_details.thinking_tokens 归并计量：明确零/正值为 known，缺失为 unknown，不从 display/正文/预算推断；已观测值不被缺失擦除。总 output 已包含 thinking，双方 known 时验证 thinking<=output，只有 thinking 时保留独立 known 与 output unknown。raw usage 当前结构必须含 thinking_tokens 的 known/value 状态，sample、checkpoint generation 和失败 provenance 使用同一严格 codec；恢复在 repair 前交叉核对 normalized sample usage，不提供旧四字段 reader、版本标记或迁移。outer Session/checkpoint、SQLite、OpenAI native 和 headless 外部字段/版本保持。
 
-两家 reducer 在任何事件归并或终态接纳前复用固定 `codec.ValidateJSON` 校验完整帧，拒绝任意对象层级的重复成员、尾随内容和有损 Unicode；不能让后值覆盖非法 usage、总量关系或响应 ID。类型解码与原有受控未知扩展处理随后执行，合法扩展保持可用；不同合法 delta 的明确零可更新旧 thinking 正值，缺失不擦除。修复不增加 owner、goroutine、公共接口或 native 格式。两家 `usage_validation_regression_test.go`、`internal/app/reasoning_malformed_stream_test.go` 和 `internal/app/reasoning_cli_e2e_test.go` 验证失败时零成功样本/工具执行、真实恢复和请求等价，详见[全面回归](../../openspec/changes/archive/2026-11-11-add-provider-reasoning-controls/regression-2026-11-11.md)。
+两家 reducer 在任何事件归并或终态接纳前复用固定 `codec.ValidateJSON` 校验完整帧，拒绝任意对象层级的重复成员、尾随内容和有损 Unicode；不能让后值覆盖非法 usage、总量关系或响应 ID。类型解码与原有受控未知扩展处理随后执行，合法扩展保持可用；不同合法 delta 的明确零可更新旧 thinking 正值，缺失不擦除。修复不增加 owner、goroutine、公共接口或 native 格式。当前关键回归为两家 `usage_validation_regression_test.go`、`reasoning_restore_test.go` 与 `internal/app/reasoning_usage_restore_test.go`，验证计量拒绝、固定 bytes 恢复及请求等价；已精简的历史 CLI/异常流矩阵结论见[全面回归](../../openspec/changes/archive/2026-11-11-add-provider-reasoning-controls/regression-2026-11-11.md)。
 
 `/context` 从应用装配的冻结值显示 thinking/display/summary/输出额度的 explicit/default/未发送来源，effort 则使用 owner 的当前及后续选择；面板以本地有界滚动呈现，动态窗口仍取 committed snapshot。内部 ContextSnapshotPayload 必须包含 effort，既有外部 context.snapshot 仍只投影数值，真实正文与 usage 继续使用现有观测。阅读、缩放、Ctrl+O 和查询不发起采样或改变策略。Darwin PTY 入口为 `scripts/reasoning-controls-smoke.py` 和 `scripts/effort-smoke.py`，其他平台的真实终端矩阵不由此推定。
 
@@ -821,7 +821,7 @@ continued 决定只保存最终反馈字节和来源、bytes/digest，尚未推�
 
 EasyCode/Claude 使用实际目录调用名；Codex/Agent Plugins 保留合法 frontmatter 引用名。Agent Plugins 只扫描默认 skills 的直接子目录；其他格式支持集合或单技能根，均不递归。本地裸名优先级不变，插件只有一层 `plugin:leaf`。Codex 副文件 `agents/openai.yaml` 的 allow_implicit_invocation=false 与主文档禁止取或；interface 注解不执行，依赖/产品策略拒绝。副文件存在性与原始 digest 参与新读取校验及复合附件 revision，不能覆盖冻结有效 metadata。
 
-原始 manifest/main/sidecar digest 只用于来源校验；目录相对绑定和有效策略构成附件 revision；模型目录仍只包含实际发送的 Skill metadata。正文未调用前不污染前缀，只有真实 Content 或有效 metadata 变化才改变相应请求指纹；仅私有 revision 变化保持模型 bytes 与历史内容指纹。恢复只消费冻结附件/result，不加载旧来源，不新增 schema、工具、事件或安装 record。详细字段、额度与可运行示例见 README；回归见 `internal/extension/skill/plugin*_test.go`、两家 `plugin_restore_test.go`、`internal/app/plugins_test.go`、`plugin_freeze_test.go`、`plugin_websocket_test.go` 和 `scripts/plugins-smoke.py`。
+原始 manifest/main/sidecar digest 只用于来源校验；目录相对绑定和有效策略构成附件 revision；模型目录仍只包含实际发送的 Skill metadata。正文未调用前不污染前缀，只有真实 Content 或有效 metadata 变化才改变相应请求指纹；仅私有 revision 变化保持模型 bytes 与历史内容指纹。恢复只消费冻结附件/result，不加载旧来源，不新增 schema、工具、事件或安装 record。详细字段、额度与可运行示例见 README；回归见 `internal/extension/skill/plugin*_test.go`、两家 `plugin_restore_test.go`、`internal/app/plugins_test.go` 和 `scripts/plugins-smoke.py`。
 
 marketplace、安装/更新、插件脚本/Hook/MCP/Agent/commands 贡献、热加载和启停仍未实现；manifest 显式声明这些贡献时失败关闭。它们需要独立 OpenSpec，不能恢复原来的无消费者通用扩展容器。 本切片已完成归档，规格、文档与验证证据核对见[归档记录](../../openspec/changes/archive/2026-11-13-add-local-plugin-skills/archive.md)。
 
@@ -953,11 +953,11 @@ make verify
 
 涉及 provider、context 或缓存时还必须执行对应 golden/cache regression suite。
 
-质量门由 `scripts/test_suite.py` 统一计时和管理测试进程，全量普通与经审计的必要 race 顺序执行，所选测试强制运行一次。各阶段通过 Go 枚举并保留当前构建模式的二进制，以标准 `test2json` 执行分片；保持包目录、TestMain、参数和失败退出语义，阶段结束或失败后清理临时二进制，避免重复链接。app 按当前平台自动发现的顶层入口分片，保留 TestMain、子测试与环境隔离；其他包共享同一有界调度；高 RSS 的两个 Provider、Runtime、Session、Tool、TUI 包另有限额并提前交错执行，构建与测试分别限制 CPU 并行度。同设备以硬链接保留二进制，跨设备或不支持时复制。普通完成清单必须与全部 Test/Example/Fuzz seed 清单一致；race 只移出 `scripts/race_policy.json` 精确审计的入口，新增入口默认参加，清单失效或缺失保留覆盖时报错。复杂数据矩阵的 race 代表场景复用原 helper 与实质断言，全量 race 可通过 `make test-race-full` 执行。失败、取消与超时停止派发并由唯一 owner 终止和等待进程；调度器的真实子进程回归位于 `scripts/test_suite_test.py`。完整流程默认无总耗时限制，正值 `TEST_BUDGET` 仅供诊断；保留单进程超时与业务 deadline，报告全部阶段的实际时间，不能用结果缓存或缺失平台证明通过。
+质量门由 `scripts/test_suite.py` 统一计时和管理测试进程，全量普通与经审计的必要 race 顺序执行，所选测试强制运行一次。各阶段通过 Go 枚举并保留当前构建模式的二进制，以标准 `test2json` 执行分片；保持包目录、TestMain、参数和失败退出语义，阶段结束或失败后清理临时二进制，避免重复链接。app 按当前平台自动发现的顶层入口分片，保留 TestMain、子测试与环境隔离；其他包共享同一有界调度；高 RSS 的两个 Provider、Runtime、Session、Tool、TUI 包另有限额并提前交错执行，构建与测试分别限制 CPU 并行度。同设备以硬链接保留二进制，跨设备或不支持时复制。普通完成清单必须与全部 Test/Example/Fuzz seed 清单一致；默认 race 仅编译关键清单涉及的包，并执行 `scripts/race_policy.json` 精确列出的关键并发入口；新增普通测试不自动参加，清单失效、重复或当前平台为空时报错。复杂数据矩阵的 race 代表场景复用原 helper 与实质断言，全量 race 可通过 `make test-race-full` 执行。失败、取消与超时停止派发并由唯一 owner 终止和等待进程；调度器的真实子进程回归位于 `scripts/test_suite_test.py`。完整流程默认无总耗时限制，正值 `TEST_BUDGET` 仅供诊断；保留单进程超时与业务 deadline，报告全部阶段的实际时间，不能用结果缓存或缺失平台证明通过。
 
 严格 JSON 在 `internal/codec/scan.go` 中先完成标准语法及无损校验，再按需要索引调用局部的字段范围。基础验证不物化数组值，字段枚举只保留一层；typed record 校验复用嵌套索引，最后仍使用固定 Sonic 配置解码。索引不跨调用缓存，公开字段结果独立复制，canonical 编码和所有权契约保持。`scan_test.go` 使用独立 token 参考实现做差异 fuzz，`benchmark_test.go` 观测小对象、嵌套记录和大文本的普通/race 成本。
 
-Session record 写入复用 checksum envelope 的 Sonic 字节，追加固定 checksum 字段后仍检查完整大小。HookToolInput 在同一次调用中复用已校验的 Sonic 编码计算规范 digest；能力为封闭常量，摘要 envelope 只补齐固定字段结构。HookInputEffect 和 HookFinished 的嵌套编码使用局部 RawMessage，避免反复调用子对象编码；不跨调用缓存，不修改 Sonic/race 检测。原编码路径的逐字节对照、坏输入、边界与 fuzz 位于 `internal/session/codec_equivalence_test.go` 和 `internal/domain/hook_encoding_test.go`，固定 fixture 和双 Provider 恢复/cache 继续由完整质量门覆盖。
+Session record 写入复用 checksum envelope 的 Sonic 字节，追加固定 checksum 字段后仍检查完整大小。HookToolInput 在同一次调用中复用已校验的 Sonic 编码计算规范 digest；能力为封闭常量，摘要 envelope 只补齐固定字段结构。HookInputEffect 和 HookFinished 的嵌套编码使用局部 RawMessage，避免反复调用子对象编码；不跨调用缓存，不修改 Sonic/race 检测。Hook 编码差异 fuzz 位于 `internal/domain/hook_encoding_test.go`；固定 current fixture 与双 Provider 恢复/cache 等价继续由完整质量门覆盖，Session 旧编码路径的独立对照矩阵已在测试精简中移除。
 
 ## 17. 设计模式使用边界
 
@@ -1071,4 +1071,4 @@ PreparedSample 持有 `domain.SamplePresentation`，将展示 block 绑定到完
 
 `protocol.IsTransientPresentation` 同时用于 publication 生产和 AgentLoop 消费，Started/Delta/Completed 都沿用 committed context/cache。app 的 main 查询先排除 reasoning 再分页，detail 包含全部真实 cursor；两个模式必填并分别缓存。TUI 的活动组件共享 64 KiB/50 项，使用 typed 临时键，提交时立刻升级准确 cursor，慢查询期间保留有界画面和源偏移。活动正文与浏览器共享字符串，已提交正文、工具页和列表共用四页缓存；构造、View/resize 不执行 I/O。headless 三模式共用严格 projector，消费内部状态但保持外部词汇不变。
 
-证据为 `internal/provider/{anthropic,openai}/reasoning_stream_test.go`、固定 `testdata/reasoning_restore.current.jsonl`、`reasoning_restore_test.go`、`internal/runtime/reasoning_test.go`、`internal/tui/reasoning_test.go`、`internal/headless/reasoning_test.go`、`internal/app/reasoning_e2e_test.go` 与 Darwin `scripts/reasoning-smoke.py`；完整执行记录见 [实施验收](../../openspec/changes/archive/2026-11-08-add-reasoning-transcript/verification.md)。
+证据为 `internal/provider/{anthropic,openai}/reasoning_stream_test.go`、固定 `testdata/reasoning_restore.current.jsonl`、`reasoning_restore_test.go`、`internal/runtime/reasoning_test.go`、`internal/tui/reasoning_test.go`、`internal/app/reasoning_e2e_test.go` 与 Darwin `scripts/reasoning-smoke.py`；历史执行记录见 [实施验收](../../openspec/changes/archive/2026-11-08-add-reasoning-transcript/verification.md)。

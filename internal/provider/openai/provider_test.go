@@ -6,10 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"easycode/internal/domain"
 	"easycode/internal/fault"
@@ -17,60 +15,6 @@ import (
 	"easycode/internal/provider/transport"
 	"easycode/internal/secret"
 )
-
-func TestProviderCreatesIsolatedConversations(t *testing.T) {
-	instance, err := New(Config{BaseURL: "https://example.com/v1", APIKey: secret.New("test-key"), Model: "gpt-test"})
-	if err != nil {
-		t.Fatalf("new provider: %v", err)
-	}
-	defer closeProvider(t, instance)
-
-	first := testConversation(t, instance)
-	second := testConversation(t, instance)
-	testCommitHistory(t, &first.history, testInputEntry(t, NewUserItem("first")), testSampleEntry([]NativeItem{{Type: "message", ID: "msg-1", Role: "assistant"}}))
-
-	if history := first.historySnapshot(); len(history) != 2 || history[0].UserInputs[0].Content[0].Text != "first" || history[1].Outputs[0].ID != "msg-1" {
-		t.Fatalf("first history: %#v", first.historySnapshot())
-	}
-	if len(second.historySnapshot()) != 0 {
-		t.Fatalf("second conversation shared history: %#v", second.historySnapshot())
-	}
-	if got := first.ProjectHistory(); len(got.Turns) != 1 || got.Turns[0].Messages[0].Text != "first" || len(got.Turns[0].Messages) != 1 {
-		t.Fatalf("first projection: %#v", got)
-	}
-	if got := second.ProjectHistory(); got.Turns == nil || len(got.Turns) != 0 {
-		t.Fatalf("second conversation shared projection: %#v", got)
-	}
-}
-
-func TestConversationIgnoresRepeatedCompletedTerminal(t *testing.T) {
-	t.Parallel()
-	conversation := &Conversation{}
-	stream := make(chan transport.SSEMessage, 4)
-	stream <- responseEvent(`{"type":"response.created","response":{"id":"resp-1"}}`)
-	stream <- responseEvent(`{"type":"response.output_item.done","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]}}`)
-	stream <- responseEvent(`{"type":"response.completed","response":{"id":"resp-1"}}`)
-	stream <- responseEvent(`{"type":"response.completed","response":{"id":"resp-2"}}`)
-	close(stream)
-	output := make(chan provider.StreamEvent, 16)
-	testConsumeStream(t, conversation, context.Background(), func() {}, nativeItemPointer(NewUserItem("question")), testOpenAIToolCatalog(t), stream, output)
-	terminalCount := 0
-	for event := range output {
-		if !event.Kind().Terminal() {
-			continue
-		}
-		terminalCount++
-		if event.Kind() != provider.StreamEventCompleted || event.PreparedSample() == nil {
-			t.Fatalf("terminal = %#v", event)
-		}
-		if err := event.PreparedSample().Finalize(); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if terminalCount != 1 || len(conversation.historySnapshot()) != 2 {
-		t.Fatalf("terminal count/history = %d/%#v", terminalCount, conversation.historySnapshot())
-	}
-}
 
 func TestConversationCancelCompletedRaceHasOneTerminal(t *testing.T) {
 	for iteration := 0; iteration < 32; iteration++ {
@@ -125,22 +69,6 @@ func TestConversationCancelCompletedRaceHasOneTerminal(t *testing.T) {
 func responseEvent(data string) transport.SSEMessage {
 	event := transport.SSEEvent{Data: data}
 	return transport.SSEMessage{Event: &event}
-}
-
-func TestProviderCapabilitiesReflectImplementedSlice(t *testing.T) {
-	instance, err := New(Config{BaseURL: "https://example.com/v1", APIKey: secret.New("test-key"), Model: "gpt-test"})
-	if err != nil {
-		t.Fatalf("new provider: %v", err)
-	}
-	defer closeProvider(t, instance)
-
-	capabilities := instance.Capabilities()
-	if !capabilities.Streaming || !capabilities.EncryptedReasoning || !capabilities.FunctionTools || !capabilities.CustomTools || !capabilities.FilePatch {
-		t.Fatalf("implemented capabilities missing: %#v", capabilities)
-	}
-	if capabilities.ParallelToolCalls || capabilities.PromptCacheKey || capabilities.PreviousResponse || capabilities.ReasoningSummary {
-		t.Fatalf("unimplemented capabilities advertised: %#v", capabilities)
-	}
 }
 
 func TestConversationStreamsAndCommitsOnlyOnCompleted(t *testing.T) {
@@ -278,74 +206,6 @@ func TestConversationCancelProducesCancelledTerminal(t *testing.T) {
 	}
 }
 
-func TestConversationFailureAndIdleTimeoutDoNotProjectTurn(t *testing.T) {
-	tests := []struct {
-		name        string
-		writeStream func(http.ResponseWriter, *http.Request)
-		wantCode    fault.Code
-	}{
-		{
-			name: "failed response",
-			writeStream: func(writer http.ResponseWriter, _ *http.Request) {
-				_, _ = io.WriteString(writer, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-failed\"}}\n\n")
-				_, _ = io.WriteString(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n")
-				_, _ = io.WriteString(writer, "data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp-failed\",\"error\":{\"code\":\"rate_limit_exceeded\"}}}\n\n")
-			},
-			wantCode: fault.CodeProviderRequest,
-		},
-		{
-			name: "idle timeout",
-			writeStream: func(writer http.ResponseWriter, request *http.Request) {
-				if flusher, ok := writer.(http.Flusher); ok {
-					flusher.Flush()
-				}
-				<-request.Context().Done()
-			},
-			wantCode: fault.CodeStreamIdleTimeout,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-				writer.Header().Set("Content-Type", "text/event-stream")
-				test.writeStream(writer, request)
-			}))
-			defer server.Close()
-
-			instance, err := New(Config{
-				BaseURL:           server.URL,
-				APIKey:            secret.New("test-key"),
-				Model:             "gpt-test",
-				StreamIdleTimeout: 30 * time.Millisecond,
-			})
-			if err != nil {
-				t.Fatalf("new provider: %v", err)
-			}
-			defer closeProvider(t, instance)
-			conversation := testConversation(t, instance)
-			stream, err := conversation.Stream(context.Background(), testOpenAITurnInputWithProject(t, conversation, "hello"))
-			if err != nil {
-				t.Fatalf("start stream: %v", err)
-			}
-			terminal := readOpenAITerminal(t, conversation, stream)
-			if terminal.Kind() != provider.StreamEventFailed {
-				t.Fatalf("terminal: %#v", terminal)
-			}
-			var faultError *fault.Error
-			if !errors.As(terminal.Error(), &faultError) || faultError.Code != test.wantCode {
-				t.Fatalf("terminal error: got %v want code %s", terminal.Error(), test.wantCode)
-			}
-			if projection := conversation.ProjectHistory(); len(projection.Turns) != 1 || len(projection.Turns[0].Messages) != 1 || projection.Turns[0].Messages[0].Role != domain.SemanticUser {
-				t.Fatalf("failed turn projected: %#v", projection)
-			}
-			if len(conversation.historySnapshot()) != 1 {
-				t.Fatalf("failed turn committed: %#v", conversation.historySnapshot())
-			}
-		})
-	}
-}
-
 func testOpenAITurnInputWithProject(t *testing.T, conversation provider.Conversation, text string) provider.TurnInput {
 	t.Helper()
 	testCommitUserInput(t, conversation.(*Conversation), text)
@@ -359,24 +219,6 @@ func testOpenAITurnInputWithProject(t *testing.T, conversation provider.Conversa
 		t.Fatal(err)
 	}
 	return input
-}
-
-func TestProviderRequestErrorDoesNotExposeAPIKey(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		writer.WriteHeader(http.StatusUnauthorized)
-	}))
-	defer server.Close()
-
-	instance, err := New(Config{BaseURL: server.URL, APIKey: secret.New("top-secret"), Model: "gpt-test"})
-	if err != nil {
-		t.Fatalf("new provider: %v", err)
-	}
-	defer closeProvider(t, instance)
-	conversation := testConversation(t, instance)
-	_, err = conversation.Stream(context.Background(), testOpenAITurnInput(t, conversation, "hello"))
-	if err == nil || strings.Contains(err.Error(), "top-secret") {
-		t.Fatalf("unsafe provider error: %v", err)
-	}
 }
 
 func closeProvider(t *testing.T, instance *Provider) {

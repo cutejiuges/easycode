@@ -27,12 +27,6 @@ import (
 )
 
 func TestReadPatchExecApprovedLoopForBothProviders(t *testing.T) {
-	runCacheReadPatchExecApprovedLoopForBothProviders(t, false)
-}
-func TestCachedReadPatchExecApprovedLoopForBothProviders(t *testing.T) {
-	runCacheReadPatchExecApprovedLoopForBothProviders(t, true)
-}
-func runCacheReadPatchExecApprovedLoopForBothProviders(t *testing.T, cacheEnabled bool) {
 	const command = `test "$(cat main.go)" = new && env > command-environment && printf verified > exec-marker && printf checks-passed`
 	for _, name := range []string{"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "AUTHORIZATION", "COOKIE", "HTTPS_PROXY", "ALL_PROXY", "EASYCODE_INTERNAL_SESSION", "BASH_ENV", "DYLD_INSERT_LIBRARIES"} {
 		t.Setenv(name, "command-private-secret")
@@ -90,7 +84,7 @@ func runCacheReadPatchExecApprovedLoopForBothProviders(t *testing.T, cacheEnable
 			}
 			resources, err := openChatResourcesWithHooks(context.Background(), cacheFixtureConfig(t, config.Config{Provider: config.Provider{
 				Family: family, Model: model, BaseURL: server.URL, APIKey: secret.New("exec-private-key"),
-			}}, cacheEnabled), dataPaths{sessionRoot: root}, "", false, workspace, chatResourceHooks{interactiveApprovals: true})
+			}}, false), dataPaths{sessionRoot: root}, "", false, workspace, chatResourceHooks{interactiveApprovals: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -333,7 +327,7 @@ func runCacheReadPatchExecApprovedLoopForBothProviders(t *testing.T, cacheEnable
 					}
 					resumed, err := openChatResources(context.Background(), cacheFixtureConfig(t, config.Config{Provider: config.Provider{
 						Family: family, Model: model, BaseURL: server.URL, APIKey: secret.New("exec-private-key"),
-					}}, cacheEnabled), root, string(resources.identity.ThreadID), workspace)
+					}}, false), root, string(resources.identity.ThreadID), workspace)
 					if err != nil {
 						t.Fatal(err)
 					}

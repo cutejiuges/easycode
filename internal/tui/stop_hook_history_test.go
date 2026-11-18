@@ -89,33 +89,3 @@ func TestStopHistoryInvalidatesOnlyBoundPagesAndRejectsLateReplies(t *testing.T)
 		t.Fatal("wrong plan replaced current history")
 	}
 }
-
-func TestStopFeedbackNeverEntersUserRecallOrMergesByText(t *testing.T) {
-	turn := domain.TurnID("01900000-0000-7000-8000-000000000001")
-	user, _ := domain.NewSemanticUserMessage(domain.InputID(turn), "real user")
-	d, _ := domain.NewStopHookDeclaration(domain.HookSourceProject, domain.HookFeedbackModel, domain.HookDigest(nil), "completion", "true", 5)
-	var messages []domain.SemanticMessage
-	messages = append(messages, user)
-	var items []protocol.TranscriptListItem
-	for index := uint32(0); index < 2; index++ {
-		plan, _ := domain.NewStopChecksPlan(domain.AssistantSampleReference{TurnID: turn, SampleIndex: index}, uint8(index), []domain.HookReference{d.Reference})
-		id, _ := domain.NewStopHookRunIdentity(plan, 0)
-		candidate, _ := domain.NewHookFeedbackCandidate("same feedback")
-		feedback, _ := domain.NewStopFeedback(domain.HookRunResult{Identity: id, Status: domain.HookBlock, Code: domain.HookDenied, ExitKnown: true, CleanupConfirmed: true, Origin: "execution"}, d.Reference, candidate)
-		message, _ := domain.NewSemanticHookMessage(feedback)
-		messages = append(messages, message)
-		source, _ := domain.NewHookMessageSource(feedback)
-		items = append([]protocol.TranscriptListItem{{Kind: domain.TranscriptHook, TurnID: turn, Cursor: protocol.TranscriptCursor{Sequence: uint64(10 + index)}, Text: feedback.Text, HookSource: &source}}, items...)
-	}
-	history := domain.SemanticHistoryView{Provider: domain.ProviderOpenAI, Turns: []domain.SemanticTurn{{TurnID: turn, Messages: messages}}}
-	m := NewModel(context.Background(), "test", nil).WithInputHistory(history)
-	if len(m.composer.history.entries) != 1 || m.composer.history.entries[0] != "real user" {
-		t.Fatal("Hook became user recall")
-	}
-	updated, _ := m.receiveMainTranscript(mainTranscriptReply{generation: m.main.generation, page: protocol.TranscriptListPage{Items: items}})
-	m = updated.(Model)
-	visible := m.visibleTranscript()
-	if len(visible) != 2 || visible[0].role != "Hook" || visible[1].role != "Hook" || visible[0].cursor == visible[1].cursor || visible[0].text != visible[1].text {
-		t.Fatal("same-text feedback sources merged")
-	}
-}

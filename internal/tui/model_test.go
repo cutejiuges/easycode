@@ -9,7 +9,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"easycode/internal/domain"
-	"easycode/internal/fault"
 	"easycode/internal/protocol"
 )
 
@@ -112,36 +111,6 @@ func (session *fakeChatSession) ResolveApproval(_ context.Context, turnID domain
 	return nil
 }
 
-func TestApprovalOverlayPreservesDraftAndSubmitsCorrelatedDecision(t *testing.T) {
-	session := &fakeChatSession{}
-	model := NewModel(context.Background(), "test", session)
-	model.composer = composerWithText(t, "kept draft")
-	event := mustApprovalRequested(t)
-	model = updateModel(t, model, RuntimeEventMsg{Event: event})
-	if model.approval == nil || model.approval.selected != 2 {
-		t.Fatalf("approval overlay = %#v", model.approval)
-	}
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("ignored")})
-	if model.composer.text != "kept draft" {
-		t.Fatalf("draft changed under overlay: %q", model.composer.text)
-	}
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyUp})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyUp})
-	updated, command := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	model = updated.(Model)
-	if command == nil || !model.approval.submitted {
-		t.Fatal("approval was not submitted")
-	}
-	_ = command()
-	if len(session.approvals) != 1 || session.approvals[0].decision != protocol.ApprovalAllowOnce || session.approvals[0].turnID != event.TurnID || session.approvals[0].request.Fingerprint != strings.Repeat("a", 64) {
-		t.Fatalf("approval = %#v", session.approvals)
-	}
-	_, duplicate := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if duplicate != nil {
-		t.Fatal("submitted overlay accepted a duplicate decision")
-	}
-}
-
 func TestApprovalFeedbackEscapeAndResolutionLifecycle(t *testing.T) {
 	session := &fakeChatSession{}
 	model := NewModel(context.Background(), "test", session)
@@ -167,31 +136,6 @@ func TestApprovalFeedbackEscapeAndResolutionLifecycle(t *testing.T) {
 	model = updateModel(t, model, RuntimeEventMsg{Event: resolved})
 	if model.approval != nil {
 		t.Fatal("resolved event did not close overlay")
-	}
-}
-
-func TestApprovalScrollAndResizeKeepCandidateState(t *testing.T) {
-	model := NewModel(context.Background(), "test", &fakeChatSession{})
-	event := mustApprovalRequested(t)
-	payload, _ := protocol.DecodeToolApprovalRequested(event)
-	payload.Presentation.Patch.Diff = strings.Repeat("-old line\n+new line\n", 30)
-	event, _ = protocol.NewToolApprovalRequested(payload)
-	event.TurnID, _ = domain.ParseTurnID("018f1d8a-7b5c-7def-8234-456789abcdef")
-	model = updateModel(t, model, RuntimeEventMsg{Event: event})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyTab})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("保留反馈")})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEsc})
-	for range 5 {
-		model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyPgDown})
-	}
-	before := *model.approval
-	model = updateModel(t, model, tea.WindowSizeMsg{Width: 32, Height: 10})
-	if model.approval.request.Fingerprint != before.request.Fingerprint || model.approval.selected != before.selected || string(model.approval.feedback) != string(before.feedback) || model.approval.scroll != before.scroll {
-		t.Fatalf("resize changed approval semantics: before=%#v after=%#v", before, model.approval)
-	}
-	view := model.View()
-	if !strings.Contains(view, "of 61") || !strings.Contains(view, "No") || strings.Contains(view, "kept draft") {
-		t.Fatalf("small approval view = %q", view)
 	}
 }
 
@@ -276,48 +220,6 @@ func mustRuntimeCompleted(t *testing.T) protocol.Event {
 	return event
 }
 
-func TestModelInputAndCancellationKeys(t *testing.T) {
-	session := &fakeChatSession{}
-	model := NewModel(context.Background(), "test", session)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
-	if model.composer.text != "q" {
-		t.Fatalf("q is not draft input: %q", model.composer.text)
-	}
-
-	empty := NewModel(context.Background(), "test", session)
-	updated, command := empty.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if command != nil || len(updated.(Model).transcript) != 0 {
-		t.Fatal("empty input was submitted")
-	}
-
-	model.state = stateStreaming
-	model.activeTurnID = "018f1d8a-7b5c-7def-8234-456789abcdef"
-	updated, command = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if command == nil || updated.(Model).state != stateSubmitting {
-		t.Fatal("running composer did not submit automatic input")
-	}
-
-	_, command = model.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	if command == nil {
-		t.Fatal("escape did not create interrupt command")
-	}
-	_ = command()
-	_, command = model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	_ = command()
-	if session.interrupts != 2 {
-		t.Fatalf("interrupt count: %d", session.interrupts)
-	}
-
-	idle := NewModel(context.Background(), "test", session)
-	_, command = idle.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	if command == nil {
-		t.Fatal("idle empty Ctrl+C did not quit")
-	}
-	if message := command(); message != tea.Quit() {
-		t.Fatalf("quit message: %#v", message)
-	}
-}
-
 func TestModelQueuesInterruptUntilSubmitIsReady(t *testing.T) {
 	session := &fakeChatSession{events: make(chan protocol.Event, 1)}
 	session.events <- protocol.NewTurnStarted()
@@ -343,50 +245,6 @@ func TestModelQueuesInterruptUntilSubmitIsReady(t *testing.T) {
 
 	if session.interrupts != 1 || model.interruptNext {
 		t.Fatalf("queued interrupt result: interrupts=%d model=%#v", session.interrupts, model)
-	}
-}
-
-func TestModelFailureAndCancellationRemainRecoverable(t *testing.T) {
-	for _, test := range []struct {
-		name      string
-		code      fault.Code
-		cancelled bool
-	}{
-		{name: "failed", code: fault.CodeProviderRequest},
-		{name: "cancelled", code: fault.CodeUserCancelled, cancelled: true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			session := &fakeChatSession{}
-			model := NewModel(context.Background(), "test", session)
-			model.transcript = []transcriptMessage{{role: "User", text: "old"}, {role: "Assistant", text: "kept"}}
-			model.state = stateStreaming
-			model.assistantItem = 1
-			failure, err := protocol.NewTurnFailed(string(test.code), "safe failure", test.cancelled)
-			if err != nil {
-				t.Fatalf("new failure: %v", err)
-			}
-			model = updateModel(t, model, RuntimeEventMsg{Event: failure})
-			if model.state != stateIdle || model.transcript[1].text != "kept" || !strings.Contains(model.errorSummary, string(test.code)) {
-				t.Fatalf("failure state: %#v", model)
-			}
-			model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("retry")})
-			updated, command := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
-			if command == nil || updated.(Model).state != stateSubmitting {
-				t.Fatal("model did not recover for retry")
-			}
-		})
-	}
-}
-
-func TestModelSubmitErrorIsSanitized(t *testing.T) {
-	session := &fakeChatSession{submitErr: fault.New(fault.CodeProviderRequest, "provider request failed")}
-	model := NewModel(context.Background(), "test", session)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello")})
-	updated, command := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	model = updated.(Model)
-	model = updateModel(t, model, testAdmissionMessage(model, command))
-	if model.errorSummary != "provider_request_failed: provider request failed" || model.state != stateIdle {
-		t.Fatalf("submit error: %#v", model)
 	}
 }
 

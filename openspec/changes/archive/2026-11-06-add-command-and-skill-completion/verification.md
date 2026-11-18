@@ -1,5 +1,7 @@
 # 命令与 Skill 输入补全验收
 
+> 历史日志、运行清单和诊断转储已清理，仅保留文字结论；当前验收以现存测试及质量门为准。
+
 后续追加验证发现并修复四项边界问题，新增确定性回归、状态机 fuzz、Unicode 请求/恢复和真实 PTY 场景。最新结论与日志见 [追加验证](revalidation.md)；以下保留首轮验收记录。
 
 ## 范围与平台
@@ -14,12 +16,12 @@
 | 命令 | 结果与证据 |
 | --- | --- |
 | `go test ./internal/tui ./internal/architecture` | 已通过；包含原有 Skills/Hooks 草稿与审批/问卷隔离回归。 |
-| `go test ./internal/tui ./internal/app -run Completion -count=1` | 已通过；[输出](verification/completion-tests.txt)。真实终端 helper 仅由显式 smoke 环境启用，普通运行不接管终端。 |
-| `go test ./internal/tui -run '^$' -bench BenchmarkCompletion -benchtime=100x -benchmem` | 已通过；[基准记录](verification/bench.txt)。256 Skill 匹配约 3–4 μs/次；4 MiB 草稿参数区不随正文大小复制；无关更新保留匹配切片与布局。数值只代表该宿主，不作为跨平台时间硬门。 |
-| `python3 scripts/completion-smoke.py` | 两种配色均通过；[PTY 记录](verification/pty.json)。每例两次模型请求：Skill 后 Write 审批、拒绝后总结；`/context` 和选择阶段零请求，目标文件未创建。 |
-| `openspec validate add-command-and-skill-completion --strict` | 已通过；[校验输出](verification/openspec.txt)。 |
-| `openspec validate --specs` | 51 项规格通过；[校验输出](verification/specs.txt)，四项修改要求保留原有全部场景，其余八项要求未修改。 |
-| `make verify` | 全部通过；包含分支策略回归、gofmt、vet、固定版本 Staticcheck、全量测试、架构守卫及 race，[完整质量门记录](verification/make-verify.txt)。 |
+| `go test ./internal/tui ./internal/app -run Completion -count=1` | 已通过；输出。真实终端 helper 仅由显式 smoke 环境启用，普通运行不接管终端。 |
+| `go test ./internal/tui -run '^$' -bench BenchmarkCompletion -benchtime=100x -benchmem` | 已通过；基准记录。256 Skill 匹配约 3–4 μs/次；4 MiB 草稿参数区不随正文大小复制；无关更新保留匹配切片与布局。数值只代表该宿主，不作为跨平台时间硬门。 |
+| `python3 scripts/completion-smoke.py` | 两种配色均通过；PTY 记录。每例两次模型请求：Skill 后 Write 审批、拒绝后总结；`/context` 和选择阶段零请求，目标文件未创建。 |
+| `openspec validate add-command-and-skill-completion --strict` | 已通过；校验输出。 |
+| `openspec validate --specs` | 51 项规格通过；校验输出，四项修改要求保留原有全部场景，其余八项要求未修改。 |
+| `make verify` | 全部通过；包含分支策略回归、gofmt、vet、固定版本 Staticcheck、全量测试、架构守卫及 race，完整质量门记录。 |
 
 PTY 通过独立确认管道同步实际按键、控制事件与 resize，不使用 sleep 猜测完成。终端退出检查进程状态以及完整 termios；仅按现有 PTY 验收规则忽略 Darwin 的内核 PENDIN 待重输标记。
 
