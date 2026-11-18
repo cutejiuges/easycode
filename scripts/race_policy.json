@@ -1,0 +1,353 @@
+[
+  {
+    "package": "easycode/internal/domain",
+    "source": "internal/domain",
+    "reason": "封闭值对象的串行校验、枚举、大小及拷贝断言；普通全量保留。Hook 编码变更对照继续参加 race，共享 codec 由集中并发回归覆盖。",
+    "tests": [
+      "TestActiveContextDoesNotForgeMessageIdentity",
+      "TestAggregateSampleUsageRejectsEmptyAndOverflow",
+      "TestAggregateSampleUsageStateAlgebra",
+      "TestAggregateSampleUsageUnknownDominatesOverflowRegardlessOfOrder",
+      "TestAlternateBranchNoticeSlotsAreNeverAddedTogether",
+      "TestCachePolicyValidationAndIdentity",
+      "TestCompactionIdentityAndSummary",
+      "TestCompactionScopeValidation",
+      "TestEffortChoicesPreserveNativeSettings",
+      "TestEffortRejectsInvalidAndConflictingChoices",
+      "TestEmptyProjectInstructionsSnapshotIsExplicitAndSilent",
+      "TestFailureHookInputStrictProjection",
+      "TestFeedbackCandidateAuthorization",
+      "TestHookEventsIsolatePlansRunsAndTrust",
+      "TestHookExecutionStatisticsRejectContradictoryFlags",
+      "TestHookExitTwoValidationDependsOnEvent",
+      "TestHookInputBranchesAndMatchLimit",
+      "TestHookInputDoesNotEvaluateOrTruncateArguments",
+      "TestHookInputEffectsVerifyChainAndOwnTheirInput",
+      "TestHookInputUsesNativeAbsoluteWorkspacePath",
+      "TestHookReplacementCanonicalExpansionAndExactBoundary",
+      "TestHookReplacementRequiresCompleteCurrentShape",
+      "TestHookResponseStrictProjection",
+      "TestHookRewriteGettersAndDigestDoNotAlias",
+      "TestHookTargetsAndScopesAreClosedAndStrict",
+      "TestHookValuesAreBoundedImmutableAndStrict",
+      "TestInferenceClosedBranchesAndIsolation",
+      "TestInferenceEffortEnumsAndDefaultIdentity",
+      "TestInputAssociationIsOrderedIndependentAndClosed",
+      "TestNativeHistoryFootprintValidatesAndReturnsValues",
+      "TestPluginListValuesAndClones",
+      "TestPostBranchesSingleOwnershipAndStrictIdentity",
+      "TestPostCurrentCodecsRejectIncompleteAndAmbiguousObjects",
+      "TestPostHookInputExactMetadataOnlyBranches",
+      "TestPostHookRoutesAndFailureDisclosure",
+      "TestPostResponseRequiresActualSuccessfulMetadata",
+      "TestPreFinishedRequiresEffectAndRejectsEffectsOnOtherEvents",
+      "TestProjectInstructionsSnapshotAppliesVisibleByteBudgetAtUTF8Boundary",
+      "TestProjectInstructionsSnapshotIsDeterministicAndImmutable",
+      "TestProjectInstructionsSnapshotRejectsInvalidByteLimits",
+      "TestProjectInstructionsSnapshotValidatesSourcesAndOrder",
+      "TestReasoningBodyPreservesPartsAndReadsVirtualRanges",
+      "TestReasoningCurrentEncodingAndUnavailable",
+      "TestReasoningLimitsBeforeCopyAndSmallPageAllocation",
+      "TestRequestReceiptRejectsInvalidCombinations",
+      "TestReservedSkillSlashNames",
+      "TestSampleUsageRejectsInvalidMetric",
+      "TestSemanticHistoryViewRepresentsEmptyHistoryWithNonNilTurns",
+      "TestSemanticHistoryViewStableJSONShape",
+      "TestSkillReferenceBoundariesAndSourceAssociation",
+      "TestSkillValuesBoundsAndCopies",
+      "TestStopContinuationCandidatesKeepRealInputIdentity",
+      "TestStopDecisionBudgetsAndActualPrefix",
+      "TestStopExecutionDoesNotRelaxOtherEvents",
+      "TestStopInputPreservesExactSampleAndEncodingLimits",
+      "TestStopPlanAndDecisionBindActualBlockingDeclaration",
+      "TestTokenEstimatePreservesEstimatedAndUnknownStates",
+      "TestTokenEstimateRejectsInvalidMethodAndState",
+      "TestTranscriptClosedKindsAndCopy",
+      "TestTranscriptReasoningIsStrictAndIndependent",
+      "TestUUIDv7RejectsAbnormalGenerationInputs",
+      "TestUUIDv7RejectsInvalidCanonicalForms",
+      "TestUUIDv7RoundTripAcrossDates",
+      "TestUnselectedTerminalCannotInventFeedbackBudgetOrDigest",
+      "TestUsageMetricStatesPreserveKnownZero",
+      "TestUserInputPreservesTextAndValidatesIdentity"
+    ],
+    "retained_race": [
+      {
+        "package": "easycode/internal/domain",
+        "test": "TestHookEncodingMatchesNestedSonic"
+      },
+      {
+        "package": "easycode/internal/domain",
+        "test": "TestHookDigestPreservesInputAndReplacementLimits"
+      },
+      {
+        "package": "easycode/internal/domain",
+        "test": "TestHookFinishedEncodingPreservesEveryFieldAndInvalidIdentity"
+      },
+      {
+        "package": "easycode/internal/domain",
+        "test": "FuzzHookEncodingMatchesNestedSonic"
+      },
+      {
+        "package": "easycode/internal/codec",
+        "test": "TestConcurrentCodecCallsOwnTheirResults"
+      }
+    ]
+  },
+  {
+    "package": "easycode/internal/protocol",
+    "source": "internal/protocol",
+    "reason": "命令和事件值的串行构造、严格解码及 golden；无后台 owner 或并发执行。普通保留全部断言，实际消息交付由 Runtime/app race 覆盖。",
+    "tests": [
+      "TestApprovalEventAndCommandStrictIdentity",
+      "TestAssistantTextDeltaPayloadRoundTrip",
+      "TestAssistantTextDeltaRejectsMissingText",
+      "TestCacheModelIdentityRedactsPathsAndBoundsLabels",
+      "TestCacheProtocolStrictCurrentContract",
+      "TestCommandActivityRejectsInvalidBounds",
+      "TestCommandActivityRoundTripAndIdentity",
+      "TestCommandConstructors",
+      "TestCommandResultPreviewExistsOnlyAtTerminal",
+      "TestCommandResultsAndControlItemsAreClosedAndSafe",
+      "TestCommitOriginsAndFailuresUseOneStrictContract",
+      "TestCompactionEventScopesAndStrictDecoders",
+      "TestContextCommandsRemainSeparateFromTurnInput",
+      "TestContextInternalShapeRequiresEffortAndExternalMetricsRemainSeparate",
+      "TestEffortCommandClosedPayloadAndResults",
+      "TestEffortRevisionAndSelectionStayConsistent",
+      "TestEffortSnapshotsGoldenAndStrictUnion",
+      "TestEffortStartingCannotClaimCompactionActivity",
+      "TestEventValidateDispatchesKnownKinds",
+      "TestEventValidateRejectsInvalidEnvelopeAndPayload",
+      "TestHookTrustContractsAreStrictAndIdentityBound",
+      "TestHookTrustRequestPreservesMaximumRawCommandAfterJSONEscaping",
+      "TestInputStatusClosedCombinations",
+      "TestPayloadDecodersRejectUnknownFields",
+      "TestPayloadlessTurnStartedIsTypedAndStrict",
+      "TestPostHookCommitScopeAndStrictPayload",
+      "TestPreInputActivityStrictBranchesAndEncodedBounds",
+      "TestPreInputCannotHideInOtherEventsOrNullTranscriptMembers",
+      "TestQuestionAnswerAssociationAndBounds",
+      "TestQuestionControlIsStrictAndSeparateFromApproval",
+      "TestQuestionInputBounds",
+      "TestQuestionInputStrictAndImmutable",
+      "TestReasoningAndPostSummaryKeepSeparateTranscriptKinds",
+      "TestReasoningEventsStrictLifecycle",
+      "TestReasoningFailedOffsetsDoNotMutateState",
+      "TestReasoningFailureClosesOpenBlocksAndCommitChecksMapping",
+      "TestReasoningFailurePayloadPreflightsEscaping",
+      "TestReasoningRangesAndClosedStageFields",
+      "TestSevenToolActivityVariantsAndTranscriptMetadata",
+      "TestStopActivityDoesNotPretendToBeATool",
+      "TestStopTrustUsesActualSampleAndPlan",
+      "TestSubmitInputValidationBoundaries",
+      "TestTerminalSavedReferenceStrictIdentityAndIsolation",
+      "TestToolTerminalStateConsistency",
+      "TestTranscriptCommitRequiresStrictSequenceAndIdentity",
+      "TestTranscriptPostSummaryRejectsCrossCallAndRawStatistics",
+      "TestTranscriptQueriesStrictCurrentShapes",
+      "TestTurnCompletedRejectsMissingInvalidAndUnknownUsage",
+      "TestTurnCompletedUsageRoundTripPreservesMetricStates",
+      "TestTurnFailedPayloadRoundTrip",
+      "TestTurnFailedRejectsWhitespaceSummary",
+      "TestUserInputCommittedStrictDecoder",
+      "TestWriteApprovalRequiresMatchingCapabilityAndDecisions",
+      "TestWritePresentationStrictUnionAndFrozenDirectoryPlan"
+    ],
+    "retained_race": [
+      {
+        "package": "easycode/internal/codec",
+        "test": "TestConcurrentCodecCallsOwnTheirResults"
+      },
+      {
+        "package": "easycode/internal/app",
+        "test": "TestCompletionAndPluginBrowserConcurrentLifecycle"
+      }
+    ]
+  },
+  {
+    "package": "easycode/internal/architecture",
+    "source": "internal/architecture",
+    "reason": "仅解析源码 AST/import graph 并检查架构规则，不执行待检业务；普通阶段始终全量执行，不需要再次做竞态检测。",
+    "tests": [
+      "TestAllConstructorsHaveExplicitLifecycle",
+      "TestArchitectureGuardRejectsViolationFixtures",
+      "TestCoreExportedAPIsRejectDynamicTypes",
+      "TestCurrentCodecBoundaries",
+      "TestCurrentContractGuardNegativeAndPositiveCases",
+      "TestDependencyDirections",
+      "TestHookSharedBoundariesRejectBusinessDependencies",
+      "TestHookSharedConstructorsRejectHiddenLifecycle",
+      "TestJSONCodecOwnership",
+      "TestMarkdownScannerHasNoExternalLifecycle",
+      "TestNativeAndCatalogVersionMarkersAreForbidden",
+      "TestPlaceholderAllowlist",
+      "TestPluginContributionAndLifecycleBoundaries",
+      "TestProductionPackageVariables",
+      "TestProductionReachability",
+      "TestProtocolConstructorsDoNotStartGoroutinesOrAccessIO",
+      "TestRuntimeAndAppDoNotImportPlaceholderCapabilities",
+      "TestSessionEnvelopeVersionMarkersAreForbidden",
+      "TestSingleCurrentContract",
+      "TestWebSocketLibraryOwnedByTransport"
+    ],
+    "retained_race": []
+  },
+  {
+    "package": "easycode/internal/codec",
+    "source": "internal/codec",
+    "reason": "串行语法、字段、canonical bytes、分配边界和 fuzz seed；普通完整保留，集中并发回归验证共享输入与返回副本，第三方全局隔离子进程仍参加 race。",
+    "tests": [
+      "FuzzStrictJSONScanner",
+      "TestCanonicalJSONIsStableAndImmutable",
+      "TestCanonicalJSONRejectsInvalidNonCanonicalAndOversizedBytes",
+      "TestCountArrayElementsBeforeTypedAllocation",
+      "TestMarshalStableSortsMapKeys",
+      "TestRecordKeepsUnknownFieldPrecedenceOverMissingFields",
+      "TestRecordNestedPresenceAndNull",
+      "TestRequiredObjectFieldsRejectLossyShapes",
+      "TestScannedDepthNullAndNumberBoundaries",
+      "TestScannedObjectRangesAndOwnership",
+      "TestStrictObjectContract",
+      "TestUnmarshalStrictRejectsUnknownFields",
+      "TestValidationDoesNotMaterializeArrayValues"
+    ],
+    "retained_race": [
+      {
+        "package": "easycode/internal/codec",
+        "test": "TestConcurrentCodecCallsOwnTheirResults"
+      },
+      {
+        "package": "easycode/internal/codec",
+        "test": "TestCodecIndependentOfThirdPartyGlobals"
+      }
+    ]
+  },
+  {
+    "package": "easycode/internal/session",
+    "source": "internal/session/input_commit_test.go",
+    "reason": "串行构造并编码 16/64 MiB record/batch，验证 envelope 和换行预算；无 writer、磁盘提交或并发。普通保留原阈值和全部断言。",
+    "tests": [
+      "TestInputDraftBudgetIncludesCanonicalEnvelopeAndNewlines"
+    ],
+    "retained_race": [
+      {
+        "package": "easycode/internal/session",
+        "test": "TestJournalWriterSerializesConcurrentAppends"
+      }
+    ]
+  },
+  {
+    "package": "easycode/internal/provider/openai",
+    "source": "internal/provider/openai/write_test.go",
+    "reason": "串行构造 17 个约 1 MiB 原生 Write 项并校验编码/请求大小，无 transport 或工具执行；普通保留完整边界。",
+    "tests": [
+      "TestWriteAggregateNativeAndRequestBudgetsRemainSixteenMiB"
+    ],
+    "retained_race": [
+      {
+        "package": "easycode/internal/app",
+        "test": "TestWriteSSEChunksCancellationEOFAndLimitsPrecedeSideEffects"
+      }
+    ]
+  },
+  {
+    "package": "easycode/internal/provider/openai",
+    "source": "internal/provider/openai/hook_input_rewrite_test.go",
+    "reason": "离线依次提交、恢复、编译和对照的输入重写 golden/cache 数据组合；没有并发提交或网络。普通保留全矩阵，race 保留跨平台改写恢复矩阵与共享历史交错；Darwin 另保留真实 sandbox 场景。",
+    "tests": [
+      "TestPreInputRewriteNativeGoldenRestoreAndCache"
+    ],
+    "retained_race": [
+      {
+        "package": "easycode/internal/provider/openai",
+        "test": "TestProjectHistoryConcurrentCommitReturnsCompleteSnapshots"
+      },
+      {
+        "package": "easycode/internal/provider/openai",
+        "test": "TestConversationCancelCompletedRaceHasOneTerminal"
+      },
+      {
+        "package": "easycode/internal/app",
+        "test": "TestPreInputRewriteResumeReconcilesEveryBatchBeforeLoadingNewSnapshot"
+      }
+    ]
+  },
+  {
+    "package": "easycode/internal/provider/anthropic",
+    "source": "internal/provider/anthropic/write_test.go",
+    "reason": "串行构造 17 个约 1 MiB 原生 Write 项并校验编码/请求大小，无 transport 或工具执行；普通保留完整边界。",
+    "tests": [
+      "TestWriteAggregateNativeAndRequestBudgetsRemainSixteenMiB"
+    ],
+    "retained_race": [
+      {
+        "package": "easycode/internal/app",
+        "test": "TestWriteSSEChunksCancellationEOFAndLimitsPrecedeSideEffects"
+      }
+    ]
+  },
+  {
+    "package": "easycode/internal/provider/anthropic",
+    "source": "internal/provider/anthropic/hook_input_rewrite_test.go",
+    "reason": "离线依次提交、恢复、编译和对照的输入重写 golden/cache 数据组合；没有并发提交或网络。普通保留全矩阵，race 保留跨平台改写恢复矩阵与共享历史交错；Darwin 另保留真实 sandbox 场景。",
+    "tests": [
+      "TestPreInputRewriteNativeGoldenRestoreAndCache"
+    ],
+    "retained_race": [
+      {
+        "package": "easycode/internal/provider/anthropic",
+        "test": "TestProjectHistoryConcurrentCommitReturnsCompleteSnapshots"
+      },
+      {
+        "package": "easycode/internal/provider/anthropic",
+        "test": "TestConversationCancelCompletedRaceHasOneTerminal"
+      },
+      {
+        "package": "easycode/internal/app",
+        "test": "TestPreInputRewriteResumeReconcilesEveryBatchBeforeLoadingNewSnapshot"
+      }
+    ]
+  },
+  {
+    "package": "easycode/internal/app",
+    "source": "internal/app/completion_e2e_test.go",
+    "reason": "完整矩阵的文本/策略组合留在普通测试；race 复用相同 helper，保留两家 Provider、local/completion/plugins/skills、真实服务、提交、恢复、cache/native bytes 和关闭断言。",
+    "tests": [
+      "TestCompletionManualAndRestoredRequestsBothProviders",
+      "TestPluginBrowserManualAndRestoredRequestsBothProviders"
+    ],
+    "retained_race": [
+      {
+        "package": "easycode/internal/app",
+        "test": "TestCompletionAndPluginBrowserConcurrentLifecycle"
+      }
+    ]
+  },
+  {
+    "package": "easycode/internal/app",
+    "source": "internal/app/reasoning_cli_e2e_test.go",
+    "reason": "此测试自行 go build 普通 CLI，父测试的 race 不会给该子程序增加检测；普通完整保留 24 组 CLI 场景，race 保留同进程 headless、取消及参数失败，其他重执行 race 二进制的 CLI 测试仍执行。",
+    "tests": [
+      "TestReasoningControlsBuiltCLIEndToEnd"
+    ],
+    "retained_race": [
+      {
+        "package": "easycode/internal/app",
+        "test": "TestReasoningControlsHeadlessToolLoopAndUsage"
+      },
+      {
+        "package": "easycode/internal/app",
+        "test": "TestReasoningHeadlessCancelAndBrokenPipeMatrix"
+      },
+      {
+        "package": "easycode/internal/app",
+        "test": "TestReasoningParameterFailuresNeverRetryOrDowngrade"
+      }
+    ],
+    "platforms": [
+      "darwin",
+      "linux"
+    ]
+  }
+]

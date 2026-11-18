@@ -91,17 +91,27 @@ func Unmarshal(data []byte, target any) error {
 
 // UnmarshalStrict 解码强类型对象并拒绝未知字段。
 func UnmarshalStrict(data []byte, target any) error {
-	if err := ValidateJSON(data); err != nil {
+	value, err := scanJSON(data, 0, false)
+	if err != nil {
 		return err
 	}
-	if err := validateRecordShape(data, reflect.TypeOf(target), false); err != nil {
+	return unmarshalValidated(value, target, false)
+}
+
+// unmarshalValidated 只消费当前调用已经扫描的字段视图，仍执行完整强类型与字段校验。
+func unmarshalValidated(value jsonValue, target any, required bool) error {
+	validator := recordShapeValidator{required: required}
+	if err := validator.validate(value, reflect.TypeOf(target)); err != nil {
 		return err
 	}
-	return sonic.Config{
+	if err := (sonic.Config{
 		EscapeHTML: true, SortMapKeys: true, CompactMarshaler: true,
 		CopyString: true, ValidateString: true, DisallowUnknownFields: true,
 		CaseSensitive: true,
-	}.Froze().Unmarshal(data, target)
+	}).Froze().Unmarshal(value.raw, target); err != nil {
+		return err
+	}
+	return validator.missing
 }
 
 // Valid 判断输入是否为合法 JSON。

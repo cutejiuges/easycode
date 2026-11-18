@@ -27,3 +27,5 @@ README、总体架构、capability-status、product-roadmap 的四处验收引�
 - 最近一次最终代码的完整 `make verify` 退出码 0，全量普通与 race 通过；14/14 PTY、4/4 回执单测通过，详见 [review.md](review.md) 与 [verification.md](verification.md)。本次仅移动归档目录并更新文档，沿用该次代码验收，没有重复执行 Go 测试。
 
 归档没有执行 commit、push 或创建 PR。
+
+后续 main 合并与测试优化的组合验证见 [main-sync-2026-11-18.md](main-sync-2026-11-18.md)。

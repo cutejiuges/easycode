@@ -63,6 +63,8 @@ func testHookResumeReconcilesEveryBatch(t *testing.T, event domain.HookEvent, re
 	t.Helper()
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		t.Run(string(family), func(t *testing.T) {
+			// 两家 Provider 各自持有完整环境；同一家内部的崩溃检查点仍按顺序恢复。
+			t.Parallel()
 			workspace := t.TempDir()
 			writeHookConfig(t, workspace, "cat >/dev/null; printf '{}'")
 			file := filepath.Join(workspace, ".easycode", "hooks.json")

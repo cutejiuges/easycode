@@ -149,10 +149,27 @@ func TestPluginBrowserManualAndRestoredRequestsBothProviders(t *testing.T) {
 
 func testCompletionManualAndRestoredRequests(t *testing.T, pluginPackage bool, selection string) {
 	t.Helper()
+	testCompletionRequestCases(t, pluginPackage, selection, []bool{false, true},
+		[]completionInputCase{{"ascii", "exact args"}, {"unicode", "\u0301中文 👩‍💻 args"}})
+}
+
+// 代表场景复用完整矩阵的断言，覆盖两家 Provider、所有入口及真实恢复和关闭。
+func TestCompletionAndPluginBrowserConcurrentLifecycle(t *testing.T) {
+	inputs := []completionInputCase{{"unicode", "\u0301中文 👩‍💻 args"}}
+	t.Run("local", func(t *testing.T) { testCompletionRequestCases(t, false, "completion", []bool{true}, inputs) })
+	for _, selection := range []string{"completion", "plugins", "skills"} {
+		t.Run(selection, func(t *testing.T) { testCompletionRequestCases(t, true, selection, []bool{true}, inputs) })
+	}
+}
+
+type completionInputCase struct{ name, args string }
+
+func testCompletionRequestCases(t *testing.T, pluginPackage bool, selection string, manualModes []bool, inputs []completionInputCase) {
+	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
-		for _, manualOnly := range []bool{false, true} {
-			for _, inputCase := range []struct{ name, args string }{{"ascii", "exact args"}, {"unicode", "\u0301中文 👩‍💻 args"}} {
+		for _, manualOnly := range manualModes {
+			for _, inputCase := range inputs {
 				t.Run(fmt.Sprintf("%s/manual-only-%t/%s", family, manualOnly, inputCase.name), func(t *testing.T) {
 					args := inputCase.args
 					name, sigil := "review", "$"

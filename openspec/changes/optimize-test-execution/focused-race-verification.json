@@ -1,0 +1,347 @@
+{
+  "execution_commit": "6a87a03",
+  "status": "passed: final-source local pre-commit and pre-push, and native Linux verification",
+  "local": [
+    {
+      "seconds": 237.676,
+      "exit": 0,
+      "source_digest": "5aa4a462d7d22e90a5fdacb43dd1778697e94e6bd1597160d362bed223511040",
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 65.918,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 171.593,
+          "exit": 0
+        }
+      ],
+      "budget_seconds": 0.0,
+      "cpu_count": 10,
+      "memory_bytes": 34359738368,
+      "go_environment": {
+        "GOARCH": "arm64",
+        "GOCACHE": "/Users/cutejiuge/Library/Caches/go-build",
+        "GOOS": "darwin",
+        "GOROOT": "/Users/cutejiuge/.local/share/mise/installs/go/1.24.13",
+        "GOVERSION": "go1.24.13"
+      },
+      "max_child_rss_bytes": 1159593984,
+      "child_cpu_seconds": 927.165,
+      "coverage": {
+        "normal": {
+          "inventory_roots": 1611,
+          "selected_roots": 1611,
+          "completed_roots": 1611,
+          "results": {
+            "pass": 4786
+          },
+          "missing_roots": [],
+          "unexpected_roots": [],
+          "previous_results": 4772,
+          "missing_previous": [],
+          "changed_previous": []
+        },
+        "race": {
+          "inventory_roots": 1611,
+          "selected_roots": 1450,
+          "completed_roots": 1450,
+          "results": {
+            "pass": 4383
+          },
+          "missing_roots": [],
+          "unexpected_roots": []
+        }
+      },
+      "excluded_roots": 161,
+      "raw_report": "/tmp/easycode-focused-local-1",
+      "memory_sample": {
+        "peak_tree_rss_bytes": 2564554752,
+        "sample_interval_seconds": 0.25,
+        "metric": "Sampled sum of RSS for the make verify process tree; shared pages may be counted more than once. Not unique physical memory or cumulative allocations."
+      },
+      "competition": "Observed another worktree /Users/cutejiuge/.codex/worktrees/01b8/easycode running go test -race ./internal/runtime ./internal/context ./internal/headless -count=1 (PID 27239, started 2026-11-18 01:07:07 local), overlapping the latter part of this run. It was not terminated or included in the sampled tree.",
+      "command": "git commit (pre-commit runs make verify)"
+    },
+    {
+      "seconds": 236.102,
+      "exit": 0,
+      "source_digest": "5aa4a462d7d22e90a5fdacb43dd1778697e94e6bd1597160d362bed223511040",
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 64.359,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 171.569,
+          "exit": 0
+        }
+      ],
+      "budget_seconds": 0.0,
+      "cpu_count": 10,
+      "memory_bytes": 34359738368,
+      "go_environment": {
+        "GOARCH": "arm64",
+        "GOCACHE": "/Users/cutejiuge/Library/Caches/go-build",
+        "GOOS": "darwin",
+        "GOROOT": "/Users/cutejiuge/.local/share/mise/installs/go/1.24.13",
+        "GOVERSION": "go1.24.13"
+      },
+      "max_child_rss_bytes": 1278541824,
+      "child_cpu_seconds": 924.344,
+      "coverage": {
+        "normal": {
+          "inventory_roots": 1611,
+          "selected_roots": 1611,
+          "completed_roots": 1611,
+          "results": {
+            "pass": 4786
+          },
+          "missing_roots": [],
+          "unexpected_roots": [],
+          "previous_results": 4772,
+          "missing_previous": [],
+          "changed_previous": []
+        },
+        "race": {
+          "inventory_roots": 1611,
+          "selected_roots": 1450,
+          "completed_roots": 1450,
+          "results": {
+            "pass": 4383
+          },
+          "missing_roots": [],
+          "unexpected_roots": []
+        }
+      },
+      "excluded_roots": 161,
+      "raw_report": "/tmp/easycode-focused-local-2",
+      "memory_sample": {
+        "peak_tree_rss_bytes": 2730180608,
+        "sample_interval_seconds": 0.25,
+        "metric": "Sampled sum of RSS for the make verify process tree; shared pages may be counted more than once. Not unique physical memory or cumulative allocations."
+      },
+      "competition": "Observed another worktree /Users/cutejiuge/.codex/worktrees/01b8/easycode running go test -race ./internal/session -count=1 (PID 30170, started 2026-11-18 01:10:09 local), overlapping this run. It was not terminated or included in the sampled tree.",
+      "command": "git push (pre-push runs make verify)"
+    }
+  ],
+  "linux_attempts": [
+    {
+      "exit": 1,
+      "seconds": 134.2,
+      "error": "missing retained race coverage: easycode/internal/app/TestInputRewriteBothProvidersRealEffectsAndOfflineRestore",
+      "source_digest": "5aa4a462d7d22e90a5fdacb43dd1778697e94e6bd1597160d362bed223511040",
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 95.387,
+          "exit": 0
+        }
+      ],
+      "budget_seconds": 0.0,
+      "cpu_count": 4,
+      "memory_bytes": 16759435264,
+      "go_environment": {
+        "GOARCH": "amd64",
+        "GOCACHE": "/home/runner/.cache/go-build",
+        "GOOS": "linux",
+        "GOROOT": "/home/runner/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.24.13.linux-amd64",
+        "GOVERSION": "go1.24.13"
+      },
+      "run": "https://github.com/cutejiuges/easycode/actions/runs/44134522709",
+      "race_executed": false,
+      "fix": "Use the existing portable TestPreInputRewriteResumeReconcilesEveryBatchBeforeLoadingNewSnapshot as retained coverage; keep the 161 exclusions unchanged."
+    }
+  ],
+  "final_execution_commit": "0d3490f",
+  "final_local": [
+    {
+      "seconds": 234.221,
+      "exit": 0,
+      "source_digest": "7103099d0ea130b9820f4364658653016c96a895e01abc21605b135344ac4450",
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 63.65,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 170.412,
+          "exit": 0
+        }
+      ],
+      "budget_seconds": 0.0,
+      "cpu_count": 10,
+      "memory_bytes": 34359738368,
+      "go_environment": {
+        "GOARCH": "arm64",
+        "GOCACHE": "/Users/cutejiuge/Library/Caches/go-build",
+        "GOOS": "darwin",
+        "GOROOT": "/Users/cutejiuge/.local/share/mise/installs/go/1.24.13",
+        "GOVERSION": "go1.24.13"
+      },
+      "max_child_rss_bytes": 1248493568,
+      "child_cpu_seconds": 891.869,
+      "coverage": {
+        "normal": {
+          "inventory_roots": 1611,
+          "selected_roots": 1611,
+          "completed_roots": 1611,
+          "results": {
+            "pass": 4786
+          },
+          "missing_roots": [],
+          "unexpected_roots": [],
+          "previous_results": 4772,
+          "missing_previous": [],
+          "changed_previous": []
+        },
+        "race": {
+          "inventory_roots": 1611,
+          "selected_roots": 1450,
+          "completed_roots": 1450,
+          "results": {
+            "pass": 4383
+          },
+          "missing_roots": [],
+          "unexpected_roots": []
+        }
+      },
+      "excluded_roots": 161,
+      "raw_report": "/tmp/easycode-focused-final-local-1",
+      "memory_sample": {
+        "peak_tree_rss_bytes": 2550693888,
+        "sample_interval_seconds": 0.25,
+        "metric": "Sampled sum of RSS for the make verify process tree; shared pages may be counted more than once. Not unique physical memory or cumulative allocations."
+      },
+      "competition": "No other Go test process was observed in the process snapshots during this run; these snapshots are not a continuous external-workload trace.",
+      "command": "git commit (pre-commit runs make verify)"
+    },
+    {
+      "seconds": 245.994,
+      "exit": 0,
+      "source_digest": "7103099d0ea130b9820f4364658653016c96a895e01abc21605b135344ac4450",
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 68.332,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 177.49,
+          "exit": 0
+        }
+      ],
+      "budget_seconds": 0.0,
+      "cpu_count": 10,
+      "memory_bytes": 34359738368,
+      "go_environment": {
+        "GOARCH": "arm64",
+        "GOCACHE": "/Users/cutejiuge/Library/Caches/go-build",
+        "GOOS": "darwin",
+        "GOROOT": "/Users/cutejiuge/.local/share/mise/installs/go/1.24.13",
+        "GOVERSION": "go1.24.13"
+      },
+      "max_child_rss_bytes": 1262993408,
+      "child_cpu_seconds": 920.054,
+      "coverage": {
+        "normal": {
+          "inventory_roots": 1611,
+          "selected_roots": 1611,
+          "completed_roots": 1611,
+          "results": {
+            "pass": 4786
+          },
+          "missing_roots": [],
+          "unexpected_roots": [],
+          "previous_results": 4772,
+          "missing_previous": [],
+          "changed_previous": []
+        },
+        "race": {
+          "inventory_roots": 1611,
+          "selected_roots": 1450,
+          "completed_roots": 1450,
+          "results": {
+            "pass": 4383
+          },
+          "missing_roots": [],
+          "unexpected_roots": []
+        }
+      },
+      "excluded_roots": 161,
+      "raw_report": "/tmp/easycode-focused-final-local-2",
+      "memory_sample": {
+        "peak_tree_rss_bytes": 2576662528,
+        "sample_interval_seconds": 0.25,
+        "metric": "Sampled sum of RSS for the make verify process tree; shared pages may be counted more than once. Not unique physical memory or cumulative allocations."
+      },
+      "competition": "Observed worktree /Users/cutejiuge/.codex/worktrees/01b8/easycode running go test ./internal/app (PID 39597, started 2026-11-18 01:24:33 local) and a selected app race run (PID 39634, started 01:24:34), concurrently. Neither process was terminated or included in sampled tree RSS.",
+      "command": "git push (pre-push runs make verify)"
+    }
+  ],
+  "linux_final": {
+    "seconds": 365.714,
+    "exit": 0,
+    "source_digest": "7103099d0ea130b9820f4364658653016c96a895e01abc21605b135344ac4450",
+    "phases": [
+      {
+        "mode": "normal",
+        "seconds": 80.964,
+        "exit": 0
+      },
+      {
+        "mode": "race",
+        "seconds": 284.639,
+        "exit": 0
+      }
+    ],
+    "budget_seconds": 0.0,
+    "cpu_count": 4,
+    "memory_bytes": 16759439360,
+    "go_environment": {
+      "GOARCH": "amd64",
+      "GOCACHE": "/home/runner/.cache/go-build",
+      "GOOS": "linux",
+      "GOROOT": "/home/runner/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.24.13.linux-amd64",
+      "GOVERSION": "go1.24.13"
+    },
+    "max_child_rss_bytes": 1204727808,
+    "child_cpu_seconds": 1186.251,
+    "run": "https://github.com/cutejiuges/easycode/actions/runs/44137389472",
+    "execution_commit": "0d3490fd5df92005182dee48c054137d229e3d60",
+    "coverage": {
+      "normal": {
+        "inventory_roots": 1573,
+        "selected_roots": 1573,
+        "completed_roots": 1573,
+        "results": {
+          "pass": 4505
+        },
+        "missing_roots": [],
+        "unexpected_roots": [],
+        "previous_results": 4491,
+        "missing_previous": [],
+        "changed_previous": []
+      },
+      "race": {
+        "inventory_roots": 1573,
+        "selected_roots": 1412,
+        "completed_roots": 1412,
+        "results": {
+          "pass": 4102
+        },
+        "missing_roots": [],
+        "unexpected_roots": []
+      }
+    },
+    "excluded_roots": 161,
+    "memory_metric": "Maximum RSS of a single child, not sampled process-tree RSS; not directly comparable to the local summed-RSS samples."
+  }
+}

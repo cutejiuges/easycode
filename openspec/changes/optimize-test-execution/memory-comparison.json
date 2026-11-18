@@ -1,0 +1,324 @@
+{
+  "metric": "Sampled process-tree RSS sum, including shared pages; not unique physical memory or cumulative allocations. Sampling can miss brief peaks.",
+  "competition": "Earlier eight/six/bounded-six runs observed competing worktree tests. Later runs record competition per entry; RSS includes only the owned process tree.",
+  "runs": [
+    {
+      "measurement": "eight",
+      "source_digest": "8b9d45fd47f8ff4c6911867129c56b8d515a7b7d7a563f042bf9466b548a815d",
+      "seconds": 246.44,
+      "exit": 0,
+      "jobs": 8,
+      "parallel": 2,
+      "shards": 16,
+      "build_jobs": null,
+      "heavy_jobs": null,
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 63.599,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 176.913,
+          "exit": 0
+        }
+      ],
+      "max_child_rss_bytes": 1257717760,
+      "child_cpu_seconds": 1064.686,
+      "tree_rss_peak_bytes": 3236331520,
+      "sample_interval_seconds": 0.25,
+      "peak_processes": 14
+    },
+    {
+      "measurement": "six",
+      "source_digest": "8b9d45fd47f8ff4c6911867129c56b8d515a7b7d7a563f042bf9466b548a815d",
+      "seconds": 252.368,
+      "exit": 0,
+      "jobs": 6,
+      "parallel": 2,
+      "shards": 16,
+      "build_jobs": null,
+      "heavy_jobs": null,
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 63.193,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 182.792,
+          "exit": 0
+        }
+      ],
+      "max_child_rss_bytes": 1212645376,
+      "child_cpu_seconds": 1028.94,
+      "tree_rss_peak_bytes": 3809492992,
+      "sample_interval_seconds": 0.25,
+      "peak_processes": 22
+    },
+    {
+      "measurement": "bounded-six",
+      "source_digest": "d2fed512d311cdbfe1dada291cfe1f3dddd218e5c88699a323903a52b4de78f5",
+      "seconds": 257.232,
+      "exit": 0,
+      "jobs": 6,
+      "parallel": 2,
+      "shards": 16,
+      "build_jobs": 4,
+      "heavy_jobs": 2,
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 65.147,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 187.305,
+          "exit": 0
+        }
+      ],
+      "max_child_rss_bytes": 1192034304,
+      "child_cpu_seconds": 1010.674,
+      "tree_rss_peak_bytes": 3186327552,
+      "sample_interval_seconds": 0.25,
+      "peak_processes": 20
+    },
+    {
+      "measurement": "heavy-one",
+      "source_digest": "74636b3887f2bf5fc49ab9119c0f234cf684763fc65ea2bd3b64679ac3c67cd2",
+      "seconds": 254.784,
+      "exit": 0,
+      "jobs": 6,
+      "parallel": 2,
+      "shards": 16,
+      "build_jobs": 4,
+      "heavy_jobs": 1,
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 62.706,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 186.681,
+          "exit": 0
+        }
+      ],
+      "max_child_rss_bytes": 1362280448,
+      "child_cpu_seconds": 973.706,
+      "tree_rss_peak_bytes": 3248635904,
+      "sample_interval_seconds": 0.25,
+      "peak_processes": 23
+    },
+    {
+      "measurement": "resource-pre-commit",
+      "source_digest": "74636b3887f2bf5fc49ab9119c0f234cf684763fc65ea2bd3b64679ac3c67cd2",
+      "seconds": 262.94,
+      "exit": 0,
+      "jobs": 6,
+      "parallel": 2,
+      "shards": 16,
+      "build_jobs": 4,
+      "heavy_jobs": 2,
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 64.728,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 191.658,
+          "exit": 0
+        }
+      ],
+      "max_child_rss_bytes": 1246052352,
+      "child_cpu_seconds": 1071.624,
+      "tree_rss_peak_bytes": 3103768576,
+      "sample_interval_seconds": 0.25,
+      "peak_processes": 22
+    },
+    {
+      "measurement": "resource-pre-push",
+      "source_digest": "74636b3887f2bf5fc49ab9119c0f234cf684763fc65ea2bd3b64679ac3c67cd2",
+      "seconds": 246.794,
+      "exit": 0,
+      "jobs": 6,
+      "parallel": 2,
+      "shards": 16,
+      "build_jobs": 4,
+      "heavy_jobs": 2,
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 65.439,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 176.205,
+          "exit": 0
+        }
+      ],
+      "max_child_rss_bytes": 1196769280,
+      "child_cpu_seconds": 997.176,
+      "tree_rss_peak_bytes": 3203547136,
+      "sample_interval_seconds": 0.25,
+      "peak_processes": 24
+    },
+    {
+      "measurement": "overlap-pre-commit",
+      "source_digest": "4f96b93789d79d6e0672a19727ffd91204e2904bdd9da322582e36922e24122e",
+      "seconds": 240.2,
+      "exit": 0,
+      "budget_seconds": 300.0,
+      "jobs": 6,
+      "parallel": 2,
+      "shards": 16,
+      "build_jobs": 4,
+      "heavy_jobs": 2,
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 63.626,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 176.392,
+          "exit": 0
+        }
+      ],
+      "max_child_rss_bytes": 1288896512,
+      "child_cpu_seconds": 982.712,
+      "tree_rss_peak_bytes": 3012984832,
+      "sample_interval_seconds": 0.25,
+      "peak_processes": 22,
+      "competing_test_suite_observed": false
+    },
+    {
+      "measurement": "overlap-pre-push",
+      "source_digest": "4f96b93789d79d6e0672a19727ffd91204e2904bdd9da322582e36922e24122e",
+      "seconds": 261.441,
+      "exit": 0,
+      "budget_seconds": 300.0,
+      "jobs": 6,
+      "parallel": 2,
+      "shards": 16,
+      "build_jobs": 4,
+      "heavy_jobs": 2,
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 63.825,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 197.446,
+          "exit": 0
+        }
+      ],
+      "max_child_rss_bytes": 1281949696,
+      "child_cpu_seconds": 1005.558,
+      "tree_rss_peak_bytes": 3214671872,
+      "sample_interval_seconds": 0.25,
+      "peak_processes": 23,
+      "competing_test_suite_observed": true
+    },
+    {
+      "measurement": "hook-target-pre-commit",
+      "source_digest": "ab118d4c952834f24d3e3edcee35c0d2f51d67645cdb790a7ac1fb6548806126",
+      "seconds": 244.996,
+      "exit": 0,
+      "budget_seconds": 300.0,
+      "jobs": 6,
+      "parallel": 2,
+      "shards": 16,
+      "build_jobs": 4,
+      "heavy_jobs": 2,
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 62.235,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 182.589,
+          "exit": 0
+        }
+      ],
+      "max_child_rss_bytes": 1275101184,
+      "child_cpu_seconds": 996.62,
+      "tree_rss_peak_bytes": 3269181440,
+      "sample_interval_seconds": 0.25,
+      "peak_processes": 21,
+      "competing_test_suite_observed": false
+    },
+    {
+      "measurement": "budget-pre-commit",
+      "source_digest": "84f8c4bceeff66a1a72952677b72e0d8e71062025f9238afcaf5f323aecf9dbc",
+      "seconds": 238.27,
+      "exit": 0,
+      "budget_seconds": 360.0,
+      "jobs": 6,
+      "parallel": 2,
+      "shards": 16,
+      "build_jobs": 4,
+      "heavy_jobs": 2,
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 64.738,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 173.359,
+          "exit": 0
+        }
+      ],
+      "max_child_rss_bytes": 1150074880,
+      "child_cpu_seconds": 964.232,
+      "tree_rss_peak_bytes": 3167944704,
+      "sample_interval_seconds": 0.25,
+      "peak_processes": 21,
+      "competing_test_suite_observed": false
+    },
+    {
+      "measurement": "budget-pre-push",
+      "source_digest": "84f8c4bceeff66a1a72952677b72e0d8e71062025f9238afcaf5f323aecf9dbc",
+      "seconds": 234.915,
+      "exit": 0,
+      "budget_seconds": 360.0,
+      "jobs": 6,
+      "parallel": 2,
+      "shards": 16,
+      "build_jobs": 4,
+      "heavy_jobs": 2,
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 62.277,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 172.469,
+          "exit": 0
+        }
+      ],
+      "max_child_rss_bytes": 1239203840,
+      "child_cpu_seconds": 964.454,
+      "tree_rss_peak_bytes": 3260186624,
+      "sample_interval_seconds": 0.25,
+      "peak_processes": 24,
+      "competing_test_suite_observed": false
+    }
+  ]
+}

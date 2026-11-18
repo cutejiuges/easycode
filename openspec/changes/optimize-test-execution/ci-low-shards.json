@@ -1,0 +1,368 @@
+[
+  {
+    "source_digest": "134ad56cb73e0022e44e02fc05efd2f8aa277cb550eb1a1da0d4d5db5666610a",
+    "platform": "linux",
+    "cpu_count": 4,
+    "memory_bytes": 16759439360,
+    "go_environment": {
+      "GOARCH": "amd64",
+      "GOCACHE": "/home/runner/.cache/go-build",
+      "GOOS": "linux",
+      "GOROOT": "/home/runner/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.24.13.linux-amd64",
+      "GOVERSION": "go1.24.13"
+    },
+    "jobs": 2,
+    "parallel": 2,
+    "shards": 1,
+    "budget_seconds": 600.0,
+    "test_result_cache": false,
+    "seconds": 444.57,
+    "exit": 0,
+    "phases": [
+      {
+        "mode": "normal",
+        "seconds": 39.729,
+        "exit": 0
+      },
+      {
+        "mode": "race",
+        "seconds": 386.643,
+        "exit": 0
+      }
+    ],
+    "peak_active_commands": 2,
+    "max_child_rss_bytes": 1079275520,
+    "child_cpu_seconds": 981.41,
+    "run": "https://github.com/cutejiuges/easycode/actions/runs/43912405190",
+    "commit": "32efe87f49b2b5770acbf04f988587a25c281282",
+    "acceptance": false,
+    "note": "完整通过，但超过 300 秒；600 秒仅用于诊断。",
+    "overhead": [
+      {
+        "label": "static",
+        "seconds": 18.11,
+        "exit": 0
+      },
+      {
+        "label": "normal-inventory",
+        "seconds": 4.546,
+        "exit": 0
+      },
+      {
+        "label": "race-inventory",
+        "seconds": 20.413,
+        "exit": 0
+      }
+    ],
+    "top_level_count": {
+      "normal": 1567,
+      "race": 1567
+    },
+    "slow_tests": [
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestPreInputRewriteResumeReconcilesEveryBatchBeforeLoadingNewSnapshot",
+        "seconds": 44.29
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/provider/openai",
+        "test": "TestPreInputRewriteNativeGoldenRestoreAndCache",
+        "seconds": 38.02
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/provider/anthropic",
+        "test": "TestPreInputRewriteNativeGoldenRestoreAndCache",
+        "seconds": 33.16
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestStopSampleAndCallLimitsKeepTextContinuationAvailable",
+        "seconds": 23.08
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestHookResumeReconcilesEveryBatchBeforeLoadingNewSnapshot",
+        "seconds": 21.82
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestPluginBrowserManualAndRestoredRequestsBothProviders",
+        "seconds": 20.61
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/session",
+        "test": "TestInputDraftBudgetIncludesCanonicalEnvelopeAndNewlines",
+        "seconds": 18.65
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestSessionPreviewCurrentFixturesAreReadOnly",
+        "seconds": 16.53
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestWriteSSEChunksCancellationEOFAndLimitsPrecedeSideEffects",
+        "seconds": 16.39
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/runtime",
+        "test": "TestPreRewriteThreeCapabilitiesUseOnlySelectedInput",
+        "seconds": 15.82
+      }
+    ]
+  },
+  {
+    "source_digest": "134ad56cb73e0022e44e02fc05efd2f8aa277cb550eb1a1da0d4d5db5666610a",
+    "platform": "linux",
+    "cpu_count": 4,
+    "memory_bytes": 16759439360,
+    "go_environment": {
+      "GOARCH": "amd64",
+      "GOCACHE": "/home/runner/.cache/go-build",
+      "GOOS": "linux",
+      "GOROOT": "/home/runner/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.24.13.linux-amd64",
+      "GOVERSION": "go1.24.13"
+    },
+    "jobs": 4,
+    "parallel": 2,
+    "shards": 2,
+    "budget_seconds": 600.0,
+    "test_result_cache": false,
+    "seconds": 359.663,
+    "exit": 0,
+    "phases": [
+      {
+        "mode": "normal",
+        "seconds": 33.876,
+        "exit": 0
+      },
+      {
+        "mode": "race",
+        "seconds": 306.81,
+        "exit": 0
+      }
+    ],
+    "peak_active_commands": 4,
+    "max_child_rss_bytes": 1099718656,
+    "child_cpu_seconds": 1168.067,
+    "run": "https://github.com/cutejiuges/easycode/actions/runs/43912411723",
+    "commit": "32efe87f49b2b5770acbf04f988587a25c281282",
+    "acceptance": false,
+    "note": "完整通过，但超过 300 秒；600 秒仅用于诊断。",
+    "overhead": [
+      {
+        "label": "static",
+        "seconds": 18.887,
+        "exit": 0
+      },
+      {
+        "label": "normal-inventory",
+        "seconds": 3.755,
+        "exit": 0
+      },
+      {
+        "label": "race-inventory",
+        "seconds": 11.677,
+        "exit": 0
+      }
+    ],
+    "top_level_count": {
+      "normal": 1567,
+      "race": 1567
+    },
+    "slow_tests": [
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestPreInputRewriteResumeReconcilesEveryBatchBeforeLoadingNewSnapshot",
+        "seconds": 60.83
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/provider/anthropic",
+        "test": "TestPreInputRewriteNativeGoldenRestoreAndCache",
+        "seconds": 58.7
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/provider/openai",
+        "test": "TestPreInputRewriteNativeGoldenRestoreAndCache",
+        "seconds": 57.58
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestStopSampleAndCallLimitsKeepTextContinuationAvailable",
+        "seconds": 37.99
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestHookResumeReconcilesEveryBatchBeforeLoadingNewSnapshot",
+        "seconds": 35.52
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestPluginBrowserManualAndRestoredRequestsBothProviders",
+        "seconds": 31.53
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/session",
+        "test": "TestInputDraftBudgetIncludesCanonicalEnvelopeAndNewlines",
+        "seconds": 28.49
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestSessionPreviewCurrentFixturesAreReadOnly",
+        "seconds": 26
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/runtime",
+        "test": "TestPreRewriteThreeCapabilitiesUseOnlySelectedInput",
+        "seconds": 23.93
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestStopCompactionKeepsFrozenFeedbackAndGenuineSkillCorrection",
+        "seconds": 19.73
+      }
+    ]
+  },
+  {
+    "source_digest": "134ad56cb73e0022e44e02fc05efd2f8aa277cb550eb1a1da0d4d5db5666610a",
+    "platform": "linux",
+    "cpu_count": 4,
+    "memory_bytes": 16759439360,
+    "go_environment": {
+      "GOARCH": "amd64",
+      "GOCACHE": "/home/runner/.cache/go-build",
+      "GOOS": "linux",
+      "GOROOT": "/home/runner/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.24.13.linux-amd64",
+      "GOVERSION": "go1.24.13"
+    },
+    "jobs": 4,
+    "parallel": 2,
+    "shards": 4,
+    "budget_seconds": 600.0,
+    "test_result_cache": false,
+    "seconds": 512.676,
+    "exit": 0,
+    "phases": [
+      {
+        "mode": "normal",
+        "seconds": 38.788,
+        "exit": 0
+      },
+      {
+        "mode": "race",
+        "seconds": 449.121,
+        "exit": 0
+      }
+    ],
+    "peak_active_commands": 4,
+    "max_child_rss_bytes": 1208680448,
+    "child_cpu_seconds": 1794.21,
+    "run": "https://github.com/cutejiuges/easycode/actions/runs/43914477998",
+    "commit": "32efe87f49b2b5770acbf04f988587a25c281282",
+    "acceptance": false,
+    "note": "完整通过，但超过 300 秒；600 秒仅用于诊断。",
+    "overhead": [
+      {
+        "label": "static",
+        "seconds": 24.616,
+        "exit": 0
+      },
+      {
+        "label": "normal-inventory",
+        "seconds": 4.768,
+        "exit": 0
+      },
+      {
+        "label": "race-inventory",
+        "seconds": 13.031,
+        "exit": 0
+      }
+    ],
+    "top_level_count": {
+      "normal": 1567,
+      "race": 1567
+    },
+    "slow_tests": [
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestPreInputRewriteResumeReconcilesEveryBatchBeforeLoadingNewSnapshot",
+        "seconds": 83.48
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/provider/anthropic",
+        "test": "TestPreInputRewriteNativeGoldenRestoreAndCache",
+        "seconds": 83.24
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/provider/openai",
+        "test": "TestPreInputRewriteNativeGoldenRestoreAndCache",
+        "seconds": 82.42
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestPluginBrowserManualAndRestoredRequestsBothProviders",
+        "seconds": 54.74
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestStopSampleAndCallLimitsKeepTextContinuationAvailable",
+        "seconds": 51.38
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestWriteSSEChunksCancellationEOFAndLimitsPrecedeSideEffects",
+        "seconds": 49.86
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestHookResumeReconcilesEveryBatchBeforeLoadingNewSnapshot",
+        "seconds": 44.67
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/session",
+        "test": "TestInputDraftBudgetIncludesCanonicalEnvelopeAndNewlines",
+        "seconds": 41.42
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/app",
+        "test": "TestSessionPreviewCurrentFixturesAreReadOnly",
+        "seconds": 40.15
+      },
+      {
+        "phase": "race",
+        "package": "easycode/internal/runtime",
+        "test": "TestPreRewriteThreeCapabilitiesUseOnlySelectedInput",
+        "seconds": 33.88
+      }
+    ]
+  }
+]

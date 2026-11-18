@@ -47,17 +47,22 @@ func (v HookToolInput) Exec() (string, string, int, bool) {
 
 // Digest 只包含规范能力与参数，不包含授权、来源路径或运行身份。
 func (v HookToolInput) Digest() (string, error) {
-	if err := v.Validate(); err != nil {
-		return "", err
-	}
-	b, err := codec.MarshalStable(struct {
-		Capability HookCapability `json:"capability"`
-		Input      HookToolInput  `json:"input"`
-	}{v.capability, v})
+	_, digest, err := v.encodingAndDigest()
+	return digest, err
+}
+
+func (v HookToolInput) encodingAndDigest() ([]byte, string, error) {
+	input, err := v.validatedJSON()
 	if err != nil {
-		return "", HookConfigInvalid
+		return nil, "", err
 	}
-	return HookDigest(b), nil
+	// 能力已由上面的校验限定为三个固定名称，输入字节也已由 Sonic 生成；只补齐固定摘要 envelope。
+	prefix := `{"capability":"` + string(v.capability) + `","input":`
+	b := make([]byte, 0, len(prefix)+len(input)+1)
+	b = append(b, prefix...)
+	b = append(b, input...)
+	b = append(b, '}')
+	return input, HookDigest(b), nil
 }
 func (v HookToolInput) Equal(other HookToolInput) bool {
 	left, le := v.MarshalJSON()

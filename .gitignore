@@ -7,3 +7,4 @@
 /.config/easycode/config.json
 /config.json
 .idea
+__pycache__/

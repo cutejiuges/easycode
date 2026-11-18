@@ -953,6 +953,12 @@ make verify
 
 涉及 provider、context 或缓存时还必须执行对应 golden/cache regression suite。
 
+质量门由 `scripts/test_suite.py` 统一计时和管理测试进程，全量普通与经审计的必要 race 顺序执行，所选测试强制运行一次。各阶段通过 Go 枚举并保留当前构建模式的二进制，以标准 `test2json` 执行分片；保持包目录、TestMain、参数和失败退出语义，阶段结束或失败后清理临时二进制，避免重复链接。app 按当前平台自动发现的顶层入口分片，保留 TestMain、子测试与环境隔离；其他包共享同一有界调度；高 RSS 的两个 Provider、Runtime、Session、Tool、TUI 包另有限额并提前交错执行，构建与测试分别限制 CPU 并行度。同设备以硬链接保留二进制，跨设备或不支持时复制。普通完成清单必须与全部 Test/Example/Fuzz seed 清单一致；race 只移出 `scripts/race_policy.json` 精确审计的入口，新增入口默认参加，清单失效或缺失保留覆盖时报错。复杂数据矩阵的 race 代表场景复用原 helper 与实质断言，全量 race 可通过 `make test-race-full` 执行。失败、取消与超时停止派发并由唯一 owner 终止和等待进程；调度器的真实子进程回归位于 `scripts/test_suite_test.py`。完整流程默认无总耗时限制，正值 `TEST_BUDGET` 仅供诊断；保留单进程超时与业务 deadline，报告全部阶段的实际时间，不能用结果缓存或缺失平台证明通过。
+
+严格 JSON 在 `internal/codec/scan.go` 中先完成标准语法及无损校验，再按需要索引调用局部的字段范围。基础验证不物化数组值，字段枚举只保留一层；typed record 校验复用嵌套索引，最后仍使用固定 Sonic 配置解码。索引不跨调用缓存，公开字段结果独立复制，canonical 编码和所有权契约保持。`scan_test.go` 使用独立 token 参考实现做差异 fuzz，`benchmark_test.go` 观测小对象、嵌套记录和大文本的普通/race 成本。
+
+Session record 写入复用 checksum envelope 的 Sonic 字节，追加固定 checksum 字段后仍检查完整大小。HookToolInput 在同一次调用中复用已校验的 Sonic 编码计算规范 digest；能力为封闭常量，摘要 envelope 只补齐固定字段结构。HookInputEffect 和 HookFinished 的嵌套编码使用局部 RawMessage，避免反复调用子对象编码；不跨调用缓存，不修改 Sonic/race 检测。原编码路径的逐字节对照、坏输入、边界与 fuzz 位于 `internal/session/codec_equivalence_test.go` 和 `internal/domain/hook_encoding_test.go`，固定 fixture 和双 Provider 恢复/cache 继续由完整质量门覆盖。
+
 ## 17. 设计模式使用边界
 
 推荐模式：

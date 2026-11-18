@@ -4,15 +4,22 @@ SHELL := /bin/sh
 
 GO ?= go
 GOFLAGS ?=
-# 全量真实进程、恢复矩阵和 race 共用有界包级总预算，不改变操作级 deadline。
+PYTHON ?= python3
+# 默认不限制总耗时；保留每测试进程超时和可选诊断预算。
 TEST_TIMEOUT ?= 20m
+TEST_BUDGET ?= 0
+TEST_OPTIONS ?=
+TEST_RUNNER := $(PYTHON) -B scripts/test_suite.py --go "$(GO)" --timeout=$(TEST_TIMEOUT) --budget=$(TEST_BUDGET) $(TEST_OPTIONS)
 APP_NAME ?= easycode
 CMD_PATH := ./cmd/easycode
 BIN_DIR ?= bin
 BIN_PATH := $(BIN_DIR)/$(APP_NAME)
 PACKAGES := ./...
 
-.PHONY: build clean branch-check branch-policy-test fmt-check vet lint test test-race verify install-hooks
+.PHONY: build clean branch-check branch-policy-test fmt-check vet lint test test-race test-race-full test-all test-runner-test verify install-hooks
+
+# 同一 make 调用中的普通/race 入口串行；各阶段由 runner 统一分配有限进程。
+.NOTPARALLEL:
 
 build:
 	@mkdir -p "$(BIN_DIR)"
@@ -33,10 +40,19 @@ lint:
 	$(GO) tool staticcheck $(PACKAGES)
 
 test:
-	$(GO) test -timeout=$(TEST_TIMEOUT) $(PACKAGES)
+	$(TEST_RUNNER) --mode=normal
 
 test-race:
-	$(GO) test -timeout=$(TEST_TIMEOUT) -race $(PACKAGES)
+	$(TEST_RUNNER) --mode=race
+
+test-race-full:
+	$(TEST_RUNNER) --mode=race --race-scope=full
+
+test-all:
+	$(TEST_RUNNER) --mode=all
+
+test-runner-test:
+	$(PYTHON) -B -m unittest discover -s scripts -p '*_test.py'
 
 branch-check:
 	@./scripts/check-branch-name.sh
@@ -44,7 +60,8 @@ branch-check:
 branch-policy-test:
 	@./scripts/check-branch-name_test.sh
 
-verify: branch-policy-test fmt-check vet lint test test-race
+verify:
+	$(TEST_RUNNER) --mode=verify
 
 install-hooks:
 	@if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then \

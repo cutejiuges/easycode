@@ -1,0 +1,32 @@
+File: easycode-rewrite.test
+Type: alloc_space
+Time: 2026-11-17 01:07:26 CST
+Showing nodes accounting for 14627.37MB, 98.75% of 14811.90MB total
+Dropped 221 nodes (cum <= 74.06MB)
+Showing top 25 nodes out of 137
+      flat  flat%   sum%        cum   cum%
+ 9399.85MB 63.46% 63.46%  9399.85MB 63.46%  github.com/bytedance/sonic/internal/encoder/vars.init.func1
+ 4053.44MB 27.37% 90.83%  4053.44MB 27.37%  github.com/bytedance/sonic/internal/decoder/optdec.init.func1
+  555.14MB  3.75% 94.58%   558.15MB  3.77%  github.com/bytedance/sonic/internal/encoder/vars.NewBytes
+  251.58MB  1.70% 96.27%   251.58MB  1.70%  github.com/bytedance/sonic/internal/native/types.init.func1
+  123.98MB  0.84% 97.11%   123.98MB  0.84%  bytes.growSlice
+   78.81MB  0.53% 97.64%    80.81MB  0.55%  github.com/bytedance/sonic/internal/encoder/vars.NewBuffer
+   59.64MB   0.4% 98.05% 10353.47MB 69.90%  github.com/bytedance/sonic/internal/encoder.Encode
+   46.17MB  0.31% 98.36%  1170.72MB  7.90%  encoding/json.Marshal
+   14.16MB 0.096% 98.45%    98.46MB  0.66%  github.com/bytedance/sonic/internal/encoder/prim.Compact
+   10.61MB 0.072% 98.52%   292.01MB  1.97%  easycode/internal/codec.MarshalCanonical
+       6MB 0.041% 98.57%  6697.04MB 45.21%  easycode/internal/domain.HookToolInput.MarshalJSON
+       5MB 0.034% 98.60%  2828.42MB 19.10%  easycode/internal/domain.HookFinished.MarshalJSON
+       4MB 0.027% 98.63%   127.98MB  0.86%  bytes.(*Buffer).grow
+       4MB 0.027% 98.65%  9755.61MB 65.86%  github.com/bytedance/sonic/internal/encoder.encodeInto
+       3MB  0.02% 98.67%   472.14MB  3.19%  easycode/internal/domain.NewHookPlan
+       2MB 0.014% 98.69% 11335.65MB 76.53%  easycode/internal/provider/anthropic.restoreNativeHistory
+       2MB 0.014% 98.70%  3575.10MB 24.14%  easycode/internal/domain.HookToolInput.Digest
+    1.50MB  0.01% 98.71%   157.03MB  1.06%  easycode/internal/tool.encodeFacades
+    1.50MB  0.01% 98.72%  1728.84MB 11.67%  easycode/internal/domain.HookInputEffect.MarshalJSON
+    1.50MB  0.01% 98.73%   891.05MB  6.02%  easycode/internal/domain.HookTarget.MarshalJSON
+       1MB 0.0068% 98.74%    85.32MB  0.58%  easycode/internal/tool.NewCatalogSnapshot
+       1MB 0.0068% 98.74%  4060.63MB 27.41%  github.com/bytedance/sonic.frozenConfig.Unmarshal
+    0.50MB 0.0034% 98.75%   133.08MB   0.9%  easycode/internal/provider/anthropic.NativeItem.MarshalJSON
+    0.50MB 0.0034% 98.75%  2068.20MB 13.96%  easycode/internal/provider/anthropic.(*NativeItem).UnmarshalJSON
+    0.50MB 0.0034% 98.75%  4060.63MB 27.41%  github.com/bytedance/sonic/internal/decoder/optdec.Decode

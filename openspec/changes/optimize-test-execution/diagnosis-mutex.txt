@@ -1,0 +1,6 @@
+File: app-race.test
+Type: delay
+Time: 2026-11-16 21:53:38 CST
+Showing nodes accounting for 17.43ms, 100% of 17.43ms total
+      flat  flat%   sum%        cum   cum%
+   17.43ms   100%   100%    17.43ms   100%  runtime._LostContendedRuntimeLock

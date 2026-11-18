@@ -1,7 +1,9 @@
 """验证 PTY 回执乱序与消费边界，不启动终端或 Provider。"""
 import importlib.util
+import builtins
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 
 spec = importlib.util.spec_from_file_location("file_mentions_smoke", Path(__file__).with_name("file-mentions-smoke.py"))
@@ -10,6 +12,21 @@ spec.loader.exec_module(smoke)
 
 
 class AckInboxTest(unittest.TestCase):
+    def test_ack_import_does_not_require_posix_terminal_modules(self):
+        original_import = builtins.__import__
+
+        def portable_import(name, *args, **kwargs):
+            if name in {"fcntl", "pty", "termios"}:
+                raise ImportError("POSIX terminal module is unavailable")
+            return original_import(name, *args, **kwargs)
+
+        portable = importlib.util.module_from_spec(spec)
+        with patch("builtins.__import__", side_effect=portable_import):
+            spec.loader.exec_module(portable)
+        inbox = portable.AckInbox()
+        inbox.append({"kind": "key"})
+        self.assertEqual(inbox.take(lambda _: True), {"kind": "key"})
+
     def test_probe_before_key_and_key_before_probe_are_both_observable_once(self):
         for kinds in (("scan_blocked", "key"), ("key", "scan_blocked")):
             with self.subTest(kinds=kinds):

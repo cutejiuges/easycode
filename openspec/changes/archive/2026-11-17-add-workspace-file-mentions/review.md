@@ -34,7 +34,7 @@
 
 修复：`AckInbox` 按序保留未消费回执，动作水位约束新按键/admission/取回/resize，事件只消费一次；新视图等待忽略旧视图。先粘贴路径、再追加范围及尾部，明确保持 paste 抑制，然后显式 Tab 重开。生产 TUI 的接受规则保持。
 
-回归：`scripts/file-mentions-smoke_test.py` 四项纯单测覆盖 probe/key 两种次序、连续终态单次消费、新按键与新 admission 的动作边界、旧视图拒绝。`internal/tui/file_completion_test.go` 新增分段粘贴范围、离开再返回目标、零提前搜索及一次显式重开的业务断言。
+回归：`scripts/file_mentions_smoke_test.py` 四项纯单测覆盖 probe/key 两种次序、连续终态单次消费、新按键与新 admission 的动作边界、旧视图拒绝。`internal/tui/file_completion_test.go` 新增分段粘贴范围、离开再返回目标、零提前搜索及一次显式重开的业务断言。
 
 ## 四条重点链路复核
 
