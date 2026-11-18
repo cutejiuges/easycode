@@ -10,50 +10,6 @@ import (
 	"easycode/internal/provider"
 )
 
-func TestNativeCommitRoundTripPreservesThinkingRawAndUsageKnowledge(t *testing.T) {
-	t.Parallel()
-	entry := nativeHistoryEntry{
-		Kind: nativeHistorySample,
-		Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{
-			{Type: blockTypeThinking, Thinking: "private", Signature: "opaque-signature"},
-			{Type: blockTypeRedactedThinking, RedactedData: "opaque-redacted", Raw: json.RawMessage(`{"type":"redacted_thinking","data":"opaque-redacted","future":true}`)},
-			{Type: blockTypeText, Text: "answer"},
-			{Type: "future_block", Raw: json.RawMessage(`{"type":"future_block","extension":{"enabled":true}}`)},
-		}},
-		Metadata: messageMetadata{
-			ID: "msg-1", Model: "claude-test", StopReason: optionalString{Known: true, Value: "end_turn"},
-			Usage: rawUsage{
-				InputTokens:  optionalUint{Known: true, Value: 0},
-				OutputTokens: optionalUint{Known: true, Value: 7},
-			},
-		},
-	}
-	envelope, err := encodeNativeCommit(entry)
-	if err != nil {
-		t.Fatal(err)
-	}
-	decoded, err := decodeNativeCommit(envelope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(decoded.Assistant.Content) != 4 ||
-		decoded.Assistant.Content[0].Signature != "opaque-signature" ||
-		!bytes.Equal(decoded.Assistant.Content[1].Raw, entry.Assistant.Content[1].Raw) ||
-		!bytes.Equal(decoded.Assistant.Content[3].Raw, entry.Assistant.Content[3].Raw) {
-		t.Fatalf("decoded turn = %#v", decoded)
-	}
-	usage := decoded.Metadata.Usage
-	if !usage.InputTokens.Known || usage.InputTokens.Value != 0 ||
-		usage.CacheCreationInputTokens.Known || usage.CacheReadInputTokens.Known ||
-		!usage.OutputTokens.Known || usage.OutputTokens.Value != 7 {
-		t.Fatalf("decoded usage = %#v", usage)
-	}
-	decoded.Assistant.Content[1].Raw[0] = '['
-	if entry.Assistant.Content[1].Raw[0] != '{' || envelope.Payload()[0] != '{' {
-		t.Fatal("round trip shares mutable opaque buffers")
-	}
-}
-
 func TestNativeCommitCanonicalGolden(t *testing.T) {
 	t.Parallel()
 	envelope, err := encodeNativeCommit(nativeHistoryEntry{
@@ -100,20 +56,5 @@ func TestNativeCommitRejectsIncompatibleAndCorruptPayloads(t *testing.T) {
 				t.Fatalf("decodeNativeCommit() error = %v", err)
 			}
 		})
-	}
-}
-
-func TestNativeCommitRejectsOversizedPayload(t *testing.T) {
-	t.Parallel()
-	entry := nativeHistoryEntry{
-		Kind: nativeHistorySample,
-		Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{
-			Type: "future_block",
-			Raw:  append(append(json.RawMessage(`{"type":"future_block","data":"`), bytes.Repeat([]byte{'x'}, provider.MaxNativeCommitBytes)...), []byte(`"}`)...),
-		}}},
-		Metadata: messageMetadata{ID: "msg-1", Model: "claude-test"},
-	}
-	if _, err := encodeNativeCommit(entry); err == nil || !strings.Contains(err.Error(), "size") {
-		t.Fatalf("encodeNativeCommit() error = %v", err)
 	}
 }

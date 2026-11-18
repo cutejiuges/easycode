@@ -35,6 +35,7 @@ func projectTranscript(history []nativeHistoryEntry) (domain.TranscriptView, err
 			for index, input := range entry.UserInputs {
 				v, err := domain.NewTranscriptUser(domain.TranscriptPosition{Entry: uint64(ordinal), Item: uint64(index)}, entry.TurnID, entry.InputMetadata.InputIDs[index], input.Content[0].Text)
 				v.Skill, v.HasSkill = entry.InputMetadata.Skill(entry.InputMetadata.InputIDs[index])
+				v.Files = entry.InputMetadata.FileAttachments(entry.InputMetadata.InputIDs[index])
 				if err != nil {
 					return domain.TranscriptView{}, err
 				}

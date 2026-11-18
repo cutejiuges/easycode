@@ -148,6 +148,17 @@ func userInputEntry(a domain.InputAssociation, inputs []domain.UserInput) (nativ
 			entry.UserInputs[i].Content = append(entry.UserInputs[i].Content, ContentPart{Type: "input_text", Text: a.Content})
 			metadata.Skills = append(metadata.Skills, provider.InputSkillMetadata{InputID: input.ID(), Attachment: a})
 		}
+		files := input.FileAttachments()
+		if files.Len() > 0 {
+			metadata.Files = append(metadata.Files, provider.InputFileMetadata{InputID: input.ID(), Attachments: files})
+		}
+		for _, attachment := range files.Items() {
+			text, err := attachment.RenderedText()
+			if err != nil {
+				return nativeHistoryEntry{}, err
+			}
+			entry.UserInputs[i].Content = append(entry.UserInputs[i].Content, ContentPart{Type: "input_text", Text: text})
+		}
 	}
 	return entry, nil
 }

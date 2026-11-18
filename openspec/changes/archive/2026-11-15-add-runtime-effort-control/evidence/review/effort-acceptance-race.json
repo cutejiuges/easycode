@@ -1,7 +1,0 @@
-{
-  "command": "go test -race ./internal/app ./internal/runtime ./internal/tui ./internal/headless ./internal/provider/... ./internal/protocol ./internal/domain ./internal/context ./internal/extension/skill -run Effort|ReservedSkill -count=1 -timeout=3m",
-  "started_at": "2026-11-14T15:15:52.967759+00:00",
-  "exit_code": 0,
-  "elapsed_seconds": 31.72,
-  "log": "effort-acceptance-race.log"
-}

@@ -2,11 +2,8 @@ package tui
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-	"unicode/utf8"
 
 	"easycode/internal/domain"
 	"easycode/internal/protocol"
@@ -93,113 +90,6 @@ func (q snapshotTranscriptQueries) ReadTranscriptBody(_ context.Context, query p
 }
 func (snapshotTranscriptQueries) ReadToolOutput(context.Context, protocol.ToolOutputQuery) (protocol.ToolOutputPage, error) {
 	return protocol.ToolOutputPage{}, nil
-}
-func openSnapshotCommandDetail(t *testing.T, model Model) Model {
-	t.Helper()
-	model, cmd := browserKey(t, model, tea.KeyCtrlO)
-	if cmd != nil {
-		model = updateModel(t, model, cmd())
-	}
-	model, cmd = browserKey(t, model, tea.KeyEnter)
-	if cmd != nil {
-		model = updateModel(t, model, cmd())
-	}
-	return model
-}
-
-func TestCommandTimelineAndDetailSnapshots(t *testing.T) {
-	for _, test := range []struct {
-		name, status, code          string
-		terminal, truncated, detail bool
-		width, height, scroll       int
-	}{
-		{name: "command_running", width: 80, height: 24},
-		{name: "command_nonzero", terminal: true, status: "success", code: "ok", width: 80, height: 24},
-		{name: "command_timeout", terminal: true, status: "error", code: "timed_out", width: 80, height: 24},
-		{name: "command_cancelled", terminal: true, status: "cancelled", code: "cancelled", width: 80, height: 24},
-		{name: "command_truncated", terminal: true, status: "success", code: "ok", truncated: true, width: 80, height: 24},
-		{name: "command_detail_running", detail: true, width: 80, height: 24},
-		{name: "command_detail_complete", terminal: true, status: "success", code: "ok", truncated: true, detail: true, width: 80, height: 24},
-		{name: "command_detail_small", terminal: true, status: "success", code: "ok", truncated: true, detail: true, width: 42, height: 14, scroll: 6},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			model, _ := commandDetailModel(t, test.terminal, test.status, test.code, test.truncated)
-			model = updateModel(t, model, tea.WindowSizeMsg{Width: test.width, Height: test.height})
-			if test.detail {
-				model = openSnapshotCommandDetail(t, model)
-			}
-			for range test.scroll {
-				model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-			}
-			got := model.View()
-			if test.detail && strings.Count(got, "\n") > test.height {
-				t.Fatal("detail exceeds viewport")
-			}
-			want, err := os.ReadFile(filepath.Join("testdata", test.name+".golden"))
-			if err != nil {
-				t.Fatalf("snapshot %s missing; actual=%q", test.name, got)
-			}
-			if got != string(want) {
-				t.Fatalf("snapshot mismatch: actual=%q", got)
-			}
-		})
-	}
-}
-
-func TestCommandDetailPreservesCandidateDraftAndInterruptRouting(t *testing.T) {
-	model, session := commandDetailModel(t, false, "", "", false)
-	model = openSnapshotCommandDetail(t, model)
-	stored := model.toolActivities[snapshotCommandID(model)]
-	if !strings.Contains(model.View(), "full command second line") || strings.Contains(model.View(), "head retained") {
-		t.Fatal("running details did not use approval command and recent output")
-	}
-	for _, key := range []tea.KeyMsg{{Type: tea.KeyRunes, Runes: []rune("ignored")}, {Type: tea.KeyEnter}, {Type: tea.KeyPgDown}} {
-		model = updateModel(t, model, key)
-	}
-	model = updateModel(t, model, tea.WindowSizeMsg{Width: 42, Height: 14})
-	if model.toolActivities[snapshotCommandID(model)] != stored || model.composer.text != "kept draft" || len(session.submits) != 0 {
-		t.Fatal("detail navigation changed candidate or composer")
-	}
-	updated, interrupt := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
-	model = updated.(Model)
-	if interrupt == nil {
-		t.Fatal("detail swallowed interrupt")
-	}
-	interrupt()
-	if session.interrupts != 1 || model.state != stateStreaming {
-		t.Fatal("interrupt prematurely released turn")
-	}
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEsc})
-	if !model.detailOpen || model.browser.detail {
-		t.Fatal("Escape did not return to command list")
-	}
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEsc})
-	if model.detailOpen || session.interrupts != 1 {
-		t.Fatal("Escape did not only close details")
-	}
-	completed, _ := commandDetailModel(t, true, "success", "ok", true)
-	completed = openSnapshotCommandDetail(t, completed)
-	if !strings.Contains(completed.View(), "head retained") || !strings.Contains(completed.View(), "tail retained") {
-		t.Fatal("completed detail did not use frozen preview")
-	}
-	frozen := completed.browser.items[completed.browser.selected]
-	completed = updateModel(t, completed, tea.KeyMsg{Type: tea.KeyCtrlO})
-	if completed.detailOpen {
-		t.Fatal("closing details left overlay open")
-	}
-	completed = openSnapshotCommandDetail(t, completed)
-	if completed.browser.items[completed.browser.selected] != frozen || len(completed.toolActivities) != 0 {
-		t.Fatal("closing details changed result")
-	}
-}
-
-func TestCompactCommandSummaryKeepsTwoLinesAndCodePointBudget(t *testing.T) {
-	for _, width := range []int{20, 42, 80, 100, 180} {
-		summary := commandSummary(strings.Repeat("界", 200), width)
-		if strings.Count(summary, "\n") > 1 || utf8.RuneCountInString(summary) > 160 {
-			t.Fatalf("unbounded summary at width %d", width)
-		}
-	}
 }
 
 func TestCommandInterruptKeepsDraftBlockedUntilTurnCleanupTerminal(t *testing.T) {

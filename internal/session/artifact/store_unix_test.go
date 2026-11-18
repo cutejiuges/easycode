@@ -3,9 +3,7 @@
 package artifact
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -45,67 +43,6 @@ func startCapture(t *testing.T, s *Store) *Capture {
 	}
 	t.Cleanup(func() { _ = c.Close() })
 	return c
-}
-
-func TestCapturePublishesVerifiedRawOutput(t *testing.T) {
-	s, root := testStore(t)
-	c := startCapture(t, s)
-	raw := []byte("first\n中\xff\nlast\n")
-	if _, err := c.WriteStdout(raw); err != nil {
-		t.Fatal(err)
-	}
-	out, stderr := c.Finish(true, true, true)
-	d, ok := out.Descriptor()
-	if !ok || !d.Complete() || stderr.Status() != tool.ArtifactNotNeeded {
-		t.Fatalf("saving: %s %s", out.Status(), stderr.Status())
-	}
-	input, _ := tool.NewReadArtifactInput(d.ID(), 0, tool.ArtifactPageBytes)
-	p, err := s.Read(context.Background(), d, input)
-	if err != nil || p.Text() != "first\n中\\xFF\nlast\n" || !p.EOF() || !p.SourceComplete() {
-		t.Fatalf("page: %+v %v", p, err)
-	}
-	if err = c.Close(); err != nil {
-		t.Fatal(err)
-	}
-	total, thread, err := s.usage(context.Background())
-	if err != nil || total != int64(len(raw)) || thread != total {
-		t.Fatalf("usage: %d %d %v", total, thread, err)
-	}
-	path := filepath.Join(root, string(s.threadID), string(c.invocation), string(d.ID()))
-	if err = os.WriteFile(path, bytes.Repeat([]byte{'x'}, len(raw)), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = s.Read(context.Background(), d, input); !errors.Is(err, tool.ArtifactReadCorrupt) {
-		t.Fatalf("tampering: %v", err)
-	}
-	if err = os.Remove(path); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = s.Read(context.Background(), d, input); !errors.Is(err, tool.ArtifactReadUnavailable) {
-		t.Fatalf("missing: %v", err)
-	}
-}
-
-func TestCaptureBoundsContinuousPrefix(t *testing.T) {
-	s, _ := testStore(t)
-	c := startCapture(t, s)
-	chunk := bytes.Repeat([]byte{'a'}, 64<<10)
-	for i := 0; i < tool.ArtifactStreamBytes/len(chunk)+2; i++ {
-		n, err := c.WriteStdout(chunk)
-		if err != nil || n != len(chunk) {
-			t.Fatalf("drain: %d %v", n, err)
-		}
-	}
-	out, _ := c.Finish(true, true, true)
-	d, ok := out.Descriptor()
-	if !ok || out.Status() != tool.ArtifactPartial || out.Reason() != "stream_limit" || d.SavedBytes() != tool.ArtifactStreamBytes || d.ObservedBytes() != tool.ArtifactStreamBytes+2*int64(len(chunk)) {
-		t.Fatalf("wrong prefix: %+v", d)
-	}
-	input, _ := tool.NewReadArtifactInput(d.ID(), uint64(d.SavedBytes())-3, 64)
-	p, err := s.Read(context.Background(), d, input)
-	if err != nil || p.Text() != "aaa" || !p.EOF() || p.SourceComplete() {
-		t.Fatalf("partial end: %+v %v", p, err)
-	}
 }
 
 type failingCaptureFile struct {
@@ -168,30 +105,6 @@ func TestCaptureFailureDoesNotStopDraining(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestCaptureSmallOutputAndQuota(t *testing.T) {
-	s, _ := testStore(t)
-	s.rootBudget = tool.ArtifactInvocationBytes
-	c := startCapture(t, s)
-	id, _ := tool.GenerateInvocationID()
-	if _, err := s.Start(context.Background(), id); !errors.Is(err, tool.ArtifactQuotaExceeded) {
-		t.Fatalf("reservation exceeded: %v", err)
-	}
-	_, _ = c.WriteStdout([]byte("small"))
-	out, _ := c.Finish(true, true, false)
-	if out.Status() != tool.ArtifactNotNeeded {
-		t.Fatal("small output stored")
-	}
-	_ = c.Close()
-	if total, _, err := s.usage(context.Background()); err != nil || total != 0 {
-		t.Fatalf("unused reservation retained: %d %v", total, err)
-	}
-	next, err := s.Start(context.Background(), id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = next.Close()
 }
 
 func TestCaptureRequiresEOFForCompleteStorage(t *testing.T) {

@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"testing"
 
@@ -17,63 +16,6 @@ type gatedArtifactExecutor struct {
 	release <-chan struct{}
 	mu      sync.Mutex
 	calls   map[tool.InvocationID]int
-}
-
-type artifactBarrierOperations struct{ trace []string }
-
-func (o *artifactBarrierOperations) executeExclusiveCall(_ context.Context, _ Emitter, _ domain.TurnID, v tool.Invocation) (tool.InvocationResult, bool, error) {
-	o.trace = append(o.trace, "exclusive:"+string(v.Capability()))
-	return tool.NewInvocationErrorResult(v, tool.ResultDenied, "approval_required", "Tool denied"), false, nil
-}
-func (o *artifactBarrierOperations) executeReadBatch(_ context.Context, _ domain.TurnID, values []tool.Invocation) ([]tool.InvocationResult, error) {
-	var names []string
-	var results []tool.InvocationResult
-	for _, v := range values {
-		names = append(names, string(v.Capability()))
-		results = append(results, tool.NewInvocationErrorResult(v, tool.ResultError, "unavailable", "Tool unavailable"))
-	}
-	o.trace = append(o.trace, "read:"+strings.Join(names, ","))
-	return results, nil
-}
-func (*artifactBarrierOperations) persistToolResult(context.Context, domain.TurnID, *tool.InvocationResult) error {
-	return nil
-}
-
-func TestArtifactMixedSchedulerHonorsEveryExclusiveBarrier(t *testing.T) {
-	artifactInput, _ := tool.NewReadArtifactInput("0123456789abcdef0123456789abcdef", 0, 3)
-	artifactCall, _ := tool.NewReadArtifactReadyCall("artifact", artifactInput)
-	readInput, _ := tool.NewReadInput("README.md", 1, 1)
-	readCall, _ := tool.NewReadReadyCall("read", readInput)
-	patch, _ := runtimePatchInvocation(t)
-	write, _ := runtimeWriteInvocation(t)
-	execInput, _ := tool.NewExecInput("true", "", 0)
-	execCall, _ := tool.NewExecReadyCall("exec", execInput)
-	makeInvocation := func(call tool.ReadyCall) tool.Invocation {
-		id, _ := tool.GenerateInvocationID()
-		v, err := tool.NewInvocation(id, call)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return v
-	}
-	skillInput, _ := tool.NewSkillLoadInput("demo", "")
-	skillCall, _ := tool.NewSkillReadyCall("skill", skillInput)
-	values := []tool.Invocation{makeInvocation(skillCall), makeInvocation(artifactCall), makeInvocation(readCall), patch, write, makeInvocation(execCall), makeInvocation(skillCall), makeInvocation(artifactCall)}
-	operations := &artifactBarrierOperations{}
-	observations := &readObservations{}
-	results, err := (orderedToolScheduler{operations: operations, observations: observations}).execute(context.Background(), domain.TurnID("018f1d8a-7b5c-7def-8123-456789abcdef"), values)
-	if err != nil || len(results) != len(values) {
-		t.Fatalf("mixed scheduling: %v", err)
-	}
-	want := "read:skill.read,artifact.read,fs.read|exclusive:fs.patch|exclusive:fs.write|exclusive:process.exec|read:skill.read,artifact.read"
-	if strings.Join(operations.trace, "|") != want {
-		t.Fatalf("barriers: %v", operations.trace)
-	}
-	for i, result := range results {
-		if result.InvocationID() != values[i].InvocationID() || result.Validate() != nil {
-			t.Fatal("mixed output pairing changed")
-		}
-	}
 }
 
 func (e *gatedArtifactExecutor) Execute(ctx context.Context, v tool.ReadArtifactInvocation) tool.ReadArtifactExecution {

@@ -13,7 +13,7 @@
 7. `UnmarshalRecord` 先 `ValidateJSON`，再经过 `UnmarshalStrict` 的重复校验与非 required 形状检查，然后再次 required 形状检查。形状遍历中的 `ObjectMembers` 又验证和物化字段。大文本被反复扫描/复制，是当前可直接优化的共享调用路径。
 8. app 有 237 个测试函数声明、20 处 `t.Parallel`、30 处 `t.Setenv`，没有 `time.Sleep` 调用。完整计时中的慢测试大多是有限矩阵累计，不是无限等待；本轮抽样的 mutex 累计仅 17.43 ms，block 主要是测试父子等待，尚无死锁证据。
 
-已有完整套件 profile 和断言解释保留在 `../archive/2026-11-15-add-runtime-effort-control/regression-2026-11-15.md` 与 `../archive/2026-11-15-add-pre-tool-use-input-rewrite/regression-2026-11-15.md`。本轮紧凑证据见 [diagnosis.json](diagnosis.json)，原始临时输出路径也记在其中；不把大型二进制/profile 加入仓库。
+已有完整套件 profile 和断言解释保留在 `../archive/2026-11-15-add-runtime-effort-control/regression-2026-11-15.md` 与 `../archive/2026-11-15-add-pre-tool-use-input-rewrite/regression-2026-11-15.md`。本轮紧凑证据见 diagnosis.json，原始临时输出路径也记在其中；不把大型二进制/profile 加入仓库。
 
 2026-11-18 用户明确接受当前耗时压缩结果，并要求本轮收尾后将总时限由 300 秒调整为 360 秒。随后用户明确批准保留全量普通测试、按并发风险精简 race，并移除默认总耗时硬限制。以下目标以最新批准范围为准；历史诊断报告保持原始预算与失败状态，不把旧超时记录改写为通过。
 

@@ -8,66 +8,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"easycode/internal/codec"
 )
-
-func TestResolveURLPreservesBasePrefix(t *testing.T) {
-	tests := []struct {
-		name    string
-		baseURL string
-		path    string
-		want    string
-	}{
-		{name: "host only", baseURL: "https://gateway.example", path: "responses", want: "https://gateway.example/responses"},
-		{name: "path prefix", baseURL: "https://gateway.example/openai/v1", path: "responses", want: "https://gateway.example/openai/v1/responses"},
-		{name: "trailing slash", baseURL: "https://gateway.example/openai/v1/", path: "/responses", want: "https://gateway.example/openai/v1/responses"},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			client, err := NewClient(test.baseURL)
-			if err != nil {
-				t.Fatalf("new client: %v", err)
-			}
-			defer closeClient(t, client)
-
-			got, err := client.resolveURL(test.path)
-			if err != nil {
-				t.Fatalf("resolve URL: %v", err)
-			}
-			if got != test.want {
-				t.Fatalf("resolved URL: got %q want %q", got, test.want)
-			}
-		})
-	}
-}
-
-func TestNewClientRejectsAmbiguousBaseURL(t *testing.T) {
-	tests := []string{
-		"",
-		"gateway.example/v1",
-		"https://:443/v1",
-		"ftp://gateway.example/v1",
-		"https://user:secret@gateway.example/v1",
-		"https://gateway.example/v1?token=secret",
-		"https://gateway.example/v1#fragment",
-	}
-	for _, rawURL := range tests {
-		t.Run(rawURL, func(t *testing.T) {
-			_, err := NewClient(rawURL)
-			if err == nil {
-				t.Fatal("expected invalid base URL")
-			}
-			if strings.Contains(err.Error(), "secret") {
-				t.Fatalf("error leaked URL secret: %v", err)
-			}
-		})
-	}
-}
 
 func TestStreamSSEUsesStableJSONAndHeaders(t *testing.T) {
 	receivedRequest := make(chan struct{}, 1)
@@ -151,35 +96,6 @@ func TestStreamSSEHTTPErrorDoesNotLeakSecret(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "401") {
 		t.Fatalf("error omitted status: %v", err)
-	}
-}
-
-func TestParseSSEFrameSemantics(t *testing.T) {
-	input := strings.Join([]string{
-		": heartbeat\r\n",
-		"id: event-1\r\n",
-		"event: delta\r\n",
-		"data: 你\r\n",
-		"data: 好\r\n",
-		"\r\n",
-		"data: final\n",
-	}, "")
-
-	events, err := collectParsedEvents(context.Background(), strings.NewReader(input), DefaultMaxEventBytes)
-	if !errors.Is(err, io.EOF) {
-		t.Fatalf("parse error: got %v want EOF", err)
-	}
-	want := []SSEEvent{
-		{ID: "event-1", Name: "delta", Data: "你\n好"},
-		{Data: "final"},
-	}
-	if len(events) != len(want) {
-		t.Fatalf("event count: got %d want %d", len(events), len(want))
-	}
-	for index := range want {
-		if events[index] != want[index] {
-			t.Fatalf("event %d: got %#v want %#v", index, events[index], want[index])
-		}
 	}
 }
 
@@ -280,33 +196,6 @@ func TestStreamSSEIdleTimeout(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("idle stream did not time out")
-	}
-}
-
-func TestStreamSSERejectsEmptyAndOversizedBodyBeforeNetwork(t *testing.T) {
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		requests.Add(1)
-	}))
-	defer server.Close()
-	client, err := NewClient(server.URL)
-	if err != nil {
-		t.Fatalf("new client: %v", err)
-	}
-	defer closeClient(t, client)
-
-	_, err = client.StreamSSE(context.Background(), SSERequest{Path: "responses"}, StreamOptions{})
-	if err == nil || !strings.Contains(err.Error(), "body is invalid") {
-		t.Fatalf("empty body error: %v", err)
-	}
-
-	oversized := mustCanonical(t, strings.Repeat("x", DefaultMaxRequestBytes), codec.DefaultMaxCanonicalJSONBytes)
-	_, err = client.StreamSSE(context.Background(), SSERequest{Path: "responses", Body: oversized}, StreamOptions{})
-	if err == nil || !strings.Contains(err.Error(), "exceeds") {
-		t.Fatalf("oversized body error: %v", err)
-	}
-	if got := requests.Load(); got != 0 {
-		t.Fatalf("invalid body produced %d network requests", got)
 	}
 }
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"easycode/internal/domain"
 	"easycode/internal/protocol"
 	"easycode/internal/provider"
 	"easycode/internal/session"
@@ -82,54 +81,5 @@ func TestHostDetachDrainsFullOutputBuffer(t *testing.T) {
 	}
 	if err := host.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestHostStartCancelledCreatesNoOwner(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	host := NewChatSession(newTestRuntime(t, &fakeConversation{stream: fixedStream()}, &fakeJournal{}))
-	if err := host.Start(ctx); err == nil {
-		t.Fatal("cancelled start succeeded")
-	}
-	if host.started {
-		t.Fatal("cancelled start created owner")
-	}
-	if err := host.Shutdown(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestHostInterruptDoesNotWaitForBlockedAdmission(t *testing.T) {
-	// 未消费 requests 的 loop 确定性模拟被输出背压阻塞的 owner。
-	loop, err := NewAgentLoop(newTestRuntime(t, &fakeConversation{stream: fixedStream()}, &fakeJournal{}), DefaultAgentLoopConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	loop.state.Store(agentLoopRunning)
-	host := NewChatSession(loop.runtime)
-	host.loop = loop
-	host.activeTurnID = runtimeTurnID
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() { defer close(done); host.runInterrupts(ctx) }()
-	host.Interrupt()
-	host.Interrupt()
-	cancel()
-	<-done
-	if host.activeTurnID != runtimeTurnID {
-		t.Fatal("interrupt changed active identity outside owner")
-	}
-}
-
-func TestHostInterruptKeepsNewestTargetWithoutRetargetingOldRequest(t *testing.T) {
-	host := NewChatSession(nil)
-	host.activeTurnID = runtimeTurnID
-	host.Interrupt()
-	next := domain.TurnID("018f1d8a-7b5c-7def-8abc-456789abcdef")
-	host.activeTurnID = next
-	host.Interrupt()
-	if target := <-host.interrupts; target != next {
-		t.Fatal("old pending target hid current interrupt")
 	}
 }

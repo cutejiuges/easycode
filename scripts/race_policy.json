@@ -1,350 +1,412 @@
 [
   {
-    "package": "easycode/internal/domain",
-    "source": "internal/domain",
-    "reason": "封闭值对象的串行校验、枚举、大小及拷贝断言；普通全量保留。Hook 编码变更对照继续参加 race，共享 codec 由集中并发回归覆盖。",
+    "package": "easycode/internal/app",
     "tests": [
-      "TestActiveContextDoesNotForgeMessageIdentity",
-      "TestAggregateSampleUsageRejectsEmptyAndOverflow",
-      "TestAggregateSampleUsageStateAlgebra",
-      "TestAggregateSampleUsageUnknownDominatesOverflowRegardlessOfOrder",
-      "TestAlternateBranchNoticeSlotsAreNeverAddedTogether",
-      "TestCachePolicyValidationAndIdentity",
-      "TestCompactionIdentityAndSummary",
-      "TestCompactionScopeValidation",
-      "TestEffortChoicesPreserveNativeSettings",
-      "TestEffortRejectsInvalidAndConflictingChoices",
-      "TestEmptyProjectInstructionsSnapshotIsExplicitAndSilent",
-      "TestFailureHookInputStrictProjection",
-      "TestFeedbackCandidateAuthorization",
-      "TestHookEventsIsolatePlansRunsAndTrust",
-      "TestHookExecutionStatisticsRejectContradictoryFlags",
-      "TestHookExitTwoValidationDependsOnEvent",
-      "TestHookInputBranchesAndMatchLimit",
-      "TestHookInputDoesNotEvaluateOrTruncateArguments",
-      "TestHookInputEffectsVerifyChainAndOwnTheirInput",
-      "TestHookInputUsesNativeAbsoluteWorkspacePath",
-      "TestHookReplacementCanonicalExpansionAndExactBoundary",
-      "TestHookReplacementRequiresCompleteCurrentShape",
-      "TestHookResponseStrictProjection",
-      "TestHookRewriteGettersAndDigestDoNotAlias",
-      "TestHookTargetsAndScopesAreClosedAndStrict",
-      "TestHookValuesAreBoundedImmutableAndStrict",
-      "TestInferenceClosedBranchesAndIsolation",
-      "TestInferenceEffortEnumsAndDefaultIdentity",
-      "TestInputAssociationIsOrderedIndependentAndClosed",
-      "TestNativeHistoryFootprintValidatesAndReturnsValues",
-      "TestPluginListValuesAndClones",
-      "TestPostBranchesSingleOwnershipAndStrictIdentity",
-      "TestPostCurrentCodecsRejectIncompleteAndAmbiguousObjects",
-      "TestPostHookInputExactMetadataOnlyBranches",
-      "TestPostHookRoutesAndFailureDisclosure",
-      "TestPostResponseRequiresActualSuccessfulMetadata",
-      "TestPreFinishedRequiresEffectAndRejectsEffectsOnOtherEvents",
-      "TestProjectInstructionsSnapshotAppliesVisibleByteBudgetAtUTF8Boundary",
-      "TestProjectInstructionsSnapshotIsDeterministicAndImmutable",
-      "TestProjectInstructionsSnapshotRejectsInvalidByteLimits",
-      "TestProjectInstructionsSnapshotValidatesSourcesAndOrder",
-      "TestReasoningBodyPreservesPartsAndReadsVirtualRanges",
-      "TestReasoningCurrentEncodingAndUnavailable",
-      "TestReasoningLimitsBeforeCopyAndSmallPageAllocation",
-      "TestRequestReceiptRejectsInvalidCombinations",
-      "TestReservedSkillSlashNames",
-      "TestSampleUsageRejectsInvalidMetric",
-      "TestSemanticHistoryViewRepresentsEmptyHistoryWithNonNilTurns",
-      "TestSemanticHistoryViewStableJSONShape",
-      "TestSkillReferenceBoundariesAndSourceAssociation",
-      "TestSkillValuesBoundsAndCopies",
-      "TestStopContinuationCandidatesKeepRealInputIdentity",
-      "TestStopDecisionBudgetsAndActualPrefix",
-      "TestStopExecutionDoesNotRelaxOtherEvents",
-      "TestStopInputPreservesExactSampleAndEncodingLimits",
-      "TestStopPlanAndDecisionBindActualBlockingDeclaration",
-      "TestTokenEstimatePreservesEstimatedAndUnknownStates",
-      "TestTokenEstimateRejectsInvalidMethodAndState",
-      "TestTranscriptClosedKindsAndCopy",
-      "TestTranscriptReasoningIsStrictAndIndependent",
-      "TestUUIDv7RejectsAbnormalGenerationInputs",
-      "TestUUIDv7RejectsInvalidCanonicalForms",
-      "TestUUIDv7RoundTripAcrossDates",
-      "TestUnselectedTerminalCannotInventFeedbackBudgetOrDigest",
-      "TestUsageMetricStatesPreserveKnownZero",
-      "TestUserInputPreservesTextAndValidatesIdentity"
+      "TestChatResourcesShutdownTimeoutEscalatesAndClosesDependencies"
     ],
-    "retained_race": [
-      {
-        "package": "easycode/internal/domain",
-        "test": "TestHookEncodingMatchesNestedSonic"
-      },
-      {
-        "package": "easycode/internal/domain",
-        "test": "TestHookDigestPreservesInputAndReplacementLimits"
-      },
-      {
-        "package": "easycode/internal/domain",
-        "test": "TestHookFinishedEncodingPreservesEveryFieldAndInvalidIdentity"
-      },
-      {
-        "package": "easycode/internal/domain",
-        "test": "FuzzHookEncodingMatchesNestedSonic"
-      },
-      {
-        "package": "easycode/internal/codec",
-        "test": "TestConcurrentCodecCallsOwnTheirResults"
-      }
+    "reason": "关闭超时后升级清理，仍持有依赖所有权"
+  },
+  {
+    "package": "easycode/internal/app",
+    "tests": [
+      "TestStreamEscalationClosesProviderBeforeLoopAndJournal"
+    ],
+    "reason": "阻塞 stream 的取消和依赖关闭顺序"
+  },
+  {
+    "package": "easycode/internal/app",
+    "tests": [
+      "TestHostShutdownRetainsRealLeaseUntilTerminalCleanup"
+    ],
+    "reason": "最终提交前保留真实跨进程 lease"
+  },
+  {
+    "package": "easycode/internal/app",
+    "tests": [
+      "TestArtifactShutdownRetainsRealLeaseWhileDiskBlocked"
+    ],
+    "reason": "磁盘屏障期间不可释放资源及真实 lease（Darwin）",
+    "platforms": [
+      "darwin"
     ]
   },
   {
-    "package": "easycode/internal/protocol",
-    "source": "internal/protocol",
-    "reason": "命令和事件值的串行构造、严格解码及 golden；无后台 owner 或并发执行。普通保留全部断言，实际消息交付由 Runtime/app race 覆盖。",
+    "package": "easycode/internal/app",
     "tests": [
-      "TestApprovalEventAndCommandStrictIdentity",
-      "TestAssistantTextDeltaPayloadRoundTrip",
-      "TestAssistantTextDeltaRejectsMissingText",
-      "TestCacheModelIdentityRedactsPathsAndBoundsLabels",
-      "TestCacheProtocolStrictCurrentContract",
-      "TestCommandActivityRejectsInvalidBounds",
-      "TestCommandActivityRoundTripAndIdentity",
-      "TestCommandConstructors",
-      "TestCommandResultPreviewExistsOnlyAtTerminal",
-      "TestCommandResultsAndControlItemsAreClosedAndSafe",
-      "TestCommitOriginsAndFailuresUseOneStrictContract",
-      "TestCompactionEventScopesAndStrictDecoders",
-      "TestContextCommandsRemainSeparateFromTurnInput",
-      "TestContextInternalShapeRequiresEffortAndExternalMetricsRemainSeparate",
-      "TestEffortCommandClosedPayloadAndResults",
-      "TestEffortRevisionAndSelectionStayConsistent",
-      "TestEffortSnapshotsGoldenAndStrictUnion",
-      "TestEffortStartingCannotClaimCompactionActivity",
-      "TestEventValidateDispatchesKnownKinds",
-      "TestEventValidateRejectsInvalidEnvelopeAndPayload",
-      "TestHookTrustContractsAreStrictAndIdentityBound",
-      "TestHookTrustRequestPreservesMaximumRawCommandAfterJSONEscaping",
-      "TestInputStatusClosedCombinations",
-      "TestPayloadDecodersRejectUnknownFields",
-      "TestPayloadlessTurnStartedIsTypedAndStrict",
-      "TestPostHookCommitScopeAndStrictPayload",
-      "TestPreInputActivityStrictBranchesAndEncodedBounds",
-      "TestPreInputCannotHideInOtherEventsOrNullTranscriptMembers",
-      "TestQuestionAnswerAssociationAndBounds",
-      "TestQuestionControlIsStrictAndSeparateFromApproval",
-      "TestQuestionInputBounds",
-      "TestQuestionInputStrictAndImmutable",
-      "TestReasoningAndPostSummaryKeepSeparateTranscriptKinds",
-      "TestReasoningEventsStrictLifecycle",
-      "TestReasoningFailedOffsetsDoNotMutateState",
-      "TestReasoningFailureClosesOpenBlocksAndCommitChecksMapping",
-      "TestReasoningFailurePayloadPreflightsEscaping",
-      "TestReasoningRangesAndClosedStageFields",
-      "TestSevenToolActivityVariantsAndTranscriptMetadata",
-      "TestStopActivityDoesNotPretendToBeATool",
-      "TestStopTrustUsesActualSampleAndPlan",
-      "TestSubmitInputValidationBoundaries",
-      "TestTerminalSavedReferenceStrictIdentityAndIsolation",
-      "TestToolTerminalStateConsistency",
-      "TestTranscriptCommitRequiresStrictSequenceAndIdentity",
-      "TestTranscriptPostSummaryRejectsCrossCallAndRawStatistics",
-      "TestTranscriptQueriesStrictCurrentShapes",
-      "TestTurnCompletedRejectsMissingInvalidAndUnknownUsage",
-      "TestTurnCompletedUsageRoundTripPreservesMetricStates",
-      "TestTurnFailedPayloadRoundTrip",
-      "TestTurnFailedRejectsWhitespaceSummary",
-      "TestUserInputCommittedStrictDecoder",
-      "TestWriteApprovalRequiresMatchingCapabilityAndDecisions",
-      "TestWritePresentationStrictUnionAndFrozenDirectoryPlan"
+      "TestFilePreparationShutdownKeepsWorkspaceWriterAndRealLeaseUntilDone"
     ],
-    "retained_race": [
-      {
-        "package": "easycode/internal/codec",
-        "test": "TestConcurrentCodecCallsOwnTheirResults"
-      },
-      {
-        "package": "easycode/internal/app",
-        "test": "TestCompletionAndPluginBrowserConcurrentLifecycle"
-      }
-    ]
+    "reason": "文件预处理与关闭交错，writer/workspace/lease 生命周期"
   },
   {
-    "package": "easycode/internal/architecture",
-    "source": "internal/architecture",
-    "reason": "仅解析源码 AST/import graph 并检查架构规则，不执行待检业务；普通阶段始终全量执行，不需要再次做竞态检测。",
+    "package": "easycode/internal/app",
     "tests": [
-      "TestAllConstructorsHaveExplicitLifecycle",
-      "TestArchitectureGuardRejectsViolationFixtures",
-      "TestCoreExportedAPIsRejectDynamicTypes",
-      "TestCurrentCodecBoundaries",
-      "TestCurrentContractGuardNegativeAndPositiveCases",
-      "TestDependencyDirections",
-      "TestHookSharedBoundariesRejectBusinessDependencies",
-      "TestHookSharedConstructorsRejectHiddenLifecycle",
-      "TestJSONCodecOwnership",
-      "TestMarkdownScannerHasNoExternalLifecycle",
-      "TestNativeAndCatalogVersionMarkersAreForbidden",
-      "TestPlaceholderAllowlist",
-      "TestPluginContributionAndLifecycleBoundaries",
-      "TestProductionPackageVariables",
-      "TestProductionReachability",
-      "TestProtocolConstructorsDoNotStartGoroutinesOrAccessIO",
-      "TestRuntimeAndAppDoNotImportPlaceholderCapabilities",
-      "TestSessionEnvelopeVersionMarkersAreForbidden",
-      "TestSingleCurrentContract",
-      "TestWebSocketLibraryOwnedByTransport"
+      "TestFileSourceLifecycleBusyCancellationAndFinalOwnership"
     ],
-    "retained_race": []
+    "reason": "异步文件索引和准备 owner 的取消与最终退出"
   },
   {
-    "package": "easycode/internal/codec",
-    "source": "internal/codec",
-    "reason": "串行语法、字段、canonical bytes、分配边界和 fuzz seed；普通完整保留，集中并发回归验证共享输入与返回副本，第三方全局隔离子进程仍参加 race。",
+    "package": "easycode/internal/app",
     "tests": [
-      "FuzzStrictJSONScanner",
-      "TestCanonicalJSONIsStableAndImmutable",
-      "TestCanonicalJSONRejectsInvalidNonCanonicalAndOversizedBytes",
-      "TestCountArrayElementsBeforeTypedAllocation",
-      "TestMarshalStableSortsMapKeys",
-      "TestRecordKeepsUnknownFieldPrecedenceOverMissingFields",
-      "TestRecordNestedPresenceAndNull",
-      "TestRequiredObjectFieldsRejectLossyShapes",
-      "TestScannedDepthNullAndNumberBoundaries",
-      "TestScannedObjectRangesAndOwnership",
-      "TestStrictObjectContract",
-      "TestUnmarshalStrictRejectsUnknownFields",
-      "TestValidationDoesNotMaterializeArrayValues"
+      "TestCompletionAndPluginBrowserConcurrentLifecycle"
     ],
-    "retained_race": [
-      {
-        "package": "easycode/internal/codec",
-        "test": "TestConcurrentCodecCallsOwnTheirResults"
-      },
-      {
-        "package": "easycode/internal/codec",
-        "test": "TestCodecIndependentOfThirdPartyGlobals"
-      }
-    ]
+    "reason": "completion 与 plugin 浏览异步任务关闭和迟到结果"
+  },
+  {
+    "package": "easycode/internal/app",
+    "tests": [
+      "TestSourceCloseWaitsForPreadmissionPluginPreparation"
+    ],
+    "reason": "预接收 plugin 读取退出前禁止关闭来源"
+  },
+  {
+    "package": "easycode/internal/app",
+    "tests": [
+      "TestPickerOwnerResourceHandoffAndLateSuccess"
+    ],
+    "reason": "异步恢复资源交接与迟到成功清理"
+  },
+  {
+    "package": "easycode/internal/app",
+    "tests": [
+      "TestPickerOwnerParentCancellationWaitsForWorker"
+    ],
+    "reason": "上层取消必须等异步恢复 worker 完成"
+  },
+  {
+    "package": "easycode/internal/app",
+    "tests": [
+      "TestRuntimeEffortDisconnectAndCancelKeepFutureSelection"
+    ],
+    "reason": "断流和取消交错时 strict-next effort 仍独立"
+  },
+  {
+    "package": "easycode/internal/tui",
+    "tests": [
+      "TestComposerCancellationDuringAdmissionBarrier"
+    ],
+    "reason": "真实 goroutine 屏障覆盖提交接收与取消交错"
+  },
+  {
+    "package": "easycode/internal/headless",
+    "tests": [
+      "TestRunCompletionWinsCancellationRace"
+    ],
+    "reason": "完成与取消的确定提交顺序"
+  },
+  {
+    "package": "easycode/internal/headless",
+    "tests": [
+      "TestRunWriterFailureInterruptsAndDrainsActiveTurn"
+    ],
+    "reason": "输出失败取消并排空活动轮次"
+  },
+  {
+    "package": "easycode/internal/headless",
+    "tests": [
+      "TestStreamRunnerCancellationUnblocksInitialOutputAndStdin"
+    ],
+    "reason": "取消打断阻塞输出和输入的双向 owner"
+  },
+  {
+    "package": "easycode/internal/runtime",
+    "tests": [
+      "TestParallelToolSchedulerBoundsConcurrency"
+    ],
+    "reason": "关键并发、提交取消与资源所有权"
+  },
+  {
+    "package": "easycode/internal/runtime",
+    "tests": [
+      "TestParallelToolSchedulerPersistsCallOrderAfterOutOfOrderCompletion"
+    ],
+    "reason": "关键并发、提交取消与资源所有权"
+  },
+  {
+    "package": "easycode/internal/runtime",
+    "tests": [
+      "TestStartedAppendFailureWaitsAcceptedCallsAndStopsLaterCalls"
+    ],
+    "reason": "关键并发、提交取消与资源所有权"
+  },
+  {
+    "package": "easycode/internal/runtime",
+    "tests": [
+      "TestRunTurnCancelCompletionRacePublishesOneTerminal"
+    ],
+    "reason": "关键并发、提交取消与资源所有权"
+  },
+  {
+    "package": "easycode/internal/runtime",
+    "tests": [
+      "TestAgentLoopTargetedInterruptIsRaceSafe"
+    ],
+    "reason": "关键并发、提交取消与资源所有权"
+  },
+  {
+    "package": "easycode/internal/runtime",
+    "tests": [
+      "TestAgentLoopShutdownDiscardsQueueAndRetainsCleanupOwner"
+    ],
+    "reason": "关键并发、提交取消与资源所有权"
+  },
+  {
+    "package": "easycode/internal/runtime",
+    "tests": [
+      "TestCompactionShutdownRetainsCleanupOwner"
+    ],
+    "reason": "关键并发、提交取消与资源所有权"
+  },
+  {
+    "package": "easycode/internal/runtime",
+    "tests": [
+      "TestHookShutdownRetainsTurnUntilRunnerCleanup"
+    ],
+    "reason": "关键并发、提交取消与资源所有权"
+  },
+  {
+    "package": "easycode/internal/runtime",
+    "tests": [
+      "TestExecShutdownTimeoutRetainsTurnUntilExecutorCleanup"
+    ],
+    "reason": "关键并发、提交取消与资源所有权"
+  },
+  {
+    "package": "easycode/internal/runtime",
+    "tests": [
+      "TestReasoningCancellationDuringAcceptedCommitWaitsForRealResult"
+    ],
+    "reason": "关键并发、提交取消与资源所有权"
   },
   {
     "package": "easycode/internal/session",
-    "source": "internal/session/input_commit_test.go",
-    "reason": "串行构造并编码 16/64 MiB record/batch，验证 envelope 和换行预算；无 writer、磁盘提交或并发。普通保留原阈值和全部断言。",
     "tests": [
-      "TestInputDraftBudgetIncludesCanonicalEnvelopeAndNewlines"
+      "TestJournalWriterSerializesConcurrentAppends"
     ],
-    "retained_race": [
-      {
-        "package": "easycode/internal/session",
-        "test": "TestJournalWriterSerializesConcurrentAppends"
-      }
+    "reason": "关键并发、提交取消与资源所有权"
+  },
+  {
+    "package": "easycode/internal/session",
+    "tests": [
+      "TestJournalWriterCancellationLinearizesAtAdmission"
+    ],
+    "reason": "关键并发、提交取消与资源所有权"
+  },
+  {
+    "package": "easycode/internal/session",
+    "tests": [
+      "TestJournalWriterCancelledCloseStillDrainsAndCloses"
+    ],
+    "reason": "关键并发、提交取消与资源所有权"
+  },
+  {
+    "package": "easycode/internal/session",
+    "tests": [
+      "TestJournalLeaseProcessOwnershipAndCrashRelease"
+    ],
+    "reason": "关键并发、提交取消与资源所有权"
+  },
+  {
+    "package": "easycode/internal/session",
+    "tests": [
+      "TestLoaderDoesNotRepairWhileHelperOwnsLease"
+    ],
+    "reason": "关键并发、提交取消与资源所有权"
+  },
+  {
+    "package": "easycode/internal/session/artifact",
+    "tests": [
+      "TestQuotaCoordinatesRealProcessAndCrash"
+    ],
+    "reason": "关键并发、提交取消与资源所有权",
+    "platforms": [
+      "darwin",
+      "linux"
     ]
   },
   {
-    "package": "easycode/internal/provider/openai",
-    "source": "internal/provider/openai/write_test.go",
-    "reason": "串行构造 17 个约 1 MiB 原生 Write 项并校验编码/请求大小，无 transport 或工具执行；普通保留完整边界。",
+    "package": "easycode/internal/session/artifact",
     "tests": [
-      "TestWriteAggregateNativeAndRequestBudgetsRemainSixteenMiB"
+      "TestCaptureFailureDoesNotStopDraining"
     ],
-    "retained_race": [
-      {
-        "package": "easycode/internal/app",
-        "test": "TestWriteSSEChunksCancellationEOFAndLimitsPrecedeSideEffects"
-      }
+    "reason": "关键并发、提交取消与资源所有权",
+    "platforms": [
+      "darwin",
+      "linux"
     ]
   },
   {
-    "package": "easycode/internal/provider/openai",
-    "source": "internal/provider/openai/hook_input_rewrite_test.go",
-    "reason": "离线依次提交、恢复、编译和对照的输入重写 golden/cache 数据组合；没有并发提交或网络。普通保留全矩阵，race 保留跨平台改写恢复矩阵与共享历史交错；Darwin 另保留真实 sandbox 场景。",
+    "package": "easycode/internal/session/catalog",
     "tests": [
-      "TestPreInputRewriteNativeGoldenRestoreAndCache"
+      "TestCatalogLockAcrossProcessesAndCrashRelease"
     ],
-    "retained_race": [
-      {
-        "package": "easycode/internal/provider/openai",
-        "test": "TestProjectHistoryConcurrentCommitReturnsCompleteSnapshots"
-      },
-      {
-        "package": "easycode/internal/provider/openai",
-        "test": "TestConversationCancelCompletedRaceHasOneTerminal"
-      },
-      {
-        "package": "easycode/internal/app",
-        "test": "TestPreInputRewriteResumeReconcilesEveryBatchBeforeLoadingNewSnapshot"
-      }
+    "reason": "关键并发、提交取消与资源所有权",
+    "platforms": [
+      "darwin",
+      "linux"
     ]
+  },
+  {
+    "package": "easycode/internal/session/catalog",
+    "tests": [
+      "TestReconcilePreservesBusyRowsAndRejectsBusyUnindexed"
+    ],
+    "reason": "关键并发、提交取消与资源所有权",
+    "platforms": [
+      "darwin",
+      "linux"
+    ]
+  },
+  {
+    "package": "easycode/internal/tool/builtin",
+    "tests": [
+      "TestProcessExecutionKeepsUniqueReaperUntilFinalWaitCompletes"
+    ],
+    "reason": "关键并发、提交取消与资源所有权"
+  },
+  {
+    "package": "easycode/internal/tool/builtin",
+    "tests": [
+      "TestArtifactBlockingIOPreservesProcessCleanupOwner"
+    ],
+    "reason": "关键并发、提交取消与资源所有权"
+  },
+  {
+    "package": "easycode/internal/tool/builtin",
+    "tests": [
+      "TestProcessExecutionCancellationAndTimeout"
+    ],
+    "reason": "关键并发、提交取消与资源所有权"
+  },
+  {
+    "package": "easycode/internal/tool/builtin",
+    "tests": [
+      "TestProcessExecutionDrainsBothStreamsBeforeWait"
+    ],
+    "reason": "关键并发、提交取消与资源所有权"
+  },
+  {
+    "package": "easycode/internal/extension/plugin",
+    "tests": [
+      "TestCloseTimeoutKeepsReadStackAndBlockedFileCloseOwned"
+    ],
+    "reason": "关键并发、提交取消与资源所有权",
+    "platforms": [
+      "darwin",
+      "linux"
+    ]
+  },
+  {
+    "package": "easycode/internal/extension/skill",
+    "tests": [
+      "TestPluginPerSourceRawBudgetAndCancelledPublication"
+    ],
+    "reason": "关键并发、提交取消与资源所有权",
+    "platforms": [
+      "darwin",
+      "linux"
+    ]
+  },
+  {
+    "package": "easycode/internal/provider",
+    "tests": [
+      "TestPreparedSampleFinalizesExactlyOnceConcurrently"
+    ],
+    "reason": "并发 finalize 只提交一次"
+  },
+  {
+    "package": "easycode/internal/provider",
+    "tests": [
+      "TestPreparedResolutionCompletesCallbackBeforeFinalized"
+    ],
+    "reason": "阻塞 callback 未完成时不得发布 finalized；竞争 discard 等待 owner"
+  },
+  {
+    "package": "easycode/internal/provider",
+    "tests": [
+      "TestPreparedFinalizeDiscardCompetition"
+    ],
+    "reason": "sample 与 tool outputs 并发 finalize/discard 唯一赢家"
+  },
+  {
+    "package": "easycode/internal/provider",
+    "tests": [
+      "TestReasoningPublisherBackpressureCancellation"
+    ],
+    "reason": "阻塞 channel 发布与取消、最终退出信号"
   },
   {
     "package": "easycode/internal/provider/anthropic",
-    "source": "internal/provider/anthropic/write_test.go",
-    "reason": "串行构造 17 个约 1 MiB 原生 Write 项并校验编码/请求大小，无 transport 或工具执行；普通保留完整边界。",
     "tests": [
-      "TestWriteAggregateNativeAndRequestBudgetsRemainSixteenMiB"
+      "TestConversationCancelCompletedRaceHasOneTerminal"
     ],
-    "retained_race": [
-      {
-        "package": "easycode/internal/app",
-        "test": "TestWriteSSEChunksCancellationEOFAndLimitsPrecedeSideEffects"
-      }
-    ]
+    "reason": "流式 completed 与 cancel 交错只产生一个终态"
   },
   {
     "package": "easycode/internal/provider/anthropic",
-    "source": "internal/provider/anthropic/hook_input_rewrite_test.go",
-    "reason": "离线依次提交、恢复、编译和对照的输入重写 golden/cache 数据组合；没有并发提交或网络。普通保留全矩阵，race 保留跨平台改写恢复矩阵与共享历史交错；Darwin 另保留真实 sandbox 场景。",
     "tests": [
-      "TestPreInputRewriteNativeGoldenRestoreAndCache"
+      "TestCompactionStreamCancellation"
     ],
-    "retained_race": [
-      {
-        "package": "easycode/internal/provider/anthropic",
-        "test": "TestProjectHistoryConcurrentCommitReturnsCompleteSnapshots"
-      },
-      {
-        "package": "easycode/internal/provider/anthropic",
-        "test": "TestConversationCancelCompletedRaceHasOneTerminal"
-      },
-      {
-        "package": "easycode/internal/app",
-        "test": "TestPreInputRewriteResumeReconcilesEveryBatchBeforeLoadingNewSnapshot"
-      }
+    "reason": "取消真实 HTTP reader 并等待清理，pending/active owner 不泄漏"
+  },
+  {
+    "package": "easycode/internal/provider/openai",
+    "tests": [
+      "TestConversationCancelCompletedRaceHasOneTerminal"
+    ],
+    "reason": "流式 completed 与 cancel 交错只产生一个终态"
+  },
+  {
+    "package": "easycode/internal/provider/openai",
+    "tests": [
+      "TestCompactionStreamCancellation"
+    ],
+    "reason": "取消真实 HTTP reader 并等待清理，pending/active owner 不泄漏"
+  },
+  {
+    "package": "easycode/internal/provider/transport",
+    "tests": [
+      "TestCloseCancelsActualBlockedBody"
+    ],
+    "reason": "Close 解阻实际被阻塞的 HTTP body，禁止后续请求"
+  },
+  {
+    "package": "easycode/internal/provider/transport",
+    "tests": [
+      "TestWSClientCloseUnblocksOriginalWriteOwner"
+    ],
+    "reason": "关闭 WebSocket 等待并解除 original write owner 阻塞"
+  },
+  {
+    "package": "easycode/internal/provider/transport",
+    "tests": [
+      "TestWSClientActiveCloseAndIdleReuse"
+    ],
+    "reason": "active/idle WebSocket 生命周期与关闭重用竞争"
+  },
+  {
+    "package": "easycode/internal/codec",
+    "tests": [
+      "TestConcurrentCodecCallsOwnTheirResults"
+    ],
+    "reason": "并发编解码返回值所有权"
+  },
+  {
+    "package": "easycode/internal/tool/builtin",
+    "tests": [
+      "TestWorkspaceOpenChildPinsDirectoryUntilOpenatReturns"
+    ],
+    "reason": "取消关闭与实际FD借用交错",
+    "platforms": [
+      "darwin",
+      "linux"
     ]
   },
   {
-    "package": "easycode/internal/app",
-    "source": "internal/app/completion_e2e_test.go",
-    "reason": "完整矩阵的文本/策略组合留在普通测试；race 复用相同 helper，保留两家 Provider、local/completion/plugins/skills、真实服务、提交、恢复、cache/native bytes 和关闭断言。",
+    "package": "easycode/internal/tool/builtin",
     "tests": [
-      "TestCompletionManualAndRestoredRequestsBothProviders",
-      "TestPluginBrowserManualAndRestoredRequestsBothProviders"
+      "TestWorkspaceFileSnapshotCancellationWaitsForReadStack"
     ],
-    "retained_race": [
-      {
-        "package": "easycode/internal/app",
-        "test": "TestCompletionAndPluginBrowserConcurrentLifecycle"
-      }
-    ]
-  },
-  {
-    "package": "easycode/internal/app",
-    "source": "internal/app/reasoning_cli_e2e_test.go",
-    "reason": "此测试自行 go build 普通 CLI，父测试的 race 不会给该子程序增加检测；普通完整保留 24 组 CLI 场景，race 保留同进程 headless、取消及参数失败，其他重执行 race 二进制的 CLI 测试仍执行。",
-    "tests": [
-      "TestReasoningControlsBuiltCLIEndToEnd"
-    ],
-    "retained_race": [
-      {
-        "package": "easycode/internal/app",
-        "test": "TestReasoningControlsHeadlessToolLoopAndUsage"
-      },
-      {
-        "package": "easycode/internal/app",
-        "test": "TestReasoningHeadlessCancelAndBrokenPipeMatrix"
-      },
-      {
-        "package": "easycode/internal/app",
-        "test": "TestReasoningParameterFailuresNeverRetryOrDowngrade"
-      }
-    ],
+    "reason": "取消后等待读取栈退出",
     "platforms": [
       "darwin",
       "linux"

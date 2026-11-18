@@ -101,13 +101,13 @@ artifact ID、保存状态、存储目录、实时配额与读取游标 MUST NOT
 - **WHEN** 同一 catalog 下创建、读取、删除输出对象或改变配额使用量
 - **THEN** catalog canonical bytes、source revision 和 stable prefix fingerprint 不变；估算包含 ReadArtifact 实际 facade schema
 
-committed_history 的 cache canonical 内容 SHALL 仅含封闭 summary/text/skill_attachment kind、有序角色和文本，不包含 InputID、turn ID 或展示状态；同内容不同关联身份必须得到相同内容 fingerprint。
+committed_history 的 cache canonical 内容 SHALL 仅含封闭 summary/text/skill_attachment/file_attachment kind、有序角色和文本，不包含 InputID、turn ID 或展示状态；同内容不同关联身份必须得到相同内容 fingerprint。
 
 #### Scenario: Keep identity out of cache content
 - **WHEN** 仅改变输入和 turn 身份但原生可见内容及其顺序相同
 - **THEN** 请求与语义规划内容 fingerprint 相同，stable prefix 不变
 
-committed_history source revision SHALL 使用独立单调 context revision；普通 native commit 和成功 checkpoint 各推进一次，失败/查询不推进。摘要正文按有来源标记的文本参与该尾部分段 canonical 内容，CompactionID、原始记录位置和时间不得进入内容 fingerprint。既有“角色/文本”规范在摘要出现时扩展为封闭 summary/text/skill_attachment kind，仍不得纳入展示身份。
+committed_history source revision SHALL 使用独立单调 context revision；普通 native commit 和成功 checkpoint 各推进一次，失败/查询不推进。摘要正文按有来源标记的文本参与该尾部分段 canonical 内容，CompactionID、原始记录位置和时间不得进入内容 fingerprint。既有“角色/文本”规范在摘要出现时扩展为封闭 summary/text/skill_attachment/file_attachment kind，仍不得纳入展示身份。
 
 #### Scenario: Change only compaction identity
 - **WHEN** 两个窗口的摘要与增量内容、source revisions 相同但 CompactionID 或 Session 路径不同
@@ -197,3 +197,43 @@ Question 的静态 schema/description SHALL 纳入同一 tool_catalog source；�
 - **WHEN** 已配置窗口但计划总量因为原生 footprint unknown 而不可完整判定
 - **THEN** 预算状态为 `indeterminate`
 - **THEN** 系统不把该状态误报为明确超限
+
+### Requirement: File attachments affect only the actual effective history tail
+
+有效历史规划 SHALL 在同一真实用户消息内按原文、可选 Skill、有序文件包装分别计入实际模型可见内容，文件使用封闭 file_attachment 内容 kind，不包含 InputID、turn ID、摘要展示状态、文件 digest、绝对根、mtime、inode 或候选搜索状态。候选预检 MUST 包括全部文件包装，并使用实际交付操作捕获的完整推理设置；user-input 编码和动态预算超限必须先于该输入 batch 的 Sync 确定拒绝。共享估算与 Provider native footprint MUST 指向同一有效窗口/revision 并继续使用覆盖值，不能相加或重复计算元数据。
+
+在相同实际推理设置和其他来源下，文件查询、候选、选择、文件读取和 UI 状态 SHALL 不改变 provider_profile/tool_catalog/project_instructions/skill_catalog 的 bytes、revision 和稳定前缀 fingerprint。忽略规则、文件名索引、索引 revision、发现状态和候选 session MUST 不进入任何上下文来源、摘要 source digest 或模型文本。仅真实附件提交改变 committed_history 内容和完整请求；它的源行数/实际范围和部分行标记只作为实际包装的一部分计入一次。checkpoint 覆盖的附件不再重复计入有效窗口，也不得从磁盘自动再加载。
+
+新独立操作改变实际 effort 时，provider_profile、请求 properties 和完整请求身份 SHALL 按既有推理契约改变，不能为维持文件补全的稳定前缀断言而复用旧 profile。固定同一 native 窗口和候选输入时，真实策略变化不得改变目录或原生历史内容身份；wire 设置相同而来源/选择序号不同不得改变请求/profile/native 身份。文件包装和 digest MUST 不包含 effort、选择来源或序号。OpenAI WS 继续核对真实属性和原生前缀；实际失败、取消、摘要或重连后的 reset/full 不能因同文件或选回旧值而被绕过。
+
+#### Scenario: Search without changing the prompt
+- **WHEN** 用户多次输入 @ 查询、移动候选、关闭或接受候选但未提交
+- **THEN** 已提交历史、所有上下文来源和请求 fingerprint 保持不变，没有 Provider 请求
+
+#### Scenario: Change discovery rules without committing an attachment
+- **WHEN** 忽略规则、索引覆盖、候选 session 或显示的索引 revision 改变，但没有新的输入提交
+- **THEN** 请求、上下文各分段和 compaction source digest 均不受影响，发现配置不变成项目指令或 Skill metadata
+
+#### Scenario: Change only the attached file body
+- **WHEN** 两份输入使用相同原文、目录和关联快照，但实际冻结文件内容不同
+- **THEN** 历史尾部与完整请求 fingerprint 可解释地变化，原稳定来源/前缀保持不变
+
+#### Scenario: Count attachments once before and after restore
+- **WHEN** 同一包含多文件的有效窗口分别直接规划与从合法 native 历史恢复后规划
+- **THEN** 内容 canonical、估算方法/状态/值、footprint/revision 及分段 fingerprints 相同，正文不因 metadata 重复计量
+
+#### Scenario: Compact a file-bearing history
+- **WHEN** checkpoint 已覆盖文件附件且新窗口只含摘要与后续增量
+- **THEN** 只计当前窗口一次，完整旧文件仍可阅读但不重新注入、读盘或污染稳定目录
+
+#### Scenario: Isolate a changed operation policy from a file change
+- **WHEN** 固定同一文件 native 窗口、候选输入和目录，仅将新操作的实际 effort 从 high 改为 low
+- **THEN** provider_profile 与请求属性按策略失效，目录/原生历史内容与附件 digest 不变；预检、body 和 receipt 不混用两种策略
+
+#### Scenario: Keep equal wire settings independent of selection revisions
+- **WHEN** 同一文件输入的实际设置相同，但选择来源和进程序号不同
+- **THEN** profile、完整逻辑请求、native 内容和所有相应指纹相同，序号不进入摘要来源或包装
+
+#### Scenario: Distinguish unused selections from a reset connection
+- **WHEN** 分别在没有中间操作时 high→low→high，及在真实失败/取消/摘要后选回 high，并使用相同文件窗口
+- **THEN** 前者按实际属性和前缀判断增量，后者沿原 reset/full 规则；附件 digest 相同不允许旧 previous_response_id 复活

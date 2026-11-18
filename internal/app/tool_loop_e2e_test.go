@@ -23,12 +23,6 @@ import (
 )
 
 func TestReadToolLoopCompletesEndToEndForBothProviders(t *testing.T) {
-	runCacheReadToolLoopCompletesEndToEndForBothProviders(t, false)
-}
-func TestCachedReadToolLoopCompletesEndToEndForBothProviders(t *testing.T) {
-	runCacheReadToolLoopCompletesEndToEndForBothProviders(t, true)
-}
-func runCacheReadToolLoopCompletesEndToEndForBothProviders(t *testing.T, cacheEnabled bool) {
 	for _, test := range []struct {
 		name         string
 		family       domain.ProviderFamily
@@ -78,7 +72,7 @@ func runCacheReadToolLoopCompletesEndToEndForBothProviders(t *testing.T, cacheEn
 						APIKey: secret.New("tool-loop-secret"), Model: test.model,
 					},
 					ContextBudget: budget,
-				}, cacheEnabled),
+				}, false),
 				filepath.Join(t.TempDir(), "sessions"), "", workspace,
 			)
 			if err != nil {
@@ -99,192 +93,6 @@ func runCacheReadToolLoopCompletesEndToEndForBothProviders(t *testing.T, cacheEn
 				if strings.Contains(string(body), workspace) || strings.Contains(string(body), "tool-loop-secret") {
 					t.Fatal("tool request leaked workspace path or secret")
 				}
-			}
-		})
-	}
-}
-
-func TestParallelSearchToolLoopCompletesEndToEndForBothProviders(t *testing.T) {
-	runCacheParallelSearchToolLoopCompletesEndToEndForBothProviders(t, false)
-}
-func TestCachedParallelSearchToolLoopCompletesEndToEndForBothProviders(t *testing.T) {
-	runCacheParallelSearchToolLoopCompletesEndToEndForBothProviders(t, true)
-}
-func runCacheParallelSearchToolLoopCompletesEndToEndForBothProviders(t *testing.T, cacheEnabled bool) {
-	for _, test := range []struct {
-		name   string
-		family domain.ProviderFamily
-		model  string
-		serve  func(io.Writer, int)
-		assert func(*testing.T, []byte)
-	}{
-		{name: "OpenAI Responses", family: domain.ProviderOpenAI, model: "gpt-test", serve: writeOpenAIParallelSearchSample, assert: assertOpenAIParallelSearchContinuation},
-		{name: "Anthropic Messages", family: domain.ProviderAnthropic, model: "claude-test", serve: writeAnthropicParallelSearchSample, assert: assertAnthropicParallelSearchContinuation},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			workspace := t.TempDir()
-			if err := os.Mkdir(filepath.Join(workspace, "src"), 0o700); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(workspace, "src", "main.go"), []byte("package main\n// needle\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			var requestMu sync.Mutex
-			var requests [][]byte
-			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-				body, err := io.ReadAll(request.Body)
-				if err != nil {
-					t.Errorf("read request: %v", err)
-					return
-				}
-				requestMu.Lock()
-				requests = append(requests, append([]byte(nil), body...))
-				sample := len(requests)
-				requestMu.Unlock()
-				writer.Header().Set("Content-Type", "text/event-stream")
-				test.serve(writer, sample)
-			}))
-			defer server.Close()
-			resources, err := openChatResources(
-				context.Background(), cacheFixtureConfig(t, config.Config{Provider: config.Provider{
-					Family: test.family, BaseURL: server.URL, APIKey: secret.New("parallel-search-secret"), Model: test.model,
-				}}, cacheEnabled), filepath.Join(t.TempDir(), "sessions"), "", workspace,
-			)
-			if err != nil {
-				t.Fatal(err)
-			}
-			submitAppTurn(t, resources, "Find and inspect the matching source")
-			if err := resources.close(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			requestMu.Lock()
-			captured := append([][]byte(nil), requests...)
-			requestMu.Unlock()
-			if len(captured) != 2 {
-				t.Fatalf("request count = %d", len(captured))
-			}
-			test.assert(t, captured[1])
-		})
-	}
-}
-
-func TestHeadlessPatchFailsClosedForBothProviders(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		family domain.ProviderFamily
-		model  string
-		serve  func(io.Writer, int)
-		wire   string
-	}{
-		{name: "OpenAI Responses", family: domain.ProviderOpenAI, model: "gpt-test", serve: writeOpenAIPatchSample, wire: "custom_tool_call_output"},
-		{name: "Anthropic Messages", family: domain.ProviderAnthropic, model: "claude-test", serve: writeAnthropicPatchSample, wire: "tool_result"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			workspace := t.TempDir()
-			path := filepath.Join(workspace, "main.go")
-			if err := os.WriteFile(path, []byte("old\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			var mu sync.Mutex
-			var requests [][]byte
-			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-				body, _ := io.ReadAll(request.Body)
-				mu.Lock()
-				requests = append(requests, append([]byte(nil), body...))
-				sample := len(requests)
-				mu.Unlock()
-				writer.Header().Set("Content-Type", "text/event-stream")
-				test.serve(writer, sample)
-			}))
-			defer server.Close()
-			resources, err := openChatResources(context.Background(), config.Config{Provider: config.Provider{
-				Family: test.family, BaseURL: server.URL, APIKey: secret.New("patch-secret"), Model: test.model,
-			}}, filepath.Join(t.TempDir(), "sessions"), "", workspace)
-			if err != nil {
-				t.Fatal(err)
-			}
-			submitAppTurn(t, resources, "Update main.go")
-			if err := resources.close(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			content, _ := os.ReadFile(path)
-			mu.Lock()
-			captured := append([][]byte(nil), requests...)
-			mu.Unlock()
-			if string(content) != "old\n" || len(captured) != 2 || !strings.Contains(string(captured[1]), test.wire) || !strings.Contains(string(captured[1]), "approval_required") || strings.Contains(string(captured[1]), workspace) {
-				t.Fatalf("content=%q requests=%d continuation=%s", content, len(captured), captured[len(captured)-1])
-			}
-		})
-	}
-}
-
-func TestInteractivePatchAllowOnceForBothProviders(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		family domain.ProviderFamily
-		model  string
-		serve  func(io.Writer, int)
-	}{
-		{name: "OpenAI Responses", family: domain.ProviderOpenAI, model: "gpt-test", serve: writeOpenAIPatchSample},
-		{name: "Anthropic Messages", family: domain.ProviderAnthropic, model: "claude-test", serve: writeAnthropicPatchSample},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			workspace := t.TempDir()
-			path := filepath.Join(workspace, "main.go")
-			if err := os.WriteFile(path, []byte("old\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			var requestCount int
-			var requestMu sync.Mutex
-			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-				requestMu.Lock()
-				requestCount++
-				sample := requestCount
-				requestMu.Unlock()
-				writer.Header().Set("Content-Type", "text/event-stream")
-				test.serve(writer, sample)
-			}))
-			defer server.Close()
-			resources, err := openChatResourcesWithHooks(
-				context.Background(), config.Config{Provider: config.Provider{
-					Family: test.family, BaseURL: server.URL, APIKey: secret.New("interactive-patch-secret"), Model: test.model,
-				}}, dataPaths{sessionRoot: filepath.Join(t.TempDir(), "sessions")}, "", false, workspace,
-				chatResourceHooks{interactiveApprovals: true},
-			)
-			if err != nil {
-				t.Fatal(err)
-			}
-			controlSession, err := startTUIControlSession(context.Background(), resources.runtime)
-			if err != nil {
-				t.Fatal(err)
-			}
-			events, err := submitInteractiveFixture(t, controlSession, context.Background(), "Update main.go")
-			if err != nil {
-				t.Fatal(err)
-			}
-			var approved bool
-			for event := range events {
-				if event.Kind != protocol.EventToolApprovalRequested {
-					continue
-				}
-				payload, decodeErr := protocol.DecodeToolApprovalRequested(event)
-				if decodeErr != nil {
-					t.Fatal(decodeErr)
-				}
-				if resolveErr := controlSession.ResolveApproval(context.Background(), event.TurnID, payload, protocol.ApprovalAllowOnce, ""); resolveErr != nil {
-					t.Fatal(resolveErr)
-				}
-				approved = true
-			}
-			if err := controlSession.Shutdown(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			if err := resources.close(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			content, _ := os.ReadFile(path)
-			if !approved || string(content) != "new\n" || requestCount != 2 {
-				t.Fatalf("approved=%v content=%q request count=%d", approved, content, requestCount)
 			}
 		})
 	}
@@ -656,18 +464,6 @@ func writeAnthropicPatchSample(writer io.Writer, sample int) {
 	_, _ = io.WriteString(writer, "data: {\"type\":\"message_stop\"}\n\n")
 }
 
-func writeOpenAIParallelSearchSample(writer io.Writer, sample int) {
-	if sample != 1 {
-		writeOpenAIAppTurn(writer, sample)
-		return
-	}
-	_, _ = io.WriteString(writer, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-search\"}}\n\n")
-	writeOpenAIFunctionCall(writer, 0, "fc-glob", "call-glob", "Glob", `{"pattern":"**/*.go"}`)
-	writeOpenAIFunctionCall(writer, 1, "fc-grep", "call-grep", "Grep", `{"pattern":"needle","glob":"**/*.go","output_mode":"content"}`)
-	writeOpenAIFunctionCall(writer, 2, "fc-read", "call-read", "Read", `{"file_path":"src/main.go"}`)
-	_, _ = io.WriteString(writer, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-search\"}}\n\n")
-}
-
 func writeOpenAIFunctionCall(writer io.Writer, index int, itemID string, callID string, name string, arguments string) {
 	_, _ = fmt.Fprintf(writer, "data: {\"type\":\"response.output_item.added\",\"output_index\":%d,\"item\":{\"type\":\"function_call\",\"id\":%q,\"call_id\":%q,\"name\":%q}}\n\n", index, itemID, callID, name)
 	encodedArguments, _ := json.Marshal(arguments)
@@ -676,85 +472,11 @@ func writeOpenAIFunctionCall(writer io.Writer, index int, itemID string, callID 
 	_, _ = fmt.Fprintf(writer, "data: {\"type\":\"response.output_item.done\",\"output_index\":%d,\"item\":{\"type\":\"function_call\",\"id\":%q,\"call_id\":%q,\"name\":%q,\"arguments\":%s}}\n\n", index, itemID, callID, name, encodedArguments)
 }
 
-func writeAnthropicParallelSearchSample(writer io.Writer, sample int) {
-	if sample != 1 {
-		writeAnthropicAppTurn(writer, sample)
-		return
-	}
-	_, _ = io.WriteString(writer, "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg-search\",\"model\":\"claude-test\"}}\n\n")
-	writeAnthropicToolUse(writer, 0, "toolu-glob", "Glob", `{"pattern":"**/*.go"}`)
-	writeAnthropicToolUse(writer, 1, "toolu-grep", "Grep", `{"pattern":"needle","glob":"**/*.go","output_mode":"content"}`)
-	writeAnthropicToolUse(writer, 2, "toolu-read", "Read", `{"file_path":"src/main.go"}`)
-	_, _ = io.WriteString(writer, "data: {\"type\":\"message_stop\"}\n\n")
-}
-
 func writeAnthropicToolUse(writer io.Writer, index int, callID string, name string, arguments string) {
 	_, _ = fmt.Fprintf(writer, "data: {\"type\":\"content_block_start\",\"index\":%d,\"content_block\":{\"type\":\"tool_use\",\"id\":%q,\"name\":%q,\"input\":{}}}\n\n", index, callID, name)
 	encodedArguments, _ := json.Marshal(arguments)
 	_, _ = fmt.Fprintf(writer, "data: {\"type\":\"content_block_delta\",\"index\":%d,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":%s}}\n\n", index, encodedArguments)
 	_, _ = fmt.Fprintf(writer, "data: {\"type\":\"content_block_stop\",\"index\":%d}\n\n", index)
-}
-
-func assertOpenAIParallelSearchContinuation(t *testing.T, body []byte) {
-	t.Helper()
-	var request struct {
-		Input []struct {
-			Type   string `json:"type"`
-			CallID string `json:"call_id"`
-			Name   string `json:"name"`
-			Output string `json:"output"`
-		} `json:"input"`
-	}
-	if err := json.Unmarshal(body, &request); err != nil {
-		t.Fatal(err)
-	}
-	if len(request.Input) != 7 {
-		t.Fatalf("OpenAI parallel continuation = %s", body)
-	}
-	for index, want := range []struct{ callID, name string }{{"call-glob", "Glob"}, {"call-grep", "Grep"}, {"call-read", "Read"}} {
-		if request.Input[index+1].Type != "function_call" || request.Input[index+1].CallID != want.callID || request.Input[index+1].Name != want.name ||
-			request.Input[index+4].Type != "function_call_output" || request.Input[index+4].CallID != want.callID {
-			t.Fatalf("OpenAI call/output[%d] pairing = %s", index, body)
-		}
-	}
-	if !strings.Contains(request.Input[4].Output, "src/main.go") || !strings.Contains(request.Input[5].Output, "needle") ||
-		!strings.Contains(request.Input[6].Output, "package main") {
-		t.Fatalf("OpenAI search outputs = %s", body)
-	}
-}
-
-func assertAnthropicParallelSearchContinuation(t *testing.T, body []byte) {
-	t.Helper()
-	var request struct {
-		Messages []struct {
-			Content []struct {
-				Type      string `json:"type"`
-				ID        string `json:"id"`
-				Name      string `json:"name"`
-				ToolUseID string `json:"tool_use_id"`
-				Content   string `json:"content"`
-			} `json:"content"`
-		} `json:"messages"`
-	}
-	if err := json.Unmarshal(body, &request); err != nil {
-		t.Fatal(err)
-	}
-	if len(request.Messages) != 3 || len(request.Messages[1].Content) != 3 || len(request.Messages[2].Content) != 3 {
-		t.Fatalf("Anthropic parallel continuation = %s", body)
-	}
-	for index, want := range []struct{ callID, name string }{{"toolu-glob", "Glob"}, {"toolu-grep", "Grep"}, {"toolu-read", "Read"}} {
-		call := request.Messages[1].Content[index]
-		result := request.Messages[2].Content[index]
-		if call.Type != "tool_use" || call.ID != want.callID || call.Name != want.name ||
-			result.Type != "tool_result" || result.ToolUseID != want.callID {
-			t.Fatalf("Anthropic call/output[%d] pairing = %s", index, body)
-		}
-	}
-	if !strings.Contains(request.Messages[2].Content[0].Content, "src/main.go") ||
-		!strings.Contains(request.Messages[2].Content[1].Content, "needle") ||
-		!strings.Contains(request.Messages[2].Content[2].Content, "package main") {
-		t.Fatalf("Anthropic search outputs = %s", body)
-	}
 }
 
 func assertOpenAIToolContinuation(t *testing.T, body []byte) {

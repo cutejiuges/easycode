@@ -1,7 +1,0 @@
-{
-  "command": "go test -json -count=1 -timeout=20m ./internal/app",
-  "started_at": "2026-11-15T08:12:49.246345+00:00",
-  "exit_code": 0,
-  "elapsed_seconds": 148.74,
-  "log": "app-normal-before.log"
-}

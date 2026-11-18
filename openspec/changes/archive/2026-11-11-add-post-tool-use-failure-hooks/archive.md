@@ -1,5 +1,7 @@
 # PostToolUseFailure 最终契约核对与归档（2026-11-11）
 
+> 历史日志、运行清单和诊断转储已清理，仅保留文字结论；当前验收以现存测试及质量门为准。
+
 归档对象为 `add-post-tool-use-failure-hooks`，schema 为 `spec-driven`。本次用户已明确授权最终检查、同步 specs 并归档；其他 change 不在范围内。以下记录最终状态，前期 proposal/design 的规划基线及各轮报告中的未归档/Windows 编译失败均属于历史快照。
 
 ## 契约、主规格与实现
@@ -16,7 +18,7 @@
 | Session 与恢复 | 实际 vocabulary 为 tool_post_hook_planned、hook_execution_started/finished、tool_post_hook_completed；`internal/session/post_hooks.go` 严格交叉验证 route/调用/预算/前缀，`internal/runtime/post_hook_recovery.go` 只用冻结事实补偿，不执行、不授权、不读旧配置/artifact、不访问 Provider。 |
 | Provider 与 UI | 两家 `failure_output_test.go`、`post_output_test.go` 及 OpenAI `post_websocket_test.go` 保持原错误/配对/opaque/cache；`internal/app/post_hook_query_test.go`、`internal/tui/post_hook_commit_test.go` 验证中性计划、原 Error/Conflict 与独立诊断、旧序列和分支隔离。 |
 
-六项主规格为 extension/command-hooks、extension/post-tool-use-failure、session/jsonl-store、session/resume、tool/result-budget、tui/hooks。同步与任务核对详见[机器记录](evidence/archive-2026-11-11/pre-archive-audit.json)。40/40 任务已完成，4 项 planning artifacts 均为 done。
+六项主规格为 extension/command-hooks、extension/post-tool-use-failure、session/jsonl-store、session/resume、tool/result-budget、tui/hooks。同步与任务核对详见机器记录。40/40 任务已完成，4 项 planning artifacts 均为 done。
 
 ## 文档修正
 
@@ -26,11 +28,11 @@
 
 本轮在修正文案后执行：
 
-- `go test -race -count=1 ./internal/domain ./internal/extension/hook ./internal/tool ./internal/runtime ./internal/session ./internal/protocol ./internal/provider/openai ./internal/provider/anthropic ./internal/tui -run 'Post|Failure|Hook' -timeout 300s`：exit=0，9 包全部通过，[原始日志](evidence/archive-2026-11-11/contracts.log)。
-- `go test -count=1 ./internal/architecture`：exit=0，[原始日志](evidence/archive-2026-11-11/architecture.log)。
-- `openspec validate add-post-tool-use-failure-hooks --strict`：exit=0，[原始日志](evidence/archive-2026-11-11/change-validation.log)。
-- `openspec validate --specs --strict`：55 passed、0 failed，[原始日志](evidence/archive-2026-11-11/spec-validation.log)。既有长 requirement 信息提示不影响结果。
-- `git diff --check`、主规格同步幂等检查、当前 fixture/测试入口、证据 SHA-256 与文档链接核对：通过；归档后再次校验链接与全部主规格。归档后架构测试 exit=0（[日志](evidence/archive-2026-11-11/architecture-post-archive.log)），主规格仍为 55 passed、0 failed（[日志](evidence/archive-2026-11-11/spec-validation-post-archive.log)）；活动列表仅剩原有 PreToolUse change（[记录](evidence/archive-2026-11-11/active-changes.json)）。
+- `go test -race -count=1 ./internal/domain ./internal/extension/hook ./internal/tool ./internal/runtime ./internal/session ./internal/protocol ./internal/provider/openai ./internal/provider/anthropic ./internal/tui -run 'Post|Failure|Hook' -timeout 300s`：exit=0，9 包全部通过，原始日志。
+- `go test -count=1 ./internal/architecture`：exit=0，原始日志。
+- `openspec validate add-post-tool-use-failure-hooks --strict`：exit=0，原始日志。
+- `openspec validate --specs --strict`：55 passed、0 failed，原始日志。既有长 requirement 信息提示不影响结果。
+- `git diff --check`、主规格同步幂等检查、当前 fixture/测试入口、证据 SHA-256 与文档链接核对：通过；归档后再次校验链接与全部主规格。归档后架构测试 exit=0（日志），主规格仍为 55 passed、0 failed（日志）；活动列表仅剩原有 PreToolUse change（记录）。
 
 已核对当前 AGENTS/Makefile/go.mod/go.sum/internal/cmd/scripts 的源码指纹为 `2279345e75a1e5fc0d8f96683eefa4ee1a0cb50602b7de493e19f8311de14d1a`，与[上一轮全量质量门](windows-helper-regression-2026-11-11.md)完全一致，19 份证据校验和有效。因此沿用刚完成的不缓存 make verify、72 例双 Provider E2E race 和 Linux/Windows amd64/arm64 全库构建/测试编译结果；本轮文档修改后另跑架构测试与契约 race，不把历史结果伪称为再次全量执行。
 
@@ -38,6 +40,6 @@ Linux/Windows 没有原生 runner，交叉编译不等于运行验收。真实�
 
 ## 归档状态
 
-已通过 `openspec archive add-post-tool-use-failure-hooks --yes --skip-specs --json` 归档至 `openspec/changes/archive/2026-11-11-add-post-tool-use-failure-hooks/`，CLI exit=0；[原始归档回执](evidence/archive-2026-11-11/archive-cli.json)。主规格已由前置语义同步核对确认一致，`--skip-specs` 仅避免 CLI 重复写入，未跳过归档校验；回执 specsUpdated=false 表示这次移动没有再次改写 specs，不表示主规格未同步。没有执行 Git commit 或 PR 操作，也未归档 add-pre-tool-use-command-hooks。
+已通过 `openspec archive add-post-tool-use-failure-hooks --yes --skip-specs --json` 归档至 `openspec/changes/archive/2026-11-11-add-post-tool-use-failure-hooks/`，CLI exit=0；原始归档回执。主规格已由前置语义同步核对确认一致，`--skip-specs` 仅避免 CLI 重复写入，未跳过归档校验；回执 specsUpdated=false 表示这次移动没有再次改写 specs，不表示主规格未同步。没有执行 Git commit 或 PR 操作，也未归档 add-pre-tool-use-command-hooks。
 
-最终链接、固定 fixture 字段、源码与证据校验见[收口记录](evidence/archive-2026-11-11/post-archive-audit.json)。
+最终链接、固定 fixture 字段、源码与证据校验见收口记录。

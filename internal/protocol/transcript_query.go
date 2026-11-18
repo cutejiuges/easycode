@@ -53,6 +53,7 @@ func DecodeTranscriptListQuery(data []byte) (TranscriptListQuery, error) {
 
 // TranscriptListItem 只携带短摘要，完整正文必须通过范围查询获取。
 type TranscriptListItem struct {
+	Files              domain.FileSummary        `json:"files"`
 	HookSource         *domain.HookMessageSource `json:"hook_source,omitempty"`
 	StopHook           *StopHookCommittedPayload `json:"stop_hook,omitempty"`
 	Reasoning          *ReasoningSummaryPayload  `json:"reasoning,omitempty"`
@@ -100,6 +101,9 @@ func (v *TranscriptListItem) UnmarshalJSON(data []byte) error {
 }
 
 func (v TranscriptListItem) Validate() error {
+	if v.Files.Validate() != nil || v.Kind != domain.TranscriptUser && v.Files.Total() != 0 {
+		return errors.New("invalid transcript file summary")
+	}
 	if v.Kind != domain.TranscriptCall && v.ExecutionAdmitted {
 		return errors.New("non-call transcript has execution admission")
 	}

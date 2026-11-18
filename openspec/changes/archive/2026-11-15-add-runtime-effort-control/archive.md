@@ -1,5 +1,7 @@
 # 归档核对
 
+> 历史日志、运行清单和诊断转储已清理，仅保留文字结论；当前验收以现存测试及质量门为准。
+
 归档后的 main 整合与交付检查见 [main-sync-2026-11-15.md](main-sync-2026-11-15.md)；本页的归档时校验及原始证据保持其历史基线。
 
 归档日期：2026-11-15。变更：`add-runtime-effort-control`；schema：`spec-driven`。
@@ -28,4 +30,4 @@ README、Roadmap 和 pitfall 的活动 change 引用更新为归档地址。历�
 - `openspec validate --all --strict`：61/61 通过；当前 change 已离开活动集合，因此较归档前少一项。
 - `go test ./internal/architecture -count=1`：通过；`git diff --check` 通过。
 - 原始 139 个文件全部保留，全部既有证据及 `.openspec.yaml` bytes 未改变；仅为归档状态更新三份说明文档，另新增本归档记录及核对证据。
-- 归档前后主规格保持一致，47 项任务无未完成项。全部文档链接与活动集合退出结果见 [最终核对](evidence/archive/final-checks.json)。
+- 归档前后主规格保持一致，47 项任务无未完成项。全部文档链接与活动集合退出结果见 最终核对。

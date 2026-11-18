@@ -83,7 +83,7 @@ func walkDirectory(ctx context.Context, directory workspaceDirectory, relative s
 		result.incompleteReason = tool.SearchEntryLimitReached
 		return nil
 	}
-	names, err := directory.readEntryNames()
+	names, err := collectWalkerNames(ctx, directory, maxWorkspaceEntries-result.visitedEntries+1)
 	if err != nil {
 		result.skipped.unreadable++
 		return nil

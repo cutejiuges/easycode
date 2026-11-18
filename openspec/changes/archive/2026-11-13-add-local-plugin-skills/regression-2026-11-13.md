@@ -13,13 +13,13 @@
 
 | 层次 | 实际结果 | 原始证据 |
 | --- | --- | --- |
-| 乱序能力矩阵 | seed=20261113；9 个包，107 个叶级测试执行；0 failure / 0 skip | [ability.jsonl](evidence/regression-2026-11-13-ability.jsonl) |
-| 生命周期与安全 race | 8 项顶层测试各 10 轮，210 个叶级执行；0 failure / 0 skip | [focused-race.jsonl](evidence/regression-2026-11-13-focused-race.jsonl) |
-| Manifest fuzz | 两 worker、60 秒，2,071,937 次执行，PASS | [manifest-fuzz.log](evidence/regression-2026-11-13-manifest-fuzz.log) |
-| 调用策略副文件 fuzz | 两 worker、60 秒，690,003 次执行，PASS | [sidecar-fuzz.log](evidence/regression-2026-11-13-sidecar-fuzz.log) |
-| 实际二进制 CLI | 四种固定包 × 双 Provider，共 8 组、40 次请求；16 次删除来源后的跨进程继续/恢复，全部通过 | [plugins-smoke.json](evidence/regression-2026-11-13-plugins-smoke.json) |
+| 乱序能力矩阵 | seed=20261113；9 个包，107 个叶级测试执行；0 failure / 0 skip | ability.jsonl |
+| 生命周期与安全 race | 8 项顶层测试各 10 轮，210 个叶级执行；0 failure / 0 skip | focused-race.jsonl |
+| Manifest fuzz | 两 worker、60 秒，2,071,937 次执行，PASS | manifest-fuzz.log |
+| 调用策略副文件 fuzz | 两 worker、60 秒，690,003 次执行，PASS | sidecar-fuzz.log |
+| 实际二进制 CLI | 四种固定包 × 双 Provider，共 8 组、40 次请求；16 次删除来源后的跨进程继续/恢复，全部通过 | plugins-smoke.json |
 | 真实终端 | OpenAI/Anthropic × 普通颜色/NO_COLOR 共 4 组；浏览、详情、草稿恢复、保留名、paste、正常提交、活动停止、80×24/28×10/8×2 和终端模式恢复通过 | 同上 |
-| 汇总计数 | 逐条解析 JSONL 的叶级结果，保留父项统计但不重复计入叶级数 | [results.json](evidence/regression-2026-11-13-results.json) |
+| 汇总计数 | 逐条解析 JSONL 的叶级结果，保留父项统计但不重复计入叶级数 | results.json |
 
 Fuzz 次数为 Go 引擎的原始执行次数，包含非法输入的快速拒绝；业务断言另由固定种子、定向回归和端到端矩阵验证。模糊测试没有发现 panic、放行未支持贡献或忽略追加调用限制的失败输入。
 
@@ -29,15 +29,15 @@ race 反例通过 channel/故障检查点精确建立：16 借用门、重复关
 
 ## 最终回归与契约检查
 
-先执行 go clean -testcache 后启动首次完整 make verify；普通全量通过，race app 套件在 600.507 秒触发默认十分钟总超时。当时活跃项为既有 TestWriteSSEChunksCancellationEOFAndLimitsPrecedeSideEffects/anthropic/aggregate-limit（该子项运行 8 秒），日志没有 data race 或业务断言失败。原始日志保留于 [首次质量门](evidence/regression-2026-11-13-make-verify-before-dual-pty.log)。测试期间观察到另一工作区也在执行全量质量门；这可能影响运行时间，不据此断言根因。没有调整超时或删减测试。该 Write 流组随后单独以 race、count=1 复测，16 个子场景全部通过，耗时 50.048 秒，见 [Write 流复测](evidence/regression-2026-11-13-write-stream-race.jsonl)。
+先执行 go clean -testcache 后启动首次完整 make verify；普通全量通过，race app 套件在 600.507 秒触发默认十分钟总超时。当时活跃项为既有 TestWriteSSEChunksCancellationEOFAndLimitsPrecedeSideEffects/anthropic/aggregate-limit（该子项运行 8 秒），日志没有 data race 或业务断言失败。原始日志保留于 首次质量门。测试期间观察到另一工作区也在执行全量质量门；这可能影响运行时间，不据此断言根因。没有调整超时或删减测试。该 Write 流组随后单独以 race、count=1 复测，16 个子场景全部通过，耗时 50.048 秒，见 Write 流复测。
 
-最终 **make verify 已通过（exit 0）**，见 [最终质量门日志](evidence/regression-2026-11-13-make-verify.log)。执行范围完整保留：分支策略、gofmt、go vet、Staticcheck、架构检查、全量测试和全量 race，覆盖已有 Skills/Hooks/Question、两家 request/stream/native golden、缓存、Session lease/崩溃/修复及权限回归。当前测试 helper 和新增 fuzz seeds 均纳入最终质量门。
+最终 **make verify 已通过（exit 0）**，见 最终质量门日志。执行范围完整保留：分支策略、gofmt、go vet、Staticcheck、架构检查、全量测试和全量 race，覆盖已有 Skills/Hooks/Question、两家 request/stream/native golden、缓存、Session lease/崩溃/修复及权限回归。当前测试 helper 和新增 fuzz seeds 均纳入最终质量门。
 
-本 change 严格校验通过；58 项主 specs 严格校验通过，见 [change 校验](evidence/regression-2026-11-13-change-validation.json)和 [主规格校验](evidence/regression-2026-11-13-specs-validation.json)。分支名和 git diff --check 通过；新增注释/文档使用中文、无新增生产依赖、无协议或 record vocabulary 变化。产品源码与固定 fixture/主规格的指纹保持不变，新增能力验证没有弱化已有断言。
+本 change 严格校验通过；58 项主 specs 严格校验通过，见 change 校验和 主规格校验。分支名和 git diff --check 通过；新增注释/文档使用中文、无新增生产依赖、无协议或 record vocabulary 变化。产品源码与固定 fixture/主规格的指纹保持不变，新增能力验证没有弱化已有断言。
 
-Linux amd64 的全库生产构建与 extension/artifact/app/CLI 测试编译通过，见 [交叉编译日志](evidence/regression-2026-11-13-linux-crosscompile.log)；没有原生运行。
+Linux amd64 的全库生产构建与 extension/artifact/app/CLI 测试编译通过，见 交叉编译日志；没有原生运行。
 
-最终源码、fixture 和主规格指纹记录于 [source.json](evidence/regression-2026-11-13-source.json)，已在交付前逐项核对；当前产品源码未改，测试增强不引入新工具、RuntimeEvent、Session record、兼容 reader 或依赖。
+最终源码、fixture 和主规格指纹记录于 source.json，已在交付前逐项核对；当前产品源码未改，测试增强不引入新工具、RuntimeEvent、Session record、兼容 reader 或依赖。
 
 复现命令：
 

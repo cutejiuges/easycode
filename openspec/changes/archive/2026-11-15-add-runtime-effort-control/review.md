@@ -1,12 +1,14 @@
 # 会话内 effort 完整代码复审
 
+> 历史日志、运行清单和诊断转储已清理，仅保留文字结论；当前验收以现存测试及质量门为准。
+
 当前变更已于 2026-11-15 归档，最终收尾见 [archive.md](archive.md)。下文保留复审当时的事实和状态。
 
 本文保留 2026-11-14 完整代码复审的事实和结论。2026-11-15 再次回归、真实 CLI/PTY 与测试耗时排查见 [regression-2026-11-15.md](regression-2026-11-15.md)。
 
 复审日期：2026-11-14；分支：`feat/runtime-effort-control`。本轮按用户要求复查已实现的 change，保留此前实现和证据，重新打开 tasks 第 9 节。范围仍是进程内 effort、完整操作冻结、双 Provider 既有请求路径、缓存恢复和 TUI；没有增加配置持久化、模型探测、原生 configuration_update 或兼容格式。
 
-本文记录源码检查与修复，最终执行结果见 [verification.md](verification.md) 的复审验收段及 [evidence/review](evidence/review)。初始工作区清单见 [initial-workspace.json](evidence/review/initial-workspace.json)；此前质量门不替代本轮修复后的验证。
+本文记录源码检查与修复，最终执行结果见 [verification.md](verification.md) 的复审验收段及 evidence/review。初始工作区清单见 initial-workspace.json；此前质量门不替代本轮修复后的验证。
 
 ## 发现与修复
 
@@ -99,4 +101,4 @@
 
 ## 最终状态
 
-44/44 项任务完成。本轮 `make verify`、功能 race、18 组 Darwin PTY、本 change 与全部 60 项主规格/62 项 changes+specs 严格校验全部通过；完整质量门耗时 897.92 秒，1,368 个输入文件执行前后校验一致。六份 delta 的 14 条 requirement 与当前主规格正文完全一致。详见 [verification.md](verification.md) 及 [任务覆盖核对](evidence/review/task-review-coverage.json)。修改保留在当前工作区，未提交、推送或归档。
+44/44 项任务完成。本轮 `make verify`、功能 race、18 组 Darwin PTY、本 change 与全部 60 项主规格/62 项 changes+specs 严格校验全部通过；完整质量门耗时 897.92 秒，1,368 个输入文件执行前后校验一致。六份 delta 的 14 条 requirement 与当前主规格正文完全一致。详见 [verification.md](verification.md) 及 任务覆盖核对。修改保留在当前工作区，未提交、推送或归档。

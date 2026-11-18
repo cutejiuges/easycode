@@ -49,6 +49,7 @@ explore -> propose -> review/confirm -> apply -> verify -> archive
 - Go 的 Template Method 只能使用“骨架持有策略接口”，禁止用 struct embed + 方法 shadow 模拟动态分派。
 - 未实现能力不得提前暴露可执行 schema、event kind、空 facade 或占位策略；新增能力必须在同一 change 中具备真实消费者、验证和测试。
 - 不得保留无用代码、注释掉的实现、失效 feature flag、永久兼容分支或无删除条件的临时代码。
+- 实现保持克制，只为明确的业务契约、真实输入边界和已知故障处理错误；禁止为假想场景堆叠防御分支、重复校验、兜底兼容或无消费者的抽象。已有上游不变量在其所属边界验证，不逐层重复防御。
 
 以下是经 OpenSpec `harden-architecture-contract-compliance` 批准的唯一临时占位 allowlist；文件必须保留带 Roadmap 阶段和退出条件的结构化 TODO，不得接入 Runtime/app。新增或扩大例外必须先更新 OpenSpec：
 
@@ -107,15 +108,18 @@ explore -> propose -> review/confirm -> apply -> verify -> archive
 
 ## 7. 测试与完成标准
 
-- 每次逻辑变更必须补测试：纯逻辑用单测，跨模块/I/O 用集成测试，Bug 修复用回归测试。
-- Provider request/stream 使用 golden/fixture；SSE 覆盖随机 chunk、半包、UTF-8、取消和断线；TUI 使用固定尺寸 snapshot；Session 覆盖当前格式校验和损坏恢复；只有用户明确要求迁移时才增加迁移测试；Tool 覆盖拒绝、取消、重放和幂等。
-- Session 并发测试必须包含真实子进程的 lease 竞争、崩溃释放、占用期间禁止 repair、续写 seq 单调和失败路径 journal bytes 不变。
+- 测试体系必须轻、准、关键、快。新增测试仅覆盖本次变更的关键业务风险、真实故障和必要的并发/资源所有权边界；Bug 修复优先增加最小回归。不以覆盖率、用例数量或测试代码行数为目标，不机械地为每个函数配单测。
+- 优先用少量代表性集成测试验证完整业务断言，复用已有 fixture 和辅助函数；已有用例能检出同一风险时直接扩充或复用，不另建重复矩阵。删除显而易见的 getter/构造器/字段透传断言、实现镜像、冗余快照及穷举排列；测试辅助设施不得比业务问题更复杂。
+- 按变更风险选择验证手段：Provider 原生请求/恢复与缓存使用必要 golden；SSE 选代表性分包、UTF-8、取消或断线；TUI 只保留关键交互的固定尺寸 snapshot；Session 保留当前格式和损坏恢复；Tool 保留副作用相关的拒绝、取消、重放或幂等。避免每个功能重复整套矩阵；只有用户明确要求迁移时才增加迁移测试。
+- Session lease 的关键集成回归使用真实子进程，在少量场景中验证竞争、崩溃释放、占用期间禁止 repair、续写 seq 单调和失败时 journal bytes 不变，不为相同风险重复启动进程。
 - Session 当前 fixture 必须逐字节固定且不得在测试运行时由当前 encoder 生成；用户明确要求并批准 migration fixture 后，同样必须使用仓库内不可变历史 bytes。
 - symlink/TOCTOU、Sync 失败、阻塞 stream 和 shutdown timeout 必须使用确定性故障注入，禁止依赖 sleep 或概率竞态证明正确性。
 - 禁止通过删除、跳过、弱化测试或编写无业务断言的测试掩盖失败；单测不得使用真实 API key 或默认访问外网。
 - 完成前必须执行 `make verify`，其范围不得弱于 gofmt、go vet、Staticcheck、架构边界测试、全量普通测试和经审计的必要 race test；pre-commit 必须执行同一质量门。仅通过语言工具和单测不能替代 AGENTS/OpenSpec 契约检查。
-- 默认 race 保留真实并发、共享状态、取消/提交交错、stream、writer、lease 和资源关闭/恢复；只有经审计的串行入口或已保留生命周期代表场景的数据矩阵可登记到 `scripts/race_policy.json`，普通测试及原断言必须保留。新增入口默认参加 race，失效清单必须报错；`make test-race-full` 保留全量入口。默认不设置总耗时硬门禁，单进程超时及失败/取消清理仍生效。
+- 默认 race 只执行 `scripts/race_policy.json` 正向列出的关键并发、提交取消、stream、writer、lease 和资源关闭路径。大型矩阵选代表场景，新增普通测试不自动进入 race；清单重复或失效必须报错。`make test-race-full` 保留手动全量入口。普通阶段执行精简后现存的全部测试，单进程超时及失败/取消清理仍生效。
+- 耗时验证只在对应风险确有必要时加入默认质量门；禁止无依据地重复运行相同用例、扩大 fuzz 预算或并发压力循环。完成必要检查后即停止，新增重量级测试必须说明其能独立检出的风险。
 - OpenSpec 归档前必须核对 specs、架构、Roadmap、pitfall、测试文件路径和实际 record vocabulary；不得把延期能力写成已实现，也不得保留失效文档引用。
+- OpenSpec 只保留方案、规格、决策和简短验收结论；原始 JSON/JSONL、日志、profile、源码快照和中间报告放到忽略的本地输出或 CI artifact，不提交进归档。保留 `.openspec.yaml` 与当前测试实际消费的固定 fixture；删除产物时同步清理链接。
 - 无法执行的检查必须在交付说明中列出原因和风险，不能声称全部通过。
 
 交付前必须确认：职责和依赖边界清晰；Provider 原生语义与缓存稳定性未破坏；无重复副作用、secret 泄漏、dead code 或无用依赖；测试充分且 `make verify` 通过；相关 OpenSpec、架构、Roadmap 或踩坑文档已同步。

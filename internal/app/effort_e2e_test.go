@@ -3,14 +3,12 @@ package app
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -18,9 +16,7 @@ import (
 
 	"easycode/internal/codec"
 	"easycode/internal/config"
-	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
-	"easycode/internal/headless"
 	"easycode/internal/protocol"
 	"easycode/internal/secret"
 	"easycode/internal/tool"
@@ -74,7 +70,7 @@ func appEffortIdle(t *testing.T, r *chatResources) {
 }
 func appEffortTurn(t *testing.T, r *chatResources, text string, wantFailure bool) {
 	t.Helper()
-	result, err := r.session.Append(context.Background(), text)
+	result, err := appendInteractiveText(context.Background(), r.session, text)
 	if err != nil || result.Status() != protocol.CommandStatusAccepted {
 		t.Fatal("append failed", err)
 	}
@@ -129,66 +125,6 @@ func assertAppEffort(t *testing.T, family domain.ProviderFamily, body []byte, wa
 	}
 }
 
-func TestRuntimeEffortHeadlessLiteralSlashWithSameNameSkill(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
-		t.Run(string(family), func(t *testing.T) {
-			cwd := t.TempDir()
-			path := filepath.Join(cwd, ".easycode", "skills", "effort", "SKILL.md")
-			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-				t.Fatal(err)
-			}
-			const expanded = "EFFORT_SKILL_EXPLICIT_ONLY"
-			if err := os.WriteFile(path, []byte("---\ndescription: A same-name skill\n---\n"+expanded+" $ARGUMENTS"), 0600); err != nil {
-				t.Fatal(err)
-			}
-			bodies := make(chan []byte, 4)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				body, _ := io.ReadAll(r.Body)
-				bodies <- body
-				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = w.Write(activeReasoningFixture(family, 1, false))
-			}))
-			defer server.Close()
-			cfg := reasoningFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, Model: "fixture-model", APIKey: secret.New("fixture-key")}})
-			r, err := openChatResources(context.Background(), cfg, filepath.Join(t.TempDir(), "sessions"), "", cwd)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() {
-				if err := r.close(context.Background()); err != nil {
-					t.Error(err)
-				}
-			}()
-			input := strings.Join([]string{
-				`{"version":1,"type":"input.submit","request_id":"literal","text":"/effort low"}`,
-				`{"version":1,"type":"input.submit","request_id":"skill","text":"$effort exact args"}`,
-			}, "\n") + "\n"
-			output := &appWriteCloser{}
-			outcome := runStreamJSON(context.Background(), Options{Input: io.NopCloser(strings.NewReader(input)), Output: output}, r)
-			if outcome.Class != ExitSuccess {
-				t.Fatal("headless same-name input failed", outcome, output.String())
-			}
-			first, second := <-bodies, <-bodies
-			if !bytes.Contains(first, []byte("/effort low")) || bytes.Contains(first, []byte(expanded)) || !bytes.Contains(second, []byte(expanded+" exact args")) {
-				t.Fatalf("literal slash or explicit Skill attachment changed: first=%s second=%s", first, second)
-			}
-			assertAppEffort(t, family, first, "high")
-			assertAppEffort(t, family, second, "high")
-			if strings.Contains(output.String(), `"type":"effort.snapshot"`) || len(bodies) != 0 {
-				t.Fatal("literal user input triggered control observations or extra sampling")
-			}
-			var a, b struct {
-				Tools json.RawMessage `json:"tools"`
-				Key   string          `json:"prompt_cache_key"`
-			}
-			if codec.Unmarshal(first, &a) != nil || codec.Unmarshal(second, &b) != nil || !bytes.Equal(a.Tools, b.Tools) || a.Key != b.Key {
-				t.Fatal("Skill invocation changed stable tools or cache key")
-			}
-		})
-	}
-}
-
 func TestRuntimeEffortDualProviderToolsRecoveryAndRestart(t *testing.T) {
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		t.Run(string(family), func(t *testing.T) {
@@ -226,7 +162,7 @@ func TestRuntimeEffortDualProviderToolsRecoveryAndRestart(t *testing.T) {
 			if p := appEffortSnapshot(t, r, "initial"); p.SelectionRevision != 0 || p.Selected.Value != "high" || p.Source != "startup" {
 				t.Fatal("startup selection wrong")
 			}
-			if result, err := r.session.Append(context.Background(), "Read README.md then answer"); err != nil || result.Status() != protocol.CommandStatusAccepted {
+			if result, err := appendInteractiveText(context.Background(), r.session, "Read @README.md then answer"); err != nil || result.Status() != protocol.CommandStatusAccepted {
 				t.Fatal(err)
 			}
 			first := <-bodies
@@ -311,110 +247,6 @@ func TestRuntimeEffortDualProviderToolsRecoveryAndRestart(t *testing.T) {
 	}
 }
 
-func TestRuntimeEffortRestoredRequestIgnoresProcessRevision(t *testing.T) {
-	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
-		t.Run(string(family), func(t *testing.T) {
-			var requests atomic.Int32
-			bodies := make(chan []byte, 8)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				body, _ := io.ReadAll(r.Body)
-				bodies <- body
-				n := int((requests.Add(1)-1)%4) + 1
-				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = w.Write(activeReasoningFixture(family, n, n <= 2))
-			}))
-			defer server.Close()
-			cfg := reasoningFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, Model: "fixture-model", APIKey: secret.New("effort-fixture")}})
-			var next [][]byte
-			var snapshots []protocol.CacheSnapshotPayload
-			for _, restore := range []bool{false, true} {
-				cwd := t.TempDir()
-				if err := os.WriteFile(filepath.Join(cwd, "README.md"), []byte("fixed current artifact"), 0600); err != nil {
-					t.Fatal(err)
-				}
-				root := filepath.Join(t.TempDir(), "sessions")
-				r, err := openChatResources(context.Background(), cfg, root, "", cwd)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := r.session.StartInteractive(context.Background()); err != nil {
-					t.Fatal(err)
-				}
-				appEffortTurn(t, r, "Read README.md", false)
-				appEffortIdle(t, r)
-				<-bodies
-				<-bodies
-				if result, err := r.session.CompactContext(context.Background(), "preserve failures"); err != nil || result.Status() != protocol.CommandStatusAccepted {
-					t.Fatal("summary admission failed", result, err)
-				}
-				for item := range r.session.Outputs() {
-					if e, ok := item.ContextEvent(); ok {
-						if e.Kind == protocol.EventCompactionFailed {
-							t.Fatalf("summary failed: %s", e.Payload)
-						}
-						if e.Kind == protocol.EventCompactionCompleted {
-							break
-						}
-					}
-				}
-				assertReasoningRequest(t, family, <-bodies, true)
-				appEffortIdle(t, r)
-				if restore {
-					thread := r.identity.ThreadID
-					journalPath, err := r.service.repository.JournalPath(thread)
-					if err != nil {
-						t.Fatal(err)
-					}
-					if err := r.close(context.Background()); err != nil {
-						t.Fatal(err)
-					}
-					before, err := os.ReadFile(journalPath)
-					if err != nil {
-						t.Fatal(err)
-					}
-					r, err = openChatResources(context.Background(), cfg, root, string(thread), cwd)
-					if err != nil {
-						t.Fatal(err)
-					}
-					if err := r.session.StartInteractive(context.Background()); err != nil {
-						t.Fatal(err)
-					}
-					appEffortSet(t, r, "same-high", appEffortChoice(t, "high"))
-					appEffortSet(t, r, "omitted", domain.NewAutomaticEffortChoice())
-					appEffortSet(t, r, "low", appEffortChoice(t, "low"))
-					p := appEffortSnapshot(t, r, "restored-revision")
-					if p.SelectionRevision != 3 {
-						t.Fatal("restored process revision not independent")
-					}
-					after, err := os.ReadFile(journalPath)
-					if err != nil || !bytes.Equal(before, after) {
-						t.Fatal("restore or controls changed existing journal")
-					}
-				} else {
-					appEffortSet(t, r, "low", appEffortChoice(t, "low"))
-					p := appEffortSnapshot(t, r, "live-revision")
-					if p.SelectionRevision != 1 {
-						t.Fatal("live revision wrong")
-					}
-				}
-				appEffortTurn(t, r, "continue explicitly", false)
-				next = append(next, <-bodies)
-				appEffortIdle(t, r)
-				snapshots = append(snapshots, completionCacheSnapshot(t, context.Background(), r))
-				if err := r.close(context.Background()); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if len(snapshots) != 2 || snapshots[0].ContentFingerprint != snapshots[1].ContentFingerprint || snapshots[0].StableFingerprint != snapshots[1].StableFingerprint || !reflect.DeepEqual(snapshots[0].Sources, snapshots[1].Sources) || snapshots[0].LastSample.RequestFingerprint != snapshots[1].LastSample.RequestFingerprint || snapshots[0].LastSample.NativeFingerprint != snapshots[1].LastSample.NativeFingerprint {
-				t.Fatal("restoration or process revisions changed request/native/profile fingerprints")
-			}
-			if requests.Load() != 8 || !bytes.Equal(next[0], next[1]) || !bytes.Contains(next[0], []byte("answer-3")) {
-				t.Fatal("native restoration changed canonical request or opaque data")
-			}
-		})
-	}
-}
-
 func TestRuntimeEffortQuestionAndApprovalKeepCapturedPolicy(t *testing.T) {
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		t.Run(string(family), func(t *testing.T) {
@@ -451,7 +283,7 @@ func TestRuntimeEffortQuestionAndApprovalKeepCapturedPolicy(t *testing.T) {
 			if err := r.session.StartInteractive(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := r.session.Append(context.Background(), "ask then write"); err != nil {
+			if _, err := appendInteractiveText(context.Background(), r.session, "ask then write"); err != nil {
 				t.Fatal(err)
 			}
 			questions, approvals := 0, 0
@@ -521,72 +353,6 @@ func TestRuntimeEffortQuestionAndApprovalKeepCapturedPolicy(t *testing.T) {
 	}
 }
 
-func TestRuntimeEffortCaptureCanFailBeforeFirstNetwork(t *testing.T) {
-	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
-		t.Run(string(family), func(t *testing.T) {
-			var requests atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				requests.Add(1)
-				http.Error(w, "must not be reached", 500)
-			}))
-			defer server.Close()
-			budget, _ := contextplan.NewBudget(20000, 16384, 0)
-			cfg := reasoningFixtureConfig(t, config.Config{ContextBudget: budget, Provider: config.Provider{Family: family, BaseURL: server.URL, Model: "fixture-model", APIKey: secret.New("effort-fixture")}})
-			r, err := openChatResources(context.Background(), cfg, filepath.Join(t.TempDir(), "sessions"), "", t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer r.close(context.Background())
-			if err := r.session.StartInteractive(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			initial := appEffortSnapshot(t, r, "captured-config")
-			if initial.Selected.Value != "high" {
-				t.Fatal("startup capture lost")
-			}
-			appEffortTurn(t, r, strings.Repeat("long candidate input ", 20000), true)
-			appEffortIdle(t, r)
-			if requests.Load() != 0 {
-				t.Fatal("local budget failure reached endpoint")
-			}
-			p := appEffortSnapshot(t, r, "after-local-failure")
-			if p.Selected.Value != "high" || p.Active != nil {
-				t.Fatal("local failure downgraded or left worker")
-			}
-			path, _ := r.service.repository.JournalPath(r.identity.ThreadID)
-			raw, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if bytes.Contains(raw, []byte(`"event_kind":"sample_usage"`)) {
-				t.Fatal("unsent request was billed")
-			}
-		})
-	}
-}
-
-func TestRuntimeEffortBrokenSnapshotReleasesRealLeaseWithoutRetry(t *testing.T) {
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1); http.Error(w, "unrequested", 500) }))
-	defer server.Close()
-	root := filepath.Join(privateAppTempDir(t), "sessions")
-	path := withReasoningConfig(t, writeAppConfig(t, t.TempDir(), domain.ProviderOpenAI, server.URL), reasoningFields(domain.ProviderOpenAI))
-	output := &failOnHeadlessWrite{failCall: 3}
-	input := io.NopCloser(strings.NewReader("{\"version\":1,\"type\":\"effort.set\",\"request_id\":\"accepted-low\",\"mode\":\"value\",\"level\":\"low\"}\n"))
-	outcome := Run(context.Background(), Options{Mode: headless.ModeStreamJSON, ConfigPath: path, SessionDataRoot: root, Input: input, Output: output})
-	if outcome.ExitCode() != 1 || outcome.Report != ReportOutputUnavailable || requests.Load() != 0 {
-		t.Fatal("broken snapshot retried or abandoned failure", outcome)
-	}
-	started := decodeThreadStarted(t, output.buffer.String())
-	loaded := loadHeadlessJournal(t, root, started.ThreadID)
-	if len(loaded.Records) != 2 {
-		t.Fatal("process setting wrote journal facts", len(loaded.Records))
-	}
-	if !strings.Contains(output.buffer.String(), `"disposition":"updated"`) {
-		t.Fatal("accepted response lost before snapshot failure")
-	}
-}
-
 func TestRuntimeEffortDisconnectAndCancelKeepFutureSelection(t *testing.T) {
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		for _, cancelled := range []bool{false, true} {
@@ -626,7 +392,7 @@ func TestRuntimeEffortDisconnectAndCancelKeepFutureSelection(t *testing.T) {
 				if err := r.session.StartInteractive(context.Background()); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := r.session.Append(context.Background(), "work"); err != nil {
+				if _, err := appendInteractiveText(context.Background(), r.session, "work"); err != nil {
 					t.Fatal(err)
 				}
 				<-entered

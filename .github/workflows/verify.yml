@@ -11,7 +11,7 @@ on:
       profile_test:
         description: App test expression for the diagnostic profile
         type: string
-        default: '^(TestPluginBrowserManualAndRestoredRequestsBothProviders|TestSessionPreviewCurrentFixturesAreReadOnly)$'
+        default: '^(TestPluginSkillLifecycleBothProvidersAndHosts|TestFileCurrentFixturesRejectBeforeRepairAndNeverReadSources)$'
       test_jobs:
         description: Maximum active test commands
         type: choice

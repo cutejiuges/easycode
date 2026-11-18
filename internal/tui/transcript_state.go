@@ -104,6 +104,7 @@ func (model Model) receiveMainTranscript(reply mainTranscriptReply) (tea.Model, 
 			message.role = "Compaction"
 		case domain.TranscriptUser:
 			message.role = "User"
+			message.text += fileSummaryText(item.Files)
 		case domain.TranscriptHook:
 			message.role = "Hook"
 		case domain.TranscriptAssistant:
@@ -177,6 +178,7 @@ func appendProvisionalText(current, delta string) string {
 }
 
 func (model Model) quitTranscript() (tea.Model, tea.Cmd) {
+	model.closeFileQueries()
 	model.browser.invalidate()
 	model.main.resetHydration()
 	if model.main.cancel != nil {

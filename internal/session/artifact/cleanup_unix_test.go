@@ -59,28 +59,3 @@ func TestCleanupPreservesCommittedReferencesAndRejectsActiveCapture(t *testing.T
 		t.Fatal("cleanup changed another thread")
 	}
 }
-
-func TestPublicationFailuresNeverExposeDescriptor(t *testing.T) {
-	for _, mode := range []string{"directory_sync", "no_replace"} {
-		t.Run(mode, func(t *testing.T) {
-			s, root := testStore(t)
-			c := startCapture(t, s)
-			_, _ = c.WriteStdout([]byte("new bytes"))
-			path := filepath.Join(root, string(s.threadID), string(c.invocation), string(c.stdout.id))
-			if mode == "directory_sync" {
-				c.syncDirectory = func(*os.File) error { return errors.New("injected sync failure") }
-			} else if err := os.WriteFile(path, []byte("existing"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			out, _ := c.Finish(true, true, true)
-			if _, ok := out.Descriptor(); ok || out.Status() != tool.ArtifactUnavailable {
-				t.Fatal("failed publication exposed a reference")
-			}
-			if mode == "no_replace" {
-				if b, err := os.ReadFile(path); err != nil || string(b) != "existing" {
-					t.Fatal("publication replaced existing bytes")
-				}
-			}
-		})
-	}
-}

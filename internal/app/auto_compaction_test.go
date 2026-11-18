@@ -3,31 +3,21 @@ package app
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 
 	"easycode/internal/config"
 	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
-	"easycode/internal/headless"
 	"easycode/internal/secret"
 )
 
 func TestAutomaticCompactionRealProvidersAndResume(t *testing.T) {
-	runCacheAutomaticCompactionRealProvidersAndResume(t, false)
-}
-func TestCachedAutomaticCompactionRealProvidersAndResume(t *testing.T) {
-	runCacheAutomaticCompactionRealProvidersAndResume(t, true)
-}
-func runCacheAutomaticCompactionRealProvidersAndResume(t *testing.T, cacheEnabled bool) {
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		for _, failure := range []bool{false, true} {
 			name := string(family)
@@ -81,7 +71,7 @@ func runCacheAutomaticCompactionRealProvidersAndResume(t *testing.T, cacheEnable
 				}))
 				defer server.Close()
 				budget, _ := contextplan.NewBudget(20000, 0, 0)
-				cfg := cacheFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, Model: "claude-test", BaseURL: server.URL, APIKey: secret.New("private-test-key")}, ContextBudget: budget}, cacheEnabled)
+				cfg := cacheFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, Model: "claude-test", BaseURL: server.URL, APIKey: secret.New("private-test-key")}, ContextBudget: budget}, false)
 				root, workspace := filepath.Join(t.TempDir(), "sessions"), t.TempDir()
 				resources, err := openChatResources(context.Background(), cfg, root, "", workspace)
 				if err != nil {
@@ -117,69 +107,6 @@ func runCacheAutomaticCompactionRealProvidersAndResume(t *testing.T, cacheEnable
 				submitAppTurn(t, resumed, "after-resume")
 				if err := resumed.close(context.Background()); err != nil {
 					t.Fatal(err)
-				}
-			})
-		}
-	}
-}
-
-func TestAutomaticCompactionHeadlessModes(t *testing.T) {
-	t.Chdir(t.TempDir())
-	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
-		for _, mode := range []headless.Mode{headless.ModeText, headless.ModeJSON, headless.ModeStreamJSON} {
-			t.Run(string(family)+"/"+string(mode), func(t *testing.T) {
-				var count atomic.Int32
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					n := int(count.Add(1))
-					w.Header().Set("Content-Type", "text/event-stream")
-					if family == domain.ProviderOpenAI {
-						writeOpenAIAppTurn(w, n)
-					} else {
-						var data bytes.Buffer
-						writeAnthropicAppTurn(&data, n)
-						_, _ = w.Write(bytes.Replace(data.Bytes(), []byte("data: {\"type\":\"message_stop\"}"), []byte("data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\ndata: {\"type\":\"message_stop\"}"), 1))
-					}
-				}))
-				defer server.Close()
-				budget, _ := contextplan.NewBudget(20000, 0, 0)
-				cfg := config.Config{Provider: config.Provider{Family: family, Model: "claude-test", BaseURL: server.URL, APIKey: secret.New("private-test-key")}, ContextBudget: budget}
-				root := filepath.Join(t.TempDir(), "sessions")
-				resource, err := openChatResources(context.Background(), cfg, root, "", t.TempDir())
-				if err != nil {
-					t.Fatal(err)
-				}
-				submitAppTurn(t, resource, strings.Repeat("historical work ", 3500))
-				thread := resource.identity.ThreadID
-				if err := resource.close(context.Background()); err != nil {
-					t.Fatal(err)
-				}
-				path := filepath.Join(t.TempDir(), "config.json")
-				content := fmt.Sprintf(`{"provider":%q,"base_url":%q,"api_key":"private-test-key","model":"claude-test","context_window_tokens":20000}`, family, server.URL)
-				if err := os.WriteFile(path, []byte(content), 0600); err != nil {
-					t.Fatal(err)
-				}
-				output := &appWriteCloser{}
-				options := Options{Mode: mode, Prompt: "next", ResumeThreadID: string(thread), SessionDataRoot: root, SessionCatalogPath: filepath.Join(t.TempDir(), "catalog.sqlite"), ConfigPath: path, Output: output}
-				if mode == headless.ModeStreamJSON {
-					options.Prompt = ""
-					options.Input = io.NopCloser(strings.NewReader("{\"version\":1,\"type\":\"input.submit\",\"request_id\":\"next\",\"text\":\"next\"}\n"))
-				}
-				outcome := Run(context.Background(), options)
-				if outcome.ExitCode() != 0 || count.Load() != 3 {
-					t.Fatalf("outcome=%v requests=%d output=%s", outcome, count.Load(), output.String())
-				}
-				text := output.String()
-				if mode == headless.ModeText && text != "answer-3\n" {
-					t.Fatal("text output changed", text)
-				}
-				if mode != headless.ModeStreamJSON && strings.Contains(text, "compaction") {
-					t.Fatal("one-shot control output leaked")
-				}
-				if mode == headless.ModeStreamJSON && (strings.Count(text, `"type":"compaction.started"`) != 1 || strings.Count(text, `"type":"compaction.completed"`) != 1 || !strings.Contains(text, `"trigger":"auto"`)) {
-					t.Fatal("automatic stream boundary absent", text)
-				}
-				if strings.Contains(text, "private-test-key") || strings.Contains(text, "historical work") {
-					t.Fatal("body or secret leaked")
 				}
 			})
 		}

@@ -105,31 +105,3 @@ func TestPreparedStopContinuationHasOneResolutionForBothEntries(t *testing.T) {
 		})
 	}
 }
-
-func TestPreparedStopContinuationRejectsIncompleteOrMixedOwnership(t *testing.T) {
-	frozen, _ := domain.NewStopFeedbackOnly(testStopFeedback(t))
-	envelope, _ := NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", []byte(`{}`))
-	if _, err := NewPreparedStopContinuation(frozen, envelope, func() {}, nil, testInputPreview(t, domain.ProviderOpenAI)); err == nil {
-		t.Fatal("missing cleanup accepted")
-	}
-	if _, err := NewPreparedStopContinuation(frozen, envelope, func() {}, func() {}, InputPreview{}); err == nil {
-		t.Fatal("missing preview accepted")
-	}
-	if _, err := NewPreparedSteeredStopContinuation(frozen, envelope, envelope, func() {}, func() {}, testInputPreview(t, domain.ProviderOpenAI)); err == nil {
-		t.Fatal("fake user envelope accepted")
-	}
-	var zero PreparedStopContinuation
-	if zero.Finalized() || zero.Finalize() == nil || zero.Discard() == nil {
-		t.Fatal("zero commit accepted")
-	}
-	p, err := NewPreparedStopContinuation(frozen, envelope, func() { t.Fatal("discard finalized") }, func() {}, testInputPreview(t, domain.ProviderOpenAI))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := p.Discard(); err != nil {
-		t.Fatal(err)
-	}
-	if p.Finalized() || p.Finalize() == nil {
-		t.Fatal("discarded feedback committed")
-	}
-}

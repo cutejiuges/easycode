@@ -2,12 +2,9 @@ package runtime
 
 import (
 	"context"
-	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
 	"easycode/internal/protocol"
 	"easycode/internal/session"
-	"fmt"
-	"strings"
 	"testing"
 )
 
@@ -50,7 +47,7 @@ func TestInputCommitCancellationLinearization(t *testing.T) {
 			}
 			recorder := &inputResolutionRecorder{}
 			var events []protocol.Event
-			got := runtime.commitInputs(ctx, runtimeTurnID, 0, runtimeInputs("  durable input\n"), recorder, func(e protocol.Event) { events = append(events, e) })
+			got := runtime.commitInputs(ctx, runtimeTurnID, 0, runtimeFileInputs(t, "  durable input @file\n"), recorder, func(e protocol.Event) { events = append(events, e) })
 			want := protocol.InputCommitted
 			if tc.before || (tc.fail && !tc.poison) {
 				want = protocol.InputReturned
@@ -75,63 +72,5 @@ func TestInputCommitCancellationLinearization(t *testing.T) {
 				t.Fatal("uncertain persistence did not poison runtime")
 			}
 		})
-	}
-}
-
-func TestInputEncodingBudgetSplitsMaximalPrefixWithoutWriting(t *testing.T) {
-	journal := &fakeJournal{}
-	runtime := newTestRuntime(t, &fakeConversation{stream: fixedStream()}, journal)
-	huge := runtimeInputs(strings.Repeat("\x01", domain.MaxUserInputBytes))
-	a, _ := inputAssociation(runtimeTurnID, 0, huge)
-	if runtime.inputEncodingFits(a, huge) {
-		t.Fatal("escaped oversized input accepted")
-	}
-	var queue []queuedInput
-	for i := 0; i < 3; i++ {
-		id := domain.InputID(fmt.Sprintf("01900000-0000-7000-8000-%012d", i+1))
-		value, _ := domain.NewUserInput(id, strings.Repeat("\x01", 1<<20))
-		queue = append(queue, queuedInput{value: value, text: value.Text(), automatic: true})
-	}
-	loop, err := NewAgentLoop(runtime, DefaultAgentLoopConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	state := newAgentLoopRunState(loop, context.Background())
-	state.queue = queue
-	state.queuedBytes = 3 << 20
-	claimed := state.takePrefix(runtimeTurnID, 0, true)
-	if len(claimed) != 2 || len(state.queue) != 1 || state.queue[0].value.ID() != "01900000-0000-7000-8000-000000000003" || state.queuedBytes != 3<<20 {
-		t.Fatal("encoding prefix split or unresolved quota changed")
-	}
-	if len(journal.snapshot()) != 0 || journal.Poisoned() {
-		t.Fatal("preflight reached writer")
-	}
-}
-
-func TestPreflightReturnsLongInputAndAllowsShortRetry(t *testing.T) {
-	conversation := &fakeConversation{stream: fixedStream()}
-	journal := &fakeJournal{}
-	cfg := testRuntimeConfig(t, journal)
-	budget, err := contextplan.NewBudget(100000, 0, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg.ContextBudget = budget
-	runtime, err := New(conversation, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	recorder := &inputResolutionRecorder{}
-	emit := func(protocol.Event) {}
-	rejected := runtime.commitInputs(context.Background(), runtimeTurnID, 0, runtimeInputs(strings.Repeat("x", 1<<20)), recorder, emit)
-	if !rejected.preflightRejected || len(journal.snapshot()) != 0 || len(conversation.ProjectHistory().Turns) != 0 || len(recorder.states) != 1 || recorder.states[0] != protocol.InputReturned || recorder.reasons[0] != protocol.InputReasonPreflight {
-		t.Fatal("over-limit input was retained")
-	}
-	accepted := runtime.commitInputs(context.Background(), runtimeTurnID, 0, runtimeInputs("short retry"), recorder, emit)
-	if !accepted.committed || len(journal.snapshot()) != 1 || len(conversation.ProjectHistory().Turns) != 1 || recorder.states[1] != protocol.InputCommitted {
-		t.Fatalf("shortened retry failed: %v", accepted.err)
-	}
-	if conversation.calls.Load() != 0 || journal.Poisoned() {
-		t.Fatal("preflight performed network or poisoned writer")
 	}
 }

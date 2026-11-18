@@ -1,9 +1,0 @@
-{
-  "command": [
-    "make",
-    "verify"
-  ],
-  "started_at": "2026-11-14T15:37:40.785489+00:00",
-  "duration_seconds": 8.721,
-  "exit_code": 2
-}

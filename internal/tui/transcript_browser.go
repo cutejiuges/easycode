@@ -581,6 +581,9 @@ func (model Model) renderTranscriptBrowser() string {
 				marker = "> "
 			}
 			text := string(item.Kind) + ": " + item.Text
+			if item.Kind == domain.TranscriptUser && item.Files.Total() > 0 {
+				text = fmt.Sprintf("user: [%d file(s)] %s", item.Files.Total(), item.Text)
+			}
 			if item.Kind == domain.TranscriptReasoning && item.Reasoning != nil {
 				text = "Reasoning · " + reasoningSourceLabel(item.Reasoning.Source) + " · " + string(item.Reasoning.Availability)
 				if item.temporary.live {

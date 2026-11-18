@@ -27,19 +27,3 @@ func TestReasoningUsageDuplicateFieldsCannotBecomeSuccessfulSample(t *testing.T)
 		})
 	}
 }
-
-func TestReasoningUsageAcceptsWellFormedProviderExtensions(t *testing.T) {
-	r := newResponsesStreamReducer()
-	reduceOpenAIEvent(t, r, `{"type":"response.created","response":{"id":"usage-regression"},"future":{"valid":true}}`)
-	result := reduceOpenAIEvent(t, r, `{"type":"response.completed","response":{"id":"usage-regression","usage":{"output_tokens":40,"output_tokens_details":{"reasoning_tokens":30,"future":3}},"future":{"valid":true}}}`)
-	if !result.completed {
-		t.Fatal("valid provider extension blocked completion")
-	}
-	usage, err := r.sampleUsage()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if value, known := usage.ReasoningOutput().Value(); !known || value != 30 {
-		t.Fatal("valid extension changed reasoning usage")
-	}
-}

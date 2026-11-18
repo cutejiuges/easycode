@@ -37,7 +37,12 @@ func transcriptListItem(node transcriptNode, entry session.ToolHistoryEntry) (pr
 	}
 	if node.toolIndex < 0 {
 		item.Text = tool.ActivityText(node.item.Text, 512)
-		item.More = len(item.Text) < len(node.item.Text) || node.item.HasSkill
+		files, err := domain.NewFileSummary(node.item.Files)
+		if err != nil {
+			return protocol.TranscriptListItem{}, err
+		}
+		item.Files = files
+		item.More = len(item.Text) < len(node.item.Text) || node.item.HasSkill || files.Total() > 0
 		return item, nil
 	}
 	item.DetailSequence = entry.DetailSequence
@@ -257,6 +262,9 @@ func (q *transcriptQueries) ReadTranscriptBody(ctx context.Context, query protoc
 		text = node.item.Text
 		if node.item.HasSkill {
 			text += "\n\n--- Skill attachment ---\n" + node.item.Skill.Content
+		}
+		for _, file := range node.item.Files.Items() {
+			text += fmt.Sprintf("\n\n--- File attachment: %s ---\nSource lines: %d; included: %d-%d; truncated: %t; partial last line: %t\n", file.Reference().String(), file.TotalLines(), file.ActualStartLine(), file.ActualEndLine(), file.Truncated(), file.EndsMidLine()) + file.Content()
 		}
 		if node.compaction != nil {
 			text = node.compaction.summary.Text()

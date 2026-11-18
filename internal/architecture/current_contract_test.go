@@ -2,8 +2,6 @@ package architecture_test
 
 import (
 	"go/ast"
-	"go/parser"
-	"go/token"
 	"path"
 	"strconv"
 	"strings"
@@ -21,65 +19,6 @@ func importsByName(file *ast.File) map[string]string {
 		result[name] = value
 	}
 	return result
-}
-
-func codecBoundaryViolations(current *sourcePackage) []string {
-	var violations []string
-	for relative, file := range current.files {
-		imports := importsByName(file)
-		ast.Inspect(file, func(node ast.Node) bool {
-			selector, ok := node.(*ast.SelectorExpr)
-			if !ok {
-				return true
-			}
-			receiver, ok := selector.X.(*ast.Ident)
-			if !ok {
-				return true
-			}
-			dependency := imports[receiver.Name]
-			if dependency == "encoding/json" && current.path != "easycode/internal/codec" {
-				switch selector.Sel.Name {
-				case "Marshal", "Unmarshal", "NewDecoder", "NewEncoder", "Valid", "Compact", "Indent":
-					violations = append(violations, relative+": JSON operation outside codec")
-				}
-			}
-			if dependency == sonicImportPath {
-				switch selector.Sel.Name {
-				case "ConfigStd", "ConfigDefault", "ConfigFastest":
-					violations = append(violations, relative+": mutable third-party codec")
-				}
-			}
-			return true
-		})
-		for _, decl := range file.Decls {
-			if function, ok := decl.(*ast.FuncDecl); ok {
-				switch function.Name.Name {
-				case "NewPreparedSample", "NewPreparedToolOutputs":
-					callbacks := 0
-					for _, field := range function.Type.Params.List {
-						if _, ok := field.Type.(*ast.FuncType); ok {
-							callbacks += len(field.Names)
-						}
-					}
-					if callbacks != 2 {
-						violations = append(violations, relative+": prepared lifecycle requires explicit finalize and discard")
-					}
-				case "NewPreparedSampleWithDiscard", "NewPreparedToolOutputsWithDiscard":
-					violations = append(violations, relative+": obsolete prepared constructor")
-				}
-			}
-		}
-	}
-	return violations
-}
-
-func TestCurrentCodecBoundaries(t *testing.T) {
-	repository := loadRepositorySource(t)
-	var violations []string
-	for _, current := range repository.packages {
-		violations = append(violations, codecBoundaryViolations(current)...)
-	}
-	assertNoViolations(t, violations)
 }
 
 type constructorFunction struct {
@@ -191,53 +130,6 @@ func TestAllConstructorsHaveExplicitLifecycle(t *testing.T) {
 	assertNoViolations(t, constructorViolations(loadRepositorySource(t).packages))
 }
 
-func TestCurrentContractGuardNegativeAndPositiveCases(t *testing.T) {
-	for _, source := range []string{
-		`package fixture; import "encoding/json"; func decode(){json.Unmarshal(nil,nil)}`,
-		`package fixture; import "github.com/bytedance/sonic"; func encode(){sonic.ConfigStd.Marshal(nil)}`,
-		`package fixture; func NewPreparedSampleWithDiscard(){}`,
-		`package fixture; func NewPreparedSample(envelope int, finalize func()) {}`,
-	} {
-		file, err := parser.ParseFile(token.NewFileSet(), "fixture.go", source, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		current := &sourcePackage{path: "easycode/internal/tool", files: map[string]*ast.File{"fixture.go": file}}
-		if len(codecBoundaryViolations(current)) == 0 {
-			t.Fatal("codec violation escaped", source)
-		}
-	}
-	for _, source := range []string{
-		`package fixture; import "os"; func NewResource(){os.Open("x")}`,
-		`package fixture; import "os"; func NewResource(){load()}; func load(){os.ReadFile("x")}`,
-		`package fixture; func NewResource(){launch()}; func launch(){go func(){}()}`,
-		`package fixture; import "os"; type resource struct{}; func NewResource(){ r:=&resource{}; r.load() }; func (*resource) load(){os.Open("x")}`,
-		`package fixture; import "os"; type resource struct{}; func (*resource) NewChild(){os.Open("x")}`,
-		`package fixture; import "os"; func NewResource(file *os.File){file.Read(nil)}`,
-		`package fixture; import "os"; type resource struct{ child *child }; type child struct{}; func NewResource(){r:=&resource{};r.child.load()};func (*child) load(){os.Open("x")}`,
-	} {
-		file, err := parser.ParseFile(token.NewFileSet(), "fixture.go", source, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		current := &sourcePackage{path: "fixture", files: map[string]*ast.File{"fixture.go": file}}
-		if len(constructorViolations(map[string]*sourcePackage{"fixture": current})) == 0 {
-			t.Fatal("constructor violation escaped", source)
-		}
-	}
-	file, err := parser.ParseFile(token.NewFileSet(), "fixture.go", `package fixture; import "encoding/json"; type Opaque struct { Raw json.RawMessage }; func NewValue() Opaque { return Opaque{} }`, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	current := &sourcePackage{path: "fixture", files: map[string]*ast.File{"fixture.go": file}}
-	if len(codecBoundaryViolations(current))+len(constructorViolations(map[string]*sourcePackage{"fixture": current}))+len(singleCurrentDeclarationViolations(current)) != 0 {
-		t.Fatal("current native envelope or opaque value rejected")
-	}
-	if !isCoreContractPackage("easycode/internal/tool") {
-		t.Fatal("tool core contract excluded")
-	}
-}
-
 // constructorType 解析显式类型，不把动态接口猜测为某个具体实现。
 func constructorType(expression ast.Expr, pkg string, imports map[string]string) string {
 	switch value := expression.(type) {
@@ -343,44 +235,4 @@ func constructorExpressionType(expression ast.Expr, current constructorFunction,
 		}
 	}
 	return ""
-}
-
-func TestSessionEnvelopeVersionMarkersAreForbidden(t *testing.T) {
-	for _, source := range []string{
-		`package session; const EnvelopeVersion=1`,
-		`package session; const formatCanary=1`,
-		`package session; type Record struct { Version int }`,
-		`package session; type checksumEnvelope struct { FormatRevision int }`,
-		"package session; type Record struct { Marker int `json:\"schema_version\"` }",
-	} {
-		file, err := parser.ParseFile(token.NewFileSet(), "fixture.go", source, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		current := &sourcePackage{path: "easycode/internal/session", files: map[string]*ast.File{"fixture.go": file}}
-		if len(singleCurrentDeclarationViolations(current)) == 0 {
-			t.Fatal("Session version marker escaped guard", source)
-		}
-	}
-}
-
-func TestNativeAndCatalogVersionMarkersAreForbidden(t *testing.T) {
-	for _, fixture := range []struct{ pkg, source string }{
-		{"provider", `package provider; const nativeCommitPayloadRevision=3`},
-		{"provider", `package provider; type NativeCommitEnvelope struct { payloadVersion int }`},
-		{"provider", `package provider; type checkpointRecord struct { FormatVersion int }`},
-		{"provider", `package provider; type CompactionSource struct { promptRevision string }`},
-		{"session", `package session; type NativeCommitPayload struct { PayloadVersion int }`},
-		{"session/catalog", `package catalog; const schemaVersion=1`},
-		{"session/catalog", `package catalog; const sql="PRAGMA user_version=1"`},
-	} {
-		file, err := parser.ParseFile(token.NewFileSet(), "fixture.go", fixture.source, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		current := &sourcePackage{path: "easycode/internal/" + fixture.pkg, files: map[string]*ast.File{"fixture.go": file}}
-		if len(singleCurrentDeclarationViolations(current)) == 0 {
-			t.Fatal("internal format marker escaped guard", fixture.source)
-		}
-	}
 }

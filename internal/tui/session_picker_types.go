@@ -15,6 +15,7 @@ type SessionEntry struct {
 
 // PreviewMessage 保留原始消息身份以及展示截断状态。
 type PreviewMessage struct {
+	Files     domain.FileSummary
 	TurnID    domain.TurnID
 	Message   domain.SemanticMessage
 	Truncated bool

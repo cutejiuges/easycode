@@ -46,9 +46,6 @@ type markdownRenderer struct {
 	nodes        int
 }
 
-func renderMarkdown(doc markdownDocument, width int, color bool) markdownLayout {
-	return renderMarkdownBudget(doc, width, color, markdownMemoryLimit, markdownNodeLimit)
-}
 func renderMarkdownBudget(doc markdownDocument, width int, color bool, limit int, nodeLimit int) markdownLayout {
 	if doc.failure || doc.root == nil || doc.nodes > nodeLimit {
 		return markdownLayout{failure: true}

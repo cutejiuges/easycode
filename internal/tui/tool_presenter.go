@@ -13,22 +13,6 @@ type toolActivityState struct {
 	activity protocol.ToolActivityPayload
 }
 
-func commandSummary(command string, viewportWidth int) string {
-	if viewportWidth <= 0 {
-		viewportWidth = 80
-	}
-	command = truncateRunes(commandDisplayText(command), 160)
-	lines := wrapApprovalDiff(command, max(1, viewportWidth-10))
-	if len(lines) <= 2 {
-		return truncateRunes(strings.Join(lines, "\n"), 160)
-	}
-	last := []rune(lines[1])
-	if len(last) > 0 {
-		last[len(last)-1] = '…'
-	}
-	return truncateRunes(lines[0]+"\n"+string(last), 160)
-}
-
 // renderTranscript 只处理当前有界展示材料，相邻正常读取和搜索合并，异常打断分组。
 func renderTranscript(messages []transcriptMessage, width int) []string {
 	var lines []string

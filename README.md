@@ -4,7 +4,7 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 
 用户只需要提供 `base_url`、`api_key` 和模型名称即可连接服务，不需要账号登录、OAuth、设备码或订阅鉴权。
 
-> 项目按纵向切片持续推进。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、命令/Skill 首词补全、原生多轮 Session、`--resume`/`--continue`、headless/FIFO 输入、离线 `sessions list`，以及九项工具能力：Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill 和结构化用户提问。命令执行当前支持 Darwin；已支持同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop 命令 Hook、PreToolUse 参数完整改写、被动推理阅读和启动推理/display/输出配置；本地 Plugin 技能包已支持显式目录加载和只读浏览；其余 Hook 事件、运行中推理切换等能力仍按 Roadmap 分阶段推进。
+> 项目按纵向切片持续推进。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、命令/Skill 首词补全、正文文件引用与路径补全、原生多轮 Session、`--resume`/`--continue`、headless/FIFO 输入、离线 `sessions list`，以及九项工具能力：Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill 和结构化用户提问。命令执行当前支持 Darwin；已支持同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop 命令 Hook、PreToolUse 参数完整改写、被动推理阅读和启动推理/display/输出配置；本地 Plugin 技能包已支持显式目录加载和只读浏览；其余 Hook 事件、effort 之外的运行中推理切换等能力仍按 Roadmap 分阶段推进。
 
 ## 交互式恢复会话
 
@@ -32,7 +32,21 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 
 目录使用启动时冻结的 Skill 来源规则，只有有效且允许用户调用的获胜条目参与补全；禁止模型自行调用的手动 Skill 仍可选择。同名内置 slash 优先，Skill 可用 `$name` 调用。显式粘贴只插入原文并暂时关闭候选，后续独立 Enter 提交实际文本；编辑名称或按 Tab 可重新请求候选。
 
-本次范围仅覆盖命令与 Skill 首词，不包含文件、参数值、正文 mentions 或动态目录补全。设计及双 Provider、恢复、缓存与终端验证证据见[归档核对记录](openspec/changes/archive/2026-11-06-add-command-and-skill-completion/archive.md)和[追加验证报告](openspec/changes/archive/2026-11-06-add-command-and-skill-completion/revalidation.md)。
+命令与 Skill 仍限定首词名称；正文中的工作区文件引用使用下述独立补全。普通参数值与其他动态目录补全尚未实现。设计及双 Provider、恢复、缓存与终端验证证据见[归档核对记录](openspec/changes/archive/2026-11-06-add-command-and-skill-completion/archive.md)和[追加验证报告](openspec/changes/archive/2026-11-06-add-command-and-skill-completion/revalidation.md)。
+
+## 工作区文件引用
+
+在正文光标处输入 `@` 搜索当前工作区文件，例如 `请检查 @src/main.go`、`@"docs/design notes.md"#L10-20`。`#L10` 表示单行，`#L10-20` 表示闭区间；引用只能使用相对路径，允许去除前导 `./`，不展开 `~`、绝对路径、反斜杠或 `..`。email、`@@`、转义的 `\@`、行内代码和围栏中的 `@` 保持字面量。精确内置命令（含 `/effort`、`/compact`）的参数不启动文件搜索；`$effort` 等显式 Skill 可以同时附带文件。
+
+↑/↓ 选择，Tab 或 Enter 只填入完整路径，保留行范围和引用以外的文字，光标越过完整引用及首个分隔字素；随后独立 Enter 才提交并读取正文。Esc 先关闭候选，Tab 可重新打开；粘贴不自动打开或接受候选。新查询立即停用旧行，搜索中、无匹配或错误状态没有可接受项时，Enter 按实际原文提交，准备失败保留草稿。窄屏隐藏的候选不可接受。
+
+候选只扫描名称、元数据和工作区内分层 `.gitignore`、`.ignore`、`.rgignore`。隐藏文件可搜索，VCS 元数据、symlink 与不受支持名称省略；不读取父级/全局规则或 Git index。过滤不授予或撤销读取权限，手输被忽略的合法路径仍可明确附带。每次候选交互渐进建立至多 50000 项/16 MiB 索引，同锚点编辑复用它；最多显示五个候选。发现上限为 2 秒、200000 原始条目、64 层，单目录至多 4096 名称/1 MiB，在途名称栈至多 8 MiB。规则正文至多 64 KiB/份、512 KiB/次、4096 规则、4096 bytes/模式，匹配分别受 32000000 规则状态及每查询 16000000 搜索状态约束。覆盖不足明确显示 Incomplete；关闭重开会重建，不是文件 watcher。
+
+每条输入最多 8 个不同的路径/范围引用，同一路径的多个范围只读一次。仅接受工作区内稳定、可读、无 NUL 的普通 UTF-8 文件；实际描述符的类型、权限、身份、大小及读前后属性均须通过校验，任一失败拒绝整条输入。单源最多 16 MiB、总实际读取最多 64 MiB（失败读取仍计费）；整文件保留至多 200 行，显式范围至多 2000 行，并受每份 64 KiB/合计 512 KiB 的实际 JSON 包装额度约束。保留原 CRLF/LF、BOM 和末尾换行，安全截断不会切开 UTF-8 或 CRLF；摘要和详情标明实际范围、截断与部分末行。
+
+用户原文、Skill 与文件分别冻结；输入连同附件元数据仍受 4 MiB、FIFO 64 条/16 MiB、native/record 16 MiB、batch 64 MiB 等限制。queued 后不重读；取回只还原原文，再次提交才重新准备。文件数据不产生 Read 工具事实、Write 资格、Skill 资源激活或 Hook 信任。文件完成不固定 effort：strict-next 真正启动时取最新选择，当前回合工具/Stop/自动摘要沿用原捕获策略。
+
+成功 Sync 后主线显示有界文件摘要，摘要的整个编码至多 4 KiB；过长来源以完整尾项省略计数表示，Ctrl+O 可分页阅读全部冻结来源与正文，共用四页缓存。双 Provider 使用各自原生文本块与必需的 `input_metadata.files`（无附件为 `[]`），恢复、离线预览及压缩不重读来源。内部没有新增格式版本、兼容 reader、Session record 或外部 JSONL 字段。普通一次性/headless/stream-json 文字里的 `@` 保持原文，这些入口仍可恢复已有交互附件。当前不包含目录、图片/PDF、外部文件、自动 rehydrate 或 watcher；Darwin 完成真实终端验收，其他平台范围见[验收记录](openspec/changes/archive/2026-11-17-add-workspace-file-mentions/verification.md)。
 
 ## 多行聊天输入
 
@@ -55,11 +69,11 @@ TUI 将 CRLF/CR 规范化为 LF，保留缩进、Tab、尾空格及尾换行；�
 
 ## 当前能力
 
-当前代码与限制的完整对照见[当前能力清单](docs/roadmap/capability-status.md)（2026-11-06 核对）。Roadmap 的阶段目标不等于已实现功能。
+当前代码与限制的完整对照见[当前能力清单](docs/roadmap/capability-status.md)（2026-11-17 核对）。Roadmap 的阶段目标不等于已实现功能。
 
 | 领域 | 当前状态 |
 |---|---|
-| CLI/TUI 入口 | 已实现流式 Markdown Chat、多行/FIFO 输入、命令/Skill 首词补全、工具/问卷/Hook 审查、历史详情与 resume 选择器；支持一次性 text/JSON 和 stream-json 控制 |
+| CLI/TUI 入口 | 已实现流式 Markdown Chat、多行/FIFO 输入、命令/Skill 首词补全、正文文件引用与路径补全、工具/问卷/Hook 审查、历史详情与 resume 选择器；支持一次性 text/JSON 和 stream-json 控制 |
 | 双 Provider | Anthropic Messages 与 OpenAI Responses 已支持流式文本多轮、各自原生历史及 committed-only 文本历史投影 |
 | HTTP/SSE | 已建立基于 Resty v3 的公共传输层 |
 | JSON 与缓存 | 已实现不可变 canonical JSON、Context/CachePlan、来源 fingerprint、Anthropic 显式断点/TTL、OpenAI thread key/可选 WebSocket 增量及缓存查询 |
@@ -326,7 +340,7 @@ stream-json v1 使用专属控制行（完整行最多 4 KiB）：
 
 活动内容共享 64 KiB/50 项显示预算，选中项优先保留。取消或失败按真实结果提示未保存、已保存但刷新失败、保存状态不确定；下一 turn 释放上一份失败快照。主线先排除推理再取最近 50 项，完整历史仍在详情分页。阅读、原文切换和 resize 不新增模型请求，不改变冻结推理或缓存策略。不发送 sequential_cutoff，也不因展开详情而请求替代正文。
 
-本地验证入口为 `scripts/reasoning-smoke.py`、`scripts/reasoning-controls-smoke.py`（Darwin 双 Provider 真实 PTY），以及 `internal/app/reasoning_e2e_test.go`、`internal/app/reasoning_controls_e2e_test.go`（双 Provider 三种 headless 模式）。新增 `internal/app/reasoning_cli_e2e_test.go` 使用真实二进制验证工具续写、跨进程恢复、参数拒绝和非法配置，`internal/app/reasoning_malformed_stream_test.go` 验证重复 JSON 成员不会变成成功样本或工具执行；完整结果见[回归记录](openspec/changes/archive/2026-11-11-add-provider-reasoning-controls/regression-2026-11-11.md)。不以 Darwin 验收宣称其他平台的原生终端支持。
+本地验证入口为 `scripts/reasoning-smoke.py`、`scripts/reasoning-controls-smoke.py`（Darwin 双 Provider 真实 PTY），以及 `internal/app/reasoning_e2e_test.go`（双 Provider 三种 headless 模式）和两家 Provider 的 `reasoning_request_test.go`、`reasoning_restore_test.go`。历史 CLI、非法配置和异常流矩阵已在测试精简中移除，当时结论见[回归记录](openspec/changes/archive/2026-11-11-add-provider-reasoning-controls/regression-2026-11-11.md)；现有关键集合见[测试维护说明](docs/testing.md)。不以 Darwin 验收宣称其他平台的原生终端支持。
 
 ## 架构概览
 
@@ -349,7 +363,7 @@ Anthropic   OpenAI
 P3+ 目标：Tool Policy / Executor、扩展系统与 Subagent
 ```
 
-当前共享层负责多 sample Tool Loop、最多 8 路只读并行、独占写入屏障、批准/ledger、Session 和宿主事件；通用 sandbox、其余 Hook 事件与 Subagent 是后续阶段目标。每个 Provider 当前独立负责原生请求、流归并、原生历史和语义投影；当前两家 Provider 均已有以下请求、归并、持久化、工具、压缩、缓存和计量接缝；运行中推理切换等剩余能力仍按 Roadmap 推进：
+当前共享层负责多 sample Tool Loop、最多 8 路只读并行、独占写入屏障、批准/ledger、Session 和宿主事件；通用 sandbox、其余 Hook 事件与 Subagent 是后续阶段目标。每个 Provider 当前独立负责原生请求、流归并、原生历史和语义投影；当前两家 Provider 均已有以下请求、归并、持久化、工具、压缩、缓存和计量接缝；effort 之外的运行中推理切换等剩余能力仍按 Roadmap 推进：
 
 - 原生请求编译与 Header 策略。
 - SSE 事件归并和状态机。
@@ -540,7 +554,7 @@ exit 0 的空白或 `{}` 表示通过；只有严格 `{"decision":"block","reaso
 
 完整质量门使用 `make verify`，包含分支策略、格式、vet、Staticcheck、架构边界、测试调度器自检、全量普通测试和经审计的必要 race。质量门需要 Python 3.9+，默认不限制总耗时（`TEST_BUDGET=0`），每次强制重新执行测试。正值总预算仅供主动诊断。Go 的正常构建缓存仍可复用；依赖和工具链需提前准备好。`TEST_TIMEOUT` 保留单个测试进程的失败上限，不修改各业务操作的取消或超时断言。
 
-测试入口在 Darwin 默认最多运行 6 个命令（不超过可见 CPU 数的两倍），其他平台最多 4 个且不超过可见 CPU 数；每个测试进程使用 2 路 CPU/测试并行度。编译与静态分析独立使用最多 4 路 CPU，测试枚举的构建命令也最多并行 4 个包。app 的顶层测试在 Darwin 自动分为 16 个隔离分片，其他平台默认 2 个。Linux CI 使用 4 个命令、2 个 app 分片，手动 workflow 可比较进程数、分片数和进程内并行度。Provider、Session、Runtime、Tool、TUI 六个高 RSS 包额外共享最多 2 个执行槽，并提前与 app 分片交错；`--heavy-jobs` 可调整该上限。其余包同样受总并发上限约束，普通与 race 阶段顺序执行，`make -j` 不会同时启动两个阶段。枚举时为每个包链接一次测试二进制，同一阶段的分片复用该文件并保持包目录与 TestMain 生命周期，结束后删除临时二进制。全部 Test、Example 和默认 fuzz seed 都从当前平台自动枚举，普通阶段完整执行；race 仅移出 `scripts/race_policy.json` 中精确列出的已审计入口。清单记录理由和保留覆盖，新增测试默认进入 race，失效名称或缺失替代覆盖会报错。实际完成清单必须与所选集合匹配，报告同时保留完整集合和排除项。
+测试入口在 Darwin 默认最多运行 6 个命令（不超过可见 CPU 数的两倍），其他平台最多 4 个且不超过可见 CPU 数；每个测试进程使用 2 路 CPU/测试并行度。编译与静态分析独立使用最多 4 路 CPU，测试枚举的构建命令也最多并行 4 个包。app 的顶层测试在 Darwin 自动分为 16 个隔离分片，其他平台默认 2 个。Linux CI 使用 4 个命令、2 个 app 分片，手动 workflow 可比较进程数、分片数和进程内并行度。Provider、Session、Runtime、Tool、TUI 六个高 RSS 包额外共享最多 2 个执行槽，并提前与 app 分片交错；`--heavy-jobs` 可调整该上限。其余包同样受总并发上限约束，普通与 race 阶段顺序执行，`make -j` 不会同时启动两个阶段。枚举时为每个包链接一次测试二进制，同一阶段的分片复用该文件并保持包目录与 TestMain 生命周期，结束后删除临时二进制。全部 Test、Example 和默认 fuzz seed 都从当前平台自动枚举，普通阶段完整执行；race 只运行 `scripts/race_policy.json` 正向列出的关键并发、提交取消和关闭恢复入口。新增普通测试不自动进入 race；清单重复或失效会报错，`make test-race-full` 仍可手动运行现存全部入口。实际完成清单必须与所选集合匹配，报告同时保留完整集合和排除项。
 
 执行开始时会打印临时报告目录，`summary.json` 保存阶段耗时、慢测试、执行清单、退出码、输入摘要与最大单个子进程 RSS（不是所有并发进程 RSS 之和），各分片保留原始 Go JSON 事件。失败、中断或预算超时会停止新工作并回收本次进程树。CI 上传相同报告，提供手动触发入口；性能验收以禁用测试结果缓存的完整流程为准。
 
@@ -588,7 +602,7 @@ make verify
 make test
 make test-race
 
-# 手动执行全量 race，不应用排除清单
+# 手动执行现存全部测试的 race，不限制为关键清单
 make test-race-full
 
 # 顺序执行全量普通与默认 race，并指定报告目录
@@ -652,11 +666,11 @@ make install-hooks
 | 阶段 | 主题 | 当前交付与剩余范围 |
 |---|---|---|
 | P0 | 工程与协议基线 | 工程、协议与质量门已落地；doctor 等诊断入口待实现 |
-| P1 | 双 Provider Kernel | 双 wire 流式、原生历史/工具/缓存及启动推理控制已交付；运行中推理切换待实现 |
+| P1 | 双 Provider Kernel | 双 wire 流式、原生历史/工具/缓存及启动推理控制与会话内 effort 已交付；其他推理字段切换待实现 |
 | P2 | Session 与 Headless Loop | root Session、JSONL/SQLite、恢复、三种 headless 与 FIFO 已交付；全文索引/子线程待实现 |
 | P3 | Coding Tools | 九项工具与批准/恢复/预算已交付；PTY、后台进程、通用跨平台 sandbox 待实现 |
 | P4 | 缓存与上下文 | 缓存、usage 归一、手动/自动压缩已交付；费用、精确计数与跨 Provider fork 待实现 |
-| P5 | Claude 风格 TUI | Markdown、输入及命令/Skill 补全、审批/问卷/Hook、详情、被动推理阅读和 resume picker 已交付；fork picker 待实现 |
+| P5 | Claude 风格 TUI | Markdown、输入及命令/Skill/文件补全、审批/问卷/Hook、详情、被动推理阅读和 resume picker 已交付；fork picker 待实现 |
 | P6 | 扩展系统 | 本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop、本地 Plugin 技能包已交付；其余 Hook、插件可执行贡献、MCP/热加载待实现 |
 | P7 | Subagent | 尚未实现；保留批准占位，未接入 Runtime/app |
 | P8 | 发布强化 | 部分安全/故障验证已落地；全平台发布矩阵、诊断、遥测待实现；兼容迁移须另行明确授权 |
@@ -742,3 +756,5 @@ Session envelope 没有版本字段，headless 仍遵循独立外部协议。旧
 Anthropic 5m 使用 ephemeral 标记并省略 TTL，1h 显式请求 1 小时，可能有更高缓存写入费用；一条活动会话内策略固定。OpenAI thread key 可在同 ThreadID 恢复后保持一致。websocket_auto 可与 key 独立启用：保留 HTTP/SSE，只有同一连接与 durable 原生前缀满足条件才增量续写，始终 store=false。仅生成写入前的明确连接不可用/404/405/426 可回退；鉴权、TLS、重定向、取消或生成写入后错误不自动重发。
 
 /cache 明确区分配置与已观测状态，恢复后显示 restored_baseline。已知零、unknown、not_applicable 与未观测各自保留；只有适用输入计量全部已知且分母非零才有读取比例。关闭显式策略不代表服务端不会进行隐式缓存；相同 fingerprint 不证明命中，也不保证 TTL、延迟或费用收益。查询不显示真实 key、正文、路径、凭据或 opaque reasoning；一次性 --print/--json 不新增这些输出。
+
+测试及归档精简范围、关键路径与当前验收见[测试维护说明](docs/testing.md)。

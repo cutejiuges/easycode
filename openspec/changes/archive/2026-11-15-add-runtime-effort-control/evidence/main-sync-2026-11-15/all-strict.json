@@ -1,7 +1,0 @@
-{
-  "command": "openspec validate --all --strict",
-  "started_at": "2026-11-15T12:05:29.075970+00:00",
-  "exit_code": 0,
-  "elapsed_seconds": 3.15,
-  "log": "all-strict.log"
-}

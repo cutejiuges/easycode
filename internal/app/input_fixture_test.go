@@ -61,7 +61,7 @@ func (conversation *orderedConversation) PrepareUserInputs(a domain.InputAssocia
 // submitInteractiveFixture 为已有单轮工具验收收集长期控制流中的 turn 事件。
 func submitInteractiveFixture(t *testing.T, host *chatRuntime.ChatSession, ctx context.Context, text string) (<-chan protocol.Event, error) {
 	t.Helper()
-	result, err := host.Append(ctx, text)
+	result, err := appendInteractiveText(ctx, host, text)
 	if err != nil {
 		return nil, err
 	}
@@ -124,4 +124,13 @@ func (conversation *fakeAppConversation) ProjectActiveContext() (domain.ActiveCo
 		return domain.ActiveContextView{}, err
 	}
 	return domain.NewActiveContextView(conversation.ProjectHistory(), domain.ContextSummary{}, footprint.Revision())
+}
+
+// appendInteractiveText 为既有宿主测试显式创建当前交互草稿。
+func appendInteractiveText(ctx context.Context, host *chatRuntime.ChatSession, text string) (protocol.CommandResult, error) {
+	draft, err := domain.NewInteractiveInputDraft(text)
+	if err != nil {
+		return protocol.CommandResult{}, err
+	}
+	return host.Append(ctx, draft)
 }

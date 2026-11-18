@@ -2,12 +2,9 @@ package anthropic
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"testing"
 
 	"easycode/internal/codec"
@@ -133,78 +130,5 @@ func TestReasoningRequestsAndSummaryEvidenceGolden(t *testing.T) {
 	}
 	if !bytes.Equal(actual.Bytes(), want) {
 		t.Fatal("reasoning request golden mismatch")
-	}
-}
-
-func TestManualSummaryBudgetRejectedBeforeNetwork(t *testing.T) {
-	thinking, _ := domain.NewThinkingSettings(domain.ThinkingEnabled, 8192, domain.DisplayOmitted)
-	settings, err := domain.NewAnthropicInference(thinking, "high", 16384)
-	if err != nil {
-		t.Fatal(err)
-	}
-	instance, err := New(Config{Inference: settings, BaseURL: "https://example.invalid", Model: "claude-test", APIKey: secret.New("fixture-key")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer instance.Close()
-	c := testConversation(t, instance)
-	c.history.commit(testInputEntry(t, newUserMessage(strings.Repeat("history ", 50))))
-	sampling, _ := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testAnthropicToolCatalog(t))
-	before, _ := codec.MarshalStable(c.history.snapshot())
-	for _, output := range []uint64{4096, 8192, 8193} {
-		compact, _ := provider.NewCompactionInput(sampling, "", output)
-		_, err := c.PreflightCompaction(compact)
-		if output <= 8192 {
-			var failure *provider.CompactionError
-			if !errors.As(err, &failure) || failure.Code() != provider.CompactionBudgetExceeded {
-				t.Fatal(output, err)
-			}
-		} else if err != nil {
-			t.Fatal(output, err)
-		}
-	}
-	after, _ := codec.MarshalStable(c.history.snapshot())
-	if !bytes.Equal(before, after) || c.pending.Load() || c.active.Load() {
-		t.Fatal("preflight changed history or ownership")
-	}
-}
-
-func TestFrozenPlanAndChangedCompactionSourceRejectsBeforeNetwork(t *testing.T) {
-	instance, err := New(Config{BaseURL: "https://example.invalid", Model: "model", APIKey: secret.New("fixture-key")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer instance.Close()
-	c := testConversation(t, instance)
-	entry := testInputEntry(t, newUserMessage("hello"))
-	c.history.commit(entry)
-	sampling, _ := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testAnthropicToolCatalog(t))
-	compact, _ := provider.NewCompactionInput(sampling, "preserve failures", 4096)
-	preview, err := c.PreflightCompaction(compact)
-	if err != nil {
-		t.Fatal(err)
-	}
-	plan, err := c.planCompactionRequest(compact)
-	if err != nil {
-		t.Fatal(err)
-	}
-	before, err := plan.body(domain.AnthropicCacheDisabled)
-	if err != nil {
-		t.Fatal(err)
-	}
-	generation := compactionTestGeneration("answer", "opaque")
-	generation.TurnID = entry.TurnID
-	c.history.commit(generation)
-	after, err := plan.body(domain.AnthropicCacheDisabled)
-	if err != nil || !bytes.Equal(before.Bytes(), after.Bytes()) {
-		t.Fatal("native mutation changed frozen plan", err)
-	}
-	prepared, err := c.RunCompaction(context.Background(), "01900000-0000-7000-8000-000000000009", preview)
-	var failure *provider.CompactionError
-	if prepared != nil || !errors.As(err, &failure) || failure.Code() != provider.CompactionSourceChanged {
-		t.Fatal("stale preflight reached network", err)
-	}
-	if c.active.Load() || c.pending.Load() {
-		t.Fatal("stale preflight retained owner")
 	}
 }

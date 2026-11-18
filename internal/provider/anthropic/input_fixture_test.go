@@ -45,14 +45,7 @@ func testCommitHistory(t *testing.T, history *nativeHistory, entries ...nativeHi
 		history.commit(entry)
 	}
 }
-func testSemanticTurn(user, assistant string) domain.SemanticTurn {
-	id := testInputID(user)
-	messages := []domain.SemanticMessage{{Role: domain.SemanticUser, InputID: id, Text: user}}
-	if assistant != "" {
-		messages = append(messages, domain.SemanticMessage{Role: domain.SemanticAssistant, Text: assistant})
-	}
-	return domain.SemanticTurn{TurnID: domain.TurnID(id), Messages: messages}
-}
+
 func testCommitUserInput(t *testing.T, conversation *Conversation, text string) {
 	t.Helper()
 	id := testInputID(text)
@@ -114,6 +107,14 @@ func testRestoreRecords(t *testing.T, envelopes []provider.NativeCommitEnvelope,
 			}
 			record, err = provider.NewToolOutputRestoreRecord(turnID, envelope, outputEvidence[outputIndex])
 			outputIndex++
+		case nativeHistoryHookFeedback:
+			feedback, feedbackErr := entryStopFeedback(entry)
+			if feedbackErr != nil {
+				t.Fatal(feedbackErr)
+			}
+			record, err = provider.NewStopFeedbackRestoreRecord(feedback, envelope)
+		default:
+			t.Fatalf("unsupported restore fixture kind: %s", entry.Kind)
 		}
 		if err != nil {
 			t.Fatal(err)

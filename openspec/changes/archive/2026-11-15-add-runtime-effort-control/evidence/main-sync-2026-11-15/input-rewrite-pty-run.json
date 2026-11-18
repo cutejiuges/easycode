@@ -1,4 +1,0 @@
-{
-  "command": "python3 scripts/input-rewrite-smoke.py <temporary app.test> --output-dir openspec/changes/archive/2026-11-15-add-runtime-effort-control/evidence/main-sync-2026-11-15/input-rewrite-pty",
-  "exit_code": 0
-}

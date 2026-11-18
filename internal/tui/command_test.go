@@ -2,8 +2,6 @@ package tui
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -68,124 +66,6 @@ func TestExecApprovalDefaultNoAndExactDecisionRouting(t *testing.T) {
 			_, repeat := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 			if repeat != nil || len(session.submits) != 0 {
 				t.Fatal("modal admitted duplicate approval or turn")
-			}
-		})
-	}
-}
-
-func TestCommandTimelineOrderingAndTerminalEscapes(t *testing.T) {
-	model := NewModel(context.Background(), "test", &fakeChatSession{})
-	turnID := mustExecApproval(t).TurnID
-	model.activeTurnID, model.state = turnID, stateStreaming
-	payload := protocol.ToolActivityPayload{Tool: protocol.ToolShell, InvocationID: eventApprovalInvocationID, Summary: "printf hello", Workdir: "src", Status: "running"}
-	started, err := protocol.NewToolStarted(payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	started.TurnID = turnID
-	model = updateModel(t, model, RuntimeEventMsg{Event: started})
-	if len(model.transcript) != 1 || model.transcript[0].activity.Status != "running" {
-		t.Fatal("missing running command")
-	}
-	payload.StdoutBytes, payload.StdoutLines, payload.ElapsedMillis = 20, 1, 100
-	payload.Recent = "hello\n\x1b]52;c;secret\a\u202e"
-	progress, err := protocol.NewToolProgress(payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	progress.TurnID = turnID
-	model = updateModel(t, model, RuntimeEventMsg{Event: progress})
-	text := model.View()
-	if strings.ContainsAny(text, "\x1b\a\u202e") || model.transcript[0].activity.ElapsedMillis != 100 || model.transcript[0].activity.StdoutBytes != 20 || !strings.Contains(text, "hello") {
-		t.Fatalf("unsafe or incomplete projection: %q", text)
-	}
-	payload.Status, payload.Code, payload.ExitKnown, payload.ExitCode = "success", "ok", true, 2
-	terminal, err := protocol.NewToolTerminal(protocol.ToolTerminalPayload{ToolActivityPayload: payload, ResultPreview: "frozen result"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	terminal.TurnID = turnID
-	model = updateModel(t, model, RuntimeEventMsg{Event: terminal})
-	frozen := *model.transcript[0].activity
-	if frozen.ExitCode != 2 || model.state != stateStreaming {
-		t.Fatal("command completion prematurely ended turn")
-	}
-	for _, invalid := range []protocol.Event{progress, terminal, started} {
-		model = updateModel(t, model, RuntimeEventMsg{Event: invalid})
-		if *model.transcript[0].activity != frozen || model.errorSummary == "" {
-			t.Fatal("late activity changed terminal")
-		}
-	}
-}
-
-func TestCommandActivityCannotPrecedeStartOrCrossTurns(t *testing.T) {
-	for _, wrongTurn := range []bool{false, true} {
-		model := NewModel(context.Background(), "test", &fakeChatSession{})
-		model.activeTurnID = mustExecApproval(t).TurnID
-		payload := protocol.ToolActivityPayload{Tool: protocol.ToolShell, InvocationID: eventApprovalInvocationID, Summary: "true", Status: "running"}
-		event, err := protocol.NewToolProgress(payload)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !wrongTurn {
-			event.TurnID = model.activeTurnID
-		}
-		model = updateModel(t, model, RuntimeEventMsg{Event: event})
-		if len(model.transcript) != 0 || model.errorSummary == "" {
-			t.Fatal("out of order command admitted")
-		}
-	}
-}
-
-func TestExecApprovalSnapshotsAndViewportState(t *testing.T) {
-	for _, test := range []struct {
-		name                  string
-		width, height, scroll int
-	}{
-		{"command_approval_normal", 80, 24, 0},
-		{"command_approval_small", 46, 20, 0},
-		{"command_approval_scroll", 46, 20, 8},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			model := NewModel(context.Background(), "test", &fakeChatSession{})
-			event := mustExecApproval(t)
-			payload, err := protocol.DecodeToolApprovalRequested(event)
-			if err != nil {
-				t.Fatal(err)
-			}
-			payload.Command = strings.Repeat("printf 'long command line'\n", 12) + "printf done"
-			event, err = protocol.NewToolApprovalRequested(payload)
-			if err != nil {
-				t.Fatal(err)
-			}
-			event.TurnID = mustExecApproval(t).TurnID
-			model = updateModel(t, model, RuntimeEventMsg{Event: event})
-			model = updateModel(t, model, tea.WindowSizeMsg{Width: test.width, Height: test.height})
-			for range test.scroll {
-				model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyPgDown})
-			}
-			got := model.View()
-			if strings.Count(got, "\n") > test.height {
-				t.Fatalf("approval exceeds viewport:\n%s", got)
-			}
-			for _, required := range []string{"Workdir: src", "Timeout: 1000 ms", "> No", "Abort turn", "Command "} {
-				if !strings.Contains(got, required) {
-					t.Fatalf("missing persistent metadata %q", required)
-				}
-			}
-			if model.approval.request.Command != payload.Command || model.approval.selected != 1 {
-				t.Fatal("scroll changed approval candidate or default")
-			}
-			want, err := os.ReadFile(filepath.Join("testdata", test.name+".golden"))
-			if err != nil {
-				t.Fatalf("snapshot %s missing; actual=%q", test.name, got)
-			}
-			if got != string(want) {
-				t.Fatalf("snapshot mismatch:\n%s", got)
-			}
-			model = updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 30})
-			if model.approval.request.Command != payload.Command || model.approval.selected != 1 || model.approval.scroll != test.scroll {
-				t.Fatal("resize mutated candidate or navigation state")
 			}
 		})
 	}

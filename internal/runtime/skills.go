@@ -8,9 +8,9 @@ import (
 	"sync"
 )
 
-// SkillPreparer 是宿主准备边界，队列接收与恢复不调用此接口。
-type SkillPreparer interface {
-	Prepare(context.Context, string) (domain.SkillAttachment, bool, error)
+// InputPreparer 是实际宿主的附件准备边界，队列接收与恢复不调用此接口。
+type InputPreparer interface {
+	Prepare(context.Context, protocol.Command) (protocol.Command, error)
 }
 
 type skillInstallation struct {
@@ -18,8 +18,8 @@ type skillInstallation struct {
 	installed, started bool
 }
 
-// InstallSkills 在旧事实 reconciliation 后、任何未来工作开始前恰好安装一次。
-func (runtime *Runtime) InstallSkills(catalog domain.SkillCatalog, preparer SkillPreparer) error {
+// InstallInputSources 在旧事实 reconciliation 后、任何未来工作开始前恰好安装目录和准备策略。
+func (runtime *Runtime) InstallInputSources(catalog domain.SkillCatalog, preparer InputPreparer) error {
 	if runtime == nil || catalog.Validate() != nil || preparer == nil {
 		return fault.New(fault.CodeInvalidConfiguration, "invalid skill installation")
 	}
@@ -30,7 +30,7 @@ func (runtime *Runtime) InstallSkills(catalog domain.SkillCatalog, preparer Skil
 	if runtime.skillInstallation.installed || runtime.skillInstallation.started || runtime.active.Load() || runtime.poisoned.Load() || poisoned {
 		return fault.New(fault.CodeInvalidConfiguration, "skill installation is closed")
 	}
-	runtime.skillCatalog, runtime.skillPreparer = copy, preparer
+	runtime.skillCatalog, runtime.inputPreparer = copy, preparer
 	runtime.skillInstallation.installed = true
 	return nil
 }
@@ -43,15 +43,24 @@ func (runtime *Runtime) markSkillsStarted() {
 // PrepareInput 在宿主 owner 上冻结显式附件；构造和 admission 保持纯内存。
 func (runtime *Runtime) PrepareInput(ctx context.Context, c protocol.Command) (protocol.Command, error) {
 	runtime.markSkillsStarted()
-	if runtime.skillPreparer == nil || (c.Kind() != protocol.CommandSubmitInput && c.Kind() != protocol.CommandSubmitConversationalInput) {
+	if c.Kind() != protocol.CommandSubmitInput && c.Kind() != protocol.CommandSubmitConversationalInput {
 		return c, nil
 	}
-	a, ok, err := runtime.skillPreparer.Prepare(ctx, c.Text())
+	if err := c.Validate(); err != nil {
+		return protocol.Command{}, err
+	}
+	if runtime.inputPreparer == nil {
+		if c.ValidateForAdmission() != nil {
+			return protocol.Command{}, fault.New(fault.CodeInvalidInput, "file_reference_unavailable")
+		}
+		return c, nil
+	}
+	prepared, err := runtime.inputPreparer.Prepare(ctx, c)
 	if err != nil {
 		return protocol.Command{}, err
 	}
-	if ok {
-		return c.WithSkillAttachment(a)
+	if prepared.Kind() != c.Kind() || prepared.RequestID() != c.RequestID() || prepared.Text() != c.Text() || prepared.ValidateForAdmission() != nil {
+		return protocol.Command{}, fault.New(fault.CodeInvalidInput, "invalid prepared input")
 	}
-	return c, nil
+	return prepared, nil
 }

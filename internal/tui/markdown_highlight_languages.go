@@ -1,7 +1,5 @@
 package tui
 
-import "unicode/utf8"
-
 func (s *highlightScanner) next() highlightKind {
 	c := s.at(s.pos)
 	if s.language == highlightPlain {
@@ -466,11 +464,6 @@ func (s *highlightScanner) hereBodies() {
 		}
 	}
 	s.heredocs = s.heredocs[:0]
-}
-
-// highlightRuneBoundary 供消费方验证源范围，不把展示偏移误作持久化偏移。
-func highlightRuneBoundary(source string, offset int) bool {
-	return offset == len(source) || offset >= 0 && offset < len(source) && utf8.RuneStart(source[offset])
 }
 
 // shellStyledQuote 在双引号中保留变量区间，其余字符仍属于字符串。

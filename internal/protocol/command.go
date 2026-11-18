@@ -61,6 +61,8 @@ func (id RequestID) Valid() bool {
 
 // Command 是封闭的 Runtime 输入命令值对象。
 type Command struct {
+	inputDraft       domain.InputDraft
+	files            domain.FileAttachments
 	effortChoice     domain.EffortChoice
 	questionResponse UserQuestionResponse
 
@@ -93,7 +95,11 @@ func NewResolveToolApprovalCommand(requestID RequestID, expectedTurnID domain.Tu
 
 // NewSubmitInputCommand 创建文本输入命令。
 func NewSubmitInputCommand(requestID RequestID, text string) (Command, error) {
-	command := Command{kind: CommandSubmitInput, requestID: requestID, text: text}
+	draft, err := domain.NewLiteralInputDraft(text)
+	if err != nil {
+		return Command{}, err
+	}
+	command := Command{kind: CommandSubmitInput, requestID: requestID, text: text, inputDraft: draft}
 	if err := command.Validate(); err != nil {
 		return Command{}, err
 	}
@@ -137,6 +143,20 @@ func (command Command) Feedback() string                   { return command.feed
 
 // Validate 验证命令 kind 和专属 payload。
 func (command Command) Validate() error {
+	inputKind := command.kind == CommandSubmitInput || command.kind == CommandSubmitConversationalInput
+	if inputKind {
+		if command.inputDraft.Validate() != nil || command.inputDraft.Text() != command.text {
+			return fmt.Errorf("invalid input draft")
+		}
+		if err := domain.ValidateFileAttachments(command.text, command.files); err != nil {
+			return err
+		}
+		if command.InputByteSize() > MaxInputBytes {
+			return fmt.Errorf("input exceeds byte limit")
+		}
+	} else if command.inputDraft.Text() != "" || command.inputDraft.Interactive() || command.files.Len() != 0 {
+		return fmt.Errorf("command contains unrelated file input")
+	}
 	if command.kind == CommandSetEffort {
 		if err := command.effortChoice.Validate(); err != nil {
 			return err
@@ -254,7 +274,11 @@ func validateInputText(text string) error {
 
 // NewSubmitConversationalInputCommand 创建优先进入工具安全点的自动输入命令。
 func NewSubmitConversationalInputCommand(requestID RequestID, text string) (Command, error) {
-	command := Command{kind: CommandSubmitConversationalInput, requestID: requestID, text: text}
+	draft, err := domain.NewLiteralInputDraft(text)
+	if err != nil {
+		return Command{}, err
+	}
+	command := Command{kind: CommandSubmitConversationalInput, requestID: requestID, text: text, inputDraft: draft}
 	if err := command.Validate(); err != nil {
 		return Command{}, err
 	}
@@ -339,5 +363,32 @@ func (command Command) SkillAttachment() (domain.SkillAttachment, bool) {
 
 // InputByteSize 包含原文和附件的完整预算。
 func (command Command) InputByteSize() int {
-	return len(command.text) + command.skillAttachment.ByteSize()
+	return len(command.text) + command.skillAttachment.ByteSize() + command.files.ByteSize()
+}
+
+// NewSubmitConversationalInputDraftCommand 明确传递交互意图，不从普通文字推断读取。
+func NewSubmitConversationalInputDraftCommand(requestID RequestID, draft domain.InputDraft) (Command, error) {
+	command := Command{kind: CommandSubmitConversationalInput, requestID: requestID, text: draft.Text(), inputDraft: draft}
+	return command, command.Validate()
+}
+
+// InputDraft 返回不可变意图，引用集合只可通过其副本 getter 访问。
+func (command Command) InputDraft() domain.InputDraft { return command.inputDraft }
+
+// WithFileAttachments 安装已准备的完整附件，不执行 I/O。
+func (command Command) WithFileAttachments(files domain.FileAttachments) (Command, error) {
+	command.files = files.Clone()
+	return command, command.Validate()
+}
+func (command Command) FileAttachments() domain.FileAttachments { return command.files.Clone() }
+
+// ValidateForAdmission 拒绝尚未准备完的交互草稿，普通文字仍保留 literal @ 语义。
+func (command Command) ValidateForAdmission() error {
+	if err := command.Validate(); err != nil {
+		return err
+	}
+	if command.inputDraft.Interactive() && len(command.inputDraft.FileReferences()) != command.files.Len() {
+		return fmt.Errorf("file input has not been prepared")
+	}
+	return nil
 }

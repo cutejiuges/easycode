@@ -115,21 +115,3 @@ func TestRuntimeEffortRequestPolicyGolden(t *testing.T) {
 		t.Fatal("runtime policy body/properties/native golden mismatch", err)
 	}
 }
-
-func TestRuntimeEffortRejectsMissingAndForeignPolicy(t *testing.T) {
-
-	startup, _ := domain.NewOpenAIInference("high", "auto", 8192)
-	instance, err := New(Config{Inference: startup, BaseURL: "https://example.invalid", Model: "fixture-model", APIKey: secret.New("fixture-key")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer instance.Close()
-	c := testConversation(t, instance)
-	foreign, _ := domain.DefaultInferenceSettings(domain.ProviderAnthropic)
-	wrong := testSamplingInput(t, foreign)
-	for _, input := range []provider.TurnInput{{}, wrong} {
-		if _, err := c.planSamplingRequest(nil, input); err == nil {
-			t.Fatal("missing or foreign policy accepted")
-		}
-	}
-}

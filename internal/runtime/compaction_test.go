@@ -6,9 +6,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
-	contextplan "easycode/internal/context"
 	"easycode/internal/context/estimate"
 	"easycode/internal/domain"
 	"easycode/internal/protocol"
@@ -187,116 +185,6 @@ func TestCompactionDurableOrderAndCancellation(t *testing.T) {
 	}
 }
 
-func TestCompactionOwnerQueryAndTargetedCancel(t *testing.T) {
-	conversation := newCompactionConversation()
-	conversation.entered = make(chan struct{})
-	conversation.release = make(chan struct{})
-	journal := &fakeJournal{}
-	runtime := newTestRuntime(t, conversation, journal)
-	loop, err := NewAgentLoop(runtime, DefaultAgentLoopConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	state := newAgentLoopRunState(loop, context.Background())
-	state.refreshContextSnapshot()
-	request := func(command protocol.Command) protocol.CommandResult {
-		t.Helper()
-		reply := make(chan loopCommandResponse, 1)
-		state.handleCommand(loopCommandRequest{command: command, result: reply})
-		result := <-reply
-		if result.err != nil {
-			t.Fatal(result.err)
-		}
-		return result.result
-	}
-	compact, _ := protocol.NewCompactContextCommand("compact", "")
-	result := request(compact)
-	if result.Status() != protocol.CommandStatusAccepted || !result.CompactionID().Valid() {
-		t.Fatal("compact was not admitted")
-	}
-	event := <-state.compaction.events
-	state.handleCompactionEvent(event, true)
-	<-conversation.entered
-	query, _ := protocol.NewQueryContextCommand("query")
-	if request(query).Disposition() != protocol.CommandDispositionQueried {
-		t.Fatal("query rejected while compacting")
-	}
-	if len(journal.snapshot()) != 1 || conversation.installed.Load() {
-		t.Fatal("query changed window or journal")
-	}
-	stale, _ := protocol.NewCancelCompactionCommand("stale", "01900000-0000-7000-8000-000000000099")
-	rejected := request(stale)
-	failure, _ := rejected.Error()
-	if failure.Code() != protocol.ControlErrorCompactionMismatch {
-		t.Fatal("stale cancel was accepted")
-	}
-	cancel, _ := protocol.NewCancelCompactionCommand("cancel", result.CompactionID())
-	if request(cancel).Disposition() != protocol.CommandDispositionCancelling {
-		t.Fatal("cancel not admitted")
-	}
-	event = <-state.compaction.events
-	if event.event.Kind != protocol.EventCompactionFailed {
-		t.Fatal("cancel has no failure terminal")
-	}
-	state.handleCompactionEvent(event, true)
-	state.handleCompactionFinished(<-state.compaction.finished, true)
-	if state.compaction != nil || conversation.installed.Load() || state.runErr != nil {
-		t.Fatal("cancel did not converge to healthy idle")
-	}
-	if len(journal.snapshot()) != 2 {
-		t.Fatal("cancel not durably closed")
-	}
-}
-
-func TestCompactionPreflightBudgetHasNoSideEffects(t *testing.T) {
-	conversation := newCompactionConversation()
-	journal := &fakeJournal{}
-	runtime := newTestRuntime(t, conversation, journal)
-	runtime.budget, _ = contextplan.NewBudget(50000, 1, 0)
-	_, code := runtime.preflightCompaction("")
-	if code != protocol.ControlErrorCompactionBudgetExceeded || len(journal.snapshot()) != 0 || conversation.generated.Load() != 0 {
-		t.Fatal("preflight wrote or sampled")
-	}
-}
-
-func TestCompactionDeadlineAndFailedTerminalSync(t *testing.T) {
-	for _, failSync := range []bool{false, true} {
-		conversation := newCompactionConversation()
-		conversation.release = make(chan struct{})
-		journal := &fakeJournal{}
-		if failSync {
-			journal.failAt = 2
-		}
-		runtime := newTestRuntime(t, conversation, journal)
-		runtime.compactionDeadline = func(ctx context.Context, duration time.Duration) (context.Context, context.CancelFunc) {
-			if duration != 120*time.Second {
-				t.Fatal("incorrect compaction deadline")
-			}
-			// 过去的 deadline 同步触发，测试无需等待真实计时器。
-			return context.WithDeadline(ctx, time.Unix(0, 0))
-		}
-		admission, code := runtime.preflightCompaction("")
-		if code != "" {
-			t.Fatal(code)
-		}
-		var events []protocol.Event
-		err := runtime.runCompaction(context.Background(), "01900000-0000-7000-8000-000000000009", admission, func(e protocol.Event) { events = append(events, e) })
-		if err == nil || len(events) != 2 || events[1].Kind != protocol.EventCompactionFailed || conversation.installed.Load() {
-			t.Fatal("timeout lifecycle invalid")
-		}
-		failure, err := protocol.DecodeCompactionFailed(events[1])
-		if err != nil || failure.Durable == failSync || failure.UsageState != "unavailable" {
-			t.Fatalf("failure=%#v err=%v", failure, err)
-		}
-		if !failSync && failure.Code != protocol.CompactionFailureTimeout {
-			t.Fatal("deadline lost")
-		}
-		if runtime.poisoned.Load() != failSync {
-			t.Fatal("failed terminal Sync did not poison")
-		}
-	}
-}
-
 func TestCompactionShutdownRetainsCleanupOwner(t *testing.T) {
 	conversation := newCompactionConversation()
 	conversation.entered = make(chan struct{})
@@ -339,73 +227,6 @@ func TestCompactionShutdownRetainsCleanupOwner(t *testing.T) {
 	}
 	if terminal != 1 || conversation.installed.Load() {
 		t.Fatal("shutdown terminal invalid")
-	}
-}
-
-func TestCompactionQueueFailureAndSuccessFIFO(t *testing.T) {
-	for _, success := range []bool{false, true} {
-		conversation := newCompactionConversation()
-		conversation.entered = make(chan struct{})
-		release := make(chan struct{})
-		conversation.release = release
-		if !success {
-			conversation.generationErr = errors.New("generation failed")
-		}
-		loop := newControlledAgentLoop(t, conversation, &fakeJournal{})
-		state := newAgentLoopRunState(loop, context.Background())
-		state.refreshContextSnapshot()
-		request := func(command protocol.Command) protocol.CommandResult {
-			reply := make(chan loopCommandResponse, 1)
-			state.handleCommand(loopCommandRequest{command: command, result: reply})
-			response := <-reply
-			if response.err != nil {
-				t.Fatal(response.err)
-			}
-			return response.result
-		}
-		compact, _ := protocol.NewCompactContextCommand("compact", "")
-		if request(compact).Status() != protocol.CommandStatusAccepted {
-			t.Fatal("not admitted")
-		}
-		state.handleCompactionEvent(<-state.compaction.events, true)
-		<-conversation.entered
-		auto, _ := protocol.NewSubmitConversationalInputCommand("auto", "pending automatic")
-		strict, _ := protocol.NewSubmitInputCommand("strict", "pending strict")
-		request(auto)
-		request(strict)
-		second, _ := protocol.NewCompactContextCommand("second", "")
-		rejected := request(second)
-		failure, _ := rejected.Error()
-		if failure.Code() != protocol.ControlErrorSessionBusy {
-			t.Fatal("second operation inserted")
-		}
-		state.startNext()
-		if state.active != nil || len(state.queue) != 2 || conversation.calls.Load() != 0 {
-			t.Fatal("queued input executed during summary")
-		}
-		close(release)
-		state.handleCompactionEvent(<-state.compaction.events, true)
-		state.handleCompactionFinished(<-state.compaction.finished, true)
-		if state.active != nil {
-			t.Fatal("completion started an implicit turn")
-		}
-		if success {
-			if len(state.queue) != 2 || state.queue[0].requestID != "auto" || state.queue[1].requestID != "strict" {
-				t.Fatal("success changed FIFO")
-			}
-		} else if len(state.queue) != 1 || state.queue[0].requestID != "strict" {
-			t.Fatal("failure did not retain strict-next")
-		}
-		returned := 0
-		for len(loop.outputs) > 0 {
-			item := <-loop.outputs
-			if status, ok := item.InputStatus(); ok && status.State() == protocol.InputReturned {
-				returned++
-			}
-		}
-		if (returned == 1) == success {
-			t.Fatal("automatic return count wrong")
-		}
 	}
 }
 

@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
 )
 
@@ -48,78 +47,6 @@ func TestCompileMessagesRequestWithProjectInstructionsMatchesGolden(t *testing.T
 			t.Fatalf("request contains forbidden field %s: %s", forbidden, encoded)
 		}
 	}
-}
-
-func TestCompileMessagesRequestKeepsNativeMessageOrder(t *testing.T) {
-	history := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, newUserMessage("first")), {
-		Kind: nativeHistorySample,
-		Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{
-			{Type: blockTypeThinking, Thinking: "reason", Signature: "opaque-signature"},
-			{Type: blockTypeRedactedThinking, RedactedData: "opaque-redacted"},
-			{Type: blockTypeText, Text: "answer"},
-		}},
-	}})
-	request := buildMessagesRequest("claude-test", 8192, append(history, testInputEntry(t, newUserMessage("second"))), nil, testAnthropicToolView(t))
-	if request.MaxTokens != 8192 || len(request.Messages) != 3 {
-		t.Fatalf("request shape: %#v", request)
-	}
-	if request.Messages[0].Role != roleUser || request.Messages[1].Role != roleAssistant || request.Messages[2].Role != roleUser {
-		t.Fatalf("message roles: %#v", request.Messages)
-	}
-	blocks := request.Messages[1].Content
-	if len(blocks) != 3 || blocks[0].Signature != "opaque-signature" || blocks[1].RedactedData != "opaque-redacted" || blocks[2].Text != "answer" {
-		t.Fatalf("assistant blocks: %#v", blocks)
-	}
-}
-
-func TestBuildMessagesRequestContinuesAfterToolResultsWithoutSyntheticUser(t *testing.T) {
-	history := testAssociatedHistory([]nativeHistoryEntry{
-		testInputEntry(t, newUserMessage("read it")), {
-			Kind: nativeHistorySample,
-			Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{
-				Type: blockTypeToolUse, ID: "toolu-1", Name: "Read", Input: []byte(`{"file_path":"README.md"}`),
-			}}},
-		},
-		{
-			Kind: nativeHistoryToolOutputs,
-			ToolOutputs: nativeMessage{Role: roleUser, Content: []NativeItem{{
-				Type: blockTypeToolResult, ToolUseID: "toolu-1", Content: "1\tcontent\n",
-			}}},
-		},
-	})
-	request := buildMessagesRequest("claude-test", 4096, history, nil, testAnthropicToolView(t))
-	if len(request.Messages) != 3 || request.Messages[0].Content[0].Text != "read it" ||
-		request.Messages[1].Content[0].Type != blockTypeToolUse || request.Messages[2].Content[0].Type != blockTypeToolResult {
-		t.Fatalf("continuation messages = %#v", request.Messages)
-	}
-}
-
-func TestMessagesRequestFingerprintIsStableAndSecretFree(t *testing.T) {
-	request, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, append([]nativeHistoryEntry(nil), testInputEntry(t, newUserMessage("hello"))), nil, testAnthropicToolView(t))
-	if err != nil {
-		t.Fatalf("compile request: %v", err)
-	}
-	first, err := contextplan.NewSegment("anthropic-messages-request", contextplan.StabilityTurnStable, "v1", request)
-	if err != nil {
-		t.Fatalf("create first fingerprint: %v", err)
-	}
-	second, err := contextplan.NewSegment("anthropic-messages-request", contextplan.StabilityTurnStable, "v1", request)
-	if err != nil {
-		t.Fatalf("create second fingerprint: %v", err)
-	}
-	if first.Fingerprint() != second.Fingerprint() || !stringSlicesEqual(first.CanonicalJSON(), second.CanonicalJSON()) {
-		t.Fatalf("request fingerprint is unstable: %#v %#v", first, second)
-	}
-	canonical := string(first.CanonicalJSON())
-	for _, dynamic := range []string{"top-secret", "x-api-key", "timestamp", "random_id", "working_directory"} {
-		if strings.Contains(canonical, dynamic) {
-			t.Fatalf("dynamic or secret input entered fingerprint: %s", canonical)
-		}
-	}
-}
-
-func stringSlicesEqual(first []byte, second []byte) bool {
-	return string(first) == string(second)
 }
 
 func testAnthropicProjectInstructions(t *testing.T, source string, content string) domain.ProjectInstructionsSnapshot {

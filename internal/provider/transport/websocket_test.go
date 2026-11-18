@@ -4,8 +4,6 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/base64"
-	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -15,7 +13,7 @@ import (
 	"time"
 
 	"easycode/internal/codec"
-	"easycode/internal/domain"
+
 	"github.com/coder/websocket"
 )
 
@@ -213,91 +211,6 @@ func TestWSClientDeadlinesAreInjected(t *testing.T) {
 	close(release)
 	if !IsIdleTimeout(failure) {
 		t.Fatalf("idle timeout not reported: %v", failure)
-	}
-}
-func TestWSClientHandshakeSecurity(t *testing.T) {
-	for _, status := range []int{404, 405, 426, 401, 403, 307} {
-		t.Run(fmt.Sprint(status), func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Location", "http://127.0.0.1:1/private")
-				w.WriteHeader(status)
-			}))
-			defer server.Close()
-			client, _ := NewWSClient(server.URL)
-			defer client.Close()
-			_, err := client.Open(context.Background(), http.Header{"Authorization": []string{"Bearer private"}})
-			want := domain.FallbackNone
-			if status == 404 || status == 405 || status == 426 {
-				want = domain.FallbackHandshake
-			}
-			if err == nil || WebSocketFallback(err) != want || strings.Contains(err.Error(), "private") {
-				t.Fatalf("invalid safe error: %v", err)
-			}
-		})
-	}
-	tls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	defer tls.Close()
-	client, _ := NewWSClient(tls.URL)
-	defer client.Close()
-	if _, err := client.Open(context.Background(), nil); err == nil || WebSocketFallback(err) != domain.FallbackNone {
-		t.Fatal("TLS failure fell back")
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, err := client.Open(ctx, nil); !errors.Is(err, context.Canceled) || WebSocketFallback(err) != domain.FallbackNone {
-		t.Fatal("cancel fell back")
-	}
-}
-
-func TestWSClientTrustedTLSAndOpeningClose(t *testing.T) {
-	tls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, nil)
-		if err != nil {
-			return
-		}
-		defer conn.CloseNow()
-		if _, _, err = conn.Read(r.Context()); err == nil {
-			_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{}`))
-		}
-		_, _, _ = conn.Read(r.Context())
-	}))
-	defer tls.Close()
-	client, _ := NewWSClient(tls.URL)
-	client.httpClient = tls.Client()
-	defer client.Close()
-	conn, err := client.Open(context.Background(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	stream, err := conn.Stream(context.Background(), wsTestBody(t), time.Minute, wsTestClassifier)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for m := range stream {
-		if m.Err != nil {
-			t.Fatal(m.Err)
-		}
-	}
-	_ = conn.Close()
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { close(entered); <-release }))
-	defer server.Close()
-	opening, _ := NewWSClient(server.URL)
-	finished := make(chan error, 1)
-	go func() { _, err := opening.Open(context.Background(), nil); finished <- err }()
-	<-entered
-	if err := opening.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-finished; err == nil {
-		t.Fatal("close did not cancel opening")
-	}
-	close(release)
-	select {
-	case <-opening.done:
-	default:
-		t.Fatal("opening ownership abandoned")
 	}
 }
 

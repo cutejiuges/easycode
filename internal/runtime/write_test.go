@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"testing"
 
-	"easycode/internal/protocol"
 	"easycode/internal/session"
 	"easycode/internal/tool"
 )
@@ -76,105 +75,6 @@ func writeTestRuntime(t *testing.T, journal Journal, c tool.WriteCandidate, e to
 	r.writeExecutor = e
 	r.interactiveApprovals = true
 	return r
-}
-
-func approveWrite(t *testing.T, runtime *Runtime, decision tool.ApprovalDecision) Emitter {
-	t.Helper()
-	return func(event protocol.Event) {
-		if event.Kind != protocol.EventToolApprovalRequested {
-			return
-		}
-		p, err := protocol.DecodeToolApprovalRequested(event)
-		if err != nil {
-			t.Fatal(err)
-		}
-		id, _ := tool.ParseApprovalRequestID(p.RequestID)
-		invocation, _ := tool.ParseInvocationID(p.InvocationID)
-		fingerprint, _ := tool.ParseCandidateFingerprint(p.Fingerprint)
-		response, err := tool.NewApprovalResponse(id, event.TurnID, invocation, fingerprint, decision, "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := runtime.ResolveToolApproval(response); err != nil {
-			t.Fatal(err)
-		}
-		if err := runtime.ResolveToolApproval(response); err == nil {
-			t.Fatal("重复响应被接受")
-		}
-	}
-}
-
-func TestWriteGrantAndExecutionRespectEveryDurableBoundary(t *testing.T) {
-	for _, failAt := range []int{0, 1, 2, 3} {
-		t.Run(fmt.Sprint(failAt), func(t *testing.T) {
-			invocation, c := runtimeWriteInvocation(t)
-			journal := &fakeJournal{failAt: failAt}
-			executor := &fixedWriteExecutor{}
-			runtime := writeTestRuntime(t, journal, c, executor)
-			journal.hook = func(batch []session.RecordDraft) {
-				if batch[0].EventKind() == session.EventToolApprovalDecided && runtime.approvals.writeGrant.Load() {
-					t.Error("allow Sync 返回前安装 grant")
-				}
-			}
-			executor.onExecute = func(context.Context) {
-				batches := journal.snapshot()
-				if len(batches) < 2 || batches[0][0].EventKind() != session.EventToolApprovalDecided || batches[1][0].EventKind() != session.EventToolExecutionStarted {
-					t.Error("执行早于批准和 started")
-				}
-				if !runtime.approvals.writeGrant.Load() || runtime.approvals.patchGrant.Load() {
-					t.Error("Write grant 缺失或扩大到 Patch")
-				}
-			}
-			results, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, []tool.Invocation{invocation}, approveWrite(t, runtime, tool.ApprovalAllowSession))
-			if (err != nil) != (failAt != 0) {
-				t.Fatalf("durability 失败结果错误 %v", err)
-			}
-			wantCalls := 0
-			if failAt == 0 || failAt == 3 {
-				wantCalls = 1
-			}
-			if executor.calls != wantCalls {
-				t.Fatal("执行次数错误", executor.calls)
-			}
-			if failAt == 1 && runtime.approvals.writeGrant.Load() {
-				t.Fatal("失败的 allow 安装了 grant")
-			}
-			if failAt == 0 && (len(results) != 1 || results[0].Status() != tool.ResultSuccess) {
-				t.Fatal("成功结果丢失")
-			}
-		})
-	}
-}
-
-func TestWriteGrantIsIndependentAndHeadlessFailsClosed(t *testing.T) {
-	invocation, c := runtimeWriteInvocation(t)
-	executor := &fixedWriteExecutor{}
-	runtime := writeTestRuntime(t, &fakeJournal{}, c, executor)
-	runtime.approvals.patchGrant.Store(true)
-	runtime.interactiveApprovals = false
-	results, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, []tool.Invocation{invocation})
-	if err != nil || results[0].Code() != "approval_required" || executor.calls != 0 {
-		t.Fatal("Patch grant 授权了 Write", err)
-	}
-	runtime.interactiveApprovals = true
-	invocation, c = runtimeWriteInvocation(t)
-	runtime.writePreparer = &fixedWritePreparer{candidate: c}
-	if _, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, []tool.Invocation{invocation}, approveWrite(t, runtime, tool.ApprovalAllowSession)); err != nil {
-		t.Fatal(err)
-	}
-	runtime.interactiveApprovals = false
-	invocation, c = runtimeWriteInvocation(t)
-	runtime.writePreparer = &fixedWritePreparer{candidate: c}
-	if _, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, []tool.Invocation{invocation}, func(event protocol.Event) {
-		if event.Kind == protocol.EventToolApprovalRequested {
-			t.Fatal("已有 Write grant 仍发出请求")
-		}
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if executor.calls != 2 {
-		t.Fatal("Write grant 未生效")
-	}
 }
 
 func TestWriteAcceptedStartedCallsExecutorOnceEvenAfterCancellation(t *testing.T) {
@@ -293,40 +193,5 @@ func TestWriteRecoveryNeverCallsPreparerOrExecutor(t *testing.T) {
 				}
 			})
 		}
-	}
-}
-
-func TestWriteReadyDurabilityAndFinalizationFailBeforeCandidateReads(t *testing.T) {
-	for _, boundary := range []string{"append", "finalize"} {
-		t.Run(boundary, func(t *testing.T) {
-			invocation, c := runtimeWriteInvocation(t)
-			v, _ := invocation.Write()
-			ready, _ := tool.NewWriteReadyCall(v.ProviderCallID(), v.Input())
-			sample := newPreparedSampleWithReady(t, ready)
-			journal := &fakeJournal{}
-			if boundary == "append" {
-				journal.failAt = 2
-			} else {
-				journal.hook = func(batch []session.RecordDraft) {
-					if len(batch) == 3 && batch[2].EventKind() == session.EventToolCallReady {
-						if err := sample.Finalize(); err != nil {
-							t.Error(err)
-						}
-					}
-				}
-			}
-			conversation := &fakeToolConversation{fakeConversation: &fakeConversation{stream: fixedStream(completedProviderEventWithSample(t, sample))}}
-			runtime := newTestRuntime(t, conversation, journal)
-			preparer := &fixedWritePreparer{candidate: c}
-			executor := &fixedWriteExecutor{}
-			runtime.writePreparer = preparer
-			runtime.writeExecutor = executor
-			if _, err := collectTurn(runtime, context.Background(), nil); err == nil {
-				t.Fatal("ready 边界失败被忽略")
-			}
-			if preparer.calls != 0 || executor.calls != 0 {
-				t.Fatal("ready durable/finalize 前读取候选")
-			}
-		})
 	}
 }

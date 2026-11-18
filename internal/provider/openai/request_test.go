@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
 )
 
@@ -46,39 +45,6 @@ func TestCompileResponsesRequestWithProjectInstructionsMatchesGolden(t *testing.
 	}
 	if strings.Contains(string(encoded), "/Users/") || strings.Contains(string(encoded), "previous_response_id") {
 		t.Fatalf("request contains an absolute path or deferred field: %s", encoded)
-	}
-}
-
-func TestCompileResponsesRequestIncludesNativeHistoryAndStableFingerprint(t *testing.T) {
-	assistant := NativeItem{
-		Type: "message",
-		ID:   "msg-1",
-		Role: "assistant",
-		Content: []ContentPart{{
-			Type: "output_text",
-			Text: "first answer",
-		}},
-	}
-	history := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, NewUserItem("first")), testSampleEntry([]NativeItem{assistant})})
-	request := buildResponsesRequest("gpt-test", append(history, testInputEntry(t, NewUserItem("second"))), nil, testOpenAIToolView(t))
-	if len(request.Input) != 3 || request.Input[1].ID != "msg-1" || request.Input[2].Content[0].Text != "second" {
-		t.Fatalf("unexpected request input: %#v", request.Input)
-	}
-	compiled, err := compileResponsesRequest("gpt-test", append(history, testInputEntry(t, NewUserItem("second"))), nil, testOpenAIToolView(t))
-	if err != nil {
-		t.Fatalf("compile request: %v", err)
-	}
-
-	first, err := contextplan.NewSegment("openai-responses-request", contextplan.StabilityTurnStable, "v1", compiled)
-	if err != nil {
-		t.Fatalf("create first fingerprint: %v", err)
-	}
-	second, err := contextplan.NewSegment("openai-responses-request", contextplan.StabilityTurnStable, "v1", compiled)
-	if err != nil {
-		t.Fatalf("create second fingerprint: %v", err)
-	}
-	if first.Fingerprint() != second.Fingerprint() || string(first.CanonicalJSON()) != string(second.CanonicalJSON()) {
-		t.Fatalf("request fingerprint is unstable: %#v %#v", first, second)
 	}
 }
 

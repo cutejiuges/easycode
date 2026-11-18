@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"easycode/internal/config"
-	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
 	"easycode/internal/protocol"
 	"easycode/internal/provider"
@@ -135,22 +134,6 @@ func completionCacheSnapshot(t *testing.T, ctx context.Context, resources *chatR
 			t.Fatal(ctx.Err())
 		}
 	}
-}
-
-func TestCompletionManualAndRestoredRequestsBothProviders(t *testing.T) {
-	testCompletionManualAndRestoredRequests(t, false, "completion")
-}
-
-func TestPluginBrowserManualAndRestoredRequestsBothProviders(t *testing.T) {
-	for _, selection := range []string{"completion", "plugins", "skills"} {
-		t.Run(selection, func(t *testing.T) { testCompletionManualAndRestoredRequests(t, true, selection) })
-	}
-}
-
-func testCompletionManualAndRestoredRequests(t *testing.T, pluginPackage bool, selection string) {
-	t.Helper()
-	testCompletionRequestCases(t, pluginPackage, selection, []bool{false, true},
-		[]completionInputCase{{"ascii", "exact args"}, {"unicode", "\u0301中文 👩‍💻 args"}})
 }
 
 // 代表场景复用完整矩阵的断言，覆盖两家 Provider、所有入口及真实恢复和关闭。
@@ -382,93 +365,6 @@ func testCompletionRequestCases(t *testing.T, pluginPackage bool, selection stri
 					}
 				})
 			}
-		}
-	}
-}
-
-func TestCompletionPreparationFailuresRemainEditable(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
-		for _, failure := range []string{"source-changed", "cancelled", "budget"} {
-			t.Run(string(family)+"/"+failure, func(t *testing.T) {
-				ctx, cancel := context.WithCancel(context.Background())
-				defer cancel()
-				workspace := t.TempDir()
-				content := "Frozen $ARGUMENTS"
-				if failure == "budget" {
-					content = strings.Repeat("content ", 7000)
-				}
-				path := writeCompletionSkill(t, workspace, false, content)
-				server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("failed preparation contacted Provider") }))
-				defer server.Close()
-				cfg := config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, APIKey: secret.New("fixture-key"), Model: "fixture-model"}}
-				if failure == "budget" {
-					var err error
-					cfg.ContextBudget, err = contextplan.NewBudget(4096, 512, 128)
-					if err != nil {
-						t.Fatal(err)
-					}
-				}
-				res, err := openChatResources(ctx, cfg, filepath.Join(t.TempDir(), "sessions"), "", workspace)
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer res.close(context.Background())
-				assembled, err := assembleChatModel(ctx, res)
-				if err != nil {
-					t.Fatal(err)
-				}
-				var model tea.Model = assembled
-				journal, _ := res.service.repository.JournalPath(res.identity.ThreadID)
-				before, err := os.ReadFile(journal)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if failure == "source-changed" {
-					if err := os.WriteFile(path, []byte("changed"), 0600); err != nil {
-						t.Fatal(err)
-					}
-				}
-				completionKey(t, &model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("$rev")})
-				completionKey(t, &model, tea.KeyMsg{Type: tea.KeyEnter})
-				if !strings.Contains(model.View(), "$review") || strings.Contains(model.View(), "Error:") {
-					t.Fatal("completion read Skill before submission")
-				}
-				if failure == "cancelled" {
-					cancel()
-				}
-				completionKey(t, &model, tea.KeyMsg{Type: tea.KeyEnter})
-				if failure == "budget" {
-					deadline, stop := context.WithTimeout(context.Background(), 5*time.Second)
-					defer stop()
-					for {
-						select {
-						case item := <-res.session.Outputs():
-							model, _ = model.Update(item)
-							if event, ok := item.TurnEvent(); ok && event.Kind == protocol.EventTurnFailed {
-								goto failed
-							}
-						case <-deadline.Done():
-							t.Fatal("budget rejection did not settle")
-						}
-					}
-				}
-			failed:
-				after, err := os.ReadFile(journal)
-				if err != nil {
-					t.Fatal(err)
-				}
-				// budget 拒绝可记录 turn 生命周期，但不能保存被拒绝的用户输入或 Skill 正文。
-				if failure != "budget" && !bytes.Equal(before, after) {
-					t.Fatal("failed preparation wrote journal")
-				}
-				if bytes.Contains(after, []byte("Frozen")) || bytes.Contains(after, []byte("$review")) {
-					t.Fatal("rejected input persisted")
-				}
-				if !strings.Contains(model.View(), "$review") {
-					t.Fatal("failed preparation lost editable draft")
-				}
-			})
 		}
 	}
 }

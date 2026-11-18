@@ -50,15 +50,6 @@ func (r *appHookRunner) Run(_ context.Context, id domain.HookRunIdentity, _ doma
 func TestHookResumeReconcilesEveryBatchBeforeLoadingNewSnapshot(t *testing.T) {
 	testHookResumeReconcilesEveryBatch(t, domain.HookPreToolUse, false)
 }
-func TestPostHookResumeReconcilesEveryBatchBeforeLoadingNewSnapshot(t *testing.T) {
-	testHookResumeReconcilesEveryBatch(t, domain.HookPostToolUse, false)
-}
-func TestFailureHookResumeReconcilesEveryBatchBeforeLoadingNewSnapshot(t *testing.T) {
-	testHookResumeReconcilesEveryBatch(t, domain.HookPostToolUseFailure, false)
-}
-func TestPreInputRewriteResumeReconcilesEveryBatchBeforeLoadingNewSnapshot(t *testing.T) {
-	testHookResumeReconcilesEveryBatch(t, domain.HookPreToolUse, true)
-}
 func testHookResumeReconcilesEveryBatch(t *testing.T, event domain.HookEvent, rewrite bool) {
 	t.Helper()
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {

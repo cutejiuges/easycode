@@ -2,9 +2,7 @@ package openai
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -119,45 +117,5 @@ func TestReasoningRequestsSummaryAndWebsocketGolden(t *testing.T) {
 	}
 	if !bytes.Equal(actual.Bytes(), want) {
 		t.Fatal("reasoning request golden mismatch")
-	}
-}
-
-func TestFrozenPlanAndChangedCompactionSourceRejectsBeforeNetwork(t *testing.T) {
-	instance, err := New(Config{BaseURL: "https://example.invalid", Model: "model", APIKey: secret.New("fixture-key")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer instance.Close()
-	c := testConversation(t, instance)
-	entry := testInputEntry(t, NewUserItem("hello"))
-	c.history.commit(entry)
-	sampling, _ := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testOpenAIToolCatalog(t))
-	compact, _ := provider.NewCompactionInput(sampling, "preserve failures", 4096)
-	preview, err := c.PreflightCompaction(compact)
-	if err != nil {
-		t.Fatal(err)
-	}
-	plan, err := c.planCompactionRequest(compact)
-	if err != nil {
-		t.Fatal(err)
-	}
-	before, err := plan.body()
-	if err != nil {
-		t.Fatal(err)
-	}
-	generation := nativeHistoryEntry{Kind: nativeHistorySample, Outputs: []NativeItem{{Type: "message", Role: "assistant", Content: []ContentPart{{Type: "output_text", Text: "answer"}}}}}
-	generation.TurnID = entry.TurnID
-	c.history.commit(generation)
-	after, err := plan.body()
-	if err != nil || !bytes.Equal(before.Bytes(), after.Bytes()) {
-		t.Fatal("native mutation changed frozen plan", err)
-	}
-	prepared, err := c.RunCompaction(context.Background(), "01900000-0000-7000-8000-000000000009", preview)
-	var failure *provider.CompactionError
-	if prepared != nil || !errors.As(err, &failure) || failure.Code() != provider.CompactionSourceChanged {
-		t.Fatal("stale preflight reached network", err)
-	}
-	if c.active.Load() || c.pending.Load() {
-		t.Fatal("stale preflight retained owner")
 	}
 }

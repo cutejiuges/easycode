@@ -413,7 +413,10 @@ func (*Planner) Plan(input PlanningInput) (ContextPlan, error) {
 		return ContextPlan{}, err
 	}
 	toolEstimate := estimate.String(string(toolView.CanonicalJSON()))
-	visibleEstimate := estimateActiveContext(input.history)
+	visibleEstimate, err := estimateActiveContext(input.history)
+	if err != nil {
+		return ContextPlan{}, err
+	}
 	historyEstimate, err := coverEstimates(visibleEstimate, input.footprint.Estimate())
 	if err != nil {
 		return ContextPlan{}, err
@@ -480,6 +483,10 @@ func buildCachePlan(input PlanningInput) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
+	historyContent, err := semanticContent(input.history.History())
+	if err != nil {
+		return Plan{}, err
+	}
 	historyJSON, err := codec.MarshalCanonical(struct {
 		Summary   string                    `json:"summary,omitempty"`
 		History   []semanticContentMessage  `json:"history"`
@@ -489,7 +496,7 @@ func buildCachePlan(input PlanningInput) (Plan, error) {
 		Tokens    uint64                    `json:"estimated_tokens"`
 		HasTokens bool                      `json:"has_estimated_tokens"`
 	}{
-		Summary: activeSummaryText(input.history), History: semanticContent(input.history.History()), Revision: input.footprint.Revision(),
+		Summary: activeSummaryText(input.history), History: historyContent, Revision: input.footprint.Revision(),
 		Method: input.footprint.Estimate().Method(), State: input.footprint.Estimate().State(),
 		Tokens: tokenValue(input.footprint.Estimate()), HasTokens: hasTokenValue(input.footprint.Estimate()),
 	}, MaxSegmentBytes)
@@ -550,7 +557,7 @@ func buildCachePlan(input PlanningInput) (Plan, error) {
 	return NewPlan(segments...)
 }
 
-func estimateSemanticHistory(history domain.SemanticHistoryView) domain.TokenEstimate {
+func estimateSemanticHistory(history domain.SemanticHistoryView) (domain.TokenEstimate, error) {
 	var tokens uint64
 	for _, turn := range history.Turns {
 		for _, message := range turn.Messages {
@@ -558,11 +565,18 @@ func estimateSemanticHistory(history domain.SemanticHistoryView) domain.TokenEst
 			if message.HasSkill {
 				text += "\n" + message.Skill.Content
 			}
+			for _, file := range message.Files.Items() {
+				rendered, err := file.RenderedText()
+				if err != nil {
+					return domain.TokenEstimate{}, err
+				}
+				text += "\n" + rendered
+			}
 			value, _ := estimate.String(text).Tokens()
 			tokens = estimate.SaturatingAdd(tokens, value)
 		}
 	}
-	return mustEstimated(tokens)
+	return mustEstimated(tokens), nil
 }
 
 // semanticContentMessage 只保留 cache 内容，不包含展示或恢复身份。
@@ -572,7 +586,7 @@ type semanticContentMessage struct {
 	Text string              `json:"text"`
 }
 
-func semanticContent(history domain.SemanticHistoryView) []semanticContentMessage {
+func semanticContent(history domain.SemanticHistoryView) ([]semanticContentMessage, error) {
 	messages := make([]semanticContentMessage, 0)
 	for _, turn := range history.Turns {
 		for _, message := range turn.Messages {
@@ -580,9 +594,16 @@ func semanticContent(history domain.SemanticHistoryView) []semanticContentMessag
 			if message.HasSkill {
 				messages = append(messages, semanticContentMessage{Kind: semanticSkillAttachment, Role: message.Role, Text: message.Skill.Content})
 			}
+			for _, file := range message.Files.Items() {
+				rendered, err := file.RenderedText()
+				if err != nil {
+					return nil, err
+				}
+				messages = append(messages, semanticContentMessage{Kind: semanticFileAttachment, Role: message.Role, Text: rendered})
+			}
 		}
 	}
-	return messages
+	return messages, nil
 }
 
 func coverEstimates(first, second domain.TokenEstimate) (domain.TokenEstimate, error) {
@@ -638,8 +659,12 @@ func activeSummaryText(view domain.ActiveContextView) string {
 	return summary.Text()
 }
 
-func estimateActiveContext(view domain.ActiveContextView) domain.TokenEstimate {
-	return sumEstimates(estimateSemanticHistory(view.History()), estimate.String(activeSummaryText(view)))
+func estimateActiveContext(view domain.ActiveContextView) (domain.TokenEstimate, error) {
+	history, err := estimateSemanticHistory(view.History())
+	if err != nil {
+		return domain.TokenEstimate{}, err
+	}
+	return sumEstimates(history, estimate.String(activeSummaryText(view))), nil
 }
 
 func tokenValue(value domain.TokenEstimate) uint64 {
@@ -676,4 +701,5 @@ type semanticContentKind string
 const (
 	semanticText            semanticContentKind = "text"
 	semanticSkillAttachment semanticContentKind = "skill_attachment"
+	semanticFileAttachment  semanticContentKind = "file_attachment"
 )

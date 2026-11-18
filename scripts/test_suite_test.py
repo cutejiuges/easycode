@@ -169,43 +169,28 @@ print(json.dumps({'Package': 'fixture/package', 'Action': 'pass'}))
 
 
 class RacePolicyTests(unittest.TestCase):
-    def setUp(self):
-        self.inventory = {"fixture/p": ["TestSerial", "TestConcurrent", "TestNew", "FuzzNew", "Example"]}
-        self.policy = [{"package": "fixture/p", "tests": ["TestSerial"], "source": "serial_test.go",
-                        "reason": "串行格式校验保留普通测试", "retained_race": [
-                            {"package": "fixture/p", "test": "TestConcurrent"}]}]
+    def test_critical_plan_keeps_only_named_paths_and_preserves_normal_inventory(self):
+        inventory = {"fixture/p": ["TestConcurrent", "TestSerial", "TestNew", "FuzzNew"]}
+        original = copy.deepcopy(inventory)
+        policy = [{"package": "fixture/p", "tests": ["TestConcurrent"], "reason": "并发提交关键路径"}]
+        selected, unselected = select_race(inventory, policy, "linux")
+        self.assertEqual(selected, {"fixture/p": ["TestConcurrent"]})
+        self.assertEqual(inventory, original)
+        self.assertEqual({x["test"] for x in unselected}, {"TestSerial", "TestNew", "FuzzNew"})
+        for invalid, reason in [(policy * 2, "duplicate"),
+                                ([{**policy[0], "tests": ["TestRemoved"]}], "stale"),
+                                ([], "empty")]:
+            with self.subTest(reason=reason), self.assertRaisesRegex(ValueError, reason):
+                select_race(inventory, invalid, "linux")
 
-    def test_exact_exclusion_keeps_new_entries_and_original_inventory(self):
-        original = copy.deepcopy(self.inventory)
-        selected, excluded = select_race(self.inventory, self.policy, "linux")
-        self.assertEqual(selected["fixture/p"], ["TestConcurrent", "TestNew", "FuzzNew", "Example"])
-        self.assertEqual(self.inventory, original)
-        self.assertEqual([item["test"] for item in excluded], ["TestSerial"])
-        self.assertEqual(excluded[0]["reason"], self.policy[0]["reason"])
-        self.assertEqual(excluded[0]["retained_race"], self.policy[0]["retained_race"])
-
-    def test_duplicate_stale_and_missing_retained_coverage_fail(self):
-        with self.assertRaisesRegex(ValueError, "duplicate"):
-            select_race(self.inventory, self.policy * 2, "linux")
-        self.policy[0]["tests"] = ["TestRemoved"]
+    def test_critical_plan_respects_platform_availability(self):
+        policy = [{"package": "fixture/p", "tests": ["TestUnix"], "reason": "描述符关键路径",
+                   "platforms": ["darwin", "linux"]},
+                  {"package": "fixture/p", "tests": ["TestOwner"], "reason": "通用关闭路径"}]
+        selected, _ = select_race({"fixture/p": ["TestOwner"]}, policy, "windows")
+        self.assertEqual(selected, {"fixture/p": ["TestOwner"]})
         with self.assertRaisesRegex(ValueError, "stale"):
-            select_race(self.inventory, self.policy, "linux")
-        self.policy[0]["tests"] = ["TestConcurrent"]
-        with self.assertRaisesRegex(ValueError, "missing retained"):
-            select_race(self.inventory, self.policy, "linux")
-        self.policy[0]["tests"] = ["TestSerial"]
-        self.policy[0]["retained_race"][0]["test"] = "TestRemoved"
-        with self.assertRaisesRegex(ValueError, "missing retained"):
-            select_race(self.inventory, self.policy, "linux")
-
-    def test_platform_absence_requires_explicit_scope(self):
-        inventory = {"fixture/p": ["TestNew"]}
-        with self.assertRaisesRegex(ValueError, "stale"):
-            select_race(inventory, self.policy, "windows")
-        self.policy[0]["platforms"] = ["darwin", "linux"]
-        selected, excluded = select_race(inventory, self.policy, "windows")
-        self.assertEqual(selected, inventory)
-        self.assertEqual(excluded, [])
+            select_race({"fixture/p": ["TestOwner"]}, policy, "linux")
 
 
 @unittest.skipUnless(os.name == "posix", "Executable script fixture requires a native POSIX host")

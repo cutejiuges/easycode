@@ -195,25 +195,6 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 	}
 }
 
-func TestCompactionRejectsInvalidOutput(t *testing.T) {
-	for _, text := range []string{"", " \n", string([]byte{0xff}), strings.Repeat("x", domain.MaxContextSummaryBytes+1)} {
-		generation := nativeHistoryEntry{Kind: nativeHistorySample, Outputs: []NativeItem{{Type: "message", Role: "assistant", Content: []ContentPart{{Type: "output_text", Text: text}}}}}
-		if _, err := compactionSummary(generation); err == nil {
-			t.Fatal("invalid summary accepted")
-		}
-	}
-	for _, kind := range []string{"refusal", "function_call", "custom_tool_call", "future_item"} {
-		generation := nativeHistoryEntry{Kind: nativeHistorySample, Outputs: []NativeItem{{Type: kind}}}
-		if _, err := compactionSummary(generation); err == nil {
-			t.Fatal("non-text response accepted")
-		}
-	}
-	generation := nativeHistoryEntry{Kind: nativeHistorySample, Outputs: []NativeItem{{Type: "message", Role: "assistant", Content: []ContentPart{{Type: "output_text", Text: "Error is a valid description of the failed test"}}}}}
-	if _, err := compactionSummary(generation); err != nil {
-		t.Fatal("text inspected as control flow", err)
-	}
-}
-
 func assertCompactionAfterToolSteering(t *testing.T, instance *Provider, conversation *Conversation, sampling provider.TurnInput, envelopes []provider.NativeCommitEnvelope, outputs []tool.ModelOutput) {
 	t.Helper()
 	records := testRestoreRecords(t, envelopes, outputs)

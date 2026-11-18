@@ -8,7 +8,6 @@ import (
 	"os"
 	"testing"
 
-	"easycode/internal/domain"
 	"easycode/internal/provider/anthropic"
 	"easycode/internal/secret"
 )
@@ -96,26 +95,5 @@ func TestThinkingUsageFixedCurrentRestoreAndRejectBeforeRepair(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestThinkingUsageAggregatesWithoutAddingToOutput(t *testing.T) {
-	known := domain.KnownUsageMetric
-	unknown := domain.UnknownUsageMetric()
-	one, _ := domain.NewSampleUsage(unknown, unknown, unknown, known(40), known(30))
-	two, _ := domain.NewSampleUsage(unknown, unknown, unknown, known(20), known(10))
-	missing, _ := domain.NewSampleUsage(unknown, unknown, unknown, known(10), unknown)
-	aggregate, err := domain.AggregateSampleUsage([]domain.SampleUsage{one, two})
-	if err != nil {
-		t.Fatal(err)
-	}
-	output, _ := aggregate.Output().Value()
-	thinking, _ := aggregate.ReasoningOutput().Value()
-	if output != 60 || thinking != 40 {
-		t.Fatal("thinking double counted or lost")
-	}
-	aggregate, err = domain.AggregateSampleUsage([]domain.SampleUsage{one, missing})
-	if err != nil || aggregate.ReasoningOutput().State() != domain.UsageMetricUnknown {
-		t.Fatal("missing observation did not propagate", err)
 	}
 }

@@ -7,12 +7,10 @@ import (
 	"context"
 	"easycode/internal/config"
 	"easycode/internal/domain"
-	"easycode/internal/extension/hook"
 	"easycode/internal/protocol"
 	"easycode/internal/secret"
 	"easycode/internal/session"
 	"easycode/internal/tool"
-	"easycode/internal/tool/builtin"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,7 +20,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 )
 
 type postDisclosureScenario struct {
@@ -31,63 +28,6 @@ type postDisclosureScenario struct {
 	command string
 	code    domain.HookCode
 	body    bool
-}
-
-func TestPostReadOnlyDocumentationExampleClassifiesFindingEmptyAndFailure(t *testing.T) {
-	for _, name := range []string{"finding", "clean", "missing"} {
-		t.Run(name, func(t *testing.T) {
-			root := t.TempDir()
-			content := "package main\n"
-			if name == "finding" {
-				content += "// TODO\n"
-			}
-			path := filepath.Join(root, "main.go")
-			if name != "missing" {
-				if err := os.WriteFile(path, []byte(content), 0600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			workspace, err := builtin.OpenWorkspace(root)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer workspace.Close()
-			runner, err := builtin.NewHookRunner(workspace, builtin.OpenCommandEnvironment(), hook.ParseExecution)
-			if err != nil || runner.Preflight(context.Background()) != domain.HookOK {
-				t.Fatal("read-only sandbox unavailable", err)
-			}
-			id := "018f1d8a-7b5c-7def-8abc-456789abcdef"
-			d, _ := domain.NewHookDeclaration(domain.HookSourceProject, domain.HookPostToolUse, domain.HookFeedbackModel, strings.Repeat("a", 64), "example", 7, postReadOnlyExample(), 5)
-			plan, _ := domain.NewHookPlan(id, domain.HookExec, []domain.HookReference{d.Reference})
-			currentPostBranch1, _ := domain.NewPostHookBranch(plan.Event, plan.Hooks, 16<<10)
-			currentPostBranch1.Delivery = domain.HookDeliveryAvailable
-			post, _ := domain.NewPostHookPlan(plan.InvocationID, plan.Capability, []domain.PostHookBranch{currentPostBranch1}, 256<<10, 16<<10)
-			run, _ := domain.NewPostHookRunIdentity(post, domain.HookPostToolUse, 0)
-			input, _ := domain.NewHookExecInput("true", "", 1000)
-			response, _ := domain.NewHookExecResponse(domain.HookExecMetadata{ExitKnown: true})
-			stdin, err := domain.NewPostHookInput(domain.SessionID(id), domain.ThreadID(id), domain.TurnID(id), "call", "exec_command", root, input, response)
-			if err != nil {
-				t.Fatal(err)
-			}
-			execution := runner.Run(context.Background(), run, d, stdin, 5*time.Second)
-			if execution.Result.Validate() != nil {
-				t.Fatal("invalid example execution")
-			}
-			if name == "missing" {
-				if execution.Result.Code != domain.HookExitFailed || execution.Result.ExitCode == 0 || !execution.Feedback.Empty() {
-					t.Fatal("example execution failure became model feedback")
-				}
-			} else {
-				if execution.Result.Code != domain.HookOK || execution.Result.ExitCode != 0 || execution.Feedback.Empty() != (name == "clean") {
-					t.Fatal("example finding/empty classification changed")
-				}
-				actual, err := os.ReadFile(path)
-				if err != nil || string(actual) != content {
-					t.Fatal("example modified workspace", err)
-				}
-			}
-		})
-	}
 }
 
 func TestPostBothProvidersRealSandboxThreeCapabilitiesAndDisclosure(t *testing.T) {

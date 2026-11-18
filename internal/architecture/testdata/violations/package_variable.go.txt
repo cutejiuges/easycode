@@ -1,3 +1,0 @@
-package fixture
-
-var Registry = map[string]string{"mutable": "state"}

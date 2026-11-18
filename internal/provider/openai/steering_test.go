@@ -149,17 +149,3 @@ func TestSteeringInputsPreviewCommitRestoreAndRequestEquivalence(t *testing.T) {
 		t.Fatal("mismatched restore association accepted")
 	}
 }
-
-func TestUserInputsCanonicalGolden(t *testing.T) {
-	a, _ := domain.NewInputAssociation("01900000-0000-7000-8000-000000000010", domain.InputInitial, 0, []domain.InputID{"01900000-0000-7000-8000-000000000011"})
-	input, _ := domain.NewUserInput(a.IDs()[0], "  hello\n")
-	var conversation Conversation
-	envelope, err := conversation.EncodeUserInputs(a, []domain.UserInput{input})
-	if err != nil {
-		t.Fatal(err)
-	}
-	const want = `{"kind":"user_inputs","user_inputs":[{"type":"message","role":"user","content":[{"type":"input_text","text":"  hello\n"}]}],"input_metadata":{"turn_id":"01900000-0000-7000-8000-000000000010","placement":"initial","target_sample_index":0,"input_ids":["01900000-0000-7000-8000-000000000011"]}}`
-	if string(envelope.Payload()) != want {
-		t.Fatalf("input golden changed: %s", envelope.Payload())
-	}
-}

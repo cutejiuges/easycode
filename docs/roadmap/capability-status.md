@@ -1,6 +1,6 @@
 # 当前能力与实现边界
 
-> 核对日期：2026-11-15。基线：当前仓库实现及已同步主规格，包含本地 Plugin 技能包、启动推理控制、会话内 effort 选择及本轮回归修复、结构化用户提问、PreToolUse 参数改写、PreToolUse/PostToolUse/PostToolUseFailure/Stop Hook、命令/Skill 首词补全与已验收归档的双 Provider 被动推理阅读。
+> 核对日期：2026-11-17。基线：当前仓库实现及已同步主规格，包含本地 Plugin 技能包、启动推理控制、会话内 effort 选择及本轮回归修复、结构化用户提问、PreToolUse 参数改写、PreToolUse/PostToolUse/PostToolUseFailure/Stop Hook、命令/Skill 首词补全、工作区文件引用与已验收归档的双 Provider 被动推理阅读。
 > 本文记录当前代码可执行的能力；[产品 Roadmap](product-roadmap.md)保留阶段目标与剩余工作。已接受的 ADR 和归档 change 记录各自当时的决策，不能单独作为现有功能清单。
 
 ## 用户入口
@@ -11,7 +11,8 @@
 | CLI | 默认 TUI、`--version`、`--config`、`--plugin-dir PATH`、`--resume ID`、`--continue`、`--print`、`--json`、`--json --input-format stream-json` | `--resume` 与 `--continue` 互斥；没有 `doctor`、`provider probe`、fork 或模型切换命令；`cmd/easycode/*_test.go` |
 | 会话发现 | `sessions list [--all] [--limit N]`；`resume [--all] [--config PATH]` 启动选择器 | 离线 list 无需模型配置；picker 需要配置及终端。搜索限最近至多 200 条元数据，非正文全文搜索；`internal/app/session_*_test.go` |
 | 本地 slash commands | `/cache`、`/context`、`/compact [instructions]`、`/effort [level|auto|reset]`、`/skills`、`/hooks`、`/plugins`，以及可调用 Skill 的 `/<name>` / `$name` | TUI 命令与 Skill 附件入口，支持 `/` / `$` 首词补全及冻结来源筛选；stream-json 使用独立 typed 控制消息，普通文字不执行 slash。`/help`、`/fork`、`/model`、`/mcp`、`/cost` 尚未实现 |
-| 命令/Skill 补全 | 确定性筛选、上下键选择、Tab 填入、内置 Enter 执行及 Skill Enter 只填入；Esc 关闭、paste 抑制、窄屏停用 | 仅首词名称，不含文件/参数值补全、正文 mentions 或动态目录；`internal/tui/completion*_test.go`、`internal/app/completion_e2e_test.go`；候选不进入 Session 或缓存前缀 |
+| 命令/Skill 补全 | 确定性筛选、上下键选择、Tab 填入、内置 Enter 执行及 Skill Enter 只填入；Esc 关闭、paste 抑制、窄屏停用 | 命令/Skill 仅首词名称；正文文件引用使用独立来源，不含普通参数值补全；`internal/tui/completion*_test.go`、`internal/app/completion_e2e_test.go`；候选不进入 Session 或缓存前缀 |
+| 工作区文件引用 | 正文光标处 @ 路径补全、引号及行范围、提交时冻结、独立摘要/分页详情、双 Provider 原生恢复 | 8 引用、16/64 MiB 源读取、64/512 KiB 包装；候选会话索引 50000 项/16 MiB、渐进代次与分层 ignore、单 worker/准备 gate；不授予工具权限；`internal/app/file*_test.go`、`internal/tui/file*_test.go`、`scripts/file-mentions-smoke.py` |
 | 本地插件 | `--plugin-dir`，只读 `/plugins`，限定 Skill 调用与补全；Codex 副文件调用限制 | 复用同一 Skill 工具、权限和原生恢复；无 marketplace/安装、脚本/MCP/Agent 贡献或热加载；`internal/app/plugins_test.go`、`cmd/easycode/plugin_integration_test.go`、`scripts/plugins-smoke.py` |
 | 启动推理控制 | 五个严格 JSON 字段；Anthropic thinking/display/独立 effort、OpenAI effort/summary、普通输出上限；/context 只读来源 | thinking/display/summary/输出额度启动冻结，effort 按完整操作捕获；窗口预留和摘要 manual budget 预检；不探测模型、不降级或重试；`internal/config/reasoning_test.go`、两家 `reasoning_request_test.go`、`internal/app/reasoning_auto_compaction_test.go` |
 | 会话内 effort | `/effort` 短通知、auto/unset/reset、七项内置补全；stream-json effort.query/set/snapshot | 下一操作生效，工具/Question/审批/Stop/自动摘要冻结，独立摘要接纳时捕获；纯进程选择和序号不写 Session/配置，活动 starting/finishing 可查；`internal/runtime/effort*_test.go`、`internal/app/effort_e2e_test.go`、`scripts/effort-smoke.py` |
@@ -48,7 +49,7 @@ Stop 已支持精确答复的完成前检查、同回合最多两次续轮、累
 | 缓存 | Anthropic disabled/5m/1h 显式断点；OpenAI omit/thread key；可选 WebSocket durable 前缀增量与受限回退；`/cache`/`cache.query` | 费用/价格、长期累计遥测、动态 plugin/MCP 目录策略；不能保证服务端命中 |
 | Usage | raw usage 保留于各 Provider native facts；共享五项三态指标及 turn 聚合，区分未知/不适用；最近 sample/turn/summary 有界缓存观测；Anthropic thinking_tokens 为 known/unknown，output 已包含 thinking | 实时独立 usage 流、cost 面板、配额与完整 metrics/tracing |
 | 压缩 | 手动 `/compact`、显式窗口下阈值自动摘要、独立 CompactionID/checkpoint、失败保留旧窗口、完整历史可读、取消/恢复 | 删除旧 JSONL、跨 Provider fork、PreCompact/PostCompact Hook、通用分块摘要 |
-| TUI | 流式 Markdown、代码/表格/原文阅读、resize/窄屏/NO_COLOR、普通批准/问卷/Hook 审查、紧凑工具主线、Ctrl+O 分页详情、context/cache、resume picker、命令/Skill 补全、thinking/summary 活动提示及 Ctrl+O 阅读、冻结设置查询与有界滚动 | 运行中推理切换、fork picker、后台任务 UI、通用命令管理面板 |
+| TUI | 流式 Markdown、代码/表格/原文阅读、resize/窄屏/NO_COLOR、普通批准/问卷/Hook 审查、紧凑工具主线、Ctrl+O 分页详情、context/cache、resume picker、命令/Skill 与正文文件补全、thinking/summary 活动提示及 Ctrl+O 阅读、冻结设置查询与有界滚动 | effort 之外的运行中推理切换、fork picker、后台任务 UI、通用命令管理面板 |
 | 输出保存 | Exec stdout/stderr 与搜索连续前缀、授权 descriptor、ReadArtifact、独立宿主详情查询；恢复不重读 artifact | Read/Patch/Write/Skill/Question 的通用自动 artifact、自动过期、远程 artifact 服务 |
 
 补全验证入口为 `internal/tui/completion*_test.go`、`internal/app/completion_e2e_test.go` 与 `scripts/completion-smoke.py`。候选状态只在 TUI 内存；正式提交仍执行 Skill 来源校验及既有输入生命周期，手输/补全/恢复保持双 Provider 请求和缓存等价。
@@ -96,3 +97,11 @@ P6 当前交付本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/
 - PostToolUseFailure 最终契约核对与归档：[archive.md](../../openspec/changes/archive/2026-11-11-add-post-tool-use-failure-hooks/archive.md)。
 
 - 本地 Plugin 技能包：[使用与受限字段](../../README.md#本地-plugin-技能包)、[设计与参考源码](../../openspec/changes/archive/2026-11-13-add-local-plugin-skills/design.md)、[验证记录](../../openspec/changes/archive/2026-11-13-add-local-plugin-skills/verification.md)。
+
+## 工作区文件引用的当前边界
+
+`domain.InputDraft` 区分交互引用与普通字面输入；`ChatSession.Append` 接收 typed 草稿，经 `Runtime.InstallInputSources` 装配的实际来源组合 Skill/文件准备后进入 admission。只有完整冻结附件进入队列与 native facts；原文仍用于 recall/取回，文件内容不递归解析。准备不捕获 operationProfile，不产生 Read/Write/Hook/Skill 权限事实。内容准备和搜索的退出先于 Workspace、writer 与 lease 释放。
+
+两家 `InputMetadata.files` 为必需非 null 数组，项为 input_id/attachments；缺失字段的旧开发 shape 在 repair 前拒绝。文件选择、源行数、实际范围、ends_mid_line、truncated、content、digest 同时校验；真实 digest 不能掩盖非法范围。冻结 JSON 数据包装只作为用户文本块，身份、digest、绝对根与搜索状态不进入 prompt 稳定前缀。压缩窗口不自动重新附带旧文件，完整历史仍可读取；恢复等价需两侧实际推理设置相同，override/选择序号不持久化。
+
+4 KiB 摘要只保存完整来源项前缀和 total/items/omitted，预先构造并验证提交事件；正文由 transcript owner 分页提供，离线 picker 只保留摘要。外部 headless JSONL 沿用现有字段，普通 @ 不读文件。Darwin PTY 验证两家 Provider、NO_COLOR、光标/范围、过期候选、忽略规则、准备中 effort、排队取回、strict-next、停止和终端恢复；真实 input-only 子进程崩溃验证 lease/repair/单调 seq 与重复恢复零重读。具体命令、数值和平台限制见[验收记录](../../openspec/changes/archive/2026-11-17-add-workspace-file-mentions/verification.md)。

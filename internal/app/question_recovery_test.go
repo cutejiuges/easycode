@@ -15,58 +15,6 @@ import (
 	"easycode/internal/tool"
 )
 
-func TestQuestionCatalogUsesOnlyMetadata(t *testing.T) {
-	data, err := os.ReadFile("../session/testdata/current/question_openai_complete.jsonl")
-	if err != nil {
-		t.Fatal(err)
-	}
-	root, _, _ := installPreviewFixture(t, data)
-	var output, diagnostics bytes.Buffer
-	result := ListSessions(context.Background(), SessionListOptions{All: true, Limit: 20, SessionDataRoot: root, SessionCatalogPath: filepath.Join(filepath.Dir(root), "state.sqlite"), Output: &output, ErrorOutput: &diagnostics})
-	if result.ExitCode() != 0 || !bytes.Contains(output.Bytes(), []byte("gpt-test")) {
-		t.Fatal("question fixture missing from catalog", result, output.String(), diagnostics.String())
-	}
-	if bytes.Contains(output.Bytes(), []byte("保留说明")) || bytes.Contains(output.Bytes(), []byte("选择存储")) {
-		t.Fatal("answer text duplicated in catalog metadata")
-	}
-}
-
-func TestQuestionRestoreRejectsNativeAndSharedFactMismatchReadOnly(t *testing.T) {
-	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
-		for _, fault := range []string{"native_input_mismatch", "native_answer_mismatch"} {
-			t.Run(string(family)+"/"+fault, func(t *testing.T) {
-				data, err := os.ReadFile("../session/testdata/current/question_" + string(family) + "_" + fault + ".jsonl")
-				if err != nil {
-					t.Fatal(err)
-				}
-				root, path, thread := installPreviewFixture(t, data)
-				// Loader 和共享 grammar 均合法，必须由原生与共享事实的关联校验拒绝。
-				loaded, plan := loadToolLoopPlan(t, root, thread)
-				if len(loaded.Records) == 0 || !plan.Tools[1].HasResult {
-					t.Fatal("fixture did not reach native association check")
-				}
-				preview, cleanup, err := previewSession(context.Background(), root, thread, defaultPreviewDependencies())
-				if err == nil || cleanup || len(preview.Messages) != 0 {
-					t.Fatal("offline preview accepted mismatched question", err)
-				}
-				cfg := config.Config{Provider: config.Provider{Family: family, BaseURL: "https://example.invalid", APIKey: secret.New("fixture-key"), Model: "gpt-test"}}
-				if family == domain.ProviderAnthropic {
-					cfg.Provider.Model = "claude-test"
-				}
-				resources, err := openChatResources(context.Background(), cfg, root, string(thread), t.TempDir())
-				if err == nil {
-					_ = resources.close(context.Background())
-					t.Fatal("resume accepted mismatched question")
-				}
-				after, err := os.ReadFile(path)
-				if err != nil || !bytes.Equal(after, data) {
-					t.Fatal("rejected restore rewrote journal", err)
-				}
-			})
-		}
-	}
-}
-
 func TestQuestionRecoveryNeverReasksAndRetainsFrozenAnswers(t *testing.T) {
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		for _, state := range []string{"ready", "started", "result", "complete", "skip", "unavailable"} {

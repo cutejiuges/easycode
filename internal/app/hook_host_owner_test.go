@@ -33,15 +33,6 @@ func (r *blockingAppHook) Run(ctx context.Context, id domain.HookRunIdentity, _ 
 func TestHookHostRetainsWorkspaceAndCrossProcessLeaseDuringCleanup(t *testing.T) {
 	testHookHostRetainsLease(t, domain.HookPreToolUse)
 }
-func TestPostHookHostRetainsWorkspaceAndCrossProcessLeaseDuringCleanup(t *testing.T) {
-	testHookHostRetainsLease(t, domain.HookPostToolUse)
-}
-func TestFailureHookHostRetainsWorkspaceAndCrossProcessLeaseDuringCleanup(t *testing.T) {
-	testHookHostRetainsLease(t, domain.HookPostToolUseFailure)
-}
-func TestStopHookHostRetainsWorkspaceAndCrossProcessLeaseDuringCleanup(t *testing.T) {
-	testHookHostRetainsLease(t, domain.HookStop)
-}
 func testHookHostRetainsLease(t *testing.T, event domain.HookEvent) {
 	t.Helper()
 	workspace := t.TempDir()

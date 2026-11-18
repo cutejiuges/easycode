@@ -1,5 +1,7 @@
 # PreToolUse 参数改写验收记录
 
+> 历史日志、运行清单和诊断转储已清理，仅保留文字结论；当前验收以现存测试及质量门为准。
+
 实现日期：2026-11-14；最终质量门：2026-11-15（Asia/Shanghai）。工作区 `/Users/cutejiuge/.codex/worktrees/0fb5/easycode`，分支 `feat/pre-tool-use-input-rewrite`，基线 `8492ec25c489605f7ef6a3b42f15b86842f8717e`。运行环境 Go 1.24.13、Darwin/arm64。
 
 ## 范围与选择理由
@@ -14,19 +16,19 @@ O 是不可变原始 ready/native 调用；C 仅为逐项已 Sync 的检查候�
 
 完整质量门重新通过：33 包正常及 race 全部以 `-count=1` 运行；双 Provider 核心专项随机顺序重复三轮通过，Darwin 真实 PTY 两个 Provider 各 33 阶段再次通过。在本轮覆盖范围内未发现功能失败、数据竞争、业务死循环或死锁。没有修改生产代码、断言、超时或默认 race 配置。
 
-完整命令、逐项耗时、CPU profile 和测试超过十分钟的原因见 [再次回归记录](regression-2026-11-15.md)。测试范围等价及汇总见 [quality-summary.json](evidence/reverification-2026-11-15/quality-summary.json)；本轮为采样分开运行 app race 和其余包，总耗时不代表默认并行质量门的耗时。
+完整命令、逐项耗时、CPU profile 和测试超过十分钟的原因见 [再次回归记录](regression-2026-11-15.md)。测试范围等价及汇总见 quality-summary.json；本轮为采样分开运行 app race 和其余包，总耗时不代表默认并行质量门的耗时。
 
 ## 首次实现运行记录
 
 | 检查 | 结果与证据 |
 | --- | --- |
-| `make verify` | **通过，exit 0**；最终运行 26.224 秒，应用包正常/race 命中上一轮完整成功缓存，调整后的 TUI 快照重新检查。[最终命令](evidence/make-verify.json)、[完整日志](evidence/make-verify.log) |
-| 完整非缓存质量门 | **通过，exit 0**；1,039.083 秒，应用包正常测试 148.188 秒、race 873.128 秒。包含分支规约测试、gofmt、vet、Staticcheck、架构守卫、全量与 race。[命令](evidence/make-verify-attempt-2.json)、[日志](evidence/make-verify-attempt-2.log) |
-| 首轮 Staticcheck 修复 | 检出测试无效赋值及未消费的旧私有 helper，已清除；未增加抑制项、跳过或弱化业务断言。[失败命令](evidence/make-verify-attempt-1.json)、[日志](evidence/make-verify-attempt-1.log) |
-| parser fuzz | **通过**；15 秒目标、4 worker、1,485,272 次执行；[命令/退出码](evidence/parser-fuzz.json)、[日志](evidence/parser-fuzz.log) |
-| Darwin 双 Provider 真实 PTY | **通过**，两次完整运行；各 Provider 33 阶段、exit 0；[OpenAI](evidence/pty/openai-input-rewrite.json)、[Anthropic](evidence/pty/anthropic-input-rewrite.json) 与相邻 `.pty.log` |
-| Linux/amd64、Windows/amd64 | **编译通过**；CGO_ENABLED=0，CLI 构建与所有 33 包逐包 `go test -c`，共 68 条命令；未原生执行。[命令/退出码](evidence/cross-compile.json)、[日志](evidence/cross-compile.log) |
-| OpenSpec | change、六份主规格、全库 strict 全部通过（62/62：60 份主规格、2 个活动 change）；实际命令和 exit code 见 [openspec-validation.json](evidence/openspec-validation.json)、[日志](evidence/openspec-validation.log) |
+| `make verify` | **通过，exit 0**；最终运行 26.224 秒，应用包正常/race 命中上一轮完整成功缓存，调整后的 TUI 快照重新检查。最终命令、完整日志 |
+| 完整非缓存质量门 | **通过，exit 0**；1,039.083 秒，应用包正常测试 148.188 秒、race 873.128 秒。包含分支规约测试、gofmt、vet、Staticcheck、架构守卫、全量与 race。命令、日志 |
+| 首轮 Staticcheck 修复 | 检出测试无效赋值及未消费的旧私有 helper，已清除；未增加抑制项、跳过或弱化业务断言。失败命令、日志 |
+| parser fuzz | **通过**；15 秒目标、4 worker、1,485,272 次执行；命令/退出码、日志 |
+| Darwin 双 Provider 真实 PTY | **通过**，两次完整运行；各 Provider 33 阶段、exit 0；OpenAI、Anthropic 与相邻 `.pty.log` |
+| Linux/amd64、Windows/amd64 | **编译通过**；CGO_ENABLED=0，CLI 构建与所有 33 包逐包 `go test -c`，共 68 条命令；未原生执行。命令/退出码、日志 |
+| OpenSpec | change、六份主规格、全库 strict 全部通过（62/62：60 份主规格、2 个活动 change）；实际命令和 exit code 见 openspec-validation.json、日志 |
 
 可复现的 parser 与 PTY 命令（本地模拟服务，无真实 API）：
 
@@ -44,12 +46,12 @@ PTY 覆盖 80×24、28×10、8×2、NO_COLOR、Unicode、控制字符、resize�
 
 | 索引 | 测试来源 | 入口 |
 | --- | --- | --- |
-| D1 | [internal/domain/hook_input_rewrite_test.go](../../../../internal/domain/hook_input_rewrite_test.go) | `TestHookReplacementRequiresCompleteCurrentShape` / `TestHookReplacementCanonicalExpansionAndExactBoundary` / `TestHookRewriteGettersAndDigestDoNotAlias` |
-| D2 | [internal/domain/hook_input_effect_test.go](../../../../internal/domain/hook_input_effect_test.go) | `TestHookInputEffectsVerifyChainAndOwnTheirInput` / `TestPreFinishedRequiresEffectAndRejectsEffectsOnOtherEvents` |
-| P1 | [internal/extension/hook/input_rewrite_test.go](../../../../internal/extension/hook/input_rewrite_test.go) | `TestPreOutputHasOneCompleteStandaloneReplacement` / `TestPreOutputCanonicalExpansionIsNotRawOutputOverflow` / `FuzzPreInputReplacement` |
-| P2 | [internal/tool/builtin/hook_input_rewrite_test.go](../../../../internal/tool/builtin/hook_input_rewrite_test.go) | `TestHookOwnerPassesTypedReplacementAndRejectsParserMismatch` |
-| T1 | [internal/tool/input_rewrite_test.go](../../../../internal/tool/input_rewrite_test.go) | `TestInputSelectionKeepsAllNineDirectCalls` / `TestRewriteInvocationRetainsIdentityAndFacadeProfiles` / `TestInputSelectionSeparatesCheckingRejectionAndFinalSelection` |
-| T2 | [internal/tool/input_rewrite_output_test.go](../../../../internal/tool/input_rewrite_output_test.go) | `TestInputRewriteResultUsesActualAdmissionAndOrigin` / `TestInputRewriteBudgetPreservesFullNoteAndRejectsBeforeAdmission` / `TestInputRewriteDoesNotTrustLabelsOrHideActualInputAsRecovery` / `TestSelectedInputCannotClaimSuccessOrUncertaintyWithoutAdmission` / `TestUnchangedAndRejectedInputsKeepExistingPreviewBytes` / `TestRewriteProvenanceFitsAllEightMaximumIDs` |
+| D1 | internal/domain/hook_input_rewrite_test.go | `TestHookReplacementRequiresCompleteCurrentShape` / `TestHookReplacementCanonicalExpansionAndExactBoundary` / `TestHookRewriteGettersAndDigestDoNotAlias` |
+| D2 | internal/domain/hook_input_effect_test.go | `TestHookInputEffectsVerifyChainAndOwnTheirInput` / `TestPreFinishedRequiresEffectAndRejectsEffectsOnOtherEvents` |
+| P1 | internal/extension/hook/input_rewrite_test.go | `TestPreOutputHasOneCompleteStandaloneReplacement` / `TestPreOutputCanonicalExpansionIsNotRawOutputOverflow` / `FuzzPreInputReplacement` |
+| P2 | internal/tool/builtin/hook_input_rewrite_test.go | `TestHookOwnerPassesTypedReplacementAndRejectsParserMismatch` |
+| T1 | internal/tool/input_rewrite_test.go | `TestInputSelectionKeepsAllNineDirectCalls` / `TestRewriteInvocationRetainsIdentityAndFacadeProfiles` / `TestInputSelectionSeparatesCheckingRejectionAndFinalSelection` |
+| T2 | internal/tool/input_rewrite_output_test.go | `TestInputRewriteResultUsesActualAdmissionAndOrigin` / `TestInputRewriteBudgetPreservesFullNoteAndRejectsBeforeAdmission` / `TestInputRewriteDoesNotTrustLabelsOrHideActualInputAsRecovery` / `TestSelectedInputCannotClaimSuccessOrUncertaintyWithoutAdmission` / `TestUnchangedAndRejectedInputsKeepExistingPreviewBytes` / `TestRewriteProvenanceFitsAllEightMaximumIDs` |
 | R1 | [internal/runtime/hook_input_rewrite_test.go](../../../../internal/runtime/hook_input_rewrite_test.go) | `TestPreRewriteThreeCapabilitiesUseOnlySelectedInput` / `TestRewriteReentryBindsActualIndexesAndRetires` |
 | R2 | [internal/runtime/hook_input_rewrite_boundaries_test.go](../../../../internal/runtime/hook_input_rewrite_boundaries_test.go) | `TestPreRewriteLateCancellationPreservesDefiniteEffectAndFinalGate` / `TestPreRewriteLowBudgetStopsBeforeCandidateAndUsesSingleTicket` / `TestPreRewriteDurableInstallAndSyncFailuresPoisonBeforeOrdinaryEffects` / `TestPreRewriteOrdinaryDenyAbortAndCandidateFailureUseShortUnadmittedNote` / `TestPreRewriteCancellationAfterIntermediateSyncKeepsCandidateUnselected` |
 | R3 | [internal/runtime/hook_input_rewrite_recovery_test.go](../../../../internal/runtime/hook_input_rewrite_recovery_test.go) | `TestPreRewriteRecoveryFromFixedCrashCutsNeverRerunsAndPreservesFrozenBytes` |
@@ -58,29 +60,29 @@ PTY 覆盖 80×24、28×10、8×2、NO_COLOR、Unicode、控制字符、resize�
 | S3 | [internal/session/lease_test.go](../../../../internal/session/lease_test.go) | `TestJournalLeaseProcessOwnershipAndCrashRelease` / `TestLoaderDoesNotRepairWhileHelperOwnsLease` |
 | N1 | [internal/provider/openai/hook_input_rewrite_test.go](../../../../internal/provider/openai/hook_input_rewrite_test.go) | `TestPreInputRewriteNativeGoldenRestoreAndCache` |
 | N2 | [internal/provider/anthropic/hook_input_rewrite_test.go](../../../../internal/provider/anthropic/hook_input_rewrite_test.go) | `TestPreInputRewriteNativeGoldenRestoreAndCache` |
-| N3 | [internal/provider/openai/post_websocket_test.go](../../../../internal/provider/openai/post_websocket_test.go) | `TestPostFeedbackWebSocketDurableSuffixDiscardAndRestoreReset` / `TestFailureFeedbackWebSocketDurableSuffixDiscardAndRestoreReset` / `TestPreInputRewriteWebSocketDurableSuffixDiscardAndRestoreReset` |
+| N3 | internal/provider/openai/post_websocket_test.go | `TestPostFeedbackWebSocketDurableSuffixDiscardAndRestoreReset` / `TestFailureFeedbackWebSocketDurableSuffixDiscardAndRestoreReset` / `TestPreInputRewriteWebSocketDurableSuffixDiscardAndRestoreReset` |
 | A1 | [internal/app/hook_input_rewrite_e2e_darwin_test.go](../../../../internal/app/hook_input_rewrite_e2e_darwin_test.go) | `TestInputRewriteBothProvidersRealEffectsAndOfflineRestore` |
 | A2 | [internal/app/hook_resume_test.go](../../../../internal/app/hook_resume_test.go) | `TestPreInputRewriteResumeReconcilesEveryBatchBeforeLoadingNewSnapshot` |
 | A3 | [internal/app/exec_headless_e2e_test.go](../../../../internal/app/exec_headless_e2e_test.go) | `TestExecHeadlessModesFailClosedForBothProviders` / `TestHookHeadlessModesFailClosedForBothProviders` / `TestPostHookHeadlessModesFailClosedForBothProviders` / `TestFailureHookHeadlessModesFailClosedForBothProviders` / `TestPreInputRewriteHeadlessModesRequireTrustAndKeepExternalJSONLV1` |
-| A4 | [internal/app/pre_hook_history_test.go](../../../../internal/app/pre_hook_history_test.go) | `TestPreCommittedHistoryKeepsOriginalAndRefreshesBoundedDetails` |
+| A4 | internal/app/pre_hook_history_test.go | `TestPreCommittedHistoryKeepsOriginalAndRefreshesBoundedDetails` |
 | A5 | [internal/app/hook_host_owner_test.go](../../../../internal/app/hook_host_owner_test.go) | `TestHookHostRetainsWorkspaceAndCrossProcessLeaseDuringCleanup` / `TestPostHookHostRetainsWorkspaceAndCrossProcessLeaseDuringCleanup` / `TestFailureHookHostRetainsWorkspaceAndCrossProcessLeaseDuringCleanup` / `TestStopHookHostRetainsWorkspaceAndCrossProcessLeaseDuringCleanup` |
-| U1 | [internal/protocol/pre_input_test.go](../../../../internal/protocol/pre_input_test.go) | `TestPreInputActivityStrictBranchesAndEncodedBounds` / `TestPreInputCannotHideInOtherEventsOrNullTranscriptMembers` |
-| U2 | [internal/tui/hook_input_rewrite_test.go](../../../../internal/tui/hook_input_rewrite_test.go) | `TestPreInputOpenDetailsRefreshKeepsAnchorAndRejectsLateChecking` / `TestPreInputPhaseSnapshotsAndSafeNarrowReview` / `TestPreInputApprovalDisablesInsufficientViewportAndPreservesDefaultDeny` |
+| U1 | internal/protocol/pre_input_test.go | `TestPreInputActivityStrictBranchesAndEncodedBounds` / `TestPreInputCannotHideInOtherEventsOrNullTranscriptMembers` |
+| U2 | internal/tui/hook_input_rewrite_test.go | `TestPreInputOpenDetailsRefreshKeepsAnchorAndRejectsLateChecking` / `TestPreInputPhaseSnapshotsAndSafeNarrowReview` / `TestPreInputApprovalDisablesInsufficientViewportAndPreservesDefaultDeny` |
 | U3 | [internal/tui/hooks_test.go](../../../../internal/tui/hooks_test.go) | `TestHookSnapshots` |
 | U4 | [scripts/input-rewrite-smoke.py](../../../../scripts/input-rewrite-smoke.py) | Darwin 实际 PTY，双 Provider 各 33 阶段 |
 | G1 | [internal/runtime/hooks_test.go](../../../../internal/runtime/hooks_test.go) | `TestHookGateKeepsTrustSeparateAndCachesDurableDenial` / `TestHookGateContinueStillRequiresOrdinaryApproval` / `TestHookDenialPrecedesExistingMutationGrantAndCandidate` |
 | G2 | [internal/runtime/stop_trust_test.go](../../../../internal/runtime/stop_trust_test.go) | `TestStopTrustReviewsAllDeclarationsBeforeFirstRun` / `TestStopCancelledTrustCannotInstallLateGrant` |
 | G3 | [internal/runtime/hook_shutdown_test.go](../../../../internal/runtime/hook_shutdown_test.go) | `TestHookTrustCancellationRejectsStaleAndCrossIdentityResponses` |
 | G4 | [internal/tui/stop_hooks_test.go](../../../../internal/tui/stop_hooks_test.go) | `TestStopTrustDefaultDenyPasteAndPhaseOrdering` |
-| G5 | [internal/domain/hook_event_test.go](../../../../internal/domain/hook_event_test.go) | `TestHookEventsIsolatePlansRunsAndTrust` / `TestHookExitTwoValidationDependsOnEvent` |
-| G6 | [internal/tool/builtin/hook_classification_test.go](../../../../internal/tool/builtin/hook_classification_test.go) | `TestHookClassificationPriorityAndEventExitTwo` |
+| G5 | internal/domain/hook_event_test.go | `TestHookEventsIsolatePlansRunsAndTrust` / `TestHookExitTwoValidationDependsOnEvent` |
+| G6 | internal/tool/builtin/hook_classification_test.go | `TestHookClassificationPriorityAndEventExitTwo` |
 | G7 | [internal/runtime/post_hooks_test.go](../../../../internal/runtime/post_hooks_test.go) | `TestPostTrustAndApprovalBothPrecedeEffects` / `TestPostEverySyncFailurePreservesRealResultAndStops` / `TestPreAndPostShareExecutionBudgetAndKeepFrozenPrefix` |
 | G8 | [internal/extension/hook/output_test.go](../../../../internal/extension/hook/output_test.go) | `TestOutputSubsetAndNoFreeTextFeedback` |
-| G9 | [internal/runtime/current_contract_test.go](../../../../internal/runtime/current_contract_test.go) | `TestPatchGrantRequiresDurableApproval` / `TestFileGrantCannotOverridePolicyDeny` |
+| G9 | internal/runtime/current_contract_test.go | `TestPatchGrantRequiresDurableApproval` / `TestFileGrantCannotOverridePolicyDeny` |
 | G10 | [internal/tool/builtin/hook_process_darwin_test.go](../../../../internal/tool/builtin/hook_process_darwin_test.go) | `TestHookProcessBoundsOutputAndPreservesExitClassification` |
-| G11 | [internal/extension/hook/post_output_test.go](../../../../internal/extension/hook/post_output_test.go) | `TestPostOutputClosedGrammar` |
+| G11 | internal/extension/hook/post_output_test.go | `TestPostOutputClosedGrammar` |
 | G12 | [internal/extension/hook/stop_output_test.go](../../../../internal/extension/hook/stop_output_test.go) | `TestStopOutputHasOneExplicitModelDisclosurePath` / `TestStopOutputRejectsAmbiguousUnicodeAndLimits` / `FuzzStopOutputNeverDisclosesUnauthorizedBytes` |
-| G13 | [internal/extension/hook/failure_test.go](../../../../internal/extension/hook/failure_test.go) | `TestFailureOutputUsesItsOwnClosedEvent` |
+| G13 | internal/extension/hook/failure_test.go | `TestFailureOutputUsesItsOwnClosedEvent` |
 
 ## 六份规格逐场景映射
 
@@ -296,9 +298,9 @@ PTY 覆盖 80×24、28×10、8×2、NO_COLOR、Unicode、控制字符、resize�
 
 ## 主规格与文档同步
 
-已同步 `extension/command-hooks`、`extension/pre-tool-use-input-rewrite`、`provider/native-history-persistence`、`session/jsonl-store`、`tool/approval`、`tui/hooks` 六份主规格。采用 CLI 返回的 planningHome 与六个确切 artifact 路径、同一 specs 规则快照；保留现有 Purpose、未修改 requirement 和原有 scenario，新增能力复制已批准 Purpose，无 TBD 或新行为。实际同步范围见 [spec-sync.json](evidence/spec-sync.json)。
+已同步 `extension/command-hooks`、`extension/pre-tool-use-input-rewrite`、`provider/native-history-persistence`、`session/jsonl-store`、`tool/approval`、`tui/hooks` 六份主规格。采用 CLI 返回的 planningHome 与六个确切 artifact 路径、同一 specs 规则快照；保留现有 Purpose、未修改 requirement 和原有 scenario，新增能力复制已批准 Purpose，无 TBD 或新行为。实际同步范围见 spec-sync.json。
 
-README、能力清单、总体架构、Roadmap、pitfall 与 ADR 0010 已同步，明确必要参数/说明是原始输出禁存规则的有界例外；测试路径和实际 record vocabulary 已核对。49 项任务全部完成，CLI 状态为 `all_done`，见 [apply-progress.json](evidence/apply-progress.json)。最终差异、strict 和人工核对见 [final-audit.json](evidence/final-audit.json)。change 已于 2026-11-15 归档；未创建 commit 或 PR。
+README、能力清单、总体架构、Roadmap、pitfall 与 ADR 0010 已同步，明确必要参数/说明是原始输出禁存规则的有界例外；测试路径和实际 record vocabulary 已核对。49 项任务全部完成，CLI 状态为 `all_done`，见 apply-progress.json。最终差异、strict 和人工核对见 final-audit.json。change 已于 2026-11-15 归档；未创建 commit 或 PR。
 
 ## 平台与能力限制
 

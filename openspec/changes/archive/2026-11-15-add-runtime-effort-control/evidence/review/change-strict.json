@@ -1,7 +1,0 @@
-{
-  "command": "openspec validate add-runtime-effort-control --strict",
-  "started_at": "2026-11-14T15:30:28.017054+00:00",
-  "exit_code": 0,
-  "elapsed_seconds": 2.24,
-  "log": "change-strict.log"
-}

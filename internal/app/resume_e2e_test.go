@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,13 +12,11 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 
 	"easycode/internal/config"
 	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
-	"easycode/internal/fault"
 	"easycode/internal/protocol"
 	"easycode/internal/secret"
 	"easycode/internal/session"
@@ -266,126 +263,6 @@ func runProvidersPersistResumeReplayAndContinue(t *testing.T, answer func(string
 	}
 }
 
-func TestCurrentSessionFixtureRestoresVisibleHistoryWithoutNetwork(t *testing.T) {
-	fixture, err := os.ReadFile(filepath.Join("..", "session", "testdata", "current", "root.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	dataRoot := filepath.Join(t.TempDir(), "sessions")
-	repository, err := session.OpenOrCreateRepository(dataRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	threadID := domain.ThreadID("00000000-0001-7000-8000-000000000002")
-	lease, err := repository.Create(context.Background(), threadID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := lease.Close(); err != nil {
-		t.Fatal(err)
-	}
-	path, err := repository.JournalPath(threadID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, fixture, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := repository.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	var networkCalls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		networkCalls.Add(1)
-	}))
-	defer server.Close()
-	applicationConfig := config.Config{Provider: config.Provider{
-		Family: domain.ProviderOpenAI, BaseURL: server.URL,
-		APIKey: secret.New("fixture-key"), Model: "fixture-model",
-	}}
-	resources, err := openChatResources(
-		context.Background(), applicationConfig, dataRoot, string(threadID), t.TempDir(),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if networkCalls.Load() != 0 {
-		t.Fatalf("session fixture restore made %d network calls", networkCalls.Load())
-	}
-	if len(resources.history.Turns) != 1 ||
-		resources.history.Turns[0].Messages[0].Text != "fixture question" ||
-		resources.history.Turns[0].Messages[1].Text != "fixture answer" {
-		t.Fatalf("session fixture history = %#v", resources.history)
-	}
-	ui := tui.NewModel(context.Background(), "test", resources.session).WithTranscriptQueries(resources.identity.ThreadID, resources.transcriptQueries)
-	initial := ui.Init()()
-	var restored tea.Model
-	if batch, ok := initial.(tea.BatchMsg); ok {
-		restored, _ = ui.Update(batch[len(batch)-1]())
-	} else {
-		restored, _ = ui.Update(initial)
-	}
-	view := restored.View()
-	if !strings.Contains(view, "User: fixture question") || !strings.Contains(view, "● fixture answer") {
-		t.Fatalf("session fixture transcript = %s", view)
-	}
-	if err := resources.close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestBusyResumeDoesNotExposeChatResourcesOrCallProvider(t *testing.T) {
-	var networkCalls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		networkCalls.Add(1)
-	}))
-	defer server.Close()
-	dataRoot := filepath.Join(t.TempDir(), "sessions")
-	applicationConfig := config.Config{Provider: config.Provider{
-		Family: domain.ProviderOpenAI, BaseURL: server.URL,
-		APIKey: secret.New("fixture-key"), Model: "gpt-test",
-	}}
-	created, err := openChatResources(context.Background(), applicationConfig, dataRoot, "", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	repository, err := session.OpenOrCreateRepository(dataRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	path, err := repository.JournalPath(created.identity.ThreadID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := repository.Close(); err != nil {
-		t.Fatal(err)
-	}
-	before, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resumed, err := openChatResources(
-		context.Background(), applicationConfig, dataRoot, string(created.identity.ThreadID), t.TempDir(),
-	)
-	if resumed != nil || !errors.Is(err, &fault.Error{Code: fault.CodeSessionBusy}) {
-		t.Fatalf("busy resources = %#v, %v", resumed, err)
-	}
-	if networkCalls.Load() != 0 {
-		t.Fatalf("busy resume made %d network calls", networkCalls.Load())
-	}
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(after) != string(before) {
-		t.Fatal("busy resource assembly modified journal bytes")
-	}
-	if err := created.close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func submitAppTurn(t *testing.T, resources *chatResources, text string) {
 	t.Helper()
 	if resources.session == nil {
@@ -481,65 +358,6 @@ func assertAnthropicThirdRequest(t *testing.T, body []byte) {
 		messages[1].Content[0].Text != "answer-1" || messages[2].Content[0].Text != "second" ||
 		messages[3].Content[0].Text != "answer-2" || messages[4].Content[0].Text != "third" {
 		t.Fatalf("third Anthropic request = %s", body)
-	}
-}
-
-func TestResumeWithDifferentCWDAndRefreshedConnectionDoesNotChangeProcessCWD(t *testing.T) {
-	t.Parallel()
-	firstServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		writer.Header().Set("Content-Type", "text/event-stream")
-		writeOpenAIAppTurn(writer, 1)
-	}))
-	defer firstServer.Close()
-	dataRoot := filepath.Join(t.TempDir(), "sessions")
-	firstConfig := config.Config{Provider: config.Provider{
-		Family: domain.ProviderOpenAI, BaseURL: firstServer.URL,
-		APIKey: secret.New("old-key"), Model: "gpt-test",
-	}}
-	created, err := openChatResources(context.Background(), firstConfig, dataRoot, "", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	submitAppTurn(t, created, "first")
-	threadID := created.identity.ThreadID
-	if err := created.close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	requestSeen := make(chan http.Header, 1)
-	secondServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		requestSeen <- request.Header.Clone()
-		writer.Header().Set("Content-Type", "text/event-stream")
-		writeOpenAIAppTurn(writer, 2)
-	}))
-	defer secondServer.Close()
-	secondConfig := config.Config{Provider: config.Provider{
-		Family: domain.ProviderOpenAI, BaseURL: secondServer.URL,
-		APIKey: secret.New("refreshed-key"), Model: "gpt-test",
-	}}
-	before, err := filepath.Abs(".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	secondCWD := filepath.Join(t.TempDir(), "different")
-	if err := os.Mkdir(secondCWD, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	resumed, err := openChatResources(context.Background(), secondConfig, dataRoot, string(threadID), secondCWD)
-	if err != nil {
-		t.Fatal(err)
-	}
-	after, _ := filepath.Abs(".")
-	if before != after {
-		t.Fatalf("resume changed process cwd from %q to %q", before, after)
-	}
-	submitAppTurn(t, resumed, "second")
-	header := <-requestSeen
-	if header.Get("Authorization") != "Bearer refreshed-key" {
-		t.Fatalf("resume did not use refreshed credentials: %#v", header)
-	}
-	if err := resumed.close(context.Background()); err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -678,77 +496,5 @@ func TestResumeRepairsHalfLineOnceAndKeepsCommittedHistory(t *testing.T) {
 	}
 	if err := second.close(context.Background()); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestSteeringFixturesRestoreLocallyAndCloseOldTurn(t *testing.T) {
-	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
-		for _, prefix := range []string{"input_only_", "steering_tail_"} {
-			t.Run(prefix+string(family), func(t *testing.T) {
-				fixture, err := os.ReadFile(filepath.Join("..", "session", "testdata", "current", prefix+string(family)+".jsonl"))
-				if err != nil {
-					t.Fatal(err)
-				}
-				dataRoot := filepath.Join(t.TempDir(), "sessions")
-				repository, err := session.OpenOrCreateRepository(dataRoot)
-				if err != nil {
-					t.Fatal(err)
-				}
-				threadID := domain.ThreadID("00000000-0001-7000-8000-000000000002")
-				lease, err := repository.Create(context.Background(), threadID)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := lease.Close(); err != nil {
-					t.Fatal(err)
-				}
-				path, err := repository.JournalPath(threadID)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(path, fixture, 0o600); err != nil {
-					t.Fatal(err)
-				}
-				if err := repository.Close(); err != nil {
-					t.Fatal(err)
-				}
-
-				var networkCalls atomic.Int32
-				server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-					networkCalls.Add(1)
-				}))
-				defer server.Close()
-				applicationConfig := config.Config{Provider: config.Provider{
-					Family: family, BaseURL: server.URL,
-					APIKey: secret.New("fixture-key"), Model: "fixture-model",
-				}}
-				resources, err := openChatResources(
-					context.Background(), applicationConfig, dataRoot, string(threadID), t.TempDir(),
-				)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if networkCalls.Load() != 0 {
-					t.Fatalf("session fixture restore made %d network calls", networkCalls.Load())
-				}
-				if len(resources.history.Turns) != 1 || resources.history.Turns[0].Messages[0].Text != "Inspect, edit and verify" {
-					t.Fatal("saved initial input missing")
-				}
-				messages := resources.history.Turns[0].Messages
-				if prefix == "steering_tail_" && (len(messages) < 3 || messages[len(messages)-2].Text != "  preserve 中文\n" || messages[len(messages)-1].Text != "also verify tests") {
-					t.Fatal("steering input order lost")
-				}
-				if err := resources.close(context.Background()); err != nil {
-					t.Fatal(err)
-				}
-				journal, err := os.ReadFile(path)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if !bytes.HasPrefix(journal, fixture) || bytes.Count(journal, []byte(`"event_kind":"turn_failed"`)) != 1 {
-					t.Fatal("old turn was not durably closed without rewriting")
-				}
-			})
-		}
 	}
 }

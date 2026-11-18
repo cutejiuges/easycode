@@ -17,13 +17,6 @@ type cacheDiagnostics struct {
 	frozen      contextplan.CacheSources
 }
 
-func (runtime *Runtime) initialCacheSnapshot() (protocol.CacheSnapshotPayload, error) {
-	plan, err := runtime.contextPlan()
-	if err != nil {
-		return protocol.CacheSnapshotPayload{}, err
-	}
-	return runtime.cacheSnapshotForPlan(plan)
-}
 func (runtime *Runtime) cacheSnapshotForPlan(plan contextplan.ContextPlan) (protocol.CacheSnapshotPayload, error) {
 	sources, err := contextplan.NewCacheSources(plan)
 	if err != nil {

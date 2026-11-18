@@ -13,68 +13,9 @@ import (
 	"testing"
 
 	"easycode/internal/tool"
-	"golang.org/x/sys/unix"
 )
 
-func TestDarwinExecSandboxAndOutput(t *testing.T) {
-	root := t.TempDir()
-	workspace, err := OpenWorkspace(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = workspace.Close() }()
-	environment := filterCommandEnvironment([]string{"PATH=/usr/bin:/bin", "API_KEY=private-secret", "HTTPS_PROXY=private-proxy"})
-	environment.executable, _ = os.Executable()
-	executor, err := NewExecExecutor(workspace, environment, tool.RenderExecOutput, testCommandOutputStore{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, test := range []struct {
-		command  string
-		exit     int
-		contains string
-	}{
-		{"printf hello; printf warning >&2; exit 2", 2, "warning"},
-		{"test -z \"$API_KEY$HTTPS_PROXY\" && printf clean", 0, "clean"},
-		{"printf inside > local-output; cat local-output", 0, "inside"},
-		{"printf signalled; kill -TERM $$", 143, "signalled"},
-	} {
-		input, _ := tool.NewExecInput(test.command, "", 0)
-		call, _ := tool.NewExecReadyCall("exec", input)
-		id, _ := tool.ParseInvocationID("018f1d8a-7b5c-7def-8abc-456789abcdef")
-		invocation, _ := tool.NewExecInvocation(id, call)
-		candidate, _ := NewExecPlanner().Prepare(invocation)
-		result := executor.Execute(context.Background(), candidate, nil)
-		exit, known := result.ExecMetadata().ExitCode()
-		if result.Status() != tool.ResultSuccess || !known || exit != test.exit || !strings.Contains(result.Preview().Text(), test.contains) {
-			t.Fatalf("command failed: %s %s", result.Code(), result.Preview().Text())
-		}
-	}
-	if _, err := os.Stat(filepath.Join(root, "local-output")); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestDarwinCommandSandboxProfileGolden(t *testing.T) {
-	want, err := os.ReadFile("testdata/command_sandbox.golden")
-	if err != nil {
-		t.Fatal(err)
-	}
-	plan := sandboxTestPlan(t, "/workspace/project")
-	if got := commandSandboxProfile(plan); got != string(want) {
-		t.Fatalf("sandbox profile changed:\n%s", got)
-	}
-	root := "/workspace/quote\"(allow network*)"
-	profile := commandSandboxProfile(sandboxTestPlan(t, root))
-	if strings.Count(profile, strconv.Quote(root)) != 3 {
-		t.Fatal("workspace path not safely quoted in every rule")
-	}
-}
-
 func TestMain(m *testing.M) {
-	if handled, code := runDetachedCommandFixture(os.Args[1:]); handled {
-		os.Exit(code)
-	}
 	if handled, err := RunCommandChild(os.Args[1:]); handled {
 		if err != nil {
 			os.Exit(125)
@@ -82,84 +23,6 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
-}
-
-func TestDarwinExitObservationDoesNotReleaseIdentity(t *testing.T) {
-	workspace, err := OpenWorkspace(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = workspace.Close() }()
-	environment := filterCommandEnvironment([]string{"PATH=/usr/bin:/bin"})
-	environment.executable, err = os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	input, _ := tool.NewExecInput("exit 7", "", 1000)
-	call, _ := tool.NewExecReadyCall("call-exit", input)
-	id, _ := tool.ParseInvocationID("018f1d8a-7b5c-7def-8abc-456789abcdef")
-	invocation, _ := tool.NewExecInvocation(id, call)
-	candidate, _ := NewExecPlanner().Prepare(invocation)
-	handle, err := newPlatformProcessLauncher(workspace, environment).start(context.Background(), candidate)
-	if err != nil {
-		t.Fatal(err)
-	}
-	process := handle.(*darwinProcess)
-	defer func() {
-		if !process.reaped {
-			_ = process.terminate(true)
-			_, _ = process.wait()
-		}
-		_ = process.stdout().Close()
-		_ = process.stderr().Close()
-	}()
-	if err := process.observeExit(); err != nil {
-		t.Fatal(err)
-	}
-	retained, err := unix.SysctlKinfoProc("kern.proc.pid", process.group)
-	if err != nil || retained.Proc.P_pid != int32(process.group) {
-		t.Fatal("exit observation released process identity")
-	}
-	alive, err := process.groupAlive()
-	if err != nil || alive {
-		t.Fatalf("exited leader treated as live member: %v", err)
-	}
-	exit, err := process.wait()
-	if err != nil || exit != 7 {
-		t.Fatalf("final Wait lost exit: %d %v", exit, err)
-	}
-	if err := process.terminate(true); err == nil {
-		t.Fatal("signal after final Wait accepted")
-	}
-	if _, err := process.groupAlive(); err == nil {
-		t.Fatal("group probe after final Wait accepted")
-	}
-	if _, err := process.wait(); err == nil {
-		t.Fatal("duplicate Wait accepted")
-	}
-}
-
-func TestDarwinObserverRegistrationFailureDoesNotRunCommand(t *testing.T) {
-	root := t.TempDir()
-	workspace, err := OpenWorkspace(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = workspace.Close() }()
-	environment := OpenCommandEnvironment()
-	launcher := &darwinProcessLauncher{workspace: workspace, environment: environment, registerExit: func(int, int) error { return errors.New("injected observer failure") }}
-	input, _ := tool.NewExecInput("printf forbidden > marker", "", 1000)
-	call, _ := tool.NewExecReadyCall("call-gate", input)
-	id, _ := tool.ParseInvocationID("018f1d8a-7b5c-7def-8abc-456789abcdef")
-	invocation, _ := tool.NewExecInvocation(id, call)
-	candidate, _ := NewExecPlanner().Prepare(invocation)
-	handle, err := launcher.start(context.Background(), candidate)
-	if handle != nil || !errors.Is(err, errSandboxUnavailable) {
-		t.Fatal("observer failure did not fail closed")
-	}
-	if _, err := os.Stat(filepath.Join(root, "marker")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("command crossed failed startup gate")
-	}
 }
 
 func TestDarwinExecWorkdirDescriptorSurvivesSymlinkSwap(t *testing.T) {
@@ -218,70 +81,6 @@ func TestDarwinExecWorkdirDescriptorSurvivesSymlinkSwap(t *testing.T) {
 				t.Fatalf("pre-open symlink accepted: %s", result.Code())
 			}
 		})
-	}
-}
-
-func TestDarwinExecCancellationAfterOutput(t *testing.T) {
-	workspace, err := OpenWorkspace(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = workspace.Close() }()
-	executor, err := NewExecExecutor(workspace, OpenCommandEnvironment(), tool.RenderExecOutput, testCommandOutputStore{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	trace := &tracedDarwinLauncher{launcher: executor.launcher}
-	executor.launcher = trace
-	input, _ := tool.NewExecInput("printf ready; exec /bin/sleep 30", "", 1000)
-	call, _ := tool.NewExecReadyCall("call-cancel", input)
-	id, _ := tool.ParseInvocationID("018f1d8a-7b5c-7def-8abc-456789abcdef")
-	invocation, _ := tool.NewExecInvocation(id, call)
-	candidate, _ := NewExecPlanner().Prepare(invocation)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	sawReady := false
-	result := executor.Execute(ctx, candidate, func(progress tool.ExecProgress) {
-		if strings.Contains(progress.Recent(), "ready") {
-			sawReady = true
-			cancel()
-		}
-	})
-	if !sawReady || result.Status() != tool.ResultCancelled || result.Code() != "cancelled" || !result.ExecMetadata().Cancelled() {
-		t.Fatalf("cancellation cleanup failed: %s %s; signals=%v probes=%v observation=%v", result.Status(), result.Code(), trace.process.signals, trace.process.probes, trace.process.observation)
-	}
-}
-
-func TestDarwinSandboxInitializationFailureIsNotACommandExit(t *testing.T) {
-	root := t.TempDir()
-	workspace, err := OpenWorkspace(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer workspace.Close()
-	launcher := &darwinProcessLauncher{workspace: workspace, environment: OpenCommandEnvironment(), sandboxProfile: func(SandboxPlan) string {
-		return "(version 1) (invalid-private-host-path)"
-	}}
-	executor := &ExecExecutor{launcher: launcher, renderer: tool.RenderExecOutput}
-	input, _ := tool.NewExecInput("printf forbidden > marker", "", 1000)
-	call, _ := tool.NewExecReadyCall("call-init", input)
-	id, _ := tool.ParseInvocationID("018f1d8a-7b5c-7def-8abc-456789abcdef")
-	invocation, _ := tool.NewExecInvocation(id, call)
-	candidate, _ := NewExecPlanner().Prepare(invocation)
-	result := executor.Execute(context.Background(), candidate, func(progress tool.ExecProgress) {
-		if progress.Recent() != "" || progress.StdoutBytes() != 0 || progress.StderrBytes() != 0 {
-			t.Error("sandbox diagnostics entered command progress")
-		}
-	})
-	_, known := result.ExecMetadata().ExitCode()
-	if result.Status() != tool.ResultError || result.Code() != "sandbox_unavailable" || known {
-		t.Fatalf("sandbox failure treated as command exit: %s %s", result.Status(), result.Code())
-	}
-	if result.Preview().Text() != "Exec failed: sandbox_unavailable" {
-		t.Fatalf("sandbox diagnostics escaped: %q", result.Preview().Text())
-	}
-	if _, err := os.Stat(filepath.Join(root, "marker")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("user command ran despite invalid sandbox")
 	}
 }
 

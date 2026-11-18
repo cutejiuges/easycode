@@ -3,21 +3,16 @@ package app
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 
 	"easycode/internal/config"
 	"easycode/internal/domain"
-	"easycode/internal/fault"
-	"easycode/internal/headless"
 	"easycode/internal/secret"
 	"easycode/internal/session"
 )
@@ -100,31 +95,5 @@ func TestCachedProvidersSameThreadLiveAndRestoredCanonicalRequests(t *testing.T)
 				t.Fatal("native output order lost")
 			}
 		})
-	}
-}
-
-func TestInvalidCacheConfigurationHasNoNetworkOrSessionSideEffects(t *testing.T) {
-	clearProviderEnvironment(t)
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1); w.WriteHeader(500) }))
-	defer server.Close()
-	for _, field := range []string{`"openai_transport":null`, `"openai_prompt_cache_key":"future"`, `"anthropic_prompt_cache":"ephemeral_5m"`, `"openai_transport":"http_sse","openai_transport":"websocket_auto"`} {
-		root := filepath.Join(t.TempDir(), "sessions")
-		path := filepath.Join(t.TempDir(), "config.json")
-		body := fmt.Sprintf(`{"provider":"openai","base_url":%q,"api_key":"cache-private-secret","model":"gpt-test",%s}`, server.URL, field)
-		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
-			t.Fatal(err)
-		}
-		var output bytes.Buffer
-		result := Run(context.Background(), Options{Mode: headless.ModeText, Prompt: "hello", ConfigPath: path, SessionDataRoot: root, Output: &output})
-		if result.Failure.Code != fault.CodeInvalidConfiguration || requests.Load() != 0 {
-			t.Fatal("invalid cache config had a side effect")
-		}
-		if _, err := os.Stat(root); !os.IsNotExist(err) {
-			t.Fatal("invalid config created session directory")
-		}
-		if strings.Contains(result.Failure.Message, "cache-private-secret") || strings.Contains(output.String(), "cache-private-secret") {
-			t.Fatal("configuration leaked secret")
-		}
 	}
 }

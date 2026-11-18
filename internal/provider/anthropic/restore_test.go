@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -88,7 +89,16 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 		}
 		commits = append(commits, commit)
 	}
-	restoredValue, err := testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", testRestoreRecords(t, commits, testRestoreFixtureOutputs(t, "toolu-", tool.WireStructured)...))
+	records := testRestoreRecords(t, commits, testRestoreFixtureOutputs(t, "toolu-", tool.WireStructured)...)
+	source := provider.HistorySource{ThreadID: "01900000-0000-7000-8000-000000000001", Family: domain.ProviderAnthropic, Wire: "messages", Model: instance.config.Model}
+	for boundary := 1; boundary <= len(records)+2; boundary++ {
+		ctx := &recordCancelContext{Context: context.Background(), remaining: boundary}
+		got, err := NewHistoryReader().ProjectStoredHistory(ctx, source, records)
+		if err == nil || len(got.Turns) != 0 {
+			t.Fatalf("cancellation boundary %d leaked view", boundary)
+		}
+	}
+	restoredValue, err := testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", records)
 	if err != nil {
 		t.Fatal(err)
 	}
