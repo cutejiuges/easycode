@@ -30,6 +30,7 @@ const (
 	CommandQueryCache                CommandKind = "query_cache"
 	CommandQueryContext              CommandKind = "query_context"
 	CommandQueryEffort               CommandKind = "query_effort"
+	CommandQueryTasks                CommandKind = "query_tasks"
 	CommandSetEffort                 CommandKind = "set_effort"
 	CommandCompactContext            CommandKind = "compact_context"
 	CommandCancelCompaction          CommandKind = "cancel_compaction"
@@ -209,7 +210,7 @@ func (command Command) Validate() error {
 		if !command.expectedTurnID.Valid() || command.questionResponse.Validate() != nil || command.text != "" || command.approvalRequestID != "" || command.invocationID != "" || command.fingerprint != "" || command.decision != "" || command.feedback != "" {
 			return fmt.Errorf("invalid question command payload")
 		}
-	case CommandQueryCache, CommandQueryContext, CommandQueryEffort, CommandSetEffort, CommandCompactContext, CommandCancelCompaction:
+	case CommandQueryCache, CommandQueryContext, CommandQueryEffort, CommandQueryTasks, CommandSetEffort, CommandCompactContext, CommandCancelCompaction:
 		if command.text != "" || command.expectedTurnID != "" || command.approvalRequestID != "" || command.invocationID != "" || command.fingerprint != "" || command.decision != "" || command.feedback != "" {
 			return fmt.Errorf("context command contains unrelated payload")
 		}

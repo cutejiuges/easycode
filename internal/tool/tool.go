@@ -43,7 +43,7 @@ func ParseCapabilityID(value string) (CapabilityID, error) {
 // Valid 判断能力是否由当前实现支持。
 func (id CapabilityID) Valid() bool {
 	switch id {
-	case CapabilityRead, CapabilityGlob, CapabilityGrep, CapabilityPatch, CapabilityWrite, CapabilityExec, CapabilityReadArtifact, CapabilitySkill, CapabilityQuestion:
+	case CapabilityRead, CapabilityGlob, CapabilityGrep, CapabilityPatch, CapabilityWrite, CapabilityExec, CapabilityReadArtifact, CapabilitySkill, CapabilityQuestion, CapabilityTaskProgress:
 		return true
 	default:
 		return false
@@ -67,8 +67,9 @@ func (id ProviderCallID) Valid() bool {
 	return err == nil
 }
 
-// ReadyCall 是完整sample中已经严格解码、可持久化的九工具封闭联合。
+// ReadyCall 是完整sample中已经严格解码、可持久化的十工具封闭联合。
 type ReadyCall struct {
+	taskInput      TaskInput
 	questionInput  QuestionInput
 	skillInput     SkillInput
 	artifactInput  ReadArtifactInput
@@ -132,11 +133,15 @@ func (call ReadyCall) GrepInput() GrepInput           { return call.grepInput }
 func (call ReadyCall) PatchInput() PatchInput         { return call.patchInput.Clone() }
 func (call ReadyCall) Clone() ReadyCall {
 	call.patchInput = call.patchInput.Clone()
+	call.taskInput = call.taskInput.Clone()
 	return call
 }
 
 // Validate 验证调用身份、能力标签及唯一匹配的 typed input。
 func (call ReadyCall) Validate() error {
+	if call.capability != CapabilityTaskProgress && !call.taskInput.IsZero() {
+		return errors.New("mismatched task input")
+	}
 	if call.capability != CapabilityQuestion && call.questionInput != (QuestionInput{}) {
 		return errors.New("mismatched question input")
 	}
@@ -159,6 +164,11 @@ func (call ReadyCall) Validate() error {
 		return errors.New("ready call contains mismatched Write input")
 	}
 	switch call.capability {
+	case CapabilityTaskProgress:
+		if call.wireKind != WireStructured || call.readInput != (ReadInput{}) || call.globInput != (GlobInput{}) || call.grepInput != (GrepInput{}) || !call.patchInput.zero() {
+			return errors.New("mismatched task input")
+		}
+		return call.taskInput.Validate()
 	case CapabilityQuestion:
 		if call.wireKind != WireStructured || call.skillInput != (SkillInput{}) || call.artifactInput != (ReadArtifactInput{}) || call.readInput != (ReadInput{}) || call.globInput != (GlobInput{}) || call.grepInput != (GrepInput{}) || !call.patchInput.zero() || call.writeInput != (WriteInput{}) || !call.execInput.zero() {
 			return errors.New("mismatched question payload")
@@ -232,8 +242,9 @@ type PatchInvocation struct {
 	input          PatchInput
 }
 
-// Invocation 是带全局identity的九能力执行输入封闭联合。
+// Invocation 是带全局identity的十能力执行输入封闭联合。
 type Invocation struct {
+	task       TaskInvocation
 	question   QuestionInvocation
 	skill      SkillInvocation
 	artifact   ReadArtifactInvocation
@@ -249,6 +260,12 @@ type Invocation struct {
 // NewInvocation 从 durable ready fact 构造匹配能力的执行输入。
 func NewInvocation(invocationID InvocationID, call ReadyCall) (Invocation, error) {
 	switch call.Capability() {
+	case CapabilityTaskProgress:
+		v, err := NewTaskInvocation(invocationID, call)
+		if err != nil {
+			return Invocation{}, err
+		}
+		return Invocation{capability: CapabilityTaskProgress, task: v}, nil
 	case CapabilityQuestion:
 		v, e := NewQuestionInvocation(invocationID, call)
 		if e != nil {
@@ -311,6 +328,8 @@ func NewInvocation(invocationID InvocationID, call ReadyCall) (Invocation, error
 func (invocation Invocation) Capability() CapabilityID { return invocation.capability }
 func (invocation Invocation) InvocationID() InvocationID {
 	switch invocation.capability {
+	case CapabilityTaskProgress:
+		return invocation.task.id
 	case CapabilityQuestion:
 		return invocation.question.id
 	case CapabilitySkill:
@@ -335,6 +354,8 @@ func (invocation Invocation) InvocationID() InvocationID {
 }
 func (invocation Invocation) ProviderCallID() ProviderCallID {
 	switch invocation.capability {
+	case CapabilityTaskProgress:
+		return invocation.task.call
 	case CapabilityQuestion:
 		return invocation.question.call
 	case CapabilitySkill:
@@ -383,6 +404,9 @@ func (invocation Invocation) Patch() (PatchInvocation, bool) {
 
 // Validate 验证 capability 标签与唯一 typed invocation 一致。
 func (invocation Invocation) Validate() error {
+	if invocation.capability != CapabilityTaskProgress && !invocation.task.zero() {
+		return errors.New("mismatched task invocation")
+	}
 	if invocation.capability != CapabilityQuestion && invocation.question != (QuestionInvocation{}) {
 		return errors.New("mismatched question invocation")
 	}
@@ -399,6 +423,11 @@ func (invocation Invocation) Validate() error {
 		return errors.New("invocation contains mismatched Exec payload")
 	}
 	switch invocation.capability {
+	case CapabilityTaskProgress:
+		if invocation.read != (ReadInvocation{}) || invocation.glob != (GlobInvocation{}) || invocation.grep != (GrepInvocation{}) || !invocation.patch.zero() {
+			return errors.New("mismatched task invocation")
+		}
+		return invocation.task.Validate()
 	case CapabilityQuestion:
 		if invocation.skill != (SkillInvocation{}) || invocation.artifact != (ReadArtifactInvocation{}) || invocation.read != (ReadInvocation{}) || invocation.glob != (GlobInvocation{}) || invocation.grep != (GrepInvocation{}) || !invocation.patch.zero() || invocation.write != (WriteInvocation{}) || invocation.exec != (ExecInvocation{}) {
 			return errors.New("mismatched question invocation")
@@ -580,7 +609,7 @@ type ExecExecutor interface {
 
 // Exclusive 标识需要等待前序结果持久化的调度屏障。
 func (id CapabilityID) Exclusive() bool {
-	return id.RequiresApproval() || id == CapabilityQuestion
+	return id.RequiresApproval() || id == CapabilityQuestion || id == CapabilityTaskProgress
 }
 
 // RequiresApproval 只标识需要副作用批准的能力。
@@ -631,13 +660,13 @@ type ApprovalPolicy struct{}
 // NewApprovalPolicy 创建无进程级grant的默认策略。
 func NewApprovalPolicy() ApprovalPolicy { return ApprovalPolicy{} }
 
-// Decide 对九能力执行默认安全策略。
+// Decide 对十能力执行默认安全策略。
 func (ApprovalPolicy) Decide(call ReadyCall) PolicyDecision {
 	if call.Validate() != nil {
 		return PolicyDeny
 	}
 	switch call.Capability() {
-	case CapabilityRead, CapabilityGlob, CapabilityGrep, CapabilityReadArtifact, CapabilitySkill, CapabilityQuestion:
+	case CapabilityRead, CapabilityGlob, CapabilityGrep, CapabilityReadArtifact, CapabilitySkill, CapabilityQuestion, CapabilityTaskProgress:
 		return PolicyAllow
 	case CapabilityPatch, CapabilityWrite, CapabilityExec:
 		return PolicyAsk

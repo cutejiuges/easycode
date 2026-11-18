@@ -35,7 +35,7 @@ type responseTool struct {
 	Name        string            `json:"name"`
 	Description string            `json:"description"`
 	Parameters  json.RawMessage   `json:"parameters,omitempty"`
-	Strict      bool              `json:"strict,omitempty"`
+	Strict      *bool             `json:"strict,omitempty"`
 	Format      *customToolFormat `json:"format,omitempty"`
 }
 
@@ -86,7 +86,16 @@ func buildResponsesRequest(
 	for _, facade := range toolView.Facades() {
 		switch facade.WireKind() {
 		case tool.WireStructured:
-			tools = append(tools, responseTool{Type: "function", Name: facade.Name(), Description: facade.Description(), Parameters: json.RawMessage(facade.InputSchema()), Strict: true})
+			var strict *bool
+			switch facade.ServerSchemaMode() {
+			case tool.ServerSchemaStrict:
+				value := true
+				strict = &value
+			case tool.ServerSchemaBestEffort:
+				value := false
+				strict = &value
+			}
+			tools = append(tools, responseTool{Type: "function", Name: facade.Name(), Description: facade.Description(), Parameters: json.RawMessage(facade.InputSchema()), Strict: strict})
 		case tool.WireCustomFreeform:
 			format := facade.FreeformFormat()
 			tools = append(tools, responseTool{Type: "custom", Name: facade.Name(), Description: facade.Description(), Format: &customToolFormat{Type: format.Type(), Syntax: format.Syntax(), Definition: format.Definition()}})
@@ -113,7 +122,7 @@ func compileResponsesRequest(
 			return codec.CanonicalJSON{}, fmt.Errorf("project instructions snapshot is invalid: %w", err)
 		}
 	}
-	if toolView.Family() != domain.ProviderOpenAI || len(toolView.Facades()) != 9 {
+	if toolView.Family() != domain.ProviderOpenAI || len(toolView.Facades()) != 10 {
 		return codec.CanonicalJSON{}, fmt.Errorf("OpenAI tool catalog view is invalid")
 	}
 	return codec.MarshalCanonical(

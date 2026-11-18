@@ -151,6 +151,13 @@ func ValidateResultInput(inv Invocation, result InvocationResult) error {
 		return errors.New("result input identity mismatch")
 	}
 	switch inv.Capability() {
+	case CapabilityTaskProgress:
+		if !inv.task.input.Equal(result.taskInput) {
+			return errors.New("task result input mismatch")
+		}
+		if update, applied := result.TaskUpdate(); applied && !update.Equal(inv.task.input.update) {
+			return errors.New("task applied update mismatch")
+		}
 	case CapabilityPatch:
 		m := result.PatchMetadata()
 		if m.RelativePath() != inv.patch.input.FilePath() || m.ReplacementCount() != len(inv.patch.input.replacements) {
@@ -217,7 +224,7 @@ func (v InputResultEvidence) ValidateResult(result InvocationResult) error {
 			return errors.New("input result does not match rejected gate")
 		}
 	}
-	if v.selection.kind == InputGateSelected && v.admission.Sequence() == 0 && (result.Status() == ResultSuccess || result.Status() == ResultOutcomeUncertain) {
+	if (v.selection.kind == InputGateSelected || result.Capability() == CapabilityTaskProgress) && v.admission.Sequence() == 0 && (result.Status() == ResultSuccess || result.Status() == ResultOutcomeUncertain) {
 		return errors.New("selected input result requires execution admission")
 	}
 	if v.origin == InputResultRecovery {

@@ -146,6 +146,9 @@ func (r *Runtime) closeQuestion(p *pendingQuestion) {
 }
 
 func (r *Runtime) executeExclusiveCall(ctx context.Context, emit Emitter, turnID domain.TurnID, inv tool.Invocation) (tool.InvocationResult, bool, error) {
+	if inv.Capability() == tool.CapabilityTaskProgress {
+		return r.executeTaskCall(ctx, turnID, inv)
+	}
 	if inv.Capability() != tool.CapabilityQuestion {
 		return r.executeApproved(ctx, emit, turnID, inv)
 	}

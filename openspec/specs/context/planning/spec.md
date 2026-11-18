@@ -8,7 +8,7 @@
 
 ### Requirement: Context planning uses typed ordered sources
 
-上下文规划 SHALL 只接收强类型的 Provider profile、Tool Catalog snapshot、可选项目指令快照、可选 Skill metadata 快照、已提交有效窗口语义快照、Provider 原生历史 footprint、不携带额外正文的当前采样状态和可选预算。来源 MUST 按 `provider_profile`、`tool_catalog`、可选 `project_instructions`、可选 `skill_catalog`、`committed_history`、`current_input` 的固定顺序出现；无项目指令文档时 MUST 省略 `project_instructions`，无可向模型披露的 Skill 时 MUST 省略 `skill_catalog`。规划不得隐式读取时间戳、随机 ID、cwd、环境变量、Session 路径、git 状态、文件系统或网络。
+上下文规划 SHALL 只接收强类型的 Provider profile、Tool Catalog snapshot、可选项目指令快照、可选 Skill metadata 快照、已提交有效窗口语义快照、Provider 原生历史 footprint、不携带额外正文的当前采样状态、可选任务内容 stamp 和可选预算。来源 MUST 按 `provider_profile`、`tool_catalog`、可选 `project_instructions`、可选 `skill_catalog`、`committed_history`、`current_input` 的固定顺序出现；无项目指令文档时 MUST 省略 `project_instructions`，无可向模型披露的 Skill 时 MUST 省略 `skill_catalog`。规划不得隐式读取时间戳、随机 ID、cwd、环境变量、Session 路径、git 状态、文件系统或网络。
 
 `provider_profile` SHALL 只包含 Provider family、model、既有显式 schema revision 以及实际非默认普通请求策略的确定性身份，不得包含 API key、base URL 凭据、配置路径或其他 secret。新设置省略时 profile canonical bytes 和 source revision MUST 与既有默认基线一致；不得递增固定 revision、增加格式版本路由或从 profile 反向重建原生历史。`tool_catalog` SHALL 只包含 catalog revision、稳定排序的 facade schema canonical bytes 与内容派生 fingerprint，不得包含 executor、invocation/call identity、权限临时状态或 workspace 绝对路径。`project_instructions` SHALL 只包含经过发现契约验证的不可变快照、内容派生 revision、截断状态和项目根相对来源，不得包含绝对项目根或启动 cwd。规划 MUST 是纯内存操作，且不得修改输入快照或 Provider 原生历史。
 
@@ -58,11 +58,29 @@ Skill metadata SHALL 只包含实际发送的稳定名称、描述、调用策�
 
 推理 raw/normalized usage SHALL 只作为完成样本或摘要的计量事实，不进入 profile、工具目录、prompt 或 stable prefix；读取计量不改变输入估算方法，也不能用累计 thinking 消耗替代当前窗口 footprint。
 
+任务清单 SHALL 只通过已提交的对应 Provider 原生调用/结果及 checkpoint 的原生摘要包装进入有效历史；普通 sample 不再从当前列表投影重复注入清单。任务进度不新增上下文 source，固定来源顺序保持不变，current_input 仍无额外正文。压缩来源的完整 typed 任务快照只用于验证和构造有来源的 checkpoint 包装，不允许共享语义视图反向重建调用 wire。
+
+#### Scenario: Plan a task update without an extra source
+- **WHEN** TodoWrite 或 update_plan 的原生调用与结果已提交
+- **THEN** 规划仍使用原固定 source 顺序，任务参数/结果由 committed_history 的原生 footprint 覆盖，不再增加 task source 或 current_input 正文
+
+#### Scenario: Plan a task-preserving checkpoint
+- **WHEN** checkpoint 原生摘要包装包含精确任务快照，而语义摘要仍为真实模型 generation
+- **THEN** 规划读取同一有效窗口的语义摘要和完整原生 footprint，不把宿主清单包装伪装成模型 generation 或追加新的用户任务
+
+任务内容 stamp SHALL 仅存在于同一 committed_history 的 canonical 元数据，不是新增 source、prompt 段、token 贡献或普通 TurnInput 附件。none 时必须省略 task_content_digest；clear/snapshot 时该字段 SHALL 是 SHA-256(CanonicalJSON({state, update})) 的 64 位小写十六进制字符串，其中 update 为纯 domain.TaskUpdate。规范内容不包含工具 facade profile、result_sequence、turn_id、invocation_id、CompactionID 或其他关联身份；不能对包含这些字段的整个 TaskInput/TaskProgressState/checkpoint payload 求 hash 代替。
+
+普通采样、prepared 输入候选预检、摘要预检/替换候选与恢复后的规划 SHALL 分别绑定对应已验证窗口的任务状态并从它派生 stamp，不能使用尚未成功提交的候选、未来更新或错误窗口的清单。stamp 不改通用 NativeHistoryFootprint 契约，不产生网络正文，也不使已由原生历史/摘要包装覆盖的任务文字再估算一次。语义摘要仍为真实模型 generation。
+
+#### Scenario: Bind task content metadata to each planning window
+- **WHEN** 当前、输入候选、摘要候选和恢复规划分别使用某个已验证窗口
+- **THEN** 每份规划的任务 stamp 来自该窗口对应状态，来源顺序和 token 估算规则不变，普通 TurnInput 与实际请求不新增任务正文
+
 ### Requirement: Context plans are immutable validated snapshots
 
 上下文计划 SHALL 使用唯一当前的强类型 shape，并深拷贝所有调用方可变输入；纯内存 plan MUST NOT 携带固定 format revision 或按 revision 选择 validator。计划 MUST 拒绝未知来源 kind、重复来源、非法顺序、空 source revision、非法 Tool Catalog、非法项目指令快照、非法 Skill 目录、非法估算状态、Provider family 不匹配及无效缓存计划。所有返回 slice、bytes 或嵌套值的读取操作 MUST 返回独立副本。
 
-计划 SHALL 把 `provider_profile` 与包含 Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill、Question 的完整 `tool_catalog` 映射为 stable cache segments，把可选 `project_instructions` 映射为 project-stable cache segment，把可选 `skill_catalog` 映射为 project-stable segment，把 `committed_history` 映射为 turn-stable segment，把 `current_input` 映射为 volatile segment，并复用 `context/cache-plan` 的 canonical JSON、排序和 stable prefix fingerprint 契约。Tool Catalog 估算 SHALL 覆盖实际发送给对应 Provider 的全部 facade schema/description；Exec动态command、workdir、timeout、approval、sandbox临时状态与环境实际值不得进入catalog source。来源生命周期、source revision 与缓存稳定级别 MUST 保持为不同的强类型概念。
+计划 SHALL 把 `provider_profile` 与包含 Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill、Question、Task 的完整 `tool_catalog` 映射为 stable cache segments，把可选 `project_instructions` 映射为 project-stable cache segment，把可选 `skill_catalog` 映射为 project-stable segment，把 `committed_history` 映射为 turn-stable segment，把 `current_input` 映射为 volatile segment，并复用 `context/cache-plan` 的 canonical JSON、排序和 stable prefix fingerprint 契约。Tool Catalog 估算 SHALL 覆盖实际发送给对应 Provider 的全部 facade schema/description；Exec动态command、workdir、timeout、approval、sandbox临时状态与环境实际值不得进入catalog source。来源生命周期、source revision 与缓存稳定级别 MUST 保持为不同的强类型概念。
 
 #### Scenario: Mutate caller-owned planning inputs
 - **WHEN** 调用方在计划创建后修改原 Tool Catalog bytes、项目指令、语义 turn slice、有序消息 buffer 或 getter 返回的数据
@@ -101,7 +119,7 @@ artifact ID、保存状态、存储目录、实时配额与读取游标 MUST NOT
 - **WHEN** 同一 catalog 下创建、读取、删除输出对象或改变配额使用量
 - **THEN** catalog canonical bytes、source revision 和 stable prefix fingerprint 不变；估算包含 ReadArtifact 实际 facade schema
 
-committed_history 的 cache canonical 内容 SHALL 仅含封闭 summary/text/skill_attachment/file_attachment kind、有序角色和文本，不包含 InputID、turn ID 或展示状态；同内容不同关联身份必须得到相同内容 fingerprint。
+committed_history 的 cache canonical 正文 SHALL 仅含封闭 summary/text/skill_attachment/file_attachment kind、有序角色和文本；同一来源的 canonical 元数据另允许下述有界任务内容 stamp，不包含 InputID、turn ID、facade profile 或展示状态。同内容不同关联身份必须得到相同内容 fingerprint。
 
 #### Scenario: Keep identity out of cache content
 - **WHEN** 仅改变输入和 turn 身份但原生可见内容及其顺序相同
@@ -133,7 +151,35 @@ Question 的静态 schema/description SHALL 纳入同一 tool_catalog source；�
 
 #### Scenario: Add a question definition deterministically
 - **WHEN** 将提问定义加入当前完整 catalog 并以不同注册顺序构造
-- **THEN** 两次得到同一九能力定义 bytes 与新 fingerprint，失效来源明确为 tool_catalog
+- **THEN** 两次得到同一十能力定义 bytes 与新 fingerprint，失效来源明确为 tool_catalog
+
+任务进度的静态 schema/description SHALL 纳入同一 tool_catalog source，并遵循两家 facade 的确定性定义；添加该能力必须可解释地改变目录 revision/fingerprint。动态任务标签、activeForm、状态、说明、当前列表、折叠/焦点、更新来源 sequence/turn/invocation 不得进入稳定目录或 profile。任务内容在原生历史或 checkpoint 包装中的变化 SHALL 只改变适用历史尾部及完整请求，不改变已冻结工具定义。仅来源身份不同而实际列表和其他模型内容相同，内容 fingerprint MUST 相同。
+
+#### Scenario: Add task progress to the complete catalog
+- **WHEN** 两次以不同注册顺序构造含 TodoWrite/update_plan 的完整当前目录
+- **THEN** 两次得到相同十能力 canonical 定义及新 fingerprint，失效来源为 tool_catalog
+
+#### Scenario: Change task state without changing the stable prefix
+- **WHEN** 静态目录不变，模型把同一任务从 pending 更新到 completed 或用户折叠列表
+- **THEN** 状态更新只改变已提交历史尾部，折叠不改变任何请求；tool_catalog canonical bytes/revision/fingerprint 保持不变
+
+#### Scenario: Keep task provenance out of model content
+- **WHEN** 两份合法 checkpoint 的模型摘要及规范任务内容相同，仅来源 seq、turn、invocation 或 CompactionID 不同
+- **THEN** 实际摘要包装 bytes 和内容 fingerprint 相同，来源仍分别在 typed metadata 中验证
+
+任务内容 stamp SHALL 使用固定 canonical 规则，none 省略与 clear/snapshot 有 digest 是同一当前规划契约中的语义分支，不是历史格式、内部版本或兼容 reader。对任意相同 context revision、估算状态/token 数和模型摘要，规范任务内容不同 MUST 使 committed_history 内容 fingerprint 不同；只改变结果来源或 facade profile 而规范 domain 更新相同 MUST 得到相同 stamp 和内容 fingerprint。none 与成功 clear 即使均无条目也必须可区分。stamp 无法验证、kind/digest 不一致或使用错误窗口状态时 MUST 拒绝计划，不能用 token 数相同掩盖内容差异。
+
+#### Scenario: Distinguish equal-sized task snapshots in history fingerprints
+- **WHEN** 两份已验证窗口的 context revision、估算方法/状态/token 数、语义消息及真实模型摘要相同，仅规范任务内容由同长度 A 改为 B
+- **THEN** 两份 committed_history 内容 stamp 与 fingerprint 不同，provider_profile/tool_catalog/project/skill 稳定段不变
+
+#### Scenario: Exclude source identity and facade profile from the stamp
+- **WHEN** 两份合法状态具有相同 kind 及规范 domain.TaskUpdate，仅来源 seq/turn/invocation/CompactionID 或原调用 facade profile 不同
+- **THEN** stamp、任务参考正文与 committed_history 内容 fingerprint 相同，不把工具输入 profile 或持久化关联字段带入规划内容；不据此宣称两家 Provider 的完整原生包装结构相同
+
+#### Scenario: Distinguish no task from an explicit empty update
+- **WHEN** 一个窗口从无成功任务更新，另一个窗口最新成功更新是无说明的空列表
+- **THEN** none 窗口省略 stamp，clear 窗口带规范空更新的 digest，二者 committed_history canonical 内容不同
 
 ### Requirement: Token estimates preserve method and uncertainty
 
@@ -169,6 +215,19 @@ Question 的静态 schema/description SHALL 纳入同一 tool_catalog source；�
 #### Scenario: Avoid counting archived history
 - **WHEN** 已归档历史估算 100000，当前摘要语义估算 1000，当前原生窗口估算 1200
 - **THEN** 历史贡献为 1200，而非 100000、101200 或 2200
+
+Task 原生参数/结果 SHALL 沿既有覆盖规则计量一次。checkpoint 的 Provider 原生 footprint MUST 覆盖真实模型摘要包装及完整确定性任务段，而单向语义摘要继续只表示真实模型 generation；共享规划使用两者的单一覆盖值，不把宿主 task JSON 拼入语义摘要后再次求和，不把恢复内存列表另计一份。归档任务调用不再重放到有效窗口；其业务状态仍由完整 ledger 验证，不因此使归档正文重复进入估算。
+
+#### Scenario: Count an exact checkpoint task snapshot once
+- **WHEN** 当前语义摘要估算 100 tokens，含完整任务包装的原生窗口 footprint 为 150 tokens，旧调用已归档
+- **THEN** committed_history 贡献为 150，不是 250、重复加入当前列表的数值或全部归档历史估算
+- **THEN** 查询、列表折叠及 /tasks 阅读不改变估算、context revision 或请求 fingerprint
+
+任务内容 stamp SHALL 仅参与 committed_history 的内容身份，不增加 profile、工具目录、current_input 或历史 token 贡献；不能对 digest 字符串重新估算正文或把 TaskProgressState 另加到原生 footprint。原生 footprint 仍完整覆盖实际发送的任务调用或 checkpoint 包装，不为实现 stamp 扩大为另一套通用 native 内容协议。
+
+#### Scenario: Change task content identity without double-counting it
+- **WHEN** 两份窗口任务内容不同但实际原生 footprint 同为 150 tokens，真实语义摘要同为 100 tokens
+- **THEN** committed_history fingerprints 不同而各自历史估算均为 150，不因 stamp 再加 digest 或任务文字的 token
 
 ### Requirement: Budget decisions require explicit configuration and complete evidence
 

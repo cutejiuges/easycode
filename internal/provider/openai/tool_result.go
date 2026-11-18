@@ -39,6 +39,8 @@ func prepareToolOutputsEntry(history []nativeHistoryEntry, results []tool.ModelO
 
 func openAICapabilityForName(name string) tool.CapabilityID {
 	switch name {
+	case "update_plan":
+		return tool.CapabilityTaskProgress
 	case "exec_command":
 		return tool.CapabilityExec
 	case "request_user_input":

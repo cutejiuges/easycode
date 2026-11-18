@@ -52,6 +52,7 @@ func (*HistoryReader) ValidateCheckpointUsage(checkpoint provider.CheckpointEnve
 func restoreNativeHistory(ctx context.Context, model string, commits []provider.RestoreRecord, history *nativeHistory) error {
 	entries := make([]nativeHistoryEntry, 0, len(commits))
 	var questionResults []tool.InvocationResult
+	var taskResults []tool.InvocationResult
 	seenCheckpoints := make(map[domain.CompactionID]struct{})
 	for index, commit := range commits {
 		if err := ctx.Err(); err != nil {
@@ -85,6 +86,10 @@ func restoreNativeHistory(ctx context.Context, model string, commits []provider.
 			if err != nil || source != checkpoint.Source() {
 				return fmt.Errorf("checkpoint source does not match native history")
 			}
+			expectedTasks, hasTasks := commit.ExpectedTaskProgress()
+			if !hasTasks || validateCheckpointTaskProgress(checkpoint, expectedTasks) != nil {
+				return fmt.Errorf("checkpoint task progress source does not match committed evidence")
+			}
 			summary, summaryText, err := decodeCheckpoint(checkpoint)
 			if err != nil {
 				return err
@@ -109,6 +114,7 @@ func restoreNativeHistory(ctx context.Context, model string, commits []provider.
 		}
 		if entry.Kind == nativeHistorySample {
 			questionResults = commit.QuestionResults()
+			taskResults = commit.TaskResults()
 		}
 		if entry.Kind == nativeHistoryToolOutputs {
 			expected, err := prepareToolOutputsEntry(entries, commit.ToolOutputs())
@@ -132,7 +138,11 @@ func restoreNativeHistory(ctx context.Context, model string, commits []provider.
 			if err := validateQuestionRestoredOutputs(entries[len(entries)-1], entry, questionResults); err != nil {
 				return err
 			}
+			if err := validateTaskRestoredOutputs(entries[len(entries)-1], entry, taskResults); err != nil {
+				return err
+			}
 			questionResults = nil
+			taskResults = nil
 		}
 		if entry.Kind == nativeHistoryHookFeedback {
 			expected, ok := commit.StopFeedback()

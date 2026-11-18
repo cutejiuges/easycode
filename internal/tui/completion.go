@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	maxCompletionCandidates = domain.MaxSkills + 7
+	maxCompletionCandidates = domain.MaxSkills + 8
 	maxCompletionBytes      = 2 << 20
 	maxCompletionLineBytes  = 16 << 10
 )
@@ -55,6 +55,7 @@ func builtinCompletionCandidates() []completionCandidate {
 		{id: completionIdentity{kind: completionBuiltin, name: "hooks"}, description: "Browse command hooks"},
 		{id: completionIdentity{kind: completionBuiltin, name: "plugins"}, description: "Browse local plugins"},
 		{id: completionIdentity{kind: completionBuiltin, name: "skills"}, description: "Browse local skills"},
+		{id: completionIdentity{kind: completionBuiltin, name: "tasks"}, description: "Inspect current task progress"},
 	}
 }
 

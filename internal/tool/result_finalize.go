@@ -9,7 +9,7 @@ import (
 // FinalizeResult 对已经有界的结果应用最终额度；搜索与范围读取应先使用各自渲染策略。
 // 已执行的修改和命令绝不因为显示预算而改变真实终态。
 func FinalizeResult(r InvocationResult, allowance int, reason BudgetReason) (InvocationResult, error) {
-	if r.Validate() != nil || allowance < SafetyResultBytes || allowance > MaxModelPreviewBytes {
+	if r.Validate() != nil || allowance < SafetyResultBytes || allowance > MaxModelPreviewBytes || (r.capability == CapabilityTaskProgress && allowance > MaxTaskPreviewBytes) {
 		return InvocationResult{}, errors.New("invalid result finalization")
 	}
 	if len(r.preview.text) > allowance {

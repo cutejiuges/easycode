@@ -21,6 +21,9 @@ func (runtime *Runtime) resultAllowance(capability tool.CapabilityID) (int, erro
 	if capability == tool.CapabilityQuestion {
 		return tool.MaxQuestionPreviewBytes, nil
 	}
+	if capability == tool.CapabilityTaskProgress {
+		return tool.MaxTaskPreviewBytes, nil
+	}
 	return tool.MaxModelPreviewBytes, nil
 }
 

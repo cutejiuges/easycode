@@ -78,6 +78,7 @@ type Model struct {
 	completion                completionState
 	files                     fileCompletionState
 	question                  *questionOverlay
+	tasks                     taskProgressView
 
 	hooks                hookBrowser
 	hookTrust            *hookTrustOverlay
@@ -156,6 +157,7 @@ func NewModel(
 	}
 	if session != nil {
 		model.outputs = session.Outputs()
+		_, model.tasks.enabled = session.(taskProgressSession)
 	}
 	return model
 }
@@ -174,7 +176,7 @@ func (model Model) WithInputHistory(history domain.SemanticHistoryView) Model {
 
 // Init 返回初始命令。
 func (model Model) Init() tea.Cmd {
-	return tea.Batch(waitForControl(model.outputs), model.initialTranscriptQuery(), model.initialFileWait())
+	return tea.Batch(waitForControl(model.outputs), model.initialTranscriptQuery(), model.initialTaskQuery(), model.initialFileWait())
 }
 
 // Update 更新纯 UI 状态，并把会话操作留给 tea.Cmd。
@@ -201,6 +203,11 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch value := message.(type) {
 	case fileResultMsg:
 		return model.receiveFileResult(value)
+	case initialTaskQueryMsg:
+		return model.queryTasks(false)
+	case taskQueryFailedMsg:
+		model.failTaskQuery(value.generation, "task_query_unavailable: task progress query failed")
+		return model, nil
 	case hookTrustFailedMsg:
 		if model.hookTrust != nil && model.hookTrust.request.RequestID == value.request && model.hookTrust.turn == value.turn {
 			model.hookTrust.submitted = false
@@ -225,11 +232,13 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case transcriptReply:
 		return model.receiveTranscriptPage(value)
 	case tea.WindowSizeMsg:
+		taskAnchor := model.taskPanelAnchor()
 		model.browser.markdown.preserveAnchor = true
 		model.width = value.Width
 		model.height = value.Height
 		model.contextScroll = min(model.contextScroll, model.contextScrollLimit())
 		model.composer.resize(value.Width, value.Height)
+		model.restoreTaskPanelAnchor(taskAnchor)
 		if model.question != nil {
 			model.question.resize(value.Width, value.Height)
 		}
@@ -238,6 +247,9 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		next, cmd := model.projectControlItem(value)
 		return next, tea.Batch(cmd, waitForControl(model.outputs))
 	case eventStreamClosedMsg:
+		if model.tasks.query != nil {
+			model.failTaskQuery(model.tasks.query.generation, "task_query_unavailable: runtime event stream closed")
+		}
 		model.activeCompactionID = ""
 		model.pendingContext = ""
 		if model.state == stateStreaming {
@@ -249,6 +261,9 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return model, nil
 	case RuntimeEventMsg:
+		if value.Event.Kind == protocol.EventTaskProgressUpdated {
+			return model.projectTaskUpdate(value.Event)
+		}
 		if value.Event.Kind == protocol.EventTurnStarted || value.Event.Kind == protocol.EventTurnCompleted || value.Event.Kind == protocol.EventTurnFailed {
 			model.effortOperationGeneration++
 		}
@@ -410,6 +425,9 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if model.plugins.open {
 		return model.handlePluginsKey(key)
 	}
+	if model.tasks.open {
+		return model.handleTasksKey(key)
+	}
 	if key.Type == tea.KeyCtrlO {
 		model.clearEffortFeedback()
 		return model.openTranscriptBrowser()
@@ -448,8 +466,18 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return model, nil
 	}
+	if key.Type == tea.KeyCtrlT {
+		if snapshot := model.tasks.snapshot; snapshot != nil && snapshot.Counts.Total > 0 {
+			model.tasks.expanded = !model.tasks.expanded
+		}
+		return model, nil
+	}
 	if key.Type == tea.KeyEnter && !key.Alt && !key.Paste {
 		if _, local, _ := parseEffortCommand(model.composer.text); local {
+			model.completion.suppress(completionCancelled)
+			return model.submitComposer()
+		}
+		if local, _ := parseTasksCommand(model.composer.text); local {
 			model.completion.suppress(completionCancelled)
 			return model.submitComposer()
 		}
@@ -466,6 +494,10 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			next, command := model.submitComposer()
 			updated := next.(Model)
 			if updated.skillsOpen || updated.hooks.open || updated.plugins.open {
+				updated.restoreComposer(originalDraft)
+			}
+			if updated.tasks.open {
+				updated.tasks.draft = originalDraft
 				updated.restoreComposer(originalDraft)
 			}
 			return updated, command
@@ -524,6 +556,13 @@ func (model Model) submitComposer() (tea.Model, tea.Cmd) {
 			return model, nil
 		}
 		return model.submitEffortCommand(command)
+	}
+	if local, err := parseTasksCommand(model.composer.text); local {
+		if err != nil {
+			model.errorSummary = "invalid_command: " + err.Error()
+			return model, nil
+		}
+		return model.queryTasks(true)
 	}
 	if words := strings.Fields(model.composer.text); len(words) > 0 && words[0] == "/plugins" {
 		if len(words) != 1 {
@@ -956,6 +995,9 @@ func (model Model) View() string {
 	if model.plugins.open {
 		return model.renderPlugins()
 	}
+	if model.tasks.open {
+		return model.renderTasksPanel()
+	}
 	if model.detailOpen {
 		return model.renderTranscriptBrowser()
 	}
@@ -1008,7 +1050,7 @@ func (model Model) View() string {
 		_, _ = fmt.Fprintf(&view, "Error: %s\n", model.errorSummary)
 	}
 	view.WriteString("\n")
-	footer := model.renderInputs() + model.completion.view + model.files.view + model.composer.view(model.pending == nil && model.retracting == nil && !model.cancelling)
+	footer := model.renderTaskInline() + model.renderInputs() + model.completion.view + model.files.view + model.composer.view(model.pending == nil && model.retracting == nil && !model.cancelling)
 	return model.fitChatView(view.String(), footer)
 }
 

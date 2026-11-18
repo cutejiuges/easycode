@@ -45,7 +45,7 @@ func TestFileAttachmentPlanningCountsOnceAndKeepsStablePrefix(t *testing.T) {
 	}
 	golden, err := os.ReadFile("testdata/file_cache_sources.golden.json")
 	if err != nil || !bytes.Equal(bytes.TrimSpace(golden), encodedGolden) {
-		t.Fatal("file cache source golden differs", err)
+		t.Fatalf("file cache source golden differs: %v\n%s", err, encodedGolden)
 	}
 
 	messages, err := semanticContent(h)
@@ -62,6 +62,29 @@ func TestFileAttachmentPlanningCountsOnceAndKeepsStablePrefix(t *testing.T) {
 	rendered, _ := a.RenderedText()
 	if !bytes.Contains(content, []byte("second")) || strings.Count(rendered, "# Attached workspace file") != 1 {
 		t.Fatal("file body missing")
+	}
+	step, _ := domain.NewTaskStep("检查附件", "", domain.TaskPending)
+	update, _ := domain.NewTaskUpdate([]domain.TaskStep{step}, "")
+	source, _ := domain.NewTaskProgressSource(8, "01900000-0000-7000-8000-000000000001", "01900000-0000-7000-8000-000000000002")
+	state, _ := domain.NewTaskProgressState(source, update)
+	input, err := mustPlanningInput(t, h, estimatedFootprint(t, domain.ProviderOpenAI, 3, 10), "next", DisabledBudget()).WithTaskProgress(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withTasks, err := NewPlanner().Plan(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskSources, err := NewCacheSources(withTasks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withTasks.TotalEstimate() != p.TotalEstimate() || taskSources.StableFingerprint != before.StableFingerprint || taskSources.ContentFingerprint == before.ContentFingerprint {
+		t.Fatal("task metadata changed attachment estimate or stable prefix")
+	}
+	combined := withTasks.CachePlan().Segments()[2].CanonicalJSON()
+	if bytes.Count(combined, []byte("file_attachment")) != 1 || !bytes.Contains(combined, []byte(state.ContentStamp())) {
+		t.Fatal("attachment or task content identity disappeared from shared history")
 	}
 	h.Turns[0].Messages[0].InputID = "01900000-0000-7000-8000-000000000099"
 	_, after := makePlan(h, 10)

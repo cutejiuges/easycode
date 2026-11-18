@@ -48,6 +48,9 @@ func (model Model) projectControlItem(item protocol.ControlItem) (tea.Model, tea
 		return model, nil
 	}
 	if event, ok := item.ContextEvent(); ok {
+		if event.Kind == protocol.EventTaskProgressSnapshot {
+			return model.projectTaskSnapshot(item.RequestID(), event)
+		}
 		if event.Kind == protocol.EventEffortSnapshot {
 			return model.projectEffortEvent(item.RequestID(), event)
 		}
@@ -78,6 +81,8 @@ func (model Model) projectControlItem(item protocol.ControlItem) (tea.Model, tea
 	}
 	if result, ok := item.CommandResult(); ok {
 		switch result.CommandKind() {
+		case protocol.CommandQueryTasks:
+			return model.projectTaskQueryResult(result)
 		case protocol.CommandQueryEffort, protocol.CommandSetEffort:
 			return model.projectEffortResult(result)
 		case protocol.CommandQueryCache, protocol.CommandQueryContext, protocol.CommandCompactContext, protocol.CommandCancelCompaction:

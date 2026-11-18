@@ -21,6 +21,8 @@ const (
 	EventCacheSnapshot         EventKind = "cache_snapshot"
 	EventContextSnapshot       EventKind = "context_snapshot"
 	EventEffortSnapshot        EventKind = "effort_snapshot"
+	EventTaskProgressSnapshot  EventKind = "task_progress_snapshot"
+	EventTaskProgressUpdated   EventKind = "task_progress_updated"
 	EventCompactionStarted     EventKind = "compaction_started"
 	EventCompactionCompleted   EventKind = "compaction_completed"
 	EventCompactionFailed      EventKind = "compaction_failed"
@@ -61,6 +63,23 @@ func (event Event) Validate() error {
 	}
 	if event.ItemID != "" || event.CallID != "" {
 		return fmt.Errorf("runtime event reserved identity is invalid")
+	}
+	if event.Kind == EventTaskProgressSnapshot || event.Kind == EventTaskProgressUpdated {
+		if !event.SessionID.Valid() || !event.ThreadID.Valid() || event.CompactionID != "" {
+			return fmt.Errorf("task progress event scope is invalid")
+		}
+		if event.Kind == EventTaskProgressSnapshot {
+			if event.TurnID != "" {
+				return fmt.Errorf("task progress query has a turn identity")
+			}
+			_, err := DecodeTaskProgressSnapshot(event)
+			return err
+		}
+		if !event.TurnID.Valid() {
+			return fmt.Errorf("task progress update turn is invalid")
+		}
+		_, err := DecodeTaskProgressUpdated(event)
+		return err
 	}
 	if event.Kind == EventEffortSnapshot || event.Kind == EventCacheSnapshot || event.Kind == EventContextSnapshot || event.Kind == EventCompactionStarted || event.Kind == EventCompactionCompleted || event.Kind == EventCompactionFailed {
 		if !event.SessionID.Valid() || !event.ThreadID.Valid() {

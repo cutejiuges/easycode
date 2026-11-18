@@ -4,17 +4,17 @@
 
 ## 结构化用户提问
 
-当前第九项能力 `user.question` 的两个 facade 为 Anthropic `AskUserQuestion` 和 OpenAI `request_user_input`，均为 structured JSON。1–4 题、每题 2–4 选项，以稳定题目 ID 和零基选项索引关联答案，支持单选、多选、精确说明文字与显式跳过；模型 schema 不包含预填答案或权限字段。问题值由 protocol 持有不可变编码，tool 别名复用；执行器不依赖 Provider、Runtime 或 TUI。
+当前能力 `user.question` 的两个 facade 为 Anthropic `AskUserQuestion` 和 OpenAI `request_user_input`，均为 structured JSON。1–4 题、每题 2–4 选项，以稳定题目 ID 和零基选项索引关联答案，支持单选、多选、精确说明文字与显式跳过；模型 schema 不包含预填答案或权限字段。问题值由 protocol 持有不可变编码，tool 别名复用；执行器不依赖 Provider、Runtime 或 TUI。
 
 Question 复用 `tool_call_ready -> tool_execution_started -> tool_call_result -> provider_native_commit`，不增加 Session event、格式版本或历史 reader。它是 exclusive 调度屏障，但 `RequiresApproval=false`；后序调用必须等待其结果 Sync。回答不生成 approval fact/grant，Patch/Write/Exec 的批准规则保持独立。无交互宿主返回 `denied/user_input_unavailable`，没有问卷事件或 stdin 等待。
 
 Runtime 的实例 pending 状态与 AgentLoop owner 接收 `resolve_user_question`，关联 turn、request、invocation 和题目 fingerprint。锁外通过固定 codec、Session 真实信封和 Provider 单项原生输出快照预检，锁内只复核身份及接收。接收不等于提交；接收后遇取消仍先履行结果提交义务，Sync 不确定则 poison，不能发布成功。
 
-完整答案 preview 最多 128 KiB，文字合计 16 KiB，计入 sample 512 KiB/turn 2 MiB；预算拒绝不扣账、不写盘、不丢草稿，成功回答不截断。目录九项定义参与稳定 fingerprint，题目、答案、请求 ID 和终端尺寸只影响动态历史。两家原生结果保持各自 function_call_output/tool_result，保留 opaque reasoning、phase、signature。
+完整答案 preview 最多 128 KiB，文字合计 16 KiB，计入 sample 512 KiB/turn 2 MiB；预算拒绝不扣账、不写盘、不丢草稿，成功回答不截断。目录十项定义参与稳定 fingerprint，题目、答案、请求 ID 和终端尺寸只影响动态历史。两家原生结果保持各自 function_call_output/tool_result，保留 opaque reasoning、phase、signature。
 
 原生恢复与离线 reader 还会核对 Session ready/result 的完整题目和冻结输出；`RestoreRecord.WithQuestionFacts` 只传递已验证的内存事实，不增加 record 或正文副本。仅分别验证两套合法数据不足以证明它们相同，native/shared 题目或答案错配必须整体拒绝并保留原日志。
 
-恢复不重新执行提问：ready 尾部补取消，started 无结果补 outcome_uncertain，result/output 缺口复用冻结答案。正文仅在现有结果 preview 保存；临时 request ID 与 UI 草稿不持久化。TUI 复核提交、单独说明编辑、窄屏滚动和 Ctrl+O 回看共用既有分页/四页缓存；实现与验证见 `internal/tui/user_questions.go`、`internal/runtime/user_question.go`、`internal/app/questions_e2e_test.go`、`internal/session/question_fixture_test.go` 和 `scripts/user-question-smoke.py`。
+恢复不重新执行提问：ready 尾部补取消，started 无结果补 outcome_uncertain，result/output 缺口复用冻结答案。正文仅在现有结果 preview 保存；临时 request ID 与 UI 草稿不持久化。TUI 复核提交、单独说明编辑、窄屏滚动和 Ctrl+O 回看共用既有分页/四页缓存；实现与验证见 `internal/tui/user_questions.go`、`internal/runtime/user_question.go`、`internal/app/questions_e2e_test.go`、`internal/app/question_recovery_test.go` 和 `scripts/user-question-smoke.py`。
 
 ## PostToolUse 与 PostToolUseFailure 后置检查
 
@@ -34,7 +34,7 @@ Exec/Hook 共享 `internal/executor/process` 的单次接收、stdin/双流、�
 
 ## 命令输出存储与查询
 
-`artifact.read` 的两家 facade 都命名为 `ReadArtifact`。输入为不透明 `artifact_id`、raw-byte `offset` 和 `limit`，单页最多 65,536 bytes；它不接受文件路径，不生成工作区 Read 证据。当前目录稳定排序与 schema 估算包括九项工具。
+`artifact.read` 的两家 facade 都命名为 `ReadArtifact`。输入为不透明 `artifact_id`、raw-byte `offset` 和 `limit`，单页最多 65,536 bytes；它不接受文件路径，不生成工作区 Read 证据。当前目录稳定排序与 schema 估算包括十项工具。
 
 `session/artifact` 在 Session 根的 `artifacts/<thread-id>/<invocation-id>/` 保存 stdout/stderr/search_result。每对象最多 16 MiB 连续前缀，Exec 原子预留 32 MiB，Glob/Grep 单文本预留 16 MiB，thread/root 分别为 256 MiB/1 GiB。内存仍是每流 512 KiB 头尾，模型预览连同引用提示不超过 256 KiB。确认 EOF 的空流和完整内联小输出为 not_needed；其他结果分别记录 complete、partial、unavailable，不覆盖 exit/timeout/cancelled。
 
@@ -62,7 +62,7 @@ Session/native/checkpoint 均为唯一当前无版本格式；headless JSONL 保
 
 ## 当前独占执行不变量
 
-九项工具的 JSON 输入统一经过 codec 检查。Read/Glob/Grep 的缺省字段保留默认值，显式 null、重复键与有损 Unicode 失败关闭；Patch 的 custom freeform 保留独立语法解析器。
+十项工具的 JSON 输入统一经过 codec 检查。Read/Glob/Grep 的缺省字段保留默认值，显式 null、重复键与有损 Unicode 失败关闭；Patch 的 custom freeform 保留独立语法解析器。
 
 `runtime/exclusive.go` 持有 typed strategy，统一 Patch/Write/Exec 的 started admission、执行一次、关联验证与结果持久化。started 接收前取消不调用 executor；接收后等待确定提交结果，只有成功 Sync 后才执行。健康取消不 poison，无法确认 durable 结果才 poison。
 
@@ -70,8 +70,8 @@ Patch/Write grant 仅满足各自 capability 的 ask，不覆盖 deny，且只�
 
 执行结果必须匹配 invocation ID、Provider call ID、capability、wire kind 与候选 metadata。错配或非法结果保存为原调用的 outcome_uncertain/invalid_tool_result，停止后续副作用并按模型顺序取消剩余调用；健康 journal 仍完成 native output pairing 与唯一失败 terminal，不重试执行。
 
-> 状态：九项模型工具及三项 mutation 的 PreToolUse 门禁、PostToolUse 检查已实现；后台进程、通用 sandbox 和全工具 artifact 仍待后续推进
-> 更新时间：2026-11-06
+> 状态：十项模型工具及三项 mutation 的 PreToolUse 门禁、PostToolUse 检查已实现；后台进程、通用 sandbox 和全工具 artifact 仍待后续推进
+> 更新时间：2026-11-18
 > 适用范围：Tool Catalog、Provider Tool Wire、Agent Tool Loop、权限与 sandbox、执行调度、结果预算、Session 恢复和宿主展示
 > 前置阅读：[总体架构设计](overall-architecture.md)、[产品阶段路线图](../roadmap/product-roadmap.md)、[踩坑与经验记录](../roadmap/pitfall-log.md)
 
@@ -79,7 +79,7 @@ Patch/Write grant 仅满足各自 capability 的 ask，不覆盖 deny，且只�
 
 本文固定 Tool 系统的完整大图、长期边界和分阶段实现顺序，避免多个长周期 change 各自发明一套调用、权限、恢复或结果协议。
 
-本文同时记录已实现基线与后续目标。当前 `internal/tool` 与 `internal/tool/builtin` 提供 Read、Glob、Grep、单个已有 UTF-8 工作区文件 Patch、structured `Write(file_path, content)`，以及 Darwin 前台 Exec、ReadArtifact、本地 Skill 和结构化用户提问。九项能力具有强类型输入/结果、双 Provider facade 和有序调度；Patch/Write/Exec/Question 都是 exclusive 屏障，只有前三者需要批准。Anthropic 使用 structured `Edit`/`Write`/`Bash`，OpenAI 使用 custom freeform `apply_patch`、structured `Write` 与 function `exec_command`。交互式 Patch 显示完整 diff，Write 区分创建与覆盖，二者默认聚焦 No；Exec 始终只允许单次批准；headless mutation 无匹配 Hook 时普通 `ask` 以 `approval_required` 失败关闭，匹配项优先 `hook_trust_required`；Question 以 `user_input_unavailable` 失败关闭。非 Darwin 命令执行明确返回 `unsupported_platform`，不得无 sandbox 降级。PTY、后台进程控制、全工具 artifact、跨能力通用 SandboxPlanner、主动推理配置和后台任务 UI 尚未实现。被动推理阅读已由独立 TUI 切片交付，不属于模型工具。新增 Tool schema、Session record、权限协议或跨包接口仍须独立 OpenSpec change，经过 `propose -> review/confirm -> apply -> verify -> archive`。
+本文同时记录已实现基线与后续目标。当前 `internal/tool` 与 `internal/tool/builtin` 提供 Read、Glob、Grep、单个已有 UTF-8 工作区文件 Patch、structured `Write(file_path, content)`，以及 Darwin 前台 Exec、ReadArtifact、本地 Skill、结构化用户提问和任务进度。十项能力具有强类型输入/结果、双 Provider facade 和有序调度；Patch/Write/Exec/Question/Task 都是 exclusive 屏障，只有前三者需要批准。Anthropic 使用 structured `Edit`/`Write`/`Bash`，OpenAI 使用 custom freeform `apply_patch`、structured `Write` 与 function `exec_command`。交互式 Patch 显示完整 diff，Write 区分创建与覆盖，二者默认聚焦 No；Exec 始终只允许单次批准；headless mutation 无匹配 Hook 时普通 `ask` 以 `approval_required` 失败关闭，匹配项优先 `hook_trust_required`；Question 以 `user_input_unavailable` 失败关闭。非 Darwin 命令执行明确返回 `unsupported_platform`，不得无 sandbox 降级。PTY、后台进程控制、全工具 artifact、跨能力通用 SandboxPlanner、主动推理配置和后台任务 UI 尚未实现。被动推理阅读已由独立 TUI 切片交付，不属于模型工具。新增 Tool schema、Session record、权限协议或跨包接口仍须独立 OpenSpec change，经过 `propose -> review/confirm -> apply -> verify -> archive`。
 
 参考工程的使用原则如下：
 
@@ -413,7 +413,7 @@ Runtime 的观察表仅由 turn owner 操作，上限 1024，按输出提交顺�
 
 当前无版本的唯一结构中，`tool_call_ready` 保存必要 WriteInput，包括 content，`tool_call_result` 只保存冻结摘要与 operation/byte/line/created-directory metadata，不重复保存 base/final 文件或候选 diff。审批仍用 `tool_approval_decided`，执行仍用 `tool_execution_started`，不新增 Read observation record。恢复验证按连续只读组与独占屏障检查顺序，不能要求所有调用先 started 后 result。
 
-测试入口：`internal/tool/builtin/write_*_test.go`、`internal/runtime/write*_test.go`、`internal/runtime/read_observations_test.go`、`internal/session/write_fixture_test.go`、两家 Provider 的 `write_test.go`/`restore_test.go`、`internal/tui/write_test.go` 与 `internal/app/write*_test.go`。当前 macOS 已运行真实发布/竞争/进程崩溃测试；Linux 与 Windows 已交叉编译，当前环境无 Linux runner，Linux 文件系统运行验证仍是已记录限制，不能等同交叉编译通过。
+测试入口：`internal/tool/builtin/write_unix_test.go`、`internal/tool/builtin/write_crash_unix_test.go`、`internal/runtime/write_test.go`、两家 Provider 的 `restore_test.go`，以及 `internal/app/write_e2e_test.go`、`internal/app/write_resume_test.go`、`internal/app/write_stream_test.go`。当前 macOS 已运行真实发布/竞争/进程崩溃测试；Linux 与 Windows 已交叉编译，当前环境无 Linux runner，Linux 文件系统运行验证仍是已记录限制，不能等同交叉编译通过。
 
 ## 11. Session 事实与 RuntimeEvent
 
@@ -459,7 +459,7 @@ Runtime 的观察表仅由 turn owner 操作，上限 1024，按输出提交顺�
 - Exec：已实现 Darwin 前台执行、单次批准、sandbox、取消/timeout、输出预算、进度与详情；非 Darwin 失败关闭。
 - `write_stdin`、PTY、后台进程控制：待各自定义输入、授权和资源所有权后实现。
 - allow/ask/deny、approval：已实现 Patch/Write/Exec 闭环；当前命令 SandboxPlan 覆盖 Exec/Hook 的不同策略，不等于通用跨能力策略引擎。
-- ledger、配对恢复和通用结果预算：九项能力均已实现；覆盖所有工具输出的统一 artifact 仍属于后续范围。
+- ledger、配对恢复和通用结果预算：十项能力均已实现；覆盖所有工具输出的统一 artifact 仍属于后续范围。
 - 完整工具输出后的 sampling safe point 已接入 same-turn steer；只领取队首自动输入前缀，strict-next 保持屏障，输入提交不重置 sample/call 上限。
 
 ### 13.2 已交付扩展与后续范围
@@ -535,3 +535,13 @@ Runtime 的观察表仅由 turn owner 操作，上限 1024，按输出提交顺�
 ### Skill 完整正文预算
 
 `Skill` 接受 `{skill,args?}` 或 `{skill,resource}`，两种输入互斥，资源限制为同来源的规范相对路径。主文档和资源各最多 64 KiB，参数最多 16 KiB，最终包装正文最多 128 KiB；成功预览必须完整，sample/turn 额度不足时返回 `result_budget_exceeded`，不截断技能指令，也不保存为隐藏 artifact。资源结果明确标为资源读取。
+
+## 任务进度的当前边界
+
+`task.progress` 是第十项能力，两个 structured facade 为 `TodoWrite` 和 `update_plan`。`tool.TaskInput` 持有封闭来源 profile；`domain.TaskUpdate` 只持有规范任务和说明，`TaskProgressState` 为 none/clear/snapshot。OpenAI 的可选 explanation 使用显式服务端 `strict:false`，本地仍严格拒绝未知/null/重复字段；其余 function 仍严格，custom 省略 strict。模式属于稳定 Catalog 身份。
+
+TaskExecutor 只构造完整候选，不持有当前清单。任务沿现有 exclusive strategy、ordered scheduler 和 budget ticket 提交，无普通 approval/grant 或 mutation Hook。成功确认最多 1 KiB，只含英文计数；完整 metadata 受规范 64 KiB 与实际 Session/native 编码预检。writer 接收成功结果前取消，复用同一 ticket 写唯一 cancelled；接收后等待确定 Sync。只有成功结果 Sync 后才安装真实 result sequence 的当前投影与通知，失败保留旧清单。
+
+ready/result 使用现有 `tool_call_ready/tool_call_result` 的强类型分支，工具历史保存实际 `ResultSequence`。恢复只补偿或补原 outputs，不重新执行任务。每个 compaction_started 前缀归约期望状态，两家在线/离线 reader 都核对 checkpoint 的任务来源、完整规范内容及确定性宿主包装；包装不含 source/profile，真实模型 generation 独立保留。
+
+当前清单不进入普通 TurnInput。source-free SHA-256 stamp 进入现有 committed_history metadata；none 省略，clear 与 snapshot 不混淆，相同内容不同来源不改 stamp，不增加 token 估算或来源种类。宿主查询和显示不改请求或 fingerprint。Ctrl+O 从每次调用冻结的输入/结果生成完整只读详情，沿用四页/每页 64 KiB 查询缓存。

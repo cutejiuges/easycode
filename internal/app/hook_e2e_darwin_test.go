@@ -221,7 +221,7 @@ func TestHookBothProvidersRealSandboxAndThreeCapabilities(t *testing.T) {
 					json.Unmarshal(captured[1], &last)
 					var tools []json.RawMessage
 					json.Unmarshal(first.Tools, &tools)
-					if len(tools) != 9 || !bytes.Equal(first.Tools, last.Tools) {
+					if len(tools) != 10 || !bytes.Equal(first.Tools, last.Tools) {
 						t.Fatal("hooks changed stable tools")
 					}
 					if scenario != "continue-allow" {

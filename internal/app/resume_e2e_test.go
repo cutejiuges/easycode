@@ -121,9 +121,12 @@ func runProvidersPersistResumeReplayAndContinue(t *testing.T, answer func(string
 			}
 			ui := tui.NewModel(context.Background(), "test", resumed.session).WithTranscriptQueries(resumed.identity.ThreadID, resumed.transcriptQueries)
 			initial := ui.Init()()
-			var restored tea.Model
+			var restored tea.Model = ui
 			if batch, ok := initial.(tea.BatchMsg); ok {
-				restored, _ = ui.Update(batch[len(batch)-1]())
+				// 首项长期等待控制流；其余初始化独立完成，不能假定最后一项是历史查询。
+				for _, command := range batch[1:] {
+					runCompletionCommand(t, &restored, command)
+				}
 			} else {
 				restored, _ = ui.Update(initial)
 			}

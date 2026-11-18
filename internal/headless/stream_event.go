@@ -258,6 +258,8 @@ func correlateProjectedEvent(inputID protocol.RequestID, event Event) (StreamEve
 
 func streamCommandType(kind protocol.CommandKind) (string, bool) {
 	switch kind {
+	case protocol.CommandQueryTasks:
+		return "tasks.query", true
 	case protocol.CommandQueryCache:
 		return "cache.query", true
 	case protocol.CommandQueryEffort:
@@ -290,6 +292,8 @@ func streamCommandType(kind protocol.CommandKind) (string, bool) {
 
 func validateStreamEvent(event StreamEvent) error {
 	switch value := event.(type) {
+	case StreamTaskSnapshotEvent:
+		return validateTaskSnapshotEvent(value)
 	case StreamCacheSnapshotEvent:
 		if value.Version != eventVersion || value.Type != "cache.snapshot" || !value.RequestID.Valid() {
 			return fmt.Errorf("cache snapshot envelope is invalid")
@@ -350,10 +354,13 @@ func validateStreamEvent(event StreamEvent) error {
 		if value.Version != eventVersion || value.Type != "control.response" || !value.RequestID.Valid() {
 			return fmt.Errorf("stream control.response envelope is invalid")
 		}
-		if value.CommandType != "effort.query" && value.CommandType != "effort.set" && value.CommandType != "cache.query" && value.CommandType != "context.query" && value.CommandType != "context.compact" && value.CommandType != "context.cancel" && value.CommandType != "input.append" && value.CommandType != "input.retract" && value.CommandType != "turn.stop" && value.CommandType != "input.submit" && value.CommandType != "turn.interrupt" && value.CommandType != "session.shutdown" {
+		if value.CommandType != "tasks.query" && value.CommandType != "effort.query" && value.CommandType != "effort.set" && value.CommandType != "cache.query" && value.CommandType != "context.query" && value.CommandType != "context.compact" && value.CommandType != "context.cancel" && value.CommandType != "input.append" && value.CommandType != "input.retract" && value.CommandType != "turn.stop" && value.CommandType != "input.submit" && value.CommandType != "turn.interrupt" && value.CommandType != "session.shutdown" {
 			return fmt.Errorf("stream control.response command type is invalid")
 		}
 		if value.Status == protocol.CommandStatusAccepted {
+			if value.CommandType == "tasks.query" && value.Disposition != protocol.CommandDispositionQueried {
+				return fmt.Errorf("task response disposition is invalid")
+			}
 			if (value.CommandType == "context.compact") != value.CompactionID.Valid() || (value.CommandType != "context.compact" && value.CompactionID != "") {
 				return fmt.Errorf("compaction response identity is invalid")
 			}

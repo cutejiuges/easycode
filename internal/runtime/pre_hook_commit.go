@@ -68,6 +68,7 @@ func (r *Runtime) appendPreFacts(ctx context.Context, turn domain.TurnID, state 
 			snapshot.Decision = &d
 			snapshot.DecisionSequence = record.Sequence
 		case session.EventToolCallResult:
+			state.resultSequence = record.Sequence
 			// 拒绝结果与 gate 同批，投影的选择 sequence 仍来自 gate。
 		default:
 			err = domain.HookConfigInvalid

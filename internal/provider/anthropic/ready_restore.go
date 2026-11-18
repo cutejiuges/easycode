@@ -64,3 +64,41 @@ func validateQuestionRestoredOutputs(sample, entry nativeHistoryEntry, results [
 	}
 	return nil
 }
+
+// validateTaskRestoredOutputs 要求原生结果与已提交的冻结任务确认一致。
+func validateTaskRestoredOutputs(sample, entry nativeHistoryEntry, results []tool.InvocationResult) error {
+	callIndex, matched := 0, 0
+	outputs := entry.ToolOutputs.Content
+	for _, item := range sample.Assistant.Content {
+		if !(item.Type == blockTypeToolUse) {
+			continue
+		}
+		if item.Name == "TodoWrite" {
+			if callIndex >= len(outputs) {
+				return fmt.Errorf("task output is missing")
+			}
+			found := false
+			for _, r := range results {
+				if string(r.ProviderCallID()) != item.ID {
+					continue
+				}
+				expected, err := encodeToolResultData(item, r, r.Preview().Text())
+				actual := outputs[callIndex]
+				if err != nil || actual.Type != expected.Type || actual.ToolUseID != expected.ToolUseID || actual.Content != expected.Content || actual.IsError != expected.IsError {
+					return fmt.Errorf("native task output differs from committed result")
+				}
+				found = true
+				matched++
+				break
+			}
+			if !found {
+				return fmt.Errorf("task output has no committed result")
+			}
+		}
+		callIndex++
+	}
+	if matched != len(results) {
+		return fmt.Errorf("committed task result has no output")
+	}
+	return nil
+}

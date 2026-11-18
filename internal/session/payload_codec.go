@@ -79,8 +79,11 @@ func DecodeToolCallReadyPayload(record Record) (ToolCallReadyPayload, error) {
 	return payload, nil
 }
 
-// Domain 重建已经分配 identity 的八工具 typed invocation。
+// Domain 重建已经分配 identity 的强类型工具调用。
 func (payload ToolCallReadyPayload) Domain() (tool.Invocation, error) {
+	if payload.Capability != tool.CapabilityTaskProgress && payload.TaskInput != nil {
+		return tool.Invocation{}, fmt.Errorf("unexpected task input")
+	}
 	if payload.Capability != tool.CapabilityQuestion && payload.QuestionInput != nil {
 		return tool.Invocation{}, fmt.Errorf("unexpected question input")
 	}
@@ -102,6 +105,11 @@ func (payload ToolCallReadyPayload) Domain() (tool.Invocation, error) {
 	var ready tool.ReadyCall
 	var err error
 	switch payload.Capability {
+	case tool.CapabilityTaskProgress:
+		if payload.TaskInput == nil || payload.WireKind != tool.WireStructured || payload.QuestionInput != nil || payload.SkillInput != nil || payload.ReadArtifactInput != nil || payload.ReadInput != nil || payload.GlobInput != nil || payload.GrepInput != nil || payload.PatchInput != nil || payload.WriteInput != nil || payload.ExecInput != nil {
+			return tool.Invocation{}, fmt.Errorf("invalid task input union")
+		}
+		ready, err = tool.NewTaskReadyCall(payload.ProviderCallID, payload.TaskInput.Clone())
 	case tool.CapabilityQuestion:
 		if payload.QuestionInput == nil || payload.WireKind != tool.WireStructured || payload.SkillInput != nil || payload.ReadArtifactInput != nil || payload.ReadInput != nil || payload.GlobInput != nil || payload.GrepInput != nil || payload.PatchInput != nil || payload.WriteInput != nil || payload.ExecInput != nil {
 			return tool.Invocation{}, fmt.Errorf("invalid question input union")
@@ -293,6 +301,12 @@ func searchPayloadSaving(payload ToolCallResultPayload) *tool.ArtifactSaving {
 }
 
 func validateToolCallResultPayload(payload ToolCallResultPayload) error {
+	if payload.Capability != tool.CapabilityTaskProgress && payload.TaskMetadata != nil {
+		return fmt.Errorf("unexpected task metadata")
+	}
+	if payload.Capability == tool.CapabilityTaskProgress {
+		return validateTaskResultPayload(payload)
+	}
 	if payload.Capability == tool.CapabilityQuestion {
 		return validateQuestionResultPayload(payload)
 	}
@@ -326,6 +340,9 @@ func (payload ToolCallResultPayload) Domain(invocation tool.Invocation) (tool.In
 }
 
 func decodeResultPayload(payload ToolCallResultPayload, invocation tool.Invocation) (tool.InvocationResult, error) {
+	if payload.Capability != tool.CapabilityTaskProgress && payload.TaskMetadata != nil {
+		return tool.InvocationResult{}, fmt.Errorf("unexpected task metadata")
+	}
 	if payload.Capability != tool.CapabilityQuestion && payload.QuestionMetadata != nil {
 		return tool.InvocationResult{}, fmt.Errorf("unexpected question metadata")
 	}
@@ -347,6 +364,8 @@ func decodeResultPayload(payload ToolCallResultPayload, invocation tool.Invocati
 	}
 	var result tool.InvocationResult
 	switch payload.Capability {
+	case tool.CapabilityTaskProgress:
+		result, err = decodeTaskResult(payload, invocation, preview)
 	case tool.CapabilityQuestion:
 		if err := validateQuestionResultPayload(payload); err != nil {
 			return tool.InvocationResult{}, err
@@ -445,6 +464,11 @@ func validationInvocation(payload ToolCallResultPayload) (tool.Invocation, error
 	var ready tool.ReadyCall
 	var err error
 	switch payload.Capability {
+	case tool.CapabilityTaskProgress:
+		if payload.TaskMetadata == nil {
+			return tool.Invocation{}, fmt.Errorf("missing task metadata")
+		}
+		ready, err = tool.NewTaskReadyCall(callID, payload.TaskMetadata.Input)
 	case tool.CapabilitySkill:
 		if payload.SkillMetadata == nil {
 			return tool.Invocation{}, fmt.Errorf("missing Skill metadata")

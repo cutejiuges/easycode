@@ -432,6 +432,8 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 	}
 
 	switch request.command.Kind() {
+	case protocol.CommandQueryTasks:
+		state.queryTasks(request)
 	case protocol.CommandQueryEffort, protocol.CommandSetEffort:
 		state.controlEffort(request)
 	case protocol.CommandQueryCache:

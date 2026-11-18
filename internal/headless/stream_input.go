@@ -140,6 +140,8 @@ func DecodeStreamCommand(line []byte) (protocol.Command, error) {
 		return protocol.Command{}, fmt.Errorf("stream command request ID is invalid")
 	}
 	switch envelope.Type {
+	case "tasks.query":
+		return decodeTaskQuery(line, requestID)
 	case "effort.query", "effort.set":
 		return decodeEffortCommand(line, envelope.Type, requestID)
 	case "cache.query":

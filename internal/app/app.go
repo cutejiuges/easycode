@@ -491,8 +491,9 @@ func openChatResourcesWithSnapshot(
 	}
 	skillReader := skillExecutor{skillSource}
 	questionExecutor := builtin.NewQuestionExecutor()
+	taskExecutor := builtin.NewTaskExecutor()
 	toolCatalog, err := builtin.NewCatalog(
-		readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, writePreparer, writeExecutor, execPreparer, execExecutor, tool.RenderExecOutput, toolPolicy, readArtifactExecutor, skillReader, questionExecutor,
+		readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, writePreparer, writeExecutor, execPreparer, execExecutor, tool.RenderExecOutput, toolPolicy, readArtifactExecutor, skillReader, questionExecutor, taskExecutor,
 	)
 	if err != nil {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "tool catalog is invalid")
@@ -526,7 +527,12 @@ func openChatResourcesWithSnapshot(
 		return nil, err
 	}
 	cleanup.add(queries.Close)
+	initialTasks, err := session.TaskProgressBefore(assembled.tools, 0)
+	if err != nil {
+		return nil, fault.New(fault.CodeSessionCorruption, "task progress history is invalid")
+	}
 	runtimeInstance, err := chatRuntime.New(assembled.conversation, chatRuntime.Config{
+		TaskExecutor: taskExecutor, InitialTaskProgress: initialTasks,
 		ArtifactReferences: artifactReferences,
 		TextOutputStore:    artifactOutputStore{store: artifactStore},
 		ToolHistory:        queries,
@@ -838,7 +844,7 @@ func assembleChatModel(ctx context.Context, resources *chatResources) (tui.Model
 		return tui.Model{}, err
 	}
 	resources.session = control
-	return tui.NewModel(ctx, Version, control).WithInferenceSettings(resources.inference).WithSkills(resources.skills).WithPlugins(resources.plugins).WithHooks(resources.session.HookEntries()).WithMarkdownColor(markdownColorEnabled(os.Getenv("NO_COLOR"), os.Getenv("TERM"), term.IsTerminal(os.Stdout.Fd()))).WithInputHistory(resources.history).WithTranscriptQueries(resources.identity.ThreadID, resources.transcriptQueries).WithFileQueries(resources.fileSource), nil
+	return tui.NewModel(ctx, Version, control).WithTaskProgressScope(resources.identity.SessionID, resources.identity.ThreadID).WithInferenceSettings(resources.inference).WithSkills(resources.skills).WithPlugins(resources.plugins).WithHooks(resources.session.HookEntries()).WithMarkdownColor(markdownColorEnabled(os.Getenv("NO_COLOR"), os.Getenv("TERM"), term.IsTerminal(os.Stdout.Fd()))).WithInputHistory(resources.history).WithTranscriptQueries(resources.identity.ThreadID, resources.transcriptQueries).WithFileQueries(resources.fileSource), nil
 }
 
 // markdownColorEnabled 由启动边界的显式环境和终端事实选择样式。

@@ -4,7 +4,7 @@
 
 每条 JSONL record SHALL 使用唯一当前、强类型的 envelope，至少包含单调 seq、UTC timestamp、session/thread/turn identity、event kind、batch 边界、checksum 和受控 typed payload。所有当前 records 均为恢复必需事实；envelope MUST NOT 携带 `required`/`optional` 选择字段，也不得透传未知 kind 或未知 payload 为 opaque Session record。
 
-当前记录词汇中的 `tool_call_ready`、`tool_approval_decided`、`tool_execution_started` 和 `tool_call_result` SHALL 具有专属 typed constructor、strict decoder 与 validator。`tool_call_ready` SHALL 保存 invocation ID、Provider call ID、Provider wire kind、sample/call index、capability，以及与 `Read`、`Glob`、`Grep`、`Patch`、`Write`、`Exec` 、`ReadArtifact`、`Skill` 或 `Question` 匹配的完整 typed input；`tool_approval_decided` SHALL 保存 request/invocation identity、candidate fingerprint、typed outcome、decision source、仅适用于 deny 的有界反馈与不含绝对路径、正文、环境值或命令输出的安全 metadata；`tool_execution_started` SHALL 引用同一 invocation 并表示 executor 接收线性化点；`tool_call_result` SHALL 保存终态 status、稳定 code、完整有界模型 preview 与 capability 对应的非敏感 typed metadata。Exec metadata SHALL包含相对workdir、exit/timeout/cancelled/truncated状态、duration、stdout/stderr计数及各流 typed 保存状态与 descriptor 和必需预算元数据，不得包含PID、绝对路径或环境。工具 records MUST NOT 保存 input revision、result codec revision、执行器额外采集的完整 base/final 文件快照、完整 diff、临时文件路径或可执行 Provider wire item。
+当前记录词汇中的 `tool_call_ready`、`tool_approval_decided`、`tool_execution_started` 和 `tool_call_result` SHALL 具有专属 typed constructor、strict decoder 与 validator。`tool_call_ready` SHALL 保存 invocation ID、Provider call ID、Provider wire kind、sample/call index、capability，以及与 `Read`、`Glob`、`Grep`、`Patch`、`Write`、`Exec` 、`ReadArtifact`、`Skill`、`Question` 或 `Task` 匹配的完整 typed input；`tool_approval_decided` SHALL 保存 request/invocation identity、candidate fingerprint、typed outcome、decision source、仅适用于 deny 的有界反馈与不含绝对路径、正文、环境值或命令输出的安全 metadata；`tool_execution_started` SHALL 引用同一 invocation 并表示 executor 接收线性化点；`tool_call_result` SHALL 保存终态 status、稳定 code、完整有界模型 preview 与 capability 对应的非敏感 typed metadata。Exec metadata SHALL包含相对workdir、exit/timeout/cancelled/truncated状态、duration、stdout/stderr计数及各流 typed 保存状态与 descriptor 和必需预算元数据，不得包含PID、绝对路径或环境。工具 records MUST NOT 保存 input revision、result codec revision、执行器额外采集的完整 base/final 文件快照、完整 diff、临时文件路径或可执行 Provider wire item。
 
 Session envelope MUST NOT 包含 schema_version、payload_version、canary、format revision 或同义版本标记，不得按版本选择 decoder。completed sample 的 Provider entry 仍作为 native commit 并紧邻配对 `sample_usage`；tool results 编码为 tool-output native commit 时不生成 sample usage。高频参数 delta、approval request/焦点/按键、命令输出progress、elapsed tick、UI 状态和文件系统瞬时信息 MUST NOT 进入 JSONL。
 
@@ -127,6 +127,14 @@ Session envelope SHALL 不携带格式版本字段；Provider native/checkpoint 
 #### Scenario: Reject unapproved text in a stop fact
 - **WHEN** plan/运行统计或非 continued 决定含脚本原文，或反馈缺少 model 来源/预算
 - **THEN** 当前 decoder/replay 在 repair/append 前拒绝，不透传正文
+
+#### Scenario: Persist task progress through the existing ledger
+- **WHEN** 合法 TodoWrite/update_plan 完成完整清单替换
+- **THEN** 当前唯一结构保存 ready、started、success result 和 matching native outputs，metadata 完整保留规范更新，不出现 approval 或 UI records
+
+#### Scenario: Reject a task result that hides or invents applied state
+- **WHEN** checksum 合法但 success 缺少完整规范更新、内容与 ready 不同，或 error/cancelled/outcome_uncertain 携带 applied state
+- **THEN** 当前严格校验拒绝，不把简短确认 preview 当成可替代的清单来源
 
 ### Requirement: Replay validation enforces record state transitions
 
@@ -276,3 +284,21 @@ Stop 候选 SHALL 消耗真实 sample index；continued 后的下一 sample 必�
 #### Scenario: Reject a premature checked completion
 - **WHEN** checks plan 存在未完成项却出现 turn_completed、新 sample 或 auto compaction
 - **THEN** 作为语义 corruption 拒绝，不能以半行修复或默认通过放行
+
+#### Scenario: Replay successive task replacements in call order
+- **WHEN** 合法 journal 在同一 sample 按 Task A、Task B 保存两个成功结果，B 含状态回退或空数组
+- **THEN** replay 接受显式完整替换，当前状态来自 B 的真实 result sequence，A 仍可在历史详情读取
+
+#### Scenario: Reject approval or hook facts for task progress
+- **WHEN** journal 为 task.progress 保存普通 approval、mutation Hook plan，或后序调用早于任务 result 完成
+- **THEN** 语义校验整体拒绝，不以“没有文件写入”为由放入并行只读批次或跳过屏障
+
+#### Scenario: Retain the previous task state after an uncertain update
+- **WHEN** 新 Task started 而 result 缺失，或保存 error/cancelled/outcome_uncertain，之前已有成功列表
+- **THEN** replay 当前状态仍是此前列表，新调用只形成原 slot 的恢复计划或失败事实，不安装候选
+
+任务 source SHALL 只使用实际成功 tool_call_result 的 record sequence。live result observer 必须接收成功 Append 返回的真实 result sequence，回放投影必须保留同一 ResultSequence；既有 ready Sequence、detail sequence、native sequence、模型自述或预分配位置均不能替代。记录顺序、同 turn/invocation 和结果成功状态必须同时匹配，列表内容相同不免除来源核验。
+
+#### Scenario: Preserve the actual result sequence across live and replay observers
+- **WHEN** 同一任务的 ready、started、result、native output 具有不同 seq，live observer 接收成功 Append 的返回记录，随后恢复同一 journal
+- **THEN** 两条路径都以真实 result record seq 形成 source，绝不使用 ready/detail/native seq，内容及来源完全一致

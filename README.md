@@ -4,7 +4,7 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 
 用户只需要提供 `base_url`、`api_key` 和模型名称即可连接服务，不需要账号登录、OAuth、设备码或订阅鉴权。
 
-> 项目按纵向切片持续推进。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、命令/Skill 首词补全、正文文件引用与路径补全、原生多轮 Session、`--resume`/`--continue`、headless/FIFO 输入、离线 `sessions list`，以及九项工具能力：Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill 和结构化用户提问。命令执行当前支持 Darwin；已支持同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop 命令 Hook、PreToolUse 参数完整改写、被动推理阅读和启动推理/display/输出配置；本地 Plugin 技能包已支持显式目录加载和只读浏览；其余 Hook 事件、effort 之外的运行中推理切换等能力仍按 Roadmap 分阶段推进。
+> 项目按纵向切片持续推进。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、命令/Skill 首词补全、正文文件引用与路径补全、原生多轮 Session、`--resume`/`--continue`、headless/FIFO 输入、离线 `sessions list`，以及十项工具能力：Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill、结构化用户提问和任务进度。命令执行当前支持 Darwin；已支持同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop 命令 Hook、PreToolUse 参数完整改写、被动推理阅读和启动推理/display/输出配置；本地 Plugin 技能包已支持显式目录加载和只读浏览；其余 Hook 事件、effort 之外的运行中推理切换等能力仍按 Roadmap 分阶段推进。
 
 ## 交互式恢复会话
 
@@ -80,7 +80,7 @@ TUI 将 CRLF/CR 规范化为 LF，保留缩进、Tab、尾空格及尾换行；�
 | 上下文 | 已实现本地估算与显式窗口预算、`/context`、手动与阈值自动压缩；完整历史保留，远端精确计数和跨 Provider fork 尚未实现 |
 | Runtime | 已实现多 sample 工具循环、同轮自动追加与严格 FIFO 屏障、原子取回、定向停止和 durable-before-memory 输入提交 |
 | 安全配置 | 已实现 JSON 配置、环境变量覆盖、API key 脱敏，以及 macOS/Linux 上绑定实际句柄的 no-follow 校验；其他平台当前安全失败关闭 |
-| Tools | 九项能力包含 Read/Glob/Grep、Edit/apply_patch、Write、Darwin Exec、ReadArtifact、Skill 和结构化提问；连续只读最多 8 路并行，Patch/Write/Exec 需批准，Question 独占但不进入权限批准 |
+| Tools | 十项能力包含 Read/Glob/Grep、Edit/apply_patch、Write、Darwin Exec、ReadArtifact、Skill、结构化提问和任务进度；连续只读最多 8 路并行，Patch/Write/Exec 需批准，Question/Task 独占但不进入权限批准 |
 | Session | 已实现 append-only JSONL、唯一当前无版本格式的强类型 draft/decoder、UUIDv7、跨进程 lease、同句柄 load/repair/write、`Sync`、尾部修复、fixture、显式恢复，以及可从 JSONL 重建的 SQLite Catalog、`--continue` 与离线 `sessions list`，以及 `resume` 启动选择器和有界元数据搜索/只读文本预览；全文搜索尚未实现 |
 | 扩展系统 | P6 目标；本地 Skills 已实现发现、显式调用、按需工具读取和原生恢复；同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop command Hooks、本地 Plugin 技能包及四种受限 manifest 导入已实现；MCP、插件可执行贡献和其余 Hook 事件待后续推进 |
 | Subagent | P7 目标；当前仅为经批准的 TODO 控制边界，调度、线程树和生命周期尚未实现 |
@@ -98,6 +98,14 @@ Review $ARGUMENTS. Explain findings and run the relevant tests.
 ```
 
 仅支持静态 frontmatter：`name`、`description`、`argument-hint`、`user-invocable`、`disable-model-invocation`、`license` 和字符串 `metadata`。不支持的行为字段会禁用该条目。模型目录只包含元数据；Skill 工具加载完整正文或同来源相对资源，不提升工具权限。manual-only 技能仅在当前 turn 的显式附件成功持久化后，允许同来源、同 revision 的辅助资源读取。参数仅作字面量替换，不执行 shell。目录在启动时冻结，修改后重启；已提交附件和工具正文从 Session 恢复，不重读文件。
+
+### 任务进度清单
+
+多步骤任务可由模型调用 Anthropic `TodoWrite({todos:[{content,activeForm,status}]})` 或 OpenAI `update_plan({plan:[{step,status}],explanation?})`。两者都完整替换清单，空数组明确清除；任务跨 turn 保留，恢复及压缩保留已成功提交的状态。`completed` 是模型报告，不代表测试通过或获得工具权限。
+
+TUI 在输入框附近显示进度；Ctrl+T 折叠/展开，全部完成自动折叠。`/tasks` 打开完整只读清单，支持滚动和 Esc 返回草稿；Ctrl+O 可阅读每次调用的冻结输入、说明和结果。同名 Skill 使用 `$tasks`。清单最多 20 项，字段最多 512 UTF-8 bytes，说明 2 KiB，总文字 16 KiB，原始参数与规范更新各最多 64 KiB，至多一个进行中项，允许零个。确认正文最多 1 KiB，计入共享 sample 512 KiB / turn 2 MiB。
+
+stream-json 使用 `{"version":1,"type":"tasks.query","request_id":"tasks-1"}` 查询，先返回 `control.response`，再返回同身份的 `tasks.snapshot`；完整查询行最多 4 KiB、快照最多 96 KiB。查询不写 Session、不联网、不创建 turn；一次性输出不增加任务专用帧。普通输入中的 `/tasks` 保持字面正文。
 
 ### 本地 Plugin 技能包
 
@@ -581,7 +589,7 @@ exit 0 的空白或 `{}` 表示通过；只有严格 `{"decision":"block","reaso
 │   ├── session/               JSONL 事实源、lease、修复与恢复规划
 │   ├── subagent/              P7 批准占位：子代理控制边界
 │   ├── telemetry/             P8 批准占位：结构化日志边界
-│   ├── tool/                  九项真实工具、批准、结果预算与执行边界
+│   ├── tool/                  十项真实工具、批准、结果预算与执行边界
 │   └── tui/                   Bubble Tea 交互层
 ├── docs/                      架构、ADR、Roadmap 与踩坑记录
 ├── .githooks/                 可版本化 Git Hooks
@@ -668,9 +676,9 @@ make install-hooks
 | P0 | 工程与协议基线 | 工程、协议与质量门已落地；doctor 等诊断入口待实现 |
 | P1 | 双 Provider Kernel | 双 wire 流式、原生历史/工具/缓存及启动推理控制与会话内 effort 已交付；其他推理字段切换待实现 |
 | P2 | Session 与 Headless Loop | root Session、JSONL/SQLite、恢复、三种 headless 与 FIFO 已交付；全文索引/子线程待实现 |
-| P3 | Coding Tools | 九项工具与批准/恢复/预算已交付；PTY、后台进程、通用跨平台 sandbox 待实现 |
+| P3 | Coding Tools | 十项工具与批准/恢复/预算已交付；PTY、后台进程、通用跨平台 sandbox 待实现 |
 | P4 | 缓存与上下文 | 缓存、usage 归一、手动/自动压缩已交付；费用、精确计数与跨 Provider fork 待实现 |
-| P5 | Claude 风格 TUI | Markdown、输入及命令/Skill/文件补全、审批/问卷/Hook、详情、被动推理阅读和 resume picker 已交付；fork picker 待实现 |
+| P5 | Claude 风格 TUI | Markdown、输入及命令/Skill/文件补全、审批/问卷/Hook、详情、被动推理阅读、任务清单和 resume picker 已交付；fork picker 待实现 |
 | P6 | 扩展系统 | 本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop、本地 Plugin 技能包已交付；其余 Hook、插件可执行贡献、MCP/热加载待实现 |
 | P7 | Subagent | 尚未实现；保留批准占位，未接入 Runtime/app |
 | P8 | 发布强化 | 部分安全/故障验证已落地；全平台发布矩阵、诊断、遥测待实现；兼容迁移须另行明确授权 |

@@ -14,11 +14,21 @@ import (
 )
 
 func TestExecSSEChunkingAndRejectedSamples(t *testing.T) {
-	for _, mode := range []string{"valid", "duplicate", "partial", "early-terminal"} {
+	testToolSSESampleModes(t, "Bash", `{"command":"printf '你好'","workdir":"src","timeout_ms":1000}`, []string{`{"command":"printf '`, `你好`, `'","workdir":"src","timeout_ms":1000}`}, tool.CapabilityExec, func(call tool.ReadyCall) bool { return call.ExecInput().Command() == "printf '你好'" })
+}
+
+func TestTaskSSEChunkingAndRejectedSamples(t *testing.T) {
+	testToolSSESampleModes(t, "TodoWrite", taskNativeInput, []string{taskNativeInput[:12], taskNativeInput[12:]}, tool.CapabilityTaskProgress, func(call tool.ReadyCall) bool {
+		return call.TaskInput().Update().Items()[0].Content() == "检查中文代码"
+	})
+}
+
+func testToolSSESampleModes(t *testing.T, name, input string, parts []string, capability tool.CapabilityID, check func(tool.ReadyCall) bool) {
+	t.Helper()
+
+	for _, mode := range []string{"valid", "duplicate", "partial", "early-terminal", "cancelled"} {
 		for _, chunkLimit := range []int{1, 17} {
 			t.Run(fmt.Sprintf("%s/%d", mode, chunkLimit), func(t *testing.T) {
-				input := `{"command":"printf '你好'","workdir":"src","timeout_ms":1000}`
-				parts := []string{`{"command":"printf '`, `你好`, `'","workdir":"src","timeout_ms":1000}`}
 				if strings.Join(parts, "") != input {
 					t.Fatal("stream fixture changed command input")
 				}
@@ -28,15 +38,15 @@ func TestExecSSEChunkingAndRejectedSamples(t *testing.T) {
 				}
 				events := []string{`{"type":"message_start","message":{"id":"msg-exec","model":"fixture-model"}}`}
 				for index := 0; index < count; index++ {
-					events = append(events, fmt.Sprintf(`{"type":"content_block_start","index":%d,"content_block":{"type":"tool_use","id":"call-exec","name":"Bash","input":{}}}`, index))
+					events = append(events, fmt.Sprintf(`{"type":"content_block_start","index":%d,"content_block":{"type":"tool_use","id":"call-exec","name":%q,"input":{}}}`, index, name))
 					for _, part := range parts {
 						events = append(events, fmt.Sprintf(`{"type":"content_block_delta","index":%d,"delta":{"type":"input_json_delta","partial_json":%s}}`, index, quoteExecJSON(t, part)))
 					}
-					if mode != "partial" {
+					if mode != "partial" && mode != "cancelled" {
 						events = append(events, fmt.Sprintf(`{"type":"content_block_stop","index":%d}`, index))
 					}
 				}
-				if mode != "partial" {
+				if mode != "partial" && mode != "cancelled" {
 					events = append(events, `{"type":"message_stop"}`)
 				}
 
@@ -49,7 +59,9 @@ func TestExecSSEChunkingAndRejectedSamples(t *testing.T) {
 					body.WriteString(event)
 					body.WriteString("\n\n")
 				}
+				started, cleaned := make(chan struct{}), make(chan struct{})
 				server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+					defer close(cleaned)
 					if request.URL.Path != "/prefix/messages" {
 						t.Error("API prefix lost")
 					}
@@ -64,6 +76,10 @@ func TestExecSSEChunkingAndRejectedSamples(t *testing.T) {
 						writer.(http.Flusher).Flush()
 						data = data[size:]
 					}
+					if mode == "cancelled" {
+						close(started)
+						<-request.Context().Done()
+					}
 				}))
 				defer server.Close()
 				instance, err := New(Config{BaseURL: server.URL + "/prefix", APIKey: secret.New("fixture-key"), Model: "fixture-model"})
@@ -77,9 +93,15 @@ func TestExecSSEChunkingAndRejectedSamples(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				stream, err := conversation.Stream(context.Background(), turn)
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				stream, err := conversation.Stream(ctx, turn)
 				if err != nil {
 					t.Fatal(err)
+				}
+				if mode == "cancelled" {
+					<-started
+					cancel()
 				}
 				terminals := 0
 				for event := range stream {
@@ -89,20 +111,23 @@ func TestExecSSEChunkingAndRejectedSamples(t *testing.T) {
 					terminals++
 					if mode != "valid" {
 						if event.Kind() == provider.StreamEventCompleted || event.PreparedSample() != nil {
-							t.Fatal("invalid Exec sample committed")
+							t.Fatal("invalid tool sample committed")
 						}
 						continue
 					}
 					if event.Kind() != provider.StreamEventCompleted || event.PreparedSample() == nil {
-						t.Fatalf("valid Exec stream failed: %v", event.Error())
+						t.Fatalf("valid tool stream failed: %v", event.Error())
 					}
 					ready, err := event.PreparedSample().ReadyCalls()
-					if err != nil || len(ready) != 1 || ready[0].Capability() != tool.CapabilityExec || ready[0].ExecInput().Command() != "printf '你好'" {
-						t.Fatal("chunked UTF-8 Exec changed")
+					if err != nil || len(ready) != 1 || ready[0].Capability() != capability || !check(ready[0]) {
+						t.Fatal("chunked UTF-8 tool changed")
 					}
 					if err := event.PreparedSample().Finalize(); err != nil {
 						t.Fatal(err)
 					}
+				}
+				if mode == "cancelled" {
+					<-cleaned
 				}
 				if terminals != 1 {
 					t.Fatalf("terminal count=%d", terminals)
@@ -112,7 +137,7 @@ func TestExecSSEChunkingAndRejectedSamples(t *testing.T) {
 					want = 2
 				}
 				if len(conversation.historySnapshot()) != want {
-					t.Fatal("invalid Exec stream changed native history")
+					t.Fatal("invalid tool stream changed native history")
 				}
 			})
 		}

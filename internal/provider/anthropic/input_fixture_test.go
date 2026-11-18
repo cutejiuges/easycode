@@ -88,6 +88,7 @@ func testRestoreRecords(t *testing.T, envelopes []provider.NativeCommitEnvelope,
 			record, err = provider.NewSampleRestoreRecord(turnID, envelope)
 			if err == nil {
 				var questions []tool.QuestionInvocation
+				var tasks []tool.TaskInvocation
 				var calls []tool.Invocation
 				for _, item := range entry.Assistant.Content {
 					if item.Type != blockTypeToolUse {
@@ -98,8 +99,13 @@ func testRestoreRecords(t *testing.T, envelopes []provider.NativeCommitEnvelope,
 					if q, ok := invocation.Question(); ok {
 						questions = append(questions, q)
 					}
+					if task, ok := invocation.Task(); ok {
+						tasks = append(tasks, task)
+					}
 				}
-				record, err = record.WithReadyFacts(calls, testQuestionRestoreResults(t, envelopes[envelopeIndex+1:], questions))
+				results := testQuestionRestoreResults(t, envelopes[envelopeIndex+1:], questions)
+				results = append(results, testTaskRestoreResults(t, envelopes[envelopeIndex+1:], tasks)...)
+				record, err = record.WithReadyFacts(calls, results)
 			}
 		case nativeHistoryToolOutputs:
 			if outputIndex >= len(outputEvidence) {

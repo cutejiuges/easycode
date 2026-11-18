@@ -24,6 +24,10 @@ func ActivityText(text string, limit int) string {
 func ProjectActivity(invocation Invocation) protocol.ToolActivityPayload {
 	p := protocol.ToolActivityPayload{InvocationID: string(invocation.InvocationID()), Status: "waiting"}
 	switch invocation.Capability() {
+	case CapabilityTaskProgress:
+		p.Tool = protocol.ToolTaskProgress
+		p.Target = "Tasks"
+		p.Summary = "Update task progress"
 	case CapabilityQuestion:
 		v, _ := invocation.Question()
 		p.Tool = protocol.ToolQuestion

@@ -11,3 +11,11 @@ type catalogQuestionFixture struct{}
 func (catalogQuestionFixture) Execute(context.Context, tool.QuestionInvocation, tool.QuestionResponder) tool.InvocationResult {
 	return tool.InvocationResult{}
 }
+
+// catalogTaskFixture 为目录提供真实的纯内存任务消费者。
+type catalogTaskFixture struct{}
+
+func (catalogTaskFixture) Execute(_ context.Context, invocation tool.TaskInvocation) tool.InvocationResult {
+	result, _ := tool.NewTaskInvocationResult(invocation)
+	return result
+}

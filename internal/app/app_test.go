@@ -38,6 +38,7 @@ func TestChatResourcesShutdownTimeoutEscalatesAndClosesDependencies(t *testing.T
 	journal := &orderedManagedJournal{}
 	runtimeInstance, err := chatRuntime.New(conversation, chatRuntime.Config{
 		SessionID: runtimeSessionIDForApp, ThreadID: runtimeThreadIDForApp, Journal: journal,
+		TaskExecutor: catalogTaskFixture{}, InitialTaskProgress: domain.NewNoTaskProgress(),
 		GenerateTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
 		ContextProfile: mustAppContextProfile(t), ProjectInstructions: mustEmptyAppProjectInstructions(t),
 		ToolCatalog: mustAppToolCatalog(t), QuestionExecutor: catalogQuestionFixture{}, SkillExecutor: catalogSkillExecutor{}, ReadArtifactExecutor: catalogArtifactExecutor{}, ReadExecutor: appReadExecutor{},
@@ -295,6 +296,7 @@ func mustIdleAppRuntime(t *testing.T, journal chatRuntime.Journal) *chatRuntime.
 	t.Helper()
 	runtimeInstance, err := chatRuntime.New(&orderedConversation{}, chatRuntime.Config{
 		SessionID: runtimeSessionIDForApp, ThreadID: runtimeThreadIDForApp, Journal: journal,
+		TaskExecutor: catalogTaskFixture{}, InitialTaskProgress: domain.NewNoTaskProgress(),
 		GenerateTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
 		ContextProfile: mustAppContextProfile(t), ProjectInstructions: mustEmptyAppProjectInstructions(t),
 		ToolCatalog: mustAppToolCatalog(t), QuestionExecutor: catalogQuestionFixture{}, SkillExecutor: catalogSkillExecutor{}, ReadArtifactExecutor: catalogArtifactExecutor{}, ReadExecutor: appReadExecutor{},
@@ -338,7 +340,7 @@ func (appGrepExecutor) Execute(context.Context, tool.GrepInvocation, tool.TextOu
 
 func mustAppToolCatalog(t *testing.T) tool.CatalogSnapshot {
 	t.Helper()
-	catalog, err := tool.NewCatalogSnapshot(appReadExecutor{}, appGlobExecutor{}, appGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, tool.RenderExecOutput, tool.NewApprovalPolicy(), catalogArtifactExecutor{}, catalogSkillExecutor{}, catalogQuestionFixture{})
+	catalog, err := tool.NewCatalogSnapshot(appReadExecutor{}, appGlobExecutor{}, appGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, tool.RenderExecOutput, tool.NewApprovalPolicy(), catalogArtifactExecutor{}, catalogSkillExecutor{}, catalogQuestionFixture{}, catalogTaskFixture{})
 	if err != nil {
 		t.Fatal(err)
 	}

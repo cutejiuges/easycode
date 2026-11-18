@@ -100,7 +100,8 @@ func (runtime *Runtime) executePatchCall(ctx context.Context, emit Emitter, turn
 		if draftErr != nil {
 			return tool.InvocationResult{}, false, draftErr
 		}
-		if _, appendErr := runtime.journal.AppendBatch(context.WithoutCancel(ctx), []session.RecordDraft{factDraft, resultDraft}); appendErr != nil {
+		records, appendErr := runtime.journal.AppendBatch(context.WithoutCancel(ctx), []session.RecordDraft{factDraft, resultDraft})
+		if appendErr != nil {
 			runtime.poisoned.Store(true)
 			return tool.InvocationResult{}, false, fault.Wrap(fault.CodeSessionWrite, "persist Patch denial failed", appendErr)
 		}
@@ -108,7 +109,7 @@ func (runtime *Runtime) executePatchCall(ctx context.Context, emit Emitter, turn
 			runtime.poisoned.Store(true)
 			return tool.InvocationResult{}, false, err
 		}
-		if err := runtime.notifyToolResult(turnID, result); err != nil {
+		if err := runtime.notifyToolResult(turnID, result, resultRecordSequence(records)); err != nil {
 			return result, false, err
 		}
 		runtime.emitApprovalResolved(emit, turnID, request, outcome)

@@ -20,6 +20,7 @@ type toolExecutionCall struct {
 	resultOrigin   tool.InputResultOrigin
 	result         tool.InvocationResult
 	resultDigest   string
+	resultSequence uint64
 	hasResult      bool
 	running        bool
 }

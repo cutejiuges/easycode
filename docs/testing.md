@@ -27,3 +27,7 @@ OpenSpec 归档只保留 Markdown 方案/规格/决策/简短验收及 .openspec
 此次端到端验证执行全部 12 个现有脚本，62 个场景均退出 0：文件引用 4、effort 8、补全 2、会话选择 4、Markdown 2、用户问答 4、推理展示 8、推理配置 8、插件 12、三种工具 Hook 6、输入改写 2、Stop 2。覆盖双 Provider、本地 CLI/真实 PTY、恢复/取消、冻结与缓存、审批及终端状态恢复；插件另完成 16 次离线续写/恢复。全部使用本地模拟服务和 fixture key，未调用真实模型服务。原始输出仅保存在 `/tmp/easycode-pr-e2e-*`，OpenSpec 严格校验另有 65 项通过。
 
 首次 Linux CI 的 Staticcheck 暴露了删减后仅被 Darwin 测试消费的通用 helper 声明；六个辅助文件现按实际消费者限定为 Darwin 或 Darwin/Linux，未恢复冗余用例或弱化断言。修复后的 Linux app/builtin 静态检查通过，Windows app 静态检查通过；Windows builtin 剩余 36 条 U1000 已用同工具链与基线 `43dd89a` 对照确认均为既有项，本轮新增项全部消除。Windows 原生验收及完整 Windows 质量门不宣称通过，既有项涉及 unsupported workspace 及 Unix 文件操作 hook，应独立处理。
+
+2026-11-18 Task 与 main 合并补充：保持上述测试原则和 runner；任务能力删去重复 getter/值矩阵及重复 CLI 模式，固定 Session 输入保留 4 份、TUI snapshot 保留 4 份，新增冻结文件与 Task 共同恢复的 canonical 请求回归。当前 356 个 Go 测试文件、47,217 行；最终 `make verify` 执行 514 个普通入口与 57 个关键 race 入口，81.080 秒退出 0（普通含静态检查 41.492 秒、race 39.448 秒）。Task 仅将两项提交/只读查询并发与一项 headless cleanup 加入正向 race 清单；平台选择数为 Darwin 57、Linux 56、Windows 48，只有 Darwin 原生运行通过。全量 OpenSpec strict 68 项通过；Task/文件/effort/补全共 18 个真实 PTY 场景通过，Linux amd64 全仓静态检查与测试编译通过，手动全量 race 未运行。原始输出仅在忽略的 `.test-results/task-progress-main-merge/`，简短任务结论见 `openspec/changes/archive/2026-11-18-add-task-progress/verification.md`。
+
+2026-11-18 任务归档回归：同一源码再次通过统一质量门（514 普通 / 57 关键 race，76.043 秒），并执行全部 13 个 E2E 脚本共 66 场景、插件另 16 次离线恢复。归档核对 64 项任务与 13 份 delta，主规格无需再次改写；输出仅保存在 `.test-results/task-progress-archive/`。详见 `openspec/changes/archive/2026-11-18-add-task-progress/verification.md`。

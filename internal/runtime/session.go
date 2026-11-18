@@ -405,6 +405,15 @@ func (session *ChatSession) ResolveQuestion(ctx context.Context, turnID domain.T
 	return nil
 }
 
+// QueryTasks 通过既有控制 owner 查询当前线程任务，不创建普通回合。
+func (session *ChatSession) QueryTasks(ctx context.Context, requestID protocol.RequestID) (protocol.CommandResult, error) {
+	command, err := protocol.NewQueryTasksCommand(requestID)
+	if err != nil {
+		return protocol.CommandResult{}, err
+	}
+	return session.submitInteractive(ctx, command)
+}
+
 // QueryEffort 通过既有控制 owner 查询进程设置。
 func (session *ChatSession) QueryEffort(ctx context.Context, requestID protocol.RequestID) (protocol.CommandResult, error) {
 	command, err := protocol.NewQueryEffortCommand(requestID)

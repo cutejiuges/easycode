@@ -118,6 +118,8 @@ func (inv Invocation) Equal(other Invocation) bool {
 		return false
 	}
 	switch inv.Capability() {
+	case CapabilityTaskProgress:
+		return inv.task.input.Equal(other.task.input)
 	case CapabilityPatch:
 		return inv.patch.input.Equal(other.patch.input)
 	case CapabilityWrite:
@@ -140,7 +142,11 @@ func (inv Invocation) Equal(other Invocation) bool {
 		return false
 	}
 }
-func (inv Invocation) Clone() Invocation { inv.patch = inv.patch.clone(); return inv }
+func (inv Invocation) Clone() Invocation {
+	inv.patch = inv.patch.clone()
+	inv.task = inv.task.clone()
+	return inv
+}
 
 // ReadyCall 只从同一当前调用恢复策略输入，不读取或重建 Provider history。
 func (inv Invocation) ReadyCall() (ReadyCall, error) {
@@ -148,6 +154,8 @@ func (inv Invocation) ReadyCall() (ReadyCall, error) {
 		return ReadyCall{}, errors.New("invalid invocation")
 	}
 	switch inv.Capability() {
+	case CapabilityTaskProgress:
+		return NewTaskReadyCall(inv.ProviderCallID(), inv.task.input)
 	case CapabilityPatch:
 		return NewPatchReadyCall(inv.ProviderCallID(), inv.WireKind(), inv.patch.input)
 	case CapabilityWrite:

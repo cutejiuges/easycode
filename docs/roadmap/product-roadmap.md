@@ -1,8 +1,10 @@
 # EasyCode 产品与工程 Roadmap
 
+2026-11-18 推进任务进度清单切片：双 Provider TodoWrite/update_plan、第十项模型工具、Ctrl+T 与只读 /tasks、冻结历史详情、跨 turn 恢复和精确 checkpoint。选择它是因为已有有序 Tool Loop、durable Session、只读宿主查询和 composer 可直接复用，同时能补齐接近 Claude Code 的多步骤进度体验。它保持 OpenAI 原生 update_plan 与本地严格验证，不包含 Plan Mode、Subagent、后台任务或协作依赖，也不代表整个 P5 完成。验收见 [add-task-progress](../../openspec/changes/archive/2026-11-18-add-task-progress/verification.md)。
+
 2026-11-05 已交付结构化用户提问：双 Provider 第九项工具、1–4 题单选/多选/说明/跳过/复核、独立回答控制、严格结果预算、原生持久化恢复、无交互失败关闭与只读历史。选择该切片是因为现有 Tool Loop、Session、AgentLoop 和 composer 已具备前置能力，可以直接补齐用户决策后继续任务的闭环。它不代表完整 P5，也不包含 Plan Mode、后台问题、自动代答或 MCP elicitation。验证入口为 `scripts/user-question-smoke.py` 和 `internal/app/questions_e2e_test.go`；平台范围沿用现有安全 opener，Darwin 完成真实 PTY 与命令链验收，其他平台未据交叉编译宣称原生支持。
 
-`add-tool-transcript-and-result-budget` 初次交付七工具统一记录、搜索原文保存、按顺序冻结的 sample/turn 预算和 Claude 风格主线，目前记录和预算已覆盖九项工具；质量门及平台范围见该 change 的 [验收记录](../../openspec/changes/archive/2026-10-30-add-tool-transcript-and-result-budget/verification.md)，change 已归档。当前 Session/native/checkpoint 均无格式版本字段；headless JSONL 保留独立外部 v1 契约。
+`add-tool-transcript-and-result-budget` 初次交付七工具统一记录、搜索原文保存、按顺序冻结的 sample/turn 预算和 Claude 风格主线，目前记录和预算已覆盖十项工具；质量门及平台范围见该 change 的 [验收记录](../../openspec/changes/archive/2026-10-30-add-tool-transcript-and-result-budget/verification.md)，change 已归档。当前 Session/native/checkpoint 均无格式版本字段；headless JSONL 保留独立外部 v1 契约。
 
 当前契约治理变更 `unify-current-contract-lifecycle` 收敛了固定 codec、prepared commit、宿主 owner 与副作用 admission。TUI、一次性 headless、stream-json 共用 AgentLoop；关闭期间排空事件，活动 transport 可显式取消，journal lease 保留至清理完成。Patch/Write grant 仅在批准 Sync 后生效，三种副作用工具统一验证结果关联并以 uncertain 收口错配结果。本次未引入迁移或兼容 reader，后续 P4/P6/P7/P8 能力及占位退出条件保持原有范围。
 
@@ -13,7 +15,7 @@
 
 ## 当前状态总览（2026-11-17）
 
-实现与测试逐项核对见[当前能力清单](capability-status.md)。P0–P8 是并行推进的阶段目标，不以某个后期切片交付推定整个阶段完成。当前已交付九项模型工具、本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop、三能力 PreToolUse 完整参数改写、结构化提问、流式 Markdown、命令/Skill 首词补全、正文文件引用与路径补全、会话内 effort、启动会话选择、Provider 缓存、手动/自动压缩、双 Provider 推理阅读及启动推理/display/输出配置；本地 Plugin 技能包及受限 importer 已交付；仍缺少 effort 之外的运行中推理切换、跨 Provider fork、后台进程、插件可执行贡献/MCP、Subagent 与完整发布矩阵。
+实现与测试逐项核对见[当前能力清单](capability-status.md)。P0–P8 是并行推进的阶段目标，不以某个后期切片交付推定整个阶段完成。当前已交付十项模型工具、本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop、三能力 PreToolUse 完整参数改写、结构化提问、任务清单、流式 Markdown、命令/Skill 首词补全、正文文件引用与路径补全、会话内 effort、启动会话选择、Provider 缓存、手动/自动压缩、双 Provider 推理阅读及启动推理/display/输出配置；本地 Plugin 技能包及受限 importer 已交付；仍缺少 effort 之外的运行中推理切换、跨 Provider fork、后台进程、插件可执行贡献/MCP、Subagent 与完整发布矩阵。
 
 下文“工作内容/交付物/验收标准”保留阶段的完整目标；已完成状态以本总览、各节进度和当前能力清单为准。所有迁移、历史 reader 或兼容窗口必须先有用户明确要求及新 OpenSpec，不因路线图提到未来发布而预先授权。
 
@@ -224,7 +226,7 @@ make verify
 
 TUI、一次性 `--print`/`--json` 和 stream-json 共用 AgentLoop。自动输入可在完整工具 outputs 后进入同一 turn 的下一 sample，strict-next 仍是独立 turn；原子取回、停止返还、EOF drain 与 shutdown 已实现。队列只在内存，成功 Sync 的输入与原生正文才是恢复事实。API key/base URL 不保存；Session metadata 保存创建 cwd，但恢复继续使用新进程当前 cwd，不回放旧动态环境。
 
-ContextPlanner 固定六类来源：`provider_profile -> tool_catalog -> [project_instructions] -> [skill_catalog] -> committed_history -> current_input`，使用 canonical bytes、内容 revision 与本地 `byte_heuristic_v1`。九项真实工具纳入 schema/预算；配置/trust/真实命令和环境不污染稳定前缀。层级项目指令和本地 Skill catalog 在启动时冻结。Provider 缓存、三态 usage、`/cache`、`/context`、手动与阈值自动压缩已在 P4 切片交付，不能继续列为 P2 未实现。
+ContextPlanner 固定六类来源：`provider_profile -> tool_catalog -> [project_instructions] -> [skill_catalog] -> committed_history -> current_input`，使用 canonical bytes、内容 revision 与本地 `byte_heuristic_v1`。十项真实工具纳入 schema/预算；配置/trust/真实命令和环境不污染稳定前缀。层级项目指令和本地 Skill catalog 在启动时冻结。Provider 缓存、三态 usage、`/cache`、`/context`、手动与阈值自动压缩已在 P4 切片交付，不能继续列为 P2 未实现。
 
 P2 后续范围为更完整的会话检索/线程组织、费用与配额、后台索引和跨平台运行矩阵；全工具 artifact、Subagent 与跨 Provider fork 在对应阶段另行推进。没有 migration/legacy reader，不把尚未授权的兼容转换列为当前实现承诺。工程与平台证据分别见[能力清单](capability-status.md)、各 change 验收和根 AGENTS 规约。
 
@@ -252,7 +254,7 @@ P2 后续范围为更完整的会话检索/线程组织、费用与配额、后�
 - 已实现 `--resume <thread-id>`、`--continue`、单 turn `--print`/JSONL v1 `--json`，以及独立 `stream-json` 双向控制模式的同进程多 turn。
 - 已实现当前文本 Chat 的用户中断、依赖有序 shutdown 和中断 turn 补偿；后台任务的完整 shutdown 随对应能力补充。
 - 提供 transcript/debug log 分离。
-- 九项 Tool、RuntimeCommand、Skill/Hook 已有真实消费者、validator 与测试。仅 MCP、Subagent、telemetry 及预留 ItemID/CallID 仍在 AGENTS.md 精确 TODO allowlist；extension 根和 plugin 已由真实技能贡献替换并退出占位。
+- 十项 Tool、RuntimeCommand、Skill/Hook 已有真实消费者、validator 与测试。仅 MCP、Subagent、telemetry 及预留 ItemID/CallID 仍在 AGENTS.md 精确 TODO allowlist；extension 根和 plugin 已由真实技能贡献替换并退出占位。
 
 ### 6.4 交付物
 
@@ -293,7 +295,7 @@ P2 后续范围为更完整的会话检索/线程组织、费用与配额、后�
 
 ## 7. P3：Coding Tools 与安全执行
 
-命令输出切片 `add-command-output-artifacts` 已接入双流私有前缀存储、当时七工具 catalog 中的 ReadArtifact（当前共九项）、durable descriptor 授权、完整命令历史和 Ctrl+O 列表/分页详情。默认预算为每流 16 MiB、调用预留 32 MiB、thread 256 MiB、root 1 GiB；后续 `add-tool-transcript-and-result-budget` 已统一工具主线与完整 transcript（当前九项），增加搜索保存及 sample/turn 累计预算，Session 当前格式不含版本字段。P3 尚未整体完成；PTY、后台命令、非 Darwin 命令执行和自动过期仍未实现。平台运行验证范围以 change 的最终验收记录为准。
+命令输出切片 `add-command-output-artifacts` 已接入双流私有前缀存储、当时七工具 catalog 中的 ReadArtifact（当前共十项）、durable descriptor 授权、完整命令历史和 Ctrl+O 列表/分页详情。默认预算为每流 16 MiB、调用预留 32 MiB、thread 256 MiB、root 1 GiB；后续 `add-tool-transcript-and-result-budget` 已统一工具主线与完整 transcript（当前十项），增加搜索保存及 sample/turn 累计预算，Session 当前格式不含版本字段。P3 尚未整体完成；PTY、后台命令、非 Darwin 命令执行和自动过期仍未实现。平台运行验证范围以 change 的最终验收记录为准。
 
 ### 7.1 目标
 
@@ -314,7 +316,7 @@ P2 后续范围为更完整的会话检索/线程组织、费用与配额、后�
 
 P3 不采用一个覆盖全部工具的长线 change。以下名称是推荐顺序，不代表 change 已创建；每项仍需独立执行 `propose -> review/confirm -> apply -> verify -> archive`：
 
-当前状态：`add-read-tool-loop`、`add-search-tools-and-ordered-parallelism`、`add-approved-file-patch-flow`、`add-file-write-tool` 与 `add-command-execution` 已实现，提供 Read/Glob/Grep/单文件 Patch/Write/Darwin 前台 Exec、双 Provider 原生 wire、多 sample Runtime、最多 8 路只读并行、Patch/Write/Exec 独占屏障、按 call index durable/提交、崩溃补偿和本地-only resume。Patch 已实现 allow/ask/deny、Runtime 局部 session grant、headless 失败关闭和 Claude 风格 diff approval overlay；Write 已实现 create/overwrite 完整审批、独立 session grant、先前完整 Read 证据和私有目录树 no-replace 发布；Exec 始终只允许单次批准并在 headless 失败关闭。命令/搜索输出 artifact、ReadArtifact、当前九项工具主线与统一详情已接入；Read/Patch/Write 自动 artifact、PTY 和后台进程控制仍未实现。Linux adapter 已交叉编译，真实 Linux 文件系统测试因当前无 runner 尚未运行，详见 Tool 架构的验证范围。
+当前状态：`add-read-tool-loop`、`add-search-tools-and-ordered-parallelism`、`add-approved-file-patch-flow`、`add-file-write-tool` 与 `add-command-execution` 已实现，提供 Read/Glob/Grep/单文件 Patch/Write/Darwin 前台 Exec、双 Provider 原生 wire、多 sample Runtime、最多 8 路只读并行、Patch/Write/Exec 独占屏障、按 call index durable/提交、崩溃补偿和本地-only resume。Patch 已实现 allow/ask/deny、Runtime 局部 session grant、headless 失败关闭和 Claude 风格 diff approval overlay；Write 已实现 create/overwrite 完整审批、独立 session grant、先前完整 Read 证据和私有目录树 no-replace 发布；Exec 始终只允许单次批准并在 headless 失败关闭。命令/搜索输出 artifact、ReadArtifact、当前十项工具主线与统一详情已接入；Read/Patch/Write 自动 artifact、PTY 和后台进程控制仍未实现。Linux adapter 已交叉编译，真实 Linux 文件系统测试因当前无 runner 尚未运行，详见 Tool 架构的验证范围。
 
 Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘要与展开详情决定交互；Codex `c248f6d48b` 的 unified_exec、Seatbelt 和进程生命周期分层决定内核边界。当前固定 non-login `/bin/sh`、环境 allowlist、workspace 写入和禁用网络；非 Darwin 稳定返回 `unsupported_platform`。清理保证只覆盖原进程组，`setsid`/脱离组后代不属于后台控制能力；保留输出造成排空失败时返回不确定结果并 poison Runtime。Linux/Windows 已交叉构建，尚无原生运行验证，不代表 P8 跨平台支持已完成。
 
@@ -325,7 +327,7 @@ Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘�
 5. `add-command-execution`（已实现）：Darwin 前台 exec、进程 owner、取消/timeout、确定性输出预算、sandbox、单次批准与命令详情；双 Provider 的 Read → Patch → Exec → 总结及拒绝/中断/崩溃恢复均有回归。
 6. `add-command-output-artifacts`（已实现）：命令输出保存、当前线程 ReadArtifact、完整历史查询与 Claude 风格列表/详情；保持冻结预览和原生恢复独立于对象存在性。
 7. `add-background-process-control`：先定义受控 process handle、PTY/stdin、后台 admission、超时与唯一 shutdown owner，再增加 write_stdin；不得把当前前台命令脱离原组视为实现。
-8. `add-tool-transcript-and-result-budget`（已实现，合并原工具预算与 UI 切片）：单调用 256 KiB（搜索 64 KiB）、sample 512 KiB、turn 2 MiB，顺序冻结、搜索原文保存、工具紧凑主线（当前九项）及四页缓存详情；不改写历史 native outputs，不实现上下文替换。
+8. `add-tool-transcript-and-result-budget`（已实现，合并原工具预算与 UI 切片）：单调用 256 KiB（搜索 64 KiB）、sample 512 KiB、turn 2 MiB，顺序冻结、搜索原文保存、工具紧凑主线（当前十项）及四页缓存详情；不改写历史 native outputs，不实现上下文替换。
 9. `add-same-turn-steering`（已实现）：活动 composer 自动追加，单 FIFO/strict 屏障；仅在完整 tool outputs 后、下一 sample 前注入独立原生输入。支持按 IDs 原子取回、停止返还、提交前预检、input-only 恢复，当前只维护唯一无版本 Session 结构，自动压缩直接更新其字段与 fixture。
 
 首个切片选择 Read，是因为它能用最低副作用风险验证最关键的双 Provider、Session durable 和 call/output 配对边界，并让接口由真实消费者驱动；不先建立万能 registry、空 facade 或没有行为证据的完整框架。
@@ -452,9 +454,9 @@ Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘�
 
 ## 9. P5：Claude 风格 TUI
 
-### 9.0 当前进度（2026-11-17）
+### 9.0 当前进度（2026-11-18）
 
-已交付多行/字素输入、同轮追加与返还、流式 Markdown 与代码/表格/原文阅读、紧凑工具主线及 Ctrl+O 分页详情、完整 Patch/Write/Exec 审批、结构化问卷、Hook 信任、context/cache 面板和启动 resume picker。当前本地命令为 `/cache`、`/context`、`/compact`、`/effort`、`/skills`、`/hooks`、`/plugins`，以及 Skill 显式入口。命令/Skill 首词补全和被动 thinking/summary 活动提示及 Ctrl+O 阅读已交付；启动推理配置、会话内 effort 与 /context 设置已实现；其他推理字段切换、fork picker、后台任务 UI、cost/综合状态面板与其余命令尚未实现。
+已交付多行/字素输入、同轮追加与返还、流式 Markdown 与代码/表格/原文阅读、紧凑工具主线及 Ctrl+O 分页详情、完整 Patch/Write/Exec 审批、结构化问卷、Hook 信任、context/cache 面板、当前任务清单和启动 resume picker。当前本地命令为 `/cache`、`/context`、`/compact`、`/effort`、`/skills`、`/hooks`、`/plugins`、`/tasks`，以及 Skill 显式入口。命令/Skill 首词补全和被动 thinking/summary 活动提示及 Ctrl+O 阅读已交付；启动推理配置、会话内 effort 与 /context 设置已实现；其他推理字段切换、fork picker、后台任务 UI、cost/综合状态面板与其余命令尚未实现。
 
 补全复用冻结 Skill 展示列表、字素编辑和既有命令提交；Tab 只填入、Skill Enter 只选择、Esc 优先关闭，粘贴不接受候选。验收覆盖双 Provider 原生请求/恢复/缓存等价、固定尺寸和 Darwin PTY，见 [验收记录](../../openspec/changes/archive/2026-11-06-add-command-and-skill-completion/verification.md)。该首词切片仍不处理普通参数值；正文工作区 @ 文件引用已由独立切片实现，文件范围、读取、索引及恢复的边界见下文。
 
@@ -821,7 +823,7 @@ P5 的助手阅读切片覆盖流式消息、已提交主线和历史正文。Pg
 
 ### 会话内 effort 选择切片（已实现，P5 未整体退出）
 
-`add-runtime-effort-control` 在现有输入 owner 接入 `/effort` 与 stream-json typed 控制，支持原生档位、明确省略、恢复启动值、只读状态及七项内置补全。复用不可变 InferenceSettings、context 预算与小型 Provider 计划；完整操作捕获覆盖工具、Question/审批、Stop 和自动摘要，独立手动摘要在接纳时捕获。选择/序号只在内存，不改 native/Session schema，不探测或猜测模型默认，不引入 Codex configuration_update/pin 专路。
+`add-runtime-effort-control` 在现有输入 owner 接入 `/effort` 与 stream-json typed 控制，支持原生档位、明确省略、恢复启动值、只读状态及当时七项内置补全（任务清单加入后当前为八项）。复用不可变 InferenceSettings、context 预算与小型 Provider 计划；完整操作捕获覆盖工具、Question/审批、Stop 和自动摘要，独立手动摘要在接纳时捕获。选择/序号只在内存，不改 native/Session schema，不探测或猜测模型默认，不引入 Codex configuration_update/pin 专路。
 
 Claude 风格的短通知、静态帮助和既有 `/context` 提供当前捕获与后续选择；终态后真实清理、请求序号及 UI 操作世代分别约束并发和迟到反馈。验收含双 Provider canonical 恢复、三种 Anthropic cache、OpenAI WS 属性变化/增量/失败重建、输出背压与跨进程 lease；整合 main 前的回归通过 24 组真实 PTY 和 10 组脚本化真实 CLI。47/47 项任务完成，六项主规格已同步，change 已归档；详见[实现验收](../../openspec/changes/archive/2026-11-15-add-runtime-effort-control/verification.md)。模型切换、其他推理字段热切换、远端能力发现、fork 和完整 P5 仍待独立变更。
 

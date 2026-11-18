@@ -1,13 +1,13 @@
 # tool/result-budget Specification
 
 ## Purpose
-定义九项当前工具的模型预览、显式后置反馈累计预算及工具特定处理规则，使多调用、多 sample 与同轮追加中的资源使用有界、结果可解释，并保持审批、文件观察、原生配对和恢复字节一致。
+定义十项当前工具的模型预览、显式后置反馈累计预算及工具特定处理规则，使多调用、多 sample 与同轮追加中的资源使用有界、结果可解释，并保持审批、文件观察、原生配对和恢复字节一致。
 
 ## Requirements
 
 ### Requirement: Tool preview budgets have explicit units and deterministic allocation
 
-系统 SHALL 计量最终模型 preview 的 UTF-8 bytes，包含行号、结果说明、省略提示和 artifact 引用。Read/Exec/ReadArtifact 单次上限为 256 KiB、Glob/Grep 为 64 KiB、Skill 为 128 KiB，每 sample 总上限 512 KiB、每 turn 总上限 2 MiB。Patch/Write 返回紧凑摘要且服从累计额度。计数不是 token window 或完整网络请求大小；实际序列化膨胀 MUST 仍经过 Provider 编译及既有请求检查。
+系统 SHALL 计量最终模型 preview 的 UTF-8 bytes，包含行号、结果说明、省略提示和 artifact 引用。Read/Exec/ReadArtifact 单次上限为 256 KiB、Glob/Grep 为 64 KiB、Skill 为 128 KiB，每 sample 总上限 512 KiB、每 turn 总上限 2 MiB。Patch/Write 返回紧凑摘要且服从累计额度。task.progress 的成功 preview SHALL 仅为固定英文计数确认，最多 1 KiB，不回显任务正文、activeForm 或 explanation，沿同一每 call 1 KiB 安全预留及累计额度分配，不建立额外正文预算。计数不是 token window 或完整网络请求大小；实际序列化膨胀 MUST 仍经过 Provider 编译及既有请求检查。
 
 分配 SHALL 按 call index 与已冻结结果计费，为当前 sample 后续 calls 和本 turn 剩余 64-call 上限位置各保留每项 1 KiB 安全结果空间；两者分别约束 sample/turn 剩余额度，不重复扣费。当前 allowance 为单次上限、sample 扣除后续预留的余额、turn 扣除后续预留的余额中的最小值。加减 MUST 检测溢出/下溢；并行完成时间不能改变分配。预算只处理新结果，同轮追加不重置，已 durable 结果不能重新裁剪。
 
@@ -22,6 +22,22 @@
 #### Scenario: Keep steering in the same budget
 - **WHEN** 同 turn 安全点提交两条追加输入后继续工具 sample
 - **THEN** 原工具累计使用量保留，不因输入或 UI 操作重新获得 2 MiB
+
+#### Scenario: Count a task confirmation in the existing ledger
+- **WHEN** 任务更新与其他工具在同一 sample/turn 生成结果
+- **THEN** 固定英文确认计入原 sample 512 KiB、turn 2 MiB 和原 call index 分配，任务状态或 UI 折叠不会重新获得额度
+
+
+
+Task 的最多 1 KiB SHALL 仅为该能力最终模型 preview 的单次 cap，不是完整规范 metadata 的大小，也不表示 sample/turn 的全局正文额度已经耗尽。额度查询、初始结果预算、reserve/freeze/finalize、恢复验证 SHALL 使用同一能力 cap 和安全结果预留口径；完整规范 TaskUpdate 仍单独受 64 KiB 及实际 record/native 编码上限限制，不按 1 KiB 裁剪 metadata。全局正文耗尽只由累计池和后续安全预留判断，MUST NOT 因当前 Task 局部 allowance 恰好等于 1 KiB 而提前终止仍有正文额度的 turn 或拒绝后续 Read。
+
+#### Scenario: Do not mistake a small task cap for global exhaustion
+- **WHEN** 健康预算中 Task 的局部 allowance 因单次 cap 为 1 KiB，而 sample/turn 累计池仍有充足正文，随后同组包含 Read
+- **THEN** 任务成功确认完整计费且只推进一次调用，BodyExhausted 为 false，后续 Read 仍取得按其自身 cap 与原累计池分配的正文额度，不提前结束 turn
+
+#### Scenario: Validate a frozen task budget with the same cap everywhere
+- **WHEN** 相同成功或失败任务结果分别经过初始预算、reserve、freeze/finalize、持久化和离线恢复
+- **THEN** 所有阶段认定同一 1 KiB preview cap、原 allowance/actual bytes 及唯一扣账事实；错误恢复 allowance 或以完整 metadata bytes 冒充 preview 用量必须拒绝
 
 ### Requirement: Budget finalization respects tool semantics
 
@@ -40,6 +56,16 @@ Skill SHALL 完整返回经过展开及来源包装的主文档或资源全文�
 #### Scenario: Reject a partial skill result
 - **WHEN** Skill 完整 preview 小于单次上限但超过有序累计分配的 allowance
 - **THEN** 返回配对预算错误，没有任何部分成功指令进入 Provider 历史
+
+Task.progress SHALL 保留完整 typed 任务 metadata；它不是可截断模型 preview。成功确认必须能完整放入当前 allowance；完整 raw input、canonical snapshot、结果 metadata、Session record 与 Provider output 的实际编码分别须通过当前上限检查。确认额度不足或完整结果的实际编码超限时，必须生成匹配原调用的安全预算错误，保留旧任务状态，不裁剪任务文字、不省略条目、不改为部分成功，不通过 artifact 绕过限制。只有确定成功 durable 的完整任务结果才生效；恢复不重新裁剪确认或任务快照。
+
+#### Scenario: Refuse an entire task update under budget pressure
+- **WHEN** 当前 allowance 不足固定确认，或合法原始任务文字在完整 JSON 编码后超过实际 record/output 上限
+- **THEN** 返回配对预算错误且当前清单不变，不截断 metadata 后保存成功，也不把预算错误当作新任务快照
+
+#### Scenario: Restore the frozen task result
+- **WHEN** 完整任务结果已 durable 且进程重启时当前预算参数或 UI 状态变化
+- **THEN** 使用原任务更新和原确认 bytes 重建状态及原生 output，不重新分配、扣账或渲染成新的模型结果
 
 ### Requirement: Exhaustion preserves accepted execution and pairing
 

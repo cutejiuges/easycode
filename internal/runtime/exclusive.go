@@ -37,7 +37,7 @@ type exclusiveResult struct {
 func (runtime *Runtime) executeExclusive(ctx context.Context, turnID domain.TurnID, invocation tool.Invocation, strategy exclusiveStrategy) (exclusiveResult, error) {
 	var admission tool.ExecutionAdmission
 	finish := func(result tool.InvocationResult) (exclusiveResult, error) {
-		if err := runtime.persistToolResult(context.WithoutCancel(ctx), turnID, &result); err != nil {
+		if err := runtime.persistToolResult(ctx, turnID, &result); err != nil {
 			return exclusiveResult{}, err
 		}
 		if result.Status() == tool.ResultOutcomeUncertain {

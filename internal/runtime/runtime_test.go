@@ -925,6 +925,7 @@ func testRuntimeConfig(t *testing.T, journal Journal) Config {
 	}
 	return Config{
 		SessionID: runtimeSessionID, ThreadID: runtimeThreadID, Journal: journal,
+		TaskExecutor: catalogTaskFixture{}, InitialTaskProgress: domain.NewNoTaskProgress(),
 		ContextProfile: profile, ToolCatalog: mustRuntimeToolCatalog(t), ProjectInstructions: projectInstructions,
 		QuestionExecutor: catalogQuestionFixture{}, SkillExecutor: catalogSkillExecutor{}, ReadArtifactExecutor: catalogArtifactExecutor{}, ReadExecutor: runtimeReadExecutor{}, GlobExecutor: runtimeGlobExecutor{}, GrepExecutor: runtimeGrepExecutor{},
 		PatchPreparer: catalogPatchPreparer{}, PatchExecutor: catalogPatchExecutor{}, WritePreparer: catalogWritePreparer{}, WriteExecutor: catalogWriteExecutor{}, ExecPreparer: catalogExecFixture{}, ExecExecutor: catalogExecFixture{}, ToolPolicy: tool.NewApprovalPolicy(),
@@ -940,7 +941,7 @@ func mustRuntimeToolCatalog(t *testing.T) tool.CatalogSnapshot {
 
 func mustRuntimeToolCatalogWithExecutor(t *testing.T, executor tool.ReadExecutor) tool.CatalogSnapshot {
 	t.Helper()
-	catalog, err := tool.NewCatalogSnapshot(executor, runtimeGlobExecutor{}, runtimeGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, tool.RenderExecOutput, tool.NewApprovalPolicy(), catalogArtifactExecutor{}, catalogSkillExecutor{}, catalogQuestionFixture{})
+	catalog, err := tool.NewCatalogSnapshot(executor, runtimeGlobExecutor{}, runtimeGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, tool.RenderExecOutput, tool.NewApprovalPolicy(), catalogArtifactExecutor{}, catalogSkillExecutor{}, catalogQuestionFixture{}, catalogTaskFixture{})
 	if err != nil {
 		t.Fatal(err)
 	}

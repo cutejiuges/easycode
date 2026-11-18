@@ -190,6 +190,7 @@ func (profile ProviderProfile) Validate() error {
 
 // PlanningInput 是纯内存 planner 所需的完整强类型输入快照。
 type PlanningInput struct {
+	taskProgress        domain.TaskProgressState
 	skillCatalog        domain.SkillCatalog
 	profile             ProviderProfile
 	toolCatalog         tool.CatalogSnapshot
@@ -211,7 +212,8 @@ func NewPlanningInput(
 	budget Budget,
 ) (PlanningInput, error) {
 	input := PlanningInput{
-		profile: profile, toolCatalog: toolCatalog.Clone(), projectInstructions: projectInstructions, history: history.Clone(), footprint: footprint,
+		taskProgress: domain.NewNoTaskProgress(),
+		profile:      profile, toolCatalog: toolCatalog.Clone(), projectInstructions: projectInstructions, history: history.Clone(), footprint: footprint,
 		currentInput: currentInput, budget: budget,
 	}
 	cloned, err := projectInstructions.Clone()
@@ -227,6 +229,9 @@ func NewPlanningInput(
 
 // Validate 校验来源之间的 Provider 和估算方法不变量。
 func (input PlanningInput) Validate() error {
+	if err := input.taskProgress.Validate(); err != nil {
+		return fmt.Errorf("task progress planning input is invalid: %w", err)
+	}
 	if err := input.skillCatalog.Validate(); err != nil {
 		return err
 	}
@@ -488,15 +493,17 @@ func buildCachePlan(input PlanningInput) (Plan, error) {
 		return Plan{}, err
 	}
 	historyJSON, err := codec.MarshalCanonical(struct {
-		Summary   string                    `json:"summary,omitempty"`
-		History   []semanticContentMessage  `json:"history"`
-		Revision  uint64                    `json:"native_revision"`
-		Method    string                    `json:"estimate_method"`
-		State     domain.TokenEstimateState `json:"estimate_state"`
-		Tokens    uint64                    `json:"estimated_tokens"`
-		HasTokens bool                      `json:"has_estimated_tokens"`
+		TaskContentDigest string                    `json:"task_content_digest,omitempty"`
+		Summary           string                    `json:"summary,omitempty"`
+		History           []semanticContentMessage  `json:"history"`
+		Revision          uint64                    `json:"native_revision"`
+		Method            string                    `json:"estimate_method"`
+		State             domain.TokenEstimateState `json:"estimate_state"`
+		Tokens            uint64                    `json:"estimated_tokens"`
+		HasTokens         bool                      `json:"has_estimated_tokens"`
 	}{
-		Summary: activeSummaryText(input.history), History: historyContent, Revision: input.footprint.Revision(),
+		TaskContentDigest: input.taskProgress.ContentStamp(),
+		Summary:           activeSummaryText(input.history), History: historyContent, Revision: input.footprint.Revision(),
 		Method: input.footprint.Estimate().Method(), State: input.footprint.Estimate().State(),
 		Tokens: tokenValue(input.footprint.Estimate()), HasTokens: hasTokenValue(input.footprint.Estimate()),
 	}, MaxSegmentBytes)
