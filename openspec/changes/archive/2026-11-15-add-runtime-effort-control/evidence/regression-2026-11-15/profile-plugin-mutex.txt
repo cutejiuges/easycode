@@ -1,9 +1,0 @@
-File: app.test
-Type: delay
-Time: 2026-11-15 16:16:09 CST
-Showing nodes accounting for 37.52ms, 100% of 37.52ms total
-Dropped 37 nodes (cum <= 0.19ms)
-      flat  flat%   sum%        cum   cum%
-   37.25ms 99.27% 99.27%    37.25ms 99.27%  runtime._LostContendedRuntimeLock
-    0.27ms  0.73%   100%     0.27ms  0.73%  sync.(*Mutex).Unlock
-         0     0%   100%     0.27ms  0.73%  runtime.deferreturn

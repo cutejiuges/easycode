@@ -1,34 +1,31 @@
-"""只移出经过逐项审计的串行入口；新测试默认参加 race。"""
+"""默认只运行关键并发路径，普通测试仍执行当前完整清单。"""
 
 import json
 
 
 def select_race(inventory, policy, goos):
-    selected = {package: list(names) for package, names in inventory.items()}
-    excluded, seen = [], set()
-    retained = set()
+    selected = {package: [] for package in inventory}
+    seen = set()
     for group in policy:
         package = group["package"]
-        if not group["reason"].strip() or not group["source"].strip() or not group["tests"]:
-            raise ValueError("race exclusion requires tests, source and reason")
+        if not group["reason"].strip() or not group["tests"]:
+            raise ValueError("critical race entry requires tests and reason")
         applicable = goos in group.get("platforms", [goos])
         for name in group["tests"]:
             key = (package, name)
             if key in seen:
-                raise ValueError(f"duplicate race exclusion: {package}/{name}")
+                raise ValueError(f"duplicate critical race entry: {package}/{name}")
             seen.add(key)
             if not applicable:
                 continue
-            if name not in selected.get(package, []):
-                raise ValueError(f"stale race exclusion: {package}/{name}")
-            selected[package].remove(name)
-            excluded.append({"package": package, "test": name, "source": group["source"],
-                             "reason": group["reason"], "retained_race": group["retained_race"]})
-        if applicable:
-            retained.update((item["package"], item["test"]) for item in group["retained_race"])
-    for package, name in sorted(retained):
-        if name not in selected.get(package, []):
-            raise ValueError(f"missing retained race coverage: {package}/{name}")
+            if name not in inventory.get(package, []):
+                raise ValueError(f"stale critical race entry: {package}/{name}")
+            selected[package].append(name)
+    if not any(selected.values()):
+        raise ValueError("critical race plan is empty for current platform")
+    excluded = [{"package": package, "test": name, "reason": "outside critical race paths"}
+                for package, names in inventory.items() for name in names if name not in selected[package]]
+    selected = {package: sorted(names) for package, names in selected.items()}
     return selected, excluded
 
 

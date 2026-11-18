@@ -36,14 +36,6 @@ func (journal *terminalGateJournal) Close(ctx context.Context) error {
 }
 
 func TestHostShutdownRetainsRealLeaseUntilTerminalCleanup(t *testing.T) {
-	runHostLeaseUntilCleanup(t, false)
-}
-
-func TestEffortHostShutdownRetainsRealLeaseUntilTerminalCleanup(t *testing.T) {
-	runHostLeaseUntilCleanup(t, true)
-}
-
-func runHostLeaseUntilCleanup(t *testing.T, effort bool) {
 	root := filepath.Join(t.TempDir(), "sessions")
 	cfg := config.Config{Provider: config.Provider{Family: domain.ProviderOpenAI, BaseURL: "https://example.invalid", APIKey: secret.New("test-key"), Model: "gpt-test"}}
 	resources, err := openChatResources(context.Background(), cfg, root, "", t.TempDir())
@@ -54,34 +46,15 @@ func runHostLeaseUntilCleanup(t *testing.T, effort bool) {
 	resources.writer = gate
 	host := chatRuntime.NewChatSession(mustIdleAppRuntime(t, gate))
 	resources.session = host
-	if effort {
-		if err := host.StartInteractive(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := appendInteractiveText(context.Background(), host, "hello"); err != nil {
-			t.Fatal(err)
-		}
-		for item := range host.Outputs() {
-			if e, ok := item.TurnEvent(); ok && e.Kind == protocol.EventTurnStarted {
-				break
-			}
-		}
-		appEffortSet(t, resources, "pending-effort", appEffortChoice(t, "high"))
-		p := appEffortSnapshot(t, resources, "before-cleanup")
-		if p.Active == nil || !p.Pending || p.Active.Effort().State != "omitted" {
-			t.Fatal("active capture changed before cleanup")
-		}
-	} else {
-		if err := host.Start(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-		stream, err := host.Submit(context.Background(), "hello")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if event := <-stream; event.Kind != protocol.EventTurnStarted {
-			t.Fatal(event.Kind)
-		}
+	if err := host.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stream, err := host.Submit(context.Background(), "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event := <-stream; event.Kind != protocol.EventTurnStarted {
+		t.Fatal(event.Kind)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

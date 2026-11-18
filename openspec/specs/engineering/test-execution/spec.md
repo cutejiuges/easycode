@@ -8,13 +8,13 @@
 
 ### Requirement: Verification preserves the complete test contract
 
-完整质量门 SHALL 执行分支策略测试、格式检查、vet、Staticcheck、架构边界、当前平台的全部普通测试与经审计的必要 race 测试。本地、pre-commit、pre-push 与 CI MUST 复用同一质量门定义。性能验收 MUST 强制重新执行测试，不能以测试结果缓存命中、仅运行修改包、未经审计排除慢测试、关闭 race 或缩减普通测试断言证明达标。
+完整质量门 SHALL 执行分支策略测试、格式检查、vet、Staticcheck、架构边界、当前平台精简后现存的全部普通测试与正向清单中的关键 race 测试。本地、pre-commit、pre-push 与 CI MUST 复用同一质量门定义。性能验收 MUST 强制重新执行测试，不能以测试结果缓存命中、仅运行修改包、遗漏现存测试、关闭关键路径 race 或把未运行入口伪装成通过。
 
 #### Scenario: Match the platform test inventory
 - **WHEN** 完整质量门采用分片或有界并行执行测试
-- **THEN** 普通阶段覆盖当前平台所有包、Test、Example 和默认 fuzz seed；race 默认覆盖相同集合，仅移出有明确理由的已审计串行入口
+- **THEN** 普通阶段覆盖当前平台所有包、Test、Example 和默认 fuzz seed；race 只执行有明确并发/生命周期理由的关键入口
 - **THEN** 分片集合不重叠且不遗漏，包内子测试仍由原顶层测试执行
-- **THEN** 沿用既有平台限制的 skip 必须可见；race 排除清单另行报告，不能伪装为通过或改变普通集合
+- **THEN** 沿用既有平台限制的 skip 必须可见；未选择的 race 入口另行报告，不能伪装为通过或改变普通集合
 
 #### Scenario: Keep hooks and CI equivalent
 - **WHEN** 同一提交通过本地、Git hooks 或 CI 触发完整质量门
@@ -42,17 +42,17 @@
 
 ### Requirement: Race selection remains explicit and reviewable
 
-默认 race SHALL 保留真实并发、共享状态、取消/提交交错、资源关闭、stream、writer、lease 与恢复生命周期。只验证串行值、字节、大小或静态源码的测试 MAY 从默认 race 移出，但 MUST 保留普通测试和所有原断言，并以精确包/测试名记录理由及相关保留覆盖。新增测试 MUST 默认进入 race，手动全量 race MUST 可用。
+默认 race SHALL 仅运行 scripts/race_policy.json 正向列出的关键并发、提交取消、stream、writer、lease 和关闭恢复入口。大型矩阵 SHALL 仅选保留关键行为断言的代表入口；串行值、getter、格式及穷举组合不要求进入默认 race。新增普通测试不自动进入 race；手动全量 race MUST 可用。
 
-#### Scenario: Audit a race exclusion
-- **WHEN** 已审核的串行测试或完整数据矩阵退出默认 race
-- **THEN** 报告列出完整清单、所选集合、排除项与理由，普通测试仍完整执行
+#### Scenario: Maintain a minimal critical race plan
+- **WHEN** 维护默认 race 的关键入口清单
+- **THEN** 报告列出所编译包的现存入口、关键所选集合及这些包内的未选入口；普通阶段仍枚举所有包并运行现存全集
 - **THEN** 复杂矩阵的并发/生命周期代表场景沿用原 helper 和实质断言
-- **THEN** 清单重复、无效名称或替代覆盖被排除必须使质量门失败
+- **THEN** 清单重复、无效名称或当前平台没有关键入口必须使质量门失败
 
 #### Scenario: Include new and manually requested coverage
 - **WHEN** 新测试尚未审核，或用户选择手动全量 race
-- **THEN** 新测试默认纳入，手动全量模式不应用排除清单
+- **THEN** 新增入口默认仅参加普通测试，涉及关键并发时显式纳入 race；手动全量模式执行全部现存入口
 
 ### Requirement: Performance reporting measures the whole workflow
 
@@ -69,7 +69,7 @@
 
 ### Requirement: Refactoring preserves assertions and data semantics
 
-测试重构 SHALL 以业务断言与故障边界为单位保留覆盖。合并重复测试前 MUST 记录原断言到保留测试的映射；真实子进程竞争、崩溃释放、故障注入、当前固定 fixture、双 Provider 原生恢复与 cache 等价不得被空实现或仅检查返回成功的测试取代。共享编解码性能重构 MUST 保持现有严格拒绝规则、当前固定 bytes、原生顺序、checksum 与 fingerprint。
+测试重构 SHALL 以业务断言与故障边界为单位保留覆盖。允许删除显然重复或普通值/构造/getter 断言及过度数据组合，保留简短的关键路径说明；真实子进程竞争、崩溃释放、故障注入、当前固定 fixture、双 Provider 原生恢复与 cache 等价不得被空实现或仅检查返回成功的测试取代。共享编解码性能重构 MUST 保持现有严格拒绝规则、当前固定 bytes、原生顺序、checksum 与 fingerprint。
 
 #### Scenario: Optimize repeated decoding
 - **WHEN** 对重复扫描、临时字段对象或解码装配进行性能优化
@@ -78,8 +78,8 @@
 
 #### Scenario: Consolidate equivalent test setup
 - **WHEN** 多个用例共享测试装配或将纯逻辑矩阵下沉到所属包
-- **THEN** 原有边界场景具有明确覆盖映射，并保留必要的真实 I/O 集成验证
-- **THEN** 测试代码行数减少本身不作为覆盖充分或性能达标的依据
+- **THEN** 当前选定的关键行为保留实质断言，并保留必要的真实 I/O 集成验证
+- **THEN** 测试代码行数采用同一范围净减少统计，不能靠压行、搬文件或跳过现存入口达标；精简不声称与原穷举集合等覆盖
 
 #### Scenario: Reuse record encoding without changing bytes
 - **WHEN** 写入方复用已编码的 checksum envelope 生成最终 Session record

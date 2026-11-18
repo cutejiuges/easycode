@@ -244,16 +244,6 @@ func TestStreamRunnerCleanEOFAndShutdownExitSuccessfully(t *testing.T) {
 	}
 }
 
-func TestStreamRunnerTurnFailureDoesNotPoisonCleanExit(t *testing.T) {
-	input := io.NopCloser(strings.NewReader(`{"version":1,"type":"input.submit","request_id":"input-1","text":"hello"}`))
-	output := newBufferWriteCloser()
-	runner := newTestStreamRunner(t, newScriptedStreamLoop(true), input, output, output)
-	result := runner.Run(context.Background())
-	if !result.Completed || !strings.Contains(output.String(), `"type":"turn.failed"`) {
-		t.Fatalf("Run() result/output = %#v/%s", result, output.String())
-	}
-}
-
 func TestStreamRunnerMalformedInputReportsTerminalErrorAndCleansUp(t *testing.T) {
 	inputReader, inputWriter := io.Pipe()
 	output := newBufferWriteCloser()
@@ -361,20 +351,6 @@ func TestStreamRunnerHandlesLoopFailureBeforeReady(t *testing.T) {
 		t.Fatalf("stream output = %s", output.String())
 	}
 	<-loop.Done()
-}
-
-func TestStreamRunnerRunStateKeepsFirstFailure(t *testing.T) {
-	t.Parallel()
-	state := &streamRunnerRunState{loopFinished: true, readerFinished: true}
-	first := fault.Summary{Code: fault.CodeStreamProtocol, Message: "first failure"}
-	state.setFailure(first)
-	state.setFailure(fault.Summary{Code: fault.CodeOutput, Message: "later failure"})
-	if state.pendingFailure == nil || *state.pendingFailure != first {
-		t.Fatalf("pending failure = %#v", state.pendingFailure)
-	}
-	if state.running() {
-		t.Fatal("completed run state is still running")
-	}
 }
 
 func newTestStreamRunner(

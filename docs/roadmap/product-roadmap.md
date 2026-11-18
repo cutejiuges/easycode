@@ -50,7 +50,7 @@
 make verify
 ```
 
-当前 `make verify` 覆盖分支策略回归、`gofmt -l .`、`go vet ./...`、固定版本的 `staticcheck`、测试调度器自检和当前平台全量普通测试与经审计的必要 race 测试；其中全量测试包含 AST/import graph 架构守卫。`scripts/test_suite.py` 统一执行并核对各阶段自动枚举的 Test/Example/Fuzz seed 清单，使用 `-count=1`、有界进程及无默认总时限的耗时记录；race 的精确审计清单位于 `scripts/race_policy.json`，新测试默认纳入，`make test-race-full` 可运行全量 race。如果新增 lint 规则，必须同步更新 Makefile、pre-commit 和本文。
+当前 `make verify` 覆盖分支策略回归、`gofmt -l .`、`go vet ./...`、固定版本的 `staticcheck`、测试调度器自检和当前平台全量普通测试与经审计的必要 race 测试；其中全量测试包含 AST/import graph 架构守卫。`scripts/test_suite.py` 枚举并核对 Test/Example/Fuzz seed，使用 `-count=1`、有界进程及无默认总时限的耗时记录；默认 race 仅编译和执行 `scripts/race_policy.json` 正向列出的关键并发路径，新增普通测试不自动进入 race，`make test-race-full` 可手动执行全量 race。测试以少量关键风险回归为主，维护与精简口径见 [测试维护说明](../testing.md)。如果新增 lint 规则，必须同步更新 Makefile、pre-commit 和本文。
 
 ## 3. 阶段总览
 

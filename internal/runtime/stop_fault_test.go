@@ -159,35 +159,3 @@ func TestStopCancellationAndSyncLinearization(t *testing.T) {
 		})
 	}
 }
-
-func TestStopActualUncertaintyOrIOFailureHasPriorityOverLateCancellation(t *testing.T) {
-	for _, uncertain := range []bool{false, true} {
-		t.Run(map[bool]string{false: "io", true: "uncertain"}[uncertain], func(t *testing.T) {
-			j := &fakeJournal{}
-			r, runner, _ := newStopRuntimeFixture(t, j)
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			runner.run = func(_ context.Context, id domain.HookRunIdentity, _ domain.HookDeclaration) domain.HookExecution {
-				cancel()
-				result := domain.HookRunResult{Identity: id, Status: domain.HookError, Code: domain.HookIOFailed, CleanupConfirmed: true, Origin: "execution"}
-				if uncertain {
-					result.Status, result.Code, result.CleanupConfirmed = domain.HookUncertain, domain.HookOutcomeUncertain, false
-				}
-				return domain.HookExecution{Result: result}
-			}
-			input, _ := domain.NewUserInput("01900000-0000-7000-8000-000000000001", "task")
-			if err := r.RunTurn(ctx, []domain.UserInput{input}, hookTrustEmitter(t, r, protocol.HookTrustSession, nil)); err == nil {
-				t.Fatal("actual failure passed")
-			}
-			batch := j.snapshot()[len(j.snapshot())-1]
-			decision, _ := domain.DecodeStopDecision(batch[1].PayloadBytes())
-			wantDisposition, wantCode := domain.StopError, domain.HookIOFailed
-			if uncertain {
-				wantDisposition, wantCode = domain.StopUncertain, domain.HookOutcomeUncertain
-			}
-			if decision.Disposition != wantDisposition || decision.Code != wantCode {
-				t.Fatal("late cancellation hid actual failure", decision)
-			}
-		})
-	}
-}

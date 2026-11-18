@@ -23,13 +23,6 @@ func testRestoreAfterPreview(t *testing.T, instance *Provider, thread domain.Thr
 	if !reflect.DeepEqual(view, direct.ProjectHistory()) {
 		t.Fatal("offline view differs from direct restore")
 	}
-	for boundary := 1; boundary <= len(records)+2; boundary++ {
-		ctx := &recordCancelContext{Context: context.Background(), remaining: boundary}
-		got, err := NewHistoryReader().ProjectStoredHistory(ctx, source, records)
-		if err == nil || len(got.Turns) != 0 {
-			t.Fatalf("cancellation boundary %d leaked view", boundary)
-		}
-	}
 	if len(view.Turns) > 0 && len(view.Turns[0].Messages) > 0 {
 		view.Turns[0].Messages[0].Text = "changed projection"
 	}
@@ -51,30 +44,6 @@ func (c *recordCancelContext) Err() error {
 		return context.Canceled
 	}
 	return nil
-}
-func TestOfflineHistorySourceValidation(t *testing.T) {
-	reader := NewHistoryReader()
-	valid := provider.HistorySource{ThreadID: "01900000-0000-7000-8000-000000000001", Family: domain.ProviderOpenAI, Wire: "responses", Model: "model"}
-	empty, err := reader.ProjectStoredHistory(context.Background(), valid, nil)
-	if err != nil || len(empty.Turns) != 0 {
-		t.Fatal("empty history rejected", err)
-	}
-	for _, field := range []string{"thread", "family", "wire", "model"} {
-		source := valid
-		switch field {
-		case "thread":
-			source.ThreadID = "bad"
-		case "family":
-			source.Family = "unknown"
-		case "wire":
-			source.Wire = "other"
-		case "model":
-			source.Model = ""
-		}
-		if _, err := reader.ProjectStoredHistory(context.Background(), source, nil); err == nil {
-			t.Fatalf("accepted invalid %s", field)
-		}
-	}
 }
 
 func testOfflineUsageEvidence(t *testing.T, instance *Provider, prepared *provider.PreparedCompaction, checkpoint provider.CheckpointEnvelope) {

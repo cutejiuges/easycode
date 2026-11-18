@@ -58,20 +58,6 @@ func runtimeFixtureOrigin(t *testing.T, sample, call uint32) tool.ToolCallOrigin
 	return origin
 }
 
-// resetRuntimeReadyFixture 在未开始任何调用前替换测试的 ready 定义。
-func resetRuntimeReadyFixture(t *testing.T, r *Runtime, turn domain.TurnID, invocations ...tool.Invocation) {
-	t.Helper()
-	for _, state := range r.toolCalls {
-		if state.pre != nil || state.hasResult || state.running {
-			t.Fatal("cannot replace an admitted fixture call")
-		}
-	}
-	r.toolCalls = make(map[tool.InvocationID]*toolExecutionCall)
-	for i, inv := range invocations {
-		seedRuntimeToolCall(t, r, turn, inv, 0, uint32(i))
-	}
-}
-
 // bindRuntimeRecoveryFixture 让独立恢复测试使用固定 journal 的真实会话身份。
 func bindRuntimeRecoveryFixture(t *testing.T, r *Runtime, plan session.ToolRecoveryPlan) {
 	t.Helper()

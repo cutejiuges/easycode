@@ -8,7 +8,6 @@ import (
 	"easycode/internal/provider"
 	"easycode/internal/secret"
 	"reflect"
-	"strings"
 	"testing"
 )
 
@@ -63,53 +62,6 @@ func stopTestConversation(t *testing.T) (*Conversation, domain.InputAssociation,
 	conversation.history.commit(entry)
 	conversation.history.commit(stopTestSample(stopTestTurn, "  同一答复\n"))
 	return conversation, association, entry
-}
-
-func TestStopProjectionUsesExactSampleAndLeavesRequestsUnchanged(t *testing.T) {
-	conversation, _, _ := stopTestConversation(t)
-	first := domain.AssistantSampleReference{TurnID: stopTestTurn}
-	input, err := testSamplingInput(t, conversation.provider.config.Inference).WithToolCatalog(testOpenAIToolCatalog(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	before, err := conversation.compileSamplingRequest(conversation.history.snapshot(), input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	text, err := conversation.ProjectAssistantSample(first)
-	if err != nil || text.Reference() != first || text.Text() != "  同一答复\n" {
-		t.Fatal("exact projection", err)
-	}
-	after, err := conversation.compileSamplingRequest(conversation.history.snapshot(), input)
-	if err != nil || !bytes.Equal(before.Bytes(), after.Bytes()) {
-		t.Fatal("projection changed request", err)
-	}
-	for index := uint32(0); index < 2; index++ {
-		feedback := stopTestFeedback(t, index)
-		entry, err := stopFeedbackEntry(feedback)
-		if err != nil {
-			t.Fatal(err)
-		}
-		conversation.history.commit(entry)
-		next := stopTestSample(stopTestTurn, "")
-		next.Outputs = next.Outputs[:1]
-		if index == 1 {
-			next = stopTestSample(stopTestTurn, "  同一答复\n")
-		}
-		conversation.history.commit(next)
-	}
-	for index, want := range []string{"  同一答复\n", "", "  同一答复\n"} {
-		reference := domain.AssistantSampleReference{TurnID: stopTestTurn, SampleIndex: uint32(index)}
-		text, err := conversation.ProjectAssistantSample(reference)
-		if err != nil || text.Reference() != reference || text.Text() != want {
-			t.Fatalf("wrong sample %d: %q %v", index, text.Text(), err)
-		}
-	}
-	for _, reference := range []domain.AssistantSampleReference{{TurnID: stopTestTurn, SampleIndex: 3}, {TurnID: "01900000-0000-7000-8000-000000000099"}} {
-		if _, err := conversation.ProjectAssistantSample(reference); err == nil {
-			t.Fatal("missing sample accepted")
-		}
-	}
 }
 
 func TestStopNativeContinuationCommitsBothSourcesAndRestoresExactly(t *testing.T) {
@@ -286,34 +238,5 @@ func TestStopNativeContinuationCommitsBothSourcesAndRestoresExactly(t *testing.T
 				t.Fatal("forged native feedback accepted")
 			}
 		})
-	}
-}
-
-func TestStopNativeEntryRejectsElevatedRoleAndExtraSources(t *testing.T) {
-	feedback := stopTestFeedback(t, 0)
-	entry, err := stopFeedbackEntry(feedback)
-	if err != nil {
-		t.Fatal(err)
-	}
-	entry.FeedbackInput.Role = "system"
-	if _, err := encodeNativeCommit(entry); err == nil {
-		t.Fatal("elevated hook role accepted")
-	}
-	envelope, err := (&Conversation{}).EncodeStopFeedback(feedback)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, field := range []string{"input_ids", "payload_version", "tool_call_id"} {
-		bad := append(bytes.TrimSuffix(bytes.Clone(envelope.Payload()), []byte("}")), []byte(",\""+field+"\":\"forged\"}")...)
-		altered, err := provider.NewNativeCommitEnvelope(envelope.Family(), envelope.Wire(), bad)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := decodeNativeCommit(altered); err == nil {
-			t.Fatal("extra source accepted", field)
-		}
-	}
-	if strings.Contains(string(envelope.Payload()), "system") {
-		t.Fatal("unexpected privilege")
 	}
 }

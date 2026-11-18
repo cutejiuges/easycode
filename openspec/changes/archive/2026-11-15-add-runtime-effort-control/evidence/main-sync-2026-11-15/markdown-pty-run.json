@@ -1,7 +1,0 @@
-{
-  "command": "python3 scripts/markdown-transcript-smoke.py",
-  "started_at": "2026-11-15T12:03:24.253408+00:00",
-  "exit_code": 0,
-  "elapsed_seconds": 2.74,
-  "log": "markdown-pty-run.log"
-}

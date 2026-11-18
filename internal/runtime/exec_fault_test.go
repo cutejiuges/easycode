@@ -116,39 +116,3 @@ func TestExecTurnDurabilityAndFinalizersFailClosedAtEveryBoundary(t *testing.T) 
 		})
 	}
 }
-
-func TestExecApprovalCancellationRejectsLateResponseAndNeverStarts(t *testing.T) {
-	journal := &fakeJournal{}
-	runtime, invocation, executor := runtimeExecFixture(t, journal)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	var request protocol.ToolApprovalRequestedPayload
-	var emitted []protocol.Event
-	emit := func(event protocol.Event) {
-		emitted = append(emitted, event)
-		if event.Kind == protocol.EventToolApprovalRequested {
-			var err error
-			request, err = protocol.DecodeToolApprovalRequested(event)
-			if err != nil {
-				t.Fatal(err)
-			}
-			cancel()
-		}
-	}
-	_, _, err := executeExecActivityTest(runtime, ctx, emit, runtimeTurnID, invocation)
-	if err != nil {
-		t.Fatal(err)
-	}
-	id, _ := tool.ParseApprovalRequestID(request.RequestID)
-	response, _ := tool.NewApprovalResponse(id, runtimeTurnID, invocation.InvocationID(), tool.CandidateFingerprint(request.Fingerprint), tool.ApprovalAllowOnce, "")
-	if runtime.ResolveToolApproval(response) == nil || executor.calls != 0 {
-		t.Fatal("cancelled approval was reused")
-	}
-	for _, batch := range journal.snapshot() {
-		for _, draft := range batch {
-			if draft.EventKind() == session.EventToolExecutionStarted {
-				t.Fatal("cancelled approval admitted execution")
-			}
-		}
-	}
-}

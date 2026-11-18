@@ -340,7 +340,7 @@ stream-json v1 使用专属控制行（完整行最多 4 KiB）：
 
 活动内容共享 64 KiB/50 项显示预算，选中项优先保留。取消或失败按真实结果提示未保存、已保存但刷新失败、保存状态不确定；下一 turn 释放上一份失败快照。主线先排除推理再取最近 50 项，完整历史仍在详情分页。阅读、原文切换和 resize 不新增模型请求，不改变冻结推理或缓存策略。不发送 sequential_cutoff，也不因展开详情而请求替代正文。
 
-本地验证入口为 `scripts/reasoning-smoke.py`、`scripts/reasoning-controls-smoke.py`（Darwin 双 Provider 真实 PTY），以及 `internal/app/reasoning_e2e_test.go`、`internal/app/reasoning_controls_e2e_test.go`（双 Provider 三种 headless 模式）。新增 `internal/app/reasoning_cli_e2e_test.go` 使用真实二进制验证工具续写、跨进程恢复、参数拒绝和非法配置，`internal/app/reasoning_malformed_stream_test.go` 验证重复 JSON 成员不会变成成功样本或工具执行；完整结果见[回归记录](openspec/changes/archive/2026-11-11-add-provider-reasoning-controls/regression-2026-11-11.md)。不以 Darwin 验收宣称其他平台的原生终端支持。
+本地验证入口为 `scripts/reasoning-smoke.py`、`scripts/reasoning-controls-smoke.py`（Darwin 双 Provider 真实 PTY），以及 `internal/app/reasoning_e2e_test.go`（双 Provider 三种 headless 模式）和两家 Provider 的 `reasoning_request_test.go`、`reasoning_restore_test.go`。历史 CLI、非法配置和异常流矩阵已在测试精简中移除，当时结论见[回归记录](openspec/changes/archive/2026-11-11-add-provider-reasoning-controls/regression-2026-11-11.md)；现有关键集合见[测试维护说明](docs/testing.md)。不以 Darwin 验收宣称其他平台的原生终端支持。
 
 ## 架构概览
 
@@ -554,7 +554,7 @@ exit 0 的空白或 `{}` 表示通过；只有严格 `{"decision":"block","reaso
 
 完整质量门使用 `make verify`，包含分支策略、格式、vet、Staticcheck、架构边界、测试调度器自检、全量普通测试和经审计的必要 race。质量门需要 Python 3.9+，默认不限制总耗时（`TEST_BUDGET=0`），每次强制重新执行测试。正值总预算仅供主动诊断。Go 的正常构建缓存仍可复用；依赖和工具链需提前准备好。`TEST_TIMEOUT` 保留单个测试进程的失败上限，不修改各业务操作的取消或超时断言。
 
-测试入口在 Darwin 默认最多运行 6 个命令（不超过可见 CPU 数的两倍），其他平台最多 4 个且不超过可见 CPU 数；每个测试进程使用 2 路 CPU/测试并行度。编译与静态分析独立使用最多 4 路 CPU，测试枚举的构建命令也最多并行 4 个包。app 的顶层测试在 Darwin 自动分为 16 个隔离分片，其他平台默认 2 个。Linux CI 使用 4 个命令、2 个 app 分片，手动 workflow 可比较进程数、分片数和进程内并行度。Provider、Session、Runtime、Tool、TUI 六个高 RSS 包额外共享最多 2 个执行槽，并提前与 app 分片交错；`--heavy-jobs` 可调整该上限。其余包同样受总并发上限约束，普通与 race 阶段顺序执行，`make -j` 不会同时启动两个阶段。枚举时为每个包链接一次测试二进制，同一阶段的分片复用该文件并保持包目录与 TestMain 生命周期，结束后删除临时二进制。全部 Test、Example 和默认 fuzz seed 都从当前平台自动枚举，普通阶段完整执行；race 仅移出 `scripts/race_policy.json` 中精确列出的已审计入口。清单记录理由和保留覆盖，新增测试默认进入 race，失效名称或缺失替代覆盖会报错。实际完成清单必须与所选集合匹配，报告同时保留完整集合和排除项。
+测试入口在 Darwin 默认最多运行 6 个命令（不超过可见 CPU 数的两倍），其他平台最多 4 个且不超过可见 CPU 数；每个测试进程使用 2 路 CPU/测试并行度。编译与静态分析独立使用最多 4 路 CPU，测试枚举的构建命令也最多并行 4 个包。app 的顶层测试在 Darwin 自动分为 16 个隔离分片，其他平台默认 2 个。Linux CI 使用 4 个命令、2 个 app 分片，手动 workflow 可比较进程数、分片数和进程内并行度。Provider、Session、Runtime、Tool、TUI 六个高 RSS 包额外共享最多 2 个执行槽，并提前与 app 分片交错；`--heavy-jobs` 可调整该上限。其余包同样受总并发上限约束，普通与 race 阶段顺序执行，`make -j` 不会同时启动两个阶段。枚举时为每个包链接一次测试二进制，同一阶段的分片复用该文件并保持包目录与 TestMain 生命周期，结束后删除临时二进制。全部 Test、Example 和默认 fuzz seed 都从当前平台自动枚举，普通阶段完整执行；race 只运行 `scripts/race_policy.json` 正向列出的关键并发、提交取消和关闭恢复入口。新增普通测试不自动进入 race；清单重复或失效会报错，`make test-race-full` 仍可手动运行现存全部入口。实际完成清单必须与所选集合匹配，报告同时保留完整集合和排除项。
 
 执行开始时会打印临时报告目录，`summary.json` 保存阶段耗时、慢测试、执行清单、退出码、输入摘要与最大单个子进程 RSS（不是所有并发进程 RSS 之和），各分片保留原始 Go JSON 事件。失败、中断或预算超时会停止新工作并回收本次进程树。CI 上传相同报告，提供手动触发入口；性能验收以禁用测试结果缓存的完整流程为准。
 
@@ -602,7 +602,7 @@ make verify
 make test
 make test-race
 
-# 手动执行全量 race，不应用排除清单
+# 手动执行现存全部测试的 race，不限制为关键清单
 make test-race-full
 
 # 顺序执行全量普通与默认 race，并指定报告目录
@@ -756,3 +756,5 @@ Session envelope 没有版本字段，headless 仍遵循独立外部协议。旧
 Anthropic 5m 使用 ephemeral 标记并省略 TTL，1h 显式请求 1 小时，可能有更高缓存写入费用；一条活动会话内策略固定。OpenAI thread key 可在同 ThreadID 恢复后保持一致。websocket_auto 可与 key 独立启用：保留 HTTP/SSE，只有同一连接与 durable 原生前缀满足条件才增量续写，始终 store=false。仅生成写入前的明确连接不可用/404/405/426 可回退；鉴权、TLS、重定向、取消或生成写入后错误不自动重发。
 
 /cache 明确区分配置与已观测状态，恢复后显示 restored_baseline。已知零、unknown、not_applicable 与未观测各自保留；只有适用输入计量全部已知且分母非零才有读取比例。关闭显式策略不代表服务端不会进行隐式缓存；相同 fingerprint 不证明命中，也不保证 TTL、延迟或费用收益。查询不显示真实 key、正文、路径、凭据或 opaque reasoning；一次性 --print/--json 不新增这些输出。
+
+测试及归档精简范围、关键路径与当前验收见[测试维护说明](docs/testing.md)。

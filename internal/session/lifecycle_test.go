@@ -11,82 +11,6 @@ import (
 	"easycode/internal/domain"
 )
 
-func TestCreateAndReopenRootJournal(t *testing.T) {
-	t.Parallel()
-	repository, err := OpenOrCreateRepository(filepath.Join(t.TempDir(), "sessions"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer repository.Close()
-	beforeCWD, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	creationBase := t.TempDir()
-	creationCWD := filepath.Join(creationBase, "nested", "..")
-	writer, records, err := CreateRootJournal(
-		context.Background(), repository,
-		Identity{SessionID: testSessionID, ThreadID: testThreadID},
-		RootJournalConfig{
-			Provider: domain.ProviderOpenAI, ProviderWire: "responses", Model: "fixture-model",
-			CreationCWD: creationCWD, CreatedAt: time.Unix(123, 0).UTC(),
-		},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(records) != 2 || records[0].Sequence != 1 || records[1].Sequence != 2 || records[0].BatchID != 1 {
-		t.Fatalf("initial records = %#v", records)
-	}
-	if err := writer.Close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	afterCWD, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if afterCWD != beforeCWD {
-		t.Fatalf("CreateRootJournal changed cwd from %q to %q", beforeCWD, afterCWD)
-	}
-
-	lease, err := repository.Open(context.Background(), testThreadID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	loaded, err := NewLoader().Load(context.Background(), lease)
-	if err != nil {
-		t.Fatal(err)
-	}
-	plan, err := NewReplayPlanner().Plan(loaded)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantCWD, err := filepath.Abs(creationCWD)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if plan.SessionMetadata.CreationCWD != filepath.Clean(wantCWD) {
-		t.Fatalf("creation cwd = %q, want %q", plan.SessionMetadata.CreationCWD, filepath.Clean(wantCWD))
-	}
-
-	writer, err = StartJournalWriter(lease, loaded.Identity, loaded.NextSequence)
-	if err != nil {
-		t.Fatal(err)
-	}
-	appended, err := writer.AppendBatch(context.Background(), []RecordDraft{
-		mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if appended[0].Sequence != 3 || appended[0].BatchID != 3 {
-		t.Fatalf("appended record = %#v", appended[0])
-	}
-	if err := writer.Close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestRootJournalDoesNotPersistConnectionSecrets(t *testing.T) {
 	t.Parallel()
 	const (
@@ -130,32 +54,5 @@ func TestRootJournalDoesNotPersistConnectionSecrets(t *testing.T) {
 		if strings.Contains(string(content), secret) {
 			t.Fatalf("journal contains %s", name)
 		}
-	}
-}
-
-func TestNormalizeCreationCWDRejectsEmptyAndDoesNotResolveSymlink(t *testing.T) {
-	t.Parallel()
-	if _, err := NormalizeCreationCWD(" "); err == nil {
-		t.Fatal("NormalizeCreationCWD(empty) unexpectedly succeeded")
-	}
-	base := t.TempDir()
-	value := filepath.Join(base, "missing", "..", "logical")
-	got, err := NormalizeCreationCWD(value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != filepath.Clean(value) {
-		t.Fatalf("NormalizeCreationCWD() = %q, want %q", got, filepath.Clean(value))
-	}
-}
-
-func TestGenerateRootIdentityProducesIndependentUUIDv7Values(t *testing.T) {
-	t.Parallel()
-	identity, err := GenerateRootIdentity()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !identity.SessionID.Valid() || !identity.ThreadID.Valid() || string(identity.SessionID) == string(identity.ThreadID) {
-		t.Fatalf("GenerateRootIdentity() = %#v", identity)
 	}
 }

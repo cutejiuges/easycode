@@ -1,7 +1,0 @@
-fuzz: elapsed: 0s, gathering baseline coverage: 0/8 completed
-fuzz: elapsed: 0s, gathering baseline coverage: 8/8 completed, now fuzzing with 10 workers
-fuzz: elapsed: 3s, execs: 153796 (51162/sec), new interesting: 116 (total: 124)
-fuzz: elapsed: 6s, execs: 171960 (6064/sec), new interesting: 132 (total: 140)
-fuzz: elapsed: 6s, execs: 171960 (0/sec), new interesting: 132 (total: 140)
-PASS
-ok  	easycode/internal/tui	6.979s

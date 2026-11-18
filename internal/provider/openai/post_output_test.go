@@ -54,9 +54,7 @@ func postProviderFixture(t *testing.T, capability domain.HookCapability) (tool.I
 	}
 	return result, call
 }
-func postProviderOutput(t *testing.T, result tool.InvocationResult) tool.ModelOutput {
-	return postProviderOutputAtCut(t, result, "completed")
-}
+
 func postProviderOutputAtCut(t *testing.T, result tool.InvocationResult, cut string) tool.ModelOutput {
 	t.Helper()
 	event := domain.HookPostToolUse

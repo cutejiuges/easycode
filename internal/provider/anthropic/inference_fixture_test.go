@@ -13,12 +13,3 @@ func testInference(t *testing.T, output uint64) domain.InferenceSettings {
 	}
 	return s
 }
-
-func testWrongFamilyInference(t *testing.T) domain.InferenceSettings {
-	t.Helper()
-	s, err := domain.DefaultInferenceSettings(domain.ProviderOpenAI)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return s
-}

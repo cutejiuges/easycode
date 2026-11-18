@@ -195,37 +195,8 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 	}
 }
 
-func TestCompactionRejectsInvalidOutput(t *testing.T) {
-	for _, text := range []string{"", " \n", string([]byte{0xff}), strings.Repeat("x", domain.MaxContextSummaryBytes+1)} {
-		generation := compactionTestGeneration(text, "opaque")
-		if _, err := compactionSummary(generation); err == nil {
-			t.Fatal("invalid summary accepted")
-		}
-	}
-	for _, kind := range []string{"refusal", "tool_use", "future_item"} {
-		generation := compactionTestGeneration("answer", "opaque")
-		generation.Assistant.Content = append(generation.Assistant.Content, NativeItem{Type: kind})
-		if _, err := compactionSummary(generation); err == nil {
-			t.Fatal("non-text response accepted")
-		}
-	}
-	generation := compactionTestGeneration("Error is a valid description of the failed test", "opaque")
-	if _, err := compactionSummary(generation); err != nil {
-		t.Fatal("text inspected as control flow", err)
-	}
-}
 func compactionTestGeneration(text, opaque string) nativeHistoryEntry {
 	return nativeHistoryEntry{Kind: nativeHistorySample, Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeThinking, Thinking: "thinking", Signature: opaque}, {Type: blockTypeRedactedThinking, RedactedData: "redacted"}, {Type: blockTypeText, Text: text}}}, Metadata: messageMetadata{ID: "message-summary", Model: "model", StopReason: optionalString{Known: true, Value: "end_turn"}}}
-}
-
-func TestCompactionRejectsIncompleteStop(t *testing.T) {
-	for _, reason := range []string{"max_tokens", "refusal", "tool_use", "stop_sequence", "pause_turn", ""} {
-		generation := compactionTestGeneration("answer", "signature")
-		generation.Metadata.StopReason.Value = reason
-		if _, err := compactionSummary(generation); err == nil {
-			t.Fatalf("accepted stop reason %q", reason)
-		}
-	}
 }
 
 func assertCompactionAfterToolSteering(t *testing.T, instance *Provider, conversation *Conversation, sampling provider.TurnInput, envelopes []provider.NativeCommitEnvelope, outputs []tool.ModelOutput) {

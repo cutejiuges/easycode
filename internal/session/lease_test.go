@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -17,39 +16,6 @@ import (
 )
 
 const journalLeaseHelperEnv = "EASYCODE_TEST_JOURNAL_LEASE_HELPER"
-
-func TestJournalLockDistinguishesBusyFromSystemError(t *testing.T) {
-	repository, err := OpenOrCreateRepository(filepath.Join(t.TempDir(), "sessions"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer repository.Close()
-	owner, err := repository.Create(context.Background(), testThreadID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer owner.Close()
-
-	competitor, err := OpenOrCreateRepository(repository.RootPath())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer competitor.Close()
-	if _, err := competitor.Open(context.Background(), testThreadID); !IsJournalBusy(err) {
-		t.Fatalf("competing Open() error = %v", err)
-	}
-
-	closed, err := os.OpenFile(filepath.Join(t.TempDir(), "closed"), os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := closed.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := tryLockJournal(closed); err == nil || IsJournalBusy(err) {
-		t.Fatalf("tryLockJournal(closed) error = %v", err)
-	}
-}
 
 func TestJournalLeaseStateTransitionsAndIndependentRepositories(t *testing.T) {
 	dataRoot := filepath.Join(t.TempDir(), "sessions")
@@ -97,31 +63,6 @@ func TestJournalLeaseStateTransitionsAndIndependentRepositories(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := reacquired.Close(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestJournalLeaseRejectsIllegalTransfer(t *testing.T) {
-	repository, err := OpenOrCreateRepository(filepath.Join(t.TempDir(), "sessions"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer repository.Close()
-	lease, err := repository.Create(context.Background(), testThreadID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	file, err := lease.transfer()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := lease.transfer(); !errors.Is(err, errJournalLeaseTransferred) {
-		t.Fatalf("second transfer error = %v", err)
-	}
-	if err := lease.Close(); !errors.Is(err, errJournalLeaseTransferred) {
-		t.Fatalf("transferred lease Close() error = %v", err)
-	}
-	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
 }

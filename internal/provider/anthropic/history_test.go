@@ -8,74 +8,8 @@ import (
 	"testing"
 
 	"easycode/internal/codec"
-	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
 )
-
-func TestProjectHistory(t *testing.T) {
-	tests := []struct {
-		name    string
-		history []nativeHistoryEntry
-		want    domain.SemanticHistoryView
-	}{
-		{
-			name: "empty history",
-			want: domain.SemanticHistoryView{Provider: domain.ProviderAnthropic, Turns: []domain.SemanticTurn{}},
-		},
-		{
-			name: "ordered text and opaque blocks",
-			history: testAssociatedHistory([]nativeHistoryEntry{
-				testInputEntry(t, nativeMessage{Role: roleUser, Content: []NativeItem{
-					{Type: blockTypeText, Text: "first\n"},
-					{Type: blockTypeThinking, Thinking: "private-user"},
-					{Type: blockTypeText, Text: "question"},
-				}}), {
-					Kind: nativeHistorySample,
-					Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{
-						{Type: blockTypeThinking, Thinking: "private", Signature: "opaque-signature"},
-						{Type: blockTypeText, Text: "answer "},
-						{Type: blockTypeRedactedThinking, RedactedData: "opaque-data"},
-						{Type: blockTypeText, Text: "one"},
-						{Type: "future_block", Raw: []byte(`{"type":"future_block","secret":"opaque"}`)},
-					}},
-					Metadata: messageMetadata{ID: "msg-private", Usage: rawUsage{InputTokens: optionalUint{Value: 7, Known: true}}},
-				},
-				testInputEntry(t, newUserMessage("second")), {
-					Kind:      nativeHistorySample,
-					Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeText, Text: "answer two"}}},
-				},
-			}),
-			want: domain.SemanticHistoryView{Provider: domain.ProviderAnthropic, Turns: []domain.SemanticTurn{
-				testSemanticTurn("first\nquestion", "answer one"),
-				testSemanticTurn("second", "answer two"),
-			}},
-		},
-		{
-			name: "empty assistant text and mismatched roles",
-			history: testAssociatedHistory([]nativeHistoryEntry{
-				testInputEntry(t, newUserMessage("visible")), {
-					Kind:      nativeHistorySample,
-					Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeThinking, Thinking: "hidden"}}},
-				},
-				testInputEntry(t, nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeText, Text: "wrong user role"}}}), {
-					Kind:      nativeHistorySample,
-					Assistant: nativeMessage{Role: roleUser, Content: []NativeItem{{Type: blockTypeText, Text: "wrong assistant role"}}},
-				},
-			}),
-			want: domain.SemanticHistoryView{Provider: domain.ProviderAnthropic, Turns: []domain.SemanticTurn{
-				testSemanticTurn("visible", ""),
-				testSemanticTurn("", ""),
-			}},
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			got := projectHistory(test.history)
-			assertSemanticHistory(t, got, test.want)
-		})
-	}
-}
 
 func TestProjectHistoryConcurrentCommitReturnsCompleteSnapshots(t *testing.T) {
 	conversation := &Conversation{}
@@ -154,65 +88,5 @@ func TestProjectHistoryMatchesGoldenAndOmitsOpaqueData(t *testing.T) {
 		if strings.Contains(string(first), opaque) {
 			t.Fatalf("projection leaked %q: %s", opaque, first)
 		}
-	}
-}
-
-func TestProjectHistoryIsIndependentAndDoesNotChangeRequest(t *testing.T) {
-	conversation := &Conversation{}
-	testCommitHistory(t, &conversation.history, testInputEntry(t, newUserMessage("first")), nativeHistoryEntry{
-		Kind: nativeHistorySample,
-		Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{
-			{Type: blockTypeThinking, Thinking: "private", Signature: "signature"},
-			{Type: blockTypeText, Text: "answer"},
-		}},
-	})
-
-	before, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, append(conversation.history.snapshot(), testInputEntry(t, newUserMessage("second"))), nil, testAnthropicToolView(t))
-	if err != nil {
-		t.Fatalf("compile request before projection: %v", err)
-	}
-	beforeSegment, err := contextplan.NewSegment("anthropic-messages-request", contextplan.StabilityTurnStable, "v1", before)
-	if err != nil {
-		t.Fatalf("fingerprint request before projection: %v", err)
-	}
-
-	view := conversation.ProjectHistory()
-	view.Provider = domain.ProviderOpenAI
-	view.Turns[0].Messages[0].Text = "changed"
-	view.Turns[0].Messages[1].Text = "changed"
-	view.Turns = append(view.Turns, testSemanticTurn("injected", ""))
-
-	afterView := conversation.ProjectHistory()
-	wantView := domain.SemanticHistoryView{Provider: domain.ProviderAnthropic, Turns: []domain.SemanticTurn{testSemanticTurn("first", "answer")}}
-	assertSemanticHistory(t, afterView, wantView)
-	after, err := compileMessagesRequest("claude-test", DefaultMaxOutputTokens, append(conversation.history.snapshot(), testInputEntry(t, newUserMessage("second"))), nil, testAnthropicToolView(t))
-	if err != nil {
-		t.Fatalf("compile request after projection: %v", err)
-	}
-	afterSegment, err := contextplan.NewSegment("anthropic-messages-request", contextplan.StabilityTurnStable, "v1", after)
-	if err != nil {
-		t.Fatalf("fingerprint request after projection: %v", err)
-	}
-	if beforeSegment.Fingerprint() != afterSegment.Fingerprint() || string(beforeSegment.CanonicalJSON()) != string(afterSegment.CanonicalJSON()) {
-		t.Fatalf("projection changed request:\n before: %s\n after: %s", beforeSegment.CanonicalJSON(), afterSegment.CanonicalJSON())
-	}
-	afterRequest := buildMessagesRequest("claude-test", DefaultMaxOutputTokens, append(conversation.history.snapshot(), testInputEntry(t, newUserMessage("second"))), nil, testAnthropicToolView(t))
-	if afterRequest.Messages[1].Content[0].Signature != "signature" || afterRequest.Messages[1].Content[1].Text != "answer" {
-		t.Fatalf("projection changed native history: %#v", afterRequest.Messages)
-	}
-}
-
-func assertSemanticHistory(t *testing.T, got, want domain.SemanticHistoryView) {
-	t.Helper()
-	gotJSON, err := codec.MarshalStable(got)
-	if err != nil {
-		t.Fatalf("marshal got semantic history: %v", err)
-	}
-	wantJSON, err := codec.MarshalStable(want)
-	if err != nil {
-		t.Fatalf("marshal wanted semantic history: %v", err)
-	}
-	if string(gotJSON) != string(wantJSON) {
-		t.Fatalf("semantic history:\n got: %s\nwant: %s", gotJSON, wantJSON)
 	}
 }

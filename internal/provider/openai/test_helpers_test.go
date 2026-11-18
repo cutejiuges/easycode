@@ -81,12 +81,6 @@ func nativeItemPointer(item NativeItem) *NativeItem {
 	return &owned
 }
 
-func testSampleEntry(outputs []NativeItem) nativeHistoryEntry {
-	return nativeHistoryEntry{
-		Kind: nativeHistorySample, Outputs: cloneNativeItems(outputs), Usage: rawUsage{},
-	}
-}
-
 // catalogWritePreparer 只用于验证目录装配，测试不会通过它访问文件系统。
 type catalogWritePreparer struct{}
 

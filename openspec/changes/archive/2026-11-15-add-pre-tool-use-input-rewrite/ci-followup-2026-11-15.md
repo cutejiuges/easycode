@@ -12,10 +12,10 @@
 
 ## 实际验证与平台边界
 
-- 修复前，使用仓库锁定版本、为宿主构建的 Staticcheck 分析器，在 `GOOS=linux GOARCH=amd64` 下复现同一条 U1000；见 [linux-staticcheck-before.log](evidence/ci-followup-2026-11-15/linux-staticcheck-before.log)。
-- 修复后，Darwin/arm64、Linux/amd64 的全库 Staticcheck 均通过；见 [staticcheck-contexts.json](evidence/ci-followup-2026-11-15/staticcheck-contexts.json)。
-- 两个实际调用该辅助函数的 Darwin 后置执行回归均重新通过；见 [命令与退出码](evidence/ci-followup-2026-11-15/darwin-post-regression.json)、[输出](evidence/ci-followup-2026-11-15/darwin-post-regression.log)。
-- Windows/amd64 全库 Staticcheck 仍有 53 条 U1000。对父基线 `8492ec25c489605f7ef6a3b42f15b86842f8717e` 的临时只读快照执行同一分析，结果集合完全相同，新增为零；见 [基线对照](evidence/ci-followup-2026-11-15/windows-staticcheck-baseline.json)、[原始基线](evidence/ci-followup-2026-11-15/windows-staticcheck-main-baseline.log)。本次不扩大为既有 Windows 支持范围的整改，也不声称 Windows 全库静态检查通过。
+- 修复前，使用仓库锁定版本、为宿主构建的 Staticcheck 分析器，在 `GOOS=linux GOARCH=amd64` 下复现同一条 U1000；见 linux-staticcheck-before.log。
+- 修复后，Darwin/arm64、Linux/amd64 的全库 Staticcheck 均通过；见 staticcheck-contexts.json。
+- 两个实际调用该辅助函数的 Darwin 后置执行回归均重新通过；见 命令与退出码、输出。
+- Windows/amd64 全库 Staticcheck 仍有 53 条 U1000。对父基线 `8492ec25c489605f7ef6a3b42f15b86842f8717e` 的临时只读快照执行同一分析，结果集合完全相同，新增为零；见 基线对照、原始基线。本次不扩大为既有 Windows 支持范围的整改，也不声称 Windows 全库静态检查通过。
 
 宿主分析器执行跨目标静态分析，不代表目标平台原生测试。完整本地 `make verify` 由正常 pre-commit/pre-push hooks 执行；Linux 原生结果以 [PR #40](https://github.com/cutejiuges/easycode/pull/40) 最新提交的 Ubuntu 检查为准。此前归档证据原样保留，本记录补充其平台验证范围。
 

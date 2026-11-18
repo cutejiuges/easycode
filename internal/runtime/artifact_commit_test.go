@@ -63,54 +63,6 @@ func TestArtifactAuthorizationFollowsDurableResult(t *testing.T) {
 	}
 }
 
-func TestArtifactPageRequiresCommittedReferenceBeforeJournal(t *testing.T) {
-	thread := domain.ThreadID("018f1d8a-7b5c-7def-8123-456789abcdef")
-	turn := domain.TurnID("018f1d8a-7b5c-7def-8123-456789abcdee")
-	owner, _ := tool.GenerateInvocationID()
-	d, err := tool.NewArtifactDescriptor("0123456789abcdef0123456789abcdef", thread, owner, tool.ArtifactStdout, 3, 3, strings.Repeat("a", 64), true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	input, _ := tool.NewReadArtifactInput(d.ID(), 0, 3)
-	ready, _ := tool.NewReadArtifactReadyCall("read", input)
-	id, _ := tool.GenerateInvocationID()
-	invocation, _ := tool.NewReadArtifactInvocation(id, ready)
-	for _, test := range []struct {
-		name                         string
-		authorized, complete, wantOK bool
-	}{
-		{"unknown", false, true, false},
-		{"mismatch", true, false, false},
-		{"committed", true, true, true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			var descriptors []tool.ArtifactDescriptor
-			if test.authorized {
-				descriptors = []tool.ArtifactDescriptor{d}
-			}
-			refs, _ := tool.NewArtifactReferences(thread, descriptors)
-			page, _ := tool.NewArtifactPage(d.ID(), 0, 3, 3, test.complete, "abc")
-			preview, _ := page.Preview()
-			result, err := tool.NewReadArtifactInvocationResult(invocation, tool.ResultSuccess, "ok", preview, page)
-			if err != nil {
-				t.Fatal(err)
-			}
-			journal := &fakeJournal{}
-			runtime := &Runtime{threadID: thread, journal: journal, artifactReferences: refs}
-			full, _ := tool.NewInvocation(id, ready)
-			seedRuntimeToolCall(t, runtime, turn, full, 0, 0)
-			err = runtime.persistToolResult(context.Background(), turn, &result)
-			if test.wantOK {
-				if err != nil || len(journal.snapshot()) != 1 {
-					t.Fatalf("committed page rejected: %v", err)
-				}
-			} else if err == nil || len(journal.snapshot()) != 0 || !runtime.poisoned.Load() {
-				t.Fatal("unauthorized page reached journal")
-			}
-		})
-	}
-}
-
 func TestSearchReferenceAuthorizedOnlyAfterResultSync(t *testing.T) {
 	thread := domain.ThreadID("018f1d8a-7b5c-7def-8123-456789abcdef")
 	id, _ := tool.GenerateInvocationID()

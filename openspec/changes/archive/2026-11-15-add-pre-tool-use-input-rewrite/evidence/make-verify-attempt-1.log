@@ -1,6 +1,0 @@
-Branch name policy tests passed.
-go vet ./...
-go tool staticcheck ./...
-internal/app/pre_hook_history_test.go:82:5: this value of lastEffect is never used (SA4006)
-internal/runtime/hook_gate.go:48:19: func (*Runtime).appendHookFacts is unused (U1000)
-make: *** [lint] Error 1

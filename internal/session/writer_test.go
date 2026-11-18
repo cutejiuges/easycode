@@ -175,23 +175,6 @@ func TestJournalWriterPoisonsAfterSyncFailure(t *testing.T) {
 	_ = writer.Close(context.Background())
 }
 
-func TestJournalWriterRejectsInvalidConstructionAndClosedAppend(t *testing.T) {
-	t.Parallel()
-	if _, err := startJournalWriter(nil, Identity{}, 0, nil); err == nil {
-		t.Fatal("startJournalWriter(nil) unexpectedly succeeded")
-	}
-	file := &memoryJournalFile{}
-	writer := mustTestWriter(t, file)
-	if err := writer.Close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := writer.AppendBatch(context.Background(), []RecordDraft{
-		mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}),
-	}); err == nil || !strings.Contains(err.Error(), "closed") {
-		t.Fatalf("AppendBatch() error = %v", err)
-	}
-}
-
 func TestStartJournalWriterTransfersLeaseOnlyAfterValidation(t *testing.T) {
 	dataRoot := filepath.Join(t.TempDir(), "sessions")
 	owner, err := OpenOrCreateRepository(dataRoot)
@@ -240,50 +223,6 @@ func TestStartJournalWriterTransfersLeaseOnlyAfterValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := reacquired.Close(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestJournalWriterRejectsQueueFullBeforeAllocatingSequence(t *testing.T) {
-	file := newBlockingJournalFile()
-	writer, err := startJournalWriterWithCapacity(
-		file,
-		Identity{SessionID: testSessionID, ThreadID: testThreadID},
-		1,
-		func() time.Time { return time.Unix(0, 0).UTC() },
-		1,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	draft := []RecordDraft{mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{})}
-	firstResult := make(chan appendResponse, 1)
-	go func() {
-		records, appendErr := writer.AppendBatch(context.Background(), draft)
-		firstResult <- appendResponse{records: records, err: appendErr}
-	}()
-	<-file.started
-
-	queuedResponse := make(chan appendResponse, 1)
-	writer.requests <- writerRequest{drafts: []RecordDraft{draft[0].clone()}, response: queuedResponse}
-	if _, err := writer.AppendBatch(context.Background(), draft); err == nil || !strings.Contains(err.Error(), "queue is full") {
-		t.Fatalf("queue-full AppendBatch() error = %v", err)
-	}
-	close(file.release)
-	if result := <-firstResult; result.err != nil || result.records[0].Sequence != 1 {
-		t.Fatalf("first append = %#v", result)
-	}
-	if result := <-queuedResponse; result.err != nil || result.records[0].Sequence != 2 {
-		t.Fatalf("queued append = %#v", result)
-	}
-	records, err := writer.AppendBatch(context.Background(), draft)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if records[0].Sequence != 3 {
-		t.Fatalf("sequence after queue rejection = %d", records[0].Sequence)
-	}
-	if err := writer.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 }

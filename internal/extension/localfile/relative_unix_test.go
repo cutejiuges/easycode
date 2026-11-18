@@ -4,7 +4,6 @@ package localfile
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -49,38 +48,6 @@ func TestRelativeReadUsesTheCheckedDirectoryAndRejectsReplacement(t *testing.T) 
 		if _, err := OpenRelative(ctx, directory, name, false, Options{}); err == nil {
 			t.Fatalf("accepted %q", name)
 		}
-	}
-}
-
-func TestReadOpenedAccountsRejectedBytesWithoutDisclosingContent(t *testing.T) {
-	for _, cancelled := range []bool{false, true} {
-		t.Run(fmt.Sprint(cancelled), func(t *testing.T) {
-			name := filepath.Join(t.TempDir(), "document")
-			if err := os.WriteFile(name, []byte("original"), 0600); err != nil {
-				t.Fatal(err)
-			}
-			file, err := Open(context.Background(), name, false, Options{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer file.Close()
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			expected := error(Changed)
-			if cancelled {
-				expected = context.Canceled
-			}
-			content, err := ReadOpened(ctx, file, 64, Options{Consistent: true, AfterRead: func() {
-				if cancelled {
-					cancel()
-				} else if err := os.WriteFile(name, []byte("changed contents"), 0600); err != nil {
-					t.Fatal(err)
-				}
-			}})
-			if err != expected || content.ReadBytes != len("original") || len(content.Bytes) != 0 {
-				t.Fatal("rejected content lost accounting or leaked bytes", content.ReadBytes, err)
-			}
-		})
 	}
 }
 

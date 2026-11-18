@@ -1,5 +1,7 @@
 # PostToolUseFailure 实现与验收
 
+> 历史日志、运行清单和诊断转储已清理，仅保留文字结论；当前验收以现存测试及质量门为准。
+
 > 后续 Windows helper 平台标签修复与质量门重跑见 [追加验收](windows-helper-regression-2026-11-11.md)。下文保留当次结果，包括修复前 Windows 测试编译失败。
 
 > 2026-11-11 后续独立回归发现并修复了审查消息编码预算问题，新增 36 个端到端用例；见 [独立回归报告](regression-2026-11-11.md)。下文保留首次验收快照，不替代后续结果。
@@ -48,8 +50,8 @@ python3 scripts/smoke-hooks.py /tmp/easycode-failure-app.test --event PostToolUs
 
 | Provider | 实际原始输出 | 状态与阶段 | bytes | SHA-256 |
 | --- | --- | --- | --- | --- |
-| OpenAI | [openai-failure.pty.log](evidence/openai-failure.pty.log) | [exit=0，22 阶段](evidence/openai-failure.json) | 13422 | `9ac03eab5cae301d7e957598e296d1e3e38361b508cb6e75d620a59cdcdc971e` |
-| Anthropic | [anthropic-failure.pty.log](evidence/anthropic-failure.pty.log) | [exit=0，22 阶段](evidence/anthropic-failure.json) | 13424 | `68cc04128527c1ddf8ef3be51665b8f20ab135153e675f6853bbdbd983b6dd3c` |
+| OpenAI | openai-failure.pty.log | exit=0，22 阶段 | 13422 | `9ac03eab5cae301d7e957598e296d1e3e38361b508cb6e75d620a59cdcdc971e` |
+| Anthropic | anthropic-failure.pty.log | exit=0，22 阶段 | 13424 | `68cc04128527c1ddf8ef3be51665b8f20ab135153e675f6853bbdbd983b6dd3c` |
 
 补充回归：相同新版二进制分别执行 `--event PreToolUse` 和 `--event PostToolUse`，两家均以 0 退出；成功检查、默认拒绝、浏览/reset、普通批准及取消流程保持。
 
@@ -66,7 +68,7 @@ go test -race ./internal/executor/process ./internal/tool/builtin -run 'TestOwne
 | 新增 domain/tool/runtime/session/protocol/TUI 与双 Provider 定向测试 | 通过 |
 | 真实 Darwin 沙箱、36 个失败端到端及双 Provider PTY | 通过 |
 | owner/Hook 输出专项 `go test -race ... -count=50` | 通过 |
-| `make verify`：分支规约、gofmt、vet、Staticcheck、架构、全量、race | 通过，exit=0；[实际日志](evidence/quality-gates.log) / [退出状态](evidence/quality-gates.json) |
+| `make verify`：分支规约、gofmt、vet、Staticcheck、架构、全量、race | 通过，exit=0；实际日志 / 退出状态 |
 | `openspec validate add-post-tool-use-failure-hooks --strict` | 通过 |
 | `openspec validate --specs --strict` | 55 个主规格通过，0 失败；长 requirement 信息提示保留 |
 | `GOOS=linux GOARCH=amd64 go test -exec=true ./...` | 编译通过，没有运行 Linux 二进制 |

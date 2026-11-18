@@ -1,5 +1,7 @@
 # 工作区文件引用验收记录
 
+> 历史日志、运行清单和诊断转储已清理，仅保留文字结论；当前验收以现存测试及质量门为准。
+
 日期：2026-11-17。分支：`feat/workspace-file-mentions`；起始 main 合并基线：`b0387c4`。宿主：Darwin/arm64，macOS 27.2.1，Go 1.24.13，Apple M1 Pro。
 
 全部 47/47 项任务已完成，完整 `make verify` 退出码 0，全量普通与 race 均通过。六份 delta 已同步主规格，62/62 主规格、64/64 全部 changes/specs 严格校验通过；change 已于 2026-11-17 归档。
@@ -58,18 +60,18 @@
 
 | 检查 | 结果 | 原始证据 |
 | --- | --- | --- |
-| `make verify` | 通过，退出码 0；branch policy、gofmt、vet、Staticcheck、架构、全量普通与 race；app 普通 185.399 秒、race 976.885 秒 | [make-verify.txt](evidence/make-verify.txt) |
-| 新文件功能定向 suite | 通过；app 8.214 秒，TUI 0.644 秒 | [file-targeted-tests.txt](evidence/file-targeted-tests.txt) |
-| `go test ./internal/architecture -count=1` | 通过，3.276 秒；新增来源/交互边界与负例 | [architecture-tests.txt](evidence/architecture-tests.txt) |
-| TUI serializer fuzz，5 秒 | 通过，171960 次；原文外部、范围、完整路径往返和字素断言 | [composer-fuzz.txt](evidence/composer-fuzz.txt) |
-| 三项 benchmark，`-benchtime=3x -benchmem` | 通过；性能仅为本机观测 | [benchmarks.txt](evidence/benchmarks.txt) |
-| `python3 scripts/file-mentions-smoke.py` | 4/4 通过，双 Provider × 普通/NO_COLOR；各 3 次模型请求、4 次正文读取、5 次发现；终端属性恢复 | [file-mentions-smoke.json](evidence/file-mentions-smoke.json) |
-| `python3 scripts/effort-smoke.py` | 8/8 通过，全部 passed | [effort-smoke.json](evidence/effort-smoke.json) |
-| `python3 scripts/completion-smoke.py` | 2/2 通过，普通/NO_COLOR、Write 拒绝、终端恢复 | [completion-smoke.json](evidence/completion-smoke.json) |
-| Linux/Windows amd64 app 测试二进制交叉编译 | 两项退出码 0，只编译未运行 | [platform-compilation.txt](evidence/platform-compilation.txt) |
-| 本 change `openspec validate ... --strict` | 通过 | [openspec-change.txt](evidence/openspec-change.txt) |
-| 同步前 `openspec validate --all --strict --json` | 63/63：2 changes、61 specs，通过 | [openspec-all-before-sync.json](evidence/openspec-all-before-sync.json) |
-| 主规格同步及同步后 strict | 新增 1 份、更新 5 份；19 项 ADDED、4 项 MODIFIED；62/62 主规格、64/64 全部项通过 | [spec-sync.json](evidence/spec-sync.json)、[主规格](evidence/openspec-specs-after-sync.json)、[全部项](evidence/openspec-all-after-sync.json)、[change](evidence/openspec-change-final.txt) |
+| `make verify` | 通过，退出码 0；branch policy、gofmt、vet、Staticcheck、架构、全量普通与 race；app 普通 185.399 秒、race 976.885 秒 | make-verify.txt |
+| 新文件功能定向 suite | 通过；app 8.214 秒，TUI 0.644 秒 | file-targeted-tests.txt |
+| `go test ./internal/architecture -count=1` | 通过，3.276 秒；新增来源/交互边界与负例 | architecture-tests.txt |
+| TUI serializer fuzz，5 秒 | 通过，171960 次；原文外部、范围、完整路径往返和字素断言 | composer-fuzz.txt |
+| 三项 benchmark，`-benchtime=3x -benchmem` | 通过；性能仅为本机观测 | benchmarks.txt |
+| `python3 scripts/file-mentions-smoke.py` | 4/4 通过，双 Provider × 普通/NO_COLOR；各 3 次模型请求、4 次正文读取、5 次发现；终端属性恢复 | file-mentions-smoke.json |
+| `python3 scripts/effort-smoke.py` | 8/8 通过，全部 passed | effort-smoke.json |
+| `python3 scripts/completion-smoke.py` | 2/2 通过，普通/NO_COLOR、Write 拒绝、终端恢复 | completion-smoke.json |
+| Linux/Windows amd64 app 测试二进制交叉编译 | 两项退出码 0，只编译未运行 | platform-compilation.txt |
+| 本 change `openspec validate ... --strict` | 通过 | openspec-change.txt |
+| 同步前 `openspec validate --all --strict --json` | 63/63：2 changes、61 specs，通过 | openspec-all-before-sync.json |
+| 主规格同步及同步后 strict | 新增 1 份、更新 5 份；19 项 ADDED、4 项 MODIFIED；62/62 主规格、64/64 全部项通过 | spec-sync.json、主规格、全部项、change |
 
 PTY 每个阶段用键盘、结果、窗口及 Provider/读取屏障握手，不以 sleep 或概率竞态证明正确。第一份读取完成后阻塞返回再改磁盘文件，证明准备与捕获不同；queued 后取回原文再提交读取新内容，再改文件也不改 frozen request。首次候选/接受对正文、Session、Provider 均零写入/调用，忽略规则关闭重开真实刷新，停止产生唯一终态。
 

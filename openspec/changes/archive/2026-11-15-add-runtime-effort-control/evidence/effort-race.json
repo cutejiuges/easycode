@@ -1,4 +1,0 @@
-{
-  "command": "go test -race ./internal/app ./internal/runtime ./internal/tui ./internal/headless ./internal/provider/... -run Effort -count=1 -timeout=90s",
-  "exit_code": 0
-}

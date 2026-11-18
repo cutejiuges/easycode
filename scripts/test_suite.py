@@ -354,9 +354,18 @@ def run_suite(args):
             binaries = Path(binary_directory.name)
             capture = shlex.join([sys.executable, "-B", str(root / "scripts/test_binary.py"), str(binaries)])
             discovery = [*go, "test", "-json", "-list=.", "-p", str(build_jobs), "-exec=" + capture]
+            discovery_packages = ["./..."]
+            race_policy = None
             if mode == "race":
                 discovery.append("-race")
-            discovery.append("./...")
+                if args.race_scope == "focused":
+                    race_policy = load_policy(root / "scripts/race_policy.json")
+                    goos = report["go_environment"]["GOOS"]
+                    discovery_packages = sorted({group["package"] for group in race_policy
+                                                 if goos in group.get("platforms", [goos])})
+                    if not discovery_packages:
+                        raise RuntimeError("critical race plan has no packages for current platform")
+            discovery.extend(discovery_packages)
             discovered = execute([(mode + "-inventory", discovery, root)], 1)[0]
             names = inventory(discovered["events"])
             if not names:
@@ -365,7 +374,7 @@ def run_suite(args):
             selected = names
             if mode == "race" and args.race_scope == "focused":
                 selected, report["race_exclusions"] = select_race(
-                    names, load_policy(root / "scripts/race_policy.json"), report["go_environment"]["GOOS"])
+                    names, race_policy, report["go_environment"]["GOOS"])
             report["selected_inventory"][mode] = selected
             jobs, expected, heavy_labels = [], {}, set()
             for package, tests in selected.items():

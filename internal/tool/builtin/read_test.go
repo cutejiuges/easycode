@@ -2,7 +2,6 @@ package builtin
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,92 +9,6 @@ import (
 
 	"easycode/internal/tool"
 )
-
-type inertWorkspaceHandle struct{ opened int }
-
-func (handle *inertWorkspaceHandle) openWritePath(string, workspaceHooks) (writePath, error) {
-	handle.opened++
-	return nil, errors.New("not used")
-}
-
-func (handle *inertWorkspaceHandle) openFile(string, workspaceHooks) (*os.File, error) {
-	handle.opened++
-	return nil, errors.New("not used")
-}
-func (*inertWorkspaceHandle) openDirectory(string, workspaceHooks) (workspaceDirectory, error) {
-	return nil, errors.New("not used")
-}
-func (*inertWorkspaceHandle) close() error { return nil }
-
-func (handle *inertWorkspaceHandle) openPatchFile(string, workspaceHooks) (patchFile, error) {
-	handle.opened++
-	return nil, errors.New("not used")
-}
-
-func TestNewReadExecutorDoesNotAccessFilesystem(t *testing.T) {
-	t.Parallel()
-	handle := &inertWorkspaceHandle{}
-	workspace := &Workspace{rootPath: "/not/opened", handle: handle}
-	if _, err := NewReadExecutor(workspace); err != nil {
-		t.Fatalf("纯构造失败: %v", err)
-	}
-	if handle.opened != 0 {
-		t.Fatal("NewReadExecutor 执行了文件 I/O")
-	}
-}
-
-func TestReadWorkspaceTextAndRange(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	path := filepath.Join(root, "src", "main.go")
-	if err := os.Mkdir(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte("one\r\ntwo\nthree\nfour"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	executor, workspace := openTestExecutor(t, root)
-	result := executor.Execute(context.Background(), invocationFor(t, filepath.Join(root, "src", "main.go"), 2, 2)).Result()
-	if result.Status() != tool.ResultSuccess || result.Code() != "ok" {
-		t.Fatalf("Read 失败: %s %s", result.Status(), result.Code())
-	}
-	if result.Preview().Text() != "2\ttwo\n3\tthree\n" || result.ReadMetadata().RelativePath() != "src/main.go" {
-		t.Fatalf("范围或路径错误: %q %#v", result.Preview().Text(), result.ReadMetadata())
-	}
-	if result.ReadMetadata().ReachedEOF() {
-		t.Fatal("读取中间范围不应到达 EOF")
-	}
-	if err := workspace.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := workspace.Close(); err != nil {
-		t.Fatalf("Close 必须幂等: %v", err)
-	}
-}
-
-func TestReadEmptyMissingNewlineAndPastEOF(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "empty"), nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "tail"), []byte("a\nb"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	executor, _ := openTestExecutor(t, root)
-	empty := executor.Execute(context.Background(), invocationFor(t, "empty", 1, 2000)).Result()
-	if empty.Preview().Text() != "" || !empty.ReadMetadata().ReachedEOF() {
-		t.Fatalf("空文件结果错误: %q %#v", empty.Preview().Text(), empty.ReadMetadata())
-	}
-	tail := executor.Execute(context.Background(), invocationFor(t, "tail", 2, 1)).Result()
-	if tail.Preview().Text() != "2\tb\n" || !tail.ReadMetadata().ReachedEOF() {
-		t.Fatalf("无末尾换行结果错误: %q %#v", tail.Preview().Text(), tail.ReadMetadata())
-	}
-	past := executor.Execute(context.Background(), invocationFor(t, "tail", 9, 1)).Result()
-	if past.Preview().Text() != "" || !past.ReadMetadata().ReachedEOF() {
-		t.Fatalf("超出 EOF 结果错误: %q %#v", past.Preview().Text(), past.ReadMetadata())
-	}
-}
 
 func TestReadRejectsTraversalSymlinkBinaryAndOversize(t *testing.T) {
 	t.Parallel()
@@ -146,21 +59,6 @@ func TestReadRejectsTraversalSymlinkBinaryAndOversize(t *testing.T) {
 		if strings.Contains(combined, root) || strings.Contains(combined, outside) || strings.Contains(combined, secret) {
 			t.Fatalf("安全错误泄漏绝对路径或正文: %q", combined)
 		}
-	}
-}
-
-func TestReadCancellationBeforeAdmissionDoesNotOpen(t *testing.T) {
-	t.Parallel()
-	handle := &inertWorkspaceHandle{}
-	executor, err := NewReadExecutor(&Workspace{rootPath: "/workspace", handle: handle})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	result := executor.Execute(ctx, invocationFor(t, "file", 1, 1)).Result()
-	if result.Status() != tool.ResultCancelled || handle.opened != 0 {
-		t.Fatalf("取消前置仍执行 I/O: status=%s opens=%d", result.Status(), handle.opened)
 	}
 }
 

@@ -1,5 +1,0 @@
-package fixture
-
-func NewValue(value any) any {
-	return value
-}

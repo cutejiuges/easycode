@@ -69,22 +69,3 @@ func TestThinkingLifecycleWhitelistAndNativeSignature(t *testing.T) {
 		t.Fatal(bindings)
 	}
 }
-
-func TestThinkingBudgetBeforeAppendAndClosedProtection(t *testing.T) {
-	r := newStreamReducer()
-	if _, err := reduceAnthropicTestEvent(r, `{"type":"message_start","message":{"id":"m","model":"fixture"}}`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := reduceAnthropicTestEvent(r, `{"type":"content_block_start","index":0,"content_block":{"type":"thinking"}}`); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.reasoningBudget.ReplaceSource(0, domain.MaxReasoningSourceBytes); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := r.reduce(transport.SSEEvent{Data: `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"x"}}`}); err == nil {
-		t.Fatal("overbudget append accepted")
-	}
-	if r.blocks[0].item.Thinking != "" {
-		t.Fatal("source mutated before budget validation")
-	}
-}

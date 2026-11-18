@@ -39,10 +39,10 @@ openspec validate --specs --strict
 
 原始证据：
 
-- [实际命令与全部退出状态](evidence/windows-helper-2026-11-11/results.json)、[全量质量门日志](evidence/windows-helper-2026-11-11/quality-gates.log)、[禁用测试缓存的转发脚本](evidence/windows-helper-2026-11-11/go-uncached.sh)。
-- [list/picker 定向结果](evidence/windows-helper-2026-11-11/focused.log)、[helper 原文与五目标文件选择](evidence/windows-helper-2026-11-11/helper-boundary.json)。
-- [72 个 E2E 叶用例](evidence/windows-helper-2026-11-11/e2e-cases.json)、[原始 race JSONL](evidence/windows-helper-2026-11-11/e2e-race.jsonl)。
-- [Windows amd64 全量测试编译日志](evidence/windows-helper-2026-11-11/windows-amd64-test-compile.log)、[其余七次跨平台构建/测试编译状态及耗时](evidence/windows-helper-2026-11-11/cross-platform-results.json)；同目录保存各目标原始日志。
-- [change strict](evidence/windows-helper-2026-11-11/change-validation.log)、[55 个主规格 strict](evidence/windows-helper-2026-11-11/spec-validation.log)、[本轮源码指纹](evidence/windows-helper-2026-11-11/source-fingerprint.json)。
+- 实际命令与全部退出状态、全量质量门日志、禁用测试缓存的转发脚本。
+- list/picker 定向结果、helper 原文与五目标文件选择。
+- 72 个 E2E 叶用例、原始 race JSONL。
+- Windows amd64 全量测试编译日志、其余七次跨平台构建/测试编译状态及耗时；同目录保存各目标原始日志。
+- change strict、55 个主规格 strict、本轮源码指纹。
 
 本次 Windows 全量测试编译阻断已消除，追加验证范围内无剩余失败。前次失败日志保持原样，不以本次通过覆盖历史证据。该轮未提交或归档 change；后续最终归档结果见 [archive.md](archive.md)。

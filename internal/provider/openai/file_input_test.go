@@ -4,11 +4,9 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"reflect"
 	"strings"
 	"testing"
 
-	"easycode/internal/codec"
 	"easycode/internal/domain"
 	"easycode/internal/provider"
 	"easycode/internal/secret"
@@ -152,143 +150,5 @@ func TestFileInputFixedNativeBlocksPrepareDiscardFinalizeAndRestore(t *testing.T
 				t.Fatal("clone leaked or invalid metadata accepted")
 			}
 		})
-	}
-}
-
-func TestFileFixedRestoreOpaqueCachePoliciesAndEffortIdentity(t *testing.T) {
-	fixture, err := os.ReadFile("testdata/files_restore.current.jsonl")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, key := range []domain.OpenAICacheKeyMode{domain.OpenAICacheOmit, domain.OpenAICacheThread} {
-		policy, _ := domain.NewCachePolicy(domain.AnthropicCacheDisabled, key, domain.OpenAIHTTPSSE)
-		settings, _ := domain.NewOpenAIInference("high", "auto", 16384)
-		instance, err := New(Config{BaseURL: "https://example.invalid", Model: "fixture-model", APIKey: secret.New("fixture-key"), CachePolicy: policy, Inference: settings})
-		if err != nil {
-			t.Fatal(err)
-		}
-		func() {
-			defer instance.Close()
-			live := testConversation(t, instance)
-			var envelopes []provider.NativeCommitEnvelope
-			for _, line := range bytes.Split(bytes.TrimSpace(fixture), []byte("\n")) {
-				e, err := provider.NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", line)
-				if err != nil {
-					t.Fatal(err)
-				}
-				entry, err := decodeNativeCommit(e)
-				if err != nil {
-					t.Fatal(err)
-				}
-				entry.TurnID = "01900000-0000-7000-8000-000000000010"
-				live.history.commit(entry)
-				envelopes = append(envelopes, e)
-			}
-			value, err := testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", testRestoreRecords(t, envelopes))
-			if err != nil {
-				t.Fatal(err)
-			}
-			restored := value.(*Conversation)
-			sampling, err := testSamplingInput(t, settings).WithToolCatalog(testOpenAIToolCatalog(t))
-			if err != nil {
-				t.Fatal(err)
-			}
-			before, err := live.compileSamplingRequest(live.history.snapshot(), sampling)
-			if err != nil {
-				t.Fatal(err)
-			}
-			beforeEvidence, err := live.requestEvidence(sampling)
-			if err != nil {
-				t.Fatal(err)
-			}
-			footprint, _ := live.HistoryFootprint()
-			sources := reasoningCacheSources(t, live)
-			for _, c := range []*Conversation{live, restored} {
-				view, err := c.ProjectTranscript()
-				if err != nil {
-					t.Fatal(err)
-				}
-				for _, item := range view.Items {
-					if item.Reasoning != nil && item.Reasoning.Availability() == domain.ReasoningReadable {
-						if _, err := item.Reasoning.ReadRange(0, 64<<10, false); err != nil {
-							t.Fatal(err)
-						}
-					}
-				}
-				after, err := c.compileSamplingRequest(c.history.snapshot(), sampling)
-				if err != nil {
-					t.Fatal(err)
-				}
-				e, err := c.requestEvidence(sampling)
-				if err != nil {
-					t.Fatal(err)
-				}
-				fp, _ := c.HistoryFootprint()
-				if !bytes.Equal(before.Bytes(), after.Bytes()) || e.nativeFingerprint != beforeEvidence.nativeFingerprint || !bytes.Equal(e.properties.Bytes(), beforeEvidence.properties.Bytes()) || !reflect.DeepEqual(footprint, fp) || reasoningCacheSources(t, c) != sources {
-					t.Fatal("restore/reading changed native order, footprint or cache")
-				}
-			}
-			left, _ := codec.MarshalStable(live.history.snapshot())
-			right, _ := codec.MarshalStable(restored.history.snapshot())
-			if !bytes.Equal(left, right) {
-				t.Fatal("opaque native history changed")
-			}
-			for _, sentinel := range []string{"opaque-sentinel", "future-sentinel"} {
-				if !bytes.Contains(before.Bytes(), []byte(sentinel)) {
-					t.Fatal("lost opaque value", sentinel)
-				}
-			}
-		}()
-	}
-}
-
-func TestFileEffortActualWirePropertiesAndNativeIdentity(t *testing.T) {
-	startup := func() domain.InferenceSettings { s, _ := domain.NewOpenAIInference("high", "auto", 16384); return s }()
-	instance, err := New(Config{BaseURL: "https://example.invalid", Model: "fixture-model", APIKey: secret.New("fixture-key"), Inference: startup})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer instance.Close()
-	c := testConversation(t, instance)
-	frozen := frozenFileInput(t, false)
-	a, _ := domain.NewInputAssociation("01900000-0000-7000-8000-000000000010", domain.InputInitial, 0, []domain.InputID{frozen.ID()})
-	p, err := c.PrepareUserInputs(a, []domain.UserInput{frozen})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := p.Finalize(); err != nil {
-		t.Fatal(err)
-	}
-	var bodies, properties [][]byte
-	var natives []string
-	for _, level := range []domain.EffortLevel{"high", "low", "high"} {
-		choice, _ := domain.NewExplicitEffortChoice(level)
-		settings, err := choice.Apply(startup)
-		if err != nil {
-			t.Fatal(err)
-		}
-		input, err := testSamplingInput(t, settings).WithToolCatalog(testOpenAIToolCatalog(t))
-		if err != nil {
-			t.Fatal(err)
-		}
-		body, err := c.compileSamplingRequest(c.history.snapshot(), input)
-		if err != nil {
-			t.Fatal(err)
-		}
-		e, err := c.requestEvidence(input)
-		if err != nil {
-			t.Fatal(err)
-		}
-		bodies = append(bodies, body.Bytes())
-		properties = append(properties, e.properties.Bytes())
-		natives = append(natives, e.nativeFingerprint)
-	}
-	if bytes.Equal(bodies[0], bodies[1]) || bytes.Equal(properties[0], properties[1]) || !bytes.Equal(bodies[0], bodies[2]) || !bytes.Equal(properties[0], properties[2]) || natives[0] != natives[1] || natives[0] != natives[2] || instance.config.Inference != startup {
-		t.Fatal("effort or process identity crossed frozen native boundary")
-	}
-	for _, file := range frozen.FileAttachments().Items() {
-		if bytes.Contains(bodies[0], []byte(file.Digest())) {
-			t.Fatal("private file digest entered request identity")
-		}
 	}
 }

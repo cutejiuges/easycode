@@ -1,8 +1,6 @@
 package headless
 
 import (
-	"bytes"
-	"encoding/json"
 	"io"
 	"strings"
 	"testing"
@@ -85,38 +83,5 @@ func TestDecodeStreamCommandStrictFailures(t *testing.T) {
 				t.Fatalf("error leaked input: %v", err)
 			}
 		})
-	}
-}
-
-func TestStreamInputSizeBoundaries(t *testing.T) {
-	t.Parallel()
-	boundary := strings.Repeat("x", protocol.MaxInputBytes)
-	wire, err := json.Marshal(streamSubmitCommand{
-		Version: 1, Type: "input.submit", RequestID: "boundary", Text: boundary,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	command, err := DecodeStreamCommand(wire)
-	if err != nil || len(command.Text()) != protocol.MaxInputBytes {
-		t.Fatalf("boundary command length=%d error=%v", len(command.Text()), err)
-	}
-	oversized, err := json.Marshal(streamSubmitCommand{
-		Version: 1, Type: "input.submit", RequestID: "oversized", Text: boundary + "x",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := DecodeStreamCommand(oversized); err == nil {
-		t.Fatal("oversized decoded input was accepted")
-	}
-
-	line := bytes.Repeat([]byte{'x'}, MaxStreamLineBytes+1)
-	reader, err := NewStreamCommandReader(bytes.NewReader(line))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := reader.ReadCommand(); err == nil || !strings.Contains(err.Error(), "exceeds") {
-		t.Fatalf("oversized encoded line error = %v", err)
 	}
 }

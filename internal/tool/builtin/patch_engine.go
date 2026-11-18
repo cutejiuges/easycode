@@ -2,7 +2,6 @@ package builtin
 
 import (
 	"bytes"
-	"errors"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -97,13 +96,4 @@ func exactPatchMatches(base string, replacement tool.PatchReplacement) []patchEd
 		}
 	}
 	return matches
-}
-
-// patchPreparationCode 将已知准备错误归一化为稳定code。
-func patchPreparationCode(err error) string {
-	var preparation *PatchPreparationError
-	if errors.As(err, &preparation) {
-		return preparation.Code()
-	}
-	return "patch_prepare_failed"
 }

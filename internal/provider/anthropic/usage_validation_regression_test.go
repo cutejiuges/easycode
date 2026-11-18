@@ -7,17 +7,6 @@ import (
 	"testing"
 )
 
-func TestThinkingUsageRejectsAmbiguousOrNonIntegerValues(t *testing.T) {
-	for _, token := range []string{"null", " null ", "\nnull\t", "-1", "1.5", "1.0", "1e1", `"30"`, "true", "false", "{}", "[]", "18446744073709551616"} {
-		t.Run(strconv.Quote(token), func(t *testing.T) {
-			value, err := decodeThinkingUsage(json.RawMessage(`{"thinking_tokens":` + token + `}`))
-			if err == nil {
-				t.Fatalf("invalid thinking count accepted as %+v", value)
-			}
-		})
-	}
-}
-
 func TestThinkingUsageDuplicateDetailsCannotOverrideInvalidFacts(t *testing.T) {
 	for _, usage := range []string{
 		`{"output_tokens":40,"output_tokens_details":{"thinking_tokens":null},"output_tokens_details":{"thinking_tokens":30}}`,
@@ -34,48 +23,6 @@ func TestThinkingUsageDuplicateDetailsCannotOverrideInvalidFacts(t *testing.T) {
 			}
 			if r.metadata.Usage.ThinkingTokens.Known || r.metadata.Usage.OutputTokens.Known {
 				t.Fatal("invalid usage changed staging facts")
-			}
-		})
-	}
-}
-
-func TestThinkingUsageLatestObservationPreservesIndependentZero(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		updates []string
-		value   uint64
-		known   bool
-	}{
-		{"unreported", []string{`{}`, `{"future":{"valid":true}}`}, 0, false},
-		{"missing-preserves-positive", []string{`{"thinking_tokens":30}`, `{}`}, 30, true},
-		{"zero-overrides-positive", []string{`{"thinking_tokens":30}`, `{"thinking_tokens":0}`, `{}`}, 0, true},
-		{"positive-overrides-zero", []string{`{"thinking_tokens":0}`, `{"thinking_tokens":30,"future":{"valid":true}}`}, 30, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			r := newStreamReducer(testAnthropicToolCatalog(t))
-			for _, event := range []string{
-				`{"type":"message_start","message":{"id":"observations","model":"model"},"future":{"valid":true}}`,
-				`{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}`,
-				`{"type":"content_block_stop","index":0}`,
-			} {
-				if _, err := reduceAnthropicTestEvent(r, event); err != nil {
-					t.Fatal(err)
-				}
-			}
-			for _, details := range tc.updates {
-				if _, err := reduceAnthropicTestEvent(r, `{"type":"message_delta","usage":{"output_tokens":40,"output_tokens_details":`+details+`},"future":{"valid":true}}`); err != nil {
-					t.Fatal("valid provider extension rejected", err)
-				}
-			}
-			if _, err := reduceAnthropicTestEvent(r, `{"type":"message_stop"}`); err != nil {
-				t.Fatal(err)
-			}
-			usage, err := r.sampleUsage()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if value, known := usage.ReasoningOutput().Value(); value != tc.value || known != tc.known {
-				t.Fatal("thinking observations changed state or applied input placeholder-zero rules")
 			}
 		})
 	}

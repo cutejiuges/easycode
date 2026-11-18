@@ -1,6 +1,0 @@
-ok  	easycode/internal/provider	1.000s [no tests to run]
-ok  	easycode/internal/provider/anthropic	1.624s
-ok  	easycode/internal/provider/openai	1.577s
-ok  	easycode/internal/provider/transport	1.004s [no tests to run]
-ok  	easycode/internal/runtime	2.504s
-ok  	easycode/internal/app	15.133s

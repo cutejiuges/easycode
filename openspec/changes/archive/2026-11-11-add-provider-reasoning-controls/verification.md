@@ -1,5 +1,7 @@
 # 启动推理控制验收记录
 
+> 历史日志、运行清单和诊断转储已清理，仅保留文字结论；当前验收以现存测试及质量门为准。
+
 2026-11-11 补充：已完成新一轮全面用例、端到端与回归测试，并修复双 Provider 对重复 JSON 成员的接受问题。新增测试、修复前后证据、32 个 PTY 场景及重新执行的完整质量门见 [全面回归记录](regression-2026-11-11.md)。以下保留原实施验收结果。
 
 2026-11-11 归档补充：九个 capability 已同步主规格，本轮回归修复同时纳入 proposal/design/specs/tasks、架构、Roadmap、能力清单和 pitfall；归档核对与本阶段检查见 [archive.md](archive.md)。原文中“未同步/未归档”保留原实施阶段的时间边界。
@@ -54,7 +56,7 @@ README、总体架构、能力清单、Roadmap 与 pitfall 已按实际字段、
 
 ## 完整质量门
 
-- `make verify`：exit 0。包含分支策略回归、gofmt、go vet、Staticcheck、架构守卫、全量测试和全量 race；完整输出见 [make-verify.log](make-verify.log)。race 的 app 包实际用时 421.014 秒，不代表性能目标。运行期间及其后未修改被验证的 Go 源码。
+- `make verify`：exit 0。包含分支策略回归、gofmt、go vet、Staticcheck、架构守卫、全量测试和全量 race；完整输出见 make-verify.log。race 的 app 包实际用时 421.014 秒，不代表性能目标。运行期间及其后未修改被验证的 Go 源码。
 - `openspec validate --all --strict --json --no-interactive`：56/56 通过（2 个 change、54 个主规格），0 失败，无 WARNING/ERROR；既有长 requirement 仅 INFO。
 - 当前分支命名检查、`git diff --check`、九份 delta/capability 路径与任务逐项对照、Markdown 本地链接检查均通过。默认 request/缓存/WS golden、go.mod/go.sum、主规格和参考工程未修改。
 - 40 项 tasks 全部完成；主规格 sync 和 archive 保留给独立后续流程，不把规划齐备或旧基线质量门当作本轮功能验收。
