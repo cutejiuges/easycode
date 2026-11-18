@@ -8,7 +8,7 @@ OpenSpec 归档只保留 Markdown 方案/规格/决策/简短验收及 .openspec
 
 此次精简接受覆盖范围缩小，不声称与旧穷举集合等覆盖。产品行为未变，生产代码仅删除无消费者的辅助函数并补齐已有平台编译约束；已确认关键缺陷回归、双 Provider 原生恢复与缓存、真实子进程 lease/取消/关闭，以及文件引用交互继续验收。归档文档记载当时的验证范围；已删除的历史矩阵不再代表当前质量门。
 
-本轮对同一分支基线 `43dd89a8ec2f1bab3a2adab7acf30771c45e1ac0` 的全部受版本管理 Go `_test.go` 文件统计，582 个文件、95,673 行精简为 325 个文件、41,319 行，净删除 54,354 行（56.81%）。统计未通过压行、搬文件或跳过入口改变口径；Python 调度器测试另保留关键执行/取消/清单回归。
+本轮对同一分支基线 `43dd89a8ec2f1bab3a2adab7acf30771c45e1ac0` 的全部受版本管理 Go `_test.go` 文件统计，582 个文件、95,673 行精简为 325 个文件、41,331 行，净删除 54,342 行（56.80%）。统计未通过压行、搬文件或跳过入口改变口径；Python 调度器测试另保留关键执行/取消/清单回归。
 
 删除 493 个 OpenSpec 原始产物，合计 17,998,265 bytes；另删除 229 个无现存消费者的测试 fixture，合计 117,108 bytes。保留当前真实使用的 request golden、native/current JSONL 和必要 OpenSpec YAML 元数据；已清理指向删除产物的 Markdown 链接。删除降低当前工作树大小，不改写 Git 历史或回收历史 blob。
 
@@ -25,3 +25,5 @@ OpenSpec 归档只保留 Markdown 方案/规格/决策/简短验收及 .openspec
 2026-11-18 PR 交付补充：重新执行 `make verify` 通过，449 个普通入口与 54 个关键 race 入口完整执行，耗时 67.307 秒。随后核查删除最后一份无消费者的 detached-command 测试夹具，并将 CI 手动 profile 的失效默认名称改为当前插件生命周期与文件恢复入口；提交及推送继续由既有 hooks 执行同一质量门。
 
 此次端到端验证执行全部 12 个现有脚本，62 个场景均退出 0：文件引用 4、effort 8、补全 2、会话选择 4、Markdown 2、用户问答 4、推理展示 8、推理配置 8、插件 12、三种工具 Hook 6、输入改写 2、Stop 2。覆盖双 Provider、本地 CLI/真实 PTY、恢复/取消、冻结与缓存、审批及终端状态恢复；插件另完成 16 次离线续写/恢复。全部使用本地模拟服务和 fixture key，未调用真实模型服务。原始输出仅保存在 `/tmp/easycode-pr-e2e-*`，OpenSpec 严格校验另有 65 项通过。
+
+首次 Linux CI 的 Staticcheck 暴露了删减后仅被 Darwin 测试消费的通用 helper 声明；六个辅助文件现按实际消费者限定为 Darwin 或 Darwin/Linux，未恢复冗余用例或弱化断言。修复后的 Linux app/builtin 静态检查通过，Windows app 静态检查通过；Windows builtin 剩余 36 条 U1000 已用同工具链与基线 `43dd89a` 对照确认均为既有项，本轮新增项全部消除。Windows 原生验收及完整 Windows 质量门不宣称通过，既有项涉及 unsupported workspace 及 Unix 文件操作 hook，应独立处理。
