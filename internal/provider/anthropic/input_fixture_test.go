@@ -114,6 +114,14 @@ func testRestoreRecords(t *testing.T, envelopes []provider.NativeCommitEnvelope,
 			}
 			record, err = provider.NewToolOutputRestoreRecord(turnID, envelope, outputEvidence[outputIndex])
 			outputIndex++
+		case nativeHistoryHookFeedback:
+			feedback, feedbackErr := entryStopFeedback(entry)
+			if feedbackErr != nil {
+				t.Fatal(feedbackErr)
+			}
+			record, err = provider.NewStopFeedbackRestoreRecord(feedback, envelope)
+		default:
+			t.Fatalf("unsupported restore fixture kind: %s", entry.Kind)
 		}
 		if err != nil {
 			t.Fatal(err)

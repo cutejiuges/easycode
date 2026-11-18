@@ -1,0 +1,38 @@
+[
+  {
+    "capability": "context/file-mentions",
+    "created": true,
+    "added": 5,
+    "modified": 0
+  },
+  {
+    "capability": "context/planning",
+    "created": false,
+    "added": 1,
+    "modified": 1
+  },
+  {
+    "capability": "provider/history-projection",
+    "created": false,
+    "added": 2,
+    "modified": 0
+  },
+  {
+    "capability": "provider/native-history-persistence",
+    "created": false,
+    "added": 3,
+    "modified": 0
+  },
+  {
+    "capability": "runtime/conversational-input",
+    "created": false,
+    "added": 3,
+    "modified": 0
+  },
+  {
+    "capability": "tui/input-completion",
+    "created": false,
+    "added": 5,
+    "modified": 3
+  }
+]

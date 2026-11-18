@@ -1,0 +1,11 @@
+EasyCode test
+
+
+> @src/a b.go [file]
+  @src/文.go [file]
+  @src/c.go [file]
+  @src/d.go [file]
+  @src/e.go [file]
+1/6 · Incomplete: ignore_unavailable
+> 参考 @sr|
+Enter: send | Alt+Enter/Ctrl+J: newline

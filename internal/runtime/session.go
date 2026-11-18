@@ -52,8 +52,8 @@ func (session *ChatSession) StartInteractive(ctx context.Context) error {
 func (session *ChatSession) Outputs() <-chan protocol.ControlItem { return session.outputs }
 
 // Append 向 owner 提交可在安全边界领取的输入。
-func (session *ChatSession) Append(ctx context.Context, text string) (protocol.CommandResult, error) {
-	command, err := protocol.NewSubmitConversationalInputCommand(session.requestID("host-append"), text)
+func (session *ChatSession) Append(ctx context.Context, draft domain.InputDraft) (protocol.CommandResult, error) {
+	command, err := protocol.NewSubmitConversationalInputDraftCommand(session.requestID("host-append"), draft)
 	if err != nil {
 		return protocol.CommandResult{}, err
 	}

@@ -150,4 +150,8 @@ func (model *Model) restoreComposer(draft composer) {
 	}
 	// 编辑序号属于各自的草稿快照，恢复不能复用另一快照的解析缓存。
 	model.completion.parsed = false
+	model.cancelFileSession()
+	model.files.valid = false
+	model.files.parsed = false
+	model.clearEffortFeedback()
 }

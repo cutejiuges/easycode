@@ -50,7 +50,7 @@ func TestInputCommitCancellationLinearization(t *testing.T) {
 			}
 			recorder := &inputResolutionRecorder{}
 			var events []protocol.Event
-			got := runtime.commitInputs(ctx, runtimeTurnID, 0, runtimeInputs("  durable input\n"), recorder, func(e protocol.Event) { events = append(events, e) })
+			got := runtime.commitInputs(ctx, runtimeTurnID, 0, runtimeFileInputs(t, "  durable input @file\n"), recorder, func(e protocol.Event) { events = append(events, e) })
 			want := protocol.InputCommitted
 			if tc.before || (tc.fail && !tc.poison) {
 				want = protocol.InputReturned

@@ -9,9 +9,9 @@ import (
 
 type installationPreparer struct{ calls int }
 
-func (p *installationPreparer) Prepare(context.Context, string) (domain.SkillAttachment, bool, error) {
+func (p *installationPreparer) Prepare(_ context.Context, command protocol.Command) (protocol.Command, error) {
 	p.calls++
-	return domain.SkillAttachment{}, false, nil
+	return command, nil
 }
 
 func TestSkillInstallationIsPureSingleAndBeforeWork(t *testing.T) {
@@ -52,12 +52,12 @@ func TestSkillInstallationIsPureSingleAndBeforeWork(t *testing.T) {
 			case "turn-started":
 				_ = r.RunTurn(context.Background(), runtimeInputs("hello"), func(protocol.Event) {})
 			}
-			err := r.InstallSkills(catalog, p)
+			err := r.InstallInputSources(catalog, p)
 			if (state == "fresh") != (err == nil) || p.calls != 0 {
 				t.Fatalf("install: %v calls=%d", err, p.calls)
 			}
 			if state == "fresh" {
-				if r.skillCatalog.Revision() != catalog.Revision() || r.InstallSkills(catalog, p) == nil {
+				if r.skillCatalog.Revision() != catalog.Revision() || r.InstallInputSources(catalog, p) == nil {
 					t.Fatal("snapshot replacement accepted")
 				}
 			}

@@ -39,7 +39,7 @@ func previewBody(preview SessionPreview) string {
 	var b strings.Builder
 	for _, entry := range preview.Messages {
 		header := fmt.Sprintf("%s · %s · %s\n", entry.Message.Role, entry.TurnID, entry.Message.InputID)
-		part := header + pickerEscaped(entry.Message.Text, 32768, true)
+		part := header + pickerEscaped(entry.Message.Text+fileSummaryText(entry.Files), 32768+8192, true)
 		if entry.Truncated {
 			part += "\n[Message truncated]"
 		}

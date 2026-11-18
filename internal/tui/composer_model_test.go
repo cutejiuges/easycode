@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"easycode/internal/domain"
 	"easycode/internal/protocol"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -167,13 +168,13 @@ type gatedComposerSession struct {
 	interrupts int
 }
 
-func (s *gatedComposerSession) Append(ctx context.Context, text string) (protocol.CommandResult, error) {
+func (s *gatedComposerSession) Append(ctx context.Context, draft domain.InputDraft) (protocol.CommandResult, error) {
 	close(s.entered)
 	<-s.release
 	if s.reject {
 		return protocol.CommandResult{}, errors.New("admission rejected")
 	}
-	return s.fakeChatSession.Append(ctx, text)
+	return s.fakeChatSession.Append(ctx, draft)
 }
 func (s *gatedComposerSession) Interrupt() { s.interrupts++ }
 

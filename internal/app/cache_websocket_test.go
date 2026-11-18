@@ -80,7 +80,7 @@ func TestWebSocketToolsAndCacheQueryEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-firstEntered
-	if result, err := resources.session.Append(context.Background(), "new exact correction"); err != nil || result.Status() != protocol.CommandStatusAccepted {
+	if result, err := appendInteractiveText(context.Background(), resources.session, "new exact correction"); err != nil || result.Status() != protocol.CommandStatusAccepted {
 		t.Fatal(result, err)
 	}
 	close(releaseFirst)

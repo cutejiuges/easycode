@@ -8,6 +8,7 @@ import (
 
 // UserInputCommittedPayload 是已成功保存的单条用户输入展示事实。
 type UserInputCommittedPayload struct {
+	Files   domain.FileSummary      `json:"files"`
 	Skill   *domain.SkillAttachment `json:"skill,omitempty"`
 	InputID domain.InputID          `json:"input_id"`
 	Text    string                  `json:"text"`
@@ -19,6 +20,11 @@ func NewUserInputCommitted(input domain.UserInput) (Event, error) {
 		return Event{}, err
 	}
 	p := UserInputCommittedPayload{InputID: input.ID(), Text: input.Text()}
+	summary, err := domain.NewFileSummary(input.FileAttachments())
+	if err != nil {
+		return Event{}, err
+	}
+	p.Files = summary
 	if a, ok := input.SkillAttachment(); ok {
 		p.Skill = &a
 	}
@@ -37,6 +43,17 @@ func DecodeUserInputCommitted(event Event) (UserInputCommittedPayload, error) {
 	v, err := domain.NewUserInput(p.InputID, p.Text)
 	if err == nil && p.Skill != nil {
 		_, err = v.WithSkillAttachment(*p.Skill)
+	}
+	if err == nil && p.Files.Total() > 0 {
+		refs, parseErr := domain.ParseFileReferences(p.Text)
+		if parseErr != nil || len(refs) != p.Files.Total() {
+			return p, fmt.Errorf("file summary does not match input")
+		}
+		for i, item := range p.Files.Items() {
+			if item.Reference() != refs[i] {
+				return p, fmt.Errorf("file summary order does not match input")
+			}
+		}
 	}
 	return p, err
 }

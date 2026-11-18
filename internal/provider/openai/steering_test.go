@@ -158,7 +158,7 @@ func TestUserInputsCanonicalGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `{"kind":"user_inputs","user_inputs":[{"type":"message","role":"user","content":[{"type":"input_text","text":"  hello\n"}]}],"input_metadata":{"turn_id":"01900000-0000-7000-8000-000000000010","placement":"initial","target_sample_index":0,"input_ids":["01900000-0000-7000-8000-000000000011"]}}`
+	const want = `{"kind":"user_inputs","user_inputs":[{"type":"message","role":"user","content":[{"type":"input_text","text":"  hello\n"}]}],"input_metadata":{"turn_id":"01900000-0000-7000-8000-000000000010","placement":"initial","target_sample_index":0,"input_ids":["01900000-0000-7000-8000-000000000011"],"files":[]}}`
 	if string(envelope.Payload()) != want {
 		t.Fatalf("input golden changed: %s", envelope.Payload())
 	}

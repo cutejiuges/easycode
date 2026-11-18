@@ -6,6 +6,9 @@ import "os"
 
 type unsupportedWorkspaceHandle struct{}
 type unsupportedWorkspaceDirectory struct{}
+
+func (unsupportedWorkspaceDirectory) interrupt() error { return errWorkspaceUnsupported }
+
 type unsupportedWorkspaceChild struct{}
 
 func (unsupportedWorkspaceHandle) openPatchFile(string, workspaceHooks) (patchFile, error) {
@@ -20,7 +23,7 @@ func (unsupportedWorkspaceHandle) openDirectory(string, workspaceHooks) (workspa
 	return nil, errWorkspaceUnsupported
 }
 func (unsupportedWorkspaceHandle) close() error { return nil }
-func (unsupportedWorkspaceDirectory) readEntryNames() ([]string, error) {
+func (unsupportedWorkspaceDirectory) readEntryNames(int) ([]string, error) {
 	return nil, errWorkspaceUnsupported
 }
 func (unsupportedWorkspaceDirectory) openChild(string, workspaceHooks) (workspaceChild, error) {

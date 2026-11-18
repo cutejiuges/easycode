@@ -7,13 +7,13 @@
 当前契约治理变更 `unify-current-contract-lifecycle` 收敛了固定 codec、prepared commit、宿主 owner 与副作用 admission。TUI、一次性 headless、stream-json 共用 AgentLoop；关闭期间排空事件，活动 transport 可显式取消，journal lease 保留至清理完成。Patch/Write grant 仅在批准 Sync 后生效，三种副作用工具统一验证结果关联并以 uncertain 收口错配结果。本次未引入迁移或兼容 reader，后续 P4/P6/P7/P8 能力及占位退出条件保持原有范围。
 
 > 状态：持续演进（各阶段按纵向切片验收）
-> 更新时间：2026-11-15
+> 更新时间：2026-11-17
 > 依赖设计：[`../architecture/overall-architecture.md`](../architecture/overall-architecture.md)
 > Tool 专题设计：[`../architecture/tool-system.md`](../architecture/tool-system.md)
 
-## 当前状态总览（2026-11-15）
+## 当前状态总览（2026-11-17）
 
-实现与测试逐项核对见[当前能力清单](capability-status.md)。P0–P8 是并行推进的阶段目标，不以某个后期切片交付推定整个阶段完成。当前已交付九项模型工具、本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop、三能力 PreToolUse 完整参数改写、结构化提问、流式 Markdown、命令/Skill 首词补全、启动会话选择、Provider 缓存、手动/自动压缩、双 Provider 推理阅读及启动推理/display/输出配置；本地 Plugin 技能包及受限 importer 已交付；仍缺少运行中推理切换、跨 Provider fork、后台进程、插件可执行贡献/MCP、Subagent 与完整发布矩阵。
+实现与测试逐项核对见[当前能力清单](capability-status.md)。P0–P8 是并行推进的阶段目标，不以某个后期切片交付推定整个阶段完成。当前已交付九项模型工具、本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop、三能力 PreToolUse 完整参数改写、结构化提问、流式 Markdown、命令/Skill 首词补全、正文文件引用与路径补全、会话内 effort、启动会话选择、Provider 缓存、手动/自动压缩、双 Provider 推理阅读及启动推理/display/输出配置；本地 Plugin 技能包及受限 importer 已交付；仍缺少 effort 之外的运行中推理切换、跨 Provider fork、后台进程、插件可执行贡献/MCP、Subagent 与完整发布矩阵。
 
 下文“工作内容/交付物/验收标准”保留阶段的完整目标；已完成状态以本总览、各节进度和当前能力清单为准。所有迁移、历史 reader 或兼容窗口必须先有用户明确要求及新 OpenSpec，不因路线图提到未来发布而预先授权。
 
@@ -155,7 +155,7 @@ make verify
 - 已完成 Anthropic Messages text-only request、indexed content-block reducer、会话级 native history、thinking/signature/redacted thinking 无损回放、显式 `message_stop` terminal、两种 API prefix 的双轮回归，并接入同一基础 TUI Chat。
 - 已完成双 Provider 共享 `StreamEvent` 的封闭构造与纯内存验证；Runtime 在消费端协议错误时取消派生 context并同步排空到 producer 关闭，AgentLoop 只在前一 stream 清理完成后启动下一 turn。
 - 已完成双 Provider 的 committed-only 文本 `HistoryProjector`：投影保留 turn 边界和可见文本，但不暴露 thinking/signature、redacted thinking、reasoning summary、encrypted content、phase、usage 或未知扩展，也不参与后续请求编译。
-- Anthropic 当前声明 streaming、thinking-signature 原生保留与 structured tools（含 Edit/Write/Bash），OpenAI 当前声明 streaming、encrypted reasoning 原生保留、function tools（含 Write/exec_command）与 custom freeform apply_patch。P2 已落地 completed-sample usage、原生历史 footprint、JSONL Session、resume/headless 和 ContextPlanner；P3 已补充 Read/Glob/Grep/Patch/Write/Exec Tool Loop 与 approval，后续已交付通用工具主线/详情、CachePlanner、三态 usage/cache UI、prompt cache key 与可选 WebSocket `previous_response_id`；被动 thinking/summary 阅读已由 P5 独立切片交付；启动冻结的推理配置、Anthropic thinking 计量和同源请求证据已实现；成本、运行中推理切换和通用自动重试仍未实现。
+- Anthropic 当前声明 streaming、thinking-signature 原生保留与 structured tools（含 Edit/Write/Bash），OpenAI 当前声明 streaming、encrypted reasoning 原生保留、function tools（含 Write/exec_command）与 custom freeform apply_patch。P2 已落地 completed-sample usage、原生历史 footprint、JSONL Session、resume/headless 和 ContextPlanner；P3 已补充 Read/Glob/Grep/Patch/Write/Exec Tool Loop 与 approval，后续已交付通用工具主线/详情、CachePlanner、三态 usage/cache UI、prompt cache key 与可选 WebSocket `previous_response_id`；被动 thinking/summary 阅读已由 P5 独立切片交付；启动冻结的推理配置、Anthropic thinking 计量和同源请求证据已实现；成本、effort 之外的运行中推理切换和通用自动重试仍未实现。
 - TUI 只消费 typed RuntimeEvent 和 ChatSession facade；已提供 Patch diff/Write、Exec approval overlay、命令进度和 Ctrl+O 历史列表与分页详情，多行 composer、字素编辑、显式 decoded paste 和有界历史；助手流式 Markdown 已接入，本地 `/cache`、`/context`、`/compact`、`/skills`、`/hooks`、`/plugins` 已接入，通用 permission 面板仍待实现；启动 session picker 已于 2026-11-04 接入。
 
 #### OpenAI Responses（首要 Provider）
@@ -452,11 +452,11 @@ Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘�
 
 ## 9. P5：Claude 风格 TUI
 
-### 9.0 当前进度（2026-11-08）
+### 9.0 当前进度（2026-11-17）
 
-已交付多行/字素输入、同轮追加与返还、流式 Markdown 与代码/表格/原文阅读、紧凑工具主线及 Ctrl+O 分页详情、完整 Patch/Write/Exec 审批、结构化问卷、Hook 信任、context/cache 面板和启动 resume picker。当前本地命令为 `/cache`、`/context`、`/compact`、`/skills`、`/hooks`、`/plugins`，以及 Skill 显式入口。命令/Skill 首词补全和被动 thinking/summary 活动提示及 Ctrl+O 阅读已交付；启动推理配置与 /context 只读设置已实现；运行中推理切换、fork picker、后台任务 UI、cost/综合状态面板与其余命令尚未实现。
+已交付多行/字素输入、同轮追加与返还、流式 Markdown 与代码/表格/原文阅读、紧凑工具主线及 Ctrl+O 分页详情、完整 Patch/Write/Exec 审批、结构化问卷、Hook 信任、context/cache 面板和启动 resume picker。当前本地命令为 `/cache`、`/context`、`/compact`、`/effort`、`/skills`、`/hooks`、`/plugins`，以及 Skill 显式入口。命令/Skill 首词补全和被动 thinking/summary 活动提示及 Ctrl+O 阅读已交付；启动推理配置、会话内 effort 与 /context 设置已实现；其他推理字段切换、fork picker、后台任务 UI、cost/综合状态面板与其余命令尚未实现。
 
-补全复用冻结 Skill 展示列表、字素编辑和既有命令提交；Tab 只填入、Skill Enter 只选择、Esc 优先关闭，粘贴不接受候选。验收覆盖双 Provider 原生请求/恢复/缓存等价、固定尺寸和 Darwin PTY，见 [验收记录](../../openspec/changes/archive/2026-11-06-add-command-and-skill-completion/verification.md)。本切片不包含文件/参数值补全、正文 mentions 或动态目录。
+补全复用冻结 Skill 展示列表、字素编辑和既有命令提交；Tab 只填入、Skill Enter 只选择、Esc 优先关闭，粘贴不接受候选。验收覆盖双 Provider 原生请求/恢复/缓存等价、固定尺寸和 Darwin PTY，见 [验收记录](../../openspec/changes/archive/2026-11-06-add-command-and-skill-completion/verification.md)。该首词切片仍不处理普通参数值；正文工作区 @ 文件引用已由独立切片实现，文件范围、读取、索引及恢复的边界见下文。
 
 ### 9.1 目标
 
@@ -473,7 +473,7 @@ Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘�
 
 ### 9.3 工作内容
 
-2026-09-19 已先交付验证 RuntimeEvent 边界的薄切片；2026-10-11 又交付了与 Patch candidate 精确关联的 diff approval overlay，包含默认 No、一次/本 Runtime session 允许、拒绝反馈、小窗口滚动、按键隔离和固定 snapshot。它不改变 P5 的完整范围，2026-10-28 已补充多行 composer、字素编辑、显式 decoded paste、有界 recall 与提交拒绝恢复。本地 slash commands、通用工具主线/详情、Markdown 与启动 resume picker 已有各自切片；命令/Skill 首词补全由 `add-command-and-skill-completion` 交付；被动 thinking/summary 阅读已由 `add-reasoning-transcript` 交付；启动推理配置已由 `add-provider-reasoning-controls` 交付；运行中推理切换与 fork picker 仍是后续目标。
+2026-09-19 已先交付验证 RuntimeEvent 边界的薄切片；2026-10-11 又交付了与 Patch candidate 精确关联的 diff approval overlay，包含默认 No、一次/本 Runtime session 允许、拒绝反馈、小窗口滚动、按键隔离和固定 snapshot。它不改变 P5 的完整范围，2026-10-28 已补充多行 composer、字素编辑、显式 decoded paste、有界 recall 与提交拒绝恢复。本地 slash commands、通用工具主线/详情、Markdown 与启动 resume picker 已有各自切片；命令/Skill 首词补全由 `add-command-and-skill-completion` 交付；被动 thinking/summary 阅读已由 `add-reasoning-transcript` 交付；启动推理配置已由 `add-provider-reasoning-controls` 交付；effort 之外的运行中推理切换与 fork picker 仍是后续目标。
 
 - composer、多行输入、paste 保护、历史、补全和 slash command。
 - assistant commentary/final、thinking/reasoning 折叠。
@@ -826,3 +826,9 @@ P5 的助手阅读切片覆盖流式消息、已提交主线和历史正文。Pg
 Claude 风格的短通知、静态帮助和既有 `/context` 提供当前捕获与后续选择；终态后真实清理、请求序号及 UI 操作世代分别约束并发和迟到反馈。验收含双 Provider canonical 恢复、三种 Anthropic cache、OpenAI WS 属性变化/增量/失败重建、输出背压与跨进程 lease；整合 main 前的回归通过 24 组真实 PTY 和 10 组脚本化真实 CLI。47/47 项任务完成，六项主规格已同步，change 已归档；详见[实现验收](../../openspec/changes/archive/2026-11-15-add-runtime-effort-control/verification.md)。模型切换、其他推理字段热切换、远端能力发现、fork 和完整 P5 仍待独立变更。
 
 2026-11-15 整合 main 的 PreToolUse 参数改写后，新增双 Provider 真实组合回归：改写目标及审批使用 E，当前工具回合保持原 effort，下一操作才应用新选择；恢复同时保留原生 O 和改写结果。整合验收扩展为 26 组 Darwin PTY 与 10 组脚本化真实 CLI，当前验证见[main 同步记录](../../openspec/changes/archive/2026-11-15-add-runtime-effort-control/main-sync-2026-11-15.md)。
+
+## 工作区文件引用纵向切片（2026-11-17）
+
+`add-workspace-file-mentions` 复用多行 composer、工作区 no-follow 读取、冻结 Skill 输入、双 Provider native facts 和 transcript owner，补齐正文 @ 路径/引号/行范围、元数据补全、提交冻结、queued/取回、安全点和离线恢复的完整链路。此阶段优先提高日常选取代码上下文的效率；MCP 仍需服务生命周期和动态能力契约，Subagent 仍需线程/预算/调度前置条件，不据此宣称 P5/P6/P7 整体完成。
+
+交互采用 Claude Code 的正文文件建议与“先填入、后独立提交”，保留 Codex 的光标目标、失效代次、完整路径插入和有界搜索 owner。语义/读取/查询/摘要分层，原生事实不由统一显示消息反向生成。各项实际额度与平台限制见 README、总体架构及[验证记录](../../openspec/changes/archive/2026-11-17-add-workspace-file-mentions/verification.md)。没有目录/图片/PDF、外部文件、文件 watcher、自动 rehydrate、MCP、Subagent 或格式迁移；change 已于 2026-11-17 归档。

@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"easycode/internal/codec"
 	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
 	"easycode/internal/fault"
@@ -53,6 +54,9 @@ func inputCommitDrafts(a domain.InputAssociation, envelope provider.NativeCommit
 }
 
 func (runtime *Runtime) inputEncodingFits(a domain.InputAssociation, inputs []domain.UserInput) bool {
+	if _, err := runtime.prepareInputEvents(a.TurnID(), inputs); err != nil {
+		return false
+	}
 	encoder, ok := runtime.conversation.(provider.UserInputEncoder)
 	if !ok {
 		return false
@@ -115,6 +119,10 @@ func (runtime *Runtime) commitInputs(ctx context.Context, turnID domain.TurnID, 
 	if err := prepared.CheckRequest(sampling); err != nil {
 		return rejected(fault.New(fault.CodeProviderRequest, "input request preflight failed"))
 	}
+	events, err := runtime.prepareInputEvents(turnID, inputs)
+	if err != nil {
+		return rejected(fault.New(fault.CodeInvalidInput, "input view encoding failed"))
+	}
 	records, err := runtime.journal.AppendBatch(ctx, drafts)
 	if err != nil {
 		if runtime.journal.Poisoned() {
@@ -139,21 +147,54 @@ func (runtime *Runtime) commitInputs(ctx context.Context, turnID domain.TurnID, 
 			return inputCommitResult{err: err}
 		}
 	}
-	for _, input := range inputs {
+	for i, input := range inputs {
 		if a, ok := input.SkillAttachment(); ok {
 			runtime.explicitSkills = append(runtime.explicitSkills, a)
 		}
-		event, err := protocol.NewUserInputCommitted(input)
-		if err != nil {
-			runtime.poisoned.Store(true)
-			resolve(protocol.InputUncertain, protocol.InputReasonUncertain)
-			return inputCommitResult{err: err}
-		}
-		emit(runtime.decorate(event, turnID))
+		emit(events[i])
 	}
 	runtime.emitTranscriptCommit(turnID, records[1].Sequence)
 	resolve(protocol.InputCommitted, "")
 	return inputCommitResult{committed: true}
+}
+
+// prepareInputEvents 在 writer 接收前冻结并验证最终展示事件，提交后只发布已验证值。
+func (runtime *Runtime) prepareInputEvents(turnID domain.TurnID, inputs []domain.UserInput) ([]protocol.Event, error) {
+	if runtime.userInputCommitted == nil {
+		return nil, fmt.Errorf("input event factory is unavailable")
+	}
+	events := make([]protocol.Event, 0, len(inputs))
+	for _, input := range inputs {
+		event, err := runtime.userInputCommitted(input)
+		if err != nil {
+			return nil, err
+		}
+		if event.Kind != protocol.EventUserInputCommitted {
+			return nil, fmt.Errorf("input event kind mismatch")
+		}
+		event.Payload = append([]byte(nil), event.Payload...)
+		event = runtime.decorate(event, turnID)
+		if err := event.Validate(); err != nil {
+			return nil, err
+		}
+		payload, err := protocol.DecodeUserInputCommitted(event)
+		if err != nil {
+			return nil, err
+		}
+		summary, err := domain.NewFileSummary(input.FileAttachments())
+		if err != nil {
+			return nil, err
+		}
+		skill, hasSkill := input.SkillAttachment()
+		if payload.InputID != input.ID() || payload.Text != input.Text() || !payload.Files.Equal(summary) || (payload.Skill != nil) != hasSkill || hasSkill && *payload.Skill != skill {
+			return nil, fmt.Errorf("input event does not match frozen input")
+		}
+		if _, err := codec.MarshalCanonical(event, session.MaxRecordBytes); err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	return events, nil
 }
 
 func (runtime *Runtime) planHistory(view domain.ActiveContextView, footprint domain.NativeHistoryFootprint) (provider.TurnInput, contextplan.ContextPlan, error) {

@@ -68,6 +68,16 @@ func runEffortWebsocketReset(t *testing.T, cancelled bool) {
 	}
 	defer instance.Close()
 	c := testConversation(t, instance)
+	frozen := frozenFileInput(t, false)
+	association, _ := domain.NewInputAssociation("01900000-0000-7000-8000-000000000010", domain.InputInitial, 0, []domain.InputID{frozen.ID()})
+	prepared, err := c.PrepareUserInputs(association, []domain.UserInput{frozen})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := prepared.Finalize(); err != nil {
+		t.Fatal(err)
+	}
+
 	for i, level := range []domain.EffortLevel{"high", "high", "low", "low", "low", "high", "high"} {
 		// 第二次 high 代表没有模型操作介入的 high→low→high；过程选择不进入 Kernel。
 		choice, _ := domain.NewExplicitEffortChoice(level)
@@ -89,6 +99,14 @@ func runEffortWebsocketReset(t *testing.T, cancelled bool) {
 		terminal := readOpenAITerminal(t, c, stream)
 		cancelOperation()
 		raw := <-requests
+		logical, err := c.compileSamplingRequest(c.history.snapshot(), input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Count(logical.Bytes(), []byte("# Attached workspace file")) != 2 {
+			t.Fatal("logical WS request lost or duplicated files")
+		}
+
 		var wire websocketCreate
 		if codec.Unmarshal(raw, &wire) != nil || wire.Reasoning == nil || domain.EffortLevel(wire.Reasoning.Effort) != level || wire.Store {
 			t.Fatal("wrong selected wire", string(raw))
@@ -113,7 +131,7 @@ func runEffortWebsocketReset(t *testing.T, cancelled bool) {
 		if i == 2 && receipt.Reason != domain.ResetProperties {
 			t.Fatal("effort change did not identify properties source", receipt)
 		}
-		if i == 5 && wire.PreviousResponseID != "" {
+		if i == 5 && (wire.PreviousResponseID != "" || bytes.Count(raw, []byte("# Attached workspace file")) != 2) {
 			t.Fatal("failed intermediate low restored old response id")
 		}
 		if err := terminal.PreparedSample().Finalize(); err != nil {

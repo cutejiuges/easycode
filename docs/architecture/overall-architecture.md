@@ -813,7 +813,7 @@ continued 决定只保存最终反馈字节和来源、bytes/digest，尚未推�
 
 `plugin.Sources.Load` 只消费用户本次明确提供的最多 32 个目录，逐段 no-follow 打开并持有实际根 FD。首个存在的 `.easycode-plugin/plugin.json`、根 Agent Plugins plugin.json、`.codex-plugin/plugin.json`、`.claude-plugin/plugin.json` 阻断其后格式；不合并、不猜名、不联网。受限 importer 共用严格 metadata 校验，外部声明归一化为 `extension.Contribution`（逻辑来源、贡献 revision、规范 roots 与窄 opener），无未来贡献空字段。`extension/skill` 消费边界且不导入 plugin。
 
-本地与插件在旧 turn reconciliation 后发现，`Runtime.InstallSkills` 在开始工作前恰好一次安装 catalog/preparer。app 在最终策略、冲突及目录纳入结束后组合 `PluginListEntry`；模型、`/plugins`、`/skills` 与补全共享一次发布。所有 New/getter/render 无 I/O。来源 owner 最多 16 个在途借用，受控 handle 持有本次同一 Skill 目录与所有文件，实际身份、类型、manifest/主文档/副文件摘要和私有存储祖先关系均绑定 FD；插件根不能扩大为任意资源根。
+本地与插件在旧 turn reconciliation 后发现，`Runtime.InstallInputSources` 在开始工作前恰好一次安装 catalog/preparer。app 在最终策略、冲突及目录纳入结束后组合 `PluginListEntry`；模型、`/plugins`、`/skills` 与补全共享一次发布。所有 New/getter/render 无 I/O。来源 owner 最多 16 个在途借用，受控 handle 持有本次同一 Skill 目录与所有文件，实际身份、类型、manifest/主文档/副文件摘要和私有存储祖先关系均绑定 FD；插件根不能扩大为任意资源根。
 
 主文档和副文件共用 16 MiB 启动读取额度；受控结果将实际读取量与可用正文分开，一致性失败或读取后取消仍保留计费依据，不返回被拒绝的正文。原始枚举和候选另有分层额度，无效条目不能绕过总预算。
 
@@ -842,26 +842,26 @@ marketplace、安装/更新、插件脚本/Hook/MCP/Agent/commands 贡献、热�
 
 当前提供用户/assistant 流式 Markdown、代码/表格/原文阅读、紧凑工具主线、前台 Shell 进度、完整 Patch/Write/Exec 批准、结构化问卷、Hook 浏览/信任、context/cache 面板、压缩边界、Ctrl+O 分页详情和启动 resume picker。视图保持无 I/O，按需查询由宿主处理并用身份/generation 拒绝迟到响应。
 
-启动 thinking/display/effort/summary 与普通输出配置已经实现，`/context` 只读展示冻结值；运行中推理切换、后台任务、渐进 patch delta、MCP elicitation、Subagent/task 与 fork picker 尚未实现。测试中使用真实 PTY 验收界面，不表示模型命令工具支持 PTY。
+启动 thinking/display/summary 与普通输出配置已经实现，effort 由 thread owner 为每次操作捕获，`/context` 展示来源与当前捕获；其余运行中推理切换、后台任务、渐进 patch delta、MCP elicitation、Subagent/task 与 fork picker 尚未实现。测试中使用真实 PTY 验收界面，不表示模型命令工具支持 PTY。
 
 ### 13.3 REPL 行为
 
 当前多行输入由 `internal/tui/composer.go`、`composer_input.go`、`composer_layout.go` 和 `composer_history.go` 组合实现。composer 拥有 UTF-8 正文与字素边界光标；同一不可变布局供视觉行移动、视口和无色光标渲染复用，普通移动与重复 View 不重建布局。历史以写时复制保留至多 100 条/8 MiB，直接消费 SemanticHistoryView，不执行 Session I/O。编辑和输入校验共享 `replace`，没有通用 editor registry 或新的宿主接口。
 
-Model 将问卷、Hook 信任/浏览、普通审批、详情和提交状态按焦点优先路由，最后才由 composer 消费输入；普通活动 turn 期间可编辑并 Enter 自动追加。ChatSession 的交互模式只有一个长期 Outputs 消费者，Append 返回不是正式 transcript 事实。pending 快照冻结到 admission response：拒绝保留正文/光标/历史，接受后记入 recall 并清空草稿；只有 UserInputCommitted 才将对应 InputID 的正文移入 transcript。Up（空草稿首行）/普通 Esc 原子取回 queued 项，Ctrl+C 或无 queued 的 Esc 定向停止；Ctrl+R 逐条取回 returned，Ctrl+D 逐条丢弃，不自动执行。状态副本与 returned 共用 64 条/16 MiB 本地保留额度，uncertain 不允许取回重试。布局与用户 transcript 的控制字符只在显示副本转义，实际输入除 TUI 的 CRLF/CR → LF 外保真；headless 保留原换行。
+Model 将问卷、Hook 信任/浏览、普通审批、详情和提交状态按焦点优先路由，最后才由 composer 消费输入；普通活动 turn 期间可编辑并 Enter 自动追加。ChatSession 的交互模式只有一个长期 Outputs 消费者，Append 接收强类型 InputDraft，返回不是正式 transcript 事实。pending 快照冻结到 admission response：拒绝保留正文/光标/历史，接受后记入 recall 并清空草稿；只有 UserInputCommitted 才将对应 InputID 的正文移入 transcript。Up（空草稿首行）/普通 Esc 原子取回 queued 项，Ctrl+C 或无 queued 的 Esc 定向停止；Ctrl+R 逐条取回 returned，Ctrl+D 逐条丢弃，不自动执行。状态副本与 returned 共用 64 条/16 MiB 本地保留额度，uncertain 不允许取回重试。布局与用户 transcript 的控制字符只在显示副本转义，实际输入除 TUI 的 CRLF/CR → LF 外保真；headless 保留原换行。
 
 #### 同轮输入与持久化边界
 
 AgentLoop 单 owner 管理 auto/strict-next 共用 FIFO；strict-next 每条独立 turn，自动前缀可共享初始 turn。只有完整工具 outputs durable/finalize 后、下一 sample 前可以 claim 自动前缀，16 samples/64 calls 上限不重置。每条独立 InputID，RequestID 只用于控制响应，实际 turn 身份由 claim 决定。
 
-输入先经 UserInputPreparer 纯内存候选历史、Context 预算和 Provider 请求编码预检，再提交相邻 `turn_inputs_committed` + `provider_native_commit` batch；Sync 成功后 finalize 并发出 UserInputCommitted 与 committed 状态。可预判超限返还输入且不改变历史；网络失败保留已保存输入；无法确认 durability 则 uncertain/poison，不自动重试。single writer 的接收线性化、lease 与 cleanup owner 继续生效。
+宿主先经组合 InputPreparer 冻结 Skill/文件；输入再经 UserInputPreparer 纯内存候选历史、Context 预算和 Provider 请求编码预检，并在 writer 接纳前冻结、验证强制提交事件及有界摘要，再提交相邻 `turn_inputs_committed` + `provider_native_commit` batch；Sync 成功后 finalize 并发出 UserInputCommitted 与 committed 状态。可预判超限返还输入且不改变历史；网络失败保留已保存输入；无法确认 durability 则 uncertain/poison，不自动重试。single writer 的接收线性化、lease 与 cleanup owner 继续生效。
 
-Provider 当前 native kind 封闭为 `user_inputs`/`sample`/`tool_outputs`，sample 不再携带用户输入。原生 user_inputs 保存有序独立消息及 turn/placement/target_sample_index/input_ids；Session 输入事实只保存关联，无正文和 RequestID。SemanticHistoryView 按真实 TurnID 投影有序强类型消息，InputID 不进入请求 bytes/token fingerprint。PreparedUserInputs 和 PreparedToolOutputs 仅共享私有 resolution 生命周期骨架；Provider 编译始终读取原生历史，不反向使用投影。
+Provider 当前 native kind 封闭为 `user_inputs`/`sample`/`tool_outputs`/`hook_feedback`，sample 不再携带用户输入。原生 user_inputs 保存有序独立消息及 turn/placement/target_sample_index/input_ids、可选 skills 与必需 files 数组；Session 输入事实只保存关联，无正文和 RequestID。SemanticHistoryView 按真实 TurnID 投影有序强类型消息，InputID 不进入请求 bytes/token fingerprint。PreparedUserInputs 和 PreparedToolOutputs 仅共享私有 resolution 生命周期骨架；Provider 编译始终读取原生历史，不反向使用投影。
 
 input-only 崩溃尾部先在本地 durable 收口；工具安全点的 steering 尾部复用现有工具补偿路径，不重跑工具或自动联网。内存队列与 returned tray 不持久化，重启不猜测未保存输入。外部 headless JSONL 仍为 v1，自动 admission 增加 entry_id，input.status 不含正文；一次性 text/JSON 过滤新增内部输入事件。
 
 
-已实现多行、字素编辑、显式 decoded paste 与有界历史；原始终端缓冲/RuneError 的框架限制见 README。当前本地命令为 `/cache`、`/context`、`/compact [instructions]`、`/skills`、`/hooks`、`/plugins`，显式 Skill 使用 `/<name>` / `$name`。已支持命令和显式 Skill 的首词补全；尚无 `/help`、`/clear`、`/resume`、`/fork`、`/model`、`/provider`、`/permissions`、`/mcp`、`/agents`、`/cost`、`/doctor`；`easycode resume` 是独立 CLI 入口。
+已实现多行、字素编辑、显式 decoded paste 与有界历史；原始终端缓冲/RuneError 的框架限制见 README。当前本地命令为 `/cache`、`/context`、`/compact [instructions]`、`/effort [level|auto|reset]`、`/skills`、`/hooks`、`/plugins`，显式 Skill 使用 `/<name>` / `$name`。已支持命令和显式 Skill 的首词补全；尚无 `/help`、`/clear`、`/resume`、`/fork`、`/model`、`/provider`、`/permissions`、`/mcp`、`/agents`、`/cost`、`/doctor`；`easycode resume` 是独立 CLI 入口。
 
 ## 14. 配置与密钥
 
@@ -1039,9 +1039,21 @@ Goldmark 的块起点与围栏闭合事件决定稳定前缀。未闭合围栏�
 
 `internal/tui/completion.go`、`completion_state.go` 和 `completion_view.go` 分别负责不可变候选/范围/匹配、实例焦点状态及安全有界布局。`WithSkills` 使用冻结展示条目，过滤不可显式调用及非获胜来源，保留 manual-only Skill；模型 SkillCatalog 不承担手动补全目录职责。
 
-Model 在 Update 中先准备补全占用，再准备 Markdown 与 hydration；主线高度扣除实际候选行数。composer 的内存编辑 revision 和字节光标标识解析缓存，不持有旧完整草稿。恢复草稿统一经 `restoreComposer` 按当前终端尺寸准备布局并失效解析缓存，不能把不同快照的相同编辑序号当作相同正文。Esc、paste 与 modal 返回有短 token 抑制，流式增量和 resize 不清除抑制。新状态与发布后不可变切片随 Model 值复制，未引入全局 registry、后台 worker 或公共协议。
+Model 在 Update 中先准备补全占用，再准备 Markdown 与 hydration；主线高度扣除实际候选行数。composer 的内存编辑 revision 和字节光标标识解析缓存，不持有旧完整草稿。恢复草稿统一经 `restoreComposer` 按当前终端尺寸准备布局并失效解析缓存，不能把不同快照的相同编辑序号当作相同正文。Esc、paste 与 modal 返回有短 token 抑制，流式增量和 resize 不清除抑制。命令/Skill 状态与发布后不可变切片随 Model 值复制；文件来源的单 worker 与 typed 查询端口由下节单独说明，没有全局 registry。
 
 名称替换使用既有 `composer.replace`；内置 Enter 交回共享 `submitComposer`，Skill Enter 与 Tab 只编辑。进入 Skills/Hooks 浏览时保留打开前草稿，返回不被尾部补全空格改写。只有正式提交才进入原有 Prepare/admission/Sync 链；UI 的候选、选择和布局不进入 Provider 请求、Session 或稳定缓存前缀。验证依据见 [补全设计](../../openspec/changes/archive/2026-11-06-add-command-and-skill-completion/design.md) 与同 change 的验收记录。
+
+### 工作区文件引用与来源 owner
+
+`domain/file_reference.go`、`file_mentions.go`、`file_attachment.go`、`file_search.go`、`file_summary.go` 分别持有引用/选择、共享 lexer/草稿、冻结正文、元数据查询和展示摘要的封闭值。构造/decoder/validator 纯内存；原文、Skill、文件独立，正文仅由显式交互草稿解析，七个内置命令共用 domain 保留名判断。TUI 的 `file_completion.go` 复用 composer.replace、安全展示与视区预算，在 Update 交换元数据请求；最多一个结果等待路径，workspace/session/composer/目标/request/index revision 全部相容才可接受，按完整路径保持选择。新请求先撤销旧行资格，接受只编辑且把光标移出完整引用。
+
+`app.workspaceInputSource` 用纯内存构造和显式 Start/BeginClose/Close 拥有一个搜索 worker、最新查询槽和一个内容准备 gate。同锚点保留至多 50000 项/16 MiB 渐进索引、一个 2 秒发现 deadline 和每查询 16000000 状态；50 项/128 KiB 返回值与五条可见候选分别有界。候选关闭即取消会话，再开重扫；不持有 watcher。`tool/builtin.file_discovery` 使用逐层 FD、256 名称批次、完整目录排序发布和有界 Gitignore 样式规则；200000 原始条目、64 层、单目录 4096 项/1 MiB、8 MiB 在途名称栈、规则 64/512 KiB 与 32000000 状态分别计费。省略子树/预算用 typed report 显示不完整，不把部分覆盖报告为完整。
+
+内容准备先核对全部引用，再按路径分组只读一次。Workspace 的小型有限读取机制与 Read 共享，实际打开 FD 校验类型/权限和读前后 dev/inode/mode/size/mtime/ctime；任一失败整条拒绝，不制造 ReadObservation 或副作用资格。16 MiB 单源/64 MiB 总真实读取包含失败消耗，原换行保真，whole/lines 分别 200/2000 行且包装 64/512 KiB。包级没有来源 registry，构造/getter/render 不读盘。
+
+native user_inputs 的必需 files 保存 input_id/attachments，文件元数据与确切原生文本块共同验证；不引入外层 record、版本、迁移器、SQLite 或外部 JSONL 字段。提交事件先按完整冻结输入派生 total/items/omitted 摘要（整个 JSON 至多 4 KiB），再进入 writer admission；成功 Sync 后只发布已经验证的事件。SemanticMessage/TranscriptItem 保存独立集合，committed_history 的 file_attachment 只计实际包装一次，与 native footprint 取覆盖；digest、身份、来源根和查询状态不进入稳定前缀。主线/picker 只显示摘要，Ctrl+O 由已有 transcript owner 提供全部冻结内容及范围/部分行语义，共用四页缓存。
+
+queued/工具安全点/Stop discard-rebuild 不重读文件；恢复和离线预览在 repair 前严格核验，来源删除仍可恢复。内容冻结与 operationProfile 捕获独立：strict-next 真正启动用最新 effort，同轮工具/Stop/自动摘要用旧捕获；manual compaction 在接纳时单独捕获。source.BeginClose 先关门并取消所有 pre-admission 借用，真实 Done 之后才关闭 Workspace/writer/lease；超时不放弃所有权。验证映射与跨平台范围见 [verification.md](../../openspec/changes/archive/2026-11-17-add-workspace-file-mentions/verification.md)。
 
 ## 双 Provider 被动推理展示
 

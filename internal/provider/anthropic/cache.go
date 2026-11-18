@@ -128,6 +128,9 @@ func messageCachePositions(plan samplingRequestPlan, summary bool) []cachePositi
 	}
 	boundary := -1
 	for _, entry := range plan.history {
+		if entry.FeedbackInput != nil {
+			messageCount++
+		}
 		messageCount += len(entry.UserInputs)
 		switch entry.Kind {
 		case nativeHistorySample:

@@ -2,6 +2,7 @@ package domain
 
 import (
 	"easycode/internal/codec"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -35,7 +36,7 @@ func TestTranscriptClosedKindsAndCopy(t *testing.T) {
 			t.Fatal(err)
 		}
 		decoded, err := DecodeTranscriptItem(data)
-		if err != nil || decoded != item {
+		if err != nil || !reflect.DeepEqual(decoded, item) {
 			t.Fatalf("round trip: %v %#v", err, decoded)
 		}
 		for _, invalid := range []string{

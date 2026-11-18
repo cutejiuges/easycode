@@ -1,0 +1,23 @@
+EasyCode test
+
+
+[queued] FIFO-00 @raw
+[queued] FIFO-01 @raw
+[queued] FIFO-02 @raw
+[queued] FIFO-03 @raw
+[queued] FIFO-04 @raw
+[queued] FIFO-05 @raw
+[queued] FIFO-06 @raw
+[queued] FIFO-07 @raw
+[queued] FIFO-08 @raw
+[queued] FIFO-09 @raw
+[queued] FIFO-10 @raw
+[queued] FIFO-11 @raw
+[queued] FIFO-12 @raw
+[queued] FIFO-13 @raw
+[queued] FIFO-14 @raw
+49 more queued or returned inputs
+Up/Esc: edit queued · Ctrl+R: take returned · Ctrl+D: discard returned
+> line one
+> 参考 @sr|
+Enter: send | Alt+Enter/Ctrl+J: newline

@@ -74,7 +74,7 @@ func appEffortIdle(t *testing.T, r *chatResources) {
 }
 func appEffortTurn(t *testing.T, r *chatResources, text string, wantFailure bool) {
 	t.Helper()
-	result, err := r.session.Append(context.Background(), text)
+	result, err := appendInteractiveText(context.Background(), r.session, text)
 	if err != nil || result.Status() != protocol.CommandStatusAccepted {
 		t.Fatal("append failed", err)
 	}
@@ -226,7 +226,7 @@ func TestRuntimeEffortDualProviderToolsRecoveryAndRestart(t *testing.T) {
 			if p := appEffortSnapshot(t, r, "initial"); p.SelectionRevision != 0 || p.Selected.Value != "high" || p.Source != "startup" {
 				t.Fatal("startup selection wrong")
 			}
-			if result, err := r.session.Append(context.Background(), "Read README.md then answer"); err != nil || result.Status() != protocol.CommandStatusAccepted {
+			if result, err := appendInteractiveText(context.Background(), r.session, "Read @README.md then answer"); err != nil || result.Status() != protocol.CommandStatusAccepted {
 				t.Fatal(err)
 			}
 			first := <-bodies
@@ -340,7 +340,7 @@ func TestRuntimeEffortRestoredRequestIgnoresProcessRevision(t *testing.T) {
 				if err := r.session.StartInteractive(context.Background()); err != nil {
 					t.Fatal(err)
 				}
-				appEffortTurn(t, r, "Read README.md", false)
+				appEffortTurn(t, r, "Read @README.md", false)
 				appEffortIdle(t, r)
 				<-bodies
 				<-bodies
@@ -451,7 +451,7 @@ func TestRuntimeEffortQuestionAndApprovalKeepCapturedPolicy(t *testing.T) {
 			if err := r.session.StartInteractive(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := r.session.Append(context.Background(), "ask then write"); err != nil {
+			if _, err := appendInteractiveText(context.Background(), r.session, "ask then write"); err != nil {
 				t.Fatal(err)
 			}
 			questions, approvals := 0, 0
@@ -626,7 +626,7 @@ func TestRuntimeEffortDisconnectAndCancelKeepFutureSelection(t *testing.T) {
 				if err := r.session.StartInteractive(context.Background()); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := r.session.Append(context.Background(), "work"); err != nil {
+				if _, err := appendInteractiveText(context.Background(), r.session, "work"); err != nil {
 					t.Fatal(err)
 				}
 				<-entered

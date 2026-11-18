@@ -67,12 +67,12 @@ type cancellingSkillSession struct {
 	admitted bool
 }
 
-func (s *cancellingSkillSession) Append(ctx context.Context, text string) (protocol.CommandResult, error) {
+func (s *cancellingSkillSession) Append(ctx context.Context, draft domain.InputDraft) (protocol.CommandResult, error) {
 	if err := ctx.Err(); err != nil {
 		return protocol.CommandResult{}, err
 	}
 	s.admitted = true
-	return s.fakeChatSession.Append(ctx, text)
+	return s.fakeChatSession.Append(ctx, draft)
 }
 func TestSkillPreparationCancellationAndStaleResponse(t *testing.T) {
 	session := &cancellingSkillSession{}

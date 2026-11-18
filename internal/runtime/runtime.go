@@ -97,7 +97,8 @@ type Runtime struct {
 	hooks                        hookState
 	skillInstallation            skillInstallation
 	skillExecutor                tool.SkillExecutor
-	skillPreparer                SkillPreparer
+	inputPreparer                InputPreparer
+	userInputCommitted           func(domain.UserInput) (protocol.Event, error)
 	skillCatalog                 domain.SkillCatalog
 	explicitSkills               []domain.SkillAttachment
 	cachePublisher               func(protocol.CacheSnapshotPayload)
@@ -245,6 +246,7 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 		readArtifactExecutor:   config.ReadArtifactExecutor,
 		questionExecutor:       config.QuestionExecutor, interactiveQuestions: config.InteractiveQuestions, newQuestionRequestID: config.GenerateQuestionRequestID,
 		skillExecutor:      config.SkillExecutor,
+		userInputCommitted: protocol.NewUserInputCommitted,
 		textOutputStore:    config.TextOutputStore,
 		artifactReferences: config.ArtifactReferences,
 		conversation:       conversation, journal: config.Journal,

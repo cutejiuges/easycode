@@ -108,7 +108,7 @@ func (loop *AgentLoop) Submit(ctx context.Context, command protocol.Command) (pr
 	if err := ctx.Err(); err != nil {
 		return protocol.CommandResult{}, fault.Wrap(fault.CodeUserCancelled, "command admission was cancelled", err)
 	}
-	if err := command.Validate(); err != nil {
+	if err := command.ValidateForAdmission(); err != nil {
 		return protocol.CommandResult{}, fault.New(fault.CodeInvalidInput, "command is invalid")
 	}
 	if loop == nil || loop.state.Load() != agentLoopRunning {
@@ -464,6 +464,9 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 		value, err := domain.NewUserInput(id, request.command.Text())
 		if a, ok := request.command.SkillAttachment(); ok && err == nil {
 			value, err = value.WithSkillAttachment(a)
+		}
+		if err == nil && request.command.FileAttachments().Len() > 0 {
+			value, err = value.WithFileAttachments(request.command.FileAttachments())
 		}
 		if err != nil {
 			state.reject(request, protocol.ControlErrorInvalidInput, true)

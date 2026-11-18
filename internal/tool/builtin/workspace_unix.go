@@ -48,7 +48,7 @@ func (handle *unixWorkspaceHandle) openDirectory(relative string, hooks workspac
 	if handle == nil || handle.root == nil {
 		return nil, errors.New("workspace is closed")
 	}
-	rootFD, err := unix.Openat(int(handle.root.Fd()), ".", unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
+	rootFD, err := openWorkspaceRelative(handle.root, ".", unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -108,16 +108,18 @@ func (handle *unixWorkspaceHandle) openFile(relative string, hooks workspaceHook
 	return file, nil
 }
 
-func (node *unixWorkspaceNode) readEntryNames() ([]string, error) {
+func (node *unixWorkspaceNode) readEntryNames(batch int) ([]string, error) {
 	if node == nil || node.handle == nil || node.nodeKind != workspaceNodeDirectory {
 		return nil, errors.New("workspace directory is unavailable")
 	}
-	names, err := node.handle.Readdirnames(-1)
-	if err != nil {
-		return nil, err
+	if batch < 1 || batch > workspaceNameBatch {
+		return nil, errors.New("workspace directory batch is invalid")
 	}
-	return names, nil
+	return node.handle.Readdirnames(batch)
 }
+
+// interrupt 只关闭实际 FD；指针状态由原读取栈在回调完成后清理。
+func (node *unixWorkspaceNode) interrupt() error { return node.handle.Close() }
 
 func (node *unixWorkspaceNode) openChild(name string, hooks workspaceHooks) (workspaceChild, error) {
 	if node == nil || node.handle == nil || node.nodeKind != workspaceNodeDirectory || name == "" || name == "." || name == ".." || strings.Contains(name, "/") || strings.ContainsRune(name, 0) {
@@ -127,10 +129,11 @@ func (node *unixWorkspaceNode) openChild(name string, hooks workspaceHooks) (wor
 	if node.relativePath != "" {
 		relative = node.relativePath + "/" + name
 	}
-	if hooks.beforeOpenComponent != nil {
-		hooks.beforeOpenComponent(relative)
-	}
-	fd, err := unix.Openat(int(node.handle.Fd()), name, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	fd, err := openWorkspaceRelative(node.handle, name, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, func() {
+		if hooks.beforeOpenComponent != nil {
+			hooks.beforeOpenComponent(relative)
+		}
+	})
 	if err != nil {
 		if errors.Is(err, unix.EACCES) {
 			return nil, errTargetNotReadable
@@ -162,6 +165,26 @@ func (node *unixWorkspaceNode) openChild(name string, hooks workspaceHooks) (wor
 		}
 	}
 	return &unixWorkspaceNode{handle: file, relativePath: relative, nodeKind: kind, fileSize: stat.Size}, nil
+}
+
+// openWorkspaceRelative 在整个 openat 期间借用目录 FD，取消关闭不能让原数字被其他对象复用。
+func openWorkspaceRelative(directory *os.File, name string, flags int, beforeOpen func()) (int, error) {
+	connection, err := directory.SyscallConn()
+	if err != nil {
+		return -1, err
+	}
+	fd := -1
+	var openErr error
+	err = connection.Control(func(parent uintptr) {
+		if beforeOpen != nil {
+			beforeOpen()
+		}
+		fd, openErr = unix.Openat(int(parent), name, flags, 0)
+	})
+	if err != nil {
+		return -1, err
+	}
+	return fd, openErr
 }
 
 func (node *unixWorkspaceNode) kind() workspaceNodeKind { return node.nodeKind }

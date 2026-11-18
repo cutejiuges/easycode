@@ -103,11 +103,15 @@ func (s *completionState) suppressPastedInput(c composer) {
 func (m *Model) prepareCompletion() {
 	s := &m.completion
 	s.refreshTarget(m.composer)
+	if !s.valid {
+		s.view, s.rows = "", 0
+	}
+	m.prepareFiles()
 	if m.completionBlocked() {
 		s.suppress(completionModal)
 		return
 	}
-	if !s.valid || s.suppression != completionNotSuppressed || len(s.matches) == 0 {
+	if m.files.valid || !s.valid || s.suppression != completionNotSuppressed || len(s.matches) == 0 {
 		s.view, s.rows = "", 0
 		return
 	}

@@ -2,6 +2,7 @@ package domain
 
 import (
 	"bytes"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -296,7 +297,7 @@ func TestStopContinuationCandidatesKeepRealInputIdentity(t *testing.T) {
 	users[0] = UserInput{}
 	returned := input.Inputs()
 	returned[0] = UserInput{}
-	if input.Validate() != nil || input.Inputs()[0] != user {
+	if input.Validate() != nil || !reflect.DeepEqual(input.Inputs()[0], user) {
 		t.Fatal("candidate input alias")
 	}
 	association, _ := input.Association()

@@ -22,6 +22,7 @@ const (
 
 // SemanticMessage 保留 turn 内消息顺序；InputID 只用于用户消息关联。
 type SemanticMessage struct {
+	Files      FileAttachments    `json:"files,omitempty,omitzero"`
 	HookSource *HookMessageSource `json:"hook_source,omitempty"`
 	Skill      SkillAttachment    `json:"skill,omitempty,omitzero"`
 	HasSkill   bool               `json:"has_skill,omitempty"`
@@ -44,6 +45,9 @@ func NewSemanticAssistantMessage(text string) (SemanticMessage, error) {
 
 // Validate 校验封闭角色与输入身份，允许没有可见正文的消息。
 func (m SemanticMessage) Validate() error {
+	if m.Files.Len() > 0 && (m.Role != SemanticUser || ValidateFileAttachments(m.Text, m.Files) != nil) {
+		return fmt.Errorf("invalid semantic file attachments")
+	}
 	if m.Role != SemanticHook && m.HookSource != nil {
 		return fmt.Errorf("unexpected semantic hook source")
 	}
@@ -139,6 +143,7 @@ func NewSemanticHookMessage(feedback StopFeedback) (SemanticMessage, error) {
 func cloneSemanticMessages(messages []SemanticMessage) []SemanticMessage {
 	out := append([]SemanticMessage{}, messages...)
 	for i := range out {
+		out[i].Files = out[i].Files.Clone()
 		if out[i].HookSource != nil {
 			source := *out[i].HookSource
 			out[i].HookSource = &source

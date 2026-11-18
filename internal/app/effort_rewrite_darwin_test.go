@@ -54,7 +54,7 @@ func TestRuntimeEffortInputRewriteKeepsCapturedPolicy(t *testing.T) {
 			if err := r.session.StartInteractive(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := r.session.Append(context.Background(), "apply one rewritten Write"); err != nil {
+			if _, err := appendInteractiveText(context.Background(), r.session, "apply one rewritten Write"); err != nil {
 				t.Fatal(err)
 			}
 			trusts, approvals := 0, 0

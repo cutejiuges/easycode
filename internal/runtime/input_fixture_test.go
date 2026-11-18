@@ -45,6 +45,7 @@ func prepareFixtureInputs(a domain.InputAssociation, inputs []domain.UserInput, 
 		if err != nil {
 			return nil, err
 		}
+		messages[i].Files = input.FileAttachments()
 	}
 	if a.Placement() == domain.InputInitial {
 		turn, err := domain.NewSemanticTurn(a.TurnID(), messages)

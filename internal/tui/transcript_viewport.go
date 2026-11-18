@@ -21,8 +21,8 @@ type transcriptViewport struct {
 
 func (model Model) transcriptHeight() int {
 	status := model.nonEffortStatusRows() + len(model.effortNoticeLines())
-	desired := max(1, model.heightOrDefault()-model.composerChatRows()-renderedChatRows(model.renderInputs())-5-status-model.completion.rows)
-	actual := max(0, model.chatContentRows()-len(model.effortNoticeLines())-model.completion.rows)
+	desired := max(1, model.heightOrDefault()-model.composerChatRows()-renderedChatRows(model.renderInputs())-5-status-(model.completion.rows+model.files.rows))
+	actual := max(0, model.chatContentRows()-len(model.effortNoticeLines())-(model.completion.rows+model.files.rows))
 	return min(desired, actual)
 }
 

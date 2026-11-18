@@ -28,6 +28,7 @@ type TranscriptPosition struct {
 
 // TranscriptItem 只包含允许展示的内容与调用关联；调用名称仅用于核验身份。
 type TranscriptItem struct {
+	Files      FileAttachments    `json:"files,omitempty,omitzero"`
 	HookSource *HookMessageSource `json:"hook_source,omitempty"`
 	Reasoning  *ReasoningBody     `json:"reasoning,omitempty"`
 	Skill      SkillAttachment    `json:"skill,omitempty,omitzero"`
@@ -67,6 +68,9 @@ func NewTranscriptReasoning(position TranscriptPosition, turn TurnID, body Reaso
 
 // Validate 拒绝未知种类、无效身份和跨种类字段，不改变正文。
 func (v TranscriptItem) Validate() error {
+	if v.Files.Len() > 0 && (v.Kind != TranscriptUser || ValidateFileAttachments(v.Text, v.Files) != nil) {
+		return errors.New("invalid transcript file attachments")
+	}
 	if v.Kind != TranscriptHook && v.HookSource != nil {
 		return errors.New("unexpected transcript hook source")
 	}
@@ -161,6 +165,7 @@ type TranscriptView struct {
 func NewTranscriptView(family ProviderFamily, items []TranscriptItem) (TranscriptView, error) {
 	v := TranscriptView{Provider: family, Items: append([]TranscriptItem{}, items...)}
 	for i := range v.Items {
+		v.Items[i].Files = v.Items[i].Files.Clone()
 		if v.Items[i].HookSource != nil {
 			source := *v.Items[i].HookSource
 			v.Items[i].HookSource = &source

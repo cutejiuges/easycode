@@ -1,0 +1,21 @@
+goos: darwin
+goarch: arm64
+pkg: easycode/internal/domain
+cpu: Apple M1 Pro
+BenchmarkFileAttachmentLongEscapedLine-10    	       3	   2697222 ns/op	 519.05 MB/s	  705877 B/op	      40 allocs/op
+PASS
+ok  	easycode/internal/domain	0.508s
+goos: darwin
+goarch: arm64
+pkg: easycode/internal/tool/builtin
+cpu: Apple M1 Pro
+BenchmarkFileIgnoreBoundedPatterns-10    	       3	      3639 ns/op	     949 B/op	       5 allocs/op
+PASS
+ok  	easycode/internal/tool/builtin	0.438s
+goos: darwin
+goarch: arm64
+pkg: easycode/internal/app
+cpu: Apple M1 Pro
+BenchmarkFileMatcherLargeIndex-10    	       3	  38408028 ns/op	  16000000 states/op	 2781605 B/op	   21719 allocs/op
+PASS
+ok  	easycode/internal/app	0.714s

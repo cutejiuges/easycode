@@ -217,9 +217,7 @@ func (entry nativeHistoryEntry) clone() nativeHistoryEntry {
 		cloned.UserInputs[i] = input.clone()
 	}
 	if entry.InputMetadata != nil {
-		m := *entry.InputMetadata
-		m.Skills = append([]provider.InputSkillMetadata(nil), m.Skills...)
-		m.InputIDs = append([]domain.InputID(nil), m.InputIDs...)
+		m := entry.InputMetadata.Clone()
 		cloned.InputMetadata = &m
 	}
 

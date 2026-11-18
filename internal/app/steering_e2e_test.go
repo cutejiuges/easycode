@@ -74,15 +74,15 @@ func TestSameTurnSteeringThroughBothProviderTransports(t *testing.T) {
 				}
 				completed <- items
 			}()
-			if _, err := resources.session.Append(context.Background(), "Read README.md"); err != nil {
+			if _, err := appendInteractiveText(context.Background(), resources.session, "Read README.md"); err != nil {
 				t.Fatal(err)
 			}
 			<-entered
-			second, err := resources.session.Append(context.Background(), "  preserve 中文\n")
+			second, err := appendInteractiveText(context.Background(), resources.session, "  preserve 中文\n")
 			if err != nil {
 				t.Fatal(err)
 			}
-			third, err := resources.session.Append(context.Background(), "also verify tests")
+			third, err := appendInteractiveText(context.Background(), resources.session, "also verify tests")
 			if err != nil {
 				t.Fatal(err)
 			}

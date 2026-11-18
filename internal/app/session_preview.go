@@ -121,6 +121,8 @@ func boundSessionPreview(view domain.SemanticHistoryView) tui.SessionPreview {
 				return result
 			}
 			entry := tui.PreviewMessage{TurnID: turn.TurnID, Message: message}
+			entry.Files, _ = domain.NewFileSummary(message.Files)
+			entry.Message.Files = domain.FileAttachments{}
 			if len(message.Text) > remaining {
 				end := remaining
 				for end > 0 && !utf8.RuneStart(message.Text[end]) {

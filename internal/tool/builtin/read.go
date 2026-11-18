@@ -1,6 +1,7 @@
 package builtin
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -34,6 +35,8 @@ type Workspace struct {
 type workspaceHooks struct {
 	beforeOpenComponent func(string)
 	afterOpenComponent  func(string)
+	afterFileRead       func(*os.File)
+	fileSnapshot        func(*os.File) (readFileState, error)
 }
 
 type workspaceNodeKind uint8
@@ -54,7 +57,8 @@ type workspaceHandle interface {
 }
 
 type workspaceDirectory interface {
-	readEntryNames() ([]string, error)
+	readEntryNames(int) ([]string, error)
+	interrupt() error
 	openChild(string, workspaceHooks) (workspaceChild, error)
 	close() error
 }
@@ -183,26 +187,18 @@ func (executor *ReadExecutor) Execute(ctx context.Context, invocation tool.ReadI
 }
 
 func readBounded(ctx context.Context, file io.Reader) ([]byte, string, string) {
-	data := make([]byte, 0, 64<<10)
-	buffer := make([]byte, 64<<10)
-	for {
-		if err := ctx.Err(); err != nil {
-			return nil, "cancelled", "Read cancelled"
-		}
-		count, err := file.Read(buffer)
-		if count > 0 {
-			if len(data)+count > maxReadFileBytes {
-				return nil, "file_too_large", "Read failed: file exceeds 16 MiB"
-			}
-			data = append(data, buffer[:count]...)
-		}
-		if errors.Is(err, io.EOF) {
-			return data, "", ""
-		}
-		if err != nil {
-			return nil, "read_failed", "Read failed: file could not be read"
-		}
+	var data bytes.Buffer
+	count, err := copyBoundedFile(ctx, file, &data, maxReadFileBytes+1)
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return nil, "cancelled", "Read cancelled"
 	}
+	if count > maxReadFileBytes {
+		return nil, "file_too_large", "Read failed: file exceeds 16 MiB"
+	}
+	if err != nil {
+		return nil, "read_failed", "Read failed: file could not be read"
+	}
+	return data.Bytes(), "", ""
 }
 
 func splitTextLines(content string) []string {

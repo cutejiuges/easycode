@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -188,7 +189,7 @@ func TestCommandDetailPreservesCandidateDraftAndInterruptRouting(t *testing.T) {
 		t.Fatal("closing details left overlay open")
 	}
 	completed = openSnapshotCommandDetail(t, completed)
-	if completed.browser.items[completed.browser.selected] != frozen || len(completed.toolActivities) != 0 {
+	if !reflect.DeepEqual(completed.browser.items[completed.browser.selected], frozen) || len(completed.toolActivities) != 0 {
 		t.Fatal("closing details changed result")
 	}
 }

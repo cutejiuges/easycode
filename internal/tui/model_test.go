@@ -37,7 +37,8 @@ func (session *fakeChatSession) Outputs() <-chan protocol.ControlItem {
 	}
 	return session.outputs
 }
-func (session *fakeChatSession) Append(ctx context.Context, text string) (protocol.CommandResult, error) {
+func (session *fakeChatSession) Append(ctx context.Context, draft domain.InputDraft) (protocol.CommandResult, error) {
+	text := draft.Text()
 	session.mu.Lock()
 	session.contexts = append(session.contexts, ctx)
 	session.submits = append(session.submits, text)
