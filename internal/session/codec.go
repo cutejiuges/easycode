@@ -62,15 +62,16 @@ func EncodeRecord(record Record) (Record, []byte, error) {
 	if err := validateRecord(record, false); err != nil {
 		return Record{}, nil, err
 	}
-	checksum, err := recordChecksum(record)
+	encoded, err := encodeChecksumEnvelope(record)
 	if err != nil {
 		return Record{}, nil, err
 	}
-	record.Checksum = checksum
-	encoded, err := codec.MarshalStable(record)
-	if err != nil {
-		return Record{}, nil, fmt.Errorf("marshal session record: %w", err)
-	}
+	sum := sha256.Sum256(encoded)
+	record.Checksum = fmt.Sprintf("%x", sum[:])
+	// 当前信封的最后一个字段固定为 checksum；散列完成后复用已编码的 payload。
+	encoded = append(encoded[:len(encoded)-1], `,"checksum":"`...)
+	encoded = append(encoded, record.Checksum...)
+	encoded = append(encoded, '"', '}')
 	if len(encoded) > MaxRecordBytes {
 		return Record{}, nil, fmt.Errorf("session record exceeds size limit")
 	}
@@ -185,8 +186,16 @@ func validateRecord(record Record, requireChecksum bool) error {
 }
 
 func recordChecksum(record Record) (string, error) {
-	encoded, err := codec.MarshalStable(checksumEnvelope{
+	encoded, err := encodeChecksumEnvelope(record)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(encoded)
+	return fmt.Sprintf("%x", sum[:]), nil
+}
 
+func encodeChecksumEnvelope(record Record) ([]byte, error) {
+	encoded, err := codec.MarshalStable(checksumEnvelope{
 		Sequence:  record.Sequence,
 		Timestamp: record.Timestamp, SessionID: record.SessionID, ThreadID: record.ThreadID,
 		ParentThreadID: record.ParentThreadID, TurnID: record.TurnID, EventKind: record.EventKind,
@@ -194,10 +203,9 @@ func recordChecksum(record Record) (string, error) {
 		Payload: record.Payload,
 	})
 	if err != nil {
-		return "", fmt.Errorf("marshal session checksum input: %w", err)
+		return nil, fmt.Errorf("marshal session checksum input: %w", err)
 	}
-	sum := sha256.Sum256(encoded)
-	return fmt.Sprintf("%x", sum[:]), nil
+	return encoded, nil
 }
 
 func validateCanonicalTimestamp(raw stdjson.RawMessage, timestamp time.Time) error {

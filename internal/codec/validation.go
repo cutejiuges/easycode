@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"unicode/utf8"
 )
 
 // ValidateJSON 拒绝重复键、尾随内容和有损 Unicode，保留合法扩展字段。
@@ -22,84 +21,36 @@ func ValidateBoundedJSON(data []byte, maxBytes, maxDepth int, rejectNull bool) e
 	return validateJSONDepth(data, maxDepth, rejectNull)
 }
 func validateJSONDepth(data []byte, maxDepth int, rejectNull bool) error {
-	if !utf8.Valid(data) || !losslessJSONUnicode(data) {
-		return errors.New("invalid JSON Unicode")
-	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	if err := scanValue(decoder, 0, maxDepth, rejectNull); err != nil {
-		return err
-	}
-	return requireJSONEOF(decoder)
-}
-
-func scanValue(decoder *json.Decoder, depth, maxDepth int, rejectNull bool) error {
-	token, err := decoder.Token()
-	if err != nil {
-		return err
-	}
-	if token == nil && rejectNull {
-		return errors.New("JSON null is not supported")
-	}
-	delimiter, ok := token.(json.Delim)
-	if !ok {
-		return nil
-	}
-	depth++
-	if maxDepth > 0 && depth > maxDepth {
-		return errors.New("JSON exceeds depth limit")
-	}
-	switch delimiter {
-	case '{':
-		seen := make(map[string]bool)
-		for decoder.More() {
-			key, err := decoder.Token()
-			name, ok := key.(string)
-			if err != nil || !ok || seen[name] {
-				return errors.New("duplicate or invalid JSON field")
-			}
-			seen[name] = true
-			if err := scanValue(decoder, depth, maxDepth, rejectNull); err != nil {
-				return err
-			}
-		}
-	case '[':
-		for decoder.More() {
-			if err := scanValue(decoder, depth, maxDepth, rejectNull); err != nil {
-				return err
-			}
-		}
-	default:
-		return errors.New("unexpected JSON delimiter")
-	}
-	_, err = decoder.Token()
+	_, err := scanJSONFields(data, maxDepth, rejectNull, 0)
 	return err
 }
 
 // DecodeObject 解码封闭对象；required 必须出现，所有当前字段均不接受 null。
 // 可空契约应分别使用 ValidateObjectFields 和 UnmarshalStrict 声明其字段策略。
 func DecodeObject(data []byte, target any, required ...string) error {
-	if err := ValidateObjectFields(data, required...); err != nil {
+	value, err := scanJSON(data, 0, false)
+	if err != nil {
 		return err
 	}
-	var fields map[string]json.RawMessage
-	if err := Unmarshal(data, &fields); err != nil {
+	if err := validateObjectFields(value, required); err != nil {
 		return err
 	}
-	for name, value := range fields {
-		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+	for name, field := range value.members {
+		if bytes.Equal(field.raw, []byte("null")) {
 			return fmt.Errorf("JSON field %q must not be null", name)
 		}
 	}
-	return UnmarshalStrict(data, target)
+	return unmarshalValidated(value, target, false)
 }
 
 // losslessJSONUnicode 在标准 JSON 解码前拒绝会被替换成 U+FFFD 的孤立代理项。
 func losslessJSONUnicode(data []byte) bool {
 	for i := 0; i < len(data); i++ {
-		if data[i] != '\\' {
-			continue
+		next := bytes.IndexByte(data[i:], '\\')
+		if next < 0 {
+			return true
 		}
+		i += next
 		i++
 		if i >= len(data) {
 			return false
@@ -135,12 +86,16 @@ func losslessJSONUnicode(data []byte) bool {
 
 // ObjectMembers 返回经过无歧义检查的对象字段；字段业务策略由调用方声明。
 func ObjectMembers(data []byte) (map[string]json.RawMessage, error) {
-	if err := ValidateObjectFields(data); err != nil {
+	value, err := scanJSONFields(data, 0, false, 1)
+	if err != nil {
 		return nil, err
 	}
-	var members map[string]json.RawMessage
-	if err := Unmarshal(data, &members); err != nil {
+	if err := validateObjectFields(value, nil); err != nil {
 		return nil, err
+	}
+	members := make(map[string]json.RawMessage, len(value.members))
+	for name, field := range value.members {
+		members[name] = append(json.RawMessage(nil), field.raw...)
 	}
 	return members, nil
 }

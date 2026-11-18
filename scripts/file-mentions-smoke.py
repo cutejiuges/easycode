@@ -1,18 +1,15 @@
 #!/usr/bin/env python3
 """以真实 Darwin PTY、双 Provider 假 SSE 和事件握手验收文件引用。"""
-import fcntl
 import http.server
 import json
 import os
 from pathlib import Path
 import platform
-import pty
 import select
 import signal
 import struct
 import subprocess
 import tempfile
-import termios
 import threading
 import time
 
@@ -76,6 +73,10 @@ class Fixture(http.server.BaseHTTPRequestHandler):
 
 
 def run_case(binary, root, directory, family, no_color):
+    import fcntl
+    import pty
+    import termios
+
     workspace = directory / f"{family}-{no_color}"
     (workspace / "src").mkdir(parents=True)
     (workspace / "src/a b.go").write_bytes(b"first\r\nFILE_FROZEN_2\nthird\n")

@@ -1,0 +1,22 @@
+File: app-race.test
+Type: alloc_space
+Time: 2026-11-16 21:53:38 CST
+Showing nodes accounting for 1300.12MB, 97.73% of 1330.34MB total
+Dropped 125 nodes (cum <= 6.65MB)
+Showing top 15 nodes out of 111
+      flat  flat%   sum%        cum   cum%
+  704.82MB 52.98% 52.98%   704.82MB 52.98%  github.com/bytedance/sonic/internal/decoder/optdec.init.func1
+  236.86MB 17.80% 70.79%   236.86MB 17.80%  encoding/json.(*Decoder).refill
+  108.34MB  8.14% 78.93%   108.34MB  8.14%  encoding/json.(*RawMessage).UnmarshalJSON
+   64.22MB  4.83% 83.76%   903.20MB 67.89%  github.com/bytedance/sonic.frozenConfig.Unmarshal
+   60.25MB  4.53% 88.28%   280.57MB 21.09%  github.com/bytedance/sonic/internal/decoder/optdec.(*unmarshalJSONDecoder).FromDom
+   55.03MB  4.14% 92.42%    69.62MB  5.23%  encoding/json.(*decodeState).literalStore
+   27.48MB  2.07% 94.49%    27.48MB  2.07%  bytes.growSlice
+   14.23MB  1.07% 95.56%    14.23MB  1.07%  github.com/bytedance/sonic/internal/encoder/vars.init.func1
+    9.28MB   0.7% 96.26%     9.28MB   0.7%  github.com/bytedance/sonic/internal/decoder/optdec.Node.AsStr
+    6.83MB  0.51% 96.77%     6.83MB  0.51%  easycode/internal/session.cloneRecord (inline)
+    3.06MB  0.23% 97.00%    11.47MB  0.86%  encoding/json.Marshal
+    3.06MB  0.23% 97.23%    18.08MB  1.36%  easycode/internal/session.readBoundedLine
+    2.58MB  0.19% 97.42%  1323.20MB 99.46%  easycode/internal/app.TestSessionPreviewCurrentFixturesAreReadOnly.func1
+    2.56MB  0.19% 97.62%     7.69MB  0.58%  github.com/bytedance/sonic/internal/encoder/prim.Compact
+    1.50MB  0.11% 97.73%   167.83MB 12.62%  encoding/json.(*Decoder).Token

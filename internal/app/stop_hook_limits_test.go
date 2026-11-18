@@ -41,6 +41,8 @@ func TestStopSampleAndCallLimitsKeepTextContinuationAvailable(t *testing.T) {
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		for _, mode := range []string{"last-pass", "last-block", "64-calls"} {
 			t.Run(string(family)+"/"+mode, func(t *testing.T) {
+				// 额度状态和所有副作用资源属于本子用例，不共享进程环境修改。
+				t.Parallel()
 				workspace := t.TempDir()
 				root := filepath.Join(t.TempDir(), "sessions")
 				if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("source\n"), 0600); err != nil {

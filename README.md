@@ -552,7 +552,13 @@ exit 0 的空白或 `{}` 表示通过；只有严格 `{"decision":"block","reaso
 
 实现及验证见[Stop 验收记录](openspec/changes/archive/2026-11-13-add-stop-command-hooks/verification.md)。真实 PTY 入口为 `scripts/stop-hook-smoke.py`，命令执行仍仅支持 Darwin；其他平台失败关闭。
 
-完整质量门使用 `make verify`，包含格式、vet、Staticcheck、架构边界、全量测试和 race。包级测试总时限默认为 20 分钟（`TEST_TIMEOUT`）；它只控制测试进程的总预算，不修改各操作的取消或超时断言。
+完整质量门使用 `make verify`，包含分支策略、格式、vet、Staticcheck、架构边界、测试调度器自检、全量普通测试和经审计的必要 race。质量门需要 Python 3.9+，默认不限制总耗时（`TEST_BUDGET=0`），每次强制重新执行测试。正值总预算仅供主动诊断。Go 的正常构建缓存仍可复用；依赖和工具链需提前准备好。`TEST_TIMEOUT` 保留单个测试进程的失败上限，不修改各业务操作的取消或超时断言。
+
+测试入口在 Darwin 默认最多运行 6 个命令（不超过可见 CPU 数的两倍），其他平台最多 4 个且不超过可见 CPU 数；每个测试进程使用 2 路 CPU/测试并行度。编译与静态分析独立使用最多 4 路 CPU，测试枚举的构建命令也最多并行 4 个包。app 的顶层测试在 Darwin 自动分为 16 个隔离分片，其他平台默认 2 个。Linux CI 使用 4 个命令、2 个 app 分片，手动 workflow 可比较进程数、分片数和进程内并行度。Provider、Session、Runtime、Tool、TUI 六个高 RSS 包额外共享最多 2 个执行槽，并提前与 app 分片交错；`--heavy-jobs` 可调整该上限。其余包同样受总并发上限约束，普通与 race 阶段顺序执行，`make -j` 不会同时启动两个阶段。枚举时为每个包链接一次测试二进制，同一阶段的分片复用该文件并保持包目录与 TestMain 生命周期，结束后删除临时二进制。全部 Test、Example 和默认 fuzz seed 都从当前平台自动枚举，普通阶段完整执行；race 仅移出 `scripts/race_policy.json` 中精确列出的已审计入口。清单记录理由和保留覆盖，新增测试默认进入 race，失效名称或缺失替代覆盖会报错。实际完成清单必须与所选集合匹配，报告同时保留完整集合和排除项。
+
+执行开始时会打印临时报告目录，`summary.json` 保存阶段耗时、慢测试、执行清单、退出码、输入摘要与最大单个子进程 RSS（不是所有并发进程 RSS 之和），各分片保留原始 Go JSON 事件。失败、中断或预算超时会停止新工作并回收本次进程树。CI 上传相同报告，提供手动触发入口；性能验收以禁用测试结果缓存的完整流程为准。
+
+静态检查与普通测试共享调度槽并交错执行，普通阶段计时包含这一重叠区间；所有静态检查和普通测试成功后才进入 race。单独列出的静态命令时间不能再次加到总墙钟。慢测试耗时包含父测试等待并行子用例的时间，排除父测试自身暂停排队的区间。
 
 ## 工程结构
 
@@ -592,9 +598,18 @@ make
 # 检查格式、执行静态分析、全量测试和竞态测试
 make verify
 
-# 分别执行普通测试或竞态测试
+# 分别执行全量普通测试或经审计的必要竞态测试
 make test
 make test-race
+
+# 手动执行全量 race，不应用排除清单
+make test-race-full
+
+# 顺序执行全量普通与默认 race，并指定报告目录
+make test-all TEST_OPTIONS="--output=/tmp/easycode-tests"
+
+# 在资源受限的机器上调整有界并发
+make verify TEST_OPTIONS="--jobs=2 --parallel=2 --shards=16"
 
 # 执行固定版本 Staticcheck
 make lint
@@ -624,14 +639,14 @@ make branch-policy-test
 make install-hooks
 ```
 
-该命令将当前仓库的 `core.hooksPath` 设置为 `.githooks`。两个 hook 共用同一个分支校验脚本；pre-commit 还会执行 `make verify`。以下任意检查失败都会中止提交：
+该命令将当前仓库的 `core.hooksPath` 设置为 `.githooks`。两个 hook 共用同一个分支校验脚本；两者都会执行 `make verify`。以下任意检查失败都会中止提交：
 
 1. 分支策略回归。
 2. `gofmt -l .`。
 3. `go vet ./...`。
 4. `go tool staticcheck ./...`。
-5. `go test ./...`。
-6. `go test -race ./...`。
+5. 调度器自检及全量普通测试（包含架构守卫）。
+6. 经审计的必要 race 测试。
 
 仓库 workflow 提供 `branch-governance` 和 `verify` 两个 job。管理员仍须在 GitHub 的 `main` branch ruleset 中把二者设为 required checks，并禁止 direct push；提交仓库文件本身不会自动启用托管平台保护。
 

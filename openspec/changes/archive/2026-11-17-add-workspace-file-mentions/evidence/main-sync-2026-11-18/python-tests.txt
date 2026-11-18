@@ -1,0 +1,45 @@
+test_ack_import_does_not_require_posix_terminal_modules (file_mentions_smoke_test.AckInboxTest) ... ok
+test_new_submission_does_not_consume_an_old_admission (file_mentions_smoke_test.AckInboxTest) ... ok
+test_new_view_does_not_accept_a_stale_buffered_view (file_mentions_smoke_test.AckInboxTest) ... ok
+test_probe_before_key_and_key_before_probe_are_both_observable_once (file_mentions_smoke_test.AckInboxTest) ... ok
+test_successive_turns_and_new_key_never_reuse_an_old_receipt (file_mentions_smoke_test.AckInboxTest) ... ok
+test_capture_preserves_cwd_arguments_exit_and_isolates_duplicate_package_names (test_suite_test.BinaryCaptureTests) ... ok
+test_copy_fallback_retains_bytes_and_permissions_and_propagates_other_failures (test_suite_test.BinaryCaptureTests) ... ok
+test_inventory_includes_examples_fuzz_and_empty_packages (test_suite_test.InventoryTests) ... ok
+test_missing_duplicate_and_unexpected_results_fail (test_suite_test.InventoryTests) ... ok
+test_partition_is_deterministic_complete_and_disjoint (test_suite_test.InventoryTests) ... ok
+test_timings_include_parallel_children_but_exclude_parent_pause (test_suite_test.InventoryTests) ... ok
+test_deadline_escalates_ignored_termination_with_controlled_clock (test_suite_test.ProcessTests) ... second: exit=-9 0.153s
+first: exit=-9 0.153s
+ok
+test_disappeared_group_permission_error_does_not_hide_failure (test_suite_test.ProcessTests) ... ok
+test_expired_budget_starts_no_process (test_suite_test.ProcessTests) ... ok
+test_failed_parent_cannot_leave_an_orphan_in_its_session (test_suite_test.ProcessTests) ... orphan: exit=7 0.133s
+ok
+test_failure_cancels_sibling_and_reaps_independent_child_group (test_suite_test.ProcessTests) ... second: exit=7 0.036s
+first: exit=-15 0.059s
+ok
+test_heavy_limit_keeps_light_work_running_without_omissions (test_suite_test.ProcessTests) ... heavy-first: exit=0 0.034s
+light: exit=0 0.033s
+heavy-second: exit=0 0.032s
+ok
+test_interrupt_cancels_running_work (test_suite_test.ProcessTests) ... second: exit=-15 0.139s
+first: exit=-15 0.141s
+ok
+test_parallel_limit_and_all_results (test_suite_test.ProcessTests) ... 0: exit=0 0.035s
+1: exit=0 0.034s
+3: exit=0 0.032s
+2: exit=0 0.034s
+ok
+test_start_failure_stops_queued_work (test_suite_test.ProcessTests) ... missing: exit=1 0.000s
+ok
+test_duplicate_stale_and_missing_retained_coverage_fail (test_suite_test.RacePolicyTests) ... ok
+test_exact_exclusion_keeps_new_entries_and_original_inventory (test_suite_test.RacePolicyTests) ... ok
+test_platform_absence_requires_explicit_scope (test_suite_test.RacePolicyTests) ... ok
+test_build_tag_inventory_and_nested_build_keep_selected_toolchain (test_suite_test.SuiteTests) ... ok
+test_invalid_diagnostic_budgets_are_rejected (test_suite_test.SuiteTests) ... ok
+
+----------------------------------------------------------------------
+Ran 25 tests in 2.889s
+
+OK

@@ -1,0 +1,395 @@
+{
+  "implementation_commit": "3579304f0ed476691f4a8ba69092f9377e3fedb5",
+  "runs": [
+    {
+      "url": "https://github.com/cutejiuges/easycode/actions/runs/44114200956",
+      "source_digest": "74636b3887f2bf5fc49ab9119c0f234cf684763fc65ea2bd3b64679ac3c67cd2",
+      "jobs": 4,
+      "parallel": 2,
+      "shards": 2,
+      "build_jobs": 4,
+      "heavy_jobs": 2,
+      "seconds": 300.081,
+      "exit": 1,
+      "error": "verification exceeded time budget",
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 33.978,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 239.18,
+          "exit": 1
+        }
+      ],
+      "child_cpu_seconds": 791.366,
+      "max_child_rss_bytes": 1233747968,
+      "app_runs": [
+        {
+          "label": "race-easycode-internal-app-2",
+          "seconds": 190.073,
+          "exit": 0,
+          "missing": null
+        },
+        {
+          "label": "race-easycode-internal-app-1",
+          "seconds": 209.469,
+          "exit": 1,
+          "missing": [
+            "TestCancelledSampleRetainsCommittedInputAfterResume",
+            "TestChatResourcesCloseOrdersSessionJournalAndProvider",
+            "TestChatResourcesWriterCloseFailureStillClosesProvider",
+            "TestProjectInstructionsAreStartupScopedAndNeverJournaled",
+            "TestResourceCleanupClosesInReverseOrderAndJoinsErrors",
+            "TestResumeUsesEquivalentSnapshotFromCurrentAbsoluteCWD",
+            "TestSessionServiceClosesInterruptedTailBeforeReturning",
+            "TestSessionServiceCreatesPrivateRootMetadataWithoutNetwork",
+            "TestSessionServiceInterruptedCompensationFailureDoesNotBecomeUsable",
+            "TestSessionServiceRejectsUnknownThreadWithoutCreatingReplacement",
+            "TestSessionServiceResumesCompatibleRootWithoutNetwork",
+            "TestWriteSSEChunksCancellationEOFAndLimitsPrecedeSideEffects"
+          ]
+        }
+      ],
+      "overhead": [
+        {
+          "label": "static",
+          "seconds": 26.876
+        },
+        {
+          "label": "normal-inventory",
+          "seconds": 11.942
+        },
+        {
+          "label": "race-inventory",
+          "seconds": 29.556
+        }
+      ]
+    },
+    {
+      "url": "https://github.com/cutejiuges/easycode/actions/runs/44114205723",
+      "source_digest": "74636b3887f2bf5fc49ab9119c0f234cf684763fc65ea2bd3b64679ac3c67cd2",
+      "jobs": 4,
+      "parallel": 2,
+      "shards": 4,
+      "build_jobs": 4,
+      "heavy_jobs": 2,
+      "seconds": 300.157,
+      "exit": 1,
+      "error": "verification exceeded time budget",
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 44.114,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 223.353,
+          "exit": 1
+        }
+      ],
+      "child_cpu_seconds": 578.547,
+      "max_child_rss_bytes": 1201164288,
+      "app_runs": [
+        {
+          "label": "race-easycode-internal-app-3",
+          "seconds": 0,
+          "exit": 130,
+          "missing": [
+            "TestAutomaticCompactionHeadlessModes",
+            "TestCachedCompactionFixedFixturesResumeAndRepair",
+            "TestCachedReadToolLoopCompletesEndToEndForBothProviders",
+            "TestChatResourcesCloseOrdersSessionJournalAndProvider",
+            "TestCommandArtifactBoundaryRejectsNestedStorage",
+            "TestCompactionFixedFixturesResumeAndRepair",
+            "TestComposerHeadlessPreservesWhitespaceForBothProviders",
+            "TestCurrentSessionFixtureRestoresVisibleHistoryWithoutNetwork",
+            "TestFailureHookCacheStableSourcesAndRestoredNativeRequests",
+            "TestForgedFixedPluginHistoryFailsBeforeSourcesOrRepair",
+            "TestHeadlessPatchFailsClosedForBothProviders",
+            "TestHookHeadlessModesFailClosedForBothProviders",
+            "TestHookTerminalHelper",
+            "TestInteractivePatchAllowOnceForBothProviders",
+            "TestListSessionsClosesBeforeOutputAndReportsGlobalWarnings",
+            "TestListThenResumeBothProviders",
+            "TestMarkdownBothProvidersRestoreAndContinueUnchanged",
+            "TestNewChatResourcesRejectsMissingConfiguration",
+            "TestPickerDiscoveryRetriesCancelledReconcileAndKeepsWarning",
+            "TestPickerOwnerCancelledBeforeStart",
+            "TestPickerOwnerRejectsCancelledHandoff",
+            "TestPickerResumeReadsJournalAppendedAfterPreview",
+            "TestPluginWebSocketIncrementalPairingAndRestoredFullRequest",
+            "TestPostHookHeadlessModesFailClosedForBothProviders",
+            "TestPreCommittedHistoryKeepsOriginalAndRefreshesBoundedDetails",
+            "TestPreviewCancellationDuringNativeValidationReleasesLease",
+            "TestPreviewRejectsUnknownContractWithoutRepair",
+            "TestProvidersPersistResumeReplayAndContinueEndToEnd",
+            "TestQuestionIncompleteSamplesNeverRequestInput",
+            "TestQuestionTerminalHelper",
+            "TestReasoningControlsBuiltCLIEndToEnd",
+            "TestReasoningOutputTerminalDoesNotChangePolicy",
+            "TestReasoningStartupValueSurvivesConfigurationFileEdits",
+            "TestResourceCleanupClosesInReverseOrderAndJoinsErrors",
+            "TestResumeUsesEquivalentSnapshotFromCurrentAbsoluteCWD",
+            "TestRunContinueCatalogErrorIsSanitized",
+            "TestRunPrintModeUsesExistingChatResources",
+            "TestRunRejectsMissingExplicitConfiguration",
+            "TestRuntimeEffortCaptureCanFailBeforeFirstNetwork",
+            "TestRuntimeEffortQuestionAndApprovalKeepCapturedPolicy",
+            "TestSessionListInterruptedTailAndInvalidJournal",
+            "TestSessionListTextGolden",
+            "TestSessionPreviewFailureAndCancellationKeepBytes",
+            "TestSessionServiceCreatesPrivateRootMetadataWithoutNetwork",
+            "TestSessionServiceOwnershipFailuresReleaseTheCurrentOwner",
+            "TestSessionServiceResumesCompatibleRootWithoutNetwork",
+            "TestSteeringFixturesRestoreLocallyAndCloseOldTurn",
+            "TestStopHeadlessModesKeepSavedAnswerAndRequireTrust",
+            "TestStopTerminalHelper",
+            "TestStreamJSONProvidersPreserveSameProcessNativeHistory",
+            "TestThinkingUsageFixedCurrentRestoreAndRejectBeforeRepair",
+            "TestTranscriptQueriesCloseCancelsAndWaits",
+            "TestWriteHeadlessAllModesRequireApprovalWithoutCreatingDirectories"
+          ]
+        },
+        {
+          "label": "race-easycode-internal-app-4",
+          "seconds": 0,
+          "exit": 130,
+          "missing": [
+            "TestAutomaticCompactionRealProvidersAndResume",
+            "TestCachedImmutableExecFixtureRestoresRealProviderNativePairs",
+            "TestCachedWriteEndToEndCreateReadOverwriteAndVerify",
+            "TestChatResourcesShutdownTimeoutEscalatesAndClosesDependencies",
+            "TestCommandArtifactBoundaryRejectsPrivateAncestorAlias",
+            "TestCompletionManualAndRestoredRequestsBothProviders",
+            "TestComposerProvidersPersistExactTextAcrossResizeAndResume",
+            "TestDirectApplicationPluginArgumentsFailBeforeConfigurationOrStorage",
+            "TestFailureHookHeadlessModesFailClosedForBothProviders",
+            "TestHeadlessCancellationWaitsForDurableFailureAndReleasesLease",
+            "TestHeadlessProviderFailureDoesNotPublishPartialText",
+            "TestHookHostRetainsWorkspaceAndCrossProcessLeaseDuringCleanup",
+            "TestHostLeaseProbe",
+            "TestInteractivePatchDenyFeedbackAndConflictForBothProviders",
+            "TestListSessionsLifecycleFailuresAndCancellation",
+            "TestLoadedConfigurationStaysTypedAcrossAppBoundary",
+            "TestMarkdownColorSelection",
+            "TestNewChatResourcesRejectsUnknownProviderWithoutNetwork",
+            "TestPickerDiscoveryScopeAndRefresh",
+            "TestPickerOwnerCoalescesAndWaitsForCancellation",
+            "TestPickerOwnerResourceHandoffAndLateSuccess",
+            "TestPickerTerminalHelper",
+            "TestPluginsTerminalHelper",
+            "TestPostHookHostRetainsWorkspaceAndCrossProcessLeaseDuringCleanup",
+            "TestPreInputRewriteHeadlessModesRequireTrustAndKeepExternalJSONLV1",
+            "TestPreviewCommittedBatchPrefixesStayReadOnly",
+            "TestProjectInstructionDiscoveryFailsBeforeApplicationResourcesOpen",
+            "TestQuestionCatalogUsesOnlyMetadata",
+            "TestQuestionNativeArgumentsRejectModelAnswers",
+            "TestQueuedPluginAttachmentDoesNotRereadDeletedSource",
+            "TestReasoningControlsHeadlessToolLoopAndUsage",
+            "TestReasoningParameterFailuresNeverRetryOrDowngrade",
+            "TestRecoveryAttemptStages",
+            "TestResourceCleanupReleaseTransfersOwnership",
+            "TestResumeWithDifferentCWDAndRefreshedConnectionDoesNotChangeProcessCWD",
+            "TestRunContinueRejectsUnindexedBusyJournal",
+            "TestRunRejectsInvalidConfigurationWithoutLeakingSecret",
+            "TestRunStartsTUIFromSupportedConfigurationSourcesWithoutNetwork",
+            "TestRuntimeEffortDisconnectAndCancelKeepFutureSelection",
+            "TestRuntimeEffortRestoredRequestIgnoresProcessRevision",
+            "TestSessionListRejectsUnsafeStore",
+            "TestSessionPreviewBudget",
+            "TestSessionServiceBusyFailsBeforeRestoreAndKeepsBytes",
+            "TestSessionServiceInterruptedAppendFailureReleasesLease",
+            "TestSessionServiceRejectsSupersededEnvelopeBeforeProviderRestore",
+            "TestSessionServiceReturnsSealedToolRecoveryWithoutExternalCalls",
+            "TestStopCompactionKeepsFrozenFeedbackAndGenuineSkillCorrection",
+            "TestStopHookHostRetainsWorkspaceAndCrossProcessLeaseDuringCleanup",
+            "TestStreamEscalationClosesProviderBeforeLoopAndJournal",
+            "TestStreamJSONQueueFullAndShutdownAreReported",
+            "TestToolLoopCrashPointsReconcileLocallyForBothProviders",
+            "TestWebSocketToolsAndCacheQueryEndToEnd",
+            "TestWriteRecoveryPairsEveryTailWithoutReplayingFilesOrGrants"
+          ]
+        },
+        {
+          "label": "race-easycode-internal-app-1",
+          "seconds": 190.379,
+          "exit": 1,
+          "missing": [
+            "TestAmbiguousReasoningUsageNeverCommitsSampleOrRunsTool",
+            "TestBusyResumeDoesNotExposeChatResourcesOrCallProvider",
+            "TestCachedParallelSearchToolLoopCompletesEndToEndForBothProviders",
+            "TestCancelledSampleRetainsCommittedInputAfterResume",
+            "TestChatResourcesWriterCloseFailureStillClosesProvider",
+            "TestCommandQueryCursorAndIsolation",
+            "TestListSessionsRejectsBeforeIO",
+            "TestLocalSkillToolAndExplicitInputRestoreBothProviders",
+            "TestParallelSearchToolLoopCompletesEndToEndForBothProviders",
+            "TestPickerProgramExitAndOutputFailure",
+            "TestPreviewDescriptorBoundPathReplacement",
+            "TestProjectInstructionsAreStartupScopedAndNeverJournaled",
+            "TestQuestionEndToEndBothProviders",
+            "TestReadToolLoopCompletesEndToEndForBothProviders",
+            "TestReasoningHeadlessBothProvidersAllModesWithToolAndEOF",
+            "TestReasoningQueriesFilterBeforePagingAndKeepExactBodyRanges",
+            "TestResumeRejectsBeforeRepair",
+            "TestSameTurnSteeringThroughBothProviderTransports",
+            "TestSessionListReportsBusyAcrossProcesses",
+            "TestSessionPreviewCurrentFixturesAreReadOnly",
+            "TestSessionServiceClosesInterruptedTailBeforeReturning",
+            "TestSessionServiceInterruptedCompensationFailureDoesNotBecomeUsable",
+            "TestSessionServiceRejectsUnknownThreadWithoutCreatingReplacement",
+            "TestSkillPreparationFailureLeavesJournalAndProviderUntouched",
+            "TestStopCompactionKeepsFrozenPluginCorrectionAfterSourceRemoval",
+            "TestStopNeverChecksFailedOrCancelledProviderSamples",
+            "TestTranscriptBodyForwardBackwardUTF8AndThroughSnapshot",
+            "TestWriteEndToEndCreateReadOverwriteAndVerify",
+            "TestWriteSSEChunksCancellationEOFAndLimitsPrecedeSideEffects"
+          ]
+        },
+        {
+          "label": "race-easycode-internal-app-2",
+          "seconds": 190.38,
+          "exit": 1,
+          "missing": [
+            "TestProviderResourceCreationAndWireMapping",
+            "TestResumeRepairsHalfLineOnceAndKeepsCommittedHistory",
+            "TestSessionServiceMismatchDoesNotModifyJournalOrRestoreProvider",
+            "TestStopDetailsBindExactTargetPlanSequenceAndKeepIndependentCursor",
+            "TestStopSampleAndCallLimitsKeepTextContinuationAvailable",
+            "TestTranscriptJoinPreservesNativeTextCallTextAndRejectsBrokenAnchors",
+            "TestWriteEndToEndPreparationDenialAndConflict"
+          ]
+        }
+      ],
+      "overhead": [
+        {
+          "label": "static",
+          "seconds": 32.627
+        },
+        {
+          "label": "normal-inventory",
+          "seconds": 14.507
+        },
+        {
+          "label": "race-inventory",
+          "seconds": 32.716
+        }
+      ]
+    },
+    {
+      "url": "https://github.com/cutejiuges/easycode/actions/runs/44114210323",
+      "source_digest": "74636b3887f2bf5fc49ab9119c0f234cf684763fc65ea2bd3b64679ac3c67cd2",
+      "jobs": 8,
+      "parallel": 2,
+      "shards": 4,
+      "build_jobs": 4,
+      "heavy_jobs": 2,
+      "seconds": 300.141,
+      "exit": 1,
+      "error": "verification exceeded time budget",
+      "phases": [
+        {
+          "mode": "normal",
+          "seconds": 35.084,
+          "exit": 0
+        },
+        {
+          "mode": "race",
+          "seconds": 236.704,
+          "exit": 1
+        }
+      ],
+      "child_cpu_seconds": 737.472,
+      "max_child_rss_bytes": 1323470848,
+      "app_runs": [
+        {
+          "label": "race-easycode-internal-app-3",
+          "seconds": 161.299,
+          "exit": 0,
+          "missing": null
+        },
+        {
+          "label": "race-easycode-internal-app-4",
+          "seconds": 198.944,
+          "exit": 0,
+          "missing": null
+        },
+        {
+          "label": "race-easycode-internal-app-2",
+          "seconds": 208.541,
+          "exit": 1,
+          "missing": [
+            "TestProviderResourceCreationAndWireMapping",
+            "TestResumeRepairsHalfLineOnceAndKeepsCommittedHistory",
+            "TestSessionServiceMismatchDoesNotModifyJournalOrRestoreProvider",
+            "TestStopDetailsBindExactTargetPlanSequenceAndKeepIndependentCursor",
+            "TestStopSampleAndCallLimitsKeepTextContinuationAvailable",
+            "TestTranscriptJoinPreservesNativeTextCallTextAndRejectsBrokenAnchors",
+            "TestWriteEndToEndPreparationDenialAndConflict"
+          ]
+        },
+        {
+          "label": "race-easycode-internal-app-1",
+          "seconds": 208.542,
+          "exit": 1,
+          "missing": [
+            "TestAmbiguousReasoningUsageNeverCommitsSampleOrRunsTool",
+            "TestBusyResumeDoesNotExposeChatResourcesOrCallProvider",
+            "TestCachedParallelSearchToolLoopCompletesEndToEndForBothProviders",
+            "TestCancelledSampleRetainsCommittedInputAfterResume",
+            "TestChatResourcesWriterCloseFailureStillClosesProvider",
+            "TestCommandQueryCursorAndIsolation",
+            "TestEffortHostShutdownRetainsRealLeaseUntilTerminalCleanup",
+            "TestHookOpenAIIncrementalAndRestoredFullDeriveFromSameNativeHistory",
+            "TestHostShutdownRetainsRealLeaseUntilTerminalCleanup",
+            "TestListSessionsRejectsBeforeIO",
+            "TestLocalSkillToolAndExplicitInputRestoreBothProviders",
+            "TestParallelSearchToolLoopCompletesEndToEndForBothProviders",
+            "TestPickerKeepsExplicitPluginPathsBoundToLaunchDirectory",
+            "TestPickerOwnerFatalFailureStopsAdmission",
+            "TestPickerProgramExitAndOutputFailure",
+            "TestPostDetailQueryBindsSnapshotAndKeepsOriginalBody",
+            "TestPreviewDescriptorBoundPathReplacement",
+            "TestProjectInstructionsAreStartupScopedAndNeverJournaled",
+            "TestQuestionEndToEndBothProviders",
+            "TestQuestionRecoveryNeverReasksAndRetainsFrozenAnswers",
+            "TestReadToolLoopCompletesEndToEndForBothProviders",
+            "TestReasoningHeadlessBothProvidersAllModesWithToolAndEOF",
+            "TestReasoningQueriesFilterBeforePagingAndKeepExactBodyRanges",
+            "TestResumeRejectsBeforeRepair",
+            "TestSameTurnSteeringThroughBothProviderTransports",
+            "TestSessionListReportsBusyAcrossProcesses",
+            "TestSessionPreviewCurrentFixturesAreReadOnly",
+            "TestSessionServiceClosesInterruptedTailBeforeReturning",
+            "TestSessionServiceInterruptedCompensationFailureDoesNotBecomeUsable",
+            "TestSessionServiceRejectsUnknownThreadWithoutCreatingReplacement",
+            "TestSkillPreparationFailureLeavesJournalAndProviderUntouched",
+            "TestStopCompactionKeepsFrozenPluginCorrectionAfterSourceRemoval",
+            "TestStopNeverChecksFailedOrCancelledProviderSamples",
+            "TestTranscriptBodyForwardBackwardUTF8AndThroughSnapshot",
+            "TestWriteEndToEndCreateReadOverwriteAndVerify",
+            "TestWriteSSEChunksCancellationEOFAndLimitsPrecedeSideEffects"
+          ]
+        }
+      ],
+      "overhead": [
+        {
+          "label": "static",
+          "seconds": 28.306
+        },
+        {
+          "label": "normal-inventory",
+          "seconds": 12.048
+        },
+        {
+          "label": "race-inventory",
+          "seconds": 27.945
+        }
+      ]
+    }
+  ]
+}

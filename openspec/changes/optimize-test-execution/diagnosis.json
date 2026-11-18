@@ -1,0 +1,91 @@
+{
+  "date": "2026-11-16",
+  "commit": "b0387c4bb3b833082beb1d077767885ecf46acdd",
+  "phase": "diagnosis-only",
+  "machine": {
+    "os": "darwin",
+    "arch": "arm64",
+    "go": "go1.24.13",
+    "cpu_count": 10,
+    "memory_bytes": 34359738368
+  },
+  "concurrent_workload": "Another worktree was running go test -timeout=20m -race ./... throughout local probes; these are not isolated full-suite benchmarks.",
+  "ci_baseline": {
+    "url": "https://github.com/cutejiuges/easycode/actions/runs/43876390977/job/133330446870",
+    "verification_step_seconds": 798,
+    "app_normal_seconds": 69.132,
+    "app_race_seconds": 682.821,
+    "runtime_race_seconds": 198.389,
+    "session_race_seconds": 182.034,
+    "anthropic_race_seconds": 174.772,
+    "openai_race_seconds": 165.265
+  },
+  "probe_selection": "^Test(SevenToolTranscriptBudgetAndRestoredRequestForBothProviders|StopCompactionKeepsFrozenFeedbackAndGenuineSkillCorrection)$",
+  "concurrency_probes": [
+    {
+      "label": "probe-1-p10",
+      "gomaxprocs": 10,
+      "seconds": 70.584,
+      "exit": 0,
+      "passes": 30
+    },
+    {
+      "label": "probe-2-p2",
+      "gomaxprocs": 2,
+      "seconds": 72.088,
+      "exit": 0,
+      "passes": 30
+    },
+    {
+      "label": "probe-3-p4",
+      "gomaxprocs": 4,
+      "seconds": 68.343,
+      "exit": 0,
+      "passes": 30
+    },
+    {
+      "label": "probe-4-p1",
+      "gomaxprocs": 1,
+      "seconds": 81.295,
+      "exit": 0,
+      "passes": 30
+    },
+    {
+      "label": "probe-5-p10",
+      "gomaxprocs": 10,
+      "seconds": 69.36,
+      "exit": 0,
+      "passes": 30
+    }
+  ],
+  "profile": {
+    "cmd": [
+      "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-test-perf-l9igwt67/app-race.test",
+      "-test.v",
+      "-test.count=1",
+      "-test.timeout=2m",
+      "-test.run=^TestSessionPreviewCurrentFixturesAreReadOnly$/^(post_hook_failure_cancelled|post_hook_input_limit).jsonl$",
+      "-test.cpuprofile=/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-test-perf-l9igwt67/preview-cpu.pprof",
+      "-test.memprofile=/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-test-perf-l9igwt67/preview-mem.pprof",
+      "-test.blockprofile=/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-test-perf-l9igwt67/preview-block.pprof",
+      "-test.mutexprofile=/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-test-perf-l9igwt67/preview-mutex.pprof"
+    ],
+    "seconds": 11.15,
+    "exit": 0
+  },
+  "profile_alloc_space_mb": {
+    "total": 1330.34,
+    "sonic_optdec_parser_pool": 704.82,
+    "encoding_json_decoder_refill": 236.86,
+    "raw_message_copy": 108.34,
+    "unmarshal_record_cumulative": 1158.59
+  },
+  "profile_mutex_delay_ms": 17.43,
+  "raw_output_directory": "/var/folders/nt/kckzrwcn69z7ljwycjl6gqkr0000gn/T/easycode-test-perf-l9igwt67",
+  "notes": [
+    "Allocation figures are cumulative sampled allocation, not peak RSS.",
+    "Cumulative call-tree values overlap and must not be added.",
+    "No production or test implementation changed in this phase.",
+    "Five-minute acceptance has not been achieved or claimed."
+  ]
+}

@@ -1,0 +1,154 @@
+{
+  "source_digest": "134ad56cb73e0022e44e02fc05efd2f8aa277cb550eb1a1da0d4d5db5666610a",
+  "seconds": 300.258,
+  "exit": 1,
+  "error": "verification exceeded time budget",
+  "phases": [
+    {
+      "mode": "normal",
+      "seconds": 61.784,
+      "exit": 0
+    },
+    {
+      "mode": "race",
+      "seconds": 179.173,
+      "exit": 1
+    }
+  ],
+  "jobs": 8,
+  "shards": 8,
+  "cpu_count": 4,
+  "memory_bytes": 16759431168,
+  "go_environment": {
+    "GOARCH": "amd64",
+    "GOCACHE": "/home/runner/.cache/go-build",
+    "GOOS": "linux",
+    "GOROOT": "/home/runner/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.24.13.linux-amd64",
+    "GOVERSION": "go1.24.13"
+  },
+  "max_child_rss_bytes": 820572160,
+  "child_cpu_seconds": 606.259,
+  "slow_tests": [
+    {
+      "phase": "race",
+      "package": "easycode/internal/app",
+      "test": "TestCompletionManualAndRestoredRequestsBothProviders",
+      "seconds": 40.16
+    },
+    {
+      "phase": "race",
+      "package": "easycode/internal/app",
+      "test": "TestPickerDiscoveryScopeAndRefresh",
+      "seconds": 35.75
+    },
+    {
+      "phase": "race",
+      "package": "easycode/internal/app",
+      "test": "TestRunJSONContinueReportsOriginalIdentityAsResumed",
+      "seconds": 35.38
+    },
+    {
+      "phase": "race",
+      "package": "easycode/internal/app",
+      "test": "TestCachedAutomaticCompactionRealProvidersAndResume",
+      "seconds": 33.41
+    },
+    {
+      "phase": "race",
+      "package": "easycode/internal/app",
+      "test": "TestContinueSelectionMatrixUsesExactCompatibilityAndStableTieBreak",
+      "seconds": 32.82
+    },
+    {
+      "phase": "race",
+      "package": "easycode/internal/app",
+      "test": "TestRunContinueRejectsUnindexedBusyJournal",
+      "seconds": 32.26
+    },
+    {
+      "phase": "race",
+      "package": "easycode/internal/app",
+      "test": "TestContinueSelectionIsRevalidatedWithoutFallback",
+      "seconds": 31.48
+    },
+    {
+      "phase": "race",
+      "package": "easycode/internal/app",
+      "test": "TestAutomaticCompactionRealProvidersAndResume",
+      "seconds": 29.45
+    },
+    {
+      "phase": "race",
+      "package": "easycode/internal/app",
+      "test": "TestAutomaticCompactionHeadlessModes",
+      "seconds": 24.73
+    },
+    {
+      "phase": "race",
+      "package": "easycode/internal/app",
+      "test": "TestReasoningControlsBuiltCLIEndToEnd",
+      "seconds": 22.25
+    },
+    {
+      "phase": "race",
+      "package": "easycode/internal/app",
+      "test": "TestRuntimeEffortDualProviderToolsRecoveryAndRestart",
+      "seconds": 20.12
+    },
+    {
+      "phase": "normal",
+      "package": "easycode/internal/app",
+      "test": "TestReasoningControlsBuiltCLIEndToEnd",
+      "seconds": 18.36
+    },
+    {
+      "phase": "race",
+      "package": "easycode/internal/app",
+      "test": "TestRuntimeEffortQuestionAndApprovalKeepCapturedPolicy",
+      "seconds": 16.02
+    },
+    {
+      "phase": "race",
+      "package": "easycode/internal/app",
+      "test": "TestRuntimeEffortRestoredRequestIgnoresProcessRevision",
+      "seconds": 15.48
+    },
+    {
+      "phase": "race",
+      "package": "easycode/internal/app",
+      "test": "TestCachedProvidersSameThreadLiveAndRestoredCanonicalRequests",
+      "seconds": 14.61
+    },
+    {
+      "phase": "race",
+      "package": "easycode/internal/app",
+      "test": "TestManualCompactionProvidersResumeEquivalent",
+      "seconds": 14.27
+    },
+    {
+      "phase": "race",
+      "package": "easycode/internal/app",
+      "test": "TestFailureHookHeadlessModesFailClosedForBothProviders",
+      "seconds": 14
+    },
+    {
+      "phase": "normal",
+      "package": "easycode/internal/app",
+      "test": "TestPluginBrowserManualAndRestoredRequestsBothProviders",
+      "seconds": 13.75
+    },
+    {
+      "phase": "race",
+      "package": "easycode/internal/app",
+      "test": "TestRuntimeEffortCaptureCanFailBeforeFirstNetwork",
+      "seconds": 12.6
+    },
+    {
+      "phase": "race",
+      "package": "easycode/internal/app",
+      "test": "TestFailureHookHostRetainsWorkspaceAndCrossProcessLeaseDuringCleanup",
+      "seconds": 12.57
+    }
+  ],
+  "url": "https://github.com/cutejiuges/easycode/actions/runs/43910591461"
+}

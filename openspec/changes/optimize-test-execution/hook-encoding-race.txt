@@ -1,0 +1,3 @@
+ok  	easycode/internal/domain	2.894s
+ok  	easycode/internal/tool	2.400s
+ok  	easycode/internal/session	13.259s

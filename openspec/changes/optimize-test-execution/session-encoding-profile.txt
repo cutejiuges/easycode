@@ -1,0 +1,89 @@
+before
+
+File: easycode-budget.test
+Type: cpu
+Time: 2026-11-16 23:52:55 CST
+Duration: 32.92s, Total samples = 28.89s (87.77%)
+Showing nodes accounting for 4.91s, 17.00% of 28.89s total
+Dropped 108 nodes (cum <= 0.14s)
+Showing top 16 nodes out of 57
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%     16.20s 56.07%  testing.tRunner
+         0     0%     0%     16.19s 56.04%  easycode/internal/session.TestInputDraftBudgetIncludesCanonicalEnvelopeAndNewlines
+         0     0%     0%     15.01s 51.96%  easycode/internal/session.ValidateDraftBatchSize
+         0     0%     0%     12.61s 43.65%  easycode/internal/codec.MarshalStable
+         0     0%     0%     12.61s 43.65%  github.com/bytedance/sonic.(*frozenConfig).Marshal
+         0     0%     0%     12.61s 43.65%  github.com/bytedance/sonic/internal/encoder.Encode
+         0     0%     0%     12.52s 43.34%  github.com/bytedance/sonic/internal/encoder.encodeIntoCheckRace
+     4.91s 17.00% 17.00%     12.50s 43.27%  encoding/json.appendCompact
+         0     0% 17.00%     11.49s 39.77%  easycode/internal/session.EncodeRecord
+         0     0% 17.00%      8.52s 29.49%  runtime._System
+         0     0% 17.00%      6.84s 23.68%  encoding/json.(*encodeState).marshal
+         0     0% 17.00%      6.84s 23.68%  encoding/json.(*encodeState).reflectValue
+         0     0% 17.00%      6.84s 23.68%  encoding/json.Marshal
+         0     0% 17.00%      6.84s 23.68%  encoding/json.structEncoder.encode
+         0     0% 17.00%      6.84s 23.68%  github.com/bytedance/sonic/internal/encoder.helpDetectDataRace
+         0     0% 17.00%      6.83s 23.64%  encoding/json.condAddrEncoder.encode
+
+File: easycode-budget.test
+Type: alloc_space
+Time: 2026-11-16 23:53:27 CST
+Showing nodes accounting for 3248.08MB, 94.80% of 3426.41MB total
+Dropped 53 nodes (cum <= 17.13MB)
+Showing top 10 nodes out of 55
+      flat  flat%   sum%        cum   cum%
+    1120MB 32.69% 32.69%     1120MB 32.69%  bytes.growSlice
+  480.07MB 14.01% 46.70%   480.07MB 14.01%  github.com/bytedance/sonic/internal/rt.GrowSlice
+  320.01MB  9.34% 56.04%   800.01MB 23.35%  encoding/json.Marshal
+     320MB  9.34% 65.38%      960MB 28.02%  github.com/bytedance/sonic/internal/encoder/prim.Compact
+     288MB  8.41% 73.78%      288MB  8.41%  easycode/internal/session.RecordDraft.PayloadBytes
+     144MB  4.20% 77.98%   742.47MB 21.67%  easycode/internal/session.DecodeNativeCommitPayload
+     144MB  4.20% 82.19%      144MB  4.20%  encoding/json.(*RawMessage).UnmarshalJSON
+     144MB  4.20% 86.39%   597.97MB 17.45%  github.com/bytedance/sonic.frozenConfig.Unmarshal
+     144MB  4.20% 90.59%      288MB  8.41%  github.com/bytedance/sonic/internal/decoder/optdec.(*unmarshalJSONDecoder).FromDom
+     144MB  4.20% 94.80%   165.97MB  4.84%  github.com/bytedance/sonic/internal/decoder/optdec.newParser
+
+after
+
+File: easycode-budget-after.test
+Type: cpu
+Time: 2026-11-17 00:11:05 CST
+Duration: 22.17s, Total samples = 19.77s (89.18%)
+Showing nodes accounting for 8.20s, 41.48% of 19.77s total
+Dropped 68 nodes (cum <= 0.10s)
+Showing top 16 nodes out of 63
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%     10.48s 53.01%  easycode/internal/session.TestInputDraftBudgetIncludesCanonicalEnvelopeAndNewlines
+         0     0%     0%     10.48s 53.01%  testing.tRunner
+         0     0%     0%      9.32s 47.14%  easycode/internal/session.ValidateDraftBatchSize
+         0     0%     0%      7.51s 37.99%  runtime._System
+         0     0%     0%      6.55s 33.13%  easycode/internal/codec.MarshalStable
+         0     0%     0%      6.55s 33.13%  github.com/bytedance/sonic.(*frozenConfig).Marshal
+         0     0%     0%      6.55s 33.13%  github.com/bytedance/sonic/internal/encoder.Encode
+         0     0%     0%      6.48s 32.78%  github.com/bytedance/sonic/internal/encoder.encodeIntoCheckRace
+     2.58s 13.05% 13.05%      6.45s 32.63%  encoding/json.appendCompact
+     5.62s 28.43% 41.48%      5.62s 28.43%  __tsan_read
+         0     0% 41.48%      5.46s 27.62%  easycode/internal/session.EncodeRecord
+         0     0% 41.48%      5.39s 27.26%  easycode/internal/session.encodeChecksumEnvelope
+         0     0% 41.48%      4.05s 20.49%  encoding/json.(*encodeState).marshal
+         0     0% 41.48%      4.05s 20.49%  encoding/json.(*encodeState).reflectValue
+         0     0% 41.48%      4.05s 20.49%  encoding/json.Marshal
+         0     0% 41.48%      4.05s 20.49%  encoding/json.condAddrEncoder.encode
+
+File: easycode-budget-after.test
+Type: alloc_space
+Time: 2026-11-17 00:11:27 CST
+Showing nodes accounting for 2296MB, 93.57% of 2453.88MB total
+Dropped 31 nodes (cum <= 12.27MB)
+Showing top 10 nodes out of 54
+      flat  flat%   sum%        cum   cum%
+     672MB 27.39% 27.39%      672MB 27.39%  bytes.growSlice
+     288MB 11.74% 39.12%      288MB 11.74%  easycode/internal/session.RecordDraft.PayloadBytes
+     264MB 10.76% 49.88%      264MB 10.76%  github.com/bytedance/sonic/internal/rt.GrowSlice
+     176MB  7.17% 57.05%      496MB 20.21%  encoding/json.Marshal
+     176MB  7.17% 64.22%      528MB 21.52%  github.com/bytedance/sonic/internal/encoder/prim.Compact
+     144MB  5.87% 70.09%   742.49MB 30.26%  easycode/internal/session.DecodeNativeCommitPayload
+     144MB  5.87% 75.96%      144MB  5.87%  encoding/json.(*RawMessage).UnmarshalJSON
+     144MB  5.87% 81.83%   597.97MB 24.37%  github.com/bytedance/sonic.frozenConfig.Unmarshal
+     144MB  5.87% 87.70%      288MB 11.74%  github.com/bytedance/sonic/internal/decoder/optdec.(*unmarshalJSONDecoder).FromDom
+     144MB  5.87% 93.57%   165.97MB  6.76%  github.com/bytedance/sonic/internal/decoder/optdec.newParser

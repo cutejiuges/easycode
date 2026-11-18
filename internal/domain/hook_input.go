@@ -74,32 +74,38 @@ func hookRelativePath(s string, directory bool) bool {
 	return true
 }
 func (v HookToolInput) Validate() error {
+	_, err := v.validatedJSON()
+	return err
+}
+
+// validatedJSON 在同一次校验中保留规范字节，供摘要和额度检查复用。
+func (v HookToolInput) validatedJSON() ([]byte, error) {
 	switch v.capability {
 	case HookPatch:
 		if !hookRelativePath(v.patch.FilePath, false) || len(v.patch.Replacements) == 0 || len(v.patch.Replacements) > 1024 {
-			return HookConfigInvalid
+			return nil, HookConfigInvalid
 		}
 		for _, r := range v.patch.Replacements {
 			if !utf8.ValidString(r.OldText) || !utf8.ValidString(r.NewText) {
-				return HookConfigInvalid
+				return nil, HookConfigInvalid
 			}
 		}
 	case HookWrite:
 		if !hookRelativePath(v.write.FilePath, false) || !utf8.ValidString(v.write.Content) {
-			return HookConfigInvalid
+			return nil, HookConfigInvalid
 		}
 	case HookExec:
 		if !utf8.ValidString(v.exec.Command) || strings.TrimSpace(v.exec.Command) == "" || strings.ContainsRune(v.exec.Command, 0) || !hookRelativePath(v.exec.Workdir, true) || v.exec.TimeoutMillis < 1 {
-			return HookConfigInvalid
+			return nil, HookConfigInvalid
 		}
 	default:
-		return HookConfigInvalid
+		return nil, HookConfigInvalid
 	}
 	b, err := v.MarshalJSON()
 	if err != nil || len(b) > MaxHookInputBytes {
-		return HookInputLimit
+		return nil, HookInputLimit
 	}
-	return nil
+	return b, nil
 }
 func (v HookToolInput) MarshalJSON() ([]byte, error) {
 	switch v.capability {
