@@ -31,6 +31,7 @@ func (id InputID) Valid() bool {
 
 // UserInput 是保留原始正文的不可变用户输入。
 type UserInput struct {
+	files         FileAttachments
 	attachment    SkillAttachment
 	hasAttachment bool
 	id            InputID
@@ -56,6 +57,9 @@ func (input UserInput) Text() string { return input.text }
 func (input UserInput) Validate() error {
 	if !input.id.Valid() {
 		return fmt.Errorf("input ID is invalid")
+	}
+	if err := ValidateFileAttachments(input.text, input.files); err != nil {
+		return err
 	}
 	if input.hasAttachment {
 		if err := input.attachment.Validate(); err != nil {
@@ -177,5 +181,16 @@ func (input UserInput) SkillAttachment() (SkillAttachment, bool) {
 
 // ByteSize 对原文和完整附件同时计费。
 func (input UserInput) ByteSize() int {
-	return len(input.text) + input.attachment.ByteSize()
+	return len(input.text) + input.attachment.ByteSize() + input.files.ByteSize()
+}
+
+// WithFileAttachments 冻结完整有序集合，保留原文和既有 Skill 附件。
+func (input UserInput) WithFileAttachments(files FileAttachments) (UserInput, error) {
+	input.files = FileAttachments{items: files.Items()}
+	return input, input.Validate()
+}
+
+// FileAttachments 返回独立集合，不能借修改副本影响输入。
+func (input UserInput) FileAttachments() FileAttachments {
+	return FileAttachments{items: input.files.Items()}
 }

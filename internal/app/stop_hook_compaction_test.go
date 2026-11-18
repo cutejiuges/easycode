@@ -82,6 +82,11 @@ func testStopCompactionKeepsFrozenCorrection(t *testing.T, pluginSkill bool) {
 				if err := os.WriteFile(skillPath, []byte("---\ndescription: Review local changes\n---\nFrozen correction instructions $ARGUMENTS"), 0600); err != nil {
 					t.Fatal(err)
 				}
+				correctionText += " @correction.txt"
+				correctionPath := filepath.Join(workspace, "correction.txt")
+				if err := os.WriteFile(correctionPath, []byte("FROZEN_FILE_CORRECTION\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
 				var mu sync.Mutex
 				var requests [][]byte
 				var host *chatRuntime.ChatSession
@@ -152,11 +157,14 @@ func testStopCompactionKeepsFrozenCorrection(t *testing.T, pluginSkill bool) {
 				for event := range events {
 					switch event.Kind {
 					case protocol.EventHookTrustRequested:
-						input, err := host.Append(context.Background(), correctionText)
+						input, err := appendInteractiveText(context.Background(), host, correctionText)
 						if err != nil {
 							t.Fatal(err)
 						}
 						correction = input.EntryID()
+						if err := os.Remove(correctionPath); err != nil {
+							t.Fatal(err)
+						}
 						p, _ := protocol.DecodeHookTrustRequested(event)
 						if err := host.ResolveHookTrust(context.Background(), event.TurnID, p, protocol.HookTrustSession); err != nil {
 							t.Fatal(err)
@@ -176,7 +184,7 @@ func testStopCompactionKeepsFrozenCorrection(t *testing.T, pluginSkill bool) {
 							t.Fatal(err)
 						}
 						if p.InputID == correction {
-							if p.Text != correctionText || p.Skill == nil || !strings.Contains(p.Skill.Content, "Frozen correction instructions") {
+							if p.Text != correctionText || p.Files.Total() != 1 || p.Skill == nil || !strings.Contains(p.Skill.Content, "Frozen correction instructions") {
 								t.Fatal("committed correction lost its frozen identity or attachment")
 							}
 							if pluginSkill && (p.Skill.Name != "claudeqa:review" || p.Skill.Source.Scope != "plugin" || p.Skill.Source.Directory != "claudeqa") {
@@ -217,7 +225,7 @@ func testStopCompactionKeepsFrozenCorrection(t *testing.T, pluginSkill bool) {
 						t.Fatal("unadmitted correction committed on cancellation")
 					}
 				} else {
-					if committed != 1 || !bytes.Contains(captured[2], []byte("exact-blocking-reason")) || !bytes.Contains(captured[2], []byte("exact-user-correction")) || !bytes.Contains(captured[2], []byte("Frozen correction instructions")) || bytes.Contains(captured[2], []byte("CHANGED-AFTER-CLAIM")) {
+					if committed != 1 || !bytes.Contains(captured[2], []byte("exact-blocking-reason")) || !bytes.Contains(captured[2], []byte("exact-user-correction")) || !bytes.Contains(captured[2], []byte("Frozen correction instructions")) || !bytes.Contains(captured[2], []byte("FROZEN_FILE_CORRECTION")) || bytes.Contains(captured[2], []byte("CHANGED-AFTER-CLAIM")) {
 						t.Fatal("frozen candidate lost or resampled", committed)
 					}
 					if mode == "summary" && bytes.Contains(captured[2], []byte("historical work")) {

@@ -84,6 +84,7 @@ type chatResources struct {
 	skills            []domain.SkillListEntry
 	plugins           []domain.PluginListEntry
 	pluginSources     *plugin.Sources
+	fileSource        *workspaceInputSource
 	identity          session.Identity
 	provider          providerResource
 	workspace         *builtin.Workspace
@@ -585,7 +586,15 @@ func openChatResourcesWithSnapshot(
 	if err := skillSource.Load(ctx, creationCWD, home, contributions, pluginViews); err != nil {
 		return nil, err
 	}
-	if err := runtimeInstance.InstallSkills(skillSource.Catalog(), skillInputPreparer{skillSource}); err != nil {
+	fileSource, err := newWorkspaceInputSource(workspace, skillInputPreparer{skillSource})
+	if err != nil {
+		return nil, err
+	}
+	if err := fileSource.Start(ctx); err != nil {
+		return nil, err
+	}
+	cleanup.add(func() error { return fileSource.Close(context.Background()) })
+	if err := runtimeInstance.InstallInputSources(skillSource.Catalog(), fileSource); err != nil {
 		return nil, err
 	}
 	plugins, err := pluginList(pluginViews, skillSource.PluginSummaries())
@@ -596,6 +605,7 @@ func openChatResourcesWithSnapshot(
 		return nil, err
 	}
 	resources = &chatResources{inference: inference,
+		fileSource:    fileSource,
 		pluginSources: pluginSources, plugins: plugins,
 		artifactLayout: artifactLayout, artifactStore: artifactStore, transcriptQueries: queries,
 		identity: assembled.identity,
@@ -747,6 +757,9 @@ func (resources *chatResources) close(ctx context.Context) error {
 	}
 	resources.closeDone = make(chan struct{})
 	resources.closeMu.Unlock()
+	if resources.fileSource != nil {
+		resources.fileSource.BeginClose()
+	}
 	var shutdownErr error
 	providerClosed := resources.providerClosed
 	if resources.session != nil {
@@ -765,11 +778,18 @@ func (resources *chatResources) close(ctx context.Context) error {
 		closeContext = context.Background()
 	}
 	var sourceErr error
-	if resources.pluginSources != nil {
-		sourceErr = resources.pluginSources.Close(closeContext)
+	if resources.fileSource != nil {
+		sourceErr = resources.fileSource.Close(ctx)
 		if sourceErr != nil {
-			sourceErr = errors.Join(sourceErr, resources.pluginSources.Close(context.Background()))
+			sourceErr = errors.Join(sourceErr, resources.fileSource.Close(context.Background()))
 		}
+	}
+	if resources.pluginSources != nil {
+		pluginErr := resources.pluginSources.Close(closeContext)
+		if pluginErr != nil {
+			pluginErr = errors.Join(pluginErr, resources.pluginSources.Close(context.Background()))
+		}
+		sourceErr = errors.Join(sourceErr, pluginErr)
 	}
 	var queryErr error
 	if resources.transcriptQueries != nil {
@@ -818,7 +838,7 @@ func assembleChatModel(ctx context.Context, resources *chatResources) (tui.Model
 		return tui.Model{}, err
 	}
 	resources.session = control
-	return tui.NewModel(ctx, Version, control).WithInferenceSettings(resources.inference).WithSkills(resources.skills).WithPlugins(resources.plugins).WithHooks(resources.session.HookEntries()).WithMarkdownColor(markdownColorEnabled(os.Getenv("NO_COLOR"), os.Getenv("TERM"), term.IsTerminal(os.Stdout.Fd()))).WithInputHistory(resources.history).WithTranscriptQueries(resources.identity.ThreadID, resources.transcriptQueries), nil
+	return tui.NewModel(ctx, Version, control).WithInferenceSettings(resources.inference).WithSkills(resources.skills).WithPlugins(resources.plugins).WithHooks(resources.session.HookEntries()).WithMarkdownColor(markdownColorEnabled(os.Getenv("NO_COLOR"), os.Getenv("TERM"), term.IsTerminal(os.Stdout.Fd()))).WithInputHistory(resources.history).WithTranscriptQueries(resources.identity.ThreadID, resources.transcriptQueries).WithFileQueries(resources.fileSource), nil
 }
 
 // markdownColorEnabled 由启动边界的显式环境和终端事实选择样式。

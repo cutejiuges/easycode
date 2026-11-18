@@ -58,7 +58,7 @@ func runHostLeaseUntilCleanup(t *testing.T, effort bool) {
 		if err := host.StartInteractive(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := host.Append(context.Background(), "hello"); err != nil {
+		if _, err := appendInteractiveText(context.Background(), host, "hello"); err != nil {
 			t.Fatal(err)
 		}
 		for item := range host.Outputs() {

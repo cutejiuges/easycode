@@ -9,11 +9,14 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 )
 
 // stopGoldenValues 固定两次反馈、真实 Skill 纠正、opaque 和完整窗口摘要的请求证据。
-func stopGoldenValues(t *testing.T) map[string][]byte {
+func stopGoldenValues(t *testing.T) map[string][]byte { return stopGoldenValuesWithFiles(t, false) }
+
+func stopGoldenValuesWithFiles(t *testing.T, includeFiles bool) map[string][]byte {
 	t.Helper()
 	c, initial, initialEntry := stopTestConversation(t)
 	feedback := stopTestFeedback(t, 0)
@@ -21,6 +24,17 @@ func stopGoldenValues(t *testing.T) map[string][]byte {
 	source, _ := domain.NewSkillSource("project", "review", "easycode")
 	attachment, _ := domain.NewSkillAttachment(source, "review", domain.SkillDigest("frozen instructions"), "keep indentation", "frozen instructions")
 	user, _ = user.WithSkillAttachment(attachment)
+	if includeFiles {
+		frozen := frozenFileInput(t, false)
+		user, _ = domain.NewUserInput(user.ID(), user.Text()+frozen.Text())
+		user, _ = user.WithSkillAttachment(attachment)
+		var err error
+		user, err = user.WithFileAttachments(frozen.FileAttachments())
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	association, _ := domain.NewInputAssociation(stopTestTurn, domain.InputSteering, 1, []domain.InputID{user.ID()})
 	candidate, _ := domain.NewStopWithSteering(feedback, association, []domain.UserInput{user})
 	prepared, err := c.PrepareStopContinuation(candidate)
@@ -220,4 +234,23 @@ func mustStopCachePolicy(t *testing.T) domain.CachePolicy {
 		t.Fatal(err)
 	}
 	return p
+}
+
+func TestFileStopNativeRequestCacheAndCheckpointGoldens(t *testing.T) {
+	values := stopGoldenValuesWithFiles(t, true)
+	for name, actual := range values {
+		want, err := os.ReadFile("testdata/files_" + name)
+		if err != nil || !bytes.Equal(want, actual) {
+			t.Fatalf("file Stop golden differs %s: %v", name, err)
+		}
+	}
+	for name, body := range values {
+		if strings.Contains(name, "checkpoint_request") {
+			if bytes.Contains(body, []byte("# Attached workspace file")) {
+				t.Fatal("checkpoint rehydrated old files")
+			}
+		} else if strings.Contains(name, "request.golden") && !bytes.Contains(body, []byte("# Attached workspace file")) {
+			t.Fatal("request lost frozen file body", name)
+		}
+	}
 }

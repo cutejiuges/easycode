@@ -86,7 +86,7 @@ func TestReasoningAutomaticSummaryAfterToolAndManualRejection(t *testing.T) {
 			if err := resources.session.StartInteractive(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			admitted, err := resources.session.Append(context.Background(), strings.Repeat("history ", 14000))
+			admitted, err := appendInteractiveText(context.Background(), resources.session, strings.Repeat("history ", 14000)+" @README.md")
 			if err != nil {
 				t.Fatal(err)
 			}

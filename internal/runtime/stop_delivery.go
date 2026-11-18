@@ -129,7 +129,13 @@ func (r *Runtime) deliverStopContinuation(ctx context.Context, emit Emitter, che
 		return fault.New(fault.CodeStreamProtocol, "prepare stop delivery failed")
 	}
 	defer func() { discardStopCandidate(prepared) }()
+	var inputEvents []protocol.Event
 	preflight := func() error {
+		events, err := r.prepareInputEvents(turn, pending)
+		if err != nil {
+			return err
+		}
+		inputEvents = events
 		if _, err := stopDeliveryDrafts(prepared); err != nil {
 			return err
 		}
@@ -220,17 +226,11 @@ func (r *Runtime) deliverStopContinuation(ctx context.Context, emit Emitter, che
 			return err
 		}
 	}
-	for _, input := range pending {
+	for i, input := range pending {
 		if attachment, ok := input.SkillAttachment(); ok {
 			r.explicitSkills = append(r.explicitSkills, attachment)
 		}
-		event, err := protocol.NewUserInputCommitted(input)
-		if err != nil {
-			r.poisoned.Store(true)
-			resolve(protocol.InputUncertain, protocol.InputReasonUncertain)
-			return err
-		}
-		emit(r.decorate(event, turn))
+		emit(inputEvents[i])
 	}
 	r.emitTranscriptCommit(turn, records[len(records)-1].Sequence)
 	resolve(protocol.InputCommitted, "")

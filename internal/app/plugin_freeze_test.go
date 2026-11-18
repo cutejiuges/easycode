@@ -82,11 +82,11 @@ func TestQueuedPluginAttachmentDoesNotRereadDeletedSource(t *testing.T) {
 				finished <- fmt.Errorf("queued plugin stream ended early")
 			}()
 			defer func() { cancel(); _ = resources.close(context.Background()); <-collectorDone }()
-			if _, err := resources.session.Append(ctx, "seed"); err != nil {
+			if _, err := appendInteractiveText(ctx, resources.session, "seed"); err != nil {
 				t.Fatal(err)
 			}
 			<-entered
-			result, err := resources.session.Append(ctx, "$claudeqa:review frozen args")
+			result, err := appendInteractiveText(ctx, resources.session, "$claudeqa:review frozen args")
 			if err != nil || result.Status() != protocol.CommandStatusAccepted {
 				t.Fatal("queue not accepted", err)
 			}

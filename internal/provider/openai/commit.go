@@ -124,13 +124,20 @@ func validateNativeHistoryEntry(entry nativeHistoryEntry) error {
 			return fmt.Errorf("user input count does not match metadata")
 		}
 		for i, input := range entry.UserInputs {
-			a, ok := entry.InputMetadata.Skill(entry.InputMetadata.InputIDs[i])
-			expected := 1
-			if ok {
-				expected = 2
+			if len(input.Content) == 0 {
+				return fmt.Errorf("user input content is required")
 			}
-			if len(input.Content) != expected || (ok && input.Content[1].Text != a.Content) {
-				return fmt.Errorf("skill content mismatch")
+			expected, err := entry.InputMetadata.TextBlocks(entry.InputMetadata.InputIDs[i], input.Content[0].Text)
+			if err != nil {
+				return err
+			}
+			if len(input.Content) != len(expected) {
+				return fmt.Errorf("input attachment count mismatch")
+			}
+			for index, text := range expected {
+				if input.Content[index].Text != text {
+					return fmt.Errorf("input attachment content mismatch")
+				}
 			}
 			if err := validateUserItem(input); err != nil {
 				return err
@@ -176,7 +183,7 @@ func validateNativeHistoryEntry(entry nativeHistoryEntry) error {
 }
 
 func validateUserItem(item NativeItem) error {
-	// 当前用户输入只有一个纯文本片段；原生 opaque 扩展仅允许模型输出持有。
+	// 原文、可选 Skill 和文件都是有序文本；opaque 扩展仅允许模型输出持有。
 	encoded, err := codec.MarshalStable(item)
 	if err != nil {
 		return fmt.Errorf("user input encoding is invalid")
@@ -192,11 +199,13 @@ func validateUserItem(item NativeItem) error {
 	if err := codec.UnmarshalRecord(encoded, &current); err != nil {
 		return fmt.Errorf("user input shape is invalid")
 	}
-	if current.Role != "user" || current.Type != "message" || (len(current.Content) != 1 && len(current.Content) != 2) || current.Content[0].Type != "input_text" {
+	if current.Role != "user" || current.Type != "message" || len(current.Content) < 1 || len(current.Content) > 2+domain.MaxFileReferences {
 		return fmt.Errorf("user input content is invalid")
 	}
-	if len(current.Content) == 2 && (current.Content[1].Type != "input_text" || len(current.Content[1].Text) > domain.MaxSkillContentBytes) {
-		return fmt.Errorf("invalid Skill content block")
+	for _, part := range current.Content {
+		if part.Type != "input_text" {
+			return fmt.Errorf("user input block type is invalid")
+		}
 	}
 	return domain.ValidateUserText(current.Content[0].Text)
 }

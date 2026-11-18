@@ -19,7 +19,7 @@ import (
 // ChatSession 是 TUI 使用的最小会话接口。
 type ChatSession interface {
 	Outputs() <-chan protocol.ControlItem
-	Append(context.Context, string) (protocol.CommandResult, error)
+	Append(context.Context, domain.InputDraft) (protocol.CommandResult, error)
 	Retract(context.Context, []domain.InputID) (protocol.CommandResult, error)
 	Interrupt()
 }
@@ -76,6 +76,7 @@ type Model struct {
 	stopCommit                *protocol.StopHookCommittedPayload
 	stopStatus                string
 	completion                completionState
+	files                     fileCompletionState
 	question                  *questionOverlay
 
 	hooks                hookBrowser
@@ -173,7 +174,7 @@ func (model Model) WithInputHistory(history domain.SemanticHistoryView) Model {
 
 // Init 返回初始命令。
 func (model Model) Init() tea.Cmd {
-	return tea.Batch(waitForControl(model.outputs), model.initialTranscriptQuery())
+	return tea.Batch(waitForControl(model.outputs), model.initialTranscriptQuery(), model.initialFileWait())
 }
 
 // Update 更新纯 UI 状态，并把会话操作留给 tea.Cmd。
@@ -198,6 +199,8 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch value := message.(type) {
+	case fileResultMsg:
+		return model.receiveFileResult(value)
 	case hookTrustFailedMsg:
 		if model.hookTrust != nil && model.hookTrust.request.RequestID == value.request && model.hookTrust.turn == value.turn {
 			model.hookTrust.submitted = false
@@ -320,6 +323,7 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if key.Type == tea.KeyCtrlC {
 		model.completion.suppress(completionCancelled)
+		model.suppressFiles(completionCancelled)
 	}
 	if key.Type == tea.KeyEsc || key.Type == tea.KeyCtrlC {
 		model.clearEffortFeedback()
@@ -422,6 +426,9 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return model, model.cancelActiveCompaction()
 	}
 	if key.Type == tea.KeyCtrlC && model.activeTurnID.Valid() {
+		if model.pendingCancel != nil {
+			model.pendingCancel()
+		}
 		model.cancelling = true
 		return model, interruptSession(model.session)
 	}
@@ -448,6 +455,9 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	originalDraft := model.composer
+	if model.handleFileKey(key) {
+		return model, nil
+	}
 	if handled, submit := model.handleCompletionKey(key); handled {
 		if model.composer.text != originalDraft.text || model.composer.cursor != originalDraft.cursor {
 			model.clearEffortFeedback()
@@ -492,6 +502,7 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if key.Paste {
 		model.completion.suppressPastedInput(model.composer)
+		model.suppressPastedFiles()
 	}
 	switch intent {
 	case composerQuit:
@@ -553,6 +564,12 @@ func (model Model) submitComposer() (tea.Model, tea.Cmd) {
 		model.errorSummary = "input_queue_full: take or discard returned inputs first"
 		return model, nil
 	}
+	draft, err := domain.NewInteractiveInputDraft(model.composer.text)
+	if err != nil {
+		model.errorSummary = "invalid_input: " + err.Error()
+		return model, nil
+	}
+	model.cancelFileSession()
 	snapshot := model.composer
 	model.pending = &snapshot
 	model.state = stateSubmitting
@@ -564,7 +581,7 @@ func (model Model) submitComposer() (tea.Model, tea.Cmd) {
 	target := model.session
 	return model, func() tea.Msg {
 		defer cancel()
-		_, err := target.Append(ctx, snapshot.text)
+		_, err := target.Append(ctx, draft)
 		if err != nil {
 			return submissionFailedMsg{err: err, generation: generation}
 		}
@@ -757,6 +774,7 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 		if payload.Skill != nil {
 			text += "\nSkill loaded: " + payload.Skill.Name + " (" + payload.Skill.Source.ID() + ")"
 		}
+		text += fileSummaryText(payload.Files)
 		model.transcript = append(model.transcript, transcriptMessage{role: "User", text: text})
 		model.assistantItem = -1
 	case protocol.EventTurnStarted:
@@ -990,7 +1008,7 @@ func (model Model) View() string {
 		_, _ = fmt.Fprintf(&view, "Error: %s\n", model.errorSummary)
 	}
 	view.WriteString("\n")
-	footer := model.renderInputs() + model.completion.view + model.composer.view(model.pending == nil && model.retracting == nil && !model.cancelling)
+	footer := model.renderInputs() + model.completion.view + model.files.view + model.composer.view(model.pending == nil && model.retracting == nil && !model.cancelling)
 	return model.fitChatView(view.String(), footer)
 }
 

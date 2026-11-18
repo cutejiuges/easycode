@@ -975,3 +975,20 @@ started Sync 前只有原输入 request_id；terminal 后直到 worker/stream �
 2026-11-14 复审补充：独立摘要在首次 started 写入前取消时不会进入 Provider，不能只依赖 Kernel 的 summary 连接清理；普通 turn 与摘要的原 worker 必须共用失败/取消收口，再发布最终完成。新增真实 AgentLoop + WebSocket 回归证明无中间操作的 high→low→high 保持增量，而已接纳但网络前取消的摘要之后必须 full，旧 response ID 不得复活。Skill 与补全各自保存保留名会漏掉新命令，改为 domain 的同一纯 switch。窄屏通知预算还要扣除状态、可见队列与 composer 的实际行数；64 条队列只裁剪展示，不删除待执行事实，保留 FIFO 头及输入区。权威选择缓存只保存选择字段，不能夹带旧活动身份和窗口数值。复审与完整验证见 `openspec/changes/archive/2026-11-15-add-runtime-effort-control/review.md`。
 
 2026-11-15 回归计时补充：排查“测试超过十分钟”时，先区分普通 `make test` 和顺序执行普通/race 的 `make verify`，使用 `-json -count=1` 分包、分顶层/子测试记录。此次 Darwin/Go 1.24.13 普通全量约 154 秒，race 约 781 秒；主要是 app 的大规模安全/恢复矩阵及大型 fixture 的重复 JSON 校验，不是 effort idle 查询死循环。其他 worktree 同时运行 race/profile 会影响墙钟时间，不能据此宣称隔离性能。profile 的多个 goroutine 累计阻塞也不能直接当成单用例等待。保留全部安全/恢复断言和 race，不用减少矩阵、改 GORACE 或扩大 timeout 掩盖慢路径；后续优化从测得的 JSON/恢复热点及实例环境隔离着手。证据与边界见 `openspec/changes/archive/2026-11-15-add-runtime-effort-control/regression-2026-11-15.md`。
+
+## [输入][2026-11-17] 文件候选、冻结内容与操作捕获分别持有
+
+- 新查询发出后继续接受旧 A 行会把用户正在输入的 B 替换成错误路径；只比 query 也无法挡住 ABA。立即撤销旧行资格，核对 workspace/session/composer/目标/request/index revision；同锚点保留发现 deadline/索引，再开才重扫。`internal/tui/file_completion_test.go` 与 `internal/app/file_source_test.go` 用确定屏障验证。
+- 目录恰好 4096 项时，批量读取可以返回满批而尚未返回 EOF。需要最多一项的有限 EOF 探针，探针仍受 200000 原始条目预算；溢出时省略完整目录，不发布随机文件系统前缀。`internal/tool/builtin/file_discovery_bounds_test.go` 固定 4096/4097、200000 条目、64 层、1 MiB 目录与 8 MiB 栈边界。
+- 源 bytes、截取内容、JSON 包装、存储附件及 UI 摘要不是同一种额度。分别校验 16/64 MiB 实读、64/512 KiB 包装、4 MiB 输入、16/64 MiB record/batch 与整个 4 KiB 摘要；路径转义和 metadata 同样计费，摘要保留完整项前缀。摘要全省略也不能丢失详情来源。
+- UserInputCommitted 若在 Sync 后才构造，确定性展示编码错误会错误污染 durability。现在 writer 接纳前构造并严格比对最终事件/摘要，Stop 交付复用同一预检；Sync 后只发布冻结事件。见 `internal/runtime/input_event_preflight_test.go`、`internal/protocol/file_input_test.go`。
+- Read 可以通过 unavailable observation 降级交付正文，附件不能沿用这个结果策略。只共享 FD 打开和有限读取机制，附件的任一读前后校验失败均拒绝整条输入；同路径不同范围只读一次，失败读取量不归零，不产生 Read/Write 资格。关闭强制 FD 后仍等待读取栈真实返回，再释放根与 writer/lease。`internal/app/file_shutdown_test.go` 用真实子进程争用验证。
+- 内容在准备/queued 时冻结，effort 在操作开始时捕获；两者不能共用冻结时点。取回只返回原文，再提才读取新内容；同轮工具/Stop/自动摘要保留旧策略，strict-next 用最新设置，finishing 不提前启动。`internal/app/file_effort_test.go` 与文件+effort 的 PTY 屏障验证实际请求和收据边界。
+- 文件 native 元数据要与完整引用集合、原生块逐字一致，不能用正确 digest 替代语义检查；缺少必需 files 的旧开发 shape 在 repair 前拒绝，保留坏 journal bytes。固定 current bytes、input-only 真进程崩溃和二次恢复见 `internal/app/file_restore_test.go`、`file_crash_test.go`。内部没有版本 reader 或 migration，外部 headless JSONL 不扩展附件字段。
+
+### 文件引用实现复审：取消句柄、缓存消息位置与验收回执
+
+- `os.File.Fd()` 返回的数字不能跨越并发 Close 作为稳定对象身份使用。目录发现的取消回调会关闭目录，附件读取的取消回调会关闭文件；`openat` 与 `fstat` 均改为在 `SyscallConn.Control` 内借用描述符。关闭仍由原 owner 等待真实系统调用和读取栈退出。`TestWorkspaceOpenChildPinsDirectoryUntilOpenatReturns` 在关闭门生效的屏障后继续实际打开，证明已借用对象保持，之后的新打开被拒绝。
+- 只在读后快照调用前检查 context，会把快照内发生的取消误归为属性变化，甚至在检查成功时返回正文。快照返回后先再次核对取消，仍保留真实读取计数。`TestWorkspaceFileSnapshotCancellationDuringFinalCheckRemainsCancellation` 在第二次检查中确定性取消并覆盖该检查成功/失败两路。
+- Anthropic 的 Stop 反馈也是实际请求中的用户消息。缓存桥接若只累计 user_inputs/sample/tool_outputs，会把多文件长窗口的二十块桥接标记放到更早的反馈消息。`messageCachePositions` 现在计入 FeedbackInput；`file_cache_bridge_test.go` 与固定 marker golden 覆盖两次反馈、Skill+多文件、项目前缀、采样/摘要、三种 TTL 策略及恢复等价，缓存覆盖不改写 native history。
+- PTY 脚本等待按键回执时，可能先收到搜索、读取或提交回执。丢掉未匹配事件会误报超时；无阶段边界地取回旧事件又会误认上次 admission。文件 smoke 增加按序保留/单次消费与动作水位，旧视图不能满足新视图等待；用分段粘贴明确抑制及 Tab 重开边界，四项纯单测和真实终端共同验证。

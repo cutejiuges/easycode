@@ -48,7 +48,8 @@ func TestQuestionAcceptedAnswerRetainsShutdownOwnerUntilSync(t *testing.T) {
 			}
 		}
 	}()
-	if _, err := host.Append(ctx, "ask"); err != nil {
+	draft, _ := domain.NewInteractiveInputDraft("ask")
+	if _, err := host.Append(ctx, draft); err != nil {
 		t.Fatal(err)
 	}
 	var e protocol.Event

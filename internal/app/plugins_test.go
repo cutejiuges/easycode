@@ -255,7 +255,7 @@ func TestSourceCloseWaitsForPreadmissionPluginPreparation(t *testing.T) {
 	blocked.Store(true)
 	prepared := make(chan error, 1)
 	go func() {
-		_, err := resources.session.Append(context.Background(), "$claudeqa:review diff")
+		_, err := appendInteractiveText(context.Background(), resources.session, "$claudeqa:review diff")
 		prepared <- err
 	}()
 	<-entered

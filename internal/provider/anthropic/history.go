@@ -32,11 +32,15 @@ func projectHistory(history []nativeHistoryEntry) domain.SemanticHistoryView {
 		} else if entry.Kind == nativeHistoryUserInputs {
 			for i, input := range entry.UserInputs {
 				a, ok := entry.InputMetadata.Skill(entry.InputMetadata.InputIDs[i])
+				files := entry.InputMetadata.FileAttachments(entry.InputMetadata.InputIDs[i])
 				text := projectMessageText(input, roleUser)
-				if ok {
-					text = input.Content[0].Text
+				if ok || files.Len() > 0 {
+					text = ""
+					if input.Role == roleUser && len(input.Content) > 0 && input.Content[0].Type == "text" {
+						text = input.Content[0].Text
+					}
 				}
-				turn.Messages = append(turn.Messages, domain.SemanticMessage{Role: domain.SemanticUser, InputID: entry.InputMetadata.InputIDs[i], Text: text, Skill: a, HasSkill: ok})
+				turn.Messages = append(turn.Messages, domain.SemanticMessage{Role: domain.SemanticUser, InputID: entry.InputMetadata.InputIDs[i], Text: text, Skill: a, HasSkill: ok, Files: files})
 			}
 		} else if text := projectMessageText(entry.Assistant, roleAssistant); text != "" {
 			turn.Messages = append(turn.Messages, domain.SemanticMessage{Role: domain.SemanticAssistant, Text: text})

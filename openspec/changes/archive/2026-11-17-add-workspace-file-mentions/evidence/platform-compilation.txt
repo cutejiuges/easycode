@@ -1,0 +1,5 @@
+宿主：darwin/arm64，go1.24.13。
+GOOS=linux GOARCH=amd64 go test -c -o /tmp/easycode-file-app-linux.test ./internal/app
+退出码：0；只编译，未在 Linux 运行。
+GOOS=windows GOARCH=amd64 go test -c -o /tmp/easycode-file-app-windows.test.exe ./internal/app
+退出码：0；只编译，未在 Windows 运行。

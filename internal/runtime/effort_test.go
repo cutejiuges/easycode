@@ -175,7 +175,7 @@ func TestEffortTurnCaptureQueueAndCancelledHandoff(t *testing.T) {
 	if _, err := loop.Submit(cancelled, command); err == nil {
 		t.Fatal("cancelled handoff accepted")
 	}
-	submitLoopCommand(t, loop, "first", "first")
+	submitFileLoopCommand(t, loop, "first", "first @file")
 	call := receiveInvocation(t, c.calls)
 	if call.settings.Effort() != "high" {
 		t.Fatal("startup not captured")
@@ -185,7 +185,7 @@ func TestEffortTurnCaptureQueueAndCancelledHandoff(t *testing.T) {
 	if snapshot.Active == nil || snapshot.Active.Effort().Value != "high" || snapshot.Selected.Value != "low" || !snapshot.Pending || snapshot.Active.SelectionRevision() != 0 {
 		t.Fatal("active policy changed", snapshot)
 	}
-	submitLoopCommand(t, loop, "second", "second")
+	submitFileLoopCommand(t, loop, "second", "second @file")
 	call.release <- completedProviderEvent(t)
 	next := receiveInvocation(t, c.calls)
 	if next.settings.Effort() != "low" || next.settings.Summary() != "auto" || next.settings.MaxOutputTokens() != 16384 {
@@ -223,7 +223,7 @@ func TestEffortStartingCapturePrecedesDurableIdentity(t *testing.T) {
 	c := newControlledConversation()
 	loop := effortLoop(t, c, j)
 	done := startAgentLoop(t, loop)
-	submitLoopCommand(t, loop, "original-request", "work")
+	submitFileLoopCommand(t, loop, "original-request", "work @file")
 	<-j.entered
 	setEffortLoop(t, loop, "later", effortChoice(t, "low"))
 	p := queryEffortLoop(t, loop, "starting")
@@ -259,7 +259,7 @@ func TestEffortFinishingRetainsCaptureUntilWorkerJoin(t *testing.T) {
 	c := &effortCleanupConversation{fakeConversation: &fakeConversation{stream: fixedStream(failed)}, entered: make(chan struct{}), release: release}
 	loop := effortLoop(t, c, &fakeJournal{})
 	done := startAgentLoop(t, loop)
-	submitLoopCommand(t, loop, "work", "work")
+	submitFileLoopCommand(t, loop, "work", "work @file")
 	receiveTurnEvent(t, loop.Outputs(), "work", protocol.EventTurnFailed)
 	<-c.entered
 	setEffortLoop(t, loop, "next", effortChoice(t, "low"))
@@ -297,7 +297,7 @@ func TestEffortManualAndAutomaticCompactionCapture(t *testing.T) {
 				}
 				done := startAgentLoop(t, loop)
 				if automatic {
-					submitLoopCommand(t, loop, "task", "new work")
+					submitFileLoopCommand(t, loop, "task", "new work @file")
 				} else {
 					command, _ := protocol.NewCompactContextCommand("summary", "")
 					if result, err := loop.Submit(context.Background(), command); err != nil || result.Status() != protocol.CommandStatusAccepted {
@@ -404,7 +404,7 @@ func runEffortStopCapture(t *testing.T, automatic bool) {
 	if automatic {
 		text += strings.Repeat(" preserve original details ", 3000)
 	}
-	submitLoopCommand(t, loop, "task", text)
+	submitFileLoopCommand(t, loop, "task", text+" @file")
 	changed, summaries := false, 0
 	var capturedTurn domain.TurnID
 	for item := range loop.Outputs() {
