@@ -102,6 +102,8 @@ func (metadata ReadResultMetadata) OutputTruncated() bool   { return metadata.ou
 
 // InvocationResult 是可直接持久化并交给 Provider result codec 的冻结结果。
 type InvocationResult struct {
+	taskInput        TaskInput
+	taskUpdate       domain.TaskUpdate
 	questionInput    QuestionInput
 	questionMetadata QuestionResultMetadata
 	skillInput       SkillInput
@@ -179,6 +181,9 @@ func (result InvocationResult) WriteMetadata() WriteResultMetadata { return resu
 
 // Validate 验证结果身份、状态、错误码、preview 和元数据。
 func (result InvocationResult) Validate() error {
+	if result.capability != CapabilityTaskProgress && (!result.taskInput.IsZero() || !result.taskUpdate.IsZero()) {
+		return errors.New("mismatched task result")
+	}
 	if result.capability != CapabilityQuestion && (result.questionInput != (QuestionInput{}) || result.questionMetadata != (QuestionResultMetadata{})) {
 		return errors.New("mismatched question metadata")
 	}
@@ -227,6 +232,8 @@ func (result InvocationResult) Validate() error {
 		return errors.New("tool result contains mismatched Write metadata")
 	}
 	switch result.capability {
+	case CapabilityTaskProgress:
+		return result.validateTaskResult()
 	case CapabilityQuestion:
 		return result.validateQuestionResult()
 	case CapabilitySkill:
@@ -345,6 +352,9 @@ func NewReadErrorResult(invocation ReadInvocation, status ResultStatus, code str
 // NewInvocationErrorResult 为当前四种能力生成不泄漏底层cause的确定错误结果。
 func NewInvocationErrorResult(invocation Invocation, status ResultStatus, code string, message string) InvocationResult {
 	switch invocation.Capability() {
+	case CapabilityTaskProgress:
+		v, _ := invocation.Task()
+		return newTaskErrorResult(v, status, code, message)
 	case CapabilityQuestion:
 		v, _ := invocation.Question()
 		return newQuestionErrorResult(v, status, code, message)

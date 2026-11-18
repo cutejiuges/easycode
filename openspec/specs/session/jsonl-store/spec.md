@@ -10,7 +10,7 @@
 
 每条 JSONL record SHALL 使用唯一当前、强类型的 envelope，至少包含单调 seq、UTC timestamp、session/thread/turn identity、event kind、batch 边界、checksum 和受控 typed payload。所有当前 records 均为恢复必需事实；envelope MUST NOT 携带 `required`/`optional` 选择字段，也不得透传未知 kind 或未知 payload 为 opaque Session record。
 
-当前记录词汇中的 `tool_call_ready`、`tool_approval_decided`、`tool_execution_started` 和 `tool_call_result` SHALL 具有专属 typed constructor、strict decoder 与 validator。`tool_call_ready` SHALL 保存 invocation ID、Provider call ID、Provider wire kind、sample/call index、capability，以及与 `Read`、`Glob`、`Grep`、`Patch`、`Write`、`Exec` 、`ReadArtifact`、`Skill` 或 `Question` 匹配的完整 typed input；`tool_approval_decided` SHALL 保存 request/invocation identity、candidate fingerprint、typed outcome、decision source、仅适用于 deny 的有界反馈与不含绝对路径、正文、环境值或命令输出的安全 metadata；`tool_execution_started` SHALL 引用同一 invocation 并表示 executor 接收线性化点；`tool_call_result` SHALL 保存终态 status、稳定 code、完整有界模型 preview 与 capability 对应的非敏感 typed metadata。Exec metadata SHALL包含相对workdir、exit/timeout/cancelled/truncated状态、duration、stdout/stderr计数及各流 typed 保存状态与 descriptor 和必需预算元数据，不得包含PID、绝对路径或环境。工具 records MUST NOT 保存 input revision、result codec revision、执行器额外采集的完整 base/final 文件快照、完整 diff、临时文件路径或可执行 Provider wire item。
+当前记录词汇中的 `tool_call_ready`、`tool_approval_decided`、`tool_execution_started` 和 `tool_call_result` SHALL 具有专属 typed constructor、strict decoder 与 validator。`tool_call_ready` SHALL 保存 invocation ID、Provider call ID、Provider wire kind、sample/call index、capability，以及与 `Read`、`Glob`、`Grep`、`Patch`、`Write`、`Exec` 、`ReadArtifact`、`Skill`、`Question` 或 `Task` 匹配的完整 typed input；`tool_approval_decided` SHALL 保存 request/invocation identity、candidate fingerprint、typed outcome、decision source、仅适用于 deny 的有界反馈与不含绝对路径、正文、环境值或命令输出的安全 metadata；`tool_execution_started` SHALL 引用同一 invocation 并表示 executor 接收线性化点；`tool_call_result` SHALL 保存终态 status、稳定 code、完整有界模型 preview 与 capability 对应的非敏感 typed metadata。Exec metadata SHALL包含相对workdir、exit/timeout/cancelled/truncated状态、duration、stdout/stderr计数及各流 typed 保存状态与 descriptor 和必需预算元数据，不得包含PID、绝对路径或环境。工具 records MUST NOT 保存 input revision、result codec revision、执行器额外采集的完整 base/final 文件快照、完整 diff、临时文件路径或可执行 Provider wire item。
 
 Session envelope MUST NOT 包含 schema_version、payload_version、canary、format revision 或同义版本标记，不得按版本选择 decoder。completed sample 的 Provider entry 仍作为 native commit 并紧邻配对 `sample_usage`；tool results 编码为 tool-output native commit 时不生成 sample usage。高频参数 delta、approval request/焦点/按键、命令输出progress、elapsed tick、UI 状态和文件系统瞬时信息 MUST NOT 进入 JSONL。
 
@@ -133,6 +133,18 @@ Session envelope SHALL 不携带格式版本字段；Provider native/checkpoint 
 #### Scenario: Reject unapproved text in a stop fact
 - **WHEN** plan/运行统计或非 continued 决定含脚本原文，或反馈缺少 model 来源/预算
 - **THEN** 当前 decoder/replay 在 repair/append 前拒绝，不透传正文
+
+任务进度 SHALL 复用 tool_call_ready、tool_execution_started、tool_call_result 与匹配原生调用/outputs，不新增任务 UI、折叠、按键、进度 tick、独立任务文件或 approval records。ready 必须保存 tool.TaskInput 的语义 facade profile 及完整规范 domain.TaskUpdate；success result 必须含完整同一 domain 更新的 typed metadata 和至多 1 KiB 固定格式英文计数确认 preview，失败结果不得携带 applied state。原始 Task 参数与 ready 的 Provider/profile/内容必须交叉验证；更新内容作为恢复必要业务事实保存，不复制到 SQLite、diagnostic 或 telemetry，不采集文件正文或环境数据。
+
+任务输入 SHALL 是有界封闭结构，采用两家严格字段契约及同一规范快照。输入 raw bytes 与规范快照各最多 64 KiB；全部文字合计最多 16 KiB，最多二十项，其余字段/状态/文本约束遵循 tool/task-progress。metadata 不因 preview 只报告计数而丢失列表，也不能借 metadata 接收超限或部分成功更新。source result_sequence 由实际成功 result 的 record sequence 推导，不能由模型或构造调用者预领、覆写。
+
+#### Scenario: Persist task progress through the existing ledger
+- **WHEN** 合法 TodoWrite/update_plan 完成完整清单替换
+- **THEN** 当前唯一结构保存 ready、started、success result 和 matching native outputs，metadata 完整保留规范更新，不出现 approval 或 UI records
+
+#### Scenario: Reject a task result that hides or invents applied state
+- **WHEN** checksum 合法但 success 缺少完整规范更新、内容与 ready 不同，或 error/cancelled/outcome_uncertain 携带 applied state
+- **THEN** 当前严格校验拒绝，不把简短确认 preview 当成可替代的清单来源
 
 ### Requirement: A single writer assigns order and durably appends batches
 
@@ -372,6 +384,28 @@ Stop 候选 SHALL 消耗真实 sample index；continued 后的下一 sample 必�
 - **WHEN** checks plan 存在未完成项却出现 turn_completed、新 sample 或 auto compaction
 - **THEN** 作为语义 corruption 拒绝，不能以半行修复或默认通过放行
 
+Task 的正常语法 SHALL 为 ready -> started -> result，并与其他 exclusive slot 按模型 call index 串行；它无需且禁止普通 approval，也不允许 PreToolUse/PostToolUse/PostToolUseFailure facts。started 必须晚于前序 result 和调用预算关闭；后序调用不得早于 Task result 的确定 durable。ready 可直接收口为取消或预算/验证错误；success/outcome_uncertain 必须具有合法 started，失败不含应用状态。只有完整合法 success result 推进任务投影，状态回退或空列表是显式完整更新，不是 corruption。
+
+任务当前状态 SHALL 从全部完整有序 facts 中最新成功 Task result 推导，保存实际 result_sequence、turn_id、invocation_id 与完整规范更新。无成功更新为 none，最新成功空数组为 clear，最新成功非空为 snapshot；三态及字段为闭合联合。Task ready/started、失败、取消、预算错误、未提交 batch、UI 事件或模型摘要自述都不是应用事实。完整 checksum 下的原生 facade/profile 与 TaskInput 不符、规范 result 与输入 update 不符、重复 source、结果顺序非法、越过屏障或审批/Hook 旁路 MUST 整体拒绝。
+
+#### Scenario: Replay successive task replacements in call order
+- **WHEN** 合法 journal 在同一 sample 按 Task A、Task B 保存两个成功结果，B 含状态回退或空数组
+- **THEN** replay 接受显式完整替换，当前状态来自 B 的真实 result sequence，A 仍可在历史详情读取
+
+#### Scenario: Reject approval or hook facts for task progress
+- **WHEN** journal 为 task.progress 保存普通 approval、mutation Hook plan，或后序调用早于任务 result 完成
+- **THEN** 语义校验整体拒绝，不以“没有文件写入”为由放入并行只读批次或跳过屏障
+
+#### Scenario: Retain the previous task state after an uncertain update
+- **WHEN** 新 Task started 而 result 缺失，或保存 error/cancelled/outcome_uncertain，之前已有成功列表
+- **THEN** replay 当前状态仍是此前列表，新调用只形成原 slot 的恢复计划或失败事实，不安装候选
+
+任务 source SHALL 只使用实际成功 tool_call_result 的 record sequence。live result observer 必须接收成功 Append 返回的真实 result sequence，回放投影必须保留同一 ResultSequence；既有 ready Sequence、detail sequence、native sequence、模型自述或预分配位置均不能替代。记录顺序、同 turn/invocation 和结果成功状态必须同时匹配，列表内容相同不免除来源核验。
+
+#### Scenario: Preserve the actual result sequence across live and replay observers
+- **WHEN** 同一任务的 ready、started、result、native output 具有不同 seq，live observer 接收成功 Append 的返回记录，随后恢复同一 journal
+- **THEN** 两条路径都以真实 result record seq 形成 source，绝不使用 ready/detail/native seq，内容及来源完全一致
+
 ### Requirement: Tail repair never rewrites committed history
 
 显式 Repair SHALL 在完整语义及 Provider 校验后只修复文件末尾的半行或未完成 batch：截断到最后一个完整 committed batch 边界，保留此前所有合法 bytes，并以结构化结果报告发生了修复。已经完整提交的 batch、文件中间的损坏和语义非法记录 MUST NOT 被自动删除、重排或重写。
@@ -476,7 +510,7 @@ JSONL 事实源 SHALL 只持久化恢复、幂等和审计所需的业务边界�
 当前固定 fixture SHALL 覆盖 Write 创建/覆盖成功、准备失败、拒绝、ready/allow/started/result 中断与混合 exclusive 顺序。新增 Write 使用唯一当前 input/result 联合并严格验证当前字段结构；不得给旧 shape 增加 optional 分支。
 
 #### Scenario: Construct every tool record through a typed API
-- **WHEN** 调用方创建 Read、Glob、Grep、Patch、Write、Exec、ReadArtifact 的 ready、approval、execution-started 或 result draft
+- **WHEN** 调用方创建 Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill、Question、Task 的 ready、approval、execution-started 或 result draft
 - **THEN** constructor只接收与kind和capability匹配的当前强类型值并立即验证
 - **THEN** draft不能被改造成capability、wire kind与payload不匹配的record
 
@@ -528,6 +562,18 @@ JSONL 事实源 SHALL 只持久化恢复、幂等和审计所需的业务边界�
 - **WHEN** 加载仓库内基础七工具、partial/unavailable 和恢复中断的固定 bytes
 - **THEN** 生产 decoder/replay 校验通过；测试运行时不使用当前 encoder 生成输入 fixture
 
+任务 ready/result、更新值、TaskProgressState 及 checkpoint 的 task_progress SHALL 具有唯一当前 typed constructor、strict decoder、validator 和深拷贝。none 只含其判别字段；clear/snapshot 必须含 source(result_sequence、turn_id、invocation_id) 及完整规范更新，分支内容与空/非空列表一致，不接受默认填充、未知字段、重复 member 或版本字段。语义 facade profile SHALL 只存在于工具 TaskInput 输入事实中，用于校验 Anthropic 每项 activeForm 必需、OpenAI activeForm 归一化为空与 explanation 的来源限制；domain.TaskUpdate、TaskProgressState、result 的规范更新、checkpoint 与查询不携带 profile。必须以原始 TaskInput/native evidence 维持两家输入语义验证，不能通过向共享状态复制 profile 或借恢复宽松解码替代。
+
+固定 current fixtures SHALL 覆盖两家任务更新、显式清空、状态回退、两个更新的 exclusive 顺序、ready/started/result 与 native-output 缺口、失败/取消/预算拒绝、合法 none/clear/snapshot checkpoint、来源及内容伪造。checkpoint 的 task_progress 为必需当前字段，替换受影响旧 fixture bytes；不新增版本、兼容 reader、迁移或测试时动态生成历史输入。
+
+#### Scenario: Load fixed task and checkpoint bytes
+- **WHEN** 生产 loader/decoder/replay 读取仓库固定的任务正常、中断、清空及 checkpoint fixtures
+- **THEN** 当前合法 bytes 验证通过，完整文本/顺序/状态/来源与预期一致；测试运行时不由当前 encoder 生成输入 fixture
+
+#### Scenario: Reject the missing current checkpoint task field
+- **WHEN** checkpoint 使用缺失 task_progress 的旧开发 shape，或 clear/snapshot 缺少来源及完整更新
+- **THEN** repair/append/网络前失败关闭，不按 none 默认补全、不选择历史 reader
+
 ### Requirement: Repository lifecycle and path safety are explicit
 
 Session Repository 的纯内存配置与外部资源获取 SHALL 分离。任何创建数据根、打开目录句柄、创建 journal、取得 lease 或启动 writer 的操作 MUST 使用 `Open`、`OpenOrCreate`、`Create` 或 `Start` 等显式生命周期入口；纯构造器不得访问文件系统或启动 goroutine。
@@ -553,7 +599,7 @@ Session Repository 的纯内存配置与外部资源获取 SHALL 分离。任何
 
 ### Requirement: Sample usage is committed atomically with its sample
 
-每个成功 Provider sample SHALL 在一个 durable batch 中依次写入 `provider_native_commit`、`sample_usage` 以及该 sample 的后续边界。无 tool call 的最终 sample 在无 Stop 且来源合法时后续边界为 turn_completed，有 Stop 或来源不可判定时为 turn_stop_hook_planned；含 tool calls 的 sample 后续边界为一个或多个按 call index 排列的 `tool_call_ready`，输入联合覆盖Read、Glob、Grep、Patch、Write、Exec与ReadArtifact。同一 batch MUST 使用相同 session/thread/turn 和 batch identity并获得连续seq；只有整个batch成功Sync后才能确认任一事实或读取Patch目标。
+每个成功 Provider sample SHALL 在一个 durable batch 中依次写入 `provider_native_commit`、`sample_usage` 以及该 sample 的后续边界。无 tool call 的最终 sample 在无 Stop 且来源合法时后续边界为 turn_completed，有 Stop 或来源不可判定时为 turn_stop_hook_planned；含 tool calls 的 sample 后续边界为一个或多个按 call index 排列的 `tool_call_ready`，输入联合覆盖 Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill、Question 与 Task。同一 batch MUST 使用相同 session/thread/turn 和 batch identity并获得连续seq；只有整个batch成功Sync后才能确认任一事实或读取Patch目标。
 
 tool-output native commit MUST 在全部对应 result facts 已按 call index durable 后单独提交且不得带 `sample_usage`。`sample_usage` payload继续完整包含五个normalized metrics，不得包含Provider raw usage、价格、请求正文、tool result、approval或diff。
 
@@ -604,6 +650,16 @@ Stop 反馈 native commit SHALL 在 continued 冻结决定后的独立一/三记
 - **WHEN** 成功 sample 无 calls 且需要 Stop
 - **THEN** sample/usage/plan 同批保存，无 turn_completed；后续失败仍保留该 sample usage
 
+任务调用 SHALL 与该 sample 的全部原生 items、usage 和有序 ready facts 原子提交，不因其执行纯内存而提前改变状态。多个各自合法的任务输入聚合后超过现有 native/record/batch 限额时，整个 sample MUST 在任务执行和清单更新之前拒绝，不扩大通用 Session 限额。任务确认 output 不产生 sample_usage，完整更新只在对应成功 result 中建立应用事实。
+
+#### Scenario: Commit a sample containing task updates atomically
+- **WHEN** completed sample 按 Read、Task、Write 排列
+- **THEN** native commit、sample_usage 及三个 ready facts 同批获得连续 seq，整个 batch Sync/finalize 前任务清单不变
+
+#### Scenario: Reject aggregate task encoding before execution
+- **WHEN** 多个合法 Task 调用聚合后超出现有 native commit 或 batch 上限
+- **THEN** 不提交部分 sample，不调用任何执行器，不更新任务列表或创建补偿式成功来源
+
 ### Requirement: Replay never treats command progress as durable state
 
 ReplayPlanner SHALL只从Exec ready、approval、started、result和Provider-native output判断命令状态。命令progress、PID、spinner、实时输出chunk与后台handle不属于当前record vocabulary；即使宿主曾观察这些瞬态数据，resume也不得据此推断命令仍运行或尝试连接进程。
@@ -633,6 +689,30 @@ compaction_started SHALL 在摘要网络请求前成功 Sync；completion SHALL 
 #### Scenario: Retain lease during cleanup
 - **WHEN** 压缩清理阻塞且另一个进程尝试 resume/repair
 - **THEN** 竞争进程 session_busy 且 journal bytes 不变，lease 直到最终 Sync/Close 才释放
+
+每个 Provider checkpoint payload SHALL 必需包含 task_progress 当前封闭联合。其期望状态仅由该 compaction_started 之前 committed journal 前缀中最新成功 task.progress result 推导；none 无 source/update，clear/snapshot 必需完整规范更新及实际 source result_sequence/turn_id/invocation_id。started/completed 之间不能插入新任务事实，失败和未完成更新不得成为来源。所有历史 checkpoint 分别对照各自 source，不能用全局最终列表替代旧来源。
+
+Session/replay SHALL 从完整 ledger 计算窄 typed 期望证据，Provider codec 校验 checkpoint 任务结构、真实 generation、规范内容与确定性原生包装；Provider 不读取 Session records，共享语义投影不反向构造 Provider wire。原生摘要包装包含完整有界任务资料和存在时的说明，但不包含来源 seq/turn/invocation 或 CompactionID。generation 单独真实保存；当前内存列表和 UI 不成为持久化依据。
+
+checkpoint 来源或内容错配、缺失必需 task_progress、虚构 none/clear、非法大小或与原生包装不一致 MUST 在任何 repair、补偿或网络之前拒绝，原 bytes 不变；不得退回旧 checkpoint、丢列表继续或引入旧 reader。只有成功 completion Sync 才安装窗口；该操作不制造新的 Task result 或改变任务来源。
+
+#### Scenario: Match a task checkpoint to its exact source prefix
+- **WHEN** source 前缀先成功保存清单甲，之后一次任务更新失败，然后启动压缩
+- **THEN** checkpoint snapshot 只能匹配甲及其真实成功 result source，失败更新不能覆盖来源
+
+#### Scenario: Reject forged task evidence before repairing a suffix
+- **WHEN** checkpoint checksum 合法但来源 seq/turn/invocation、完整更新或原生包装错配，末尾另有半行
+- **THEN** 整体恢复拒绝，半行及原始前缀全部 bytes 保持不变，不执行 repair/补偿/Provider 请求
+
+#### Scenario: Keep later progress outside an earlier checkpoint
+- **WHEN** checkpoint A 保存源清单甲，其后成功更新乙并创建 checkpoint B
+- **THEN** A 与 B 分别匹配各自前缀，恢复有效窗口和最新列表而不把乙追写到 A 或重复生成 Task facts
+
+来源期望证据及原生包装核验 SHALL 同时用于在线恢复与 Session picker 的离线 StoredHistoryReader，复用同一有序 restore evidence 装配。离线预览即使不展示任务也不得省略 Task ready/result 或 checkpoint 期望状态，不得因为没有网络配置而只校验自洽 payload。规范 domain 更新与状态不携带 facade profile；原调用的 profile 验证仍由工具输入证据承担。
+
+#### Scenario: Validate task provenance during offline picker preview
+- **WHEN** Session picker 离线预览合法任务 checkpoint，或预览把来源换成非 result/其他结果/未来结果并重算 checksum 的 journal
+- **THEN** 合法历史可预览，伪造历史整体拒绝；两种路径均零网络且不 repair/追加，原 journal bytes 不变
 
 ### Requirement: Post hook facts preserve results and explicitly freeze disclosed feedback
 

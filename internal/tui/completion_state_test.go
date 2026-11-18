@@ -61,6 +61,7 @@ func TestCompletionEveryExclusiveFocusPreservesDraft(t *testing.T) {
 		"cache":      func(m *Model) { m.cachePanel = &protocol.CacheSnapshotPayload{} },
 		"context":    func(m *Model) { m.contextPanel = &protocol.ContextSnapshotPayload{} },
 		"transcript": func(m *Model) { m.detailOpen = true },
+		"tasks":      func(m *Model) { m.tasks.open = true },
 		"pending":    func(m *Model) { c := m.composer; m.pending = &c },
 		"retract":    func(m *Model) { m.retracting = &inputRetraction{} },
 		"cancel":     func(m *Model) { m.cancelling = true },
@@ -83,6 +84,7 @@ func TestCompletionEveryExclusiveFocusPreservesDraft(t *testing.T) {
 			m.cachePanel = nil
 			m.contextPanel = nil
 			m.detailOpen = false
+			m.tasks.open = false
 			m.pending = nil
 			m.retracting = nil
 			m.cancelling = false

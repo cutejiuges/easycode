@@ -62,6 +62,13 @@ func (projectorValue *StreamProjector) projectContext(item protocol.ControlItem)
 		return nil, fmt.Errorf("context event identity mismatch")
 	}
 	switch event.Kind {
+	case protocol.EventTaskProgressSnapshot:
+		payload, err := protocol.DecodeTaskProgressSnapshot(event)
+		if err != nil {
+			return nil, err
+		}
+		value := StreamTaskSnapshotEvent{Version: eventVersion, Type: "tasks.snapshot", RequestID: item.RequestID(), SessionID: event.SessionID, ThreadID: event.ThreadID, Snapshot: payload}
+		return value, validateTaskSnapshotEvent(value)
 	case protocol.EventEffortSnapshot:
 		payload, err := protocol.DecodeEffortSnapshot(event)
 		if err != nil {

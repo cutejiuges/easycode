@@ -100,7 +100,8 @@ func (runtime *Runtime) executeExecCall(ctx context.Context, emit Emitter, turnI
 		if draftErr != nil {
 			return tool.InvocationResult{}, false, draftErr
 		}
-		if _, err := runtime.journal.AppendBatch(context.WithoutCancel(ctx), []session.RecordDraft{draft, resultDraft}); err != nil {
+		records, err := runtime.journal.AppendBatch(context.WithoutCancel(ctx), []session.RecordDraft{draft, resultDraft})
+		if err != nil {
 			runtime.poisoned.Store(true)
 			return tool.InvocationResult{}, false, fault.Wrap(fault.CodeSessionWrite, "persist Exec denial failed", err)
 		}
@@ -108,7 +109,7 @@ func (runtime *Runtime) executeExecCall(ctx context.Context, emit Emitter, turnI
 			runtime.poisoned.Store(true)
 			return tool.InvocationResult{}, false, err
 		}
-		if err := runtime.notifyToolResult(turnID, result); err != nil {
+		if err := runtime.notifyToolResult(turnID, result, resultRecordSequence(records)); err != nil {
 			return result, false, err
 		}
 		runtime.emitApprovalResolved(emit, turnID, request, outcome)

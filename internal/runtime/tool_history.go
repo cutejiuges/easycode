@@ -11,7 +11,7 @@ import (
 type ToolHistoryObserver interface {
 	NativeCommitted(uint64, []session.ToolHistoryEntry) error
 	ToolStarted(tool.InvocationID, tool.ExecutionAdmission) error
-	ToolResult(tool.InvocationResult, tool.InputResultEvidence) error
+	ToolResult(uint64, tool.InvocationResult, tool.InputResultEvidence) error
 }
 
 func (runtime *Runtime) emitTranscriptCommit(turnID domain.TurnID, sequence uint64) {

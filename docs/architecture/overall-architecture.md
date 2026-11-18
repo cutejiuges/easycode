@@ -4,7 +4,7 @@
 
 ## 当前契约与生命周期基线
 
-当前九项工具包括 Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill、Question。结构化问题和回答的不可变值位于 `protocol/question_values.go`，tool 使用类型别名组合 Invocation/Result，避免 protocol 反向依赖 tool。Provider 只处理各自原生 wire；Runtime 拥有等待与回答接收；TUI 仅编辑草稿和提交 typed 控制命令。恢复时 app 按原生提交 seq 把已验证的 ready/result 绑定为纯内存 RestoreRecord 事实，两家在安装历史前核对完整题目及冻结输出一致，防止两套事实各自合法却彼此不同。
+当前十项工具包括 Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill、Question。结构化问题和回答的不可变值位于 `protocol/question_values.go`，tool 使用类型别名组合 Invocation/Result，避免 protocol 反向依赖 tool。Provider 只处理各自原生 wire；Runtime 拥有等待与回答接收；TUI 仅编辑草稿和提交 typed 控制命令。恢复时 app 按原生提交 seq 把已验证的 ready/result 绑定为纯内存 RestoreRecord 事实，两家在安装历史前核对完整题目及冻结输出一致，防止两套事实各自合法却彼此不同。
 
 `Exclusive()` 是有序调度屏障，`RequiresApproval()` 只对 Patch/Write/Exec 为真。Question 在 started Sync 后发布 `user_question_requested`；回答通过 `resolve_user_question` 接收前验证完整 Session/Provider 编码和预算，result Sync 后才发布 `user_question_resolved`。不可变 `ToolOutputPreflight` 只持有单项原生调用快照，不在控制 owner 上访问活动 Conversation。取消接收后的回答义务由既有 turn worker 完成，关闭仍等待同一个 owner。
 
@@ -134,7 +134,7 @@ Runtime 构造时深拷贝该快照，并在每轮把同一值分别交给 Conte
 
 ### 4.1 建议的 Go Module 结构
 
-下列结构同时包含当前实现与目标边界。`tool` 已实现 ReadArtifact、Read、Glob、Grep、Patch、Write、Exec、Skill、Question 九项能力；`extension/skill` 已接入；其他扩展、`subagent`、`telemetry` 仍保留经批准的结构化 TODO 占位，分别等待 P6/P7/P8 的 OpenSpec 提供真实消费者、验证与测试；不得从目录存在推断能力已经可用。
+下列结构同时包含当前实现与目标边界。`tool` 已实现 ReadArtifact、Read、Glob、Grep、Patch、Write、Exec、Skill、Question、Task 十项能力；`extension/skill` 已接入；其他扩展、`subagent`、`telemetry` 仍保留经批准的结构化 TODO 占位，分别等待 P6/P7/P8 的 OpenSpec 提供真实消费者、验证与测试；不得从目录存在推断能力已经可用。
 
 ```text
 cmd/
@@ -151,7 +151,7 @@ internal/
     anthropic/              Anthropic Messages 实现
     openai/                 OpenAI Responses 实现
   tool/                     当前强类型输入、Facade、Executor、Policy 与 ResultCodec
-    builtin/                九项工具的已实现执行/准备边界
+    builtin/                十项工具的已实现执行/准备边界
   context/                  上下文分层、token budget、compact、cache plan
   session/                  JSONL、artifact、root-thread resume；fork 未实现
     catalog/                可重建 SQLite Catalog 与前台 reconciliation
@@ -372,7 +372,7 @@ OpenAI 当前 native payload 保存用户 Responses item、有序 output items �
 
 ### 6.2 上下文分段
 
-当前已实现不可变、强类型且可验证的 `CachePlan`、stable-prefix fingerprint 和 ContextPlanner。计划依次输出 `provider_profile`、`tool_catalog`、可选 `project_instructions`、可选 `skill_catalog`、`committed_history`、`current_input`；九项真实工具的稳定 facade/schema 进入 catalog segment、估算与 fingerprint，实际 command、workdir、approval 和宿主环境不得污染稳定前缀。项目快照非空时以 `replace + project-stable` 进入稳定前缀，history 为 turn-stable，当前输入为 volatile。当前分段如下：
+当前已实现不可变、强类型且可验证的 `CachePlan`、stable-prefix fingerprint 和 ContextPlanner。计划依次输出 `provider_profile`、`tool_catalog`、可选 `project_instructions`、可选 `skill_catalog`、`committed_history`、`current_input`；十项真实工具的稳定 facade/schema 进入 catalog segment、估算与 fingerprint，实际 command、workdir、approval 和宿主环境不得污染稳定前缀。项目快照非空时以 `replace + project-stable` 进入稳定前缀，history 为 turn-stable，当前输入为 volatile。当前分段如下：
 
 ```text
 provider_profile       replace / stable
@@ -574,7 +574,7 @@ P3 当前已实现 Read、Glob、Grep、Anthropic structured Edit/OpenAI custom 
 当前已接入 Runtime 的来源只有：
 
 - `provider_profile`：family、model、schema revision、非默认 request_policy，`replace + stable`。
-- `tool_catalog`：九项工具的确定性 schema，`replace + stable`。
+- `tool_catalog`：十项工具的确定性 schema，`replace + stable`。
 - `project_instructions`：启动时发现的有界结构化快照，存在文档时为 `replace + project-stable`，空快照省略。
 - `skill_catalog`：冻结的本地与插件 Skill metadata，非空时为 `replace + project-stable`；正文不进入此来源。
 - `committed_history`：`ActiveContextView` 中的独立摘要与增量历史，结合不含 opaque 正文的 Provider footprint，`append + turn-stable`。
@@ -761,7 +761,7 @@ TUI `/hooks` 从内存快照浏览与滚动审查；`resolve_hook_trust`、`rese
 
 单项 timeout 默认 5 秒/最大 30 秒，每调用总执行预算 30 秒，信任等待可取消但不计执行预算。stdin 最大 512 KiB，双输出各 16 KiB，门禁失败的安全摘要最多 1 KiB。Pre 接受 exit 0 空输出/空对象、严格 structured deny、独立完整 updatedInput，以及 exit 2 拒绝；其他行为失败关闭。上述拒绝规则只适用于 Pre；当前 PostToolUse 的边界见 12.1.1，PostToolUseFailure 见 12.1.2。其余未支持事件、async、结果改写和 plugin hooks 仍是后续目标。
 
-当前参数改写使用 `domain.HookRewriteContext`/`HookInputEffect` 的封闭 profile 与严格完整对象；`extension/hook` 不依赖 tool 或 Provider。`tool` 提供 O/C/E 纯适配、`InputSelection` 与 `InputResultEvidence`，绑定真实 Session/thread/turn/sample/call，保留原 invocation/call ID、capability 和 wire。Runtime 的 turn owner 持有九能力原调用来源和冻结结果；只有三项 mutation 进入 Pre，后项只能读取已 Sync 的 C，全通过后 E 才进入候选、policy、普通审批、执行及 Post。完成重入只取同一冻结结果，跨 turn/Close 退役。
+当前参数改写使用 `domain.HookRewriteContext`/`HookInputEffect` 的封闭 profile 与严格完整对象；`extension/hook` 不依赖 tool 或 Provider。`tool` 提供 O/C/E 纯适配、`InputSelection` 与 `InputResultEvidence`，绑定真实 Session/thread/turn/sample/call，保留原 invocation/call ID、capability 和 wire。Runtime 的 turn owner 持有十能力原调用来源和冻结结果；只有三项 mutation 进入 Pre，后项只能读取已 Sync 的 C，全通过后 E 才进入候选、policy、普通审批、执行及 Post。完成重入只取同一冻结结果，跨 turn/Close 退役。
 
 唯一当前 Pre `hook_execution_finished` 必需 `input_effect`，unchanged 保存相等前后摘要，replaced 另保存至多 16 KiB 的完整规范输入；其他事件禁止 effect。最后成功 finished 与 continue 保持原子，即使返回后取消也不能改写真实 Hook 结果。Session 在 repair 前验证摘要链、来源 profile、门禁/批准/准入、结果 metadata 和说明；两家 Provider 另将原始 ready 与 native 参数逐一对照，使用同一执行证明验证 stored output。没有新增 record kind、格式数字、旧 reader 或迁移器。
 
@@ -861,7 +861,7 @@ Provider 当前 native kind 封闭为 `user_inputs`/`sample`/`tool_outputs`/`hoo
 input-only 崩溃尾部先在本地 durable 收口；工具安全点的 steering 尾部复用现有工具补偿路径，不重跑工具或自动联网。内存队列与 returned tray 不持久化，重启不猜测未保存输入。外部 headless JSONL 仍为 v1，自动 admission 增加 entry_id，input.status 不含正文；一次性 text/JSON 过滤新增内部输入事件。
 
 
-已实现多行、字素编辑、显式 decoded paste 与有界历史；原始终端缓冲/RuneError 的框架限制见 README。当前本地命令为 `/cache`、`/context`、`/compact [instructions]`、`/effort [level|auto|reset]`、`/skills`、`/hooks`、`/plugins`，显式 Skill 使用 `/<name>` / `$name`。已支持命令和显式 Skill 的首词补全；尚无 `/help`、`/clear`、`/resume`、`/fork`、`/model`、`/provider`、`/permissions`、`/mcp`、`/agents`、`/cost`、`/doctor`；`easycode resume` 是独立 CLI 入口。
+已实现多行、字素编辑、显式 decoded paste 与有界历史；原始终端缓冲/RuneError 的框架限制见 README。当前本地命令为 `/cache`、`/context`、`/compact [instructions]`、`/effort [level|auto|reset]`、`/skills`、`/hooks`、`/plugins`、`/tasks`，显式 Skill 使用 `/<name>` / `$name`。已支持命令和显式 Skill 的首词补全；尚无 `/help`、`/clear`、`/resume`、`/fork`、`/model`、`/provider`、`/permissions`、`/mcp`、`/agents`、`/cost`、`/doctor`；`easycode resume` 是独立 CLI 入口。
 
 ## 14. 配置与密钥
 
@@ -1051,7 +1051,7 @@ Model 在 Update 中先准备补全占用，再准备 Markdown 与 hydration；�
 
 ### 工作区文件引用与来源 owner
 
-`domain/file_reference.go`、`file_mentions.go`、`file_attachment.go`、`file_search.go`、`file_summary.go` 分别持有引用/选择、共享 lexer/草稿、冻结正文、元数据查询和展示摘要的封闭值。构造/decoder/validator 纯内存；原文、Skill、文件独立，正文仅由显式交互草稿解析，七个内置命令共用 domain 保留名判断。TUI 的 `file_completion.go` 复用 composer.replace、安全展示与视区预算，在 Update 交换元数据请求；最多一个结果等待路径，workspace/session/composer/目标/request/index revision 全部相容才可接受，按完整路径保持选择。新请求先撤销旧行资格，接受只编辑且把光标移出完整引用。
+`domain/file_reference.go`、`file_mentions.go`、`file_attachment.go`、`file_search.go`、`file_summary.go` 分别持有引用/选择、共享 lexer/草稿、冻结正文、元数据查询和展示摘要的封闭值。构造/decoder/validator 纯内存；原文、Skill、文件独立，正文仅由显式交互草稿解析，八个内置命令共用 domain 保留名判断。TUI 的 `file_completion.go` 复用 composer.replace、安全展示与视区预算，在 Update 交换元数据请求；最多一个结果等待路径，workspace/session/composer/目标/request/index revision 全部相容才可接受，按完整路径保持选择。新请求先撤销旧行资格，接受只编辑且把光标移出完整引用。
 
 `app.workspaceInputSource` 用纯内存构造和显式 Start/BeginClose/Close 拥有一个搜索 worker、最新查询槽和一个内容准备 gate。同锚点保留至多 50000 项/16 MiB 渐进索引、一个 2 秒发现 deadline 和每查询 16000000 状态；50 项/128 KiB 返回值与五条可见候选分别有界。候选关闭即取消会话，再开重扫；不持有 watcher。`tool/builtin.file_discovery` 使用逐层 FD、256 名称批次、完整目录排序发布和有界 Gitignore 样式规则；200000 原始条目、64 层、单目录 4096 项/1 MiB、8 MiB 在途名称栈、规则 64/512 KiB 与 32000000 状态分别计费。省略子树/预算用 typed report 显示不完整，不把部分覆盖报告为完整。
 
@@ -1072,3 +1072,13 @@ PreparedSample 持有 `domain.SamplePresentation`，将展示 block 绑定到完
 `protocol.IsTransientPresentation` 同时用于 publication 生产和 AgentLoop 消费，Started/Delta/Completed 都沿用 committed context/cache。app 的 main 查询先排除 reasoning 再分页，detail 包含全部真实 cursor；两个模式必填并分别缓存。TUI 的活动组件共享 64 KiB/50 项，使用 typed 临时键，提交时立刻升级准确 cursor，慢查询期间保留有界画面和源偏移。活动正文与浏览器共享字符串，已提交正文、工具页和列表共用四页缓存；构造、View/resize 不执行 I/O。headless 三模式共用严格 projector，消费内部状态但保持外部词汇不变。
 
 证据为 `internal/provider/{anthropic,openai}/reasoning_stream_test.go`、固定 `testdata/reasoning_restore.current.jsonl`、`reasoning_restore_test.go`、`internal/runtime/reasoning_test.go`、`internal/tui/reasoning_test.go`、`internal/app/reasoning_e2e_test.go` 与 Darwin `scripts/reasoning-smoke.py`；历史执行记录见 [实施验收](../../openspec/changes/archive/2026-11-08-add-reasoning-transcript/verification.md)。
+
+## 任务进度切片
+
+当前第十项模型能力为 `task.progress`，两家 facade 保持原生输入（Anthropic TodoWrite/OpenAI update_plan），通过 tool 输入 profile 归一为不可变 domain.TaskUpdate。领域值不含 Provider DTO、UI 状态或 facade profile。无普通权限批准、无 mutation Tool Hook，沿现有独占骨架和有序提交；成功 result Sync 后使用真实 result record sequence 更新 Runtime 实例投影，查询/getter/render 均无 I/O。
+
+Session 仍只使用现有 ready/started/result records，无任务/UI 专用记录或格式版本。app 按有序成功结果恢复 none/clear/snapshot，并在 repair 前核验两家原生调用与结果。checkpoint 的必需 task_progress 精确对应 compaction_started 前缀；Provider 同时验证来源、完整规范值和 deterministic wrapper，真实 generation 保持独立语义。离线 picker 复用同一核验。
+
+任务内容 SHA-256 stamp 只加入 committed_history metadata，排除来源/profile/显示身份，不新增来源、token 估算或普通 TurnInput 附件。TUI 当前清单、只读 /tasks 与 Ctrl+O 冻结详情各自有界；首次 hydration 为 pending/failed/ready，不能把尚未加载显示成业务 none。线程、实际结果序号及 UI generation 隔离迟到回复，同序号必须完整相等才幂等。composer/高优先交互和活动补全先占布局预算，任务区域可降为一行或隐藏。
+
+stream-json 通过 tasks.query 返回 correlated control.response/tasks.snapshot，外部 v1 与内部无版本格式独立；宿主 durable 更新通知被一次性输出显式验证并过滤。Plan Mode、Subagent、后台任务与依赖协作不属于此切片。实现与验证入口见[任务进度验收](../../openspec/changes/archive/2026-11-18-add-task-progress/verification.md)。

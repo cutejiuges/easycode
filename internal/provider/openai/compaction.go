@@ -17,8 +17,9 @@ import (
 var _ provider.CompactionKernel = (*Conversation)(nil)
 
 type checkpointPayload struct {
-	Summary    NativeItem      `json:"summary"`
-	Generation json.RawMessage `json:"generation"`
+	Summary      NativeItem               `json:"summary"`
+	TaskProgress domain.TaskProgressState `json:"task_progress"`
+	Generation   json.RawMessage          `json:"generation"`
 }
 
 func (conversation *Conversation) compactionSource() (provider.CompactionSource, error) {
@@ -170,7 +171,7 @@ func (conversation *Conversation) RunCompaction(ctx context.Context, id domain.C
 		if receiptErr != nil {
 			return nil, receiptErr
 		}
-		return conversation.prepareCheckpoint(preview.Input().Scope(), id, source, generation, receipt)
+		return conversation.prepareCheckpoint(preview.Input().Scope(), id, source, generation, receipt, preview.Input().TaskProgress())
 	}
 	return nil, compactionNetworkError(ctx)
 }
@@ -209,7 +210,7 @@ func compactionSummary(generation nativeHistoryEntry) (domain.ContextSummary, er
 	return summary, nil
 }
 
-func (conversation *Conversation) prepareCheckpoint(scope domain.CompactionScope, id domain.CompactionID, source provider.CompactionSource, generation nativeHistoryEntry, receipt domain.RequestReceipt) (*provider.PreparedCompaction, error) {
+func (conversation *Conversation) prepareCheckpoint(scope domain.CompactionScope, id domain.CompactionID, source provider.CompactionSource, generation nativeHistoryEntry, receipt domain.RequestReceipt, tasks domain.TaskProgressState) (*provider.PreparedCompaction, error) {
 	summary, err := compactionSummary(generation)
 	if err != nil {
 		return nil, err
@@ -218,8 +219,12 @@ func (conversation *Conversation) prepareCheckpoint(scope domain.CompactionScope
 	if err != nil {
 		return nil, err
 	}
-	native := NewUserItem(provider.WrapScopedContextSummary(summary, scope))
-	payload, err := codec.MarshalStable(checkpointPayload{Summary: native, Generation: encoded.Payload()})
+	wrapped, err := provider.WrapScopedTaskContextSummary(summary, scope, tasks)
+	if err != nil {
+		return nil, err
+	}
+	native := NewUserItem(wrapped)
+	payload, err := codec.MarshalStable(checkpointPayload{Summary: native, Generation: encoded.Payload(), TaskProgress: tasks.Clone()})
 	if err != nil {
 		return nil, err
 	}
@@ -280,8 +285,11 @@ func decodeCheckpoint(checkpoint provider.CheckpointEnvelope) (nativeHistoryEntr
 		return nativeHistoryEntry{}, domain.ContextSummary{}, fmt.Errorf("checkpoint boundary is incompatible")
 	}
 	var payload checkpointPayload
-	if err := codec.UnmarshalRecord(checkpoint.Payload(), &payload); err != nil {
+	if err := codec.DecodeObject(checkpoint.Payload(), &payload, "summary", "generation", "task_progress"); err != nil {
 		return nativeHistoryEntry{}, domain.ContextSummary{}, fmt.Errorf("checkpoint payload is invalid")
+	}
+	if err := payload.TaskProgress.Validate(); err != nil {
+		return nativeHistoryEntry{}, domain.ContextSummary{}, fmt.Errorf("checkpoint task progress is invalid")
 	}
 	envelope, err := provider.NewNativeCommitEnvelope(domain.ProviderOpenAI, responsesWire, payload.Generation)
 	if err != nil {
@@ -295,7 +303,14 @@ func decodeCheckpoint(checkpoint provider.CheckpointEnvelope) (nativeHistoryEntr
 	if err != nil {
 		return nativeHistoryEntry{}, domain.ContextSummary{}, fmt.Errorf("checkpoint summary does not match generation")
 	}
-	expected, _ := codec.MarshalCanonical(NewUserItem(provider.WrapScopedContextSummary(summary, checkpoint.Scope())), provider.MaxNativeCommitBytes)
+	wrapped, err := provider.WrapScopedTaskContextSummary(summary, checkpoint.Scope(), payload.TaskProgress)
+	if err != nil {
+		return nativeHistoryEntry{}, domain.ContextSummary{}, err
+	}
+	expected, err := codec.MarshalCanonical(NewUserItem(wrapped), provider.MaxNativeCommitBytes)
+	if err != nil {
+		return nativeHistoryEntry{}, domain.ContextSummary{}, err
+	}
 	actual, err := codec.MarshalCanonical(payload.Summary, provider.MaxNativeCommitBytes)
 	if err != nil || string(expected.Bytes()) != string(actual.Bytes()) {
 		return nativeHistoryEntry{}, domain.ContextSummary{}, fmt.Errorf("checkpoint native summary is invalid")
@@ -346,7 +361,7 @@ func validateCheckpointUsage(checkpoint provider.CheckpointEnvelope, expected do
 		return err
 	}
 	var payload checkpointPayload
-	if err := codec.UnmarshalRecord(checkpoint.Payload(), &payload); err != nil {
+	if err := codec.DecodeObject(checkpoint.Payload(), &payload, "summary", "generation", "task_progress"); err != nil {
 		return fmt.Errorf("checkpoint usage encoding is invalid")
 	}
 	envelope, err := provider.NewNativeCommitEnvelope(domain.ProviderOpenAI, responsesWire, payload.Generation)
@@ -383,6 +398,21 @@ func validateCompactionStreamEvent(event transport.SSEEvent) error {
 		if (envelope.Response.Status != "" && envelope.Response.Status != "completed") || (len(envelope.Response.Incomplete) != 0 && string(envelope.Response.Incomplete) != "null") {
 			return provider.NewCompactionError(provider.CompactionInvalidResponse)
 		}
+	}
+	return nil
+}
+
+// validateCheckpointTaskProgress 核对 journal 来源前缀给出的证据，不信任自洽的包装正文。
+func validateCheckpointTaskProgress(checkpoint provider.CheckpointEnvelope, expected domain.TaskProgressState) error {
+	if err := expected.Validate(); err != nil {
+		return err
+	}
+	var payload checkpointPayload
+	if err := codec.DecodeObject(checkpoint.Payload(), &payload, "summary", "generation", "task_progress"); err != nil {
+		return fmt.Errorf("checkpoint task progress evidence is invalid")
+	}
+	if payload.TaskProgress.Validate() != nil || !payload.TaskProgress.Equal(expected) {
+		return fmt.Errorf("checkpoint task progress differs from committed source")
 	}
 	return nil
 }

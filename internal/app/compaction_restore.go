@@ -32,7 +32,7 @@ func orderedRestoreRecords(plan session.ReplayPlan) ([]provider.RestoreRecord, e
 		_, isQuestion := entry.Invocation.Question()
 		facts := callsBySequence[entry.NativeSequence]
 		facts.calls = append(facts.calls, entry.Invocation.Clone())
-		if isQuestion && entry.HasResult {
+		if (isQuestion || entry.Invocation.Capability() == tool.CapabilityTaskProgress) && entry.HasResult {
 			facts.results = append(facts.results, entry.Result)
 		}
 		callsBySequence[entry.NativeSequence] = facts
@@ -58,7 +58,11 @@ func orderedRestoreRecords(plan session.ReplayPlan) ([]provider.RestoreRecord, e
 		}
 		entries = append(entries, entry{operation.StartedSequence, source})
 		if operation.Completed != nil {
-			checkpoint, err := provider.NewCheckpointRestoreRecord(operation.Completed.Checkpoint)
+			expected, err := session.TaskProgressBefore(plan.Tools, operation.StartedSequence)
+			if err != nil {
+				return nil, err
+			}
+			checkpoint, err := provider.NewCheckpointRestoreRecord(operation.Completed.Checkpoint, expected)
 			if err != nil {
 				return nil, err
 			}

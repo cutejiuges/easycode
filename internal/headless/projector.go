@@ -60,6 +60,12 @@ func (projector *projector) project(event protocol.Event) (projection, error) {
 		}
 		_, err := protocol.DecodeToolActivity(event)
 		return projection{}, err
+	case protocol.EventTaskProgressUpdated:
+		if err := projector.validateActiveTurn(event); err != nil {
+			return projection{}, err
+		}
+		_, err := protocol.DecodeTaskProgressUpdated(event)
+		return projection{}, err
 	case protocol.EventStopHookCommitted:
 		if err := projector.validateActiveTurn(event); err != nil {
 			return projection{}, err

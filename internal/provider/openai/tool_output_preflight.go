@@ -41,6 +41,19 @@ func encodeToolResultData(call NativeItem, result tool.InvocationResult, text st
 	if string(result.ProviderCallID()) != call.CallID || result.Capability() != openAICapabilityForName(call.Name) || result.WireKind() != wire {
 		return NativeItem{}, fmt.Errorf("OpenAI tool output does not match call")
 	}
+	if call.Name == "update_plan" {
+		ready, err := tool.NewTaskReadyCall(result.ProviderCallID(), result.TaskInput())
+		if err != nil {
+			return NativeItem{}, err
+		}
+		inv, err := tool.NewInvocation(result.InvocationID(), ready)
+		if err != nil {
+			return NativeItem{}, err
+		}
+		if err := tool.ValidateNativeCallInput(inv, domain.ProviderOpenAI, call.Name, tool.ProviderCallID(call.CallID), tool.WireStructured, []byte(call.Arguments)); err != nil {
+			return NativeItem{}, err
+		}
+	}
 	if call.Name == "request_user_input" {
 		input, err := tool.DecodeQuestionInput([]byte(call.Arguments))
 		if err != nil || result.QuestionMetadata().Fingerprint != input.Fingerprint() {
@@ -93,6 +106,11 @@ func (c *Conversation) PrepareToolOutputPreflight(inv tool.Invocation) (provider
 		if call.CallID == string(inv.ProviderCallID()) {
 			if openAICapabilityForName(call.Name) != inv.Capability() {
 				return nil, fmt.Errorf("tool capability mismatch")
+			}
+			if inv.Capability() == tool.CapabilityTaskProgress {
+				if err := tool.ValidateNativeCallInput(inv, domain.ProviderOpenAI, call.Name, tool.ProviderCallID(call.CallID), tool.WireStructured, []byte(call.Arguments)); err != nil {
+					return nil, err
+				}
 			}
 			if q, ok := inv.Question(); ok {
 				input, err := tool.DecodeQuestionInput([]byte(call.Arguments))

@@ -2,6 +2,16 @@
 
 > 本文按事件发生时记录事实，不作为当前功能清单。版本数字、工具数量、平台验收和当时未实现项需结合后续条目与[当前能力清单](capability-status.md)阅读；当前内部格式没有 canary/schema_version 等版本门禁。
 
+### [P2/P5][2026-11-18] 任务候选、持久化事实与展示身份不能混用
+
+- 现象：执行器返回候选不代表清单已保存；ready/detail/native 序号也不能证明实际成功结果。仅依赖摘要和 token 数会让同长度任务替换遗漏缓存身份变化。
+- 处理：TaskExecutor 保持纯候选，成功结果 Sync 后才按实际 result_sequence 安装投影；接收前取消复用唯一 budget ticket，接收后等待确定结果。checkpoint 精确核验开始前缀的成功状态，离线预览与联网恢复均在 repair 前完成全部验证。
+- 缓存：只把无来源的规范内容 stamp 加入已有 committed_history metadata；不注入普通请求附件，不重计量，不把 source/profile/UI 混入稳定目录或任务正文。
+- 展示：初次 hydration 不能先显示业务 none；同结果序号要比较完整来源/更新/计数；清单、completion 和 effort 共用高度预算，优先保留输入框及当前操作候选。全部完成只自动折叠，不能删除或授予权限。
+- 回归：`internal/runtime/task_progress_test.go`、`internal/context/task_progress_test.go`、`internal/headless/task_progress_test.go`、`internal/app/task_transcript_test.go`；完整 CLI/PTY 与质量门见[验收记录](../../openspec/changes/archive/2026-11-18-add-task-progress/verification.md)。
+- 质量门：早期任务矩阵曾触发整包累计超时并临时扩大期限。2026-11-18 合并 main 时按用户要求采用远端“轻、准、关键、快”原则：删除重复矩阵、保留关键业务和故障断言，恢复统一 runner 的 20 分钟进程期限与无总预算限制；默认 race 只执行关键正向清单，手动全量入口保留。不能将当前范围宣称为旧穷举集合的等覆盖。
+
+
 ### [P1/P2][2026-11-11] 类型反序列化前遗漏完整事件帧校验
 
 - 现象：两家 Provider 的重复 usage/details/token 成员可由后值覆盖，掩盖 null、超总量关系或已报告计量；OpenAI 重复响应 ID 还可能掩盖终态身份冲突。完整工具参数先到达时，不能只凭参数有效就允许后续异常样本执行工具。

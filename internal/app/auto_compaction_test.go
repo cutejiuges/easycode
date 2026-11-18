@@ -70,7 +70,8 @@ func TestAutomaticCompactionRealProvidersAndResume(t *testing.T) {
 					}
 				}))
 				defer server.Close()
-				budget, _ := contextplan.NewBudget(20000, 0, 0)
+				// 十工具目录增加了摘要请求开销；窗口须覆盖输入和 4096 输出预留，旧历史仍超过软阈值。
+				budget, _ := contextplan.NewBudget(22000, 0, 0)
 				cfg := cacheFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, Model: "claude-test", BaseURL: server.URL, APIKey: secret.New("private-test-key")}, ContextBudget: budget}, false)
 				root, workspace := filepath.Join(t.TempDir(), "sessions"), t.TempDir()
 				resources, err := openChatResources(context.Background(), cfg, root, "", workspace)

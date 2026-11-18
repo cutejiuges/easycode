@@ -36,6 +36,10 @@ func (runtime *Runtime) planWindowFor(profile contextplan.ProviderProfile, view 
 	if err != nil {
 		return contextplan.ContextPlan{}, err
 	}
+	input, err = input.WithTaskProgress(runtime.TaskProgress())
+	if err != nil {
+		return contextplan.ContextPlan{}, err
+	}
 	return runtime.planner.Plan(input)
 }
 func (runtime *Runtime) contextSnapshot() (protocol.ContextMetricsPayload, error) {
@@ -97,6 +101,10 @@ func (runtime *Runtime) preflightCompactionFor(profile contextplan.ProviderProfi
 		return compactionAdmission{}, protocol.ControlErrorInvalidCommand
 	}
 	input, err := provider.NewCompactionInput(sampling, instructions, runtime.compactionOutputTokens)
+	if err != nil {
+		return compactionAdmission{}, protocol.ControlErrorInvalidCommand
+	}
+	input, err = input.WithTaskProgress(runtime.TaskProgress())
 	if err != nil {
 		return compactionAdmission{}, protocol.ControlErrorInvalidCommand
 	}

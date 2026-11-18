@@ -7,6 +7,7 @@ import (
 
 // ToolHistoryEntry 保存已验证工具事实的纯内存投影，不保存文件句柄或实时进度。
 type ToolHistoryEntry struct {
+	ResultSequence    uint64
 	PreDetailSequence uint64
 	Origin            tool.ToolCallOrigin
 	PreHooks          *ReplayedHookGate
@@ -202,6 +203,7 @@ func projectToolHistory(records []Record) ([]ToolHistoryEntry, error) {
 				return nil, err
 			}
 			entries[index].Result = result
+			entries[index].ResultSequence = record.Sequence
 			entries[index].HasResult = true
 			if _, err := entries[index].InputResultEvidence(); err != nil {
 				return nil, err

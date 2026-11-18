@@ -4,7 +4,7 @@ package domain
 // 同名 Skill 仍可通过美元前缀显式调用，限定插件名不受影响。
 func IsReservedSkillSlashName(name string) bool {
 	switch name {
-	case "cache", "compact", "context", "effort", "hooks", "plugins", "skills":
+	case "cache", "compact", "context", "effort", "hooks", "plugins", "skills", "tasks":
 		return true
 	default:
 		return false

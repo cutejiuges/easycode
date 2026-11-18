@@ -15,6 +15,7 @@ const MaxCompactionInstructionsBytes = 16 << 10
 type CompactionInput struct {
 	scope        domain.CompactionScope
 	sampling     TurnInput
+	taskProgress domain.TaskProgressState
 	instructions string
 	outputTokens uint64
 }
@@ -31,7 +32,7 @@ func NewCompactionInput(sampling TurnInput, instructions string, outputTokens ui
 	if _, _, err := sampling.ProjectInstructions(); err != nil {
 		return CompactionInput{}, err
 	}
-	return CompactionInput{scope: domain.ManualCompactionScope(), sampling: sampling, instructions: instructions, outputTokens: outputTokens}, nil
+	return CompactionInput{scope: domain.ManualCompactionScope(), sampling: sampling, taskProgress: domain.NewNoTaskProgress(), instructions: instructions, outputTokens: outputTokens}, nil
 }
 
 // Sampling 返回持有不可变目录和项目快照的采样参数。
@@ -48,8 +49,25 @@ func (input CompactionInput) Validate() error {
 	if err := input.scope.Validate(); err != nil {
 		return err
 	}
+	if err := input.taskProgress.Validate(); err != nil {
+		return err
+	}
 	_, err := NewCompactionInput(input.sampling, input.instructions, input.outputTokens)
 	return err
+}
+
+// WithTaskProgress 冻结仅供本次 checkpoint 构造与来源核验使用的任务状态。
+func (input CompactionInput) WithTaskProgress(state domain.TaskProgressState) (CompactionInput, error) {
+	if err := state.Validate(); err != nil {
+		return CompactionInput{}, err
+	}
+	input.taskProgress = state.Clone()
+	return input, input.Validate()
+}
+
+// TaskProgress 返回不共享可变数据的压缩来源任务快照。
+func (input CompactionInput) TaskProgress() domain.TaskProgressState {
+	return input.taskProgress.Clone()
 }
 
 // CompactionPreview 绑定预检来源、请求估算和不可变参数。

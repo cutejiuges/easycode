@@ -2,13 +2,13 @@
 
 ### Requirement: Tool turns use a bounded ordered multi-sample loop
 
-一个用户turn SHALL支持最多16个Provider samples和累计最多64个tool calls。completed sample 不含 tool calls 时 SHALL 进入完成边界：合法无 Stop 沿原路径结束，有 Stop 时先保存 sample/usage/plan，检查通过才完成，正常授权阻断则按 Stop 契约继续同 turn；含calls时，Scheduler SHALL按call index把连续`parallel_read`调用组成最大8并发的批次，并把每个`exclusive` Patch、Write、Exec 或 Question 作为前后屏障。Runtime SHALL在到达每个调用或批次时完成其policy；Patch候选准备和所需approval只能在其前序批次结果durable后发生，matching decision收口后才可越过该屏障。结果收集到固定call slot并按call index durable提交全部results和匹配Provider-native outputs，outputs durable后才可开始下一sample。
+一个用户turn SHALL支持最多16个Provider samples和累计最多64个tool calls。completed sample 不含 tool calls 时 SHALL 进入完成边界：合法无 Stop 沿原路径结束，有 Stop 时先保存 sample/usage/plan，检查通过才完成，正常授权阻断则按 Stop 契约继续同 turn；含calls时，Scheduler SHALL按call index把连续`parallel_read`调用组成最大8并发的批次，并把每个`exclusive` Patch、Write、Exec、Question 或 Task 作为前后屏障。Runtime SHALL在到达每个调用或批次时完成其policy；Patch候选准备和所需approval只能在其前序批次结果durable后发生，matching decision收口后才可越过该屏障。结果收集到固定call slot并按call index durable提交全部results和匹配Provider-native outputs，outputs durable后才可开始下一sample。
 
-当前Read、Glob、Grep、ReadArtifact、Skill属于`parallel_read`，Patch、Write、Exec与Question属于`exclusive`。单个调用的普通执行错误、拒绝、冲突或无匹配结果不得取消independent sibling；`abort`、turn取消或poisoned状态按取消契约收口。goroutine完成顺序、approval响应时间和实际执行时间不得影响Session seq、Provider output顺序、preview bytes或后续请求。超过sample/call上限 SHALL以稳定英文`tool_loop_limit_exceeded`失败，并且已经durable的sample、approval、ledger和outputs不得被删除或改写。
+当前Read、Glob、Grep、ReadArtifact、Skill属于`parallel_read`，Patch、Write、Exec、Question 与 Task 属于 `exclusive`。单个调用的普通执行错误、拒绝、冲突或无匹配结果不得取消independent sibling；`abort`、turn取消或poisoned状态按取消契约收口。goroutine完成顺序、approval响应时间和实际执行时间不得影响Session seq、Provider output顺序、preview bytes或后续请求。超过sample/call上限 SHALL以稳定英文`tool_loop_limit_exceeded`失败，并且已经durable的sample、approval、ledger和outputs不得被删除或改写。
 
 本条的 exclusive 屏障和串行审批语义 SHALL 同样适用于 Write；不能将非 Patch 调用默认视作 parallel_read。
 
-存在匹配 PreToolUse 时，Patch/Write/Exec SHALL 在同一 exclusive 屏障内先冻结并 durable 保存完整 Hook 计划，串行完成检查，再准备候选与普通审批。Hook 的计划、信任、进程及结果不得越过前序 result 或与后序工具重叠；只读调用不触发本切片 Hook。无匹配时 SHALL 保持原调度、九能力目录与 Provider facade 不变。单个 Hook denied/error 只阻断原 call slot，后序 independent sibling 仍按原序执行；取消、cleanup 不确定或 writer poison 才停止整个 turn。
+存在匹配 PreToolUse 时，Patch/Write/Exec SHALL 在同一 exclusive 屏障内先冻结并 durable 保存完整 Hook 计划，串行完成检查，再准备候选与普通审批。Hook 的计划、信任、进程及结果不得越过前序 result 或与后序工具重叠；只读调用不触发本切片 Hook。无匹配时 SHALL 保持原调度、十能力目录与 Provider facade 不变。单个 Hook denied/error 只阻断原 call slot，后序 independent sibling 仍按原序执行；取消、cleanup 不确定或 writer poison 才停止整个 turn。
 
 
 匹配 PostToolUse 的调用 SHALL 在同一 exclusive slot 内先冻结计划并审查信任，再沿用普通候选/审批/执行。真实结果先冻结并成功 Sync；成功且真实执行的调用随后串行收口 Post，其他结果将已存在计划标记 skipped。前序 result 已 durable 但 Post 尚未 terminal 时，后序工具、整组 native outputs、steering 与下一 sample MUST 继续等待。Post 普通检查失败不能改写原结果或取消独立 sibling；取消、cleanup 不确定或 writer poison 按既有强制收口规则处理。Pre/Post 对同调用共享 30 秒检查执行预算。未开始的后缀用明确 skipped/cancelled disposition 收口，不伪造超时运行；已准入的普通 Post 错误可继续下一项，未关闭的调用预算 ticket 与未 terminal 的 Post 一样阻止后序 admission。
@@ -125,6 +125,15 @@ Stop 自动续轮 SHALL 先按真实阻断项检查独立续轮与下一普通 s
 - **WHEN** 64 个已配对 calls 后仍有 sample 余量和其他正常预算，Stop 请求续轮且后续 sample 只有文本
 - **THEN** 文本采样可继续同 turn，但若出现新 ready call 则在调用准入前拒绝，不能重置 calls 上限
 
+#### Scenario: Order task updates as nonapproval exclusive barriers
+- **WHEN** 同一 sample 按 Read、Task A、Write、Task B、Grep 排列
+- **THEN** 每个 Task 等待前序 result durable 后逐个处理，B 成功保存后成为当前清单，Write 仍单独批准
+- **THEN** Task 的批准、文件/进程/网络与工具 Hook 次数为零，所有结果/native outputs 保持原顺序
+
+#### Scenario: Keep tasks within the existing turn limits
+- **WHEN** 同轮多次更新任务并接受 steering
+- **THEN** 任务调用仍累计到既有 16/64 及输出额度，不因清空列表或折叠界面重置预算或结束回合
+
 ### Requirement: Execution ledger provides at-most-once automatic execution
 
 自动允许调用的正常路径 SHALL 遵循`ready_durable -> execution_started_durable -> result_durable`；需要审批的调用 SHALL 遵循`ready_durable -> approval_decided_durable -> execution_started_durable -> result_durable`。拒绝路径 SHALL为`ready_durable -> [approval_decided(deny), result(denied)]_durable`且不得出现started。Runtime SHALL在启动任何worker前按调度顺序为每个仍可执行调用单独append/Sync`tool_execution_started`；该append被接受的成功点是该调用的执行接收线性化点。在它之前观察到取消的调用 SHALL被分类为cancelled且不得进入executor；在它之后Runtime MUST恰好调用一次匹配executor，即使turn context已取消。
@@ -195,3 +204,15 @@ Write SHALL 与 Patch 使用相同的审批 ledger、accepted started、至多�
 #### Scenario: Recover an uncertain hook without inventing a tool start
 - **WHEN** 只有 Hook started，没有 Hook finished、tool approval 或 tool started
 - **THEN** 本地补偿 Hook 不确定与工具 cancelled/hook_outcome_uncertain，零重跑，旧 turn 失败关闭
+
+#### Scenario: Cancel a task result before writer acceptance
+- **WHEN** Task 候选计算完成但成功 result 尚未被 writer 接收便取消
+- **THEN** 新清单不生效，原 call 获得配对取消结果，旧列表及来源不变
+
+#### Scenario: Confirm an accepted task result despite late cancellation
+- **WHEN** 成功 Task result 已接收，随后取消到达且 Sync 成功
+- **THEN** 完整列表恰好一次生效，返回确定成功事实，不伪造回滚或第二个 result
+
+#### Scenario: Recover an admitted task without its result
+- **WHEN** Task started 已保存但没有 result，候选是否曾在旧进程计算未知
+- **THEN** 本地补 outcome_uncertain、保留此前成功清单，执行器与外部调用次数为零

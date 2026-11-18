@@ -275,6 +275,10 @@ func (runner *StreamRunner) Run(ctx context.Context) Result {
 	}
 
 	stopTransportOwner()
+	// 角色可能先于 transport 的取消通知全部退出，收口时仍须报告宿主取消。
+	if ctx.Err() != nil {
+		state.setFailure(fault.Summary{Code: fault.CodeUserCancelled, Message: "stream control was cancelled", Cancelled: true})
+	}
 	if state.pendingFailure == nil {
 		return Result{Completed: true}
 	}

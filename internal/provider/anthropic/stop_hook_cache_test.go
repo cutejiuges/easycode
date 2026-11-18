@@ -159,7 +159,7 @@ func stopGoldenValuesWithFiles(t *testing.T, includeFiles bool) map[string][]byt
 	values["stop_compaction_request.golden.json"] = append(request.Bytes(), '\n')
 	generated := stopTestSample(stopTestTurn, "goal; completed tests; next step")
 	generated.Metadata.StopReason = optionalString{Known: true, Value: "end_turn"}
-	checkpoint, err := c.prepareCheckpoint(domain.ManualCompactionScope(), "01900000-0000-7000-8000-000000000004", preview.Source(), generated, syntheticRequestReceipt(domain.RequestSummary))
+	checkpoint, err := c.prepareCheckpoint(domain.ManualCompactionScope(), "01900000-0000-7000-8000-000000000004", preview.Source(), generated, syntheticRequestReceipt(domain.RequestSummary), domain.NewNoTaskProgress())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func stopGoldenValuesWithFiles(t *testing.T, includeFiles bool) map[string][]byt
 	if err := checkpoint.Finalize(); err != nil {
 		t.Fatal(err)
 	}
-	checkpointRecord, err := provider.NewCheckpointRestoreRecord(envelopeCheckpoint)
+	checkpointRecord, err := provider.NewCheckpointRestoreRecord(envelopeCheckpoint, domain.NewNoTaskProgress())
 	if err != nil {
 		t.Fatal(err)
 	}

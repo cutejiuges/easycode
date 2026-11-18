@@ -19,7 +19,7 @@ func ValidateNativeCallInput(original Invocation, family domain.ProviderFamily, 
 	if name != expectedName || wire != expectedWire {
 		return errors.New("native call facade mismatch")
 	}
-	ready, err := decodeFacadeInput(original.Capability(), wire, callID, arguments)
+	ready, err := decodeFacadeInput(family, original.Capability(), wire, callID, arguments)
 	if err != nil {
 		return errors.New("invalid native call input")
 	}

@@ -12,9 +12,11 @@ import (
 const minCompletionColumns = len("> ") + 3 + 1 + len("[skill]")
 
 type completionLayoutKey struct {
-	generation             uint64
-	width, space, selected int
-	sigil                  byte
+	generation                        uint64
+	width, space, selected            int
+	commonSpace, taskRows, effortRows int
+	completionRows, fileRows          int
+	sigil                             byte
 }
 
 func completionBoundedText(value string, limit int) string {
@@ -33,12 +35,25 @@ func safeCompletionText(value string) string {
 }
 
 func (m Model) completionSpace() int {
-	return max(0, m.heightOrDefault()-m.composerChatRows()-renderedChatRows(m.renderInputs())-6-m.nonEffortStatusRows()-len(m.effortNoticeLines()))
+	if m.heightOrDefault() <= 5 {
+		return 0
+	}
+	return m.chatContentRows()
 }
 
 func (m *Model) layoutCompletion() {
 	s := &m.completion
-	key := completionLayoutKey{s.generation, min(m.widthOrDefault(), maxCompletionLineBytes), m.completionSpace(), s.selected, s.target.sigil}
+	space, width := m.completionSpace(), min(m.widthOrDefault(), maxCompletionLineBytes)
+	rows := 0
+	if width >= minCompletionColumns && space > 0 {
+		rows = min(5, len(s.matches), space)
+		if space > 1 {
+			rows = min(rows, space-1) + 1
+		}
+	}
+	shared := m.auxiliaryLayout(rows)
+	key := completionLayoutKey{generation: s.generation, width: width, space: space, selected: s.selected,
+		commonSpace: shared.space, taskRows: len(shared.taskLines), effortRows: shared.effortRows, completionRows: rows, fileRows: m.files.rows, sigil: s.target.sigil}
 	if s.layoutReady && s.layoutKey == key {
 		return
 	}

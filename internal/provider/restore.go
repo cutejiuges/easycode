@@ -8,16 +8,17 @@ import (
 
 // RestoreRecord 将 opaque 原生增量绑定到已校验的 turn 和提交角色。
 type RestoreRecord struct {
-	feedback        *domain.StopFeedback
-	toolOutputs     []tool.ModelOutput
-	readyCalls      []tool.Invocation
-	questionResults []tool.InvocationResult
-	source          *CompactionSource
-	checkpoint      *CheckpointEnvelope
-	turnID          domain.TurnID
-	role            domain.NativeCommitRole
-	association     domain.InputAssociation
-	envelope        NativeCommitEnvelope
+	feedback     *domain.StopFeedback
+	toolOutputs  []tool.ModelOutput
+	readyCalls   []tool.Invocation
+	readyResults []tool.InvocationResult
+	expectedTask *domain.TaskProgressState
+	source       *CompactionSource
+	checkpoint   *CheckpointEnvelope
+	turnID       domain.TurnID
+	role         domain.NativeCommitRole
+	association  domain.InputAssociation
+	envelope     NativeCommitEnvelope
 }
 
 // NewInputRestoreRecord 创建必须具有完整输入关联的恢复记录。
@@ -97,6 +98,9 @@ func (record RestoreRecord) Association() (domain.InputAssociation, bool) {
 
 // Validate 拒绝零值或不匹配的恢复角色。
 func (record RestoreRecord) Validate() error {
+	if record.expectedTask != nil && record.checkpoint == nil {
+		return fmt.Errorf("unrelated checkpoint task evidence")
+	}
 	if (record.role == domain.NativeCommitHookFeedback) != (record.feedback != nil) {
 		return fmt.Errorf("unrelated hook feedback restore evidence")
 	}
@@ -121,7 +125,7 @@ func (record RestoreRecord) Validate() error {
 		return fmt.Errorf("unrelated tool output restore evidence")
 	}
 
-	if len(record.readyCalls) > 0 || len(record.questionResults) > 0 {
+	if len(record.readyCalls) > 0 || len(record.readyResults) > 0 {
 		if record.source != nil || record.checkpoint != nil || record.role != domain.NativeCommitSample {
 			return fmt.Errorf("ready facts require a sample restore record")
 		}
@@ -132,21 +136,25 @@ func (record RestoreRecord) Validate() error {
 			}
 			seen[q.ProviderCallID()] = true
 		}
-		seenResults := make(map[tool.ProviderCallID]bool, len(record.questionResults))
-		for _, result := range record.questionResults {
-			if tool.ValidateFrozenResult(result) != nil || result.Capability() != tool.CapabilityQuestion || seenResults[result.ProviderCallID()] {
-				return fmt.Errorf("invalid question restore result")
+		seenResults := make(map[tool.ProviderCallID]bool, len(record.readyResults))
+		for _, result := range record.readyResults {
+			if tool.ValidateFrozenResult(result) != nil || (result.Capability() != tool.CapabilityQuestion && result.Capability() != tool.CapabilityTaskProgress) || seenResults[result.ProviderCallID()] {
+				return fmt.Errorf("invalid ready restore result")
 			}
 			matched := false
 			for _, inv := range record.readyCalls {
-				q, ok := inv.Question()
-				if ok && q.ProviderCallID() == result.ProviderCallID() && q.InvocationID() == result.InvocationID() && q.Input().Fingerprint() == result.QuestionMetadata().Fingerprint {
+				if inv.ProviderCallID() != result.ProviderCallID() || inv.InvocationID() != result.InvocationID() || inv.Capability() != result.Capability() {
+					continue
+				}
+				q, isQuestion := inv.Question()
+				task, isTask := inv.Task()
+				if isQuestion && q.Input().Fingerprint() == result.QuestionMetadata().Fingerprint || isTask && task.Input().Equal(result.TaskInput()) {
 					matched = true
 					break
 				}
 			}
 			if !matched {
-				return fmt.Errorf("question restore result has no matching ready fact")
+				return fmt.Errorf("ready restore result has no matching ready fact")
 			}
 			seenResults[result.ProviderCallID()] = true
 		}
@@ -161,6 +169,9 @@ func (record RestoreRecord) Validate() error {
 	if record.checkpoint != nil {
 		if record.turnID != "" || record.role != "" || record.association.TurnID() != "" || record.envelope.Family() != "" {
 			return fmt.Errorf("checkpoint restore record contains turn fields")
+		}
+		if record.expectedTask == nil || record.expectedTask.Validate() != nil {
+			return fmt.Errorf("checkpoint task evidence is required")
 		}
 		_, err := record.checkpoint.Clone()
 		return err
@@ -187,13 +198,13 @@ func (record RestoreRecord) Validate() error {
 	return nil
 }
 
-// WithReadyFacts 绑定同一 sample 的完整原始 ready 与已提交提问结果，不改变原生信封。
+// WithReadyFacts 绑定同一 sample 的完整原始 ready 与已提交提问/任务结果，不改变原生信封。
 func (record RestoreRecord) WithReadyFacts(calls []tool.Invocation, results []tool.InvocationResult) (RestoreRecord, error) {
 	if record.role != domain.NativeCommitSample || record.source != nil || record.checkpoint != nil {
 		return RestoreRecord{}, fmt.Errorf("ready facts require a sample restore record")
 	}
 	record.readyCalls = cloneReadyInvocations(calls)
-	record.questionResults = append([]tool.InvocationResult(nil), results...)
+	record.readyResults = append([]tool.InvocationResult(nil), results...)
 	return record, record.Validate()
 }
 func cloneReadyInvocations(calls []tool.Invocation) []tool.Invocation {
@@ -211,16 +222,43 @@ func (record RestoreRecord) ReadyInvocations() []tool.Invocation {
 
 // QuestionResults 返回独立的已提交答案关联，不包含未提交草稿。
 func (record RestoreRecord) QuestionResults() []tool.InvocationResult {
-	return append([]tool.InvocationResult(nil), record.questionResults...)
+	return record.resultsForCapability(tool.CapabilityQuestion)
+}
+
+// TaskResults 返回已提交任务结果，不把仅有调用当作已应用进度。
+func (record RestoreRecord) TaskResults() []tool.InvocationResult {
+	return record.resultsForCapability(tool.CapabilityTaskProgress)
+}
+
+func (record RestoreRecord) resultsForCapability(capability tool.CapabilityID) []tool.InvocationResult {
+	results := make([]tool.InvocationResult, 0)
+	for _, result := range record.readyResults {
+		if result.Capability() == capability {
+			results = append(results, result)
+		}
+	}
+	return results
 }
 
 // NewCheckpointRestoreRecord 保留与普通增量交错的独立 checkpoint。
-func NewCheckpointRestoreRecord(checkpoint CheckpointEnvelope) (RestoreRecord, error) {
+func NewCheckpointRestoreRecord(checkpoint CheckpointEnvelope, expected domain.TaskProgressState) (RestoreRecord, error) {
 	clone, err := checkpoint.Clone()
 	if err != nil {
 		return RestoreRecord{}, err
 	}
-	return RestoreRecord{checkpoint: &clone}, nil
+	if err := expected.Validate(); err != nil {
+		return RestoreRecord{}, err
+	}
+	tasks := expected.Clone()
+	return RestoreRecord{checkpoint: &clone, expectedTask: &tasks}, nil
+}
+
+// ExpectedTaskProgress 返回由来源 journal 前缀验证得到的独立任务证据。
+func (record RestoreRecord) ExpectedTaskProgress() (domain.TaskProgressState, bool) {
+	if record.checkpoint == nil || record.expectedTask == nil {
+		return domain.TaskProgressState{}, false
+	}
+	return record.expectedTask.Clone(), true
 }
 
 // IsCheckpoint 判断恢复记录是否具有独立窗口边界。

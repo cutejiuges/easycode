@@ -26,6 +26,19 @@ func encodeToolResultData(call NativeItem, result tool.InvocationResult, text st
 	if tool.ValidateFrozenResult(result) != nil || string(result.ProviderCallID()) != call.ID || result.Capability() != anthropicCapabilityForName(call.Name) || result.WireKind() != tool.WireStructured {
 		return NativeItem{}, fmt.Errorf("anthropic tool output does not match call")
 	}
+	if call.Name == "TodoWrite" {
+		ready, err := tool.NewTaskReadyCall(result.ProviderCallID(), result.TaskInput())
+		if err != nil {
+			return NativeItem{}, err
+		}
+		inv, err := tool.NewInvocation(result.InvocationID(), ready)
+		if err != nil {
+			return NativeItem{}, err
+		}
+		if err := tool.ValidateNativeCallInput(inv, domain.ProviderAnthropic, call.Name, tool.ProviderCallID(call.ID), tool.WireStructured, call.Input); err != nil {
+			return NativeItem{}, err
+		}
+	}
 	if call.Name == "AskUserQuestion" {
 		input, err := tool.DecodeQuestionInput(call.Input)
 		if err != nil || result.QuestionMetadata().Fingerprint != input.Fingerprint() {
@@ -74,6 +87,11 @@ func (c *Conversation) PrepareToolOutputPreflight(inv tool.Invocation) (provider
 		if call.ID == string(inv.ProviderCallID()) {
 			if anthropicCapabilityForName(call.Name) != inv.Capability() {
 				return nil, fmt.Errorf("tool capability mismatch")
+			}
+			if inv.Capability() == tool.CapabilityTaskProgress {
+				if err := tool.ValidateNativeCallInput(inv, domain.ProviderAnthropic, call.Name, tool.ProviderCallID(call.ID), tool.WireStructured, call.Input); err != nil {
+					return nil, err
+				}
 			}
 			if q, ok := inv.Question(); ok {
 				input, err := tool.DecodeQuestionInput(call.Input)

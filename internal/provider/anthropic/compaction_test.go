@@ -80,11 +80,11 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 	if err := codec.Unmarshal(request.Bytes(), &wire); err != nil {
 		t.Fatal(err)
 	}
-	if wire.ToolChoice == nil || wire.ToolChoice.Type != "none" || wire.MaxTokens != 4096 || len(wire.Tools) != 9 || !strings.Contains(string(request.Bytes()), "preserve test failures") {
+	if wire.ToolChoice == nil || wire.ToolChoice.Type != "none" || wire.MaxTokens != 4096 || len(wire.Tools) != 10 || !strings.Contains(string(request.Bytes()), "preserve test failures") {
 		t.Fatal("summary request protection or sources missing")
 	}
 	generation := compactionTestGeneration("goal; completed tests; next task", "summary-generation-only")
-	prepared, err := conversation.prepareCheckpoint(scope, "01900000-0000-7000-8000-000000000001", preview.Source(), generation, syntheticRequestReceipt(domain.RequestSummary))
+	prepared, err := conversation.prepareCheckpoint(scope, "01900000-0000-7000-8000-000000000001", preview.Source(), generation, syntheticRequestReceipt(domain.RequestSummary), domain.NewNoTaskProgress())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 	if _, err := conversation.PreflightCompaction(compactInput); err == nil {
 		t.Fatal("repeated compaction without increments accepted")
 	}
-	record, err := provider.NewCheckpointRestoreRecord(checkpoint)
+	record, err := provider.NewCheckpointRestoreRecord(checkpoint, domain.NewNoTaskProgress())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 	if secondPreview.Source().Previous().ID() != checkpoint.ID() {
 		t.Fatal("predecessor lost")
 	}
-	second, err := conversation.prepareCheckpoint(domain.ManualCompactionScope(), "01900000-0000-7000-8000-000000000002", secondPreview.Source(), generation, syntheticRequestReceipt(domain.RequestSummary))
+	second, err := conversation.prepareCheckpoint(domain.ManualCompactionScope(), "01900000-0000-7000-8000-000000000002", secondPreview.Source(), generation, syntheticRequestReceipt(domain.RequestSummary), domain.NewNoTaskProgress())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 	if err := second.Finalize(); err != nil {
 		t.Fatal(err)
 	}
-	secondRecord, _ := provider.NewCheckpointRestoreRecord(secondCheckpoint)
+	secondRecord, _ := provider.NewCheckpointRestoreRecord(secondCheckpoint, domain.NewNoTaskProgress())
 	records = append(records, secondRecord)
 	restoredValue, err = testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", records)
 	if err != nil {
@@ -210,7 +210,7 @@ func assertCompactionAfterToolSteering(t *testing.T, instance *Provider, convers
 			t.Fatal(err)
 		}
 		scope, _ := domain.NewAutoCompactionScope("01900000-0000-7000-8000-000000000099", uint32(iteration+1))
-		candidate, err := conversation.prepareCheckpoint(scope, id, preview.Source(), compactionTestGeneration("Preserve goal and tests", "summary-opaque"), syntheticRequestReceipt(domain.RequestSummary))
+		candidate, err := conversation.prepareCheckpoint(scope, id, preview.Source(), compactionTestGeneration("Preserve goal and tests", "summary-opaque"), syntheticRequestReceipt(domain.RequestSummary), domain.NewNoTaskProgress())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -218,7 +218,7 @@ func assertCompactionAfterToolSteering(t *testing.T, instance *Provider, convers
 		if err := candidate.Finalize(); err != nil {
 			t.Fatal(err)
 		}
-		record, _ := provider.NewCheckpointRestoreRecord(checkpoint)
+		record, _ := provider.NewCheckpointRestoreRecord(checkpoint, domain.NewNoTaskProgress())
 		records = append(records, record)
 		restoredValue, err := testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", records)
 		if err != nil {

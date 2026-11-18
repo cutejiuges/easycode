@@ -126,7 +126,7 @@ func (r *Runtime) writeHookGateResult(ctx context.Context, turn domain.TurnID, i
 			return tool.InvocationResult{}, err
 		}
 	}
-	if err = r.notifyToolResult(turn, result); err != nil {
+	if err = r.notifyToolResult(turn, result, state.resultSequence); err != nil {
 		return tool.InvocationResult{}, err
 	}
 	return result, nil

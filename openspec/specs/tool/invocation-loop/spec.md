@@ -10,7 +10,7 @@
 
 每次 Provider sample SHALL 使用一个不可变 Tool Catalog snapshot。snapshot 中每个 facade MUST 关联唯一当前、已注册且可执行的 capability、强类型 input/result、Provider facade及其wire kind、validator、policy、适用的 sandbox planner、executor 和结果 renderer；系统 MUST NOT 暴露缺少任一真实消费者的 schema或freeform定义，也 MUST NOT 通过 input revision、result codec revision 或版本后缀类型选择实现。
 
-当前 snapshot SHALL 恰好包含 `fs.read`、`fs.glob`、`fs.grep`、`fs.patch`、`fs.write`、`process.exec`、`artifact.read`、`skill.read` 与 `user.question`；Anthropic SHALL 将 patch/command 分别暴露为 structured `Edit`/`Bash`，OpenAI SHALL 将同一 patch/command 能力分别暴露为 custom freeform `apply_patch` 与 structured `exec_command`。facade 按稳定 capability ID、wire kind 与 facade name 确定性排序。snapshot SHALL 具有非空内容派生 source revision、canonical definition bytes 和 fingerprint；调用方修改 getter 返回值不得改变 snapshot。时间戳、cwd、Session/thread/turn identity、随机 invocation/approval ID、权限临时状态、base evidence、diff、命令环境实际值和文件系统枚举顺序 MUST NOT 进入 definition bytes 或 fingerprint。
+当前 snapshot SHALL 恰好包含 `fs.read`、`fs.glob`、`fs.grep`、`fs.patch`、`fs.write`、`process.exec`、`artifact.read`、`skill.read`、`user.question` 与 `task.progress`；Anthropic SHALL 将 patch/command 分别暴露为 structured `Edit`/`Bash`，OpenAI SHALL 将同一 patch/command 能力分别暴露为 custom freeform `apply_patch` 与 structured `exec_command`。facade 按稳定 capability ID、wire kind 与 facade name 确定性排序。snapshot SHALL 具有非空内容派生 source revision、canonical definition bytes 和 fingerprint；调用方修改 getter 返回值不得改变 snapshot。时间戳、cwd、Session/thread/turn identity、随机 invocation/approval ID、权限临时状态、base evidence、diff、命令环境实际值和文件系统枚举顺序 MUST NOT 进入 definition bytes 或 fingerprint。
 
 两个 Provider SHALL 都以 structured Write 暴露 fs.write。Write 的 request、strict decoder、native restore、result codec、候选、policy、executor 和审批展示缺一不可；创建/覆盖证据和 Read observation MUST NOT 进入稳定 definition bytes。
 
@@ -24,15 +24,15 @@
 
 #### Scenario: Expose the complete current catalog
 - **WHEN** Runtime为本变更编译一次Provider请求
-- **THEN** catalog只声明Read、ReadArtifact、Glob、Grep、Write、对应Provider的Edit或apply_patch以及Bash或exec_command，额外声明 structured Skill 与对应 Provider 的 structured 提问 facade，不声明MCP、Agent、后台进程或write_stdin
+- **THEN** catalog只声明Read、ReadArtifact、Glob、Grep、Write、对应Provider的Edit或apply_patch以及Bash或exec_command，额外声明 structured Skill、对应 Provider 的 structured 提问 facade 与任务进度 facade，不声明MCP、Agent、后台进程或write_stdin
 
 #### Scenario: Expose the complete read-only catalog
 - **WHEN** 将当前catalog中的只读子集投影给审计或测试
-- **THEN** 该子集仍恰好包含Read、ReadArtifact、Glob、Grep、Skill，Patch、Write与Exec作为独立exclusive能力存在且不冒充只读工具
+- **THEN** 该子集仍恰好包含Read、ReadArtifact、Glob、Grep、Skill，Patch、Write、Exec、Question 与 Task 作为独立 exclusive 能力存在且不冒充只读工具
 
 #### Scenario: Expose only current contracts
 - **WHEN** 将当前catalog与早期开发期catalog比较
-- **THEN** 当前唯一catalog直接包含九项能力且不保留旧catalog、旧schema或兼容分支
+- **THEN** 当前唯一catalog直接包含十项能力且不保留旧catalog、旧schema或兼容分支
 
 #### Scenario: Expose Provider-specific mutation wire
 - **WHEN** 分别读取Anthropic与OpenAI catalog view
@@ -40,7 +40,7 @@
 
 #### Scenario: Expose only Read
 - **WHEN** 将当前catalog与最早只暴露Read的开发期catalog比较
-- **THEN** 当前唯一catalog直接包含Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill与Question且不保留旧catalog分支
+- **THEN** 当前唯一catalog直接包含Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill、Question 与 Task 且不保留旧catalog分支
 
 #### Scenario: Expose Provider-specific patch wire
 - **WHEN** 分别读取Anthropic与OpenAI catalog view
@@ -55,27 +55,51 @@
 
 #### Scenario: Expose executable artifact reading
 - **WHEN** 构造两家 Provider 当前 catalog
-- **THEN** 恰好九项能力，ReadArtifact 具有完整 request、reducer、native restore、policy、executor 和 result codec
+- **THEN** 恰好十项能力，ReadArtifact 具有完整 request、reducer、native restore、policy、executor 和 result codec
 
 两家 Provider SHALL 以 structured Skill 暴露 skill.read，具备完整读取、validator、policy、来源范围约束、renderer 与恢复实现。目录为空仍保留真实 executor，未知名称返回安全错误，不暴露未来来源能力。
 
 #### Scenario: Expose executable Skill loading
 - **WHEN** 两家 Provider 构造当前目录
-- **THEN** 均恰好九项能力，Skill 的主文档与资源分支都有 typed input/result，定义不包含实际目录正文或绝对路径
+- **THEN** 均恰好十项能力，Skill 的主文档与资源分支都有 typed input/result，定义不包含实际目录正文或绝对路径
 
 user.question SHALL 具有完整 typed input/result、strict decoder、policy、实际交互执行消费者、renderer 和 native restore。Anthropic facade 为 AskUserQuestion，OpenAI facade 为 request_user_input，均为 structured wire。该能力不操作文件、进程或网络，不生成虚构 sandbox 候选或副作用批准；无交互宿主由真实执行路径返回配对不可用结果。目录定义中不得出现动态题目、回答、请求身份、结果余额或 UI 状态。
 
 #### Scenario: Expose executable user questions
 - **WHEN** 两家 Provider 构造完整当前 catalog
-- **THEN** 均恰好九项真实能力，提问 facade 按既有规则排序，不能只提供 schema 而没有交互、拒绝及恢复消费者
+- **THEN** 均恰好十项真实能力，提问 facade 按既有规则排序，不能只提供 schema 而没有交互、拒绝及恢复消费者
 
 #### Scenario: Keep the read-only subset precise
 - **WHEN** 检查可并行读取子集
 - **THEN** 仍为 Read、Glob、Grep、ReadArtifact、Skill，提问不因没有文件写入而被放入并行读批次
 
+`task.progress` SHALL 是当前第十项真实能力，Anthropic facade 为 structured `TodoWrite`，OpenAI facade 为 structured `update_plan`。两家 SHALL 使用各自严格参数契约并归一化为同一有界完整清单替换；schema、decoder、validator、结果消费者、展示、持久化及恢复缺一不可。任务能力为无需普通副作用批准的 exclusive 调度屏障，不冒充并行读取或文件写入，不触发 PreToolUse/PostToolUse/PostToolUseFailure。任务标签、activeForm、状态、说明、来源身份与当前清单 MUST NOT 进入静态定义或 catalog fingerprint。
+
+#### Scenario: Expose Provider-specific task progress facades
+- **WHEN** 读取两家完整当前 catalog
+- **THEN** 恰好十项真实能力，Anthropic 声明 TodoWrite，OpenAI 声明 update_plan，二者映射 task.progress
+- **THEN** 改变当前任务清单不改变定义 bytes、source revision 或 fingerprint，五项并行只读子集保持不变
+
+
+每个 facade SHALL 具有固定且强类型的服务端 schema 模式，参与不可变 catalog 的 canonical definition、source revision/fingerprint 与实际 Provider 请求属性证据。只有 OpenAI update_plan SHALL 显式编译 strict:false；既有 function facade strict 值和 wire bytes 不变，custom apply_patch 不增加该字段，Anthropic 不发送 OpenAI 专属字段。显式 false 必须在序列化中保留，不使用零值省略或服务端默认代替；本地 strict decoder/validator 不因该模式降低要求。服务端模式不属于领域 TaskUpdate 或动态任务状态，不能在请求编译时按字段猜测或只特判名称而让 catalog 证据遗漏策略。
+
+任务工具的原生参数 SHALL 以显式 Provider family/facade profile 进入工具层封闭 TaskInput，持有纯规范领域 TaskUpdate；ready、result 和 native restore evidence SHALL 验证该映射。profile 不存入领域值、当前三态、checkpoint 或 tasks.snapshot，也不得作为版本/历史 reader 分派。静态 description 必须完整披露 tool/task-progress 的数量、UTF-8 字节、原始/规范编码、唯一性、状态、完整替换、清除、跨回合及验证证据边界；schema 字符 maxLength 不能代替 UTF-8 bytes 校验。
+
+#### Scenario: Preserve the explicit nonstrict server mode for update_plan only
+- **WHEN** 两家实际请求编译完整十能力目录
+- **THEN** OpenAI update_plan 恰好显式 strict:false，其他既有 function strict 值及定义 bytes 保持，custom 与 Anthropic 不带不适用字段；同一模式进入目录和实际请求属性证据
+
+#### Scenario: Reject a facade mode omitted from catalog identity
+- **WHEN** facade schema 模式变化但 catalog canonical definition、source revision 或 fingerprint 没有对应变化
+- **THEN** 当前目录验证或相应回归断言失败，不让请求编译器与目录证据各自维护矛盾定义
+
+#### Scenario: Validate actual first request definitions before emitting fixtures
+- **WHEN** 两家真实 CLI 连接本地协议验证服务并发送首个请求
+- **THEN** 服务先核对真实 schema/description、update_plan 的显式 false 与其他工具原模式，再决定是否返回 SSE；错误定义不能借预置成功响应通过验收
+
 ### Requirement: Completed samples produce typed ready calls
 
-Provider completed sample SHALL 将原生 native commit、normalized usage 与按模型 item 顺序排列的 ready calls 作为一个不可分割的 prepared value 交给 Runtime。每个 ready call MUST 包含合法 Provider call ID、非空 facade identity、已解析 capability 以及 `ReadInput`、`GlobInput`、`GrepInput`、`PatchInput`、`WriteInput`、`ExecInput`、`ReadArtifactInput` 或 `SkillInput` 封闭联合中的恰好一种；核心导出边界 MUST NOT 接受或返回 `any`、无约束动态 map 或 input revision router。
+Provider completed sample SHALL 将原生 native commit、normalized usage 与按模型 item 顺序排列的 ready calls 作为一个不可分割的 prepared value 交给 Runtime。每个 ready call MUST 包含合法 Provider call ID、非空 facade identity、已解析 capability 以及 `ReadInput`、`GlobInput`、`GrepInput`、`PatchInput`、`WriteInput`、`ExecInput`、`ReadArtifactInput`、`SkillInput`、`QuestionInput` 或任务进度更新封闭联合中的恰好一种；核心导出边界 MUST NOT 接受或返回 `any`、无约束动态 map 或 input revision router。
 
 Anthropic patch与command参数必须由完整structured JSON strict decode；OpenAI patch输入必须由完整custom freeform parser消费，command参数必须由完整structured JSON strict decode。参数delta、未闭合原生item、未知工具、重复Provider call ID、capability与typed input不匹配、未知字段、尾随JSON/patch文本、未支持操作或超限输入 MUST 使sample失败，不得产生ready call、native commit、sample usage、approval或工具I/O。
 
@@ -120,6 +144,23 @@ SkillInput SHALL 是主文档加载与资源读取的封闭联合；skill 必填
 - **WHEN** Skill 同时提供 args 与 resource、重复键、未知字段或不完整参数
 - **THEN** sample 失败且 Skill 读取次数为零
 
+TodoWrite 与 update_plan SHALL 仅在完整 sample 通过各自 strict decoder 后产生 typed 任务调用；不得将两家字段混用、透传未知字段或以文字、Bash、用户输入代替任务调用。两家均支持至多 20 项、pending/in_progress/completed、至多一个 in_progress、完整替换与显式空数组清空；其余文本与字节约束遵循 tool/task-progress。状态回退是合法显式替换，重复标签或多个进行中不是合法更新。
+
+#### Scenario: Decode both task facades strictly
+- **WHEN** Anthropic 返回合法 TodoWrite，或 OpenAI 返回合法 update_plan
+- **THEN** prepared sample 包含原生调用、usage 与同一 task.progress 能力的完整 typed ready call，顺序不变
+
+#### Scenario: Reject a mixed or invalid task update
+- **WHEN** 任务参数混用两家字段、重复标签、超过二十项、含两个 in_progress、未知字段或超出文本/编码上限
+- **THEN** sample 失败，零成功 native/usage/ready facts，当前任务清单不变
+
+
+任务参数解码 SHALL 按不可变 catalog 绑定的 family/profile 执行，不根据参数中出现 todos、plan 或其他字段猜测来源。工具层封闭 TaskInput 的 profile 校验与纯领域 TaskUpdate 的公共约束分别执行，非法 wire shape 使当前整个 sample 失败，不制造部分 ready、成功任务结果或新的清单。
+
+#### Scenario: Reject mixed task arguments without profile guessing
+- **WHEN** 已绑定 TodoWrite 的调用携带 plan/explanation，或已绑定 update_plan 的调用携带 activeForm/todos
+- **THEN** 显式匹配的 facade decoder 拒绝整个 sample，不尝试另一 facade、不产生任何可执行 ready 或副作用
+
 ### Requirement: Durable sample facts precede tool execution
 
 Runtime MUST 在任何工具I/O前，将当前sample的Provider-native commit、sample usage与全部`tool_call_ready` facts作为同一Session batch成功`Sync`，随后执行prepared sample finalizer。每个ready fact SHALL分配全局唯一、格式可验证的EasyCode invocation ID，并保存Provider call ID、sample index、call index、capability和匹配的完整typed input；不得保存或分派capability/input revision。
@@ -145,15 +186,21 @@ Write 的目标/目录检查与候选读取 SHALL 遵循上述 Patch 的 ready d
 - **WHEN** Write 指向不存在的目录链
 - **THEN** ready 前零文件读取，allow 与 started durable 前零暂存或正式目录创建
 
+任务进度执行与其他能力一样 MUST 等待整个 ready batch 成功 Sync/finalize；只有 ready 或 started facts 不得使任务列表生效。任务执行器只计算并验证候选结果；其成功 result 在独立提交边界确定 Sync 前，宿主清单、后续请求来源与可见成功通知 MUST 仍使用旧状态。
+
+#### Scenario: Fail a task ready batch without applying progress
+- **WHEN** 含任务更新的 sample 无法成功 Sync，或 prepared sample finalize 失败
+- **THEN** 任务执行器不接收调用，清单及其来源保持旧值，不发布任务更新成功
+
 ### Requirement: Tool turns use a bounded ordered multi-sample loop
 
-一个用户turn SHALL支持最多16个Provider samples和累计最多64个tool calls。completed sample 不含 tool calls 时 SHALL 进入完成边界：合法无 Stop 沿原路径结束，有 Stop 时先保存 sample/usage/plan，检查通过才完成，正常授权阻断则按 Stop 契约继续同 turn；含calls时，Scheduler SHALL按call index把连续`parallel_read`调用组成最大8并发的批次，并把每个`exclusive` Patch、Write、Exec 或 Question 作为前后屏障。Runtime SHALL在到达每个调用或批次时完成其policy；Patch候选准备和所需approval只能在其前序批次结果durable后发生，matching decision收口后才可越过该屏障。结果收集到固定call slot并按call index durable提交全部results和匹配Provider-native outputs，outputs durable后才可开始下一sample。
+一个用户turn SHALL支持最多16个Provider samples和累计最多64个tool calls。completed sample 不含 tool calls 时 SHALL 进入完成边界：合法无 Stop 沿原路径结束，有 Stop 时先保存 sample/usage/plan，检查通过才完成，正常授权阻断则按 Stop 契约继续同 turn；含calls时，Scheduler SHALL按call index把连续`parallel_read`调用组成最大8并发的批次，并把每个`exclusive` Patch、Write、Exec、Question 或 Task 作为前后屏障。Runtime SHALL在到达每个调用或批次时完成其policy；Patch候选准备和所需approval只能在其前序批次结果durable后发生，matching decision收口后才可越过该屏障。结果收集到固定call slot并按call index durable提交全部results和匹配Provider-native outputs，outputs durable后才可开始下一sample。
 
-当前Read、Glob、Grep、ReadArtifact、Skill属于`parallel_read`，Patch、Write、Exec与Question属于`exclusive`。单个调用的普通执行错误、拒绝、冲突或无匹配结果不得取消independent sibling；`abort`、turn取消或poisoned状态按取消契约收口。goroutine完成顺序、approval响应时间和实际执行时间不得影响Session seq、Provider output顺序、preview bytes或后续请求。超过sample/call上限 SHALL以稳定英文`tool_loop_limit_exceeded`失败，并且已经durable的sample、approval、ledger和outputs不得被删除或改写。
+当前Read、Glob、Grep、ReadArtifact、Skill属于`parallel_read`，Patch、Write、Exec、Question 与 Task 属于 `exclusive`。单个调用的普通执行错误、拒绝、冲突或无匹配结果不得取消independent sibling；`abort`、turn取消或poisoned状态按取消契约收口。goroutine完成顺序、approval响应时间和实际执行时间不得影响Session seq、Provider output顺序、preview bytes或后续请求。超过sample/call上限 SHALL以稳定英文`tool_loop_limit_exceeded`失败，并且已经durable的sample、approval、ledger和outputs不得被删除或改写。
 
 本条的 exclusive 屏障和串行审批语义 SHALL 同样适用于 Write；不能将非 Patch 调用默认视作 parallel_read。
 
-存在匹配 PreToolUse 时，Patch/Write/Exec SHALL 在同一 exclusive 屏障内先冻结并 durable 保存完整 Hook 计划，串行完成检查，再准备候选与普通审批。Hook 的计划、信任、进程及结果不得越过前序 result 或与后序工具重叠；只读调用不触发本切片 Hook。无匹配时 SHALL 保持原调度、九能力目录与 Provider facade 不变。单个 Hook denied/error 只阻断原 call slot，后序 independent sibling 仍按原序执行；取消、cleanup 不确定或 writer poison 才停止整个 turn。
+存在匹配 PreToolUse 时，Patch/Write/Exec SHALL 在同一 exclusive 屏障内先冻结并 durable 保存完整 Hook 计划，串行完成检查，再准备候选与普通审批。Hook 的计划、信任、进程及结果不得越过前序 result 或与后序工具重叠；只读调用不触发本切片 Hook。无匹配时 SHALL 保持原调度、十能力目录与 Provider facade 不变。单个 Hook denied/error 只阻断原 call slot，后序 independent sibling 仍按原序执行；取消、cleanup 不确定或 writer poison 才停止整个 turn。
 
 
 匹配 PostToolUse 的调用 SHALL 在同一 exclusive slot 内先冻结计划并审查信任，再沿用普通候选/审批/执行。真实结果先冻结并成功 Sync；成功且真实执行的调用随后串行收口 Post，其他结果将已存在计划标记 skipped。前序 result 已 durable 但 Post 尚未 terminal 时，后序工具、整组 native outputs、steering 与下一 sample MUST 继续等待。Post 普通检查失败不能改写原结果或取消独立 sibling；取消、cleanup 不确定或 writer poison 按既有强制收口规则处理。Pre/Post 对同调用共享 30 秒检查执行预算。未开始的后缀用明确 skipped/cancelled disposition 收口，不伪造超时运行；已准入的普通 Post 错误可继续下一项，未关闭的调用预算 ticket 与未 terminal 的 Post 一样阻止后序 admission。
@@ -270,6 +317,17 @@ Stop 自动续轮 SHALL 先按真实阻断项检查独立续轮与下一普通 s
 - **WHEN** 64 个已配对 calls 后仍有 sample 余量和其他正常预算，Stop 请求续轮且后续 sample 只有文本
 - **THEN** 文本采样可继续同 turn，但若出现新 ready call 则在调用准入前拒绝，不能重置 calls 上限
 
+任务进度 SHALL 占据一个无需普通副作用批准的 exclusive slot。前序 results 成功 Sync 后才可准入 Task，Task 的唯一 result 确定 Sync 并关闭预算后才可准入后序工具；同一 sample 的多个 Task 按 call index 逐个完整替换，不能并行覆盖或合并。任务调用计入原有 16 samples/64 calls 及结果预算，不新增调度器、后台工作或额外循环；不运行工具 Hook、不产生 approval、候选文件或 sandbox 资源。只报告模型维护的清单状态不自动完成 turn，也不阻止模型在仍有 pending/in_progress 时返回普通最终答复。
+
+#### Scenario: Order task updates as nonapproval exclusive barriers
+- **WHEN** 同一 sample 按 Read、Task A、Write、Task B、Grep 排列
+- **THEN** 每个 Task 等待前序 result durable 后逐个处理，B 成功保存后成为当前清单，Write 仍单独批准
+- **THEN** Task 的批准、文件/进程/网络与工具 Hook 次数为零，所有结果/native outputs 保持原顺序
+
+#### Scenario: Keep tasks within the existing turn limits
+- **WHEN** 同轮多次更新任务并接受 steering
+- **THEN** 任务调用仍累计到既有 16/64 及输出额度，不因清空列表或折叠界面重置预算或结束回合
+
 ### Requirement: Execution ledger provides at-most-once automatic execution
 
 自动允许调用的正常路径 SHALL 遵循`ready_durable -> execution_started_durable -> result_durable`；需要审批的调用 SHALL 遵循`ready_durable -> approval_decided_durable -> execution_started_durable -> result_durable`。拒绝路径 SHALL为`ready_durable -> [approval_decided(deny), result(denied)]_durable`且不得出现started。Runtime SHALL在启动任何worker前按调度顺序为每个仍可执行调用单独append/Sync`tool_execution_started`；该append被接受的成功点是该调用的执行接收线性化点。在它之前观察到取消的调用 SHALL被分类为cancelled且不得进入executor；在它之后Runtime MUST恰好调用一次匹配executor，即使turn context已取消。
@@ -341,6 +399,22 @@ Write SHALL 与 Patch 使用相同的审批 ledger、accepted started、至多�
 - **WHEN** 只有 Hook started，没有 Hook finished、tool approval 或 tool started
 - **THEN** 本地补偿 Hook 不确定与工具 cancelled/hook_outcome_uncertain，零重跑，旧 turn 失败关闭
 
+任务进度正常路径 SHALL 为 ready_durable -> execution_started_durable -> result_durable，不要求或允许普通 approval。started 的执行接纳只允许计算候选结果，不代表清单已生效。成功 result 请求在 writer 接收前取消时 MUST 不安装新清单，并按原 slot 保存有界取消结果；writer 接收后必须等待确定提交结果，成功 Sync 才应用完整更新，不能因随后取消把已提交结果改为失败或应用两次。未知 durability MUST poison，不能发布可用新状态。错误、取消、预算拒绝与 outcome_uncertain 都不含 applied state。
+
+恢复 Task ready 无 started 时 SHALL 补 cancelled/session_interrupted_before_execution；started 无 result 时 SHALL 保守补 outcome_uncertain；二者都不得推测候选已经生效。唯一成功 result 已 durable 时 SHALL 仅投影它的完整规范更新，不再调用执行器，不因缺少 native outputs 回退列表，也不重复更新来源。
+
+#### Scenario: Cancel a task result before writer acceptance
+- **WHEN** Task 候选计算完成但成功 result 尚未被 writer 接收便取消
+- **THEN** 新清单不生效，原 call 获得配对取消结果，旧列表及来源不变
+
+#### Scenario: Confirm an accepted task result despite late cancellation
+- **WHEN** 成功 Task result 已接收，随后取消到达且 Sync 成功
+- **THEN** 完整列表恰好一次生效，返回确定成功事实，不伪造回滚或第二个 result
+
+#### Scenario: Recover an admitted task without its result
+- **WHEN** Task started 已保存但没有 result，候选是否曾在旧进程计算未知
+- **THEN** 本地补 outcome_uncertain、保留此前成功清单，执行器与外部调用次数为零
+
 ### Requirement: Every durable call receives a durable Provider output
 
 每个durable tool call最终 MUST具有一个确定result状态和一个匹配原Provider call ID及call kind的Provider-native output。成功、拒绝、验证/执行错误、冲突、取消和`outcome_uncertain` SHALL使用typed result status与稳定安全的英文code；Provider-specific codec SHALL将按call index冻结的模型preview编码为合法原生function、custom或Anthropic output。
@@ -388,6 +462,24 @@ Exec artifact 状态/引用与 ReadArtifact 页结果 SHALL 随 preview 一次�
 #### Scenario: Recover a reduced search result
 - **WHEN** 搜索缩短结果与保存引用已 durable 而 native output 未提交，保存文件随后丢失
 - **THEN** 恢复只使用冻结 bytes，canonical request、native item 顺序与 fingerprint 与不中断路径等价
+
+Task success SHALL 使用最多 1 KiB 的固定格式英文计数确认 preview，并在 typed metadata 中完整保存规范更新与必要来源关联；模型调用本身已保存完整参数，preview 无需重复回显整份清单。完整更新不得被 preview 裁剪替代，失败结果不得伪含 applied state。只有 status=success/code=ok 且完整 metadata 与调用一致的 durable result 能成为当前清单来源；完成数只是模型报告，不证明工作已验证或获得授权。
+
+#### Scenario: Rebuild a task output without re-rendering its list
+- **WHEN** 任务成功 result 已 durable 而对应 native outputs 缺失
+- **THEN** 恢复保留已保存规范列表并仅使用原冻结英文确认 preview 编码配对 output，canonical request 和 fingerprint 与同一事实不中断路径相等
+- **THEN** 不重新执行更新、不按当前 UI 或预算重渲染确认文本
+
+#### Scenario: Preserve task metadata independently of the compact confirmation
+- **WHEN** 完整合法任务更新包含多项长文本，而成功 preview 只报告计数
+- **THEN** Session 恢复仍逐字保留完整清单、顺序、activeForm 与说明，不能把计数 preview 当成唯一任务数据
+
+
+原生恢复、恢复补齐输出和离线历史正文读取 SHALL 复用相同已验证 TaskInput/任务结果 evidence，确认完整规范更新与原 native 调用相等。只读读者不得从固定计数 preview、调用名或自然语言摘要独立猜测已应用清单，也不能重新规范化文字或放宽来源 profile 约束；只有成功完整结果才能显示为已应用更新。
+
+#### Scenario: Share task evidence with the offline history reader
+- **WHEN** 同一固定 Session 分别用于正常恢复、补齐缺失 native output 与离线读取任务详情
+- **THEN** 三者使用相同原调用/profile/result 关联并保留完整规范内容；篡改 ready/result 或原生参数时三者均拒绝，不能一个读者显示伪造成功而另一个拒绝
 
 ### Requirement: Command execution is an exclusive durable invocation
 

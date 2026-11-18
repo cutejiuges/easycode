@@ -182,3 +182,19 @@ gate continue 后的未审批/allow 未 tool-started 状态 SHALL 沿用本条�
 #### Scenario: Select failure for a saved launch error offline
 - **WHEN** 准入后进程尚未启动便形成确定 process_start_failed，原 error result 已保存且存在失败分支
 - **THEN** 恢复仍选 failure，仅补检查中断终态和配对输出，不尝试启动原命令或诊断脚本
+
+#### Scenario: Reconcile task readiness without applying it
+- **WHEN** Task ready 已 durable 但没有 started，之前已有成功任务列表
+- **THEN** 按原 invocation 补 before_execution 取消及 matching output，旧列表保持，任务执行器调用为零
+
+#### Scenario: Reconcile an uncertain task conservatively
+- **WHEN** Task started 已 durable 而 result 缺失
+- **THEN** 补 outcome_uncertain 与 matching output，不推断候选已应用、不清空旧列表、不重新执行
+
+#### Scenario: Recover success before native task outputs
+- **WHEN** Task success result 已 Sync，而原生 outputs 或内存投影通知前退出
+- **THEN** 完整列表及来源恢复恰好一次，原冻结确认 bytes 生成 matching output；下一请求 canonical bytes、原生顺序和 fingerprint 等于同一已补偿历史不中断路径
+
+#### Scenario: Resume after only the first task replacement was saved
+- **WHEN** 同一 sample 两个 Task ready 中仅第一个成功 result durable，第二个未开始或 started 无结果
+- **THEN** 只安装第一个成功更新，第二个按真实状态补偿；二次恢复不重复应用第一项或执行第二项

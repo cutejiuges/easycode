@@ -35,6 +35,8 @@ func prepareToolOutputsEntry(history []nativeHistoryEntry, results []tool.ModelO
 
 func anthropicCapabilityForName(name string) tool.CapabilityID {
 	switch name {
+	case "TodoWrite":
+		return tool.CapabilityTaskProgress
 	case "Bash":
 		return tool.CapabilityExec
 	case "AskUserQuestion":

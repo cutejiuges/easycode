@@ -34,6 +34,32 @@ func (model Model) chatContentRows() int {
 	return max(0, model.heightOrDefault()-model.composerChatRows()-renderedChatRows(model.renderInputs())-model.nonEffortStatusRows()-3)
 }
 
+// candidateRows 统一计入互斥的命令与文件候选，避免任务区重复占用其行。
+func (model Model) candidateRows() int { return model.completion.rows + model.files.rows }
+
+type chatAuxiliaryLayout struct {
+	space, completionRows, effortRows int
+	taskLines                         []string
+}
+
+// auxiliaryLayout 让活动补全先使用共享余量，通知和任务只分配尚未使用的行。
+func (model Model) auxiliaryLayout(completionRows int) chatAuxiliaryLayout {
+	layout := chatAuxiliaryLayout{space: model.chatContentRows(), completionRows: completionRows}
+	remaining := max(0, layout.space-completionRows)
+	layout.effortRows = min(len(model.effortNotice), 6, max(0, remaining-1))
+	remaining -= layout.effortRows
+	layout.taskLines = model.taskInlineLines(remaining, completionRows)
+	return layout
+}
+
+func (model Model) renderTaskInline() string {
+	lines := model.auxiliaryLayout(model.candidateRows()).taskLines
+	if len(lines) == 0 {
+		return ""
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
 // fitChatView 在极端状态组合下裁去空行和较后的主线内容，始终保留已预算的输入区。
 func (model Model) fitChatView(prefix, footer string) string {
 	height, width := max(1, model.heightOrDefault()), max(1, model.widthOrDefault())

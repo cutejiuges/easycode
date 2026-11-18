@@ -198,8 +198,7 @@ func (model Model) projectEffortEvent(requestID protocol.RequestID, event protoc
 
 func (model Model) effortNoticeLines() []string {
 	// 输入区优先；每个逻辑通知行最多一屏宽，帮助最多六行、状态最多两行。
-	room := max(0, model.chatContentRows()-model.completion.rows-model.files.rows-1)
-	count := min(len(model.effortNotice), min(6, room))
+	count := model.auxiliaryLayout(model.candidateRows()).effortRows
 	lines := make([]string, 0, count)
 	for _, line := range model.effortNotice[:count] {
 		lines = append(lines, ansi.Truncate(line, max(1, model.widthOrDefault()), "…"))

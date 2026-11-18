@@ -1,0 +1,12 @@
+EasyCode test
+
+
+[queued] queued input
+Esc edit · ^R take · ^D drop
+  @src/a.go [file]
+> @src/b.go [file]
+2/5 · Tab/Enter: fill · Esc: close
+> inspect @sr|
+> next draft row
+> 第三行草稿
+Enter: send | Alt+Enter/Ctrl+J: newline

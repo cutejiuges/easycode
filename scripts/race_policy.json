@@ -108,6 +108,13 @@
     "reason": "取消打断阻塞输出和输入的双向 owner"
   },
   {
+    "package": "easycode/internal/headless",
+    "tests": [
+      "TestTaskQueryEOFDrainAndSnapshotWriteFailureOwnCleanup"
+    ],
+    "reason": "任务查询两帧输出在 EOF 与 snapshot 写入失败时的清理所有权"
+  },
+  {
     "package": "easycode/internal/runtime",
     "tests": [
       "TestParallelToolSchedulerBoundsConcurrency"
@@ -176,6 +183,20 @@
       "TestReasoningCancellationDuringAcceptedCommitWaitsForRealResult"
     ],
     "reason": "关键并发、提交取消与资源所有权"
+  },
+  {
+    "package": "easycode/internal/runtime",
+    "tests": [
+      "TestTaskResultAdmissionCancellationAndSyncProjection"
+    ],
+    "reason": "任务结果接收前后取消与 Sync 投影的确定性交错"
+  },
+  {
+    "package": "easycode/internal/runtime",
+    "tests": [
+      "TestTaskQueryIsCoherentWhileResultSyncIsPendingAndDoesNoIO"
+    ],
+    "reason": "结果 Sync 屏障期间的并发宿主查询与当前任务快照一致性"
   },
   {
     "package": "easycode/internal/session",

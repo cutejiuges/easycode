@@ -121,7 +121,8 @@ func (runtime *Runtime) executeWriteCall(ctx context.Context, emit Emitter, turn
 		if err != nil {
 			return tool.InvocationResult{}, false, err
 		}
-		if _, err := runtime.journal.AppendBatch(context.WithoutCancel(ctx), []session.RecordDraft{factDraft, resultDraft}); err != nil {
+		records, err := runtime.journal.AppendBatch(context.WithoutCancel(ctx), []session.RecordDraft{factDraft, resultDraft})
+		if err != nil {
 			runtime.poisoned.Store(true)
 			return tool.InvocationResult{}, false, fault.Wrap(fault.CodeSessionWrite, "persist Write denial failed", err)
 		}
@@ -129,7 +130,7 @@ func (runtime *Runtime) executeWriteCall(ctx context.Context, emit Emitter, turn
 			runtime.poisoned.Store(true)
 			return tool.InvocationResult{}, false, err
 		}
-		if err := runtime.notifyToolResult(turnID, result); err != nil {
+		if err := runtime.notifyToolResult(turnID, result, resultRecordSequence(records)); err != nil {
 			return result, false, err
 		}
 		runtime.emitApprovalResolved(emit, turnID, request, outcome)

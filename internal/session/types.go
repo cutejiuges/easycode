@@ -161,6 +161,7 @@ type ExecInputPayload struct {
 
 // ToolCallReadyPayload 保存执行前已经durable的完整调用事实。
 type ToolCallReadyPayload struct {
+	TaskInput         *tool.TaskInput           `json:"task_input,omitempty"`
 	QuestionInput     *tool.QuestionInput       `json:"question_input,omitempty"`
 	SkillInput        *SkillInputPayload        `json:"skill_input,omitempty"`
 	ReadArtifactInput *ReadArtifactInputPayload `json:"read_artifact_input,omitempty"`
@@ -258,6 +259,7 @@ type PatchResultMetadataPayload struct {
 
 // ToolCallResultPayload 保存无需重新执行即可恢复的冻结结果。
 type ToolCallResultPayload struct {
+	TaskMetadata         *TaskResultPayload           `json:"task_metadata,omitempty"`
 	QuestionMetadata     *tool.QuestionResultMetadata `json:"question_metadata,omitempty"`
 	SkillMetadata        *SkillResultPayload          `json:"skill_metadata,omitempty"`
 	Budget               tool.ResultBudgetMetadata    `json:"budget"`
@@ -274,6 +276,12 @@ type ToolCallResultPayload struct {
 	PatchMetadata        *PatchResultMetadataPayload  `json:"patch_metadata,omitempty"`
 	WriteMetadata        *WriteResultMetadataPayload  `json:"write_metadata,omitempty"`
 	ExecMetadata         *ExecResultMetadataPayload   `json:"exec_metadata,omitempty"`
+}
+
+// TaskResultPayload 保留原候选，只有成功结果携带完整已应用更新。
+type TaskResultPayload struct {
+	Input  tool.TaskInput     `json:"input"`
+	Update *domain.TaskUpdate `json:"update,omitempty"`
 }
 
 // ReadArtifactInputPayload 保存完整默认化范围，不在恢复时重新应用默认值。

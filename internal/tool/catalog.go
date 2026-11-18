@@ -35,14 +35,15 @@ type FacadeID string
 
 // Facade 是 Provider 请求编译所需的不可变视图。
 type Facade struct {
-	id          FacadeID
-	family      domain.ProviderFamily
-	name        string
-	description string
-	capability  CapabilityID
-	wireKind    ProviderWireKind
-	schema      codec.CanonicalJSON
-	format      FreeformFormat
+	id           FacadeID
+	family       domain.ProviderFamily
+	name         string
+	description  string
+	capability   CapabilityID
+	wireKind     ProviderWireKind
+	schema       codec.CanonicalJSON
+	format       FreeformFormat
+	serverSchema ServerSchemaMode
 }
 
 // FreeformFormat 保存OpenAI custom tool的确定性grammar定义。
@@ -70,8 +71,15 @@ func (facade Facade) clone() Facade {
 }
 
 func (facade Facade) validate() error {
-	if !facade.family.Valid() || facade.name == "" || facade.description == "" || !facade.capability.Valid() || !facade.wireKind.Valid() {
+	if !facade.family.Valid() || facade.name == "" || facade.description == "" || !facade.capability.Valid() || !facade.wireKind.Valid() || !facade.serverSchema.Valid() {
 		return errors.New("invalid tool facade")
+	}
+	if facade.family != domain.ProviderOpenAI || facade.wireKind != WireStructured {
+		if facade.serverSchema != ServerSchemaNotApplicable {
+			return errors.New("inapplicable server schema mode")
+		}
+	} else if facade.serverSchema == ServerSchemaNotApplicable {
+		return errors.New("function server schema mode is required")
 	}
 	wantName, wantID := facadeIdentity(facade.family, facade.capability)
 	if facade.name != wantName || facade.id != wantID {
@@ -99,6 +107,11 @@ func facadeIdentity(family domain.ProviderFamily, capability CapabilityID) (stri
 		prefix = "anthropic:"
 	}
 	switch capability {
+	case CapabilityTaskProgress:
+		if family == domain.ProviderAnthropic {
+			return "TodoWrite", FacadeID(prefix + "TodoWrite")
+		}
+		return "update_plan", FacadeID(prefix + "update_plan")
 	case CapabilityQuestion:
 		if family == domain.ProviderAnthropic {
 			return "AskUserQuestion", FacadeID(prefix + "AskUserQuestion")
@@ -144,7 +157,7 @@ func (view FacadeView) Facades() []Facade             { return cloneFacades(view
 func (view FacadeView) CanonicalJSON() []byte         { return view.canonical.Bytes() }
 func (view FacadeView) Fingerprint() string           { return view.fingerprint }
 
-// CatalogSnapshot 保存 ReadArtifact、Read、Glob、Grep、Patch、Write、Exec、Skill、Question 九项真实能力的确定性目录。
+// CatalogSnapshot 保存 ReadArtifact、Read、Glob、Grep、Patch、Write、Exec、Skill、Question、Task 十项真实能力的确定性目录。
 type CatalogSnapshot struct {
 	facades     []Facade
 	canonical   codec.CanonicalJSON
@@ -233,14 +246,15 @@ type editInputSchemaProperties struct {
 }
 
 type facadeCanonical struct {
-	ID          FacadeID                 `json:"id"`
-	Family      domain.ProviderFamily    `json:"family"`
-	Name        string                   `json:"name"`
-	Description string                   `json:"description"`
-	Capability  CapabilityID             `json:"capability"`
-	WireKind    ProviderWireKind         `json:"wire_kind"`
-	InputSchema json.RawMessage          `json:"input_schema,omitempty"`
-	Format      *freeformFormatCanonical `json:"format,omitempty"`
+	ServerSchemaMode ServerSchemaMode         `json:"server_schema_mode"`
+	ID               FacadeID                 `json:"id"`
+	Family           domain.ProviderFamily    `json:"family"`
+	Name             string                   `json:"name"`
+	Description      string                   `json:"description"`
+	Capability       CapabilityID             `json:"capability"`
+	WireKind         ProviderWireKind         `json:"wire_kind"`
+	InputSchema      json.RawMessage          `json:"input_schema,omitempty"`
+	Format           *freeformFormatCanonical `json:"format,omitempty"`
 }
 
 type freeformFormatCanonical struct {
@@ -309,9 +323,9 @@ func buildFileFacades() ([]Facade, error) {
 	return facades, nil
 }
 
-// NewCatalogSnapshot 创建当前九能力唯一目录，要求所有消费者已显式装配。
-func NewCatalogSnapshot(readExecutor ReadExecutor, globExecutor GlobExecutor, grepExecutor GrepExecutor, preparer PatchPreparer, patchExecutor PatchExecutor, writePreparer WritePreparer, writeExecutor WriteExecutor, execPreparer ExecPreparer, execExecutor ExecExecutor, renderer ExecOutputRenderer, policy Policy, artifactExecutor ReadArtifactExecutor, skillExecutor SkillExecutor, questionExecutor QuestionExecutor) (CatalogSnapshot, error) {
-	if readExecutor == nil || globExecutor == nil || grepExecutor == nil || preparer == nil || patchExecutor == nil || writePreparer == nil || writeExecutor == nil || execPreparer == nil || execExecutor == nil || renderer == nil || policy == nil || artifactExecutor == nil || skillExecutor == nil || questionExecutor == nil {
+// NewCatalogSnapshot 创建当前十能力唯一目录，要求所有消费者已显式装配。
+func NewCatalogSnapshot(readExecutor ReadExecutor, globExecutor GlobExecutor, grepExecutor GrepExecutor, preparer PatchPreparer, patchExecutor PatchExecutor, writePreparer WritePreparer, writeExecutor WriteExecutor, execPreparer ExecPreparer, execExecutor ExecExecutor, renderer ExecOutputRenderer, policy Policy, artifactExecutor ReadArtifactExecutor, skillExecutor SkillExecutor, questionExecutor QuestionExecutor, taskExecutor TaskExecutor) (CatalogSnapshot, error) {
+	if readExecutor == nil || globExecutor == nil || grepExecutor == nil || preparer == nil || patchExecutor == nil || writePreparer == nil || writeExecutor == nil || execPreparer == nil || execExecutor == nil || renderer == nil || policy == nil || artifactExecutor == nil || skillExecutor == nil || questionExecutor == nil || taskExecutor == nil {
 		return CatalogSnapshot{}, errors.New("all tool components are required")
 	}
 	facades, err := buildFileFacades()
@@ -350,6 +364,14 @@ func NewCatalogSnapshot(readExecutor ReadExecutor, globExecutor GlobExecutor, gr
 	for _, family := range []domain.ProviderFamily{domain.ProviderAnthropic, domain.ProviderOpenAI} {
 		name, id := facadeIdentity(family, CapabilityQuestion)
 		facades = append(facades, Facade{id: id, family: family, name: name, description: "Asks the user one to four questions with single or multiple choices and optional notes, then waits for explicit answers. The client adds Other. Put a recommended choice first with (Recommended) in its label. Ask before generating tool calls whose parameters depend on the answer. Answers never grant tool permissions. Requires an interactive host.", capability: CapabilityQuestion, wireKind: WireStructured, schema: questionSchema.Clone()})
+	}
+	tasks, err := buildTaskFacades()
+	if err != nil {
+		return CatalogSnapshot{}, err
+	}
+	facades = append(facades, tasks...)
+	for i := range facades {
+		facades[i].serverSchema = serverSchemaMode(facades[i].family, facades[i].wireKind, facades[i].capability)
 	}
 	return newCatalogSnapshot(facades)
 }
@@ -440,7 +462,7 @@ func buildGrepSchema() (codec.CanonicalJSON, error) {
 }
 
 func newCatalogSnapshot(facades []Facade) (CatalogSnapshot, error) {
-	if len(facades) != 18 {
+	if len(facades) != 20 {
 		return CatalogSnapshot{}, errors.New("tool catalog requires a complete Provider facade set")
 	}
 	owned := cloneFacades(facades)
@@ -468,7 +490,7 @@ func encodeFacades(facades []Facade) (codec.CanonicalJSON, error) {
 	canonicalFacades := make([]facadeCanonical, len(facades))
 	for index, facade := range facades {
 		canonicalFacades[index] = facadeCanonical{
-			ID: facade.id, Family: facade.family, Name: facade.name, Description: facade.description,
+			ID: facade.id, Family: facade.family, Name: facade.name, Description: facade.description, ServerSchemaMode: facade.serverSchema,
 			Capability: facade.capability, WireKind: facade.wireKind, InputSchema: json.RawMessage(facade.schema.Bytes()),
 		}
 		if !facade.format.zero() {
@@ -500,7 +522,7 @@ func (snapshot CatalogSnapshot) View(family domain.ProviderFamily) (FacadeView, 
 			selected = append(selected, facade.clone())
 		}
 	}
-	if len(selected) != 9 {
+	if len(selected) != 10 {
 		return FacadeView{}, errors.New("tool catalog has incomplete Provider facade set")
 	}
 	canonical, err := encodeFacades(selected)
@@ -527,12 +549,22 @@ func (snapshot CatalogSnapshot) DecodeReadyCall(family domain.ProviderFamily, na
 	if selected == nil {
 		return ReadyCall{}, errors.New("tool facade is not advertised")
 	}
-	return decodeFacadeInput(selected.capability, selected.wireKind, callID, arguments)
+	return decodeFacadeInput(family, selected.capability, selected.wireKind, callID, arguments)
 }
 
 // decodeFacadeInput 由目录解码及原生调用核验共用，不创建执行绑定。
-func decodeFacadeInput(capability CapabilityID, wireKind ProviderWireKind, callID ProviderCallID, arguments []byte) (ReadyCall, error) {
+func decodeFacadeInput(family domain.ProviderFamily, capability CapabilityID, wireKind ProviderWireKind, callID ProviderCallID, arguments []byte) (ReadyCall, error) {
 	switch capability {
+	case CapabilityTaskProgress:
+		profile, err := taskFacadeProfile(family)
+		if err != nil || wireKind != WireStructured {
+			return ReadyCall{}, errors.New("invalid task facade")
+		}
+		input, err := decodeTaskFacadeInput(family, profile, arguments)
+		if err != nil {
+			return ReadyCall{}, err
+		}
+		return NewTaskReadyCall(callID, input)
 	case CapabilityQuestion:
 		input, err := DecodeQuestionInput(arguments)
 		if err != nil {
@@ -600,7 +632,7 @@ func decodeFacadeInput(capability CapabilityID, wireKind ProviderWireKind, callI
 
 // Validate 重新计算 canonical bytes 与 fingerprint。
 func (snapshot CatalogSnapshot) Validate() error {
-	if len(snapshot.facades) != 18 || snapshot.fingerprint == "" {
+	if len(snapshot.facades) != 20 || snapshot.fingerprint == "" {
 		return errors.New("tool catalog snapshot is invalid")
 	}
 	rebuilt, err := newCatalogSnapshot(snapshot.facades)

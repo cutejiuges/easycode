@@ -55,8 +55,8 @@ func newTranscriptQueries(thread domain.ThreadID, reader tool.ArtifactRangeReade
 	return q
 }
 
-func (q *transcriptQueries) ToolResult(result tool.InvocationResult, evidence tool.InputResultEvidence) error {
-	invalid := tool.ValidateFrozenResult(result) != nil || evidence.ValidateResult(result) != nil
+func (q *transcriptQueries) ToolResult(sequence uint64, result tool.InvocationResult, evidence tool.InputResultEvidence) error {
+	invalid := sequence == 0 || tool.ValidateFrozenResult(result) != nil || evidence.ValidateResult(result) != nil
 	original, origin, admission := evidence.Selection().Original(), evidence.Selection().Origin(), evidence.Admission()
 	q.mu.Lock()
 	index, exists := q.indices[result.InvocationID()]
@@ -66,7 +66,7 @@ func (q *transcriptQueries) ToolResult(result tool.InvocationResult, evidence to
 	}
 	q.mu.Unlock()
 	selection, err := entry.InputSelection()
-	if invalid || !exists || err != nil || !selection.Equal(evidence.Selection()) || entry.HasResult || entry.Origin != origin || !entry.Invocation.Equal(original) || entry.Admission != admission || entry.Invocation.ProviderCallID() != result.ProviderCallID() || entry.Invocation.Capability() != result.Capability() || entry.Invocation.WireKind() != result.WireKind() {
+	if invalid || !exists || err != nil || sequence <= max(entry.Sequence, max(entry.DetailSequence, admission.Sequence())) || !selection.Equal(evidence.Selection()) || entry.HasResult || entry.Origin != origin || !entry.Invocation.Equal(original) || entry.Admission != admission || entry.Invocation.ProviderCallID() != result.ProviderCallID() || entry.Invocation.Capability() != result.Capability() || entry.Invocation.WireKind() != result.WireKind() {
 		q.mu.Lock()
 		q.invalid = true
 		q.mu.Unlock()
@@ -79,6 +79,7 @@ func (q *transcriptQueries) ToolResult(result tool.InvocationResult, evidence to
 		return errors.New("tool result history snapshot is stale")
 	}
 	q.entries[index].Result = result
+	q.entries[index].ResultSequence = sequence
 	q.entries[index].HasResult = true
 	return nil
 }

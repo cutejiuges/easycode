@@ -284,6 +284,12 @@ func (q *transcriptQueries) ReadTranscriptBody(ctx context.Context, query protoc
 				text = "Original request O\n" + string(encoded)
 			} else if question, ok := entry.Invocation.Question(); ok {
 				text = tool.QuestionInputText(question.Input())
+			} else if task, ok := entry.Invocation.Task(); ok {
+				var err error
+				text, err = tool.TaskInputText(task.Input())
+				if err != nil {
+					return protocol.TranscriptBodyPage{}, err
+				}
 			} else if invocation, ok := entry.Invocation.Exec(); ok {
 				text = invocation.Input().Command()
 			} else {
@@ -297,6 +303,13 @@ func (q *transcriptQueries) ReadTranscriptBody(ctx context.Context, query protoc
 			text = entry.Result.Preview().Text()
 			if question, ok := entry.Invocation.Question(); ok {
 				text = tool.QuestionResultText(question.Input(), entry.Result)
+			}
+			if entry.Result.Capability() == tool.CapabilityTaskProgress {
+				var err error
+				text, err = tool.TaskResultText(entry.Result)
+				if err != nil {
+					return protocol.TranscriptBodyPage{}, err
+				}
 			}
 			for _, h := range entry.Hooks {
 				if h.Result.Identity.Event != domain.HookPreToolUse {

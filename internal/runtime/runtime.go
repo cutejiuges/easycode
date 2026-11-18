@@ -47,6 +47,8 @@ type ContextPlanner interface {
 
 // Config 固定一个 Session-bound Runtime 的身份与 durable 边界。
 type Config struct {
+	TaskExecutor              tool.TaskExecutor
+	InitialTaskProgress       domain.TaskProgressState
 	QuestionExecutor          tool.QuestionExecutor
 	InteractiveQuestions      bool
 	GenerateQuestionRequestID func() (domain.QuestionRequestID, error)
@@ -89,6 +91,8 @@ type Config struct {
 
 // Runtime 持有一条会话级 Provider Conversation 和同一 thread journal。
 type Runtime struct {
+	taskExecutor         tool.TaskExecutor
+	tasks                taskProgressProjection
 	questionExecutor     tool.QuestionExecutor
 	interactiveQuestions bool
 	newQuestionRequestID func() (domain.QuestionRequestID, error)
@@ -194,7 +198,7 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 	if _, err := config.ToolCatalog.View(conversation.Family()); err != nil {
 		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "runtime tool catalog Provider view is invalid", err)
 	}
-	if config.QuestionExecutor == nil || config.SkillExecutor == nil || config.ReadArtifactExecutor == nil || config.ReadExecutor == nil || config.GlobExecutor == nil || config.GrepExecutor == nil {
+	if config.TaskExecutor == nil || config.QuestionExecutor == nil || config.SkillExecutor == nil || config.ReadArtifactExecutor == nil || config.ReadExecutor == nil || config.GlobExecutor == nil || config.GrepExecutor == nil {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "runtime read-only executors are not configured")
 	}
 	if config.PatchPreparer == nil || config.PatchExecutor == nil || config.WritePreparer == nil || config.WriteExecutor == nil || config.ExecPreparer == nil || config.ExecExecutor == nil || config.ToolPolicy == nil {
@@ -202,6 +206,9 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 	}
 	if config.GenerateQuestionRequestID == nil {
 		config.GenerateQuestionRequestID = domain.GenerateQuestionRequestID
+	}
+	if err := config.InitialTaskProgress.Validate(); err != nil {
+		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "runtime task progress is invalid", err)
 	}
 	if config.GenerateApprovalRequestID == nil {
 		config.GenerateApprovalRequestID = tool.GenerateApprovalRequestID
@@ -236,6 +243,8 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 		}
 	}
 	return &Runtime{
+		taskExecutor:           config.TaskExecutor,
+		tasks:                  taskProgressProjection{state: config.InitialTaskProgress.Clone()},
 		autoCompactionPolicy:   config.AutoCompactionPolicy,
 		compactionHistory:      config.CompactionHistory,
 		compactionDeadline:     context.WithTimeout,
@@ -1167,9 +1176,26 @@ func (runtime *Runtime) persistToolResult(ctx context.Context, turnID domain.Tur
 		runtime.poisoned.Store(true)
 		return fault.Wrap(fault.CodeStreamProtocol, "tool result is invalid", err)
 	}
-	if _, err := runtime.journal.AppendBatch(context.WithoutCancel(ctx), []session.RecordDraft{draft}); err != nil {
+	writeContext := context.WithoutCancel(ctx)
+	if result.Capability() == tool.CapabilityTaskProgress && result.Status() == tool.ResultSuccess {
+		writeContext = ctx
+	}
+	records, appendErr := runtime.journal.AppendBatch(writeContext, []session.RecordDraft{draft})
+	if appendErr != nil {
+		if result.Capability() == tool.CapabilityTaskProgress && result.Status() == tool.ResultSuccess && (errors.Is(appendErr, context.Canceled) || errors.Is(appendErr, context.DeadlineExceeded)) && !runtime.journal.Poisoned() {
+			call := runtime.toolCalls[result.InvocationID()]
+			if call == nil {
+				return fault.New(fault.CodeStreamProtocol, "task result has no source")
+			}
+			*target = tool.NewInvocationErrorResult(call.original, tool.ResultCancelled, "cancelled", "Task update cancelled before commit")
+			return runtime.persistToolResult(context.WithoutCancel(ctx), turnID, target)
+		}
 		runtime.poisoned.Store(true)
-		return fault.Wrap(fault.CodeSessionWrite, "persist tool result failed", err)
+		return fault.Wrap(fault.CodeSessionWrite, "persist tool result failed", appendErr)
+	}
+	if len(records) != 1 || records[0].Sequence == 0 {
+		runtime.poisoned.Store(true)
+		return fault.New(fault.CodeSessionWrite, "tool result has no unique durable sequence")
 	}
 	if runtime.artifactReferences != nil {
 		if err := runtime.artifactReferences.AuthorizeCommitted(result); err != nil {
@@ -1181,7 +1207,7 @@ func (runtime *Runtime) persistToolResult(ctx context.Context, turnID domain.Tur
 		runtime.poisoned.Store(true)
 		return err
 	}
-	return runtime.notifyToolResult(turnID, result)
+	return runtime.notifyToolResult(turnID, result, resultRecordSequence(records))
 }
 
 func (runtime *Runtime) commitToolOutputs(ctx context.Context, turnID domain.TurnID, results []tool.InvocationResult) error {

@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"easycode/internal/domain"
+	"easycode/internal/fault"
 	"easycode/internal/protocol"
 	"easycode/internal/tool"
 )
@@ -22,7 +23,11 @@ func (runtime *Runtime) emitToolStarted(turn domain.TurnID, invocation tool.Invo
 }
 
 // notifyToolResult 只在 result Sync 成功后发布；进度永远不能替代此终态。
-func (runtime *Runtime) notifyToolResult(turn domain.TurnID, result tool.InvocationResult) error {
+func (runtime *Runtime) notifyToolResult(turn domain.TurnID, result tool.InvocationResult, sequence uint64) error {
+	if sequence == 0 {
+		runtime.poisoned.Store(true)
+		return fault.New(fault.CodeSessionWrite, "tool result has no durable sequence")
+	}
 	if err := runtime.rememberToolResult(turn, result); err != nil {
 		runtime.poisoned.Store(true)
 		return err
@@ -32,8 +37,11 @@ func (runtime *Runtime) notifyToolResult(turn domain.TurnID, result tool.Invocat
 		runtime.poisoned.Store(true)
 		return err
 	}
+	if err := runtime.installTaskProgress(turn, result, sequence); err != nil {
+		return err
+	}
 	if runtime.toolHistory != nil {
-		if err := runtime.toolHistory.ToolResult(result, evidence); err != nil {
+		if err := runtime.toolHistory.ToolResult(sequence, result, evidence); err != nil {
 			runtime.poisoned.Store(true)
 			return err
 		}

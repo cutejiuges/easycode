@@ -82,6 +82,9 @@ func (b *ResultBudget) Allowance(capability CapabilityID) (int, error) {
 		return 0, errors.New("invalid result budget call")
 	}
 	cap := MaxModelPreviewBytes
+	if capability == CapabilityTaskProgress {
+		cap = MaxTaskPreviewBytes
+	}
 	if capability == CapabilitySkill || capability == CapabilityQuestion {
 		cap = 128 << 10
 	}
@@ -138,6 +141,9 @@ func (r InvocationResult) Budget() ResultBudgetMetadata { return r.budget }
 
 func initializeResultBudget(r InvocationResult) (InvocationResult, error) {
 	cap := MaxModelPreviewBytes
+	if r.capability == CapabilityTaskProgress {
+		cap = MaxTaskPreviewBytes
+	}
 	if r.capability == CapabilitySkill || r.capability == CapabilityQuestion {
 		cap = 128 << 10
 	}
