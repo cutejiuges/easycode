@@ -711,7 +711,7 @@ Catalog 关闭后，app 按所选 thread ID 重新取得 journal lease。`sessio
 
 ### 会话标题事实
 
-`/rename` 经 ChatSession 的 typed `rename_session` 交给 AgentLoop。owner 确认交互会话处于空闲并检查请求取消、关门和运行 context 信号后接纳，复用同一 lease 和 writer 追加 `session_title_updated`。单条 batch 的 `title` 为规范非空值，`turn_id` 和 `parent_thread_id` 缺省。完整行先验证成员和 batch 结构，Replay 只在活动操作已闭合的边界接受。相同标题为无写入成功。追加 Sync 确认后才更新界面，关闭仍等待最终 Sync/Close。
+`/rename` 经 ChatSession 的 typed `rename_session` 交给 AgentLoop。owner 确认交互会话处于空闲且没有会话交接许可，并检查请求取消、关门和运行 context 信号后接纳，复用同一 lease 和 writer 追加 `session_title_updated`。单条 batch 的 `title` 为规范非空值，`turn_id` 和 `parent_thread_id` 缺省。完整行先验证成员和 batch 结构，Replay 只在活动操作已闭合的边界接受。相同标题为无写入成功。追加 Sync 确认后才更新界面，关闭仍等待最终 Sync/Close。
 
 Catalog 从最后合法标题事实投影 `threads.title TEXT NOT NULL`，空字符串代表未命名。排序时间继续取最新已提交记录。Picker 在最多 200 条已加载元数据中独立匹配标题，预览从 journal 重新验证并使用独立展示字段。标题没有 Provider 原生 item、普通输入或缓存来源。在线恢复先收口本地补偿，再装配互动标题控制。验收见 [add-session-titles](../../openspec/changes/archive/2026-11-19-add-session-titles/verification.md)。
 
@@ -845,7 +845,7 @@ marketplace、安装/更新、插件脚本/Hook/MCP/Agent/commands 贡献、热�
 
 ### 13.2 当前视图与剩余目标
 
-当前提供用户/assistant 流式 Markdown、代码/表格/原文阅读、紧凑工具主线、前台 Shell 进度、完整 Patch/Write/Exec 批准、结构化问卷、Hook 浏览/信任、context/cache 面板、压缩边界、Ctrl+O 分页详情和启动 resume picker。视图保持无 I/O，按需查询由宿主处理并用身份/generation 拒绝迟到响应。
+当前提供用户/assistant 流式 Markdown、代码/表格/原文阅读、紧凑工具主线、前台 Shell 进度、完整 Patch/Write/Exec 批准、结构化问卷、Hook 浏览/信任、context/cache 面板、压缩边界、Ctrl+O 分页详情、会话命名及启动和聊天内恢复选择器。视图保持无 I/O，按需查询由宿主处理并用身份/generation 拒绝迟到响应。
 
 启动 thinking/display/summary 与普通输出配置已经实现，effort 由 thread owner 为每次操作捕获，`/context` 展示来源与当前捕获；其余运行中推理切换、后台任务、渐进 patch delta、MCP elicitation、Subagent/task 与 fork picker 尚未实现。测试中使用真实 PTY 验收界面，不表示模型命令工具支持 PTY。
 
@@ -866,7 +866,7 @@ Provider 当前 native kind 封闭为 `user_inputs`/`sample`/`tool_outputs`/`hoo
 input-only 崩溃尾部先在本地 durable 收口；工具安全点的 steering 尾部复用现有工具补偿路径，不重跑工具或自动联网。内存队列与 returned tray 不持久化，重启不猜测未保存输入。外部 headless JSONL 仍为 v1，自动 admission 增加 entry_id，input.status 不含正文；一次性 text/JSON 过滤新增内部输入事件。
 
 
-已实现多行、字素编辑、显式 decoded paste 与有界历史；原始终端缓冲/RuneError 的框架限制见 README。当前本地命令为 `/cache`、`/context`、`/compact [instructions]`、`/effort [level|auto|reset]`、`/skills`、`/hooks`、`/plugins`、`/tasks`、`/rename`，显式 Skill 使用 `/<name>` / `$name`。已支持命令和显式 Skill 的首词补全；尚无 `/help`、`/clear`、`/resume`、`/fork`、`/model`、`/provider`、`/permissions`、`/mcp`、`/agents`、`/cost`、`/doctor`；`easycode resume` 是独立 CLI 入口。
+已实现多行、字素编辑、显式 decoded paste 与有界历史；原始终端缓冲/RuneError 的框架限制见 README。当前本地命令为 `/cache`、`/context`、`/compact [instructions]`、`/effort [level|auto|reset]`、`/skills`、`/hooks`、`/plugins`、`/tasks`、`/rename [标题]`、`/resume [thread-id]`，显式 Skill 使用 `/<name>` / `$name`。已支持命令和显式 Skill 的首词补全；尚无 `/help`、`/clear`、`/fork`、`/model`、`/provider`、`/permissions`、`/mcp`、`/agents`、`/cost`、`/doctor`；`easycode resume` 是独立 CLI 入口。
 
 ## 14. 配置与密钥
 
@@ -1018,15 +1018,17 @@ Session record 写入复用 checksum envelope 的 Sonic 字节，追加固定 ch
 ADR 存放在 `docs/architecture/adr/`，模板见该目录的 `README.md`，并与产生该决策的 OpenSpec change 双向引用。实际开发中遇到的 provider 兼容、缓存失效、流式边界、工具幂等、终端渲染和 session 恢复问题，统一记录到 `docs/roadmap/pitfall-log.md`，并关联 OpenSpec change、修复提交、测试和 ADR。
 
 
-### 启动会话选择与离线投影
+### 交互式会话选择与离线投影
 
-`cmd/easycode/resume.go -> app.RunSessionPicker -> tui.StartupModel` 在一个 Bubble Tea Program 中组合选择器与既有 Chat Model。配置与 cwd 在启动时冻结，项目指令仅在正式恢复时加载。`assembleChatModel` 由普通聊天和选择器共用，工具、审批、上下文、缓存与 transcript 消费逻辑保持单一实现。
+启动选择器和普通聊天经 `runInteractiveProgram` 进入 `tui.StartupModel`，在同一个 Bubble Tea Program 中组合选择器与 Chat Model。配置与 cwd 在启动时冻结。项目指令在首次创建或正式恢复会话时加载。`assembleChatModel` 由普通聊天和选择器共用，工具、审批、上下文、缓存与 transcript 消费逻辑保持单一实现。
 
-`pickerOwner` 使用一个 worker、一个最新意图槽、单调请求身份和唯一 done。取消旧操作后等待清理再开始下一操作；成功资源先由宿主持有，经 UI 显式 Accept 后进入 Chat，关闭始终由宿主负责。锁内只转换状态，取消、结果发送和关闭均在锁外。`recoveryAttempt` 区分纯验证、可能修改 journal 和清理失败；后两类失败结束启动，不把已有合法事实当作未发生。
+`pickerOwner` 串行持有当前聊天、至多一个候选、最新意图和最终完成信号。聊天内恢复从 AgentLoop 取得空闲许可，覆盖附件准备、待处理队列、turn/compaction worker 和直接变更控制入口。目标持连续 lease 恢复，并准备控制实例和已验证的首屏。唯一接管点后先等源 writer 实际关闭并释放 lease，再显示目标和启用输入。子模型命令以激活代次隔离，旧消息和退出意图无法驱动新实例。
 
-列表与独立 `sessions list` 共用 `loadSessionCatalog` 生命周期；首次和刷新协调，成功后的切范围仅查询，最多 200 条，正文不入 Catalog。`previewSession` 在 descriptor-bound lease 下 Load/Replay、恢复顺序及压缩用量校验，关闭句柄后才发布预览；不用 resume、writer、Repair、artifact 或 Runtime。`provider.StoredHistoryReader` 是有实际消费者的单向离线接口，两家独立 reader 与正式恢复共享私有 native 校验和压缩来源计算，无连接、凭据或新增 capability。
+`chatEnvironment` 持有启动配置的指令和扩展快照，以及经过实际描述符身份校验的 workspace 与私有数据根。宿主在候选和活动实例结束之后释放这些根。授权、Hook 信任、effort 覆盖和短期缓存观测按每次激活初始化。`recoveryAttempt` 独立记录此前持久化结果与最终关闭结果。接管前，候选清理确认成功且源仍健康时可恢复源输入，已完成目标修复和维护继续保留。接管后，关闭超时仍由原 owner 等最终完成。
 
-选择理由、参考工程版本、预算和验证方案见 [OpenSpec 变更](../../openspec/changes/archive/2026-11-04-add-interactive-session-picker/design.md)。这是一块恢复入口的完整切片，不代表 P5 整体完成；Markdown 已由独立切片交付，被动推理阅读和命令/Skill 补全已由独立切片交付；fork picker 仍未实现。
+列表与独立 `sessions list` 共用 `loadSessionCatalog` 生命周期；首次和刷新协调，成功后的切范围仅查询，最多 200 条，正文不入 Catalog。列表查询可匹配已投影标题，`/resume` 的直接参数按完整 thread ID 定位。`previewSession` 在 descriptor-bound lease 下 Load/Replay、恢复顺序及压缩用量校验，关闭句柄后才发布预览；不用 resume、writer、Repair、artifact 或 Runtime。`provider.StoredHistoryReader` 是有实际消费者的单向离线接口，两家独立 reader 与正式恢复共享私有 native 校验和压缩来源计算，无连接、凭据或新增 capability。
+
+选择理由、参考工程版本、预算和验证方案见 [启动选择器设计](../../openspec/changes/archive/2026-11-04-add-interactive-session-picker/design.md)和[聊天内恢复设计](../../openspec/changes/archive/2026-11-19-add-in-chat-session-resume/design.md)。这是一块恢复入口的完整切片，不代表 P5 整体完成；Markdown 已由独立切片交付，被动推理阅读和命令/Skill 补全已由独立切片交付；fork picker 仍未实现。
 
 选择器接收以 owner 锁内对操作/父取消 done channel 的非阻塞检查为线性化点；此前已取消的结果不能进入 Chat。资源仍由同一 worker 持有到最终关闭，不在锁内调用 context 实现或执行关闭。预览的原文预算和安全展示预算分别裁剪，任何省略都保留可见标记；展示不会持有被截掉的大字符串 backing storage。短屏确认保留当前选项并允许滚动目录，短屏预览允许滚过状态头部。
 

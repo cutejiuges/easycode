@@ -44,6 +44,10 @@ func (handle *unixWorkspaceHandle) close() error {
 	return handle.root.Close()
 }
 
+func (handle *unixWorkspaceHandle) inspectRoot() (os.FileInfo, error) {
+	return handle.root.Stat()
+}
+
 func (handle *unixWorkspaceHandle) openDirectory(relative string, hooks workspaceHooks) (workspaceDirectory, error) {
 	if handle == nil || handle.root == nil {
 		return nil, errors.New("workspace is closed")

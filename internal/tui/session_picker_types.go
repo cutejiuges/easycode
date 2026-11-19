@@ -37,6 +37,7 @@ const (
 	PickerRefresh
 	PickerPreview
 	PickerResume
+	PickerOpen
 )
 
 // PickerRequest 将请求身份、范围和目标绑定在一起。
@@ -44,19 +45,32 @@ type PickerRequest struct {
 	ID        uint64
 	Operation PickerOperation
 	All       bool
+	Source    domain.ThreadID
 	ThreadID  domain.ThreadID
 }
 
+// PickerStage 区分查询结果、待接管候选和宿主完成后的交付。
+type PickerStage uint8
+
+const (
+	PickerCompleted PickerStage = iota
+	PickerPrepared
+	PickerActivated
+	PickerCancelled
+)
+
 // PickerResult 是宿主已完成操作的投影，不携带存储句柄。
 type PickerResult struct {
-	Request PickerRequest
-	Entries []SessionEntry
-	HasMore bool
-	Warning string
-	Preview SessionPreview
-	Chat    *Model
-	Error   string
-	Fatal   bool
+	Request           PickerRequest
+	Stage             PickerStage
+	Entries           []SessionEntry
+	HasMore           bool
+	Warning           string
+	Preview           SessionPreview
+	Chat              *Model
+	Error             string
+	Fatal             bool
+	DirectoryMismatch bool
 }
 
 // PickerHost 只向界面提供操作接收、结果和资源接收确认。
@@ -66,4 +80,10 @@ type PickerHost interface {
 	CancelPending()
 	Accept(uint64) bool
 	Stop()
+}
+
+// InteractivePickerHost 额外负责取消聊天内切换并确认候选与许可的清理。
+type InteractivePickerHost interface {
+	PickerHost
+	CancelResume(PickerRequest)
 }

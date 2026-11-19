@@ -12,16 +12,17 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Clean 在调用方持有线程 lease 且已完成 journal 校验后回收当前线程孤儿。
+// CleanWithReport 在调用方持有线程 lease 且已完成 journal 校验后回收当前线程孤儿。
 // 引用集合必须来自完整 replay；本函数不会读取其他线程的 journal 或删除其内容。
-func (s *Store) Clean(ctx context.Context, referenced []tool.ArtifactDescriptor) error {
+func (s *Store) CleanWithReport(ctx context.Context, referenced []tool.ArtifactDescriptor) (CleanupReport, error) {
+	var report CleanupReport
 	if ctx == nil || s == nil || s.root == nil {
-		return tool.ArtifactReadUnavailable
+		return report, tool.ArtifactReadUnavailable
 	}
 	keep := make(map[string]map[string]bool)
 	for _, d := range referenced {
 		if d.Validate() != nil || d.ThreadID() != s.threadID {
-			return tool.ArtifactReadUnauthorized
+			return report, tool.ArtifactReadUnauthorized
 		}
 		key := string(d.InvocationID())
 		if keep[key] == nil {
@@ -31,56 +32,60 @@ func (s *Store) Clean(ctx context.Context, referenced []tool.ArtifactDescriptor)
 	}
 	guard, err := lockAccounting(ctx, s.root)
 	if err != nil {
-		return err
+		return report, err
 	}
 	defer func() { _ = guard.Close() }()
 	entries, err := names(s.thread)
 	if err != nil {
-		return tool.ArtifactReadUnavailable
+		return report, tool.ArtifactReadUnavailable
 	}
 	for _, entry := range entries {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return report, ctx.Err()
 		}
 		if _, err = tool.ParseInvocationID(entry); err != nil {
-			return tool.ArtifactReadCorrupt
+			return report, tool.ArtifactReadCorrupt
 		}
 		dir, err := openChildDirectory(s.thread, entry, false)
 		if err != nil {
-			return tool.ArtifactReadUnavailable
+			return report, tool.ArtifactReadUnavailable
 		}
-		err = cleanInvocation(dir, keep[entry])
+		changed, err := cleanInvocation(dir, keep[entry])
+		report.Changed = report.Changed || changed
 		_ = dir.Close()
 		if err != nil {
-			return err
+			return report, err
 		}
 		if len(keep[entry]) == 0 {
 			if err = unix.Unlinkat(int(s.thread.Fd()), entry, unix.AT_REMOVEDIR); err != nil {
-				return tool.ArtifactReadUnavailable
+				return report, tool.ArtifactReadUnavailable
 			}
+			report.Changed = true
 		}
 	}
 	if err = s.thread.Sync(); err != nil {
-		return tool.ArtifactReadUnavailable
+		return report, tool.ArtifactReadUnavailable
 	}
-	return nil
+	report.Durable = report.Changed
+	return report, nil
 }
 
-func cleanInvocation(dir *os.File, keep map[string]bool) error {
+func cleanInvocation(dir *os.File, keep map[string]bool) (bool, error) {
 	entries, err := names(dir)
 	if err != nil {
-		return tool.ArtifactReadUnavailable
+		return false, tool.ArtifactReadUnavailable
 	}
 	var reservation *os.File
+	changed := false
 	for _, name := range entries {
 		if name != "reservation" {
 			if _, err = tool.ParseArtifactID(strings.TrimSuffix(name, ".stage")); err != nil {
-				return tool.ArtifactReadCorrupt
+				return false, tool.ArtifactReadCorrupt
 			}
 		}
 		f, err := openObject(dir, name, unix.O_RDONLY)
 		if err != nil {
-			return tool.ArtifactReadUnavailable
+			return false, tool.ArtifactReadUnavailable
 		}
 		if name == "reservation" {
 			reservation = f
@@ -91,7 +96,7 @@ func cleanInvocation(dir *os.File, keep map[string]bool) error {
 	}
 	if reservation != nil {
 		if err = unix.Flock(int(reservation.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
-			return errors.New("artifact capture is active")
+			return false, errors.New("artifact capture is active")
 		}
 	}
 	for _, name := range entries {
@@ -99,11 +104,12 @@ func cleanInvocation(dir *os.File, keep map[string]bool) error {
 			continue
 		}
 		if err = unix.Unlinkat(int(dir.Fd()), name, 0); err != nil {
-			return tool.ArtifactReadUnavailable
+			return changed, tool.ArtifactReadUnavailable
 		}
+		changed = true
 	}
 	if err = dir.Sync(); err != nil {
-		return tool.ArtifactReadUnavailable
+		return changed, tool.ArtifactReadUnavailable
 	}
-	return nil
+	return changed, nil
 }

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"sync"
@@ -32,10 +33,6 @@ func RunSessionPicker(ctx context.Context, options Options, all bool) Outcome {
 	if err = applicationConfig.ValidateProvider(); err != nil {
 		return runtimeFailure(err)
 	}
-	wire, err := providerWire(applicationConfig.Provider.Family)
-	if err != nil {
-		return runtimeFailure(err)
-	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return sessionListFailure("current working directory is unavailable")
@@ -48,9 +45,7 @@ func RunSessionPicker(ctx context.Context, options Options, all bool) Outcome {
 	if err != nil {
 		return runtimeFailure(err)
 	}
-	location := time.Now().Location()
-	_, _ = time.Now().In(location).Zone()
-	return runPickerProgram(ctx, options, tui.PickerConfig{Location: location, Family: applicationConfig.Provider.Family, Wire: wire, Model: applicationConfig.Provider.Model, CWD: cwd, All: all}, newPickerExecutor(applicationConfig, paths, cwd, options.PluginDirs))
+	return runInteractiveProgram(ctx, options, applicationConfig, paths, cwd, true, all)
 }
 
 type pickerOutput struct {
@@ -74,27 +69,71 @@ func (w *pickerOutput) Write(p []byte) (int, error) {
 	return n, err
 }
 func (w *pickerOutput) hasFailed() bool { w.mu.Lock(); defer w.mu.Unlock(); return w.failed }
-func runPickerProgram(ctx context.Context, options Options, configuration tui.PickerConfig, execute pickerExecutor) Outcome {
+func runInteractiveProgram(ctx context.Context, options Options, cfg config.Config, paths dataPaths, cwd string, startupPicker, all bool) Outcome {
+	wire, err := providerWire(cfg.Provider.Family)
+	if err != nil {
+		return runtimeFailure(err)
+	}
+	location := time.Now().Location()
+	_, _ = time.Now().In(location).Zone()
+	pickerConfig := tui.PickerConfig{Location: location, Family: cfg.Provider.Family, Wire: wire, Model: cfg.Provider.Model, CWD: cwd, All: all}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	owner := newPickerOwner(execute)
+	environment := &chatEnvironment{}
+	owner := newPickerOwner(newPickerExecutor(cfg, paths, cwd, options.PluginDirs, environment))
+	var model tui.StartupModel
+	if startupPicker {
+		model = tui.NewStartupModel(owner, pickerConfig)
+	} else {
+		lifetime, closeLifetime := context.WithCancel(runCtx)
+		resources, err := openChatResourcesWithHooks(runCtx, cfg, paths, options.ResumeThreadID, options.ContinueSession, cwd, chatResourceHooks{
+			interactiveApprovals: true, pluginDirs: options.PluginDirs, pluginCWD: cwd, environment: environment, lifetime: lifetime,
+		})
+		if err != nil {
+			closeLifetime()
+			return runtimeFailure(errors.Join(err, environment.close()))
+		}
+		resources.cancelLifetime = closeLifetime
+		chat, err := assembleChatModel(lifetime, resources)
+		if err != nil {
+			return runtimeFailure(errors.Join(err, closePickerResources(resources), environment.close()))
+		}
+		owner.initial = resources
+		model = tui.NewChatShell(owner, pickerConfig, chat)
+	}
+	outcome := runPickerTerminal(runCtx, cancel, options, owner, model)
+	if err := environment.close(); err != nil {
+		return runtimeFailure(err)
+	}
+	return outcome
+}
+
+func runPickerTerminal(runCtx context.Context, cancel context.CancelFunc, options Options, owner *pickerOwner, model tui.StartupModel) Outcome {
 	owner.Start(runCtx)
 	output := &pickerOutput{target: options.Output, cancel: cancel}
 	var terminalOutput io.Writer = output
 	if file, ok := options.Output.(term.File); ok {
 		terminalOutput = &pickerTerminalOutput{pickerOutput: output, file: file}
 	}
-	model := tui.NewStartupModel(owner, configuration)
-	final, err := tea.NewProgram(model, tea.WithContext(runCtx), tea.WithInput(options.Input), tea.WithOutput(terminalOutput), tea.WithoutSignalHandler()).Run()
+	programOptions := []tea.ProgramOption{tea.WithContext(runCtx), tea.WithOutput(terminalOutput), tea.WithoutSignalHandler()}
+	if options.Input != nil {
+		programOptions = append(programOptions, tea.WithInput(options.Input))
+	}
+	final, err := tea.NewProgram(model, programOptions...).Run()
+	cancelled := runCtx.Err() != nil
 	owner.Stop()
+	cancel()
 	cleanupErr := owner.Wait()
+	if errors.Is(cleanupErr, context.DeadlineExceeded) {
+		return sessionListFailure("session cleanup timed out")
+	}
 	if cleanupErr != nil {
 		return sessionListFailure("session picker cleanup or recovery failed")
 	}
 	if output.hasFailed() {
 		return runtimeFailure(fault.New(fault.CodeOutput, "write session picker output failed"))
 	}
-	if ctx.Err() != nil {
+	if cancelled {
 		return Outcome{Class: ExitCancelled, Report: ReportComplete}
 	}
 	if err != nil {

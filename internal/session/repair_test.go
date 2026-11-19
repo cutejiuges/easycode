@@ -50,7 +50,7 @@ func TestRepairAuthorityAndCancellation(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := loader.Repair(ctx, lease, loaded); !errors.Is(err, context.Canceled) {
+	if _, err := loader.Repair(ctx, lease, loaded); !errors.Is(err, context.Canceled) || IsJournalMutationUncertain(err) {
 		t.Fatalf("cancel: %v", err)
 	}
 	after, err := os.ReadFile(path)
@@ -125,8 +125,8 @@ func TestRepairFailurePoisonsLease(t *testing.T) {
 			} else {
 				op.syncErr = errors.New("injected")
 			}
-			if _, err := loader.repairWith(context.Background(), lease, loaded, op); err == nil {
-				t.Fatal("fault ignored")
+			if _, err := loader.repairWith(context.Background(), lease, loaded, op); !IsJournalMutationUncertain(err) {
+				t.Fatalf("admitted mutation error = %v", err)
 			}
 			if _, err := StartJournalWriter(lease, loaded.Identity, loaded.NextSequence); err == nil {
 				t.Fatal("poisoned lease transferred")

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -78,22 +79,6 @@ func TestHostShutdownRetainsRealLeaseUntilTerminalCleanup(t *testing.T) {
 	}
 }
 
-type finalWriterCloseGate struct {
-	managedJournal
-	entered, waiting, release chan struct{}
-}
-
-func (gate *finalWriterCloseGate) Close(ctx context.Context) error {
-	if ctx.Done() != nil {
-		close(gate.entered)
-		<-ctx.Done()
-		return context.DeadlineExceeded
-	}
-	close(gate.waiting)
-	<-gate.release
-	return gate.managedJournal.Close(ctx)
-}
-
 func TestTitleHostCloseWaitsForWriterAfterDeadline(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "sessions")
 	cfg := config.Config{Provider: config.Provider{Family: domain.ProviderOpenAI, BaseURL: "https://example.invalid", APIKey: secret.New("test-key"), Model: "gpt-test"}}
@@ -101,49 +86,101 @@ func TestTitleHostCloseWaitsForWriterAfterDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer resources.close(context.Background())
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := resources.session.StartInteractive(ctx); err != nil {
 		t.Fatal(err)
 	}
 	confirmTitle(t, ctx, resources.session, "title-before-first-turn", "Named before first turn")
-	gate := &finalWriterCloseGate{managedJournal: resources.writer, entered: make(chan struct{}), waiting: make(chan struct{}), release: make(chan struct{})}
-	resources.writer = gate
-	defer func() {
-		select {
-		case <-gate.release:
-		default:
-			close(gate.release)
-		}
-		_ = resources.close(context.Background())
-	}()
-	closeCtx, triggerDeadline := context.WithCancel(context.Background())
-	defer triggerDeadline()
+	final := &finalWriterWaitGate{
+		writer: resources.writer.(*session.JournalWriter),
+		first:  make(chan struct{}),
+		retry:  make(chan struct{}),
+		unlock: make(chan struct{}),
+	}
+	resources.writer = final
+	closeCtx := writerDeadlineContext{Context: context.Background(), expired: make(chan struct{})}
+	expire := sync.OnceFunc(func() { close(closeCtx.expired) })
+	release := sync.OnceFunc(func() { close(final.unlock) })
+	defer release()
+	defer expire()
 	done := make(chan error, 1)
 	go func() { done <- resources.close(closeCtx) }()
-	<-gate.entered
-	triggerDeadline()
 	select {
-	case <-gate.waiting:
+	case <-final.first:
 	case err := <-done:
-		t.Fatalf("host returned before final writer close: %v", err)
+		t.Fatalf("host skipped first structured close wait: %v", err)
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	expire()
+	select {
+	case <-final.retry:
+	case err := <-done:
+		t.Fatalf("host skipped final wait after deadline: %v", err)
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
 	probeHostLease(t, root, resources.identity.ThreadID, "busy")
 	select {
 	case <-resources.closeDone:
-		t.Fatal("released dependencies before final writer close")
+		t.Fatal("host published close before final wait")
 	default:
 	}
-	close(gate.release)
+
+	release()
 	if err := <-done; !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("lost writer deadline: %v", err)
+		t.Fatalf("close did not retain the first deadline: %v", err)
 	}
 	probeHostLease(t, root, resources.identity.ThreadID, "free")
+	if err := resources.close(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("repeat close lost the first deadline: %v", err)
+	}
 	_, plan := loadToolLoopPlan(t, root, resources.identity.ThreadID)
 	if plan.Title != "Named before first turn" || len(plan.Turns) != 0 {
 		t.Fatal("closing writer lost the title-only session")
+	}
+}
+
+// finalWriterWaitGate 将宿主首次等待和超时后的实际关闭分开，继续持有真实 writer。
+type finalWriterWaitGate struct {
+	writer               *session.JournalWriter
+	first, retry, unlock chan struct{}
+}
+
+func (gate *finalWriterWaitGate) AppendBatch(ctx context.Context, drafts []session.RecordDraft) ([]session.Record, error) {
+	return gate.writer.AppendBatch(ctx, drafts)
+}
+
+func (gate *finalWriterWaitGate) Poisoned() bool { return gate.writer.Poisoned() }
+
+func (gate *finalWriterWaitGate) Close(ctx context.Context) error { return gate.writer.Close(ctx) }
+
+func (gate *finalWriterWaitGate) CloseResult(ctx context.Context) (session.JournalCloseResult, error) {
+	if ctx.Done() != nil {
+		close(gate.first)
+		<-ctx.Done()
+		return session.JournalCloseResult{}, ctx.Err()
+	}
+	close(gate.retry)
+	<-gate.unlock
+	return gate.writer.CloseResult(ctx)
+}
+
+type writerDeadlineContext struct {
+	context.Context
+	expired chan struct{}
+}
+
+func (ctx writerDeadlineContext) Done() <-chan struct{} { return ctx.expired }
+
+func (ctx writerDeadlineContext) Err() error {
+	select {
+	case <-ctx.expired:
+		return context.DeadlineExceeded
+	default:
+		return nil
 	}
 }
 

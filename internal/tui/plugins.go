@@ -100,7 +100,7 @@ func (m Model) handlePluginsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.plugins.skill >= len(entries) || (plugin.Status != domain.PluginAvailable && plugin.Status != domain.PluginPartial) || !explicitSkillEntry(entries[m.plugins.skill]) {
 			return m, nil
 		}
-		text := skillInvocationText(entries[m.plugins.skill].Name)
+		text := m.skillInvocationText(entries[m.plugins.skill].Name)
 		if err := m.composer.replace(0, len(m.composer.text), text); err != nil {
 			m.errorSummary = "invalid_input: " + err.Error()
 			return m, nil

@@ -161,18 +161,44 @@ func TestJournalWriterPoisonsAfterShortWrite(t *testing.T) {
 
 func TestJournalWriterPoisonsAfterSyncFailure(t *testing.T) {
 	t.Parallel()
-	file := &memoryJournalFile{syncErr: errors.New("fixture sync failure")}
-	writer := mustTestWriter(t, file)
-	_, err := writer.AppendBatch(context.Background(), []RecordDraft{
-		mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}),
-	})
-	if err == nil || !strings.Contains(err.Error(), "sync session batch") {
-		t.Fatalf("AppendBatch() error = %v", err)
+	initialSync := errors.New("fixture append sync failure")
+	finalSync := errors.New("fixture final sync failure")
+	finalClose := errors.New("fixture descriptor close failure")
+	for _, tc := range []struct {
+		name              string
+		syncErr, closeErr error
+	}{
+		{name: "successful final cleanup"},
+		{name: "failed final sync", syncErr: finalSync},
+		{name: "failed descriptor close", closeErr: finalClose},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			file := &memoryJournalFile{syncErr: initialSync}
+			writer := mustTestWriter(t, file)
+			_, err := writer.AppendBatch(context.Background(), []RecordDraft{
+				mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}),
+			})
+			if !errors.Is(err, initialSync) || !IsJournalMutationUncertain(err) || !writer.Poisoned() {
+				t.Fatalf("AppendBatch() error = %v, poisoned = %v", err, writer.Poisoned())
+			}
+			file.mu.Lock()
+			file.syncErr, file.closeErr = tc.syncErr, tc.closeErr
+			file.mu.Unlock()
+			result, err := writer.CloseResult(context.Background())
+			if err != nil || !result.Poisoned || result.SyncErr != tc.syncErr || result.CloseErr != tc.closeErr {
+				t.Fatalf("CloseResult() = %+v, %v", result, err)
+			}
+			if err := result.CleanupError(); (err == nil) != (tc.syncErr == nil && tc.closeErr == nil) {
+				t.Fatalf("CleanupError() = %v", err)
+			}
+			if err := writer.Close(context.Background()); err == nil || !strings.Contains(err.Error(), "poisoned") {
+				t.Fatalf("Close() error = %v", err)
+			}
+			if file.syncCount != 2 || file.closeCount != 1 {
+				t.Fatalf("sync/close count = %d/%d", file.syncCount, file.closeCount)
+			}
+		})
 	}
-	if !writer.Poisoned() {
-		t.Fatal("writer was not poisoned")
-	}
-	_ = writer.Close(context.Background())
 }
 
 func TestStartJournalWriterTransfersLeaseOnlyAfterValidation(t *testing.T) {
@@ -305,6 +331,82 @@ func TestJournalWriterCancelledCloseStillDrainsAndCloses(t *testing.T) {
 		t.Fatalf("close count = %d", closeCount)
 	}
 }
+
+func TestJournalWriterDeadlineDuringFinalSyncRetainsLease(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "sessions")
+	owner, err := OpenOrCreateRepository(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = owner.Close() })
+	competitor, err := OpenOrCreateRepository(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = competitor.Close() })
+	lease, err := owner.Create(context.Background(), testThreadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := lease.transfer()
+	if err != nil {
+		_ = lease.Close()
+		t.Fatal(err)
+	}
+	blocked := &finalSyncGateFile{file: file, entered: make(chan struct{}), release: make(chan struct{})}
+	writer := mustTestWriter(t, blocked)
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(blocked.release) }) }
+	t.Cleanup(func() {
+		release()
+		_ = writer.Close(context.Background())
+	})
+	final := make(chan error, 1)
+	go func() { final <- writer.Close(context.Background()) }()
+	<-blocked.entered
+
+	expired, cancel := context.WithDeadline(context.Background(), time.Unix(0, 0))
+	defer cancel()
+	if _, err := writer.CloseResult(expired); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("CloseResult() before actual Sync = %v", err)
+	}
+	if competingLease, err := competitor.Open(context.Background(), testThreadID); !IsJournalBusy(err) {
+		_ = competingLease.Close()
+		t.Fatalf("lease contention during final Sync = %v", err)
+	}
+	select {
+	case err := <-final:
+		t.Fatalf("final writer close returned during Sync: %v", err)
+	default:
+	}
+
+	release()
+	if err := <-final; err != nil {
+		t.Fatal(err)
+	}
+	acquired, err := competitor.Open(context.Background(), testThreadID)
+	if err != nil {
+		t.Fatalf("open after final close: %v", err)
+	}
+	if err := acquired.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type finalSyncGateFile struct {
+	file             *os.File
+	entered, release chan struct{}
+}
+
+func (file *finalSyncGateFile) Write(value []byte) (int, error) { return file.file.Write(value) }
+
+func (file *finalSyncGateFile) Sync() error {
+	close(file.entered)
+	<-file.release
+	return file.file.Sync()
+}
+
+func (file *finalSyncGateFile) Close() error { return file.file.Close() }
 
 func mustTestWriter(t *testing.T, file journalFile) *JournalWriter {
 	t.Helper()

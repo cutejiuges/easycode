@@ -11,6 +11,10 @@ func (unsupportedWorkspaceDirectory) interrupt() error { return errWorkspaceUnsu
 
 type unsupportedWorkspaceChild struct{}
 
+func (unsupportedWorkspaceHandle) inspectRoot() (os.FileInfo, error) {
+	return nil, errWorkspaceUnsupported
+}
+
 func (unsupportedWorkspaceHandle) openPatchFile(string, workspaceHooks) (patchFile, error) {
 	return nil, errWorkspaceUnsupported
 }

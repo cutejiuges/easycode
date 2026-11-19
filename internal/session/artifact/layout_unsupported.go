@@ -19,6 +19,9 @@ func OpenLayout(context.Context, string, string, []string, []string) (*Layout, e
 // Check 在不支持的平台上失败关闭。
 func (*Layout) Check(context.Context) error { return errors.New("unsafe_storage_layout") }
 
+// CheckRoots 在不支持的平台上失败关闭。
+func (*Layout) CheckRoots(os.FileInfo, os.FileInfo) error { return errors.New("unsafe_storage_layout") }
+
 func (*Layout) CheckSource(context.Context, *os.File) error {
 	return errors.New("unsafe_storage_layout")
 }

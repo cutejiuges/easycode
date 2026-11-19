@@ -37,6 +37,9 @@ func (d *pickerDiscovery) list(ctx context.Context, request tui.PickerRequest) (
 		d.report = snapshot.report
 	}
 	for _, e := range snapshot.rows.Entries {
+		if request.Source == e.ThreadID {
+			continue
+		}
 		result.Entries = append(result.Entries, tui.SessionEntry{
 			ThreadID: e.ThreadID, UpdatedAt: e.UpdatedAt, Title: e.Title,
 			Family: e.ProviderFamily, Wire: e.ProviderWire, Model: e.Model, CWD: e.CreationCWD,

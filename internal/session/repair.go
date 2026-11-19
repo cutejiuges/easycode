@@ -83,7 +83,7 @@ func (loader *Loader) repairWith(ctx context.Context, lease *JournalLease, loade
 	}
 	lease.mu.Unlock()
 	if err != nil {
-		return RepairReport{}, fmt.Errorf("repair session journal failed: %w", err)
+		return RepairReport{}, &journalMutationUncertain{cause: fmt.Errorf("repair session journal failed: %w", err)}
 	}
 	return RepairReport{Repaired: true, Kind: ticket.kind, TruncatedFrom: ticket.offset, RemovedBytes: ticket.size - ticket.offset}, nil
 }

@@ -140,9 +140,9 @@ func (m *Model) closeFileQueries() {
 }
 func (m *Model) suppressPastedFiles() {
 	s := &m.files
-	target, ok := domain.FindFileMentionTarget(m.composer.text, m.composer.cursor)
+	target, ok := m.findFileMentionTarget(m.composer.cursor)
 	if !ok && s.valid {
-		target, ok = domain.FindFileMentionTarget(m.composer.text, s.target.Start+1)
+		target, ok = m.findFileMentionTarget(s.target.Start + 1)
 	}
 	if ok {
 		s.target, s.valid = target, true
@@ -151,6 +151,15 @@ func (m *Model) suppressPastedFiles() {
 		m.cancelFileSession()
 		s.valid = false
 	}
+}
+
+func (m Model) findFileMentionTarget(cursor int) (domain.FileMentionTarget, bool) {
+	if m.resumeEnabled {
+		if _, local := resumeArgument(m.composer.text); local {
+			return domain.FileMentionTarget{}, false
+		}
+	}
+	return domain.FindFileMentionTarget(m.composer.text, cursor)
 }
 
 func fileTargetToken(text string, target domain.FileMentionTarget) string {
@@ -173,7 +182,7 @@ func (m *Model) prepareFiles() {
 	}
 	target, valid := s.target, s.valid
 	if !s.parsed || s.revision != m.composer.revision || s.cursor != m.composer.cursor {
-		target, valid = domain.FindFileMentionTarget(m.composer.text, m.composer.cursor)
+		target, valid = m.findFileMentionTarget(m.composer.cursor)
 		if valid {
 			points := m.composer.layout.points
 			i := sort.Search(len(points), func(i int) bool { return int(points[i].offset) >= target.Start })
@@ -299,7 +308,7 @@ func (m *Model) handleFileKey(key tea.KeyMsg) bool {
 		}
 		m.clearEffortFeedback()
 		m.cancelFileSession()
-		if target, ok := domain.FindFileMentionTarget(m.composer.text, s.target.Start+1); ok {
+		if target, ok := m.findFileMentionTarget(s.target.Start + 1); ok {
 			s.target = target
 			m.suppressFiles(completionAccepted)
 		}

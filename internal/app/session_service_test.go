@@ -1,8 +1,10 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -143,6 +145,114 @@ func TestSessionServiceOwnershipFailuresReleaseTheCurrentOwner(t *testing.T) {
 		}
 		assertSessionLeaseAvailable(t, service, identity.ThreadID)
 	})
+}
+
+func TestSessionServiceInChatRevalidatesBeforeRepair(t *testing.T) {
+	service, identity := createClosedTestSession(t, domain.ProviderOpenAI, "responses", "gpt-test")
+	defer service.close()
+	path, durable, torn := installTornSessionTail(t, service, identity)
+	_, plan := loadAppPlan(t, service, identity.ThreadID)
+	factory := &fakeProviderFactory{family: domain.ProviderOpenAI}
+
+	service.expectedResumeCWD = t.TempDir()
+	if _, err := service.resume(context.Background(), factory, "responses", "gpt-test", identity.ThreadID); !errors.Is(err, errResumeDirectory) {
+		t.Fatalf("wrong directory = %v", err)
+	}
+	assertSessionLeaseAvailable(t, service, identity.ThreadID)
+	assertRecoveryFileBytes(t, path, torn)
+
+	service.expectedResumeCWD = plan.SessionMetadata.CreationCWD
+	if _, err := service.resume(context.Background(), factory, "responses", "other-model", identity.ThreadID); !errors.Is(err, &fault.Error{Code: fault.CodeSessionIncompatible}) || errors.Is(err, errResumeDirectory) {
+		t.Fatalf("wrong model = %v", err)
+	}
+	assertSessionLeaseAvailable(t, service, identity.ThreadID)
+	assertRecoveryFileBytes(t, path, torn)
+	if factory.restoreCalls.Load() != 0 || factory.networkCalls.Load() != 0 {
+		t.Fatal("incompatible recovery ran a Provider")
+	}
+
+	// 启动恢复允许使用原有跨目录入口。
+	service.expectedResumeCWD = ""
+	resumed, err := service.resume(context.Background(), factory, "responses", "gpt-test", identity.ThreadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resumed.repair.Repaired {
+		t.Fatal("startup recovery did not repair the validated tail")
+	}
+	if err := resumed.writer.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertRecoveryFileBytes(t, path, durable)
+}
+
+func TestSessionServiceRecoveryRecordsOnlyConfirmedRepair(t *testing.T) {
+	service, identity := createClosedTestSession(t, domain.ProviderOpenAI, "responses", "gpt-test")
+	defer service.close()
+	path, durable, torn := installTornSessionTail(t, service, identity)
+	_, plan := loadAppPlan(t, service, identity.ThreadID)
+	service.expectedResumeCWD = plan.SessionMetadata.CreationCWD
+	factory := &fakeProviderFactory{family: domain.ProviderOpenAI}
+	replay, start := service.plan, service.start
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	service.recovery = &recoveryAttempt{}
+	service.plan = func(loaded session.LoadResult) (session.ReplayPlan, error) {
+		result, err := replay(loaded)
+		cancel()
+		return result, err
+	}
+	if _, err := service.resume(ctx, factory, "responses", "gpt-test", identity.ThreadID); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled before repair = %v", err)
+	}
+	if service.recovery.committed || service.recovery.uncertain || service.recovery.cleanupErr != nil {
+		t.Fatalf("cancelled repair result = %+v", service.recovery)
+	}
+	assertRecoveryFileBytes(t, path, torn)
+	assertSessionLeaseAvailable(t, service, identity.ThreadID)
+
+	repairedCtx, cancelAfterRepair := context.WithCancel(context.Background())
+	defer cancelAfterRepair()
+	service.recovery = &recoveryAttempt{}
+	service.plan = replay
+	service.start = func(lease *session.JournalLease, identity session.Identity, seq uint64) (journalStartResult, error) {
+		result, err := start(lease, identity, seq)
+		cancelAfterRepair()
+		return result, err
+	}
+	if _, err := service.resume(repairedCtx, factory, "responses", "gpt-test", identity.ThreadID); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled after repair = %v", err)
+	}
+	if !service.recovery.committed || service.recovery.uncertain || service.recovery.cleanupErr != nil {
+		t.Fatalf("completed repair result = %+v", service.recovery)
+	}
+	assertRecoveryFileBytes(t, path, durable)
+	assertSessionLeaseAvailable(t, service, identity.ThreadID)
+}
+
+func installTornSessionTail(t *testing.T, service *sessionService, identity session.Identity) (path string, durable, torn []byte) {
+	t.Helper()
+	path, err := service.repository.JournalPath(identity.ThreadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	durable, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	torn = append(bytes.Clone(durable), `{"incomplete":`...)
+	if err := os.WriteFile(path, torn, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path, durable, torn
+}
+
+func assertRecoveryFileBytes(t *testing.T, path string, want []byte) {
+	t.Helper()
+	if result, err := os.ReadFile(path); err != nil || !bytes.Equal(result, want) {
+		t.Fatalf("%s bytes = %d, want %d, read error = %v", path, len(result), len(want), err)
+	}
 }
 
 func TestSessionServiceInterruptedCompensationFailureDoesNotBecomeUsable(t *testing.T) {

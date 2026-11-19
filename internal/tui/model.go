@@ -67,6 +67,12 @@ const (
 
 // Model 保存纯 UI 投影状态，不依赖 Provider 或 transport。
 type Model struct {
+	resumeEnabled             bool
+	resumeIntent              *chatResumeIntent
+	resumed                   bool
+	resumeDirectoryNotice     string
+	resumeDirectoryScroll     int
+	quitRequested             bool
 	effortOperationGeneration uint64
 	queryOperationGeneration  uint64
 	effortGeneration          uint64
@@ -150,7 +156,7 @@ func NewModel(
 	version string,
 	session ChatSession,
 ) Model {
-	catalog, _ := newCompletionCatalog(nil)
+	catalog, _ := newCompletionCatalog(nil, false)
 	model := Model{
 		completion: completionState{catalog: catalog},
 		markdown:   newMarkdownViewCache(),
@@ -355,6 +361,10 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return model, nil
 	}
+	if model.resumeDirectoryNotice != "" {
+		model.handleResumeDirectoryKey(key)
+		return model, nil
+	}
 	if key.Type == tea.KeyCtrlC {
 		model.completion.suppress(completionCancelled)
 		model.suppressFiles(completionCancelled)
@@ -472,6 +482,11 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		model.cancelling = true
 		return model, interruptSession(model.session)
 	}
+	if model.resumeEnabled && key.Type == tea.KeyEnter && !key.Alt && !key.Paste && !model.composer.hasLineContinuation() {
+		if argument, local := resumeArgument(model.composer.text); local {
+			return model.submitResume(argument)
+		}
+	}
 	if model.cancelling {
 		return model, nil
 	}
@@ -530,6 +545,9 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 				updated.restoreComposer(originalDraft)
 				updated.suppressSessionTitleCompletion()
 			}
+			if updated.resumeIntent != nil {
+				updated.resumeIntent.draft = originalDraft
+			}
 			return updated, command
 		}
 		return model, nil
@@ -581,6 +599,11 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (model Model) submitComposer() (tea.Model, tea.Cmd) {
 	if arguments, local := sessionTitleArguments(model.composer.text); local {
 		return model.beginSessionTitle(arguments)
+	}
+	if model.resumeEnabled {
+		if argument, local := resumeArgument(model.composer.text); local {
+			return model.submitResume(argument)
+		}
 	}
 	model.clearEffortFeedback()
 	if command, local, err := parseEffortCommand(model.composer.text); local {
@@ -1005,6 +1028,9 @@ func (model Model) View() string {
 	if model.title.closed {
 		return model.renderSessionTitleClosed()
 	}
+	if model.resumeDirectoryNotice != "" {
+		return pickerWrapped(model.resumeDirectoryText(), model.widthOrDefault(), model.heightOrDefault(), model.resumeDirectoryScroll)
+	}
 	if model.question != nil {
 		return model.renderQuestion()
 	}
@@ -1042,21 +1068,23 @@ func (model Model) View() string {
 	}
 	if model.composer.height <= 5 {
 		status := model.title.status()
-		if status == "" {
-			status = model.title.line()
-			if model.errorSummary != "" {
-				if _, local := sessionTitleArguments(model.composer.text); local {
-					status = "Error: " + model.errorSummary
-				}
+		if status == "" && model.errorSummary != "" {
+			if _, local := sessionTitleArguments(model.composer.text); local {
+				status = "Error: " + model.errorSummary
 			}
 		}
 		if status != "" {
 			return model.fitChatView(status, model.composer.inputView(model.chatComposerEditable()))
 		}
-		return model.composer.view(model.chatComposerEditable())
+		footer := model.composer.view(model.chatComposerEditable())
+		if prefix := model.resumeStatus() + model.title.line(); prefix != "" {
+			return model.fitChatView(prefix, footer)
+		}
+		return footer
 	}
 	var view strings.Builder
 	_, _ = fmt.Fprintf(&view, "EasyCode %s\n", model.version)
+	view.WriteString(model.resumeStatus())
 	if line := model.title.line(); line != "" {
 		view.WriteString(ansi.Truncate(line, model.widthOrDefault(), "…") + "\n")
 	}
