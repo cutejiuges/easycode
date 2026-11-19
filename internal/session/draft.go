@@ -279,7 +279,7 @@ func validateDraftPlacement(draft RecordDraft) error {
 		if draft.turnID != "" || draft.parentThreadID != "" {
 			return fmt.Errorf("compaction draft placement is invalid")
 		}
-	case EventSessionMeta:
+	case EventSessionMeta, EventSessionTitleUpdated:
 		if draft.parentThreadID != "" || draft.turnID != "" {
 			return fmt.Errorf("session metadata draft placement is invalid")
 		}
@@ -343,6 +343,9 @@ func validateDraftPayload(draft RecordDraft) error {
 		return err
 	case EventSessionMeta:
 		_, err := DecodeSessionMetaPayload(record)
+		return err
+	case EventSessionTitleUpdated:
+		_, err := DecodeSessionTitleUpdated(record)
 		return err
 	case EventThreadMeta:
 		payload, err := DecodeThreadMetaPayload(record)

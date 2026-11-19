@@ -36,6 +36,10 @@ Session Catalog SHALL 将 SQLite 仅作为 JSONL journal 的可重建只读投�
 
 Catalog SHALL 支持按规范化 `creation_cwd`、Provider family、wire 和 model 精确筛选 root thread。最近排序 MUST 使用 `updated_at` 降序，并以 canonical `thread_id` 降序打破时间相同的平局，使重复查询、重建和不同进程得到相同结果。
 
+当前标题 SHALL 来自该 root journal 已验证的最后一条标题事实。没有标题事实的会话 SHALL 以未命名状态投影。标题事实成为 journal 最后一条 committed record 时，Catalog SHALL 以它的时间、seq 和 checksum 更新对应字段，继续用同一排序规则参与列表及最近兼容会话查询。重命名成功 SHALL 只以 journal 的持久提交为依据。Catalog 在后续协调取得 lease 并完成验证时更新标题。busy journal 的已索引标题 SHALL 与其他字段一同保留最后一次已验证的值。
+
+一次协调发布的是各 journal 在各自 lease 下验证的快照。某个 journal 在释放 lease 后、SQLite 发布前更新时，该轮查询仍使用本次已验证值。列表与最近兼容会话查询 SHALL 使用该快照的排序；下一次在新事实提交后获取该 journal lease 的成功协调 SHALL 看到更新。预览与实际恢复继续按 thread ID 独立校验 journal。
+
 #### Scenario: Order by durable record time
 
 - **WHEN** 两个兼容 thread 的文件 mtime 与最后 committed record timestamp 顺序不同
@@ -50,6 +54,23 @@ Catalog SHALL 支持按规范化 `creation_cwd`、Provider family、wire 和 mod
 
 - **WHEN** 同一 `creation_cwd` 下存在不同 Provider family、wire 或 model 的 root Session
 - **THEN** 精确筛选只返回四个条件全部匹配的候选
+
+#### Scenario: Reconcile the latest durable title and record time
+
+- **WHEN** 已索引会话先后完成两次重命名，第二条标题事实是最新的 committed record
+- **THEN** 取得 journal lease 并成功协调后，Catalog 投影第二次标题及该记录的时间、seq 和 checksum
+- **THEN** 列表和精确兼容查询仍按该更新时间及 canonical thread ID 排序
+
+#### Scenario: Preserve validated title while the journal is busy
+
+- **WHEN** 另一个进程持有已索引 journal 的 writer lease 并已持久化新标题，而协调无法取得该 lease
+- **THEN** 查询可返回上次已验证的标题及该行原有的时间、seq 和 checksum
+- **THEN** 后续能取得租约并验证最新 journal 的协调才发布新标题
+
+#### Scenario: Publish a validated observation after the journal changes
+
+- **WHEN** 一次协调读完目标并释放 lease，另一进程在该次 SQLite 发布前完成改名
+- **THEN** 已观察到的标题和排序证据可作为本次快照发布，下一次验证目标 journal 的协调取得新标题
 
 ### Requirement: Journal discovery preserves descriptor-bound safety and ownership
 
@@ -104,7 +125,7 @@ Catalog 的纯内存配置与数据库资源获取 SHALL 分离；打开、创�
 
 默认 Catalog SHALL 位于 `~/.easycode/state.sqlite`，Session 根和 Catalog 路径 MUST 能在测试与宿主装配时分别注入。支持权限位的平台上，父目录 MUST 为当前用户私有且数据库及其 sidecar MUST 使用用户私有权限；打开数据库不得跟随 symlink，文件类型与权限 MUST 根据 SQLite 实际使用的对象校验，单独 `Lstat` 后再按路径打开不满足该契约。无法提供等价保证的平台 SHALL fail closed。
 
-Catalog schema SHALL 具有显式版本。当前程序遇到缺失、损坏或不兼容的派生 schema 时 SHALL 从 JSONL 重建，而不是把部分旧表当作有效结果；任何对外错误只包含稳定英文 code 和安全英文 message。
+当前 Catalog schema SHALL 用 `title TEXT NOT NULL` 保存已验证标题投影，空字符串表示未命名。派生 schema 缺失、损坏或实际结构不匹配时 SHALL 从 JSONL 重建，包括同名标题列的声明类型或可空性错误。只有完整当前结构的投影可以参与查询。对外错误 SHALL 只包含稳定英文 code 和安全英文 message。
 
 #### Scenario: Pure construction has no external effect
 
@@ -126,11 +147,17 @@ Catalog schema SHALL 具有显式版本。当前程序遇到缺失、损坏或�
 - **WHEN** 当前表与索引结构完整合法，但 user_version 为任意值
 - **THEN** 打开 Catalog 保留已验证投影行，不因该值重建，也不执行历史迁移
 
+#### Scenario: Rebuild a derived table that lacks the title field
+
+- **WHEN** 现有派生表缺少当前标题字段或同名字段不符合要求，且 Session 根存在合法的有名及未命名 journal
+- **THEN** 协调从已验证 journal 重建当前结构并恢复标题投影及原有兼容性字段
+- **THEN** 各 journal 的 bytes、seq 和 checksum 保持不变
+
 ### Requirement: Catalog supports bounded root session discovery independent of provider configuration
 
 Catalog SHALL 提供当前规范化创建目录或全部目录的 root 会话列表查询，不要求 Provider family、wire、model selector；同目录下不同 Provider/model 的会话 SHALL 均参与候选集。列表 MUST 按 committed `updated_at` 降序、canonical `thread_id` 降序排序，先筛选再限制数量；数量范围为 1–200，非法范围或非法目录条件 MUST 在查询前拒绝。查询 SHALL 返回至多指定数量的条目及 `has_more`，仅当当前筛选条件下存在额外可查询条目时为 true。
 
-列表 MUST 使用现有已验证元数据，不新增 prompt、response、标题、摘要或 opaque payload 索引；当前目录匹配 MUST 使用规范化目录精确相等，不得隐式匹配子目录、同名目录或其他 worktree。现有最近兼容会话查询 SHALL 保留四字段精确筛选语义。
+列表 MUST 只使用已验证的会话元数据，包括已命名条目的显式标题。标题 SHALL 作为返回条目的展示字段。Catalog MUST NOT 为 prompt、response、标题、摘要或 opaque payload 新建搜索索引；当前目录匹配 MUST 使用规范化目录精确相等，不得隐式匹配子目录、同名目录或其他 worktree。现有最近兼容会话查询 SHALL 保留四字段精确筛选语义。
 
 #### Scenario: Discover different provider sessions in one directory
 

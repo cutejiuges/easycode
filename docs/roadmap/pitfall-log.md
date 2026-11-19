@@ -2,6 +2,13 @@
 
 > 本文按事件发生时记录事实，不作为当前功能清单。版本数字、工具数量、平台验收和当时未实现项需结合后续条目与[当前能力清单](capability-status.md)阅读；当前内部格式没有 canary/schema_version 等版本门禁。
 
+### [P2/P5][2026-11-19] 命名回执、关闭完成和索引发布有各自的时点
+
+- `ChatSession` 的关门信号早于运行 context 取消，标题接纳同时检查两处和请求自身的取消。接纳后等待追加 Sync 才发布成功。
+- 追加成功后 writer 关闭仍要执行最终 Sync。关闭等待超时时，宿主保留超时结论，继续等同一个 writer 完成后才释放资源。故障测试分别覆盖追加 Sync 和最终 Sync。
+- `turn_id` 与 `parent_thread_id` 的显式空值会被 Go 解码为与缺省相同的零值。标题事实在完整行解码阶段检查成员是否存在，非法单条 batch 在判断可修复尾部之前拒绝。
+- Catalog 按 lease 下已验证的快照发布，忙行和发布前变旧的标题可在下次协调刷新。预览及正式恢复分别取得 lease 重新验证。验证入口见 `internal/app/session_title_test.go`、`internal/app/host_lease_test.go` 和 `scripts/session-titles-smoke.py`。
+
 ### [P2/P5][2026-11-18] 任务候选、持久化事实与展示身份不能混用
 
 - 现象：执行器返回候选不代表清单已保存；ready/detail/native 序号也不能证明实际成功结果。仅依赖摘要和 token 数会让同长度任务替换遗漏缓存身份变化。

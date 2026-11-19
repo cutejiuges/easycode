@@ -79,6 +79,7 @@ type Model struct {
 	files                     fileCompletionState
 	question                  *questionOverlay
 	tasks                     taskProgressView
+	title                     sessionTitleView
 
 	hooks                hookBrowser
 	hookTrust            *hookTrustOverlay
@@ -242,11 +243,14 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if model.question != nil {
 			model.question.resize(value.Width, value.Height)
 		}
+		model.resizeSessionTitleEditor()
 		return model, nil
 	case protocol.ControlItem:
 		next, cmd := model.projectControlItem(value)
 		return next, tea.Batch(cmd, waitForControl(model.outputs))
 	case eventStreamClosedMsg:
+		model.outputs = nil
+		failure := "session_failed: session control stream closed"
 		if model.tasks.query != nil {
 			model.failTaskQuery(model.tasks.query.generation, "task_query_unavailable: runtime event stream closed")
 		}
@@ -255,11 +259,19 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if model.state == stateStreaming {
 			model.state = stateIdle
 			model.assistantItem = -1
-			model.outputs = nil
 			model.interruptNext = false
-			model.errorSummary = "stream_protocol_error: runtime event stream closed before terminal"
+			failure = "stream_protocol_error: runtime event stream closed before terminal"
+			model.errorSummary = failure
+		}
+		if _, supportsTitle := model.session.(sessionTitleHost); supportsTitle {
+			return model.closeSessionTitleInput(failure)
 		}
 		return model, nil
+	case sessionTitleDeliveryFailedMsg:
+		if model.title.request == nil || model.title.request.id != value.id {
+			return model, nil
+		}
+		return model.finishSessionTitleRequest(safeErrorSummary(value.err))
 	case RuntimeEventMsg:
 		if value.Event.Kind == protocol.EventTaskProgressUpdated {
 			return model.projectTaskUpdate(value.Event)
@@ -335,6 +347,13 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	model.prepareCompletion()
 	if key.Paste {
 		key.Type, key.Alt = tea.KeyRunes, false
+	}
+	model.title.saved = false
+	if model.title.closed {
+		if !key.Paste && key.Type == tea.KeyCtrlC {
+			return model.quitTranscript()
+		}
+		return model, nil
 	}
 	if key.Type == tea.KeyCtrlC {
 		model.completion.suppress(completionCancelled)
@@ -428,6 +447,9 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if model.tasks.open {
 		return model.handleTasksKey(key)
 	}
+	if !model.detailOpen && (model.title.editor != nil || model.title.request != nil) {
+		return model.handleSessionTitleKey(key)
+	}
 	if key.Type == tea.KeyCtrlO {
 		model.clearEffortFeedback()
 		return model.openTranscriptBrowser()
@@ -473,6 +495,10 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return model, nil
 	}
 	if key.Type == tea.KeyEnter && !key.Alt && !key.Paste {
+		if arguments, local := sessionTitleArguments(model.composer.text); local {
+			model.completion.suppress(completionCancelled)
+			return model.beginSessionTitle(arguments)
+		}
 		if _, local, _ := parseEffortCommand(model.composer.text); local {
 			model.completion.suppress(completionCancelled)
 			return model.submitComposer()
@@ -499,6 +525,10 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if updated.tasks.open {
 				updated.tasks.draft = originalDraft
 				updated.restoreComposer(originalDraft)
+			}
+			if updated.title.editor != nil {
+				updated.restoreComposer(originalDraft)
+				updated.suppressSessionTitleCompletion()
 			}
 			return updated, command
 		}
@@ -549,6 +579,9 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (model Model) submitComposer() (tea.Model, tea.Cmd) {
+	if arguments, local := sessionTitleArguments(model.composer.text); local {
+		return model.beginSessionTitle(arguments)
+	}
 	model.clearEffortFeedback()
 	if command, local, err := parseEffortCommand(model.composer.text); local {
 		if err != nil {
@@ -969,6 +1002,9 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 
 // View 渲染确定性的聊天投影和已准备的多行输入布局。
 func (model Model) View() string {
+	if model.title.closed {
+		return model.renderSessionTitleClosed()
+	}
 	if model.question != nil {
 		return model.renderQuestion()
 	}
@@ -1001,11 +1037,32 @@ func (model Model) View() string {
 	if model.detailOpen {
 		return model.renderTranscriptBrowser()
 	}
+	if model.title.editor != nil {
+		return model.renderSessionTitleEditor()
+	}
 	if model.composer.height <= 5 {
-		return model.composer.view(model.pending == nil && model.retracting == nil && !model.cancelling)
+		status := model.title.status()
+		if status == "" {
+			status = model.title.line()
+			if model.errorSummary != "" {
+				if _, local := sessionTitleArguments(model.composer.text); local {
+					status = "Error: " + model.errorSummary
+				}
+			}
+		}
+		if status != "" {
+			return model.fitChatView(status, model.composer.inputView(model.chatComposerEditable()))
+		}
+		return model.composer.view(model.chatComposerEditable())
 	}
 	var view strings.Builder
 	_, _ = fmt.Fprintf(&view, "EasyCode %s\n", model.version)
+	if line := model.title.line(); line != "" {
+		view.WriteString(ansi.Truncate(line, model.widthOrDefault(), "…") + "\n")
+	}
+	if status := model.title.status(); status != "" {
+		view.WriteString(ansi.Truncate(status, model.widthOrDefault(), "…") + "\n")
+	}
 	if model.cancelling {
 		view.WriteString("Cancelling — waiting for cleanup\n")
 	}
@@ -1050,7 +1107,7 @@ func (model Model) View() string {
 		_, _ = fmt.Fprintf(&view, "Error: %s\n", model.errorSummary)
 	}
 	view.WriteString("\n")
-	footer := model.renderTaskInline() + model.renderInputs() + model.completion.view + model.files.view + model.composer.view(model.pending == nil && model.retracting == nil && !model.cancelling)
+	footer := model.renderTaskInline() + model.renderInputs() + model.completion.view + model.files.view + model.composer.view(model.chatComposerEditable())
 	return model.fitChatView(view.String(), footer)
 }
 

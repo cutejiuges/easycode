@@ -56,7 +56,7 @@ Read 超实际额度返回 `result_budget_exceeded` 并失效旧覆盖证据。R
 
 `tool_ready/tool_started/tool_progress/tool_terminal` 是统一活动事件，只有 Shell 产生进度；`transcript_committed` 在 native finalize 与宿主投影更新后发出。TUI 用提交序号上界查询最新 50 项，把 provisional sample 恰好一次替换为 committed 投影；未提交失败文本只在当前进程标为 unfinished。主线按视口裁剪，Shell 三行、相邻成功 Read/Search 去重计数；Ctrl+O 访问完整记录。正文页最多 64 KiB UTF-8，保存页最多 64 KiB raw / 256 KiB escaped，前后翻页不依赖无限缓存，浏览端统一缓存四页。TUI render 不执行 I/O。
 
-Session/native/checkpoint 均为唯一当前无版本格式；headless JSONL 保留独立外部 v1。预算与保存状态都是 result 的必需字段；恢复复用冻结 preview，不重新预算或读取对象。记录词汇仍为 `session_meta/thread_meta/turn_started/turn_inputs_committed/provider_native_commit/sample_usage/tool_call_ready/tool_approval_decided/tool_execution_started/tool_call_result/turn_completed/turn_failed/compaction_started/compaction_completed/compaction_failed/tool_hook_gate_planned/hook_execution_started/hook_execution_finished/tool_hook_gate_decided`；UI 活动与提交提示不写入 journal。
+Session/native/checkpoint 均为唯一当前无版本格式。headless JSONL 保留独立外部 v1。预算与保存状态都是 result 的必需字段，恢复直接复用冻结 preview。工具调用按 `tool_call_ready`、`tool_approval_decided`、`tool_execution_started` 和 `tool_call_result` 记录适用的持久化事实。UI 活动与提交提示不写入 journal。完整记录词汇见[总体架构中的 JSONL 事实源](overall-architecture.md#102-jsonl-事实源)。
 
 设计与复用依据见 [ADR-0006](adr/0006-tool-transcript-and-result-budget.md)。
 

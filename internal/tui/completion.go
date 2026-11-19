@@ -11,9 +11,8 @@ import (
 )
 
 const (
-	maxCompletionCandidates = domain.MaxSkills + 8
-	maxCompletionBytes      = 2 << 20
-	maxCompletionLineBytes  = 16 << 10
+	maxCompletionBytes     = 2 << 20
+	maxCompletionLineBytes = 16 << 10
 )
 
 type completionKind uint8
@@ -54,6 +53,7 @@ func builtinCompletionCandidates() []completionCandidate {
 		{id: completionIdentity{kind: completionBuiltin, name: "effort"}, description: "Set next operation reasoning effort", hint: "[level|auto|reset]"},
 		{id: completionIdentity{kind: completionBuiltin, name: "hooks"}, description: "Browse command hooks"},
 		{id: completionIdentity{kind: completionBuiltin, name: "plugins"}, description: "Browse local plugins"},
+		{id: completionIdentity{kind: completionBuiltin, name: "rename"}, description: "Rename the current conversation", hint: "[title]"},
 		{id: completionIdentity{kind: completionBuiltin, name: "skills"}, description: "Browse local skills"},
 		{id: completionIdentity{kind: completionBuiltin, name: "tasks"}, description: "Inspect current task progress"},
 	}
@@ -61,6 +61,7 @@ func builtinCompletionCandidates() []completionCandidate {
 
 func newCompletionCatalog(skills []domain.SkillListEntry) (*completionCatalog, error) {
 	entries := builtinCompletionCandidates()
+	maxCandidates := domain.MaxSkills + len(entries)
 	bytes := 4096
 	for _, e := range skills {
 		// 先检查字节总量，再验证或派生字符串，避免超大来源先产生副本。
@@ -75,7 +76,7 @@ func newCompletionCatalog(skills []domain.SkillListEntry) (*completionCatalog, e
 		if !explicitSkillEntry(e) {
 			continue
 		}
-		if len(entries) == maxCompletionCandidates {
+		if len(entries) == maxCandidates {
 			return nil, fmt.Errorf("completion catalog exceeds item limit")
 		}
 		entries = append(entries, completionCandidate{

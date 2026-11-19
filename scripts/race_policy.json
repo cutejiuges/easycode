@@ -23,6 +23,27 @@
   {
     "package": "easycode/internal/app",
     "tests": [
+      "TestTitleHostCloseWaitsForWriterAfterDeadline"
+    ],
+    "reason": "宿主关闭截止后继续等待 writer 和真实跨进程 lease"
+  },
+  {
+    "package": "easycode/internal/runtime",
+    "tests": [
+      "TestRenameSessionSyncPrecedesAcceptanceAndInput"
+    ],
+    "reason": "接纳后取消、标题 Sync 回执和下一输入的顺序"
+  },
+  {
+    "package": "easycode/internal/session",
+    "tests": [
+      "TestSessionTitleSyncFailureWaitsForFinalSyncAndReplaysWrittenTitle"
+    ],
+    "reason": "实际写入后的 Sync 失败、最终关闭和 lease 交接"
+  },
+  {
+    "package": "easycode/internal/app",
+    "tests": [
       "TestArtifactShutdownRetainsRealLeaseWhileDiskBlocked"
     ],
     "reason": "磁盘屏障期间不可释放资源及真实 lease（Darwin）",

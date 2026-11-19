@@ -100,8 +100,12 @@ func (loop *AgentLoop) Done() <-chan struct{} {
 	return loop.done
 }
 
-// Submit 将命令交给 owner；context 只参与 handoff 之前的 admission 等待。
+// Submit 将命令交给 owner，已接纳的命令必须返回确定结果。
 func (loop *AgentLoop) Submit(ctx context.Context, command protocol.Command) (protocol.CommandResult, error) {
+	return loop.submit(ctx, command, nil)
+}
+
+func (loop *AgentLoop) submit(ctx context.Context, command protocol.Command, hostStopped <-chan struct{}) (protocol.CommandResult, error) {
 	if ctx == nil {
 		return protocol.CommandResult{}, fault.New(fault.CodeTurnFailed, "command context is required")
 	}
@@ -111,13 +115,20 @@ func (loop *AgentLoop) Submit(ctx context.Context, command protocol.Command) (pr
 	if err := command.ValidateForAdmission(); err != nil {
 		return protocol.CommandResult{}, fault.New(fault.CodeInvalidInput, "command is invalid")
 	}
+	if command.Kind() == protocol.CommandRenameSession && hostStopped == nil {
+		return protocol.CommandResult{}, fault.New(fault.CodeInvalidInput, "session title control requires an interactive host")
+	}
 	if loop == nil || loop.state.Load() != agentLoopRunning {
 		return protocol.CommandResult{}, fault.New(fault.CodeTurnFailed, "agent loop is not running")
 	}
 	request := loopCommandRequest{command: command, result: make(chan loopCommandResponse, 1)}
+	if command.Kind() == protocol.CommandRenameSession {
+		request.cancelled = ctx.Done()
+		request.hostStopped = hostStopped
+	}
 	select {
 	case loop.requests <- request:
-		// owner 接收即为线性化点，此后不再观察调用方 context。
+		// 持久命令在 owner 内另有接纳检查，等待结果不受调用方取消打断。
 	case <-ctx.Done():
 		return protocol.CommandResult{}, fault.Wrap(fault.CodeUserCancelled, "command admission was cancelled", ctx.Err())
 	case <-loop.done:
@@ -199,8 +210,10 @@ const (
 )
 
 type loopCommandRequest struct {
-	command protocol.Command
-	result  chan loopCommandResponse
+	command     protocol.Command
+	result      chan loopCommandResponse
+	cancelled   <-chan struct{}
+	hostStopped <-chan struct{}
 }
 
 type loopCommandResponse struct {
@@ -280,6 +293,7 @@ func (ledger *recentRequestLedger) add(requestID protocol.RequestID) {
 }
 
 type agentLoopRunState struct {
+	title              domain.SessionTitle
 	choice             domain.EffortChoice
 	selectedProfile    contextplan.ProviderProfile
 	selectionRevision  uint64
@@ -303,6 +317,7 @@ type agentLoopRunState struct {
 func newAgentLoopRunState(loop *AgentLoop, ctx context.Context) *agentLoopRunState {
 	return &agentLoopRunState{
 		loop: loop, ctx: ctx, mode: loopModeAccepting,
+		title:  loop.runtime.initialSessionTitle,
 		choice: domain.NewResetEffortChoice(), selectedProfile: loop.runtime.profile,
 		queue:       make([]queuedInput, 0, loop.config.MaxQueuedInputs),
 		outstanding: make(map[protocol.RequestID]struct{}, loop.config.MaxQueuedInputs+1),
@@ -432,6 +447,8 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 	}
 
 	switch request.command.Kind() {
+	case protocol.CommandRenameSession:
+		state.renameSession(request)
 	case protocol.CommandQueryTasks:
 		state.queryTasks(request)
 	case protocol.CommandQueryEffort, protocol.CommandSetEffort:

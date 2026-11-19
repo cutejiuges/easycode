@@ -28,6 +28,9 @@ func formatSessionList(query catalog.ListQuery, result catalog.ListResult) strin
 	}
 	for _, entry := range result.Entries {
 		fmt.Fprintf(&output, "%s\n  Updated: %s\n  Provider: %s / %s | Model: %s\n", entry.ThreadID, entry.UpdatedAt.UTC().Format(time.RFC3339Nano), entry.ProviderFamily, sessionListField(entry.ProviderWire, 256), sessionListField(entry.Model, 256))
+		if entry.Title != "" {
+			fmt.Fprintf(&output, "  Title: %s\n", entry.Title)
+		}
 		if query.Scope == catalog.ListAllDirectories {
 			fmt.Fprintf(&output, "  Directory: %s\n", sessionListField(entry.CreationCWD, 512))
 		}

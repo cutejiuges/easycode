@@ -129,6 +129,9 @@ func (writer *JournalWriter) AppendBatch(ctx context.Context, drafts []RecordDra
 	}
 	prepared := make([]RecordDraft, 0, len(drafts))
 	for _, draft := range drafts {
+		if draft.EventKind() == EventSessionTitleUpdated && len(drafts) != 1 {
+			return nil, fmt.Errorf("session title record requires a single-record batch")
+		}
 		if err := draft.validate(); err != nil {
 			return nil, err
 		}

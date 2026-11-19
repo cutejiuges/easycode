@@ -49,7 +49,7 @@ func TestCatalogSchemaAndFilesExcludeSecretsAndUsePrivatePermissions(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, forbidden := range []string{"title", "tag", "prompt", "payload", "base_url", "api_key", "authorization"} {
+	for _, forbidden := range []string{"tag", "prompt", "payload", "base_url", "api_key", "authorization"} {
 		if strings.Contains(strings.ToLower(schema), forbidden) {
 			t.Fatalf("schema contains deferred or sensitive field %q: %s", forbidden, schema)
 		}

@@ -32,6 +32,7 @@ const (
 	CommandQueryEffort               CommandKind = "query_effort"
 	CommandQueryTasks                CommandKind = "query_tasks"
 	CommandSetEffort                 CommandKind = "set_effort"
+	CommandRenameSession             CommandKind = "rename_session"
 	CommandCompactContext            CommandKind = "compact_context"
 	CommandCancelCompaction          CommandKind = "cancel_compaction"
 	CommandShutdown                  CommandKind = "shutdown"
@@ -75,6 +76,7 @@ type Command struct {
 	expectedCompactionID domain.CompactionID
 	kind                 CommandKind
 	requestID            RequestID
+	sessionTitle         domain.SessionTitle
 	text                 string
 	inputIDs             []domain.InputID
 	expectedTurnID       domain.TurnID
@@ -168,6 +170,9 @@ func (command Command) Validate() error {
 	if command.kind != CommandResolveUserQuestion && command.questionResponse != (UserQuestionResponse{}) {
 		return fmt.Errorf("unexpected question response")
 	}
+	if command.kind != CommandRenameSession && command.sessionTitle != "" {
+		return fmt.Errorf("command contains an unrelated session title")
+	}
 	if command.hasSkillAttachment {
 		if (command.kind != CommandSubmitInput && command.kind != CommandSubmitConversationalInput) || command.skillAttachment.Validate() != nil || command.InputByteSize() > MaxInputBytes {
 			return fmt.Errorf("invalid Skill attachment")
@@ -206,6 +211,11 @@ func (command Command) Validate() error {
 		return fmt.Errorf("command contains unrelated compaction identity")
 	}
 	switch command.kind {
+	case CommandRenameSession:
+		if command.text != "" || command.expectedTurnID != "" || command.approvalRequestID != "" || command.invocationID != "" || command.fingerprint != "" || command.decision != "" || command.feedback != "" {
+			return fmt.Errorf("rename command contains unrelated payload")
+		}
+		return command.sessionTitle.Validate()
 	case CommandResolveUserQuestion:
 		if !command.expectedTurnID.Valid() || command.questionResponse.Validate() != nil || command.text != "" || command.approvalRequestID != "" || command.invocationID != "" || command.fingerprint != "" || command.decision != "" || command.feedback != "" {
 			return fmt.Errorf("invalid question command payload")
@@ -329,6 +339,15 @@ func NewSetEffortCommand(requestID RequestID, choice domain.EffortChoice) (Comma
 
 // EffortChoice 返回设置命令的不可变选择。
 func (command Command) EffortChoice() domain.EffortChoice { return command.effortChoice }
+
+// NewRenameSessionCommand 创建当前会话的本地标题更新命令。
+func NewRenameSessionCommand(requestID RequestID, title domain.SessionTitle) (Command, error) {
+	command := Command{kind: CommandRenameSession, requestID: requestID, sessionTitle: title}
+	return command, command.Validate()
+}
+
+// SessionTitle 返回命名命令的规范标题。
+func (command Command) SessionTitle() domain.SessionTitle { return command.sessionTitle }
 
 // NewCompactContextCommand 创建独立摘要请求，不分配输入身份。
 func NewCompactContextCommand(requestID RequestID, instructions string) (Command, error) {

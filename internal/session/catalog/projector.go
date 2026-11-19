@@ -38,7 +38,7 @@ func (projector *Projector) Project(relativePath string, loaded session.LoadResu
 		UpdatedAt: last.Timestamp, LastSequence: last.Sequence, LastChecksum: last.Checksum,
 		CreationCWD:    plan.SessionMetadata.CreationCWD,
 		ProviderFamily: plan.SessionMetadata.Provider, ProviderWire: plan.SessionMetadata.ProviderWire,
-		Model: plan.SessionMetadata.Model,
+		Model: plan.SessionMetadata.Model, Title: plan.Title,
 	}
 	if err := validateEntry(entry); err != nil {
 		return Entry{}, err

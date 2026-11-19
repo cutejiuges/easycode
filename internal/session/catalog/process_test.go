@@ -58,11 +58,13 @@ func TestReconcilePreservesBusyRowsAndRejectsBusyUnindexed(t *testing.T) {
 	defer func() { _ = repository.Close() }()
 	cwd := t.TempDir()
 	first := createCatalogJournal(t, repository, cwd)
+	oldTitle := appendCatalogTitle(t, repository, first, "Previously indexed")
 	instance := openTestCatalog(t, databasePath, root)
 	defer func() { _ = instance.Close() }()
 	if _, err := instance.Reconcile(context.Background(), repository); err != nil {
 		t.Fatal(err)
 	}
+	newTitle := appendCatalogTitle(t, repository, first, "Durable but busy")
 	firstHelper := startCatalogProcessHelper(t, catalogJournalHelperEnv, "", root, string(first))
 	report, err := instance.Reconcile(context.Background(), repository)
 	if err != nil {
@@ -71,6 +73,11 @@ func TestReconcilePreservesBusyRowsAndRejectsBusyUnindexed(t *testing.T) {
 	if report.Busy != 1 || report.BusyUnindexed {
 		t.Fatalf("indexed busy report = %#v", report)
 	}
+	entries, err := instance.List(context.Background(), ListQuery{Scope: ListAllDirectories, Limit: 1})
+	if err != nil || len(entries.Entries) != 1 {
+		t.Fatalf("busy title row = %+v, %v", entries, err)
+	}
+	assertCatalogTitle(t, entries.Entries[0], "Previously indexed", oldTitle)
 	firstHelper.stop(t)
 
 	second := createCatalogJournal(t, repository, cwd)
@@ -99,6 +106,11 @@ func TestReconcilePreservesBusyRowsAndRejectsBusyUnindexed(t *testing.T) {
 	if err != nil || report.Valid != 2 || report.Busy != 0 {
 		t.Fatalf("post-crash report = %#v, %v", report, err)
 	}
+	entries, err = instance.List(context.Background(), ListQuery{Scope: ListAllDirectories, Limit: 2})
+	if err != nil || len(entries.Entries) != 2 || entries.Entries[1].ThreadID != first {
+		t.Fatalf("released title row = %+v, %v", entries, err)
+	}
+	assertCatalogTitle(t, entries.Entries[1], "Durable but busy", newTitle)
 }
 
 func TestCatalogLockHelperProcess(t *testing.T) {

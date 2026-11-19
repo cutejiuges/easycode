@@ -9,6 +9,7 @@ import (
 type SessionEntry struct {
 	ThreadID         domain.ThreadID
 	UpdatedAt        time.Time
+	Title            domain.SessionTitle
 	Family           domain.ProviderFamily
 	Wire, Model, CWD string
 }
@@ -23,6 +24,7 @@ type PreviewMessage struct {
 
 // SessionPreview 仅供当前预览展示，不是恢复事实源。
 type SessionPreview struct {
+	Title                 domain.SessionTitle
 	Messages              []PreviewMessage
 	Incomplete, Truncated bool
 }

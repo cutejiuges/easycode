@@ -36,6 +36,7 @@ type chatRuntimeJournal interface {
 }
 
 type assembledSession struct {
+	title         domain.SessionTitle
 	compactions   []compactionTranscript
 	nativeCommits []session.NativeCommitRecord
 	tools         []session.ToolHistoryEntry
@@ -222,6 +223,7 @@ func (service *sessionService) resume(
 	}
 	return assembledSession{
 		compactions: compactions, identity: plan.Identity, conversation: conversation, writer: writer,
+		title: plan.Title,
 		tools: plan.Tools,
 		stops: plan.Stops, stopRecovery: stopRecovery,
 		nativeCommits: plan.NativeCommits,

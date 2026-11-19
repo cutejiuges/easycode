@@ -16,7 +16,7 @@ func renderedChatRows(value string) int {
 // nonEffortStatusRows 为主线、通知和补全共用现有状态的真实行预算。
 func (model Model) nonEffortStatusRows() int {
 	rows := 0
-	for _, present := range []bool{model.cancelling, model.stopStatus != "", model.reasoning.notice != "", model.reasoningStatus() != "", model.reading.detached || model.reading.notice != "" || model.reading.newContent, model.errorSummary != ""} {
+	for _, present := range []bool{model.cancelling, model.stopStatus != "", model.reasoning.notice != "", model.reasoningStatus() != "", model.reading.detached || model.reading.notice != "" || model.reading.newContent, model.errorSummary != "", model.title.value != "", model.title.status() != ""} {
 		if present {
 			rows++
 		}
@@ -64,7 +64,7 @@ func (model Model) renderTaskInline() string {
 func (model Model) fitChatView(prefix, footer string) string {
 	height, width := max(1, model.heightOrDefault()), max(1, model.widthOrDefault())
 	if renderedChatRows(footer) > height {
-		return model.composer.view(model.pending == nil && model.retracting == nil && !model.cancelling)
+		return model.composer.view(model.chatComposerEditable())
 	}
 	lines := strings.Split(strings.TrimSuffix(prefix, "\n"), "\n")
 	capacity := height - renderedChatRows(footer)

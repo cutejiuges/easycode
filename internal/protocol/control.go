@@ -290,14 +290,14 @@ func (item ControlItem) Validate() error {
 }
 
 func validCommandKind(kind CommandKind) bool {
-	return kind == CommandResolveUserQuestion || kind == CommandResolveHookTrust || kind == CommandResetHookTrust || kind == CommandQueryEffort || kind == CommandQueryTasks || kind == CommandSetEffort || kind == CommandQueryCache || kind == CommandQueryContext || kind == CommandCompactContext || kind == CommandCancelCompaction || kind == CommandSubmitConversationalInput || kind == CommandRetractInputs || kind == CommandStopTurn || kind == CommandSubmitInput || kind == CommandInterrupt || kind == CommandShutdown || kind == CommandResolveToolApproval
+	return kind == CommandResolveUserQuestion || kind == CommandResolveHookTrust || kind == CommandResetHookTrust || kind == CommandQueryEffort || kind == CommandQueryTasks || kind == CommandSetEffort || kind == CommandRenameSession || kind == CommandQueryCache || kind == CommandQueryContext || kind == CommandCompactContext || kind == CommandCancelCompaction || kind == CommandSubmitConversationalInput || kind == CommandRetractInputs || kind == CommandStopTurn || kind == CommandSubmitInput || kind == CommandInterrupt || kind == CommandShutdown || kind == CommandResolveToolApproval
 }
 
 func dispositionMatches(kind CommandKind, disposition CommandDisposition) bool {
 	switch kind {
 	case CommandQueryCache, CommandQueryContext, CommandQueryEffort, CommandQueryTasks:
 		return disposition == CommandDispositionQueried
-	case CommandSetEffort:
+	case CommandSetEffort, CommandRenameSession:
 		return disposition == CommandDispositionUpdated
 	case CommandCompactContext:
 		return disposition == CommandDispositionCompacting

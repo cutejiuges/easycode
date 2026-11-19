@@ -47,6 +47,7 @@ type ContextPlanner interface {
 
 // Config 固定一个 Session-bound Runtime 的身份与 durable 边界。
 type Config struct {
+	InitialSessionTitle       domain.SessionTitle
 	TaskExecutor              tool.TaskExecutor
 	InitialTaskProgress       domain.TaskProgressState
 	QuestionExecutor          tool.QuestionExecutor
@@ -91,6 +92,7 @@ type Config struct {
 
 // Runtime 持有一条会话级 Provider Conversation 和同一 thread journal。
 type Runtime struct {
+	initialSessionTitle  domain.SessionTitle
 	taskExecutor         tool.TaskExecutor
 	tasks                taskProgressProjection
 	questionExecutor     tool.QuestionExecutor
@@ -180,6 +182,9 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 	if !config.SessionID.Valid() || !config.ThreadID.Valid() {
 		return nil, fault.New(fault.CodeTurnFailed, "runtime session identity is invalid")
 	}
+	if config.InitialSessionTitle != "" && config.InitialSessionTitle.Validate() != nil {
+		return nil, fault.New(fault.CodeSessionCorruption, "session title is invalid")
+	}
 	if config.Journal == nil {
 		return nil, fault.New(fault.CodeSessionWrite, "session journal is not configured")
 	}
@@ -243,6 +248,7 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 		}
 	}
 	return &Runtime{
+		initialSessionTitle:    config.InitialSessionTitle,
 		taskExecutor:           config.TaskExecutor,
 		tasks:                  taskProgressProjection{state: config.InitialTaskProgress.Clone()},
 		autoCompactionPolicy:   config.AutoCompactionPolicy,
