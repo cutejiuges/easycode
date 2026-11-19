@@ -2,10 +2,22 @@ package runtime
 
 import (
 	"context"
+
 	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
 )
+
+func (state *agentLoopRunState) canResolveHookTrust(response protocol.HookTrustResponse) bool {
+	id, scope, compact := response.Target.Compaction()
+	if !compact {
+		return state.active != nil && !state.active.terminalSeen && !state.active.compactionID.Valid() && state.active.turnID == response.TurnID
+	}
+	if scope.Trigger == domain.CompactionManual {
+		return state.compaction != nil && state.compaction.started && !state.compaction.terminalSeen && state.compaction.id == id
+	}
+	return state.active != nil && !state.active.terminalSeen && state.active.compactionID == id && state.active.compactionScope == scope
+}
 
 func (r *Runtime) ResolveHookTrust(response protocol.HookTrustResponse) error {
 	if response.Validate() != nil || response.SessionID != r.sessionID || response.ThreadID != r.threadID {

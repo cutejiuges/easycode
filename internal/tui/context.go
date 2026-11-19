@@ -25,6 +25,11 @@ type localContextCommand struct {
 	instructions string
 }
 
+type compactionCancelFailedMsg struct {
+	id      domain.CompactionID
+	summary string
+}
+
 // parseContextCommand 仅识别完整首词，未知 slash 和绝对路径保留为普通正文。
 func parseContextCommand(text string) (localContextCommand, bool, error) {
 	trimmed := strings.TrimSpace(text)
@@ -46,8 +51,8 @@ func parseContextCommand(text string) (localContextCommand, bool, error) {
 		}
 		return localContextCommand{kind: protocol.CommandQueryContext}, true, nil
 	case "/compact":
-		if !utf8.ValidString(remainder) || len(remainder) > 16<<10 {
-			return localContextCommand{}, true, fmt.Errorf("compaction instructions exceed 16384 UTF-8 bytes")
+		if !utf8.ValidString(remainder) || len(remainder) > domain.MaxCompactionInstructionsBytes {
+			return localContextCommand{}, true, fmt.Errorf("compaction instructions require valid UTF-8 and at most %d bytes", domain.MaxCompactionInstructionsBytes)
 		}
 		return localContextCommand{kind: protocol.CommandCompactContext, instructions: remainder}, true, nil
 	default:
@@ -102,9 +107,12 @@ func (model Model) cancelActiveCompaction() tea.Cmd {
 	}
 	ctx, id := model.submitContext, model.activeCompactionID
 	return func() tea.Msg {
-		_, err := target.CancelCompaction(ctx, id)
+		result, err := target.CancelCompaction(ctx, id)
 		if err != nil {
-			return approvalSubmitErrorMsg{err: err}
+			return compactionCancelFailedMsg{id, safeErrorSummary(err)}
+		}
+		if summary, rejected := result.Error(); rejected {
+			return compactionCancelFailedMsg{id, string(summary.Code()) + ": " + summary.Message()}
 		}
 		return nil
 	}
@@ -112,9 +120,6 @@ func (model Model) cancelActiveCompaction() tea.Cmd {
 
 func (model Model) projectContextResult(result protocol.CommandResult) (tea.Model, tea.Cmd) {
 	if result.CommandKind() == protocol.CommandCancelCompaction {
-		if summary, rejected := result.Error(); rejected {
-			model.errorSummary = string(summary.Code()) + ": " + summary.Message()
-		}
 		return model, nil
 	}
 	if (result.CommandKind() == protocol.CommandQueryCache || result.CommandKind() == protocol.CommandQueryContext) && result.RequestID() != model.queryRequestID {
@@ -132,8 +137,7 @@ func (model Model) projectContextResult(result protocol.CommandResult) (tea.Mode
 		}
 		model.composer.clear()
 		if result.CommandKind() == protocol.CommandCompactContext {
-			model.activeCompactionID = result.CompactionID()
-			model.compactionStatus = "Compacting conversation…"
+			model.prepareCompaction(result.CompactionID(), domain.ManualCompactionScope())
 		}
 	} else {
 		model.restoreComposer(*model.pending)
@@ -145,8 +149,7 @@ func (model Model) projectContextResult(result protocol.CommandResult) (tea.Mode
 	model.refreshState()
 	if model.interruptNext && model.activeCompactionID.Valid() {
 		model.interruptNext = false
-		model.compactionStatus = "Cancelling compaction — waiting for cleanup"
-		return model, model.cancelActiveCompaction()
+		return model.requestCompactionCancellation()
 	}
 	model.interruptNext = false
 	return model, nil
@@ -166,21 +169,21 @@ func (model Model) projectContextEvent(event protocol.Event) (tea.Model, tea.Cmd
 		model.contextPanel = &payload
 		model.contextScroll = 0
 	case protocol.EventCompactionStarted:
-		model.effortOperationGeneration++
 		payload, err := protocol.DecodeCompactionStarted(event)
 		if err != nil {
 			model.errorSummary = "stream_protocol_error: invalid compaction start"
 			return model, nil
 		}
-		if payload.Scope.Trigger == domain.CompactionAuto && event.TurnID == model.activeTurnID && model.activeCompactionID == "" {
-			model.activeCompactionID = event.CompactionID
+		if model.activeCompactionID == "" && model.freshAutomaticCompaction(payload.Scope) {
+			model.prepareCompaction(event.CompactionID, payload.Scope)
+			model.lastAutomaticCompaction = payload.Scope
 		}
-		if event.CompactionID != model.activeCompactionID {
+		if !model.currentCompaction(event, payload.Scope) || model.compaction.sessionID.Valid() {
 			return model, nil
 		}
-		model.compactionStatus = "Compacting conversation…"
-	case protocol.EventCompactionCompleted:
 		model.effortOperationGeneration++
+		model.compaction.sessionID, model.compaction.threadID = event.SessionID, event.ThreadID
+	case protocol.EventCompactionCompleted:
 		if event.CompactionID != model.activeCompactionID {
 			return model, nil
 		}
@@ -189,25 +192,32 @@ func (model Model) projectContextEvent(event protocol.Event) (tea.Model, tea.Cmd
 			model.errorSummary = "stream_protocol_error: invalid compaction completion"
 			return model, nil
 		}
+		if !model.currentCompaction(event, payload.Scope) || !model.compaction.sessionID.Valid() {
+			return model, nil
+		}
+		model.effortOperationGeneration++
 		model.compactionStatus = fmt.Sprintf("Conversation compacted · estimated %s → %s tokens · Ctrl+O for history", formatContextEstimate(payload.Before), formatContextEstimate(payload.After))
-		model.activeCompactionID = ""
+		model.clearCompaction()
 		model.refreshState()
 		if model.browser.queries != nil {
 			model.main.generation++
 			return model, model.queryMainTranscript(model.main.generation, 0, model.submitContext)
 		}
 	case protocol.EventCompactionFailed:
-		model.effortOperationGeneration++
-		if event.CompactionID != model.activeCompactionID {
-			return model, nil
-		}
 		payload, err := protocol.DecodeCompactionFailed(event)
 		if err != nil {
 			model.errorSummary = "stream_protocol_error: invalid compaction failure"
 			return model, nil
 		}
+		if !model.currentCompaction(event, payload.Scope) {
+			if model.activeCompactionID != "" || payload.Durable || !model.freshAutomaticCompaction(payload.Scope) {
+				return model, nil
+			}
+			model.lastAutomaticCompaction = payload.Scope
+		}
+		model.effortOperationGeneration++
 		model.compactionStatus = "Compaction failed: " + string(payload.Code)
-		model.activeCompactionID = ""
+		model.clearCompaction()
 	}
 	model.refreshState()
 	return model, nil

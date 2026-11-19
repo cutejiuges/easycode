@@ -6,20 +6,171 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"easycode/internal/config"
 	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
+	"easycode/internal/extension/hook"
 	"easycode/internal/protocol"
+	chatRuntime "easycode/internal/runtime"
 	"easycode/internal/secret"
+	"easycode/internal/tool/builtin"
 	"easycode/internal/tui"
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+const preCompactFixtureFocus = "hook emphasis marker"
+
+type compactionFixtureRunner struct {
+	t          *testing.T
+	runs       int
+	blockFirst bool
+	automatic  bool
+}
+
+func (*compactionFixtureRunner) Preflight(context.Context) domain.HookCode { return domain.HookOK }
+
+func (runner *compactionFixtureRunner) Run(_ context.Context, id domain.HookRunIdentity, declaration domain.HookDeclaration, input domain.HookInput, _ time.Duration) domain.HookExecution {
+	runner.runs++
+	stdin, err := input.Bytes()
+	trigger, instructions := `"trigger":"manual"`, `"custom_instructions":"preserve unfinished tests"`
+	if runner.automatic {
+		trigger, instructions = `"trigger":"auto"`, `"custom_instructions":null`
+	}
+	if err != nil || !bytes.Contains(stdin, []byte(instructions)) || !bytes.Contains(stdin, []byte(trigger)) || bytes.Contains(stdin, []byte("archived task details")) || bytes.Contains(stdin, []byte("new-exact-correction")) {
+		runner.t.Error("hook stdin lost or leaked compaction input")
+	}
+	stdout := []byte(`{"hookSpecificOutput":{"hookEventName":"PreCompact","summaryInstructions":"` + preCompactFixtureFocus + `"}}`)
+	if runner.blockFirst && runner.runs == 1 {
+		stdout = []byte(`{"continue":false}`)
+	}
+	parsed := hook.ParseExecution(id.Event, declaration.Reference.Feedback, 0, stdout, domain.HookRewriteContext{})
+	return domain.HookExecution{Result: domain.HookRunResult{Identity: id, Status: parsed.Status, Code: parsed.Code, Origin: "execution", ExitKnown: true, CleanupConfirmed: true, StdoutBytes: int64(len(stdout))}, Feedback: parsed.Feedback}
+}
+
+func TestPreCompactOpenAIHandshakeFallbackKeepsOneGateDecision(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var handshakes, summaries atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Upgrade") == "websocket" {
+			handshakes.Add(1)
+			w.WriteHeader(http.StatusUpgradeRequired)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		if bytes.Contains(body, []byte(`"tool_choice":"none"`)) {
+			summaries.Add(1)
+			if !bytes.Contains(body, []byte(`preserve unfinished tests\n\n`+preCompactFixtureFocus)) || bytes.Contains(body, []byte(`"previous_response_id"`)) {
+				t.Error("fallback did not use the approved full summary body")
+			}
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		serveStopAssistant(w, domain.ProviderOpenAI, "short handoff")
+	}))
+	defer server.Close()
+	root, workspace := filepath.Join(t.TempDir(), "sessions"), t.TempDir()
+	cfg := config.Config{Provider: config.Provider{Family: domain.ProviderOpenAI, Model: "fixture-model", BaseURL: server.URL, APIKey: secret.New("fixture")}}
+	seed, err := openChatResources(ctx, cfg, root, "", workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	submitAppTurn(t, seed, strings.Repeat("archived task details ", 1000))
+	thread := seed.identity.ThreadID
+	if err := seed.close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cfg = cacheFixtureConfigMode(t, cfg, true, "websocket_auto")
+	runner := &compactionFixtureRunner{t: t, blockFirst: true}
+	res, err := openChatResourcesWithHooks(ctx, cfg, dataPaths{sessionRoot: root}, string(thread), false, workspace, compactionFixtureHooks(t, runner, "manual"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.close(context.Background())
+	if err := res.session.StartInteractive(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []protocol.CompactionFailureCode{protocol.CompactionFailureHookDenied, ""} {
+		result, err := res.session.CompactContext(ctx, "preserve unfinished tests")
+		if err != nil || result.Status() != protocol.CommandStatusAccepted {
+			t.Fatalf("compaction not accepted: %v", err)
+		}
+		var terminal bool
+		for !terminal {
+			select {
+			case item, open := <-res.session.Outputs():
+				if !open {
+					t.Fatal("host closed before compaction terminal")
+				}
+				event, ok := item.ContextEvent()
+				if !ok {
+					continue
+				}
+				switch event.Kind {
+				case protocol.EventHookTrustRequested:
+					request, err := protocol.DecodeHookTrustRequested(event)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := res.session.ResolveHookTrust(ctx, "", request, protocol.HookTrustSession); err != nil {
+						t.Fatal(err)
+					}
+				case protocol.EventCompactionCompleted:
+					if want != "" {
+						t.Fatal("blocked summary completed")
+					}
+					terminal = true
+				case protocol.EventCompactionFailed:
+					failure, err := protocol.DecodeCompactionFailed(event)
+					if want == "" || err != nil || failure.Code != want || !failure.Durable {
+						t.Fatalf("unexpected compaction failure: %+v %v", failure, err)
+					}
+					terminal = true
+				}
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+		}
+		waitCompactionIdle(t, res)
+		if want != "" && (handshakes.Load() != 0 || summaries.Load() != 0) {
+			t.Fatal("blocked compaction opened a summary connection")
+		}
+	}
+	if runner.runs != 2 || handshakes.Load() != 1 || summaries.Load() != 1 {
+		t.Fatalf("fallback duplicated a gate or summary: runs=%d handshakes=%d summaries=%d", runner.runs, handshakes.Load(), summaries.Load())
+	}
+}
+
+func compactionFixtureHooks(t *testing.T, runner *compactionFixtureRunner, matcher string) chatResourceHooks {
+	t.Helper()
+	return chatResourceHooks{
+		interactiveApprovals: true,
+		loadHooks: func(context.Context, string, string) (domain.HookSnapshot, error) {
+			if matcher == "" {
+				return domain.NewHookSnapshot(nil, nil)
+			}
+			scope, err := domain.ParsePreCompactHookScope(matcher)
+			if err != nil {
+				return domain.HookSnapshot{}, err
+			}
+			declaration, err := domain.NewPreCompactHookDeclaration(domain.HookSourceProject, domain.HookFeedbackModel, domain.HookDigest([]byte(matcher)), "compact-focus", scope, "fixture", 5)
+			if err != nil {
+				return domain.HookSnapshot{}, err
+			}
+			return domain.NewHookSnapshot([]domain.HookDeclaration{declaration}, nil)
+		},
+		newHookRunner: func(*builtin.Workspace, builtin.CommandEnvironment, builtin.HookOutputParser) (chatRuntime.HookRunner, error) {
+			return runner, nil
+		},
+	}
+}
 
 func TestManualCompactionProvidersResumeEquivalent(t *testing.T) {
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
@@ -65,9 +216,15 @@ func TestManualCompactionProvidersResumeEquivalent(t *testing.T) {
 			cfg := config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, APIKey: secret.New("compaction-secret"), Model: "claude-test"}, ContextBudget: budget}
 			cfg = reasoningFixtureConfig(t, cfg)
 			var nextRequests [][]byte
-			for _, resume := range []bool{false, true} {
+			var nextObservations []protocol.CacheObservationPayload
+			for _, scenario := range []struct {
+				matcher string
+				resume  bool
+			}{{}, {matcher: "auto"}, {matcher: "manual"}, {matcher: "manual", resume: true}} {
 				root, cwd := filepath.Join(t.TempDir(), "sessions"), t.TempDir()
-				resources, err := openChatResources(context.Background(), cfg, root, "", cwd)
+				paths := dataPaths{sessionRoot: root}
+				runner := &compactionFixtureRunner{t: t}
+				resources, err := openChatResourcesWithHooks(context.Background(), cfg, paths, "", false, cwd, compactionFixtureHooks(t, runner, scenario.matcher))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -120,6 +277,15 @@ func TestManualCompactionProvidersResumeEquivalent(t *testing.T) {
 					if event.Kind == protocol.EventCompactionStarted {
 						started++
 					}
+					if event.Kind == protocol.EventHookTrustRequested {
+						request, err := protocol.DecodeHookTrustRequested(event)
+						if err != nil {
+							t.Fatal(err)
+						}
+						if err := resources.session.ResolveHookTrust(context.Background(), event.TurnID, request, protocol.HookTrustSession); err != nil {
+							t.Fatal(err)
+						}
+					}
 					if event.Kind == protocol.EventCompactionFailed {
 						t.Fatalf("compaction failed: %s", event.Payload)
 					}
@@ -146,12 +312,12 @@ func TestManualCompactionProvidersResumeEquivalent(t *testing.T) {
 				if err != nil || body.Text != "answer-2" {
 					t.Fatalf("summary detail=%q err=%v", body.Text, err)
 				}
-				if resume {
-					thread := resources.identity.ThreadID
+				thread := resources.identity.ThreadID
+				if scenario.resume {
 					if err := resources.close(context.Background()); err != nil {
 						t.Fatal(err)
 					}
-					resources, err = openChatResources(context.Background(), cfg, root, string(thread), cwd)
+					resources, err = openChatResourcesWithHooks(context.Background(), cfg, paths, string(thread), false, cwd, compactionFixtureHooks(t, runner, ""))
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -171,8 +337,30 @@ func TestManualCompactionProvidersResumeEquivalent(t *testing.T) {
 						t.Fatalf("continuation failed: %s", event.Payload)
 					}
 				}
+				cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				cache := completionCacheSnapshot(t, cacheCtx, resources)
+				cancel()
+				if cache.LastSample == nil {
+					t.Fatal("continuation has no canonical request observation")
+				}
+				nextObservations = append(nextObservations, *cache.LastSample)
 				if err := resources.close(context.Background()); err != nil {
 					t.Fatal(err)
+				}
+				wantRuns := 0
+				if scenario.matcher == "manual" {
+					wantRuns = 1
+				}
+				if runner.runs != wantRuns {
+					t.Fatalf("unexpected executions: %d", runner.runs)
+				}
+				journalPath, err := resources.service.repository.JournalPath(thread)
+				if err != nil {
+					t.Fatal(err)
+				}
+				journal, err := os.ReadFile(journalPath)
+				if err != nil || bytes.Contains(journal, []byte(preCompactFixtureFocus)) || bytes.Contains(journal, []byte("preserve unfinished tests")) {
+					t.Fatalf("focus persisted in journal or journal unavailable: %v", err)
 				}
 				mu.Lock()
 				nextRequests = append(nextRequests, append([]byte{}, requests[len(requests)-1]...))
@@ -182,18 +370,30 @@ func TestManualCompactionProvidersResumeEquivalent(t *testing.T) {
 			count := len(requests)
 			captured := append([][]byte{}, requests...)
 			mu.Unlock()
-			if count != 6 {
+			if count != 12 {
 				t.Fatalf("unexpected automatic continuation or regeneration: %d requests", count)
 			}
-			if !bytes.Equal(nextRequests[0], nextRequests[1]) {
+			if !bytes.Equal(nextRequests[2], nextRequests[3]) {
 				t.Fatal("restored request differs from uninterrupted request")
 			}
-			if bytes.Contains(nextRequests[0], []byte("archived task details")) || bytes.Contains(nextRequests[0], []byte("preserve unfinished tests")) || !bytes.Contains(nextRequests[0], []byte("answer-2")) {
+			if nextObservations[2].RequestFingerprint != nextObservations[3].RequestFingerprint || nextObservations[2].NativeFingerprint != nextObservations[3].NativeFingerprint {
+				t.Fatal("restored fingerprints differ from uninterrupted request")
+			}
+			if bytes.Contains(nextRequests[2], []byte("archived task details")) || bytes.Contains(nextRequests[2], []byte("preserve unfinished tests")) || bytes.Contains(nextRequests[2], []byte(preCompactFixtureFocus)) || !bytes.Contains(nextRequests[2], []byte("answer-2")) {
 				t.Fatal("active window did not replace archived input")
 			}
-			for _, index := range []int{1, 4} {
+			if !bytes.Equal(captured[1], captured[4]) {
+				t.Fatal("nonmatching declaration changed the summary request")
+			}
+			for _, index := range []int{1, 4, 7, 10} {
 				if !bytes.Contains(captured[index], []byte("preserve unfinished tests")) || !bytes.Contains(captured[index], []byte("archived task details")) {
 					t.Fatal("summary request lost source or instructions")
+				}
+			}
+			focus := []byte(`\n\n` + preCompactFixtureFocus)
+			for _, index := range []int{7, 10} {
+				if !bytes.Equal(bytes.Replace(captured[index], focus, nil, 1), captured[1]) {
+					t.Fatal("checked summary altered data outside the authorized focus")
 				}
 			}
 		})

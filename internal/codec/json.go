@@ -119,6 +119,18 @@ func Valid(data []byte) bool {
 	return fixedConfig().Valid(data)
 }
 
+type canonicalSizeError struct{ maxBytes int }
+
+func (err canonicalSizeError) Error() string {
+	return fmt.Sprintf("canonical JSON exceeds %d bytes", err.maxBytes)
+}
+
+// IsCanonicalSizeLimit 区分编码上限与编码本身不合法。
+func IsCanonicalSizeLimit(err error) bool {
+	var limit canonicalSizeError
+	return errors.As(err, &limit)
+}
+
 func requireJSONEOF(decoder *json.Decoder) error {
 	var trailing any
 	err := decoder.Decode(&trailing)
@@ -139,7 +151,7 @@ func validateJSONBytes(data []byte, maxBytes int) error {
 		return errors.New("canonical JSON size limit must be positive")
 	}
 	if len(data) > maxBytes {
-		return fmt.Errorf("canonical JSON exceeds %d bytes", maxBytes)
+		return canonicalSizeError{maxBytes: maxBytes}
 	}
 	if !Valid(data) {
 		return errors.New("canonical JSON is invalid")

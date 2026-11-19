@@ -255,6 +255,7 @@ type activeLoopTurn struct {
 	selectionRevision  uint64
 	autoCompactionSeen bool
 	compactionID       domain.CompactionID
+	compactionScope    domain.CompactionScope
 	claim              []queuedInput
 	stopping           bool
 	input              queuedInput
@@ -561,7 +562,7 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 		state.completeRequest(request.command.RequestID())
 	case protocol.CommandResolveHookTrust:
 		response := request.command.HookTrustResponse()
-		if state.active == nil || state.active.turnID != response.TurnID || state.loop.runtime.ResolveHookTrust(response) != nil {
+		if !state.canResolveHookTrust(response) || state.loop.runtime.ResolveHookTrust(response) != nil {
 			state.reject(request, protocol.ControlErrorApprovalMismatch, true)
 			return
 		}
@@ -664,21 +665,9 @@ func (state *agentLoopRunState) handleTurnEvent(publication runtimePublication, 
 	}
 	item, err := protocol.NewCorrelatedTurnItem(state.active.input.requestID, event)
 	if event.CompactionID.Valid() {
-		state.active.autoCompactionSeen = true
-		item, err = protocol.NewCorrelatedContextItem(state.active.input.requestID, event)
-		if event.TurnID != state.active.turnID {
-			err = fault.New(fault.CodeStreamProtocol, "automatic compaction turn mismatch")
-		}
-		if event.Kind == protocol.EventCompactionStarted {
-			if state.active.compactionID != "" {
-				err = fault.New(fault.CodeStreamProtocol, "automatic compaction overlap")
-			}
-			state.active.compactionID = event.CompactionID
-		} else {
-			if state.active.compactionID != event.CompactionID {
-				err = fault.New(fault.CodeStreamProtocol, "automatic compaction identity mismatch")
-			}
-			state.active.compactionID = ""
+		item, err = state.correlateCompactionEvent(state.active.input.requestID, event)
+		if err == nil {
+			err = state.active.acceptCompactionEvent(event)
 		}
 	}
 	if err != nil {

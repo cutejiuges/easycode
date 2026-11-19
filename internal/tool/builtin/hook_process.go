@@ -62,6 +62,9 @@ func (r *HookRunner) Run(ctx context.Context, id domain.HookRunIdentity, d domai
 	if id.Validate() != nil || d.Validate() != nil || input.Validate() != nil || input.Event != id.Event || !input.MatchesTarget(id.Target) || d.Reference.Event != id.Event || timeout <= 0 || timeout > time.Duration(d.Reference.TimeoutSeconds)*time.Second {
 		return domain.HookExecution{Result: result}
 	}
+	if _, scope, ok := id.Target.Compaction(); ok && !d.Scope.MatchesCompaction(scope.Trigger) {
+		return domain.HookExecution{Result: result}
+	}
 	if ctx == nil || ctx.Err() != nil {
 		result.Status = domain.HookCancel
 		result.Code = domain.HookCancelled

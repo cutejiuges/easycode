@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"easycode/internal/context/estimate"
 	"easycode/internal/domain"
@@ -186,25 +187,49 @@ func TestCompactionDurableOrderAndCancellation(t *testing.T) {
 }
 
 func TestCompactionShutdownRetainsCleanupOwner(t *testing.T) {
+	t.Run("provider stream", func(t *testing.T) { testCompactionShutdownRetainsOwner(t, false) })
+	t.Run("pre-compact command", func(t *testing.T) { testCompactionShutdownRetainsOwner(t, true) })
+}
+
+type preCompactCleanupRunner struct {
+	entered, cancelled, release chan struct{}
+}
+
+func (*preCompactCleanupRunner) Preflight(context.Context) domain.HookCode { return domain.HookOK }
+
+func (runner *preCompactCleanupRunner) Run(ctx context.Context, id domain.HookRunIdentity, _ domain.HookDeclaration, _ domain.HookInput, _ time.Duration) domain.HookExecution {
+	close(runner.entered)
+	<-ctx.Done()
+	close(runner.cancelled)
+	<-runner.release
+	return domain.HookExecution{Result: domain.HookRunResult{Identity: id, Status: domain.HookCancel, Code: domain.HookCancelled, Cancelled: true, CleanupConfirmed: true, Origin: "execution"}}
+}
+
+func testCompactionShutdownRetainsOwner(t *testing.T, check bool) {
+	t.Helper()
 	conversation := newCompactionConversation()
-	conversation.entered = make(chan struct{})
-	conversation.release = make(chan struct{})
-	cleanup := make(chan struct{})
-	conversation.cleanupRelease = cleanup
-	conversation.cancelObserved = make(chan struct{})
+	entered, cancelled, cleanup := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	loop := newControlledAgentLoop(t, conversation, &fakeJournal{})
+	if check {
+		runner := &preCompactCleanupRunner{entered, cancelled, cleanup}
+		declaration := installPreCompactFixture(t, loop.runtime, runner, true)
+		loop.runtime.hooks.trust[declaration.Reference.Key()] = protocol.HookTrustSession
+	} else {
+		conversation.entered, conversation.cancelObserved = entered, cancelled
+		conversation.release, conversation.cleanupRelease = make(chan struct{}), cleanup
+	}
 	done := startAgentLoop(t, loop)
 	command, _ := protocol.NewCompactContextCommand("compact", "")
 	result, err := loop.Submit(context.Background(), command)
 	if err != nil || result.Status() != protocol.CommandStatusAccepted {
 		t.Fatal("not admitted")
 	}
-	<-conversation.entered
+	<-entered
 	shutdown, _ := protocol.NewShutdownCommand("shutdown")
 	if _, err := loop.Submit(context.Background(), shutdown); err != nil {
 		t.Fatal(err)
 	}
-	<-conversation.cancelObserved
+	<-cancelled
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := loop.Stop(ctx); !errors.Is(err, context.Canceled) {
@@ -227,6 +252,9 @@ func TestCompactionShutdownRetainsCleanupOwner(t *testing.T) {
 	}
 	if terminal != 1 || conversation.installed.Load() {
 		t.Fatal("shutdown terminal invalid")
+	}
+	if check && conversation.generated.Load() != 0 {
+		t.Fatal("cancelled gate reached the provider")
 	}
 }
 

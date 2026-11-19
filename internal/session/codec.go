@@ -173,12 +173,19 @@ func validateRecord(record Record, requireChecksum bool) error {
 	if record.EventKind == "" || !codec.Valid(record.Payload) || len(record.Payload) == 0 || len(record.Payload) > MaxRecordBytes {
 		return fmt.Errorf("session event kind or payload is invalid")
 	}
-	if _, exists := descriptorByKind(record.EventKind); !exists {
+	descriptor, exists := descriptorByKind(record.EventKind)
+	if !exists {
 		return fmt.Errorf("session event kind is unsupported")
 	}
 	if record.EventKind == EventSessionTitleUpdated {
 		if err := validateSessionTitleEnvelope(record); err != nil {
 			return err
+		}
+	}
+	// 完整压缩开始/检查记录必须是单记录批次，不能被误判为可修复尾批。
+	if descriptor.Placement == PlacementCompactionStart || descriptor.Placement == PlacementCompactionHook {
+		if record.BatchID != record.Sequence || record.BatchIndex != 0 || record.BatchSize != 1 || record.TurnID != "" || record.ParentThreadID != "" {
+			return fmt.Errorf("invalid compaction admission record envelope")
 		}
 	}
 	if requireChecksum {

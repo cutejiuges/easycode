@@ -87,35 +87,37 @@ type Model struct {
 	tasks                     taskProgressView
 	title                     sessionTitleView
 
-	hooks                hookBrowser
-	hookTrust            *hookTrustOverlay
-	nextTextID           uint64
-	reading              transcriptViewport
-	markdown             markdownViewCache
-	skills               []domain.SkillListEntry
-	skillsOpen           bool
-	plugins              pluginBrowser
-	skillSelection       int
-	queryGeneration      uint64
-	queryRequestID       protocol.RequestID
-	queryKind            protocol.CommandKind
-	cachePanel           *protocol.CacheSnapshotPayload
-	cacheScroll          int
-	pendingContext       protocol.CommandKind
-	activeCompactionID   domain.CompactionID
-	compactionStatus     string
-	contextPanel         *protocol.ContextSnapshotPayload
-	inference            domain.InferenceSettings
-	contextScroll        int
-	main                 mainTranscript
-	browser              transcriptBrowser
-	reasoning            activeReasoning
-	version              string
-	width                int
-	height               int
-	session              ChatSession
-	pendingCancel        context.CancelFunc
-	submissionGeneration uint64
+	hooks                   hookBrowser
+	hookTrust               *hookTrustOverlay
+	nextTextID              uint64
+	reading                 transcriptViewport
+	markdown                markdownViewCache
+	skills                  []domain.SkillListEntry
+	skillsOpen              bool
+	plugins                 pluginBrowser
+	skillSelection          int
+	queryGeneration         uint64
+	queryRequestID          protocol.RequestID
+	queryKind               protocol.CommandKind
+	cachePanel              *protocol.CacheSnapshotPayload
+	cacheScroll             int
+	pendingContext          protocol.CommandKind
+	activeCompactionID      domain.CompactionID
+	compaction              compactionView
+	lastAutomaticCompaction domain.CompactionScope
+	compactionStatus        string
+	contextPanel            *protocol.ContextSnapshotPayload
+	inference               domain.InferenceSettings
+	contextScroll           int
+	main                    mainTranscript
+	browser                 transcriptBrowser
+	reasoning               activeReasoning
+	version                 string
+	width                   int
+	height                  int
+	session                 ChatSession
+	pendingCancel           context.CancelFunc
+	submissionGeneration    uint64
 
 	composer       composer
 	pending        *composer
@@ -216,9 +218,15 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.failTaskQuery(value.generation, "task_query_unavailable: task progress query failed")
 		return model, nil
 	case hookTrustFailedMsg:
-		if model.hookTrust != nil && model.hookTrust.request.RequestID == value.request && model.hookTrust.turn == value.turn {
+		if model.hookTrust != nil && model.hookTrust.request.RequestID == value.request && model.hookTrust.turn == value.turn &&
+			model.hookTrust.request.Target == value.target && model.compaction.stage != compactionCancelling {
 			model.hookTrust.submitted = false
 			model.errorSummary = safeErrorSummary(value.err)
+		}
+		return model, nil
+	case compactionCancelFailedMsg:
+		if model.activeCompactionID == value.id && model.compaction.stage == compactionCancelling {
+			model.errorSummary = value.summary
 		}
 		return model, nil
 	case hookResetMsg:
@@ -260,7 +268,11 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if model.tasks.query != nil {
 			model.failTaskQuery(model.tasks.query.generation, "task_query_unavailable: runtime event stream closed")
 		}
-		model.activeCompactionID = ""
+		if model.activeCompactionID.Valid() {
+			model.compactionStatus = ""
+			model.cancelling = false
+		}
+		model.clearCompaction()
 		model.pendingContext = ""
 		if model.state == stateStreaming {
 			model.state = stateIdle
@@ -279,6 +291,9 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return model.finishSessionTitleRequest(safeErrorSummary(value.err))
 	case RuntimeEventMsg:
+		if protocol.IsCompactionPresentation(value.Event) {
+			return model.projectCompactionPresentation(value.Event)
+		}
 		if value.Event.Kind == protocol.EventTaskProgressUpdated {
 			return model.projectTaskUpdate(value.Event)
 		}
@@ -472,8 +487,7 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return model.navigateTranscript(key)
 	}
 	if key.Type == tea.KeyCtrlC && model.activeCompactionID.Valid() {
-		model.compactionStatus = "Cancelling compaction — waiting for cleanup"
-		return model, model.cancelActiveCompaction()
+		return model.requestCompactionCancellation()
 	}
 	if key.Type == tea.KeyCtrlC && model.activeTurnID.Valid() {
 		if model.pendingCancel != nil {
@@ -562,8 +576,7 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return model.retractQueuedInputs()
 		}
 		if key.Type == tea.KeyEsc && model.activeCompactionID.Valid() {
-			model.compactionStatus = "Cancelling compaction — waiting for cleanup"
-			return model, model.cancelActiveCompaction()
+			return model.requestCompactionCancellation()
 		}
 		if key.Type == tea.KeyEsc && model.activeTurnID.Valid() {
 			model.cancelling = true

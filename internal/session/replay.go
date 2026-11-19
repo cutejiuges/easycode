@@ -370,7 +370,7 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 		}
 
 		switch batch[0].EventKind {
-		case EventCompactionStarted, EventCompactionCompleted, EventCompactionFailed:
+		case EventCompactionStarted, EventPreCompactHookStarted, EventPreCompactHookFinished, EventPreCompactHookDecided, EventCompactionCompleted, EventCompactionFailed:
 			if err := compaction.accept(&plan, batch, active); err != nil {
 				return ReplayPlan{}, err
 			}

@@ -10,9 +10,10 @@ import (
 
 // CompactionStartedPayload 冻结压缩开始时的已提交来源。
 type CompactionStartedPayload struct {
-	Scope  domain.CompactionScope    `json:"scope"`
-	ID     domain.CompactionID       `json:"compaction_id"`
-	Source provider.CompactionSource `json:"source"`
+	Scope      domain.CompactionScope    `json:"scope"`
+	ID         domain.CompactionID       `json:"compaction_id"`
+	Source     provider.CompactionSource `json:"source"`
+	PreCompact PreCompactPlan            `json:"pre_compact"`
 }
 
 // CompactionCompletedPayload 原子保存独立 checkpoint、摘要计量和窗口估算。
@@ -34,9 +35,9 @@ type CompactionFailedPayload struct {
 	Provenance *NativeCommitPayload           `json:"provenance,omitempty"`
 }
 
-// NewCompactionStartedDraft 在网络前创建必须 Sync 的独立操作事实。
-func NewCompactionStartedDraft(scope domain.CompactionScope, id domain.CompactionID, source provider.CompactionSource) (RecordDraft, error) {
-	payload := CompactionStartedPayload{Scope: scope, ID: id, Source: source}
+// NewCompactionStartedDraft 在审查、执行及网络前冻结压缩开始事实。
+func NewCompactionStartedDraft(scope domain.CompactionScope, id domain.CompactionID, source provider.CompactionSource, plan PreCompactPlan) (RecordDraft, error) {
+	payload := CompactionStartedPayload{Scope: scope, ID: id, Source: source, PreCompact: plan}
 	if err := payload.Validate(); err != nil {
 		return RecordDraft{}, err
 	}
@@ -74,13 +75,10 @@ func NewCompactionFailedDraft(payload CompactionFailedPayload) (RecordDraft, err
 
 // Validate 校验操作身份和来源，拒绝把前驱重用为新操作。
 func (payload CompactionStartedPayload) Validate() error {
-	if err := payload.Scope.Validate(); err != nil {
-		return err
-	}
-	if !payload.ID.Valid() || payload.ID == payload.Source.Previous().ID() {
+	if payload.ID == payload.Source.Previous().ID() {
 		return fmt.Errorf("compaction identity is invalid")
 	}
-	return payload.Source.Validate()
+	return payload.PreCompact.validate(payload.ID, payload.Scope, payload.Source)
 }
 
 // Validate 校验原生 envelope、usage 及严格缩减条件。
@@ -121,6 +119,9 @@ func (payload CompactionFailedPayload) Validate() error {
 	if !payload.ID.Valid() || !payload.Code.Valid() {
 		return fmt.Errorf("compaction failure identity or code is invalid")
 	}
+	if (payload.Code.IsHookFailure() || payload.Code == protocol.CompactionFailureInterrupted) && payload.UsageState != "unavailable" {
+		return fmt.Errorf("compaction failure cannot have observed usage")
+	}
 	switch payload.UsageState {
 	case "unavailable":
 		if payload.Usage != nil || payload.Provenance != nil {
@@ -151,7 +152,7 @@ func DecodeCompactionStartedPayload(record Record) (CompactionStartedPayload, er
 	if err != nil {
 		return payload, err
 	}
-	if record.TurnID != "" {
+	if record.TurnID != "" || record.ParentThreadID != "" {
 		return payload, fmt.Errorf("compaction record contains turn identity")
 	}
 	return payload, payload.Validate()
@@ -192,10 +193,11 @@ type ReplayedCompaction struct {
 
 // compactionReplay 独占压缩语法，不扩大普通 turn 状态机。
 type compactionReplay struct {
-	active    *ReplayedCompaction
-	seen      map[domain.CompactionID]struct{}
-	previous  domain.CompactionID
-	completed uint64
+	active     *ReplayedCompaction
+	preCompact preCompactReplay
+	seen       map[domain.CompactionID]struct{}
+	previous   domain.CompactionID
+	completed  uint64
 }
 
 func (state *compactionReplay) accept(plan *ReplayPlan, batch []Record, turn *activeReplayTurn) error {
@@ -231,6 +233,13 @@ func (state *compactionReplay) accept(plan *ReplayPlan, batch []Record, turn *ac
 		}
 		state.seen[payload.ID] = struct{}{}
 		state.active = &ReplayedCompaction{StartedSequence: record.Sequence, Started: payload}
+		state.preCompact = preCompactReplay{}
+		return nil
+	case EventPreCompactHookStarted, EventPreCompactHookFinished, EventPreCompactHookDecided:
+		if state.active == nil || state.active.Started.PreCompact.kind != preCompactPlanned {
+			return replayCorrupt("pre-compact hook has no active plan")
+		}
+		return state.preCompact.accept(state.active.Started, record)
 	case EventCompactionCompleted:
 		payload, err := DecodeCompactionCompletedPayload(record)
 		if err != nil {
@@ -238,6 +247,9 @@ func (state *compactionReplay) accept(plan *ReplayPlan, batch []Record, turn *ac
 		}
 		if state.active == nil || payload.Checkpoint.ID() != state.active.Started.ID || payload.Checkpoint.Source() != state.active.Started.Source || payload.Scope != state.active.Started.Scope {
 			return replayCorrupt("compaction completion does not match start")
+		}
+		if !state.preCompact.allowsSummary(state.active.Started.PreCompact) {
+			return replayCorrupt("compaction completion has no matching hook permission")
 		}
 		state.active.Completed = &payload
 		state.previous = payload.Checkpoint.ID()
@@ -253,14 +265,16 @@ func (state *compactionReplay) accept(plan *ReplayPlan, batch []Record, turn *ac
 		if payload.Provenance != nil && (payload.Provenance.Provider != state.active.Started.Source.Family() || payload.Provenance.Wire != state.active.Started.Source.Wire()) {
 			return replayCorrupt("compaction usage provider mismatch")
 		}
+		if !state.preCompact.acceptsFailure(state.active.Started.PreCompact, payload) {
+			return replayCorrupt("compaction failure does not match pre-compact evidence")
+		}
 		state.active.Failed = &payload
 	default:
 		return replayCorrupt("invalid compaction record")
 	}
-	if record.EventKind != EventCompactionStarted {
-		state.active.TerminalSequence = record.Sequence
-		plan.Compactions = append(plan.Compactions, *state.active)
-		state.active = nil
-	}
+	state.active.TerminalSequence = record.Sequence
+	plan.Compactions = append(plan.Compactions, *state.active)
+	state.active = nil
+	state.preCompact = preCompactReplay{}
 	return nil
 }

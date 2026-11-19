@@ -30,6 +30,7 @@ type hookTrustOverlay struct {
 type hookTrustFailedMsg struct {
 	request string
 	turn    domain.TurnID
+	target  domain.HookTarget
 	err     error
 }
 type hookResetMsg struct {
@@ -70,6 +71,9 @@ func (m Model) handleHooksKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyCtrlC:
 		m.hooks.open = false
 		m.hooks.generation++
+		if m.activeCompactionID.Valid() {
+			return m.requestCompactionCancellation()
+		}
 		if m.activeTurnID.Valid() {
 			m.cancelling = true
 			return m, interruptSession(m.session)
@@ -96,7 +100,7 @@ func (m Model) handleHooksKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyPgDown:
 		m.hooks.scroll += max(1, m.heightOrDefault()-3)
 	case tea.KeyRunes:
-		if string(key.Runes) == "r" && m.hooks.detail && !m.activeTurnID.Valid() && len(m.hooks.entries) > 0 {
+		if string(key.Runes) == "r" && m.hooks.detail && !m.activeTurnID.Valid() && !m.activeCompactionID.Valid() && len(m.hooks.entries) > 0 {
 			entry := m.hooks.entries[m.hooks.selected]
 			if entry.Declaration.Validate() != nil || entry.State == "unsupported" {
 				return m, nil
@@ -132,7 +136,17 @@ func (m Model) renderHooks() string {
 	if m.hooks.detail && len(m.hooks.entries) > 0 {
 		e := m.hooks.entries[m.hooks.selected]
 		d := e.Declaration
-		lines = []string{"Hook details · Esc: back · ↑/↓: scroll · r: reset trust", fmt.Sprintf("Source: %s · %s [%s]", d.Reference.Source, d.Reference.ID, e.State), "Event: " + string(d.Reference.Event) + " · feedback: " + string(d.Reference.Feedback), hookScopeLabel(d), fmt.Sprintf("Timeout: %d seconds", d.Reference.TimeoutSeconds), "Workspace: . · read-only · network denied", "Workspace scripts can change after review.", "Reset only removes trust; the next matching check asks again.", "Raw output is discarded. Only trusted model feedback is sent and saved.", "", "Command:", d.Command}
+		header := "Hook details · Esc: back · ↑/↓: scroll"
+		if !m.activeTurnID.Valid() && !m.activeCompactionID.Valid() {
+			header += " · r: reset trust"
+		}
+		lines = []string{header, fmt.Sprintf("Source: %s · %s [%s]", d.Reference.Source, d.Reference.ID, e.State), "Event: " + string(d.Reference.Event) + " · feedback: " + string(d.Reference.Feedback), hookScopeLabel(d), fmt.Sprintf("Timeout: %d seconds", d.Reference.TimeoutSeconds), "Workspace: . · read-only · network denied", "Workspace scripts can change after review.", "Reset clears the current approval or refusal."}
+		if d.Reference.Event == domain.HookPreCompact {
+			lines = append(lines, compactionHookDisclosure(d, d.Scope.MatchesCompaction(domain.CompactionManual))...)
+		} else {
+			lines = append(lines, "Raw output is discarded. Only trusted model feedback is sent and saved.")
+		}
+		lines = append(lines, "", "Command:", d.Command)
 		if d.Reference.Event == domain.HookPreToolUse {
 			lines = append(lines[:1], append([]string{"May replace complete tool parameters before ordinary permission.", "Changed candidates and execution facts are saved in Session.", "Results disclose the effective input or a note about execution."}, lines[1:]...)...)
 		}
@@ -154,7 +168,12 @@ func (m Model) renderHooks() string {
 		if e.Declaration.Validate() != nil {
 			lines = append(lines, fmt.Sprintf("%s%s [%s]", marker, e.Declaration.Reference.Source, e.State))
 		} else {
-			lines = append(lines, fmt.Sprintf("%s%s:%s · %s · %s [%s]", marker, e.Declaration.Reference.Source, e.Declaration.Reference.ID, e.Declaration.Reference.Event, e.Declaration.Reference.Feedback, e.State))
+			d := e.Declaration
+			eventLabel := string(d.Reference.Event)
+			if d.Reference.Event == domain.HookPreCompact {
+				eventLabel += " (" + d.Scope.String() + ")"
+			}
+			lines = append(lines, fmt.Sprintf("%s%s:%s · %s · %s [%s]", marker, d.Reference.Source, d.Reference.ID, eventLabel, d.Reference.Feedback, e.State))
 		}
 		if e.Code != domain.HookOK {
 			lines = append(lines, "  "+string(e.Code))
@@ -167,17 +186,17 @@ func (m Model) renderHooks() string {
 	return hookPanel(lines, m.widthOrDefault(), m.heightOrDefault(), scroll)
 }
 func (m Model) handleHookTrustKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.hookTrust != nil && m.hookTrust.request.Declaration.Reference.Event == domain.HookPreToolUse && (m.widthOrDefault() < 20 || m.heightOrDefault() < 6) && key.Type != tea.KeyEsc && key.Type != tea.KeyCtrlC {
-		return m, nil
-	}
 	if key.Paste {
 		return m, nil
 	}
 	if key.Type == tea.KeyCtrlC {
+		if _, _, ok := m.hookTrust.request.Target.Compaction(); ok {
+			return m.requestCompactionCancellation()
+		}
 		m.cancelling = true
 		return m, interruptSession(m.session)
 	}
-	if m.hookTrust.submitted {
+	if m.hookTrust.submitted || m.compaction.stage == compactionCancelling || (m.hookReviewUnavailable() && key.Type != tea.KeyEsc) {
 		return m, nil
 	}
 	switch key.Type {
@@ -215,14 +234,17 @@ func (m *Model) submitHookTrust() tea.Cmd {
 	return func() tea.Msg {
 		err := target.ResolveHookTrust(context.Background(), turn, request, decision)
 		if err != nil {
-			return hookTrustFailedMsg{request.RequestID, turn, err}
+			return hookTrustFailedMsg{request: request.RequestID, turn: turn, target: request.Target, err: err}
 		}
 		return nil
 	}
 }
 func (m Model) renderHookTrust() string {
 	o := m.hookTrust
-	if o.request.Declaration.Reference.Event == domain.HookPreToolUse && (m.widthOrDefault() < 20 || m.heightOrDefault() < 6) {
+	if m.compaction.stage == compactionCancelling {
+		return hookPanel([]string{m.compactionStatus}, m.widthOrDefault(), m.heightOrDefault(), 0)
+	}
+	if m.hookReviewUnavailable() {
 		return hookPanel([]string{"Hook approval disabled: resize terminal to review.", "Esc: deny."}, m.widthOrDefault(), m.heightOrDefault(), 0)
 	}
 	d := o.request.Declaration
@@ -243,6 +265,11 @@ func (m Model) renderHookTrust() string {
 	if d.Reference.Event == domain.HookPostToolUseFailure {
 		lines = append(lines[:1], append([]string{"Runs only after a definite execution-attempt failure.", "Admission does not prove the process started. Normal nonzero exits use PostToolUse.", "feedback=model sends additionalContext to the provider and saves it in Session."}, lines[1:]...)...)
 	}
+	if _, scope, ok := o.request.Target.Compaction(); ok {
+		lines = []string{"Trust this hook?", fmt.Sprintf("Source: %s · %s", d.Reference.Source, d.Reference.ID), "PreCompact: " + string(scope.Trigger) + " · " + hookScopeLabel(d), "Feedback: " + string(d.Reference.Feedback), fmt.Sprintf("Timeout: %d seconds", d.Reference.TimeoutSeconds), "Workspace: . · read-only · network denied", "Workspace scripts can change after review."}
+		lines = append(lines, compactionHookDisclosure(d, scope.Trigger == domain.CompactionManual)...)
+		lines = append(lines, "PgUp/PgDn: full command · Tab/↑/↓: choose · Esc: deny", "", trust, deny, "", "Command:", d.Command)
+	}
 	if o.submitted {
 		lines = append(lines, "Waiting for confirmation")
 	}
@@ -250,6 +277,22 @@ func (m Model) renderHookTrust() string {
 		lines = append(lines, "Cancelling — waiting for cleanup")
 	}
 	return hookPanel(lines, m.widthOrDefault(), m.heightOrDefault(), o.scroll)
+}
+
+func (m Model) hookReviewUnavailable() bool {
+	event := m.hookTrust.request.Declaration.Reference.Event
+	return (event == domain.HookPreToolUse || event == domain.HookPreCompact) && (m.widthOrDefault() < 20 || m.heightOrDefault() < 6)
+}
+
+func compactionHookDisclosure(d domain.HookDeclaration, manual bool) []string {
+	lines := []string{"Runs before the summary request and may block this compaction."}
+	if manual {
+		lines = append(lines, "The script reads the original /compact instructions on stdin.")
+	}
+	if d.Reference.Feedback == domain.HookFeedbackModel {
+		lines = append(lines, "Accepted summary instructions go to the provider; the generated summary may retain them.")
+	}
+	return lines
 }
 func (m Model) projectHookEvent(e protocol.Event) (tea.Model, tea.Cmd) {
 	if e.TurnID != m.activeTurnID {
@@ -262,29 +305,13 @@ func (m Model) projectHookEvent(e protocol.Event) (tea.Model, tea.Cmd) {
 		return m.projectPostHookCommit(e)
 	case protocol.EventHookTrustRequested:
 		p, err := protocol.DecodeHookTrustRequested(e)
-		if err != nil || m.approval != nil || m.question != nil || m.hookTrust != nil {
+		if err != nil {
 			m.errorSummary = "stream_protocol_error: invalid hook trust request"
 			return m, interruptSession(m.session)
 		}
-		m.hookTrust = &hookTrustOverlay{request: p, turn: e.TurnID}
+		return m.openHookTrust(e.TurnID, p)
 	case protocol.EventHookTrustResolved:
-		p, err := protocol.DecodeHookTrustResolved(e)
-		if err != nil {
-			m.errorSummary = "stream_protocol_error: invalid hook trust resolution"
-			return m, nil
-		}
-		if m.hookTrust == nil || p.RequestID != m.hookTrust.request.RequestID || p.Target != m.hookTrust.request.Target || p.PlanDigest != m.hookTrust.request.PlanDigest || p.Reference != m.hookTrust.request.Declaration.Reference {
-			return m, nil
-		}
-		m.hookTrust = nil
-		for i := range m.hooks.entries {
-			if m.hooks.entries[i].Declaration.Reference == p.Reference {
-				m.hooks.entries[i].State = "denied"
-				if p.Decision == protocol.HookTrustSession {
-					m.hooks.entries[i].State = "trusted"
-				}
-			}
-		}
+		return m.projectHookTrustResolution(e)
 	case protocol.EventHookActivity:
 		p, err := protocol.DecodeHookActivity(e)
 		if err != nil {
@@ -333,6 +360,39 @@ func (m Model) projectHookEvent(e protocol.Event) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.transcript[index].hook = &p
+	}
+	return m, nil
+}
+
+func (m Model) openHookTrust(turn domain.TurnID, request protocol.HookTrustRequestedPayload) (tea.Model, tea.Cmd) {
+	if m.approval != nil || m.question != nil || m.hookTrust != nil {
+		m.errorSummary = "stream_protocol_error: overlapping hook trust request"
+		if _, _, ok := request.Target.Compaction(); ok {
+			return m.requestCompactionCancellation()
+		}
+		return m, interruptSession(m.session)
+	}
+	m.hookTrust = &hookTrustOverlay{request: request, turn: turn}
+	return m, nil
+}
+
+func (m Model) projectHookTrustResolution(event protocol.Event) (tea.Model, tea.Cmd) {
+	p, err := protocol.DecodeHookTrustResolved(event)
+	if err != nil {
+		m.errorSummary = "stream_protocol_error: invalid hook trust resolution"
+		return m, nil
+	}
+	if m.hookTrust == nil || p.RequestID != m.hookTrust.request.RequestID || p.Target != m.hookTrust.request.Target || p.PlanDigest != m.hookTrust.request.PlanDigest || p.Reference != m.hookTrust.request.Declaration.Reference {
+		return m, nil
+	}
+	m.hookTrust = nil
+	for i := range m.hooks.entries {
+		if m.hooks.entries[i].Declaration.Reference == p.Reference {
+			m.hooks.entries[i].State = "denied"
+			if p.Decision == protocol.HookTrustSession {
+				m.hooks.entries[i].State = "trusted"
+			}
+		}
 	}
 	return m, nil
 }

@@ -30,7 +30,7 @@ func NewFrozenHookFeedback(id HookRunIdentity, ref HookReference, kind HookFeedb
 	return v, v.Validate()
 }
 func (v FrozenHookFeedback) Validate() error {
-	if v.Identity.Validate() != nil || v.Reference.Validate() != nil || v.Identity.Event != v.Reference.Event || v.BudgetDelta < 0 || v.BudgetDelta > MaxHookOutputBytes {
+	if v.Identity.Validate() != nil || v.Identity.Event == HookPreCompact || v.Reference.Validate() != nil || v.Identity.Event != v.Reference.Event || v.BudgetDelta < 0 || v.BudgetDelta > MaxHookOutputBytes {
 		return HookConfigInvalid
 	}
 	switch v.Kind {

@@ -34,6 +34,9 @@ func (p HookTrustRequestedPayload) Validate() error {
 	if _, cap, ok := p.Target.ToolCall(); ok && !p.Declaration.Scope.Matches(cap) {
 		return fmt.Errorf("hook trust capability mismatch")
 	}
+	if _, scope, ok := p.Target.Compaction(); ok && !p.Declaration.Scope.MatchesCompaction(scope.Trigger) {
+		return fmt.Errorf("hook trust compaction trigger mismatch")
+	}
 	return nil
 }
 
@@ -57,8 +60,17 @@ func NewHookTrustResponse(session domain.SessionID, thread domain.ThreadID, turn
 	return r, r.Validate()
 }
 func (r HookTrustResponse) Validate() error {
-	if !r.SessionID.Valid() || !r.ThreadID.Valid() || !r.TurnID.Valid() || !validUUIDv7Text(r.RequestID) || !r.Target.ValidFor(r.Reference.Event) || !domain.ValidHookDigest(r.PlanDigest) || r.Reference.Validate() != nil || !r.Decision.Valid() {
+	if !r.SessionID.Valid() || !r.ThreadID.Valid() || !validUUIDv7Text(r.RequestID) || !r.Target.ValidFor(r.Reference.Event) || !domain.ValidHookDigest(r.PlanDigest) || r.Reference.Validate() != nil || !r.Decision.Valid() {
 		return fmt.Errorf("invalid hook trust response")
+	}
+	if _, scope, ok := r.Target.Compaction(); ok {
+		if r.TurnID != scope.TurnID {
+			return fmt.Errorf("hook trust compaction scope mismatch")
+		}
+		return nil
+	}
+	if !r.TurnID.Valid() {
+		return fmt.Errorf("invalid hook trust turn")
 	}
 	if sample, ok := r.Target.AssistantSample(); ok && sample.TurnID != r.TurnID {
 		return fmt.Errorf("hook trust turn mismatch")
@@ -113,15 +125,16 @@ func NewHookTrustRequested(p HookTrustRequestedPayload) (Event, error) {
 	if p.Validate() != nil {
 		return Event{}, fmt.Errorf("invalid hook trust request")
 	}
-	return newEventWithPayload(EventHookTrustRequested, p)
+	event, err := newEventWithPayload(EventHookTrustRequested, p)
+	return decorateCompactionHookEvent(event, p.Target), err
 }
 func DecodeHookTrustRequested(e Event) (HookTrustRequestedPayload, error) {
 	var p HookTrustRequestedPayload
 	if e.Kind != EventHookTrustRequested || len(e.Payload) > maxHookTrustRequestBytes || codec.UnmarshalRecord(e.Payload, &p) != nil {
 		return p, fmt.Errorf("invalid hook trust request")
 	}
-	if sample, ok := p.Target.AssistantSample(); ok && e.TurnID != "" && sample.TurnID != e.TurnID {
-		return p, fmt.Errorf("hook trust target scope mismatch")
+	if err := validateHookEventScope(e, p.Target); err != nil {
+		return p, err
 	}
 	return p, p.Validate()
 }
@@ -129,14 +142,47 @@ func NewHookTrustResolved(p HookTrustResponse) (Event, error) {
 	if p.Validate() != nil {
 		return Event{}, fmt.Errorf("invalid hook trust resolution")
 	}
-	return newEventWithPayload(EventHookTrustResolved, p)
+	event, err := newEventWithPayload(EventHookTrustResolved, p)
+	if event = decorateCompactionHookEvent(event, p.Target); event.CompactionID != "" {
+		event.SessionID, event.ThreadID = p.SessionID, p.ThreadID
+	}
+	return event, err
 }
 func DecodeHookTrustResolved(e Event) (HookTrustResponse, error) {
 	var p HookTrustResponse
 	if e.Kind != EventHookTrustResolved || len(e.Payload) > 16<<10 || codec.UnmarshalRecord(e.Payload, &p) != nil {
 		return p, fmt.Errorf("invalid hook trust resolution")
 	}
+	if err := validateHookEventScope(e, p.Target); err != nil {
+		return p, err
+	}
+	if e.CompactionID != "" && (e.SessionID != p.SessionID || e.ThreadID != p.ThreadID || e.TurnID != p.TurnID) {
+		return p, fmt.Errorf("hook resolution scope mismatch")
+	}
 	return p, p.Validate()
+}
+
+func decorateCompactionHookEvent(event Event, target domain.HookTarget) Event {
+	if id, scope, ok := target.Compaction(); ok && event.Kind != "" {
+		event.CompactionID, event.TurnID = id, scope.TurnID
+	}
+	return event
+}
+
+func validateHookEventScope(e Event, target domain.HookTarget) error {
+	if id, scope, ok := target.Compaction(); ok {
+		if e.CompactionID != id || e.TurnID != scope.TurnID {
+			return fmt.Errorf("hook target compaction scope mismatch")
+		}
+		return nil
+	}
+	if e.CompactionID != "" {
+		return fmt.Errorf("noncompaction hook contains a compaction identity")
+	}
+	if sample, ok := target.AssistantSample(); ok && e.TurnID != "" && sample.TurnID != e.TurnID {
+		return fmt.Errorf("hook target turn scope mismatch")
+	}
+	return nil
 }
 
 // HookActivityState 将瞬态检查投影与持久化执行 outcome 分开。
@@ -218,15 +264,15 @@ func NewHookActivity(p HookActivityPayload) (Event, error) {
 	if err != nil || len(e.Payload) > 16<<10 {
 		return Event{}, fmt.Errorf("hook activity exceeds limit")
 	}
-	return e, nil
+	return decorateCompactionHookEvent(e, p.Target), nil
 }
 func DecodeHookActivity(e Event) (HookActivityPayload, error) {
 	var p HookActivityPayload
 	if e.Kind != EventHookActivity || len(e.Payload) > 16<<10 || codec.UnmarshalRecord(e.Payload, &p) != nil {
 		return p, fmt.Errorf("invalid hook activity")
 	}
-	if sample, ok := p.Target.AssistantSample(); ok && e.TurnID != "" && sample.TurnID != e.TurnID {
-		return p, fmt.Errorf("hook activity target scope mismatch")
+	if err := validateHookEventScope(e, p.Target); err != nil {
+		return p, err
 	}
 	return p, p.Validate()
 }

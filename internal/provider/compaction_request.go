@@ -9,7 +9,7 @@ import (
 	"easycode/internal/domain"
 )
 
-const MaxCompactionInstructionsBytes = 16 << 10
+const MaxCompactionInstructionsBytes = domain.MaxCompactionInstructionsBytes
 
 // CompactionInput 冻结本次摘要使用的稳定来源与额外关注点。
 type CompactionInput struct {
@@ -40,6 +40,12 @@ func (input CompactionInput) Sampling() TurnInput { return input.sampling }
 
 // Instructions 返回仅供本次生成使用的关注点。
 func (input CompactionInput) Instructions() string { return input.instructions }
+
+// WithInstructions 更新摘要重点并保留已冻结的来源、任务和采样参数。
+func (input CompactionInput) WithInstructions(instructions string) (CompactionInput, error) {
+	input.instructions = strings.TrimSpace(instructions)
+	return input, input.Validate()
+}
 
 // OutputTokens 返回实际 wire 输出上限。
 func (input CompactionInput) OutputTokens() uint64 { return input.outputTokens }

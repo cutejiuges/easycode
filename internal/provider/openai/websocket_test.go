@@ -347,6 +347,10 @@ func TestWebSocketSummaryUsesSeparateFullConnectionAndResets(t *testing.T) {
 			<-bodies
 			input, _ := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testOpenAIToolCatalog(t))
 			compact, _ := provider.NewCompactionInput(input, "preserve tests", 4096)
+			compact, err = compact.WithInstructions("preserve tests\n\nretain hook emphasis")
+			if err != nil {
+				t.Fatal(err)
+			}
 			preview, err := c.PreflightCompaction(compact)
 			if err != nil {
 				t.Fatal(err)
@@ -357,7 +361,8 @@ func TestWebSocketSummaryUsesSeparateFullConnectionAndResets(t *testing.T) {
 				t.Fatalf("summary result: %v", err)
 			}
 			var summary websocketCreate
-			if codec.Unmarshal(<-bodies, &summary) != nil || summary.PreviousResponseID != "" || summary.ToolChoice != "none" {
+			body := <-bodies
+			if codec.Unmarshal(body, &summary) != nil || summary.PreviousResponseID != "" || summary.ToolChoice != "none" || !bytes.Contains(body, []byte(`preserve tests\n\nretain hook emphasis`)) {
 				t.Fatal("summary was not a separate full create")
 			}
 			if failure {

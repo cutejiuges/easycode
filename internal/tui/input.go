@@ -48,6 +48,9 @@ func (model Model) projectControlItem(item protocol.ControlItem) (tea.Model, tea
 		return model, nil
 	}
 	if event, ok := item.ContextEvent(); ok {
+		if protocol.IsCompactionPresentation(event) {
+			return model.projectCompactionPresentation(event)
+		}
 		if event.Kind == protocol.EventTaskProgressSnapshot {
 			return model.projectTaskSnapshot(item.RequestID(), event)
 		}

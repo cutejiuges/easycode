@@ -45,9 +45,16 @@ func runHookFixtureForEvent(t *testing.T, root, command string, event domain.Hoo
 		t.Fatal(code)
 	}
 	var d domain.HookDeclaration
-	if event == domain.HookStop {
+	switch event {
+	case domain.HookStop:
 		d, err = domain.NewStopHookDeclaration(domain.HookSourceProject, domain.HookFeedbackNone, strings.Repeat("a", 64), "check", command, 5)
-	} else {
+	case domain.HookPreCompact:
+		scope, scopeErr := domain.ParsePreCompactHookScope("manual")
+		if scopeErr != nil {
+			t.Fatal(scopeErr)
+		}
+		d, err = domain.NewPreCompactHookDeclaration(domain.HookSourceProject, domain.HookFeedbackNone, strings.Repeat("a", 64), "check", scope, command, 5)
+	default:
 		d, err = domain.NewHookDeclaration(domain.HookSourceProject, event, domain.HookFeedbackNone, strings.Repeat("a", 64), "check", 7, command, 5)
 	}
 	if err != nil {
@@ -87,6 +94,21 @@ func runHookFixtureForEvent(t *testing.T, root, command string, event domain.Hoo
 			t.Fatal(err)
 		}
 	}
+	if event == domain.HookPreCompact {
+		scope := domain.ManualCompactionScope()
+		target, targetErr := domain.NewPreCompactHookTarget(domain.CompactionID(id), scope)
+		if targetErr != nil {
+			t.Fatal(targetErr)
+		}
+		run, err = domain.NewPreCompactHookRunIdentity(target, domain.HookDigest(nil), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		input, err = domain.NewPreCompactHookInput(domain.SessionID(id), domain.ThreadID(id), domain.CompactionID(id), scope, root, "preserve verification")
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	result := r.Run(context.Background(), run, d, input, 5*time.Second).Result
 	if result.Validate() != nil {
 		t.Fatal("invalid hook result")
@@ -95,6 +117,10 @@ func runHookFixtureForEvent(t *testing.T, root, command string, event domain.Hoo
 }
 func TestHookProcessReceivesStdinWithoutGrantingWritesOrNetwork(t *testing.T) {
 	testHookProcessIsolation(t, domain.HookPreToolUse)
+}
+
+func TestPreCompactProcessReceivesScopedStdinWithoutGrantingWritesOrNetwork(t *testing.T) {
+	testHookProcessIsolation(t, domain.HookPreCompact)
 }
 
 func testHookProcessIsolation(t *testing.T, event domain.HookEvent) {
@@ -113,6 +139,9 @@ func testHookProcessIsolation(t *testing.T, event domain.HookEvent) {
 	command := fmt.Sprintf(`input=$(/bin/cat); case "$input" in *'"tool_name":"exec_command"'*) ;; *) exit 9;; esac; test -z "$API_KEY$HTTPS_PROXY" || exit 8; test -r . || exit 7; (printf bad > forbidden-file) 2>/dev/null && exit 6; /bin/cat %q >/dev/null 2>&1 && exit 5; /usr/bin/nc -z 127.0.0.1 %d >/dev/null 2>&1 && exit 4; printf '{}'`, private, port)
 	if event == domain.HookStop {
 		command = strings.Replace(command, `"tool_name":"exec_command"`, `"hook_event_name":"Stop"`, 1)
+	}
+	if event == domain.HookPreCompact {
+		command = strings.Replace(command, `"tool_name":"exec_command"`, `"custom_instructions":"preserve verification"`, 1)
 	}
 	result := runHookFixtureForEvent(t, root, command, event)
 	if result.Status != domain.HookContinue || !result.ExitKnown || result.ExitCode != 0 {

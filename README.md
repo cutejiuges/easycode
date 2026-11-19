@@ -4,7 +4,7 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 
 用户只需要提供 `base_url`、`api_key` 和模型名称即可连接服务，不需要账号登录、OAuth、设备码或订阅鉴权。
 
-> 项目按纵向切片持续推进。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、命令/Skill 首词补全、正文文件引用与路径补全、原生多轮 Session、`--resume`/`--continue`、headless/FIFO 输入、离线 `sessions list`，以及十项工具能力：Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill、结构化用户提问和任务进度。命令执行当前支持 Darwin；已支持同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop 命令 Hook、PreToolUse 参数完整改写、被动推理阅读和启动推理/display/输出配置；本地 Plugin 技能包已支持显式目录加载和只读浏览；其余 Hook 事件、effort 之外的运行中推理切换等能力仍按 Roadmap 分阶段推进。
+> 项目按纵向切片持续推进。Anthropic Messages 与 OpenAI Responses 已支持基础 TUI、命令/Skill 首词补全、正文文件引用与路径补全、原生多轮 Session、`--resume`/`--continue`、headless/FIFO 输入、离线 `sessions list`，以及十项工具能力：Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill、结构化用户提问和任务进度。命令执行当前支持 Darwin；已支持同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact 命令 Hook、PreToolUse 参数完整改写、被动推理阅读和启动推理/display/输出配置；本地 Plugin 技能包已支持显式目录加载和只读浏览；其余 Hook 事件、effort 之外的运行中推理切换等能力仍按 Roadmap 分阶段推进。
 
 ## 交互式恢复会话
 
@@ -79,11 +79,11 @@ TUI 将 CRLF/CR 规范化为 LF，保留缩进、Tab、尾空格及尾换行；�
 
 ## 当前能力
 
-当前代码与限制的完整对照见[当前能力清单](docs/roadmap/capability-status.md)（2026-11-17 核对）。Roadmap 的阶段目标不等于已实现功能。
+当前代码与限制的完整对照见[当前能力清单](docs/roadmap/capability-status.md)（2026-11-19 核对）。Roadmap 的阶段目标不等于已实现功能。
 
 | 领域 | 当前状态 |
 |---|---|
-| CLI/TUI 入口 | 已实现流式 Markdown Chat、多行/FIFO 输入、命令/Skill 首词补全、正文文件引用与路径补全、工具/问卷/Hook 审查、历史详情与 resume 选择器；支持一次性 text/JSON 和 stream-json 控制 |
+| CLI/TUI 入口 | 已实现流式 Markdown Chat、多行/FIFO 输入、命令/Skill 首词补全、正文文件引用与路径补全、工具/问卷/Hook 审查、历史详情、会话命名、启动与聊天内的恢复选择器；支持一次性 text/JSON 和 stream-json 控制 |
 | 双 Provider | Anthropic Messages 与 OpenAI Responses 已支持流式文本多轮、各自原生历史及 committed-only 文本历史投影 |
 | HTTP/SSE | 已建立基于 Resty v3 的公共传输层 |
 | JSON 与缓存 | 已实现不可变 canonical JSON、Context/CachePlan、来源 fingerprint、Anthropic 显式断点/TTL、OpenAI thread key/可选 WebSocket 增量及缓存查询 |
@@ -92,7 +92,7 @@ TUI 将 CRLF/CR 规范化为 LF，保留缩进、Tab、尾空格及尾换行；�
 | 安全配置 | 已实现 JSON 配置、环境变量覆盖、API key 脱敏，以及 macOS/Linux 上绑定实际句柄的 no-follow 校验；其他平台当前安全失败关闭 |
 | Tools | 十项能力包含 Read/Glob/Grep、Edit/apply_patch、Write、Darwin Exec、ReadArtifact、Skill、结构化提问和任务进度；连续只读最多 8 路并行，Patch/Write/Exec 需批准，Question/Task 独占但不进入权限批准 |
 | Session | 已实现 append-only JSONL、唯一当前无版本格式的强类型 draft/decoder、UUIDv7、跨进程 lease、同句柄 load/repair/write、`Sync`、尾部修复、fixture、显式恢复，以及可从 JSONL 重建的 SQLite Catalog、`--continue` 与离线 `sessions list`，以及 `resume` 启动选择器和有界元数据搜索/只读文本预览；全文搜索尚未实现 |
-| 扩展系统 | P6 目标；本地 Skills 已实现发现、显式调用、按需工具读取和原生恢复；同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop command Hooks、本地 Plugin 技能包及四种受限 manifest 导入已实现；MCP、插件可执行贡献和其余 Hook 事件待后续推进 |
+| 扩展系统 | P6 目标；本地 Skills 已实现发现、显式调用、按需工具读取和原生恢复；同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact command Hooks、本地 Plugin 技能包及四种受限 manifest 导入已实现；MCP、插件可执行贡献和其余 Hook 事件待后续推进 |
 | Subagent | P7 目标；当前仅为经批准的 TODO 控制边界，调度、线程树和生命周期尚未实现 |
 | Telemetry | P8 目标；当前 logger 仅为经批准的 TODO 占位，未接入请求正文、Session 或运行时链路 |
 
@@ -431,7 +431,7 @@ Write 输入（原始 JSON 与规范编码）上限 1 MiB，审批完整展示�
 | 边界 | 当前行为 |
 | --- | --- |
 | 匹配 | `*` 或字面 `Edit/apply_patch`、`Write`、`Bash/exec_command`，以 `|` 分隔；别名只执行一次；读取工具不触发 |
-| 来源 | 严格 JSON、no-follow/实际 FD 校验；每来源 64 KiB，四个事件合计 32 项/来源、64 项/两来源，每事件每调用最多 8 项；任一已存在来源无效则阻断全部三项 mutation，并拒绝最终完成检查 |
+| 来源 | 严格 JSON、no-follow/实际 FD 校验；每来源 64 KiB，五个事件合计 32 项/来源、64 项/两来源，每事件每次最多匹配 8 项；任一已存在来源无效会阻断三项 mutation、完成检查及已接纳的压缩 |
 | 执行 | Darwin，非 login `/bin/sh`，最小环境，工作区只读、禁网；仅 `/dev/null` 写入；其他平台失败关闭 |
 | 预算 | 单项默认 5 秒，可设整数 1..30；每次工具调用总执行预算 30 秒，信任等待不计费；stdin 最大 512 KiB，stdout/stderr 各 16 KiB |
 | Pre 放行/改写 | exit 0 且空输出、`{}` 或独立 `updatedInput` 完整对象；串行保存后选参，仍重新进行普通候选、权限及审批 |
@@ -471,7 +471,7 @@ stdin 提供真实 `tool_name`、会话/回合/调用身份、cwd 与规范 `too
 
 PostToolUse 只检查真实执行成功的 Edit/apply_patch、Write 和 Bash/exec_command；正常非零 Exec exit 也按现有成功语义触发。完整后置计划在工具候选与普通批准之前审查，Pre/Post 信任相互隔离。真实工具结果先 Sync，随后检查；后置失败不会撤销或改写工具成功，下一工具和模型采样等待检查收口。主线保留工具成功并显示检查状态；Ctrl+O 中按右键进入独立 `post_hooks` 详情。
 
-在同一配置的 `hooks` 对象内增加以下数组；id 在同一来源的四个事件之间也必须唯一：
+在同一配置的 `hooks` 对象内增加以下数组。id 在同一来源的所有事件之间必须唯一。
 
 ```json
 "PostToolUse": [{
@@ -569,6 +569,26 @@ exit 0 的空白或 `{}` 表示通过；只有严格 `{"decision":"block","reaso
 决定保存后即形成本地交付义务；取消或恢复仍补齐反馈，但不联网自动续写。恢复先关闭中断摘要，再按原冻结字节交付并关闭旧回合，不重跑检查或工具、不读取旧配置/脚本/artifact、不恢复信任。坏来源会在已保存答复之后以配置错误失败，合法无 Stop 保持原完成路径。三个 headless 入口匹配 Stop 时返回 `hook_trust_required`，不投影 Stop 专用输入、运行脚本或等待交互；stream-json 继续沿用现有外部事件格式。
 
 实现及验证见[Stop 验收记录](openspec/changes/archive/2026-11-13-add-stop-command-hooks/verification.md)。真实 PTY 入口为 `scripts/stop-hook-smoke.py`，命令执行仍仅支持 Darwin；其他平台失败关闭。
+
+### 压缩前的 PreCompact 检查
+
+在 `hooks` 对象内配置 `PreCompact`。matcher 可选 `manual`、`auto` 或 `*`。以下示例为手动压缩添加一项摘要重点。
+
+```json
+"PreCompact": [{
+  "matcher": "manual",
+  "hooks": [{
+    "id": "preserve-verification",
+    "type": "command",
+    "command": "cat >/dev/null; printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreCompact\",\"summaryInstructions\":\"Keep failed tests and reproduction commands.\"}}'",
+    "feedback": "model"
+  }]
+}]
+```
+
+压缩通过基础预检后，匹配命令全部获信任才按顺序运行。脚本通过 stdin 接收触发方式、压缩身份、工作目录和同一份原始 `/compact` 重点，自动压缩的重点为 `null`。exit 0 后的空白或 `{}` 继续，`{"continue":false}` 阻止本次压缩，非零退出或无效输出关闭本次压缩。`feedback` 默认为 `none`，显式 `model` 可追加每项最多 4 KiB 的摘要重点。用户重点在前，组合上限 16 KiB，并按实际摘要请求再次核定预算。
+
+界面分别显示准备、审查、运行检查和请求摘要。阻止或失败保留旧窗口。非交互匹配以 `hook_trust_required` 关闭压缩，自动路径仅在旧窗口通过普通请求预检时继续。检查记录保留安全状态、数量和指纹，已授权重点进入本次摘要请求，生成的 checkpoint 可能引用它。恢复收口中断的压缩时不会重跑脚本或重新请求摘要。
 
 完整质量门使用 `make verify`，包含分支策略、格式、vet、Staticcheck、架构边界、测试调度器自检、全量普通测试和经审计的必要 race。质量门需要 Python 3.9+，默认不限制总耗时（`TEST_BUDGET=0`），每次强制重新执行测试。正值总预算仅供主动诊断。Go 的正常构建缓存仍可复用；依赖和工具链需提前准备好。`TEST_TIMEOUT` 保留单个测试进程的失败上限，不修改各业务操作的取消或超时断言。
 
@@ -688,8 +708,8 @@ make install-hooks
 | P2 | Session 与 Headless Loop | root Session、JSONL/SQLite、恢复、三种 headless 与 FIFO 已交付；全文索引/子线程待实现 |
 | P3 | Coding Tools | 十项工具与批准/恢复/预算已交付；PTY、后台进程、通用跨平台 sandbox 待实现 |
 | P4 | 缓存与上下文 | 缓存、usage 归一、手动/自动压缩已交付；费用、精确计数与跨 Provider fork 待实现 |
-| P5 | Claude 风格 TUI | Markdown、输入及命令/Skill/文件补全、审批/问卷/Hook、详情、被动推理阅读、任务清单和 resume picker 已交付；fork picker 待实现 |
-| P6 | 扩展系统 | 本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop、本地 Plugin 技能包已交付；其余 Hook、插件可执行贡献、MCP/热加载待实现 |
+| P5 | Claude 风格 TUI | Markdown、输入及命令/Skill/文件补全、审批/问卷/Hook、详情、被动推理阅读、任务清单、会话命名及启动与聊天内恢复已交付；fork picker 待实现 |
+| P6 | 扩展系统 | 本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact、本地 Plugin 技能包已交付；其余 Hook、插件可执行贡献、MCP/热加载待实现 |
 | P7 | Subagent | 尚未实现；保留批准占位，未接入 Runtime/app |
 | P8 | 发布强化 | 部分安全/故障验证已落地；全平台发布矩阵、诊断、遥测待实现；兼容迁移须另行明确授权 |
 
@@ -757,7 +777,7 @@ stream-json v1 使用显式控制，不把普通输入中的 slash 当命令：
 {"version":1,"type":"context.cancel","request_id":"cancel-1","expected_compaction_id":"<accepted response 中的 compaction_id>"}
 ```
 
-控制响应先于 `cache.snapshot`、`context.snapshot` 或 `compaction.started/completed/failed`。压缩输出关联独立 CompactionID，不含 TurnID、摘要正文或 opaque 内容；失败带 `durable`。stdin EOF 等待已接受操作完成，显式 shutdown 取消并等待清理。
+控制响应先于 `cache.snapshot`、`context.snapshot` 或 `compaction.started/completed/failed`。压缩输出关联独立 CompactionID，自动压缩在 scope 内另带实际 turn/sample。内容仅含生命周期、估算与计量，失败带 `durable`。stdin EOF 等待已接受操作完成，显式 shutdown 取消并等待清理。
 
 Session envelope 没有版本字段，headless 仍遵循独立外部协议。旧开发 journal 在修复或追加前失败关闭。压缩保留原始 JSONL 和工具详情；resume 本地恢复 checkpoint，未完成摘要本地收口，不重执行工具。阈值自动压缩已实现；其余 Hook 事件和跨 Provider fork 尚未实现。
 
