@@ -37,7 +37,10 @@ func (d *pickerDiscovery) list(ctx context.Context, request tui.PickerRequest) (
 		d.report = snapshot.report
 	}
 	for _, e := range snapshot.rows.Entries {
-		result.Entries = append(result.Entries, tui.SessionEntry{ThreadID: e.ThreadID, UpdatedAt: e.UpdatedAt, Family: e.ProviderFamily, Wire: e.ProviderWire, Model: e.Model, CWD: e.CreationCWD})
+		result.Entries = append(result.Entries, tui.SessionEntry{
+			ThreadID: e.ThreadID, UpdatedAt: e.UpdatedAt, Title: e.Title,
+			Family: e.ProviderFamily, Wire: e.ProviderWire, Model: e.Model, CWD: e.CreationCWD,
+		})
 	}
 	result.HasMore = snapshot.rows.HasMore
 	result.Warning = formatSessionListWarning(d.report)

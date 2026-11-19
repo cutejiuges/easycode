@@ -2,11 +2,12 @@ package tui
 
 import (
 	"fmt"
-	"github.com/charmbracelet/x/ansi"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 // pickerSafe 将不可信控制符转义为可见文本，先限制原文码点数。
@@ -66,9 +67,12 @@ func (m StartupModel) View() string {
 	if m.details {
 		entry, _ := m.selection()
 		text := string(entry.ThreadID) + "\n" + pickerSafe(string(entry.Family), 256) + " / " + pickerSafe(entry.Wire, 256) + "\n" + pickerSafe(entry.Model, 256) + "\nCreated in: " + pickerSafe(entry.CWD, 512) + "\nResume in: " + pickerSafe(m.config.CWD, 512) + "\nEsc back · ↑↓ scroll"
+		if entry.Title != "" {
+			text = "Title: " + string(entry.Title) + "\nUpdated: " + m.pickerTime(entry.UpdatedAt) + "\n" + text
+		}
 		lines := strings.Split(ansi.Hardwrap(text, max(1, m.width), true), "\n")
 		offset := min(m.scroll, max(0, len(lines)-m.height))
-		return strings.Join(lines[offset:min(len(lines), offset+m.height)], "\n")
+		return fitPickerLines(lines[offset:min(len(lines), offset+m.height)], m.width)
 	}
 	lines := []string{"Resume a session"}
 	if m.previewOpen {
@@ -76,6 +80,9 @@ func (m StartupModel) View() string {
 		if m.busy {
 			lines = append(lines, "Loading preview…")
 		} else if m.preview != nil {
+			if title := m.preview.Title; title != "" {
+				lines = append(lines, strings.Split(ansi.Hardwrap("Title: "+string(title), max(1, m.width), true), "\n")...)
+			}
 			if len(m.preview.Messages) == 0 {
 				lines = append(lines, "No visible text in this session")
 			}
@@ -118,12 +125,15 @@ func (m StartupModel) View() string {
 			lines = append(lines, strings.TrimSpace(m.warning))
 		}
 		if entry, ok := m.selection(); ok {
-			lines = append(lines, strings.Split(ansi.Hardwrap("ID: "+string(entry.ThreadID), max(1, m.width), true), "\n")...)
+			identification := strings.Split(ansi.Hardwrap("ID: "+string(entry.ThreadID), max(1, m.width), true), "\n")
 			status := "compatible"
 			if !m.compatible(entry) {
 				status = "incompatible"
 			}
-			lines = append(lines, pickerSafe(string(entry.Family)+" / "+entry.Wire, 256)+" · "+pickerSafe(entry.Model, 256)+" · "+status, pickerSafe(entry.CWD, 512))
+			identification = append(identification, pickerSafe(string(entry.Family)+" / "+entry.Wire, 256)+" · "+pickerSafe(entry.Model, 256)+" · "+status, pickerSafe(entry.CWD, 512))
+			// 窄屏优先留出候选行，完整身份与元数据仍可在详情中查看。
+			budget := max(0, m.height-len(lines)-3)
+			lines = append(lines, identification[:min(len(identification), budget)]...)
 		}
 		rows := m.filtered()
 		count := max(1, m.height-len(lines)-3)
@@ -139,7 +149,15 @@ func (m StartupModel) View() string {
 			if entry.ThreadID == m.selected {
 				prefix = "> "
 			}
-			lines = append(lines, prefix+entry.UpdatedAt.In(m.location()).Format("2006-01-02 15:04:05 -0700")+" "+pickerSafe(entry.Model, 256)+" "+pickerSafe(entry.CWD, 512))
+			updated := m.pickerTime(entry.UpdatedAt)
+			var line string
+			if entry.Title != "" {
+				metadata := updated + " " + pickerSafe(string(entry.Family)+" / "+entry.Model, 256)
+				line = prefix + ansi.Truncate(string(entry.Title)+" · "+metadata, max(0, m.width-len(prefix)), "…")
+			} else {
+				line = prefix + updated + " " + pickerSafe(entry.Model, 256) + " " + pickerSafe(entry.CWD, 512)
+			}
+			lines = append(lines, line)
 		}
 		if len(rows) == 0 && m.loaded {
 			if m.query == "" {
@@ -160,17 +178,22 @@ func (m StartupModel) View() string {
 	if len(lines) > m.height {
 		lines = lines[:m.height]
 	}
+	return fitPickerLines(lines, m.width)
+}
+
+func fitPickerLines(lines []string, width int) string {
 	for i, line := range lines {
-		lines[i] = ansi.Truncate(line, max(1, m.width), "")
+		lines[i] = ansi.Truncate(line, max(1, width), "")
 	}
 	return strings.Join(lines, "\n")
 }
 
-func (m StartupModel) location() *time.Location {
-	if m.config.Location != nil {
-		return m.config.Location
+func (m StartupModel) pickerTime(timestamp time.Time) string {
+	location := m.config.Location
+	if location == nil {
+		location = time.UTC
 	}
-	return time.UTC
+	return timestamp.In(location).Format("2006-01-02 15:04:05 -0700")
 }
 
 func (m StartupModel) compatibilityDifference(e SessionEntry) string {

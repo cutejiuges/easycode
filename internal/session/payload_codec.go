@@ -802,6 +802,9 @@ func decodeKnownRecord(record Record) error {
 	case EventSessionMeta:
 		_, err := DecodeSessionMetaPayload(record)
 		return err
+	case EventSessionTitleUpdated:
+		_, err := DecodeSessionTitleUpdated(record)
+		return err
 	case EventThreadMeta:
 		_, err := DecodeThreadMetaPayload(record)
 		return err

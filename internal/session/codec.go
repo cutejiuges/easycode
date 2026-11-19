@@ -117,6 +117,10 @@ func DecodeRecord(line []byte) (Record, error) {
 	if record.Checksum != want {
 		return Record{}, fmt.Errorf("session record checksum mismatch")
 	}
+	// 解码后的零值无法区分省略的身份和显式空字符串。
+	if record.EventKind == EventSessionTitleUpdated && (members["turn_id"] != nil || members["parent_thread_id"] != nil) {
+		return Record{}, fmt.Errorf("session title record identity fields must be absent")
+	}
 	if err := decodeKnownRecord(record); err != nil {
 		return Record{}, err
 	}
@@ -171,6 +175,11 @@ func validateRecord(record Record, requireChecksum bool) error {
 	}
 	if _, exists := descriptorByKind(record.EventKind); !exists {
 		return fmt.Errorf("session event kind is unsupported")
+	}
+	if record.EventKind == EventSessionTitleUpdated {
+		if err := validateSessionTitleEnvelope(record); err != nil {
+			return err
+		}
 	}
 	if requireChecksum {
 		if len(record.Checksum) != sha256.Size*2 {

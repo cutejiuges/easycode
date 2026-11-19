@@ -31,6 +31,7 @@ type Entry struct {
 	ProviderFamily domain.ProviderFamily
 	ProviderWire   string
 	Model          string
+	Title          domain.SessionTitle
 }
 
 // Selector 描述 --continue 的精确兼容条件。
@@ -82,6 +83,9 @@ func validateEntry(entry Entry) error {
 	}
 	if !entry.ProviderFamily.Valid() || strings.TrimSpace(entry.ProviderWire) == "" || strings.TrimSpace(entry.Model) == "" {
 		return fmt.Errorf("catalog entry provider metadata is invalid")
+	}
+	if entry.Title != "" && entry.Title.Validate() != nil {
+		return fmt.Errorf("catalog entry title is invalid")
 	}
 	return nil
 }

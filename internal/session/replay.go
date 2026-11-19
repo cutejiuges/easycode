@@ -307,6 +307,7 @@ type ReplayPlan struct {
 	Identity              Identity
 	SessionMetadata       SessionMetaPayload
 	ThreadMetadata        ThreadMetaPayload
+	Title                 domain.SessionTitle
 	NativeCommits         []NativeCommitRecord
 	SampleUsages          []SampleUsageRecord
 	Turns                 []ReplayedTurn
@@ -395,6 +396,15 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 			}
 		}
 		switch batch[0].EventKind {
+		case EventSessionTitleUpdated:
+			if active != nil {
+				return ReplayPlan{}, replayCorrupt("session title update overlaps an active turn")
+			}
+			title, decodeErr := DecodeSessionTitleUpdated(batch[0])
+			if decodeErr != nil {
+				return ReplayPlan{}, replayCorrupt("session title update payload is invalid")
+			}
+			plan.Title = title
 		case EventTurnStarted:
 			if active != nil || len(batch) != 1 || batch[0].TurnID == "" {
 				return ReplayPlan{}, replayCorrupt("turn_started placement is invalid")

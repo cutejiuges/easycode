@@ -25,7 +25,8 @@ CREATE TABLE threads (
     creation_cwd TEXT NOT NULL,
     provider_family TEXT NOT NULL,
     provider_wire TEXT NOT NULL,
-    model TEXT NOT NULL
+    model TEXT NOT NULL,
+    title TEXT NOT NULL
 ) STRICT;
 CREATE INDEX threads_continue_lookup ON threads (
     creation_cwd,
@@ -123,7 +124,7 @@ func validateSchema(db *sqlite3.Conn) error {
 	}
 	wantColumns := []string{
 		"thread_id", "session_id", "journal_path", "created_at_ns", "updated_at_ns",
-		"last_sequence", "last_checksum", "creation_cwd", "provider_family", "provider_wire", "model",
+		"last_sequence", "last_checksum", "creation_cwd", "provider_family", "provider_wire", "model", "title",
 	}
 	statement, _, err := db.Prepare("PRAGMA table_info(threads)")
 	if err != nil {
@@ -132,7 +133,11 @@ func validateSchema(db *sqlite3.Conn) error {
 	defer func() { _ = statement.Close() }()
 	columns := make([]string, 0, len(wantColumns))
 	for statement.Step() {
-		columns = append(columns, statement.ColumnText(1))
+		name := statement.ColumnText(1)
+		if name == "title" && (statement.ColumnText(2) != "TEXT" || statement.ColumnInt(3) != 1) {
+			return fmt.Errorf("session catalog title schema is incompatible")
+		}
+		columns = append(columns, name)
 	}
 	if err := statement.Err(); err != nil {
 		return fmt.Errorf("inspect session catalog schema: %w", err)
@@ -207,7 +212,7 @@ func (catalog *Catalog) LatestCompatible(ctx context.Context, selector Selector)
 		return Entry{}, false, err
 	}
 	statement, _, err := catalog.db.Prepare(`SELECT session_id, thread_id, journal_path, created_at_ns, updated_at_ns,
-last_sequence, last_checksum, creation_cwd, provider_family, provider_wire, model
+last_sequence, last_checksum, creation_cwd, provider_family, provider_wire, model, title
 FROM threads WHERE creation_cwd=?1 AND provider_family=?2 AND provider_wire=?3 AND model=?4
 ORDER BY updated_at_ns DESC, thread_id DESC LIMIT 1`)
 	if err != nil {
@@ -248,6 +253,7 @@ func decodeEntry(statement *sqlite3.Stmt) (Entry, error) {
 		CreatedAt: time.Unix(0, statement.ColumnInt64(3)).UTC(), UpdatedAt: time.Unix(0, statement.ColumnInt64(4)).UTC(),
 		LastSequence: uint64(sequence), LastChecksum: statement.ColumnText(6), CreationCWD: statement.ColumnText(7),
 		ProviderFamily: domain.ProviderFamily(statement.ColumnText(8)), ProviderWire: statement.ColumnText(9), Model: statement.ColumnText(10),
+		Title: domain.SessionTitle(statement.ColumnText(11)),
 	}
 	if err := validateEntry(entry); err != nil {
 		return Entry{}, fmt.Errorf("session catalog row is invalid")
@@ -288,13 +294,13 @@ func (catalog *Catalog) upsert(entry Entry) error {
 	}
 	statement, _, err := catalog.db.Prepare(`INSERT INTO threads (
 thread_id, session_id, journal_path, created_at_ns, updated_at_ns, last_sequence, last_checksum,
-creation_cwd, provider_family, provider_wire, model
-) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
+creation_cwd, provider_family, provider_wire, model, title
+) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)
 ON CONFLICT(thread_id) DO UPDATE SET session_id=excluded.session_id, journal_path=excluded.journal_path,
 created_at_ns=excluded.created_at_ns, updated_at_ns=excluded.updated_at_ns,
 last_sequence=excluded.last_sequence, last_checksum=excluded.last_checksum,
 creation_cwd=excluded.creation_cwd, provider_family=excluded.provider_family,
-provider_wire=excluded.provider_wire, model=excluded.model`)
+provider_wire=excluded.provider_wire, model=excluded.model, title=excluded.title`)
 	if err != nil {
 		return fmt.Errorf("prepare session catalog upsert: %w", err)
 	}
@@ -312,7 +318,7 @@ provider_wire=excluded.provider_wire, model=excluded.model`)
 	if err := statement.BindInt64(6, int64(entry.LastSequence)); err != nil {
 		return err
 	}
-	for index, value := range []string{entry.LastChecksum, entry.CreationCWD, string(entry.ProviderFamily), entry.ProviderWire, entry.Model} {
+	for index, value := range []string{entry.LastChecksum, entry.CreationCWD, string(entry.ProviderFamily), entry.ProviderWire, entry.Model, string(entry.Title)} {
 		if err := statement.BindText(index+7, value); err != nil {
 			return err
 		}

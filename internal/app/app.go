@@ -80,6 +80,7 @@ type providerResource interface {
 }
 
 type chatResources struct {
+	title             domain.SessionTitle
 	inference         domain.InferenceSettings
 	skills            []domain.SkillListEntry
 	plugins           []domain.PluginListEntry
@@ -532,7 +533,8 @@ func openChatResourcesWithSnapshot(
 		return nil, fault.New(fault.CodeSessionCorruption, "task progress history is invalid")
 	}
 	runtimeInstance, err := chatRuntime.New(assembled.conversation, chatRuntime.Config{
-		TaskExecutor: taskExecutor, InitialTaskProgress: initialTasks,
+		InitialSessionTitle: assembled.title,
+		TaskExecutor:        taskExecutor, InitialTaskProgress: initialTasks,
 		ArtifactReferences: artifactReferences,
 		TextOutputStore:    artifactOutputStore{store: artifactStore},
 		ToolHistory:        queries,
@@ -610,7 +612,7 @@ func openChatResourcesWithSnapshot(
 	if err := installChatHooks(ctx, runtimeInstance, workspace, artifactLayout, creationCWD, home, hooks); err != nil {
 		return nil, err
 	}
-	resources = &chatResources{inference: inference,
+	resources = &chatResources{inference: inference, title: assembled.title,
 		fileSource:    fileSource,
 		pluginSources: pluginSources, plugins: plugins,
 		artifactLayout: artifactLayout, artifactStore: artifactStore, transcriptQueries: queries,
@@ -812,6 +814,9 @@ func (resources *chatResources) close(ctx context.Context) error {
 	var writerErr error
 	if resources.writer != nil {
 		writerErr = resources.writer.Close(closeContext)
+		if errors.Is(writerErr, context.Canceled) || errors.Is(writerErr, context.DeadlineExceeded) {
+			writerErr = errors.Join(writerErr, resources.writer.Close(context.Background()))
+		}
 	}
 	var workspaceErr error
 	if resources.workspace != nil {
@@ -844,7 +849,7 @@ func assembleChatModel(ctx context.Context, resources *chatResources) (tui.Model
 		return tui.Model{}, err
 	}
 	resources.session = control
-	return tui.NewModel(ctx, Version, control).WithTaskProgressScope(resources.identity.SessionID, resources.identity.ThreadID).WithInferenceSettings(resources.inference).WithSkills(resources.skills).WithPlugins(resources.plugins).WithHooks(resources.session.HookEntries()).WithMarkdownColor(markdownColorEnabled(os.Getenv("NO_COLOR"), os.Getenv("TERM"), term.IsTerminal(os.Stdout.Fd()))).WithInputHistory(resources.history).WithTranscriptQueries(resources.identity.ThreadID, resources.transcriptQueries).WithFileQueries(resources.fileSource), nil
+	return tui.NewModel(ctx, Version, control).WithSessionTitle(resources.title).WithTaskProgressScope(resources.identity.SessionID, resources.identity.ThreadID).WithInferenceSettings(resources.inference).WithSkills(resources.skills).WithPlugins(resources.plugins).WithHooks(resources.session.HookEntries()).WithMarkdownColor(markdownColorEnabled(os.Getenv("NO_COLOR"), os.Getenv("TERM"), term.IsTerminal(os.Stdout.Fd()))).WithInputHistory(resources.history).WithTranscriptQueries(resources.identity.ThreadID, resources.transcriptQueries).WithFileQueries(resources.fileSource), nil
 }
 
 // markdownColorEnabled 由启动边界的显式环境和终端事实选择样式。

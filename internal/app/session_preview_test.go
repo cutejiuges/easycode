@@ -87,6 +87,67 @@ func TestPreviewDescriptorBoundPathReplacement(t *testing.T) {
 	}
 }
 
+func TestPreviewTitleUsesJournalInsteadOfPickerSnapshot(t *testing.T) {
+	ctx := context.Background()
+	base, err := os.ReadFile("../session/testdata/current/root.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	updates, err := os.ReadFile("../session/testdata/current/session_title_updates.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cut := bytes.IndexByte(updates, '\n') + 1
+	root, path, thread := installPreviewFixture(t, append(append([]byte(nil), base...), updates[:cut]...))
+	discovery := pickerDiscovery{
+		paths: dataPaths{sessionRoot: root, catalogPath: filepath.Join(filepath.Dir(root), "state.sqlite")},
+		cwd:   t.TempDir(),
+	}
+	request := tui.PickerRequest{ID: 1, Operation: tui.PickerList}
+	scoped, err := discovery.list(ctx, request)
+	if err != nil || len(scoped.Entries) != 0 {
+		t.Fatalf("current directory included an unrelated named session: %+v, %v", scoped, err)
+	}
+	request.ID++
+	request.All = true
+	snapshot, err := discovery.list(ctx, request)
+	if err != nil || len(snapshot.Entries) != 1 || snapshot.Entries[0].Title != "复核 @src/parser" {
+		t.Fatalf("initial discovery = %+v, %v", snapshot, err)
+	}
+	before, _, err := previewSession(ctx, root, thread, defaultPreviewDependencies())
+	if err != nil || len(before.Messages) == 0 || before.Title != snapshot.Entries[0].Title {
+		t.Fatalf("initial preview = %+v, %v", before, err)
+	}
+	content := append(append([]byte(nil), base...), updates...)
+	if err := os.WriteFile(path, content, 0600); err != nil {
+		t.Fatal(err)
+	}
+	after, cleanupFailed, err := previewSession(ctx, root, thread, defaultPreviewDependencies())
+	if err != nil || cleanupFailed || after.Title != "解析 👩‍💻" || len(after.Messages) != len(before.Messages) || after.Truncated != before.Truncated {
+		t.Fatalf("updated preview = %+v, %v", after, err)
+	}
+	for i, message := range after.Messages {
+		if message.Message.Text != before.Messages[i].Message.Text {
+			t.Fatalf("title changed preview content: %+v", message)
+		}
+	}
+	request.ID++
+	stillStale, err := discovery.list(ctx, request)
+	if err != nil || len(stillStale.Entries) != 1 || stillStale.Entries[0].Title != "复核 @src/parser" {
+		t.Fatalf("preview changed discovery = %+v, %v", stillStale, err)
+	}
+	request.ID++
+	request.Operation = tui.PickerRefresh
+	refreshed, err := discovery.list(ctx, request)
+	if err != nil || len(refreshed.Entries) != 1 || refreshed.Entries[0].ThreadID != thread || refreshed.Entries[0].Title != after.Title {
+		t.Fatalf("refreshed discovery = %+v, %v", refreshed, err)
+	}
+	unchanged, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(unchanged, content) {
+		t.Fatalf("discovery or preview changed journal: %v", err)
+	}
+}
+
 // previewValidationBarrier 只在测试中阻塞离线 reader 的逐条取消检查。
 type previewValidationBarrier struct {
 	context.Context

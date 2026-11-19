@@ -392,7 +392,7 @@ func TestTasksCommandCompletionAndReadOnlyPanel(t *testing.T) {
 	}
 	entries[0] = completionSkillEntry(t, "tasks", "same name skill")
 	m = taskTestModel(t).WithSkills(entries)
-	if len(m.completion.catalog.entries) != domain.MaxSkills+8 {
+	if len(m.completion.catalog.entries) != domain.MaxSkills+9 {
 		t.Fatal("eighth builtin reduced the skill capacity")
 	}
 	m.composer = composerWithText(t, "$ta")

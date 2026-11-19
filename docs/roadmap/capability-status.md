@@ -1,6 +1,6 @@
 # 当前能力与实现边界
 
-> 核对日期：2026-11-18。基线：当前仓库实现及已同步主规格，包含本地 Plugin 技能包、启动推理控制、会话内 effort 选择及本轮回归修复、结构化用户提问、PreToolUse 参数改写、PreToolUse/PostToolUse/PostToolUseFailure/Stop Hook、命令/Skill 首词补全、工作区文件引用、任务清单与已验收归档的双 Provider 被动推理阅读。
+> 核对日期：2026-11-19。基线：当前仓库实现及已同步主规格，包含本地 Plugin 技能包、启动推理控制、会话内 effort 选择及本轮回归修复、结构化用户提问、PreToolUse 参数改写、PreToolUse/PostToolUse/PostToolUseFailure/Stop Hook、命令/Skill 首词补全、工作区文件引用、任务清单、会话标题与已验收归档的双 Provider 被动推理阅读。
 > 本文记录当前代码可执行的能力；[产品 Roadmap](product-roadmap.md)保留阶段目标与剩余工作。已接受的 ADR 和归档 change 记录各自当时的决策，不能单独作为现有功能清单。
 
 ## 用户入口
@@ -9,13 +9,14 @@
 | --- | --- | --- |
 | 双 Provider | Anthropic Messages、OpenAI Responses；HTTP/SSE，OpenAI 可显式启用 WebSocket | 不隐式支持 Chat Completions，不实现登录/OAuth/订阅鉴权；`cmd/easycode/main.go`、`internal/provider/{anthropic,openai,transport}` |
 | CLI | 默认 TUI、`--version`、`--config`、`--plugin-dir PATH`、`--resume ID`、`--continue`、`--print`、`--json`、`--json --input-format stream-json` | `--resume` 与 `--continue` 互斥；没有 `doctor`、`provider probe`、fork 或模型切换命令；`cmd/easycode/*_test.go` |
-| 会话发现 | `sessions list [--all] [--limit N]`；`resume [--all] [--config PATH]` 启动选择器 | 离线 list 无需模型配置；picker 需要配置及终端。搜索限最近至多 200 条元数据，非正文全文搜索；`internal/app/session_*_test.go` |
-| 本地 slash commands | `/cache`、`/context`、`/compact [instructions]`、`/effort [level|auto|reset]`、`/skills`、`/hooks`、`/plugins`、`/tasks`，以及可调用 Skill 的 `/<name>` / `$name` | TUI 命令与 Skill 附件入口，支持 `/` / `$` 首词补全及冻结来源筛选；stream-json 使用独立 typed 控制消息，普通文字不执行 slash。`/help`、`/fork`、`/model`、`/mcp`、`/cost` 尚未实现 |
+| 会话发现 | `sessions list [--all] [--limit N]`；`resume [--all] [--config PATH]` 启动选择器 | 离线 list 无需模型配置；picker 需要配置及终端。标题纳入最近至多 200 条元数据搜索，预览从日志读取已验证标题；`internal/app/session_*_test.go` |
+| 会话命名 | 空闲时用 `/rename <名称>` 保存或用裸命令打开预填编辑框。标题 Sync 后确认，按最新有效事实恢复 | 单行 256 UTF-8 bytes，允许重名。改名计入最近活动，可影响 `--continue`。标题仅供宿主展示和发现，测试见 `internal/app/session_title_test.go` 与 `scripts/session-titles-smoke.py` |
+| 本地 slash commands | `/cache`、`/context`、`/compact [instructions]`、`/effort [level|auto|reset]`、`/skills`、`/hooks`、`/plugins`、`/tasks`、`/rename`，以及可调用 Skill 的 `/<name>` / `$name` | TUI 命令与 Skill 附件入口，支持 `/` / `$` 首词补全及冻结来源筛选；stream-json 使用独立 typed 控制消息，普通文字不执行 slash。`/help`、`/fork`、`/model`、`/mcp`、`/cost` 尚未实现 |
 | 命令/Skill 补全 | 确定性筛选、上下键选择、Tab 填入、内置 Enter 执行及 Skill Enter 只填入；Esc 关闭、paste 抑制、窄屏停用 | 命令/Skill 仅首词名称；正文文件引用使用独立来源，不含普通参数值补全；`internal/tui/completion*_test.go`、`internal/app/completion_e2e_test.go`；候选不进入 Session 或缓存前缀 |
 | 工作区文件引用 | 正文光标处 @ 路径补全、引号及行范围、提交时冻结、独立摘要/分页详情、双 Provider 原生恢复 | 8 引用、16/64 MiB 源读取、64/512 KiB 包装；候选会话索引 50000 项/16 MiB、渐进代次与分层 ignore、单 worker/准备 gate；不授予工具权限；`internal/app/file*_test.go`、`internal/tui/file*_test.go`、`scripts/file-mentions-smoke.py` |
 | 本地插件 | `--plugin-dir`，只读 `/plugins`，限定 Skill 调用与补全；Codex 副文件调用限制 | 复用同一 Skill 工具、权限和原生恢复；无 marketplace/安装、脚本/MCP/Agent 贡献或热加载；`internal/app/plugins_test.go`、`cmd/easycode/plugin_integration_test.go`、`scripts/plugins-smoke.py` |
 | 启动推理控制 | 五个严格 JSON 字段；Anthropic thinking/display/独立 effort、OpenAI effort/summary、普通输出上限；/context 只读来源 | thinking/display/summary/输出额度启动冻结，effort 按完整操作捕获；窗口预留和摘要 manual budget 预检；不探测模型、不降级或重试；两家 `reasoning_request_test.go`、`internal/app/effort_e2e_test.go`、`scripts/reasoning-controls-smoke.py` |
-| 会话内 effort | `/effort` 短通知、auto/unset/reset、八项内置补全；stream-json effort.query/set/snapshot | 下一操作生效，工具/Question/审批/Stop/自动摘要冻结，独立摘要接纳时捕获；纯进程选择和序号不写 Session/配置，活动 starting/finishing 可查；`internal/headless/effort_test.go`、`internal/app/effort_e2e_test.go`、`scripts/effort-smoke.py` |
+| 会话内 effort | `/effort` 短通知、auto/unset/reset、内置补全；stream-json effort.query/set/snapshot | 下一操作生效，工具/Question/审批/Stop/自动摘要冻结，独立摘要接纳时捕获；纯进程选择和序号不写 Session/配置，活动 starting/finishing 可查；`internal/headless/effort_test.go`、`internal/app/effort_e2e_test.go`、`scripts/effort-smoke.py` |
 | 输入控制 | 多行、字素编辑、decoded paste、有界历史、同轮追加、FIFO strict-next、原子取回、停止返还 | 未提交队列/草稿只在内存；同轮追加在完整工具 outputs 后，或 Stop continued 决定闭合后的交付安全点提交；`internal/runtime/agent_loop_test.go`、`internal/tui/composer*_test.go` |
 
 ## 十项模型工具与执行前检查
@@ -44,7 +45,7 @@ Stop 已支持精确答复的完成前检查、同回合最多两次续轮、累
 | 领域 | 当前实现 | 仍未实现 |
 | --- | --- | --- |
 | 原生历史 | 两家独立 request/stream/native codecs，保留 thinking/signature/redacted thinking、encrypted reasoning、message phase 与未知 opaque 扩展；单向 HistoryProjector/TranscriptProjector | 跨 Provider/wire 转换、compacted fork、child-thread 执行与 Subagent |
-| Session | append-only JSONL、批次/seq/checksum、typed 当前 decoder、跨进程 lease、验证后 repair、原生恢复与本地中断补偿；SQLite 为可重建 root-thread 索引 | title/tag、项目/worktree 聚合、全文搜索、实时索引、迁移器/历史 reader；内部 Session/native/checkpoint 无格式版本标记 |
+| Session | append-only JSONL、批次/seq/checksum、typed 当前 decoder、跨进程 lease、验证后 repair、原生恢复与本地中断补偿；SQLite 为可重建 root-thread 索引，投影最后已验证会话标题 | tag、项目/worktree 聚合、全文搜索、实时索引、迁移器/历史 reader；内部 Session/native/checkpoint 无格式版本标记 |
 | 上下文 | `provider_profile -> tool_catalog -> [project_instructions] -> [skill_catalog] -> committed_history -> current_input`，确定性 CachePlan、来源 fingerprint、本地 `byte_heuristic_v1`、显式窗口预算 | 远端精确 token count、自动文件 rehydrate、动态 git/env/world-state 注入 |
 | 项目指令 | 从启动 cwd 显式冻结层级 AGENTS.md/CLAUDE.md，相对来源、预算截断、临时注入双 Provider 请求，不写原生历史 | 全局用户指令、includes、`.claude/rules`、热加载 |
 | 缓存 | Anthropic disabled/5m/1h 显式断点；OpenAI omit/thread key；可选 WebSocket durable 前缀增量与受限回退；`/cache`/`cache.query` | 费用/价格、长期累计遥测、动态 plugin/MCP 目录策略；不能保证服务端命中 |

@@ -15,6 +15,7 @@ const (
 	PlacementCompactionStart    Placement = "compaction_start"
 	PlacementCompactionTerminal Placement = "compaction_terminal"
 	PlacementInitialMetadata    Placement = "initial_metadata"
+	PlacementIdleThread         Placement = "idle_thread"
 	PlacementTurnStart          Placement = "turn_start"
 	PlacementActiveTurn         Placement = "active_turn"
 	PlacementTurnTerminal       Placement = "turn_terminal"
@@ -45,6 +46,8 @@ func descriptorByKind(kind EventKind) (Descriptor, bool) {
 			Kind:        EventThreadMeta,
 			Cardinality: CardinalityExactlyOne, Placement: PlacementInitialMetadata,
 		}, true
+	case EventSessionTitleUpdated:
+		return Descriptor{Kind: kind, Cardinality: CardinalityMany, Placement: PlacementIdleThread}, true
 	case EventTurnStarted:
 		return Descriptor{
 			Kind:        EventTurnStarted,

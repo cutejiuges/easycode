@@ -290,7 +290,8 @@ func (m StartupModel) filtered() []SessionEntry {
 	result := make([]SessionEntry, 0, len(m.entries))
 	q := strings.ToLower(m.query)
 	for _, e := range m.entries {
-		if strings.Contains(strings.ToLower(string(e.ThreadID)+" "+string(e.Family)+" "+e.Wire+" "+e.Model+" "+e.CWD), q) {
+		if strings.Contains(strings.ToLower(string(e.Title)), q) ||
+			strings.Contains(strings.ToLower(string(e.ThreadID)+" "+string(e.Family)+" "+e.Wire+" "+e.Model+" "+e.CWD), q) {
 			result = append(result, e)
 		}
 	}

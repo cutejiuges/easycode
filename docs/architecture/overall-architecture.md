@@ -648,15 +648,14 @@ EventEnvelope
   checksum
 ```
 
-当前理解的记录词汇如下；每条路径只要求其适用的 facts：
+当前记录词汇按用途列出。每条路径只要求适用的记录。
 
-- `session_meta` 与 `thread_meta`；
-- `turn_started`、`turn_inputs_committed`；
-- `provider_native_commit`、`sample_usage` 与 `turn_completed`；
-- `tool_call_ready`、`tool_approval_decided`、`tool_execution_started` 与 `tool_call_result`；
-- `turn_failed`；
-- `compaction_started`、`compaction_completed`、`compaction_failed`；
-- `tool_hook_gate_planned`、`hook_execution_started`、`hook_execution_finished`、`tool_hook_gate_decided`。
+- 会话元数据与标题使用 `session_meta`、`thread_meta` 和 `session_title_updated`。
+- Turn 使用 `turn_started`、`turn_inputs_committed`、`turn_completed` 和 `turn_failed`。
+- Provider 原生提交与用量使用 `provider_native_commit` 和 `sample_usage`。
+- 工具调用使用 `tool_call_ready`、`tool_approval_decided`、`tool_execution_started` 和 `tool_call_result`。
+- 压缩使用 `compaction_started`、`compaction_completed` 和 `compaction_failed`。
+- Hook 使用 `tool_hook_gate_planned`、`tool_hook_gate_decided`、`tool_post_hook_planned`、`tool_post_hook_completed`、`turn_stop_hook_planned`、`turn_stop_hook_decided`、`hook_execution_started` 和 `hook_execution_finished`。
 
 Session envelope 只使用唯一当前字段结构，不包含 schema_version、payload_version、canary 或同义版本标记。decoder 只按 event_kind 选择唯一 strict decoder，字段/类型、checksum 和 replay 状态机共同校验恢复事实；未知 kind、未知字段与损坏在 repair、Provider 恢复和 append 前失败关闭。
 
@@ -670,7 +669,7 @@ Headless JSONL v1 是 stdout 外部协议，不是 Session record：不得写入
 
 ### 10.3 SQLite projection
 
-`internal/session/catalog` 是 JSONL 事实源之上的可重建投影边界。当前唯一 schema 只包含 `threads` 表及 continue 组合索引，保存 root thread 的 session/thread identity、journal 相对定位、创建 cwd、Provider family/wire、model、最后 committed record 的 timestamp/seq/checksum；不保存 prompt、response、native payload、title、tag、worktree 或全文搜索内容。
+`internal/session/catalog` 是 JSONL 事实源之上的可重建投影边界。当前唯一 schema 包含 `threads` 表及 continue 组合索引。表中保存 root thread 的 session/thread identity、journal 相对定位、创建 cwd、Provider family/wire、model、手动标题，以及最后一条已提交记录的 timestamp/seq/checksum。prompt、response、native payload、tag、worktree 和全文搜索内容均在投影范围之外。
 
 Catalog 在 `--continue` 路径按以下顺序工作：
 
@@ -690,11 +689,11 @@ Open Catalog lock
 
 `state.sqlite.lock` 为 schema、重建和 reconciliation 提供跨进程唯一 owner。Unix adapter 从实际打开的 handle 校验私有 data home、数据库、rollback journal 与 sidecar 的普通文件类型和 `0600` 权限，并使用 no-follow 打开；无法提供等价语义的平台失败关闭。数据库缺失、损坏或 schema 不兼容时，在同一 Catalog 锁下从 JSONL 构建临时数据库，`Sync` 后原子替换。
 
-选择结果不是恢复事实：Catalog 关闭后，app 仍通过既有 `sessionService.resume` 重新取得 journal lease并完整执行 load、repair、ReplayPlanner、Provider-native restore 与兼容性校验。选择和恢复之间发生占用、替换、损坏或配置不兼容时直接失败，不回退旧 thread。worktree/project catalog、title/tag、全文搜索、实时索引和 thread graph 仍属后续能力。
+Catalog 关闭后，app 按所选 thread ID 重新取得 journal lease。`sessionService.resume` 先执行 load、ReplayPlanner、配置兼容性与 Provider-native 校验，随后才可 repair 和转移 writer 所有权。选择和恢复之间发生占用、替换、损坏或配置不兼容时直接失败。worktree/project catalog、tag、全文搜索、实时索引和 thread graph 仍属后续能力。
 
-`sessions list` 新增独立发现入口：`cmd/easycode/sessions.go -> app.ListSessions -> catalog.Reconcile/List`，不进入聊天配置、项目指令、Provider 或 Runtime 装配。`ListQuery` 明确区分规范化创建目录和全部目录，使用原 schema 按 committed `updated_at`/thread ID 双降序、先筛选后 limit+1，返回至多 200 条及 HasMore。查询不依赖 Provider selector，`LatestCompatible` 仍保留原四字段精确匹配。
+`sessions list` 新增独立发现入口：`cmd/easycode/sessions.go -> app.ListSessions -> catalog.Reconcile/List`，不进入聊天配置、项目指令、Provider 或 Runtime 装配。`ListQuery` 明确区分规范化创建目录和全部目录，按 committed `updated_at`/thread ID 双降序、先筛选后 limit+1，返回至多 200 条及 HasMore。查询不依赖 Provider selector，`LatestCompatible` 仍保留原四字段精确匹配。
 
-列表沿用上述只读 journal 协调，随后先关闭 Catalog/Repository，再格式化和输出。busy/invalid 是全存储扫描报告，stderr 明确提示元数据可能未刷新或会话缺席；列表不补偿未完成 turn，也不把可见条目当作恢复事实。CLI 采用紧凑文本、完整 ID、受限并转义的字段，不读取对话正文作标题。当前目录不等于项目/worktree，limit 不是扫描预算；project/worktree 聚合、title/tag/全文检索仍是后续能力；交互 picker 已交付并复用相同只读协调。
+列表沿用上述只读 journal 协调，随后先关闭 Catalog/Repository，再格式化和输出。busy/invalid 是全存储扫描报告，stderr 明确提示元数据可能未刷新或会话缺席；列表不补偿未完成 turn，也不把可见条目当作恢复事实。CLI 采用紧凑文本、完整 ID、受限并转义的字段，标题来自明确命名。limit 限制当前范围的返回条数。交互 picker 复用相同只读协调。
 
 ### 10.4 写入与权限
 
@@ -706,9 +705,15 @@ Open Catalog lock
 - 当前 `--resume <thread-id>` 通过日期编码的 UUIDv7 定位文件，恢复 native history 和只读语义视图；不恢复旧 API key、base URL、cwd 或其他动态 world state。
 - 仓库已建立不可变的当前文本与 Tool Loop fixture，用于验证 Loader/ReplayPlanner 的读取、续写 prefix 不变、账本顺序和双 Provider 恢复等价性；项目没有线上历史格式，因此开发期旧 fixture 与旧 reader 已删除。未经用户明确要求和新 OpenSpec，不引入历史 reader、迁移器或兼容窗口；不得在 resume 原地改写既有 records。
 - exclusive lease 是协作进程间的 advisory lock，不能阻止旧版 EasyCode 或非协作进程绕过锁直接写文件；混合版本运行前必须确保目标 thread 没有其他 owner，绕过锁产生的损坏继续由 checksum、seq 和完整回放校验发现。
-- SQLite Catalog、`--continue`、离线 `sessions list` 与启动 `resume` picker 已实现；worktree/project catalog、title/tag、全文搜索、实时索引和全工具 artifact 尚未实现。内部格式继续保持唯一当前契约，不预设未来兼容授权。
+- SQLite Catalog、`--continue`、离线 `sessions list` 与启动 `resume` picker 已实现；worktree/project catalog、tag、全文搜索、实时索引和全工具 artifact 尚未实现。内部格式继续保持唯一当前契约，不预设未来兼容授权。
 - 手动与阈值自动 compaction 追加独立 checkpoint，保留原始 JSONL；跨 Provider fork 与 child-thread 元数据仍为后续目标。摘要是可辨识的历史参考，不构成新的用户输入或授权。
 - artifact 文件路径必须防止目录穿越。
+
+### 会话标题事实
+
+`/rename` 经 ChatSession 的 typed `rename_session` 交给 AgentLoop。owner 确认交互会话处于空闲并检查请求取消、关门和运行 context 信号后接纳，复用同一 lease 和 writer 追加 `session_title_updated`。单条 batch 的 `title` 为规范非空值，`turn_id` 和 `parent_thread_id` 缺省。完整行先验证成员和 batch 结构，Replay 只在活动操作已闭合的边界接受。相同标题为无写入成功。追加 Sync 确认后才更新界面，关闭仍等待最终 Sync/Close。
+
+Catalog 从最后合法标题事实投影 `threads.title TEXT NOT NULL`，空字符串代表未命名。排序时间继续取最新已提交记录。Picker 在最多 200 条已加载元数据中独立匹配标题，预览从 journal 重新验证并使用独立展示字段。标题没有 Provider 原生 item、普通输入或缓存来源。在线恢复先收口本地补偿，再装配互动标题控制。验收见 [add-session-titles](../../openspec/changes/archive/2026-11-19-add-session-titles/verification.md)。
 
 ### 10.5 自动压缩与活动回合
 
@@ -861,7 +866,7 @@ Provider 当前 native kind 封闭为 `user_inputs`/`sample`/`tool_outputs`/`hoo
 input-only 崩溃尾部先在本地 durable 收口；工具安全点的 steering 尾部复用现有工具补偿路径，不重跑工具或自动联网。内存队列与 returned tray 不持久化，重启不猜测未保存输入。外部 headless JSONL 仍为 v1，自动 admission 增加 entry_id，input.status 不含正文；一次性 text/JSON 过滤新增内部输入事件。
 
 
-已实现多行、字素编辑、显式 decoded paste 与有界历史；原始终端缓冲/RuneError 的框架限制见 README。当前本地命令为 `/cache`、`/context`、`/compact [instructions]`、`/effort [level|auto|reset]`、`/skills`、`/hooks`、`/plugins`、`/tasks`，显式 Skill 使用 `/<name>` / `$name`。已支持命令和显式 Skill 的首词补全；尚无 `/help`、`/clear`、`/resume`、`/fork`、`/model`、`/provider`、`/permissions`、`/mcp`、`/agents`、`/cost`、`/doctor`；`easycode resume` 是独立 CLI 入口。
+已实现多行、字素编辑、显式 decoded paste 与有界历史；原始终端缓冲/RuneError 的框架限制见 README。当前本地命令为 `/cache`、`/context`、`/compact [instructions]`、`/effort [level|auto|reset]`、`/skills`、`/hooks`、`/plugins`、`/tasks`、`/rename`，显式 Skill 使用 `/<name>` / `$name`。已支持命令和显式 Skill 的首词补全；尚无 `/help`、`/clear`、`/resume`、`/fork`、`/model`、`/provider`、`/permissions`、`/mcp`、`/agents`、`/cost`、`/doctor`；`easycode resume` 是独立 CLI 入口。
 
 ## 14. 配置与密钥
 

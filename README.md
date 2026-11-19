@@ -10,11 +10,17 @@ EasyCode 是一个使用 Go 构建的本地优先 coding agent。项目在产品
 
 运行 `easycode resume [--all] [--config PATH]`，在当前目录或全部创建目录中选择会话。该入口需要有效模型配置以及终端 stdin/stdout；无需配置的发现入口仍是 `easycode sessions list`。已有 `--resume ID`、`--continue` 和 headless 行为保持一致。
 
-输入搜索 ID、Provider、wire、model、创建目录；搜索只覆盖当前范围最近 200 条元数据，最多 256 个 Unicode 码点。上下键/翻页选择，Ctrl+A 切范围，Ctrl+R 重新协调索引，Ctrl+V 按需预览，Tab 查看可滚动完整身份，Enter 恢复。Esc 逐层返回、清空搜索、退出；Ctrl+C 取消启动。
+可按会话标题、ID、Provider、wire、model 或创建目录搜索当前范围最近 200 条元数据，查询最多 256 个 Unicode 码点。已有标题优先显示。上下键/翻页选择，Ctrl+A 切范围，Ctrl+R 重新协调索引，Ctrl+V 按需预览，Tab 查看可滚动的完整标题和身份，Enter 按 thread ID 恢复。Esc 逐层返回、清空搜索、退出，Ctrl+C 取消启动。
 
 预览严格校验原生历史，只显示前 128 条非空用户/assistant 文本，正文总量最多 32768 UTF-8 bytes，安全转义后的展示最多 196608 bytes。预览不访问模型、不执行工具、不修复日志；不完整尾部显示已提交前缀并明确提示。工具详情、opaque reasoning 和压缩摘要不伪装成原始消息，正文不进入索引或日志，关闭即丢弃。
 
 不兼容配置可浏览和预览，但不能直接恢复。跨目录恢复默认返回，明确确认后仍使用当前工作目录和项目指令。预览不是恢复缓存：正式恢复重新获取独占 lease 并校验日志。正常取消浏览退出 0，启动中断退出 130；配置、不可确定的恢复或清理失败退出 1，非法参数或非终端调用退出 2。
+
+### 命名会话
+
+在空闲的交互聊天中输入 `/rename 代码审阅`，可在第一轮前命名会话。单独输入 `/rename` 会打开预填现名的编辑框，Enter 保存，Esc 恢复之前的草稿。标题需为单行，去掉首尾空格后最多 256 UTF-8 bytes，允许重名。标题保存为本地会话元数据，写入确认后才显示。
+
+`easycode sessions list` 显示标题，`easycode resume` 支持按标题查找和只读预览。索引在协调读到新日志后更新，仍在使用的会话可显示上次验证的标题。改名计入最近活动，因此可能改变 `--continue` 的恢复目标。`$rename` 可调用同名 Skill，headless 中的 `/rename …` 按字面输入处理。
 
 ## 结构化用户提问
 

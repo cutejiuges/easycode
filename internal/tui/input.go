@@ -85,6 +85,8 @@ func (model Model) projectControlItem(item protocol.ControlItem) (tea.Model, tea
 			return model.projectTaskQueryResult(result)
 		case protocol.CommandQueryEffort, protocol.CommandSetEffort:
 			return model.projectEffortResult(result)
+		case protocol.CommandRenameSession:
+			return model.projectSessionTitleResult(result)
 		case protocol.CommandQueryCache, protocol.CommandQueryContext, protocol.CommandCompactContext, protocol.CommandCancelCompaction:
 			return model.projectContextResult(result)
 		case protocol.CommandSubmitConversationalInput:

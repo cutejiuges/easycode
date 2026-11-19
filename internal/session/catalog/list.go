@@ -62,7 +62,7 @@ func (catalog *Catalog) List(ctx context.Context, query ListQuery) (result ListR
 		return ListResult{}, err
 	}
 	sql := `SELECT session_id, thread_id, journal_path, created_at_ns, updated_at_ns,
-last_sequence, last_checksum, creation_cwd, provider_family, provider_wire, model
+last_sequence, last_checksum, creation_cwd, provider_family, provider_wire, model, title
 FROM threads`
 	if query.Scope == ListCurrentDirectory {
 		sql += ` WHERE creation_cwd=?2`

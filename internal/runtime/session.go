@@ -73,6 +73,15 @@ func (session *ChatSession) Retract(ctx context.Context, ids []domain.InputID) (
 	return session.submitInteractive(ctx, command)
 }
 
+// RenameSession 在交互控制流内提交当前 root 会话的标题更新。
+func (session *ChatSession) RenameSession(ctx context.Context, requestID protocol.RequestID, title domain.SessionTitle) (protocol.CommandResult, error) {
+	command, err := protocol.NewRenameSessionCommand(requestID, title)
+	if err != nil {
+		return protocol.CommandResult{}, err
+	}
+	return session.submitInteractive(ctx, command)
+}
+
 func (session *ChatSession) submitInteractive(ctx context.Context, command protocol.Command) (protocol.CommandResult, error) {
 	session.mu.Lock()
 	live, loop := session.started && !session.closed && session.interactive, session.loop
@@ -80,7 +89,7 @@ func (session *ChatSession) submitInteractive(ctx context.Context, command proto
 	if !live {
 		return protocol.CommandResult{}, fmt.Errorf("interactive session is not running")
 	}
-	return loop.Submit(ctx, command)
+	return loop.submit(ctx, command, session.stop)
 }
 
 // Start 显式启动唯一控制循环与输出分发器，返回前确认启动或完成清理。

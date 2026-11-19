@@ -33,6 +33,7 @@ const (
 	EventCompactionFailed      EventKind = "compaction_failed"
 	EventSessionMeta           EventKind = "session_meta"
 	EventThreadMeta            EventKind = "thread_meta"
+	EventSessionTitleUpdated   EventKind = "session_title_updated"
 	EventTurnInputsCommitted   EventKind = "turn_inputs_committed"
 	EventTurnStarted           EventKind = "turn_started"
 	EventProviderNativeCommit  EventKind = "provider_native_commit"
@@ -328,7 +329,7 @@ type recordPayload interface {
 	domain.StopPlan | domain.StopDecision | domain.HookPlan | domain.HookRunIdentity | domain.HookFinished | domain.PostHookPlan | domain.PostHookTerminal | domain.HookGateDecision |
 		CompactionStartedPayload | CompactionCompletedPayload | CompactionFailedPayload |
 		TurnInputsPayload |
-		SessionMetaPayload | ThreadMetaPayload | TurnStartedPayload | NativeCommitPayload |
+		SessionMetaPayload | ThreadMetaPayload | sessionTitleUpdatedPayload | TurnStartedPayload | NativeCommitPayload |
 		SampleUsagePayload | ToolCallReadyPayload | ToolExecutionStartedPayload |
 		ToolApprovalDecidedPayload | ToolCallResultPayload | TurnCompletedPayload | TurnFailedPayload
 }
