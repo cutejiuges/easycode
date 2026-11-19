@@ -59,20 +59,37 @@ func previewBody(preview SessionPreview) string {
 	return b.String()
 }
 
-// View 只渲染内存投影，任何尺寸都不访问存储。
+// View 只渲染当前拥有终端焦点的投影。
 func (m StartupModel) View() string {
-	if m.chat != nil {
-		return m.chat.View()
+	if m.closing && m.finalNotice != "" {
+		return pickerWrapped(pickerSafe(m.finalNotice, 1024), m.width, m.height, 0)
 	}
+	switch m.phase {
+	case shellChat:
+		return m.chat.View()
+	case shellOpening:
+		return pickerWrapped("Opening session chooser…\nEsc: cancel", m.width, m.height, 0)
+	case shellRecovering:
+		return pickerWrapped("Resuming session…\nEsc: cancel", m.width, m.height, 0)
+	case shellCancelling:
+		return pickerWrapped("Cancelling resume — waiting for cleanup", m.width, m.height, 0)
+	case shellRetiring:
+		return pickerWrapped("Switching sessions — closing previous session", m.width, m.height, 0)
+	default:
+		return m.picker.view()
+	}
+}
+
+func pickerWrapped(text string, width, height, scroll int) string {
+	lines := strings.Split(ansi.Hardwrap(text, max(1, width), true), "\n")
+	offset := min(scroll, max(0, len(lines)-height))
+	return fitPickerLines(lines[offset:min(len(lines), offset+height)], width)
+}
+
+func (m pickerModel) view() string {
 	if m.details {
 		entry, _ := m.selection()
-		text := string(entry.ThreadID) + "\n" + pickerSafe(string(entry.Family), 256) + " / " + pickerSafe(entry.Wire, 256) + "\n" + pickerSafe(entry.Model, 256) + "\nCreated in: " + pickerSafe(entry.CWD, 512) + "\nResume in: " + pickerSafe(m.config.CWD, 512) + "\nEsc back · ↑↓ scroll"
-		if entry.Title != "" {
-			text = "Title: " + string(entry.Title) + "\nUpdated: " + m.pickerTime(entry.UpdatedAt) + "\n" + text
-		}
-		lines := strings.Split(ansi.Hardwrap(text, max(1, m.width), true), "\n")
-		offset := min(m.scroll, max(0, len(lines)-m.height))
-		return fitPickerLines(lines[offset:min(len(lines), offset+m.height)], m.width)
+		return pickerWrapped(m.detailsText(entry), m.width, m.height, m.scroll)
 	}
 	lines := []string{"Resume a session"}
 	if m.previewOpen {
@@ -161,12 +178,20 @@ func (m StartupModel) View() string {
 		}
 		if len(rows) == 0 && m.loaded {
 			if m.query == "" {
-				lines = append(lines, "No sessions in this scope")
+				if m.source.Valid() {
+					lines = append(lines, "No other sessions in this scope")
+				} else {
+					lines = append(lines, "No sessions in this scope")
+				}
 			} else {
 				lines = append(lines, "No matching sessions")
 			}
 		}
-		lines = append(lines, "↑↓ select · Enter resume · Ctrl+V preview", "Ctrl+A scope · Ctrl+R refresh · Tab details · Esc exit")
+		exit := "Esc exit"
+		if m.source.Valid() {
+			exit = "Esc back"
+		}
+		lines = append(lines, "↑↓ select · Enter resume · Ctrl+V preview", "Ctrl+A scope · Ctrl+R refresh · Tab details · "+exit)
 	}
 	failure := m.failure
 	if failure == "" {
@@ -188,7 +213,7 @@ func fitPickerLines(lines []string, width int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m StartupModel) pickerTime(timestamp time.Time) string {
+func (m pickerModel) pickerTime(timestamp time.Time) string {
 	location := m.config.Location
 	if location == nil {
 		location = time.UTC
@@ -196,7 +221,23 @@ func (m StartupModel) pickerTime(timestamp time.Time) string {
 	return timestamp.In(location).Format("2006-01-02 15:04:05 -0700")
 }
 
-func (m StartupModel) compatibilityDifference(e SessionEntry) string {
+func (m pickerModel) detailsText(entry SessionEntry) string {
+	text := string(entry.ThreadID) + "\n" + pickerSafe(string(entry.Family), 256) + " / " + pickerSafe(entry.Wire, 256) + "\n" + pickerSafe(entry.Model, 256) + "\nCreated in: " + pickerSafe(entry.CWD, 512)
+	if entry.Title != "" {
+		text = "Title: " + string(entry.Title) + "\nUpdated: " + m.pickerTime(entry.UpdatedAt) + "\n" + text
+	}
+	if m.source.Valid() && entry.CWD != m.config.CWD {
+		text += "\nOpen the creation directory with a compatible configuration and run:\neasycode --resume " + string(entry.ThreadID)
+	} else {
+		text += "\nResume in: " + pickerSafe(m.config.CWD, 512)
+	}
+	if m.source.Valid() && !m.compatible(entry) {
+		text += "\n" + m.compatibilityDifference(entry)
+	}
+	return text + "\nEsc back · ↑↓ scroll"
+}
+
+func (m pickerModel) compatibilityDifference(e SessionEntry) string {
 	var fields []string
 	if e.Family != m.config.Family {
 		fields = append(fields, "provider "+pickerSafe(string(e.Family), 256)+" != "+pickerSafe(string(m.config.Family), 256))

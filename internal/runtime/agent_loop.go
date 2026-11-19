@@ -54,6 +54,7 @@ type AgentLoop struct {
 	resolutions chan inputResolution
 	requests    chan loopCommandRequest
 	lifecycle   chan loopLifecycleRequest
+	resume      chan resumeRequest
 	outputs     chan protocol.ControlItem
 	ready       chan struct{}
 	done        chan struct{}
@@ -72,6 +73,7 @@ func NewAgentLoop(runtime *Runtime, config AgentLoopConfig) (*AgentLoop, error) 
 		runtime: runtime, config: config, effortSnapshot: protocol.NewEffortSnapshot,
 		claims: make(chan inputClaimRequest), resolutions: make(chan inputResolution),
 		requests: make(chan loopCommandRequest), lifecycle: make(chan loopLifecycleRequest),
+		resume:  make(chan resumeRequest),
 		outputs: make(chan protocol.ControlItem, agentLoopOutputBuffer), ready: make(chan struct{}), done: make(chan struct{}),
 	}, nil
 }
@@ -310,6 +312,7 @@ type agentLoopRunState struct {
 	outstanding        map[protocol.RequestID]struct{}
 	recent             recentRequestLedger
 	active             *activeLoopTurn
+	resumePermit       *ResumePermit
 	runErr             error
 	runContextDone     <-chan struct{}
 }
@@ -443,6 +446,10 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 	}
 	if state.mode == loopModeDraining {
 		state.reject(request, protocol.ControlErrorSessionClosing, true)
+		return
+	}
+	if state.resumePermit != nil && !allowsCommandDuringResume(request.command.Kind()) {
+		state.reject(request, protocol.ControlErrorSessionBusy, true)
 		return
 	}
 
@@ -607,6 +614,7 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 			state.returnAutomatic(protocol.InputReasonStopped)
 		}
 	case protocol.CommandShutdown:
+		state.clearResumePermit()
 		result, _ := protocol.NewAcceptedCommandResult(request.command, protocol.CommandDispositionClosing)
 		state.emitResult(request, result)
 		state.completeRequest(requestID)
@@ -628,6 +636,7 @@ func (state *agentLoopRunState) cancelActive() {
 }
 
 func (state *agentLoopRunState) handleLifecycle(lifecycle loopLifecycleRequest) {
+	state.clearResumePermit()
 	switch lifecycle.kind {
 	case loopLifecycleDrain:
 		if state.mode == loopModeAccepting {
@@ -731,6 +740,7 @@ func (state *agentLoopRunState) handleTurnFinished(workerErr error, open bool) {
 }
 
 func (state *agentLoopRunState) handleContextDone() {
+	state.clearResumePermit()
 	state.runErr = state.ctx.Err()
 	state.runContextDone = nil
 	state.mode = loopModeClosing
@@ -758,6 +768,7 @@ func (loop *AgentLoop) Run(ctx context.Context) error {
 		close(loop.done)
 	}()
 	state := newAgentLoopRunState(loop, ctx)
+	defer state.clearResumePermit()
 	state.refreshContextSnapshot()
 
 	for {
@@ -784,6 +795,8 @@ func (loop *AgentLoop) Run(ctx context.Context) error {
 
 		case lifecycle := <-loop.lifecycle:
 			state.handleLifecycle(lifecycle)
+		case request := <-loop.resume:
+			request.result <- state.handleResume(request)
 
 		case event, open := <-eventChannel:
 			state.handleTurnEvent(event, open)

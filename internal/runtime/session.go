@@ -13,22 +13,25 @@ import (
 
 // ChatSession 把交互与一次性宿主操作统一交给 AgentLoop 单 owner。
 type ChatSession struct {
-	runtime     *Runtime
-	loop        *AgentLoop
-	started     bool
-	closed      bool
-	cancel      context.CancelFunc
-	stop        chan struct{}
-	done        chan struct{}
-	runErr      error
-	nextID      atomic.Uint64
-	interrupts  chan domain.TurnID
-	interactive bool
-	outputs     chan protocol.ControlItem
+	runtime      *Runtime
+	loop         *AgentLoop
+	started      bool
+	closed       bool
+	cancel       context.CancelFunc
+	runCancelled <-chan struct{}
+	stop         chan struct{}
+	done         chan struct{}
+	runErr       error
+	nextID       atomic.Uint64
+	interrupts   chan domain.TurnID
+	interactive  bool
+	outputs      chan protocol.ControlItem
 
-	mu           sync.Mutex
-	streams      map[protocol.RequestID]chan protocol.Event
-	activeTurnID domain.TurnID
+	mu               sync.Mutex
+	streams          map[protocol.RequestID]chan protocol.Event
+	activeTurnID     domain.TurnID
+	appendAdmissions int
+	resumePermit     *ResumePermit
 }
 
 // NewChatSession 只构造 AgentLoop 的宿主适配器；Start 显式取得运行所有权。
@@ -53,6 +56,10 @@ func (session *ChatSession) Outputs() <-chan protocol.ControlItem { return sessi
 
 // Append 向 owner 提交可在安全边界领取的输入。
 func (session *ChatSession) Append(ctx context.Context, draft domain.InputDraft) (protocol.CommandResult, error) {
+	if err := session.beginAppend(); err != nil {
+		return protocol.CommandResult{}, err
+	}
+	defer session.finishAppend()
 	command, err := protocol.NewSubmitConversationalInputDraftCommand(session.requestID("host-append"), draft)
 	if err != nil {
 		return protocol.CommandResult{}, err
@@ -127,6 +134,7 @@ func (session *ChatSession) Start(ctx context.Context) error {
 	session.started = true
 	session.loop = loop
 	session.cancel = cancel
+	session.runCancelled = runContext.Done()
 	session.mu.Unlock()
 	go func() {
 		runDone := make(chan error, 1)
@@ -177,10 +185,13 @@ func (session *ChatSession) Submit(ctx context.Context, text string) (<-chan pro
 		return nil, fault.Wrap(fault.CodeUserCancelled, "turn was cancelled", err)
 	}
 	session.mu.Lock()
-	live := session.started && !session.closed
+	live, interactive := session.started && !session.closed, session.interactive
 	session.mu.Unlock()
 	if !live {
 		return nil, fault.New(fault.CodeTurnFailed, "session is not running")
+	}
+	if interactive {
+		return nil, fault.New(fault.CodeTurnFailed, "host already has an active input")
 	}
 
 	requestID := session.requestID("host-input")
@@ -195,7 +206,7 @@ func (session *ChatSession) Submit(ctx context.Context, text string) (<-chan pro
 	// 宿主适配层直接背压，避免在 Provider 和 AgentLoop 之外重复排队正文。
 	events := make(chan protocol.Event)
 	session.mu.Lock()
-	if len(session.streams) != 0 || session.closed || session.interactive {
+	if len(session.streams) != 0 || session.closed {
 		session.mu.Unlock()
 		return nil, fault.New(fault.CodeTurnFailed, "host already has an active input")
 	}

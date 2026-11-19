@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -12,6 +13,7 @@ import (
 
 // mainTranscript 持有最新五十个逻辑项；未提交增量与查询快照分开拥有。
 type mainTranscript struct {
+	initialReady       bool
 	hydrationEpoch     uint64
 	awaitingProjection bool
 	hydrating          bool
@@ -30,8 +32,38 @@ type mainTranscriptReply struct {
 }
 
 func (model Model) initialTranscriptQuery() tea.Cmd {
+	if model.main.initialReady {
+		return nil
+	}
 	return model.queryMainTranscript(model.main.generation, 0, model.submitContext)
 }
+
+// LoadInitialTranscript 显式取得目标首个有界主线页，失败时不得提供可接管的模型。
+func (model Model) LoadInitialTranscript(ctx context.Context) (Model, error) {
+	thread := model.browser.thread
+	if !thread.Valid() || model.tasks.threadID != thread || !model.tasks.sessionID.Valid() || model.browser.queries == nil || model.outputs == nil {
+		return Model{}, fmt.Errorf("resumed conversation is not ready")
+	}
+	page, err := model.browser.queries.ListTranscript(ctx, mainTranscriptQuery(thread, 0))
+	if err != nil || page.Validate() != nil {
+		return Model{}, fmt.Errorf("initial conversation history is unavailable")
+	}
+	for _, item := range page.Items {
+		if item.Kind == domain.TranscriptReasoning {
+			return Model{}, fmt.Errorf("initial conversation history is invalid")
+		}
+	}
+	model = model.applyMainTranscript(page)
+	model.main.initialReady = true
+	model.main.awaitingProjection = false
+	model.prepareMarkdownView()
+	return model, nil
+}
+
+func mainTranscriptQuery(thread domain.ThreadID, sequence uint64) protocol.TranscriptListQuery {
+	return protocol.TranscriptListQuery{Mode: protocol.TranscriptMain, ThreadID: thread, Through: sequence, Limit: 50}
+}
+
 func (model Model) queryMainTranscript(generation, sequence uint64, ctx context.Context) tea.Cmd {
 	queries, thread := model.browser.queries, model.browser.thread
 	if queries == nil {
@@ -41,7 +73,7 @@ func (model Model) queryMainTranscript(generation, sequence uint64, ctx context.
 		ctx = context.Background()
 	}
 	return func() tea.Msg {
-		page, err := queries.ListTranscript(ctx, protocol.TranscriptListQuery{Mode: protocol.TranscriptMain, ThreadID: thread, Through: sequence, Limit: 50})
+		page, err := queries.ListTranscript(ctx, mainTranscriptQuery(thread, sequence))
 		return mainTranscriptReply{generation: generation, page: page, err: err}
 	}
 }
@@ -95,9 +127,13 @@ func (model Model) receiveMainTranscript(reply mainTranscriptReply) (tea.Model, 
 			return model, nil
 		}
 	}
-	messages := make([]transcriptMessage, 0, len(reply.page.Items))
-	for i := len(reply.page.Items) - 1; i >= 0; i-- {
-		item := reply.page.Items[i]
+	return model.applyMainTranscript(reply.page), nil
+}
+
+func (model Model) applyMainTranscript(page protocol.TranscriptListPage) Model {
+	messages := make([]transcriptMessage, 0, len(page.Items))
+	for i := len(page.Items) - 1; i >= 0; i-- {
+		item := page.Items[i]
 		message := transcriptMessage{text: item.Text, cursor: item.Cursor, more: item.More}
 		switch item.Kind {
 		case domain.TranscriptCompaction:
@@ -133,15 +169,15 @@ func (model Model) receiveMainTranscript(reply mainTranscriptReply) (tea.Model, 
 		}
 	}
 	through := model.main.sequence
-	if through == 0 && len(reply.page.Items) > 0 {
-		through = reply.page.Items[0].Cursor.Sequence
+	if through == 0 && len(page.Items) > 0 {
+		through = page.Items[0].Cursor.Sequence
 	}
 	model.browser.mainListKey = transcriptPageKey{mode: protocol.TranscriptMain, kind: transcriptListPage, through: through}
 	model.browser.mainListPinned = true
-	model.browser.remember(cachedTranscriptPage{key: model.browser.mainListKey, list: reply.page})
+	model.browser.remember(cachedTranscriptPage{key: model.browser.mainListKey, list: page})
 	model.main.items = messages
 	model.main.awaitingProjection = true
-	return model, nil
+	return model
 }
 func (model Model) visibleTranscript() []transcriptMessage {
 	messages := append([]transcriptMessage(nil), model.main.items...)
@@ -192,5 +228,6 @@ func (model Model) quitTranscript() (tea.Model, tea.Cmd) {
 	model.browser.queries = nil
 	model.main.awaitingProjection = false
 	model.main.handoff = nil
+	model.quitRequested = true
 	return model, tea.Quit
 }

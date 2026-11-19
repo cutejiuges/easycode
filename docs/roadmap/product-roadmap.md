@@ -1,6 +1,8 @@
 # EasyCode 产品与工程 Roadmap
 
-2026-11-19 交付 `add-session-titles`。空闲会话可从首轮前通过 `/rename` 命名，Sync 后显示，离线列表和启动选择器从 journal 投影标题。列表按最后提交记录排序，改名可影响 `--continue`。本切片复用现有 writer、Catalog 与双 Provider 恢复，验收见 [add-session-titles](../../openspec/changes/archive/2026-11-19-add-session-titles/verification.md)。
+2026-11-19 交付 `add-session-titles`。空闲会话可从首轮前通过 `/rename` 命名，Sync 后显示，离线列表和选择器从 journal 投影标题。列表按最后提交记录排序，改名可影响 `--continue`。本切片复用现有 writer、Catalog 与双 Provider 恢复，验收见 [add-session-titles](../../openspec/changes/archive/2026-11-19-add-session-titles/verification.md)。
+
+2026-11-19 的聊天内 `/resume` 切片让 P2 的 Catalog、预览与双 Provider journal 恢复服务进入同一 P5 终端宿主。空闲时可通过列表或完整 ID 切换同目录会话，跨目录仅提供预览和独立恢复提示。接管先验证目标和首屏，再等待源 writer 及租约关闭，暂时授权和 effort 覆盖按新实例初始化。[聊天内会话恢复验收](../../openspec/changes/archive/2026-11-19-add-in-chat-session-resume/verification.md)
 
 2026-11-18 推进任务进度清单切片：双 Provider TodoWrite/update_plan、第十项模型工具、Ctrl+T 与只读 /tasks、冻结历史详情、跨 turn 恢复和精确 checkpoint。选择它是因为已有有序 Tool Loop、durable Session、只读宿主查询和 composer 可直接复用，同时能补齐接近 Claude Code 的多步骤进度体验。它保持 OpenAI 原生 update_plan 与本地严格验证，不包含 Plan Mode、Subagent、后台任务或协作依赖，也不代表整个 P5 完成。验收见 [add-task-progress](../../openspec/changes/archive/2026-11-18-add-task-progress/verification.md)。
 
@@ -17,7 +19,7 @@
 
 ## 当前状态总览（2026-11-19）
 
-实现与测试逐项核对见[当前能力清单](capability-status.md)。P0–P8 是并行推进的阶段目标，不以某个后期切片交付推定整个阶段完成。当前已交付十项模型工具、本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop、三能力 PreToolUse 完整参数改写、结构化提问、任务清单、流式 Markdown、命令/Skill 首词补全、正文文件引用与路径补全、会话内 effort、会话命名与启动时按标题查找、Provider 缓存、手动/自动压缩、双 Provider 推理阅读及启动推理/display/输出配置；本地 Plugin 技能包及受限 importer 已交付；仍缺少 effort 之外的运行中推理切换、跨 Provider fork、后台进程、插件可执行贡献/MCP、Subagent 与完整发布矩阵。
+实现与测试逐项核对见[当前能力清单](capability-status.md)。P0–P8 是并行推进的阶段目标，不以某个后期切片交付推定整个阶段完成。当前已交付十项模型工具、本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop、三能力 PreToolUse 完整参数改写、结构化提问、任务清单、流式 Markdown、命令/Skill 首词补全、正文文件引用与路径补全、会话内 effort、会话命名、按标题查找及聊天内会话恢复、Provider 缓存、手动/自动压缩、双 Provider 推理阅读及启动推理/display/输出配置；本地 Plugin 技能包及受限 importer 已交付；仍缺少 effort 之外的运行中推理切换、跨 Provider fork、后台进程、插件可执行贡献/MCP、Subagent 与完整发布矩阵。
 
 下文“工作内容/交付物/验收标准”保留阶段的完整目标；已完成状态以本总览、各节进度和当前能力清单为准。所有迁移、历史 reader 或兼容窗口必须先有用户明确要求及新 OpenSpec，不因路线图提到未来发布而预先授权。
 
@@ -458,7 +460,7 @@ Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘�
 
 ### 9.0 当前进度（2026-11-19）
 
-已交付多行/字素输入、同轮追加与返还、流式 Markdown 与代码/表格/原文阅读、紧凑工具主线及 Ctrl+O 分页详情、完整 Patch/Write/Exec 审批、结构化问卷、Hook 信任、context/cache 面板、当前任务清单和启动 resume picker。当前本地命令为 `/cache`、`/context`、`/compact`、`/effort`、`/skills`、`/hooks`、`/plugins`、`/tasks`、`/rename`，以及 Skill 显式入口。命令/Skill 首词补全和被动 thinking/summary 活动提示及 Ctrl+O 阅读已交付；启动推理配置、会话内 effort 与 /context 设置已实现；其他推理字段切换、fork picker、后台任务 UI、cost/综合状态面板与其余命令尚未实现。
+已交付多行/字素输入、同轮追加与返还、流式 Markdown 与代码/表格/原文阅读、紧凑工具主线及 Ctrl+O 分页详情、完整 Patch/Write/Exec 审批、结构化问卷、Hook 信任、context/cache 面板、当前任务清单以及启动和聊天内 resume picker。当前本地命令为 `/cache`、`/context`、`/compact`、`/effort`、`/skills`、`/hooks`、`/plugins`、`/tasks`、`/rename`、`/resume`，以及 Skill 显式入口。命令/Skill 首词补全和被动 thinking/summary 活动提示及 Ctrl+O 阅读已交付；启动推理配置、会话内 effort 与 /context 设置已实现；其他推理字段切换、fork picker、后台任务 UI、cost/综合状态面板与其余命令尚未实现。
 
 补全复用冻结 Skill 展示列表、字素编辑和既有命令提交；Tab 只填入、Skill Enter 只选择、Esc 优先关闭，粘贴不接受候选。验收覆盖双 Provider 原生请求/恢复/缓存等价、固定尺寸和 Darwin PTY，见 [验收记录](../../openspec/changes/archive/2026-11-06-add-command-and-skill-completion/verification.md)。该首词切片仍不处理普通参数值；正文工作区 @ 文件引用已由独立切片实现，文件范围、读取、索引及恢复的边界见下文。
 

@@ -41,8 +41,31 @@ type JournalWriter struct {
 
 	mu       sync.Mutex
 	closing  bool
-	closeErr error
+	result   JournalCloseResult
 	poisoned atomic.Bool
+}
+
+// JournalCloseResult 分别记录先前的 writer poison 和最终同步、关闭结果。
+type JournalCloseResult struct {
+	Poisoned bool
+	SyncErr  error
+	CloseErr error
+}
+
+// CleanupError 只报告最终同步或描述符关闭的失败。
+func (result JournalCloseResult) CleanupError() error {
+	if err := errors.Join(result.SyncErr, result.CloseErr); err != nil {
+		return fmt.Errorf("close session writer: %w", err)
+	}
+	return nil
+}
+
+// Err 保留 Close 的聚合错误契约。
+func (result JournalCloseResult) Err() error {
+	if result.Poisoned {
+		return errors.Join(fmt.Errorf("session writer is poisoned"), result.SyncErr, result.CloseErr)
+	}
+	return result.CleanupError()
 }
 
 // StartJournalWriter 接管 lease，并从 nextSequence 继续追加。
@@ -173,11 +196,20 @@ func (writer *JournalWriter) Poisoned() bool {
 
 // Close 停止接收新 batch，等待已接收请求，最终 Sync 并关闭文件。
 func (writer *JournalWriter) Close(ctx context.Context) error {
+	result, err := writer.CloseResult(ctx)
+	if err != nil {
+		return err
+	}
+	return result.Err()
+}
+
+// CloseResult 在最终关闭完成后返回实际结果。等待取消时，writer 继续持有关闭责任。
+func (writer *JournalWriter) CloseResult(ctx context.Context) (JournalCloseResult, error) {
 	if writer == nil {
-		return nil
+		return JournalCloseResult{}, nil
 	}
 	if ctx == nil {
-		return fmt.Errorf("session context is required")
+		return JournalCloseResult{}, fmt.Errorf("session context is required")
 	}
 	writer.mu.Lock()
 	if !writer.closing {
@@ -188,9 +220,14 @@ func (writer *JournalWriter) Close(ctx context.Context) error {
 	writer.mu.Unlock()
 	select {
 	case <-done:
-		return writer.closeErr
+		return writer.result, nil
+	default:
+	}
+	select {
+	case <-done:
+		return writer.result, nil
 	case <-ctx.Done():
-		return fmt.Errorf("session writer close cancelled: %w", ctx.Err())
+		return JournalCloseResult{}, fmt.Errorf("session writer close cancelled: %w", ctx.Err())
 	}
 }
 
@@ -228,7 +265,7 @@ func (writer *JournalWriter) run(nextSequence uint64) {
 					nextSequence += uint64(len(records))
 					request.response <- appendResponse{records: records}
 				default:
-					writer.closeErr = writer.finish()
+					writer.result = writer.finish()
 					return
 				}
 			}
@@ -263,27 +300,23 @@ func (writer *JournalWriter) append(nextSequence uint64, drafts []RecordDraft) (
 	}
 	written, err := writer.file.Write(buffer.Bytes())
 	if err != nil {
-		return nil, fmt.Errorf("append session batch: %w", err)
+		return nil, &journalMutationUncertain{cause: fmt.Errorf("append session batch: %w", err)}
 	}
 	if written != buffer.Len() {
-		return nil, fmt.Errorf("append session batch: %w", io.ErrShortWrite)
+		return nil, &journalMutationUncertain{cause: fmt.Errorf("append session batch: %w", io.ErrShortWrite)}
 	}
 	if err := writer.file.Sync(); err != nil {
-		return nil, fmt.Errorf("sync session batch: %w", err)
+		return nil, &journalMutationUncertain{cause: fmt.Errorf("sync session batch: %w", err)}
 	}
 	return cloneRecords(records), nil
 }
 
-func (writer *JournalWriter) finish() error {
-	syncErr := writer.file.Sync()
-	closeErr := writer.file.Close()
-	if writer.poisoned.Load() {
-		return errors.Join(fmt.Errorf("session writer is poisoned"), syncErr, closeErr)
+func (writer *JournalWriter) finish() JournalCloseResult {
+	return JournalCloseResult{
+		Poisoned: writer.poisoned.Load(),
+		SyncErr:  writer.file.Sync(),
+		CloseErr: writer.file.Close(),
 	}
-	if syncErr != nil || closeErr != nil {
-		return fmt.Errorf("close session writer: %w", errors.Join(syncErr, closeErr))
-	}
-	return nil
 }
 
 func cloneRecords(records []Record) []Record {

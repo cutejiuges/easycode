@@ -27,9 +27,9 @@ func (*Store) Read(context.Context, tool.ArtifactDescriptor, tool.ReadArtifactIn
 	return tool.ArtifactPage{}, tool.ArtifactReadUnavailable
 }
 
-// Clean 在未支持的平台不执行删除。
-func (*Store) Clean(context.Context, []tool.ArtifactDescriptor) error {
-	return tool.ArtifactReadUnavailable
+// CleanWithReport 在未支持的平台不执行删除。
+func (*Store) CleanWithReport(context.Context, []tool.ArtifactDescriptor) (CleanupReport, error) {
+	return CleanupReport{}, tool.ArtifactReadUnavailable
 }
 
 // Close 没有需要释放的资源。

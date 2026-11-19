@@ -49,6 +49,7 @@ const (
 
 // workspaceHandle 和子 handle 只暴露相对已验证目录描述符的操作。
 type workspaceHandle interface {
+	inspectRoot() (os.FileInfo, error)
 	openFile(string, workspaceHooks) (*os.File, error)
 	openDirectory(string, workspaceHooks) (workspaceDirectory, error)
 	openPatchFile(string, workspaceHooks) (patchFile, error)
@@ -92,6 +93,11 @@ func (workspace *Workspace) Close() error {
 	}
 	workspace.close.Do(func() { workspace.closeErr = workspace.handle.close() })
 	return workspace.closeErr
+}
+
+// InspectRoot 读取实际工作区句柄的身份，供宿主绑定同一隔离边界。
+func (workspace *Workspace) InspectRoot() (os.FileInfo, error) {
+	return workspace.handle.inspectRoot()
 }
 
 func (workspace *Workspace) relativePath(input string) (string, error) {

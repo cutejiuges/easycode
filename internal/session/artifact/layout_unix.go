@@ -108,6 +108,20 @@ func (l *Layout) Check(ctx context.Context) error {
 	return nil
 }
 
+// CheckRoots 核对本布局与宿主实际使用的工作区和数据根描述符属于同一目录。
+func (l *Layout) CheckRoots(storage, workspace os.FileInfo) error {
+	if storage == nil || workspace == nil {
+		return errUnsafeLayout
+	}
+	actualStorage, storageErr := l.storage.Stat()
+	actualWorkspace, workspaceErr := l.workspace.Stat()
+	if storageErr != nil || workspaceErr != nil ||
+		!os.SameFile(actualStorage, storage) || !os.SameFile(actualWorkspace, workspace) {
+		return errUnsafeLayout
+	}
+	return nil
+}
+
 // CheckSource 验证本次实际来源目录与私有存储互不包含，不重新按来源路径打开。
 func (l *Layout) CheckSource(ctx context.Context, source *os.File) error {
 	if l == nil || l.storage == nil || ctx == nil || ctx.Err() != nil || source == nil {

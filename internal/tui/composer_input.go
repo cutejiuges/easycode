@@ -14,6 +14,11 @@ const (
 	composerQuit
 )
 
+func (c *composer) hasLineContinuation() bool {
+	index := c.pointIndex()
+	return index > 0 && c.text[int(c.layout.points[index-1].offset):c.cursor] == "\\"
+}
+
 func (c *composer) input(key tea.KeyMsg) (composerIntent, error) {
 	if key.Paste {
 		return composerEdited, c.replace(c.cursor, c.cursor, string(key.Runes))
@@ -27,8 +32,7 @@ func (c *composer) input(key tea.KeyMsg) (composerIntent, error) {
 		if key.Alt {
 			return composerEdited, c.replace(c.cursor, c.cursor, "\n")
 		}
-		index := c.pointIndex()
-		if index > 0 && c.text[int(c.layout.points[index-1].offset):c.cursor] == "\\" {
+		if c.hasLineContinuation() {
 			return composerEdited, c.replace(c.cursor-1, c.cursor, "\n")
 		}
 		if strings.TrimSpace(c.text) != "" {

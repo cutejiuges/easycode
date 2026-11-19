@@ -243,3 +243,26 @@ func TestSessionTitleExitAndClosedControlDoNotLoseLastConfirmation(t *testing.T)
 		})
 	}
 }
+
+func TestMountedTitleStreamClosureKeepsTheLastConfirmation(t *testing.T) {
+	session := &sessionTitleFixture{}
+	chat := NewModel(context.Background(), "test", session).WithSessionTitle("Last confirmed")
+	model, host := resumeTestShell(chat)
+	model = pickerKey(resumeType(model, "/rename next"), tea.KeyEnter)
+	if model.chat.title.request == nil {
+		t.Fatal("title command did not start")
+	}
+	model = pickerUpdate(model, scopedChatMessage{generation: model.generation, value: eventStreamClosedMsg{}})
+	if host.stopped || !model.chat.title.closed || model.chat.title.request != nil ||
+		!strings.Contains(model.View(), "Last confirmed") || !strings.Contains(model.View(), "could not confirm") {
+		t.Fatalf("mounted chat lost the last confirmed title or terminal save failure: %s", model.View())
+	}
+	model = pickerKey(model, tea.KeyEnter)
+	if len(host.requests) != 0 || model.chat.title.request != nil {
+		t.Fatal("closed chat accepted another request")
+	}
+	model = pickerKey(model, tea.KeyCtrlC)
+	if !host.stopped || model.ExitCode() != 0 {
+		t.Fatal("closed chat did not request normal host shutdown")
+	}
+}

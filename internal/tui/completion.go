@@ -36,8 +36,9 @@ type completionCandidate struct {
 
 // completionCatalog 发布后不可变；匹配只保存它的有界索引。
 type completionCatalog struct {
-	entries []completionCandidate
-	bytes   int
+	entries       []completionCandidate
+	bytes         int
+	resumeEnabled bool
 }
 
 func explicitSkillEntry(e domain.SkillListEntry) bool {
@@ -59,9 +60,12 @@ func builtinCompletionCandidates() []completionCandidate {
 	}
 }
 
-func newCompletionCatalog(skills []domain.SkillListEntry) (*completionCatalog, error) {
+func newCompletionCatalog(skills []domain.SkillListEntry, resumeEnabled bool) (*completionCatalog, error) {
 	entries := builtinCompletionCandidates()
-	maxCandidates := domain.MaxSkills + len(entries)
+	if resumeEnabled {
+		entries = append(entries, completionCandidate{id: completionIdentity{kind: completionBuiltin, name: resumeCommandName}, description: "Resume a previous conversation", hint: "[thread-id]"})
+	}
+	maxCandidates := len(entries) + domain.MaxSkills
 	bytes := 4096
 	for _, e := range skills {
 		// 先检查字节总量，再验证或派生字符串，避免超大来源先产生副本。
@@ -101,7 +105,7 @@ func newCompletionCatalog(skills []domain.SkillListEntry) (*completionCatalog, e
 		}
 		entries[i].searchDescription = strings.ToLower(entries[i].description)
 	}
-	return &completionCatalog{entries: entries, bytes: bytes}, nil
+	return &completionCatalog{entries: entries, bytes: bytes, resumeEnabled: resumeEnabled}, nil
 }
 
 type completionTarget struct {
@@ -182,7 +186,7 @@ func (c *completionCatalog) match(target completionTarget) []completionMatch {
 		if target.sigil == '$' && candidate.id.kind != completionSkill {
 			continue
 		}
-		if target.sigil == '/' && candidate.id.kind == completionSkill && isBuiltinCompletionName(candidate.id.name) {
+		if target.sigil == '/' && candidate.id.kind == completionSkill && isBuiltinCompletionName(candidate.id.name, c.resumeEnabled) {
 			continue
 		}
 		if tier := completionMatchTier(candidate, target.query); tier >= 0 {
@@ -194,7 +198,9 @@ func (c *completionCatalog) match(target completionTarget) []completionMatch {
 	return matches
 }
 
-func isBuiltinCompletionName(name string) bool { return domain.IsReservedSkillSlashName(name) }
+func isBuiltinCompletionName(name string, resumeEnabled bool) bool {
+	return domain.IsReservedSkillSlashName(name) || resumeEnabled && name == resumeCommandName
+}
 
 func (c *composer) complete(target completionTarget, candidate completionCandidate) error {
 	inserted := string(target.sigil) + candidate.id.name

@@ -11,12 +11,10 @@ import (
 	"sync"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/term"
 
 	"easycode/internal/config"
 	contextplan "easycode/internal/context"
-	"easycode/internal/context/projectinstructions"
 	"easycode/internal/domain"
 	"easycode/internal/extension/plugin"
 	"easycode/internal/extension/skill"
@@ -72,6 +70,9 @@ type chatResourceHooks struct {
 	interactiveApprovals   bool
 	newExecExecutor        func(*builtin.Workspace, builtin.CommandEnvironment, tool.ExecOutputRenderer) (tool.ExecExecutor, error)
 	wrapOutputStore        func(tool.CommandOutputStore) tool.CommandOutputStore
+	environment            *chatEnvironment
+	lifetime               context.Context
+	expectedResumeCWD      string
 }
 
 type providerResource interface {
@@ -99,6 +100,8 @@ type chatResources struct {
 	history           domain.SemanticHistoryView
 	repair            session.RepairReport
 	resumed           bool
+	sharedRoots       bool
+	cancelLifetime    context.CancelFunc
 	providerClosed    bool
 	closeMu           sync.Mutex
 	closeDone         chan struct{}
@@ -178,18 +181,23 @@ func Run(ctx context.Context, options Options) Outcome {
 	if err != nil {
 		return runtimeFailure(fault.New(fault.CodeSessionWrite, "current working directory is unavailable"))
 	}
+	if options.Mode == headless.ModeInteractive {
+		cwd, err := session.NormalizeCreationCWD(creationCWD)
+		if err != nil {
+			return runtimeFailure(fault.New(fault.CodeSessionWrite, "current working directory is invalid"))
+		}
+		return runInteractiveProgram(ctx, options, applicationConfig, paths, cwd, false, false)
+	}
 	resources, err := openChatResourcesWithHooks(
 		ctx, applicationConfig, paths, options.ResumeThreadID, options.ContinueSession, creationCWD,
-		chatResourceHooks{interactiveApprovals: options.Mode == headless.ModeInteractive, pluginDirs: options.PluginDirs, pluginCWD: creationCWD},
+		chatResourceHooks{pluginDirs: options.PluginDirs, pluginCWD: creationCWD},
 	)
 	if err != nil {
 		return runtimeFailure(err)
 	}
 
 	var outcome Outcome
-	if options.Mode == headless.ModeInteractive {
-		outcome = runTUI(ctx, options, resources)
-	} else if options.Mode == headless.ModeStreamJSON {
+	if options.Mode == headless.ModeStreamJSON {
 		outcome = runStreamJSON(ctx, options, resources)
 	} else {
 		if err := resources.session.Start(ctx); err != nil {
@@ -265,21 +273,6 @@ func runStreamWithEscalation(
 	}
 }
 
-func runTUI(ctx context.Context, options Options, resources *chatResources) Outcome {
-	model, err := assembleChatModel(ctx, resources)
-	if err != nil {
-		return runtimeFailure(err)
-	}
-	programOptions := []tea.ProgramOption{tea.WithContext(ctx), tea.WithOutput(options.Output)}
-	if options.Input != nil {
-		programOptions = append(programOptions, tea.WithInput(options.Input))
-	}
-	if _, err := tea.NewProgram(model, programOptions...).Run(); err != nil {
-		return runtimeFailure(fault.Wrap(fault.CodeTurnFailed, "run TUI failed", err))
-	}
-	return Outcome{Class: ExitSuccess}
-}
-
 func outcomeFromHeadless(result headless.Result) Outcome {
 	if result.Completed {
 		return Outcome{Class: ExitSuccess}
@@ -330,11 +323,7 @@ func openChatResourcesWithHooks(
 	if err := plugin.ValidateDirectories(hooks.pluginDirs); err != nil {
 		return nil, fault.New(fault.CodeInvalidInput, err.Error())
 	}
-	loader, err := projectinstructions.NewLoader(projectinstructions.DefaultMaxBytes)
-	if err != nil {
-		return nil, fault.New(fault.CodeProjectInstructionsRead, "project instruction loader is invalid")
-	}
-	projectInstructions, err := loader.Load(creationCWD)
+	projectInstructions, err := projectInstructionSnapshot(creationCWD, hooks.environment)
 	if err != nil {
 		return nil, err
 	}
@@ -357,7 +346,11 @@ func openChatResourcesWithSnapshot(
 	cleanup := &resourceCleanup{}
 	defer func() {
 		if resultErr != nil {
+			deadline := time.Now().Add(shutdownTimeout)
 			closeErr := cleanup.close()
+			if hooks.recovery != nil && time.Now().After(deadline) && !errors.Is(closeErr, context.DeadlineExceeded) {
+				closeErr = errors.Join(closeErr, context.DeadlineExceeded)
+			}
 			hooks.recovery.cleanup(closeErr)
 			resultErr = errors.Join(resultErr, closeErr)
 		}
@@ -373,22 +366,14 @@ func openChatResourcesWithSnapshot(
 	if err != nil {
 		return nil, err
 	}
-	service, err := openSessionService(paths.sessionRoot)
+	roots, err := acquireChatRoots(ctx, paths.sessionRoot, creationCWD, hooks.environment, cleanup)
 	if err != nil {
 		return nil, err
 	}
+	service := newSessionService(roots.repository)
 	service.recovery = hooks.recovery
-	cleanup.add(service.close)
-	artifactLayout, err := openCommandArtifactBoundary(ctx, service.repository.RootPath(), creationCWD)
-	if err != nil {
-		return nil, err
-	}
-	cleanup.add(artifactLayout.Close)
-	workspace, err := builtin.OpenWorkspace(creationCWD)
-	if err != nil {
-		return nil, fault.New(fault.CodeInvalidConfiguration, "workspace is unavailable")
-	}
-	cleanup.add(workspace.Close)
+	service.expectedResumeCWD = hooks.expectedResumeCWD
+	artifactLayout, workspace := roots.layout, roots.workspace
 	readExecutor, err := builtin.NewReadExecutor(workspace)
 	if err != nil {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "Read executor is unavailable")
@@ -454,17 +439,20 @@ func openChatResourcesWithSnapshot(
 	if err != nil {
 		return nil, err
 	}
-	cleanup.add(func() error { return assembled.writer.Close(context.Background()) })
+	cleanup.add(func() error { return hooks.recovery.closeJournal(assembled.writer) })
 	artifactStore, err := artifact.Open(ctx, artifactLayout, assembled.identity.ThreadID)
 	if err != nil {
 		return nil, fault.New(fault.CodeSessionWrite, "artifact storage is unavailable")
 	}
 	cleanup.add(artifactStore.Close)
-	artifactReferences, err := tool.NewArtifactReferences(assembled.identity.ThreadID, session.ToolArtifactReferences(assembled.tools))
+	descriptors := session.ToolArtifactReferences(assembled.tools)
+	artifactReferences, err := tool.NewArtifactReferences(assembled.identity.ThreadID, descriptors)
 	if err != nil {
 		return nil, fault.New(fault.CodeSessionCorruption, "artifact references are invalid")
 	}
-	if err = artifactStore.Clean(ctx, session.ToolArtifactReferences(assembled.tools)); err != nil {
+	maintenance, err := artifactStore.CleanWithReport(ctx, descriptors)
+	hooks.recovery.artifactMaintenance(maintenance)
+	if err != nil {
 		return nil, fault.New(fault.CodeSessionWrite, "artifact cleanup failed")
 	}
 	readArtifactExecutor, err := builtin.NewReadArtifactExecutor(artifactRangeReader{store: artifactStore, references: artifactReferences})
@@ -485,10 +473,15 @@ func openChatResourcesWithSnapshot(
 		return nil, fault.New(fault.CodeInvalidConfiguration, "Exec executor is unavailable")
 	}
 	execExecutor = &commandArtifactBoundary{layout: artifactLayout, executor: execExecutor}
-	skillSource := skill.NewLocal()
-	home, homeErr := os.UserHomeDir()
-	if homeErr != nil {
-		return nil, homeErr
+	var extensions *chatExtensions
+	if hooks.environment != nil {
+		extensions = hooks.environment.extensions
+	}
+	var skillSource *skill.Local
+	if extensions == nil {
+		skillSource = skill.NewLocal()
+	} else {
+		skillSource = extensions.skills
 	}
 	skillReader := skillExecutor{skillSource}
 	questionExecutor := builtin.NewQuestionExecutor()
@@ -541,7 +534,7 @@ func openChatResourcesWithSnapshot(
 		HookHistory:        queries,
 		StopHistory:        queries,
 		SessionID:          assembled.identity.SessionID, ThreadID: assembled.identity.ThreadID,
-		Journal: assembled.writer, ContextProfile: contextProfile, CachePolicy: applicationConfig.CachePolicy(), RestoredCacheBaseline: resumeThreadID != "",
+		Journal: hooks.recovery.journalForRecovery(assembled.writer), ContextProfile: contextProfile, CachePolicy: applicationConfig.CachePolicy(), RestoredCacheBaseline: resumeThreadID != "",
 		ToolCatalog:      toolCatalog,
 		QuestionExecutor: questionExecutor, InteractiveQuestions: hooks.interactiveApprovals,
 		ReadExecutor:         readExecutor,
@@ -579,47 +572,45 @@ func openChatResourcesWithSnapshot(
 		}
 		assembled.history = assembled.conversation.ProjectHistory()
 	}
-	pluginOptions := hooks.pluginOptions
-	pluginOptions.Boundary = artifactLayout.CheckSource
-	pluginSources := plugin.NewSources(pluginOptions)
-	cleanup.add(func() error { return pluginSources.Close(context.Background()) })
-	pluginCWD := hooks.pluginCWD
-	if pluginCWD == "" {
-		pluginCWD = creationCWD
-	}
-	pluginViews, contributions, err := pluginSources.Load(ctx, pluginCWD, hooks.pluginDirs)
-	if err != nil {
-		return nil, err
-	}
-	if err := skillSource.Load(ctx, creationCWD, home, contributions, pluginViews); err != nil {
-		return nil, err
+	hooks.recovery.finishJournalRecovery()
+	if extensions == nil {
+		extensions, err = loadChatExtensions(ctx, skillSource, artifactLayout, creationCWD, hooks, cleanup)
+		if err != nil {
+			return nil, err
+		}
 	}
 	fileSource, err := newWorkspaceInputSource(workspace, skillInputPreparer{skillSource})
 	if err != nil {
 		return nil, err
 	}
-	if err := fileSource.Start(ctx); err != nil {
+	lifetime := ctx
+	if hooks.lifetime != nil {
+		lifetime = hooks.lifetime
+	}
+	if err := fileSource.Start(lifetime); err != nil {
 		return nil, err
 	}
 	cleanup.add(func() error { return fileSource.Close(context.Background()) })
 	if err := runtimeInstance.InstallInputSources(skillSource.Catalog(), fileSource); err != nil {
 		return nil, err
 	}
-	plugins, err := pluginList(pluginViews, skillSource.PluginSummaries())
-	if err != nil {
+	if err := installChatHooks(ctx, runtimeInstance, workspace, artifactLayout, creationCWD, extensions.hooks, hooks); err != nil {
 		return nil, err
 	}
-	if err := installChatHooks(ctx, runtimeInstance, workspace, artifactLayout, creationCWD, home, hooks); err != nil {
-		return nil, err
+	var pluginSources *plugin.Sources
+	if hooks.environment == nil {
+		pluginSources = extensions.owner
+	} else {
+		hooks.environment.extensions = extensions
 	}
 	resources = &chatResources{inference: inference, title: assembled.title,
 		fileSource:    fileSource,
-		pluginSources: pluginSources, plugins: plugins,
+		pluginSources: pluginSources, plugins: extensions.views,
 		artifactLayout: artifactLayout, artifactStore: artifactStore, transcriptQueries: queries,
 		identity: assembled.identity,
 		provider: providerInstance, workspace: workspace, service: service, writer: assembled.writer,
 		skills: skillSource.Entries(), runtime: runtimeInstance, session: chatRuntime.NewChatSession(runtimeInstance), history: assembled.history,
-		repair: assembled.repair, resumed: resumeThreadID != "",
+		repair: assembled.repair, resumed: resumeThreadID != "", sharedRoots: hooks.environment != nil,
 	}
 	cleanup.release()
 	return resources, nil
@@ -765,6 +756,9 @@ func (resources *chatResources) close(ctx context.Context) error {
 	}
 	resources.closeDone = make(chan struct{})
 	resources.closeMu.Unlock()
+	if resources.cancelLifetime != nil {
+		resources.cancelLifetime()
+	}
 	if resources.fileSource != nil {
 		resources.fileSource.BeginClose()
 	}
@@ -813,23 +807,19 @@ func (resources *chatResources) close(ctx context.Context) error {
 	}
 	var writerErr error
 	if resources.writer != nil {
-		writerErr = resources.writer.Close(closeContext)
-		if errors.Is(writerErr, context.Canceled) || errors.Is(writerErr, context.DeadlineExceeded) {
-			writerErr = errors.Join(writerErr, resources.writer.Close(context.Background()))
+		writerErr = finishManagedJournal(closeContext, resources.writer).err()
+	}
+	var rootsErr error
+	if !resources.sharedRoots {
+		rootsErr = errors.Join(resources.workspace.Close(), resources.artifactLayout.Close())
+		if resources.service != nil {
+			rootsErr = errors.Join(rootsErr, resources.service.close())
 		}
 	}
-	var workspaceErr error
-	if resources.workspace != nil {
-		workspaceErr = resources.workspace.Close()
+	resources.closeErr = errors.Join(shutdownErr, sourceErr, queryErr, artifactErr, writerErr, providerErr, rootsErr)
+	if ctx.Err() == context.DeadlineExceeded && !errors.Is(resources.closeErr, context.DeadlineExceeded) {
+		resources.closeErr = errors.Join(resources.closeErr, context.DeadlineExceeded)
 	}
-	var repositoryErr error
-	if resources.artifactLayout != nil {
-		repositoryErr = resources.artifactLayout.Close()
-	}
-	if resources.service != nil {
-		repositoryErr = errors.Join(repositoryErr, resources.service.close())
-	}
-	resources.closeErr = errors.Join(shutdownErr, sourceErr, queryErr, artifactErr, writerErr, providerErr, workspaceErr, repositoryErr)
 	close(resources.closeDone)
 	return resources.closeErr
 }

@@ -8,15 +8,15 @@
 
 ### Requirement: Completion offers only available explicit actions
 
-TUI SHALL 为 `/` 提供已实现的 `/cache`、`/context`、`/compact`、`/effort`、`/skills`、`/hooks`、`/plugins`、`/tasks`、`/rename` 和可显式调用 Skill，为 `$` 仅提供可显式调用 Skill。Skill SHALL 来自本会话冻结的展示目录，仅包含状态 available、user-invocable=true 的获胜条目；disable-model-invocation=true 不得排除合法手动调用。invalid、unsupported、shadowed、unavailable 和 model-only 条目 MUST NOT 成为可接受候选。
+TUI SHALL 为 `/` 提供已实现的 `/cache`、`/context`、`/compact`、`/effort`、`/skills`、`/hooks`、`/plugins`、`/tasks`、`/rename`、`/resume` 和可显式调用 Skill，为 `$` 仅提供可显式调用 Skill。Skill SHALL 来自本会话冻结的展示目录，仅包含状态 available、user-invocable=true 的获胜条目；disable-model-invocation=true 不得排除合法手动调用。invalid、unsupported、shadowed、unavailable 和 model-only 条目 MUST NOT 成为可接受候选。
 
 内置命令 SHALL 优先占用同名 slash；同名 Skill SHALL 仍可在 `$` 列表发现。候选 SHALL 包含名称、简短说明，以及 Skill 的参数提示和不含绝对路径的来源；参数提示只供展示，不写入调用参数。不提供未实现命令。
 
-插件候选 SHALL 使用完整 plugin:leaf 限定名，与 /plugins 和 /skills 来自所有策略、冲突及预算纳入后同一最终冻结目录，不提供裸名别名或冲突来源；Codex 有效策略禁止模型调用的合法手动项仍可补全。原有裸名 plugins Skill 仅在 $ 列表占用该名称，/plugins 为内置命令，/skills 选择这类保留名技能也必须填入 $name。总 Skill 候选仍最多 256 项，内置候选为九项；内置候选不得挤占原 Skill 上限。
+插件候选 SHALL 使用完整 plugin:leaf 限定名，与 /plugins 和 /skills 来自所有策略、冲突及预算纳入后同一最终冻结目录，不提供裸名别名或冲突来源；Codex 有效策略禁止模型调用的合法手动项仍可补全。原有裸名 plugins Skill 仅在 $ 列表占用该名称，/plugins 为内置命令，/skills 选择这类保留名技能也必须填入 $name。总 Skill 候选仍最多 256 项，十项内置候选不得挤占 Skill 上限。
 
 #### Scenario: Discover commands and manual skills
 - **WHEN** 用户分别输入 `/` 与 `$`
-- **THEN** 前者显示当前九项内置命令及合法显式 Skill，后者只显示合法显式 Skill，包括禁止模型自行调用的条目
+- **THEN** 前者显示当前十项内置命令及合法显式 Skill，后者只显示合法显式 Skill，包括禁止模型自行调用的条目
 
 #### Scenario: Respect a broken winning source
 - **WHEN** 同名低优先级 Skill 被非法高优先级来源遮蔽
@@ -40,7 +40,7 @@ TUI SHALL 为 `/` 提供已实现的 `/cache`、`/context`、`/compact`、`/effo
 
 #### Scenario: Discover tasks without hiding the colliding skill
 - **WHEN** 合法可显式调用 Skill 名为 tasks，用户浏览 `/ta`、`$ta` 或从 `/skills` 选择该 Skill
-- **THEN** slash 提供内置 tasks，dollar 提供该 Skill，`/skills` 选择填入 `$tasks`；内置候选共九项且原 256 项 Skill 上限不变
+- **THEN** slash 提供内置 tasks，dollar 提供该 Skill，`/skills` 选择填入 `$tasks`，原 256 项 Skill 上限保持
 
 #### Scenario: Complete a tasks query through the existing command path
 - **WHEN** 用户对 `/ta` 的 tasks 内置候选分别使用 Tab 和普通 Enter，或在 `/ta unexpected` 名称区接受该候选
@@ -208,7 +208,7 @@ Alt+Enter、Ctrl+J 和反斜杠换行 SHALL 优先执行原有换行语义，不
 
 文件 @ 补全 SHALL 在正文任意位置按当前光标的路径编辑区确定目标，共用显式文件引用语法；不得把命令/Skill 的首词限制扩大到文件，也不得改变 /、$ 的原有激活范围。目标 MUST 在字符和字素合法边界内，允许未闭合引号作为编辑中状态；email、转义、@@、行内/围栏代码不得激活。光标进入 #L 范围、引用之后或其他正文 MUST 不激活路径补全；已有范围与 token 外正文保留，不 fuzzy 修正范围。
 
-九项精确内置命令的参数 SHALL 按原命令语义保持文字，文件目标识别前复用 domain 的同一保留名纯判断，不开启文件搜索或规则读取，不额外保存一套命令名。256 项 Skill 容量和同名 Skill 的 $ 入口 MUST 保持；`$effort`、`$rename` 等合法 Skill 输入的正文参数仍可明确附带文件，不能因为名称保留而禁用合法文件引用。
+精确内置命令的参数 SHALL 按原命令语义保持文字，文件目标识别前沿用共同内置命令的保留名判断。交互专属 `/resume` 的参数同样不得开启文件搜索或规则读取，补全与提交使用同一个精确识别规则。既有内置命令、256 项 Skill 容量、同名 Skill 的 $ 入口 MUST 保持。通过 `$name` 或插件限定名调用的合法 Skill 仍可在交互正文参数中明确附带文件。
 
 #### Scenario: Complete a file in the middle of a multiline draft
 - **WHEN** 用户在多行正文中间的 @src/ma 光标处选择 src/main.go，后面已有行范围及文字
@@ -229,6 +229,10 @@ Alt+Enter、Ctrl+J 和反斜杠换行 SHALL 优先执行原有换行语义，不
 #### Scenario: Keep a title containing an at sign literal
 - **WHEN** 用户编辑或提交 `/rename Review @src/main.go`，或在会话标题编辑器中输入相同标题
 - **THEN** 不开启文件候选、不读规则或文件、不冻结附件；`@` 和余下标题按标题契约处理，`$rename @src/main.go` 仍使用普通 Skill 输入的文件规则
+
+#### Scenario: Keep file references available for a resume-named Skill
+- **WHEN** 用户分别编辑精确内置 `/resume @src/ma` 和合法 Skill 调用 `$resume @src/ma`
+- **THEN** 前者没有文件候选，普通提交时报告参数非法。后者按既有文件语义开启候选，正式提交时正常准备附件
 
 ### Requirement: File candidates are bounded asynchronous metadata with generation validation
 
@@ -343,3 +347,31 @@ Esc、paste、modal、接受、提交或离开目标 SHALL 结束候选 session�
 #### Scenario: Reopen after files and rules change
 - **WHEN** 用户关闭候选，创建/重命名文件或修改本地规则，再重新打开
 - **THEN** 旧 session 已取消，新的发现反映当前文件/规则，旧结果不能复活或替换当前选择
+
+### Requirement: Resume completion uses local execution and preserves the draft
+
+`/resume` SHALL 只在交互聊天占用同名的裸 slash 入口。可手动调用的同名本地 Skill SHALL 通过 `$resume` 保持可用，`/skills` 选择时填入 `$resume`。同名插件 Skill 仍以完整限定名调用和补全。一次性 headless 与 stream-json 的输入均 SHALL 沿用既有显式 Skill 分派，合法的 `/resume` 或 `$resume` Skill 调用按原规则准备。无同名 Skill 时，普通输入和现有控制契约均保持原样。
+
+Tab SHALL 仅补全首词，保留参数与分隔空白。用户显式普通提交才 SHALL 产生恢复意图，包括通过普通 Enter 接受内置候选后的同一次提交。交互聊天 SHALL 在 Skill 或文件引用准备之前识别完整首词 `/resume`。粘贴 SHALL 只编辑文本，粘贴事件中的控制键不得触发恢复。Alt+Enter、Ctrl+J 和反斜杠续行 MUST 先按原规则插入换行。无效参数或忙碌拒绝 SHALL 显示本地英文反馈，保留可编辑草稿，命令不得进入模型或输入队列。
+
+从补全打开选择器或直接恢复进度时，取消或可恢复失败返回 SHALL 还原接受候选前的准确正文和光标，并使用当前终端布局。恢复期间候选不可见且不接收按键。返回原聊天不会自动重开旧候选。
+
+#### Scenario: Discover resume while keeping manual skills reachable
+- **WHEN** 冻结目录包含名为 resume 的可显式调用 Skill 和名为 qa:resume 的插件 Skill，用户查询 `/res`、`$res` 或 `/qa:res`
+- **THEN** 分别可选内置命令、裸名 Skill 和插件的完整限定名。经 `/skills` 选择裸名 Skill 填入 `$resume`
+
+#### Scenario: Complete once and restore the pre-completion draft on cancel
+- **WHEN** 用户在 `/res` 的内置候选上按 Tab，或在同样的原草稿上按 Enter 后取消选择器
+- **THEN** Tab 仅填入 `/resume `。Enter 打开一次选择器，取消后恢复 `/res` 和原光标，未提交对话输入或打开旧候选
+
+#### Scenario: Keep malformed resume arguments out of model input
+- **WHEN** 用户在名称区补全并提交含多余参数或文件引用样式参数的 `/res`
+- **THEN** 保留参数并报告本地命令错误，未启动恢复、准备 Skill、读取文件或向模型提交
+
+#### Scenario: Do not switch on paste or multiline editing
+- **WHEN** 用户粘贴 `/resume` 及换行，或使用 Alt+Enter、Ctrl+J、反斜杠续行编辑命令草稿
+- **THEN** 按现有规则更新草稿，直到用户之后显式普通提交才执行参数校验和本地恢复入口
+
+#### Scenario: Preserve explicit skills in both headless paths
+- **WHEN** 用户在一次性 headless 和 stream-json 分别提交合法的 `/resume` 或 `$resume` Skill 调用
+- **THEN** 两个入口按原指令准备同一 Skill 并继续正常输入，从未运行终端恢复动作

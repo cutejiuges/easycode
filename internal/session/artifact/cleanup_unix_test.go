@@ -44,8 +44,9 @@ func TestCleanupPreservesCommittedReferencesAndRejectsActiveCapture(t *testing.T
 	_, _ = orphan.WriteStdout([]byte("orphan"))
 	orphanPath := filepath.Join(root, string(s.threadID), string(orphan.invocation))
 	_ = orphan.Close()
-	if err := s.Clean(context.Background(), []tool.ArtifactDescriptor{d}); err != nil {
-		t.Fatal(err)
+	report, err := s.CleanWithReport(context.Background(), []tool.ArtifactDescriptor{d})
+	if err != nil || !report.Changed || !report.Durable {
+		t.Fatalf("orphan maintenance = %+v, %v", report, err)
 	}
 	if _, err := os.Stat(orphanPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("orphan retained: %v", err)
@@ -57,5 +58,9 @@ func TestCleanupPreservesCommittedReferencesAndRejectsActiveCapture(t *testing.T
 	}
 	if b, err := os.ReadFile(otherPath); err != nil || string(b) != "other thread" {
 		t.Fatal("cleanup changed another thread")
+	}
+	report, err = s.CleanWithReport(context.Background(), []tool.ArtifactDescriptor{d})
+	if err != nil || report.Changed || report.Durable {
+		t.Fatalf("retry without orphans = %+v, %v", report, err)
 	}
 }

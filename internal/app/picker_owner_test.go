@@ -31,7 +31,7 @@ func TestPickerOwnerResourceHandoffAndLateSuccess(t *testing.T) {
 			entered := make(chan struct{})
 			release := make(chan struct{})
 			journal := &pickerJournal{fail: mode == "cleanup_failure"}
-			owner := newPickerOwner(func(ctx context.Context, r tui.PickerRequest) pickerExecution {
+			owner := newPickerOwner(func(ctx, lifetime context.Context, r tui.PickerRequest) pickerExecution {
 				close(entered)
 				<-release
 				return pickerExecution{result: tui.PickerResult{Request: r, Chat: &tui.Model{}}, resources: &chatResources{writer: journal}}
@@ -68,7 +68,7 @@ func TestPickerOwnerParentCancellationWaitsForWorker(t *testing.T) {
 	entered := make(chan struct{})
 	cancelled := make(chan struct{})
 	release := make(chan struct{})
-	owner := newPickerOwner(func(ctx context.Context, r tui.PickerRequest) pickerExecution {
+	owner := newPickerOwner(func(ctx, lifetime context.Context, r tui.PickerRequest) pickerExecution {
 		close(entered)
 		<-ctx.Done()
 		close(cancelled)

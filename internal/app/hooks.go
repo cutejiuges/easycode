@@ -35,16 +35,17 @@ func (b hookArtifactBoundary) Run(ctx context.Context, id domain.HookRunIdentity
 	}
 	return b.runner.Run(ctx, id, d, input, timeout)
 }
-func installChatHooks(ctx context.Context, r *chatRuntime.Runtime, workspace *builtin.Workspace, layout *artifact.Layout, cwd, home string, hooks chatResourceHooks) error {
+func loadChatHookSnapshot(ctx context.Context, cwd, home string, hooks chatResourceHooks) (domain.HookSnapshot, error) {
 	load := hooks.loadHooks
 	if load == nil {
 		load = hook.NewLoader().Load
 	}
-	snapshot, err := load(ctx, cwd, home)
-	if err != nil {
-		return err
-	}
+	return load(ctx, cwd, home)
+}
+
+func installChatHooks(ctx context.Context, r *chatRuntime.Runtime, workspace *builtin.Workspace, layout *artifact.Layout, cwd string, snapshot domain.HookSnapshot, hooks chatResourceHooks) error {
 	var runner chatRuntime.HookRunner
+	var err error
 	if hooks.newHookRunner != nil {
 		runner, err = hooks.newHookRunner(workspace, builtin.OpenCommandEnvironment(), hook.ParseExecution)
 	} else {

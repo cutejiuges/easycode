@@ -13,12 +13,15 @@ import (
 )
 
 type sessionService struct {
-	recovery   *recoveryAttempt
-	repository *session.Repository
-	load       func(context.Context, *session.JournalLease) (session.LoadResult, error)
-	plan       func(session.LoadResult) (session.ReplayPlan, error)
-	start      func(*session.JournalLease, session.Identity, uint64) (journalStartResult, error)
+	recovery          *recoveryAttempt
+	repository        *session.Repository
+	expectedResumeCWD string
+	load              func(context.Context, *session.JournalLease) (session.LoadResult, error)
+	plan              func(session.LoadResult) (session.ReplayPlan, error)
+	start             func(*session.JournalLease, session.Identity, uint64) (journalStartResult, error)
 }
+
+var errResumeDirectory = errors.New("session working directory is incompatible")
 
 type journalStartResult struct {
 	writer      managedJournal
@@ -55,6 +58,10 @@ func openSessionService(dataRoot string) (*sessionService, error) {
 	if err != nil {
 		return nil, err
 	}
+	return newSessionService(repository), nil
+}
+
+func newSessionService(repository *session.Repository) *sessionService {
 	return &sessionService{
 		repository: repository,
 		load:       session.NewLoader().Load,
@@ -66,7 +73,7 @@ func openSessionService(dataRoot string) (*sessionService, error) {
 			}
 			return journalStartResult{writer: writer, transferred: true}, nil
 		},
-	}, nil
+	}
 }
 
 func (service *sessionService) create(
@@ -133,8 +140,14 @@ func (service *sessionService) resume(
 	if metadata.RootThreadID != threadID || plan.Identity.ThreadID != threadID || !plan.ThreadMetadata.Root {
 		return assembledSession{}, fault.New(fault.CodeSessionIncompatible, "resume requires a root session thread")
 	}
+	if service.expectedResumeCWD != "" && metadata.CreationCWD != service.expectedResumeCWD {
+		return assembledSession{}, fault.Wrap(fault.CodeSessionIncompatible, "session working directory is incompatible", errResumeDirectory)
+	}
 	if metadata.Provider != factory.Family() || metadata.ProviderWire != wire || metadata.Model != model {
 		return assembledSession{}, fault.New(fault.CodeSessionIncompatible, "session provider configuration is incompatible")
+	}
+	if err := ctx.Err(); err != nil {
+		return assembledSession{}, err
 	}
 	if err := validateSampleUsageEvidence(plan); err != nil {
 		return assembledSession{}, fault.Wrap(fault.CodeSessionCorruption, "sample usage is invalid", err)
@@ -155,13 +168,20 @@ func (service *sessionService) resume(
 	if err != nil {
 		return assembledSession{}, fault.Wrap(fault.CodeSessionCorruption, "compaction transcript is invalid", err)
 	}
+	if err := ctx.Err(); err != nil {
+		return assembledSession{}, err
+	}
 	if loaded.NeedsRepair() {
 		service.recovery.mutating()
 		report, repairErr := session.NewLoader().Repair(ctx, lease, loaded)
+		service.recovery.journalMutation(report.Repaired, repairErr)
 		if repairErr != nil {
 			return assembledSession{}, fault.Wrap(fault.CodeSessionWrite, "repair session journal failed", repairErr)
 		}
 		loaded.Repair = report
+	}
+	if err := ctx.Err(); err != nil {
+		return assembledSession{}, err
 	}
 	started, err := service.start(lease, loaded.Identity, loaded.NextSequence)
 	if err != nil {
@@ -171,6 +191,11 @@ func (service *sessionService) resume(
 	if writer == nil {
 		return assembledSession{}, fault.New(fault.CodeSessionWrite, "start session journal writer failed")
 	}
+	defer func() {
+		if resultErr != nil {
+			resultErr = errors.Join(resultErr, service.recovery.closeJournal(writer))
+		}
+	}()
 	if started.transferred {
 		lease = nil
 	}
@@ -178,38 +203,34 @@ func (service *sessionService) resume(
 		service.recovery.mutating()
 	}
 	if err := reconcileInterruptedCompaction(ctx, writer, plan.InterruptedCompaction); err != nil {
-		closeErr := writer.Close(context.Background())
-		service.recovery.cleanup(closeErr)
-		return assembledSession{}, fault.Wrap(fault.CodeSessionWrite, "close interrupted compaction failed", errors.Join(err, closeErr))
+		service.recovery.journalMutation(false, err)
+		return assembledSession{}, fault.Wrap(fault.CodeSessionWrite, "close interrupted compaction failed", err)
 	}
+	service.recovery.journalMutation(plan.InterruptedCompaction != nil, nil)
 	if plan.InterruptedTail != nil {
 		failureDraft, draftErr := session.NewTurnFailedDraft(plan.InterruptedTail.TurnID, session.TurnFailedPayload{
 			Code: "session_interrupted", Message: "session turn was interrupted",
 		})
 		if draftErr != nil {
-			closeErr := writer.Close(context.Background())
-			service.recovery.cleanup(closeErr)
 			return assembledSession{}, fault.Wrap(
 				fault.CodeSessionWrite, "build interrupted session turn failed",
-				errors.Join(draftErr, closeErr),
+				draftErr,
 			)
 		}
 		_, appendErr := writer.AppendBatch(ctx, []session.RecordDraft{failureDraft})
+		service.recovery.journalMutation(appendErr == nil, appendErr)
 		if appendErr != nil {
-			closeErr := writer.Close(context.Background())
-			service.recovery.cleanup(closeErr)
 			return assembledSession{}, fault.Wrap(
 				fault.CodeSessionWrite, "close interrupted session turn failed",
-				errors.Join(appendErr, closeErr),
+				appendErr,
 			)
 		}
 	}
 	if !started.transferred {
-		closeErr := writer.Close(context.Background())
-		service.recovery.cleanup(closeErr)
-		return assembledSession{}, fault.Wrap(
-			fault.CodeSessionWrite, "session journal ownership was not transferred", closeErr,
-		)
+		return assembledSession{}, fault.New(fault.CodeSessionWrite, "session journal ownership was not transferred")
+	}
+	if err := ctx.Err(); err != nil {
+		return assembledSession{}, err
 	}
 	var stopRecovery *session.StopRecoveryPlan
 	if plan.StopRecovery != nil {

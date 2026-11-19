@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"strings"
 	"testing"
 	"time"
@@ -52,10 +51,11 @@ func TestPickerResumingDoesNotSubmitBufferedInputToChat(t *testing.T) {
 	m = pickerKey(m, tea.KeyEnter)
 	m = pickerUpdate(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("do not submit")})
 	m = pickerKey(m, tea.KeyEnter)
-	session := &fakeChatSession{}
-	chat := NewModel(context.Background(), "test", session)
+	chat := resumeCandidate(t, m.request.ThreadID, "")
+	session := chat.session.(*fakeChatSession)
 	h.accept = true
-	m = pickerUpdate(m, PickerResult{Request: m.request, Chat: &chat})
+	m = pickerUpdate(m, PickerResult{Request: m.request, Stage: PickerPrepared, Chat: &chat})
+	m = pickerUpdate(m, PickerResult{Request: m.request, Stage: PickerActivated, Chat: &chat})
 	if m.chat == nil || strings.Contains(m.View(), "do not submit") || len(session.submits) != 0 {
 		t.Fatal("resuming input crossed into chat")
 	}
@@ -67,7 +67,7 @@ func TestPickerResumingDoesNotSubmitBufferedInputToChat(t *testing.T) {
 
 func TestPickerTitlesSearchIndependentlyAndPreserveSelectionByID(t *testing.T) {
 	m, host := pickerTestModel(t)
-	first, second := m.entries[0], m.entries[1]
+	first, second := m.picker.entries[0], m.picker.entries[1]
 	first.Title, second.Title = "Review PARSER", "Review Parser"
 	second.Family, second.Wire, second.Model, second.CWD = first.Family, first.Wire, first.Model, first.CWD
 	m = pickerUpdate(m, PickerResult{Request: m.request, Entries: []SessionEntry{first, second}, HasMore: true})
@@ -75,20 +75,20 @@ func TestPickerTitlesSearchIndependentlyAndPreserveSelectionByID(t *testing.T) {
 		t.Fatalf("bounded named list missing from view: %s", view)
 	}
 	m = pickerUpdate(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("parser " + string(first.ThreadID))})
-	if len(m.filtered()) != 0 {
+	if len(m.picker.filtered()) != 0 {
 		t.Fatal("title search combined adjacent metadata fields")
 	}
 	m = pickerKey(m, tea.KeyEsc)
 	m = pickerUpdate(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("REVIEW PARSER")})
 	m = pickerKey(m, tea.KeyDown)
-	if len(m.filtered()) != 2 || m.selected != second.ThreadID {
-		t.Fatalf("duplicate title selection = %s, matches=%d", m.selected, len(m.filtered()))
+	if len(m.picker.filtered()) != 2 || m.picker.selected != second.ThreadID {
+		t.Fatalf("duplicate title selection = %s, matches=%d", m.picker.selected, len(m.picker.filtered()))
 	}
 	m = pickerKey(m, tea.KeyCtrlR)
 	second.Title = "Review Parser updated"
 	m = pickerUpdate(m, PickerResult{Request: m.request, Entries: []SessionEntry{second, first}})
-	if entry, ok := m.selection(); !ok || entry.ThreadID != second.ThreadID || entry.Title != second.Title || m.query != "REVIEW PARSER" {
-		t.Fatalf("refresh did not preserve selected identity: %+v, query=%q", entry, m.query)
+	if entry, ok := m.picker.selection(); !ok || entry.ThreadID != second.ThreadID || entry.Title != second.Title || m.picker.query != "REVIEW PARSER" {
+		t.Fatalf("refresh did not preserve selected identity: %+v, query=%q", entry, m.picker.query)
 	}
 	m = pickerKey(m, tea.KeyCtrlV)
 	if got := host.requests[len(host.requests)-1]; got.Operation != PickerPreview || got.ThreadID != second.ThreadID {
@@ -98,7 +98,7 @@ func TestPickerTitlesSearchIndependentlyAndPreserveSelectionByID(t *testing.T) {
 
 func TestPickerLongTitleAndPreviewContentRemainReachable(t *testing.T) {
 	m, _ := pickerTestModel(t)
-	entry := m.entries[0]
+	entry := m.picker.entries[0]
 	entry.Title = domain.SessionTitle("列表 👩‍💻 " + strings.Repeat("a", 80) + "末端")
 	m = pickerUpdate(m, PickerResult{Request: m.request, Entries: []SessionEntry{entry}})
 	m = pickerUpdate(m, tea.WindowSizeMsg{Width: 15, Height: 9})
@@ -107,7 +107,7 @@ func TestPickerLongTitleAndPreviewContentRemainReachable(t *testing.T) {
 		t.Fatalf("narrow list did not preserve visible title graphemes: %s", view)
 	}
 	m = pickerKey(m, tea.KeyTab)
-	if !strings.Contains(m.View(), "👩‍💻") || !strings.Contains(scrollPickerViews(t, m), "末端") || m.selected != entry.ThreadID {
+	if !strings.Contains(m.View(), "👩‍💻") || !strings.Contains(scrollPickerViews(t, m), "末端") || m.picker.selected != entry.ThreadID {
 		t.Fatalf("narrow details lost title or selection: %s", m.View())
 	}
 	m = pickerKey(m, tea.KeyEsc)
@@ -123,7 +123,7 @@ func TestPickerLongTitleAndPreviewContentRemainReachable(t *testing.T) {
 		t.Fatalf("narrow preview did not expose title ending and body: %s", scrolled)
 	}
 	m = pickerKey(m, tea.KeyEsc)
-	if m.selected != entry.ThreadID || !strings.Contains(m.View(), "> 列表 👩‍💻") {
+	if m.picker.selected != entry.ThreadID || !strings.Contains(m.View(), "> 列表 👩‍💻") {
 		t.Fatal("preview changed the picker snapshot or selection")
 	}
 }

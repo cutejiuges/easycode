@@ -145,6 +145,13 @@
   {
     "package": "easycode/internal/runtime",
     "tests": [
+      "TestResumePermitSerializesPreparationAndDirectControls"
+    ],
+    "reason": "交接许可要和接纳前准备及直接变更入口互斥"
+  },
+  {
+    "package": "easycode/internal/runtime",
+    "tests": [
       "TestParallelToolSchedulerPersistsCallOrderAfterOutOfOrderCompletion"
     ],
     "reason": "关键并发、提交取消与资源所有权"
