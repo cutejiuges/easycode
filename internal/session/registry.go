@@ -13,6 +13,7 @@ type Placement string
 
 const (
 	PlacementCompactionStart    Placement = "compaction_start"
+	PlacementCompactionHook     Placement = "compaction_hook"
 	PlacementCompactionTerminal Placement = "compaction_terminal"
 	PlacementInitialMetadata    Placement = "initial_metadata"
 	PlacementIdleThread         Placement = "idle_thread"
@@ -34,6 +35,8 @@ func descriptorByKind(kind EventKind) (Descriptor, bool) {
 		return Descriptor{Kind: kind, Cardinality: CardinalityMany, Placement: PlacementActiveTurn}, true
 	case EventCompactionStarted:
 		return Descriptor{Kind: kind, Cardinality: CardinalityMany, Placement: PlacementCompactionStart}, true
+	case EventPreCompactHookStarted, EventPreCompactHookFinished, EventPreCompactHookDecided:
+		return Descriptor{Kind: kind, Cardinality: CardinalityMany, Placement: PlacementCompactionHook}, true
 	case EventCompactionCompleted, EventCompactionFailed:
 		return Descriptor{Kind: kind, Cardinality: CardinalityMany, Placement: PlacementCompactionTerminal}, true
 	case EventSessionMeta:

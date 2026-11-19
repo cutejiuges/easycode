@@ -150,6 +150,7 @@ func DecodeHookToolInput(cap HookCapability, b []byte) (HookToolInput, error) {
 // HookInput 是只发送给已信任本地检查的临时 stdin，不进入 Session。
 type HookInput struct {
 	stop        *StopInput
+	preCompact  *preCompactInput
 	rewrite     HookRewriteContext
 	Event       HookEvent         `json:"hook_event_name"`
 	SessionID   SessionID         `json:"session_id"`
@@ -176,10 +177,14 @@ func (v HookInput) RewriteContext() HookRewriteContext {
 	return HookRewriteContext{v.rewrite.Input(), v.rewrite.profile}
 }
 func (v HookInput) Validate() error {
-	if v.Event == HookStop {
+	switch v.Event {
+	case HookStop:
 		return v.validateStop()
+	case HookPreCompact:
+		_, err := v.preCompactBytes()
+		return err
 	}
-	if v.stop != nil {
+	if v.stop != nil || v.preCompact != nil {
 		return HookConfigInvalid
 	}
 	if v.Event == HookPreToolUse {
@@ -219,6 +224,9 @@ func (v HookInput) Validate() error {
 	return nil
 }
 func (v HookInput) Bytes() ([]byte, error) {
+	if v.Event == HookPreCompact {
+		return v.preCompactBytes()
+	}
 	if err := v.Validate(); err != nil {
 		return nil, err
 	}
@@ -266,15 +274,15 @@ func DecodeHookInput(b []byte) (HookInput, error) {
 	if codec.UnmarshalRecord(members["hook_event_name"], &event) != nil {
 		return HookInput{}, HookConfigInvalid
 	}
-	if event == HookStop {
+	switch event {
+	case HookStop:
 		input, err := DecodeStopInput(b)
 		if err != nil {
 			return HookInput{}, err
 		}
 		return NewStopHookInput(input)
-	}
-	if len(b) > MaxHookInputBytes {
-		return HookInput{}, HookInputLimit
+	case HookPreCompact:
+		return decodePreCompactHookInput(b)
 	}
 	var w struct {
 		Event       HookEvent       `json:"hook_event_name"`

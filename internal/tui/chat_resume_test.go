@@ -21,6 +21,21 @@ type resumeTestHost struct {
 	accepted       []uint64
 }
 
+type compactingResumeSession struct {
+	sessionTitleFixture
+	contextSession
+	cancelled domain.CompactionID
+}
+
+func (s *compactingResumeSession) CancelCompaction(_ context.Context, id domain.CompactionID) (protocol.CommandResult, error) {
+	s.cancelled = id
+	command, err := protocol.NewCancelCompactionCommand("test-cancel", id)
+	if err != nil {
+		return protocol.CommandResult{}, err
+	}
+	return protocol.NewAcceptedCommandResult(command, protocol.CommandDispositionCancelling)
+}
+
 func (h *resumeTestHost) Accept(id uint64) bool {
 	h.accepted = append(h.accepted, id)
 	return true
@@ -93,6 +108,34 @@ func TestInChatResumePreservesCompletedDraftAndPortOnFailure(t *testing.T) {
 	model = pickerUpdate(model, PickerResult{Request: request, Stage: PickerPrepared})
 	if model.phase != shellChat || len(host.accepted) != 0 {
 		t.Fatal("late result reopened a failed switch")
+	}
+}
+
+func TestInChatCommandsKeepPreCompactCancellationInChat(t *testing.T) {
+	session := &compactingResumeSession{}
+	chat := NewModel(context.Background(), "test", session).WithTranscriptQueries(resumeThreadA, &mainTestQueries{})
+	id := domain.CompactionID("01900000-0000-7000-8000-000000000023")
+	chat.prepareCompaction(id, domain.ManualCompactionScope())
+	chat.compaction.stage = compactionChecking
+	model, host := resumeTestShell(chat)
+	for _, draft := range []string{"/resume " + string(resumeThreadB), "/rename New title"} {
+		model.chat.composer.clear()
+		model = resumeType(model, draft)
+		updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		model = updated.(StartupModel)
+		if cmd != nil || model.phase != shellChat || len(host.requests) != 0 || model.chat.title.request != nil ||
+			model.chat.composer.text != draft || !strings.HasPrefix(model.chat.errorSummary, "session_busy:") {
+			t.Fatalf("%q took over an active compaction or lost its draft", draft)
+		}
+	}
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	model = updated.(StartupModel)
+	if cmd == nil || model.chat.compaction.stage != compactionCancelling {
+		t.Fatal("Ctrl+C did not reach the compaction owner")
+	}
+	cmd()
+	if session.cancelled != id || len(host.cancelRequests) != 0 {
+		t.Fatal("Ctrl+C did not cancel the current compaction exclusively")
 	}
 }
 

@@ -61,6 +61,9 @@ func (projectorValue *StreamProjector) projectContext(item protocol.ControlItem)
 	if event.SessionID != projectorValue.sessionID || event.ThreadID != projectorValue.threadID {
 		return nil, fmt.Errorf("context event identity mismatch")
 	}
+	if protocol.IsCompactionPresentation(event) {
+		return nil, nil
+	}
 	switch event.Kind {
 	case protocol.EventTaskProgressSnapshot:
 		payload, err := protocol.DecodeTaskProgressSnapshot(event)

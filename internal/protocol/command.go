@@ -224,7 +224,7 @@ func (command Command) Validate() error {
 		if command.text != "" || command.expectedTurnID != "" || command.approvalRequestID != "" || command.invocationID != "" || command.fingerprint != "" || command.decision != "" || command.feedback != "" {
 			return fmt.Errorf("context command contains unrelated payload")
 		}
-		if !utf8.ValidString(command.instructions) || len(command.instructions) > 16<<10 || strings.TrimSpace(command.instructions) != command.instructions {
+		if !utf8.ValidString(command.instructions) || len(command.instructions) > domain.MaxCompactionInstructionsBytes || strings.TrimSpace(command.instructions) != command.instructions {
 			return fmt.Errorf("compaction instructions are invalid")
 		}
 		if command.kind == CommandCancelCompaction && !command.expectedCompactionID.Valid() {

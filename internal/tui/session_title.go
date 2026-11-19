@@ -16,6 +16,8 @@ import (
 
 const maxSessionTitleEditorBytes = 1 << 10
 
+const sessionTitleBusyMessage = "session_busy: session has an active operation or pending input"
+
 type sessionTitleHost interface {
 	RenameSession(context.Context, protocol.RequestID, domain.SessionTitle) (protocol.CommandResult, error)
 }
@@ -72,7 +74,7 @@ func (model Model) beginSessionTitle(arguments string) (tea.Model, tea.Cmd) {
 		return model, nil
 	}
 	if model.activeTurnID.Valid() || model.activeCompactionID.Valid() || model.hasQueuedInput() {
-		model.errorSummary = "session_busy: session has an active operation or pending input"
+		model.errorSummary = sessionTitleBusyMessage
 		return model, nil
 	}
 	editor := newComposer()
@@ -86,6 +88,10 @@ func (model Model) beginSessionTitle(arguments string) (tea.Model, tea.Cmd) {
 }
 
 func (model Model) saveSessionTitle(text string) (tea.Model, tea.Cmd) {
+	if model.activeCompactionID.Valid() {
+		model.errorSummary = sessionTitleBusyMessage
+		return model, nil
+	}
 	title, err := domain.ParseSessionTitle(text)
 	if err != nil {
 		model.errorSummary = "invalid_input: " + err.Error()

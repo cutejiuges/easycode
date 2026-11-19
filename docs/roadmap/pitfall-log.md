@@ -1035,3 +1035,13 @@ Linux CI 回归补充：TurnStarted 只证明回合接纳，不能证明输入�
 ### [P2][2026-11-19] Writer 等待超时不能作为会话已经关闭的证据
 
 聊天内会话交接要求目标输入等到源 writer 真正结束。关闭等待的 context 可以在最终 Sync 与实际文件关闭期间到期，宿主必须保留超时结果并继续等同一个 writer 的完成信号，再释放共享根。前序 poisoned 也必须与最终 Sync 和释放错误分别判断，否则会把清理成功的候选错误归为无法回到源会话。回归覆盖阻塞的最终 Sync 和真实跨进程租约竞争，见 `internal/session/writer_test.go`、`internal/app/in_chat_recovery_test.go`。
+
+## PreCompact 的写入确认、网络准入与终端阶段
+
+- 检查通过决定 Sync 仅确认授权事实。网络准入前观察取消，零摘要请求。若 checkpoint 的完成 Sync 已确定成功，则必须安装窗口。`internal/runtime/pre_compact_hooks_test.go` 对两种 Sync 注入取消。
+- 自动压缩的瞬态检查和信任事件只供宿主投影。只有对应终态关闭活动压缩。started 前失败可报告 `durable=false`，TUI 的信任弹窗也须在定向取消无 resolved 时随终态关闭。`scripts/pre-compact-smoke.py` 与 `internal/app/pre_compact_stream_test.go` 验证交互和 wire。
+- 单记录检查事实必须在完整行解码时验证 batch 字段。生命周期回放前，伪造的多记录 batch 可能把非法完整行隐藏在可修复尾部内。`internal/session/pre_compact_replay_test.go` 验证拒绝伪造触发、退出码及超预算通过证据。
+
+## 交互 CLI 的进程信号所有权
+
+`SIGTERM` 同时触发 CLI 的 context 取消和 Bubble Tea 的信号处理时，事件循环可能先退出，Bubble Tea 的信号 goroutine 随后阻塞在发送退出消息，终端也无法恢复。聊天界面沿用启动会话选择器的 `WithoutSignalHandler`，由 CLI 的 context 驱动关闭。终端内 Ctrl+C 仍由 TUI 按键处理。

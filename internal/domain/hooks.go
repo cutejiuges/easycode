@@ -175,7 +175,7 @@ type HookDeclaration struct {
 
 func NewHookDeclaration(source HookSource, event HookEvent, feedback HookFeedbackPolicy, revision, id string, matcher HookMatcher, command string, timeout int) (HookDeclaration, error) {
 	scope, err := NewToolHookScope(matcher)
-	if err != nil || event == HookStop {
+	if err != nil {
 		return HookDeclaration{}, HookConfigInvalid
 	}
 	return newScopedHookDeclaration(source, event, feedback, revision, id, scope, command, timeout)
@@ -184,6 +184,11 @@ func NewHookDeclaration(source HookSource, event HookEvent, feedback HookFeedbac
 // NewStopHookDeclaration 构造无工具 matcher 的回合检查声明。
 func NewStopHookDeclaration(source HookSource, feedback HookFeedbackPolicy, revision, id, command string, timeout int) (HookDeclaration, error) {
 	return newScopedHookDeclaration(source, HookStop, feedback, revision, id, NewStopHookScope(), command, timeout)
+}
+
+// NewPreCompactHookDeclaration 构造与压缩触发范围绑定的检查声明。
+func NewPreCompactHookDeclaration(source HookSource, feedback HookFeedbackPolicy, revision, id string, scope HookScope, command string, timeout int) (HookDeclaration, error) {
+	return newScopedHookDeclaration(source, HookPreCompact, feedback, revision, id, scope, command, timeout)
 }
 
 func newScopedHookDeclaration(source HookSource, event HookEvent, feedback HookFeedbackPolicy, revision, id string, scope HookScope, command string, timeout int) (HookDeclaration, error) {
@@ -238,7 +243,7 @@ func NewHookPlan(invocation string, capability HookCapability, refs []HookRefere
 	if _, err := parseUUIDv7(invocation); err != nil || !capability.Valid() || len(refs) == 0 || len(refs) > MaxHookMatches {
 		return HookPlan{}, HookConfigInvalid
 	}
-	if refs[0].Event == HookStop {
+	if refs[0].Event.targetKind() != HookTargetToolCall {
 		return HookPlan{}, HookConfigInvalid
 	}
 	if err := validateHookReferences(refs[0].Event, refs); err != nil {
@@ -302,6 +307,12 @@ func NewHookRunIdentity(p HookPlan, ordinal int) (HookRunIdentity, error) {
 	}
 	return newHookRunIdentity(target, p.Event, p.Digest, ordinal)
 }
+
+// NewPreCompactHookRunIdentity 关联当前压缩计划中的真实执行序号。
+func NewPreCompactHookRunIdentity(target HookTarget, planDigest string, ordinal int) (HookRunIdentity, error) {
+	return newHookRunIdentity(target, HookPreCompact, planDigest, ordinal)
+}
+
 func newHookRunIdentity(target HookTarget, event HookEvent, digest string, ordinal int) (HookRunIdentity, error) {
 	v := HookRunIdentity{Event: event, Target: target, PlanDigest: digest, Ordinal: ordinal}
 	v.RunID = target.Key() + ":" + string(event) + ":" + digest + ":" + strconv.Itoa(ordinal)
@@ -371,6 +382,9 @@ func (r HookRunResult) Validate() error {
 	if r.Identity.Event.Post() && r.Status == HookBlock || r.Identity.Event == HookPreToolUse && (r.Code == HookFeedbackNotAllowed || r.Code == HookFeedbackBudgetExceeded) {
 		return HookConfigInvalid
 	}
+	if r.Identity.Event == HookPreCompact && r.Origin != "execution" {
+		return HookConfigInvalid
+	}
 	if r.Origin == "recovery" && (r.Status != HookUncertain || r.ExitKnown || r.TimedOut || r.Cancelled || r.StdoutBytes != 0 || r.StderrBytes != 0 || r.CleanupConfirmed) {
 		return HookConfigInvalid
 	}
@@ -392,6 +406,9 @@ func (r HookRunResult) Validate() error {
 	switch r.Code {
 	case HookDenied:
 		if !r.ExitKnown || r.ExitCode != 0 && r.ExitCode != 2 {
+			return HookConfigInvalid
+		}
+		if r.Identity.Event == HookPreCompact && r.ExitCode != 0 {
 			return HookConfigInvalid
 		}
 	case HookExitFailed:
@@ -526,32 +543,32 @@ func (s HookSnapshot) Clone() HookSnapshot {
 	return s
 }
 func (s HookSnapshot) Match(event HookEvent, cap HookCapability) ([]HookDeclaration, error) {
-	if !event.Valid() || event == HookStop || !cap.Valid() {
+	if event.targetKind() != HookTargetToolCall || !cap.Valid() {
 		return nil, HookConfigInvalid
 	}
-	if len(s.diagnostics) > 0 {
-		return nil, HookConfigInvalid
-	}
-	var result []HookDeclaration
-	for _, d := range s.declarations {
-		if d.Reference.Event == event && d.Scope.Matches(cap) {
-			result = append(result, d)
-		}
-	}
-	if len(result) > MaxHookMatches {
-		return nil, HookMatchLimit
-	}
-	return result, nil
+	return s.match(event, func(scope HookScope) bool { return scope.Matches(cap) })
 }
 
 // StopChecks 返回完整冻结的完成检查；坏来源不能以部分配置放行。
 func (s HookSnapshot) StopChecks() ([]HookDeclaration, error) {
+	return s.match(HookStop, nil)
+}
+
+// PreCompactChecks 只选择对应触发方式的声明，沿用冻结来源与共享匹配上限。
+func (s HookSnapshot) PreCompactChecks(trigger CompactionTrigger) ([]HookDeclaration, error) {
+	if trigger != CompactionManual && trigger != CompactionAuto {
+		return nil, HookConfigInvalid
+	}
+	return s.match(HookPreCompact, func(scope HookScope) bool { return scope.MatchesCompaction(trigger) })
+}
+
+func (s HookSnapshot) match(event HookEvent, matches func(HookScope) bool) ([]HookDeclaration, error) {
 	if len(s.diagnostics) > 0 {
 		return nil, HookConfigInvalid
 	}
 	var out []HookDeclaration
 	for _, d := range s.declarations {
-		if d.Reference.Event == HookStop {
+		if d.Reference.Event == event && (matches == nil || matches(d.Scope)) {
 			out = append(out, d)
 		}
 	}

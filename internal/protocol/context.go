@@ -177,21 +177,36 @@ type CompactionCompletedPayload struct {
 type CompactionFailureCode string
 
 const (
-	CompactionFailureCancelled     CompactionFailureCode = "compaction_cancelled"
-	CompactionFailureTimeout       CompactionFailureCode = "compaction_timeout"
-	CompactionFailureRequest       CompactionFailureCode = "compaction_request_failed"
-	CompactionFailureResponse      CompactionFailureCode = "compaction_invalid_response"
-	CompactionFailureBudget        CompactionFailureCode = "compaction_budget_exceeded"
-	CompactionFailureUnknownBudget CompactionFailureCode = "compaction_budget_unknown"
-	CompactionFailureNoReduction   CompactionFailureCode = "compaction_no_reduction"
-	CompactionFailureInterrupted   CompactionFailureCode = "compaction_interrupted"
-	CompactionFailureSession       CompactionFailureCode = "session_failed"
+	CompactionFailureCancelled         CompactionFailureCode = "compaction_cancelled"
+	CompactionFailureTimeout           CompactionFailureCode = "compaction_timeout"
+	CompactionFailureRequest           CompactionFailureCode = "compaction_request_failed"
+	CompactionFailureResponse          CompactionFailureCode = "compaction_invalid_response"
+	CompactionFailureBudget            CompactionFailureCode = "compaction_budget_exceeded"
+	CompactionFailureUnknownBudget     CompactionFailureCode = "compaction_budget_unknown"
+	CompactionFailureNoReduction       CompactionFailureCode = "compaction_no_reduction"
+	CompactionFailureInterrupted       CompactionFailureCode = "compaction_interrupted"
+	CompactionFailureSession           CompactionFailureCode = "session_failed"
+	CompactionFailureHookConfigInvalid CompactionFailureCode = "hook_config_invalid"
+	CompactionFailureHookTrustRequired CompactionFailureCode = "hook_trust_required"
+	CompactionFailureHookTrustDenied   CompactionFailureCode = "hook_trust_denied"
+	CompactionFailureHookDenied        CompactionFailureCode = "hook_denied"
+	CompactionFailureHookFailed        CompactionFailureCode = "hook_failed"
 )
 
 // Valid 校验封闭失败原因。
 func (code CompactionFailureCode) Valid() bool {
 	switch code {
 	case CompactionFailureCancelled, CompactionFailureTimeout, CompactionFailureRequest, CompactionFailureResponse, CompactionFailureBudget, CompactionFailureUnknownBudget, CompactionFailureNoReduction, CompactionFailureInterrupted, CompactionFailureSession:
+		return true
+	default:
+		return code.IsHookFailure()
+	}
+}
+
+// IsHookFailure 标识摘要请求之前已作出确定结论的压缩检查失败。
+func (code CompactionFailureCode) IsHookFailure() bool {
+	switch code {
+	case CompactionFailureHookConfigInvalid, CompactionFailureHookTrustRequired, CompactionFailureHookTrustDenied, CompactionFailureHookDenied, CompactionFailureHookFailed:
 		return true
 	default:
 		return false
@@ -214,6 +229,9 @@ func (payload CompactionFailedPayload) Validate() error {
 	}
 	if !payload.Code.Valid() {
 		return fmt.Errorf("compaction failure code is invalid")
+	}
+	if payload.Code.IsHookFailure() && (!payload.Durable || payload.UsageState != "unavailable") {
+		return fmt.Errorf("compaction hook failure requires a durable result without usage")
 	}
 	switch payload.UsageState {
 	case "unavailable":

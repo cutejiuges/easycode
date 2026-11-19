@@ -95,3 +95,84 @@ func TestLoadDetectsCaptureChangesAndSourceReplacement(t *testing.T) {
 		t.Fatal("swapped config accepted", err)
 	}
 }
+
+func TestPreCompactConfigUsesOneFrozenTriggerOrder(t *testing.T) {
+	manual := `[{"matcher":"manual","hooks":[{"id":"manual-check","type":"command","command":"true"}]}]`
+	stop := `[{"hooks":[{"id":"stop-check","type":"command","command":"true"}]}]`
+	user, err := decodeConfig(domain.HookSourceUser, []byte(`{"hooks":{"PreCompact":`+manual+`,"Stop":`+stop+`}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reordered, err := decodeConfig(domain.HookSourceUser, []byte(`{"hooks":{"Stop":`+stop+`,"PreCompact":`+manual+`}}`))
+	if err != nil || len(user) != 2 || len(reordered) != 2 || user[0] != reordered[0] || user[1] != reordered[1] ||
+		user[0].Reference.Event != domain.HookStop || user[1].Reference.Feedback != domain.HookFeedbackNone {
+		t.Fatal("source order or normalized revision changed", err)
+	}
+	project, err := decodeConfig(domain.HookSourceProject, []byte(`{"hooks":{"PreCompact":[
+		{"matcher":"auto","hooks":[{"id":"automatic-check","type":"command","command":"true"}]},
+		{"matcher":"*","hooks":[{"id":"all-check","type":"command","command":"true","feedback":"model"}]}
+	]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := domain.NewHookSnapshot(append(user, project...), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		trigger domain.CompactionTrigger
+		first   string
+	}{
+		{domain.CompactionManual, "manual-check"},
+		{domain.CompactionAuto, "automatic-check"},
+	} {
+		checks, err := snapshot.PreCompactChecks(tc.trigger)
+		if err != nil || len(checks) != 2 || checks[0].Reference.ID != tc.first || checks[1].Reference.ID != "all-check" {
+			t.Fatalf("%s checks = %+v, error: %v", tc.trigger, checks, err)
+		}
+	}
+	nonmatching, err := domain.NewHookSnapshot(user, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checks, err := nonmatching.PreCompactChecks(domain.CompactionAuto); err != nil || len(checks) != 0 {
+		t.Fatal("manual matcher affected an automatic operation", err)
+	}
+	for _, invalid := range []string{strings.Replace(manual, "manual\"", "manual|auto\"", 1), "null"} {
+		if _, err := decodeConfig(domain.HookSourceUser, []byte(`{"hooks":{"PreCompact":`+invalid+`}}`)); err == nil {
+			t.Fatal("accepted invalid PreCompact configuration")
+		}
+	}
+	duplicate := strings.Replace(manual, "manual-check", "stop-check", 1)
+	if _, err = decodeConfig(domain.HookSourceUser, []byte(`{"hooks":{"PreCompact":`+duplicate+`,"Stop":`+stop+`}}`)); err == nil {
+		t.Fatal("accepted an id from another event")
+	}
+}
+
+func TestPreCompactConfigUsesSharedSourceAndMatchLimits(t *testing.T) {
+	var commands []string
+	for index := 0; index < 32; index++ {
+		commands = append(commands, fmt.Sprintf(`{"id":"check-%d","type":"command","command":"true"}`, index))
+	}
+	group := func(count int) string {
+		return `[{"matcher":"manual","hooks":[` + strings.Join(commands[:count], ",") + `]}]`
+	}
+	stop := `[{"hooks":[{"id":"stop-check","type":"command","command":"true"}]}]`
+	if _, err := decodeConfig(domain.HookSourceUser, []byte(`{"hooks":{"PreCompact":`+group(32)+`,"Stop":`+stop+`}}`)); err == nil {
+		t.Fatal("accepted more than 32 declarations across events")
+	}
+	declarations, err := decodeConfig(domain.HookSourceProject, []byte(`{"hooks":{"PreCompact":`+group(domain.MaxHookMatches+1)+`}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := domain.NewHookSnapshot(declarations, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checks, err := snapshot.PreCompactChecks(domain.CompactionManual); err != domain.HookMatchLimit || len(checks) != 0 {
+		t.Fatal("allowed partial execution after matching overflow", err)
+	}
+	if checks, err := snapshot.PreCompactChecks(domain.CompactionAuto); err != nil || len(checks) != 0 {
+		t.Fatal("nonmatching declarations counted against an automatic operation", err)
+	}
+}

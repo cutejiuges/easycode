@@ -8,14 +8,14 @@
 
 ### Requirement: Command hook configuration is bounded strict and frozen
 
-系统 SHALL 显式加载用户 `~/.config/easycode/hooks.json` 与启动 workspace 根 `.easycode/hooks.json`，只接受顶层 hooks 对象中的 PreToolUse、PostToolUse、PostToolUseFailure、Stop 数组；前三种工具事件的 group 含 matcher/hooks，Stop group 只含 hooks 且 MUST 拒绝任何 matcher；每条含 id/type/command/timeout，两个后置事件及 Stop 支持 feedback；type MUST 为 command。缺失文件表示空来源；重复/未知字段、非 UTF-8、大小写别名、null、尾随 JSON、错误类型与未支持事件或行为 MUST 使整个来源无效。timeout 省略为 5 秒，只允许整数 1..30；id 为 1..64 字节小写 ASCII 字母/数字/单连字符、首尾字母数字且来源内唯一，command 非空且最多 8 KiB。
+系统 SHALL 显式加载用户 `~/.config/easycode/hooks.json` 与启动 workspace 根 `.easycode/hooks.json`，只接受顶层 hooks 对象中的 PreToolUse、PostToolUse、PostToolUseFailure、Stop、PreCompact 数组；三个工具事件与 PreCompact 的 group 含 matcher/hooks，Stop group 只含 hooks 且 MUST 拒绝任何 matcher；每条含 id/type/command/timeout，两个后置事件、Stop 和 PreCompact 支持 feedback；type MUST 为 command。缺失文件表示空来源；重复/未知字段、非 UTF-8、大小写别名、null、尾随 JSON、错误类型与未支持事件或行为 MUST 使整个来源无效。timeout 省略为 5 秒，只允许整数 1..30；id 为 1..64 字节小写 ASCII 字母/数字/单连字符、首尾字母数字且来源内唯一，command 非空且最多 8 KiB。
 
-每来源 SHALL 最多 64 KiB 和 32 条 Hook，合并最多 64 条；单调用每事件最多匹配 8 条。matcher MUST 是 `*` 或以 `|` 分隔的非重复字面名称：Edit/apply_patch 对应 fs.patch，Write 对应 fs.write，Bash/exec_command 对应 process.exec。空分支、未知名称或正则语法 MUST 拒绝；别名命中相同能力不得重复执行一条声明。`*` SHALL 仅指上述三项能力。
+每来源 SHALL 最多 64 KiB 和 32 条 Hook，合并最多 64 条；单调用每事件最多匹配 8 条。工具事件的 matcher MUST 是 `*` 或以 `|` 分隔的非重复字面名称：Edit/apply_patch 对应 fs.patch，Write 对应 fs.write，Bash/exec_command 对应 process.exec。空分支、未知名称或正则语法 MUST 拒绝；别名命中相同能力不得重复执行一条声明。工具事件的 `*` SHALL 仅指上述三项能力。PreCompact matcher SHALL 仅接受单一字面 `manual`、`auto` 或 `*`，其中 `*` 匹配两种压缩触发。
 
 同一事件的全部匹配项 MUST 按用户来源、项目来源、配置数组位置稳定执行。source revision SHALL 由完整规范内容派生；绝对路径、时间、inode、执行或信任身份不得参与内容 revision。相同内容和数组顺序 MUST 产生相同 bytes/revision，getter 返回值修改不得改变快照。快照只在启动时建立，后续磁盘编辑不改变当前运行语义。
 
 
-PostToolUse/PostToolUseFailure/Stop 的 feedback SHALL 仅接受 none/model，省略规范化为 none；PreToolUse 出现 feedback MUST 拒绝。每来源 32 条和合并 64 条上限按四个事件合计，id 在来源全部事件中唯一；规范配置显式按 PreToolUse、PostToolUse、PostToolUseFailure、Stop 排序，不以对象键插入顺序决定 revision。未知事件继续失败关闭。source revision 覆盖四事件全部声明，command fingerprint SHALL 绑定事件与披露策略。
+PostToolUse/PostToolUseFailure/Stop/PreCompact 的 feedback SHALL 仅接受 none/model，省略规范化为 none；PreToolUse 出现 feedback MUST 拒绝。每来源 32 条和合并 64 条上限按五个事件合计，id 在来源全部事件中唯一；规范配置显式按 PreToolUse、PostToolUse、PostToolUseFailure、Stop、PreCompact 排序，不以对象键插入顺序决定 revision。未知事件继续失败关闭。source revision 覆盖五事件全部声明，command fingerprint SHALL 绑定事件与披露策略。
 
 #### Scenario: Load two ordered sources
 - **WHEN** 用户和项目各有合法的匹配 Hook，文件对象键顺序不同
@@ -23,7 +23,7 @@ PostToolUse/PostToolUseFailure/Stop 的 feedback SHALL 仅接受 none/model，�
 
 #### Scenario: Refuse a partial snapshot
 - **WHEN** 一个已存在来源损坏、超限或包含未支持事件，另一个来源合法
-- **THEN** 三项 mutation 调用以 hook_config_invalid 阻断，不从合法来源组成部分放行；已保存答复、只读工具与配置浏览仍可用，但最终完成边界 MUST 以 hook_config_invalid 失败且零 Stop 执行，不能通过损坏来源推断没有 Stop
+- **THEN** 三项 mutation 调用以 hook_config_invalid 阻断，不从合法来源组成部分放行；已保存答复、只读工具与配置浏览仍可用，但最终完成边界 MUST 以 hook_config_invalid 失败且零 Stop 执行。接纳的压缩同样以 hook_config_invalid 收口且零 PreCompact 执行，不能通过损坏来源推断没有 Stop 或 PreCompact
 
 #### Scenario: Match aliases only once
 - **WHEN** matcher 为 Bash|exec_command，当前 ready 调用属于 process.exec
@@ -38,7 +38,7 @@ PostToolUse/PostToolUseFailure/Stop 的 feedback SHALL 仅接受 none/model，�
 - **THEN** 首次规范值为 none，第二次 source revision/command fingerprint 改变，旧信任不适用；对象键顺序不影响 bytes
 
 #### Scenario: Reject frontloaded disclosure on PreToolUse
-- **WHEN** PreToolUse 声明包含 feedback 或三个事件合计超出来源数量上限
+- **WHEN** PreToolUse 声明包含 feedback 或五个事件合计超出来源数量上限
 - **THEN** 整个来源无效且工具与 Hook 均不执行
 
 #### Scenario: Freeze failure declarations in the same source
@@ -49,15 +49,21 @@ PostToolUse/PostToolUseFailure/Stop 的 feedback SHALL 仅接受 none/model，�
 - **WHEN** 同来源成功和失败声明使用相同 id
 - **THEN** 整个来源无效，不以另一事件或合法来源部分放行 mutation
 
-Stop SHALL 仅按回合完成事件选择，不与任一工具能力匹配。每候选最多 8 项，保持 user/project 和数组顺序；四事件共享来源计数/id 唯一规则。合法无诊断且 Stop 为空时保留无 Stop 快速路径，既有工具 matcher 的 * 仍只指三种 mutation。
+Stop SHALL 仅按回合完成事件选择，不与任一工具能力匹配。每候选最多 8 项，保持 user/project 和数组顺序；五事件共享来源计数/id 唯一规则。合法无诊断且 Stop 为空时保留无 Stop 快速路径，既有工具 matcher 的 * 仍只指三种 mutation。
 
 #### Scenario: Load a completion hook without a matcher
 - **WHEN** Stop group 只含合法 hooks，feedback 省略
-- **THEN** 规范化为 feedback=none 并保持顺序；任何 matcher、四事件重复 id 或合计超限使来源无效
+- **THEN** 规范化为 feedback=none 并保持顺序；任何 Stop matcher、五事件重复 id 或合计超限使来源无效
 
 #### Scenario: Preserve a valid tool-only configuration
 - **WHEN** 两来源合法且未配置 Stop
 - **THEN** 聊天完成沿既有无 Stop 路径，不新增 Stop facts 或请求内容
+
+#### Scenario: Freeze compaction declarations with other events
+
+- **WHEN** 一个合法来源同时配置工具、Stop 与 PreCompact，PreCompact 使用 `manual` 并省略 feedback
+- **THEN** 规范顺序不受 JSON 键顺序影响，PreCompact 规范化为 feedback=none，其 id 和数量纳入该来源全部事件的共享约束
+- **THEN** 将 PreCompact matcher 改为 `manual|auto` 使整个来源无效
 
 ### Requirement: Hook source checks bind to opened descriptors
 
@@ -75,7 +81,7 @@ Stop SHALL 仅按回合完成事件选择，不与任一工具能力匹配。每
 
 用户及项目来源 SHALL 均默认未信任。每条信任 MUST 绑定当前 Session/workspace 实例、来源身份与 revision、Hook id、事件、feedback 策略、命令 fingerprint 以及 shell/environment/sandbox 身份；不得从项目打开、Skill 使用、普通工具批准、其他 Hook 或历史 Session 推导授权。指纹 SHALL 包含规范 matcher、命令和 timeout，不含宿主环境实际值。
 
-首次运行前 MUST 提供完整命令、来源、事件、作用能力或回合完成范围、超时、只读/禁网限制和脚本依赖可变化的审查；仅接受本进程会话信任或拒绝，默认拒绝。响应 MUST 关联活动 request/session/thread/turn、封闭 tool_call 或 turn_stop 目标及快照身份；过期、重复、错配或取消后的响应在授权和执行前拒绝。拒绝状态保持至该项被显式 reset 或进程结束；reset 仅在无活动 turn 且目标身份匹配时清除状态，不建立信任、不重试工具。
+首次运行前 MUST 提供完整命令、来源、事件、作用能力、回合完成范围或压缩触发范围、超时、只读/禁网限制和脚本依赖可变化的审查；仅接受本进程会话信任或拒绝，默认拒绝。响应 MUST 关联活动 request/session/thread、封闭 tool_call、turn_stop 或 compaction 目标及快照身份。工具与 Stop 使用真实 turn 关联，PreCompact 使用真实 compaction ID 及其作用域，手动无 TurnID、自动绑定真实 turn 与采样下标；过期、重复、错配或取消后的响应在授权和执行前拒绝。拒绝状态保持至该项被显式 reset 或进程结束；reset 仅在无活动 turn、无独立手动压缩且目标身份匹配时清除状态，不建立信任、不重试工具。
 
 信任和拒绝 MUST 由实例持有，不写配置或 Session，不跨重启、resume、Provider/workspace/Session 实例复用。信任不冻结所引用脚本的完整依赖内容，不得声称命令摘要证明了所有未来脚本 bytes。
 
@@ -120,9 +126,16 @@ Stop SHALL 在本次成功无 calls sample 与计划已 Sync/finalize、输入�
 - **WHEN** 用户首次审查一个 PreToolUse 声明
 - **THEN** 可查看参数替换及保存/模型说明用途，Enter/Esc 仍默认拒绝，普通工具权限独立
 
+PreCompact SHALL 在基础压缩预检接纳且检查计划已 Sync 后，按 extension/pre-compact-hooks 的平台与输入前检以及逐项信任顺序工作。审查明确运行在本次摘要请求之前、可阻止压缩。feedback=model 的合法摘要重点将发给本次摘要 Provider，生成的摘要可能保留这些内容。全部匹配声明通过信任前零脚本。无交互或拒绝时停止本次压缩，信任和拒绝不从历史恢复。
+
+#### Scenario: Require all compaction trust before running the first declaration
+
+- **WHEN** 第一条 PreCompact 声明已受信任而第二条被拒绝
+- **THEN** 当前未通过审查的声明不获授权，本次拒绝后零 PreCompact 进程和摘要请求
+
 ### Requirement: Hook commands execute with explicit restricted lifecycle
 
-三种工具 Hook SHALL 只在 mutation 调用完整 ready 且对应事件计划和 Hook 执行 started 已成功 Sync 后启动；Stop SHALL 另要求成功无 calls sample、回合计划及对应 Hook started 均已 Sync，且 sample 已 finalize。执行 MUST 使用非 login `/bin/sh`、最小环境、实际目录 FD 绑定的 workspace 根、工作区只读且禁网 sandbox；仅 `/dev/null` 必需行为允许文件写入。不得继承 Provider 凭据、敏感 Header/Cookie、Session 路径、内部控制变量或真实 home 写权限。命令参数不得由模型输入或环境插值形成；工具参数只通过 stdin 传递。
+三种工具 Hook SHALL 只在 mutation 调用完整 ready 且对应事件计划和 Hook 执行 started 已成功 Sync 后启动；Stop SHALL 另要求成功无 calls sample、回合计划及对应 Hook started 均已 Sync，且 sample 已 finalize。PreCompact SHALL 在本次 compaction 已接纳、压缩计划和对应检查准入已 Sync、全部匹配声明已获信任后运行。执行 MUST 使用非 login `/bin/sh`、最小环境、实际目录 FD 绑定的 workspace 根、工作区只读且禁网 sandbox；仅 `/dev/null` 必需行为允许文件写入。不得继承 Provider 凭据、敏感 Header/Cookie、Session 路径、内部控制变量或真实 home 写权限。命令参数不得由模型输入或环境插值形成；工具参数和压缩检查输入各自只通过 typed stdin 传递。
 
 首批真实执行平台 SHALL 为 Darwin；交互运行路径中其他平台或 sandbox 不可兑现时 MUST 在信任请求与命令启动前返回 unsupported_platform 或 sandbox_unavailable，禁止无 sandbox fallback。headless 匹配项 SHALL 先按无交互信任规则返回 hook_trust_required，不进入平台执行前检。每条工具调用全部 Hook 的执行时间预算 SHALL 为 30 秒；单项期限不超过配置值及剩余预算，信任等待不计入执行预算但必须可取消。
 
@@ -162,6 +175,13 @@ Stop SHALL 复用同一只读/禁网执行和清理 owner，但具有同 turn �
 #### Scenario: Bound completion checks across continuations
 - **WHEN** 首次 Stop 消耗部分 30 秒额度，反馈后再次检查
 - **THEN** 只使用剩余额度，耗尽则零新执行且失败，不悄悄跳过检查宣告通过
+
+PreCompact SHALL 复用同一只读/禁网命令及清理 owner，按冻结声明顺序串行运行。全部声明共享独立的 30 秒进程阶段额度，审查等待和 Provider 摘要阶段不计入。取消/超时与清理未完成时不得发摘要请求、确认旧窗口已替换、提前报告终态或释放 lease。
+
+#### Scenario: Wait for compaction hook cleanup on cancellation
+
+- **WHEN** 已开始的 PreCompact 命令收到取消但 Wait 或双流尚未清理
+- **THEN** 后续脚本与摘要请求不启动，保留资源所有权，清理确认后才报告确定终态
 
 ### Requirement: Hook wire uses typed input and strict bounded control output
 
@@ -221,5 +241,12 @@ updatedInput 的来源 profile、规范 16 KiB 大小及当前 finished 完整�
 - **THEN** 参数进入严格验证与 durable 接纳路径，尚不表示原工具已获批准或执行
 
 #### Scenario: Reject control output in another event
-- **WHEN** PostToolUse、PostToolUseFailure 或 Stop 输出 updatedInput，或 Pre 将 deny 与替换混用
+- **WHEN** PostToolUse、PostToolUseFailure、Stop 或 PreCompact 输出 updatedInput，或 Pre 将 deny 与替换混用
 - **THEN** 按真实事件拒绝非法输出，不改写参数或扩大其他事件权限
+
+PreCompact 输入/输出 SHALL 按 extension/pre-compact-hooks 的独立封闭分支校验。受信任的 `feedback: model` 声明只有在 exit 0、允许继续、专属 `summaryInstructions` 验证成功且整体压缩预算通过时才向本次摘要请求贡献文本。`continue:false` 仅在其专属 exit 0 分支阻止压缩，退出码 2 仍为执行失败。新分支不得放宽其他事件的控制及披露字段。PreCompact 原始双流和接纳文本均不直接保存或展示，只保存安全状态和摘要统计。
+
+#### Scenario: Isolate compaction controls from existing hook outputs
+
+- **WHEN** 同一 `summaryInstructions` 响应分别交给已信任 PreCompact 和其余事件，或 PreCompact 收到其他事件的 `additionalContext`
+- **THEN** 仅合法 PreCompact 的摘要重点进入本次摘要路径，各事件仍保留严格校验

@@ -86,30 +86,44 @@ func (v HookInput) MatchesTarget(target HookTarget) bool {
 	if v.Validate() != nil || !target.ValidFor(v.Event) {
 		return false
 	}
-	if v.Event == HookStop {
+	switch v.Event {
+	case HookStop:
 		sample, ok := target.AssistantSample()
 		return ok && sample == v.stop.sample
+	case HookPreCompact:
+		id, scope, ok := target.Compaction()
+		return ok && id == v.preCompact.id && scope == v.preCompact.scope
+	default:
+		_, capability, ok := target.ToolCall()
+		return ok && capability == v.Input.Capability()
 	}
-	_, cap, ok := target.ToolCall()
-	return ok && cap == v.Input.Capability()
 }
 
 func (v HookInput) validateStop() error {
-	if v.stop == nil || v.stop.Validate() != nil || v.SessionID != v.stop.session || v.ThreadID != v.stop.thread || v.TurnID != v.stop.sample.TurnID || v.CWD != v.stop.cwd || v.ToolUseID != "" || v.ToolName != "" || v.Input.capability != "" || v.Input.patch.FilePath != "" || len(v.Input.patch.Replacements) != 0 || v.Input.write != (hookWriteInput{}) || v.Input.exec != (hookExecInput{}) || v.Response != nil || v.Error != "" || v.IsInterrupt != nil {
+	if v.stop == nil || v.preCompact != nil || v.stop.Validate() != nil || v.SessionID != v.stop.session || v.ThreadID != v.stop.thread || v.TurnID != v.stop.sample.TurnID || v.CWD != v.stop.cwd || v.hasToolFields() {
 		return HookConfigInvalid
 	}
 	return nil
 }
 
-// MarshalJSON 根据已校验事件选择封闭输入形状，Stop 不序列化任何工具字段。
+func (v HookInput) hasToolFields() bool {
+	return v.ToolUseID != "" || v.ToolName != "" || v.Input.capability != "" || v.Input.patch.FilePath != "" ||
+		len(v.Input.patch.Replacements) != 0 || v.Input.write != (hookWriteInput{}) || v.Input.exec != (hookExecInput{}) ||
+		!v.rewrite.Empty() || v.Response != nil || v.Error != "" || v.IsInterrupt != nil
+}
+
+// MarshalJSON 根据已校验事件选择封闭输入形状。
 func (v HookInput) MarshalJSON() ([]byte, error) {
-	if v.Event == HookStop {
+	switch v.Event {
+	case HookStop:
 		if err := v.validateStop(); err != nil {
 			return nil, err
 		}
 		return v.stop.Bytes()
+	case HookPreCompact:
+		return v.preCompactBytes()
 	}
-	if v.stop != nil {
+	if v.stop != nil || v.preCompact != nil {
 		return nil, HookConfigInvalid
 	}
 	type toolInput HookInput

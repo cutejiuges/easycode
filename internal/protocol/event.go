@@ -24,6 +24,7 @@ const (
 	EventTaskProgressSnapshot  EventKind = "task_progress_snapshot"
 	EventTaskProgressUpdated   EventKind = "task_progress_updated"
 	EventCompactionStarted     EventKind = "compaction_started"
+	EventCompactionSummarizing EventKind = "compaction_summarizing"
 	EventCompactionCompleted   EventKind = "compaction_completed"
 	EventCompactionFailed      EventKind = "compaction_failed"
 	EventTranscriptCommitted   EventKind = "transcript_committed"
@@ -63,6 +64,13 @@ func (event Event) Validate() error {
 	}
 	if event.ItemID != "" || event.CallID != "" {
 		return fmt.Errorf("runtime event reserved identity is invalid")
+	}
+	if IsCompactionPresentation(event) {
+		if !event.SessionID.Valid() || !event.ThreadID.Valid() {
+			return fmt.Errorf("compaction presentation scope is invalid")
+		}
+		_, err := CompactionEventScope(event)
+		return err
 	}
 	if event.Kind == EventTaskProgressSnapshot || event.Kind == EventTaskProgressUpdated {
 		if !event.SessionID.Valid() || !event.ThreadID.Valid() || event.CompactionID != "" {

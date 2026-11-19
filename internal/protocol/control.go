@@ -271,7 +271,7 @@ func (item ControlItem) Validate() error {
 			return fmt.Errorf("command result item is invalid")
 		}
 	case ControlItemContextEvent:
-		if item.result != (CommandResult{}) || item.discard != (ControlError{}) || item.event.Validate() != nil || (item.event.Kind != EventCacheSnapshot && item.event.Kind != EventContextSnapshot && item.event.Kind != EventEffortSnapshot && item.event.Kind != EventTaskProgressSnapshot && item.event.Kind != EventCompactionStarted && item.event.Kind != EventCompactionCompleted && item.event.Kind != EventCompactionFailed) {
+		if item.result != (CommandResult{}) || item.discard != (ControlError{}) || item.event.Validate() != nil || !isCorrelatedContextEvent(item.event) {
 			return fmt.Errorf("correlated context item is invalid")
 		}
 	case ControlItemTurnEvent:
@@ -287,6 +287,16 @@ func (item ControlItem) Validate() error {
 		return fmt.Errorf("control item kind is invalid")
 	}
 	return nil
+}
+
+func isCorrelatedContextEvent(event Event) bool {
+	switch event.Kind {
+	case EventCacheSnapshot, EventContextSnapshot, EventEffortSnapshot, EventTaskProgressSnapshot,
+		EventCompactionStarted, EventCompactionCompleted, EventCompactionFailed:
+		return true
+	default:
+		return IsCompactionPresentation(event)
+	}
 }
 
 func validCommandKind(kind CommandKind) bool {

@@ -35,7 +35,7 @@ func validHookDeniedResult(call ReplayedToolCall, result tool.InvocationResult) 
 	}
 }
 func NewHookExecutionStartedDraft(turn domain.TurnID, id domain.HookRunIdentity) (RecordDraft, error) {
-	if !turn.Valid() || id.Validate() != nil {
+	if !turn.Valid() || id.Event == domain.HookPreCompact || id.Validate() != nil {
 		return RecordDraft{}, fmt.Errorf("invalid hook execution start")
 	}
 	if sample, ok := id.Target.AssistantSample(); ok && sample.TurnID != turn {
@@ -72,6 +72,9 @@ func DecodeHookExecutionStarted(record Record) (domain.HookRunIdentity, error) {
 	v, err := decodeKnownPayload[domain.HookRunIdentity](record, EventHookExecutionStarted)
 	if err != nil {
 		return v, err
+	}
+	if v.Event == domain.HookPreCompact {
+		return v, fmt.Errorf("compaction hook requires a dedicated start record")
 	}
 	if sample, ok := v.Target.AssistantSample(); ok && sample.TurnID != record.TurnID {
 		return v, fmt.Errorf("hook start target mismatch")

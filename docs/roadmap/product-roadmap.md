@@ -19,7 +19,7 @@
 
 ## 当前状态总览（2026-11-19）
 
-实现与测试逐项核对见[当前能力清单](capability-status.md)。P0–P8 是并行推进的阶段目标，不以某个后期切片交付推定整个阶段完成。当前已交付十项模型工具、本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop、三能力 PreToolUse 完整参数改写、结构化提问、任务清单、流式 Markdown、命令/Skill 首词补全、正文文件引用与路径补全、会话内 effort、会话命名、按标题查找及聊天内会话恢复、Provider 缓存、手动/自动压缩、双 Provider 推理阅读及启动推理/display/输出配置；本地 Plugin 技能包及受限 importer 已交付；仍缺少 effort 之外的运行中推理切换、跨 Provider fork、后台进程、插件可执行贡献/MCP、Subagent 与完整发布矩阵。
+实现与测试逐项核对见[当前能力清单](capability-status.md)。P0–P8 是并行推进的阶段目标，不以某个后期切片交付推定整个阶段完成。当前已交付十项模型工具、本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact、三能力 PreToolUse 完整参数改写、结构化提问、任务清单、流式 Markdown、命令/Skill 首词补全、正文文件引用与路径补全、会话内 effort、会话命名、按标题查找及聊天内会话恢复、Provider 缓存、手动/自动压缩、双 Provider 推理阅读及启动推理/display/输出配置；本地 Plugin 技能包及受限 importer 已交付；仍缺少 effort 之外的运行中推理切换、跨 Provider fork、后台进程、插件可执行贡献/MCP、Subagent 与完整发布矩阵。
 
 下文“工作内容/交付物/验收标准”保留阶段的完整目标；已完成状态以本总览、各节进度和当前能力清单为准。所有迁移、历史 reader 或兼容窗口必须先有用户明确要求及新 OpenSpec，不因路线图提到未来发布而预先授权。
 
@@ -408,7 +408,7 @@ Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘�
 - compaction 替换模型窗口但不删除原始 transcript。
 - 跨 provider 切换通过 compacted fork，而不是强行转换 thinking/reasoning。
 
-上述 compacted cross-provider fork 是 P4 计划，当前尚未实现；现有 resume 只允许同一 Provider/wire 的原生恢复。
+上述 compacted cross-provider fork 是 P4 计划，当前尚未实现；现有 resume 只允许同一 Provider/wire 的原生恢复。手动与阈值自动摘要共用已实现的同步 PreCompact。
 
 ### 8.3 工作内容
 
@@ -528,7 +528,7 @@ Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘�
 
 支持 Claude 风格 hooks、渐进披露 skills、MCP 和本地 plugins，并保证来源权限、信任、缓存稳定和热加载安全。
 
-当前已交付本地 Skills 首个切片：固定 user/project 根发现、严格静态 frontmatter、`/skills` 列表、`/name` / `$name` 显式附件、Skill 主文档/同来源资源读取、缓存元数据来源与双 Provider 原生恢复。同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop command Hooks 已交付；本地 Plugin 技能包与 plugin skills 已由后续切片交付；其余 Hook 事件、MCP、system skills、path activation、allowed-tools、fork 与热加载仍未实现，不能将本切片视为 P6 退出。
+当前已交付本地 Skills 首个切片：固定 user/project 根发现、严格静态 frontmatter、`/skills` 列表、`/name` / `$name` 显式附件、Skill 主文档/同来源资源读取、缓存元数据来源与双 Provider 原生恢复。同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact command Hooks 已交付；本地 Plugin 技能包与 plugin skills 已由后续切片交付；其余 Hook 事件、MCP、system skills、path activation、allowed-tools、fork 与热加载仍未实现，不能将本切片视为 P6 退出。
 
 ### PostToolUse 同步检查与显式模型反馈
 
@@ -563,6 +563,10 @@ P6 尚未退出：下面的其他 Hook 事件、async、result 改写、其他 c
 `add-local-plugin-skills` 用可重复 `--plugin-dir` 提供进程级显式来源，支持 EasyCode、Claude、Codex JSON 和 Agent Plugins 的静态技能子集，复用 Skill 准备、工具、预算、权限和双 Provider 原生恢复。`/plugins` 只读列表/详情和 `/skills`、补全共享最终快照；限定名保留两家引用规则，Codex 副文件调用限制按更严格结果合并。
 
 manifest ID 冲突先于扫描，原始枚举、候选、读取和合并目录均有界。根/manifest/正文/副文件变化拒绝新读取；来源关闭覆盖 pre-admission Prepare，超时不放弃 FD/清理 owner。恢复先收口旧事实再安装未来快照；无新 Session record、模型工具、内部版本或旧 reader。验证入口见[验收记录](../../openspec/changes/archive/2026-11-13-add-local-plugin-skills/verification.md)。主规格已同步，change 已归档；最终核对见[归档记录](../../openspec/changes/archive/2026-11-13-add-local-plugin-skills/archive.md)。本切片不表示 P6 退出，marketplace、安装/更新、插件脚本/Hook/MCP/Agent 贡献、热加载仍待独立设计。
+
+### PreCompact 压缩前检查
+
+手动和阈值自动压缩复用同一 PreCompact 门禁。逐声明信任、只读禁网 runner 和旧窗口预算回退沿用现有边界。exit 0 的显式停止保留当前窗口，获授权的结构化重点只补充本次摘要请求。已 Sync 的检查前缀在恢复时仅用于校验与中断收口。PostCompact、后台 Hook 和可执行插件贡献仍是后续范围。[验收记录](../../openspec/changes/archive/2026-11-19-add-pre-compact-command-hooks/verification.md)
 
 ### 10.2 架构选择
 
@@ -803,7 +807,7 @@ Turn 1 建立稳定前缀
 
 新增 `easycode resume [--all] [--config PATH]`：复用 Catalog 与连续 lease 恢复，采用 Claude Code 的搜索/范围/显式预览/分层返回交互，以及 Codex 的请求身份和过期结果隔离。选择这一能力是因为现有 Session、Catalog 和双 Provider 原生恢复已具备基础，能直接改善会话辨认与续接体验，同时避免提前扩张工具或扩展系统边界。
 
-首版交付最近 200 条元数据搜索、跨目录默认返回确认、128 条/32 KiB 文本预览、离线严格原生校验和唯一 owner 清理。标题展示与匹配于 2026-11-19 由 `add-session-titles` 补齐。正文索引、自动模型切换、worktree 聚合、活动会话切换和 fork 仍属后续范围。首版对应 `add-interactive-session-picker`。
+首版 `add-interactive-session-picker` 交付最近 200 条元数据搜索、跨目录默认返回确认、128 条/32 KiB 文本预览、离线严格原生校验和唯一 owner 清理。2026-11-19 的 `add-session-titles` 补齐标题展示与匹配，`add-in-chat-session-resume` 支持空闲时在聊天内切换同目录会话。正文索引、自动模型切换、worktree 聚合与 fork 仍属后续范围。
 
 2026-11-04 复核补强：修复选择器父取消接收窗口、预览预算和窄屏/失败展示，补充真实 journal 追加后恢复、双 Provider 校验中取消以及无变更/补偿后失败分类的直接断言。范围仍为现有启动选择器；跟踪变更 `harden-session-picker-review`。
 

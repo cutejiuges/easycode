@@ -275,7 +275,7 @@ func (draft RecordDraft) clone() RecordDraft {
 
 func validateDraftPlacement(draft RecordDraft) error {
 	switch draft.descriptor.Kind {
-	case EventCompactionStarted, EventCompactionCompleted, EventCompactionFailed:
+	case EventCompactionStarted, EventPreCompactHookStarted, EventPreCompactHookFinished, EventPreCompactHookDecided, EventCompactionCompleted, EventCompactionFailed:
 		if draft.turnID != "" || draft.parentThreadID != "" {
 			return fmt.Errorf("compaction draft placement is invalid")
 		}
@@ -334,6 +334,15 @@ func validateDraftPayload(draft RecordDraft) error {
 
 	case EventCompactionStarted:
 		_, err := DecodeCompactionStartedPayload(record)
+		return err
+	case EventPreCompactHookStarted:
+		_, err := DecodePreCompactHookStartedPayload(record)
+		return err
+	case EventPreCompactHookFinished:
+		_, err := DecodePreCompactHookFinishedPayload(record)
+		return err
+	case EventPreCompactHookDecided:
+		_, err := DecodePreCompactHookDecidedPayload(record)
 		return err
 	case EventCompactionCompleted:
 		_, err := DecodeCompactionCompletedPayload(record)

@@ -150,15 +150,22 @@ func (runtime *Runtime) runCompaction(ctx context.Context, id domain.CompactionI
 }
 
 func (runtime *Runtime) runCompactionOwned(ctx context.Context, id domain.CompactionID, admission compactionAdmission, scope domain.CompactionScope, emit Emitter) error {
-	started, err := session.NewCompactionStartedDraft(scope, id, admission.preview.Source())
+	check, rejection, err := runtime.planPreCompact(id, scope, admission.preview)
 	if err != nil {
+		runtime.poisoned.Store(true)
 		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, false, nil, emit)
 	}
-	if _, err = runtime.journal.AppendBatch(ctx, []session.RecordDraft{started}); err != nil {
-		if runtime.journal.Poisoned() {
-			runtime.poisoned.Store(true)
+	started, err := session.NewCompactionStartedDraft(scope, id, admission.preview.Source(), check.plan)
+	if err != nil {
+		runtime.poisoned.Store(true)
+		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, false, nil, emit)
+	}
+	if _, err = runtime.commitHookFacts(ctx, []session.RecordDraft{started}); err != nil {
+		code := compactionFailureCode(ctx, err)
+		if runtime.poisoned.Load() {
+			code = protocol.CompactionFailureSession
 		}
-		return runtime.failScopedCompaction(scope, id, compactionFailureCode(ctx, err), false, nil, emit)
+		return runtime.failScopedCompaction(scope, id, code, false, nil, emit)
 	}
 	event, err := protocol.NewCompactionStarted(runtime.sessionID, runtime.threadID, id, admission.preview.Source().ContextRevision(), scope)
 	if err != nil {
@@ -166,9 +173,38 @@ func (runtime *Runtime) runCompactionOwned(ctx context.Context, id domain.Compac
 		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, false, nil, emit)
 	}
 	emit(event)
+	if rejection != "" {
+		return runtime.failScopedCompaction(scope, id, rejection, true, nil, emit)
+	}
+	if len(check.declarations) != 0 {
+		outcome := runtime.runPreCompact(ctx, id, scope, admission, check, emit)
+		if outcome.code != "" {
+			// 已观察到的清理不确定先收口失败，再永久关闭当前运行时的接纳。
+			err := runtime.failScopedCompaction(scope, id, outcome.code, true, nil, emit)
+			if outcome.code == protocol.CompactionFailureSession {
+				runtime.poisoned.Store(true)
+			}
+			return err
+		}
+		admission.preview = outcome.preview
+	}
+	if ctx.Err() != nil {
+		return runtime.failScopedCompaction(scope, id, compactionFailureCode(ctx, ctx.Err()), true, nil, emit)
+	}
 	runtime.cache.frozen, err = contextplan.NewCacheSources(admission.before)
 	if err != nil {
 		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, true, nil, emit)
+	}
+	if runtime.interactiveApprovals {
+		event, err := protocol.NewCompactionSummarizing(runtime.sessionID, runtime.threadID, id, scope)
+		if err != nil {
+			runtime.poisoned.Store(true)
+			return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, false, nil, emit)
+		}
+		emit(event)
+	}
+	if ctx.Err() != nil {
+		return runtime.failScopedCompaction(scope, id, compactionFailureCode(ctx, ctx.Err()), true, nil, emit)
 	}
 	networkCtx, cancel := runtime.compactionDeadline(ctx, 120*time.Second)
 	prepared, err := admission.kernel.RunCompaction(networkCtx, id, admission.preview)
@@ -288,6 +324,8 @@ func (runtime *Runtime) failScopedCompaction(scope domain.CompactionScope, id do
 			eventPayload.Durable = true
 		} else {
 			runtime.poisoned.Store(true)
+			code = protocol.CompactionFailureSession
+			eventPayload.Code = code
 		}
 	}
 	event, err := protocol.NewCompactionFailed(runtime.sessionID, runtime.threadID, id, eventPayload)

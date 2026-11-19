@@ -1,6 +1,6 @@
 # 当前能力与实现边界
 
-> 核对日期：2026-11-19。基线：当前仓库实现及已同步主规格，包含本地 Plugin 技能包、启动推理控制、会话内 effort 选择及本轮回归修复、结构化用户提问、PreToolUse 参数改写、PreToolUse/PostToolUse/PostToolUseFailure/Stop Hook、命令/Skill 首词补全、工作区文件引用、任务清单、会话命名、聊天内会话恢复与已验收归档的双 Provider 被动推理阅读。
+> 核对日期：2026-11-19。基线：当前仓库实现及已同步主规格，包含本地 Plugin 技能包、启动推理控制、会话内 effort 选择及本轮回归修复、结构化用户提问、PreToolUse 参数改写、PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact Hook、命令/Skill 首词补全、工作区文件引用、任务清单、会话命名、聊天内会话恢复与已验收归档的双 Provider 被动推理阅读。
 > 本文记录当前代码可执行的能力；[产品 Roadmap](product-roadmap.md)保留阶段目标与剩余工作。已接受的 ADR 和归档 change 记录各自当时的决策，不能单独作为现有功能清单。
 
 ## 用户入口
@@ -50,7 +50,7 @@ Stop 已支持精确答复的完成前检查、同回合最多两次续轮、累
 | 项目指令 | 从启动 cwd 显式冻结层级 AGENTS.md/CLAUDE.md，相对来源、预算截断、临时注入双 Provider 请求，不写原生历史 | 全局用户指令、includes、`.claude/rules`、热加载 |
 | 缓存 | Anthropic disabled/5m/1h 显式断点；OpenAI omit/thread key；可选 WebSocket durable 前缀增量与受限回退；`/cache`/`cache.query` | 费用/价格、长期累计遥测、动态 plugin/MCP 目录策略；不能保证服务端命中 |
 | Usage | raw usage 保留于各 Provider native facts；共享五项三态指标及 turn 聚合，区分未知/不适用；最近 sample/turn/summary 有界缓存观测；Anthropic thinking_tokens 为 known/unknown，output 已包含 thinking | 实时独立 usage 流、cost 面板、配额与完整 metrics/tracing |
-| 压缩 | 手动 `/compact`、显式窗口下阈值自动摘要、独立 CompactionID/checkpoint、失败保留旧窗口、完整历史可读、取消/恢复 | 删除旧 JSONL、跨 Provider fork、PreCompact/PostCompact Hook、通用分块摘要 |
+| 压缩 | 手动 `/compact`、显式窗口下阈值自动摘要、独立 CompactionID/checkpoint、失败保留旧窗口、完整历史可读、取消/恢复、同步 PreCompact 检查 | 删除旧 JSONL、跨 Provider fork、PostCompact Hook、通用分块摘要 |
 | TUI | 流式 Markdown、代码/表格/原文阅读、resize/窄屏/NO_COLOR、普通批准/问卷/Hook 审查、紧凑工具主线、Ctrl+O 分页详情、context/cache、resume picker、命令/Skill 与正文文件补全、thinking/summary 活动提示及 Ctrl+O 阅读、冻结设置查询与有界滚动 | effort 之外的运行中推理切换、fork picker、后台任务 UI、通用命令管理面板 |
 | 输出保存 | Exec stdout/stderr 与搜索连续前缀、授权 descriptor、ReadArtifact、独立宿主详情查询；恢复不重读 artifact | Read/Patch/Write/Skill/Question 的通用自动 artifact、自动过期、远程 artifact 服务 |
 
@@ -73,7 +73,7 @@ Stop 已支持精确答复的完成前检查、同回合最多两次续轮、累
 
 ## 后续能力与审阅入口
 
-P6 当前交付本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop 和显式本地 Plugin 技能包（EasyCode、Claude、Codex JSON、Agent Plugins 四种受限 manifest）。MCP、插件可执行贡献、marketplace/安装与热加载仍是后续目标。P7 Subagent 和 P8 telemetry/诊断/发布强化的批准占位尚未接入 Runtime/app。doctor、模型/Provider 动态切换、后台任务、通用迁移设计不得仅因出现在路线图或 ADR 中就视作已经实现。
+P6 当前交付本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact 和显式本地 Plugin 技能包（EasyCode、Claude、Codex JSON、Agent Plugins 四种受限 manifest）。MCP、插件可执行贡献、marketplace/安装与热加载仍是后续目标。P7 Subagent 和 P8 telemetry/诊断/发布强化的批准占位尚未接入 Runtime/app。doctor、模型/Provider 动态切换、后台任务、通用迁移设计不得仅因出现在路线图或 ADR 中就视作已经实现。
 
 - 功能使用和配置：[README](../../README.md)。
 - 长期目标及剩余验收：[产品 Roadmap](product-roadmap.md)。
@@ -82,6 +82,7 @@ P6 当前交付本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/
 - PostToolUse 验收：[verification.md](../../openspec/changes/archive/2026-11-08-add-post-tool-use-command-hooks/verification.md)。
 - PreToolUse 验收：[verification.md](../../openspec/changes/add-pre-tool-use-command-hooks/verification.md)。
 - PreToolUse 参数改写验收：[verification.md](../../openspec/changes/archive/2026-11-15-add-pre-tool-use-input-rewrite/verification.md)。
+- PreCompact 验收包含双 Provider、Darwin PTY、stream-json、恢复和 WebSocket 回退。[验证记录](../../openspec/changes/archive/2026-11-19-add-pre-compact-command-hooks/verification.md)
 - 命令/Skill 补全：[归档核对记录](../../openspec/changes/archive/2026-11-06-add-command-and-skill-completion/archive.md)、[追加验证报告](../../openspec/changes/archive/2026-11-06-add-command-and-skill-completion/revalidation.md)。
 
 推理展示只读取 Anthropic thinking 与 OpenAI summary_text 白名单，opaque-only 为 unavailable；签名、密文、raw 和未知扩展不进入显示或 headless。主线不累计完成推理行，活动显示共用 64 KiB/50 项，查询正文与其他详情共用四页缓存。提交来源与 sample/block 映射仅在内存中存在，这部分展示不改变存储；启动推理控制另将 Anthropic raw usage 当前 shape 扩展为必需 thinking_tokens 状态，并替换固定 current bytes，旧开发 shape 拒绝。验证入口为 `internal/provider/*/reasoning_stream_test.go`、`internal/provider/*/reasoning_restore_test.go`、`internal/runtime/reasoning_test.go`、`internal/tui/reasoning_test.go`、`internal/app/reasoning_e2e_test.go` 与 Darwin `scripts/reasoning-smoke.py`。

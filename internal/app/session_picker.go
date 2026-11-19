@@ -115,6 +115,7 @@ func runPickerTerminal(runCtx context.Context, cancel context.CancelFunc, option
 	if file, ok := options.Output.(term.File); ok {
 		terminalOutput = &pickerTerminalOutput{pickerOutput: output, file: file}
 	}
+	// 进程信号由调用方的 context 统一处理，避免事件循环退出后 Bubble Tea 的信号处理器阻塞。
 	programOptions := []tea.ProgramOption{tea.WithContext(runCtx), tea.WithOutput(terminalOutput), tea.WithoutSignalHandler()}
 	if options.Input != nil {
 		programOptions = append(programOptions, tea.WithInput(options.Input))
