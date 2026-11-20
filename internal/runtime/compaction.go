@@ -92,8 +92,8 @@ func (runtime *Runtime) preflightCompaction(instructions string) (compactionAdmi
 	return runtime.preflightCompactionFor(runtime.operationProfile, instructions)
 }
 func (runtime *Runtime) preflightCompactionFor(profile contextplan.ProviderProfile, instructions string) (compactionAdmission, protocol.ControlErrorCode) {
-	kernel, ok := runtime.conversation.(provider.CompactionKernel)
-	if !ok {
+	kernel := runtime.providerOperations.compaction
+	if kernel == nil {
 		return compactionAdmission{}, protocol.ControlErrorInvalidCommand
 	}
 	sampling, err := runtime.samplingInputFor(profile)

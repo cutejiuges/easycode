@@ -303,98 +303,14 @@ func validateDraftPayload(draft RecordDraft) error {
 		TurnID:    draft.turnID,
 		EventKind: draft.descriptor.Kind, Payload: draft.PayloadBytes(),
 	}
-	switch draft.descriptor.Kind {
-	case EventTurnStopHookPlanned:
-		_, err := DecodeTurnStopHookPlanned(record)
-		return err
-	case EventTurnStopHookDecided:
-		_, err := DecodeTurnStopHookDecided(record)
-		return err
-	case EventToolPostHookPlanned:
-		_, err := DecodeToolPostHookPlanned(record)
-		return err
-	case EventToolPostHookCompleted:
-		_, err := DecodeToolPostHookCompleted(record)
-		return err
-	case EventToolHookGatePlanned:
-		_, err := DecodeToolHookGatePlanned(record)
-		return err
-
-	case EventHookExecutionStarted:
-		_, err := DecodeHookExecutionStarted(record)
-		return err
-
-	case EventHookExecutionFinished:
-		_, err := DecodeHookExecutionFinished(record)
-		return err
-
-	case EventToolHookGateDecided:
-		_, err := DecodeToolHookGateDecided(record)
-		return err
-
-	case EventCompactionStarted:
-		_, err := DecodeCompactionStartedPayload(record)
-		return err
-	case EventPreCompactHookStarted:
-		_, err := DecodePreCompactHookStartedPayload(record)
-		return err
-	case EventPreCompactHookFinished:
-		_, err := DecodePreCompactHookFinishedPayload(record)
-		return err
-	case EventPreCompactHookDecided:
-		_, err := DecodePreCompactHookDecidedPayload(record)
-		return err
-	case EventCompactionCompleted:
-		_, err := DecodeCompactionCompletedPayload(record)
-		return err
-	case EventCompactionFailed:
-		_, err := DecodeCompactionFailedPayload(record)
-		return err
-	case EventSessionMeta:
-		_, err := DecodeSessionMetaPayload(record)
-		return err
-	case EventSessionTitleUpdated:
-		_, err := DecodeSessionTitleUpdated(record)
-		return err
-	case EventThreadMeta:
-		payload, err := DecodeThreadMetaPayload(record)
-		if err == nil && payload.ParentThreadID != draft.parentThreadID {
-			return fmt.Errorf("thread metadata parent does not match draft")
-		}
-		return err
-	case EventTurnInputsCommitted:
-		_, err := DecodeTurnInputsPayload(record)
-		return err
-	case EventTurnStarted:
-		_, err := DecodeTurnStartedPayload(record)
-		return err
-	case EventProviderNativeCommit:
-		_, err := DecodeNativeCommitPayload(record)
-		return err
-	case EventSampleUsage:
-		_, err := DecodeSampleUsagePayload(record)
-		return err
-	case EventToolCallReady:
-		_, err := DecodeToolCallReadyPayload(record)
-		return err
-	case EventToolExecutionStarted:
-		_, err := DecodeToolExecutionStartedPayload(record)
-		return err
-	case EventToolApprovalDecided:
-		_, err := DecodeToolApprovalDecidedPayload(record)
-		return err
-	case EventToolCallResult:
-		_, err := DecodeToolCallResultPayload(record)
-		return err
-	case EventTurnCompleted:
-		_, err := DecodeTurnCompletedPayload(record)
-		return err
-	case EventTurnFailed:
-		_, err := DecodeTurnFailedPayload(record)
-		return err
-	default:
-		return fmt.Errorf("session draft event kind is invalid")
+	if record.EventKind != EventThreadMeta {
+		return decodeKnownRecord(record)
 	}
+	payload, err := DecodeThreadMetaPayload(record)
+	if err == nil && payload.ParentThreadID != draft.parentThreadID {
+		return fmt.Errorf("thread metadata parent does not match draft")
+	}
+	return err
 }
 
 func validateTurnID(turnID domain.TurnID) error {

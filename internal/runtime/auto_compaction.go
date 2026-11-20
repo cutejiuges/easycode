@@ -38,8 +38,8 @@ func (runtime *Runtime) prepareAutomaticSample(ctx context.Context, turn domain.
 		if !runtime.inputEncodingFits(association, inputs) {
 			return nil
 		}
-		preparer, ok := runtime.conversation.(provider.UserInputPreparer)
-		if !ok {
+		preparer := runtime.providerOperations.userInputs
+		if preparer == nil {
 			return nil
 		}
 		prepared, err := preparer.PrepareUserInputs(association, inputs)

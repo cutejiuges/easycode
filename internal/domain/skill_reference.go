@@ -23,7 +23,6 @@ func ParseSkillReference(value string) (SkillReference, error) {
 }
 
 func (r SkillReference) Namespace() string { return r.namespace }
-func (r SkillReference) Leaf() string      { return r.leaf }
 func (r SkillReference) Qualified() bool   { return r.namespace != "" }
 func (r SkillReference) String() string {
 	if r.Qualified() {

@@ -2,6 +2,12 @@
 
 > 本文按事件发生时记录事实，不作为当前功能清单。版本数字、工具数量、平台验收和当时未实现项需结合后续条目与[当前能力清单](capability-status.md)阅读；当前内部格式没有 canary/schema_version 等版本门禁。
 
+### [P1/P2][2026-11-19] 共享流程仍有校验与清理顺序
+
+- 发现两家回放在工具输出处反复扫描历史前缀。增量状态保存已检查前缀的首错，到原有工具输出、checkpoint 或终末检查点才报告，避免改变组合损坏的错误优先级。回放验证完整日志，原生 digest 仍覆盖实际有效窗口。
+- 采样保留一个 producer。transport 排空及 active 释放后才关闭输出，收到 completed 后仍需等待 durable finalize 才能推进普通基线与 OpenAI 连接续写资格。摘要仍用独立终态，离线预览仍在读 lease 下按现有顺序核验。
+- 代表回归位于两家的 `compaction_test.go`、OpenAI `websocket_test.go` 及 `internal/app/cache_e2e_test.go`、`internal/app/reasoning_usage_restore_test.go`。[Provider Kernel](../architecture/overall-architecture.md#5-provider-kernel)
+
 ### [P2/P5][2026-11-19] 命名回执、关闭完成和索引发布有各自的时点
 
 - `ChatSession` 的关门信号早于运行 context 取消，标题接纳同时检查两处和请求自身的取消。接纳后等待追加 Sync 才发布成功。

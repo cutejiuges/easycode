@@ -148,12 +148,11 @@ func (runtime *Runtime) checkPreCompact(ctx context.Context, id domain.Compactio
 		}
 		activity := protocol.HookActivityPayload{Target: target, PlanDigest: check.plan.Digest(), Reference: declaration.Reference, State: protocol.HookActivityChecking, Code: domain.HookOK}
 		runtime.publishPreCompactActivity(emit, scope.TurnID, activity)
-		start := check.now()
-		execution := check.runner.Run(ctx, identity, declaration, input, min(remaining, time.Duration(declaration.Reference.TimeoutSeconds)*time.Second))
-		remaining -= max(0, check.now().Sub(start))
+		execution, left := runTimedHook(ctx, check.runner, check.now, remaining, identity, declaration, input)
+		remaining = left
 		result := execution.Result
 		focus := execution.Feedback.Content()
-		if _, err := domain.NewHookExecution(result, declaration.Reference.Feedback, execution.Feedback, execution.Replacement); err != nil || result.Identity != identity || result.Origin != "execution" {
+		if !validHookExecution(execution, identity, declaration.Reference.Feedback) {
 			result = domain.HookRunResult{Identity: identity, Status: domain.HookUncertain, Code: domain.HookOutcomeUncertain, Origin: "execution"}
 			focus = ""
 		}

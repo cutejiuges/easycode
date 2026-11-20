@@ -23,9 +23,25 @@ type ProviderFamily string
 const (
 	ProviderAnthropic ProviderFamily = "anthropic"
 	ProviderOpenAI    ProviderFamily = "openai"
+
+	// AnthropicMessagesWire 与 OpenAIResponsesWire 是当前持久化的协议身份。
+	AnthropicMessagesWire = "messages"
+	OpenAIResponsesWire   = "responses"
 )
 
 // Valid 判断 provider 家族是否受支持。
 func (family ProviderFamily) Valid() bool {
-	return family == ProviderAnthropic || family == ProviderOpenAI
+	return family.Wire() != ""
+}
+
+// Wire 返回该协议家族唯一的当前 wire 标识。
+func (family ProviderFamily) Wire() string {
+	switch family {
+	case ProviderAnthropic:
+		return AnthropicMessagesWire
+	case ProviderOpenAI:
+		return OpenAIResponsesWire
+	default:
+		return ""
+	}
 }

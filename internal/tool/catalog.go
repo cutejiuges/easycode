@@ -1,7 +1,6 @@
 package tool
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -148,6 +147,7 @@ func facadeIdentity(family domain.ProviderFamily, capability CapabilityID) (stri
 type FacadeView struct {
 	family      domain.ProviderFamily
 	facades     []Facade
+	byName      map[string]int
 	canonical   codec.CanonicalJSON
 	fingerprint string
 }
@@ -159,6 +159,12 @@ func (view FacadeView) Fingerprint() string           { return view.fingerprint 
 
 // CatalogSnapshot 保存 ReadArtifact、Read、Glob、Grep、Patch、Write、Exec、Skill、Question、Task 十项真实能力的确定性目录。
 type CatalogSnapshot struct {
+	data *catalogData
+}
+
+// catalogData 在严格构造后发布，其内容不会被修改。
+type catalogData struct {
+	views       map[domain.ProviderFamily]FacadeView
 	facades     []Facade
 	canonical   codec.CanonicalJSON
 	fingerprint string
@@ -267,6 +273,41 @@ type catalogCanonical struct {
 	Facades []facadeCanonical `json:"facades"`
 }
 
+// FacadeCapability 用同一套声明识别持久化的原生调用，无需装配工具执行器。
+func FacadeCapability(family domain.ProviderFamily, name string) (CapabilityID, bool) {
+	if !family.Valid() || name == "" {
+		return "", false
+	}
+	for _, capability := range [...]CapabilityID{
+		CapabilityRead, CapabilityGlob, CapabilityGrep, CapabilityPatch, CapabilityWrite,
+		CapabilityExec, CapabilityReadArtifact, CapabilitySkill, CapabilityQuestion, CapabilityTaskProgress,
+	} {
+		expected, _ := facadeIdentity(family, capability)
+		if name == expected {
+			return capability, true
+		}
+	}
+	return "", false
+}
+
+func facadeWireKind(family domain.ProviderFamily, capability CapabilityID) ProviderWireKind {
+	if family == domain.ProviderOpenAI && capability == CapabilityPatch {
+		return WireCustomFreeform
+	}
+	return WireStructured
+}
+
+func appendStructuredFacades(facades []Facade, capability CapabilityID, description string, schema codec.CanonicalJSON) []Facade {
+	for _, family := range [...]domain.ProviderFamily{domain.ProviderAnthropic, domain.ProviderOpenAI} {
+		name, id := facadeIdentity(family, capability)
+		facades = append(facades, Facade{
+			id: id, family: family, name: name, description: description,
+			capability: capability, wireKind: WireStructured, schema: schema.Clone(),
+		})
+	}
+	return facades
+}
+
 // buildReadOnlyFacades 只构造真实只读子集，不建立可执行的旧目录契约。
 func buildReadOnlyFacades() ([]Facade, error) {
 	readSchema, err := buildReadSchema()
@@ -289,10 +330,7 @@ func buildReadOnlyFacades() ([]Facade, error) {
 	schemas := map[CapabilityID]codec.CanonicalJSON{CapabilityRead: readSchema, CapabilityGlob: globSchema, CapabilityGrep: grepSchema}
 	facades := make([]Facade, 0, 6)
 	for _, capability := range []CapabilityID{CapabilityRead, CapabilityGlob, CapabilityGrep} {
-		for _, family := range []domain.ProviderFamily{domain.ProviderAnthropic, domain.ProviderOpenAI} {
-			name, id := facadeIdentity(family, capability)
-			facades = append(facades, Facade{id: id, family: family, name: name, description: descriptions[capability], capability: capability, wireKind: WireStructured, schema: schemas[capability].Clone()})
-		}
+		facades = appendStructuredFacades(facades, capability, descriptions[capability], schemas[capability])
 	}
 	return facades, nil
 }
@@ -316,10 +354,7 @@ func buildFileFacades() ([]Facade, error) {
 		return nil, err
 	}
 	facades := append(readOnly, patchFacades...)
-	for _, family := range []domain.ProviderFamily{domain.ProviderAnthropic, domain.ProviderOpenAI} {
-		name, id := facadeIdentity(family, CapabilityWrite)
-		facades = append(facades, Facade{id: id, family: family, name: name, description: "Creates or overwrites one UTF-8 workspace file with exact content after approval. Overwriting requires a complete Read delivered in an earlier sample; truncated or same-sample reads do not qualify. Missing parent directories are created atomically. Use Edit or apply_patch for partial changes.", capability: CapabilityWrite, wireKind: WireStructured, schema: writeSchema.Clone()})
-	}
+	facades = appendStructuredFacades(facades, CapabilityWrite, "Creates or overwrites one UTF-8 workspace file with exact content after approval. Overwriting requires a complete Read delivered in an earlier sample; truncated or same-sample reads do not qualify. Missing parent directories are created atomically. Use Edit or apply_patch for partial changes.", writeSchema)
 	return facades, nil
 }
 
@@ -336,35 +371,23 @@ func NewCatalogSnapshot(readExecutor ReadExecutor, globExecutor GlobExecutor, gr
 	if err != nil {
 		return CatalogSnapshot{}, err
 	}
-	for _, family := range []domain.ProviderFamily{domain.ProviderAnthropic, domain.ProviderOpenAI} {
-		name, id := facadeIdentity(family, CapabilityExec)
-		facades = append(facades, Facade{id: id, family: family, name: name, description: "Runs a foreground command after one-time approval, with workspace writes, no network, bounded output and timeout.", capability: CapabilityExec, wireKind: WireStructured, schema: execSchema.Clone()})
-	}
+	facades = appendStructuredFacades(facades, CapabilityExec, "Runs a foreground command after one-time approval, with workspace writes, no network, bounded output and timeout.", execSchema)
 	artifactSchema, err := buildArtifactSchema()
 	if err != nil {
 		return CatalogSnapshot{}, err
 	}
-	for _, family := range []domain.ProviderFamily{domain.ProviderAnthropic, domain.ProviderOpenAI} {
-		name, id := facadeIdentity(family, CapabilityReadArtifact)
-		facades = append(facades, Facade{id: id, family: family, name: name, description: "Reads a saved command-output prefix by artifact ID from the current thread. Offsets and limits count raw bytes; partial storage EOF does not mean complete command output.", capability: CapabilityReadArtifact, wireKind: WireStructured, schema: artifactSchema.Clone()})
-	}
+	facades = appendStructuredFacades(facades, CapabilityReadArtifact, "Reads a saved command-output prefix by artifact ID from the current thread. Offsets and limits count raw bytes; partial storage EOF does not mean complete command output.", artifactSchema)
 	skillSchema, err := buildSkillSchema()
 	if err != nil {
 		return CatalogSnapshot{}, err
 	}
-	for _, family := range []domain.ProviderFamily{domain.ProviderAnthropic, domain.ProviderOpenAI} {
-		name, id := facadeIdentity(family, CapabilitySkill)
-		facades = append(facades, Facade{id: id, family: family, name: name, description: "Loads complete local skill instructions by name, or reads a relative supporting resource from the same source. Does not grant tool permissions. args and resource are mutually exclusive.", capability: CapabilitySkill, wireKind: WireStructured, schema: skillSchema.Clone()})
-	}
+	facades = appendStructuredFacades(facades, CapabilitySkill, "Loads complete local skill instructions by name, or reads a relative supporting resource from the same source. Does not grant tool permissions. args and resource are mutually exclusive.", skillSchema)
 
 	questionSchema, err := buildQuestionSchema()
 	if err != nil {
 		return CatalogSnapshot{}, err
 	}
-	for _, family := range []domain.ProviderFamily{domain.ProviderAnthropic, domain.ProviderOpenAI} {
-		name, id := facadeIdentity(family, CapabilityQuestion)
-		facades = append(facades, Facade{id: id, family: family, name: name, description: "Asks the user one to four questions with single or multiple choices and optional notes, then waits for explicit answers. The client adds Other. Put a recommended choice first with (Recommended) in its label. Ask before generating tool calls whose parameters depend on the answer. Answers never grant tool permissions. Requires an interactive host.", capability: CapabilityQuestion, wireKind: WireStructured, schema: questionSchema.Clone()})
-	}
+	facades = appendStructuredFacades(facades, CapabilityQuestion, "Asks the user one to four questions with single or multiple choices and optional notes, then waits for explicit answers. The client adds Other. Put a recommended choice first with (Recommended) in its label. Ask before generating tool calls whose parameters depend on the answer. Answers never grant tool permissions. Requires an interactive host.", questionSchema)
 	tasks, err := buildTaskFacades()
 	if err != nil {
 		return CatalogSnapshot{}, err
@@ -483,7 +506,15 @@ func newCatalogSnapshot(facades []Facade) (CatalogSnapshot, error) {
 	}
 	sum := sha256.Sum256(canonical.Bytes())
 	fingerprint := hex.EncodeToString(sum[:])
-	return CatalogSnapshot{facades: owned, canonical: canonical, fingerprint: fingerprint}, nil
+	views := make(map[domain.ProviderFamily]FacadeView, 2)
+	for _, family := range [...]domain.ProviderFamily{domain.ProviderAnthropic, domain.ProviderOpenAI} {
+		view, err := buildFacadeView(family, owned)
+		if err != nil {
+			return CatalogSnapshot{}, err
+		}
+		views[family] = view
+	}
+	return CatalogSnapshot{data: &catalogData{facades: owned, canonical: canonical, fingerprint: fingerprint, views: views}}, nil
 }
 
 func encodeFacades(facades []Facade) (codec.CanonicalJSON, error) {
@@ -504,22 +535,37 @@ func encodeFacades(facades []Facade) (codec.CanonicalJSON, error) {
 	return canonical, nil
 }
 
-func (snapshot CatalogSnapshot) CanonicalJSON() []byte { return snapshot.canonical.Bytes() }
-func (snapshot CatalogSnapshot) Fingerprint() string   { return snapshot.fingerprint }
-func (snapshot CatalogSnapshot) Facades() []Facade     { return cloneFacades(snapshot.facades) }
-func (snapshot CatalogSnapshot) Clone() CatalogSnapshot {
-	return CatalogSnapshot{facades: snapshot.Facades(), canonical: snapshot.canonical.Clone(), fingerprint: snapshot.fingerprint}
+func (snapshot CatalogSnapshot) CanonicalJSON() []byte {
+	if snapshot.data == nil {
+		return nil
+	}
+	return snapshot.data.canonical.Bytes()
 }
 
-// View 返回指定 Provider family 的独立 facade 快照。
-func (snapshot CatalogSnapshot) View(family domain.ProviderFamily) (FacadeView, error) {
-	if err := snapshot.Validate(); err != nil {
-		return FacadeView{}, err
+func (snapshot CatalogSnapshot) Fingerprint() string {
+	if snapshot.data == nil {
+		return ""
 	}
-	var selected []Facade
-	for _, facade := range snapshot.facades {
+	return snapshot.data.fingerprint
+}
+
+func (snapshot CatalogSnapshot) Facades() []Facade {
+	if snapshot.data == nil {
+		return []Facade{}
+	}
+	return cloneFacades(snapshot.data.facades)
+}
+
+// Clone 共享不可变目录。所有导出的切片和字节仍由 getter 独立复制。
+func (snapshot CatalogSnapshot) Clone() CatalogSnapshot { return snapshot }
+
+func buildFacadeView(family domain.ProviderFamily, facades []Facade) (FacadeView, error) {
+	selected := make([]Facade, 0, 10)
+	byName := make(map[string]int, 10)
+	for _, facade := range facades {
 		if facade.family == family {
-			selected = append(selected, facade.clone())
+			byName[facade.name] = len(selected)
+			selected = append(selected, facade)
 		}
 	}
 	if len(selected) != 10 {
@@ -530,7 +576,19 @@ func (snapshot CatalogSnapshot) View(family domain.ProviderFamily) (FacadeView, 
 		return FacadeView{}, err
 	}
 	sum := sha256.Sum256(canonical.Bytes())
-	return FacadeView{family: family, facades: selected, canonical: canonical, fingerprint: hex.EncodeToString(sum[:])}, nil
+	return FacadeView{family: family, facades: selected, byName: byName, canonical: canonical, fingerprint: hex.EncodeToString(sum[:])}, nil
+}
+
+// View 返回指定 Provider family 的不可变 facade 快照。
+func (snapshot CatalogSnapshot) View(family domain.ProviderFamily) (FacadeView, error) {
+	if err := snapshot.Validate(); err != nil {
+		return FacadeView{}, err
+	}
+	view, ok := snapshot.data.views[family]
+	if !ok {
+		return FacadeView{}, errors.New("tool catalog has incomplete Provider facade set")
+	}
+	return view, nil
 }
 
 // DecodeReadyCall 按当前 snapshot 的 facade 解码模型参数为封闭联合。
@@ -539,17 +597,12 @@ func (snapshot CatalogSnapshot) DecodeReadyCall(family domain.ProviderFamily, na
 	if err != nil {
 		return ReadyCall{}, err
 	}
-	var selected *Facade
-	for index := range view.facades {
-		if view.facades[index].name == name {
-			selected = &view.facades[index]
-			break
-		}
-	}
-	if selected == nil {
+	index, ok := view.byName[name]
+	if !ok {
 		return ReadyCall{}, errors.New("tool facade is not advertised")
 	}
-	return decodeFacadeInput(family, selected.capability, selected.wireKind, callID, arguments)
+	selected := view.facades[index]
+	return decodeFacadeInput(view.family, selected.capability, selected.wireKind, callID, arguments)
 }
 
 // decodeFacadeInput 由目录解码及原生调用核验共用，不创建执行绑定。
@@ -630,17 +683,10 @@ func decodeFacadeInput(family domain.ProviderFamily, capability CapabilityID, wi
 	}
 }
 
-// Validate 重新计算 canonical bytes 与 fingerprint。
+// Validate 拒绝未经目录构造器校验的零值。
 func (snapshot CatalogSnapshot) Validate() error {
-	if len(snapshot.facades) != 20 || snapshot.fingerprint == "" {
+	if snapshot.data == nil {
 		return errors.New("tool catalog snapshot is invalid")
-	}
-	rebuilt, err := newCatalogSnapshot(snapshot.facades)
-	if err != nil {
-		return err
-	}
-	if !bytes.Equal(snapshot.canonical.Bytes(), rebuilt.canonical.Bytes()) || snapshot.fingerprint != rebuilt.fingerprint {
-		return errors.New("tool catalog snapshot does not match fields")
 	}
 	return nil
 }

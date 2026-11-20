@@ -8,7 +8,6 @@ import (
 	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
-	"easycode/internal/provider"
 	"easycode/internal/session"
 	"easycode/internal/tool"
 )
@@ -70,8 +69,8 @@ func (r *Runtime) installTaskProgress(turn domain.TurnID, result tool.Invocation
 		r.poisoned.Store(true)
 		return err
 	}
-	if r.activityEmitter != nil {
-		r.activityEmitter(event)
+	if r.toolTurn.activityEmitter != nil {
+		r.toolTurn.activityEmitter(event)
 	}
 	return nil
 }
@@ -95,7 +94,7 @@ func (r *Runtime) executeTaskCall(ctx context.Context, turn domain.TurnID, inv t
 		err := r.persistToolResult(context.WithoutCancel(ctx), turn, &result)
 		return result, false, err
 	}
-	if r.resultBudget.BodyExhausted() {
+	if r.toolTurn.resultBudget.BodyExhausted() {
 		return fail(tool.ResultError, "result_budget_exceeded", "Task not updated: turn result budget exhausted")
 	}
 	ready, err := inv.ReadyCall()
@@ -106,8 +105,8 @@ func (r *Runtime) executeTaskCall(ctx context.Context, turn domain.TurnID, inv t
 	if err != nil {
 		return tool.InvocationResult{}, false, err
 	}
-	preparer, ok := r.conversation.(provider.ToolResultPreparer)
-	if !ok {
+	preparer := r.providerOperations.toolOutputs
+	if preparer == nil {
 		return tool.InvocationResult{}, false, fmt.Errorf("task output preparation is unavailable")
 	}
 	preflight, err := preparer.PrepareToolOutputPreflight(inv)
@@ -115,7 +114,7 @@ func (r *Runtime) executeTaskCall(ctx context.Context, turn domain.TurnID, inv t
 		return tool.InvocationResult{}, false, fmt.Errorf("task output preflight is unavailable")
 	}
 	v, _ := inv.Task()
-	execution, err := r.executeExclusive(ctx, turn, inv, exclusiveAction{
+	result, err := r.executeExclusive(ctx, turn, inv, exclusiveAction{
 		execute: func(ctx context.Context) tool.InvocationResult {
 			result := r.taskExecutor.Execute(ctx, v)
 			if result.Status() != tool.ResultSuccess {
@@ -137,7 +136,7 @@ func (r *Runtime) executeTaskCall(ctx context.Context, turn domain.TurnID, inv t
 		},
 		matches: func(result tool.InvocationResult) bool { return tool.ValidateResultInput(inv, result) == nil },
 	})
-	return execution.Result, false, err
+	return result, false, err
 }
 
 func (state *agentLoopRunState) queryTasks(request loopCommandRequest) {

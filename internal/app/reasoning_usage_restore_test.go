@@ -59,7 +59,7 @@ func TestThinkingUsageFixedCurrentRestoreAndRejectBeforeRepair(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer instance.Close()
-			assembled, err := service.resume(context.Background(), instance, "messages", "claude-test", thread)
+			assembled, err := service.resume(context.Background(), testSessionProvider(instance, "messages"), "claude-test", thread)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -83,7 +83,7 @@ func TestThinkingUsageFixedCurrentRestoreAndRejectBeforeRepair(t *testing.T) {
 				if err := os.WriteFile(path, invalid, 0600); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := service.resume(context.Background(), instance, "messages", "claude-test", thread); err == nil {
+				if _, err := service.resume(context.Background(), testSessionProvider(instance, "messages"), "claude-test", thread); err == nil {
 					t.Fatal("inconsistent facts restored")
 				}
 				if _, _, err := previewSession(context.Background(), root, thread, defaultPreviewDependencies()); err == nil {

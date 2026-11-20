@@ -2,7 +2,7 @@ package openai
 
 import (
 	"easycode/internal/domain"
-	"errors"
+	"easycode/internal/provider"
 )
 
 // ProjectTranscript 保留原生提交及内部顺序，仅返回允许展示的文本与调用锚点。
@@ -11,70 +11,39 @@ func (conversation *Conversation) ProjectTranscript() (domain.TranscriptView, er
 }
 
 func projectTranscript(history []nativeHistoryEntry) (domain.TranscriptView, error) {
-	items := make([]domain.TranscriptItem, 0)
-	for ordinal, entry := range history {
-		if entry.Kind == nativeHistoryToolOutputs {
-			continue
-		}
-		if entry.Kind == nativeHistoryHookFeedback {
-			feedback, err := entryStopFeedback(entry)
-			if err != nil {
-				return domain.TranscriptView{}, err
+	return provider.ProjectNativeTranscript(history, domain.ProviderOpenAI, nativeUsers,
+		func(input NativeItem) string { return input.Content[0].Text }, appendSampleTranscript, entryStopFeedback)
+}
+
+func appendSampleTranscript(items []domain.TranscriptItem, entry nativeHistoryEntry, ordinal uint64) ([]domain.TranscriptItem, error) {
+	for index, item := range entry.Outputs {
+		position := domain.TranscriptPosition{Entry: ordinal, Item: uint64(index)}
+		var v domain.TranscriptItem
+		var err error
+		switch item.Type {
+		case "reasoning":
+			body, bodyErr := reasoningBody(item)
+			if bodyErr != nil {
+				return nil, bodyErr
 			}
-			item, err := domain.NewTranscriptHook(domain.TranscriptPosition{Entry: uint64(ordinal)}, feedback)
-			if err != nil {
-				return domain.TranscriptView{}, err
-			}
-			items = append(items, item)
-			continue
-		}
-		if entry.Kind == nativeHistoryUserInputs {
-			if entry.InputMetadata == nil || len(entry.InputMetadata.InputIDs) != len(entry.UserInputs) {
-				return domain.TranscriptView{}, errors.New("invalid transcript input association")
-			}
-			for index, input := range entry.UserInputs {
-				v, err := domain.NewTranscriptUser(domain.TranscriptPosition{Entry: uint64(ordinal), Item: uint64(index)}, entry.TurnID, entry.InputMetadata.InputIDs[index], input.Content[0].Text)
-				v.Skill, v.HasSkill = entry.InputMetadata.Skill(entry.InputMetadata.InputIDs[index])
-				v.Files = entry.InputMetadata.FileAttachments(entry.InputMetadata.InputIDs[index])
-				if err != nil {
-					return domain.TranscriptView{}, err
-				}
-				items = append(items, v)
-			}
-			continue
-		}
-		if entry.Kind != nativeHistorySample {
-			return domain.TranscriptView{}, errors.New("invalid transcript entry")
-		}
-		for index, item := range entry.Outputs {
-			position := domain.TranscriptPosition{Entry: uint64(ordinal), Item: uint64(index)}
-			var v domain.TranscriptItem
-			var err error
-			switch item.Type {
-			case "reasoning":
-				body, bodyErr := reasoningBody(item)
-				if bodyErr != nil {
-					return domain.TranscriptView{}, bodyErr
-				}
-				v, err = domain.NewTranscriptReasoning(position, entry.TurnID, body)
-			case "message":
-				if item.Role != "assistant" {
-					continue
-				}
-				v, err = domain.NewTranscriptAssistant(position, entry.TurnID, projectItemText(item, "assistant", "output_text"))
-			case "function_call", "custom_tool_call":
-				v, err = domain.NewTranscriptCall(position, entry.TurnID, item.CallID, item.Name)
-			default:
+			v, err = domain.NewTranscriptReasoning(position, entry.TurnID, body)
+		case "message":
+			if item.Role != "assistant" {
 				continue
 			}
-			if err != nil {
-				return domain.TranscriptView{}, err
-			}
-			if v.Kind == domain.TranscriptAssistant && v.Text == "" {
-				continue
-			}
-			items = append(items, v)
+			v, err = domain.NewTranscriptAssistant(position, entry.TurnID, projectItemText(item, "assistant", "output_text"))
+		case "function_call", "custom_tool_call":
+			v, err = domain.NewTranscriptCall(position, entry.TurnID, item.CallID, item.Name)
+		default:
+			continue
 		}
+		if err != nil {
+			return nil, err
+		}
+		if v.Kind == domain.TranscriptAssistant && v.Text == "" {
+			continue
+		}
+		items = append(items, v)
 	}
-	return domain.NewTranscriptView(domain.ProviderOpenAI, items)
+	return items, nil
 }

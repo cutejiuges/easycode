@@ -4,6 +4,7 @@ import (
 	"context"
 	"easycode/internal/codec"
 	"easycode/internal/domain"
+	"easycode/internal/provider"
 	"easycode/internal/provider/transport"
 	"fmt"
 	"net/http"
@@ -74,7 +75,7 @@ func (conversation *Conversation) closeWebsocket() {
 	}
 	conversation.wsResponseID = ""
 }
-func (conversation *Conversation) startRequest(ctx context.Context, request codec.CanonicalJSON, evidence requestEvidence, purpose domain.RequestPurpose) (<-chan transport.SSEMessage, requestSelection, func(), error) {
+func (conversation *Conversation) startRequest(ctx context.Context, request codec.CanonicalJSON, evidence provider.RequestEvidence, purpose domain.RequestPurpose) (<-chan transport.SSEMessage, requestSelection, func(), error) {
 	selection := requestSelection{transport: domain.TransportHTTP, mode: domain.RequestFull, reason: domain.ResetNone, fallback: domain.FallbackNone}
 	cleanup := func() {}
 	if purpose == domain.RequestSummary {
@@ -104,7 +105,7 @@ func (conversation *Conversation) startRequest(ctx context.Context, request code
 		}
 		if conn != nil {
 			selection.transport = domain.TransportWebSocket
-			offset, _, reason := conversation.baseline.Compare(evidence.items, evidence.properties)
+			offset, _, reason := evidence.Compare(conversation.baseline)
 			selection.reason = reason
 			responseID := ""
 			if purpose == domain.RequestSample && conversation.wsResponseID != "" && reason == domain.ResetNone && conversation.nextReason == domain.ResetNone {

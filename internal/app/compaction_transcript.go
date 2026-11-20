@@ -16,14 +16,13 @@ type compactionTranscript struct {
 	summary  domain.ContextSummary
 }
 
-func restoreCompactionTranscript(factory provider.Factory, plan session.ReplayPlan) ([]compactionTranscript, error) {
+func restoreCompactionTranscript(projector provider.CheckpointProjector, plan session.ReplayPlan) ([]compactionTranscript, error) {
 	values := make([]compactionTranscript, 0)
 	for _, operation := range plan.Compactions {
 		if operation.Completed == nil {
 			continue
 		}
-		projector, ok := factory.(provider.CheckpointProjector)
-		if !ok {
+		if projector == nil {
 			return nil, fmt.Errorf("checkpoint projection is unavailable")
 		}
 		summary, err := projector.ProjectCheckpoint(operation.Completed.Checkpoint)

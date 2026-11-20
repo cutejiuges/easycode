@@ -98,7 +98,7 @@ func (p CacheSnapshotPayload) Validate() error {
 		return fmt.Errorf("cache snapshot scope or model is invalid")
 	}
 
-	if (p.Family == domain.ProviderOpenAI && p.Wire != "responses") || (p.Family == domain.ProviderAnthropic && p.Wire != "messages") {
+	if p.Wire != p.Family.Wire() {
 		return fmt.Errorf("cache wire is invalid")
 	}
 	policy, err := p.Policy.Domain()
@@ -210,11 +210,7 @@ func NewCacheSnapshot(sessionID domain.SessionID, threadID domain.ThreadID, payl
 	if err != nil {
 		return Event{}, err
 	}
-	event := newEvent(EventCacheSnapshot)
-	event.SessionID = sessionID
-	event.ThreadID = threadID
-	event.Payload = raw
-	return event, event.Validate()
+	return newScopedPayloadEvent(EventCacheSnapshot, sessionID, threadID, "", "", raw)
 }
 
 // DecodeCacheSnapshot 严格解码有界的当前缓存快照。

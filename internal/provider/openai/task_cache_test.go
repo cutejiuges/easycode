@@ -106,7 +106,7 @@ func assertTaskCacheEquivalent(t *testing.T, left, right *Conversation, input pr
 		t.Fatal(err)
 	}
 	evidenceB, err := right.requestEvidence(input)
-	if err != nil || evidenceA.nativeFingerprint != evidenceB.nativeFingerprint || !bytes.Equal(evidenceA.properties.Bytes(), evidenceB.properties.Bytes()) || websocketCacheSources(t, left) != websocketCacheSources(t, right) {
+	if err != nil || evidenceA.NativeFingerprint() != evidenceB.NativeFingerprint() || !bytes.Equal(evidenceA.Properties().Bytes(), evidenceB.Properties().Bytes()) || websocketCacheSources(t, left) != websocketCacheSources(t, right) {
 		t.Fatal("task cache restore changed native or source fingerprints", err)
 	}
 	receiptA, err := left.describeRequest(a, evidenceA, domain.RequestSample)

@@ -1,47 +1,40 @@
 package openai
 
 import (
-	"easycode/internal/codec"
-	"easycode/internal/context/estimate"
 	"easycode/internal/domain"
+	"easycode/internal/provider"
+	"iter"
 )
 
 // HistoryFootprint 返回下一次 Responses 请求会重放的已提交原生历史估算。
 func (conversation *Conversation) HistoryFootprint() (domain.NativeHistoryFootprint, error) {
 	snapshot := conversation.history.snapshotWindow()
-	return historyFootprint(snapshot.requestEntries(), snapshot.revision+snapshot.count)
+	return historyFootprint(snapshot.RequestEntries(), snapshot.Revision+snapshot.Count)
 }
 
 func historyFootprint(entries []nativeHistoryEntry, revision uint64) (domain.NativeHistoryFootprint, error) {
-	var bytes uint64
-	for _, entry := range entries {
-		if entry.FeedbackInput != nil {
-			encoded, err := codec.MarshalStable(*entry.FeedbackInput)
-			if err != nil {
-				return unknownHistoryFootprint(revision)
-			}
-			bytes = estimate.SaturatingAdd(bytes, uint64(len(encoded)))
-		}
-		for _, userInput := range entry.UserInputs {
-			input, err := codec.MarshalStable(userInput)
-			if err != nil {
-				return unknownHistoryFootprint(revision)
-			}
-			bytes = estimate.SaturatingAdd(bytes, uint64(len(input)))
-		}
-		for _, item := range append(cloneNativeItems(entry.Outputs), entry.ToolOutputs...) {
-			encoded, err := codec.MarshalStable(item)
-			if err != nil {
-				return unknownHistoryFootprint(revision)
-			}
-			bytes = estimate.SaturatingAdd(bytes, uint64(len(encoded)))
-		}
-	}
-	tokens, _ := domain.NewEstimatedTokenEstimate(estimate.MethodByteHeuristic, estimate.ByteCount(bytes))
-	return domain.NewNativeHistoryFootprint(domain.ProviderOpenAI, revision, tokens)
+	return provider.EstimateNativeHistory(entries, revision, domain.ProviderOpenAI, measureNativeEntry)
 }
 
-func unknownHistoryFootprint(revision uint64) (domain.NativeHistoryFootprint, error) {
-	tokens, _ := domain.NewUnknownTokenEstimate(estimate.MethodByteHeuristic)
-	return domain.NewNativeHistoryFootprint(domain.ProviderOpenAI, revision, tokens)
+func measureNativeEntry(entry nativeHistoryEntry) iter.Seq[NativeItem] {
+	return func(yield func(NativeItem) bool) {
+		if entry.FeedbackInput != nil && !yield(*entry.FeedbackInput) {
+			return
+		}
+		for _, input := range entry.UserInputs {
+			if !yield(input) {
+				return
+			}
+		}
+		for _, item := range entry.Outputs {
+			if !yield(item) {
+				return
+			}
+		}
+		for _, item := range entry.ToolOutputs {
+			if !yield(item) {
+				return
+			}
+		}
+	}
 }

@@ -44,7 +44,7 @@ func TestFailureCancellationAfterResultKeepsRouteAndStartsNoScript(t *testing.T)
 			r.patchExecutor = postPatchOutcome{tool.ResultError}
 			result, _, err := r.executeApproved(ctx, postApprovalEmitter(t, r, inv, protocol.HookTrustSession, tool.ApprovalAllowOnce), runtimeTurnID, inv)
 			state := r.hooks.post[inv.InvocationID()]
-			if result.Status() != tool.ResultError || state.route != domain.PostHookRouteFailure || runner.calls != 0 || state.terminal == nil || r.resultTicket != nil {
+			if result.Status() != tool.ResultError || state.route != domain.PostHookRouteFailure || runner.calls != 0 || state.terminal == nil || r.toolTurn.resultTicket != nil {
 				t.Fatal("cancellation changed route or started script", err)
 			}
 			want := domain.HookEventUnmatched

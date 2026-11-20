@@ -22,8 +22,7 @@ func TestSessionServiceResumeAcrossProcesses(t *testing.T) {
 	owner := newTestSessionService(t)
 	defer owner.close()
 	created, err := owner.create(
-		context.Background(), &fakeProviderFactory{family: domain.ProviderOpenAI},
-		"responses", "gpt-test", t.TempDir(),
+		context.Background(), testSessionProvider(&fakeProviderFactory{family: domain.ProviderOpenAI}, "responses"), "gpt-test", t.TempDir(),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -86,7 +85,7 @@ func TestSessionServiceResumeAcrossProcesses(t *testing.T) {
 	defer competitor.close()
 	factory := &fakeProviderFactory{family: domain.ProviderOpenAI}
 	if _, err := competitor.resume(
-		context.Background(), factory, "responses", "gpt-test", created.identity.ThreadID,
+		context.Background(), testSessionProvider(factory, "responses"), "gpt-test", created.identity.ThreadID,
 	); !errors.Is(err, &fault.Error{Code: fault.CodeSessionBusy}) {
 		t.Fatalf("second process resume error = %v", err)
 	}
@@ -103,7 +102,7 @@ func TestSessionServiceResumeAcrossProcesses(t *testing.T) {
 	helper.stop(t)
 
 	resumed, err := competitor.resume(
-		context.Background(), factory, "responses", "gpt-test", created.identity.ThreadID,
+		context.Background(), testSessionProvider(factory, "responses"), "gpt-test", created.identity.ThreadID,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -148,8 +147,7 @@ func TestAppSessionHelperProcess(t *testing.T) {
 		os.Exit(2)
 	}
 	resumed, err := service.resume(
-		context.Background(), &fakeProviderFactory{family: domain.ProviderOpenAI},
-		"responses", "gpt-test", threadID,
+		context.Background(), testSessionProvider(&fakeProviderFactory{family: domain.ProviderOpenAI}, "responses"), "gpt-test", threadID,
 	)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

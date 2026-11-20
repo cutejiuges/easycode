@@ -59,17 +59,17 @@ func (r *Runtime) preparePostHooks(ctx context.Context, emit Emitter, turn domai
 	if err != nil {
 		return nil, domain.HookConfigInvalid, err
 	}
-	if r.resultBudget == nil {
+	if r.toolTurn.resultBudget == nil {
 		return nil, domain.HookConfigInvalid, errors.New("post hooks require result budget owner")
 	}
-	ticket, err := r.resultBudget.Reserve(inv.Capability(), model)
+	ticket, err := r.toolTurn.resultBudget.Reserve(inv.Capability(), model)
 	if err != nil {
 		return nil, domain.HookConfigInvalid, err
 	}
-	r.resultTicket = ticket
-	r.resultTicketInvocation = inv.InvocationID()
-	r.resultTicketCapability = inv.Capability()
-	r.resultTicketPost = true
+	r.toolTurn.resultTicket = ticket
+	r.toolTurn.resultTicketInvocation = inv.InvocationID()
+	r.toolTurn.resultTicketCapability = inv.Capability()
+	r.toolTurn.resultTicketPost = true
 	var branches []domain.PostHookBranch
 	for _, event := range []domain.HookEvent{domain.HookPostToolUse, domain.HookPostToolUseFailure} {
 		var refs []domain.HookReference
@@ -101,10 +101,7 @@ func (r *Runtime) preparePostHooks(ctx context.Context, emit Emitter, turn domai
 			if abortErr := ticket.AbortReservation(); abortErr != nil {
 				return nil, domain.HookConfigInvalid, abortErr
 			}
-			r.resultTicket = nil
-			r.resultTicketInvocation = ""
-			r.resultTicketCapability = ""
-			r.resultTicketPost = false
+			r.toolTurn.resetResultTicket()
 		}
 		code := domain.HookConfigInvalid
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -232,7 +229,7 @@ func (r *Runtime) completePostHooks(ctx context.Context, turn domain.TurnID, res
 	if err = r.appendPostFacts(context.WithoutCancel(ctx), turn, state, protocol.PostHookCompleted, append(prefix, draft)); err != nil {
 		return err
 	}
-	if r.resultTicket != nil {
+	if r.toolTurn.resultTicket != nil {
 		delta := 0
 		if len(prefix) > 0 {
 			delta += state.finished[len(state.finished)-1].Feedback.BudgetDelta
@@ -240,7 +237,7 @@ func (r *Runtime) completePostHooks(ctx context.Context, turn domain.TurnID, res
 		for _, f := range suffix {
 			delta += f.BudgetDelta
 		}
-		if err = r.resultTicket.CommitFeedback(state.detailSequence, delta); err != nil {
+		if err = r.toolTurn.resultTicket.CommitFeedback(state.detailSequence, delta); err != nil {
 			r.poisoned.Store(true)
 			return err
 		}
@@ -357,11 +354,10 @@ func (r *Runtime) runPostHooks(ctx context.Context, turn domain.TurnID, inv tool
 			return err
 		}
 		r.emitHookActivity(turn, protocol.HookActivityPayload{Target: state.plan.Target(), PlanDigest: state.plan.Digest, Reference: d.Reference, State: "checking", Code: domain.HookOK})
-		start := now()
-		execution := runner.Run(ctx, id, d, input, min(time.Duration(d.Reference.TimeoutSeconds)*time.Second, remaining))
-		remaining -= max(0, now().Sub(start))
+		execution, left := runTimedHook(ctx, runner, now, remaining, id, d, input)
+		remaining = left
 		r.hooks.remaining[inv.InvocationID()] = remaining
-		if _, validationErr := domain.NewHookExecution(execution.Result, d.Reference.Feedback, execution.Feedback, execution.Replacement); validationErr != nil || execution.Result.Identity != id || execution.Result.Origin != "execution" {
+		if !validHookExecution(execution, id, d.Reference.Feedback) {
 			execution = domain.HookExecution{Result: domain.HookRunResult{Identity: id, Status: domain.HookUncertain, Code: domain.HookOutcomeUncertain, Origin: "execution"}}
 		}
 		frozen, err := tool.FreezePostFeedback(state.plan, postFeedback(state), execution.Result, execution.Feedback)
@@ -391,8 +387,8 @@ func (r *Runtime) runPostHooks(ctx context.Context, turn domain.TurnID, inv tool
 			err = complete(disposition, code, []session.RecordDraft{finished})
 		} else {
 			err = r.appendPostFacts(context.WithoutCancel(ctx), turn, state, protocol.PostHookFinished, []session.RecordDraft{finished})
-			if err == nil && r.resultTicket != nil {
-				err = r.resultTicket.CommitFeedback(state.detailSequence, frozen.Feedback.BudgetDelta)
+			if err == nil && r.toolTurn.resultTicket != nil {
+				err = r.toolTurn.resultTicket.CommitFeedback(state.detailSequence, frozen.Feedback.BudgetDelta)
 			}
 		}
 		if err != nil {

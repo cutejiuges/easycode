@@ -100,7 +100,7 @@ func TestRuntimeEffortRequestPolicyGolden(t *testing.T) {
 						Request    string `json:"request"`
 						Native     string `json:"native"`
 						Properties string `json:"properties"`
-					}{fmt.Sprintf("%s/%s/%s/%s/%s", mode, cache, choice.Mode(), choice.Level(), plan.purpose), domain.ContentFingerprint(body.Bytes()), evidence.nativeFingerprint, domain.ContentFingerprint(evidence.properties.Bytes())})
+					}{fmt.Sprintf("%s/%s/%s/%s/%s", mode, cache, choice.Mode(), choice.Level(), plan.purpose), domain.ContentFingerprint(body.Bytes()), evidence.NativeFingerprint(), domain.ContentFingerprint(evidence.Properties().Bytes())})
 					if err != nil {
 						t.Fatal(err)
 					}

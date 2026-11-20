@@ -70,11 +70,10 @@ func (runtime *Runtime) executePatchCall(ctx context.Context, emit Emitter, turn
 			outcome = tool.ApprovalOutcomeAbort
 		}
 	}
-	metadata, err := session.NewApprovalMetadata(invocation)
+	factDraft, err := buildApprovalFact(request, invocation, outcome, source, feedback)
 	if err != nil {
 		return tool.InvocationResult{}, false, err
 	}
-	fact := session.ToolApprovalDecidedPayload{RequestID: requestID, InvocationID: invocation.InvocationID(), Fingerprint: candidate.Fingerprint(), Outcome: outcome, Feedback: feedback, Source: source, Metadata: metadata}
 	if outcome == tool.ApprovalOutcomeDeny || outcome == tool.ApprovalOutcomeAbort {
 		status, code, preview := tool.ResultDenied, "approval_denied", "Patch denied: approval_denied"
 		if outcome == tool.ApprovalOutcomeAbort {
@@ -88,46 +87,16 @@ func (runtime *Runtime) executePatchCall(ctx context.Context, emit Emitter, turn
 			preview += "\nUser feedback: " + feedback
 		}
 		result := tool.NewPatchErrorResult(patch, status, code, preview)
-		factDraft, draftErr := session.NewToolApprovalDecidedDraft(turnID, fact)
-		if draftErr != nil {
-			return tool.InvocationResult{}, false, draftErr
-		}
-		result, freezeErr := runtime.freezeResult(result)
-		if freezeErr != nil {
-			return tool.InvocationResult{}, false, freezeErr
-		}
-		resultDraft, draftErr := session.NewToolCallResultDraft(turnID, result)
-		if draftErr != nil {
-			return tool.InvocationResult{}, false, draftErr
-		}
-		records, appendErr := runtime.journal.AppendBatch(context.WithoutCancel(ctx), []session.RecordDraft{factDraft, resultDraft})
-		if appendErr != nil {
-			runtime.poisoned.Store(true)
-			return tool.InvocationResult{}, false, fault.Wrap(fault.CodeSessionWrite, "persist Patch denial failed", appendErr)
-		}
-		if err := runtime.commitResultBudget(result); err != nil {
-			runtime.poisoned.Store(true)
-			return tool.InvocationResult{}, false, err
-		}
-		if err := runtime.notifyToolResult(turnID, result, resultRecordSequence(records)); err != nil {
-			return result, false, err
-		}
-		runtime.emitApprovalResolved(emit, turnID, request, outcome)
-		return result, outcome == tool.ApprovalOutcomeAbort, nil
+		return runtime.commitApprovalDenial(ctx, emit, request, outcome, factDraft, result, "Patch")
 	}
-	factDraft, err := session.NewToolApprovalDecidedDraft(turnID, fact)
-	if err != nil {
+	if err := runtime.commitApprovalDecision(ctx, factDraft, "Patch"); err != nil {
 		return tool.InvocationResult{}, false, err
-	}
-	if _, err = runtime.journal.AppendBatch(context.WithoutCancel(ctx), []session.RecordDraft{factDraft}); err != nil {
-		runtime.poisoned.Store(true)
-		return tool.InvocationResult{}, false, fault.Wrap(fault.CodeSessionWrite, "persist Patch approval failed", err)
 	}
 	if outcome == tool.ApprovalOutcomeAllowSession {
 		runtime.approvals.patchGrant.Store(true)
 	}
 	runtime.emitApprovalResolved(emit, turnID, request, outcome)
-	execution, err := runtime.executeExclusive(ctx, turnID, invocation, exclusiveAction{
+	result, err := runtime.executeExclusive(ctx, turnID, invocation, exclusiveAction{
 		execute: func(ctx context.Context) tool.InvocationResult {
 			runtime.readObservations.invalidate(candidate.RelativePath())
 			return runtime.patchExecutor.Execute(ctx, candidate)
@@ -136,7 +105,6 @@ func (runtime *Runtime) executePatchCall(ctx context.Context, emit Emitter, turn
 			return result.Status() != tool.ResultSuccess || result.PatchMetadata() == candidate.ResultMetadata()
 		},
 	})
-	result := execution.Result
 	return result, false, err
 }
 

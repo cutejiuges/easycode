@@ -47,8 +47,8 @@ func singleRewriteRuntime(t *testing.T, j *fakeJournal, withPost bool) (*Runtime
 	if err := r.InstallHooks(snapshot, runner, "/workspace", domain.HookOK); err != nil {
 		t.Fatal(err)
 	}
-	r.resultBudget = tool.NewResultBudget()
-	if err := r.resultBudget.BeginSample(1); err != nil {
+	r.toolTurn.resultBudget = tool.NewResultBudget()
+	if err := r.toolTurn.resultBudget.BeginSample(1); err != nil {
 		t.Fatal(err)
 	}
 	return r, original, effective, runner, prepare, execute
@@ -74,9 +74,9 @@ func TestPreRewriteDurableInstallAndSyncFailuresPoisonBeforeOrdinaryEffects(t *t
 				j := &fakeJournal{}
 				r, original, _, runner, prepare, execute := singleRewriteRuntime(t, j, false)
 				emissions := 0
-				r.activityEmitter = func(e protocol.Event) {
+				r.toolTurn.activityEmitter = func(e protocol.Event) {
 					p, err := protocol.DecodeHookActivity(e)
-					state := r.toolCalls[original.InvocationID()]
+					state := r.toolTurn.toolCalls[original.InvocationID()]
 					if err != nil || state.pre == nil || state.detailSequence != p.PreInput.Sequence() || !state.original.Equal(original) {
 						t.Fatal("activity preceded committed snapshot installation", err)
 					}

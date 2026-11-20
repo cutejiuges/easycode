@@ -22,7 +22,7 @@ func seedRuntimeToolCall(t *testing.T, r *Runtime, turn domain.TurnID, inv tool.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if existing := r.toolCalls[inv.InvocationID()]; existing != nil {
+	if existing := r.toolTurn.toolCalls[inv.InvocationID()]; existing != nil {
 		if existing.origin != origin || !existing.original.Equal(inv) {
 			t.Fatal("fixture call source mismatch")
 		}
@@ -38,11 +38,11 @@ func seedRuntimeToolCall(t *testing.T, r *Runtime, turn domain.TurnID, inv tool.
 func executeReadyFixtureCalls(t *testing.T, r *Runtime, ctx context.Context, turn domain.TurnID, invocations []tool.Invocation, emitters ...Emitter) ([]tool.InvocationResult, error) {
 	t.Helper()
 	var sample uint32
-	for _, state := range r.toolCalls {
+	for _, state := range r.toolTurn.toolCalls {
 		sample = max(sample, state.origin.SampleIndex+1)
 	}
 	for i, inv := range invocations {
-		if r.toolCalls[inv.InvocationID()] == nil {
+		if r.toolTurn.toolCalls[inv.InvocationID()] == nil {
 			seedRuntimeToolCall(t, r, turn, inv, sample, uint32(i))
 		}
 	}

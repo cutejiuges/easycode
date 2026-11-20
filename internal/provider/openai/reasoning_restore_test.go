@@ -90,7 +90,7 @@ func TestReasoningFixedNativeRestoreAndCacheBytesIgnoreReading(t *testing.T) {
 					t.Fatal(err)
 				}
 				afterEvidence, err := conversation.requestEvidence(input)
-				if err != nil || afterEvidence.nativeFingerprint != beforeEvidence.nativeFingerprint || !bytes.Equal(afterEvidence.properties.Bytes(), beforeEvidence.properties.Bytes()) {
+				if err != nil || afterEvidence.NativeFingerprint() != beforeEvidence.NativeFingerprint() || !bytes.Equal(afterEvidence.Properties().Bytes(), beforeEvidence.Properties().Bytes()) {
 					t.Fatal("restored request evidence differs", err)
 				}
 				if reasoningCacheSources(t, conversation) != beforeSources {

@@ -64,9 +64,6 @@ func NewEnvironmentPolicy(revision string, allowed []string) (EnvironmentPolicy,
 }
 
 func (policy EnvironmentPolicy) Revision() string { return policy.revision }
-func (policy EnvironmentPolicy) AllowedNames() []string {
-	return append([]string(nil), policy.allowed...)
-}
 
 func (policy EnvironmentPolicy) Validate() error {
 	if policy.revision == "" || len(policy.revision) > 128 || !utf8.ValidString(policy.revision) {

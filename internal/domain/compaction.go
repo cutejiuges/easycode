@@ -16,7 +16,7 @@ const MaxCompactionInstructionsBytes = 16 << 10
 
 // GenerateCompactionID 显式分配压缩操作身份。
 func GenerateCompactionID() (CompactionID, error) {
-	value, err := generateUUIDv7(time.Now(), rand.Reader)
+	value, err := GenerateUUIDv7(time.Now(), rand.Reader)
 	return CompactionID(value), err
 }
 

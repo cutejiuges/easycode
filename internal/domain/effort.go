@@ -5,6 +5,16 @@ import "fmt"
 // EffortLevel 是两家已实现原生档位的有限并集，不表示远端能力。
 type EffortLevel string
 
+// Valid 判断值是否位于当前档位的封闭并集。
+func (level EffortLevel) Valid() bool {
+	switch level {
+	case "none", "minimal", "low", "medium", "high", "xhigh", "max":
+		return true
+	default:
+		return false
+	}
+}
+
 // EffortMode 区分恢复启动值、明确省略和显式档位。
 type EffortMode string
 
@@ -65,8 +75,7 @@ func (c EffortChoice) Validate() error {
 			return nil
 		}
 	case EffortValue:
-		switch c.level {
-		case "none", "minimal", "low", "medium", "high", "xhigh", "max":
+		if c.level.Valid() {
 			return nil
 		}
 	}

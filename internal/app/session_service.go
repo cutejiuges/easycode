@@ -53,14 +53,6 @@ type assembledSession struct {
 	stops         []session.ReplayedStop
 }
 
-func openSessionService(dataRoot string) (*sessionService, error) {
-	repository, err := session.OpenOrCreateRepository(dataRoot)
-	if err != nil {
-		return nil, err
-	}
-	return newSessionService(repository), nil
-}
-
 func newSessionService(repository *session.Repository) *sessionService {
 	return &sessionService{
 		repository: repository,
@@ -78,8 +70,7 @@ func newSessionService(repository *session.Repository) *sessionService {
 
 func (service *sessionService) create(
 	ctx context.Context,
-	factory provider.Factory,
-	wire string,
+	binding sessionProvider,
 	model string,
 	creationCWD string,
 ) (assembledSession, error) {
@@ -87,12 +78,12 @@ func (service *sessionService) create(
 	if err != nil {
 		return assembledSession{}, fault.Wrap(fault.CodeSessionWrite, "create session identity failed", err)
 	}
-	conversation, err := factory.NewConversation(identity.ThreadID)
+	conversation, err := binding.factory.NewConversation(identity.ThreadID)
 	if err != nil {
 		return assembledSession{}, fault.Wrap(fault.CodeProviderUnavailable, "create conversation failed", err)
 	}
 	writer, _, err := session.CreateRootJournal(ctx, service.repository, identity, session.RootJournalConfig{
-		Provider: factory.Family(), ProviderWire: wire, Model: model,
+		Provider: binding.factory.Family(), ProviderWire: binding.wire, Model: model,
 		CreationCWD: creationCWD, CreatedAt: time.Now().UTC(),
 	})
 	if err != nil {
@@ -106,8 +97,7 @@ func (service *sessionService) create(
 
 func (service *sessionService) resume(
 	ctx context.Context,
-	factory provider.Factory,
-	wire string,
+	binding sessionProvider,
 	model string,
 	threadID domain.ThreadID,
 ) (assembled assembledSession, resultErr error) {
@@ -143,13 +133,13 @@ func (service *sessionService) resume(
 	if service.expectedResumeCWD != "" && metadata.CreationCWD != service.expectedResumeCWD {
 		return assembledSession{}, fault.Wrap(fault.CodeSessionIncompatible, "session working directory is incompatible", errResumeDirectory)
 	}
-	if metadata.Provider != factory.Family() || metadata.ProviderWire != wire || metadata.Model != model {
+	if metadata.Provider != binding.factory.Family() || metadata.ProviderWire != binding.wire || metadata.Model != model {
 		return assembledSession{}, fault.New(fault.CodeSessionIncompatible, "session provider configuration is incompatible")
 	}
 	if err := ctx.Err(); err != nil {
 		return assembledSession{}, err
 	}
-	if err := validateSampleUsageEvidence(plan); err != nil {
+	if err := validateSampleUsageEvidence(binding.sampleUsage, plan); err != nil {
 		return assembledSession{}, fault.Wrap(fault.CodeSessionCorruption, "sample usage is invalid", err)
 	}
 	commits, err := orderedRestoreRecords(plan)
@@ -157,14 +147,14 @@ func (service *sessionService) resume(
 		return assembledSession{}, err
 	}
 
-	conversation, err := factory.RestoreConversation(plan.Identity.ThreadID, commits)
+	conversation, err := binding.factory.RestoreConversation(plan.Identity.ThreadID, commits)
 	if err != nil {
 		return assembledSession{}, fault.Wrap(fault.CodeSessionCorruption, "restore provider native history failed", err)
 	}
-	if err := validateCompactionUsage(factory, plan); err != nil {
+	if err := validateCompactionUsageEvidence(binding.compactionUsage, plan); err != nil {
 		return assembledSession{}, fault.Wrap(fault.CodeSessionCorruption, "compaction usage is invalid", err)
 	}
-	compactions, err := restoreCompactionTranscript(factory, plan)
+	compactions, err := restoreCompactionTranscript(binding.checkpoints, plan)
 	if err != nil {
 		return assembledSession{}, fault.Wrap(fault.CodeSessionCorruption, "compaction transcript is invalid", err)
 	}

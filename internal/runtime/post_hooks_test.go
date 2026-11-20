@@ -48,8 +48,8 @@ func postRuntimeFixture(t *testing.T, journal Journal, policies ...domain.HookFe
 	preparer := &fixedPatchPreparer{candidate: candidate}
 	executor := &fixedPatchExecutor{}
 	r.patchPreparer, r.patchExecutor = preparer, executor
-	r.resultBudget = tool.NewResultBudget()
-	if err := r.resultBudget.BeginSample(1); err != nil {
+	r.toolTurn.resultBudget = tool.NewResultBudget()
+	if err := r.toolTurn.resultBudget.BeginSample(1); err != nil {
 		t.Fatal(err)
 	}
 	return r, inv, runner, preparer, executor
@@ -129,11 +129,11 @@ func TestPostCachedFactsRejectChangedInputAndForgedResult(t *testing.T) {
 	if _, _, err := r.executeApproved(context.Background(), emit, runtimeTurnID, changed); err == nil {
 		t.Fatal("same identity with changed input reused result")
 	}
-	r.toolCalls[inv.InvocationID()].result = tool.NewInvocationErrorResult(inv, tool.ResultError, "forged", "forged cached result")
+	r.toolTurn.toolCalls[inv.InvocationID()].result = tool.NewInvocationErrorResult(inv, tool.ResultError, "forged", "forged cached result")
 	if _, _, err := r.executeApproved(context.Background(), emit, runtimeTurnID, inv); err == nil {
 		t.Fatal("forged cached result accepted")
 	}
-	r.toolCalls[inv.InvocationID()].result = result
+	r.toolTurn.toolCalls[inv.InvocationID()].result = result
 	if runner.calls != 1 || executor.calls != 1 || len(j.snapshot()) != before {
 		t.Fatal("cache mismatch produced new side effects/facts")
 	}

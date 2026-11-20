@@ -17,7 +17,7 @@ func TestHookRecoveryMatrixNeverCallsExternalCapabilities(t *testing.T) {
 			refs := []domain.HookReference{ds[0].Reference, ds[1].Reference}
 			p, _ := domain.NewHookPlan(string(inv.InvocationID()), domain.HookPatch, refs)
 			g := &session.ReplayedHookGate{Plan: p, PlanSequence: 5}
-			call := session.ReplayedToolCall{Origin: r.toolCalls[inv.InvocationID()].origin, ReadySequence: 4, Invocation: inv, State: session.ReplayedToolCallReady, Hooks: g}
+			call := session.ReplayedToolCall{Origin: r.toolTurn.toolCalls[inv.InvocationID()].origin, ReadySequence: 4, Invocation: inv, State: session.ReplayedToolCallReady, Hooks: g}
 			if phase == "prefix" || phase == "continued" || phase == "result" {
 				id, _ := domain.NewHookRunIdentity(p, 0)
 				input, _ := tool.HookInputForInvocation(inv)

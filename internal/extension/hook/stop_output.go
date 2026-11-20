@@ -1,39 +1,22 @@
 package hook
 
 import (
-	"bytes"
-
 	"easycode/internal/codec"
 	"easycode/internal/domain"
 )
 
 // parseStopOutput 只接纳显式正常退出的结构化阻断，不转发原始双流。
 func parseStopOutput(policy domain.HookFeedbackPolicy, exit int, stdout []byte) domain.HookParsedOutput {
-	v := domain.HookParsedOutput{Status: domain.HookError, Code: domain.HookOutputInvalid}
-	if len(stdout) > domain.MaxHookOutputBytes {
-		v.Code = domain.HookOutputLimit
+	v, terminal := classifyHookExit(exit, stdout, true)
+	if terminal {
 		return v
 	}
-	if exit == 2 {
-		v.Status, v.Code = domain.HookBlock, domain.HookDenied
-		return v
-	}
-	if exit != 0 {
-		v.Code = domain.HookExitFailed
-		return v
-	}
-	trimmed := bytes.TrimSpace(stdout)
-	if len(trimmed) == 0 {
-		v.Status, v.Code = domain.HookContinue, domain.HookOK
-		return v
-	}
-	m, err := codec.ObjectMembers(trimmed)
+	trimmed, m, err := hookOutputObject(stdout)
 	if err != nil {
 		return v
 	}
 	if len(m) == 0 {
-		v.Status, v.Code = domain.HookContinue, domain.HookOK
-		return v
+		return domain.HookParsedOutput{Status: domain.HookContinue, Code: domain.HookOK}
 	}
 	var block struct {
 		Decision string `json:"decision"`

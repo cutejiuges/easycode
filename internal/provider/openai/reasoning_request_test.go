@@ -58,11 +58,11 @@ func TestReasoningRequestsSummaryAndWebsocketGolden(t *testing.T) {
 				t.Fatal(err)
 			}
 			native, _ := codec.MarshalCanonical(plan.request.Input, provider.MaxNativeCommitBytes)
-			if e.nativeFingerprint != domain.ContentFingerprint(native.Bytes()) || receipt.NativeFingerprint != e.nativeFingerprint || receipt.RequestFingerprint != domain.ContentFingerprint(body.Bytes()) {
+			if e.NativeFingerprint() != domain.ContentFingerprint(native.Bytes()) || receipt.NativeFingerprint != e.NativeFingerprint() || receipt.RequestFingerprint != domain.ContentFingerprint(body.Bytes()) {
 				t.Fatal("receipt evidence mismatch")
 			}
 			var properties responsesRequest
-			if codec.Unmarshal(e.properties.Bytes(), &properties) != nil || properties.MaxOutputTokens != plan.request.MaxOutputTokens || properties.Input != nil {
+			if codec.Unmarshal(e.Properties().Bytes(), &properties) != nil || properties.MaxOutputTokens != plan.request.MaxOutputTokens || properties.Input != nil {
 				t.Fatal("incorrect properties")
 			}
 			if plan.purpose == domain.RequestSummary {
@@ -73,7 +73,7 @@ func TestReasoningRequestsSummaryAndWebsocketGolden(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if preview.Source().Digest() == e.nativeFingerprint {
+				if preview.Source().Digest() == e.NativeFingerprint() {
 					t.Fatal("source digest confused with guided input")
 				}
 				preflight, _ := c.compileCompactionRequest(preview.Input())

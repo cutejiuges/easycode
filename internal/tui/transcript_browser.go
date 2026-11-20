@@ -730,3 +730,26 @@ func (model Model) renderTranscriptBrowser() string {
 func (b *transcriptBrowser) protected(key transcriptPageKey) bool {
 	return b.mainListPinned && key == b.mainListKey || b.listPinned && key == b.listKey || key.kind == transcriptBodyPage && key.source == protocol.TranscriptText && key.cursor == b.anchorCursor && b.anchorCursor.Valid() || b.page != nil && key == b.page.key
 }
+
+func (b *transcriptBrowser) invalidateHookPages(id string, cursor protocol.TranscriptCursor, source protocol.TranscriptBodySource) {
+	filtered := b.cache[:0]
+	for _, cached := range b.cache {
+		affected := cached.key.cursor == cursor && cached.key.source == source
+		for _, item := range cached.list.Items {
+			affected = affected || item.Activity.InvocationID == id
+		}
+		if !affected {
+			filtered = append(filtered, cached)
+		}
+	}
+	b.cache = filtered
+}
+
+func (model Model) reloadHookList() (tea.Model, tea.Cmd) {
+	b := &model.browser
+	if b.selected >= 0 && b.selected < len(b.items) {
+		b.entryCursor = b.items[b.selected].Cursor
+	}
+	b.invalidate()
+	return model.loadTranscriptPage(b.listKey)
+}

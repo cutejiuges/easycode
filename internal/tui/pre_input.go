@@ -47,23 +47,9 @@ func (m Model) projectPreInput(p protocol.HookActivityPayload) (tea.Model, tea.C
 			selected = b.selected == i
 		}
 	}
-	filtered := b.cache[:0]
-	for _, cached := range b.cache {
-		affected := cached.key.cursor == cursor && cached.key.source == protocol.TranscriptPreHooks
-		for _, item := range cached.list.Items {
-			affected = affected || item.Activity.InvocationID == id
-		}
-		if !affected {
-			filtered = append(filtered, cached)
-		}
-	}
-	b.cache = filtered
+	b.invalidateHookPages(id, cursor, protocol.TranscriptPreHooks)
 	if m.detailOpen && !b.detail {
-		if b.selected >= 0 && b.selected < len(b.items) {
-			b.entryCursor = b.items[b.selected].Cursor
-		}
-		b.invalidate()
-		return m.loadTranscriptPage(b.listKey)
+		return m.reloadHookList()
 	}
 	if m.detailOpen && b.detail && selected && b.source == protocol.TranscriptPreHooks && b.stream == "" {
 		b.invalidate()

@@ -44,7 +44,7 @@ Stop 已支持精确答复的完成前检查、同回合最多两次续轮、累
 
 | 领域 | 当前实现 | 仍未实现 |
 | --- | --- | --- |
-| 原生历史 | 两家独立 request/stream/native codecs，保留 thinking/signature/redacted thinking、encrypted reasoning、message phase 与未知 opaque 扩展；单向 HistoryProjector/TranscriptProjector | 跨 Provider/wire 转换、compacted fork、child-thread 执行与 Subagent |
+| 原生历史 | 两家共用窗口、普通采样、独立摘要与有序回放，各自负责 request、reducer 和 native codec。保留 thinking/signature/redacted thinking、encrypted reasoning、message phase 与未知 opaque 扩展，单向投影供读取 | 跨 Provider/wire 转换、compacted fork、child-thread 执行与 Subagent |
 | Session | append-only JSONL、批次/seq/checksum、typed 当前 decoder、跨进程 lease、验证后 repair、原生恢复与本地中断补偿；SQLite 为可重建 root-thread 索引，投影最后已验证会话标题 | tag、项目/worktree 聚合、全文搜索、实时索引、迁移器/历史 reader；内部 Session/native/checkpoint 无格式版本标记 |
 | 上下文 | `provider_profile -> tool_catalog -> [project_instructions] -> [skill_catalog] -> committed_history -> current_input`，确定性 CachePlan、来源 fingerprint、本地 `byte_heuristic_v1`、显式窗口预算 | 远端精确 token count、自动文件 rehydrate、动态 git/env/world-state 注入 |
 | 项目指令 | 从启动 cwd 显式冻结层级 AGENTS.md/CLAUDE.md，相对来源、预算截断、临时注入双 Provider 请求，不写原生历史 | 全局用户指令、includes、`.claude/rules`、热加载 |
@@ -99,7 +99,7 @@ P6 当前交付本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/
 
 - PostToolUseFailure 最终契约核对与归档：[archive.md](../../openspec/changes/archive/2026-11-11-add-post-tool-use-failure-hooks/archive.md)。
 
-- 本地 Plugin 技能包：[使用与受限字段](../../README.md#本地-plugin-技能包)、[设计与参考源码](../../openspec/changes/archive/2026-11-13-add-local-plugin-skills/design.md)、[验证记录](../../openspec/changes/archive/2026-11-13-add-local-plugin-skills/verification.md)。
+- 本地 Plugin 技能包：[使用与受限字段](../../openspec/specs/extension/local-plugins/spec.md)、[设计与参考源码](../../openspec/changes/archive/2026-11-13-add-local-plugin-skills/design.md)、[验证记录](../../openspec/changes/archive/2026-11-13-add-local-plugin-skills/verification.md)。
 
 ## 工作区文件引用的当前边界
 

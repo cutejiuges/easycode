@@ -30,9 +30,6 @@ func RunSessionPicker(ctx context.Context, options Options, all bool) Outcome {
 	if err != nil {
 		return runtimeFailure(err)
 	}
-	if err = applicationConfig.ValidateProvider(); err != nil {
-		return runtimeFailure(err)
-	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return sessionListFailure("current working directory is unavailable")
@@ -70,13 +67,13 @@ func (w *pickerOutput) Write(p []byte) (int, error) {
 }
 func (w *pickerOutput) hasFailed() bool { w.mu.Lock(); defer w.mu.Unlock(); return w.failed }
 func runInteractiveProgram(ctx context.Context, options Options, cfg config.Config, paths dataPaths, cwd string, startupPicker, all bool) Outcome {
-	wire, err := providerWire(cfg.Provider.Family)
+	binding, err := bindProvider(cfg.Provider.Family)
 	if err != nil {
 		return runtimeFailure(err)
 	}
 	location := time.Now().Location()
 	_, _ = time.Now().In(location).Zone()
-	pickerConfig := tui.PickerConfig{Location: location, Family: cfg.Provider.Family, Wire: wire, Model: cfg.Provider.Model, CWD: cwd, All: all}
+	pickerConfig := tui.PickerConfig{Location: location, Family: cfg.Provider.Family, Wire: binding.wire, Model: cfg.Provider.Model, CWD: cwd, All: all}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	environment := &chatEnvironment{}

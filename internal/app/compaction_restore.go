@@ -77,11 +77,6 @@ func orderedRestoreRecords(plan session.ReplayPlan) ([]provider.RestoreRecord, e
 	return result, nil
 }
 
-func validateCompactionUsage(factory provider.Factory, plan session.ReplayPlan) error {
-	validator, _ := factory.(provider.CompactionUsageValidator)
-	return validateCompactionUsageEvidence(validator, plan)
-}
-
 func validateCompactionUsageEvidence(validator provider.CompactionUsageValidator, plan session.ReplayPlan) error {
 	for _, operation := range plan.Compactions {
 		if operation.Completed != nil {

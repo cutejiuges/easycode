@@ -23,28 +23,13 @@ func NewEncoder(writer io.Writer) *Encoder {
 
 // Write 写入一个完整 JSON object 和尾部换行。
 func (encoder *Encoder) Write(event Event) error {
-	if encoder == nil || encoder.writer == nil {
-		return fmt.Errorf("headless output is unavailable")
-	}
-	if encoder.failed {
+	if encoder == nil || encoder.writer == nil || encoder.failed {
 		return fmt.Errorf("headless output is unavailable")
 	}
 	if err := validateEvent(event); err != nil {
 		return err
 	}
-	encoded, err := codec.MarshalStable(event)
-	if err != nil || !utf8.Valid(encoded) || bytes.ContainsAny(encoded, "\r\n") {
-		encoder.failed = true
-		return fmt.Errorf("encode headless event failed")
-	}
-	frame := make([]byte, 0, len(encoded)+1)
-	frame = append(frame, encoded...)
-	frame = append(frame, '\n')
-	if err := writeFull(encoder.writer, frame); err != nil {
-		encoder.failed = true
-		return fmt.Errorf("write headless event failed")
-	}
-	return nil
+	return writeJSONFrame(encoder.writer, &encoder.failed, "headless", event)
 }
 
 // WriteError 写入一个独立的 stream-level error 事件。
@@ -54,6 +39,20 @@ func WriteError(writer io.Writer, failure fault.Summary) error {
 		return err
 	}
 	return NewEncoder(writer).Write(event)
+}
+
+func writeJSONFrame[E any](writer io.Writer, failed *bool, label string, event E) error {
+	encoded, err := codec.MarshalStable(event)
+	if err != nil || !utf8.Valid(encoded) || bytes.ContainsAny(encoded, "\r\n") {
+		*failed = true
+		return fmt.Errorf("encode %s event failed", label)
+	}
+	frame := append(append(make([]byte, 0, len(encoded)+1), encoded...), '\n')
+	if err := writeFull(writer, frame); err != nil {
+		*failed = true
+		return fmt.Errorf("write %s event failed", label)
+	}
+	return nil
 }
 
 func writeFull(writer io.Writer, content []byte) error {

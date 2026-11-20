@@ -57,8 +57,8 @@ func (runtime *Runtime) inputEncodingFits(a domain.InputAssociation, inputs []do
 	if _, err := runtime.prepareInputEvents(a.TurnID(), inputs); err != nil {
 		return false
 	}
-	encoder, ok := runtime.conversation.(provider.UserInputEncoder)
-	if !ok {
+	encoder := runtime.providerOperations.inputEncoding
+	if encoder == nil {
 		return false
 	}
 	envelope, err := encoder.EncodeUserInputs(a, inputs)
@@ -87,8 +87,8 @@ func (runtime *Runtime) commitInputs(ctx context.Context, turnID domain.TurnID, 
 	if err != nil {
 		return rejected(err)
 	}
-	preparer, ok := runtime.conversation.(provider.UserInputPreparer)
-	if !ok {
+	preparer := runtime.providerOperations.userInputs
+	if preparer == nil {
 		return rejected(fmt.Errorf("provider user input preparation is unavailable"))
 	}
 	prepared, err := preparer.PrepareUserInputs(a, inputs)

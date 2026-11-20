@@ -1,12 +1,9 @@
 package headless
 
 import (
-	"bytes"
 	"fmt"
 	"io"
-	"unicode/utf8"
 
-	"easycode/internal/codec"
 	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
@@ -438,15 +435,5 @@ func (encoder *StreamEncoder) Write(event StreamEvent) error {
 	if err := validateStreamEvent(event); err != nil {
 		return err
 	}
-	encoded, err := codec.MarshalStable(event)
-	if err != nil || !utf8.Valid(encoded) || bytes.ContainsAny(encoded, "\r\n") {
-		encoder.failed = true
-		return fmt.Errorf("encode stream event failed")
-	}
-	frame := append(append(make([]byte, 0, len(encoded)+1), encoded...), '\n')
-	if err := writeFull(encoder.writer, frame); err != nil {
-		encoder.failed = true
-		return fmt.Errorf("write stream event failed")
-	}
-	return nil
+	return writeJSONFrame(encoder.writer, &encoder.failed, "stream", event)
 }

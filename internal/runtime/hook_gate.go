@@ -46,7 +46,7 @@ func (r *Runtime) commitHookFacts(ctx context.Context, drafts []session.RecordDr
 	return records, nil
 }
 func (r *Runtime) emitHookActivity(turn domain.TurnID, p protocol.HookActivityPayload) {
-	emitter := r.activityEmitter
+	emitter := r.toolTurn.activityEmitter
 	if p.Reference.Event == domain.HookStop {
 		emitter = r.turnEmitter
 	}
@@ -260,10 +260,9 @@ func (r *Runtime) checkToolHooks(ctx context.Context, emit Emitter, turn domain.
 			}
 			return tool.InvocationResult{}, true, err
 		}
-		start := now()
-		execution := runner.Run(ctx, id, d, input, min(time.Duration(d.Reference.TimeoutSeconds)*time.Second, remaining))
+		execution, left := runTimedHook(ctx, runner, now, remaining, id, d, input)
+		remaining = left
 		result := execution.Result
-		remaining -= max(0, now().Sub(start))
 		r.hooks.remaining[inv.InvocationID()] = remaining
 		_, executionErr := domain.NewHookExecution(result, d.Reference.Feedback, execution.Feedback, execution.Replacement)
 		if executionErr == nil {
@@ -272,7 +271,7 @@ func (r *Runtime) checkToolHooks(ctx context.Context, emit Emitter, turn domain.
 		if executionErr == nil && !execution.Replacement.Empty() {
 			_, executionErr = tool.RewriteInvocation(inv, execution.Replacement.Input())
 		}
-		if executionErr != nil || result.Identity != id || result.Origin != "execution" {
+		if executionErr != nil || !hookExecutionMatches(result, id) {
 			result = domain.HookRunResult{Identity: id, Status: domain.HookUncertain, Code: domain.HookOutcomeUncertain, Origin: "execution"}
 			execution.Replacement = domain.HookInputReplacement{}
 		}

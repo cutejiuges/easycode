@@ -296,3 +296,45 @@ func (model Model) renderContextPanel() string {
 	rendered = append(rendered, ansi.Truncate(footer, width, ""))
 	return strings.Join(rendered, "\n")
 }
+
+func (model Model) handleContextPanelKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if model.contextPanel != nil {
+		switch key.Type {
+		case tea.KeyDown:
+			model.contextScroll = min(model.contextScroll+1, model.contextScrollLimit())
+		case tea.KeyUp:
+			model.contextScroll = max(0, model.contextScroll-1)
+		case tea.KeyPgDown:
+			model.contextScroll = min(model.contextScroll+min(model.contextScrollLimit(), max(1, model.heightOrDefault()-2)), model.contextScrollLimit())
+		case tea.KeyPgUp:
+			model.contextScroll = max(0, model.contextScroll-max(1, model.heightOrDefault()-2))
+		case tea.KeyHome:
+			model.contextScroll = 0
+		case tea.KeyEnd:
+			model.contextScroll = model.contextScrollLimit()
+		}
+	}
+	if model.cachePanel != nil {
+		switch key.Type {
+		case tea.KeyDown:
+			model.cacheScroll++
+		case tea.KeyUp:
+			model.cacheScroll = max(0, model.cacheScroll-1)
+		case tea.KeyPgDown:
+			model.cacheScroll += max(1, model.heightOrDefault()-2)
+		case tea.KeyPgUp:
+			model.cacheScroll = max(0, model.cacheScroll-max(1, model.heightOrDefault()-2))
+		}
+	}
+	if key.Type == tea.KeyEsc || key.Type == tea.KeyCtrlC {
+		model.contextPanel = nil
+		model.cachePanel = nil
+		model.queryGeneration++
+		model.queryRequestID = ""
+		model.queryKind = ""
+		if key.Type == tea.KeyCtrlC {
+			return model.handleKey(key)
+		}
+	}
+	return model, nil
+}

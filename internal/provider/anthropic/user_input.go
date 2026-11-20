@@ -14,61 +14,22 @@ func (conversation *Conversation) PrepareUserInputs(a domain.InputAssociation, i
 	if err := provider.ValidateUserInputs(a, inputs); err != nil {
 		return nil, err
 	}
-	if conversation == nil || conversation.active.Load() {
+	if conversation == nil {
 		return nil, fmt.Errorf("conversation is active")
 	}
-	if !conversation.pending.CompareAndSwap(false, true) {
-		return nil, fmt.Errorf("conversation has an unresolved commit")
-	}
-	success := false
-	defer func() {
-		if !success {
-			conversation.pending.Store(false)
-		}
-	}()
-	entry, err := userInputEntry(a, inputs)
-	if err != nil {
-		return nil, err
-	}
-	history, revision := conversation.history.snapshotWithRevision()
-	candidate := append(history, entry.clone())
-	if err := validateNativeHistory(candidate); err != nil {
-		return nil, err
-	}
-	envelope, err := encodeNativeCommit(entry)
-	if err != nil {
-		return nil, err
-	}
-	footprint, err := conversation.windowFootprint(candidate, revision+1)
-	if err != nil {
-		return nil, err
-	}
-	activeView, err := conversation.projectActiveWindow(candidate, revision+1)
-	if err != nil {
-		return nil, err
-	}
-	preview, err := provider.NewInputPreview(activeView, footprint, func(input provider.TurnInput) error {
-		_, err := conversation.compileSamplingRequest(candidate, input)
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	prepared, err := provider.NewPreparedUserInputs(a, envelope, func() { conversation.history.commit(entry); conversation.pending.Store(false) }, func() { conversation.pending.Store(false) }, preview)
-	if err != nil {
-		return nil, err
-	}
-	success = true
-	return prepared, nil
+	return conversation.inputPreparation().PrepareInputs(a, inputs)
 }
 
-// compileSamplingRequest 是预检与实际采样共用的纯内存编译入口。
-func (conversation *Conversation) compileSamplingRequest(history []nativeHistoryEntry, input provider.TurnInput) (codec.CanonicalJSON, error) {
-	plan, err := conversation.planSamplingRequest(history, input)
-	if err != nil {
-		return codec.CanonicalJSON{}, err
+func (conversation *Conversation) inputPreparation() provider.NativeInputPreparation[nativeHistoryEntry] {
+	return provider.NativeInputPreparation[nativeHistoryEntry]{
+		History: &conversation.history.NativeHistory, Active: &conversation.active, Pending: &conversation.pending,
+		UserEntry: userInputEntry, Feedback: stopFeedbackEntry, Encode: encodeNativeCommit,
+		Validate: validateNativeHistory, Footprint: historyFootprint, Project: projectHistory,
+		CheckRequest: func(entries []nativeHistoryEntry, input provider.TurnInput) error {
+			_, err := conversation.compileSamplingWindow(entries, input)
+			return err
+		},
 	}
-	return plan.body(conversation.provider.config.CachePolicy.Anthropic())
 }
 
 func (plan samplingRequestPlan) body(mode domain.AnthropicCacheMode) (codec.CanonicalJSON, error) {
@@ -83,43 +44,39 @@ type samplingRequestPlan struct {
 	skills  bool
 }
 
+func (conversation *Conversation) compileSamplingWindow(entries []nativeHistoryEntry, input provider.TurnInput) (codec.CanonicalJSON, error) {
+	plan, err := conversation.planWindowSamplingRequest(input, func() []nativeHistoryEntry { return entries })
+	if err != nil {
+		return codec.CanonicalJSON{}, err
+	}
+	return plan.body(conversation.provider.config.CachePolicy.Anthropic())
+}
+
 func (conversation *Conversation) planSamplingRequest(history []nativeHistoryEntry, input provider.TurnInput) (samplingRequestPlan, error) {
-	if err := input.Validate(); err != nil {
-		return samplingRequestPlan{}, err
-	}
-	if input.InferenceSettings().Family() != conversation.Family() {
-		return samplingRequestPlan{}, fmt.Errorf("sampling inference family mismatch")
-	}
-	history = conversation.windowRequestEntries(history)
-	snapshot, exists, err := input.ProjectInstructions()
+	return conversation.planWindowSamplingRequest(input, func() []nativeHistoryEntry { return conversation.windowRequestEntries(history) })
+}
+
+func (conversation *Conversation) planWindowSamplingRequest(input provider.TurnInput, activeWindow func() []nativeHistoryEntry) (samplingRequestPlan, error) {
+	sources, err := provider.ReadSamplingSources(input, conversation.Family(), activeWindow)
 	if err != nil {
 		return samplingRequestPlan{}, err
 	}
-	var instructions *domain.ProjectInstructionsSnapshot
-	if exists {
-		instructions = &snapshot
-	}
-	catalog, exists, err := input.ToolCatalog()
-	if err != nil || !exists {
-		return samplingRequestPlan{}, fmt.Errorf("tool catalog is required")
-	}
-	view, err := catalog.View(domain.ProviderAnthropic)
-	if err != nil {
-		return samplingRequestPlan{}, err
-	}
-	plan := samplingRequestPlan{purpose: domain.RequestSample, request: buildMessagesRequest(conversation.provider.config.Model, int(input.InferenceSettings().MaxOutputTokens()), history, instructions, view), history: history, project: instructions != nil && instructions.HasDocuments()}
-	plan.request.applyInference(input.InferenceSettings())
-	if c := input.SkillCatalog(); c.HasEntries() {
+	project := sources.Instructions != nil && sources.Instructions.HasDocuments()
+	request := buildMessagesRequest(conversation.provider.config.Model, int(sources.Inference.MaxOutputTokens()), sources.History, sources.Instructions, sources.Tools)
+	request.applyInference(sources.Inference)
+	if sources.Skills.HasEntries() {
 		index := 0
-		if plan.project {
+		if project {
 			index = 1
 		}
-		messages := append([]nativeMessage(nil), plan.request.Messages[:index]...)
-		messages = append(messages, newUserMessage(c.RenderedText()))
-		plan.request.Messages = append(messages, plan.request.Messages[index:]...)
-		plan.skills = true
+		items := append([]nativeMessage(nil), request.Messages[:index]...)
+		items = append(items, newUserMessage(sources.Skills.RenderedText()))
+		request.Messages = append(items, request.Messages[index:]...)
 	}
-	return plan, nil
+	return samplingRequestPlan{
+		purpose: domain.RequestSample, request: request, history: sources.History,
+		project: project, skills: sources.Skills.HasEntries(),
+	}, nil
 }
 
 // EncodeUserInputs 不读取会话状态，仅验证用户消息的可表示性。

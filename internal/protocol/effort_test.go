@@ -73,6 +73,7 @@ func TestEffortSnapshotsGoldenAndStrictUnion(t *testing.T) {
 		strings.Replace(string(raw), `"turn_id":`, `"compaction_id":null,"turn_id":`, 1),
 		strings.Replace(string(raw), `"phase":"running"`, `"phase":"starting"`, 1),
 		strings.Replace(string(raw), `"kind":"turn"`, `"kind":"turn_starting"`, 1),
+		strings.Replace(string(raw), `"value":"high"`, `"value":"turbo"`, 1),
 		strings.Replace(string(raw), `"cancel_requested":false`, `"cancel_requested":false,"cancel_requested":true`, 1),
 	} {
 		var active EffortActivePayload
@@ -89,6 +90,15 @@ func TestEffortSnapshotsGoldenAndStrictUnion(t *testing.T) {
 	payload.Active = &future
 	if payload.Validate() == nil {
 		t.Fatal("future capture accepted")
+	}
+	anthropic := effortFixture()
+	anthropic.Family = domain.ProviderAnthropic
+	anthropic.AllowedLevels = []domain.EffortLevel{"low", "medium", "high", "xhigh", "max"}
+	anthropic.Selected = EffortValuePayload{State: "explicit", Value: "minimal"}
+	anthropic.Source = "runtime"
+	anthropic.SelectionRevision = 1
+	if anthropic.Validate() == nil {
+		t.Fatal("family did not narrow the shared effort shape")
 	}
 	base, _ := NewEffortSnapshot(sessionID, threadID, effortFixture())
 	for _, bad := range []string{

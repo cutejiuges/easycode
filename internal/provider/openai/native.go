@@ -176,13 +176,13 @@ func (item NativeItem) clone() NativeItem {
 	return item
 }
 
-type nativeHistoryEntryKind string
+type nativeHistoryEntryKind = domain.NativeCommitRole
 
 const (
-	nativeHistoryHookFeedback nativeHistoryEntryKind = "hook_feedback"
-	nativeHistorySample       nativeHistoryEntryKind = "sample"
-	nativeHistoryUserInputs   nativeHistoryEntryKind = "user_inputs"
-	nativeHistoryToolOutputs  nativeHistoryEntryKind = "tool_outputs"
+	nativeHistoryHookFeedback = domain.NativeCommitHookFeedback
+	nativeHistorySample       = domain.NativeCommitSample
+	nativeHistoryUserInputs   = domain.NativeCommitUserInputs
+	nativeHistoryToolOutputs  = domain.NativeCommitToolOutputs
 )
 
 // nativeHistoryEntry 是 Responses 原生历史唯一的当前内存模型。
@@ -222,4 +222,24 @@ func (entry nativeHistoryEntry) clone() nativeHistoryEntry {
 	}
 
 	return cloned
+}
+
+// CloneNativeEntry 隔离历史持有的可变原生内容。
+func (entry nativeHistoryEntry) CloneNativeEntry() nativeHistoryEntry { return entry.clone() }
+
+// NativeRole 返回原生条目在提交时序中的职责。
+func (entry nativeHistoryEntry) NativeRole() domain.NativeCommitRole { return entry.Kind }
+
+// NativeTurn 返回提交关联的回合。
+func (entry nativeHistoryEntry) NativeTurn() domain.TurnID { return entry.TurnID }
+
+// NativeInputMetadata 返回只读流程消费的输入元数据。
+func (entry nativeHistoryEntry) NativeInputMetadata() *provider.InputMetadata {
+	return entry.InputMetadata
+}
+
+// WithNativeTurn 绑定回放证据中的回合标识。
+func (entry nativeHistoryEntry) WithNativeTurn(turn domain.TurnID) nativeHistoryEntry {
+	entry.TurnID = turn
+	return entry
 }

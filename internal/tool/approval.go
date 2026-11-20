@@ -32,7 +32,7 @@ func GenerateApprovalRequestID() (ApprovalRequestID, error) {
 
 // ParseApprovalRequestID 校验canonical UUIDv7 approval请求标识。
 func ParseApprovalRequestID(value string) (ApprovalRequestID, error) {
-	if _, err := parseUUIDv7(value); err != nil {
+	if err := domain.ValidateUUIDv7(value); err != nil {
 		return "", errors.New("invalid approval request ID")
 	}
 	return ApprovalRequestID(value), nil
@@ -40,8 +40,7 @@ func ParseApprovalRequestID(value string) (ApprovalRequestID, error) {
 
 // Valid 判断approval请求标识是否合法。
 func (id ApprovalRequestID) Valid() bool {
-	_, err := parseUUIDv7(string(id))
-	return err == nil
+	return domain.ValidateUUIDv7(string(id)) == nil
 }
 
 // CandidateFingerprint 是绑定typed input、base evidence与final bytes的SHA-256。

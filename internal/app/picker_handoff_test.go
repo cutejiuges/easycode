@@ -280,7 +280,7 @@ func newPickerFixtureThread(t *testing.T, ctx context.Context, paths dataPaths, 
 		t.Fatal(err)
 	}
 	defer service.close()
-	target, err := service.create(ctx, &fakeProviderFactory{family: domain.ProviderOpenAI}, "responses", "gpt-test", cwd)
+	target, err := service.create(ctx, testSessionProvider(&fakeProviderFactory{family: domain.ProviderOpenAI}, "responses"), "gpt-test", cwd)
 	if err != nil {
 		t.Fatal(err)
 	}

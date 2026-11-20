@@ -145,7 +145,7 @@ func stopGoldenValuesWithFiles(t *testing.T, includeFiles bool) map[string][]byt
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot.entries[5] = changedEntry
+	snapshot.Entries[5] = changedEntry
 	sourceAfter, err := nativeCompactionSource(snapshot, "model")
 	if err != nil || sourceBefore.Digest() == sourceAfter.Digest() {
 		t.Fatal("compaction digest omitted delivered feedback", err)

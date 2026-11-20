@@ -925,6 +925,7 @@ func testRuntimeConfig(t *testing.T, journal Journal) Config {
 	}
 	return Config{
 		SessionID: runtimeSessionID, ThreadID: runtimeThreadID, Journal: journal,
+		ProviderWire: domain.ProviderOpenAI.Wire(),
 		TaskExecutor: catalogTaskFixture{}, InitialTaskProgress: domain.NewNoTaskProgress(),
 		ContextProfile: profile, ToolCatalog: mustRuntimeToolCatalog(t), ProjectInstructions: projectInstructions,
 		QuestionExecutor: catalogQuestionFixture{}, SkillExecutor: catalogSkillExecutor{}, ReadArtifactExecutor: catalogArtifactExecutor{}, ReadExecutor: runtimeReadExecutor{}, GlobExecutor: runtimeGlobExecutor{}, GrepExecutor: runtimeGrepExecutor{},

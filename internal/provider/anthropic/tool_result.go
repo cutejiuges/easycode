@@ -4,6 +4,7 @@ import (
 	"easycode/internal/domain"
 	"fmt"
 
+	"easycode/internal/provider"
 	"easycode/internal/tool"
 )
 
@@ -12,21 +13,15 @@ func prepareToolOutputsEntry(history []nativeHistoryEntry, results []tool.ModelO
 	if err != nil {
 		return nativeHistoryEntry{}, err
 	}
-	if len(results) != len(calls) {
-		return nativeHistoryEntry{}, fmt.Errorf("anthropic tool result count does not match pending calls")
+	return toolOutputsEntry(history[len(history)-1].TurnID, calls, results)
+}
+
+func toolOutputsEntry(turn domain.TurnID, calls []NativeItem, results []tool.ModelOutput) (nativeHistoryEntry, error) {
+	items, err := provider.EncodeNativeToolOutputs(calls, results, "anthropic tool result count does not match pending calls", encodeToolResult)
+	if err != nil {
+		return nativeHistoryEntry{}, err
 	}
-	blocks := make([]NativeItem, len(results))
-	for index, result := range results {
-		item, err := encodeToolResult(calls[index], result)
-		if err != nil {
-			return nativeHistoryEntry{}, err
-		}
-		blocks[index] = item
-	}
-	entry := nativeHistoryEntry{
-		Kind: nativeHistoryToolOutputs, TurnID: history[len(history)-1].TurnID,
-		ToolOutputs: nativeMessage{Role: roleUser, Content: blocks},
-	}
+	entry := nativeHistoryEntry{Kind: nativeHistoryToolOutputs, TurnID: turn, ToolOutputs: nativeMessage{Role: roleUser, Content: items}}
 	if err := validateNativeHistoryEntry(entry); err != nil {
 		return nativeHistoryEntry{}, err
 	}
@@ -34,123 +29,29 @@ func prepareToolOutputsEntry(history []nativeHistoryEntry, results []tool.ModelO
 }
 
 func anthropicCapabilityForName(name string) tool.CapabilityID {
-	switch name {
-	case "TodoWrite":
-		return tool.CapabilityTaskProgress
-	case "Bash":
-		return tool.CapabilityExec
-	case "AskUserQuestion":
-		return tool.CapabilityQuestion
-	case "Skill":
-		return tool.CapabilitySkill
-	case "ReadArtifact":
-		return tool.CapabilityReadArtifact
-	case "Read":
-		return tool.CapabilityRead
-	case "Glob":
-		return tool.CapabilityGlob
-	case "Write":
-		return tool.CapabilityWrite
-	case "Grep":
-		return tool.CapabilityGrep
-	case "Edit":
-		return tool.CapabilityPatch
-	default:
-		return ""
+	capability, _ := tool.FacadeCapability(domain.ProviderAnthropic, name)
+	return capability
+}
+
+func nativeSequenceRules() provider.NativeSequenceRules[nativeHistoryEntry, NativeItem] {
+	return provider.NativeSequenceRules[nativeHistoryEntry, NativeItem]{
+		ValidateEntry: validateNativeHistoryEntry,
+		Calls:         func(entry nativeHistoryEntry) []NativeItem { return toolUses(entry.Assistant.Content) },
+		MatchOutputs: func(calls []NativeItem, entry nativeHistoryEntry) error {
+			return matchToolResults(calls, entry.ToolOutputs.Content)
+		},
+		Feedback: entryStopFeedback,
 	}
 }
 
 func validateNativeHistory(entries []nativeHistoryEntry) error {
-	var pending []NativeItem
-	var turnID domain.TurnID
-	var nextSample uint32
-	stopCount := 0
-	sampleAllowed := false
-	steeringAllowed := false
-	seenInputs := make(map[domain.InputID]struct{})
-	seenTurns := make(map[domain.TurnID]struct{})
-	for index, entry := range entries {
-		if err := validateNativeHistoryEntry(entry); err != nil {
-			return fmt.Errorf("entry %d is invalid: %w", index+1, err)
-		}
-		switch entry.Kind {
-		case nativeHistoryUserInputs:
-			if len(pending) != 0 {
-				return fmt.Errorf("user inputs precede pending tool outputs")
-			}
-			a, err := entry.InputMetadata.Association()
-			if err != nil {
-				return err
-			}
-			if entry.TurnID != a.TurnID() {
-				return fmt.Errorf("input turn association mismatch")
-			}
-			if a.Placement() == domain.InputInitial {
-				if _, exists := seenTurns[a.TurnID()]; exists {
-					return fmt.Errorf("initial input is duplicated")
-				}
-				seenTurns[a.TurnID()] = struct{}{}
-				turnID = a.TurnID()
-				nextSample = 0
-				stopCount = 0
-			} else if !steeringAllowed || turnID != a.TurnID() || nextSample != a.SampleIndex() {
-				return fmt.Errorf("steering input position is invalid")
-			}
-			for _, id := range a.IDs() {
-				if _, exists := seenInputs[id]; exists {
-					return fmt.Errorf("input ID is duplicated")
-				}
-				seenInputs[id] = struct{}{}
-			}
-			sampleAllowed = true
-			steeringAllowed = false
-		case nativeHistorySample:
-			if len(pending) != 0 || !sampleAllowed || entry.TurnID != turnID {
-				return fmt.Errorf("sample history position is invalid")
-			}
-			sampleAllowed = false
-			steeringAllowed = false
-			nextSample++
-			pending = toolUses(entry.Assistant.Content)
-		case nativeHistoryHookFeedback:
-			feedback, err := entryStopFeedback(entry)
-			if err != nil {
-				return err
-			}
-			sample, _ := feedback.Identity.Target.AssistantSample()
-			if len(pending) != 0 || sampleAllowed || turnID != entry.TurnID || nextSample == 0 || sample.TurnID != turnID || sample.SampleIndex+1 != nextSample || nextSample >= 16 || index == 0 || entries[index-1].Kind != nativeHistorySample || stopCount >= domain.MaxStopContinuations {
-				return fmt.Errorf("invalid hook feedback history position")
-			}
-			stopCount++
-			sampleAllowed = true
-			steeringAllowed = true
-		case nativeHistoryToolOutputs:
-			if len(pending) == 0 || entry.TurnID != turnID {
-				return fmt.Errorf("tool outputs have no matching pending calls")
-			}
-			if err := matchToolResults(pending, entry.ToolOutputs.Content); err != nil {
-				return err
-			}
-			pending = nil
-			sampleAllowed = true
-			steeringAllowed = true
-		}
-	}
-	return nil
+	return provider.ValidateNativeSequence(entries, nativeSequenceRules())
 }
 
+const pendingCallsUnavailable = "anthropic native history has no pending tool uses"
+
 func pendingToolUses(history []nativeHistoryEntry) ([]NativeItem, error) {
-	if err := validateNativeHistory(history); err != nil {
-		return nil, err
-	}
-	if len(history) == 0 || history[len(history)-1].Kind != nativeHistorySample {
-		return nil, fmt.Errorf("anthropic native history has no pending tool uses")
-	}
-	calls := toolUses(history[len(history)-1].Assistant.Content)
-	if len(calls) == 0 {
-		return nil, fmt.Errorf("anthropic native history has no pending tool uses")
-	}
-	return calls, nil
+	return provider.PendingNativeCalls(history, nativeSequenceRules(), pendingCallsUnavailable)
 }
 
 func toolUses(blocks []NativeItem) []NativeItem {

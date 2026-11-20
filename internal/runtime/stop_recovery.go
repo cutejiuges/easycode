@@ -5,7 +5,6 @@ import (
 	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
-	"easycode/internal/provider"
 	"easycode/internal/session"
 )
 
@@ -49,8 +48,8 @@ func (r *Runtime) ReconcileStopTurn(ctx context.Context, plan session.StopRecove
 		if err != nil {
 			return err
 		}
-		preparer, ok := r.conversation.(provider.StopContinuationPreparer)
-		if !ok {
+		preparer := r.providerOperations.stop
+		if preparer == nil {
 			return fault.New(fault.CodeSessionCorruption, "stop feedback recovery is unavailable")
 		}
 		prepared, err := preparer.PrepareStopContinuation(candidate)

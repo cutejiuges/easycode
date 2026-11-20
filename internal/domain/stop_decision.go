@@ -36,7 +36,6 @@ func NewStopHookSource(ordinal int) (StopDecisionSource, error) {
 	v := StopDecisionSource{true, ordinal, true}
 	return v, v.Validate()
 }
-func (v StopDecisionSource) HookOrdinal() (int, bool) { return v.ordinal, v.valid && v.hook }
 func (v StopDecisionSource) Validate() error {
 	if !v.valid || v.hook && (v.ordinal < 0 || v.ordinal >= MaxHookMatches) || !v.hook && v.ordinal != 0 {
 		return HookConfigInvalid

@@ -50,7 +50,7 @@ func (runtime *Runtime) ResolveToolApproval(response tool.ApprovalResponse) erro
 func (runtime *Runtime) waitForApproval(ctx context.Context, emit Emitter, turnID domain.TurnID, request tool.ApprovalRequest) (tool.ApprovalResponse, error) {
 	reason := request.Reason()
 	var rewrite protocol.PreInputProjection
-	if state := runtime.toolCalls[request.InvocationID()]; state != nil && state.pre != nil {
+	if state := runtime.toolTurn.toolCalls[request.InvocationID()]; state != nil && state.pre != nil {
 		selection, err := state.selection()
 		if err != nil {
 			return tool.ApprovalResponse{}, err

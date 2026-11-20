@@ -44,7 +44,6 @@ func NewReplacedHookInputEffect(before, after HookToolInput, profile HookInputPr
 	return HookInputEffect{kind: HookInputReplaced, before: b, after: a, input: after.Clone()}, nil
 }
 func (v HookInputEffect) Kind() HookInputEffectKind { return v.kind }
-func (v HookInputEffect) BeforeDigest() string      { return v.before }
 func (v HookInputEffect) AfterDigest() string       { return v.after }
 func (v HookInputEffect) Input() HookToolInput      { return v.input.Clone() }
 func (v HookInputEffect) Empty() bool {

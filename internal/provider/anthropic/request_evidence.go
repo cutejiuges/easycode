@@ -1,75 +1,29 @@
 package anthropic
 
 import (
+	"fmt"
+
 	"easycode/internal/codec"
 	"easycode/internal/domain"
 	"easycode/internal/provider"
-	"encoding/json"
-	"fmt"
 )
 
-type requestEvidence struct {
-	items             []codec.CanonicalJSON
-	properties        codec.CanonicalJSON
-	nativeFingerprint string
+func (plan samplingRequestPlan) evidence() (provider.RequestEvidence, error) {
+	request := plan.request
+	input := request.Messages
+	request.Messages = nil
+	return provider.CompileRequestEvidence(input, request, "messages", maxMessagesRequestBytes)
 }
 
-func (plan samplingRequestPlan) evidence() (requestEvidence, error) {
-	request := plan.request
-	items := make([]codec.CanonicalJSON, 0, len(request.Messages))
-	raw := make([]json.RawMessage, 0, len(request.Messages))
-	for _, item := range request.Messages {
-		part, e := codec.MarshalCanonical(item, provider.MaxNativeCommitBytes)
-		if e != nil {
-			return requestEvidence{}, e
-		}
-		items = append(items, part)
-		raw = append(raw, part.Bytes())
-	}
-	native, err := codec.MarshalCanonical(raw, provider.MaxNativeCommitBytes)
-	if err != nil {
-		return requestEvidence{}, err
-	}
-	request.Messages = nil
-	properties, err := codec.MarshalCanonical(request, maxMessagesRequestBytes)
-	if err != nil {
-		return requestEvidence{}, err
-	}
-	members, err := codec.ObjectMembers(properties.Bytes())
-	if err != nil {
-		return requestEvidence{}, err
-	}
-	delete(members, "messages")
-	properties, err = codec.MarshalCanonical(members, maxMessagesRequestBytes)
-	if err != nil {
-		return requestEvidence{}, err
-	}
-	return requestEvidence{items, properties, domain.ContentFingerprint(native.Bytes())}, nil
-}
-func (e requestEvidence) commitBaseline(entry nativeHistoryEntry) (provider.RequestBaseline, error) {
-	output, err := codec.MarshalCanonical(entry.Assistant, provider.MaxNativeCommitBytes)
-	if err != nil {
-		return provider.RequestBaseline{}, err
-	}
-	return provider.NewRequestBaseline(e.items, []codec.CanonicalJSON{output}, e.properties)
-}
-func (conversation *Conversation) describeRequest(request codec.CanonicalJSON, e requestEvidence, purpose domain.RequestPurpose) (domain.RequestReceipt, error) {
-	_, relation, reason := conversation.baseline.Compare(e.items, e.properties)
-	if conversation.nextReason != "" && conversation.nextReason != domain.ResetNone {
-		reason = conversation.nextReason
-		if reason == domain.ResetCompacted {
-			relation = domain.NativeBoundary
-		}
-	}
-	if purpose == domain.RequestSummary {
-		reason = domain.ResetSummary
-		relation = domain.NativeBoundary
-	}
+func (conversation *Conversation) describeRequest(request codec.CanonicalJSON, e provider.RequestEvidence, purpose domain.RequestPurpose) (domain.RequestReceipt, error) {
 	markers, err := requestMarkerCount(request, conversation.provider.config.CachePolicy.Anthropic())
 	if err != nil {
 		return domain.RequestReceipt{}, err
 	}
-	return domain.NewRequestReceipt(domain.RequestReceipt{Family: domain.ProviderAnthropic, Purpose: purpose, Policy: conversation.provider.config.CachePolicy, RequestFingerprint: domain.ContentFingerprint(request.Bytes()), NativeFingerprint: e.nativeFingerprint, Relation: relation, Transport: domain.TransportHTTP, Mode: domain.RequestFull, Reason: reason, Fallback: domain.FallbackNone, Markers: uint8(markers)})
+	return e.Receipt(request, conversation.baseline, conversation.nextReason, domain.RequestReceipt{
+		Family: conversation.Family(), Purpose: purpose,
+		Policy: conversation.provider.config.CachePolicy, Markers: markers,
+	})
 }
 
 func requestMarkerCount(request codec.CanonicalJSON, mode domain.AnthropicCacheMode) (uint8, error) {

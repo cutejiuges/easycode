@@ -48,6 +48,13 @@ func (value EffortValuePayload) Validate(family domain.ProviderFamily) error {
 	return fmt.Errorf("effort value is invalid")
 }
 
+func (value EffortValuePayload) validateShape() error {
+	if value.State == "omitted" && value.Value == "" || value.State == "explicit" && value.Value.Valid() {
+		return nil
+	}
+	return fmt.Errorf("effort value is invalid")
+}
+
 // UnmarshalJSON 严格区分省略分支和显式分支，拒绝空值替代省略。
 func (value *EffortValuePayload) UnmarshalJSON(raw []byte) error {
 	type wire EffortValuePayload
@@ -64,7 +71,7 @@ func (value *EffortValuePayload) UnmarshalJSON(raw []byte) error {
 		return fmt.Errorf("effort value shape is invalid")
 	}
 	candidate := EffortValuePayload(decoded)
-	if err := candidate.Validate(domain.ProviderOpenAI); err != nil {
+	if err := candidate.validateShape(); err != nil {
 		return err
 	}
 	*value = candidate
@@ -88,19 +95,19 @@ type effortActiveWire struct {
 // NewStartingEffortActive 使用原输入身份表示尚未发布 durable started 的回合。
 func NewStartingEffortActive(requestID RequestID, phase string, effort EffortValuePayload, revision uint64, cancelled bool) (EffortActivePayload, error) {
 	value := EffortActivePayload{effortActiveWire{Kind: "turn_starting", Phase: phase, Effort: effort, SelectionRevision: revision, CancelRequested: cancelled, RequestID: requestID}}
-	return value, value.Validate(domain.ProviderOpenAI)
+	return value, value.validateShape()
 }
 
 // NewTurnEffortActive 只绑定已 durable 发布的回合身份。
 func NewTurnEffortActive(turnID domain.TurnID, phase string, effort EffortValuePayload, revision uint64, cancelled bool) (EffortActivePayload, error) {
 	value := EffortActivePayload{effortActiveWire{Kind: "turn", Phase: phase, Effort: effort, SelectionRevision: revision, CancelRequested: cancelled, TurnID: turnID}}
-	return value, value.Validate(domain.ProviderOpenAI)
+	return value, value.validateShape()
 }
 
 // NewCompactionEffortActive 只绑定独立手动摘要身份。
 func NewCompactionEffortActive(id domain.CompactionID, phase string, effort EffortValuePayload, revision uint64, cancelled bool) (EffortActivePayload, error) {
 	value := EffortActivePayload{effortActiveWire{Kind: "manual_compaction", Phase: phase, Effort: effort, SelectionRevision: revision, CancelRequested: cancelled, CompactionID: id}}
-	return value, value.Validate(domain.ProviderOpenAI)
+	return value, value.validateShape()
 }
 
 func (value EffortActivePayload) validateIdentity() error {
@@ -130,6 +137,13 @@ func (value EffortActivePayload) Validate(family domain.ProviderFamily) error {
 		return err
 	}
 	return value.wire.Effort.Validate(family)
+}
+
+func (value EffortActivePayload) validateShape() error {
+	if err := value.validateIdentity(); err != nil {
+		return err
+	}
+	return value.wire.Effort.validateShape()
 }
 
 // MarshalJSON 仅编码当前分支的身份。
@@ -163,7 +177,7 @@ func (value *EffortActivePayload) UnmarshalJSON(raw []byte) error {
 		}
 	}
 	candidate := EffortActivePayload{wire: w}
-	if err := candidate.Validate(domain.ProviderOpenAI); err != nil {
+	if err := candidate.validateShape(); err != nil {
 		return err
 	}
 	*value = candidate
@@ -279,11 +293,7 @@ func NewEffortSnapshot(sessionID domain.SessionID, threadID domain.ThreadID, pay
 	if len(raw) > MaxEffortSnapshotBytes {
 		return Event{}, fmt.Errorf("effort snapshot exceeds limit")
 	}
-	event := newEvent(EventEffortSnapshot)
-	event.SessionID = sessionID
-	event.ThreadID = threadID
-	event.Payload = raw
-	return event, event.Validate()
+	return newScopedPayloadEvent(EventEffortSnapshot, sessionID, threadID, "", "", raw)
 }
 
 // DecodeEffortSnapshot 严格解码唯一当前观测结构。

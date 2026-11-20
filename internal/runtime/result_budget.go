@@ -6,14 +6,14 @@ import (
 )
 
 func (runtime *Runtime) resultAllowance(capability tool.CapabilityID) (int, error) {
-	if runtime.resultTicket != nil {
-		if runtime.resultTicketCapability != capability {
+	if runtime.toolTurn.resultTicket != nil {
+		if runtime.toolTurn.resultTicketCapability != capability {
 			return 0, errors.New("result ticket capability mismatch")
 		}
-		return runtime.resultTicket.BaseAllowance(), nil
+		return runtime.toolTurn.resultTicket.BaseAllowance(), nil
 	}
-	if runtime.resultBudget != nil {
-		return runtime.resultBudget.Allowance(capability)
+	if runtime.toolTurn.resultBudget != nil {
+		return runtime.toolTurn.resultBudget.Allowance(capability)
 	}
 	if capability == tool.CapabilityGlob || capability == tool.CapabilityGrep {
 		return tool.MaxSearchPreviewBytes, nil
@@ -36,23 +36,23 @@ func (runtime *Runtime) freezeResult(result tool.InvocationResult) (tool.Invocat
 	return runtime.freezeResultUsingEvidence(result, evidence)
 }
 func (runtime *Runtime) freezeResultUsingEvidence(result tool.InvocationResult, evidence tool.InputResultEvidence) (tool.InvocationResult, error) {
-	if runtime.resultBudget == nil {
+	if runtime.toolTurn.resultBudget == nil {
 		return tool.FreezeInputRewriteResult(result, evidence, result.Budget().Allowance(), result.Budget().Reason())
 	}
-	if runtime.resultTicket == nil {
-		ticket, err := runtime.resultBudget.Reserve(result.Capability(), false)
+	if runtime.toolTurn.resultTicket == nil {
+		ticket, err := runtime.toolTurn.resultBudget.Reserve(result.Capability(), false)
 		if err != nil {
 			return tool.InvocationResult{}, err
 		}
-		runtime.resultTicket = ticket
-		runtime.resultTicketInvocation = result.InvocationID()
-		runtime.resultTicketCapability = result.Capability()
-		runtime.resultTicketPost = false
+		runtime.toolTurn.resultTicket = ticket
+		runtime.toolTurn.resultTicketInvocation = result.InvocationID()
+		runtime.toolTurn.resultTicketCapability = result.Capability()
+		runtime.toolTurn.resultTicketPost = false
 	}
-	if runtime.resultTicketInvocation != result.InvocationID() || runtime.resultTicketCapability != result.Capability() {
+	if runtime.toolTurn.resultTicketInvocation != result.InvocationID() || runtime.toolTurn.resultTicketCapability != result.Capability() {
 		return tool.InvocationResult{}, errors.New("result ticket invocation mismatch")
 	}
-	return tool.FreezeInputRewriteResult(result, evidence, runtime.resultTicket.BaseAllowance(), result.Budget().Reason())
+	return tool.FreezeInputRewriteResult(result, evidence, runtime.toolTurn.resultTicket.BaseAllowance(), result.Budget().Reason())
 }
 
 func (runtime *Runtime) resultBodyAllowance(invocation tool.Invocation) (int, error) {
@@ -60,7 +60,7 @@ func (runtime *Runtime) resultBodyAllowance(invocation tool.Invocation) (int, er
 	if err != nil {
 		return 0, err
 	}
-	state := runtime.toolCalls[invocation.InvocationID()]
+	state := runtime.toolTurn.toolCalls[invocation.InvocationID()]
 	if state == nil {
 		return 0, errors.New("tool input has no source")
 	}
@@ -72,30 +72,27 @@ func (runtime *Runtime) resultBodyAllowance(invocation tool.Invocation) (int, er
 }
 
 func (runtime *Runtime) commitResultBudget(result tool.InvocationResult) error {
-	if runtime.resultBudget == nil {
+	if runtime.toolTurn.resultBudget == nil {
 		return nil
 	}
-	if runtime.resultTicket == nil || runtime.resultTicketInvocation != result.InvocationID() {
+	if runtime.toolTurn.resultTicket == nil || runtime.toolTurn.resultTicketInvocation != result.InvocationID() {
 		return errors.New("missing result budget ticket")
 	}
-	if err := runtime.resultTicket.CommitBase(result.Budget()); err != nil {
+	if err := runtime.toolTurn.resultTicket.CommitBase(result.Budget()); err != nil {
 		return err
 	}
-	if !runtime.resultTicketPost {
+	if !runtime.toolTurn.resultTicketPost {
 		return runtime.closeResultTicket()
 	}
 	return nil
 }
 func (runtime *Runtime) closeResultTicket() error {
-	if runtime.resultTicket == nil {
+	if runtime.toolTurn.resultTicket == nil {
 		return nil
 	}
-	if err := runtime.resultTicket.Close(); err != nil {
+	if err := runtime.toolTurn.resultTicket.Close(); err != nil {
 		return err
 	}
-	runtime.resultTicket = nil
-	runtime.resultTicketInvocation = ""
-	runtime.resultTicketCapability = ""
-	runtime.resultTicketPost = false
+	runtime.toolTurn.resetResultTicket()
 	return nil
 }

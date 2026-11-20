@@ -24,20 +24,20 @@ func TestTaskTurnBudgetExhaustionPairsFailureWithoutApplyingOrExecuting(t *testi
 	}
 	saved := r.TaskProgress()
 	// 使用真实 turn 账本扣满正文额度，不伪造 exhausted 标志。
-	for !r.resultBudget.BodyExhausted() {
-		if err := r.resultBudget.BeginSample(1); err != nil {
+	for !r.toolTurn.resultBudget.BodyExhausted() {
+		if err := r.toolTurn.resultBudget.BeginSample(1); err != nil {
 			t.Fatal(err)
 		}
-		allowance, err := r.resultBudget.Allowance(tool.CapabilityRead)
+		allowance, err := r.toolTurn.resultBudget.Allowance(tool.CapabilityRead)
 		if err != nil {
 			t.Fatal(err)
 		}
 		metadata, _ := tool.NewResultBudgetMetadata(allowance, allowance, tool.BudgetPreserved)
-		if err := r.resultBudget.Commit(tool.CapabilityRead, metadata); err != nil {
+		if err := r.toolTurn.resultBudget.Commit(tool.CapabilityRead, metadata); err != nil {
 			t.Fatal(err)
 		}
 	}
-	used := r.resultBudget.TurnUsed()
+	used := r.toolTurn.resultBudget.TurnUsed()
 	inv := taskRuntimeInvocation(t, "不得应用的候选", domain.TaskPending, "exhausted-task")
 	results, err := executeReadyFixtureCalls(t, r, context.Background(), runtimeTurnID, []tool.Invocation{inv})
 	if err != nil || len(results) != 1 || results[0].Status() != tool.ResultError || results[0].Code() != "result_budget_exceeded" {
@@ -46,7 +46,7 @@ func TestTaskTurnBudgetExhaustionPairsFailureWithoutApplyingOrExecuting(t *testi
 	if _, applied := results[0].TaskUpdate(); applied || !r.TaskProgress().Equal(saved) || executor.calls.Load() != 0 || r.poisoned.Load() {
 		t.Fatal("exhausted task executed or applied its candidate")
 	}
-	if r.resultTicket != nil || r.resultBudget.TurnUsed() != used+results[0].Budget().ActualBytes() || !r.resultBudget.BodyExhausted() {
+	if r.toolTurn.resultTicket != nil || r.toolTurn.resultBudget.TurnUsed() != used+results[0].Budget().ActualBytes() || !r.toolTurn.resultBudget.BodyExhausted() {
 		t.Fatal("exhausted task was rebudgeted or charged more than once")
 	}
 	if err := r.commitToolOutputs(context.Background(), runtimeTurnID, results); err != nil {
@@ -120,7 +120,7 @@ func TestTaskOutputPreflightRejectionPairsBudgetFailureAndKeepsPriorState(t *tes
 	if err != nil || len(results) != 1 || results[0].Status() != tool.ResultError || results[0].Code() != "result_budget_exceeded" || !r.TaskProgress().Equal(saved) {
 		t.Fatal("output encoding failure applied a partial success", err)
 	}
-	if conversation.checks != 1 || executor.calls.Load() != 1 || r.poisoned.Load() || r.resultTicket != nil || r.resultBudget.TurnUsed() != results[0].Budget().ActualBytes() {
+	if conversation.checks != 1 || executor.calls.Load() != 1 || r.poisoned.Load() || r.toolTurn.resultTicket != nil || r.toolTurn.resultBudget.TurnUsed() != results[0].Budget().ActualBytes() {
 		t.Fatal("preflight failure repeated execution or budget commitment")
 	}
 	if _, applied := results[0].TaskUpdate(); applied || results[0].TaskInput().IsZero() {

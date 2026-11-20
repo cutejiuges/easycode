@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	responsesWire = "responses"
+	responsesWire = domain.OpenAIResponsesWire
 )
 
 type nativeHistoryCommit struct {
