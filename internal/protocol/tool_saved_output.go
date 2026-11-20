@@ -74,20 +74,3 @@ func validateTerminalSaving(p ToolTerminalPayload) error {
 	}
 	return nil
 }
-
-func NewToolOutputReference(reference ToolOutputReference) (ToolOutputReference, error) {
-	return reference, reference.Validate()
-}
-func DecodeToolOutputReference(data []byte) (ToolOutputReference, error) {
-	return decodeTranscriptValue[ToolOutputReference](data)
-}
-func NewToolOutputInfo(info ToolOutputInfo) (ToolOutputInfo, error) {
-	if info.Reference != nil {
-		copy := *info.Reference
-		info.Reference = &copy
-	}
-	return info, info.Validate()
-}
-func DecodeToolOutputInfo(data []byte) (ToolOutputInfo, error) {
-	return decodeTranscriptValue[ToolOutputInfo](data)
-}

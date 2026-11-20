@@ -26,67 +26,23 @@ func NewSampleUsagePayload(usage domain.SampleUsage) (SampleUsagePayload, error)
 	if err := usage.Validate(); err != nil {
 		return SampleUsagePayload{}, fmt.Errorf("sample usage is invalid: %w", err)
 	}
+	fields := usage.Fields()
 	return SampleUsagePayload{
-		InputUncached:   newUsageMetricPayload(usage.InputUncached()),
-		CacheRead:       newUsageMetricPayload(usage.CacheRead()),
-		CacheWrite:      newUsageMetricPayload(usage.CacheWrite()),
-		Output:          newUsageMetricPayload(usage.Output()),
-		ReasoningOutput: newUsageMetricPayload(usage.ReasoningOutput()),
+		InputUncached:   UsageMetricPayload(fields.InputUncached),
+		CacheRead:       UsageMetricPayload(fields.CacheRead),
+		CacheWrite:      UsageMetricPayload(fields.CacheWrite),
+		Output:          UsageMetricPayload(fields.Output),
+		ReasoningOutput: UsageMetricPayload(fields.ReasoningOutput),
 	}, nil
 }
 
 // Domain 校验 DTO 并转换为不可变领域值。
 func (payload SampleUsagePayload) Domain() (domain.SampleUsage, error) {
-	inputUncached, err := payload.InputUncached.domain()
-	if err != nil {
-		return domain.SampleUsage{}, fmt.Errorf("input_uncached metric is invalid: %w", err)
-	}
-	cacheRead, err := payload.CacheRead.domain()
-	if err != nil {
-		return domain.SampleUsage{}, fmt.Errorf("cache_read metric is invalid: %w", err)
-	}
-	cacheWrite, err := payload.CacheWrite.domain()
-	if err != nil {
-		return domain.SampleUsage{}, fmt.Errorf("cache_write metric is invalid: %w", err)
-	}
-	output, err := payload.Output.domain()
-	if err != nil {
-		return domain.SampleUsage{}, fmt.Errorf("output metric is invalid: %w", err)
-	}
-	reasoningOutput, err := payload.ReasoningOutput.domain()
-	if err != nil {
-		return domain.SampleUsage{}, fmt.Errorf("reasoning_output metric is invalid: %w", err)
-	}
-	return domain.NewSampleUsage(inputUncached, cacheRead, cacheWrite, output, reasoningOutput)
-}
-
-func newUsageMetricPayload(metric domain.UsageMetric) UsageMetricPayload {
-	payload := UsageMetricPayload{State: metric.State()}
-	if value, known := metric.Value(); known {
-		copy := value
-		payload.Value = &copy
-	}
-	return payload
-}
-
-func (payload UsageMetricPayload) domain() (domain.UsageMetric, error) {
-	switch payload.State {
-	case domain.UsageMetricKnown:
-		if payload.Value == nil {
-			return domain.UsageMetric{}, fmt.Errorf("known usage metric value is required")
-		}
-		return domain.KnownUsageMetric(*payload.Value), nil
-	case domain.UsageMetricUnknown:
-		if payload.Value != nil {
-			return domain.UsageMetric{}, fmt.Errorf("unknown usage metric must not contain a value")
-		}
-		return domain.UnknownUsageMetric(), nil
-	case domain.UsageMetricNotApplicable:
-		if payload.Value != nil {
-			return domain.UsageMetric{}, fmt.Errorf("not_applicable usage metric must not contain a value")
-		}
-		return domain.NotApplicableUsageMetric(), nil
-	default:
-		return domain.UsageMetric{}, fmt.Errorf("usage metric state is invalid")
-	}
+	return domain.NewSampleUsageFromFields(domain.SampleUsageFields{
+		InputUncached:   domain.UsageMetricFields(payload.InputUncached),
+		CacheRead:       domain.UsageMetricFields(payload.CacheRead),
+		CacheWrite:      domain.UsageMetricFields(payload.CacheWrite),
+		Output:          domain.UsageMetricFields(payload.Output),
+		ReasoningOutput: domain.UsageMetricFields(payload.ReasoningOutput),
+	})
 }

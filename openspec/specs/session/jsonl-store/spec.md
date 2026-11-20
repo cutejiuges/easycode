@@ -2,7 +2,7 @@
 
 ## Purpose
 
-定义 append-only JSONL Session 事实源，使已交付的文本对话、Tool、Hook、Compaction 与未来 MCP、Subagent 记录共享稳定日志机制，而不把 SQLite 或 UI 事件变成恢复依据。
+定义 append-only JSONL Session 事实源，使已交付的文本对话、Tool、Hook、Compaction 与未来 MCP、Subagent 记录共享稳定日志机制。Catalog 快照与 UI 事件均由事实源派生。
 
 ## Requirements
 
@@ -110,7 +110,7 @@ Session envelope SHALL 不携带格式版本字段；Provider native/checkpoint 
 - **WHEN** journal 使用 非法附加版本字段、缺失必需 scope 字段的记录，或 native/checkpoint 包含非法 payload_version 字段
 - **THEN** 在 repair/append/网络前失败关闭，不保留旧 reader，不迁移既有 bytes
 
-提问 SHALL 复用 tool_call_ready、tool_execution_started 与 tool_call_result，不新增问卷 UI/回答 admission record 或 approval_decided。ready 保存完整题目/选项和对应 Provider call；result 保存完整冻结回答 preview 与必要的强类型关联/计数 metadata。模型预填答案、未知字段、非当前 shape、题目/回答错配及超限内容必须拒绝。答案正文不额外复制到 SQLite、diagnostic 或 telemetry；焦点、按键、未提交文字和临时 request identity 不成为恢复事实。
+提问 SHALL 复用 tool_call_ready、tool_execution_started 与 tool_call_result，不新增问卷 UI/回答 admission record 或 approval_decided。ready 保存完整题目/选项和对应 Provider call；result 保存完整冻结回答 preview 与必要的强类型关联/计数 metadata。模型预填答案、未知字段、非当前 shape、题目/回答错配及超限内容必须拒绝。答案正文不额外复制到 Catalog 快照、diagnostic 或 telemetry；焦点、按键、未提交文字和临时 request identity 不成为恢复事实。
 
 #### Scenario: Persist a question without approval
 - **WHEN** 用户提交一个合法问卷
@@ -134,7 +134,7 @@ Session envelope SHALL 不携带格式版本字段；Provider native/checkpoint 
 - **WHEN** plan/运行统计或非 continued 决定含脚本原文，或反馈缺少 model 来源/预算
 - **THEN** 当前 decoder/replay 在 repair/append 前拒绝，不透传正文
 
-任务进度 SHALL 复用 tool_call_ready、tool_execution_started、tool_call_result 与匹配原生调用/outputs，不新增任务 UI、折叠、按键、进度 tick、独立任务文件或 approval records。ready 必须保存 tool.TaskInput 的语义 facade profile 及完整规范 domain.TaskUpdate；success result 必须含完整同一 domain 更新的 typed metadata 和至多 1 KiB 固定格式英文计数确认 preview，失败结果不得携带 applied state。原始 Task 参数与 ready 的 Provider/profile/内容必须交叉验证；更新内容作为恢复必要业务事实保存，不复制到 SQLite、diagnostic 或 telemetry，不采集文件正文或环境数据。
+任务进度 SHALL 复用 tool_call_ready、tool_execution_started、tool_call_result 与匹配原生调用/outputs，不新增任务 UI、折叠、按键、进度 tick、独立任务文件或 approval records。ready 必须保存 tool.TaskInput 的语义 facade profile 及完整规范 domain.TaskUpdate；success result 必须含完整同一 domain 更新的 typed metadata 和至多 1 KiB 固定格式英文计数确认 preview，失败结果不得携带 applied state。原始 Task 参数与 ready 的 Provider/profile/内容必须交叉验证；更新内容作为恢复必要业务事实保存，不复制到 Catalog 快照、diagnostic 或 telemetry，不采集文件正文或环境数据。
 
 任务输入 SHALL 是有界封闭结构，采用两家严格字段契约及同一规范快照。输入 raw bytes 与规范快照各最多 64 KiB；全部文字合计最多 16 KiB，最多二十项，其余字段/状态/文本约束遵循 tool/task-progress。metadata 不因 preview 只报告计数而丢失列表，也不能借 metadata 接收超限或部分成功更新。source result_sequence 由实际成功 result 的 record sequence 推导，不能由模型或构造调用者预领、覆写。
 
@@ -157,6 +157,8 @@ writer MUST 分配连续递增的 `seq` 与记录时间，调用方不得自行�
 append admission MUST 有明确线性化点：在请求被接受前发生的 context 取消或有界队列背压 MUST 在分配 seq、写盘或产生其他副作用前拒绝请求；请求一旦被接受，writer MUST 返回确定的 durable success 或失败结果，不得因调用方随后取消而留下无人确认的后台提交。Close MUST 拒绝新的 admission、完成所有已接受请求，然后执行最终 Sync、关闭 handle 并释放 lease。状态检查与 admission 不得在锁内执行阻塞 channel 操作、磁盘 I/O 或等待其他 goroutine。
 
 写入或 Sync 结果不确定时，writer MUST 进入不可继续写入的失败状态；同一进程不得在该 writer 上继续分配序号或启动新的 Provider 副作用。
+
+接收后但进入文件写入前的编码或大小拒绝 SHALL 返回确定未写入失败，保留既有 journal bytes、下一个 seq 和 writer 的可写状态。进入写入后无法确认 durable 效果的 Write、短写或 Sync 失败仍 MUST 使 writer poison。Runtime 对此调用之前已接纳的副作用或不完整语义另按已知事实收口。
 
 #### Scenario: Acquire one writer across processes
 
@@ -197,6 +199,10 @@ append admission MUST 有明确线性化点：在请求被接受前发生的 con
 - **WHEN** append 或 Sync 返回无法确认 durable 状态的错误
 - **THEN** writer 返回安全英文 session 错误并拒绝后续写入
 - **THEN** 上层不会继续当前 conversation 的模型调用或其他副作用
+
+#### Scenario: Keep the writer usable after a definite prewrite failure
+- **WHEN** 已接纳 batch 在首个文件写入前因编码或大小限制确定失败，此后提交另一个合法 batch
+- **THEN** 失败前后的 journal bytes 与下一 seq 相同，writer 未 poison，后续合法 batch 从该 seq 成功 Sync
 
 ### Requirement: Loading validates the complete journal before replay
 

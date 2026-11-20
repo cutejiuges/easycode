@@ -26,7 +26,7 @@ Provider 完整 item 首次提供允许正文时 SHALL 发布有界的 Started/C
 
 #### Scenario: Consume item-only output once
 - **WHEN** OpenAI 仅以合法完整 reasoning item 提供正文
-- **THEN** 依次产生 Started/Completed 后发布该 native item，一个块、一份正文，不要求原服务端未要求的辅助事件
+- **THEN** 发布有序的 Started/Completed。Provider 私有归并保留完整原生 item，展示只有一个块和一份正文，无需额外外部事件
 
 #### Scenario: Fail a sample with open blocks
 - **WHEN** stream 在多个块尚未 Completed 时取消、失败或提前 EOF

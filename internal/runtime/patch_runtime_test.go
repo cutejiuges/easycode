@@ -91,7 +91,7 @@ func TestPatchApprovalDurabilityPrecedesExecution(t *testing.T) {
 	preparer := &fixedPatchPreparer{candidate: candidate}
 	executor := &fixedPatchExecutor{}
 	approvalID, _ := tool.ParseApprovalRequestID("018f1d8a-7b5c-7def-8abc-456789abcdef")
-	runtime := &Runtime{journal: journal, sessionID: runtimeSessionID, threadID: runtimeThreadID, patchPreparer: preparer, patchExecutor: executor, toolPolicy: tool.NewApprovalPolicy(), newApprovalRequestID: func() (tool.ApprovalRequestID, error) { return approvalID, nil }, interactiveApprovals: true}
+	runtime := &Runtime{journal: journal, sessionID: runtimeSessionID, threadID: runtimeThreadID, tools: tool.Components{PreparePatch: preparer, Patch: executor, Policy: tool.NewApprovalPolicy()}, newApprovalRequestID: func() (tool.ApprovalRequestID, error) { return approvalID, nil }, interactiveApprovals: true}
 	events := make(chan protocol.Event, 2)
 	type outcome struct {
 		results []tool.InvocationResult
@@ -154,10 +154,13 @@ func TestPatchCreatesExclusiveBarrierBetweenReadBatches(t *testing.T) {
 	}
 	runtime := &Runtime{
 		journal: &fakeJournal{}, sessionID: runtimeSessionID, threadID: runtimeThreadID,
-		readExecutor:  timelineReadExecutor{mu: &mu, timeline: &timeline},
-		patchPreparer: &fixedPatchPreparer{candidate: candidate, onPrepare: func() { appendTimeline("prepare") }},
-		patchExecutor: &fixedPatchExecutor{onExecute: func() { appendTimeline("patch") }},
-		toolPolicy:    allowPatchPolicy{}, newApprovalRequestID: tool.GenerateApprovalRequestID,
+		tools: tool.Components{
+			Read:         timelineReadExecutor{mu: &mu, timeline: &timeline},
+			PreparePatch: &fixedPatchPreparer{candidate: candidate, onPrepare: func() { appendTimeline("prepare") }},
+			Patch:        &fixedPatchExecutor{onExecute: func() { appendTimeline("patch") }},
+			Policy:       allowPatchPolicy{},
+		},
+		newApprovalRequestID: tool.GenerateApprovalRequestID,
 	}
 	results, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, invocations)
 	if err != nil || len(results) != 3 {

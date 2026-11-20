@@ -76,16 +76,16 @@ func testCompactionCacheStreams(t *testing.T, policy domain.CachePolicy) {
 				defer instance.Close()
 				conversation := testConversation(t, instance)
 				for _, entry := range testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, newUserMessage(strings.Repeat("old history ", 100)))}) {
-					conversation.history.commit(entry)
+					conversation.history.Append(entry)
 				}
-				before, _ := conversation.HistoryFootprint()
+				_, before, _ := conversation.ProjectContextWindow()
 				input, _ := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testAnthropicToolCatalog(t))
 				compact, _ := provider.NewCompactionInput(input, "", 4096)
 				if trigger == domain.CompactionAuto {
 					scope, _ := domain.NewAutoCompactionScope("01900000-0000-7000-8000-000000000099", 1)
 					compact, _ = compact.WithScope(scope)
 				}
-				preview, err := conversation.PreflightCompaction(compact)
+				preview, _, err := conversation.PreflightCompaction(compact)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -93,7 +93,7 @@ func testCompactionCacheStreams(t *testing.T, policy domain.CachePolicy) {
 				if requests.Load() != 1 {
 					t.Fatalf("request retry: %d", requests.Load())
 				}
-				after, _ := conversation.HistoryFootprint()
+				_, after, _ := conversation.ProjectContextWindow()
 				if before != after {
 					t.Fatal("generation changed committed window")
 				}
@@ -146,11 +146,11 @@ func testCompactionStreamCancellation(t *testing.T, policy domain.CachePolicy) {
 	defer instance.Close()
 	conversation := testConversation(t, instance)
 	for _, entry := range testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, newUserMessage(strings.Repeat("old history ", 100)))}) {
-		conversation.history.commit(entry)
+		conversation.history.Append(entry)
 	}
 	input, _ := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testAnthropicToolCatalog(t))
 	compact, _ := provider.NewCompactionInput(input, "", 4096)
-	preview, _ := conversation.PreflightCompaction(compact)
+	preview, _, _ := conversation.PreflightCompaction(compact)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
@@ -164,7 +164,7 @@ func testCompactionStreamCancellation(t *testing.T, policy domain.CachePolicy) {
 		t.Fatal("cancellation accepted")
 	}
 	<-released
-	if conversation.pending.Load() || conversation.active.Load() {
+	if conversation.operations.Busy() {
 		t.Fatal("operation owner leaked")
 	}
 }

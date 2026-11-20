@@ -14,59 +14,48 @@ import (
 
 // transcriptQueries 拥有当前线程查询与事实投影，关闭时取消并等待所有已接收查询。
 type transcriptQueries struct {
-	stopSequences   map[uint64]domain.AssistantSampleReference
-	stops           map[domain.AssistantSampleReference]session.ReplayedStop
-	compactions     []compactionTranscript
-	projector       provider.TranscriptProjector
-	facades         []tool.Facade
-	nativeSequences []uint64
-	nodes           []transcriptNode
-	mainNodes       []transcriptNode
-	mu              sync.Mutex
-	thread          domain.ThreadID
-	reader          tool.ArtifactRangeReader
-	entries         []session.ToolHistoryEntry
-	indices         map[tool.InvocationID]int
-	closed          bool
-	invalid         bool
-	next            uint64
-	active          map[uint64]context.CancelFunc
-	wait            sync.WaitGroup
+	stopSequences map[uint64]domain.AssistantSampleReference
+	stops         map[domain.AssistantSampleReference]session.ReplayedStop
+	compactionIDs map[domain.CompactionID]struct{}
+	projector     provider.TranscriptProjector
+	family        domain.ProviderFamily
+	facades       map[string]tool.Facade
+	inputs        map[domain.InputID]struct{}
+	samples       map[domain.TurnID]uint32
+	nativeOrdinal uint64
+	lastSequence  uint64
+	nodes         transcriptRows[transcriptNode]
+	mainNodes     transcriptRows[int]
+	mu            sync.Mutex
+	thread        domain.ThreadID
+	reader        tool.ArtifactRangeReader
+	tools         map[tool.InvocationID]*session.ToolHistoryEntry
+	closed        bool
+	invalid       bool
+	next          uint64
+	active        map[uint64]context.CancelFunc
+	wait          sync.WaitGroup
 }
 
-func newTranscriptQueries(thread domain.ThreadID, reader tool.ArtifactRangeReader, entries []session.ToolHistoryEntry) *transcriptQueries {
-	q := &transcriptQueries{thread: thread, reader: reader, indices: make(map[tool.InvocationID]int), active: make(map[uint64]context.CancelFunc)}
-	q.entries = append([]session.ToolHistoryEntry(nil), entries...)
-	for i := range q.entries {
-		q.entries[i].Invocation = q.entries[i].Invocation.Clone()
-		if q.entries[i].PreHooks != nil {
-			g := q.entries[i].PreHooks.Clone()
-			q.entries[i].PreHooks = &g
-		}
-		q.entries[i].Hooks = append([]session.HookHistoryEntry(nil), q.entries[i].Hooks...)
-		if q.entries[i].PostHooks != nil {
-			g := q.entries[i].PostHooks.Clone()
-			q.entries[i].PostHooks = &g
-		}
+func newTranscriptQueries(thread domain.ThreadID, reader tool.ArtifactRangeReader) *transcriptQueries {
+	return &transcriptQueries{
+		thread: thread, reader: reader, tools: make(map[tool.InvocationID]*session.ToolHistoryEntry),
+		active: make(map[uint64]context.CancelFunc),
 	}
-	for i, e := range q.entries {
-		q.indices[e.Invocation.InvocationID()] = i
-	}
-	return q
 }
 
 func (q *transcriptQueries) ToolResult(sequence uint64, result tool.InvocationResult, evidence tool.InputResultEvidence) error {
 	invalid := sequence == 0 || tool.ValidateFrozenResult(result) != nil || evidence.ValidateResult(result) != nil
 	original, origin, admission := evidence.Selection().Original(), evidence.Selection().Origin(), evidence.Admission()
 	q.mu.Lock()
-	index, exists := q.indices[result.InvocationID()]
+	stored := q.tools[result.InvocationID()]
 	var entry session.ToolHistoryEntry
-	if exists {
-		entry = q.entries[index]
+	if stored != nil {
+		entry = *stored
 	}
 	q.mu.Unlock()
 	selection, err := entry.InputSelection()
-	if invalid || !exists || err != nil || sequence <= max(entry.Sequence, max(entry.DetailSequence, admission.Sequence())) || !selection.Equal(evidence.Selection()) || entry.HasResult || entry.Origin != origin || !entry.Invocation.Equal(original) || entry.Admission != admission || entry.Invocation.ProviderCallID() != result.ProviderCallID() || entry.Invocation.Capability() != result.Capability() || entry.Invocation.WireKind() != result.WireKind() {
+	if invalid || stored == nil || err != nil || sequence <= max(entry.Sequence, max(entry.DetailSequence, admission.Sequence())) || !selection.Equal(evidence.Selection()) || entry.HasResult || entry.Origin != origin || !entry.Invocation.Equal(original) || entry.Admission != admission || entry.Invocation.ProviderCallID() != result.ProviderCallID() || entry.Invocation.Capability() != result.Capability() || entry.Invocation.WireKind() != result.WireKind() {
 		q.mu.Lock()
 		q.invalid = true
 		q.mu.Unlock()
@@ -74,13 +63,13 @@ func (q *transcriptQueries) ToolResult(sequence uint64, result tool.InvocationRe
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if q.closed || q.invalid || q.entries[index].HasResult || q.entries[index].DetailSequence != entry.DetailSequence || q.entries[index].Admission != entry.Admission {
+	if q.closed || q.invalid || stored.HasResult || stored.DetailSequence != entry.DetailSequence || stored.Admission != entry.Admission {
 		q.invalid = true
 		return errors.New("tool result history snapshot is stale")
 	}
-	q.entries[index].Result = result
-	q.entries[index].ResultSequence = sequence
-	q.entries[index].HasResult = true
+	stored.Result = result
+	stored.ResultSequence = sequence
+	stored.HasResult = true
 	return nil
 }
 
@@ -90,24 +79,24 @@ func (q *transcriptQueries) ToolStarted(invocation tool.InvocationID, admission 
 		return errors.New("invalid tool admission history")
 	}
 	q.mu.Lock()
-	index, ok := q.indices[invocation]
+	stored := q.tools[invocation]
 	var previous session.ToolHistoryEntry
-	if ok {
-		previous = q.entries[index]
+	if stored != nil {
+		previous = *stored
 	}
 	q.mu.Unlock()
 	selection, err := previous.InputSelection()
 	_, selected := selection.EffectiveInvocation()
-	if !ok || err != nil || !selected || admission.Sequence() <= previous.Sequence || admission.Sequence() <= previous.DetailSequence {
+	if stored == nil || err != nil || !selected || admission.Sequence() <= previous.Sequence || admission.Sequence() <= previous.DetailSequence {
 		return errors.New("tool admission history has no selected source")
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if q.closed || q.invalid || q.entries[index].HasResult || q.entries[index].Admission.Sequence() != 0 || q.entries[index].DetailSequence != previous.DetailSequence {
+	if q.closed || q.invalid || stored.HasResult || stored.Admission.Sequence() != 0 || stored.DetailSequence != previous.DetailSequence {
 		q.invalid = true
 		return errors.New("tool admission history order mismatch")
 	}
-	q.entries[index].Admission = admission
+	stored.Admission = admission
 	return nil
 }
 
@@ -166,13 +155,13 @@ func (q *transcriptQueries) ReadToolOutput(ctx context.Context, query protocol.T
 	}
 	defer done()
 	q.mu.Lock()
-	index, exists := q.indices[id]
+	stored := q.tools[id]
 	var entry session.ToolHistoryEntry
-	if exists {
-		entry = q.entries[index]
+	if stored != nil {
+		entry = *stored
 	}
 	q.mu.Unlock()
-	if !exists || !entry.HasResult {
+	if stored == nil || !entry.HasResult {
 		return protocol.ToolOutputPage{}, tool.ArtifactReadUnauthorized
 	}
 	var saving tool.ArtifactSaving
@@ -234,12 +223,11 @@ func (q *transcriptQueries) PostHooksCommitted(invocation tool.InvocationID, seq
 	cloned := snapshot.Clone()
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	index, ok := q.indices[invocation]
-	if !ok || sequence <= q.entries[index].DetailSequence {
+	entry := q.tools[invocation]
+	if entry == nil || sequence <= entry.DetailSequence {
 		q.invalid = true
 		return errors.New("post hook history order mismatch")
 	}
-	entry := &q.entries[index]
 	if entry.PostHooks != nil && entry.PostHooks.Plan.Digest != snapshot.Plan.Digest {
 		q.invalid = true
 		return errors.New("post hook history plan mismatch")

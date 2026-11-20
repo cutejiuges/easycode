@@ -17,7 +17,7 @@ func taskRuntimeFixture(t *testing.T, journal Journal) *Runtime {
 	t.Helper()
 	c := &fakeToolConversation{fakeConversation: &fakeConversation{}}
 	config := testRuntimeConfig(t, journal)
-	config.TaskExecutor = builtin.NewTaskExecutor()
+	config.ToolBinding = testRuntimeToolBinding(t, func(tools *tool.Components) { tools.Task = builtin.NewTaskExecutor() })
 	r, err := New(c, config)
 	if err != nil {
 		t.Fatal(err)
@@ -336,7 +336,7 @@ func TestTaskIsExclusiveWithoutApprovalHookOrGrantAuthority(t *testing.T) {
 	}
 	denied := taskRuntimeInvocation(t, "拒绝候选", domain.TaskPending, "denied")
 	before := r.TaskProgress()
-	r.toolPolicy = taskDenyPolicy{}
+	r.tools.Policy = taskDenyPolicy{}
 	results, err = executeReadyFixtureCalls(t, r, context.Background(), runtimeTurnID, []tool.Invocation{denied})
 	if err != nil || len(results) != 1 || results[0].Status() != tool.ResultDenied || !r.TaskProgress().Equal(before) {
 		t.Fatal("denied candidate applied", err)

@@ -295,7 +295,7 @@ func testHookResumeReconcilesEveryBatch(t *testing.T, event domain.HookEvent, re
 						if err != nil {
 							t.Fatal(err)
 						}
-						footprint, err := future.transcriptQueries.projector.(provider.Conversation).HistoryFootprint()
+						_, footprint, err := future.transcriptQueries.projector.(provider.Conversation).ProjectContextWindow()
 						if err != nil {
 							t.Fatal(err)
 						}

@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"easycode/internal/domain"
 	"easycode/internal/protocol"
@@ -60,17 +59,6 @@ func (model Model) WithTaskProgressScope(sessionID domain.SessionID, threadID do
 	enabled := model.tasks.enabled
 	model.tasks = taskProgressView{enabled: enabled, generation: generation, sessionID: sessionID, threadID: threadID}
 	return model
-}
-
-func parseTasksCommand(text string) (bool, error) {
-	words := strings.Fields(text)
-	if len(words) == 0 || words[0] != "/tasks" {
-		return false, nil
-	}
-	if len(words) != 1 {
-		return true, fmt.Errorf("/tasks does not accept arguments")
-	}
-	return true, nil
 }
 
 func (model Model) initialTaskQuery() tea.Cmd {
@@ -235,7 +223,7 @@ func (model Model) handleTasksKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return model.closeTaskPanel(), nil
 	case tea.KeyCtrlC:
 		model = model.closeTaskPanel()
-		return model.handleKey(key)
+		return model.handleCancelKey()
 	case tea.KeyUp:
 		model.tasks.scroll = max(0, model.tasks.scroll-1)
 	case tea.KeyDown:

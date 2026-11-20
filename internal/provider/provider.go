@@ -101,18 +101,10 @@ func (input TurnInput) ToolCatalog() (tool.CatalogSnapshot, bool, error) {
 	return clone, true, nil
 }
 
-// NativeItem 是 provider 原生 item 的只读领域边界。
-// 具体字段必须留在 anthropic/openai 子包的强类型结构中。
-type NativeItem interface {
-	ProviderFamily() domain.ProviderFamily
-	ItemKind() string
-}
-
 // StreamEvent 是 Provider 流中封闭构造的只读事件。
 type StreamEvent struct {
 	kind     StreamEventKind
 	semantic protocol.Event
-	native   NativeItem
 	prepared *PreparedSample
 	err      error
 }
@@ -122,7 +114,6 @@ type StreamEventKind string
 
 const (
 	StreamEventSemantic  StreamEventKind = "semantic"
-	StreamEventNative    StreamEventKind = "native_item"
 	StreamEventCompleted StreamEventKind = "completed"
 	StreamEventFailed    StreamEventKind = "failed"
 	StreamEventCancelled StreamEventKind = "cancelled"
@@ -140,15 +131,6 @@ func NewSemanticStreamEvent(event protocol.Event) (StreamEvent, error) {
 		return StreamEvent{}, err
 	}
 	streamEvent.semantic = cloneProtocolEvent(event)
-	return streamEvent, nil
-}
-
-// NewNativeStreamEvent 创建 Provider 原生 item 事件。
-func NewNativeStreamEvent(item NativeItem) (StreamEvent, error) {
-	streamEvent := StreamEvent{kind: StreamEventNative, native: item}
-	if err := streamEvent.Validate(); err != nil {
-		return StreamEvent{}, err
-	}
 	return streamEvent, nil
 }
 
@@ -192,14 +174,6 @@ func (event StreamEvent) Semantic() protocol.Event {
 	return cloneProtocolEvent(event.semantic)
 }
 
-// NativeItem 返回原生 item，其他 kind 返回 nil。
-func (event StreamEvent) NativeItem() NativeItem {
-	if event.kind != StreamEventNative {
-		return nil
-	}
-	return event.native
-}
-
 // PreparedSample 返回成功终态携带的待提交 sample，其他 kind 返回 nil。
 func (event StreamEvent) PreparedSample() *PreparedSample {
 	if event.kind != StreamEventCompleted {
@@ -220,7 +194,7 @@ func (event StreamEvent) Error() error {
 func (event StreamEvent) Validate() error {
 	switch event.kind {
 	case StreamEventSemantic:
-		if eventHasNoSemantic(event) || protocolEventEmpty(event.semantic) {
+		if event.prepared != nil || event.err != nil || protocolEventEmpty(event.semantic) {
 			return fmt.Errorf("semantic stream event payload is invalid")
 		}
 		if event.semantic.Kind != protocol.EventAssistantTextDelta && event.semantic.Kind != protocol.EventAssistantReasoning {
@@ -235,15 +209,8 @@ func (event StreamEvent) Validate() error {
 		if err := event.semantic.Validate(); err != nil {
 			return fmt.Errorf("semantic stream event is invalid: %w", err)
 		}
-	case StreamEventNative:
-		if !protocolEventEmpty(event.semantic) || event.prepared != nil || event.err != nil || nativeItemNil(event.native) {
-			return fmt.Errorf("native stream event payload is invalid")
-		}
-		if !event.native.ProviderFamily().Valid() || strings.TrimSpace(event.native.ItemKind()) == "" {
-			return fmt.Errorf("native stream event item is invalid")
-		}
 	case StreamEventCompleted:
-		if !protocolEventEmpty(event.semantic) || !nativeItemNil(event.native) || event.prepared == nil || event.err != nil {
+		if !protocolEventEmpty(event.semantic) || event.prepared == nil || event.err != nil {
 			return fmt.Errorf("completed stream event payload is invalid")
 		}
 		if _, err := event.prepared.Envelope(); err != nil {
@@ -262,17 +229,13 @@ func (event StreamEvent) Validate() error {
 			return fmt.Errorf("completed stream event presentation is invalid: %w", err)
 		}
 	case StreamEventFailed, StreamEventCancelled:
-		if !protocolEventEmpty(event.semantic) || !nativeItemNil(event.native) || event.prepared != nil || streamErrorNil(event.err) {
+		if !protocolEventEmpty(event.semantic) || event.prepared != nil || streamErrorNil(event.err) {
 			return fmt.Errorf("terminal stream event payload is invalid")
 		}
 	default:
 		return fmt.Errorf("stream event kind is invalid")
 	}
 	return nil
-}
-
-func eventHasNoSemantic(event StreamEvent) bool {
-	return !nativeItemNil(event.native) || event.prepared != nil || event.err != nil
 }
 
 func protocolEventEmpty(event protocol.Event) bool {
@@ -284,19 +247,6 @@ func protocolEventEmpty(event protocol.Event) bool {
 func cloneProtocolEvent(event protocol.Event) protocol.Event {
 	event.Payload = append(json.RawMessage(nil), event.Payload...)
 	return event
-}
-
-func nativeItemNil(item NativeItem) bool {
-	if item == nil {
-		return true
-	}
-	value := reflect.ValueOf(item)
-	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return value.IsNil()
-	default:
-		return false
-	}
 }
 
 func streamErrorNil(err error) bool {
@@ -318,19 +268,17 @@ type HistoryProjector interface {
 	ProjectAssistantSample(domain.AssistantSampleReference) (domain.AssistantSampleText, error)
 }
 
-// HistoryFootprinter 返回 Provider 已提交原生历史的不透明数值摘要。
-type HistoryFootprinter interface {
-	HistoryFootprint() (domain.NativeHistoryFootprint, error)
-}
+// StreamEvents 按顺序交付流事件。宿主取消后继续迭代到结束，等待原生产者完成清理。
+type StreamEvents func(yield func(StreamEvent) bool)
 
 // Conversation 是 Runtime 依赖的会话级 provider 接口。
 type Conversation interface {
 	HistoryProjector
-	HistoryFootprinter
 	ProjectActiveContext() (domain.ActiveContextView, error)
+	ProjectContextWindow() (domain.ActiveContextView, domain.NativeHistoryFootprint, error)
 	Family() domain.ProviderFamily
 	Capabilities() Capabilities
-	Stream(context.Context, TurnInput) (<-chan StreamEvent, error)
+	Stream(context.Context, TurnInput) (StreamEvents, error)
 }
 
 // ToolResultPreparer 由具体 Provider 在纯内存中完成原生结果配对和编码。
@@ -585,12 +533,12 @@ type Factory interface {
 	Family() domain.ProviderFamily
 	Capabilities() Capabilities
 	NewConversation(domain.ThreadID) (Conversation, error)
-	RestoreConversation(domain.ThreadID, []RestoreRecord) (Conversation, error)
+	RestoreConversation(context.Context, domain.ThreadID, []RestoreRecord) (Conversation, CheckpointReader, error)
 }
 
 // TranscriptProjector 为宿主生成只读有序展示投影，不参与请求编译。
 type TranscriptProjector interface {
-	ProjectTranscript() (domain.TranscriptView, error)
+	ProjectTranscriptFrom(ordinal uint64) (view domain.TranscriptView, end uint64, err error)
 }
 
 // Receipt 返回待提交样本的纯值请求收据。
@@ -605,7 +553,7 @@ func (sample *PreparedSample) Receipt() (domain.RequestReceipt, error) {
 }
 
 // ContinuationResetter 由持有瞬态续写资源的 Conversation 实现显式生命周期清理。
-type ContinuationResetter interface{ ResetContinuation() }
+type ContinuationResetter interface{ ResetContinuation() error }
 
 // WithSkillCatalog 绑定不可变的本地技能元数据目录。
 func (input TurnInput) WithSkillCatalog(c domain.SkillCatalog) (TurnInput, error) {

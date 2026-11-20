@@ -3,7 +3,6 @@ package domain
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -288,12 +287,17 @@ func ValidateFileAttachments(text string, files FileAttachments) error {
 	if err != nil {
 		return err
 	}
-	actual := make([]FileReference, 0, files.Len())
-	for _, item := range files.items {
-		actual = append(actual, item.Reference())
-	}
-	if !slices.Equal(refs, actual) {
+	return matchFileReferences(refs, files)
+}
+
+func matchFileReferences(refs []FileReference, files FileAttachments) error {
+	if len(refs) != files.Len() {
 		return NewFileFailure(FileInvalid)
+	}
+	for i, ref := range refs {
+		if files.items[i].Reference() != ref {
+			return NewFileFailure(FileInvalid)
+		}
 	}
 	return nil
 }

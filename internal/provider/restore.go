@@ -220,26 +220,6 @@ func (record RestoreRecord) ReadyInvocations() []tool.Invocation {
 	return cloneReadyInvocations(record.readyCalls)
 }
 
-// QuestionResults 返回独立的已提交答案关联，不包含未提交草稿。
-func (record RestoreRecord) QuestionResults() []tool.InvocationResult {
-	return record.resultsForCapability(tool.CapabilityQuestion)
-}
-
-// TaskResults 返回已提交任务结果，不把仅有调用当作已应用进度。
-func (record RestoreRecord) TaskResults() []tool.InvocationResult {
-	return record.resultsForCapability(tool.CapabilityTaskProgress)
-}
-
-func (record RestoreRecord) resultsForCapability(capability tool.CapabilityID) []tool.InvocationResult {
-	results := make([]tool.InvocationResult, 0)
-	for _, result := range record.readyResults {
-		if result.Capability() == capability {
-			results = append(results, result)
-		}
-	}
-	return results
-}
-
 // NewCheckpointRestoreRecord 保留与普通增量交错的独立 checkpoint。
 func NewCheckpointRestoreRecord(checkpoint CheckpointEnvelope, expected domain.TaskProgressState) (RestoreRecord, error) {
 	clone, err := checkpoint.Clone()

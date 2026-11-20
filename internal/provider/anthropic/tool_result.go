@@ -1,9 +1,9 @@
 package anthropic
 
 import (
-	"easycode/internal/domain"
 	"fmt"
 
+	"easycode/internal/domain"
 	"easycode/internal/provider"
 	"easycode/internal/tool"
 )
@@ -26,11 +26,6 @@ func toolOutputsEntry(turn domain.TurnID, calls []NativeItem, results []tool.Mod
 		return nativeHistoryEntry{}, err
 	}
 	return entry, nil
-}
-
-func anthropicCapabilityForName(name string) tool.CapabilityID {
-	capability, _ := tool.FacadeCapability(domain.ProviderAnthropic, name)
-	return capability
 }
 
 func nativeSequenceRules() provider.NativeSequenceRules[nativeHistoryEntry, NativeItem] {

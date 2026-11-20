@@ -33,14 +33,14 @@ func TestReasoningRequestsSummaryAndWebsocketGolden(t *testing.T) {
 			t.Fatal(err)
 		}
 		c := testConversation(t, instance)
-		c.history.commit(testInputEntry(t, NewUserItem("hello")))
+		c.history.Append(testInputEntry(t, NewUserItem("hello")))
 		sampling, _ := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testOpenAIToolCatalog(t))
-		ordinary, err := c.planSamplingRequest(c.history.snapshot(), sampling)
+		ordinary, err := c.planSamplingRequest(c.history.Snapshot(), sampling)
 		if err != nil {
 			t.Fatal(err)
 		}
 		compact, _ := provider.NewCompactionInput(sampling, "preserve test failures", 4096)
-		summary, err := c.planCompactionRequest(compact)
+		summary, err := c.planCompactionRequest(c.history.Snapshot(), compact)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -53,7 +53,7 @@ func TestReasoningRequestsSummaryAndWebsocketGolden(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			receipt, err := c.describeRequest(body, e, plan.purpose)
+			receipt, err := c.describeRequest(body, e, e.Compare(c.baseline), plan.purpose)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -69,14 +69,14 @@ func TestReasoningRequestsSummaryAndWebsocketGolden(t *testing.T) {
 				if properties.ToolChoice != "none" || properties.MaxOutputTokens != 4096 || !bytes.Contains(native.Bytes(), []byte("preserve test failures")) {
 					t.Fatal("ordinary evidence substituted for summary")
 				}
-				preview, err := c.PreflightCompaction(compact)
+				preview, _, err := c.PreflightCompaction(compact)
 				if err != nil {
 					t.Fatal(err)
 				}
 				if preview.Source().Digest() == e.NativeFingerprint() {
 					t.Fatal("source digest confused with guided input")
 				}
-				preflight, _ := c.compileCompactionRequest(preview.Input())
+				preflight, _ := c.compileCompactionRequest(c.history.Snapshot(), preview.Input())
 				if !bytes.Equal(preflight.Bytes(), body.Bytes()) {
 					t.Fatal("preflight differs from execution")
 				}
@@ -88,7 +88,7 @@ func TestReasoningRequestsSummaryAndWebsocketGolden(t *testing.T) {
 					if transport == "ws-incremental" {
 						id, offset = "response-fixture", 1
 					}
-					wire, err = websocketBody(body, id, offset)
+					wire, err = plan.websocketBody(id, offset)
 					if err != nil {
 						t.Fatal(err)
 					}

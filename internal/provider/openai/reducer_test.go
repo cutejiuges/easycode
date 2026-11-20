@@ -82,10 +82,23 @@ func TestResponsesStreamReducerProducesOrderedHeterogeneousReadyCalls(t *testing
 		reduceOpenAIEvent(t, reducer, fmt.Sprintf(`{"type":"response.function_call_arguments.done","item_id":"%s","output_index":%d,"arguments":%q}`, call.itemID, call.index, call.arguments))
 		reduceOpenAIEvent(t, reducer, fmt.Sprintf(`{"type":"response.output_item.done","output_index":%d,"item":{"type":"function_call","id":"%s","call_id":"%s","name":"%s","arguments":%q}}`, call.index, call.itemID, call.callID, call.name, call.arguments))
 	}
+	const patch = "*** Begin Patch\n*** Update File: note.txt\n@@\n-old\n+verified\n*** End Patch\n"
+	reduceOpenAIEvent(t, reducer, `{"type":"response.output_item.added","output_index":3,"item":{"type":"custom_tool_call","id":"ct-3","call_id":"call-3","name":"apply_patch"}}`)
+	reduceOpenAIEvent(t, reducer, fmt.Sprintf(`{"type":"response.custom_tool_call_input.delta","item_id":"ct-3","output_index":3,"delta":%q}`, patch))
+	reduceOpenAIEvent(t, reducer, fmt.Sprintf(`{"type":"response.custom_tool_call_input.done","item_id":"ct-3","output_index":3,"input":%q}`, patch))
+	if len(reducer.readyCalls()) != 3 {
+		t.Fatal("freeform input became ready before the native item completed")
+	}
+	reduceOpenAIEvent(t, reducer, fmt.Sprintf(`{"type":"response.output_item.done","output_index":3,"item":{"type":"custom_tool_call","id":"ct-3","call_id":"call-3","name":"apply_patch","input":%q}}`, patch))
 	reduceOpenAIEvent(t, reducer, `{"type":"response.completed","response":{"id":"resp-tools"}}`)
 	ready := reducer.readyCalls()
-	if len(ready) != 3 || ready[0].Capability() != tool.CapabilityGlob || ready[1].Capability() != tool.CapabilityGrep || ready[2].Capability() != tool.CapabilityRead {
+	if len(ready) != 4 || ready[0].Capability() != tool.CapabilityGlob || ready[1].Capability() != tool.CapabilityGrep || ready[2].Capability() != tool.CapabilityRead ||
+		ready[3].Capability() != tool.CapabilityPatch || ready[3].WireKind() != tool.WireCustomFreeform || ready[3].ProviderCallID() != "call-3" {
 		t.Fatalf("异构 ready calls = %#v", ready)
+	}
+	items := reducer.outputItems()
+	if len(items) != 4 || items[3].Type != "custom_tool_call" || items[3].Input != patch || items[3].Arguments != "" {
+		t.Fatalf("native items = %#v", items)
 	}
 }
 
@@ -115,4 +128,39 @@ func reduceOpenAIEvent(t *testing.T, reducer *responsesStreamReducer, data strin
 		t.Fatalf("reduce event %s: %v", data, err)
 	}
 	return result
+}
+
+func TestResponsesRejectsUnfinishedOrDuplicatedMessage(t *testing.T) {
+	const messageDone = `{"type":"response.output_item.done","output_index":0,"item":{"type":"message","id":"msg","role":"assistant","content":[{"type":"output_text","text":"answer"}]}}`
+	for _, scenario := range []struct {
+		name   string
+		first  string
+		second string
+		reject string
+	}{
+		{
+			name:   "unfinished message beside a completed reasoning item",
+			first:  `{"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg","role":"assistant","content":[]}}`,
+			second: `{"type":"response.output_item.done","output_index":1,"item":{"type":"reasoning","id":"reason","encrypted_content":"opaque"}}`,
+			reject: `{"type":"response.completed","response":{"id":"resp"}}`,
+		},
+		{
+			name:   "duplicate completion with a conflicting snapshot",
+			first:  messageDone,
+			second: `{"type":"response.output_item.done","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"another item"}]}}`,
+			reject: `{"type":"response.output_item.done","output_index":0,"item":{"type":"message","id":"msg","role":"assistant","content":[{"type":"output_text","text":"conflict"}]}}`,
+		},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			reducer := newResponsesStreamReducer()
+			reduceOpenAIEvent(t, reducer, `{"type":"response.created","response":{"id":"resp"}}`)
+			reduceOpenAIEvent(t, reducer, scenario.first)
+			reduceOpenAIEvent(t, reducer, scenario.second)
+			_, err := reducer.reduce(transport.SSEEvent{Data: scenario.reject})
+			var failure *fault.Error
+			if !errors.As(err, &failure) || failure.Code != fault.CodeStreamProtocol || reducer.terminal {
+				t.Fatalf("invalid message stream resolved as terminal=%v, %v", reducer.terminal, err)
+			}
+		})
+	}
 }

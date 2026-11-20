@@ -1,7 +1,6 @@
 package anthropic
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -32,7 +31,10 @@ func TestThinkingLifecycleWhitelistAndNativeSignature(t *testing.T) {
 			t.Fatal(err)
 		}
 		output := make(chan provider.StreamEvent, 16)
-		if err := provider.PublishReasoning(context.Background(), output, result.reasoning); err != nil {
+		if err := provider.PublishReasoning(result.reasoning, func(event provider.StreamEvent) error {
+			output <- event
+			return nil
+		}); err != nil {
 			t.Fatal(err)
 		}
 		close(output)

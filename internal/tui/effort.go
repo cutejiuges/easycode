@@ -43,26 +43,19 @@ type effortFailedMsg struct {
 	err        error
 }
 
-// parseEffortCommand 仅规范化参数；首词必须精确匹配内置命令。
-func parseEffortCommand(text string) (localEffortCommand, bool, error) {
-	words := strings.Fields(text)
-	if len(words) == 0 || words[0] != "/effort" {
-		return localEffortCommand{}, false, nil
+// 仅在识别出 /effort 后解析至多一个参数。
+func parseEffortArgument(remainder string) (localEffortCommand, error) {
+	argument, extra := domain.SplitInputHead(remainder)
+	if strings.TrimSpace(extra) != "" {
+		return localEffortCommand{}, fmt.Errorf("/effort accepts one argument")
 	}
-	if len(words) > 2 {
-		return localEffortCommand{}, true, fmt.Errorf("/effort accepts one argument")
-	}
-	argument := ""
-	if len(words) == 2 {
-		for _, character := range words[1] {
-			if character > 127 {
-				return localEffortCommand{}, true, fmt.Errorf("unknown effort argument")
-			}
+	for _, character := range argument {
+		if character > 127 {
+			return localEffortCommand{}, fmt.Errorf("unknown effort argument")
 		}
-		argument = strings.ToLower(words[1])
 	}
 	command := localEffortCommand{}
-	switch argument {
+	switch argument = strings.ToLower(argument); argument {
 	case "", "current", "status":
 		command.query = true
 	case "help", "-h", "--help":
@@ -74,11 +67,11 @@ func parseEffortCommand(text string) (localEffortCommand, bool, error) {
 	default:
 		choice, err := domain.NewExplicitEffortChoice(domain.EffortLevel(argument))
 		if err != nil {
-			return command, true, fmt.Errorf("unknown effort argument")
+			return command, fmt.Errorf("unknown effort argument")
 		}
 		command.choice = choice
 	}
-	return command, true, nil
+	return command, nil
 }
 
 func (model *Model) clearEffortFeedback() {

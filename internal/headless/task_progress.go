@@ -11,8 +11,8 @@ import (
 const (
 	// MaxTaskQueryBytes 限制独立任务查询的完整编码行。
 	MaxTaskQueryBytes = 4 << 10
-	// MaxTaskSnapshotBytes 同时覆盖外部 envelope、任务资料及换行。
-	MaxTaskSnapshotBytes = 96 << 10
+	// MaxTaskSnapshotFrameBytes 同时覆盖外部 envelope、任务资料及换行。
+	MaxTaskSnapshotFrameBytes = 96 << 10
 )
 
 func decodeTaskQuery(line []byte, requestID protocol.RequestID) (protocol.Command, error) {
@@ -43,7 +43,7 @@ func validateTaskSnapshotEvent(value StreamTaskSnapshotEvent) error {
 		return fmt.Errorf("task snapshot event is invalid")
 	}
 	encoded, err := codec.MarshalStable(value)
-	if err != nil || len(encoded)+1 > MaxTaskSnapshotBytes {
+	if err != nil || len(encoded)+1 > MaxTaskSnapshotFrameBytes {
 		return fmt.Errorf("task snapshot event exceeds limit")
 	}
 	return nil
@@ -51,7 +51,7 @@ func validateTaskSnapshotEvent(value StreamTaskSnapshotEvent) error {
 
 // DecodeTaskSnapshotEvent 严格读取唯一外部 v1 快照，不忽略未知身份或 profile。
 func DecodeTaskSnapshotEvent(raw []byte) (StreamTaskSnapshotEvent, error) {
-	if len(raw)+1 > MaxTaskSnapshotBytes {
+	if len(raw)+1 > MaxTaskSnapshotFrameBytes {
 		return StreamTaskSnapshotEvent{}, fmt.Errorf("task snapshot event exceeds limit")
 	}
 	var value StreamTaskSnapshotEvent

@@ -106,11 +106,11 @@ func TestFileInputFixedNativeBlocksPrepareDiscardFinalizeAndRestore(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
-			before, err := c.compileSamplingRequest(c.history.snapshot(), sampling)
+			before, err := c.compileSamplingRequest(c.history.Entries(), sampling)
 			if err != nil {
 				t.Fatal(err)
 			}
-			after, err := restored.compileSamplingRequest(restored.history.snapshot(), sampling)
+			after, err := restored.compileSamplingRequest(restored.history.Entries(), sampling)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -140,11 +140,11 @@ func TestFileInputFixedNativeBlocksPrepareDiscardFinalizeAndRestore(t *testing.T
 			}
 			message.Files = domain.FileAttachments{}
 			view.Turns[0].Messages[0] = message
-			transcript, err := restored.ProjectTranscript()
+			transcript, _, err := restored.ProjectTranscriptFrom(0)
 			if err != nil || transcript.Items[0].Files.Len() != 2 {
 				t.Fatal("transcript missing frozen files", err)
 			}
-			entries := restored.history.snapshot()
+			entries := restored.history.Entries()
 			entries[0].InputMetadata.Files[0].Attachments = domain.FileAttachments{}
 			if validateNativeHistory(entries) == nil || restored.ProjectHistory().Turns[0].Messages[0].Files.Len() != 2 {
 				t.Fatal("clone leaked or invalid metadata accepted")

@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	"easycode/internal/domain"
+	"easycode/internal/executor/process"
 	"easycode/internal/tool"
 )
 
@@ -23,7 +24,7 @@ type hookLaunchPolicy struct{ fingerprint string }
 
 func (p hookLaunchPolicy) Plan(root string) (SandboxPlan, error) {
 	if !domain.ValidHookDigest(p.fingerprint) || !filepath.IsAbs(root) || filepath.Clean(root) != root || !utf8.ValidString(root) || strings.ContainsRune(root, 0) {
-		return SandboxPlan{}, errSandboxUnavailable
+		return SandboxPlan{}, process.SandboxUnavailable
 	}
 	return SandboxPlan{root: root, workdir: ".", temporary: root, cache: filepath.Join(root, ".cache", "go-build"), revision: domain.HookSandboxPolicy, candidateFingerprint: p.fingerprint, readRoots: CommandReadRoots(root)}, nil
 }

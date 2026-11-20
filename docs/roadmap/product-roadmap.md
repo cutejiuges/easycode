@@ -228,7 +228,7 @@ make verify
 
 ### 6.0 当前进度（2026-11-19）
 
-已交付 root Session 的 append-only JSONL、typed 当前 codecs、UUIDv7 日期定位、跨进程连续 lease、验证后 repair/Sync、双 Provider 原生恢复、工具补偿和不可变 fixture。SQLite Catalog 可重建，仅保存 root-thread 元数据；支持 `--resume`、`--continue`、离线 `sessions list` 及启动 `resume` 元数据搜索/只读预览。手动标题由 root journal 追加事实，列表、选择器和预览提供展示。其余目标包括 child-thread 执行、全文搜索、tag、project/worktree 聚合与实时索引。
+已交付 root Session 的 append-only JSONL、typed 当前 codecs、UUIDv7 日期定位、跨进程连续 lease、验证后 repair/Sync、双 Provider 原生恢复、工具补偿和不可变 fixture。Catalog 快照 可重建，仅保存 root-thread 元数据；支持 `--resume`、`--continue`、离线 `sessions list` 及启动 `resume` 元数据搜索/只读预览。手动标题由 root journal 追加事实，列表、选择器和预览提供展示。其余目标包括 child-thread 执行、全文搜索、tag、project/worktree 聚合与实时索引。
 
 TUI、一次性 `--print`/`--json` 和 stream-json 共用 AgentLoop。自动输入可在完整工具 outputs 后进入同一 turn 的下一 sample，strict-next 仍是独立 turn；原子取回、停止返还、EOF drain 与 shutdown 已实现。队列只在内存，成功 Sync 的输入与原生正文才是恢复事实。API key/base URL 不保存；Session metadata 保存创建 cwd，但恢复继续使用新进程当前 cwd，不回放旧动态环境。
 
@@ -243,7 +243,7 @@ P2 后续范围为更完整的会话检索/线程组织、费用与配额、后�
 ### 6.2 架构选择
 
 - Runtime 通过组合策略模板化生命周期，不统一 provider-native history。
-- JSONL 作为事实源，SQLite 只做可重建索引。
+- JSONL 作为事实源，Catalog 快照只做可重建索引。
 - RuntimeEvent 驱动 TUI 与 headless 的只读投影；Session 事实由 Runtime 在发布 durable terminal 前独立提交，外部 JSONL 不反向写入 Session。
 - 高频 text delta 默认不持久化，item/turn boundary 持久化。
 - ContextPlanner 输出有来源和稳定性标记的 segment，而不是直接拼 prompt。
@@ -256,7 +256,7 @@ P2 后续范围为更完整的会话检索/线程组织、费用与配额、后�
 - 已实现 `provider_profile`、可选 `project_instructions`、`committed_history`、`current_input` 的固定顺序、正交 lifecycle/cache stability、canonical segments、stable prefix、SemanticHistoryView 可见估算与 Provider-native footprint 覆盖合并；后续来源必须随真实消费者独立落地。
 - 已实现 JSONL SessionMeta、native commit、`sample_usage` 和文本 turn boundary；费用与长期累计指标仍待实现；P4 缓存切片已增加有界的进程级来源失效解释。
 - 已实现由同一 exclusive lease 覆盖 load/repair、Provider 恢复、续写和最终关闭的跨进程单 writer，及 `Sync`、尾部半行/未完成尾批修复、唯一当前无版本 envelope 与不可变 current fixture；旧开发 shape 失败关闭，未经用户明确指示不得引入版本转换或兼容设计。
-- 已实现 SQLite Catalog 的 root thread 元数据、全量前台 reconciliation 与损坏或结构不兼容时重建。显式标题由 journal 投影并参与选择器搜索。其余目标包括 project/worktree、tag、正文搜索、实时索引和 thread graph。
+- 已实现 Catalog 快照 的 root thread 元数据、全量前台 reconciliation 与损坏或结构不兼容时重建。显式标题由 journal 投影并参与选择器搜索。其余目标包括 project/worktree、tag、正文搜索、实时索引和 thread graph。
 - 已实现 `--resume <thread-id>`、`--continue`、单 turn `--print`/JSONL v1 `--json`，以及独立 `stream-json` 双向控制模式的同进程多 turn。
 - 已实现当前文本 Chat 的用户中断、依赖有序 shutdown 和中断 turn 补偿；后台任务的完整 shutdown 随对应能力补充。
 - 提供 transcript/debug log 分离。
@@ -265,7 +265,7 @@ P2 后续范围为更完整的会话检索/线程组织、费用与配额、后�
 ### 6.4 交付物
 
 - 已交付可 resume/continue 的一次性 headless 文本 chat 与同进程 FIFO AgentLoop；Read/Glob/Grep/Patch/Write 已交付，Darwin 前台命令已交付，同轮追加、取回与停止返还已交付。
-- 已交付 session JSONL 与可从 JSONL 重建的 `state.sqlite` Catalog。
+- 已交付 session JSONL 与可从 JSONL 重建的 `catalog.json` 快照。
 - 已交付显式 resume 与兼容性精确匹配的 `--continue`；离线 `sessions list` 已交付，启动 `resume` 选择器已交付，支持元数据搜索与显式只读预览。
 - 已交付一次性 thread/turn/text/failure JSONL v1 与独立 streaming control v1，成功 `turn.completed` 必含 normalized usage；独立 usage 更新、reasoning 与 tool 事件尚未交付。
 - 已交付不新增 Session/RuntimeEvent vocabulary 的请求前 ContextPlan 和显式预算守卫；Provider cache marker/key、可选 WebSocket 增量、手动/阈值自动压缩与 context/cache UI 已交付；远程精确 token count 尚未实现。
@@ -276,7 +276,7 @@ P2 后续范围为更完整的会话检索/线程组织、费用与配额、后�
 - 进程重启后可恢复两种 provider 的原生历史并继续对话。
 - resume 可通过 HistoryProjector 重建用户可见历史，但续写请求仍只使用 native history。
 - JSONL 尾部被截断时能保留此前合法记录并报告修复。
-- 删除 SQLite 后可以从 JSONL 重建 session 列表和 thread metadata。
+- 删除 `catalog.json` 后可以从 JSONL 重建 session 列表和 thread metadata。
 - `--json` 不混入人类可读日志，stdout/stderr 职责清晰。
 - completed sample 的 raw usage 可随 native history 无损恢复，normalized usage 与 native commit 同 batch durable，headless completion 与该事实一致。
 - session 文件不包含 API key 或 Authorization header。
@@ -288,7 +288,7 @@ P2 后续范围为更完整的会话检索/线程组织、费用与配额、后�
 ### 6.6 已知踩坑与规避
 
 - **把 RuntimeEvent 全量写入 JSONL**：只记录恢复所需事实，避免 delta 膨胀。
-- **SQLite 成为唯一事实源**：任何索引都必须可重建。
+- **把可重建索引当作恢复事实**。会话恢复以 JSONL 重新验证。
 - **resume 时通过 UI message 重建 provider history**：使用 native item。
 - **写入顺序与事件顺序不一致**：跨进程 lease 保护的单 writer 分配单调 seq；advisory lock 不能约束旧版或非协作进程，禁止新旧二进制同时写同一 thread。
 - **context source 每轮全量重排**：稳定层固定，动态 world state 放尾部或 diff。
@@ -297,7 +297,7 @@ P2 后续范围为更完整的会话检索/线程组织、费用与配额、后�
 
 ### 6.7 退出条件
 
-两种 provider 的同进程 FIFO 多轮、重启恢复、取消、JSONL 修复、SQLite 重建、`--continue`、durable usage、层级项目指令、确定性 context planning/token estimator 和两套 headless 输出协议测试已通过；剩余会话组织、检索、费用/配额和平台验收仍按对应范围推进；不据局部切片宣布 P2 整体退出。
+两种 provider 的同进程 FIFO 多轮、重启恢复、取消、JSONL 修复、Catalog 快照重建、`--continue`、durable usage、层级项目指令、确定性 context planning/token estimator 和两套 headless 输出协议测试已通过；剩余会话组织、检索、费用/配额和平台验收仍按对应范围推进；不据局部切片宣布 P2 整体退出。
 
 ## 7. P3：Coding Tools 与安全执行
 
@@ -558,7 +558,7 @@ Stop 反馈及真实 Skill 纠正在必要摘要后原字节交付；恢复先�
 
 `add-pre-tool-use-command-hooks` 完成 user/project 冻结来源、三种 mutation 字面匹配、默认拒绝的单项内存信任、Darwin 只读/禁网命令、30 秒总预算、`/hooks` 浏览/reset/审查及四类 durable facts。两个 Provider 复用相同 gate，并保留原生 function/custom/tool_result 配对、普通审批和缓存前缀。恢复不重跑脚本，先补偿旧事实再 Load 新来源；无匹配保持旧行为。Exec 与 Hook 共用进程资源 owner，Skills 与 Hooks 共用 FD 安全打开骨架。
 
-P6 尚未退出：下面的其他 Hook 事件、async、result 改写、其他 context 扩展、插件可执行贡献、MCP 与热加载仍是后续计划。验收入口为 change 的 `verification.md`；实现测试分布于 `extension/hook`、`executor/process`、`runtime/hook*_test.go`、`session/hook*_test.go`、`app/hook*_test.go` 与 `tui/hooks_test.go`。
+PostToolUse、PostToolUseFailure、Stop、PreCompact 及 PreToolUse 参数改写由后续切片交付。P6 剩余计划包括 PostCompact 等事件、异步执行、结果改写、其他上下文扩展、插件可执行贡献、MCP 与热加载。当前回归分布在 `internal/extension/hook`、`internal/executor/process`、Runtime 与 Session 的 Hook 测试、`internal/app/hook_resume_test.go` 和 `internal/tui/hooks_test.go`。首个切片已归档。[验收记录](../../openspec/changes/archive/2026-11-20-add-pre-tool-use-command-hooks/verification.md)
 
 ### 2026-11-12：本地 Plugin 技能包
 
@@ -660,7 +660,7 @@ hook、skill、MCP、plugin 的信任、热加载、失败隔离和缓存回归�
 - full/last-N/none fork 的上下文内容符合定义，且不复制父线程不可继承状态。
 - 超出最大并发或深度时明确拒绝，不泄漏 slot。
 - parent 取消可按策略传播；child 独立失败不破坏 root session。
-- 每个 child 可以独立 resume，SQLite thread graph 可从 JSONL/meta 重建。
+- 每个 child 可以独立 resume，派生的 thread graph 可从 JSONL/meta 重建。
 - usage、cache 和工具副作用能归属到正确 thread/turn。
 
 ### 11.6 已知踩坑与规避

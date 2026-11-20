@@ -16,7 +16,7 @@ func BenchmarkRestoreToolHistory(b *testing.B) {
 			records := replayToolHistoryFixture(b, groups)
 			b.ReportAllocs()
 			for b.Loop() {
-				if err := restoreNativeHistory(context.Background(), "fixture-model", records, &nativeHistory{}); err != nil {
+				if _, err := restoreNativeHistory(context.Background(), "fixture-model", records, &nativeHistory{}); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -49,7 +49,7 @@ func TestIncrementalReplayPreservesNativeValidationPrecedence(t *testing.T) {
 		{"malformed next record", []provider.RestoreRecord{prefix, malformedRecord}, "restore Anthropic native commit 2: " + decodeErr.Error()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := restoreNativeHistory(context.Background(), "fixture-model", tc.records, &nativeHistory{})
+			_, err := restoreNativeHistory(context.Background(), "fixture-model", tc.records, &nativeHistory{})
 			if err == nil || err.Error() != tc.want {
 				t.Fatalf("restore error = %v; want %q", err, tc.want)
 			}

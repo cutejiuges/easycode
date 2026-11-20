@@ -51,16 +51,6 @@ type nativeItemWire struct {
 	IsError   bool            `json:"is_error,omitempty"`
 }
 
-// ProviderFamily 返回原生项所属协议家族。
-func (NativeItem) ProviderFamily() domain.ProviderFamily {
-	return domain.ProviderAnthropic
-}
-
-// ItemKind 返回原生 content block 类型。
-func (item NativeItem) ItemKind() string {
-	return item.Type
-}
-
 // MarshalJSON 生成 Messages request 可直接回放的 content block。
 func (item NativeItem) MarshalJSON() ([]byte, error) {
 	if len(item.Raw) > 0 {
@@ -160,11 +150,7 @@ func (message nativeMessage) clone() nativeMessage {
 	return cloned
 }
 
-// optionalUint 区分服务端明确给出的零值与缺失字段。
-type optionalUint struct {
-	Value uint64
-	Known bool
-}
+type optionalUint = provider.OptionalUint
 
 // optionalString 区分服务端给出的字符串与缺失字段。
 type optionalString struct {
@@ -181,28 +167,17 @@ type rawUsage struct {
 	ThinkingTokens           optionalUint
 }
 
-func (usage rawUsage) clone() rawUsage {
-	return usage
-}
-
 func (usage rawUsage) normalized() (domain.SampleUsage, error) {
 	if usage.OutputTokens.Known && usage.ThinkingTokens.Known && usage.ThinkingTokens.Value > usage.OutputTokens.Value {
 		return domain.SampleUsage{}, fmt.Errorf("thinking usage exceeds output tokens")
 	}
 	return domain.NewSampleUsage(
-		anthropicUsageMetric(usage.InputTokens),
-		anthropicUsageMetric(usage.CacheReadInputTokens),
-		anthropicUsageMetric(usage.CacheCreationInputTokens),
-		anthropicUsageMetric(usage.OutputTokens),
-		anthropicUsageMetric(usage.ThinkingTokens),
+		usage.InputTokens.Metric(),
+		usage.CacheReadInputTokens.Metric(),
+		usage.CacheCreationInputTokens.Metric(),
+		usage.OutputTokens.Metric(),
+		usage.ThinkingTokens.Metric(),
 	)
-}
-
-func anthropicUsageMetric(value optionalUint) domain.UsageMetric {
-	if !value.Known {
-		return domain.UnknownUsageMetric()
-	}
-	return domain.KnownUsageMetric(value.Value)
 }
 
 // messageMetadata 保存 response message 自身的信息，不参与下一轮 content 编译。
@@ -211,11 +186,6 @@ type messageMetadata struct {
 	Model      string
 	StopReason optionalString
 	Usage      rawUsage
-}
-
-func (metadata messageMetadata) clone() messageMetadata {
-	metadata.Usage = metadata.Usage.clone()
-	return metadata
 }
 
 type nativeHistoryEntryKind = domain.NativeCommitRole
@@ -243,7 +213,7 @@ type nativeHistoryEntry struct {
 func (entry nativeHistoryEntry) clone() nativeHistoryEntry {
 	cloned := nativeHistoryEntry{
 		Kind: entry.Kind, Assistant: entry.Assistant.clone(),
-		ToolOutputs: entry.ToolOutputs.clone(), Metadata: entry.Metadata.clone(),
+		ToolOutputs: entry.ToolOutputs.clone(), Metadata: entry.Metadata,
 	}
 	cloned.TurnID = entry.TurnID
 	if entry.FeedbackInput != nil {

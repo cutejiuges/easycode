@@ -73,6 +73,9 @@ type ReplayedToolCall struct {
 	ApprovalSequence     uint64
 	ApprovalOutcome      tool.ApprovalOutcome
 	CandidateFingerprint tool.CandidateFingerprint
+	preDetailSequence    uint64
+	postDetailSequence   uint64
+	preStartBudgetDenied bool
 }
 
 // ToolRecoveryPlan 描述活动Tool Loop尾部唯一允许的恢复动作输入。
@@ -215,7 +218,7 @@ func (plan ToolRecoveryPlan) Validate() error {
 			return fmt.Errorf("exec recovery cannot use a session grant")
 		}
 		if allowed && call.State == ReplayedToolCallResult && call.StartedSequence == 0 {
-			if !validAllowedBeforeStartResult(call.Invocation, call.Result) {
+			if !validAllowedBeforeStartResult(call.Result) {
 				return fmt.Errorf("allowed tool result has no execution start")
 			}
 		}
@@ -236,6 +239,11 @@ func (plan ToolRecoveryPlan) Validate() error {
 	lastResultSequence := lastReadySequence
 	resultGapSeen := false
 	for index, call := range plan.calls {
+		if call.StartedSequence != 0 && !call.Invocation.Capability().Exclusive() {
+			if err := validateReadStartOrder(plan.calls, index, call.StartedSequence); err != nil {
+				return err
+			}
+		}
 		// 独占调用之间的 result/started 可交错；只读组内部仍须先完成全部准入。
 		for previous := 0; previous < index; previous++ {
 			prior := plan.calls[previous]
@@ -246,15 +254,8 @@ func (plan ToolRecoveryPlan) Validate() error {
 			if call.ApprovalSequence != 0 && (completedSequence == 0 || completedSequence >= call.ApprovalSequence) {
 				return fmt.Errorf("tool recovery approval crossed an unfinished call")
 			}
-			if call.StartedSequence != 0 && (call.Invocation.Capability().Exclusive() || prior.Invocation.Capability().Exclusive()) && (completedSequence == 0 || completedSequence >= call.StartedSequence) {
+			if call.StartedSequence != 0 && call.Invocation.Capability().Exclusive() && (completedSequence == 0 || completedSequence >= call.StartedSequence) {
 				return fmt.Errorf("tool recovery start crossed an unfinished exclusive barrier")
-			}
-		}
-		if call.ResultSequence != 0 && !call.Invocation.Capability().Exclusive() {
-			for next := index + 1; next < len(plan.calls) && !plan.calls[next].Invocation.Capability().Exclusive(); next++ {
-				if plan.calls[next].StartedSequence >= call.ResultSequence {
-					return fmt.Errorf("read result preceded group admission")
-				}
 			}
 		}
 		switch call.State {
@@ -282,9 +283,10 @@ func (plan ToolRecoveryPlan) Validate() error {
 				closedExclusive := call.Invocation.Capability().RequiresApproval() &&
 					((call.ApprovalOutcome == tool.ApprovalOutcomeDeny && call.Result.Status() == tool.ResultDenied) ||
 						(call.ApprovalOutcome == tool.ApprovalOutcomeAbort && call.Result.Status() == tool.ResultCancelled))
-				preparedFailure := call.Invocation.Capability().Exclusive() && call.ApprovalSequence == 0 && (call.Result.Status() == tool.ResultError || (call.Invocation.Capability() == tool.CapabilityQuestion && call.Result.Status() == tool.ResultDenied) || (call.Invocation.Capability() == tool.CapabilityWrite && call.Result.Status() == tool.ResultConflict))
-				if call.Result.Status() != tool.ResultCancelled && !closedExclusive && !preparedFailure && !validHookDeniedResult(call, call.Result) && !validPostTrustResult(call, call.Result) {
-					return fmt.Errorf("tool result before execution start is not cancelled")
+				preparedFailure := call.Invocation.Capability().Exclusive() && call.ApprovalSequence == 0 && validExclusiveUnapprovedResult(call, call.Result)
+				budgetDenied := !call.Invocation.Capability().Exclusive() && call.preStartBudgetDenied && isBoundedBudgetRejection(call.Result)
+				if call.Result.Status() != tool.ResultCancelled && !closedExclusive && !preparedFailure && !budgetDenied {
+					return fmt.Errorf("tool result before execution start is invalid")
 				}
 			} else if call.ResultSequence <= call.StartedSequence {
 				return fmt.Errorf("result tool recovery call sequence is invalid")
@@ -315,6 +317,35 @@ type ReplayPlan struct {
 	ToolRecovery          *ToolRecoveryPlan
 	NextSequence          uint64
 	Repair                RepairReport
+	taskProgress          replayedTaskProgress
+}
+
+// ReplayMetadata 是 Catalog 从完整语法校验中取得的只读元数据。
+type ReplayMetadata struct {
+	Identity        Identity
+	SessionMetadata SessionMetaPayload
+	ThreadMetadata  ThreadMetaPayload
+	Title           domain.SessionTitle
+}
+
+type replayAccumulator struct {
+	ReplayPlan
+	projectHistory bool
+	nativeRevision uint64
+}
+
+func (plan *replayAccumulator) recordNative(record NativeCommitRecord) {
+	plan.nativeRevision++
+	if plan.projectHistory {
+		record.Commit.Payload = append([]byte(nil), record.Commit.Payload...)
+		plan.NativeCommits = append(plan.NativeCommits, record)
+	}
+}
+
+func (plan *replayAccumulator) recordStop(stop *ReplayedStop) {
+	if plan.projectHistory {
+		plan.Stops = append(plan.Stops, stop.Clone())
+	}
 }
 
 // ReplayPlanner 在 Loader 之后校验强类型 Session lifecycle。
@@ -327,6 +358,19 @@ func NewReplayPlanner() *ReplayPlanner {
 
 // Plan 校验 metadata cardinality、required placement 和当前文本 turn 状态机。
 func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
+	return replay(loaded, true)
+}
+
+// PlanMetadata 使用相同验证语法，省略历史展示与任务快照的物化。
+func (*ReplayPlanner) PlanMetadata(loaded LoadResult) (ReplayMetadata, error) {
+	plan, err := replay(loaded, false)
+	if err != nil {
+		return ReplayMetadata{}, err
+	}
+	return ReplayMetadata{Identity: plan.Identity, SessionMetadata: plan.SessionMetadata, ThreadMetadata: plan.ThreadMetadata, Title: plan.Title}, nil
+}
+
+func replay(loaded LoadResult, projectHistory bool) (ReplayPlan, error) {
 	if len(loaded.Records) < 2 {
 		return ReplayPlan{}, replayCorrupt("initial metadata batch is missing")
 	}
@@ -350,10 +394,17 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 		return ReplayPlan{}, err
 	}
 
-	plan := ReplayPlan{
+	plan := replayAccumulator{projectHistory: projectHistory, ReplayPlan: ReplayPlan{
 		Identity: identity, SessionMetadata: sessionMetadata, ThreadMetadata: threadMetadata,
 		NativeCommits: make([]NativeCommitRecord, 0), SampleUsages: make([]SampleUsageRecord, 0),
 		Turns: make([]ReplayedTurn, 0), NextSequence: loaded.NextSequence, Repair: loaded.Repair,
+	}}
+	artifacts := newArtifactReplay(loaded.Identity.ThreadID)
+	var toolSamples []replayedToolSample
+	var taskProgress *replayedTaskProgress
+	if projectHistory {
+		plan.taskProgress.state = domain.NewNoTaskProgress()
+		taskProgress = &plan.taskProgress
 	}
 	var active *activeReplayTurn
 	compaction := compactionReplay{seen: make(map[domain.CompactionID]struct{})}
@@ -388,7 +439,9 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 				return ReplayPlan{}, err
 			}
 			if terminal != "" {
-				plan.Turns = append(plan.Turns, ReplayedTurn{TurnID: active.turnID, State: terminal})
+				if projectHistory {
+					plan.Turns = append(plan.Turns, ReplayedTurn{TurnID: active.turnID, State: terminal})
+				}
 				active = nil
 			}
 			if handled {
@@ -415,6 +468,7 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 			active = &activeReplayTurn{
 				turnID: batch[0].TurnID, startSequence: batch[0].Sequence, lastSequence: batch[0].Sequence,
 				providerCallIDs: make(map[tool.ProviderCallID]struct{}),
+				artifacts:       &artifacts, taskProgress: taskProgress,
 			}
 		case EventTurnInputsCommitted:
 			if err := acceptInputBatch(&plan, active, batch, seenInputs); err != nil {
@@ -435,8 +489,12 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 				return ReplayPlan{}, err
 			}
 			if completed {
-				plan.Turns = append(plan.Turns, ReplayedTurn{TurnID: active.turnID, State: ReplayedTurnCompleted})
+				if projectHistory {
+					plan.Turns = append(plan.Turns, ReplayedTurn{TurnID: active.turnID, State: ReplayedTurnCompleted})
+				}
 				active = nil
+			} else if projectHistory && active.pendingCalls != nil {
+				toolSamples = append(toolSamples, replayedToolSample{nativeSequence: batch[0].Sequence, calls: active.pendingCalls})
 			}
 		case EventToolPostHookPlanned, EventToolPostHookCompleted, EventToolHookGatePlanned, EventHookExecutionStarted, EventHookExecutionFinished, EventToolHookGateDecided:
 			if active == nil {
@@ -479,7 +537,9 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 			if decodeErr != nil {
 				return ReplayPlan{}, replayCorrupt("turn_failed payload is invalid")
 			}
-			plan.Turns = append(plan.Turns, ReplayedTurn{TurnID: active.turnID, State: ReplayedTurnFailed})
+			if projectHistory {
+				plan.Turns = append(plan.Turns, ReplayedTurn{TurnID: active.turnID, State: ReplayedTurnFailed})
+			}
 			active = nil
 		default:
 			return ReplayPlan{}, replayCorrupt("session record placement is invalid")
@@ -495,7 +555,7 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 				return ReplayPlan{}, replayCorrupt("stop recovery plan is invalid")
 			}
 			plan.StopRecovery = &recovery
-			plan.Stops = append(plan.Stops, active.stop.Clone())
+			plan.recordStop(active.stop)
 		} else if !active.hadToolSample {
 			plan.InterruptedTail = &InterruptedTail{TurnID: active.turnID, Sequence: active.startSequence}
 		} else {
@@ -507,18 +567,21 @@ func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
 		}
 	}
 	plan.InterruptedCompaction = compaction.active
-	plan.NativeCommits = cloneNativeCommitRecords(plan.NativeCommits)
-	if err := validateArtifactHistory(loaded.Identity.ThreadID, loaded.Records); err != nil {
-		return ReplayPlan{}, err
+	if artifacts.err != nil {
+		return ReplayPlan{}, artifacts.err
 	}
-	plan.Tools, err = projectToolHistory(loaded.Records)
-	if err != nil {
-		return ReplayPlan{}, err
+	if projectHistory {
+		plan.Tools, err = projectToolHistory(toolSamples)
+		if err != nil {
+			return ReplayPlan{}, err
+		}
 	}
-	return plan, nil
+	return plan.ReplayPlan, nil
 }
 
 type activeReplayTurn struct {
+	artifacts            *artifactReplay
+	taskProgress         *replayedTaskProgress
 	stop                 *ReplayedStop
 	stopContinuations    uint8
 	stopFeedbackBytes    int
@@ -538,7 +601,7 @@ type activeReplayTurn struct {
 	toolOutputsCommitted bool
 }
 
-func acceptSampleBatch(plan *ReplayPlan, active *activeReplayTurn, batch []Record, seenInvocations map[tool.InvocationID]struct{}) (bool, error) {
+func acceptSampleBatch(plan *replayAccumulator, active *activeReplayTurn, batch []Record, seenInvocations map[tool.InvocationID]struct{}) (bool, error) {
 	if !active.initialInputs || !active.nextSampleReady || active.pendingCalls != nil || len(batch) < 3 ||
 		batch[1].EventKind != EventSampleUsage {
 		return false, replayCorrupt("sample batch placement is invalid")
@@ -555,12 +618,14 @@ func acceptSampleBatch(plan *ReplayPlan, active *activeReplayTurn, batch []Recor
 	if err != nil {
 		return false, replayCorrupt("sample_usage payload is invalid")
 	}
-	plan.NativeCommits = append(plan.NativeCommits, NativeCommitRecord{
-		Sequence: batch[0].Sequence, TurnID: active.turnID, Role: domain.NativeCommitSample, Commit: cloneNativeCommit(commit),
+	plan.recordNative(NativeCommitRecord{
+		Sequence: batch[0].Sequence, TurnID: active.turnID, Role: domain.NativeCommitSample, Commit: commit,
 	})
-	plan.SampleUsages = append(plan.SampleUsages, SampleUsageRecord{
-		Sequence: batch[1].Sequence, TurnID: active.turnID, Usage: usage,
-	})
+	if plan.projectHistory {
+		plan.SampleUsages = append(plan.SampleUsages, SampleUsageRecord{
+			Sequence: batch[1].Sequence, TurnID: active.turnID, Usage: usage,
+		})
+	}
 	if len(batch) == 3 && batch[2].EventKind == EventTurnStopHookPlanned {
 		if err := beginStopCheck(active, batch[2]); err != nil {
 			return false, err
@@ -626,7 +691,7 @@ func acceptSampleBatch(plan *ReplayPlan, active *activeReplayTurn, batch []Recor
 	return false, nil
 }
 
-func acceptToolOutputs(plan *ReplayPlan, active *activeReplayTurn, record Record) error {
+func acceptToolOutputs(plan *replayAccumulator, active *activeReplayTurn, record Record) error {
 	if active.pendingCalls == nil || active.toolOutputsCommitted {
 		return replayCorrupt("tool output commit placement is invalid")
 	}
@@ -635,7 +700,10 @@ func acceptToolOutputs(plan *ReplayPlan, active *activeReplayTurn, record Record
 			return replayCorrupt("tool output commit appears before all results")
 		}
 	}
-	outputs := make([]tool.ModelOutput, len(active.pendingCalls))
+	var outputs []tool.ModelOutput
+	if plan.projectHistory {
+		outputs = make([]tool.ModelOutput, len(active.pendingCalls))
+	}
 	for i, call := range active.pendingCalls {
 		evidence, evidenceErr := call.InputResultEvidence()
 		if evidenceErr != nil {
@@ -659,14 +727,16 @@ func acceptToolOutputs(plan *ReplayPlan, active *activeReplayTurn, record Record
 		if err != nil {
 			return replayCorrupt("invalid model output evidence")
 		}
-		outputs[i] = output
+		if plan.projectHistory {
+			outputs[i] = output
+		}
 	}
 	commit, err := DecodeNativeCommitPayload(record)
 	if err != nil {
 		return replayCorrupt("provider native commit payload is invalid")
 	}
-	plan.NativeCommits = append(plan.NativeCommits, NativeCommitRecord{
-		ToolOutputs: outputs, Sequence: record.Sequence, TurnID: active.turnID, Role: domain.NativeCommitToolOutputs, Commit: cloneNativeCommit(commit),
+	plan.recordNative(NativeCommitRecord{
+		ToolOutputs: outputs, Sequence: record.Sequence, TurnID: active.turnID, Role: domain.NativeCommitToolOutputs, Commit: commit,
 	})
 	active.pendingCalls = nil
 	active.toolOutputsCommitted = true
@@ -700,16 +770,8 @@ func (active *activeReplayTurn) acceptStarted(record Record) error {
 					return replayCorrupt("exclusive execution crossed an unfinished call")
 				}
 			}
-		} else {
-			for previous := 0; previous < index; previous++ {
-				prior := active.pendingCalls[previous]
-				if prior.Invocation.Capability().Exclusive() && !callComplete(prior) {
-					return replayCorrupt("read execution crossed an unfinished exclusive call")
-				}
-				if !prior.Invocation.Capability().Exclusive() && prior.State == ReplayedToolCallReady {
-					return replayCorrupt("read execution order is invalid")
-				}
-			}
+		} else if err := validateReadStartOrder(active.pendingCalls, index, record.Sequence); err != nil {
+			return replayCorrupt(err.Error())
 		}
 		call.State = ReplayedToolCallStarted
 		call.StartedSequence = record.Sequence
@@ -717,6 +779,26 @@ func (active *activeReplayTurn) acceptStarted(record Record) error {
 		return nil
 	}
 	return replayCorrupt("tool_execution_started is duplicated")
+}
+
+// validateReadStartOrder 约束同一只读段先完成全部准入，已收口的独占调用划分相邻段。
+func validateReadStartOrder(calls []ReplayedToolCall, index int, sequence uint64) error {
+	for previous := index - 1; previous >= 0; previous-- {
+		prior := calls[previous]
+		if prior.Invocation.Capability().Exclusive() {
+			if completed := callCompletionSequence(prior); completed == 0 || completed >= sequence {
+				return fmt.Errorf("read execution crossed an unfinished exclusive call")
+			}
+			break
+		}
+		if prior.StartedSequence == 0 || prior.StartedSequence >= sequence {
+			return fmt.Errorf("read execution order is invalid")
+		}
+		if prior.ResultSequence != 0 && prior.ResultSequence <= sequence {
+			return fmt.Errorf("read result preceded group admission")
+		}
+	}
+	return nil
 }
 
 func (active *activeReplayTurn) acceptApproval(batch []Record) error {
@@ -810,11 +892,11 @@ func (active *activeReplayTurn) acceptResult(record Record) error {
 		}
 		if call.State == ReplayedToolCallReady {
 			if call.Invocation.Capability().Exclusive() {
-				if call.ApprovalSequence == 0 && !validPostTrustResult(*call, result) && !validHookDeniedResult(*call, result) && result.Status() != tool.ResultError && result.Status() != tool.ResultCancelled && !(call.Invocation.Capability() == tool.CapabilityQuestion && result.Status() == tool.ResultDenied) && !(call.Invocation.Capability() == tool.CapabilityWrite && result.Status() == tool.ResultConflict) {
+				if call.ApprovalSequence == 0 && !validExclusiveUnapprovedResult(*call, result) {
 					return replayCorrupt("exclusive result before approval is invalid")
 				}
 				if call.ApprovalSequence != 0 && (call.ApprovalOutcome == tool.ApprovalOutcomeAllowOnce || call.ApprovalOutcome == tool.ApprovalOutcomeAllowSession || call.ApprovalOutcome == tool.ApprovalOutcomeAllowFromSession) {
-					if !validAllowedBeforeStartResult(call.Invocation, result) {
+					if !validAllowedBeforeStartResult(result) {
 						return replayCorrupt("allowed tool result appears before execution start")
 					}
 				}
@@ -825,7 +907,11 @@ func (active *activeReplayTurn) acceptResult(record Record) error {
 					return replayCorrupt("aborted exclusive result is invalid")
 				}
 			} else if result.Status() != tool.ResultCancelled {
-				return replayCorrupt("tool result before execution start is not cancelled")
+				if !active.budget.BodyExhausted() || !isBoundedBudgetRejection(result) {
+					return replayCorrupt("tool result before execution start is invalid")
+				}
+				// 恢复计划只持有最后一组调用，保留此前预算已耗尽的回放证据。
+				call.preStartBudgetDenied = true
 			}
 		}
 		if call.State != ReplayedToolCallReady && call.State != ReplayedToolCallStarted {
@@ -851,6 +937,10 @@ func (active *activeReplayTurn) acceptResult(record Record) error {
 		call.State = ReplayedToolCallResult
 		call.ResultSequence = record.Sequence
 		call.Result = result
+		active.artifacts.accept(result)
+		if active.taskProgress != nil {
+			active.taskProgress.accept(*call)
+		}
 		active.lastSequence = record.Sequence
 		return nil
 	}
@@ -863,11 +953,31 @@ func (active *activeReplayTurn) recoveryPlan() (ToolRecoveryPlan, error) {
 	)
 }
 
-func validAllowedBeforeStartResult(invocation tool.Invocation, result tool.InvocationResult) bool {
+func validAllowedBeforeStartResult(result tool.InvocationResult) bool {
 	if result.Status() != tool.ResultCancelled {
 		return false
 	}
-	return result.Code() == "session_interrupted_before_execution" || (invocation.Capability() == tool.CapabilityExec && result.Code() == "cancelled_before_execution")
+	return result.Code() == "session_interrupted_before_execution" || result.Code() == "cancelled_before_execution"
+}
+
+func validExclusiveUnapprovedResult(call ReplayedToolCall, result tool.InvocationResult) bool {
+	if result.Status() == tool.ResultError || result.Status() == tool.ResultCancelled || validPostTrustResult(call, result) || validHookDeniedResult(call, result) {
+		return true
+	}
+	switch call.Invocation.Capability() {
+	case tool.CapabilityQuestion:
+		return result.Status() == tool.ResultDenied
+	case tool.CapabilityTaskProgress:
+		return result.Status() == tool.ResultDenied && result.Code() == "permission_denied"
+	case tool.CapabilityWrite:
+		return result.Status() == tool.ResultConflict
+	default:
+		return false
+	}
+}
+
+func isBoundedBudgetRejection(result tool.InvocationResult) bool {
+	return result.Status() == tool.ResultError && result.Code() == "result_budget_exceeded" && result.Budget().ActualBytes() <= tool.SafetyResultBytes
 }
 
 func cloneReplayedToolCalls(calls []ReplayedToolCall) []ReplayedToolCall {
@@ -949,25 +1059,6 @@ func replayBatches(records []Record) ([][]Record, error) {
 		index += size
 	}
 	return batches, nil
-}
-
-func cloneNativeCommit(commit NativeCommitPayload) NativeCommitPayload {
-	commit.Payload = append([]byte(nil), commit.Payload...)
-	return commit
-}
-
-func cloneNativeCommitRecords(records []NativeCommitRecord) []NativeCommitRecord {
-	cloned := make([]NativeCommitRecord, len(records))
-	for index, record := range records {
-		cloned[index] = record
-		cloned[index].Commit = cloneNativeCommit(record.Commit)
-		if record.Feedback != nil {
-			f := *record.Feedback
-			cloned[index].Feedback = &f
-		}
-		cloned[index].ToolOutputs = append([]tool.ModelOutput(nil), record.ToolOutputs...)
-	}
-	return cloned
 }
 
 func replayCorrupt(message string) error {

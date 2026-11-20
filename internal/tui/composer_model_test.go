@@ -72,7 +72,7 @@ func (s *gatedComposerSession) Append(ctx context.Context, draft domain.InputDra
 	}
 	return s.fakeChatSession.Append(ctx, draft)
 }
-func (s *gatedComposerSession) Interrupt() { s.interrupts++ }
+func (s *gatedComposerSession) InterruptTurn(domain.TurnID) { s.interrupts++ }
 
 func TestComposerCancellationDuringAdmissionBarrier(t *testing.T) {
 	for _, reject := range []bool{false, true} {

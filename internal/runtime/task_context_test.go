@@ -69,7 +69,7 @@ func TestTaskStampBindsOrdinaryInputCandidateQueryFailureAndRestoredPlanning(t *
 	if _, err := r.contextPlanFor(r.operationProfile); err != nil {
 		t.Fatal(err)
 	}
-	r.toolPolicy = taskDenyPolicy{}
+	r.tools.Policy = taskDenyPolicy{}
 	b := taskRuntimeInvocation(t, "失败内容 B", domain.TaskPending, "task-b")
 	if results, err := executeReadyFixtureCalls(t, r, context.Background(), runtimeTurnID, []tool.Invocation{b}); err != nil || results[0].Status() != tool.ResultDenied {
 		t.Fatal("failure path not exercised", err)

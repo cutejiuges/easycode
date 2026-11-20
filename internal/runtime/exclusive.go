@@ -28,14 +28,14 @@ func (action exclusiveAction) Matches(result tool.InvocationResult) bool {
 	return action.matches(result)
 }
 
-func buildApprovalFact(request tool.ApprovalRequest, invocation tool.Invocation, outcome tool.ApprovalOutcome, source session.ApprovalDecisionSource, feedback string) (session.RecordDraft, error) {
+func buildApprovalFact(request tool.ApprovalRequest, invocation tool.Invocation, resolution approvalResolution) (session.RecordDraft, error) {
 	metadata, err := session.NewApprovalMetadata(invocation)
 	if err != nil {
 		return session.RecordDraft{}, err
 	}
 	return session.NewToolApprovalDecidedDraft(request.TurnID(), session.ToolApprovalDecidedPayload{
 		RequestID: request.RequestID(), InvocationID: invocation.InvocationID(), Fingerprint: request.Fingerprint(),
-		Outcome: outcome, Feedback: feedback, Source: source, Metadata: metadata,
+		Outcome: resolution.outcome, Feedback: resolution.feedback, Source: resolution.source, Metadata: metadata,
 	})
 }
 
@@ -47,7 +47,7 @@ func (runtime *Runtime) commitApprovalDecision(ctx context.Context, fact session
 	return nil
 }
 
-func (runtime *Runtime) commitApprovalDenial(ctx context.Context, emit Emitter, request tool.ApprovalRequest, outcome tool.ApprovalOutcome, fact session.RecordDraft, result tool.InvocationResult, label string) (tool.InvocationResult, bool, error) {
+func (runtime *Runtime) commitApprovalDenial(ctx context.Context, emit Emitter, request tool.ApprovalRequest, resolution approvalResolution, fact session.RecordDraft, result tool.InvocationResult, label string) (tool.InvocationResult, bool, error) {
 	result, err := runtime.freezeResult(result)
 	if err != nil {
 		return tool.InvocationResult{}, false, err
@@ -69,8 +69,32 @@ func (runtime *Runtime) commitApprovalDenial(ctx context.Context, emit Emitter, 
 	if err := runtime.notifyToolResult(turnID, result, resultRecordSequence(records)); err != nil {
 		return result, false, err
 	}
-	runtime.emitApprovalResolved(emit, turnID, request, outcome)
-	return result, outcome == tool.ApprovalOutcomeAbort, nil
+	runtime.emitApprovalResolved(emit, request, resolution)
+	return result, resolution.outcome == tool.ApprovalOutcomeAbort, nil
+}
+
+// executeWithApproval 持久化唯一审批决定，之后由独立的 started 门禁接纳执行。
+func (runtime *Runtime) executeWithApproval(ctx context.Context, emit Emitter, request tool.ApprovalRequest, invocation tool.Invocation, policy tool.PolicyDecision, label string, action exclusiveAction) (tool.InvocationResult, bool, error) {
+	resolution, err := runtime.decideApproval(ctx, emit, request, policy)
+	if err != nil {
+		return tool.InvocationResult{}, false, err
+	}
+	fact, err := buildApprovalFact(request, invocation, resolution)
+	if err != nil {
+		return tool.InvocationResult{}, false, err
+	}
+	if resolution.outcome == tool.ApprovalOutcomeDeny || resolution.outcome == tool.ApprovalOutcomeAbort {
+		return runtime.commitApprovalDenial(ctx, emit, request, resolution, fact, resolution.rejection(label, invocation), label)
+	}
+	if err := runtime.commitApprovalDecision(ctx, fact, label); err != nil {
+		return tool.InvocationResult{}, false, err
+	}
+	if resolution.outcome == tool.ApprovalOutcomeAllowSession {
+		runtime.approvals.grant(request.Capability()).Store(true)
+	}
+	runtime.emitApprovalResolved(emit, request, resolution)
+	result, err := runtime.executeExclusive(ctx, request.TurnID(), invocation, action)
+	return result, false, err
 }
 
 // executeExclusive 把 started 接收作为取消线性化点，返回前持久化唯一关联结果。
@@ -84,33 +108,13 @@ func (runtime *Runtime) executeExclusive(ctx context.Context, turnID domain.Turn
 		}
 		return result, nil
 	}
-	cancelled := func() (tool.InvocationResult, error) {
+	admitted, err := runtime.admitToolExecution(ctx, turnID, invocation)
+	if err != nil {
+		return tool.InvocationResult{}, err
+	}
+	if !admitted {
 		return finish(tool.NewInvocationErrorResult(invocation, tool.ResultCancelled, "cancelled_before_execution", "Tool cancelled before execution"))
 	}
-	if ctx.Err() != nil {
-		return cancelled()
-	}
-	started, err := session.NewToolExecutionStartedDraft(turnID, invocation.InvocationID())
-	if err != nil {
-		return tool.InvocationResult{}, err
-	}
-	records, err := runtime.journal.AppendBatch(ctx, []session.RecordDraft{started})
-	if err != nil {
-		if (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) && !runtime.journal.Poisoned() {
-			return cancelled()
-		}
-		runtime.poisoned.Store(true)
-		return tool.InvocationResult{}, fault.Wrap(fault.CodeSessionWrite, "persist tool execution start failed", err)
-	}
-	if len(records) != 1 {
-		runtime.poisoned.Store(true)
-		return tool.InvocationResult{}, fault.New(fault.CodeSessionWrite, "execution start has no durable sequence")
-	}
-	if _, err := runtime.registerExecutionAdmission(invocation, records[0].Sequence); err != nil {
-		runtime.poisoned.Store(true)
-		return tool.InvocationResult{}, err
-	}
-	runtime.emitToolStarted(turnID, invocation)
 	result := strategy.Execute(ctx)
 	if result.Validate() != nil || result.InvocationID() != invocation.InvocationID() || result.ProviderCallID() != invocation.ProviderCallID() || result.Capability() != invocation.Capability() || result.WireKind() != invocation.WireKind() || !strategy.Matches(result) {
 		result = tool.NewInvocationErrorResult(invocation, tool.ResultOutcomeUncertain, "invalid_tool_result", "Tool outcome is uncertain")
@@ -224,7 +228,7 @@ func (runtime *Runtime) executeApproved(ctx context.Context, emit Emitter, turnI
 		if readyErr != nil {
 			return tool.InvocationResult{}, false, readyErr
 		}
-		if runtime.toolPolicy.Decide(ready) == tool.PolicyDeny {
+		if runtime.tools.Policy.Decide(ready) == tool.PolicyDeny {
 			return finishBeforeExecution(tool.NewInvocationErrorResult(invocation, tool.ResultError, "tool_denied", "Tool not executed: effective input is denied by policy"))
 		}
 	}

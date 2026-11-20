@@ -36,11 +36,11 @@ func DecodeTurnInputsPayload(record Record) (TurnInputsPayload, error) {
 	return payload, nil
 }
 
-func acceptInputBatch(plan *ReplayPlan, active *activeReplayTurn, batch []Record, seen map[domain.InputID]struct{}) error {
+func acceptInputBatch(plan *replayAccumulator, active *activeReplayTurn, batch []Record, seen map[domain.InputID]struct{}) error {
 	return acceptBoundInputBatch(plan, active, batch, seen, false)
 }
 
-func acceptBoundInputBatch(plan *ReplayPlan, active *activeReplayTurn, batch []Record, seen map[domain.InputID]struct{}, stopDelivery bool) error {
+func acceptBoundInputBatch(plan *replayAccumulator, active *activeReplayTurn, batch []Record, seen map[domain.InputID]struct{}, stopDelivery bool) error {
 	if active == nil || len(batch) != 2 || !batchHasTurn(batch, active.turnID) || batch[1].EventKind != EventProviderNativeCommit || active.pendingCalls != nil {
 		return replayCorrupt("input batch placement is invalid")
 	}
@@ -71,7 +71,7 @@ func acceptBoundInputBatch(plan *ReplayPlan, active *activeReplayTurn, batch []R
 	for _, id := range payload.InputIDs {
 		seen[id] = struct{}{}
 	}
-	plan.NativeCommits = append(plan.NativeCommits, NativeCommitRecord{Sequence: batch[1].Sequence, TurnID: active.turnID, Role: domain.NativeCommitUserInputs, Inputs: a, Commit: cloneNativeCommit(commit)})
+	plan.recordNative(NativeCommitRecord{Sequence: batch[1].Sequence, TurnID: active.turnID, Role: domain.NativeCommitUserInputs, Inputs: a, Commit: commit})
 	active.nextSampleReady = true
 	active.initialInputs = true
 	active.inputAtSample = true

@@ -1,9 +1,6 @@
 package tui
 
 import (
-	"strings"
-	"unicode"
-
 	"easycode/internal/domain"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -14,15 +11,6 @@ const resumeCommandName = "resume"
 type chatResumeIntent struct {
 	target domain.ThreadID
 	draft  composer
-}
-
-// resumeArgument 只识别交互式 composer 的精确首词。
-func resumeArgument(text string) (string, bool) {
-	text = strings.TrimSpace(text)
-	if end := strings.IndexFunc(text, unicode.IsSpace); end >= 0 {
-		return strings.TrimSpace(text[end:]), text[:end] == "/"+resumeCommandName
-	}
-	return "", text == "/"+resumeCommandName
 }
 
 func (model Model) submitResume(argument string) (tea.Model, tea.Cmd) {

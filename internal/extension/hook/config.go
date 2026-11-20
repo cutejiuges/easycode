@@ -2,7 +2,6 @@
 package hook
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -96,15 +95,6 @@ func (v *configEvents) UnmarshalJSON(b []byte) error {
 	var f fields
 	if codec.DecodeObject(b, &f) != nil {
 		return domain.HookConfigInvalid
-	}
-	m, err := codec.ObjectMembers(b)
-	if err != nil {
-		return domain.HookConfigInvalid
-	}
-	for _, event := range []domain.HookEvent{domain.HookPreToolUse, domain.HookPostToolUse, domain.HookPostToolUseFailure, domain.HookStop, domain.HookPreCompact} {
-		if raw, ok := m[string(event)]; ok && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-			return domain.HookConfigInvalid
-		}
 	}
 	*v = configEvents(f)
 	return nil

@@ -206,6 +206,8 @@ Facade 不执行工具，也不自行放宽 Capability 的安全约束。
 - policy/sandbox 所需的静态 metadata。
 - 由稳定 facade 名称、描述和 canonical schema bytes 派生的 fingerprint，不包含密钥、绝对临时路径和易变 world state。
 
+当前在线装配由一份 `tool.Binding` 同时提供只读模型目录与对应执行组件。组件完整性在生成目录时校验。离线恢复按当前 Provider facade 身份核验已保存工具事实，只需要纯声明。
+
 模型只能调用本次 snapshot 中可见的工具。动态刷新只能在 sampling safe point 切换 snapshot；已经收到的调用继续使用其原 snapshot 路由，避免同名工具被静默替换。
 
 ### 5.4 InputDecoder 与 Validator
@@ -223,6 +225,8 @@ Policy 输入是不可变调用描述和当前安全上下文，输出强类型�
 - `deny`：生成稳定的机器错误码和 Provider-native 拒绝结果。
 
 当前 Patch/Write 支持单次或本 Runtime 的各自 session grant，Exec 只有单次批准；不写配置，不跨恢复。持久规则与批准时改写命令/路径/patch 均未实现，未来需要独立 OpenSpec；改写候选不能继承旧批准。
+
+三个工具共用一个审批收口流程。Runtime 在同一准入边界验证关联身份、候选指纹和实际提供的选项。Stop、interrupt 或 shutdown 与用户决定竞争，先接纳的结果不可改写。显式 Exec Abort 的来源为 `interactive`，内部中断为 `interruption`。批准事实成功 Sync 后才能安装 grant，执行仍独立等待 started 成功 Sync。只有已发布的审批请求收到对应 resolved。
 
 ### 5.6 SandboxPlanner
 
@@ -333,9 +337,11 @@ ready_durable
 
 `execution_started_durable` 是副作用接收线性化点：
 
-- 在它之前取消，直接从ready写入cancelled result，不得启动副作用。
+- 在接纳前确定取消或超时，按原调用位置写入取消结果，不得启动副作用。Patch、Write 和 Exec 已保存的 allow fact 继续有效为历史事实，回放接受后续没有 started 的 `cancelled_before_execution`。
 - started append被接受后，即使context同时取消，owner也必须恰好调用一次executor并取得确定结果；若进程崩溃导致无法确认，恢复为 `outcome_uncertain`。
 - `outcome_uncertain` 默认生成补偿 output 并停止自动推进，要求用户检查或显式处理；不得把未知当失败后自动重试。
+- 工具组无法闭合时结束活动 Runtime，保留 journal 的可恢复前缀。原生 outputs 尚未完整提交时不追加 `turn_failed`。回放根据已提交结果重建预算，只接受有耗尽证据的未启动只读调用预算拒绝。
+- 同一连续只读段的全部 started 先于该段首条结果，活动尾部和已闭合记录适用同一规则。独占调用的 Post 或结果票据尚未收口时，保留原失败及前缀，后续未准入调用留给本地恢复。无交互审批能力的 Task 被自定义询问策略拒绝时，保存关联的执行前拒绝事实，不生成审批或执行记录。
 
 ### 8.2 幂等承诺
 
@@ -397,7 +403,7 @@ headless 无交互宿主遇到 `ask` 时默认失败关闭。未来若支持预�
 3. 将“模型实际收到的预览字节 + artifact descriptor + 截断元数据”写入 durable fact。
 4. 恢复时复用已保存预览，不根据新预算重新截断。
 
-Exec 从首字节暂存双流，各保存最多 16 MiB 连续前缀；小输出完全内联时删除暂存。搜索工具在扫描上限内增量保存选中原文，并冻结最多 64 KiB 的确定性首尾预览。Exec 冻结最多 256 KiB 预览和 complete/partial/unavailable/not_needed 保存状态，恢复不读对象、不重新截断。JSONL 是事实源，artifact 是按 descriptor 校验的私有数据，SQLite 仍只做可重建索引。详见 [命令输出存储与查询](#命令输出存储与查询)。
+Exec 从首字节暂存双流，各保存最多 16 MiB 连续前缀；小输出完全内联时删除暂存。搜索工具在扫描上限内增量保存选中原文，并冻结最多 64 KiB 的确定性首尾预览。Exec 冻结最多 256 KiB 预览和 complete/partial/unavailable/not_needed 保存状态，恢复不读对象、不重新截断。JSONL 是事实源，artifact 是按 descriptor 校验的私有数据，Catalog 快照只做可重建索引。详见 [命令输出存储与查询](#命令输出存储与查询)。
 
 ### 10.1 Write 已实现边界
 
@@ -409,11 +415,13 @@ Runtime 的观察表仅由 turn owner 操作，上限 1024，按输出提交顺�
 
 `WriteExecutor` 在 fd 相对路径上重开并复验，私有 owner 写入完整暂存文件、设置权限、Sync。创建使用 Darwin `RenameatxNp(RENAME_EXCL)` / Linux `Renameat2(RENAME_NOREPLACE)`，绝不回退为普通 rename；已有目标覆盖使用最终基线复验后的同目录原子替换。缺失目录先准备私有树并从叶到根 Sync，再一次发布首个缺失组件。新文件 `0600`、目录 `0700`，覆盖只保留基本 `0777`，不承诺 owner/ACL/xattr 保留。
 
-发布前取消不改变正式目标；确定发布后忽略迟到取消，完成父目录 Sync/清理后返回 success。发布结果无法确认、目录 Sync 或 cleanup 失败返回 outcome_uncertain；Runtime 停止后续副作用，但健康 journal 仍保存冻结结果和配对 output。owner 仅清理 identity 匹配的自有项，不递归删除未知内容；SIGKILL 可留下私有暂存项，resume 不访问它们。
+发布前取消保留原目标。确定发布后完成父目录 Sync 和清理，迟到取消不改写确定成功。发布结果无法确认、目录 Sync 或 cleanup 失败返回 outcome_uncertain。Runtime 停止后续副作用，健康 journal 保存能够确认的结果，未完成组的 native outputs 由恢复补偿。owner 只清理身份匹配的自有暂存项。SIGKILL 可留下私有暂存项，resume 不访问它们。
+
+Patch 和 Write 共用暂存所有权校验。发布前在实际文件句柄上核验权限，并从已打开的目录核对暂存项身份。Patch 另外复验 canonical 父目录及目标的 base evidence 后执行替换。发现暂存项身份不匹配时保留陌生目录项和正式目标，无法确认清理时报告结果不确定。
 
 当前无版本的唯一结构中，`tool_call_ready` 保存必要 WriteInput，包括 content，`tool_call_result` 只保存冻结摘要与 operation/byte/line/created-directory metadata，不重复保存 base/final 文件或候选 diff。审批仍用 `tool_approval_decided`，执行仍用 `tool_execution_started`，不新增 Read observation record。恢复验证按连续只读组与独占屏障检查顺序，不能要求所有调用先 started 后 result。
 
-测试入口：`internal/tool/builtin/write_unix_test.go`、`internal/tool/builtin/write_crash_unix_test.go`、`internal/runtime/write_test.go`、两家 Provider 的 `restore_test.go`，以及 `internal/app/write_e2e_test.go`、`internal/app/write_resume_test.go`、`internal/app/write_stream_test.go`。当前 macOS 已运行真实发布/竞争/进程崩溃测试；Linux 与 Windows 已交叉编译，当前环境无 Linux runner，Linux 文件系统运行验证仍是已记录限制，不能等同交叉编译通过。
+测试入口：`internal/tool/builtin/write_unix_test.go`、`internal/tool/builtin/write_crash_unix_test.go`、`internal/runtime/write_test.go`、两家 Provider 的 `restore_test.go`，以及 `internal/app/write_e2e_test.go`、`internal/app/write_resume_test.go`、`internal/app/write_stream_test.go`。macOS 已运行真实发布、竞争与进程崩溃测试。Linux arm64 已运行进程所有权及会话续写定向回归。Linux 和 Windows amd64 已交叉编译，发布和故障行为按实际运行平台记录。
 
 ## 11. Session 事实与 RuntimeEvent
 
@@ -488,7 +496,7 @@ Runtime 的观察表仅由 turn owner 操作，上限 1024，按输出提交顺�
 | 10（已实现） | `add-same-turn-steering` | tool output 后 safe point 注入、缓存与历史语义 | 任意时刻抢占 Provider stream |
 | P6（已实现） | `add-local-skills` | 本地目录、显式附件、按需正文和原生恢复 | plugin/system 来源、fork 与热加载 |
 | P5（已实现） | `add-structured-user-questions` | 双 Provider 问卷、回答预算、离线补偿与历史 | 自动代答、MCP elicitation |
-| P6（实现完成待归档） | `add-pre-tool-use-command-hooks` | 独立信任、Darwin 只读检查、四类事实和恢复 | 其他事件、async 与改写 |
+| P6（已实现、已归档） | [add-pre-tool-use-command-hooks](../../openspec/changes/archive/2026-11-20-add-pre-tool-use-command-hooks/proposal.md) | 独立信任、Darwin 只读检查、四类事实和恢复 | 本切片限于同步 PreToolUse |
 
 首个 change 选择 Read，而不是先搭建“完整通用框架”，原因是：
 

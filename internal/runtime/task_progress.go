@@ -98,7 +98,7 @@ func (r *Runtime) executeTaskCall(ctx context.Context, turn domain.TurnID, inv t
 		return fail(tool.ResultError, "result_budget_exceeded", "Task not updated: turn result budget exhausted")
 	}
 	ready, err := inv.ReadyCall()
-	if err != nil || r.toolPolicy.Decide(ready) != tool.PolicyAllow {
+	if err != nil || r.tools.Policy.Decide(ready) != tool.PolicyAllow {
 		return fail(tool.ResultDenied, "permission_denied", "Task updates are not allowed")
 	}
 	allowance, err := r.resultAllowance(inv.Capability())
@@ -116,7 +116,7 @@ func (r *Runtime) executeTaskCall(ctx context.Context, turn domain.TurnID, inv t
 	v, _ := inv.Task()
 	result, err := r.executeExclusive(ctx, turn, inv, exclusiveAction{
 		execute: func(ctx context.Context) tool.InvocationResult {
-			result := r.taskExecutor.Execute(ctx, v)
+			result := r.tools.Task.Execute(ctx, v)
 			if result.Status() != tool.ResultSuccess {
 				return result
 			}

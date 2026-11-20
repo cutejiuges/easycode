@@ -41,7 +41,7 @@ func TestFailureCancellationAfterResultKeepsRouteAndStartsNoScript(t *testing.T)
 			if matched {
 				installFailureBranches(t, r, runner, true)
 			}
-			r.patchExecutor = postPatchOutcome{tool.ResultError}
+			r.tools.Patch = postPatchOutcome{tool.ResultError}
 			result, _, err := r.executeApproved(ctx, postApprovalEmitter(t, r, inv, protocol.HookTrustSession, tool.ApprovalAllowOnce), runtimeTurnID, inv)
 			state := r.hooks.post[inv.InvocationID()]
 			if result.Status() != tool.ResultError || state.route != domain.PostHookRouteFailure || runner.calls != 0 || state.terminal == nil || r.toolTurn.resultTicket != nil {

@@ -1,7 +1,7 @@
 package provider
 
 import (
-	"encoding/json"
+	"encoding/hex"
 	"fmt"
 
 	"easycode/internal/codec"
@@ -14,6 +14,18 @@ type RequestEvidence struct {
 	items             []codec.CanonicalJSON
 	properties        codec.CanonicalJSON
 	nativeFingerprint string
+}
+
+// RequestComparison 冻结一次提交基线比较，供传输选择和收据共用。
+type RequestComparison struct {
+	offset   int
+	relation domain.NativeRelation
+	reason   domain.RequestResetReason
+}
+
+// Suffix 返回可复用的前缀长度及重置原因。
+func (c RequestComparison) Suffix() (int, domain.RequestResetReason) {
+	return c.offset, c.reason
 }
 
 func canonicalRequestItems[E any](items []E) ([]codec.CanonicalJSON, error) {
@@ -34,11 +46,7 @@ func CompileRequestEvidence[E, P any](input []E, wireProperties P, inputField st
 	if err != nil {
 		return RequestEvidence{}, err
 	}
-	raw := make([]json.RawMessage, 0, len(items))
-	for _, item := range items {
-		raw = append(raw, item.Bytes())
-	}
-	native, err := codec.MarshalCanonical(raw, MaxNativeCommitBytes)
+	native, err := codec.CanonicalArraySHA256(items, MaxNativeCommitBytes)
 	if err != nil {
 		return RequestEvidence{}, err
 	}
@@ -55,7 +63,7 @@ func CompileRequestEvidence[E, P any](input []E, wireProperties P, inputField st
 	if err != nil {
 		return RequestEvidence{}, err
 	}
-	return RequestEvidence{items, properties, domain.ContentFingerprint(native.Bytes())}, nil
+	return RequestEvidence{items, properties, hex.EncodeToString(native[:])}, nil
 }
 
 // Properties 返回已冻结的请求属性。
@@ -65,7 +73,7 @@ func (e RequestEvidence) Properties() codec.CanonicalJSON { return e.properties 
 func (e RequestEvidence) NativeFingerprint() string { return e.nativeFingerprint }
 
 // Compare 与已提交基线比较逻辑输入及原生请求属性。
-func (e RequestEvidence) Compare(baseline RequestBaseline) (int, domain.NativeRelation, domain.RequestResetReason) {
+func (e RequestEvidence) Compare(baseline RequestBaseline) RequestComparison {
 	return baseline.Compare(e.items, e.properties)
 }
 
@@ -79,8 +87,8 @@ func BaselineWithOutput[E any](e RequestEvidence, output []E) (RequestBaseline, 
 }
 
 // Receipt 记录逻辑请求和窗口关系，传输策略可以在后续据实补充传输信息。
-func (e RequestEvidence) Receipt(body codec.CanonicalJSON, baseline RequestBaseline, nextReason domain.RequestResetReason, receipt domain.RequestReceipt) (domain.RequestReceipt, error) {
-	_, relation, reason := e.Compare(baseline)
+func (e RequestEvidence) Receipt(body codec.CanonicalJSON, comparison RequestComparison, nextReason domain.RequestResetReason, receipt domain.RequestReceipt) (domain.RequestReceipt, error) {
+	relation, reason := comparison.relation, comparison.reason
 	if nextReason != "" && nextReason != domain.ResetNone {
 		reason = nextReason
 		if reason == domain.ResetCompacted {
@@ -91,7 +99,8 @@ func (e RequestEvidence) Receipt(body codec.CanonicalJSON, baseline RequestBasel
 		reason = domain.ResetSummary
 		relation = domain.NativeBoundary
 	}
-	receipt.RequestFingerprint = domain.ContentFingerprint(body.Bytes())
+	bodyDigest := body.SHA256()
+	receipt.RequestFingerprint = hex.EncodeToString(bodyDigest[:])
 	receipt.NativeFingerprint = e.nativeFingerprint
 	receipt.Relation = relation
 	receipt.Reason = reason

@@ -1,10 +1,10 @@
 package openai
 
 import (
-	"easycode/internal/domain"
 	"fmt"
 
 	"easycode/internal/codec"
+	"easycode/internal/domain"
 	"easycode/internal/provider"
 	"easycode/internal/tool"
 )
@@ -33,11 +33,6 @@ func toolOutputsEntry(turn domain.TurnID, calls []NativeItem, results []tool.Mod
 		return nativeHistoryEntry{}, err
 	}
 	return entry, nil
-}
-
-func openAICapabilityForName(name string) tool.CapabilityID {
-	capability, _ := tool.FacadeCapability(domain.ProviderOpenAI, name)
-	return capability
 }
 
 func nativeSequenceRules() provider.NativeSequenceRules[nativeHistoryEntry, NativeItem] {
@@ -69,6 +64,13 @@ func functionCalls(items []NativeItem) []NativeItem {
 		}
 	}
 	return calls
+}
+
+func nativeToolCallInput(call NativeItem) (tool.ProviderWireKind, string) {
+	if call.Type == "custom_tool_call" {
+		return tool.WireCustomFreeform, call.Input
+	}
+	return tool.WireStructured, call.Arguments
 }
 
 func matchFunctionOutputs(calls []NativeItem, outputs []NativeItem) error {

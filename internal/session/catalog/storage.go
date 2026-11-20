@@ -1,209 +1,188 @@
 package catalog
 
 import (
+	"bufio"
+	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
-	"time"
+	"io"
+	"io/fs"
+	"slices"
 
-	"github.com/ncruces/go-sqlite3"
-	_ "github.com/ncruces/go-sqlite3/embed"
-
+	"easycode/internal/codec"
 	"easycode/internal/domain"
 )
 
-const schemaSQL = `
-CREATE TABLE threads (
-    thread_id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    journal_path TEXT NOT NULL UNIQUE,
-    created_at_ns INTEGER NOT NULL,
-    updated_at_ns INTEGER NOT NULL,
-    last_sequence INTEGER NOT NULL,
-    last_checksum TEXT NOT NULL,
-    creation_cwd TEXT NOT NULL,
-    provider_family TEXT NOT NULL,
-    provider_wire TEXT NOT NULL,
-    model TEXT NOT NULL,
-    title TEXT NOT NULL
-) STRICT;
-CREATE INDEX threads_continue_lookup ON threads (
-    creation_cwd,
-    provider_family,
-    provider_wire,
-    model,
-    updated_at_ns DESC,
-    thread_id DESC
-);
-`
+var (
+	errInvalidSnapshot              = errors.New("session catalog snapshot is invalid")
+	errSnapshotPublicationUncertain = errors.New("session catalog publication is uncertain")
+)
 
-// Catalog 持有一次显式 Catalog 协调所需的锁和单一 SQLite 连接。
+// Catalog 持有跨进程锁及本次打开看到的已验证快照。
 type Catalog struct {
-	config Config
-	store  *secureStore
-	db     *sqlite3.Conn
-	open   bool
+	config      Config
+	store       *secureStore
+	entries     []Entry
+	hasSnapshot bool
+	uncertain   bool
 }
 
-// New 创建纯内存 Catalog 配置，不访问文件系统或数据库。
+// New 创建纯内存 Catalog 配置。
 func New(config Config) (*Catalog, error) {
 	if err := validateConfig(config); err != nil {
 		return nil, err
 	}
-	if config.BusyTimeout == 0 {
-		config.BusyTimeout = 5 * time.Second
-	}
 	return &Catalog{config: config}, nil
 }
 
-// Open 取得跨进程 Catalog 锁，并打开、校验或重建 schema。
+// Open 取得 Catalog 锁并读取安全打开且符合当前结构的快照。
 func (catalog *Catalog) Open(ctx context.Context) error {
-	if catalog == nil {
-		return fmt.Errorf("session catalog is required")
+	if catalog == nil || ctx == nil {
+		return fmt.Errorf("session catalog and context are required")
 	}
-	if catalog.open {
-		return nil
+	if catalog.store != nil {
+		return catalog.ready(ctx)
 	}
-	if ctx == nil {
-		return fmt.Errorf("catalog context is required")
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	store, err := openSecureStore(ctx, catalog.config.DatabasePath)
+	store, err := openSecureStore(ctx, catalog.config.SnapshotPath)
 	if err != nil {
 		return err
 	}
 	catalog.store = store
-	if err := store.ensureDatabase(); err != nil {
-		_ = catalog.Close()
-		return err
+	file, err := store.openSnapshot()
+	if canceled := ctx.Err(); canceled != nil {
+		return errors.Join(canceled, catalog.Close())
 	}
-	db, err := catalog.openConnection(ctx, store.path(store.dbName))
-	if err == nil {
-		err = validateSchema(db)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
 	}
 	if err != nil {
-		if db != nil {
-			_ = db.Close()
+		return errors.Join(err, catalog.Close())
+	}
+	entries, err := decodeSnapshot(ctx, file)
+	if err != nil {
+		if ctx.Err() != nil {
+			return errors.Join(ctx.Err(), catalog.Close())
 		}
-		db, err = catalog.rebuildEmpty(ctx)
+		var syntaxError *json.SyntaxError
+		if errors.Is(err, errInvalidSnapshot) || errors.Is(err, io.ErrUnexpectedEOF) ||
+			errors.Is(err, io.EOF) || errors.As(err, &syntaxError) {
+			return nil
+		}
+		return errors.Join(fmt.Errorf("read session catalog snapshot: %w", err), catalog.Close())
 	}
-	if err != nil {
-		_ = catalog.Close()
-		return err
-	}
-	catalog.db = db
-	catalog.open = true
+	catalog.entries = entries
+	catalog.hasSnapshot = true
 	return nil
 }
 
-func (catalog *Catalog) openConnection(ctx context.Context, path string) (*sqlite3.Conn, error) {
-	db, err := sqlite3.OpenFlags(path, sqlite3.OPEN_READWRITE|sqlite3.OPEN_CREATE|sqlite3.OPEN_NOFOLLOW)
+func decodeSnapshot(ctx context.Context, reader io.Reader) ([]Entry, error) {
+	decoder := json.NewDecoder(reader)
+	open, err := decoder.Token()
 	if err != nil {
-		return nil, fmt.Errorf("open session catalog database: %w", err)
-	}
-	db.SetInterrupt(ctx)
-	if err := db.BusyTimeout(catalog.config.BusyTimeout); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("configure session catalog busy timeout: %w", err)
-	}
-	if err := db.Exec("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA temp_store=MEMORY; PRAGMA foreign_keys=ON;"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("configure session catalog database: %w", err)
-	}
-	if err := catalog.store.validateSidecars(); err != nil {
-		_ = db.Close()
 		return nil, err
 	}
-	return db, nil
+	if open != json.Delim('[') {
+		return nil, errInvalidSnapshot
+	}
+
+	var entries []Entry
+	seen := make(map[domain.ThreadID]struct{})
+	for decoder.More() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		var raw json.RawMessage
+		if err := decoder.Decode(&raw); err != nil {
+			return nil, err
+		}
+		var entry Entry
+		if codec.UnmarshalRecord(raw, &entry) != nil || validateEntry(entry) != nil {
+			return nil, errInvalidSnapshot
+		}
+		if _, duplicate := seen[entry.ThreadID]; duplicate ||
+			(len(entries) != 0 && compareEntry(entries[len(entries)-1], entry) >= 0) {
+			return nil, errInvalidSnapshot
+		}
+		seen[entry.ThreadID] = struct{}{}
+		entries = append(entries, entry)
+	}
+	close, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	if close != json.Delim(']') {
+		return nil, errInvalidSnapshot
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		if err != nil {
+			return nil, err
+		}
+		return nil, errInvalidSnapshot
+	}
+	return entries, ctx.Err()
 }
 
-func validateSchema(db *sqlite3.Conn) error {
-	check, err := querySingleText(db, "PRAGMA quick_check")
-	if err != nil || check != "ok" {
-		return fmt.Errorf("session catalog integrity check failed")
+func (catalog *Catalog) publish(ctx context.Context, entries []Entry) error {
+	if err := catalog.ready(ctx); err != nil {
+		return err
 	}
-	wantColumns := []string{
-		"thread_id", "session_id", "journal_path", "created_at_ns", "updated_at_ns",
-		"last_sequence", "last_checksum", "creation_cwd", "provider_family", "provider_wire", "model", "title",
+	slices.SortFunc(entries, compareEntry)
+	if catalog.hasSnapshot && slices.Equal(entries, catalog.entries) {
+		return errors.Join(catalog.store.checkSnapshot(), ctx.Err())
 	}
-	statement, _, err := db.Prepare("PRAGMA table_info(threads)")
+	err := catalog.store.publishSnapshot(ctx, func(writer io.Writer) error {
+		return writeSnapshot(ctx, writer, entries)
+	})
 	if err != nil {
-		return fmt.Errorf("inspect session catalog schema: %w", err)
+		catalog.uncertain = errors.Is(err, errSnapshotPublicationUncertain)
+		return err
 	}
-	defer func() { _ = statement.Close() }()
-	columns := make([]string, 0, len(wantColumns))
-	for statement.Step() {
-		name := statement.ColumnText(1)
-		if name == "title" && (statement.ColumnText(2) != "TEXT" || statement.ColumnInt(3) != 1) {
-			return fmt.Errorf("session catalog title schema is incompatible")
-		}
-		columns = append(columns, name)
-	}
-	if err := statement.Err(); err != nil {
-		return fmt.Errorf("inspect session catalog schema: %w", err)
-	}
-	if len(columns) != len(wantColumns) {
-		return fmt.Errorf("session catalog schema is incompatible")
-	}
-	for index := range columns {
-		if columns[index] != wantColumns[index] {
-			return fmt.Errorf("session catalog schema is incompatible")
-		}
-	}
-	indexCount, err := querySingleInt64(db, "SELECT count(*) FROM sqlite_schema WHERE type='index' AND name='threads_continue_lookup'")
-	if err != nil || indexCount != 1 {
-		return fmt.Errorf("session catalog schema is incompatible")
-	}
+	catalog.entries = entries
+	catalog.hasSnapshot = true
 	return nil
 }
 
-func (catalog *Catalog) rebuildEmpty(ctx context.Context) (*sqlite3.Conn, error) {
-	temporaryName, err := catalog.store.createTemporaryDatabase()
-	if err != nil {
-		return nil, err
+func writeSnapshot(ctx context.Context, writer io.Writer, entries []Entry) error {
+	buffer := bufio.NewWriter(writer)
+	if _, err := buffer.WriteString("["); err != nil {
+		return err
 	}
-	keepTemporary := true
-	defer func() {
-		if keepTemporary {
-			_ = catalog.store.removeTemporary(temporaryName)
+	for index, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-	}()
-	temporaryPath := catalog.store.path(temporaryName)
-	db, err := catalog.openConnection(ctx, temporaryPath)
-	if err != nil {
-		return nil, err
+		data, err := codec.MarshalStable(entry)
+		if err != nil {
+			return fmt.Errorf("encode session catalog entry: %w", err)
+		}
+		if index > 0 {
+			if _, err := buffer.WriteString(","); err != nil {
+				return err
+			}
+		}
+		if _, err := buffer.Write(data); err != nil {
+			return err
+		}
 	}
-	if err := catalog.store.openTemporaryJournal(temporaryName); err != nil {
-		_ = db.Close()
-		return nil, err
+	if _, err := buffer.WriteString("]\n"); err != nil {
+		return err
 	}
-	if err := db.Exec("BEGIN IMMEDIATE;" + schemaSQL + "COMMIT;"); err != nil {
-		_ = db.Exec("ROLLBACK")
-		_ = db.Close()
-		return nil, fmt.Errorf("create session catalog schema: %w", err)
-	}
-	if err := db.Close(); err != nil {
-		return nil, fmt.Errorf("close rebuilt session catalog: %w", err)
-	}
-	file, err := catalog.store.openNamedDatabase(temporaryName)
-	if err != nil {
-		return nil, err
-	}
-	if err := file.Sync(); err != nil {
-		_ = file.Close()
-		return nil, fmt.Errorf("sync rebuilt session catalog: %w", err)
-	}
-	if err := file.Close(); err != nil {
-		return nil, fmt.Errorf("close synced session catalog: %w", err)
-	}
-	if err := catalog.store.replaceDatabase(temporaryName); err != nil {
-		return nil, err
-	}
-	keepTemporary = false
-	return catalog.openConnection(ctx, catalog.store.path(catalog.store.dbName))
+	return buffer.Flush()
 }
 
-// LatestCompatible 返回精确 selector 下确定性排序的最近 root thread。
+func compareEntry(left, right Entry) int {
+	if order := right.UpdatedAt.Compare(left.UpdatedAt); order != 0 {
+		return order
+	}
+	return cmp.Compare(right.ThreadID, left.ThreadID)
+}
+
+// LatestCompatible 返回精确条件下最近的 root thread。
 func (catalog *Catalog) LatestCompatible(ctx context.Context, selector Selector) (Entry, bool, error) {
 	if err := validateSelector(selector); err != nil {
 		return Entry{}, false, err
@@ -211,177 +190,40 @@ func (catalog *Catalog) LatestCompatible(ctx context.Context, selector Selector)
 	if err := catalog.ready(ctx); err != nil {
 		return Entry{}, false, err
 	}
-	statement, _, err := catalog.db.Prepare(`SELECT session_id, thread_id, journal_path, created_at_ns, updated_at_ns,
-last_sequence, last_checksum, creation_cwd, provider_family, provider_wire, model, title
-FROM threads WHERE creation_cwd=?1 AND provider_family=?2 AND provider_wire=?3 AND model=?4
-ORDER BY updated_at_ns DESC, thread_id DESC LIMIT 1`)
-	if err != nil {
-		return Entry{}, false, fmt.Errorf("prepare session catalog query: %w", err)
-	}
-	defer func() { _ = statement.Close() }()
-	if err := bindTexts(statement, selector.CreationCWD, string(selector.ProviderFamily), selector.ProviderWire, selector.Model); err != nil {
-		return Entry{}, false, err
-	}
-	if !statement.Step() {
-		if err := statement.Err(); err != nil {
-			return Entry{}, false, fmt.Errorf("query session catalog: %w", err)
+	for _, entry := range catalog.entries {
+		if err := ctx.Err(); err != nil {
+			return Entry{}, false, err
 		}
-		return Entry{}, false, nil
+		if entry.CreationCWD == selector.CreationCWD && entry.ProviderFamily == selector.ProviderFamily &&
+			entry.ProviderWire == selector.ProviderWire && entry.Model == selector.Model {
+			return entry, true, nil
+		}
 	}
-	entry, err := decodeEntry(statement)
-	if err != nil {
-		return Entry{}, false, err
-	}
-	return entry, true, nil
-}
-
-func decodeEntry(statement *sqlite3.Stmt) (Entry, error) {
-	sessionID, err := domain.ParseSessionID(statement.ColumnText(0))
-	if err != nil {
-		return Entry{}, fmt.Errorf("session catalog row is invalid")
-	}
-	threadID, err := domain.ParseThreadID(statement.ColumnText(1))
-	if err != nil {
-		return Entry{}, fmt.Errorf("session catalog row is invalid")
-	}
-	sequence := statement.ColumnInt64(5)
-	if sequence <= 0 {
-		return Entry{}, fmt.Errorf("session catalog row is invalid")
-	}
-	entry := Entry{
-		SessionID: sessionID, ThreadID: threadID, JournalPath: statement.ColumnText(2),
-		CreatedAt: time.Unix(0, statement.ColumnInt64(3)).UTC(), UpdatedAt: time.Unix(0, statement.ColumnInt64(4)).UTC(),
-		LastSequence: uint64(sequence), LastChecksum: statement.ColumnText(6), CreationCWD: statement.ColumnText(7),
-		ProviderFamily: domain.ProviderFamily(statement.ColumnText(8)), ProviderWire: statement.ColumnText(9), Model: statement.ColumnText(10),
-		Title: domain.SessionTitle(statement.ColumnText(11)),
-	}
-	if err := validateEntry(entry); err != nil {
-		return Entry{}, fmt.Errorf("session catalog row is invalid")
-	}
-	return entry, nil
+	return Entry{}, false, ctx.Err()
 }
 
 func (catalog *Catalog) ready(ctx context.Context) error {
-	if catalog == nil || !catalog.open || catalog.db == nil {
+	if catalog == nil || catalog.store == nil {
 		return fmt.Errorf("session catalog is not open")
 	}
 	if ctx == nil {
 		return fmt.Errorf("catalog context is required")
 	}
-	catalog.db.SetInterrupt(ctx)
-	return nil
+	if catalog.uncertain {
+		return errSnapshotPublicationUncertain
+	}
+	return ctx.Err()
 }
 
-func (catalog *Catalog) beginWrite(ctx context.Context) error {
-	if err := catalog.ready(ctx); err != nil {
-		return err
-	}
-	if err := catalog.store.ensureRollbackJournal(); err != nil {
-		return err
-	}
-	if err := catalog.db.Exec("BEGIN IMMEDIATE"); err != nil {
-		return fmt.Errorf("begin session catalog transaction: %w", err)
-	}
-	return nil
-}
-
-func (catalog *Catalog) upsert(entry Entry) error {
-	if err := validateEntry(entry); err != nil {
-		return err
-	}
-	if entry.LastSequence > math.MaxInt64 {
-		return fmt.Errorf("catalog entry sequence is invalid")
-	}
-	statement, _, err := catalog.db.Prepare(`INSERT INTO threads (
-thread_id, session_id, journal_path, created_at_ns, updated_at_ns, last_sequence, last_checksum,
-creation_cwd, provider_family, provider_wire, model, title
-) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)
-ON CONFLICT(thread_id) DO UPDATE SET session_id=excluded.session_id, journal_path=excluded.journal_path,
-created_at_ns=excluded.created_at_ns, updated_at_ns=excluded.updated_at_ns,
-last_sequence=excluded.last_sequence, last_checksum=excluded.last_checksum,
-creation_cwd=excluded.creation_cwd, provider_family=excluded.provider_family,
-provider_wire=excluded.provider_wire, model=excluded.model, title=excluded.title`)
-	if err != nil {
-		return fmt.Errorf("prepare session catalog upsert: %w", err)
-	}
-	defer func() { _ = statement.Close() }()
-	values := []string{string(entry.ThreadID), string(entry.SessionID), entry.JournalPath}
-	if err := bindTexts(statement, values...); err != nil {
-		return err
-	}
-	if err := statement.BindInt64(4, entry.CreatedAt.UnixNano()); err != nil {
-		return err
-	}
-	if err := statement.BindInt64(5, entry.UpdatedAt.UnixNano()); err != nil {
-		return err
-	}
-	if err := statement.BindInt64(6, int64(entry.LastSequence)); err != nil {
-		return err
-	}
-	for index, value := range []string{entry.LastChecksum, entry.CreationCWD, string(entry.ProviderFamily), entry.ProviderWire, entry.Model, string(entry.Title)} {
-		if err := statement.BindText(index+7, value); err != nil {
-			return err
-		}
-	}
-	if err := statement.Exec(); err != nil {
-		return fmt.Errorf("upsert session catalog entry: %w", err)
-	}
-	return nil
-}
-
-func bindTexts(statement *sqlite3.Stmt, values ...string) error {
-	for index, value := range values {
-		if err := statement.BindText(index+1, value); err != nil {
-			return fmt.Errorf("bind session catalog value: %w", err)
-		}
-	}
-	return nil
-}
-
-func querySingleText(db *sqlite3.Conn, query string) (string, error) {
-	statement, _, err := db.Prepare(query)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = statement.Close() }()
-	if !statement.Step() {
-		if err := statement.Err(); err != nil {
-			return "", err
-		}
-		return "", fmt.Errorf("query returned no rows")
-	}
-	return statement.ColumnText(0), nil
-}
-
-func querySingleInt64(db *sqlite3.Conn, query string) (int64, error) {
-	statement, _, err := db.Prepare(query)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = statement.Close() }()
-	if !statement.Step() {
-		if err := statement.Err(); err != nil {
-			return 0, err
-		}
-		return 0, fmt.Errorf("query returned no rows")
-	}
-	return statement.ColumnInt64(0), nil
-}
-
-// Close 幂等关闭 SQLite、释放 Catalog 锁和 data-home 句柄。
+// Close 释放快照、Catalog 锁和所属目录句柄。
 func (catalog *Catalog) Close() error {
-	if catalog == nil {
+	if catalog == nil || catalog.store == nil {
 		return nil
 	}
-	var result error
-	if catalog.db != nil {
-		result = errors.Join(result, catalog.db.Close())
-		catalog.db = nil
-	}
-	if catalog.store != nil {
-		result = errors.Join(result, catalog.store.Close())
-		catalog.store = nil
-	}
-	catalog.open = false
-	return result
+	err := catalog.store.Close()
+	catalog.store = nil
+	catalog.entries = nil
+	catalog.hasSnapshot = false
+	catalog.uncertain = false
+	return err
 }

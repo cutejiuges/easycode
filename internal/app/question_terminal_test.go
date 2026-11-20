@@ -49,7 +49,7 @@ func TestQuestionTerminalHelper(t *testing.T) {
 	if err := os.WriteFile(configuration, []byte(text), 0600); err != nil {
 		t.Fatal(err)
 	}
-	options := Options{ConfigPath: configuration, SessionDataRoot: filepath.Join(dir, "sessions"), SessionCatalogPath: filepath.Join(dir, "state.sqlite"), Input: os.Stdin, Output: os.Stdout}
+	options := Options{ConfigPath: configuration, SessionDataRoot: filepath.Join(dir, "sessions"), SessionCatalogPath: filepath.Join(dir, "catalog.json"), Input: os.Stdin, Output: os.Stdout}
 	var outcome Outcome
 	if os.Getenv("EASYCODE_QUESTION_PICKER") == "1" {
 		data, err := os.ReadFile("../session/testdata/current/question_openai_complete.jsonl")

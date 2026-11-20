@@ -54,7 +54,7 @@ func TestTaskRecoveryUsesCommittedResultAndNeverRepeatsCompensation(t *testing.T
 			original := append(bytes.Join(lines[:end], []byte{'\n'}), '\n')
 			root, path, thread := installPreviewFixture(t, original)
 			_, plan := loadToolLoopPlan(t, root, thread)
-			expected, err := session.TaskProgressBefore(plan.Tools, 0)
+			expected, err := plan.TaskProgress()
 			if err != nil {
 				t.Fatal(err)
 			}

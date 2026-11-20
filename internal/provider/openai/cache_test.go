@@ -21,7 +21,7 @@ func TestOpenAICacheRequestGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := conversation.compileSamplingRequest(conversation.history.snapshot(), input)
+	got, err := conversation.compileSamplingRequest(conversation.history.Entries(), input)
 	if err != nil {
 		t.Fatal(err)
 	}

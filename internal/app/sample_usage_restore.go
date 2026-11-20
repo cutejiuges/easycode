@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 
 	"easycode/internal/domain"
@@ -9,12 +10,12 @@ import (
 )
 
 // validateSampleUsageEvidence 在 repair 或 writer 接管前按绑定的策略核对当前计量结构。
-func validateSampleUsageEvidence(validator provider.SampleUsageValidator, plan session.ReplayPlan) error {
-	if validator == nil {
-		return nil
-	}
+func validateSampleUsageEvidence(ctx context.Context, validator provider.SampleUsageValidator, plan session.ReplayPlan) error {
 	index := 0
 	for _, native := range plan.NativeCommits {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if native.Role != domain.NativeCommitSample {
 			continue
 		}
@@ -37,5 +38,5 @@ func validateSampleUsageEvidence(validator provider.SampleUsageValidator, plan s
 	if index != len(plan.SampleUsages) {
 		return fmt.Errorf("sample usage has no native facts")
 	}
-	return nil
+	return ctx.Err()
 }

@@ -1,4 +1,4 @@
-// Package catalog 实现从 Session JSONL 事实源派生的可重建 SQLite 目录。
+// Package catalog 实现从 Session JSONL 事实源派生的可重建会话目录。
 package catalog
 
 import (
@@ -13,25 +13,23 @@ import (
 
 // Config 描述 Catalog 的显式存储位置和协调边界。
 type Config struct {
-	DatabasePath string
-	SessionRoot  string
-	BusyTimeout  time.Duration
+	SnapshotPath string
 }
 
 // Entry 是一个已完整回放的 root thread 的最小查询投影。
 type Entry struct {
-	SessionID      domain.SessionID
-	ThreadID       domain.ThreadID
-	JournalPath    string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	LastSequence   uint64
-	LastChecksum   string
-	CreationCWD    string
-	ProviderFamily domain.ProviderFamily
-	ProviderWire   string
-	Model          string
-	Title          domain.SessionTitle
+	SessionID      domain.SessionID      `json:"session_id"`
+	ThreadID       domain.ThreadID       `json:"thread_id"`
+	JournalPath    string                `json:"journal_path"`
+	CreatedAt      time.Time             `json:"created_at"`
+	UpdatedAt      time.Time             `json:"updated_at"`
+	LastSequence   uint64                `json:"last_sequence"`
+	LastChecksum   string                `json:"last_checksum"`
+	CreationCWD    string                `json:"creation_cwd"`
+	ProviderFamily domain.ProviderFamily `json:"provider_family"`
+	ProviderWire   string                `json:"provider_wire"`
+	Model          string                `json:"model"`
+	Title          domain.SessionTitle   `json:"title"`
 }
 
 // Selector 描述 --continue 的精确兼容条件。
@@ -52,14 +50,8 @@ type ReconciliationReport struct {
 }
 
 func validateConfig(config Config) error {
-	if config.DatabasePath == "" || !filepath.IsAbs(config.DatabasePath) {
-		return fmt.Errorf("catalog database path must be absolute")
-	}
-	if config.SessionRoot == "" || !filepath.IsAbs(config.SessionRoot) {
-		return fmt.Errorf("catalog session root must be absolute")
-	}
-	if config.BusyTimeout < 0 {
-		return fmt.Errorf("catalog busy timeout is invalid")
+	if !filepath.IsAbs(config.SnapshotPath) || filepath.Base(filepath.Clean(config.SnapshotPath)) == string(filepath.Separator) {
+		return fmt.Errorf("catalog snapshot path must be absolute")
 	}
 	return nil
 }
@@ -72,7 +64,7 @@ func validateEntry(entry Entry) error {
 		return fmt.Errorf("catalog entry journal path is invalid")
 	}
 	if entry.CreatedAt.IsZero() || entry.CreatedAt.Location() != time.UTC ||
-		entry.UpdatedAt.IsZero() || entry.UpdatedAt.Location() != time.UTC || entry.UpdatedAt.Before(entry.CreatedAt) {
+		entry.UpdatedAt.IsZero() || entry.UpdatedAt.Location() != time.UTC {
 		return fmt.Errorf("catalog entry timestamp is invalid")
 	}
 	if entry.LastSequence == 0 || strings.TrimSpace(entry.LastChecksum) == "" {

@@ -81,7 +81,7 @@ func TestExecNativeResultsRestoreExactly(t *testing.T) {
 			uninterrupted := &Conversation{provider: instance}
 			var commits []provider.NativeCommitEnvelope
 			for _, entry := range history {
-				uninterrupted.history.commit(entry)
+				uninterrupted.history.Append(entry)
 				commit, err := encodeNativeCommit(entry)
 				if err != nil {
 					t.Fatal(err)
@@ -125,11 +125,11 @@ func TestExecNativeResultsRestoreExactly(t *testing.T) {
 					t.Fatalf("Exec continuation golden mismatch:\n%s", first.Bytes())
 				}
 			}
-			a, err := uninterrupted.HistoryFootprint()
+			_, a, err := uninterrupted.ProjectContextWindow()
 			if err != nil {
 				t.Fatal(err)
 			}
-			b, err := restored.HistoryFootprint()
+			_, b, err := restored.ProjectContextWindow()
 			if err != nil || a != b {
 				t.Fatal("Exec restore changed history footprint")
 			}

@@ -39,11 +39,7 @@ type NativeItem struct {
 	Raw              json.RawMessage        `json:"-"`
 }
 
-// optionalUint 区分服务端明确给出的零值与缺失字段。
-type optionalUint struct {
-	Value uint64
-	Known bool
-}
+type optionalUint = provider.OptionalUint
 
 // rawUsage 原样保存当前文本切片支持的 Responses usage 字段。
 type rawUsage struct {
@@ -53,8 +49,6 @@ type rawUsage struct {
 	OutputTokens          optionalUint
 	ReasoningOutputTokens optionalUint
 }
-
-func (usage rawUsage) clone() rawUsage { return usage }
 
 func (usage rawUsage) normalized() (domain.SampleUsage, error) {
 	inputUncached := domain.UnknownUsageMetric()
@@ -70,18 +64,11 @@ func (usage rawUsage) normalized() (domain.SampleUsage, error) {
 	}
 	return domain.NewSampleUsage(
 		inputUncached,
-		openAIUsageMetric(usage.CachedInputTokens),
-		openAIUsageMetric(usage.CacheWriteTokens),
-		openAIUsageMetric(usage.OutputTokens),
-		openAIUsageMetric(usage.ReasoningOutputTokens),
+		usage.CachedInputTokens.Metric(),
+		usage.CacheWriteTokens.Metric(),
+		usage.OutputTokens.Metric(),
+		usage.ReasoningOutputTokens.Metric(),
 	)
-}
-
-func openAIUsageMetric(value optionalUint) domain.UsageMetric {
-	if !value.Known {
-		return domain.UnknownUsageMetric()
-	}
-	return domain.KnownUsageMetric(value.Value)
 }
 
 type nativeItemWire struct {
@@ -109,16 +96,6 @@ func NewUserItem(text string) NativeItem {
 			Text: text,
 		}},
 	}
-}
-
-// ProviderFamily 返回原生项所属协议家族。
-func (NativeItem) ProviderFamily() domain.ProviderFamily {
-	return domain.ProviderOpenAI
-}
-
-// ItemKind 返回原生 response item 类型。
-func (item NativeItem) ItemKind() string {
-	return item.Type
 }
 
 // MarshalJSON 优先回放服务端原始 item，避免未知扩展丢失。
@@ -201,7 +178,7 @@ type nativeHistoryEntry struct {
 func (entry nativeHistoryEntry) clone() nativeHistoryEntry {
 	cloned := nativeHistoryEntry{
 		Kind: entry.Kind, Outputs: cloneNativeItems(entry.Outputs),
-		ToolOutputs: cloneNativeItems(entry.ToolOutputs), Usage: entry.Usage.clone(),
+		ToolOutputs: cloneNativeItems(entry.ToolOutputs), Usage: entry.Usage,
 	}
 	cloned.TurnID = entry.TurnID
 	if entry.FeedbackInput != nil {

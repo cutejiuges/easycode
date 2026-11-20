@@ -181,7 +181,7 @@ func runCompletedAnthropicTurn(t *testing.T, conversation provider.Conversation,
 	if terminalCount != 1 {
 		t.Fatalf("turn %q terminal count: %d", text, terminalCount)
 	}
-	if concrete, ok := conversation.(*Conversation); ok && concrete.active.Load() {
+	if concrete, ok := conversation.(*Conversation); ok && concrete.operations.Busy() {
 		t.Fatalf("turn %q channel closed before conversation became inactive", text)
 	}
 	if got := len(conversation.ProjectHistory().Turns); got != committedBefore+1 {

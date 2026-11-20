@@ -227,9 +227,23 @@ func (conversation *fakeConversation) HistoryFootprint() (domain.NativeHistoryFo
 	return domain.NewNativeHistoryFootprint(domain.ProviderOpenAI, 0, estimated)
 }
 
-func (conversation *fakeConversation) Stream(ctx context.Context, input provider.TurnInput) (<-chan provider.StreamEvent, error) {
+func (conversation *fakeConversation) Stream(ctx context.Context, input provider.TurnInput) (provider.StreamEvents, error) {
 	conversation.calls.Add(1)
-	return conversation.stream(ctx, input)
+	events, err := conversation.stream(ctx, input)
+	return testStreamEvents(events), err
+}
+
+func testStreamEvents(events <-chan provider.StreamEvent) provider.StreamEvents {
+	if events == nil {
+		return nil
+	}
+	return func(yield func(provider.StreamEvent) bool) {
+		for event := range events {
+			if !yield(event) {
+				return
+			}
+		}
+	}
 }
 
 type fakeJournal struct {
@@ -394,8 +408,7 @@ func TestRunTurnCancellationUsesStartedAcceptanceAsExecutorBoundary(t *testing.T
 				}
 			}}
 			config := testRuntimeConfig(t, journal)
-			config.ReadExecutor = executor
-			config.ToolCatalog = mustRuntimeToolCatalogWithExecutor(t, executor)
+			config.ToolBinding = testRuntimeToolBinding(t, func(tools *tool.Components) { tools.Read = executor })
 			config.GenerateTurnID = func() (domain.TurnID, error) { return runtimeTurnID, nil }
 			config.GenerateInvocationID = func() (tool.InvocationID, error) {
 				return tool.ParseInvocationID("01890f3e-7bcd-7abc-8abc-0123456789ab")
@@ -556,8 +569,7 @@ func TestStartedAppendFailureWaitsAcceptedCallsAndStopsLaterCalls(t *testing.T) 
 			}}
 			journal := &startedFailureJournal{failAt: 5, poisonOnFailure: test.poisoned}
 			config := testRuntimeConfig(t, journal)
-			config.ReadExecutor = executor
-			config.ToolCatalog = mustRuntimeToolCatalogWithExecutor(t, executor)
+			config.ToolBinding = testRuntimeToolBinding(t, func(tools *tool.Components) { tools.Read = executor })
 			config.GenerateTurnID = func() (domain.TurnID, error) { return runtimeTurnID, nil }
 			invocationIDs := testRuntimeInvocationIDs(t, 3)
 			var invocationIndex int
@@ -590,12 +602,15 @@ func TestStartedAppendFailureWaitsAcceptedCallsAndStopsLaterCalls(t *testing.T) 
 					failureCount++
 				}
 			}
+			if failureCount != 0 || !runtime.poisoned.Load() {
+				t.Fatalf("unfinished call group lost its recovery boundary: failure=%d, runtime poisoned=%t", failureCount, runtime.poisoned.Load())
+			}
+			wantResults := 1
 			if test.poisoned {
-				if resultCount != 0 || failureCount != 0 || !journal.Poisoned() {
-					t.Fatalf("uncertain result/failure/poisoned = %d/%d/%t", resultCount, failureCount, journal.Poisoned())
-				}
-			} else if resultCount != 1 || failureCount != 1 || journal.Poisoned() {
-				t.Fatalf("definite result/failure/poisoned = %d/%d/%t", resultCount, failureCount, journal.Poisoned())
+				wantResults = 0
+			}
+			if resultCount != wantResults || journal.Poisoned() != test.poisoned {
+				t.Fatalf("durable accepted results=%d, journal poisoned=%t", resultCount, journal.Poisoned())
 			}
 		})
 	}
@@ -624,8 +639,7 @@ func TestRunTurnToolDurabilityFailuresPreventLaterSideEffects(t *testing.T) {
 		}}
 		journal := &fakeJournal{failAt: 3}
 		config := testRuntimeConfig(t, journal)
-		config.ReadExecutor = executor
-		config.ToolCatalog = mustRuntimeToolCatalogWithExecutor(t, executor)
+		config.ToolBinding = testRuntimeToolBinding(t, func(tools *tool.Components) { tools.Read = executor })
 		config.GenerateTurnID = func() (domain.TurnID, error) { return runtimeTurnID, nil }
 		runtime, err := New(conversation, config)
 		if err != nil {
@@ -659,8 +673,7 @@ func TestRunTurnToolDurabilityFailuresPreventLaterSideEffects(t *testing.T) {
 			}
 		}}
 		config := testRuntimeConfig(t, journal)
-		config.ReadExecutor = executor
-		config.ToolCatalog = mustRuntimeToolCatalogWithExecutor(t, executor)
+		config.ToolBinding = testRuntimeToolBinding(t, func(tools *tool.Components) { tools.Read = executor })
 		config.GenerateTurnID = func() (domain.TurnID, error) { return runtimeTurnID, nil }
 		runtime, err := New(conversation, config)
 		if err != nil {
@@ -688,8 +701,7 @@ func TestRunTurnToolDurabilityFailuresPreventLaterSideEffects(t *testing.T) {
 		}}
 		journal := &fakeJournal{failAt: 6}
 		config := testRuntimeConfig(t, journal)
-		config.ReadExecutor = executor
-		config.ToolCatalog = mustRuntimeToolCatalogWithExecutor(t, executor)
+		config.ToolBinding = testRuntimeToolBinding(t, func(tools *tool.Components) { tools.Read = executor })
 		config.GenerateTurnID = func() (domain.TurnID, error) { return runtimeTurnID, nil }
 		runtime, err := New(conversation, config)
 		if err != nil {
@@ -771,8 +783,7 @@ func TestReconcileToolTurnClosesCrashPointsWithoutExternalCalls(t *testing.T) {
 			}}
 			journal := &fakeJournal{}
 			config := testRuntimeConfig(t, journal)
-			config.ReadExecutor = executor
-			config.ToolCatalog = mustRuntimeToolCatalogWithExecutor(t, executor)
+			config.ToolBinding = testRuntimeToolBinding(t, func(tools *tool.Components) { tools.Read = executor })
 			runtime, err := New(conversation, config)
 			if err != nil {
 				t.Fatal(err)
@@ -888,7 +899,7 @@ func TestRunTurnCancelCompletionRacePublishesOneTerminal(t *testing.T) {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			_ = runtime.RunTurn(ctx, runtimeInputs("hello"), func(event protocol.Event) {
+			_ = runtime.runFixtureTurn(ctx, runtimeInputs("hello"), func(event protocol.Event) {
 				if event.Kind == protocol.EventTurnCompleted || event.Kind == protocol.EventTurnFailed {
 					terminalCount.Add(1)
 				}
@@ -925,28 +936,32 @@ func testRuntimeConfig(t *testing.T, journal Journal) Config {
 	}
 	return Config{
 		SessionID: runtimeSessionID, ThreadID: runtimeThreadID, Journal: journal,
-		ProviderWire: domain.ProviderOpenAI.Wire(),
-		TaskExecutor: catalogTaskFixture{}, InitialTaskProgress: domain.NewNoTaskProgress(),
-		ContextProfile: profile, ToolCatalog: mustRuntimeToolCatalog(t), ProjectInstructions: projectInstructions,
-		QuestionExecutor: catalogQuestionFixture{}, SkillExecutor: catalogSkillExecutor{}, ReadArtifactExecutor: catalogArtifactExecutor{}, ReadExecutor: runtimeReadExecutor{}, GlobExecutor: runtimeGlobExecutor{}, GrepExecutor: runtimeGrepExecutor{},
-		PatchPreparer: catalogPatchPreparer{}, PatchExecutor: catalogPatchExecutor{}, WritePreparer: catalogWritePreparer{}, WriteExecutor: catalogWriteExecutor{}, ExecPreparer: catalogExecFixture{}, ExecExecutor: catalogExecFixture{}, ToolPolicy: tool.NewApprovalPolicy(),
+		ProviderWire:        domain.ProviderOpenAI.Wire(),
+		InitialTaskProgress: domain.NewNoTaskProgress(),
+		ContextProfile:      profile, ToolBinding: testRuntimeToolBinding(t, nil), ProjectInstructions: projectInstructions,
 		ContextBudget:  contextplan.DisabledBudget(),
 		ContextPlanner: contextplan.NewPlanner(),
 	}
 }
 
-func mustRuntimeToolCatalog(t *testing.T) tool.CatalogSnapshot {
+func testRuntimeToolBinding(t *testing.T, alter func(*tool.Components)) tool.Binding {
 	t.Helper()
-	return mustRuntimeToolCatalogWithExecutor(t, runtimeReadExecutor{})
-}
-
-func mustRuntimeToolCatalogWithExecutor(t *testing.T, executor tool.ReadExecutor) tool.CatalogSnapshot {
-	t.Helper()
-	catalog, err := tool.NewCatalogSnapshot(executor, runtimeGlobExecutor{}, runtimeGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, tool.RenderExecOutput, tool.NewApprovalPolicy(), catalogArtifactExecutor{}, catalogSkillExecutor{}, catalogQuestionFixture{}, catalogTaskFixture{})
+	components := tool.Components{
+		Read: runtimeReadExecutor{}, Glob: runtimeGlobExecutor{}, Grep: runtimeGrepExecutor{},
+		PreparePatch: catalogPatchPreparer{}, Patch: catalogPatchExecutor{},
+		PrepareWrite: catalogWritePreparer{}, Write: catalogWriteExecutor{},
+		PrepareExec: catalogExecFixture{}, Exec: catalogExecFixture{}, Policy: tool.NewApprovalPolicy(),
+		ReadArtifact: catalogArtifactExecutor{}, Skill: catalogSkillExecutor{},
+		Question: catalogQuestionFixture{}, Task: catalogTaskFixture{},
+	}
+	if alter != nil {
+		alter(&components)
+	}
+	binding, err := tool.NewBinding(components)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return catalog
+	return binding
 }
 
 func newRuntimeWithReadExecutor(t *testing.T, journal Journal, executor tool.ReadExecutor) *Runtime {
@@ -957,8 +972,7 @@ func newRuntimeWithReadExecutor(t *testing.T, journal Journal, executor tool.Rea
 		},
 	}
 	config := testRuntimeConfig(t, journal)
-	config.ReadExecutor = executor
-	config.ToolCatalog = mustRuntimeToolCatalogWithExecutor(t, executor)
+	config.ToolBinding = testRuntimeToolBinding(t, func(tools *tool.Components) { tools.Read = executor })
 	runtime, err := New(conversation, config)
 	if err != nil {
 		t.Fatal(err)
@@ -1138,7 +1152,7 @@ func cancelledProviderEvent(t *testing.T, failure error) provider.StreamEvent {
 
 func collectTurn(runtime *Runtime, ctx context.Context, observe Emitter) ([]protocol.Event, error) {
 	var events []protocol.Event
-	err := runtime.RunTurn(ctx, runtimeInputs("hello"), func(event protocol.Event) {
+	err := runtime.runFixtureTurn(ctx, runtimeInputs("hello"), func(event protocol.Event) {
 		events = append(events, event)
 		if observe != nil {
 			observe(event)

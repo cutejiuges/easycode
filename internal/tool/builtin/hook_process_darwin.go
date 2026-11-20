@@ -35,9 +35,7 @@ func (l darwinHookLauncher) startHook(ctx context.Context, d domain.HookDeclarat
 	if d.Validate() != nil {
 		return nil, process.SandboxUnavailable
 	}
-	h, err := l.launcher.startSpec(ctx, commandLaunchSpec{command: d.Command, workdir: "", pipeInput: true, policy: hookLaunchPolicy{d.Reference.Fingerprint}})
-	if err != nil {
-		return nil, ownerProcessError(err)
-	}
-	return ownerHandle{handle: h, input: h.(*darwinProcess).input}, nil
+	return l.launcher.startSpec(ctx, commandLaunchSpec{
+		command: d.Command, pipeInput: true, policy: hookLaunchPolicy{d.Reference.Fingerprint},
+	})
 }

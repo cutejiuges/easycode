@@ -1,10 +1,10 @@
 package provider
 
 import (
-	"bytes"
+	"fmt"
+
 	"easycode/internal/codec"
 	"easycode/internal/domain"
-	"fmt"
 )
 
 // RequestBaseline 保存一个已提交请求的原生前缀证据，不含连接所有权。
@@ -30,27 +30,27 @@ func NewRequestBaseline(input, output []codec.CanonicalJSON, properties codec.Ca
 			if size > 2*MaxNativeCommitBytes {
 				return RequestBaseline{}, fmt.Errorf("request baseline exceeds size limit")
 			}
-			items = append(items, item.Clone())
+			items = append(items, item)
 		}
 	}
-	return RequestBaseline{items: items, properties: properties.Clone(), present: true}, nil
+	return RequestBaseline{items: items, properties: properties, present: true}, nil
 }
 
 // Compare 校验完整字节前缀并返回后缀，不执行语义或 opaque 字段裁剪。
-func (b RequestBaseline) Compare(input []codec.CanonicalJSON, properties codec.CanonicalJSON) (int, domain.NativeRelation, domain.RequestResetReason) {
+func (b RequestBaseline) Compare(input []codec.CanonicalJSON, properties codec.CanonicalJSON) RequestComparison {
 	if !b.present {
-		return 0, domain.NativeFirst, domain.ResetFirst
+		return RequestComparison{relation: domain.NativeFirst, reason: domain.ResetFirst}
 	}
-	if !bytes.Equal(b.properties.Bytes(), properties.Bytes()) {
-		return 0, domain.NativeReplaced, domain.ResetProperties
+	if !b.properties.Equal(properties) {
+		return RequestComparison{relation: domain.NativeReplaced, reason: domain.ResetProperties}
 	}
 	if len(input) < len(b.items) {
-		return 0, domain.NativeReplaced, domain.ResetPrefix
+		return RequestComparison{relation: domain.NativeReplaced, reason: domain.ResetPrefix}
 	}
 	for i, item := range b.items {
-		if !bytes.Equal(item.Bytes(), input[i].Bytes()) {
-			return 0, domain.NativeReplaced, domain.ResetPrefix
+		if !item.Equal(input[i]) {
+			return RequestComparison{relation: domain.NativeReplaced, reason: domain.ResetPrefix}
 		}
 	}
-	return len(b.items), domain.NativeAppend, domain.ResetNone
+	return RequestComparison{offset: len(b.items), relation: domain.NativeAppend, reason: domain.ResetNone}
 }

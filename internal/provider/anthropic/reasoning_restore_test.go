@@ -37,7 +37,7 @@ func TestReasoningFixedNativeRestoreAndCacheBytesIgnoreReading(t *testing.T) {
 					t.Fatal(err)
 				}
 				entry.TurnID = "01900000-0000-7000-8000-000000000010"
-				live.history.commit(entry)
+				live.history.Append(entry)
 				envelopes = append(envelopes, envelope)
 			}
 			restoredValue, err := testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", testRestoreRecords(t, envelopes))
@@ -54,12 +54,12 @@ func TestReasoningFixedNativeRestoreAndCacheBytesIgnoreReading(t *testing.T) {
 				t.Fatal(err)
 			}
 			beforeSources := reasoningCacheSources(t, live)
-			before, err := live.compileSamplingRequest(live.history.snapshot(), input)
+			before, err := live.compileSamplingRequest(live.history.Entries(), input)
 			if err != nil {
 				t.Fatal(err)
 			}
 			for _, conversation := range []*Conversation{live, restored} {
-				view, err := conversation.ProjectTranscript()
+				view, _, err := conversation.ProjectTranscriptFrom(0)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -84,7 +84,7 @@ func TestReasoningFixedNativeRestoreAndCacheBytesIgnoreReading(t *testing.T) {
 				if bytes.Contains(semantic, []byte("readable")) {
 					t.Fatal("reasoning entered semantic history")
 				}
-				after, err := conversation.compileSamplingRequest(conversation.history.snapshot(), input)
+				after, err := conversation.compileSamplingRequest(conversation.history.Entries(), input)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -104,8 +104,8 @@ func TestReasoningFixedNativeRestoreAndCacheBytesIgnoreReading(t *testing.T) {
 					t.Fatal("display changed request fingerprint")
 				}
 			}
-			left, _ := codec.MarshalStable(live.history.snapshot())
-			right, _ := codec.MarshalStable(restored.history.snapshot())
+			left, _ := codec.MarshalStable(live.history.Entries())
+			right, _ := codec.MarshalStable(restored.history.Entries())
 			if !bytes.Equal(left, right) {
 				t.Fatal("native item order or opaque snapshot changed on restore")
 			}
@@ -147,7 +147,7 @@ func reasoningCacheSources(t *testing.T, c *Conversation) contextplan.CacheSourc
 	if err != nil {
 		t.Fatal(err)
 	}
-	footprint, err := c.HistoryFootprint()
+	_, footprint, err := c.ProjectContextWindow()
 	if err != nil {
 		t.Fatal(err)
 	}

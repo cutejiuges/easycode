@@ -56,7 +56,7 @@ func TestWebSocketDurableIncrementalAndReset(t *testing.T) {
 	defer instance.Close()
 	conversation := testConversation(t, instance)
 	firstInput := testOpenAITurnInput(t, conversation, "first")
-	firstFull, _ := conversation.compileSamplingRequest(conversation.history.snapshot(), firstInput)
+	firstFull, _ := conversation.compileSamplingRequest(conversation.history.Entries(), firstInput)
 	stream, err := conversation.Stream(context.Background(), firstInput)
 	if err != nil {
 		t.Fatal(err)
@@ -86,7 +86,7 @@ func TestWebSocketDurableIncrementalAndReset(t *testing.T) {
 		t.Fatal(err)
 	}
 	secondInput := testOpenAITurnInput(t, conversation, "second")
-	full, err := conversation.compileSamplingRequest(conversation.history.snapshot(), secondInput)
+	full, err := conversation.compileSamplingRequest(conversation.history.Entries(), secondInput)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestWebSocketDurableIncrementalAndReset(t *testing.T) {
 	_ = third.PreparedSample().Finalize()
 	restoredInput := testOpenAITurnInput(t, conversation, "after restore")
 	envelopes := make([]provider.NativeCommitEnvelope, 0)
-	for _, entry := range conversation.history.snapshot() {
+	for _, entry := range conversation.history.Entries() {
 		envelope, err := encodeNativeCommit(entry)
 		if err != nil {
 			t.Fatal(err)
@@ -153,16 +153,16 @@ func TestWebSocketDurableIncrementalAndReset(t *testing.T) {
 		envelopes = append(envelopes, envelope)
 	}
 	records := testRestoreRecords(t, envelopes)
-	restoredValue, err := instance.RestoreConversation(conversation.threadID, records)
+	restoredValue, _, err := instance.RestoreConversation(context.Background(), conversation.threadID, records)
 	if err != nil {
 		t.Fatal(err)
 	}
 	restored := restoredValue.(*Conversation)
-	liveFull, err := conversation.compileSamplingRequest(conversation.history.snapshot(), restoredInput)
+	liveFull, err := conversation.compileSamplingRequest(conversation.history.Entries(), restoredInput)
 	if err != nil {
 		t.Fatal(err)
 	}
-	restoredFull, err := restored.compileSamplingRequest(restored.history.snapshot(), restoredInput)
+	restoredFull, err := restored.compileSamplingRequest(restored.history.Entries(), restoredInput)
 	if err != nil || !bytes.Equal(liveFull.Bytes(), restoredFull.Bytes()) {
 		t.Fatal("restored full logical canonical bytes differ", err)
 	}
@@ -208,7 +208,7 @@ func websocketCacheSources(t *testing.T, c *Conversation) contextplan.CacheSourc
 	if err != nil {
 		t.Fatal(err)
 	}
-	footprint, err := c.HistoryFootprint()
+	_, footprint, err := c.ProjectContextWindow()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -351,11 +351,11 @@ func TestWebSocketSummaryUsesSeparateFullConnectionAndResets(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			preview, err := c.PreflightCompaction(compact)
+			preview, _, err := c.PreflightCompaction(compact)
 			if err != nil {
 				t.Fatal(err)
 			}
-			before, _ := c.HistoryFootprint()
+			_, before, _ := c.ProjectContextWindow()
 			prepared, err := c.RunCompaction(context.Background(), "01900000-0000-7000-8000-000000000009", preview)
 			if (err != nil) != failure {
 				t.Fatalf("summary result: %v", err)
@@ -366,7 +366,7 @@ func TestWebSocketSummaryUsesSeparateFullConnectionAndResets(t *testing.T) {
 				t.Fatal("summary was not a separate full create")
 			}
 			if failure {
-				after, _ := c.HistoryFootprint()
+				_, after, _ := c.ProjectContextWindow()
 				if before != after {
 					t.Fatal("failed summary changed window")
 				}

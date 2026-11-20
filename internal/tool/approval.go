@@ -103,12 +103,6 @@ func NewFileBaseEvidence(digest ContentDigest, size int64, mode uint32, device u
 	return evidence, nil
 }
 
-func (evidence FileBaseEvidence) ContentDigest() ContentDigest { return evidence.contentDigest }
-func (evidence FileBaseEvidence) Size() int64                  { return evidence.size }
-func (evidence FileBaseEvidence) Mode() uint32                 { return evidence.mode }
-func (evidence FileBaseEvidence) Device() uint64               { return evidence.device }
-func (evidence FileBaseEvidence) Inode() uint64                { return evidence.inode }
-
 // Validate 验证基线证据字段。
 func (evidence FileBaseEvidence) Validate() error {
 	if !evidence.contentDigest.Valid() || evidence.size < 0 || evidence.size > maxPatchFileBytes || evidence.mode > 0o7777 || evidence.device == 0 || evidence.inode == 0 {

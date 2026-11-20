@@ -2,6 +2,26 @@
 
 > 本文按事件发生时记录事实，不作为当前功能清单。版本数字、工具数量、平台验收和当时未实现项需结合后续条目与[当前能力清单](capability-status.md)阅读；当前内部格式没有 canary/schema_version 等版本门禁。
 
+### [P2][2026-11-20] 恢复证据与写入结果以实际阶段为准
+
+- 错误优先级由 grammar、artifact、投影和 Provider 校验的既有次序决定。提前归约只保存经校验的事实和待报告错误。任务状态按 result seq 更新，摘要安装、计量对账、摘要详情复用一次解码。
+- Provider 回放要继承恢复请求的取消信号。只在记录边界观察取消，并在 repair 前释放 lease。编码或大小拒绝发生在首次文件写入前，writer 继续使用原序号。已经发生的写入或 Sync 无法确认时仍 fail closed。
+
+### [P2][2026-11-20] 审批决定、执行接纳与文件发布分别确认
+
+- Stop 接纳后不能再批准，已接纳的主动决定也不能被后到取消改写。只校验通用枚举会接受活动请求未提供的选项。共用审批收口在一个准入点冻结选项、来源和决定，批准成功 Sync 后才赋予 grant，执行仍独立等待 started。
+- 暂存文件名不能证明它仍指向已写入和 Sync 的对象。Patch 发布前必须核对实际目录和暂存项身份。错配时保留陌生目录项，清理无法确认时停止后续副作用。回归入口为 `internal/runtime/exec_runtime_test.go` 和 `internal/tool/builtin/patch_unix_test.go`。
+
+### [P1/P4][2026-11-20] 流终态和待提交结果各有完成条件
+
+- 两个独立的 active/pending 检查会让采样与原生准备同时接纳。共享准入同时跟踪流清理和准备提交收口。OpenAI discard 保持占用，直到实际旧连接释放完成。
+- 普通事件占满队列时，取消仍须让生产者退出并保留唯一终态。OpenAI HTTP 收到候选成功帧后，已有缓冲区内的完整尾帧仍参与协议校验。回归入口为 `internal/provider/reasoning_test.go`、`internal/provider/transport/close_test.go` 与 `internal/provider/openai/websocket_test.go`。
+
+### [P1/P2][2026-11-20] 完整 checksum 只证明记录完整性
+
+- 普通 sample 的原生 usage 与相邻归一化事实可以各自合法却互相矛盾。共享记录结构无法验证两份数据的语义一致性。
+- 在线恢复与离线预览都由已绑定的原生 reader 对账，失败发生在 repair 和 writer 接管前。OpenAI 按原生 codec 读取计量证据，其他条目内容仍按回放原顺序校验。回归入口为 `internal/app/reasoning_usage_restore_test.go`。
+
 ### [P1/P2][2026-11-19] 共享流程仍有校验与清理顺序
 
 - 发现两家回放在工具输出处反复扫描历史前缀。增量状态保存已检查前缀的首错，到原有工具输出、checkpoint 或终末检查点才报告，避免改变组合损坏的错误优先级。回放验证完整日志，原生 digest 仍覆盖实际有效窗口。
@@ -334,7 +354,7 @@
 - 现象：Runtime 收到零值事件、重复 terminal 或 terminal 后事件时立即返回，会停止读取有界输出 channel，使 Provider producer 阻塞在后续发送，Conversation 长期保持 active，并污染下一 turn 与 shutdown。
 - 触发条件：Provider 或测试 fake 违反唯一 terminal 契约，或调用取消与 terminal/transport 清理并发发生。
 - 根因：terminal 既被当作业务结果，又被误当作 producer 已退出的完成信号；消费 owner 没有在提前失败后继续承担排空职责。
-- 架构影响：`StreamEvent` 改为五类封闭 typed constructor 与只读 accessor；Runtime 为每次 stream 派生 context，验证并保留首错，取消后同步排空到 producer 关闭。Provider 创建者仍唯一关闭 channel，channel close 才表示 transport、active 状态和 goroutine 清理完成。
+- 架构影响：`StreamEvent` 改为五类封闭 typed constructor 与只读 accessor；Runtime 为每次 stream 派生 context，验证并保留首错，取消后同步排空到 producer 关闭。Provider 创建者仍唯一关闭 channel，channel close 才表示 transport、active 状态和 goroutine 清理完成。现行宿主使用四类事件的迭代契约，自然迭代结束表示同一生产者完成清理。
 - 缓存影响：不改变 request bytes、native history、Session records、usage 或 fingerprint；失败 sample 不 finalize，也不进入下一请求。
 - 修复方案：首次消费协议错误立即取消派生 context，停止向宿主转发但继续读取；terminal 后任何事件都转为 `stream_protocol_error`，等待 channel close 后再 durable 写入唯一失败边界。AgentLoop 和 shutdown 复用同一完成信号，不增加 watchdog 或无 owner waiter。
 - 未采用方案及原因：不启动后台 drainer，因为这会让 RunTurn 在清理未完成时返回；不让消费方关闭 Provider channel，因为 channel 仍由 producer 创建并拥有；不增加超时 goroutine，因为超时返回不能转移资源 ownership。
@@ -488,9 +508,9 @@
 - 根因：文件系统属性、轻量文本扫描和派生索引都无法证明 envelope、checksum、batch、lifecycle 与 Provider-native payload 已完整验证。
 - 架构影响：JSONL 保持唯一事实源；Catalog 通过 descriptor-relative 枚举、逐 journal exclusive lease、Loader、ReplayPlanner 和纯 Projector 生成最小 SQLite 投影。`--continue` 只从精确兼容 row 选择 thread ID，关闭 Catalog 后仍进入既有 `sessionService.resume` 重新校验并取得连续 writer lease。
 - 缓存影响：Catalog path、record timestamp、session/thread identity 和 SQLite metadata 不进入 Provider request；双 Provider e2e 比较 uninterrupted、显式 resume 与 continue 的实际 request bytes、native item 顺序和 fingerprint。
-- 修复方案：recency 使用最后 committed record timestamp，并以 canonical thread ID 降序打破平局；reconciliation 在 transaction 外完成全部文件 I/O且任一时刻只持有一个 journal lease，短 transaction 只应用已验证投影。数据库缺失、损坏或 schema 不兼容时从 JSONL 原子重建。
+- 修复方案：recency 使用最后 committed record timestamp，并以 canonical thread ID 降序打破平局；reconciliation 在 transaction 外完成全部文件 I/O且任一时刻只持有一个 journal lease，短 transaction 只应用已验证投影。数据库缺失、损坏或 schema 不兼容时从 JSONL 原子重建。当前实现已改用私有 JSON 快照，见本篇 Catalog 首次 I/O 的记录。
 - 未采用方案及原因：不采用 mtime 排序，因为它可被外部修改；不采用字符串 head/tail，因为它会形成绕过 strict decoder 的第二套解析器；不采用 DB-as-truth 或 DB-first 快路径，因为当前没有可靠实时索引维护，陈旧 row 不能替代恢复事实。
-- 回归测试：`internal/session/catalog/*_test.go`、`internal/session/repository_enumeration_test.go`、`internal/app/continue_test.go`、`internal/app/headless_e2e_test.go`、`cmd/easycode/main_test.go`。
+- 回归测试：`internal/session/catalog/*_test.go`、`internal/session/repository_enumeration_test.go`、`internal/app/resume_e2e_test.go`、`internal/app/headless_e2e_test.go`、`cmd/easycode/main_test.go`。
 - 关联 ADR/Issue/PR：ADR-0003；OpenSpec `add-rebuildable-session-catalog`，未引入新的长期事实源决策。
 - 后续行动：session picker、worktree/project catalog、title/tag/search 和实时索引仍延期；引入可靠增量维护前继续执行前台全量 reconciliation。2026-09-30 在 Darwin/arm64 Apple M1 Pro 上对 25 个 journal 的一次开发基准为约 5.55 ms、4.94 MB、14934 allocs/op，仅作为后续优化对照，不作为跨平台阈值。
 
@@ -554,7 +574,7 @@
 - 关联 ADR/Issue/PR：OpenSpec `add-search-tools-and-ordered-parallelism`；这是发布前演进规则，不新增长期 ADR。
 - 后续行动：稳定发布后首次需要破坏性 revision 时，必须先通过 OpenSpec 明确不可变历史 fixture、兼容窗口、迁移方向和删除条件。
 
-重点关注：JSONL 尾部损坏、事件顺序、取消时 flush、SQLite 重建和 native history 恢复。
+重点关注 JSONL 尾部损坏、事件顺序、取消时 flush、Catalog 重建和 native history 恢复。
 
 ## 6. P3 Coding Tools 与安全执行
 
@@ -693,7 +713,7 @@
 - 生命周期：只清理 identity 匹配的自有暂存项；SIGKILL 的残留不在 resume 扫描。恢复只补 ready/allow/started/result 尾部，清空授权和观察。
 - 验收发现：原恢复计划要求全组 started 先于所有 result，不能表达 Read→Write→Patch 屏障；已改为分组检查并拒绝越过未完成独占调用。headless 曾接收 UI 专用 approval-resolved 导致投影失败，现只向交互宿主发送此事件。审批按终端显示宽度布局，避免中文路径边框错位。
 - 缓存影响：Read 观察、目录 evidence、授权和临时路径不进入 catalog fingerprint；只有真实 Write schema 增加稳定目录 segment，原生 history/opaque reasoning 与恢复 request bytes 保持等价。
-- 回归测试：`internal/tool/builtin/write_crash_unix_test.go` 使用管道定位发布前后并真实杀死子进程；`write_unix_test.go` / `write_prepare_test.go` 注入 Sync/Close/unlink/身份替换故障；`internal/session/write_fixture_test.go` 读取固定 bytes；`internal/runtime/write_schedule_test.go` 验证屏障；`internal/app/write_stream_test.go`、`write_headless_test.go`、`write_resume_test.go` 验证双 Provider 纵向链路；`internal/tui/write_test.go` 覆盖展示和输入。
+- 回归测试：`internal/tool/builtin/write_crash_unix_test.go` 使用管道定位发布前后并真实杀死子进程；`internal/tool/builtin/write_unix_test.go` 注入同步、清理及身份替换故障。`internal/runtime/write_test.go` 验证工具屏障。`internal/app/write_e2e_test.go`、`write_stream_test.go` 和 `write_resume_test.go` 验证双 Provider 纵向链路。
 - 未采用方案：不拼接多段 Read 授权、不依赖单独 mtime、不回退直接写入、不恢复 grant、不把未知暂存目录递归删除。
 - 后续行动：在真实 Linux 支持/不支持 `RENAME_NOREPLACE` 的文件系统执行现有发布用例；交叉编译不替代该运行验证。Exec 合并时另按其批准契约处理观察失效，不提前暴露占位接口。
 ### [P3][2026-10-24] 提前 Wait 会让后续进程组清理命中复用编号
@@ -793,7 +813,7 @@
 - 缓存影响：无，未修改 Provider request/native history/tool catalog。
 - 修复方案：明确标注 storage-wide 警告、完整 ID 与配置匹配恢复提示；存储 owner 关闭后才输出，不新增逐行状态猜测、弱 reader 或隐式模型调用。
 - 未采用方案及原因：不将 busy 全部视作列表失败，也不静默宣称结果完整；不把 limit 用作扫描中断条件。
-- 回归测试：`internal/app/session_list_test.go`、`internal/app/session_list_integration_test.go`、`internal/session/catalog/list_integration_test.go`。
+- 回归测试：`internal/app/session_list_titles_test.go`、`internal/session/catalog/list_integration_test.go`。
 - 后续行动：worktree 聚合、标题与交互 picker 另立 change。
 
 ### [P5][2026-10-28] 多行正文必须贯穿宿主与 Provider，粘贴边界不能靠 UI 上限推断
@@ -897,8 +917,8 @@
 - 隐私：退出码和严格 deny 只产生安全 code/统计；stdout/stderr/reason 不进模型、JSONL、日志、snapshot 或 artifact，审查完整命令仅限本地瞬态 UI。
 - 恢复：先使用旧冻结计划本地补偿并关闭旧 turn，随后才 Load 当前来源。未运行或成功前缀取消；started 无 finish 为 Hook 不确定、目标工具 cancelled，不查询 PID、不重跑命令。半行不能掩盖先前完整记录的语义损坏。
 - 缓存影响：配置与 trust 不进入 prompt/catalog 段；只有实际工具结果进入历史尾部。恢复保持冻结 preview、原生 item 次序、footprint 与 canonical request。
-- 回归入口：`internal/session/hook_fixture_test.go`、`internal/runtime/hook_recovery_test.go`、`internal/runtime/hook_shutdown_test.go`、`internal/app/hook_resume_test.go`、`internal/app/hook_cache_test.go`、`internal/app/hook_host_owner_test.go`、`internal/tui/hooks_test.go`；真实终端由 `scripts/smoke-hooks.py` 验证。
-- 关联变更：`add-pre-tool-use-command-hooks`；完整验收见该 change 的 `verification.md`。
+- 回归入口包括 `internal/session/hook_fixture_test.go`、`internal/runtime/hook_recovery_test.go`、`internal/runtime/hook_shutdown_test.go`、`internal/app/hook_resume_test.go`、`internal/app/hook_host_owner_test.go` 和 `internal/tui/hooks_test.go`。真实终端由 `scripts/smoke-hooks.py` 验证。
+- [PreToolUse 首个切片的归档验收](../../openspec/changes/archive/2026-11-20-add-pre-tool-use-command-hooks/verification.md)记录当时的各平台结果。
 
 
 ## [P5][2026-11-06] 补全选择不能改写被保护的草稿或抢占控制键
@@ -1022,7 +1042,7 @@ started Sync 前只有原输入 request_id；terminal 后直到 worker/stream �
 
 修复把严格校验合并为一次扫描与调用局部字段索引，保留固定 Sonic typed 解码、重复键/未知字段/Unicode/null 拒绝以及 canonical bytes。纯验证不物化数组值；公开 ObjectMembers 仍返回独立副本。测试增加独立 token 差异 fuzz、边界/所有权回归与分配 benchmark，不使用 race 专用替代 codec 或放宽解析规则。
 
-app 的环境敏感测试不能批量加 t.Parallel；统一入口自动分片到独立进程，所有包共用有限执行槽并核对实际完成清单。worker 必须在交回执行槽前标记失败，否则调度线程尚未读取结果时可能启动排队工作。取消需要覆盖测试派生的独立进程组，并保留升级与最终等待；真实子进程和可控时钟验证此边界。完整计时、覆盖集合和平台结论以 `optimize-test-execution` 的验收报告为准。
+app 的环境敏感测试不能批量加 t.Parallel；统一入口自动分片到独立进程，所有包共用有限执行槽并核对实际完成清单。worker 必须在交回执行槽前标记失败，否则调度线程尚未读取结果时可能启动排队工作。取消需要覆盖测试派生的独立进程组，并保留升级与最终等待；真实子进程和可控时钟验证此边界。实施阶段的计时、覆盖集合和平台结论见[测试执行优化验收](../../openspec/changes/archive/2026-11-20-optimize-test-execution/verification.md)。
 
 Linux CI 回归补充：TurnStarted 只证明回合接纳，不能证明输入已经提交或 Provider Stream 已进入。关闭顺序测试必须等待 fixture 的真实 started 信号后才调用 shutdown；扩大 deadline 无法修正错误前置条件。原关闭顺序断言与操作级 deadline 保持。
 
@@ -1051,3 +1071,31 @@ Linux CI 回归补充：TurnStarted 只证明回合接纳，不能证明输入�
 ## 交互 CLI 的进程信号所有权
 
 `SIGTERM` 同时触发 CLI 的 context 取消和 Bubble Tea 的信号处理时，事件循环可能先退出，Bubble Tea 的信号 goroutine 随后阻塞在发送退出消息，终端也无法恢复。聊天界面沿用启动会话选择器的 `WithoutSignalHandler`，由 CLI 的 context 驱动关闭。终端内 Ctrl+C 仍由 TUI 按键处理。
+
+### 2026-11-20：Catalog 的文件预检无法约束 SQLite 首次 I/O
+
+- 现象：Catalog 预检并关闭描述符后，SQLite 按路径重新打开主库和 sidecar。确定性替换实验显示，打开连接或事务时 SQLite 可先读写替换对象。
+- 处理：持久投影改为 `catalog.json`。在实际句柄上校验私有目录和普通文件。取得 Catalog 锁后从严格校验的 Session journal 协调元数据，快照在同目录暂存并原子发布。
+- 验证：覆盖非法对象拒绝、替换身份检查、缺失或损坏快照重建、忙会话与进程竞争。CLI、TUI 继续通过 Session journal 完成正式恢复。
+
+### 2026-11-20：Headless 末帧阻塞需要保留 transport owner
+
+- 原流式收口先结束 transport owner，再写最终 error。继承的阻塞 stdout 被放满时，宿主取消无法解除该写入，后续清理和进程退出停滞。
+- 末帧写完才退出 transport owner。CLI 在 macOS/Linux 使用可取消的描述符，退出时恢复继承的阻塞标志。输出不可用或终态已交付后保留原结果，避免因关闭失败再写一次 error。
+- 独立可控管道确认最终 error 写入卡住后取消，核对单一终态边界、进程退出、journal 字节及 lease 重获。
+
+### 2026-11-20：一次请求的窗口证据必须同源
+
+- Context、体量、原生 revision 与摘要来源分开抓取可能出现不同窗口。每次规划从同一捕获派生视图和证据，摘要预算拒绝保持先于后续投影错误。
+- HTTP 完整逻辑请求与 WebSocket 实际发送后缀来自同一冻结计划，前缀比较共用于传输选择和请求收据。编译版 CLI 验证了首帧、增量、独立摘要、重置和握手回退的字节及结果。
+
+### 2026-11-20：工具接纳结果也要通过重开回放
+
+- 批准后取消、只读工具接纳前超时和同组前序调用耗尽预算，均可能合法地产生未 started 的结果。回归同时检查执行次数、journal 重开和严格回放。工具组无法完整收口时保留可恢复尾部，避免越序写入 turn 终态。
+- Patch 的 rename 和父目录 Sync 成功后提交已确定。后到取消不应覆盖成功或使会话停止，无法确认的同步和清理错误继续失败关闭。
+
+### 2026-11-20 已解码命令的拒绝与流失败分开
+
+- 附件准备拒绝沿同一命令 owner 产生关联响应。未知 Skill 不关闭已建立的 headless 流，真正坏帧和 transport 失败仍由各自 owner 收口。
+- Responses 成功前校验已知输出的身份及完成状态。HTTP 和 WebSocket 统一按解码后的错误事件处理，冲突或错误不进入成功样本。活跃窗口在复制前裁去归档段，完整历史仍保留原生事实。
+- Catalog 以末条 seq 找到最后事实，使用该记录的真实 UTC 时间排序。墙钟回拨后，严格可回放的 journal 仍是可查询候选。

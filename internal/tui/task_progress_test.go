@@ -353,7 +353,11 @@ func TestTasksCommandCompletionAndReadOnlyPanel(t *testing.T) {
 		}
 	}
 	for _, text := range []string{"/Tasks", "/tasks-file", "prefix /tasks", "$tasks"} {
-		if local, _ := parseTasksCommand(text); local {
+		m := taskTestModel(t)
+		m.composer = composerWithText(t, text)
+		next, _ := m.submitComposer(domain.SplitInputHead(text))
+		updated := next.(Model)
+		if updated.tasks.open || updated.pending == nil {
 			t.Fatal("nonexact command intercepted", text)
 		}
 	}

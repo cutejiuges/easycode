@@ -43,7 +43,7 @@ func testCommitHistory(t *testing.T, history *nativeHistory, entries ...nativeHi
 	t.Helper()
 	entries = testAssociatedHistory(entries)
 	for _, entry := range entries {
-		history.commit(entry)
+		history.Append(entry)
 	}
 }
 
@@ -123,10 +123,10 @@ func testRestoreRecords(t *testing.T, envelopes []provider.NativeCommitEnvelope,
 	return records
 }
 
-func testConsumeStream(t *testing.T, conversation *Conversation, ctx context.Context, cancel context.CancelFunc, user *NativeItem, catalog tool.CatalogSnapshot, stream <-chan transport.SSEMessage, output chan<- provider.StreamEvent) {
+func testConsumeStream(t *testing.T, conversation *Conversation, ctx context.Context, cancel context.CancelFunc, user *NativeItem, catalog tool.CatalogSnapshot, stream <-chan transport.SSEMessage) provider.StreamEvents {
 	t.Helper()
 	if user != nil {
-		conversation.history.commit(testInputEntry(t, *user))
+		conversation.history.Append(testInputEntry(t, *user))
 	}
 	if conversation.provider == nil {
 		settings, err := domain.DefaultInferenceSettings(domain.ProviderOpenAI)
@@ -139,7 +139,7 @@ func testConsumeStream(t *testing.T, conversation *Conversation, ctx context.Con
 	if err != nil {
 		t.Fatal(err)
 	}
-	request, err := conversation.compileSamplingRequest(conversation.history.snapshot(), input)
+	request, err := conversation.compileSamplingRequest(conversation.history.Entries(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,11 @@ func testConsumeStream(t *testing.T, conversation *Conversation, ctx context.Con
 	if err != nil {
 		t.Fatal(err)
 	}
-	conversation.sampleStream(catalog, stream, request, evidence, requestSelection{transport: domain.TransportHTTP, mode: domain.RequestFull, reason: domain.ResetNone, fallback: domain.FallbackNone}, func() {}).Consume(ctx, cancel, &conversation.active, output, samplingErrors())
+	entries := conversation.history.Snapshot().Entries
+	if conversation.operations.Begin() != provider.ConversationIdle {
+		t.Fatal("fixture could not acquire the conversation")
+	}
+	return conversation.sampleStream(entries[len(entries)-1].TurnID, catalog, stream, request, evidence, evidence.Compare(conversation.baseline), requestSelection{transport: domain.TransportHTTP, mode: domain.RequestFull, reason: domain.ResetNone, fallback: domain.FallbackNone}, func() {}).Consume(ctx, cancel, &conversation.operations, samplingErrors())
 }
 
 func testSampleRestoreSequence(t *testing.T, envelopes ...provider.NativeCommitEnvelope) []provider.RestoreRecord {
@@ -177,7 +181,7 @@ func testSampleRestoreSequence(t *testing.T, envelopes ...provider.NativeCommitE
 }
 
 func (conversation *Conversation) requestEvidence(input provider.TurnInput) (provider.RequestEvidence, error) {
-	plan, err := conversation.planSamplingRequest(conversation.history.snapshot(), input)
+	plan, err := conversation.planSamplingRequest(conversation.history.Snapshot(), input)
 	if err != nil {
 		return provider.RequestEvidence{}, err
 	}
@@ -185,12 +189,14 @@ func (conversation *Conversation) requestEvidence(input provider.TurnInput) (pro
 }
 
 func (conversation *Conversation) historySnapshot() []nativeHistoryEntry {
-	return conversation.history.snapshot()
+	return conversation.history.Entries()
 }
 
 // compileSamplingRequest 用生产请求计划生成用于比较的字节。
 func (conversation *Conversation) compileSamplingRequest(history []nativeHistoryEntry, input provider.TurnInput) (codec.CanonicalJSON, error) {
-	plan, err := conversation.planSamplingRequest(history, input)
+	window := conversation.history.Snapshot()
+	window.Entries = history
+	plan, err := conversation.planSamplingRequest(window, input)
 	if err != nil {
 		return codec.CanonicalJSON{}, err
 	}
@@ -215,4 +221,33 @@ func compileResponsesRequest(
 		buildResponsesRequest(model, history, projectInstructions, toolView),
 		maxResponsesRequestBytes,
 	)
+}
+
+// websocketBody 独立保留既有字段顺序，防止生产编码改变 WebSocket canonical 字节。
+func websocketBody(request codec.CanonicalJSON, responseID string, offset int) (codec.CanonicalJSON, error) {
+	var logical responsesRequest
+	if err := codec.Unmarshal(request.Bytes(), &logical); err != nil {
+		return codec.CanonicalJSON{}, err
+	}
+	if offset < 0 || offset > len(logical.Input) {
+		return codec.CanonicalJSON{}, fmt.Errorf("incremental request offset is invalid")
+	}
+	expected := struct {
+		Reasoning          *reasoningWire `json:"reasoning,omitempty"`
+		Type               string         `json:"type"`
+		PreviousResponseID string         `json:"previous_response_id,omitempty"`
+		PromptCacheKey     string         `json:"prompt_cache_key,omitempty"`
+		ToolChoice         string         `json:"tool_choice,omitempty"`
+		MaxOutputTokens    uint64         `json:"max_output_tokens,omitempty"`
+		Model              string         `json:"model"`
+		Input              []NativeItem   `json:"input"`
+		Tools              []responseTool `json:"tools"`
+		Store              bool           `json:"store"`
+		Include            []string       `json:"include"`
+	}{
+		Reasoning: logical.Reasoning, Type: "response.create", PreviousResponseID: responseID, PromptCacheKey: logical.PromptCacheKey,
+		ToolChoice: logical.ToolChoice, MaxOutputTokens: logical.MaxOutputTokens, Model: logical.Model,
+		Input: logical.Input[offset:], Tools: logical.Tools, Store: logical.Store, Include: logical.Include,
+	}
+	return codec.MarshalCanonical(expected, maxResponsesRequestBytes)
 }

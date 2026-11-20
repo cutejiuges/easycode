@@ -36,7 +36,7 @@ func TestTaskCheckpointFixedSourcesAndReadOnlyPreview(t *testing.T) {
 			if len(plan.Compactions) != 4 || len(plan.Tools) != 3 {
 				t.Fatal("fixed task checkpoint chain is incomplete")
 			}
-			records, err := orderedRestoreRecords(plan)
+			records, err := orderedRestoreRecords(context.Background(), plan)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -49,9 +49,16 @@ func TestTaskCheckpointFixedSourcesAndReadOnlyPreview(t *testing.T) {
 				if !ok {
 					t.Fatal("offline checkpoint lost expected task evidence")
 				}
-				prefix, err := session.TaskProgressBefore(plan.Tools, plan.Compactions[checkpointIndex].StartedSequence)
+				prefix, err := plan.Compactions[checkpointIndex].TaskProgressAtStart()
 				if err != nil || !prefix.Equal(expected) {
 					t.Fatal("checkpoint did not bind its own source prefix", err)
+				}
+				if checkpointIndex > 0 {
+					source, present := expected.Source()
+					call := plan.Tools[checkpointIndex-1]
+					if !present || source.ResultSequence() != call.ResultSequence || source.InvocationID() != string(call.Invocation.InvocationID()) {
+						t.Fatal("checkpoint task source did not use the successful result")
+					}
 				}
 				checkpoint, err := record.Checkpoint()
 				if err != nil {
@@ -94,7 +101,7 @@ func TestTaskCheckpointFixedSourcesAndReadOnlyPreview(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want, err := session.TaskProgressBefore(plan.Tools, 0)
+			want, err := plan.TaskProgress()
 			if err != nil || !resources.runtime.TaskProgress().Equal(want) {
 				t.Fatal("restore used historical checkpoint as a new task update", err)
 			}
@@ -135,7 +142,7 @@ func TestTaskCheckpointForgeryRejectsBeforeRepairAndNetwork(t *testing.T) {
 				changed := false
 				switch fault {
 				case "future-result":
-					future, err := session.TaskProgressBefore(plan.Tools, plan.Compactions[2].StartedSequence)
+					future, err := plan.Compactions[2].TaskProgressAtStart()
 					if err != nil {
 						t.Fatal(err)
 					}

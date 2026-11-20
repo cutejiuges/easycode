@@ -154,7 +154,7 @@ internal/
     builtin/                十项工具的已实现执行/准备边界
   context/                  上下文分层、token budget、compact、cache plan
   session/                  JSONL、artifact、root-thread resume；fork 未实现
-    catalog/                可重建 SQLite Catalog 与前台 reconciliation
+    catalog/                可重建 Catalog 快照 与前台 reconciliation
   executor/process/         Exec/Hook 共用进程生命周期
   extension/                本地 Skills、Plugin 技能包与 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact Hooks；P6 后续目标：插件可执行贡献、MCP
   subagent/                 P7 目标：thread tree、mailbox、后台任务和限流
@@ -206,7 +206,6 @@ cmd      -> app
 | Schema | 强类型 ToolSchema + 稳定 canonicalizer | 控制工具 schema 顺序和缓存字节，避免反射输出漂移 |
 | CLI | 标准库 `flag` 起步，复杂子命令出现后再评估 Cobra | 首版减少依赖和空壳命令层 |
 | TUI | `github.com/charmbracelet/bubbletea` | Elm 风格状态更新适合 RuntimeEvent projection 和可测试交互 |
-| 数据库 | `github.com/ncruces/go-sqlite3 v0.32.0` | JSONL 事实源之上的本地索引；纯 Go、无 CGO，并由独立 adapter 固定安全打开与事务语义 |
 | 日志 | 标准库 `log/slog` | 结构化字段、分组、handler 和敏感字段过滤 |
 | ID | UUID v7 实现 | 全局唯一且大致按时间有序 |
 | Secret | 自定义不可打印值对象 | 防止 String/GoString/日志意外泄漏 |
@@ -230,7 +229,7 @@ Provider HTTP 层不直接依赖官方模型 SDK。原因是 EasyCode 需要支�
 1. AgentLoop 按 FIFO/strict-next 领取用户输入，冻结独立 InputID。
 2. 准备输入候选、上下文预算及适用的阈值摘要。摘要请求前完成 PreCompact 门禁。输入 batch 成功 Sync 后 finalize。
 3. 由当前 ContextPlan 和 Provider 策略编译原生请求及缓存证据。
-4. 消费 stream，归并原生 item 与瞬态语义事件，验证完整 PreparedSample。
+4. Provider 在私有 reducer 中归并原生条目。Runtime 消费语义事件和唯一终态，验证完整 PreparedSample。
 5. 原子提交 native sample、usage 与 ready calls、适用的 Stop 计划或最终 terminal，成功后 finalize。
 6. 工具按只读批次/exclusive 屏障执行；三项 mutation 先过适用 PreToolUse 门禁和 PostToolUse 独立信任，再候选/普通批准；Question 单独等待回答。
 7. 按 call index 冻结并 Sync results，提交各 Provider 匹配的原生 outputs。
@@ -238,6 +237,8 @@ Provider HTTP 层不直接依赖官方模型 SDK。原因是 EasyCode 需要支�
 9. 发布已提交的 usage、context/cache 与 transcript 投影；关闭仍等待唯一 owner。
 
 适用的 Stop 检查在无工具调用的答复已保存之后、回合收口之前执行。UserPromptSubmit 仍属于后续范围。
+
+同一 Conversation 的采样、摘要、原生提交准备和连接重置共用一个准入边界。活动流及未收口的准备提交分别持有所有权。新操作只有在两者都完成时才能接纳。普通请求、摘要预检与来源证据各从一次捕获的已提交窗口派生。摘要真正打开 transport 前再次核对来源，过期预检立即拒绝。
 
 Provider Kernel 不是单个庞大 interface，而是以下策略的组合：
 
@@ -299,7 +300,7 @@ profile 的 request_policy 只记录实际非默认普通 wire 设置；默认 c
 
 普通 turn 和独立摘要共用 worker 的失败/取消收口；已接纳的摘要即使在 started 的首次 Sync 前取消，也必须先清除旧 continuation，再完成 worker join。操作 profile 在资源清理后恢复启动基础值，最新选择始终由控制 owner 独立持有。裸 slash 的内置保留名由 `domain.IsReservedSkillSlashName` 同时供 Skill 解析和 TUI 使用；`$effort`、`/skills` 选中同名项仍通过真实 Skill 路径。聊天布局由 `internal/tui/chat_space.go` 统一预算状态、队列、通知与 composer 行数；队列只裁剪展示并保持 FIFO 头可见，输入区优先，最终宽度和高度受物理窗口约束。
 
-Anthropic 从最终 message_delta 的 output_tokens_details.thinking_tokens 归并计量：明确零/正值为 known，缺失为 unknown，不从 display/正文/预算推断；已观测值不被缺失擦除。总 output 已包含 thinking，双方 known 时验证 thinking<=output，只有 thinking 时保留独立 known 与 output unknown。raw usage 当前结构必须含 thinking_tokens 的 known/value 状态，sample、checkpoint generation 和失败 provenance 使用同一严格 codec；恢复在 repair 前交叉核对 normalized sample usage，不提供旧四字段 reader、版本标记或迁移。outer Session/checkpoint、SQLite、OpenAI native 和 headless 外部字段/版本保持。
+Anthropic 从最终 message_delta 的 output_tokens_details.thinking_tokens 归并计量：明确零/正值为 known，缺失为 unknown，不从 display/正文/预算推断；已观测值不被缺失擦除。总 output 已包含 thinking，双方 known 时验证 thinking<=output，只有 thinking 时保留独立 known 与 output unknown。raw usage 当前结构必须含 thinking_tokens 的 known/value 状态，sample、checkpoint generation 和失败 provenance 使用同一严格 codec；恢复在 repair 前交叉核对 normalized sample usage，不提供旧四字段 reader、版本标记或迁移。outer Session/checkpoint、Catalog 元数据、OpenAI native 和 headless 外部字段保持。
 
 两家 reducer 在任何事件归并或终态接纳前复用固定 `codec.ValidateJSON` 校验完整帧，拒绝任意对象层级的重复成员、尾随内容和有损 Unicode；不能让后值覆盖非法 usage、总量关系或响应 ID。类型解码与原有受控未知扩展处理随后执行，合法扩展保持可用；不同合法 delta 的明确零可更新旧 thinking 正值，缺失不擦除。修复不增加 owner、goroutine、公共接口或 native 格式。当前关键回归为两家 `usage_validation_regression_test.go`、`reasoning_restore_test.go` 与 `internal/app/reasoning_usage_restore_test.go`，验证计量拒绝、固定 bytes 恢复及请求等价；已精简的历史 CLI/异常流矩阵结论见[全面回归](../../openspec/changes/archive/2026-11-11-add-provider-reasoning-controls/regression-2026-11-11.md)。
 
@@ -351,7 +352,9 @@ RequestCompiler、NativeHistory、Session 事实源和 Provider resume 使用 na
 
 当前文本会话使用两阶段提交。Provider 在成功终态生成同时携带 opaque `NativeCommitEnvelope` 与 normalized `SampleUsage` 的 `PreparedSample`，不立即修改 committed native history。Runtime 重新验证两者，将 `[provider_native_commit(sample), sample_usage, turn_completed]` 作为同一 JSONL batch 写入并执行 `Sync`，随后调用一次性 finalizer，最后才发布携带聚合 turn usage 的成功终态。持久化失败会 poison 当前 Runtime，未 finalize 的 staging 不得进入下一请求。
 
-OpenAI 当前 native payload 保存用户 Responses item、有序 output items 和原始 usage。Anthropic 当前 native payload 保存 user/assistant message、最终 metadata 和原始 usage。两者都显式保留 known/unknown 状态，归一化结果由独立 `sample_usage` 保存。共享回放按原顺序把 commit 交给对应原生 decoder，通过增量历史时序状态复用已验证前缀，在现有检查点报告首错。恢复整体通过后才安装历史，包括 checkpoint 覆盖的旧提交。在线恢复和离线预览保留各自的校验顺序、取消边界与接受范围。
+OpenAI 当前 native payload 保存用户 Responses item、有序 output items 和原始 usage。Anthropic 当前 native payload 保存 user/assistant message、最终 metadata 和原始 usage。两者都显式保留 known/unknown 状态，归一化结果由独立 `sample_usage` 保存。在线恢复和离线预览均在校验 Session 关联与 Provider 身份后，将相邻的普通 sample 计量交给绑定的原生 reader 对账。五项指标的状态和值必须一致，任一矛盾都在 repair、writer 接管与本地补偿之前拒绝。独立摘要按其来源证据校验。共享回放按原顺序把 commit 交给对应原生 decoder，通过增量历史时序状态复用已验证前缀，在现有检查点报告首错。恢复整体通过后才安装历史，包括 checkpoint 覆盖的旧提交。
+
+每次恢复或预览只解码一次各 checkpoint 的原生证据。回放安装替换条目，计量与摘要详情复用同一份结果。Session 按成功工具结果的真实序号归约任务状态，在摘要开始处捕获来源，在线与离线各自保持原有错误阶段。调用方的取消信号贯通原生记录和计量校验，在记录之间停止恢复并释放 lease。
 
 ## 6. 缓存架构
 
@@ -390,6 +393,8 @@ current_input          replace / volatile
 - Provider request golden test 应覆盖最终 wire JSON，而不仅是中间领域对象。
 
 当前 ContextPlanner 的 `provider_profile` 包含 family、model、既有固定 schema revision 和可省略的非默认 request_policy 身份，不包含 API key、base URL、预算、cwd、Session identity 或其他动态状态。`project_instructions` 使用结构化快照的内容派生 revision 和 canonical bytes，不包含绝对项目根、mtime、inode 或 Session identity；正文或项目根相对来源变化才改变该 segment。`committed_history` 的 source revision 来自 Provider committed native revision，而不是语义 turn 数；Provider footprint 与语义历史估算是包含关系，使用 `max(semantic_visible, provider_native)` 合并，禁止相加造成可见文本重复计数。
+
+ContextPlanner 的语义视图、原生体量和 revision 从一次已提交窗口捕获派生。摘要预检冻结同一窗口，先验证请求预算，再读取该窗口的语义投影。各适配器复用自身原生条目的遍历来编译请求、估算体量及核对摘要来源。OpenAI 从同一冻结计划生成完整 HTTP 请求与 WebSocket 后缀，传输选择和收据共用一次 canonical 前缀比较。Anthropic 在编译期取得 marker 的位置及计数，沿用自己的 TTL 和 scope 规则。
 
 token 估算当前使用版本化本地 `byte_heuristic_v1`，明确标记 `estimated` 或 `unknown`。显式 JSON 配置可以提供 context window、输出预留和安全余量；未配置窗口或估算 unknown 时不执行硬拒绝，也不根据模型名猜测窗口。明确超限只在 durable `turn_started` 后、Provider stream 前以既有 `turn_failed` 收口，计划本身不写 Session、不新增 RuntimeEvent。
 
@@ -458,13 +463,17 @@ Anthropic input_tokens 是 uncached 输入；OpenAI total 包含 cached 子集�
 
 `--print` 在内存中聚合文本，仅在 Runtime 已 durable 发布 `turn_completed` 且事件流正常闭合后输出最终值。`--json` 可实时输出 delta，但同样不从 channel close 或已见文本推断成功。取消、短写和断管会触发幂等 Interrupt 并 drain Runtime；已 durable 完成后的输出失败只改变进程交付状态，不回滚 Session。
 
-一次性 headless prompt 在应用装配前解析：无位置参数或显式 `-` 时读取 stdin；显式 prompt 与非终端 stdin 同时存在时使用稳定 `<stdin>` 边界追加；组合内容必须是合法 UTF-8、非空且不超过 4 MiB。流式模式只由 `--json --input-format stream-json` 显式启用，要求可关闭的非终端 stdin/stdout transport，以不超过 32 MiB 的单行 NDJSON 接收严格 `input.submit`、自动 `input.append`、按 InputID 原子 `input.retract`、定向 `turn.stop`/`turn.interrupt` 、`cache.query`、`context.query/compact/cancel` 和 `session.shutdown`。`--continue` 会在当前 cwd、Provider family/wire 和 model 完全匹配时恢复最近 root Session，并与 `--resume` 互斥。当前仍不支持独立 usage 更新或 reasoning/tool 事件。
+一次性 headless prompt 在应用装配前解析：无位置参数或显式 `-` 时读取 stdin；显式 prompt 与非终端 stdin 同时存在时使用稳定 `<stdin>` 边界追加；组合内容必须是合法 UTF-8、非空且不超过 4 MiB。流式模式只由 `--json --input-format stream-json` 显式启用，要求可关闭的非终端 stdin/stdout transport，以不超过 32 MiB 的单行 NDJSON 接收严格 `input.submit`、自动 `input.append`、按 InputID 原子 `input.retract`、定向 `turn.stop`/`turn.interrupt` 、`cache.query`、`effort.query`、`effort.set`、`tasks.query`、`context.query/compact/cancel` 和 `session.shutdown`。`--continue` 会在当前 cwd、Provider family/wire 和 model 完全匹配时恢复最近 root Session，并与 `--resume` 互斥。当前仍不支持独立 usage 更新或 reasoning/tool 事件。
+
+流式命令的外部 v1 名称和内部类型由同一份映射绑定。编码 control.response 前核对该命令允许的 disposition、关联身份和稳定错误文案。已解码输入的可预期准备失败沿同一 owner 返回关联的 `rejected/invalid_input`，后续命令仍可处理。坏帧与 transport 读取失败按各自的流终态收口。流式 transport owner 保持到末帧写入结束。macOS/Linux 的 CLI 用可取消的描述符承接继承的管道，取消时解除阻塞写入，等待 Runtime、journal writer 和 lease 清理。一次输出失败停止重试终态。EOF drain、显式 shutdown 和一次性 JSON 继续遵循既有顺序。
 
 ### 7.3 AgentLoop 输入控制
 
-`runtime.AgentLoop` 位于单 turn `Runtime.RunTurn` 之上，是 Session 实例级的唯一 admission owner。空闲 submit 得到 `starting`，活动期间的 submit 进入同时受条数和 UTF-8 字节约束的 FIFO，并得到 `queued`；strict-next 输入独立形成 durable turn，自动输入可在完整工具 outputs 后进入同轮后续 sample；两者均不注入正在运行的 Provider stream。command result 只确认进程内 obligation，只有关联的 `turn.started` 表示 `turn_started` 已成功 `Sync`。外部 request identity、queue 状态与 control metadata 都不写 Session，也不进入 Provider request/cache fingerprint。
+`runtime.AgentLoop` 驱动单 turn Runtime，是 Session 实例级的唯一 admission owner。空闲 submit 得到 `starting`，活动期间的 submit 进入同时受条数和 UTF-8 字节约束的 FIFO，并得到 `queued`；strict-next 输入独立形成 durable turn，自动输入可在完整工具 outputs 后进入同轮后续 sample；两者均不注入正在运行的 Provider stream。command result 只确认进程内 obligation，只有关联的 `turn.started` 表示 `turn_started` 已成功 `Sync`。外部 request identity、queue 状态与 control metadata 都不写 Session，也不进入 Provider request/cache fingerprint。
 
 queue 是有界、非 durable 的进程内状态。stdin EOF 只停止新 admission，并按 FIFO 排空已经接受的输入；显式 shutdown 则停止 admission、取消活动 turn、为所有尚未开始的输入发布 `session_shutdown` discard，并等待 Runtime durable terminal 与 worker cleanup。interrupt 必须携带当前活动 `turn_id`，过期目标不得误取消下一 turn。普通 Provider failure 后 loop 可以继续；journal poisoned 或 durable 结果不确定时停止所有后续 Provider 副作用。
+
+普通 turn 与手动摘要的 worker 由同一生命周期负责启动、定向取消、顺序发布和最终退出。各操作仍持有自己的业务处理和接纳规则。Exec 与 Hook 直接使用进程边界的 Handle、Clock 和 Timer，分别实施各自的 sandbox、信任、输出采集及收尾。
 
 该控制器同时处理严格跨 turn follow-up 与自动同轮输入。自动输入只在完整 durable tool outputs 后、下一 sample 前领取，strict-next 保持 FIFO 屏障。TUI 通过 ChatSession 的长期控制流接入同一 AgentLoop；一次性 headless 保留严格提交接口，二者共享唯一执行 owner。
 
@@ -477,11 +486,11 @@ Anthropic reducer 负责处理：
 - text/thinking/signature/input_json delta
 - stop reason、usage、异常 block 顺序和中断恢复
 
-OpenAI reducer 负责处理 `response.created`、文本 delta、function call item/arguments delta/done、完成 output item，以及 identity 匹配的 completed/failed/incomplete；Anthropic reducer相应归并 `tool_use` 与 `input_json_delta`。两家都只在参数完整、strict decode 和调用身份一致后产出有序 typed ready calls。completed usage 会在活动 response identity 校验后严格解析并保留 raw/normalized 两层表示。每条 stream 使用独立状态机，要求起始事件恰好一次、所有支持事件位于 active 状态且 terminal 唯一。reasoning 的宿主事件投影和未交付的其他工具类型仍是后续目标。
+OpenAI reducer 负责处理 `response.created`、文本 delta、function call item/arguments delta/done、完成 output item，以及 identity 匹配的 completed/failed/incomplete；Anthropic reducer相应归并 `tool_use` 与 `input_json_delta`。两家都只在参数完整、strict decode 和调用身份一致后产出有序 typed ready calls。completed usage 会在活动 response identity 校验后严格解析并保留 raw/normalized 两层表示。每条 stream 使用独立状态机，约束成功起始、已知输出身份和唯一终态。Responses 的 `type:"error"` 可在 created 前报告 Provider 失败。推理通过 Started、Delta、Completed 语义事件提供有界宿主投影。
 
-共享 `provider.StreamEvent` 使用私有字段和 semantic、native item、completed、failed、cancelled 五类 typed constructor，零值、冲突 payload、nil terminal error、非法 native item 与失效 prepared sample 均不能进入正常路径。Provider 生产者是输出 channel 的唯一关闭者，且必须在 transport 排空、Conversation active 状态释放后关闭 channel；channel close 是生产 goroutine 的清理完成信号，不代表业务成功。
+共享 `provider.StreamEvent` 使用私有字段和 semantic、completed、failed、cancelled 四类 typed constructor。零值、冲突 payload、nil terminal error 与失效 prepared sample 均不能进入正常路径。两家 Provider 在私有 reducer 内保留原生条目，经 prepared sample 与 durable commit 保持条目顺序和 opaque 内容。`StreamEvents` 按序迭代语义事件并归还队列容量，生产者专用槽位保证停读时仍能发布唯一终态。生产者排空 transport 并完成清理后发布终态，释放 active 所有权并关闭内部队列。迭代结束表示生产者已清理，业务提交结果由独立的 durable 流程决定。
 
-Runtime 为每次 Provider stream 创建派生 context，逐项验证事件并记录唯一 terminal，但仍持续读取到 channel 关闭。非法事件、重复 terminal 或 terminal 后事件会保留首个 protocol error、立即取消派生 context、停止向宿主转发并由同一 owner 同步排空；只有生产者退出后才 durable 收口失败或允许 AgentLoop 启动下一 turn。应用 shutdown 超时继续由既有 Provider transport 强制关闭路径解除阻塞，不创建失去 owner 的后台 waiter。
+Runtime 为每次 Provider stream 创建派生 context，逐项验证事件、记录唯一 terminal 并读取到迭代结束。非法事件、重复 terminal 或 terminal 后事件会保留首个 protocol error，立即取消派生 context，停止向宿主转发并由同一 owner 同步排空。生产者退出后才收口 durable 失败或允许 AgentLoop 启动下一 turn。应用 shutdown 超时继续由既有 Provider transport 强制关闭路径解除阻塞。OpenAI 普通 HTTP SSE 在候选完成帧时停止进一步读取，在接受成功前按序校验缓冲区中已完整分隔的尾帧。
 
 - response/item created/added/done/completed
 - output text delta
@@ -619,7 +628,8 @@ TUI 提供 `/context`、`/compact [instructions]`、定向取消及 Ctrl+O 完�
 ~/.easycode/
   sessions/YYYY/MM/DD/<thread-id>.jsonl
   sessions/artifacts/<thread-id>/... 私有已保存输出
-  state.sqlite                      可重建索引与受控 sidecar/lock
+  catalog.json                      可重建元数据快照
+  catalog.json.lock                 跨进程 Catalog 锁
 <workspace>/.easycode/hooks.json     项目 Hook 来源
 ```
 
@@ -655,17 +665,19 @@ EventEnvelope
 
 Session envelope 只使用唯一当前字段结构，不包含 schema_version、payload_version、canary 或同义版本标记。decoder 只按 event_kind 选择唯一 strict decoder，字段/类型、checksum 和 replay 状态机共同校验恢复事实；未知 kind、未知字段与损坏在 repair、Provider 恢复和 append 前失败关闭。
 
+Session 回放生成有序的工具、Hook、artifact 与结果事实，经校验后供投影复用。Catalog 的元数据入口使用同一 grammar 与 artifact 核验。JournalWriter 在首次文件 Write 前遇到编码或批大小拒绝时保留原序号和可写状态。Write、短写或 Sync 无法确认时仍使 writer poison，Runtime 按已接纳的工具执行和其他提交事实判断后续操作。
+
 Provider native commit 只记录 Provider 已验证的原生增量和 raw usage；紧邻的 `sample_usage` 记录共享五项三态指标。合法无 Stop 的成功 sample 仍以 native commit、usage 与 terminal 原子提交；带调用的 sample 则把有序 ready facts 放入同一 durable batch，随后按需要 durable 批准决定，再提交 started、result 和 Provider 原生 tool outputs。当前 approval fact 保存 decision source、candidate fingerprint 与安全展示 metadata；Exec 不持久化 PID、宿主环境、输出 chunk 或底层 cause。缺失 usage、错序、遗漏配对或重复调用身份一律 fail closed。其余 Hook 与 Subagent 仍需按各自恢复语义定义记录；cache/compaction checkpoint 与当前 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact facts 使用各自当前强类型契约；不能把 RuntimeEvent 或 UI transcript 当作 native history。
 
-Session、Provider native/checkpoint 和压缩来源不承担格式版本管理。Catalog 不设置或校验 user_version，按实际结构与完整性重建派生索引。当前没有存量用户或业务数据，直接修改唯一当前格式与 current fixture。未经用户明确指示，禁止引入多版本兼容、历史 reader、迁移器或以 canary/revision 为同义替代的版本门禁；即使未来发布也不能推定获得授权。headless JSONL 是独立外部协议。
+Session、Provider native/checkpoint 和压缩来源不承担格式版本管理。Catalog 按当前快照结构与完整性重建派生索引。当前没有存量用户或业务数据，直接修改唯一当前格式与 current fixture。未经用户明确指示，禁止引入多版本兼容、历史 reader、迁移器或以 canary/revision 为同义替代的版本门禁；即使未来发布也不能推定获得授权。headless JSONL 是独立外部协议。
 
 Headless JSONL v1 是 stdout 外部协议，不是 Session record：不得写入 journal，也不得在 resume 时回放。headless resume 只复用连续 lease 下恢复出的 Provider-native history，并只发布本次新 turn；`SemanticHistoryView` 仍只供 TUI 等只读消费者使用。
 
 默认不持久化每个文本 delta、spinner 或窗口状态；在 item 完成时持久化最终值。需要崩溃恢复时，可以增加有节制的 checkpoint，而不是把所有 UI delta 写入日志。
 
-### 10.3 SQLite projection
+### 10.3 Catalog 快照
 
-`internal/session/catalog` 是 JSONL 事实源之上的可重建投影边界。当前唯一 schema 包含 `threads` 表及 continue 组合索引。表中保存 root thread 的 session/thread identity、journal 相对定位、创建 cwd、Provider family/wire、model、手动标题，以及最后一条已提交记录的 timestamp/seq/checksum。prompt、response、native payload、tag、worktree 和全文搜索内容均在投影范围之外。
+`internal/session/catalog` 是 JSONL 事实源之上的可重建投影边界。当前快照是按已提交记录时间和 thread ID 双降序排列的强类型 JSON 数组。条目保存 root thread 的 session/thread identity、journal 相对定位、创建 cwd、Provider family/wire、model、手动标题，以及最后一条已提交记录的 timestamp/seq/checksum。prompt、response、native payload、tag、worktree 和全文搜索内容均在投影范围之外。
 
 Catalog 在 `--continue` 路径按以下顺序工作：
 
@@ -675,21 +687,21 @@ Open Catalog lock
   -> 对每个候选依次取得一个 Repository lease
   -> Loader / ReplayPlanner / Projector
   -> 释放该 lease
-  -> 单次短 SQLite transaction 做 upsert/delete
+  -> 按需原子发布完整元数据快照
   -> latest-compatible 精确选择
   -> Close Catalog
   -> 使用选中的 thread ID 进入既有 sessionService.resume
 ```
 
-全部 journal 文件 I/O 在 SQLite transaction 外完成；协调过程不启动后台 goroutine，也不会同时持有多个 journal lease。busy 的已索引行保持原值，未索引 busy thread 会阻止自动选择，避免静默跳到更旧会话。真正缺失或无效 journal 的旧行会删除；Catalog 不修复尾部；resume 完整验证 replay、Provider 兼容及原生内容后，才在同一 exclusive lease 下显式 Repair、truncate 并 `Sync`。
+全部 journal 文件 I/O 在快照发布前完成；协调过程不启动后台 goroutine，也不会同时持有多个 journal lease。busy 的已索引行保持原值，未索引 busy thread 会阻止自动选择，避免静默跳到更旧会话。真正缺失或无效 journal 的旧行会删除；Catalog 不修复尾部；resume 完整验证 replay、Provider 兼容及原生内容后，才在同一 exclusive lease 下显式 Repair、truncate 并 `Sync`。
 
-`state.sqlite.lock` 为 schema、重建和 reconciliation 提供跨进程唯一 owner。Unix adapter 从实际打开的 handle 校验私有 data home、数据库、rollback journal 与 sidecar 的普通文件类型和 `0600` 权限，并使用 no-follow 打开；无法提供等价语义的平台失败关闭。数据库缺失、损坏或 schema 不兼容时，在同一 Catalog 锁下从 JSONL 构建临时数据库，`Sync` 后原子替换。
+`catalog.json.lock` 为读取、重建和发布提供跨进程唯一 owner。Unix 适配器通过已持有的私有目录句柄打开快照、锁和暂存文件，在实际句柄上校验归属、普通文件和 `0600` 权限。缺失或损坏快照由已验证的 JSONL 重新投影。发布时在同一目录写入并同步暂存文件，校验目录项身份，原子替换后同步目录。安全或 I/O 检查失败直接返回。无法提供等价语义的平台失败关闭。
 
 Catalog 关闭后，app 按所选 thread ID 重新取得 journal lease。`sessionService.resume` 先执行 load、ReplayPlanner、配置兼容性与 Provider-native 校验，随后才可 repair 和转移 writer 所有权。选择和恢复之间发生占用、替换、损坏或配置不兼容时直接失败。worktree/project catalog、tag、全文搜索、实时索引和 thread graph 仍属后续能力。
 
-`sessions list` 新增独立发现入口：`cmd/easycode/sessions.go -> app.ListSessions -> catalog.Reconcile/List`，不进入聊天配置、项目指令、Provider 或 Runtime 装配。`ListQuery` 明确区分规范化创建目录和全部目录，按 committed `updated_at`/thread ID 双降序、先筛选后 limit+1，返回至多 200 条及 HasMore。查询不依赖 Provider selector，`LatestCompatible` 仍保留原四字段精确匹配。
+`sessions list` 新增独立发现入口：`cmd/easycode/sessions.go -> app.ListSessions -> catalog.Reconcile/List`，不进入聊天配置、项目指令、Provider 或 Runtime 装配。`ListQuery` 明确区分规范化创建目录和全部目录，按 committed `updated_at`/thread ID 双降序、先筛选后 limit+1，返回至多 200 条及 HasMore。`updated_at` 取末条 committed seq 的 UTC 时间，墙钟回拨不影响会话有效性。查询不依赖 Provider selector，`LatestCompatible` 仍保留原四字段精确匹配。
 
-列表沿用上述只读 journal 协调，随后先关闭 Catalog/Repository，再格式化和输出。busy/invalid 是全存储扫描报告，stderr 明确提示元数据可能未刷新或会话缺席；列表不补偿未完成 turn，也不把可见条目当作恢复事实。CLI 采用紧凑文本、完整 ID、受限并转义的字段，标题来自明确命名。limit 限制当前范围的返回条数。交互 picker 复用相同只读协调。
+列表沿用上述只读 journal 协调，随后先关闭 Catalog/Repository，再格式化和输出。busy/invalid 是全存储扫描报告，stderr 明确提示元数据可能未刷新或会话缺席；列表不补偿未完成 turn，也不把可见条目当作恢复事实。CLI 采用紧凑文本、完整 ID、受限并转义的字段，标题来自明确命名。limit 限制当前范围的返回条数。交互 picker 首次打开及显式刷新从同一次协调取得当前目录、全部目录的有界列表和同一报告，切范围时直接复用该结果。当前源 thread 在计算 limit 和 HasMore 前排除。同范围刷新失败且清理成功时，已有结果可继续用于选择及预览，目标 journal 仍须独立验证。
 
 ### 10.4 写入与权限
 
@@ -701,7 +713,7 @@ Catalog 关闭后，app 按所选 thread ID 重新取得 journal lease。`sessio
 - 当前 `--resume <thread-id>` 通过日期编码的 UUIDv7 定位文件，恢复 native history 和只读语义视图；不恢复旧 API key、base URL、cwd 或其他动态 world state。
 - 仓库已建立不可变的当前文本与 Tool Loop fixture，用于验证 Loader/ReplayPlanner 的读取、续写 prefix 不变、账本顺序和双 Provider 恢复等价性；项目没有线上历史格式，因此开发期旧 fixture 与旧 reader 已删除。未经用户明确要求和新 OpenSpec，不引入历史 reader、迁移器或兼容窗口；不得在 resume 原地改写既有 records。
 - exclusive lease 是协作进程间的 advisory lock，不能阻止旧版 EasyCode 或非协作进程绕过锁直接写文件；混合版本运行前必须确保目标 thread 没有其他 owner，绕过锁产生的损坏继续由 checksum、seq 和完整回放校验发现。
-- SQLite Catalog、`--continue`、离线 `sessions list` 与启动 `resume` picker 已实现；worktree/project catalog、tag、全文搜索、实时索引和全工具 artifact 尚未实现。内部格式继续保持唯一当前契约，不预设未来兼容授权。
+- Catalog 快照、`--continue`、离线 `sessions list` 与启动 `resume` picker 已实现；worktree/project catalog、tag、全文搜索、实时索引和全工具 artifact 尚未实现。内部格式继续保持唯一当前契约，不预设未来兼容授权。
 - 手动与阈值自动 compaction 追加独立 checkpoint，保留原始 JSONL；跨 Provider fork 与 child-thread 元数据仍为后续目标。摘要是可辨识的历史参考，不构成新的用户输入或授权。
 - artifact 文件路径必须防止目录穿越。
 
@@ -709,7 +721,7 @@ Catalog 关闭后，app 按所选 thread ID 重新取得 journal lease。`sessio
 
 `/rename` 经 ChatSession 的 typed `rename_session` 交给 AgentLoop。owner 确认交互会话处于空闲且没有会话交接许可，并检查请求取消、关门和运行 context 信号后接纳，复用同一 lease 和 writer 追加 `session_title_updated`。单条 batch 的 `title` 为规范非空值，`turn_id` 和 `parent_thread_id` 缺省。完整行先验证成员和 batch 结构，Replay 只在活动操作已闭合的边界接受。相同标题为无写入成功。追加 Sync 确认后才更新界面，关闭仍等待最终 Sync/Close。
 
-Catalog 从最后合法标题事实投影 `threads.title TEXT NOT NULL`，空字符串代表未命名。排序时间继续取最新已提交记录。Picker 在最多 200 条已加载元数据中独立匹配标题，预览从 journal 重新验证并使用独立展示字段。标题没有 Provider 原生 item、普通输入或缓存来源。在线恢复先收口本地补偿，再装配互动标题控制。验收见 [add-session-titles](../../openspec/changes/archive/2026-11-19-add-session-titles/verification.md)。
+Catalog 从最后合法标题事实投影快照条目的 `title`，空字符串代表未命名。排序时间继续取最新已提交记录。Picker 在最多 200 条已加载元数据中独立匹配标题，预览从 journal 重新验证并使用独立展示字段。标题没有 Provider 原生 item、普通输入或缓存来源。在线恢复先收口本地补偿，再装配互动标题控制。验收见 [add-session-titles](../../openspec/changes/archive/2026-11-19-add-session-titles/verification.md)。
 
 ### 10.5 自动压缩与活动回合
 
@@ -855,7 +867,7 @@ marketplace、安装/更新、插件脚本/Hook/MCP/Agent/commands 贡献、热�
 
 当前多行输入由 `internal/tui/composer.go`、`composer_input.go`、`composer_layout.go` 和 `composer_history.go` 组合实现。composer 拥有 UTF-8 正文与字素边界光标；同一不可变布局供视觉行移动、视口和无色光标渲染复用，普通移动与重复 View 不重建布局。历史以写时复制保留至多 100 条/8 MiB，直接消费 SemanticHistoryView，不执行 Session I/O。编辑和输入校验共享 `replace`，没有通用 editor registry 或新的宿主接口。
 
-Model 将问卷、Hook 信任/浏览、普通审批、详情和提交状态按焦点优先路由，最后才由 composer 消费输入；普通活动 turn 期间可编辑并 Enter 自动追加。ChatSession 的交互模式只有一个长期 Outputs 消费者，Append 接收强类型 InputDraft，返回不是正式 transcript 事实。pending 快照冻结到 admission response：拒绝保留正文/光标/历史，接受后记入 recall 并清空草稿；只有 UserInputCommitted 才将对应 InputID 的正文移入 transcript。Up（空草稿首行）/普通 Esc 原子取回 queued 项，Ctrl+C 或无 queued 的 Esc 定向停止；Ctrl+R 逐条取回 returned，Ctrl+D 逐条丢弃，不自动执行。状态副本与 returned 共用 64 条/16 MiB 本地保留额度，uncertain 不允许取回重试。布局与用户 transcript 的控制字符只在显示副本转义，实际输入除 TUI 的 CRLF/CR → LF 外保真；headless 保留原换行。
+Model 的渲染、按键与补全共用焦点判定。问卷、Hook 信任及审批优先于只读面板，保留被覆盖面板的位置与草稿。composer 先处理显式换行和反斜杠续行，再处理补全或 slash 提交。内部 Runtime 控制消息只执行一次补全、Markdown 与查询后处理。普通活动 turn 期间可编辑并 Enter 自动追加。ChatSession 的交互模式只有一个长期 Outputs 消费者，Append 接收强类型 InputDraft，返回不是正式 transcript 事实。pending 快照冻结到 admission response：拒绝保留正文/光标/历史，接受后记入 recall 并清空草稿；只有 UserInputCommitted 才将对应 InputID 的正文移入 transcript。Up（空草稿首行）/普通 Esc 原子取回 queued 项，Ctrl+C 或无 queued 的 Esc 按界面已显示的 turn 身份定向停止。只读面板打开时 Ctrl+C 仍提交一次停止。Ctrl+R 逐条取回 returned，Ctrl+D 逐条丢弃，不自动执行。状态副本与 returned 共用 64 条/16 MiB 本地保留额度，uncertain 不允许取回重试。布局与用户 transcript 的控制字符只在显示副本转义，实际输入除 TUI 的 CRLF/CR → LF 外保真；headless 保留原换行。
 
 #### 同轮输入与持久化边界
 
@@ -942,7 +954,7 @@ session -> turn -> sampling attempt -> provider request
 - hooks、skills、plugins、MCP 生命周期。
 - subagent 并发、限制和取消传播。
 
-以上条目按对应 Roadmap 阶段启用。当前已落地双 Provider 文本 stream、Session/restore/headless、可重建 SQLite Catalog 与 `--continue`、descriptor-bound 配置与 journal 安全、不可变当前 fixture，以及架构静态门禁；不得把未来条目视作现有测试覆盖。
+以上条目按对应 Roadmap 阶段启用。当前已落地双 Provider 文本 stream、Session/restore/headless、可重建 Catalog 快照 与 `--continue`、descriptor-bound 配置与 journal 安全、不可变当前 fixture，以及架构静态门禁；不得把未来条目视作现有测试覆盖。
 
 ### 16.4 TUI 测试
 
@@ -991,7 +1003,7 @@ Session record 写入复用 checksum envelope 的 Sonic 字节，追加固定 ch
 4. ToolExecutor 不包含 UI 渲染代码。
 5. 缓存相关集合必须稳定排序、稳定序列化。
 6. 工具调用必须有唯一 call ID 和幂等 ledger。
-7. JSONL 是 session 事实源，SQLite 可重建。
+7. JSONL 是 session 事实源，Catalog 快照可重建。
 8. API key 和敏感 header 不得进入日志、错误或 session。
 9. domain/protocol 层不包含网络、数据库和终端副作用。
 10. 禁止上帝类、上帝包、循环依赖和跨层捷径。
@@ -1066,7 +1078,9 @@ Model 在 Update 中先准备补全占用，再准备 Markdown 与 hydration；�
 
 内容准备先核对全部引用，再按路径分组只读一次。Workspace 的小型有限读取机制与 Read 共享，实际打开 FD 校验类型/权限和读前后 dev/inode/mode/size/mtime/ctime；任一失败整条拒绝，不制造 ReadObservation 或副作用资格。16 MiB 单源/64 MiB 总真实读取包含失败消耗，原换行保真，whole/lines 分别 200/2000 行且包装 64/512 KiB。包级没有来源 registry，构造/getter/render 不读盘。
 
-native user_inputs 的必需 files 保存 input_id/attachments，文件元数据与确切原生文本块共同验证；不引入外层 record、版本、迁移器、SQLite 或外部 JSONL 字段。提交事件先按完整冻结输入派生 total/items/omitted 摘要（整个 JSON 至多 4 KiB），再进入 writer admission；成功 Sync 后只发布已经验证的事件。SemanticMessage/TranscriptItem 保存独立集合，committed_history 的 file_attachment 只计实际包装一次，与 native footprint 取覆盖；digest、身份、来源根和查询状态不进入稳定前缀。主线/picker 只显示摘要，Ctrl+O 由已有 transcript owner 提供全部冻结内容及范围/部分行语义，共用四页缓存。
+TUI 草稿在构造时解析并冻结引用。工作区准备复用该列表，先完成静态校验，再按路径读取并按原次序关联附件。Runtime 接纳独立核对原文与冻结引用。候选裁剪与快照校验共用文件搜索结果的字节预算。
+
+native user_inputs 的必需 files 保存 input_id/attachments，文件元数据与确切原生文本块共同验证；不引入外层 record、版本、迁移器、Catalog 或外部 JSONL 字段。提交事件先按完整冻结输入派生 total/items/omitted 摘要（整个 JSON 至多 4 KiB），再进入 writer admission；成功 Sync 后只发布已经验证的事件。SemanticMessage/TranscriptItem 保存独立集合，committed_history 的 file_attachment 只计实际包装一次，与 native footprint 取覆盖；digest、身份、来源根和查询状态不进入稳定前缀。主线/picker 只显示摘要，Ctrl+O 由已有 transcript owner 提供全部冻结内容及范围/部分行语义，共用四页缓存。
 
 queued/工具安全点/Stop discard-rebuild 不重读文件；恢复和离线预览在 repair 前严格核验，来源删除仍可恢复。内容冻结与 operationProfile 捕获独立：strict-next 真正启动用最新 effort，同轮工具/Stop/自动摘要用旧捕获；manual compaction 在接纳时单独捕获。source.BeginClose 先关门并取消所有 pre-admission 借用，真实 Done 之后才关闭 Workspace/writer/lease；超时不放弃所有权。验证映射与跨平台范围见 [verification.md](../../openspec/changes/archive/2026-11-17-add-workspace-file-mentions/verification.md)。
 
@@ -1080,6 +1094,8 @@ PreparedSample 持有 `domain.SamplePresentation`，将展示 block 绑定到完
 
 `protocol.IsTransientPresentation` 同时用于 publication 生产和 AgentLoop 消费，Started/Delta/Completed 都沿用 committed context/cache。app 的 main 查询先排除 reasoning 再分页，detail 包含全部真实 cursor；两个模式必填并分别缓存。TUI 的活动组件共享 64 KiB/50 项，使用 typed 临时键，提交时立刻升级准确 cursor，慢查询期间保留有界画面和源偏移。活动正文与浏览器共享字符串，已提交正文、工具页和列表共用四页缓存；构造、View/resize 不执行 I/O。headless 三模式共用严格 projector，消费内部状态但保持外部词汇不变。
 
+启动和恢复时，宿主全量校验 native 提交与 ready facts。实时发布只读取已 finalize 的原生后缀。不显示的 outputs 仍推进 ordinal，复合 Stop 的原生反馈及用户输入在一次更新中可见。工具快照使用调用索引更新，独立摘要保留 terminal seq。主线只索引可见条目，详情页按同一 cursor 定位。恢复前缀和实时追加块独立保留，避免实时追加复制既有条目。
+
 证据为 `internal/provider/{anthropic,openai}/reasoning_stream_test.go`、固定 `testdata/reasoning_restore.current.jsonl`、`reasoning_restore_test.go`、`internal/runtime/reasoning_test.go`、`internal/tui/reasoning_test.go`、`internal/app/reasoning_e2e_test.go` 与 Darwin `scripts/reasoning-smoke.py`；历史执行记录见 [实施验收](../../openspec/changes/archive/2026-11-08-add-reasoning-transcript/verification.md)。
 
 ## 任务进度切片
@@ -1089,5 +1105,7 @@ PreparedSample 持有 `domain.SamplePresentation`，将展示 block 绑定到完
 Session 仍只使用现有 ready/started/result records，无任务/UI 专用记录或格式版本。app 按有序成功结果恢复 none/clear/snapshot，并在 repair 前核验两家原生调用与结果。checkpoint 的必需 task_progress 精确对应 compaction_started 前缀；Provider 同时验证来源、完整规范值和 deterministic wrapper，真实 generation 保持独立语义。离线 picker 复用同一核验。
 
 任务内容 SHA-256 stamp 只加入 committed_history metadata，排除来源/profile/显示身份，不新增来源、token 估算或普通 TurnInput 附件。TUI 当前清单、只读 /tasks 与 Ctrl+O 冻结详情各自有界；首次 hydration 为 pending/failed/ready，不能把尚未加载显示成业务 none。线程、实际结果序号及 UI generation 隔离迟到回复，同序号必须完整相等才幂等。composer/高优先交互和活动补全先占布局预算，任务区域可降为一行或隐藏。
+
+Runtime 任务快照 payload 与 headless v1 整帧各有独立的 96 KiB 上限。Runtime 计量 payload 本身，外部帧另计 envelope 和换行。
 
 stream-json 通过 tasks.query 返回 correlated control.response/tasks.snapshot，外部 v1 与内部无版本格式独立；宿主 durable 更新通知被一次性输出显式验证并过滤。Plan Mode、Subagent、后台任务与依赖协作不属于此切片。实现与验证入口见[任务进度验收](../../openspec/changes/archive/2026-11-18-add-task-progress/verification.md)。

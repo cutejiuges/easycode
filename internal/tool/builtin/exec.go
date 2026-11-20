@@ -7,11 +7,9 @@ import (
 	"sort"
 	"strings"
 
+	"easycode/internal/executor/process"
 	"easycode/internal/tool"
 )
-
-var errExecUnsupported = errors.New("unsupported_platform")
-var errSandboxUnavailable = errors.New("sandbox_unavailable")
 
 // CommandEnvironment 保存显式捕获的最小环境，实际值不进入工具契约。
 type CommandEnvironment struct {
@@ -88,7 +86,7 @@ func NewExecExecutor(workspace *Workspace, environment CommandEnvironment, rende
 
 // Execute 持有唯一执行owner直到最终清理；progress回调只在宿主路径调用。
 func (executor *ExecExecutor) Execute(ctx context.Context, candidate tool.ExecCandidate, progress func(tool.ExecProgress)) tool.InvocationResult {
-	execution, err := newProcessExecution(executor.launcher, wallProcessClock{}, candidate, executor.renderer)
+	execution, err := newProcessExecution(executor.launcher, process.WallClock{}, candidate, executor.renderer)
 	if err != nil {
 		return tool.NewExecErrorResult(candidate.Invocation(), tool.ResultError, "invalid_candidate", "Exec failed: invalid_candidate")
 	}

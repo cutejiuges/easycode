@@ -29,4 +29,4 @@
 
 ## 验证
 
-`internal/session/repair_test.go` 覆盖只读扫描、凭据、取消、内容变化及 Truncate/Sync 故障；`internal/app/repair_order_test.go` 验证 Provider/模型校验失败时完整 bytes 不变。原跨进程 lease、崩溃释放、descriptor-bound 修复及 Catalog 测试保留，并改为显式修复或只读断言。
+`internal/session/repair_test.go` 覆盖只读扫描、凭据、取消、内容变化及 Truncate/Sync 故障；`internal/app/session_service_test.go` 验证兼容性校验失败时完整 bytes 不变。原跨进程 lease、崩溃释放、descriptor-bound 修复及 Catalog 测试保留，并改为显式修复或只读断言。

@@ -40,8 +40,9 @@ type SSEMessage struct {
 }
 
 type parsedSSEMessage struct {
-	event *SSEEvent
-	err   error
+	event  *SSEEvent
+	err    error
+	sealed bool
 }
 
 func superviseSSE(
@@ -58,7 +59,7 @@ func superviseSSE(
 
 	go func() {
 		defer close(readerDone)
-		err := parseSSE(readerContext, body, options.MaxEventBytes, activity, parsed)
+		err := parseSSE(readerContext, body, options, activity, parsed)
 		select {
 		case parsed <- parsedSSEMessage{err: err}:
 		case <-readerContext.Done():
@@ -66,14 +67,18 @@ func superviseSSE(
 	}()
 
 	go func() {
-		defer finished()
 		defer close(output)
+		defer finished()
 		defer stopReader()
 		defer func() { _ = body.Close() }()
 
 		timer := time.NewTimer(options.IdleTimeout)
 		defer timer.Stop()
+		idle := timer.C
 		resetTimer := func() {
+			if idle == nil {
+				return
+			}
 			if !timer.Stop() {
 				select {
 				case <-timer.C:
@@ -100,7 +105,7 @@ func superviseSSE(
 				finishReader()
 				sendFinal(ctx.Err())
 				return
-			case <-timer.C:
+			case <-idle:
 				finishReader()
 				sendFinal(errIdleTimeout)
 				return
@@ -108,7 +113,13 @@ func superviseSSE(
 				resetTimer()
 			case message := <-parsed:
 				if message.event != nil {
-					resetTimer()
+					if message.sealed {
+						// 剩余读取已封闭，不再等待远端活动。
+						timer.Stop()
+						idle = nil
+					} else {
+						resetTimer()
+					}
 					select {
 					case output <- SSEMessage{Event: message.event}:
 					case <-ctx.Done():
@@ -119,7 +130,9 @@ func superviseSSE(
 					continue
 				}
 				<-readerDone
-				sendFinal(message.err)
+				if message.err != nil {
+					sendFinal(message.err)
+				}
 				return
 			}
 		}
@@ -131,7 +144,7 @@ func superviseSSE(
 func parseSSE(
 	ctx context.Context,
 	reader io.Reader,
-	maxEventBytes int,
+	options StreamOptions,
 	activity chan<- struct{},
 	output chan<- parsedSSEMessage,
 ) error {
@@ -140,6 +153,7 @@ func parseSSE(
 	var eventID string
 	var dataLines []string
 	eventBytes := 0
+	unacceptedBytes := -1
 
 	emit := func() error {
 		if len(dataLines) == 0 {
@@ -153,8 +167,14 @@ func parseSSE(
 			Name: eventName,
 			Data: strings.Join(dataLines, "\n"),
 		}
+		sealed := unacceptedBytes < 0 && options.SealAfter != nil && options.SealAfter(*event)
+		if sealed {
+			// Peek 只查看此次读取已交付的字节。从此仅消费含分隔空行的完整帧。
+			available, _ := buffered.Peek(buffered.Buffered())
+			unacceptedBytes = len(available) - completeSSEPrefix(available)
+		}
 		select {
-		case output <- parsedSSEMessage{event: event}:
+		case output <- parsedSSEMessage{event: event, sealed: sealed}:
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -165,13 +185,13 @@ func parseSSE(
 		return nil
 	}
 
-	for {
-		line, eof, err := readSSELine(ctx, buffered, maxEventBytes-eventBytes, activity)
+	for unacceptedBytes < 0 || buffered.Buffered() > unacceptedBytes {
+		line, eof, err := readSSELine(ctx, buffered, options.MaxEventBytes-eventBytes, activity)
 		if err != nil {
 			return err
 		}
 		eventBytes += len(line) + 1
-		if eventBytes > maxEventBytes {
+		if eventBytes > options.MaxEventBytes {
 			return errEventTooLarge
 		}
 
@@ -205,6 +225,24 @@ func parseSSE(
 			return io.EOF
 		}
 	}
+	return nil
+}
+
+// completeSSEPrefix 返回最后一个完整帧分隔空行之后的位置。
+func completeSSEPrefix(data []byte) int {
+	end := 0
+	for start := 0; start < len(data); {
+		newline := bytes.IndexByte(data[start:], '\n')
+		if newline < 0 {
+			break
+		}
+		next := start + newline + 1
+		if len(trimSSELineEnding(data[start:next])) == 0 {
+			end = next
+		}
+		start = next
+	}
+	return end
 }
 
 func readSSELine(

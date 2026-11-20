@@ -178,9 +178,12 @@ func (p *unixWritePath) publish(ctx context.Context, c tool.WriteCandidate, hook
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	owner := writeStagingOwner{hooks: hooks}
+	owner := fileStagingOwner{}
 	defer func() {
-		if err := owner.cleanup(); err != nil {
+		if hooks.beforeCleanup != nil {
+			hooks.beforeCleanup()
+		}
+		if err := owner.cleanup(hooks.unlink, hooks.close); err != nil || errors.Is(resultErr, errStagingUncertain) {
 			resultErr = errors.Join(resultErr, errWriteUncertain)
 		}
 	}()
@@ -190,10 +193,10 @@ func (p *unixWritePath) publish(ctx context.Context, c tool.WriteCandidate, hook
 	var stagedFile *os.File
 	var err error
 	if len(p.directories) == 0 {
-		stagedFile, err = owner.createRandom(parent, false)
+		stagedFile, err = owner.createRandom(parent, ".easycode-write-", false)
 	} else {
 		var directory *os.File
-		directory, err = owner.createRandom(parent, true)
+		directory, err = owner.createRandom(parent, ".easycode-write-", true)
 		for i := len(p.ancestors); err == nil && i < len(parts)-1; i++ {
 			directory, err = owner.create(directory, parts[i], true)
 		}
@@ -204,41 +207,14 @@ func (p *unixWritePath) publish(ctx context.Context, c tool.WriteCandidate, hook
 	if err != nil {
 		return err
 	}
-	if hooks.write != nil {
-		err = hooks.write(stagedFile, c.FinalBytes())
-	} else {
-		err = writePatchBytes(ctx, stagedFile, c.FinalBytes())
-	}
-	if err != nil {
-		return err
-	}
-	stat, err := stagedFile.Stat()
-	if err != nil {
-		return err
-	}
-	if stat.Size() != int64(len(c.FinalBytes())) {
-		return errors.New("short Write staging file")
-	}
-	if hooks.chmod != nil {
-		err = hooks.chmod(stagedFile, os.FileMode(c.Mode()))
-	} else {
-		err = stagedFile.Chmod(os.FileMode(c.Mode()))
-	}
-	if err != nil {
-		return err
-	}
-	if hooks.fileSync != nil {
-		err = hooks.fileSync(stagedFile)
-	} else {
-		err = stagedFile.Sync()
-	}
-	if err != nil {
+	contentHooks := stagedContentHooks{write: hooks.write, chmod: hooks.chmod, sync: hooks.fileSync}
+	if err = prepareStagedContent(ctx, stagedFile, c.FinalBytes(), c.Mode(), contentHooks); err != nil {
 		return err
 	}
 	for i := len(owner.entries) - 1; i >= 0; i-- {
 		entry := owner.entries[i]
 		if entry.directory {
-			if err = syncWriteDirectory(entry.file, hooks); err != nil {
+			if err = syncStagingHandle(entry.file, hooks.directorySync); err != nil {
 				return err
 			}
 		}
@@ -253,8 +229,11 @@ func (p *unixWritePath) publish(ctx context.Context, c tool.WriteCandidate, hook
 		return err
 	}
 	// 发布前核验整个暂存清单，防止名称被替换后发布未知对象。
-	if err = owner.validate(); err != nil {
+	if err = owner.validate(c.Mode()); err != nil {
 		return errors.Join(err, errWriteUncertain)
+	}
+	if err = ctx.Err(); err != nil {
+		return err
 	}
 	parentFD := int(parent.Fd())
 	name := owner.entries[0].name
@@ -276,17 +255,10 @@ func (p *unixWritePath) publish(ctx context.Context, c tool.WriteCandidate, hook
 		hooks.afterPublish()
 	}
 	// 发布已确定成功，取消不能跳过目录持久化或资源关闭。
-	if err = syncWriteDirectory(parent, hooks); err != nil {
+	if err = syncStagingHandle(parent, hooks.directorySync); err != nil {
 		return errors.Join(err, errWriteUncertain)
 	}
 	return nil
-}
-
-func syncWriteDirectory(file *os.File, hooks writeHooks) error {
-	if hooks.directorySync != nil {
-		return hooks.directorySync(file)
-	}
-	return file.Sync()
 }
 
 func publishWriteEntry(parent int, from, to string, noReplace bool) error {

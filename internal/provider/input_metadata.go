@@ -1,10 +1,11 @@
 package provider
 
 import (
-	"easycode/internal/codec"
-	"easycode/internal/domain"
 	"fmt"
 	"slices"
+
+	"easycode/internal/codec"
+	"easycode/internal/domain"
 )
 
 // InputMetadata 是两家原生存储共用的关联元数据，不属于模型 wire。
@@ -23,6 +24,34 @@ func NewInputMetadata(a domain.InputAssociation) (InputMetadata, error) {
 		return InputMetadata{}, err
 	}
 	return InputMetadata{TurnID: a.TurnID(), Placement: a.Placement(), SampleIndex: a.SampleIndex(), InputIDs: a.IDs(), Files: make([]InputFileMetadata, 0)}, nil
+}
+
+// EncodeUserInputMessages 将有序的冻结原文、技能和文件正文交给原生消息编码器。
+func EncodeUserInputMessages[M any](a domain.InputAssociation, inputs []domain.UserInput, encode func([]string) M) (InputMetadata, []M, error) {
+	metadata, err := NewInputMetadata(a)
+	if err != nil {
+		return InputMetadata{}, nil, err
+	}
+	if err := validateUserInputs(metadata.InputIDs, inputs); err != nil {
+		return InputMetadata{}, nil, err
+	}
+	messages := make([]M, len(inputs))
+	for i, input := range inputs {
+		skill, hasSkill := input.SkillAttachment()
+		if hasSkill {
+			metadata.Skills = append(metadata.Skills, InputSkillMetadata{InputID: input.ID(), Attachment: skill})
+		}
+		files := input.FileAttachments()
+		if files.Len() > 0 {
+			metadata.Files = append(metadata.Files, InputFileMetadata{InputID: input.ID(), Attachments: files})
+		}
+		blocks, err := inputTextBlocks(input.Text(), skill, hasSkill, files)
+		if err != nil {
+			return InputMetadata{}, nil, err
+		}
+		messages[i] = encode(blocks)
+	}
+	return metadata, messages, nil
 }
 
 // Association 严格校验并返回独立领域关联。
@@ -137,16 +166,24 @@ func (m InputMetadata) TextBlocks(id domain.InputID, text string) ([]string, err
 	if err != nil {
 		return nil, err
 	}
-	blocks := []string{text}
-	if skill, ok := m.Skill(id); ok {
+	skill, hasSkill := m.Skill(id)
+	if hasSkill {
 		input, err = input.WithSkillAttachment(skill)
 		if err != nil {
 			return nil, err
 		}
-		blocks = append(blocks, skill.Content)
 	}
 	if _, err = input.WithFileAttachments(files); err != nil {
 		return nil, err
+	}
+	return inputTextBlocks(text, skill, hasSkill, files)
+}
+
+func inputTextBlocks(text string, skill domain.SkillAttachment, hasSkill bool, files domain.FileAttachments) ([]string, error) {
+	blocks := make([]string, 1, 2+files.Len())
+	blocks[0] = text
+	if hasSkill {
+		blocks = append(blocks, skill.Content)
 	}
 	for _, attachment := range files.Items() {
 		rendered, err := attachment.RenderedText()
@@ -169,7 +206,10 @@ func ValidateUserInputs(a domain.InputAssociation, inputs []domain.UserInput) er
 	if err := a.Validate(); err != nil {
 		return err
 	}
-	ids := a.IDs()
+	return validateUserInputs(a.IDs(), inputs)
+}
+
+func validateUserInputs(ids []domain.InputID, inputs []domain.UserInput) error {
 	if len(ids) != len(inputs) {
 		return fmt.Errorf("input count does not match association")
 	}

@@ -23,7 +23,7 @@ func TestRepeatedReconcileDoesNotLeaveBackgroundGoroutines(t *testing.T) {
 	for range 3 {
 		createCatalogJournal(t, repository, cwd)
 	}
-	instance := openTestCatalog(t, filepath.Join(directory, "state.sqlite"), root)
+	instance := openTestCatalog(t, filepath.Join(directory, "catalog.json"))
 	defer func() { _ = instance.Close() }()
 	if _, err := instance.Reconcile(context.Background(), repository); err != nil {
 		t.Fatal(err)

@@ -97,7 +97,7 @@ func TestWebSocketDurabilityAndOuterCancellation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := runtime.RunTurn(context.Background(), []domain.UserInput{user}, func(protocol.Event) {}); err != nil {
+			if err := runtime.runFixtureTurn(context.Background(), []domain.UserInput{user}, func(protocol.Event) {}); err != nil {
 				t.Fatal(err)
 			}
 			var next struct {

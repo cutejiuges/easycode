@@ -136,7 +136,7 @@ func TestTaskBuiltCLICompactionQueriesAndIndependentResumeRequests(t *testing.T)
 					}
 					loaded := loadHeadlessJournal(t, filepath.Join(resumedHome, ".easycode", "sessions"), thread)
 					plan, err := session.NewReplayPlanner().Plan(loaded)
-					state, stateErr := session.TaskProgressBefore(plan.Tools, 0)
+					state, stateErr := plan.TaskProgress()
 					if err != nil || stateErr != nil || !state.Equal(saved) || len(plan.Compactions) != 1 || len(plan.Tools) != 1 {
 						t.Fatal("resume rewrote task truth or repeated compaction", err, stateErr)
 					}

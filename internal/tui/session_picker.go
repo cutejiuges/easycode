@@ -43,6 +43,10 @@ type pickerAction struct {
 	cancelPreview bool
 }
 
+func (m pickerModel) hasCurrentResults() bool {
+	return m.loaded && m.entriesAll == m.all
+}
+
 func (m *pickerModel) key(v tea.KeyMsg) pickerAction {
 	if v.Paste {
 		v.Type, v.Alt = tea.KeyRunes, false
@@ -98,10 +102,8 @@ func (m *pickerModel) key(v tea.KeyMsg) pickerAction {
 		}
 	case "ctrl+a":
 		m.all = !m.all
-		m.loaded = false
 		return pickerAction{operation: PickerList}
 	case "ctrl+r":
-		m.loaded = false
 		return pickerAction{operation: PickerRefresh}
 	case "up":
 		m.move(-1)
@@ -112,14 +114,14 @@ func (m *pickerModel) key(v tea.KeyMsg) pickerAction {
 	case "pgdown":
 		m.move(max(1, m.height-10))
 	case "ctrl+v":
-		if m.loaded && m.selected != "" {
+		if m.hasCurrentResults() && !m.busy && m.selected != "" {
 			m.previewOpen = true
 			m.preview = nil
 			m.scroll = 0
 			return pickerAction{operation: PickerPreview}
 		}
 	case "enter":
-		if m.loaded && !m.busy {
+		if m.hasCurrentResults() && !m.busy {
 			return m.choose()
 		}
 	case "backspace":

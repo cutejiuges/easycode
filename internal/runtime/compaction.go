@@ -14,15 +14,16 @@ import (
 )
 
 func (runtime *Runtime) contextPlanFor(profile contextplan.ProviderProfile) (contextplan.ContextPlan, error) {
-	view, err := runtime.conversation.ProjectActiveContext()
+	plan, _, err := runtime.contextPlanWithRevision(profile)
+	return plan, err
+}
+func (runtime *Runtime) contextPlanWithRevision(profile contextplan.ProviderProfile) (contextplan.ContextPlan, uint64, error) {
+	view, footprint, err := runtime.conversation.ProjectContextWindow()
 	if err != nil {
-		return contextplan.ContextPlan{}, err
+		return contextplan.ContextPlan{}, 0, err
 	}
-	footprint, err := runtime.conversation.HistoryFootprint()
-	if err != nil {
-		return contextplan.ContextPlan{}, err
-	}
-	return runtime.planWindowFor(profile, view, footprint)
+	plan, err := runtime.planWindowFor(profile, view, footprint)
+	return plan, view.Revision(), err
 }
 func (runtime *Runtime) planWindow(view domain.ActiveContextView, footprint domain.NativeHistoryFootprint) (contextplan.ContextPlan, error) {
 	return runtime.planWindowFor(runtime.operationProfile, view, footprint)
@@ -46,11 +47,7 @@ func (runtime *Runtime) contextSnapshot() (protocol.ContextMetricsPayload, error
 	return runtime.contextSnapshotFor(runtime.operationProfile)
 }
 func (runtime *Runtime) contextSnapshotFor(profile contextplan.ProviderProfile) (protocol.ContextMetricsPayload, error) {
-	plan, err := runtime.contextPlanFor(profile)
-	if err != nil {
-		return protocol.ContextMetricsPayload{}, err
-	}
-	view, err := runtime.conversation.ProjectActiveContext()
+	plan, revision, err := runtime.contextPlanWithRevision(profile)
 	if err != nil {
 		return protocol.ContextMetricsPayload{}, err
 	}
@@ -58,7 +55,7 @@ func (runtime *Runtime) contextSnapshotFor(profile contextplan.ProviderProfile) 
 	if err != nil {
 		return protocol.ContextMetricsPayload{}, err
 	}
-	suppressed := runtime.autoCompactionFailures >= 3 || (runtime.autoCompactionFailures > 0 && runtime.autoCompactionFailedRevision == view.Revision())
+	suppressed := runtime.autoCompactionFailures >= 3 || (runtime.autoCompactionFailures > 0 && runtime.autoCompactionFailedRevision == revision)
 	decision, err := runtime.autoCompactionPolicy.Decide(plan.TotalEstimate(), suppressed)
 	if err != nil {
 		return protocol.ContextMetricsPayload{}, err
@@ -67,7 +64,7 @@ func (runtime *Runtime) contextSnapshotFor(profile contextplan.ProviderProfile) 
 	if err != nil {
 		return protocol.ContextMetricsPayload{}, err
 	}
-	snapshot := protocol.ContextMetricsPayload{CachePolicy: policy, AutoCompactionState: string(decision), AutoCompactionReason: runtime.autoCompactionPolicy.UnavailableReason(), Scope: "committed", Revision: view.Revision(), Activity: "idle", Model: profile.Model(), Sources: make([]protocol.ContextSourcePayload, 0), Total: total, WindowConfigured: runtime.budget.Enabled(), Window: runtime.budget.Window(), ReservedOutput: runtime.budget.ReservedOutput(), SafetyMargin: runtime.budget.SafetyMargin(), BudgetState: string(plan.Decision().State())}
+	snapshot := protocol.ContextMetricsPayload{CachePolicy: policy, AutoCompactionState: string(decision), AutoCompactionReason: runtime.autoCompactionPolicy.UnavailableReason(), Scope: "committed", Revision: revision, Activity: "idle", Model: profile.Model(), Sources: make([]protocol.ContextSourcePayload, 0), Total: total, WindowConfigured: runtime.budget.Enabled(), Window: runtime.budget.Window(), ReservedOutput: runtime.budget.ReservedOutput(), SafetyMargin: runtime.budget.SafetyMargin(), BudgetState: string(plan.Decision().State())}
 	if threshold, enabled := runtime.autoCompactionPolicy.Threshold(); enabled {
 		snapshot.AutoCompactionThreshold = &threshold
 	}
@@ -108,7 +105,7 @@ func (runtime *Runtime) preflightCompactionFor(profile contextplan.ProviderProfi
 	if err != nil {
 		return compactionAdmission{}, protocol.ControlErrorInvalidCommand
 	}
-	preview, err := kernel.PreflightCompaction(input)
+	preview, projectWindow, err := kernel.PreflightCompaction(input)
 	if err != nil {
 		var failure *provider.CompactionError
 		if errors.As(err, &failure) {
@@ -130,7 +127,11 @@ func (runtime *Runtime) preflightCompactionFor(profile contextplan.ProviderProfi
 		}
 		return compactionAdmission{}, protocol.ControlErrorCompactionBudgetExceeded
 	}
-	before, err := runtime.contextPlanFor(profile)
+	view, footprint, err := projectWindow()
+	if err != nil {
+		return compactionAdmission{}, protocol.ControlErrorInvalidCommand
+	}
+	before, err := runtime.planWindowFor(profile, view, footprint)
 	if err != nil {
 		return compactionAdmission{}, protocol.ControlErrorInvalidCommand
 	}

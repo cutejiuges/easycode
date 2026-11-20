@@ -115,7 +115,7 @@ func runtimeQuestionFixture(t *testing.T, journal Journal) (*Runtime, *fakeToolC
 	c := &fakeToolConversation{fakeConversation: base}
 	config := testRuntimeConfig(t, journal)
 	config.InteractiveQuestions = true
-	config.QuestionExecutor = builtin.NewQuestionExecutor()
+	config.ToolBinding = testRuntimeToolBinding(t, func(tools *tool.Components) { tools.Question = builtin.NewQuestionExecutor() })
 	config.GenerateTurnID = func() (domain.TurnID, error) { return runtimeTurnID, nil }
 	r, err := New(c, config)
 	if err != nil {

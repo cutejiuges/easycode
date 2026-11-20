@@ -6,13 +6,12 @@ import (
 
 	"easycode/internal/domain"
 	"easycode/internal/fault"
-	"easycode/internal/session"
 	"easycode/internal/tool"
 )
 
 func (runtime *Runtime) executeWriteCall(ctx context.Context, emit Emitter, turnID domain.TurnID, invocation tool.Invocation) (tool.InvocationResult, bool, error) {
 	v, ok := invocation.Write()
-	if !ok || runtime.writePreparer == nil || runtime.writeExecutor == nil {
+	if !ok || runtime.tools.PrepareWrite == nil || runtime.tools.Write == nil {
 		return tool.InvocationResult{}, false, fault.New(fault.CodeTurnFailed, "Write runtime is not configured")
 	}
 	finish := func(result tool.InvocationResult) (tool.InvocationResult, bool, error) {
@@ -24,7 +23,7 @@ func (runtime *Runtime) executeWriteCall(ctx context.Context, emit Emitter, turn
 	if ctx.Err() != nil {
 		return finish(tool.NewWriteErrorResult(v, tool.ResultCancelled, "cancelled", "Write cancelled"))
 	}
-	candidate, err := runtime.writePreparer.Prepare(ctx, v, runtime.readObservations.lookup(v.Input().FilePath()))
+	candidate, err := runtime.tools.PrepareWrite.Prepare(ctx, v, runtime.readObservations.lookup(v.Input().FilePath()))
 	if err != nil {
 		code := "write_prepare_failed"
 		status := tool.ResultError
@@ -58,73 +57,14 @@ func (runtime *Runtime) executeWriteCall(ctx context.Context, emit Emitter, turn
 		return tool.InvocationResult{}, false, err
 	}
 	call, _ := tool.NewWriteReadyCall(v.ProviderCallID(), v.Input())
-	decision := runtime.toolPolicy.Decide(call)
-	outcome := tool.ApprovalOutcomeDeny
-	feedback := ""
-	if decision == tool.PolicyAllow {
-		outcome = tool.ApprovalOutcomeAllowOnce
-	} else if decision == tool.PolicyAsk {
-		if runtime.approvals.writeGrant.Load() {
-			outcome = tool.ApprovalOutcomeAllowFromSession
-		} else if runtime.interactiveApprovals {
-			response, err := runtime.waitForApproval(ctx, emit, turnID, request)
-			if err != nil {
-				return tool.InvocationResult{}, false, err
-			}
-			feedback = response.Feedback()
-			switch response.Decision() {
-			case tool.ApprovalAllowOnce:
-				outcome = tool.ApprovalOutcomeAllowOnce
-			case tool.ApprovalAllowSession:
-				outcome = tool.ApprovalOutcomeAllowSession
-			case tool.ApprovalAbort:
-				outcome = tool.ApprovalOutcomeAbort
-			}
-		}
-	}
-	source := session.ApprovalSourcePolicy
-	if decision == tool.PolicyAsk {
-		source = session.ApprovalSourceHeadless
-		if runtime.interactiveApprovals {
-			source = session.ApprovalSourceInteractive
-		}
-	}
-	if outcome == tool.ApprovalOutcomeAbort {
-		source = session.ApprovalSourceInterruption
-	} else if outcome == tool.ApprovalOutcomeAllowFromSession {
-		source = session.ApprovalSourceSessionGrant
-	}
-	factDraft, err := buildApprovalFact(request, invocation, outcome, source, feedback)
-	if err != nil {
-		return tool.InvocationResult{}, false, err
-	}
-	if outcome == tool.ApprovalOutcomeDeny || outcome == tool.ApprovalOutcomeAbort {
-		status, code, message := tool.ResultDenied, "approval_denied", "Write denied: approval_denied"
-		if outcome == tool.ApprovalOutcomeAbort {
-			status, code, message = tool.ResultCancelled, "user_aborted", "Write cancelled: user_aborted"
-		} else if decision == tool.PolicyAsk && !runtime.interactiveApprovals {
-			code, message = "approval_required", "Write denied: approval_required"
-		} else if feedback != "" {
-			message += "\nUser feedback: " + feedback
-		}
-		result := tool.NewWriteErrorResult(v, status, code, message)
-		return runtime.commitApprovalDenial(ctx, emit, request, outcome, factDraft, result, "Write")
-	}
-	if err := runtime.commitApprovalDecision(ctx, factDraft, "Write"); err != nil {
-		return tool.InvocationResult{}, false, err
-	}
-	if outcome == tool.ApprovalOutcomeAllowSession {
-		runtime.approvals.writeGrant.Store(true)
-	}
-	runtime.emitApprovalResolved(emit, turnID, request, outcome)
-	result, err := runtime.executeExclusive(ctx, turnID, invocation, exclusiveAction{
+	policy := runtime.tools.Policy.Decide(call)
+	return runtime.executeWithApproval(ctx, emit, request, invocation, policy, "Write", exclusiveAction{
 		execute: func(ctx context.Context) tool.InvocationResult {
 			runtime.readObservations.invalidate(candidate.RelativePath())
-			return runtime.writeExecutor.Execute(ctx, candidate)
+			return runtime.tools.Write.Execute(ctx, candidate)
 		},
 		matches: func(result tool.InvocationResult) bool {
 			return result.Status() != tool.ResultSuccess || result.WriteMetadata() == candidate.ResultMetadata()
 		},
 	})
-	return result, false, err
 }

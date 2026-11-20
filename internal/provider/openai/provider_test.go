@@ -36,8 +36,7 @@ func TestConversationCancelCompletedRaceHasOneTerminal(t *testing.T) {
 		}()
 		senders.Wait()
 		close(stream)
-		output := make(chan provider.StreamEvent, 16)
-		testConsumeStream(t, conversation, ctx, func() {}, nativeItemPointer(NewUserItem("question")), testOpenAIToolCatalog(t), stream, output)
+		output := testConsumeStream(t, conversation, ctx, func() {}, nativeItemPointer(NewUserItem("question")), testOpenAIToolCatalog(t), stream)
 		terminalCount := 0
 		for event := range output {
 			if !event.Kind().Terminal() {
@@ -102,7 +101,7 @@ func TestConversationStreamsAndCommitsOnlyOnCompleted(t *testing.T) {
 			prepared = event.PreparedSample()
 		}
 	}
-	want := []provider.StreamEventKind{provider.StreamEventSemantic, provider.StreamEventNative, provider.StreamEventCompleted}
+	want := []provider.StreamEventKind{provider.StreamEventSemantic, provider.StreamEventCompleted}
 	if len(kinds) != len(want) {
 		t.Fatalf("stream kinds: got %#v want %#v", kinds, want)
 	}
@@ -228,7 +227,7 @@ func closeProvider(t *testing.T, instance *Provider) {
 	}
 }
 
-func readOpenAITerminal(t *testing.T, conversation *Conversation, stream <-chan provider.StreamEvent) provider.StreamEvent {
+func readOpenAITerminal(t *testing.T, conversation *Conversation, stream provider.StreamEvents) provider.StreamEvent {
 	t.Helper()
 	var terminal provider.StreamEvent
 	terminalSeen := false
@@ -247,7 +246,7 @@ func readOpenAITerminal(t *testing.T, conversation *Conversation, stream <-chan 
 	if !terminalSeen {
 		t.Fatal("stream closed without terminal")
 	}
-	if conversation.active.Load() {
+	if conversation.operations.State()&provider.ConversationActive != 0 {
 		t.Fatal("stream channel closed before conversation became inactive")
 	}
 	return terminal

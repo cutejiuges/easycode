@@ -43,7 +43,7 @@ func TestArtifactSchedulerBoundsWorkersAndPreservesResultOrder(t *testing.T) {
 			release := make(chan struct{})
 			executor := &gatedArtifactExecutor{entered: make(chan tool.InvocationID, 12), release: release, calls: make(map[tool.InvocationID]int)}
 			journal := &fakeJournal{}
-			runtime := &Runtime{journal: journal, readArtifactExecutor: executor}
+			runtime := &Runtime{journal: journal, tools: tool.Components{ReadArtifact: executor}}
 			var invocations []tool.Invocation
 			for i := 0; i < 12; i++ {
 				id, _ := tool.GenerateInvocationID()

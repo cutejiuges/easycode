@@ -86,7 +86,7 @@ func TestTaskNativeResultsRestoreExactly(t *testing.T) {
 	}
 	entries := testAssociatedHistory([]nativeHistoryEntry{fileEntry, nativeHistoryEntry{Kind: nativeHistorySample, Assistant: nativeMessage{Role: roleAssistant, Content: []NativeItem{{Type: blockTypeThinking, Thinking: "private reasoning", Signature: "opaque-task"}, {Type: blockTypeRedactedThinking, RedactedData: "opaque-redacted"}, {Type: blockTypeToolUse, ID: "call-task", Name: "TodoWrite", Input: []byte(taskNativeInput)}}}, Metadata: messageMetadata{ID: "task", Model: "claude-test"}}})
 	for _, entry := range entries {
-		c.history.commit(entry)
+		c.history.Append(entry)
 	}
 	input, err := tool.DecodeTodoWriteInput([]byte(taskNativeInput))
 	if err != nil {
@@ -130,7 +130,7 @@ func TestTaskNativeResultsRestoreExactly(t *testing.T) {
 		t.Fatal(err)
 	}
 	entry.TurnID = entries[0].TurnID
-	c.history.commit(entry)
+	c.history.Append(entry)
 	entries = append(entries, entry)
 	var records []provider.RestoreRecord
 	for index, entry := range entries {
@@ -180,8 +180,8 @@ func TestTaskNativeResultsRestoreExactly(t *testing.T) {
 		t.Fatal("ordinary task call was duplicated")
 	}
 
-	a, _ := c.HistoryFootprint()
-	b, _ := restored.(*Conversation).HistoryFootprint()
+	_, a, _ := c.ProjectContextWindow()
+	_, b, _ := restored.(*Conversation).ProjectContextWindow()
 	if a != b {
 		t.Fatal("task restore changed footprint")
 	}

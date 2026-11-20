@@ -4,9 +4,11 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"easycode/internal/codec"
 )
@@ -68,5 +70,42 @@ func TestCloseCancelsActualBlockedBody(t *testing.T) {
 	}
 	if transport.calls.Load() != 1 {
 		t.Fatal("unexpected network call")
+	}
+}
+
+func TestSSESealDeliversBufferedFramesAndClosesBody(t *testing.T) {
+	client, err := NewClient("https://example.invalid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeClient(t, client)
+	blocked := &blockedBody{entered: make(chan struct{}), closed: make(chan struct{})}
+	reader := io.MultiReader(strings.NewReader("data: terminal\r\n\r\ndata: tail\r\n\r\ndata: incomplete\r\n"), blocked)
+	client.HTTP().SetTransport(&fixedRoundTripper{body: struct {
+		io.Reader
+		io.Closer
+	}{reader, blocked}})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	messages, err := client.StreamSSE(ctx, SSERequest{Path: "responses", Body: mustCanonical(t, struct{}{}, 1024)}, StreamOptions{
+		SealAfter: func(event SSEEvent) bool { return event.Data == "terminal" },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var delivered []string
+	for message := range messages {
+		if message.Event == nil || message.Err != nil {
+			t.Fatalf("seal message = %#v", message)
+		}
+		delivered = append(delivered, message.Event.Data)
+	}
+	if strings.Join(delivered, ",") != "terminal,tail" || blocked.reads.Load() != 0 {
+		t.Fatalf("seal delivered %q and made %d further reads", delivered, blocked.reads.Load())
+	}
+	select {
+	case <-blocked.closed:
+	default:
+		t.Fatal("seal closed output before closing the body")
 	}
 }

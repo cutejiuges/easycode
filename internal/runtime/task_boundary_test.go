@@ -17,7 +17,7 @@ func TestTaskTurnBudgetExhaustionPairsFailureWithoutApplyingOrExecuting(t *testi
 	j := &fakeJournal{}
 	r := taskRuntimeFixture(t, j)
 	executor := &taskCountingExecutor{}
-	r.taskExecutor = executor
+	r.tools.Task = executor
 	prior := taskRuntimeInvocation(t, "此前成功清单", domain.TaskCompleted, "prior")
 	if err := r.installTaskProgress(runtimeTurnID, sessionTaskCandidateForBoundary(t, prior), 10); err != nil {
 		t.Fatal(err)
@@ -105,7 +105,7 @@ func TestTaskOutputPreflightRejectionPairsBudgetFailureAndKeepsPriorState(t *tes
 	conversation := &taskRejectingOutputConversation{fakeToolConversation: &fakeToolConversation{fakeConversation: &fakeConversation{}}}
 	executor := &taskCountingExecutor{}
 	config := testRuntimeConfig(t, j)
-	config.TaskExecutor = executor
+	config.ToolBinding = testRuntimeToolBinding(t, func(tools *tool.Components) { tools.Task = executor })
 	r, err := New(conversation, config)
 	if err != nil {
 		t.Fatal(err)

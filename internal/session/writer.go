@@ -233,7 +233,9 @@ func (writer *JournalWriter) handleAppend(nextSequence uint64, request writerReq
 	}
 	records, err := writer.append(nextSequence, request.drafts)
 	if err != nil {
-		writer.poisoned.Store(true)
+		if IsJournalMutationUncertain(err) {
+			writer.poisoned.Store(true)
+		}
 		request.response <- appendResponse{err: err}
 		return nextSequence
 	}

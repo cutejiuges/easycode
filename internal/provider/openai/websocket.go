@@ -28,38 +28,43 @@ func (s requestSelection) apply(r domain.RequestReceipt) (domain.RequestReceipt,
 }
 
 type websocketCreate struct {
-	Reasoning          *reasoningWire `json:"reasoning,omitempty"`
-	Type               string         `json:"type"`
-	PreviousResponseID string         `json:"previous_response_id,omitempty"`
-	PromptCacheKey     string         `json:"prompt_cache_key,omitempty"`
-	ToolChoice         string         `json:"tool_choice,omitempty"`
-	MaxOutputTokens    uint64         `json:"max_output_tokens,omitempty"`
-	Model              string         `json:"model"`
-	Input              []NativeItem   `json:"input"`
-	Tools              []responseTool `json:"tools"`
-	Store              bool           `json:"store"`
-	Include            []string       `json:"include"`
+	responsesReasoningFields
+	Type               string `json:"type"`
+	PreviousResponseID string `json:"previous_response_id,omitempty"`
+	responsesInputFields
+	responsesStorageFields
 }
 
-func websocketBody(request codec.CanonicalJSON, responseID string, offset int) (codec.CanonicalJSON, error) {
-	var r responsesRequest
-	if err := codec.Unmarshal(request.Bytes(), &r); err != nil {
-		return codec.CanonicalJSON{}, err
-	}
-	if offset < 0 || offset > len(r.Input) {
+func (plan samplingRequestPlan) websocketBody(responseID string, offset int) (codec.CanonicalJSON, error) {
+	fields := plan.request.responsesInputFields
+	if offset < 0 || offset > len(fields.Input) {
 		return codec.CanonicalJSON{}, fmt.Errorf("incremental request offset is invalid")
 	}
-	return codec.MarshalCanonical(websocketCreate{Reasoning: r.Reasoning, Type: "response.create", PreviousResponseID: responseID, PromptCacheKey: r.PromptCacheKey, ToolChoice: r.ToolChoice, MaxOutputTokens: r.MaxOutputTokens, Model: r.Model, Input: r.Input[offset:], Tools: r.Tools, Store: false, Include: r.Include}, maxResponsesRequestBytes)
+	fields.Input = fields.Input[offset:]
+	return codec.MarshalCanonical(websocketCreate{
+		responsesReasoningFields: plan.request.responsesReasoningFields,
+		Type:                     "response.create",
+		PreviousResponseID:       responseID,
+		responsesInputFields:     fields,
+		responsesStorageFields:   plan.request.responsesStorageFields,
+	}, maxResponsesRequestBytes)
 }
-func classifyWebsocketFrame(data []byte) (transport.WSFrameInfo, error) {
+
+func responseFrameType(data []byte) (string, error) {
 	var event struct {
 		Type string `json:"type"`
 	}
-	if err := codec.Unmarshal(data, &event); err != nil || event.Type == "" {
+	err := codec.Unmarshal(data, &event)
+	return event.Type, err
+}
+
+func classifyWebsocketFrame(data []byte) (transport.WSFrameInfo, error) {
+	kind, err := responseFrameType(data)
+	if err != nil || kind == "" {
 		return transport.WSFrameInfo{}, fmt.Errorf("websocket event type is invalid")
 	}
-	info := transport.WSFrameInfo{Name: event.Type}
-	switch event.Type {
+	info := transport.WSFrameInfo{Name: kind}
+	switch kind {
 	case "response.completed":
 		info.Terminal = true
 		info.Reusable = true
@@ -75,9 +80,10 @@ func (conversation *Conversation) closeWebsocket() {
 	}
 	conversation.wsResponseID = ""
 }
-func (conversation *Conversation) startRequest(ctx context.Context, request codec.CanonicalJSON, evidence provider.RequestEvidence, purpose domain.RequestPurpose) (<-chan transport.SSEMessage, requestSelection, func(), error) {
+func (conversation *Conversation) startRequest(ctx context.Context, plan samplingRequestPlan, request codec.CanonicalJSON, comparison provider.RequestComparison) (<-chan transport.SSEMessage, requestSelection, func(), error) {
 	selection := requestSelection{transport: domain.TransportHTTP, mode: domain.RequestFull, reason: domain.ResetNone, fallback: domain.FallbackNone}
 	cleanup := func() {}
+	purpose := plan.purpose
 	if purpose == domain.RequestSummary {
 		conversation.closeWebsocket()
 	}
@@ -105,7 +111,7 @@ func (conversation *Conversation) startRequest(ctx context.Context, request code
 		}
 		if conn != nil {
 			selection.transport = domain.TransportWebSocket
-			offset, _, reason := evidence.Compare(conversation.baseline)
+			offset, reason := comparison.Suffix()
 			selection.reason = reason
 			responseID := ""
 			if purpose == domain.RequestSample && conversation.wsResponseID != "" && reason == domain.ResetNone && conversation.nextReason == domain.ResetNone {
@@ -125,7 +131,7 @@ func (conversation *Conversation) startRequest(ctx context.Context, request code
 				selection.reason = domain.ResetSummary
 				cleanup = func() { _ = conn.Close() }
 			}
-			body, err := websocketBody(request, responseID, offset)
+			body, err := plan.websocketBody(responseID, offset)
 			if err != nil {
 				_ = conn.Close()
 				return nil, selection, cleanup, err
@@ -141,9 +147,24 @@ func (conversation *Conversation) startRequest(ctx context.Context, request code
 	if conversation.httpFallback.Load() {
 		selection.fallback = conversation.fallback
 	}
-	stream, err := conversation.provider.transport.StreamSSE(ctx, transport.SSERequest{Method: http.MethodPost, Path: "responses", Headers: map[string]string{"Authorization": "Bearer " + conversation.provider.config.APIKey.Reveal(), "Accept": "text/event-stream", "Content-Type": "application/json"}, Body: request}, transport.StreamOptions{IdleTimeout: conversation.provider.config.StreamIdleTimeout})
+	options := transport.StreamOptions{IdleTimeout: conversation.provider.config.StreamIdleTimeout}
+	if purpose == domain.RequestSample {
+		options.SealAfter = func(event transport.SSEEvent) bool {
+			// 只标记读取截止位置。终态合法性仍由有序 reducer 核验。
+			kind, err := responseFrameType([]byte(event.Data))
+			return err == nil && kind == "response.completed"
+		}
+	}
+	stream, err := conversation.provider.transport.StreamSSE(ctx, transport.SSERequest{Method: http.MethodPost, Path: "responses", Headers: map[string]string{"Authorization": "Bearer " + conversation.provider.config.APIKey.Reveal(), "Accept": "text/event-stream", "Content-Type": "application/json"}, Body: request}, options)
 	return stream, selection, cleanup, err
 }
 
 // ResetContinuation 由 turn owner 在失败或外层取消后清除瞬态连接资格。
-func (conversation *Conversation) ResetContinuation() { conversation.closeWebsocket() }
+func (conversation *Conversation) ResetContinuation() error {
+	if conversation.operations.Begin() != provider.ConversationIdle {
+		return fmt.Errorf("OpenAI conversation cannot reset continuation while busy")
+	}
+	defer conversation.operations.End()
+	conversation.closeWebsocket()
+	return nil
+}

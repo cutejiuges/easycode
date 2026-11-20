@@ -300,6 +300,7 @@ func (active *activeReplayTurn) acceptPostHookBatch(batch []Record) error {
 		}
 		active.budgetTicket = ticket
 		call.PostHooks = &ReplayedPostHooks{Plan: p, PlanSequence: first.Sequence}
+		call.postDetailSequence = first.Sequence
 		if err := call.PostHooks.Validate(*call); err != nil {
 			return replayCorrupt(err.Error())
 		}
@@ -370,6 +371,7 @@ func (active *activeReplayTurn) acceptPostHookBatch(batch []Record) error {
 		g.Terminal = &terminal
 		g.TerminalSequence = first.Sequence
 	}
+	call.postDetailSequence = batch[len(batch)-1].Sequence
 	if err := g.Validate(*call); err != nil {
 		return replayCorrupt(err.Error())
 	}

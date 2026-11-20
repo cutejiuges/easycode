@@ -98,18 +98,21 @@ func listSessions(ctx context.Context, options SessionListOptions, deps sessionL
 }
 
 func loadSessionList(ctx context.Context, paths dataPaths, query catalog.ListQuery, deps sessionListDependencies) (catalog.ListResult, catalog.ReconciliationReport, error) {
-	snapshot, err := loadSessionCatalog(ctx, paths, query, deps, true)
-	return snapshot.rows, snapshot.report, err
+	snapshot, err := loadSessionCatalog(ctx, paths, deps, query)
+	if err != nil {
+		return catalog.ListResult{}, snapshot.report, err
+	}
+	return snapshot.rows[0], snapshot.report, nil
 }
 
 type catalogSnapshot struct {
-	rows          catalog.ListResult
+	rows          []catalog.ListResult
 	report        catalog.ReconciliationReport
 	cleanupFailed bool
 }
 
-// loadSessionCatalog 复用一次性列表和选择器的显式资源生命周期。
-func loadSessionCatalog(ctx context.Context, paths dataPaths, query catalog.ListQuery, deps sessionListDependencies, reconcile bool) (snapshot catalogSnapshot, resultErr error) {
+// loadSessionCatalog 在一次协调所持有的快照上依次执行各范围查询。
+func loadSessionCatalog(ctx context.Context, paths dataPaths, deps sessionListDependencies, queries ...catalog.ListQuery) (snapshot catalogSnapshot, resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return snapshot, err
 	}
@@ -128,7 +131,7 @@ func loadSessionCatalog(ctx context.Context, paths dataPaths, query catalog.List
 	if err := ctx.Err(); err != nil {
 		return snapshot, err
 	}
-	instance, err := deps.newCatalog(catalog.Config{DatabasePath: paths.catalogPath, SessionRoot: paths.sessionRoot})
+	instance, err := deps.newCatalog(catalog.Config{SnapshotPath: paths.catalogPath})
 	if err != nil {
 		return snapshot, err
 	}
@@ -146,18 +149,19 @@ func loadSessionCatalog(ctx context.Context, paths dataPaths, query catalog.List
 	if err := ctx.Err(); err != nil {
 		return snapshot, err
 	}
-	if reconcile {
-		snapshot.report, err = instance.Reconcile(ctx, repository)
-		if err != nil {
-			return snapshot, err
-		}
+	snapshot.report, err = instance.Reconcile(ctx, repository)
+	if err != nil {
+		return snapshot, err
+	}
+	for _, query := range queries {
 		if err := ctx.Err(); err != nil {
 			return snapshot, err
 		}
-	}
-	snapshot.rows, err = instance.List(ctx, query)
-	if err != nil {
-		return snapshot, err
+		rows, err := instance.List(ctx, query)
+		if err != nil {
+			return snapshot, err
+		}
+		snapshot.rows = append(snapshot.rows, rows)
 	}
 	return snapshot, ctx.Err()
 }

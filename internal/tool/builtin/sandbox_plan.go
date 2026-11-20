@@ -5,6 +5,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"easycode/internal/executor/process"
 	"easycode/internal/tool"
 )
 
@@ -27,7 +28,7 @@ func (*SandboxPlanner) Plan(candidate tool.ExecCandidate, workspaceRoot string) 
 		candidate.Sandbox().Revision() != "darwin-workspace-offline" || candidate.Sandbox().NetworkAllowed() || !candidate.Sandbox().WriteWorkspace() ||
 		candidate.Environment().Revision() != "minimal-command-environment" ||
 		!filepath.IsAbs(workspaceRoot) || filepath.Clean(workspaceRoot) != workspaceRoot || !utf8.ValidString(workspaceRoot) || strings.ContainsRune(workspaceRoot, 0) {
-		return SandboxPlan{}, errSandboxUnavailable
+		return SandboxPlan{}, process.SandboxUnavailable
 	}
 	return SandboxPlan{
 		root: workspaceRoot, workdir: candidate.Invocation().Input().Workdir(), temporary: workspaceRoot, cache: filepath.Join(workspaceRoot, ".cache", "go-build"),

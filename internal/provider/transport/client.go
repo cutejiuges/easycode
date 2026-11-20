@@ -45,10 +45,12 @@ type SSERequest struct {
 	Body    codec.CanonicalJSON
 }
 
-// StreamOptions 控制 SSE frame 大小和空闲超时。
+// StreamOptions 约束单条 SSE 请求的读取边界。
 type StreamOptions struct {
 	MaxEventBytes int
 	IdleTimeout   time.Duration
+	// SealAfter 标记候选结束帧，只交付已读入缓冲区的完整尾帧。
+	SealAfter func(SSEEvent) bool
 }
 
 // NewClient 创建 Resty v3 客户端并校验 base URL。

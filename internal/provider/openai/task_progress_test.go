@@ -84,7 +84,7 @@ func TestTaskNativeResultsRestoreExactly(t *testing.T) {
 	}
 	entries := testAssociatedHistory([]nativeHistoryEntry{fileEntry, nativeHistoryEntry{Kind: nativeHistorySample, Outputs: []NativeItem{{Type: "reasoning", ID: "r-task", EncryptedContent: "opaque-task"}, {Type: "message", Role: "assistant", Phase: "commentary", Content: []ContentPart{{Type: "output_text", Text: "Working on the task"}}}, {Type: "function_call", ID: "item-task", CallID: "call-task", Name: "update_plan", Arguments: taskNativeInput}}}})
 	for _, entry := range entries {
-		c.history.commit(entry)
+		c.history.Append(entry)
 	}
 	input, err := tool.DecodeUpdatePlanInput([]byte(taskNativeInput))
 	if err != nil {
@@ -128,7 +128,7 @@ func TestTaskNativeResultsRestoreExactly(t *testing.T) {
 		t.Fatal(err)
 	}
 	entry.TurnID = entries[0].TurnID
-	c.history.commit(entry)
+	c.history.Append(entry)
 	entries = append(entries, entry)
 	var records []provider.RestoreRecord
 	for index, entry := range entries {
@@ -178,8 +178,8 @@ func TestTaskNativeResultsRestoreExactly(t *testing.T) {
 		t.Fatal("ordinary task call was duplicated")
 	}
 
-	a, _ := c.HistoryFootprint()
-	b, _ := restored.(*Conversation).HistoryFootprint()
+	_, a, _ := c.ProjectContextWindow()
+	_, b, _ := restored.(*Conversation).ProjectContextWindow()
 	if a != b {
 		t.Fatal("task restore changed footprint")
 	}
@@ -256,7 +256,7 @@ func TestTaskFacadeStrictFalseAcrossHTTPAndWebSocket(t *testing.T) {
 	}
 	defer instance.Close()
 	c := testConversation(t, instance)
-	c.history.commit(testInputEntry(t, NewUserItem("hello")))
+	c.history.Append(testInputEntry(t, NewUserItem("hello")))
 	input, err := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testOpenAIToolCatalog(t))
 	if err != nil {
 		t.Fatal(err)
@@ -265,11 +265,11 @@ func TestTaskFacadeStrictFalseAcrossHTTPAndWebSocket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	regular, err := c.compileSamplingRequest(c.history.snapshot(), input)
+	regular, err := c.compileSamplingRequest(c.history.Entries(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	summary, err := c.compileCompactionRequest(compact)
+	summary, err := c.compileCompactionRequest(c.history.Snapshot(), compact)
 	if err != nil {
 		t.Fatal(err)
 	}

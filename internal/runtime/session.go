@@ -246,8 +246,18 @@ func (session *ChatSession) ResolveApproval(ctx context.Context, turnID domain.T
 func (session *ChatSession) Interrupt() {
 	session.mu.Lock()
 	defer session.mu.Unlock()
-	turnID := session.activeTurnID
-	if !turnID.Valid() {
+	session.queueInterrupt(session.activeTurnID)
+}
+
+// InterruptTurn 只提交与宿主显示的 turn 身份匹配的停止请求。
+func (session *ChatSession) InterruptTurn(turnID domain.TurnID) {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	session.queueInterrupt(turnID)
+}
+
+func (session *ChatSession) queueInterrupt(turnID domain.TurnID) {
+	if !turnID.Valid() || turnID != session.activeTurnID {
 		return
 	}
 	// 只保留最新目标，避免旧 turn 的未交付请求占住当前 turn 的中断槽。

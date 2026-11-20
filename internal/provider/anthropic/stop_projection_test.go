@@ -59,8 +59,8 @@ func stopTestConversation(t *testing.T) (*Conversation, domain.InputAssociation,
 	if err != nil {
 		t.Fatal(err)
 	}
-	conversation.history.commit(entry)
-	conversation.history.commit(stopTestSample(stopTestTurn, "  同一答复\n"))
+	conversation.history.Append(entry)
+	conversation.history.Append(stopTestSample(stopTestTurn, "  同一答复\n"))
 	return conversation, association, entry
 }
 
@@ -68,7 +68,7 @@ func TestStopNativeContinuationCommitsBothSourcesAndRestoresExactly(t *testing.T
 	for _, steer := range []bool{false, true} {
 		t.Run(map[bool]string{false: "feedback-only", true: "with-steering"}[steer], func(t *testing.T) {
 			conversation, initial, initialEntry := stopTestConversation(t)
-			sample := conversation.history.snapshot()[1]
+			sample := conversation.history.Entries()[1]
 			feedback := stopTestFeedback(t, 0)
 			candidate, _ := domain.NewStopFeedbackOnly(feedback)
 			var association domain.InputAssociation
@@ -156,19 +156,19 @@ func TestStopNativeContinuationCommitsBothSourcesAndRestoresExactly(t *testing.T
 			if !prepared.Finalized() || prepared.Finalize() == nil || prepared.Discard() == nil {
 				t.Fatal("double resolution accepted")
 			}
-			actualFootprint, err := conversation.HistoryFootprint()
+			_, actualFootprint, err := conversation.ProjectContextWindow()
 			if err != nil || actualFootprint != footprint {
 				t.Fatal("finalized footprint differs", err)
 			}
 			restored := testConversation(t, conversation.provider)
-			if err := restoreNativeHistory(context.Background(), "model", records, &restored.history); err != nil {
+			if _, err := restoreNativeHistory(context.Background(), "model", records, &restored.history); err != nil {
 				t.Fatal("restore", err)
 			}
-			liveBody, err := conversation.compileSamplingRequest(conversation.history.snapshot(), sampling)
+			liveBody, err := conversation.compileSamplingRequest(conversation.history.Entries(), sampling)
 			if err != nil {
 				t.Fatal(err)
 			}
-			restoredBody, err := restored.compileSamplingRequest(restored.history.snapshot(), sampling)
+			restoredBody, err := restored.compileSamplingRequest(restored.history.Entries(), sampling)
 			if err != nil || !bytes.Equal(liveBody.Bytes(), restoredBody.Bytes()) {
 				t.Fatal("canonical request changed across restore", err)
 			}
@@ -193,7 +193,7 @@ func TestStopNativeContinuationCommitsBothSourcesAndRestoresExactly(t *testing.T
 			if steer && (messages[3].Role != domain.SemanticUser || messages[3].Text != "  用户纠正\n") {
 				t.Fatal("real correction reordered")
 			}
-			transcript, err := restored.ProjectTranscript()
+			transcript, _, err := restored.ProjectTranscriptFrom(0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -234,7 +234,7 @@ func TestStopNativeContinuationCommitsBothSourcesAndRestoresExactly(t *testing.T
 			}
 			badRecords := append([]provider.RestoreRecord(nil), records...)
 			badRecords[2] = badRecord
-			if err := restoreNativeHistory(context.Background(), "model", badRecords, &nativeHistory{}); err == nil {
+			if _, err := restoreNativeHistory(context.Background(), "model", badRecords, &nativeHistory{}); err == nil {
 				t.Fatal("forged native feedback accepted")
 			}
 		})

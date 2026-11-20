@@ -132,7 +132,7 @@ func (m pickerModel) view() string {
 		if m.busy {
 			lines = append(lines, "Loading…")
 		}
-		if !m.loaded && len(m.entries) > 0 {
+		if !m.hasCurrentResults() && len(m.entries) > 0 {
 			lines = append(lines, "Previous results: "+pickerScope(m.entriesAll)+" · resume disabled until refreshed")
 		}
 		if m.hasMore {
@@ -176,7 +176,7 @@ func (m pickerModel) view() string {
 			}
 			lines = append(lines, line)
 		}
-		if len(rows) == 0 && m.loaded {
+		if len(rows) == 0 && m.hasCurrentResults() {
 			if m.query == "" {
 				if m.source.Valid() {
 					lines = append(lines, "No other sessions in this scope")

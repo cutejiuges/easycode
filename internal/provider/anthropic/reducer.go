@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"easycode/internal/codec"
 	"easycode/internal/domain"
@@ -65,7 +66,7 @@ type usageEventWire struct {
 
 type blockState struct {
 	item           NativeItem
-	toolInput      string
+	content        strings.Builder
 	ready          *tool.ReadyCall
 	stopped        bool
 	reasoningBlock uint32
@@ -235,11 +236,10 @@ func (reducer *streamReducer) reduceBlockStart(index *int, raw json.RawMessage) 
 }
 
 func (reducer *streamReducer) reduceBlockDelta(index *int, raw json.RawMessage) (reducerResult, error) {
-	resolved, state, err := reducer.activeBlock(index)
+	_, state, err := reducer.activeBlock(index)
 	if err != nil {
 		return reducerResult{}, err
 	}
-	_ = resolved
 	if len(raw) == 0 || string(raw) == "null" {
 		return reducerResult{}, protocolError("Anthropic content block delta is required")
 	}
@@ -252,7 +252,7 @@ func (reducer *streamReducer) reduceBlockDelta(index *int, raw json.RawMessage) 
 		if state.item.Type != blockTypeText {
 			return reducerResult{}, protocolError("Anthropic text delta does not match content block")
 		}
-		state.item.Text += delta.Text
+		state.content.WriteString(delta.Text)
 		if delta.Text == "" {
 			return reducerResult{}, nil
 		}
@@ -265,11 +265,11 @@ func (reducer *streamReducer) reduceBlockDelta(index *int, raw json.RawMessage) 
 		if state.item.Type != blockTypeThinking {
 			return reducerResult{}, protocolError("Anthropic thinking delta does not match content block")
 		}
-		old := len(state.item.Thinking)
+		old := state.content.Len()
 		if err := reducer.reasoningBudget.ReplaceSource(old, old+len(delta.Thinking)); err != nil {
 			return reducerResult{}, protocolError(err.Error())
 		}
-		state.item.Thinking += delta.Thinking
+		state.content.WriteString(delta.Thinking)
 		if delta.Thinking == "" {
 			return reducerResult{}, nil
 		}
@@ -290,10 +290,10 @@ func (reducer *streamReducer) reduceBlockDelta(index *int, raw json.RawMessage) 
 		return reducerResult{}, nil
 	case "input_json_delta":
 		if state.item.Type != blockTypeToolUse || delta.PartialJSON == "" ||
-			len(state.toolInput)+len(delta.PartialJSON) > maxToolInputBytes {
+			state.content.Len()+len(delta.PartialJSON) > maxToolInputBytes {
 			return reducerResult{}, protocolError("Anthropic tool input delta is invalid")
 		}
-		state.toolInput += delta.PartialJSON
+		state.content.WriteString(delta.PartialJSON)
 		return reducerResult{}, nil
 	default:
 		return reducerResult{}, protocolError("Anthropic content block delta type is unsupported")
@@ -305,26 +305,33 @@ func (reducer *streamReducer) reduceBlockStop(index *int) (reducerResult, error)
 	if err != nil {
 		return reducerResult{}, err
 	}
-	if state.item.Type == blockTypeToolUse {
-		if state.toolInput == "" || !codec.Valid([]byte(state.toolInput)) {
+	switch state.item.Type {
+	case blockTypeText:
+		state.item.Text = state.content.String()
+	case blockTypeThinking:
+		state.item.Thinking = state.content.String()
+	case blockTypeToolUse:
+		input := []byte(state.content.String())
+		if len(input) == 0 || !codec.Valid(input) {
 			return reducerResult{}, protocolError("Anthropic tool input is incomplete")
 		}
 		callID, callErr := tool.ParseProviderCallID(state.item.ID)
 		if callErr != nil {
 			return reducerResult{}, protocolError("Anthropic tool use ID is invalid")
 		}
-		ready, readyErr := reducer.catalog.DecodeReadyCall(domain.ProviderAnthropic, state.item.Name, callID, []byte(state.toolInput))
+		ready, readyErr := reducer.catalog.DecodeReadyCall(domain.ProviderAnthropic, state.item.Name, callID, input)
 		if readyErr != nil {
 			return reducerResult{}, protocolError("Anthropic ready call is invalid")
 		}
-		state.item.Input = append(json.RawMessage(nil), state.toolInput...)
+		state.item.Input = input
 		state.ready = &ready
 	}
+	state.content.Reset()
 	state.stopped = true
-	item := state.item.clone()
-	result := reducerResult{native: &item}
+	item := &state.item
+	result := reducerResult{native: item}
 	if item.Type == blockTypeThinking || item.Type == blockTypeRedactedThinking {
-		body, err := reasoningBody(item)
+		body, err := reasoningBody(*item)
 		if err != nil {
 			return reducerResult{}, err
 		}
@@ -433,7 +440,7 @@ func (reducer *streamReducer) readyCalls() []tool.ReadyCall {
 }
 
 func (reducer *streamReducer) messageMetadata() messageMetadata {
-	return reducer.metadata.clone()
+	return reducer.metadata
 }
 
 func (reducer *streamReducer) sampleUsage() (domain.SampleUsage, error) {

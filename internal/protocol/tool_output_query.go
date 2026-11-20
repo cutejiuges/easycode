@@ -83,17 +83,9 @@ func (s ToolOutputSummary) Validate() error {
 	return errors.New("invalid tool output summary")
 }
 
-func NewToolOutputQuery(q ToolOutputQuery) (ToolOutputQuery, error) { return q, q.Validate() }
-func DecodeToolOutputQuery(data []byte) (ToolOutputQuery, error) {
-	return decodeTranscriptValue[ToolOutputQuery](data)
-}
 func (p ToolOutputPage) Validate() error {
 	if uint64(len(p.Text)) < p.NextOffset-p.Offset || uint64(len(p.Text)) > 4*(p.NextOffset-p.Offset) || p.Offset > p.NextOffset || p.NextOffset > p.StoredBytes || p.NextOffset-p.Offset > 64<<10 || p.StoredEOF != (p.NextOffset == p.StoredBytes) || len(p.Text) > 256<<10 || !utf8.ValidString(p.Text) || (p.Offset == p.NextOffset && !p.StoredEOF) {
 		return errors.New("invalid tool output page")
 	}
 	return nil
-}
-func NewToolOutputPage(p ToolOutputPage) (ToolOutputPage, error) { return p, p.Validate() }
-func DecodeToolOutputPage(data []byte) (ToolOutputPage, error) {
-	return decodeTranscriptValue[ToolOutputPage](data)
 }

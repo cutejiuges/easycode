@@ -5,14 +5,15 @@ import (
 	"easycode/internal/provider"
 )
 
-// ProjectTranscript 保留原生提交及内部顺序，仅返回允许展示的文本与调用锚点。
-func (conversation *Conversation) ProjectTranscript() (domain.TranscriptView, error) {
-	return projectTranscript(conversation.history.snapshot())
-}
-
-func projectTranscript(history []nativeHistoryEntry) (domain.TranscriptView, error) {
-	return provider.ProjectNativeTranscript(history, domain.ProviderOpenAI, nativeUsers,
+// ProjectTranscriptFrom 返回指定 ordinal 起的已提交投影和真实结束位置。
+func (conversation *Conversation) ProjectTranscriptFrom(ordinal uint64) (domain.TranscriptView, uint64, error) {
+	history, err := conversation.history.EntriesFrom(ordinal)
+	if err != nil {
+		return domain.TranscriptView{}, 0, err
+	}
+	view, err := provider.ProjectNativeTranscript(history, ordinal, domain.ProviderOpenAI, nativeUsers,
 		func(input NativeItem) string { return input.Content[0].Text }, appendSampleTranscript, entryStopFeedback)
+	return view, ordinal + uint64(len(history)), err
 }
 
 func appendSampleTranscript(items []domain.TranscriptItem, entry nativeHistoryEntry, ordinal uint64) ([]domain.TranscriptItem, error) {

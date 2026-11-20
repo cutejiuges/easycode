@@ -2,7 +2,6 @@ package anthropic
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -21,8 +20,8 @@ type checkpointPayload struct {
 	Generation   json.RawMessage          `json:"generation"`
 }
 
-func (conversation *Conversation) compactionSource() (provider.CompactionSource, error) {
-	return nativeCompactionSource(conversation.history.snapshotWindow(), conversation.provider.config.Model)
+func (conversation *Conversation) compactionSource(window nativeWindowSnapshot) (provider.CompactionSource, error) {
+	return nativeCompactionSource(window, conversation.provider.config.Model)
 }
 
 func nativeCompactionSource(snapshot nativeWindowSnapshot, model string) (provider.CompactionSource, error) {
@@ -45,36 +44,29 @@ func nativeCompactionSourceChecked(snapshot nativeWindowSnapshot, model string, 
 	if checkpoint != nil {
 		predecessor, _ = provider.AfterCompactionCheckpoint(checkpoint.ID())
 	}
-	items := make([]nativeMessage, 0)
+	items := make([]nativeMessage, 0, max(len(entries)-offset, 0))
 	for _, entry := range snapshot.RequestEntries() {
-		if entry.FeedbackInput != nil {
-			items = append(items, *entry.FeedbackInput)
-		}
-		items = append(items, entry.UserInputs...)
-		if entry.Kind == nativeHistorySample {
-			items = append(items, entry.Assistant)
-		}
-		if entry.Kind == nativeHistoryToolOutputs {
-			items = append(items, entry.ToolOutputs)
+		for message := range nativeRequestMessages(entry) {
+			items = append(items, message)
 		}
 	}
 	canonical, err := codec.MarshalCanonical(items, provider.MaxNativeCommitBytes)
 	if err != nil {
 		return provider.CompactionSource{}, err
 	}
-	digest := sha256.Sum256(canonical.Bytes())
+	digest := canonical.SHA256()
 	return provider.NewCompactionSource(domain.ProviderAnthropic, messagesWire, model, revision, revision+count, predecessor, hex.EncodeToString(digest[:]))
 }
 
-func (conversation *Conversation) compileCompactionRequest(input provider.CompactionInput) (codec.CanonicalJSON, error) {
-	plan, err := conversation.planCompactionRequest(input)
+func (conversation *Conversation) compileCompactionRequest(window nativeWindowSnapshot, input provider.CompactionInput) (codec.CanonicalJSON, error) {
+	plan, err := conversation.planCompactionRequest(window, input)
 	if err != nil {
 		return codec.CanonicalJSON{}, err
 	}
 	return plan.body(conversation.provider.config.CachePolicy.Anthropic())
 }
 
-func (conversation *Conversation) planCompactionRequest(input provider.CompactionInput) (samplingRequestPlan, error) {
+func (conversation *Conversation) planCompactionRequest(window nativeWindowSnapshot, input provider.CompactionInput) (samplingRequestPlan, error) {
 	if err := input.Validate(); err != nil {
 		return samplingRequestPlan{}, err
 	}
@@ -82,7 +74,7 @@ func (conversation *Conversation) planCompactionRequest(input provider.Compactio
 	if t.Mode() == domain.ThinkingEnabled && t.BudgetTokens() >= input.OutputTokens() {
 		return samplingRequestPlan{}, provider.NewCompactionError(provider.CompactionBudgetExceeded)
 	}
-	plan, err := conversation.planSamplingRequest(conversation.history.snapshot(), input.Sampling())
+	plan, err := conversation.planSamplingRequest(window, input.Sampling())
 	if err != nil {
 		return samplingRequestPlan{}, err
 	}
@@ -94,21 +86,21 @@ func (conversation *Conversation) planCompactionRequest(input provider.Compactio
 }
 
 // PreflightCompaction 只编译和估算当前完整有效窗口，不产生副作用。
-func (conversation *Conversation) PreflightCompaction(input provider.CompactionInput) (provider.CompactionPreview, error) {
-	return provider.PreflightCompaction(input, &conversation.active, &conversation.pending, conversation.compactionSource, conversation.compileCompactionRequest)
+func (conversation *Conversation) PreflightCompaction(input provider.CompactionInput) (provider.CompactionPreview, provider.ContextWindowProjection, error) {
+	return provider.PreflightCompaction(input, &conversation.operations, conversation.history.Snapshot, conversation.compactionSource, conversation.compileCompactionRequest, projectContextWindow)
 }
 
 // RunCompaction 独立消费摘要流，不发普通 turn 事件，也不调用工具调度器。
 func (conversation *Conversation) RunCompaction(ctx context.Context, id domain.CompactionID, preview provider.CompactionPreview) (*provider.PreparedCompaction, error) {
-	return provider.RunCompaction(ctx, id, preview, &conversation.active, &conversation.pending, conversation.compactionSource, conversation.openCompaction)
+	return provider.RunCompaction(ctx, id, preview, &conversation.operations, conversation.history.Snapshot, conversation.compactionSource, conversation.openCompaction)
 }
 
-func (conversation *Conversation) openCompaction(ctx context.Context, input provider.CompactionInput) (provider.CompactionStream, error) {
-	plan, err := conversation.planCompactionRequest(input)
+func (conversation *Conversation) openCompaction(ctx context.Context, window nativeWindowSnapshot, input provider.CompactionInput) (provider.CompactionStream, error) {
+	plan, err := conversation.planCompactionRequest(window, input)
 	if err != nil {
 		return provider.CompactionStream{}, err
 	}
-	request, err := plan.body(conversation.provider.config.CachePolicy.Anthropic())
+	request, err := plan.compile(conversation.provider.config.CachePolicy.Anthropic())
 	if err != nil {
 		return provider.CompactionStream{}, provider.NewCompactionError(provider.CompactionRequestFailed)
 	}
@@ -117,7 +109,7 @@ func (conversation *Conversation) openCompaction(ctx context.Context, input prov
 		return provider.CompactionStream{}, err
 	}
 	streamCtx, cancel := context.WithCancel(ctx)
-	stream, err := conversation.startRequest(streamCtx, request)
+	stream, err := conversation.startRequest(streamCtx, request.body)
 	if err != nil {
 		err = provider.CompactionNetworkError(ctx)
 		cancel()
@@ -185,134 +177,83 @@ func (conversation *Conversation) prepareCheckpoint(scope domain.CompactionScope
 		return nil, err
 	}
 	summaryEntry := nativeHistoryEntry{Kind: nativeHistoryUserInputs, UserInputs: []nativeMessage{native}}
-	return provider.PrepareCheckpoint(scope, id, source, receipt, &conversation.pending, provider.CheckpointCandidate{
+	return provider.PrepareCheckpoint(scope, id, source, receipt, &conversation.operations, provider.CheckpointCandidate{
 		Family: conversation.Family(), Payload: payload, Summary: summary,
 		Usage: generation.Metadata.Usage.normalized,
 		Footprint: func(revision uint64) (domain.NativeHistoryFootprint, error) {
 			return historyFootprint([]nativeHistoryEntry{summaryEntry}, revision)
 		},
-		Source:      conversation.compactionSource,
 		EncodeUsage: func() ([]byte, error) { return codec.MarshalStable(encodeMetadata(generation.Metadata).Usage) },
 		Install: func(checkpoint provider.CheckpointEnvelope) {
 			conversation.baseline = provider.RequestBaseline{}
 			conversation.nextReason = domain.ResetCompacted
-			conversation.history.installCheckpoint(checkpoint, summaryEntry, summary)
+			conversation.history.InstallCheckpoint(checkpoint, summaryEntry, summary)
 		},
 	})
 }
 
-func decodeCheckpoint(checkpoint provider.CheckpointEnvelope) (nativeHistoryEntry, domain.ContextSummary, error) {
+func decodeCheckpoint(checkpoint provider.CheckpointEnvelope) (provider.DecodedCheckpoint[nativeHistoryEntry], error) {
+	var evidence provider.DecodedCheckpoint[nativeHistoryEntry]
 	if checkpoint.Source().Family() != domain.ProviderAnthropic || checkpoint.Source().Wire() != messagesWire {
-		return nativeHistoryEntry{}, domain.ContextSummary{}, fmt.Errorf("checkpoint boundary is incompatible")
+		return evidence, fmt.Errorf("checkpoint boundary is incompatible")
 	}
 	var payload checkpointPayload
 	if err := codec.DecodeObject(checkpoint.Payload(), &payload, "summary", "generation", "task_progress"); err != nil {
-		return nativeHistoryEntry{}, domain.ContextSummary{}, fmt.Errorf("checkpoint payload is invalid")
+		return evidence, fmt.Errorf("checkpoint payload is invalid")
 	}
-	if err := payload.TaskProgress.Validate(); err != nil {
-		return nativeHistoryEntry{}, domain.ContextSummary{}, fmt.Errorf("checkpoint task progress is invalid")
+	evidence.Tasks = payload.TaskProgress
+	if err := evidence.Tasks.Validate(); err != nil {
+		return evidence, fmt.Errorf("checkpoint task progress is invalid")
 	}
 	envelope, err := provider.NewNativeCommitEnvelope(domain.ProviderAnthropic, messagesWire, payload.Generation)
 	if err != nil {
-		return nativeHistoryEntry{}, domain.ContextSummary{}, err
+		return evidence, err
 	}
 	generation, err := decodeNativeCommit(envelope)
 	if err != nil {
-		return nativeHistoryEntry{}, domain.ContextSummary{}, err
+		return evidence, err
 	}
 	summary, err := compactionSummary(generation)
 	if err != nil {
-		return nativeHistoryEntry{}, domain.ContextSummary{}, fmt.Errorf("checkpoint summary does not match generation")
+		return evidence, fmt.Errorf("checkpoint summary does not match generation")
 	}
 	wrapped, err := provider.WrapScopedTaskContextSummary(summary, checkpoint.Scope(), payload.TaskProgress)
 	if err != nil {
-		return nativeHistoryEntry{}, domain.ContextSummary{}, err
+		return evidence, err
 	}
 	expected, err := codec.MarshalCanonical(newUserMessage(wrapped), provider.MaxNativeCommitBytes)
 	if err != nil {
-		return nativeHistoryEntry{}, domain.ContextSummary{}, err
+		return evidence, err
 	}
 	actual, err := codec.MarshalCanonical(payload.Summary, provider.MaxNativeCommitBytes)
 	if err != nil || string(expected.Bytes()) != string(actual.Bytes()) {
-		return nativeHistoryEntry{}, domain.ContextSummary{}, fmt.Errorf("checkpoint native summary is invalid")
+		return evidence, fmt.Errorf("checkpoint native summary is invalid")
 	}
-	return nativeHistoryEntry{Kind: nativeHistoryUserInputs, UserInputs: []nativeMessage{payload.Summary.clone()}}, summary, nil
-}
-
-// ValidateCompactionUsage 验证失败计量的 raw facts 与归一化值一致。
-func (instance *Provider) ValidateCompactionUsage(envelope provider.NativeCommitEnvelope, expected domain.SampleUsage) error {
-	return validateCompactionUsage(envelope, expected)
+	usage, err := generation.Metadata.Usage.normalized()
+	if err != nil {
+		return evidence, err
+	}
+	evidence.Replacement = nativeHistoryEntry{Kind: nativeHistoryUserInputs, UserInputs: []nativeMessage{payload.Summary.clone()}}
+	evidence.Summary, evidence.Usage = summary, usage
+	return evidence, nil
 }
 
 func validateCompactionUsage(envelope provider.NativeCommitEnvelope, expected domain.SampleUsage) error {
-	if envelope.Family() != domain.ProviderAnthropic || envelope.Wire() != messagesWire || len(envelope.Payload()) > 64<<10 {
-		return fmt.Errorf("compaction usage boundary is incompatible")
+	payload, err := provider.CompactionUsagePayload(envelope, domain.ProviderAnthropic, messagesWire)
+	if err != nil {
+		return err
 	}
 	var record rawUsageCommit
-	if err := codec.UnmarshalRecord(envelope.Payload(), &record); err != nil {
+	if err := codec.UnmarshalRecord(payload, &record); err != nil {
 		return fmt.Errorf("compaction usage encoding is invalid")
 	}
-	for _, field := range []optionalUintCommit{record.InputTokens, record.CacheCreationInputTokens, record.CacheReadInputTokens, record.OutputTokens, record.ThinkingTokens} {
-		if field.Known != (field.Value != nil) {
-			return fmt.Errorf("compaction raw usage state is invalid")
-		}
+	if err := validateRawUsageCommit(record); err != nil {
+		return fmt.Errorf("compaction raw usage state is invalid")
 	}
 	raw := decodeMetadata(messageMetadataCommit{Usage: record}).Usage
 	normalized, err := raw.normalized()
 	if err != nil || normalized != expected {
 		return fmt.Errorf("compaction usage does not match provenance")
-	}
-	return nil
-}
-
-// ProjectCheckpoint 纯内存解码摘要详情，不重放生成 provenance。
-func (instance *Provider) ProjectCheckpoint(checkpoint provider.CheckpointEnvelope) (domain.ContextSummary, error) {
-	if checkpoint.Source().Model() != instance.config.Model {
-		return domain.ContextSummary{}, fmt.Errorf("checkpoint model mismatch")
-	}
-	_, summary, err := decodeCheckpoint(checkpoint)
-	return summary, err
-}
-
-// ValidateCheckpointUsage 对照生成 provenance 核验共享成功计量。
-func (instance *Provider) ValidateCheckpointUsage(checkpoint provider.CheckpointEnvelope, expected domain.SampleUsage) error {
-	return validateCheckpointUsage(checkpoint, expected)
-}
-
-func validateCheckpointUsage(checkpoint provider.CheckpointEnvelope, expected domain.SampleUsage) error {
-	if _, _, err := decodeCheckpoint(checkpoint); err != nil {
-		return err
-	}
-	var payload checkpointPayload
-	if err := codec.DecodeObject(checkpoint.Payload(), &payload, "summary", "generation", "task_progress"); err != nil {
-		return fmt.Errorf("checkpoint usage encoding is invalid")
-	}
-	envelope, err := provider.NewNativeCommitEnvelope(domain.ProviderAnthropic, messagesWire, payload.Generation)
-	if err != nil {
-		return err
-	}
-	generation, err := decodeNativeCommit(envelope)
-	if err != nil {
-		return err
-	}
-	actual, err := generation.Metadata.Usage.normalized()
-	if err != nil || actual != expected {
-		return fmt.Errorf("checkpoint usage does not match provenance")
-	}
-	return nil
-}
-
-// validateCheckpointTaskProgress 核对 journal 来源前缀给出的证据，不信任自洽的包装正文。
-func validateCheckpointTaskProgress(checkpoint provider.CheckpointEnvelope, expected domain.TaskProgressState) error {
-	if err := expected.Validate(); err != nil {
-		return err
-	}
-	var payload checkpointPayload
-	if err := codec.DecodeObject(checkpoint.Payload(), &payload, "summary", "generation", "task_progress"); err != nil {
-		return fmt.Errorf("checkpoint task progress evidence is invalid")
-	}
-	if payload.TaskProgress.Validate() != nil || !payload.TaskProgress.Equal(expected) {
-		return fmt.Errorf("checkpoint task progress differs from committed source")
 	}
 	return nil
 }

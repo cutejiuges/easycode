@@ -206,7 +206,7 @@ func TestResumePermitOwnerCancellationAndFinishing(t *testing.T) {
 	owner.active = &activeLoopTurn{
 		input:        queuedInput{requestID: "finishing"},
 		terminalSeen: true,
-		cancel:       func() {},
+		worker:       loopWorker{cancel: func() {}},
 	}
 	request, cancel, done = reserve()
 	request.result <- owner.handleResume(request)

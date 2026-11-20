@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"easycode/internal/codec"
@@ -47,8 +46,7 @@ type Conversation struct {
 	baseline   provider.RequestBaseline
 	nextReason domain.RequestResetReason
 	history    nativeHistory
-	active     atomic.Bool
-	pending    atomic.Bool
+	operations provider.ConversationOperations
 }
 
 var _ provider.Conversation = (*Conversation)(nil)
@@ -105,15 +103,16 @@ func (instance *Provider) NewConversation(threadID domain.ThreadID) (provider.Co
 }
 
 // RestoreConversation 先事务式校验全部 commits，再构造可调用 Conversation。
-func (instance *Provider) RestoreConversation(threadID domain.ThreadID, commits []provider.RestoreRecord) (provider.Conversation, error) {
+func (instance *Provider) RestoreConversation(ctx context.Context, threadID domain.ThreadID, commits []provider.RestoreRecord) (provider.Conversation, provider.CheckpointReader, error) {
 	if !threadID.Valid() {
-		return nil, fmt.Errorf("conversation thread ID is invalid")
+		return nil, nil, fmt.Errorf("conversation thread ID is invalid")
 	}
 	conversation := &Conversation{provider: instance, threadID: threadID, nextReason: domain.ResetRestored}
-	if err := restoreNativeHistory(context.Background(), instance.config.Model, commits, &conversation.history); err != nil {
-		return nil, err
+	checkpoints, err := restoreNativeHistory(ctx, instance.config.Model, commits, &conversation.history)
+	if err != nil {
+		return nil, nil, err
 	}
-	return conversation, nil
+	return conversation, checkpoints, nil
 }
 
 // Close 释放 HTTP transport 资源。
@@ -132,8 +131,8 @@ func (conversation *Conversation) Capabilities() provider.Capabilities {
 }
 
 // Stream 发起一次 Messages 文本 turn。
-func (conversation *Conversation) Stream(ctx context.Context, input provider.TurnInput) (<-chan provider.StreamEvent, error) {
-	return provider.StartSample(ctx, input, &conversation.active, &conversation.pending, provider.SamplingStrategy[nativeHistoryEntry]{
+func (conversation *Conversation) Stream(ctx context.Context, input provider.TurnInput) (provider.StreamEvents, error) {
+	return provider.StartSample(ctx, input, &conversation.operations, provider.SamplingStrategy[nativeWindowSnapshot]{
 		History: conversation.samplingHistory,
 		Plan:    conversation.openSamplingPlan,
 		Errors:  samplingErrors(),
@@ -147,21 +146,21 @@ func samplingErrors() provider.SampleStreamErrors {
 	}
 }
 
-func (conversation *Conversation) samplingHistory() ([]nativeHistoryEntry, bool) {
-	history := conversation.history.snapshot()
-	if len(history) == 0 || validateNativeHistory(history) != nil {
-		return nil, false
+func (conversation *Conversation) samplingHistory() (nativeWindowSnapshot, bool) {
+	window := conversation.history.Snapshot()
+	if len(window.Entries) == 0 || validateNativeHistory(window.Entries) != nil {
+		return nativeWindowSnapshot{}, false
 	}
-	kind := history[len(history)-1].Kind
-	return history, kind == nativeHistoryUserInputs || kind == nativeHistoryToolOutputs || kind == nativeHistoryHookFeedback
+	kind := window.Entries[len(window.Entries)-1].Kind
+	return window, kind == nativeHistoryUserInputs || kind == nativeHistoryToolOutputs || kind == nativeHistoryHookFeedback
 }
 
-func (conversation *Conversation) openSamplingPlan(history []nativeHistoryEntry, input provider.TurnInput, catalog tool.CatalogSnapshot) (func(context.Context) (provider.SampleStream, error), error) {
-	plan, err := conversation.planSamplingRequest(history, input)
+func (conversation *Conversation) openSamplingPlan(window nativeWindowSnapshot, input provider.TurnInput, catalog tool.CatalogSnapshot) (func(context.Context) (provider.SampleStream, error), error) {
+	plan, err := conversation.planSamplingRequest(window, input)
 	if err != nil {
 		return nil, err
 	}
-	request, err := plan.body(conversation.provider.config.CachePolicy.Anthropic())
+	request, err := plan.compile(conversation.provider.config.CachePolicy.Anthropic())
 	if err != nil {
 		return nil, fault.Wrap(fault.CodeProviderRequest, "compile provider request failed", err)
 	}
@@ -170,15 +169,15 @@ func (conversation *Conversation) openSamplingPlan(history []nativeHistoryEntry,
 		return nil, err
 	}
 	return func(ctx context.Context) (provider.SampleStream, error) {
-		stream, err := conversation.startRequest(ctx, request)
+		stream, err := conversation.startRequest(ctx, request.body)
 		if err != nil {
 			return provider.SampleStream{}, err
 		}
-		return conversation.sampleStream(catalog, stream, request, evidence), nil
+		return conversation.sampleStream(window.Entries[len(window.Entries)-1].TurnID, catalog, stream, request, evidence), nil
 	}, nil
 }
 
-func (conversation *Conversation) sampleStream(catalog tool.CatalogSnapshot, messages <-chan transport.SSEMessage, request codec.CanonicalJSON, evidence provider.RequestEvidence) provider.SampleStream {
+func (conversation *Conversation) sampleStream(turn domain.TurnID, catalog tool.CatalogSnapshot, messages <-chan transport.SSEMessage, request compiledMessagesRequest, evidence provider.RequestEvidence) provider.SampleStream {
 	reducer := newStreamReducer(catalog)
 	return provider.SampleStream{
 		Messages: messages,
@@ -187,11 +186,7 @@ func (conversation *Conversation) sampleStream(catalog tool.CatalogSnapshot, mes
 			if err != nil {
 				return provider.SampleReduction{}, err
 			}
-			reduced := provider.SampleReduction{Semantic: result.semantic, Reasoning: result.reasoning, Complete: result.complete}
-			if result.native != nil {
-				reduced.Native = result.native.clone()
-			}
-			return reduced, nil
+			return provider.SampleReduction{Semantic: result.semantic, Reasoning: result.reasoning, Complete: result.complete}, nil
 		},
 		Prepare: func() (*provider.PreparedSample, error) {
 			usage, err := reducer.sampleUsage()
@@ -199,8 +194,7 @@ func (conversation *Conversation) sampleStream(catalog tool.CatalogSnapshot, mes
 				return nil, fault.Wrap(fault.CodeStreamProtocol, "Anthropic completed sample usage is invalid", err)
 			}
 			entry := nativeHistoryEntry{Kind: nativeHistorySample, Assistant: reducer.assistantMessage(), Metadata: reducer.messageMetadata()}
-			snapshot := conversation.history.snapshot()
-			entry.TurnID = snapshot[len(snapshot)-1].TurnID
+			entry.TurnID = turn
 			envelope, err := encodeNativeCommit(entry)
 			if err != nil {
 				return nil, fault.Wrap(fault.CodeStreamProtocol, "Anthropic completed sample is invalid", err)
@@ -217,17 +211,16 @@ func (conversation *Conversation) sampleStream(catalog tool.CatalogSnapshot, mes
 			if err != nil {
 				return nil, err
 			}
-			conversation.pending.Store(true)
 			prepared, err := provider.NewPreparedSample(envelope, usage, receipt, presentation, func() {
 				conversation.baseline = baseline
 				conversation.nextReason = domain.ResetNone
-				conversation.history.commit(entry)
-				conversation.pending.Store(false)
-			}, func() { conversation.pending.Store(false) }, reducer.readyCalls()...)
+				conversation.history.Append(entry)
+				conversation.operations.ResolvePrepared()
+			}, conversation.operations.ResolvePrepared, reducer.readyCalls()...)
 			if err != nil {
-				conversation.pending.Store(false)
 				return nil, fault.Wrap(fault.CodeStreamProtocol, "Anthropic completed sample cannot be prepared", err)
 			}
+			conversation.operations.HoldPrepared()
 			return prepared, nil
 		},
 	}
@@ -252,7 +245,7 @@ func (conversation *Conversation) PrepareToolOutputs(results []tool.ModelOutput)
 	if conversation == nil {
 		return nil, fmt.Errorf("anthropic conversation cannot prepare tool outputs while active")
 	}
-	return provider.PrepareNativeToolOutputs(&conversation.history.NativeHistory, &conversation.active, &conversation.pending,
+	return provider.PrepareNativeToolOutputs(&conversation.history, &conversation.operations,
 		"anthropic conversation cannot prepare tool outputs while active", "anthropic conversation has an unfinalized native entry",
 		results, prepareToolOutputsEntry, encodeNativeCommit)
 }

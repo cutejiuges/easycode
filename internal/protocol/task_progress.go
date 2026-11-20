@@ -7,8 +7,8 @@ import (
 	"easycode/internal/domain"
 )
 
-// MaxTaskSnapshotBytes 限制完整任务观测编码，包含来源和宿主信封。
-const MaxTaskSnapshotBytes = 96 << 10
+// MaxTaskSnapshotPayloadBytes 限制完整任务观测编码，包含来源和宿主信封。
+const MaxTaskSnapshotPayloadBytes = 96 << 10
 
 // TaskProgressSnapshotPayload 只投影规范任务和派生计数，不携带工具来源语法。
 type TaskProgressSnapshotPayload struct {
@@ -101,11 +101,11 @@ func decodeTaskProgressEvent(event Event) (TaskProgressSnapshotPayload, error) {
 	if !event.SessionID.Valid() || !event.ThreadID.Valid() || event.Timestamp.IsZero() || event.CompactionID != "" || event.ItemID != "" || event.CallID != "" {
 		return payload, fmt.Errorf("task progress event identity is invalid")
 	}
-	if codec.ValidateBoundedJSON(event.Payload, MaxTaskSnapshotBytes, 8, true) != nil || codec.UnmarshalRecord(event.Payload, &payload) != nil || payload.Validate() != nil {
+	if codec.ValidateBoundedJSON(event.Payload, MaxTaskSnapshotPayloadBytes, 8, true) != nil || codec.UnmarshalRecord(event.Payload, &payload) != nil || payload.Validate() != nil {
 		return TaskProgressSnapshotPayload{}, fmt.Errorf("task progress snapshot encoding is invalid")
 	}
 	encoded, err := codec.MarshalStable(event)
-	if err != nil || len(encoded) > MaxTaskSnapshotBytes {
+	if err != nil || len(encoded) > MaxTaskSnapshotPayloadBytes {
 		return TaskProgressSnapshotPayload{}, fmt.Errorf("task progress event encoding exceeds limit")
 	}
 	return payload, nil

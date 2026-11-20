@@ -45,6 +45,14 @@ Write 候选 SHALL 绑定 create/overwrite、完整最终内容、实际文件/�
 
 owner MUST 原子接受至多一个 response。未知、过期、重复、identity 不匹配、fingerprint 不匹配、当前 request 未提供的决定或超限反馈 SHALL 在写 approval fact、生成 result 或启动 executor 前被拒绝。首版宿主不得原地修改候选；用户希望修改时必须拒绝并让模型产生新的 Provider tool call，新调用必须重新 strict decode、validate、准备候选、policy 和 approval。
 
+Stop、interrupt 或 shutdown 先被接纳后，迟到的响应 MUST 被拒绝。审批 owner SHALL 在同一个接纳边界冻结终态、决定来源和是否发布过请求。内部中断的 abort 来源为 `interruption`，经允许选项提交且被接纳的显式 Abort 来源为 `interactive`。后到的取消不能改写已接纳响应，执行仍须满足 started 接收及 Sync 的独立门禁。Resolved 事件仅对应已发布的关联审批请求。
+
+durable allow 后、started 接纳前已确定取消或超时的 Patch、Write、Exec SHALL 写入关联的 `cancelled_before_execution` 结果。未收到 started 的调用不得执行。恢复 MUST 接受相同的已提交事实，同时禁止重放审批或启动执行器。
+
+#### Scenario: Cancel after an allowed approval before started
+- **WHEN** Patch、Write 或 Exec 的 allow 已 durable，started 接纳前发生确定取消
+- **THEN** journal 保留原审批及匹配的取消结果，执行器零调用，重新加载及回放后可继续会话
+
 #### Scenario: Resolve an approval once
 - **WHEN** 活动 request 首次收到 identity、fingerprint 和决定均匹配的 `allow_once`
 - **THEN** owner 接受该 response 并关闭 request 的等待状态
@@ -58,6 +66,18 @@ owner MUST 原子接受至多一个 response。未知、过期、重复、identi
 - **WHEN** 用户选择 `deny` 并附加修改建议
 - **THEN** 当前 patch 不执行，反馈进入匹配调用的有界拒绝结果
 - **THEN** 模型只有通过新的 tool call 才能提交修改后的候选，并接受完整重验
+
+#### Scenario: Do not install a grant from a late approval
+- **WHEN** 活动工具等待审批且 Stop 已被接纳，随后收到原请求的 allow_session
+- **THEN** 响应被拒绝，不写 allow_session、不安装 grant、不启动 executor，原调用按取消结果配对收口
+
+#### Scenario: Associate an interactive abort with the offered decisions
+- **WHEN** Exec 以关联匹配的显式 Abort 收口，另一次活动 Patch 或 Write 请求未提供 Abort
+- **THEN** Exec 的 durable 审批来源为 interactive，Patch 或 Write 的未提供选项被拒绝
+
+#### Scenario: Reuse a grant without a phantom resolution
+- **WHEN** 已有同能力 grant 满足本次合法 ask，且没有发布新的交互请求
+- **THEN** 该候选仍需 durable approval fact，宿主不收到未匹配请求的 resolved
 
 ### Requirement: Final approval facts precede execution or denial output
 
@@ -142,7 +162,6 @@ Write 与 Patch grants MUST NOT 互相授权或扩大到命令；Write grant SHA
 恢复 SHALL NOT 重新显示旧 approval、恢复进程内 grant或自动执行任何 Patch、Write 或 Exec。只有 ready、没有 approval fact 的调用关闭为 `cancelled/session_interrupted_before_approval`；已有 allow fact但没有 started 的调用关闭为 `cancelled/session_interrupted_before_execution`；started 而没有 result 的 Patch/Write/Exec关闭为 `outcome_uncertain`。每种补偿都必须生成匹配原 Provider call ID 的 output并以 `turn_failed` 关闭旧 turn。
 
 恢复 SHALL 清空 Write grant 和进程内 Read 证据，不检查旧候选文件、不查找进程 PID或清理暂存树。
-恢复 SHALL NOT 重新显示旧 approval、恢复进程内 grant或自动执行任何 Patch/Exec。只有 ready、没有 approval fact 的副作用调用关闭为 `cancelled/session_interrupted_before_approval`；已有 allow fact但没有 started 的调用关闭为 `cancelled/session_interrupted_before_execution`；started 而没有 result 的Patch或Exec关闭为 `outcome_uncertain`。每种补偿都必须生成匹配原 Provider call ID 的 output并以 `turn_failed` 关闭旧 turn。
 
 #### Scenario: Interrupt a pending approval
 - **WHEN** 用户在 Patch 或 Exec approval overlay 活跃时定向中断当前 turn
@@ -160,8 +179,7 @@ Write 与 Patch grants MUST NOT 互相授权或扩大到命令；Write grant SHA
 
 #### Scenario: Recover Write before execution
 - **WHEN** Write 的 allow 已 durable 而 started 缺失
-- **THEN** 本地补偿 session_interrupted_before_execution，不重询问、不创建目录或执行写入
-- **THEN** resume 不复用批准执行副作用，而以 `session_interrupted_before_execution` 关闭调用
+- **THEN** 本地以 `session_interrupted_before_execution` 关闭调用，不重询问、不创建目录或执行写入
 
 #### Scenario: Recover after command acceptance
 - **WHEN** journal包含Exec execution started但没有result

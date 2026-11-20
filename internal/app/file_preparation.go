@@ -10,18 +10,11 @@ type workspaceFileReader interface {
 	ReadWorkspaceFile(context.Context, string, int) (string, int, error)
 }
 
-// prepareWorkspaceFiles 先验证整条草稿，再按路径分组只读取一次，最后恢复原引用顺序。
-func prepareWorkspaceFiles(ctx context.Context, draft domain.InputDraft, reader workspaceFileReader) (domain.FileAttachments, error) {
-	if ctx == nil {
-		return domain.FileAttachments{}, domain.NewFileFailure(domain.FileInvalid)
-	}
+// prepareWorkspaceFiles 复用已验证引用，按路径各读一次，再恢复原顺序。
+func prepareWorkspaceFiles(ctx context.Context, refs []domain.FileReference, reader workspaceFileReader) (domain.FileAttachments, error) {
 	if err := ctx.Err(); err != nil {
 		return domain.FileAttachments{}, err
 	}
-	if err := draft.Validate(); err != nil {
-		return domain.FileAttachments{}, err
-	}
-	refs := draft.FileReferences()
 	if len(refs) == 0 {
 		return domain.FileAttachments{}, nil
 	}

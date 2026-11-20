@@ -99,13 +99,6 @@ func (p UserQuestionResponse) Validate() error {
 	}
 	return nil
 }
-func DecodeUserQuestionResponse(data []byte) (UserQuestionResponse, error) {
-	var p UserQuestionResponse
-	if len(data) > MaxQuestionPreviewBytes+1024 || codec.UnmarshalRecord(data, &p) != nil || p.Validate() != nil {
-		return UserQuestionResponse{}, fmt.Errorf("invalid question response")
-	}
-	return p, nil
-}
 func NewResolveUserQuestionCommand(id RequestID, turnID domain.TurnID, response UserQuestionResponse) (Command, error) {
 	c := Command{kind: CommandResolveUserQuestion, requestID: id, expectedTurnID: turnID, questionResponse: response}
 	return c, c.Validate()

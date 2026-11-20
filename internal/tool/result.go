@@ -482,14 +482,6 @@ func truncateRunes(value string, limit int) (string, bool) {
 	return value, false
 }
 
-// ResultValidationError 提供不包含结果正文的稳定验证错误。
-func ResultValidationError(err error) error {
-	if err == nil {
-		return nil
-	}
-	return fmt.Errorf("invalid tool result")
-}
-
 // SearchSaving 返回搜索文本的冻结保存状态。
 func (result InvocationResult) SearchSaving() ArtifactSaving {
 	return result.searchSaving

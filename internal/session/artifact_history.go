@@ -5,46 +5,35 @@ import (
 	"easycode/internal/tool"
 )
 
-// validateArtifactHistory 按 durable 顺序验证引用，不能由未来结果授权较早读取。
-// 这里只检查事实关联，不访问对象；缺失或篡改的文件不能改变原生恢复。
-func validateArtifactHistory(thread domain.ThreadID, records []Record) error {
+// artifactReplay 按已验证结果的 durable 顺序绑定授权。语法校验完成后才报告首个引用错误。
+type artifactReplay struct {
+	references *tool.ArtifactReferences
+	err        error
+}
+
+func newArtifactReplay(thread domain.ThreadID) artifactReplay {
 	references, err := tool.NewArtifactReferences(thread, nil)
 	if err != nil {
-		return replayCorrupt("artifact reference thread is invalid")
+		return artifactReplay{err: replayCorrupt("artifact reference thread is invalid")}
 	}
-	for _, record := range records {
-		if record.EventKind != EventToolCallResult {
-			continue
+	return artifactReplay{references: references}
+}
+
+func (replay *artifactReplay) accept(result tool.InvocationResult) {
+	if replay.err != nil {
+		return
+	}
+	switch result.Capability() {
+	case tool.CapabilityExec, tool.CapabilityGlob, tool.CapabilityGrep:
+		if replay.references.ValidatePending(result) != nil || replay.references.AuthorizeCommitted(result) != nil {
+			replay.err = replayCorrupt("artifact references conflict")
 		}
-		payload, err := DecodeToolCallResultPayload(record)
-		if err != nil {
-			return replayCorrupt("artifact result payload is invalid")
-		}
-		switch payload.Capability {
-		case tool.CapabilityExec, tool.CapabilityGlob, tool.CapabilityGrep, tool.CapabilityReadArtifact:
-		default:
-			continue
-		}
-		invocation, err := validationInvocation(payload)
-		if err != nil {
-			return replayCorrupt("artifact result invocation is invalid")
-		}
-		result, err := payload.Domain(invocation)
-		if err != nil {
-			return replayCorrupt("artifact result is invalid")
-		}
-		if payload.Capability != tool.CapabilityReadArtifact {
-			if references.ValidatePending(result) != nil || references.AuthorizeCommitted(result) != nil {
-				return replayCorrupt("artifact references conflict")
-			}
-			continue
-		}
+	case tool.CapabilityReadArtifact:
 		if page, ok := result.ArtifactPage(); ok {
-			d, exists := references.Lookup(page.ID())
-			if !exists || uint64(d.SavedBytes()) != page.SavedBytes() || d.Complete() != page.SourceComplete() {
-				return replayCorrupt("artifact page has no matching committed reference")
+			descriptor, exists := replay.references.Lookup(page.ID())
+			if !exists || uint64(descriptor.SavedBytes()) != page.SavedBytes() || descriptor.Complete() != page.SourceComplete() {
+				replay.err = replayCorrupt("artifact page has no matching committed reference")
 			}
 		}
 	}
-	return nil
 }

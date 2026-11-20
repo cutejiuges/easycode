@@ -3,13 +3,13 @@ package headless
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"unicode/utf8"
 
 	"easycode/internal/codec"
 	"easycode/internal/domain"
+	"easycode/internal/fault"
 	"easycode/internal/protocol"
 )
 
@@ -82,7 +82,7 @@ func (reader *StreamCommandReader) readLine() ([]byte, error) {
 			}
 			return line, io.EOF
 		default:
-			return nil, fmt.Errorf("read stream input failed")
+			return nil, fault.Wrap(fault.CodeInputRead, "read stream input failed", err)
 		}
 	}
 }
@@ -114,18 +114,12 @@ type streamRetractCommand struct {
 	InputIDs  []domain.InputID `json:"input_ids"`
 }
 
-type streamShutdownCommand struct {
-	Version   int    `json:"version"`
-	Type      string `json:"type"`
-	RequestID string `json:"request_id"`
-}
-
 // DecodeStreamCommand 严格解码一个外部 stream-json v1 command frame。
 func DecodeStreamCommand(line []byte) (protocol.Command, error) {
 	if len(line) == 0 || len(line) > MaxStreamLineBytes || !utf8.Valid(line) {
 		return protocol.Command{}, fmt.Errorf("stream command is invalid")
 	}
-	if _, err := scanStreamMembers(line); err != nil {
+	if _, err := codec.ObjectMembers(line); err != nil {
 		return protocol.Command{}, fmt.Errorf("stream command is invalid")
 	}
 	var envelope streamCommandEnvelope
@@ -139,56 +133,58 @@ func DecodeStreamCommand(line []byte) (protocol.Command, error) {
 	if err != nil {
 		return protocol.Command{}, fmt.Errorf("stream command request ID is invalid")
 	}
-	switch envelope.Type {
-	case "tasks.query":
+	kind := streamCommandKind(envelope.Type)
+	switch kind {
+	case protocol.CommandQueryTasks:
 		return decodeTaskQuery(line, requestID)
-	case "effort.query", "effort.set":
-		return decodeEffortCommand(line, envelope.Type, requestID)
-	case "cache.query":
+	case protocol.CommandQueryEffort, protocol.CommandSetEffort:
+		return decodeEffortCommand(line, kind, requestID)
+	case protocol.CommandQueryCache:
 		var wire streamCommandEnvelope
 		if err := codec.DecodeObject(line, &wire, "version", "type", "request_id"); err != nil {
 			return protocol.Command{}, fmt.Errorf("cache.query command is invalid")
 		}
 		return protocol.NewQueryCacheCommand(requestID)
-	case "context.query":
+	case protocol.CommandQueryContext:
 		var wire streamCommandEnvelope
 		if err := codec.DecodeObject(line, &wire, "version", "type", "request_id"); err != nil {
 			return protocol.Command{}, fmt.Errorf("context.query command is invalid")
 		}
 		return protocol.NewQueryContextCommand(requestID)
-	case "context.compact":
+	case protocol.CommandCompactContext:
 		var wire streamCompactCommand
 		if err := codec.DecodeObject(line, &wire, "version", "type", "request_id", "instructions"); err != nil {
 			return protocol.Command{}, fmt.Errorf("context.compact command is invalid")
 		}
 		return protocol.NewCompactContextCommand(requestID, wire.Instructions)
-	case "context.cancel":
+	case protocol.CommandCancelCompaction:
 		var wire streamCancelCompactionCommand
 		if err := codec.DecodeObject(line, &wire, "version", "type", "request_id", "expected_compaction_id"); err != nil {
 			return protocol.Command{}, fmt.Errorf("context.cancel command is invalid")
 		}
 		return protocol.NewCancelCompactionCommand(requestID, wire.ExpectedCompactionID)
 
-	case "input.submit", "input.append":
+	case protocol.CommandSubmitInput, protocol.CommandSubmitConversationalInput:
 		var wire streamSubmitCommand
 		if err := codec.DecodeObject(line, &wire, "version", "type", "request_id"); err != nil {
 			return protocol.Command{}, fmt.Errorf("input.submit command is invalid")
 		}
-		command, err := protocol.NewSubmitInputCommand(requestID, wire.Text)
-		if envelope.Type == "input.append" {
-			command, err = protocol.NewSubmitConversationalInputCommand(requestID, wire.Text)
+		newCommand := protocol.NewSubmitInputCommand
+		if kind == protocol.CommandSubmitConversationalInput {
+			newCommand = protocol.NewSubmitConversationalInputCommand
 		}
+		command, err := newCommand(requestID, wire.Text)
 		if err != nil {
 			return protocol.Command{}, fmt.Errorf("input.submit command is invalid")
 		}
 		return command, nil
-	case "input.retract":
+	case protocol.CommandRetractInputs:
 		var wire streamRetractCommand
 		if err := codec.DecodeObject(line, &wire, "version", "type", "request_id", "input_ids"); err != nil {
 			return protocol.Command{}, fmt.Errorf("input.retract command is invalid")
 		}
 		return protocol.NewRetractInputsCommand(requestID, wire.InputIDs)
-	case "turn.interrupt", "turn.stop":
+	case protocol.CommandInterrupt, protocol.CommandStopTurn:
 		var wire streamInterruptCommand
 		if err := codec.DecodeObject(line, &wire, "version", "type", "request_id"); err != nil {
 			return protocol.Command{}, fmt.Errorf("turn.interrupt command is invalid")
@@ -197,12 +193,12 @@ func DecodeStreamCommand(line []byte) (protocol.Command, error) {
 		if err != nil {
 			return protocol.Command{}, fmt.Errorf("turn.interrupt command is invalid")
 		}
-		if envelope.Type == "turn.stop" {
+		if kind == protocol.CommandStopTurn {
 			return protocol.NewStopTurnCommand(requestID, turnID)
 		}
 		return protocol.NewInterruptCommand(requestID, turnID)
-	case "session.shutdown":
-		var wire streamShutdownCommand
+	case protocol.CommandShutdown:
+		var wire streamCommandEnvelope
 		if err := codec.DecodeObject(line, &wire, "version", "type", "request_id"); err != nil {
 			return protocol.Command{}, fmt.Errorf("session.shutdown command is invalid")
 		}
@@ -210,10 +206,6 @@ func DecodeStreamCommand(line []byte) (protocol.Command, error) {
 	default:
 		return protocol.Command{}, fmt.Errorf("stream command type is unsupported")
 	}
-}
-
-func scanStreamMembers(line []byte) (map[string]json.RawMessage, error) {
-	return codec.ObjectMembers(line)
 }
 
 type streamCompactCommand struct {

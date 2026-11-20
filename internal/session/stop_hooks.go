@@ -132,7 +132,7 @@ func beginStopCheck(active *activeReplayTurn, record Record) error {
 }
 
 // acceptStopBatch 独立检查完成语法，不借用工具 output、approval 或调用槽。
-func acceptStopBatch(plan *ReplayPlan, active *activeReplayTurn, batch []Record, seenInputs map[domain.InputID]struct{}) (bool, ReplayedTurnState, error) {
+func acceptStopBatch(plan *replayAccumulator, active *activeReplayTurn, batch []Record, seenInputs map[domain.InputID]struct{}) (bool, ReplayedTurnState, error) {
 	s := active.stop
 	if s == nil {
 		return false, "", nil
@@ -143,7 +143,7 @@ func acceptStopBatch(plan *ReplayPlan, active *activeReplayTurn, batch []Record,
 	first := batch[0]
 	if s.DeliverySequence != 0 {
 		if first.EventKind == EventProviderNativeCommit && len(batch) >= 3 && batch[1].EventKind == EventSampleUsage {
-			plan.Stops = append(plan.Stops, s.Clone())
+			plan.recordStop(s)
 			active.stop = nil
 			return false, "", nil
 		}
@@ -151,7 +151,7 @@ func acceptStopBatch(plan *ReplayPlan, active *activeReplayTurn, batch []Record,
 			if _, err := DecodeTurnFailedPayload(first); err != nil {
 				return true, "", err
 			}
-			plan.Stops = append(plan.Stops, s.Clone())
+			plan.recordStop(s)
 			return true, ReplayedTurnFailed, nil
 		}
 		return true, "", replayCorrupt("stop delivery must precede sampling or turn failure")
@@ -202,7 +202,7 @@ func acceptStopBatch(plan *ReplayPlan, active *activeReplayTurn, batch []Record,
 	}
 }
 
-func acceptStopDecision(plan *ReplayPlan, active *activeReplayTurn, batch []Record) (ReplayedTurnState, error) {
+func acceptStopDecision(plan *replayAccumulator, active *activeReplayTurn, batch []Record) (ReplayedTurnState, error) {
 	s := active.stop
 	if s == nil || s.Started != nil || s.Decision != nil || len(batch) == 0 || batch[0].EventKind != EventTurnStopHookDecided {
 		return "", replayCorrupt("invalid stop decision placement")
@@ -246,14 +246,14 @@ func acceptStopDecision(plan *ReplayPlan, active *activeReplayTurn, batch []Reco
 	if decision.Disposition == domain.StopContinued {
 		return "", nil
 	}
-	plan.Stops = append(plan.Stops, s.Clone())
+	plan.recordStop(s)
 	if decision.Disposition == domain.StopPassed {
 		return ReplayedTurnCompleted, nil
 	}
 	return ReplayedTurnFailed, nil
 }
 
-func acceptStopDelivery(plan *ReplayPlan, active *activeReplayTurn, batch []Record, seenInputs map[domain.InputID]struct{}) error {
+func acceptStopDelivery(plan *replayAccumulator, active *activeReplayTurn, batch []Record, seenInputs map[domain.InputID]struct{}) error {
 	s := active.stop
 	if s == nil || !s.PendingFeedback() || batch[0].EventKind != EventProviderNativeCommit || len(batch) != 1 && len(batch) != 3 {
 		return replayCorrupt("invalid stop delivery batch")
@@ -266,7 +266,7 @@ func acceptStopDelivery(plan *ReplayPlan, active *activeReplayTurn, batch []Reco
 		return err
 	}
 	feedback, _ := s.Decision.Feedback()
-	plan.NativeCommits = append(plan.NativeCommits, NativeCommitRecord{Sequence: batch[0].Sequence, TurnID: active.turnID, Role: domain.NativeCommitHookFeedback, Feedback: &feedback, Commit: cloneNativeCommit(commit)})
+	plan.recordNative(NativeCommitRecord{Sequence: batch[0].Sequence, TurnID: active.turnID, Role: domain.NativeCommitHookFeedback, Feedback: &feedback, Commit: commit})
 	if len(batch) == 3 {
 		if err := acceptBoundInputBatch(plan, active, batch[1:], seenInputs, true); err != nil {
 			return err

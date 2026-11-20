@@ -3,7 +3,6 @@ package provider
 import (
 	"fmt"
 	"math"
-	"sync/atomic"
 
 	"easycode/internal/domain"
 	"easycode/internal/tool"
@@ -12,8 +11,7 @@ import (
 // NativeInputPreparation 组合候选输入构造、验证与原生窗口预检所需的策略。
 type NativeInputPreparation[E nativeClone[E]] struct {
 	History      *NativeHistory[E]
-	Active       *atomic.Bool
-	Pending      *atomic.Bool
+	Operations   *ConversationOperations
 	UserEntry    func(domain.InputAssociation, []domain.UserInput) (E, error)
 	Feedback     func(domain.StopFeedback) (E, error)
 	Encode       func(E) (NativeCommitEnvelope, error)
@@ -23,18 +21,18 @@ type NativeInputPreparation[E nativeClone[E]] struct {
 	CheckRequest func([]E, TurnInput) error
 }
 
-func prepareNativeCommit[P any](active, pending *atomic.Bool, activeMessage, pendingMessage string, prepare func() (P, error)) (P, error) {
+func prepareNativeCommit[P any](operations *ConversationOperations, activeMessage, pendingMessage string, prepare func() (P, error)) (P, error) {
 	var zero P
-	if active.Load() {
+	switch operations.begin(ConversationPending) {
+	case ConversationActive:
 		return zero, fmt.Errorf("%s", activeMessage)
-	}
-	if !pending.CompareAndSwap(false, true) {
+	case ConversationPending:
 		return zero, fmt.Errorf("%s", pendingMessage)
 	}
 	prepared := false
 	defer func() {
 		if !prepared {
-			pending.Store(false)
+			operations.ResolvePrepared()
 		}
 	}()
 	value, err := prepare()
@@ -44,7 +42,7 @@ func prepareNativeCommit[P any](active, pending *atomic.Bool, activeMessage, pen
 
 // PrepareInputs 准备已验证的用户输入，保持先验证候选再编码提交的顺序。
 func (p NativeInputPreparation[E]) PrepareInputs(association domain.InputAssociation, inputs []domain.UserInput) (*PreparedUserInputs, error) {
-	return prepareNativeCommit(p.Active, p.Pending, "conversation is active", "conversation has an unresolved commit", func() (*PreparedUserInputs, error) {
+	return prepareNativeCommit(p.Operations, "conversation is active", "conversation has an unresolved commit", func() (*PreparedUserInputs, error) {
 		entry, err := p.UserEntry(association, inputs)
 		if err != nil {
 			return nil, err
@@ -65,14 +63,14 @@ func (p NativeInputPreparation[E]) PrepareInputs(association domain.InputAssocia
 		}
 		return NewPreparedUserInputs(association, envelope, func() {
 			p.History.Append(entry)
-			p.Pending.Store(false)
-		}, func() { p.Pending.Store(false) }, preview)
+			p.Operations.ResolvePrepared()
+		}, p.Operations.ResolvePrepared, preview)
 	})
 }
 
 // PrepareStop 准备单独反馈或反馈加用户纠正的一次性原生交付。
 func (p NativeInputPreparation[E]) PrepareStop(input domain.StopContinuationInput) (*PreparedStopContinuation, error) {
-	return prepareNativeCommit(p.Active, p.Pending, "conversation is active", "conversation has an unresolved commit", func() (*PreparedStopContinuation, error) {
+	return prepareNativeCommit(p.Operations, "conversation is active", "conversation has an unresolved commit", func() (*PreparedStopContinuation, error) {
 		window := p.History.Snapshot()
 		feedback, err := p.Feedback(input.Feedback())
 		if err != nil {
@@ -108,8 +106,11 @@ func (p NativeInputPreparation[E]) PrepareStop(input domain.StopContinuationInpu
 		if err != nil {
 			return nil, err
 		}
-		finalize := func() { p.History.AppendBatch(entries); p.Pending.Store(false) }
-		discard := func() { p.Pending.Store(false) }
+		finalize := func() {
+			p.History.AppendBatch(entries)
+			p.Operations.ResolvePrepared()
+		}
+		discard := p.Operations.ResolvePrepared
 		if input.Kind() == domain.StopWithSteering {
 			return NewPreparedSteeredStopContinuation(input, feedbackEnvelope, userEnvelope, finalize, discard, preview)
 		}
@@ -136,9 +137,9 @@ func (p NativeInputPreparation[E]) preview(window NativeWindow[E]) (InputPreview
 }
 
 // PrepareNativeToolOutputs 在已有活动与待提交边界内准备工具输出。
-func PrepareNativeToolOutputs[E nativeClone[E]](history *NativeHistory[E], active, pending *atomic.Bool, activeMessage, pendingMessage string, results []tool.ModelOutput, prepare func([]E, []tool.ModelOutput) (E, error), encode func(E) (NativeCommitEnvelope, error)) (*PreparedToolOutputs, error) {
-	return prepareNativeCommit(active, pending, activeMessage, pendingMessage, func() (*PreparedToolOutputs, error) {
-		entries, _ := history.Entries()
+func PrepareNativeToolOutputs[E nativeClone[E]](history *NativeHistory[E], operations *ConversationOperations, activeMessage, pendingMessage string, results []tool.ModelOutput, prepare func([]E, []tool.ModelOutput) (E, error), encode func(E) (NativeCommitEnvelope, error)) (*PreparedToolOutputs, error) {
+	return prepareNativeCommit(operations, activeMessage, pendingMessage, func() (*PreparedToolOutputs, error) {
+		entries := history.Entries()
 		entry, err := prepare(entries, results)
 		if err != nil {
 			return nil, err
@@ -149,7 +150,7 @@ func PrepareNativeToolOutputs[E nativeClone[E]](history *NativeHistory[E], activ
 		}
 		return NewPreparedToolOutputs(envelope, func() {
 			history.Append(entry)
-			pending.Store(false)
-		}, func() { pending.Store(false) })
+			operations.ResolvePrepared()
+		}, operations.ResolvePrepared)
 	})
 }

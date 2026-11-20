@@ -165,7 +165,7 @@ func (r *Runtime) executeExclusiveCall(ctx context.Context, emit Emitter, turnID
 	}
 	v, _ := inv.Question()
 	call, _ := tool.NewQuestionReadyCall(v.ProviderCallID(), v.Input())
-	if r.toolPolicy.Decide(call) != tool.PolicyAllow {
+	if r.tools.Policy.Decide(call) != tool.PolicyAllow {
 		return finishError(tool.ResultDenied, "permission_denied", "User questions are not allowed")
 	}
 	allowance, err := r.resultAllowance(tool.CapabilityQuestion)
@@ -198,7 +198,7 @@ func (r *Runtime) executeExclusiveCall(ctx context.Context, emit Emitter, turnID
 	responder := &questionResponder{runtime: r, turnID: turnID, emit: emit, allowance: allowance, preflight: preflight}
 	defer func() { r.closeQuestion(responder.pending) }()
 	result, err := r.executeExclusive(ctx, turnID, inv, exclusiveAction{
-		execute: func(ctx context.Context) tool.InvocationResult { return r.questionExecutor.Execute(ctx, v, responder) },
+		execute: func(ctx context.Context) tool.InvocationResult { return r.tools.Question.Execute(ctx, v, responder) },
 		matches: func(result tool.InvocationResult) bool {
 			return result.QuestionMetadata().Fingerprint == v.Input().Fingerprint()
 		},

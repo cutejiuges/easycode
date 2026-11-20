@@ -37,8 +37,7 @@ func TestConversationCancelCompletedRaceHasOneTerminal(t *testing.T) {
 		}()
 		senders.Wait()
 		close(stream)
-		output := make(chan provider.StreamEvent, 16)
-		testConsumeStream(t, conversation, ctx, func() {}, nativeMessagePointer(newUserMessage("question")), testAnthropicToolCatalog(t), stream, output)
+		output := testConsumeStream(t, conversation, ctx, func() {}, nativeMessagePointer(newUserMessage("question")), testAnthropicToolCatalog(t), stream)
 		terminalCount := 0
 		for event := range output {
 			if !event.Kind().Terminal() {
@@ -98,7 +97,7 @@ func TestConversationPublishesOrderedEventsAndCommitsOnMessageStop(t *testing.T)
 	defer closeAnthropicProvider(t, instance)
 	conversation := testConversation(t, instance)
 	events := runCompletedAnthropicTurn(t, conversation, "hello")
-	wantKinds := []provider.StreamEventKind{provider.StreamEventSemantic, provider.StreamEventNative, provider.StreamEventCompleted}
+	wantKinds := []provider.StreamEventKind{provider.StreamEventSemantic, provider.StreamEventCompleted}
 	if len(events) != len(wantKinds) {
 		t.Fatalf("events: %#v", events)
 	}
@@ -194,7 +193,7 @@ func testAnthropicTurnInputWithProject(t *testing.T, conversation provider.Conve
 	return input
 }
 
-func readAnthropicTerminal(t *testing.T, conversation *Conversation, stream <-chan provider.StreamEvent) provider.StreamEvent {
+func readAnthropicTerminal(t *testing.T, conversation *Conversation, stream provider.StreamEvents) provider.StreamEvent {
 	t.Helper()
 	var terminal provider.StreamEvent
 	terminalSeen := false
@@ -213,7 +212,7 @@ func readAnthropicTerminal(t *testing.T, conversation *Conversation, stream <-ch
 	if !terminalSeen {
 		t.Fatal("stream closed without terminal")
 	}
-	if conversation.active.Load() {
+	if conversation.operations.State()&provider.ConversationActive != 0 {
 		t.Fatal("stream channel closed before conversation became inactive")
 	}
 	return terminal

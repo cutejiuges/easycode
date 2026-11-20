@@ -13,8 +13,8 @@ import (
 )
 
 // orderedRestoreRecords 保留原生 ordinal，并将来源校验与 checkpoint 按 journal seq 插入。
-func orderedRestoreRecords(plan session.ReplayPlan) ([]provider.RestoreRecord, error) {
-	ordinary, err := nativeRestoreRecords(plan.NativeCommits)
+func orderedRestoreRecords(ctx context.Context, plan session.ReplayPlan) ([]provider.RestoreRecord, error) {
+	ordinary, err := nativeRestoreRecords(ctx, plan.NativeCommits)
 	if err != nil {
 		return nil, err
 	}
@@ -29,6 +29,9 @@ func orderedRestoreRecords(plan session.ReplayPlan) ([]provider.RestoreRecord, e
 	}
 	callsBySequence := make(map[uint64]readyFacts)
 	for _, entry := range plan.Tools {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		_, isQuestion := entry.Invocation.Question()
 		facts := callsBySequence[entry.NativeSequence]
 		facts.calls = append(facts.calls, entry.Invocation.Clone())
@@ -38,6 +41,9 @@ func orderedRestoreRecords(plan session.ReplayPlan) ([]provider.RestoreRecord, e
 		callsBySequence[entry.NativeSequence] = facts
 	}
 	for i, record := range ordinary {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if record.Role() == domain.NativeCommitSample {
 			facts := callsBySequence[plan.NativeCommits[i].Sequence]
 			record, err = record.WithReadyFacts(facts.calls, facts.results)
@@ -52,13 +58,16 @@ func orderedRestoreRecords(plan session.ReplayPlan) ([]provider.RestoreRecord, e
 		compactions = append(compactions, *plan.InterruptedCompaction)
 	}
 	for _, operation := range compactions {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		source, err := provider.NewCompactionSourceRestoreRecord(operation.Started.Source)
 		if err != nil {
 			return nil, err
 		}
 		entries = append(entries, entry{operation.StartedSequence, source})
 		if operation.Completed != nil {
-			expected, err := session.TaskProgressBefore(plan.Tools, operation.StartedSequence)
+			expected, err := operation.TaskProgressAtStart()
 			if err != nil {
 				return nil, err
 			}
@@ -74,20 +83,23 @@ func orderedRestoreRecords(plan session.ReplayPlan) ([]provider.RestoreRecord, e
 	for i, entry := range entries {
 		result[i] = entry.record
 	}
-	return result, nil
+	return result, ctx.Err()
 }
 
-func validateCompactionUsageEvidence(validator provider.CompactionUsageValidator, plan session.ReplayPlan) error {
+func validateCompactionUsageEvidence(ctx context.Context, validator provider.CompactionUsageValidator, checkpoints provider.CheckpointReader, plan session.ReplayPlan) error {
 	for _, operation := range plan.Compactions {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if operation.Completed != nil {
-			if validator == nil {
+			if checkpoints == nil {
 				return fmt.Errorf("provider cannot validate checkpoint usage")
 			}
 			usage, err := operation.Completed.Usage.Domain()
 			if err != nil {
 				return err
 			}
-			if err := validator.ValidateCheckpointUsage(operation.Completed.Checkpoint, usage); err != nil {
+			if err := checkpoints.ValidateCheckpointUsage(operation.Completed.Checkpoint, usage); err != nil {
 				return err
 			}
 		}
@@ -110,7 +122,7 @@ func validateCompactionUsageEvidence(validator provider.CompactionUsageValidator
 			return err
 		}
 	}
-	return nil
+	return ctx.Err()
 }
 
 func reconcileInterruptedCompaction(ctx context.Context, writer managedJournal, operation *session.ReplayedCompaction) error {

@@ -5,6 +5,7 @@ package catalog
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -23,7 +24,7 @@ func TestListBusyProcessCannotRepairUntilRelease(t *testing.T) {
 	}
 	defer func() { _ = repository.Close() }()
 	first := createCatalogJournal(t, repository, dir)
-	instance := openTestCatalog(t, filepath.Join(dir, "state.sqlite"), root)
+	instance := openTestCatalog(t, filepath.Join(dir, "catalog.json"))
 	defer func() { _ = instance.Close() }()
 	if _, err := instance.Reconcile(context.Background(), repository); err != nil {
 		t.Fatal(err)
@@ -90,51 +91,49 @@ func TestCatalogTitleSnapshotUpdatesListAndLatestCompatible(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer repository.Close()
-	database := openTestCatalog(t, filepath.Join(dir, "state.sqlite"), root)
-	defer database.Close()
+	instance := openTestCatalog(t, filepath.Join(dir, "catalog.json"))
 	older := createCatalogJournal(t, repository, dir)
 	observed := appendCatalogTitle(t, repository, older, "Observed title")
 	newer := createCatalogJournal(t, repository, dir)
 	query := ListQuery{Scope: ListAllDirectories, Limit: 2}
 	selector := Selector{CreationCWD: dir, ProviderFamily: domain.ProviderOpenAI, ProviderWire: "responses", Model: "gpt-test"}
-	if _, err := database.Reconcile(ctx, repository); err != nil {
+	if _, err := instance.Reconcile(ctx, repository); err != nil {
 		t.Fatal(err)
 	}
-	first, err := database.List(ctx, query)
+	first, err := instance.List(ctx, query)
 	if err != nil || len(first.Entries) != 2 || first.Entries[0].ThreadID != newer || first.Entries[1].ThreadID != older {
 		t.Fatalf("initial list = %+v, %v", first, err)
 	}
 	assertCatalogTitle(t, first.Entries[1], "Observed title", observed)
 	committed := appendCatalogTitle(t, repository, older, "Newly committed title")
 
-	// 按协调的两个阶段交错操作，模拟读完释放 lease 后、SQLite 发布前的改名。
-	present := map[domain.ThreadID]struct{}{older: {}, newer: {}}
-	if err := database.applyReconciliation(ctx, first.Entries, present, nil); err != nil {
+	// 按协调的两个阶段交错操作，模拟读完释放 lease 后、快照发布前的改名。
+	if err := instance.publish(ctx, first.Entries); err != nil {
 		t.Fatal(err)
 	}
-	stale, err := database.List(ctx, query)
+	stale, err := instance.List(ctx, query)
 	if err != nil || !slices.Equal(stale.Entries, first.Entries) {
 		t.Fatalf("observed snapshot = %+v, %v", stale, err)
 	}
-	latest, found, err := database.LatestCompatible(ctx, selector)
+	latest, found, err := instance.LatestCompatible(ctx, selector)
 	if err != nil || !found || latest.ThreadID != newer {
 		t.Fatalf("latest compatible snapshot = %+v, %v, %v", latest, found, err)
 	}
-	if _, err := database.Reconcile(ctx, repository); err != nil {
+	if _, err := instance.Reconcile(ctx, repository); err != nil {
 		t.Fatal(err)
 	}
-	updated, err := database.List(ctx, query)
+	updated, err := instance.List(ctx, query)
 	if err != nil || len(updated.Entries) != 2 || updated.Entries[0].ThreadID != older {
 		t.Fatalf("refreshed list = %+v, %v", updated, err)
 	}
 	assertCatalogTitle(t, updated.Entries[0], "Newly committed title", committed)
-	latest, found, err = database.LatestCompatible(ctx, selector)
+	latest, found, err = instance.LatestCompatible(ctx, selector)
 	if err != nil || !found || latest != updated.Entries[0] {
 		t.Fatalf("latest compatible after rename = %+v, %v, %v", latest, found, err)
 	}
 }
 
-func TestCatalogRebuildsMismatchedTitleField(t *testing.T) {
+func TestCatalogRebuildsUnusableSnapshot(t *testing.T) {
 	ctx := context.Background()
 	dir := privateTempDir(t)
 	root := filepath.Join(dir, "sessions")
@@ -158,42 +157,62 @@ func TestCatalogRebuildsMismatchedTitleField(t *testing.T) {
 		}
 		paths[path] = pathBytes
 	}
-	databasePath := filepath.Join(dir, "state.sqlite")
-	database := openTestCatalog(t, databasePath, root)
-	defer database.Close()
+	snapshotPath := filepath.Join(dir, "catalog.json")
+	instance := openTestCatalog(t, snapshotPath)
+	if _, err := instance.Reconcile(ctx, repository); err != nil {
+		t.Fatal(err)
+	}
+	valid, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, scenario := range []struct {
-		name, change string
+		name, title string
+		missing     bool
 	}{
-		{name: "missing field", change: "ALTER TABLE threads DROP COLUMN title"},
-		{name: "wrong type", change: "ALTER TABLE threads DROP COLUMN title; ALTER TABLE threads ADD COLUMN title INTEGER NOT NULL DEFAULT 0"},
-		{name: "nullable field", change: "ALTER TABLE threads DROP COLUMN title; ALTER TABLE threads ADD COLUMN title TEXT"},
-		{name: "deleted database"},
+		{name: "missing title field"},
+		{name: "wrong title type", title: "0"},
+		{name: "null title", title: "null"},
+		{name: "missing snapshot", missing: true},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
-			if scenario.change != "" {
-				if err := database.db.Exec(scenario.change); err != nil {
+			if err := instance.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if scenario.missing {
+				if err := os.Remove(snapshotPath); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				var rows []map[string]json.RawMessage
+				if err := json.Unmarshal(valid, &rows); err != nil || len(rows) != 2 {
+					t.Fatalf("source snapshot rows = %d, %v", len(rows), err)
+				}
+				if scenario.title == "" {
+					delete(rows[0], "title")
+				} else {
+					rows[0]["title"] = json.RawMessage(scenario.title)
+				}
+				corrupt, err := json.Marshal(rows)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(snapshotPath, corrupt, 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if err := database.Close(); err != nil {
+			if err := instance.Open(ctx); err != nil {
 				t.Fatal(err)
 			}
-			if scenario.change == "" {
-				if err := os.Remove(databasePath); err != nil {
-					t.Fatal(err)
-				}
+			query := ListQuery{Scope: ListAllDirectories, Limit: 2}
+			before, err := instance.List(ctx, query)
+			if err != nil || len(before.Entries) != 0 {
+				t.Fatalf("unusable snapshot was visible: %+v, %v", before, err)
 			}
-			if err := database.Open(ctx); err != nil {
+			if _, err := instance.Reconcile(ctx, repository); err != nil {
 				t.Fatal(err)
 			}
-			schema, err := querySingleText(database.db, `SELECT type || ':' || "notnull" FROM pragma_table_info('threads') WHERE name = 'title'`)
-			if err != nil || schema != "TEXT:1" {
-				t.Fatalf("rebuilt title schema = %q, %v", schema, err)
-			}
-			if _, err := database.Reconcile(ctx, repository); err != nil {
-				t.Fatal(err)
-			}
-			result, err := database.List(ctx, ListQuery{Scope: ListAllDirectories, Limit: 2})
+			result, err := instance.List(ctx, query)
 			if err != nil || len(result.Entries) != 2 || result.Entries[0].ThreadID != named || result.Entries[1].ThreadID != untitled {
 				t.Fatalf("rebuilt list = %+v, %v", result, err)
 			}
@@ -201,6 +220,7 @@ func TestCatalogRebuildsMismatchedTitleField(t *testing.T) {
 			if result.Entries[0].Model != "gpt-test" || result.Entries[1].Title != "" || result.Entries[1].LastSequence != 2 {
 				t.Fatalf("rebuilt metadata = %+v", result.Entries)
 			}
+			assertFileContent(t, snapshotPath, string(valid))
 		})
 		if t.Failed() {
 			return

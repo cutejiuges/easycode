@@ -221,11 +221,7 @@ func (l *Local) load(ctx context.Context, name string) (localEntry, document, ex
 
 // Prepare 将显式首词调用转为独立附件，普通正文不变。
 func (l *Local) Prepare(ctx context.Context, text string) (attachment domain.SkillAttachment, prepared bool, resultErr error) {
-	words := strings.Fields(text)
-	if len(words) == 0 {
-		return domain.SkillAttachment{}, false, nil
-	}
-	first := words[0]
+	first, remainder := domain.SplitInputHead(text)
 	if len(first) < 2 || (first[0] != '/' && first[0] != '$') {
 		return domain.SkillAttachment{}, false, nil
 	}
@@ -260,7 +256,7 @@ func (l *Local) Prepare(ctx context.Context, text string) (attachment domain.Ski
 	if !d.metadata.UserInvocable {
 		return domain.SkillAttachment{}, false, failure("skill_not_user_invocable")
 	}
-	args := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(text), first))
+	args := strings.TrimSpace(remainder)
 	a, err := expand(d, e.revision, args)
 	return a, err == nil, err
 }

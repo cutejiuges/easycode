@@ -44,12 +44,12 @@ Stop 已支持精确答复的完成前检查、同回合最多两次续轮、累
 
 | 领域 | 当前实现 | 仍未实现 |
 | --- | --- | --- |
-| 原生历史 | 两家共用窗口、普通采样、独立摘要与有序回放，各自负责 request、reducer 和 native codec。保留 thinking/signature/redacted thinking、encrypted reasoning、message phase 与未知 opaque 扩展，单向投影供读取 | 跨 Provider/wire 转换、compacted fork、child-thread 执行与 Subagent |
-| Session | append-only JSONL、批次/seq/checksum、typed 当前 decoder、跨进程 lease、验证后 repair、原生恢复与本地中断补偿；SQLite 为可重建 root-thread 索引，投影最后已验证会话标题 | tag、项目/worktree 聚合、全文搜索、实时索引、迁移器/历史 reader；内部 Session/native/checkpoint 无格式版本标记 |
+| 原生历史 | 两家共用会话准入、原生窗口、普通采样、独立摘要与有序回放，各自负责 request、reducer 和 native codec。保留 thinking/signature/redacted thinking、encrypted reasoning、message phase 与未知 opaque 扩展，单向投影供读取 | 跨 Provider/wire 转换、compacted fork、child-thread 执行与 Subagent |
+| Session | append-only JSONL、批次/seq/checksum、typed 当前 decoder、跨进程 lease、验证后 repair、原生恢复与本地中断补偿；私有原子快照为可重建 root-thread 索引，投影最后已验证会话标题 | tag、项目/worktree 聚合、全文搜索、实时索引、迁移器/历史 reader；内部 Session/native/checkpoint 无格式版本标记 |
 | 上下文 | `provider_profile -> tool_catalog -> [project_instructions] -> [skill_catalog] -> committed_history -> current_input`，确定性 CachePlan、来源 fingerprint、本地 `byte_heuristic_v1`、显式窗口预算 | 远端精确 token count、自动文件 rehydrate、动态 git/env/world-state 注入 |
 | 项目指令 | 从启动 cwd 显式冻结层级 AGENTS.md/CLAUDE.md，相对来源、预算截断、临时注入双 Provider 请求，不写原生历史 | 全局用户指令、includes、`.claude/rules`、热加载 |
 | 缓存 | Anthropic disabled/5m/1h 显式断点；OpenAI omit/thread key；可选 WebSocket durable 前缀增量与受限回退；`/cache`/`cache.query` | 费用/价格、长期累计遥测、动态 plugin/MCP 目录策略；不能保证服务端命中 |
-| Usage | raw usage 保留于各 Provider native facts；共享五项三态指标及 turn 聚合，区分未知/不适用；最近 sample/turn/summary 有界缓存观测；Anthropic thinking_tokens 为 known/unknown，output 已包含 thinking | 实时独立 usage 流、cost 面板、配额与完整 metrics/tracing |
+| Usage | raw usage 保留于各 Provider native facts；共享五项三态指标及 turn 聚合；两家普通 sample 在恢复和离线预览时按原生证据对账；最近 sample/turn/summary 有界缓存观测；Anthropic thinking_tokens 为 known/unknown，output 已包含 thinking | 实时独立 usage 流、cost 面板、配额与完整 metrics/tracing |
 | 压缩 | 手动 `/compact`、显式窗口下阈值自动摘要、独立 CompactionID/checkpoint、失败保留旧窗口、完整历史可读、取消/恢复、同步 PreCompact 检查 | 删除旧 JSONL、跨 Provider fork、PostCompact Hook、通用分块摘要 |
 | TUI | 流式 Markdown、代码/表格/原文阅读、resize/窄屏/NO_COLOR、普通批准/问卷/Hook 审查、紧凑工具主线、Ctrl+O 分页详情、context/cache、resume picker、命令/Skill 与正文文件补全、thinking/summary 活动提示及 Ctrl+O 阅读、冻结设置查询与有界滚动 | effort 之外的运行中推理切换、fork picker、后台任务 UI、通用命令管理面板 |
 | 输出保存 | Exec stdout/stderr 与搜索连续前缀、授权 descriptor、ReadArtifact、独立宿主详情查询；恢复不重读 artifact | Read/Patch/Write/Skill/Question 的通用自动 artifact、自动过期、远程 artifact 服务 |
@@ -62,7 +62,7 @@ Stop 已支持精确答复的完成前检查、同回合最多两次续轮、累
 
 主配置为 `~/.config/easycode/config.json` 或显式 `--config PATH`，Provider 四字段可由非空 `EASYCODE_PROVIDER`、`EASYCODE_BASE_URL`、`EASYCODE_API_KEY`、`EASYCODE_MODEL` 覆盖。窗口、压缩和缓存选项只通过 JSON 配置；没有项目级主配置合并、TOML 主配置或额外凭据登录。Skills、Hooks 与显式 Plugin 目录使用各自来源规则；插件只贡献受限技能，不借用 Hook 信任。
 
-默认数据根为 `~/.easycode`：journal 为 `sessions/YYYY/MM/DD/<thread-id>.jsonl`，Catalog 为 `state.sqlite`，私有输出位于 `sessions/artifacts`。其权限、实际 descriptor 身份和 sandbox 读写根关系均在装配/执行边界检查；不向模型暴露存储路径。没有启用默认 diagnostic 日志文件、plugin 安装目录或文件 watcher。
+默认数据根为 `~/.easycode`：journal 为 `sessions/YYYY/MM/DD/<thread-id>.jsonl`，Catalog 为 `catalog.json`，私有输出位于 `sessions/artifacts`。其权限、实际 descriptor 身份和 sandbox 读写根关系均在装配/执行边界检查；不向模型暴露存储路径。没有启用默认 diagnostic 日志文件、plugin 安装目录或文件 watcher。
 
 | 平台/范围 | 实际边界 |
 | --- | --- |
@@ -80,7 +80,7 @@ P6 当前交付本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/
 - 实现边界：[总体架构](../architecture/overall-architecture.md)、[Tool 系统](../architecture/tool-system.md)。
 - 必须遵循的规约：[AGENTS.md](../../AGENTS.md)。
 - PostToolUse 验收：[verification.md](../../openspec/changes/archive/2026-11-08-add-post-tool-use-command-hooks/verification.md)。
-- PreToolUse 验收：[verification.md](../../openspec/changes/add-pre-tool-use-command-hooks/verification.md)。
+- PreToolUse 验收：[verification.md](../../openspec/changes/archive/2026-11-20-add-pre-tool-use-command-hooks/verification.md)。
 - PreToolUse 参数改写验收：[verification.md](../../openspec/changes/archive/2026-11-15-add-pre-tool-use-input-rewrite/verification.md)。
 - PreCompact 验收包含双 Provider、Darwin PTY、stream-json、恢复和 WebSocket 回退。[验证记录](../../openspec/changes/archive/2026-11-19-add-pre-compact-command-hooks/verification.md)
 - 命令/Skill 补全：[归档核对记录](../../openspec/changes/archive/2026-11-06-add-command-and-skill-completion/archive.md)、[追加验证报告](../../openspec/changes/archive/2026-11-06-add-command-and-skill-completion/revalidation.md)。

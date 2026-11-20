@@ -35,7 +35,7 @@ func transcriptListItem(node transcriptNode, entry session.ToolHistoryEntry) (pr
 		}
 		return item, nil
 	}
-	if node.toolIndex < 0 {
+	if node.tool == nil {
 		item.Text = tool.ActivityText(node.item.Text, 512)
 		files, err := domain.NewFileSummary(node.item.Files)
 		if err != nil {
@@ -141,20 +141,20 @@ func (q *transcriptQueries) ListTranscript(ctx context.Context, query protocol.T
 	}
 	defer done()
 	q.mu.Lock()
-	nodes := q.nodes
+	at, end := q.nodes.at, q.nodes.len()
 	if query.Mode == protocol.TranscriptMain {
-		nodes = q.mainNodes
+		at = func(index int) *transcriptNode { return q.nodes.at(*q.mainNodes.at(index)) }
+		end = q.mainNodes.len()
 	}
-	end := len(nodes)
 	if query.Through > 0 {
-		end = sort.Search(end, func(i int) bool { return nodes[i].cursor.Sequence > query.Through })
+		end = sort.Search(end, func(i int) bool { return at(i).cursor.Sequence > query.Through })
 	}
 	lower := 0
 	if query.Newer && query.Before.Valid() {
-		lower = sort.Search(end, func(i int) bool { return query.Before.Before(nodes[i].cursor) })
+		lower = sort.Search(end, func(i int) bool { return query.Before.Before(at(i).cursor) })
 		end = min(end, lower+int(query.Limit))
 	} else if query.Before.Valid() {
-		end = sort.Search(end, func(i int) bool { return !nodes[i].cursor.Before(query.Before) })
+		end = sort.Search(end, func(i int) bool { return !at(i).cursor.Before(query.Before) })
 	}
 	lower = max(lower, end-int(query.Limit))
 	type selectedNode struct {
@@ -164,10 +164,10 @@ func (q *transcriptQueries) ListTranscript(ctx context.Context, query protocol.T
 	}
 	selected := make([]selectedNode, 0, query.Limit)
 	for i := end - 1; i >= lower && len(selected) < int(query.Limit); i-- {
-		node := nodes[i]
+		node := *at(i)
 		var entry session.ToolHistoryEntry
-		if node.toolIndex >= 0 {
-			entry = q.entries[node.toolIndex]
+		if node.tool != nil {
+			entry = *node.tool
 			if entry.PostHooks != nil {
 				g := entry.PostHooks.Clone()
 				entry.PostHooks = &g
@@ -193,7 +193,7 @@ func (q *transcriptQueries) ListTranscript(ctx context.Context, query protocol.T
 		return protocol.TranscriptListPage{}, err
 	}
 	page := protocol.TranscriptListPage{Items: items}
-	if end > len(items) {
+	if lower > 0 && len(items) != 0 {
 		page.NextBefore = items[len(items)-1].Cursor
 	}
 	return protocol.NewTranscriptListPage(page)
@@ -209,16 +209,16 @@ func (q *transcriptQueries) ReadTranscriptBody(ctx context.Context, query protoc
 	}
 	defer done()
 	q.mu.Lock()
-	index := sort.Search(len(q.nodes), func(i int) bool { return !q.nodes[i].cursor.Before(query.Cursor) })
-	if index == len(q.nodes) || q.nodes[index].cursor != query.Cursor {
+	index := sort.Search(q.nodes.len(), func(i int) bool { return !q.nodes.at(i).cursor.Before(query.Cursor) })
+	if index == q.nodes.len() || q.nodes.at(index).cursor != query.Cursor {
 		q.mu.Unlock()
 		return protocol.TranscriptBodyPage{}, tool.ArtifactReadUnavailable
 	}
-	node := q.nodes[index]
+	node := *q.nodes.at(index)
 	stop := q.stopForNodeLocked(node)
 	var entry session.ToolHistoryEntry
-	if node.toolIndex >= 0 {
-		entry = q.entries[node.toolIndex]
+	if node.tool != nil {
+		entry = *node.tool
 		if entry.PostHooks != nil {
 			g := entry.PostHooks.Clone()
 			entry.PostHooks = &g
@@ -255,7 +255,7 @@ func (q *transcriptQueries) ReadTranscriptBody(ctx context.Context, query protoc
 	text := ""
 	if query.Source == protocol.TranscriptStopHooks {
 		text = stopDetail(*stop)
-	} else if node.toolIndex < 0 {
+	} else if node.tool == nil {
 		if query.Source != protocol.TranscriptText {
 			return protocol.TranscriptBodyPage{}, tool.ArtifactReadInvalidRange
 		}

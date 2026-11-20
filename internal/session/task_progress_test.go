@@ -347,12 +347,12 @@ func TestTaskProgressUsesActualResultPrefixAcrossReplacementsAndFailedTurns(t *t
 	if len(plan.Tools) != 5 || len(plan.Turns) != 2 {
 		t.Fatal("task replacements lost failed-turn history")
 	}
-	none, err := TaskProgressBefore(plan.Tools, resultSequences[0])
+	none, err := taskProgressBefore(plan.Tools, resultSequences[0])
 	if err != nil || none.Kind() != domain.TaskProgressNone {
 		t.Fatal("success source was included in its own preceding prefix", err)
 	}
 	for i, sequence := range resultSequences {
-		state, err := TaskProgressBefore(plan.Tools, sequence+1)
+		state, err := taskProgressBefore(plan.Tools, sequence+1)
 		source, found := state.Source()
 		update, applied := state.Update()
 		inv, _ := invocations[i].Task()
@@ -369,7 +369,7 @@ func TestTaskProgressUsesActualResultPrefixAcrossReplacementsAndFailedTurns(t *t
 			t.Fatal("tool facade profile leaked into domain task state")
 		}
 	}
-	current, err := TaskProgressBefore(plan.Tools, 0)
+	current, err := plan.TaskProgress()
 	source, _ := current.Source()
 	if err != nil || current.Kind() != domain.TaskProgressClear || source.ResultSequence() != resultSequences[3] || source.TurnID() != testTurnID {
 		t.Fatal("failed later turn changed earlier explicit clear", err)
@@ -415,7 +415,7 @@ func TestTaskProgressUsesActualResultPrefixAcrossReplacementsAndFailedTurns(t *t
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			entries := append([]ToolHistoryEntry(nil), plan.Tools...)
-			if _, err := TaskProgressBefore(test.mutate(entries), 0); err == nil {
+			if _, err := taskProgressBefore(test.mutate(entries), 0); err == nil {
 				t.Fatal("forged or repeated task result source accepted")
 			}
 		})
@@ -450,4 +450,34 @@ func TestInvalidTaskResultWithValidChecksumFailsBeforeTailRepair(t *testing.T) {
 	if err != nil || !bytes.Equal(after, content) {
 		t.Fatal("invalid task fact permitted tail repair", err)
 	}
+}
+
+// taskProgressBefore 从已验证工具事实中归约指定前缀的最近成功更新。
+// before 为零时读取整个历史；实际来源始终取 result record，不能使用 ready 序号。
+func taskProgressBefore(entries []ToolHistoryEntry, before uint64) (domain.TaskProgressState, error) {
+	state := domain.NewNoTaskProgress()
+	var last uint64
+	for _, entry := range entries {
+		if !entry.HasResult || entry.Result.Capability() != tool.CapabilityTaskProgress || entry.Result.Status() != tool.ResultSuccess || before != 0 && entry.ResultSequence >= before {
+			continue
+		}
+		evidence, evidenceErr := entry.InputResultEvidence()
+		if evidenceErr != nil || evidence.ValidateResult(entry.Result) != nil || entry.Origin.TurnID != entry.TurnID || entry.Origin.SampleIndex != entry.SampleIndex || entry.Origin.CallIndex != entry.CallIndex || entry.Admission.InvocationID() != entry.Invocation.InvocationID() || entry.ResultSequence <= max(entry.Sequence, entry.Admission.Sequence()) || entry.ResultSequence <= last || tool.ValidateFrozenResult(entry.Result) != nil || tool.ValidateResultInput(entry.Invocation, entry.Result) != nil {
+			return domain.TaskProgressState{}, fmt.Errorf("invalid task result history source")
+		}
+		update, ok := entry.Result.TaskUpdate()
+		if !ok {
+			return domain.TaskProgressState{}, fmt.Errorf("successful task result has no update")
+		}
+		source, err := domain.NewTaskProgressSource(entry.ResultSequence, entry.TurnID, string(entry.Invocation.InvocationID()))
+		if err != nil {
+			return domain.TaskProgressState{}, err
+		}
+		state, err = domain.NewTaskProgressState(source, update)
+		if err != nil {
+			return domain.TaskProgressState{}, err
+		}
+		last = entry.ResultSequence
+	}
+	return state, nil
 }

@@ -134,7 +134,7 @@ func TestHookGateContinueStillRequiresOrdinaryApproval(t *testing.T) {
 			_, candidate := runtimePatchInvocation(t)
 			preparer := &fixedPatchPreparer{candidate: candidate}
 			executor := &fixedPatchExecutor{}
-			r.patchPreparer, r.patchExecutor = preparer, executor
+			r.tools.PreparePatch, r.tools.Patch = preparer, executor
 			trust := hookTrustEmitter(t, r, protocol.HookTrustSession, nil)
 			var events []protocol.Event
 			decision := tool.ApprovalDeny

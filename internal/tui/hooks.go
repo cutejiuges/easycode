@@ -71,12 +71,8 @@ func (m Model) handleHooksKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyCtrlC:
 		m.hooks.open = false
 		m.hooks.generation++
-		if m.activeCompactionID.Valid() {
-			return m.requestCompactionCancellation()
-		}
-		if m.activeTurnID.Valid() {
-			m.cancelling = true
-			return m, interruptSession(m.session)
+		if m.activeCompactionID.Valid() || m.activeTurnID.Valid() {
+			return m.handleCancelKey()
 		}
 	case tea.KeyEnter:
 		if len(m.hooks.entries) > 0 {
@@ -193,8 +189,7 @@ func (m Model) handleHookTrustKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if _, _, ok := m.hookTrust.request.Target.Compaction(); ok {
 			return m.requestCompactionCancellation()
 		}
-		m.cancelling = true
-		return m, interruptSession(m.session)
+		return m.requestTurnCancellation(m.hookTrust.turn)
 	}
 	if m.hookTrust.submitted || m.compaction.stage == compactionCancelling || (m.hookReviewUnavailable() && key.Type != tea.KeyEsc) {
 		return m, nil
@@ -307,7 +302,7 @@ func (m Model) projectHookEvent(e protocol.Event) (tea.Model, tea.Cmd) {
 		p, err := protocol.DecodeHookTrustRequested(e)
 		if err != nil {
 			m.errorSummary = "stream_protocol_error: invalid hook trust request"
-			return m, interruptSession(m.session)
+			return m, interruptSession(m.session, e.TurnID)
 		}
 		return m.openHookTrust(e.TurnID, p)
 	case protocol.EventHookTrustResolved:
@@ -370,7 +365,7 @@ func (m Model) openHookTrust(turn domain.TurnID, request protocol.HookTrustReque
 		if _, _, ok := request.Target.Compaction(); ok {
 			return m.requestCompactionCancellation()
 		}
-		return m, interruptSession(m.session)
+		return m, interruptSession(m.session, turn)
 	}
 	m.hookTrust = &hookTrustOverlay{request: request, turn: turn}
 	return m, nil

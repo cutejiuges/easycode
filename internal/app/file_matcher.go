@@ -226,13 +226,8 @@ func (m *fileMatcher) advance(ctx context.Context, index []string) error {
 
 func (m *fileMatcher) paths() []string {
 	paths := make([]string, 0, len(m.best))
-	bytes := 256 + len(m.identity.Target.Query)
 	for _, item := range m.best {
-		if bytes+len(item.path)+16 > domain.MaxFileSearchResultBytes {
-			break
-		}
-		bytes += len(item.path) + 16
 		paths = append(paths, item.path)
 	}
-	return paths
+	return domain.FileSearchResultPrefix(m.identity.Target.Query, paths)
 }

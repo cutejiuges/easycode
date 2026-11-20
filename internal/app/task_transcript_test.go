@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -42,18 +44,18 @@ func TestTaskTranscriptDetailsRemainFrozenAfterReplacementAndClear(t *testing.T)
 		projector.view.Items = append(projector.view.Items, anchor)
 		commits = append(commits, session.NativeCommitRecord{Sequence: seq - 2})
 	}
-	q := newTranscriptQueries(thread, nil, entries)
+	projector.end = uint64(len(commits))
+	q := newTranscriptQueries(thread, nil)
 	defer q.Close()
-	if err := q.bindTranscript(projector, mustAppToolCatalog(t), commits); err != nil {
+	if err := q.bindTranscript(projector, mustAppToolCatalog(t), commits, entries, nil); err != nil {
 		t.Fatal(err)
 	}
 	page, err := q.ListTranscript(context.Background(), protocol.TranscriptListQuery{Mode: protocol.TranscriptDetail, ThreadID: thread, Limit: 10})
 	if err != nil || len(page.Items) != 3 {
 		t.Fatal("task list projection", err)
 	}
-	state, err := session.TaskProgressBefore(entries, 0)
-	if err != nil || state.Kind() != domain.TaskProgressClear {
-		t.Fatal("latest clear projection", err)
+	if update, applied := entries[len(entries)-1].Result.TaskUpdate(); !applied || update.Counts().Total != 0 {
+		t.Fatal("latest task result does not clear its list")
 	}
 	for _, item := range page.Items {
 		input, err := q.ReadTranscriptBody(context.Background(), protocol.TranscriptBodyQuery{ThreadID: thread, Cursor: item.Cursor, Source: protocol.TranscriptInput, Limit: 65536})
@@ -81,9 +83,83 @@ func TestTaskTranscriptDetailsRemainFrozenAfterReplacementAndClear(t *testing.T)
 	}
 }
 
-// taskTranscriptProjector 只提供本测试冻结的调用锚点。
-type taskTranscriptProjector struct{ view domain.TranscriptView }
+// taskTranscriptProjector 提供测试冻结的可见条目和实际提交数。
+type taskTranscriptProjector struct {
+	view domain.TranscriptView
+	end  uint64
+}
 
-func (p *taskTranscriptProjector) ProjectTranscript() (domain.TranscriptView, error) {
-	return domain.NewTranscriptView(p.view.Provider, p.view.Items)
+func (p *taskTranscriptProjector) ProjectTranscriptFrom(start uint64) (domain.TranscriptView, uint64, error) {
+	items := p.view.Items
+	index := sort.Search(len(items), func(i int) bool { return items[i].Position.Entry >= start })
+	view, err := domain.NewTranscriptView(p.view.Provider, items[index:])
+	return view, p.end, err
+}
+
+func TestTranscriptSuffixPreservesCursorAndRejectsInvalidBatch(t *testing.T) {
+	ctx := context.Background()
+	thread := domain.ThreadID("01900000-0000-7000-8000-000000000001")
+	turn := domain.TurnID("01900000-0000-7000-8000-000000000003")
+	text, err := domain.NewTranscriptAssistant(domain.TranscriptPosition{}, turn, "repeat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	projector := &taskTranscriptProjector{view: domain.TranscriptView{Provider: domain.ProviderOpenAI, Items: []domain.TranscriptItem{text}}, end: 1}
+	catalog := mustAppToolCatalog(t)
+	q := newTranscriptQueries(thread, nil)
+	defer q.Close()
+	if err := q.bindTranscript(projector, catalog, []session.NativeCommitRecord{{Sequence: 2}}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	projector.end = 2 // 无可见条目的工具 outputs 仍消耗一个原生位置。
+	if err := q.NativeCommitted(4, nil); err != nil {
+		t.Fatal(err)
+	}
+	text.Position.Entry = 2
+	anchor, err := domain.NewTranscriptCall(domain.TranscriptPosition{Entry: 2, Item: 1}, turn, "call-3", "update_plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	projector.view.Items = append(projector.view.Items, text, anchor)
+	projector.end = 3
+	query := protocol.TranscriptListQuery{Mode: protocol.TranscriptDetail, ThreadID: thread, Limit: 10}
+	if err := q.NativeCommitted(6, nil); err == nil {
+		t.Fatal("commit without ready fact was accepted")
+	}
+	before, err := q.ListTranscript(ctx, query)
+	if err != nil || len(before.Items) != 1 || before.Items[0].Cursor.Sequence != 2 {
+		t.Fatalf("rejected append changed transcript: %+v, %v", before, err)
+	}
+	update, _ := domain.NewTaskUpdate(nil, "")
+	input, _ := tool.NewTaskInput(tool.TaskProfileUpdatePlan, update)
+	ready, _ := tool.NewTaskReadyCall("call-3", input)
+	id, _ := tool.GenerateInvocationID()
+	invocation, err := tool.NewInvocation(id, ready)
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts := []session.ToolHistoryEntry{{Invocation: invocation, NativeSequence: 6, Sequence: 8, TurnID: turn}}
+	if err := q.NativeCommitted(6, facts); err != nil {
+		t.Fatal(err)
+	}
+
+	restored := newTranscriptQueries(thread, nil)
+	defer restored.Close()
+	commits := []session.NativeCommitRecord{{Sequence: 2}, {Sequence: 4}, {Sequence: 6}}
+	if err := restored.bindTranscript(projector, catalog, commits, facts, nil); err != nil {
+		t.Fatal(err)
+	}
+	live, err := q.ListTranscript(ctx, query)
+	want, restoredErr := restored.ListTranscript(ctx, query)
+	if err != nil || restoredErr != nil || len(live.Items) != 3 || !reflect.DeepEqual(live, want) ||
+		live.Items[0].Cursor != (protocol.TranscriptCursor{Sequence: 6, Item: 1}) ||
+		live.Items[1].Text != live.Items[2].Text || live.Items[1].Cursor == live.Items[2].Cursor {
+		t.Fatalf("live and restored cursors differ: %+v, %+v, %v, %v", live, want, err, restoredErr)
+	}
+	query.Before, query.Newer = live.Items[0].Cursor, true
+	empty, err := q.ListTranscript(ctx, query)
+	if err != nil || len(empty.Items) != 0 || empty.NextBefore.Valid() {
+		t.Fatalf("paging beyond latest should return an empty page: %+v, %v", empty, err)
+	}
 }

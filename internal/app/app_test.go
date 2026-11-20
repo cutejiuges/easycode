@@ -39,13 +39,11 @@ func TestChatResourcesShutdownTimeoutEscalatesAndClosesDependencies(t *testing.T
 	journal := &orderedManagedJournal{}
 	runtimeInstance, err := chatRuntime.New(conversation, chatRuntime.Config{
 		SessionID: runtimeSessionIDForApp, ThreadID: runtimeThreadIDForApp, Journal: journal,
-		ProviderWire: domain.ProviderOpenAI.Wire(),
-		TaskExecutor: catalogTaskFixture{}, InitialTaskProgress: domain.NewNoTaskProgress(),
-		GenerateTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
-		ContextProfile: mustAppContextProfile(t), ProjectInstructions: mustEmptyAppProjectInstructions(t),
-		ToolCatalog: mustAppToolCatalog(t), QuestionExecutor: catalogQuestionFixture{}, SkillExecutor: catalogSkillExecutor{}, ReadArtifactExecutor: catalogArtifactExecutor{}, ReadExecutor: appReadExecutor{},
-		GlobExecutor: appGlobExecutor{}, GrepExecutor: appGrepExecutor{},
-		PatchPreparer: catalogPatchPreparer{}, PatchExecutor: catalogPatchExecutor{}, WritePreparer: catalogWritePreparer{}, WriteExecutor: catalogWriteExecutor{}, ExecPreparer: catalogExecFixture{}, ExecExecutor: catalogExecFixture{}, ToolPolicy: tool.NewApprovalPolicy(),
+		ProviderWire:        domain.ProviderOpenAI.Wire(),
+		InitialTaskProgress: domain.NewNoTaskProgress(),
+		GenerateTurnID:      func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
+		ContextProfile:      mustAppContextProfile(t), ProjectInstructions: mustEmptyAppProjectInstructions(t),
+		ToolBinding:    mustAppToolBinding(t),
 		ContextBudget:  contextplan.DisabledBudget(),
 		ContextPlanner: contextplan.NewPlanner(),
 	})
@@ -233,12 +231,12 @@ func (*orderedConversation) ProjectHistory() domain.SemanticHistoryView {
 	return domain.SemanticHistoryView{Provider: domain.ProviderOpenAI, Turns: []domain.SemanticTurn{}}
 }
 
-func (*orderedConversation) HistoryFootprint() (domain.NativeHistoryFootprint, error) {
+func (*orderedConversation) historyFootprint() (domain.NativeHistoryFootprint, error) {
 	estimated, _ := domain.NewEstimatedTokenEstimate(estimate.MethodByteHeuristic, 0)
 	return domain.NewNativeHistoryFootprint(domain.ProviderOpenAI, 0, estimated)
 }
 
-func (conversation *orderedConversation) Stream(ctx context.Context, _ provider.TurnInput) (<-chan provider.StreamEvent, error) {
+func (conversation *orderedConversation) Stream(ctx context.Context, _ provider.TurnInput) (provider.StreamEvents, error) {
 	if conversation.add != nil {
 		conversation.add("provider:stream")
 	}
@@ -257,7 +255,13 @@ func (conversation *orderedConversation) Stream(ctx context.Context, _ provider.
 		}
 		close(stream)
 	}()
-	return stream, nil
+	return func(yield func(provider.StreamEvent) bool) {
+		for event := range stream {
+			if !yield(event) {
+				return
+			}
+		}
+	}, nil
 }
 
 type orderedProviderResource struct {
@@ -279,8 +283,8 @@ func (resource *orderedProviderResource) NewConversation(threadID domain.ThreadI
 	return resource.factory.NewConversation(threadID)
 }
 
-func (resource *orderedProviderResource) RestoreConversation(threadID domain.ThreadID, commits []provider.RestoreRecord) (provider.Conversation, error) {
-	return resource.factory.RestoreConversation(threadID, commits)
+func (resource *orderedProviderResource) RestoreConversation(ctx context.Context, threadID domain.ThreadID, commits []provider.RestoreRecord) (provider.Conversation, provider.CheckpointReader, error) {
+	return resource.factory.RestoreConversation(ctx, threadID, commits)
 }
 
 func (resource *orderedProviderResource) Close() error {
@@ -298,13 +302,11 @@ func mustIdleAppRuntime(t *testing.T, journal chatRuntime.Journal) *chatRuntime.
 	t.Helper()
 	runtimeInstance, err := chatRuntime.New(&orderedConversation{}, chatRuntime.Config{
 		SessionID: runtimeSessionIDForApp, ThreadID: runtimeThreadIDForApp, Journal: journal,
-		ProviderWire: domain.ProviderOpenAI.Wire(),
-		TaskExecutor: catalogTaskFixture{}, InitialTaskProgress: domain.NewNoTaskProgress(),
-		GenerateTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
-		ContextProfile: mustAppContextProfile(t), ProjectInstructions: mustEmptyAppProjectInstructions(t),
-		ToolCatalog: mustAppToolCatalog(t), QuestionExecutor: catalogQuestionFixture{}, SkillExecutor: catalogSkillExecutor{}, ReadArtifactExecutor: catalogArtifactExecutor{}, ReadExecutor: appReadExecutor{},
-		GlobExecutor: appGlobExecutor{}, GrepExecutor: appGrepExecutor{},
-		PatchPreparer: catalogPatchPreparer{}, PatchExecutor: catalogPatchExecutor{}, WritePreparer: catalogWritePreparer{}, WriteExecutor: catalogWriteExecutor{}, ExecPreparer: catalogExecFixture{}, ExecExecutor: catalogExecFixture{}, ToolPolicy: tool.NewApprovalPolicy(),
+		ProviderWire:        domain.ProviderOpenAI.Wire(),
+		InitialTaskProgress: domain.NewNoTaskProgress(),
+		GenerateTurnID:      func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
+		ContextProfile:      mustAppContextProfile(t), ProjectInstructions: mustEmptyAppProjectInstructions(t),
+		ToolBinding:    mustAppToolBinding(t),
 		ContextBudget:  contextplan.DisabledBudget(),
 		ContextPlanner: contextplan.NewPlanner(),
 	})
@@ -343,11 +345,31 @@ func (appGrepExecutor) Execute(context.Context, tool.GrepInvocation, tool.TextOu
 
 func mustAppToolCatalog(t *testing.T) tool.CatalogSnapshot {
 	t.Helper()
-	catalog, err := tool.NewCatalogSnapshot(appReadExecutor{}, appGlobExecutor{}, appGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, tool.RenderExecOutput, tool.NewApprovalPolicy(), catalogArtifactExecutor{}, catalogSkillExecutor{}, catalogQuestionFixture{}, catalogTaskFixture{})
+	return mustAppToolBinding(t).Catalog()
+}
+
+func mustAppToolBinding(t *testing.T) tool.Binding {
+	t.Helper()
+	binding, err := tool.NewBinding(tool.Components{
+		Read:         appReadExecutor{},
+		Glob:         appGlobExecutor{},
+		Grep:         appGrepExecutor{},
+		PreparePatch: catalogPatchPreparer{},
+		Patch:        catalogPatchExecutor{},
+		PrepareWrite: catalogWritePreparer{},
+		Write:        catalogWriteExecutor{},
+		PrepareExec:  catalogExecFixture{},
+		Exec:         catalogExecFixture{},
+		Policy:       tool.NewApprovalPolicy(),
+		ReadArtifact: catalogArtifactExecutor{},
+		Skill:        catalogSkillExecutor{},
+		Question:     catalogQuestionFixture{},
+		Task:         catalogTaskFixture{},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return catalog
+	return binding
 }
 
 func mustEmptyAppProjectInstructions(t *testing.T) domain.ProjectInstructionsSnapshot {

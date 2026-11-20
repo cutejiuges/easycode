@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"errors"
 	"fmt"
 
 	"easycode/internal/codec"
@@ -20,6 +21,47 @@ func (call NativeToolCall) validateInput(invocation tool.Invocation, family doma
 	return tool.ValidateNativeCallInput(invocation, family, call.Name, call.ID, call.Wire, call.Arguments)
 }
 
+// ValidateModelOutput 核对冻结输出关联的原始工具调用。
+func (call NativeToolCall) ValidateModelOutput(family domain.ProviderFamily, output tool.ModelOutput) error {
+	if output.Validate() != nil {
+		return fmt.Errorf("invalid model tool output")
+	}
+	return call.validateInput(output.Evidence().Selection().Original(), family)
+}
+
+// ValidateFrozenResult 核对结果的原生调用身份和提问或任务的额外证据。
+func (call NativeToolCall) ValidateFrozenResult(family domain.ProviderFamily, result tool.InvocationResult, invalid, mismatch string) error {
+	if tool.ValidateFrozenResult(result) != nil {
+		return errors.New(invalid)
+	}
+	capability, _ := tool.FacadeCapability(family, call.Name)
+	if result.ProviderCallID() != call.ID || result.Capability() != capability || result.WireKind() != call.Wire {
+		return errors.New(mismatch)
+	}
+	switch capability {
+	case tool.CapabilityTaskProgress:
+		ready, err := tool.NewTaskReadyCall(result.ProviderCallID(), result.TaskInput())
+		if err != nil {
+			return err
+		}
+		invocation, err := tool.NewInvocation(result.InvocationID(), ready)
+		if err != nil {
+			return err
+		}
+		return call.validateInput(invocation, family)
+	case tool.CapabilityQuestion:
+		input, err := tool.DecodeQuestionInput(call.Arguments)
+		if err != nil || result.QuestionMetadata().Fingerprint != input.Fingerprint() {
+			return fmt.Errorf("question input association mismatch")
+		}
+		if result.Status() == tool.ResultSuccess {
+			_, err = tool.DecodeQuestionPreview(input, []byte(result.Preview().Text()))
+			return err
+		}
+	}
+	return nil
+}
+
 // ValidateNativeReadyFacts 按原生调用顺序核对已冻结的原始工具事实。
 func ValidateNativeReadyFacts[C any](calls []C, ready []tool.Invocation, family domain.ProviderFamily, describe func(C) NativeToolCall) error {
 	for index, input := range calls {
@@ -36,37 +78,50 @@ func ValidateNativeReadyFacts[C any](calls []C, ready []tool.Invocation, family 
 	return nil
 }
 
-// ValidateNativeRestoredResult 验证匹配的 Question 或 Task 的原生结果与其冻结事实。
-func ValidateNativeRestoredResult[C any](calls, outputs []C, results []tool.InvocationResult, name, label string, describe func(C) NativeToolCall, compare func(C, C, tool.InvocationResult) bool) error {
-	matched := 0
-	for index, call := range calls {
-		info := describe(call)
-		if info.Name != name {
-			continue
+// ValidateNativeRestoredResults 用已验证的原始调用比对冻结提问及任务结果。
+func ValidateNativeRestoredResults[C any](calls, outputs []C, results []tool.InvocationResult, family domain.ProviderFamily, describe func(C) NativeToolCall, compare func(C, C, tool.InvocationResult) bool) error {
+	byCall := make(map[tool.ProviderCallID]*tool.InvocationResult, len(results))
+	var questions, tasks int
+	for index := range results {
+		result := &results[index]
+		byCall[result.ProviderCallID()] = result
+		switch result.Capability() {
+		case tool.CapabilityQuestion:
+			questions++
+		case tool.CapabilityTaskProgress:
+			tasks++
 		}
-		if index >= len(outputs) {
-			return fmt.Errorf("%s output is missing", label)
-		}
-		found := false
-		for _, result := range results {
-			if result.ProviderCallID() != info.ID {
+	}
+	match := func(capability tool.CapabilityID, label string, count int) error {
+		matched := 0
+		for index, call := range calls {
+			info := describe(call)
+			actual, _ := tool.FacadeCapability(family, info.Name)
+			if actual != capability {
 				continue
 			}
-			if !compare(call, outputs[index], result) {
+			if index >= len(outputs) {
+				return fmt.Errorf("%s output is missing", label)
+			}
+			result := byCall[info.ID]
+			if result == nil || result.Capability() != capability {
+				return fmt.Errorf("%s output has no committed result", label)
+			}
+			if !compare(call, outputs[index], *result) {
 				return fmt.Errorf("native %s output differs from committed result", label)
 			}
-			found = true
 			matched++
-			break
 		}
-		if !found {
-			return fmt.Errorf("%s output has no committed result", label)
+		if matched != count {
+			return fmt.Errorf("committed %s result has no output", label)
 		}
+		return nil
 	}
-	if matched != len(results) {
-		return fmt.Errorf("committed %s result has no output", label)
+	// 保留提问先于任务的恢复错误顺序。
+	if err := match(tool.CapabilityQuestion, "question", questions); err != nil {
+		return err
 	}
-	return nil
+	return match(tool.CapabilityTaskProgress, "task", tasks)
 }
 
 type nativeOutputPreflight[C any] struct {

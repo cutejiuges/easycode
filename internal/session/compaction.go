@@ -137,7 +137,7 @@ func (payload CompactionFailedPayload) Validate() error {
 		if err := validateNativeCommitPayload(*payload.Provenance); err != nil {
 			return err
 		}
-		if len(payload.Provenance.Payload) > 64<<10 {
+		if len(payload.Provenance.Payload) > domain.MaxCompactionUsageProvenanceBytes {
 			return fmt.Errorf("compaction usage provenance exceeds size limit")
 		}
 	default:
@@ -189,6 +189,12 @@ type ReplayedCompaction struct {
 	Started          CompactionStartedPayload
 	Completed        *CompactionCompletedPayload
 	Failed           *CompactionFailedPayload
+	taskProgress     replayedTaskProgress
+}
+
+// TaskProgressAtStart 返回压缩开始时的独立任务证据。
+func (operation ReplayedCompaction) TaskProgressAtStart() (domain.TaskProgressState, error) {
+	return operation.taskProgress.snapshot()
 }
 
 // compactionReplay 独占压缩语法，不扩大普通 turn 状态机。
@@ -200,7 +206,7 @@ type compactionReplay struct {
 	completed  uint64
 }
 
-func (state *compactionReplay) accept(plan *ReplayPlan, batch []Record, turn *activeReplayTurn) error {
+func (state *compactionReplay) accept(plan *replayAccumulator, batch []Record, turn *activeReplayTurn) error {
 	if len(batch) != 1 {
 		return replayCorrupt("compaction placement is invalid")
 	}
@@ -228,11 +234,11 @@ func (state *compactionReplay) accept(plan *ReplayPlan, batch []Record, turn *ac
 			turn.autoCompactedSample = true
 		}
 		source := payload.Source
-		if source.Family() != plan.SessionMetadata.Provider || source.Wire() != plan.SessionMetadata.ProviderWire || source.Model() != plan.SessionMetadata.Model || source.CommittedRevision() != uint64(len(plan.NativeCommits)) || source.ContextRevision() != uint64(len(plan.NativeCommits))+state.completed || source.Previous().ID() != state.previous || source.Previous().IsRoot() != (state.previous == "") {
+		if source.Family() != plan.SessionMetadata.Provider || source.Wire() != plan.SessionMetadata.ProviderWire || source.Model() != plan.SessionMetadata.Model || source.CommittedRevision() != plan.nativeRevision || source.ContextRevision() != plan.nativeRevision+state.completed || source.Previous().ID() != state.previous || source.Previous().IsRoot() != (state.previous == "") {
 			return replayCorrupt("compaction source metadata does not match journal")
 		}
 		state.seen[payload.ID] = struct{}{}
-		state.active = &ReplayedCompaction{StartedSequence: record.Sequence, Started: payload}
+		state.active = &ReplayedCompaction{StartedSequence: record.Sequence, Started: payload, taskProgress: plan.taskProgress}
 		state.preCompact = preCompactReplay{}
 		return nil
 	case EventPreCompactHookStarted, EventPreCompactHookFinished, EventPreCompactHookDecided:
@@ -273,7 +279,9 @@ func (state *compactionReplay) accept(plan *ReplayPlan, batch []Record, turn *ac
 		return replayCorrupt("invalid compaction record")
 	}
 	state.active.TerminalSequence = record.Sequence
-	plan.Compactions = append(plan.Compactions, *state.active)
+	if plan.projectHistory {
+		plan.Compactions = append(plan.Compactions, *state.active)
+	}
 	state.active = nil
 	state.preCompact = preCompactReplay{}
 	return nil

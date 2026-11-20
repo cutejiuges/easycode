@@ -54,14 +54,14 @@ func TestSteeringInputsPreviewCommitRestoreAndRequestEquivalence(t *testing.T) {
 		{Type: "message", Role: "assistant", Phase: "commentary", Content: []ContentPart{{Type: "output_text", Text: "checking"}}},
 		{Type: "function_call", CallID: "call-read", Name: "Read", Arguments: `{ "file_path": "a" }`},
 	}}
-	conversation.history.commit(sample)
+	conversation.history.Append(sample)
 	steering, _ := domain.NewInputAssociation(turnID, domain.InputSteering, 1, ids[1:])
 	if candidate, err := conversation.PrepareUserInputs(steering, values[1:]); err == nil {
 		candidate.Discard()
 		t.Fatal("steering accepted before complete tool outputs")
 	}
-	conversation.history.commit(nativeHistoryEntry{Kind: nativeHistoryToolOutputs, TurnID: turnID, ToolOutputs: []NativeItem{{Type: "function_call_output", CallID: "call-read", Output: `{"status":"success","code":"ok","content":"done"}`}}})
-	before, _ := conversation.HistoryFootprint()
+	conversation.history.Append(nativeHistoryEntry{Kind: nativeHistoryToolOutputs, TurnID: turnID, ToolOutputs: []NativeItem{{Type: "function_call_output", CallID: "call-read", Output: `{"status":"success","code":"ok","content":"done"}`}}})
+	_, before, _ := conversation.ProjectContextWindow()
 	prepared, err = conversation.PrepareUserInputs(steering, values[1:])
 	if err != nil {
 		t.Fatal(err)
@@ -96,11 +96,11 @@ func TestSteeringInputsPreviewCommitRestoreAndRequestEquivalence(t *testing.T) {
 		t.Fatal(err)
 	}
 	restored := restoredValue.(*Conversation)
-	liveTranscript, err := conversation.ProjectTranscript()
+	liveTranscript, _, err := conversation.ProjectTranscriptFrom(0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	restoredTranscript, err := restored.ProjectTranscript()
+	restoredTranscript, _, err := restored.ProjectTranscriptFrom(0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,8 +122,8 @@ func TestSteeringInputsPreviewCommitRestoreAndRequestEquivalence(t *testing.T) {
 	if !bytes.Equal(liveBytes.Bytes(), restoredBytes.Bytes()) {
 		t.Fatal("restored request differs from uninterrupted request")
 	}
-	liveFootprint, _ := conversation.HistoryFootprint()
-	restoredFootprint, _ := restored.HistoryFootprint()
+	_, liveFootprint, _ := conversation.ProjectContextWindow()
+	_, restoredFootprint, _ := restored.ProjectContextWindow()
 	if liveFootprint != restoredFootprint {
 		t.Fatal("restored footprint changed")
 	}

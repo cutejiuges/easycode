@@ -29,7 +29,7 @@ explore -> propose -> review/confirm -> apply -> verify -> archive
 - 发现设计不成立或范围扩大时暂停实现，先更新 OpenSpec artifacts，不得静默降级、延期或扩张范围。
 - 验收完成后同步需要沉淀的 specs，再归档 change。
 
-以下契约变更必须先走 OpenSpec：Provider wire/capability/native item、HistoryProjector、RuntimeCommand/Event、Tool schema/result、Session/JSONL/SQLite schema、缓存 fingerprint/usage 口径、权限与 sandbox、hooks/plugins/skills/MCP manifest、Subagent thread/completion envelope、跨包公共接口或依赖方向。
+以下契约变更必须先走 OpenSpec：Provider wire/capability/native item、HistoryProjector、RuntimeCommand/Event、Tool schema/result、Session/JSONL/Catalog 快照结构、缓存 fingerprint/usage 口径、权限与 sandbox、hooks/plugins/skills/MCP manifest、Subagent thread/completion envelope、跨包公共接口或依赖方向。
 
 纯错别字、注释、测试数据或不改变行为的内部重命名可以不创建 change，但仍须通过质量门。ADR 只保存长期架构决策的理由，不替代 OpenSpec 的需求与任务管理。
 
@@ -81,7 +81,7 @@ explore -> propose -> review/confirm -> apply -> verify -> archive
 - 工具参数完整并进入 ToolCallReady 后才能产生副作用；每次调用具有唯一 call ID 和幂等 ledger。
 - 并发执行结果仍按模型调用顺序提交，保持 tool call/output pairing；文件、命令和网络操作必须经过权限、路径和 sandbox capability。
 - 大输出必须截断，完整内容按策略保存为 artifact。
-- JSONL 是 Session 事实源，SQLite 只是可重建索引；Session/native/checkpoint envelope 只保留唯一当前结构，不含 schema_version、payload_version、canary 或同义版本标记，headless 外部 JSONL 独立版本化，二者不得混为一套协议。压缩来源不得保存固定 prompt revision；Catalog 不设置或校验 user_version，只验证实际结构与完整性。
+- JSONL 是 Session 事实源，Catalog 快照只是可重建索引；Session/native/checkpoint envelope 只保留唯一当前结构，不含 schema_version、payload_version、canary 或同义版本标记，headless 外部 JSONL 独立版本化，二者不得混为一套协议。压缩来源不得保存固定 prompt revision；Catalog 只验证唯一当前快照结构与完整性，不使用格式版本门禁。
 - 当前没有存量用户或业务数据，格式调整直接修改唯一当前结构并替换 `testdata/current` fixture，不递增版本，不保留兼容 reader。只有用户明确要求多版本兼容后，才另经 OpenSpec 定义历史 fixture、迁移与退出条件；禁止在 resume 时原地重写既有 append-only records。
 - 每个活动 thread 的单 writer 指跨 goroutine、跨 Repository 实例和跨进程独占；exclusive lease 必须先于 load/repair 获得并保持到 writer 完成 Sync 和关闭，禁止 load/reopen 无锁窗口。
 - Session 写入保持 append-only、单调 seq，并能修复尾部半行；flush 不代表 durable success，恢复或副作用前置事实只有在成功 Sync 后才能确认。

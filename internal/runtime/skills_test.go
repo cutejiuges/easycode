@@ -45,7 +45,7 @@ func testExplicitSkillPermissionRequiresDurableInput(t *testing.T, source domain
 	}
 	runtime := newTestRuntime(t, &fakeConversation{stream: fixedStream()}, &fakeJournal{})
 	runtime.explicitSkills = []domain.SkillAttachment{attachment}
-	if err := runtime.RunTurn(context.Background(), runtimeInputs("ordinary next turn"), func(protocol.Event) {}); err == nil {
+	if err := runtime.runFixtureTurn(context.Background(), runtimeInputs("ordinary next turn"), func(protocol.Event) {}); err == nil {
 		t.Fatal("missing terminal failure was not reported")
 	}
 	if len(runtime.explicitSkills) != 0 {

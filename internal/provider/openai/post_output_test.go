@@ -160,7 +160,7 @@ func testPostOutputGoldenRestore(t *testing.T, failed bool, cut string) {
 			live := &Conversation{provider: instance}
 			var envelopes []provider.NativeCommitEnvelope
 			for _, value := range append(history, entry) {
-				live.history.commit(value)
+				live.history.Append(value)
 				e, err := encodeNativeCommit(value)
 				if err != nil {
 					t.Fatal(err)
@@ -181,8 +181,8 @@ func testPostOutputGoldenRestore(t *testing.T, failed bool, cut string) {
 			if err != nil || !bytes.Equal(first.Bytes(), second.Bytes()) {
 				t.Fatal("post restore changed canonical request", err)
 			}
-			before, _ := live.HistoryFootprint()
-			after, _ := restored.HistoryFootprint()
+			_, before, _ := live.ProjectContextWindow()
+			_, after, _ := restored.ProjectContextWindow()
 			if before != after || !bytes.Contains(second.Bytes(), []byte("opaque-post")) {
 				t.Fatal("post restore changed fingerprint/order/opaque evidence")
 			}
@@ -201,7 +201,7 @@ func testPostOutputGoldenRestore(t *testing.T, failed bool, cut string) {
 				t.Fatal(err)
 			}
 			reader := NewHistoryReader()
-			if _, err := reader.ProjectStoredHistory(context.Background(), provider.HistorySource{Family: instance.Family(), Wire: responsesWire, Model: "fixture-model"}, records); err == nil {
+			if _, err := reader.ProjectStoredHistory(context.Background(), provider.HistorySource{Family: instance.Family(), Wire: responsesWire, Model: "fixture-model"}, records, nil); err == nil {
 				t.Fatal("forged native output accepted")
 			}
 			if _, err := provider.NewToolOutputRestoreRecord(records[len(records)-1].TurnID(), envelope, nil); err == nil {
@@ -219,7 +219,7 @@ func testPostOutputGoldenRestore(t *testing.T, failed bool, cut string) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			request, err := live.compileCompactionRequest(compact)
+			request, err := live.compileCompactionRequest(live.history.Snapshot(), compact)
 			if err != nil || !(bytes.Contains(request.Bytes(), []byte("Read-only check:")) || cut == "cancelled" && bytes.Contains(request.Bytes(), []byte("cancelled"))) {
 				t.Fatal("post feedback missing from compaction source", err)
 			}

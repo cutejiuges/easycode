@@ -48,7 +48,7 @@ func writeJSONFrame[E any](writer io.Writer, failed *bool, label string, event E
 		return fmt.Errorf("encode %s event failed", label)
 	}
 	frame := append(append(make([]byte, 0, len(encoded)+1), encoded...), '\n')
-	if err := writeFull(writer, frame); err != nil {
+	if written, err := writer.Write(frame); err != nil || written != len(frame) {
 		*failed = true
 		return fmt.Errorf("write %s event failed", label)
 	}

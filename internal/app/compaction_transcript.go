@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"sort"
 
@@ -16,9 +17,12 @@ type compactionTranscript struct {
 	summary  domain.ContextSummary
 }
 
-func restoreCompactionTranscript(projector provider.CheckpointProjector, plan session.ReplayPlan) ([]compactionTranscript, error) {
+func restoreCompactionTranscript(ctx context.Context, projector provider.CheckpointReader, plan session.ReplayPlan) ([]compactionTranscript, error) {
 	values := make([]compactionTranscript, 0)
 	for _, operation := range plan.Compactions {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if operation.Completed == nil {
 			continue
 		}
@@ -31,13 +35,17 @@ func restoreCompactionTranscript(projector provider.CheckpointProjector, plan se
 		}
 		values = append(values, compactionTranscript{sequence: operation.TerminalSequence, id: operation.Started.ID, summary: summary})
 	}
-	return values, nil
+	return values, ctx.Err()
 }
 
 func mergeCompactionTranscript(nodes []transcriptNode, compactions []compactionTranscript) []transcriptNode {
-	result := append([]transcriptNode{}, nodes...)
+	if len(compactions) == 0 {
+		return nodes
+	}
+	result := make([]transcriptNode, 0, len(nodes)+len(compactions))
+	result = append(result, nodes...)
 	for _, boundary := range compactions {
-		result = append(result, transcriptNode{cursor: protocol.TranscriptCursor{Sequence: boundary.sequence}, compaction: &boundary, toolIndex: -1})
+		result = append(result, transcriptNode{cursor: protocol.TranscriptCursor{Sequence: boundary.sequence}, compaction: &boundary})
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].cursor.Before(result[j].cursor) })
 	return result
@@ -52,26 +60,18 @@ func (q *transcriptQueries) CompactionCommitted(sequence uint64, id domain.Compa
 		return err
 	}
 	q.mu.Lock()
-	existing, nodes := q.compactions, q.nodes
-	invalid := q.invalid || q.closed
-	q.mu.Unlock()
-	if invalid {
+	defer q.mu.Unlock()
+	if q.invalid || q.closed {
 		return fmt.Errorf("compaction transcript is unavailable")
 	}
-	for _, boundary := range existing {
-		if boundary.sequence >= sequence || boundary.id == id {
-			return fmt.Errorf("compaction transcript order is invalid")
-		}
-	}
-	if len(nodes) > 0 && nodes[len(nodes)-1].cursor.Sequence >= sequence {
-		return fmt.Errorf("compaction transcript sequence is invalid")
+	if _, exists := q.compactionIDs[id]; exists || q.lastSequence >= sequence {
+		return fmt.Errorf("compaction transcript order is invalid")
 	}
 	boundary := compactionTranscript{sequence: sequence, id: id, summary: summary}
-	next := append(append([]compactionTranscript{}, existing...), boundary)
-	updated := append(append([]transcriptNode{}, nodes...), transcriptNode{cursor: protocol.TranscriptCursor{Sequence: sequence}, compaction: &boundary, toolIndex: -1})
-	mainNodes := mainTranscriptNodes(updated)
-	q.mu.Lock()
-	q.compactions, q.nodes, q.mainNodes = next, updated, mainNodes
-	q.mu.Unlock()
+	node := transcriptNode{cursor: protocol.TranscriptCursor{Sequence: sequence}, compaction: &boundary}
+	q.mainNodes.append([]int{q.nodes.len()})
+	q.nodes.append([]transcriptNode{node})
+	q.compactionIDs[id] = struct{}{}
+	q.lastSequence = sequence
 	return nil
 }

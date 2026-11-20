@@ -13,14 +13,15 @@ import (
 )
 
 type fakeChatSession struct {
-	mu         sync.Mutex
-	submits    []string
-	events     chan protocol.Event
-	outputs    chan protocol.ControlItem
-	submitErr  error
-	interrupts int
-	contexts   []context.Context
-	approvals  []capturedApproval
+	mu                  sync.Mutex
+	submits             []string
+	events              chan protocol.Event
+	outputs             chan protocol.ControlItem
+	submitErr           error
+	interrupts          int
+	lastInterruptedTurn domain.TurnID
+	contexts            []context.Context
+	approvals           []capturedApproval
 }
 
 type capturedApproval struct {
@@ -98,9 +99,10 @@ func testAdmissionMessage(model Model, command tea.Cmd) tea.Msg {
 	return waitForControl(model.outputs)()
 }
 
-func (session *fakeChatSession) Interrupt() {
+func (session *fakeChatSession) InterruptTurn(turnID domain.TurnID) {
 	session.mu.Lock()
 	session.interrupts++
+	session.lastInterruptedTurn = turnID
 	session.mu.Unlock()
 }
 
@@ -136,6 +138,43 @@ func TestApprovalFeedbackEscapeAndResolutionLifecycle(t *testing.T) {
 	model = updateModel(t, model, RuntimeEventMsg{Event: resolved})
 	if model.approval != nil {
 		t.Fatal("resolved event did not close overlay")
+	}
+}
+
+func TestApprovalOwnsKeysOverSkillsUntilTurnCleanup(t *testing.T) {
+	session := &fakeChatSession{}
+	model := NewModel(context.Background(), "test", session).WithSkills([]domain.SkillListEntry{
+		completionSkillEntry(t, "first", "First skill"),
+		completionSkillEntry(t, "second", "Second skill"),
+	})
+	model.skillsOpen = true
+	model.skillSelection = 1
+	model.composer = composerWithText(t, "keep draft")
+	event := mustApprovalRequested(t)
+	model.activeTurnID = event.TurnID
+	model = updateModel(t, model, RuntimeEventMsg{Event: event})
+	if !strings.Contains(model.View(), "--- a/src/main.go") {
+		t.Fatal("Skills hid the pending approval")
+	}
+	model, stop := updateModelWithCommand(t, model, tea.KeyMsg{Type: tea.KeyCtrlC})
+	if stop == nil || !model.approval.submitted {
+		t.Fatal("approval did not enter cancellation")
+	}
+	stop()
+	for _, key := range []tea.KeyType{tea.KeyCtrlC, tea.KeyEsc, tea.KeyEnter} {
+		model, stop = updateModelWithCommand(t, model, tea.KeyMsg{Type: key})
+		if stop != nil {
+			t.Fatal("approval accepted another action during cancellation", key)
+		}
+	}
+	if session.interrupts != 1 || session.lastInterruptedTurn != event.TurnID || len(session.approvals) != 0 {
+		t.Fatal("approval did not cancel the displayed turn exactly once")
+	}
+	completed := mustRuntimeCompleted(t)
+	completed.TurnID = event.TurnID
+	model = updateModel(t, model, RuntimeEventMsg{Event: completed})
+	if model.approval != nil || !strings.Contains(model.View(), "> /second") || model.composer.text != "keep draft" {
+		t.Fatal("turn cleanup lost the Skills position or draft")
 	}
 }
 

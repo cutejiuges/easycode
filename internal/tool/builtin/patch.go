@@ -26,7 +26,10 @@ type patchHooks struct {
 	cleanup       func(int, string) error
 }
 
-var errPatchConflict = errors.New("patch base conflicts with candidate")
+var (
+	errPatchConflict         = errors.New("patch base conflicts with candidate")
+	errPatchCleanupUncertain = errors.New("patch cleanup is uncertain")
+)
 
 // PatchPreparer 只读取已打开Workspace中的目标，不创建或修改文件。
 type PatchPreparer struct{ workspace *Workspace }
@@ -123,7 +126,7 @@ func (executor *PatchExecutor) Execute(ctx context.Context, candidate tool.Patch
 	}
 	committed, err := target.replace(ctx, candidate.Evidence(), candidate.FinalBytes(), executor.hooks)
 	if err != nil {
-		if committed {
+		if committed || errors.Is(err, errPatchCleanupUncertain) {
 			return failed(tool.ResultOutcomeUncertain, "patch_durability_uncertain")
 		}
 		if errors.Is(err, errPatchConflict) {

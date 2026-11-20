@@ -69,7 +69,8 @@ func TestExecTurnDurabilityAndFinalizersFailClosedAtEveryBoundary(t *testing.T) 
 				executor.resultOverride = func(tool.ExecCandidate) tool.InvocationResult { return tool.InvocationResult{} }
 			}
 			config := testRuntimeConfig(t, journal)
-			config.ExecPreparer, config.ExecExecutor, config.InteractiveApprovals = executor, executor, true
+			config.ToolBinding = testRuntimeToolBinding(t, func(tools *tool.Components) { tools.PrepareExec, tools.Exec = executor, executor })
+			config.InteractiveApprovals = true
 			config.GenerateTurnID = func() (domain.TurnID, error) { return runtimeTurnID, nil }
 			config.GenerateInvocationID = func() (tool.InvocationID, error) { return invocation.InvocationID(), nil }
 			runtime, err := New(conversation, config)
@@ -77,7 +78,7 @@ func TestExecTurnDurabilityAndFinalizersFailClosedAtEveryBoundary(t *testing.T) 
 				t.Fatal(err)
 			}
 			var events []protocol.Event
-			err = runtime.RunTurn(context.Background(), runtimeInputs("run command"), execApprovalEmitter(t, runtime, tool.ApprovalAllowOnce, &events))
+			err = runtime.runFixtureTurn(context.Background(), runtimeInputs("run command"), execApprovalEmitter(t, runtime, tool.ApprovalAllowOnce, &events))
 			if err == nil || !runtime.poisoned.Load() {
 				t.Fatalf("boundary did not poison: %v", err)
 			}

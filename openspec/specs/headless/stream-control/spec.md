@@ -85,6 +85,15 @@ effort.query/effort.set/tasks.query 的完整编码行 SHALL 额外限制为 4 K
 
 `control.response` 只确认命令 admission 或拒绝，不得伪装成 durable turn start 或 terminal。对严格 input.submit 的 `starting`/`queued` submit，后续对应的全部 `turn.*` 和 `assistant.text.delta` 事件 SHALL 携带相同 `input_id`；只有 `turn.started` 才表示对应 `turn_started` 已 durable。显式 shutdown 丢弃已接受但未启动的输入时，系统 SHALL 为每个严格输入输出一次携带其 `input_id` 和 `session_shutdown` error 的 `input.discarded`；自动输入使用 input.status returned。
 
+外部 v1 的命令类型与接受后的 disposition MUST 对应同一条已验证的内部命令契约。例如 `context.query` 成功只允许 `queried`。不匹配的类型、状态、disposition 或关联身份在写帧前失败关闭。
+
+已解码 `input.submit` 的可预期正文或附件准备失败 SHALL 经同一命令 owner 产生一个关联的 `rejected/invalid_input`。同一请求身份继续应用当前去重和关闭优先级。拒绝不得入队、分配 input ID、产生 Provider 请求或终止后续流控。解码错误和 transport 或 owner 失败沿对应终态收口。
+
+#### Scenario: Reject one input and keep the command stream open
+
+- **WHEN** 合法 input.submit 引用未知 Skill，之后收到合法 cache.query 或普通输入
+- **THEN** 前者收到同 request ID 的一次拒绝，后者按顺序取得正常响应，拒绝不产生 turn 或泄漏用户正文
+
 #### Scenario: Acknowledge a queued input before it starts
 
 - **WHEN** `input.submit` 在另一个 turn 活跃时被接受
@@ -122,6 +131,10 @@ effort.query/effort.set/tasks.query 的完整编码行 SHALL 额外限制为 4 K
 #### Scenario: Cancel an old compaction
 - **WHEN** expected_compaction_id 不匹配当前活动压缩
 - **THEN** 一次 rejected response，不取消当前 worker 或后续 turn
+
+#### Scenario: Reject a response with the wrong disposition before encoding
+- **WHEN** 输出侧收到 context.query 的 accepted 响应但 disposition 为 updated
+- **THEN** 拒绝该帧且无部分输出，合法 query 响应保持 v1 的字段和顺序
 
 ### Requirement: One stdout writer preserves cross-protocol order
 
@@ -165,6 +178,8 @@ stdin EOF SHALL 被解释为 graceful input close：应用停止 admission，继
 
 流式会话在 EOF drain 或显式 shutdown 下完成全部协议和资源清理时 SHALL 返回退出码 `0`；单个 turn 的 `turn.failed` 或命令级 rejected 已通过机器事件报告时，不得单独把健康控制进程变成基础设施失败。CLI 用法错误仍为退出码 `2`。所有对外错误必须是稳定、安全的英文 code/message，不得包含输入正文、底层 cause、secret、Provider 正文或 Session opaque payload。
 
+输出 transport owner SHALL 持续拥有底层 stdout 直到终态帧完成或确定无法交付。最后一帧被背压阻塞期间发生取消或强制关闭，MUST 解除该写入，等待同一 writer、Runtime 和 Session 完成，沿用输出不可用失败分类。在可用 stdout 上仍发布单个安全终止性错误。
+
 #### Scenario: Fail a malformed command safely
 
 - **WHEN** reader 收到一个无法严格解码的非空 JSON 行
@@ -181,6 +196,10 @@ stdin EOF SHALL 被解释为 graceful input close：应用停止 admission，继
 - **WHEN** stdout 在活动 turn 中发生短写或断管
 - **THEN** 应用不再写 stdout，请求取消并等待 Runtime、Session writer 和 stream cleanup
 - **THEN** 进程以退出码 `1` 结束且不把部分输出提交为成功历史
+
+#### Scenario: Cancel while writing the final error frame
+- **WHEN** 未读取的 stdout 确定性阻塞最终 error 帧，宿主随后取消
+- **THEN** 同一个 transport owner 解除写入并完成清理，进程退出且 journal lease 可重新获取，不再尝试第二个终态帧
 
 ### Requirement: Streaming request deduplication is process-local
 

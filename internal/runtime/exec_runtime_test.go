@@ -53,7 +53,7 @@ func runtimeExecFixture(t *testing.T, journal Journal) (*Runtime, tool.Invocatio
 		t.Fatal(err)
 	}
 	components := &fixedExecComponents{candidate: candidate}
-	runtime := &Runtime{journal: journal, sessionID: runtimeSessionID, threadID: runtimeThreadID, execPreparer: components, execExecutor: components, newApprovalRequestID: tool.GenerateApprovalRequestID, interactiveApprovals: true}
+	runtime := &Runtime{journal: journal, sessionID: runtimeSessionID, threadID: runtimeThreadID, tools: tool.Components{PrepareExec: components, Exec: components}, newApprovalRequestID: tool.GenerateApprovalRequestID, interactiveApprovals: true}
 	seedRuntimeToolCall(t, runtime, runtimeTurnID, invocation, 0, 0)
 	return runtime, invocation, components
 }
@@ -135,6 +135,33 @@ func TestExecAdmissionCancellationLinearization(t *testing.T) {
 		} else if executor.calls != 0 || result.Status() != tool.ResultCancelled || result.Code() != "cancelled_before_execution" {
 			t.Fatal("unaccepted Exec created side effects")
 		}
+	}
+}
+
+func TestAcceptedExecApprovalSurvivesCancellationBeforeStart(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	journal := &fakeJournal{}
+	runtime, invocation, executor := runtimeExecFixture(t, journal)
+	var events []protocol.Event
+	approve := execApprovalEmitter(t, runtime, tool.ApprovalAllowOnce, &events)
+	result, _, err := executeExecActivityTest(runtime, ctx, func(event protocol.Event) {
+		approve(event)
+		if event.Kind == protocol.EventToolApprovalRequested {
+			cancel()
+		}
+	}, runtimeTurnID, invocation)
+	if err != nil || executor.calls != 0 || result.Code() != "cancelled_before_execution" {
+		t.Fatalf("accepted approval and execution cancellation were conflated: %v, %v", result.Code(), err)
+	}
+	batches := journal.snapshot()
+	if len(batches) != 2 || len(batches[0]) != 1 || len(batches[1]) != 1 || batches[1][0].EventKind() != session.EventToolCallResult {
+		t.Fatal("expected one approval fact and one result without execution started")
+	}
+	draft := batches[0][0]
+	fact, err := session.DecodeToolApprovalDecidedPayload(session.Record{EventKind: draft.EventKind(), Payload: draft.PayloadBytes()})
+	if err != nil || fact.Outcome != tool.ApprovalOutcomeAllowOnce || fact.Source != session.ApprovalSourceInteractive {
+		t.Fatalf("accepted interactive approval was rewritten: %v, %v", fact, err)
 	}
 }
 

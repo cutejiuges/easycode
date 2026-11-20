@@ -297,7 +297,8 @@ func facadeWireKind(family domain.ProviderFamily, capability CapabilityID) Provi
 	return WireStructured
 }
 
-func appendStructuredFacades(facades []Facade, capability CapabilityID, description string, schema codec.CanonicalJSON) []Facade {
+func structuredFacades(capability CapabilityID, description string, schema codec.CanonicalJSON) []Facade {
+	facades := make([]Facade, 0, 2)
 	for _, family := range [...]domain.ProviderFamily{domain.ProviderAnthropic, domain.ProviderOpenAI} {
 		name, id := facadeIdentity(family, capability)
 		facades = append(facades, Facade{
@@ -308,95 +309,15 @@ func appendStructuredFacades(facades []Facade, capability CapabilityID, descript
 	return facades
 }
 
-// buildReadOnlyFacades 只构造真实只读子集，不建立可执行的旧目录契约。
-func buildReadOnlyFacades() ([]Facade, error) {
-	readSchema, err := buildReadSchema()
-	if err != nil {
-		return nil, err
-	}
-	globSchema, err := buildGlobSchema()
-	if err != nil {
-		return nil, err
-	}
-	grepSchema, err := buildGrepSchema()
-	if err != nil {
-		return nil, err
-	}
-	descriptions := map[CapabilityID]string{
-		CapabilityRead: "Reads a UTF-8 text file from the local workspace with stable 1-based line numbers.",
-		CapabilityGlob: "Finds regular files in the local workspace using a deterministic workspace-relative glob pattern.",
-		CapabilityGrep: "Searches UTF-8 text files in the local workspace using deterministic line-oriented RE2 semantics.",
-	}
-	schemas := map[CapabilityID]codec.CanonicalJSON{CapabilityRead: readSchema, CapabilityGlob: globSchema, CapabilityGrep: grepSchema}
-	facades := make([]Facade, 0, 6)
-	for _, capability := range []CapabilityID{CapabilityRead, CapabilityGlob, CapabilityGrep} {
-		facades = appendStructuredFacades(facades, capability, descriptions[capability], schemas[capability])
-	}
-	return facades, nil
-}
-
-// buildFileFacades 构造文件类完整子集：Read/Glob/Grep/Patch/Write。
-func buildFileFacades() ([]Facade, error) {
-	readOnly, err := buildReadOnlyFacades()
-	if err != nil {
-		return nil, err
-	}
+func buildPatchFacades() ([]Facade, error) {
 	editSchema, err := buildEditSchema()
 	if err != nil {
 		return nil, err
 	}
-	patchFacades := []Facade{
+	return []Facade{
 		{id: FacadeAnthropicEdit, family: domain.ProviderAnthropic, name: "Edit", description: "Edits one existing UTF-8 workspace file after showing the exact diff for approval.", capability: CapabilityPatch, wireKind: WireStructured, schema: editSchema},
 		{id: FacadeOpenAIPatch, family: domain.ProviderOpenAI, name: "apply_patch", description: "The `apply_patch` tool edits one existing file. This is a FREEFORM tool, so do not wrap the patch in JSON.", capability: CapabilityPatch, wireKind: WireCustomFreeform, format: FreeformFormat{kind: "grammar", syntax: "lark", definition: applyPatchGrammar()}},
-	}
-	writeSchema, err := buildWriteSchema()
-	if err != nil {
-		return nil, err
-	}
-	facades := append(readOnly, patchFacades...)
-	facades = appendStructuredFacades(facades, CapabilityWrite, "Creates or overwrites one UTF-8 workspace file with exact content after approval. Overwriting requires a complete Read delivered in an earlier sample; truncated or same-sample reads do not qualify. Missing parent directories are created atomically. Use Edit or apply_patch for partial changes.", writeSchema)
-	return facades, nil
-}
-
-// NewCatalogSnapshot 创建当前十能力唯一目录，要求所有消费者已显式装配。
-func NewCatalogSnapshot(readExecutor ReadExecutor, globExecutor GlobExecutor, grepExecutor GrepExecutor, preparer PatchPreparer, patchExecutor PatchExecutor, writePreparer WritePreparer, writeExecutor WriteExecutor, execPreparer ExecPreparer, execExecutor ExecExecutor, renderer ExecOutputRenderer, policy Policy, artifactExecutor ReadArtifactExecutor, skillExecutor SkillExecutor, questionExecutor QuestionExecutor, taskExecutor TaskExecutor) (CatalogSnapshot, error) {
-	if readExecutor == nil || globExecutor == nil || grepExecutor == nil || preparer == nil || patchExecutor == nil || writePreparer == nil || writeExecutor == nil || execPreparer == nil || execExecutor == nil || renderer == nil || policy == nil || artifactExecutor == nil || skillExecutor == nil || questionExecutor == nil || taskExecutor == nil {
-		return CatalogSnapshot{}, errors.New("all tool components are required")
-	}
-	facades, err := buildFileFacades()
-	if err != nil {
-		return CatalogSnapshot{}, err
-	}
-	execSchema, err := buildExecSchema()
-	if err != nil {
-		return CatalogSnapshot{}, err
-	}
-	facades = appendStructuredFacades(facades, CapabilityExec, "Runs a foreground command after one-time approval, with workspace writes, no network, bounded output and timeout.", execSchema)
-	artifactSchema, err := buildArtifactSchema()
-	if err != nil {
-		return CatalogSnapshot{}, err
-	}
-	facades = appendStructuredFacades(facades, CapabilityReadArtifact, "Reads a saved command-output prefix by artifact ID from the current thread. Offsets and limits count raw bytes; partial storage EOF does not mean complete command output.", artifactSchema)
-	skillSchema, err := buildSkillSchema()
-	if err != nil {
-		return CatalogSnapshot{}, err
-	}
-	facades = appendStructuredFacades(facades, CapabilitySkill, "Loads complete local skill instructions by name, or reads a relative supporting resource from the same source. Does not grant tool permissions. args and resource are mutually exclusive.", skillSchema)
-
-	questionSchema, err := buildQuestionSchema()
-	if err != nil {
-		return CatalogSnapshot{}, err
-	}
-	facades = appendStructuredFacades(facades, CapabilityQuestion, "Asks the user one to four questions with single or multiple choices and optional notes, then waits for explicit answers. The client adds Other. Put a recommended choice first with (Recommended) in its label. Ask before generating tool calls whose parameters depend on the answer. Answers never grant tool permissions. Requires an interactive host.", questionSchema)
-	tasks, err := buildTaskFacades()
-	if err != nil {
-		return CatalogSnapshot{}, err
-	}
-	facades = append(facades, tasks...)
-	for i := range facades {
-		facades[i].serverSchema = serverSchemaMode(facades[i].family, facades[i].wireKind, facades[i].capability)
-	}
-	return newCatalogSnapshot(facades)
+	}, nil
 }
 
 func buildArtifactSchema() (codec.CanonicalJSON, error) {

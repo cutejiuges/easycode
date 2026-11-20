@@ -282,9 +282,6 @@ type PlannedSource struct {
 // Kind 返回来源类型。
 func (source PlannedSource) Kind() SourceKind { return source.kind }
 
-// Lifecycle 返回来源更新方式。
-func (source PlannedSource) Lifecycle() SourceLifecycle { return source.lifecycle }
-
 // Revision 返回来源 schema 或已提交历史 revision。
 func (source PlannedSource) Revision() string { return source.revision }
 

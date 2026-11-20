@@ -60,7 +60,7 @@ func (m Model) handlePluginsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.Type {
 	case tea.KeyCtrlC:
 		m.plugins.open = false
-		return m.handleKey(key)
+		return m.handleCancelKey()
 	case tea.KeyEsc:
 		if m.plugins.detail {
 			m.plugins.detail = false

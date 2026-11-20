@@ -2,6 +2,7 @@ package openai
 
 import (
 	"bytes"
+	"context"
 	"easycode/internal/codec"
 	"easycode/internal/domain"
 	"easycode/internal/provider"
@@ -178,7 +179,7 @@ func TestPreInputRewriteNativeGoldenRestoreAndCache(t *testing.T) {
 				live := &Conversation{provider: instance, threadID: "01900000-0000-7000-8000-000000000001"}
 				var envelopes []provider.NativeCommitEnvelope
 				for _, e := range append(history, entry) {
-					live.history.commit(e)
+					live.history.Append(e)
 					native, err := encodeNativeCommit(e)
 					if err != nil {
 						t.Fatal(err)
@@ -197,16 +198,16 @@ func TestPreInputRewriteNativeGoldenRestoreAndCache(t *testing.T) {
 				}
 				for _, policy := range []domain.CachePolicy{domain.DefaultCachePolicy(), mustStopCachePolicy(t)} {
 					instance.config.CachePolicy = policy
-					request, err := live.compileSamplingRequest(live.history.snapshot(), sampling)
+					request, err := live.compileSamplingRequest(live.history.Entries(), sampling)
 					if err != nil {
 						t.Fatal(err)
 					}
-					again, err := restored.compileSamplingRequest(restored.history.snapshot(), sampling)
+					again, err := restored.compileSamplingRequest(restored.history.Entries(), sampling)
 					if err != nil || !bytes.Equal(request.Bytes(), again.Bytes()) {
 						t.Fatal("restored request/cache bytes changed", err)
 					}
-					before, _ := live.HistoryFootprint()
-					after, _ := restored.HistoryFootprint()
+					_, before, _ := live.ProjectContextWindow()
+					_, after, _ := restored.ProjectContextWindow()
 					if before != after {
 						t.Fatal("native item order/fingerprint/revision changed")
 					}
@@ -273,7 +274,7 @@ func TestPreInputRewriteNativeGoldenRestoreAndCache(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if value, err := instance.RestoreConversation("01900000-0000-7000-8000-000000000001", records); err == nil || value != nil {
+				if value, _, err := instance.RestoreConversation(context.Background(), "01900000-0000-7000-8000-000000000001", records); err == nil || value != nil {
 					t.Fatal("forged effective input/output accepted")
 				}
 				// ready 必须仍为 O；把 E 塞进原始 sample 关联也必须拒绝。
@@ -284,7 +285,7 @@ func TestPreInputRewriteNativeGoldenRestoreAndCache(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if value, err := instance.RestoreConversation("01900000-0000-7000-8000-000000000001", records); err == nil || value != nil {
+					if value, _, err := instance.RestoreConversation(context.Background(), "01900000-0000-7000-8000-000000000001", records); err == nil || value != nil {
 						t.Fatal("effective input impersonated original native call")
 					}
 				}

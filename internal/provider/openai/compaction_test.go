@@ -35,7 +35,7 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 	entries := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, NewUserItem(strings.Repeat("archived work ", 100))), {Kind: nativeHistorySample, Outputs: []NativeItem{{Type: "reasoning", EncryptedContent: "old-opaque"}, {Type: "message", Role: "assistant", Content: []ContentPart{{Type: "output_text", Text: "old answer"}}}}}})
 	envelopes := make([]provider.NativeCommitEnvelope, 0)
 	for _, entry := range entries {
-		conversation.history.commit(entry)
+		conversation.history.Append(entry)
 		envelope, err := encodeNativeCommit(entry)
 		if err != nil {
 			t.Fatal(err)
@@ -44,7 +44,7 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 	}
 	records := testRestoreRecords(t, envelopes)
 	full := conversation.ProjectHistory()
-	fullTranscript, err := conversation.ProjectTranscript()
+	fullTranscript, _, err := conversation.ProjectTranscriptFrom(0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,11 +56,11 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 	if err != nil {
 		t.Fatal(err)
 	}
-	preview, err := conversation.PreflightCompaction(compactInput)
+	preview, preflightContext, err := conversation.PreflightCompaction(compactInput)
 	if err != nil {
 		t.Fatal(err)
 	}
-	request, err := conversation.compileCompactionRequest(compactInput)
+	request, err := conversation.compileCompactionRequest(conversation.history.Snapshot(), compactInput)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,22 +93,27 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 		t.Fatal(err)
 	}
 	testOfflineUsageEvidence(t, instance, prepared, checkpoint)
-	before, _ := conversation.HistoryFootprint()
+	_, before, _ := conversation.ProjectContextWindow()
 	if before.Revision() != 2 {
 		t.Fatal("staging changed committed revision")
 	}
 	if err := prepared.Finalize(); err != nil {
 		t.Fatal(err)
 	}
-	afterTranscript, err := conversation.ProjectTranscript()
+	captured, capturedFootprint, err := preflightContext()
+	if err != nil || captured.Revision() != preview.Source().ContextRevision() ||
+		capturedFootprint != before || !reflect.DeepEqual(captured.History(), full) {
+		t.Fatal("preflight projection did not retain its original committed window", err)
+	}
+	afterTranscript, _, err := conversation.ProjectTranscriptFrom(0)
 	if err != nil || !reflect.DeepEqual(fullTranscript, afterTranscript) {
 		t.Fatal("checkpoint changed native transcript ordinals")
 	}
-	after, _ := conversation.HistoryFootprint()
+	_, after, _ := conversation.ProjectContextWindow()
 	if after.Revision() != 3 || !reflect.DeepEqual(full, conversation.ProjectHistory()) {
 		t.Fatal("checkpoint changed full history or wrong revision")
 	}
-	if _, err := conversation.PreflightCompaction(compactInput); err == nil {
+	if _, _, err := conversation.PreflightCompaction(compactInput); err == nil {
 		t.Fatal("repeated compaction without increments accepted")
 	}
 	record, err := provider.NewCheckpointRestoreRecord(checkpoint, domain.NewNoTaskProgress())
@@ -117,7 +122,7 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 	}
 	records = append(records, record)
 	next := testInputEntry(t, NewUserItem("continue"))
-	conversation.history.commit(next)
+	conversation.history.Append(next)
 	envelope, err := encodeNativeCommit(next)
 	if err != nil {
 		t.Fatal(err)
@@ -128,11 +133,11 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 		t.Fatal(err)
 	}
 	restored := restoredValue.(*Conversation)
-	a, err := conversation.compileSamplingRequest(conversation.history.snapshot(), input)
+	a, err := conversation.compileSamplingRequest(conversation.history.Entries(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := restored.compileSamplingRequest(restored.history.snapshot(), input)
+	b, err := restored.compileSamplingRequest(restored.history.Entries(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,8 +158,8 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 	if !reflect.DeepEqual(av, bv) || len(av.History().Turns) != 1 {
 		t.Fatal("active view restore mismatch")
 	}
-	af, _ := conversation.HistoryFootprint()
-	bf, _ := restored.HistoryFootprint()
+	_, af, _ := conversation.ProjectContextWindow()
+	_, bf, _ := restored.ProjectContextWindow()
 	if af != bf {
 		t.Fatal("active footprint restore mismatch")
 	}
@@ -162,7 +167,7 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 		t.Fatal("full history restore mismatch")
 	}
 	// 第二次 checkpoint 必须绑定前一摘要和新增输入，不能重新覆盖旧窗口来源。
-	secondPreview, err := conversation.PreflightCompaction(compactInput)
+	secondPreview, _, err := conversation.PreflightCompaction(compactInput)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,8 +188,8 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 	if err != nil {
 		t.Fatal(err)
 	}
-	af, _ = conversation.HistoryFootprint()
-	bf, _ = restoredValue.HistoryFootprint()
+	_, af, _ = conversation.ProjectContextWindow()
+	_, bf, _ = restoredValue.ProjectContextWindow()
 	if af != bf || af.Revision() != 5 {
 		t.Fatal("second checkpoint revision mismatch")
 	}
@@ -198,10 +203,10 @@ func testCheckpointWindowAndRestoredRequest(t *testing.T, scope domain.Compactio
 func assertCompactionAfterToolSteering(t *testing.T, instance *Provider, conversation *Conversation, sampling provider.TurnInput, envelopes []provider.NativeCommitEnvelope, outputs []tool.ModelOutput) {
 	t.Helper()
 	records := testRestoreRecords(t, envelopes, outputs)
-	original, _ := conversation.ProjectTranscript()
+	original, _, _ := conversation.ProjectTranscriptFrom(0)
 	input, _ := provider.NewCompactionInput(sampling, "preserve tool observations", 4096)
 	for iteration, id := range []domain.CompactionID{"01900000-0000-7000-8000-000000000080", "01900000-0000-7000-8000-000000000081"} {
-		preview, err := conversation.PreflightCompaction(input)
+		preview, _, err := conversation.PreflightCompaction(input)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -221,11 +226,11 @@ func assertCompactionAfterToolSteering(t *testing.T, instance *Provider, convers
 			t.Fatal(err)
 		}
 		restored := restoredValue.(*Conversation)
-		live, err := conversation.compileSamplingRequest(conversation.history.snapshot(), sampling)
+		live, err := conversation.compileSamplingRequest(conversation.history.Entries(), sampling)
 		if err != nil {
 			t.Fatal(err)
 		}
-		recovered, err := restored.compileSamplingRequest(restored.history.snapshot(), sampling)
+		recovered, err := restored.compileSamplingRequest(restored.history.Entries(), sampling)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -234,8 +239,8 @@ func assertCompactionAfterToolSteering(t *testing.T, instance *Provider, convers
 		}
 		liveView, _ := conversation.ProjectActiveContext()
 		restoredView, _ := restored.ProjectActiveContext()
-		liveFootprint, _ := conversation.HistoryFootprint()
-		restoredFootprint, _ := restored.HistoryFootprint()
+		_, liveFootprint, _ := conversation.ProjectContextWindow()
+		_, restoredFootprint, _ := restored.ProjectContextWindow()
 		if !reflect.DeepEqual(liveView, restoredView) || liveFootprint != restoredFootprint {
 			t.Fatal("tool/steering window changed")
 		}
@@ -262,14 +267,14 @@ func assertCompactionAfterToolSteering(t *testing.T, instance *Provider, convers
 			t.Fatal("restored checkpoint fingerprints changed")
 		}
 
-		transcript, _ := restored.ProjectTranscript()
+		transcript, _, _ := restored.ProjectTranscriptFrom(0)
 		if iteration == 0 && !reflect.DeepEqual(original, transcript) {
 			t.Fatal("tool cursor or frozen preview changed")
 		}
 		if iteration == 0 {
 			// 已提交输入即使没有后续成功 sample，仍必须被下一次压缩覆盖。
 			entry := testInputEntry(t, NewUserItem("failed turn input retained"))
-			conversation.history.commit(entry)
+			conversation.history.Append(entry)
 			envelope, err := encodeNativeCommit(entry)
 			if err != nil {
 				t.Fatal(err)
@@ -282,7 +287,7 @@ func assertCompactionAfterToolSteering(t *testing.T, instance *Provider, convers
 	initial := testInputEntry(t, NewUserItem("post checkpoint input"))
 	tail := []nativeHistoryEntry{initial, nativeHistoryEntry{Kind: nativeHistorySample, TurnID: initial.TurnID, Outputs: []NativeItem{{Type: "function_call", ID: "fc-next", CallID: "call-next", Name: "Read", Arguments: `{"file_path":"next"}`}}}, nativeHistoryEntry{Kind: nativeHistoryToolOutputs, TurnID: initial.TurnID, ToolOutputs: []NativeItem{{Type: "function_call_output", CallID: "call-next", Output: `{"status":"success","code":"ok","content":"done"}`}}}}
 	for _, entry := range tail {
-		conversation.history.commit(entry)
+		conversation.history.Append(entry)
 	}
 	inputID := domain.InputID("01900000-0000-7000-8000-000000000090")
 	association, _ := domain.NewInputAssociation(initial.TurnID, domain.InputSteering, 1, []domain.InputID{inputID})
@@ -294,7 +299,7 @@ func assertCompactionAfterToolSteering(t *testing.T, instance *Provider, convers
 	if err := prepared.Finalize(); err != nil {
 		t.Fatal(err)
 	}
-	entries := conversation.history.snapshot()
+	entries := conversation.history.Entries()
 	tail = append(tail, entries[len(entries)-1])
 	var tailEnvelopes []provider.NativeCommitEnvelope
 	for _, entry := range tail {
@@ -310,19 +315,19 @@ func assertCompactionAfterToolSteering(t *testing.T, instance *Provider, convers
 		t.Fatal(err)
 	}
 	restored := restoredValue.(*Conversation)
-	live, err := conversation.compileSamplingRequest(conversation.history.snapshot(), sampling)
+	live, err := conversation.compileSamplingRequest(conversation.history.Entries(), sampling)
 	if err != nil {
 		t.Fatal(err)
 	}
-	recovered, err := restored.compileSamplingRequest(restored.history.snapshot(), sampling)
+	recovered, err := restored.compileSamplingRequest(restored.history.Entries(), sampling)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(live.Bytes(), recovered.Bytes()) || !bytes.Contains(live.Bytes(), []byte("post checkpoint steering")) {
 		t.Fatal("post-checkpoint steering request changed")
 	}
-	liveTranscript, _ := conversation.ProjectTranscript()
-	restoredTranscript, _ := restored.ProjectTranscript()
+	liveTranscript, _, _ := conversation.ProjectTranscriptFrom(0)
+	restoredTranscript, _, _ := restored.ProjectTranscriptFrom(0)
 	if !reflect.DeepEqual(liveTranscript, restoredTranscript) {
 		t.Fatal("post-checkpoint native ordinal changed")
 	}
