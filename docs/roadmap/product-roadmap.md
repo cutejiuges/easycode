@@ -164,6 +164,8 @@ make verify
 - Anthropic 当前声明 streaming、thinking-signature 原生保留与 structured tools（含 Edit/Write/Bash），OpenAI 当前声明 streaming、encrypted reasoning 原生保留、function tools（含 Write/exec_command）与 custom freeform apply_patch。P2 已落地 completed-sample usage、原生历史 footprint、JSONL Session、resume/headless 和 ContextPlanner；P3 已补充 Read/Glob/Grep/Patch/Write/Exec Tool Loop 与 approval，后续已交付通用工具主线/详情、CachePlanner、三态 usage/cache UI、prompt cache key 与可选 WebSocket `previous_response_id`；被动 thinking/summary 阅读已由 P5 独立切片交付；启动冻结的推理配置、Anthropic thinking 计量和同源请求证据已实现；成本、effort 之外的运行中推理切换和通用自动重试仍未实现。
 - TUI 只消费 typed RuntimeEvent 和 ChatSession facade；已提供 Patch diff/Write、Exec approval overlay、命令进度和 Ctrl+O 历史列表与分页详情，多行 composer、字素编辑、显式 decoded paste 和有界历史；助手流式 Markdown 已接入，本地 `/cache`、`/context`、`/compact`、`/skills`、`/hooks`、`/plugins` 已接入，通用 permission 面板仍待实现；启动 session picker 已于 2026-11-04 接入。
 
+2026-11-19，App 统一绑定协议身份、在线工厂和离线读取策略，Runtime 消费已绑定的强类型操作。两家在保持独立原生 codec、reducer 与 transport 策略的前提下复用窗口、采样、摘要和回放。该重构沿用现有 Provider、存储格式及交互能力。[Provider Kernel](../architecture/overall-architecture.md#5-provider-kernel)
+
 #### OpenAI Responses（首要 Provider）
 
 - Responses request、instructions、input 和 headers。

@@ -47,17 +47,25 @@ func (state *agentLoopRunState) queryContext(request loopCommandRequest) {
 		return
 	}
 	payload := protocol.ContextSnapshotPayload{ContextMetricsPayload: state.contextSnapshot, Effort: effort}
-	if state.active != nil {
-		payload.Activity = "turn"
-		if state.active.compactionID.Valid() {
-			payload.Activity = "compacting"
-		}
-	} else if state.compaction != nil {
-		payload.Activity = "compacting"
-	} else {
-		payload.Activity = "idle"
-	}
+	payload.Activity = state.contextActivity()
 	event, err := protocol.NewContextSnapshot(state.loop.runtime.sessionID, state.loop.runtime.threadID, payload)
+	state.publishContextQuery(request, event, err)
+}
+
+func (state *agentLoopRunState) contextActivity() string {
+	if state.active != nil {
+		if state.active.compactionID.Valid() {
+			return "compacting"
+		}
+		return "turn"
+	}
+	if state.compaction != nil {
+		return "compacting"
+	}
+	return "idle"
+}
+
+func (state *agentLoopRunState) publishContextQuery(request loopCommandRequest, event protocol.Event, err error) {
 	if err != nil {
 		state.reject(request, protocol.ControlErrorInvalidCommand, true)
 		return

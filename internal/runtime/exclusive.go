@@ -28,24 +28,63 @@ func (action exclusiveAction) Matches(result tool.InvocationResult) bool {
 	return action.matches(result)
 }
 
-type exclusiveResult struct {
-	Result    tool.InvocationResult
-	Admission tool.ExecutionAdmission
+func buildApprovalFact(request tool.ApprovalRequest, invocation tool.Invocation, outcome tool.ApprovalOutcome, source session.ApprovalDecisionSource, feedback string) (session.RecordDraft, error) {
+	metadata, err := session.NewApprovalMetadata(invocation)
+	if err != nil {
+		return session.RecordDraft{}, err
+	}
+	return session.NewToolApprovalDecidedDraft(request.TurnID(), session.ToolApprovalDecidedPayload{
+		RequestID: request.RequestID(), InvocationID: invocation.InvocationID(), Fingerprint: request.Fingerprint(),
+		Outcome: outcome, Feedback: feedback, Source: source, Metadata: metadata,
+	})
+}
+
+func (runtime *Runtime) commitApprovalDecision(ctx context.Context, fact session.RecordDraft, label string) error {
+	if _, err := runtime.journal.AppendBatch(context.WithoutCancel(ctx), []session.RecordDraft{fact}); err != nil {
+		runtime.poisoned.Store(true)
+		return fault.Wrap(fault.CodeSessionWrite, "persist "+label+" approval failed", err)
+	}
+	return nil
+}
+
+func (runtime *Runtime) commitApprovalDenial(ctx context.Context, emit Emitter, request tool.ApprovalRequest, outcome tool.ApprovalOutcome, fact session.RecordDraft, result tool.InvocationResult, label string) (tool.InvocationResult, bool, error) {
+	result, err := runtime.freezeResult(result)
+	if err != nil {
+		return tool.InvocationResult{}, false, err
+	}
+	turnID := request.TurnID()
+	resultDraft, err := session.NewToolCallResultDraft(turnID, result)
+	if err != nil {
+		return tool.InvocationResult{}, false, err
+	}
+	records, err := runtime.journal.AppendBatch(context.WithoutCancel(ctx), []session.RecordDraft{fact, resultDraft})
+	if err != nil {
+		runtime.poisoned.Store(true)
+		return tool.InvocationResult{}, false, fault.Wrap(fault.CodeSessionWrite, "persist "+label+" denial failed", err)
+	}
+	if err := runtime.commitResultBudget(result); err != nil {
+		runtime.poisoned.Store(true)
+		return tool.InvocationResult{}, false, err
+	}
+	if err := runtime.notifyToolResult(turnID, result, resultRecordSequence(records)); err != nil {
+		return result, false, err
+	}
+	runtime.emitApprovalResolved(emit, turnID, request, outcome)
+	return result, outcome == tool.ApprovalOutcomeAbort, nil
 }
 
 // executeExclusive 把 started 接收作为取消线性化点，返回前持久化唯一关联结果。
-func (runtime *Runtime) executeExclusive(ctx context.Context, turnID domain.TurnID, invocation tool.Invocation, strategy exclusiveStrategy) (exclusiveResult, error) {
-	var admission tool.ExecutionAdmission
-	finish := func(result tool.InvocationResult) (exclusiveResult, error) {
+func (runtime *Runtime) executeExclusive(ctx context.Context, turnID domain.TurnID, invocation tool.Invocation, strategy exclusiveStrategy) (tool.InvocationResult, error) {
+	finish := func(result tool.InvocationResult) (tool.InvocationResult, error) {
 		if err := runtime.persistToolResult(ctx, turnID, &result); err != nil {
-			return exclusiveResult{}, err
+			return tool.InvocationResult{}, err
 		}
 		if result.Status() == tool.ResultOutcomeUncertain {
-			return exclusiveResult{Result: result, Admission: admission}, fault.New(fault.CodeSessionWrite, "tool execution outcome is uncertain")
+			return result, fault.New(fault.CodeSessionWrite, "tool execution outcome is uncertain")
 		}
-		return exclusiveResult{Result: result, Admission: admission}, nil
+		return result, nil
 	}
-	cancelled := func() (exclusiveResult, error) {
+	cancelled := func() (tool.InvocationResult, error) {
 		return finish(tool.NewInvocationErrorResult(invocation, tool.ResultCancelled, "cancelled_before_execution", "Tool cancelled before execution"))
 	}
 	if ctx.Err() != nil {
@@ -53,7 +92,7 @@ func (runtime *Runtime) executeExclusive(ctx context.Context, turnID domain.Turn
 	}
 	started, err := session.NewToolExecutionStartedDraft(turnID, invocation.InvocationID())
 	if err != nil {
-		return exclusiveResult{}, err
+		return tool.InvocationResult{}, err
 	}
 	records, err := runtime.journal.AppendBatch(ctx, []session.RecordDraft{started})
 	if err != nil {
@@ -61,16 +100,15 @@ func (runtime *Runtime) executeExclusive(ctx context.Context, turnID domain.Turn
 			return cancelled()
 		}
 		runtime.poisoned.Store(true)
-		return exclusiveResult{}, fault.Wrap(fault.CodeSessionWrite, "persist tool execution start failed", err)
+		return tool.InvocationResult{}, fault.Wrap(fault.CodeSessionWrite, "persist tool execution start failed", err)
 	}
 	if len(records) != 1 {
 		runtime.poisoned.Store(true)
-		return exclusiveResult{}, fault.New(fault.CodeSessionWrite, "execution start has no durable sequence")
+		return tool.InvocationResult{}, fault.New(fault.CodeSessionWrite, "execution start has no durable sequence")
 	}
-	admission, err = runtime.registerExecutionAdmission(invocation, records[0].Sequence)
-	if err != nil {
+	if _, err := runtime.registerExecutionAdmission(invocation, records[0].Sequence); err != nil {
 		runtime.poisoned.Store(true)
-		return exclusiveResult{}, err
+		return tool.InvocationResult{}, err
 	}
 	runtime.emitToolStarted(turnID, invocation)
 	result := strategy.Execute(ctx)
@@ -101,7 +139,7 @@ func (runtime *Runtime) executeApproved(ctx context.Context, emit Emitter, turnI
 	}
 	call.running = true
 	defer func() { call.running = false }()
-	if runtime.resultBudget.BodyExhausted() {
+	if runtime.toolTurn.resultBudget.BodyExhausted() {
 		result := tool.NewInvocationErrorResult(invocation, tool.ResultError, "result_budget_exceeded", "Tool not executed: turn result budget exhausted")
 		err := runtime.persistToolResult(context.WithoutCancel(ctx), turnID, &result)
 		return result, false, err
@@ -118,8 +156,8 @@ func (runtime *Runtime) executeApproved(ctx context.Context, emit Emitter, turnI
 		return tool.InvocationResult{}, false, fault.New(fault.CodeStreamProtocol, "tool input was not selected")
 	}
 	invocation = effective
-	if runtime.activityInvocations != nil {
-		runtime.activityInvocations[invocation.InvocationID()] = invocation.Clone()
+	if runtime.toolTurn.activityInvocations != nil {
+		runtime.toolTurn.activityInvocations[invocation.InvocationID()] = invocation.Clone()
 	}
 	if ctx.Err() != nil {
 		result := tool.NewInvocationErrorResult(invocation, tool.ResultCancelled, "cancelled_before_execution", "Tool cancelled before execution")

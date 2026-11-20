@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"easycode/internal/domain"
+	"easycode/internal/provider"
 )
 
 // ProjectHistory 返回已提交 Anthropic 原生历史的独立文本语义快照。
@@ -12,41 +13,23 @@ func (conversation *Conversation) ProjectHistory() domain.SemanticHistoryView {
 }
 
 func projectHistory(history []nativeHistoryEntry) domain.SemanticHistoryView {
-	turns := make([]domain.SemanticTurn, 0)
-	for _, entry := range history {
-		if entry.Kind == nativeHistoryToolOutputs {
-			continue
-		}
-		if len(turns) == 0 || turns[len(turns)-1].TurnID != entry.TurnID {
-			turns = append(turns, domain.SemanticTurn{TurnID: entry.TurnID, Messages: make([]domain.SemanticMessage, 0)})
-		}
-		turn := &turns[len(turns)-1]
-		if entry.Kind == nativeHistoryHookFeedback {
-			feedback, err := entryStopFeedback(entry)
-			if err == nil {
-				message, err := domain.NewSemanticHookMessage(feedback)
-				if err == nil {
-					turn.Messages = append(turn.Messages, message)
-				}
-			}
-		} else if entry.Kind == nativeHistoryUserInputs {
-			for i, input := range entry.UserInputs {
-				a, ok := entry.InputMetadata.Skill(entry.InputMetadata.InputIDs[i])
-				files := entry.InputMetadata.FileAttachments(entry.InputMetadata.InputIDs[i])
-				text := projectMessageText(input, roleUser)
-				if ok || files.Len() > 0 {
-					text = ""
-					if input.Role == roleUser && len(input.Content) > 0 && input.Content[0].Type == "text" {
-						text = input.Content[0].Text
-					}
-				}
-				turn.Messages = append(turn.Messages, domain.SemanticMessage{Role: domain.SemanticUser, InputID: entry.InputMetadata.InputIDs[i], Text: text, Skill: a, HasSkill: ok, Files: files})
-			}
-		} else if text := projectMessageText(entry.Assistant, roleAssistant); text != "" {
-			turn.Messages = append(turn.Messages, domain.SemanticMessage{Role: domain.SemanticAssistant, Text: text})
-		}
+	return provider.ProjectNativeHistory(history, domain.ProviderAnthropic, nativeUsers, projectUserText, nativeAssistantText, entryStopFeedback)
+}
+
+func nativeUsers(entry nativeHistoryEntry) []nativeMessage { return entry.UserInputs }
+
+func nativeAssistantText(entry nativeHistoryEntry) string {
+	return projectMessageText(entry.Assistant, roleAssistant)
+}
+
+func projectUserText(input nativeMessage, withAttachments bool) string {
+	if !withAttachments {
+		return projectMessageText(input, roleUser)
 	}
-	return domain.SemanticHistoryView{Provider: domain.ProviderAnthropic, Turns: turns}
+	if input.Role == roleUser && len(input.Content) > 0 && input.Content[0].Type == "text" {
+		return input.Content[0].Text
+	}
+	return ""
 }
 
 func projectMessageText(message nativeMessage, role string) string {

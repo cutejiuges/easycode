@@ -9,6 +9,25 @@ import (
 	"encoding/json"
 )
 
+// toolTurnState 集中由 turn owner 维护的工具调用、输出预算与样本展示状态。
+type toolTurnState struct {
+	toolCalls              map[tool.InvocationID]*toolExecutionCall
+	activityEmitter        Emitter
+	activityInvocations    map[tool.InvocationID]tool.Invocation
+	resultBudget           *tool.ResultBudget
+	resultTicket           *tool.ResultBudgetTicket
+	resultTicketInvocation tool.InvocationID
+	resultTicketCapability tool.CapabilityID
+	resultTicketPost       bool
+}
+
+func (s *toolTurnState) resetResultTicket() {
+	s.resultTicket = nil
+	s.resultTicketInvocation = ""
+	s.resultTicketCapability = ""
+	s.resultTicketPost = false
+}
+
 // toolExecutionCall 由唯一 turn owner 持有，最多保留本 turn 已准入的真实调用。
 type toolExecutionCall struct {
 	origin         tool.ToolCallOrigin
@@ -29,21 +48,21 @@ func (r *Runtime) registerToolCall(origin tool.ToolCallOrigin, inv tool.Invocati
 	if origin.Validate() != nil || origin.SessionID != r.sessionID || origin.ThreadID != r.threadID || inv.Validate() != nil {
 		return fault.New(fault.CodeStreamProtocol, "invalid tool call source")
 	}
-	if r.toolCalls == nil {
-		r.toolCalls = make(map[tool.InvocationID]*toolExecutionCall)
+	if r.toolTurn.toolCalls == nil {
+		r.toolTurn.toolCalls = make(map[tool.InvocationID]*toolExecutionCall)
 	}
-	if _, exists := r.toolCalls[inv.InvocationID()]; exists || len(r.toolCalls) >= maxToolCallsPerTurn {
+	if _, exists := r.toolTurn.toolCalls[inv.InvocationID()]; exists || len(r.toolTurn.toolCalls) >= maxToolCallsPerTurn {
 		return fault.New(fault.CodeStreamProtocol, "duplicate or excessive tool call source")
 	}
 	digest, err := toolCallSourceDigest(origin, inv)
 	if err != nil {
 		return err
 	}
-	r.toolCalls[inv.InvocationID()] = &toolExecutionCall{origin: origin, original: inv.Clone(), sourceDigest: digest, resultOrigin: tool.InputResultExecution}
+	r.toolTurn.toolCalls[inv.InvocationID()] = &toolExecutionCall{origin: origin, original: inv.Clone(), sourceDigest: digest, resultOrigin: tool.InputResultExecution}
 	return nil
 }
 func (r *Runtime) executionCall(turn domain.TurnID, inv tool.Invocation) (*toolExecutionCall, error) {
-	state := r.toolCalls[inv.InvocationID()]
+	state := r.toolTurn.toolCalls[inv.InvocationID()]
 	if state == nil || state.origin.SessionID != r.sessionID || state.origin.ThreadID != r.threadID || state.origin.TurnID != turn || !state.original.Equal(inv) {
 		return nil, fault.New(fault.CodeStreamProtocol, "tool invocation source mismatch")
 	}
@@ -82,14 +101,14 @@ func (state *toolExecutionCall) evidence() (tool.InputResultEvidence, error) {
 	return tool.NewInputResultEvidence(selection, state.admission, state.resultOrigin)
 }
 func (r *Runtime) resultEvidence(result tool.InvocationResult) (tool.InputResultEvidence, error) {
-	state := r.toolCalls[result.InvocationID()]
+	state := r.toolTurn.toolCalls[result.InvocationID()]
 	if state == nil {
 		return tool.InputResultEvidence{}, fault.New(fault.CodeStreamProtocol, "tool result has no ready source")
 	}
 	return state.evidence()
 }
 func (r *Runtime) registerExecutionAdmission(inv tool.Invocation, sequence uint64) (tool.ExecutionAdmission, error) {
-	state := r.toolCalls[inv.InvocationID()]
+	state := r.toolTurn.toolCalls[inv.InvocationID()]
 	if state == nil || state.admission.Sequence() != 0 || sequence == 0 || sequence <= state.detailSequence {
 		return tool.ExecutionAdmission{}, fault.New(fault.CodeStreamProtocol, "tool admission has no unique ready source")
 	}
@@ -120,7 +139,7 @@ func (r *Runtime) registerExecutionAdmission(inv tool.Invocation, sequence uint6
 
 // rememberToolResult 只在 Sync 后安装冻结结果及摘要，重入不再执行或重新关闭预算。
 func (r *Runtime) rememberToolResult(turn domain.TurnID, result tool.InvocationResult) error {
-	state := r.toolCalls[result.InvocationID()]
+	state := r.toolTurn.toolCalls[result.InvocationID()]
 	if state == nil || state.origin.TurnID != turn || state.hasResult {
 		return fault.New(fault.CodeStreamProtocol, "tool result source mismatch")
 	}
@@ -151,6 +170,6 @@ func (state *toolExecutionCall) cachedResult() (tool.InvocationResult, error) {
 
 // resetToolTurn 只在 turn 退役或会话 owner 已停止时释放调用事实缓存。
 func (r *Runtime) resetToolTurn() {
-	r.toolCalls = make(map[tool.InvocationID]*toolExecutionCall)
+	r.toolTurn.toolCalls = make(map[tool.InvocationID]*toolExecutionCall)
 	r.resetHookTurn()
 }

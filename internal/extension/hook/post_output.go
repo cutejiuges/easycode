@@ -1,7 +1,6 @@
 package hook
 
 import (
-	"bytes"
 	"easycode/internal/codec"
 	"easycode/internal/domain"
 	"strings"
@@ -27,29 +26,19 @@ func ParseExecution(event domain.HookEvent, policy domain.HookFeedbackPolicy, ex
 	if event == domain.HookPreToolUse {
 		return ParseOutput(exit, stdout, context)
 	}
-	if len(stdout) > domain.MaxHookOutputBytes {
-		result.Code = domain.HookOutputLimit
-		return result
-	}
-	if exit != 0 {
-		result.Code = domain.HookExitFailed
+	result, terminal := classifyHookExit(exit, stdout, false)
+	if terminal {
 		return result
 	}
 	if !utf8.Valid(stdout) {
 		return result
 	}
-	stdout = bytes.TrimSpace(stdout)
-	if len(stdout) == 0 {
-		result.Status, result.Code = domain.HookContinue, domain.HookOK
-		return result
-	}
-	members, err := codec.ObjectMembers(stdout)
+	stdout, members, err := hookOutputObject(stdout)
 	if err != nil {
 		return result
 	}
 	if len(members) == 0 {
-		result.Status, result.Code = domain.HookContinue, domain.HookOK
-		return result
+		return domain.HookParsedOutput{Status: domain.HookContinue, Code: domain.HookOK}
 	}
 	var out struct {
 		Specific struct {

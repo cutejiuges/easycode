@@ -12,10 +12,7 @@ func ValidateNativeCallInput(original Invocation, family domain.ProviderFamily, 
 		return errors.New("native call identity mismatch")
 	}
 	expectedName, _ := facadeIdentity(family, original.Capability())
-	expectedWire := WireStructured
-	if family == domain.ProviderOpenAI && original.Capability() == CapabilityPatch {
-		expectedWire = WireCustomFreeform
-	}
+	expectedWire := facadeWireKind(family, original.Capability())
 	if name != expectedName || wire != expectedWire {
 		return errors.New("native call facade mismatch")
 	}

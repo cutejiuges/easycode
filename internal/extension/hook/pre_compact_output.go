@@ -21,13 +21,8 @@ type preCompactSpecificOutput struct {
 
 // parsePreCompactOutput 只在正常退出时接纳当前事件的结构化控制及显式授权的摘要重点。
 func parsePreCompactOutput(policy domain.HookFeedbackPolicy, exit int, stdout []byte) domain.HookParsedOutput {
-	result := domain.HookParsedOutput{Status: domain.HookError, Code: domain.HookOutputInvalid}
-	if len(stdout) > domain.MaxHookOutputBytes {
-		result.Code = domain.HookOutputLimit
-		return result
-	}
-	if exit != 0 {
-		result.Code = domain.HookExitFailed
+	result, terminal := classifyHookExit(exit, stdout, false)
+	if terminal {
 		return result
 	}
 	if !utf8.Valid(stdout) {

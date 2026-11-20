@@ -22,7 +22,7 @@ func taskRuntimeFixture(t *testing.T, journal Journal) *Runtime {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.resultBudget = tool.NewResultBudget()
+	r.toolTurn.resultBudget = tool.NewResultBudget()
 	return r
 }
 
@@ -69,7 +69,7 @@ type taskAdmissionJournal struct {
 
 func (j *taskAdmissionJournal) AppendBatch(ctx context.Context, drafts []session.RecordDraft) ([]session.Record, error) {
 	if j.runtime != nil && len(drafts) == 1 && drafts[0].EventKind() == session.EventToolCallResult {
-		j.tickets = append(j.tickets, j.runtime.resultTicket)
+		j.tickets = append(j.tickets, j.runtime.toolTurn.resultTicket)
 	}
 
 	if len(drafts) == 1 && drafts[0].EventKind() == session.EventToolCallResult && j.gated.CompareAndSwap(false, true) {
@@ -92,7 +92,7 @@ func TestTaskResultAdmissionCancellationAndSyncProjection(t *testing.T) {
 			j := &taskAdmissionJournal{before: before, entered: make(chan struct{}), release: make(chan struct{})}
 			r := taskRuntimeFixture(t, j)
 			j.runtime = r
-			if err := r.resultBudget.BeginSample(1); err != nil {
+			if err := r.toolTurn.resultBudget.BeginSample(1); err != nil {
 				t.Fatal(err)
 			}
 			inv := taskRuntimeInvocation(t, "验证结果", domain.TaskInProgress, "task")
@@ -105,7 +105,7 @@ func TestTaskResultAdmissionCancellationAndSyncProjection(t *testing.T) {
 			}
 			done := make(chan outcome, 1)
 			var notifications atomic.Int32
-			r.activityEmitter = func(e protocol.Event) {
+			r.toolTurn.activityEmitter = func(e protocol.Event) {
 				if e.Kind == protocol.EventTaskProgressUpdated {
 					if r.TaskProgress().Kind() != domain.TaskProgressSnapshot {
 						t.Error("notification before projection")
@@ -133,7 +133,7 @@ func TestTaskResultAdmissionCancellationAndSyncProjection(t *testing.T) {
 			if before {
 				want = tool.ResultCancelled
 			}
-			if got.result.Status() != want || r.resultTicket != nil || r.resultBudget.BodyExhausted() || r.resultBudget.TurnUsed() != got.result.Budget().ActualBytes() {
+			if got.result.Status() != want || r.toolTurn.resultTicket != nil || r.toolTurn.resultBudget.BodyExhausted() || r.toolTurn.resultBudget.TurnUsed() != got.result.Budget().ActualBytes() {
 				t.Fatalf("result/ticket mismatch: %s", got.result.Status())
 			}
 			batches := j.snapshot()
@@ -167,7 +167,7 @@ func TestTaskResultFailuresRetainPriorStateAndStopAdmission(t *testing.T) {
 	for _, failAt := range []int{1, 2} {
 		j := &fakeJournal{failAt: failAt}
 		r := taskRuntimeFixture(t, j)
-		if err := r.resultBudget.BeginSample(1); err != nil {
+		if err := r.toolTurn.resultBudget.BeginSample(1); err != nil {
 			t.Fatal(err)
 		}
 		old := taskRuntimeInvocation(t, "原清单", domain.TaskCompleted, "old")
@@ -243,7 +243,7 @@ func TestTaskReplacementRegressionClearAndOrderedReadBarrier(t *testing.T) {
 func TestTaskQueryIsCoherentWhileResultSyncIsPendingAndDoesNoIO(t *testing.T) {
 	j := &taskAdmissionJournal{entered: make(chan struct{}), release: make(chan struct{})}
 	r := taskRuntimeFixture(t, j)
-	if err := r.resultBudget.BeginSample(1); err != nil {
+	if err := r.toolTurn.resultBudget.BeginSample(1); err != nil {
 		t.Fatal(err)
 	}
 	inv := taskRuntimeInvocation(t, "等待落盘", domain.TaskInProgress, "pending")

@@ -12,13 +12,13 @@ func activityForInvocation(invocation tool.Invocation) protocol.ToolActivityPayl
 }
 
 func (runtime *Runtime) emitToolStarted(turn domain.TurnID, invocation tool.Invocation) {
-	if runtime.activityEmitter == nil {
+	if runtime.toolTurn.activityEmitter == nil {
 		return
 	}
 	p := activityForInvocation(invocation)
 	p.Status = "running"
 	if event, err := protocol.NewToolStarted(p); err == nil {
-		runtime.activityEmitter(runtime.decorate(event, turn))
+		runtime.toolTurn.activityEmitter(runtime.decorate(event, turn))
 	}
 }
 
@@ -46,10 +46,10 @@ func (runtime *Runtime) notifyToolResult(turn domain.TurnID, result tool.Invocat
 			return err
 		}
 	}
-	if runtime.activityEmitter == nil {
+	if runtime.toolTurn.activityEmitter == nil {
 		return nil
 	}
-	invocation, ok := runtime.activityInvocations[result.InvocationID()]
+	invocation, ok := runtime.toolTurn.activityInvocations[result.InvocationID()]
 	if !ok {
 		return nil
 	}
@@ -85,7 +85,7 @@ func (runtime *Runtime) notifyToolResult(turn domain.TurnID, result tool.Invocat
 		terminal.Search = tool.ProjectOutputSaving(result.SearchSaving(), 0)
 	}
 	if event, err := protocol.NewToolTerminal(terminal); err == nil {
-		runtime.activityEmitter(runtime.decorate(event, turn))
+		runtime.toolTurn.activityEmitter(runtime.decorate(event, turn))
 	}
 	return nil
 }

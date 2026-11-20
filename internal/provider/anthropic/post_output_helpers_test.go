@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func testDirectModelOutput(t *testing.T, invocation tool.Invocation, result tool.InvocationResult, admission tool.ExecutionAdmission) tool.ModelOutput {
+func testDirectModelOutput(t testing.TB, invocation tool.Invocation, result tool.InvocationResult, admission tool.ExecutionAdmission) tool.ModelOutput {
 	t.Helper()
 	const id = "01900000-0000-7000-8000-000000000001"
 	origin, err := tool.NewToolCallOrigin(domain.SessionID(id), domain.ThreadID(id), domain.TurnID(id), 0, 0)
@@ -56,7 +56,7 @@ func testModelOutputs(t *testing.T, history []nativeHistoryEntry, results ...too
 	return out
 }
 
-func testReadOutput(t *testing.T, call, path, text string) tool.ModelOutput {
+func testReadOutput(t testing.TB, call, path, text string) tool.ModelOutput {
 	t.Helper()
 	input, err := tool.NewReadInput(path, 1, 2000)
 	if err != nil {

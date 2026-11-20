@@ -2,6 +2,7 @@ package hook
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"unicode/utf8"
 
@@ -19,34 +20,19 @@ type hookOutput struct {
 
 // ParseOutput 只返回封闭候选与安全分类，原始输出和自由文本原因不越过此边界。
 func ParseOutput(exit int, stdout []byte, context domain.HookRewriteContext) domain.HookParsedOutput {
-	result := domain.HookParsedOutput{Status: domain.HookError, Code: domain.HookOutputInvalid}
-	if len(stdout) > domain.MaxHookOutputBytes {
-		result.Code = domain.HookOutputLimit
-		return result
-	}
-	if exit == 2 {
-		result.Status, result.Code = domain.HookBlock, domain.HookDenied
-		return result
-	}
-	if exit != 0 {
-		result.Code = domain.HookExitFailed
+	result, terminal := classifyHookExit(exit, stdout, true)
+	if terminal {
 		return result
 	}
 	if !utf8.Valid(stdout) {
 		return result
 	}
-	stdout = bytes.TrimSpace(stdout)
-	if len(stdout) == 0 {
-		result.Status, result.Code = domain.HookContinue, domain.HookOK
-		return result
-	}
-	m, err := codec.ObjectMembers(stdout)
+	stdout, m, err := hookOutputObject(stdout)
 	if err != nil {
 		return result
 	}
 	if len(m) == 0 {
-		result.Status, result.Code = domain.HookContinue, domain.HookOK
-		return result
+		return domain.HookParsedOutput{Status: domain.HookContinue, Code: domain.HookOK}
 	}
 	if len(m) != 1 {
 		return result
@@ -73,4 +59,27 @@ func ParseOutput(exit int, stdout []byte, context domain.HookRewriteContext) dom
 	}
 	result.Status, result.Code = domain.HookBlock, domain.HookDenied
 	return result
+}
+
+// classifyHookExit 先按 stdout 上限和进程退出码分类，保持各事件的阻断约定。
+func classifyHookExit(exit int, stdout []byte, blockOnExitTwo bool) (domain.HookParsedOutput, bool) {
+	switch {
+	case len(stdout) > domain.MaxHookOutputBytes:
+		return domain.HookParsedOutput{Status: domain.HookError, Code: domain.HookOutputLimit}, true
+	case exit == 2 && blockOnExitTwo:
+		return domain.HookParsedOutput{Status: domain.HookBlock, Code: domain.HookDenied}, true
+	case exit != 0:
+		return domain.HookParsedOutput{Status: domain.HookError, Code: domain.HookExitFailed}, true
+	default:
+		return domain.HookParsedOutput{Status: domain.HookError, Code: domain.HookOutputInvalid}, false
+	}
+}
+
+func hookOutputObject(stdout []byte) ([]byte, map[string]json.RawMessage, error) {
+	trimmed := bytes.TrimSpace(stdout)
+	if len(trimmed) == 0 {
+		return trimmed, nil, nil
+	}
+	members, err := codec.ObjectMembers(trimmed)
+	return trimmed, members, err
 }

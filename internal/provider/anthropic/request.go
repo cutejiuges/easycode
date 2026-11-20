@@ -2,9 +2,7 @@ package anthropic
 
 import (
 	"encoding/json"
-	"fmt"
 
-	"easycode/internal/codec"
 	"easycode/internal/domain"
 	"easycode/internal/tool"
 )
@@ -86,27 +84,6 @@ func buildMessagesRequest(
 		Tools:     tools,
 		Stream:    true,
 	}
-}
-
-func compileMessagesRequest(
-	model string,
-	maxTokens int,
-	history []nativeHistoryEntry,
-	projectInstructions *domain.ProjectInstructionsSnapshot,
-	toolView tool.FacadeView,
-) (codec.CanonicalJSON, error) {
-	if projectInstructions != nil {
-		if err := projectInstructions.Validate(); err != nil {
-			return codec.CanonicalJSON{}, fmt.Errorf("project instructions snapshot is invalid: %w", err)
-		}
-	}
-	if toolView.Family() != domain.ProviderAnthropic || len(toolView.Facades()) != 10 {
-		return codec.CanonicalJSON{}, fmt.Errorf("anthropic tool catalog view is invalid")
-	}
-	return codec.MarshalCanonical(
-		buildMessagesRequest(model, maxTokens, history, projectInstructions, toolView),
-		maxMessagesRequestBytes,
-	)
 }
 
 func (request *messagesRequest) applyInference(settings domain.InferenceSettings) {

@@ -117,7 +117,7 @@ func assertTaskCacheEquivalent(t *testing.T, left, right *Conversation, input pr
 		t.Fatal(err)
 	}
 	evidenceB, err := right.requestEvidence(input)
-	if err != nil || evidenceA.nativeFingerprint != evidenceB.nativeFingerprint || !bytes.Equal(evidenceA.properties.Bytes(), evidenceB.properties.Bytes()) || reasoningCacheSources(t, left) != reasoningCacheSources(t, right) {
+	if err != nil || evidenceA.NativeFingerprint() != evidenceB.NativeFingerprint() || !bytes.Equal(evidenceA.Properties().Bytes(), evidenceB.Properties().Bytes()) || reasoningCacheSources(t, left) != reasoningCacheSources(t, right) {
 		t.Fatal("task cache restore changed request or source fingerprints", err)
 	}
 	receiptA, err := left.describeRequest(a, evidenceA, domain.RequestSample)

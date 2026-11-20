@@ -53,8 +53,8 @@ func (r *Runtime) deliverStopContinuation(ctx context.Context, emit Emitter, che
 	}
 	turn := check.state.Plan.Sample().TurnID
 	index := check.state.Plan.Sample().SampleIndex + 1
-	preparer, ok := r.conversation.(provider.StopContinuationPreparer)
-	if !ok {
+	preparer := r.providerOperations.stop
+	if preparer == nil {
 		r.poisoned.Store(true)
 		return fault.New(fault.CodeStreamProtocol, "stop continuation preparation is unavailable")
 	}

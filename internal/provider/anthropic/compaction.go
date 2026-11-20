@@ -6,10 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"net/http"
 
 	"easycode/internal/codec"
-	"easycode/internal/context/estimate"
 	"easycode/internal/domain"
 	"easycode/internal/provider"
 	"easycode/internal/provider/transport"
@@ -28,12 +26,16 @@ func (conversation *Conversation) compactionSource() (provider.CompactionSource,
 }
 
 func nativeCompactionSource(snapshot nativeWindowSnapshot, model string) (provider.CompactionSource, error) {
-	entries, revision := snapshot.entries, snapshot.revision
-	checkpoint, offset, count := snapshot.checkpoint, snapshot.offset, snapshot.count
+	return nativeCompactionSourceChecked(snapshot, model, func() error { return validateNativeHistory(snapshot.Entries) })
+}
+
+func nativeCompactionSourceChecked(snapshot nativeWindowSnapshot, model string, validate func() error) (provider.CompactionSource, error) {
+	entries, revision := snapshot.Entries, snapshot.Revision
+	checkpoint, offset, count := snapshot.Checkpoint, snapshot.Offset, snapshot.Count
 	if len(entries) == offset {
 		return provider.CompactionSource{}, provider.NewCompactionError(provider.CompactionNothing)
 	}
-	if err := validateNativeHistory(entries); err != nil {
+	if err := validate(); err != nil {
 		return provider.CompactionSource{}, err
 	}
 	if entries[len(entries)-1].Kind == nativeHistorySample && len(toolUses(entries[len(entries)-1].Assistant.Content)) != 0 {
@@ -44,7 +46,7 @@ func nativeCompactionSource(snapshot nativeWindowSnapshot, model string) (provid
 		predecessor, _ = provider.AfterCompactionCheckpoint(checkpoint.ID())
 	}
 	items := make([]nativeMessage, 0)
-	for _, entry := range snapshot.requestEntries() {
+	for _, entry := range snapshot.RequestEntries() {
 		if entry.FeedbackInput != nil {
 			items = append(items, *entry.FeedbackInput)
 		}
@@ -93,101 +95,54 @@ func (conversation *Conversation) planCompactionRequest(input provider.Compactio
 
 // PreflightCompaction 只编译和估算当前完整有效窗口，不产生副作用。
 func (conversation *Conversation) PreflightCompaction(input provider.CompactionInput) (provider.CompactionPreview, error) {
-	if conversation.active.Load() || conversation.pending.Load() {
-		return provider.CompactionPreview{}, provider.NewCompactionError(provider.CompactionBusy)
-	}
-	source, err := conversation.compactionSource()
-	if err != nil {
-		return provider.CompactionPreview{}, err
-	}
-	request, err := conversation.compileCompactionRequest(input)
-	if err != nil {
-		return provider.CompactionPreview{}, err
-	}
-	return provider.NewCompactionPreview(source, input, estimate.String(string(request.Bytes())))
+	return provider.PreflightCompaction(input, &conversation.active, &conversation.pending, conversation.compactionSource, conversation.compileCompactionRequest)
 }
 
 // RunCompaction 独立消费摘要流，不发普通 turn 事件，也不调用工具调度器。
 func (conversation *Conversation) RunCompaction(ctx context.Context, id domain.CompactionID, preview provider.CompactionPreview) (*provider.PreparedCompaction, error) {
-	if !id.Valid() || preview.Validate() != nil {
-		return nil, provider.NewCompactionError(provider.CompactionInvalidResponse)
-	}
-	if !conversation.active.CompareAndSwap(false, true) {
-		return nil, provider.NewCompactionError(provider.CompactionBusy)
-	}
-	defer conversation.active.Store(false)
-	if conversation.pending.Load() {
-		return nil, provider.NewCompactionError(provider.CompactionBusy)
-	}
-	source, err := conversation.compactionSource()
-	if err != nil || source != preview.Source() {
-		return nil, provider.NewCompactionError(provider.CompactionSourceChanged)
-	}
-	plan, err := conversation.planCompactionRequest(preview.Input())
+	return provider.RunCompaction(ctx, id, preview, &conversation.active, &conversation.pending, conversation.compactionSource, conversation.openCompaction)
+}
+
+func (conversation *Conversation) openCompaction(ctx context.Context, input provider.CompactionInput) (provider.CompactionStream, error) {
+	plan, err := conversation.planCompactionRequest(input)
 	if err != nil {
-		return nil, err
+		return provider.CompactionStream{}, err
 	}
 	request, err := plan.body(conversation.provider.config.CachePolicy.Anthropic())
 	if err != nil {
-		return nil, provider.NewCompactionError(provider.CompactionRequestFailed)
+		return provider.CompactionStream{}, provider.NewCompactionError(provider.CompactionRequestFailed)
 	}
-	evidence, evidenceErr := plan.evidence()
-	if evidenceErr != nil {
-		return nil, evidenceErr
+	evidence, err := plan.evidence()
+	if err != nil {
+		return provider.CompactionStream{}, err
 	}
 	streamCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	stream, err := conversation.provider.transport.StreamSSE(streamCtx, transport.SSERequest{Method: http.MethodPost, Path: "messages", Headers: map[string]string{
-		"x-api-key": conversation.provider.config.APIKey.Reveal(), "anthropic-version": apiVersion, "Accept": "text/event-stream", "Content-Type": "application/json",
-	}, Body: request}, transport.StreamOptions{IdleTimeout: conversation.provider.config.StreamIdleTimeout})
+	stream, err := conversation.startRequest(streamCtx, request)
 	if err != nil {
-		return nil, compactionNetworkError(ctx)
-	}
-	defer func() {
+		err = provider.CompactionNetworkError(ctx)
 		cancel()
-		for range stream {
-		}
-	}()
-	catalog, _, _ := preview.Input().Sampling().ToolCatalog()
+		return provider.CompactionStream{}, err
+	}
+	catalog, _, _ := input.Sampling().ToolCatalog()
 	reducer := newStreamReducer(catalog)
-	for message := range stream {
-		if message.Err != nil {
-			return nil, compactionNetworkError(ctx)
-		}
-		if message.Event == nil {
-			continue
-		}
-		result, err := reducer.reduce(*message.Event)
-		if err != nil {
-			return nil, provider.NewCompactionError(provider.CompactionInvalidResponse)
-		}
-		if result.native != nil && result.native.Type == blockTypeToolUse {
-			return nil, provider.NewCompactionError(provider.CompactionInvalidResponse)
-		}
-		if !result.complete {
-			continue
-		}
-		if ctx.Err() != nil {
-			return nil, compactionNetworkError(ctx)
-		}
-		generation := nativeHistoryEntry{Kind: nativeHistorySample, Assistant: reducer.assistantMessage(), Metadata: reducer.messageMetadata()}
-		receipt, receiptErr := conversation.describeRequest(request, evidence, plan.purpose)
-		if receiptErr != nil {
-			return nil, receiptErr
-		}
-		return conversation.prepareCheckpoint(preview.Input().Scope(), id, source, generation, receipt, preview.Input().TaskProgress())
-	}
-	return nil, compactionNetworkError(ctx)
-}
-
-func compactionNetworkError(ctx context.Context) error {
-	if ctx.Err() == context.DeadlineExceeded {
-		return provider.NewCompactionError(provider.CompactionTimedOut)
-	}
-	if ctx.Err() != nil {
-		return provider.NewCompactionError(provider.CompactionCancelled)
-	}
-	return provider.NewCompactionError(provider.CompactionRequestFailed)
+	return provider.CompactionStream{
+		Messages: stream, Cancel: cancel,
+		Reduce: func(event transport.SSEEvent) (bool, error) {
+			result, err := reducer.reduce(event)
+			if err != nil || (result.native != nil && result.native.Type == blockTypeToolUse) {
+				return false, provider.NewCompactionError(provider.CompactionInvalidResponse)
+			}
+			return result.complete, nil
+		},
+		Checkpoint: func(id domain.CompactionID, source provider.CompactionSource) (*provider.PreparedCompaction, error) {
+			generation := nativeHistoryEntry{Kind: nativeHistorySample, Assistant: reducer.assistantMessage(), Metadata: reducer.messageMetadata()}
+			receipt, err := conversation.describeRequest(request, evidence, plan.purpose)
+			if err != nil {
+				return nil, err
+			}
+			return conversation.prepareCheckpoint(input.Scope(), id, source, generation, receipt, input.TaskProgress())
+		},
+	}, nil
 }
 
 func compactionSummary(generation nativeHistoryEntry) (domain.ContextSummary, error) {
@@ -229,56 +184,21 @@ func (conversation *Conversation) prepareCheckpoint(scope domain.CompactionScope
 	if err != nil {
 		return nil, err
 	}
-	checkpoint, err := provider.NewCheckpointEnvelope(scope, id, source, payload)
-	if err != nil {
-		return nil, err
-	}
-	usage, err := generation.Metadata.Usage.normalized()
-	if err != nil {
-		return nil, err
-	}
-	view, err := domain.NewActiveContextView(domain.SemanticHistoryView{Provider: domain.ProviderAnthropic, Turns: []domain.SemanticTurn{}}, summary, source.ContextRevision()+1)
-	if err != nil {
-		return nil, err
-	}
 	summaryEntry := nativeHistoryEntry{Kind: nativeHistoryUserInputs, UserInputs: []nativeMessage{native}}
-	footprint, err := historyFootprint([]nativeHistoryEntry{summaryEntry}, view.Revision())
-	if err != nil {
-		return nil, err
-	}
-	current, err := conversation.compactionSource()
-	if err != nil || current != source {
-		return nil, provider.NewCompactionError(provider.CompactionSourceChanged)
-	}
-	usageBytes, err := codec.MarshalStable(encodeMetadata(generation.Metadata).Usage)
-	if err != nil {
-		return nil, err
-	}
-	provenance, err := provider.NewNativeCommitEnvelope(source.Family(), source.Wire(), usageBytes)
-	if err != nil {
-		return nil, err
-	}
-	conversation.pending.Store(true)
-	prepared, err := provider.NewPreparedCompaction(checkpoint, view, footprint, usage, provenance, receipt, func() {
-		conversation.baseline = provider.RequestBaseline{}
-		conversation.nextReason = domain.ResetCompacted
-		conversation.history.installCheckpoint(checkpoint, summaryEntry, summary)
-		conversation.pending.Store(false)
-	}, func() { conversation.pending.Store(false) })
-	if err != nil {
-		conversation.pending.Store(false)
-	}
-	return prepared, err
-}
-
-func (history *nativeHistory) installCheckpoint(checkpoint provider.CheckpointEnvelope, summary nativeHistoryEntry, text domain.ContextSummary) {
-	history.mu.Lock()
-	defer history.mu.Unlock()
-	history.checkpoint = &checkpoint
-	history.summaryNative = summary
-	history.contextSummary = text
-	history.checkpointOffset = len(history.entries)
-	history.checkpointCount++
+	return provider.PrepareCheckpoint(scope, id, source, receipt, &conversation.pending, provider.CheckpointCandidate{
+		Family: conversation.Family(), Payload: payload, Summary: summary,
+		Usage: generation.Metadata.Usage.normalized,
+		Footprint: func(revision uint64) (domain.NativeHistoryFootprint, error) {
+			return historyFootprint([]nativeHistoryEntry{summaryEntry}, revision)
+		},
+		Source:      conversation.compactionSource,
+		EncodeUsage: func() ([]byte, error) { return codec.MarshalStable(encodeMetadata(generation.Metadata).Usage) },
+		Install: func(checkpoint provider.CheckpointEnvelope) {
+			conversation.baseline = provider.RequestBaseline{}
+			conversation.nextReason = domain.ResetCompacted
+			conversation.history.installCheckpoint(checkpoint, summaryEntry, summary)
+		},
+	})
 }
 
 func decodeCheckpoint(checkpoint provider.CheckpointEnvelope) (nativeHistoryEntry, domain.ContextSummary, error) {

@@ -9,8 +9,6 @@ import (
 
 	"easycode/internal/domain"
 	"easycode/internal/provider"
-	"easycode/internal/provider/anthropic"
-	"easycode/internal/provider/openai"
 	"easycode/internal/session"
 	"easycode/internal/tui"
 )
@@ -28,17 +26,6 @@ func defaultPreviewDependencies() previewDependencies {
 		open: session.OpenOrCreateRepository, load: session.NewLoader().Load,
 		closeLease:      func(lease *session.JournalLease) error { return lease.Close() },
 		closeRepository: func(repo *session.Repository) error { return repo.Close() },
-	}
-}
-
-func storedHistoryReader(family domain.ProviderFamily, wire string) (provider.StoredHistoryReader, error) {
-	switch {
-	case family == domain.ProviderOpenAI && wire == "responses":
-		return openai.NewHistoryReader(), nil
-	case family == domain.ProviderAnthropic && wire == "messages":
-		return anthropic.NewHistoryReader(), nil
-	default:
-		return nil, fmt.Errorf("stored history source is unsupported")
 	}
 }
 
@@ -85,21 +72,21 @@ func previewSession(ctx context.Context, root string, thread domain.ThreadID, de
 	if plan.Identity.ThreadID != thread || meta.RootThreadID != thread || !plan.ThreadMetadata.Root {
 		return result, false, fmt.Errorf("preview requires a root thread")
 	}
-	reader, err := storedHistoryReader(meta.Provider, meta.ProviderWire)
-	if err != nil {
-		return result, false, err
+	binding, err := bindProvider(meta.Provider)
+	if err != nil || binding.wire != meta.ProviderWire {
+		return result, false, fmt.Errorf("stored history source is unsupported")
 	}
-	if err := validateSampleUsageEvidence(plan); err != nil {
+	if err := validateSampleUsageEvidence(binding.sampleUsage, plan); err != nil {
 		return result, false, err
 	}
 	records, err := orderedRestoreRecords(plan)
 	if err != nil {
 		return result, false, err
 	}
-	if err := validateCompactionUsageEvidence(reader, plan); err != nil {
+	if err := validateCompactionUsageEvidence(binding.history, plan); err != nil {
 		return result, false, err
 	}
-	view, err := reader.ProjectStoredHistory(ctx, provider.HistorySource{ThreadID: thread, Family: meta.Provider, Wire: meta.ProviderWire, Model: meta.Model}, records)
+	view, err := binding.history.ProjectStoredHistory(ctx, provider.HistorySource{ThreadID: thread, Family: meta.Provider, Wire: meta.ProviderWire, Model: meta.Model}, records)
 	if err != nil {
 		return result, false, err
 	}

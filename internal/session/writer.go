@@ -80,31 +80,6 @@ func StartJournalWriter(lease *JournalLease, identity Identity, nextSequence uin
 	return startOwnedJournalWriter(file, identity, nextSequence, time.Now, journalRequestCapacity), nil
 }
 
-func startJournalWriter(
-	file journalFile,
-	identity Identity,
-	nextSequence uint64,
-	clock func() time.Time,
-) (*JournalWriter, error) {
-	return startJournalWriterWithCapacity(file, identity, nextSequence, clock, journalRequestCapacity)
-}
-
-func startJournalWriterWithCapacity(
-	file journalFile,
-	identity Identity,
-	nextSequence uint64,
-	clock func() time.Time,
-	requestCapacity int,
-) (*JournalWriter, error) {
-	if file == nil {
-		return nil, fmt.Errorf("session journal file is required")
-	}
-	if err := validateJournalWriter(identity, nextSequence, clock, requestCapacity); err != nil {
-		return nil, err
-	}
-	return startOwnedJournalWriter(file, identity, nextSequence, clock, requestCapacity), nil
-}
-
 func validateJournalWriter(
 	identity Identity,
 	nextSequence uint64,
@@ -236,34 +211,12 @@ func (writer *JournalWriter) run(nextSequence uint64) {
 	for {
 		select {
 		case request := <-writer.requests:
-			if writer.poisoned.Load() {
-				request.response <- appendResponse{err: fmt.Errorf("session writer is poisoned")}
-				continue
-			}
-			records, err := writer.append(nextSequence, request.drafts)
-			if err != nil {
-				writer.poisoned.Store(true)
-				request.response <- appendResponse{err: err}
-				continue
-			}
-			nextSequence += uint64(len(records))
-			request.response <- appendResponse{records: records}
+			nextSequence = writer.handleAppend(nextSequence, request)
 		case <-writer.closeReq:
 			for {
 				select {
 				case request := <-writer.requests:
-					if writer.poisoned.Load() {
-						request.response <- appendResponse{err: fmt.Errorf("session writer is poisoned")}
-						continue
-					}
-					records, err := writer.append(nextSequence, request.drafts)
-					if err != nil {
-						writer.poisoned.Store(true)
-						request.response <- appendResponse{err: err}
-						continue
-					}
-					nextSequence += uint64(len(records))
-					request.response <- appendResponse{records: records}
+					nextSequence = writer.handleAppend(nextSequence, request)
 				default:
 					writer.result = writer.finish()
 					return
@@ -271,6 +224,21 @@ func (writer *JournalWriter) run(nextSequence uint64) {
 			}
 		}
 	}
+}
+
+func (writer *JournalWriter) handleAppend(nextSequence uint64, request writerRequest) uint64 {
+	if writer.poisoned.Load() {
+		request.response <- appendResponse{err: fmt.Errorf("session writer is poisoned")}
+		return nextSequence
+	}
+	records, err := writer.append(nextSequence, request.drafts)
+	if err != nil {
+		writer.poisoned.Store(true)
+		request.response <- appendResponse{err: err}
+		return nextSequence
+	}
+	request.response <- appendResponse{records: records}
+	return nextSequence + uint64(len(records))
 }
 
 func (writer *JournalWriter) append(nextSequence uint64, drafts []RecordDraft) ([]Record, error) {

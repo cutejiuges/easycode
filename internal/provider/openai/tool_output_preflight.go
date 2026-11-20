@@ -72,27 +72,6 @@ func encodeToolResultData(call NativeItem, result tool.InvocationResult, text st
 	return NativeItem{Type: kind, CallID: call.CallID, Output: string(b)}, nil
 }
 
-type toolOutputPreflight struct {
-	call         NativeItem
-	invocationID tool.InvocationID
-}
-
-func (p toolOutputPreflight) Validate(output tool.ModelOutput) error {
-	r := output.Result()
-	if r.InvocationID() != p.invocationID {
-		return fmt.Errorf("tool output invocation mismatch")
-	}
-	item, err := encodeToolResult(p.call, output)
-	if err != nil {
-		return err
-	}
-	b, err := codec.MarshalStable(item)
-	if err != nil || len(b) > provider.MaxNativeCommitBytes {
-		return fmt.Errorf("tool output encoding exceeds limit")
-	}
-	return nil
-}
-
 // PrepareToolOutputPreflight 复制当前原生调用，返回不触及活动历史的单项校验策略。
 func (c *Conversation) PrepareToolOutputPreflight(inv tool.Invocation) (provider.ToolOutputPreflight, error) {
 	if c == nil || c.active.Load() || c.pending.Load() || inv.Validate() != nil {
@@ -102,24 +81,5 @@ func (c *Conversation) PrepareToolOutputPreflight(inv tool.Invocation) (provider
 	if err != nil {
 		return nil, err
 	}
-	for _, call := range calls {
-		if call.CallID == string(inv.ProviderCallID()) {
-			if openAICapabilityForName(call.Name) != inv.Capability() {
-				return nil, fmt.Errorf("tool capability mismatch")
-			}
-			if inv.Capability() == tool.CapabilityTaskProgress {
-				if err := tool.ValidateNativeCallInput(inv, domain.ProviderOpenAI, call.Name, tool.ProviderCallID(call.CallID), tool.WireStructured, []byte(call.Arguments)); err != nil {
-					return nil, err
-				}
-			}
-			if q, ok := inv.Question(); ok {
-				input, err := tool.DecodeQuestionInput([]byte(call.Arguments))
-				if err != nil || input != q.Input() {
-					return nil, fmt.Errorf("question input mismatch")
-				}
-			}
-			return toolOutputPreflight{call.clone(), inv.InvocationID()}, nil
-		}
-	}
-	return nil, fmt.Errorf("no matching pending tool call")
+	return provider.PreflightNativeToolOutput(calls, inv, domain.ProviderOpenAI, structuredCallEvidence, encodeToolResult)
 }

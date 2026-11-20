@@ -10,9 +10,9 @@ import (
 
 // executeExecActivityTest 为独占骨架单测显式安装调用组 owner，独立验证开始和持久终态。
 func executeExecActivityTest(runtime *Runtime, ctx context.Context, emit Emitter, turn domain.TurnID, invocation tool.Invocation) (tool.InvocationResult, bool, error) {
-	runtime.activityEmitter = emit
-	runtime.activityInvocations = map[tool.InvocationID]tool.Invocation{invocation.InvocationID(): invocation}
-	defer func() { runtime.activityEmitter = nil; runtime.activityInvocations = nil }()
+	runtime.toolTurn.activityEmitter = emit
+	runtime.toolTurn.activityInvocations = map[tool.InvocationID]tool.Invocation{invocation.InvocationID(): invocation}
+	defer func() { runtime.toolTurn.activityEmitter = nil; runtime.toolTurn.activityInvocations = nil }()
 	return runtime.executeExecCall(ctx, emit, turn, invocation)
 }
 

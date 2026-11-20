@@ -51,7 +51,7 @@ func (r *questionResponder) Answer(ctx context.Context, v tool.QuestionInvocatio
 	if err != nil {
 		return tool.QuestionAnswerSet{}, err
 	}
-	state := r.runtime.toolCalls[v.InvocationID()]
+	state := r.runtime.toolTurn.toolCalls[v.InvocationID()]
 	if state == nil {
 		return tool.QuestionAnswerSet{}, fmt.Errorf("question has no ready source")
 	}
@@ -157,7 +157,7 @@ func (r *Runtime) executeExclusiveCall(ctx context.Context, emit Emitter, turnID
 		err := r.persistToolResult(context.WithoutCancel(ctx), turnID, &result)
 		return result, false, err
 	}
-	if r.resultBudget.BodyExhausted() {
+	if r.toolTurn.resultBudget.BodyExhausted() {
 		return finishError(tool.ResultError, "result_budget_exceeded", "Question not asked: result budget exhausted")
 	}
 	if !r.interactiveQuestions {
@@ -187,8 +187,8 @@ func (r *Runtime) executeExclusiveCall(ctx context.Context, emit Emitter, turnID
 	if _, err = tool.FinalizeResult(minimum, allowance, tool.BudgetPreserved); err != nil {
 		return finishError(tool.ResultError, "result_budget_exceeded", "Question not asked: result budget exhausted")
 	}
-	preparer, ok := r.conversation.(provider.ToolResultPreparer)
-	if !ok {
+	preparer := r.providerOperations.toolOutputs
+	if preparer == nil {
 		return tool.InvocationResult{}, false, fmt.Errorf("question output preparation is unavailable")
 	}
 	preflight, err := preparer.PrepareToolOutputPreflight(inv)
@@ -197,13 +197,12 @@ func (r *Runtime) executeExclusiveCall(ctx context.Context, emit Emitter, turnID
 	}
 	responder := &questionResponder{runtime: r, turnID: turnID, emit: emit, allowance: allowance, preflight: preflight}
 	defer func() { r.closeQuestion(responder.pending) }()
-	execution, err := r.executeExclusive(ctx, turnID, inv, exclusiveAction{
+	result, err := r.executeExclusive(ctx, turnID, inv, exclusiveAction{
 		execute: func(ctx context.Context) tool.InvocationResult { return r.questionExecutor.Execute(ctx, v, responder) },
 		matches: func(result tool.InvocationResult) bool {
 			return result.QuestionMetadata().Fingerprint == v.Input().Fingerprint()
 		},
 	})
-	result := execution.Result
 	if err == nil && responder.pending != nil {
 		resolution := protocol.QuestionCancelled
 		if result.Status() == tool.ResultSuccess {

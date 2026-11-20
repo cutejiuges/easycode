@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
-	"sync/atomic"
 
 	"easycode/internal/domain"
 	"easycode/internal/protocol"
@@ -17,7 +16,7 @@ import (
 
 const MaxNativeCommitBytes = 16 << 20
 
-// Capabilities 描述服务端实际支持的能力，不能仅由厂商名称推断。
+// Capabilities 描述适配器实现且会话启用的能力，远端是否接受请求取决于实际端点。
 type Capabilities struct {
 	Streaming          bool
 	ReasoningSummary   bool // 表示主动编译摘要请求的能力，被动展示不会启用它。
@@ -402,10 +401,7 @@ type PreparedSample struct {
 	receipt      domain.RequestReceipt
 	usage        domain.SampleUsage
 	ready        []tool.ReadyCall
-	finalize     func()
-	discard      func()
-	state        atomic.Uint32
-	resolved     chan struct{}
+	resolution   *preparedResolution
 }
 
 // NewPreparedSample 创建具有显式提交和丢弃路径的当前 sample。
@@ -425,7 +421,8 @@ func NewPreparedSample(
 	if err := usage.Validate(); err != nil {
 		return nil, fmt.Errorf("prepared sample usage is invalid: %w", err)
 	}
-	if finalize == nil || discard == nil {
+	resolution, err := newPreparedResolution(finalize, discard)
+	if err != nil {
 		return nil, fmt.Errorf("prepared sample lifecycle callbacks are required")
 	}
 	if err := receipt.Validate(); err != nil {
@@ -450,12 +447,12 @@ func NewPreparedSample(
 	if err != nil {
 		return nil, err
 	}
-	return &PreparedSample{presentation: ownedPresentation, receipt: receipt, envelope: cloned, usage: usage, ready: clonedReady, finalize: finalize, discard: discard, resolved: make(chan struct{})}, nil
+	return &PreparedSample{presentation: ownedPresentation, receipt: receipt, envelope: cloned, usage: usage, ready: clonedReady, resolution: resolution}, nil
 }
 
 // Presentation 返回尚未解析 sample 的独立展示附属值。
 func (sample *PreparedSample) Presentation() (domain.SamplePresentation, error) {
-	if sample == nil || sample.finalize == nil || sample.state.Load() != 0 {
+	if sample == nil || !sample.resolution.pending() {
 		return domain.SamplePresentation{}, fmt.Errorf("prepared sample is invalid or resolved")
 	}
 	return sample.presentation.Clone()
@@ -463,10 +460,10 @@ func (sample *PreparedSample) Presentation() (domain.SamplePresentation, error) 
 
 // ReadyCalls 返回按模型 item 顺序排列的独立 typed 调用切片。
 func (sample *PreparedSample) ReadyCalls() ([]tool.ReadyCall, error) {
-	if sample == nil || sample.finalize == nil {
+	if sample == nil || sample.resolution == nil {
 		return nil, fmt.Errorf("prepared sample is invalid")
 	}
-	if sample.state.Load() != 0 {
+	if !sample.resolution.pending() {
 		return nil, fmt.Errorf("prepared sample is already finalized")
 	}
 	return cloneReadyCalls(sample.ready)
@@ -474,10 +471,10 @@ func (sample *PreparedSample) ReadyCalls() ([]tool.ReadyCall, error) {
 
 // Envelope 返回待持久化原生增量的独立副本。
 func (sample *PreparedSample) Envelope() (NativeCommitEnvelope, error) {
-	if sample == nil || sample.finalize == nil {
+	if sample == nil || sample.resolution == nil {
 		return NativeCommitEnvelope{}, fmt.Errorf("prepared sample is invalid")
 	}
-	if sample.state.Load() != 0 {
+	if !sample.resolution.pending() {
 		return NativeCommitEnvelope{}, fmt.Errorf("prepared sample is already finalized")
 	}
 	return sample.envelope.Clone()
@@ -485,10 +482,10 @@ func (sample *PreparedSample) Envelope() (NativeCommitEnvelope, error) {
 
 // Usage 返回待持久化 normalized usage 的值拷贝。
 func (sample *PreparedSample) Usage() (domain.SampleUsage, error) {
-	if sample == nil || sample.finalize == nil {
+	if sample == nil || sample.resolution == nil {
 		return domain.SampleUsage{}, fmt.Errorf("prepared sample is invalid")
 	}
-	if sample.state.Load() != 0 {
+	if !sample.resolution.pending() {
 		return domain.SampleUsage{}, fmt.Errorf("prepared sample is already finalized")
 	}
 	if err := sample.usage.Validate(); err != nil {
@@ -499,36 +496,28 @@ func (sample *PreparedSample) Usage() (domain.SampleUsage, error) {
 
 // Finalize 在 durable success 后恰好一次提交纯内存历史。
 func (sample *PreparedSample) Finalize() error {
-	if sample == nil || sample.finalize == nil {
+	if sample == nil || sample.resolution == nil {
 		return fmt.Errorf("prepared sample is invalid")
 	}
-	if !sample.state.CompareAndSwap(0, 3) {
-		<-sample.resolved
+	if err := sample.resolution.resolve(true); err != nil {
 		return fmt.Errorf("prepared sample is already finalized")
 	}
-	sample.finalize()
-	sample.state.Store(1)
-	close(sample.resolved)
 	return nil
 }
 
 // Finalized 判断 sample 是否已经提交到内存历史。
 func (sample *PreparedSample) Finalized() bool {
-	return sample != nil && sample.state.Load() == 1
+	return sample != nil && sample.resolution.finalized()
 }
 
 // Discard 在native commit尚未durable时恰好一次释放Provider staging。
 func (sample *PreparedSample) Discard() error {
-	if sample == nil || sample.discard == nil {
+	if sample == nil || sample.resolution == nil {
 		return fmt.Errorf("prepared sample is invalid")
 	}
-	if !sample.state.CompareAndSwap(0, 3) {
-		<-sample.resolved
+	if err := sample.resolution.resolve(false); err != nil {
 		return fmt.Errorf("prepared sample is already resolved")
 	}
-	sample.discard()
-	sample.state.Store(2)
-	close(sample.resolved)
 	return nil
 }
 
@@ -606,7 +595,7 @@ type TranscriptProjector interface {
 
 // Receipt 返回待提交样本的纯值请求收据。
 func (sample *PreparedSample) Receipt() (domain.RequestReceipt, error) {
-	if sample == nil || sample.finalize == nil || sample.state.Load() != 0 {
+	if sample == nil || !sample.resolution.pending() {
 		return domain.RequestReceipt{}, fmt.Errorf("prepared sample is not pending")
 	}
 	if err := sample.receipt.Validate(); err != nil {

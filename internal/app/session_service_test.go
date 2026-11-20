@@ -25,6 +25,12 @@ type fakeProviderFactory struct {
 	restored     []provider.NativeCommitEnvelope
 }
 
+func testSessionProvider(factory provider.Factory, wire string) sessionProvider {
+	binding, _ := bindProvider(factory.Family())
+	binding.wire = wire
+	return binding.bindSession(factory)
+}
+
 func (factory *fakeProviderFactory) Family() domain.ProviderFamily { return factory.family }
 
 func (*fakeProviderFactory) Capabilities() provider.Capabilities {
@@ -87,7 +93,7 @@ func TestSessionServiceOwnershipFailuresReleaseTheCurrentOwner(t *testing.T) {
 			return session.ReplayPlan{}, errors.New("fixture replay failure")
 		}
 		factory := &fakeProviderFactory{family: domain.ProviderOpenAI}
-		if _, err := service.resume(context.Background(), factory, "responses", "gpt-test", identity.ThreadID); !errors.Is(err, &fault.Error{Code: fault.CodeSessionCorruption}) {
+		if _, err := service.resume(context.Background(), testSessionProvider(factory, "responses"), "gpt-test", identity.ThreadID); !errors.Is(err, &fault.Error{Code: fault.CodeSessionCorruption}) {
 			t.Fatalf("resume error = %v", err)
 		}
 		if factory.restoreCalls.Load() != 0 {
@@ -106,11 +112,31 @@ func TestSessionServiceOwnershipFailuresReleaseTheCurrentOwner(t *testing.T) {
 			return plan, err
 		}
 		factory := &fakeProviderFactory{family: domain.ProviderOpenAI}
-		if _, err := service.resume(context.Background(), factory, "responses", "gpt-test", identity.ThreadID); !errors.Is(err, &fault.Error{Code: fault.CodeSessionIncompatible}) {
+		if _, err := service.resume(context.Background(), testSessionProvider(factory, "responses"), "gpt-test", identity.ThreadID); !errors.Is(err, &fault.Error{Code: fault.CodeSessionIncompatible}) {
 			t.Fatalf("resume error = %v", err)
 		}
 		if factory.restoreCalls.Load() != 0 {
 			t.Fatalf("restore calls = %d", factory.restoreCalls.Load())
+		}
+		assertSessionLeaseAvailable(t, service, identity.ThreadID)
+	})
+
+	t.Run("mismatched wire", func(t *testing.T) {
+		service, identity := createClosedTestSession(t, domain.ProviderOpenAI, domain.AnthropicMessagesWire, "gpt-test")
+		defer service.close()
+		factory := &fakeProviderFactory{family: domain.ProviderOpenAI}
+		binding, err := bindProvider(factory.Family())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = service.resume(context.Background(), binding.bindSession(factory), "gpt-test", identity.ThreadID); !errors.Is(err, &fault.Error{Code: fault.CodeSessionIncompatible}) {
+			t.Fatalf("resume error = %v", err)
+		}
+		if preview, cleanupFailed, err := previewSession(context.Background(), service.repository.RootPath(), identity.ThreadID, defaultPreviewDependencies()); err == nil || err.Error() != "stored history source is unsupported" || cleanupFailed || len(preview.Messages) != 0 {
+			t.Fatalf("preview mismatch = %#v, %t, %v", preview, cleanupFailed, err)
+		}
+		if factory.restoreCalls.Load() != 0 || factory.networkCalls.Load() != 0 {
+			t.Fatal("mismatched wire entered a provider")
 		}
 		assertSessionLeaseAvailable(t, service, identity.ThreadID)
 	})
@@ -121,7 +147,7 @@ func TestSessionServiceOwnershipFailuresReleaseTheCurrentOwner(t *testing.T) {
 		factory := &fakeProviderFactory{
 			family: domain.ProviderOpenAI, restoreErr: errors.New("fixture restore failure"),
 		}
-		if _, err := service.resume(context.Background(), factory, "responses", "gpt-test", identity.ThreadID); !errors.Is(err, &fault.Error{Code: fault.CodeSessionCorruption}) {
+		if _, err := service.resume(context.Background(), testSessionProvider(factory, "responses"), "gpt-test", identity.ThreadID); !errors.Is(err, &fault.Error{Code: fault.CodeSessionCorruption}) {
 			t.Fatalf("resume error = %v", err)
 		}
 		if factory.restoreCalls.Load() != 1 || factory.networkCalls.Load() != 0 {
@@ -137,7 +163,7 @@ func TestSessionServiceOwnershipFailuresReleaseTheCurrentOwner(t *testing.T) {
 			return journalStartResult{}, errors.New("fixture writer start failure")
 		}
 		factory := &fakeProviderFactory{family: domain.ProviderOpenAI}
-		if _, err := service.resume(context.Background(), factory, "responses", "gpt-test", identity.ThreadID); !errors.Is(err, &fault.Error{Code: fault.CodeSessionWrite}) {
+		if _, err := service.resume(context.Background(), testSessionProvider(factory, "responses"), "gpt-test", identity.ThreadID); !errors.Is(err, &fault.Error{Code: fault.CodeSessionWrite}) {
 			t.Fatalf("resume error = %v", err)
 		}
 		if factory.restoreCalls.Load() != 1 || factory.networkCalls.Load() != 0 {
@@ -155,14 +181,14 @@ func TestSessionServiceInChatRevalidatesBeforeRepair(t *testing.T) {
 	factory := &fakeProviderFactory{family: domain.ProviderOpenAI}
 
 	service.expectedResumeCWD = t.TempDir()
-	if _, err := service.resume(context.Background(), factory, "responses", "gpt-test", identity.ThreadID); !errors.Is(err, errResumeDirectory) {
+	if _, err := service.resume(context.Background(), testSessionProvider(factory, "responses"), "gpt-test", identity.ThreadID); !errors.Is(err, errResumeDirectory) {
 		t.Fatalf("wrong directory = %v", err)
 	}
 	assertSessionLeaseAvailable(t, service, identity.ThreadID)
 	assertRecoveryFileBytes(t, path, torn)
 
 	service.expectedResumeCWD = plan.SessionMetadata.CreationCWD
-	if _, err := service.resume(context.Background(), factory, "responses", "other-model", identity.ThreadID); !errors.Is(err, &fault.Error{Code: fault.CodeSessionIncompatible}) || errors.Is(err, errResumeDirectory) {
+	if _, err := service.resume(context.Background(), testSessionProvider(factory, "responses"), "other-model", identity.ThreadID); !errors.Is(err, &fault.Error{Code: fault.CodeSessionIncompatible}) || errors.Is(err, errResumeDirectory) {
 		t.Fatalf("wrong model = %v", err)
 	}
 	assertSessionLeaseAvailable(t, service, identity.ThreadID)
@@ -173,7 +199,7 @@ func TestSessionServiceInChatRevalidatesBeforeRepair(t *testing.T) {
 
 	// 启动恢复允许使用原有跨目录入口。
 	service.expectedResumeCWD = ""
-	resumed, err := service.resume(context.Background(), factory, "responses", "gpt-test", identity.ThreadID)
+	resumed, err := service.resume(context.Background(), testSessionProvider(factory, "responses"), "gpt-test", identity.ThreadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +229,7 @@ func TestSessionServiceRecoveryRecordsOnlyConfirmedRepair(t *testing.T) {
 		cancel()
 		return result, err
 	}
-	if _, err := service.resume(ctx, factory, "responses", "gpt-test", identity.ThreadID); !errors.Is(err, context.Canceled) {
+	if _, err := service.resume(ctx, testSessionProvider(factory, "responses"), "gpt-test", identity.ThreadID); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled before repair = %v", err)
 	}
 	if service.recovery.committed || service.recovery.uncertain || service.recovery.cleanupErr != nil {
@@ -221,7 +247,7 @@ func TestSessionServiceRecoveryRecordsOnlyConfirmedRepair(t *testing.T) {
 		cancelAfterRepair()
 		return result, err
 	}
-	if _, err := service.resume(repairedCtx, factory, "responses", "gpt-test", identity.ThreadID); !errors.Is(err, context.Canceled) {
+	if _, err := service.resume(repairedCtx, testSessionProvider(factory, "responses"), "gpt-test", identity.ThreadID); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled after repair = %v", err)
 	}
 	if !service.recovery.committed || service.recovery.uncertain || service.recovery.cleanupErr != nil {
@@ -261,7 +287,7 @@ func TestSessionServiceInterruptedCompensationFailureDoesNotBecomeUsable(t *test
 	service.recovery = &recoveryAttempt{}
 	defer service.close()
 	factory := &fakeProviderFactory{family: domain.ProviderOpenAI}
-	created, err := service.create(context.Background(), factory, "responses", "gpt-test", t.TempDir())
+	created, err := service.create(context.Background(), testSessionProvider(factory, "responses"), "gpt-test", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +305,7 @@ func TestSessionServiceInterruptedCompensationFailureDoesNotBecomeUsable(t *test
 		return journalStartResult{writer: failing}, nil
 	}
 	restorer := &fakeProviderFactory{family: domain.ProviderOpenAI}
-	resumed, err := service.resume(context.Background(), restorer, "responses", "gpt-test", created.identity.ThreadID)
+	resumed, err := service.resume(context.Background(), testSessionProvider(restorer, "responses"), "gpt-test", created.identity.ThreadID)
 	if !errors.Is(err, &fault.Error{Code: fault.CodeSessionWrite}) || resumed.writer != nil {
 		t.Fatalf("resume = %#v, %v", resumed, err)
 	}
@@ -297,8 +323,7 @@ func TestSessionServiceInterruptedAppendFailureReleasesLease(t *testing.T) {
 	service.recovery = &recoveryAttempt{}
 	defer service.close()
 	created, err := service.create(
-		context.Background(), &fakeProviderFactory{family: domain.ProviderOpenAI},
-		"responses", "gpt-test", t.TempDir(),
+		context.Background(), testSessionProvider(&fakeProviderFactory{family: domain.ProviderOpenAI}, "responses"), "gpt-test", t.TempDir(),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -322,7 +347,7 @@ func TestSessionServiceInterruptedAppendFailureReleasesLease(t *testing.T) {
 		return journalStartResult{writer: failing}, nil
 	}
 	factory := &fakeProviderFactory{family: domain.ProviderOpenAI}
-	if _, err := service.resume(context.Background(), factory, "responses", "gpt-test", created.identity.ThreadID); !errors.Is(err, &fault.Error{Code: fault.CodeSessionWrite}) {
+	if _, err := service.resume(context.Background(), testSessionProvider(factory, "responses"), "gpt-test", created.identity.ThreadID); !errors.Is(err, &fault.Error{Code: fault.CodeSessionWrite}) {
 		t.Fatalf("resume error = %v", err)
 	}
 	if failing.appendCalls.Load() != 1 || failing.closeCalls.Load() != 1 || factory.networkCalls.Load() != 0 {
@@ -373,7 +398,7 @@ func createClosedTestSession(
 	t.Helper()
 	service := newTestSessionService(t)
 	created, err := service.create(
-		context.Background(), &fakeProviderFactory{family: family}, wire, model, t.TempDir(),
+		context.Background(), testSessionProvider(&fakeProviderFactory{family: family}, wire), model, t.TempDir(),
 	)
 	if err != nil {
 		_ = service.close()

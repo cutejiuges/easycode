@@ -17,6 +17,22 @@ type HookRunner interface {
 	Preflight(context.Context) domain.HookCode
 	Run(context.Context, domain.HookRunIdentity, domain.HookDeclaration, domain.HookInput, time.Duration) domain.HookExecution
 }
+
+func runTimedHook(ctx context.Context, runner HookRunner, now func() time.Time, remaining time.Duration, id domain.HookRunIdentity, declaration domain.HookDeclaration, input domain.HookInput) (domain.HookExecution, time.Duration) {
+	start := now()
+	execution := runner.Run(ctx, id, declaration, input, min(time.Duration(declaration.Reference.TimeoutSeconds)*time.Second, remaining))
+	return execution, remaining - max(0, now().Sub(start))
+}
+
+func hookExecutionMatches(result domain.HookRunResult, id domain.HookRunIdentity) bool {
+	return result.Identity == id && result.Origin == "execution"
+}
+
+func validHookExecution(execution domain.HookExecution, id domain.HookRunIdentity, feedback domain.HookFeedbackPolicy) bool {
+	_, err := domain.NewHookExecution(execution.Result, feedback, execution.Feedback, execution.Replacement)
+	return err == nil && hookExecutionMatches(execution.Result, id)
+}
+
 type hookTrustWait struct {
 	request   protocol.HookTrustRequestedPayload
 	turn      domain.TurnID

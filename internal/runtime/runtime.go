@@ -72,6 +72,7 @@ type Config struct {
 	CachePolicy               domain.CachePolicy
 	RestoredCacheBaseline     bool
 	ContextProfile            contextplan.ProviderProfile
+	ProviderWire              string
 	ToolCatalog               tool.CatalogSnapshot
 	ReadExecutor              tool.ReadExecutor
 	GlobExecutor              tool.GlobExecutor
@@ -118,14 +119,7 @@ type Runtime struct {
 	compactionOutputTokens       uint64
 	compactionDeadline           func(context.Context, time.Duration) (context.Context, context.CancelFunc)
 	turnEmitter                  Emitter
-	activityEmitter              Emitter
-	toolCalls                    map[tool.InvocationID]*toolExecutionCall
-	activityInvocations          map[tool.InvocationID]tool.Invocation
-	resultBudget                 *tool.ResultBudget
-	resultTicket                 *tool.ResultBudgetTicket
-	resultTicketInvocation       tool.InvocationID
-	resultTicketCapability       tool.CapabilityID
-	resultTicketPost             bool
+	toolTurn                     toolTurnState
 	textOutputStore              tool.TextOutputStore
 	toolHistory                  ToolHistoryObserver
 	hookHistory                  HookHistoryObserver
@@ -133,6 +127,8 @@ type Runtime struct {
 	readArtifactExecutor         tool.ReadArtifactExecutor
 	artifactReferences           *tool.ArtifactReferences
 	conversation                 provider.Conversation
+	providerOperations           providerOperations
+	providerWire                 string
 	journal                      Journal
 	sessionID                    domain.SessionID
 	threadID                     domain.ThreadID
@@ -196,6 +192,9 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 	}
 	if config.ContextProfile.Family() != conversation.Family() {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "runtime context profile provider does not match conversation")
+	}
+	if config.ProviderWire != conversation.Family().Wire() {
+		return nil, fault.New(fault.CodeInvalidConfiguration, "runtime provider wire does not match conversation")
 	}
 	if err := config.ToolCatalog.Validate(); err != nil {
 		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "runtime tool catalog is invalid", err)
@@ -264,7 +263,7 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 		userInputCommitted: protocol.NewUserInputCommitted,
 		textOutputStore:    config.TextOutputStore,
 		artifactReferences: config.ArtifactReferences,
-		conversation:       conversation, journal: config.Journal,
+		conversation:       conversation, providerOperations: bindProviderOperations(conversation), providerWire: config.ProviderWire, journal: config.Journal,
 		sessionID: config.SessionID, threadID: config.ThreadID, newTurnID: config.GenerateTurnID,
 		newInvocationID: config.GenerateInvocationID,
 		cachePolicy:     domain.WithDefaultCachePolicy(config.CachePolicy), restoredCacheBaseline: config.RestoredCacheBaseline,
@@ -300,13 +299,10 @@ func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, 
 	runtime.turnEmitter = emit
 	defer func() { runtime.turnEmitter = nil }()
 	defer runtime.clearTurnObservations()
-	runtime.resultBudget = tool.NewResultBudget()
+	runtime.toolTurn.resultBudget = tool.NewResultBudget()
 	defer func() {
-		runtime.resultBudget = nil
-		runtime.resultTicket = nil
-		runtime.resultTicketInvocation = ""
-		runtime.resultTicketCapability = ""
-		runtime.resultTicketPost = false
+		runtime.toolTurn.resultBudget = nil
+		runtime.toolTurn.resetResultTicket()
 	}()
 
 	turnID, err := runtime.beginTurn(ctx, emit)
@@ -398,7 +394,7 @@ func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, 
 				return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, outputErr)
 			}
 		}
-		if runtime.resultBudget.BodyExhausted() {
+		if runtime.toolTurn.resultBudget.BodyExhausted() {
 			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, fault.New(fault.CodeToolResultBudgetExceeded, "tool result budget exhausted"))
 		}
 		if executeErr != nil {
@@ -442,7 +438,7 @@ func (runtime *Runtime) releaseFailedContinuation(ctx context.Context, operation
 	if operationErr == nil && ctx.Err() == nil {
 		return
 	}
-	if resetter, ok := runtime.conversation.(provider.ContinuationResetter); ok {
+	if resetter := runtime.providerOperations.continuation; resetter != nil {
 		resetter.ResetContinuation()
 	}
 }
@@ -474,7 +470,7 @@ func (runtime *Runtime) ReconcileToolTurn(ctx context.Context, plan session.Tool
 		if err := runtime.registerToolCall(call.Origin, call.Invocation); err != nil {
 			return err
 		}
-		state := runtime.toolCalls[call.Invocation.InvocationID()]
+		state := runtime.toolTurn.toolCalls[call.Invocation.InvocationID()]
 		state.resultOrigin = tool.InputResultRecovery
 		if call.Hooks != nil {
 			g := call.Hooks.Clone()
@@ -964,7 +960,7 @@ func (runtime *Runtime) commitCallSample(
 	if runtime.toolHistory != nil {
 		entries := make([]session.ToolHistoryEntry, len(invocations))
 		for index, invocation := range invocations {
-			entries[index] = session.ToolHistoryEntry{Origin: runtime.toolCalls[invocation.InvocationID()].origin, Sequence: records[index+2].Sequence, NativeSequence: records[0].Sequence, TurnID: turnID, SampleIndex: sampleIndex, CallIndex: uint32(index), Invocation: invocation}
+			entries[index] = session.ToolHistoryEntry{Origin: runtime.toolTurn.toolCalls[invocation.InvocationID()].origin, Sequence: records[index+2].Sequence, NativeSequence: records[0].Sequence, TurnID: turnID, SampleIndex: sampleIndex, CallIndex: uint32(index), Invocation: invocation}
 		}
 		if err := runtime.toolHistory.NativeCommitted(records[0].Sequence, entries); err != nil {
 			runtime.poisoned.Store(true)
@@ -976,25 +972,25 @@ func (runtime *Runtime) commitCallSample(
 }
 
 func (runtime *Runtime) executeToolCalls(ctx context.Context, turnID domain.TurnID, invocations []tool.Invocation, emitters ...Emitter) ([]tool.InvocationResult, error) {
-	if runtime.resultBudget == nil {
-		runtime.resultBudget = tool.NewResultBudget()
+	if runtime.toolTurn.resultBudget == nil {
+		runtime.toolTurn.resultBudget = tool.NewResultBudget()
 	}
-	if err := runtime.resultBudget.BeginSample(len(invocations)); err != nil {
+	if err := runtime.toolTurn.resultBudget.BeginSample(len(invocations)); err != nil {
 		return nil, err
 	}
-	runtime.activityEmitter = func(protocol.Event) {}
+	runtime.toolTurn.activityEmitter = func(protocol.Event) {}
 	if len(emitters) == 1 && emitters[0] != nil {
-		runtime.activityEmitter = emitters[0]
+		runtime.toolTurn.activityEmitter = emitters[0]
 	}
-	runtime.activityInvocations = make(map[tool.InvocationID]tool.Invocation, len(invocations))
-	defer func() { runtime.activityEmitter = nil; runtime.activityInvocations = nil }()
+	runtime.toolTurn.activityInvocations = make(map[tool.InvocationID]tool.Invocation, len(invocations))
+	defer func() { runtime.toolTurn.activityEmitter = nil; runtime.toolTurn.activityInvocations = nil }()
 	for _, invocation := range invocations {
-		runtime.activityInvocations[invocation.InvocationID()] = invocation
+		runtime.toolTurn.activityInvocations[invocation.InvocationID()] = invocation
 		event, err := protocol.NewToolReady(activityForInvocation(invocation))
 		if err != nil {
 			return nil, err
 		}
-		runtime.activityEmitter(runtime.decorate(event, turnID))
+		runtime.toolTurn.activityEmitter(runtime.decorate(event, turnID))
 	}
 	return (orderedToolScheduler{operations: runtime, observations: &runtime.readObservations}).execute(ctx, turnID, invocations, emitters...)
 }
@@ -1017,7 +1013,7 @@ func (runtime *Runtime) executeReadBatch(ctx context.Context, turnID domain.Turn
 	var admissionErr error
 	startedCount := 0
 	for index, invocation := range invocations {
-		if runtime.resultBudget.BodyExhausted() {
+		if runtime.toolTurn.resultBudget.BodyExhausted() {
 			results[index] = tool.NewInvocationErrorResult(invocation, tool.ResultError, "result_budget_exceeded", "Tool not executed: turn result budget exhausted")
 			continue
 		}
@@ -1189,7 +1185,7 @@ func (runtime *Runtime) persistToolResult(ctx context.Context, turnID domain.Tur
 	records, appendErr := runtime.journal.AppendBatch(writeContext, []session.RecordDraft{draft})
 	if appendErr != nil {
 		if result.Capability() == tool.CapabilityTaskProgress && result.Status() == tool.ResultSuccess && (errors.Is(appendErr, context.Canceled) || errors.Is(appendErr, context.DeadlineExceeded)) && !runtime.journal.Poisoned() {
-			call := runtime.toolCalls[result.InvocationID()]
+			call := runtime.toolTurn.toolCalls[result.InvocationID()]
 			if call == nil {
 				return fault.New(fault.CodeStreamProtocol, "task result has no source")
 			}
@@ -1217,8 +1213,8 @@ func (runtime *Runtime) persistToolResult(ctx context.Context, turnID domain.Tur
 }
 
 func (runtime *Runtime) commitToolOutputs(ctx context.Context, turnID domain.TurnID, results []tool.InvocationResult) error {
-	preparer, ok := runtime.conversation.(provider.ToolResultPreparer)
-	if !ok {
+	preparer := runtime.providerOperations.toolOutputs
+	if preparer == nil {
 		runtime.poisoned.Store(true)
 		return fault.New(fault.CodeStreamProtocol, "provider does not support tool result preparation")
 	}

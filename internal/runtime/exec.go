@@ -70,12 +70,7 @@ func (runtime *Runtime) executeExecCall(ctx context.Context, emit Emitter, turnI
 		feedback = ""
 		source = session.ApprovalSourceInterruption
 	}
-	approvalMetadata, err := session.NewApprovalMetadata(invocation)
-	if err != nil {
-		return tool.InvocationResult{}, false, err
-	}
-	fact := session.ToolApprovalDecidedPayload{RequestID: requestID, InvocationID: invocation.InvocationID(), Fingerprint: tool.CandidateFingerprint(candidate.Fingerprint()), Outcome: outcome, Feedback: feedback, Source: source, Metadata: approvalMetadata}
-	draft, err := session.NewToolApprovalDecidedDraft(turnID, fact)
+	factDraft, err := buildApprovalFact(request, invocation, outcome, source, feedback)
 	if err != nil {
 		return tool.InvocationResult{}, false, err
 	}
@@ -92,32 +87,10 @@ func (runtime *Runtime) executeExecCall(ctx context.Context, emit Emitter, turnI
 			message += "\nUser feedback: " + feedback
 		}
 		result := tool.NewExecErrorResult(execInvocation, status, code, message)
-		result, freezeErr := runtime.freezeResult(result)
-		if freezeErr != nil {
-			return tool.InvocationResult{}, false, freezeErr
-		}
-		resultDraft, draftErr := session.NewToolCallResultDraft(turnID, result)
-		if draftErr != nil {
-			return tool.InvocationResult{}, false, draftErr
-		}
-		records, err := runtime.journal.AppendBatch(context.WithoutCancel(ctx), []session.RecordDraft{draft, resultDraft})
-		if err != nil {
-			runtime.poisoned.Store(true)
-			return tool.InvocationResult{}, false, fault.Wrap(fault.CodeSessionWrite, "persist Exec denial failed", err)
-		}
-		if err := runtime.commitResultBudget(result); err != nil {
-			runtime.poisoned.Store(true)
-			return tool.InvocationResult{}, false, err
-		}
-		if err := runtime.notifyToolResult(turnID, result, resultRecordSequence(records)); err != nil {
-			return result, false, err
-		}
-		runtime.emitApprovalResolved(emit, turnID, request, outcome)
-		return result, outcome == tool.ApprovalOutcomeAbort, nil
+		return runtime.commitApprovalDenial(ctx, emit, request, outcome, factDraft, result, "Exec")
 	}
-	if _, err := runtime.journal.AppendBatch(context.WithoutCancel(ctx), []session.RecordDraft{draft}); err != nil {
-		runtime.poisoned.Store(true)
-		return tool.InvocationResult{}, false, fault.Wrap(fault.CodeSessionWrite, "persist Exec approval failed", err)
+	if err := runtime.commitApprovalDecision(ctx, factDraft, "Exec"); err != nil {
+		return tool.InvocationResult{}, false, err
 	}
 	runtime.emitApprovalResolved(emit, turnID, request, outcome)
 	summary := strings.Join(strings.Fields(execInvocation.Input().Command()), " ")
@@ -127,14 +100,10 @@ func (runtime *Runtime) executeExecCall(ctx context.Context, emit Emitter, turnI
 	}
 	activity := protocol.ToolActivityPayload{Tool: protocol.ToolShell, InvocationID: string(invocation.InvocationID()), Summary: summary, Workdir: execInvocation.Input().Workdir(), Status: "running"}
 
-	runningActivity := activity
-	execution, err := runtime.executeExclusive(ctx, turnID, invocation, exclusiveAction{
+	result, err := runtime.executeExclusive(ctx, turnID, invocation, exclusiveAction{
 		execute: func(ctx context.Context) tool.InvocationResult {
 			return executeWithProgress(ctx, runtime.execExecutor, candidate, func(progress tool.ExecProgress) {
-				activity.Recent = progress.Recent()
-				activity.StdoutLines = progress.StdoutLines()
-				activity.StderrLines = progress.StderrLines()
-				payload := runningActivity
+				payload := activity
 				payload.ElapsedMillis = progress.ElapsedMillis()
 				payload.StdoutBytes = progress.StdoutBytes()
 				payload.StderrBytes = progress.StderrBytes()
@@ -151,10 +120,5 @@ func (runtime *Runtime) executeExecCall(ctx context.Context, emit Emitter, turnI
 			return result.ExecMetadata().Workdir() == candidate.Invocation().Input().Workdir()
 		},
 	})
-	result := execution.Result
-	if result.Validate() != nil {
-		return result, false, err
-	}
-
 	return result, false, err
 }

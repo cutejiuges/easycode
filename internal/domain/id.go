@@ -12,25 +12,25 @@ const maxUUIDv7UnixMilli = int64(1<<48 - 1)
 
 // GenerateInputID 显式生成一次接收输入的 UUIDv7 身份。
 func GenerateInputID() (InputID, error) {
-	value, err := generateUUIDv7(time.Now(), rand.Reader)
+	value, err := GenerateUUIDv7(time.Now(), rand.Reader)
 	return InputID(value), err
 }
 
 // GenerateSessionID 生成以当前 UTC 毫秒为时间字段的 UUIDv7 Session 标识。
 func GenerateSessionID() (SessionID, error) {
-	value, err := generateUUIDv7(time.Now(), rand.Reader)
+	value, err := GenerateUUIDv7(time.Now(), rand.Reader)
 	return SessionID(value), err
 }
 
 // GenerateThreadID 生成以当前 UTC 毫秒为时间字段的 UUIDv7 Thread 标识。
 func GenerateThreadID() (ThreadID, error) {
-	value, err := generateUUIDv7(time.Now(), rand.Reader)
+	value, err := GenerateUUIDv7(time.Now(), rand.Reader)
 	return ThreadID(value), err
 }
 
 // GenerateTurnID 生成以当前 UTC 毫秒为时间字段的 UUIDv7 Turn 标识。
 func GenerateTurnID() (TurnID, error) {
-	value, err := generateUUIDv7(time.Now(), rand.Reader)
+	value, err := GenerateUUIDv7(time.Now(), rand.Reader)
 	return TurnID(value), err
 }
 
@@ -91,7 +91,8 @@ func (id TurnID) Time() (time.Time, error) {
 	return uuidv7Time(string(id), "turn")
 }
 
-func generateUUIDv7(now time.Time, random io.Reader) (string, error) {
+// GenerateUUIDv7 用调用方提供的时间与随机源显式生成规范 UUIDv7。
+func GenerateUUIDv7(now time.Time, random io.Reader) (string, error) {
 	milliseconds := now.UnixMilli()
 	if milliseconds < 0 || milliseconds > maxUUIDv7UnixMilli {
 		return "", fmt.Errorf("UUIDv7 timestamp is out of range")
@@ -111,6 +112,12 @@ func generateUUIDv7(now time.Time, random io.Reader) (string, error) {
 	raw[6] = raw[6]&0x0f | 0x70
 	raw[8] = raw[8]&0x3f | 0x80
 	return formatUUID(raw), nil
+}
+
+// ValidateUUIDv7 校验共享的规范 UUIDv7 文本，不转换业务身份类型。
+func ValidateUUIDv7(value string) error {
+	_, err := parseUUIDv7(value)
+	return err
 }
 
 func uuidv7Time(value string, kind string) (time.Time, error) {

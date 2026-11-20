@@ -67,7 +67,7 @@ EasyCode 是一个本地优先的 coding agent。产品体验主要参考 Claude
 
 ### 3.1 模板化生命周期，差异化 Provider Kernel
 
-共享层负责 turn 生命周期、工具调度、权限、hooks、session 和 UI 事件；每个 provider 独立负责请求编译、流式归并、原生历史、推理数据、工具 wire 和缓存策略。
+Runtime 负责 turn 生命周期、工具调度、权限、Hooks、Session 提交和 UI 事件。Provider 共享请求准备、采样、摘要、原生历史窗口与回放流程，具体适配器负责 wire 编解码、原生归并、推理数据、工具配对和缓存策略。
 
 不使用“统一扁平 Message + 薄 Adapter”作为核心模型。薄 adapter 无法正确承载：
 
@@ -254,14 +254,9 @@ ProviderKernel
   HistoryProjector
 ```
 
-Go 中通过小接口与组合实现。Provider 持有不可变配置和 transport，并通过显式 ThreadID 的 `provider.Factory.NewConversation` / `RestoreConversation` 创建会话级 `provider.Conversation`；`runtime.Runtime` 只依赖 Conversation，避免多个 Session 共享可变 native history。运行时装配具体实现：
+App 在同一装配边界按已验证的 family/wire 选择在线工厂和离线读取器。在线工厂用显式 ThreadID 创建或恢复会话，各会话独占可变历史及续写状态。离线预览使用 journal 身份和相同协议的只读策略，无需在线凭据。Runtime 装配时绑定输入、工具、Stop、压缩及续写清理等小接口，执行路径直接使用绑定。可选能力沿用各入口现有错误，OpenAI 回退后的增量能力按实际会话状态查询。缓存诊断使用实际 wire，Context 从当前推理设置读取输出预算。
 
-```text
-anthropic.Provider
-openai.Provider
-```
-
-不建议将原生 item 放进无结构的 `map[string]any` 后到处类型断言；应该使用 provider 包内的强类型结构，并只在明确的未知扩展字段上保留 `json.RawMessage` 等 opaque 数据。
+`internal/provider` 按 Go 组合式 Template Method 共享原生历史窗口、准备与一次性提交或丢弃、有序回放。两个适配器以各自的强类型条目接入，并负责原生编码、reducer、工具配对、计量、缓存和 transport 策略。未知扩展使用受控 opaque 数据。两家的普通采样和独立摘要分别共用流驱动，两类操作复用排空清理，各自保留终态、事件和提交边界。Runtime 负责业务预算、队列、审批、Hooks 和 durable 提交，App 与 Session 负责验证、lease 和 writer 接管。[Provider 共享职责规格](../../openspec/specs/architecture/single-current-contract/spec.md)
 
 ### 5.2 Provider 能力模型
 
@@ -290,11 +285,11 @@ openai.Provider
 
 Anthropic 编译 thinking/type/budget/display 及独立 output_config.effort，display 仅支持 adaptive/enabled 的 summarized/omitted；OpenAI 编译独立可省略的 reasoning.effort/summary。默认不发送推理字段；普通 Anthropic 缺省上限 4096，OpenAI 缺省不发上限。ReasoningSummary 只在显式 OpenAI summary 的本地完整路径启用时为 true，Anthropic 和 RawReasoning 仍为 false，不代表已探测 endpoint。
 
-两家分别组合自己的原生请求计划，同一执行计划产生 body、非输入 properties、输入 fingerprint 和 receipt。Anthropic 逻辑输入 hash 排除 cache marker；两家均包含临时项目/Skill 及摘要指导。窗口来源 digest 与逻辑输入 hash 分开；WS 的 full/incremental 只是完整逻辑 body 的传输派生，receipt 不改用 suffix hash。执行前核对摘要预检来源，失败不安装普通 baseline；完成 Sync 后才建立 compacted boundary。
+预检和执行复用请求来源选取及编译流程，原生计划产生 body、非输入 properties、输入 fingerprint 和 receipt。Anthropic 逻辑输入 hash 排除 cache marker，两家逻辑输入均包含临时项目/Skill 及摘要指导。窗口来源 digest 与逻辑输入 hash 分开，WebSocket 的 full/incremental 为完整逻辑 body 的传输派生，receipt 使用完整逻辑请求。执行前核对摘要预检来源，失败不安装普通 baseline，完成 Sync 后才建立 compacted boundary。
 
 手动和自动摘要保留操作捕获的 thinking/display/effort/summary，只改 tool choice none、独立输出额度及摘要指导。manual budget 必须严格小于摘要上限，否则 Provider CompactionBudgetExceeded 映射既有 Runtime compaction_budget_exceeded，在 started/网络前拒绝。自动路径使用既有来源抑制/预算收口；工具结果 durable 不构成远端 assistant turn 结束或切换推理模式的许可。
 
-profile 的 request_policy 只记录实际非默认普通 wire 设置；默认 canonical bytes/revision 不变，显式 Anthropic 4096 与缺省等价，显式 disabled 与省略不同。非默认 source revision 内容派生；UI 来源标签、配置路径、usage 与动态 identity 不进入指纹。所有模式、省略行为和输出边界见 [README](../../README.md#启动推理与普通输出)。
+profile 的 request_policy 只记录实际非默认普通 wire 设置；默认 canonical bytes/revision 不变，显式 Anthropic 4096 与缺省等价，显式 disabled 与省略不同。非默认 source revision 内容派生；UI 来源标签、配置路径、usage 与动态 identity 不进入指纹。所有模式、省略行为和输出边界见 [配置规格](../../openspec/specs/config/json-file/spec.md)和 [Provider 推理控制规格](../../openspec/specs/provider/reasoning-control/spec.md)。
 
 `internal/domain/effort.go` 的 reset/auto/value 仅派生 effort，`internal/context/inference.go` 共享启动及运行中组合校验并保留输出额度原始来源。现有 AgentLoop owner 持有最新选择与 uint64 进程序号，接收前完成候选、结果和有界观测编码校验，交换后 context 观测失败独立处理；不增加设置 writer 或控制 goroutine。每个 turn 在 worker 启动前捕获完整 ProviderProfile，独立摘要在预检接纳时捕获；worker 的 operationProfile 供所有候选、工具/Stop/自动摘要后续请求使用，owner 活动查询只读取已发布数值，idle 按选定 profile 纯规划。
 
@@ -350,13 +345,13 @@ Provider-native history
 - Stop hook 所需的最后 assistant 文本；
 - Subagent completion envelope 的正文抽取。
 
-RequestCompiler、NativeHistory、Session 事实源和 Provider resume 只能使用 native history，不能从语义视图反向构建请求。投影视图允许有损，按 Provider 各自实现并通过 golden fixture 保证 live stream 与 replay 的可见语义一致。详细决策见 [ADR-0002](adr/0002-provider-native-history-and-semantic-projection.md)。
+RequestCompiler、NativeHistory、Session 事实源和 Provider resume 使用 native history。各家按原生规则提供单向投影，共享层复用同义的窗口遍历和采样定位。Golden fixture 核对 live stream 与 replay 的可见语义。[ADR-0002](adr/0002-provider-native-history-and-semantic-projection.md)
 
 ### 5.6 Durable native commit 接缝
 
 当前文本会话使用两阶段提交。Provider 在成功终态生成同时携带 opaque `NativeCommitEnvelope` 与 normalized `SampleUsage` 的 `PreparedSample`，不立即修改 committed native history。Runtime 重新验证两者，将 `[provider_native_commit(sample), sample_usage, turn_completed]` 作为同一 JSONL batch 写入并执行 `Sync`，随后调用一次性 finalizer，最后才发布携带聚合 turn usage 的成功终态。持久化失败会 poison 当前 Runtime，未 finalize 的 staging 不得进入下一请求。
 
-OpenAI 当前 native payload 保存用户 Responses item、有序 output items 和原始 usage；Anthropic 当前 native payload 保存 user/assistant message、最终 metadata 和原始 usage。两者都显式保留 known/unknown 状态，归一化结果由独立 `sample_usage` 保存。恢复时对应 Provider 先事务式解码全部 commits，任一错误都不返回部分历史。共享 Session、Runtime 和 TUI 不解析具体 Provider wire。
+OpenAI 当前 native payload 保存用户 Responses item、有序 output items 和原始 usage。Anthropic 当前 native payload 保存 user/assistant message、最终 metadata 和原始 usage。两者都显式保留 known/unknown 状态，归一化结果由独立 `sample_usage` 保存。共享回放按原顺序把 commit 交给对应原生 decoder，通过增量历史时序状态复用已验证前缀，在现有检查点报告首错。恢复整体通过后才安装历史，包括 checkpoint 覆盖的旧提交。在线恢复和离线预览保留各自的校验顺序、取消边界与接受范围。
 
 ## 6. 缓存架构
 

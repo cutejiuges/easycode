@@ -8,18 +8,10 @@ import (
 	"easycode/internal/session"
 )
 
-// validateSampleUsageEvidence 在 repair 或 writer 接管前核对 Anthropic 当前计量结构。
-func validateSampleUsageEvidence(plan session.ReplayPlan) error {
-	if plan.SessionMetadata.Provider != domain.ProviderAnthropic {
+// validateSampleUsageEvidence 在 repair 或 writer 接管前按绑定的策略核对当前计量结构。
+func validateSampleUsageEvidence(validator provider.SampleUsageValidator, plan session.ReplayPlan) error {
+	if validator == nil {
 		return nil
-	}
-	reader, err := storedHistoryReader(plan.SessionMetadata.Provider, plan.SessionMetadata.ProviderWire)
-	if err != nil {
-		return err
-	}
-	validator, ok := reader.(provider.SampleUsageValidator)
-	if !ok {
-		return fmt.Errorf("provider cannot validate sample usage")
 	}
 	index := 0
 	for _, native := range plan.NativeCommits {

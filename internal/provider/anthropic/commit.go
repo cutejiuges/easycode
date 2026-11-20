@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	messagesWire = "messages"
+	messagesWire = domain.AnthropicMessagesWire
 )
 
 type nativeHistoryCommit struct {

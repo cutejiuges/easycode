@@ -20,9 +20,6 @@ import (
 	"easycode/internal/extension/skill"
 	"easycode/internal/fault"
 	"easycode/internal/headless"
-	"easycode/internal/provider"
-	"easycode/internal/provider/anthropic"
-	"easycode/internal/provider/openai"
 	chatRuntime "easycode/internal/runtime"
 	"easycode/internal/session"
 	"easycode/internal/session/artifact"
@@ -73,11 +70,6 @@ type chatResourceHooks struct {
 	environment            *chatEnvironment
 	lifetime               context.Context
 	expectedResumeCWD      string
-}
-
-type providerResource interface {
-	provider.Factory
-	Close() error
 }
 
 type chatResources struct {
@@ -286,31 +278,6 @@ func outcomeFromHeadless(result headless.Result) Outcome {
 	return Outcome{Class: ExitRuntimeFailure, Report: report, Failure: result.Failure}
 }
 
-func openChatResources(
-	ctx context.Context,
-	applicationConfig config.Config,
-	dataRoot string,
-	resumeThreadID string,
-	creationCWD string,
-) (*chatResources, error) {
-	return openChatResourcesWithSelection(
-		ctx, applicationConfig, dataPaths{sessionRoot: dataRoot}, resumeThreadID, false, creationCWD,
-	)
-}
-
-func openChatResourcesWithSelection(
-	ctx context.Context,
-	applicationConfig config.Config,
-	paths dataPaths,
-	resumeThreadID string,
-	continueSession bool,
-	creationCWD string,
-) (*chatResources, error) {
-	return openChatResourcesWithHooks(
-		ctx, applicationConfig, paths, resumeThreadID, continueSession, creationCWD, chatResourceHooks{},
-	)
-}
-
 func openChatResourcesWithHooks(
 	ctx context.Context,
 	applicationConfig config.Config,
@@ -355,14 +322,11 @@ func openChatResourcesWithSnapshot(
 			resultErr = errors.Join(resultErr, closeErr)
 		}
 	}()
-	if err := applicationConfig.ValidateProvider(); err != nil {
-		return nil, err
-	}
-	inference, err := applicationConfig.InferenceSettings()
+	settings, err := applicationConfig.ResolveProvider()
 	if err != nil {
 		return nil, err
 	}
-	wire, err := providerWire(applicationConfig.Provider.Family)
+	binding, err := bindProvider(applicationConfig.Provider.Family)
 	if err != nil {
 		return nil, err
 	}
@@ -374,39 +338,13 @@ func openChatResourcesWithSnapshot(
 	service.recovery = hooks.recovery
 	service.expectedResumeCWD = hooks.expectedResumeCWD
 	artifactLayout, workspace := roots.layout, roots.workspace
-	readExecutor, err := builtin.NewReadExecutor(workspace)
+	tools, err := newWorkspaceTools(workspace)
 	if err != nil {
-		return nil, fault.New(fault.CodeInvalidConfiguration, "Read executor is unavailable")
+		return nil, err
 	}
-	globExecutor, err := builtin.NewGlobExecutor(workspace)
-	if err != nil {
-		return nil, fault.New(fault.CodeInvalidConfiguration, "Glob executor is unavailable")
-	}
-	grepExecutor, err := builtin.NewGrepExecutor(workspace)
-	if err != nil {
-		return nil, fault.New(fault.CodeInvalidConfiguration, "Grep executor is unavailable")
-	}
-	patchPreparer, err := builtin.NewPatchPreparer(workspace)
-	if err != nil {
-		return nil, fault.New(fault.CodeInvalidConfiguration, "Patch preparer is unavailable")
-	}
-	patchExecutor, err := builtin.NewPatchExecutor(workspace)
-	if err != nil {
-		return nil, fault.New(fault.CodeInvalidConfiguration, "Patch executor is unavailable")
-	}
-	writePreparer, err := builtin.NewWritePreparer(workspace)
-	if err != nil {
-		return nil, fault.New(fault.CodeInvalidConfiguration, "Write preparer is unavailable")
-	}
-	writeExecutor, err := builtin.NewWriteExecutor(workspace)
-	if err != nil {
-		return nil, fault.New(fault.CodeInvalidConfiguration, "Write executor is unavailable")
-	}
-	toolPolicy := tool.NewApprovalPolicy()
-	execPreparer := builtin.NewExecPlanner()
 	if continueSession {
 		threadID, selectErr := selectContinueThread(
-			ctx, paths, service.repository, applicationConfig, wire, creationCWD,
+			ctx, paths, service.repository, applicationConfig, binding.wire, creationCWD,
 		)
 		if selectErr != nil {
 			return nil, selectErr
@@ -416,15 +354,16 @@ func openChatResourcesWithSnapshot(
 			hooks.afterContinueSelection(threadID)
 		}
 	}
-	providerInstance, err := newProviderResource(applicationConfig)
+	providerInstance, err := binding.open(applicationConfig.Provider, settings)
 	if err != nil {
 		return nil, err
 	}
 	cleanup.add(providerInstance.Close)
+	boundSession := binding.bindSession(providerInstance)
 	var assembled assembledSession
 	if resumeThreadID == "" {
 		assembled, err = service.create(
-			ctx, providerInstance, wire, applicationConfig.Provider.Model, creationCWD,
+			ctx, boundSession, applicationConfig.Provider.Model, creationCWD,
 		)
 	} else {
 		threadID, parseErr := domain.ParseThreadID(resumeThreadID)
@@ -432,7 +371,7 @@ func openChatResourcesWithSnapshot(
 			err = fault.New(fault.CodeSessionNotFound, "resume thread ID is invalid")
 		} else {
 			assembled, err = service.resume(
-				ctx, providerInstance, wire, applicationConfig.Provider.Model, threadID,
+				ctx, boundSession, applicationConfig.Provider.Model, threadID,
 			)
 		}
 	}
@@ -487,7 +426,7 @@ func openChatResourcesWithSnapshot(
 	questionExecutor := builtin.NewQuestionExecutor()
 	taskExecutor := builtin.NewTaskExecutor()
 	toolCatalog, err := builtin.NewCatalog(
-		readExecutor, globExecutor, grepExecutor, patchPreparer, patchExecutor, writePreparer, writeExecutor, execPreparer, execExecutor, tool.RenderExecOutput, toolPolicy, readArtifactExecutor, skillReader, questionExecutor, taskExecutor,
+		tools.read, tools.glob, tools.grep, tools.patchPrepare, tools.patch, tools.writePrepare, tools.write, tools.execPrepare, execExecutor, tool.RenderExecOutput, tools.policy, readArtifactExecutor, skillReader, questionExecutor, taskExecutor,
 	)
 	if err != nil {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "tool catalog is invalid")
@@ -498,11 +437,7 @@ func openChatResourcesWithSnapshot(
 	if err != nil {
 		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "context profile is invalid", err)
 	}
-	contextProfile, err = contextProfile.WithInferenceSettings(inference)
-	if err != nil {
-		return nil, err
-	}
-	autoPolicy, err := applicationConfig.AutoCompactionPolicy()
+	contextProfile, err = contextProfile.WithInferenceSettings(settings.Inference)
 	if err != nil {
 		return nil, err
 	}
@@ -513,8 +448,8 @@ func openChatResourcesWithSnapshot(
 			return nil, err
 		}
 	}
-	projector, ok := assembled.conversation.(provider.TranscriptProjector)
-	if !ok {
+	projector := bindTranscriptProjector(assembled.conversation)
+	if projector == nil {
 		return nil, fault.New(fault.CodeStreamProtocol, "transcript projection is unavailable")
 	}
 	if err = queries.bindTranscript(projector, toolCatalog, assembled.nativeCommits); err != nil {
@@ -534,24 +469,25 @@ func openChatResourcesWithSnapshot(
 		HookHistory:        queries,
 		StopHistory:        queries,
 		SessionID:          assembled.identity.SessionID, ThreadID: assembled.identity.ThreadID,
-		Journal: hooks.recovery.journalForRecovery(assembled.writer), ContextProfile: contextProfile, CachePolicy: applicationConfig.CachePolicy(), RestoredCacheBaseline: resumeThreadID != "",
+		Journal: hooks.recovery.journalForRecovery(assembled.writer), ContextProfile: contextProfile, CachePolicy: settings.Cache, RestoredCacheBaseline: resumeThreadID != "",
+		ProviderWire:     binding.wire,
 		ToolCatalog:      toolCatalog,
 		QuestionExecutor: questionExecutor, InteractiveQuestions: hooks.interactiveApprovals,
-		ReadExecutor:         readExecutor,
+		ReadExecutor:         tools.read,
 		ReadArtifactExecutor: readArtifactExecutor,
 		SkillExecutor:        skillReader,
-		GlobExecutor:         globExecutor,
-		GrepExecutor:         grepExecutor,
-		PatchPreparer:        patchPreparer,
-		PatchExecutor:        patchExecutor,
-		WritePreparer:        writePreparer,
-		WriteExecutor:        writeExecutor,
-		ExecPreparer:         execPreparer,
+		GlobExecutor:         tools.glob,
+		GrepExecutor:         tools.grep,
+		PatchPreparer:        tools.patchPrepare,
+		PatchExecutor:        tools.patch,
+		WritePreparer:        tools.writePrepare,
+		WriteExecutor:        tools.write,
+		ExecPreparer:         tools.execPrepare,
 		ExecExecutor:         execExecutor,
-		ToolPolicy:           toolPolicy,
+		ToolPolicy:           tools.policy,
 		InteractiveApprovals: hooks.interactiveApprovals,
 		ProjectInstructions:  projectInstructions,
-		AutoCompactionPolicy: autoPolicy,
+		AutoCompactionPolicy: settings.AutoCompaction,
 		CompactionHistory:    queries, CompactionOutputTokens: applicationConfig.CompactionOutputTokens(),
 		ContextBudget: applicationConfig.ContextBudget, ContextPlanner: contextplan.NewPlanner(),
 	})
@@ -603,7 +539,7 @@ func openChatResourcesWithSnapshot(
 	} else {
 		hooks.environment.extensions = extensions
 	}
-	resources = &chatResources{inference: inference, title: assembled.title,
+	resources = &chatResources{inference: settings.Inference, title: assembled.title,
 		fileSource:    fileSource,
 		pluginSources: pluginSources, plugins: extensions.views,
 		artifactLayout: artifactLayout, artifactStore: artifactStore, transcriptQueries: queries,
@@ -659,53 +595,6 @@ func selectContinueThread(
 		return "", fault.New(fault.CodeSessionCatalog, "close session catalog failed")
 	}
 	return entry.ThreadID, nil
-}
-
-func newProviderResource(applicationConfig config.Config) (providerResource, error) {
-	if !applicationConfig.Provider.Family.Valid() {
-		return nil, fault.New(fault.CodeProviderUnavailable, "provider is unavailable")
-	}
-	inference, err := applicationConfig.InferenceSettings()
-	if err != nil {
-		return nil, err
-	}
-	switch applicationConfig.Provider.Family {
-	case domain.ProviderOpenAI:
-		instance, err := openai.New(openai.Config{
-			BaseURL:     applicationConfig.Provider.BaseURL,
-			APIKey:      applicationConfig.Provider.APIKey,
-			Model:       applicationConfig.Provider.Model,
-			CachePolicy: applicationConfig.CachePolicy(),
-			Inference:   inference,
-		})
-		if err == nil && instance.Capabilities().ReasoningSummary != (inference.Summary() != "") {
-			_ = instance.Close()
-			return nil, fault.New(fault.CodeInvalidConfiguration, "reasoning capability is inconsistent")
-		}
-		return instance, err
-	case domain.ProviderAnthropic:
-		instance, err := anthropic.New(anthropic.Config{
-			BaseURL:     applicationConfig.Provider.BaseURL,
-			APIKey:      applicationConfig.Provider.APIKey,
-			Model:       applicationConfig.Provider.Model,
-			CachePolicy: applicationConfig.CachePolicy(),
-			Inference:   inference,
-		})
-		return instance, err
-	default:
-		return nil, fault.New(fault.CodeProviderUnavailable, "provider is unavailable")
-	}
-}
-
-func providerWire(family domain.ProviderFamily) (string, error) {
-	switch family {
-	case domain.ProviderOpenAI:
-		return "responses", nil
-	case domain.ProviderAnthropic:
-		return "messages", nil
-	default:
-		return "", fault.New(fault.CodeProviderUnavailable, "provider is unavailable")
-	}
 }
 
 func resolveDataPaths(sessionRoot string, catalogPath string) (dataPaths, error) {

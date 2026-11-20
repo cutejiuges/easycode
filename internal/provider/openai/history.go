@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"easycode/internal/domain"
+	"easycode/internal/provider"
 )
 
 // ProjectHistory 返回已提交 OpenAI 原生历史的独立文本语义快照。
@@ -12,41 +13,21 @@ func (conversation *Conversation) ProjectHistory() domain.SemanticHistoryView {
 }
 
 func projectHistory(history []nativeHistoryEntry) domain.SemanticHistoryView {
-	turns := make([]domain.SemanticTurn, 0)
-	for _, entry := range history {
-		if entry.Kind == nativeHistoryToolOutputs {
-			continue
-		}
-		if len(turns) == 0 || turns[len(turns)-1].TurnID != entry.TurnID {
-			turns = append(turns, domain.SemanticTurn{TurnID: entry.TurnID, Messages: make([]domain.SemanticMessage, 0)})
-		}
-		turn := &turns[len(turns)-1]
-		if entry.Kind == nativeHistoryHookFeedback {
-			feedback, err := entryStopFeedback(entry)
-			if err == nil {
-				message, err := domain.NewSemanticHookMessage(feedback)
-				if err == nil {
-					turn.Messages = append(turn.Messages, message)
-				}
-			}
-		} else if entry.Kind == nativeHistoryUserInputs {
-			for i, input := range entry.UserInputs {
-				a, ok := entry.InputMetadata.Skill(entry.InputMetadata.InputIDs[i])
-				files := entry.InputMetadata.FileAttachments(entry.InputMetadata.InputIDs[i])
-				text := projectItemText(input, "user", "input_text")
-				if ok || files.Len() > 0 {
-					text = ""
-					if input.Type == "message" && input.Role == "user" && len(input.Content) > 0 && input.Content[0].Type == "input_text" {
-						text = input.Content[0].Text
-					}
-				}
-				turn.Messages = append(turn.Messages, domain.SemanticMessage{Role: domain.SemanticUser, InputID: entry.InputMetadata.InputIDs[i], Text: text, Skill: a, HasSkill: ok, Files: files})
-			}
-		} else if text := projectAssistantText(entry.Outputs); text != "" {
-			turn.Messages = append(turn.Messages, domain.SemanticMessage{Role: domain.SemanticAssistant, Text: text})
-		}
+	return provider.ProjectNativeHistory(history, domain.ProviderOpenAI, nativeUsers, projectUserText, nativeAssistantText, entryStopFeedback)
+}
+
+func nativeUsers(entry nativeHistoryEntry) []NativeItem { return entry.UserInputs }
+
+func nativeAssistantText(entry nativeHistoryEntry) string { return projectAssistantText(entry.Outputs) }
+
+func projectUserText(input NativeItem, withAttachments bool) string {
+	if !withAttachments {
+		return projectItemText(input, "user", "input_text")
 	}
-	return domain.SemanticHistoryView{Provider: domain.ProviderOpenAI, Turns: turns}
+	if input.Type == "message" && input.Role == "user" && len(input.Content) > 0 && input.Content[0].Type == "input_text" {
+		return input.Content[0].Text
+	}
+	return ""
 }
 
 func projectAssistantText(outputs []NativeItem) string {

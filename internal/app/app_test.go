@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"easycode/internal/config"
 	contextplan "easycode/internal/context"
 	"easycode/internal/context/estimate"
 	"easycode/internal/domain"
@@ -38,6 +39,7 @@ func TestChatResourcesShutdownTimeoutEscalatesAndClosesDependencies(t *testing.T
 	journal := &orderedManagedJournal{}
 	runtimeInstance, err := chatRuntime.New(conversation, chatRuntime.Config{
 		SessionID: runtimeSessionIDForApp, ThreadID: runtimeThreadIDForApp, Journal: journal,
+		ProviderWire: domain.ProviderOpenAI.Wire(),
 		TaskExecutor: catalogTaskFixture{}, InitialTaskProgress: domain.NewNoTaskProgress(),
 		GenerateTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
 		ContextProfile: mustAppContextProfile(t), ProjectInstructions: mustEmptyAppProjectInstructions(t),
@@ -296,6 +298,7 @@ func mustIdleAppRuntime(t *testing.T, journal chatRuntime.Journal) *chatRuntime.
 	t.Helper()
 	runtimeInstance, err := chatRuntime.New(&orderedConversation{}, chatRuntime.Config{
 		SessionID: runtimeSessionIDForApp, ThreadID: runtimeThreadIDForApp, Journal: journal,
+		ProviderWire: domain.ProviderOpenAI.Wire(),
 		TaskExecutor: catalogTaskFixture{}, InitialTaskProgress: domain.NewNoTaskProgress(),
 		GenerateTurnID: func() (domain.TurnID, error) { return runtimeTurnIDForApp, nil },
 		ContextProfile: mustAppContextProfile(t), ProjectInstructions: mustEmptyAppProjectInstructions(t),
@@ -410,4 +413,37 @@ func (catalogWriteExecutor) Execute(context.Context, tool.WriteCandidate) tool.I
 // ProjectAssistantSample 在不模拟原生采样的测试替身中明确失败，不猜测展示列表。
 func (*orderedConversation) ProjectAssistantSample(domain.AssistantSampleReference) (domain.AssistantSampleText, error) {
 	return domain.AssistantSampleText{}, domain.HookConfigInvalid
+}
+
+func openChatResources(
+	ctx context.Context,
+	applicationConfig config.Config,
+	dataRoot string,
+	resumeThreadID string,
+	creationCWD string,
+) (*chatResources, error) {
+	return openChatResourcesWithSelection(
+		ctx, applicationConfig, dataPaths{sessionRoot: dataRoot}, resumeThreadID, false, creationCWD,
+	)
+}
+
+func openChatResourcesWithSelection(
+	ctx context.Context,
+	applicationConfig config.Config,
+	paths dataPaths,
+	resumeThreadID string,
+	continueSession bool,
+	creationCWD string,
+) (*chatResources, error) {
+	return openChatResourcesWithHooks(
+		ctx, applicationConfig, paths, resumeThreadID, continueSession, creationCWD, chatResourceHooks{},
+	)
+}
+
+func openSessionService(dataRoot string) (*sessionService, error) {
+	repository, err := session.OpenOrCreateRepository(dataRoot)
+	if err != nil {
+		return nil, err
+	}
+	return newSessionService(repository), nil
 }

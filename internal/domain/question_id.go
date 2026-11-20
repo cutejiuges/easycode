@@ -9,7 +9,7 @@ import (
 type QuestionRequestID string
 
 func GenerateQuestionRequestID() (QuestionRequestID, error) {
-	v, err := generateUUIDv7(time.Now(), rand.Reader)
+	v, err := GenerateUUIDv7(time.Now(), rand.Reader)
 	return QuestionRequestID(v), err
 }
 func (id QuestionRequestID) Valid() bool { _, err := parseUUIDv7(string(id)); return err == nil }

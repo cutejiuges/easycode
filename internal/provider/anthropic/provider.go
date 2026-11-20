@@ -3,12 +3,9 @@ package anthropic
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -52,17 +49,6 @@ type Conversation struct {
 	history    nativeHistory
 	active     atomic.Bool
 	pending    atomic.Bool
-}
-
-type nativeHistory struct {
-	mu               sync.RWMutex
-	entries          []nativeHistoryEntry
-	revision         uint64
-	checkpoint       *provider.CheckpointEnvelope
-	summaryNative    nativeHistoryEntry
-	contextSummary   domain.ContextSummary
-	checkpointOffset int
-	checkpointCount  uint64
 }
 
 var _ provider.Conversation = (*Conversation)(nil)
@@ -146,48 +132,109 @@ func (conversation *Conversation) Capabilities() provider.Capabilities {
 }
 
 // Stream 发起一次 Messages 文本 turn。
-func (conversation *Conversation) Stream(
-	ctx context.Context,
-	input provider.TurnInput,
-) (<-chan provider.StreamEvent, error) {
-	if err := input.Validate(); err != nil {
-		return nil, fault.Wrap(fault.CodeTurnFailed, "turn input is invalid", err)
-	}
-	if !conversation.active.CompareAndSwap(false, true) {
-		return nil, fault.New(fault.CodeTurnFailed, "conversation already has an active turn")
-	}
-	if conversation.pending.Load() {
-		conversation.active.Store(false)
-		return nil, fault.New(fault.CodeTurnFailed, "conversation has an unfinalized sample")
-	}
+func (conversation *Conversation) Stream(ctx context.Context, input provider.TurnInput) (<-chan provider.StreamEvent, error) {
+	return provider.StartSample(ctx, input, &conversation.active, &conversation.pending, provider.SamplingStrategy[nativeHistoryEntry]{
+		History: conversation.samplingHistory,
+		Plan:    conversation.openSamplingPlan,
+		Errors:  samplingErrors(),
+	})
+}
 
+func samplingErrors() provider.SampleStreamErrors {
+	return provider.SampleStreamErrors{
+		ProviderLabel: "Anthropic", MissingTerminal: "provider stream closed before message_stop",
+		CancelOpenWithParent: true,
+	}
+}
+
+func (conversation *Conversation) samplingHistory() ([]nativeHistoryEntry, bool) {
 	history := conversation.history.snapshot()
-	if len(history) == 0 || validateNativeHistory(history) != nil || (history[len(history)-1].Kind != nativeHistoryUserInputs && history[len(history)-1].Kind != nativeHistoryToolOutputs && history[len(history)-1].Kind != nativeHistoryHookFeedback) {
-		conversation.active.Store(false)
-		return nil, fault.New(fault.CodeTurnFailed, "native history is not ready for sampling")
+	if len(history) == 0 || validateNativeHistory(history) != nil {
+		return nil, false
 	}
-	catalog, hasCatalog, err := input.ToolCatalog()
-	if err != nil || !hasCatalog {
-		conversation.active.Store(false)
-		return nil, fault.New(fault.CodeProviderRequest, "tool catalog is required")
-	}
+	kind := history[len(history)-1].Kind
+	return history, kind == nativeHistoryUserInputs || kind == nativeHistoryToolOutputs || kind == nativeHistoryHookFeedback
+}
+
+func (conversation *Conversation) openSamplingPlan(history []nativeHistoryEntry, input provider.TurnInput, catalog tool.CatalogSnapshot) (func(context.Context) (provider.SampleStream, error), error) {
 	plan, err := conversation.planSamplingRequest(history, input)
 	if err != nil {
-		conversation.active.Store(false)
 		return nil, err
 	}
 	request, err := plan.body(conversation.provider.config.CachePolicy.Anthropic())
 	if err != nil {
-		conversation.active.Store(false)
 		return nil, fault.Wrap(fault.CodeProviderRequest, "compile provider request failed", err)
 	}
 	evidence, err := plan.evidence()
 	if err != nil {
-		conversation.active.Store(false)
 		return nil, err
 	}
-	streamContext, cancelStream := context.WithCancel(ctx)
-	stream, err := conversation.provider.transport.StreamSSE(streamContext, transport.SSERequest{
+	return func(ctx context.Context) (provider.SampleStream, error) {
+		stream, err := conversation.startRequest(ctx, request)
+		if err != nil {
+			return provider.SampleStream{}, err
+		}
+		return conversation.sampleStream(catalog, stream, request, evidence), nil
+	}, nil
+}
+
+func (conversation *Conversation) sampleStream(catalog tool.CatalogSnapshot, messages <-chan transport.SSEMessage, request codec.CanonicalJSON, evidence provider.RequestEvidence) provider.SampleStream {
+	reducer := newStreamReducer(catalog)
+	return provider.SampleStream{
+		Messages: messages,
+		Reduce: func(event transport.SSEEvent) (provider.SampleReduction, error) {
+			result, err := reducer.reduce(event)
+			if err != nil {
+				return provider.SampleReduction{}, err
+			}
+			reduced := provider.SampleReduction{Semantic: result.semantic, Reasoning: result.reasoning, Complete: result.complete}
+			if result.native != nil {
+				reduced.Native = result.native.clone()
+			}
+			return reduced, nil
+		},
+		Prepare: func() (*provider.PreparedSample, error) {
+			usage, err := reducer.sampleUsage()
+			if err != nil {
+				return nil, fault.Wrap(fault.CodeStreamProtocol, "Anthropic completed sample usage is invalid", err)
+			}
+			entry := nativeHistoryEntry{Kind: nativeHistorySample, Assistant: reducer.assistantMessage(), Metadata: reducer.messageMetadata()}
+			snapshot := conversation.history.snapshot()
+			entry.TurnID = snapshot[len(snapshot)-1].TurnID
+			envelope, err := encodeNativeCommit(entry)
+			if err != nil {
+				return nil, fault.Wrap(fault.CodeStreamProtocol, "Anthropic completed sample is invalid", err)
+			}
+			receipt, err := conversation.describeRequest(request, evidence, domain.RequestSample)
+			if err != nil {
+				return nil, err
+			}
+			baseline, err := provider.BaselineWithOutput(evidence, []nativeMessage{entry.Assistant})
+			if err != nil {
+				return nil, err
+			}
+			presentation, err := reducer.presentation()
+			if err != nil {
+				return nil, err
+			}
+			conversation.pending.Store(true)
+			prepared, err := provider.NewPreparedSample(envelope, usage, receipt, presentation, func() {
+				conversation.baseline = baseline
+				conversation.nextReason = domain.ResetNone
+				conversation.history.commit(entry)
+				conversation.pending.Store(false)
+			}, func() { conversation.pending.Store(false) }, reducer.readyCalls()...)
+			if err != nil {
+				conversation.pending.Store(false)
+				return nil, fault.Wrap(fault.CodeStreamProtocol, "Anthropic completed sample cannot be prepared", err)
+			}
+			return prepared, nil
+		},
+	}
+}
+
+func (conversation *Conversation) startRequest(ctx context.Context, body codec.CanonicalJSON) (<-chan transport.SSEMessage, error) {
+	return conversation.provider.transport.StreamSSE(ctx, transport.SSERequest{
 		Method: http.MethodPost,
 		Path:   "messages",
 		Headers: map[string]string{
@@ -196,230 +243,16 @@ func (conversation *Conversation) Stream(
 			"Accept":            "text/event-stream",
 			"Content-Type":      "application/json",
 		},
-		Body: request,
+		Body: body,
 	}, transport.StreamOptions{IdleTimeout: conversation.provider.config.StreamIdleTimeout})
-	if err != nil {
-		cancelStream()
-		conversation.active.Store(false)
-		if errors.Is(err, context.Canceled) || ctx.Err() != nil {
-			return nil, fault.Wrap(fault.CodeUserCancelled, "turn was cancelled", context.Canceled)
-		}
-		return nil, fault.Wrap(fault.CodeProviderRequest, "provider request failed", err)
-	}
-
-	output := make(chan provider.StreamEvent, 16)
-	go conversation.consumeStream(ctx, cancelStream, catalog, stream, output, request, evidence)
-	return output, nil
-}
-
-func (conversation *Conversation) consumeStream(
-	ctx context.Context,
-	cancelStream context.CancelFunc,
-	catalog tool.CatalogSnapshot,
-	stream <-chan transport.SSEMessage,
-	output chan<- provider.StreamEvent,
-	request codec.CanonicalJSON,
-	evidence requestEvidence,
-) {
-	defer close(output)
-	defer conversation.active.Store(false)
-	defer cancelStream()
-
-	reducer := newStreamReducer(catalog)
-	stopTransport := func() {
-		cancelStream()
-		for range stream {
-		}
-	}
-	sendTerminal := func(kind provider.StreamEventKind, prepared *provider.PreparedSample, err error) {
-		var event provider.StreamEvent
-		var buildErr error
-		switch kind {
-		case provider.StreamEventCompleted:
-			event, buildErr = provider.NewCompletedStreamEvent(prepared)
-		case provider.StreamEventCancelled:
-			event, buildErr = provider.NewCancelledStreamEvent(err)
-		default:
-			event, buildErr = provider.NewFailedStreamEvent(err)
-		}
-		if buildErr != nil {
-			event, _ = provider.NewFailedStreamEvent(fault.Wrap(fault.CodeStreamProtocol, "Anthropic terminal event is invalid", buildErr))
-		}
-		output <- event
-	}
-
-	for message := range stream {
-		if message.Event != nil {
-			result, err := reducer.reduce(*message.Event)
-			if err != nil {
-				stopTransport()
-				sendTerminal(provider.StreamEventFailed, nil, err)
-				return
-			}
-			if err := provider.PublishReasoning(ctx, output, result.reasoning); err != nil {
-				stopTransport()
-				kind, terminalErr := mapTransportTerminal(ctx, err)
-				sendTerminal(kind, nil, terminalErr)
-				return
-			}
-			if result.semantic != nil {
-				event, eventErr := provider.NewSemanticStreamEvent(*result.semantic)
-				if eventErr != nil {
-					stopTransport()
-					sendTerminal(provider.StreamEventFailed, nil, fault.Wrap(fault.CodeStreamProtocol, "Anthropic semantic event is invalid", eventErr))
-					return
-				}
-				output <- event
-			}
-			if result.native != nil {
-				event, eventErr := provider.NewNativeStreamEvent(result.native.clone())
-				if eventErr != nil {
-					stopTransport()
-					sendTerminal(provider.StreamEventFailed, nil, fault.Wrap(fault.CodeStreamProtocol, "Anthropic native event is invalid", eventErr))
-					return
-				}
-				output <- event
-			}
-			if result.complete {
-				stopTransport()
-				usage, usageErr := reducer.sampleUsage()
-				if usageErr != nil {
-					sendTerminal(provider.StreamEventFailed, nil, fault.Wrap(fault.CodeStreamProtocol, "Anthropic completed sample usage is invalid", usageErr))
-					return
-				}
-				entry := nativeHistoryEntry{
-					Kind:      nativeHistorySample,
-					Assistant: reducer.assistantMessage(),
-					Metadata:  reducer.messageMetadata(),
-				}
-				snapshot := conversation.history.snapshot()
-				entry.TurnID = snapshot[len(snapshot)-1].TurnID
-
-				envelope, encodeErr := encodeNativeCommit(entry)
-				if encodeErr != nil {
-					sendTerminal(provider.StreamEventFailed, nil, fault.Wrap(fault.CodeStreamProtocol, "Anthropic completed sample is invalid", encodeErr))
-					return
-				}
-				receipt, receiptErr := conversation.describeRequest(request, evidence, domain.RequestSample)
-				if receiptErr != nil {
-					sendTerminal(provider.StreamEventFailed, nil, receiptErr)
-					return
-				}
-				baseline, baselineErr := evidence.commitBaseline(entry)
-				if baselineErr != nil {
-					sendTerminal(provider.StreamEventFailed, nil, baselineErr)
-					return
-				}
-				presentation, presentationErr := reducer.presentation()
-				if presentationErr != nil {
-					sendTerminal(provider.StreamEventFailed, nil, presentationErr)
-					return
-				}
-				conversation.pending.Store(true)
-				prepared, prepareErr := provider.NewPreparedSample(envelope, usage, receipt, presentation, func() {
-					conversation.baseline = baseline
-					conversation.nextReason = domain.ResetNone
-					conversation.history.commit(entry)
-					conversation.pending.Store(false)
-				}, func() { conversation.pending.Store(false) }, reducer.readyCalls()...)
-				if prepareErr != nil {
-					conversation.pending.Store(false)
-					sendTerminal(provider.StreamEventFailed, nil, fault.Wrap(fault.CodeStreamProtocol, "Anthropic completed sample cannot be prepared", prepareErr))
-					return
-				}
-				sendTerminal(provider.StreamEventCompleted, prepared, nil)
-				return
-			}
-			continue
-		}
-
-		if message.Err != nil {
-			kind, terminalErr := mapTransportTerminal(ctx, message.Err)
-			sendTerminal(kind, nil, terminalErr)
-			return
-		}
-	}
-
-	if ctx.Err() != nil {
-		sendTerminal(provider.StreamEventCancelled, nil, fault.Wrap(fault.CodeUserCancelled, "turn was cancelled", context.Canceled))
-		return
-	}
-	sendTerminal(provider.StreamEventFailed, nil, fault.New(fault.CodeStreamProtocol, "provider stream closed before message_stop"))
-}
-
-func mapTransportTerminal(ctx context.Context, err error) (provider.StreamEventKind, error) {
-	if ctx.Err() != nil || errors.Is(err, context.Canceled) {
-		return provider.StreamEventCancelled, fault.Wrap(fault.CodeUserCancelled, "turn was cancelled", context.Canceled)
-	}
-	if transport.IsIdleTimeout(err) {
-		return provider.StreamEventFailed, fault.Wrap(fault.CodeStreamIdleTimeout, "provider stream idle timeout", err)
-	}
-	if errors.Is(err, io.EOF) {
-		return provider.StreamEventFailed, fault.New(fault.CodeStreamProtocol, "provider stream closed before message_stop")
-	}
-	if transport.IsEventTooLarge(err) {
-		return provider.StreamEventFailed, fault.Wrap(fault.CodeStreamProtocol, "provider stream event is too large", err)
-	}
-	return provider.StreamEventFailed, fault.Wrap(fault.CodeStreamProtocol, "provider stream failed", err)
-}
-
-func (history *nativeHistory) snapshot() []nativeHistoryEntry {
-	entries, _ := history.snapshotWithRevision()
-	return entries
-}
-
-func (history *nativeHistory) snapshotWithRevision() ([]nativeHistoryEntry, uint64) {
-	history.mu.RLock()
-	defer history.mu.RUnlock()
-	entries := make([]nativeHistoryEntry, 0, len(history.entries))
-	for _, entry := range history.entries {
-		entries = append(entries, entry.clone())
-	}
-	return entries, history.revision
-}
-
-func (history *nativeHistory) commit(entry nativeHistoryEntry) {
-	history.mu.Lock()
-	defer history.mu.Unlock()
-	history.entries = append(history.entries, entry.clone())
-	if history.revision < ^uint64(0) {
-		history.revision++
-	}
-}
-
-func (conversation *Conversation) historySnapshot() []nativeHistoryEntry {
-	return conversation.history.snapshot()
 }
 
 // PrepareToolOutputs 在纯内存中编码与最后一组tool_use配对的结果。
 func (conversation *Conversation) PrepareToolOutputs(results []tool.ModelOutput) (*provider.PreparedToolOutputs, error) {
-	if conversation == nil || conversation.active.Load() {
+	if conversation == nil {
 		return nil, fmt.Errorf("anthropic conversation cannot prepare tool outputs while active")
 	}
-	if !conversation.pending.CompareAndSwap(false, true) {
-		return nil, fmt.Errorf("anthropic conversation has an unfinalized native entry")
-	}
-	resetPending := true
-	defer func() {
-		if resetPending {
-			conversation.pending.Store(false)
-		}
-	}()
-	entry, err := prepareToolOutputsEntry(conversation.history.snapshot(), results)
-	if err != nil {
-		return nil, err
-	}
-	envelope, err := encodeNativeCommit(entry)
-	if err != nil {
-		return nil, err
-	}
-	prepared, err := provider.NewPreparedToolOutputs(envelope, func() {
-		conversation.history.commit(entry)
-		conversation.pending.Store(false)
-	}, func() { conversation.pending.Store(false) })
-	if err != nil {
-		return nil, err
-	}
-	resetPending = false
-	return prepared, nil
+	return provider.PrepareNativeToolOutputs(&conversation.history.NativeHistory, &conversation.active, &conversation.pending,
+		"anthropic conversation cannot prepare tool outputs while active", "anthropic conversation has an unfinalized native entry",
+		results, prepareToolOutputsEntry, encodeNativeCommit)
 }

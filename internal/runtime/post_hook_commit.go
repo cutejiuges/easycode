@@ -53,13 +53,13 @@ func (r *Runtime) appendPostFacts(ctx context.Context, turn domain.TurnID, state
 			return err
 		}
 	}
-	if r.activityEmitter != nil {
+	if r.toolTurn.activityEmitter != nil {
 		event, err := protocol.NewPostHookCommitted(protocol.PostHookCommittedPayload{InvocationID: state.plan.InvocationID, PlanDigest: state.plan.Digest, DetailSequence: sequence, Phase: phase})
 		if err != nil {
 			r.poisoned.Store(true)
 			return err
 		}
-		r.activityEmitter(r.decorate(event, turn))
+		r.toolTurn.activityEmitter(r.decorate(event, turn))
 	}
 	return nil
 }

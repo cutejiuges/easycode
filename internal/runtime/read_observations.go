@@ -88,7 +88,7 @@ func (table *readObservations) clear() { *table = readObservations{} }
 
 // clearTurnObservations 由唯一 turn owner 在退出时清理未提交与 poisoned 证据。
 func (runtime *Runtime) clearTurnObservations() {
-	runtime.toolCalls = make(map[tool.InvocationID]*toolExecutionCall)
+	runtime.toolTurn.toolCalls = make(map[tool.InvocationID]*toolExecutionCall)
 	if runtime.poisoned.Load() || runtime.journal.Poisoned() {
 		runtime.readObservations.clear()
 		return

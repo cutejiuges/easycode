@@ -18,7 +18,7 @@ func (budget Budget) ValidateInference(settings domain.InferenceSettings) error 
 		return nil
 	}
 	_, explicit := settings.ExplicitOutput()
-	if settings.Family() == domain.ProviderOpenAI && settings.HasReasoning() && !explicit {
+	if settings.HasReasoning() && settings.MaxOutputTokens() == 0 {
 		return fmt.Errorf("reasoning requires an explicit output cap with a context window")
 	}
 	if (explicit || settings.HasReasoning()) && budget.ReservedOutput() < settings.MaxOutputTokens() {

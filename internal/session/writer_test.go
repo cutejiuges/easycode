@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -494,4 +495,29 @@ func (file *memoryJournalFile) Close() error {
 	defer file.mu.Unlock()
 	file.closeCount++
 	return file.closeErr
+}
+
+func startJournalWriter(
+	file journalFile,
+	identity Identity,
+	nextSequence uint64,
+	clock func() time.Time,
+) (*JournalWriter, error) {
+	return startJournalWriterWithCapacity(file, identity, nextSequence, clock, journalRequestCapacity)
+}
+
+func startJournalWriterWithCapacity(
+	file journalFile,
+	identity Identity,
+	nextSequence uint64,
+	clock func() time.Time,
+	requestCapacity int,
+) (*JournalWriter, error) {
+	if file == nil {
+		return nil, fmt.Errorf("session journal file is required")
+	}
+	if err := validateJournalWriter(identity, nextSequence, clock, requestCapacity); err != nil {
+		return nil, err
+	}
+	return startOwnedJournalWriter(file, identity, nextSequence, clock, requestCapacity), nil
 }

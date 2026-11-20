@@ -26,16 +26,12 @@ func (runtime *Runtime) cacheSnapshotForPlan(plan contextplan.ContextPlan) (prot
 	if err != nil {
 		return protocol.CacheSnapshotPayload{}, err
 	}
-	wire := "responses"
-	if runtime.conversation.Family() == domain.ProviderAnthropic {
-		wire = "messages"
-	}
 	baseline, reason := "fresh", "first_request"
 	if runtime.restoredCacheBaseline {
 		baseline = "restored_baseline"
 		reason = "restored_baseline"
 	}
-	snapshot := protocol.CacheSnapshotPayload{Scope: "process", Baseline: baseline, Activity: "idle", Family: runtime.conversation.Family(), Wire: wire, Model: protocol.CacheModelIdentity(runtime.profile.Model()), Policy: policy, ChangeReason: reason}
+	snapshot := protocol.CacheSnapshotPayload{Scope: "process", Baseline: baseline, Activity: "idle", Family: runtime.conversation.Family(), Wire: runtime.providerWire, Model: protocol.CacheModelIdentity(runtime.profile.Model()), Policy: policy, ChangeReason: reason}
 	copyCacheSources(&snapshot, sources)
 	return snapshot, snapshot.Validate()
 }
@@ -118,26 +114,9 @@ func (state *agentLoopRunState) queryCache(request loopCommandRequest) {
 		state.reject(request, protocol.ControlErrorInvalidCommand, true)
 		return
 	}
-	if state.active != nil {
-		payload.Activity = "turn"
-		if state.active.compactionID.Valid() {
-			payload.Activity = "compacting"
-		}
-	} else if state.compaction != nil {
-		payload.Activity = "compacting"
-	} else {
-		payload.Activity = "idle"
-	}
+	payload.Activity = state.contextActivity()
 	event, err := protocol.NewCacheSnapshot(state.loop.runtime.sessionID, state.loop.runtime.threadID, payload)
-	if err != nil {
-		state.reject(request, protocol.ControlErrorInvalidCommand, true)
-		return
-	}
-	result, _ := protocol.NewAcceptedCommandResult(request.command, protocol.CommandDispositionQueried)
-	state.emitResult(request, result)
-	item, _ := protocol.NewCorrelatedContextItem(request.command.RequestID(), event)
-	state.loop.outputs <- item
-	state.completeRequest(request.command.RequestID())
+	state.publishContextQuery(request, event, err)
 }
 
 func (runtime *Runtime) publishCacheSnapshot() {

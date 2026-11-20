@@ -232,17 +232,6 @@ func (v QuestionAnswerSet) Answers() []QuestionAnswer {
 	_ = codec.Unmarshal([]byte(v.canonical), &w)
 	return w.Answers
 }
-func (v QuestionAnswerSet) AllSkipped() bool {
-	if v.canonical == "" {
-		return false
-	}
-	for _, a := range v.Answers() {
-		if !a.Skipped {
-			return false
-		}
-	}
-	return true
-}
 func (v QuestionAnswerSet) MarshalJSON() ([]byte, error) {
 	if err := v.Validate(); err != nil {
 		return nil, err

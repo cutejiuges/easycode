@@ -251,11 +251,10 @@ func (r *Runtime) runStopCheck(ctx context.Context, emit Emitter, check *stopChe
 			return false, err
 		}
 		r.emitHookActivity(p.Sample().TurnID, protocol.HookActivityPayload{Target: p.Target(), PlanDigest: p.Digest(), Reference: declaration.Reference, State: "checking", Code: domain.HookOK})
-		start := check.now()
-		execution := check.runner.Run(ctx, id, declaration, input, min(budget.remaining, time.Duration(declaration.Reference.TimeoutSeconds)*time.Second))
-		budget.remaining -= max(0, check.now().Sub(start))
+		execution, left := runTimedHook(ctx, check.runner, check.now, budget.remaining, id, declaration, input)
+		budget.remaining = left
 		result := execution.Result
-		if _, err := domain.NewHookExecution(result, declaration.Reference.Feedback, execution.Feedback, execution.Replacement); err != nil || result.Identity != id || result.Origin != "execution" {
+		if !validHookExecution(execution, id, declaration.Reference.Feedback) {
 			result = domain.HookRunResult{Identity: id, Status: domain.HookUncertain, Code: domain.HookOutcomeUncertain, Origin: "execution"}
 			execution.Feedback = domain.HookFeedbackCandidate{}
 		}
@@ -343,8 +342,8 @@ func (r *Runtime) runStopCheck(ctx context.Context, emit Emitter, check *stopChe
 }
 
 func (r *Runtime) preencodeStopFeedback(feedback domain.StopFeedback) error {
-	encoder, ok := r.conversation.(provider.StopFeedbackEncoder)
-	if !ok {
+	encoder := r.providerOperations.stopEncoding
+	if encoder == nil {
 		return domain.HookFeedbackEncodingFailed
 	}
 	envelope, err := encoder.EncodeStopFeedback(feedback)

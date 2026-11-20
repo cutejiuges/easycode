@@ -171,7 +171,7 @@ func TestWebSocketDurableIncrementalAndReset(t *testing.T) {
 		t.Fatal(err)
 	}
 	restoredEvidence, err := restored.requestEvidence(restoredInput)
-	if err != nil || liveEvidence.nativeFingerprint != restoredEvidence.nativeFingerprint {
+	if err != nil || liveEvidence.NativeFingerprint() != restoredEvidence.NativeFingerprint() {
 		t.Fatal("restored native fingerprint differs", err)
 	}
 	if websocketCacheSources(t, conversation) != websocketCacheSources(t, restored) {

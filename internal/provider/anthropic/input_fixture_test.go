@@ -3,6 +3,7 @@ package anthropic
 import (
 	"context"
 	"crypto/sha256"
+	"easycode/internal/codec"
 	"easycode/internal/domain"
 	"easycode/internal/provider"
 	"easycode/internal/provider/transport"
@@ -150,7 +151,7 @@ func testConsumeStream(t *testing.T, conversation *Conversation, ctx context.Con
 	if err != nil {
 		t.Fatal(err)
 	}
-	conversation.consumeStream(ctx, cancel, catalog, stream, output, request, evidence)
+	conversation.sampleStream(catalog, stream, request, evidence).Consume(ctx, cancel, &conversation.active, output, samplingErrors())
 }
 
 func testSampleRestoreSequence(t *testing.T, envelopes ...provider.NativeCommitEnvelope) []provider.RestoreRecord {
@@ -179,10 +180,44 @@ func testSampleRestoreSequence(t *testing.T, envelopes ...provider.NativeCommitE
 	return records
 }
 
-func (conversation *Conversation) requestEvidence(input provider.TurnInput) (requestEvidence, error) {
+func (conversation *Conversation) requestEvidence(input provider.TurnInput) (provider.RequestEvidence, error) {
 	plan, err := conversation.planSamplingRequest(conversation.history.snapshot(), input)
 	if err != nil {
-		return requestEvidence{}, err
+		return provider.RequestEvidence{}, err
 	}
 	return plan.evidence()
+}
+
+func (conversation *Conversation) historySnapshot() []nativeHistoryEntry {
+	return conversation.history.snapshot()
+}
+
+// compileSamplingRequest 用生产请求计划生成用于比较的字节。
+func (conversation *Conversation) compileSamplingRequest(history []nativeHistoryEntry, input provider.TurnInput) (codec.CanonicalJSON, error) {
+	plan, err := conversation.planSamplingRequest(history, input)
+	if err != nil {
+		return codec.CanonicalJSON{}, err
+	}
+	return plan.body(conversation.provider.config.CachePolicy.Anthropic())
+}
+
+func compileMessagesRequest(
+	model string,
+	maxTokens int,
+	history []nativeHistoryEntry,
+	projectInstructions *domain.ProjectInstructionsSnapshot,
+	toolView tool.FacadeView,
+) (codec.CanonicalJSON, error) {
+	if projectInstructions != nil {
+		if err := projectInstructions.Validate(); err != nil {
+			return codec.CanonicalJSON{}, fmt.Errorf("project instructions snapshot is invalid: %w", err)
+		}
+	}
+	if toolView.Family() != domain.ProviderAnthropic || len(toolView.Facades()) != 10 {
+		return codec.CanonicalJSON{}, fmt.Errorf("anthropic tool catalog view is invalid")
+	}
+	return codec.MarshalCanonical(
+		buildMessagesRequest(model, maxTokens, history, projectInstructions, toolView),
+		maxMessagesRequestBytes,
+	)
 }

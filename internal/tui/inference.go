@@ -31,13 +31,15 @@ func (model Model) inferenceLines() []string {
 		if t.Mode() == domain.ThinkingEnabled {
 			lines = append(lines, fmt.Sprintf("Thinking budget: %d (explicit)", t.BudgetTokens()))
 		}
-		lines = append(lines, "Display: "+choice(string(t.Display())), "Startup effort: "+choice(string(s.AnthropicEffort())))
-	} else {
-		lines = append(lines, "Startup effort: "+choice(string(s.OpenAIEffort())), "Summary: "+choice(string(s.Summary())))
+		lines = append(lines, "Display: "+choice(string(t.Display())))
+	}
+	lines = append(lines, "Startup effort: "+choice(string(s.Effort())))
+	if s.Family() != domain.ProviderAnthropic {
+		lines = append(lines, "Summary: "+choice(string(s.Summary())))
 	}
 	if value, explicit := s.ExplicitOutput(); explicit {
 		lines = append(lines, fmt.Sprintf("Ordinary output cap: %d (explicit)", value))
-	} else if s.Family() == domain.ProviderAnthropic {
+	} else if s.MaxOutputTokens() != 0 {
 		lines = append(lines, fmt.Sprintf("Ordinary output cap: %d (default)", s.MaxOutputTokens()))
 	} else {
 		lines = append(lines, "Ordinary output cap: server default / unknown (not sent)")

@@ -251,6 +251,16 @@ func (payload CompactionFailedPayload) Validate() error {
 	return nil
 }
 
+func newScopedPayloadEvent(kind EventKind, sessionID domain.SessionID, threadID domain.ThreadID, compactionID domain.CompactionID, turnID domain.TurnID, payload []byte) (Event, error) {
+	event := newEvent(kind)
+	event.SessionID = sessionID
+	event.ThreadID = threadID
+	event.CompactionID = compactionID
+	event.TurnID = turnID
+	event.Payload = payload
+	return event, event.Validate()
+}
+
 // NewContextSnapshot 创建 thread 级查询事件。
 func NewContextSnapshot(sessionID domain.SessionID, threadID domain.ThreadID, payload ContextSnapshotPayload) (Event, error) {
 	if err := payload.Validate(); err != nil {
@@ -260,11 +270,7 @@ func NewContextSnapshot(sessionID domain.SessionID, threadID domain.ThreadID, pa
 	if err != nil {
 		return Event{}, err
 	}
-	event := newEvent(EventContextSnapshot)
-	event.SessionID = sessionID
-	event.ThreadID = threadID
-	event.Payload = raw
-	return event, event.Validate()
+	return newScopedPayloadEvent(EventContextSnapshot, sessionID, threadID, "", "", raw)
 }
 
 // DecodeContextSnapshot 严格解码查询快照。
@@ -285,13 +291,7 @@ func NewCompactionStarted(sessionID domain.SessionID, threadID domain.ThreadID, 
 	if err != nil {
 		return Event{}, err
 	}
-	event := newEvent(EventCompactionStarted)
-	event.SessionID = sessionID
-	event.ThreadID = threadID
-	event.CompactionID = id
-	event.TurnID = scope.TurnID
-	event.Payload = raw
-	return event, event.Validate()
+	return newScopedPayloadEvent(EventCompactionStarted, sessionID, threadID, id, scope.TurnID, raw)
 }
 
 // DecodeCompactionStarted 严格解码开始事件。
@@ -333,13 +333,7 @@ func NewCompactionCompleted(sessionID domain.SessionID, threadID domain.ThreadID
 	if err != nil {
 		return Event{}, err
 	}
-	event := newEvent(EventCompactionCompleted)
-	event.SessionID = sessionID
-	event.ThreadID = threadID
-	event.CompactionID = id
-	event.TurnID = scope.TurnID
-	event.Payload = raw
-	return event, event.Validate()
+	return newScopedPayloadEvent(EventCompactionCompleted, sessionID, threadID, id, scope.TurnID, raw)
 }
 
 // DecodeCompactionCompleted 严格解码成功事件。
@@ -391,13 +385,7 @@ func NewCompactionFailed(sessionID domain.SessionID, threadID domain.ThreadID, i
 	if err != nil {
 		return Event{}, err
 	}
-	event := newEvent(EventCompactionFailed)
-	event.SessionID = sessionID
-	event.ThreadID = threadID
-	event.CompactionID = id
-	event.TurnID = payload.Scope.TurnID
-	event.Payload = raw
-	return event, event.Validate()
+	return newScopedPayloadEvent(EventCompactionFailed, sessionID, threadID, id, payload.Scope.TurnID, raw)
 }
 
 // DecodeCompactionFailed 严格解码失败终态。

@@ -33,23 +33,9 @@ func (m Model) projectPostHookCommit(e protocol.Event) (tea.Model, tea.Cmd) {
 			selected = b.selected == i
 		}
 	}
-	filtered := b.cache[:0]
-	for _, cached := range b.cache {
-		affected := cached.key.cursor == cursor && cached.key.source == protocol.TranscriptPostHooks
-		for _, item := range cached.list.Items {
-			affected = affected || item.Activity.InvocationID == p.InvocationID
-		}
-		if !affected {
-			filtered = append(filtered, cached)
-		}
-	}
-	b.cache = filtered
+	b.invalidateHookPages(p.InvocationID, cursor, protocol.TranscriptPostHooks)
 	if m.detailOpen && !b.detail {
-		if b.selected >= 0 && b.selected < len(b.items) {
-			b.entryCursor = b.items[b.selected].Cursor
-		}
-		b.invalidate()
-		return m.loadTranscriptPage(b.listKey)
+		return m.reloadHookList()
 	}
 	if m.detailOpen && b.detail && selected && b.source == protocol.TranscriptPostHooks && b.stream == "" {
 		b.invalidate()

@@ -336,43 +336,59 @@ func mergeEnvironment(base Config) Config {
 	return base
 }
 
-// ValidateProvider 校验启动真实模型请求前必须具备的字段。
-func (config Config) ValidateProvider() error {
-	if _, err := config.InferenceSettings(); err != nil {
-		return err
+// ProviderSettings 保存一次完整配置校验得到的运行策略。
+type ProviderSettings struct {
+	Inference      domain.InferenceSettings
+	Cache          domain.CachePolicy
+	AutoCompaction contextplan.AutoCompactionPolicy
+}
+
+// ResolveProvider 校验启动请求所需的配置并返回已解析的运行策略。
+func (config Config) ResolveProvider() (ProviderSettings, error) {
+	inference, err := config.InferenceSettings()
+	if err != nil {
+		return ProviderSettings{}, err
 	}
-	if err := config.CachePolicy().ValidateFamily(config.Provider.Family); err != nil {
-		return fault.New(fault.CodeInvalidConfiguration, "cache policy does not match provider")
+	cache := config.CachePolicy()
+	if err := cache.ValidateFamily(config.Provider.Family); err != nil {
+		return ProviderSettings{}, fault.New(fault.CodeInvalidConfiguration, "cache policy does not match provider")
 	}
-	if _, err := config.AutoCompactionPolicy(); err != nil {
-		return err
+	auto, err := config.AutoCompactionPolicy()
+	if err != nil {
+		return ProviderSettings{}, err
 	}
 	if err := validateCompactionOutput(config.compactionOutput, config.ContextBudget); err != nil {
-		return err
+		return ProviderSettings{}, err
 	}
 	if err := config.ContextBudget.Validate(); err != nil {
-		return fault.New(fault.CodeInvalidConfiguration, "context token budget is invalid")
+		return ProviderSettings{}, fault.New(fault.CodeInvalidConfiguration, "context token budget is invalid")
 	}
 	if !config.Provider.Family.Valid() {
-		return fault.New(fault.CodeInvalidConfiguration, "provider must be anthropic or openai")
+		return ProviderSettings{}, fault.New(fault.CodeInvalidConfiguration, "provider must be anthropic or openai")
 	}
 	if config.Provider.BaseURL == "" {
-		return fault.New(fault.CodeInvalidConfiguration, "base URL is required")
+		return ProviderSettings{}, fault.New(fault.CodeInvalidConfiguration, "base URL is required")
 	}
 	parsedURL, err := url.Parse(config.Provider.BaseURL)
 	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" || parsedURL.Hostname() == "" {
-		return fault.New(fault.CodeInvalidConfiguration, "base URL is invalid")
+		return ProviderSettings{}, fault.New(fault.CodeInvalidConfiguration, "base URL is invalid")
 	}
 	if parsedURL.User != nil || parsedURL.RawQuery != "" || parsedURL.Fragment != "" {
-		return fault.New(fault.CodeInvalidConfiguration, "base URL must not contain userinfo, query, or fragment")
+		return ProviderSettings{}, fault.New(fault.CodeInvalidConfiguration, "base URL must not contain userinfo, query, or fragment")
 	}
 	if config.Provider.APIKey.Empty() {
-		return fault.New(fault.CodeInvalidConfiguration, "API key is required")
+		return ProviderSettings{}, fault.New(fault.CodeInvalidConfiguration, "API key is required")
 	}
 	if config.Provider.Model == "" {
-		return fault.New(fault.CodeInvalidConfiguration, "model is required")
+		return ProviderSettings{}, fault.New(fault.CodeInvalidConfiguration, "model is required")
 	}
-	return nil
+	return ProviderSettings{Inference: inference, Cache: cache, AutoCompaction: auto}, nil
+}
+
+// ValidateProvider 校验启动真实模型请求前必须具备的字段。
+func (config Config) ValidateProvider() error {
+	_, err := config.ResolveProvider()
+	return err
 }
 
 // String 返回可安全输出的配置摘要。

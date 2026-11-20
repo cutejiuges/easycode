@@ -94,12 +94,7 @@ func (runtime *Runtime) executeWriteCall(ctx context.Context, emit Emitter, turn
 	} else if outcome == tool.ApprovalOutcomeAllowFromSession {
 		source = session.ApprovalSourceSessionGrant
 	}
-	metadata, err := session.NewApprovalMetadata(invocation)
-	if err != nil {
-		return tool.InvocationResult{}, false, err
-	}
-	fact := session.ToolApprovalDecidedPayload{RequestID: id, InvocationID: v.InvocationID(), Fingerprint: candidate.Fingerprint(), Outcome: outcome, Feedback: feedback, Source: source, Metadata: metadata}
-	factDraft, err := session.NewToolApprovalDecidedDraft(turnID, fact)
+	factDraft, err := buildApprovalFact(request, invocation, outcome, source, feedback)
 	if err != nil {
 		return tool.InvocationResult{}, false, err
 	}
@@ -113,38 +108,16 @@ func (runtime *Runtime) executeWriteCall(ctx context.Context, emit Emitter, turn
 			message += "\nUser feedback: " + feedback
 		}
 		result := tool.NewWriteErrorResult(v, status, code, message)
-		result, freezeErr := runtime.freezeResult(result)
-		if freezeErr != nil {
-			return tool.InvocationResult{}, false, freezeErr
-		}
-		resultDraft, err := session.NewToolCallResultDraft(turnID, result)
-		if err != nil {
-			return tool.InvocationResult{}, false, err
-		}
-		records, err := runtime.journal.AppendBatch(context.WithoutCancel(ctx), []session.RecordDraft{factDraft, resultDraft})
-		if err != nil {
-			runtime.poisoned.Store(true)
-			return tool.InvocationResult{}, false, fault.Wrap(fault.CodeSessionWrite, "persist Write denial failed", err)
-		}
-		if err := runtime.commitResultBudget(result); err != nil {
-			runtime.poisoned.Store(true)
-			return tool.InvocationResult{}, false, err
-		}
-		if err := runtime.notifyToolResult(turnID, result, resultRecordSequence(records)); err != nil {
-			return result, false, err
-		}
-		runtime.emitApprovalResolved(emit, turnID, request, outcome)
-		return result, outcome == tool.ApprovalOutcomeAbort, nil
+		return runtime.commitApprovalDenial(ctx, emit, request, outcome, factDraft, result, "Write")
 	}
-	if _, err := runtime.journal.AppendBatch(context.WithoutCancel(ctx), []session.RecordDraft{factDraft}); err != nil {
-		runtime.poisoned.Store(true)
-		return tool.InvocationResult{}, false, fault.Wrap(fault.CodeSessionWrite, "persist Write approval failed", err)
+	if err := runtime.commitApprovalDecision(ctx, factDraft, "Write"); err != nil {
+		return tool.InvocationResult{}, false, err
 	}
 	if outcome == tool.ApprovalOutcomeAllowSession {
 		runtime.approvals.writeGrant.Store(true)
 	}
 	runtime.emitApprovalResolved(emit, turnID, request, outcome)
-	execution, err := runtime.executeExclusive(ctx, turnID, invocation, exclusiveAction{
+	result, err := runtime.executeExclusive(ctx, turnID, invocation, exclusiveAction{
 		execute: func(ctx context.Context) tool.InvocationResult {
 			runtime.readObservations.invalidate(candidate.RelativePath())
 			return runtime.writeExecutor.Execute(ctx, candidate)
@@ -153,6 +126,5 @@ func (runtime *Runtime) executeWriteCall(ctx context.Context, emit Emitter, turn
 			return result.Status() != tool.ResultSuccess || result.WriteMetadata() == candidate.ResultMetadata()
 		},
 	})
-	result := execution.Result
 	return result, false, err
 }

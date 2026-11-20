@@ -74,7 +74,7 @@ func TestReasoningRequestsAndSummaryEvidenceGolden(t *testing.T) {
 					t.Fatal(err)
 				}
 				logical, _ := codec.MarshalCanonical(plan.request.Messages, provider.MaxNativeCommitBytes)
-				if evidence.nativeFingerprint != domain.ContentFingerprint(logical.Bytes()) || receipt.NativeFingerprint != evidence.nativeFingerprint || receipt.RequestFingerprint != domain.ContentFingerprint(body.Bytes()) {
+				if evidence.NativeFingerprint() != domain.ContentFingerprint(logical.Bytes()) || receipt.NativeFingerprint != evidence.NativeFingerprint() || receipt.RequestFingerprint != domain.ContentFingerprint(body.Bytes()) {
 					t.Fatal("request and evidence disagree")
 				}
 				var wire messagesRequest
@@ -82,7 +82,7 @@ func TestReasoningRequestsAndSummaryEvidenceGolden(t *testing.T) {
 					t.Fatal("request fields lost")
 				}
 				var props messagesRequest
-				if codec.Unmarshal(evidence.properties.Bytes(), &props) != nil || props.MaxTokens != wire.MaxTokens || props.Messages != nil {
+				if codec.Unmarshal(evidence.Properties().Bytes(), &props) != nil || props.MaxTokens != wire.MaxTokens || props.Messages != nil {
 					t.Fatal("properties describe a different request")
 				}
 				if plan.purpose == domain.RequestSummary {
@@ -90,7 +90,7 @@ func TestReasoningRequestsAndSummaryEvidenceGolden(t *testing.T) {
 						t.Fatal("ordinary evidence substituted for summary")
 					}
 					source, err := conversation.compactionSource()
-					if err != nil || source.Digest() == evidence.nativeFingerprint {
+					if err != nil || source.Digest() == evidence.NativeFingerprint() {
 						t.Fatal("source digest confused with guided input", err)
 					}
 					preview, err := conversation.PreflightCompaction(compact)

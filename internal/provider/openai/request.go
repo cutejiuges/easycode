@@ -2,9 +2,7 @@ package openai
 
 import (
 	"encoding/json"
-	"fmt"
 
-	"easycode/internal/codec"
 	"easycode/internal/domain"
 	"easycode/internal/tool"
 )
@@ -109,26 +107,6 @@ func buildResponsesRequest(
 		Store:   false,
 		Include: []string{"reasoning.encrypted_content"},
 	}
-}
-
-func compileResponsesRequest(
-	model string,
-	history []nativeHistoryEntry,
-	projectInstructions *domain.ProjectInstructionsSnapshot,
-	toolView tool.FacadeView,
-) (codec.CanonicalJSON, error) {
-	if projectInstructions != nil {
-		if err := projectInstructions.Validate(); err != nil {
-			return codec.CanonicalJSON{}, fmt.Errorf("project instructions snapshot is invalid: %w", err)
-		}
-	}
-	if toolView.Family() != domain.ProviderOpenAI || len(toolView.Facades()) != 10 {
-		return codec.CanonicalJSON{}, fmt.Errorf("OpenAI tool catalog view is invalid")
-	}
-	return codec.MarshalCanonical(
-		buildResponsesRequest(model, history, projectInstructions, toolView),
-		maxResponsesRequestBytes,
-	)
 }
 
 func (request *responsesRequest) applyInference(settings domain.InferenceSettings) {
