@@ -5,53 +5,70 @@ package catalog
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"easycode/internal/domain"
 )
 
-func TestCatalogTransactionRollsBackAtomically(t *testing.T) {
-	directory := privateTempDir(t)
-	instance := openTestCatalog(t, filepath.Join(directory, "state.sqlite"), filepath.Join(directory, "sessions"))
-	defer func() { _ = instance.Close() }()
+func TestCatalogCanceledPublicationKeepsPreviousSnapshot(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(privateTempDir(t), "catalog.json")
+	instance := openTestCatalog(t, path)
 	cwd := t.TempDir()
 	first := catalogTestEntry(t, cwd, domain.ProviderOpenAI, "responses", "gpt-test", time.Unix(500, 0).UTC())
-	second := catalogTestEntry(t, cwd, domain.ProviderOpenAI, "responses", "gpt-test", time.Unix(600, 0).UTC())
-	second.JournalPath = first.JournalPath
-	present := map[domain.ThreadID]struct{}{first.ThreadID: {}, second.ThreadID: {}}
-	if err := instance.applyReconciliation(context.Background(), []Entry{first, second}, present, nil); err == nil {
-		t.Fatal("applyReconciliation() unexpectedly committed duplicate journal paths")
-	}
-	_, found, err := instance.LatestCompatible(context.Background(), Selector{
-		CreationCWD: cwd, ProviderFamily: domain.ProviderOpenAI, ProviderWire: "responses", Model: "gpt-test",
-	})
-	if err != nil || found {
-		t.Fatalf("rolled-back query found=%v err=%v", found, err)
-	}
-}
-
-func TestCatalogSchemaAndFilesExcludeSecretsAndUsePrivatePermissions(t *testing.T) {
-	directory := privateTempDir(t)
-	databasePath := filepath.Join(directory, "state.sqlite")
-	instance := openTestCatalog(t, databasePath, filepath.Join(directory, "sessions"))
-	cwd := t.TempDir()
-	entry := catalogTestEntry(t, cwd, domain.ProviderOpenAI, "responses", "gpt-test", time.Now().UTC())
-	if err := instance.applyReconciliation(
-		context.Background(), []Entry{entry}, map[domain.ThreadID]struct{}{entry.ThreadID: {}}, nil,
-	); err != nil {
+	if err := instance.publish(ctx, []Entry{first}); err != nil {
 		t.Fatal(err)
 	}
-	schema, err := querySingleText(instance.db, "SELECT group_concat(sql, ';') FROM sqlite_schema WHERE sql IS NOT NULL")
+	before, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, forbidden := range []string{"tag", "prompt", "payload", "base_url", "api_key", "authorization"} {
-		if strings.Contains(strings.ToLower(schema), forbidden) {
-			t.Fatalf("schema contains deferred or sensitive field %q: %s", forbidden, schema)
+	second := first
+	second.Title = "Unpublished title"
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := instance.publish(canceled, []Entry{second}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("publish() error = %v, want context.Canceled", err)
+	}
+	assertFileContent(t, path, string(before))
+	entry, found, err := instance.LatestCompatible(ctx, Selector{
+		CreationCWD: cwd, ProviderFamily: domain.ProviderOpenAI, ProviderWire: "responses", Model: "gpt-test",
+	})
+	if err != nil || !found || entry != first {
+		t.Fatalf("query after rejected publication = %+v, %v, %v", entry, found, err)
+	}
+}
+
+func TestCatalogSnapshotExcludesSecretsAndUsesPrivatePermissions(t *testing.T) {
+	directory := privateTempDir(t)
+	path := filepath.Join(directory, "catalog.json")
+	instance := openTestCatalog(t, path)
+	cwd := t.TempDir()
+	entry := catalogTestEntry(t, cwd, domain.ProviderOpenAI, "responses", "gpt-test", time.Now().UTC())
+	if err := instance.publish(context.Background(), []Entry{entry}); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []map[string]json.RawMessage
+	if err := json.Unmarshal(content, &rows); err != nil || len(rows) != 1 {
+		t.Fatalf("persisted snapshot rows = %d, %v", len(rows), err)
+	}
+	fields := []string{"session_id", "thread_id", "journal_path", "created_at", "updated_at", "last_sequence",
+		"last_checksum", "creation_cwd", "provider_family", "provider_wire", "model", "title"}
+	if len(rows[0]) != len(fields) {
+		t.Fatalf("persisted snapshot has %d fields, want %d", len(rows[0]), len(fields))
+	}
+	for _, field := range fields {
+		if _, ok := rows[0][field]; !ok {
+			t.Fatalf("persisted snapshot is missing %q", field)
 		}
 	}
 	if err := instance.Close(); err != nil {
@@ -60,7 +77,7 @@ func TestCatalogSchemaAndFilesExcludeSecretsAndUsePrivatePermissions(t *testing.
 	if err := instance.Close(); err != nil {
 		t.Fatalf("second Close() = %v", err)
 	}
-	for _, path := range []string{databasePath, databasePath + ".lock"} {
+	for _, path := range []string{path, path + ".lock"} {
 		info, err := os.Stat(path)
 		if err != nil {
 			t.Fatalf("inspect catalog file %s: %v", filepath.Base(path), err)
@@ -80,59 +97,101 @@ func TestCatalogSchemaAndFilesExcludeSecretsAndUsePrivatePermissions(t *testing.
 	}
 }
 
-func TestCatalogRejectsSymlinkedDatabaseAndSidecar(t *testing.T) {
-	t.Run("database", func(t *testing.T) {
+func TestCatalogRejectsUnsafeSnapshotOrLock(t *testing.T) {
+	for _, suffix := range []string{"", ".lock"} {
+		t.Run("symlink"+suffix, func(t *testing.T) {
+			path := filepath.Join(privateTempDir(t), "catalog.json")
+			target := filepath.Join(t.TempDir(), "outside")
+			if err := os.WriteFile(target, []byte("outside-secret"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, path+suffix); err != nil {
+				t.Fatal(err)
+			}
+			instance, err := New(Config{SnapshotPath: path})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = instance.Close() })
+			if err := instance.Open(context.Background()); err == nil {
+				t.Fatal("Open() unexpectedly accepted a symlink")
+			}
+			assertFileContent(t, target, "outside-secret")
+		})
+	}
+
+	t.Run("non-private snapshot", func(t *testing.T) {
 		directory := privateTempDir(t)
-		target := filepath.Join(t.TempDir(), "outside")
-		if err := os.WriteFile(target, []byte("outside-secret"), 0o600); err != nil {
+		path := filepath.Join(directory, "catalog.json")
+		if err := os.WriteFile(path, []byte("unsafe snapshot"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Symlink(target, filepath.Join(directory, "state.sqlite")); err != nil {
+		if err := os.Chmod(path, 0o644); err != nil {
 			t.Fatal(err)
 		}
-		instance, err := New(Config{DatabasePath: filepath.Join(directory, "state.sqlite"), SessionRoot: filepath.Join(directory, "sessions")})
+		instance, err := New(Config{SnapshotPath: path})
 		if err != nil {
 			t.Fatal(err)
 		}
+		t.Cleanup(func() { _ = instance.Close() })
 		if err := instance.Open(context.Background()); err == nil {
-			t.Fatal("Open() unexpectedly followed database symlink")
+			t.Fatal("Open() unexpectedly accepted non-private snapshot")
 		}
-		assertFileContent(t, target, "outside-secret")
-	})
-	t.Run("rollback journal", func(t *testing.T) {
-		directory := privateTempDir(t)
-		databasePath := filepath.Join(directory, "state.sqlite")
-		instance := openTestCatalog(t, databasePath, filepath.Join(directory, "sessions"))
-		if err := instance.Close(); err != nil {
-			t.Fatal(err)
-		}
-		target := filepath.Join(t.TempDir(), "outside")
-		if err := os.WriteFile(target, []byte("outside-secret"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Symlink(target, databasePath+"-journal"); err != nil {
-			t.Fatal(err)
-		}
-		instance, err := New(Config{DatabasePath: databasePath, SessionRoot: filepath.Join(directory, "sessions")})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := instance.Open(context.Background()); err == nil {
-			t.Fatal("Open() unexpectedly accepted sidecar symlink")
-		}
-		assertFileContent(t, target, "outside-secret")
+		assertFileContent(t, path, "unsafe snapshot")
 	})
 }
 
-func openTestCatalog(t *testing.T, databasePath string, root string) *Catalog {
+func TestCatalogRejectsReplacedSnapshotBeforePublishing(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(privateTempDir(t), "catalog.json")
+	instance := openTestCatalog(t, path)
+	entry := catalogTestEntry(t, t.TempDir(), domain.ProviderOpenAI, "responses", "gpt-test", time.Unix(500, 0).UTC())
+	if err := instance.publish(ctx, []Entry{entry}); err != nil {
+		t.Fatal(err)
+	}
+	if err := instance.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := instance.Open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := path + ".old"
+	if err := os.Rename(path, previous); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("foreign snapshot"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := instance.publish(ctx, []Entry{entry}); err == nil {
+		t.Fatal("publish() unexpectedly accepted a replaced snapshot with unchanged entries")
+	}
+	updated := entry
+	updated.Title = "Unpublished title"
+	if err := instance.publish(ctx, []Entry{updated}); err == nil {
+		t.Fatal("publish() unexpectedly replaced a distinct inode at the snapshot path")
+	}
+	assertFileContent(t, path, "foreign snapshot")
+	assertFileContent(t, previous, string(before))
+	result, err := instance.List(ctx, ListQuery{Scope: ListAllDirectories, Limit: 2})
+	if err != nil || len(result.Entries) != 1 || result.Entries[0] != entry {
+		t.Fatalf("query after rejected publication = %+v, %v", result, err)
+	}
+}
+
+func openTestCatalog(t *testing.T, path string) *Catalog {
 	t.Helper()
-	instance, err := New(Config{DatabasePath: databasePath, SessionRoot: root})
+	instance, err := New(Config{SnapshotPath: path})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := instance.Open(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = instance.Close() })
 	return instance
 }
 

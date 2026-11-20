@@ -400,19 +400,7 @@ func (b *transcriptBrowser) switchDetail(source protocol.TranscriptBodySource, s
 func (model Model) handleTranscriptBrowserKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	b := &model.browser
 	if key.Type == tea.KeyCtrlC {
-		if model.activeTurnID.Valid() {
-			model.cancelling = true
-			return model, interruptSession(model.session)
-		}
-		if model.pending != nil {
-			model.interruptNext = true
-			return model, nil
-		}
-		if model.composer.text != "" {
-			return model, nil
-		}
-		b.invalidate()
-		return model.quitTranscript()
+		return model.handleCancelKey()
 	}
 	if key.Type == tea.KeyEsc {
 		b.invalidate()

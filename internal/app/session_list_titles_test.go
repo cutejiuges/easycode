@@ -41,7 +41,7 @@ func TestSessionListShowsNamedAndUnnamedSessionsOffline(t *testing.T) {
 		finishSessionTitleFixture(t, writer, name)
 		threads = append(threads, identity.ThreadID)
 	}
-	paths := dataPaths{sessionRoot: root, catalogPath: filepath.Join(dir, "state.sqlite")}
+	paths := dataPaths{sessionRoot: root, catalogPath: filepath.Join(dir, "catalog.json")}
 	var stdout, stderr bytes.Buffer
 	outcome := ListSessions(ctx, SessionListOptions{
 		All: true, Limit: 3, SessionDataRoot: paths.sessionRoot, SessionCatalogPath: paths.catalogPath,

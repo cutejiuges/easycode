@@ -76,17 +76,16 @@ func previewSession(ctx context.Context, root string, thread domain.ThreadID, de
 	if err != nil || binding.wire != meta.ProviderWire {
 		return result, false, fmt.Errorf("stored history source is unsupported")
 	}
-	if err := validateSampleUsageEvidence(binding.sampleUsage, plan); err != nil {
+	if err := validateSampleUsageEvidence(ctx, binding.history, plan); err != nil {
 		return result, false, err
 	}
-	records, err := orderedRestoreRecords(plan)
+	records, err := orderedRestoreRecords(ctx, plan)
 	if err != nil {
 		return result, false, err
 	}
-	if err := validateCompactionUsageEvidence(binding.history, plan); err != nil {
-		return result, false, err
-	}
-	view, err := binding.history.ProjectStoredHistory(ctx, provider.HistorySource{ThreadID: thread, Family: meta.Provider, Wire: meta.ProviderWire, Model: meta.Model}, records)
+	view, err := binding.history.ProjectStoredHistory(ctx, provider.HistorySource{ThreadID: thread, Family: meta.Provider, Wire: meta.ProviderWire, Model: meta.Model}, records, func(checkpoints provider.CheckpointReader) error {
+		return validateCompactionUsageEvidence(ctx, binding.history, checkpoints, plan)
+	})
 	if err != nil {
 		return result, false, err
 	}

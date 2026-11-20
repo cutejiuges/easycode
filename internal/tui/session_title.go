@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -47,16 +46,6 @@ type sessionTitleDeliveryFailedMsg struct {
 func (model Model) WithSessionTitle(title domain.SessionTitle) Model {
 	model.title.value = title
 	return model
-}
-
-// sessionTitleArguments 只切分首词，保留其后的原始分隔符和参数。
-func sessionTitleArguments(text string) (string, bool) {
-	arguments, matched := strings.CutPrefix(strings.TrimLeftFunc(text, unicode.IsSpace), "/rename")
-	if !matched {
-		return "", false
-	}
-	first, _ := utf8.DecodeRuneInString(arguments)
-	return arguments, arguments == "" || unicode.IsSpace(first)
 }
 
 func (model *Model) suppressSessionTitleCompletion() {
@@ -217,7 +206,7 @@ func (model Model) closeSessionTitleInput(failure string) (tea.Model, tea.Cmd) {
 }
 
 func (model Model) chatComposerEditable() bool {
-	return model.pending == nil && model.retracting == nil && !model.cancelling && model.title.request == nil
+	return model.focus() == focusComposer && model.pending == nil && model.retracting == nil && !model.cancelling
 }
 
 func (title sessionTitleView) line() string {

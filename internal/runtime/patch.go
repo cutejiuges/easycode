@@ -4,17 +4,16 @@ import (
 	"context"
 	"easycode/internal/domain"
 	"easycode/internal/fault"
-	"easycode/internal/session"
 	"easycode/internal/tool"
 	"errors"
 )
 
 func (runtime *Runtime) executePatchCall(ctx context.Context, emit Emitter, turnID domain.TurnID, invocation tool.Invocation) (tool.InvocationResult, bool, error) {
 	patch, ok := invocation.Patch()
-	if !ok || runtime.patchPreparer == nil || runtime.patchExecutor == nil {
+	if !ok || runtime.tools.PreparePatch == nil || runtime.tools.Patch == nil {
 		return tool.InvocationResult{}, false, fault.New(fault.CodeTurnFailed, "Patch runtime is not configured")
 	}
-	candidate, err := runtime.patchPreparer.Prepare(ctx, patch)
+	candidate, err := runtime.tools.PreparePatch.Prepare(ctx, patch)
 	if err != nil {
 		code := "patch_prepare_failed"
 		type coded interface{ Code() string }
@@ -39,73 +38,16 @@ func (runtime *Runtime) executePatchCall(ctx context.Context, emit Emitter, turn
 	if err != nil {
 		return tool.InvocationResult{}, false, fault.New(fault.CodeTurnFailed, "approval request is invalid")
 	}
-	outcome := tool.ApprovalOutcomeDeny
-	feedback := ""
-	decision := runtime.toolPolicy.Decide(callFromPatchInvocation(patch))
-	source := session.ApprovalSourcePolicy
-	if decision == tool.PolicyAsk && !runtime.interactiveApprovals {
-		source = session.ApprovalSourceHeadless
-	}
-	if decision == tool.PolicyAsk && runtime.approvals.patchGrant.Load() {
-		outcome = tool.ApprovalOutcomeAllowFromSession
-		source = session.ApprovalSourceSessionGrant
-	} else if decision == tool.PolicyAllow {
-		outcome = tool.ApprovalOutcomeAllowOnce
-		source = session.ApprovalSourcePolicy
-	} else if decision == tool.PolicyAsk && runtime.interactiveApprovals {
-		source = session.ApprovalSourceInteractive
-		response, waitErr := runtime.waitForApproval(ctx, emit, turnID, request)
-		if waitErr != nil {
-			return tool.InvocationResult{}, false, waitErr
-		}
-		feedback = response.Feedback()
-		switch response.Decision() {
-		case tool.ApprovalAllowOnce:
-			outcome = tool.ApprovalOutcomeAllowOnce
-		case tool.ApprovalAllowSession:
-			outcome = tool.ApprovalOutcomeAllowSession
-		case tool.ApprovalDeny:
-			outcome = tool.ApprovalOutcomeDeny
-		case tool.ApprovalAbort:
-			outcome = tool.ApprovalOutcomeAbort
-		}
-	}
-	factDraft, err := buildApprovalFact(request, invocation, outcome, source, feedback)
-	if err != nil {
-		return tool.InvocationResult{}, false, err
-	}
-	if outcome == tool.ApprovalOutcomeDeny || outcome == tool.ApprovalOutcomeAbort {
-		status, code, preview := tool.ResultDenied, "approval_denied", "Patch denied: approval_denied"
-		if outcome == tool.ApprovalOutcomeAbort {
-			status = tool.ResultCancelled
-			code = "user_aborted"
-			preview = "Patch cancelled: user_aborted"
-		} else if decision == tool.PolicyAsk && !runtime.interactiveApprovals {
-			code = "approval_required"
-			preview = "Patch denied: approval_required"
-		} else if feedback != "" {
-			preview += "\nUser feedback: " + feedback
-		}
-		result := tool.NewPatchErrorResult(patch, status, code, preview)
-		return runtime.commitApprovalDenial(ctx, emit, request, outcome, factDraft, result, "Patch")
-	}
-	if err := runtime.commitApprovalDecision(ctx, factDraft, "Patch"); err != nil {
-		return tool.InvocationResult{}, false, err
-	}
-	if outcome == tool.ApprovalOutcomeAllowSession {
-		runtime.approvals.patchGrant.Store(true)
-	}
-	runtime.emitApprovalResolved(emit, turnID, request, outcome)
-	result, err := runtime.executeExclusive(ctx, turnID, invocation, exclusiveAction{
+	policy := runtime.tools.Policy.Decide(callFromPatchInvocation(patch))
+	return runtime.executeWithApproval(ctx, emit, request, invocation, policy, "Patch", exclusiveAction{
 		execute: func(ctx context.Context) tool.InvocationResult {
 			runtime.readObservations.invalidate(candidate.RelativePath())
-			return runtime.patchExecutor.Execute(ctx, candidate)
+			return runtime.tools.Patch.Execute(ctx, candidate)
 		},
 		matches: func(result tool.InvocationResult) bool {
 			return result.Status() != tool.ResultSuccess || result.PatchMetadata() == candidate.ResultMetadata()
 		},
 	})
-	return result, false, err
 }
 
 func callFromPatchInvocation(invocation tool.PatchInvocation) tool.ReadyCall {

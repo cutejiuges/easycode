@@ -269,7 +269,7 @@ func (w *failingHandoffOutput) Write(p []byte) (int, error) {
 func pickerFixture(t *testing.T) (dataPaths, string, config.Config) {
 	t.Helper()
 	base := privateAppTempDir(t)
-	return dataPaths{sessionRoot: filepath.Join(base, "sessions"), catalogPath: filepath.Join(base, "state.sqlite")}, privateAppTempDir(t),
+	return dataPaths{sessionRoot: filepath.Join(base, "sessions"), catalogPath: filepath.Join(base, "catalog.json")}, privateAppTempDir(t),
 		config.Config{Provider: config.Provider{Family: domain.ProviderOpenAI, BaseURL: "https://example.invalid", APIKey: secret.New("picker-fixture"), Model: "gpt-test"}}
 }
 

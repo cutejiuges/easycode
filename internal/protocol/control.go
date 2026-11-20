@@ -73,11 +73,16 @@ func (controlError ControlError) Message() string { return controlError.message 
 
 // Validate 验证错误码与固定安全消息匹配。
 func (controlError ControlError) Validate() error {
-	message, ok := controlErrorMessage(controlError.code)
-	if !ok || message != controlError.message {
+	if !controlError.code.MatchesMessage(controlError.message) {
 		return fmt.Errorf("control error is invalid")
 	}
 	return nil
+}
+
+// MatchesMessage 核对宿主使用的错误摘要是否与稳定文案相符。
+func (code ControlErrorCode) MatchesMessage(message string) bool {
+	want, ok := controlErrorMessage(code)
+	return ok && message == want
 }
 
 // CommandResult 是 owner 对一条命令的确定 admission 结果。
@@ -144,35 +149,43 @@ func (result CommandResult) Error() (ControlError, bool) {
 
 // Validate 验证 command kind、status 和 disposition/error 的组合。
 func (result CommandResult) Validate() error {
-	if result.commandKind == CommandCompactContext && result.status == CommandStatusAccepted {
-		if !result.compactionID.Valid() {
-			return fmt.Errorf("accepted compaction identity is invalid")
-		}
-	} else if result.compactionID != "" {
-		return fmt.Errorf("unrelated compaction identity")
-	}
-
 	if !result.requestID.Valid() || !validCommandKind(result.commandKind) {
 		return fmt.Errorf("command result identity is invalid")
 	}
 	switch result.status {
 	case CommandStatusAccepted:
-		if result.commandKind == CommandSubmitConversationalInput {
-			if !result.entryID.Valid() {
-				return fmt.Errorf("accepted input identity is invalid")
-			}
-		} else if result.entryID != "" {
-			return fmt.Errorf("unrelated input identity")
-		}
-		if result.controlErr != (ControlError{}) || !dispositionMatches(result.commandKind, result.disposition) {
+		if result.controlErr != (ControlError{}) {
 			return fmt.Errorf("accepted command result is invalid")
 		}
+		return result.commandKind.ValidateAcceptance(result.disposition, result.compactionID, result.entryID)
 	case CommandStatusRejected:
-		if result.entryID != "" || result.disposition != "" || result.controlErr.Validate() != nil {
+		if result.compactionID != "" || result.entryID != "" || result.disposition != "" || result.controlErr.Validate() != nil {
 			return fmt.Errorf("rejected command result is invalid")
 		}
 	default:
 		return fmt.Errorf("command result status is invalid")
+	}
+	return nil
+}
+
+// ValidateAcceptance 核对接纳动作及其关联身份是否符合命令契约。
+func (kind CommandKind) ValidateAcceptance(disposition CommandDisposition, compactionID domain.CompactionID, entryID domain.InputID) error {
+	if kind == CommandCompactContext {
+		if !compactionID.Valid() {
+			return fmt.Errorf("accepted compaction identity is invalid")
+		}
+	} else if compactionID != "" {
+		return fmt.Errorf("unrelated compaction identity")
+	}
+	if kind == CommandSubmitConversationalInput {
+		if !entryID.Valid() {
+			return fmt.Errorf("accepted input identity is invalid")
+		}
+	} else if entryID != "" {
+		return fmt.Errorf("unrelated input identity")
+	}
+	if !dispositionMatches(kind, disposition) {
+		return fmt.Errorf("accepted command result is invalid")
 	}
 	return nil
 }

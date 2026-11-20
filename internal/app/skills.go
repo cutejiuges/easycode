@@ -37,11 +37,14 @@ type preparedControl struct {
 }
 
 func (p preparedControl) Submit(ctx context.Context, c protocol.Command) (protocol.CommandResult, error) {
-	c, err := p.runtime.PrepareInput(ctx, c)
+	prepared, err := p.runtime.PrepareInput(ctx, c)
 	if err != nil {
+		if fault.Project(err).Code == fault.CodeInvalidInput {
+			return p.AgentLoop.RejectInputPreparation(ctx, c)
+		}
 		return protocol.CommandResult{}, err
 	}
-	return p.AgentLoop.Submit(ctx, c)
+	return p.AgentLoop.Submit(ctx, prepared)
 }
 
 // skillInputPreparer 只把来源安全分类投影为宿主可显示错误。

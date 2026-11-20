@@ -19,11 +19,11 @@ type streamSetEffortCommand struct {
 	Level     domain.EffortLevel `json:"level,omitempty"`
 }
 
-func decodeEffortCommand(line []byte, kind string, requestID protocol.RequestID) (protocol.Command, error) {
+func decodeEffortCommand(line []byte, kind protocol.CommandKind, requestID protocol.RequestID) (protocol.Command, error) {
 	if len(line) > MaxEffortCommandBytes {
 		return protocol.Command{}, fmt.Errorf("effort command exceeds limit")
 	}
-	if kind == "effort.query" {
+	if kind == protocol.CommandQueryEffort {
 		var wire streamCommandEnvelope
 		if err := codec.DecodeObject(line, &wire, "version", "type", "request_id"); err != nil {
 			return protocol.Command{}, fmt.Errorf("effort.query command is invalid")

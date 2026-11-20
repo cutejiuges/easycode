@@ -40,15 +40,21 @@ func TestSessionServiceResumeAcrossProcesses(t *testing.T) {
 	}
 	appendFixtureInitialInput(t, created.writer, completedTurnID)
 	usage, err := domain.NewSampleUsage(
-		domain.KnownUsageMetric(1), domain.UnknownUsageMetric(),
-		domain.NotApplicableUsageMetric(), domain.KnownUsageMetric(2),
-		domain.NotApplicableUsageMetric(),
+		domain.KnownUsageMetric(1), domain.KnownUsageMetric(0),
+		domain.UnknownUsageMetric(), domain.KnownUsageMetric(2),
+		domain.UnknownUsageMetric(),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	commitDraft, err := session.NewProviderNativeCommitDraft(completedTurnID, session.NativeCommitPayload{
-		Provider: domain.ProviderOpenAI, Wire: "responses", Payload: []byte(`{"shape":"fixture"}`),
+		Provider: domain.ProviderOpenAI, Wire: "responses",
+		Payload: []byte(`{
+			"kind":"sample",
+			"outputs":[{"type":"message","id":"lease-sample","role":"assistant","content":[{"type":"output_text","text":"fixture"}]}],
+			"usage":{"input_tokens":{"known":true,"value":1},"cached_input_tokens":{"known":true,"value":0},
+				"cache_write_tokens":{"known":false},"output_tokens":{"known":true,"value":2},"reasoning_output_tokens":{"known":false}}
+		}`),
 	})
 	if err != nil {
 		t.Fatal(err)

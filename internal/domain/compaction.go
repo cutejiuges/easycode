@@ -14,6 +14,9 @@ type CompactionID string
 const MaxContextSummaryBytes = 256 << 10
 const MaxCompactionInstructionsBytes = 16 << 10
 
+// MaxCompactionUsageProvenanceBytes 限制压缩计量携带的 Provider 原生证据。
+const MaxCompactionUsageProvenanceBytes = 64 << 10
+
 // GenerateCompactionID 显式分配压缩操作身份。
 func GenerateCompactionID() (CompactionID, error) {
 	value, err := GenerateUUIDv7(time.Now(), rand.Reader)

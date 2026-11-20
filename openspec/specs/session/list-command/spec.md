@@ -60,7 +60,7 @@ CLI SHALL 提供 `easycode sessions list [--all] [--limit N]`，默认当前规�
 
 列表 SHALL 在一次成功协调后展示元数据。协调报告含 busy 或 invalid 时 SHALL 向 stderr 输出安全英文警告，说明这是全存储扫描的报告、列表可能包含未刷新元数据或遗漏会话；只要协调和查询成功，仍返回可用列表并退出 0。MUST NOT 把 busy/invalid 报告包装成“全部历史完整可恢复”，也不得把全局计数标成当前目录计数。
 
-数据资源打开、安全检查、协调、查询或关闭失败 SHALL 返回 1 和安全英文错误；收到取消后 SHALL 清理资源并返回 1，不能输出正常成功列表。stdout/stderr 写入失败 SHALL 返回 1，不重复打印列表、不启动模型作为回退。所有已取得 lease、statement、数据库和目录句柄 SHALL 在命令返回前按唯一 owner 清理。
+数据资源打开、安全检查、协调、查询或关闭失败 SHALL 返回 1 和安全英文错误；收到取消后 SHALL 清理资源并返回 1，不能输出正常成功列表。stdout/stderr 写入失败 SHALL 返回 1，不重复打印列表、不启动模型作为回退。所有已取得的 journal lease、Catalog 锁、快照与目录句柄 SHALL 在命令返回前按唯一 owner 清理。
 
 #### Scenario: Display available history while another process owns a journal
 
@@ -70,7 +70,7 @@ CLI SHALL 提供 `easycode sessions list [--all] [--limit N]`，默认当前规�
 
 #### Scenario: Do not disguise a storage failure as an empty list
 
-- **WHEN** 数据库或目录不安全、无法打开、查询失败或资源关闭失败
+- **WHEN** Catalog 快照或目录不安全、无法打开、查询失败或资源关闭失败
 - **THEN** 返回 1 及安全英文错误，不输出正常空列表或成功列表
 
 #### Scenario: Cancel or fail output without leaking owners

@@ -122,9 +122,6 @@ func (snapshot ProjectInstructionsSnapshot) HasDocuments() bool { return len(sna
 // Truncated 判断快照是否因模型可见字节预算发生截断。
 func (snapshot ProjectInstructionsSnapshot) Truncated() bool { return snapshot.truncated }
 
-// ByteLimit 返回构造快照时使用的模型可见字节上限。
-func (snapshot ProjectInstructionsSnapshot) ByteLimit() int { return snapshot.byteLimit }
-
 // RenderedText 返回 Provider 请求使用的确定性文本。
 func (snapshot ProjectInstructionsSnapshot) RenderedText() string { return snapshot.rendered }
 

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"easycode/internal/executor/process"
 	"easycode/internal/tool"
 )
 
@@ -139,29 +140,29 @@ type tracedDarwinLauncher struct {
 	process  *tracedDarwinProcess
 }
 
-func (launcher *tracedDarwinLauncher) start(ctx context.Context, candidate tool.ExecCandidate) (processHandle, error) {
+func (launcher *tracedDarwinLauncher) start(ctx context.Context, candidate tool.ExecCandidate) (process.Handle, error) {
 	process, err := launcher.launcher.start(ctx, candidate)
 	if err != nil {
 		return nil, err
 	}
-	launcher.process = &tracedDarwinProcess{processHandle: process}
+	launcher.process = &tracedDarwinProcess{Handle: process}
 	return launcher.process, nil
 }
 
 type tracedDarwinProcess struct {
-	processHandle
+	process.Handle
 	signals, probes []error
 	observation     error
 	alive           []bool
 }
 
-func (process *tracedDarwinProcess) terminate(force bool) error {
-	err := process.processHandle.terminate(force)
+func (process *tracedDarwinProcess) Terminate(force bool) error {
+	err := process.Handle.Terminate(force)
 	process.signals = append(process.signals, err)
 	return err
 }
-func (process *tracedDarwinProcess) groupAlive() (bool, error) {
-	alive, err := process.processHandle.groupAlive()
+func (process *tracedDarwinProcess) GroupAlive() (bool, error) {
+	alive, err := process.Handle.GroupAlive()
 	process.probes = append(process.probes, err)
 	process.alive = append(process.alive, alive)
 	return alive, err
@@ -210,7 +211,7 @@ func TestDarwinExecTimeoutAndCancellationCleanOriginalGroup(t *testing.T) {
 		})
 	}
 }
-func (process *tracedDarwinProcess) observeExit() error {
-	process.observation = process.processHandle.observeExit()
+func (process *tracedDarwinProcess) ObserveExit() error {
+	process.observation = process.Handle.ObserveExit()
 	return process.observation
 }

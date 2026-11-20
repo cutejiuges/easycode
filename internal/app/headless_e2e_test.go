@@ -76,7 +76,7 @@ func TestHeadlessProvidersPreserveResumeRequestAndOutputBoundaries(t *testing.T)
 
 			dataHome := privateAppTempDir(t)
 			dataRoot := filepath.Join(dataHome, "sessions")
-			catalogPath := filepath.Join(dataHome, "state.sqlite")
+			catalogPath := filepath.Join(dataHome, "catalog.json")
 			configPath := writeAppConfig(t, t.TempDir(), fixture.family, server.URL)
 			var firstOutput bytes.Buffer
 			first := Run(context.Background(), Options{
@@ -170,7 +170,7 @@ func TestHeadlessProvidersPreserveResumeRequestAndOutputBoundaries(t *testing.T)
 					t.Fatalf("continue request contains catalog/session metadata %q", forbidden)
 				}
 			}
-			assertCatalogFilesExclude(t, dataHome, []string{
+			assertCatalogFilesExclude(t, catalogPath, []string{
 				"file-secret", server.URL, "first", "second", "third",
 				"answer-1", "answer-2", "answer-3", "Authorization",
 			})
@@ -302,23 +302,16 @@ func canonicalizeCapturedRequest(t *testing.T, data []byte) codec.CanonicalJSON 
 	return canonical
 }
 
-func assertCatalogFilesExclude(t *testing.T, dataHome string, forbidden []string) {
+func assertCatalogFilesExclude(t *testing.T, snapshotPath string, forbidden []string) {
 	t.Helper()
-	entries, err := os.ReadDir(dataHome)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasPrefix(entry.Name(), "state.sqlite") {
-			continue
-		}
-		content, err := os.ReadFile(filepath.Join(dataHome, entry.Name()))
+	for _, path := range []string{snapshotPath, snapshotPath + ".lock"} {
+		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, value := range forbidden {
 			if value != "" && bytes.Contains(content, []byte(value)) {
-				t.Fatalf("catalog file %s contains forbidden value %q", entry.Name(), value)
+				t.Fatalf("catalog file %s contains forbidden value %q", filepath.Base(path), value)
 			}
 		}
 	}

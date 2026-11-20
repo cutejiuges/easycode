@@ -100,7 +100,7 @@ func TestPreviewTitleUsesJournalInsteadOfPickerSnapshot(t *testing.T) {
 	cut := bytes.IndexByte(updates, '\n') + 1
 	root, path, thread := installPreviewFixture(t, append(append([]byte(nil), base...), updates[:cut]...))
 	discovery := pickerDiscovery{
-		paths: dataPaths{sessionRoot: root, catalogPath: filepath.Join(filepath.Dir(root), "state.sqlite")},
+		paths: dataPaths{sessionRoot: root, catalogPath: filepath.Join(filepath.Dir(root), "catalog.json")},
 		cwd:   t.TempDir(),
 	}
 	request := tui.PickerRequest{ID: 1, Operation: tui.PickerList}

@@ -20,7 +20,7 @@ type StreamCacheSnapshot struct {
 	Scope               string                            `json:"scope"`
 	Baseline            string                            `json:"baseline"`
 	Activity            string                            `json:"activity"`
-	Provider            domain.ProviderFamily             `json:"provider"`
+	Family              domain.ProviderFamily             `json:"provider"`
 	Wire                string                            `json:"wire"`
 	Model               string                            `json:"model"`
 	Policy              protocol.CachePolicyPayload       `json:"policy"`
@@ -38,9 +38,6 @@ type StreamCacheSnapshot struct {
 }
 
 func (StreamCacheSnapshotEvent) streamEvent() {}
-func newStreamCacheSnapshot(p protocol.CacheSnapshotPayload) StreamCacheSnapshot {
-	return StreamCacheSnapshot{Scope: p.Scope, Baseline: p.Baseline, Activity: p.Activity, Provider: p.Family, Wire: p.Wire, Model: p.Model, Policy: p.Policy, Sources: p.Sources, StableFingerprint: p.StableFingerprint, ContentFingerprint: p.ContentFingerprint, ChangeReason: p.ChangeReason, ChangedSource: p.ChangedSource, PolicyChanged: p.PolicyChanged, UnexplainedReadDrop: p.UnexplainedReadDrop, LastFailure: p.LastFailure, LastSample: p.LastSample, LastTurn: p.LastTurn, LastSummary: p.LastSummary}
-}
 func (p StreamCacheSnapshot) validate() error {
-	return (protocol.CacheSnapshotPayload{Scope: p.Scope, Baseline: p.Baseline, Activity: p.Activity, Family: p.Provider, Wire: p.Wire, Model: p.Model, Policy: p.Policy, Sources: p.Sources, StableFingerprint: p.StableFingerprint, ContentFingerprint: p.ContentFingerprint, ChangeReason: p.ChangeReason, ChangedSource: p.ChangedSource, PolicyChanged: p.PolicyChanged, UnexplainedReadDrop: p.UnexplainedReadDrop, LastFailure: p.LastFailure, LastSample: p.LastSample, LastTurn: p.LastTurn, LastSummary: p.LastSummary}).Validate()
+	return protocol.CacheSnapshotPayload(p).Validate()
 }

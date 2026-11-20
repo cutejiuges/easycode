@@ -14,6 +14,19 @@ const (
 	MaxFileSearchWork        = 16000000
 )
 
+// FileSearchResultPrefix 返回按原有次序符合快照字节预算的候选前缀。
+func FileSearchResultPrefix(query string, paths []string) []string {
+	// 预留快照及 query 元数据和每条路径的编码开销。
+	bytes := 256 + len(query)
+	for index, path := range paths {
+		bytes += len(path) + 16
+		if bytes > MaxFileSearchResultBytes {
+			return paths[:index]
+		}
+	}
+	return paths
+}
+
 // FileDiscoveryIssue 区分覆盖省略与匹配为空，不属于 prompt 或持久化事实。
 type FileDiscoveryIssue uint16
 
@@ -133,7 +146,6 @@ func (v FileSearchSnapshot) Validate() error {
 	if v.state != FileSearchFailed && v.report.Failure != "" {
 		return NewFileFailure(FileInvalid)
 	}
-	bytes := 256 + len(v.identity.Target.Query)
 	for i, path := range v.paths {
 		ref, err := NewFileReference(path, NewWholeFileSelection())
 		if err != nil || ref.Path() != path {
@@ -144,9 +156,8 @@ func (v FileSearchSnapshot) Validate() error {
 				return NewFileFailure(FileInvalid)
 			}
 		}
-		bytes += len(path) + 16
 	}
-	if bytes > MaxFileSearchResultBytes {
+	if len(FileSearchResultPrefix(v.identity.Target.Query, v.paths)) != len(v.paths) {
 		return NewFileFailure(FileLimit)
 	}
 	return nil

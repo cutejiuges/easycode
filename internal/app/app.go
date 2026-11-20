@@ -207,7 +207,8 @@ func Run(ctx context.Context, options Options) Outcome {
 	defer cancel()
 	closeErr := resources.close(shutdownContext)
 	if closeErr != nil {
-		if outcome.Class != ExitSuccess && outcome.Report == ReportOutputUnavailable {
+		if outcome.Class != ExitSuccess && (outcome.Report == ReportOutputUnavailable ||
+			options.Mode == headless.ModeStreamJSON && outcome.Report == ReportComplete) {
 			return outcome
 		}
 		return runtimeFailure(closeErr)
@@ -234,7 +235,7 @@ func runStreamJSON(ctx context.Context, options Options, resources *chatResource
 	}
 	resources.session = nil
 	result, escalationErr := runStreamWithEscalation(ctx, runner, resources, shutdownTimeout)
-	if escalationErr != nil {
+	if escalationErr != nil && !result.Reported && !result.OutputUnavailable {
 		return runtimeFailure(escalationErr)
 	}
 	return outcomeFromHeadless(result)
@@ -422,12 +423,14 @@ func openChatResourcesWithSnapshot(
 	} else {
 		skillSource = extensions.skills
 	}
-	skillReader := skillExecutor{skillSource}
-	questionExecutor := builtin.NewQuestionExecutor()
-	taskExecutor := builtin.NewTaskExecutor()
-	toolCatalog, err := builtin.NewCatalog(
-		tools.read, tools.glob, tools.grep, tools.patchPrepare, tools.patch, tools.writePrepare, tools.write, tools.execPrepare, execExecutor, tool.RenderExecOutput, tools.policy, readArtifactExecutor, skillReader, questionExecutor, taskExecutor,
-	)
+	toolBinding, err := tool.NewBinding(tool.Components{
+		Read: tools.read, Glob: tools.glob, Grep: tools.grep,
+		PreparePatch: tools.patchPrepare, Patch: tools.patch,
+		PrepareWrite: tools.writePrepare, Write: tools.write,
+		PrepareExec: tools.execPrepare, Exec: execExecutor, Policy: tools.policy,
+		ReadArtifact: readArtifactExecutor, Skill: skillExecutor{skillSource},
+		Question: builtin.NewQuestionExecutor(), Task: builtin.NewTaskExecutor(),
+	})
 	if err != nil {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "tool catalog is invalid")
 	}
@@ -441,8 +444,7 @@ func openChatResourcesWithSnapshot(
 	if err != nil {
 		return nil, err
 	}
-	queries := newTranscriptQueries(assembled.identity.ThreadID, artifactRangeReader{store: artifactStore, references: artifactReferences}, assembled.tools)
-	queries.compactions = append([]compactionTranscript(nil), assembled.compactions...)
+	queries := newTranscriptQueries(assembled.identity.ThreadID, artifactRangeReader{store: artifactStore, references: artifactReferences})
 	for _, state := range assembled.stops {
 		if err := queries.StopHooksCommitted(state); err != nil {
 			return nil, err
@@ -452,39 +454,26 @@ func openChatResourcesWithSnapshot(
 	if projector == nil {
 		return nil, fault.New(fault.CodeStreamProtocol, "transcript projection is unavailable")
 	}
-	if err = queries.bindTranscript(projector, toolCatalog, assembled.nativeCommits); err != nil {
+	if err = queries.bindTranscript(projector, toolBinding.Catalog(), assembled.nativeCommits, assembled.tools, assembled.compactions); err != nil {
 		return nil, err
 	}
 	cleanup.add(queries.Close)
-	initialTasks, err := session.TaskProgressBefore(assembled.tools, 0)
-	if err != nil {
+	if assembled.taskErr != nil {
 		return nil, fault.New(fault.CodeSessionCorruption, "task progress history is invalid")
 	}
 	runtimeInstance, err := chatRuntime.New(assembled.conversation, chatRuntime.Config{
 		InitialSessionTitle: assembled.title,
-		TaskExecutor:        taskExecutor, InitialTaskProgress: initialTasks,
-		ArtifactReferences: artifactReferences,
-		TextOutputStore:    artifactOutputStore{store: artifactStore},
-		ToolHistory:        queries,
-		HookHistory:        queries,
-		StopHistory:        queries,
-		SessionID:          assembled.identity.SessionID, ThreadID: assembled.identity.ThreadID,
+		InitialTaskProgress: assembled.tasks,
+		ArtifactReferences:  artifactReferences,
+		TextOutputStore:     artifactOutputStore{store: artifactStore},
+		ToolHistory:         queries,
+		HookHistory:         queries,
+		StopHistory:         queries,
+		SessionID:           assembled.identity.SessionID, ThreadID: assembled.identity.ThreadID,
 		Journal: hooks.recovery.journalForRecovery(assembled.writer), ContextProfile: contextProfile, CachePolicy: settings.Cache, RestoredCacheBaseline: resumeThreadID != "",
-		ProviderWire:     binding.wire,
-		ToolCatalog:      toolCatalog,
-		QuestionExecutor: questionExecutor, InteractiveQuestions: hooks.interactiveApprovals,
-		ReadExecutor:         tools.read,
-		ReadArtifactExecutor: readArtifactExecutor,
-		SkillExecutor:        skillReader,
-		GlobExecutor:         tools.glob,
-		GrepExecutor:         tools.grep,
-		PatchPreparer:        tools.patchPrepare,
-		PatchExecutor:        tools.patch,
-		WritePreparer:        tools.writePrepare,
-		WriteExecutor:        tools.write,
-		ExecPreparer:         tools.execPrepare,
-		ExecExecutor:         execExecutor,
-		ToolPolicy:           tools.policy,
+		ProviderWire:         binding.wire,
+		ToolBinding:          toolBinding,
+		InteractiveQuestions: hooks.interactiveApprovals,
 		InteractiveApprovals: hooks.interactiveApprovals,
 		ProjectInstructions:  projectInstructions,
 		AutoCompactionPolicy: settings.AutoCompaction,
@@ -565,7 +554,7 @@ func selectContinueThread(
 		return "", fault.New(fault.CodeSessionCatalog, "session catalog selector is invalid")
 	}
 	instance, err := catalog.New(catalog.Config{
-		DatabasePath: paths.catalogPath, SessionRoot: paths.sessionRoot,
+		SnapshotPath: paths.catalogPath,
 	})
 	if err != nil {
 		return "", fault.New(fault.CodeSessionCatalog, "session catalog configuration is invalid")
@@ -627,7 +616,7 @@ func resolveDataPaths(sessionRoot string, catalogPath string) (dataPaths, error)
 		sessionRoot = filepath.Join(dataHome, "sessions")
 	}
 	if catalogPath == "" {
-		catalogPath = filepath.Join(dataHome, "state.sqlite")
+		catalogPath = filepath.Join(dataHome, "catalog.json")
 	}
 	return dataPaths{sessionRoot: sessionRoot, catalogPath: catalogPath}, nil
 }

@@ -47,7 +47,7 @@ func postRuntimeFixture(t *testing.T, journal Journal, policies ...domain.HookFe
 	_, candidate := runtimePatchInvocation(t)
 	preparer := &fixedPatchPreparer{candidate: candidate}
 	executor := &fixedPatchExecutor{}
-	r.patchPreparer, r.patchExecutor = preparer, executor
+	r.tools.PreparePatch, r.tools.Patch = preparer, executor
 	r.toolTurn.resultBudget = tool.NewResultBudget()
 	if err := r.toolTurn.resultBudget.BeginSample(1); err != nil {
 		t.Fatal(err)

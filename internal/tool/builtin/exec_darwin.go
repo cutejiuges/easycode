@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"unsafe"
 
+	"easycode/internal/executor/process"
 	"easycode/internal/tool"
 	"golang.org/x/sys/unix"
 )
@@ -44,11 +45,11 @@ func commandSandboxProfile(plan SandboxPlan) string {
 		"(allow file-write*" + writes.String() + " (literal \"/dev/null\"))\n"
 }
 
-func (launcher *darwinProcessLauncher) start(ctx context.Context, candidate tool.ExecCandidate) (processHandle, error) {
+func (launcher *darwinProcessLauncher) start(ctx context.Context, candidate tool.ExecCandidate) (process.Handle, error) {
 	return launcher.startSpec(ctx, commandLaunchSpec{command: candidate.Invocation().Input().Command(), workdir: candidate.Invocation().Input().Workdir(), policy: execLaunchPolicy{candidate}})
 }
 
-func (launcher *darwinProcessLauncher) startSpec(ctx context.Context, spec commandLaunchSpec) (processHandle, error) {
+func (launcher *darwinProcessLauncher) startSpec(ctx context.Context, spec commandLaunchSpec) (process.Handle, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -59,11 +60,11 @@ func (launcher *darwinProcessLauncher) startSpec(ctx context.Context, spec comma
 	defer func() { _ = directory.close() }()
 	node, ok := directory.(*unixWorkspaceNode)
 	if !ok {
-		return nil, errSandboxUnavailable
+		return nil, process.SandboxUnavailable
 	}
 	rootHandle, ok := launcher.workspace.handle.(*unixWorkspaceHandle)
 	if !ok {
-		return nil, errSandboxUnavailable
+		return nil, process.SandboxUnavailable
 	}
 	// FcntlInt通过libSystem调用；固定缓冲区地址，避免整数参数跨调用时失去指针生命周期。
 	pathBuffer := new([1024]byte)
@@ -72,7 +73,7 @@ func (launcher *darwinProcessLauncher) startSpec(ctx context.Context, spec comma
 	defer pinned.Unpin()
 	_, err = unix.FcntlInt(rootHandle.root.Fd(), unix.F_GETPATH, int(uintptr(unsafe.Pointer(pathBuffer))))
 	if err != nil {
-		return nil, errSandboxUnavailable
+		return nil, process.SandboxUnavailable
 	}
 	root := unix.ByteSliceToString(pathBuffer[:])
 	plan, err := spec.policy.Plan(root)
@@ -80,7 +81,7 @@ func (launcher *darwinProcessLauncher) startSpec(ctx context.Context, spec comma
 		return nil, err
 	}
 	if launcher.environment.executable == "" {
-		return nil, errSandboxUnavailable
+		return nil, process.SandboxUnavailable
 	}
 	profile := commandSandboxProfile
 	if launcher.sandboxProfile != nil {
@@ -89,7 +90,7 @@ func (launcher *darwinProcessLauncher) startSpec(ctx context.Context, spec comma
 	command := exec.Command(launcher.environment.executable, "--internal-command-child", profile(plan), spec.command)
 	readyRead, readyWrite, err := os.Pipe()
 	if err != nil {
-		return nil, errSandboxUnavailable
+		return nil, process.SandboxUnavailable
 	}
 	readyOwned := true
 	defer func() {
@@ -100,12 +101,12 @@ func (launcher *darwinProcessLauncher) startSpec(ctx context.Context, spec comma
 	}()
 	gateRead, gateWrite, err := os.Pipe()
 	if err != nil {
-		return nil, errSandboxUnavailable
+		return nil, process.SandboxUnavailable
 	}
 	defer func() { _ = gateRead.Close(); _ = gateWrite.Close() }()
 	queue, err := unix.Kqueue()
 	if err != nil {
-		return nil, errSandboxUnavailable
+		return nil, process.SandboxUnavailable
 	}
 	queueOwned := true
 	defer func() {
@@ -139,7 +140,7 @@ func (launcher *darwinProcessLauncher) startSpec(ctx context.Context, spec comma
 			_ = outWrite.Close()
 			_ = errRead.Close()
 			_ = errWrite.Close()
-			return nil, errSandboxUnavailable
+			return nil, process.SandboxUnavailable
 		}
 		defer inRead.Close()
 		defer func() {
@@ -163,9 +164,9 @@ func (launcher *darwinProcessLauncher) startSpec(ctx context.Context, spec comma
 		}
 		_ = outRead.Close()
 		_ = errRead.Close()
-		return nil, errSandboxUnavailable
+		return nil, process.SandboxUnavailable
 	}
-	process := &darwinProcess{command: command, out: outRead, errout: errRead, group: command.Process.Pid, queue: queue, sandboxReady: readyRead, input: inWrite}
+	handle := &darwinProcess{command: command, out: outRead, errout: errRead, group: command.Process.Pid, queue: queue, sandboxReady: readyRead, input: inWrite}
 	register := launcher.registerExit
 	if register == nil {
 		register = registerDarwinExit
@@ -180,12 +181,12 @@ func (launcher *darwinProcessLauncher) startSpec(ctx context.Context, spec comma
 		_ = command.Wait()
 		_ = outRead.Close()
 		_ = errRead.Close()
-		return nil, errSandboxUnavailable
+		return nil, process.SandboxUnavailable
 	}
 	queueOwned = false
 	readyOwned = false
 	inputOwned = false
-	return process, nil
+	return handle, nil
 }
 
 func registerDarwinExit(queue, pid int) error {
@@ -201,27 +202,27 @@ func RunCommandChild(arguments []string) (bool, error) {
 		return false, nil
 	}
 	if len(arguments) != 3 {
-		return true, errSandboxUnavailable
+		return true, process.SandboxUnavailable
 	}
 	gate := os.NewFile(4, "command-start-gate")
 	var permit [1]byte
 	_, err := io.ReadFull(gate, permit[:])
 	_ = gate.Close()
 	if err != nil || permit[0] != 1 {
-		return true, errSandboxUnavailable
+		return true, process.SandboxUnavailable
 	}
 	var stat unix.Stat_t
 	if err := unix.Fstat(3, &stat); err != nil || stat.Mode&unix.S_IFMT != unix.S_IFDIR {
-		return true, errSandboxUnavailable
+		return true, process.SandboxUnavailable
 	}
 	if err := unix.Fchdir(3); err != nil {
-		return true, errSandboxUnavailable
+		return true, process.SandboxUnavailable
 	}
 	_ = unix.Close(3)
 	// 只有sandbox中的shell启动成功才确认准入；先关闭私有描述符再执行不可信命令。
 	const trampoline = "exec 2>&6; exec 6>&-; printf '\\001' >&5 || exit 125; exec 5>&-; exec /bin/sh -c \"$1\""
 	if err := syscall.Exec("/usr/bin/sandbox-exec", []string{"sandbox-exec", "-p", arguments[1], "/bin/sh", "-c", trampoline, "command-sandbox", arguments[2]}, os.Environ()); err != nil {
-		return true, errSandboxUnavailable
+		return true, process.SandboxUnavailable
 	}
 	return true, nil
 }
@@ -236,66 +237,72 @@ type darwinProcess struct {
 	sandboxReady *os.File
 }
 
-func (process *darwinProcess) stdout() io.ReadCloser { return process.out }
-func (process *darwinProcess) stderr() io.ReadCloser { return process.errout }
-func (process *darwinProcess) observeExit() error {
+func (p *darwinProcess) Stdin() io.WriteCloser {
+	if p.input == nil {
+		return nil
+	}
+	return p.input
+}
+func (p *darwinProcess) Stdout() io.ReadCloser { return p.out }
+func (p *darwinProcess) Stderr() io.ReadCloser { return p.errout }
+func (p *darwinProcess) ObserveExit() error {
 	var events [1]unix.Kevent_t
 	for {
-		count, err := unix.Kevent(process.queue, nil, events[:], nil)
+		count, err := unix.Kevent(p.queue, nil, events[:], nil)
 		if errors.Is(err, unix.EINTR) {
 			continue
 		}
 		if err != nil {
 			return errors.New("process exit observation failed")
 		}
-		if count == 1 && events[0].Ident == uint64(process.group) && events[0].Flags&unix.EV_ERROR == 0 && events[0].Fflags&unix.NOTE_EXIT != 0 {
+		if count == 1 && events[0].Ident == uint64(p.group) && events[0].Flags&unix.EV_ERROR == 0 && events[0].Fflags&unix.NOTE_EXIT != 0 {
 			return nil
 		}
 		return errors.New("invalid process exit observation")
 	}
 }
-func (process *darwinProcess) wait() (int, error) {
-	if process.reaped {
+func (p *darwinProcess) Wait() (int, error) {
+	if p.reaped {
 		return 0, errors.New("process already reaped")
 	}
-	process.reaped = true
-	defer func() { _ = unix.Close(process.queue) }()
-	err := process.command.Wait()
+	p.reaped = true
+	defer func() { _ = unix.Close(p.queue) }()
+	err := p.command.Wait()
 	var ready [1]byte
-	_, readyErr := io.ReadFull(process.sandboxReady, ready[:])
-	_ = process.sandboxReady.Close()
+	_, readyErr := io.ReadFull(p.sandboxReady, ready[:])
+	_ = p.sandboxReady.Close()
 	if readyErr != nil || ready[0] != 1 {
-		return 0, errSandboxUnavailable
+		return 0, process.SandboxUnavailable
 	}
 	var exitErr *exec.ExitError
 	if err == nil || errors.As(err, &exitErr) {
 		// 信号退出使用shell约定的128+signal，保留已确定退出而非误报清理不确定。
-		if status, ok := process.command.ProcessState.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+		if status, ok := p.command.ProcessState.Sys().(syscall.WaitStatus); ok && status.Signaled() {
 			return 128 + int(status.Signal()), nil
 		}
-		return process.command.ProcessState.ExitCode(), nil
+		return p.command.ProcessState.ExitCode(), nil
 	}
 	return 0, errors.New("process wait failed")
 }
-func (process *darwinProcess) terminate(force bool) error {
-	if process.reaped {
+func (p *darwinProcess) Terminate(force bool) error {
+	if p.reaped {
 		return errors.New("process identity released")
 	}
 	signal := unix.SIGTERM
 	if force {
 		signal = unix.SIGKILL
 	}
-	err := unix.Kill(-process.group, signal)
+	err := unix.Kill(-p.group, signal)
 	if errors.Is(err, unix.ESRCH) {
 		return nil
 	}
 	return err
 }
-func (process *darwinProcess) groupAlive() (bool, error) {
-	if process.reaped {
+func (p *darwinProcess) GroupAlive() (bool, error) {
+	if p.reaped {
 		return false, errors.New("process identity released")
 	}
-	members, err := unix.SysctlKinfoProcSlice("kern.proc.pgrp", process.group)
+	members, err := unix.SysctlKinfoProcSlice("kern.proc.pgrp", p.group)
 	if err != nil {
 		return false, errors.New("process group probe failed")
 	}

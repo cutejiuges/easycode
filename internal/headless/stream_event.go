@@ -209,8 +209,8 @@ func (projectorValue *StreamProjector) Project(item protocol.ControlItem) (Strea
 }
 
 func projectCommandResult(result protocol.CommandResult) (StreamEvent, error) {
-	commandType, ok := streamCommandType(result.CommandKind())
-	if !ok {
+	commandType := streamCommandType(result.CommandKind())
+	if commandType == "" {
 		return nil, fmt.Errorf("command result kind is invalid")
 	}
 	event := StreamControlResponseEvent{
@@ -220,7 +220,7 @@ func projectCommandResult(result protocol.CommandResult) (StreamEvent, error) {
 	if summary, rejected := result.Error(); rejected {
 		event.Error = &StreamControlError{Code: summary.Code(), Message: summary.Message()}
 	}
-	return event, validateStreamEvent(event)
+	return event, nil
 }
 
 func correlateProjectedEvent(inputID protocol.RequestID, event Event) (StreamEvent, error) {
@@ -250,40 +250,6 @@ func correlateProjectedEvent(inputID protocol.RequestID, event Event) (StreamEve
 		}, nil
 	default:
 		return nil, fmt.Errorf("projected stream event is unsupported")
-	}
-}
-
-func streamCommandType(kind protocol.CommandKind) (string, bool) {
-	switch kind {
-	case protocol.CommandQueryTasks:
-		return "tasks.query", true
-	case protocol.CommandQueryCache:
-		return "cache.query", true
-	case protocol.CommandQueryEffort:
-		return "effort.query", true
-	case protocol.CommandSetEffort:
-		return "effort.set", true
-	case protocol.CommandQueryContext:
-		return "context.query", true
-	case protocol.CommandCompactContext:
-		return "context.compact", true
-	case protocol.CommandCancelCompaction:
-		return "context.cancel", true
-
-	case protocol.CommandSubmitConversationalInput:
-		return "input.append", true
-	case protocol.CommandRetractInputs:
-		return "input.retract", true
-	case protocol.CommandStopTurn:
-		return "turn.stop", true
-	case protocol.CommandSubmitInput:
-		return "input.submit", true
-	case protocol.CommandInterrupt:
-		return "turn.interrupt", true
-	case protocol.CommandShutdown:
-		return "session.shutdown", true
-	default:
-		return "", false
 	}
 }
 
@@ -348,32 +314,7 @@ func validateStreamEvent(event StreamEvent) error {
 		}
 		return validateThreadIdentity(value.SessionID, value.ThreadID)
 	case StreamControlResponseEvent:
-		if value.Version != eventVersion || value.Type != "control.response" || !value.RequestID.Valid() {
-			return fmt.Errorf("stream control.response envelope is invalid")
-		}
-		if value.CommandType != "tasks.query" && value.CommandType != "effort.query" && value.CommandType != "effort.set" && value.CommandType != "cache.query" && value.CommandType != "context.query" && value.CommandType != "context.compact" && value.CommandType != "context.cancel" && value.CommandType != "input.append" && value.CommandType != "input.retract" && value.CommandType != "turn.stop" && value.CommandType != "input.submit" && value.CommandType != "turn.interrupt" && value.CommandType != "session.shutdown" {
-			return fmt.Errorf("stream control.response command type is invalid")
-		}
-		if value.Status == protocol.CommandStatusAccepted {
-			if value.CommandType == "tasks.query" && value.Disposition != protocol.CommandDispositionQueried {
-				return fmt.Errorf("task response disposition is invalid")
-			}
-			if (value.CommandType == "context.compact") != value.CompactionID.Valid() || (value.CommandType != "context.compact" && value.CompactionID != "") {
-				return fmt.Errorf("compaction response identity is invalid")
-			}
-
-			if value.CommandType == "effort.query" && value.Disposition != protocol.CommandDispositionQueried || value.CommandType == "effort.set" && value.Disposition != protocol.CommandDispositionUpdated {
-				return fmt.Errorf("effort response disposition is invalid")
-			}
-			if value.Error != nil || value.Disposition == "" || (value.CommandType == "input.append") != value.EntryID.Valid() {
-				return fmt.Errorf("stream accepted response is invalid")
-			}
-			return nil
-		}
-		if value.CompactionID != "" || value.EntryID != "" || value.Status != protocol.CommandStatusRejected || value.Disposition != "" || value.Error == nil || value.Error.Code == "" || value.Error.Message == "" {
-			return fmt.Errorf("stream rejected response is invalid")
-		}
-		return nil
+		return validateStreamControlResponse(value)
 	case StreamTurnStartedEvent:
 		if value.Version != eventVersion || value.Type != "turn.started" || !value.InputID.Valid() {
 			return fmt.Errorf("stream turn.started envelope is invalid")
@@ -413,6 +354,31 @@ func validateStreamEvent(event StreamEvent) error {
 		return validateFailure(value.Error)
 	default:
 		return fmt.Errorf("stream event type is unsupported")
+	}
+}
+
+func validateStreamControlResponse(value StreamControlResponseEvent) error {
+	if value.Version != eventVersion || value.Type != "control.response" || !value.RequestID.Valid() {
+		return fmt.Errorf("stream control.response envelope is invalid")
+	}
+	kind := streamCommandKind(value.CommandType)
+	if kind == "" {
+		return fmt.Errorf("stream control.response command type is invalid")
+	}
+	switch value.Status {
+	case protocol.CommandStatusAccepted:
+		if value.Error != nil {
+			return fmt.Errorf("stream accepted response is invalid")
+		}
+		return kind.ValidateAcceptance(value.Disposition, value.CompactionID, value.EntryID)
+	case protocol.CommandStatusRejected:
+		if value.CompactionID != "" || value.EntryID != "" || value.Disposition != "" ||
+			value.Error == nil || !value.Error.Code.MatchesMessage(value.Error.Message) {
+			return fmt.Errorf("stream rejected response is invalid")
+		}
+		return nil
+	default:
+		return fmt.Errorf("stream control.response status is invalid")
 	}
 }
 

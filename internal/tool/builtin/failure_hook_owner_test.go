@@ -50,9 +50,10 @@ func TestFailureHookRunnerRetainsOwnerAcrossDeterministicFaults(t *testing.T) {
 			case "uncertain":
 				h.probeError = errors.New("PRIVATE-PROBE-CAUSE")
 			}
-			launcher := &failureHookLauncher{handle: ownerHandle{handle: h, input: stdin}}
+			h.input = stdin
+			launcher := &failureHookLauncher{handle: h}
 			clock := &fakeProcessClock{timers: make(chan *fakeProcessTimer, 8)}
-			runner := &HookRunner{launcher: launcher, clock: ownerClock{clock}, parse: func(domain.HookEvent, domain.HookFeedbackPolicy, int, []byte, domain.HookRewriteContext) domain.HookParsedOutput {
+			runner := &HookRunner{launcher: launcher, clock: clock, parse: func(domain.HookEvent, domain.HookFeedbackPolicy, int, []byte, domain.HookRewriteContext) domain.HookParsedOutput {
 				t.Error("fault reached output parser")
 				return domain.HookParsedOutput{}
 			}}

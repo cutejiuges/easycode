@@ -13,12 +13,9 @@ type activeLoopCompaction struct {
 	profile           contextplan.ProviderProfile
 	selectionRevision uint64
 	started           bool
-	cancelRequested   bool
 	id                domain.CompactionID
 	requestID         protocol.RequestID
-	cancel            context.CancelFunc
-	events            <-chan runtimePublication
-	finished          <-chan error
+	worker            loopWorker
 	terminalSeen      bool
 	succeeded         bool
 }
@@ -98,20 +95,11 @@ func (state *agentLoopRunState) compactContext(request loopCommandRequest) {
 		return
 	}
 	state.emitResult(request, result)
-	operationCtx, cancel := context.WithCancel(state.ctx)
-	events := make(chan runtimePublication)
-	finished := make(chan error, 1)
-	state.compaction = &activeLoopCompaction{profile: state.selectedProfile, selectionRevision: state.selectionRevision, id: id, requestID: request.command.RequestID(), cancel: cancel, events: events, finished: finished}
-	go func() {
-		state.loop.runtime.cachePublisher = func(snapshot protocol.CacheSnapshotPayload) {
-			events <- runtimePublication{cacheOnly: true, cacheSnapshot: snapshot}
-		}
-		err := state.loop.runtime.runCompaction(operationCtx, id, admission, func(event protocol.Event) { events <- state.loop.runtime.publishContext(event) })
-		state.loop.runtime.cachePublisher = nil
-		close(events)
-		finished <- err
-		close(finished)
-	}()
+	runtime := state.loop.runtime
+	worker := startLoopWorker(state.ctx, runtime, func(ctx context.Context, emit Emitter) error {
+		return runtime.runCompaction(ctx, id, admission, emit)
+	})
+	state.compaction = &activeLoopCompaction{profile: state.selectedProfile, selectionRevision: state.selectionRevision, id: id, requestID: request.command.RequestID(), worker: worker}
 }
 
 func (state *agentLoopRunState) cancelCompaction(request loopCommandRequest) {
@@ -126,21 +114,20 @@ func (state *agentLoopRunState) cancelCompaction(request loopCommandRequest) {
 	result, _ := protocol.NewAcceptedCommandResult(request.command, protocol.CommandDispositionCancelling)
 	state.emitResult(request, result)
 	state.completeRequest(request.command.RequestID())
-	state.compaction.cancelRequested = true
-	state.compaction.cancel()
+	state.compaction.worker.requestCancel()
 }
 
 func (state *agentLoopRunState) compactionChannels() (<-chan runtimePublication, <-chan error) {
 	if state.compaction == nil {
 		return nil, nil
 	}
-	return state.compaction.events, state.compaction.finished
+	return state.compaction.worker.events, state.compaction.worker.finished
 }
 
 func (state *agentLoopRunState) handleCompactionEvent(publication runtimePublication, open bool) {
 	event := publication.event
 	if !open {
-		state.compaction.events = nil
+		state.compaction.worker.events = nil
 		return
 	}
 	if publication.cacheOnly {
@@ -228,11 +215,9 @@ func preStartCompactionFailure(code protocol.CompactionFailureCode) bool {
 }
 
 func (state *agentLoopRunState) handleCompactionFinished(workerErr error, open bool) {
-	if !open {
-		state.compaction.finished = nil
+	if !state.compaction.worker.finish(open) {
 		return
 	}
-	state.compaction.cancel()
 	if !state.compaction.terminalSeen || state.loop.runtime.poisoned.Load() || state.loop.runtime.journal.Poisoned() {
 		state.runErr = fault.New(fault.CodeSessionWrite, "session cannot continue after compaction")
 		state.mode = loopModeClosing

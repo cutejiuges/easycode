@@ -83,7 +83,7 @@ func (model Model) handleQuestionKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if !key.Paste && (key.Type == tea.KeyCtrlC || (key.Type == tea.KeyEsc && (!q.editing || q.submitted))) {
 		q.submitted = true
 		q.stopping = true
-		return model, interruptSession(model.session)
+		return model.requestTurnCancellation(q.turnID)
 	}
 	if q.submitted {
 		return model, nil

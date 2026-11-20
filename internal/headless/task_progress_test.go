@@ -158,7 +158,7 @@ func TestTaskSnapshotMaximumCanonicalAndEncodedCap(t *testing.T) {
 	if _, err := DecodeTaskSnapshotEvent(raw); err != nil {
 		t.Fatal("maximum legal snapshot rejected", len(raw), err)
 	}
-	if _, err := DecodeTaskSnapshotEvent(append(raw, bytes.Repeat([]byte{' '}, MaxTaskSnapshotBytes-len(raw))...)); err == nil {
+	if _, err := DecodeTaskSnapshotEvent(append(raw, bytes.Repeat([]byte{' '}, MaxTaskSnapshotFrameBytes-len(raw))...)); err == nil {
 		t.Fatal("encoded snapshot cap ignored")
 	}
 }

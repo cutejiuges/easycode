@@ -36,6 +36,13 @@ func TestStreamProjectorAndEncoderMatchV1Fixture(t *testing.T) {
 
 	var output bytes.Buffer
 	encoder := NewStreamEncoder(&output)
+	badResponse := StreamControlResponseEvent{
+		Version: eventVersion, Type: "control.response", RequestID: "context-1", CommandType: "context.query",
+		Status: protocol.CommandStatusAccepted, Disposition: protocol.CommandDispositionUpdated,
+	}
+	if err := encoder.Write(badResponse); err == nil || output.Len() != 0 {
+		t.Fatalf("invalid response write = %v, output = %q", err, output.String())
+	}
 	for _, event := range events {
 		if err := encoder.Write(event); err != nil {
 			t.Fatal(err)

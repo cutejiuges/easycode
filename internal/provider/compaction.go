@@ -184,7 +184,7 @@ func NewPreparedCompaction(checkpoint CheckpointEnvelope, view domain.ActiveCont
 	if err != nil {
 		return nil, err
 	}
-	if provenance.Family() != checkpoint.Source().Family() || provenance.Wire() != checkpoint.Source().Wire() || len(provenance.Payload()) > 64<<10 {
+	if provenance.Family() != checkpoint.Source().Family() || provenance.Wire() != checkpoint.Source().Wire() || len(provenance.payload) > domain.MaxCompactionUsageProvenanceBytes {
 		return nil, fmt.Errorf("compaction usage provenance is invalid")
 	}
 	commit, err := newPreparedNativeCommit(checkpoint.native, finalize, discard)
@@ -256,14 +256,22 @@ func (prepared *PreparedCompaction) UsageProvenance() (NativeCommitEnvelope, err
 	return prepared.provenance.Clone()
 }
 
+// CompactionUsagePayload 检查失败计量证据的身份和大小，再复制独立的原生数据。
+func CompactionUsagePayload(envelope NativeCommitEnvelope, family domain.ProviderFamily, wire string) ([]byte, error) {
+	if envelope.family != family || envelope.wire != wire || len(envelope.payload) > domain.MaxCompactionUsageProvenanceBytes {
+		return nil, fmt.Errorf("compaction usage boundary is incompatible")
+	}
+	return envelope.Payload(), nil
+}
+
 // CompactionUsageValidator 在恢复失败计量时验证 Provider 自有 raw usage。
 type CompactionUsageValidator interface {
 	ValidateCompactionUsage(NativeCommitEnvelope, domain.SampleUsage) error
-	ValidateCheckpointUsage(CheckpointEnvelope, domain.SampleUsage) error
 }
 
-// CheckpointProjector 单向提供已验证 checkpoint 的摘要详情，不生成模型请求。
-type CheckpointProjector interface {
+// CheckpointReader 用同一份 checkpoint 证据对账计量并投影摘要。
+type CheckpointReader interface {
+	ValidateCheckpointUsage(CheckpointEnvelope, domain.SampleUsage) error
 	ProjectCheckpoint(CheckpointEnvelope) (domain.ContextSummary, error)
 }
 

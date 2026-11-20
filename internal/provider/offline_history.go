@@ -27,6 +27,10 @@ func (source HistorySource) Validate() error {
 
 // StoredHistoryReader 将原生记录单向投影为可见文本，并独立校验用量证据。
 type StoredHistoryReader interface {
-	ProjectStoredHistory(context.Context, HistorySource, []RestoreRecord) (domain.SemanticHistoryView, error)
+	ProjectStoredHistory(context.Context, HistorySource, []RestoreRecord, StoredUsageCheck) (domain.SemanticHistoryView, error)
+	SampleUsageValidator
 	CompactionUsageValidator
 }
+
+// StoredUsageCheck 在离线回放前按 journal 顺序校验计量证据。
+type StoredUsageCheck func(CheckpointReader) error

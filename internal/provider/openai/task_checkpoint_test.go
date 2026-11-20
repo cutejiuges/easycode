@@ -22,7 +22,7 @@ func TestTaskCheckpointPreservesExactStateAndSource(t *testing.T) {
 	entries := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, NewUserItem("archived work")), nativeHistoryEntry{Kind: nativeHistorySample, Outputs: []NativeItem{{Type: "message", Role: "assistant", Content: []ContentPart{{Type: "output_text", Text: "archived answer"}}}}}})
 	var envelopes []provider.NativeCommitEnvelope
 	for _, e := range entries {
-		c.history.commit(e)
+		c.history.Append(e)
 		v, err := encodeNativeCommit(e)
 		if err != nil {
 			t.Fatal(err)
@@ -57,7 +57,7 @@ func TestTaskCheckpointPreservesExactStateAndSource(t *testing.T) {
 	if err != nil || !compact.TaskProgress().Equal(state) {
 		t.Fatal("compaction state missing", err)
 	}
-	preview, err := c.PreflightCompaction(compact)
+	preview, _, err := c.PreflightCompaction(compact)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,8 +77,8 @@ func TestTaskCheckpointPreservesExactStateAndSource(t *testing.T) {
 	if !bytes.Equal(bytes.TrimSpace(fixture), checkpoint.Payload()) {
 		t.Fatalf("task checkpoint fixture differs: %s", checkpoint.Payload())
 	}
-	summary, err := instance.ProjectCheckpoint(checkpoint)
-	if err != nil || summary.Text() != "model summary omits tasks" {
+	decoded, err := decodeCheckpoint(checkpoint)
+	if err != nil || decoded.Summary.Text() != "model summary omits tasks" {
 		t.Fatal("task wrapper changed model summary", err)
 	}
 	// 固定 bytes 必须能独立解码，不能仅验证当前 encoder 自己的输出。
@@ -86,13 +86,13 @@ func TestTaskCheckpointPreservesExactStateAndSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := decodeCheckpoint(fixed); err != nil {
+	if _, err := decodeCheckpoint(fixed); err != nil {
 		t.Fatal(err)
 	}
 	if err := prepared.Finalize(); err != nil {
 		t.Fatal(err)
 	}
-	wire, err := c.compileSamplingRequest(c.history.snapshot(), input)
+	wire, err := c.compileSamplingRequest(c.history.Entries(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,12 +111,12 @@ func TestTaskCheckpointPreservesExactStateAndSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	other := restored.(*Conversation)
-	restoredWire, err := other.compileSamplingRequest(other.history.snapshot(), input)
+	restoredWire, err := other.compileSamplingRequest(other.history.Entries(), input)
 	if err != nil || !bytes.Equal(wire.Bytes(), restoredWire.Bytes()) {
 		t.Fatal("task checkpoint restore changed canonical request", err)
 	}
-	a, _ := c.HistoryFootprint()
-	b, _ := other.HistoryFootprint()
+	_, a, _ := c.ProjectContextWindow()
+	_, b, _ := other.ProjectContextWindow()
 	if a != b {
 		t.Fatal("task checkpoint restore changed footprint")
 	}
@@ -138,7 +138,7 @@ func TestTaskCheckpointPreservesExactStateAndSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := decodeCheckpoint(forgedCheckpoint); err != nil {
+	if _, err := decodeCheckpoint(forgedCheckpoint); err != nil {
 		t.Fatal("forged fixture was not self-consistent", err)
 	}
 	forgedRecord, err := provider.NewCheckpointRestoreRecord(forgedCheckpoint, state)
@@ -166,7 +166,7 @@ func TestTaskCheckpointPreservesExactStateAndSource(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		if _, _, err := decodeCheckpoint(bad); err == nil {
+		if _, err := decodeCheckpoint(bad); err == nil {
 			t.Fatal("malformed or inconsistent current task checkpoint accepted")
 		}
 	}

@@ -146,12 +146,13 @@ func (command Command) Feedback() string                   { return command.feed
 
 // Validate 验证命令 kind 和专属 payload。
 func (command Command) Validate() error {
-	inputKind := command.kind == CommandSubmitInput || command.kind == CommandSubmitConversationalInput
+	inputKind := command.isInput()
 	if inputKind {
-		if command.inputDraft.Validate() != nil || command.inputDraft.Text() != command.text {
+		// 草稿构造时已冻结有序引用。正式接纳在 ValidateForAdmission 独立复核。
+		if command.inputDraft.Text() != command.text || domain.ValidateUserText(command.text) != nil {
 			return fmt.Errorf("invalid input draft")
 		}
-		if err := domain.ValidateFileAttachments(command.text, command.files); err != nil {
+		if err := command.inputDraft.ValidateFiles(command.files); err != nil {
 			return err
 		}
 		if command.InputByteSize() > MaxInputBytes {
@@ -174,7 +175,7 @@ func (command Command) Validate() error {
 		return fmt.Errorf("command contains an unrelated session title")
 	}
 	if command.hasSkillAttachment {
-		if (command.kind != CommandSubmitInput && command.kind != CommandSubmitConversationalInput) || command.skillAttachment.Validate() != nil || command.InputByteSize() > MaxInputBytes {
+		if !inputKind || command.skillAttachment.Validate() != nil {
 			return fmt.Errorf("invalid Skill attachment")
 		}
 	} else if command.skillAttachment != (domain.SkillAttachment{}) {
@@ -235,9 +236,6 @@ func (command Command) Validate() error {
 		if command.expectedTurnID != "" || command.approvalRequestID != "" || command.invocationID != "" || command.fingerprint != "" || command.decision != "" || command.feedback != "" {
 			return fmt.Errorf("submit command contains an interrupt target")
 		}
-		if err := validateInputText(command.text); err != nil {
-			return err
-		}
 	case CommandInterrupt, CommandStopTurn:
 		if command.text != "" || !command.expectedTurnID.Valid() || command.approvalRequestID != "" || command.invocationID != "" || command.fingerprint != "" || command.decision != "" || command.feedback != "" {
 			return fmt.Errorf("interrupt command payload is invalid")
@@ -266,19 +264,6 @@ func (command Command) Validate() error {
 		}
 	default:
 		return fmt.Errorf("command kind is invalid")
-	}
-	return nil
-}
-
-func validateInputText(text string) error {
-	if !utf8.ValidString(text) {
-		return fmt.Errorf("command input is not valid UTF-8")
-	}
-	if strings.TrimSpace(text) == "" {
-		return fmt.Errorf("command input is required")
-	}
-	if len(text) > MaxInputBytes {
-		return fmt.Errorf("command input exceeds %d bytes", MaxInputBytes)
 	}
 	return nil
 }
@@ -402,13 +387,22 @@ func (command Command) WithFileAttachments(files domain.FileAttachments) (Comman
 }
 func (command Command) FileAttachments() domain.FileAttachments { return command.files.Clone() }
 
+func (command Command) isInput() bool {
+	return command.kind == CommandSubmitInput || command.kind == CommandSubmitConversationalInput
+}
+
 // ValidateForAdmission 拒绝尚未准备完的交互草稿，普通文字仍保留 literal @ 语义。
 func (command Command) ValidateForAdmission() error {
 	if err := command.Validate(); err != nil {
 		return err
 	}
-	if command.inputDraft.Interactive() && len(command.inputDraft.FileReferences()) != command.files.Len() {
-		return fmt.Errorf("file input has not been prepared")
+	if command.inputDraft.Interactive() {
+		if err := command.inputDraft.Validate(); err != nil {
+			return fmt.Errorf("invalid input draft")
+		}
+		if len(command.inputDraft.FileReferences()) != command.files.Len() {
+			return fmt.Errorf("file input has not been prepared")
+		}
 	}
 	return nil
 }

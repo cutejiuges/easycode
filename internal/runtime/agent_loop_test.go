@@ -53,7 +53,7 @@ func (*controlledConversation) HistoryFootprint() (domain.NativeHistoryFootprint
 	return domain.NewNativeHistoryFootprint(domain.ProviderOpenAI, 0, estimateValue)
 }
 
-func (conversation *controlledConversation) Stream(ctx context.Context, input provider.TurnInput) (<-chan provider.StreamEvent, error) {
+func (conversation *controlledConversation) Stream(ctx context.Context, input provider.TurnInput) (provider.StreamEvents, error) {
 	active := conversation.active.Add(1)
 	for {
 		maximum := conversation.maxActive.Load()
@@ -86,7 +86,7 @@ func (conversation *controlledConversation) Stream(ctx context.Context, input pr
 		}
 		close(stream)
 	}()
-	return stream, nil
+	return testStreamEvents(stream), nil
 }
 
 func TestAgentLoopFIFOQueueCapacityDedupeAndDrain(t *testing.T) {

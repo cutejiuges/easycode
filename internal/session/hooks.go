@@ -224,6 +224,7 @@ func (active *activeReplayTurn) acceptHookBatch(batch []Record) error {
 			return replayCorrupt("duplicate or mismatched hook plan")
 		}
 		call.Hooks = &ReplayedHookGate{Plan: p.Clone(), PlanSequence: first.Sequence}
+		call.preDetailSequence = first.Sequence
 	case EventHookExecutionStarted:
 		id, err := DecodeHookExecutionStarted(first)
 		if err != nil || len(batch) != 1 {
@@ -243,6 +244,7 @@ func (active *activeReplayTurn) acceptHookBatch(batch []Record) error {
 		}
 		g.Started = &id
 		g.StartedSequence = first.Sequence
+		call.preDetailSequence = first.Sequence
 	case EventHookExecutionFinished:
 		finished, err := DecodeHookExecutionFinished(first)
 		r := finished.Result
@@ -258,6 +260,7 @@ func (active *activeReplayTurn) acceptHookBatch(batch []Record) error {
 			return replayCorrupt("invalid hook finish transition")
 		}
 		g.Finished = append(g.Finished, finished.Clone())
+		call.preDetailSequence = first.Sequence
 		if _, err := tool.CheckingHookInput(call.Invocation, g.Plan, g.Finished); err != nil {
 			return replayCorrupt("invalid hook input effect chain")
 		}
@@ -314,6 +317,7 @@ func (active *activeReplayTurn) acceptHookDecision(batch []Record, call *Replaye
 	}
 	g.Decision = &d
 	g.DecisionSequence = batch[0].Sequence
+	call.preDetailSequence = batch[0].Sequence
 	if d.Status != domain.HookContinue {
 		return active.acceptResult(batch[1])
 	}

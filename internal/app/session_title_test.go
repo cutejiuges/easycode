@@ -174,7 +174,7 @@ func TestSessionTitleRestoreRejectsBeforeRepair(t *testing.T) {
 			if cleanup || (err == nil) != fixture.good || preview.Incomplete != fixture.good {
 				t.Fatalf("unexpected preview status: cleanup=%t, incomplete=%t, error=%v", cleanup, preview.Incomplete, err)
 			}
-			rows, report, err := loadSessionList(ctx, dataPaths{sessionRoot: root, catalogPath: filepath.Join(filepath.Dir(root), "state.sqlite")}, catalog.ListQuery{Scope: catalog.ListAllDirectories, Limit: 20}, defaultSessionListDependencies())
+			rows, report, err := loadSessionList(ctx, dataPaths{sessionRoot: root, catalogPath: filepath.Join(filepath.Dir(root), "catalog.json")}, catalog.ListQuery{Scope: catalog.ListAllDirectories, Limit: 20}, defaultSessionListDependencies())
 			if err != nil || (len(rows.Entries) == 1) != fixture.good || (report.Invalid == 1) == fixture.good {
 				t.Fatalf("unexpected catalog result: %+v, %v", report, err)
 			}

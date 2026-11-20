@@ -49,7 +49,7 @@ func (model Model) projectControlItem(item protocol.ControlItem) (tea.Model, tea
 	}
 	if event, ok := item.ContextEvent(); ok {
 		if protocol.IsCompactionPresentation(event) {
-			return model.projectCompactionPresentation(event)
+			return model.reduceRuntimeEvent(event)
 		}
 		if event.Kind == protocol.EventTaskProgressSnapshot {
 			return model.projectTaskSnapshot(item.RequestID(), event)
@@ -80,7 +80,7 @@ func (model Model) projectControlItem(item protocol.ControlItem) (tea.Model, tea
 		return model.projectContextEvent(event)
 	}
 	if event, ok := item.TurnEvent(); ok {
-		return model.Update(RuntimeEventMsg{Event: event})
+		return model.reduceRuntimeEvent(event)
 	}
 	if result, ok := item.CommandResult(); ok {
 		switch result.CommandKind() {

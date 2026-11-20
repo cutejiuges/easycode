@@ -23,25 +23,31 @@ type NativeReplayCodec[E nativeReplayEntry[E], C any] struct {
 	Encode             func(E) (NativeCommitEnvelope, error)
 	ReadyFacts         func(E, []tool.Invocation) error
 	ToolOutputs        func(domain.TurnID, []C, []tool.ModelOutput) (E, error)
-	QuestionResults    func(E, E, []tool.InvocationResult) error
-	TaskResults        func(E, E, []tool.InvocationResult) error
+	ResultFacts        func([]C, E, []tool.InvocationResult) error
 	CompactionSource   func(NativeWindow[E], string, func() error) (CompactionSource, error)
-	DecodeCheckpoint   func(CheckpointEnvelope) (E, domain.ContextSummary, error)
-	CheckpointTasks    func(CheckpointEnvelope, domain.TaskProgressState) error
+	DecodeCheckpoint   func(CheckpointEnvelope) (DecodedCheckpoint[E], error)
 }
 
 type nativeReplay[E nativeReplayEntry[E], C any] struct {
-	history         *NativeHistory[E]
-	sequence        *nativeSequence[E, C]
-	codec           NativeReplayCodec[E, C]
-	questionResults []tool.InvocationResult
-	taskResults     []tool.InvocationResult
+	history      *NativeHistory[E]
+	sequence     *nativeSequence[E, C]
+	codec        NativeReplayCodec[E, C]
+	checkpoints  *checkpointReplay[E]
+	readyResults []tool.InvocationResult
 }
 
 // RestoreNativeHistory 回放尚未发布的新历史。各检查点保留既有的错误优先顺序。
-func RestoreNativeHistory[E nativeReplayEntry[E], C any](ctx context.Context, model string, records []RestoreRecord, history *NativeHistory[E], rules NativeSequenceRules[E, C], codec NativeReplayCodec[E, C]) error {
+func RestoreNativeHistory[E nativeReplayEntry[E], C any](ctx context.Context, model string, records []RestoreRecord, history *NativeHistory[E], rules NativeSequenceRules[E, C], codec NativeReplayCodec[E, C]) (CheckpointReader, error) {
+	checkpoints := &checkpointReplay[E]{model: model, decode: codec.DecodeCheckpoint}
+	if err := restoreNativeHistory(ctx, model, records, history, rules, codec, checkpoints); err != nil {
+		return nil, err
+	}
+	return checkpoints, nil
+}
+
+func restoreNativeHistory[E nativeReplayEntry[E], C any](ctx context.Context, model string, records []RestoreRecord, history *NativeHistory[E], rules NativeSequenceRules[E, C], codec NativeReplayCodec[E, C], checkpoints *checkpointReplay[E]) error {
 	history.entries = make([]E, 0, len(records))
-	replay := nativeReplay[E, C]{history: history, sequence: newNativeSequence(rules), codec: codec}
+	replay := nativeReplay[E, C]{history: history, sequence: newNativeSequence(rules), codec: codec, checkpoints: checkpoints}
 	seenCheckpoints := make(map[domain.CompactionID]struct{})
 	for index, record := range records {
 		if err := ctx.Err(); err != nil {
@@ -93,14 +99,14 @@ func (r *nativeReplay[E, C]) checkpoint(model string, record RestoreRecord, chec
 		return fmt.Errorf("checkpoint source does not match native history")
 	}
 	expectedTasks, hasTasks := record.ExpectedTaskProgress()
-	if !hasTasks || r.codec.CheckpointTasks(checkpoint, expectedTasks) != nil {
+	decoded, err := r.checkpoints.read(checkpoint)
+	if !hasTasks || decoded.Tasks.Validate() != nil || !decoded.Tasks.Equal(expectedTasks) {
 		return fmt.Errorf("checkpoint task progress source does not match committed evidence")
 	}
-	summary, text, err := r.codec.DecodeCheckpoint(checkpoint)
 	if err != nil {
 		return err
 	}
-	r.history.InstallCheckpoint(checkpoint, summary, text)
+	r.history.InstallCheckpoint(checkpoint, decoded.Replacement, decoded.Summary)
 	return nil
 }
 
@@ -121,12 +127,12 @@ func (r *nativeReplay[E, C]) commit(index int, record RestoreRecord) error {
 	}
 	switch entry.NativeRole() {
 	case domain.NativeCommitSample:
-		r.questionResults, r.taskResults = record.QuestionResults(), record.TaskResults()
+		r.readyResults = record.readyResults
 	case domain.NativeCommitToolOutputs:
 		if err := r.outputs(entry, record.ToolOutputs()); err != nil {
 			return err
 		}
-		r.questionResults, r.taskResults = nil, nil
+		r.readyResults = nil
 	case domain.NativeCommitHookFeedback:
 		expected, ok := record.StopFeedback()
 		actual, err := r.sequence.rules.Feedback(entry)
@@ -169,15 +175,17 @@ func (r *nativeReplay[E, C]) outputs(entry E, results []tool.ModelOutput) error 
 	if !bytes.Equal(expectedEnvelope.payload, actualEnvelope.payload) {
 		return fmt.Errorf("native tool output differs from committed evidence")
 	}
-	sample := r.history.entries[len(r.history.entries)-1]
-	if err := r.codec.QuestionResults(sample, entry, r.questionResults); err != nil {
-		return err
-	}
-	return r.codec.TaskResults(sample, entry, r.taskResults)
+	return r.codec.ResultFacts(calls, entry, r.readyResults)
 }
 
 // ProjectStoredNativeHistory 使用离线身份校验、回放与只读投影，保持各阶段的取消边界。
-func ProjectStoredNativeHistory[E nativeReplayEntry[E], C any](ctx context.Context, source HistorySource, family domain.ProviderFamily, wire string, records []RestoreRecord, rules NativeSequenceRules[E, C], codec NativeReplayCodec[E, C], project func([]E) domain.SemanticHistoryView) (domain.SemanticHistoryView, error) {
+func ProjectStoredNativeHistory[E nativeReplayEntry[E], C any](ctx context.Context, source HistorySource, family domain.ProviderFamily, wire string, records []RestoreRecord, checkUsage StoredUsageCheck, rules NativeSequenceRules[E, C], codec NativeReplayCodec[E, C], project func([]E) domain.SemanticHistoryView) (domain.SemanticHistoryView, error) {
+	checkpoints := &checkpointReplay[E]{model: source.Model, decode: codec.DecodeCheckpoint}
+	if checkUsage != nil {
+		if err := checkUsage(checkpoints); err != nil {
+			return domain.SemanticHistoryView{}, err
+		}
+	}
 	if err := source.Validate(); err != nil {
 		return domain.SemanticHistoryView{}, err
 	}
@@ -188,7 +196,7 @@ func ProjectStoredNativeHistory[E nativeReplayEntry[E], C any](ctx context.Conte
 		return domain.SemanticHistoryView{}, err
 	}
 	var history NativeHistory[E]
-	if err := RestoreNativeHistory(ctx, source.Model, records, &history, rules, codec); err != nil {
+	if err := restoreNativeHistory(ctx, source.Model, records, &history, rules, codec, checkpoints); err != nil {
 		return domain.SemanticHistoryView{}, err
 	}
 	view := project(history.entries)

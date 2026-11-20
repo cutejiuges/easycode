@@ -24,7 +24,7 @@ func rewriteCandidateFixture(t *testing.T, r *Runtime, effective tool.Invocation
 			t.Fatal(err)
 		}
 		p, e := &fixedPatchPreparer{candidate: candidate}, &fixedPatchExecutor{}
-		r.patchPreparer, r.patchExecutor = p, e
+		r.tools.PreparePatch, r.tools.Patch = p, e
 		return func() int { return p.calls }, func() int { return e.calls }, string(candidate.Fingerprint())
 	case tool.CapabilityWrite:
 		v, _ := effective.Write()
@@ -34,7 +34,7 @@ func rewriteCandidateFixture(t *testing.T, r *Runtime, effective tool.Invocation
 			t.Fatal(err)
 		}
 		p, e := &fixedWritePreparer{candidate: candidate}, &fixedWriteExecutor{}
-		r.writePreparer, r.writeExecutor = p, e
+		r.tools.PrepareWrite, r.tools.Write = p, e
 		return func() int { return p.calls }, func() int { return e.calls }, string(candidate.Fingerprint())
 	case tool.CapabilityExec:
 		v, _ := effective.Exec()
@@ -47,7 +47,7 @@ func rewriteCandidateFixture(t *testing.T, r *Runtime, effective tool.Invocation
 		}
 		e := &fixedExecComponents{candidate: candidate}
 		p := &rewriteExecPreparer{candidate: candidate}
-		r.execPreparer, r.execExecutor = p, e
+		r.tools.PrepareExec, r.tools.Exec = p, e
 		return func() int { return p.calls }, func() int { return e.calls }, string(candidate.Fingerprint())
 	default:
 		t.Fatal("unsupported fixture capability")

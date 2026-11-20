@@ -18,13 +18,13 @@ func (q *transcriptQueries) PreHooksCommitted(original tool.Invocation, sequence
 		hooks[i] = session.HookHistoryEntry{Reference: f.Feedback.Reference, Result: f.Result, Feedback: f.Feedback}
 	}
 	q.mu.Lock()
-	index, ok := q.indices[original.InvocationID()]
+	stored := q.tools[original.InvocationID()]
 	var previous session.ToolHistoryEntry
-	if ok {
-		previous = q.entries[index]
+	if stored != nil {
+		previous = *stored
 	}
 	q.mu.Unlock()
-	if !ok || !previous.Invocation.Equal(original) || previous.HasResult || previous.PostHooks != nil || sequence <= previous.DetailSequence {
+	if stored == nil || !previous.Invocation.Equal(original) || previous.HasResult || previous.PostHooks != nil || sequence <= previous.DetailSequence {
 		return errors.New("pre hook history source or order mismatch")
 	}
 	if old := previous.PreHooks; old != nil {
@@ -39,13 +39,13 @@ func (q *transcriptQueries) PreHooksCommitted(original tool.Invocation, sequence
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if q.closed || q.invalid || q.entries[index].DetailSequence != previous.DetailSequence || q.entries[index].HasResult {
+	if q.closed || q.invalid || stored.DetailSequence != previous.DetailSequence || stored.HasResult {
 		q.invalid = true
 		return errors.New("pre hook history snapshot is stale")
 	}
-	q.entries[index].PreHooks = &cloned
-	q.entries[index].DetailSequence = sequence
-	q.entries[index].PreDetailSequence = sequence
-	q.entries[index].Hooks = hooks
+	stored.PreHooks = &cloned
+	stored.DetailSequence = sequence
+	stored.PreDetailSequence = sequence
+	stored.Hooks = hooks
 	return nil
 }

@@ -34,7 +34,7 @@ func TestRuntimeEffortRequestPolicyGolden(t *testing.T) {
 				t.Fatal(err)
 			}
 			c := testConversation(t, instance)
-			c.history.commit(testInputEntry(t, newUserMessage("same candidate input")))
+			c.history.Append(testInputEntry(t, newUserMessage("same candidate input")))
 			choices := []domain.EffortChoice{domain.NewResetEffortChoice(), domain.NewAutomaticEffortChoice()}
 			for _, level := range []domain.EffortLevel{"low", "high"} {
 				choice, _ := domain.NewExplicitEffortChoice(level)
@@ -49,12 +49,12 @@ func TestRuntimeEffortRequestPolicyGolden(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				ordinary, err := c.planSamplingRequest(c.history.snapshot(), input)
+				ordinary, err := c.planSamplingRequest(c.history.Snapshot(), input)
 				if err != nil {
 					t.Fatal(err)
 				}
 				compact, _ := provider.NewCompactionInput(input, "preserve failures", 4096)
-				summary, err := c.planCompactionRequest(compact)
+				summary, err := c.planCompactionRequest(c.history.Snapshot(), compact)
 				if err != nil {
 					t.Fatal(err)
 				}

@@ -20,7 +20,8 @@ func TestExecShutdownTimeoutRetainsTurnUntilExecutorCleanup(t *testing.T) {
 	}
 	conversation := &fakeToolConversation{fakeConversation: &fakeConversation{stream: fixedStream(completedProviderEventWithSample(t, newPreparedSampleWithReady(t, ready)))}}
 	config := testRuntimeConfig(t, journal)
-	config.ExecPreparer, config.ExecExecutor, config.InteractiveApprovals = executor, executor, true
+	config.ToolBinding = testRuntimeToolBinding(t, func(tools *tool.Components) { tools.PrepareExec, tools.Exec = executor, executor })
+	config.InteractiveApprovals = true
 	config.GenerateInvocationID = func() (tool.InvocationID, error) { return invocation.InvocationID(), nil }
 	config.GenerateTurnID = func() (domain.TurnID, error) { return runtimeTurnID, nil }
 	runtime, err := New(conversation, config)

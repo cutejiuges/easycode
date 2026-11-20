@@ -48,20 +48,20 @@ func TestReasoningRequestsAndSummaryEvidenceGolden(t *testing.T) {
 				t.Fatal(err)
 			}
 			conversation := testConversation(t, instance)
-			conversation.history.commit(testInputEntry(t, newUserMessage("hello")))
+			conversation.history.Append(testInputEntry(t, newUserMessage("hello")))
 			sampling, _ := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testAnthropicToolCatalog(t))
-			ordinary, err := conversation.planSamplingRequest(conversation.history.snapshot(), sampling)
+			ordinary, err := conversation.planSamplingRequest(conversation.history.Snapshot(), sampling)
 			if err != nil {
 				t.Fatal(err)
 			}
 			compact, _ := provider.NewCompactionInput(sampling, "preserve test failures", 4096)
-			summary, err := conversation.planCompactionRequest(compact)
+			summary, err := conversation.planCompactionRequest(conversation.history.Snapshot(), compact)
 			if err != nil {
 				t.Fatal(err)
 			}
-			before, _ := codec.MarshalStable(conversation.history.snapshot())
+			before, _ := codec.MarshalStable(conversation.history.Entries())
 			for _, plan := range []samplingRequestPlan{ordinary, summary} {
-				body, err := plan.body(mode)
+				compiled, err := plan.compile(mode)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -69,7 +69,8 @@ func TestReasoningRequestsAndSummaryEvidenceGolden(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				receipt, err := conversation.describeRequest(body, evidence, plan.purpose)
+				body := compiled.body
+				receipt, err := conversation.describeRequest(compiled, evidence, plan.purpose)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -89,15 +90,15 @@ func TestReasoningRequestsAndSummaryEvidenceGolden(t *testing.T) {
 					if props.ToolChoice == nil || props.ToolChoice.Type != "none" || props.MaxTokens != 4096 || !bytes.Contains(logical.Bytes(), []byte("preserve test failures")) {
 						t.Fatal("ordinary evidence substituted for summary")
 					}
-					source, err := conversation.compactionSource()
+					source, err := conversation.compactionSource(conversation.history.Snapshot())
 					if err != nil || source.Digest() == evidence.NativeFingerprint() {
 						t.Fatal("source digest confused with guided input", err)
 					}
-					preview, err := conversation.PreflightCompaction(compact)
+					preview, _, err := conversation.PreflightCompaction(compact)
 					if err != nil || preview.Source() != source {
 						t.Fatal("preflight source", err)
 					}
-					second, _ := conversation.compileCompactionRequest(preview.Input())
+					second, _ := conversation.compileCompactionRequest(conversation.history.Snapshot(), preview.Input())
 					if !bytes.Equal(second.Bytes(), body.Bytes()) {
 						t.Fatal("preflight differs from execution plan")
 					}
@@ -112,7 +113,7 @@ func TestReasoningRequestsAndSummaryEvidenceGolden(t *testing.T) {
 				actual.Write(record)
 				actual.WriteByte('\n')
 			}
-			after, _ := codec.MarshalStable(conversation.history.snapshot())
+			after, _ := codec.MarshalStable(conversation.history.Entries())
 			if !bytes.Equal(before, after) {
 				t.Fatal("cache planning mutated native history")
 			}

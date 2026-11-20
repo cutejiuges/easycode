@@ -20,6 +20,10 @@ func (model Model) WithSkills(entries []domain.SkillListEntry) Model {
 }
 func (model Model) handleSkillsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.Type {
+	case tea.KeyCtrlC:
+		if model.activeCompactionID.Valid() || model.activeTurnID.Valid() {
+			return model.handleCancelKey()
+		}
 	case tea.KeyEsc:
 		model.skillsOpen = false
 	case tea.KeyUp:

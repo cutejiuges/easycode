@@ -3,6 +3,7 @@ package openai
 import (
 	"encoding/json"
 	"sort"
+	"strings"
 
 	"easycode/internal/codec"
 	"easycode/internal/domain"
@@ -15,13 +16,15 @@ type reasoningItemState struct {
 	index       int
 	block       uint32
 	parts       map[int]*reasoningPartState
+	nextPart    int
+	partOffset  int
 	emitted     uint64
 	closed      bool
 	sourceBytes int
 }
 type reasoningPartState struct {
 	kind string
-	text string
+	text strings.Builder
 	done bool
 }
 
@@ -30,13 +33,8 @@ func reasoningError() error {
 }
 
 func (r *responsesStreamReducer) startReasoning(index *int, item NativeItem) (reducerResult, error) {
-	if index == nil || *index < 0 || *index >= domain.MaxReasoningNodes || item.ID == "" || r.functions[item.ID] != nil || r.customs[item.ID] != nil || r.reasoning[item.ID] != nil || r.toolIdentityConflicts("", *index) {
+	if index == nil || *index < 0 || *index >= domain.MaxReasoningNodes || item.ID == "" {
 		return reducerResult{}, reasoningError()
-	}
-	for _, state := range r.reasoning {
-		if state.index == *index {
-			return reducerResult{}, reasoningError()
-		}
 	}
 	if err := r.reasoningBudget.ReserveNode(len(item.ID)); err != nil {
 		return reducerResult{}, err
@@ -47,24 +45,18 @@ func (r *responsesStreamReducer) startReasoning(index *int, item NativeItem) (re
 		return reducerResult{}, err
 	}
 	r.reasoning[item.ID] = state
-	r.reasoningIndexes[state.index] = state
 	start, err := provider.NewReasoningStartDraft(state.block, domain.ReasoningOpenAISummary)
 	if err != nil {
 		return reducerResult{}, err
 	}
-	body, err := state.prefix()
+	delta, visible, err := state.prefixDelta()
 	if err != nil {
 		return reducerResult{}, err
 	}
-	if body.Len() == 0 {
+	if !visible {
 		drafts, err := provider.NewReasoningDrafts(start)
 		return reducerResult{reasoning: drafts}, err
 	}
-	delta, err := provider.NewReasoningBodyTextDraft(state.block, body, 0)
-	if err != nil {
-		return reducerResult{}, err
-	}
-	state.emitted = body.Len()
 	drafts, err := provider.NewReasoningDrafts(start, delta)
 	return reducerResult{reasoning: drafts}, err
 }
@@ -81,26 +73,47 @@ func (r *responsesStreamReducer) seedReasoning(state *reasoningItemState, parts 
 			return err
 		}
 		state.sourceBytes += len(part.Text)
-		state.parts[i] = &reasoningPartState{kind: part.Type, text: part.Text, done: part.Type != "summary_text"}
+		value := &reasoningPartState{kind: part.Type, done: part.Type != "summary_text"}
+		value.text.WriteString(part.Text)
+		state.parts[i] = value
 	}
 	return nil
 }
 
-func (state *reasoningItemState) prefix() (domain.ReasoningBody, error) {
-	parts := make([]string, 0, len(state.parts))
-	for i := 0; i < domain.MaxReasoningNodes; i++ {
-		part, ok := state.parts[i]
-		if !ok {
-			break
-		}
-		if part.kind == "summary_text" {
-			parts = append(parts, part.text)
+// prefixDelta 只访问新解锁的片段。已发布字节仅在最终快照核对时重读。
+func (state *reasoningItemState) prefixDelta() (provider.ReasoningDraft, bool, error) {
+	var parts []string
+	separate := false
+	for part := state.parts[state.nextPart]; part != nil; part = state.parts[state.nextPart] {
+		if part.kind == "summary_text" && part.text.Len() > state.partOffset {
+			if len(parts) == 0 {
+				separate = state.emitted != 0 && state.partOffset == 0
+			}
+			parts = append(parts, part.text.String()[state.partOffset:])
+			state.partOffset = part.text.Len()
 		}
 		if !part.done {
 			break
 		}
+		state.nextPart++
+		state.partOffset = 0
 	}
-	return domain.NewReasoningBody(domain.ReasoningOpenAISummary, parts)
+	if len(parts) == 0 {
+		return provider.ReasoningDraft{}, false, nil
+	}
+	body, err := domain.NewReasoningBody(domain.ReasoningOpenAISummary, parts)
+	if err != nil {
+		return provider.ReasoningDraft{}, false, err
+	}
+	delta, err := provider.NewReasoningBodyTextDraft(state.block, body, 0, state.emitted, separate)
+	if err != nil {
+		return provider.ReasoningDraft{}, false, err
+	}
+	state.emitted += body.Len()
+	if separate {
+		state.emitted += 2
+	}
+	return delta, true, nil
 }
 
 func (r *responsesStreamReducer) reduceReasoningPart(e responsesEventEnvelope) (reducerResult, error) {
@@ -137,11 +150,11 @@ func (r *responsesStreamReducer) reduceReasoningPart(e responsesEventEnvelope) (
 		if part == nil || part.done || e.Delta == nil {
 			return reducerResult{}, reasoningError()
 		}
-		if err := r.reasoningBudget.ReplaceSource(len(part.text), len(part.text)+len(*e.Delta)); err != nil {
+		if err := r.reasoningBudget.ReplaceSource(part.text.Len(), part.text.Len()+len(*e.Delta)); err != nil {
 			return reducerResult{}, err
 		}
 		state.sourceBytes += len(*e.Delta)
-		part.text += *e.Delta
+		part.text.WriteString(*e.Delta)
 	case "response.reasoning_summary_text.done":
 		if e.Text == nil {
 			return reducerResult{}, reasoningError()
@@ -159,34 +172,27 @@ func (r *responsesStreamReducer) reduceReasoningPart(e responsesEventEnvelope) (
 				return reducerResult{}, err
 			}
 			state.sourceBytes += len(text)
-			part = &reasoningPartState{kind: "summary_text", text: text}
+			part = &reasoningPartState{kind: "summary_text"}
+			part.text.WriteString(text)
 			state.parts[*e.SummaryIndex] = part
 		} else {
-			if !done || part.text != "" && part.text != text || part.done && part.text != text {
+			if !done || (part.text.Len() != 0 || part.done) && part.text.String() != text {
 				return reducerResult{}, reasoningError()
 			}
-			if part.text == "" {
+			if part.text.Len() == 0 {
 				if err := r.reasoningBudget.ReplaceSource(0, len(text)); err != nil {
 					return reducerResult{}, err
 				}
 				state.sourceBytes += len(text)
-				part.text = text
+				part.text.WriteString(text)
 			}
 		}
 		part.done = done
 	}
-	body, err := state.prefix()
-	if err != nil {
+	draft, visible, err := state.prefixDelta()
+	if err != nil || !visible {
 		return reducerResult{}, err
 	}
-	if body.Len() <= state.emitted {
-		return reducerResult{}, nil
-	}
-	draft, err := provider.NewReasoningBodyTextDraft(state.block, body, state.emitted)
-	if err != nil {
-		return reducerResult{}, err
-	}
-	state.emitted = body.Len()
 	drafts, err := provider.NewReasoningDrafts(draft)
 	return reducerResult{reasoning: drafts}, err
 }
@@ -195,10 +201,7 @@ func (r *responsesStreamReducer) completeReasoning(index *int, item NativeItem) 
 	state := r.reasoning[item.ID]
 	itemOnly := state == nil
 	if itemOnly {
-		if r.functions[item.ID] != nil || r.customs[item.ID] != nil {
-			return reducerResult{}, reasoningError()
-		}
-		if index != nil && (*index < 0 || *index >= domain.MaxReasoningNodes || r.toolIdentityConflicts("", *index)) {
+		if index != nil && (*index < 0 || *index >= domain.MaxReasoningNodes) {
 			return reducerResult{}, reasoningError()
 		}
 		if err := r.reasoningBudget.ReserveNode(len(item.ID)); err != nil {
@@ -217,7 +220,7 @@ func (r *responsesStreamReducer) completeReasoning(index *int, item NativeItem) 
 		return reducerResult{}, reasoningError()
 	}
 	for i, part := range state.parts {
-		if i >= len(item.ReasoningSummary) || item.ReasoningSummary[i].Type != part.kind || part.text != "" && part.text != item.ReasoningSummary[i].Text || part.done && part.text != item.ReasoningSummary[i].Text {
+		if i >= len(item.ReasoningSummary) || item.ReasoningSummary[i].Type != part.kind || (part.text.Len() != 0 || part.done) && part.text.String() != item.ReasoningSummary[i].Text {
 			return reducerResult{}, reasoningError()
 		}
 	}
@@ -257,7 +260,7 @@ func (r *responsesStreamReducer) completeReasoning(index *int, item NativeItem) 
 		}
 		drafts, err = provider.NewReasoningDrafts(start, complete)
 	} else if body.Len() > state.emitted {
-		delta, buildErr := provider.NewReasoningBodyTextDraft(state.block, body, state.emitted)
+		delta, buildErr := provider.NewReasoningBodyTextDraft(state.block, body, state.emitted, state.emitted, false)
 		if buildErr != nil {
 			return reducerResult{}, buildErr
 		}
@@ -277,9 +280,6 @@ func (r *responsesStreamReducer) completeReasoning(index *int, item NativeItem) 
 	state.parts = nil
 	if item.ID != "" {
 		r.reasoning[item.ID] = state
-	}
-	if state.index >= 0 {
-		r.reasoningIndexes[state.index] = state
 	}
 	r.items = append(r.items, item)
 	return reducerResult{native: &item, reasoning: drafts}, nil

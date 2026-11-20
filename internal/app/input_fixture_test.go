@@ -43,7 +43,7 @@ func (conversation *orderedConversation) PrepareUserInputs(a domain.InputAssocia
 	if err != nil {
 		return nil, err
 	}
-	footprint, err := conversation.HistoryFootprint()
+	footprint, err := conversation.historyFootprint()
 	if err != nil {
 		return nil, err
 	}
@@ -111,19 +111,31 @@ func appendFixtureInitialInput(t *testing.T, writer interface {
 }
 
 func (conversation *orderedConversation) ProjectActiveContext() (domain.ActiveContextView, error) {
-	footprint, err := conversation.HistoryFootprint()
+	view, _, err := conversation.ProjectContextWindow()
+	return view, err
+}
+
+func (conversation *orderedConversation) ProjectContextWindow() (domain.ActiveContextView, domain.NativeHistoryFootprint, error) {
+	footprint, err := conversation.historyFootprint()
 	if err != nil {
-		return domain.ActiveContextView{}, err
+		return domain.ActiveContextView{}, domain.NativeHistoryFootprint{}, err
 	}
-	return domain.NewActiveContextView(conversation.ProjectHistory(), domain.ContextSummary{}, footprint.Revision())
+	view, err := domain.NewActiveContextView(conversation.ProjectHistory(), domain.ContextSummary{}, footprint.Revision())
+	return view, footprint, err
 }
 
 func (conversation *fakeAppConversation) ProjectActiveContext() (domain.ActiveContextView, error) {
-	footprint, err := conversation.HistoryFootprint()
+	view, _, err := conversation.ProjectContextWindow()
+	return view, err
+}
+
+func (conversation *fakeAppConversation) ProjectContextWindow() (domain.ActiveContextView, domain.NativeHistoryFootprint, error) {
+	footprint, err := conversation.historyFootprint()
 	if err != nil {
-		return domain.ActiveContextView{}, err
+		return domain.ActiveContextView{}, domain.NativeHistoryFootprint{}, err
 	}
-	return domain.NewActiveContextView(conversation.ProjectHistory(), domain.ContextSummary{}, footprint.Revision())
+	view, err := domain.NewActiveContextView(conversation.ProjectHistory(), domain.ContextSummary{}, footprint.Revision())
+	return view, footprint, err
 }
 
 // appendInteractiveText 为既有宿主测试显式创建当前交互草稿。

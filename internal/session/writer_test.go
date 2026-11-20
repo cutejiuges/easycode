@@ -132,6 +132,31 @@ func TestJournalWriterAssignsBatchBoundaryAndResumeSequence(t *testing.T) {
 	}
 }
 
+func TestJournalWriterRetainsSequenceAfterEncodingRejection(t *testing.T) {
+	t.Parallel()
+	file := &memoryJournalFile{}
+	validTime := time.Unix(0, 0).UTC()
+	clock := time.Time{}
+	writer, err := startJournalWriter(file, Identity{SessionID: testSessionID, ThreadID: testThreadID}, 7, func() time.Time { return clock })
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	defer writer.Close(ctx)
+	draft := []RecordDraft{mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{})}
+	if _, err := writer.AppendBatch(ctx, draft); err == nil || IsJournalMutationUncertain(err) || writer.Poisoned() {
+		t.Fatalf("encoding rejection must leave the writer usable: %v", err)
+	}
+	if file.writeCount != 0 || file.syncCount != 0 {
+		t.Fatal("encoding rejection acquired file mutation")
+	}
+	clock = validTime
+	records, err := writer.AppendBatch(ctx, draft)
+	if err != nil || len(records) != 1 || records[0].Sequence != 7 || file.writeCount != 1 || file.syncCount != 1 {
+		t.Fatalf("next append did not reuse the unconsumed sequence: %v, %v", records, err)
+	}
+}
+
 func TestJournalWriterPoisonsAfterShortWrite(t *testing.T) {
 	t.Parallel()
 	file := &memoryJournalFile{shortWrite: true}

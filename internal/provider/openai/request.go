@@ -9,23 +9,35 @@ import (
 
 const maxResponsesRequestBytes = 16 << 20
 
-// responsesRequest 是当前文本切片发送给 Responses API 的稳定请求。
 type reasoningWire struct {
 	Effort  domain.OpenAIEffort     `json:"effort,omitempty"`
 	Summary domain.ReasoningSummary `json:"summary,omitempty"`
 }
 
-type responsesRequest struct {
-	Reasoning       *reasoningWire `json:"reasoning,omitempty"`
+type responsesReasoningFields struct {
+	Reasoning *reasoningWire `json:"reasoning,omitempty"`
+}
+
+type responsesInputFields struct {
 	PromptCacheKey  string         `json:"prompt_cache_key,omitempty"`
 	ToolChoice      string         `json:"tool_choice,omitempty"`
 	MaxOutputTokens uint64         `json:"max_output_tokens,omitempty"`
 	Model           string         `json:"model"`
 	Input           []NativeItem   `json:"input"`
 	Tools           []responseTool `json:"tools"`
-	Stream          bool           `json:"stream"`
-	Store           bool           `json:"store"`
-	Include         []string       `json:"include"`
+}
+
+type responsesStorageFields struct {
+	Store   bool     `json:"store"`
+	Include []string `json:"include"`
+}
+
+// 两种传输从相同字段组组装，同时保留各自已固定的 canonical 属性顺序。
+type responsesRequest struct {
+	responsesReasoningFields
+	responsesInputFields
+	Stream bool `json:"stream"`
+	responsesStorageFields
 }
 
 type responseTool struct {
@@ -49,39 +61,19 @@ func buildResponsesRequest(
 	projectInstructions *domain.ProjectInstructionsSnapshot,
 	toolView tool.FacadeView,
 ) responsesRequest {
-	itemCount := 0
-
-	if projectInstructions != nil && projectInstructions.HasDocuments() {
-		itemCount++
-	}
-	for _, entry := range history {
-		if entry.FeedbackInput != nil {
-			itemCount++
-		}
-		itemCount += len(entry.UserInputs)
-		itemCount += len(entry.Outputs) + len(entry.ToolOutputs)
-	}
-	input := make([]NativeItem, 0, itemCount)
+	input := make([]NativeItem, 0, len(history))
 	if projectInstructions != nil && projectInstructions.HasDocuments() {
 		input = append(input, NewUserItem(projectInstructions.RenderedText()))
 	}
 	for _, entry := range history {
-		if entry.FeedbackInput != nil {
-			input = append(input, entry.FeedbackInput.clone())
-		}
-		for _, item := range entry.UserInputs {
-			input = append(input, item.clone())
-		}
-		for _, item := range entry.Outputs {
-			input = append(input, item.clone())
-		}
-		for _, item := range entry.ToolOutputs {
+		for item := range nativeRequestItems(entry) {
 			input = append(input, item.clone())
 		}
 	}
 
-	tools := make([]responseTool, 0, len(toolView.Facades()))
-	for _, facade := range toolView.Facades() {
+	facades := toolView.Facades()
+	tools := make([]responseTool, 0, len(facades))
+	for _, facade := range facades {
 		switch facade.WireKind() {
 		case tool.WireStructured:
 			var strict *bool
@@ -100,12 +92,11 @@ func buildResponsesRequest(
 		}
 	}
 	return responsesRequest{
-		Model:   model,
-		Input:   input,
-		Tools:   tools,
-		Stream:  true,
-		Store:   false,
-		Include: []string{"reasoning.encrypted_content"},
+		responsesInputFields: responsesInputFields{Model: model, Input: input, Tools: tools},
+		Stream:               true,
+		responsesStorageFields: responsesStorageFields{
+			Include: []string{"reasoning.encrypted_content"},
+		},
 	}
 }
 

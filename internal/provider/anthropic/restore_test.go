@@ -82,7 +82,7 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 	uninterrupted := &Conversation{provider: instance}
 	commits := make([]provider.NativeCommitEnvelope, 0, len(entries))
 	for _, entry := range entries {
-		uninterrupted.history.commit(entry)
+		uninterrupted.history.Append(entry)
 		commit, encodeErr := encodeNativeCommit(entry)
 		if encodeErr != nil {
 			t.Fatal(encodeErr)
@@ -93,7 +93,7 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 	source := provider.HistorySource{ThreadID: "01900000-0000-7000-8000-000000000001", Family: domain.ProviderAnthropic, Wire: "messages", Model: instance.config.Model}
 	for boundary := 1; boundary <= len(records)+2; boundary++ {
 		ctx := &recordCancelContext{Context: context.Background(), remaining: boundary}
-		got, err := NewHistoryReader().ProjectStoredHistory(ctx, source, records)
+		got, err := NewHistoryReader().ProjectStoredHistory(ctx, source, records, nil)
 		if err == nil || len(got.Turns) != 0 {
 			t.Fatalf("cancellation boundary %d leaked view", boundary)
 		}
@@ -103,11 +103,11 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	restored := restoredValue.(*Conversation)
-	uninterruptedFootprint, err := uninterrupted.HistoryFootprint()
+	_, uninterruptedFootprint, err := uninterrupted.ProjectContextWindow()
 	if err != nil {
 		t.Fatal(err)
 	}
-	restoredFootprint, err := restored.HistoryFootprint()
+	_, restoredFootprint, err := restored.ProjectContextWindow()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 		changedShape.Messages[0].Content[0].Text == restoredShape.Messages[0].Content[0].Text {
 		t.Fatalf("changed project instructions modified native history: %#v %#v", restoredShape.Messages, changedShape.Messages)
 	}
-	changedFootprint, err := restored.HistoryFootprint()
+	_, changedFootprint, err := restored.ProjectContextWindow()
 	if err != nil || changedFootprint != restoredFootprint {
 		t.Fatalf("project instruction change modified footprint: %#v, %v", changedFootprint, err)
 	}

@@ -56,7 +56,7 @@ func TestSearchOwnerRetainsCaptureAcrossCancellationAndBlockedPublication(t *tes
 			journal := &startedFailureJournal{failAt: 2}
 			rt := newTestRuntime(t, &fakeToolConversation{fakeConversation: &fakeConversation{}}, journal)
 			rt.textOutputStore = heldTextStore{capture}
-			rt.globExecutor = capturedGlobExecutor{}
+			rt.tools.Glob = capturedGlobExecutor{}
 			input, _ := tool.NewGlobInput("*.txt", "", 10)
 			ready, _ := tool.NewGlobReadyCall("search", input)
 			id, _ := tool.GenerateInvocationID()

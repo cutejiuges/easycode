@@ -22,11 +22,6 @@ func ByteCount(bytes uint64) uint64 {
 	return quotient
 }
 
-// StructuredByteCount 同时计入内容字节和调用方定义的结构 framing 字节。
-func StructuredByteCount(contentBytes, framingBytes uint64) uint64 {
-	return ByteCount(SaturatingAdd(contentBytes, framingBytes))
-}
-
 // Bytes 返回字节切片的本地 token 估算。
 func Bytes(value []byte) domain.TokenEstimate {
 	estimate, _ := domain.NewEstimatedTokenEstimate(MethodByteHeuristic, ByteCount(uint64(len(value))))

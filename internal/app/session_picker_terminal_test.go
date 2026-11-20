@@ -43,7 +43,7 @@ func TestPickerTerminalHelper(t *testing.T) {
 	if err = os.WriteFile(configuration, []byte(`{"provider":"openai","base_url":"https://example.invalid","api_key":"fixture-key","model":"fixture-model"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	outcome := RunSessionPicker(context.Background(), Options{ConfigPath: configuration, SessionDataRoot: root, SessionCatalogPath: filepath.Join(filepath.Dir(root), "state.sqlite"), Input: os.Stdin, Output: os.Stdout}, true)
+	outcome := RunSessionPicker(context.Background(), Options{ConfigPath: configuration, SessionDataRoot: root, SessionCatalogPath: filepath.Join(filepath.Dir(root), "catalog.json"), Input: os.Stdin, Output: os.Stdout}, true)
 	fmt.Fprintf(os.Stdout, "\nPICKER_EXIT=%d\n", outcome.ExitCode())
 }
 
@@ -111,7 +111,7 @@ func runInChatPickerTerminal(t *testing.T, directory string) {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	options := Options{ConfigPath: configuration, ResumeThreadID: threads["source"], SessionDataRoot: storage,
-		SessionCatalogPath: filepath.Join(directory, "state.sqlite"), Input: os.Stdin, Output: os.Stdout}
+		SessionCatalogPath: filepath.Join(directory, "catalog.json"), Input: os.Stdin, Output: os.Stdout}
 	var outcome Outcome
 	if os.Getenv("EASYCODE_PICKER_FROM_STARTUP") == "1" {
 		outcome = RunSessionPicker(ctx, options, false)

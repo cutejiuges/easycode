@@ -1,7 +1,6 @@
 package provider
 
 import (
-	"context"
 	"errors"
 	"unicode/utf8"
 
@@ -66,12 +65,14 @@ func (b *ReasoningBudget) ReplaceScratch(oldBytes, newBytes int) error {
 
 // ReasoningDraft 是 Provider 内的逻辑输出，发布时才构造成有界共享事件。
 type ReasoningDraft struct {
-	stage  protocol.ReasoningStage
-	block  uint32
-	source domain.ReasoningSource
-	offset uint64
-	text   string
-	body   domain.ReasoningBody
+	stage      protocol.ReasoningStage
+	block      uint32
+	source     domain.ReasoningSource
+	offset     uint64
+	text       string
+	body       domain.ReasoningBody
+	bodyOffset uint64
+	separate   bool
 }
 
 // NewReasoningStartDraft 创建真实块的开始输出。
@@ -90,12 +91,19 @@ func NewReasoningTextDraft(block uint32, source domain.ReasoningSource, offset u
 	return ReasoningDraft{stage: protocol.ReasoningDelta, block: block, source: source, offset: offset, text: text}, nil
 }
 
-// NewReasoningBodyTextDraft 引用虚拟正文中尚未发布的范围，避免拼接完整前缀。
-func NewReasoningBodyTextDraft(block uint32, body domain.ReasoningBody, offset uint64) (ReasoningDraft, error) {
-	if block >= domain.MaxReasoningNodes || body.Validate() != nil || offset >= body.Len() {
+// NewReasoningBodyTextDraft 引用增量片段；续接新段时在已发布正文后加双换行。
+func NewReasoningBodyTextDraft(block uint32, body domain.ReasoningBody, bodyOffset, offset uint64, separate bool) (ReasoningDraft, error) {
+	if block >= domain.MaxReasoningNodes || body.Validate() != nil || bodyOffset >= body.Len() {
 		return ReasoningDraft{}, errors.New("invalid reasoning body draft")
 	}
-	return ReasoningDraft{stage: protocol.ReasoningDelta, block: block, source: body.Source(), offset: offset, body: body}, nil
+	size := body.Len() - bodyOffset
+	if separate {
+		size += 2
+	}
+	if offset > domain.MaxReasoningSourceBytes || size > domain.MaxReasoningSourceBytes-offset {
+		return ReasoningDraft{}, errors.New("reasoning body exceeds size limit")
+	}
+	return ReasoningDraft{stage: protocol.ReasoningDelta, block: block, source: body.Source(), offset: offset, body: body, bodyOffset: bodyOffset, separate: separate}, nil
 }
 
 // NewReasoningCompletionDraft 引用已完成的不可变允许正文。
@@ -129,27 +137,19 @@ func NewReasoningDrafts(drafts ...ReasoningDraft) (ReasoningDrafts, error) {
 }
 
 // PublishReasoning 惰性分片并沿原 stream owner 发送，不创建后台工作。
-func PublishReasoning(ctx context.Context, output chan<- StreamEvent, drafts ReasoningDrafts) error {
-	if ctx == nil || output == nil {
+func PublishReasoning(drafts ReasoningDrafts, publish func(StreamEvent) error) error {
+	if publish == nil {
 		return errors.New("reasoning publisher scope is invalid")
 	}
 	send := func(event protocol.Event, err error) error {
 		if err != nil {
 			return err
 		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
 		item, err := NewSemanticStreamEvent(event)
 		if err != nil {
 			return err
 		}
-		select {
-		case output <- item:
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+		return publish(item)
 	}
 	for i := uint8(0); i < drafts.count; i++ {
 		draft := drafts.values[i]
@@ -160,15 +160,22 @@ func PublishReasoning(ctx context.Context, output chan<- StreamEvent, drafts Rea
 			}
 		case protocol.ReasoningDelta:
 			if draft.text == "" {
-				for offset := draft.offset; offset < draft.body.Len(); {
-					page, err := draft.body.ReadRange(offset, protocol.MaxReasoningDeltaBytes, false)
+				position := draft.offset
+				separator := ""
+				if draft.separate {
+					separator = "\n\n"
+				}
+				for offset := draft.bodyOffset; offset < draft.body.Len(); {
+					page, err := draft.body.ReadRange(offset, protocol.MaxReasoningDeltaBytes-uint32(len(separator)), false)
 					if err != nil {
 						return err
 					}
-					if err := send(protocol.NewReasoningDelta(draft.block, draft.source, offset, page.Text)); err != nil {
+					text := separator + page.Text
+					if err := send(protocol.NewReasoningDelta(draft.block, draft.source, position, text)); err != nil {
 						return err
 					}
-					offset = page.NextOffset
+					position += uint64(len(text))
+					offset, separator = page.NextOffset, ""
 				}
 				continue
 			}

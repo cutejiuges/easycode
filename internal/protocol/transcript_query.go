@@ -44,12 +44,6 @@ func (q TranscriptListQuery) Validate() error {
 	}
 	return nil
 }
-func NewTranscriptListQuery(q TranscriptListQuery) (TranscriptListQuery, error) {
-	return q, q.Validate()
-}
-func DecodeTranscriptListQuery(data []byte) (TranscriptListQuery, error) {
-	return decodeTranscriptValue[TranscriptListQuery](data)
-}
 
 // TranscriptListItem 只携带短摘要，完整正文必须通过范围查询获取。
 type TranscriptListItem struct {
@@ -204,10 +198,6 @@ func (v TranscriptListItem) Validate() error {
 	}
 	return nil
 }
-func NewTranscriptListItem(v TranscriptListItem) (TranscriptListItem, error) { return v, v.Validate() }
-func DecodeTranscriptListItem(data []byte) (TranscriptListItem, error) {
-	return decodeTranscriptValue[TranscriptListItem](data)
-}
 
 // TranscriptListPage 按稳定位置倒序返回最多五十项，供主线或详细记录复用。
 type TranscriptListPage struct {
@@ -232,9 +222,6 @@ func (p TranscriptListPage) Validate() error {
 func NewTranscriptListPage(p TranscriptListPage) (TranscriptListPage, error) {
 	p.Items = append([]TranscriptListItem(nil), p.Items...)
 	return p, p.Validate()
-}
-func DecodeTranscriptListPage(data []byte) (TranscriptListPage, error) {
-	return decodeTranscriptValue[TranscriptListPage](data)
 }
 
 // TranscriptBodySource 区分用户/assistant 正文、工具输入摘要和冻结结果。
@@ -289,12 +276,6 @@ func (q TranscriptBodyQuery) Validate() error {
 	}
 	return nil
 }
-func NewTranscriptBodyQuery(q TranscriptBodyQuery) (TranscriptBodyQuery, error) {
-	return q, q.Validate()
-}
-func DecodeTranscriptBodyQuery(data []byte) (TranscriptBodyQuery, error) {
-	return decodeTranscriptValue[TranscriptBodyQuery](data)
-}
 
 // TranscriptBodyPage 保持 UTF-8 边界与实际正文偏移，不以屏幕行号分页。
 type TranscriptBodyPage struct {
@@ -312,9 +293,6 @@ func (p TranscriptBodyPage) Validate() error {
 	return nil
 }
 func NewTranscriptBodyPage(p TranscriptBodyPage) (TranscriptBodyPage, error) { return p, p.Validate() }
-func DecodeTranscriptBodyPage(data []byte) (TranscriptBodyPage, error) {
-	return decodeTranscriptValue[TranscriptBodyPage](data)
-}
 
 // TranscriptQueries 是唯一浏览端口；不会产生 Provider 请求或执行工具。
 type TranscriptQueries interface {

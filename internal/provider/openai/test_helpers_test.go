@@ -41,11 +41,26 @@ func (inertPatchExecutor) Execute(context.Context, tool.PatchCandidate) tool.Inv
 
 func testOpenAIToolCatalog(t *testing.T) tool.CatalogSnapshot {
 	t.Helper()
-	catalog, err := tool.NewCatalogSnapshot(inertReadExecutor{}, inertGlobExecutor{}, inertGrepExecutor{}, inertPatchPreparer{}, inertPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, inertExecComponents{}, inertExecComponents{}, tool.RenderExecOutput, tool.NewApprovalPolicy(), catalogArtifactExecutor{}, catalogSkillExecutor{}, catalogQuestionFixture{}, catalogTaskFixture{})
+	binding, err := tool.NewBinding(tool.Components{
+		Read:         inertReadExecutor{},
+		Glob:         inertGlobExecutor{},
+		Grep:         inertGrepExecutor{},
+		PreparePatch: inertPatchPreparer{},
+		Patch:        inertPatchExecutor{},
+		PrepareWrite: catalogWritePreparer{},
+		Write:        catalogWriteExecutor{},
+		PrepareExec:  inertExecComponents{},
+		Exec:         inertExecComponents{},
+		Policy:       tool.NewApprovalPolicy(),
+		ReadArtifact: catalogArtifactExecutor{},
+		Skill:        catalogSkillExecutor{},
+		Question:     catalogQuestionFixture{},
+		Task:         catalogTaskFixture{},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return catalog
+	return binding.Catalog()
 }
 
 type inertExecComponents struct{}

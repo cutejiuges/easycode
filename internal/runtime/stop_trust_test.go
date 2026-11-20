@@ -13,7 +13,7 @@ func TestStopCancelledTrustCannotInstallLateGrant(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	input, _ := domain.NewUserInput("01900000-0000-7000-8000-000000000001", "task")
-	err := r.RunTurn(ctx, []domain.UserInput{input}, func(e protocol.Event) {
+	err := r.runFixtureTurn(ctx, []domain.UserInput{input}, func(e protocol.Event) {
 		if e.Kind != protocol.EventHookTrustRequested {
 			return
 		}

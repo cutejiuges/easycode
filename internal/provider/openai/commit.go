@@ -24,10 +24,7 @@ type nativeHistoryCommit struct {
 	Usage            *rawUsageCommit                `json:"usage,omitempty"`
 }
 
-type optionalUintCommit struct {
-	Known bool    `json:"known"`
-	Value *uint64 `json:"value,omitempty"`
-}
+type optionalUintCommit = provider.OptionalUintCommit
 
 type rawUsageCommit struct {
 	InputTokens           optionalUintCommit `json:"input_tokens"`
@@ -74,8 +71,8 @@ func decodeNativeCommit(envelope provider.NativeCommitEnvelope) (nativeHistoryEn
 		return nativeHistoryEntry{}, fmt.Errorf("decode native commit: %w", err)
 	}
 	entry := nativeHistoryEntry{
-		Kind: commit.Kind, Outputs: cloneNativeItems(commit.Outputs),
-		ToolOutputs: cloneNativeItems(commit.ToolOutputs),
+		Kind: commit.Kind, Outputs: commit.Outputs,
+		ToolOutputs: commit.ToolOutputs,
 	}
 	entry.FeedbackInput = commit.FeedbackInput
 	entry.FeedbackMetadata = commit.FeedbackMetadata
@@ -97,7 +94,7 @@ func decodeNativeCommit(envelope provider.NativeCommitEnvelope) (nativeHistoryEn
 	if err := validateNativeHistoryEntry(entry); err != nil {
 		return nativeHistoryEntry{}, err
 	}
-	return entry.clone(), nil
+	return entry, nil
 }
 
 func validateNativeHistoryEntry(entry nativeHistoryEntry) error {
@@ -153,9 +150,16 @@ func validateNativeHistoryEntry(entry nativeHistoryEntry) error {
 		}
 
 		seenCallIDs := make(map[string]struct{})
+		seenItemIDs := make(map[string]struct{})
 		for _, item := range entry.Outputs {
 			if err := validateOutputItem(item); err != nil {
 				return err
+			}
+			if item.ID != "" && knownOutputKind(item.Type) {
+				if _, exists := seenItemIDs[item.ID]; exists {
+					return fmt.Errorf("OpenAI native output item ID is duplicated")
+				}
+				seenItemIDs[item.ID] = struct{}{}
 			}
 			if item.Type == "function_call" || item.Type == "custom_tool_call" {
 				if _, exists := seenCallIDs[item.CallID]; exists {
@@ -248,11 +252,11 @@ func validateOutputItem(item NativeItem) error {
 
 func encodeRawUsage(usage rawUsage) *rawUsageCommit {
 	return &rawUsageCommit{
-		InputTokens:           encodeOptionalUint(usage.InputTokens),
-		CachedInputTokens:     encodeOptionalUint(usage.CachedInputTokens),
-		CacheWriteTokens:      encodeOptionalUint(usage.CacheWriteTokens),
-		OutputTokens:          encodeOptionalUint(usage.OutputTokens),
-		ReasoningOutputTokens: encodeOptionalUint(usage.ReasoningOutputTokens),
+		InputTokens:           usage.InputTokens.Commit(),
+		CachedInputTokens:     usage.CachedInputTokens.Commit(),
+		CacheWriteTokens:      usage.CacheWriteTokens.Commit(),
+		OutputTokens:          usage.OutputTokens.Commit(),
+		ReasoningOutputTokens: usage.ReasoningOutputTokens.Commit(),
 	}
 }
 
@@ -270,32 +274,16 @@ func decodeRawUsage(commit *rawUsageCommit) (rawUsage, error) {
 		}
 	}
 	usage := rawUsage{
-		InputTokens:           decodeOptionalUint(commit.InputTokens),
-		CachedInputTokens:     decodeOptionalUint(commit.CachedInputTokens),
-		CacheWriteTokens:      decodeOptionalUint(commit.CacheWriteTokens),
-		OutputTokens:          decodeOptionalUint(commit.OutputTokens),
-		ReasoningOutputTokens: decodeOptionalUint(commit.ReasoningOutputTokens),
+		InputTokens:           commit.InputTokens.OptionalUint(),
+		CachedInputTokens:     commit.CachedInputTokens.OptionalUint(),
+		CacheWriteTokens:      commit.CacheWriteTokens.OptionalUint(),
+		OutputTokens:          commit.OutputTokens.OptionalUint(),
+		ReasoningOutputTokens: commit.ReasoningOutputTokens.OptionalUint(),
 	}
 	if _, err := usage.normalized(); err != nil {
 		return rawUsage{}, fmt.Errorf("OpenAI native commit usage is invalid: %w", err)
 	}
 	return usage, nil
-}
-
-func encodeOptionalUint(value optionalUint) optionalUintCommit {
-	encoded := optionalUintCommit{Known: value.Known}
-	if value.Known {
-		copy := value.Value
-		encoded.Value = &copy
-	}
-	return encoded
-}
-
-func decodeOptionalUint(value optionalUintCommit) optionalUint {
-	if !value.Known || value.Value == nil {
-		return optionalUint{Known: value.Known}
-	}
-	return optionalUint{Known: true, Value: *value.Value}
 }
 
 func cloneNativeItems(items []NativeItem) []NativeItem {

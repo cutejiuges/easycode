@@ -51,6 +51,8 @@ type assembledSession struct {
 	toolRecovery  *session.ToolRecoveryPlan
 	stopRecovery  *session.StopRecoveryPlan
 	stops         []session.ReplayedStop
+	tasks         domain.TaskProgressState
+	taskErr       error
 }
 
 func newSessionService(repository *session.Repository) *sessionService {
@@ -91,7 +93,7 @@ func (service *sessionService) create(
 	}
 	return assembledSession{
 		identity: identity, conversation: conversation, writer: writer,
-		history: conversation.ProjectHistory(),
+		history: conversation.ProjectHistory(), tasks: domain.NewNoTaskProgress(),
 	}, nil
 }
 
@@ -139,24 +141,24 @@ func (service *sessionService) resume(
 	if err := ctx.Err(); err != nil {
 		return assembledSession{}, err
 	}
-	if err := validateSampleUsageEvidence(binding.sampleUsage, plan); err != nil {
-		return assembledSession{}, fault.Wrap(fault.CodeSessionCorruption, "sample usage is invalid", err)
+	if err := validateSampleUsageEvidence(ctx, binding.history, plan); err != nil {
+		return assembledSession{}, resumeValidationError("sample usage is invalid", err)
 	}
-	commits, err := orderedRestoreRecords(plan)
+	commits, err := orderedRestoreRecords(ctx, plan)
 	if err != nil {
 		return assembledSession{}, err
 	}
 
-	conversation, err := binding.factory.RestoreConversation(plan.Identity.ThreadID, commits)
+	conversation, checkpoints, err := binding.factory.RestoreConversation(ctx, plan.Identity.ThreadID, commits)
 	if err != nil {
-		return assembledSession{}, fault.Wrap(fault.CodeSessionCorruption, "restore provider native history failed", err)
+		return assembledSession{}, resumeValidationError("restore provider native history failed", err)
 	}
-	if err := validateCompactionUsageEvidence(binding.compactionUsage, plan); err != nil {
-		return assembledSession{}, fault.Wrap(fault.CodeSessionCorruption, "compaction usage is invalid", err)
+	if err := validateCompactionUsageEvidence(ctx, binding.history, checkpoints, plan); err != nil {
+		return assembledSession{}, resumeValidationError("compaction usage is invalid", err)
 	}
-	compactions, err := restoreCompactionTranscript(binding.checkpoints, plan)
+	compactions, err := restoreCompactionTranscript(ctx, checkpoints, plan)
 	if err != nil {
-		return assembledSession{}, fault.Wrap(fault.CodeSessionCorruption, "compaction transcript is invalid", err)
+		return assembledSession{}, resumeValidationError("compaction transcript is invalid", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return assembledSession{}, err
@@ -232,6 +234,7 @@ func (service *sessionService) resume(
 		cloned := plan.ToolRecovery.Clone()
 		toolRecovery = &cloned
 	}
+	tasks, taskErr := plan.TaskProgress()
 	return assembledSession{
 		compactions: compactions, identity: plan.Identity, conversation: conversation, writer: writer,
 		title: plan.Title,
@@ -239,6 +242,7 @@ func (service *sessionService) resume(
 		stops: plan.Stops, stopRecovery: stopRecovery,
 		nativeCommits: plan.NativeCommits,
 		history:       conversation.ProjectHistory(), repair: loaded.Repair, toolRecovery: toolRecovery,
+		tasks: tasks, taskErr: taskErr,
 	}, nil
 }
 
@@ -249,9 +253,19 @@ func (service *sessionService) close() error {
 	return service.repository.Close()
 }
 
-func nativeRestoreRecords(records []session.NativeCommitRecord) ([]provider.RestoreRecord, error) {
+func resumeValidationError(message string, err error) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	return fault.Wrap(fault.CodeSessionCorruption, message, err)
+}
+
+func nativeRestoreRecords(ctx context.Context, records []session.NativeCommitRecord) ([]provider.RestoreRecord, error) {
 	commits := make([]provider.RestoreRecord, 0, len(records))
 	for _, record := range records {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		commit, buildErr := provider.NewNativeCommitEnvelope(
 			record.Commit.Provider, record.Commit.Wire,
 			record.Commit.Payload,

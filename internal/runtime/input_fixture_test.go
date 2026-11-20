@@ -1,10 +1,16 @@
 package runtime
 
 import (
+	"context"
+	"encoding/json"
+
 	"easycode/internal/domain"
 	"easycode/internal/provider"
-	"encoding/json"
 )
+
+func (runtime *Runtime) runFixtureTurn(ctx context.Context, inputs []domain.UserInput, emit Emitter) error {
+	return runtime.runTurn(ctx, inputs, runtime.profile, nil, emit)
+}
 
 func runtimeInputs(text string) []domain.UserInput {
 	input, err := domain.NewUserInput("01900000-0000-7000-8000-000000000001", text)
@@ -90,17 +96,29 @@ func (conversation *controlledConversation) PrepareUserInputs(a domain.InputAsso
 }
 
 func (conversation *fakeConversation) ProjectActiveContext() (domain.ActiveContextView, error) {
+	view, _, err := conversation.ProjectContextWindow()
+	return view, err
+}
+
+func (conversation *fakeConversation) ProjectContextWindow() (domain.ActiveContextView, domain.NativeHistoryFootprint, error) {
 	footprint, err := conversation.HistoryFootprint()
 	if err != nil {
-		return domain.ActiveContextView{}, err
+		return domain.ActiveContextView{}, domain.NativeHistoryFootprint{}, err
 	}
-	return domain.NewActiveContextView(conversation.ProjectHistory(), domain.ContextSummary{}, footprint.Revision())
+	view, err := domain.NewActiveContextView(conversation.ProjectHistory(), domain.ContextSummary{}, footprint.Revision())
+	return view, footprint, err
 }
 
 func (conversation *controlledConversation) ProjectActiveContext() (domain.ActiveContextView, error) {
+	view, _, err := conversation.ProjectContextWindow()
+	return view, err
+}
+
+func (conversation *controlledConversation) ProjectContextWindow() (domain.ActiveContextView, domain.NativeHistoryFootprint, error) {
 	footprint, err := conversation.HistoryFootprint()
 	if err != nil {
-		return domain.ActiveContextView{}, err
+		return domain.ActiveContextView{}, domain.NativeHistoryFootprint{}, err
 	}
-	return domain.NewActiveContextView(conversation.ProjectHistory(), domain.ContextSummary{}, footprint.Revision())
+	view, err := domain.NewActiveContextView(conversation.ProjectHistory(), domain.ContextSummary{}, footprint.Revision())
+	return view, footprint, err
 }

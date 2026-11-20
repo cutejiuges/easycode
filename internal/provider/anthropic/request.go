@@ -21,14 +21,15 @@ type outputConfigWire struct {
 }
 
 type messagesRequest struct {
-	Thinking     *thinkingWire      `json:"thinking,omitempty"`
-	OutputConfig *outputConfigWire  `json:"output_config,omitempty"`
-	ToolChoice   *summaryToolChoice `json:"tool_choice,omitempty"`
-	Model        string             `json:"model"`
-	Messages     []nativeMessage    `json:"messages"`
-	MaxTokens    int                `json:"max_tokens"`
-	Tools        []anthropicTool    `json:"tools"`
-	Stream       bool               `json:"stream"`
+	Thinking          *thinkingWire      `json:"thinking,omitempty"`
+	OutputConfig      *outputConfigWire  `json:"output_config,omitempty"`
+	ToolChoice        *summaryToolChoice `json:"tool_choice,omitempty"`
+	Model             string             `json:"model"`
+	Messages          []nativeMessage    `json:"messages"`
+	MaxTokens         int                `json:"max_tokens"`
+	Tools             []anthropicTool    `json:"tools"`
+	Stream            bool               `json:"stream"`
+	lastSampleMessage int
 }
 
 type summaryToolChoice struct {
@@ -57,32 +58,30 @@ func buildMessagesRequest(
 	if projectInstructions != nil && projectInstructions.HasDocuments() {
 		messages = append(messages, newUserMessage(projectInstructions.RenderedText()))
 	}
+	lastSampleMessage := -1
 	for _, entry := range history {
-		if entry.FeedbackInput != nil {
-			messages = append(messages, entry.FeedbackInput.clone())
-		}
-		for _, message := range entry.UserInputs {
+		for message := range nativeRequestMessages(entry) {
 			messages = append(messages, message.clone())
 		}
 		if entry.Kind == nativeHistorySample {
-			messages = append(messages, entry.Assistant.clone())
-		} else if entry.Kind == nativeHistoryToolOutputs {
-			messages = append(messages, entry.ToolOutputs.clone())
+			lastSampleMessage = len(messages) - 1
 		}
 	}
 
-	tools := make([]anthropicTool, 0, len(toolView.Facades()))
-	for _, facade := range toolView.Facades() {
+	facades := toolView.Facades()
+	tools := make([]anthropicTool, 0, len(facades))
+	for _, facade := range facades {
 		tools = append(tools, anthropicTool{
 			Name: facade.Name(), Description: facade.Description(), InputSchema: json.RawMessage(facade.InputSchema()),
 		})
 	}
 	return messagesRequest{
-		Model:     model,
-		Messages:  messages,
-		MaxTokens: maxTokens,
-		Tools:     tools,
-		Stream:    true,
+		Model:             model,
+		Messages:          messages,
+		MaxTokens:         maxTokens,
+		Tools:             tools,
+		Stream:            true,
+		lastSampleMessage: lastSampleMessage,
 	}
 }
 

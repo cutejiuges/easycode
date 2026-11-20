@@ -1,12 +1,15 @@
 package runtime
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+
 	"easycode/internal/codec"
 	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/session"
 	"easycode/internal/tool"
-	"encoding/json"
 )
 
 // toolTurnState 集中由 turn owner 维护的工具调用、输出预算与样本展示状态。
@@ -73,7 +76,7 @@ func (state *toolExecutionCall) selection() (tool.InputSelection, error) {
 	if err != nil || digest != state.sourceDigest {
 		return tool.InputSelection{}, fault.New(fault.CodeStreamProtocol, "tool call source fingerprint mismatch")
 	}
-	return (session.ReplayedToolCall{Origin: state.origin, Invocation: state.original, Hooks: state.pre}).InputSelection()
+	return session.SelectToolInput(state.origin, state.original, state.pre)
 }
 
 func toolCallSourceDigest(origin tool.ToolCallOrigin, invocation tool.Invocation) (string, error) {
@@ -107,6 +110,37 @@ func (r *Runtime) resultEvidence(result tool.InvocationResult) (tool.InputResult
 	}
 	return state.evidence()
 }
+
+// admitToolExecution 在 started 持久化后才开放执行，明确区分接收前取消与写入故障。
+func (r *Runtime) admitToolExecution(ctx context.Context, turnID domain.TurnID, inv tool.Invocation) (bool, error) {
+	if ctx.Err() != nil {
+		return false, nil
+	}
+	started, err := session.NewToolExecutionStartedDraft(turnID, inv.InvocationID())
+	if err != nil {
+		return false, fault.Wrap(fault.CodeStreamProtocol, "tool execution start is invalid", err)
+	}
+	records, err := r.journal.AppendBatch(ctx, []session.RecordDraft{started})
+	if err != nil {
+		if r.journal.Poisoned() {
+			r.poisoned.Store(true)
+		} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return false, nil
+		}
+		return false, fault.Wrap(fault.CodeSessionWrite, "persist tool execution start failed", err)
+	}
+	if len(records) != 1 {
+		r.poisoned.Store(true)
+		return false, fault.New(fault.CodeSessionWrite, "tool execution start has no durable sequence")
+	}
+	if _, err := r.registerExecutionAdmission(inv, records[0].Sequence); err != nil {
+		r.poisoned.Store(true)
+		return false, err
+	}
+	r.emitToolStarted(turnID, inv)
+	return true, nil
+}
+
 func (r *Runtime) registerExecutionAdmission(inv tool.Invocation, sequence uint64) (tool.ExecutionAdmission, error) {
 	state := r.toolTurn.toolCalls[inv.InvocationID()]
 	if state == nil || state.admission.Sequence() != 0 || sequence == 0 || sequence <= state.detailSequence {

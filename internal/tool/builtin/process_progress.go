@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"easycode/internal/executor/process"
 	"easycode/internal/tool"
 )
 
@@ -61,7 +62,7 @@ type processOutputWriter struct {
 	buffer   tool.ExecOutputBuffer
 	progress *processProgress
 	stderr   bool
-	clock    processClock
+	clock    process.Clock
 	started  time.Time
 	save     func([]byte) (int, error)
 }
@@ -71,6 +72,6 @@ func (writer *processOutputWriter) Write(data []byte) (int, error) {
 	if writer.save != nil {
 		_, _ = writer.save(data)
 	}
-	writer.progress.update(data, writer.stderr, max(0, writer.clock.now().Sub(writer.started).Milliseconds()))
+	writer.progress.update(data, writer.stderr, max(0, writer.clock.Now().Sub(writer.started).Milliseconds()))
 	return count, err
 }

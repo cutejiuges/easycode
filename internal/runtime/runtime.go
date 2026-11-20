@@ -48,12 +48,9 @@ type ContextPlanner interface {
 // Config 固定一个 Session-bound Runtime 的身份与 durable 边界。
 type Config struct {
 	InitialSessionTitle       domain.SessionTitle
-	TaskExecutor              tool.TaskExecutor
 	InitialTaskProgress       domain.TaskProgressState
-	QuestionExecutor          tool.QuestionExecutor
 	InteractiveQuestions      bool
 	GenerateQuestionRequestID func() (domain.QuestionRequestID, error)
-	SkillExecutor             tool.SkillExecutor
 	AutoCompactionPolicy      contextplan.AutoCompactionPolicy
 	CompactionHistory         CompactionHistoryObserver
 	CompactionOutputTokens    uint64
@@ -61,7 +58,6 @@ type Config struct {
 	ToolHistory               ToolHistoryObserver
 	HookHistory               HookHistoryObserver
 	StopHistory               StopHistoryObserver
-	ReadArtifactExecutor      tool.ReadArtifactExecutor
 	ArtifactReferences        *tool.ArtifactReferences
 	SessionID                 domain.SessionID
 	ThreadID                  domain.ThreadID
@@ -73,17 +69,7 @@ type Config struct {
 	RestoredCacheBaseline     bool
 	ContextProfile            contextplan.ProviderProfile
 	ProviderWire              string
-	ToolCatalog               tool.CatalogSnapshot
-	ReadExecutor              tool.ReadExecutor
-	GlobExecutor              tool.GlobExecutor
-	GrepExecutor              tool.GrepExecutor
-	PatchPreparer             tool.PatchPreparer
-	PatchExecutor             tool.PatchExecutor
-	WritePreparer             tool.WritePreparer
-	WriteExecutor             tool.WriteExecutor
-	ExecPreparer              tool.ExecPreparer
-	ExecExecutor              tool.ExecExecutor
-	ToolPolicy                tool.Policy
+	ToolBinding               tool.Binding
 	GenerateApprovalRequestID ApprovalRequestIDGenerator
 	InteractiveApprovals      bool
 	ProjectInstructions       domain.ProjectInstructionsSnapshot
@@ -94,16 +80,13 @@ type Config struct {
 // Runtime 持有一条会话级 Provider Conversation 和同一 thread journal。
 type Runtime struct {
 	initialSessionTitle  domain.SessionTitle
-	taskExecutor         tool.TaskExecutor
 	tasks                taskProgressProjection
-	questionExecutor     tool.QuestionExecutor
 	interactiveQuestions bool
 	newQuestionRequestID func() (domain.QuestionRequestID, error)
 	questions            questionState
 
 	hooks                        hookState
 	skillInstallation            skillInstallation
-	skillExecutor                tool.SkillExecutor
 	inputPreparer                InputPreparer
 	userInputCommitted           func(domain.UserInput) (protocol.Event, error)
 	skillCatalog                 domain.SkillCatalog
@@ -124,7 +107,6 @@ type Runtime struct {
 	toolHistory                  ToolHistoryObserver
 	hookHistory                  HookHistoryObserver
 	stopHistory                  StopHistoryObserver
-	readArtifactExecutor         tool.ReadArtifactExecutor
 	artifactReferences           *tool.ArtifactReferences
 	conversation                 provider.Conversation
 	providerOperations           providerOperations
@@ -136,17 +118,8 @@ type Runtime struct {
 	newInvocationID              InvocationIDGenerator
 	profile                      contextplan.ProviderProfile
 	operationProfile             contextplan.ProviderProfile
+	tools                        tool.Components
 	toolCatalog                  tool.CatalogSnapshot
-	readExecutor                 tool.ReadExecutor
-	globExecutor                 tool.GlobExecutor
-	grepExecutor                 tool.GrepExecutor
-	patchPreparer                tool.PatchPreparer
-	patchExecutor                tool.PatchExecutor
-	writePreparer                tool.WritePreparer
-	writeExecutor                tool.WriteExecutor
-	execPreparer                 tool.ExecPreparer
-	execExecutor                 tool.ExecExecutor
-	toolPolicy                   tool.Policy
 	newApprovalRequestID         ApprovalRequestIDGenerator
 	interactiveApprovals         bool
 	readObservations             readObservations
@@ -157,14 +130,6 @@ type Runtime struct {
 	active                       atomic.Bool
 	poisoned                     atomic.Bool
 	samplePresentation           *samplePresentationState
-}
-
-type runtimeApproval struct {
-	request  tool.ApprovalRequest
-	response tool.ApprovalResponse
-	resolved bool
-	closed   bool
-	done     chan struct{}
 }
 
 // New 创建已绑定稳定 Session 身份的共享 Runtime。
@@ -196,17 +161,12 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 	if config.ProviderWire != conversation.Family().Wire() {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "runtime provider wire does not match conversation")
 	}
-	if err := config.ToolCatalog.Validate(); err != nil {
+	catalog := config.ToolBinding.Catalog()
+	if err := catalog.Validate(); err != nil {
 		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "runtime tool catalog is invalid", err)
 	}
-	if _, err := config.ToolCatalog.View(conversation.Family()); err != nil {
+	if _, err := catalog.View(conversation.Family()); err != nil {
 		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "runtime tool catalog Provider view is invalid", err)
-	}
-	if config.TaskExecutor == nil || config.QuestionExecutor == nil || config.SkillExecutor == nil || config.ReadArtifactExecutor == nil || config.ReadExecutor == nil || config.GlobExecutor == nil || config.GrepExecutor == nil {
-		return nil, fault.New(fault.CodeInvalidConfiguration, "runtime read-only executors are not configured")
-	}
-	if config.PatchPreparer == nil || config.PatchExecutor == nil || config.WritePreparer == nil || config.WriteExecutor == nil || config.ExecPreparer == nil || config.ExecExecutor == nil || config.ToolPolicy == nil {
-		return nil, fault.New(fault.CodeInvalidConfiguration, "runtime file mutation and Exec components are not configured")
 	}
 	if config.GenerateQuestionRequestID == nil {
 		config.GenerateQuestionRequestID = domain.GenerateQuestionRequestID
@@ -248,7 +208,6 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 	}
 	return &Runtime{
 		initialSessionTitle:    config.InitialSessionTitle,
-		taskExecutor:           config.TaskExecutor,
 		tasks:                  taskProgressProjection{state: config.InitialTaskProgress.Clone()},
 		autoCompactionPolicy:   config.AutoCompactionPolicy,
 		compactionHistory:      config.CompactionHistory,
@@ -257,9 +216,7 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 		toolHistory:            config.ToolHistory,
 		hookHistory:            config.HookHistory,
 		stopHistory:            config.StopHistory,
-		readArtifactExecutor:   config.ReadArtifactExecutor,
-		questionExecutor:       config.QuestionExecutor, interactiveQuestions: config.InteractiveQuestions, newQuestionRequestID: config.GenerateQuestionRequestID,
-		skillExecutor:      config.SkillExecutor,
+		interactiveQuestions:   config.InteractiveQuestions, newQuestionRequestID: config.GenerateQuestionRequestID,
 		userInputCommitted: protocol.NewUserInputCommitted,
 		textOutputStore:    config.TextOutputStore,
 		artifactReferences: config.ArtifactReferences,
@@ -267,18 +224,13 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 		sessionID: config.SessionID, threadID: config.ThreadID, newTurnID: config.GenerateTurnID,
 		newInvocationID: config.GenerateInvocationID,
 		cachePolicy:     domain.WithDefaultCachePolicy(config.CachePolicy), restoredCacheBaseline: config.RestoredCacheBaseline,
-		profile: config.ContextProfile, operationProfile: config.ContextProfile, toolCatalog: config.ToolCatalog.Clone(),
-		readExecutor: config.ReadExecutor, globExecutor: config.GlobExecutor, grepExecutor: config.GrepExecutor,
-		patchPreparer: config.PatchPreparer, patchExecutor: config.PatchExecutor, writePreparer: config.WritePreparer, writeExecutor: config.WriteExecutor, execPreparer: config.ExecPreparer, execExecutor: config.ExecExecutor, toolPolicy: config.ToolPolicy, newApprovalRequestID: config.GenerateApprovalRequestID, interactiveApprovals: config.InteractiveApprovals, projectInstructions: projectInstructions,
+		profile: config.ContextProfile, operationProfile: config.ContextProfile, toolCatalog: catalog, tools: config.ToolBinding.Components(),
+		newApprovalRequestID: config.GenerateApprovalRequestID, interactiveApprovals: config.InteractiveApprovals, projectInstructions: projectInstructions,
 		budget: config.ContextBudget, planner: config.ContextPlanner,
 	}, nil
 }
 
-// RunTurn 执行一次文本 turn，并等待 Provider terminal 后的 durable 收口。
-func (runtime *Runtime) RunTurn(ctx context.Context, inputs []domain.UserInput, emit Emitter) error {
-	return runtime.runTurn(ctx, inputs, runtime.profile, nil, emit)
-}
-
+// runTurn 执行一次文本 turn，并等待 Provider terminal 后的 durable 收口。
 func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, profile contextplan.ProviderProfile, control turnInputControl, emit Emitter) (resultErr error) {
 	if err := runtime.validateTurnRequest(ctx, emit); err != nil {
 		return err
@@ -389,10 +341,17 @@ func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, 
 		usages = append(usages, usage)
 		totalCalls += len(invocations)
 		results, executeErr := runtime.executeToolCalls(ctx, turnID, invocations, emit)
-		if len(results) > 0 {
-			if outputErr := runtime.commitToolOutputs(ctx, turnID, results); outputErr != nil {
-				return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, outputErr)
+		if len(results) != len(invocations) {
+			// 保留待恢复的工具组尾部，禁止在尚未配对时写入 turn_failed。
+			runtime.poisoned.Store(true)
+			if executeErr == nil {
+				executeErr = fault.New(fault.CodeStreamProtocol, "tool results do not match the committed call group")
 			}
+			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, executeErr)
+		}
+		if outputErr := runtime.commitToolOutputs(ctx, turnID, results); outputErr != nil {
+			runtime.poisoned.Store(true)
+			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, outputErr)
 		}
 		if runtime.toolTurn.resultBudget.BodyExhausted() {
 			return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, fault.New(fault.CodeToolResultBudgetExceeded, "tool result budget exhausted"))
@@ -439,7 +398,8 @@ func (runtime *Runtime) releaseFailedContinuation(ctx context.Context, operation
 		return
 	}
 	if resetter := runtime.providerOperations.continuation; resetter != nil {
-		resetter.ResetContinuation()
+		// 已有操作错误；若会话有其他 owner，由它负责在当前生命周期收口。
+		_ = resetter.ResetContinuation()
 	}
 }
 
@@ -628,11 +588,7 @@ func (runtime *Runtime) beginTurn(ctx context.Context, emit Emitter) (domain.Tur
 }
 
 func (runtime *Runtime) planTurnInput() (provider.TurnInput, contextplan.ContextPlan, error) {
-	footprint, err := runtime.conversation.HistoryFootprint()
-	if err != nil {
-		return provider.TurnInput{}, contextplan.ContextPlan{}, err
-	}
-	view, err := runtime.conversation.ProjectActiveContext()
+	view, footprint, err := runtime.conversation.ProjectContextWindow()
 	if err != nil {
 		return provider.TurnInput{}, contextplan.ContextPlan{}, err
 	}
@@ -642,7 +598,7 @@ func (runtime *Runtime) planTurnInput() (provider.TurnInput, contextplan.Context
 func (runtime *Runtime) consumeProviderStream(
 	ctx context.Context,
 	cancel context.CancelFunc,
-	stream <-chan provider.StreamEvent,
+	stream provider.StreamEvents,
 	emit Emitter,
 	turnID domain.TurnID,
 ) (provider.StreamEvent, error) {
@@ -692,8 +648,6 @@ func (runtime *Runtime) consumeProviderStream(
 			} else if ctx.Err() == nil {
 				emit(runtime.decorate(semantic, turnID))
 			}
-		case provider.StreamEventNative:
-			// Provider 原生 item 只由 Conversation staging 持有，Runtime 不解释 wire。
 		}
 	}
 
@@ -902,7 +856,7 @@ func (runtime *Runtime) commitCallSample(
 	drafts := make([]session.RecordDraft, 0, len(ready)+2)
 	drafts = append(drafts, commitDraft, usageDraft)
 	for index, call := range ready {
-		if runtime.toolPolicy.Decide(call) == tool.PolicyDeny {
+		if runtime.tools.Policy.Decide(call) == tool.PolicyDeny {
 			discardPreparedSample(sample)
 			return nil, fault.New(fault.CodeTurnFailed, "tool call is denied")
 		}
@@ -992,7 +946,7 @@ func (runtime *Runtime) executeToolCalls(ctx context.Context, turnID domain.Turn
 		}
 		runtime.toolTurn.activityEmitter(runtime.decorate(event, turnID))
 	}
-	return (orderedToolScheduler{operations: runtime, observations: &runtime.readObservations}).execute(ctx, turnID, invocations, emitters...)
+	return runtime.scheduleToolCalls(ctx, turnID, invocations, runtime.toolTurn.activityEmitter)
 }
 
 func (runtime *Runtime) executeReadBatch(ctx context.Context, turnID domain.TurnID, invocations []tool.Invocation) ([]tool.InvocationResult, error) {
@@ -1017,37 +971,19 @@ func (runtime *Runtime) executeReadBatch(ctx context.Context, turnID domain.Turn
 			results[index] = tool.NewInvocationErrorResult(invocation, tool.ResultError, "result_budget_exceeded", "Tool not executed: turn result budget exhausted")
 			continue
 		}
-		if ctx.Err() != nil {
-			results[index] = tool.NewInvocationErrorResult(invocation, tool.ResultCancelled, "cancelled", "Tool cancelled")
-			continue
-		}
-		startedDraft, err := session.NewToolExecutionStartedDraft(turnID, invocation.InvocationID())
+		admitted, err := runtime.admitToolExecution(ctx, turnID, invocation)
 		if err != nil {
-			return nil, fault.Wrap(fault.CodeStreamProtocol, "tool execution start is invalid", err)
-		}
-		records, err := runtime.journal.AppendBatch(ctx, []session.RecordDraft{startedDraft})
-		if err != nil {
-			if errors.Is(err, context.Canceled) && !runtime.journal.Poisoned() {
-				results[index] = tool.NewInvocationErrorResult(invocation, tool.ResultCancelled, "cancelled", "Tool cancelled")
-				continue
-			}
-			if runtime.journal.Poisoned() {
-				runtime.poisoned.Store(true)
-			}
 			persistCount = index
-			admissionErr = fault.Wrap(fault.CodeSessionWrite, "persist tool execution start failed", err)
+			admissionErr = err
 			break
 		}
-		if len(records) != 1 {
-			runtime.poisoned.Store(true)
-			return nil, fault.New(fault.CodeSessionWrite, "tool start has no durable sequence")
-		}
-		if _, err := runtime.registerExecutionAdmission(invocation, records[0].Sequence); err != nil {
-			runtime.poisoned.Store(true)
-			return nil, err
+		if !admitted {
+			for next := index; next < len(invocations); next++ {
+				results[next] = tool.NewInvocationErrorResult(invocations[next], tool.ResultCancelled, "cancelled", "Tool cancelled")
+			}
+			break
 		}
 		started[index] = true
-		runtime.emitToolStarted(turnID, invocation)
 		if invocation.Capability() == tool.CapabilityGlob || invocation.Capability() == tool.CapabilityGrep {
 			savingReasons[index] = "storage_unavailable"
 			if runtime.textOutputStore != nil {
@@ -1130,19 +1066,19 @@ func (runtime *Runtime) executeInvocation(ctx context.Context, invocation tool.I
 	switch invocation.Capability() {
 	case tool.CapabilitySkill:
 		v, _ := invocation.Skill()
-		return tool.NewSkillMaterial(runtime.skillExecutor.Execute(ctx, v, append([]domain.SkillAttachment(nil), runtime.explicitSkills...)))
+		return tool.NewSkillMaterial(runtime.tools.Skill.Execute(ctx, v, append([]domain.SkillAttachment(nil), runtime.explicitSkills...)))
 	case tool.CapabilityReadArtifact:
 		v, _ := invocation.ReadArtifact()
-		return tool.NewArtifactMaterial(runtime.readArtifactExecutor.Execute(ctx, v))
+		return tool.NewArtifactMaterial(runtime.tools.ReadArtifact.Execute(ctx, v))
 	case tool.CapabilityRead:
 		v, _ := invocation.Read()
-		return tool.NewReadMaterial(runtime.readExecutor.Execute(ctx, v))
+		return tool.NewReadMaterial(runtime.tools.Read.Execute(ctx, v))
 	case tool.CapabilityGlob:
 		v, _ := invocation.Glob()
-		return tool.NewSearchMaterial(runtime.globExecutor.Execute(ctx, v, capture))
+		return tool.NewSearchMaterial(runtime.tools.Glob.Execute(ctx, v, capture))
 	case tool.CapabilityGrep:
 		v, _ := invocation.Grep()
-		return tool.NewSearchMaterial(runtime.grepExecutor.Execute(ctx, v, capture))
+		return tool.NewSearchMaterial(runtime.tools.Grep.Execute(ctx, v, capture))
 	default:
 		return tool.ReadonlyMaterial{}, errors.New("invalid readonly capability")
 	}

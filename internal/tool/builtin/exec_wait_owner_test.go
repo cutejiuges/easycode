@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	childprocess "easycode/internal/executor/process"
 	"easycode/internal/tool"
 )
 
@@ -13,7 +14,7 @@ func TestProcessExecutionKeepsUniqueReaperUntilFinalWaitCompletes(t *testing.T) 
 	release, entered := make(chan struct{}), make(chan struct{})
 	process := &fakeOwnedProcess{out: io.NopCloser(strings.NewReader("output")), errout: io.NopCloser(strings.NewReader("")), waitResult: make(chan processWaitResult, 1), waitEntered: entered, waitRelease: release}
 	process.waitResult <- processWaitResult{exit: 0}
-	execution, err := newProcessExecution(&fakeProcessLauncher{process: process}, wallProcessClock{}, processTestCandidate(t), tool.RenderExecOutput)
+	execution, err := newProcessExecution(&fakeProcessLauncher{process: process}, childprocess.WallClock{}, processTestCandidate(t), tool.RenderExecOutput)
 	if err != nil {
 		t.Fatal(err)
 	}

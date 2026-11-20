@@ -24,7 +24,7 @@ func taskCacheFixture(t *testing.T, instance *Provider) (*Conversation, []provid
 		}}, Metadata: messageMetadata{ID: "task", Model: instance.config.Model},
 	}})
 	for _, entry := range entries {
-		c.history.commit(entry)
+		c.history.Append(entry)
 	}
 	input, err := tool.DecodeTodoWriteInput([]byte(taskNativeInput))
 	if err != nil {
@@ -56,7 +56,7 @@ func taskCacheFixture(t *testing.T, instance *Provider) (*Conversation, []provid
 		t.Fatal(err)
 	}
 	var records []provider.RestoreRecord
-	for _, entry := range c.history.snapshot() {
+	for _, entry := range c.history.Entries() {
 		envelope, err := encodeNativeCommit(entry)
 		if err != nil {
 			t.Fatal(err)
@@ -96,19 +96,19 @@ func taskCacheFixture(t *testing.T, instance *Provider) (*Conversation, []provid
 
 func assertTaskCacheEquivalent(t *testing.T, left, right *Conversation, input provider.TurnInput) codec.CanonicalJSON {
 	t.Helper()
-	a, err := left.compileSamplingRequest(left.history.snapshot(), input)
+	a, err := left.compileSamplingRequest(left.history.Entries(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := right.compileSamplingRequest(right.history.snapshot(), input)
+	b, err := right.compileSamplingRequest(right.history.Entries(), input)
 	if err != nil || !bytes.Equal(a.Bytes(), b.Bytes()) {
 		t.Fatal("task cache restore changed complete canonical request", err)
 	}
-	nativeA, err := codec.MarshalStable(left.history.snapshot())
+	nativeA, err := codec.MarshalStable(left.history.Entries())
 	if err != nil {
 		t.Fatal(err)
 	}
-	nativeB, err := codec.MarshalStable(right.history.snapshot())
+	nativeB, err := codec.MarshalStable(right.history.Entries())
 	if err != nil || !bytes.Equal(nativeA, nativeB) || !bytes.Contains(nativeA, []byte("opaque-task-cache")) || !bytes.Contains(nativeA, []byte("opaque-task-redacted")) {
 		t.Fatal("task cache restore changed native opaque bytes or item order", err)
 	}
@@ -120,11 +120,19 @@ func assertTaskCacheEquivalent(t *testing.T, left, right *Conversation, input pr
 	if err != nil || evidenceA.NativeFingerprint() != evidenceB.NativeFingerprint() || !bytes.Equal(evidenceA.Properties().Bytes(), evidenceB.Properties().Bytes()) || reasoningCacheSources(t, left) != reasoningCacheSources(t, right) {
 		t.Fatal("task cache restore changed request or source fingerprints", err)
 	}
-	receiptA, err := left.describeRequest(a, evidenceA, domain.RequestSample)
+	markersA, err := requestMarkerCount(a, left.provider.config.CachePolicy.Anthropic())
 	if err != nil {
 		t.Fatal(err)
 	}
-	receiptB, err := right.describeRequest(b, evidenceB, domain.RequestSample)
+	receiptA, err := left.describeRequest(compiledMessagesRequest{body: a, markers: markersA}, evidenceA, domain.RequestSample)
+	if err != nil {
+		t.Fatal(err)
+	}
+	markersB, err := requestMarkerCount(b, right.provider.config.CachePolicy.Anthropic())
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiptB, err := right.describeRequest(compiledMessagesRequest{body: b, markers: markersB}, evidenceB, domain.RequestSample)
 	if err != nil || receiptA.RequestFingerprint != receiptB.RequestFingerprint || receiptA.NativeFingerprint != receiptB.NativeFingerprint || receiptA.Markers != receiptB.Markers {
 		t.Fatal("task cache restore changed receipt fingerprints or markers", err)
 	}
@@ -171,8 +179,8 @@ func TestTaskCacheTTLNativeCheckpointAndRestore(t *testing.T) {
 	if tail.Type != blockTypeToolResult || (tail.CacheControl != nil) != (mode != domain.AnthropicCacheDisabled) || bytes.Count(wire.Bytes(), []byte("检查中文代码")) != 1 {
 		t.Fatal("cache overlay misplaced or duplicated the task result")
 	}
-	before, _ := codec.MarshalStable(live.history.snapshot())
-	transcript, err := live.ProjectTranscript()
+	before, _ := codec.MarshalStable(live.history.Entries())
+	transcript, _, err := live.ProjectTranscriptFrom(0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +192,7 @@ func TestTaskCacheTTLNativeCheckpointAndRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	preview, err := live.PreflightCompaction(compact)
+	preview, _, err := live.PreflightCompaction(compact)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,8 +217,8 @@ func TestTaskCacheTTLNativeCheckpointAndRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	wire = assertTaskCacheEquivalent(t, live, value.(*Conversation), input)
-	after, _ := codec.MarshalStable(live.history.snapshot())
-	restoredTranscript, err := value.(*Conversation).ProjectTranscript()
+	after, _ := codec.MarshalStable(live.history.Entries())
+	restoredTranscript, _, err := value.(*Conversation).ProjectTranscriptFrom(0)
 	if err != nil || !bytes.Equal(before, after) || !reflect.DeepEqual(transcript, restoredTranscript) || bytes.Count(wire.Bytes(), []byte("检查中文代码")) != 1 || bytes.Contains(wire.Bytes(), []byte("result_sequence")) {
 		t.Fatal("task checkpoint lost frozen history or duplicated prompt state", err)
 	}

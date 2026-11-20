@@ -23,7 +23,7 @@ func fileStopBridgeHistory(t *testing.T) (*Conversation, []provider.RestoreRecor
 		if err != nil {
 			t.Fatal(err)
 		}
-		c.history.commit(feedback)
+		c.history.Append(feedback)
 		user, err := domain.NewUserInput(domain.InputID(fmt.Sprintf("01900000-0000-7000-8000-%012d", 12+index)), frozen.Text())
 		if err != nil {
 			t.Fatal(err)
@@ -45,17 +45,17 @@ func fileStopBridgeHistory(t *testing.T) (*Conversation, []provider.RestoreRecor
 		if err != nil {
 			t.Fatal(err)
 		}
-		c.history.commit(entry)
+		c.history.Append(entry)
 		if index == 0 {
 			sample := stopTestSample(stopTestTurn, "long answer")
 			for i := 0; i < 18; i++ {
 				sample.Assistant.Content = append(sample.Assistant.Content, NativeItem{Type: blockTypeText, Text: fmt.Sprintf("part-%02d", i)})
 			}
-			c.history.commit(sample)
+			c.history.Append(sample)
 		}
 	}
 	var envelopes []provider.NativeCommitEnvelope
-	for _, entry := range c.history.snapshot() {
+	for _, entry := range c.history.Entries() {
 		envelope, err := encodeNativeCommit(entry)
 		if err != nil {
 			t.Fatal(err)
@@ -72,7 +72,7 @@ func TestFileStopCacheBridgeUsesActualMessagesAndRestoresExactly(t *testing.T) {
 		t.Fatal(err)
 	}
 	restored := value.(*Conversation)
-	beforeNative, err := codec.MarshalStable(c.history.snapshot())
+	beforeNative, err := codec.MarshalStable(c.history.Entries())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestFileStopCacheBridgeUsesActualMessagesAndRestoresExactly(t *testing.T) {
 				t.Run(fmt.Sprintf("project=%t/summary=%t/%s", project, summary, mode), func(t *testing.T) {
 					var original []byte
 					for _, conversation := range []*Conversation{c, restored} {
-						plan, err := conversation.planSamplingRequest(conversation.history.snapshot(), input)
+						plan, err := conversation.planSamplingRequest(conversation.history.Snapshot(), input)
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -138,10 +138,10 @@ func TestFileStopCacheBridgeUsesActualMessagesAndRestoresExactly(t *testing.T) {
 			}
 		}
 	}
-	afterNative, _ := codec.MarshalStable(restored.history.snapshot())
-	unchangedNative, _ := codec.MarshalStable(c.history.snapshot())
-	left, leftErr := c.HistoryFootprint()
-	right, rightErr := restored.HistoryFootprint()
+	afterNative, _ := codec.MarshalStable(restored.history.Entries())
+	unchangedNative, _ := codec.MarshalStable(c.history.Entries())
+	_, left, leftErr := c.ProjectContextWindow()
+	_, right, rightErr := restored.ProjectContextWindow()
 	if !bytes.Equal(beforeNative, afterNative) || !bytes.Equal(beforeNative, unchangedNative) || leftErr != nil || rightErr != nil || left != right || !reflect.DeepEqual(c.ProjectHistory(), restored.ProjectHistory()) || reasoningCacheSources(t, c) != reasoningCacheSources(t, restored) {
 		t.Fatal("cache overlay changed native content, projection, footprint or fingerprints")
 	}

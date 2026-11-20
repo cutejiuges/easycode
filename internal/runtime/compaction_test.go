@@ -54,19 +54,29 @@ func (conversation *compactionConversation) ProjectActiveContext() (domain.Activ
 	}
 	return domain.NewActiveContextView(history, summary, revision)
 }
-func (conversation *compactionConversation) PreflightCompaction(input provider.CompactionInput) (provider.CompactionPreview, error) {
+
+func (conversation *compactionConversation) ProjectContextWindow() (domain.ActiveContextView, domain.NativeHistoryFootprint, error) {
+	footprint, err := conversation.HistoryFootprint()
+	if err != nil {
+		return domain.ActiveContextView{}, domain.NativeHistoryFootprint{}, err
+	}
+	view, err := conversation.ProjectActiveContext()
+	return view, footprint, err
+}
+func (conversation *compactionConversation) PreflightCompaction(input provider.CompactionInput) (provider.CompactionPreview, provider.ContextWindowProjection, error) {
 	if conversation.policies != nil {
 		conversation.policies <- input.Sampling().InferenceSettings()
 	}
 	if conversation.installed.Load() {
-		return provider.CompactionPreview{}, provider.NewCompactionError(provider.CompactionNothing)
+		return provider.CompactionPreview{}, nil, provider.NewCompactionError(provider.CompactionNothing)
 	}
 	source, err := provider.NewCompactionSource(domain.ProviderOpenAI, "responses", "model", conversation.revision, conversation.revision, provider.RootCompactionPredecessor(), strings.Repeat("a", 64))
 	if err != nil {
-		return provider.CompactionPreview{}, err
+		return provider.CompactionPreview{}, nil, err
 	}
 	tokens, _ := domain.NewEstimatedTokenEstimate(estimate.MethodByteHeuristic, 50000)
-	return provider.NewCompactionPreview(source, input, tokens)
+	preview, err := provider.NewCompactionPreview(source, input, tokens)
+	return preview, conversation.ProjectContextWindow, err
 }
 func (conversation *compactionConversation) RunCompaction(ctx context.Context, id domain.CompactionID, preview provider.CompactionPreview) (*provider.PreparedCompaction, error) {
 	conversation.generated.Add(1)

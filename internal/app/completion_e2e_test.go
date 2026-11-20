@@ -319,11 +319,11 @@ func testCompletionRequestCases(t *testing.T, pluginPackage bool, selection stri
 					if snapshots[0].StableFingerprint != snapshots[1].StableFingerprint || snapshots[0].ContentFingerprint != snapshots[1].ContentFingerprint || !reflect.DeepEqual(snapshots[0].Sources, snapshots[1].Sources) || snapshots[0].LastSample.NativeFingerprint != snapshots[1].LastSample.NativeFingerprint {
 						t.Fatal("completion changed cache/native fingerprints")
 					}
-					left, err := resources[0].transcriptQueries.projector.(provider.Conversation).HistoryFootprint()
+					_, left, err := resources[0].transcriptQueries.projector.(provider.Conversation).ProjectContextWindow()
 					if err != nil {
 						t.Fatal(err)
 					}
-					right, err := resources[1].transcriptQueries.projector.(provider.Conversation).HistoryFootprint()
+					_, right, err := resources[1].transcriptQueries.projector.(provider.Conversation).ProjectContextWindow()
 					if err != nil || !reflect.DeepEqual(left, right) {
 						t.Fatal("native footprint differs", err)
 					}

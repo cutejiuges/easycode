@@ -8,7 +8,9 @@ import (
 	"os"
 	"testing"
 
+	"easycode/internal/fault"
 	"easycode/internal/provider/anthropic"
+	"easycode/internal/provider/openai"
 	"easycode/internal/secret"
 )
 
@@ -95,5 +97,40 @@ func TestThinkingUsageFixedCurrentRestoreAndRejectBeforeRepair(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestOpenAISampleUsageRejectsKnownZeroForUnknownBeforeRepair(t *testing.T) {
+	fixture, err := os.ReadFile("../session/testdata/current/question_openai_complete.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalid := append(corruptThinkingFact(t, fixture,
+		`"reasoning_output":{"state":"unknown"}`, `"reasoning_output":{"state":"known","value":0}`), []byte(`{"torn":`)...)
+	root, path, thread := installPreviewFixture(t, invalid)
+	ctx := context.Background()
+	service, err := openSessionService(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer service.close()
+	instance, err := openai.New(openai.Config{BaseURL: "https://example.invalid", Model: "gpt-test", APIKey: secret.New("fixture-key")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer instance.Close()
+	assembled, err := service.resume(ctx, testSessionProvider(instance, "responses"), "gpt-test", thread)
+	if err == nil {
+		_ = assembled.writer.Close(ctx)
+	}
+	if summary := fault.Project(err); summary.Code != fault.CodeSessionCorruption || summary.Message != "sample usage is invalid" {
+		t.Errorf("resume must reject the sample evidence: %v", err)
+	}
+	if _, _, err := previewSession(ctx, root, thread, defaultPreviewDependencies()); err == nil || err.Error() != "sample usage does not match native facts" {
+		t.Errorf("preview must reject the sample evidence: %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(invalid, after) {
+		t.Fatalf("rejected journal changed: %v", err)
 	}
 }

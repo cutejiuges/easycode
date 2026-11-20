@@ -197,7 +197,7 @@ func (runtime *Runtime) recheckCompactionFocus(admission compactionAdmission, ou
 	if err != nil {
 		return outcome.fail(protocol.CompactionFailureBudget, domain.HookFeedbackBudgetExceeded)
 	}
-	preview, err := admission.kernel.PreflightCompaction(input)
+	preview, _, err := admission.kernel.PreflightCompaction(input)
 	if err != nil {
 		var failure *provider.CompactionError
 		if codec.IsCanonicalSizeLimit(err) || errors.As(err, &failure) && failure.Code() == provider.CompactionBudgetExceeded {

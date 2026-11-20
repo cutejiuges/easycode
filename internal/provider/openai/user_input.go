@@ -22,7 +22,7 @@ func (conversation *Conversation) PrepareUserInputs(a domain.InputAssociation, i
 
 func (conversation *Conversation) inputPreparation() provider.NativeInputPreparation[nativeHistoryEntry] {
 	return provider.NativeInputPreparation[nativeHistoryEntry]{
-		History: &conversation.history.NativeHistory, Active: &conversation.active, Pending: &conversation.pending,
+		History: &conversation.history, Operations: &conversation.operations,
 		UserEntry: userInputEntry, Feedback: stopFeedbackEntry, Encode: encodeNativeCommit,
 		Validate: validateNativeHistory, Footprint: historyFootprint, Project: projectHistory,
 		CheckRequest: func(entries []nativeHistoryEntry, input provider.TurnInput) error {
@@ -49,8 +49,8 @@ func (conversation *Conversation) compileSamplingWindow(entries []nativeHistoryE
 	return plan.body()
 }
 
-func (conversation *Conversation) planSamplingRequest(history []nativeHistoryEntry, input provider.TurnInput) (samplingRequestPlan, error) {
-	return conversation.planWindowSamplingRequest(input, func() []nativeHistoryEntry { return conversation.windowRequestEntries(history) })
+func (conversation *Conversation) planSamplingRequest(window nativeWindowSnapshot, input provider.TurnInput) (samplingRequestPlan, error) {
+	return conversation.planWindowSamplingRequest(input, func() []nativeHistoryEntry { return window.RequestEntries() })
 }
 
 func (conversation *Conversation) planWindowSamplingRequest(input provider.TurnInput, activeWindow func() []nativeHistoryEntry) (samplingRequestPlan, error) {
@@ -89,31 +89,15 @@ func (conversation *Conversation) EncodeUserInputs(a domain.InputAssociation, in
 }
 
 func userInputEntry(a domain.InputAssociation, inputs []domain.UserInput) (nativeHistoryEntry, error) {
-	if err := provider.ValidateUserInputs(a, inputs); err != nil {
-		return nativeHistoryEntry{}, err
-	}
-	metadata, err := provider.NewInputMetadata(a)
+	metadata, messages, err := provider.EncodeUserInputMessages(a, inputs, func(blocks []string) NativeItem {
+		content := make([]ContentPart, len(blocks))
+		for i, text := range blocks {
+			content[i] = ContentPart{Type: "input_text", Text: text}
+		}
+		return NativeItem{Type: "message", Role: "user", Content: content}
+	})
 	if err != nil {
 		return nativeHistoryEntry{}, err
 	}
-	entry := nativeHistoryEntry{Kind: nativeHistoryUserInputs, TurnID: a.TurnID(), InputMetadata: &metadata, UserInputs: make([]NativeItem, len(inputs))}
-	for i, input := range inputs {
-		entry.UserInputs[i] = NewUserItem(input.Text())
-		if a, ok := input.SkillAttachment(); ok {
-			entry.UserInputs[i].Content = append(entry.UserInputs[i].Content, ContentPart{Type: "input_text", Text: a.Content})
-			metadata.Skills = append(metadata.Skills, provider.InputSkillMetadata{InputID: input.ID(), Attachment: a})
-		}
-		files := input.FileAttachments()
-		if files.Len() > 0 {
-			metadata.Files = append(metadata.Files, provider.InputFileMetadata{InputID: input.ID(), Attachments: files})
-		}
-		for _, attachment := range files.Items() {
-			text, err := attachment.RenderedText()
-			if err != nil {
-				return nativeHistoryEntry{}, err
-			}
-			entry.UserInputs[i].Content = append(entry.UserInputs[i].Content, ContentPart{Type: "input_text", Text: text})
-		}
-	}
-	return entry, nil
+	return nativeHistoryEntry{Kind: nativeHistoryUserInputs, TurnID: a.TurnID(), InputMetadata: &metadata, UserInputs: messages}, nil
 }

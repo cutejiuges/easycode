@@ -170,9 +170,7 @@ func (s *workspaceInputSource) Prepare(ctx context.Context, command protocol.Com
 		return protocol.Command{}, fileInputFailure(err)
 	}
 	defer s.finishPreparation(owner)
-	if err := command.InputDraft().Validate(); err != nil {
-		return protocol.Command{}, fileInputFailure(err)
-	}
+	refs := command.InputDraft().FileReferences()
 	skill, hasSkill, err := s.skills.Prepare(readContext, command.Text())
 	if err != nil {
 		return protocol.Command{}, fileInputFailure(err)
@@ -180,22 +178,19 @@ func (s *workspaceInputSource) Prepare(ctx context.Context, command protocol.Com
 	if hasSkill {
 		command, err = command.WithSkillAttachment(skill)
 		if err != nil {
-			return protocol.Command{}, fileInputFailure(err)
+			return protocol.Command{}, fault.Wrap(fault.CodeInvalidInput, "Skill attachment is invalid", err)
 		}
 	}
-	files, err := prepareWorkspaceFiles(readContext, command.InputDraft(), s.workspace)
+	files, err := prepareWorkspaceFiles(readContext, refs, s.workspace)
 	if err != nil {
 		return protocol.Command{}, fileInputFailure(err)
 	}
 	command, err = command.WithFileAttachments(files)
 	if err != nil {
-		return protocol.Command{}, fileInputFailure(err)
+		return protocol.Command{}, fault.Wrap(fault.CodeInvalidInput, "file attachments are invalid", err)
 	}
 	if err = readContext.Err(); err != nil {
 		return protocol.Command{}, err
-	}
-	if err = command.ValidateForAdmission(); err != nil {
-		return protocol.Command{}, fileInputFailure(err)
 	}
 	return command, nil
 }

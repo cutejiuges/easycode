@@ -10,21 +10,27 @@ import (
 	"time"
 
 	"easycode/internal/domain"
+	childprocess "easycode/internal/executor/process"
 	"easycode/internal/tool"
 )
+
+type processWaitResult struct {
+	exit int
+	err  error
+}
 
 type fakeProcessTimer struct {
 	ticks    chan time.Time
 	duration time.Duration
 }
 
-func (timer *fakeProcessTimer) channel() <-chan time.Time { return timer.ticks }
-func (*fakeProcessTimer) stop()                           {}
+func (timer *fakeProcessTimer) Channel() <-chan time.Time { return timer.ticks }
+func (*fakeProcessTimer) Stop()                           {}
 
 type fakeProcessClock struct{ timers chan *fakeProcessTimer }
 
-func (*fakeProcessClock) now() time.Time { return time.Unix(0, 0) }
-func (clock *fakeProcessClock) timer(duration time.Duration) processTimer {
+func (*fakeProcessClock) Now() time.Time { return time.Unix(0, 0) }
+func (clock *fakeProcessClock) Timer(duration time.Duration) childprocess.Timer {
 	timer := &fakeProcessTimer{ticks: make(chan time.Time, 1), duration: duration}
 	clock.timers <- timer
 	return timer
@@ -33,6 +39,7 @@ func (clock *fakeProcessClock) timer(duration time.Duration) processTimer {
 type fakeOwnedProcess struct {
 	mu              sync.Mutex
 	out, errout     io.ReadCloser
+	input           io.WriteCloser
 	waitResult      chan processWaitResult
 	alive           bool
 	signals         []bool
@@ -48,16 +55,17 @@ type fakeOwnedProcess struct {
 	waitRelease     <-chan struct{}
 }
 
-func (process *fakeOwnedProcess) stdout() io.ReadCloser { return process.out }
-func (process *fakeOwnedProcess) stderr() io.ReadCloser { return process.errout }
-func (process *fakeOwnedProcess) observeExit() error {
+func (*fakeOwnedProcess) Stdin() io.WriteCloser         { return nil }
+func (process *fakeOwnedProcess) Stdout() io.ReadCloser { return process.out }
+func (process *fakeOwnedProcess) Stderr() io.ReadCloser { return process.errout }
+func (process *fakeOwnedProcess) ObserveExit() error {
 	result := <-process.waitResult
 	process.mu.Lock()
 	process.observedResult = result
 	process.mu.Unlock()
 	return result.err
 }
-func (process *fakeOwnedProcess) wait() (int, error) {
+func (process *fakeOwnedProcess) Wait() (int, error) {
 	if process.waitEntered != nil {
 		close(process.waitEntered)
 	}
@@ -71,7 +79,7 @@ func (process *fakeOwnedProcess) wait() (int, error) {
 	process.mu.Unlock()
 	return result.exit, result.err
 }
-func (process *fakeOwnedProcess) groupAlive() (bool, error) {
+func (process *fakeOwnedProcess) GroupAlive() (bool, error) {
 	process.mu.Lock()
 	defer process.mu.Unlock()
 	if process.reaped {
@@ -80,7 +88,7 @@ func (process *fakeOwnedProcess) groupAlive() (bool, error) {
 	}
 	return process.alive, process.probeError
 }
-func (process *fakeOwnedProcess) terminate(force bool) error {
+func (process *fakeOwnedProcess) Terminate(force bool) error {
 	process.mu.Lock()
 	if process.reaped {
 		process.staleOperations++
@@ -108,7 +116,7 @@ type fakeProcessLauncher struct {
 	started chan struct{}
 }
 
-func (launcher *fakeProcessLauncher) start(context.Context, tool.ExecCandidate) (processHandle, error) {
+func (launcher *fakeProcessLauncher) start(context.Context, tool.ExecCandidate) (childprocess.Handle, error) {
 	launcher.calls++
 	if launcher.started != nil {
 		close(launcher.started)
@@ -144,7 +152,7 @@ func TestProcessExecutionCompletesAndCannotRerun(t *testing.T) {
 		}
 		return tool.RenderExecOutput(stdout, stderr, metadata, allowance)
 	}
-	execution, err := newProcessExecution(launcher, wallProcessClock{}, processTestCandidate(t), renderer)
+	execution, err := newProcessExecution(launcher, childprocess.WallClock{}, processTestCandidate(t), renderer)
 	if err != nil || launcher.calls != 0 {
 		t.Fatal("constructor launched process")
 	}
@@ -272,7 +280,7 @@ func TestProcessExecutionDrainsBothStreamsBeforeWait(t *testing.T) {
 		out, outWriter := io.Pipe()
 		errout, errWriter := io.Pipe()
 		process := &fakeOwnedProcess{out: out, errout: errout, waitResult: make(chan processWaitResult, 1)}
-		execution, err := newProcessExecution(&fakeProcessLauncher{process: process}, wallProcessClock{}, processTestCandidate(t), tool.RenderExecOutput)
+		execution, err := newProcessExecution(&fakeProcessLauncher{process: process}, childprocess.WallClock{}, processTestCandidate(t), tool.RenderExecOutput)
 		if err != nil {
 			t.Fatal(err)
 		}

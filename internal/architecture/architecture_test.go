@@ -117,8 +117,8 @@ func forbiddenDependencyReason(packagePath string, imported string) string {
 	}
 
 	if packagePath == "easycode/internal/session/catalog" && strings.HasPrefix(imported, "easycode/internal/") &&
-		imported != "easycode/internal/session" && imported != "easycode/internal/domain" {
-		return "session/catalog 只能依赖 session/domain"
+		imported != "easycode/internal/session" && imported != "easycode/internal/domain" && imported != "easycode/internal/codec" {
+		return "session/catalog 只能依赖 session/domain/codec"
 	}
 	if imported == "easycode/internal/app" || strings.HasPrefix(imported, "easycode/cmd/") {
 		if packagePath != "easycode/cmd/easycode" {

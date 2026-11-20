@@ -19,7 +19,6 @@ type StreamControlLoop interface {
 	CloseInput(context.Context) error
 	Stop(context.Context) error
 	Outputs() <-chan protocol.ControlItem
-	Done() <-chan struct{}
 }
 
 // StreamRunConfig 固定一个长期 stream-json 会话的身份与可解除阻塞 transport。
@@ -50,7 +49,8 @@ func NewStreamRunner(loop StreamControlLoop, config StreamRunConfig) (*StreamRun
 }
 
 type streamReaderResult struct {
-	err error
+	err             error
+	protocolFailure bool
 }
 
 type streamTransportRequest struct {
@@ -138,8 +138,10 @@ func (state *streamRunnerRunState) handleReader(result streamReaderResult) {
 	}
 	if state.ctx.Err() != nil {
 		state.setFailure(fault.Summary{Code: fault.CodeUserCancelled, Message: "stream control was cancelled", Cancelled: true})
-	} else {
+	} else if result.protocolFailure {
 		state.setFailure(fault.Summary{Code: fault.CodeStreamProtocol, Message: "stream input is invalid"})
+	} else {
+		state.setFailure(fault.Project(result.err))
 	}
 	state.requestTransport(true, false)
 	state.requestStop()
@@ -204,14 +206,13 @@ func (runner *StreamRunner) Run(ctx context.Context) Result {
 		close(stopTransport)
 		<-transportDone
 	}
+	defer stopTransportOwner()
 	encoder := NewStreamEncoder(runner.config.Output)
 	if err := encoder.Write(threadStarted); err != nil {
-		stopTransportOwner()
 		return outputFailure()
 	}
 	projectorValue, err := NewStreamProjector(runner.config.SessionID, runner.config.ThreadID)
 	if err != nil {
-		stopTransportOwner()
 		return failedResult(fault.New(fault.CodeStreamProtocol, "stream identity is invalid"))
 	}
 
@@ -236,7 +237,7 @@ func (runner *StreamRunner) Run(ctx context.Context) Result {
 	if !loopFinished {
 		readerDone = make(chan streamReaderResult, 1)
 		go func() {
-			readerDone <- streamReaderResult{err: readStreamCommands(runContext, runner.config.Input, runner.loop)}
+			readerDone <- readStreamCommands(runContext, runner.config.Input, runner.loop)
 		}()
 	}
 
@@ -274,7 +275,6 @@ func (runner *StreamRunner) Run(ctx context.Context) Result {
 		}
 	}
 
-	stopTransportOwner()
 	// 角色可能先于 transport 的取消通知全部退出，收口时仍须报告宿主取消。
 	if ctx.Err() != nil {
 		state.setFailure(fault.Summary{Code: fault.CodeUserCancelled, Message: "stream control was cancelled", Cancelled: true})
@@ -283,34 +283,35 @@ func (runner *StreamRunner) Run(ctx context.Context) Result {
 		return Result{Completed: true}
 	}
 	if state.outputUnavailable {
-		return Result{Failure: *state.pendingFailure, OutputUnavailable: true}
+		return outputFailure()
 	}
 	terminal, err := NewStreamErrorEvent(*state.pendingFailure)
 	if err != nil || encoder.Write(terminal) != nil {
+		state.requestTransport(true, true)
 		return outputFailure()
 	}
 	return Result{Failure: *state.pendingFailure, Reported: true}
 }
 
-func readStreamCommands(ctx context.Context, input io.Reader, loop StreamControlLoop) error {
+func readStreamCommands(ctx context.Context, input io.Reader, loop StreamControlLoop) streamReaderResult {
 	reader, err := NewStreamCommandReader(input)
 	if err != nil {
-		return err
+		return streamReaderResult{err: err}
 	}
 	for {
 		command, err := reader.ReadCommand()
-		if errors.Is(err, io.EOF) {
-			return loop.CloseInput(ctx)
+		if err == io.EOF {
+			return streamReaderResult{err: loop.CloseInput(ctx)}
 		}
 		if err != nil {
-			return err
+			return streamReaderResult{err: err, protocolFailure: !errors.Is(err, &fault.Error{Code: fault.CodeInputRead})}
 		}
 		result, err := loop.Submit(ctx, command)
 		if err != nil {
-			return err
+			return streamReaderResult{err: err}
 		}
 		if command.Kind() == protocol.CommandShutdown && result.Status() == protocol.CommandStatusAccepted {
-			return nil
+			return streamReaderResult{}
 		}
 	}
 }
@@ -327,13 +328,13 @@ func (runner *StreamRunner) ownTransport(
 	outputClosed := false
 	contextDone := ctx.Done()
 	closeRequested := func(closeInput bool, closeOutput bool) {
-		if closeInput && !inputClosed {
-			_ = runner.config.Input.Close()
-			inputClosed = true
-		}
 		if closeOutput && !outputClosed {
 			_ = runner.config.OutputCloser.Close()
 			outputClosed = true
+		}
+		if closeInput && !inputClosed {
+			_ = runner.config.Input.Close()
+			inputClosed = true
 		}
 	}
 	for {

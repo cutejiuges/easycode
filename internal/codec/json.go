@@ -3,6 +3,7 @@ package codec
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -67,6 +68,48 @@ func (value CanonicalJSON) Bytes() []byte {
 // Len 返回 canonical JSON 的字节数。
 func (value CanonicalJSON) Len() int {
 	return len(value.data)
+}
+
+// Equal 比较已冻结的 canonical 字节。
+func (value CanonicalJSON) Equal(other CanonicalJSON) bool {
+	return bytes.Equal(value.data, other.data)
+}
+
+// SHA256 返回已冻结 canonical 字节的内容摘要。
+func (value CanonicalJSON) SHA256() [sha256.Size]byte {
+	return sha256.Sum256(value.data)
+}
+
+// CanonicalArraySHA256 将无空白的数组边界和已冻结元素依次计入摘要。
+func CanonicalArraySHA256(items []CanonicalJSON, maxBytes int) ([sha256.Size]byte, error) {
+	if maxBytes <= 0 {
+		return [sha256.Size]byte{}, errors.New("canonical JSON size limit must be positive")
+	}
+	size := 2
+	if len(items) > 0 {
+		size += len(items) - 1
+	}
+	hash := sha256.New()
+	_, _ = hash.Write([]byte{'['})
+	for i, item := range items {
+		if size > maxBytes || item.Len() > maxBytes-size {
+			return [sha256.Size]byte{}, canonicalSizeError{maxBytes: maxBytes}
+		}
+		if item.Len() == 0 {
+			return [sha256.Size]byte{}, errors.New("canonical array item is required")
+		}
+		size += item.Len()
+		if i > 0 {
+			_, _ = hash.Write([]byte{','})
+		}
+		_, _ = hash.Write(item.data)
+	}
+	if size > maxBytes {
+		return [sha256.Size]byte{}, canonicalSizeError{maxBytes: maxBytes}
+	}
+	_, _ = hash.Write([]byte{']'})
+	var digest [sha256.Size]byte
+	return [sha256.Size]byte(hash.Sum(digest[:0])), nil
 }
 
 // Clone 返回与原值不共享可变字节的副本。

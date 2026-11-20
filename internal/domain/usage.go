@@ -45,6 +45,39 @@ func (metric UsageMetric) Value() (uint64, bool) {
 	return metric.value, metric.state == UsageMetricKnown
 }
 
+// UsageMetricFields 保存传输边界可表示的一个三态指标，不绑定编码格式。
+type UsageMetricFields struct {
+	State UsageMetricState
+	Value *uint64
+}
+
+func (metric UsageMetric) fields() UsageMetricFields {
+	fields := UsageMetricFields{State: metric.state}
+	value, known := metric.Value()
+	if known {
+		fields.Value = &value
+	}
+	return fields
+}
+
+// NewUsageMetric 从三态与可选值恢复指标，拒绝状态和值不符的输入。
+func NewUsageMetric(state UsageMetricState, value *uint64) (UsageMetric, error) {
+	switch state {
+	case UsageMetricKnown:
+		if value == nil {
+			return UsageMetric{}, fmt.Errorf("known usage metric requires a value")
+		}
+		return KnownUsageMetric(*value), nil
+	case UsageMetricUnknown, UsageMetricNotApplicable:
+		if value != nil {
+			return UsageMetric{}, fmt.Errorf("%s usage metric must not contain a value", state)
+		}
+		return UsageMetric{state: state}, nil
+	default:
+		return UsageMetric{}, fmt.Errorf("usage metric state is invalid")
+	}
+}
+
 // Validate 校验指标状态和值的不变量。
 func (metric UsageMetric) Validate() error {
 	switch metric.state {
@@ -67,6 +100,47 @@ type SampleUsage struct {
 	cacheWrite      UsageMetric
 	output          UsageMetric
 	reasoningOutput UsageMetric
+}
+
+// SampleUsageFields 保存三个编码边界共同使用的五项计量输入。
+type SampleUsageFields struct {
+	InputUncached   UsageMetricFields
+	CacheRead       UsageMetricFields
+	CacheWrite      UsageMetricFields
+	Output          UsageMetricFields
+	ReasoningOutput UsageMetricFields
+}
+
+// Fields 返回计量字段，已知值的指针各自指向独立副本。
+func (usage SampleUsage) Fields() SampleUsageFields {
+	return SampleUsageFields{
+		InputUncached: usage.inputUncached.fields(), CacheRead: usage.cacheRead.fields(),
+		CacheWrite: usage.cacheWrite.fields(), Output: usage.output.fields(),
+		ReasoningOutput: usage.reasoningOutput.fields(),
+	}
+}
+
+// NewSampleUsageFromFields 按稳定的字段顺序解析完整的计量值。
+func NewSampleUsageFromFields(fields SampleUsageFields) (SampleUsage, error) {
+	var usage SampleUsage
+	for _, field := range [...]struct {
+		name  string
+		input UsageMetricFields
+		out   *UsageMetric
+	}{
+		{"input_uncached", fields.InputUncached, &usage.inputUncached},
+		{"cache_read", fields.CacheRead, &usage.cacheRead},
+		{"cache_write", fields.CacheWrite, &usage.cacheWrite},
+		{"output", fields.Output, &usage.output},
+		{"reasoning_output", fields.ReasoningOutput, &usage.reasoningOutput},
+	} {
+		metric, err := NewUsageMetric(field.input.State, field.input.Value)
+		if err != nil {
+			return SampleUsage{}, fmt.Errorf("%s metric is invalid: %w", field.name, err)
+		}
+		*field.out = metric
+	}
+	return usage, nil
 }
 
 // NewSampleUsage 创建并校验不可变 sample usage。

@@ -133,7 +133,7 @@ func TestTaskSnapshotRejectsMissingConflictingAndOversizedFields(t *testing.T) {
 		strings.Replace(valid, `"completed":0`, `"completed":0,"completed":1`, 1),
 		strings.Replace(valid, `"explanation":`, `"profile":"todo_write","explanation":`, 1),
 		strings.Replace(valid, `"result_sequence":9`, `"result_sequence":0`, 1),
-		valid + `{}`, strings.Repeat(" ", MaxTaskSnapshotBytes) + valid,
+		valid + `{}`, strings.Repeat(" ", MaxTaskSnapshotPayloadBytes) + valid,
 	} {
 		forged := event
 		forged.Payload = []byte(raw)
@@ -155,7 +155,7 @@ func TestTaskSnapshotRejectsMissingConflictingAndOversizedFields(t *testing.T) {
 		}
 	}
 	encoded, err := codec.MarshalStable(event)
-	if err != nil || len(encoded) > MaxTaskSnapshotBytes {
+	if err != nil || len(encoded) > MaxTaskSnapshotPayloadBytes {
 		t.Fatal("complete snapshot was not bounded", err)
 	}
 	decoded, _ := DecodeTaskProgressSnapshot(event)

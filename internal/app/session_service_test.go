@@ -42,20 +42,20 @@ func (factory *fakeProviderFactory) NewConversation(threadID domain.ThreadID) (p
 	return &fakeAppConversation{family: factory.family, networkCalls: &factory.networkCalls}, nil
 }
 
-func (factory *fakeProviderFactory) RestoreConversation(threadID domain.ThreadID, commits []provider.RestoreRecord) (provider.Conversation, error) {
+func (factory *fakeProviderFactory) RestoreConversation(_ context.Context, threadID domain.ThreadID, commits []provider.RestoreRecord) (provider.Conversation, provider.CheckpointReader, error) {
 	factory.restoreCalls.Add(1)
 	if factory.restoreErr != nil {
-		return nil, factory.restoreErr
+		return nil, nil, factory.restoreErr
 	}
 	factory.restored = make([]provider.NativeCommitEnvelope, len(commits))
 	for index, commit := range commits {
 		cloned, err := commit.Envelope()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		factory.restored[index] = cloned
 	}
-	return &fakeAppConversation{family: factory.family, networkCalls: &factory.networkCalls}, nil
+	return &fakeAppConversation{family: factory.family, networkCalls: &factory.networkCalls}, nil, nil
 }
 
 type fakeAppConversation struct {
@@ -75,12 +75,12 @@ func (conversation *fakeAppConversation) ProjectHistory() domain.SemanticHistory
 	return domain.SemanticHistoryView{Provider: conversation.family, Turns: turns}
 }
 
-func (conversation *fakeAppConversation) HistoryFootprint() (domain.NativeHistoryFootprint, error) {
+func (conversation *fakeAppConversation) historyFootprint() (domain.NativeHistoryFootprint, error) {
 	estimated, _ := domain.NewEstimatedTokenEstimate(estimate.MethodByteHeuristic, 0)
 	return domain.NewNativeHistoryFootprint(conversation.family, 0, estimated)
 }
 
-func (conversation *fakeAppConversation) Stream(context.Context, provider.TurnInput) (<-chan provider.StreamEvent, error) {
+func (conversation *fakeAppConversation) Stream(context.Context, provider.TurnInput) (provider.StreamEvents, error) {
 	conversation.networkCalls.Add(1)
 	return nil, errors.New("unexpected network call")
 }

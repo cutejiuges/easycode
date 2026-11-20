@@ -182,11 +182,26 @@ func emptyHistory(family domain.ProviderFamily) domain.SemanticHistoryView {
 
 func testToolCatalog(t *testing.T) tool.CatalogSnapshot {
 	t.Helper()
-	catalog, err := tool.NewCatalogSnapshot(planningReadExecutor{}, planningGlobExecutor{}, planningGrepExecutor{}, catalogPatchPreparer{}, catalogPatchExecutor{}, catalogWritePreparer{}, catalogWriteExecutor{}, catalogExecFixture{}, catalogExecFixture{}, tool.RenderExecOutput, tool.NewApprovalPolicy(), catalogArtifactExecutor{}, catalogSkillExecutor{}, catalogQuestionFixture{}, catalogTaskFixture{})
+	binding, err := tool.NewBinding(tool.Components{
+		Read:         planningReadExecutor{},
+		Glob:         planningGlobExecutor{},
+		Grep:         planningGrepExecutor{},
+		PreparePatch: catalogPatchPreparer{},
+		Patch:        catalogPatchExecutor{},
+		PrepareWrite: catalogWritePreparer{},
+		Write:        catalogWriteExecutor{},
+		PrepareExec:  catalogExecFixture{},
+		Exec:         catalogExecFixture{},
+		Policy:       tool.NewApprovalPolicy(),
+		ReadArtifact: catalogArtifactExecutor{},
+		Skill:        catalogSkillExecutor{},
+		Question:     catalogQuestionFixture{},
+		Task:         catalogTaskFixture{},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return catalog
+	return binding.Catalog()
 }
 
 // catalogPatchPreparer 只用于验证目录装配，测试不会通过它访问文件系统。

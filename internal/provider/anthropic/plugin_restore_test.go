@@ -34,7 +34,7 @@ func TestPluginFixedNativeRestorePreservesOpaqueOrderCacheAndPrivateRevision(t *
 			t.Fatal(err)
 		}
 		entry.TurnID = "01900000-0000-7000-8000-000000000010"
-		live.history.commit(entry)
+		live.history.Append(entry)
 		envelopes = append(envelopes, envelope)
 	}
 	value, err := testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", testRestoreRecords(t, envelopes))
@@ -47,18 +47,18 @@ func TestPluginFixedNativeRestorePreservesOpaqueOrderCacheAndPrivateRevision(t *
 	catalog, _ := domain.NewSkillCatalog([]domain.SkillMetadata{metadata})
 	sampling, _ := testSamplingInput(t, restored.provider.config.Inference).WithToolCatalog(testAnthropicToolCatalog(t))
 	sampling, _ = sampling.WithSkillCatalog(catalog)
-	before, err := live.compileSamplingRequest(live.history.snapshot(), sampling)
+	before, err := live.compileSamplingRequest(live.history.Entries(), sampling)
 	if err != nil {
 		t.Fatal(err)
 	}
-	after, err := restored.compileSamplingRequest(restored.history.snapshot(), sampling)
+	after, err := restored.compileSamplingRequest(restored.history.Entries(), sampling)
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, _ := codec.MarshalStable(live.history.snapshot())
-	b, _ := codec.MarshalStable(restored.history.snapshot())
-	fa, ea := live.HistoryFootprint()
-	fb, eb := restored.HistoryFootprint()
+	a, _ := codec.MarshalStable(live.history.Entries())
+	b, _ := codec.MarshalStable(restored.history.Entries())
+	_, fa, ea := live.ProjectContextWindow()
+	_, fb, eb := restored.ProjectContextWindow()
 	if !bytes.Equal(a, b) || !bytes.Equal(before.Bytes(), after.Bytes()) || ea != nil || eb != nil || !reflect.DeepEqual(fa, fb) || reasoningCacheSources(t, live) != reasoningCacheSources(t, restored) {
 		t.Fatal("plugin restore changed request, native order, footprint or fingerprints")
 	}
@@ -68,14 +68,14 @@ func TestPluginFixedNativeRestorePreservesOpaqueOrderCacheAndPrivateRevision(t *
 		}
 	}
 	changed := testConversation(t, instance)
-	for i, entry := range live.history.snapshot() {
+	for i, entry := range live.history.Entries() {
 		if i == 0 {
 			entry.InputMetadata.Skills[0].Attachment.Revision = domain.SkillDigest("different private binding")
 		}
-		changed.history.commit(entry)
+		changed.history.Append(entry)
 	}
-	private, _ := changed.compileSamplingRequest(changed.history.snapshot(), sampling)
-	footprint, _ := changed.HistoryFootprint()
+	private, _ := changed.compileSamplingRequest(changed.history.Entries(), sampling)
+	_, footprint, _ := changed.ProjectContextWindow()
 	if !bytes.Equal(before.Bytes(), private.Bytes()) || !reflect.DeepEqual(fa, footprint) || reasoningCacheSources(t, live) != reasoningCacheSources(t, changed) {
 		t.Fatal("private attachment revision polluted model-visible bytes")
 	}

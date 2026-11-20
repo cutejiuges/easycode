@@ -155,7 +155,7 @@ func (m *Model) suppressPastedFiles() {
 
 func (m Model) findFileMentionTarget(cursor int) (domain.FileMentionTarget, bool) {
 	if m.resumeEnabled {
-		if _, local := resumeArgument(m.composer.text); local {
+		if head, _ := domain.SplitInputHead(m.composer.text); head == "/"+resumeCommandName {
 			return domain.FileMentionTarget{}, false
 		}
 	}

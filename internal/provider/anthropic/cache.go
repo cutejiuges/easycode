@@ -21,6 +21,9 @@ func (block cachedBlock) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if block.marker == nil && len(block.item.Raw) == 0 {
+		return original, nil
+	}
 	members, err := codec.ObjectMembers(original)
 	if err != nil {
 		return nil, err
@@ -73,87 +76,65 @@ func cacheable(item NativeItem) bool {
 		return false
 	}
 }
-func lastCachePosition(messages []nativeMessage, end int) (cachePosition, bool) {
-	ordinal := 0
-	var result cachePosition
-	found := false
-	for i, message := range messages {
-		if i > end {
-			break
+func messageCachePositions(plan samplingRequestPlan) []cachePosition {
+	messages := plan.request.Messages
+	end := len(messages)
+	if plan.purpose == domain.RequestSummary {
+		end--
+	}
+
+	prefixEnd := -1
+	if plan.project || plan.skills {
+		prefixEnd = 0
+		if plan.project && plan.skills {
+			prefixEnd = 1
 		}
+	}
+	bridgeEnd := plan.request.lastSampleMessage - 1
+	prefix, bridge, tail := cachePosition{ordinal: -1}, cachePosition{ordinal: -1}, cachePosition{ordinal: -1}
+	ordinal := 0
+	for i, message := range messages[:max(end, 0)] {
 		for j, item := range message.Content {
 			if cacheable(item) {
-				result = cachePosition{i, j, ordinal}
-				found = true
+				tail = cachePosition{message: i, block: j, ordinal: ordinal}
 			}
 			ordinal++
 		}
-	}
-	return result, found
-}
-func messageCachePositions(plan samplingRequestPlan, summary bool) []cachePosition {
-	messages := plan.request.Messages
-	end := len(messages) - 1
-	if summary {
-		end--
-	}
-	positions := make([]cachePosition, 0, 3)
-	appendUnique := func(p cachePosition) {
-		for _, old := range positions {
-			if old.message == p.message && old.block == p.block {
-				return
+		switch i {
+		case prefixEnd, bridgeEnd:
+			if i == prefixEnd {
+				prefix = tail
+			}
+			if i == bridgeEnd {
+				bridge = tail
 			}
 		}
-		positions = append(positions, p)
 	}
-	if plan.project || plan.skills {
-		index := 0
-		if plan.project && plan.skills {
-			index = 1
-		}
-		if p, ok := lastCachePosition(messages, index); ok {
-			appendUnique(p)
-		}
+	positions := make([]cachePosition, 0, 3)
+	if prefix.ordinal >= 0 {
+		positions = append(positions, prefix)
 	}
-	tail, exists := lastCachePosition(messages, end)
-	if !exists {
-		return positions
+	if bridge.ordinal >= 0 && bridge.ordinal != prefix.ordinal && tail.ordinal-bridge.ordinal >= 20 {
+		positions = append(positions, bridge)
 	}
-	messageCount := 0
-	if plan.project {
-		messageCount++
+	if tail.ordinal >= 0 && tail.ordinal != prefix.ordinal {
+		positions = append(positions, tail)
 	}
-	if plan.skills {
-		messageCount++
-	}
-	boundary := -1
-	for _, entry := range plan.history {
-		if entry.FeedbackInput != nil {
-			messageCount++
-		}
-		messageCount += len(entry.UserInputs)
-		switch entry.Kind {
-		case nativeHistorySample:
-			boundary = messageCount - 1
-			messageCount++
-		case nativeHistoryToolOutputs:
-			messageCount++
-		}
-	}
-	if boundary >= 0 {
-		if bridge, ok := lastCachePosition(messages, boundary); ok && tail.ordinal-bridge.ordinal >= 20 {
-			appendUnique(bridge)
-		}
-	}
-	appendUnique(tail)
 	return positions
 }
-func compileCachedMessagesRequest(plan samplingRequestPlan, summary bool, mode domain.AnthropicCacheMode) (codec.CanonicalJSON, error) {
+
+type compiledMessagesRequest struct {
+	body    codec.CanonicalJSON
+	markers uint8
+}
+
+func (plan samplingRequestPlan) compile(mode domain.AnthropicCacheMode) (compiledMessagesRequest, error) {
 	if mode == domain.AnthropicCacheDisabled {
-		return codec.MarshalCanonical(plan.request, maxMessagesRequestBytes)
+		body, err := codec.MarshalCanonical(plan.request, maxMessagesRequestBytes)
+		return compiledMessagesRequest{body: body}, err
 	}
 	if mode != domain.AnthropicCache5m && mode != domain.AnthropicCache1h {
-		return codec.CanonicalJSON{}, fmt.Errorf("invalid Anthropic cache policy")
+		return compiledMessagesRequest{}, fmt.Errorf("invalid Anthropic cache policy")
 	}
 	marker := cacheControl{Type: "ephemeral"}
 	if mode == domain.AnthropicCache1h {
@@ -164,17 +145,21 @@ func compileCachedMessagesRequest(plan samplingRequestPlan, summary bool, mode d
 	for i, m := range r.Messages {
 		wire.Messages[i] = cachedMessage{Role: m.Role, Content: make([]cachedBlock, len(m.Content))}
 		for j, item := range m.Content {
-			wire.Messages[i].Content[j] = cachedBlock{item: item.clone()}
+			wire.Messages[i].Content[j] = cachedBlock{item: item}
 		}
 	}
 	for i, t := range r.Tools {
-		wire.Tools[i] = cachedTool{Name: t.Name, Description: t.Description, InputSchema: append(json.RawMessage(nil), t.InputSchema...)}
+		wire.Tools[i] = cachedTool{Name: t.Name, Description: t.Description, InputSchema: t.InputSchema}
 	}
+	positions := messageCachePositions(plan)
+	markers := len(positions)
 	if len(wire.Tools) > 0 {
 		wire.Tools[len(wire.Tools)-1].CacheControl = &marker
+		markers++
 	}
-	for _, p := range messageCachePositions(plan, summary) {
+	for _, p := range positions {
 		wire.Messages[p.message].Content[p.block].marker = &marker
 	}
-	return codec.MarshalCanonical(wire, maxMessagesRequestBytes)
+	body, err := codec.MarshalCanonical(wire, maxMessagesRequestBytes)
+	return compiledMessagesRequest{body: body, markers: uint8(markers)}, err
 }

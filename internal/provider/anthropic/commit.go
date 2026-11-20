@@ -38,10 +38,7 @@ type optionalStringCommit struct {
 	Value string `json:"value,omitempty"`
 }
 
-type optionalUintCommit struct {
-	Known bool    `json:"known"`
-	Value *uint64 `json:"value,omitempty"`
-}
+type optionalUintCommit = provider.OptionalUintCommit
 
 type rawUsageCommit struct {
 	InputTokens              optionalUintCommit `json:"input_tokens"`
@@ -113,20 +110,20 @@ func decodeNativeCommit(envelope provider.NativeCommitEnvelope) (nativeHistoryEn
 		if err := validateRawUsageCommit(commit.Metadata.Usage); err != nil {
 			return nativeHistoryEntry{}, err
 		}
-		entry.Assistant = commit.Assistant.clone()
+		entry.Assistant = *commit.Assistant
 		entry.Metadata = decodeMetadata(*commit.Metadata)
 	case nativeHistoryToolOutputs:
 		if len(commit.UserInputs) != 0 || commit.InputMetadata != nil || commit.Assistant != nil || commit.Metadata != nil || commit.ToolOutputs == nil {
 			return nativeHistoryEntry{}, fmt.Errorf("anthropic tool outputs commit fields are invalid")
 		}
-		entry.ToolOutputs = commit.ToolOutputs.clone()
+		entry.ToolOutputs = *commit.ToolOutputs
 	default:
 		return nativeHistoryEntry{}, fmt.Errorf("anthropic native commit kind is unsupported")
 	}
 	if err := validateNativeHistoryEntry(entry); err != nil {
 		return nativeHistoryEntry{}, err
 	}
-	return entry.clone(), nil
+	return entry, nil
 }
 
 func validateRawUsageCommit(usage rawUsageCommit) error {
@@ -299,11 +296,11 @@ func encodeMetadata(metadata messageMetadata) messageMetadataCommit {
 		ID: metadata.ID, Model: metadata.Model,
 		StopReason: optionalStringCommit{Known: metadata.StopReason.Known, Value: metadata.StopReason.Value},
 		Usage: rawUsageCommit{
-			InputTokens:              encodeOptionalInt(metadata.Usage.InputTokens),
-			CacheCreationInputTokens: encodeOptionalInt(metadata.Usage.CacheCreationInputTokens),
-			CacheReadInputTokens:     encodeOptionalInt(metadata.Usage.CacheReadInputTokens),
-			OutputTokens:             encodeOptionalInt(metadata.Usage.OutputTokens),
-			ThinkingTokens:           encodeOptionalInt(metadata.Usage.ThinkingTokens),
+			InputTokens:              metadata.Usage.InputTokens.Commit(),
+			CacheCreationInputTokens: metadata.Usage.CacheCreationInputTokens.Commit(),
+			CacheReadInputTokens:     metadata.Usage.CacheReadInputTokens.Commit(),
+			OutputTokens:             metadata.Usage.OutputTokens.Commit(),
+			ThinkingTokens:           metadata.Usage.ThinkingTokens.Commit(),
 		},
 	}
 }
@@ -313,27 +310,11 @@ func decodeMetadata(metadata messageMetadataCommit) messageMetadata {
 		ID: metadata.ID, Model: metadata.Model,
 		StopReason: optionalString{Known: metadata.StopReason.Known, Value: metadata.StopReason.Value},
 		Usage: rawUsage{
-			InputTokens:              decodeOptionalInt(metadata.Usage.InputTokens),
-			CacheCreationInputTokens: decodeOptionalInt(metadata.Usage.CacheCreationInputTokens),
-			CacheReadInputTokens:     decodeOptionalInt(metadata.Usage.CacheReadInputTokens),
-			OutputTokens:             decodeOptionalInt(metadata.Usage.OutputTokens),
-			ThinkingTokens:           decodeOptionalInt(metadata.Usage.ThinkingTokens),
+			InputTokens:              metadata.Usage.InputTokens.OptionalUint(),
+			CacheCreationInputTokens: metadata.Usage.CacheCreationInputTokens.OptionalUint(),
+			CacheReadInputTokens:     metadata.Usage.CacheReadInputTokens.OptionalUint(),
+			OutputTokens:             metadata.Usage.OutputTokens.OptionalUint(),
+			ThinkingTokens:           metadata.Usage.ThinkingTokens.OptionalUint(),
 		},
 	}
-}
-
-func encodeOptionalInt(value optionalUint) optionalUintCommit {
-	encoded := optionalUintCommit{Known: value.Known}
-	if value.Known {
-		copy := value.Value
-		encoded.Value = &copy
-	}
-	return encoded
-}
-
-func decodeOptionalInt(value optionalUintCommit) optionalUint {
-	if !value.Known || value.Value == nil {
-		return optionalUint{Known: value.Known}
-	}
-	return optionalUint{Known: true, Value: *value.Value}
 }

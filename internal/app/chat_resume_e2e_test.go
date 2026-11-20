@@ -61,7 +61,7 @@ func TestInChatResumePreservesCanonicalProviderContinuation(t *testing.T) {
 			}}, true)
 			cfg = reasoningFixtureConfig(t, cfg)
 			dataHome := privateAppTempDir(t)
-			paths := dataPaths{sessionRoot: filepath.Join(dataHome, "sessions"), catalogPath: filepath.Join(dataHome, "state.sqlite")}
+			paths := dataPaths{sessionRoot: filepath.Join(dataHome, "sessions"), catalogPath: filepath.Join(dataHome, "catalog.json")}
 			target, err := openChatResources(ctx, cfg, paths.sessionRoot, "", workspace)
 			if err != nil {
 				t.Fatal(err)

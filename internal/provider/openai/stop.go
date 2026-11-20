@@ -14,7 +14,7 @@ func (conversation *Conversation) ProjectAssistantSample(reference domain.Assist
 	if conversation == nil || reference.Validate() != nil {
 		return domain.AssistantSampleText{}, fmt.Errorf("invalid assistant sample reference")
 	}
-	return provider.ProjectNativeAssistantSample(conversation.history.snapshot(), reference, nativeAssistantText)
+	return provider.ProjectNativeAssistantSample(conversation.history.Entries(), reference, nativeAssistantText)
 }
 
 // EncodeStopFeedback 只编码已经冻结的模型字节，不读取磁盘、配置或网络。

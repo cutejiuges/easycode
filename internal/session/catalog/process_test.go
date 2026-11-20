@@ -25,11 +25,10 @@ const (
 
 func TestCatalogLockAcrossProcessesAndCrashRelease(t *testing.T) {
 	directory := privateTempDir(t)
-	databasePath := filepath.Join(directory, "state.sqlite")
-	root := filepath.Join(directory, "sessions")
-	helper := startCatalogProcessHelper(t, catalogLockHelperEnv, databasePath, root, "")
+	snapshotPath := filepath.Join(directory, "catalog.json")
+	helper := startCatalogProcessHelper(t, catalogLockHelperEnv, snapshotPath, "", "")
 
-	competitor, err := New(Config{DatabasePath: databasePath, SessionRoot: root})
+	competitor, err := New(Config{SnapshotPath: snapshotPath})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +49,7 @@ func TestCatalogLockAcrossProcessesAndCrashRelease(t *testing.T) {
 func TestReconcilePreservesBusyRowsAndRejectsBusyUnindexed(t *testing.T) {
 	directory := privateTempDir(t)
 	root := filepath.Join(directory, "sessions")
-	databasePath := filepath.Join(directory, "state.sqlite")
+	snapshotPath := filepath.Join(directory, "catalog.json")
 	repository, err := session.OpenOrCreateRepository(root)
 	if err != nil {
 		t.Fatal(err)
@@ -59,7 +58,7 @@ func TestReconcilePreservesBusyRowsAndRejectsBusyUnindexed(t *testing.T) {
 	cwd := t.TempDir()
 	first := createCatalogJournal(t, repository, cwd)
 	oldTitle := appendCatalogTitle(t, repository, first, "Previously indexed")
-	instance := openTestCatalog(t, databasePath, root)
+	instance := openTestCatalog(t, snapshotPath)
 	defer func() { _ = instance.Close() }()
 	if _, err := instance.Reconcile(context.Background(), repository); err != nil {
 		t.Fatal(err)
@@ -118,8 +117,7 @@ func TestCatalogLockHelperProcess(t *testing.T) {
 		return
 	}
 	instance, err := New(Config{
-		DatabasePath: os.Getenv("EASYCODE_TEST_CATALOG_DATABASE"),
-		SessionRoot:  os.Getenv("EASYCODE_TEST_CATALOG_ROOT"),
+		SnapshotPath: os.Getenv("EASYCODE_TEST_CATALOG_SNAPSHOT"),
 	})
 	if err == nil {
 		err = instance.Open(context.Background())
@@ -172,12 +170,12 @@ type catalogProcessHelper struct {
 	control io.WriteCloser
 }
 
-func startCatalogProcessHelper(t *testing.T, helperEnv string, databasePath string, root string, threadID string) *catalogProcessHelper {
+func startCatalogProcessHelper(t *testing.T, helperEnv string, snapshotPath string, root string, threadID string) *catalogProcessHelper {
 	t.Helper()
 	command := exec.Command(os.Args[0], "-test.run=^TestCatalog(Lock|Journal)HelperProcess$")
 	command.Env = append(os.Environ(),
 		helperEnv+"=1",
-		"EASYCODE_TEST_CATALOG_DATABASE="+databasePath,
+		"EASYCODE_TEST_CATALOG_SNAPSHOT="+snapshotPath,
 		"EASYCODE_TEST_CATALOG_ROOT="+root,
 		"EASYCODE_TEST_CATALOG_THREAD="+threadID,
 	)

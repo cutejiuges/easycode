@@ -12,23 +12,40 @@ import (
 )
 
 func TestReplayPlannerRejectsParallelCompletionOrderPersistence(t *testing.T) {
-	fixture := newReplayFixture(t)
-	fixture.appendMetadata()
-	fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
-	fixture.appendInitialInputs(testTurnID)
-	read := testReplayInvocation(t, "01890f3e-7bcd-7abc-8abc-0123456789ab", "call-0")
-	glob := testReplayGlobInvocation(t, "01890f3e-7bcd-7abc-8abc-0123456789ac", "call-1")
-	fixture.appendBatch(
-		mustDraft(t, EventProviderNativeCommit, testTurnID, validNativeCommit()),
-		mustDraft(t, EventSampleUsage, testTurnID, testSampleUsage(t)),
-		mustReadyDraftForReplay(t, read, 0, 0),
-		mustReadyDraftForReplay(t, glob, 0, 1),
-	)
-	fixture.appendBatch(mustStartedDraftForReplay(t, read))
-	fixture.appendBatch(mustStartedDraftForReplay(t, glob))
-	fixture.appendBatch(mustResultDraftForReplay(t, glob))
-	if _, err := NewReplayPlanner().Plan(fixture.loaded()); err == nil || !strings.Contains(err.Error(), "order") {
-		t.Fatalf("completion-order journal error = %v", err)
+	for _, test := range []struct {
+		name      string
+		want      string
+		lateStart bool
+	}{
+		{name: "out-of-order-result", want: "order"},
+		{name: "late-start-before-committed-outputs", want: "read result preceded group admission", lateStart: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newReplayFixture(t)
+			fixture.appendMetadata()
+			fixture.appendBatch(mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{}))
+			fixture.appendInitialInputs(testTurnID)
+			read := testReplayInvocation(t, "01890f3e-7bcd-7abc-8abc-0123456789ab", "call-0")
+			glob := testReplayGlobInvocation(t, "01890f3e-7bcd-7abc-8abc-0123456789ac", "call-1")
+			fixture.appendBatch(
+				mustDraft(t, EventProviderNativeCommit, testTurnID, validNativeCommit()),
+				mustDraft(t, EventSampleUsage, testTurnID, testSampleUsage(t)),
+				mustReadyDraftForReplay(t, read, 0, 0),
+				mustReadyDraftForReplay(t, glob, 0, 1),
+			)
+			fixture.appendBatch(mustStartedDraftForReplay(t, read))
+			if test.lateStart {
+				fixture.appendBatch(mustResultDraftForReplay(t, read))
+			}
+			fixture.appendBatch(mustStartedDraftForReplay(t, glob))
+			fixture.appendBatch(mustResultDraftForReplay(t, glob))
+			if test.lateStart {
+				fixture.appendBatch(mustDraft(t, EventProviderNativeCommit, testTurnID, validToolOutputsCommit()))
+			}
+			if _, err := NewReplayPlanner().Plan(fixture.loaded()); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("unexpected replay error: %v", err)
+			}
+		})
 	}
 }
 

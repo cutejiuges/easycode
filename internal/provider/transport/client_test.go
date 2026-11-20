@@ -238,7 +238,7 @@ func TestStreamSSESendsCanonicalSnapshotAfterInputMutation(t *testing.T) {
 func collectParsedEvents(ctx context.Context, reader io.Reader, maxEventBytes int) ([]SSEEvent, error) {
 	activity := make(chan struct{}, 128)
 	parsed := make(chan parsedSSEMessage, 128)
-	err := parseSSE(ctx, reader, maxEventBytes, activity, parsed)
+	err := parseSSE(ctx, reader, StreamOptions{MaxEventBytes: maxEventBytes}, activity, parsed)
 	close(parsed)
 	events := make([]SSEEvent, 0)
 	for message := range parsed {

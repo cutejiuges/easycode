@@ -51,10 +51,10 @@ func ProjectNativeHistory[E nativeSequenceEntry, U any](entries []E, family doma
 }
 
 // ProjectNativeTranscript 保留展示条目与原生位置之间的关联。
-func ProjectNativeTranscript[E nativeSequenceEntry, U any](entries []E, family domain.ProviderFamily, users func(E) []U, userText func(U) string, sample func([]domain.TranscriptItem, E, uint64) ([]domain.TranscriptItem, error), feedback func(E) (domain.StopFeedback, error)) (domain.TranscriptView, error) {
+func ProjectNativeTranscript[E nativeSequenceEntry, U any](entries []E, start uint64, family domain.ProviderFamily, users func(E) []U, userText func(U) string, sample func([]domain.TranscriptItem, E, uint64) ([]domain.TranscriptItem, error), feedback func(E) (domain.StopFeedback, error)) (domain.TranscriptView, error) {
 	items := make([]domain.TranscriptItem, 0)
 	for ordinal, entry := range entries {
-		position := domain.TranscriptPosition{Entry: uint64(ordinal)}
+		position := domain.TranscriptPosition{Entry: start + uint64(ordinal)}
 		switch entry.NativeRole() {
 		case domain.NativeCommitToolOutputs:
 			continue
@@ -85,7 +85,7 @@ func ProjectNativeTranscript[E nativeSequenceEntry, U any](entries []E, family d
 				items = append(items, item)
 			}
 		case domain.NativeCommitSample:
-			part, err := sample(items, entry, uint64(ordinal))
+			part, err := sample(items, entry, position.Entry)
 			if err != nil {
 				return domain.TranscriptView{}, err
 			}

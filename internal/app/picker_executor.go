@@ -20,7 +20,7 @@ func newPickerExecutor(applicationConfig config.Config, paths dataPaths, cwd str
 			return pickerExecution{result: result}
 		}
 		if request.Operation == tui.PickerOpen {
-			discovery.initialized = false
+			discovery.snapshot = nil
 		}
 		switch {
 		case request.Operation == tui.PickerResume || (request.Operation == tui.PickerOpen && request.ThreadID.Valid()):

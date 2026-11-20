@@ -83,7 +83,7 @@ func (projectorValue *StreamProjector) projectContext(item protocol.ControlItem)
 		if err != nil {
 			return nil, err
 		}
-		return StreamCacheSnapshotEvent{Version: eventVersion, Type: "cache.snapshot", RequestID: item.RequestID(), SessionID: event.SessionID, ThreadID: event.ThreadID, Snapshot: newStreamCacheSnapshot(payload)}, nil
+		return StreamCacheSnapshotEvent{Version: eventVersion, Type: "cache.snapshot", RequestID: item.RequestID(), SessionID: event.SessionID, ThreadID: event.ThreadID, Snapshot: StreamCacheSnapshot(payload)}, nil
 	case protocol.EventContextSnapshot:
 		payload, err := protocol.DecodeContextSnapshot(event)
 		if err != nil {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -30,33 +29,27 @@ type compactionCancelFailedMsg struct {
 	summary string
 }
 
-// parseContextCommand 仅识别完整首词，未知 slash 和绝对路径保留为普通正文。
-func parseContextCommand(text string) (localContextCommand, bool, error) {
-	trimmed := strings.TrimSpace(text)
-	split := strings.IndexFunc(trimmed, unicode.IsSpace)
-	word, remainder := trimmed, ""
-	if split >= 0 {
-		word = trimmed[:split]
-		remainder = strings.TrimSpace(trimmed[split:])
-	}
+// parseContextCommand 只处理已识别的上下文命令及其参数。
+func parseContextCommand(word, remainder string) (localContextCommand, error) {
+	remainder = strings.TrimSpace(remainder)
 	switch word {
 	case "/cache":
 		if remainder != "" {
-			return localContextCommand{}, true, fmt.Errorf("/cache does not accept arguments")
+			return localContextCommand{}, fmt.Errorf("/cache does not accept arguments")
 		}
-		return localContextCommand{kind: protocol.CommandQueryCache}, true, nil
+		return localContextCommand{kind: protocol.CommandQueryCache}, nil
 	case "/context":
 		if remainder != "" {
-			return localContextCommand{}, true, fmt.Errorf("/context does not accept arguments")
+			return localContextCommand{}, fmt.Errorf("/context does not accept arguments")
 		}
-		return localContextCommand{kind: protocol.CommandQueryContext}, true, nil
+		return localContextCommand{kind: protocol.CommandQueryContext}, nil
 	case "/compact":
 		if !utf8.ValidString(remainder) || len(remainder) > domain.MaxCompactionInstructionsBytes {
-			return localContextCommand{}, true, fmt.Errorf("compaction instructions require valid UTF-8 and at most %d bytes", domain.MaxCompactionInstructionsBytes)
+			return localContextCommand{}, fmt.Errorf("compaction instructions require valid UTF-8 and at most %d bytes", domain.MaxCompactionInstructionsBytes)
 		}
-		return localContextCommand{kind: protocol.CommandCompactContext, instructions: remainder}, true, nil
+		return localContextCommand{kind: protocol.CommandCompactContext, instructions: remainder}, nil
 	default:
-		return localContextCommand{}, false, nil
+		return localContextCommand{}, fmt.Errorf("unknown context command")
 	}
 }
 
@@ -98,8 +91,8 @@ func (model Model) submitContextCommand(command localContextCommand) (tea.Model,
 }
 
 func (model Model) cancelActiveCompaction() tea.Cmd {
-	if model.activeTurnID.Valid() {
-		return interruptSession(model.session)
+	if model.compaction.scope.Trigger == domain.CompactionAuto {
+		return interruptSession(model.session, model.compaction.scope.TurnID)
 	}
 	target, ok := model.session.(contextSession)
 	if !ok {
@@ -298,7 +291,18 @@ func (model Model) renderContextPanel() string {
 }
 
 func (model Model) handleContextPanelKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if model.contextPanel != nil {
+	if model.cachePanel != nil {
+		switch key.Type {
+		case tea.KeyDown:
+			model.cacheScroll++
+		case tea.KeyUp:
+			model.cacheScroll = max(0, model.cacheScroll-1)
+		case tea.KeyPgDown:
+			model.cacheScroll += max(1, model.heightOrDefault()-2)
+		case tea.KeyPgUp:
+			model.cacheScroll = max(0, model.cacheScroll-max(1, model.heightOrDefault()-2))
+		}
+	} else {
 		switch key.Type {
 		case tea.KeyDown:
 			model.contextScroll = min(model.contextScroll+1, model.contextScrollLimit())
@@ -314,18 +318,6 @@ func (model Model) handleContextPanelKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			model.contextScroll = model.contextScrollLimit()
 		}
 	}
-	if model.cachePanel != nil {
-		switch key.Type {
-		case tea.KeyDown:
-			model.cacheScroll++
-		case tea.KeyUp:
-			model.cacheScroll = max(0, model.cacheScroll-1)
-		case tea.KeyPgDown:
-			model.cacheScroll += max(1, model.heightOrDefault()-2)
-		case tea.KeyPgUp:
-			model.cacheScroll = max(0, model.cacheScroll-max(1, model.heightOrDefault()-2))
-		}
-	}
 	if key.Type == tea.KeyEsc || key.Type == tea.KeyCtrlC {
 		model.contextPanel = nil
 		model.cachePanel = nil
@@ -333,7 +325,7 @@ func (model Model) handleContextPanelKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		model.queryRequestID = ""
 		model.queryKind = ""
 		if key.Type == tea.KeyCtrlC {
-			return model.handleKey(key)
+			return model.handleCancelKey()
 		}
 	}
 	return model, nil

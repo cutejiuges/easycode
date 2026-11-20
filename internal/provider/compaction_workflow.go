@@ -2,7 +2,6 @@ package provider
 
 import (
 	"context"
-	"sync/atomic"
 
 	"easycode/internal/codec"
 	"easycode/internal/context/estimate"
@@ -20,38 +19,54 @@ type CompactionStream struct {
 }
 
 // PreflightCompaction 以当前已提交窗口编译并估算摘要请求。
-func PreflightCompaction(input CompactionInput, active, pending *atomic.Bool, currentSource func() (CompactionSource, error), compile func(CompactionInput) (codec.CanonicalJSON, error)) (CompactionPreview, error) {
-	if active.Load() || pending.Load() {
-		return CompactionPreview{}, NewCompactionError(CompactionBusy)
+func PreflightCompaction[E nativeClone[E]](
+	input CompactionInput,
+	operations *ConversationOperations,
+	snapshot func() NativeWindow[E],
+	sourceFor func(NativeWindow[E]) (CompactionSource, error),
+	compile func(NativeWindow[E], CompactionInput) (codec.CanonicalJSON, error),
+	project func(NativeWindow[E]) (domain.ActiveContextView, domain.NativeHistoryFootprint, error),
+) (CompactionPreview, ContextWindowProjection, error) {
+	if operations.Busy() {
+		return CompactionPreview{}, nil, NewCompactionError(CompactionBusy)
 	}
-	source, err := currentSource()
+	window := snapshot()
+	source, err := sourceFor(window)
 	if err != nil {
-		return CompactionPreview{}, err
+		return CompactionPreview{}, nil, err
 	}
-	request, err := compile(input)
+	request, err := compile(window, input)
 	if err != nil {
-		return CompactionPreview{}, err
+		return CompactionPreview{}, nil, err
 	}
-	return NewCompactionPreview(source, input, estimate.String(string(request.Bytes())))
+	tokens, err := domain.NewEstimatedTokenEstimate(estimate.MethodByteHeuristic, estimate.ByteCount(uint64(request.Len())))
+	if err != nil {
+		return CompactionPreview{}, nil, err
+	}
+	preview, err := NewCompactionPreview(source, input, tokens)
+	if err != nil {
+		return CompactionPreview{}, nil, err
+	}
+	return preview, func() (domain.ActiveContextView, domain.NativeHistoryFootprint, error) {
+		return project(window)
+	}, nil
 }
 
 // RunCompaction 只消费摘要流，并在排空及释放传输资源后归还拥有权。
-func RunCompaction(ctx context.Context, id domain.CompactionID, preview CompactionPreview, active, pending *atomic.Bool, currentSource func() (CompactionSource, error), open func(context.Context, CompactionInput) (CompactionStream, error)) (*PreparedCompaction, error) {
+func RunCompaction[E nativeClone[E]](ctx context.Context, id domain.CompactionID, preview CompactionPreview, operations *ConversationOperations, snapshot func() NativeWindow[E], sourceFor func(NativeWindow[E]) (CompactionSource, error), open func(context.Context, NativeWindow[E], CompactionInput) (CompactionStream, error)) (*PreparedCompaction, error) {
 	if !id.Valid() || preview.Validate() != nil {
 		return nil, NewCompactionError(CompactionInvalidResponse)
 	}
-	if !active.CompareAndSwap(false, true) {
+	if operations.Begin() != ConversationIdle {
 		return nil, NewCompactionError(CompactionBusy)
 	}
-	defer active.Store(false)
-	if pending.Load() {
-		return nil, NewCompactionError(CompactionBusy)
-	}
-	source, err := currentSource()
+	defer operations.End()
+	window := snapshot()
+	source, err := sourceFor(window)
 	if err != nil || source != preview.Source() {
 		return nil, NewCompactionError(CompactionSourceChanged)
 	}
-	stream, err := open(ctx, preview.Input())
+	stream, err := open(ctx, window, preview.Input())
 	if err != nil {
 		return nil, err
 	}
@@ -101,13 +116,12 @@ type CheckpointCandidate struct {
 	Summary     domain.ContextSummary
 	Usage       func() (domain.SampleUsage, error)
 	Footprint   func(uint64) (domain.NativeHistoryFootprint, error)
-	Source      func() (CompactionSource, error)
 	EncodeUsage func() ([]byte, error)
 	Install     func(CheckpointEnvelope)
 }
 
 // PrepareCheckpoint 核对窗口和计量证据后暂存摘要，等待 durable 结果。
-func PrepareCheckpoint(scope domain.CompactionScope, id domain.CompactionID, source CompactionSource, receipt domain.RequestReceipt, pending *atomic.Bool, candidate CheckpointCandidate) (*PreparedCompaction, error) {
+func PrepareCheckpoint(scope domain.CompactionScope, id domain.CompactionID, source CompactionSource, receipt domain.RequestReceipt, operations *ConversationOperations, candidate CheckpointCandidate) (*PreparedCompaction, error) {
 	checkpoint, err := NewCheckpointEnvelope(scope, id, source, candidate.Payload)
 	if err != nil {
 		return nil, err
@@ -124,10 +138,6 @@ func PrepareCheckpoint(scope domain.CompactionScope, id domain.CompactionID, sou
 	if err != nil {
 		return nil, err
 	}
-	current, err := candidate.Source()
-	if err != nil || current != source {
-		return nil, NewCompactionError(CompactionSourceChanged)
-	}
 	usageBytes, err := candidate.EncodeUsage()
 	if err != nil {
 		return nil, err
@@ -136,13 +146,12 @@ func PrepareCheckpoint(scope domain.CompactionScope, id domain.CompactionID, sou
 	if err != nil {
 		return nil, err
 	}
-	pending.Store(true)
 	prepared, err := NewPreparedCompaction(checkpoint, view, footprint, usage, provenance, receipt, func() {
 		candidate.Install(checkpoint)
-		pending.Store(false)
-	}, func() { pending.Store(false) })
-	if err != nil {
-		pending.Store(false)
+		operations.ResolvePrepared()
+	}, operations.ResolvePrepared)
+	if err == nil {
+		operations.HoldPrepared()
 	}
 	return prepared, err
 }

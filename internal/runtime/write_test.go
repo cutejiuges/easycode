@@ -71,8 +71,8 @@ func runtimeWriteInvocation(t *testing.T) (tool.Invocation, tool.WriteCandidate)
 func writeTestRuntime(t *testing.T, journal Journal, c tool.WriteCandidate, e tool.WriteExecutor) *Runtime {
 	t.Helper()
 	r := newTestRuntime(t, &fakeToolConversation{fakeConversation: &fakeConversation{}}, journal)
-	r.writePreparer = &fixedWritePreparer{candidate: c}
-	r.writeExecutor = e
+	r.tools.PrepareWrite = &fixedWritePreparer{candidate: c}
+	r.tools.Write = e
 	r.interactiveApprovals = true
 	return r
 }
@@ -84,7 +84,7 @@ func TestWriteAcceptedStartedCallsExecutorOnceEvenAfterCancellation(t *testing.T
 			journal := &fakeJournal{}
 			executor := &fixedWriteExecutor{}
 			runtime := writeTestRuntime(t, journal, c, executor)
-			runtime.toolPolicy = allowPatchPolicy{}
+			runtime.tools.Policy = allowPatchPolicy{}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			journal.hook = func(batch []session.RecordDraft) {
@@ -125,9 +125,9 @@ func TestWriteUncertainStopsSiblingsButPersistsFrozenOutput(t *testing.T) {
 	journal := &fakeJournal{}
 	executor := &fixedWriteExecutor{status: tool.ResultOutcomeUncertain}
 	runtime := writeTestRuntime(t, journal, c, executor)
-	runtime.toolPolicy = allowPatchPolicy{}
+	runtime.tools.Policy = allowPatchPolicy{}
 	reader := &recordingReadExecutor{}
-	runtime.readExecutor = reader
+	runtime.tools.Read = reader
 	read := testRuntimeInvocations(t, 1)[0]
 	results, err := executeReadyFixtureCalls(t, runtime, context.Background(), runtimeTurnID, []tool.Invocation{invocation, read})
 	if err == nil || len(results) != 2 || !runtime.poisoned.Load() || reader.calls.Load() != 0 || results[0].Status() != tool.ResultOutcomeUncertain || results[1].Status() != tool.ResultCancelled {
@@ -171,7 +171,7 @@ func TestWriteRecoveryNeverCallsPreparerOrExecutor(t *testing.T) {
 				if err := runtime.ReconcileToolTurn(context.Background(), plan); err != nil {
 					t.Fatal(err)
 				}
-				if executor.calls != 0 || runtime.writePreparer.(*fixedWritePreparer).calls != 0 || runtime.approvals.writeGrant.Load() || len(runtime.readObservations.current) != 0 {
+				if executor.calls != 0 || runtime.tools.PrepareWrite.(*fixedWritePreparer).calls != 0 || runtime.approvals.writeGrant.Load() || len(runtime.readObservations.current) != 0 {
 					t.Fatal("恢复访问工作区或恢复授权")
 				}
 				result := runtime.conversation.(*fakeToolConversation).results[0]

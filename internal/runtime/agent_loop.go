@@ -108,25 +108,40 @@ func (loop *AgentLoop) Submit(ctx context.Context, command protocol.Command) (pr
 }
 
 func (loop *AgentLoop) submit(ctx context.Context, command protocol.Command, hostStopped <-chan struct{}) (protocol.CommandResult, error) {
+	return loop.submitRequest(ctx, loopCommandRequest{command: command, hostStopped: hostStopped})
+}
+
+// RejectInputPreparation 将已解码输入的准备拒绝交给同一个命令 owner。
+func (loop *AgentLoop) RejectInputPreparation(ctx context.Context, command protocol.Command) (protocol.CommandResult, error) {
+	if command.Kind() != protocol.CommandSubmitInput && command.Kind() != protocol.CommandSubmitConversationalInput {
+		return protocol.CommandResult{}, fault.New(fault.CodeInvalidInput, "only input commands can be rejected during preparation")
+	}
+	return loop.submitRequest(ctx, loopCommandRequest{command: command, inputRejected: true})
+}
+
+func (loop *AgentLoop) submitRequest(ctx context.Context, request loopCommandRequest) (protocol.CommandResult, error) {
 	if ctx == nil {
 		return protocol.CommandResult{}, fault.New(fault.CodeTurnFailed, "command context is required")
 	}
 	if err := ctx.Err(); err != nil {
 		return protocol.CommandResult{}, fault.Wrap(fault.CodeUserCancelled, "command admission was cancelled", err)
 	}
-	if err := command.ValidateForAdmission(); err != nil {
+	validate := request.command.ValidateForAdmission
+	if request.inputRejected {
+		validate = request.command.Validate
+	}
+	if err := validate(); err != nil {
 		return protocol.CommandResult{}, fault.New(fault.CodeInvalidInput, "command is invalid")
 	}
-	if command.Kind() == protocol.CommandRenameSession && hostStopped == nil {
+	if request.command.Kind() == protocol.CommandRenameSession && request.hostStopped == nil {
 		return protocol.CommandResult{}, fault.New(fault.CodeInvalidInput, "session title control requires an interactive host")
 	}
 	if loop == nil || loop.state.Load() != agentLoopRunning {
 		return protocol.CommandResult{}, fault.New(fault.CodeTurnFailed, "agent loop is not running")
 	}
-	request := loopCommandRequest{command: command, result: make(chan loopCommandResponse, 1)}
-	if command.Kind() == protocol.CommandRenameSession {
+	request.result = make(chan loopCommandResponse, 1)
+	if request.command.Kind() == protocol.CommandRenameSession {
 		request.cancelled = ctx.Done()
-		request.hostStopped = hostStopped
 	}
 	select {
 	case loop.requests <- request:
@@ -212,10 +227,11 @@ const (
 )
 
 type loopCommandRequest struct {
-	command     protocol.Command
-	result      chan loopCommandResponse
-	cancelled   <-chan struct{}
-	hostStopped <-chan struct{}
+	command       protocol.Command
+	result        chan loopCommandResponse
+	cancelled     <-chan struct{}
+	hostStopped   <-chan struct{}
+	inputRejected bool
 }
 
 type loopCommandResponse struct {
@@ -247,7 +263,6 @@ type queuedInput struct {
 	value     domain.UserInput
 	automatic bool
 	requestID protocol.RequestID
-	text      string
 }
 
 type activeLoopTurn struct {
@@ -259,12 +274,9 @@ type activeLoopTurn struct {
 	claim              []queuedInput
 	stopping           bool
 	input              queuedInput
-	cancel             context.CancelFunc
-	events             <-chan runtimePublication
-	finished           <-chan error
+	worker             loopWorker
 	turnID             domain.TurnID
 	terminalSeen       bool
-	cancelRequested    bool
 }
 
 type recentRequestLedger struct {
@@ -384,23 +396,14 @@ func (state *agentLoopRunState) discardQueue(code protocol.ControlErrorCode) {
 }
 
 func (state *agentLoopRunState) startTurn(inputs []queuedInput) *activeLoopTurn {
-	turnContext, cancel := context.WithCancel(state.ctx)
-	events := make(chan runtimePublication)
-	finished := make(chan error, 1)
 	profile, revision := state.selectedProfile, state.selectionRevision
 	state.refreshContextSnapshot()
 	control := &loopInputControl{loop: state.loop, reply: make(chan []domain.UserInput, 1), resolved: make(chan struct{}, 1)}
-	go func() {
-		state.loop.runtime.cachePublisher = func(snapshot protocol.CacheSnapshotPayload) {
-			events <- runtimePublication{cacheOnly: true, cacheSnapshot: snapshot}
-		}
-		err := state.loop.runtime.runTurn(turnContext, queuedDomainInputs(inputs), profile, control, func(event protocol.Event) { events <- state.loop.runtime.publishContext(event) })
-		state.loop.runtime.cachePublisher = nil
-		close(events)
-		finished <- err
-		close(finished)
-	}()
-	return &activeLoopTurn{profile: profile, selectionRevision: revision, input: inputs[0], claim: inputs, cancel: cancel, events: events, finished: finished}
+	runtime := state.loop.runtime
+	worker := startLoopWorker(state.ctx, runtime, func(ctx context.Context, emit Emitter) error {
+		return runtime.runTurn(ctx, queuedDomainInputs(inputs), profile, control, emit)
+	})
+	return &activeLoopTurn{profile: profile, selectionRevision: revision, input: inputs[0], claim: inputs, worker: worker}
 }
 
 func (state *agentLoopRunState) startNext() {
@@ -424,7 +427,7 @@ func (state *agentLoopRunState) activeChannels() (<-chan runtimePublication, <-c
 	if state.active == nil {
 		return nil, nil
 	}
-	return state.active.events, state.active.finished
+	return state.active.worker.events, state.active.worker.finished
 }
 
 func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
@@ -451,6 +454,10 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 	}
 	if state.resumePermit != nil && !allowsCommandDuringResume(request.command.Kind()) {
 		state.reject(request, protocol.ControlErrorSessionBusy, true)
+		return
+	}
+	if request.inputRejected {
+		state.reject(request, protocol.ControlErrorInvalidInput, true)
 		return
 	}
 
@@ -514,7 +521,7 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 		} else {
 			result, _ = protocol.NewAcceptedCommandResult(request.command, disposition)
 		}
-		state.queue = append(state.queue, queuedInput{requestID: requestID, text: value.Text(), value: value, automatic: automatic})
+		state.queue = append(state.queue, queuedInput{requestID: requestID, value: value, automatic: automatic})
 		state.queuedBytes += value.ByteSize()
 		state.emitResult(request, result)
 		state.startNext()
@@ -532,20 +539,17 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 		disposition := protocol.CommandDispositionInterrupting
 		if request.command.Kind() == protocol.CommandStopTurn {
 			disposition = protocol.CommandDispositionStopping
+			state.active.stopping = true
 		}
+		state.cancelActiveTurn()
 		result, _ := protocol.NewAcceptedCommandResult(request.command, disposition)
 		state.emitResult(request, result)
 		state.completeRequest(requestID)
 		if request.command.Kind() == protocol.CommandStopTurn {
-			state.active.stopping = true
 			state.returnAutomatic(protocol.InputReasonStopped)
 		}
-		if !state.active.cancelRequested {
-			state.active.cancelRequested = true
-			state.active.cancel()
-		}
 	case protocol.CommandResolveUserQuestion:
-		if state.active == nil || state.active.turnID == "" || state.active.stopping || state.active.cancelRequested {
+		if state.active == nil || state.active.turnID == "" || state.active.stopping || state.active.worker.cancelRequested {
 			state.reject(request, protocol.ControlErrorNoActiveQuestion, true)
 			return
 		}
@@ -578,7 +582,7 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 		state.emitResult(request, result)
 		state.completeRequest(request.command.RequestID())
 	case protocol.CommandResolveToolApproval:
-		if state.active == nil || state.active.turnID == "" {
+		if state.active == nil || state.active.turnID == "" || state.active.stopping || state.active.worker.cancelRequested {
 			state.reject(request, protocol.ControlErrorNoActiveApproval, true)
 			return
 		}
@@ -616,23 +620,25 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 		}
 	case protocol.CommandShutdown:
 		state.clearResumePermit()
+		state.mode = loopModeClosing
+		state.cancelActive()
 		result, _ := protocol.NewAcceptedCommandResult(request.command, protocol.CommandDispositionClosing)
 		state.emitResult(request, result)
 		state.completeRequest(requestID)
-		state.mode = loopModeClosing
 		state.discardQueue(protocol.ControlErrorSessionShutdown)
-		state.cancelActive()
 	}
 }
 
 func (state *agentLoopRunState) cancelActive() {
 	if state.compaction != nil {
-		state.compaction.cancelRequested = true
-		state.compaction.cancel()
+		state.compaction.worker.requestCancel()
 	}
-	if state.active != nil && !state.active.cancelRequested {
-		state.active.cancelRequested = true
-		state.active.cancel()
+	state.cancelActiveTurn()
+}
+
+func (state *agentLoopRunState) cancelActiveTurn() {
+	if state.active != nil && state.active.worker.requestCancel() {
+		state.loop.runtime.interruptToolApproval(state.active.turnID)
 	}
 }
 
@@ -656,7 +662,7 @@ func (state *agentLoopRunState) handleLifecycle(lifecycle loopLifecycleRequest) 
 func (state *agentLoopRunState) handleTurnEvent(publication runtimePublication, open bool) {
 	event := publication.event
 	if !open {
-		state.active.events = nil
+		state.active.worker.events = nil
 		return
 	}
 	if publication.cacheOnly {
@@ -696,12 +702,9 @@ func (state *agentLoopRunState) handleTurnEvent(publication runtimePublication, 
 }
 
 func (state *agentLoopRunState) handleTurnFinished(workerErr error, open bool) {
-	if !open {
-		state.active.finished = nil
+	if !state.active.worker.finish(open) {
 		return
 	}
-	state.active.finished = nil
-	state.active.cancel()
 	if workerErr != nil && state.active.autoCompactionSeen {
 		state.returnAutomatic(protocol.InputReasonFailed)
 	}

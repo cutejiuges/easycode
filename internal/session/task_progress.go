@@ -60,32 +60,50 @@ func PreflightTaskResult(identity Identity, turnID domain.TurnID, result tool.In
 	return err
 }
 
-// TaskProgressBefore 从已验证工具事实中归约指定前缀的最近成功更新。
-// before 为零时读取整个历史；实际来源始终取 result record，不能使用 ready 序号。
-func TaskProgressBefore(entries []ToolHistoryEntry, before uint64) (domain.TaskProgressState, error) {
-	state := domain.NewNoTaskProgress()
-	var last uint64
-	for _, entry := range entries {
-		if !entry.HasResult || entry.Result.Capability() != tool.CapabilityTaskProgress || entry.Result.Status() != tool.ResultSuccess || before != 0 && entry.ResultSequence >= before {
-			continue
-		}
-		evidence, evidenceErr := entry.InputResultEvidence()
-		if evidenceErr != nil || evidence.ValidateResult(entry.Result) != nil || entry.Origin.TurnID != entry.TurnID || entry.Origin.SampleIndex != entry.SampleIndex || entry.Origin.CallIndex != entry.CallIndex || entry.Admission.InvocationID() != entry.Invocation.InvocationID() || entry.ResultSequence <= max(entry.Sequence, entry.Admission.Sequence()) || entry.ResultSequence <= last || tool.ValidateFrozenResult(entry.Result) != nil || tool.ValidateResultInput(entry.Invocation, entry.Result) != nil {
-			return domain.TaskProgressState{}, fmt.Errorf("invalid task result history source")
-		}
-		update, ok := entry.Result.TaskUpdate()
-		if !ok {
-			return domain.TaskProgressState{}, fmt.Errorf("successful task result has no update")
-		}
-		source, err := domain.NewTaskProgressSource(entry.ResultSequence, entry.TurnID, string(entry.Invocation.InvocationID()))
-		if err != nil {
-			return domain.TaskProgressState{}, err
-		}
-		state, err = domain.NewTaskProgressState(source, update)
-		if err != nil {
-			return domain.TaskProgressState{}, err
-		}
-		last = entry.ResultSequence
+// replayedTaskProgress 只从通过当前语法验证的成功 result 向前推进。
+// 序号或计量错误保留到读取任务证据时报告，避免抢占语法和 artifact 错误。
+type replayedTaskProgress struct {
+	state domain.TaskProgressState
+	err   error
+}
+
+func (progress *replayedTaskProgress) accept(call ReplayedToolCall) {
+	if progress.err != nil || call.Result.Capability() != tool.CapabilityTaskProgress || call.Result.Status() != tool.ResultSuccess {
+		return
 	}
-	return state, nil
+	if call.StartedSequence == 0 || call.ResultSequence <= max(call.ReadySequence, call.StartedSequence) || tool.ValidateResultInput(call.Invocation, call.Result) != nil {
+		progress.err = fmt.Errorf("invalid task result history source")
+		return
+	}
+	progress.advance(call.ResultSequence, call.Origin.TurnID, call.Result)
+}
+
+func (progress *replayedTaskProgress) advance(sequence uint64, turn domain.TurnID, result tool.InvocationResult) {
+	if previous, exists := progress.state.Source(); exists && sequence <= previous.ResultSequence() {
+		progress.err = fmt.Errorf("invalid task result history source")
+		return
+	}
+	update, ok := result.TaskUpdate()
+	if !ok {
+		progress.err = fmt.Errorf("successful task result has no update")
+		return
+	}
+	source, err := domain.NewTaskProgressSource(sequence, turn, string(result.InvocationID()))
+	if err != nil {
+		progress.err = err
+		return
+	}
+	progress.state, progress.err = domain.NewTaskProgressState(source, update)
+}
+
+func (progress replayedTaskProgress) snapshot() (domain.TaskProgressState, error) {
+	if progress.err != nil {
+		return domain.TaskProgressState{}, progress.err
+	}
+	return progress.state.Clone(), nil
+}
+
+// TaskProgress 返回严格回放最后一个成功结果的任务快照。
+func (plan ReplayPlan) TaskProgress() (domain.TaskProgressState, error) {
+	return plan.taskProgress.snapshot()
 }

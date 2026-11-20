@@ -14,12 +14,8 @@ func validateNativeReadyFacts(entry nativeHistoryEntry, ready []tool.Invocation)
 	return provider.ValidateNativeReadyFacts(toolUses(entry.Assistant.Content), ready, domain.ProviderAnthropic, nativeCallEvidence)
 }
 
-func validateQuestionRestoredOutputs(sample, entry nativeHistoryEntry, results []tool.InvocationResult) error {
-	return provider.ValidateNativeRestoredResult(toolUses(sample.Assistant.Content), entry.ToolOutputs.Content, results, "AskUserQuestion", "question", nativeCallEvidence, matchFrozenToolOutput)
-}
-
-func validateTaskRestoredOutputs(sample, entry nativeHistoryEntry, results []tool.InvocationResult) error {
-	return provider.ValidateNativeRestoredResult(toolUses(sample.Assistant.Content), entry.ToolOutputs.Content, results, "TodoWrite", "task", nativeCallEvidence, matchFrozenToolOutput)
+func validateRestoredOutputs(calls []NativeItem, entry nativeHistoryEntry, results []tool.InvocationResult) error {
+	return provider.ValidateNativeRestoredResults(calls, entry.ToolOutputs.Content, results, domain.ProviderAnthropic, nativeCallEvidence, matchFrozenToolOutput)
 }
 
 func matchFrozenToolOutput(call, actual NativeItem, result tool.InvocationResult) bool {

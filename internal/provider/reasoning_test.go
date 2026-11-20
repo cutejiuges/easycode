@@ -2,34 +2,105 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"easycode/internal/domain"
 	"easycode/internal/protocol"
+	"easycode/internal/provider/transport"
 )
 
 func TestReasoningPublisherBackpressureCancellation(t *testing.T) {
-	text := strings.Repeat("x", domain.MaxReasoningSourceBytes)
-	delta, _ := NewReasoningTextDraft(0, domain.ReasoningOpenAISummary, 0, text)
-	drafts, _ := NewReasoningDrafts(delta)
-	output := make(chan StreamEvent)
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- PublishReasoning(ctx, output, drafts) }()
-	event := <-output
-	p, _ := protocol.DecodeAssistantReasoning(event.Semantic())
-	if len(p.Delta.Text) != protocol.MaxReasoningDeltaBytes {
-		t.Fatal("first chunk invalid")
+	timeout, stopTimeout := context.WithTimeout(t.Context(), 5*time.Second)
+	defer stopTimeout()
+	ctx, cancel := context.WithCancel(timeout)
+	defer cancel()
+	transportCtx, stopTransport := context.WithCancel(ctx)
+	defer stopTransport()
+
+	input := make(chan transport.SSEMessage, sampleProgressCapacity+2)
+	transportDone := make(chan struct{})
+	for range cap(input) {
+		input <- transport.SSEMessage{Event: &transport.SSEEvent{}}
 	}
+	go func() {
+		<-transportCtx.Done()
+		close(transportDone)
+		close(input)
+	}()
+
+	output := newSampleOutput()
+	ops := &ConversationOperations{}
+	ops.Begin()
+	full, advanced, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var frames int
+	var cleanupCompleted bool
+	text := strings.Repeat("x", protocol.MaxReasoningDeltaBytes)
+	stream := SampleStream{
+		Messages: input,
+		Reduce: func(transport.SSEEvent) (SampleReduction, error) {
+			frames++
+			switch frames {
+			case sampleProgressCapacity + 1:
+				close(full)
+			case sampleProgressCapacity + 2:
+				close(advanced)
+			}
+			delta, _ := NewReasoningTextDraft(0, domain.ReasoningOpenAISummary, uint64((frames-1)*len(text)), text)
+			drafts, err := NewReasoningDrafts(delta)
+			return SampleReduction{Reasoning: drafts}, err
+		},
+		Cleanup: func(success bool) {
+			select {
+			case <-transportDone:
+				cleanupCompleted = !success && ops.Busy()
+			default:
+			}
+		},
+	}
+	go func() {
+		defer close(done)
+		stream.run(ctx, stopTransport, ops, output, SampleStreamErrors{ProviderLabel: "fixture"})
+	}()
+	wait := func(ch <-chan struct{}, stage string) {
+		t.Helper()
+		select {
+		case <-ch:
+		case <-timeout.Done():
+			t.Fatalf("stream did not reach %s", stage)
+		}
+	}
+	wait(full, "publication capacity")
+	checkDelta := func(event StreamEvent, index int) {
+		t.Helper()
+		p, err := protocol.DecodeAssistantReasoning(event.Semantic())
+		if err != nil || p.Delta == nil || len(p.Delta.Text) != len(text) || p.Delta.Offset != uint64(index*len(text)) {
+			t.Fatalf("unexpected reasoning chunk %d: %v", index, err)
+		}
+	}
+	for event := range output.read {
+		checkDelta(event, 0)
+		break
+	}
+	wait(advanced, "progress after a consumer receive")
 	cancel()
-	if err := <-done; err != context.Canceled {
-		t.Fatal(err)
+	wait(done, "cleanup without further reads")
+	if !cleanupCompleted || ops.Busy() {
+		t.Fatal("sample released ownership before cleanup or remained busy after cleanup")
 	}
-	select {
-	case <-output:
-		t.Fatal("published after owner completed")
-	default:
+	count := 0
+	for event := range output.read {
+		count++
+		if count <= sampleProgressCapacity {
+			checkDelta(event, count)
+		} else if event.Kind() != StreamEventCancelled || !errors.Is(event.Error(), context.Canceled) {
+			t.Fatalf("unexpected terminal %s: %v", event.Kind(), event.Error())
+		}
+	}
+	if count != sampleProgressCapacity+1 {
+		t.Fatalf("remaining progress and terminal count = %d", count)
 	}
 }
 

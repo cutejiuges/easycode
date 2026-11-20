@@ -23,7 +23,7 @@ import (
 func taskCacheRecords(t *testing.T, c *Conversation, invocation tool.Invocation, result tool.InvocationResult, outputs []tool.ModelOutput) []provider.RestoreRecord {
 	t.Helper()
 	var records []provider.RestoreRecord
-	for _, entry := range c.history.snapshot() {
+	for _, entry := range c.history.Entries() {
 		envelope, err := encodeNativeCommit(entry)
 		if err != nil {
 			t.Fatal(err)
@@ -55,7 +55,7 @@ func taskCacheState(t *testing.T, c *Conversation, invocation tool.Invocation) d
 	if !ok {
 		t.Fatal("task invocation missing")
 	}
-	source, err := domain.NewTaskProgressSource(5, c.history.snapshot()[0].TurnID, string(invocation.InvocationID()))
+	source, err := domain.NewTaskProgressSource(5, c.history.Entries()[0].TurnID, string(invocation.InvocationID()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,19 +85,19 @@ func taskCacheOutput(t *testing.T, invocation tool.Invocation) (tool.InvocationR
 
 func assertTaskCacheEquivalent(t *testing.T, left, right *Conversation, input provider.TurnInput) codec.CanonicalJSON {
 	t.Helper()
-	a, err := left.compileSamplingRequest(left.history.snapshot(), input)
+	a, err := left.compileSamplingRequest(left.history.Entries(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := right.compileSamplingRequest(right.history.snapshot(), input)
+	b, err := right.compileSamplingRequest(right.history.Entries(), input)
 	if err != nil || !bytes.Equal(a.Bytes(), b.Bytes()) {
 		t.Fatal("task cache restore changed complete canonical request", err)
 	}
-	nativeA, err := codec.MarshalStable(left.history.snapshot())
+	nativeA, err := codec.MarshalStable(left.history.Entries())
 	if err != nil {
 		t.Fatal(err)
 	}
-	nativeB, err := codec.MarshalStable(right.history.snapshot())
+	nativeB, err := codec.MarshalStable(right.history.Entries())
 	if err != nil || !bytes.Equal(nativeA, nativeB) || !bytes.Contains(nativeA, []byte("opaque-task-cache")) || !bytes.Contains(nativeA, []byte(`"phase":"commentary"`)) {
 		t.Fatal("task cache restore changed native opaque bytes, phase or item order", err)
 	}
@@ -109,11 +109,11 @@ func assertTaskCacheEquivalent(t *testing.T, left, right *Conversation, input pr
 	if err != nil || evidenceA.NativeFingerprint() != evidenceB.NativeFingerprint() || !bytes.Equal(evidenceA.Properties().Bytes(), evidenceB.Properties().Bytes()) || websocketCacheSources(t, left) != websocketCacheSources(t, right) {
 		t.Fatal("task cache restore changed native or source fingerprints", err)
 	}
-	receiptA, err := left.describeRequest(a, evidenceA, domain.RequestSample)
+	receiptA, err := left.describeRequest(a, evidenceA, evidenceA.Compare(left.baseline), domain.RequestSample)
 	if err != nil {
 		t.Fatal(err)
 	}
-	receiptB, err := right.describeRequest(b, evidenceB, domain.RequestSample)
+	receiptB, err := right.describeRequest(b, evidenceB, evidenceB.Compare(right.baseline), domain.RequestSample)
 	if err != nil || receiptA.RequestFingerprint != receiptB.RequestFingerprint || receiptA.NativeFingerprint != receiptB.NativeFingerprint {
 		t.Fatal("task cache restore changed receipt fingerprints", err)
 	}
@@ -130,7 +130,7 @@ func taskCacheCheckpoint(t *testing.T, c *Conversation, input provider.TurnInput
 	if err != nil {
 		t.Fatal(err)
 	}
-	preview, err := c.PreflightCompaction(compact)
+	preview, _, err := c.PreflightCompaction(compact)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func TestTaskCacheWebSocketSuffixCheckpointFailureAndRestore(t *testing.T) {
 	live := testConversation(t, instance)
 	defer live.closeWebsocket()
 	input := testOpenAITurnInput(t, live, "make a plan")
-	initial, err := live.compileSamplingRequest(live.history.snapshot(), input)
+	initial, err := live.compileSamplingRequest(live.history.Entries(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +254,7 @@ func TestTaskCacheWebSocketSuffixCheckpointFailureAndRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	logical, err := live.compileSamplingRequest(live.history.snapshot(), input)
+	logical, err := live.compileSamplingRequest(live.history.Entries(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +275,7 @@ func TestTaskCacheWebSocketSuffixCheckpointFailureAndRestore(t *testing.T) {
 	if err := codec.Unmarshal(logical.Bytes(), &expected); err != nil {
 		t.Fatal(err)
 	}
-	reconstructed := append(append(append([]NativeItem(nil), prefix.Input...), live.history.snapshot()[1].Outputs...), suffix.Input...)
+	reconstructed := append(append(append([]NativeItem(nil), prefix.Input...), live.history.Entries()[1].Outputs...), suffix.Input...)
 	a, err := codec.MarshalCanonical(reconstructed, maxResponsesRequestBytes)
 	if err != nil {
 		t.Fatal(err)
@@ -284,7 +284,7 @@ func TestTaskCacheWebSocketSuffixCheckpointFailureAndRestore(t *testing.T) {
 	if err != nil || !bytes.Equal(a.Bytes(), b.Bytes()) || !bytes.Contains(a.Bytes(), []byte(`"future":{"task":true}`)) || !bytes.Contains(a.Bytes(), []byte(`"phase":"commentary"`)) {
 		t.Fatal("task incremental reconstruction changed logical input, opaque order or phase", err)
 	}
-	expectedSuffix, err := websocketBody(logical, "task-cache-1", len(prefix.Input)+len(live.history.snapshot()[1].Outputs))
+	expectedSuffix, err := websocketBody(logical, "task-cache-1", len(prefix.Input)+len(live.history.Entries()[1].Outputs))
 	if err != nil || !bytes.Equal(suffixWire, expectedSuffix.Bytes()) {
 		t.Fatal("task incremental wire changed logical request properties", err)
 	}
@@ -330,7 +330,7 @@ func TestTaskCacheWebSocketSuffixCheckpointFailureAndRestore(t *testing.T) {
 	records = append(records, record)
 	// 手动压缩后由后续用户输入继续，不能把已经结束的 assistant sample 伪装成可采样尾部。
 	nextInput := testInputEntry(t, NewUserItem("continue preserved task"))
-	live.history.commit(nextInput)
+	live.history.Append(nextInput)
 	envelope, err := encodeNativeCommit(nextInput)
 	if err != nil {
 		t.Fatal(err)
@@ -343,7 +343,7 @@ func TestTaskCacheWebSocketSuffixCheckpointFailureAndRestore(t *testing.T) {
 	restored := value.(*Conversation)
 	defer restored.closeWebsocket()
 	logical = assertTaskCacheEquivalent(t, live, restored, input)
-	before, err := live.HistoryFootprint()
+	_, before, err := live.ProjectContextWindow()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +359,7 @@ func TestTaskCacheWebSocketSuffixCheckpointFailureAndRestore(t *testing.T) {
 	if actual := <-requests; !bytes.Equal(actual, full.Bytes()) {
 		t.Fatal("post-checkpoint connection reused an incremental baseline")
 	}
-	after, err := live.HistoryFootprint()
+	_, after, err := live.ProjectContextWindow()
 	if err != nil || before != after {
 		t.Fatal("connection failure changed task checkpoint facts", err)
 	}

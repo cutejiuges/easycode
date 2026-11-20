@@ -1,6 +1,7 @@
 package headless
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"io"
@@ -265,6 +266,55 @@ func TestStreamRunnerMalformedInputReportsTerminalErrorAndCleansUp(t *testing.T)
 		t.Fatalf("last output is not terminal error: %s", output.String())
 	}
 	<-loop.Done()
+}
+
+type finalErrorPipe struct {
+	*io.PipeWriter
+	accepted chan struct{}
+	writes   int
+}
+
+func (writer *finalErrorPipe) Write(content []byte) (int, error) {
+	writer.writes++
+	if bytes.Contains(content, []byte(`"type":"error"`)) {
+		close(writer.accepted)
+	}
+	return writer.PipeWriter.Write(content)
+}
+
+func TestStreamRunnerCancellationUnblocksFinalError(t *testing.T) {
+	stdout, writer := io.Pipe()
+	defer stdout.Close()
+	output := &finalErrorPipe{PipeWriter: writer, accepted: make(chan struct{})}
+	loop := newScriptedStreamLoop(false)
+	runner := newTestStreamRunner(t, loop, io.NopCloser(strings.NewReader("{malformed}\n")), output, output)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	resultDone := make(chan Result, 1)
+	go func() { resultDone <- runner.Run(ctx) }()
+
+	if initial, err := bufio.NewReader(stdout).ReadString('\n'); err != nil || !strings.Contains(initial, `"type":"thread.started"`) {
+		t.Fatalf("initial frame = %q, %v", initial, err)
+	}
+	select {
+	case <-output.accepted:
+	case <-ctx.Done():
+		t.Fatal("writer never received the terminal error frame")
+	}
+	cancel()
+	select {
+	case result := <-resultDone:
+		if result.Failure.Code != fault.CodeOutput || !result.OutputUnavailable || result.Reported || output.writes != 2 {
+			t.Fatalf("Run() result = %#v, writes = %d", result, output.writes)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("cancellation did not unblock the terminal error frame")
+	}
+	select {
+	case <-loop.Done():
+	default:
+		t.Fatal("runner returned before control cleanup")
+	}
 }
 
 func TestStreamRunnerBrokenOutputStopsWithoutAppendingError(t *testing.T) {

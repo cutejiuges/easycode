@@ -10,60 +10,21 @@ import (
 )
 
 func encodeToolResult(call NativeItem, output tool.ModelOutput) (NativeItem, error) {
-	if output.Validate() != nil {
-		return NativeItem{}, fmt.Errorf("invalid model tool output")
-	}
-	result := output.Result()
-	original := output.Evidence().Selection().Original()
-	wire := tool.WireStructured
-	arguments := []byte(call.Arguments)
-	if call.Type == "custom_tool_call" {
-		wire = tool.WireCustomFreeform
-		arguments = []byte(call.Input)
-	}
-	if err := tool.ValidateNativeCallInput(original, domain.ProviderOpenAI, call.Name, tool.ProviderCallID(call.CallID), wire, arguments); err != nil {
+	if err := nativeCallEvidence(call).ValidateModelOutput(domain.ProviderOpenAI, output); err != nil {
 		return NativeItem{}, err
 	}
-	return encodeToolResultData(call, result, output.Text())
+	return encodeToolResultData(call, output.Result(), output.Text())
 }
 
 // encodeToolResultData 是纯 wire 编码，也供已验证提问事实的离线正文比对复用。
 func encodeToolResultData(call NativeItem, result tool.InvocationResult, text string) (NativeItem, error) {
-	if err := tool.ValidateFrozenResult(result); err != nil {
-		return NativeItem{}, fmt.Errorf("invalid OpenAI tool result")
+	evidence := nativeCallEvidence(call)
+	if err := evidence.ValidateFrozenResult(domain.ProviderOpenAI, result, "invalid OpenAI tool result", "OpenAI tool output does not match call"); err != nil {
+		return NativeItem{}, err
 	}
-	wire := tool.WireStructured
 	kind := "function_call_output"
-	if call.Type == "custom_tool_call" {
-		wire = tool.WireCustomFreeform
+	if evidence.Wire == tool.WireCustomFreeform {
 		kind = "custom_tool_call_output"
-	}
-	if string(result.ProviderCallID()) != call.CallID || result.Capability() != openAICapabilityForName(call.Name) || result.WireKind() != wire {
-		return NativeItem{}, fmt.Errorf("OpenAI tool output does not match call")
-	}
-	if call.Name == "update_plan" {
-		ready, err := tool.NewTaskReadyCall(result.ProviderCallID(), result.TaskInput())
-		if err != nil {
-			return NativeItem{}, err
-		}
-		inv, err := tool.NewInvocation(result.InvocationID(), ready)
-		if err != nil {
-			return NativeItem{}, err
-		}
-		if err := tool.ValidateNativeCallInput(inv, domain.ProviderOpenAI, call.Name, tool.ProviderCallID(call.CallID), tool.WireStructured, []byte(call.Arguments)); err != nil {
-			return NativeItem{}, err
-		}
-	}
-	if call.Name == "request_user_input" {
-		input, err := tool.DecodeQuestionInput([]byte(call.Arguments))
-		if err != nil || result.QuestionMetadata().Fingerprint != input.Fingerprint() {
-			return NativeItem{}, fmt.Errorf("question input association mismatch")
-		}
-		if result.Status() == tool.ResultSuccess {
-			if _, err := tool.DecodeQuestionPreview(input, []byte(result.Preview().Text())); err != nil {
-				return NativeItem{}, err
-			}
-		}
 	}
 	b, err := codec.MarshalStable(functionOutputPayload{Status: result.Status(), Code: result.Code(), Content: text})
 	if err != nil {
@@ -74,12 +35,12 @@ func encodeToolResultData(call NativeItem, result tool.InvocationResult, text st
 
 // PrepareToolOutputPreflight 复制当前原生调用，返回不触及活动历史的单项校验策略。
 func (c *Conversation) PrepareToolOutputPreflight(inv tool.Invocation) (provider.ToolOutputPreflight, error) {
-	if c == nil || c.active.Load() || c.pending.Load() || inv.Validate() != nil {
+	if c == nil || c.operations.Busy() || inv.Validate() != nil {
 		return nil, fmt.Errorf("OpenAI tool output preflight is unavailable")
 	}
-	calls, err := pendingFunctionCalls(c.history.snapshot())
+	calls, err := pendingFunctionCalls(c.history.Entries())
 	if err != nil {
 		return nil, err
 	}
-	return provider.PreflightNativeToolOutput(calls, inv, domain.ProviderOpenAI, structuredCallEvidence, encodeToolResult)
+	return provider.PreflightNativeToolOutput(calls, inv, domain.ProviderOpenAI, nativeCallEvidence, encodeToolResult)
 }

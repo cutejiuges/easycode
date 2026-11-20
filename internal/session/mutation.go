@@ -8,7 +8,7 @@ type journalMutationUncertain struct{ cause error }
 func (err *journalMutationUncertain) Error() string { return err.cause.Error() }
 func (err *journalMutationUncertain) Unwrap() error { return err.cause }
 
-// IsJournalMutationUncertain 区分已接收写入的失败与接收前拒绝。
+// IsJournalMutationUncertain 判断文件变更开始后是否无法确认结果。
 func IsJournalMutationUncertain(err error) bool {
 	var uncertain *journalMutationUncertain
 	return errors.As(err, &uncertain)

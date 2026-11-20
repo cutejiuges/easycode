@@ -85,7 +85,7 @@ func TestStopRuntimeContinuesTwiceWithoutCompletingEarly(t *testing.T) {
 	trust := hookTrustEmitter(t, r, protocol.HookTrustSession, nil)
 	var completed int
 	input, _ := domain.NewUserInput("01900000-0000-7000-8000-000000000001", "task")
-	err := r.RunTurn(context.Background(), []domain.UserInput{input}, func(e protocol.Event) {
+	err := r.runFixtureTurn(context.Background(), []domain.UserInput{input}, func(e protocol.Event) {
 		trust(e)
 		if e.Kind == protocol.EventTurnCompleted {
 			completed++

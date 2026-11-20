@@ -50,7 +50,7 @@ func stopGoldenValuesWithFiles(t *testing.T, includeFiles bool) map[string][]byt
 		t.Fatal(err)
 	}
 	initialNative, _ := encodeNativeCommit(initialEntry)
-	sampleNative, _ := encodeNativeCommit(c.history.snapshot()[1])
+	sampleNative, _ := encodeNativeCommit(c.history.Entries()[1])
 	r0, _ := provider.NewInputRestoreRecord(initial, initialNative)
 	r1, _ := provider.NewSampleRestoreRecord(stopTestTurn, sampleNative)
 	r2, _ := provider.NewStopFeedbackRestoreRecord(feedback, native)
@@ -60,7 +60,7 @@ func stopGoldenValuesWithFiles(t *testing.T, includeFiles bool) map[string][]byt
 		t.Fatal(err)
 	}
 	sample := stopTestSample(stopTestTurn, "second answer")
-	c.history.commit(sample)
+	c.history.Append(sample)
 	envelope, _ := encodeNativeCommit(sample)
 	record, _ := provider.NewSampleRestoreRecord(stopTestTurn, envelope)
 	records = append(records, record)
@@ -77,7 +77,7 @@ func stopGoldenValuesWithFiles(t *testing.T, includeFiles bool) map[string][]byt
 		t.Fatal(err)
 	}
 	restored := testConversation(t, c.provider)
-	if err := restoreNativeHistory(context.Background(), "model", records, &restored.history); err != nil {
+	if _, err := restoreNativeHistory(context.Background(), "model", records, &restored.history); err != nil {
 		t.Fatal(err)
 	}
 	sampling, err := testSamplingInput(t, c.provider.config.Inference).WithToolCatalog(testOpenAIToolCatalog(t))
@@ -87,19 +87,19 @@ func stopGoldenValuesWithFiles(t *testing.T, includeFiles bool) map[string][]byt
 	values := map[string][]byte{"stop_feedback_native.golden.json": append(native.Payload(), '\n')}
 	for _, policy := range []domain.CachePolicy{domain.DefaultCachePolicy(), mustStopCachePolicy(t)} {
 		c.provider.config.CachePolicy = policy
-		request, err := c.compileSamplingRequest(c.history.snapshot(), sampling)
+		request, err := c.compileSamplingRequest(c.history.Entries(), sampling)
 		if err != nil {
 			t.Fatal(err)
 		}
-		again, err := restored.compileSamplingRequest(restored.history.snapshot(), sampling)
+		again, err := restored.compileSamplingRequest(restored.history.Entries(), sampling)
 		if err != nil || !bytes.Equal(request.Bytes(), again.Bytes()) {
 			t.Fatal("restored request differs", err)
 		}
-		original, err := c.HistoryFootprint()
+		_, original, err := c.ProjectContextWindow()
 		if err != nil {
 			t.Fatal(err)
 		}
-		actual, err := restored.HistoryFootprint()
+		_, actual, err := restored.ProjectContextWindow()
 		if err != nil || original != actual || original.Revision() != 6 {
 			t.Fatal("footprint/revision changed", err)
 		}
@@ -127,11 +127,11 @@ func stopGoldenValuesWithFiles(t *testing.T, includeFiles bool) map[string][]byt
 	}
 	// 后续摘要覆盖完整旧窗口；已消费的反馈进入摘要来源，完整 transcript 永不丢失。
 	sample = stopTestSample(stopTestTurn, "final answer")
-	c.history.commit(sample)
+	c.history.Append(sample)
 	envelope, _ = encodeNativeCommit(sample)
 	record, _ = provider.NewSampleRestoreRecord(stopTestTurn, envelope)
 	records = append(records, record)
-	snapshot := c.history.snapshotWindow()
+	snapshot := c.history.Snapshot()
 	sourceBefore, err := nativeCompactionSource(snapshot, "model")
 	if err != nil {
 		t.Fatal(err)
@@ -151,7 +151,7 @@ func stopGoldenValuesWithFiles(t *testing.T, includeFiles bool) map[string][]byt
 		t.Fatal("compaction digest omitted delivered feedback", err)
 	}
 	before := c.ProjectHistory()
-	transcript, err := c.ProjectTranscript()
+	transcript, _, err := c.ProjectTranscriptFrom(0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,11 +159,11 @@ func stopGoldenValuesWithFiles(t *testing.T, includeFiles bool) map[string][]byt
 	if err != nil {
 		t.Fatal(err)
 	}
-	preview, err := c.PreflightCompaction(compact)
+	preview, _, err := c.PreflightCompaction(compact)
 	if err != nil {
 		t.Fatal(err)
 	}
-	request, err := c.compileCompactionRequest(compact)
+	request, err := c.compileCompactionRequest(c.history.Snapshot(), compact)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,24 +185,24 @@ func stopGoldenValuesWithFiles(t *testing.T, includeFiles bool) map[string][]byt
 		t.Fatal(err)
 	}
 	records = append(records, checkpointRecord)
-	value, err := c.provider.RestoreConversation(c.threadID, records)
+	value, _, err := c.provider.RestoreConversation(context.Background(), c.threadID, records)
 	if err != nil {
 		t.Fatal(err)
 	}
 	recovered := value.(*Conversation)
-	footprint, err := recovered.HistoryFootprint()
+	_, footprint, err := recovered.ProjectContextWindow()
 	if err != nil || footprint.Revision() != 8 {
 		t.Fatal("checkpoint counted as native or feedback omitted", err)
 	}
-	recoveredTranscript, err := recovered.ProjectTranscript()
+	recoveredTranscript, _, err := recovered.ProjectTranscriptFrom(0)
 	if err != nil || !reflect.DeepEqual(transcript, recoveredTranscript) || !reflect.DeepEqual(before, recovered.ProjectHistory()) {
 		t.Fatal("checkpoint lost full sources", err)
 	}
-	live, err := c.compileSamplingRequest(c.history.snapshot(), sampling)
+	live, err := c.compileSamplingRequest(c.history.Entries(), sampling)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replay, err := recovered.compileSamplingRequest(recovered.history.snapshot(), sampling)
+	replay, err := recovered.compileSamplingRequest(recovered.history.Entries(), sampling)
 	if err != nil || !bytes.Equal(live.Bytes(), replay.Bytes()) {
 		t.Fatal("checkpoint restore request changed", err)
 	}

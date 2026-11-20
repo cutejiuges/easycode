@@ -12,8 +12,8 @@ type Projector struct{}
 // NewProjector 创建纯内存投影器。
 func NewProjector() *Projector { return &Projector{} }
 
-// Project 只使用已提交 records 和完整 ReplayPlan 构造 Catalog Entry。
-func (projector *Projector) Project(relativePath string, loaded session.LoadResult, plan session.ReplayPlan) (Entry, error) {
+// Project 只使用已提交 records 和已验证的元数据构造 Catalog Entry。
+func (projector *Projector) Project(relativePath string, loaded session.LoadResult, plan session.ReplayMetadata) (Entry, error) {
 	if projector == nil {
 		return Entry{}, fmt.Errorf("catalog projector is required")
 	}

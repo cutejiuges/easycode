@@ -24,10 +24,10 @@ func TestTitleTerminalHelper(t *testing.T) {
 	}
 	root := os.Getenv("EASYCODE_TITLE_SMOKE_ROOT")
 	data := filepath.Join(root, "sessions")
-	database := filepath.Join(root, "state.sqlite")
+	snapshot := filepath.Join(root, "catalog.json")
 	ctx := context.Background()
 	if mode == "list" {
-		outcome := ListSessions(ctx, SessionListOptions{All: true, Limit: 20, SessionDataRoot: data, SessionCatalogPath: database, Output: os.Stdout, ErrorOutput: os.Stderr})
+		outcome := ListSessions(ctx, SessionListOptions{All: true, Limit: 20, SessionDataRoot: data, SessionCatalogPath: snapshot, Output: os.Stdout, ErrorOutput: os.Stderr})
 		if outcome.ExitCode() != 0 {
 			t.Fatalf("offline list failed: %#v", outcome)
 		}
@@ -55,7 +55,7 @@ func TestTitleTerminalHelper(t *testing.T) {
 		serveWriteScenarioSample(w, family, 81, nil)
 	}))
 	defer server.Close()
-	options := Options{Mode: headless.ModeInteractive, ConfigPath: writeAppConfig(t, root, family, server.URL), SessionDataRoot: data, SessionCatalogPath: database, Input: os.Stdin, Output: os.Stdout}
+	options := Options{Mode: headless.ModeInteractive, ConfigPath: writeAppConfig(t, root, family, server.URL), SessionDataRoot: data, SessionCatalogPath: snapshot, Input: os.Stdin, Output: os.Stdout}
 	var outcome Outcome
 	want := int32(0)
 	switch mode {

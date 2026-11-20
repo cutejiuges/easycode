@@ -249,8 +249,8 @@ func TestFailureBothProvidersRealHookSandboxAndFrozenRestore(t *testing.T) {
 							t.Fatal(err)
 						}
 						defer restored.close(context.Background())
-						lf, _ := live.transcriptQueries.projector.(provider.Conversation).HistoryFootprint()
-						rf, _ := restored.transcriptQueries.projector.(provider.Conversation).HistoryFootprint()
+						_, lf, _ := live.transcriptQueries.projector.(provider.Conversation).ProjectContextWindow()
+						_, rf, _ := restored.transcriptQueries.projector.(provider.Conversation).ProjectContextWindow()
 						if !reflect.DeepEqual(lf, rf) {
 							t.Fatal("failure restore changed footprint")
 						}

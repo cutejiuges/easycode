@@ -21,7 +21,7 @@ type ChatSession interface {
 	Outputs() <-chan protocol.ControlItem
 	Append(context.Context, domain.InputDraft) (protocol.CommandResult, error)
 	Retract(context.Context, []domain.InputID) (protocol.CommandResult, error)
-	Interrupt()
+	InterruptTurn(domain.TurnID)
 }
 
 type approvalSession interface {
@@ -39,7 +39,10 @@ type submissionFailedMsg struct {
 }
 
 type eventStreamClosedMsg struct{}
-type approvalSubmitErrorMsg struct{ err error }
+type approvalSubmitErrorMsg struct {
+	requestID string
+	err       error
+}
 
 type transcriptMessage struct {
 	admitted    bool
@@ -291,41 +294,9 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return model.finishSessionTitleRequest(safeErrorSummary(value.err))
 	case RuntimeEventMsg:
-		if protocol.IsCompactionPresentation(value.Event) {
-			return model.projectCompactionPresentation(value.Event)
-		}
-		if value.Event.Kind == protocol.EventTaskProgressUpdated {
-			return model.projectTaskUpdate(value.Event)
-		}
-		if value.Event.Kind == protocol.EventTurnStarted || value.Event.Kind == protocol.EventTurnCompleted || value.Event.Kind == protocol.EventTurnFailed {
-			model.effortOperationGeneration++
-		}
-		if value.Event.Kind == protocol.EventUserQuestionRequested || value.Event.Kind == protocol.EventToolApprovalRequested || value.Event.Kind == protocol.EventHookTrustRequested {
-			model.clearEffortFeedback()
-		}
-		next, cmd := model.projectRuntimeEvent(value.Event)
-		updated := next.(Model)
-		if value.Event.Kind == protocol.EventToolTerminal && updated.detailOpen && updated.browser.queries != nil && updated.errorSummary == "" {
-			refreshed, query := updated.refreshTranscriptBrowser()
-			return refreshed, tea.Batch(cmd, query)
-		}
-		return next, cmd
+		return model.reduceRuntimeEvent(value.Event)
 	case submissionFailedMsg:
-		if value.generation != 0 && value.generation != model.submissionGeneration {
-			return model, nil
-		}
-		model.pendingCancel = nil
-		if model.state != stateSubmitting || model.pending == nil {
-			return model, nil
-		}
-		model.restoreComposer(*model.pending)
-		model.pending = nil
-		model.pendingContext = ""
-		model.refreshState()
-		model.interruptNext = false
-		model.cancelling = false
-		model.errorSummary = safeErrorSummary(value.err)
-		return model, nil
+		return model.failSubmission(value)
 	case retractFailedMsg:
 		model.retracting = nil
 		model.errorSummary = safeErrorSummary(value.err)
@@ -337,9 +308,10 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return model, nil
 	case approvalSubmitErrorMsg:
-		if model.approval != nil {
-			model.approval.submitted = false
+		if model.approval == nil || model.approval.request.RequestID != value.requestID || model.cancelling {
+			return model, nil
 		}
+		model.approval.submitted = false
 		model.errorSummary = safeErrorSummary(value.err)
 		return model, nil
 	case effortFailedMsg:
@@ -353,7 +325,7 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if value.generation != model.queryGeneration {
 			return model, nil
 		}
-		return model.Update(submissionFailedMsg{err: value.err})
+		return model.failSubmission(submissionFailedMsg{err: value.err})
 	case tea.KeyMsg:
 		return model.handleKey(value)
 	default:
@@ -361,22 +333,42 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
-func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if key.Paste && len(key.Runes) == 0 {
+func (model Model) failSubmission(message submissionFailedMsg) (tea.Model, tea.Cmd) {
+	if message.generation != 0 && message.generation != model.submissionGeneration {
 		return model, nil
 	}
-	model.prepareCompletion()
+	model.pendingCancel = nil
+	if model.state != stateSubmitting || model.pending == nil {
+		return model, nil
+	}
+	model.restoreComposer(*model.pending)
+	model.pending = nil
+	model.pendingContext = ""
+	model.refreshState()
+	model.interruptNext = false
+	if !model.activeTurnID.Valid() && !model.activeCompactionID.Valid() {
+		model.cancelling = false
+	}
+	model.errorSummary = safeErrorSummary(message.err)
+	return model, nil
+}
+
+func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key.Paste {
+		if len(key.Runes) == 0 {
+			return model, nil
+		}
 		key.Type, key.Alt = tea.KeyRunes, false
 	}
 	model.title.saved = false
-	if model.title.closed {
-		if !key.Paste && key.Type == tea.KeyCtrlC {
+	focus := model.focus()
+	switch focus {
+	case focusClosed:
+		if key.Type == tea.KeyCtrlC {
 			return model.quitTranscript()
 		}
 		return model, nil
-	}
-	if model.resumeDirectoryNotice != "" {
+	case focusResumeNotice:
 		model.handleResumeDirectoryKey(key)
 		return model, nil
 	}
@@ -387,25 +379,17 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key.Type == tea.KeyEsc || key.Type == tea.KeyCtrlC {
 		model.clearEffortFeedback()
 	}
-	if model.question != nil {
+	switch focus {
+	case focusQuestion:
 		return model.handleQuestionKey(key)
-	}
-
-	if model.hookTrust != nil {
+	case focusHookTrust:
 		return model.handleHookTrustKey(key)
-	}
-	if model.hooks.open {
+	case focusApproval:
+		return model.handleApprovalKey(key)
+	case focusHooks:
 		return model.handleHooksKey(key)
-	}
-
-	if model.skillsOpen {
+	case focusSkills:
 		return model.handleSkillsKey(key)
-	}
-	if key.Paste && (model.approval != nil || model.detailOpen || (model.pending != nil || model.retracting != nil)) {
-		if model.approval != nil && model.approval.editing && !model.approval.submitted {
-			return model.handleApprovalKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: key.Runes, Paste: true})
-		}
-		return model, nil
 	}
 	if (key.Type == tea.KeyEsc || key.Type == tea.KeyCtrlC) && (model.pendingContext == protocol.CommandQueryCache || model.pendingContext == protocol.CommandQueryContext) {
 		if model.pending != nil {
@@ -417,86 +401,119 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		model.queryKind = ""
 		model.queryGeneration++
 		model.refreshState()
-		if key.Type == tea.KeyCtrlC {
-			return model.handleKey(key)
+		if key.Type == tea.KeyEsc {
+			return model, nil
 		}
-		return model, nil
 	}
-	if model.contextPanel != nil || model.cachePanel != nil {
+	switch focus {
+	case focusCache, focusContext:
 		return model.handleContextPanelKey(key)
-	}
-	if model.approval != nil {
-		return model.handleApprovalKey(key)
-	}
-	if model.plugins.open {
+	case focusPlugins:
 		return model.handlePluginsKey(key)
-	}
-	if model.tasks.open {
+	case focusTasks:
 		return model.handleTasksKey(key)
-	}
-	if !model.detailOpen && (model.title.editor != nil || model.title.request != nil) {
+	case focusTitle:
 		return model.handleSessionTitleKey(key)
 	}
 	if key.Type == tea.KeyCtrlO {
 		model.clearEffortFeedback()
 		return model.openTranscriptBrowser()
 	}
-	if model.detailOpen {
+	if focus == focusTranscript {
+		if key.Paste {
+			return model, nil
+		}
 		return model.handleTranscriptBrowserKey(key)
 	}
 	if key.Type == tea.KeyPgUp || key.Type == tea.KeyPgDown {
 		model.clearEffortFeedback()
 		return model.navigateTranscript(key)
 	}
-	if key.Type == tea.KeyCtrlC && model.activeCompactionID.Valid() {
+	if key.Type == tea.KeyCtrlC {
+		return model.handleCancelKey()
+	}
+	return model.handleComposerKey(key)
+}
+
+func (model Model) handleCancelKey() (tea.Model, tea.Cmd) {
+	if model.activeCompactionID.Valid() {
 		return model.requestCompactionCancellation()
 	}
-	if key.Type == tea.KeyCtrlC && model.activeTurnID.Valid() {
+	if model.activeTurnID.Valid() {
+		return model.requestTurnCancellation(model.activeTurnID)
+	}
+	if model.cancelling {
+		return model, nil
+	}
+	if model.pending != nil {
 		if model.pendingCancel != nil {
 			model.pendingCancel()
 		}
-		model.cancelling = true
-		return model, interruptSession(model.session)
+		model.interruptNext = true
+		return model, nil
 	}
-	if model.resumeEnabled && key.Type == tea.KeyEnter && !key.Alt && !key.Paste && !model.composer.hasLineContinuation() {
-		if argument, local := resumeArgument(model.composer.text); local {
-			return model.submitResume(argument)
+	if model.retracting == nil && model.composer.text == "" {
+		return model.quitTranscript()
+	}
+	return model, nil
+}
+
+func (model Model) requestTurnCancellation(turnID domain.TurnID) (tea.Model, tea.Cmd) {
+	if model.cancelling {
+		return model, nil
+	}
+	if model.pendingCancel != nil {
+		model.pendingCancel()
+	}
+	model.cancelling = true
+	return model, interruptSession(model.session, turnID)
+}
+
+func (model Model) handleComposerKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	newlineStart, newline := model.composer.newlineStart(key)
+	submit := !key.Paste && key.Type == tea.KeyEnter && !newline
+	var head, remainder string
+	if submit {
+		head, remainder = domain.SplitInputHead(model.composer.text)
+		if model.resumeEnabled && head == "/"+resumeCommandName {
+			return model.submitResume(strings.TrimSpace(remainder))
 		}
 	}
 	if model.cancelling {
 		return model, nil
 	}
 	if model.pending != nil || model.retracting != nil {
-		if model.pending != nil && (key.Type == tea.KeyCtrlC || key.Type == tea.KeyEsc) {
+		if model.pending != nil && key.Type == tea.KeyEsc {
+			if model.activeTurnID.Valid() {
+				return model.requestTurnCancellation(model.activeTurnID)
+			}
 			if model.pendingCancel != nil {
 				model.pendingCancel()
-			}
-			if model.activeTurnID.Valid() {
-				model.cancelling = true
-				return model, interruptSession(model.session)
 			}
 			model.interruptNext = true
 		}
 		return model, nil
 	}
+	if newline {
+		if err := model.composer.replace(newlineStart, model.composer.cursor, "\n"); err != nil {
+			model.errorSummary = "invalid_input: " + err.Error()
+		} else {
+			model.clearEffortFeedback()
+		}
+		return model, nil
+	}
+	model.prepareCompletion()
 	if key.Type == tea.KeyCtrlT {
 		if snapshot := model.tasks.snapshot; snapshot != nil && snapshot.Counts.Total > 0 {
 			model.tasks.expanded = !model.tasks.expanded
 		}
 		return model, nil
 	}
-	if key.Type == tea.KeyEnter && !key.Alt && !key.Paste {
-		if arguments, local := sessionTitleArguments(model.composer.text); local {
+	if submit {
+		switch head {
+		case "/rename", "/effort", "/tasks":
 			model.completion.suppress(completionCancelled)
-			return model.beginSessionTitle(arguments)
-		}
-		if _, local, _ := parseEffortCommand(model.composer.text); local {
-			model.completion.suppress(completionCancelled)
-			return model.submitComposer()
-		}
-		if local, _ := parseTasksCommand(model.composer.text); local {
-			model.completion.suppress(completionCancelled)
-			return model.submitComposer()
+			return model.submitComposer(head, remainder)
 		}
 	}
 	originalDraft := model.composer
@@ -508,7 +525,10 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			model.clearEffortFeedback()
 		}
 		if submit {
-			next, command := model.submitComposer()
+			if model.composer.text != originalDraft.text {
+				head, remainder = domain.SplitInputHead(model.composer.text)
+			}
+			next, command := model.submitComposer(head, remainder)
 			updated := next.(Model)
 			if updated.skillsOpen || updated.hooks.open || updated.plugins.open {
 				updated.restoreComposer(originalDraft)
@@ -541,8 +561,7 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return model.requestCompactionCancellation()
 		}
 		if key.Type == tea.KeyEsc && model.activeTurnID.Valid() {
-			model.cancelling = true
-			return model, interruptSession(model.session)
+			return model.requestTurnCancellation(model.activeTurnID)
 		}
 	}
 
@@ -559,62 +578,42 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		model.completion.suppressPastedInput(model.composer)
 		model.suppressPastedFiles()
 	}
-	switch intent {
-	case composerQuit:
-		if model.activeTurnID.Valid() || model.activeCompactionID.Valid() || model.composer.text != "" {
-			return model, nil
-		}
-		return model.quitTranscript()
-	case composerSubmit:
-		return model.submitComposer()
+	if intent == composerSubmit {
+		return model.submitComposer(head, remainder)
 	}
 	return model, nil
 }
 
-func (model Model) submitComposer() (tea.Model, tea.Cmd) {
-	if arguments, local := sessionTitleArguments(model.composer.text); local {
-		return model.beginSessionTitle(arguments)
+func (model Model) submitComposer(head, remainder string) (tea.Model, tea.Cmd) {
+	if head == "/rename" {
+		return model.beginSessionTitle(remainder)
 	}
-	if model.resumeEnabled {
-		if argument, local := resumeArgument(model.composer.text); local {
-			return model.submitResume(argument)
-		}
+	if model.resumeEnabled && head == "/"+resumeCommandName {
+		return model.submitResume(strings.TrimSpace(remainder))
 	}
 	model.clearEffortFeedback()
-	if command, local, err := parseEffortCommand(model.composer.text); local {
+	switch head {
+	case "/effort":
+		command, err := parseEffortArgument(remainder)
 		if err != nil {
 			model.errorSummary = "invalid_command: " + err.Error()
 			return model, nil
 		}
 		return model.submitEffortCommand(command)
-	}
-	if local, err := parseTasksCommand(model.composer.text); local {
-		if err != nil {
-			model.errorSummary = "invalid_command: " + err.Error()
+	case "/tasks", "/plugins", "/hooks", "/skills":
+		if strings.TrimSpace(remainder) != "" {
+			model.errorSummary = "invalid_command: " + head + " does not accept arguments"
 			return model, nil
 		}
-		return model.queryTasks(true)
-	}
-	if words := strings.Fields(model.composer.text); len(words) > 0 && words[0] == "/plugins" {
-		if len(words) != 1 {
-			model.errorSummary = "invalid_command: /plugins does not accept arguments"
-			return model, nil
-		}
-		model.plugins.open, model.plugins.detail = true, false
-		model.plugins.selected, model.plugins.skill = 0, 0
-		return model, nil
-	}
-	if words := strings.Fields(model.composer.text); len(words) > 0 && words[0] == "/hooks" {
-		if len(words) != 1 {
-			model.errorSummary = "invalid_command: /hooks does not accept arguments"
-			return model, nil
-		}
-		return model.openHooks()
-	}
-	if words := strings.Fields(model.composer.text); len(words) > 0 && words[0] == "/skills" {
-		if len(words) != 1 {
-			model.errorSummary = "invalid_command: /skills does not accept arguments"
-		} else {
+		switch head {
+		case "/tasks":
+			return model.queryTasks(true)
+		case "/plugins":
+			model.plugins.open, model.plugins.detail = true, false
+			model.plugins.selected, model.plugins.skill = 0, 0
+		case "/hooks":
+			return model.openHooks()
+		case "/skills":
 			model.skillsOpen = true
 			model.skillSelection = 0
 		}
@@ -623,7 +622,9 @@ func (model Model) submitComposer() (tea.Model, tea.Cmd) {
 	if model.session == nil {
 		return model, nil
 	}
-	if command, local, err := parseContextCommand(model.composer.text); local {
+	switch head {
+	case "/cache", "/context", "/compact":
+		command, err := parseContextCommand(head, remainder)
 		if err != nil {
 			model.errorSummary = "invalid_command: " + err.Error()
 			return model, nil
@@ -674,14 +675,15 @@ func (model Model) heightOrDefault() int {
 }
 
 func (model Model) handleApprovalKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if model.rewriteApprovalTooSmall() && key.Type != tea.KeyEsc && key.Type != tea.KeyCtrlC {
+	overlay := model.approval
+	if model.cancelling || (key.Paste && (!overlay.editing || overlay.submitted)) {
 		return model, nil
 	}
-	overlay := model.approval
-	if overlay.submitted {
-		if key.Type == tea.KeyEsc || key.Type == tea.KeyCtrlC {
-			return model, interruptSession(model.session)
-		}
+	if !key.Paste && (key.Type == tea.KeyCtrlC || (key.Type == tea.KeyEsc && (!overlay.editing || overlay.submitted))) {
+		overlay.submitted = true
+		return model.requestTurnCancellation(overlay.turnID)
+	}
+	if overlay.submitted || model.rewriteApprovalTooSmall() && key.Type != tea.KeyEsc {
 		return model, nil
 	}
 	if overlay.editing {
@@ -695,9 +697,6 @@ func (model Model) handleApprovalKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		case tea.KeyEnter:
 			return model, model.submitApproval()
-		case tea.KeyCtrlC:
-			overlay.submitted = true
-			return model, interruptSession(model.session)
 		case tea.KeySpace:
 			if len(string(overlay.feedback))+1 <= 16<<10 {
 				overlay.feedback = append(overlay.feedback, ' ')
@@ -734,9 +733,6 @@ func (model Model) handleApprovalKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyEnter:
 		return model, model.submitApproval()
-	case tea.KeyEsc, tea.KeyCtrlC:
-		overlay.submitted = true
-		return model, interruptSession(model.session)
 	}
 	return model, nil
 }
@@ -760,10 +756,31 @@ func (model *Model) submitApproval() tea.Cmd {
 	request := overlay.request
 	return func() tea.Msg {
 		if err := target.ResolveApproval(context.Background(), overlay.turnID, request, decision, feedback); err != nil {
-			return approvalSubmitErrorMsg{err: err}
+			return approvalSubmitErrorMsg{requestID: request.RequestID, err: err}
 		}
 		return nil
 	}
+}
+
+func (model Model) reduceRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd) {
+	if protocol.IsCompactionPresentation(event) {
+		return model.projectCompactionPresentation(event)
+	}
+	switch event.Kind {
+	case protocol.EventTaskProgressUpdated:
+		return model.projectTaskUpdate(event)
+	case protocol.EventTurnStarted, protocol.EventTurnCompleted, protocol.EventTurnFailed:
+		model.effortOperationGeneration++
+	case protocol.EventUserQuestionRequested, protocol.EventToolApprovalRequested, protocol.EventHookTrustRequested:
+		model.clearEffortFeedback()
+	}
+	next, cmd := model.projectRuntimeEvent(event)
+	updated := next.(Model)
+	if event.Kind == protocol.EventToolTerminal && updated.detailOpen && updated.browser.queries != nil && updated.errorSummary == "" {
+		refreshed, query := updated.refreshTranscriptBrowser()
+		return refreshed, tea.Batch(cmd, query)
+	}
+	return next, cmd
 }
 
 func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd) {
@@ -876,8 +893,7 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 			model.refreshState()
 			if model.interruptNext {
 				model.interruptNext = false
-				model.cancelling = true
-				return model, interruptSession(model.session)
+				return model.requestTurnCancellation(event.TurnID)
 			}
 		}
 	case protocol.EventAssistantReasoning:
@@ -942,7 +958,7 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 		p, err := protocol.DecodeUserQuestionRequested(event)
 		if err != nil || !event.TurnID.Valid() || model.question != nil || model.approval != nil || model.hookTrust != nil || (model.activeTurnID != "" && model.activeTurnID != event.TurnID) {
 			model.errorSummary = "stream_protocol_error: invalid question request"
-			return model, interruptSession(model.session)
+			return model, interruptSession(model.session, model.activeTurnID)
 		}
 		model.question = newQuestionOverlay(p, event.TurnID, model.widthOrDefault(), model.heightOrDefault())
 	case protocol.EventUserQuestionResolved:
@@ -964,7 +980,7 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 		if err != nil || !event.TurnID.Valid() || model.approval != nil || model.question != nil || model.hookTrust != nil ||
 			(model.activeTurnID != "" && model.activeTurnID != event.TurnID) {
 			model.errorSummary = "stream_protocol_error: invalid approval request event"
-			return model, interruptSession(model.session)
+			return model, interruptSession(model.session, model.activeTurnID)
 		}
 		model.approval = &approvalOverlay{request: payload, turnID: event.TurnID, selected: 2}
 		if payload.Capability == "process.exec" {
@@ -1000,51 +1016,40 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 
 // View 渲染确定性的聊天投影和已准备的多行输入布局。
 func (model Model) View() string {
-	if model.title.closed {
+	switch model.focus() {
+	case focusClosed:
 		return model.renderSessionTitleClosed()
-	}
-	if model.resumeDirectoryNotice != "" {
+	case focusResumeNotice:
 		return pickerWrapped(model.resumeDirectoryText(), model.widthOrDefault(), model.heightOrDefault(), model.resumeDirectoryScroll)
-	}
-	if model.question != nil {
+	case focusQuestion:
 		return model.renderQuestion()
-	}
-
-	if model.hookTrust != nil {
+	case focusHookTrust:
 		return model.renderHookTrust()
-	}
-	if model.hooks.open {
-		return model.renderHooks()
-	}
-
-	if model.skillsOpen {
-		return model.renderSkills()
-	}
-	if model.cachePanel != nil {
-		return model.renderCachePanel()
-	}
-	if model.contextPanel != nil {
-		return model.renderContextPanel()
-	}
-	if model.approval != nil {
+	case focusApproval:
 		return model.renderApproval()
-	}
-	if model.plugins.open {
+	case focusHooks:
+		return model.renderHooks()
+	case focusSkills:
+		return model.renderSkills()
+	case focusCache:
+		return model.renderCachePanel()
+	case focusContext:
+		return model.renderContextPanel()
+	case focusPlugins:
 		return model.renderPlugins()
-	}
-	if model.tasks.open {
+	case focusTasks:
 		return model.renderTasksPanel()
-	}
-	if model.detailOpen {
+	case focusTranscript:
 		return model.renderTranscriptBrowser()
-	}
-	if model.title.editor != nil {
-		return model.renderSessionTitleEditor()
+	case focusTitle:
+		if model.title.editor != nil {
+			return model.renderSessionTitleEditor()
+		}
 	}
 	if model.composer.height <= 5 {
 		status := model.title.status()
 		if status == "" && model.errorSummary != "" {
-			if _, local := sessionTitleArguments(model.composer.text); local {
+			if head, _ := domain.SplitInputHead(model.composer.text); head == "/rename" {
 				status = "Error: " + model.errorSummary
 			}
 		}
@@ -1240,10 +1245,10 @@ func waitForControl(outputs <-chan protocol.ControlItem) tea.Cmd {
 	}
 }
 
-func interruptSession(session ChatSession) tea.Cmd {
+func interruptSession(session ChatSession, turnID domain.TurnID) tea.Cmd {
 	return func() tea.Msg {
 		if session != nil {
-			session.Interrupt()
+			session.InterruptTurn(turnID)
 		}
 		return nil
 	}

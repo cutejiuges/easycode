@@ -2,53 +2,22 @@ package builtin
 
 import (
 	"context"
-	"easycode/internal/executor/process"
 	"errors"
-	"io"
 	"sync"
 	"time"
 
+	"easycode/internal/executor/process"
 	"easycode/internal/tool"
 )
 
-// processHandle 封装一次启动的进程组；实现不得向上层泄漏PID。
-type processHandle interface {
-	stdout() io.ReadCloser
-	stderr() io.ReadCloser
-	observeExit() error
-	wait() (int, error)
-	terminate(force bool) error
-	groupAlive() (bool, error)
-}
-
 type processLauncher interface {
-	start(context.Context, tool.ExecCandidate) (processHandle, error)
+	start(context.Context, tool.ExecCandidate) (process.Handle, error)
 }
-
-type processTimer interface {
-	channel() <-chan time.Time
-	stop()
-}
-
-type processClock interface {
-	now() time.Time
-	timer(time.Duration) processTimer
-}
-
-type wallProcessClock struct{}
-type wallProcessTimer struct{ timerValue *time.Timer }
-
-func (wallProcessClock) now() time.Time { return time.Now() }
-func (wallProcessClock) timer(duration time.Duration) processTimer {
-	return wallProcessTimer{timerValue: time.NewTimer(duration)}
-}
-func (timer wallProcessTimer) channel() <-chan time.Time { return timer.timerValue.C }
-func (timer wallProcessTimer) stop()                     { timer.timerValue.Stop() }
 
 // ProcessExecution 是一次命令的唯一owner；Run串行执行且只能接收一次。
 type ProcessExecution struct {
 	launcher    processLauncher
-	clock       processClock
+	clock       process.Clock
 	candidate   tool.ExecCandidate
 	renderer    tool.ExecOutputRenderer
 	mu          sync.Mutex
@@ -58,7 +27,7 @@ type ProcessExecution struct {
 	outputStore tool.CommandOutputStore
 }
 
-func newProcessExecution(launcher processLauncher, clock processClock, candidate tool.ExecCandidate, renderer tool.ExecOutputRenderer) (*ProcessExecution, error) {
+func newProcessExecution(launcher processLauncher, clock process.Clock, candidate tool.ExecCandidate, renderer tool.ExecOutputRenderer) (*ProcessExecution, error) {
 	if launcher == nil || clock == nil || candidate.Validate() != nil || renderer == nil {
 		return nil, errors.New("invalid process execution configuration")
 	}
@@ -73,15 +42,6 @@ func (execution *ProcessExecution) Notifications() <-chan struct{} { return exec
 
 // Progress 返回已存储的不可变快照，不读取时钟或执行I/O。
 func (execution *ProcessExecution) Progress() tool.ExecProgress { return execution.progress.snapshot() }
-
-type processWaitResult struct {
-	exit int
-	err  error
-}
-type processReadResult struct {
-	output tool.ExecOutputSnapshot
-	err    error
-}
 
 // Run 接收一次执行，取消后仍持有所有goroutine并等待清理。
 func (execution *ProcessExecution) Run(ctx context.Context) tool.InvocationResult {
@@ -100,7 +60,7 @@ func (execution *ProcessExecution) Run(ctx context.Context) tool.InvocationResul
 	if ctx == nil || ctx.Err() != nil {
 		return failed(tool.ResultCancelled, "cancelled")
 	}
-	started := execution.clock.now()
+	started := execution.clock.Now()
 	var capture tool.CommandOutputCapture
 	var captureErr error
 	if execution.outputStore != nil {
@@ -116,7 +76,7 @@ func (execution *ProcessExecution) Run(ctx context.Context) tool.InvocationResul
 		outWriter.save = capture.WriteStdout
 		errWriter.save = capture.WriteStderr
 	}
-	owner, err := process.New(process.Config{Launcher: execOwnerLauncher{execution.launcher, execution.candidate}, Clock: ownerClock{execution.clock}, Stdout: outWriter, Stderr: errWriter, Timeout: time.Duration(execution.candidate.Invocation().Input().TimeoutMillis()) * time.Millisecond})
+	owner, err := process.New(process.Config{Launcher: execOwnerLauncher{execution.launcher, execution.candidate}, Clock: execution.clock, Stdout: outWriter, Stderr: errWriter, Timeout: time.Duration(execution.candidate.Invocation().Input().TimeoutMillis()) * time.Millisecond})
 	if err != nil {
 		return failed(tool.ResultError, "process_start_failed")
 	}
@@ -135,13 +95,12 @@ func (execution *ProcessExecution) Run(ctx context.Context) tool.InvocationResul
 	}
 	cancelled, timedOut, uncertain := owned.Cancelled, owned.TimedOut, owned.Uncertain
 	drainExpired := owned.DrainExpired
-	waited := processWaitResult{exit: owned.ExitCode, err: owned.WaitError}
 	sandboxFailed := errors.Is(owned.WaitError, process.SandboxUnavailable)
-	outResult := processReadResult{output: outWriter.buffer.Snapshot(), err: owned.StdoutError}
-	errResult := processReadResult{output: errWriter.buffer.Snapshot(), err: owned.StderrError}
+	stdout := outWriter.buffer.Snapshot()
+	stderr := errWriter.buffer.Snapshot()
 
-	execution.progress.update(nil, false, max(0, execution.clock.now().Sub(started).Milliseconds()))
-	uncertain = uncertain || drainExpired || outResult.err != nil || errResult.err != nil
+	execution.progress.update(nil, false, max(0, execution.clock.Now().Sub(started).Milliseconds()))
+	uncertain = uncertain || drainExpired || owned.StdoutError != nil || owned.StderrError != nil
 	if sandboxFailed && !uncertain {
 		// 基础设施错误不冒充用户命令退出，也不回传可能含宿主路径的sandbox诊断。
 		if cancelled {
@@ -165,15 +124,15 @@ func (execution *ProcessExecution) Run(ctx context.Context) tool.InvocationResul
 	if drainExpired {
 		code = "output_cleanup_incomplete"
 	}
-	metadata, err := tool.NewExecResultMetadata(execution.candidate.Invocation().Input().Workdir(), waited.exit, waited.err == nil, max(0, execution.clock.now().Sub(started).Milliseconds()), outResult.output.Stats(), errResult.output.Stats(), timedOut, cancelled, false)
+	metadata, err := tool.NewExecResultMetadata(execution.candidate.Invocation().Input().Workdir(), owned.ExitCode, owned.ExitKnown, max(0, execution.clock.Now().Sub(started).Milliseconds()), stdout.Stats(), stderr.Stats(), timedOut, cancelled, false)
 	if err != nil {
 		return failed(tool.ResultOutcomeUncertain, "invalid_process_result")
 	}
-	truncated := tool.ExecOutputNeedsSaving(outResult.output, errResult.output, execution.candidate.PreviewAllowance())
-	needsSaving := truncated || drainExpired || outResult.err != nil || errResult.err != nil
+	truncated := tool.ExecOutputNeedsSaving(stdout, stderr, execution.candidate.PreviewAllowance())
+	needsSaving := truncated || drainExpired || owned.StdoutError != nil || owned.StderrError != nil
 	var preview tool.ModelPreview
 	if capture != nil {
-		outSaving, errSaving := capture.Finish(outResult.err == nil && !drainExpired, errResult.err == nil && !drainExpired, needsSaving)
+		outSaving, errSaving := capture.Finish(owned.StdoutError == nil && !drainExpired, owned.StderrError == nil && !drainExpired, needsSaving)
 		metadata, err = metadata.WithOutputSaving(outSaving, errSaving)
 	} else if needsSaving && captureErr != nil {
 		reason := "storage_unavailable"
@@ -186,7 +145,7 @@ func (execution *ProcessExecution) Run(ctx context.Context) tool.InvocationResul
 	if err != nil {
 		return failed(tool.ResultOutcomeUncertain, "invalid_process_result")
 	}
-	preview, truncated, err = execution.renderer(outResult.output, errResult.output, metadata, execution.candidate.PreviewAllowance())
+	preview, truncated, err = execution.renderer(stdout, stderr, metadata, execution.candidate.PreviewAllowance())
 	if err != nil {
 		return failed(tool.ResultOutcomeUncertain, "invalid_process_result")
 	}
@@ -194,7 +153,7 @@ func (execution *ProcessExecution) Run(ctx context.Context) tool.InvocationResul
 	if err != nil {
 		return failed(tool.ResultOutcomeUncertain, "invalid_process_result")
 	}
-	updated, updateErr := tool.NewExecResultMetadata(metadata.Workdir(), waited.exit, waited.err == nil, metadata.DurationMillis(), metadata.Stdout(), metadata.Stderr(), timedOut, cancelled, truncated)
+	updated, updateErr := tool.NewExecResultMetadata(metadata.Workdir(), owned.ExitCode, owned.ExitKnown, metadata.DurationMillis(), metadata.Stdout(), metadata.Stderr(), timedOut, cancelled, truncated)
 	if updateErr == nil {
 		metadata, err = updated.WithOutputSaving(metadata.StdoutSaving(), metadata.StderrSaving())
 	} else {

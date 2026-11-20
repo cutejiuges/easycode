@@ -9,7 +9,7 @@ import (
 
 // ProjectHistory 返回已提交 OpenAI 原生历史的独立文本语义快照。
 func (conversation *Conversation) ProjectHistory() domain.SemanticHistoryView {
-	return projectHistory(conversation.history.snapshot())
+	return projectHistory(conversation.history.Entries())
 }
 
 func projectHistory(history []nativeHistoryEntry) domain.SemanticHistoryView {

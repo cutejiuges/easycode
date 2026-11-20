@@ -4,41 +4,27 @@ package catalog
 
 import (
 	"context"
-	"fmt"
+	"errors"
+	"io"
 	"os"
 )
 
-type secureStore struct {
-	dbName string
-}
+var errUnsupportedCatalogStore = errors.New("secure session catalog is unsupported on this platform")
+
+type secureStore struct{}
 
 func openSecureStore(context.Context, string) (*secureStore, error) {
-	return nil, fmt.Errorf("secure session catalog is unsupported on this platform")
+	return nil, errUnsupportedCatalogStore
 }
 
-func (*secureStore) ensureDatabase() error {
-	return fmt.Errorf("secure session catalog is unsupported on this platform")
+func (*secureStore) openSnapshot() (*os.File, error) {
+	return nil, errUnsupportedCatalogStore
 }
-func (*secureStore) ensureRollbackJournal() error {
-	return fmt.Errorf("secure session catalog is unsupported on this platform")
+
+func (*secureStore) publishSnapshot(context.Context, func(io.Writer) error) error {
+	return errUnsupportedCatalogStore
 }
-func (*secureStore) openTemporaryJournal(string) error {
-	return fmt.Errorf("secure session catalog is unsupported on this platform")
-}
-func (*secureStore) openNamedDatabase(string) (*os.File, error) {
-	return nil, fmt.Errorf("secure session catalog is unsupported on this platform")
-}
-func (*secureStore) validateSidecars() error {
-	return fmt.Errorf("secure session catalog is unsupported on this platform")
-}
-func (*secureStore) createTemporaryDatabase() (string, error) {
-	return "", fmt.Errorf("secure session catalog is unsupported on this platform")
-}
-func (*secureStore) replaceDatabase(string) error {
-	return fmt.Errorf("secure session catalog is unsupported on this platform")
-}
-func (*secureStore) removeTemporary(string) error {
-	return fmt.Errorf("secure session catalog is unsupported on this platform")
-}
-func (*secureStore) path(string) string { return "" }
-func (*secureStore) Close() error       { return nil }
+
+func (*secureStore) checkSnapshot() error { return errUnsupportedCatalogStore }
+
+func (*secureStore) Close() error { return nil }

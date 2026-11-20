@@ -128,7 +128,7 @@ func run(
 		prompt = resolved
 	}
 
-	return renderOutcome(app.Run(ctx, app.Options{
+	options := app.Options{
 		ShowVersion:     *showVersion,
 		Mode:            mode,
 		Prompt:          prompt,
@@ -138,7 +138,11 @@ func run(
 		ContinueSession: *continueSession,
 		Input:           input,
 		Output:          output,
-	}), mode, output, errorOutput)
+	}
+	if mode == headless.ModeStreamJSON {
+		return runStreamCommand(ctx, options, errorOutput)
+	}
+	return renderOutcome(app.Run(ctx, options), mode, output, errorOutput)
 }
 
 func renderOutcome(outcome app.Outcome, mode headless.Mode, output io.Writer, errorOutput io.Writer) int {

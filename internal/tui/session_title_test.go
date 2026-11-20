@@ -61,7 +61,14 @@ func TestSessionTitleInlineUsesLiteralArgumentsAndWaitsForControl(t *testing.T) 
 	s := &sessionTitleFixture{}
 	f := &fileQueryFixture{results: make(chan domain.FileSearchSnapshot)}
 	model := NewModel(context.Background(), "test", s).WithFileQueries(f)
+	model = setTitleCommandDraft(t, model, "/rename draft-only\\")
+	model, continuation := updateModelWithCommand(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	if continuation != nil || model.composer.text != "/rename draft-only\n" || model.title.request != nil || len(s.commands) != 0 {
+		t.Fatal("composer continuation dispatched the title command")
+	}
 	model = setTitleCommandDraft(t, model, "/rename\u00a0 Parser 👩‍💻 @src/main.go \\")
+	// 光标不在反斜杠之后时，命令参数仍保留原始字符。
+	model.composer.moveTo(len(model.composer.text) - 1)
 	model, cmd := updateModelWithCommand(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil || model.title.request == nil || model.title.value != "" || !strings.Contains(model.View(), "Saving session title") {
 		t.Fatal("inline rename did not wait for authoritative confirmation")

@@ -115,9 +115,12 @@ func (preview CompactionPreview) Validate() error {
 // CompactionKernel 将纯预检与显式网络生命周期分离。
 // RunCompaction 返回前必须完成 transport 清理；成功候选仍需显式 finalize 或 discard。
 type CompactionKernel interface {
-	PreflightCompaction(CompactionInput) (CompactionPreview, error)
+	PreflightCompaction(CompactionInput) (CompactionPreview, ContextWindowProjection, error)
 	RunCompaction(context.Context, domain.CompactionID, CompactionPreview) (*PreparedCompaction, error)
 }
+
+// ContextWindowProjection 延迟读取冻结的预检窗口，避免在预算拒绝前计算体量。
+type ContextWindowProjection func() (domain.ActiveContextView, domain.NativeHistoryFootprint, error)
 
 // CompactionPrompt 是原创的当前交接摘要指示，不请求推理过程。
 func CompactionPrompt(instructions string) string {

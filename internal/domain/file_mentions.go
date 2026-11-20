@@ -17,10 +17,7 @@ type fileMentionToken struct {
 
 // IsLocalSlashInput 复用唯一保留名判断，只识别精确的首词。
 func IsLocalSlashInput(text string) bool {
-	head := strings.TrimLeftFunc(text, unicode.IsSpace)
-	if end := strings.IndexFunc(head, unicode.IsSpace); end >= 0 {
-		head = head[:end]
-	}
+	head, _ := SplitInputHead(text)
 	return strings.HasPrefix(head, "/") && IsReservedSkillSlashName(strings.TrimPrefix(head, "/"))
 }
 
@@ -306,6 +303,17 @@ func NewInteractiveInputDraft(text string) (InputDraft, error) {
 func (d InputDraft) Text() string                    { return d.text }
 func (d InputDraft) FileReferences() []FileReference { return slices.Clone(d.references) }
 func (d InputDraft) Interactive() bool               { return d.interactive }
+
+// ValidateFiles 核对附件与已解析引用的顺序。文本入口仍须独立校验草稿。
+func (d InputDraft) ValidateFiles(files FileAttachments) error {
+	if !d.interactive {
+		return ValidateFileAttachments(d.text, files)
+	}
+	if err := files.Validate(); err != nil || files.Len() == 0 {
+		return err
+	}
+	return matchFileReferences(d.references, files)
+}
 
 // Validate 不信任外部携带的引用列表，重新核对完整有序原文集合。
 func (d InputDraft) Validate() error {

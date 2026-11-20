@@ -45,9 +45,9 @@ func (state *agentLoopRunState) effortSnapshot(profile contextplan.ProviderProfi
 			phase = "finishing"
 		}
 		if state.active.turnID.Valid() {
-			active, err = protocol.NewTurnEffortActive(state.active.turnID, phase, captured, state.active.selectionRevision, state.active.cancelRequested)
+			active, err = protocol.NewTurnEffortActive(state.active.turnID, phase, captured, state.active.selectionRevision, state.active.worker.cancelRequested)
 		} else {
-			active, err = protocol.NewStartingEffortActive(state.active.input.requestID, phase, captured, state.active.selectionRevision, state.active.cancelRequested)
+			active, err = protocol.NewStartingEffortActive(state.active.input.requestID, phase, captured, state.active.selectionRevision, state.active.worker.cancelRequested)
 		}
 		payload.Activity = "turn"
 		if state.active.compactionID.Valid() {
@@ -66,7 +66,7 @@ func (state *agentLoopRunState) effortSnapshot(profile contextplan.ProviderProfi
 		if state.compaction.terminalSeen {
 			phase = "finishing"
 		}
-		active, err = protocol.NewCompactionEffortActive(state.compaction.id, phase, captured, state.compaction.selectionRevision, state.compaction.cancelRequested)
+		active, err = protocol.NewCompactionEffortActive(state.compaction.id, phase, captured, state.compaction.selectionRevision, state.compaction.worker.cancelRequested)
 		payload.Activity = "compacting"
 		payload.Active = &active
 	}

@@ -92,7 +92,7 @@ func (state *agentLoopRunState) takePrefix(turnID domain.TurnID, index uint32, i
 
 func (state *agentLoopRunState) handleInputClaim(request inputClaimRequest) {
 	var claimed []queuedInput
-	if state.active != nil && state.active.turnID == request.turnID && !state.active.cancelRequested && len(state.active.claim) == 0 && !state.active.terminalSeen {
+	if state.active != nil && state.active.turnID == request.turnID && !state.active.worker.cancelRequested && len(state.active.claim) == 0 && !state.active.terminalSeen {
 		claimed = state.takePrefix(request.turnID, request.index, false)
 		state.active.claim = claimed
 		for _, input := range claimed {

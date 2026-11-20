@@ -1,7 +1,6 @@
 package openai
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -21,7 +20,10 @@ func reasoningFrames(t *testing.T, frames ...string) (*responsesStreamReducer, [
 			t.Fatalf("frame %s: %v", frame, err)
 		}
 		output := make(chan provider.StreamEvent, 16)
-		if err := provider.PublishReasoning(context.Background(), output, reduced.reasoning); err != nil {
+		if err := provider.PublishReasoning(reduced.reasoning, func(event provider.StreamEvent) error {
+			output <- event
+			return nil
+		}); err != nil {
 			t.Fatal(err)
 		}
 		close(output)

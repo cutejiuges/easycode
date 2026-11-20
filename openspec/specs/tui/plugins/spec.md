@@ -74,7 +74,7 @@ model-only、invalid、unavailable 或 conflict 项 MUST NOT 被接受。选择�
 
 ### Requirement: Plugin browsing does not become protocol or cache state
 
-打开、关闭、滚动、查看详情及选择技能 SHALL 只修改本地内存投影；不得添加 RuntimeEvent/headless 消息、Session/SQLite 记录、原生历史或缓存 segment。相同最终用户文本经手动输入、/plugins、/skills 或补全生成时 SHALL 得到相同准备结果和对应 Provider 请求。
+打开、关闭、滚动、查看详情及选择技能 SHALL 只修改本地内存投影；不得添加 RuntimeEvent/headless 消息、Session 记录、Catalog 快照、原生历史或缓存 segment。相同最终用户文本经手动输入、/plugins、/skills 或补全生成时 SHALL 得到相同准备结果和对应 Provider 请求。
 
 headless 和 stream-json SHALL 继续使用既有文本与 typed 控制契约；普通 `/plugins` 文本不得被当作终端面板控制。两个入口仍可显式调用插件技能，恢复后面板只显示本次明确配置的来源，不根据历史附件重新启用插件。
 

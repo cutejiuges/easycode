@@ -18,17 +18,16 @@ func (runtime *Runtime) prepareAutomaticSample(ctx context.Context, turn domain.
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	view, err := runtime.conversation.ProjectActiveContext()
+	if runtime.autoCompactionFailures >= 3 {
+		return nil
+	}
+	view, footprint, err := runtime.conversation.ProjectContextWindow()
 	if err != nil {
 		return err
 	}
 	revision := view.Revision()
-	if runtime.autoCompactionFailures >= 3 || (runtime.autoCompactionFailures > 0 && runtime.autoCompactionFailedRevision == revision) {
+	if runtime.autoCompactionFailures > 0 && runtime.autoCompactionFailedRevision == revision {
 		return nil
-	}
-	footprint, err := runtime.conversation.HistoryFootprint()
-	if err != nil {
-		return err
 	}
 	if len(inputs) > 0 {
 		association, err := inputAssociation(turn, index, inputs)
