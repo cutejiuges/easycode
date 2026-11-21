@@ -8,9 +8,11 @@
 
 ### Requirement: Tool catalog snapshots are deterministic and executable
 
-每次 Provider sample SHALL 使用一个不可变 Tool Catalog snapshot。snapshot 中每个 facade MUST 关联唯一当前、已注册且可执行的 capability、强类型 input/result、Provider facade及其wire kind、validator、policy、适用的 sandbox planner、executor 和结果 renderer；系统 MUST NOT 暴露缺少任一真实消费者的 schema或freeform定义，也 MUST NOT 通过 input revision、result codec revision 或版本后缀类型选择实现。
+每次普通 Provider sample SHALL 使用从当前完整工具注册目录派生的不可变声明快照。快照按回合捕获的模式筛选同一套当前定义，实际请求编译与流式参数解码 SHALL 使用同一冻结快照。完整目录中每个 facade MUST 关联唯一当前、已注册且可执行的 capability、强类型 input/result、Provider facade及其wire kind、validator、policy、适用的 sandbox planner、executor 和结果 renderer；系统 MUST NOT 暴露缺少任一真实消费者的 schema或freeform定义，也 MUST NOT 通过 input revision、result codec revision 或版本后缀类型选择实现。
 
-当前 snapshot SHALL 恰好包含 `fs.read`、`fs.glob`、`fs.grep`、`fs.patch`、`fs.write`、`process.exec`、`artifact.read`、`skill.read`、`user.question` 与 `task.progress`；Anthropic SHALL 将 patch/command 分别暴露为 structured `Edit`/`Bash`，OpenAI SHALL 将同一 patch/command 能力分别暴露为 custom freeform `apply_patch` 与 structured `exec_command`。facade 按稳定 capability ID、wire kind 与 facade name 确定性排序。snapshot SHALL 具有非空内容派生 source revision、canonical definition bytes 和 fingerprint；调用方修改 getter 返回值不得改变 snapshot。时间戳、cwd、Session/thread/turn identity、随机 invocation/approval ID、权限临时状态、base evidence、diff、命令环境实际值和文件系统枚举顺序 MUST NOT 进入 definition bytes 或 fingerprint。
+当前完整注册目录 SHALL 恰好包含 `fs.read`、`fs.glob`、`fs.grep`、`fs.patch`、`fs.write`、`process.exec`、`artifact.read`、`skill.read`、`user.question` 与 `task.progress`；Anthropic SHALL 将 patch/command 分别暴露为 structured `Edit`/`Bash`，OpenAI SHALL 将同一 patch/command 能力分别暴露为 custom freeform `apply_patch` 与 structured `exec_command`。facade 按稳定 capability ID、wire kind 与 facade name 确定性排序。snapshot SHALL 具有非空内容派生 source revision、canonical definition bytes 和 fingerprint；调用方修改 getter 返回值不得改变 snapshot。时间戳、cwd、Session/thread/turn identity、随机 invocation/approval ID、权限临时状态、base evidence、diff、命令环境实际值和文件系统枚举顺序 MUST NOT 进入 definition bytes 或 fingerprint。
+
+普通模式（含两个 headless 入口）SHALL 声明完整十项能力。TUI Plan Mode SHALL 恰好声明 `fs.read`、`fs.glob`、`fs.grep`、`artifact.read`、`skill.read`、`user.question` 与 `task.progress`。两种模式下同一能力的 facade 名称、wire kind、schema、description、服务端 schema 模式及本地参数与结果约束 SHALL 相同。声明快照的 canonical bytes、source revision 与 fingerprint MUST 对应实际声明的定义及顺序，普通模式的定义和指纹保持原样。模式筛选只适用于当次采样，Session 恢复及原生历史核验 SHALL 使用完整当前注册目录并保留先前全部已提交的调用与结果。
 
 两个 Provider SHALL 都以 structured Write 暴露 fs.write。Write 的 request、strict decoder、native restore、result codec、候选、policy、executor 和审批展示缺一不可；创建/覆盖证据和 Read observation MUST NOT 进入稳定 definition bytes。
 
@@ -23,7 +25,7 @@
 - **THEN** snapshot构造失败且该facade不会出现在任一Provider请求中
 
 #### Scenario: Expose the complete current catalog
-- **WHEN** Runtime为本变更编译一次Provider请求
+- **WHEN** Runtime 编译普通模式的 Provider 请求
 - **THEN** catalog只声明Read、ReadArtifact、Glob、Grep、Write、对应Provider的Edit或apply_patch以及Bash或exec_command，额外声明 structured Skill、对应 Provider 的 structured 提问 facade 与任务进度 facade，不声明MCP、Agent、后台进程或write_stdin
 
 #### Scenario: Expose the complete read-only catalog
@@ -32,18 +34,18 @@
 
 #### Scenario: Expose only current contracts
 - **WHEN** 将当前catalog与早期开发期catalog比较
-- **THEN** 当前唯一catalog直接包含十项能力且不保留旧catalog、旧schema或兼容分支
+- **THEN** 当前唯一完整注册目录包含十项能力，Plan Mode 从中派生声明快照，系统不保留旧 catalog、旧 schema 或兼容分支
 
 #### Scenario: Expose Provider-specific mutation wire
-- **WHEN** 分别读取Anthropic与OpenAI catalog view
+- **WHEN** 分别读取 Anthropic 与 OpenAI 的普通模式声明快照
 - **THEN** 两者分别路由到相同`fs.patch`与`process.exec`能力，但保持各自Edit/apply_patch与Bash/exec_command facade及wire
 
 #### Scenario: Expose only Read
 - **WHEN** 将当前catalog与最早只暴露Read的开发期catalog比较
-- **THEN** 当前唯一catalog直接包含Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill、Question 与 Task 且不保留旧catalog分支
+- **THEN** 当前唯一完整注册目录包含 Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill、Question 与 Task，系统不保留旧 catalog 分支
 
 #### Scenario: Expose Provider-specific patch wire
-- **WHEN** 分别读取Anthropic与OpenAI catalog view
+- **WHEN** 分别读取 Anthropic 与 OpenAI 的普通模式声明快照
 - **THEN** 两者都路由到`fs.patch`，但Anthropic使用structured JSON而OpenAI使用custom freeform定义
 
 #### Scenario: Expose structured Write beside native Patch
@@ -54,13 +56,13 @@
 两家 Provider SHALL 使用 structured ReadArtifact 暴露 artifact.read；保存路径、ID、计数、动态配额使用量 MUST NOT 进入 catalog definition 或 fingerprint。
 
 #### Scenario: Expose executable artifact reading
-- **WHEN** 构造两家 Provider 当前 catalog
+- **WHEN** 构造两家 Provider 的普通模式声明快照
 - **THEN** 恰好十项能力，ReadArtifact 具有完整 request、reducer、native restore、policy、executor 和 result codec
 
 两家 Provider SHALL 以 structured Skill 暴露 skill.read，具备完整读取、validator、policy、来源范围约束、renderer 与恢复实现。目录为空仍保留真实 executor，未知名称返回安全错误，不暴露未来来源能力。
 
 #### Scenario: Expose executable Skill loading
-- **WHEN** 两家 Provider 构造当前目录
+- **WHEN** 两家 Provider 构造普通模式声明快照
 - **THEN** 均恰好十项能力，Skill 的主文档与资源分支都有 typed input/result，定义不包含实际目录正文或绝对路径
 
 user.question SHALL 具有完整 typed input/result、strict decoder、policy、实际交互执行消费者、renderer 和 native restore。Anthropic facade 为 AskUserQuestion，OpenAI facade 为 request_user_input，均为 structured wire。该能力不操作文件、进程或网络，不生成虚构 sandbox 候选或副作用批准；无交互宿主由真实执行路径返回配对不可用结果。目录定义中不得出现动态题目、回答、请求身份、结果余额或 UI 状态。
@@ -97,11 +99,20 @@ user.question SHALL 具有完整 typed input/result、strict decoder、policy、
 - **WHEN** 两家真实 CLI 连接本地协议验证服务并发送首个请求
 - **THEN** 服务先核对真实 schema/description、update_plan 的显式 false 与其他工具原模式，再决定是否返回 SSE；错误定义不能借预置成功响应通过验收
 
+#### Scenario: Advertise the seven planning facades without changing their contracts
+- **WHEN** Anthropic 与 OpenAI 分别编译同一已冻结 Plan Mode 回合的普通采样请求
+- **THEN** 两者都只声明 Read、Glob、Grep、ReadArtifact、Skill 及各自现有的 AskUserQuestion 和 TodoWrite，或 request_user_input 和 update_plan，沿用各自参数、wire 和本地验证规则
+- **THEN** 共同 facade 保持原有定义和相对顺序，OpenAI update_plan 保留显式 strict:false，规划快照的定义证据与请求中的七项声明一致
+
+#### Scenario: Keep history independent of advertised tools
+- **WHEN** 同一会话已在普通模式提交文件修改或命令调用及配对原生输出，随后在 Plan Mode 续写或退出后重新装载该会话
+- **THEN** 当前声明的筛选只影响新采样准入，已经提交的历史调用和配对输出保留完整内容与顺序，恢复按完整当前注册目录验证
+
 ### Requirement: Completed samples produce typed ready calls
 
 Provider completed sample SHALL 将原生 native commit、normalized usage 与按模型 item 顺序排列的 ready calls 作为一个不可分割的 prepared value 交给 Runtime。每个 ready call MUST 包含合法 Provider call ID、非空 facade identity、已解析 capability 以及 `ReadInput`、`GlobInput`、`GrepInput`、`PatchInput`、`WriteInput`、`ExecInput`、`ReadArtifactInput`、`SkillInput`、`QuestionInput` 或任务进度更新封闭联合中的恰好一种；核心导出边界 MUST NOT 接受或返回 `any`、无约束动态 map 或 input revision router。
 
-Anthropic patch与command参数必须由完整structured JSON strict decode；OpenAI patch输入必须由完整custom freeform parser消费，command参数必须由完整structured JSON strict decode。参数delta、未闭合原生item、未知工具、重复Provider call ID、capability与typed input不匹配、未知字段、尾随JSON/patch文本、未支持操作或超限输入 MUST 使sample失败，不得产生ready call、native commit、sample usage、approval或工具I/O。
+Anthropic patch与command参数必须由完整structured JSON strict decode；OpenAI patch输入必须由完整custom freeform parser消费，command参数必须由完整structured JSON strict decode。参数delta、未闭合原生item、未在当前回合的采样快照声明的工具、重复Provider call ID、capability与typed input不匹配、未知字段、尾随JSON/patch文本、未支持操作或超限输入 MUST 使sample失败，不得产生ready call、native commit、sample usage、approval或工具I/O。
 
 Write SHALL 只由完整 structured JSON strict decode 产生 ready call；调用不得被转换成 Patch replacement 或 shell 命令。
 
@@ -127,7 +138,7 @@ Write SHALL 只由完整 structured JSON strict decode 产生 ready call；调�
 - **THEN** sample以协议错误失败，Session不写入成功sample facts且所有executor调用次数为零
 
 #### Scenario: Reject an unadvertised tool
-- **WHEN** Provider返回当前catalog snapshot中不存在的工具名称或wire kind
+- **WHEN** Provider返回当前冻结声明快照中不存在的工具名称或不匹配的 wire kind
 - **THEN** sample失败且系统不按名称猜测executor或降级到通用JSON/freeform工具
 
 #### Scenario: Reject partial Write content
@@ -160,6 +171,16 @@ TodoWrite 与 update_plan SHALL 仅在完整 sample 通过各自 strict decoder 
 #### Scenario: Reject mixed task arguments without profile guessing
 - **WHEN** 已绑定 TodoWrite 的调用携带 plan/explanation，或已绑定 update_plan 的调用携带 activeForm/todos
 - **THEN** 显式匹配的 facade decoder 拒绝整个 sample，不尝试另一 facade、不产生任何可执行 ready 或副作用
+
+Runtime SHALL 在整个调用采样的 native commit、usage 和 ready 同批持久化前，按与声明快照相同的模式准入规则核验全部 typed ready calls。任一个调用违反 Plan Mode 的白名单时，整个采样 MUST 失败关闭。该采样 SHALL 无已提交的 native commit、usage 或 ready facts，无配对的虚构拒绝结果，无工具准备、审批、工具 Hook 或工具 I/O。此前已提交的调用和输出 SHALL 保持有效。
+
+#### Scenario: Reject an unadvertised mutation before any member of the planning sample runs
+- **WHEN** Plan Mode 中同一个 sample 同时返回合法 Read 和未声明的 Edit/apply_patch、Write 或 Bash/exec_command，即使该操作已获会话级权限或命中工具 Hook
+- **THEN** 整个采样失败，所有调用均不产生已提交的 native/usage/ready facts、工具候选、审批、工具 Hook、结果或 I/O，先前采样的已提交事实仍可读取和恢复
+
+#### Scenario: Reject a typed mutation at Runtime admission
+- **WHEN** Provider 适配器向 Runtime 交付了含完整 typed Patch、Write 或 Exec 的 Plan Mode prepared sample
+- **THEN** 与该回合声明相同的准入规则在持久化前拒绝整个采样，无法通过完整注册目录或既有授权绕过
 
 ### Requirement: Durable sample facts precede tool execution
 
@@ -200,7 +221,7 @@ Write 的目标/目录检查与候选读取 SHALL 遵循上述 Patch 的 ready d
 
 本条的 exclusive 屏障和串行审批语义 SHALL 同样适用于 Write；不能将非 Patch 调用默认视作 parallel_read。
 
-存在匹配 PreToolUse 时，Patch/Write/Exec SHALL 在同一 exclusive 屏障内先冻结并 durable 保存完整 Hook 计划，串行完成检查，再准备候选与普通审批。Hook 的计划、信任、进程及结果不得越过前序 result 或与后序工具重叠；只读调用不触发本切片 Hook。无匹配时 SHALL 保持原调度、十能力目录与 Provider facade 不变。单个 Hook denied/error 只阻断原 call slot，后序 independent sibling 仍按原序执行；取消、cleanup 不确定或 writer poison 才停止整个 turn。
+存在匹配 PreToolUse 时，Patch/Write/Exec SHALL 在同一 exclusive 屏障内先冻结并 durable 保存完整 Hook 计划，串行完成检查，再准备候选与普通审批。Hook 的计划、信任、进程及结果不得越过前序 result 或与后序工具重叠；只读调用不触发本切片 Hook。无匹配时 SHALL 使用该回合模式声明的目录并保持原调度与 facade 契约。单个 Hook denied/error 只阻断原 call slot，后序 independent sibling 仍按原序执行；取消、cleanup 不确定或 writer poison 才停止整个 turn。
 
 
 匹配 PostToolUse 的调用 SHALL 在同一 exclusive slot 内先冻结计划并审查信任，再沿用普通候选/审批/执行。真实结果先冻结并成功 Sync；成功且真实执行的调用随后串行收口 Post，其他结果将已存在计划标记 skipped。前序 result 已 durable 但 Post 尚未 terminal 时，后序工具、整组 native outputs、steering 与下一 sample MUST 继续等待。Post 普通检查失败不能改写原结果或取消独立 sibling；取消、cleanup 不确定或 writer poison 按既有强制收口规则处理。Pre/Post 对同调用共享 30 秒检查执行预算。未开始的后缀用明确 skipped/cancelled disposition 收口，不伪造超时运行；已准入的普通 Post 错误可继续下一项，未关闭的调用预算 ticket 与未 terminal 的 Post 一样阻止后序 admission。
@@ -327,6 +348,12 @@ Stop 自动续轮 SHALL 先按真实阻断项检查独立续轮与下一普通 s
 #### Scenario: Keep tasks within the existing turn limits
 - **WHEN** 同轮多次更新任务并接受 steering
 - **THEN** 任务调用仍累计到既有 16/64 及输出额度，不因清空列表或折叠界面重置预算或结束回合
+
+Plan Mode 已准入的五项读取 SHALL 继续遵循既有只读批次、结果预算及输出配对规则。Question 和 Task SHALL 继续作为各自的 exclusive 屏障并保留既有交互、提交、取消与恢复边界。Stop 与 PreCompact SHALL 按各自的用户配置、信任、只读工作区和禁网沙箱执行。它们独立于模型工具目录，使用原有续轮或压缩边界，不改变回合捕获的模式。
+
+#### Scenario: Order reads around planning questions and task updates
+- **WHEN** Plan Mode 的合法采样按 Read、Question、Task、Grep 排列
+- **THEN** Question 与 Task 分别作为 exclusive 屏障，调用结果及配对原生输出保持原顺序，既有任务与提问行为不改变当前模式
 
 ### Requirement: Execution ledger provides at-most-once automatic execution
 

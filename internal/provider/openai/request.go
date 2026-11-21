@@ -23,6 +23,7 @@ type responsesInputFields struct {
 	ToolChoice      string         `json:"tool_choice,omitempty"`
 	MaxOutputTokens uint64         `json:"max_output_tokens,omitempty"`
 	Model           string         `json:"model"`
+	Instructions    string         `json:"instructions,omitempty"`
 	Input           []NativeItem   `json:"input"`
 	Tools           []responseTool `json:"tools"`
 }

@@ -29,7 +29,7 @@ func (runtime *Runtime) planWindow(view domain.ActiveContextView, footprint doma
 	return runtime.planWindowFor(runtime.operationProfile, view, footprint)
 }
 func (runtime *Runtime) planWindowFor(profile contextplan.ProviderProfile, view domain.ActiveContextView, footprint domain.NativeHistoryFootprint) (contextplan.ContextPlan, error) {
-	input, err := contextplan.NewPlanningInput(profile, runtime.toolCatalog, runtime.projectInstructions, view, footprint, contextplan.NewSamplingInput(), runtime.budget)
+	input, err := contextplan.NewPlanningInput(profile, runtime.toolCatalogFor(profile.WorkMode()), runtime.projectInstructions, view, footprint, contextplan.NewSamplingInput(), runtime.budget)
 	if err != nil {
 		return contextplan.ContextPlan{}, err
 	}
@@ -93,7 +93,12 @@ func (runtime *Runtime) preflightCompactionFor(profile contextplan.ProviderProfi
 	if kernel == nil {
 		return compactionAdmission{}, protocol.ControlErrorInvalidCommand
 	}
-	sampling, err := runtime.samplingInputFor(profile)
+	// 摘要按实际摘要 wire 预算，普通候选窗口仍使用本次捕获的操作策略。
+	summaryProfile, err := profile.WithWorkMode(domain.WorkModeDefault)
+	if err != nil {
+		return compactionAdmission{}, protocol.ControlErrorInvalidCommand
+	}
+	sampling, err := runtime.samplingInputFor(summaryProfile)
 	if err != nil {
 		return compactionAdmission{}, protocol.ControlErrorInvalidCommand
 	}

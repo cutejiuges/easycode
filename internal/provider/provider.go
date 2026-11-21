@@ -35,6 +35,7 @@ type Capabilities struct {
 // TurnInput 是共享 turn 模板交给 Provider Kernel 的最小输入。
 type TurnInput struct {
 	inference              domain.InferenceSettings
+	workMode               domain.WorkMode
 	skillCatalog           domain.SkillCatalog
 	projectInstructions    domain.ProjectInstructionsSnapshot
 	hasProjectInstructions bool
@@ -44,15 +45,29 @@ type TurnInput struct {
 
 // NewSamplingInput 创建仅使用已提交原生历史的采样输入。
 func NewSamplingInput(settings domain.InferenceSettings) (TurnInput, error) {
-	input := TurnInput{inference: settings}
+	input := TurnInput{inference: settings, workMode: domain.WorkModeDefault}
 	return input, input.Validate()
 }
 
 // InferenceSettings 返回本次操作捕获的完整不可变策略。
 func (input TurnInput) InferenceSettings() domain.InferenceSettings { return input.inference }
 
+// WorkMode 返回本次普通请求使用的冻结工作方式。
+func (input TurnInput) WorkMode() domain.WorkMode { return input.workMode }
+
 // Validate 校验纯采样输入；用户正文只通过独立输入提交传递。
-func (input TurnInput) Validate() error { return input.inference.Validate() }
+func (input TurnInput) Validate() error {
+	if err := input.inference.Validate(); err != nil {
+		return err
+	}
+	if err := input.workMode.Validate(); err != nil {
+		return err
+	}
+	if input.hasToolCatalog || input.workMode == domain.WorkModePlan {
+		return input.toolCatalog.ValidateForWorkMode(input.workMode)
+	}
+	return nil
+}
 
 // WithProjectInstructions 返回附着了项目指令快照的输入副本。
 func (input TurnInput) WithProjectInstructions(
@@ -81,12 +96,18 @@ func (input TurnInput) ProjectInstructions() (domain.ProjectInstructionsSnapshot
 
 // WithToolCatalog 返回绑定不可变工具目录快照的输入副本。
 func (input TurnInput) WithToolCatalog(snapshot tool.CatalogSnapshot) (TurnInput, error) {
-	if err := snapshot.Validate(); err != nil {
+	if err := snapshot.ValidateForWorkMode(input.workMode); err != nil {
 		return TurnInput{}, fmt.Errorf("tool catalog snapshot is invalid: %w", err)
 	}
 	input.toolCatalog = snapshot.Clone()
 	input.hasToolCatalog = true
 	return input, nil
+}
+
+// WithPlanMode 一次冻结规划工作方式和其受限工具声明。
+func (input TurnInput) WithPlanMode(snapshot tool.CatalogSnapshot) (TurnInput, error) {
+	input.workMode = domain.WorkModePlan
+	return input.WithToolCatalog(snapshot)
 }
 
 // ToolCatalog 返回不共享可变内存的工具目录快照。
@@ -95,7 +116,7 @@ func (input TurnInput) ToolCatalog() (tool.CatalogSnapshot, bool, error) {
 		return tool.CatalogSnapshot{}, false, nil
 	}
 	clone := input.toolCatalog.Clone()
-	if err := clone.Validate(); err != nil {
+	if err := clone.ValidateForWorkMode(input.workMode); err != nil {
 		return tool.CatalogSnapshot{}, false, fmt.Errorf("tool catalog snapshot is invalid: %w", err)
 	}
 	return clone, true, nil

@@ -21,6 +21,7 @@ const (
 	EventCacheSnapshot         EventKind = "cache_snapshot"
 	EventContextSnapshot       EventKind = "context_snapshot"
 	EventEffortSnapshot        EventKind = "effort_snapshot"
+	EventWorkModeSnapshot      EventKind = "work_mode_snapshot"
 	EventTaskProgressSnapshot  EventKind = "task_progress_snapshot"
 	EventTaskProgressUpdated   EventKind = "task_progress_updated"
 	EventCompactionStarted     EventKind = "compaction_started"
@@ -70,6 +71,13 @@ func (event Event) Validate() error {
 			return fmt.Errorf("compaction presentation scope is invalid")
 		}
 		_, err := CompactionEventScope(event)
+		return err
+	}
+	if event.Kind == EventWorkModeSnapshot {
+		if !event.SessionID.Valid() || !event.ThreadID.Valid() || event.TurnID != "" || event.CompactionID != "" {
+			return fmt.Errorf("work mode snapshot scope is invalid")
+		}
+		_, err := DecodeWorkModeSnapshot(event)
 		return err
 	}
 	if event.Kind == EventTaskProgressSnapshot || event.Kind == EventTaskProgressUpdated {

@@ -25,6 +25,7 @@ type messagesRequest struct {
 	OutputConfig      *outputConfigWire  `json:"output_config,omitempty"`
 	ToolChoice        *summaryToolChoice `json:"tool_choice,omitempty"`
 	Model             string             `json:"model"`
+	System            string             `json:"system,omitempty"`
 	Messages          []nativeMessage    `json:"messages"`
 	MaxTokens         int                `json:"max_tokens"`
 	Tools             []anthropicTool    `json:"tools"`

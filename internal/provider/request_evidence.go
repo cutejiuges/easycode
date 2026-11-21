@@ -114,6 +114,7 @@ func (e RequestEvidence) Receipt(body codec.CanonicalJSON, comparison RequestCom
 type SamplingSources[E any] struct {
 	History      []E
 	Instructions *domain.ProjectInstructionsSnapshot
+	WorkMode     domain.WorkMode
 	Tools        tool.FacadeView
 	Inference    domain.InferenceSettings
 	Skills       domain.SkillCatalog
@@ -145,5 +146,5 @@ func ReadSamplingSources[E any](input TurnInput, family domain.ProviderFamily, a
 	if err != nil {
 		return SamplingSources[E]{}, err
 	}
-	return SamplingSources[E]{History: history, Instructions: instructions, Tools: view, Inference: inference, Skills: input.SkillCatalog()}, nil
+	return SamplingSources[E]{History: history, Instructions: instructions, WorkMode: input.WorkMode(), Tools: view, Inference: inference, Skills: input.SkillCatalog()}, nil
 }

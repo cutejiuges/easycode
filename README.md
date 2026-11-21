@@ -34,6 +34,10 @@ easycode resume
 
 交互模式中，输入 `/` 浏览命令，输入 `@` 引用工作区文件。用 `/rename` 为会话命名，用 `/resume` 切换会话。
 
+在空闲会话中输入 `/plan` 或按 `Shift+Tab` 进入只读 Plan Mode。模型可以读取和搜索工作区、查看授权输出和技能、提问并维护任务进度。此时修改文件和执行命令的工具不可用。通过 `/plan off` 或 `Shift+Tab` 回到 `Default` 后，再发送实施指令，工具沿用现有审批规则。
+
+计划正文保留在转录中，会话恢复从 `Default` 开始。压缩可能只保留旧计划的摘要。需要精确实施某一版时，从转录或 `Ctrl+O` 读取原文，把所需决定附进本次实施输入。[Plan Mode 规格](openspec/specs/tui/plan-mode/spec.md)
+
 ## 继续阅读
 
 - [当前功能与平台支持](docs/roadmap/capability-status.md)

@@ -1019,6 +1019,12 @@ started Sync 前只有原输入 request_id；terminal 后直到 worker/stream �
 
 2026-11-15 回归计时补充：排查“测试超过十分钟”时，先区分普通 `make test` 和顺序执行普通/race 的 `make verify`，使用 `-json -count=1` 分包、分顶层/子测试记录。此次 Darwin/Go 1.24.13 普通全量约 154 秒，race 约 781 秒；主要是 app 的大规模安全/恢复矩阵及大型 fixture 的重复 JSON 校验，不是 effort idle 查询死循环。其他 worktree 同时运行 race/profile 会影响墙钟时间，不能据此宣称隔离性能。profile 的多个 goroutine 累计阻塞也不能直接当成单用例等待。保留全部安全/恢复断言和 race，不用减少矩阵、改 GORACE 或扩大 timeout 掩盖慢路径；后续优化从测得的 JSON/恢复热点及实例环境隔离着手。证据与边界见 `openspec/changes/archive/2026-11-15-add-runtime-effort-control/regression-2026-11-15.md`。
 
+## Plan Mode 的目录、命令与摘要边界
+
+- 只在请求里隐藏写入工具，无法约束已经解码的调用。普通 Plan 请求和流式解码共用受限目录，Runtime 在整批 sample 持久化前再次使用同一允许集合。拒绝发生在审批、Hook 与工具准备之前，已有会话授权不会改变此次准入。
+- 交互模式待决与正文提交分别持有。接纳后的迟到取消仍收到权威确认，接纳前取消保留草稿。TUI 局部保留 `/plan`，避免共享 Skill 解析器吞掉 headless 的既有 `/plan` 调用。
+- 普通采样策略在操作开始时冻结，摘要的实际请求仍用专用指令、完整目录和禁用工具选择。窗口估算与摘要 wire 各用对应输入。精确实施依靠用户带入的本次正文，旧计划摘要不提供权限或原文绑定。测试见 `internal/app/plan_mode_test.go` 和 `scripts/plan-mode-smoke.py`。
+
 ## [输入][2026-11-17] 文件候选、冻结内容与操作捕获分别持有
 
 - 新查询发出后继续接受旧 A 行会把用户正在输入的 B 替换成错误路径；只比 query 也无法挡住 ABA。立即撤销旧行资格，核对 workspace/session/composer/目标/request/index revision；同锚点保留发现 deadline/索引，再开才重扫。`internal/tui/file_completion_test.go` 与 `internal/app/file_source_test.go` 用确定屏障验证。

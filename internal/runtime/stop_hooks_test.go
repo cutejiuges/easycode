@@ -1,7 +1,9 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -35,14 +37,18 @@ func (f *stopRunnerFixture) Run(ctx context.Context, id domain.HookRunIdentity, 
 func newStopRuntimeFixture(t *testing.T, journal Journal) (*Runtime, *stopRunnerFixture, *atomic.Int32) {
 	return newStopRuntimeRequestFixture(t, journal, nil)
 }
-func newStopRuntimeRequestFixture(t *testing.T, journal Journal, inspect func([]byte)) (*Runtime, *stopRunnerFixture, *atomic.Int32) {
+func newStopRuntimeRequestFixture(t *testing.T, journal Journal, inspect func(int, []byte)) (*Runtime, *stopRunnerFixture, *atomic.Int32) {
 	t.Helper()
 	requests := new(atomic.Int32)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		body, _ := io.ReadAll(r.Body)
+		index := int(requests.Add(1)) - 1
 		if inspect != nil {
-			inspect(body)
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			inspect(index, body)
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = fmt.Fprint(w, "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"response-test\"}}\n\nevent: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"  answer\\n\"}]}}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"response-test\"}}\n\n")
@@ -81,11 +87,33 @@ func newStopRuntimeRequestFixture(t *testing.T, journal Journal, inspect func([]
 }
 func TestStopRuntimeContinuesTwiceWithoutCompletingEarly(t *testing.T) {
 	j := &fakeJournal{}
-	r, runner, requests := newStopRuntimeFixture(t, j)
+	const steering = "preserve this steering input"
+	r, runner, requests := newStopRuntimeRequestFixture(t, j, func(index int, body []byte) {
+		var request struct {
+			Instructions string            `json:"instructions"`
+			Tools        []json.RawMessage `json:"tools"`
+		}
+		if err := json.Unmarshal(body, &request); err != nil || request.Instructions != domain.WorkModePlan.Instructions() || len(request.Tools) != 7 {
+			t.Errorf("sampling request %d lost Plan guidance or declarations: %v", index, err)
+		}
+		wantSteering := 0
+		if index > 0 {
+			wantSteering = 1
+		}
+		if bytes.Count(body, []byte("check again")) != index || bytes.Count(body, []byte(steering)) != wantSteering {
+			t.Errorf("sampling request %d lost native Stop feedback or steering", index)
+		}
+	})
 	trust := hookTrustEmitter(t, r, protocol.HookTrustSession, nil)
+	plan, err := r.profile.WithWorkMode(domain.WorkModePlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	correction, _ := domain.NewUserInput("01900000-0000-7000-8000-000000000002", steering)
+	control := &stopInputFixture{inputs: []domain.UserInput{correction}}
 	var completed int
 	input, _ := domain.NewUserInput("01900000-0000-7000-8000-000000000001", "task")
-	err := r.runFixtureTurn(context.Background(), []domain.UserInput{input}, func(e protocol.Event) {
+	err = r.runTurn(context.Background(), []domain.UserInput{input}, plan, control, func(e protocol.Event) {
 		trust(e)
 		if e.Kind == protocol.EventTurnCompleted {
 			completed++

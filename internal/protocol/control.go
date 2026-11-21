@@ -304,7 +304,7 @@ func (item ControlItem) Validate() error {
 
 func isCorrelatedContextEvent(event Event) bool {
 	switch event.Kind {
-	case EventCacheSnapshot, EventContextSnapshot, EventEffortSnapshot, EventTaskProgressSnapshot,
+	case EventCacheSnapshot, EventContextSnapshot, EventEffortSnapshot, EventWorkModeSnapshot, EventTaskProgressSnapshot,
 		EventCompactionStarted, EventCompactionCompleted, EventCompactionFailed:
 		return true
 	default:
@@ -313,14 +313,22 @@ func isCorrelatedContextEvent(event Event) bool {
 }
 
 func validCommandKind(kind CommandKind) bool {
-	return kind == CommandResolveUserQuestion || kind == CommandResolveHookTrust || kind == CommandResetHookTrust || kind == CommandQueryEffort || kind == CommandQueryTasks || kind == CommandSetEffort || kind == CommandRenameSession || kind == CommandQueryCache || kind == CommandQueryContext || kind == CommandCompactContext || kind == CommandCancelCompaction || kind == CommandSubmitConversationalInput || kind == CommandRetractInputs || kind == CommandStopTurn || kind == CommandSubmitInput || kind == CommandInterrupt || kind == CommandShutdown || kind == CommandResolveToolApproval
+	switch kind {
+	case CommandResolveUserQuestion, CommandResolveHookTrust, CommandResetHookTrust, CommandQueryEffort,
+		CommandQueryTasks, CommandSetEffort, CommandSetWorkMode, CommandRenameSession, CommandQueryCache,
+		CommandQueryContext, CommandCompactContext, CommandCancelCompaction, CommandSubmitConversationalInput,
+		CommandRetractInputs, CommandStopTurn, CommandSubmitInput, CommandInterrupt, CommandShutdown, CommandResolveToolApproval:
+		return true
+	default:
+		return false
+	}
 }
 
 func dispositionMatches(kind CommandKind, disposition CommandDisposition) bool {
 	switch kind {
 	case CommandQueryCache, CommandQueryContext, CommandQueryEffort, CommandQueryTasks:
 		return disposition == CommandDispositionQueried
-	case CommandSetEffort, CommandRenameSession:
+	case CommandSetEffort, CommandSetWorkMode, CommandRenameSession:
 		return disposition == CommandDispositionUpdated
 	case CommandCompactContext:
 		return disposition == CommandDispositionCompacting

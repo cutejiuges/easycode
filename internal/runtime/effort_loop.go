@@ -100,7 +100,7 @@ func (state *agentLoopRunState) controlEffort(request loopCommandRequest) {
 			state.reject(request, protocol.ControlErrorEffortConflict, true)
 			return
 		}
-		profile, err = state.loop.runtime.profile.WithInferenceSettings(settings)
+		profile, err = profile.WithInferenceSettings(settings)
 		if err != nil {
 			state.reject(request, protocol.ControlErrorEffortConflict, true)
 			return

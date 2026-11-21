@@ -125,6 +125,9 @@ func TestExecNativeResultsRestoreExactly(t *testing.T) {
 					t.Fatalf("Exec continuation golden mismatch:\n%s", first.Bytes())
 				}
 			}
+			if test.name == "zero" {
+				assertPlanExecRestore(t, uninterrupted, restored)
+			}
 			_, a, err := uninterrupted.ProjectContextWindow()
 			if err != nil {
 				t.Fatal(err)

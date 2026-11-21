@@ -130,7 +130,7 @@ func taskResultSequence(payload protocol.TaskProgressSnapshotPayload) uint64 {
 	return 0
 }
 
-func (model Model) taskScopeMatches(event protocol.Event) bool {
+func (model Model) matchesChatScope(event protocol.Event) bool {
 	return model.tasks.threadID == "" || (model.tasks.threadID == event.ThreadID && model.tasks.sessionID == event.SessionID)
 }
 
@@ -140,7 +140,7 @@ func (model *Model) observeTaskProgress(event protocol.Event, payload protocol.T
 		return false
 	}
 	view := &model.tasks
-	if !model.taskScopeMatches(event) {
+	if !model.matchesChatScope(event) {
 		return false
 	}
 	if previous := view.snapshot; previous != nil {
@@ -174,7 +174,7 @@ func (model Model) projectTaskSnapshot(requestID protocol.RequestID, event proto
 	if query == nil || query.requestID != requestID || query.generation != model.tasks.generation || !query.accepted {
 		return model, nil
 	}
-	if !model.taskScopeMatches(event) {
+	if !model.matchesChatScope(event) {
 		return model, nil
 	}
 	payload, err := protocol.DecodeTaskProgressSnapshot(event)
@@ -188,7 +188,7 @@ func (model Model) projectTaskSnapshot(requestID protocol.RequestID, event proto
 }
 
 func (model Model) projectTaskUpdate(event protocol.Event) (tea.Model, tea.Cmd) {
-	if !model.taskScopeMatches(event) {
+	if !model.matchesChatScope(event) {
 		return model, nil
 	}
 	payload, err := protocol.DecodeTaskProgressUpdated(event)

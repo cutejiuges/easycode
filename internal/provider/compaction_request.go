@@ -26,6 +26,9 @@ func NewCompactionInput(sampling TurnInput, instructions string, outputTokens ui
 	if !utf8.ValidString(instructions) || len(instructions) > MaxCompactionInstructionsBytes || outputTokens == 0 || outputTokens > 65536 {
 		return CompactionInput{}, fmt.Errorf("compaction input is invalid")
 	}
+	if sampling.WorkMode() != domain.WorkModeDefault {
+		return CompactionInput{}, fmt.Errorf("compaction requires default sampling sources")
+	}
 	if _, exists, err := sampling.ToolCatalog(); err != nil || !exists {
 		return CompactionInput{}, fmt.Errorf("compaction tool catalog is required")
 	}

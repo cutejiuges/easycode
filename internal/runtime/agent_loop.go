@@ -133,19 +133,25 @@ func (loop *AgentLoop) submitRequest(ctx context.Context, request loopCommandReq
 	if err := validate(); err != nil {
 		return protocol.CommandResult{}, fault.New(fault.CodeInvalidInput, "command is invalid")
 	}
-	if request.command.Kind() == protocol.CommandRenameSession && request.hostStopped == nil {
-		return protocol.CommandResult{}, fault.New(fault.CodeInvalidInput, "session title control requires an interactive host")
+	switch request.command.Kind() {
+	case protocol.CommandRenameSession:
+		if request.hostStopped == nil {
+			return protocol.CommandResult{}, fault.New(fault.CodeInvalidInput, "session title control requires an interactive host")
+		}
+		request.cancelled = ctx.Done()
+	case protocol.CommandSetWorkMode:
+		if request.hostStopped == nil {
+			return protocol.CommandResult{}, fault.New(fault.CodeInvalidInput, "work mode control requires an interactive host")
+		}
+		request.cancelled = ctx.Done()
 	}
 	if loop == nil || loop.state.Load() != agentLoopRunning {
 		return protocol.CommandResult{}, fault.New(fault.CodeTurnFailed, "agent loop is not running")
 	}
 	request.result = make(chan loopCommandResponse, 1)
-	if request.command.Kind() == protocol.CommandRenameSession {
-		request.cancelled = ctx.Done()
-	}
 	select {
 	case loop.requests <- request:
-		// 持久命令在 owner 内另有接纳检查，等待结果不受调用方取消打断。
+		// 需要明确提交点的命令由 owner 另行检查取消。已交付后等待确定结果。
 	case <-ctx.Done():
 		return protocol.CommandResult{}, fault.Wrap(fault.CodeUserCancelled, "command admission was cancelled", ctx.Err())
 	case <-loop.done:
@@ -462,6 +468,8 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 	}
 
 	switch request.command.Kind() {
+	case protocol.CommandSetWorkMode:
+		state.setWorkMode(request)
 	case protocol.CommandRenameSession:
 		state.renameSession(request)
 	case protocol.CommandQueryTasks:

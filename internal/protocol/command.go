@@ -32,6 +32,7 @@ const (
 	CommandQueryEffort               CommandKind = "query_effort"
 	CommandQueryTasks                CommandKind = "query_tasks"
 	CommandSetEffort                 CommandKind = "set_effort"
+	CommandSetWorkMode               CommandKind = "set_work_mode"
 	CommandRenameSession             CommandKind = "rename_session"
 	CommandCompactContext            CommandKind = "compact_context"
 	CommandCancelCompaction          CommandKind = "cancel_compaction"
@@ -77,6 +78,7 @@ type Command struct {
 	kind                 CommandKind
 	requestID            RequestID
 	sessionTitle         domain.SessionTitle
+	workMode             domain.WorkMode
 	text                 string
 	inputIDs             []domain.InputID
 	expectedTurnID       domain.TurnID
@@ -174,6 +176,9 @@ func (command Command) Validate() error {
 	if command.kind != CommandRenameSession && command.sessionTitle != "" {
 		return fmt.Errorf("command contains an unrelated session title")
 	}
+	if command.kind != CommandSetWorkMode && command.workMode != "" {
+		return fmt.Errorf("command contains an unrelated work mode")
+	}
 	if command.hasSkillAttachment {
 		if !inputKind || command.skillAttachment.Validate() != nil {
 			return fmt.Errorf("invalid Skill attachment")
@@ -212,6 +217,11 @@ func (command Command) Validate() error {
 		return fmt.Errorf("command contains unrelated compaction identity")
 	}
 	switch command.kind {
+	case CommandSetWorkMode:
+		if command.text != "" || command.expectedTurnID != "" || command.approvalRequestID != "" || command.invocationID != "" || command.fingerprint != "" || command.decision != "" || command.feedback != "" {
+			return fmt.Errorf("work mode command contains unrelated payload")
+		}
+		return command.workMode.Validate()
 	case CommandRenameSession:
 		if command.text != "" || command.expectedTurnID != "" || command.approvalRequestID != "" || command.invocationID != "" || command.fingerprint != "" || command.decision != "" || command.feedback != "" {
 			return fmt.Errorf("rename command contains unrelated payload")

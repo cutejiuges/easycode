@@ -113,6 +113,7 @@ type ProviderProfile struct {
 	family    domain.ProviderFamily
 	model     string
 	inference domain.InferenceSettings
+	workMode  domain.WorkMode
 }
 
 // CurrentInput 表达没有额外正文的当前采样状态。
@@ -135,7 +136,7 @@ func NewProviderProfile(family domain.ProviderFamily, model string) (ProviderPro
 	if err != nil {
 		return ProviderProfile{}, err
 	}
-	profile := ProviderProfile{family: family, model: strings.TrimSpace(model), inference: settings}
+	profile := ProviderProfile{family: family, model: strings.TrimSpace(model), inference: settings, workMode: domain.WorkModeDefault}
 	if err := profile.Validate(); err != nil {
 		return ProviderProfile{}, err
 	}
@@ -152,19 +153,33 @@ func (profile ProviderProfile) WithInferenceSettings(settings domain.InferenceSe
 	return profile, profile.Validate()
 }
 
+// WithWorkMode 返回绑定当前工作方式而保留已选推理策略的快照。
+func (profile ProviderProfile) WithWorkMode(mode domain.WorkMode) (ProviderProfile, error) {
+	profile.workMode = mode
+	return profile, profile.Validate()
+}
+
+// WorkMode 返回普通请求使用的工作方式。
+func (profile ProviderProfile) WorkMode() domain.WorkMode { return profile.workMode }
+
 func (profile ProviderProfile) canonical() (codec.CanonicalJSON, string, error) {
 	identity, err := profile.inference.RequestPolicyIdentity()
 	if err != nil {
 		return codec.CanonicalJSON{}, "", err
 	}
+	instructionsDigest := ""
+	if instructions := profile.workMode.Instructions(); instructions != "" {
+		instructionsDigest = domain.ContentFingerprint([]byte(instructions))
+	}
 	value, err := codec.MarshalCanonical(struct {
-		Family         domain.ProviderFamily `json:"family"`
-		Model          string                `json:"model"`
-		SchemaRevision string                `json:"schema_revision"`
-		Policy         json.RawMessage       `json:"request_policy,omitempty"`
-	}{profile.family, profile.model, providerProfileRevision, identity}, MaxSegmentBytes)
+		Family             domain.ProviderFamily `json:"family"`
+		Model              string                `json:"model"`
+		SchemaRevision     string                `json:"schema_revision"`
+		Policy             json.RawMessage       `json:"request_policy,omitempty"`
+		InstructionsDigest string                `json:"planning_instructions_digest,omitempty"`
+	}{profile.family, profile.model, providerProfileRevision, identity, instructionsDigest}, MaxSegmentBytes)
 	revision := providerProfileRevision
-	if len(identity) != 0 {
+	if len(identity) != 0 || instructionsDigest != "" {
 		revision = domain.ContentFingerprint(value.Bytes())
 	}
 	return value, revision, err
@@ -183,6 +198,9 @@ func (profile ProviderProfile) Validate() error {
 	}
 	if strings.TrimSpace(profile.model) == "" {
 		return fmt.Errorf("provider profile model is required")
+	}
+	if err := profile.workMode.Validate(); err != nil {
+		return err
 	}
 	_, err := domain.ResolveInferenceSettings(profile.family, profile.inference)
 	return err
@@ -238,7 +256,7 @@ func (input PlanningInput) Validate() error {
 	if err := input.profile.Validate(); err != nil {
 		return err
 	}
-	if err := input.toolCatalog.Validate(); err != nil {
+	if err := input.toolCatalog.ValidateForWorkMode(input.profile.workMode); err != nil {
 		return fmt.Errorf("tool catalog is invalid: %w", err)
 	}
 	if _, err := input.toolCatalog.View(input.profile.family); err != nil {
@@ -409,7 +427,7 @@ func (*Planner) Plan(input PlanningInput) (ContextPlan, error) {
 	if err != nil {
 		return ContextPlan{}, err
 	}
-	profileEstimate := mustEstimated(0)
+	profileEstimate := estimate.String(input.profile.workMode.Instructions())
 	toolView, err := input.toolCatalog.View(input.profile.family)
 	if err != nil {
 		return ContextPlan{}, err

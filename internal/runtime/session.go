@@ -32,6 +32,7 @@ type ChatSession struct {
 	activeTurnID     domain.TurnID
 	appendAdmissions int
 	resumePermit     *ResumePermit
+	workModePending  bool
 }
 
 // NewChatSession 只构造 AgentLoop 的宿主适配器；Start 显式取得运行所有权。
