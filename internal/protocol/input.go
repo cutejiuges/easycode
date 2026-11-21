@@ -140,7 +140,7 @@ func (item ControlItem) InputStatus() (InputStatus, bool) {
 
 // NewAcceptedInputResult 创建自动输入 admission 的领域身份反馈。
 func NewAcceptedInputResult(command Command, disposition CommandDisposition, id domain.InputID) (CommandResult, error) {
-	if command.Kind() != CommandSubmitConversationalInput || !id.Valid() {
+	if (command.Kind() != CommandSubmitConversationalInput && command.Kind() != CommandApprovePlan) || !id.Valid() {
 		return CommandResult{}, fmt.Errorf("automatic input result is invalid")
 	}
 	result := CommandResult{requestID: command.RequestID(), commandKind: command.Kind(), status: CommandStatusAccepted, disposition: disposition, entryID: id}

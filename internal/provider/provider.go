@@ -289,6 +289,11 @@ type HistoryProjector interface {
 	ProjectAssistantSample(domain.AssistantSampleReference) (domain.AssistantSampleText, error)
 }
 
+// PlanProposalProjector 按最终原生样本的结尾证据提取可审阅方案。
+type PlanProposalProjector interface {
+	ProjectPlanProposal(domain.AssistantSampleReference) (string, bool)
+}
+
 // StreamEvents 按顺序交付流事件。宿主取消后继续迭代到结束，等待原生产者完成清理。
 type StreamEvents func(yield func(StreamEvent) bool)
 

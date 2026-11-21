@@ -11,6 +11,7 @@ type providerOperations struct {
 	stop          provider.StopContinuationPreparer
 	compaction    provider.CompactionKernel
 	continuation  provider.ContinuationResetter
+	planProposal  provider.PlanProposalProjector
 }
 
 func bindProviderOperations(conversation provider.Conversation) providerOperations {
@@ -22,5 +23,6 @@ func bindProviderOperations(conversation provider.Conversation) providerOperatio
 	operations.stop, _ = conversation.(provider.StopContinuationPreparer)
 	operations.compaction, _ = conversation.(provider.CompactionKernel)
 	operations.continuation, _ = conversation.(provider.ContinuationResetter)
+	operations.planProposal, _ = conversation.(provider.PlanProposalProjector)
 	return operations
 }

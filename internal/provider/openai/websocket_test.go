@@ -232,6 +232,10 @@ func assertPlanWebSocketTransitions(t *testing.T, c *Conversation, requests <-ch
 			input = testPlanModeInput(t, input)
 			wantedTools = 7
 		}
+		full, err := c.compileSamplingRequest(c.history.Entries(), input)
+		if err != nil {
+			t.Fatal(err)
+		}
 		stream, err := c.Stream(context.Background(), input)
 		if err != nil {
 			t.Fatal(err)
@@ -246,7 +250,7 @@ func assertPlanWebSocketTransitions(t *testing.T, c *Conversation, requests <-ch
 		if test.previous != "" {
 			wantMode, reason, wantItems = domain.RequestIncremental, domain.ResetNone, 1
 		}
-		if err != nil || receipt.Transport != domain.TransportWebSocket || receipt.Mode != wantMode || receipt.Reason != reason {
+		if err != nil || receipt.Transport != domain.TransportWebSocket || receipt.Mode != wantMode || receipt.Reason != reason || receipt.RequestFingerprint != domain.ContentFingerprint(full.Bytes()) {
 			t.Fatalf("step %d returned the wrong continuation evidence: %+v %v", i+1, receipt, err)
 		}
 		var wire websocketCreate

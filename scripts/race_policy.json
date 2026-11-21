@@ -146,9 +146,10 @@
     "package": "easycode/internal/runtime",
     "tests": [
       "TestResumePermitSerializesPreparationAndDirectControls",
-      "TestWorkModeHostReservationAndAcceptedCancellation"
+      "TestWorkModeHostReservationAndAcceptedCancellation",
+      "TestPlanApprovalStartsOneLiteralInput"
     ],
-    "reason": "交接许可、接纳前准备和模式变更互斥，接纳后的取消须返回确定结果"
+    "reason": "交接许可、输入准备与模式接纳互斥，方案确认后的取消不影响已认领的唯一初始输入"
   },
   {
     "package": "easycode/internal/runtime",

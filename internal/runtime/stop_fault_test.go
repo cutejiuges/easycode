@@ -17,7 +17,7 @@ func TestPostCompactPoisonStopsPendingStopDelivery(t *testing.T) {
 		if index == 1 && (!strings.Contains(string(body), `"tool_choice":"none"`) || strings.Contains(string(body), "check again")) {
 			t.Error("summary request did not exclude pending Stop feedback")
 		}
-	})
+	}, func(int) string { return "  answer\n" })
 	r.budget, _ = contextplan.NewBudget(22000, 0, 0)
 	autoPolicy, _ := contextplan.NewAutoCompactionPolicy(true, r.budget, 4096)
 	decls := r.hooks.snapshot.Declarations()

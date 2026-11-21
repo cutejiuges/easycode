@@ -95,6 +95,7 @@ func (state *agentLoopRunState) compactContext(request loopCommandRequest) {
 		state.reject(request, protocol.ControlErrorInvalidCommand, true)
 		return
 	}
+	state.planReview = protocol.PlanReviewOffer{}
 	state.emitResult(request, result)
 	runtime := state.loop.runtime
 	worker := startLoopWorker(state.ctx, runtime, func(ctx context.Context, emit Emitter) error {

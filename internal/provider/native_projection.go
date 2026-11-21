@@ -112,6 +112,37 @@ func ProjectNativeAssistantSample[E nativeSequenceEntry](entries []E, reference 
 	return domain.AssistantSampleText{}, fmt.Errorf("committed assistant sample was not found")
 }
 
+// LatestNativeAssistantSample 只复制指定回合的最终原生样本，不复制已提交前缀。
+func LatestNativeAssistantSample[E interface {
+	nativeClone[E]
+	nativeSequenceEntry
+}](history *NativeHistory[E], reference domain.AssistantSampleReference) (E, bool) {
+	var zero E
+	if reference.Validate() != nil {
+		return zero, false
+	}
+	history.mu.RLock()
+	entries := history.entries
+	history.mu.RUnlock()
+	if len(entries) == 0 {
+		return zero, false
+	}
+	last := entries[len(entries)-1]
+	if last.NativeTurn() != reference.TurnID || last.NativeRole() != domain.NativeCommitSample {
+		return zero, false
+	}
+	var index uint32
+	for i := len(entries) - 2; i >= 0 && entries[i].NativeTurn() == reference.TurnID; i-- {
+		if entries[i].NativeRole() == domain.NativeCommitSample {
+			index++
+		}
+	}
+	if index != reference.SampleIndex {
+		return zero, false
+	}
+	return last.CloneNativeEntry(), true
+}
+
 // EstimateNativeHistory 按适配器的请求条目边界估算原生字节占用。
 func EstimateNativeHistory[E, W any](entries []E, revision uint64, family domain.ProviderFamily, inputs func(E) iter.Seq[W]) (domain.NativeHistoryFootprint, error) {
 	var bytes uint64

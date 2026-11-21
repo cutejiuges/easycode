@@ -57,6 +57,7 @@ const (
 	ControlErrorSessionClosing           ControlErrorCode = "session_closing"
 	ControlErrorSessionShutdown          ControlErrorCode = "session_shutdown"
 	ControlErrorSessionFailed            ControlErrorCode = "session_failed"
+	ControlErrorPlanUnavailable          ControlErrorCode = "plan_unavailable"
 )
 
 // ControlError 是不包含底层 cause 的控制面安全错误摘要。
@@ -177,7 +178,7 @@ func (kind CommandKind) ValidateAcceptance(disposition CommandDisposition, compa
 	} else if compactionID != "" {
 		return fmt.Errorf("unrelated compaction identity")
 	}
-	if kind == CommandSubmitConversationalInput {
+	if kind == CommandSubmitConversationalInput || kind == CommandApprovePlan {
 		if !entryID.Valid() {
 			return fmt.Errorf("accepted input identity is invalid")
 		}
@@ -304,7 +305,7 @@ func (item ControlItem) Validate() error {
 
 func isCorrelatedContextEvent(event Event) bool {
 	switch event.Kind {
-	case EventCacheSnapshot, EventContextSnapshot, EventEffortSnapshot, EventWorkModeSnapshot, EventTaskProgressSnapshot,
+	case EventCacheSnapshot, EventContextSnapshot, EventEffortSnapshot, EventWorkModeSnapshot, EventPlanReviewOffered, EventTaskProgressSnapshot,
 		EventCompactionStarted, EventCompactionCompleted, EventCompactionFailed:
 		return true
 	default:
@@ -315,7 +316,7 @@ func isCorrelatedContextEvent(event Event) bool {
 func validCommandKind(kind CommandKind) bool {
 	switch kind {
 	case CommandResolveUserQuestion, CommandResolveHookTrust, CommandResetHookTrust, CommandQueryEffort,
-		CommandQueryTasks, CommandSetEffort, CommandSetWorkMode, CommandRenameSession, CommandQueryCache,
+		CommandQueryTasks, CommandSetEffort, CommandSetWorkMode, CommandApprovePlan, CommandRenameSession, CommandQueryCache,
 		CommandQueryContext, CommandCompactContext, CommandCancelCompaction, CommandSubmitConversationalInput,
 		CommandRetractInputs, CommandStopTurn, CommandSubmitInput, CommandInterrupt, CommandShutdown, CommandResolveToolApproval:
 		return true
@@ -336,6 +337,8 @@ func dispositionMatches(kind CommandKind, disposition CommandDisposition) bool {
 		return disposition == CommandDispositionCancelling
 	case CommandSubmitInput, CommandSubmitConversationalInput:
 		return disposition == CommandDispositionStarting || disposition == CommandDispositionQueued
+	case CommandApprovePlan:
+		return disposition == CommandDispositionStarting
 	case CommandRetractInputs:
 		return disposition == CommandDispositionRetracted
 	case CommandStopTurn:
@@ -353,6 +356,8 @@ func dispositionMatches(kind CommandKind, disposition CommandDisposition) bool {
 
 func controlErrorMessage(code ControlErrorCode) (string, bool) {
 	switch code {
+	case ControlErrorPlanUnavailable:
+		return "the reviewed plan is no longer available", true
 	case ControlErrorNoActiveQuestion:
 		return "there is no active user question", true
 	case ControlErrorQuestionMismatch:
@@ -409,7 +414,7 @@ func controlErrorMessage(code ControlErrorCode) (string, bool) {
 }
 
 func validateRuntimeEvent(event Event) error {
-	if !event.SessionID.Valid() || !event.ThreadID.Valid() || !event.TurnID.Valid() || event.CompactionID != "" {
+	if !event.SessionID.Valid() || !event.ThreadID.Valid() || !event.TurnID.Valid() || event.CompactionID != "" || event.Kind == EventPlanReviewOffered {
 		return fmt.Errorf("runtime event identity is invalid")
 	}
 	return event.Validate()

@@ -130,6 +130,7 @@ func (model Model) projectContextResult(result protocol.CommandResult) (tea.Mode
 		}
 		model.composer.clear()
 		if result.CommandKind() == protocol.CommandCompactContext {
+			model.clearPlanReviewOffer()
 			model.prepareCompaction(result.CompactionID(), domain.ManualCompactionScope())
 		}
 	} else {

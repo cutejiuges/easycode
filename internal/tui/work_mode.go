@@ -40,7 +40,10 @@ func (model Model) submitPlanCommand(remainder string) (tea.Model, tea.Cmd) {
 	target := domain.WorkModePlan
 	argument := strings.TrimSpace(remainder)
 	if strings.Contains(model.composer.text, "\n") || (argument != "" && argument != "off") {
-		model.errorSummary = "invalid_command: use /plan or /plan off on one line"
+		if !strings.Contains(model.composer.text, "\n") && argument == "review" {
+			return model.openPlanReviewCommand(), nil
+		}
+		model.errorSummary = "invalid_command: use /plan, /plan off or /plan review on one line"
 		return model, nil
 	}
 	if argument == "off" {
@@ -108,6 +111,9 @@ func (model Model) projectWorkModeSnapshot(id protocol.RequestID, event protocol
 		return model, nil
 	}
 	model.workMode.mode = snapshot.Mode
+	if snapshot.Mode == domain.WorkModeDefault {
+		model.clearPlanReviewOffer()
+	}
 	if request.consumeDraft {
 		model.composer.clear()
 	}
@@ -134,6 +140,9 @@ func (model Model) workModeLine(hint bool) string {
 		instruction := " · Shift+Tab: switch mode"
 		if model.workMode.pending != nil {
 			instruction = " · Esc: cancel mode change"
+		}
+		if model.planReviewReady() && width >= ansi.StringWidth(label+" · /plan review") {
+			instruction = " · /plan review"
 		}
 		if width >= ansi.StringWidth(label+instruction) {
 			label += instruction

@@ -90,6 +90,7 @@ type Model struct {
 	tasks                     taskProgressView
 	title                     sessionTitleView
 	workMode                  workModeView
+	planReview                planReviewView
 
 	hooks                   hookBrowser
 	hookTrust               *hookTrustOverlay
@@ -201,6 +202,7 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	updated.prepareCompletion()
 	updated.prepareMarkdownView()
 	updated.prepareMarkdownDetail()
+	updated.preparePlanReview()
 	if _, resize := message.(tea.WindowSizeMsg); !resize {
 		hydration := updated.scheduleHydration()
 		cmd = tea.Batch(cmd, hydration)
@@ -253,6 +255,9 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case transcriptReply:
 		return model.receiveTranscriptPage(value)
 	case tea.WindowSizeMsg:
+		if !model.planReviewFits() {
+			model.planReview.implement = false
+		}
 		taskAnchor := model.taskPanelAnchor()
 		model.browser.markdown.preserveAnchor = true
 		model.width = value.Width
@@ -271,6 +276,10 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case eventStreamClosedMsg:
 		model.outputs = nil
 		failure := "session_failed: session control stream closed"
+		if model.planReview.waiting() {
+			model.errorSummary = failure
+		}
+		model.closePlanReviewControl()
 		if model.workMode.pending != nil {
 			model.finishWorkModeRequest(failure)
 		}
@@ -302,6 +311,11 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case workModeDeliveryFailedMsg:
 		if model.workMode.pending != nil && model.workMode.pending.id == value.id {
 			model.finishWorkModeRequest(safeErrorSummary(value.err))
+		}
+		return model, nil
+	case planReviewDeliveryFailedMsg:
+		if request := model.planReview.confirmation; request != nil && request.id == value.id && !request.input.Valid() {
+			model.finishPlanReviewConfirmation(safeErrorSummary(value.err))
 		}
 		return model, nil
 	case RuntimeEventMsg:
@@ -425,6 +439,11 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return model.handleTasksKey(key)
 	case focusTitle:
 		return model.handleSessionTitleKey(key)
+	case focusPlanReview:
+		return model.handlePlanReviewKey(key)
+	}
+	if model.planReview.starting != "" && (key.Type == tea.KeyEsc || key.Type == tea.KeyCtrlC) {
+		return model, nil
 	}
 	if focus == focusComposer && model.workMode.pending != nil {
 		if key.Type == tea.KeyEsc || key.Type == tea.KeyCtrlC {
@@ -802,6 +821,7 @@ func (model Model) reduceRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd)
 		return model.projectTaskUpdate(event)
 	case protocol.EventTurnStarted, protocol.EventTurnCompleted, protocol.EventTurnFailed:
 		model.effortOperationGeneration++
+		model.planReview.terminal = ""
 	case protocol.EventUserQuestionRequested, protocol.EventToolApprovalRequested, protocol.EventHookTrustRequested:
 		model.clearEffortFeedback()
 	}
@@ -889,6 +909,7 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 			return model, nil
 		}
 		text := payload.Text
+		model.rememberCommittedPlanInput(payload)
 		if payload.Skill != nil {
 			text += "\nSkill loaded: " + payload.Skill.Name + " (" + payload.Skill.Source.ID() + ")"
 		}
@@ -962,6 +983,9 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 			model.interruptNext = false
 			model.errorSummary = "stream_protocol_error: invalid turn completion event"
 			return model, nil
+		}
+		if model.workMode.mode == domain.WorkModePlan && event.TurnID == model.activeTurnID {
+			model.planReview.terminal = event.TurnID
 		}
 		model.state = stateIdle
 		model.assistantItem = -1
@@ -1076,9 +1100,14 @@ func (model Model) View() string {
 		if model.title.editor != nil {
 			return model.modalWorkModeView(model.renderSessionTitleEditor())
 		}
+	case focusPlanReview:
+		return model.renderPlanReview()
 	}
 	if model.composer.height <= 5 {
 		status := model.title.status()
+		if model.planReview.starting != "" {
+			status = "Starting plan implementation…"
+		}
 		if status == "" && model.errorSummary != "" {
 			if head, _ := domain.SplitInputHead(model.composer.text); head == "/rename" || model.workMode.enabled {
 				status = "Error: " + model.errorSummary
@@ -1104,6 +1133,9 @@ func (model Model) View() string {
 	}
 	if model.cancelling {
 		view.WriteString("Cancelling — waiting for cleanup\n")
+	}
+	if model.planReview.starting != "" {
+		view.WriteString("Starting plan implementation…\n")
 	}
 	if model.stopStatus != "" {
 		view.WriteString(ansi.Truncate(model.stopStatus, model.widthOrDefault(), "…") + "\n")

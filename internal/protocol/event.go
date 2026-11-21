@@ -22,6 +22,7 @@ const (
 	EventContextSnapshot       EventKind = "context_snapshot"
 	EventEffortSnapshot        EventKind = "effort_snapshot"
 	EventWorkModeSnapshot      EventKind = "work_mode_snapshot"
+	EventPlanReviewOffered     EventKind = "plan_review_offered"
 	EventTaskProgressSnapshot  EventKind = "task_progress_snapshot"
 	EventTaskProgressUpdated   EventKind = "task_progress_updated"
 	EventCompactionStarted     EventKind = "compaction_started"
@@ -80,6 +81,10 @@ func (event Event) Validate() error {
 			return fmt.Errorf("work mode snapshot scope is invalid")
 		}
 		_, err := DecodeWorkModeSnapshot(event)
+		return err
+	}
+	if event.Kind == EventPlanReviewOffered {
+		_, err := DecodePlanReviewOffer(event)
 		return err
 	}
 	if event.Kind == EventTaskProgressSnapshot || event.Kind == EventTaskProgressUpdated {
