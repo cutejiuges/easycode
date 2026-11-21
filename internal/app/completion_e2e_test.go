@@ -114,13 +114,18 @@ func awaitCompletionTurn(t *testing.T, ctx context.Context, resources *chatResou
 
 func completionCacheSnapshot(t *testing.T, ctx context.Context, resources *chatResources) protocol.CacheSnapshotPayload {
 	t.Helper()
-	if _, err := resources.session.QueryCache(ctx, "completion-cache"); err != nil {
+	return queryFixtureCacheSnapshot(t, ctx, resources, "completion-cache")
+}
+
+func queryFixtureCacheSnapshot(t *testing.T, ctx context.Context, resources *chatResources, requestID protocol.RequestID) protocol.CacheSnapshotPayload {
+	t.Helper()
+	if _, err := resources.session.QueryCache(ctx, requestID); err != nil {
 		t.Fatal(err)
 	}
 	for {
 		select {
 		case item := <-resources.session.Outputs():
-			if item.RequestID() != "completion-cache" {
+			if item.RequestID() != requestID {
 				continue
 			}
 			if event, ok := item.ContextEvent(); ok && event.Kind == protocol.EventCacheSnapshot {

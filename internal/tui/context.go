@@ -188,8 +188,15 @@ func (model Model) projectContextEvent(event protocol.Event) (tea.Model, tea.Cmd
 		if !model.currentCompaction(event, payload.Scope) || !model.compaction.sessionID.Valid() {
 			return model, nil
 		}
+		if model.compaction.post.CheckpointSequence != 0 && (payload.ContextRevision != model.compaction.post.Revision || model.compaction.postResult == "") {
+			return model, nil
+		}
 		model.effortOperationGeneration++
-		model.compactionStatus = fmt.Sprintf("Conversation compacted · estimated %s → %s tokens · Ctrl+O for history", formatContextEstimate(payload.Before), formatContextEstimate(payload.After))
+		model.compactionStatus = fmt.Sprintf("Conversation compacted · estimated %s → %s tokens", formatContextEstimate(payload.Before), formatContextEstimate(payload.After))
+		if model.compaction.postResult != "" {
+			model.compactionStatus += " · " + model.compaction.postResult
+		}
+		model.compactionStatus += " · Ctrl+O for history"
 		model.clearCompaction()
 		model.refreshState()
 		if model.browser.queries != nil {
@@ -200,6 +207,9 @@ func (model Model) projectContextEvent(event protocol.Event) (tea.Model, tea.Cmd
 		payload, err := protocol.DecodeCompactionFailed(event)
 		if err != nil {
 			model.errorSummary = "stream_protocol_error: invalid compaction failure"
+			return model, nil
+		}
+		if model.compaction.post.CheckpointSequence != 0 {
 			return model, nil
 		}
 		if !model.currentCompaction(event, payload.Scope) {

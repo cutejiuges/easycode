@@ -90,9 +90,9 @@ func (v HookInput) MatchesTarget(target HookTarget) bool {
 	case HookStop:
 		sample, ok := target.AssistantSample()
 		return ok && sample == v.stop.sample
-	case HookPreCompact:
+	case HookPreCompact, HookPostCompact:
 		id, scope, ok := target.Compaction()
-		return ok && id == v.preCompact.id && scope == v.preCompact.scope
+		return ok && id == v.compaction.id && scope == v.compaction.scope
 	default:
 		_, capability, ok := target.ToolCall()
 		return ok && capability == v.Input.Capability()
@@ -100,7 +100,7 @@ func (v HookInput) MatchesTarget(target HookTarget) bool {
 }
 
 func (v HookInput) validateStop() error {
-	if v.stop == nil || v.preCompact != nil || v.stop.Validate() != nil || v.SessionID != v.stop.session || v.ThreadID != v.stop.thread || v.TurnID != v.stop.sample.TurnID || v.CWD != v.stop.cwd || v.hasToolFields() {
+	if v.stop == nil || v.compaction != nil || v.stop.Validate() != nil || v.SessionID != v.stop.session || v.ThreadID != v.stop.thread || v.TurnID != v.stop.sample.TurnID || v.CWD != v.stop.cwd || v.hasToolFields() {
 		return HookConfigInvalid
 	}
 	return nil
@@ -120,10 +120,10 @@ func (v HookInput) MarshalJSON() ([]byte, error) {
 			return nil, err
 		}
 		return v.stop.Bytes()
-	case HookPreCompact:
-		return v.preCompactBytes()
+	case HookPreCompact, HookPostCompact:
+		return v.compactionBytes()
 	}
-	if v.stop != nil || v.preCompact != nil {
+	if v.stop != nil || v.compaction != nil {
 		return nil, HookConfigInvalid
 	}
 	type toolInput HookInput

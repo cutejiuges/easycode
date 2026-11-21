@@ -39,7 +39,7 @@ func DecodeCompactionSummarizing(event Event) (CompactionSummarizingPayload, err
 // IsCompactionPresentation 判断事件是否仅供本地交互宿主展示。
 func IsCompactionPresentation(event Event) bool {
 	switch event.Kind {
-	case EventCompactionSummarizing:
+	case EventCompactionSummarizing, EventPostCompactInstalled, EventPostCompactClosed:
 		return true
 	case EventHookTrustRequested, EventHookTrustResolved, EventHookActivity:
 		return event.CompactionID != ""
@@ -65,6 +65,12 @@ func CompactionEventScope(event Event) (domain.CompactionScope, error) {
 		return payload.Scope, err
 	case EventCompactionSummarizing:
 		payload, err := DecodeCompactionSummarizing(event)
+		return payload.Scope, err
+	case EventPostCompactInstalled:
+		payload, err := DecodePostCompactInstalled(event)
+		return payload.Scope, err
+	case EventPostCompactClosed:
+		payload, err := DecodePostCompactClosed(event)
 		return payload.Scope, err
 	case EventHookTrustRequested:
 		payload, err := DecodeHookTrustRequested(event)

@@ -96,21 +96,27 @@ func TestLoadDetectsCaptureChangesAndSourceReplacement(t *testing.T) {
 	}
 }
 
-func TestPreCompactConfigUsesOneFrozenTriggerOrder(t *testing.T) {
+func TestCompactionHookConfigUsesOneFrozenTriggerOrder(t *testing.T) {
 	manual := `[{"matcher":"manual","hooks":[{"id":"manual-check","type":"command","command":"true"}]}]`
+	postManual := strings.Replace(manual, "manual-check", "manual-observer", 1)
+	postManualExplicit := strings.Replace(postManual, `"command":"true"`, `"command":"true","feedback":"none"`, 1)
 	stop := `[{"hooks":[{"id":"stop-check","type":"command","command":"true"}]}]`
-	user, err := decodeConfig(domain.HookSourceUser, []byte(`{"hooks":{"PreCompact":`+manual+`,"Stop":`+stop+`}}`))
+	user, err := decodeConfig(domain.HookSourceUser, []byte(`{"hooks":{"PreCompact":`+manual+`,"Stop":`+stop+`,"PostCompact":`+postManual+`}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	reordered, err := decodeConfig(domain.HookSourceUser, []byte(`{"hooks":{"Stop":`+stop+`,"PreCompact":`+manual+`}}`))
-	if err != nil || len(user) != 2 || len(reordered) != 2 || user[0] != reordered[0] || user[1] != reordered[1] ||
-		user[0].Reference.Event != domain.HookStop || user[1].Reference.Feedback != domain.HookFeedbackNone {
+	reordered, err := decodeConfig(domain.HookSourceUser, []byte(`{"hooks":{"PostCompact":`+postManualExplicit+`,"Stop":`+stop+`,"PreCompact":`+manual+`}}`))
+	if err != nil || len(user) != 3 || len(reordered) != 3 || user[0] != reordered[0] || user[1] != reordered[1] || user[2] != reordered[2] ||
+		user[0].Reference.Event != domain.HookStop || user[1].Reference.Event != domain.HookPreCompact ||
+		user[2].Reference.Event != domain.HookPostCompact || user[2].Reference.Feedback != domain.HookFeedbackNone {
 		t.Fatal("source order or normalized revision changed", err)
 	}
 	project, err := decodeConfig(domain.HookSourceProject, []byte(`{"hooks":{"PreCompact":[
 		{"matcher":"auto","hooks":[{"id":"automatic-check","type":"command","command":"true"}]},
 		{"matcher":"*","hooks":[{"id":"all-check","type":"command","command":"true","feedback":"model"}]}
+	],"PostCompact":[
+		{"matcher":"auto","hooks":[{"id":"automatic-observer","type":"command","command":"true"}]},
+		{"matcher":"*","hooks":[{"id":"all-observer","type":"command","command":"true"}]}
 	]}}`))
 	if err != nil {
 		t.Fatal(err)
@@ -121,14 +127,19 @@ func TestPreCompactConfigUsesOneFrozenTriggerOrder(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		trigger domain.CompactionTrigger
-		first   string
+		pre     string
+		post    string
 	}{
-		{domain.CompactionManual, "manual-check"},
-		{domain.CompactionAuto, "automatic-check"},
+		{domain.CompactionManual, "manual-check", "manual-observer"},
+		{domain.CompactionAuto, "automatic-check", "automatic-observer"},
 	} {
 		checks, err := snapshot.PreCompactChecks(tc.trigger)
-		if err != nil || len(checks) != 2 || checks[0].Reference.ID != tc.first || checks[1].Reference.ID != "all-check" {
+		if err != nil || len(checks) != 2 || checks[0].Reference.ID != tc.pre || checks[1].Reference.ID != "all-check" {
 			t.Fatalf("%s checks = %+v, error: %v", tc.trigger, checks, err)
+		}
+		observers, err := snapshot.PostCompactChecks(tc.trigger)
+		if err != nil || len(observers) != 2 || observers[0].Reference.ID != tc.post || observers[1].Reference.ID != "all-observer" {
+			t.Fatalf("%s observers = %+v, error: %v", tc.trigger, observers, err)
 		}
 	}
 	nonmatching, err := domain.NewHookSnapshot(user, nil)
@@ -147,9 +158,18 @@ func TestPreCompactConfigUsesOneFrozenTriggerOrder(t *testing.T) {
 	if _, err = decodeConfig(domain.HookSourceUser, []byte(`{"hooks":{"PreCompact":`+duplicate+`,"Stop":`+stop+`}}`)); err == nil {
 		t.Fatal("accepted an id from another event")
 	}
+	for _, invalid := range []string{
+		manual,
+		strings.Replace(postManual, `"manual"`, `"manual|auto"`, 1),
+		strings.Replace(postManualExplicit, `"none"`, `"model"`, 1),
+	} {
+		if _, err := decodeConfig(domain.HookSourceUser, []byte(`{"hooks":{"PreCompact":`+manual+`,"PostCompact":`+invalid+`}}`)); err == nil {
+			t.Fatal("accepted invalid PostCompact declaration")
+		}
+	}
 }
 
-func TestPreCompactConfigUsesSharedSourceAndMatchLimits(t *testing.T) {
+func TestCompactionHookConfigUsesSharedSourceAndMatchLimits(t *testing.T) {
 	var commands []string
 	for index := 0; index < 32; index++ {
 		commands = append(commands, fmt.Sprintf(`{"id":"check-%d","type":"command","command":"true"}`, index))
@@ -158,10 +178,10 @@ func TestPreCompactConfigUsesSharedSourceAndMatchLimits(t *testing.T) {
 		return `[{"matcher":"manual","hooks":[` + strings.Join(commands[:count], ",") + `]}]`
 	}
 	stop := `[{"hooks":[{"id":"stop-check","type":"command","command":"true"}]}]`
-	if _, err := decodeConfig(domain.HookSourceUser, []byte(`{"hooks":{"PreCompact":`+group(32)+`,"Stop":`+stop+`}}`)); err == nil {
+	if _, err := decodeConfig(domain.HookSourceUser, []byte(`{"hooks":{"PostCompact":`+group(32)+`,"Stop":`+stop+`}}`)); err == nil {
 		t.Fatal("accepted more than 32 declarations across events")
 	}
-	declarations, err := decodeConfig(domain.HookSourceProject, []byte(`{"hooks":{"PreCompact":`+group(domain.MaxHookMatches+1)+`}}`))
+	declarations, err := decodeConfig(domain.HookSourceProject, []byte(`{"hooks":{"PostCompact":`+group(domain.MaxHookMatches+1)+`}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,10 +189,10 @@ func TestPreCompactConfigUsesSharedSourceAndMatchLimits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if checks, err := snapshot.PreCompactChecks(domain.CompactionManual); err != domain.HookMatchLimit || len(checks) != 0 {
+	if checks, err := snapshot.PostCompactChecks(domain.CompactionManual); err != domain.HookMatchLimit || len(checks) != 0 {
 		t.Fatal("allowed partial execution after matching overflow", err)
 	}
-	if checks, err := snapshot.PreCompactChecks(domain.CompactionAuto); err != nil || len(checks) != 0 {
+	if checks, err := snapshot.PostCompactChecks(domain.CompactionAuto); err != nil || len(checks) != 0 {
 		t.Fatal("nonmatching declarations counted against an automatic operation", err)
 	}
 }

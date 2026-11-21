@@ -225,13 +225,13 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return model, nil
 	case hookTrustFailedMsg:
 		if model.hookTrust != nil && model.hookTrust.request.RequestID == value.request && model.hookTrust.turn == value.turn &&
-			model.hookTrust.request.Target == value.target && model.compaction.stage != compactionCancelling {
+			model.hookTrust.request.Target == value.target && !model.compaction.cancelling {
 			model.hookTrust.submitted = false
 			model.errorSummary = safeErrorSummary(value.err)
 		}
 		return model, nil
 	case compactionCancelFailedMsg:
-		if model.activeCompactionID == value.id && model.compaction.stage == compactionCancelling {
+		if model.activeCompactionID == value.id && model.compaction.cancelling {
 			model.errorSummary = value.summary
 		}
 		return model, nil

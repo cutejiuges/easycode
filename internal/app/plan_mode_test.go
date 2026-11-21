@@ -374,3 +374,43 @@ func assertPlanCheckpointResume(t *testing.T, ctx context.Context, cfg config.Co
 	right := planModeCacheSnapshot(t, ctx, restored, "cache-restored")
 	assertOrdinaryPlanCacheBaseline(t, left, right)
 }
+
+func compactForSwitch(t *testing.T, ctx context.Context, resources *chatResources) {
+	t.Helper()
+	result, err := resources.session.CompactContext(ctx, "preserve test facts")
+	if err != nil || result.Status() != protocol.CommandStatusAccepted {
+		t.Fatal("target could not start compaction", err)
+	}
+	waitSwitchObservation(t, ctx, resources, protocol.EventCompactionCompleted, result.RequestID())
+	waitCompactionIdle(t, resources)
+}
+
+func waitSwitchObservation(t *testing.T, ctx context.Context, resources *chatResources, kind protocol.EventKind, id protocol.RequestID) protocol.Event {
+	t.Helper()
+	for {
+		select {
+		case item, open := <-resources.session.Outputs():
+			if !open {
+				t.Fatal("control session closed before observation")
+			}
+			event, ok := item.ContextEvent()
+			if ok && event.Kind == protocol.EventCompactionFailed {
+				t.Fatalf("compaction failed: %s", event.Payload)
+			}
+			if ok && event.Kind == kind && item.RequestID() == id {
+				return event
+			}
+		case <-ctx.Done():
+			t.Fatalf("observation %s: %v", kind, ctx.Err())
+		}
+	}
+}
+
+func readSwitchJournal(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}

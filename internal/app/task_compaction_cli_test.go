@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -66,8 +67,25 @@ func TestTaskBuiltCLICompactionQueriesAndIndependentResumeRequests(t *testing.T)
 			defer server.Close()
 			configuration := writeAppConfig(t, privateAppTempDir(t), family, server.URL)
 			home, workspace := privateAppTempDir(t), privateAppTempDir(t)
+			hookDir := filepath.Join(workspace, ".easycode")
+			if err := os.Mkdir(hookDir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			const hooks = `{"hooks":{"PostCompact":[{"matcher":"manual","hooks":[{"id":"check-summary","type":"command","command":"cat >/dev/null; printf post-compact-cli-sentinel; exit 97"}]}]}}`
+			if err := os.WriteFile(filepath.Join(hookDir, "hooks.json"), []byte(hooks), 0600); err != nil {
+				t.Fatal(err)
+			}
 			requestCount := func() int { mu.Lock(); defer mu.Unlock(); return len(requests) }
 			thread, prefix, saved := runTaskCompactionCLI(t, binary, home, workspace, configuration, requestCount)
+			loaded := loadHeadlessJournal(t, filepath.Join(home, ".easycode", "sessions"), thread)
+			plan, err := session.NewReplayPlanner().Plan(loaded)
+			if err != nil || len(plan.Compactions) != 1 || plan.Compactions[0].Completed == nil {
+				t.Fatal("headless compaction did not save a replayable checkpoint", err)
+			}
+			post := plan.Compactions[0].Completed.PostCompact
+			if post.Kind() != session.PostCompactPlanSkipped || post.Code() != domain.HookTrustRequired {
+				t.Fatal("matched headless observer was not skipped for lack of interactive trust", post.Kind(), post.Code())
+			}
 			mu.Lock()
 			count, summaryCount := len(requests), summaries
 			var uninterrupted []byte
@@ -203,6 +221,8 @@ func runTaskCompactionCLI(t *testing.T, binary, home, workspace, configuration s
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 4096), 128<<10)
 	var thread domain.ThreadID
+	var compactionFrames []string
+	var observeCompactionFrames bool
 	readUntil := func(want string) []byte {
 		t.Helper()
 		for scanner.Scan() {
@@ -213,6 +233,12 @@ func runTaskCompactionCLI(t *testing.T, binary, home, workspace, configuration s
 			}
 			if codec.Unmarshal(line, &event) != nil {
 				t.Fatal("invalid CLI JSONL")
+			}
+			if strings.Contains(event.Type, "hook") || bytes.Contains(line, []byte("post-compact-cli-sentinel")) {
+				t.Fatal("CLI emitted local post-compaction inspection data", string(line))
+			}
+			if observeCompactionFrames {
+				compactionFrames = append(compactionFrames, event.Type)
 			}
 			if event.Thread.Valid() {
 				thread = event.Thread
@@ -265,13 +291,19 @@ func runTaskCompactionCLI(t *testing.T, binary, home, workspace, configuration s
 	if saved.Kind() != domain.TaskProgressSnapshot || saved.Counts().Total != 2 {
 		t.Fatal("task creation was not durable before CLI compaction")
 	}
+	observeCompactionFrames = true
 	_, _ = io.WriteString(stdin, "{\"version\":1,\"type\":\"context.compact\",\"request_id\":\"compact\",\"instructions\":\"Preserve the current task list\"}\n")
 	response := readUntil("control.response")
 	if !bytes.Contains(response, []byte(`"request_id":"compact"`)) || !bytes.Contains(response, []byte(`"disposition":"compacting"`)) {
 		t.Fatal("CLI compaction admission failed", string(response))
 	}
 	readUntil("compaction.started")
-	readUntil("compaction.completed")
+	completed := readUntil("compaction.completed")
+	observeCompactionFrames = false
+	if !slices.Equal(compactionFrames, []string{"control.response", "compaction.started", "compaction.completed"}) ||
+		bytes.Contains(completed, []byte("post_compact")) || bytes.Contains(completed, []byte(domain.HookTrustRequired)) {
+		t.Fatal("matching PostCompact changed the public stream v1 compaction frames", compactionFrames, string(completed))
+	}
 	if !query("after-compact").Equal(saved) {
 		t.Fatal("CLI compaction changed the task source or content")
 	}

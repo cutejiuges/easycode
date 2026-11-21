@@ -26,6 +26,8 @@ const (
 	EventTaskProgressUpdated   EventKind = "task_progress_updated"
 	EventCompactionStarted     EventKind = "compaction_started"
 	EventCompactionSummarizing EventKind = "compaction_summarizing"
+	EventPostCompactInstalled  EventKind = "post_compact_installed"
+	EventPostCompactClosed     EventKind = "post_compact_closed"
 	EventCompactionCompleted   EventKind = "compaction_completed"
 	EventCompactionFailed      EventKind = "compaction_failed"
 	EventTranscriptCommitted   EventKind = "transcript_committed"

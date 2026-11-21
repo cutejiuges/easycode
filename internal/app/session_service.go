@@ -191,7 +191,7 @@ func (service *sessionService) resume(
 	if started.transferred {
 		lease = nil
 	}
-	if plan.InterruptedCompaction != nil || plan.InterruptedTail != nil {
+	if plan.InterruptedCompaction != nil || plan.InterruptedPostCompact != nil || plan.InterruptedTail != nil {
 		service.recovery.mutating()
 	}
 	if err := reconcileInterruptedCompaction(ctx, writer, plan.InterruptedCompaction); err != nil {
@@ -199,6 +199,13 @@ func (service *sessionService) resume(
 		return assembledSession{}, fault.Wrap(fault.CodeSessionWrite, "close interrupted compaction failed", err)
 	}
 	service.recovery.journalMutation(plan.InterruptedCompaction != nil, nil)
+	if plan.InterruptedPostCompact != nil {
+		if err := reconcileInterruptedPostCompact(ctx, writer, *plan.InterruptedPostCompact); err != nil {
+			service.recovery.journalMutation(false, err)
+			return assembledSession{}, fault.Wrap(fault.CodeSessionWrite, "close interrupted post-compact hook failed", err)
+		}
+		service.recovery.journalMutation(true, nil)
+	}
 	if plan.InterruptedTail != nil {
 		failureDraft, draftErr := session.NewTurnFailedDraft(plan.InterruptedTail.TurnID, session.TurnFailedPayload{
 			Code: "session_interrupted", Message: "session turn was interrupted",

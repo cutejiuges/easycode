@@ -106,7 +106,7 @@ func TestPreCompactReplayRejectsForgedEvidenceBeforeTornTailRepair(t *testing.T)
 				}
 				test.edit(t, &record)
 				content = append(bytes.Join(rows[:i], []byte{'\n'}), '\n')
-				content = append(content, forgedPreCompactRecord(t, record)...)
+				content = append(content, forgeCompactionRecord(t, record)...)
 				break
 			}
 			if len(content) == 0 {
@@ -149,7 +149,7 @@ func TestPreCompactReplayAccountsForFocusSeparators(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := start.PreCompact.checks[0]
-	start.PreCompact.checks = make([]preCompactReference, 4)
+	start.PreCompact.checks = make([]compactionHookReference, 4)
 	for i, id := range []string{"one", "two", "three", "four"} {
 		reference := first
 		reference.Reference.ID = id
@@ -207,7 +207,7 @@ func TestPreCompactReplayAccountsForFocusSeparators(t *testing.T) {
 	}
 }
 
-func forgedPreCompactRecord(t *testing.T, record Record) []byte {
+func forgeCompactionRecord(t *testing.T, record Record) []byte {
 	t.Helper()
 	digest, err := recordChecksum(record)
 	if err != nil {

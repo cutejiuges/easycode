@@ -108,28 +108,25 @@ func (runtime *Runtime) prepareAutomaticWindow(ctx context.Context, turn domain.
 		return err
 	}
 	failedDurable := false
-	failureRecorded := false
 	observed := func(event protocol.Event) {
 		if event.Kind == protocol.EventCompactionFailed {
-			runtime.recordAutoCompactionFailure(revision)
-			failureRecorded = true
 			payload, err := protocol.DecodeCompactionFailed(event)
 			failedDurable = err == nil && payload.Durable && payload.Code != protocol.CompactionFailureSession
 		}
 		emit(event)
 	}
-	err = runtime.runCompactionOwned(ctx, id, admission, scope, observed)
-	if err == nil {
+	committed, operationErr := runtime.runCompactionOwned(ctx, id, admission, scope, observed)
+	if committed {
+		if operationErr != nil {
+			return operationErr
+		}
 		return ctx.Err()
-	}
-	if !failureRecorded {
-		runtime.recordAutoCompactionFailure(revision)
 	}
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 	if runtime.poisoned.Load() || runtime.journal.Poisoned() || !failedDurable {
-		return err
+		return operationErr
 	}
 	// 可恢复失败后仍由普通请求的预算与编码预检决定是否继续。
 	return nil

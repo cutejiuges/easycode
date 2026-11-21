@@ -53,6 +53,11 @@ func NewStopHookTarget(sample AssistantSampleReference) (HookTarget, error) {
 
 // NewPreCompactHookTarget 绑定真实压缩身份及触发作用域。
 func NewPreCompactHookTarget(id CompactionID, scope CompactionScope) (HookTarget, error) {
+	return NewCompactionHookTarget(id, scope)
+}
+
+// NewCompactionHookTarget 绑定两类压缩检查共用的真实操作目标。
+func NewCompactionHookTarget(id CompactionID, scope CompactionScope) (HookTarget, error) {
 	v := HookTarget{kind: HookTargetCompaction, compaction: id, scope: scope}
 	return v, v.Validate()
 }
@@ -166,7 +171,7 @@ func DecodeHookTarget(b []byte) (HookTarget, error) {
 		if codec.UnmarshalRecord(b, &w) != nil {
 			return HookTarget{}, HookConfigInvalid
 		}
-		return NewPreCompactHookTarget(w.ID, w.Scope)
+		return NewCompactionHookTarget(w.ID, w.Scope)
 	default:
 		return HookTarget{}, HookConfigInvalid
 	}
@@ -197,6 +202,11 @@ func NewStopHookScope() HookScope { return HookScope{kind: HookTargetTurnStop} }
 
 // ParsePreCompactHookScope 只接受当前三种规范触发 matcher。
 func ParsePreCompactHookScope(matcher string) (HookScope, error) {
+	return ParseCompactionHookScope(matcher)
+}
+
+// ParseCompactionHookScope 读取两类压缩检查共用的字面触发 matcher。
+func ParseCompactionHookScope(matcher string) (HookScope, error) {
 	v := HookScope{kind: HookTargetCompaction, compactionMatcher: CompactionTrigger(matcher)}
 	return v, v.Validate()
 }
@@ -287,7 +297,7 @@ func DecodeHookScope(b []byte) (HookScope, error) {
 		if codec.DecodeObject(b, &w, "kind", "matcher") != nil {
 			return HookScope{}, HookConfigInvalid
 		}
-		return ParsePreCompactHookScope(w.Matcher)
+		return ParseCompactionHookScope(w.Matcher)
 	}
 	var w struct {
 		Kind    HookTargetKind `json:"kind"`

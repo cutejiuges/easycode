@@ -137,7 +137,7 @@ func (m Model) renderHooks() string {
 			header += " · r: reset trust"
 		}
 		lines = []string{header, fmt.Sprintf("Source: %s · %s [%s]", d.Reference.Source, d.Reference.ID, e.State), "Event: " + string(d.Reference.Event) + " · feedback: " + string(d.Reference.Feedback), hookScopeLabel(d), fmt.Sprintf("Timeout: %d seconds", d.Reference.TimeoutSeconds), "Workspace: . · read-only · network denied", "Workspace scripts can change after review.", "Reset clears the current approval or refusal."}
-		if d.Reference.Event == domain.HookPreCompact {
+		if _, compact := d.Scope.CompactionMatcher(); compact {
 			lines = append(lines, compactionHookDisclosure(d, d.Scope.MatchesCompaction(domain.CompactionManual))...)
 		} else {
 			lines = append(lines, "Raw output is discarded. Only trusted model feedback is sent and saved.")
@@ -166,7 +166,7 @@ func (m Model) renderHooks() string {
 		} else {
 			d := e.Declaration
 			eventLabel := string(d.Reference.Event)
-			if d.Reference.Event == domain.HookPreCompact {
+			if _, compact := d.Scope.CompactionMatcher(); compact {
 				eventLabel += " (" + d.Scope.String() + ")"
 			}
 			lines = append(lines, fmt.Sprintf("%s%s:%s · %s · %s [%s]", marker, d.Reference.Source, d.Reference.ID, eventLabel, d.Reference.Feedback, e.State))
@@ -191,7 +191,7 @@ func (m Model) handleHookTrustKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.requestTurnCancellation(m.hookTrust.turn)
 	}
-	if m.hookTrust.submitted || m.compaction.stage == compactionCancelling || (m.hookReviewUnavailable() && key.Type != tea.KeyEsc) {
+	if m.hookTrust.submitted || m.compaction.cancelling || (m.hookReviewUnavailable() && key.Type != tea.KeyEsc) {
 		return m, nil
 	}
 	switch key.Type {
@@ -236,7 +236,7 @@ func (m *Model) submitHookTrust() tea.Cmd {
 }
 func (m Model) renderHookTrust() string {
 	o := m.hookTrust
-	if m.compaction.stage == compactionCancelling {
+	if m.compaction.cancelling {
 		return hookPanel([]string{m.compactionStatus}, m.widthOrDefault(), m.heightOrDefault(), 0)
 	}
 	if m.hookReviewUnavailable() {
@@ -261,7 +261,11 @@ func (m Model) renderHookTrust() string {
 		lines = append(lines[:1], append([]string{"Runs only after a definite execution-attempt failure.", "Admission does not prove the process started. Normal nonzero exits use PostToolUse.", "feedback=model sends additionalContext to the provider and saves it in Session."}, lines[1:]...)...)
 	}
 	if _, scope, ok := o.request.Target.Compaction(); ok {
-		lines = []string{"Trust this hook?", fmt.Sprintf("Source: %s · %s", d.Reference.Source, d.Reference.ID), "PreCompact: " + string(scope.Trigger) + " · " + hookScopeLabel(d), "Feedback: " + string(d.Reference.Feedback), fmt.Sprintf("Timeout: %d seconds", d.Reference.TimeoutSeconds), "Workspace: . · read-only · network denied", "Workspace scripts can change after review."}
+		heading := "Trust this hook?"
+		if d.Reference.Event == domain.HookPostCompact {
+			heading = "Conversation compacted · trust this hook?"
+		}
+		lines = []string{heading, fmt.Sprintf("Source: %s · %s", d.Reference.Source, d.Reference.ID), string(d.Reference.Event) + ": " + string(scope.Trigger) + " · " + hookScopeLabel(d), "Feedback: " + string(d.Reference.Feedback), fmt.Sprintf("Timeout: %d seconds", d.Reference.TimeoutSeconds), "Workspace: . · read-only · network denied", "Workspace scripts can change after review."}
 		lines = append(lines, compactionHookDisclosure(d, scope.Trigger == domain.CompactionManual)...)
 		lines = append(lines, "PgUp/PgDn: full command · Tab/↑/↓: choose · Esc: deny", "", trust, deny, "", "Command:", d.Command)
 	}
@@ -275,11 +279,15 @@ func (m Model) renderHookTrust() string {
 }
 
 func (m Model) hookReviewUnavailable() bool {
-	event := m.hookTrust.request.Declaration.Reference.Event
-	return (event == domain.HookPreToolUse || event == domain.HookPreCompact) && (m.widthOrDefault() < 20 || m.heightOrDefault() < 6)
+	declaration := m.hookTrust.request.Declaration
+	_, compact := declaration.Scope.CompactionMatcher()
+	return (declaration.Reference.Event == domain.HookPreToolUse || compact) && (m.widthOrDefault() < 20 || m.heightOrDefault() < 6)
 }
 
 func compactionHookDisclosure(d domain.HookDeclaration, manual bool) []string {
+	if d.Reference.Event == domain.HookPostCompact {
+		return []string{"Runs after the new context is saved.", "The local script reads the current compaction summary on stdin.", "The exit status reports the check result. Command output is discarded."}
+	}
 	lines := []string{"Runs before the summary request and may block this compaction."}
 	if manual {
 		lines = append(lines, "The script reads the original /compact instructions on stdin.")

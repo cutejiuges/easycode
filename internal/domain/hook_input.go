@@ -150,7 +150,7 @@ func DecodeHookToolInput(cap HookCapability, b []byte) (HookToolInput, error) {
 // HookInput 是只发送给已信任本地检查的临时 stdin，不进入 Session。
 type HookInput struct {
 	stop        *StopInput
-	preCompact  *preCompactInput
+	compaction  *compactionHookInput
 	rewrite     HookRewriteContext
 	Event       HookEvent         `json:"hook_event_name"`
 	SessionID   SessionID         `json:"session_id"`
@@ -180,11 +180,11 @@ func (v HookInput) Validate() error {
 	switch v.Event {
 	case HookStop:
 		return v.validateStop()
-	case HookPreCompact:
-		_, err := v.preCompactBytes()
+	case HookPreCompact, HookPostCompact:
+		_, err := v.compactionBytes()
 		return err
 	}
-	if v.stop != nil || v.preCompact != nil {
+	if v.stop != nil || v.compaction != nil {
 		return HookConfigInvalid
 	}
 	if v.Event == HookPreToolUse {
@@ -224,8 +224,8 @@ func (v HookInput) Validate() error {
 	return nil
 }
 func (v HookInput) Bytes() ([]byte, error) {
-	if v.Event == HookPreCompact {
-		return v.preCompactBytes()
+	if v.Event.targetKind() == HookTargetCompaction {
+		return v.compactionBytes()
 	}
 	if err := v.Validate(); err != nil {
 		return nil, err
@@ -281,8 +281,13 @@ func DecodeHookInput(b []byte) (HookInput, error) {
 			return HookInput{}, err
 		}
 		return NewStopHookInput(input)
-	case HookPreCompact:
-		return decodePreCompactHookInput(b)
+	case HookPreCompact, HookPostCompact:
+		_, instructions := members["custom_instructions"]
+		_, summary := members["compact_summary"]
+		if instructions != (event == HookPreCompact) || summary != (event == HookPostCompact) {
+			return HookInput{}, HookConfigInvalid
+		}
+		return decodeCompactionHookInput(b)
 	}
 	var w struct {
 		Event       HookEvent       `json:"hook_event_name"`

@@ -136,3 +136,12 @@ func reconcileInterruptedCompaction(ctx context.Context, writer managedJournal, 
 	_, err = writer.AppendBatch(ctx, []session.RecordDraft{draft})
 	return err
 }
+
+func reconcileInterruptedPostCompact(ctx context.Context, writer managedJournal, plan session.PostCompactRecoveryPlan) error {
+	draft, err := plan.CloseDraft()
+	if err != nil {
+		return err
+	}
+	_, err = writer.AppendBatch(ctx, []session.RecordDraft{draft})
+	return err
+}

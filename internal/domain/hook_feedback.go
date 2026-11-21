@@ -39,7 +39,8 @@ type HookParsedOutput struct {
 func NewHookParsedOutput(event HookEvent, policy HookFeedbackPolicy, status HookOutcome, code HookCode, feedback HookFeedbackCandidate, replacement HookInputReplacement) (HookParsedOutput, error) {
 	v := HookParsedOutput{status, code, feedback, replacement}
 	allowsFeedback := (event.Post() || event == HookPreCompact) && status == HookContinue || event == HookStop && status == HookBlock && code == HookDenied
-	if !policy.ValidFor(event) || !status.ValidCode(code) || feedback.Validate() != nil || event.Post() && status == HookBlock || !feedback.Empty() && (policy != HookFeedbackModel || !allowsFeedback) {
+	if !policy.ValidFor(event) || !status.ValidCode(code) || feedback.Validate() != nil ||
+		(event.Post() || event == HookPostCompact) && status == HookBlock || !feedback.Empty() && (policy != HookFeedbackModel || !allowsFeedback) {
 		return HookParsedOutput{}, HookConfigInvalid
 	}
 	if replacement.Validate() != nil || !replacement.Empty() && (event != HookPreToolUse || status != HookContinue || code != HookOK || !feedback.Empty()) {

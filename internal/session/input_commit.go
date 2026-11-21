@@ -79,19 +79,30 @@ func acceptBoundInputBatch(plan *replayAccumulator, active *activeReplayTurn, ba
 	return nil
 }
 
-// ValidateDraftBatchSize 在 writer 接收前按完整 envelope 最大开销验证编码预算。
-func ValidateDraftBatchSize(drafts []RecordDraft) error {
+func encodeLargestDraftEnvelope(draft RecordDraft, batchIndex, batchSize uint32) ([]byte, error) {
 	// 身份长度固定；使用最大数字宽度和纳秒时间，复用 writer 的唯一编码路径。
 	const id = "00000000-0000-7000-8000-000000000001"
 	identity := Identity{SessionID: domain.SessionID(id), ThreadID: domain.ThreadID(id)}
 	timestamp := time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
+	record, err := BuildRecord(identity, draft, math.MaxUint64, timestamp, math.MaxUint64, batchIndex, batchSize)
+	if err != nil {
+		return nil, err
+	}
+	_, encoded, err := EncodeRecord(record)
+	return encoded, err
+}
+
+// ValidateSingletonDraftSize 在 writer 接纳前按合法单记录批次的最大信封开销检查预算。
+func ValidateSingletonDraftSize(draft RecordDraft) error {
+	_, err := encodeLargestDraftEnvelope(draft, 0, 1)
+	return err
+}
+
+// ValidateDraftBatchSize 在 writer 接收前按完整 envelope 最大开销验证编码预算。
+func ValidateDraftBatchSize(drafts []RecordDraft) error {
 	total := 0
 	for _, draft := range drafts {
-		record, err := BuildRecord(identity, draft, math.MaxUint64, timestamp, math.MaxUint64, math.MaxUint32-1, math.MaxUint32)
-		if err != nil {
-			return err
-		}
-		_, encoded, err := EncodeRecord(record)
+		encoded, err := encodeLargestDraftEnvelope(draft, math.MaxUint32-1, math.MaxUint32)
 		if err != nil {
 			return err
 		}

@@ -233,6 +233,9 @@ func (p HookActivityPayload) Validate() error {
 		}
 		return nil
 	}
+	if p.Reference.Event == domain.HookPostCompact {
+		return fmt.Errorf("post compact activity requires checking state")
+	}
 	if p.Reference.Event.Post() {
 		switch p.State {
 		case HookActivityCompleted:

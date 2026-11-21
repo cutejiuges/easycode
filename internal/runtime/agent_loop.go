@@ -277,6 +277,7 @@ type activeLoopTurn struct {
 	autoCompactionSeen bool
 	compactionID       domain.CompactionID
 	compactionScope    domain.CompactionScope
+	compactionPhase    loopCompactionPresentation
 	claim              []queuedInput
 	stopping           bool
 	input              queuedInput
@@ -681,7 +682,7 @@ func (state *agentLoopRunState) handleTurnEvent(publication runtimePublication, 
 	if event.CompactionID.Valid() {
 		item, err = state.correlateCompactionEvent(state.active.input.requestID, event)
 		if err == nil {
-			err = state.active.acceptCompactionEvent(event)
+			err = state.active.acceptCompactionEvent(publication)
 		}
 	}
 	if err != nil {
