@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"easycode/internal/codec"
+	"easycode/internal/domain"
 )
 
 // Components 是当前十项工具能力使用的执行器、准备器及审批策略。
@@ -69,7 +70,7 @@ func NewBinding(components Components) (Binding, error) {
 	for i := range facades {
 		facades[i].serverSchema = serverSchemaMode(facades[i].family, facades[i].wireKind, facades[i].capability)
 	}
-	catalog, err := newCatalogSnapshot(facades)
+	catalog, err := newCatalogSnapshot(facades, domain.WorkModeDefault)
 	if err != nil {
 		return Binding{}, err
 	}

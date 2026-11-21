@@ -57,6 +57,9 @@ func (model Model) projectControlItem(item protocol.ControlItem) (tea.Model, tea
 		if event.Kind == protocol.EventEffortSnapshot {
 			return model.projectEffortEvent(item.RequestID(), event)
 		}
+		if event.Kind == protocol.EventWorkModeSnapshot {
+			return model.projectWorkModeSnapshot(item.RequestID(), event)
+		}
 		if event.Kind == protocol.EventCacheSnapshot || event.Kind == protocol.EventContextSnapshot {
 			if item.RequestID() != model.queryRequestID || model.queryRequestID == "" {
 				return model, nil
@@ -88,6 +91,8 @@ func (model Model) projectControlItem(item protocol.ControlItem) (tea.Model, tea
 			return model.projectTaskQueryResult(result)
 		case protocol.CommandQueryEffort, protocol.CommandSetEffort:
 			return model.projectEffortResult(result)
+		case protocol.CommandSetWorkMode:
+			return model.projectWorkModeResult(result)
 		case protocol.CommandRenameSession:
 			return model.projectSessionTitleResult(result)
 		case protocol.CommandQueryCache, protocol.CommandQueryContext, protocol.CommandCompactContext, protocol.CommandCancelCompaction:

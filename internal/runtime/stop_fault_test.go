@@ -17,7 +17,9 @@ type stopInputFixture struct {
 
 func (f *stopInputFixture) claim(context.Context, domain.TurnID, uint32) ([]domain.UserInput, error) {
 	f.claims++
-	return f.inputs, nil
+	inputs := f.inputs
+	f.inputs = nil
+	return inputs, nil
 }
 func (f *stopInputFixture) resolve(_ domain.TurnID, _ []domain.UserInput, state protocol.InputState, _ protocol.InputReason) {
 	f.states = append(f.states, state)

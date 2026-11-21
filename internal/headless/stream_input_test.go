@@ -67,6 +67,7 @@ func TestDecodeStreamCommandStrictFailures(t *testing.T) {
 		"unknown field":      []byte(`{"version":1,"type":"session.shutdown","request_id":"one","api_key":"do-not-echo"}`),
 		"multiple values":    []byte(`{"version":1,"type":"session.shutdown","request_id":"one"} {}`),
 		"unknown type":       []byte(`{"version":1,"type":"future","request_id":"one"}`),
+		"internal work mode": []byte(`{"version":1,"type":"set_work_mode","request_id":"plan","mode":"plan"}`),
 		"unknown version":    []byte(`{"version":2,"type":"session.shutdown","request_id":"one"}`),
 		"invalid request ID": []byte(`{"version":1,"type":"session.shutdown","request_id":" bad "}`),
 		"invalid turn ID":    []byte(`{"version":1,"type":"turn.interrupt","request_id":"one","expected_turn_id":"bad"}`),

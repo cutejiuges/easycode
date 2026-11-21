@@ -120,6 +120,7 @@ type Runtime struct {
 	operationProfile             contextplan.ProviderProfile
 	tools                        tool.Components
 	toolCatalog                  tool.CatalogSnapshot
+	planToolCatalog              tool.CatalogSnapshot
 	newApprovalRequestID         ApprovalRequestIDGenerator
 	interactiveApprovals         bool
 	readObservations             readObservations
@@ -155,6 +156,9 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 	if err := config.ContextProfile.Validate(); err != nil {
 		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "runtime context profile is invalid", err)
 	}
+	if config.ContextProfile.WorkMode() != domain.WorkModeDefault {
+		return nil, fault.New(fault.CodeInvalidConfiguration, "runtime work mode must start in default")
+	}
 	if config.ContextProfile.Family() != conversation.Family() {
 		return nil, fault.New(fault.CodeInvalidConfiguration, "runtime context profile provider does not match conversation")
 	}
@@ -167,6 +171,10 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 	}
 	if _, err := catalog.View(conversation.Family()); err != nil {
 		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "runtime tool catalog Provider view is invalid", err)
+	}
+	planCatalog, err := catalog.ForPlanMode()
+	if err != nil {
+		return nil, fault.Wrap(fault.CodeInvalidConfiguration, "runtime plan tool catalog is invalid", err)
 	}
 	if config.GenerateQuestionRequestID == nil {
 		config.GenerateQuestionRequestID = domain.GenerateQuestionRequestID
@@ -224,7 +232,8 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 		sessionID: config.SessionID, threadID: config.ThreadID, newTurnID: config.GenerateTurnID,
 		newInvocationID: config.GenerateInvocationID,
 		cachePolicy:     domain.WithDefaultCachePolicy(config.CachePolicy), restoredCacheBaseline: config.RestoredCacheBaseline,
-		profile: config.ContextProfile, operationProfile: config.ContextProfile, toolCatalog: catalog, tools: config.ToolBinding.Components(),
+		profile: config.ContextProfile, operationProfile: config.ContextProfile,
+		toolCatalog: catalog, planToolCatalog: planCatalog, tools: config.ToolBinding.Components(),
 		newApprovalRequestID: config.GenerateApprovalRequestID, interactiveApprovals: config.InteractiveApprovals, projectInstructions: projectInstructions,
 		budget: config.ContextBudget, planner: config.ContextPlanner,
 	}, nil
@@ -830,6 +839,14 @@ func (runtime *Runtime) commitCallSample(
 	usage domain.SampleUsage,
 	seenInvocationIDs map[tool.InvocationID]struct{},
 ) ([]tool.Invocation, error) {
+	if runtime.operationProfile.WorkMode() == domain.WorkModePlan {
+		for _, call := range ready {
+			if !tool.PlanModeAllows(call.Capability()) {
+				discardPreparedSample(sample)
+				return nil, fault.New(fault.CodeStreamProtocol, "tool call is not allowed in plan mode")
+			}
+		}
+	}
 	observation, err := runtime.sampleObservation(sample)
 	if err != nil {
 		discardPreparedSample(sample)

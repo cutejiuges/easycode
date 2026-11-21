@@ -2,6 +2,9 @@ package runtime
 
 import (
 	"context"
+	"errors"
+	"fmt"
+
 	"easycode/internal/codec"
 	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
@@ -9,8 +12,7 @@ import (
 	"easycode/internal/protocol"
 	"easycode/internal/provider"
 	"easycode/internal/session"
-	"errors"
-	"fmt"
+	"easycode/internal/tool"
 )
 
 // turnInputControl 由 loop owner 串行决定领取和最终输入归属。
@@ -211,9 +213,16 @@ func (runtime *Runtime) planHistory(view domain.ActiveContextView, footprint dom
 	return sampling, plan, err
 }
 
-// samplingInput 为预检、普通采样与压缩共用稳定来源快照。
+// samplingInput 读取当前操作冻结的普通采样来源。
 func (runtime *Runtime) samplingInput() (provider.TurnInput, error) {
 	return runtime.samplingInputFor(runtime.operationProfile)
+}
+
+func (runtime *Runtime) toolCatalogFor(mode domain.WorkMode) tool.CatalogSnapshot {
+	if mode == domain.WorkModePlan {
+		return runtime.planToolCatalog
+	}
+	return runtime.toolCatalog
 }
 
 func (runtime *Runtime) samplingInputFor(profile contextplan.ProviderProfile) (provider.TurnInput, error) {
@@ -225,7 +234,13 @@ func (runtime *Runtime) samplingInputFor(profile contextplan.ProviderProfile) (p
 	if err != nil {
 		return provider.TurnInput{}, err
 	}
-	sampling, err = sampling.WithToolCatalog(runtime.toolCatalog)
+	mode := profile.WorkMode()
+	catalog := runtime.toolCatalogFor(mode)
+	if mode == domain.WorkModePlan {
+		sampling, err = sampling.WithPlanMode(catalog)
+	} else {
+		sampling, err = sampling.WithToolCatalog(catalog)
+	}
 	if err != nil {
 		return provider.TurnInput{}, err
 	}

@@ -194,8 +194,74 @@ func TestWebSocketDurableIncrementalAndReset(t *testing.T) {
 	if err != nil || receipt.Mode != domain.RequestFull || receipt.Reason != domain.ResetRestored || receipt.RequestFingerprint != domain.ContentFingerprint(liveFull.Bytes()) {
 		t.Fatal(receipt, err)
 	}
-	_ = resumed.PreparedSample().Finalize()
+	if err := resumed.PreparedSample().Finalize(); err != nil {
+		t.Fatal(err)
+	}
+	generation := connects.Load()
+	assertPlanWebSocketTransitions(t, restored, requests, generation)
+	if connects.Load() != generation {
+		t.Fatal("work mode changes opened a new connection")
+	}
 }
+
+func assertPlanWebSocketTransitions(t *testing.T, c *Conversation, requests <-chan []byte, generation int32) {
+	t.Helper()
+	threadKey, err := domain.ThreadCacheKey(c.threadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialItems := len(c.historySnapshot())
+	for i, test := range []struct {
+		mode     domain.WorkMode
+		previous string
+	}{
+		{domain.WorkModeDefault, fmt.Sprintf("resp-%d-1", generation)},
+		{domain.WorkModePlan, ""},
+		{domain.WorkModePlan, fmt.Sprintf("resp-%d-3", generation)},
+		{domain.WorkModeDefault, ""},
+	} {
+		input := testOpenAITurnInput(t, c, fmt.Sprintf("mode step %d", i+1))
+		if i == 0 {
+			// 未发送的计划请求不能影响随后普通请求的续写资格。
+			if _, err := c.compileSamplingRequest(c.history.Entries(), testPlanModeInput(t, input)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		wantedTools := 10
+		if test.mode == domain.WorkModePlan {
+			input = testPlanModeInput(t, input)
+			wantedTools = 7
+		}
+		stream, err := c.Stream(context.Background(), input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		terminal := readOpenAITerminal(t, c, stream)
+		if terminal.Kind() != provider.StreamEventCompleted {
+			t.Fatal(terminal.Error())
+		}
+		sample := terminal.PreparedSample()
+		receipt, err := sample.Receipt()
+		wantMode, reason, wantItems := domain.RequestFull, domain.ResetProperties, initialItems+2*i+1
+		if test.previous != "" {
+			wantMode, reason, wantItems = domain.RequestIncremental, domain.ResetNone, 1
+		}
+		if err != nil || receipt.Transport != domain.TransportWebSocket || receipt.Mode != wantMode || receipt.Reason != reason {
+			t.Fatalf("step %d returned the wrong continuation evidence: %+v %v", i+1, receipt, err)
+		}
+		var wire websocketCreate
+		if err := codec.Unmarshal(<-requests, &wire); err != nil || wire.Instructions != test.mode.Instructions() || wire.PreviousResponseID != test.previous || wire.PromptCacheKey != threadKey || len(wire.Tools) != wantedTools || len(wire.Input) != wantItems {
+			t.Fatalf("step %d changed transport, instructions, or input suffix: %+v %v", i+1, wire, err)
+		}
+		if test.previous == "" && wire.Input[1].Phase != "final_answer" {
+			t.Fatal("mode change dropped the committed response phase")
+		}
+		if err := sample.Finalize(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func websocketCacheSources(t *testing.T, c *Conversation) contextplan.CacheSources {
 	t.Helper()
 	profile, _ := contextplan.NewProviderProfile(domain.ProviderOpenAI, c.provider.config.Model)
@@ -335,7 +401,7 @@ func TestWebSocketSummaryUsesSeparateFullConnectionAndResets(t *testing.T) {
 			}
 			defer instance.Close()
 			c := testConversation(t, instance)
-			stream, err := c.Stream(context.Background(), testOpenAITurnInput(t, c, "old history"))
+			stream, err := c.Stream(context.Background(), testPlanModeInput(t, testOpenAITurnInput(t, c, "old history")))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -362,7 +428,7 @@ func TestWebSocketSummaryUsesSeparateFullConnectionAndResets(t *testing.T) {
 			}
 			var summary websocketCreate
 			body := <-bodies
-			if codec.Unmarshal(body, &summary) != nil || summary.PreviousResponseID != "" || summary.ToolChoice != "none" || !bytes.Contains(body, []byte(`preserve tests\n\nretain hook emphasis`)) {
+			if codec.Unmarshal(body, &summary) != nil || summary.PreviousResponseID != "" || summary.ToolChoice != "none" || summary.Instructions != "" || len(summary.Tools) != 10 || !bytes.Contains(body, []byte(`preserve tests\n\nretain hook emphasis`)) {
 				t.Fatal("summary was not a separate full create")
 			}
 			if failure {
@@ -379,7 +445,7 @@ func TestWebSocketSummaryUsesSeparateFullConnectionAndResets(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			stream, err = c.Stream(context.Background(), testOpenAITurnInput(t, c, "continue"))
+			stream, err = c.Stream(context.Background(), testPlanModeInput(t, testOpenAITurnInput(t, c, "continue")))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -388,7 +454,7 @@ func TestWebSocketSummaryUsesSeparateFullConnectionAndResets(t *testing.T) {
 				t.Fatal(next.Error())
 			}
 			var normal websocketCreate
-			if codec.Unmarshal(<-bodies, &normal) != nil || normal.PreviousResponseID != "" || normal.ToolChoice != "" || connects.Load() != 3 {
+			if codec.Unmarshal(<-bodies, &normal) != nil || normal.PreviousResponseID != "" || normal.ToolChoice != "" || normal.Instructions != domain.WorkModePlan.Instructions() || len(normal.Tools) != 7 || connects.Load() != 3 {
 				t.Fatal("summary left a reusable continuation connection")
 			}
 			_ = next.PreparedSample().Finalize()

@@ -13,6 +13,9 @@ import (
 )
 
 const (
+	defaultFacadeCount = 10
+	planFacadeCount    = 7
+
 	maxCatalogBytes = 1 << 20
 
 	FacadeAnthropicRead  FacadeID = "anthropic:Read"
@@ -157,7 +160,7 @@ func (view FacadeView) Facades() []Facade             { return cloneFacades(view
 func (view FacadeView) CanonicalJSON() []byte         { return view.canonical.Bytes() }
 func (view FacadeView) Fingerprint() string           { return view.fingerprint }
 
-// CatalogSnapshot 保存 ReadArtifact、Read、Glob、Grep、Patch、Write、Exec、Skill、Question、Task 十项真实能力的确定性目录。
+// CatalogSnapshot 保存由完整已注册定义派生的确定性声明目录。
 type CatalogSnapshot struct {
 	data *catalogData
 }
@@ -168,6 +171,7 @@ type catalogData struct {
 	facades     []Facade
 	canonical   codec.CanonicalJSON
 	fingerprint string
+	mode        domain.WorkMode
 }
 
 type stringSchemaProperty struct {
@@ -405,14 +409,24 @@ func buildGrepSchema() (codec.CanonicalJSON, error) {
 	}, maxCatalogBytes)
 }
 
-func newCatalogSnapshot(facades []Facade) (CatalogSnapshot, error) {
-	if len(facades) != 20 {
+func newCatalogSnapshot(facades []Facade, mode domain.WorkMode) (CatalogSnapshot, error) {
+	if err := mode.Validate(); err != nil {
+		return CatalogSnapshot{}, err
+	}
+	count := defaultFacadeCount
+	if mode == domain.WorkModePlan {
+		count = planFacadeCount
+	}
+	if len(facades) != 2*count {
 		return CatalogSnapshot{}, errors.New("tool catalog requires a complete Provider facade set")
 	}
 	owned := cloneFacades(facades)
 	for index := range owned {
 		if err := owned[index].validate(); err != nil {
 			return CatalogSnapshot{}, err
+		}
+		if mode == domain.WorkModePlan && !PlanModeAllows(owned[index].capability) {
+			return CatalogSnapshot{}, errors.New("tool catalog contains a capability unavailable in Plan mode")
 		}
 	}
 	sortFacades(owned)
@@ -429,13 +443,38 @@ func newCatalogSnapshot(facades []Facade) (CatalogSnapshot, error) {
 	fingerprint := hex.EncodeToString(sum[:])
 	views := make(map[domain.ProviderFamily]FacadeView, 2)
 	for _, family := range [...]domain.ProviderFamily{domain.ProviderAnthropic, domain.ProviderOpenAI} {
-		view, err := buildFacadeView(family, owned)
+		view, err := buildFacadeView(family, owned, count)
 		if err != nil {
 			return CatalogSnapshot{}, err
 		}
 		views[family] = view
 	}
-	return CatalogSnapshot{data: &catalogData{facades: owned, canonical: canonical, fingerprint: fingerprint, views: views}}, nil
+	return CatalogSnapshot{data: &catalogData{facades: owned, canonical: canonical, fingerprint: fingerprint, views: views, mode: mode}}, nil
+}
+
+// PlanModeAllows 供声明目录和运行时采样准入共用。
+func PlanModeAllows(capability CapabilityID) bool {
+	switch capability {
+	case CapabilityRead, CapabilityGlob, CapabilityGrep, CapabilityReadArtifact, CapabilitySkill,
+		CapabilityQuestion, CapabilityTaskProgress:
+		return true
+	default:
+		return false
+	}
+}
+
+// ForPlanMode 从完整注册快照筛选七项能力，保留现有 Provider 定义。
+func (snapshot CatalogSnapshot) ForPlanMode() (CatalogSnapshot, error) {
+	if err := snapshot.ValidateForWorkMode(domain.WorkModeDefault); err != nil {
+		return CatalogSnapshot{}, err
+	}
+	facades := make([]Facade, 0, 2*planFacadeCount)
+	for _, facade := range snapshot.data.facades {
+		if PlanModeAllows(facade.capability) {
+			facades = append(facades, facade)
+		}
+	}
+	return newCatalogSnapshot(facades, domain.WorkModePlan)
 }
 
 func encodeFacades(facades []Facade) (codec.CanonicalJSON, error) {
@@ -480,16 +519,16 @@ func (snapshot CatalogSnapshot) Facades() []Facade {
 // Clone 共享不可变目录。所有导出的切片和字节仍由 getter 独立复制。
 func (snapshot CatalogSnapshot) Clone() CatalogSnapshot { return snapshot }
 
-func buildFacadeView(family domain.ProviderFamily, facades []Facade) (FacadeView, error) {
-	selected := make([]Facade, 0, 10)
-	byName := make(map[string]int, 10)
+func buildFacadeView(family domain.ProviderFamily, facades []Facade, count int) (FacadeView, error) {
+	selected := make([]Facade, 0, count)
+	byName := make(map[string]int, count)
 	for _, facade := range facades {
 		if facade.family == family {
 			byName[facade.name] = len(selected)
 			selected = append(selected, facade)
 		}
 	}
-	if len(selected) != 10 {
+	if len(selected) != count {
 		return FacadeView{}, errors.New("tool catalog has incomplete Provider facade set")
 	}
 	canonical, err := encodeFacades(selected)
@@ -608,6 +647,17 @@ func decodeFacadeInput(family domain.ProviderFamily, capability CapabilityID, wi
 func (snapshot CatalogSnapshot) Validate() error {
 	if snapshot.data == nil {
 		return errors.New("tool catalog snapshot is invalid")
+	}
+	return nil
+}
+
+// ValidateForWorkMode 校验当前声明目录与请求冻结模式匹配。
+func (snapshot CatalogSnapshot) ValidateForWorkMode(mode domain.WorkMode) error {
+	if err := snapshot.Validate(); err != nil {
+		return err
+	}
+	if snapshot.data.mode != mode {
+		return errors.New("tool catalog does not match work mode")
 	}
 	return nil
 }

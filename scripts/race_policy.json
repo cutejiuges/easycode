@@ -145,9 +145,10 @@
   {
     "package": "easycode/internal/runtime",
     "tests": [
-      "TestResumePermitSerializesPreparationAndDirectControls"
+      "TestResumePermitSerializesPreparationAndDirectControls",
+      "TestWorkModeHostReservationAndAcceptedCancellation"
     ],
-    "reason": "交接许可要和接纳前准备及直接变更入口互斥"
+    "reason": "交接许可、接纳前准备和模式变更互斥，接纳后的取消须返回确定结果"
   },
   {
     "package": "easycode/internal/runtime",

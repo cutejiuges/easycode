@@ -89,6 +89,7 @@ type Model struct {
 	question                  *questionOverlay
 	tasks                     taskProgressView
 	title                     sessionTitleView
+	workMode                  workModeView
 
 	hooks                   hookBrowser
 	hookTrust               *hookTrustOverlay
@@ -161,10 +162,12 @@ func NewModel(
 	version string,
 	session ChatSession,
 ) Model {
-	catalog, _ := newCompletionCatalog(nil, false)
+	_, workModeEnabled := session.(workModeSession)
+	catalog, _ := newCompletionCatalog(nil, false, workModeEnabled)
 	model := Model{
 		completion: completionState{catalog: catalog},
 		markdown:   newMarkdownViewCache(),
+		workMode:   workModeView{mode: domain.WorkModeDefault, enabled: workModeEnabled},
 		version:    version, session: session, submitContext: submitContext, assistantItem: -1, composer: newComposer(),
 	}
 	if session != nil {
@@ -268,6 +271,9 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case eventStreamClosedMsg:
 		model.outputs = nil
 		failure := "session_failed: session control stream closed"
+		if model.workMode.pending != nil {
+			model.finishWorkModeRequest(failure)
+		}
 		if model.tasks.query != nil {
 			model.failTaskQuery(model.tasks.query.generation, "task_query_unavailable: runtime event stream closed")
 		}
@@ -293,6 +299,11 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model, nil
 		}
 		return model.finishSessionTitleRequest(safeErrorSummary(value.err))
+	case workModeDeliveryFailedMsg:
+		if model.workMode.pending != nil && model.workMode.pending.id == value.id {
+			model.finishWorkModeRequest(safeErrorSummary(value.err))
+		}
+		return model, nil
 	case RuntimeEventMsg:
 		return model.reduceRuntimeEvent(value.Event)
 	case submissionFailedMsg:
@@ -415,6 +426,15 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case focusTitle:
 		return model.handleSessionTitleKey(key)
 	}
+	if focus == focusComposer && model.workMode.pending != nil {
+		if key.Type == tea.KeyEsc || key.Type == tea.KeyCtrlC {
+			if model.activeTurnID.Valid() || model.activeCompactionID.Valid() {
+				return model.handleCancelKey()
+			}
+			model.workMode.pending.cancel()
+		}
+		return model, nil
+	}
 	if key.Type == tea.KeyCtrlO {
 		model.clearEffortFeedback()
 		return model.openTranscriptBrowser()
@@ -503,6 +523,9 @@ func (model Model) handleComposerKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return model, nil
 	}
 	model.prepareCompletion()
+	if key.Type == tea.KeyShiftTab && model.workMode.enabled && model.completion.rows == 0 && model.files.rows == 0 {
+		return model.switchWorkMode()
+	}
 	if key.Type == tea.KeyCtrlT {
 		if snapshot := model.tasks.snapshot; snapshot != nil && snapshot.Counts.Total > 0 {
 			model.tasks.expanded = !model.tasks.expanded
@@ -510,6 +533,10 @@ func (model Model) handleComposerKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return model, nil
 	}
 	if submit {
+		if head == "/"+planCommandName && model.workMode.enabled {
+			model.completion.suppress(completionCancelled)
+			return model.submitPlanCommand(remainder)
+		}
 		switch head {
 		case "/rename", "/effort", "/tasks":
 			model.completion.suppress(completionCancelled)
@@ -527,6 +554,10 @@ func (model Model) handleComposerKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if submit {
 			if model.composer.text != originalDraft.text {
 				head, remainder = domain.SplitInputHead(model.composer.text)
+			}
+			if head == "/"+planCommandName && model.workMode.enabled {
+				model.restoreComposer(originalDraft)
+				return model.submitPlanCommand(remainder)
 			}
 			next, command := model.submitComposer(head, remainder)
 			updated := next.(Model)
@@ -1020,43 +1051,43 @@ func (model Model) View() string {
 	case focusClosed:
 		return model.renderSessionTitleClosed()
 	case focusResumeNotice:
-		return pickerWrapped(model.resumeDirectoryText(), model.widthOrDefault(), model.heightOrDefault(), model.resumeDirectoryScroll)
+		return model.modalWorkModeView(pickerWrapped(model.resumeDirectoryText(), model.widthOrDefault(), model.heightOrDefault(), model.resumeDirectoryScroll))
 	case focusQuestion:
-		return model.renderQuestion()
+		return model.modalWorkModeView(model.renderQuestion())
 	case focusHookTrust:
-		return model.renderHookTrust()
+		return model.modalWorkModeView(model.renderHookTrust())
 	case focusApproval:
-		return model.renderApproval()
+		return model.modalWorkModeView(model.renderApproval())
 	case focusHooks:
-		return model.renderHooks()
+		return model.modalWorkModeView(model.renderHooks())
 	case focusSkills:
-		return model.renderSkills()
+		return model.modalWorkModeView(model.renderSkills())
 	case focusCache:
-		return model.renderCachePanel()
+		return model.modalWorkModeView(model.renderCachePanel())
 	case focusContext:
-		return model.renderContextPanel()
+		return model.modalWorkModeView(model.renderContextPanel())
 	case focusPlugins:
-		return model.renderPlugins()
+		return model.modalWorkModeView(model.renderPlugins())
 	case focusTasks:
-		return model.renderTasksPanel()
+		return model.modalWorkModeView(model.renderTasksPanel())
 	case focusTranscript:
-		return model.renderTranscriptBrowser()
+		return model.modalWorkModeView(model.renderTranscriptBrowser())
 	case focusTitle:
 		if model.title.editor != nil {
-			return model.renderSessionTitleEditor()
+			return model.modalWorkModeView(model.renderSessionTitleEditor())
 		}
 	}
 	if model.composer.height <= 5 {
 		status := model.title.status()
 		if status == "" && model.errorSummary != "" {
-			if head, _ := domain.SplitInputHead(model.composer.text); head == "/rename" {
+			if head, _ := domain.SplitInputHead(model.composer.text); head == "/rename" || model.workMode.enabled {
 				status = "Error: " + model.errorSummary
 			}
 		}
 		if status != "" {
-			return model.fitChatView(status, model.composer.inputView(model.chatComposerEditable()))
+			return model.fitChatView(status, model.composerWorkModeView(model.composer.inputView(model.chatComposerEditable())))
 		}
-		footer := model.composer.view(model.chatComposerEditable())
+		footer := model.composerWorkModeView(model.composer.view(model.chatComposerEditable()))
 		if prefix := model.resumeStatus() + model.title.line(); prefix != "" {
 			return model.fitChatView(prefix, footer)
 		}
@@ -1115,7 +1146,7 @@ func (model Model) View() string {
 		_, _ = fmt.Fprintf(&view, "Error: %s\n", model.errorSummary)
 	}
 	view.WriteString("\n")
-	footer := model.renderTaskInline() + model.renderInputs() + model.completion.view + model.files.view + model.composer.view(model.chatComposerEditable())
+	footer := model.renderTaskInline() + model.renderInputs() + model.completion.view + model.files.view + model.composerWorkModeView(model.composer.view(model.chatComposerEditable()))
 	return model.fitChatView(view.String(), footer)
 }
 

@@ -206,7 +206,7 @@ func (model Model) closeSessionTitleInput(failure string) (tea.Model, tea.Cmd) {
 }
 
 func (model Model) chatComposerEditable() bool {
-	return model.focus() == focusComposer && model.pending == nil && model.retracting == nil && !model.cancelling
+	return model.focus() == focusComposer && model.pending == nil && model.workMode.pending == nil && model.retracting == nil && !model.cancelling
 }
 
 func (title sessionTitleView) line() string {

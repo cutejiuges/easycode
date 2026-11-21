@@ -27,7 +27,9 @@ func (model Model) nonEffortStatusRows() int {
 	return rows
 }
 
-func (model Model) composerChatRows() int { return renderedChatRows(model.composer.view(true)) }
+func (model Model) composerChatRows() int {
+	return renderedChatRows(model.composerWorkModeView(model.composer.view(true)))
+}
 
 // chatContentRows 优先预留输入、队列、固定标题和分隔，剩余空间由正文及短通知使用。
 func (model Model) chatContentRows() int {
@@ -64,7 +66,7 @@ func (model Model) renderTaskInline() string {
 func (model Model) fitChatView(prefix, footer string) string {
 	height, width := max(1, model.heightOrDefault()), max(1, model.widthOrDefault())
 	if renderedChatRows(footer) > height {
-		return model.composer.view(model.chatComposerEditable())
+		return model.composerWorkModeView(model.composer.view(model.chatComposerEditable()))
 	}
 	lines := strings.Split(strings.TrimSuffix(prefix, "\n"), "\n")
 	capacity := height - renderedChatRows(footer)

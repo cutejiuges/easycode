@@ -63,6 +63,7 @@ func (conversation *Conversation) planWindowSamplingRequest(input provider.TurnI
 	}
 	project := sources.Instructions != nil && sources.Instructions.HasDocuments()
 	request := buildMessagesRequest(conversation.provider.config.Model, int(sources.Inference.MaxOutputTokens()), sources.History, sources.Instructions, sources.Tools)
+	request.System = sources.WorkMode.Instructions()
 	request.applyInference(sources.Inference)
 	if sources.Skills.HasEntries() {
 		index := 0

@@ -8,14 +8,14 @@
 
 ### Requirement: Compile a deterministic text-only Messages request
 
-系统 SHALL向解析后的相对`messages` endpoint发送Anthropic Messages请求并保留`base_url`路径前缀。请求 SHALL使用既有鉴权/version/JSON/SSE headers；正文 MUST包含model、正整数`max_tokens`、可选临时项目指令、按原顺序排列的Anthropic native history、`stream=true`和当前Tool Catalog编译出的稳定tools数组。所有真实用户输入 SHALL 已独立提交到 native history，编译仅按原生顺序回放，不额外追加当前正文、合成 user 或空消息。
+系统 SHALL向解析后的相对`messages` endpoint发送Anthropic Messages请求并保留`base_url`路径前缀。请求 SHALL使用既有鉴权/version/JSON/SSE headers；正文 MUST包含model、正整数`max_tokens`、可选临时项目指令、按原顺序排列的Anthropic native history、`stream=true`和当前操作冻结的已声明 Tool Catalog 编译出的稳定 tools 数组。所有真实用户输入 SHALL 已独立提交到 native history，编译仅按原生顺序回放，不额外追加当前正文、合成 user 或空消息。
 
-存在项目指令时，其user context message SHALL位于已提交history和真实当前输入之前，并保持独立且不进入native history。Read、Glob、Grep、Write、ReadArtifact、Skill、AskUserQuestion facade与structured `Edit`/`Bash`/`TodoWrite` facade SHALL编译为稳定名称、description和strict JSON input schema；tools顺序与schema bytes MUST来自本次不可变catalog snapshot。请求不得声明 custom/freeform tool、后台进程、write_stdin 或 system 配置。普通请求 SHALL 按 provider/reasoning-control 编译显式冻结的 thinking（含合法 display）、output_config.effort 及输出上限；新字段省略时维持原请求 bytes。启用缓存的请求副本 MUST 保留这些字段，不能因 cache marker 编译丢失。禁用缓存时 MUST 省略 cache_control；启用时 SHALL 按 provider/prompt-caching 在最终请求副本上添加合法、确定性断点及冻结 TTL，不修改原生历史。secret、项目指令正文、workspace绝对路径、candidate fingerprint、实际环境和动态调用/approval identity MUST NOT进入错误、日志或普通fixture。
+存在项目指令时，其user context message SHALL位于已提交history和真实当前输入之前，并保持独立且不进入native history。当前冻结目录中已声明的 Read、Glob、Grep、Write、ReadArtifact、Skill、AskUserQuestion 与 structured `Edit`、`Bash`、`TodoWrite` facade SHALL 编译为稳定名称、description 和 strict JSON input schema。tools 顺序与 schema bytes MUST 来自本次不可变 catalog snapshot。请求不得声明 custom/freeform tool、后台进程或 write_stdin。普通请求 SHALL 按 provider/reasoning-control 编译显式冻结的 thinking（含合法 display）、output_config.effort 及输出上限；新字段省略时维持原请求 bytes。启用缓存的请求副本 MUST 保留这些字段，不能因 cache marker 编译丢失。禁用缓存时 MUST 省略 cache_control；启用时 SHALL 按 provider/prompt-caching 在最终请求副本上添加合法、确定性断点及冻结 TTL，不修改原生历史。secret、项目指令正文、workspace绝对路径、candidate fingerprint、实际环境和动态调用/approval identity MUST NOT进入错误、日志或普通fixture。
 
 Write 的稳定 schema/description SHALL 来自同一不可变 catalog；文件存在性、Read 证据、候选内容、目录清单、命令输入和批准状态不得注入稳定工具定义。
 
 #### Scenario: Compile the first Anthropic turn
-- **WHEN** 空会话收到用户文本且catalog包含当前十个 Anthropic facades
+- **WHEN** 普通模式下的空会话收到用户文本且 catalog 包含当前十个 Anthropic facades
 - **THEN** 请求包含用户message以及稳定排序的Read、Glob、Grep、Write、ReadArtifact、Edit、Bash、Skill、AskUserQuestion 和 TodoWrite schemas，并保持model、max_tokens和stream字段确定
 
 #### Scenario: Compile the first Anthropic turn without project instructions
@@ -35,7 +35,7 @@ Write 的稳定 schema/description SHALL 来自同一不可变 catalog；文件�
 - **THEN** messages 按项目指令、包含当前已提交用户输入的原生 messages 顺序排列，且不从共享事件重建
 
 #### Scenario: Produce stable request bytes
-- **WHEN** model、catalog、项目指令、native history、当前输入、冻结推理/输出设置与缓存策略相同
+- **WHEN** model、catalog、规划指令、项目指令、native history、当前输入、冻结推理/输出设置与缓存策略相同
 - **THEN** canonical request bytes和fingerprint完全相同，cwd、Session identity、invocation ID和approval状态不参与
 
 #### Scenario: Compile a continuation after tool results
@@ -65,6 +65,22 @@ TodoWrite SHALL 使用 tool/task-progress 定义的唯一 structured 输入 sche
 #### Scenario: Keep the catalog stable across task updates
 - **WHEN** 两次请求之间只成功更新、回退或清除任务，或改变任务面板折叠状态
 - **THEN** tools canonical bytes 与稳定 catalog fingerprint 不变；请求历史只按真实已提交调用/结果或 checkpoint 变化
+
+Plan Mode 的普通采样 SHALL 将本机固定的规划指令原样编译为 Messages 顶层 `system` 文本，并使用同一操作冻结的 Read、Glob、Grep、ReadArtifact、Skill、AskUserQuestion 和 TodoWrite 七项定义。缓存关闭及两种 TTL 的请求副本 SHALL 保留相同的规划指令与定义顺序。规划指令 SHALL 独立于项目指令，并只随本次请求发送。既有原生用户消息、助手消息及工具配对继续按原顺序回放。普通模式 MUST 省略 `system` 并使用原有完整目录。独立摘要 SHALL 使用既有完整工具定义、专用摘要提示和实际请求预算，保持 `tool_choice.type=none`，并省略普通 Plan Mode 的 `system`。
+
+#### Scenario: Compile a Plan Mode request under each cache policy
+- **WHEN** 同一 Plan Mode 普通采样分别按关闭缓存、5m 或 1h 的策略编译
+- **THEN** 三份请求各自得到确定的 canonical bytes，顶层 `system` 与七项工具定义一致，缓存断点和 TTL 按既有规则应用
+- **THEN** `messages` 保持包括原生命令调用及结果在内的已提交顺序，规划指令没有进入项目指令消息或原生提交
+
+#### Scenario: Separate summary generation and the next ordinary sample
+- **WHEN** Plan Mode 在同一会话触发摘要生成，之后继续普通采样
+- **THEN** 摘要请求使用既有完整目录与摘要提示，省略规划指令并禁止工具选择，摘要生成与 checkpoint 采用既有格式
+- **THEN** 后续普通请求仍使用对应操作冻结的规划指令与七项工具定义
+
+#### Scenario: Preserve the default request encoding
+- **WHEN** 固定同一原生历史、模型、缓存策略和其他实际输入，编译普通模式请求
+- **THEN** 省略 `system`，保留完整目录和既有 canonical bytes
 
 ### Requirement: Reduce Anthropic content blocks with an indexed state machine
 

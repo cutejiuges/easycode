@@ -8,9 +8,11 @@
 
 ### Requirement: Context planning uses typed ordered sources
 
-上下文规划 SHALL 只接收强类型的 Provider profile、Tool Catalog snapshot、可选项目指令快照、可选 Skill metadata 快照、已提交有效窗口语义快照、Provider 原生历史 footprint、不携带额外正文的当前采样状态、可选任务内容 stamp 和可选预算。来源 MUST 按 `provider_profile`、`tool_catalog`、可选 `project_instructions`、可选 `skill_catalog`、`committed_history`、`current_input` 的固定顺序出现；无项目指令文档时 MUST 省略 `project_instructions`，无可向模型披露的 Skill 时 MUST 省略 `skill_catalog`。规划不得隐式读取时间戳、随机 ID、cwd、环境变量、Session 路径、git 状态、文件系统或网络。
+上下文规划 SHALL 只接收强类型的 Provider profile、当前操作冻结的已声明 Tool Catalog snapshot、可选项目指令快照、可选 Skill metadata 快照、已提交有效窗口语义快照、Provider 原生历史 footprint、不携带额外正文的当前采样状态、可选任务内容 stamp 和可选预算。来源 MUST 按 `provider_profile`、`tool_catalog`、可选 `project_instructions`、可选 `skill_catalog`、`committed_history`、`current_input` 的固定顺序出现；无项目指令文档时 MUST 省略 `project_instructions`，无可向模型披露的 Skill 时 MUST 省略 `skill_catalog`。规划不得隐式读取时间戳、随机 ID、cwd、环境变量、Session 路径、git 状态、文件系统或网络。
 
 `provider_profile` SHALL 只包含 Provider family、model、既有显式 schema revision 以及实际非默认普通请求策略的确定性身份，不得包含 API key、base URL 凭据、配置路径或其他 secret。新设置省略时 profile canonical bytes 和 source revision MUST 与既有默认基线一致；不得递增固定 revision、增加格式版本路由或从 profile 反向重建原生历史。`tool_catalog` SHALL 只包含 catalog revision、稳定排序的 facade schema canonical bytes 与内容派生 fingerprint，不得包含 executor、invocation/call identity、权限临时状态或 workspace 绝对路径。`project_instructions` SHALL 只包含经过发现契约验证的不可变快照、内容派生 revision、截断状态和项目根相对来源，不得包含绝对项目根或启动 cwd。规划 MUST 是纯内存操作，且不得修改输入快照或 Provider 原生历史。
+
+Plan Mode 的普通采样 SHALL 在 `provider_profile` 的 canonical 内容使用由实际发送的本机固定规划指令正文派生的身份。该来源的估算 SHALL 覆盖这份正文一次。当前操作冻结的已声明目录 SHALL 同时供规划与 Provider 编译使用。普通输入预检、工具或问卷后的同回合续写以及压缩前后用于普通采样的窗口比较，均 SHALL 使用相应操作冻结的规划指令与目录。摘要请求本身沿用独立的实际 wire 估算与既有摘要契约。规划指令的正文和身份不得作为项目指令、当前输入或已提交历史另计。
 
 #### Scenario: Plan the same inputs twice
 - **WHEN** 两次规划使用相同 profile、Tool Catalog、项目指令快照、Skill metadata、有效窗口语义快照、原生 footprint、当前输入和预算
@@ -76,11 +78,25 @@ Skill metadata SHALL 只包含实际发送的稳定名称、描述、调用策�
 - **WHEN** 当前、输入候选、摘要候选和恢复规划分别使用某个已验证窗口
 - **THEN** 每份规划的任务 stamp 来自该窗口对应状态，来源顺序和 token 估算规则不变，普通 TurnInput 与实际请求不新增任务正文
 
+#### Scenario: Attribute a Plan Mode switch to the actual request sources
+- **WHEN** 固定同一 Provider、推理设置和原生窗口，分别规划普通模式和 Plan Mode 的普通请求
+- **THEN** Plan 的规划指令由 `provider_profile` 计入一次，`tool_catalog` 准确反映已声明定义，两项分别得到与实际内容对应的不同 revision 和 fingerprint，稳定前缀指纹随之变化
+- **THEN** 来源顺序及项目指令、Skill 和历史内容保持一致。切换次数、界面状态和请求关联身份不进入规划内容
+
+#### Scenario: Compare candidate windows under the captured Plan Mode sources
+- **WHEN** Plan Mode 操作触发手动或自动压缩并评估继续普通采样所用的候选窗口
+- **THEN** 压缩前后均用同一份冻结的规划指令和已声明目录比较普通请求窗口
+- **THEN** 摘要请求的独立估算与预检对应实际摘要请求，摘要生成与原生 checkpoint 沿用既有语义
+
+#### Scenario: Return to the same default profile identity
+- **WHEN** 两次规划都处于普通模式且实际模型内容与设置相同，中间曾选中 Plan Mode
+- **THEN** 普通模式不产生规划指令字段、额外正文估算或模式序号，其 canonical bytes、source revision 及稳定前缀指纹与既有普通基线相同
+
 ### Requirement: Context plans are immutable validated snapshots
 
 上下文计划 SHALL 使用唯一当前的强类型 shape，并深拷贝所有调用方可变输入；纯内存 plan MUST NOT 携带固定 format revision 或按 revision 选择 validator。计划 MUST 拒绝未知来源 kind、重复来源、非法顺序、空 source revision、非法 Tool Catalog、非法项目指令快照、非法 Skill 目录、非法估算状态、Provider family 不匹配及无效缓存计划。所有返回 slice、bytes 或嵌套值的读取操作 MUST 返回独立副本。
 
-计划 SHALL 把 `provider_profile` 与包含 Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill、Question、Task 的完整 `tool_catalog` 映射为 stable cache segments，把可选 `project_instructions` 映射为 project-stable cache segment，把可选 `skill_catalog` 映射为 project-stable segment，把 `committed_history` 映射为 turn-stable segment，把 `current_input` 映射为 volatile segment，并复用 `context/cache-plan` 的 canonical JSON、排序和 stable prefix fingerprint 契约。Tool Catalog 估算 SHALL 覆盖实际发送给对应 Provider 的全部 facade schema/description；Exec动态command、workdir、timeout、approval、sandbox临时状态与环境实际值不得进入catalog source。来源生命周期、source revision 与缓存稳定级别 MUST 保持为不同的强类型概念。
+计划 SHALL 把 `provider_profile` 与当前操作已声明的 `tool_catalog` 映射为 stable cache segments，把可选 `project_instructions` 映射为 project-stable cache segment，把可选 `skill_catalog` 映射为 project-stable segment，把 `committed_history` 映射为 turn-stable segment，把 `current_input` 映射为 volatile segment，并复用 `context/cache-plan` 的 canonical JSON、排序和 stable prefix fingerprint 契约。Tool Catalog 的 canonical bytes、source revision、fingerprint 与估算 SHALL 覆盖实际发送给对应 Provider 的全部 facade schema/description。普通模式使用包含 Read、Glob、Grep、Patch、Write、Exec、ReadArtifact、Skill、Question、Task 的完整目录，Plan Mode 依照 tool/invocation-loop 使用七项定义。Exec 动态 command、workdir、timeout、approval、sandbox 临时状态与环境实际值不得进入 catalog source。来源生命周期、source revision 与缓存稳定级别 MUST 保持为不同的强类型概念。
 
 #### Scenario: Mutate caller-owned planning inputs
 - **WHEN** 调用方在计划创建后修改原 Tool Catalog bytes、项目指令、语义 turn slice、有序消息 buffer 或 getter 返回的数据
@@ -180,6 +196,11 @@ Question 的静态 schema/description SHALL 纳入同一 tool_catalog source；�
 #### Scenario: Distinguish no task from an explicit empty update
 - **WHEN** 一个窗口从无成功任务更新，另一个窗口最新成功更新是无说明的空列表
 - **THEN** none 窗口省略 stamp，clear 窗口带规范空更新的 digest，二者 committed_history canonical 内容不同
+
+#### Scenario: Match the declared tools in Plan Mode
+- **WHEN** 普通采样冻结了 Plan Mode 的已声明目录
+- **THEN** `tool_catalog` 的顺序、canonical 定义、内容派生身份和估算覆盖 Read、Glob、Grep、ReadArtifact、Skill、Question 与任务进度，恢复完整声明时得到普通模式对应的目录身份
+- **THEN** 变动可定位到 `tool_catalog` 来源，原生历史中的既有调用与结果保留原内容身份
 
 ### Requirement: Token estimates preserve method and uncertainty
 

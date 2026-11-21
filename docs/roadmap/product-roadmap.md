@@ -1,5 +1,7 @@
 # EasyCode 产品与工程 Roadmap
 
+2026-11-21 交付并归档 `add-interactive-plan-mode`。它复用工作区调查、问卷、Markdown 与审批，补齐先规划再实施的交互闭环。空闲时可切换，回合内冻结模式，双 Provider 的声明和 durable 准入共享同一七项允许集合。普通实施由用户退出后独立提交。参见[主规格](../../openspec/specs/tui/plan-mode/spec.md)与[验收记录](../../openspec/changes/archive/2026-11-21-add-interactive-plan-mode/verification.md)。
+
 2026-11-19 交付 `add-session-titles`。空闲会话可从首轮前通过 `/rename` 命名，Sync 后显示，离线列表和选择器从 journal 投影标题。列表按最后提交记录排序，改名可影响 `--continue`。本切片复用现有 writer、Catalog 与双 Provider 恢复，验收见 [add-session-titles](../../openspec/changes/archive/2026-11-19-add-session-titles/verification.md)。
 
 2026-11-19 的聊天内 `/resume` 切片让 P2 的 Catalog、预览与双 Provider journal 恢复服务进入同一 P5 终端宿主。空闲时可通过列表或完整 ID 切换同目录会话，跨目录仅提供预览和独立恢复提示。接管先验证目标和首屏，再等待源 writer 及租约关闭，暂时授权和 effort 覆盖按新实例初始化。[聊天内会话恢复验收](../../openspec/changes/archive/2026-11-19-add-in-chat-session-resume/verification.md)
@@ -13,7 +15,7 @@
 当前契约治理变更 `unify-current-contract-lifecycle` 收敛了固定 codec、prepared commit、宿主 owner 与副作用 admission。TUI、一次性 headless、stream-json 共用 AgentLoop；关闭期间排空事件，活动 transport 可显式取消，journal lease 保留至清理完成。Patch/Write grant 仅在批准 Sync 后生效，三种副作用工具统一验证结果关联并以 uncertain 收口错配结果。本次未引入迁移或兼容 reader，后续 P4/P6/P7/P8 能力及占位退出条件保持原有范围。
 
 > 状态：持续演进（各阶段按纵向切片验收）
-> 更新时间：2026-11-19
+> 更新时间：2026-11-21
 > 依赖设计：[`../architecture/overall-architecture.md`](../architecture/overall-architecture.md)
 > Tool 专题设计：[`../architecture/tool-system.md`](../architecture/tool-system.md)
 
@@ -462,7 +464,7 @@ Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘�
 
 ### 9.0 当前进度（2026-11-19）
 
-已交付多行/字素输入、同轮追加与返还、流式 Markdown 与代码/表格/原文阅读、紧凑工具主线及 Ctrl+O 分页详情、完整 Patch/Write/Exec 审批、结构化问卷、Hook 信任、context/cache 面板、当前任务清单以及启动和聊天内 resume picker。当前本地命令为 `/cache`、`/context`、`/compact`、`/effort`、`/skills`、`/hooks`、`/plugins`、`/tasks`、`/rename`、`/resume`，以及 Skill 显式入口。命令/Skill 首词补全和被动 thinking/summary 活动提示及 Ctrl+O 阅读已交付；启动推理配置、会话内 effort 与 /context 设置已实现；其他推理字段切换、fork picker、后台任务 UI、cost/综合状态面板与其余命令尚未实现。
+已交付多行/字素输入、同轮追加与返还、流式 Markdown 与代码/表格/原文阅读、紧凑工具主线及 Ctrl+O 分页详情、完整 Patch/Write/Exec 审批、结构化问卷、Hook 信任、context/cache 面板、当前任务清单以及启动和聊天内 resume picker。当前本地命令为 `/cache`、`/context`、`/compact`、`/effort`、`/skills`、`/hooks`、`/plugins`、`/tasks`、`/rename`、`/resume`、`/plan`，以及 Skill 显式入口。命令/Skill 首词补全和被动 thinking/summary 活动提示及 Ctrl+O 阅读已交付；启动推理配置、会话内 effort 与 /context 设置已实现；其他推理字段切换、fork picker、后台任务 UI、cost/综合状态面板与其余命令尚未实现。
 
 补全复用冻结 Skill 展示列表、字素编辑和既有命令提交；Tab 只填入、Skill Enter 只选择、Esc 优先关闭，粘贴不接受候选。验收覆盖双 Provider 原生请求/恢复/缓存等价、固定尺寸和 Darwin PTY，见 [验收记录](../../openspec/changes/archive/2026-11-06-add-command-and-skill-completion/verification.md)。该首词切片仍不处理普通参数值；正文工作区 @ 文件引用已由独立切片实现，文件范围、读取、索引及恢复的边界见下文。
 

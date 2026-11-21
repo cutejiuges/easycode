@@ -30,7 +30,7 @@ func (model Model) submitResume(argument string) (tea.Model, tea.Cmd) {
 		}
 	}
 	if model.activeTurnID.Valid() || model.activeCompactionID.Valid() || model.pending != nil ||
-		model.retracting != nil || len(model.inputs) != 0 || model.cancelling {
+		model.retracting != nil || model.workMode.pending != nil || len(model.inputs) != 0 || model.cancelling {
 		model.errorSummary = "session_busy: finish the current work or handle pending inputs, then retry"
 		return model, nil
 	}

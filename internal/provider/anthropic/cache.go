@@ -57,6 +57,7 @@ type cachedMessagesRequest struct {
 	OutputConfig *outputConfigWire  `json:"output_config,omitempty"`
 	ToolChoice   *summaryToolChoice `json:"tool_choice,omitempty"`
 	Model        string             `json:"model"`
+	System       string             `json:"system,omitempty"`
 	Messages     []cachedMessage    `json:"messages"`
 	MaxTokens    int                `json:"max_tokens"`
 	Tools        []cachedTool       `json:"tools"`
@@ -141,7 +142,11 @@ func (plan samplingRequestPlan) compile(mode domain.AnthropicCacheMode) (compile
 		marker.TTL = "1h"
 	}
 	r := plan.request
-	wire := cachedMessagesRequest{Thinking: plan.request.Thinking, OutputConfig: plan.request.OutputConfig, ToolChoice: r.ToolChoice, Model: r.Model, MaxTokens: r.MaxTokens, Stream: r.Stream, Messages: make([]cachedMessage, len(r.Messages)), Tools: make([]cachedTool, len(r.Tools))}
+	wire := cachedMessagesRequest{
+		Thinking: r.Thinking, OutputConfig: r.OutputConfig, ToolChoice: r.ToolChoice,
+		Model: r.Model, System: r.System, MaxTokens: r.MaxTokens, Stream: r.Stream,
+		Messages: make([]cachedMessage, len(r.Messages)), Tools: make([]cachedTool, len(r.Tools)),
+	}
 	for i, m := range r.Messages {
 		wire.Messages[i] = cachedMessage{Role: m.Role, Content: make([]cachedBlock, len(m.Content))}
 		for j, item := range m.Content {

@@ -56,7 +56,7 @@ func (session *ChatSession) ReserveResume(ctx context.Context) (*ResumePermit, e
 		session.mu.Unlock()
 		return nil, fault.New(fault.CodeTurnFailed, "interactive session is not running")
 	}
-	if session.resumePermit != nil || session.appendAdmissions != 0 {
+	if session.resumePermit != nil || session.appendAdmissions != 0 || session.workModePending {
 		session.mu.Unlock()
 		return nil, fault.New(fault.CodeSessionBusy, "session is not idle for resume")
 	}
@@ -75,6 +75,9 @@ func (session *ChatSession) beginAppend() error {
 	defer session.mu.Unlock()
 	if session.resumePermit != nil {
 		return fault.New(fault.CodeSessionBusy, "session is reserved for resume")
+	}
+	if session.workModePending {
+		return fault.New(fault.CodeSessionBusy, "work mode change is pending")
 	}
 	session.appendAdmissions++
 	return nil

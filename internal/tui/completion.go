@@ -39,6 +39,7 @@ type completionCatalog struct {
 	entries       []completionCandidate
 	bytes         int
 	resumeEnabled bool
+	planEnabled   bool
 }
 
 func explicitSkillEntry(e domain.SkillListEntry) bool {
@@ -60,10 +61,13 @@ func builtinCompletionCandidates() []completionCandidate {
 	}
 }
 
-func newCompletionCatalog(skills []domain.SkillListEntry, resumeEnabled bool) (*completionCatalog, error) {
+func newCompletionCatalog(skills []domain.SkillListEntry, resumeEnabled, planEnabled bool) (*completionCatalog, error) {
 	entries := builtinCompletionCandidates()
 	if resumeEnabled {
 		entries = append(entries, completionCandidate{id: completionIdentity{kind: completionBuiltin, name: resumeCommandName}, description: "Resume a previous conversation", hint: "[thread-id]"})
+	}
+	if planEnabled {
+		entries = append(entries, completionCandidate{id: completionIdentity{kind: completionBuiltin, name: planCommandName}, description: "Plan without modifying the workspace", hint: "[off]"})
 	}
 	maxCandidates := len(entries) + domain.MaxSkills
 	bytes := 4096
@@ -105,7 +109,7 @@ func newCompletionCatalog(skills []domain.SkillListEntry, resumeEnabled bool) (*
 		}
 		entries[i].searchDescription = strings.ToLower(entries[i].description)
 	}
-	return &completionCatalog{entries: entries, bytes: bytes, resumeEnabled: resumeEnabled}, nil
+	return &completionCatalog{entries: entries, bytes: bytes, resumeEnabled: resumeEnabled, planEnabled: planEnabled}, nil
 }
 
 type completionTarget struct {
@@ -186,7 +190,7 @@ func (c *completionCatalog) match(target completionTarget) []completionMatch {
 		if target.sigil == '$' && candidate.id.kind != completionSkill {
 			continue
 		}
-		if target.sigil == '/' && candidate.id.kind == completionSkill && isBuiltinCompletionName(candidate.id.name, c.resumeEnabled) {
+		if target.sigil == '/' && candidate.id.kind == completionSkill && isBuiltinCompletionName(candidate.id.name, c.resumeEnabled, c.planEnabled) {
 			continue
 		}
 		if tier := completionMatchTier(candidate, target.query); tier >= 0 {
@@ -198,8 +202,12 @@ func (c *completionCatalog) match(target completionTarget) []completionMatch {
 	return matches
 }
 
-func isBuiltinCompletionName(name string, resumeEnabled bool) bool {
-	return domain.IsReservedSkillSlashName(name) || resumeEnabled && name == resumeCommandName
+func isBuiltinCompletionName(name string, resumeEnabled, planEnabled bool) bool {
+	return domain.IsReservedSkillSlashName(name) || isHostSlashName(name, resumeEnabled, planEnabled)
+}
+
+func isHostSlashName(name string, resumeEnabled, planEnabled bool) bool {
+	return resumeEnabled && name == resumeCommandName || planEnabled && name == planCommandName
 }
 
 func (c *composer) complete(target completionTarget, candidate completionCandidate) error {

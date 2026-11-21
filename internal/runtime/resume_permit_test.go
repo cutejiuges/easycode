@@ -84,6 +84,9 @@ func TestResumePermitSerializesPreparationAndDirectControls(t *testing.T) {
 	if _, err := source.Append(ctx, draft); fault.Project(err).Code != fault.CodeSessionBusy {
 		t.Fatalf("reserved append: %v", err)
 	}
+	if _, err := source.SetWorkMode(ctx, "reserved-work-mode", domain.WorkModePlan); fault.Project(err).Code != fault.CodeSessionBusy {
+		t.Fatalf("reserved work mode change: %v", err)
+	}
 	select {
 	case <-preparation.entered:
 		t.Fatal("reserved source started input preparation")
@@ -148,6 +151,9 @@ func TestResumePermitSerializesPreparationAndDirectControls(t *testing.T) {
 	}
 	if held, err := source.ReserveResume(ctx); held != nil || fault.Project(err).Code != fault.CodeSessionBusy {
 		t.Fatalf("in-flight preparation did not prevent reservation: %v", err)
+	}
+	if _, err := source.SetWorkMode(ctx, "preparing-work-mode", domain.WorkModePlan); fault.Project(err).Code != fault.CodeSessionBusy {
+		t.Fatalf("work mode changed during preparation: %v", err)
 	}
 	close(preparation.release)
 	if err := <-appendDone; err != nil {

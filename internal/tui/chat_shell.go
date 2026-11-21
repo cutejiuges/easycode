@@ -328,7 +328,7 @@ func (m StartupModel) receiveChat(message scopedChatMessage) (tea.Model, tea.Cmd
 			return m.stop(0, "")
 		}
 	case eventStreamClosedMsg:
-		if m.phase == shellChat && (m.chat.title.request != nil || m.chat.title.closed) {
+		if m.phase == shellChat && (m.chat.title.request != nil || m.chat.title.closed || m.chat.workMode.pending != nil) {
 			return m.updateChat(value)
 		}
 		return m.stop(1, "Conversation control closed unexpectedly")
