@@ -877,6 +877,8 @@ marketplace、安装/更新、插件脚本/Hook/MCP/Agent/commands 贡献、热�
 
 交互 `Plan Mode` 由 AgentLoop 接纳显式目标。`ChatSession` 串行化模式设置、输入准备和会话交接，worker 完全收口且队列为空才可切换。工作模式与 effort 各自选值，启动普通操作时组合为同一冻结策略。工具声明、上下文估算、Provider reducer 和 Runtime 的样本准入使用同一允许集合。两家普通 Plan 请求分别在 `system` 或 `instructions` 发送固定规则，原生历史沿用当前结构。摘要保持专用请求并按实际请求独立预算，前后窗口比较使用该操作的普通 Plan 策略。[Runtime 规格](../../openspec/specs/runtime/plan-mode/spec.md)
 
+方案审阅从当前已提交的终结采样单向投影。适配器核对各自的完结证据，AgentLoop 在成功终态和 worker 清理后才发布会话内通知。确认请求只携带方案身份，AgentLoop 原子消费候选、选择 Default 并通过普通输入路径启动实施。获批原文进入该回合的唯一初始输入，排在自动摘要窗口之外。确认的 context 只参与接纳判定，实施 worker 继续使用会话 context。TUI 通过同一控制流确认模式，并在普通输入提交成功后显示历史条目和加入召回。 [终端规格](../../openspec/specs/tui/plan-mode/spec.md)
+
 当前多行输入由 `internal/tui/composer.go`、`composer_input.go`、`composer_layout.go` 和 `composer_history.go` 组合实现。composer 拥有 UTF-8 正文与字素边界光标；同一不可变布局供视觉行移动、视口和无色光标渲染复用，普通移动与重复 View 不重建布局。历史以写时复制保留至多 100 条/8 MiB，直接消费 SemanticHistoryView，不执行 Session I/O。编辑和输入校验共享 `replace`，没有通用 editor registry 或新的宿主接口。
 
 Model 的渲染、按键与补全共用焦点判定。问卷、Hook 信任及审批优先于只读面板，保留被覆盖面板的位置与草稿。composer 先处理显式换行和反斜杠续行，再处理补全或 slash 提交。内部 Runtime 控制消息只执行一次补全、Markdown 与查询后处理。普通活动 turn 期间可编辑并 Enter 自动追加。ChatSession 的交互模式只有一个长期 Outputs 消费者，Append 接收强类型 InputDraft，返回不是正式 transcript 事实。pending 快照冻结到 admission response：拒绝保留正文/光标/历史，接受后记入 recall 并清空草稿；只有 UserInputCommitted 才将对应 InputID 的正文移入 transcript。Up（空草稿首行）/普通 Esc 原子取回 queued 项，Ctrl+C 或无 queued 的 Esc 按界面已显示的 turn 身份定向停止。只读面板打开时 Ctrl+C 仍提交一次停止。Ctrl+R 逐条取回 returned，Ctrl+D 逐条丢弃，不自动执行。状态副本与 returned 共用 64 条/16 MiB 本地保留额度，uncertain 不允许取回重试。布局与用户 transcript 的控制字符只在显示副本转义，实际输入除 TUI 的 CRLF/CR → LF 外保真；headless 保留原换行。

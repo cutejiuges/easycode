@@ -132,6 +132,9 @@ func (session *ChatSession) Start(ctx context.Context) error {
 		return err
 	}
 	runContext, cancel := context.WithCancel(ctx)
+	if session.interactive {
+		loop.interactiveStopped = session.stop
+	}
 	session.started = true
 	session.loop = loop
 	session.cancel = cancel

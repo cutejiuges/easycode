@@ -1,6 +1,6 @@
 # 当前能力与实现边界
 
-> 核对日期：2026-11-22。基线：当前仓库实现，包含交互式 Plan Mode、本地 Plugin 技能包、启动推理控制、会话内 effort 选择、结构化用户提问、PreToolUse 参数改写、PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact Hook、命令/Skill 首词补全、工作区文件引用、任务清单、会话命名、聊天内会话恢复与双 Provider 被动推理阅读。
+> 核对日期：2026-11-22。基线：当前仓库实现及已同步主规格，包含交互式 Plan Mode 与方案审阅、本地 Plugin 技能包、启动推理控制、会话内 effort 选择及本轮回归修复、结构化用户提问、PreToolUse 参数改写、PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact Hook、命令/Skill 首词补全、工作区文件引用、任务清单、会话命名、聊天内会话恢复与已验收归档的双 Provider 被动推理阅读。
 > 本文记录当前代码可执行的能力；[产品 Roadmap](product-roadmap.md)保留阶段目标与剩余工作。已接受的 ADR 和归档 change 记录各自当时的决策，不能单独作为现有功能清单。
 
 ## 用户入口
@@ -11,8 +11,8 @@
 | CLI | 默认 TUI、`--version`、`--config`、`--plugin-dir PATH`、`--resume ID`、`--continue`、`--print`、`--json`、`--json --input-format stream-json` | `--resume` 与 `--continue` 互斥；没有 `doctor`、`provider probe`、fork 或模型切换命令；`cmd/easycode/*_test.go` |
 | 会话发现与切换 | `sessions list [--all] [--limit N]`、`resume [--all] [--config PATH]` 启动选择器、聊天内 `/resume [thread-id]` | 离线 list 无需模型配置，选择器需要配置及终端。标题纳入最近至多 200 条元数据搜索，预览从日志读取已验证标题。聊天内要求空闲且目录与配置兼容，可用完整 ID 直达。见 `internal/app/picker_handoff_test.go` 与 `scripts/session-picker-smoke.py` |
 | 会话命名 | 空闲时用 `/rename <名称>` 保存或用裸命令打开预填编辑框。标题 Sync 后确认，按最新有效事实恢复 | 单行 256 UTF-8 bytes，允许重名。改名计入最近活动，可影响 `--continue`。标题仅供宿主展示和发现，测试见 `internal/app/session_title_test.go` 与 `scripts/session-titles-smoke.py` |
-| 本地 slash commands | `/cache`、`/context`、`/compact [instructions]`、`/effort [level|auto|reset]`、`/skills`、`/hooks`、`/plugins`、`/tasks`、`/rename [标题]`、`/resume [thread-id]`、`/plan [off]`，以及可调用 Skill 的 `/<name>` / `$name` | TUI 命令与 Skill 附件入口，支持 `/` / `$` 首词补全及冻结来源筛选；stream-json 使用独立 typed 控制消息，普通文字不执行 TUI 命令。`/help`、`/fork`、`/model`、`/mcp`、`/cost` 尚未实现 |
-| 交互式 Plan Mode | 空闲时用 `/plan`、`/plan off` 或 `Shift+Tab` 切换，双 Provider 普通采样使用七项只读规划工具 | 模式由当前交互 owner 持有并独立于 effort，越界调用整样本失败。退出后用户另行提交实施，保留既有审批规则。恢复从 `Default` 开始，计划仍可读。见 [运行时规格](../../openspec/specs/runtime/plan-mode/spec.md) 与 `scripts/plan-mode-smoke.py` |
+| 本地 slash commands | `/cache`、`/context`、`/compact [instructions]`、`/effort [level|auto|reset]`、`/skills`、`/hooks`、`/plugins`、`/tasks`、`/rename [标题]`、`/resume [thread-id]`、`/plan`、`/plan off`、`/plan review`，以及可调用 Skill 的 `/<name>` / `$name` | TUI 命令与 Skill 附件入口，支持 `/` / `$` 首词补全及冻结来源筛选；stream-json 使用独立 typed 控制消息，普通文字不执行 TUI 命令。`/help`、`/fork`、`/model`、`/mcp`、`/cost` 尚未实现 |
+| 交互式 Plan Mode | 空闲时用 `/plan`、`/plan off` 或 `Shift+Tab` 切换。双 Provider 冻结七项只读规划工具，完整终结方案可用 `/plan review` 审阅并携原文进入同一会话的 Default 实施回合 | 方案确认与工具审批独立，恢复从 `Default` 开始，历史方案可读。见 [运行时规格](../../openspec/specs/runtime/plan-mode/spec.md) 与 `scripts/plan-mode-smoke.py` |
 | 命令/Skill 补全 | 确定性筛选、上下键选择、Tab 填入、内置 Enter 执行及 Skill Enter 只填入；Esc 关闭、paste 抑制、窄屏停用 | 命令/Skill 仅首词名称；正文文件引用使用独立来源，不含普通参数值补全；`internal/tui/completion*_test.go`、`internal/app/completion_e2e_test.go`；候选不进入 Session 或缓存前缀 |
 | 工作区文件引用 | 正文光标处 @ 路径补全、引号及行范围、提交时冻结、独立摘要/分页详情、双 Provider 原生恢复 | 8 引用、16/64 MiB 源读取、64/512 KiB 包装；候选会话索引 50000 项/16 MiB、渐进代次与分层 ignore、单 worker/准备 gate；不授予工具权限；`internal/app/file*_test.go`、`internal/tui/file*_test.go`、`scripts/file-mentions-smoke.py` |
 | 本地插件 | `--plugin-dir`，只读 `/plugins`，限定 Skill 调用与补全；Codex 副文件调用限制 | 复用同一 Skill 工具、权限和原生恢复；无 marketplace/安装、脚本/MCP/Agent 贡献或热加载；`internal/app/plugins_test.go`、`cmd/easycode/plugin_integration_test.go`、`scripts/plugins-smoke.py` |

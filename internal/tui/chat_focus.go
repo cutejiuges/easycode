@@ -17,6 +17,7 @@ const (
 	focusTasks
 	focusTranscript
 	focusTitle
+	focusPlanReview
 )
 
 func (model Model) focus() chatFocus {
@@ -47,6 +48,8 @@ func (model Model) focus() chatFocus {
 		return focusTranscript
 	case model.title.editor != nil || model.title.request != nil:
 		return focusTitle
+	case model.planReview.open:
+		return focusPlanReview
 	default:
 		return focusComposer
 	}

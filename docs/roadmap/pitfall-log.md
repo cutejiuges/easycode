@@ -1023,7 +1023,8 @@ started Sync 前只有原输入 request_id；terminal 后直到 worker/stream �
 
 - 只在请求里隐藏写入工具，无法约束已经解码的调用。普通 Plan 请求和流式解码共用受限目录，Runtime 在整批 sample 持久化前再次使用同一允许集合。拒绝发生在审批、Hook 与工具准备之前，已有会话授权不会改变此次准入。
 - 交互模式待决与正文提交分别持有。接纳后的迟到取消仍收到权威确认，接纳前取消保留草稿。TUI 局部保留 `/plan`，避免共享 Skill 解析器吞掉 headless 的既有 `/plan` 调用。
-- 普通采样策略在操作开始时冻结，摘要的实际请求仍用专用指令、完整目录和禁用工具选择。窗口估算与摘要 wire 各用对应输入。精确实施依靠用户带入的本次正文，旧计划摘要不提供权限或原文绑定。测试见 `internal/app/plan_mode_test.go` 和 `scripts/plan-mode-smoke.py`。
+- 普通采样策略在操作开始时冻结，摘要的实际请求仍用专用指令、完整目录和禁用工具选择。窗口估算与摘要 wire 各用对应输入。方案审阅确认后把已提交的确切原文放入本次实施输入，摘要只读取旧窗口。双 Provider 回归会让摘要故意遗漏旧方案中的内容。测试见 `internal/app/plan_mode_test.go` 和 `scripts/plan-mode-smoke.py`。
+- 流结束并不证明方案可审阅。OpenAI 的进度和最终答复须按原生消息分别识别，Anthropic 的显式输出截断须排除。最终成功和受理中断可以竞态，AgentLoop 还需以 worker 的中断状态决定是否发布候选。回执与实施回合启动之间没有活动 TurnID，终端需保留启动状态以免 Ctrl+C 误退出。回归见 `internal/runtime/plan_review_test.go` 和 `internal/tui/plan_review_test.go`。
 
 ## [输入][2026-11-17] 文件候选、冻结内容与操作捕获分别持有
 

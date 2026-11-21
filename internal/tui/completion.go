@@ -67,7 +67,7 @@ func newCompletionCatalog(skills []domain.SkillListEntry, resumeEnabled, planEna
 		entries = append(entries, completionCandidate{id: completionIdentity{kind: completionBuiltin, name: resumeCommandName}, description: "Resume a previous conversation", hint: "[thread-id]"})
 	}
 	if planEnabled {
-		entries = append(entries, completionCandidate{id: completionIdentity{kind: completionBuiltin, name: planCommandName}, description: "Plan without modifying the workspace", hint: "[off]"})
+		entries = append(entries, completionCandidate{id: completionIdentity{kind: completionBuiltin, name: planCommandName}, description: "Plan without modifying the workspace", hint: "[off | review]"})
 	}
 	maxCandidates := len(entries) + domain.MaxSkills
 	bytes := 4096

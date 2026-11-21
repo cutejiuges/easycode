@@ -50,6 +50,12 @@ func queuedDomainInputs(inputs []queuedInput) []domain.UserInput {
 	return values
 }
 
+func (state *agentLoopRunState) enqueueInput(input queuedInput) {
+	state.planReview = protocol.PlanReviewOffer{}
+	state.queue = append(state.queue, input)
+	state.queuedBytes += input.value.ByteSize()
+}
+
 func (state *agentLoopRunState) emitInputStatus(input queuedInput, turnID domain.TurnID, status protocol.InputState, reason protocol.InputReason) {
 	if !input.automatic {
 		return

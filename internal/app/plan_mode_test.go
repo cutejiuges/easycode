@@ -24,6 +24,10 @@ import (
 )
 
 func TestPlanModeHeadlessKeepsExplicitSkills(t *testing.T) {
+	internalCommand, _ := json.Marshal(string(protocol.CommandApprovePlan))
+	if _, err := headless.DecodeStreamCommand([]byte(`{"version":1,"type":` + string(internalCommand) + `,"request_id":"approve"}`)); err == nil || err.Error() != "stream command type is unsupported" {
+		t.Fatalf("headless exposed the internal plan approval control: %v", err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	const skillBody = "PLAN_SKILL_BODY"
@@ -205,20 +209,28 @@ func assertOrdinaryPlanCacheBaseline(t *testing.T, baseline, after protocol.Cach
 	}
 }
 
+const planFixtureSummary = "answer-2"
+
 func TestPlanModeCompactionAndRestore(t *testing.T) {
-	for _, automatic := range []bool{false, true} {
-		family, scope := domain.ProviderOpenAI, "manual"
-		if automatic {
-			family, scope = domain.ProviderAnthropic, "auto"
-		}
-		t.Run(scope, func(t *testing.T) {
+	for _, scenario := range []struct {
+		family domain.ProviderFamily
+		scope  string
+	}{
+		{domain.ProviderOpenAI, "manual"},
+		{domain.ProviderOpenAI, "auto"},
+		{domain.ProviderAnthropic, "auto"},
+	} {
+		family, scope := scenario.family, scenario.scope
+		automatic := scope == "auto"
+		t.Run(string(family)+"/"+scope, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 			const keyDecision = "PLAN_DECISION=keep exact spacing"
-			const oldPlan = "## Reviewed plan\n\n" + keyDecision
-			const implementation = "Implement with the agreed constraints:\n  " + keyDecision + "  "
+			const markdown = "## Reviewed plan\r\n\r\n  " + keyDecision + "  \r\n```text\r\n$plan @missing/path\r\n```\r\n"
+			const oldPlan = "<proposed_plan>\r\n" + markdown + "</proposed_plan>"
+			const implementation = "Implement the following approved plan:\n\n" + markdown
 			var count atomic.Int32
-			bodies := make(chan []byte, 5)
+			bodies := make(chan []byte, 6)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				body, err := io.ReadAll(r.Body)
 				if err != nil {
@@ -235,11 +247,16 @@ func TestPlanModeCompactionAndRestore(t *testing.T) {
 					return
 				}
 				w.Header().Set("Content-Type", "text/event-stream")
-				if family == domain.ProviderAnthropic && n == 1 {
+				switch {
+				case automatic && n == 1:
 					serveStopAssistant(w, family, oldPlan)
-				} else if family == domain.ProviderAnthropic && n == 2 {
-					serveStopAssistant(w, family, "short handoff")
-				} else {
+				case automatic && n == 2:
+					serveStopAssistant(w, family, planFixtureSummary)
+				case automatic && n == 3:
+					serveWriteScenarioSample(w, family, n, []writeScenarioCall{{"Write", `{"file_path":"implemented.txt","content":"approved implementation"}`}})
+				case automatic && n == 4:
+					_, _ = w.Write(reasoningFixtureStream(family, n, false))
+				default:
 					serveWriteScenarioSample(w, family, n, nil)
 				}
 			}))
@@ -250,7 +267,7 @@ func TestPlanModeCompactionAndRestore(t *testing.T) {
 			}
 			cfg = cacheFixtureConfig(t, cfg, true)
 			root, workspace := filepath.Join(t.TempDir(), "sessions"), t.TempDir()
-			runner := &compactionFixtureRunner{t: t, automatic: true}
+			runner := &compactionFixtureRunner{t: t, automatic: true, post: true}
 			var hooks chatResourceHooks
 			if automatic {
 				hooks = compactionFixtureHooks(t, runner, scope)
@@ -278,11 +295,11 @@ func TestPlanModeCompactionAndRestore(t *testing.T) {
 				t.Fatal("first Plan sample did not use its captured policy")
 			}
 			if automatic {
-				setAppWorkMode(t, ctx, live, domain.WorkModeDefault, "exit-plan")
-				if count.Load() != 1 {
-					t.Fatal("exiting Plan submitted implementation")
+				offer := waitAppPlanReview(t, ctx, live)
+				if offer.Markdown != markdown || count.Load() != 1 {
+					t.Fatal("plan offer changed the committed Markdown or submitted implementation")
 				}
-				submitCheckedAutoTurn(t, ctx, live, implementation)
+				approveAppPlan(t, ctx, live, offer.Ref, implementation, filepath.Join(workspace, "implemented.txt"))
 			} else {
 				waitCompactionIdle(t, live)
 				before := planModeCacheSnapshot(t, ctx, live, "cache-before-summary")
@@ -296,27 +313,203 @@ func TestPlanModeCompactionAndRestore(t *testing.T) {
 			summary := <-bodies
 			if bytes.Contains(summary, promptField) || !bytes.Contains(summary, []byte(`"name":"Write"`)) ||
 				!bytes.Contains(summary, toolDisabled) || !bytes.Contains(summary, []byte(keyDecision)) ||
-				bytes.Contains(summary, []byte("Implement with the agreed constraints")) {
+				bytes.Contains(summary, []byte("Implement the following approved plan")) {
 				t.Fatal("summary mixed execution mode or pending input into its independent request")
 			}
 			if automatic {
-				if runner.runs != 1 || !bytes.Contains(summary, []byte(preCompactFixtureFocus)) {
-					t.Fatal("automatic summary did not use the trusted PreCompact result exactly once")
+				if runner.runs != 2 || runner.postRuns != 1 || !bytes.Contains(summary, []byte(preCompactFixtureFocus)) {
+					t.Fatal("automatic compaction did not run each trusted hook exactly once")
 				}
 				next := <-bodies
 				quoted, _ := json.Marshal(implementation)
-				if bytes.Contains(next, promptField) || !bytes.Contains(next, []byte(`"name":"Write"`)) || !bytes.Contains(next, quoted) || bytes.Count(next, []byte(keyDecision)) != 1 {
-					t.Fatal("first implementation sample lost the explicit user text or used the old mode")
+				if bytes.Contains(next, promptField) || !bytes.Contains(next, []byte(`"name":"Write"`)) || bytes.Count(next, quoted) != 1 ||
+					bytes.Count(next, []byte(keyDecision)) != 1 || !bytes.Contains(next, []byte(planFixtureSummary)) {
+					t.Fatal("first implementation sample lost the approved literal input or used the old mode")
 				}
-				if count.Load() != 3 {
+				<-bodies
+				if count.Load() != 4 {
 					t.Fatal("wrong number of requests during transition", count.Load())
 				}
 				assertCompactedPlanReadable(t, ctx, live, oldPlan)
+				assertApprovedPlanResume(t, ctx, cfg, live, workspace, oldPlan, implementation, bodies, &count)
 				return
 			}
 			assertPlanCheckpointResume(t, ctx, cfg, live, workspace, bodies, &count)
 		})
 	}
+}
+
+func waitAppPlanReview(t *testing.T, ctx context.Context, live *chatResources) protocol.PlanReviewOffer {
+	t.Helper()
+	for {
+		select {
+		case item, open := <-live.session.Outputs():
+			if !open {
+				t.Fatal("closed before offering the committed plan")
+			}
+			if offer, ok := item.PlanReviewOffer(); ok {
+				if offer.Ref.SessionID != live.identity.SessionID || offer.Ref.ThreadID != live.identity.ThreadID ||
+					!offer.Ref.Sample.TurnID.Valid() || offer.Ref.Sample.SampleIndex != 0 {
+					t.Fatal("review did not identify the committed planning sample", offer.Ref)
+				}
+				return offer
+			}
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	}
+}
+
+func approveAppPlan(t *testing.T, ctx context.Context, live *chatResources, ref protocol.PlanReviewRef, implementation, outputPath string) {
+	t.Helper()
+	const requestID = protocol.RequestID("approve-reviewed-plan")
+	accepted, err := live.session.ApprovePlan(ctx, requestID, ref)
+	if err != nil || accepted.Status() != protocol.CommandStatusAccepted || !accepted.EntryID().Valid() {
+		t.Fatalf("plan approval: %v %v", accepted, err)
+	}
+	var admitted, confirmed, committed, postClosed bool
+	var started domain.TurnID
+	userInputs, approvals := 0, 0
+	for {
+		select {
+		case item, open := <-live.session.Outputs():
+			if !open {
+				t.Fatal("closed before implementation completed")
+			}
+			if result, ok := item.CommandResult(); ok && result.RequestID() == requestID {
+				if admitted || result.CommandKind() != protocol.CommandApprovePlan || result.EntryID() != accepted.EntryID() {
+					t.Fatal("implementation acceptance changed identity or repeated", result)
+				}
+				admitted = true
+			}
+			if status, ok := item.InputStatus(); ok && status.EntryID() == accepted.EntryID() && status.State() == protocol.InputCommitted {
+				if committed || userInputs != 1 || status.TurnID() != started {
+					t.Fatal("implementation input committed without matching durable history or more than once", status)
+				}
+				committed = true
+			}
+			if event, ok := item.ContextEvent(); ok {
+				switch event.Kind {
+				case protocol.EventWorkModeSnapshot:
+					mode, err := protocol.DecodeWorkModeSnapshot(event)
+					if err != nil || !admitted || confirmed || mode.Mode != domain.WorkModeDefault || item.RequestID() != requestID {
+						t.Fatalf("invalid Default confirmation: %v %v", mode, err)
+					}
+					confirmed = true
+				case protocol.EventHookTrustRequested:
+					request, err := protocol.DecodeHookTrustRequested(event)
+					if err != nil || event.TurnID != started || !event.CompactionID.Valid() {
+						t.Fatalf("automatic PreCompact review lost scope: %v", err)
+					}
+					if err := live.session.ResolveHookTrust(ctx, event.TurnID, request, protocol.HookTrustSession); err != nil {
+						t.Fatal(err)
+					}
+				case protocol.EventPostCompactClosed:
+					result, err := protocol.DecodePostCompactClosed(event)
+					if err != nil || postClosed || event.TurnID != started || result.State != protocol.PostCompactFailed || result.Code != domain.HookExitFailed {
+						t.Fatalf("unexpected PostCompact result: %v %v", result, err)
+					}
+					postClosed = true
+				}
+			}
+			if event, ok := item.TurnEvent(); ok {
+				switch event.Kind {
+				case protocol.EventTurnStarted:
+					if !confirmed || started != "" || event.TurnID == ref.Sample.TurnID || item.RequestID() != requestID {
+						t.Fatal("implementation started before confirmation or reused the planning turn")
+					}
+					started = event.TurnID
+				case protocol.EventUserInputCommitted:
+					input, err := protocol.DecodeUserInputCommitted(event)
+					if err != nil || !postClosed || input.Text != implementation || input.InputID != accepted.EntryID() ||
+						input.Skill != nil || input.Files.Total() != 0 || event.TurnID != started {
+						t.Fatalf("invalid committed implementation input: %v %v", input, err)
+					}
+					userInputs++
+				case protocol.EventToolApprovalRequested:
+					request, err := protocol.DecodeToolApprovalRequested(event)
+					if err != nil || request.Capability != "fs.write" || approvals != 0 {
+						t.Fatalf("invalid ordinary write approval: %v %v", request, err)
+					}
+					if _, err := os.Stat(outputPath); !os.IsNotExist(err) {
+						t.Fatal("plan confirmation authorized the write before ordinary approval", err)
+					}
+					if err := live.session.ResolveApproval(ctx, event.TurnID, request, protocol.ApprovalAllowOnce, ""); err != nil {
+						t.Fatal(err)
+					}
+					approvals++
+				case protocol.EventTurnFailed:
+					t.Fatalf("implementation failed: %s", event.Payload)
+				case protocol.EventTurnCompleted:
+					data, err := os.ReadFile(outputPath)
+					if !committed || userInputs != 1 || approvals != 1 || err != nil || string(data) != "approved implementation" {
+						t.Fatal("implementation did not commit one input and execute one approved write", err)
+					}
+					return
+				}
+			}
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	}
+}
+
+func assertApprovedPlanResume(t *testing.T, ctx context.Context, cfg config.Config, live *chatResources, workspace, plan, input string, bodies <-chan []byte, count *atomic.Int32) {
+	t.Helper()
+	thread := live.identity.ThreadID
+	path, err := live.service.repository.JournalPath(thread)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal := readSwitchJournal(t, path)
+	if bytes.Contains(journal, []byte(`"work_mode_snapshot"`)) || bytes.Contains(journal, []byte(`"approve-reviewed-plan"`)) {
+		t.Fatal("process-only confirmation is present in the journal")
+	}
+	root := copyCompletionJournal(t, thread, journal)
+	preview, cleanupFailed, err := previewSession(ctx, root, thread, defaultPreviewDependencies())
+	if err != nil || cleanupFailed || preview.Incomplete || len(preview.Messages) == 0 || count.Load() != 4 {
+		t.Fatalf("offline preview changed committed state or started work: %v", err)
+	}
+	resumed, err := openChatResources(ctx, cfg, root, string(thread), workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resumed.close(context.Background())
+	path, err = resumed.service.repository.JournalPath(thread)
+	if err != nil || !bytes.Equal(readSwitchJournal(t, path), journal) || count.Load() != 4 {
+		t.Fatalf("completed-journal preview or resume wrote records or replayed work: %v", err)
+	}
+	seenPlan, seenInput := 0, 0
+	for _, turn := range resumed.history.Turns {
+		for _, message := range turn.Messages {
+			if message.Role == domain.SemanticAssistant && message.Text == plan {
+				seenPlan++
+			}
+			if message.Role == domain.SemanticUser && message.Text == input && !message.HasSkill && message.Files.Len() == 0 {
+				seenInput++
+			}
+		}
+	}
+	if seenPlan != 1 || seenInput != 1 {
+		t.Fatal("resume did not preserve the single approved input and original proposal", seenPlan, seenInput)
+	}
+	if err := resumed.session.StartInteractive(ctx); err != nil {
+		t.Fatal(err)
+	}
+	appEffortTurn(t, live, "Verify the approved change", false)
+	appEffortTurn(t, resumed, "Verify the approved change", false)
+	left, right := <-bodies, <-bodies
+	if !bytes.Equal(left, right) || count.Load() != 6 {
+		t.Fatal("full HTTP request changed across restore or restoration caused extra work")
+	}
+	for _, marker := range []string{planFixtureSummary, "Implement the following approved plan", "write-3-0", "write-3-0", "opaque-reasoning-sentinel", "Verify the approved change"} {
+		_, remainder, found := bytes.Cut(left, []byte(marker))
+		if !found {
+			t.Fatalf("post-compaction request lost ordered native evidence %q", marker)
+		}
+		left = remainder
+	}
+	assertOrdinaryPlanCacheBaseline(t, planModeCacheSnapshot(t, ctx, live, "handoff-live"), planModeCacheSnapshot(t, ctx, resumed, "handoff-resumed"))
 }
 
 func assertCompactedPlanReadable(t *testing.T, ctx context.Context, live *chatResources, expected string) {

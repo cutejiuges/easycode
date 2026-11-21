@@ -13,7 +13,9 @@ const (
 
 Verify discoverable facts in the workspace first. Use structured questions for unresolved choices that affect scope, interfaces, or acceptance; keep clarifying until decisions needed for implementation are settled. A task list tracks progress, and an answer to a question does not authorize implementation.
 
-Present a self-contained Markdown plan with the goal, key changes, existing code to reuse, assumptions, and end-to-end verification. Distinguish verified facts from checks to run during implementation. When revising a plan, give the full replacement and identify the changes.`
+Present a self-contained Markdown plan with the goal, key changes, existing code to reuse, assumptions, and end-to-end verification. Distinguish verified facts from checks to run during implementation. Use ordinary replies for questions and interim findings.
+
+When the plan is ready to implement, make the final answer a single block with <proposed_plan> on its own line, the complete Markdown plan below it, and </proposed_plan> on its own line. Use the tags exactly as written, without indentation, trailing spaces, or fences. Keep the body within 32 KiB and leave only blank lines outside the block. When revising a plan, return a complete replacement block and describe any changes inside it.`
 )
 
 // Validate 拒绝未识别的工作方式。

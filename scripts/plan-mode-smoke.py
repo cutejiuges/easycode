@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""用真实 EasyCode CLI、Darwin PTY 和本地双 Provider 服务验收 Plan Mode。"""
+"""用真实 EasyCode CLI、Darwin PTY 和本地双 Provider 服务验收规划与审阅交接。"""
 
 import argparse
 from contextlib import contextmanager
@@ -126,6 +126,11 @@ def expected_names(family, plan):
     return names
 
 
+FIRST_PROPOSAL = "## First reviewed plan\n\nChoose the planned layout.\n"
+REVISED_PROPOSAL = "## Revised plan\n\n  Keep `$plan @missing/path` literal.  \n"
+APPROVED_INPUT = "Implement the following approved plan:\n\n" + REVISED_PROPOSAL
+
+
 class Fixture(http.server.BaseHTTPRequestHandler):
     def log_message(self, *_args):
         pass
@@ -135,7 +140,7 @@ class Fixture(http.server.BaseHTTPRequestHandler):
         self.server.requests.append(body)
         number = len(self.server.requests)
         family = self.server.family
-        plan = 3 <= number <= 7
+        plan = 3 <= number <= 8
         try:
             assert [item["name"] for item in body["tools"]] == expected_names(family, plan), body["tools"]
             instruction = body.get("system" if family == "anthropic" else "instructions")
@@ -145,6 +150,11 @@ class Fixture(http.server.BaseHTTPRequestHandler):
                 assert json.dumps(body).count('"call-1-0"') == 2, "prior call and result must both be present"
             if number == 5:
                 assert "Go modules" in json.dumps(body)
+            if number == 9:
+                messages = body["messages" if family == "anthropic" else "input"]
+                user_texts = [part.get("text") for message in messages if message.get("role") == "user"
+                              for part in message["content"]]
+                assert user_texts[-1] == APPROVED_INPUT and user_texts.count(APPROVED_INPUT) == 1, user_texts
         except AssertionError as error:
             self.server.errors.append(f"request {number}: {error}")
             self.send_error(422)
@@ -165,10 +175,11 @@ class Fixture(http.server.BaseHTTPRequestHandler):
                 ], "multi_select": False},
             ]},
         )
-        calls = {1: [write], 3: [read, blocked], 4: [read, question], 8: [final]}.get(number, [])
+        calls = {1: [write], 3: [read, blocked], 4: [read, question], 9: [final]}.get(number, [])
         replies = {
             2: "## Initial change complete", 3: "Partially streamed plan", 5: "## Plan draft",
-            6: "Cancelled request output", 7: "## Revised plan", 9: "## Implementation complete",
+            6: "Cancelled request output", 7: f"<proposed_plan>\n{FIRST_PROPOSAL}</proposed_plan>",
+            8: f"<proposed_plan>\n{REVISED_PROPOSAL}</proposed_plan>", 10: "## Implementation complete",
         }
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -190,7 +201,7 @@ class Fixture(http.server.BaseHTTPRequestHandler):
             if reply:
                 event("response.output_text.delta", delta=reply)
                 event("response.output_item.done", item={"id": "message-" + sample, "type": "message",
-                      "role": "assistant", "phase": "final", "content": [{"type": "output_text", "text": reply}]})
+                      "role": "assistant", "phase": "final_answer", "content": [{"type": "output_text", "text": reply}]})
         else:
             event("message_start", message={"id": sample, "model": "fixture-model"})
             if reply:
@@ -289,20 +300,34 @@ def run_case(binary, temporary, family, output):
             terminal.expect("user_cancelled")
             server.release.set()
             terminal.submit("Revise the plan after cancellation")
-            terminal.expect("● Revised plan")
-            terminal.set_mode("/plan off", "Default")
+            terminal.expect("Keep planning")
+            terminal.send(b"\r")
+            terminal.expect("Plan mode · read-only · /plan review")
             assert len(server.requests) == 7
-            terminal.submit("Implement with an explicit approval")
+            terminal.submit("/plan review")
+            terminal.expect("Keep planning")
+            terminal.send(b"\x1b")
+            terminal.expect("Plan mode · read-only · /plan review")
+            terminal.submit("Retain the literal example in the revised plan")
+            terminal.expect("Keep planning")
+            assert len(server.requests) == 8
+            terminal.send(b"\x1b[A\r")
             terminal.expect("Create file")
+            assert not (workspace / "implemented.txt").exists()
             terminal.send(b"\x1b[A\x1b[A\r")
             terminal.expect("● Implementation complete")
             terminal.quit()
+        after = path.read_bytes()
+        with capture_terminal(resumed, workspace, env, output / f"{family}-implemented-resume.pty") as terminal:
+            terminal.expect("Default")
+            assert len(server.requests) == 10 and after == path.read_bytes()
+            terminal.quit()
         assert (workspace / "implemented.txt").read_text() == "implemented"
         assert not server.errors, server.errors
-        assert len(server.requests) == 9
+        assert len(server.requests) == 10
         assert "Reopened draft" in json.dumps(server.requests[5])
         assert b"work_mode_snapshot" not in path.read_bytes()
-        print(f"{family}: verified 9 requests, refused Plan writes, restored Default and approved implementation", flush=True)
+        print(f"{family}: verified 10 requests, live review and revision, exact handoff, separate write approval and resume", flush=True)
     finally:
         server.release.set()
         server.shutdown()

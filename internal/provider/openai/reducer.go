@@ -31,8 +31,10 @@ type responseReference struct {
 }
 
 type responseCompletedWire struct {
-	ID    string              `json:"id"`
-	Usage *responsesUsageWire `json:"usage,omitempty"`
+	ID         string              `json:"id"`
+	Status     json.RawMessage     `json:"status"`
+	Incomplete json.RawMessage     `json:"incomplete_details"`
+	Usage      *responsesUsageWire `json:"usage,omitempty"`
 }
 
 type responsesUsageWire struct {
@@ -74,6 +76,7 @@ type responsesStreamReducer struct {
 	pendingMessages     int
 	pendingFunctions    int
 	pendingCustoms      int
+	planReviewCompleted bool
 	ready               []tool.ReadyCall
 	catalog             tool.CatalogSnapshot
 	usage               rawUsage
@@ -235,8 +238,18 @@ func (reducer *responsesStreamReducer) acceptCompleted(raw json.RawMessage) erro
 		return fault.Wrap(fault.CodeStreamProtocol, "Responses usage is invalid", err)
 	}
 	reducer.usage = usage
+	reducer.planReviewCompleted = response.isPlanReviewComplete()
 	reducer.terminal = true
 	return nil
+}
+
+// isPlanReviewComplete 只为审阅使用终态附加证据，普通提交和 Stop 沿用已有归并语义。
+func (response responseCompletedWire) isPlanReviewComplete() bool {
+	if len(response.Incomplete) != 0 && string(response.Incomplete) != "null" {
+		return false
+	}
+	var status string
+	return len(response.Status) == 0 || codec.Unmarshal(response.Status, &status) == nil && status == "completed"
 }
 
 func (reducer *responsesStreamReducer) reduceOutputItemAdded(index *int, raw json.RawMessage) (reducerResult, error) {

@@ -46,9 +46,10 @@ func (config AgentLoopConfig) validate() error {
 
 // AgentLoop 是一个 Session-bound 的单 owner 输入控制循环。
 type AgentLoop struct {
-	runtime        *Runtime
-	effortSnapshot func(domain.SessionID, domain.ThreadID, protocol.EffortSnapshotPayload) (protocol.Event, error)
-	config         AgentLoopConfig
+	runtime            *Runtime
+	effortSnapshot     func(domain.SessionID, domain.ThreadID, protocol.EffortSnapshotPayload) (protocol.Event, error)
+	config             AgentLoopConfig
+	interactiveStopped <-chan struct{}
 
 	claims      chan inputClaimRequest
 	resolutions chan inputResolution
@@ -142,6 +143,11 @@ func (loop *AgentLoop) submitRequest(ctx context.Context, request loopCommandReq
 	case protocol.CommandSetWorkMode:
 		if request.hostStopped == nil {
 			return protocol.CommandResult{}, fault.New(fault.CodeInvalidInput, "work mode control requires an interactive host")
+		}
+		request.cancelled = ctx.Done()
+	case protocol.CommandApprovePlan:
+		if loop == nil || request.hostStopped == nil || request.hostStopped != loop.interactiveStopped {
+			return protocol.CommandResult{}, fault.New(fault.CodeInvalidInput, "plan approval requires the current interactive host")
 		}
 		request.cancelled = ctx.Done()
 	}
@@ -284,6 +290,8 @@ type activeLoopTurn struct {
 	worker             loopWorker
 	turnID             domain.TurnID
 	terminalSeen       bool
+	completed          bool
+	lastSample         domain.AssistantSampleReference
 }
 
 type recentRequestLedger struct {
@@ -333,6 +341,7 @@ type agentLoopRunState struct {
 	recent             recentRequestLedger
 	active             *activeLoopTurn
 	resumePermit       *ResumePermit
+	planReview         protocol.PlanReviewOffer
 	runErr             error
 	runContextDone     <-chan struct{}
 }
@@ -471,6 +480,8 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 	switch request.command.Kind() {
 	case protocol.CommandSetWorkMode:
 		state.setWorkMode(request)
+	case protocol.CommandApprovePlan:
+		state.approvePlan(request)
 	case protocol.CommandRenameSession:
 		state.renameSession(request)
 	case protocol.CommandQueryTasks:
@@ -530,8 +541,7 @@ func (state *agentLoopRunState) handleCommand(request loopCommandRequest) {
 		} else {
 			result, _ = protocol.NewAcceptedCommandResult(request.command, disposition)
 		}
-		state.queue = append(state.queue, queuedInput{requestID: requestID, value: value, automatic: automatic})
-		state.queuedBytes += value.ByteSize()
+		state.enqueueInput(queuedInput{requestID: requestID, value: value, automatic: automatic})
 		state.emitResult(request, result)
 		state.startNext()
 	case protocol.CommandRetractInputs:
@@ -701,6 +711,12 @@ func (state *agentLoopRunState) handleTurnEvent(publication runtimePublication, 
 	}
 	if event.Kind == protocol.EventTurnCompleted || event.Kind == protocol.EventTurnFailed {
 		state.active.terminalSeen = true
+		state.active.completed = event.Kind == protocol.EventTurnCompleted
+	}
+	if event.Kind == protocol.EventTranscriptCommitted && state.active.profile.WorkMode() == domain.WorkModePlan {
+		if commit, err := protocol.DecodeTranscriptCommitted(event); err == nil && commit.Sample != nil {
+			state.active.lastSample = domain.AssistantSampleReference{TurnID: event.TurnID, SampleIndex: commit.Sample.SampleIndex}
+		}
 	}
 	state.loop.outputs <- item
 	if event.Kind == protocol.EventTurnStarted {
@@ -735,9 +751,13 @@ func (state *agentLoopRunState) handleTurnFinished(workerErr error, open bool) {
 		state.completeRequest(input.requestID)
 	}
 	state.active.claim = nil
-	state.completeRequest(state.active.input.requestID)
+	finished := state.active
+	state.completeRequest(finished.input.requestID)
 	state.active = nil
 	state.refreshContextSnapshot()
+	if workerErr == nil {
+		state.offerPlanReview(finished)
+	}
 }
 
 func (state *agentLoopRunState) handleContextDone() {

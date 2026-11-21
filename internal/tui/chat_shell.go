@@ -272,7 +272,9 @@ func (m *StartupModel) activateChat() tea.Cmd {
 }
 
 func (m StartupModel) updateChat(message tea.Msg) (tea.Model, tea.Cmd) {
-	next, cmd := m.chat.Update(message)
+	source := *m.chat
+	source.planReview.suspendAutomatic = m.phase != shellChat
+	next, cmd := source.Update(message)
 	chat := next.(Model)
 	intent := chat.resumeIntent
 	chat.resumeIntent = nil
@@ -328,7 +330,7 @@ func (m StartupModel) receiveChat(message scopedChatMessage) (tea.Model, tea.Cmd
 			return m.stop(0, "")
 		}
 	case eventStreamClosedMsg:
-		if m.phase == shellChat && (m.chat.title.request != nil || m.chat.title.closed || m.chat.workMode.pending != nil) {
+		if m.phase == shellChat && (m.chat.title.request != nil || m.chat.title.closed || m.chat.workMode.pending != nil || m.chat.planReview.waiting()) {
 			return m.updateChat(value)
 		}
 		return m.stop(1, "Conversation control closed unexpectedly")

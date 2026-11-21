@@ -7,6 +7,25 @@ import (
 	"easycode/internal/provider"
 )
 
+var _ provider.PlanProposalProjector = (*Conversation)(nil)
+
+// ProjectPlanProposal 只审阅当前终结采样的助手正文，排除显式截断和工具调用。
+func (conversation *Conversation) ProjectPlanProposal(reference domain.AssistantSampleReference) (string, bool) {
+	if conversation == nil {
+		return "", false
+	}
+	entry, ok := provider.LatestNativeAssistantSample(&conversation.history, reference)
+	if !ok || entry.Metadata.StopReason.Known && entry.Metadata.StopReason.Value != "end_turn" {
+		return "", false
+	}
+	for _, block := range entry.Assistant.Content {
+		if block.Type == blockTypeToolUse {
+			return "", false
+		}
+	}
+	return domain.ParsePlanProposal(nativeAssistantText(entry))
+}
+
 // ProjectHistory 返回已提交 Anthropic 原生历史的独立文本语义快照。
 func (conversation *Conversation) ProjectHistory() domain.SemanticHistoryView {
 	return projectHistory(conversation.history.Entries())

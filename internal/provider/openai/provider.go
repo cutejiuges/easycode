@@ -44,9 +44,11 @@ type Conversation struct {
 	socket       *transport.WSConnection
 	wsResponseID string
 	httpFallback atomic.Bool
-	fallback     domain.CacheFallbackReason
-	history      nativeHistory
-	operations   provider.ConversationOperations
+	// 每个终结采样发布独立地址，区分同一回合内的多个样本。
+	planReviewTurn atomic.Pointer[domain.TurnID]
+	fallback       domain.CacheFallbackReason
+	history        nativeHistory
+	operations     provider.ConversationOperations
 }
 
 var _ provider.Conversation = (*Conversation)(nil)
@@ -235,7 +237,12 @@ func (conversation *Conversation) sampleStream(turn domain.TurnID, catalog tool.
 					conversation.wsResponseID = reducer.responseIdentity()
 				}
 				conversation.nextReason = domain.ResetNone
+				conversation.planReviewTurn.Store(nil)
 				conversation.history.Append(entry)
+				if reducer.planReviewCompleted {
+					reviewTurn := entry.TurnID
+					conversation.planReviewTurn.Store(&reviewTurn)
+				}
 				conversation.operations.ResolvePrepared()
 			}, func() {
 				conversation.closeWebsocket()

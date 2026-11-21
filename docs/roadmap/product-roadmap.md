@@ -1,5 +1,7 @@
 # EasyCode 产品与工程 Roadmap
 
+2026-11-22 交付并归档 `add-plan-review-handoff`。实时 Plan 回合按双 Provider 的原生完结证据识别完整方案。用户可审阅、继续规划，或确认把所审原文作为单独的 Default 回合输入。确认的权限限于启动回合，实际调用沿用普通审批。自动压缩保留本次实施输入的完整原文，恢复沿现有原生提交事实进行。[主规格](../../openspec/specs/runtime/plan-mode/spec.md)与[验收记录](../../openspec/changes/archive/2026-11-22-add-plan-review-handoff/verification.md)
+
 2026-11-21 交付并归档 `add-interactive-plan-mode`。它复用工作区调查、问卷、Markdown 与审批，补齐先规划再实施的交互闭环。空闲时可切换，回合内冻结模式，双 Provider 的声明和 durable 准入共享同一七项允许集合。普通实施由用户退出后独立提交。参见[主规格](../../openspec/specs/tui/plan-mode/spec.md)与[验收记录](../../openspec/changes/archive/2026-11-21-add-interactive-plan-mode/verification.md)。
 
 2026-11-19 交付 `add-session-titles`。空闲会话可从首轮前通过 `/rename` 命名，Sync 后显示，离线列表和选择器从 journal 投影标题。列表按最后提交记录排序，改名可影响 `--continue`。本切片复用现有 writer、Catalog 与双 Provider 恢复，验收见 [add-session-titles](../../openspec/changes/archive/2026-11-19-add-session-titles/verification.md)。

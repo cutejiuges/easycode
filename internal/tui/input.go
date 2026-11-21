@@ -12,10 +12,11 @@ import (
 
 // inputPreview 只保存本地可编辑副本，不能驱动运行时执行。
 type inputPreview struct {
-	id     domain.InputID
-	text   string
-	state  protocol.InputState
-	reason protocol.InputReason
+	id             domain.InputID
+	text           string
+	state          protocol.InputState
+	reason         protocol.InputReason
+	implementation bool
 }
 
 type inputRetraction struct {
@@ -47,6 +48,9 @@ func (model Model) projectControlItem(item protocol.ControlItem) (tea.Model, tea
 		model.errorSummary = "stream_protocol_error: invalid control item"
 		return model, nil
 	}
+	if offer, ok := item.PlanReviewOffer(); ok {
+		return model.projectPlanReviewOffer(offer), nil
+	}
 	if event, ok := item.ContextEvent(); ok {
 		if protocol.IsCompactionPresentation(event) {
 			return model.reduceRuntimeEvent(event)
@@ -58,6 +62,9 @@ func (model Model) projectControlItem(item protocol.ControlItem) (tea.Model, tea
 			return model.projectEffortEvent(item.RequestID(), event)
 		}
 		if event.Kind == protocol.EventWorkModeSnapshot {
+			if request := model.planReview.confirmation; request != nil && request.id == item.RequestID() {
+				return model.projectPlanReviewMode(event), nil
+			}
 			return model.projectWorkModeSnapshot(item.RequestID(), event)
 		}
 		if event.Kind == protocol.EventCacheSnapshot || event.Kind == protocol.EventContextSnapshot {
@@ -83,6 +90,12 @@ func (model Model) projectControlItem(item protocol.ControlItem) (tea.Model, tea
 		return model.projectContextEvent(event)
 	}
 	if event, ok := item.TurnEvent(); ok {
+		if model.planReview.starting == item.RequestID() && (event.Kind == protocol.EventTurnStarted || event.Kind == protocol.EventTurnFailed) {
+			if !model.matchesChatScope(event) {
+				return model, nil
+			}
+			model.planReview.starting = ""
+		}
 		return model.reduceRuntimeEvent(event)
 	}
 	if result, ok := item.CommandResult(); ok {
@@ -93,6 +106,8 @@ func (model Model) projectControlItem(item protocol.ControlItem) (tea.Model, tea
 			return model.projectEffortResult(result)
 		case protocol.CommandSetWorkMode:
 			return model.projectWorkModeResult(result)
+		case protocol.CommandApprovePlan:
+			return model.projectPlanReviewResult(result), nil
 		case protocol.CommandRenameSession:
 			return model.projectSessionTitleResult(result)
 		case protocol.CommandQueryCache, protocol.CommandQueryContext, protocol.CommandCompactContext, protocol.CommandCancelCompaction:
@@ -103,6 +118,7 @@ func (model Model) projectControlItem(item protocol.ControlItem) (tea.Model, tea
 				return model, nil
 			}
 			if result.Status() == protocol.CommandStatusAccepted {
+				model.clearPlanReviewOffer()
 				text := model.pending.text
 				model.inputs = append(model.inputs, inputPreview{id: result.EntryID(), text: text})
 				model.composer.history.add(text)
@@ -131,6 +147,9 @@ func (model Model) projectControlItem(item protocol.ControlItem) (tea.Model, tea
 		return model, nil
 	}
 	if status, ok := item.InputStatus(); ok {
+		if status.RequestID() == model.planReview.starting && (status.State() == protocol.InputReturned || status.State() == protocol.InputCommitted || status.State() == protocol.InputUncertain) {
+			model.planReview.starting = ""
+		}
 		for index := range model.inputs {
 			if model.inputs[index].id != status.EntryID() {
 				continue

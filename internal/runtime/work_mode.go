@@ -14,6 +14,10 @@ func (session *ChatSession) SetWorkMode(ctx context.Context, requestID protocol.
 	if err != nil {
 		return protocol.CommandResult{}, err
 	}
+	return session.submitWorkModeControl(ctx, command)
+}
+
+func (session *ChatSession) submitWorkModeControl(ctx context.Context, command protocol.Command) (protocol.CommandResult, error) {
 	session.mu.Lock()
 	if !session.started || session.closed || !session.interactive {
 		session.mu.Unlock()
@@ -35,13 +39,7 @@ func (session *ChatSession) SetWorkMode(ctx context.Context, requestID protocol.
 }
 
 func (state *agentLoopRunState) setWorkMode(request loopCommandRequest) {
-	if state.active != nil || state.compaction != nil || len(state.queue) != 0 {
-		state.reject(request, protocol.ControlErrorSessionBusy, true)
-		return
-	}
-	runtime := state.loop.runtime
-	if runtime.poisoned.Load() || runtime.journal.Poisoned() {
-		state.reject(request, protocol.ControlErrorSessionFailed, true)
+	if !state.canChangeWorkMode(request) {
 		return
 	}
 	mode, requestID := request.command.WorkMode(), request.command.RequestID()
@@ -50,12 +48,7 @@ func (state *agentLoopRunState) setWorkMode(request loopCommandRequest) {
 		state.reject(request, protocol.ControlErrorInvalidCommand, true)
 		return
 	}
-	event, err := protocol.NewWorkModeSnapshot(runtime.sessionID, runtime.threadID, mode)
-	if err != nil {
-		state.reject(request, protocol.ControlErrorInvalidCommand, true)
-		return
-	}
-	item, err := protocol.NewCorrelatedContextItem(requestID, event)
+	item, err := state.workModeConfirmation(requestID, mode)
 	if err != nil {
 		state.reject(request, protocol.ControlErrorInvalidCommand, true)
 		return
@@ -65,23 +58,57 @@ func (state *agentLoopRunState) setWorkMode(request loopCommandRequest) {
 		state.reject(request, protocol.ControlErrorInvalidCommand, true)
 		return
 	}
-	select {
-	case <-request.cancelled:
-		request.result <- loopCommandResponse{err: fault.New(fault.CodeUserCancelled, "command admission was cancelled")}
-		state.completeRequest(requestID)
+	if !state.acceptWorkModeControl(request) {
 		return
-	case <-request.hostStopped:
-		state.reject(request, protocol.ControlErrorSessionClosing, true)
-		return
-	case <-state.runContextDone:
-		state.reject(request, protocol.ControlErrorSessionClosing, true)
-		return
-	default:
-		// 所有确认值均已验证，交换后不撤回已接纳的设置。
-		state.selectedProfile = profile
+	}
+	// 所有确认值均已验证，交换后不撤回已接纳的设置。
+	state.selectedProfile = profile
+	if mode != domain.WorkModePlan {
+		state.planReview = protocol.PlanReviewOffer{}
 	}
 	state.refreshContextSnapshot()
 	state.emitResult(request, result)
 	state.loop.outputs <- item
 	state.completeRequest(requestID)
+}
+
+func (state *agentLoopRunState) idleForWorkMode() bool {
+	return state.active == nil && state.compaction == nil && state.resumePermit == nil && len(state.queue) == 0
+}
+
+func (state *agentLoopRunState) canChangeWorkMode(request loopCommandRequest) bool {
+	if !state.idleForWorkMode() {
+		state.reject(request, protocol.ControlErrorSessionBusy, true)
+		return false
+	}
+	runtime := state.loop.runtime
+	if runtime.poisoned.Load() || runtime.journal.Poisoned() {
+		state.reject(request, protocol.ControlErrorSessionFailed, true)
+		return false
+	}
+	return true
+}
+
+func (state *agentLoopRunState) workModeConfirmation(requestID protocol.RequestID, mode domain.WorkMode) (protocol.ControlItem, error) {
+	runtime := state.loop.runtime
+	event, err := protocol.NewWorkModeSnapshot(runtime.sessionID, runtime.threadID, mode)
+	if err != nil {
+		return protocol.ControlItem{}, err
+	}
+	return protocol.NewCorrelatedContextItem(requestID, event)
+}
+
+func (state *agentLoopRunState) acceptWorkModeControl(request loopCommandRequest) bool {
+	select {
+	case <-request.cancelled:
+		request.result <- loopCommandResponse{err: fault.New(fault.CodeUserCancelled, "command admission was cancelled")}
+		state.completeRequest(request.command.RequestID())
+	case <-request.hostStopped:
+		state.reject(request, protocol.ControlErrorSessionClosing, true)
+	case <-state.runContextDone:
+		state.reject(request, protocol.ControlErrorSessionClosing, true)
+	default:
+		return true
+	}
+	return false
 }

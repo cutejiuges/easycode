@@ -7,6 +7,48 @@ import (
 	"easycode/internal/provider"
 )
 
+var _ provider.PlanProposalProjector = (*Conversation)(nil)
+
+// ProjectPlanProposal 供活动回合收口后从已提交采样选取一条最终助手消息。
+func (conversation *Conversation) ProjectPlanProposal(reference domain.AssistantSampleReference) (string, bool) {
+	if conversation == nil {
+		return "", false
+	}
+	reviewedTurn := conversation.planReviewTurn.Load()
+	if reviewedTurn == nil || *reviewedTurn != reference.TurnID {
+		return "", false
+	}
+	entry, ok := provider.LatestNativeAssistantSample(&conversation.history, reference)
+	if !ok || conversation.planReviewTurn.Load() != reviewedTurn {
+		return "", false
+	}
+	var final, unphased string
+	visible := 0
+	for _, item := range entry.Outputs {
+		if item.Type == "function_call" || item.Type == "custom_tool_call" {
+			return "", false
+		}
+		text := projectItemText(item, "assistant", "output_text")
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		visible++
+		switch item.Phase {
+		case "final_answer":
+			if final != "" {
+				return "", false
+			}
+			final = text
+		case "":
+			unphased = text
+		}
+	}
+	if final == "" && visible == 1 {
+		final = unphased
+	}
+	return domain.ParsePlanProposal(final)
+}
+
 // ProjectHistory 返回已提交 OpenAI 原生历史的独立文本语义快照。
 func (conversation *Conversation) ProjectHistory() domain.SemanticHistoryView {
 	return projectHistory(conversation.history.Entries())
