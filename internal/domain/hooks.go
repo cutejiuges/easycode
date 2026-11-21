@@ -105,6 +105,7 @@ const (
 	HookConfigInvalid            HookCode = "hook_config_invalid"
 	HookInputLimit               HookCode = "hook_input_limit"
 	HookMatchLimit               HookCode = "hook_match_limit"
+	HookPlanLimit                HookCode = "hook_plan_limit"
 	HookTrustRequired            HookCode = "hook_trust_required"
 	HookTrustDenied              HookCode = "hook_trust_denied"
 	HookDenied                   HookCode = "hook_denied"
@@ -130,7 +131,7 @@ const (
 func (c HookCode) Error() string { return string(c) }
 func (c HookCode) Valid() bool {
 	switch c {
-	case HookStopLimitExceeded, HookSampleLimitExceeded, HookStopInterrupted, HookFeedbackEncodingFailed, HookOK, HookConfigInvalid, HookInputLimit, HookMatchLimit, HookTrustRequired, HookTrustDenied,
+	case HookStopLimitExceeded, HookSampleLimitExceeded, HookStopInterrupted, HookFeedbackEncodingFailed, HookOK, HookConfigInvalid, HookInputLimit, HookMatchLimit, HookPlanLimit, HookTrustRequired, HookTrustDenied,
 		HookDenied, HookExitFailed, HookStartFailed, HookOutputInvalid, HookOutputLimit, HookIOFailed,
 		HookTimedOut, HookUnsupported, HookSandboxUnavailable, HookCancelled, HookOutcomeUncertain, HookInterrupted,
 		HookPostInterrupted, HookFeedbackNotAllowed, HookFeedbackBudgetExceeded, HookExecutionBudgetExhausted, HookToolNotSuccessful, HookEventUnmatched:
@@ -189,6 +190,11 @@ func NewStopHookDeclaration(source HookSource, feedback HookFeedbackPolicy, revi
 // NewPreCompactHookDeclaration 构造与压缩触发范围绑定的检查声明。
 func NewPreCompactHookDeclaration(source HookSource, feedback HookFeedbackPolicy, revision, id string, scope HookScope, command string, timeout int) (HookDeclaration, error) {
 	return newScopedHookDeclaration(source, HookPreCompact, feedback, revision, id, scope, command, timeout)
+}
+
+// NewPostCompactHookDeclaration 构造只观察已安装摘要的压缩检查声明。
+func NewPostCompactHookDeclaration(source HookSource, feedback HookFeedbackPolicy, revision, id string, scope HookScope, command string, timeout int) (HookDeclaration, error) {
+	return newScopedHookDeclaration(source, HookPostCompact, feedback, revision, id, scope, command, timeout)
 }
 
 func newScopedHookDeclaration(source HookSource, event HookEvent, feedback HookFeedbackPolicy, revision, id string, scope HookScope, command string, timeout int) (HookDeclaration, error) {
@@ -313,6 +319,11 @@ func NewPreCompactHookRunIdentity(target HookTarget, planDigest string, ordinal 
 	return newHookRunIdentity(target, HookPreCompact, planDigest, ordinal)
 }
 
+// NewPostCompactHookRunIdentity 关联已安装 checkpoint 的检查计划和执行序号。
+func NewPostCompactHookRunIdentity(target HookTarget, planDigest string, ordinal int) (HookRunIdentity, error) {
+	return newHookRunIdentity(target, HookPostCompact, planDigest, ordinal)
+}
+
 func newHookRunIdentity(target HookTarget, event HookEvent, digest string, ordinal int) (HookRunIdentity, error) {
 	v := HookRunIdentity{Event: event, Target: target, PlanDigest: digest, Ordinal: ordinal}
 	v.RunID = target.Key() + ":" + string(event) + ":" + digest + ":" + strconv.Itoa(ordinal)
@@ -383,6 +394,9 @@ func (r HookRunResult) Validate() error {
 		return HookConfigInvalid
 	}
 	if r.Identity.Event == HookPreCompact && r.Origin != "execution" {
+		return HookConfigInvalid
+	}
+	if r.Identity.Event == HookPostCompact && !r.validPostCompactResult() {
 		return HookConfigInvalid
 	}
 	if r.Origin == "recovery" && (r.Status != HookUncertain || r.ExitKnown || r.TimedOut || r.Cancelled || r.StdoutBytes != 0 || r.StderrBytes != 0 || r.CleanupConfirmed) {
@@ -556,10 +570,19 @@ func (s HookSnapshot) StopChecks() ([]HookDeclaration, error) {
 
 // PreCompactChecks 只选择对应触发方式的声明，沿用冻结来源与共享匹配上限。
 func (s HookSnapshot) PreCompactChecks(trigger CompactionTrigger) ([]HookDeclaration, error) {
+	return s.compactionChecks(HookPreCompact, trigger)
+}
+
+// PostCompactChecks 只选择成功检查点所属触发方式的冻结声明。
+func (s HookSnapshot) PostCompactChecks(trigger CompactionTrigger) ([]HookDeclaration, error) {
+	return s.compactionChecks(HookPostCompact, trigger)
+}
+
+func (s HookSnapshot) compactionChecks(event HookEvent, trigger CompactionTrigger) ([]HookDeclaration, error) {
 	if trigger != CompactionManual && trigger != CompactionAuto {
 		return nil, HookConfigInvalid
 	}
-	return s.match(HookPreCompact, func(scope HookScope) bool { return scope.MatchesCompaction(trigger) })
+	return s.match(event, func(scope HookScope) bool { return scope.MatchesCompaction(trigger) })
 }
 
 func (s HookSnapshot) match(event HookEvent, matches func(HookScope) bool) ([]HookDeclaration, error) {

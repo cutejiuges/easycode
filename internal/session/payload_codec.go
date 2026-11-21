@@ -798,6 +798,15 @@ func decodeKnownRecord(record Record) error {
 	case EventPreCompactHookDecided:
 		_, err := DecodePreCompactHookDecidedPayload(record)
 		return err
+	case EventPostCompactHookStarted:
+		_, err := DecodePostCompactHookStartedPayload(record)
+		return err
+	case EventPostCompactHookFinished:
+		_, err := DecodePostCompactHookFinishedPayload(record)
+		return err
+	case EventPostCompactHookClosed:
+		_, err := DecodePostCompactHookClosedPayload(record)
+		return err
 	case EventCompactionCompleted:
 		_, err := DecodeCompactionCompletedPayload(record)
 		return err

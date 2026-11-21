@@ -1,6 +1,6 @@
 # 当前能力与实现边界
 
-> 核对日期：2026-11-21。基线：当前仓库实现及已同步主规格，包含交互式 Plan Mode、本地 Plugin 技能包、启动推理控制、会话内 effort 选择及本轮回归修复、结构化用户提问、PreToolUse 参数改写、PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact Hook、命令/Skill 首词补全、工作区文件引用、任务清单、会话命名、聊天内会话恢复与已验收归档的双 Provider 被动推理阅读。
+> 核对日期：2026-11-22。基线：当前仓库实现，包含交互式 Plan Mode、本地 Plugin 技能包、启动推理控制、会话内 effort 选择、结构化用户提问、PreToolUse 参数改写、PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact Hook、命令/Skill 首词补全、工作区文件引用、任务清单、会话命名、聊天内会话恢复与双 Provider 被动推理阅读。
 > 本文记录当前代码可执行的能力；[产品 Roadmap](product-roadmap.md)保留阶段目标与剩余工作。已接受的 ADR 和归档 change 记录各自当时的决策，不能单独作为现有功能清单。
 
 ## 用户入口
@@ -51,11 +51,13 @@ Stop 已支持精确答复的完成前检查、同回合最多两次续轮、累
 | 项目指令 | 从启动 cwd 显式冻结层级 AGENTS.md/CLAUDE.md，相对来源、预算截断、临时注入双 Provider 请求，不写原生历史 | 全局用户指令、includes、`.claude/rules`、热加载 |
 | 缓存 | Anthropic disabled/5m/1h 显式断点；OpenAI omit/thread key；可选 WebSocket durable 前缀增量与受限回退；`/cache`/`cache.query` | 费用/价格、长期累计遥测、动态 plugin/MCP 目录策略；不能保证服务端命中 |
 | Usage | raw usage 保留于各 Provider native facts；共享五项三态指标及 turn 聚合；两家普通 sample 在恢复和离线预览时按原生证据对账；最近 sample/turn/summary 有界缓存观测；Anthropic thinking_tokens 为 known/unknown，output 已包含 thinking | 实时独立 usage 流、cost 面板、配额与完整 metrics/tracing |
-| 压缩 | 手动 `/compact`、显式窗口下阈值自动摘要、独立 CompactionID/checkpoint、失败保留旧窗口、完整历史可读、取消/恢复、同步 PreCompact 检查 | 删除旧 JSONL、跨 Provider fork、PostCompact Hook、通用分块摘要 |
+| 压缩 | 手动 `/compact`、显式窗口下阈值自动摘要、独立 CompactionID/checkpoint、失败保留旧窗口、完整历史可读、取消和恢复、同步 PreCompact 与 PostCompact | 删除旧 JSONL、跨 Provider fork、通用分块摘要 |
 | TUI | 流式 Markdown、代码/表格/原文阅读、resize/窄屏/NO_COLOR、普通批准/问卷/Hook 审查、紧凑工具主线、Ctrl+O 分页详情、context/cache、resume picker、命令/Skill 与正文文件补全、thinking/summary 活动提示及 Ctrl+O 阅读、冻结设置查询与有界滚动 | effort 之外的运行中推理切换、fork picker、后台任务 UI、通用命令管理面板 |
 | 输出保存 | Exec stdout/stderr 与搜索连续前缀、授权 descriptor、ReadArtifact、独立宿主详情查询；恢复不重读 artifact | Read/Patch/Write/Skill/Question 的通用自动 artifact、自动过期、远程 artifact 服务 |
 
 补全验证入口为 `internal/tui/completion*_test.go`、`internal/app/completion_e2e_test.go` 与 `scripts/completion-smoke.py`。候选状态只在 TUI 内存；正式提交仍执行 Skill 来源校验及既有输入生命周期，手输/补全/恢复保持双 Provider 请求和缓存等价。
+
+PostCompact 在手动或自动压缩的新窗口保存后运行。每项声明经过独立信任审查，可读取同一份已安装的语义摘要。退出状态报告本地检查结果，TUI 同时保留压缩结果。非交互匹配在 Session 中记录跳过原因，stream-json v1 维持原有压缩帧。恢复保留成功窗口并只收口尚未关闭的检查。 [运行时验证](../../internal/runtime/post_compact_hooks_test.go) · [回放验证](../../internal/session/post_compact_replay_test.go) · [CLI 验证](../../internal/app/task_compaction_cli_test.go) · [归档验收](../../openspec/changes/archive/2026-11-22-add-post-compact-command-hooks/verification.md)
 
 相关证据包括两家 `exec_restore_test.go`、`internal/app/cache_e2e_test.go`、`resume_e2e_test.go`、`hook_cache_test.go`、`hook_resume_test.go`、`questions_e2e_test.go` 及[当前规格目录](../../openspec/specs/)。具体平台与完整测试命令以各 change 的验收记录为准。
 
@@ -74,7 +76,7 @@ Stop 已支持精确答复的完成前检查、同回合最多两次续轮、累
 
 ## 后续能力与审阅入口
 
-P6 当前交付本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact 和显式本地 Plugin 技能包（EasyCode、Claude、Codex JSON、Agent Plugins 四种受限 manifest）。MCP、插件可执行贡献、marketplace/安装与热加载仍是后续目标。P7 Subagent 和 P8 telemetry/诊断/发布强化的批准占位尚未接入 Runtime/app。doctor、模型/Provider 动态切换、后台任务、通用迁移设计不得仅因出现在路线图或 ADR 中就视作已经实现。
+P6 当前交付本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact 和显式本地 Plugin 技能包（EasyCode、Claude、Codex JSON、Agent Plugins 四种受限 manifest）。MCP、插件可执行贡献、marketplace/安装与热加载仍是后续目标。P7 Subagent 和 P8 telemetry/诊断/发布强化的批准占位尚未接入 Runtime/app。doctor、模型/Provider 动态切换、后台任务、通用迁移设计不得仅因出现在路线图或 ADR 中就视作已经实现。
 
 - 功能使用和配置：[README](../../README.md)。
 - 长期目标及剩余验收：[产品 Roadmap](product-roadmap.md)。

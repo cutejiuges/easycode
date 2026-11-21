@@ -14,9 +14,13 @@ func (state *agentLoopRunState) canResolveHookTrust(response protocol.HookTrustR
 		return state.active != nil && !state.active.terminalSeen && !state.active.compactionID.Valid() && state.active.turnID == response.TurnID
 	}
 	if scope.Trigger == domain.CompactionManual {
-		return state.compaction != nil && state.compaction.started && !state.compaction.terminalSeen && state.compaction.id == id
+		operation := state.compaction
+		return operation != nil && operation.started && !operation.terminalSeen && !operation.worker.cancelRequested && operation.id == id &&
+			operation.presentation.acceptsHook(response.Reference.Event, response.PlanDigest)
 	}
-	return state.active != nil && !state.active.terminalSeen && state.active.compactionID == id && state.active.compactionScope == scope
+	turn := state.active
+	return turn != nil && !turn.terminalSeen && !turn.worker.cancelRequested && turn.compactionID == id && turn.compactionScope == scope &&
+		turn.compactionPhase.acceptsHook(response.Reference.Event, response.PlanDigest)
 }
 
 func (r *Runtime) ResolveHookTrust(response protocol.HookTrustResponse) error {

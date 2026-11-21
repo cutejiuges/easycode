@@ -14,20 +14,29 @@ import (
 	"easycode/internal/session"
 )
 
-type preCompactCheck struct {
-	plan         session.PreCompactPlan
-	declarations []domain.HookDeclaration
+type compactionHookExecution struct {
 	runner       HookRunner
 	workspace    string
 	availability domain.HookCode
 	now          func() time.Time
 }
 
-func (runtime *Runtime) planPreCompact(id domain.CompactionID, scope domain.CompactionScope, preview provider.CompactionPreview) (preCompactCheck, protocol.CompactionFailureCode, error) {
+func (runtime *Runtime) captureCompactionHooks() (domain.HookSnapshot, compactionHookExecution) {
 	runtime.hooks.mu.Lock()
-	snapshot := runtime.hooks.snapshot
-	check := preCompactCheck{runner: runtime.hooks.runner, workspace: runtime.hooks.workspace, availability: runtime.hooks.availability, now: runtime.hooks.now}
-	runtime.hooks.mu.Unlock()
+	defer runtime.hooks.mu.Unlock()
+	hooks := &runtime.hooks
+	return hooks.snapshot, compactionHookExecution{runner: hooks.runner, workspace: hooks.workspace, availability: hooks.availability, now: hooks.now}
+}
+
+type preCompactCheck struct {
+	compactionHookExecution
+	plan         session.PreCompactPlan
+	declarations []domain.HookDeclaration
+}
+
+func (runtime *Runtime) planPreCompact(id domain.CompactionID, scope domain.CompactionScope, preview provider.CompactionPreview) (preCompactCheck, protocol.CompactionFailureCode, error) {
+	snapshot, execution := runtime.captureCompactionHooks()
+	check := preCompactCheck{compactionHookExecution: execution}
 	declarations, err := snapshot.PreCompactChecks(scope.Trigger)
 	if err != nil {
 		cause := domain.HookConfigInvalid

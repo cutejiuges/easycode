@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	stdjson "encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -12,6 +13,11 @@ import (
 	"easycode/internal/codec"
 	"easycode/internal/domain"
 )
+
+var errRecordSizeLimit = errors.New("session record exceeds size limit")
+
+// IsRecordSizeLimit 区分记录编码的大小超限和结构错误。
+func IsRecordSizeLimit(err error) bool { return errors.Is(err, errRecordSizeLimit) }
 
 type checksumEnvelope struct {
 	Sequence       uint64             `json:"seq"`
@@ -73,7 +79,7 @@ func EncodeRecord(record Record) (Record, []byte, error) {
 	encoded = append(encoded, record.Checksum...)
 	encoded = append(encoded, '"', '}')
 	if len(encoded) > MaxRecordBytes {
-		return Record{}, nil, fmt.Errorf("session record exceeds size limit")
+		return Record{}, nil, errRecordSizeLimit
 	}
 	return record, encoded, nil
 }
@@ -120,6 +126,12 @@ func DecodeRecord(line []byte) (Record, error) {
 	// 解码后的零值无法区分省略的身份和显式空字符串。
 	if record.EventKind == EventSessionTitleUpdated && (members["turn_id"] != nil || members["parent_thread_id"] != nil) {
 		return Record{}, fmt.Errorf("session title record identity fields must be absent")
+	}
+	switch record.EventKind {
+	case EventCompactionCompleted, EventPostCompactHookStarted, EventPostCompactHookFinished, EventPostCompactHookClosed:
+		if members["turn_id"] != nil || members["parent_thread_id"] != nil {
+			return Record{}, fmt.Errorf("compaction record identity fields must be absent")
+		}
 	}
 	if err := decodeKnownRecord(record); err != nil {
 		return Record{}, err
@@ -182,8 +194,8 @@ func validateRecord(record Record, requireChecksum bool) error {
 			return err
 		}
 	}
-	// 完整压缩开始/检查记录必须是单记录批次，不能被误判为可修复尾批。
-	if descriptor.Placement == PlacementCompactionStart || descriptor.Placement == PlacementCompactionHook {
+	// 完整压缩开始、检查和成功记录不能被误判为可修复尾批。
+	if descriptor.Placement == PlacementCompactionStart || descriptor.Placement == PlacementCompactionHook || record.EventKind == EventCompactionCompleted {
 		if record.BatchID != record.Sequence || record.BatchIndex != 0 || record.BatchSize != 1 || record.TurnID != "" || record.ParentThreadID != "" {
 			return fmt.Errorf("invalid compaction admission record envelope")
 		}

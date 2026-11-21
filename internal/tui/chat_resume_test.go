@@ -130,7 +130,7 @@ func TestInChatCommandsKeepPreCompactCancellationInChat(t *testing.T) {
 	}
 	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	model = updated.(StartupModel)
-	if cmd == nil || model.chat.compaction.stage != compactionCancelling {
+	if cmd == nil || !model.chat.compaction.cancelling {
 		t.Fatal("Ctrl+C did not reach the compaction owner")
 	}
 	cmd()

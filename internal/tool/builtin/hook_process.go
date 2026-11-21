@@ -121,6 +121,10 @@ func classifyHookExecution(id domain.HookRunIdentity, policy domain.HookFeedback
 		feedback = parsed.Feedback
 		replacement = parsed.Replacement
 	}
+	if id.Event == domain.HookPostCompact {
+		result.StdoutBytes = min(result.StdoutBytes, domain.PostCompactOverflowBytes)
+		result.StderrBytes = min(result.StderrBytes, domain.PostCompactOverflowBytes)
+	}
 	execution, validationErr := domain.NewHookExecution(result, policy, feedback, replacement)
 	if !replacement.Empty() && replacement.ValidateAgainst(context) != nil {
 		validationErr = domain.HookConfigInvalid

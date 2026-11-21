@@ -120,7 +120,7 @@ func (state *agentLoopRunState) queryCache(request loopCommandRequest) {
 }
 
 func (runtime *Runtime) publishCacheSnapshot() {
-	if runtime.cachePublisher != nil {
-		runtime.cachePublisher(runtime.cache.snapshot)
+	if runtime.snapshotPublisher != nil {
+		runtime.snapshotPublisher(runtimePublication{cacheOnly: true, cacheSnapshot: runtime.cache.snapshot})
 	}
 }

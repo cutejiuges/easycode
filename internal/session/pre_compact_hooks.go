@@ -23,12 +23,12 @@ const (
 type PreCompactPlan struct {
 	kind     preCompactPlanKind
 	cause    domain.HookCode
-	checks   []preCompactReference
+	checks   []compactionHookReference
 	original PreCompactFocusEvidence
 	digest   string
 }
 
-type preCompactReference struct {
+type compactionHookReference struct {
 	Reference domain.HookReference `json:"reference"`
 	Matcher   string               `json:"matcher"`
 }
@@ -49,10 +49,10 @@ type preCompactInvalidWire struct {
 }
 
 type preCompactPlannedWire struct {
-	Kind     preCompactPlanKind      `json:"kind"`
-	Checks   []preCompactReference   `json:"checks"`
-	Original PreCompactFocusEvidence `json:"original_focus"`
-	Digest   string                  `json:"plan_digest"`
+	Kind     preCompactPlanKind        `json:"kind"`
+	Checks   []compactionHookReference `json:"checks"`
+	Original PreCompactFocusEvidence   `json:"original_focus"`
+	Digest   string                    `json:"plan_digest"`
 }
 
 // NewNoPreCompactPlan 表示来源已成功读取且本次压缩没有匹配检查。
@@ -77,17 +77,11 @@ func NewPreCompactPlan(id domain.CompactionID, scope domain.CompactionScope, sou
 	if err != nil {
 		return PreCompactPlan{}, err
 	}
-	plan := PreCompactPlan{kind: preCompactPlanned, original: original, checks: make([]preCompactReference, len(declarations))}
-	for i, declaration := range declarations {
-		matcher, ok := declaration.Scope.CompactionMatcher()
-		if !ok || declaration.Validate() != nil {
-			return PreCompactPlan{}, fmt.Errorf("invalid pre-compact declaration")
-		}
-		plan.checks[i] = preCompactReference{Reference: declaration.Reference, Matcher: matcher}
-	}
-	if err := plan.validateChecks(scope); err != nil {
+	checks, err := freezeCompactionHookReferences(domain.HookPreCompact, scope, declarations)
+	if err != nil {
 		return PreCompactPlan{}, err
 	}
+	plan := PreCompactPlan{kind: preCompactPlanned, original: original, checks: checks}
 	plan.digest, err = plan.computeDigest(id, scope, source)
 	if err != nil {
 		return PreCompactPlan{}, err
@@ -107,7 +101,7 @@ func (plan PreCompactPlan) computeDigest(id domain.CompactionID, scope domain.Co
 		Scope    domain.CompactionScope    `json:"scope"`
 		Source   provider.CompactionSource `json:"source"`
 		Original PreCompactFocusEvidence   `json:"original_focus"`
-		Checks   []preCompactReference     `json:"checks"`
+		Checks   []compactionHookReference `json:"checks"`
 	}{id, scope, source, plan.original, plan.checks})
 	if err != nil {
 		return "", fmt.Errorf("encode pre-compact plan digest: %w", err)
@@ -137,21 +131,43 @@ func (plan PreCompactPlan) validate(id domain.CompactionID, scope domain.Compact
 }
 
 func (plan PreCompactPlan) validateChecks(scope domain.CompactionScope) error {
-	if len(plan.checks) == 0 || len(plan.checks) > domain.MaxHookMatches || !plan.original.valid(0, domain.MaxCompactionInstructionsBytes) || (scope.Trigger == domain.CompactionAuto && plan.original.Bytes != 0) {
+	if !plan.original.valid(0, domain.MaxCompactionInstructionsBytes) || (scope.Trigger == domain.CompactionAuto && plan.original.Bytes != 0) {
 		return fmt.Errorf("invalid pre-compact plan contents")
 	}
-	seen := make(map[preCompactDeclarationID]struct{}, len(plan.checks))
+	return validateCompactionHookReferences(domain.HookPreCompact, scope, plan.checks)
+}
+
+func freezeCompactionHookReferences(event domain.HookEvent, scope domain.CompactionScope, declarations []domain.HookDeclaration) ([]compactionHookReference, error) {
+	if len(declarations) == 0 || len(declarations) > domain.MaxHookMatches {
+		return nil, fmt.Errorf("invalid compaction hook declaration count")
+	}
+	checks := make([]compactionHookReference, len(declarations))
+	for i, declaration := range declarations {
+		matcher, ok := declaration.Scope.CompactionMatcher()
+		if !ok || declaration.Validate() != nil {
+			return nil, fmt.Errorf("invalid compaction hook declaration")
+		}
+		checks[i] = compactionHookReference{Reference: declaration.Reference, Matcher: matcher}
+	}
+	return checks, validateCompactionHookReferences(event, scope, checks)
+}
+
+func validateCompactionHookReferences(event domain.HookEvent, scope domain.CompactionScope, checks []compactionHookReference) error {
+	if len(checks) == 0 || len(checks) > domain.MaxHookMatches {
+		return fmt.Errorf("invalid compaction hook declaration count")
+	}
+	seen := make(map[compactionDeclarationID]struct{}, len(checks))
 	revisions := make(map[domain.HookSource]string, 2)
-	for _, check := range plan.checks {
+	for _, check := range checks {
 		ref := check.Reference
-		declarationID := preCompactDeclarationID{ref.Source, ref.ID}
+		declarationID := compactionDeclarationID{ref.Source, ref.ID}
 		_, duplicate := seen[declarationID]
-		matcher, err := domain.ParsePreCompactHookScope(check.Matcher)
-		if err != nil || !matcher.MatchesCompaction(scope.Trigger) || ref.Event != domain.HookPreCompact || ref.Validate() != nil || duplicate {
-			return fmt.Errorf("invalid pre-compact plan declaration")
+		matcher, err := domain.ParseCompactionHookScope(check.Matcher)
+		if err != nil || !matcher.MatchesCompaction(scope.Trigger) || ref.Event != event || ref.Validate() != nil || duplicate {
+			return fmt.Errorf("invalid compaction hook plan declaration")
 		}
 		if (ref.Source == domain.HookSourceUser && revisions[domain.HookSourceProject] != "") || (revisions[ref.Source] != "" && revisions[ref.Source] != ref.Revision) {
-			return fmt.Errorf("invalid pre-compact declaration order or revision")
+			return fmt.Errorf("invalid compaction hook declaration order or revision")
 		}
 		seen[declarationID] = struct{}{}
 		revisions[ref.Source] = ref.Revision
@@ -159,7 +175,7 @@ func (plan PreCompactPlan) validateChecks(scope domain.CompactionScope) error {
 	return nil
 }
 
-type preCompactDeclarationID struct {
+type compactionDeclarationID struct {
 	source domain.HookSource
 	id     string
 }

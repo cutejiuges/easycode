@@ -91,7 +91,7 @@ type Runtime struct {
 	userInputCommitted           func(domain.UserInput) (protocol.Event, error)
 	skillCatalog                 domain.SkillCatalog
 	explicitSkills               []domain.SkillAttachment
-	cachePublisher               func(protocol.CacheSnapshotPayload)
+	snapshotPublisher            func(runtimePublication)
 	cachePolicy                  domain.CachePolicy
 	restoredCacheBaseline        bool
 	cache                        cacheDiagnostics

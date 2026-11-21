@@ -55,7 +55,7 @@ type fakeOwnedProcess struct {
 	waitRelease     <-chan struct{}
 }
 
-func (*fakeOwnedProcess) Stdin() io.WriteCloser         { return nil }
+func (process *fakeOwnedProcess) Stdin() io.WriteCloser { return process.input }
 func (process *fakeOwnedProcess) Stdout() io.ReadCloser { return process.out }
 func (process *fakeOwnedProcess) Stderr() io.ReadCloser { return process.errout }
 func (process *fakeOwnedProcess) ObserveExit() error {

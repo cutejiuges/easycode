@@ -301,23 +301,24 @@ func (plan ToolRecoveryPlan) Validate() error {
 
 // ReplayPlan 是创建 Provider Conversation 前的不可变语义恢复计划。
 type ReplayPlan struct {
-	Stops                 []ReplayedStop
-	StopRecovery          *StopRecoveryPlan
-	Compactions           []ReplayedCompaction
-	InterruptedCompaction *ReplayedCompaction
-	Tools                 []ToolHistoryEntry
-	Identity              Identity
-	SessionMetadata       SessionMetaPayload
-	ThreadMetadata        ThreadMetaPayload
-	Title                 domain.SessionTitle
-	NativeCommits         []NativeCommitRecord
-	SampleUsages          []SampleUsageRecord
-	Turns                 []ReplayedTurn
-	InterruptedTail       *InterruptedTail
-	ToolRecovery          *ToolRecoveryPlan
-	NextSequence          uint64
-	Repair                RepairReport
-	taskProgress          replayedTaskProgress
+	Stops                  []ReplayedStop
+	StopRecovery           *StopRecoveryPlan
+	Compactions            []ReplayedCompaction
+	InterruptedCompaction  *ReplayedCompaction
+	InterruptedPostCompact *PostCompactRecoveryPlan
+	Tools                  []ToolHistoryEntry
+	Identity               Identity
+	SessionMetadata        SessionMetaPayload
+	ThreadMetadata         ThreadMetaPayload
+	Title                  domain.SessionTitle
+	NativeCommits          []NativeCommitRecord
+	SampleUsages           []SampleUsageRecord
+	Turns                  []ReplayedTurn
+	InterruptedTail        *InterruptedTail
+	ToolRecovery           *ToolRecoveryPlan
+	NextSequence           uint64
+	Repair                 RepairReport
+	taskProgress           replayedTaskProgress
 }
 
 // ReplayMetadata 是 Catalog 从完整语法校验中取得的只读元数据。
@@ -421,7 +422,8 @@ func replay(loaded LoadResult, projectHistory bool) (ReplayPlan, error) {
 		}
 
 		switch batch[0].EventKind {
-		case EventCompactionStarted, EventPreCompactHookStarted, EventPreCompactHookFinished, EventPreCompactHookDecided, EventCompactionCompleted, EventCompactionFailed:
+		case EventCompactionStarted, EventPreCompactHookStarted, EventPreCompactHookFinished, EventPreCompactHookDecided, EventCompactionCompleted, EventCompactionFailed,
+			EventPostCompactHookStarted, EventPostCompactHookFinished, EventPostCompactHookClosed:
 			if err := compaction.accept(&plan, batch, active); err != nil {
 				return ReplayPlan{}, err
 			}
@@ -432,6 +434,9 @@ func replay(loaded LoadResult, projectHistory bool) (ReplayPlan, error) {
 		}
 		if compaction.active != nil {
 			return ReplayPlan{}, replayCorrupt("turn record overlaps compaction")
+		}
+		if compaction.postCompact != nil {
+			return ReplayPlan{}, replayCorrupt("turn record overlaps post-compact observation")
 		}
 		if active != nil && active.stop != nil {
 			handled, terminal, err := acceptStopBatch(&plan, active, batch, seenInputs)
@@ -567,6 +572,9 @@ func replay(loaded LoadResult, projectHistory bool) (ReplayPlan, error) {
 		}
 	}
 	plan.InterruptedCompaction = compaction.active
+	if compaction.postCompact != nil && projectHistory {
+		plan.InterruptedPostCompact = &PostCompactRecoveryPlan{state: *compaction.postCompact}
+	}
 	if artifacts.err != nil {
 		return ReplayPlan{}, artifacts.err
 	}

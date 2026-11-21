@@ -245,8 +245,11 @@ func encodeDraft[T recordPayload](
 	if err != nil {
 		return RecordDraft{}, fmt.Errorf("marshal session payload: %w", err)
 	}
-	if len(encoded) == 0 || len(encoded) > MaxRecordBytes {
-		return RecordDraft{}, fmt.Errorf("session payload exceeds size limit")
+	if len(encoded) > MaxRecordBytes {
+		return RecordDraft{}, errRecordSizeLimit
+	}
+	if len(encoded) == 0 {
+		return RecordDraft{}, fmt.Errorf("session payload is empty")
 	}
 	return RecordDraft{
 		descriptor: descriptor, parentThreadID: parentThreadID, turnID: turnID,
@@ -275,7 +278,8 @@ func (draft RecordDraft) clone() RecordDraft {
 
 func validateDraftPlacement(draft RecordDraft) error {
 	switch draft.descriptor.Kind {
-	case EventCompactionStarted, EventPreCompactHookStarted, EventPreCompactHookFinished, EventPreCompactHookDecided, EventCompactionCompleted, EventCompactionFailed:
+	case EventCompactionStarted, EventPreCompactHookStarted, EventPreCompactHookFinished, EventPreCompactHookDecided, EventCompactionCompleted, EventCompactionFailed,
+		EventPostCompactHookStarted, EventPostCompactHookFinished, EventPostCompactHookClosed:
 		if draft.turnID != "" || draft.parentThreadID != "" {
 			return fmt.Errorf("compaction draft placement is invalid")
 		}

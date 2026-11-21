@@ -38,6 +38,33 @@ easycode resume
 
 计划正文保留在转录中，会话恢复从 `Default` 开始。压缩可能只保留旧计划的摘要。需要精确实施某一版时，从转录或 `Ctrl+O` 读取原文，把所需决定附进本次实施输入。[Plan Mode 规格](openspec/specs/tui/plan-mode/spec.md)
 
+## 本地命令 Hooks
+
+`/hooks` 浏览启动时加载的用户和项目声明。支持 `PreToolUse`、`PostToolUse`、`PostToolUseFailure`、`Stop`、`PreCompact` 和 `PostCompact`。交互模式逐项审查，默认拒绝。当前命令执行支持 macOS，工作区只读且禁网。
+
+将下面的声明合并到项目的 `.easycode/hooks.json` 或用户的 `~/.config/easycode/hooks.json`，重新打开会话。运行 `/compact 保留 main.go 的变更`，在新窗口保存后审查并授权检查。示例用 macOS 的 `plutil` 读取完整 JSON 输入并提取 `compact_summary`，以退出状态报告摘要是否包含 `main.go`。
+
+```json
+{
+  "hooks": {
+    "PostCompact": [
+      {
+        "matcher": "manual",
+        "hooks": [
+          {
+            "id": "check-summary",
+            "type": "command",
+            "command": "summary=$(/usr/bin/plutil -extract compact_summary raw -expect string -o - -- -) || exit 1; case \"$summary\" in *main.go*) exit 0 ;; *) exit 1 ;; esac"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+`manual` 匹配 `/compact`，`auto` 匹配已启用的阈值自动压缩，`*` 匹配两者。脚本通过 stdin 读取当前已保存的摘要。TUI 分别显示压缩和检查的结果，脚本输出会丢弃。检查失败、拒绝或取消时保留已保存的新窗口。非交互模式跳过匹配的后置检查并照常提交成功压缩。
+
 ## 继续阅读
 
 - [当前功能与平台支持](docs/roadmap/capability-status.md)

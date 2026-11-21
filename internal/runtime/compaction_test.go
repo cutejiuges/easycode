@@ -197,17 +197,18 @@ func TestCompactionDurableOrderAndCancellation(t *testing.T) {
 }
 
 func TestCompactionShutdownRetainsCleanupOwner(t *testing.T) {
-	t.Run("provider stream", func(t *testing.T) { testCompactionShutdownRetainsOwner(t, false) })
-	t.Run("pre-compact command", func(t *testing.T) { testCompactionShutdownRetainsOwner(t, true) })
+	t.Run("provider stream", func(t *testing.T) { testCompactionShutdownRetainsOwner(t, "") })
+	t.Run("pre-compact command", func(t *testing.T) { testCompactionShutdownRetainsOwner(t, domain.HookPreCompact) })
+	t.Run("post-compact command", func(t *testing.T) { testCompactionShutdownRetainsOwner(t, domain.HookPostCompact) })
 }
 
-type preCompactCleanupRunner struct {
+type compactionCleanupRunner struct {
 	entered, cancelled, release chan struct{}
 }
 
-func (*preCompactCleanupRunner) Preflight(context.Context) domain.HookCode { return domain.HookOK }
+func (*compactionCleanupRunner) Preflight(context.Context) domain.HookCode { return domain.HookOK }
 
-func (runner *preCompactCleanupRunner) Run(ctx context.Context, id domain.HookRunIdentity, _ domain.HookDeclaration, _ domain.HookInput, _ time.Duration) domain.HookExecution {
+func (runner *compactionCleanupRunner) Run(ctx context.Context, id domain.HookRunIdentity, _ domain.HookDeclaration, _ domain.HookInput, _ time.Duration) domain.HookExecution {
 	close(runner.entered)
 	<-ctx.Done()
 	close(runner.cancelled)
@@ -215,16 +216,32 @@ func (runner *preCompactCleanupRunner) Run(ctx context.Context, id domain.HookRu
 	return domain.HookExecution{Result: domain.HookRunResult{Identity: id, Status: domain.HookCancel, Code: domain.HookCancelled, Cancelled: true, CleanupConfirmed: true, Origin: "execution"}}
 }
 
-func testCompactionShutdownRetainsOwner(t *testing.T, check bool) {
+func testCompactionShutdownRetainsOwner(t *testing.T, hookEvent domain.HookEvent) {
 	t.Helper()
 	conversation := newCompactionConversation()
 	entered, cancelled, cleanup := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	loop := newControlledAgentLoop(t, conversation, &fakeJournal{})
-	if check {
-		runner := &preCompactCleanupRunner{entered, cancelled, cleanup}
+	switch hookEvent {
+	case domain.HookPreCompact:
+		runner := &compactionCleanupRunner{entered, cancelled, cleanup}
 		declaration := installPreCompactFixture(t, loop.runtime, runner, true)
 		loop.runtime.hooks.trust[declaration.Reference.Key()] = protocol.HookTrustSession
-	} else {
+	case domain.HookPostCompact:
+		scope, _ := domain.ParseCompactionHookScope("manual")
+		declaration, err := domain.NewPostCompactHookDeclaration(domain.HookSourceProject, domain.HookFeedbackNone, domain.HookDigest(nil), "observe", scope, "true", 5)
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot, err := domain.NewHookSnapshot([]domain.HookDeclaration{declaration}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := loop.runtime.InstallHooks(snapshot, &compactionCleanupRunner{entered, cancelled, cleanup}, t.TempDir(), domain.HookOK); err != nil {
+			t.Fatal(err)
+		}
+		loop.runtime.interactiveApprovals = true
+		loop.runtime.hooks.trust[declaration.Reference.Key()] = protocol.HookTrustSession
+	default:
 		conversation.entered, conversation.cancelObserved = entered, cancelled
 		conversation.release, conversation.cleanupRelease = make(chan struct{}), cleanup
 	}
@@ -255,15 +272,25 @@ func testCompactionShutdownRetainsOwner(t *testing.T, check bool) {
 		t.Fatal(err)
 	}
 	terminal := 0
+	wantTerminal := protocol.EventCompactionFailed
+	if hookEvent == domain.HookPostCompact {
+		wantTerminal = protocol.EventCompactionCompleted
+	}
 	for item := range loop.Outputs() {
-		if event, ok := item.ContextEvent(); ok && event.Kind == protocol.EventCompactionFailed {
-			terminal++
+		if event, ok := item.ContextEvent(); ok {
+			switch event.Kind {
+			case protocol.EventCompactionFailed, protocol.EventCompactionCompleted:
+				if event.Kind != wantTerminal {
+					t.Fatalf("unexpected terminal: %s", event.Kind)
+				}
+				terminal++
+			}
 		}
 	}
-	if terminal != 1 || conversation.installed.Load() {
+	if terminal != 1 || conversation.installed.Load() != (hookEvent == domain.HookPostCompact) {
 		t.Fatal("shutdown terminal invalid")
 	}
-	if check && conversation.generated.Load() != 0 {
+	if hookEvent == domain.HookPreCompact && conversation.generated.Load() != 0 {
 		t.Fatal("cancelled gate reached the provider")
 	}
 }

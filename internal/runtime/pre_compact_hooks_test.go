@@ -213,27 +213,27 @@ func TestAutoCompactionRoutingRetainsCurrentIdentityThroughPresentation(t *testi
 	if _, err := state.correlateCompactionEvent("fixture", wrongThread); err == nil {
 		t.Fatal("valid event from a different thread was accepted")
 	}
-	if err := turn.acceptCompactionEvent(started); err != nil {
+	if err := turn.acceptCompactionEvent(runtimePublication{event: started}); err != nil {
 		t.Fatal(err)
 	}
 	summarizing, _ := protocol.NewCompactionSummarizing(runtimeSessionID, runtimeThreadID, id, scope)
-	if err := turn.acceptCompactionEvent(summarizing); err != nil || turn.compactionID != id {
+	if err := turn.acceptCompactionEvent(runtimePublication{event: summarizing}); err != nil || turn.compactionID != id {
 		t.Fatalf("presentation changed identity: %v", err)
 	}
 	failed, _ := protocol.NewCompactionFailed(runtimeSessionID, runtimeThreadID, id, protocol.CompactionFailedPayload{Scope: scope, Code: protocol.CompactionFailureCancelled, Durable: true, UsageState: "unavailable"})
-	if err := turn.acceptCompactionEvent(failed); err != nil || turn.compactionID.Valid() {
+	if err := turn.acceptCompactionEvent(runtimePublication{event: failed}); err != nil || turn.compactionID.Valid() {
 		t.Fatalf("terminal failed to retire identity: %v", err)
 	}
-	if turn.acceptCompactionEvent(summarizing) == nil {
+	if turn.acceptCompactionEvent(runtimePublication{event: summarizing}) == nil {
 		t.Fatal("stale presentation accepted")
 	}
 	scope, _ = domain.NewAutoCompactionScope(runtimeTurnID, 1)
 	id, _ = domain.GenerateCompactionID()
 	failed, err := protocol.NewCompactionFailed(runtimeSessionID, runtimeThreadID, id, protocol.CompactionFailedPayload{Scope: scope, Code: protocol.CompactionFailureSession, UsageState: "unavailable"})
-	if err != nil || turn.acceptCompactionEvent(failed) != nil || turn.compactionID.Valid() || !turn.autoCompactionSeen {
+	if err != nil || turn.acceptCompactionEvent(runtimePublication{event: failed}) != nil || turn.compactionID.Valid() || !turn.autoCompactionSeen {
 		t.Fatalf("predurable failure was not accepted: %v", err)
 	}
-	if err := turn.acceptCompactionEvent(failed); err == nil {
+	if err := turn.acceptCompactionEvent(runtimePublication{event: failed}); err == nil {
 		t.Fatalf("duplicate predurable failure was accepted: %v", err)
 	}
 }

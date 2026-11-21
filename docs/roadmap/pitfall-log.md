@@ -1074,6 +1074,11 @@ Linux CI 回归补充：TurnStarted 只证明回合接纳，不能证明输入�
 - 自动压缩的瞬态检查和信任事件只供宿主投影。只有对应终态关闭活动压缩。started 前失败可报告 `durable=false`，TUI 的信任弹窗也须在定向取消无 resolved 时随终态关闭。`scripts/pre-compact-smoke.py` 与 `internal/app/pre_compact_stream_test.go` 验证交互和 wire。
 - 单记录检查事实必须在完整行解码时验证 batch 字段。生命周期回放前，伪造的多记录 batch 可能把非法完整行隐藏在可修复尾部内。`internal/session/pre_compact_replay_test.go` 验证拒绝伪造触发、退出码及超预算通过证据。
 
+## PostCompact 关闭必须保留成功检查点
+
+- checkpoint Sync 后可以恢复已知成功窗口，即使进程还未开始检查。Session 在成功记录中冻结后置计划，恢复沿实际 checkpoint 序号安装窗口，再按已保存前缀添加关闭事实。started 无 finished 只能记录不确定，不能补造进程结果。 [回放回归](../../internal/session/post_compact_replay_test.go)
+- 公共压缩终态会释放 AgentLoop 的活动压缩身份。先发送本地已安装通知更新 Context/Cache，再保留同一取消和清理 owner 直至后置检查关闭。后置致命错误停止下一 sample，已成功摘要的计量仍保留，自动压缩失败预算也保持成功后的状态。 [运行时回归](../../internal/runtime/post_compact_hooks_test.go) · [TUI 回归](../../internal/tui/compaction_presentation_test.go)
+
 ## 交互 CLI 的进程信号所有权
 
 `SIGTERM` 同时触发 CLI 的 context 取消和 Bubble Tea 的信号处理时，事件循环可能先退出，Bubble Tea 的信号 goroutine 随后阻塞在发送退出消息，终端也无法恢复。聊天界面沿用启动会话选择器的 `WithoutSignalHandler`，由 CLI 的 context 驱动关闭。终端内 Ctrl+C 仍由 TUI 按键处理。

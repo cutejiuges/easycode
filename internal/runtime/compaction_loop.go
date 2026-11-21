@@ -18,6 +18,7 @@ type activeLoopCompaction struct {
 	worker            loopWorker
 	terminalSeen      bool
 	succeeded         bool
+	presentation      loopCompactionPresentation
 }
 
 func (state *agentLoopRunState) refreshContextSnapshot() {
@@ -136,7 +137,7 @@ func (state *agentLoopRunState) handleCompactionEvent(publication runtimePublica
 	}
 	item, err := state.correlateCompactionEvent(state.compaction.requestID, event)
 	scope, scopeErr := protocol.CompactionEventScope(event)
-	if err != nil || scopeErr != nil || scope != domain.ManualCompactionScope() || !state.compaction.acceptEvent(event) {
+	if err != nil || scopeErr != nil || scope != domain.ManualCompactionScope() || !state.compaction.acceptEvent(publication) {
 		state.runErr = fault.New(fault.CodeTurnFailed, "compaction emitted an invalid event")
 		state.mode = loopModeClosing
 		state.discardQueue(protocol.ControlErrorSessionFailed)
@@ -149,6 +150,8 @@ func (state *agentLoopRunState) handleCompactionEvent(publication runtimePublica
 	if event.Kind == protocol.EventCompactionCompleted || event.Kind == protocol.EventCompactionFailed {
 		state.compaction.terminalSeen = true
 		state.compaction.succeeded = event.Kind == protocol.EventCompactionCompleted
+	}
+	if state.compaction.terminalSeen || event.Kind == protocol.EventPostCompactInstalled {
 		state.contextSnapshot, state.contextSnapshotErr = publication.snapshot, publication.snapshotErr
 		state.cacheSnapshot = publication.cacheSnapshot
 	}
@@ -162,7 +165,8 @@ func (state *agentLoopRunState) correlateCompactionEvent(requestID protocol.Requ
 	return protocol.NewCorrelatedContextItem(requestID, event)
 }
 
-func (operation *activeLoopCompaction) acceptEvent(event protocol.Event) bool {
+func (operation *activeLoopCompaction) acceptEvent(publication runtimePublication) bool {
+	event := publication.event
 	if event.CompactionID != operation.id || operation.terminalSeen {
 		return false
 	}
@@ -171,14 +175,15 @@ func (operation *activeLoopCompaction) acceptEvent(event protocol.Event) bool {
 		return !operation.started
 	case protocol.EventCompactionFailed:
 		failure, err := protocol.DecodeCompactionFailed(event)
-		return err == nil && (operation.started || !failure.Durable)
+		return err == nil && (operation.started || !failure.Durable) && operation.presentation.accept(publication)
 	default:
-		return operation.started
+		return operation.started && operation.presentation.accept(publication)
 	}
 }
 
 // acceptCompactionEvent 仅用真实终态关闭自动压缩，保留后续采样的会话身份。
-func (turn *activeLoopTurn) acceptCompactionEvent(event protocol.Event) error {
+func (turn *activeLoopTurn) acceptCompactionEvent(publication runtimePublication) error {
+	event := publication.event
 	scope, err := protocol.CompactionEventScope(event)
 	if err != nil || scope.Trigger != domain.CompactionAuto || scope.TurnID != turn.turnID || turn.terminalSeen {
 		return fault.New(fault.CodeStreamProtocol, "automatic compaction scope mismatch")
@@ -190,6 +195,7 @@ func (turn *activeLoopTurn) acceptCompactionEvent(event protocol.Event) error {
 		switch event.Kind {
 		case protocol.EventCompactionStarted:
 			turn.compactionID = event.CompactionID
+			turn.compactionPhase = loopCompactionPresentation{}
 		case protocol.EventCompactionFailed:
 			failure, err := protocol.DecodeCompactionFailed(event)
 			if err != nil || failure.Durable || !preStartCompactionFailure(failure.Code) {
@@ -201,13 +207,75 @@ func (turn *activeLoopTurn) acceptCompactionEvent(event protocol.Event) error {
 		turn.autoCompactionSeen, turn.compactionScope = true, scope
 		return nil
 	}
-	if event.CompactionID != turn.compactionID || scope != turn.compactionScope || event.Kind == protocol.EventCompactionStarted {
+	if event.CompactionID != turn.compactionID || scope != turn.compactionScope || event.Kind == protocol.EventCompactionStarted || !turn.compactionPhase.accept(publication) {
 		return fault.New(fault.CodeStreamProtocol, "automatic compaction identity mismatch")
 	}
 	if event.Kind == protocol.EventCompactionCompleted || event.Kind == protocol.EventCompactionFailed {
 		turn.compactionID = ""
 	}
 	return nil
+}
+
+// loopCompactionPresentation 校验同一 worker 的安装、信任和关闭顺序。
+type loopCompactionPresentation struct {
+	summarizing bool
+	installed   protocol.PostCompactInstalledPayload
+	closed      bool
+}
+
+func (phase *loopCompactionPresentation) acceptsHook(event domain.HookEvent, digest string) bool {
+	switch event {
+	case domain.HookPreCompact:
+		return !phase.summarizing
+	case domain.HookPostCompact:
+		return phase.installed.PlanDigest != "" && phase.installed.PlanDigest == digest && !phase.closed
+	default:
+		return false
+	}
+}
+
+func (phase *loopCompactionPresentation) accept(publication runtimePublication) bool {
+	event := publication.event
+	switch event.Kind {
+	case protocol.EventCompactionSummarizing:
+		if phase.summarizing {
+			return false
+		}
+		phase.summarizing = true
+	case protocol.EventPostCompactInstalled:
+		payload, err := protocol.DecodePostCompactInstalled(event)
+		if err != nil || !phase.summarizing || phase.installed.CheckpointSequence != 0 ||
+			publication.snapshotErr != nil || publication.snapshot.Revision != payload.Revision {
+			return false
+		}
+		phase.installed = payload
+	case protocol.EventPostCompactClosed:
+		payload, err := protocol.DecodePostCompactClosed(event)
+		if err != nil || !phase.acceptsHook(domain.HookPostCompact, payload.PlanDigest) ||
+			payload.CheckpointSequence != phase.installed.CheckpointSequence || payload.Finished > phase.installed.Count ||
+			payload.State == protocol.PostCompactSucceeded && payload.Finished != phase.installed.Count {
+			return false
+		}
+		phase.closed = true
+	case protocol.EventHookTrustRequested:
+		payload, err := protocol.DecodeHookTrustRequested(event)
+		return err == nil && phase.acceptsHook(payload.Declaration.Reference.Event, payload.PlanDigest)
+	case protocol.EventHookTrustResolved:
+		payload, err := protocol.DecodeHookTrustResolved(event)
+		return err == nil && phase.acceptsHook(payload.Reference.Event, payload.PlanDigest)
+	case protocol.EventHookActivity:
+		payload, err := protocol.DecodeHookActivity(event)
+		return err == nil && phase.acceptsHook(payload.Reference.Event, payload.PlanDigest)
+	case protocol.EventCompactionCompleted:
+		if phase.installed.CheckpointSequence != 0 {
+			completed, err := protocol.DecodeCompactionCompleted(event)
+			return err == nil && completed.ContextRevision == phase.installed.Revision &&
+				(phase.installed.PlanDigest == "" || phase.closed)
+		}
+	case protocol.EventCompactionFailed:
+		return phase.installed.CheckpointSequence == 0
+	}
+	return true
 }
 
 func preStartCompactionFailure(code protocol.CompactionFailureCode) bool {

@@ -19,11 +19,9 @@ func startLoopWorker(ctx context.Context, runtime *Runtime, run func(context.Con
 	events := make(chan runtimePublication)
 	finished := make(chan error, 1)
 	go func() {
-		runtime.cachePublisher = func(snapshot protocol.CacheSnapshotPayload) {
-			events <- runtimePublication{cacheOnly: true, cacheSnapshot: snapshot}
-		}
+		runtime.snapshotPublisher = func(publication runtimePublication) { events <- publication }
 		err := run(operationCtx, func(event protocol.Event) { events <- runtime.publishContext(event) })
-		runtime.cachePublisher = nil
+		runtime.snapshotPublisher = nil
 		close(events)
 		finished <- err
 		close(finished)

@@ -1,10 +1,11 @@
 package hook
 
 import (
-	"easycode/internal/codec"
-	"easycode/internal/domain"
 	"strings"
 	"unicode/utf8"
+
+	"easycode/internal/codec"
+	"easycode/internal/domain"
 )
 
 // ParseExecution 按事件解析封闭输出；只有显式 model 策略可以返回正文候选。
@@ -29,6 +30,9 @@ func ParseExecution(event domain.HookEvent, policy domain.HookFeedbackPolicy, ex
 	result, terminal := classifyHookExit(exit, stdout, false)
 	if terminal {
 		return result
+	}
+	if event == domain.HookPostCompact {
+		return domain.HookParsedOutput{Status: domain.HookContinue, Code: domain.HookOK}
 	}
 	if !utf8.Valid(stdout) {
 		return result

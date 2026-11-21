@@ -78,6 +78,23 @@ func TestCompactionTrustAndPresentationUseExactScope(t *testing.T) {
 			if _, err := NewCorrelatedContextItem("compact-1", active); err == nil {
 				t.Fatal("summary phase accepted unknown content")
 			}
+			post := PostCompactInstalledPayload{Scope: scope, CheckpointSequence: 3, Revision: 2, PlanDigest: request.PlanDigest, Count: 1}
+			installed, err := NewPostCompactInstalled(testSessionID, testThreadID, id, post)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, err := DecodePostCompactInstalled(installed); err != nil || got != post || !IsCompactionPresentation(installed) {
+				t.Fatal("installed checkpoint lost post plan scope", err)
+			}
+			installed.Payload = append(installed.Payload[:len(installed.Payload)-1], []byte(`,"compact_summary":"private"}`)...)
+			if _, err := NewCorrelatedContextItem("compact-1", installed); err == nil {
+				t.Fatal("post-compaction installation accepted private summary")
+			}
+			closed := PostCompactClosedPayload{Scope: scope, CheckpointSequence: 3, PlanDigest: request.PlanDigest,
+				State: PostCompactSucceeded, Code: domain.HookOK, Finished: 1}
+			if _, err := NewPostCompactClosed(testSessionID, testThreadID, id, closed); err == nil {
+				t.Fatal("post check success accepted without a durable close")
+			}
 		})
 	}
 }

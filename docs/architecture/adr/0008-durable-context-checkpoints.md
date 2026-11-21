@@ -1,6 +1,6 @@
 # ADR-0008：保留完整原生历史，以 durable checkpoint 切换有效窗口
 
-> 当前对照（2026-11-19）：手动与阈值自动压缩保留全部原生历史，用当前无版本 checkpoint 切换有效窗口。两种摘要共用已交付的 PreCompact 检查。PostCompact、分块摘要、跨 Provider fork 与专用压缩 API 仍是后续范围。 [当前能力清单](../../roadmap/capability-status.md) · [PreCompact 归档设计](../../../openspec/changes/archive/2026-11-19-add-pre-compact-command-hooks/design.md)
+> 当前对照（2026-11-22）：手动与阈值自动压缩保留全部原生历史，用当前无版本 checkpoint 切换有效窗口。两种路径共用 PreCompact 门禁，安装成功后共用同步 PostCompact。分块摘要、跨 Provider fork 与专用压缩 API 仍是后续范围。 [当前能力清单](../../roadmap/capability-status.md) · [PreCompact 归档设计](../../../openspec/changes/archive/2026-11-19-add-pre-compact-command-hooks/design.md)
 
 > 后续决策：`add-threshold-auto-compaction` 已删除 Session/native/checkpoint 格式版本、固定压缩 prompt revision 和 Catalog user_version 门禁；本文涉及这些内部格式的版本数字仅为历史背景，当前实现以单一无版本内部契约为准。外部 headless 协议与实际内容 revision 保留。
 

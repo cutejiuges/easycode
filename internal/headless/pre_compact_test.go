@@ -2,6 +2,7 @@ package headless
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"easycode/internal/domain"
@@ -57,4 +58,34 @@ func TestStreamCompactionHookOutputsOnlyDurableFailure(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStreamIgnoresLocalPostCompactPresentation(t *testing.T) {
+	id := domain.CompactionID("01900000-0000-7000-8000-000000000020")
+	projectorValue, err := NewStreamProjector(testSessionID, testThreadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := domain.ManualCompactionScope()
+	digest := strings.Repeat("a", 64)
+	assertPrivate := func(event protocol.Event, err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+		item, err := protocol.NewCorrelatedContextItem("compact-1", event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if wire, err := projectorValue.Project(item); err != nil || wire != nil {
+			t.Fatalf("private %s projected into stream v1: %v, %v", event.Kind, wire, err)
+		}
+	}
+	assertPrivate(protocol.NewPostCompactInstalled(testSessionID, testThreadID, id, protocol.PostCompactInstalledPayload{
+		Scope: scope, CheckpointSequence: 3, Revision: 2, PlanDigest: digest, Count: 1,
+	}))
+	assertPrivate(protocol.NewPostCompactClosed(testSessionID, testThreadID, id, protocol.PostCompactClosedPayload{
+		Scope: scope, CheckpointSequence: 3, PlanDigest: digest, CloseSequence: 6,
+		State: protocol.PostCompactSucceeded, Code: domain.HookOK, Finished: 1,
+	}))
 }

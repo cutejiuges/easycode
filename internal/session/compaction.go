@@ -18,11 +18,12 @@ type CompactionStartedPayload struct {
 
 // CompactionCompletedPayload 原子保存独立 checkpoint、摘要计量和窗口估算。
 type CompactionCompletedPayload struct {
-	Scope      domain.CompactionScope          `json:"scope"`
-	Checkpoint provider.CheckpointEnvelope     `json:"checkpoint"`
-	Usage      SampleUsagePayload              `json:"usage"`
-	Before     protocol.ContextEstimatePayload `json:"before"`
-	After      protocol.ContextEstimatePayload `json:"after"`
+	Scope       domain.CompactionScope          `json:"scope"`
+	Checkpoint  provider.CheckpointEnvelope     `json:"checkpoint"`
+	Usage       SampleUsagePayload              `json:"usage"`
+	Before      protocol.ContextEstimatePayload `json:"before"`
+	After       protocol.ContextEstimatePayload `json:"after"`
+	PostCompact PostCompactPlan                 `json:"post_compact"`
 }
 
 // CompactionFailedPayload 保存唯一失败及有明确可用性的独立计量。
@@ -45,7 +46,7 @@ func NewCompactionStartedDraft(scope domain.CompactionScope, id domain.Compactio
 }
 
 // NewCompactionCompletedDraft 冻结成功候选，编码不安装内存窗口。
-func NewCompactionCompletedDraft(scope domain.CompactionScope, checkpoint provider.CheckpointEnvelope, usage domain.SampleUsage, before, after domain.TokenEstimate) (RecordDraft, error) {
+func NewCompactionCompletedDraft(scope domain.CompactionScope, checkpoint provider.CheckpointEnvelope, usage domain.SampleUsage, before, after domain.TokenEstimate, postCompact PostCompactPlan) (RecordDraft, error) {
 	usagePayload, err := NewSampleUsagePayload(usage)
 	if err != nil {
 		return RecordDraft{}, err
@@ -58,7 +59,7 @@ func NewCompactionCompletedDraft(scope domain.CompactionScope, checkpoint provid
 	if err != nil {
 		return RecordDraft{}, err
 	}
-	payload := CompactionCompletedPayload{Scope: scope, Checkpoint: checkpoint, Usage: usagePayload, Before: beforePayload, After: afterPayload}
+	payload := CompactionCompletedPayload{Scope: scope, Checkpoint: checkpoint, Usage: usagePayload, Before: beforePayload, After: afterPayload, PostCompact: postCompact}
 	if err := payload.Validate(); err != nil {
 		return RecordDraft{}, err
 	}
@@ -90,6 +91,9 @@ func (payload CompactionCompletedPayload) Validate() error {
 		return err
 	}
 	if _, err := payload.Checkpoint.Clone(); err != nil {
+		return err
+	}
+	if err := payload.PostCompact.validate(payload.Checkpoint); err != nil {
 		return err
 	}
 	if _, err := payload.Usage.Domain(); err != nil {
@@ -199,11 +203,12 @@ func (operation ReplayedCompaction) TaskProgressAtStart() (domain.TaskProgressSt
 
 // compactionReplay 独占压缩语法，不扩大普通 turn 状态机。
 type compactionReplay struct {
-	active     *ReplayedCompaction
-	preCompact preCompactReplay
-	seen       map[domain.CompactionID]struct{}
-	previous   domain.CompactionID
-	completed  uint64
+	active      *ReplayedCompaction
+	preCompact  preCompactReplay
+	postCompact *postCompactReplay
+	seen        map[domain.CompactionID]struct{}
+	previous    domain.CompactionID
+	completed   uint64
 }
 
 func (state *compactionReplay) accept(plan *replayAccumulator, batch []Record, turn *activeReplayTurn) error {
@@ -211,6 +216,15 @@ func (state *compactionReplay) accept(plan *replayAccumulator, batch []Record, t
 		return replayCorrupt("compaction placement is invalid")
 	}
 	record := batch[0]
+	if state.postCompact != nil {
+		if err := state.postCompact.accept(record); err != nil {
+			return err
+		}
+		if record.EventKind == EventPostCompactHookClosed {
+			state.postCompact = nil
+		}
+		return nil
+	}
 	switch record.EventKind {
 	case EventCompactionStarted:
 		payload, err := DecodeCompactionStartedPayload(record)
@@ -260,6 +274,13 @@ func (state *compactionReplay) accept(plan *replayAccumulator, batch []Record, t
 		state.active.Completed = &payload
 		state.previous = payload.Checkpoint.ID()
 		state.completed++
+		if payload.PostCompact.kind == PostCompactPlanPlanned {
+			target, err := domain.NewCompactionHookTarget(payload.Checkpoint.ID(), payload.Scope)
+			if err != nil {
+				return replayCorrupt("post-compact target is invalid")
+			}
+			state.postCompact = &postCompactReplay{target: target, plan: payload.PostCompact}
+		}
 	case EventCompactionFailed:
 		payload, err := DecodeCompactionFailedPayload(record)
 		if err != nil {

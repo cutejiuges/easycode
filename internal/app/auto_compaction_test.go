@@ -80,7 +80,7 @@ func TestAutomaticCompactionRealProvidersAndResume(t *testing.T) {
 				budget, _ := contextplan.NewBudget(22000, 0, 0)
 				cfg := cacheFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, Model: "claude-test", BaseURL: server.URL, APIKey: secret.New("private-test-key")}, ContextBudget: budget}, false)
 				root, workspace := filepath.Join(t.TempDir(), "sessions"), t.TempDir()
-				runner := &compactionFixtureRunner{t: t, automatic: true}
+				runner := &compactionFixtureRunner{t: t, automatic: true, post: scenario == "accepted"}
 				hooks := compactionFixtureHooks(t, runner, "auto")
 				hooks.interactiveApprovals = !headless
 				resources, err := openChatResourcesWithHooks(ctx, cfg, dataPaths{sessionRoot: root}, "", false, workspace, hooks)
@@ -136,7 +136,11 @@ func TestAutomaticCompactionRealProvidersAndResume(t *testing.T) {
 				if headless {
 					wantSummary = 0
 				}
-				if count != 2+wantSummary || summaryCount != wantSummary || runner.runs != wantSummary {
+				wantPost := 0
+				if runner.post {
+					wantPost = 1
+				}
+				if count != 2+wantSummary || summaryCount != wantSummary || runner.runs != wantSummary+wantPost || runner.postRuns != wantPost {
 					t.Fatalf("requests=%d summaries=%d checks=%d", count, summaryCount, runner.runs)
 				}
 				next := captured[count-1]

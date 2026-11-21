@@ -156,7 +156,7 @@ internal/
   session/                  JSONL、artifact、root-thread resume；fork 未实现
     catalog/                可重建 Catalog 快照 与前台 reconciliation
   executor/process/         Exec/Hook 共用进程生命周期
-  extension/                本地 Skills、Plugin 技能包与 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact Hooks；P6 后续目标：插件可执行贡献、MCP
+  extension/                本地 Skills、Plugin 技能包与 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact Hooks；P6 后续目标：插件可执行贡献、MCP
   subagent/                 P7 目标：thread tree、mailbox、后台任务和限流
   tui/                      Bubble Tea、输入、消息 view、overlay 和 diff
   telemetry/                P8 目标：slog、redaction、metrics 和 diagnostics
@@ -227,7 +227,7 @@ Provider HTTP 层不直接依赖官方模型 SDK。原因是 EasyCode 需要支�
 共享 Runtime 的当前采样流程：
 
 1. AgentLoop 按 FIFO/strict-next 领取用户输入，冻结独立 InputID。
-2. 准备输入候选、上下文预算及适用的阈值摘要。摘要请求前完成 PreCompact 门禁。输入 batch 成功 Sync 后 finalize。
+2. 准备输入候选、上下文预算及适用的阈值摘要。摘要请求前完成 PreCompact 门禁，新窗口成功保存后先收口 PostCompact，再提交待处理输入。输入 batch 成功 Sync 后 finalize。
 3. 由当前 ContextPlan 和 Provider 策略编译原生请求及缓存证据。
 4. Provider 在私有 reducer 中归并原生条目。Runtime 消费语义事件和唯一终态，验证完整 PreparedSample。
 5. 原子提交 native sample、usage 与 ready calls、适用的 Stop 计划或最终 terminal，成功后 finalize。
@@ -452,6 +452,7 @@ Anthropic input_tokens 是 uncached 输入；OpenAI total 包含 cached 子集�
 - `tool_approval_requested/resolved`、`tool_ready/started/progress/terminal`、`transcript_committed`。
 - `user_question_requested/resolved`、`hook_trust_requested/resolved`、`hook_activity`。
 - `context_snapshot`、`cache_snapshot`、`compaction_started/completed/failed`。
+- `compaction_summarizing`、`post_compact_installed`、`post_compact_closed` 供本地宿主展示检查、安装和收口。
 
 这些事件有 typed 构造、validator 和实际消费者。工具 running、结果/回答收口及 Hook activity 分别受对应 durable 边界约束，事件本身不替代 Session/native facts。普通 usage、摘要 usage 与来源证据在成功 Sync/finalize 后才可投影；`assistant_reasoning` 已通过 `started/delta/completed` 三阶段消费被动推理展示；独立实时 usage 和 patch delta 事件尚未实现。外部 headless DTO 的词汇独立于本枚举，不自动公开所有内部事件。
 
@@ -567,7 +568,7 @@ fs.patch
 
 P3 当前已实现 Read、Glob、Grep、Anthropic structured Edit/OpenAI custom freeform apply_patch、Anthropic Bash/OpenAI exec_command、双 Provider structured Write、durable approval/ledger、最多 8 路只读并发、Patch/Write/Exec 独占屏障、有序结果提交和本地恢复补偿。Patch 限于一个已有 UTF-8 工作区常规文件，在 Unix 使用 descriptor-relative 重验与同目录原子替换；其他平台失败关闭。Write 的 structured facade 支持原子创建/整文件覆盖：覆盖要求先前已回传的完整 Read，新目录链通过私有树和 no-replace 发布；审批展示区分 create/overwrite，独立 Write grant 不在 resume 恢复。详见 [Tool 已实现边界](tool-system.md#101-write-已实现边界)。Exec 限于 Darwin 前台 non-login `/bin/sh`：每次单独批准、最小环境、workspace 写入、禁止网络、确定性头尾输出、原进程组清理与唯一最终 Wait；非 Darwin 返回 `unsupported_platform`，不降级。`setsid` 等脱离组后代不属于保证清理范围，但仍受继承的 sandbox 限制；输出收口不确定时 poison Runtime。详细预算与测试边界见 [Tool 系统架构](tool-system.md#93-进程工具)。write_stdin、PTY/后台进程控制、全工具 artifact、跨能力通用 sandbox 和跨平台等价执行仍按独立 change 增加。
 
-本地 Skill、本地 Plugin 技能包和 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact Hook 已交付；其余 Hooks、插件可执行贡献/MCP 属于 P6 后续范围，Agent/Subagent 属于 P7；完整跨平台 sandbox 矩阵属于 P8。未到对应阶段前不得提前暴露空 schema、event kind、facade 或 capability flag。
+本地 Skill、本地 Plugin 技能包和 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact Hook 已交付；其余 Hooks、插件可执行贡献/MCP 属于 P6 后续范围，Agent/Subagent 属于 P7；完整跨平台 sandbox 矩阵属于 P8。未到对应阶段前不得提前暴露空 schema、event kind、facade 或 capability flag。
 
 ## 9. Context 与 Compaction
 
@@ -606,7 +607,7 @@ AgentLoop 只允许空闲且队列为空时接收手动压缩。预检通过才�
 
 恢复按 seq 验证全部原生记录、来源 digest、模型、前驱与 checkpoint 包装，再修复物理尾部。未完成的压缩仅追加本地 interrupted 终态。恢复保持已有检查事实，不联网、不重跑脚本或工具，也不读取旧 artifact 内容。摘要不恢复审批 grant、文件观察或 artifact 授权。新进程重新发现当前项目指令。详见 [ADR-0008](adr/0008-durable-context-checkpoints.md)。
 
-TUI 提供 `/context`、`/compact [instructions]`、定向取消及 Ctrl+O 完整历史；headless stream v1 提供 `context.query/compact/cancel`。完成后等待显式输入，已有队列则清理完成后继续；失败返还 auto，保留 strict-next。自动阈值压缩、本地 Skills 和 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact Hooks 已有独立切片；其余 Hook、MCP、跨 Provider fork 与自动文件 rehydrate 仍是后续能力。
+TUI 提供 `/context`、`/compact [instructions]`、定向取消及 Ctrl+O 完整历史；headless stream v1 提供 `context.query/compact/cancel`。如匹配 PostCompact，同一 worker 会在新窗口保存后等待检查关闭，再发布公共成功终态。完成后等待显式输入，已有队列则清理完成后继续；压缩失败返还 auto，保留 strict-next。MCP、跨 Provider fork 与自动文件 rehydrate 仍是后续能力。
 
 ## 10. Session 与存储
 
@@ -662,6 +663,7 @@ EventEnvelope
 - 压缩使用 `compaction_started`、`compaction_completed` 和 `compaction_failed`。
 - 工具与回合 Hook 使用 `tool_hook_gate_planned`、`tool_hook_gate_decided`、`tool_post_hook_planned`、`tool_post_hook_completed`、`turn_stop_hook_planned`、`turn_stop_hook_decided`、`hook_execution_started` 和 `hook_execution_finished`。
 - 压缩前 Hook 使用 `pre_compact_hook_started`、`pre_compact_hook_finished` 和 `pre_compact_hook_decided`。
+- 压缩后计划保存在 `compaction_completed.post_compact`。后置执行使用 `post_compact_hook_started`、`post_compact_hook_finished` 和 `post_compact_hook_closed`。
 
 Session envelope 只使用唯一当前字段结构，不包含 schema_version、payload_version、canary 或同义版本标记。decoder 只按 event_kind 选择唯一 strict decoder，字段/类型、checksum 和 replay 状态机共同校验恢复事实；未知 kind、未知字段与损坏在 repair、Provider 恢复和 append 前失败关闭。
 
@@ -729,7 +731,7 @@ Catalog 从最后合法标题事实投影快照条目的 `title`，空字符串�
 
 手动入口取得 Runtime.active，自动路径复用已持有 owner 的摘要骨架。初始输入提交前或完整工具 outputs 后，冻结已领取输入，候选必须 Discard 后才允许 Kernel 摘要，成功后重新准备相同正文和 InputID。同一目标 sample 共用一次尝试额度；sample/call/result 预算不重置。compaction usage 不混入普通 sample usage。
 
-Session 的 compaction_started/completed/failed 具有强类型 scope（manual，或 auto + turn_id + sample_index），checkpoint 保存同一 scope 并验证确定性接续包装。Replay 校验目标采样、工具闭合、同一 sample 不重复压缩，以及摘要区间不插入普通事实。恢复先收口悬空摘要，再关闭活动 turn；durable completed 恢复新窗口，不自动联网。取消与 completed Sync 竞争时已确定提交优先，后续任务停止，窗口不回滚。
+Session 的 compaction_started/completed/failed 具有强类型 scope（manual，或 auto + turn_id + sample_index），checkpoint 保存同一 scope 并验证确定性接续包装。Replay 校验目标采样、工具闭合、同一 sample 不重复压缩，以及摘要和后置检查期间的记录顺序。恢复先收口悬空摘要或后置检查，再处理待交付的 Stop 反馈及活动 turn。成功 checkpoint 恢复新窗口。取消与 completed Sync 竞争时已确定提交优先，后置检查的确定错误会保留任务的续写资格，取消和不确定结果终止后续采样。
 
 自动事件通过 turn worker 的 publication 通道交给唯一 AgentLoop，使用关联原 submit 的 context item；查询观察 coherent committed snapshot，活动阶段显示 compacting，TUI 的摘要完成不代表 turn 完成。可恢复摘要失败只有在确定收口且普通请求重新预检通过时才继续；内部生命周期与 durability 错误停止工作。任务失败后返还 queued auto，strict-next 保持原顺序。TUI/stream-json 使用真实边界，一次性输出过滤摘要控制帧。
 
@@ -756,7 +758,7 @@ Session 的 compaction_started/completed/failed 具有强类型 scope（manual�
 
 ## 12. Hooks、Skills、Plugins 与 MCP
 
-本章区分当前交付与 P6 后续目标。本地 Skills 与同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact 命令 Hook 已接入 Runtime/app；本地 Plugin 已交付静态技能贡献；MCP 仍保留经批准的 TODO 边界，不接入运行。
+本章区分当前交付与 P6 后续目标。本地 Skills 与同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact 命令 Hook 已接入 Runtime/app；本地 Plugin 已交付静态技能贡献；MCP 仍保留经批准的 TODO 边界，不接入运行。
 
 ### 12.1 当前 PreToolUse 命令 Hook
 
@@ -823,6 +825,14 @@ continued 决定只保存最终反馈字节和来源、bytes/digest，尚未推�
 手动与自动压缩共用 `runCompactionOwned`。只读基础预检先于计划保存。`compaction_started.pre_compact` 使用 `none`、`invalid`、`planned` 的必需封闭联合，按 CompactionID、scope、来源与匹配指纹关联后续检查。全部声明通过审查后，逐项 Sync 准入、串行运行并保存结果。通过决定在组合重点的最终预算预检后 Sync，网络准入前再次观察取消。清理或写入不确定时停止接纳。
 
 检查原文与合并重点不进入检查记录。Session 在完整行解码时检查单记录 batch，回放验证匹配、连续序位、授权披露长度及终态配对。恢复仅补压缩终态，再处理原有 Stop 待交付反馈或 turn 收口。TUI 只接收绑定当前压缩的本地信任和阶段通知，外部 v1 沿用压缩终态。两家 Provider 继续从同一冻结输入编译摘要请求，正常的 OpenAI 握手回退沿用原检查决定。
+
+#### 12.1.5 压缩后的 PostCompact
+
+`runCompactionOwned` 根据冻结来源完成触发匹配，将 `none`、`skipped` 或 `planned` 写入唯一成功记录的 `post_compact` 字段。计划摘要绑定 CompactionID、scope、完整 checkpoint 摘要与有序声明引用。Session 验证当前单记录 shape，Provider checkpoint envelope 沿用现有结构。非交互匹配按 `hook_trust_required` 跳过，继续使用原有 v1 压缩帧。
+
+成功记录 Sync 且新窗口、摘要历史、Context/Cache 投影安装后，本地宿主接收 `post_compact_installed`。运行时完成平台、输入和所有声明的信任检查后，逐项 Sync 准入并由同一进程 owner 串行执行。脚本 stdin 包含真实压缩身份与已安装的语义摘要，退出状态提供安全结果，输出正文随进程收口丢弃。最终的 `post_compact_closed` 单独显示固定分类与完成数。公共压缩终态仍以成功 checkpoint 为准。
+
+回放在实际成功序号恢复 checkpoint，并检查随后有序的后置事实。未关闭前缀由恢复 owner 在同一 lease 下只追加一次关闭，再按既有顺序处理 Stop 待交付或中断 turn。自动续写在检查关闭后使用已安装窗口，按既有预算、取消及 Session 健康状态决定是否开始下一 sample。 [运行时实现](../../internal/runtime/post_compact_hooks.go) · [回放实现](../../internal/session/post_compact_replay.go)
 
 ### 12.2 当前本地 Skills
 

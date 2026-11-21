@@ -152,65 +152,73 @@ func (runtime *Runtime) runCompaction(ctx context.Context, id domain.CompactionI
 	runtime.operationProfile = admission.profile
 	defer func() { runtime.operationProfile = runtime.profile }()
 	defer func() { runtime.releaseFailedContinuation(ctx, resultErr) }()
-	return runtime.runCompactionOwned(ctx, id, admission, domain.ManualCompactionScope(), emit)
+	_, err := runtime.runCompactionOwned(ctx, id, admission, domain.ManualCompactionScope(), emit)
+	return err
 }
 
-func (runtime *Runtime) runCompactionOwned(ctx context.Context, id domain.CompactionID, admission compactionAdmission, scope domain.CompactionScope, emit Emitter) error {
+func (runtime *Runtime) runCompactionOwned(ctx context.Context, id domain.CompactionID, admission compactionAdmission, scope domain.CompactionScope, emit Emitter) (bool, error) {
+	checkpointCommitted := false
+	fail := func(code protocol.CompactionFailureCode, started bool, prepared *provider.PreparedCompaction) (bool, error) {
+		if scope.Trigger == domain.CompactionAuto && !checkpointCommitted {
+			runtime.recordAutoCompactionFailure(admission.preview.Source().ContextRevision())
+		}
+		return checkpointCommitted, runtime.failScopedCompaction(scope, id, code, started, prepared, emit)
+	}
 	check, rejection, err := runtime.planPreCompact(id, scope, admission.preview)
 	if err != nil {
 		runtime.poisoned.Store(true)
-		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, false, nil, emit)
+		return fail(protocol.CompactionFailureSession, false, nil)
 	}
 	started, err := session.NewCompactionStartedDraft(scope, id, admission.preview.Source(), check.plan)
 	if err != nil {
 		runtime.poisoned.Store(true)
-		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, false, nil, emit)
+		return fail(protocol.CompactionFailureSession, false, nil)
 	}
 	if _, err = runtime.commitHookFacts(ctx, []session.RecordDraft{started}); err != nil {
 		code := compactionFailureCode(ctx, err)
 		if runtime.poisoned.Load() {
 			code = protocol.CompactionFailureSession
 		}
-		return runtime.failScopedCompaction(scope, id, code, false, nil, emit)
+		return fail(code, false, nil)
 	}
 	event, err := protocol.NewCompactionStarted(runtime.sessionID, runtime.threadID, id, admission.preview.Source().ContextRevision(), scope)
 	if err != nil {
 		runtime.poisoned.Store(true)
-		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, false, nil, emit)
+		return fail(protocol.CompactionFailureSession, false, nil)
 	}
 	emit(event)
 	if rejection != "" {
-		return runtime.failScopedCompaction(scope, id, rejection, true, nil, emit)
+		return fail(rejection, true, nil)
 	}
 	if len(check.declarations) != 0 {
 		outcome := runtime.runPreCompact(ctx, id, scope, admission, check, emit)
 		if outcome.code != "" {
 			// 已观察到的清理不确定先收口失败，再永久关闭当前运行时的接纳。
-			err := runtime.failScopedCompaction(scope, id, outcome.code, true, nil, emit)
+			committed, err := fail(outcome.code, true, nil)
 			if outcome.code == protocol.CompactionFailureSession {
 				runtime.poisoned.Store(true)
 			}
-			return err
+			return committed, err
 		}
 		admission.preview = outcome.preview
 	}
 	if ctx.Err() != nil {
-		return runtime.failScopedCompaction(scope, id, compactionFailureCode(ctx, ctx.Err()), true, nil, emit)
+		return fail(compactionFailureCode(ctx, ctx.Err()), true, nil)
 	}
 	runtime.cache.frozen, err = contextplan.NewCacheSources(admission.before)
 	if err != nil {
-		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, true, nil, emit)
+		return fail(protocol.CompactionFailureSession, true, nil)
 	}
 	if runtime.interactiveApprovals {
 		event, err := protocol.NewCompactionSummarizing(runtime.sessionID, runtime.threadID, id, scope)
 		if err != nil {
 			runtime.poisoned.Store(true)
-			return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, false, nil, emit)
+			return fail(protocol.CompactionFailureSession, false, nil)
 		}
 		emit(event)
 	}
 	if ctx.Err() != nil {
-		return runtime.failScopedCompaction(scope, id, compactionFailureCode(ctx, ctx.Err()), true, nil, emit)
+		return fail(compactionFailureCode(ctx, ctx.Err()), true, nil)
 	}
 	networkCtx, cancel := runtime.compactionDeadline(ctx, 120*time.Second)
 	prepared, err := admission.kernel.RunCompaction(networkCtx, id, admission.preview)
@@ -222,74 +230,92 @@ func (runtime *Runtime) runCompactionOwned(ctx context.Context, id domain.Compac
 			runtime.poisoned.Store(true)
 			code = protocol.CompactionFailureSession
 		}
-		return runtime.failScopedCompaction(scope, id, code, true, nil, emit)
+		return fail(code, true, nil)
 	}
 	view, footprint, err := prepared.Preview()
 	if err != nil {
 		runtime.poisoned.Store(true)
-		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, true, prepared, emit)
+		return fail(protocol.CompactionFailureSession, true, prepared)
 	}
 	candidate, err := runtime.planWindow(view, footprint)
 	if err == nil {
 		err = contextplan.CheckCompactionCandidate(admission.before, candidate)
 	}
 	if err != nil {
-		return runtime.failScopedCompaction(scope, id, compactionFailureCode(ctx, err), true, prepared, emit)
+		return fail(compactionFailureCode(ctx, err), true, prepared)
 	}
 	checkpoint, err := prepared.Checkpoint()
 	if err != nil || checkpoint.ID() != id || checkpoint.Source() != admission.preview.Source() || checkpoint.Scope() != scope {
 		runtime.poisoned.Store(true)
-		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureResponse, true, prepared, emit)
+		return fail(protocol.CompactionFailureResponse, true, prepared)
 	}
 	usage, err := prepared.Usage()
 	if err != nil {
 		runtime.poisoned.Store(true)
-		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, true, prepared, emit)
+		return fail(protocol.CompactionFailureSession, true, prepared)
 	}
 	receipt, receiptErr := prepared.Receipt()
 	if receiptErr != nil {
-		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureResponse, true, prepared, emit)
+		return fail(protocol.CompactionFailureResponse, true, prepared)
 	}
 	observation, observationErr := runtime.cacheObservation(receipt, usage, domain.RequestSummary, id)
 	if observationErr != nil {
-		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureResponse, true, prepared, emit)
+		return fail(protocol.CompactionFailureResponse, true, prepared)
 	}
-	completed, err := session.NewCompactionCompletedDraft(scope, checkpoint, usage, admission.before.TotalEstimate(), candidate.TotalEstimate())
+	post, err := runtime.planPostCompact(checkpoint)
 	if err != nil {
 		runtime.poisoned.Store(true)
-		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, true, prepared, emit)
+		return fail(protocol.CompactionFailureSession, false, prepared)
+	}
+	completed, err := post.completionDraft(checkpoint, usage, admission.before.TotalEstimate(), candidate.TotalEstimate())
+	if err != nil {
+		if session.IsRecordSizeLimit(err) {
+			return fail(protocol.CompactionFailureBudget, true, prepared)
+		}
+		runtime.poisoned.Store(true)
+		return fail(protocol.CompactionFailureSession, false, prepared)
 	}
 	records, err := runtime.journal.AppendBatch(ctx, []session.RecordDraft{completed})
 	if err != nil {
 		if runtime.journal.Poisoned() {
 			runtime.poisoned.Store(true)
-			return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, false, prepared, emit)
+			return fail(protocol.CompactionFailureSession, false, prepared)
 		}
-		return runtime.failScopedCompaction(scope, id, compactionFailureCode(ctx, err), true, prepared, emit)
+		return fail(compactionFailureCode(ctx, err), true, prepared)
 	}
-	// writer admission 后的确定提交结果优先于取消，窗口必须安装且只发送 completed。
+	checkpointCommitted = true
+	// 成功 Sync 优先于取消。窗口安装失败保留成功记录，交由下次恢复。
 	if err = prepared.Finalize(); err != nil {
 		runtime.poisoned.Store(true)
-		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, false, nil, emit)
+		return fail(protocol.CompactionFailureSession, false, nil)
+	}
+	summary, ok := view.Summary()
+	if len(records) != 1 || records[0].Sequence == 0 || !ok ||
+		runtime.compactionHistory != nil && runtime.compactionHistory.CompactionCommitted(records[0].Sequence, id, summary) != nil {
+		runtime.poisoned.Store(true)
+		return fail(protocol.CompactionFailureSession, false, nil)
 	}
 	runtime.cache.snapshot.LastSummary = &observation
 	runtime.cache.snapshot.LastFailure = ""
-	if runtime.compactionHistory != nil {
-		summary, _ := view.Summary()
-		if len(records) != 1 || runtime.compactionHistory.CompactionCommitted(records[0].Sequence, id, summary) != nil {
-			runtime.poisoned.Store(true)
-			return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, false, nil, emit)
-		}
-	}
+	runtime.autoCompactionFailures = 0
+	runtime.autoCompactionFailedRevision = 0
 	event, err = protocol.NewCompactionCompleted(runtime.sessionID, runtime.threadID, id, view.Revision(), admission.before.TotalEstimate(), candidate.TotalEstimate(), usage, scope)
 	if err != nil {
 		runtime.poisoned.Store(true)
-		return runtime.failScopedCompaction(scope, id, protocol.CompactionFailureSession, false, nil, emit)
+		return fail(protocol.CompactionFailureSession, false, nil)
 	}
-	runtime.autoCompactionFailures = 0
-	runtime.autoCompactionFailedRevision = 0
+	var postErr error
+	if runtime.interactiveApprovals && post.plan.Kind() != session.PostCompactPlanNone {
+		target, err := domain.NewCompactionHookTarget(id, scope)
+		snapshot, snapshotErr := runtime.contextSnapshot()
+		if err != nil || snapshotErr != nil || snapshot.Revision != view.Revision() {
+			runtime.poisoned.Store(true)
+			return fail(protocol.CompactionFailureSession, false, nil)
+		}
+		postErr = runtime.runPostCompact(ctx, target, summary, records[0].Sequence, snapshot, post, emit)
+	}
 	emit(event)
-	return nil
+	return checkpointCommitted, postErr
 }
 
 func (runtime *Runtime) failCompaction(id domain.CompactionID, code protocol.CompactionFailureCode, started bool, prepared *provider.PreparedCompaction, emit Emitter) error {

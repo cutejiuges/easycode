@@ -8,7 +8,7 @@
 
 ### Requirement: Hooks browser is local bounded and draft preserving
 
-TUI SHALL 提供 /hooks，按事件、适用工具 matcher、无 matcher 的回合完成范围或 PreCompact 压缩触发 matcher 及来源展示冻结声明与 available/untrusted/trusted/denied/invalid/unsupported 状态，并可进入完整命令、timeout 和安全限制详情。浏览 MUST 无 Provider、磁盘、Session 写入或进程副作用；View 只读取内存投影。窄屏与长命令 SHALL 可滚动完整审查，不将截断行冒充完整声明；Esc 返回原草稿。
+TUI SHALL 提供 /hooks，按事件、适用工具 matcher、无 matcher 的回合完成范围或 压缩事件的触发 matcher 及来源展示冻结声明与 available/untrusted/trusted/denied/invalid/unsupported 状态，并可进入完整命令、timeout 和安全限制详情。浏览 MUST 无 Provider、磁盘、Session 写入或进程副作用；View 只读取内存投影。窄屏与长命令 SHALL 可滚动完整审查，不将截断行冒充完整声明；Esc 返回原草稿。
 
 空闲时详情 SHALL 允许对精确匹配快照的单项 reset 内存信任或拒绝；reset 不运行命令、不建立授权、不重试旧调用。活动 turn 或独立手动压缩中 reset MUST 拒绝。无效或不支持项不得提供可执行信任动作。
 
@@ -91,7 +91,7 @@ Stop SHALL 独立显示检查中、阻断后继续、通过、错误/取消/不�
 
 ### Requirement: Hooks review exposes event timing and model disclosure
 
-/hooks SHALL 同时展示 PreToolUse、PostToolUse、PostToolUseFailure、Stop、PreCompact 五事件、来源、工具 matcher、回合完成范围或压缩触发范围、feedback=none/model 与原有信任状态，完整详情支持窄屏滚动且不执行 I/O。两个后置分支的信任 overlay MUST 出现在原工具候选/普通批准/执行之前，分别说明成功后检查或执行尝试确定失败后检查、只读/禁网及 model 模式内容会发送给 Provider 并保存到 Session；失败说明须明确准入后的启动失败可诊断、正常非零退出仍走成功事件，不宣传测试失败自动修复。默认拒绝、Esc 拒绝、Ctrl+C 取消。reset 不隐式开启披露、不重试旧工具，历史信任不建立当前授权。paste、过期响应和 modal 输入不得泄漏到 composer 或其他批准。
+/hooks SHALL 同时展示 PreToolUse、PostToolUse、PostToolUseFailure、Stop、PreCompact、PostCompact 六事件、来源、工具 matcher、回合完成范围或压缩触发范围、feedback=none/model 与原有信任状态，完整详情支持窄屏滚动且不执行 I/O。两个后置分支的信任 overlay MUST 出现在原工具候选/普通批准/执行之前，分别说明成功后检查或执行尝试确定失败后检查、只读/禁网及 model 模式内容会发送给 Provider 并保存到 Session；失败说明须明确准入后的启动失败可诊断、正常非零退出仍走成功事件，不宣传测试失败自动修复。默认拒绝、Esc 拒绝、Ctrl+C 取消。reset 不隐式开启披露、不重试旧工具，历史信任不建立当前授权。paste、过期响应和 modal 输入不得泄漏到 composer 或其他批准。
 
 失败检查的审查 MUST 发生于原工具候选与普通批准前，不因可能不执行而隐式信任。实际运行期间主线与详情 SHALL 保留原 Error/Conflict，检查成功不能显示为工具修复成功。只有当前选择分支可发布 checking/finished；不同事件、plan、旧 turn 或过期 detail_sequence 不得覆盖当前状态。Ctrl+O 只展示安全统计及已授权 durable 反馈；未披露 stdout/stderr 不展示。原 error 保存后当前取消不得把已选失败事件改成 none 或把原工具显示为未执行；原 result 自身 cancelled 而选择 none 时也不得据此显示工具从未运行。取消后等待唯一 owner cleanup，保留草稿/锚点，完成前不能 idle。
 
@@ -140,7 +140,7 @@ Stop SHALL 独立显示检查中、阻断后继续、通过、错误/取消/不�
 - **THEN** 保留原工具错误、failure 选择及独立检查取消，零脚本；草稿和阅读锚点保持，不显示工具未执行或已修复
 
 #### Scenario: Review a maximum command after JSON expansion
-- **WHEN** 五事件之一的合法最大命令包含 JSON 需要转义的字符，审查消息编码后超过 16 KiB
+- **WHEN** 六事件之一的合法最大命令包含 JSON 需要转义的字符，审查消息编码后超过 16 KiB
 - **THEN** 构造、严格解码、AgentLoop 与本地审查保留完整命令和身份；未知字段或原始命令超限仍被拒绝，不默认授权或取消合法回合
 
 Stop 历史详情及提交通知 SHALL 精确绑定回合/sample target、plan digest、durable detail sequence 及 plan/decision/delivery 阶段；不借用 Post 的原工具 success/failure route。旧 target/plan、过期序列或跨事件更新不得覆盖当前状态。Ctrl+O 复用既有有界页缓存、异步查询与代次校验，render 不读取 journal。恢复后的候选/反馈/续答、检查结果及真实 cursor 与 live committed 一致，Hook 正文不进入用户 recall。
@@ -241,3 +241,14 @@ Pre 进度和详情 SHALL 先安装包含原调用、计划、已保存前缀和
 
 - **WHEN** 手动压缩的信任等待被 Ctrl+C 取消，压缩发出匹配终态且无 trust resolved，随后旧确认或错误到达
 - **THEN** 取消等待保留至终态，之后解除弹窗并保留草稿。旧响应被忽略，正常输入与新的压缩均可继续
+
+### Requirement: PostCompact review and status preserve the successful window
+
+TUI SHALL 在真实的已安装 checkpoint 阶段显示已压缩及后置审查/运行信息。`/hooks` 与完整审查 MUST 显示事件、触发 matcher、来源、timeout、完整命令和向本地脚本披露当前压缩摘要。默认选择为拒绝，Enter 确认当前选择，Esc 拒绝，Ctrl+C 定向取消。长命令和窄屏可完整安全审查或明确禁止授权；草稿、历史锚点和清理所有权保持。状态 MUST 绑定真实 scope、checkpoint 序号、实际 PostCompact plan、事件与相位，忽略旧 PreCompact 或其他操作的活动和信任响应。交互路径的未计划执行跳过只展示匹配 checkpoint 和稳定原因，禁止伪造计划、审查或运行。合法无匹配沿用原显示。
+
+当前操作的终态 SHALL 同时显示成功压缩和独立的后置结果。取消期间仍接纳真实范围匹配的安装与关闭通知、拒绝迟到审查或 checking，已安装后继续显示压缩已保存，清理未完成前维持活动。检查关闭未确认时只显示安全的不确定状态。检查展示限当前操作、有界分类及计数，历史摘要沿原 Ctrl+O 权限和阅读路径。
+
+#### Scenario: Cancel during post-install review
+
+- **WHEN** checkpoint 已安装且当前 PostCompact 审查正等待，用户 Ctrl+C 并随后收到旧审查响应
+- **THEN** 取消等待期间保持已压缩，接纳匹配的关闭并将结果并入唯一压缩成功终态；解除审查后草稿保留，旧响应不授权新命令

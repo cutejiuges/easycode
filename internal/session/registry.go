@@ -35,7 +35,8 @@ func descriptorByKind(kind EventKind) (Descriptor, bool) {
 		return Descriptor{Kind: kind, Cardinality: CardinalityMany, Placement: PlacementActiveTurn}, true
 	case EventCompactionStarted:
 		return Descriptor{Kind: kind, Cardinality: CardinalityMany, Placement: PlacementCompactionStart}, true
-	case EventPreCompactHookStarted, EventPreCompactHookFinished, EventPreCompactHookDecided:
+	case EventPreCompactHookStarted, EventPreCompactHookFinished, EventPreCompactHookDecided,
+		EventPostCompactHookStarted, EventPostCompactHookFinished, EventPostCompactHookClosed:
 		return Descriptor{Kind: kind, Cardinality: CardinalityMany, Placement: PlacementCompactionHook}, true
 	case EventCompactionCompleted, EventCompactionFailed:
 		return Descriptor{Kind: kind, Cardinality: CardinalityMany, Placement: PlacementCompactionTerminal}, true

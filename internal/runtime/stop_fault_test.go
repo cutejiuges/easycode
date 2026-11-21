@@ -2,12 +2,66 @@ package runtime
 
 import (
 	"context"
+	"strings"
 	"testing"
 
+	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
 	"easycode/internal/protocol"
 	"easycode/internal/session"
 )
+
+func TestPostCompactPoisonStopsPendingStopDelivery(t *testing.T) {
+	journal := &fakeJournal{}
+	r, runner, requests := newStopRuntimeRequestFixture(t, journal, func(index int, body []byte) {
+		if index == 1 && (!strings.Contains(string(body), `"tool_choice":"none"`) || strings.Contains(string(body), "check again")) {
+			t.Error("summary request did not exclude pending Stop feedback")
+		}
+	})
+	r.budget, _ = contextplan.NewBudget(22000, 0, 0)
+	autoPolicy, _ := contextplan.NewAutoCompactionPolicy(true, r.budget, 4096)
+	decls := r.hooks.snapshot.Declarations()
+	scope, _ := domain.ParseCompactionHookScope("auto")
+	post, err := domain.NewPostCompactHookDeclaration(domain.HookSourceProject, domain.HookFeedbackNone, decls[0].Reference.Revision, "observe", scope, "true", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := domain.NewHookSnapshot(append(decls, post), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.InstallHooks(snapshot, runner, "/workspace", domain.HookOK); err != nil {
+		t.Fatal(err)
+	}
+	stopCheck := runner.run
+	runner.run = func(ctx context.Context, id domain.HookRunIdentity, d domain.HookDeclaration) domain.HookExecution {
+		if id.Event == domain.HookPostCompact {
+			return domain.HookExecution{Result: domain.HookRunResult{Identity: id, Origin: "execution", Status: domain.HookUncertain, Code: domain.HookOutcomeUncertain}}
+		}
+		r.autoCompactionPolicy = autoPolicy
+		return stopCheck(ctx, id, d)
+	}
+	input, _ := domain.NewUserInput("01900000-0000-7000-8000-000000000001", strings.Repeat("historical work ", 3500))
+	trust := hookTrustEmitter(t, r, protocol.HookTrustSession, nil)
+	completed := 0
+	err = r.runTurn(context.Background(), []domain.UserInput{input}, r.profile, nil, func(event protocol.Event) {
+		trust(event)
+		if event.Kind == protocol.EventCompactionCompleted {
+			completed++
+		}
+	})
+	if err == nil || !r.poisoned.Load() || completed != 1 || requests.Load() != 2 || r.autoCompactionFailures != 0 {
+		t.Fatalf("continued after uncertain post hook: %v, completions=%d, requests=%d", err, completed, requests.Load())
+	}
+	for _, batch := range journal.snapshot() {
+		for _, draft := range batch {
+			if draft.EventKind() == session.EventCompactionFailed || draft.EventKind() == session.EventTurnFailed ||
+				draft.EventKind() == session.EventProviderNativeCommit && strings.Contains(string(draft.PayloadBytes()), "check again") {
+				t.Fatalf("advanced past poisoned checkpoint: %s", draft.EventKind())
+			}
+		}
+	}
+}
 
 type stopInputFixture struct {
 	inputs []domain.UserInput
