@@ -69,8 +69,8 @@ func previewSession(ctx context.Context, root string, thread domain.ThreadID, de
 		return result, false, err
 	}
 	meta := plan.SessionMetadata
-	if plan.Identity.ThreadID != thread || meta.RootThreadID != thread || !plan.ThreadMetadata.Root {
-		return result, false, fmt.Errorf("preview requires a root thread")
+	if plan.Identity.ThreadID != thread {
+		return result, false, fmt.Errorf("preview thread identity is inconsistent")
 	}
 	binding, err := bindProvider(meta.Provider)
 	if err != nil || binding.wire != meta.ProviderWire {
@@ -91,6 +91,7 @@ func previewSession(ctx context.Context, root string, thread domain.ThreadID, de
 	}
 	result = boundSessionPreview(view)
 	result.Title = plan.Title
+	result.ParentThreadID = plan.ThreadMetadata.ParentThreadID
 	result.Incomplete = loaded.NeedsRepair() || plan.InterruptedTail != nil || plan.ToolRecovery != nil ||
 		plan.StopRecovery != nil || plan.InterruptedCompaction != nil || plan.InterruptedPostCompact != nil
 	return result, false, ctx.Err()

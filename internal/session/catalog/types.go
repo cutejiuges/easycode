@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"easycode/internal/codec"
 	"easycode/internal/domain"
 )
 
@@ -16,10 +17,11 @@ type Config struct {
 	SnapshotPath string
 }
 
-// Entry 是一个已完整回放的 root thread 的最小查询投影。
+// Entry 是一个已完整回放的可恢复线程的最小查询投影。
 type Entry struct {
 	SessionID      domain.SessionID      `json:"session_id"`
 	ThreadID       domain.ThreadID       `json:"thread_id"`
+	ParentThreadID parentThreadID        `json:"parent_thread_id,omitempty"`
 	JournalPath    string                `json:"journal_path"`
 	CreatedAt      time.Time             `json:"created_at"`
 	UpdatedAt      time.Time             `json:"updated_at"`
@@ -30,6 +32,22 @@ type Entry struct {
 	ProviderWire   string                `json:"provider_wire"`
 	Model          string                `json:"model"`
 	Title          domain.SessionTitle   `json:"title"`
+}
+
+// parentThreadID 只在分支存在。解码时区分缺省与显式空值。
+type parentThreadID domain.ThreadID
+
+func (id *parentThreadID) UnmarshalJSON(data []byte) error {
+	var raw string
+	if err := codec.UnmarshalStrict(data, &raw); err != nil {
+		return err
+	}
+	parsed, err := domain.ParseThreadID(raw)
+	if err != nil {
+		return fmt.Errorf("catalog parent thread ID is invalid")
+	}
+	*id = parentThreadID(parsed)
+	return nil
 }
 
 // Selector 描述 --continue 的精确兼容条件。
@@ -59,6 +77,9 @@ func validateConfig(config Config) error {
 func validateEntry(entry Entry) error {
 	if !entry.SessionID.Valid() || !entry.ThreadID.Valid() {
 		return fmt.Errorf("catalog entry identity is invalid")
+	}
+	if entry.ParentThreadID != "" && (!domain.ThreadID(entry.ParentThreadID).Valid() || domain.ThreadID(entry.ParentThreadID) == entry.ThreadID || entry.Title == "") {
+		return fmt.Errorf("catalog branch metadata is invalid")
 	}
 	if !validRelativeJournalPath(entry.JournalPath, entry.ThreadID) {
 		return fmt.Errorf("catalog entry journal path is invalid")

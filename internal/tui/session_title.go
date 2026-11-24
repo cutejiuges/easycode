@@ -53,9 +53,14 @@ func (model *Model) suppressSessionTitleCompletion() {
 	model.completion.suppress(completionModal)
 }
 
+// hasSessionTitleArgument 只允许省略文本或纯 Zs 分隔符选用默认入口。
+func hasSessionTitleArgument(argument string) bool {
+	return strings.ContainsFunc(argument, func(r rune) bool { return !unicode.Is(unicode.Zs, r) })
+}
+
 func (model Model) beginSessionTitle(arguments string) (tea.Model, tea.Cmd) {
 	model.clearEffortFeedback()
-	if strings.TrimFunc(arguments, func(r rune) bool { return unicode.Is(unicode.Zs, r) }) != "" {
+	if hasSessionTitleArgument(arguments) {
 		return model.saveSessionTitle(arguments)
 	}
 	if _, ok := model.session.(sessionTitleHost); !ok {

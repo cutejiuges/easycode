@@ -2,7 +2,7 @@
 
 ## Purpose
 
-定义 append-only JSONL Session 事实源，使已交付的文本对话、Tool、Hook、Compaction 与未来 MCP、Subagent 记录共享稳定日志机制。Catalog 快照与 UI 事件均由事实源派生。
+定义 append-only JSONL Session 事实源，使已交付的文本对话、Tool、Hook、Compaction、分支来源与未来 MCP、Subagent 记录共享稳定日志机制。Catalog 快照与 UI 事件均由事实源派生。
 
 ## Requirements
 
@@ -206,7 +206,7 @@ append admission MUST 有明确线性化点：在请求被接受前发生的 con
 
 ### Requirement: Loading validates the complete journal before replay
 
-Session loader SHALL 按行和 batch 顺序校验记录大小、JSON、完整性校验值、seq 连续性、标识一致性和 batch 闭合性。当前 envelope MUST 拒绝重复顶层 member、未知顶层 member、尾随 JSON value、非法 UTF-8、非 canonical ID/时间字段和任一未知 event kind。checksum SHALL 覆盖移除 checksum 字段后的强类型 canonical envelope bytes；Provider payload 内部语义仍由对应 Provider 当前 codec 校验。
+Session loader SHALL 按行和 batch 顺序校验记录大小、JSON、完整性校验值、seq 连续性、标识一致性和 batch 闭合性。标识一致性涵盖同一 Session 内经验证的分支标记转换，文件其余位置不允许线程标识漂移。当前 envelope MUST 拒绝重复顶层 member、未知顶层 member、尾随 JSON value、非法 UTF-8、非 canonical ID/时间字段和任一未知 event kind。checksum SHALL 覆盖移除 checksum 字段后的强类型 canonical envelope bytes；Provider payload 内部语义仍由对应 Provider 当前 codec 校验。
 
 任何含非法版本字段的 envelope、未知 kind、文件中间损坏、seq 跳变、标识漂移或重复 metadata MUST 产生明确安全错误。loader MUST NOT 返回部分可恢复历史、fallback 到旧 decoder、保留 optional opaque record、执行 migration 或用默认值补全。
 
@@ -235,15 +235,23 @@ Session loader SHALL 按行和 batch 顺序校验记录大小、JSON、完整性
 - **WHEN** 一行包含重复 `seq`、未知当前顶层字段或一个合法对象后的尾随 JSON value
 - **THEN** loader 将该行视为损坏并且不得依赖 JSON decoder 的覆盖或宽松默认行为
 
-Load SHALL 只读扫描并返回完整 committed 前缀和私有待修复凭据，不执行 Truncate/Sync。恢复协调者 MUST 在全部 replay、Provider 兼容和原生/checkpoint 校验通过后才执行显式 Repair。Catalog SHALL 只读扫描，不隐式修复。
+Load SHALL 只读扫描并返回完整 committed 前缀和私有待修复凭据，不执行 Truncate/Sync。恢复协调者 MUST 在全部 replay、Provider 兼容和原生/checkpoint 校验通过后才执行显式 Repair。Catalog SHALL 只读扫描，不隐式修复。对于非空 committed 前缀，loader MUST 先证明最后完整 committed batch 确认的线程标识与 journal 文件名的期望标识相同，才可签发尾部修复凭据。完整的非法标记不能作为未完成 batch 丢弃。
 
 #### Scenario: Reject semantic corruption with a torn tail
 - **WHEN** committed 前缀语义非法或 Provider/checkpoint 校验失败，且末尾另有半行或未完成 batch
 - **THEN** 恢复拒绝，原 journal 全部 bytes 不变，不启动 writer 或补偿
 
+#### Scenario: Bind the filename to the final committed owner
+- **WHEN** 分支文件的最后完整 committed batch 对应的线程标识与文件名指定的线程标识不同，包括目标标记尚未完整写入或只复制了源前缀
+- **THEN** loader 在发出任何待修复凭据前拒绝，原文件 bytes 保持不变，且不会以祖先身份返回该文件或为其启动 writer
+
+#### Scenario: Repair only the final branch suffix
+- **WHEN** 分支的最后合法标记及其已有合法 committed batches 共同确定了与文件名相符的线程标识，但其后存在半行或未完成的本地 batch
+- **THEN** loader 验证全部 committed 事实和继承证据后，仅允许按当前规则显式修复未完成本地尾部，并完整保留标记及其继承前缀
+
 ### Requirement: Replay validation enforces record state transitions
 
-Loader 完成字节、envelope 和 batch 校验后，ReplayPlanner SHALL 在创建 Provider Conversation 前对全部当前 typed records 执行语义回放。首个 batch MUST 恰好建立唯一 `session_meta` 与 root `thread_meta`；同一 root thread 最多有一个活动 turn。
+Loader 完成字节、envelope 和 batch 校验后，ReplayPlanner SHALL 在创建 Provider Conversation 前对全部当前 typed records 执行语义回放。首个 batch MUST 恰好建立唯一 `session_meta` 与 root `thread_meta`；同一已验证线程段最多有一个活动 turn。分支标记仅可置于已有提交用户输入、所有 turn、工具调用与原生 outputs、Stop、Compaction、PostCompact 与 SessionStart 生命周期均已闭合的边界，且标记 MUST NOT 关闭、补偿或重新开始此前操作。只有最终线程段的合法活动尾部可生成恢复计划。
 
 文本 turn SHALL 在 turn_started 后完成适用的压缩和 SessionStart 检查及 initial 输入 batch，之后才允许普通 sample；无 Stop 时才可通过 [provider_native_commit(sample), sample_usage, turn_completed] 完成，有 Stop 时必须先按独立完成检查 grammar 保存 sample/usage/plan 再收口；单个 turn_failed 可在输入提交前或后收口，保留此前全部已提交事实。Tool Loop 中，一个含 calls 的 sample batch MUST 严格为 `[provider_native_commit, sample_usage, tool_call_ready...]`，ready records 的 sample/call index 连续且 identity 唯一。ReplayPlanner SHALL 按 capability 验证每个 call slot：自动允许的读取正常为 `ready -> execution_started -> result`；Patch 可为 `ready -> approval_decided(allow*) -> execution_started -> result`、`ready -> [approval_decided(deny), result(denied)]`，或在候选准备失败/取消时从 ready 直接进入匹配的 error/cancelled result。`abort` SHALL 使当前及尚未完成 slots 按取消契约收口。approval identity、candidate fingerprint、outcome 和 decision source MUST 与同一 invocation 一致，且每个 Patch 至多一个 approval fact。
 
@@ -411,6 +419,25 @@ Task 的正常语法 SHALL 为 ready -> started -> result，并与其他 exclusi
 #### Scenario: Preserve the actual result sequence across live and replay observers
 - **WHEN** 同一任务的 ready、started、result、native output 具有不同 seq，live observer 接收成功 Append 的返回记录，随后恢复同一 journal
 - **THEN** 两条路径都以真实 result record seq 形成 source，绝不使用 ready/detail/native seq，内容及来源完全一致
+
+分支回放 SHALL 保留各继承事实的原始来源和顺序，保留 Provider 原生输入、样本与工具配对，并按原位置校验 checkpoint 前驱、来源 revisions 及任务 result 的原始 seq、turn 和 invocation 关联。任务当前状态和有效压缩窗口沿用已经验证的前缀并随本线程后续提交推进。工具结果及历史 ReadArtifact 页按其原线程归属验证，继承条目仍可提供已冻结的历史投影。切换记录归属只改变接受当前引用的线程，必须保留继承段已发现的首个引用错误，即使其后的标记和后续记录均有效。运行中的 artifact 授权及清理引用 MUST 仅来自最终线程段内与其线程归属一致的已提交结果。继承记录中的历史批准、运行和结果事实只用于验证已经结束的调用，不能接纳本线程的新副作用或补偿祖先操作。
+
+#### Scenario: Reject a branch boundary with an open operation
+- **WHEN** 有效 checksum 与前缀摘要的标记出现在未完成 turn、尚未交付的工具或 Stop 结果、悬空压缩或未关闭 PostCompact 检查之后
+- **THEN** 语义回放拒绝，原文件 bytes 保持不变，不对祖先执行恢复补偿或修复
+
+#### Scenario: Restore inherited context without inheriting artifact authority
+- **WHEN** 源线程成功提交工具结果、artifact 引用、读取页、任务更新及匹配 checkpoint 后创建分支，随后分支另有自己的工具结果或压缩
+- **THEN** 回放使用原线程身份分别验证已冻结历史、任务来源和连续 checkpoint 链，保持原生顺序与有效上下文
+- **THEN** 运行中的 artifact 引用和清理范围只来自分支自己已提交的拥有者事实，继承条目不产生执行或读取授权
+
+#### Scenario: Keep an ancestor artifact error across a valid marker
+- **WHEN** 继承段的 ReadArtifact 结果无该段的 matching durable 引用，后接 checksum 和前缀摘要均合法的分支标记及合法子线程结果
+- **THEN** 完整及元数据回放都拒绝继承段的错误，分支不能通过发现、恢复或尾部修复检查
+
+#### Scenario: Reject a branch created from metadata alone
+- **WHEN** 分支文件的继承前缀含初始元数据或本地标题，标记的父子、seq、digest 与 batch 结构有效，但切点前没有已提交用户输入
+- **THEN** 语义回放拒绝该分支，保留原 bytes，不签发可用于修复或接管的已验证结果
 
 ### Requirement: Tail repair never rewrites committed history
 
@@ -996,9 +1023,32 @@ PreCompact 事实 MUST NOT 持久化指令原文、命令正文、stdout/stderr�
 - **WHEN** 所有声明的确定 finished 均已 Sync，随后取消与 closed 的写入交错
 - **THEN** 从真实前缀保存通过或首个确定错误；取消仍停止后续采样，不增加 cancelled finished 或改变检查结果
 
+### Requirement: A branch journal preserves an exact committed prefix and a single owner chain
+
+分支 journal SHALL 逐字节保留源线程从首行至分支切点的全部 committed JSONL bytes，包括每行末尾的 LF。每次创建 SHALL 在该前缀之后追加恰好一条新的 `thread_forked` 事实。继承前缀中的原始标识、序号、时间、batch、checksum 与 payload MUST 保持原样，包括此前的分支事实。分支标记不推进原生历史 ordinal、sample、usage、checkpoint 或任务序号。分支自己的后续事实使用当前线程标识并从标记的下一 seq 单调追加。
+
+`thread_forked` SHALL 使用现有无版本 envelope，具备专属 typed constructor、strict decoder 和 validator。外层 `session_id` MUST 等于根 Session 标识，`thread_id` 为本链从未出现的有效子线程标识，`parent_thread_id` 为前一段的已提交线程标识，`timestamp` 为子线程创建的 UTC 时间，`turn_id` MUST 缺席。其完整行 MUST 声明独立单记录 batch，`batch_id=seq`、`batch_index=0`、`batch_size=1`，并遵守当前 16 MiB 行及 64 MiB batch 上限。
+
+标记 payload SHALL 仅含三个必需字段 `source_seq`、`source_sha256`、`title`。`source_seq` 为正整数，MUST 等于前一完整 batch 的最后 seq 且等于标记 seq 减一。`source_sha256` MUST 是紧邻标记之前全部原始 bytes 的 SHA-256，表示为 64 个小写十六进制字符。`title` MUST 满足 session/titles 的非空规范标题约束，未显式命名时的默认标题仍以同一字段写入。缺失必需字段、重复或未知字段、null、尾随 JSON 及错配证据 MUST 拒绝。标记 MUST NOT 保存配置、路径、会话内容副本、批准、权限或格式标记。
+
+同一文件 SHALL 只有一条继承链。文件首 batch 仍是源根线程的唯一 `session_meta` 和 `thread_meta`。工作目录、Provider family、wire 和 model 沿用根 metadata，分支的创建时间和初始标题来自其自身标记。每个 `thread_forked` 只可从当时的已提交线程标识过渡到未见过的子线程标识。其他 records MUST 属于当前段的线程，并沿用其现有外层标识规则。验证 SHALL 按文件顺序检查整个链，只依赖当前 journal 中的事实，不读祖先 journal 或使用 Catalog 代替证明。验证整个链时对已读前缀的字节完整性检查 SHALL 随文件大小线性增长，不能随标记数反复扫描继承前缀。
+
+#### Scenario: Retain the exact prefix through a recursive branch
+- **WHEN** 根线程的分支追加完成的回合，此后从该分支继续派生
+- **THEN** 新 journal 逐字节保留源分支的完整提交前缀及既有标记，仅追加一个新的合法标记，后续本地事实从其下一 seq 起写入
+- **THEN** 即使祖先 journal 不可访问，当前 journal 仍可完整验证与恢复
+
+#### Scenario: Reject a forged or misplaced fork marker
+- **WHEN** 标记 checksum 正确，但父线程、Session、子线程唯一性、前缀 seq、batch 或 payload 不符，或普通行冒用其他线程身份
+- **THEN** 在 repair、writer 接管和恢复副作用前拒绝，原 journal bytes 保持不变
+
+#### Scenario: Verify the digest against exact bytes
+- **WHEN** 继承记录的字节改动仍能通过单行 canonical checksum，但其原始行或 LF 与已保存的前缀摘要不符
+- **THEN** 拒绝整个 journal，即使在末尾另外存在可识别的半行
+
 ### Requirement: SessionStart facts bind execution and delivered context to their real owners
 
-系统 SHALL 使用唯一当前的 `session_start_hook_planned`、`session_start_hook_started`、`session_start_hook_finished` 和 `session_start_hook_closed` 四种记录，每种具有专属 typed constructor、strict decoder 与 validator。startup/resume 记录 SHALL 绑定当前根 Session 及实际首个符合条件的 TurnID。compact 记录的 envelope MUST 省略 `turn_id`，typed target SHALL 绑定 CompactionID、scope、确切的成功 checkpoint 记录序号与来源摘要。自动压缩的真实 turn 和 sample index 保留在 scope 中。每个初始回合或成功压缩最多一个匹配计划。startup 在一个 journal 中最多出现一次，只能在尚无已提交 initial 输入且无在先 resume 计划时出现。未接纳计划或输入的较早取消回合不消耗启动机会。恢复事件的实际激活由宿主保证，回放验证可由 journal 证明的顺序和绑定。
+系统 SHALL 使用唯一当前的 `session_start_hook_planned`、`session_start_hook_started`、`session_start_hook_finished` 和 `session_start_hook_closed` 四种记录，每种具有专属 typed constructor、strict decoder 与 validator。startup/resume 记录 SHALL 绑定当前 Session、实际线程及该次激活首个符合条件的真实 TurnID。分支继承已关闭的 SessionStart 事实并保留原归属。compact 记录的 envelope MUST 省略 `turn_id`，typed target SHALL 绑定 CompactionID、scope、确切的成功 checkpoint 记录序号与来源摘要。自动压缩的真实 turn 和 sample index 保留在 scope 中。每个初始回合或成功压缩最多一个匹配计划。startup 只属于根线程，在一份 journal 中最多出现一次，只能在尚无已提交 initial 输入且无在先 resume 计划时出现。未接纳计划或输入的较早取消回合不消耗启动机会。恢复事件的实际激活由宿主保证，回放验证可由 journal 证明的顺序和绑定。
 
 计划 SHALL 绑定目标、触发来源、有序冻结声明引用及计划摘要。计划和每项 started 必须在独立有序批次 Sync，started 按声明顺序唯一接纳，finished 必须与该序位的真实准入匹配。finished 保存安全运行统计，只有成功、清理确定且已授权的 model 输出可附带单项精确模型包装的字节数和摘要。计划、started、finished 和不含交付的关闭 MUST NOT 保存命令、信任响应、stdout/stderr、候选正文、绝对工作目录或秘密。无法确认执行或持久化时 SHALL 停止后续接纳，并用可验证的已有前缀留待收口。
 

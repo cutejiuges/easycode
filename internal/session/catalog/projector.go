@@ -23,10 +23,6 @@ func (projector *Projector) Project(relativePath string, loaded session.LoadResu
 	if loaded.Identity != plan.Identity || !plan.Identity.SessionID.Valid() || !plan.Identity.ThreadID.Valid() {
 		return Entry{}, fmt.Errorf("catalog projection identity is invalid")
 	}
-	if !plan.ThreadMetadata.Root || plan.ThreadMetadata.ParentThreadID != "" ||
-		plan.SessionMetadata.RootThreadID != plan.Identity.ThreadID {
-		return Entry{}, fmt.Errorf("catalog projection requires a root thread")
-	}
 	last := loaded.Records[len(loaded.Records)-1]
 	if last.SessionID != plan.Identity.SessionID || last.ThreadID != plan.Identity.ThreadID ||
 		last.Sequence+1 != loaded.NextSequence {
@@ -39,6 +35,10 @@ func (projector *Projector) Project(relativePath string, loaded session.LoadResu
 		CreationCWD:    plan.SessionMetadata.CreationCWD,
 		ProviderFamily: plan.SessionMetadata.Provider, ProviderWire: plan.SessionMetadata.ProviderWire,
 		Model: plan.SessionMetadata.Model, Title: plan.Title,
+	}
+	if plan.Branch != nil {
+		entry.ParentThreadID = parentThreadID(plan.Branch.ParentThreadID)
+		entry.CreatedAt = plan.Branch.CreatedAt
 	}
 	if err := validateEntry(entry); err != nil {
 		return Entry{}, err

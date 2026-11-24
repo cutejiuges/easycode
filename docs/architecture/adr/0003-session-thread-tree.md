@@ -1,6 +1,6 @@
 # ADR-0003：使用 Session 线程树组织会话
 
-> 当前对照（2026-11-20）：当前只实现 root thread 的会话/原生恢复和最小元数据快照；child thread、fork、跨 Provider compacted fork 与 Subagent 尚未实现。正文的线程树与迁移讨论是当时目标，不代表当前 reader、目录或授权承诺。 [当前能力清单](../../roadmap/capability-status.md)。
+> 当前对照（2026-11-24）：支持根线程和同 Provider、同模型的交互分支。分支复制已确认的 JSONL 前缀，使用 `thread_forked` 绑定父、切点及独立 ThreadID。跨 Provider compacted fork 与 Subagent 仍是后续设计。 [当前能力清单](../../roadmap/capability-status.md)
 
 - 状态：accepted
 - 日期：2026-09-18
@@ -32,7 +32,7 @@ EasyCode 需要支持普通多轮对话、resume、fork、compaction 和 Subagen
 - 每个 Session 恰有一个 root thread。
 - fork、compaction fork 和 Subagent 创建 child thread，并记录 `parent_thread_id` 与创建原因。
 - 每个 turn 只属于一个 thread；每个 Provider-native item 只属于一个 turn/thread。
-- Child thread 的结果通过显式 completion envelope 返回父线程，禁止把 child native history 直接拼入父线程。
+- 未来 Subagent 的结果通过显式 completion envelope 返回父线程。用户会话分支各自续写，保留原记录归属。
 
 ```text
 Session
@@ -59,14 +59,14 @@ Session
 ## Session/协议迁移影响
 
 - EventEnvelope 和 Session Record 同时携带 `session_id` 与 `thread_id`；child 事件额外携带 `parent_thread_id` 或可查询的 thread metadata。
-- JSONL 是 Session 级事实源，记录按单调 seq 追加；SQLite 投影维护 thread tree 索引。
-- 在线性历史阶段创建的旧 Session 可迁移为仅含 root thread 的树。
+- JSONL 是各线程的事实源；分支保留继承记录的原标识和 seq，从已验证切点继续追加。可重建的 JSON Catalog 投影当前线程和直接父线程身份。
+- 根和分支使用同一当前记录契约，分支关系由 typed record 表达。
 
 ## 验证与回归测试
 
 - 覆盖 root thread、fork、Subagent completion、取消和 resume。
 - 验证 child native history 不进入父 RequestCompiler。
-- 删除 SQLite 后能从 JSONL 重建相同线程树。
+- 删除 JSON Catalog 后能从各自 journal 重建可查询的线程和父线程身份。
 - EventEnvelope 中 session/thread/turn 关系违反约束时必须产生英文协议错误。
 
 ## 回滚或替代方案

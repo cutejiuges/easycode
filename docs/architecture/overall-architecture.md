@@ -153,7 +153,7 @@ internal/
   tool/                     当前强类型输入、Facade、Executor、Policy 与 ResultCodec
     builtin/                十项工具的已实现执行/准备边界
   context/                  上下文分层、token budget、compact、cache plan
-  session/                  JSONL、artifact、root-thread resume；fork 未实现
+  session/                  JSONL、artifact、根线程和分支的创建与恢复
     catalog/                可重建 Catalog 快照 与前台 reconciliation
   executor/process/         Exec/Hook 共用进程生命周期
   extension/                本地 Skills、Plugin 技能包与 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact/SessionStart Hooks；P6 后续目标：插件可执行贡献、MCP
@@ -615,7 +615,7 @@ TUI 提供 `/context`、`/compact [instructions]`、定向取消及 Ctrl+O 完�
 
 - `session`：一个逻辑会话和持久化命名空间，拥有一棵线程树，不等同于单条消息历史。
 - `root thread`：Session 创建时的根线程，承载默认用户交互历史。
-- `thread`：Session 内一条线性的 turn/native history；未来 Subagent 与跨 Provider fork 可创建 child thread；当前手动与自动压缩始终留在原 thread。
+- `thread`：Session 内一条线性的 turn/native history；交互分支创建同 Session 的 child thread，Subagent 与跨 Provider fork 属于后续目标。手动与自动压缩始终留在原 thread。
 - `turn`：Thread 内一次用户输入到模型停止/工具循环结束的完整生命周期。
 
 `session_id` 用于定位逻辑会话，`thread_id` 用于定位具体执行链；EventEnvelope 同时携带二者，不能只用其中一个替代另一个。线程树决策见 [ADR-0003](adr/0003-session-thread-tree.md)。
@@ -656,7 +656,7 @@ EventEnvelope
 
 当前记录词汇按用途列出。每条路径只要求适用的记录。
 
-- 会话元数据与标题使用 `session_meta`、`thread_meta` 和 `session_title_updated`。
+- 会话元数据与标题使用 `session_meta`、`thread_meta` 和 `session_title_updated`，分支创建使用 `thread_forked`。
 - Turn 使用 `turn_started`、`turn_inputs_committed`、`turn_completed` 和 `turn_failed`。
 - Provider 原生提交与用量使用 `provider_native_commit` 和 `sample_usage`。
 - 工具调用使用 `tool_call_ready`、`tool_approval_decided`、`tool_execution_started` 和 `tool_call_result`。
@@ -679,7 +679,7 @@ Headless JSONL v1 是 stdout 外部协议，不是 Session record：不得写入
 
 ### 10.3 Catalog 快照
 
-`internal/session/catalog` 是 JSONL 事实源之上的可重建投影边界。当前快照是按已提交记录时间和 thread ID 双降序排列的强类型 JSON 数组。条目保存 root thread 的 session/thread identity、journal 相对定位、创建 cwd、Provider family/wire、model、手动标题，以及最后一条已提交记录的 timestamp/seq/checksum。prompt、response、native payload、tag、worktree 和全文搜索内容均在投影范围之外。
+`internal/session/catalog` 是 JSONL 事实源之上的可重建投影边界。当前快照是按已提交记录时间和 thread ID 双降序排列的强类型 JSON 数组。条目保存根线程或分支的 session/thread identity、journal 相对定位、创建 cwd、Provider family/wire、model、标题及分支的父线程身份，以及最后一条已提交记录的 timestamp/seq/checksum。prompt、response、native payload、tag、worktree 和全文搜索内容均在投影范围之外。
 
 Catalog 在 `--continue` 路径按以下顺序工作：
 
@@ -716,7 +716,7 @@ Catalog 关闭后，app 按所选 thread ID 重新取得 journal lease。`sessio
 - 仓库已建立不可变的当前文本与 Tool Loop fixture，用于验证 Loader/ReplayPlanner 的读取、续写 prefix 不变、账本顺序和双 Provider 恢复等价性；项目没有线上历史格式，因此开发期旧 fixture 与旧 reader 已删除。未经用户明确要求和新 OpenSpec，不引入历史 reader、迁移器或兼容窗口；不得在 resume 原地改写既有 records。
 - exclusive lease 是协作进程间的 advisory lock，不能阻止旧版 EasyCode 或非协作进程绕过锁直接写文件；混合版本运行前必须确保目标 thread 没有其他 owner，绕过锁产生的损坏继续由 checksum、seq 和完整回放校验发现。
 - Catalog 快照、`--continue`、离线 `sessions list` 与启动 `resume` picker 已实现；worktree/project catalog、tag、全文搜索、实时索引和全工具 artifact 尚未实现。内部格式继续保持唯一当前契约，不预设未来兼容授权。
-- 手动与阈值自动 compaction 追加独立 checkpoint，保留原始 JSONL；跨 Provider fork 与 child-thread 元数据仍为后续目标。摘要是可辨识的历史参考，不构成新的用户输入或授权。
+- 手动与阈值自动 compaction 追加独立 checkpoint，保留原始 JSONL；跨 Provider fork 与 Subagent 创建元数据仍为后续目标。摘要是可辨识的历史参考，不构成新的用户输入或授权。
 - artifact 文件路径必须防止目录穿越。
 
 ### 会话标题事实
@@ -724,6 +724,12 @@ Catalog 关闭后，app 按所选 thread ID 重新取得 journal lease。`sessio
 `/rename` 经 ChatSession 的 typed `rename_session` 交给 AgentLoop。owner 确认交互会话处于空闲且没有会话交接许可，并检查请求取消、关门和运行 context 信号后接纳，复用同一 lease 和 writer 追加 `session_title_updated`。单条 batch 的 `title` 为规范非空值，`turn_id` 和 `parent_thread_id` 缺省。完整行先验证成员和 batch 结构，Replay 只在活动操作已闭合的边界接受。相同标题为无写入成功。追加 Sync 确认后才更新界面，关闭仍等待最终 Sync/Close。
 
 Catalog 从最后合法标题事实投影快照条目的 `title`，空字符串代表未命名。排序时间继续取最新已提交记录。Picker 在最多 200 条已加载元数据中独立匹配标题，预览从 journal 重新验证并使用独立展示字段。标题没有 Provider 原生 item、普通输入或缓存来源。在线恢复先收口本地补偿，再装配互动标题控制。验收见 [add-session-titles](../../openspec/changes/archive/2026-11-19-add-session-titles/verification.md)。
+
+### 会话分支
+
+`/branch` 与 `/fork` 共用聊天内恢复的空闲许可和交接 owner。源 writer 只提供由 Sync 确认的字节范围。目标 journal 保留这段前缀并以单条 `thread_forked` 绑定父子身份、序号、前缀 SHA-256 和标题。Loader 按实际行验证血缘，在最终写入归属与文件名相符后才允许生成修复凭据。
+
+私有暂存通过完整回放和原生验证、文件 Sync、排他发布、目录 Sync 与规范路径复核后确认创建。目标 lease 从暂存持续到活动 writer 关闭。接管前等待源所有者实际关闭。发布状态和目标 ID 独立于界面结果保存，终端退出时由既有 CLI 输出安全诊断。分支继续使用有效原生窗口和任务状态，权限与连接状态由新实例建立。 [分支规格](../../openspec/specs/session/branch/spec.md)
 
 ### 10.5 自动压缩与活动回合
 
@@ -737,7 +743,7 @@ Session 的 compaction_started/completed/failed 具有强类型 scope（manual�
 
 ## 11. Subagent
 
-本章描述 P7 目标架构。当前仅保留经批准的 TODO 控制边界，没有生产消费者、thread tree、调度或 completion envelope。
+本章描述 P7 目标架构。Subagent 当前仅保留经批准的 TODO 控制边界。已经实现的对话分支属于会话线程树，Subagent 调度和 completion envelope 仍是后续目标。
 
 ### 11.1 模型
 
@@ -836,7 +842,7 @@ continued 决定只保存最终反馈字节和来源、bytes/digest，尚未推�
 
 #### 12.1.6 SessionStart 上下文交付
 
-首轮由原回合 owner 在自动摘要及真实输入预检后消费实例的 `startup` 或 `resume`。`compact` 由同一压缩 owner 在 PostCompact 收口后消费已安装 checkpoint。逐条独立信任完成后串行运行，只采纳显式授权、结构校验及预算通过的完整模型包装。共享 runner 负责真实进程和双流的清理。
+首轮由原回合 owner 在自动摘要及真实输入预检后消费实例的来源。新建根线程使用 `startup`，创建并进入分支或恢复根线程及分支使用 `resume`。`compact` 由同一压缩 owner 在 PostCompact 收口后消费已安装 checkpoint。逐条独立信任完成后串行运行，只采纳显式授权、结构校验及预算通过的完整模型包装。共享 runner 负责真实进程和双流的清理。
 
 Session 使用 `session_start_hook_planned`、`session_start_hook_started`、`session_start_hook_finished` 和 `session_start_hook_closed`。只有 applied 关闭携带 Provider 原生 `session_start_context`。激活上下文和真实 initial 输入在同一批次 Sync，compact 闭合是检查点后的独立记录。手动压缩锚定真实 CompactionID，自动压缩沿用真实作用域。两家 Provider 通过逻辑前驱保持原有采样与工具配对，完整请求维护已提交上下文的原生顺序。宿主根据关闭真实序号增加只读详情，当前窗口更新独立于最近联网请求的计量。恢复先校验批次与原生证据，再在同一 lease 下本地结算未关闭前缀。 [设计](../../openspec/changes/archive/2026-11-24-add-session-start-context/design.md)
 
@@ -877,7 +883,7 @@ marketplace、安装/更新、插件脚本/Hook/MCP/Agent/commands 贡献、热�
 
 当前提供用户/assistant 流式 Markdown、代码/表格/原文阅读、紧凑工具主线、前台 Shell 进度、完整 Patch/Write/Exec 批准、结构化问卷、Hook 浏览/信任、context/cache 面板、压缩边界、Ctrl+O 分页详情、会话命名及启动和聊天内恢复选择器。视图保持无 I/O，按需查询由宿主处理并用身份/generation 拒绝迟到响应。
 
-启动 thinking/display/summary 与普通输出配置已经实现，effort 由 thread owner 为每次操作捕获，`/context` 展示来源与当前捕获；其余运行中推理切换、后台任务、渐进 patch delta、MCP elicitation、Subagent/task 与 fork picker 尚未实现。测试中使用真实 PTY 验收界面，不表示模型命令工具支持 PTY。
+启动 thinking/display/summary 与普通输出配置已经实现，effort 由 thread owner 为每次操作捕获，`/context` 展示来源与当前捕获；其余运行中推理切换、后台任务、渐进 patch delta、MCP elicitation、Subagent/task 与历史切点选择尚未实现。测试中使用真实 PTY 验收界面，不表示模型命令工具支持 PTY。
 
 ### 13.3 REPL 行为
 
@@ -900,7 +906,7 @@ Provider 当前 native kind 封闭为 `user_inputs`/`sample`/`tool_outputs`/`hoo
 input-only 崩溃尾部先在本地 durable 收口；工具安全点的 steering 尾部复用现有工具补偿路径，不重跑工具或自动联网。内存队列与 returned tray 不持久化，重启不猜测未保存输入。外部 headless JSONL 仍为 v1，自动 admission 增加 entry_id，input.status 不含正文；一次性 text/JSON 过滤新增内部输入事件。
 
 
-已实现多行、字素编辑、显式 decoded paste 与有界历史；原始终端缓冲/RuneError 的框架限制见 README。当前本地命令为 `/cache`、`/context`、`/compact [instructions]`、`/effort [level|auto|reset]`、`/skills`、`/hooks`、`/plugins`、`/tasks`、`/rename [标题]`、`/resume [thread-id]`、`/plan [off]`，显式 Skill 使用 `/<name>` / `$name`。已支持命令和显式 Skill 的首词补全；尚无 `/help`、`/clear`、`/fork`、`/model`、`/provider`、`/permissions`、`/mcp`、`/agents`、`/cost`、`/doctor`；`easycode resume` 是独立 CLI 入口。
+已实现多行、字素编辑、显式 decoded paste 与有界历史；原始终端缓冲/RuneError 的框架限制见 README。当前本地命令为 `/cache`、`/context`、`/compact [instructions]`、`/effort [level|auto|reset]`、`/skills`、`/hooks`、`/plugins`、`/tasks`、`/rename [标题]`、`/resume [thread-id]`、`/branch [标题]`、`/fork [标题]`、`/plan [off]`，显式 Skill 使用 `/<name>` / `$name`。已支持命令和显式 Skill 的首词补全；尚无 `/help`、`/clear`、`/model`、`/provider`、`/permissions`、`/mcp`、`/agents`、`/cost`、`/doctor`；`easycode resume` 是独立 CLI 入口。
 
 ## 14. 配置与密钥
 
@@ -1062,7 +1068,7 @@ ADR 存放在 `docs/architecture/adr/`，模板见该目录的 `README.md`，并
 
 列表与独立 `sessions list` 共用 `loadSessionCatalog` 生命周期；首次和刷新协调，成功后的切范围仅查询，最多 200 条，正文不入 Catalog。列表查询可匹配已投影标题，`/resume` 的直接参数按完整 thread ID 定位。`previewSession` 在 descriptor-bound lease 下 Load/Replay、恢复顺序及压缩用量校验，关闭句柄后才发布预览；不用 resume、writer、Repair、artifact 或 Runtime。`provider.StoredHistoryReader` 是有实际消费者的单向离线接口，两家独立 reader 与正式恢复共享私有 native 校验和压缩来源计算，无连接、凭据或新增 capability。
 
-选择理由、参考工程版本、预算和验证方案见 [启动选择器设计](../../openspec/changes/archive/2026-11-04-add-interactive-session-picker/design.md)和[聊天内恢复设计](../../openspec/changes/archive/2026-11-19-add-in-chat-session-resume/design.md)。这是一块恢复入口的完整切片，不代表 P5 整体完成；Markdown 已由独立切片交付，被动推理阅读和命令/Skill 补全已由独立切片交付；fork picker 仍未实现。
+选择理由、参考工程版本、预算和验证方案见 [启动选择器设计](../../openspec/changes/archive/2026-11-04-add-interactive-session-picker/design.md)和[聊天内恢复设计](../../openspec/changes/archive/2026-11-19-add-in-chat-session-resume/design.md)。这是一块恢复入口的完整切片，不代表 P5 整体完成；Markdown 已由独立切片交付，被动推理阅读和命令/Skill 补全和当前会话分支已由独立切片交付。
 
 选择器接收以 owner 锁内对操作/父取消 done channel 的非阻塞检查为线性化点；此前已取消的结果不能进入 Chat。资源仍由同一 worker 持有到最终关闭，不在锁内调用 context 实现或执行关闭。预览的原文预算和安全展示预算分别裁剪，任何省略都保留可见标记；展示不会持有被截掉的大字符串 backing storage。短屏确认保留当前选项并允许滚动目录，短屏预览允许滚过状态头部。
 

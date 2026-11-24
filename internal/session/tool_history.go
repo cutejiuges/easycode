@@ -80,11 +80,11 @@ func (entry ToolHistoryEntry) InputResultEvidence() (tool.InputResultEvidence, e
 	return inputResultEvidence(selection, entry.Admission, entry.Result)
 }
 
-// ToolArtifactReferences 只投影已提交工具结果中的授权引用，不访问对象。
-func ToolArtifactReferences(entries []ToolHistoryEntry) []tool.ArtifactDescriptor {
+// ToolArtifactReferences 只投影当前线程已提交的授权引用，不访问对象。
+func ToolArtifactReferences(thread domain.ThreadID, entries []ToolHistoryEntry) []tool.ArtifactDescriptor {
 	var refs []tool.ArtifactDescriptor
 	for _, entry := range entries {
-		if !entry.HasResult {
+		if !entry.HasResult || entry.Origin.ThreadID != thread {
 			continue
 		}
 		refs = append(refs, entry.Result.ArtifactDescriptors()...)

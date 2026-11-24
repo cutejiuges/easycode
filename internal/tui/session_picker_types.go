@@ -1,13 +1,15 @@
 package tui
 
 import (
-	"easycode/internal/domain"
 	"time"
+
+	"easycode/internal/domain"
 )
 
 // SessionEntry 是选择器允许展示和搜索的元数据。
 type SessionEntry struct {
 	ThreadID         domain.ThreadID
+	ParentThreadID   domain.ThreadID
 	UpdatedAt        time.Time
 	Title            domain.SessionTitle
 	Family           domain.ProviderFamily
@@ -25,6 +27,7 @@ type PreviewMessage struct {
 // SessionPreview 仅供当前预览展示，不是恢复事实源。
 type SessionPreview struct {
 	Title                 domain.SessionTitle
+	ParentThreadID        domain.ThreadID
 	Messages              []PreviewMessage
 	Incomplete, Truncated bool
 }
@@ -38,6 +41,7 @@ const (
 	PickerPreview
 	PickerResume
 	PickerOpen
+	PickerBranch
 )
 
 // PickerRequest 将请求身份、范围和目标绑定在一起。
@@ -47,6 +51,7 @@ type PickerRequest struct {
 	All       bool
 	Source    domain.ThreadID
 	ThreadID  domain.ThreadID
+	Title     domain.SessionTitle
 }
 
 // PickerStage 区分查询结果、待接管候选和宿主完成后的交付。
@@ -57,6 +62,15 @@ const (
 	PickerPrepared
 	PickerActivated
 	PickerCancelled
+)
+
+// BranchPublication 区分本地分支创建的持久化结果。
+type BranchPublication uint8
+
+const (
+	BranchNotPublished BranchPublication = iota
+	BranchPublished
+	BranchPublicationUncertain
 )
 
 // PickerResult 是宿主已完成操作的投影，不携带存储句柄。
@@ -71,6 +85,8 @@ type PickerResult struct {
 	Error             string
 	Fatal             bool
 	DirectoryMismatch bool
+	BranchThreadID    domain.ThreadID
+	BranchPublication BranchPublication
 }
 
 // PickerHost 只向界面提供操作接收、结果和资源接收确认。

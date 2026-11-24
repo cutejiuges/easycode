@@ -143,6 +143,72 @@ func TestSessionStartRealRunnerBothProvidersAndCheckpointRestore(t *testing.T) {
 	}
 }
 
+func TestSessionStartBranchUsesDeferredResumeContext(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	workspace, home := privateAppTempDir(t), privateAppTempDir(t)
+	writeSessionStartFixture(t, workspace, false)
+	requests := make(chan []byte, 3)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		select {
+		case requests <- body:
+		default:
+			t.Error("unexpected model request")
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		serveStopAssistant(w, domain.ProviderOpenAI, "fixture-answer")
+	}))
+	defer server.Close()
+	cfg := config.Config{Provider: config.Provider{
+		Family: domain.ProviderOpenAI, Model: "fixture-model", BaseURL: server.URL, APIKey: secret.New("branch-context-fixture"),
+	}}
+	paths := dataPaths{sessionRoot: filepath.Join(home, "sessions"), catalogPath: filepath.Join(home, "catalog.json")}
+	owner, source, candidates := startBranchFixture(t, ctx, cfg, paths, workspace)
+	if got := runSessionStartFixtureTurn(t, ctx, source, "source prompt"); !slices.Equal(got, []domain.SessionStartSource{domain.SessionStartStartup}) {
+		t.Fatal("source did not commit startup context", got)
+	}
+	waitCompactionIdle(t, source)
+	branch := activateBranchFixture(t, ctx, owner, source, candidates, "Trial")
+	path, err := branch.service.repository.JournalPath(branch.identity.ThreadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := readSwitchJournal(t, path)
+	if len(requests) != 1 || switchJournalRecord(t, seed, false).EventKind != session.EventThreadForked ||
+		bytes.Contains(seed, []byte("context-resume")) {
+		t.Fatal("branch creation dispatched a model or SessionStart")
+	}
+	<-requests
+	copyRoot, _ := installThreadFixture(t, seed, branch.identity.ThreadID)
+	cold, err := openChatResourcesWithHooks(ctx, cfg, dataPaths{sessionRoot: copyRoot}, string(branch.identity.ThreadID), false, workspace, chatResourceHooks{interactiveApprovals: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeResumeTestResources(t, cold)
+	if err := cold.session.StartInteractive(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, chat := range []*chatResources{branch, cold} {
+		if got := runSessionStartFixtureTurn(t, ctx, chat, "branch prompt"); !slices.Equal(got, []domain.SessionStartSource{domain.SessionStartResume}) {
+			t.Fatal("branch did not independently authorize resume context", got)
+		}
+		waitCompactionIdle(t, chat)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("wanted two model requests, got %d", len(requests))
+	}
+	live, reopened := <-requests, <-requests
+	if !bytes.Equal(live, reopened) || bytes.Count(live, []byte("context-startup")) != 1 ||
+		bytes.Count(live, []byte("context-resume")) != 1 || !bytes.Contains(live, []byte("branch prompt")) {
+		t.Fatal("branch continuation changed inherited or newly authorized context")
+	}
+}
+
 func writeSessionStartFixture(t *testing.T, workspace string, stop bool) {
 	t.Helper()
 	dir := filepath.Join(workspace, ".easycode")

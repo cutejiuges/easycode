@@ -8,15 +8,29 @@ import (
 	"easycode/internal/protocol"
 )
 
-// ResumePermit 将一次交接绑定到源控制实例，保持到释放获确认或源关闭。
+// HandoffIntent 区分共享空闲许可的恢复和分支入口。
+type HandoffIntent uint8
+
+const (
+	HandoffResume HandoffIntent = iota + 1
+	HandoffBranch
+)
+
+// ResumePermit 将一次交接绑定到源控制实例和意图，保持到释放获确认或源关闭。
 type ResumePermit struct {
 	source *ChatSession
+	intent HandoffIntent
 	held   atomic.Bool
 }
 
 // Valid 报告此许可是否仍由健康的源控制实例持有。
 func (p *ResumePermit) Valid() bool {
 	return p != nil && p.held.Load() && p.source.Live()
+}
+
+// Matches 核对当前许可是否属于同一个活跃源和交接意图。
+func (p *ResumePermit) Matches(source *ChatSession, intent HandoffIntent) bool {
+	return p != nil && p.source == source && p.intent == intent && p.Valid()
 }
 
 // Release 在交接未被接受时，等待 owner 确认释放此许可。
@@ -39,18 +53,21 @@ func (session *ChatSession) Live() bool {
 	live, loop, cancelled := session.started && !session.closed && session.interactive, session.loop, session.runCancelled
 	session.mu.Unlock()
 	return live && resumeSignalClosed(loop.ready) && !resumeSignalClosed(cancelled) &&
-		loop.state.Load() == agentLoopRunning && !session.runtime.poisoned.Load()
+		loop.state.Load() == agentLoopRunning && !session.runtime.poisoned.Load() && !session.runtime.journal.Poisoned()
 }
 
-// ReserveResume 在处理输入或启动交接之间确定唯一顺序。
-func (session *ChatSession) ReserveResume(ctx context.Context) (*ResumePermit, error) {
+// ReserveHandoff 在处理输入或接纳指定交接之间确定唯一顺序。
+func (session *ChatSession) ReserveHandoff(ctx context.Context, intent HandoffIntent) (*ResumePermit, error) {
 	if ctx == nil {
-		return nil, fault.New(fault.CodeInvalidInput, "resume context is required")
+		return nil, fault.New(fault.CodeInvalidInput, "handoff context is required")
+	}
+	if intent != HandoffResume && intent != HandoffBranch {
+		return nil, fault.New(fault.CodeInvalidInput, "handoff intent is invalid")
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, fault.Wrap(fault.CodeUserCancelled, "resume admission was cancelled", err)
+		return nil, fault.Wrap(fault.CodeUserCancelled, "session handoff admission was cancelled", err)
 	}
-	permit := &ResumePermit{source: session}
+	permit := &ResumePermit{source: session, intent: intent}
 	session.mu.Lock()
 	if !session.started || session.closed || !session.interactive {
 		session.mu.Unlock()
@@ -58,7 +75,7 @@ func (session *ChatSession) ReserveResume(ctx context.Context) (*ResumePermit, e
 	}
 	if session.resumePermit != nil || session.appendAdmissions != 0 || session.workModePending {
 		session.mu.Unlock()
-		return nil, fault.New(fault.CodeSessionBusy, "session is not idle for resume")
+		return nil, fault.New(fault.CodeSessionBusy, "session is not idle for handoff")
 	}
 	session.resumePermit = permit
 	loop := session.loop
@@ -74,7 +91,7 @@ func (session *ChatSession) beginAppend() error {
 	session.mu.Lock()
 	defer session.mu.Unlock()
 	if session.resumePermit != nil {
-		return fault.New(fault.CodeSessionBusy, "session is reserved for resume")
+		return fault.New(fault.CodeSessionBusy, "session is reserved for handoff")
 	}
 	if session.workModePending {
 		return fault.New(fault.CodeSessionBusy, "work mode change is pending")
@@ -106,10 +123,10 @@ type resumeRequest struct {
 
 func (loop *AgentLoop) requestResume(ctx context.Context, permit *ResumePermit, release bool) error {
 	if ctx == nil {
-		return fault.New(fault.CodeInvalidInput, "resume context is required")
+		return fault.New(fault.CodeInvalidInput, "handoff context is required")
 	}
 	if err := ctx.Err(); err != nil {
-		return fault.Wrap(fault.CodeUserCancelled, "resume admission was cancelled", err)
+		return fault.Wrap(fault.CodeUserCancelled, "session handoff admission was cancelled", err)
 	}
 	request := resumeRequest{permit: permit, release: release, cancelled: ctx.Done(), result: make(chan error, 1)}
 	select {
@@ -117,7 +134,7 @@ func (loop *AgentLoop) requestResume(ctx context.Context, permit *ResumePermit, 
 		// owner 必须返回确定结果，即使调用方已取消等待。
 		return <-request.result
 	case <-ctx.Done():
-		return fault.Wrap(fault.CodeUserCancelled, "resume admission was cancelled", ctx.Err())
+		return fault.Wrap(fault.CodeUserCancelled, "session handoff admission was cancelled", ctx.Err())
 	case <-loop.done:
 		if release {
 			return nil
@@ -137,11 +154,11 @@ func (state *agentLoopRunState) handleResume(request resumeRequest) error {
 		return fault.New(fault.CodeTurnFailed, "interactive session is not available")
 	}
 	if state.resumePermit != nil || state.active != nil || state.compaction != nil || len(state.queue) != 0 {
-		return fault.New(fault.CodeSessionBusy, "session is not idle for resume")
+		return fault.New(fault.CodeSessionBusy, "session is not idle for handoff")
 	}
 	// 接收点只检查完成信号并安装许可。未获接收的请求不会留下许可。
 	if resumeSignalClosed(request.cancelled) || resumeSignalClosed(state.runContextDone) {
-		return fault.Wrap(fault.CodeUserCancelled, "resume admission was cancelled", context.Canceled)
+		return fault.Wrap(fault.CodeUserCancelled, "session handoff admission was cancelled", context.Canceled)
 	}
 	state.resumePermit = request.permit
 	state.resumePermit.held.Store(true)

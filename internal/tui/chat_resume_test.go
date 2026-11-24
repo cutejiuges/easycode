@@ -118,7 +118,7 @@ func TestInChatCommandsKeepPreCompactCancellationInChat(t *testing.T) {
 	chat.prepareCompaction(id, domain.ManualCompactionScope())
 	chat.compaction.stage = compactionChecking
 	model, host := resumeTestShell(chat)
-	for _, draft := range []string{"/resume " + string(resumeThreadB), "/rename New title"} {
+	for _, draft := range []string{"/resume " + string(resumeThreadB), "/rename New title", "/branch New branch"} {
 		model.chat.composer.clear()
 		model = resumeType(model, draft)
 		updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -136,6 +136,95 @@ func TestInChatCommandsKeepPreCompactCancellationInChat(t *testing.T) {
 	cmd()
 	if session.cancelled != id || len(host.cancelRequests) != 0 {
 		t.Fatal("Ctrl+C did not cancel the current compaction exclusively")
+	}
+}
+
+func TestBranchCompletionKeepsPreCompletionDraftAndPublication(t *testing.T) {
+	chat := resumeChatFixture(resumeThreadA, protocol.TranscriptListPage{}).WithSkills([]domain.SkillListEntry{
+		completionSkillEntry(t, "branch", "Review a branch"), completionSkillEntry(t, "fork", "Review a fork"),
+	})
+	model, host := resumeTestShell(chat)
+	for _, name := range []string{"branch", "fork"} {
+		model = pickerKey(resumeType(model, "$"+name[:3]), tea.KeyTab)
+		if model.chat.composer.text != "$"+name+" " || len(host.requests) != 0 {
+			t.Fatal("the same-named Skill lost its explicit completion")
+		}
+		model.chat.composer.clear()
+	}
+	model = pickerKey(resumeType(model, "/bra"), tea.KeyTab)
+	if model.chat.composer.text != "/branch " || len(host.requests) != 0 {
+		t.Fatal("Tab created a branch instead of filling the command")
+	}
+	model.chat.composer.clear()
+	draft := `/bra  Review @src "v2"`
+	model = resumeType(model, draft)
+	model.chat.composer.moveTo(len("/bra"))
+	model = pickerKey(model, tea.KeyEnter)
+	request := model.request
+	if len(host.requests) != 1 || request.Operation != PickerBranch || request.Source != resumeThreadA ||
+		request.ThreadID != "" || request.Title != `Review @src "v2"` || model.phase != shellRecovering {
+		t.Fatalf("completion did not produce one literal branch request: %#v", host.requests)
+	}
+	model = pickerUpdate(model, tea.WindowSizeMsg{Width: 71, Height: 19})
+	model = pickerKey(model, tea.KeyCtrlC)
+	branch := resumeCandidate(t, resumeThreadB, "branch history").WithSessionTitle(request.Title)
+	result := PickerResult{Request: request, Stage: PickerPrepared, Chat: &branch, BranchThreadID: resumeThreadB, BranchPublication: BranchPublished}
+	model = pickerUpdate(model, result)
+	if len(host.cancelRequests) != 1 || len(host.accepted) != 0 || model.ReportedBranchRequestID() != 0 || model.phase != shellCancelling {
+		t.Fatal("a late candidate was accepted or counted as a delivered result")
+	}
+	result.Stage = PickerCancelled
+	model = pickerUpdate(model, result)
+	if model.phase != shellChat || model.chat.browser.thread != resumeThreadA || model.chat.composer.text != draft ||
+		model.chat.composer.cursor != len("/bra") || model.chat.composer.width != 71 || model.ReportedBranchRequestID() != request.ID ||
+		!strings.Contains(strings.ReplaceAll(model.View(), "\n", ""), "Open it with /resume "+string(resumeThreadB)) {
+		t.Fatalf("cancel lost the source draft or the published branch: %s", model.View())
+	}
+	model.chat.sessionStartStatus = "SessionStart (startup) · Context saved (1) · Ctrl+O for details"
+	model = pickerUpdate(model, tea.WindowSizeMsg{Width: 35, Height: 5})
+	if !strings.Contains(model.View(), "Ctrl+G: branch details") {
+		t.Fatal("previous SessionStart status hid the new branch notice on a narrow terminal")
+	}
+}
+
+func TestBranchAliasPreservesLiteralTitleAndMountsValidatedTarget(t *testing.T) {
+	model, host := resumeTestShell(resumeChatFixture(resumeThreadA, protocol.TranscriptListPage{}))
+	model = pickerUpdate(model, tea.KeyMsg{Type: tea.KeyRunes, Paste: true, Runes: []rune("/branch\t")})
+	model = pickerKey(model, tea.KeyEnter)
+	if model.chat.composer.text != "/branch\t" || len(host.requests) != 0 || !strings.Contains(model.View(), "prohibited character") {
+		t.Fatal("pasted control character was accepted as an omitted title")
+	}
+	for _, key := range []tea.KeyMsg{{Type: tea.KeyEnter, Alt: true}, {Type: tea.KeyCtrlJ}} {
+		model.chat.composer.clear()
+		model = pickerUpdate(resumeType(model, `/fork dir\`), key)
+		if !strings.HasSuffix(model.chat.composer.text, "\n") || len(host.requests) != 0 {
+			t.Fatal("an explicit editing key created a branch")
+		}
+	}
+	model.chat.composer.clear()
+	model = pickerKey(resumeType(model, `/fork dir\`), tea.KeyEnter)
+	request := model.request
+	if request.Operation != PickerBranch || request.Title != `dir\` || len(host.requests) != 1 {
+		t.Fatalf("alias lost the final backslash: %#v", request)
+	}
+	branch := resumeCandidate(t, resumeThreadB, "branch history").WithSessionTitle(request.Title)
+	result := PickerResult{Request: request, Stage: PickerPrepared, Chat: &branch, BranchThreadID: resumeThreadB, BranchPublication: BranchPublished}
+	model = pickerUpdate(model, result)
+	model = pickerKey(model, tea.KeyEsc)
+	model = pickerUpdate(model, tea.KeyMsg{Type: tea.KeyRunes, Paste: true, Runes: []rune("during handoff")})
+	if len(host.accepted) != 1 || len(host.cancelRequests) != 0 || model.phase != shellRetiring || model.ReportedBranchRequestID() != 0 {
+		t.Fatal("input crossed the accepted handoff or its report was premature")
+	}
+	result.Stage = PickerActivated
+	model = pickerUpdate(model, result)
+	if model.phase != shellChat || model.chat.composer.text != "" || model.ReportedBranchRequestID() != request.ID ||
+		!strings.Contains(model.View(), "branch history") || !strings.Contains(model.View(), "Session: dir\\") {
+		t.Fatalf("branch activation did not mount the prepared target: %s", model.View())
+	}
+	model = pickerUpdate(model, tea.WindowSizeMsg{Width: 24, Height: 6})
+	model = pickerKey(model, tea.KeyCtrlG)
+	if view := strings.ReplaceAll(scrollPickerViews(t, model), "\n", ""); !strings.Contains(view, "/resume "+string(resumeThreadA)) {
+		t.Fatalf("small terminal hid the complete source recovery command: %s", view)
 	}
 }
 
@@ -240,7 +329,7 @@ func TestInChatDirectDirectoryHintKeepsTheCompleteCommand(t *testing.T) {
 	}
 	model = pickerKey(model, tea.KeyEsc)
 	draft := "/resume " + string(resumeThreadB)
-	if model.chat.resumeDirectoryNotice != "" || model.chat.composer.text != draft || model.chat.composer.cursor != len(draft) {
+	if model.chat.handoffNotice != "" || model.chat.composer.text != draft || model.chat.composer.cursor != len(draft) {
 		t.Fatal("dismissal did not expose the restored draft")
 	}
 }

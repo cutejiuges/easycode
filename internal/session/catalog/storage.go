@@ -182,7 +182,7 @@ func compareEntry(left, right Entry) int {
 	return cmp.Compare(right.ThreadID, left.ThreadID)
 }
 
-// LatestCompatible 返回精确条件下最近的 root thread。
+// LatestCompatible 返回精确条件下最近的可恢复线程。
 func (catalog *Catalog) LatestCompatible(ctx context.Context, selector Selector) (Entry, bool, error) {
 	if err := validateSelector(selector); err != nil {
 		return Entry{}, false, err

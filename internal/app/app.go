@@ -70,6 +70,7 @@ type chatResourceHooks struct {
 	environment            *chatEnvironment
 	lifetime               context.Context
 	expectedResumeCWD      string
+	branch                 *branchCreation
 }
 
 type chatResources struct {
@@ -351,6 +352,10 @@ func openChatResourcesWithSnapshot(
 			return nil, selectErr
 		}
 		resumeThreadID = string(threadID)
+		service.expectedResumeCWD, err = session.NormalizeCreationCWD(creationCWD)
+		if err != nil {
+			return nil, fault.New(fault.CodeSessionCatalog, "session catalog selector is invalid")
+		}
 		if hooks.afterContinueSelection != nil {
 			hooks.afterContinueSelection(threadID)
 		}
@@ -362,7 +367,9 @@ func openChatResourcesWithSnapshot(
 	cleanup.add(providerInstance.Close)
 	boundSession := binding.bindSession(providerInstance)
 	var assembled assembledSession
-	if resumeThreadID == "" {
+	if hooks.branch != nil {
+		assembled, err = service.branch(ctx, boundSession, applicationConfig.Provider.Model, hooks.branch, artifactLayout.Check)
+	} else if resumeThreadID == "" {
 		assembled, err = service.create(
 			ctx, boundSession, applicationConfig.Provider.Model, creationCWD,
 		)
@@ -385,7 +392,7 @@ func openChatResourcesWithSnapshot(
 		return nil, fault.New(fault.CodeSessionWrite, "artifact storage is unavailable")
 	}
 	cleanup.add(artifactStore.Close)
-	descriptors := session.ToolArtifactReferences(assembled.tools)
+	descriptors := session.ToolArtifactReferences(assembled.identity.ThreadID, assembled.tools)
 	artifactReferences, err := tool.NewArtifactReferences(assembled.identity.ThreadID, descriptors)
 	if err != nil {
 		return nil, fault.New(fault.CodeSessionCorruption, "artifact references are invalid")
@@ -458,9 +465,7 @@ func openChatResourcesWithSnapshot(
 		return nil, err
 	}
 	cleanup.add(queries.Close)
-	if assembled.taskErr != nil {
-		return nil, fault.New(fault.CodeSessionCorruption, "task progress history is invalid")
-	}
+	restored := resumeThreadID != "" || hooks.branch != nil
 	runtimeInstance, err := chatRuntime.New(assembled.conversation, chatRuntime.Config{
 		InitialSessionTitle: assembled.title,
 		InitialTaskProgress: assembled.tasks,
@@ -471,7 +476,7 @@ func openChatResourcesWithSnapshot(
 		SessionStartHistory: queries,
 		StopHistory:         queries,
 		SessionID:           assembled.identity.SessionID, ThreadID: assembled.identity.ThreadID,
-		Journal: hooks.recovery.journalForRecovery(assembled.writer), ContextProfile: contextProfile, CachePolicy: settings.Cache, RestoredCacheBaseline: resumeThreadID != "",
+		Journal: hooks.recovery.journalForRecovery(assembled.writer), ContextProfile: contextProfile, CachePolicy: settings.Cache, RestoredCacheBaseline: restored,
 		ProviderWire:         binding.wire,
 		ToolBinding:          toolBinding,
 		InteractiveQuestions: hooks.interactiveApprovals,
@@ -525,7 +530,7 @@ func openChatResourcesWithSnapshot(
 	}
 	if hooks.interactiveApprovals {
 		source := domain.SessionStartStartup
-		if resumeThreadID != "" {
+		if restored {
 			source = domain.SessionStartResume
 		}
 		if err := runtimeInstance.InstallSessionStartSource(source); err != nil {
@@ -545,7 +550,7 @@ func openChatResourcesWithSnapshot(
 		identity: assembled.identity,
 		provider: providerInstance, workspace: workspace, service: service, writer: assembled.writer,
 		skills: skillSource.Entries(), runtime: runtimeInstance, session: chatRuntime.NewChatSession(runtimeInstance), history: assembled.history,
-		repair: assembled.repair, resumed: resumeThreadID != "", sharedRoots: hooks.environment != nil,
+		repair: assembled.repair, resumed: restored, sharedRoots: hooks.environment != nil,
 	}
 	cleanup.release()
 	return resources, nil

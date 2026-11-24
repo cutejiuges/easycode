@@ -99,7 +99,7 @@ committed 用户消息 SHALL 结束前一个 assistant 文本 cell，后续 delt
 
 一次成功 turn 结束后，TUI SHALL 返回可输入状态并允许提交下一轮。后续 turn SHALL 使用同一个会话级 Runtime 和启动时所选 Provider 的原生历史；Anthropic 与 OpenAI 历史不得互相转换或共享。
 
-用户显式恢复 root thread 时，TUI SHALL 在接受新输入前使用 `HistoryProjector` 的语义视图按 turn 顺序初始化 transcript，并继续使用已恢复的 Provider 原生历史。TUI MUST NOT 解析 JSONL payload、Provider wire、signature 或 encrypted reasoning。未指定 resume 的普通启动 SHALL 创建新 Session，不得隐式恢复最近历史；运行中切换 Provider 仍不属于本能力。
+用户显式恢复兼容根线程或分支，或完成交互式分支切换时，TUI SHALL 在接受新输入前使用 `HistoryProjector` 的语义视图按 turn 顺序初始化 transcript，并继续使用已恢复的 Provider 原生历史。TUI MUST NOT 解析 JSONL payload、Provider wire、signature 或 encrypted reasoning。未指定 resume 的普通启动 SHALL 创建新 Session，不得隐式恢复最近历史；运行中切换 Provider 仍不属于本能力。
 
 #### Scenario: Submit a second turn
 
@@ -121,9 +121,15 @@ committed 用户消息 SHALL 结束前一个 assistant 文本 cell，后续 delt
 
 #### Scenario: Restart the process
 
-- **WHEN** 用户退出、重新启动 EasyCode 并显式选择兼容的 root thread
+- **WHEN** 用户退出、重新启动 EasyCode 并显式选择兼容的根线程或分支
 - **THEN** TUI 在进入 idle 前显示已完成 turn 的用户与 assistant 可见文本
 - **THEN** 后续 turn 使用恢复后的对应 Provider native history
+
+#### Scenario: Initialize the branch before enabling input
+
+- **WHEN** 新分支完成交接，或者用户重启并恢复已有分支
+- **THEN** TUI 在可提交下一输入前初始化已验证的目标 transcript，按原顺序展示继承及分支自身的可见历史
+- **THEN** 下一 turn 使用分支对应 Provider 的原生历史，创建分支的命令与源草稿不会成为分支输入
 
 #### Scenario: Restart without resume
 
@@ -248,6 +254,7 @@ Write 的 session allow 标签 SHALL 明确仅授权本 Runtime 的创建和覆�
 #### Scenario: Keep rendering free of filesystem effects
 - **WHEN** 多次渲染同一个 Write approval
 - **THEN** 不读取目标、不探测目录、不重新生成候选或授予权限
+
 ### Requirement: Command approval follows Claude Code interaction semantics
 
 Exec安全摘要 SHALL简洁说明仅支持前台命令，主动脱离的进程可能继续运行；不得将sandbox或进程组描述成任意进程树的回收保证。
@@ -277,7 +284,7 @@ TUI SHALL将typed Exec approval request投影为modal overlay，显示完整命�
 
 #### Scenario: Inspect a completed command
 - **WHEN** 用户在命令终态后按 Ctrl+O 并选择该命令进入详情
-- **THEN** 详情立即展示相同完整命令和冻结有界结果，存在保存引用时通过 typed 宿主查询异步获取首个输出页
+- **THEN** 详情立即展示相同完整命令和冻结有界结果，存在当前线程已授权的保存引用时通过 typed 宿主查询异步获取首个输出页
 - **THEN** View/resize 不读取外部资源，分页 I/O 只在异步查询执行，不改变候选或冻结模型输出预算
 
 TUI 只能消费 typed RuntimeEvent 和宿主 typed transcript/detail 查询结果，不得直接读取 executor、Session、文件系统、PID 或 Provider native item。活动Exec期间composer不得提交并发turn，定向interrupt保持可用；只有Runtime已经完成进程cleanup并发布terminal后，TUI才可恢复idle输入状态。
@@ -301,7 +308,7 @@ TUI 只能消费 typed RuntimeEvent 和宿主 typed transcript/detail 查询结�
 - **THEN** B 的内容与游标不受影响，旧请求被取消并由 owner 收尾
 
 #### Scenario: Browse restored commands
-- **WHEN** 恢复后打开列表并查看较早命令 stderr
+- **WHEN** 恢复后打开列表并查看属于当前线程的较早命令 stderr
 - **THEN** 按 seq 找到历史命令、独立切流翻页，零 Provider 请求、零 tool ledger 写入
 
 #### Scenario: Show partial storage
@@ -314,13 +321,17 @@ TUI 只能消费 typed RuntimeEvent 和宿主 typed transcript/detail 查询结�
 - **WHEN** 用户带草稿浏览 Read/Search 组时出现审批
 - **THEN** 审批获得焦点，浏览按键不处理；审批完成后恢复原浏览位置，退出后草稿不变
 
+#### Scenario: Show a saved ancestor command without a local read action
+- **WHEN** 用户在分支按 Ctrl+O 查看某个祖先线程已保存的 stdout 或 stderr
+- **THEN** 详情保留冻结预览与保存状态，并给出生成该项的完整线程 ID。没有针对祖先的首屏原文查询或分页入口；选择本线程已授权的命令仍可分页。
+
 ### Requirement: Composer editing preserves grapheme boundaries
 
 聊天 composer SHALL 支持在光标处插入文本、按扩展字素移动左右光标、用 Backspace 删除前一字素和 Delete 删除后一字素。光标 MUST 始终处于合法字素边界。Home/End 与 Ctrl+A/E SHALL 移到逻辑行首/尾，Ctrl+B/F SHALL 等价于左/右。输入补全激活时上下键 SHALL 选择候选；未激活补全时，上下键 SHALL 优先在软折行后的视觉行之间移动并保留目标显示列；较短行不得使光标越界或落在字素中间。水平移动、修改文本、resize 和历史切换 SHALL 重置目标列。
 
-Alt+Enter 与 Ctrl+J SHALL 插入 LF。普通 Enter 且光标前一字素为反斜杠时 SHALL 以 LF 替换该反斜杠，不提交。输入中的 CRLF 和独立 CR SHALL 规范化为 LF，不做其他 Unicode 规范化。输入补全可见且激活时手动 Tab SHALL 只接受候选；当前合法目标因 Esc、粘贴或 modal 返回而被抑制且有可显示匹配时，手动 Tab SHALL 只重新打开列表；其他未激活补全时手动 Tab SHALL 保持无操作。粘贴中的 Tab 属于正文，不接受候选。空闲 Esc SHALL 先关闭激活补全并保留草稿；无激活补全的空闲 Esc 和空闲非空草稿 Ctrl+C SHALL 保持草稿，空闲空草稿 Ctrl+C 的退出语义不变。
+Alt+Enter 与 Ctrl+J SHALL 插入 LF。普通 Enter 且光标前一字素为反斜杠时 SHALL 以 LF 替换该反斜杠，不提交。交互式 `/branch` 或 `/fork` 的明确标题末尾是例外，普通 Enter 提交时 SHALL 保留该反斜杠作为标题字符。输入中的 CRLF 和独立 CR SHALL 规范化为 LF，不做其他 Unicode 规范化。输入补全可见且激活时手动 Tab SHALL 只接受候选；当前合法目标因 Esc、粘贴或 modal 返回而被抑制且有可显示匹配时，手动 Tab SHALL 只重新打开列表；其他未激活补全时手动 Tab SHALL 保持无操作。粘贴中的 Tab 属于正文，不接受候选。空闲 Esc SHALL 先关闭激活补全并保留草稿；无激活补全的空闲 Esc 和空闲非空草稿 Ctrl+C SHALL 保持草稿，空闲空草稿 Ctrl+C 的退出语义不变。
 
-普通 Enter 的反斜杠续行和显式换行 SHALL 在补全提交或内置 slash 命令分派之前处理。仅实际提交意图可执行内置命令或沿用补全提交，续行保留草稿其余内容。
+普通 Enter 的反斜杠续行和显式换行 SHALL 在补全提交或内置 slash 命令分派之前处理，明确分支标题末尾的反斜杠按前述规则处理。仅实际提交意图可执行内置命令或沿用补全提交，续行保留草稿其余内容。
 
 #### Scenario: Edit inside a Unicode line
 - **WHEN** 用户在中文、组合重音或 ZWJ emoji 之间移动、插入和前后删除
@@ -331,7 +342,7 @@ Alt+Enter 与 Ctrl+J SHALL 插入 LF。普通 Enter 且光标前一字素为反�
 - **THEN** 短行光标停在合法可达边界，下一长行恢复原目标显示列
 
 #### Scenario: Insert newlines without submitting
-- **WHEN** 用户按 Alt+Enter、Ctrl+J，或在反斜杠后按普通 Enter
+- **WHEN** 用户按 Alt+Enter、Ctrl+J，或在普通正文的反斜杠后按普通 Enter
 - **THEN** 只插入规定的换行，不产生提交、历史条目或 Provider 请求
 
 #### Scenario: Keep multiline editing separate from exit
@@ -349,6 +360,10 @@ Alt+Enter 与 Ctrl+J SHALL 插入 LF。普通 Enter 且光标前一字素为反�
 #### Scenario: Continue a slash draft without executing it
 - **WHEN** composer 输入 `/rename demo\` 且光标紧跟反斜杠，用户按普通 Enter
 - **THEN** 反斜杠换成 LF，保留草稿，Session title 和 journal 不发生变化
+
+#### Scenario: Keep a trailing backslash in an explicit branch title
+- **WHEN** composer 输入 `/branch demo\` 或 `/fork demo\`，且光标位于标题末尾，用户按普通 Enter
+- **THEN** 按本地分支规则提交包含原样反斜杠的标题。Alt+Enter 或 Ctrl+J 则只编辑草稿，不请求创建分支
 
 ### Requirement: Explicit text paste is atomic and bounded
 

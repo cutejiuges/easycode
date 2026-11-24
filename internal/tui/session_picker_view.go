@@ -62,6 +62,9 @@ func previewBody(preview SessionPreview) string {
 // View 只渲染当前拥有终端焦点的投影。
 func (m StartupModel) View() string {
 	if m.closing && m.finalNotice != "" {
+		if m.request.Operation == PickerBranch {
+			return pickerWrapped(pickerEscaped(m.finalNotice, 2048, true), m.width, m.height, 0)
+		}
 		return pickerWrapped(pickerSafe(m.finalNotice, 1024), m.width, m.height, 0)
 	}
 	switch m.phase {
@@ -70,8 +73,14 @@ func (m StartupModel) View() string {
 	case shellOpening:
 		return pickerWrapped("Opening session chooser…\nEsc: cancel", m.width, m.height, 0)
 	case shellRecovering:
+		if m.request.Operation == PickerBranch {
+			return pickerWrapped("Creating branch…\nEsc: cancel", m.width, m.height, 0)
+		}
 		return pickerWrapped("Resuming session…\nEsc: cancel", m.width, m.height, 0)
 	case shellCancelling:
+		if m.request.Operation == PickerBranch {
+			return pickerWrapped("Cancelling branch — waiting for cleanup", m.width, m.height, 0)
+		}
 		return pickerWrapped("Cancelling resume — waiting for cleanup", m.width, m.height, 0)
 	case shellRetiring:
 		return pickerWrapped("Switching sessions — closing previous session", m.width, m.height, 0)
@@ -99,6 +108,9 @@ func (m pickerModel) view() string {
 		} else if m.preview != nil {
 			if title := m.preview.Title; title != "" {
 				lines = append(lines, strings.Split(ansi.Hardwrap("Title: "+string(title), max(1, m.width), true), "\n")...)
+			}
+			if parent := m.preview.ParentThreadID; parent.Valid() {
+				lines = append(lines, strings.Split(ansi.Hardwrap("Branch of: "+string(parent), max(1, m.width), true), "\n")...)
 			}
 			if len(m.preview.Messages) == 0 {
 				lines = append(lines, "No visible text in this session")
@@ -166,11 +178,14 @@ func (m pickerModel) view() string {
 			if entry.ThreadID == m.selected {
 				prefix = "> "
 			}
+			if entry.ParentThreadID.Valid() {
+				prefix += "Branch · "
+			}
 			updated := m.pickerTime(entry.UpdatedAt)
 			var line string
 			if entry.Title != "" {
 				metadata := updated + " " + pickerSafe(string(entry.Family)+" / "+entry.Model, 256)
-				line = prefix + ansi.Truncate(string(entry.Title)+" · "+metadata, max(0, m.width-len(prefix)), "…")
+				line = prefix + ansi.Truncate(string(entry.Title)+" · "+metadata, max(0, m.width-ansi.StringWidth(prefix)), "…")
 			} else {
 				line = prefix + updated + " " + pickerSafe(entry.Model, 256) + " " + pickerSafe(entry.CWD, 512)
 			}
@@ -225,6 +240,9 @@ func (m pickerModel) detailsText(entry SessionEntry) string {
 	text := string(entry.ThreadID) + "\n" + pickerSafe(string(entry.Family), 256) + " / " + pickerSafe(entry.Wire, 256) + "\n" + pickerSafe(entry.Model, 256) + "\nCreated in: " + pickerSafe(entry.CWD, 512)
 	if entry.Title != "" {
 		text = "Title: " + string(entry.Title) + "\nUpdated: " + m.pickerTime(entry.UpdatedAt) + "\n" + text
+	}
+	if parent := entry.ParentThreadID; parent.Valid() {
+		text += "\nBranch of: " + string(parent)
 	}
 	if m.source.Valid() && entry.CWD != m.config.CWD {
 		text += "\nOpen the creation directory with a compatible configuration and run:\neasycode --resume " + string(entry.ThreadID)

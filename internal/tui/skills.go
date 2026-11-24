@@ -11,7 +11,7 @@ import (
 // WithSkills 接收启动时冻结的列表快照，不在渲染或按键时访问来源。
 func (model Model) WithSkills(entries []domain.SkillListEntry) Model {
 	model.skills = append([]domain.SkillListEntry(nil), entries...)
-	catalog, err := newCompletionCatalog(model.skills, model.resumeEnabled, model.workMode.enabled)
+	catalog, err := newCompletionCatalog(model.skills, model.handoffEnabled, model.workMode.enabled)
 	model.completion = completionState{catalog: catalog}
 	if err != nil {
 		model.errorSummary = "completion_unavailable: " + err.Error()
@@ -49,7 +49,7 @@ func (model Model) handleSkillsKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (model Model) skillInvocationText(name string) string {
-	if isBuiltinCompletionName(name, model.resumeEnabled, model.workMode.enabled) {
+	if isBuiltinCompletionName(name, model.handoffEnabled, model.workMode.enabled) {
 		return "$" + name + " "
 	}
 	return "/" + name + " "

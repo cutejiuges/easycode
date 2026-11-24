@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"easycode/internal/domain"
@@ -10,8 +11,9 @@ import (
 )
 
 type browserQueries struct {
-	lists int
-	reads int
+	lists           int
+	reads           int
+	inheritedOrigin domain.ThreadID
 }
 
 func (q *browserQueries) ListTranscript(context.Context, protocol.TranscriptListQuery) (protocol.TranscriptListPage, error) {
@@ -23,7 +25,37 @@ func (q *browserQueries) ListTranscript(context.Context, protocol.TranscriptList
 	second.Cursor.Sequence = 1
 	second.Activity.InvocationID = "018f1d8a-7b5c-7def-8123-456789abcdec"
 	second.Activity.Summary = "printf old"
+	if q.inheritedOrigin.Valid() {
+		first.Stdout.Readable, first.Stderr.Readable = false, false
+		first.Stdout.SourceThreadID, first.Stderr.SourceThreadID = q.inheritedOrigin, q.inheritedOrigin
+	}
 	return protocol.TranscriptListPage{Items: []protocol.TranscriptListItem{first, second}}, nil
+}
+
+func TestInheritedCommandOutputDoesNotRequestForeignArtifactPages(t *testing.T) {
+	m, queries, _ := browserModel(t)
+	queries.inheritedOrigin = resumeThreadA
+	m, cmd := browserKey(t, m, tea.KeyCtrlO)
+	m = updateModel(t, m, cmd())
+	m, cmd = browserKey(t, m, tea.KeyEnter)
+	m = updateModel(t, m, cmd())
+	view := strings.ReplaceAll(m.View(), "\n", "")
+	for _, expected := range []string{"/resume " + string(resumeThreadA), "stdout: Saved 100000 bytes · partial prefix", "stderr: Saved 3 bytes · complete", "frozen new"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("inherited saved output lost %q: %s", expected, view)
+		}
+	}
+	m, cmd = browserKey(t, m, tea.KeyTab)
+	if cmd != nil || m.browser.stream != "" || queries.reads != 0 {
+		t.Fatal("inherited output consumed raw artifact paging")
+	}
+	m, _ = browserKey(t, m, tea.KeyEsc)
+	m, _ = browserKey(t, m, tea.KeyDown)
+	m, cmd = browserKey(t, m, tea.KeyEnter)
+	updateModel(t, m, cmd())
+	if queries.reads != 1 {
+		t.Fatal("the current conversation's saved output was no longer prefetched")
+	}
 }
 func (q *browserQueries) ReadTranscriptBody(_ context.Context, query protocol.TranscriptBodyQuery) (protocol.TranscriptBodyPage, error) {
 	text := "frozen new"

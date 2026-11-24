@@ -65,11 +65,7 @@ func TestRunValidatesStreamJSONMatrixBeforeApplicationSideEffects(t *testing.T) 
 
 func TestHeadlessProcessExitCodesAndJSONStdout(t *testing.T) {
 	successServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		writer.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(writer, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-1\"}}\n\n")
-		_, _ = io.WriteString(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"answer\"}\n\n")
-		_, _ = io.WriteString(writer, "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"id\":\"msg-1\",\"role\":\"assistant\",\"phase\":\"final\",\"content\":[{\"type\":\"output_text\",\"text\":\"answer\"}]}}\n\n")
-		_, _ = io.WriteString(writer, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-1\",\"usage\":{\"input_tokens\":10,\"input_tokens_details\":{\"cached_tokens\":2},\"cache_write_tokens\":0,\"output_tokens\":5,\"output_tokens_details\":{\"reasoning_tokens\":0}}}}\n\n")
+		writeCLISuccessResponse(writer)
 	}))
 	defer successServer.Close()
 	failureServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
@@ -213,4 +209,12 @@ func writeCLIConfig(t *testing.T, baseURL string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func writeCLISuccessResponse(writer http.ResponseWriter) {
+	writer.Header().Set("Content-Type", "text/event-stream")
+	_, _ = io.WriteString(writer, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-1\"}}\n\n")
+	_, _ = io.WriteString(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"answer\"}\n\n")
+	_, _ = io.WriteString(writer, "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"id\":\"msg-1\",\"role\":\"assistant\",\"phase\":\"final\",\"content\":[{\"type\":\"output_text\",\"text\":\"answer\"}]}}\n\n")
+	_, _ = io.WriteString(writer, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-1\",\"usage\":{\"input_tokens\":10,\"input_tokens_details\":{\"cached_tokens\":2},\"cache_write_tokens\":0,\"output_tokens\":5,\"output_tokens_details\":{\"reasoning_tokens\":0}}}}\n\n")
 }

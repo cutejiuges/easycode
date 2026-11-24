@@ -18,19 +18,21 @@ const (
 
 // StartupModel 在唯一终端事件循环中组合当前聊天和选择器。
 type StartupModel struct {
-	host          PickerHost
-	config        PickerConfig
-	chat          *Model
-	picker        pickerModel
-	phase         pickerPhase
-	request       PickerRequest
-	generation    uint64
-	draft         composer
-	width, height int
-	exitCode      int
-	finalNotice   string
-	cancelNotice  string
-	closing       bool
+	host                    PickerHost
+	config                  PickerConfig
+	chat                    *Model
+	picker                  pickerModel
+	phase                   pickerPhase
+	request                 PickerRequest
+	generation              uint64
+	draft                   composer
+	width, height           int
+	exitCode                int
+	finalNotice             string
+	cancelNotice            string
+	branchTarget            domain.ThreadID
+	reportedBranchRequestID uint64
+	closing                 bool
 }
 
 // NewStartupModel 只构造内存状态，启动选择器由 Init 发起。
@@ -50,6 +52,9 @@ func NewChatShell(host InteractivePickerHost, config PickerConfig, initial Model
 
 // ExitCode 返回终端界面的退出结果。
 func (m StartupModel) ExitCode() int { return m.exitCode }
+
+// ReportedBranchRequestID 返回已安装到终端投影的最近一次分支发布结果请求号。
+func (m StartupModel) ReportedBranchRequestID() uint64 { return m.reportedBranchRequestID }
 
 // Init 启动初始投影和唯一的宿主结果等待。
 func (m StartupModel) Init() tea.Cmd {
@@ -73,7 +78,12 @@ func waitPicker(host PickerHost) tea.Cmd {
 }
 
 func (m *StartupModel) requestOperation(op PickerOperation, target domain.ThreadID) bool {
-	m.request = PickerRequest{ID: m.request.ID + 1, Operation: op, All: m.picker.all, Source: m.picker.source, ThreadID: target}
+	return m.submitPicker(PickerRequest{Operation: op, All: m.picker.all, Source: m.picker.source, ThreadID: target})
+}
+
+func (m *StartupModel) submitPicker(request PickerRequest) bool {
+	request.ID = m.request.ID + 1
+	m.request = request
 	m.picker.busy, m.picker.failure = true, ""
 	if m.host.Submit(m.request) {
 		return true
@@ -163,6 +173,12 @@ func (m *StartupModel) cancelResume() {
 
 func (m StartupModel) receivePicker(result PickerResult) (tea.Model, tea.Cmd) {
 	if result.Fatal {
+		if result.Request.Operation == PickerBranch {
+			if result.Request != m.request || m.phase == shellChat {
+				return m, waitPicker(m.host)
+			}
+			return m.stop(1, m.branchResultNotice(result, result.Error))
+		}
 		return m.stop(1, result.Error)
 	}
 	if result.Request != m.request || m.phase == shellChat {
@@ -182,12 +198,16 @@ func (m StartupModel) receivePicker(result PickerResult) (tea.Model, tea.Cmd) {
 		if m.cancelNotice != "" {
 			notice = m.cancelNotice
 		}
-		m.returnToChat(notice, result.DirectoryMismatch)
+		if result.Request.Operation == PickerBranch {
+			m.returnFromBranch(result, notice)
+		} else {
+			m.returnToChat(notice, result.DirectoryMismatch)
+		}
 	case PickerPrepared:
 		if m.phase != shellRecovering {
 			break
 		}
-		if result.Chat == nil || !result.Chat.main.initialReady || result.Chat.browser.thread != result.Request.ThreadID {
+		if !m.validPickerCandidate(result) {
 			if m.chat != nil {
 				m.cancelNotice = "Initial conversation history is invalid"
 				m.cancelResume()
@@ -197,15 +217,24 @@ func (m StartupModel) receivePicker(result PickerResult) (tea.Model, tea.Cmd) {
 		}
 		if m.host.Accept(result.Request.ID) {
 			m.phase = shellRetiring
+			m.branchTarget = result.BranchThreadID
 		} else {
 			m.phase = shellCancelling
 		}
 	case PickerActivated:
-		if m.phase != shellRetiring || result.Chat == nil || !result.Chat.main.initialReady || result.Chat.browser.thread != result.Request.ThreadID {
+		if result.Request.Operation == PickerBranch && m.phase != shellRetiring {
+			break
+		}
+		if m.phase != shellRetiring || !m.validPickerCandidate(result) {
 			return m.stop(1, "Session host delivered an invalid conversation")
 		}
 		resumed := m.chat != nil
-		m.mount(*result.Chat, resumed)
+		chat := *result.Chat
+		if result.Request.Operation == PickerBranch {
+			chat.branchNotice = "Branched session " + string(result.BranchThreadID) + "\nReturn to source: /resume " + string(result.Request.Source)
+			m.reportedBranchRequestID = result.Request.ID
+		}
+		m.mount(chat, resumed)
 		return m, tea.Batch(waitPicker(m.host), m.activateChat())
 	case PickerCompleted:
 		if m.phase == shellCancelling || m.phase == shellRetiring {
@@ -214,6 +243,38 @@ func (m StartupModel) receivePicker(result PickerResult) (tea.Model, tea.Cmd) {
 		m.applyPickerResult(result)
 	}
 	return m, waitPicker(m.host)
+}
+
+func (m StartupModel) validPickerCandidate(result PickerResult) bool {
+	if result.Chat == nil || !result.Chat.main.initialReady {
+		return false
+	}
+	target := result.Request.ThreadID
+	if result.Request.Operation == PickerBranch {
+		target = result.BranchThreadID
+		if result.BranchPublication != BranchPublished || !target.Valid() || target == result.Request.Source ||
+			m.phase == shellRetiring && target != m.branchTarget || result.Chat.title.value.Validate() != nil {
+			return false
+		}
+	}
+	return result.Chat.browser.thread == target
+}
+
+func (m *StartupModel) branchResultNotice(result PickerResult, base string) string {
+	status := "Branch was not created"
+	if result.BranchPublication != BranchNotPublished && (!result.BranchThreadID.Valid() || result.BranchThreadID == result.Request.Source) {
+		status = "Branch publication could not be confirmed"
+	} else if result.BranchPublication == BranchPublished {
+		status = "Branch created. Open it with /resume " + string(result.BranchThreadID)
+		m.reportedBranchRequestID = result.Request.ID
+	} else if result.BranchPublication == BranchPublicationUncertain {
+		status = "Branch publication is uncertain. Target thread: " + string(result.BranchThreadID)
+		m.reportedBranchRequestID = result.Request.ID
+	}
+	if base != "" {
+		status += "\n" + pickerSafe(base, 1024)
+	}
+	return status
 }
 
 func (m *StartupModel) applyPickerResult(result PickerResult) {
@@ -240,9 +301,20 @@ func (m *StartupModel) returnToChat(notice string, directoryMismatch bool) {
 	if notice == "" {
 		notice = "Resume cancelled"
 	}
-	m.chat.returnFromResume(m.draft, notice, directoryMismatch)
+	m.chat.returnFromHandoff(m.draft, notice, directoryMismatch)
+	m.finishHandoff()
+}
+
+func (m *StartupModel) returnFromBranch(result PickerResult, notice string) {
+	m.chat.branchNotice = m.branchResultNotice(result, notice)
+	m.chat.returnFromHandoff(m.draft, "", false)
+	m.finishHandoff()
+}
+
+func (m *StartupModel) finishHandoff() {
 	m.phase = shellChat
 	m.cancelNotice = ""
+	m.branchTarget = ""
 	m.picker = pickerModel{}
 	m.draft = composer{}
 }
@@ -255,13 +327,14 @@ func (m StartupModel) stop(code int, notice string) (tea.Model, tea.Cmd) {
 
 func (m *StartupModel) mount(chat Model, resumed bool) {
 	if _, available := m.host.(InteractivePickerHost); available {
-		chat.resumeEnabled = true
+		chat.handoffEnabled = true
 		chat = chat.WithSkills(chat.skills)
 	}
 	chat.resumed = resumed
 	m.generation++
 	m.chat, m.phase = &chat, shellChat
 	m.picker, m.draft = pickerModel{}, composer{}
+	m.branchTarget = ""
 }
 
 func (m *StartupModel) activateChat() tea.Cmd {
@@ -276,8 +349,8 @@ func (m StartupModel) updateChat(message tea.Msg) (tea.Model, tea.Cmd) {
 	source.planReview.suspendAutomatic = m.phase != shellChat
 	next, cmd := source.Update(message)
 	chat := next.(Model)
-	intent := chat.resumeIntent
-	chat.resumeIntent = nil
+	intent := chat.handoffIntent
+	chat.handoffIntent = nil
 	m.chat = &chat
 	if chat.quitRequested {
 		return m.stop(0, "")
@@ -286,11 +359,15 @@ func (m StartupModel) updateChat(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.draft = intent.draft
 		m.picker = pickerModel{config: m.config, source: chat.browser.thread, width: m.width, height: m.height}
 		m.phase = shellOpening
-		if intent.target.Valid() {
+		if intent.operation == PickerBranch || intent.target.Valid() {
 			m.phase = shellRecovering
 		}
-		if !m.requestOperation(PickerOpen, intent.target) {
-			m.returnToChat(m.picker.failure, false)
+		if !m.submitPicker(PickerRequest{Operation: intent.operation, Source: chat.browser.thread, ThreadID: intent.target, Title: intent.title}) {
+			if intent.operation == PickerBranch {
+				m.returnFromBranch(PickerResult{Request: m.request}, "Session host is closing")
+			} else {
+				m.returnToChat(m.picker.failure, false)
+			}
 		}
 	}
 	return m, scopeChatCommand(m.generation, cmd)

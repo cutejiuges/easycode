@@ -155,7 +155,7 @@ func (m *Model) suppressPastedFiles() {
 
 func (m Model) findFileMentionTarget(cursor int) (domain.FileMentionTarget, bool) {
 	head, _ := domain.SplitInputHead(m.composer.text)
-	if strings.HasPrefix(head, "/") && isHostSlashName(head[1:], m.resumeEnabled, m.workMode.enabled) {
+	if strings.HasPrefix(head, "/") && isHostSlashName(head[1:], m.handoffEnabled, m.workMode.enabled) {
 		return domain.FileMentionTarget{}, false
 	}
 	return domain.FindFileMentionTarget(m.composer.text, cursor)

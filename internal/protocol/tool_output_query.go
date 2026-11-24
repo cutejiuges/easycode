@@ -16,14 +16,15 @@ const (
 	ToolSearchResult ToolOutputSource = "search_result"
 )
 
-// ToolOutputSummary 分别描述保存完整性与预览省略，不暴露私有路径。
+// ToolOutputSummary 描述保存完整性和当前线程读取资格，不暴露私有路径。
 type ToolOutputSummary struct {
-	Status        string `json:"status"`
-	Reason        string `json:"reason"`
-	SavedBytes    int64  `json:"saved_bytes"`
-	ObservedBytes int64  `json:"observed_bytes"`
-	Complete      bool   `json:"complete"`
-	Readable      bool   `json:"readable"`
+	SourceThreadID domain.ThreadID `json:"source_thread_id,omitempty"`
+	Status         string          `json:"status"`
+	Reason         string          `json:"reason"`
+	SavedBytes     int64           `json:"saved_bytes"`
+	ObservedBytes  int64           `json:"observed_bytes"`
+	Complete       bool            `json:"complete"`
+	Readable       bool            `json:"readable"`
 }
 
 // ToolOutputQuery 只使用当前线程的命令身份，不接受任意路径或 artifact ID。
@@ -58,6 +59,9 @@ func (s ToolOutputSummary) Validate() error {
 	if s == (ToolOutputSummary{}) {
 		return nil
 	}
+	if s.SourceThreadID != "" && (!s.SourceThreadID.Valid() || s.Readable || s.SavedBytes == 0) {
+		return errors.New("invalid inherited tool output source")
+	}
 	validReason := false
 	switch s.Reason {
 	case "quota_exceeded", "stream_limit", "write_failed", "sync_failed", "publish_failed", "output_incomplete", "storage_unavailable":
@@ -72,7 +76,7 @@ func (s ToolOutputSummary) Validate() error {
 			return nil
 		}
 	case "complete", "partial":
-		if s.Readable && s.SavedBytes > 0 && s.SavedBytes <= 16<<20 && s.ObservedBytes >= s.SavedBytes && s.Complete == (s.Status == "complete") {
+		if (s.Readable || s.SourceThreadID.Valid()) && s.SavedBytes > 0 && s.SavedBytes <= 16<<20 && s.ObservedBytes >= s.SavedBytes && s.Complete == (s.Status == "complete") {
 			return nil
 		}
 	case "unavailable":

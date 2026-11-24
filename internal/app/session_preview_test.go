@@ -20,19 +20,25 @@ func installPreviewFixture(t *testing.T, data []byte) (string, string, domain.Th
 	if err != nil {
 		t.Fatal(err)
 	}
+	root, path := installThreadFixture(t, data, first.ThreadID)
+	return root, path, first.ThreadID
+}
+
+func installThreadFixture(t *testing.T, data []byte, thread domain.ThreadID) (string, string) {
+	t.Helper()
 	root := filepath.Join(privateAppTempDir(t), "sessions")
 	repo, err := session.OpenOrCreateRepository(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := repo.Create(context.Background(), first.ThreadID)
+	lease, err := repo.Create(context.Background(), thread)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := lease.Close(); err != nil {
 		t.Fatal(err)
 	}
-	path, err := repo.JournalPath(first.ThreadID)
+	path, err := repo.JournalPath(thread)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +48,7 @@ func installPreviewFixture(t *testing.T, data []byte) (string, string, domain.Th
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	return root, path, first.ThreadID
+	return root, path
 }
 
 func TestPreviewDescriptorBoundPathReplacement(t *testing.T) {

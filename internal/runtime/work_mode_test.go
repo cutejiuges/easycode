@@ -95,7 +95,7 @@ func TestWorkModeHostReservationAndAcceptedCancellation(t *testing.T) {
 	if _, err := host.Append(ctx, draft); fault.Project(err).Code != fault.CodeSessionBusy {
 		t.Fatalf("preparation crossed the mode reservation: %v", err)
 	}
-	if _, err := host.ReserveResume(ctx); fault.Project(err).Code != fault.CodeSessionBusy {
+	if _, err := host.ReserveHandoff(ctx, HandoffResume); fault.Project(err).Code != fault.CodeSessionBusy {
 		t.Fatalf("resume crossed the mode reservation: %v", err)
 	}
 	state.handleCommand(request)

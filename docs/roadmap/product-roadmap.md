@@ -1,5 +1,7 @@
 # EasyCode 产品与工程 Roadmap
 
+2026-11-24 实现会话分支。空闲时通过 `/branch [标题]` 或 `/fork [标题]` 创建并进入同一 Session 下的独立线程，沿用当前工作区及双 Provider 原生历史。分支保留自身可验证的历史和持久化切点，并通过现有选择器、列表和恢复入口访问。跨 Provider 摘要分支和历史任意切点仍在后续范围。 [主规格](../../openspec/specs/session/branch/spec.md) · [归档验收](../../openspec/changes/archive/2026-11-24-add-session-branch/verification.md)
+
 2026-11-22 交付并归档 `add-plan-review-handoff`。实时 Plan 回合按双 Provider 的原生完结证据识别完整方案。用户可审阅、继续规划，或确认把所审原文作为单独的 Default 回合输入。确认的权限限于启动回合，实际调用沿用普通审批。自动压缩保留本次实施输入的完整原文，恢复沿现有原生提交事实进行。[主规格](../../openspec/specs/runtime/plan-mode/spec.md)与[验收记录](../../openspec/changes/archive/2026-11-22-add-plan-review-handoff/verification.md)
 
 2026-11-21 交付并归档 `add-interactive-plan-mode`。它复用工作区调查、问卷、Markdown 与审批，补齐先规划再实施的交互闭环。空闲时可切换，回合内冻结模式，双 Provider 的声明和 durable 准入共享同一七项允许集合。普通实施由用户退出后独立提交。参见[主规格](../../openspec/specs/tui/plan-mode/spec.md)与[验收记录](../../openspec/changes/archive/2026-11-21-add-interactive-plan-mode/verification.md)。
@@ -260,7 +262,7 @@ P2 后续范围为更完整的会话检索/线程组织、费用与配额、后�
 - 已实现 `provider_profile`、可选 `project_instructions`、`committed_history`、`current_input` 的固定顺序、正交 lifecycle/cache stability、canonical segments、stable prefix、SemanticHistoryView 可见估算与 Provider-native footprint 覆盖合并；后续来源必须随真实消费者独立落地。
 - 已实现 JSONL SessionMeta、native commit、`sample_usage` 和文本 turn boundary；费用与长期累计指标仍待实现；P4 缓存切片已增加有界的进程级来源失效解释。
 - 已实现由同一 exclusive lease 覆盖 load/repair、Provider 恢复、续写和最终关闭的跨进程单 writer，及 `Sync`、尾部半行/未完成尾批修复、唯一当前无版本 envelope 与不可变 current fixture；旧开发 shape 失败关闭，未经用户明确指示不得引入版本转换或兼容设计。
-- 已实现 Catalog 快照 的 root thread 元数据、全量前台 reconciliation 与损坏或结构不兼容时重建。显式标题由 journal 投影并参与选择器搜索。其余目标包括 project/worktree、tag、正文搜索、实时索引和 thread graph。
+- 已实现 Catalog 快照的根线程与分支元数据、全量前台 reconciliation 与损坏或结构不兼容时重建。显式标题由 journal 投影并参与选择器搜索。其余目标包括 project/worktree、tag、正文搜索、实时索引和 thread graph。
 - 已实现 `--resume <thread-id>`、`--continue`、单 turn `--print`/JSONL v1 `--json`，以及独立 `stream-json` 双向控制模式的同进程多 turn。
 - 已实现当前文本 Chat 的用户中断、依赖有序 shutdown 和中断 turn 补偿；后台任务的完整 shutdown 随对应能力补充。
 - 提供 transcript/debug log 分离。
@@ -466,7 +468,7 @@ Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘�
 
 ### 9.0 当前进度（2026-11-19）
 
-已交付多行/字素输入、同轮追加与返还、流式 Markdown 与代码/表格/原文阅读、紧凑工具主线及 Ctrl+O 分页详情、完整 Patch/Write/Exec 审批、结构化问卷、Hook 信任、context/cache 面板、当前任务清单以及启动和聊天内 resume picker。当前本地命令为 `/cache`、`/context`、`/compact`、`/effort`、`/skills`、`/hooks`、`/plugins`、`/tasks`、`/rename`、`/resume`、`/plan`，以及 Skill 显式入口。命令/Skill 首词补全和被动 thinking/summary 活动提示及 Ctrl+O 阅读已交付；启动推理配置、会话内 effort 与 /context 设置已实现；其他推理字段切换、fork picker、后台任务 UI、cost/综合状态面板与其余命令尚未实现。
+已交付多行/字素输入、同轮追加与返还、流式 Markdown 与代码/表格/原文阅读、紧凑工具主线及 Ctrl+O 分页详情、完整 Patch/Write/Exec 审批、结构化问卷、Hook 信任、context/cache 面板、当前任务清单以及启动和聊天内恢复选择器与会话分支。当前本地命令为 `/cache`、`/context`、`/compact`、`/effort`、`/skills`、`/hooks`、`/plugins`、`/tasks`、`/rename`、`/resume`、`/branch`、`/fork`、`/plan`，以及 Skill 显式入口。命令/Skill 首词补全和被动 thinking/summary 活动提示及 Ctrl+O 阅读已交付；启动推理配置、会话内 effort 与 /context 设置已实现；其他推理字段切换、历史切点选择、后台任务 UI、cost/综合状态面板与其余命令尚未实现。
 
 补全复用冻结 Skill 展示列表、字素编辑和既有命令提交；Tab 只填入、Skill Enter 只选择、Esc 优先关闭，粘贴不接受候选。验收覆盖双 Provider 原生请求/恢复/缓存等价、固定尺寸和 Darwin PTY，见 [验收记录](../../openspec/changes/archive/2026-11-06-add-command-and-skill-completion/verification.md)。该首词切片仍不处理普通参数值；正文工作区 @ 文件引用已由独立切片实现，文件范围、读取、索引及恢复的边界见下文。
 
@@ -485,7 +487,7 @@ Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘�
 
 ### 9.3 工作内容
 
-2026-09-19 已先交付验证 RuntimeEvent 边界的薄切片；2026-10-11 又交付了与 Patch candidate 精确关联的 diff approval overlay，包含默认 No、一次/本 Runtime session 允许、拒绝反馈、小窗口滚动、按键隔离和固定 snapshot。它不改变 P5 的完整范围，2026-10-28 已补充多行 composer、字素编辑、显式 decoded paste、有界 recall 与提交拒绝恢复。本地 slash commands、通用工具主线/详情、Markdown 与启动 resume picker 已有各自切片；命令/Skill 首词补全由 `add-command-and-skill-completion` 交付；被动 thinking/summary 阅读已由 `add-reasoning-transcript` 交付；启动推理配置已由 `add-provider-reasoning-controls` 交付；effort 之外的运行中推理切换与 fork picker 仍是后续目标。
+2026-09-19 已先交付验证 RuntimeEvent 边界的薄切片；2026-10-11 又交付了与 Patch candidate 精确关联的 diff approval overlay，包含默认 No、一次/本 Runtime session 允许、拒绝反馈、小窗口滚动、按键隔离和固定 snapshot。它不改变 P5 的完整范围，2026-10-28 已补充多行 composer、字素编辑、显式 decoded paste、有界 recall 与提交拒绝恢复。本地 slash commands、通用工具主线/详情、Markdown 与启动 resume picker 已有各自切片；命令/Skill 首词补全由 `add-command-and-skill-completion` 交付；被动 thinking/summary 阅读已由 `add-reasoning-transcript` 交付；启动推理配置已由 `add-provider-reasoning-controls` 交付；effort 之外的运行中推理切换与历史切点选择仍是后续目标。
 
 - composer、多行输入、paste 保护、历史、补全和 slash command。
 - assistant commentary/final、thinking/reasoning 折叠。

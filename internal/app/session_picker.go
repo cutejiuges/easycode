@@ -78,6 +78,7 @@ func runInteractiveProgram(ctx context.Context, options Options, cfg config.Conf
 	defer cancel()
 	environment := &chatEnvironment{}
 	owner := newPickerOwner(newPickerExecutor(cfg, paths, cwd, options.PluginDirs, environment))
+	owner.branch = newBranchPickerExecutor(cfg, paths, cwd, options.PluginDirs, environment)
 	var model tui.StartupModel
 	if startupPicker {
 		model = tui.NewStartupModel(owner, pickerConfig)
@@ -99,13 +100,19 @@ func runInteractiveProgram(ctx context.Context, options Options, cfg config.Conf
 		model = tui.NewChatShell(owner, pickerConfig, chat)
 	}
 	outcome := runPickerTerminal(runCtx, cancel, options, owner, model)
-	if err := environment.close(); err != nil {
-		return runtimeFailure(err)
+	return interactiveCleanupOutcome(outcome, environment.close())
+}
+
+func interactiveCleanupOutcome(outcome Outcome, cleanupErr error) Outcome {
+	if cleanupErr != nil {
+		failure := runtimeFailure(cleanupErr)
+		failure.BranchNotice = outcome.BranchNotice
+		return failure
 	}
 	return outcome
 }
 
-func runPickerTerminal(runCtx context.Context, cancel context.CancelFunc, options Options, owner *pickerOwner, model tui.StartupModel) Outcome {
+func runPickerTerminal(runCtx context.Context, cancel context.CancelFunc, options Options, owner *pickerOwner, model tui.StartupModel) (outcome Outcome) {
 	owner.Start(runCtx)
 	output := &pickerOutput{target: options.Output, cancel: cancel}
 	var terminalOutput io.Writer = output
@@ -122,6 +129,12 @@ func runPickerTerminal(runCtx context.Context, cancel context.CancelFunc, option
 	owner.Stop()
 	cancel()
 	cleanupErr := owner.Wait()
+	finalModel, available := final.(tui.StartupModel)
+	delivered := available && err == nil && !output.hasFailed() &&
+		finalModel.ReportedBranchRequestID() == owner.lastBranch.requestID
+	if !delivered {
+		defer func() { outcome.BranchNotice = owner.lastBranch.notice }()
+	}
 	if errors.Is(cleanupErr, context.DeadlineExceeded) {
 		return sessionListFailure("session cleanup timed out")
 	}
@@ -137,7 +150,7 @@ func runPickerTerminal(runCtx context.Context, cancel context.CancelFunc, option
 	if err != nil {
 		return sessionListFailure("session picker terminal failed")
 	}
-	switch final.(tui.StartupModel).ExitCode() {
+	switch finalModel.ExitCode() {
 	case 130:
 		return Outcome{Class: ExitCancelled, Report: ReportComplete}
 	case 1:

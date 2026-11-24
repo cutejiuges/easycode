@@ -34,6 +34,8 @@ easycode resume
 
 交互模式中，输入 `/` 浏览命令，输入 `@` 引用工作区文件。用 `/rename` 为会话命名，用 `/resume` 切换会话。
 
+在已有对话的空闲会话中，输入 `/branch [标题]` 或 `/fork [标题]` 从当前已提交历史创建分支。成功后进入分支，界面给出返回源线程的 `/resume <thread-id>`。分支沿用当前工作区和模型，各自保存后续对话及标题。可通过会话列表、选择器或 `easycode --resume <thread-id>` 恢复。工作区文件由两条对话共用，修改仍按当前线程的工具审批执行。 [会话分支规格](openspec/specs/session/branch/spec.md)
+
 在空闲会话中输入 `/plan` 或按 `Shift+Tab` 进入只读 Plan Mode。模型可以读取和搜索工作区、查看已授权输出和技能、提问并维护任务进度。此时修改文件和执行命令的工具不可用。
 
 模型给出完整方案后，可滚动审阅并选择 `Keep planning` 或 `Implement with normal approvals`。输入 `/plan review` 可重新打开当前有效方案。确认实施会在同一会话开启新的 `Default` 回合，即使首个请求前发生自动压缩，也会携带所审方案的完整原文。修改文件和执行命令仍各自经过普通审批。
@@ -69,7 +71,7 @@ easycode resume
 
 ### 会话上下文
 
-`SessionStart` 的 matcher 支持 `startup`、`resume`、`compact` 和 `*`。新建或恢复后，在首条通过预检的普通对话中处理 `startup` 或 `resume`。手动和自动压缩都在新窗口保存、PostCompact 收口后处理 `compact`。
+`SessionStart` 的 matcher 支持 `startup`、`resume`、`compact` 和 `*`。在首条通过预检的普通对话中，新建根会话处理 `startup`，创建并进入分支或恢复已有线程处理 `resume`。手动和自动压缩都在新窗口保存、PostCompact 收口后处理 `compact`。
 
 以下项目声明在交互终端获准后为模型提供一条工作区说明。stdin 的 `source` 可用于区分触发时机。要向模型提供正文，使用 `feedback: model` 并在成功退出时输出事件对应的 `additionalContext` 对象。
 

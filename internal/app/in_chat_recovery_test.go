@@ -11,6 +11,7 @@ import (
 
 	"easycode/internal/config"
 	"easycode/internal/domain"
+	chatRuntime "easycode/internal/runtime"
 	"easycode/internal/secret"
 	"easycode/internal/session"
 	"easycode/internal/session/artifact"
@@ -111,7 +112,7 @@ func TestCancelledCandidateRetainsTargetArtifactMaintenanceAndSource(t *testing.
 	if !source.session.Live() {
 		t.Fatal("source control did not survive candidate cancellation")
 	}
-	permit, err := source.session.ReserveResume(ctx)
+	permit, err := source.session.ReserveHandoff(ctx, chatRuntime.HandoffResume)
 	if err != nil {
 		t.Fatalf("source intake stayed frozen: %v", err)
 	}

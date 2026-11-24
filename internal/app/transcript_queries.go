@@ -13,7 +13,7 @@ import (
 	"easycode/internal/tool"
 )
 
-func transcriptListItem(node transcriptNode, entry session.ToolHistoryEntry) (protocol.TranscriptListItem, error) {
+func transcriptListItem(thread domain.ThreadID, node transcriptNode, entry session.ToolHistoryEntry) (protocol.TranscriptListItem, error) {
 	if node.compaction != nil {
 		return protocol.TranscriptListItem{Cursor: node.cursor, Kind: domain.TranscriptCompaction, CompactionID: node.compaction.id, Text: "Conversation compacted", More: true}, nil
 	}
@@ -110,11 +110,11 @@ func transcriptListItem(node transcriptNode, entry session.ToolHistoryEntry) (pr
 			item.Activity.Target = r.ReadMetadata().RelativePath()
 			item.ModelShortened = item.ModelShortened || r.ReadMetadata().OutputTruncated() || r.ReadMetadata().LongLineTruncated()
 		case tool.CapabilityGlob:
-			item.Search = toolOutputSummary(r.SearchSaving(), 0)
+			item.Search = toolOutputSummary(r.SearchSaving(), 0, thread, entry.Origin.ThreadID)
 			m := r.GlobMetadata()
 			item.CoverageIncomplete = m.IncompleteReason() != tool.SearchComplete || m.OmittedMatches() > m.ModelOmittedMatches()
 		case tool.CapabilityGrep:
-			item.Search = toolOutputSummary(r.SearchSaving(), 0)
+			item.Search = toolOutputSummary(r.SearchSaving(), 0, thread, entry.Origin.ThreadID)
 			m := r.GrepMetadata()
 			item.CoverageIncomplete = m.IncompleteReason() != tool.SearchComplete || m.OmittedMatches() > m.ModelOmittedMatches()
 		case tool.CapabilityExec:
@@ -125,8 +125,8 @@ func transcriptListItem(node transcriptNode, entry session.ToolHistoryEntry) (pr
 			item.Activity.StderrBytes = m.Stderr().ObservedBytes()
 			item.Activity.Truncated = m.OutputTruncated()
 			item.ModelShortened = item.ModelShortened || m.OutputTruncated()
-			item.Stdout = toolOutputSummary(m.StdoutSaving(), m.Stdout().ObservedBytes())
-			item.Stderr = toolOutputSummary(m.StderrSaving(), m.Stderr().ObservedBytes())
+			item.Stdout = toolOutputSummary(m.StdoutSaving(), m.Stdout().ObservedBytes(), thread, entry.Origin.ThreadID)
+			item.Stderr = toolOutputSummary(m.StderrSaving(), m.Stderr().ObservedBytes(), thread, entry.Origin.ThreadID)
 		case tool.CapabilityPatch, tool.CapabilityWrite:
 			item.SummaryOnly = true
 		}
@@ -181,7 +181,7 @@ func (q *transcriptQueries) ListTranscript(ctx context.Context, query protocol.T
 	q.mu.Unlock()
 	items := make([]protocol.TranscriptListItem, len(selected))
 	for i, value := range selected {
-		item, err := transcriptListItem(value.node, value.entry)
+		item, err := transcriptListItem(q.thread, value.node, value.entry)
 		if err != nil {
 			return protocol.TranscriptListPage{}, err
 		}

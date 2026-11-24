@@ -195,6 +195,9 @@ func (model Model) refreshSessionStartList() (tea.Model, tea.Cmd) {
 
 func (model Model) loadTranscriptPage(key transcriptPageKey) (tea.Model, tea.Cmd) {
 	b := &model.browser
+	if key.kind == transcriptOutputPage && b.selected < len(b.items) && inheritedOutputOrigin(b.items[b.selected].TranscriptListItem).Valid() {
+		return model, nil
+	}
 	b.invalidate()
 	b.page = nil
 	b.markdown = transcriptMarkdownDetail{}
@@ -485,7 +488,7 @@ func (model Model) handleTranscriptBrowserKey(key tea.KeyMsg) (tea.Model, tea.Cm
 	}
 	switch key.Type {
 	case tea.KeyTab:
-		if item.Activity.Tool == protocol.ToolShell {
+		if item.Activity.Tool == protocol.ToolShell && !inheritedOutputOrigin(item.TranscriptListItem).Valid() {
 			stream := protocol.ToolStdout
 			if b.stream == "" || b.stream == protocol.ToolStdout {
 				stream = protocol.ToolStderr
@@ -716,13 +719,7 @@ func (model Model) renderTranscriptBrowser() string {
 		summary = item.Stderr
 	}
 	if summary.Readable {
-		description := fmt.Sprintf("Saved %d bytes", summary.SavedBytes)
-		if summary.Complete {
-			description += " · complete"
-		} else {
-			description += " · partial prefix"
-		}
-		headers = append(headers, description)
+		headers = append(headers, savedOutputDescription(summary))
 	} else if summary.Status == "unavailable" {
 		headers = append(headers, "Saved output unavailable")
 	}
@@ -742,13 +739,44 @@ func (model Model) renderTranscriptBrowser() string {
 	for i := range headers {
 		headers[i] = truncateRunes(headers[i], width)
 	}
+	navigation := "←/→: input/result/saved · PgUp/PgDn: page"
+	if origin := inheritedOutputOrigin(item.TranscriptListItem); item.Kind == domain.TranscriptSessionStartContext {
+		navigation = "↑/↓: scroll · PgUp/PgDn: page"
+	} else if origin.Valid() {
+		navigation = "←/→: input/result · PgUp/PgDn: page"
+		if b.source == protocol.TranscriptResult && b.offset == 0 {
+			notice := "View saved output in its original session: /resume " + string(origin)
+			for _, stream := range []struct {
+				label   string
+				summary protocol.ToolOutputSummary
+			}{{"stdout", item.Stdout}, {"stderr", item.Stderr}, {"search", item.Search}} {
+				if stream.summary.SourceThreadID.Valid() {
+					notice += "\n" + stream.label + ": " + savedOutputDescription(stream.summary)
+				}
+			}
+			lines = append(wrapApprovalDiff(notice+"\n", width), lines...)
+		}
+	}
 	visible = max(1, model.heightOrDefault()-len(headers)-2)
 	scroll := min(model.detailScroll-b.markdown.first, max(0, len(lines)-visible))
-	actions := "←/→: input/result/saved · PgUp/PgDn: page"
-	if item.Kind == domain.TranscriptSessionStartContext {
-		actions = "↑/↓: scroll · PgUp/PgDn: page"
+	return strings.Join(headers, "\n") + "\n" + strings.Join(lines[scroll:min(len(lines), scroll+visible)], "\n") + "\n" + truncateRunes(navigation, width) + "\n" + truncateRunes("Esc: transcript · Ctrl+O: close", width) + "\n"
+}
+
+func inheritedOutputOrigin(item protocol.TranscriptListItem) domain.ThreadID {
+	for _, stream := range [...]protocol.ToolOutputSummary{item.Stdout, item.Stderr, item.Search} {
+		if stream.SourceThreadID.Valid() {
+			return stream.SourceThreadID
+		}
 	}
-	return strings.Join(headers, "\n") + "\n" + strings.Join(lines[scroll:min(len(lines), scroll+visible)], "\n") + "\n" + truncateRunes(actions, width) + "\n" + truncateRunes("Esc: transcript · Ctrl+O: close", width) + "\n"
+	return ""
+}
+
+func savedOutputDescription(summary protocol.ToolOutputSummary) string {
+	status := "partial prefix"
+	if summary.Complete {
+		status = "complete"
+	}
+	return fmt.Sprintf("Saved %d bytes · %s", summary.SavedBytes, status)
 }
 
 func (b *transcriptBrowser) protected(key transcriptPageKey) bool {

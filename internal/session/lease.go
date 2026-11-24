@@ -26,15 +26,16 @@ const (
 
 // JournalLease 持有一个 thread journal 的进程级独占所有权。
 type JournalLease struct {
-	mu        sync.Mutex
-	file      *os.File
-	threadID  domain.ThreadID
-	state     journalLeaseState
-	ioDone    chan struct{}
-	poisoned  bool
-	repair    *repairTicket
-	closeDone chan struct{}
-	closeErr  error
+	mu             sync.Mutex
+	file           *os.File
+	threadID       domain.ThreadID
+	state          journalLeaseState
+	ioDone         chan struct{}
+	poisoned       bool
+	repair         *repairTicket
+	committedBytes int64
+	closeDone      chan struct{}
+	closeErr       error
 }
 
 func newJournalLease(file *os.File, threadID domain.ThreadID) *JournalLease {

@@ -519,7 +519,7 @@ Runtime SHALL 以同一 turn owner 执行 Stop 状态机；continued 至多两�
 
 ### Requirement: SessionStart admission preserves the first input and its cancellation boundary
 
-新建或成功接管的交互根会话 SHALL 在首个符合条件的真实对话 turn 消费已准备的 startup/resume 来源，时机位于 `turn_started` 耐久提交及原初始自动压缩阶段之后、初始输入批次之前。已匹配的首个回合 SHALL 先验证真实输入自身可通过普通预算、请求编码和完整记录预检。预检失败保留待处理来源，零本次 SessionStart 审查及执行。未接受的输入、普通命令与只读预览 MUST 不触发 SessionStart 进程。计划接纳前的确定取消保留待处理来源。已 Sync 的计划消耗本次启动机会，即使后续无交付。无匹配时原始输入、原生请求和持久化行为保持等价。
+新建或成功接管的交互线程 SHALL 在首个符合条件的真实对话 turn 消费已准备的来源。新建根线程使用 startup，创建并进入分支或恢复根线程及分支使用 resume。消费时机位于 `turn_started` 耐久提交及原初始自动压缩阶段之后、初始输入批次之前。已匹配的首个回合 SHALL 先验证真实输入自身可通过普通预算、请求编码和完整记录预检。预检失败保留待处理来源，零本次 SessionStart 审查及执行。未接受的输入、普通命令与只读预览 MUST 不触发 SessionStart 进程。计划接纳前的确定取消保留待处理来源。已 Sync 的计划消耗本次启动机会，即使后续无交付。无匹配时原始输入、原生请求和持久化行为保持等价。
 
 Runtime SHALL 在全部冻结声明独立获得信任、执行前置条件通过、对应 started Sync 后才调用 runner。获准的有界上下文与真实原文和已有附件使用同一候选窗口完成普通预算、请求编码与批次预检。只有已知的窗口、Provider canonical、单记录或批次额度错误可以视为上下文导致的超限。此情形 SHALL 关闭为跳过，并以同一真实初始输入重新进行原有预检。该退回策略不重复运行脚本、摘要或准备新的附件。applied 批次接纳前的取消保留原有输入归还规则。接纳后等待确定结果，成功时上下文和真实输入一起 finalize 一次，durability 不确定则 poison 并停止新副作用。确认 Sync 后若原生 finalize 或必要宿主投影失败，保留同批历史事实供恢复，不执行后续采样或让宿主将输入标记为可重试。
 

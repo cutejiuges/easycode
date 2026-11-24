@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -32,11 +33,13 @@ type RepairReport struct {
 
 // LoadResult 是完成只读结构校验后的 journal 快照。
 type LoadResult struct {
-	Identity     Identity
-	Records      []Record
-	NextSequence uint64
-	Repair       RepairReport
-	repair       *repairTicket
+	Identity       Identity
+	Records        []Record
+	NextSequence   uint64
+	Repair         RepairReport
+	repair         *repairTicket
+	committedBytes int64
+	completeDigest string
 }
 
 // Loader 负责有界结构加载，不解释 turn 或 Provider 语义。
@@ -69,11 +72,12 @@ func (loader *Loader) Load(ctx context.Context, lease *JournalLease) (LoadResult
 	}
 	lease.mu.Lock()
 	lease.repair = result.repair
+	lease.committedBytes = result.committedBytes
 	lease.mu.Unlock()
 	return result, nil
 }
 
-func loadJournal(ctx context.Context, file *os.File, expectedThreadID domain.ThreadID) (result LoadResult, resultErr error) {
+func loadJournal(ctx context.Context, file *os.File, expectedThreadID domain.ThreadID) (LoadResult, error) {
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return LoadResult{}, fmt.Errorf("seek session journal: %w", err)
 	}
@@ -83,15 +87,11 @@ func loadJournal(ctx context.Context, file *os.File, expectedThreadID domain.Thr
 	}
 	originalSize := info.Size()
 	digest := sha256.New()
-	reader := bufio.NewReaderSize(io.TeeReader(file, digest), 64<<10)
-	defer func() {
-		if resultErr == nil && result.repair != nil {
-			copy(result.repair.digest[:], digest.Sum(nil))
-		}
-	}()
+	reader := bufio.NewReaderSize(file, 64<<10)
 	committed := make([]Record, 0)
 	currentBatch := make([]Record, 0)
 	var identity Identity
+	var threads map[domain.ThreadID]struct{}
 	expectedSequence := uint64(1)
 	offset := int64(0)
 	batchOffset := int64(0)
@@ -120,9 +120,10 @@ func loadJournal(ctx context.Context, file *os.File, expectedThreadID domain.Thr
 			if len(currentBatch) > 0 {
 				truncateAt = batchOffset
 			}
-			result := finalLoadResult(identity, committed, expectedThreadID, RepairReport{})
-			result.repair = &repairTicket{size: originalSize, offset: truncateAt, kind: RepairHalfLine}
-			return result, nil
+			_, _ = digest.Write(line)
+			ticket := &repairTicket{size: originalSize, offset: truncateAt, kind: RepairHalfLine}
+			copy(ticket.digest[:], digest.Sum(nil))
+			return finishJournalLoad(identity, committed, expectedThreadID, truncateAt, ticket)
 		}
 
 		record, decodeErr := DecodeRecord(line)
@@ -132,13 +133,27 @@ func loadJournal(ctx context.Context, file *os.File, expectedThreadID domain.Thr
 		if record.Sequence != expectedSequence {
 			return LoadResult{}, corrupt(fmt.Errorf("session sequence is not continuous"))
 		}
-		if record.ThreadID != expectedThreadID {
-			return LoadResult{}, corrupt(fmt.Errorf("session thread identity changed"))
-		}
 		if identity.SessionID == "" {
 			identity = Identity{SessionID: record.SessionID, ThreadID: record.ThreadID}
-		} else if record.SessionID != identity.SessionID || record.ThreadID != identity.ThreadID {
+		} else if record.SessionID != identity.SessionID {
 			return LoadResult{}, corrupt(fmt.Errorf("session identity changed"))
+		}
+		if record.EventKind == EventThreadForked {
+			payload, err := DecodeThreadForkedPayload(record)
+			if err != nil || len(currentBatch) != 0 || len(committed) == 0 || record.ParentThreadID != identity.ThreadID ||
+				payload.SourceSHA256 != hex.EncodeToString(digest.Sum(nil)) {
+				return LoadResult{}, corrupt(fmt.Errorf("thread fork does not match committed prefix"))
+			}
+			if threads == nil {
+				threads = map[domain.ThreadID]struct{}{identity.ThreadID: {}}
+			}
+			if _, seen := threads[record.ThreadID]; seen {
+				return LoadResult{}, corrupt(fmt.Errorf("thread fork identity is repeated"))
+			}
+			threads[record.ThreadID] = struct{}{}
+			identity.ThreadID = record.ThreadID
+		} else if record.ThreadID != identity.ThreadID {
+			return LoadResult{}, corrupt(fmt.Errorf("session thread identity changed without a fork record"))
 		}
 
 		if len(currentBatch) == 0 {
@@ -162,6 +177,9 @@ func loadJournal(ctx context.Context, file *os.File, expectedThreadID domain.Thr
 			return LoadResult{}, corrupt(fmt.Errorf("session batch exceeds size limit"))
 		}
 		currentBatch = append(currentBatch, record)
+		// 标记只绑定先前已消费的完整行，不能把缓冲预读的字节计算进去。
+		_, _ = digest.Write(line)
+		_, _ = digest.Write([]byte{'\n'})
 		expectedSequence++
 		if uint32(len(currentBatch)) == record.BatchSize {
 			committed = append(committed, currentBatch...)
@@ -171,11 +189,26 @@ func loadJournal(ctx context.Context, file *os.File, expectedThreadID domain.Thr
 	}
 
 	if len(currentBatch) > 0 {
-		result := finalLoadResult(identity, committed, expectedThreadID, RepairReport{})
-		result.repair = &repairTicket{size: originalSize, offset: batchOffset, kind: RepairIncompleteBatch}
-		return result, nil
+		ticket := &repairTicket{size: originalSize, offset: batchOffset, kind: RepairIncompleteBatch}
+		copy(ticket.digest[:], digest.Sum(nil))
+		return finishJournalLoad(identity, committed, expectedThreadID, batchOffset, ticket)
 	}
-	return finalLoadResult(identity, committed, expectedThreadID, RepairReport{}), nil
+	result, err := finishJournalLoad(identity, committed, expectedThreadID, offset, nil)
+	if err != nil {
+		return LoadResult{}, err
+	}
+	result.completeDigest = hex.EncodeToString(digest.Sum(nil))
+	return result, nil
+}
+
+func finishJournalLoad(identity Identity, records []Record, expected domain.ThreadID, committedBytes int64, ticket *repairTicket) (LoadResult, error) {
+	if identity.ThreadID != "" && identity.ThreadID != expected {
+		return LoadResult{}, corrupt(fmt.Errorf("session thread does not match journal identity"))
+	}
+	result := finalLoadResult(identity, records, expected, RepairReport{})
+	result.committedBytes = committedBytes
+	result.repair = ticket
+	return result, nil
 }
 
 func readBoundedLine(reader *bufio.Reader) ([]byte, bool, error) {

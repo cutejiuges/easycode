@@ -65,7 +65,7 @@ PreCompact 审查 SHALL 在本次压缩接纳后显示。它 MUST 说明触发�
 
 SessionStart 审查 SHALL 显示本次实际 `startup`、`resume` 或 `compact` 来源，即使声明 matcher 为 `*`。审查 SHALL 展示配置 matcher 和本次实际来源，并说明同一冻结声明的信任或拒绝对当前实例未来匹配的适用范围。审查 SHALL 明确命令在本地以只读、禁网限制运行，`feedback: model` 下通过校验及预算并接纳的 `additionalContext` 会保存到 Session，保留在有效历史时随后续请求提供给配置的 Provider，且可能被之后的摘要保留。reset 只影响未来匹配与审查。审查仍使用本会话信任或拒绝。窄屏 SHALL 可滚动审查完整命令和披露说明。无法呈现完整必要内容时 MUST 停用信任，保留拒绝和取消。paste、旧响应和 modal 按键不得泄漏到 composer、工具审批、问卷或其他请求。
 
-`startup` 与 `resume` 审查 SHALL 只在实际采用的根会话首个符合条件的真实对话回合内出现。已有初始自动压缩先完成检查，SessionStart 审查位于真实输入提交之前。确认 SHALL 绑定当前会话和 thread、真实 TurnID、实际来源、计划、声明和请求身份。`compact` 审查 SHALL 在 checkpoint 成功保存并安装且本次 PostCompact 已收口或无需运行后展示。确认 SHALL 绑定同一 session/thread、CompactionID、完整作用域、checkpoint 序列和修订、实际来源、计划、声明和请求。自动作用域使用真实 TurnID 和采样下标。手动作用域不得伪造 TurnID。
+`startup` 审查 SHALL 只在新根会话首个符合条件的真实对话回合内出现，`resume` 审查 SHALL 只在创建并进入分支或恢复根线程及分支后的首个符合条件的真实对话回合内出现。已有初始自动压缩先完成检查，SessionStart 审查位于真实输入提交之前。确认 SHALL 绑定当前会话和 thread、真实 TurnID、实际来源、计划、声明和请求身份。`compact` 审查 SHALL 在 checkpoint 成功保存并安装且本次 PostCompact 已收口或无需运行后展示。确认 SHALL 绑定同一 session/thread、CompactionID、完整作用域、checkpoint 序列和修订、实际来源、计划、声明和请求。自动作用域使用真实 TurnID 和采样下标。手动作用域不得伪造 TurnID。
 
 #### Scenario: Keep the user's first turn after denying session context
 
