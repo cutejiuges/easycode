@@ -180,6 +180,11 @@ func TestBranchCompletionKeepsPreCompletionDraftAndPublication(t *testing.T) {
 		!strings.Contains(strings.ReplaceAll(model.View(), "\n", ""), "Open it with /resume "+string(resumeThreadB)) {
 		t.Fatalf("cancel lost the source draft or the published branch: %s", model.View())
 	}
+	model.chat.sessionStartStatus = "SessionStart (startup) · Context saved (1) · Ctrl+O for details"
+	model = pickerUpdate(model, tea.WindowSizeMsg{Width: 35, Height: 5})
+	if !strings.Contains(model.View(), "Ctrl+G: branch details") {
+		t.Fatal("previous SessionStart status hid the new branch notice on a narrow terminal")
+	}
 }
 
 func TestBranchAliasPreservesLiteralTitleAndMountsValidatedTarget(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -372,30 +373,51 @@ func TestWebSocketSummaryUsesSeparateFullConnectionAndResets(t *testing.T) {
 	for _, failure := range []bool{false, true} {
 		t.Run(fmt.Sprint(failure), func(t *testing.T) {
 			bodies := make(chan []byte, 4)
-			var connects atomic.Int32
+			var connects, posts atomic.Int32
+			events := func(id string) []string {
+				return []string{fmt.Sprintf(`{"type":"response.created","response":{"id":%q}}`, id), `{"type":"response.output_item.done","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"goal; tests passed; next task"}]}}`, fmt.Sprintf(`{"type":"response.completed","response":{"id":%q,"status":"completed"}}`, id)}
+			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPost {
+					posts.Add(1)
+					body, err := io.ReadAll(r.Body)
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					bodies <- body
+					w.Header().Set("Content-Type", "text/event-stream")
+					for _, event := range events("http-fallback") {
+						_, _ = io.WriteString(w, "data: "+event+"\n\n")
+					}
+					return
+				}
+				n := connects.Add(1)
+				if n == 5 && !failure {
+					w.WriteHeader(http.StatusUpgradeRequired)
+					return
+				}
 				conn, err := websocket.Accept(w, r, nil)
 				if err != nil {
 					return
 				}
 				defer conn.CloseNow()
-				n := connects.Add(1)
-				_, body, err := conn.Read(r.Context())
-				if err != nil {
-					return
-				}
-				bodies <- body
-				if n == 2 && failure {
-					_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"type":"error","error":{"message":"private"}}`))
-					return
-				}
-				id := fmt.Sprintf("r%d", n)
-				for _, event := range []string{fmt.Sprintf(`{"type":"response.created","response":{"id":%q}}`, id), `{"type":"response.output_item.done","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"goal; tests passed; next task"}]}}`, fmt.Sprintf(`{"type":"response.completed","response":{"id":%q,"status":"completed"}}`, id)} {
-					if err := conn.Write(r.Context(), websocket.MessageText, []byte(event)); err != nil {
+				for seq := 1; ; seq++ {
+					_, body, err := conn.Read(r.Context())
+					if err != nil {
 						return
 					}
+					bodies <- body
+					if n == 2 && failure {
+						_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"type":"error","error":{"message":"private"}}`))
+						return
+					}
+					for _, event := range events(fmt.Sprintf("r%d-%d", n, seq)) {
+						if err := conn.Write(r.Context(), websocket.MessageText, []byte(event)); err != nil {
+							return
+						}
+					}
 				}
-				_, _, _ = conn.Read(r.Context())
 			}))
 			defer server.Close()
 			policy, _ := domain.NewCachePolicy(domain.AnthropicCacheDisabled, domain.OpenAICacheThread, domain.OpenAIWebSocketAuto)
@@ -435,6 +457,7 @@ func TestWebSocketSummaryUsesSeparateFullConnectionAndResets(t *testing.T) {
 			if codec.Unmarshal(body, &summary) != nil || summary.PreviousResponseID != "" || summary.ToolChoice != "none" || summary.Instructions != "" || len(summary.Tools) != 10 || !bytes.Contains(body, []byte(`preserve tests\n\nretain hook emphasis`)) {
 				t.Fatal("summary was not a separate full create")
 			}
+			var records []provider.RestoreRecord
 			if failure {
 				_, after, _ := c.ProjectContextWindow()
 				if before != after {
@@ -445,11 +468,17 @@ func TestWebSocketSummaryUsesSeparateFullConnectionAndResets(t *testing.T) {
 				if err != nil || receipt.Transport != domain.TransportWebSocket || receipt.Mode != domain.RequestFull || receipt.Purpose != domain.RequestSummary {
 					t.Fatal(receipt, err)
 				}
+				checkpoint, err := prepared.Checkpoint()
+				if err != nil {
+					t.Fatal(err)
+				}
 				if err := prepared.Finalize(); err != nil {
 					t.Fatal(err)
 				}
+				records = applyWebSocketCompactionContext(t, c, checkpoint)
 			}
-			stream, err = c.Stream(context.Background(), testPlanModeInput(t, testOpenAITurnInput(t, c, "continue")))
+			continuation := testPlanModeInput(t, testOpenAITurnInput(t, c, "continue"))
+			stream, err = c.Stream(context.Background(), continuation)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -458,10 +487,124 @@ func TestWebSocketSummaryUsesSeparateFullConnectionAndResets(t *testing.T) {
 				t.Fatal(next.Error())
 			}
 			var normal websocketCreate
-			if codec.Unmarshal(<-bodies, &normal) != nil || normal.PreviousResponseID != "" || normal.ToolChoice != "" || normal.Instructions != domain.WorkModePlan.Instructions() || len(normal.Tools) != 7 || connects.Load() != 3 {
+			normalWire := <-bodies
+			if codec.Unmarshal(normalWire, &normal) != nil || normal.PreviousResponseID != "" || normal.ToolChoice != "" || normal.Instructions != domain.WorkModePlan.Instructions() || len(normal.Tools) != 7 || connects.Load() != 3 {
 				t.Fatal("summary left a reusable continuation connection")
+			}
+			if !failure {
+				receipt, err := next.PreparedSample().Receipt()
+				if err != nil || receipt.Mode != domain.RequestFull || receipt.Reason != domain.ResetCompacted ||
+					bytes.Count(normalWire, []byte(websocketCompactContext)) != 1 {
+					t.Fatal("post-checkpoint WebSocket request did not include the applied context exactly once", receipt, err)
+				}
+				assertSessionStartWebSocketRestore(t, instance, c.threadID, records, normalWire, bodies)
+				if connects.Load() != 5 || posts.Load() != 1 {
+					t.Fatal("restored WebSocket requests or fallback were duplicated")
+				}
 			}
 			_ = next.PreparedSample().Finalize()
 		})
+	}
+}
+
+const websocketCompactContext = "approved fixture after compaction"
+
+func applyWebSocketCompactionContext(t *testing.T, conversation *Conversation, checkpoint provider.CheckpointEnvelope) []provider.RestoreRecord {
+	t.Helper()
+	var envelopes []provider.NativeCommitEnvelope
+	for _, entry := range conversation.history.Entries() {
+		envelope, err := encodeNativeCommit(entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		envelopes = append(envelopes, envelope)
+	}
+	records := testRestoreRecords(t, envelopes)
+	checkpointRecord, err := provider.NewCheckpointRestoreRecord(checkpoint, domain.NewNoTaskProgress())
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := domain.SessionStartTarget{
+		Source: domain.SessionStartCompact, CompactionID: checkpoint.ID(), Scope: checkpoint.Scope(),
+		CheckpointSequence: 8, CheckpointRevision: checkpoint.Source().ContextRevision() + 1, CheckpointDigest: checkpoint.Source().Digest(),
+	}
+	supplement := sessionStartTestContext(t, target, websocketCompactContext)
+	applied, err := conversation.PrepareCompactSessionStartContext(supplement, provider.SessionStartContinuation{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	contextEnvelope, err := applied.Envelope()
+	if err != nil {
+		t.Fatal(err)
+	}
+	contextRecord, err := provider.NewSessionStartContextRestoreRecord(target, []domain.SessionStartProof{supplement.Items[0].Proof()}, contextEnvelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := applied.Finalize(); err != nil {
+		t.Fatal(err)
+	}
+	return append(records, checkpointRecord, contextRecord)
+}
+
+func assertSessionStartWebSocketRestore(t *testing.T, instance *Provider, thread domain.ThreadID, records []provider.RestoreRecord, fullWire []byte, bodies <-chan []byte) {
+	t.Helper()
+	ctx := context.Background()
+	var conversation *Conversation
+	for _, step := range []struct {
+		text      string
+		transport domain.RequestTransport
+		mode      domain.RequestMode
+		reason    domain.RequestResetReason
+		fallback  domain.CacheFallbackReason
+	}{
+		{"continue", domain.TransportWebSocket, domain.RequestFull, domain.ResetRestored, domain.FallbackNone},
+		{"next prompt", domain.TransportWebSocket, domain.RequestIncremental, domain.ResetNone, domain.FallbackNone},
+		{"continue", domain.TransportHTTP, domain.RequestFull, domain.ResetRestored, domain.FallbackHandshake},
+	} {
+		if step.mode == domain.RequestFull {
+			value, _, err := instance.RestoreConversation(ctx, thread, records)
+			if err != nil {
+				t.Fatal(err)
+			}
+			conversation = value.(*Conversation)
+			defer conversation.closeWebsocket()
+		}
+		input := testPlanModeInput(t, testOpenAITurnInput(t, conversation, step.text))
+		logical, err := conversation.compileSamplingRequest(conversation.history.Entries(), input)
+		if err != nil || bytes.Count(logical.Bytes(), []byte(websocketCompactContext)) != 1 {
+			t.Fatal("restored logical history did not include the applied context exactly once", err)
+		}
+		stream, err := conversation.Stream(ctx, input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		terminal := readOpenAITerminal(t, conversation, stream)
+		if terminal.Kind() != provider.StreamEventCompleted {
+			t.Fatal(terminal.Error())
+		}
+		receipt, err := terminal.PreparedSample().Receipt()
+		if err != nil || receipt.Transport != step.transport || receipt.Mode != step.mode || receipt.Reason != step.reason ||
+			receipt.Fallback != step.fallback || receipt.RequestFingerprint != domain.ContentFingerprint(logical.Bytes()) {
+			t.Fatal("restored request changed the expected reset reason or full logical fingerprint", receipt, err)
+		}
+		body := <-bodies
+		switch {
+		case step.mode == domain.RequestIncremental:
+			var delta websocketCreate
+			if err := codec.Unmarshal(body, &delta); err != nil || delta.PreviousResponseID != "r4-1" || len(delta.Input) != 1 ||
+				bytes.Contains(body, []byte(websocketCompactContext)) {
+				t.Fatal("incremental request replayed approved context or lost its accepted response id", err)
+			}
+		case step.transport == domain.TransportWebSocket:
+			if !bytes.Equal(body, fullWire) {
+				t.Fatal("restored full wire differs from uninterrupted post-checkpoint request")
+			}
+		case !bytes.Equal(body, logical.Bytes()):
+			t.Fatal("handshake fallback changed the canonical HTTP context")
+		}
+		if err := terminal.PreparedSample().Finalize(); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

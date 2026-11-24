@@ -195,4 +195,54 @@ func TestCompactionHookConfigUsesSharedSourceAndMatchLimits(t *testing.T) {
 	if checks, err := snapshot.PostCompactChecks(domain.CompactionAuto); err != nil || len(checks) != 0 {
 		t.Fatal("nonmatching declarations counted against an automatic operation", err)
 	}
+	startup := func(count int) string { return strings.Replace(group(count), `"manual"`, `"startup"`, 1) }
+	if _, err := decodeConfig(domain.HookSourceUser, []byte(`{"hooks":{"SessionStart":`+startup(32)+`,"Stop":`+stop+`}}`)); err == nil {
+		t.Fatal("SessionStart exceeded the shared declaration limit")
+	}
+	starts, err := decodeConfig(domain.HookSourceProject, []byte(`{"hooks":{"SessionStart":`+startup(domain.MaxHookMatches+1)+`}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err = domain.NewHookSnapshot(starts, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checks, err := snapshot.SessionStartChecks(domain.SessionStartStartup); err != domain.HookMatchLimit || len(checks) != 0 {
+		t.Fatal("SessionStart selected a partial plan after matching overflow", err)
+	}
+}
+
+func TestSessionStartConfigFreezesOrderAndTrustIdentity(t *testing.T) {
+	const start = `[{"matcher":"*","hooks":[{"id":"all","type":"command","command":"true","feedback":"model"}]}]`
+	const resume = `[{"matcher":"resume","hooks":[{"id":"resume-only","type":"command","command":"true"}]}]`
+	const post = `[{"matcher":"auto","hooks":[{"id":"inspect","type":"command","command":"true"}]}]`
+	payload := `{"hooks":{"SessionStart":` + start + `,"PostCompact":` + post + `}}`
+	user, err := decodeConfig(domain.HookSourceUser, []byte(payload))
+	reordered, reorderedErr := decodeConfig(domain.HookSourceUser, []byte(`{"hooks":{"PostCompact":`+post+`,"SessionStart":`+start+`}}`))
+	project, projectErr := decodeConfig(domain.HookSourceProject, []byte(`{"hooks":{"SessionStart":`+resume+`}}`))
+	if err != nil || reorderedErr != nil || projectErr != nil || len(user) != 2 || len(reordered) != 2 ||
+		user[0].Reference.Event != domain.HookPostCompact || user[1] != reordered[1] {
+		t.Fatalf("unexpected normalized order or config: %v, %v, %v", err, reorderedErr, projectErr)
+	}
+	snapshot, err := domain.NewHookSnapshot(append(user, project...), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activation, err := snapshot.SessionStartChecks(domain.SessionStartResume)
+	compact, compactErr := snapshot.SessionStartChecks(domain.SessionStartCompact)
+	if err != nil || compactErr != nil || len(activation) != 2 || len(compact) != 1 ||
+		activation[0] != compact[0] || activation[1].Reference.ID != "resume-only" {
+		t.Fatal("incorrect source or wildcard matching", err, compactErr)
+	}
+	for _, edit := range [][2]string{{`"*"`, `"resume"`}, {`"model"`, `"none"`}, {`"true","feedback"`, `"false","feedback"`}} {
+		changed, err := decodeConfig(domain.HookSourceUser, []byte(strings.Replace(payload, edit[0], edit[1], 1)))
+		if err != nil || len(changed) != 2 || changed[1].Reference.Key() == user[1].Reference.Key() {
+			t.Fatal("reused trust after declaration changed", err)
+		}
+	}
+	for _, invalid := range []string{"clear", "resume|compact", "auto"} {
+		if _, err := decodeConfig(domain.HookSourceUser, []byte(strings.Replace(payload, `"*"`, fmt.Sprintf("%q", invalid), 1))); err == nil {
+			t.Fatal("accepted unsupported SessionStart source", invalid)
+		}
+	}
 }

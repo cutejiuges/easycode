@@ -163,7 +163,7 @@ func (service *sessionService) resume(
 	if started.transferred {
 		lease = nil
 	}
-	if plan.InterruptedCompaction != nil || plan.InterruptedPostCompact != nil || plan.InterruptedTail != nil {
+	if plan.InterruptedCompaction != nil || plan.InterruptedPostCompact != nil || plan.InterruptedSessionStart != nil || plan.InterruptedTail != nil {
 		service.recovery.mutating()
 	}
 	if err := reconcileInterruptedCompaction(ctx, writer, plan.InterruptedCompaction); err != nil {
@@ -177,6 +177,16 @@ func (service *sessionService) resume(
 			return assembledSession{}, fault.Wrap(fault.CodeSessionWrite, "close interrupted post-compact hook failed", err)
 		}
 		service.recovery.journalMutation(true, nil)
+	}
+	if plan.InterruptedSessionStart != nil {
+		draft, closeErr := plan.InterruptedSessionStart.CloseDraft()
+		if closeErr == nil {
+			_, closeErr = writer.AppendBatch(ctx, []session.RecordDraft{draft})
+		}
+		service.recovery.journalMutation(closeErr == nil, closeErr)
+		if closeErr != nil {
+			return assembledSession{}, fault.Wrap(fault.CodeSessionWrite, "close interrupted session start hook failed", closeErr)
+		}
 	}
 	if plan.InterruptedTail != nil {
 		failureDraft, draftErr := session.NewTurnFailedDraft(plan.InterruptedTail.TurnID, session.TurnFailedPayload{
@@ -308,6 +318,11 @@ func nativeRestoreRecords(ctx context.Context, records []session.NativeCommitRec
 		}
 		var restored provider.RestoreRecord
 		switch record.Role {
+		case domain.NativeCommitSessionStartContext:
+			if record.SessionStart == nil {
+				return nil, fault.New(fault.CodeSessionCorruption, "missing session start context evidence")
+			}
+			restored, buildErr = provider.NewSessionStartContextRestoreRecord(record.SessionStart.Target, record.SessionStart.Proofs, commit)
 		case domain.NativeCommitUserInputs:
 			restored, buildErr = provider.NewInputRestoreRecord(record.Inputs, commit)
 		case domain.NativeCommitSample:

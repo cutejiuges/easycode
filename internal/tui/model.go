@@ -85,6 +85,10 @@ type Model struct {
 	effortNotice              []string
 	stopCommit                *protocol.StopHookCommittedPayload
 	stopStatus                string
+	sessionStart              sessionStartView
+	sessionStartStatus        string
+	sessionStartControlClosed bool
+	activeTurnSession         domain.SessionID
 	completion                completionState
 	files                     fileCompletionState
 	question                  *questionOverlay
@@ -228,7 +232,8 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return model, nil
 	case hookTrustFailedMsg:
 		if model.hookTrust != nil && model.hookTrust.request.RequestID == value.request && model.hookTrust.turn == value.turn &&
-			model.hookTrust.request.Target == value.target && !model.compaction.cancelling {
+			model.hookTrust.request.Target == value.target && !model.compaction.cancelling &&
+			!(model.cancelling && model.hookTrust.request.Declaration.Reference.Event == domain.HookSessionStart) {
 			model.hookTrust.submitted = false
 			model.errorSummary = safeErrorSummary(value.err)
 		}
@@ -276,6 +281,7 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return next, tea.Batch(cmd, waitForControl(model.outputs))
 	case eventStreamClosedMsg:
 		model.outputs = nil
+		model.sessionStartControlClosed = model.compaction.sessionStart.present() || model.sessionStart.pending()
 		failure := "session_failed: session control stream closed"
 		if model.planReview.waiting() {
 			model.errorSummary = failure
@@ -289,9 +295,27 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if model.activeCompactionID.Valid() {
 			model.compactionStatus = ""
+			if model.compaction.sessionStart.present() {
+				model.compactionStatus = "Conversation compacted"
+				if model.compaction.postResult != "" {
+					model.compactionStatus += "\n" + model.compaction.postResult
+				}
+				if model.compaction.sessionStart.pending() {
+					model.compactionStatus += "\nSessionStart (compact) context outcome uncertain"
+				} else {
+					model.compactionStatus += "\n" + model.compaction.sessionStart.status()
+				}
+				model.errorSummary = failure
+			}
 			model.cancelling = false
 		}
 		model.clearCompaction()
+		if model.sessionStart.pending() {
+			model.sessionStartStatus = "SessionStart (" + string(model.sessionStart.payload.Target.Source) + ") · Context outcome uncertain"
+			if model.hookTrust != nil && model.hookTrust.request.Declaration.Reference.Event == domain.HookSessionStart {
+				model.hookTrust = nil
+			}
+		}
 		model.pendingContext = ""
 		if model.state == stateStreaming {
 			model.state = stateIdle
@@ -300,7 +324,7 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			failure = "stream_protocol_error: runtime event stream closed before terminal"
 			model.errorSummary = failure
 		}
-		if _, supportsTitle := model.session.(sessionTitleHost); supportsTitle {
+		if _, supportsTitle := model.session.(sessionTitleHost); supportsTitle || model.sessionStartControlClosed {
 			return model.closeSessionTitleInput(failure)
 		}
 		return model, nil
@@ -824,6 +848,8 @@ func (model Model) reduceRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd)
 		return model.projectCompactionPresentation(event)
 	}
 	switch event.Kind {
+	case protocol.EventSessionStart:
+		return model.projectSessionStart(event)
 	case protocol.EventTaskProgressUpdated:
 		return model.projectTaskUpdate(event)
 	case protocol.EventTurnStarted, protocol.EventTurnCompleted, protocol.EventTurnFailed:
@@ -926,6 +952,8 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 	case protocol.EventTurnStarted:
 		model.stopCommit = nil
 		model.stopStatus = ""
+		model.sessionStart = sessionStartView{}
+		model.sessionStartStatus = ""
 		model.preInputs = make(map[string]protocol.HookActivityPayload)
 		model.postHooks = make(map[string]protocol.PostHookCommittedPayload)
 		if event.TurnID.Valid() {
@@ -948,7 +976,7 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 				model.browser.markdown = transcriptMarkdownDetail{}
 				model.browser.items = nil
 			}
-			model.activeTurnID = event.TurnID
+			model.activeTurnID, model.activeTurnSession = event.TurnID, event.SessionID
 			model.refreshState()
 			if model.interruptNext {
 				model.interruptNext = false
@@ -1070,6 +1098,7 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 		model.hookTrust = nil
 		model.approval = nil
 		model.activeTurnID = ""
+		model.activeTurnSession = ""
 		model.cancelling = false
 	}
 	model.refreshState()
@@ -1120,6 +1149,15 @@ func (model Model) View() string {
 				status = "Error: " + model.errorSummary
 			}
 		}
+		if status == "" {
+			status = model.sessionStartStatus
+			if model.compaction.sessionStart.present() {
+				status = model.compactionStatus
+			}
+			if status != "" && model.branchNotice != "" {
+				status = model.handoffStatus() + status
+			}
+		}
 		if status != "" {
 			return model.fitChatView(status, model.composerWorkModeView(model.composer.inputView(model.chatComposerEditable())))
 		}
@@ -1146,6 +1184,9 @@ func (model Model) View() string {
 	}
 	if model.stopStatus != "" {
 		view.WriteString(ansi.Truncate(model.stopStatus, model.widthOrDefault(), "…") + "\n")
+	}
+	if model.sessionStartStatus != "" {
+		view.WriteString(ansi.Truncate(model.sessionStartStatus, model.widthOrDefault(), "…") + "\n")
 	}
 	if model.compactionStatus != "" {
 		view.WriteString(ansi.Hardwrap(model.compactionStatus, model.widthOrDefault(), true))

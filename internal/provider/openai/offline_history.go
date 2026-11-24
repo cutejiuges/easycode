@@ -26,7 +26,8 @@ func (*HistoryReader) ValidateCompactionUsage(envelope provider.NativeCommitEnve
 func nativeReplayCodec() provider.NativeReplayCodec[nativeHistoryEntry, NativeItem] {
 	return provider.NativeReplayCodec[nativeHistoryEntry, NativeItem]{
 		Name: "OpenAI", PendingUnavailable: pendingCallsUnavailable, Decode: decodeNativeCommit, Encode: encodeNativeCommit,
-		ReadyFacts: validateNativeReadyFacts, ToolOutputs: toolOutputsEntry,
+		SessionStart: entrySessionStartContext,
+		ReadyFacts:   validateNativeReadyFacts, ToolOutputs: toolOutputsEntry,
 		ResultFacts:      validateRestoredOutputs,
 		CompactionSource: nativeCompactionSourceChecked, DecodeCheckpoint: decodeCheckpoint,
 	}

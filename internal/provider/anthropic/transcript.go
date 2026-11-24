@@ -12,7 +12,7 @@ func (conversation *Conversation) ProjectTranscriptFrom(ordinal uint64) (domain.
 		return domain.TranscriptView{}, 0, err
 	}
 	view, err := provider.ProjectNativeTranscript(history, ordinal, domain.ProviderAnthropic, nativeUsers,
-		func(input nativeMessage) string { return input.Content[0].Text }, appendSampleTranscript, entryStopFeedback)
+		func(input nativeMessage) string { return input.Content[0].Text }, appendSampleTranscript, entryStopFeedback, entrySessionStartContext)
 	return view, ordinal + uint64(len(history)), err
 }
 

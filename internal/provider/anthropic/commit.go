@@ -16,14 +16,16 @@ const (
 )
 
 type nativeHistoryCommit struct {
-	FeedbackInput    *nativeMessage                 `json:"feedback_input,omitempty"`
-	FeedbackMetadata *provider.HookFeedbackMetadata `json:"feedback_metadata,omitempty"`
-	Kind             nativeHistoryEntryKind         `json:"kind"`
-	UserInputs       []nativeMessage                `json:"user_inputs,omitempty"`
-	InputMetadata    *provider.InputMetadata        `json:"input_metadata,omitempty"`
-	Assistant        *nativeMessage                 `json:"assistant,omitempty"`
-	ToolOutputs      *nativeMessage                 `json:"tool_outputs,omitempty"`
-	Metadata         *messageMetadataCommit         `json:"metadata,omitempty"`
+	SessionStartInput    *nativeMessage                 `json:"session_start_input,omitempty"`
+	SessionStartMetadata *provider.SessionStartMetadata `json:"session_start_metadata,omitempty"`
+	FeedbackInput        *nativeMessage                 `json:"feedback_input,omitempty"`
+	FeedbackMetadata     *provider.HookFeedbackMetadata `json:"feedback_metadata,omitempty"`
+	Kind                 nativeHistoryEntryKind         `json:"kind"`
+	UserInputs           []nativeMessage                `json:"user_inputs,omitempty"`
+	InputMetadata        *provider.InputMetadata        `json:"input_metadata,omitempty"`
+	Assistant            *nativeMessage                 `json:"assistant,omitempty"`
+	ToolOutputs          *nativeMessage                 `json:"tool_outputs,omitempty"`
+	Metadata             *messageMetadataCommit         `json:"metadata,omitempty"`
 }
 
 type messageMetadataCommit struct {
@@ -53,7 +55,7 @@ func encodeNativeCommit(entry nativeHistoryEntry) (provider.NativeCommitEnvelope
 	if err := validateNativeHistoryEntry(cloned); err != nil {
 		return provider.NativeCommitEnvelope{}, err
 	}
-	commit := nativeHistoryCommit{Kind: cloned.Kind, UserInputs: cloned.UserInputs, InputMetadata: cloned.InputMetadata, FeedbackInput: cloned.FeedbackInput, FeedbackMetadata: cloned.FeedbackMetadata}
+	commit := nativeHistoryCommit{Kind: cloned.Kind, UserInputs: cloned.UserInputs, InputMetadata: cloned.InputMetadata, FeedbackInput: cloned.FeedbackInput, FeedbackMetadata: cloned.FeedbackMetadata, SessionStartInput: cloned.SessionStartInput, SessionStartMetadata: cloned.SessionStartMetadata}
 	if cloned.Kind == nativeHistorySample {
 		assistant := cloned.Assistant.clone()
 		metadata := encodeMetadata(cloned.Metadata)
@@ -87,6 +89,9 @@ func decodeNativeCommit(envelope provider.NativeCommitEnvelope) (nativeHistoryEn
 	}
 	entry := nativeHistoryEntry{Kind: commit.Kind}
 	entry.FeedbackInput = commit.FeedbackInput
+	entry.SessionStartInput = commit.SessionStartInput
+	entry.SessionStartMetadata = commit.SessionStartMetadata
+	entry.TurnID = entry.NativeSessionStartTarget().TurnID
 	entry.FeedbackMetadata = commit.FeedbackMetadata
 	entry.UserInputs = commit.UserInputs
 	entry.InputMetadata = commit.InputMetadata
@@ -95,7 +100,7 @@ func decodeNativeCommit(envelope provider.NativeCommitEnvelope) (nativeHistoryEn
 	}
 
 	switch commit.Kind {
-	case nativeHistoryHookFeedback:
+	case nativeHistorySessionStart, nativeHistoryHookFeedback:
 		if len(commit.UserInputs) != 0 || commit.InputMetadata != nil || commit.Assistant != nil || commit.Metadata != nil || commit.ToolOutputs != nil {
 			return nativeHistoryEntry{}, fmt.Errorf("hook feedback contains unrelated fields")
 		}
@@ -139,10 +144,20 @@ func validateRawUsageCommit(usage rawUsageCommit) error {
 }
 
 func validateNativeHistoryEntry(entry nativeHistoryEntry) error {
+	if entry.Kind != nativeHistorySessionStart && (entry.SessionStartInput != nil || entry.SessionStartMetadata != nil) {
+		return fmt.Errorf("unrelated session start context fields")
+	}
 	if entry.Kind != nativeHistoryHookFeedback && (entry.FeedbackInput != nil || entry.FeedbackMetadata != nil) {
 		return fmt.Errorf("unrelated hook feedback fields")
 	}
 	switch entry.Kind {
+	case nativeHistorySessionStart:
+		if len(entry.UserInputs) != 0 || entry.InputMetadata != nil || entry.Assistant.Role != "" || len(entry.Assistant.Content) != 0 || entry.ToolOutputs.Role != "" || len(entry.ToolOutputs.Content) != 0 || entry.Metadata != (messageMetadata{}) {
+			return fmt.Errorf("session start context contains unrelated fields")
+		}
+		if _, err := entrySessionStartContext(entry); err != nil {
+			return err
+		}
 	case nativeHistoryHookFeedback:
 		if len(entry.UserInputs) != 0 || entry.InputMetadata != nil || entry.Assistant.Role != "" || len(entry.Assistant.Content) != 0 || entry.ToolOutputs.Role != "" || len(entry.ToolOutputs.Content) != 0 || entry.Metadata != (messageMetadata{}) {
 			return fmt.Errorf("hook feedback contains unrelated fields")

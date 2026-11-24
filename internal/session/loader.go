@@ -168,6 +168,9 @@ func loadJournal(ctx context.Context, file *os.File, expectedThreadID domain.Thr
 				record.BatchIndex != uint32(len(currentBatch)) {
 				return LoadResult{}, corrupt(fmt.Errorf("session batch boundary is invalid"))
 			}
+			if err := validateSessionStartBatchPrefix(first, record); err != nil {
+				return LoadResult{}, corrupt(err)
+			}
 		}
 		batchBytes += consumed
 		if batchBytes > MaxBatchBytes {

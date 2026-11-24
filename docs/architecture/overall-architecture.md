@@ -156,7 +156,7 @@ internal/
   session/                  JSONL、artifact、根线程和分支的创建与恢复
     catalog/                可重建 Catalog 快照 与前台 reconciliation
   executor/process/         Exec/Hook 共用进程生命周期
-  extension/                本地 Skills、Plugin 技能包与 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact Hooks；P6 后续目标：插件可执行贡献、MCP
+  extension/                本地 Skills、Plugin 技能包与 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact/SessionStart Hooks；P6 后续目标：插件可执行贡献、MCP
   subagent/                 P7 目标：thread tree、mailbox、后台任务和限流
   tui/                      Bubble Tea、输入、消息 view、overlay 和 diff
   telemetry/                P8 目标：slog、redaction、metrics 和 diagnostics
@@ -227,7 +227,7 @@ Provider HTTP 层不直接依赖官方模型 SDK。原因是 EasyCode 需要支�
 共享 Runtime 的当前采样流程：
 
 1. AgentLoop 按 FIFO/strict-next 领取用户输入，冻结独立 InputID。
-2. 准备输入候选、上下文预算及适用的阈值摘要。摘要请求前完成 PreCompact 门禁，新窗口成功保存后先收口 PostCompact，再提交待处理输入。输入 batch 成功 Sync 后 finalize。
+2. 准备输入候选、上下文预算及适用的阈值摘要。摘要请求前完成 PreCompact 门禁，新窗口成功保存后依序收口 PostCompact 和适用的 SessionStart，再提交待处理输入。输入 batch 成功 Sync 后 finalize。
 3. 由当前 ContextPlan 和 Provider 策略编译原生请求及缓存证据。
 4. Provider 在私有 reducer 中归并原生条目。Runtime 消费语义事件和唯一终态，验证完整 PreparedSample。
 5. 原子提交 native sample、usage 与 ready calls、适用的 Stop 计划或最终 terminal，成功后 finalize。
@@ -568,7 +568,7 @@ fs.patch
 
 P3 当前已实现 Read、Glob、Grep、Anthropic structured Edit/OpenAI custom freeform apply_patch、Anthropic Bash/OpenAI exec_command、双 Provider structured Write、durable approval/ledger、最多 8 路只读并发、Patch/Write/Exec 独占屏障、有序结果提交和本地恢复补偿。Patch 限于一个已有 UTF-8 工作区常规文件，在 Unix 使用 descriptor-relative 重验与同目录原子替换；其他平台失败关闭。Write 的 structured facade 支持原子创建/整文件覆盖：覆盖要求先前已回传的完整 Read，新目录链通过私有树和 no-replace 发布；审批展示区分 create/overwrite，独立 Write grant 不在 resume 恢复。详见 [Tool 已实现边界](tool-system.md#101-write-已实现边界)。Exec 限于 Darwin 前台 non-login `/bin/sh`：每次单独批准、最小环境、workspace 写入、禁止网络、确定性头尾输出、原进程组清理与唯一最终 Wait；非 Darwin 返回 `unsupported_platform`，不降级。`setsid` 等脱离组后代不属于保证清理范围，但仍受继承的 sandbox 限制；输出收口不确定时 poison Runtime。详细预算与测试边界见 [Tool 系统架构](tool-system.md#93-进程工具)。write_stdin、PTY/后台进程控制、全工具 artifact、跨能力通用 sandbox 和跨平台等价执行仍按独立 change 增加。
 
-本地 Skill、本地 Plugin 技能包和 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact Hook 已交付；其余 Hooks、插件可执行贡献/MCP 属于 P6 后续范围，Agent/Subagent 属于 P7；完整跨平台 sandbox 矩阵属于 P8。未到对应阶段前不得提前暴露空 schema、event kind、facade 或 capability flag。
+本地 Skill、本地 Plugin 技能包和 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact/SessionStart Hook 已实现；其余 Hooks、插件可执行贡献/MCP 属于 P6 后续范围，Agent/Subagent 属于 P7；完整跨平台 sandbox 矩阵属于 P8。未到对应阶段前不得提前暴露空 schema、event kind、facade 或 capability flag。
 
 ## 9. Context 与 Compaction
 
@@ -764,7 +764,7 @@ Session 的 compaction_started/completed/failed 具有强类型 scope（manual�
 
 ## 12. Hooks、Skills、Plugins 与 MCP
 
-本章区分当前交付与 P6 后续目标。本地 Skills 与同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact 命令 Hook 已接入 Runtime/app；本地 Plugin 已交付静态技能贡献；MCP 仍保留经批准的 TODO 边界，不接入运行。
+本章区分当前交付与 P6 后续目标。本地 Skills 与同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact/SessionStart 命令 Hook 已接入 Runtime/app；本地 Plugin 已交付静态技能贡献；MCP 仍保留经批准的 TODO 边界，不接入运行。
 
 ### 12.1 当前 PreToolUse 命令 Hook
 
@@ -839,6 +839,12 @@ continued 决定只保存最终反馈字节和来源、bytes/digest，尚未推�
 成功记录 Sync 且新窗口、摘要历史、Context/Cache 投影安装后，本地宿主接收 `post_compact_installed`。运行时完成平台、输入和所有声明的信任检查后，逐项 Sync 准入并由同一进程 owner 串行执行。脚本 stdin 包含真实压缩身份与已安装的语义摘要，退出状态提供安全结果，输出正文随进程收口丢弃。最终的 `post_compact_closed` 单独显示固定分类与完成数。公共压缩终态仍以成功 checkpoint 为准。
 
 回放在实际成功序号恢复 checkpoint，并检查随后有序的后置事实。未关闭前缀由恢复 owner 在同一 lease 下只追加一次关闭，再按既有顺序处理 Stop 待交付或中断 turn。自动续写在检查关闭后使用已安装窗口，按既有预算、取消及 Session 健康状态决定是否开始下一 sample。 [运行时实现](../../internal/runtime/post_compact_hooks.go) · [回放实现](../../internal/session/post_compact_replay.go)
+
+#### 12.1.6 SessionStart 上下文交付
+
+首轮由原回合 owner 在自动摘要及真实输入预检后消费实例的来源。新建根线程使用 `startup`，创建并进入分支或恢复根线程及分支使用 `resume`。`compact` 由同一压缩 owner 在 PostCompact 收口后消费已安装 checkpoint。逐条独立信任完成后串行运行，只采纳显式授权、结构校验及预算通过的完整模型包装。共享 runner 负责真实进程和双流的清理。
+
+Session 使用 `session_start_hook_planned`、`session_start_hook_started`、`session_start_hook_finished` 和 `session_start_hook_closed`。只有 applied 关闭携带 Provider 原生 `session_start_context`。激活上下文和真实 initial 输入在同一批次 Sync，compact 闭合是检查点后的独立记录。手动压缩锚定真实 CompactionID，自动压缩沿用真实作用域。两家 Provider 通过逻辑前驱保持原有采样与工具配对，完整请求维护已提交上下文的原生顺序。宿主根据关闭真实序号增加只读详情，当前窗口更新独立于最近联网请求的计量。恢复先校验批次与原生证据，再在同一 lease 下本地结算未关闭前缀。 [设计](../../openspec/changes/archive/2026-11-24-add-session-start-context/design.md)
 
 ### 12.2 当前本地 Skills
 

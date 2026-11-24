@@ -1,10 +1,11 @@
 package session
 
 import (
-	"easycode/internal/domain"
-	"fmt"
+	"errors"
 	"math"
 	"time"
+
+	"easycode/internal/domain"
 )
 
 // TurnInputsPayload 仅记录输入归属，正文保存在紧邻的原生 commit。
@@ -84,7 +85,8 @@ func encodeLargestDraftEnvelope(draft RecordDraft, batchIndex, batchSize uint32)
 	const id = "00000000-0000-7000-8000-000000000001"
 	identity := Identity{SessionID: domain.SessionID(id), ThreadID: domain.ThreadID(id)}
 	timestamp := time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
-	record, err := BuildRecord(identity, draft, math.MaxUint64, timestamp, math.MaxUint64, batchIndex, batchSize)
+	batchID := math.MaxUint64 - uint64(batchSize-1)
+	record, err := BuildRecord(identity, draft, batchID+uint64(batchIndex), timestamp, batchID, batchIndex, batchSize)
 	if err != nil {
 		return nil, err
 	}
@@ -98,17 +100,22 @@ func ValidateSingletonDraftSize(draft RecordDraft) error {
 	return err
 }
 
+var errBatchSizeLimit = errors.New("session batch exceeds size limit")
+
+// IsBatchSizeLimit 区分整批大小超限与端点结构错误。
+func IsBatchSizeLimit(err error) bool { return errors.Is(err, errBatchSizeLimit) }
+
 // ValidateDraftBatchSize 在 writer 接收前按完整 envelope 最大开销验证编码预算。
 func ValidateDraftBatchSize(drafts []RecordDraft) error {
 	total := 0
-	for _, draft := range drafts {
-		encoded, err := encodeLargestDraftEnvelope(draft, math.MaxUint32-1, math.MaxUint32)
+	for index, draft := range drafts {
+		encoded, err := encodeLargestDraftEnvelope(draft, uint32(index), uint32(len(drafts)))
 		if err != nil {
 			return err
 		}
 		total += len(encoded) + 1
 		if total > MaxBatchBytes {
-			return fmt.Errorf("session batch exceeds size limit")
+			return errBatchSizeLimit
 		}
 	}
 	return nil

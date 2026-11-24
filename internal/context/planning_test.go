@@ -82,6 +82,65 @@ func TestPlannerCacheFingerprintIgnoresVolatileInputAndSecrets(t *testing.T) {
 	}
 }
 
+func TestPlannerSessionStartContextChangesOnlyCommittedHistory(t *testing.T) {
+	t.Parallel()
+	const family = domain.ProviderOpenAI
+	const revision = 5
+	profile, _ := NewProviderProfile(family, "fixture-model")
+	scope, _ := domain.ParseSessionStartHookScope("compact")
+	digest := domain.HookDigest(nil)
+	hook, err := domain.NewSessionStartHookDeclaration(domain.HookSourceProject, domain.HookFeedbackModel, digest, "workspace-context", scope, "true", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary, _ := domain.NewContextSummary("fresh checkpoint")
+	catalog, project := testToolCatalog(t), emptyProjectInstructions(t)
+	plan := func(body string) (ContextPlan, Segment) {
+		t.Helper()
+		history := planningHistoryWithInput(emptyHistory(family), "real user input")
+		if body != "" {
+			text, err := domain.WrapSessionStartContext(domain.SessionStartCompact, body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			history.CheckpointContexts = []domain.SemanticCheckpointContext{{Context: domain.SessionStartContext{
+				Target: domain.SessionStartTarget{Source: domain.SessionStartCompact, Scope: domain.ManualCompactionScope(),
+					CompactionID: "01900000-0000-7000-8000-000000000005", CheckpointSequence: 10, CheckpointRevision: 3, CheckpointDigest: digest},
+				Items: []domain.SessionStartContextItem{{Reference: hook.Reference, Text: text}},
+			}}}
+		}
+		active, err := domain.NewActiveContextView(history, summary, revision)
+		if err != nil {
+			t.Fatal(err)
+		}
+		input, err := NewPlanningInput(profile, catalog, project, active, estimatedFootprint(t, family, revision, 0), NewSamplingInput(), DisabledBudget())
+		if err != nil {
+			t.Fatal(err)
+		}
+		value, err := NewPlanner().Plan(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		segments := value.CachePlan().Segments()
+		return value, segments[len(segments)-2]
+	}
+	without, _ := plan("")
+	first, current := plan("workspace facts A")
+	second, changed := plan("workspace facts B")
+	firstStable, _ := first.CachePlan().StablePrefixFingerprint()
+	secondStable, _ := second.CachePlan().StablePrefixFingerprint()
+	canonical := string(current.CanonicalJSON())
+	before, _ := without.TotalEstimate().Tokens()
+	after, _ := first.TotalEstimate().Tokens()
+	contextIndex := strings.Index(canonical, "workspace facts A")
+	inputIndex := strings.Index(canonical, "real user input")
+	if firstStable != secondStable || current.Fingerprint() == changed.Fingerprint() || after <= before ||
+		contextIndex < 0 || contextIndex >= inputIndex ||
+		strings.Contains(canonical, "01900000-0000") || strings.Contains(canonical, "workspace-context") {
+		t.Fatalf("session start context did not change only the dynamic history: %s", canonical)
+	}
+}
+
 func TestPlannerProjectInstructionFingerprintUsesContentAndRelativeSource(t *testing.T) {
 	t.Parallel()
 	first := planWithProjectInstructions(t, projectInstructions(t, "AGENTS.md", "same"), "input", DisabledBudget())

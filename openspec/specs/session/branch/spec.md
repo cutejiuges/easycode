@@ -29,7 +29,7 @@
 
 ### Requirement: A branch has a verifiable and self-contained lineage
 
-分支 SHALL 使用源的 SessionID 和新 canonical ThreadID，父为命令接纳时的当前线程。切点为源 writer 已确认的最后完整提交，在完整 turn、工具调用、Stop 反馈和压缩生命周期之间。分支 journal SHALL 包含截至切点的准确源 JSONL bytes，随后追加唯一用于本次派生的 `thread_forked` 记录。该记录绑定父、最后序号、前缀 SHA-256、子身份和初始标题。普通恢复沿用现有追加和修复规则，保留被继承记录的身份、授权归属、checksum 和完整序号。源 journal 及工作区 SHALL 在分支创建前后字节一致。
+分支 SHALL 使用源的 SessionID 和新 canonical ThreadID，父为命令接纳时的当前线程。切点为源 writer 已确认的最后完整提交，在完整 turn、工具调用、Stop 反馈、压缩和 SessionStart 生命周期之间。分支 journal SHALL 包含截至切点的准确源 JSONL bytes，随后追加唯一用于本次派生的 `thread_forked` 记录。该记录绑定父、最后序号、前缀 SHA-256、子身份和初始标题。普通恢复沿用现有追加和修复规则，保留被继承记录的身份、授权归属、checksum 和完整序号。源 journal 及工作区 SHALL 在分支创建前后字节一致。
 
 分支及其再派生 SHALL 可在源忙或源文件不可用时独立预览和恢复。在任何修复或允许目标写入之前，系统 MUST 在目标的连续 lease 下验证整条链、当前身份、历史事实和 Provider 原生完整性。序号按切点后继续，新的记录和改名归所属分支。候选无有效分支标记或标记不能证明精确前缀时，MUST 拒绝将其作为可用分支。
 
@@ -95,15 +95,15 @@
 
 ### Requirement: Inherited native history preserves continuation with fresh execution authority
 
-分支 SHALL 继承已提交的 Provider-native 历史、真实工具 call/output 配对、冻结用户输入和 Hook 反馈、有效 checkpoint、任务状态及可见历史预览。输入、历史事实、原生 item 与依赖证据使用原有字节和次序。继承事实供回放、显示和语境使用。分支以当前启动配置和 Default 模式建立新控制实例，新样本的用量、进程内缓存诊断、临时审批、信任、文件读取资格、待审方案、effort 覆盖和输入队列从新实例开始。
+分支 SHALL 继承已提交的 Provider-native 历史、真实工具 call/output 配对、冻结用户输入和 Hook 反馈、有效 checkpoint、任务状态及可见历史预览。输入、历史事实、原生 item 与依赖证据使用原有字节和次序。继承事实供回放、显示和语境使用，包括此前已交付的 SessionStart 原生上下文。分支以当前启动配置和 Default 模式建立新控制实例，新样本的用量、进程内缓存诊断、临时审批、信任、文件读取资格、待审方案、effort 覆盖和输入队列从新实例开始。
 
 历史 artifact descriptor MUST 按原归属验证。分支当前的工具与宿主读取权限，以及 artifact 清理，MUST 只由当前段中属于该分支的 durable 引用建立。历史工具详情 SHALL 展示冻结预览、保存时的状态及完整的生成线程 ID。继承工具项的详情不显示本线程的原文分页入口，也不预取原文。宿主直接收到祖先条目的原文请求时仍须按条目归属拒绝。原文可从实际生成它的线程依照现有策略查看。分支不改变冻结模型 output 及预算结果，也不补偿、重跑或重新计费已收口的历史操作。
 
-给定相同的分支已提交历史、下一输入、上下文来源和捕获设置，立即续写与重启后续写的请求 canonical bytes、原生顺序、footprint 和 fingerprint MUST 等价。两种 Provider 的首次分支采样 SHALL 使用完整的有效原生窗口及本次输入。已有压缩时使用当前有效 checkpoint 和其后原生项，压缩前的归档正文只用于本地历史验证与展示。OpenAI 首个分支 WebSocket 请求不使用源的 `previous_response_id`，按当前策略派生分支的 thread cache key。Anthropic SHALL 延续原有断点和 TTL 策略。源 Provider 的关闭不得关闭分支后续请求所用的资源。分支元数据仅服务持久化和宿主，稳定内容仍以现有来源和原生事实计算。
+分支直接接管和显式恢复均沿用 SessionStart 的 `resume` 来源，首次符合条件的真实对话回合才可派发。给定相同的分支已提交历史、下一输入、上下文来源、捕获设置及该次 SessionStart 的确认结果和最终上下文字节，立即续写与重启后续写的请求 canonical bytes、原生顺序、footprint 和 fingerprint MUST 等价。两种 Provider 的首次分支采样 SHALL 使用完整的有效原生窗口及本次输入。已有压缩时使用当前有效 checkpoint 和其后原生项，压缩前的归档正文只用于本地历史验证与展示。OpenAI 首个分支 WebSocket 请求不使用源的 `previous_response_id`，按当前策略派生分支的 thread cache key。Anthropic SHALL 延续原有断点和 TTL 策略。源 Provider 的关闭不得关闭分支后续请求所用的资源。分支元数据仅服务持久化和宿主，稳定内容仍以现有来源和原生事实计算。
 
 #### Scenario: Continue the same native history before and after restart
 
-- **WHEN** 含原生推理、已配对工具调用和有效压缩 checkpoint 的分支，在相同设置下即时续写或重启后续写
+- **WHEN** 含原生推理、已配对工具调用和有效压缩 checkpoint 的分支，在相同设置和可选 SessionStart 上下文下即时续写或重启后续写
 - **THEN** 两种 Provider 的分支请求分别满足等价要求。压缩前的原始事实可在本地历史读取，发送窗口由近期 checkpoint、checkpoint 后截至切点仍有效的原生项和新输入组成。OpenAI 首次完整请求使用本分支的路由身份和新连接续写状态
 
 #### Scenario: Use historical evidence without granting mutation or artifact access

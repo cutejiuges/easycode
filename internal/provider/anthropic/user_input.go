@@ -23,7 +23,7 @@ func (conversation *Conversation) PrepareUserInputs(a domain.InputAssociation, i
 func (conversation *Conversation) inputPreparation() provider.NativeInputPreparation[nativeHistoryEntry] {
 	return provider.NativeInputPreparation[nativeHistoryEntry]{
 		History: &conversation.history, Operations: &conversation.operations,
-		UserEntry: userInputEntry, Feedback: stopFeedbackEntry, Encode: encodeNativeCommit,
+		UserEntry: userInputEntry, Feedback: stopFeedbackEntry, SessionStart: sessionStartEntry, Encode: encodeNativeCommit,
 		Validate: validateNativeHistory, Footprint: historyFootprint, Project: projectHistory,
 		CheckRequest: func(entries []nativeHistoryEntry, input provider.TurnInput) error {
 			_, err := conversation.compileSamplingWindow(entries, input)

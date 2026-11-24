@@ -259,6 +259,16 @@ func (model Model) renderSessionTitleEditor() string {
 
 func (model Model) renderSessionTitleClosed() string {
 	lines := []string{"Error: " + model.errorSummary, "Ctrl+C: exit"}
+	if model.sessionStartControlClosed {
+		var status []string
+		if model.compactionStatus != "" {
+			status = append(status, strings.Split(model.compactionStatus, "\n")...)
+		}
+		if model.sessionStartStatus != "" {
+			status = append(status, model.sessionStartStatus)
+		}
+		lines = append(status, lines...)
+	}
 	if line := model.title.line(); line != "" && model.heightOrDefault() > len(lines) {
 		lines = append([]string{line}, lines...)
 	}

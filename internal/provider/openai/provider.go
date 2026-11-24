@@ -160,11 +160,15 @@ func (conversation *Conversation) samplingHistory() (nativeWindowSnapshot, bool)
 	if len(window.Entries) == 0 || validateNativeHistory(window.Entries) != nil {
 		return nativeWindowSnapshot{}, false
 	}
-	kind := window.Entries[len(window.Entries)-1].Kind
-	return window, kind == nativeHistoryUserInputs || kind == nativeHistoryToolOutputs || kind == nativeHistoryHookFeedback
+	last, ok := provider.LastNativeConversationEntry(window.Entries)
+	return window, ok && (last.Kind == nativeHistoryUserInputs || last.Kind == nativeHistoryToolOutputs || last.Kind == nativeHistoryHookFeedback)
 }
 
 func (conversation *Conversation) openSamplingPlan(window nativeWindowSnapshot, input provider.TurnInput, catalog tool.CatalogSnapshot) (func(context.Context) (provider.SampleStream, error), error) {
+	last, ok := provider.LastNativeConversationEntry(window.Entries)
+	if !ok {
+		return nil, fmt.Errorf("sampling requires a committed conversation predecessor")
+	}
 	plan, err := conversation.planSamplingRequest(window, input)
 	if err != nil {
 		return nil, err
@@ -183,7 +187,7 @@ func (conversation *Conversation) openSamplingPlan(window nativeWindowSnapshot, 
 		if err != nil {
 			return provider.SampleStream{}, err
 		}
-		return conversation.sampleStream(window.Entries[len(window.Entries)-1].TurnID, catalog, stream, request, evidence, comparison, selection, cleanup), nil
+		return conversation.sampleStream(last.TurnID, catalog, stream, request, evidence, comparison, selection, cleanup), nil
 	}, nil
 }
 

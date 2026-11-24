@@ -16,7 +16,7 @@ func renderedChatRows(value string) int {
 // nonEffortStatusRows 为主线、通知和补全共用现有状态的真实行预算。
 func (model Model) nonEffortStatusRows() int {
 	rows := renderedChatRows(model.handoffStatus())
-	for _, present := range []bool{model.cancelling, model.planReview.starting != "", model.stopStatus != "", model.reasoning.notice != "", model.reasoningStatus() != "", model.reading.detached || model.reading.notice != "" || model.reading.newContent, model.errorSummary != "", model.title.value != "", model.title.status() != ""} {
+	for _, present := range []bool{model.cancelling, model.planReview.starting != "", model.stopStatus != "", model.sessionStartStatus != "", model.reasoning.notice != "", model.reasoningStatus() != "", model.reading.detached || model.reading.notice != "" || model.reading.newContent, model.errorSummary != "", model.title.value != "", model.title.status() != ""} {
 		if present {
 			rows++
 		}

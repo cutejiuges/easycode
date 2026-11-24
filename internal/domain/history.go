@@ -2,33 +2,43 @@ package domain
 
 import (
 	"fmt"
+	"strings"
 	"unicode/utf8"
 )
 
 // SemanticHistoryView 是只读、允许有损的原生历史投影，不得用于构造 Provider 请求。
 type SemanticHistoryView struct {
-	Provider ProviderFamily `json:"provider"`
-	Turns    []SemanticTurn `json:"turns"`
+	Provider           ProviderFamily              `json:"provider"`
+	Turns              []SemanticTurn              `json:"turns"`
+	CheckpointContexts []SemanticCheckpointContext `json:"checkpoint_contexts,omitempty"`
+}
+
+// SemanticCheckpointContext 将补充上下文定位在真实消息之间，不创建人工回合。
+type SemanticCheckpointContext struct {
+	AfterMessages int                 `json:"after_messages"`
+	Context       SessionStartContext `json:"context"`
 }
 
 // SemanticRole 区分用户正文和已提交的 assistant 可见正文。
 type SemanticRole string
 
 const (
-	SemanticUser      SemanticRole = "user"
-	SemanticAssistant SemanticRole = "assistant"
-	SemanticHook      SemanticRole = "hook"
+	SemanticUser                SemanticRole = "user"
+	SemanticAssistant           SemanticRole = "assistant"
+	SemanticHook                SemanticRole = "hook"
+	SemanticSessionStartContext SemanticRole = "session_start_context"
 )
 
 // SemanticMessage 保留 turn 内消息顺序；InputID 只用于用户消息关联。
 type SemanticMessage struct {
-	Files      FileAttachments    `json:"files,omitempty,omitzero"`
-	HookSource *HookMessageSource `json:"hook_source,omitempty"`
-	Skill      SkillAttachment    `json:"skill,omitempty,omitzero"`
-	HasSkill   bool               `json:"has_skill,omitempty"`
-	Role       SemanticRole       `json:"role"`
-	InputID    InputID            `json:"input_id,omitempty"`
-	Text       string             `json:"text"`
+	Files        FileAttachments      `json:"files,omitempty,omitzero"`
+	HookSource   *HookMessageSource   `json:"hook_source,omitempty"`
+	SessionStart *SessionStartContext `json:"session_start,omitempty"`
+	Skill        SkillAttachment      `json:"skill,omitempty,omitzero"`
+	HasSkill     bool                 `json:"has_skill,omitempty"`
+	Role         SemanticRole         `json:"role"`
+	InputID      InputID              `json:"input_id,omitempty"`
+	Text         string               `json:"text"`
 }
 
 // NewSemanticUserMessage 创建有身份的用户正文投影。
@@ -51,6 +61,9 @@ func (m SemanticMessage) Validate() error {
 	if m.Role != SemanticHook && m.HookSource != nil {
 		return fmt.Errorf("unexpected semantic hook source")
 	}
+	if m.Role != SemanticSessionStartContext && m.SessionStart != nil {
+		return fmt.Errorf("unexpected semantic session start context")
+	}
 	if m.HasSkill {
 		if m.Role != SemanticUser || m.Skill.Validate() != nil {
 			return fmt.Errorf("invalid semantic skill")
@@ -69,6 +82,11 @@ func (m SemanticMessage) Validate() error {
 	case SemanticHook:
 		if m.InputID != "" || m.HookSource == nil || m.HookSource.Validate() != nil {
 			return fmt.Errorf("invalid semantic hook source")
+		}
+	case SemanticSessionStartContext:
+		if m.InputID != "" || m.SessionStart == nil || m.SessionStart.Target.Source == SessionStartCompact ||
+			m.SessionStart.Validate() != nil || m.Text != sessionStartModelText(*m.SessionStart) {
+			return fmt.Errorf("invalid semantic session start context")
 		}
 	case SemanticAssistant:
 		if m.InputID != "" {
@@ -101,7 +119,11 @@ func (turn SemanticTurn) Validate() error {
 		return fmt.Errorf("semantic turn is invalid")
 	}
 	seen := make(map[InputID]struct{})
-	for _, m := range turn.Messages {
+	for i, m := range turn.Messages {
+		if m.SessionStart != nil && (i != 0 || m.SessionStart.Target.TurnID != turn.TurnID ||
+			i+1 >= len(turn.Messages) || turn.Messages[i+1].Role != SemanticUser) {
+			return fmt.Errorf("invalid semantic session start placement")
+		}
 		if m.HookSource != nil {
 			sample, _ := m.HookSource.Identity.Target.AssistantSample()
 			if sample.TurnID != turn.TurnID {
@@ -127,7 +149,32 @@ func (view SemanticHistoryView) Clone() SemanticHistoryView {
 	for i, t := range view.Turns {
 		copy.Turns[i] = SemanticTurn{TurnID: t.TurnID, Messages: cloneSemanticMessages(t.Messages)}
 	}
+	for _, context := range view.CheckpointContexts {
+		copy.CheckpointContexts = append(copy.CheckpointContexts, SemanticCheckpointContext{
+			AfterMessages: context.AfterMessages, Context: context.Context.Clone(),
+		})
+	}
 	return copy
+}
+
+// NewSemanticSessionStartContext 保留首次真实输入前的授权来源和精确正文。
+func NewSemanticSessionStartContext(value SessionStartContext) (SemanticMessage, error) {
+	value = value.Clone()
+	message := SemanticMessage{Role: SemanticSessionStartContext, Text: sessionStartModelText(value), SessionStart: &value}
+	return message, message.Validate()
+}
+
+// ModelText 返回适配器冻结的正文块，不为显示添加字节。
+func (context SemanticCheckpointContext) ModelText() string {
+	return sessionStartModelText(context.Context)
+}
+
+func sessionStartModelText(value SessionStartContext) string {
+	var text strings.Builder
+	for _, item := range value.Items {
+		text.WriteString(item.Text)
+	}
+	return text.String()
 }
 
 // NewSemanticHookMessage 将已授权反馈投影为独立来源，不创建真实用户身份。
@@ -147,6 +194,10 @@ func cloneSemanticMessages(messages []SemanticMessage) []SemanticMessage {
 		if out[i].HookSource != nil {
 			source := *out[i].HookSource
 			out[i].HookSource = &source
+		}
+		if out[i].SessionStart != nil {
+			context := out[i].SessionStart.Clone()
+			out[i].SessionStart = &context
 		}
 	}
 	return out

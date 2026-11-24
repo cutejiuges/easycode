@@ -72,7 +72,7 @@
 - **WHEN** 自动压缩 started 后进程退出
 - **THEN** resume 在 lease 下收口，零网络、零 Hook 或工具重跑。只有完整 durable completed 能安装窗口
 
-Stop 后的摘要 SHALL 继续使用原阈值、来源抑制、三次熔断、计量及取消/恢复契约；最新待交付反馈及本次真实输入必须保持在摘要之外，重建后原字节交付，不靠摘要文本的语义完整性保证它们存在。恢复先收口摘要，再补齐已接收的本地反馈交付，不运行旧 Stop 或联网重发。
+Stop 后的摘要 SHALL 继续使用原阈值、来源抑制、三次熔断、计量及取消/恢复契约；最新待交付反馈及本次真实输入必须保持在摘要之外，重建后原字节交付，不靠摘要文本的语义完整性保证它们存在。恢复依次收口摘要、适用的 PostCompact、已接纳的 SessionStart(compact)，再补齐已接收的本地 Stop 反馈交付，不运行旧 Hook 或联网重发。
 
 #### Scenario: Recover a post-stop compaction
 - **WHEN** continued 冻结决定已保存、native 交付缺失，而自动摘要 started 后中断
@@ -142,7 +142,7 @@ Stop continued 决定 SHALL 先冻结最终模型反馈与交付义务。随后�
 
 ### Requirement: Automatic sampling waits for post-compaction observation
 
-初始输入、工具续轮和 Stop 待交付边界 SHALL 在同一压缩 owner 内等待已安装 checkpoint 的 PostCompact 阶段收口及清理，才准备后续 native 提交或普通 sample。检查只读取摘要及压缩身份，所有待交付正文和附件保持原有顺序、边界与字节。成功安装清零自动失败计数。拒绝、确定的检查错误和跳过 MUST 不计为自动压缩失败，不重新摘要，健康且未取消时以新窗口继续原有预算检查。已成功 checkpoint 后的取消 MUST 停止下一 sample，保留新窗口和既有输入返还规则；健康 Session 仍按已有契约本地交付待提交的 Stop 反馈。后置事实写入失败或清理不确定 MUST 以独立 Session 错误阻止后续 native 提交、Stop 反馈交付和下一 sample，保留已确认 checkpoint 并交由恢复处理未关闭尾部，不产生自动压缩失败计数。
+初始输入、工具续轮和 Stop 待交付边界 SHALL 在同一压缩 owner 内等待已安装 checkpoint 的 PostCompact 阶段及适用的 SessionStart(compact) 依次收口和清理，再提交后续 native facts 或发起普通 sample。检查经各自授权读取的输入受原事件契约约束，所有待交付正文和附件保持原有顺序、边界与字节。成功安装清零自动失败计数。拒绝、确定的检查错误和跳过 MUST 不计为自动压缩失败，不重新摘要，健康且未取消时以新窗口继续原有预算检查。已成功 checkpoint 后的取消 MUST 停止下一 sample，保留新窗口和既有输入返还规则；健康 Session 仍按已有契约本地交付待提交的 Stop 反馈。后置事实写入失败或清理不确定 MUST 以独立 Session 错误阻止后续 native 提交、Stop 反馈交付和下一 sample，保留已确认 checkpoint 并交由恢复处理未关闭尾部，不产生自动压缩失败计数。
 
 #### Scenario: Continue after a known observer failure
 
@@ -158,3 +158,17 @@ Stop continued 决定 SHALL 先冻结最终模型反馈与交付义务。随后�
 
 - **WHEN** checkpoint 已成功安装，PostCompact 的关闭 Sync 或进程清理不确定
 - **THEN** 保留唯一已知成功的压缩，既不增加自动压缩失败计数，也不提交尚待交付的输入或 Stop 反馈，不开始下一 sample，Session 进入失败关闭
+
+### Requirement: Automatic continuation preserves ordering around the compact supplement
+
+自动压缩后的 SessionStart(compact) SHALL 使用已安装窗口和真实压缩作用域执行。Runtime SHALL 将候选补充内容纳入普通编码及窗口预检，并验证带补充的窗口小于旧窗口。存在已知的下一普通候选时，预检 SHALL 覆盖该候选的原身份、原字节、Skill/文件附件及适用的冻结 Stop 反馈。当该候选无法在加入补充内容后通过确定的预算或编码校验时，关闭为跳过并沿用原有后续预检和归还规则。不得领取第二批输入或再次摘要。候选必须包含无 steering 时的下一工具采样。若裸候选本身超限，原有真实输入返还及 Stop feedback-only 预检仍按原规则处理。在首次输入场景中若另有待运行的 startup/resume，后者沿用应用 compact 内容之后的实际窗口进行独立的最终输入候选预检。
+
+成功提交的原生顺序 SHALL 按真实安全点保持为摘要、compact 上下文、适用的 startup/resume 上下文、初始输入，或摘要、compact 上下文、适用的 steering、普通 sample。Stop 续轮使用摘要、compact 上下文、已冻结的 Stop 反馈、适用的 steering、普通 sample。跳过的内容不占原生位置。计量、工具结果配对、队列所有权、Stop 交付义务及自动压缩尝试预算保留既有归属。
+
+#### Scenario: Order both context sources before an initial input
+- **WHEN** 恢复后首个普通回合触发初始自动压缩，compact 与 resume 均有可交付的上下文
+- **THEN** 两项原生提交按摘要、compact、resume、真实用户输入的顺序出现，只有一条原始输入身份且无额外摘要
+
+#### Scenario: Preserve the next candidate at tool and Stop boundaries
+- **WHEN** 已闭合工具组或 Stop 决定后成功自动压缩，compact 补充内容可应用或因合并候选超限而被省略
+- **THEN** 原冻结的 Stop 反馈和已领取 steering 保持各自原字节。合法补充内容在两者之前，省略时只恢复原后续候选预检，无重复摘要、运行或领取

@@ -11,6 +11,7 @@ type nativeSequenceEntry interface {
 	NativeRole() domain.NativeCommitRole
 	NativeTurn() domain.TurnID
 	NativeInputMetadata() *InputMetadata
+	NativeSessionStartTarget() domain.SessionStartTarget
 }
 
 // NativeSequenceRules 提供时序检查所需的协议验证和原生配对。
@@ -26,6 +27,7 @@ type nativeSequence[E nativeSequenceEntry, C any] struct {
 	err             error
 	pending         []C
 	turn            domain.TurnID
+	awaitingInitial domain.TurnID
 	lastRole        domain.NativeCommitRole
 	index           int
 	nextSample      uint32
@@ -48,14 +50,21 @@ func (s *nativeSequence[E, C]) observe(entry E) {
 	}
 	s.index++
 	s.err = s.advance(entry)
-	s.lastRole = entry.NativeRole()
+	if entry.NativeRole() != domain.NativeCommitSessionStartContext {
+		s.lastRole = entry.NativeRole()
+	}
 }
 
 func (s *nativeSequence[E, C]) advance(entry E) error {
 	if err := s.rules.ValidateEntry(entry); err != nil {
 		return fmt.Errorf("entry %d is invalid: %w", s.index, err)
 	}
+	if s.awaitingInitial != "" && entry.NativeRole() != domain.NativeCommitUserInputs {
+		return fmt.Errorf("session start context requires adjacent initial user inputs")
+	}
 	switch entry.NativeRole() {
+	case domain.NativeCommitSessionStartContext:
+		return s.acceptSessionStart(entry.NativeSessionStartTarget())
 	case domain.NativeCommitUserInputs:
 		return s.acceptInputs(entry)
 	case domain.NativeCommitSample:
@@ -102,6 +111,12 @@ func (s *nativeSequence[E, C]) acceptInputs(entry E) error {
 	if entry.NativeTurn() != association.TurnID() {
 		return fmt.Errorf("input turn association mismatch")
 	}
+	if s.awaitingInitial != "" {
+		if association.TurnID() != s.awaitingInitial || association.Placement() != domain.InputInitial {
+			return fmt.Errorf("session start context does not match initial user inputs")
+		}
+		s.awaitingInitial = ""
+	}
 	if association.Placement() == domain.InputInitial {
 		if _, exists := s.seenTurns[association.TurnID()]; exists {
 			return fmt.Errorf("initial input is duplicated")
@@ -121,6 +136,40 @@ func (s *nativeSequence[E, C]) acceptInputs(entry E) error {
 	return nil
 }
 
+func (s *nativeSequence[E, C]) acceptSessionStart(target domain.SessionStartTarget) error {
+	if len(s.pending) != 0 {
+		return fmt.Errorf("session start context precedes pending tool outputs")
+	}
+	if target.Source == domain.SessionStartCompact {
+		scope := target.Scope
+		if scope.Trigger == domain.CompactionAuto {
+			if scope.SampleIndex == 0 {
+				if _, alreadyStarted := s.seenTurns[scope.TurnID]; alreadyStarted {
+					return fmt.Errorf("compact context has a stale initial sample")
+				}
+			} else if scope.TurnID != s.turn || scope.SampleIndex != s.nextSample {
+				return fmt.Errorf("compact context does not match continuation")
+			}
+		}
+		return nil
+	}
+	if _, exists := s.seenTurns[target.TurnID]; exists {
+		return fmt.Errorf("session start context applies to an existing turn")
+	}
+	s.awaitingInitial = target.TurnID
+	return nil
+}
+
+func (s *nativeSequence[E, C]) complete() error {
+	if s.err != nil {
+		return s.err
+	}
+	if s.awaitingInitial != "" {
+		return fmt.Errorf("session start context has no initial user inputs")
+	}
+	return nil
+}
+
 func validateNativeSequence[E nativeSequenceEntry, C any](entries []E, rules NativeSequenceRules[E, C]) *nativeSequence[E, C] {
 	sequence := newNativeSequence(rules)
 	for _, entry := range entries {
@@ -134,7 +183,25 @@ func validateNativeSequence[E nativeSequenceEntry, C any](entries []E, rules Nat
 
 // ValidateNativeSequence 按当前顺序验证条目和工具闭合关系。
 func ValidateNativeSequence[E nativeSequenceEntry, C any](entries []E, rules NativeSequenceRules[E, C]) error {
-	return validateNativeSequence(entries, rules).err
+	return validateNativeSequence(entries, rules).complete()
+}
+
+// LastNativeConversationEntry 找到决定实际回合与采样资格的原生前驱。
+func LastNativeConversationEntry[E nativeSequenceEntry](entries []E) (E, bool) {
+	if index := lastNativeConversationIndex(entries); index >= 0 {
+		return entries[index], true
+	}
+	var zero E
+	return zero, false
+}
+
+func lastNativeConversationIndex[E nativeSequenceEntry](entries []E) int {
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].NativeRole() != domain.NativeCommitSessionStartContext {
+			return i
+		}
+	}
+	return -1
 }
 
 // PendingNativeCalls 返回最后一个原生 sample 中仍待配对的调用。
@@ -143,8 +210,8 @@ func PendingNativeCalls[E nativeSequenceEntry, C any](entries []E, rules NativeS
 }
 
 func (s *nativeSequence[E, C]) pendingCalls(unavailable string) ([]C, error) {
-	if s.err != nil {
-		return nil, s.err
+	if err := s.complete(); err != nil {
+		return nil, err
 	}
 	if s.lastRole != domain.NativeCommitSample || len(s.pending) == 0 {
 		return nil, fmt.Errorf("%s", unavailable)

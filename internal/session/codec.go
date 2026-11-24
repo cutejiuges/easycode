@@ -136,6 +136,12 @@ func DecodeRecord(line []byte) (Record, error) {
 		if members["turn_id"] != nil || members["parent_thread_id"] != nil {
 			return Record{}, fmt.Errorf("compaction record identity fields must be absent")
 		}
+	case EventSessionStartHookPlanned, EventSessionStartHookStarted, EventSessionStartHookFinished, EventSessionStartHookClosed:
+		if (record.TurnID == "" && members["turn_id"] != nil) || members["parent_thread_id"] != nil {
+			return Record{}, fmt.Errorf("session start record has unexpected identity fields")
+		}
+		// validateRecord 已按真实分支校验这四种记录的 payload 和批次形状。
+		return cloneRecord(record), nil
 	}
 	if err := decodeKnownRecord(record); err != nil {
 		return Record{}, err
@@ -192,6 +198,11 @@ func validateRecord(record Record, requireChecksum bool) error {
 	descriptor, exists := descriptorByKind(record.EventKind)
 	if !exists {
 		return fmt.Errorf("session event kind is unsupported")
+	}
+	if descriptor.Placement == PlacementSessionStartHook {
+		if err := validateSessionStartRecordShape(record); err != nil {
+			return err
+		}
 	}
 	if record.EventKind == EventSessionTitleUpdated {
 		if err := validateSessionTitleEnvelope(record); err != nil {

@@ -10,9 +10,10 @@ import (
 type HookTargetKind string
 
 const (
-	HookTargetToolCall   HookTargetKind = "tool_call"
-	HookTargetTurnStop   HookTargetKind = "turn_stop"
-	HookTargetCompaction HookTargetKind = "compaction"
+	HookTargetToolCall     HookTargetKind = "tool_call"
+	HookTargetTurnStop     HookTargetKind = "turn_stop"
+	HookTargetCompaction   HookTargetKind = "compaction"
+	HookTargetSessionStart HookTargetKind = "session_start"
 )
 
 // AssistantSampleReference 精确定位一个回合中的成功采样，不使用展示位置。
@@ -34,12 +35,13 @@ func (v AssistantSampleReference) Validate() error {
 
 // HookTarget 是当前检查目标的值联合；构造和编解码均不执行副作用。
 type HookTarget struct {
-	kind       HookTargetKind
-	invocation string
-	capability HookCapability
-	sample     AssistantSampleReference
-	compaction CompactionID
-	scope      CompactionScope
+	kind         HookTargetKind
+	invocation   string
+	capability   HookCapability
+	sample       AssistantSampleReference
+	compaction   CompactionID
+	scope        CompactionScope
+	sessionStart SessionStartTarget
 }
 
 func NewToolHookTarget(invocation string, capability HookCapability) (HookTarget, error) {
@@ -62,6 +64,12 @@ func NewCompactionHookTarget(id CompactionID, scope CompactionScope) (HookTarget
 	return v, v.Validate()
 }
 
+// NewSessionStartHookTarget 绑定真实会话激活或已安装压缩检查点。
+func NewSessionStartHookTarget(target SessionStartTarget) (HookTarget, error) {
+	v := HookTarget{kind: HookTargetSessionStart, sessionStart: target}
+	return v, v.Validate()
+}
+
 func (v HookTarget) Kind() HookTargetKind { return v.kind }
 func (v HookTarget) ToolCall() (string, HookCapability, bool) {
 	return v.invocation, v.capability, v.kind == HookTargetToolCall && v.Validate() == nil
@@ -71,10 +79,21 @@ func (v HookTarget) AssistantSample() (AssistantSampleReference, bool) {
 }
 
 func (v HookTarget) Compaction() (CompactionID, CompactionScope, bool) {
+	if v.kind == HookTargetSessionStart && v.sessionStart.Source == SessionStartCompact {
+		return v.sessionStart.CompactionID, v.sessionStart.Scope, v.Validate() == nil
+	}
 	return v.compaction, v.scope, v.kind == HookTargetCompaction && v.Validate() == nil
 }
 
+// SessionStart 读取与 SessionStart 声明匹配的目标身份。
+func (v HookTarget) SessionStart() (SessionStartTarget, bool) {
+	return v.sessionStart, v.kind == HookTargetSessionStart && v.Validate() == nil
+}
+
 func (v HookTarget) Validate() error {
+	if v.kind != HookTargetSessionStart && v.sessionStart != (SessionStartTarget{}) {
+		return HookConfigInvalid
+	}
 	switch v.kind {
 	case HookTargetToolCall:
 		if _, err := parseUUIDv7(v.invocation); err != nil || !v.capability.Valid() || v.sample != (AssistantSampleReference{}) || v.compaction != "" || v.scope != (CompactionScope{}) {
@@ -86,6 +105,11 @@ func (v HookTarget) Validate() error {
 		}
 	case HookTargetCompaction:
 		if !v.compaction.Valid() || v.scope.Validate() != nil || v.invocation != "" || v.capability != "" || v.sample != (AssistantSampleReference{}) {
+			return HookConfigInvalid
+		}
+	case HookTargetSessionStart:
+		if v.sessionStart.Validate() != nil || v.invocation != "" || v.capability != "" || v.sample != (AssistantSampleReference{}) ||
+			v.compaction != "" || v.scope != (CompactionScope{}) {
 			return HookConfigInvalid
 		}
 	default:
@@ -104,6 +128,8 @@ func (v HookTarget) Key() string {
 		return string(v.kind) + ":" + string(v.sample.TurnID) + ":" + strconv.FormatUint(uint64(v.sample.SampleIndex), 10)
 	case HookTargetCompaction:
 		return string(v.kind) + ":" + string(v.compaction) + ":" + string(v.scope.Trigger) + ":" + string(v.scope.TurnID) + ":" + strconv.FormatUint(uint64(v.scope.SampleIndex), 10)
+	case HookTargetSessionStart:
+		return string(v.kind) + ":" + v.sessionStart.key()
 	default:
 		return ""
 	}
@@ -125,6 +151,8 @@ func (v HookTarget) MarshalJSON() ([]byte, error) {
 			TurnID TurnID         `json:"turn_id"`
 			Index  uint32         `json:"sample_index"`
 		}{v.kind, v.sample.TurnID, v.sample.SampleIndex})
+	case HookTargetSessionStart:
+		return codec.MarshalStable(sessionStartHookTargetWire{v.kind, v.sessionStart})
 	default:
 		return codec.MarshalStable(compactionHookTargetWire{v.kind, v.compaction, v.scope})
 	}
@@ -134,6 +162,11 @@ type compactionHookTargetWire struct {
 	Kind  HookTargetKind  `json:"kind"`
 	ID    CompactionID    `json:"compaction_id"`
 	Scope CompactionScope `json:"scope"`
+}
+
+type sessionStartHookTargetWire struct {
+	Kind   HookTargetKind     `json:"kind"`
+	Target SessionStartTarget `json:"session_start"`
 }
 
 func DecodeHookTarget(b []byte) (HookTarget, error) {
@@ -172,6 +205,12 @@ func DecodeHookTarget(b []byte) (HookTarget, error) {
 			return HookTarget{}, HookConfigInvalid
 		}
 		return NewCompactionHookTarget(w.ID, w.Scope)
+	case HookTargetSessionStart:
+		var w sessionStartHookTargetWire
+		if codec.UnmarshalRecord(b, &w) != nil {
+			return HookTarget{}, HookConfigInvalid
+		}
+		return NewSessionStartHookTarget(w.Target)
 	default:
 		return HookTarget{}, HookConfigInvalid
 	}
@@ -187,11 +226,12 @@ func (v *HookTarget) UnmarshalJSON(b []byte) error {
 
 const anyCompactionTrigger CompactionTrigger = "*"
 
-// HookScope 隔离工具 matcher、无 matcher 的回合检查和压缩触发 matcher。
+// HookScope 隔离工具 matcher、回合检查、压缩触发和会话来源 matcher。
 type HookScope struct {
-	kind              HookTargetKind
-	matcher           HookMatcher
-	compactionMatcher CompactionTrigger
+	kind                HookTargetKind
+	matcher             HookMatcher
+	compactionMatcher   CompactionTrigger
+	sessionStartMatcher SessionStartSource
 }
 
 func NewToolHookScope(matcher HookMatcher) (HookScope, error) {
@@ -211,13 +251,25 @@ func ParseCompactionHookScope(matcher string) (HookScope, error) {
 	return v, v.Validate()
 }
 
+// ParseSessionStartHookScope 只接受当前来源字面值和通配符。
+func ParseSessionStartHookScope(matcher string) (HookScope, error) {
+	v := HookScope{kind: HookTargetSessionStart, sessionStartMatcher: SessionStartSource(matcher)}
+	return v, v.Validate()
+}
+
 func (v HookScope) Validate() error {
+	if v.kind != HookTargetSessionStart && v.sessionStartMatcher != "" {
+		return HookConfigInvalid
+	}
 	switch {
 	case v.kind == HookTargetToolCall && v.matcher.Valid() && v.compactionMatcher == "":
 		return nil
 	case v.kind == HookTargetTurnStop && v.matcher == 0 && v.compactionMatcher == "":
 		return nil
 	case v.kind == HookTargetCompaction && v.matcher == 0 && (v.compactionMatcher == CompactionManual || v.compactionMatcher == CompactionAuto || v.compactionMatcher == anyCompactionTrigger):
+		return nil
+	case v.kind == HookTargetSessionStart && v.matcher == 0 && v.compactionMatcher == "" &&
+		(v.sessionStartMatcher.Valid() || v.sessionStartMatcher == anySessionStartSource):
 		return nil
 	}
 	return HookConfigInvalid
@@ -240,12 +292,24 @@ func (v HookScope) MatchesCompaction(trigger CompactionTrigger) bool {
 	return v.kind == HookTargetCompaction && (trigger == CompactionManual || trigger == CompactionAuto) && (v.compactionMatcher == trigger || v.compactionMatcher == anyCompactionTrigger)
 }
 
+// SessionStartMatcher 返回声明中配置的会话来源或通配符。
+func (v HookScope) SessionStartMatcher() (string, bool) {
+	return string(v.sessionStartMatcher), v.kind == HookTargetSessionStart && v.Validate() == nil
+}
+
+// MatchesSessionStart 按声明匹配实际会话来源。
+func (v HookScope) MatchesSessionStart(source SessionStartSource) bool {
+	return v.kind == HookTargetSessionStart && source.Valid() && (v.sessionStartMatcher == source || v.sessionStartMatcher == anySessionStartSource)
+}
+
 func (v HookScope) String() string {
 	switch v.kind {
 	case HookTargetTurnStop:
 		return "Turn completion"
 	case HookTargetCompaction:
 		return string(v.compactionMatcher)
+	case HookTargetSessionStart:
+		return string(v.sessionStartMatcher)
 	default:
 		return v.matcher.String()
 	}
@@ -261,6 +325,8 @@ func (v HookScope) MarshalJSON() ([]byte, error) {
 		}{v.kind})
 	case HookTargetCompaction:
 		return codec.MarshalStable(compactionHookScopeWire{v.kind, string(v.compactionMatcher)})
+	case HookTargetSessionStart:
+		return codec.MarshalStable(compactionHookScopeWire{v.kind, string(v.sessionStartMatcher)})
 	default:
 		return codec.MarshalStable(struct {
 			Kind    HookTargetKind `json:"kind"`
@@ -298,6 +364,12 @@ func DecodeHookScope(b []byte) (HookScope, error) {
 			return HookScope{}, HookConfigInvalid
 		}
 		return ParseCompactionHookScope(w.Matcher)
+	case HookTargetSessionStart:
+		var w compactionHookScopeWire
+		if codec.DecodeObject(b, &w, "kind", "matcher") != nil {
+			return HookScope{}, HookConfigInvalid
+		}
+		return ParseSessionStartHookScope(w.Matcher)
 	}
 	var w struct {
 		Kind    HookTargetKind `json:"kind"`
