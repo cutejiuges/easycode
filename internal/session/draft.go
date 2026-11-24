@@ -278,6 +278,11 @@ func (draft RecordDraft) clone() RecordDraft {
 
 func validateDraftPlacement(draft RecordDraft) error {
 	switch draft.descriptor.Kind {
+	case EventSessionStartHookPlanned, EventSessionStartHookStarted, EventSessionStartHookFinished, EventSessionStartHookClosed:
+		// 当前 typed payload 核对激活和压缩各自的 turn 规则。
+		if draft.parentThreadID != "" {
+			return fmt.Errorf("session start draft placement is invalid")
+		}
 	case EventCompactionStarted, EventPreCompactHookStarted, EventPreCompactHookFinished, EventPreCompactHookDecided, EventCompactionCompleted, EventCompactionFailed,
 		EventPostCompactHookStarted, EventPostCompactHookFinished, EventPostCompactHookClosed:
 		if draft.turnID != "" || draft.parentThreadID != "" {

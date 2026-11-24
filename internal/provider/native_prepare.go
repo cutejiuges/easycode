@@ -14,6 +14,7 @@ type NativeInputPreparation[E nativeClone[E]] struct {
 	Operations   *ConversationOperations
 	UserEntry    func(domain.InputAssociation, []domain.UserInput) (E, error)
 	Feedback     func(domain.StopFeedback) (E, error)
+	SessionStart func(domain.SessionStartContext) (E, error)
 	Encode       func(E) (NativeCommitEnvelope, error)
 	Validate     func([]E) error
 	Footprint    func([]E, uint64) (domain.NativeHistoryFootprint, error)

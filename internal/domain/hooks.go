@@ -197,6 +197,11 @@ func NewPostCompactHookDeclaration(source HookSource, feedback HookFeedbackPolic
 	return newScopedHookDeclaration(source, HookPostCompact, feedback, revision, id, scope, command, timeout)
 }
 
+// NewSessionStartHookDeclaration 构造按实际会话来源匹配的命令声明。
+func NewSessionStartHookDeclaration(source HookSource, feedback HookFeedbackPolicy, revision, id string, scope HookScope, command string, timeout int) (HookDeclaration, error) {
+	return newScopedHookDeclaration(source, HookSessionStart, feedback, revision, id, scope, command, timeout)
+}
+
 func newScopedHookDeclaration(source HookSource, event HookEvent, feedback HookFeedbackPolicy, revision, id string, scope HookScope, command string, timeout int) (HookDeclaration, error) {
 	if !feedback.ValidFor(event) || !source.Valid() || !ValidHookDigest(revision) || ValidateSkillName(id) != nil || !scope.ValidFor(event) ||
 		strings.TrimSpace(command) == "" || len(command) > MaxHookCommandBytes || !utf8.ValidString(command) || strings.ContainsRune(command, 0) || timeout < 1 || timeout > 30 {
@@ -324,6 +329,11 @@ func NewPostCompactHookRunIdentity(target HookTarget, planDigest string, ordinal
 	return newHookRunIdentity(target, HookPostCompact, planDigest, ordinal)
 }
 
+// NewSessionStartHookRunIdentity 关联当前会话上下文计划和执行序号。
+func NewSessionStartHookRunIdentity(target HookTarget, planDigest string, ordinal int) (HookRunIdentity, error) {
+	return newHookRunIdentity(target, HookSessionStart, planDigest, ordinal)
+}
+
 func newHookRunIdentity(target HookTarget, event HookEvent, digest string, ordinal int) (HookRunIdentity, error) {
 	v := HookRunIdentity{Event: event, Target: target, PlanDigest: digest, Ordinal: ordinal}
 	v.RunID = target.Key() + ":" + string(event) + ":" + digest + ":" + strconv.Itoa(ordinal)
@@ -397,6 +407,9 @@ func (r HookRunResult) Validate() error {
 		return HookConfigInvalid
 	}
 	if r.Identity.Event == HookPostCompact && !r.validPostCompactResult() {
+		return HookConfigInvalid
+	}
+	if r.Identity.Event == HookSessionStart && !r.validSessionStartResult() {
 		return HookConfigInvalid
 	}
 	if r.Origin == "recovery" && (r.Status != HookUncertain || r.ExitKnown || r.TimedOut || r.Cancelled || r.StdoutBytes != 0 || r.StderrBytes != 0 || r.CleanupConfirmed) {
@@ -576,6 +589,14 @@ func (s HookSnapshot) PreCompactChecks(trigger CompactionTrigger) ([]HookDeclara
 // PostCompactChecks 只选择成功检查点所属触发方式的冻结声明。
 func (s HookSnapshot) PostCompactChecks(trigger CompactionTrigger) ([]HookDeclaration, error) {
 	return s.compactionChecks(HookPostCompact, trigger)
+}
+
+// SessionStartChecks 按实际会话来源选择完整的冻结命令。
+func (s HookSnapshot) SessionStartChecks(source SessionStartSource) ([]HookDeclaration, error) {
+	if !source.Valid() {
+		return nil, HookConfigInvalid
+	}
+	return s.match(HookSessionStart, func(scope HookScope) bool { return scope.MatchesSessionStart(source) })
 }
 
 func (s HookSnapshot) compactionChecks(event HookEvent, trigger CompactionTrigger) ([]HookDeclaration, error) {

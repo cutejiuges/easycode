@@ -1,14 +1,17 @@
 package provider
 
 import (
+	"fmt"
+	"slices"
+
 	"easycode/internal/domain"
 	"easycode/internal/tool"
-	"fmt"
 )
 
 // RestoreRecord 将 opaque 原生增量绑定到已校验的 turn 和提交角色。
 type RestoreRecord struct {
 	feedback     *domain.StopFeedback
+	sessionStart *SessionStartMetadata
 	toolOutputs  []tool.ModelOutput
 	readyCalls   []tool.Invocation
 	readyResults []tool.InvocationResult
@@ -98,6 +101,9 @@ func (record RestoreRecord) Association() (domain.InputAssociation, bool) {
 
 // Validate 拒绝零值或不匹配的恢复角色。
 func (record RestoreRecord) Validate() error {
+	if (record.role == domain.NativeCommitSessionStartContext) != (record.sessionStart != nil) {
+		return fmt.Errorf("unrelated session start restore evidence")
+	}
 	if record.expectedTask != nil && record.checkpoint == nil {
 		return fmt.Errorf("unrelated checkpoint task evidence")
 	}
@@ -177,6 +183,31 @@ func (record RestoreRecord) Validate() error {
 		return err
 	}
 
+	if record.sessionStart != nil {
+		if record.sessionStart.Target.TurnID != record.turnID || record.association.TurnID() != "" {
+			return fmt.Errorf("invalid session start restore scope")
+		}
+		if err := record.sessionStart.Target.Validate(); err != nil {
+			return err
+		}
+		if len(record.sessionStart.Proofs) == 0 || len(record.sessionStart.Proofs) > domain.MaxHookMatches {
+			return fmt.Errorf("invalid session start restore evidence count")
+		}
+		previous, total := -1, 0
+		for _, proof := range record.sessionStart.Proofs {
+			if err := proof.Validate(); err != nil || proof.Ordinal <= previous {
+				return fmt.Errorf("invalid session start restore evidence order")
+			}
+			previous = proof.Ordinal
+			total += proof.Bytes
+		}
+		if total > domain.MaxSessionStartContextBytes {
+			return fmt.Errorf("session start restore evidence exceeds budget")
+		}
+		_, err := record.envelope.Clone()
+		return err
+	}
+
 	if !record.turnID.Valid() {
 		return fmt.Errorf("restore turn ID is invalid")
 	}
@@ -196,6 +227,22 @@ func (record RestoreRecord) Validate() error {
 		return fmt.Errorf("restore commit role is invalid")
 	}
 	return nil
+}
+
+// NewSessionStartContextRestoreRecord 绑定已验证的关闭事实与原生上下文。
+func NewSessionStartContextRestoreRecord(target domain.SessionStartTarget, proofs []domain.SessionStartProof, envelope NativeCommitEnvelope) (RestoreRecord, error) {
+	cloned, err := envelope.Clone()
+	if err != nil {
+		return RestoreRecord{}, err
+	}
+	record := RestoreRecord{
+		role: domain.NativeCommitSessionStartContext, turnID: target.TurnID, envelope: cloned,
+		sessionStart: &SessionStartMetadata{Target: target, Proofs: slices.Clone(proofs)},
+	}
+	if err := record.Validate(); err != nil {
+		return RestoreRecord{}, err
+	}
+	return record, nil
 }
 
 // WithReadyFacts 绑定同一 sample 的完整原始 ready 与已提交提问/任务结果，不改变原生信封。

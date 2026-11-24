@@ -32,7 +32,7 @@ func (conversation *Conversation) ProjectHistory() domain.SemanticHistoryView {
 }
 
 func projectHistory(history []nativeHistoryEntry) domain.SemanticHistoryView {
-	return provider.ProjectNativeHistory(history, domain.ProviderAnthropic, nativeUsers, projectUserText, nativeAssistantText, entryStopFeedback)
+	return provider.ProjectNativeHistory(history, domain.ProviderAnthropic, nativeUsers, projectUserText, nativeAssistantText, entryStopFeedback, entrySessionStartContext)
 }
 
 func nativeUsers(entry nativeHistoryEntry) []nativeMessage { return entry.UserInputs }

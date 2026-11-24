@@ -64,6 +64,7 @@ type configEvents struct {
 	Stop               []configStopGroup `json:"Stop,omitempty"`
 	PreCompact         []configGroup     `json:"PreCompact,omitempty"`
 	PostCompact        []configGroup     `json:"PostCompact,omitempty"`
+	SessionStart       []configGroup     `json:"SessionStart,omitempty"`
 }
 type configGroup struct {
 	Matcher string          `json:"matcher"`
@@ -156,6 +157,7 @@ func decodeConfig(source domain.HookSource, b []byte) ([]domain.HookDeclaration,
 		{domain.HookStop, stopGroups},
 		{domain.HookPreCompact, f.Hooks.PreCompact},
 		{domain.HookPostCompact, f.Hooks.PostCompact},
+		{domain.HookSessionStart, f.Hooks.SessionStart},
 	} {
 		for _, g := range phase.groups {
 			scope, err := configScope(phase.event, g.Matcher)
@@ -212,6 +214,8 @@ func configScope(event domain.HookEvent, matcher string) (domain.HookScope, erro
 		return domain.NewStopHookScope(), nil
 	case domain.HookPreCompact, domain.HookPostCompact:
 		return domain.ParseCompactionHookScope(matcher)
+	case domain.HookSessionStart:
+		return domain.ParseSessionStartHookScope(matcher)
 	default:
 		tools, err := domain.ParseHookMatcher(matcher)
 		if err != nil {
@@ -230,6 +234,8 @@ func configDeclaration(source domain.HookSource, event domain.HookEvent, feedbac
 		return domain.NewPreCompactHookDeclaration(source, feedback, revision, id, scope, command, timeout)
 	case domain.HookPostCompact:
 		return domain.NewPostCompactHookDeclaration(source, feedback, revision, id, scope, command, timeout)
+	case domain.HookSessionStart:
+		return domain.NewSessionStartHookDeclaration(source, feedback, revision, id, scope, command, timeout)
 	}
 	matcher, ok := scope.ToolMatcher()
 	if !ok {

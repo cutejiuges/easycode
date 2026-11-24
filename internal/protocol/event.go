@@ -18,6 +18,7 @@ const (
 	EventStopHookCommitted     EventKind = "stop_hook_committed"
 	EventPostHookCommitted     EventKind = "post_hook_committed"
 	EventHookActivity          EventKind = "hook_activity"
+	EventSessionStart          EventKind = "session_start"
 	EventCacheSnapshot         EventKind = "cache_snapshot"
 	EventContextSnapshot       EventKind = "context_snapshot"
 	EventEffortSnapshot        EventKind = "effort_snapshot"
@@ -68,6 +69,10 @@ func (event Event) Validate() error {
 	}
 	if event.ItemID != "" || event.CallID != "" {
 		return fmt.Errorf("runtime event reserved identity is invalid")
+	}
+	if event.Kind == EventSessionStart {
+		_, err := DecodeSessionStart(event)
+		return err
 	}
 	if IsCompactionPresentation(event) {
 		if !event.SessionID.Valid() || !event.ThreadID.Valid() {

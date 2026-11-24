@@ -1,6 +1,6 @@
 package domain
 
-// HookEvent 区分工具、回合完成和压缩的同步检查事件。
+// HookEvent 区分工具、回合完成、压缩和会话上下文的同步检查事件。
 type HookEvent string
 
 const (
@@ -10,6 +10,7 @@ const (
 	HookPostToolUseFailure HookEvent = "PostToolUseFailure"
 	HookPreCompact         HookEvent = "PreCompact"
 	HookPostCompact        HookEvent = "PostCompact"
+	HookSessionStart       HookEvent = "SessionStart"
 )
 
 func (e HookEvent) Valid() bool { return e.targetKind() != "" }
@@ -22,6 +23,8 @@ func (e HookEvent) targetKind() HookTargetKind {
 		return HookTargetTurnStop
 	case HookPreCompact, HookPostCompact:
 		return HookTargetCompaction
+	case HookSessionStart:
+		return HookTargetSessionStart
 	default:
 		return ""
 	}

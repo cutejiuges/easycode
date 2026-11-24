@@ -12,6 +12,9 @@ func historyFootprint(entries []nativeHistoryEntry, revision uint64) (domain.Nat
 
 func nativeRequestMessages(entry nativeHistoryEntry) iter.Seq[nativeMessage] {
 	return func(yield func(nativeMessage) bool) {
+		if entry.SessionStartInput != nil && !yield(*entry.SessionStartInput) {
+			return
+		}
 		if entry.FeedbackInput != nil && !yield(*entry.FeedbackInput) {
 			return
 		}

@@ -163,6 +163,8 @@ type HookInput struct {
 	Response    *HookToolResponse `json:"tool_response,omitempty"`
 	Error       string            `json:"error,omitempty"`
 	IsInterrupt *bool             `json:"is_interrupt,omitempty"`
+
+	sessionStart *sessionStartHookInput
 }
 
 func NewHookInput(session SessionID, thread ThreadID, turn TurnID, call, name, cwd string, input HookToolInput, profile HookInputProfile) (HookInput, error) {
@@ -183,8 +185,11 @@ func (v HookInput) Validate() error {
 	case HookPreCompact, HookPostCompact:
 		_, err := v.compactionBytes()
 		return err
+	case HookSessionStart:
+		_, err := v.sessionStartBytes()
+		return err
 	}
-	if v.stop != nil || v.compaction != nil {
+	if v.stop != nil || v.compaction != nil || v.sessionStart != nil {
 		return HookConfigInvalid
 	}
 	if v.Event == HookPreToolUse {
@@ -226,6 +231,9 @@ func (v HookInput) Validate() error {
 func (v HookInput) Bytes() ([]byte, error) {
 	if v.Event.targetKind() == HookTargetCompaction {
 		return v.compactionBytes()
+	}
+	if v.Event == HookSessionStart {
+		return v.sessionStartBytes()
 	}
 	if err := v.Validate(); err != nil {
 		return nil, err
@@ -288,6 +296,8 @@ func DecodeHookInput(b []byte) (HookInput, error) {
 			return HookInput{}, HookConfigInvalid
 		}
 		return decodeCompactionHookInput(b)
+	case HookSessionStart:
+		return decodeSessionStartHookInput(b, members)
 	}
 	var w struct {
 		Event       HookEvent       `json:"hook_event_name"`

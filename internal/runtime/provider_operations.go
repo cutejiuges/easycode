@@ -9,6 +9,7 @@ type providerOperations struct {
 	toolOutputs   provider.ToolResultPreparer
 	stopEncoding  provider.StopFeedbackEncoder
 	stop          provider.StopContinuationPreparer
+	sessionStart  provider.SessionStartPreparer
 	compaction    provider.CompactionKernel
 	continuation  provider.ContinuationResetter
 	planProposal  provider.PlanProposalProjector
@@ -21,6 +22,7 @@ func bindProviderOperations(conversation provider.Conversation) providerOperatio
 	operations.toolOutputs, _ = conversation.(provider.ToolResultPreparer)
 	operations.stopEncoding, _ = conversation.(provider.StopFeedbackEncoder)
 	operations.stop, _ = conversation.(provider.StopContinuationPreparer)
+	operations.sessionStart, _ = conversation.(provider.SessionStartPreparer)
 	operations.compaction, _ = conversation.(provider.CompactionKernel)
 	operations.continuation, _ = conversation.(provider.ContinuationResetter)
 	operations.planProposal, _ = conversation.(provider.PlanProposalProjector)

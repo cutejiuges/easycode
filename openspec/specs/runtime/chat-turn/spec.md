@@ -128,7 +128,7 @@ Session-bound Runtime SHALL 在接受 turn 前获得有效的 `session_id` 与 `
 
 ### Requirement: Durable facts precede Provider side effects and completion
 
-Runtime SHALL 在首次 Provider 请求前依次提交 turn_started、纯内存预检候选输入、durable 提交 initial 用户输入 batch 并 finalize；任一步失败时不得建立网络流。每个completed sample的`provider_native_commit`、`sample_usage`和全部ready-call facts MUST在同一batch append/Sync后finalize，随后才允许候选准备或executor I/O。
+Runtime SHALL 在首次普通 Provider 请求前依次保存 turn_started、完成适用的自动压缩与 SessionStart 检查、纯内存预检最终候选输入、durable 提交 initial 用户输入 batch 并 finalize。初始批次应用 SessionStart 上下文时，applied 关闭必须与真实输入事实同批提交。必要步骤失败时不得建立普通采样流。每个completed sample的`provider_native_commit`、`sample_usage`和全部ready-call facts MUST在同一batch append/Sync后finalize，随后才允许候选准备或executor I/O。
 
 Runtime SHALL按call index与调度屏障完成policy及所需approval。Patch候选只能在ready durable且前序批次结果durable后读取目标；ask decision只有在匹配`tool_approval_decided(allow*)`成功Sync后才可进入执行准入，deny decision必须与denied result同batch durable且零executor I/O。Runtime SHALL按调度批次逐一durable`tool_execution_started`：连续`parallel_read`批次的全部准入完成后最多启动8个workers，每个`exclusive` Patch在前序批次完成后准备候选、请求approval并独占执行。worker/executor只返回固定call slot的typed result，不得写Session或Provider history；协调owner按call index durable result facts。全部results durable后，匹配的Provider-native tool outputs MUST在下一Provider sample前append/Sync并finalize。无 Stop 的最终无 calls sample 的 native commit、sample usage 和 turn_completed SHALL 同批 durable；有 Stop 或来源不可判定时 SHALL 先同批保存 native sample、usage、Stop plan；通过/失败时决定与 terminal 同批，合法阻断时 finished 与 continued 决定同批冻结反馈义务，再经独立一/三记录 batch 原子交付 native feedback 及适用的真实用户输入；携带聚合usage的`turn_completed` RuntimeEvent只有在finalizer成功后才能发布。
 
@@ -286,7 +286,7 @@ Runtime SHALL 在构造 Session drafts 前同时复制并重新验证 prepared s
 
 ### Requirement: Runtime plans context before Provider side effects
 
-Runtime SHALL 在 `turn_started` 已 durable、每次 Provider stream之前，使用同一不可变项目指令与Tool Catalog snapshots、当前已提交Conversation history以及本轮输入状态生成上下文计划。首轮和中途用户输入均先以候选历史预检，通过后独立提交；实际 sample 只从已提交 Provider-native 用户输入、tool outputs 和合法独立 hook_feedback 继续，不得把result、RuntimeEvent或SemanticHistoryView伪造成新的共享user文本。
+Runtime SHALL 在 `turn_started` 已 durable、每次 Provider stream之前，使用同一不可变项目指令与Tool Catalog snapshots、当前已提交Conversation history以及本轮输入状态生成上下文计划。首轮和中途用户输入均先以候选历史预检，通过后独立提交；实际 sample 只从已提交的 Provider-native 用户输入、tool outputs、合法独立的 hook_feedback 与 session_start_context 继续，不得把result、RuntimeEvent或SemanticHistoryView伪造成新的共享user文本。
 
 规划失败或预算明确 `over_limit` 时，Runtime MUST durable收口当前turn且不得建立该Provider stream。Tool Catalog segment必须参与stable-prefix fingerprint和估算，但catalog、workspace绝对路径、invocation identity、ledger和结果正文不得新增RuntimeEvent或独立prompt文本。
 
@@ -516,3 +516,17 @@ Runtime SHALL 以同一 turn owner 执行 Stop 状态机；continued 至多两�
 #### Scenario: Preserve queued user intent
 - **WHEN** 检查期间队首为 auto A、strict-next B、auto C，随后阻断并允许继续
 - **THEN** 只领取 A 并与反馈候选一起预检，B/C 保持 FIFO；A 的取消/Sync/返还沿真实输入生命周期
+
+### Requirement: SessionStart admission preserves the first input and its cancellation boundary
+
+新建或成功接管的交互根会话 SHALL 在首个符合条件的真实对话 turn 消费已准备的 startup/resume 来源，时机位于 `turn_started` 耐久提交及原初始自动压缩阶段之后、初始输入批次之前。已匹配的首个回合 SHALL 先验证真实输入自身可通过普通预算、请求编码和完整记录预检。预检失败保留待处理来源，零本次 SessionStart 审查及执行。未接受的输入、普通命令与只读预览 MUST 不触发 SessionStart 进程。计划接纳前的确定取消保留待处理来源。已 Sync 的计划消耗本次启动机会，即使后续无交付。无匹配时原始输入、原生请求和持久化行为保持等价。
+
+Runtime SHALL 在全部冻结声明独立获得信任、执行前置条件通过、对应 started Sync 后才调用 runner。获准的有界上下文与真实原文和已有附件使用同一候选窗口完成普通预算、请求编码与批次预检。只有已知的窗口、Provider canonical、单记录或批次额度错误可以视为上下文导致的超限。此情形 SHALL 关闭为跳过，并以同一真实初始输入重新进行原有预检。该退回策略不重复运行脚本、摘要或准备新的附件。applied 批次接纳前的取消保留原有输入归还规则。接纳后等待确定结果，成功时上下文和真实输入一起 finalize 一次，durability 不确定则 poison 并停止新副作用。确认 Sync 后若原生 finalize 或必要宿主投影失败，保留同批历史事实供恢复，不执行后续采样或让宿主将输入标记为可重试。
+
+#### Scenario: Keep genuine input when context is too large
+- **WHEN** 用户输入自身通过预检，但合并合法 SessionStart 上下文后超过可用窗口或完整编码限制
+- **THEN** 保存跳过状态并提交原始用户输入，候选上下文不进入模型历史，不补跑脚本或摘要
+
+#### Scenario: Cancel on either side of combined admission
+- **WHEN** 合并批次在 writer 接纳前被取消，或在接纳后已确定 Sync 成功时被取消
+- **THEN** 前者保留未提交输入的归还资格且不交付上下文，后者保留两个已提交原生位置，取消不返还已提交输入

@@ -12,13 +12,14 @@ import (
 
 // NativeCommitRecord 将通过 lifecycle 校验的 opaque commit 与顺序绑定。
 type NativeCommitRecord struct {
-	Feedback    *domain.StopFeedback
-	ToolOutputs []tool.ModelOutput
-	Role        domain.NativeCommitRole
-	Inputs      domain.InputAssociation
-	Sequence    uint64
-	TurnID      domain.TurnID
-	Commit      NativeCommitPayload
+	SessionStart *SessionStartRestoreEvidence
+	Feedback     *domain.StopFeedback
+	ToolOutputs  []tool.ModelOutput
+	Role         domain.NativeCommitRole
+	Inputs       domain.InputAssociation
+	Sequence     uint64
+	TurnID       domain.TurnID
+	Commit       NativeCommitPayload
 }
 
 // SampleUsageRecord 将通过 lifecycle 校验的 normalized usage 与顺序绑定。
@@ -301,24 +302,25 @@ func (plan ToolRecoveryPlan) Validate() error {
 
 // ReplayPlan 是创建 Provider Conversation 前的不可变语义恢复计划。
 type ReplayPlan struct {
-	Stops                  []ReplayedStop
-	StopRecovery           *StopRecoveryPlan
-	Compactions            []ReplayedCompaction
-	InterruptedCompaction  *ReplayedCompaction
-	InterruptedPostCompact *PostCompactRecoveryPlan
-	Tools                  []ToolHistoryEntry
-	Identity               Identity
-	SessionMetadata        SessionMetaPayload
-	ThreadMetadata         ThreadMetaPayload
-	Title                  domain.SessionTitle
-	NativeCommits          []NativeCommitRecord
-	SampleUsages           []SampleUsageRecord
-	Turns                  []ReplayedTurn
-	InterruptedTail        *InterruptedTail
-	ToolRecovery           *ToolRecoveryPlan
-	NextSequence           uint64
-	Repair                 RepairReport
-	taskProgress           replayedTaskProgress
+	InterruptedSessionStart *SessionStartRecoveryPlan
+	Stops                   []ReplayedStop
+	StopRecovery            *StopRecoveryPlan
+	Compactions             []ReplayedCompaction
+	InterruptedCompaction   *ReplayedCompaction
+	InterruptedPostCompact  *PostCompactRecoveryPlan
+	Tools                   []ToolHistoryEntry
+	Identity                Identity
+	SessionMetadata         SessionMetaPayload
+	ThreadMetadata          ThreadMetaPayload
+	Title                   domain.SessionTitle
+	NativeCommits           []NativeCommitRecord
+	SampleUsages            []SampleUsageRecord
+	Turns                   []ReplayedTurn
+	InterruptedTail         *InterruptedTail
+	ToolRecovery            *ToolRecoveryPlan
+	NextSequence            uint64
+	Repair                  RepairReport
+	taskProgress            replayedTaskProgress
 }
 
 // ReplayMetadata 是 Catalog 从完整语法校验中取得的只读元数据。
@@ -409,6 +411,7 @@ func replay(loaded LoadResult, projectHistory bool) (ReplayPlan, error) {
 	}
 	var active *activeReplayTurn
 	compaction := compactionReplay{seen: make(map[domain.CompactionID]struct{})}
+	var sessionStart sessionStartLedger
 	seenInvocations := make(map[tool.InvocationID]struct{})
 	seenInputs := make(map[domain.InputID]struct{})
 	for _, batch := range batches[1:] {
@@ -424,6 +427,9 @@ func replay(loaded LoadResult, projectHistory bool) (ReplayPlan, error) {
 		switch batch[0].EventKind {
 		case EventCompactionStarted, EventPreCompactHookStarted, EventPreCompactHookFinished, EventPreCompactHookDecided, EventCompactionCompleted, EventCompactionFailed,
 			EventPostCompactHookStarted, EventPostCompactHookFinished, EventPostCompactHookClosed:
+			if sessionStart.open != nil {
+				return ReplayPlan{}, replayCorrupt("compaction overlaps an open session start plan")
+			}
 			if err := compaction.accept(&plan, batch, active); err != nil {
 				return ReplayPlan{}, err
 			}
@@ -438,6 +444,31 @@ func replay(loaded LoadResult, projectHistory bool) (ReplayPlan, error) {
 		if compaction.postCompact != nil {
 			return ReplayPlan{}, replayCorrupt("turn record overlaps post-compact observation")
 		}
+		if sessionStart.open != nil {
+			closed, err := sessionStart.open.accept(&plan, active, batch, seenInputs)
+			if err != nil {
+				return ReplayPlan{}, err
+			}
+			if active != nil {
+				active.lastSequence = batch[len(batch)-1].Sequence
+				sessionStart.seenInputs = sessionStart.seenInputs || active.initialInputs
+			}
+			if closed {
+				sessionStart.open = nil
+			}
+			continue
+		}
+		if batch[0].EventKind == EventSessionStartHookPlanned {
+			if err := sessionStart.begin(batch[0], active, compaction.sessionStartTarget); err != nil {
+				return ReplayPlan{}, err
+			}
+			compaction.sessionStartTarget = domain.SessionStartTarget{}
+			if active != nil {
+				active.lastSequence = batch[0].Sequence
+			}
+			continue
+		}
+		compaction.sessionStartTarget = domain.SessionStartTarget{}
 		if active != nil && active.stop != nil {
 			handled, terminal, err := acceptStopBatch(&plan, active, batch, seenInputs)
 			if err != nil {
@@ -479,6 +510,7 @@ func replay(loaded LoadResult, projectHistory bool) (ReplayPlan, error) {
 			if err := acceptInputBatch(&plan, active, batch, seenInputs); err != nil {
 				return ReplayPlan{}, err
 			}
+			sessionStart.seenInputs = true
 		case EventProviderNativeCommit:
 			if active == nil || !batchHasTurn(batch, active.turnID) {
 				return ReplayPlan{}, replayCorrupt("provider native commit placement is invalid")
@@ -575,6 +607,9 @@ func replay(loaded LoadResult, projectHistory bool) (ReplayPlan, error) {
 	if compaction.postCompact != nil && projectHistory {
 		plan.InterruptedPostCompact = &PostCompactRecoveryPlan{state: *compaction.postCompact}
 	}
+	if sessionStart.open != nil && projectHistory {
+		plan.InterruptedSessionStart = &SessionStartRecoveryPlan{prefix: *sessionStart.open}
+	}
 	if artifacts.err != nil {
 		return ReplayPlan{}, artifacts.err
 	}
@@ -597,6 +632,7 @@ type activeReplayTurn struct {
 	budget               *tool.ResultBudget
 	budgetTicket         *tool.ResultBudgetTicket
 	autoCompactedSample  bool
+	sessionStartChecked  bool
 	initialInputs        bool
 	inputAtSample        bool
 	turnID               domain.TurnID

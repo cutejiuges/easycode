@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 
 	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
@@ -152,7 +153,7 @@ func (state *agentLoopRunState) handleCompactionEvent(publication runtimePublica
 		state.compaction.terminalSeen = true
 		state.compaction.succeeded = event.Kind == protocol.EventCompactionCompleted
 	}
-	if state.compaction.terminalSeen || event.Kind == protocol.EventPostCompactInstalled {
+	if state.compaction.terminalSeen || event.Kind == protocol.EventPostCompactInstalled || event.Kind == protocol.EventSessionStart {
 		state.contextSnapshot, state.contextSnapshotErr = publication.snapshot, publication.snapshotErr
 		state.cacheSnapshot = publication.cacheSnapshot
 	}
@@ -222,6 +223,9 @@ type loopCompactionPresentation struct {
 	summarizing bool
 	installed   protocol.PostCompactInstalledPayload
 	closed      bool
+	postResult  protocol.PostCompactStatus
+	start       protocol.SessionStartPayload
+	startClosed bool
 }
 
 func (phase *loopCompactionPresentation) acceptsHook(event domain.HookEvent, digest string) bool {
@@ -230,6 +234,8 @@ func (phase *loopCompactionPresentation) acceptsHook(event domain.HookEvent, dig
 		return !phase.summarizing
 	case domain.HookPostCompact:
 		return phase.installed.PlanDigest != "" && phase.installed.PlanDigest == digest && !phase.closed
+	case domain.HookSessionStart:
+		return phase.start.State == protocol.SessionStartPlanned && phase.start.PlanDigest == digest && !phase.startClosed
 	default:
 		return false
 	}
@@ -258,6 +264,9 @@ func (phase *loopCompactionPresentation) accept(publication runtimePublication) 
 			return false
 		}
 		phase.closed = true
+		phase.postResult = payload.State
+	case protocol.EventSessionStart:
+		return phase.acceptSessionStart(publication)
 	case protocol.EventHookTrustRequested:
 		payload, err := protocol.DecodeHookTrustRequested(event)
 		return err == nil && phase.acceptsHook(payload.Declaration.Reference.Event, payload.PlanDigest)
@@ -268,14 +277,46 @@ func (phase *loopCompactionPresentation) accept(publication runtimePublication) 
 		payload, err := protocol.DecodeHookActivity(event)
 		return err == nil && phase.acceptsHook(payload.Reference.Event, payload.PlanDigest)
 	case protocol.EventCompactionCompleted:
+		if phase.start.State != "" {
+			completed, err := protocol.DecodeCompactionCompleted(event)
+			return err == nil && phase.startClosed && completed.ContextRevision == phase.start.Target.CheckpointRevision
+		}
 		if phase.installed.CheckpointSequence != 0 {
 			completed, err := protocol.DecodeCompactionCompleted(event)
 			return err == nil && completed.ContextRevision == phase.installed.Revision &&
 				(phase.installed.PlanDigest == "" || phase.closed)
 		}
 	case protocol.EventCompactionFailed:
-		return phase.installed.CheckpointSequence == 0
+		return phase.installed.CheckpointSequence == 0 && phase.start.State == ""
 	}
+	return true
+}
+
+func (phase *loopCompactionPresentation) acceptSessionStart(publication runtimePublication) bool {
+	payload, err := protocol.DecodeSessionStart(publication.event)
+	if err != nil || !phase.summarizing || phase.startClosed || phase.postResult == protocol.PostCompactUncertain || phase.postResult == protocol.PostCompactCancelled ||
+		phase.installed.PlanDigest != "" && !phase.closed {
+		return false
+	}
+	if phase.start.State == "" {
+		if publication.snapshotErr != nil || publication.snapshot.Revision != payload.Target.CheckpointRevision ||
+			phase.installed.CheckpointSequence != 0 && (phase.installed.CheckpointSequence != payload.Target.CheckpointSequence || phase.installed.Revision != payload.Target.CheckpointRevision) {
+			return false
+		}
+		if payload.State != protocol.SessionStartPlanned && !(payload.State == protocol.SessionStartSkipped && payload.PlanDigest == "") {
+			return false
+		}
+		phase.start = payload
+		phase.startClosed = payload.State != protocol.SessionStartPlanned
+		return true
+	}
+	if payload.State == protocol.SessionStartPlanned || payload.Target != phase.start.Target || payload.PlanDigest != phase.start.PlanDigest || payload.Count > phase.start.Count {
+		return false
+	}
+	if payload.State == protocol.SessionStartApplied && (publication.snapshotErr != nil || publication.snapshot.Revision != payload.Revision) {
+		return false
+	}
+	phase.startClosed = true
 	return true
 }
 
@@ -292,7 +333,11 @@ func (state *agentLoopRunState) handleCompactionFinished(workerErr error, open b
 		state.mode = loopModeClosing
 		state.discardQueue(protocol.ControlErrorSessionFailed)
 	} else if workerErr != nil || !state.compaction.succeeded {
-		state.returnAutomatic(protocol.InputReasonFailed)
+		reason := protocol.InputReasonFailed
+		if state.compaction.worker.cancelRequested && errors.Is(workerErr, context.Canceled) {
+			reason = protocol.InputReasonCancelled
+		}
+		state.returnAutomatic(reason)
 	}
 	state.completeRequest(state.compaction.requestID)
 	state.compaction = nil

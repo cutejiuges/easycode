@@ -171,6 +171,11 @@ func (q *transcriptQueries) StopFeedbackCommitted(sequences []uint64) error {
 	return q.nativeBatchCommitted(sequences, nil)
 }
 
+// SessionStartCommitted 将已原子提交的上下文和适用的真实输入位置一次发布。
+func (q *transcriptQueries) SessionStartCommitted(sequences []uint64) error {
+	return q.nativeBatchCommitted(sequences, nil)
+}
+
 func (q *transcriptQueries) nativeBatchCommitted(batch []uint64, ready []session.ToolHistoryEntry) error {
 	q.mu.Lock()
 	unavailable := q.closed || q.invalid
@@ -246,7 +251,7 @@ func (q *transcriptQueries) prepareTranscriptTools(facts []session.ToolHistoryEn
 func mainTranscriptIndices(nodes []transcriptNode, start int) []int {
 	result := make([]int, 0, len(nodes))
 	for index, node := range nodes {
-		if node.item.Kind != domain.TranscriptReasoning {
+		if node.item.Kind != domain.TranscriptReasoning && node.item.Kind != domain.TranscriptSessionStartContext {
 			result = append(result, start+index)
 		}
 	}

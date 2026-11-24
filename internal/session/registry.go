@@ -15,6 +15,7 @@ const (
 	PlacementCompactionStart    Placement = "compaction_start"
 	PlacementCompactionHook     Placement = "compaction_hook"
 	PlacementCompactionTerminal Placement = "compaction_terminal"
+	PlacementSessionStartHook   Placement = "session_start_hook"
 	PlacementInitialMetadata    Placement = "initial_metadata"
 	PlacementIdleThread         Placement = "idle_thread"
 	PlacementTurnStart          Placement = "turn_start"
@@ -31,6 +32,8 @@ type Descriptor struct {
 
 func descriptorByKind(kind EventKind) (Descriptor, bool) {
 	switch kind {
+	case EventSessionStartHookPlanned, EventSessionStartHookStarted, EventSessionStartHookFinished, EventSessionStartHookClosed:
+		return Descriptor{Kind: kind, Cardinality: CardinalityMany, Placement: PlacementSessionStartHook}, true
 	case EventTurnStopHookPlanned, EventTurnStopHookDecided, EventToolPostHookPlanned, EventToolPostHookCompleted, EventToolHookGatePlanned, EventHookExecutionStarted, EventHookExecutionFinished, EventToolHookGateDecided:
 		return Descriptor{Kind: kind, Cardinality: CardinalityMany, Placement: PlacementActiveTurn}, true
 	case EventCompactionStarted:

@@ -65,25 +65,32 @@ class Terminal:
                     return target.decode()
             remaining = deadline - time.monotonic()
             if remaining <= 0 or not select.select([self.master], [], [], remaining)[0]:
-                raise AssertionError(f"missing {needles!r}: {self.buffer[-2500:]!r}")
+                raise TimeoutError(f"missing {needles!r}: {self.buffer[-2500:]!r}")
             data = os.read(self.master, 65536)
             if not data:
                 raise AssertionError(f"process closed before {needles!r}: {self.buffer[-2500:]!r}")
             self.buffer.extend(data)
 
-    def quit(self):
+    def wait_idle(self):
         # 可见回复可能先于 owner 完成终态处理，先等待真实空闲快照。
         deadline = time.monotonic() + 5
         while True:
             remaining = deadline - time.monotonic()
-            assert remaining > 0, "CLI did not become idle"
+            assert remaining > 0, f"CLI did not become idle: {self.buffer[-2500:]!r}"
             self.submit("/context")
-            self.expect("Context · committed snapshot", timeout=remaining)
-            activity = self.expect(" · idle", " · turn", timeout=remaining)
+            try:
+                self.expect("Context · committed snapshot", timeout=min(remaining, 0.5))
+            except TimeoutError:
+                # 回合切换后旧查询会被丢弃，重新请求当前快照。
+                continue
+            activity = self.expect(" · idle", " · turn", " · compacting", timeout=remaining)
             self.send(b"\x1b")
             self.expect("Shift+Tab: switch mode", timeout=remaining)
             if activity == " · idle":
-                break
+                return
+
+    def quit(self):
+        self.wait_idle()
         self.send(b"\x03")
         deadline = time.monotonic() + 5
         while self.process.poll() is None:

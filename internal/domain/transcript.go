@@ -11,12 +11,13 @@ import (
 type TranscriptKind string
 
 const (
-	TranscriptHook       TranscriptKind = "hook"
-	TranscriptUser       TranscriptKind = "user"
-	TranscriptCompaction TranscriptKind = "compaction"
-	TranscriptAssistant  TranscriptKind = "assistant"
-	TranscriptCall       TranscriptKind = "call"
-	TranscriptReasoning  TranscriptKind = "reasoning"
+	TranscriptHook                TranscriptKind = "hook"
+	TranscriptSessionStartContext TranscriptKind = "session_start_context"
+	TranscriptUser                TranscriptKind = "user"
+	TranscriptCompaction          TranscriptKind = "compaction"
+	TranscriptAssistant           TranscriptKind = "assistant"
+	TranscriptCall                TranscriptKind = "call"
+	TranscriptReasoning           TranscriptKind = "reasoning"
 )
 
 // TranscriptPosition 用原生提交序号及提交内位置定位内容，均从零开始。
@@ -28,18 +29,19 @@ type TranscriptPosition struct {
 
 // TranscriptItem 只包含允许展示的内容与调用关联；调用名称仅用于核验身份。
 type TranscriptItem struct {
-	Files      FileAttachments    `json:"files,omitempty,omitzero"`
-	HookSource *HookMessageSource `json:"hook_source,omitempty"`
-	Reasoning  *ReasoningBody     `json:"reasoning,omitempty"`
-	Skill      SkillAttachment    `json:"skill,omitempty,omitzero"`
-	HasSkill   bool               `json:"has_skill,omitempty"`
-	Kind       TranscriptKind     `json:"kind"`
-	Position   TranscriptPosition `json:"position"`
-	TurnID     TurnID             `json:"turn_id"`
-	InputID    InputID            `json:"input_id"`
-	Text       string             `json:"text"`
-	CallID     string             `json:"call_id"`
-	CallName   string             `json:"call_name"`
+	Files        FileAttachments      `json:"files,omitempty,omitzero"`
+	HookSource   *HookMessageSource   `json:"hook_source,omitempty"`
+	SessionStart *SessionStartContext `json:"session_start,omitempty"`
+	Reasoning    *ReasoningBody       `json:"reasoning,omitempty"`
+	Skill        SkillAttachment      `json:"skill,omitempty,omitzero"`
+	HasSkill     bool                 `json:"has_skill,omitempty"`
+	Kind         TranscriptKind       `json:"kind"`
+	Position     TranscriptPosition   `json:"position"`
+	TurnID       TurnID               `json:"turn_id"`
+	InputID      InputID              `json:"input_id"`
+	Text         string               `json:"text"`
+	CallID       string               `json:"call_id"`
+	CallName     string               `json:"call_name"`
 }
 
 // NewTranscriptUser 构造保留原始空白的用户正文投影。
@@ -74,6 +76,9 @@ func (v TranscriptItem) Validate() error {
 	if v.Kind != TranscriptHook && v.HookSource != nil {
 		return errors.New("unexpected transcript hook source")
 	}
+	if v.Kind != TranscriptSessionStartContext && v.SessionStart != nil {
+		return errors.New("unexpected transcript session start context")
+	}
 	if v.HasSkill {
 		if v.Kind != TranscriptUser || v.Skill.Validate() != nil {
 			return errors.New("invalid transcript skill")
@@ -81,13 +86,18 @@ func (v TranscriptItem) Validate() error {
 	} else if v.Skill != (SkillAttachment{}) {
 		return errors.New("unexpected transcript skill")
 	}
-	if !v.TurnID.Valid() || !utf8.ValidString(v.Text) {
+	if (v.Kind != TranscriptSessionStartContext && !v.TurnID.Valid()) || !utf8.ValidString(v.Text) {
 		return errors.New("invalid transcript item")
 	}
 	if v.Kind != TranscriptReasoning && v.Reasoning != nil {
 		return errors.New("unexpected transcript reasoning")
 	}
 	switch v.Kind {
+	case TranscriptSessionStartContext:
+		if v.SessionStart == nil || v.SessionStart.Validate() != nil || v.SessionStart.Target.TurnID != v.TurnID ||
+			v.Text != sessionStartModelText(*v.SessionStart) || v.InputID != "" || v.CallID != "" || v.CallName != "" {
+			return errors.New("invalid transcript session start context")
+		}
 	case TranscriptReasoning:
 		if v.Reasoning == nil || v.Reasoning.Validate() != nil || v.Text != "" || v.InputID != "" || v.CallID != "" || v.CallName != "" {
 			return errors.New("invalid transcript reasoning")
@@ -170,6 +180,10 @@ func NewTranscriptView(family ProviderFamily, items []TranscriptItem) (Transcrip
 			source := *v.Items[i].HookSource
 			v.Items[i].HookSource = &source
 		}
+		if v.Items[i].SessionStart != nil {
+			context := v.Items[i].SessionStart.Clone()
+			v.Items[i].SessionStart = &context
+		}
 		if v.Items[i].Reasoning != nil {
 			body := *v.Items[i].Reasoning
 			v.Items[i].Reasoning = &body
@@ -216,4 +230,11 @@ func NewTranscriptHook(position TranscriptPosition, feedback StopFeedback) (Tran
 	sample, _ := source.Identity.Target.AssistantSample()
 	v := TranscriptItem{Kind: TranscriptHook, Position: position, TurnID: sample.TurnID, Text: feedback.Text, HookSource: &source}
 	return v, v.Validate()
+}
+
+// NewTranscriptSessionStartContext 保留独立来源及真实原生位置供详情读取。
+func NewTranscriptSessionStartContext(position TranscriptPosition, value SessionStartContext) (TranscriptItem, error) {
+	value = value.Clone()
+	item := TranscriptItem{Kind: TranscriptSessionStartContext, Position: position, TurnID: value.Target.TurnID, Text: sessionStartModelText(value), SessionStart: &value}
+	return item, item.Validate()
 }

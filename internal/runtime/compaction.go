@@ -83,6 +83,7 @@ type compactionAdmission struct {
 	kernel  provider.CompactionKernel
 	preview provider.CompactionPreview
 	before  contextplan.ContextPlan
+	next    provider.SessionStartContinuation
 }
 
 func (runtime *Runtime) preflightCompaction(instructions string) (compactionAdmission, protocol.ControlErrorCode) {
@@ -313,6 +314,11 @@ func (runtime *Runtime) runCompactionOwned(ctx context.Context, id domain.Compac
 			return fail(protocol.CompactionFailureSession, false, nil)
 		}
 		postErr = runtime.runPostCompact(ctx, target, summary, records[0].Sequence, snapshot, post, emit)
+	}
+	if postErr == nil {
+		target := domain.SessionStartTarget{Source: domain.SessionStartCompact, CompactionID: id, Scope: scope,
+			CheckpointSequence: records[0].Sequence, CheckpointRevision: view.Revision(), CheckpointDigest: checkpoint.Source().Digest()}
+		postErr = runtime.runCompactSessionStart(ctx, target, admission, emit)
 	}
 	emit(event)
 	return checkpointCommitted, postErr

@@ -71,91 +71,138 @@ func (runtime *Runtime) inputEncodingFits(a domain.InputAssociation, inputs []do
 	return err == nil
 }
 
-func (runtime *Runtime) commitInputs(ctx context.Context, turnID domain.TurnID, index uint32, inputs []domain.UserInput, control turnInputControl, emit Emitter) inputCommitResult {
-	resolve := func(state protocol.InputState, reason protocol.InputReason) {
-		if control != nil {
-			control.resolve(turnID, inputs, state, reason)
-		}
+// preparedInputCommit 持有已经通过请求、记录和展示预检的一次输入提交。
+type preparedInputCommit struct {
+	change interface {
+		Finalize() error
+		Discard() error
+		Finalized() bool
 	}
-	rejected := func(err error) inputCommitResult {
-		resolve(protocol.InputReturned, protocol.InputReasonPreflight)
-		return inputCommitResult{preflightRejected: true, err: err}
+	drafts   []session.RecordDraft
+	events   []protocol.Event
+	revision uint64
+}
+
+func (commit preparedInputCommit) discard() error {
+	if commit.change != nil && !commit.change.Finalized() {
+		return commit.change.Discard()
 	}
-	if ctx.Err() != nil {
-		resolve(protocol.InputReturned, protocol.InputReasonCancelled)
-		return inputCommitResult{err: ctx.Err()}
-	}
+	return nil
+}
+
+func (runtime *Runtime) prepareInputCommit(turnID domain.TurnID, index uint32, inputs []domain.UserInput) (commit preparedInputCommit, resultErr error) {
 	a, err := inputAssociation(turnID, index, inputs)
 	if err != nil {
-		return rejected(err)
+		return commit, err
 	}
 	preparer := runtime.providerOperations.userInputs
 	if preparer == nil {
-		return rejected(fmt.Errorf("provider user input preparation is unavailable"))
+		return commit, fmt.Errorf("provider user input preparation is unavailable")
 	}
 	prepared, err := preparer.PrepareUserInputs(a, inputs)
 	if err != nil {
-		return rejected(fault.New(fault.CodeTurnFailed, "user input preparation failed"))
+		return commit, fault.New(fault.CodeTurnFailed, "user input preparation failed")
 	}
+	commit.change = prepared
 	defer func() {
-		if !prepared.Finalized() {
-			_ = prepared.Discard()
+		if resultErr != nil {
+			_ = commit.discard()
 		}
 	}()
 	envelope, err := prepared.Envelope()
 	if err != nil {
-		return rejected(err)
+		return commit, err
 	}
-	drafts, err := inputCommitDrafts(a, envelope)
+	commit.drafts, err = inputCommitDrafts(a, envelope)
 	if err != nil {
-		return rejected(fault.New(fault.CodeTurnFailed, "input encoding limit exceeded"))
+		return commit, fault.New(fault.CodeTurnFailed, "input encoding limit exceeded")
 	}
 	history, footprint, err := prepared.Preview()
 	if err != nil {
-		return rejected(err)
+		return commit, err
 	}
 	sampling, _, err := runtime.planHistory(history, footprint)
 	if err != nil {
-		return rejected(err)
+		return commit, err
 	}
 	if err := prepared.CheckRequest(sampling); err != nil {
-		return rejected(fault.New(fault.CodeProviderRequest, "input request preflight failed"))
+		return commit, fault.New(fault.CodeProviderRequest, "input request preflight failed")
 	}
-	events, err := runtime.prepareInputEvents(turnID, inputs)
+	commit.events, err = runtime.prepareInputEvents(turnID, inputs)
 	if err != nil {
-		return rejected(fault.New(fault.CodeInvalidInput, "input view encoding failed"))
+		return commit, fault.New(fault.CodeInvalidInput, "input view encoding failed")
 	}
-	records, err := runtime.journal.AppendBatch(ctx, drafts)
+	return commit, nil
+}
+
+func (runtime *Runtime) commitInputs(ctx context.Context, turnID domain.TurnID, index uint32, inputs []domain.UserInput, control turnInputControl, emit Emitter) inputCommitResult {
+	resolve := resolveInputCommit(control, turnID, inputs)
+	if ctx.Err() != nil {
+		resolve(protocol.InputReturned, protocol.InputReasonCancelled)
+		return inputCommitResult{err: ctx.Err()}
+	}
+	commit, err := runtime.prepareInputCommit(turnID, index, inputs)
+	if err != nil {
+		resolve(protocol.InputReturned, protocol.InputReasonPreflight)
+		return inputCommitResult{preflightRejected: true, err: err}
+	}
+	return runtime.commitPreparedInputs(ctx, turnID, inputs, resolve, emit, commit, nil)
+}
+
+func resolveInputCommit(control turnInputControl, turnID domain.TurnID, inputs []domain.UserInput) func(protocol.InputState, protocol.InputReason) {
+	return func(state protocol.InputState, reason protocol.InputReason) {
+		if control != nil {
+			control.resolve(turnID, inputs, state, reason)
+		}
+	}
+}
+
+func (runtime *Runtime) commitPreparedInputs(ctx context.Context, turnID domain.TurnID, inputs []domain.UserInput, resolve func(protocol.InputState, protocol.InputReason), emit Emitter, commit preparedInputCommit, attempt *sessionStartAttempt) inputCommitResult {
+	defer func() { _ = commit.discard() }()
+	records, err := runtime.journal.AppendBatch(ctx, commit.drafts)
 	if err != nil {
 		if runtime.journal.Poisoned() {
 			runtime.poisoned.Store(true)
 			resolve(protocol.InputUncertain, protocol.InputReasonUncertain)
-		} else if errors.Is(err, context.Canceled) {
+		} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			resolve(protocol.InputReturned, protocol.InputReasonCancelled)
+			if attempt != nil {
+				attempt.cancel()
+				if closeErr := runtime.closeSessionStart(ctx, emit, *attempt); closeErr != nil && !errors.Is(closeErr, ctx.Err()) {
+					return inputCommitResult{err: closeErr}
+				}
+			}
 		} else {
 			resolve(protocol.InputReturned, protocol.InputReasonFailed)
+			if attempt != nil {
+				runtime.poisoned.Store(true)
+			}
 		}
 		return inputCommitResult{err: fault.Wrap(fault.CodeSessionWrite, "persist user input failed", err)}
 	}
-	if err := prepared.Finalize(); err != nil {
+	if err := commit.change.Finalize(); err != nil || len(records) != len(commit.drafts) {
 		runtime.poisoned.Store(true)
 		resolve(protocol.InputUncertain, protocol.InputReasonUncertain)
 		return inputCommitResult{err: fault.New(fault.CodeSessionWrite, "finalize user input failed")}
 	}
-	if runtime.toolHistory != nil {
-		if err := runtime.toolHistory.NativeCommitted(records[1].Sequence, nil); err != nil {
-			runtime.poisoned.Store(true)
-			resolve(protocol.InputUncertain, protocol.InputReasonUncertain)
-			return inputCommitResult{err: err}
-		}
+	last := records[len(records)-1].Sequence
+	if attempt != nil {
+		err = runtime.sessionStartCommitted(emit, *attempt, []uint64{records[0].Sequence, last}, commit.revision)
+	} else if runtime.toolHistory != nil {
+		err = runtime.toolHistory.NativeCommitted(last, nil)
+	}
+	if err != nil {
+		runtime.poisoned.Store(true)
+		resolve(protocol.InputUncertain, protocol.InputReasonUncertain)
+		return inputCommitResult{err: err}
 	}
 	for i, input := range inputs {
 		if a, ok := input.SkillAttachment(); ok {
 			runtime.explicitSkills = append(runtime.explicitSkills, a)
 		}
-		emit(events[i])
+		emit(commit.events[i])
 	}
-	runtime.emitTranscriptCommit(turnID, records[1].Sequence)
+	runtime.emitTranscriptCommit(turnID, last)
 	resolve(protocol.InputCommitted, "")
 	return inputCommitResult{committed: true}
 }

@@ -581,6 +581,10 @@ func buildCachePlan(input PlanningInput) (Plan, error) {
 
 func estimateSemanticHistory(history domain.SemanticHistoryView) (domain.TokenEstimate, error) {
 	var tokens uint64
+	for _, item := range history.CheckpointContexts {
+		value, _ := estimate.String(item.ModelText()).Tokens()
+		tokens = estimate.SaturatingAdd(tokens, value)
+	}
 	for _, turn := range history.Turns {
 		for _, message := range turn.Messages {
 			text := message.Text
@@ -610,6 +614,9 @@ type semanticContentMessage struct {
 
 func semanticContent(history domain.SemanticHistoryView) ([]semanticContentMessage, error) {
 	messages := make([]semanticContentMessage, 0)
+	for _, item := range history.CheckpointContexts {
+		messages = append(messages, semanticContentMessage{Kind: semanticText, Role: domain.SemanticSessionStartContext, Text: item.ModelText()})
+	}
 	for _, turn := range history.Turns {
 		for _, message := range turn.Messages {
 			messages = append(messages, semanticContentMessage{Kind: semanticText, Role: message.Role, Text: message.Text})

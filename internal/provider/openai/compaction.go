@@ -31,13 +31,14 @@ func nativeCompactionSource(snapshot nativeWindowSnapshot, model string) (provid
 func nativeCompactionSourceChecked(snapshot nativeWindowSnapshot, model string, validate func() error) (provider.CompactionSource, error) {
 	entries, revision := snapshot.Entries, snapshot.Revision
 	checkpoint, offset, count := snapshot.Checkpoint, snapshot.Offset, snapshot.Count
-	if len(entries) == offset {
+	last, found := provider.LastNativeConversationEntry(entries[offset:])
+	if !found {
 		return provider.CompactionSource{}, provider.NewCompactionError(provider.CompactionNothing)
 	}
 	if err := validate(); err != nil {
 		return provider.CompactionSource{}, err
 	}
-	if entries[len(entries)-1].Kind == nativeHistorySample && len(functionCalls(entries[len(entries)-1].Outputs)) != 0 {
+	if last.Kind == nativeHistorySample && len(functionCalls(last.Outputs)) != 0 {
 		return provider.CompactionSource{}, fmt.Errorf("compaction cannot cover pending tool calls")
 	}
 	predecessor := provider.RootCompactionPredecessor()

@@ -10,18 +10,35 @@ import (
 )
 
 // ProjectNativeHistory 保留回合顺序，交由适配器提取各自允许展示的正文。
-func ProjectNativeHistory[E nativeSequenceEntry, U any](entries []E, family domain.ProviderFamily, users func(E) []U, userText func(U, bool) string, assistant func(E) string, feedback func(E) (domain.StopFeedback, error)) domain.SemanticHistoryView {
-	turns := make([]domain.SemanticTurn, 0)
+func ProjectNativeHistory[E nativeSequenceEntry, U any](entries []E, family domain.ProviderFamily, users func(E) []U, userText func(U, bool) string, assistant func(E) string, feedback func(E) (domain.StopFeedback, error), sessionStart func(E) (domain.SessionStartContext, error)) domain.SemanticHistoryView {
+	view := domain.SemanticHistoryView{Provider: family, Turns: make([]domain.SemanticTurn, 0)}
+	messageCount := 0
 	for _, entry := range entries {
 		role, turn := entry.NativeRole(), entry.NativeTurn()
 		if role == domain.NativeCommitToolOutputs {
 			continue
 		}
-		if len(turns) == 0 || turns[len(turns)-1].TurnID != turn {
-			turns = append(turns, domain.SemanticTurn{TurnID: turn, Messages: make([]domain.SemanticMessage, 0)})
+		if role == domain.NativeCommitSessionStartContext && entry.NativeSessionStartTarget().Source == domain.SessionStartCompact {
+			value, err := sessionStart(entry)
+			if err == nil {
+				view.CheckpointContexts = append(view.CheckpointContexts, domain.SemanticCheckpointContext{AfterMessages: messageCount, Context: value})
+			}
+			continue
 		}
-		messages := &turns[len(turns)-1].Messages
+		if len(view.Turns) == 0 || view.Turns[len(view.Turns)-1].TurnID != turn {
+			view.Turns = append(view.Turns, domain.SemanticTurn{TurnID: turn, Messages: make([]domain.SemanticMessage, 0)})
+		}
+		messages := &view.Turns[len(view.Turns)-1].Messages
+		before := len(*messages)
 		switch role {
+		case domain.NativeCommitSessionStartContext:
+			value, err := sessionStart(entry)
+			if err == nil {
+				message, err := domain.NewSemanticSessionStartContext(value)
+				if err == nil {
+					*messages = append(*messages, message)
+				}
+			}
 		case domain.NativeCommitHookFeedback:
 			value, err := feedback(entry)
 			if err == nil {
@@ -46,16 +63,27 @@ func ProjectNativeHistory[E nativeSequenceEntry, U any](entries []E, family doma
 				*messages = append(*messages, domain.SemanticMessage{Role: domain.SemanticAssistant, Text: text})
 			}
 		}
+		messageCount += len(*messages) - before
 	}
-	return domain.SemanticHistoryView{Provider: family, Turns: turns}
+	return view
 }
 
 // ProjectNativeTranscript 保留展示条目与原生位置之间的关联。
-func ProjectNativeTranscript[E nativeSequenceEntry, U any](entries []E, start uint64, family domain.ProviderFamily, users func(E) []U, userText func(U) string, sample func([]domain.TranscriptItem, E, uint64) ([]domain.TranscriptItem, error), feedback func(E) (domain.StopFeedback, error)) (domain.TranscriptView, error) {
+func ProjectNativeTranscript[E nativeSequenceEntry, U any](entries []E, start uint64, family domain.ProviderFamily, users func(E) []U, userText func(U) string, sample func([]domain.TranscriptItem, E, uint64) ([]domain.TranscriptItem, error), feedback func(E) (domain.StopFeedback, error), sessionStart func(E) (domain.SessionStartContext, error)) (domain.TranscriptView, error) {
 	items := make([]domain.TranscriptItem, 0)
 	for ordinal, entry := range entries {
 		position := domain.TranscriptPosition{Entry: start + uint64(ordinal)}
 		switch entry.NativeRole() {
+		case domain.NativeCommitSessionStartContext:
+			value, err := sessionStart(entry)
+			if err != nil {
+				return domain.TranscriptView{}, err
+			}
+			item, err := domain.NewTranscriptSessionStartContext(position, value)
+			if err != nil {
+				return domain.TranscriptView{}, err
+			}
+			items = append(items, item)
 		case domain.NativeCommitToolOutputs:
 			continue
 		case domain.NativeCommitHookFeedback:
@@ -124,15 +152,22 @@ func LatestNativeAssistantSample[E interface {
 	history.mu.RLock()
 	entries := history.entries
 	history.mu.RUnlock()
-	if len(entries) == 0 {
+	lastIndex := lastNativeConversationIndex(entries)
+	if lastIndex < 0 {
 		return zero, false
 	}
-	last := entries[len(entries)-1]
+	last := entries[lastIndex]
 	if last.NativeTurn() != reference.TurnID || last.NativeRole() != domain.NativeCommitSample {
 		return zero, false
 	}
 	var index uint32
-	for i := len(entries) - 2; i >= 0 && entries[i].NativeTurn() == reference.TurnID; i-- {
+	for i := lastIndex - 1; i >= 0; i-- {
+		if entries[i].NativeRole() == domain.NativeCommitSessionStartContext {
+			continue
+		}
+		if entries[i].NativeTurn() != reference.TurnID {
+			break
+		}
 		if entries[i].NativeRole() == domain.NativeCommitSample {
 			index++
 		}

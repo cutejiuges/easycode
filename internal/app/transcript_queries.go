@@ -23,6 +23,9 @@ func transcriptListItem(node transcriptNode, entry session.ToolHistoryEntry) (pr
 		source := *item.HookSource
 		item.HookSource = &source
 	}
+	if node.item.Kind == domain.TranscriptSessionStartContext {
+		return protocol.NewSessionStartTranscriptListItem(node.cursor, node.item.SessionStart.Target)
+	}
 	if node.item.Kind == domain.TranscriptReasoning && node.item.Reasoning != nil {
 		body := node.item.Reasoning
 		item.Reasoning = &protocol.ReasoningSummaryPayload{Source: body.Source(), Availability: body.Availability(), TotalBytes: body.Len()}

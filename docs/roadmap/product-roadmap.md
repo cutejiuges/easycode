@@ -23,7 +23,7 @@
 
 ## 当前状态总览（2026-11-19）
 
-实现与测试逐项核对见[当前能力清单](capability-status.md)。P0–P8 是并行推进的阶段目标，不以某个后期切片交付推定整个阶段完成。当前已交付十项模型工具、本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact、三能力 PreToolUse 完整参数改写、结构化提问、任务清单、流式 Markdown、命令/Skill 首词补全、正文文件引用与路径补全、会话内 effort、会话命名、按标题查找及聊天内会话恢复、Provider 缓存、手动/自动压缩、双 Provider 推理阅读及启动推理/display/输出配置；本地 Plugin 技能包及受限 importer 已交付；仍缺少 effort 之外的运行中推理切换、跨 Provider fork、后台进程、插件可执行贡献/MCP、Subagent 与完整发布矩阵。
+实现与测试逐项核对见[当前能力清单](capability-status.md)。P0–P8 是并行推进的阶段目标，不以某个后期切片交付推定整个阶段完成。当前已交付十项模型工具、本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact/SessionStart、三能力 PreToolUse 完整参数改写、结构化提问、任务清单、流式 Markdown、命令/Skill 首词补全、正文文件引用与路径补全、会话内 effort、会话命名、按标题查找及聊天内会话恢复、Provider 缓存、手动/自动压缩、双 Provider 推理阅读及启动推理/display/输出配置；本地 Plugin 技能包及受限 importer 已交付；仍缺少 effort 之外的运行中推理切换、跨 Provider fork、后台进程、插件可执行贡献/MCP、Subagent 与完整发布矩阵。
 
 下文“工作内容/交付物/验收标准”保留阶段的完整目标；已完成状态以本总览、各节进度和当前能力清单为准。所有迁移、历史 reader 或兼容窗口必须先有用户明确要求及新 OpenSpec，不因路线图提到未来发布而预先授权。
 
@@ -534,7 +534,7 @@ Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘�
 
 支持 Claude 风格 hooks、渐进披露 skills、MCP 和本地 plugins，并保证来源权限、信任、缓存稳定和热加载安全。
 
-当前已交付本地 Skills 首个切片：固定 user/project 根发现、严格静态 frontmatter、`/skills` 列表、`/name` / `$name` 显式附件、Skill 主文档/同来源资源读取、缓存元数据来源与双 Provider 原生恢复。同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact command Hooks 已交付；本地 Plugin 技能包与 plugin skills 已由后续切片交付；其余 Hook 事件、MCP、system skills、path activation、allowed-tools、fork 与热加载仍未实现，不能将本切片视为 P6 退出。
+当前已交付本地 Skills 首个切片：固定 user/project 根发现、严格静态 frontmatter、`/skills` 列表、`/name` / `$name` 显式附件、Skill 主文档/同来源资源读取、缓存元数据来源与双 Provider 原生恢复。同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact/SessionStart command Hooks 已实现；本地 Plugin 技能包与 plugin skills 已由后续切片交付；其余 Hook 事件、MCP、system skills、path activation、allowed-tools、fork 与热加载仍未实现，不能将本切片视为 P6 退出。
 
 ### PostToolUse 同步检查与显式模型反馈
 
@@ -562,7 +562,7 @@ Stop 反馈及真实 Skill 纠正在必要摘要后原字节交付；恢复先�
 
 `add-pre-tool-use-command-hooks` 完成 user/project 冻结来源、三种 mutation 字面匹配、默认拒绝的单项内存信任、Darwin 只读/禁网命令、30 秒总预算、`/hooks` 浏览/reset/审查及四类 durable facts。两个 Provider 复用相同 gate，并保留原生 function/custom/tool_result 配对、普通审批和缓存前缀。恢复不重跑脚本，先补偿旧事实再 Load 新来源；无匹配保持旧行为。Exec 与 Hook 共用进程资源 owner，Skills 与 Hooks 共用 FD 安全打开骨架。
 
-PostToolUse、PostToolUseFailure、Stop、PreCompact、PostCompact 及 PreToolUse 参数改写由后续切片交付。P6 剩余计划包括 SessionStart 等事件、异步执行、结果改写、其他上下文扩展、插件可执行贡献、MCP 与热加载。当前回归分布在 `internal/extension/hook`、`internal/executor/process`、Runtime 与 Session 的 Hook 测试、`internal/app/hook_resume_test.go` 和 `internal/tui/hooks_test.go`。首个切片已归档。[验收记录](../../openspec/changes/archive/2026-11-20-add-pre-tool-use-command-hooks/verification.md)
+PostToolUse、PostToolUseFailure、Stop、PreCompact、PostCompact 及 PreToolUse 参数改写由后续切片交付。P6 剩余计划包括更多生命周期事件、异步执行、结果改写、其他上下文扩展、插件可执行贡献、MCP 与热加载。当前回归分布在 `internal/extension/hook`、`internal/executor/process`、Runtime 与 Session 的 Hook 测试、`internal/app/hook_resume_test.go` 和 `internal/tui/hooks_test.go`。首个切片已归档。[验收记录](../../openspec/changes/archive/2026-11-20-add-pre-tool-use-command-hooks/verification.md)
 
 ### 2026-11-12：本地 Plugin 技能包
 
@@ -576,7 +576,11 @@ manifest ID 冲突先于扫描，原始枚举、候选、读取和合并目录�
 
 ### PostCompact 压缩后检查
 
-手动与阈值自动压缩在 checkpoint 成功 Sync、安装新窗口并更新宿主投影后，共用同步 PostCompact。用户在 TUI 中审查将读取当前摘要的本地命令，检查结果以退出状态报告。压缩成功和检查关闭分别保存，恢复只在本地结算未关闭的后置检查。非交互匹配跳过检查并保留原有 stream-json v1 输出。SessionStart 上下文重注入、后台 Hook 和可执行插件贡献仍属后续切片。 [当前能力清单](capability-status.md) · [架构边界](../architecture/overall-architecture.md#1215-压缩后的-postcompact)
+手动与阈值自动压缩在 checkpoint 成功 Sync、安装新窗口并更新宿主投影后，共用同步 PostCompact。用户在 TUI 中审查将读取当前摘要的本地命令，检查结果以退出状态报告。压缩成功和检查关闭分别保存，恢复只在本地结算未关闭的后置检查。非交互匹配跳过检查并保留原有 stream-json v1 输出。后台 Hook 和可执行插件贡献仍属后续切片。 [当前能力清单](capability-status.md) · [架构边界](../architecture/overall-architecture.md#1215-压缩后的-postcompact)
+
+### SessionStart 会话上下文
+
+本地同步声明按实际新建、恢复或成功压缩触发。首轮通过输入预检后运行激活 Hook。压缩 owner 在已安装 checkpoint 和 PostCompact 收口之后执行补充，先保存合格原生内容，再放行工具或 Stop 续写。完整关闭或中断事实在恢复时只读验证并本地收口。 [归档设计](../../openspec/changes/archive/2026-11-24-add-session-start-context/design.md)
 
 ### 10.2 架构选择
 

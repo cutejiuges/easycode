@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"slices"
 
 	"easycode/internal/domain"
 	"easycode/internal/tool"
@@ -21,6 +22,7 @@ type NativeReplayCodec[E nativeReplayEntry[E], C any] struct {
 	PendingUnavailable string
 	Decode             func(NativeCommitEnvelope) (E, error)
 	Encode             func(E) (NativeCommitEnvelope, error)
+	SessionStart       func(E) (domain.SessionStartContext, error)
 	ReadyFacts         func(E, []tool.Invocation) error
 	ToolOutputs        func(domain.TurnID, []C, []tool.ModelOutput) (E, error)
 	ResultFacts        func([]C, E, []tool.InvocationResult) error
@@ -80,8 +82,8 @@ func restoreNativeHistory[E nativeReplayEntry[E], C any](ctx context.Context, mo
 			return err
 		}
 	}
-	if replay.sequence.err != nil {
-		return fmt.Errorf("restore %s native history: %w", codec.Name, replay.sequence.err)
+	if err := replay.sequence.complete(); err != nil {
+		return fmt.Errorf("restore %s native history: %w", codec.Name, err)
 	}
 	history.revision = uint64(len(history.entries))
 	return ctx.Err()
@@ -90,7 +92,7 @@ func restoreNativeHistory[E nativeReplayEntry[E], C any](ctx context.Context, mo
 func (r *nativeReplay[E, C]) compactionSource(model string) (CompactionSource, error) {
 	window := r.history.window()
 	window.Revision = uint64(len(window.Entries))
-	return r.codec.CompactionSource(window, model, func() error { return r.sequence.err })
+	return r.codec.CompactionSource(window, model, r.sequence.complete)
 }
 
 func (r *nativeReplay[E, C]) checkpoint(model string, record RestoreRecord, checkpoint CheckpointEnvelope) error {
@@ -126,6 +128,23 @@ func (r *nativeReplay[E, C]) commit(index int, record RestoreRecord) error {
 		return err
 	}
 	switch entry.NativeRole() {
+	case domain.NativeCommitSessionStartContext:
+		actual, err := r.codec.SessionStart(entry)
+		if err != nil {
+			return err
+		}
+		metadata, err := NewSessionStartMetadata(actual)
+		expected := record.sessionStart
+		if err != nil || expected == nil || metadata.Target != expected.Target || !slices.Equal(metadata.Proofs, expected.Proofs) {
+			return fmt.Errorf("native session start context differs from committed evidence")
+		}
+		if metadata.Target.Source == domain.SessionStartCompact {
+			window := r.history.window()
+			window.Revision = uint64(len(window.Entries))
+			if !matchesSessionStartCheckpoint(window, metadata.Target) {
+				return fmt.Errorf("native session start context differs from installed checkpoint")
+			}
+		}
 	case domain.NativeCommitSample:
 		r.readyResults = record.readyResults
 	case domain.NativeCommitToolOutputs:

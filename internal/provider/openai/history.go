@@ -55,7 +55,7 @@ func (conversation *Conversation) ProjectHistory() domain.SemanticHistoryView {
 }
 
 func projectHistory(history []nativeHistoryEntry) domain.SemanticHistoryView {
-	return provider.ProjectNativeHistory(history, domain.ProviderOpenAI, nativeUsers, projectUserText, nativeAssistantText, entryStopFeedback)
+	return provider.ProjectNativeHistory(history, domain.ProviderOpenAI, nativeUsers, projectUserText, nativeAssistantText, entryStopFeedback, entrySessionStartContext)
 }
 
 func nativeUsers(entry nativeHistoryEntry) []NativeItem { return entry.UserInputs }

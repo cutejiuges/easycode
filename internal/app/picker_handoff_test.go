@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,6 +17,7 @@ import (
 	"easycode/internal/domain"
 	"easycode/internal/extension/hook"
 	"easycode/internal/fault"
+	"easycode/internal/protocol"
 	"easycode/internal/secret"
 	"easycode/internal/session"
 	"easycode/internal/tui"
@@ -23,6 +27,22 @@ func TestInChatResumeOwnerKeepsSourceUntilCandidateIsAccepted(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	paths, cwd, cfg := pickerFixture(t)
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		serveStopAssistant(w, domain.ProviderOpenAI, "picker fixture reply")
+	}))
+	defer server.Close()
+	cfg.Provider.BaseURL = server.URL
+	hookDir := filepath.Join(cwd, ".easycode")
+	if err := os.Mkdir(hookDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	const resumeHook = `{"hooks":{"SessionStart":[{"matcher":"resume","hooks":[{"id":"resume-context","type":"command","command":"printf '{}'"}]}]}}`
+	if err := os.WriteFile(filepath.Join(hookDir, "hooks.json"), []byte(resumeHook), 0600); err != nil {
+		t.Fatal(err)
+	}
 	target := newPickerFixtureThread(t, ctx, paths, cwd)
 	environment := &chatEnvironment{}
 	source, err := openChatResourcesWithHooks(ctx, cfg, paths, "", false, cwd, chatResourceHooks{interactiveApprovals: true, environment: environment})
@@ -36,11 +56,15 @@ func TestInChatResumeOwnerKeepsSourceUntilCandidateIsAccepted(t *testing.T) {
 	}
 	execute := newPickerExecutor(cfg, paths, cwd, nil, environment)
 	prepared := make(chan struct{})
+	adopted := make(chan *chatResources, 1)
 	owner := newPickerOwner(func(opCtx, life context.Context, request tui.PickerRequest) pickerExecution {
 		execution := execute(opCtx, life, request)
 		if request.ID == 2 {
 			close(prepared)
 			<-opCtx.Done()
+		}
+		if request.ID == 5 {
+			adopted <- execution.resources
 		}
 		return execution
 	})
@@ -78,12 +102,19 @@ func TestInChatResumeOwnerKeepsSourceUntilCandidateIsAccepted(t *testing.T) {
 	owner.CancelResume(request)
 	awaitPickerStage(t, ctx, owner, tui.PickerCancelled)
 	requirePickerLeaseBusy(t, ctx, repo, source.identity.ThreadID)
-	if !source.session.Live() || owner.Accept(request.ID) {
-		t.Fatal("cancelled handoff replaced its source")
+	if !source.session.Live() || owner.Accept(request.ID) || !bytes.Equal(before, readPickerJournal(t, targetPath)) {
+		t.Fatal("cancelled handoff replaced its source or attempted a target Hook")
 	}
 
 	previous := request
-	request.ID = 3
+	submitPickerRequest(t, owner, tui.PickerRequest{ID: 3, Operation: tui.PickerOpen, Source: source.identity.ThreadID})
+	awaitPickerStage(t, ctx, owner, tui.PickerCompleted)
+	submitPickerRequest(t, owner, tui.PickerRequest{ID: 4, Operation: tui.PickerPreview, Source: source.identity.ThreadID, ThreadID: target})
+	preview := awaitPickerStage(t, ctx, owner, tui.PickerCompleted)
+	if preview.Error != "" || !bytes.Equal(before, readPickerJournal(t, targetPath)) || requests.Load() != 0 {
+		t.Fatal("preview did not remain read-only", preview.Error)
+	}
+	request.ID, request.Operation = 5, tui.PickerResume
 	submitPickerRequest(t, owner, request)
 	awaitPickerStage(t, ctx, owner, tui.PickerPrepared)
 	owner.CancelResume(previous)
@@ -91,6 +122,10 @@ func TestInChatResumeOwnerKeepsSourceUntilCandidateIsAccepted(t *testing.T) {
 		t.Fatal("candidate must survive a stale cancellation and be accepted once")
 	}
 	awaitPickerStage(t, ctx, owner, tui.PickerActivated)
+	current := <-adopted
+	if current == nil || !bytes.Equal(before, readPickerJournal(t, targetPath)) || requests.Load() != 0 {
+		t.Fatal("adoption ran the pending hook before accepting a real turn")
+	}
 	lease, err := repo.Open(ctx, source.identity.ThreadID)
 	if err != nil {
 		t.Fatalf("source lease remains after activation: %v", err)
@@ -100,10 +135,68 @@ func TestInChatResumeOwnerKeepsSourceUntilCandidateIsAccepted(t *testing.T) {
 	}
 	requirePickerLeaseBusy(t, ctx, repo, target)
 
-	submitPickerRequest(t, owner, tui.PickerRequest{ID: 4, Operation: tui.PickerOpen, Source: target})
+	if plans := pickerSessionStartTurn(t, ctx, current); plans != 1 || requests.Load() != 1 {
+		t.Fatal("first adopted turn did not match exactly one resume plan", plans)
+	}
+	waitCompactionIdle(t, current)
+	adoptedPrefix := readPickerJournal(t, targetPath)
+	submitPickerRequest(t, owner, tui.PickerRequest{ID: 6, Operation: tui.PickerOpen, Source: target, ThreadID: target})
+	same := awaitPickerStage(t, ctx, owner, tui.PickerCancelled)
+	if same.Error != "This session is already active" || !bytes.Equal(adoptedPrefix, readPickerJournal(t, targetPath)) {
+		t.Fatal("same-thread selection changed the adopted session", same.Error)
+	}
+	if plans := pickerSessionStartTurn(t, ctx, current); plans != 0 || requests.Load() != 2 {
+		t.Fatal("same-thread selection rearmed the consumed resume source", plans)
+	}
+	waitCompactionIdle(t, current)
+	submitPickerRequest(t, owner, tui.PickerRequest{ID: 7, Operation: tui.PickerOpen, Source: target})
 	listed := awaitPickerStage(t, ctx, owner, tui.PickerCompleted)
 	if len(listed.Entries) != 1 || listed.Entries[0].ThreadID != source.identity.ThreadID {
 		t.Fatalf("picker did not re-discover the released source: %#v", listed)
+	}
+}
+
+func pickerSessionStartTurn(t *testing.T, ctx context.Context, resources *chatResources) int {
+	t.Helper()
+	if result, err := appendInteractiveText(ctx, resources.session, "continue the adopted session"); err != nil || result.Status() != protocol.CommandStatusAccepted {
+		t.Fatal("picker left the adopted session unable to accept input", err)
+	}
+	plans := 0
+	for {
+		select {
+		case item, open := <-resources.session.Outputs():
+			if !open {
+				t.Fatal("adopted session closed before the turn")
+			}
+			event, ok := item.TurnEvent()
+			if !ok {
+				continue
+			}
+			switch event.Kind {
+			case protocol.EventSessionStart:
+				payload, err := protocol.DecodeSessionStart(event)
+				if err != nil || payload.Target.Source != domain.SessionStartResume || event.ThreadID != resources.identity.ThreadID {
+					t.Fatal("session start event lost the adopted resume identity", err)
+				}
+				if payload.State == protocol.SessionStartPlanned {
+					plans++
+				}
+			case protocol.EventHookTrustRequested:
+				request, err := protocol.DecodeHookTrustRequested(event)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := resources.session.ResolveHookTrust(ctx, event.TurnID, request, protocol.HookTrustDeny); err != nil {
+					t.Fatal(err)
+				}
+			case protocol.EventTurnCompleted:
+				return plans
+			case protocol.EventTurnFailed:
+				t.Fatalf("adopted turn failed: %s", event.Payload)
+			}
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
 	}
 }
 
