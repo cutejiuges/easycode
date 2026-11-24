@@ -31,6 +31,9 @@ type compactionView struct {
 	cancelling bool
 	post       protocol.PostCompactInstalledPayload
 	postResult string
+
+	postUncertain bool
+	sessionStart  sessionStartView
 }
 
 func (model *Model) prepareCompaction(id domain.CompactionID, scope domain.CompactionScope) {
@@ -66,7 +69,13 @@ func (model Model) requestCompactionCancellation() (tea.Model, tea.Cmd) {
 	}
 	model.compaction.cancelling = true
 	model.compactionStatus = "Cancelling compaction — waiting for cleanup"
-	if model.compaction.post.CheckpointSequence != 0 {
+	if model.compaction.sessionStart.present() {
+		if model.compaction.sessionStart.pending() {
+			model.compactionStatus = "Conversation compacted · cancelling SessionStart — waiting for cleanup"
+		} else {
+			model.compactionStatus = "Conversation compacted · " + model.compaction.sessionStart.status()
+		}
+	} else if model.compaction.post.CheckpointSequence != 0 {
 		model.compactionStatus = "Conversation compacted · cancelling PostCompact — waiting for cleanup"
 		if model.compaction.postResult != "" {
 			model.compactionStatus = "Conversation compacted · " + model.compaction.postResult
@@ -85,12 +94,21 @@ func (model Model) projectCompactionPresentation(event protocol.Event) (tea.Mode
 	}
 	view := &model.compaction
 	switch event.Kind {
+	case protocol.EventSessionStart:
+		return model.projectCompactSessionStart(event)
 	case protocol.EventPostCompactInstalled:
 		model.applyPostCompactInstalled(event)
 	case protocol.EventPostCompactClosed:
 		model.applyPostCompactClosed(event)
 	case protocol.EventHookTrustRequested:
 		request, err := protocol.DecodeHookTrustRequested(event)
+		if err == nil && request.Declaration.Reference.Event == domain.HookSessionStart {
+			if view.cancelling || model.hookTrust != nil || !view.sessionStart.acceptReview(event, request) {
+				return model, nil
+			}
+			model.clearEffortFeedback()
+			return model.openHookTrust(event.TurnID, request)
+		}
 		if err != nil || !view.acceptsHook(request.Declaration.Reference.Event, request.PlanDigest, true) || model.hookTrust != nil ||
 			view.trustCount == len(view.trustIDs) ||
 			slices.Contains(view.trustIDs[:view.trustCount], request.RequestID) {
@@ -116,6 +134,12 @@ func (model Model) projectCompactionPresentation(event protocol.Event) (tea.Mode
 		}
 	case protocol.EventHookActivity:
 		payload, err := protocol.DecodeHookActivity(event)
+		if err == nil && payload.Reference.Event == domain.HookSessionStart {
+			if !view.cancelling && model.hookTrust == nil && view.sessionStart.acceptActivity(event, payload) {
+				model.compactionStatus = "Conversation compacted · " + view.sessionStart.status()
+			}
+			return model, nil
+		}
 		if err != nil || payload.State != protocol.HookActivityChecking || model.hookTrust != nil ||
 			!view.acceptsHook(payload.Reference.Event, payload.PlanDigest, false) {
 			return model, nil
@@ -198,6 +222,7 @@ func (model *Model) applyPostCompactClosed(event protocol.Event) {
 	outcome := string(payload.State)
 	if payload.State == protocol.PostCompactUncertain {
 		outcome = "outcome uncertain"
+		view.postUncertain = true
 	}
 	if payload.Code == domain.HookOK {
 		view.postResult = fmt.Sprintf("PostCompact passed (%d/%d checks)", payload.Finished, view.post.Count)

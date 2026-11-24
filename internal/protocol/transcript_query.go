@@ -47,6 +47,7 @@ func (q TranscriptListQuery) Validate() error {
 
 // TranscriptListItem 只携带短摘要，完整正文必须通过范围查询获取。
 type TranscriptListItem struct {
+	SessionStartSource domain.SessionStartSource `json:"session_start_source,omitempty"`
 	Files              domain.FileSummary        `json:"files"`
 	HookSource         *domain.HookMessageSource `json:"hook_source,omitempty"`
 	StopHook           *StopHookCommittedPayload `json:"stop_hook,omitempty"`
@@ -70,6 +71,20 @@ type TranscriptListItem struct {
 	Text               string                    `json:"text"`
 	More               bool                      `json:"more"`
 	Activity           ToolActivityPayload       `json:"activity"`
+}
+
+const sessionStartTranscriptSummary = "SessionStart context saved"
+
+// NewSessionStartTranscriptListItem 只展示事件来源和位置，正文由详情范围查询读取。
+func NewSessionStartTranscriptListItem(cursor TranscriptCursor, target domain.SessionStartTarget) (TranscriptListItem, error) {
+	if err := target.Validate(); err != nil {
+		return TranscriptListItem{}, err
+	}
+	item := TranscriptListItem{
+		Cursor: cursor, Kind: domain.TranscriptSessionStartContext, TurnID: target.TurnID,
+		CompactionID: target.CompactionID, SessionStartSource: target.Source, Text: sessionStartTranscriptSummary, More: true,
+	}
+	return item, item.Validate()
 }
 
 // UnmarshalJSON 保持可选活动对象的缺省语义，显式 null 不得伪装成没有该分支。
@@ -139,6 +154,19 @@ func (v TranscriptListItem) Validate() error {
 	}
 	if v.Kind != domain.TranscriptReasoning && v.Reasoning != nil {
 		return errors.New("unexpected reasoning transcript metadata")
+	}
+	if v.Kind == domain.TranscriptSessionStartContext {
+		compact := v.SessionStartSource == domain.SessionStartCompact
+		if !v.SessionStartSource.Valid() || v.InputID != "" || v.Activity != (ToolActivityPayload{}) ||
+			compact && (v.TurnID != "" || !v.CompactionID.Valid()) ||
+			!compact && (!v.TurnID.Valid() || v.CompactionID != "") ||
+			v.Text != sessionStartTranscriptSummary || !v.More {
+			return errors.New("invalid session start transcript item")
+		}
+		return nil
+	}
+	if v.SessionStartSource != "" {
+		return errors.New("unexpected session start transcript source")
 	}
 	if v.Kind == domain.TranscriptCompaction {
 		if !v.CompactionID.Valid() || v.TurnID != "" || v.InputID != "" || v.Activity != (ToolActivityPayload{}) {

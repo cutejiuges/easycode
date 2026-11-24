@@ -78,6 +78,8 @@ type transcriptBrowser struct {
 	cache              []cachedTranscriptPage
 	loading            bool
 	errorText          string
+
+	sessionStartThrough uint64
 }
 
 // WithTranscriptQueries 只装配宿主端口，首个查询通过 Init 或按键命令显式执行。
@@ -165,7 +167,30 @@ func (model Model) openTranscriptBrowser() (tea.Model, tea.Cmd) {
 	if through == 0 && model.browser.mainListPinned {
 		through = model.browser.mainListKey.through
 	}
+	through = max(through, model.browser.sessionStartThrough)
 	return model.loadTranscriptPage(transcriptPageKey{mode: protocol.TranscriptDetail, kind: transcriptListPage, through: through})
+}
+
+// refreshSessionStartTranscript 按真实关闭序号更新详情上界，保留已阅读的正文与锚点。
+func (model Model) refreshSessionStartTranscript(sequence uint64) (tea.Model, tea.Cmd) {
+	model.browser.sessionStartThrough = max(model.browser.sessionStartThrough, sequence)
+	if !model.detailOpen || model.browser.detail || model.browser.queries == nil {
+		return model, nil
+	}
+	return model.refreshSessionStartList()
+}
+
+func (model Model) refreshSessionStartList() (tea.Model, tea.Cmd) {
+	b := &model.browser
+	key := b.listKey
+	if key.through >= b.sessionStartThrough {
+		return model, nil
+	}
+	if !b.entryCursor.Valid() && b.selected < len(b.items) {
+		b.entryCursor = b.items[b.selected].Cursor
+	}
+	key.through = b.sessionStartThrough
+	return model.loadTranscriptPage(key)
 }
 
 func (model Model) loadTranscriptPage(key transcriptPageKey) (tea.Model, tea.Cmd) {
@@ -408,6 +433,7 @@ func (model Model) handleTranscriptBrowserKey(key tea.KeyMsg) (tea.Model, tea.Cm
 			b.detail = false
 			b.page = nil
 			b.markdown = transcriptMarkdownDetail{}
+			return model.refreshSessionStartList()
 		} else {
 			model.detailOpen = false
 			b.listPinned = false
@@ -578,6 +604,9 @@ func (model Model) renderTranscriptBrowser() string {
 					text += " · live"
 				}
 			}
+			if item.Kind == domain.TranscriptSessionStartContext {
+				text = "SessionStart (" + string(item.SessionStartSource) + ") · Saved model context"
+			}
 			if item.Kind == domain.TranscriptCall {
 				text = string(item.Activity.Tool) + " · " + item.Activity.Status + " · " + item.Activity.Summary
 			}
@@ -598,6 +627,9 @@ func (model Model) renderTranscriptBrowser() string {
 	}
 	item := b.items[b.selected]
 	title := string(item.Kind)
+	if item.Kind == domain.TranscriptSessionStartContext {
+		title = "SessionStart (" + string(item.SessionStartSource) + ") · Saved model context"
+	}
 	if item.Kind == domain.TranscriptReasoning && item.Reasoning != nil {
 		title = "Reasoning · " + reasoningSourceLabel(item.Reasoning.Source)
 		if model.cancelling {
@@ -712,7 +744,11 @@ func (model Model) renderTranscriptBrowser() string {
 	}
 	visible = max(1, model.heightOrDefault()-len(headers)-2)
 	scroll := min(model.detailScroll-b.markdown.first, max(0, len(lines)-visible))
-	return strings.Join(headers, "\n") + "\n" + strings.Join(lines[scroll:min(len(lines), scroll+visible)], "\n") + "\n" + truncateRunes("←/→: input/result/saved · PgUp/PgDn: page", width) + "\n" + truncateRunes("Esc: transcript · Ctrl+O: close", width) + "\n"
+	actions := "←/→: input/result/saved · PgUp/PgDn: page"
+	if item.Kind == domain.TranscriptSessionStartContext {
+		actions = "↑/↓: scroll · PgUp/PgDn: page"
+	}
+	return strings.Join(headers, "\n") + "\n" + strings.Join(lines[scroll:min(len(lines), scroll+visible)], "\n") + "\n" + truncateRunes(actions, width) + "\n" + truncateRunes("Esc: transcript · Ctrl+O: close", width) + "\n"
 }
 
 func (b *transcriptBrowser) protected(key transcriptPageKey) bool {

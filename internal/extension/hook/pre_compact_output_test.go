@@ -49,3 +49,29 @@ func TestPreCompactOutputUsesStrictScopedControl(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionStartOutputRequiresExplicitCanonicalContext(t *testing.T) {
+	const output = `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"  保留正文\n "}}`
+	for _, tc := range []struct {
+		policy  domain.HookFeedbackPolicy
+		exit    int
+		input   string
+		code    domain.HookCode
+		context string
+	}{
+		{domain.HookFeedbackModel, 0, output, domain.HookOK, "  保留正文\n "},
+		{domain.HookFeedbackNone, 0, output, domain.HookFeedbackNotAllowed, ""},
+		{domain.HookFeedbackModel, 2, output, domain.HookExitFailed, ""},
+		{domain.HookFeedbackNone, 0, " \n{}", domain.HookOK, ""},
+		{domain.HookFeedbackModel, 0, `{"continue":false,` + output[1:], domain.HookOutputInvalid, ""},
+		{domain.HookFeedbackModel, 0, strings.Replace(output, `"additionalContext":`, `"watchPaths":[],"additionalContext":`, 1), domain.HookOutputInvalid, ""},
+		{domain.HookFeedbackModel, 0, strings.Replace(output, "SessionStart", "PostCompact", 1), domain.HookOutputInvalid, ""},
+		{domain.HookFeedbackModel, 0, strings.Replace(output, "保留正文", strings.Repeat("x", domain.MaxHookFeedbackBytes), 1), domain.HookOutputInvalid, ""},
+		{domain.HookFeedbackModel, 0, "fixture-private-stdout", domain.HookOutputInvalid, ""},
+	} {
+		got := ParseExecution(domain.HookSessionStart, tc.policy, tc.exit, []byte(tc.input), domain.HookRewriteContext{})
+		if got.Code != tc.code || got.Feedback.Content() != tc.context || !got.Replacement.Empty() {
+			t.Fatalf("incorrect SessionStart output for code %s: %+v", tc.code, got)
+		}
+	}
+}

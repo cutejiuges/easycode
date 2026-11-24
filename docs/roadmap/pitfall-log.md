@@ -1111,3 +1111,10 @@ Linux CI 回归补充：TurnStarted 只证明回合接纳，不能证明输入�
 - 附件准备拒绝沿同一命令 owner 产生关联响应。未知 Skill 不关闭已建立的 headless 流，真正坏帧和 transport 失败仍由各自 owner 收口。
 - Responses 成功前校验已知输出的身份及完成状态。HTTP 和 WebSocket 统一按解码后的错误事件处理，冲突或错误不进入成功样本。活跃窗口在复制前裁去归档段，完整历史仍保留原生事实。
 - Catalog 以末条 seq 找到最后事实，使用该记录的真实 UTC 时间排序。墙钟回拨后，严格可回放的 journal 仍是可查询候选。
+
+
+### 2026-11-22 SessionStart 的原生物理尾项与采样身份
+
+已保存的压缩上下文可能位于已闭合工具组或待交付 Stop 反馈之后。以物理尾项判断资格和 TurnID 会错误拒绝无 steering 的续采。两家 Provider 根据已验证逻辑前驱作出采样决定，同时把真实附加上下文保留在请求序列中。已安装 checkpoint 时收到取消，压缩历史保留成功，操作 owner 仍按取消结束并返还 auto 队列。
+
+合法激活交付是三记录批次，压缩上下文是独立单记录。加载时先验证完整行的批次形状，避免把伪造的 singleton 当成可修复尾部。尺寸预检使用实际批次位置和 arity，使用相同 writer 编码规则。 [恢复与取消边界](../../openspec/changes/archive/2026-11-24-add-session-start-context/design.md)

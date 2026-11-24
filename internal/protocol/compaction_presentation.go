@@ -41,7 +41,7 @@ func IsCompactionPresentation(event Event) bool {
 	switch event.Kind {
 	case EventCompactionSummarizing, EventPostCompactInstalled, EventPostCompactClosed:
 		return true
-	case EventHookTrustRequested, EventHookTrustResolved, EventHookActivity:
+	case EventHookTrustRequested, EventHookTrustResolved, EventHookActivity, EventSessionStart:
 		return event.CompactionID != ""
 	default:
 		return false
@@ -72,6 +72,9 @@ func CompactionEventScope(event Event) (domain.CompactionScope, error) {
 	case EventPostCompactClosed:
 		payload, err := DecodePostCompactClosed(event)
 		return payload.Scope, err
+	case EventSessionStart:
+		payload, err := DecodeSessionStart(event)
+		return payload.Target.Scope, err
 	case EventHookTrustRequested:
 		payload, err := DecodeHookTrustRequested(event)
 		_, scope, _ := payload.Target.Compaction()

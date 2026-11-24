@@ -105,7 +105,12 @@ func (r *Runtime) deliverStopContinuation(ctx context.Context, emit Emitter, che
 			if err != nil {
 				priorErr = err
 			} else {
-				priorErr = r.prepareAutomaticWindow(ctx, turn, index, view, footprint, base.Revision(), emit)
+				next, err := provider.NewSessionStartStopContinuation(candidate)
+				if err != nil {
+					priorErr = err
+				} else {
+					priorErr = r.prepareAutomaticWindow(ctx, turn, index, view, footprint, base.Revision(), next, emit)
+				}
 			}
 		}
 		if r.poisoned.Load() || r.journal.Poisoned() {

@@ -192,6 +192,7 @@ type nativeHistoryEntryKind = domain.NativeCommitRole
 
 const (
 	nativeHistoryHookFeedback = domain.NativeCommitHookFeedback
+	nativeHistorySessionStart = domain.NativeCommitSessionStartContext
 	nativeHistorySample       = domain.NativeCommitSample
 	nativeHistoryUserInputs   = domain.NativeCommitUserInputs
 	nativeHistoryToolOutputs  = domain.NativeCommitToolOutputs
@@ -199,15 +200,17 @@ const (
 
 // nativeHistoryEntry 是 Messages 原生历史唯一的当前内存模型。
 type nativeHistoryEntry struct {
-	FeedbackInput    *nativeMessage
-	FeedbackMetadata *provider.HookFeedbackMetadata
-	Kind             nativeHistoryEntryKind
-	TurnID           domain.TurnID
-	UserInputs       []nativeMessage
-	InputMetadata    *provider.InputMetadata
-	Assistant        nativeMessage
-	ToolOutputs      nativeMessage
-	Metadata         messageMetadata
+	SessionStartInput    *nativeMessage
+	SessionStartMetadata *provider.SessionStartMetadata
+	FeedbackInput        *nativeMessage
+	FeedbackMetadata     *provider.HookFeedbackMetadata
+	Kind                 nativeHistoryEntryKind
+	TurnID               domain.TurnID
+	UserInputs           []nativeMessage
+	InputMetadata        *provider.InputMetadata
+	Assistant            nativeMessage
+	ToolOutputs          nativeMessage
+	Metadata             messageMetadata
 }
 
 func (entry nativeHistoryEntry) clone() nativeHistoryEntry {
@@ -216,6 +219,14 @@ func (entry nativeHistoryEntry) clone() nativeHistoryEntry {
 		ToolOutputs: entry.ToolOutputs.clone(), Metadata: entry.Metadata,
 	}
 	cloned.TurnID = entry.TurnID
+	if entry.SessionStartInput != nil {
+		input := entry.SessionStartInput.clone()
+		cloned.SessionStartInput = &input
+	}
+	if entry.SessionStartMetadata != nil {
+		metadata := entry.SessionStartMetadata.Clone()
+		cloned.SessionStartMetadata = &metadata
+	}
 	if entry.FeedbackInput != nil {
 		v := entry.FeedbackInput.clone()
 		cloned.FeedbackInput = &v
@@ -254,4 +265,12 @@ func (entry nativeHistoryEntry) NativeInputMetadata() *provider.InputMetadata {
 func (entry nativeHistoryEntry) WithNativeTurn(turn domain.TurnID) nativeHistoryEntry {
 	entry.TurnID = turn
 	return entry
+}
+
+// NativeSessionStartTarget 返回上下文的封闭作用域。
+func (entry nativeHistoryEntry) NativeSessionStartTarget() domain.SessionStartTarget {
+	if entry.SessionStartMetadata == nil {
+		return domain.SessionStartTarget{}
+	}
+	return entry.SessionStartMetadata.Target
 }

@@ -77,6 +77,14 @@ func NewActiveContextView(history SemanticHistoryView, summary ContextSummary, r
 			return ActiveContextView{}, fmt.Errorf("summary context revision is required")
 		}
 	}
+	if len(history.CheckpointContexts) > 0 {
+		context := history.CheckpointContexts[0]
+		if len(history.CheckpointContexts) != 1 || summary.text == "" || context.AfterMessages != 0 ||
+			context.Context.Target.Source != SessionStartCompact || context.Context.Target.CheckpointRevision >= revision ||
+			context.Context.Validate() != nil {
+			return ActiveContextView{}, fmt.Errorf("invalid checkpoint session start context")
+		}
+	}
 	return ActiveContextView{history: history.Clone(), summary: summary, revision: revision}, nil
 }
 

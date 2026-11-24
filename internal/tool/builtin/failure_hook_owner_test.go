@@ -114,3 +114,26 @@ func TestFailureHookRunnerRetainsOwnerAcrossDeterministicFaults(t *testing.T) {
 		})
 	}
 }
+
+func TestSessionStartCapturedOutputLimitClosesWithoutParsing(t *testing.T) {
+	target, err := domain.NewSessionStartHookTarget(domain.SessionStartTarget{
+		Source: domain.SessionStartStartup, TurnID: "018f1d8a-7b5c-7def-8abc-456789abcdef",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := domain.NewSessionStartHookRunIdentity(target, domain.HookDigest(nil), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout := []byte(`{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"private-truncated-prefix"}}`)
+	execution := classifyHookExecution(identity, domain.HookFeedbackModel, process.Result{ExitKnown: true}, stdout,
+		int64(len(stdout)), 2*domain.MaxHookOutputBytes, func(domain.HookEvent, domain.HookFeedbackPolicy, int, []byte, domain.HookRewriteContext) domain.HookParsedOutput {
+			t.Fatal("truncated command output reached the model feedback parser")
+			return domain.HookParsedOutput{}
+		}, domain.HookRewriteContext{})
+	if execution.Result.Validate() != nil || execution.Result.Code != domain.HookOutputLimit ||
+		!execution.Feedback.Empty() || execution.Result.StderrBytes != domain.MaxHookOutputBytes+1 {
+		t.Fatalf("unsafe or uncertain completion for bounded output: %+v", execution)
+	}
+}

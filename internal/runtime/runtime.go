@@ -58,6 +58,7 @@ type Config struct {
 	ToolHistory               ToolHistoryObserver
 	HookHistory               HookHistoryObserver
 	StopHistory               StopHistoryObserver
+	SessionStartHistory       SessionStartHistoryObserver
 	ArtifactReferences        *tool.ArtifactReferences
 	SessionID                 domain.SessionID
 	ThreadID                  domain.ThreadID
@@ -107,6 +108,8 @@ type Runtime struct {
 	toolHistory                  ToolHistoryObserver
 	hookHistory                  HookHistoryObserver
 	stopHistory                  StopHistoryObserver
+	sessionStartHistory          SessionStartHistoryObserver
+	sessionStartSource           domain.SessionStartSource
 	artifactReferences           *tool.ArtifactReferences
 	conversation                 provider.Conversation
 	providerOperations           providerOperations
@@ -224,6 +227,7 @@ func New(conversation provider.Conversation, config Config) (*Runtime, error) {
 		toolHistory:            config.ToolHistory,
 		hookHistory:            config.HookHistory,
 		stopHistory:            config.StopHistory,
+		sessionStartHistory:    config.SessionStartHistory,
 		interactiveQuestions:   config.InteractiveQuestions, newQuestionRequestID: config.GenerateQuestionRequestID,
 		userInputCommitted: protocol.NewUserInputCommitted,
 		textOutputStore:    config.TextOutputStore,
@@ -280,7 +284,7 @@ func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, 
 		}
 		return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, err)
 	}
-	result := runtime.commitInputs(ctx, turnID, 0, inputs, control, emit)
+	result := runtime.commitInitialInputs(ctx, turnID, inputs, control, emit)
 	if result.err != nil {
 		return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, result.err)
 	}

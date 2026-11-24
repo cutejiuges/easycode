@@ -203,12 +203,13 @@ func (operation ReplayedCompaction) TaskProgressAtStart() (domain.TaskProgressSt
 
 // compactionReplay 独占压缩语法，不扩大普通 turn 状态机。
 type compactionReplay struct {
-	active      *ReplayedCompaction
-	preCompact  preCompactReplay
-	postCompact *postCompactReplay
-	seen        map[domain.CompactionID]struct{}
-	previous    domain.CompactionID
-	completed   uint64
+	active             *ReplayedCompaction
+	preCompact         preCompactReplay
+	postCompact        *postCompactReplay
+	seen               map[domain.CompactionID]struct{}
+	previous           domain.CompactionID
+	completed          uint64
+	sessionStartTarget domain.SessionStartTarget
 }
 
 func (state *compactionReplay) accept(plan *replayAccumulator, batch []Record, turn *activeReplayTurn) error {
@@ -221,12 +222,20 @@ func (state *compactionReplay) accept(plan *replayAccumulator, batch []Record, t
 			return err
 		}
 		if record.EventKind == EventPostCompactHookClosed {
+			closed, err := DecodePostCompactHookClosedPayload(record)
+			if err != nil {
+				return err
+			}
+			if closed.Origin == postCompactRecovery || closed.State == protocol.PostCompactCancelled || closed.State == protocol.PostCompactUncertain {
+				state.sessionStartTarget = domain.SessionStartTarget{}
+			}
 			state.postCompact = nil
 		}
 		return nil
 	}
 	switch record.EventKind {
 	case EventCompactionStarted:
+		state.sessionStartTarget = domain.SessionStartTarget{}
 		payload, err := DecodeCompactionStartedPayload(record)
 		if err != nil {
 			return err
@@ -242,7 +251,7 @@ func (state *compactionReplay) accept(plan *replayAccumulator, batch []Record, t
 				return replayCorrupt("manual compaction overlaps turn")
 			}
 		} else {
-			if turn == nil || payload.Scope.TurnID != turn.turnID || payload.Scope.SampleIndex != turn.nextSampleIndex || turn.inputAtSample || turn.autoCompactedSample || turn.pendingCalls != nil || (turn.stop != nil && !turn.stop.PendingFeedback()) || (turn.initialInputs && turn.stop == nil && (!turn.hadToolSample || !turn.toolOutputsCommitted)) {
+			if turn == nil || payload.Scope.TurnID != turn.turnID || payload.Scope.SampleIndex != turn.nextSampleIndex || turn.inputAtSample || turn.autoCompactedSample || turn.pendingCalls != nil || (turn.stop != nil && !turn.stop.PendingFeedback()) || (!turn.initialInputs && turn.sessionStartChecked) || (turn.initialInputs && turn.stop == nil && (!turn.hadToolSample || !turn.toolOutputsCommitted)) {
 				return replayCorrupt("automatic compaction boundary is invalid")
 			}
 			turn.autoCompactedSample = true
@@ -274,6 +283,11 @@ func (state *compactionReplay) accept(plan *replayAccumulator, batch []Record, t
 		state.active.Completed = &payload
 		state.previous = payload.Checkpoint.ID()
 		state.completed++
+		state.sessionStartTarget = domain.SessionStartTarget{
+			Source: domain.SessionStartCompact, CompactionID: payload.Checkpoint.ID(), Scope: payload.Scope,
+			CheckpointSequence: record.Sequence, CheckpointRevision: payload.Checkpoint.Source().ContextRevision() + 1,
+			CheckpointDigest: payload.Checkpoint.Source().Digest(),
+		}
 		if payload.PostCompact.kind == PostCompactPlanPlanned {
 			target, err := domain.NewCompactionHookTarget(payload.Checkpoint.ID(), payload.Scope)
 			if err != nil {

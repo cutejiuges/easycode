@@ -137,7 +137,10 @@ func (m Model) renderHooks() string {
 			header += " · r: reset trust"
 		}
 		lines = []string{header, fmt.Sprintf("Source: %s · %s [%s]", d.Reference.Source, d.Reference.ID, e.State), "Event: " + string(d.Reference.Event) + " · feedback: " + string(d.Reference.Feedback), hookScopeLabel(d), fmt.Sprintf("Timeout: %d seconds", d.Reference.TimeoutSeconds), "Workspace: . · read-only · network denied", "Workspace scripts can change after review.", "Reset clears the current approval or refusal."}
-		if _, compact := d.Scope.CompactionMatcher(); compact {
+		if d.Reference.Event == domain.HookSessionStart {
+			lines = append(lines, sessionStartHookTiming(d.Scope), "Reset only affects later checks.")
+			lines = append(lines, sessionStartHookDisclosure(d)...)
+		} else if _, compact := d.Scope.CompactionMatcher(); compact {
 			lines = append(lines, compactionHookDisclosure(d, d.Scope.MatchesCompaction(domain.CompactionManual))...)
 		} else {
 			lines = append(lines, "Raw output is discarded. Only trusted model feedback is sent and saved.")
@@ -166,7 +169,7 @@ func (m Model) renderHooks() string {
 		} else {
 			d := e.Declaration
 			eventLabel := string(d.Reference.Event)
-			if _, compact := d.Scope.CompactionMatcher(); compact {
+			if _, compact := d.Scope.CompactionMatcher(); compact || d.Reference.Event == domain.HookSessionStart {
 				eventLabel += " (" + d.Scope.String() + ")"
 			}
 			lines = append(lines, fmt.Sprintf("%s%s:%s · %s · %s [%s]", marker, d.Reference.Source, d.Reference.ID, eventLabel, d.Reference.Feedback, e.State))
@@ -191,7 +194,9 @@ func (m Model) handleHookTrustKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.requestTurnCancellation(m.hookTrust.turn)
 	}
-	if m.hookTrust.submitted || m.compaction.cancelling || (m.hookReviewUnavailable() && key.Type != tea.KeyEsc) {
+	if m.hookTrust.submitted || m.compaction.cancelling ||
+		(m.cancelling && m.hookTrust.request.Declaration.Reference.Event == domain.HookSessionStart) ||
+		(m.hookReviewUnavailable() && key.Type != tea.KeyEsc) {
 		return m, nil
 	}
 	switch key.Type {
@@ -260,7 +265,19 @@ func (m Model) renderHookTrust() string {
 	if d.Reference.Event == domain.HookPostToolUseFailure {
 		lines = append(lines[:1], append([]string{"Runs only after a definite execution-attempt failure.", "Admission does not prove the process started. Normal nonzero exits use PostToolUse.", "feedback=model sends additionalContext to the provider and saves it in Session."}, lines[1:]...)...)
 	}
-	if _, scope, ok := o.request.Target.Compaction(); ok {
+	if target, ok := o.request.Target.SessionStart(); ok {
+		heading := "Trust this SessionStart hook?"
+		trigger := "Triggered by: " + string(target.Source)
+		if target.Source == domain.SessionStartCompact {
+			heading = "Conversation compacted · trust this SessionStart hook?"
+			trigger += " (" + string(target.Scope.Trigger) + ")"
+		}
+		lines = []string{heading, trigger, hookScopeLabel(d), fmt.Sprintf("Source: %s · %s", d.Reference.Source, d.Reference.ID),
+			"Feedback: " + string(d.Reference.Feedback), fmt.Sprintf("Timeout: %d seconds", d.Reference.TimeoutSeconds),
+			"Workspace: . · read-only · network denied", "Workspace scripts can change after review."}
+		lines = append(lines, sessionStartHookDisclosure(d)...)
+		lines = append(lines, "PgUp/PgDn: full command · Tab/↑/↓: choose · Esc: deny", "", trust, deny, "", "Command:", d.Command)
+	} else if _, scope, ok := o.request.Target.Compaction(); ok {
 		heading := "Trust this hook?"
 		if d.Reference.Event == domain.HookPostCompact {
 			heading = "Conversation compacted · trust this hook?"
@@ -281,7 +298,30 @@ func (m Model) renderHookTrust() string {
 func (m Model) hookReviewUnavailable() bool {
 	declaration := m.hookTrust.request.Declaration
 	_, compact := declaration.Scope.CompactionMatcher()
-	return (declaration.Reference.Event == domain.HookPreToolUse || compact) && (m.widthOrDefault() < 20 || m.heightOrDefault() < 6)
+	return (declaration.Reference.Event == domain.HookPreToolUse || declaration.Reference.Event == domain.HookSessionStart || compact) &&
+		(m.widthOrDefault() < 20 || m.heightOrDefault() < 6)
+}
+
+func sessionStartHookTiming(scope domain.HookScope) string {
+	switch scope.String() {
+	case string(domain.SessionStartStartup):
+		return "Runs during the first prompt in a new session."
+	case string(domain.SessionStartResume):
+		return "Runs during the first prompt after resuming."
+	case string(domain.SessionStartCompact):
+		return "Runs after compaction is saved and PostCompact checks settle."
+	default:
+		return "Runs during the first prompt after opening or resuming, and after successful compaction."
+	}
+}
+
+func sessionStartHookDisclosure(d domain.HookDeclaration) []string {
+	lines := []string{"This decision covers this declaration on later matching triggers in this session.", "Raw command output is discarded."}
+	if d.Reference.Feedback == domain.HookFeedbackModel {
+		lines = append(lines, "Accepted additionalContext is saved in Session and included when the active history is sent to the provider.",
+			"Later summaries can retain this context.")
+	}
+	return lines
 }
 
 func compactionHookDisclosure(d domain.HookDeclaration, manual bool) []string {
@@ -312,6 +352,10 @@ func (m Model) projectHookEvent(e protocol.Event) (tea.Model, tea.Cmd) {
 			m.errorSummary = "stream_protocol_error: invalid hook trust request"
 			return m, interruptSession(m.session, e.TurnID)
 		}
+		if p.Declaration.Reference.Event == domain.HookSessionStart &&
+			(m.cancelling || m.hookTrust != nil || !m.sessionStart.acceptReview(e, p)) {
+			return m, nil
+		}
 		return m.openHookTrust(e.TurnID, p)
 	case protocol.EventHookTrustResolved:
 		return m.projectHookTrustResolution(e)
@@ -319,6 +363,12 @@ func (m Model) projectHookEvent(e protocol.Event) (tea.Model, tea.Cmd) {
 		p, err := protocol.DecodeHookActivity(e)
 		if err != nil {
 			m.errorSummary = "stream_protocol_error: invalid hook activity"
+			return m, nil
+		}
+		if p.Reference.Event == domain.HookSessionStart {
+			if !m.cancelling && m.hookTrust == nil && m.sessionStart.acceptActivity(e, p) {
+				m.sessionStartStatus = m.sessionStart.status()
+			}
 			return m, nil
 		}
 		if p.Reference.Event == domain.HookStop {
@@ -387,6 +437,15 @@ func (m Model) projectHookTrustResolution(event protocol.Event) (tea.Model, tea.
 	}
 	if m.hookTrust == nil || p.RequestID != m.hookTrust.request.RequestID || p.Target != m.hookTrust.request.Target || p.PlanDigest != m.hookTrust.request.PlanDigest || p.Reference != m.hookTrust.request.Declaration.Reference {
 		return m, nil
+	}
+	if target, ok := p.Target.SessionStart(); ok {
+		view := m.sessionStart
+		if target.Source == domain.SessionStartCompact {
+			view = m.compaction.sessionStart
+		}
+		if m.cancelling || m.compaction.cancelling || !view.matches(event, target, p.PlanDigest) {
+			return m, nil
+		}
 	}
 	m.hookTrust = nil
 	for i := range m.hooks.entries {

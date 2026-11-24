@@ -468,6 +468,7 @@ func openChatResourcesWithSnapshot(
 		TextOutputStore:     artifactOutputStore{store: artifactStore},
 		ToolHistory:         queries,
 		HookHistory:         queries,
+		SessionStartHistory: queries,
 		StopHistory:         queries,
 		SessionID:           assembled.identity.SessionID, ThreadID: assembled.identity.ThreadID,
 		Journal: hooks.recovery.journalForRecovery(assembled.writer), ContextProfile: contextProfile, CachePolicy: settings.Cache, RestoredCacheBaseline: resumeThreadID != "",
@@ -521,6 +522,15 @@ func openChatResourcesWithSnapshot(
 	}
 	if err := installChatHooks(ctx, runtimeInstance, workspace, artifactLayout, creationCWD, extensions.hooks, hooks); err != nil {
 		return nil, err
+	}
+	if hooks.interactiveApprovals {
+		source := domain.SessionStartStartup
+		if resumeThreadID != "" {
+			source = domain.SessionStartResume
+		}
+		if err := runtimeInstance.InstallSessionStartSource(source); err != nil {
+			return nil, err
+		}
 	}
 	var pluginSources *plugin.Sources
 	if hooks.environment == nil {

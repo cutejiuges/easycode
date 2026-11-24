@@ -11,7 +11,7 @@ import (
 func (state *agentLoopRunState) canResolveHookTrust(response protocol.HookTrustResponse) bool {
 	id, scope, compact := response.Target.Compaction()
 	if !compact {
-		return state.active != nil && !state.active.terminalSeen && !state.active.compactionID.Valid() && state.active.turnID == response.TurnID
+		return state.active != nil && !state.active.terminalSeen && !state.active.worker.cancelRequested && !state.active.compactionID.Valid() && state.active.turnID == response.TurnID
 	}
 	if scope.Trigger == domain.CompactionManual {
 		operation := state.compaction

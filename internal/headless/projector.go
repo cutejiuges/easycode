@@ -66,6 +66,9 @@ func (projector *projector) project(event protocol.Event) (projection, error) {
 		}
 		_, err := protocol.DecodeTaskProgressUpdated(event)
 		return projection{}, err
+	case protocol.EventSessionStart:
+		_, err := protocol.DecodeSessionStart(event)
+		return projection{}, err
 	case protocol.EventStopHookCommitted:
 		if err := projector.validateActiveTurn(event); err != nil {
 			return projection{}, err

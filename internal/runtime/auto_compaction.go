@@ -29,6 +29,7 @@ func (runtime *Runtime) prepareAutomaticSample(ctx context.Context, turn domain.
 	if runtime.autoCompactionFailures > 0 && runtime.autoCompactionFailedRevision == revision {
 		return nil
 	}
+	var next provider.SessionStartContinuation
 	if len(inputs) > 0 {
 		association, err := inputAssociation(turn, index, inputs)
 		if err != nil {
@@ -53,13 +54,17 @@ func (runtime *Runtime) prepareAutomaticSample(ctx context.Context, turn domain.
 		if previewErr != nil {
 			return previewErr
 		}
+		next, err = provider.NewSessionStartInputContinuation(association, inputs)
+		if err != nil {
+			return err
+		}
 		view, footprint = candidate, candidateFootprint
 	}
-	return runtime.prepareAutomaticWindow(ctx, turn, index, view, footprint, revision, emit)
+	return runtime.prepareAutomaticWindow(ctx, turn, index, view, footprint, revision, next, emit)
 }
 
 // prepareAutomaticWindow 只接收已丢弃 prepared 的候选投影；摘要仍读取旧提交窗口。
-func (runtime *Runtime) prepareAutomaticWindow(ctx context.Context, turn domain.TurnID, index uint32, view domain.ActiveContextView, footprint domain.NativeHistoryFootprint, revision uint64, emit Emitter) error {
+func (runtime *Runtime) prepareAutomaticWindow(ctx context.Context, turn domain.TurnID, index uint32, view domain.ActiveContextView, footprint domain.NativeHistoryFootprint, revision uint64, next provider.SessionStartContinuation, emit Emitter) error {
 	if _, enabled := runtime.autoCompactionPolicy.Threshold(); !enabled {
 		return nil
 	}
@@ -107,6 +112,7 @@ func (runtime *Runtime) prepareAutomaticWindow(ctx context.Context, turn domain.
 	if err != nil {
 		return err
 	}
+	admission.next = next
 	failedDurable := false
 	observed := func(event protocol.Event) {
 		if event.Kind == protocol.EventCompactionFailed {

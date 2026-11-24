@@ -35,6 +35,16 @@
 - **WHEN** 同一 turn 的候选答复后保存 Stop 反馈与真实纠正，再保存模型续答
 - **THEN** 投影保持 assistant/Hook/user/assistant 顺序及真实用户身份；反馈不成为真实 user 或 recall 条目
 
+已提交的 SessionStart 上下文 SHALL 独立标识来源并保留原生提交顺序。startup/resume 上下文位于实际所属语义 turn 的第一条真实 initial 输入之前。compact 上下文 SHALL 以有序的 checkpoint 关联项投影，自动来源可关联实际作用域，手动来源以真实 CompactionID 和 checkpoint 位置锚定。语义 turn 始终使用真实身份，来源项保存获准且已提交的规范模型正文及其来源。上下文 MUST NOT 变成真实用户消息、用户召回条目、Stop 反馈或助手 sample。只有已应用的 native 内容产生该语义项。
+
+#### Scenario: Keep the initial input association intact
+- **WHEN** 已保存的 startup 或 resume 上下文和带有 Skill 或文件附件的首个真实输入同批提交
+- **THEN** 语义历史保持上下文、用户及后续助手项的顺序，既有 InputID、Skill 和文件附件只关联真实输入
+
+#### Scenario: Project manual compact context outside the turn list
+- **WHEN** 手动压缩后已保存 compact 上下文，而用户尚未提交下一条真实输入
+- **THEN** 完整语义视图保留实际 checkpoint 来源与顺序，不产生新的 turn、用户消息或助手 sample
+
 ### Requirement: Provider projectors preserve visible text semantics
 
 Anthropic 投影 SHALL 按原生 message 与 content block 顺序投影独立消息，仅在同一消息内部连接属于原始正文的 text blocks。OpenAI 投影 SHALL 按真实 turn、原生 item 与 content part 顺序投影独立用户和 assistant 消息，仅在同一消息内部连接属于原始正文的文本。连接 MUST 精确保留各文本片段的内容和接收顺序，不得自行插入、删除或规范化空格与换行。
@@ -140,6 +150,16 @@ Provider RequestCompiler、原生 resume 和未来 Session 恢复 MUST 继续消
 #### Scenario: Render a checkpoint summary
 - **WHEN** 宿主显示压缩摘要
 - **THEN** 使用独立压缩边界和摘要详情，不生成假的用户 InputID、turn 或 assistant completion
+
+有效窗口 SHALL 在已安装原生摘要之后及其后的真实历史之前，保留本 checkpoint 已提交的 compact 上下文。真实 turn 内的 startup/resume 上下文按原生位置参与有效窗口。后续 checkpoint 覆盖的旧上下文退出有效窗口，完整历史仍保留真实来源与位置供读取。既有 /resume 预览继续只选择真实用户及 assistant 文本，SessionStart 上下文不占正文或条数预算。
+
+#### Scenario: Project a compacted window after both sources
+- **WHEN** 首轮普通自动压缩后依次保存本 checkpoint 的 compact 上下文、当次 resume 上下文和真实输入
+- **THEN** 有效窗口保留摘要、compact 上下文、resume 上下文和真实输入的内容顺序。完整历史仍可投影旧事实
+
+#### Scenario: Preview a history with saved hooks
+- **WHEN** 离线预览含两种 SessionStart 作用域及真实用户和助手文本
+- **THEN** 验证覆盖全部原生事实，预览只返回真实用户和助手文本，且正文预算不会被 Hook 内容占用
 
 ### Requirement: Stored native history supports offline semantic projection
 

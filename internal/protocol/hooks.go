@@ -34,6 +34,12 @@ func (p HookTrustRequestedPayload) Validate() error {
 	if _, cap, ok := p.Target.ToolCall(); ok && !p.Declaration.Scope.Matches(cap) {
 		return fmt.Errorf("hook trust capability mismatch")
 	}
+	if target, ok := p.Target.SessionStart(); ok {
+		if !p.Declaration.Scope.MatchesSessionStart(target.Source) {
+			return fmt.Errorf("hook trust session start source mismatch")
+		}
+		return nil
+	}
 	if _, scope, ok := p.Target.Compaction(); ok && !p.Declaration.Scope.MatchesCompaction(scope.Trigger) {
 		return fmt.Errorf("hook trust compaction trigger mismatch")
 	}
@@ -62,6 +68,12 @@ func NewHookTrustResponse(session domain.SessionID, thread domain.ThreadID, turn
 func (r HookTrustResponse) Validate() error {
 	if !r.SessionID.Valid() || !r.ThreadID.Valid() || !validUUIDv7Text(r.RequestID) || !r.Target.ValidFor(r.Reference.Event) || !domain.ValidHookDigest(r.PlanDigest) || r.Reference.Validate() != nil || !r.Decision.Valid() {
 		return fmt.Errorf("invalid hook trust response")
+	}
+	if target, ok := r.Target.SessionStart(); ok {
+		if r.TurnID != sessionStartTurn(target) {
+			return fmt.Errorf("hook trust session start scope mismatch")
+		}
+		return nil
 	}
 	if _, scope, ok := r.Target.Compaction(); ok {
 		if r.TurnID != scope.TurnID {
@@ -170,6 +182,9 @@ func decorateCompactionHookEvent(event Event, target domain.HookTarget) Event {
 }
 
 func validateHookEventScope(e Event, target domain.HookTarget) error {
+	if start, ok := target.SessionStart(); ok && (e.CompactionID != start.CompactionID || e.TurnID != sessionStartTurn(start)) {
+		return fmt.Errorf("hook target session start scope mismatch")
+	}
 	if id, scope, ok := target.Compaction(); ok {
 		if e.CompactionID != id || e.TurnID != scope.TurnID {
 			return fmt.Errorf("hook target compaction scope mismatch")
@@ -233,7 +248,7 @@ func (p HookActivityPayload) Validate() error {
 		}
 		return nil
 	}
-	if p.Reference.Event == domain.HookPostCompact {
+	if p.Reference.Event == domain.HookPostCompact || p.Reference.Event == domain.HookSessionStart {
 		return fmt.Errorf("post compact activity requires checking state")
 	}
 	if p.Reference.Event.Post() {

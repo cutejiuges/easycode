@@ -34,6 +34,9 @@ func TestTaskBuiltCLICompactionQueriesAndIndependentResumeRequests(t *testing.T)
 			summaries := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				body, _ := io.ReadAll(r.Body)
+				if bytes.Contains(body, []byte("session-start-cli-sentinel")) {
+					t.Error("headless sent SessionStart output to the Provider")
+				}
 				if err := validateTaskServiceSchema(family, body); err != nil {
 					t.Error("real CLI request has an invalid task schema", err)
 					http.Error(w, "invalid task schema", http.StatusBadRequest)
@@ -71,13 +74,14 @@ func TestTaskBuiltCLICompactionQueriesAndIndependentResumeRequests(t *testing.T)
 			if err := os.Mkdir(hookDir, 0700); err != nil {
 				t.Fatal(err)
 			}
-			const hooks = `{"hooks":{"PostCompact":[{"matcher":"manual","hooks":[{"id":"check-summary","type":"command","command":"cat >/dev/null; printf post-compact-cli-sentinel; exit 97"}]}]}}`
+			const hooks = `{"hooks":{"PostCompact":[{"matcher":"manual","hooks":[{"id":"check-summary","type":"command","command":"cat >/dev/null; printf post-compact-cli-sentinel; exit 97"}]}],"SessionStart":[{"matcher":"*","hooks":[{"id":"start-context","type":"command","feedback":"model","command":"printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"session-start-cli-sentinel\"}}'"}]}]}}`
 			if err := os.WriteFile(filepath.Join(hookDir, "hooks.json"), []byte(hooks), 0600); err != nil {
 				t.Fatal(err)
 			}
 			requestCount := func() int { mu.Lock(); defer mu.Unlock(); return len(requests) }
 			thread, prefix, saved := runTaskCompactionCLI(t, binary, home, workspace, configuration, requestCount)
 			loaded := loadHeadlessJournal(t, filepath.Join(home, ".easycode", "sessions"), thread)
+			assertNoSessionStartFrames(t, loaded, "", "")
 			plan, err := session.NewReplayPlanner().Plan(loaded)
 			if err != nil || len(plan.Compactions) != 1 || plan.Compactions[0].Completed == nil {
 				t.Fatal("headless compaction did not save a replayable checkpoint", err)
@@ -101,7 +105,7 @@ func TestTaskBuiltCLICompactionQueriesAndIndependentResumeRequests(t *testing.T)
 				// 此输入的 activeForm 也包含标签，两个规范字段应各保存一次。
 				occurrences = 2
 			}
-			if bytes.Contains(uninterrupted, []byte("task-compaction-archived-history")) || strings.Count(string(uninterrupted), "检查中文代码") != occurrences || bytes.Contains(uninterrupted, []byte("result_sequence")) || bytes.Contains(uninterrupted, []byte(`"profile"`)) {
+			if bytes.Contains(uninterrupted, []byte("task-compaction-archived-history")) || strings.Count(string(uninterrupted), "检查中文代码") != occurrences || bytes.Contains(uninterrupted, []byte("result_sequence")) || bytes.Contains(uninterrupted, []byte(`"profile"`)) || bytes.Contains(uninterrupted, []byte("session-start-cli-sentinel")) {
 				t.Fatal("compacted continuation duplicated tasks, retained archived input or disclosed provenance")
 			}
 			modes := []string{"stream-json", "print"}
@@ -153,6 +157,7 @@ func TestTaskBuiltCLICompactionQueriesAndIndependentResumeRequests(t *testing.T)
 						t.Fatal("one-shot resume emitted task frames or echoed task text")
 					}
 					loaded := loadHeadlessJournal(t, filepath.Join(resumedHome, ".easycode", "sessions"), thread)
+					assertNoSessionStartFrames(t, loaded, result.stdout, result.stderr)
 					plan, err := session.NewReplayPlanner().Plan(loaded)
 					state, stateErr := plan.TaskProgress()
 					if err != nil || stateErr != nil || !state.Equal(saved) || len(plan.Compactions) != 1 || len(plan.Tools) != 1 {
@@ -161,6 +166,20 @@ func TestTaskBuiltCLICompactionQueriesAndIndependentResumeRequests(t *testing.T)
 				})
 			}
 		})
+	}
+}
+
+func assertNoSessionStartFrames(t *testing.T, loaded session.LoadResult, stdout, stderr string) {
+	t.Helper()
+	for _, record := range loaded.Records {
+		switch record.EventKind {
+		case session.EventSessionStartHookPlanned, session.EventSessionStartHookStarted, session.EventSessionStartHookFinished, session.EventSessionStartHookClosed:
+			t.Fatalf("headless saved a SessionStart fact: %s", record.EventKind)
+		}
+	}
+	if strings.Contains(stdout, "session_start") || strings.Contains(stdout, "session.start") ||
+		strings.Contains(stdout+stderr, "session-start-cli-sentinel") {
+		t.Fatal("headless emitted SessionStart frames or command output")
 	}
 }
 
@@ -234,8 +253,9 @@ func runTaskCompactionCLI(t *testing.T, binary, home, workspace, configuration s
 			if codec.Unmarshal(line, &event) != nil {
 				t.Fatal("invalid CLI JSONL")
 			}
-			if strings.Contains(event.Type, "hook") || bytes.Contains(line, []byte("post-compact-cli-sentinel")) {
-				t.Fatal("CLI emitted local post-compaction inspection data", string(line))
+			if strings.Contains(event.Type, "hook") || strings.Contains(event.Type, "session_start") || strings.Contains(event.Type, "session.start") ||
+				bytes.Contains(line, []byte("post-compact-cli-sentinel")) || bytes.Contains(line, []byte("session-start-cli-sentinel")) {
+				t.Fatal("CLI emitted local hook inspection data", string(line))
 			}
 			if observeCompactionFrames {
 				compactionFrames = append(compactionFrames, event.Type)
@@ -301,8 +321,8 @@ func runTaskCompactionCLI(t *testing.T, binary, home, workspace, configuration s
 	completed := readUntil("compaction.completed")
 	observeCompactionFrames = false
 	if !slices.Equal(compactionFrames, []string{"control.response", "compaction.started", "compaction.completed"}) ||
-		bytes.Contains(completed, []byte("post_compact")) || bytes.Contains(completed, []byte(domain.HookTrustRequired)) {
-		t.Fatal("matching PostCompact changed the public stream v1 compaction frames", compactionFrames, string(completed))
+		bytes.Contains(completed, []byte("post_compact")) || bytes.Contains(completed, []byte("session_start")) || bytes.Contains(completed, []byte(domain.HookTrustRequired)) {
+		t.Fatal("matching hooks changed the public stream v1 compaction frames", compactionFrames, string(completed))
 	}
 	if !query("after-compact").Equal(saved) {
 		t.Fatal("CLI compaction changed the task source or content")
@@ -318,11 +338,18 @@ func runTaskCompactionCLI(t *testing.T, binary, home, workspace, configuration s
 		if bytes.Contains(scanner.Bytes(), []byte(`"type":"tasks.snapshot"`)) {
 			t.Fatal("EOF emitted an unsolicited snapshot")
 		}
+		if bytes.Contains(scanner.Bytes(), []byte("session_start")) || bytes.Contains(scanner.Bytes(), []byte("session.start")) ||
+			bytes.Contains(scanner.Bytes(), []byte("session-start-cli-sentinel")) {
+			t.Fatal("EOF emitted SessionStart data")
+		}
 	}
 	err = cmd.Wait()
 	waited = true
 	if err != nil || ctx.Err() != nil {
 		t.Fatal("compacted CLI did not drain or release its resources", err, stderr.String())
+	}
+	if strings.Contains(stderr.String(), "session-start-cli-sentinel") {
+		t.Fatal("CLI exposed SessionStart output on stderr")
 	}
 	return thread, prefix, saved
 }
