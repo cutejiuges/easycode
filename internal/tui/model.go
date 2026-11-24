@@ -70,11 +70,12 @@ const (
 
 // Model 保存纯 UI 投影状态，不依赖 Provider 或 transport。
 type Model struct {
-	resumeEnabled             bool
-	resumeIntent              *chatResumeIntent
+	handoffEnabled            bool
+	handoffIntent             *chatHandoffIntent
+	branchNotice              string
 	resumed                   bool
-	resumeDirectoryNotice     string
-	resumeDirectoryScroll     int
+	handoffNotice             string
+	handoffNoticeScroll       int
 	quitRequested             bool
 	effortOperationGeneration uint64
 	queryOperationGeneration  uint64
@@ -393,8 +394,8 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return model.quitTranscript()
 		}
 		return model, nil
-	case focusResumeNotice:
-		model.handleResumeDirectoryKey(key)
+	case focusHandoffNotice:
+		model.handleHandoffNoticeKey(key)
 		return model, nil
 	}
 	if key.Type == tea.KeyCtrlC {
@@ -512,10 +513,11 @@ func (model Model) handleComposerKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	newlineStart, newline := model.composer.newlineStart(key)
 	submit := !key.Paste && key.Type == tea.KeyEnter && !newline
 	var head, remainder string
-	if submit {
+	if !key.Paste && key.Type == tea.KeyEnter && !key.Alt {
 		head, remainder = domain.SplitInputHead(model.composer.text)
-		if model.resumeEnabled && head == "/"+resumeCommandName {
-			return model.submitResume(strings.TrimSpace(remainder))
+		if model.handoffEnabled && isHandoffSlash(head) &&
+			(!newline || isBranchSlash(head) && model.composer.cursor == len(model.composer.text)) {
+			return model.submitHandoff(head, remainder)
 		}
 	}
 	if model.cancelling {
@@ -538,6 +540,13 @@ func (model Model) handleComposerKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			model.errorSummary = "invalid_input: " + err.Error()
 		} else {
 			model.clearEffortFeedback()
+		}
+		return model, nil
+	}
+	if !key.Paste && key.Type == tea.KeyCtrlG && model.branchNotice != "" && !model.handoffBusy() {
+		model.handoffNotice, model.handoffNoticeScroll = model.branchNotice, 0
+		if title := model.title.line(); title != "" {
+			model.handoffNotice += "\n" + title
 		}
 		return model, nil
 	}
@@ -578,6 +587,10 @@ func (model Model) handleComposerKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 				model.restoreComposer(originalDraft)
 				return model.submitPlanCommand(remainder)
 			}
+			if model.handoffEnabled && isHandoffSlash(head) {
+				model.restoreComposer(originalDraft)
+				return model.submitHandoff(head, remainder)
+			}
 			next, command := model.submitComposer(head, remainder)
 			updated := next.(Model)
 			if updated.skillsOpen || updated.hooks.open || updated.plugins.open {
@@ -590,9 +603,6 @@ func (model Model) handleComposerKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if updated.title.editor != nil {
 				updated.restoreComposer(originalDraft)
 				updated.suppressSessionTitleCompletion()
-			}
-			if updated.resumeIntent != nil {
-				updated.resumeIntent.draft = originalDraft
 			}
 			return updated, command
 		}
@@ -637,9 +647,6 @@ func (model Model) handleComposerKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (model Model) submitComposer(head, remainder string) (tea.Model, tea.Cmd) {
 	if head == "/rename" {
 		return model.beginSessionTitle(remainder)
-	}
-	if model.resumeEnabled && head == "/"+resumeCommandName {
-		return model.submitResume(strings.TrimSpace(remainder))
 	}
 	model.clearEffortFeedback()
 	switch head {
@@ -1074,8 +1081,8 @@ func (model Model) View() string {
 	switch model.focus() {
 	case focusClosed:
 		return model.renderSessionTitleClosed()
-	case focusResumeNotice:
-		return model.modalWorkModeView(pickerWrapped(model.resumeDirectoryText(), model.widthOrDefault(), model.heightOrDefault(), model.resumeDirectoryScroll))
+	case focusHandoffNotice:
+		return model.modalWorkModeView(pickerWrapped(model.handoffNoticeText(), model.widthOrDefault(), model.heightOrDefault(), model.handoffNoticeScroll))
 	case focusQuestion:
 		return model.modalWorkModeView(model.renderQuestion())
 	case focusHookTrust:
@@ -1109,7 +1116,7 @@ func (model Model) View() string {
 			status = "Starting plan implementation…"
 		}
 		if status == "" && model.errorSummary != "" {
-			if head, _ := domain.SplitInputHead(model.composer.text); head == "/rename" || model.workMode.enabled {
+			if head, _ := domain.SplitInputHead(model.composer.text); head == "/rename" || isBranchSlash(head) || model.workMode.enabled {
 				status = "Error: " + model.errorSummary
 			}
 		}
@@ -1117,14 +1124,14 @@ func (model Model) View() string {
 			return model.fitChatView(status, model.composerWorkModeView(model.composer.inputView(model.chatComposerEditable())))
 		}
 		footer := model.composerWorkModeView(model.composer.view(model.chatComposerEditable()))
-		if prefix := model.resumeStatus() + model.title.line(); prefix != "" {
+		if prefix := model.handoffStatus() + model.title.line(); prefix != "" {
 			return model.fitChatView(prefix, footer)
 		}
 		return footer
 	}
 	var view strings.Builder
 	_, _ = fmt.Fprintf(&view, "EasyCode %s\n", model.version)
-	view.WriteString(model.resumeStatus())
+	view.WriteString(model.handoffStatus())
 	if line := model.title.line(); line != "" {
 		view.WriteString(ansi.Truncate(line, model.widthOrDefault(), "…") + "\n")
 	}

@@ -33,6 +33,16 @@ type securePathHooks struct {
 	afterOpenComponent  func(string)
 	beforeOpenJournal   func(string)
 	afterOpenJournal    func(string)
+	beforeBranchPublish func(string)
+	afterBranchRename   func(string)
+	syncBranchFile      func(*os.File) error
+	syncBranchDirectory func(*os.File) error
+}
+
+func callSecurePathHook(hook func(string), value string) {
+	if hook != nil {
+		hook(value)
+	}
 }
 
 // NewRepository 创建纯内存 Repository 配置，不打开或创建外部资源。

@@ -31,6 +31,9 @@ func formatSessionList(query catalog.ListQuery, result catalog.ListResult) strin
 		if entry.Title != "" {
 			fmt.Fprintf(&output, "  Title: %s\n", entry.Title)
 		}
+		if entry.ParentThreadID != "" {
+			fmt.Fprintf(&output, "  Branch of: %s\n", entry.ParentThreadID)
+		}
 		if query.Scope == catalog.ListAllDirectories {
 			fmt.Fprintf(&output, "  Directory: %s\n", sessionListField(entry.CreationCWD, 512))
 		}

@@ -69,11 +69,17 @@ func TestPickerTitlesSearchIndependentlyAndPreserveSelectionByID(t *testing.T) {
 	m, host := pickerTestModel(t)
 	first, second := m.picker.entries[0], m.picker.entries[1]
 	first.Title, second.Title = "Review PARSER", "Review Parser"
+	second.ParentThreadID = first.ThreadID
 	second.Family, second.Wire, second.Model, second.CWD = first.Family, first.Wire, first.Model, first.CWD
 	m = pickerUpdate(m, PickerResult{Request: m.request, Entries: []SessionEntry{first, second}, HasMore: true})
 	if view := m.View(); !strings.Contains(view, "Latest 200 sessions only") || !strings.Contains(view, string(first.Title)) {
 		t.Fatalf("bounded named list missing from view: %s", view)
 	}
+	m = resumeType(m, string(first.ThreadID))
+	if rows := m.picker.filtered(); len(rows) != 1 || rows[0].ThreadID != first.ThreadID {
+		t.Fatal("the parent ID was added to the branch's search keys")
+	}
+	m = pickerKey(m, tea.KeyEsc)
 	m = pickerUpdate(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("parser " + string(first.ThreadID))})
 	if len(m.picker.filtered()) != 0 {
 		t.Fatal("title search combined adjacent metadata fields")
@@ -90,9 +96,16 @@ func TestPickerTitlesSearchIndependentlyAndPreserveSelectionByID(t *testing.T) {
 	if entry, ok := m.picker.selection(); !ok || entry.ThreadID != second.ThreadID || entry.Title != second.Title || m.picker.query != "REVIEW PARSER" {
 		t.Fatalf("refresh did not preserve selected identity: %+v, query=%q", entry, m.picker.query)
 	}
+	if !strings.Contains(m.View(), "Branch · Review Parser updated") {
+		t.Fatal("picker entry did not identify the branch")
+	}
 	m = pickerKey(m, tea.KeyCtrlV)
 	if got := host.requests[len(host.requests)-1]; got.Operation != PickerPreview || got.ThreadID != second.ThreadID {
 		t.Fatalf("preview did not use real thread id: %+v", got)
+	}
+	m = pickerUpdate(m, PickerResult{Request: m.request, Preview: SessionPreview{ParentThreadID: first.ThreadID, Title: second.Title}})
+	if !strings.Contains(m.View(), "Branch of: "+string(first.ThreadID)) {
+		t.Fatal("the verified branch parent was missing from preview")
 	}
 }
 

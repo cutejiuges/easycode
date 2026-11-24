@@ -70,11 +70,11 @@ func TestResumePermitSerializesPreparationAndDirectControls(t *testing.T) {
 		<-outputDone
 	})
 
-	first, err := source.ReserveResume(ctx)
-	if err != nil || !first.Valid() {
+	first, err := source.ReserveHandoff(ctx, HandoffBranch)
+	if err != nil || !first.Matches(source, HandoffBranch) || first.Matches(source, HandoffResume) {
 		t.Fatalf("idle source did not reserve: %v", err)
 	}
-	if duplicate, err := source.ReserveResume(ctx); duplicate != nil || fault.Project(err).Code != fault.CodeSessionBusy {
+	if duplicate, err := source.ReserveHandoff(ctx, HandoffResume); duplicate != nil || fault.Project(err).Code != fault.CodeSessionBusy {
 		t.Fatalf("repeated reservation: %v", err)
 	}
 	draft, err := domain.NewInteractiveInputDraft("Inspect the workspace")
@@ -125,7 +125,7 @@ func TestResumePermitSerializesPreparationAndDirectControls(t *testing.T) {
 	if err := first.Release(ctx); err != nil {
 		t.Fatal(err)
 	}
-	second, err := source.ReserveResume(ctx)
+	second, err := source.ReserveHandoff(ctx, HandoffResume)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func TestResumePermitSerializesPreparationAndDirectControls(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("append failed to enter input preparation")
 	}
-	if held, err := source.ReserveResume(ctx); held != nil || fault.Project(err).Code != fault.CodeSessionBusy {
+	if held, err := source.ReserveHandoff(ctx, HandoffBranch); held != nil || fault.Project(err).Code != fault.CodeSessionBusy {
 		t.Fatalf("in-flight preparation did not prevent reservation: %v", err)
 	}
 	if _, err := source.SetWorkMode(ctx, "preparing-work-mode", domain.WorkModePlan); fault.Project(err).Code != fault.CodeSessionBusy {
@@ -163,7 +163,7 @@ func TestResumePermitSerializesPreparationAndDirectControls(t *testing.T) {
 	if call.input != draft.Text() {
 		t.Fatalf("original pending input did not reach Provider: %q", call.input)
 	}
-	if held, err := source.ReserveResume(ctx); held != nil || fault.Project(err).Code != fault.CodeSessionBusy {
+	if held, err := source.ReserveHandoff(ctx, HandoffBranch); held != nil || fault.Project(err).Code != fault.CodeSessionBusy {
 		t.Fatalf("active worker did not prevent reservation: %v", err)
 	}
 	call.release <- completedProviderEvent(t)
@@ -191,7 +191,7 @@ func TestResumePermitOwnerCancellationAndFinishing(t *testing.T) {
 		t.Cleanup(cancel)
 		results := make(chan reservationResult, 1)
 		go func() {
-			permit, err := source.ReserveResume(ctx)
+			permit, err := source.ReserveHandoff(ctx, HandoffBranch)
 			results <- reservationResult{permit, err}
 		}()
 		select {

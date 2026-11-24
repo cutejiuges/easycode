@@ -207,7 +207,11 @@ func waitSwitchResult(t *testing.T, ctx context.Context, owner *pickerOwner) tui
 
 func switchTaskSnapshot(t *testing.T, ctx context.Context, resources *chatResources) protocol.TaskProgressSnapshotPayload {
 	t.Helper()
-	const id protocol.RequestID = "switch-tasks"
+	requestID, err := domain.GenerateInputID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := protocol.RequestID("switch-tasks-" + string(requestID))
 	result, err := resources.session.QueryTasks(ctx, id)
 	if err != nil || result.Status() != protocol.CommandStatusAccepted {
 		t.Fatal("task snapshot not accepted", err)

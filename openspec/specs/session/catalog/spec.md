@@ -30,17 +30,22 @@ Session Catalog SHALL 将私有快照仅作为 JSONL journal 的可重建只读�
 - **THEN** 系统返回稳定英文 `session_catalog_failed` 错误且不调用 Provider
 - **THEN** 全部 Session journal bytes 保持不变，显式 `--resume <thread-id>` 的事实源不变
 
+#### Scenario: Rebuild a branch row without opening the parent on its behalf
+- **WHEN** 私有快照缺失且分支 journal 合法，父 journal 已移出存储根，或另一进程持有父线程的 lease
+- **THEN** 协调只用分支自己的已验证记录投影该条目，恢复其完整 ThreadID、父 ThreadID、标题与排序事实，不因父线程缺失或繁忙排除该分支
+- **THEN** 父 journal 仍按各自的缺失或 busy 语义分类，自动继续的现有 busy-unindexed 规则继续适用
+
 ### Requirement: Catalog metadata and ordering are deterministic
 
-每个可查询 root thread 投影 SHALL 至少包含 `session_id`、`thread_id`、journal 相对定位、`created_at`、最后 committed record 的 `updated_at`、最后 committed `seq` 与 checksum、规范化 `creation_cwd`、Provider family、wire 和 model。所有字段 MUST 从已验证 ReplayPlan 及其 committed records 派生；文件 mtime、ctime、inode、扫描时间和 快照 写入时间 MAY 仅作为重扫提示，不得成为用户可见 recency 或兼容性事实。
+每个可查询根线程或分支投影 SHALL 至少包含 `session_id`、`thread_id`、journal 相对定位、`created_at`、最后 committed record 的 `updated_at`、最后 committed `seq` 与 checksum、规范化 `creation_cwd`、Provider family、wire 和 model。所有字段 MUST 从已验证 ReplayPlan 及其 committed records 派生；文件 mtime、ctime、inode、扫描时间和 快照 写入时间 MAY 仅作为重扫提示，不得成为用户可见 recency 或兼容性事实。
 
-Catalog SHALL 支持按规范化 `creation_cwd`、Provider family、wire 和 model 精确筛选 root thread。最近排序 MUST 使用 `updated_at` 降序，并以 canonical `thread_id` 降序打破时间相同的平局，使重复查询、重建和不同进程得到相同结果。
+Catalog SHALL 支持按规范化 `creation_cwd`、Provider family、wire 和 model 精确筛选可恢复的根线程和分支。最近排序 MUST 使用 `updated_at` 降序，并以 canonical `thread_id` 降序打破时间相同的平局，使重复查询、重建和不同进程得到相同结果。
 
-当前标题 SHALL 来自该 root journal 已验证的最后一条标题事实。没有标题事实的会话 SHALL 以未命名状态投影。标题事实成为 journal 最后一条 committed record 时，Catalog SHALL 以它的时间、seq 和 checksum 更新对应字段，继续用同一排序规则参与列表及最近兼容会话查询。重命名成功 SHALL 只以 journal 的持久提交为依据。Catalog 在后续协调取得 lease 并完成验证时更新标题。busy journal 的已索引标题 SHALL 与其他字段一同保留最后一次已验证的值。
+根线程的创建时间和标题 SHALL 从各自已验证的初始元数据及最新标题事实取得。没有已提交标题的根线程 SHALL 投影为未命名。分支的 `created_at` 和父 ThreadID SHALL 来自定位该线程的、已完成验证的 `thread_forked`，其标题 SHALL 按本线程的创建标题及后续改名投影。父线程身份仅供血缘展示。标题事实成为 journal 最后一条 committed record 时，Catalog SHALL 以它的时间、seq 和 checksum 更新对应字段，继续用同一排序规则参与列表及最近兼容会话查询。重命名成功 SHALL 只以 journal 的持久提交为依据。Catalog 在后续协调取得 lease 并完成验证时更新标题。busy journal 的已索引标题 SHALL 与其他字段一同保留最后一次已验证的值。
 
 一次协调发布的是各 journal 在各自 lease 下验证的快照。某个 journal 在释放 lease 后、快照发布前更新时，该轮查询仍使用本次已验证值。列表与最近兼容会话查询 SHALL 使用该快照的排序；下一次在新事实提交后获取该 journal lease 的成功协调 SHALL 看到更新。预览与实际恢复继续按 thread ID 独立校验 journal。
 
-最后提交事实 SHALL 以 journal seq 确定，`updated_at` 使用该记录的实际 UTC 时间。系统墙钟回拨时，`updated_at` 可以早于 `created_at`，只按正常排序规则处理，不能因此排除可重放会话或改写 journal。
+最后提交事实 SHALL 以当前线程的 journal seq 确定，`updated_at` 使用该记录的实际 UTC 时间。分支的排序事实 SHALL 来自自身创建边界或其后提交的最新记录。系统墙钟回拨时，`updated_at` 可以早于 `created_at`，只按正常排序规则处理，不能因此排除可重放会话或改写 journal。
 
 #### Scenario: Discover the same valid session after a wall clock rollback
 
@@ -59,7 +64,7 @@ Catalog SHALL 支持按规范化 `creation_cwd`、Provider family、wire 和 mod
 
 #### Scenario: Filter exact compatibility fields
 
-- **WHEN** 同一 `creation_cwd` 下存在不同 Provider family、wire 或 model 的 root Session
+- **WHEN** 同一 `creation_cwd` 下存在不同 Provider family、wire 或 model 的根线程与分支
 - **THEN** 精确筛选只返回四个条件全部匹配的候选
 
 #### Scenario: Reconcile the latest durable title and record time
@@ -78,6 +83,10 @@ Catalog SHALL 支持按规范化 `creation_cwd`、Provider family、wire 和 mod
 
 - **WHEN** 一次协调读完目标并释放 lease，另一进程在该次 快照发布前完成改名
 - **THEN** 已观察到的标题和排序证据可作为本次快照发布，下一次验证目标 journal 的协调取得新标题
+
+#### Scenario: Project branch metadata from its own durable records
+- **WHEN** 根线程和分支共享 SessionID，继承前缀含父线程的标题，而分支先创建后改名
+- **THEN** 两条不同 ThreadID 的条目独立投影。分支显示本线程创建时间、父 ThreadID 和已提交改名，排序和尾部证据来自分支自身最后提交的记录
 
 ### Requirement: Journal discovery preserves descriptor-bound safety and ownership
 
@@ -126,7 +135,7 @@ Catalog reconciliation SHALL 从已安全打开并校验的 Session 根开始，
 
 ### Requirement: Catalog snapshot storage is explicit and private
 
-Catalog SHALL 使用唯一当前 JSON 快照格式，只有已验证的强类型元数据可查询。条目 MUST 包含所需字段和规范类型，拒绝未知或重复字段、重复身份、错误排序与不完整快照。标题为空字符串表示未命名。缺失或结构损坏的私有快照 SHALL 从 JSONL 重建。派生格式不使用版本标记，不读取或迁移旧 SQLite。
+Catalog SHALL 使用唯一当前 JSON 快照格式，只有已验证的强类型元数据可查询。条目 MUST 包含所需字段和规范类型，拒绝未知或重复字段、重复 ThreadID、错误排序与不完整快照。多个不同线程的条目 SHALL 允许共享逻辑 SessionID。分支条目 SHALL 以 `parent_thread_id` 保存从当前分支边界派生的合法父 ThreadID，根线程条目 SHALL 省略该字段。该字段出现时必须为与当前 ThreadID 不同的 canonical ThreadID，`null` 和空字符串均无效。标题为空字符串表示未命名。缺失或结构损坏的私有快照 SHALL 从 JSONL 重建。派生格式不使用版本标记，不读取或迁移旧 SQLite。
 
 Catalog 配置的构造只在内存中完成。持有资源的实例显式打开、发布和关闭。默认 Catalog SHALL 位于 `~/.easycode/catalog.json`，Session 根和快照路径可分别注入。父目录 MUST 为当前用户拥有的 `0700` 目录，快照、锁与暂存文件 MUST 为当前用户拥有的 `0600` 普通文件。通过同一已持有目录句柄打开，不跟随 symlink。类型、权限及身份以实际句柄核对。跨进程锁须覆盖加载、重建、协调和发布全过程。无法提供等价保证的平台失败关闭。
 
@@ -154,11 +163,15 @@ Catalog 配置的构造只在内存中完成。持有资源的实例显式打开
 - **THEN** 发布前保留旧代，之后的打开只从仍有效的完整快照或 JSONL 重建恢复
 - **THEN** 无法确认持久化时不报告成功且不改写 journal
 
-### Requirement: Catalog supports bounded root session discovery independent of provider configuration
+#### Scenario: Preserve distinct branches of one logical Session
+- **WHEN** 当前快照包含多个共享 SessionID 且各有唯一 ThreadID 的已验证条目
+- **THEN** 快照接受并重新加载这些条目。重复 ThreadID、非法父 ThreadID 或父线程与自身相等使派生快照无效，再从 journals 重建
 
-Catalog SHALL 提供当前规范化创建目录或全部目录的 root 会话列表查询，不要求 Provider family、wire、model selector；同目录下不同 Provider/model 的会话 SHALL 均参与候选集。列表 MUST 按 committed `updated_at` 降序、canonical `thread_id` 降序排序，先按范围及调用方提供的可选源 thread 排除条件筛选，再限制数量；数量范围为 1–200，非法范围或非法目录条件 MUST 在查询前拒绝。查询 SHALL 返回至多指定数量的条目及 `has_more`，仅当当前筛选条件下存在额外可查询条目时为 true。
+### Requirement: Catalog supports bounded thread discovery independent of provider configuration
 
-列表 MUST 只使用已验证的会话元数据，包括已命名条目的显式标题。标题 SHALL 作为返回条目的展示字段。Catalog MUST NOT 为 prompt、response、标题、摘要或 opaque payload 新建搜索索引；当前目录匹配 MUST 使用规范化目录精确相等，不得隐式匹配子目录、同名目录或其他 worktree。现有最近兼容会话查询 SHALL 保留四字段精确筛选语义。
+Catalog SHALL 提供当前规范化创建目录或全部目录的根线程和分支列表查询，不要求 Provider family、wire、model selector；同目录下不同 Provider/model 的会话 SHALL 均参与候选集。列表 MUST 按 committed `updated_at` 降序、canonical `thread_id` 降序排序，先按范围及调用方提供的可选源 thread 排除条件筛选，再限制数量；数量范围为 1–200，非法范围或非法目录条件 MUST 在查询前拒绝。查询 SHALL 返回至多指定数量的条目及 `has_more`，仅当当前筛选条件下存在额外可查询条目时为 true。
+
+列表 MUST 只使用已验证的会话元数据，包括已命名条目的显式标题。标题和分支父 ThreadID SHALL 作为展示元数据。父 ThreadID 不参与搜索、排序或兼容筛选。Catalog MUST NOT 为 prompt、response、标题、摘要或 opaque payload 新建搜索索引；当前目录匹配 MUST 使用规范化目录精确相等，不得隐式匹配子目录、同名目录或其他 worktree。现有最近兼容会话查询 SHALL 保留四字段精确筛选语义。
 
 #### Scenario: Discover different provider sessions in one directory
 
@@ -187,6 +200,10 @@ Catalog SHALL 提供当前规范化创建目录或全部目录的 root 会话列
 
 - **WHEN** 数量为 0、负数、超过 200，或当前目录条件不是规范化绝对目录
 - **THEN** 查询失败，不返回部分条目，不执行写入或 journal 加载
+
+#### Scenario: Count root and branch entries within one list limit
+- **WHEN** 当前范围存在同一逻辑 Session 的根线程与两个分支
+- **THEN** 在相同范围、最近排序和上限规则下按各自的 ThreadID 查询，排除当前线程时仍可看到其合格的源线程和分支
 
 ### Requirement: Session discovery preserves reconciliation and recovery separation
 

@@ -101,7 +101,7 @@ func TestPlanCommandCompletionUsesOneLocalDecision(t *testing.T) {
 
 func TestPlanPendingFreezesDraftAndCancelsOnlyMode(t *testing.T) {
 	model, session := workModeModel(resumeThreadA)
-	model.resumeEnabled = true
+	model.handoffEnabled = true
 	model.workMode.mode = domain.WorkModePlan
 	model.composer = composerWithText(t, "/pla off")
 	model.composer.history.add("previous user input")
@@ -115,7 +115,7 @@ func TestPlanPendingFreezesDraftAndCancelsOnlyMode(t *testing.T) {
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/resume"), Paste: true})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyCtrlC})
-	if model.resumeIntent != nil || model.workMode.pending == nil || model.interruptNext || model.quitRequested {
+	if model.handoffIntent != nil || model.workMode.pending == nil || model.interruptNext || model.quitRequested {
 		t.Fatal("a pending control allowed another action")
 	}
 	model = updateModel(t, model, cmd())

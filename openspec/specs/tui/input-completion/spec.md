@@ -8,7 +8,7 @@
 
 ### Requirement: Completion offers only available explicit actions
 
-TUI SHALL 为 `/` 提供已实现的 `/cache`、`/context`、`/compact`、`/effort`、`/skills`、`/hooks`、`/plugins`、`/tasks`、`/rename`、`/resume`、`/plan` 和可显式调用 Skill，为 `$` 仅提供可显式调用 Skill。`/plan` 的同名保留只作用于交互式 TUI。Skill SHALL 来自本会话冻结的展示目录，仅包含状态 available、user-invocable=true 的获胜条目；disable-model-invocation=true 不得排除合法手动调用。invalid、unsupported、shadowed、unavailable 和 model-only 条目 MUST NOT 成为可接受候选。
+TUI SHALL 为 `/` 提供已实现的 `/cache`、`/context`、`/compact`、`/effort`、`/skills`、`/hooks`、`/plugins`、`/tasks`、`/rename`、`/resume`、`/plan`、`/branch`、`/fork` 和可显式调用 Skill，为 `$` 仅提供可显式调用 Skill。`/plan`、`/branch` 和 `/fork` 的同名保留只作用于交互式 TUI。Skill SHALL 来自本会话冻结的展示目录，仅包含状态 available、user-invocable=true 的获胜条目；disable-model-invocation=true 不得排除合法手动调用。invalid、unsupported、shadowed、unavailable 和 model-only 条目 MUST NOT 成为可接受候选。
 
 内置命令 SHALL 优先占用同名 slash；同名 Skill SHALL 仍可在 `$` 列表发现。候选 SHALL 包含名称、简短说明，以及 Skill 的参数提示和不含绝对路径的来源；参数提示只供展示，不写入调用参数。不提供未实现命令。
 
@@ -220,7 +220,7 @@ Alt+Enter、Ctrl+J 和反斜杠换行 SHALL 优先执行原有换行语义，不
 
 文件 @ 补全 SHALL 在正文任意位置按当前光标的路径编辑区确定目标，共用显式文件引用语法；不得把命令/Skill 的首词限制扩大到文件，也不得改变 /、$ 的原有激活范围。目标 MUST 在字符和字素合法边界内，允许未闭合引号作为编辑中状态；email、转义、@@、行内/围栏代码不得激活。光标进入 #L 范围、引用之后或其他正文 MUST 不激活路径补全；已有范围与 token 外正文保留，不 fuzzy 修正范围。
 
-精确内置命令的参数 SHALL 按原命令语义保持文字，文件目标识别前沿用共同内置命令的保留名判断。交互专属 `/resume` 的参数同样不得开启文件搜索或规则读取，补全与提交使用同一个精确识别规则。既有内置命令、256 项 Skill 容量、同名 Skill 的 $ 入口 MUST 保持。通过 `$name` 或插件限定名调用的合法 Skill 仍可在交互正文参数中明确附带文件。
+精确内置命令的参数 SHALL 按原命令语义保持文字，文件目标识别前沿用共同内置命令的保留名判断。交互专属 `/resume`、`/branch`、`/fork` 的参数同样不得开启文件搜索或规则读取，补全与提交使用同一个精确识别规则。既有内置命令、256 项 Skill 容量、同名 Skill 的 $ 入口 MUST 保持。通过 `$name` 或插件限定名调用的合法 Skill 仍可在交互正文参数中明确附带文件。
 
 #### Scenario: Complete a file in the middle of a multiline draft
 - **WHEN** 用户在多行正文中间的 @src/ma 光标处选择 src/main.go，后面已有行范围及文字
@@ -239,8 +239,8 @@ Alt+Enter、Ctrl+J 和反斜杠换行 SHALL 优先执行原有换行语义，不
 - **THEN** @ 目标仍可查询及在正式提交后准备，/effort 内置候选和全部 Skill 容量保持，技能选择不误执行本地设置
 
 #### Scenario: Keep a title containing an at sign literal
-- **WHEN** 用户编辑或提交 `/rename Review @src/main.go`，或在会话标题编辑器中输入相同标题
-- **THEN** 不开启文件候选、不读规则或文件、不冻结附件；`@` 和余下标题按标题契约处理，`$rename @src/main.go` 仍使用普通 Skill 输入的文件规则
+- **WHEN** 用户编辑或提交 `/rename Review @src/main.go`、`/branch Review @src/main.go` 或 `/fork Review @src/main.go`，或在会话标题编辑器中输入相同标题
+- **THEN** 不开启文件候选、不读规则或文件、不冻结附件；`@` 和余下标题按标题契约处理，合法的 `$rename`、`$branch`、`$fork` Skill 调用仍使用普通 Skill 输入的文件规则
 
 #### Scenario: Keep file references available for a resume-named Skill
 - **WHEN** 用户分别编辑精确内置 `/resume @src/ma` 和合法 Skill 调用 `$resume @src/ma`
@@ -387,3 +387,27 @@ Tab SHALL 仅补全首词，保留参数与分隔空白。用户显式普通提�
 #### Scenario: Preserve explicit skills in both headless paths
 - **WHEN** 用户在一次性 headless 和 stream-json 分别提交合法的 `/resume` 或 `$resume` Skill 调用
 - **THEN** 两个入口按原指令准备同一 Skill 并继续正常输入，从未运行终端恢复动作
+
+### Requirement: Branch completion uses local execution and preserves the draft
+
+`/branch` 与 `/fork` SHALL 分别提供内置候选，使用同一个本地分支语义。分支命令及其标题不进入聊天输入回顾。两个精确首词只在交互聊天占用同名裸 slash 入口，并 SHALL 在 Skill 或文件引用准备前识别。可手动调用的同名本地 Skill SHALL 通过 `$branch`、`$fork` 保持可用，`/skills` 选择时填入相应美元入口。插件 Skill 仍以完整限定名调用和补全。一次性 headless 和 stream-json 中相同文本 SHALL 沿原分派规则走显式 Skill 或普通输入。非交互协议不提供分支创建操作。
+
+Tab SHALL 只补全首词，保留原参数与分隔空白。普通 Enter 接受内置候选 SHALL 与手工提交走相同本地验证和准入，并且只提交一次。标题校验 SHALL 首先检查首词后的完整原始文本，包括外围字符，再按 session/titles 的 Unicode `Zs` 规则规范化。空参数或仅含 `Zs` 视为省略标题。引号、`@` 和明确标题末尾的反斜杠按字面处理。含禁用字符的参数 SHALL 以安全英文诊断拒绝。粘贴、Alt+Enter 与 Ctrl+J SHALL 只编辑输入，分支命令不进入模型、队列、附件或输入回顾。
+
+提交后取消或可恢复失败，包括无效参数和忙碌拒绝，SHALL 按当前终端尺寸保留实际提交前的草稿与字素光标，补全提交时 SHALL 还原接受候选之前的内容。分支准备期间候选不得接收输入，返回时不得自动重开旧候选。
+
+#### Scenario: Discover both branch spellings without hiding manual Skills
+- **WHEN** 冻结目录包含可显式调用的 branch、fork 和 qa:fork Skill，用户查询 `/bra`、`/for`、`$bra`、`$for` 或 `/qa:for`
+- **THEN** slash 裸名命中所对应的分支内置候选，dollar 命中对应本地 Skill，插件限定名仍可选。`/skills` 选择两个同名本地 Skill 时分别填入 `$branch` 与 `$fork`
+
+#### Scenario: Complete once and preserve title and pre-completion draft
+- **WHEN** 用户在 `/bra Review @src "v2"` 的命令词上按 Tab 或普通 Enter 接受候选，普通 Enter 提交因忙碌、取消或可恢复失败而未能切换
+- **THEN** Tab 只补全命令词，普通 Enter 至多产生一次本地请求，标题按原参数解析。未切换成功时草稿与光标恢复到接受候选前，不读取附件或发送模型请求
+
+#### Scenario: Validate the complete suffix before applying a default title
+- **WHEN** 用户已解码粘贴含末尾 Tab 或换行的 `/branch` 草稿，之后按普通 Enter
+- **THEN** 粘贴本身不创建分支，提交时拒绝整个非法参数，不能因裁掉控制字符创建默认标题分支，草稿仍可编辑
+
+#### Scenario: Preserve headless input routing
+- **WHEN** 一次性 headless 或 stream-json 提交 `/branch`、`/fork` 或相应美元入口
+- **THEN** 合法显式 Skill 按既有规则准备。其他普通输入继续经过原输入语义，所有情况均不创建分支

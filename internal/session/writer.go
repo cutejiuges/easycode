@@ -3,10 +3,13 @@ package session
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"math"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -20,7 +23,31 @@ type journalFile interface {
 
 type writerRequest struct {
 	drafts   []RecordDraft
+	prefix   *branchCopyRequest
 	response chan appendResponse
+}
+
+type branchCopyRequest struct {
+	ctx         context.Context
+	destination io.Writer
+	response    chan branchCopyResponse
+}
+
+type branchCopyResponse struct {
+	cut branchCut
+	err error
+}
+
+type branchCut struct {
+	identity     Identity
+	lastSequence uint64
+	bytes        int64
+	digest       string
+}
+
+type journalPrefixSource interface {
+	io.ReaderAt
+	Stat() (os.FileInfo, error)
 }
 
 type appendResponse struct {
@@ -38,6 +65,8 @@ type JournalWriter struct {
 	requests chan writerRequest
 	closeReq chan struct{}
 	done     chan struct{}
+	// 已提交长度只由 writer owner 推进。
+	committedBytes int64
 
 	mu       sync.Mutex
 	closing  bool
@@ -77,7 +106,7 @@ func StartJournalWriter(lease *JournalLease, identity Identity, nextSequence uin
 	if err != nil {
 		return nil, err
 	}
-	return startOwnedJournalWriter(file, identity, nextSequence, time.Now, journalRequestCapacity), nil
+	return startOwnedJournalWriter(file, identity, nextSequence, lease.committedBytes, time.Now, journalRequestCapacity), nil
 }
 
 func validateJournalWriter(
@@ -105,12 +134,14 @@ func startOwnedJournalWriter(
 	file journalFile,
 	identity Identity,
 	nextSequence uint64,
+	committedBytes int64,
 	clock func() time.Time,
 	requestCapacity int,
 ) *JournalWriter {
 	writer := &JournalWriter{
 		file: file, identity: identity, clock: clock,
-		requests: make(chan writerRequest, requestCapacity), closeReq: make(chan struct{}),
+		committedBytes: committedBytes,
+		requests:       make(chan writerRequest, requestCapacity), closeReq: make(chan struct{}),
 		done: make(chan struct{}),
 	}
 	go writer.run(nextSequence)
@@ -127,6 +158,9 @@ func (writer *JournalWriter) AppendBatch(ctx context.Context, drafts []RecordDra
 	}
 	prepared := make([]RecordDraft, 0, len(drafts))
 	for _, draft := range drafts {
+		if draft.EventKind() == EventThreadForked {
+			return nil, fmt.Errorf("thread fork record requires staged journal publication")
+		}
 		if draft.EventKind() == EventSessionTitleUpdated && len(drafts) != 1 {
 			return nil, fmt.Errorf("session title record requires a single-record batch")
 		}
@@ -140,28 +174,31 @@ func (writer *JournalWriter) AppendBatch(ctx context.Context, drafts []RecordDra
 	}
 
 	request := writerRequest{drafts: prepared, response: make(chan appendResponse, 1)}
-	writer.mu.Lock()
-	if writer.closing {
-		writer.mu.Unlock()
-		return nil, fmt.Errorf("session writer is closed")
-	}
-	if writer.poisoned.Load() {
-		writer.mu.Unlock()
-		return nil, fmt.Errorf("session writer is poisoned")
-	}
-	if err := ctx.Err(); err != nil {
-		writer.mu.Unlock()
-		return nil, fmt.Errorf("session append cancelled: %w", err)
-	}
-	select {
-	case writer.requests <- request:
-		writer.mu.Unlock()
-	default:
-		writer.mu.Unlock()
-		return nil, fmt.Errorf("session writer queue is full")
+	if err := writer.enqueue(ctx, request); err != nil {
+		return nil, err
 	}
 	response := <-request.response
 	return response.records, response.err
+}
+
+func (writer *JournalWriter) enqueue(ctx context.Context, request writerRequest) error {
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	if writer.closing {
+		return fmt.Errorf("session writer is closed")
+	}
+	if writer.poisoned.Load() {
+		return fmt.Errorf("session writer is poisoned")
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("session writer request cancelled: %w", err)
+	}
+	select {
+	case writer.requests <- request:
+		return nil
+	default:
+		return fmt.Errorf("session writer queue is full")
+	}
 }
 
 // Poisoned 判断 writer 是否遇到无法确认 durable 状态的写入错误。
@@ -211,12 +248,12 @@ func (writer *JournalWriter) run(nextSequence uint64) {
 	for {
 		select {
 		case request := <-writer.requests:
-			nextSequence = writer.handleAppend(nextSequence, request)
+			nextSequence = writer.handleRequest(nextSequence, request)
 		case <-writer.closeReq:
 			for {
 				select {
 				case request := <-writer.requests:
-					nextSequence = writer.handleAppend(nextSequence, request)
+					nextSequence = writer.handleRequest(nextSequence, request)
 				default:
 					writer.result = writer.finish()
 					return
@@ -226,12 +263,17 @@ func (writer *JournalWriter) run(nextSequence uint64) {
 	}
 }
 
-func (writer *JournalWriter) handleAppend(nextSequence uint64, request writerRequest) uint64 {
+func (writer *JournalWriter) handleRequest(nextSequence uint64, request writerRequest) uint64 {
+	if request.prefix != nil {
+		cut, err := writer.copyBranchPrefix(request.prefix.ctx, request.prefix.destination, nextSequence)
+		request.prefix.response <- branchCopyResponse{cut: cut, err: err}
+		return nextSequence
+	}
 	if writer.poisoned.Load() {
 		request.response <- appendResponse{err: fmt.Errorf("session writer is poisoned")}
 		return nextSequence
 	}
-	records, err := writer.append(nextSequence, request.drafts)
+	records, written, err := writer.append(nextSequence, request.drafts)
 	if err != nil {
 		if IsJournalMutationUncertain(err) {
 			writer.poisoned.Store(true)
@@ -239,11 +281,12 @@ func (writer *JournalWriter) handleAppend(nextSequence uint64, request writerReq
 		request.response <- appendResponse{err: err}
 		return nextSequence
 	}
+	writer.committedBytes += written
 	request.response <- appendResponse{records: records}
 	return nextSequence + uint64(len(records))
 }
 
-func (writer *JournalWriter) append(nextSequence uint64, drafts []RecordDraft) ([]Record, error) {
+func (writer *JournalWriter) append(nextSequence uint64, drafts []RecordDraft) ([]Record, int64, error) {
 	batchSize := uint32(len(drafts))
 	batchID := nextSequence
 	var buffer bytes.Buffer
@@ -259,10 +302,10 @@ func (writer *JournalWriter) append(nextSequence uint64, drafts []RecordDraft) (
 		}
 		sealed, encoded, err := EncodeRecord(record)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if buffer.Len()+len(encoded)+1 > MaxBatchBytes {
-			return nil, fmt.Errorf("session batch exceeds size limit")
+			return nil, 0, fmt.Errorf("session batch exceeds size limit")
 		}
 		buffer.Write(encoded)
 		buffer.WriteByte('\n')
@@ -270,15 +313,80 @@ func (writer *JournalWriter) append(nextSequence uint64, drafts []RecordDraft) (
 	}
 	written, err := writer.file.Write(buffer.Bytes())
 	if err != nil {
-		return nil, &journalMutationUncertain{cause: fmt.Errorf("append session batch: %w", err)}
+		return nil, 0, &journalMutationUncertain{cause: fmt.Errorf("append session batch: %w", err)}
 	}
 	if written != buffer.Len() {
-		return nil, &journalMutationUncertain{cause: fmt.Errorf("append session batch: %w", io.ErrShortWrite)}
+		return nil, 0, &journalMutationUncertain{cause: fmt.Errorf("append session batch: %w", io.ErrShortWrite)}
 	}
 	if err := writer.file.Sync(); err != nil {
-		return nil, &journalMutationUncertain{cause: fmt.Errorf("sync session batch: %w", err)}
+		return nil, 0, &journalMutationUncertain{cause: fmt.Errorf("sync session batch: %w", err)}
 	}
-	return cloneRecords(records), nil
+	return cloneRecords(records), int64(written), nil
+}
+
+func (writer *JournalWriter) branchPrefix(ctx context.Context, destination io.Writer) (branchCut, error) {
+	request := &branchCopyRequest{ctx: ctx, destination: destination, response: make(chan branchCopyResponse, 1)}
+	if err := writer.enqueue(ctx, writerRequest{prefix: request}); err != nil {
+		return branchCut{}, err
+	}
+	result := <-request.response
+	return result.cut, result.err
+}
+
+func (writer *JournalWriter) copyBranchPrefix(ctx context.Context, destination io.Writer, nextSequence uint64) (branchCut, error) {
+	if err := contextError(ctx); err != nil {
+		return branchCut{}, err
+	}
+	if writer.poisoned.Load() {
+		return branchCut{}, errBranchSourceUnsafe
+	}
+	file, ok := writer.file.(journalPrefixSource)
+	if !ok {
+		return branchCut{}, fmt.Errorf("session writer cannot copy source journal")
+	}
+	if err := writer.checkBranchSourceSize(file); err != nil {
+		return branchCut{}, err
+	}
+	digest := sha256.New()
+	var buffer [64 << 10]byte
+	for offset := int64(0); offset < writer.committedBytes; {
+		if err := contextError(ctx); err != nil {
+			return branchCut{}, err
+		}
+		chunk := buffer[:min(int64(len(buffer)), writer.committedBytes-offset)]
+		if count, err := file.ReadAt(chunk, offset); err != nil || count != len(chunk) {
+			return branchCut{}, writer.MarkBranchSourceUnsafe(errors.Join(io.ErrUnexpectedEOF, err))
+		}
+		if count, err := destination.Write(chunk); err != nil || count != len(chunk) {
+			return branchCut{}, fmt.Errorf("write branch staging prefix: %w", errors.Join(io.ErrShortWrite, err))
+		}
+		_, _ = digest.Write(chunk)
+		offset += int64(len(chunk))
+	}
+	if err := contextError(ctx); err != nil {
+		return branchCut{}, err
+	}
+	if err := writer.checkBranchSourceSize(file); err != nil {
+		return branchCut{}, err
+	}
+	return branchCut{writer.identity, nextSequence - 1, writer.committedBytes, hex.EncodeToString(digest.Sum(nil))}, nil
+}
+
+func (writer *JournalWriter) checkBranchSourceSize(file journalPrefixSource) error {
+	info, err := file.Stat()
+	if err != nil {
+		return writer.MarkBranchSourceUnsafe(err)
+	}
+	if info.Size() != writer.committedBytes {
+		return writer.MarkBranchSourceUnsafe(fmt.Errorf("session source length does not match committed position"))
+	}
+	return nil
+}
+
+// MarkBranchSourceUnsafe 在已验证复制内容揭示源事实损坏时停止该源 writer。
+func (writer *JournalWriter) MarkBranchSourceUnsafe(err error) error {
+	writer.poisoned.Store(true)
+	return errors.Join(errBranchSourceUnsafe, err)
 }
 
 func (writer *JournalWriter) finish() JournalCloseResult {

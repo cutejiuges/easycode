@@ -128,6 +128,10 @@ func DecodeRecord(line []byte) (Record, error) {
 		return Record{}, fmt.Errorf("session title record identity fields must be absent")
 	}
 	switch record.EventKind {
+	case EventThreadForked:
+		if members["turn_id"] != nil {
+			return Record{}, fmt.Errorf("thread fork record turn identity must be absent")
+		}
 	case EventCompactionCompleted, EventPostCompactHookStarted, EventPostCompactHookFinished, EventPostCompactHookClosed:
 		if members["turn_id"] != nil || members["parent_thread_id"] != nil {
 			return Record{}, fmt.Errorf("compaction record identity fields must be absent")
@@ -191,6 +195,11 @@ func validateRecord(record Record, requireChecksum bool) error {
 	}
 	if record.EventKind == EventSessionTitleUpdated {
 		if err := validateSessionTitleEnvelope(record); err != nil {
+			return err
+		}
+	}
+	if record.EventKind == EventThreadForked {
+		if err := validateThreadForkedEnvelope(record); err != nil {
 			return err
 		}
 	}

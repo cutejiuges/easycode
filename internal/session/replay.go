@@ -310,6 +310,7 @@ type ReplayPlan struct {
 	Identity               Identity
 	SessionMetadata        SessionMetaPayload
 	ThreadMetadata         ThreadMetaPayload
+	Branch                 *BranchMetadata
 	Title                  domain.SessionTitle
 	NativeCommits          []NativeCommitRecord
 	SampleUsages           []SampleUsageRecord
@@ -319,14 +320,17 @@ type ReplayPlan struct {
 	NextSequence           uint64
 	Repair                 RepairReport
 	taskProgress           replayedTaskProgress
+	hasCommittedInput      bool
 }
 
 // ReplayMetadata 是 Catalog 从完整语法校验中取得的只读元数据。
 type ReplayMetadata struct {
-	Identity        Identity
-	SessionMetadata SessionMetaPayload
-	ThreadMetadata  ThreadMetaPayload
-	Title           domain.SessionTitle
+	Identity          Identity
+	SessionMetadata   SessionMetaPayload
+	ThreadMetadata    ThreadMetaPayload
+	Branch            *BranchMetadata
+	Title             domain.SessionTitle
+	hasCommittedInput bool
 }
 
 type replayAccumulator struct {
@@ -337,6 +341,7 @@ type replayAccumulator struct {
 
 func (plan *replayAccumulator) recordNative(record NativeCommitRecord) {
 	plan.nativeRevision++
+	plan.hasCommittedInput = plan.hasCommittedInput || record.Role == domain.NativeCommitUserInputs
 	if plan.projectHistory {
 		record.Commit.Payload = append([]byte(nil), record.Commit.Payload...)
 		plan.NativeCommits = append(plan.NativeCommits, record)
@@ -368,7 +373,10 @@ func (*ReplayPlanner) PlanMetadata(loaded LoadResult) (ReplayMetadata, error) {
 	if err != nil {
 		return ReplayMetadata{}, err
 	}
-	return ReplayMetadata{Identity: plan.Identity, SessionMetadata: plan.SessionMetadata, ThreadMetadata: plan.ThreadMetadata, Title: plan.Title}, nil
+	return ReplayMetadata{
+		Identity: plan.Identity, SessionMetadata: plan.SessionMetadata, ThreadMetadata: plan.ThreadMetadata,
+		Branch: plan.Branch, Title: plan.Title, hasCommittedInput: plan.hasCommittedInput,
+	}, nil
 }
 
 func replay(loaded LoadResult, projectHistory bool) (ReplayPlan, error) {
@@ -400,7 +408,7 @@ func replay(loaded LoadResult, projectHistory bool) (ReplayPlan, error) {
 		NativeCommits: make([]NativeCommitRecord, 0), SampleUsages: make([]SampleUsageRecord, 0),
 		Turns: make([]ReplayedTurn, 0), NextSequence: loaded.NextSequence, Repair: loaded.Repair,
 	}}
-	artifacts := newArtifactReplay(loaded.Identity.ThreadID)
+	artifacts := newArtifactReplay(identity.ThreadID)
 	var toolSamples []replayedToolSample
 	var taskProgress *replayedTaskProgress
 	if projectHistory {
@@ -413,6 +421,15 @@ func replay(loaded LoadResult, projectHistory bool) (ReplayPlan, error) {
 	seenInputs := make(map[domain.InputID]struct{})
 	for _, batch := range batches[1:] {
 		for _, record := range batch {
+			if record.EventKind == EventThreadForked {
+				if len(batch) != 1 || record.SessionID != identity.SessionID {
+					return ReplayPlan{}, replayCorrupt("thread fork batch identity is invalid")
+				}
+				continue
+			}
+			if record.SessionID != plan.Identity.SessionID || record.ThreadID != plan.Identity.ThreadID {
+				return ReplayPlan{}, replayCorrupt("record is outside its thread segment")
+			}
 			if record.ParentThreadID != "" {
 				return ReplayPlan{}, replayCorrupt("root thread record contains a parent thread")
 			}
@@ -454,6 +471,19 @@ func replay(loaded LoadResult, projectHistory bool) (ReplayPlan, error) {
 			}
 		}
 		switch batch[0].EventKind {
+		case EventThreadForked:
+			record := batch[0]
+			payload, err := DecodeThreadForkedPayload(record)
+			if err != nil || active != nil || !plan.hasCommittedInput || record.ParentThreadID != plan.Identity.ThreadID {
+				return ReplayPlan{}, replayCorrupt("thread fork is outside a closed conversation boundary")
+			}
+			plan.Identity.ThreadID = record.ThreadID
+			plan.ThreadMetadata = ThreadMetaPayload{ParentThreadID: record.ParentThreadID}
+			plan.Branch = &BranchMetadata{ParentThreadID: record.ParentThreadID, CreatedAt: record.Timestamp, SourceSequence: payload.SourceSequence}
+			plan.Title = payload.Title
+			if artifacts.err == nil {
+				artifacts = newArtifactReplay(record.ThreadID)
+			}
 		case EventSessionTitleUpdated:
 			if active != nil {
 				return ReplayPlan{}, replayCorrupt("session title update overlaps an active turn")
@@ -549,6 +579,9 @@ func replay(loaded LoadResult, projectHistory bool) (ReplayPlan, error) {
 		default:
 			return ReplayPlan{}, replayCorrupt("session record placement is invalid")
 		}
+	}
+	if plan.Identity != loaded.Identity {
+		return ReplayPlan{}, replayCorrupt("final thread segment identity does not match journal")
 	}
 	if active != nil {
 		if loaded.Records[len(loaded.Records)-1].Sequence != active.lastSequence {

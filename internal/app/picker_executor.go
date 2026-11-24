@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"easycode/internal/config"
+	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/session"
 	"easycode/internal/tui"
@@ -83,9 +84,54 @@ func preparePickerCandidate(
 		execution.result.Fatal = attempt.cleanupErr != nil || (!request.Source.Valid() && attempt.fatal())
 		return execution
 	}
+	return finishPickerCandidate(ctx, lifetime, execution, resources)
+}
+
+func newBranchPickerExecutor(applicationConfig config.Config, paths dataPaths, cwd string, pluginDirs []string, environment *chatEnvironment) pickerBranchExecutor {
+	pluginDirs = append([]string(nil), pluginDirs...)
+	return func(ctx, lifetime context.Context, request tui.PickerRequest, source *chatResources, admit func(domain.ThreadID) bool) pickerExecution {
+		attempt := &recoveryAttempt{}
+		execution := pickerExecution{result: tui.PickerResult{Request: request}, recovery: attempt}
+		writer, ok := source.writer.(*session.JournalWriter)
+		if !ok {
+			execution.result.Error = "Source session journal is unavailable"
+			return execution
+		}
+		target, err := domain.GenerateThreadID()
+		if err != nil {
+			execution.result.Error = "Session branch identity could not be generated"
+			return execution
+		}
+		creation := &branchCreation{source: writer, target: target, title: request.Title, admit: admit}
+		hooks := chatResourceHooks{
+			interactiveApprovals: true, recovery: attempt, pluginDirs: pluginDirs, pluginCWD: cwd,
+			environment: environment, lifetime: lifetime, expectedResumeCWD: cwd, branch: creation,
+		}
+		resources, err := openChatResourcesWithHooks(ctx, applicationConfig, paths, "", false, cwd, hooks)
+		switch creation.publication {
+		case session.BranchPublished:
+			execution.result.BranchPublication = tui.BranchPublished
+			execution.result.BranchThreadID = target
+		case session.BranchPublicationUncertain:
+			execution.result.BranchPublication = tui.BranchPublicationUncertain
+			execution.result.BranchThreadID = target
+		}
+		if err != nil {
+			execution.result.Error = pickerFailure(err)
+			execution.result.Fatal = attempt.cleanupErr != nil || session.IsBranchSourceUnsafe(err)
+			return execution
+		}
+		return finishPickerCandidate(ctx, lifetime, execution, resources)
+	}
+}
+
+func finishPickerCandidate(ctx, lifetime context.Context, execution pickerExecution, resources *chatResources) pickerExecution {
 	execution.resources = resources
 	if ctx.Err() != nil {
 		execution.result.Error = "Session recovery cancelled"
+		if execution.result.Request.Operation == tui.PickerBranch {
+			execution.result.Error = "Session branch cancelled"
+		}
 		return execution
 	}
 	model, err := assembleChatModel(lifetime, resources)
@@ -94,7 +140,7 @@ func preparePickerCandidate(
 	}
 	if err != nil {
 		execution.result.Error = "Target session could not be prepared"
-		execution.result.Fatal = !request.Source.Valid() && attempt.fatal()
+		execution.result.Fatal = !execution.result.Request.Source.Valid() && execution.recovery.fatal()
 		return execution
 	}
 	execution.result.Chat = &model

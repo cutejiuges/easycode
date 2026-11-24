@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -229,4 +230,28 @@ func privateTempDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return resolved
+}
+
+func TestCatalogSnapshotValidatesBranchParentAndSeparatesThreadIdentity(t *testing.T) {
+	ctx := context.Background()
+	root := catalogTestEntry(t, t.TempDir(), domain.ProviderOpenAI, "responses", "gpt-test", time.Unix(500, 0).UTC())
+	child := catalogTestEntry(t, root.CreationCWD, root.ProviderFamily, root.ProviderWire, root.Model, time.Unix(501, 0).UTC())
+	child.SessionID = root.SessionID
+	child.ParentThreadID = parentThreadID(root.ThreadID)
+	child.Title = "Alternative"
+	var file bytes.Buffer
+	if err := writeSnapshot(ctx, &file, []Entry{child, root}); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := decodeSnapshot(ctx, bytes.NewReader(file.Bytes()))
+	if err != nil || len(entries) != 2 || entries[0] != child || entries[1] != root {
+		t.Fatalf("root and branch snapshot did not round trip: %+v, %v", entries, err)
+	}
+	needle := []byte(fmt.Sprintf(`"parent_thread_id":%q`, root.ThreadID))
+	for _, invalid := range []string{`"parent_thread_id":""`, `"parent_thread_id":null`, fmt.Sprintf(`"parent_thread_id":%q`, child.ThreadID)} {
+		data := bytes.Replace(file.Bytes(), needle, []byte(invalid), 1)
+		if _, err := decodeSnapshot(ctx, bytes.NewReader(data)); !errors.Is(err, errInvalidSnapshot) {
+			t.Fatalf("invalid branch reference %s accepted: %v", invalid, err)
+		}
+	}
 }

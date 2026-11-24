@@ -42,7 +42,7 @@ func (d *pickerDiscovery) list(ctx context.Context, request tui.PickerRequest) (
 	}
 	for _, e := range rows.Entries {
 		result.Entries = append(result.Entries, tui.SessionEntry{
-			ThreadID: e.ThreadID, UpdatedAt: e.UpdatedAt, Title: e.Title,
+			ThreadID: e.ThreadID, ParentThreadID: domain.ThreadID(e.ParentThreadID), UpdatedAt: e.UpdatedAt, Title: e.Title,
 			Family: e.ProviderFamily, Wire: e.ProviderWire, Model: e.Model, CWD: e.CreationCWD,
 		})
 	}

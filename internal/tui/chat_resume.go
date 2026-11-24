@@ -1,25 +1,52 @@
 package tui
 
 import (
+	"strings"
+
 	"easycode/internal/domain"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 )
 
-const resumeCommandName = "resume"
+const (
+	resumeCommandName = "resume"
+	branchCommandName = "branch"
+	forkCommandName   = "fork"
+)
 
-type chatResumeIntent struct {
-	target domain.ThreadID
-	draft  composer
+type chatHandoffIntent struct {
+	operation PickerOperation
+	target    domain.ThreadID
+	title     domain.SessionTitle
+	draft     composer
 }
 
-func (model Model) submitResume(argument string) (tea.Model, tea.Cmd) {
+func isBranchCommandName(name string) bool {
+	return name == branchCommandName || name == forkCommandName
+}
+
+func isBranchSlash(head string) bool {
+	return strings.HasPrefix(head, "/") && isBranchCommandName(head[1:])
+}
+
+func isHandoffSlash(head string) bool {
+	return head == "/"+resumeCommandName || isBranchSlash(head)
+}
+
+func (model Model) submitHandoff(head, argument string) (tea.Model, tea.Cmd) {
 	model.completion.suppress(completionCancelled)
 	model.suppressFiles(completionCancelled)
-	var target domain.ThreadID
-	if argument != "" {
-		var err error
-		target, err = domain.ParseThreadID(argument)
+	intent := chatHandoffIntent{operation: PickerOpen, draft: model.composer}
+	if isBranchSlash(head) {
+		intent.operation = PickerBranch
+		title, err := branchTitleArgument(argument)
+		if err != nil {
+			model.errorSummary = "invalid_input: " + err.Error()
+			return model, nil
+		}
+		intent.title = title
+	} else if argument = strings.TrimSpace(argument); argument != "" {
+		target, err := domain.ParseThreadID(argument)
 		if err != nil {
 			model.errorSummary = "invalid_command: use /resume or /resume <full thread ID>"
 			return model, nil
@@ -28,58 +55,77 @@ func (model Model) submitResume(argument string) (tea.Model, tea.Cmd) {
 			model.errorSummary = "This conversation is already open"
 			return model, nil
 		}
+		intent.target = target
 	}
-	if model.activeTurnID.Valid() || model.activeCompactionID.Valid() || model.pending != nil ||
-		model.retracting != nil || model.workMode.pending != nil || len(model.inputs) != 0 || model.cancelling {
+	if model.handoffBusy() {
 		model.errorSummary = "session_busy: finish the current work or handle pending inputs, then retry"
 		return model, nil
 	}
-	model.resumeIntent = &chatResumeIntent{target: target, draft: model.composer}
+	model.handoffIntent = &intent
 	return model, nil
 }
 
-func (model *Model) returnFromResume(draft composer, notice string, directoryMismatch bool) {
+func (model Model) handoffBusy() bool {
+	return model.activeTurnID.Valid() || model.activeCompactionID.Valid() || model.pending != nil ||
+		model.retracting != nil || model.workMode.pending != nil || len(model.inputs) != 0 || model.cancelling
+}
+
+func branchTitleArgument(argument string) (domain.SessionTitle, error) {
+	if !hasSessionTitleArgument(argument) {
+		return "", nil
+	}
+	return domain.ParseSessionTitle(argument)
+}
+
+func (model *Model) returnFromHandoff(draft composer, notice string, directoryMismatch bool) {
 	model.restoreComposer(draft)
 	model.completion.refreshTarget(model.composer)
 	model.completion.suppress(completionCancelled)
 	model.errorSummary = pickerSafe(notice, 1024)
 	if directoryMismatch {
-		model.resumeDirectoryNotice, model.resumeDirectoryScroll = model.errorSummary, 0
+		model.handoffNotice, model.handoffNoticeScroll = model.errorSummary, 0
 		model.errorSummary = ""
 	}
 	model.prepareCompletion()
 	model.prepareMarkdownView()
 }
 
-func (model Model) resumeDirectoryText() string {
-	return model.resumeDirectoryNotice + "\nEsc: back · ↑↓ scroll"
+func (model Model) handoffNoticeText() string {
+	return model.handoffNotice + "\nEsc: back · ↑↓ scroll"
 }
 
-func (model *Model) handleResumeDirectoryKey(key tea.KeyMsg) {
+func (model *Model) handleHandoffNoticeKey(key tea.KeyMsg) {
 	if key.Paste {
 		return
 	}
 	switch key.Type {
 	case tea.KeyEsc, tea.KeyCtrlC:
-		model.resumeDirectoryNotice = ""
-		model.resumeDirectoryScroll = 0
+		model.handoffNotice = ""
+		model.handoffNoticeScroll = 0
 		return
 	case tea.KeyUp:
-		model.resumeDirectoryScroll--
+		model.handoffNoticeScroll--
 	case tea.KeyDown:
-		model.resumeDirectoryScroll++
+		model.handoffNoticeScroll++
 	case tea.KeyPgUp:
-		model.resumeDirectoryScroll -= model.heightOrDefault()
+		model.handoffNoticeScroll -= model.heightOrDefault()
 	case tea.KeyPgDown:
-		model.resumeDirectoryScroll += model.heightOrDefault()
+		model.handoffNoticeScroll += model.heightOrDefault()
 	default:
 		return
 	}
-	rows := renderedChatRows(ansi.Hardwrap(model.resumeDirectoryText(), model.widthOrDefault(), true))
-	model.resumeDirectoryScroll = min(max(0, model.resumeDirectoryScroll), max(0, rows-model.heightOrDefault()))
+	rows := renderedChatRows(ansi.Hardwrap(model.handoffNoticeText(), model.widthOrDefault(), true))
+	model.handoffNoticeScroll = min(max(0, model.handoffNoticeScroll), max(0, rows-model.heightOrDefault()))
 }
 
-func (model Model) resumeStatus() string {
+func (model Model) handoffStatus() string {
+	if model.branchNotice != "" {
+		wrapped := ansi.Hardwrap(model.branchNotice, model.widthOrDefault(), true)
+		if renderedChatRows(wrapped) > max(1, model.heightOrDefault()-model.composerChatRows()-4) {
+			return "Ctrl+G: branch details\n"
+		}
+		return wrapped + "\n"
+	}
 	if !model.resumed {
 		return ""
 	}

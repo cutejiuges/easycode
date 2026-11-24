@@ -79,6 +79,20 @@ def run_case(binary, root, name, steps, expected, no_color=False, entrypoint=Non
                 break
         raise RuntimeError("target did not reach restoration under its journal lease")
 
+    def wait_for_branch_recovery():
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            candidates = [
+                path.name for path in (fixture / "sessions" / "artifacts").iterdir()
+                if path.is_dir() and path.name not in threads.values()
+            ]
+            if len(candidates) == 1:
+                threads["branch"] = candidates[0]
+                return
+            if process.poll() is not None or not read_terminal(0.03):
+                break
+        raise RuntimeError("published branch did not reach candidate resource assembly")
+
     try:
         if entrypoint is not None:
             wait_for("PICKER_THREADS=")
@@ -108,6 +122,8 @@ def run_case(binary, root, name, steps, expected, no_color=False, entrypoint=Non
                 target_artifacts().rmdir()
             elif action == "target_recovery":
                 wait_for_target_recovery()
+            elif action == "branch_recovery":
+                wait_for_branch_recovery()
             elif action == "signal":
                 os.kill(process.pid, value)
         wait_for(f"PICKER_EXIT={expected}\r")
@@ -184,6 +200,28 @@ def main():
                 ("wait", "Resumed session {target}"), ("wait", "target prompt"),
                 ("send", b"\x03"),
             ], 0, entrypoint="startup"),
+            run_case(binary, root, "branch_completion_alias_and_source_navigation", [
+                ("send", "/bra"), ("wait", "/branch"),
+                ("send", b"\t"), ("send", "Alternative\r"),
+                ("wait", "Return to source: /resume {source}"),
+                ("resize", (8, 30)), ("wait", "Ctrl+G: branch details"),
+                ("send", b"\x07"), ("wrapped", "Return to source: /resume {source}"),
+                ("send", b"\x1b"), ("resize", (28, 100)),
+                ("send", "/resume {source}\r"), ("wait", "Resumed session {source}"),
+                ("send", "/resume\r"), ("wait", "Current directory"),
+                ("send", "Alternative"), ("wait", "> Alternative"), ("send", b"\r"),
+                ("wait", "Resumed session"),
+                ("send", "/fork Different route\r"), ("wait", "Return to source: /resume"),
+                ("send", b"\x03"),
+            ], 0, no_color=True, entrypoint="chat"),
+            run_case(binary, root, "cancel_published_branch_returns_exact_target", [
+                ("lock", None),
+                ("send", "/branch Unswitched\r"), ("branch_recovery", None),
+                ("send", b"\x1b"),
+                ("wait", "Branch created. Open it with /resume {branch}"),
+                ("wait", "> /branch Unswitched|"),
+                ("signal", signal.SIGTERM),
+            ], 130, no_color=True, entrypoint="chat"),
             run_case(binary, root, "blocked_target_esc_retry_and_signal", [
                 ("lock", None), ("reset_target_artifacts", None),
                 ("send", "/resume {target}\r"), ("wait", "Resuming session"), ("target_recovery", None),

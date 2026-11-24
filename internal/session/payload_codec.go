@@ -826,6 +826,9 @@ func decodeKnownRecord(record Record) error {
 	case EventThreadMeta:
 		_, err := DecodeThreadMetaPayload(record)
 		return err
+	case EventThreadForked:
+		_, err := DecodeThreadForkedPayload(record)
+		return err
 	case EventTurnStarted:
 		_, err := DecodeTurnStartedPayload(record)
 		return err

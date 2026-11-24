@@ -42,7 +42,7 @@ type ToolOutputInfo struct {
 }
 
 func (v ToolOutputInfo) Validate() error {
-	if v.Summary.Validate() != nil {
+	if v.Summary.SourceThreadID != "" || v.Summary.Validate() != nil {
 		return errors.New("invalid saved output summary")
 	}
 	if !v.Summary.Readable {

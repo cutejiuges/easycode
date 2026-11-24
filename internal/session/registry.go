@@ -50,6 +50,8 @@ func descriptorByKind(kind EventKind) (Descriptor, bool) {
 			Kind:        EventThreadMeta,
 			Cardinality: CardinalityExactlyOne, Placement: PlacementInitialMetadata,
 		}, true
+	case EventThreadForked:
+		return Descriptor{Kind: kind, Cardinality: CardinalityExactlyOne, Placement: PlacementIdleThread}, true
 	case EventSessionTitleUpdated:
 		return Descriptor{Kind: kind, Cardinality: CardinalityMany, Placement: PlacementIdleThread}, true
 	case EventTurnStarted:

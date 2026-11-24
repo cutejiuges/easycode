@@ -36,10 +36,10 @@ type completionCandidate struct {
 
 // completionCatalog 发布后不可变；匹配只保存它的有界索引。
 type completionCatalog struct {
-	entries       []completionCandidate
-	bytes         int
-	resumeEnabled bool
-	planEnabled   bool
+	entries        []completionCandidate
+	bytes          int
+	handoffEnabled bool
+	planEnabled    bool
 }
 
 func explicitSkillEntry(e domain.SkillListEntry) bool {
@@ -61,10 +61,14 @@ func builtinCompletionCandidates() []completionCandidate {
 	}
 }
 
-func newCompletionCatalog(skills []domain.SkillListEntry, resumeEnabled, planEnabled bool) (*completionCatalog, error) {
+func newCompletionCatalog(skills []domain.SkillListEntry, handoffEnabled, planEnabled bool) (*completionCatalog, error) {
 	entries := builtinCompletionCandidates()
-	if resumeEnabled {
-		entries = append(entries, completionCandidate{id: completionIdentity{kind: completionBuiltin, name: resumeCommandName}, description: "Resume a previous conversation", hint: "[thread-id]"})
+	if handoffEnabled {
+		entries = append(entries,
+			completionCandidate{id: completionIdentity{kind: completionBuiltin, name: resumeCommandName}, description: "Resume a previous conversation", hint: "[thread-id]"},
+			completionCandidate{id: completionIdentity{kind: completionBuiltin, name: branchCommandName}, description: "Branch the current conversation", hint: "[title]"},
+			completionCandidate{id: completionIdentity{kind: completionBuiltin, name: forkCommandName}, description: "Alias for /branch", hint: "[title]"},
+		)
 	}
 	if planEnabled {
 		entries = append(entries, completionCandidate{id: completionIdentity{kind: completionBuiltin, name: planCommandName}, description: "Plan without modifying the workspace", hint: "[off | review]"})
@@ -109,7 +113,7 @@ func newCompletionCatalog(skills []domain.SkillListEntry, resumeEnabled, planEna
 		}
 		entries[i].searchDescription = strings.ToLower(entries[i].description)
 	}
-	return &completionCatalog{entries: entries, bytes: bytes, resumeEnabled: resumeEnabled, planEnabled: planEnabled}, nil
+	return &completionCatalog{entries: entries, bytes: bytes, handoffEnabled: handoffEnabled, planEnabled: planEnabled}, nil
 }
 
 type completionTarget struct {
@@ -190,7 +194,7 @@ func (c *completionCatalog) match(target completionTarget) []completionMatch {
 		if target.sigil == '$' && candidate.id.kind != completionSkill {
 			continue
 		}
-		if target.sigil == '/' && candidate.id.kind == completionSkill && isBuiltinCompletionName(candidate.id.name, c.resumeEnabled, c.planEnabled) {
+		if target.sigil == '/' && candidate.id.kind == completionSkill && isBuiltinCompletionName(candidate.id.name, c.handoffEnabled, c.planEnabled) {
 			continue
 		}
 		if tier := completionMatchTier(candidate, target.query); tier >= 0 {
@@ -202,12 +206,12 @@ func (c *completionCatalog) match(target completionTarget) []completionMatch {
 	return matches
 }
 
-func isBuiltinCompletionName(name string, resumeEnabled, planEnabled bool) bool {
-	return domain.IsReservedSkillSlashName(name) || isHostSlashName(name, resumeEnabled, planEnabled)
+func isBuiltinCompletionName(name string, handoffEnabled, planEnabled bool) bool {
+	return domain.IsReservedSkillSlashName(name) || isHostSlashName(name, handoffEnabled, planEnabled)
 }
 
-func isHostSlashName(name string, resumeEnabled, planEnabled bool) bool {
-	return resumeEnabled && name == resumeCommandName || planEnabled && name == planCommandName
+func isHostSlashName(name string, handoffEnabled, planEnabled bool) bool {
+	return handoffEnabled && (name == resumeCommandName || isBranchCommandName(name)) || planEnabled && name == planCommandName
 }
 
 func (c *composer) complete(target completionTarget, candidate completionCandidate) error {

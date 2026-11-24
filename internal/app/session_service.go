@@ -52,7 +52,6 @@ type assembledSession struct {
 	stopRecovery  *session.StopRecoveryPlan
 	stops         []session.ReplayedStop
 	tasks         domain.TaskProgressState
-	taskErr       error
 }
 
 func newSessionService(repository *session.Repository) *sessionService {
@@ -124,44 +123,17 @@ func (service *sessionService) resume(
 	if err != nil {
 		return assembledSession{}, fault.Wrap(fault.CodeSessionCorruption, "load session journal failed", err)
 	}
-	plan, err := service.plan(loaded)
-	if err != nil {
-		return assembledSession{}, fault.Wrap(fault.CodeSessionCorruption, "validate session replay failed", err)
-	}
-	metadata := plan.SessionMetadata
-	if metadata.RootThreadID != threadID || plan.Identity.ThreadID != threadID || !plan.ThreadMetadata.Root {
-		return assembledSession{}, fault.New(fault.CodeSessionIncompatible, "resume requires a root session thread")
-	}
-	if service.expectedResumeCWD != "" && metadata.CreationCWD != service.expectedResumeCWD {
-		return assembledSession{}, fault.Wrap(fault.CodeSessionIncompatible, "session working directory is incompatible", errResumeDirectory)
-	}
-	if metadata.Provider != binding.factory.Family() || metadata.ProviderWire != binding.wire || metadata.Model != model {
-		return assembledSession{}, fault.New(fault.CodeSessionIncompatible, "session provider configuration is incompatible")
-	}
-	if err := ctx.Err(); err != nil {
-		return assembledSession{}, err
-	}
-	if err := validateSampleUsageEvidence(ctx, binding.history, plan); err != nil {
-		return assembledSession{}, resumeValidationError("sample usage is invalid", err)
-	}
-	commits, err := orderedRestoreRecords(ctx, plan)
+	validated, plan, err := service.restore(ctx, binding, model, threadID, loaded)
 	if err != nil {
 		return assembledSession{}, err
 	}
-
-	conversation, checkpoints, err := binding.factory.RestoreConversation(ctx, plan.Identity.ThreadID, commits)
-	if err != nil {
-		return assembledSession{}, resumeValidationError("restore provider native history failed", err)
-	}
-	if err := validateCompactionUsageEvidence(ctx, binding.history, checkpoints, plan); err != nil {
-		return assembledSession{}, resumeValidationError("compaction usage is invalid", err)
-	}
-	compactions, err := restoreCompactionTranscript(ctx, checkpoints, plan)
-	if err != nil {
-		return assembledSession{}, resumeValidationError("compaction transcript is invalid", err)
-	}
-	if err := ctx.Err(); err != nil {
-		return assembledSession{}, err
+	if plan.Branch != nil {
+		if err := service.repository.ConfirmBranchDurability(ctx, lease); err != nil {
+			if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+				return assembledSession{}, err
+			}
+			return assembledSession{}, fault.Wrap(fault.CodeSessionWrite, "confirm session branch durability failed", err)
+		}
 	}
 	if loaded.NeedsRepair() {
 		service.recovery.mutating()
@@ -231,6 +203,57 @@ func (service *sessionService) resume(
 	if err := ctx.Err(); err != nil {
 		return assembledSession{}, err
 	}
+	validated.writer = writer
+	validated.repair = loaded.Repair
+	return validated, nil
+}
+
+func (service *sessionService) restore(
+	ctx context.Context,
+	binding sessionProvider,
+	model string,
+	threadID domain.ThreadID,
+	loaded session.LoadResult,
+) (assembledSession, session.ReplayPlan, error) {
+	plan, err := service.plan(loaded)
+	if err != nil {
+		return assembledSession{}, session.ReplayPlan{}, fault.Wrap(fault.CodeSessionCorruption, "validate session replay failed", err)
+	}
+	metadata := plan.SessionMetadata
+	if plan.Identity.ThreadID != threadID {
+		return assembledSession{}, session.ReplayPlan{}, fault.New(fault.CodeSessionIncompatible, "session journal thread does not match requested identity")
+	}
+	if service.expectedResumeCWD != "" && metadata.CreationCWD != service.expectedResumeCWD {
+		return assembledSession{}, session.ReplayPlan{}, fault.Wrap(fault.CodeSessionIncompatible, "session working directory is incompatible", errResumeDirectory)
+	}
+	if metadata.Provider != binding.factory.Family() || metadata.ProviderWire != binding.wire || metadata.Model != model {
+		return assembledSession{}, session.ReplayPlan{}, fault.New(fault.CodeSessionIncompatible, "session provider configuration is incompatible")
+	}
+	if err := ctx.Err(); err != nil {
+		return assembledSession{}, session.ReplayPlan{}, err
+	}
+	if err := validateSampleUsageEvidence(ctx, binding.history, plan); err != nil {
+		return assembledSession{}, session.ReplayPlan{}, resumeValidationError("sample usage is invalid", err)
+	}
+	commits, err := orderedRestoreRecords(ctx, plan)
+	if err != nil {
+		return assembledSession{}, session.ReplayPlan{}, resumeValidationError("build provider restore evidence failed", err)
+	}
+
+	conversation, checkpoints, err := binding.factory.RestoreConversation(ctx, plan.Identity.ThreadID, commits)
+	if err != nil {
+		return assembledSession{}, session.ReplayPlan{}, resumeValidationError("restore provider native history failed", err)
+	}
+	if err := validateCompactionUsageEvidence(ctx, binding.history, checkpoints, plan); err != nil {
+		return assembledSession{}, session.ReplayPlan{}, resumeValidationError("compaction usage is invalid", err)
+	}
+	compactions, err := restoreCompactionTranscript(ctx, checkpoints, plan)
+	if err != nil {
+		return assembledSession{}, session.ReplayPlan{}, resumeValidationError("compaction transcript is invalid", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return assembledSession{}, session.ReplayPlan{}, err
+	}
 	var stopRecovery *session.StopRecoveryPlan
 	if plan.StopRecovery != nil {
 		cloned := plan.StopRecovery.Clone()
@@ -242,15 +265,18 @@ func (service *sessionService) resume(
 		toolRecovery = &cloned
 	}
 	tasks, taskErr := plan.TaskProgress()
+	if taskErr != nil {
+		return assembledSession{}, session.ReplayPlan{}, fault.New(fault.CodeSessionCorruption, "task progress history is invalid")
+	}
 	return assembledSession{
-		compactions: compactions, identity: plan.Identity, conversation: conversation, writer: writer,
+		compactions: compactions, identity: plan.Identity, conversation: conversation,
 		title: plan.Title,
 		tools: plan.Tools,
 		stops: plan.Stops, stopRecovery: stopRecovery,
 		nativeCommits: plan.NativeCommits,
-		history:       conversation.ProjectHistory(), repair: loaded.Repair, toolRecovery: toolRecovery,
-		tasks: tasks, taskErr: taskErr,
-	}, nil
+		history:       conversation.ProjectHistory(), toolRecovery: toolRecovery,
+		tasks: tasks,
+	}, plan, nil
 }
 
 func (service *sessionService) close() error {

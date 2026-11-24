@@ -96,6 +96,13 @@
   {
     "package": "easycode/internal/app",
     "tests": [
+      "TestBranchTerminalCancellationPreservesAdmittedOutcome"
+    ],
+    "reason": "终端取消后仍须等待发布尝试并报告确切目标"
+  },
+  {
+    "package": "easycode/internal/app",
+    "tests": [
       "TestRuntimeEffortDisconnectAndCancelKeepFutureSelection"
     ],
     "reason": "断流和取消交错时 strict-next effort 仍独立"

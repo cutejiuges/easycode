@@ -5,7 +5,7 @@ type chatFocus uint8
 const (
 	focusComposer chatFocus = iota
 	focusClosed
-	focusResumeNotice
+	focusHandoffNotice
 	focusQuestion
 	focusHookTrust
 	focusApproval
@@ -24,8 +24,8 @@ func (model Model) focus() chatFocus {
 	switch {
 	case model.title.closed:
 		return focusClosed
-	case model.resumeDirectoryNotice != "":
-		return focusResumeNotice
+	case model.handoffNotice != "":
+		return focusHandoffNotice
 	case model.question != nil:
 		return focusQuestion
 	case model.hookTrust != nil:

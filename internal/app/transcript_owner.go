@@ -137,8 +137,13 @@ func (q *transcriptQueries) Close() error {
 	return nil
 }
 
-func toolOutputSummary(s tool.ArtifactSaving, observed int64) protocol.ToolOutputSummary {
-	return tool.ProjectOutputSaving(s, observed).Summary
+func toolOutputSummary(s tool.ArtifactSaving, observed int64, current, source domain.ThreadID) protocol.ToolOutputSummary {
+	summary := tool.ProjectOutputSaving(s, observed).Summary
+	if summary.Readable && current != source {
+		summary.Readable = false
+		summary.SourceThreadID = source
+	}
+	return summary
 }
 
 func (q *transcriptQueries) ReadToolOutput(ctx context.Context, query protocol.ToolOutputQuery) (protocol.ToolOutputPage, error) {
@@ -161,7 +166,7 @@ func (q *transcriptQueries) ReadToolOutput(ctx context.Context, query protocol.T
 		entry = *stored
 	}
 	q.mu.Unlock()
-	if stored == nil || !entry.HasResult {
+	if stored == nil || !entry.HasResult || entry.Origin.ThreadID != q.thread {
 		return protocol.ToolOutputPage{}, tool.ArtifactReadUnauthorized
 	}
 	var saving tool.ArtifactSaving

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 
+	"easycode/internal/domain"
 	"easycode/internal/fault"
 	chatRuntime "easycode/internal/runtime"
 	"easycode/internal/tui"
@@ -17,6 +18,7 @@ type pickerExecution struct {
 }
 
 type pickerExecutor func(context.Context, context.Context, tui.PickerRequest) pickerExecution
+type pickerBranchExecutor func(context.Context, context.Context, tui.PickerRequest, *chatResources, func(domain.ThreadID) bool) pickerExecution
 
 // pickerOwner 串行处理终端请求，只有 worker 持有和关闭活动实例与待接管候选。
 type pickerOwner struct {
@@ -30,14 +32,22 @@ type pickerOwner struct {
 	latest       tui.PickerRequest
 	offered      *pickerCandidate
 	accepted     bool
+	branchActive bool
 	stopping     bool
 	started      bool
 	wake         chan struct{}
 	results      chan tui.PickerResult
 	done         chan struct{}
 	execute      pickerExecutor
+	branch       pickerBranchExecutor
 	initial      *chatResources
 	finalErr     error
+	lastBranch   branchReport
+}
+
+type branchReport struct {
+	requestID uint64
+	notice    BranchNotice
 }
 
 type pickerCandidate struct {
@@ -58,13 +68,18 @@ func (o *pickerOwner) signal() {
 }
 
 func (o *pickerOwner) Submit(r tui.PickerRequest) bool {
-	if r.ID == 0 || r.Operation < tui.PickerList || r.Operation > tui.PickerOpen ||
+	if r.ID == 0 || r.Operation < tui.PickerList || r.Operation > tui.PickerBranch ||
 		((r.Operation == tui.PickerPreview || r.Operation == tui.PickerResume) && !r.ThreadID.Valid()) ||
-		(r.Operation == tui.PickerOpen && !r.Source.Valid()) || (r.Source != "" && !r.Source.Valid()) {
+		(r.Operation == tui.PickerOpen && !r.Source.Valid()) || (r.Source != "" && !r.Source.Valid()) ||
+		(r.Operation != tui.PickerBranch && r.Title != "") {
+		return false
+	}
+	if r.Operation == tui.PickerBranch &&
+		(o.branch == nil || !r.Source.Valid() || r.ThreadID != "" || r.All || (r.Title != "" && r.Title.Validate() != nil)) {
 		return false
 	}
 	o.mu.Lock()
-	if o.stopping || o.offered != nil || o.accepted || o.cancelResume != nil ||
+	if o.stopping || o.offered != nil || o.accepted || o.branchActive || o.cancelResume != nil ||
 		r.ID <= o.latest.ID || pickerCancelled(o.parentDone) {
 		o.mu.Unlock()
 		return false
@@ -72,6 +87,7 @@ func (o *pickerOwner) Submit(r tui.PickerRequest) bool {
 	o.latest = r
 	o.generation++
 	o.pending = &r
+	o.branchActive = r.Operation == tui.PickerBranch
 	cancel := o.activeCancel
 	o.mu.Unlock()
 	if cancel != nil {
@@ -86,7 +102,7 @@ func (o *pickerOwner) Results() <-chan tui.PickerResult { return o.results }
 // CancelPending 只废弃当前列表或预览请求，保留聊天内恢复许可。
 func (o *pickerOwner) CancelPending() {
 	o.mu.Lock()
-	if o.offered != nil || o.accepted || o.cancelResume != nil {
+	if o.offered != nil || o.accepted || o.branchActive || o.cancelResume != nil {
 		o.mu.Unlock()
 		return
 	}
@@ -206,7 +222,7 @@ func (o *pickerOwner) run(ctx context.Context) {
 				return
 			}
 		case cancelled != nil:
-			if !state.returnToSource(ctx, tui.PickerResult{Request: *cancelled, Error: "Resume cancelled"}) {
+			if !state.returnToSource(ctx, pickerCancellation(*cancelled)) {
 				return
 			}
 		case state.candidate != nil && !chatLive(state.candidate.execution.resources):
@@ -278,10 +294,17 @@ func (s *pickerRun) serve(ctx context.Context, generation uint64, request tui.Pi
 	}()
 	if request.Source.Valid() {
 		if s.current == nil || request.Source != s.current.identity.ThreadID {
+			if request.Operation == tui.PickerBranch {
+				return s.returnToSource(ctx, tui.PickerResult{Request: request, Error: "Current session changed before branch preparation"})
+			}
 			return true
 		}
-		if request.Operation == tui.PickerOpen {
-			permit, err := s.current.session.ReserveResume(operation)
+		intent := chatRuntime.HandoffResume
+		if request.Operation == tui.PickerBranch {
+			intent = chatRuntime.HandoffBranch
+		}
+		if request.Operation == tui.PickerOpen || request.Operation == tui.PickerBranch {
+			permit, err := s.current.session.ReserveHandoff(operation, intent)
 			if err != nil {
 				if operation.Err() != nil {
 					return true
@@ -290,7 +313,7 @@ func (s *pickerRun) serve(ctx context.Context, generation uint64, request tui.Pi
 			}
 			s.permit = permit
 		}
-		if s.permit == nil || !s.permit.Valid() || operation.Err() != nil {
+		if !s.permit.Matches(s.current.session, intent) || operation.Err() != nil {
 			return true
 		}
 		if request.ThreadID == request.Source {
@@ -301,7 +324,12 @@ func (s *pickerRun) serve(ctx context.Context, generation uint64, request tui.Pi
 	}
 
 	lifetime, closeLifetime := context.WithCancel(ctx)
-	execution := o.execute(operation, lifetime, request)
+	var execution pickerExecution
+	if request.Operation == tui.PickerBranch {
+		execution = s.executeBranch(operation, lifetime, generation, request)
+	} else {
+		execution = o.execute(operation, lifetime, request)
+	}
 	s.recovery = execution.recovery
 	if execution.resources == nil {
 		closeLifetime()
@@ -341,12 +369,58 @@ func (s *pickerRun) serve(ctx context.Context, generation uint64, request tui.Pi
 	if !valid {
 		return true
 	}
-	if request.Source.Valid() && (request.Operation == tui.PickerResume ||
+	if request.Source.Valid() && (request.Operation == tui.PickerBranch || request.Operation == tui.PickerResume ||
 		(request.Operation == tui.PickerOpen && request.ThreadID.Valid())) {
 		return s.returnToSource(ctx, execution.result)
 	}
 	s.publish(operation, execution.result)
 	return true
+}
+
+func (s *pickerRun) executeBranch(
+	ctx, lifetime context.Context,
+	generation uint64,
+	request tui.PickerRequest,
+) pickerExecution {
+	o := s.owner
+	source := s.current
+	permit := s.permit
+	var admittedTarget domain.ThreadID
+	execution := o.branch(ctx, lifetime, request, source, func(target domain.ThreadID) bool {
+		o.mu.Lock()
+		defer o.mu.Unlock()
+		if !o.currentOperation(generation) || o.latest != request || pickerCancelled(o.parentDone) ||
+			!permit.Matches(source.session, chatRuntime.HandoffBranch) ||
+			admittedTarget != "" || !target.Valid() || target == request.Source {
+			return false
+		}
+		admittedTarget = target
+		return true
+	})
+	result := &execution.result
+	if result.Request != request || (result.BranchPublication != tui.BranchNotPublished &&
+		(!admittedTarget.Valid() || result.BranchThreadID != admittedTarget)) ||
+		(execution.resources != nil && (result.BranchPublication != tui.BranchPublished ||
+			execution.resources.identity.ThreadID != admittedTarget ||
+			execution.resources.identity.SessionID != source.identity.SessionID)) {
+		*result = tui.PickerResult{Request: request, Error: "Session branch result did not match its attempt", Fatal: true}
+		return execution
+	}
+	if result.BranchPublication != tui.BranchNotPublished {
+		o.lastBranch = branchReport{
+			requestID: request.ID,
+			notice:    BranchNotice{threadID: admittedTarget, publication: result.BranchPublication},
+		}
+	}
+	return execution
+}
+
+func pickerCancellation(request tui.PickerRequest) tui.PickerResult {
+	message := "Resume cancelled"
+	if request.Operation == tui.PickerBranch {
+		message = "Session branch cancelled"
+	}
+	return tui.PickerResult{Request: request, Error: message}
 }
 
 func (s *pickerRun) returnToSource(ctx context.Context, result tui.PickerResult) bool {
@@ -379,11 +453,17 @@ func (s *pickerRun) returnToSource(ctx context.Context, result tui.PickerResult)
 	}
 	o.mu.Lock()
 	if o.cancelResume != nil {
-		result = tui.PickerResult{Request: *o.cancelResume, Error: "Resume cancelled"}
+		result = pickerCancellation(*o.cancelResume)
 		o.cancelResume = nil
 	}
+	o.branchActive = false
 	o.mu.Unlock()
-	if s.recovery != nil {
+	if result.Request.Operation == tui.PickerBranch {
+		if retained := o.lastBranch; retained.requestID == result.Request.ID {
+			result.BranchThreadID = retained.notice.threadID
+			result.BranchPublication = retained.notice.publication
+		}
+	} else if s.recovery != nil {
 		if s.recovery.uncertain {
 			result.Error += ". Target recovery durability is uncertain."
 		}
@@ -427,6 +507,7 @@ func (s *pickerRun) activate(ctx context.Context) bool {
 	o.mu.Lock()
 	o.offered = nil
 	o.accepted = false
+	o.branchActive = false
 	o.mu.Unlock()
 	result := candidate.execution.result
 	result.Stage = tui.PickerActivated

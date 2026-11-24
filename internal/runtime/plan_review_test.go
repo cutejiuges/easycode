@@ -105,7 +105,7 @@ func TestPlanApprovalStartsOneLiteralInput(t *testing.T) {
 	if _, err := host.loop.Submit(ctx, command); fault.Project(err).Code != fault.CodeInvalidInput {
 		t.Fatalf("noninteractive approval reached owner: %v", err)
 	}
-	permit, err := host.ReserveResume(ctx)
+	permit, err := host.ReserveHandoff(ctx, HandoffResume)
 	if err != nil {
 		t.Fatal(err)
 	}

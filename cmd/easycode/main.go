@@ -54,8 +54,8 @@ func run(
 	printMode := flags.Bool("print", false, "print only the final assistant text")
 	jsonMode := flags.Bool("json", false, "stream versioned JSONL events")
 	inputFormat := flags.String("input-format", "text", "input format: text or stream-json")
-	resumeThreadID := flags.String("resume", "", "resume an existing root thread selected by --resume UUIDv7")
-	continueSession := flags.Bool("continue", false, "continue the latest compatible session in the current directory")
+	resumeThreadID := flags.String("resume", "", "resume an existing root thread or branch by UUIDv7")
+	continueSession := flags.Bool("continue", false, "continue the latest compatible root thread or branch in the current directory")
 	configPath := flags.String(
 		"config",
 		"",
@@ -146,6 +146,9 @@ func run(
 }
 
 func renderOutcome(outcome app.Outcome, mode headless.Mode, output io.Writer, errorOutput io.Writer) int {
+	if notice := outcome.BranchNotice.Message(); notice != "" {
+		defer func() { _, _ = fmt.Fprintln(errorOutput, notice) }()
+	}
 	if outcome.Class == app.ExitSuccess {
 		return 0
 	}

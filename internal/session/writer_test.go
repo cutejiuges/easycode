@@ -544,5 +544,5 @@ func startJournalWriterWithCapacity(
 	if err := validateJournalWriter(identity, nextSequence, clock, requestCapacity); err != nil {
 		return nil, err
 	}
-	return startOwnedJournalWriter(file, identity, nextSequence, clock, requestCapacity), nil
+	return startOwnedJournalWriter(file, identity, nextSequence, 0, clock, requestCapacity), nil
 }

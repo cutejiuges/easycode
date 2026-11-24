@@ -1,6 +1,10 @@
 package app
 
-import "easycode/internal/fault"
+import (
+	"easycode/internal/domain"
+	"easycode/internal/fault"
+	"easycode/internal/tui"
+)
 
 // ExitClass 是应用返回给进程入口的稳定退出分类。
 type ExitClass uint8
@@ -23,9 +27,32 @@ const (
 
 // Outcome 携带退出分类和安全错误，不保留底层 cause。
 type Outcome struct {
-	Class   ExitClass
-	Report  ReportState
-	Failure fault.Summary
+	Class        ExitClass
+	Report       ReportState
+	Failure      fault.Summary
+	BranchNotice BranchNotice
+}
+
+// BranchNotice 携带终端未确认交付的已发布或状态不确定的本地分支。
+type BranchNotice struct {
+	threadID    domain.ThreadID
+	publication tui.BranchPublication
+}
+
+// Message 仅使用持久化分类和通过校验的 canonical ID 生成 CLI 诊断。
+func (notice BranchNotice) Message() string {
+	if !notice.threadID.Valid() {
+		return ""
+	}
+	id := string(notice.threadID)
+	switch notice.publication {
+	case tui.BranchPublished:
+		return "Session branch saved. Resume with easycode --resume " + id
+	case tui.BranchPublicationUncertain:
+		return "Session branch publication durability is uncertain for " + id
+	default:
+		return ""
+	}
 }
 
 // ExitCode 返回 CLI 使用的稳定退出码。

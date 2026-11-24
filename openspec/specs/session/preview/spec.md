@@ -2,15 +2,15 @@
 
 ## Purpose
 
-定义未启动聊天会话时对已存储 root thread 的按需只读预览，使宿主能在完整验证 Session 与 Provider 原生历史后展示有界可见文本，同时保证不修复、不补偿、不执行模型或工具，并释放全部临时资源。
+定义未启动聊天会话时对已存储根线程和分支线程的按需只读预览，使宿主能在完整验证 Session 与 Provider 原生历史后展示有界可见文本，同时保证不修复、不补偿、不执行模型或工具，并释放全部临时资源。
 
 ## Requirements
 
 ### Requirement: Preview validates stored history under continuous short-lived ownership
 
-预览 SHALL 接收明确的 canonical root thread ID，从安全 Repository 获取 descriptor-bound exclusive lease，在同一连续句柄所有权下读取并验证当前 Session、root 身份、record 顺序、native role/关联、checkpoint/source、压缩 usage/provenance 和标题事实，再由原生 Provider 离线投影正文。MUST NOT 使用 Catalog row、文件 mtime 或显示文本替代事实校验，也不得要求预览来源与当前聊天配置匹配。
+预览 SHALL 接收根线程或分支的明确 canonical ThreadID，从安全 Repository 获取 descriptor-bound exclusive lease，在同一连续句柄所有权下读取并验证当前 Session、根线程或分支身份、继承前缀和分支边界、record 顺序、native role/关联、checkpoint/source、压缩 usage/provenance 和标题事实，再由原生 Provider 离线投影正文。MUST NOT 使用 Catalog row、文件 mtime 或显示文本替代事实校验，也不得要求预览来源与当前聊天配置匹配。
 
-预览 SHALL 在关闭 lease 和 Repository 成功后才发布显示结果；用户阅读期间不得持有 journal lease。不存在、busy、不支持的 family/wire、损坏记录或任何验证/关闭失败 SHALL 返回安全英文错误，不返回部分成功结果或未经完整校验的标题及正文。受支持 family/wire 的模型使用 journal 已验证 metadata，不要求网络凭据。
+预览 SHALL 在关闭 lease 和 Repository 成功后才发布显示结果；用户阅读期间不得持有 journal lease。不存在、busy、不支持的 family/wire、损坏记录或任何验证/关闭失败 SHALL 返回安全英文错误，不返回部分成功结果或未经完整校验的标题及正文。受支持 family/wire 的模型使用 journal 已验证 metadata，不要求网络凭据。分支预览 SHALL 只读验证目标 journal 内完整的继承证据，不获取父 journal 的 lease。
 
 #### Scenario: Preview another supported provider without its credentials
 - **WHEN** 当前聊天配置为 OpenAI，用户预览合法 Anthropic root thread
@@ -29,6 +29,10 @@
 - **WHEN** Catalog 最近一次协调看到的标题已经过时，且目标 journal 当前可在 lease 下完整验证
 - **THEN** 预览返回本次实际读取的 committed 标题，并在关闭 lease 和 Repository 后发布
 - **THEN** 无法完整验证或关闭资源时，预览只返回安全错误
+
+#### Scenario: Preview a valid branch while its original parent is unavailable
+- **WHEN** 合法分支的源 journal 缺失或由另一进程持有 lease
+- **THEN** 只用分支 journal 离线验证继承前缀及原生历史，关闭目标 lease 后显示有界预览，保留 journal 全部 bytes
 
 ### Requirement: Preview never repairs compensates or executes
 
@@ -54,7 +58,7 @@
 
 预览 MUST NOT 展示工具输入/输出、artifact、reasoning summary、thinking/signature/redacted 内容、encrypted content、phase、usage、原始 JSON 或未知 opaque 数据；压缩摘要不伪造普通 user/assistant 消息。安全显示的正文副本 SHALL 最多 196608 bytes，展开控制字符超过预算仍需明确省略。预览文本仅存在于当前预览内存，关闭即丢弃，不进入日志、遥测、Catalog、搜索字段或 Provider 请求。
 
-预览 SHALL 将最后已验证的显式标题作为独立元数据字段返回，并按单行终端安全规则展示。未命名会话不展示标题。标题字段遵循会话标题自身的 UTF-8 大小上限，正文的消息数量、字节、截断标志和顺序均按正文单独计算。
+预览 SHALL 将已验证的当前线程标题作为独立元数据字段返回，并按单行终端安全规则展示。未命名会话不展示标题。分支 SHALL 附带来自已验证的当前分支边界的父 ThreadID，作为独立的有界显示元数据。标题字段遵循会话标题自身的 UTF-8 大小上限，正文的消息数量、字节、截断标志和顺序均按正文单独计算。
 
 #### Scenario: Bound a long multilingual preview
 - **WHEN** 已命名会话的已验证历史含超过 128 条消息或 32768 bytes 的中文/emoji 正文
@@ -68,6 +72,10 @@
 
 - **WHEN** 一个已命名的合法 root journal 尚无可见对话正文
 - **THEN** 预览返回标题、空消息列表及正常的空正文提示
+
+#### Scenario: Present branch lineage as metadata
+- **WHEN** 分支有已验证的独立标题和父 ThreadID，继承历史中另有父线程标题
+- **THEN** 在相同正文预算下显示已提交的对话前缀与分支后续可见文本，分支标题和父 ThreadID 作为独立元数据，正文中不插入这些元数据
 
 ### Requirement: Preview cancellation has a verifiable completion boundary
 

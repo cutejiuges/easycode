@@ -330,9 +330,3 @@ func (root *secureRoot) Close() error {
 	root.file = nil
 	return file.Close()
 }
-
-func callSecurePathHook(hook func(string), value string) {
-	if hook != nil {
-		hook(value)
-	}
-}

@@ -102,13 +102,17 @@ func TestSessionServiceOwnershipFailuresReleaseTheCurrentOwner(t *testing.T) {
 		assertSessionLeaseAvailable(t, service, identity.ThreadID)
 	})
 
-	t.Run("non root", func(t *testing.T) {
+	t.Run("mismatched thread", func(t *testing.T) {
 		service, identity := createClosedTestSession(t, domain.ProviderOpenAI, "responses", "gpt-test")
 		defer service.close()
+		differentThread, err := domain.GenerateThreadID()
+		if err != nil {
+			t.Fatal(err)
+		}
 		planner := session.NewReplayPlanner()
 		service.plan = func(loaded session.LoadResult) (session.ReplayPlan, error) {
 			plan, err := planner.Plan(loaded)
-			plan.ThreadMetadata.Root = false
+			plan.Identity.ThreadID = differentThread
 			return plan, err
 		}
 		factory := &fakeProviderFactory{family: domain.ProviderOpenAI}
