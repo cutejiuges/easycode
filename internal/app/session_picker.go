@@ -79,6 +79,7 @@ func runInteractiveProgram(ctx context.Context, options Options, cfg config.Conf
 	environment := &chatEnvironment{}
 	owner := newPickerOwner(newPickerExecutor(cfg, paths, cwd, options.PluginDirs, environment))
 	owner.branch = newBranchPickerExecutor(cfg, paths, cwd, options.PluginDirs, environment)
+	owner.rewind = newRewindPickerExecutor(binding, cfg.Provider.Model, cwd)
 	var model tui.StartupModel
 	if startupPicker {
 		model = tui.NewStartupModel(owner, pickerConfig)

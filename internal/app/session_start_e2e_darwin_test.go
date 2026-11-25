@@ -144,11 +144,11 @@ func TestSessionStartRealRunnerBothProvidersAndCheckpointRestore(t *testing.T) {
 }
 
 func TestSessionStartBranchUsesDeferredResumeContext(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	workspace, home := privateAppTempDir(t), privateAppTempDir(t)
 	writeSessionStartFixture(t, workspace, false)
-	requests := make(chan []byte, 3)
+	requests := make(chan []byte, 7)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -161,29 +161,67 @@ func TestSessionStartBranchUsesDeferredResumeContext(t *testing.T) {
 			t.Error("unexpected model request")
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
-		serveStopAssistant(w, domain.ProviderOpenAI, "fixture-answer")
+		answer := "fixture-answer"
+		if bytes.Contains(body, []byte(`"tool_choice":"none"`)) {
+			answer = "retained-manual-summary"
+			if bytes.Contains(body, []byte("retained-followup")) {
+				answer = "excluded-auto-summary"
+			}
+		}
+		serveStopAssistant(w, domain.ProviderOpenAI, answer)
 	}))
 	defer server.Close()
 	cfg := config.Config{Provider: config.Provider{
 		Family: domain.ProviderOpenAI, Model: "fixture-model", BaseURL: server.URL, APIKey: secret.New("branch-context-fixture"),
 	}}
+	cfg.ContextBudget, _ = contextplan.NewBudget(22000, 0, 0)
 	paths := dataPaths{sessionRoot: filepath.Join(home, "sessions"), catalogPath: filepath.Join(home, "catalog.json")}
 	owner, source, candidates := startBranchFixture(t, ctx, cfg, paths, workspace)
-	if got := runSessionStartFixtureTurn(t, ctx, source, "source prompt"); !slices.Equal(got, []domain.SessionStartSource{domain.SessionStartStartup}) {
+	if got := runSessionStartFixtureTurn(t, ctx, source, "source prompt "+strings.Repeat("foundational history ", 900)); !slices.Equal(got, []domain.SessionStartSource{domain.SessionStartStartup}) {
 		t.Fatal("source did not commit startup context", got)
 	}
 	waitCompactionIdle(t, source)
-	branch := activateBranchFixture(t, ctx, owner, source, candidates, "Trial")
+	if result, err := source.session.CompactContext(ctx, ""); err != nil || result.Status() != protocol.CommandStatusAccepted {
+		t.Fatal("manual checkpoint admission failed", err)
+	}
+	if got, _ := sessionStartFixtureEvents(t, ctx, source, protocol.EventCompactionCompleted); !slices.Equal(got, []domain.SessionStartSource{domain.SessionStartCompact}) {
+		t.Fatal("manual checkpoint did not commit compact context", got)
+	}
+	waitCompactionIdle(t, source)
+	if got := runSessionStartFixtureTurn(t, ctx, source, "retained-followup "+strings.Repeat("retained detail ", 500)); len(got) != 0 {
+		t.Fatal("retained follow-up unexpectedly compacted", got)
+	}
+	waitCompactionIdle(t, source)
+	sourcePath, err := source.service.repository.JournalPath(source.identity.ThreadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retained := readSwitchJournal(t, sourcePath)
+	selected := "excluded-rewind-prompt " + strings.Repeat("substantial history ", 2850)
+	if got := runSessionStartFixtureTurn(t, ctx, source, selected); !slices.Equal(got, []domain.SessionStartSource{domain.SessionStartCompact}) {
+		t.Fatal("selected turn did not commit automatic checkpoint context", got)
+	}
+	waitCompactionIdle(t, source)
+	durable := readSwitchJournal(t, sourcePath)
+	if !bytes.Contains(durable[len(retained):], []byte("excluded-auto-summary")) {
+		t.Fatal("selected turn did not include the excluded automatic checkpoint")
+	}
+	branch := activateHistoricalBranchFixture(t, ctx, owner, source, candidates, selected)
 	path, err := branch.service.repository.JournalPath(branch.identity.ThreadID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	seed := readSwitchJournal(t, path)
-	if len(requests) != 1 || switchJournalRecord(t, seed, false).EventKind != session.EventThreadForked ||
-		bytes.Contains(seed, []byte("context-resume")) {
-		t.Fatal("branch creation dispatched a model or SessionStart")
+	marker := switchJournalRecord(t, seed, false)
+	if len(requests) != 5 || marker.EventKind != session.EventThreadForked ||
+		marker.Sequence != switchJournalRecord(t, retained, false).Sequence+1 ||
+		!bytes.HasPrefix(seed, retained) || bytes.Contains(seed, []byte("excluded-auto-summary")) ||
+		!bytes.Equal(readSwitchJournal(t, sourcePath), durable) {
+		t.Fatal("branch did not retain precisely the closed scope before selected turn")
 	}
-	<-requests
+	for range 5 {
+		<-requests
+	}
 	copyRoot, _ := installThreadFixture(t, seed, branch.identity.ThreadID)
 	cold, err := openChatResourcesWithHooks(ctx, cfg, dataPaths{sessionRoot: copyRoot}, string(branch.identity.ThreadID), false, workspace, chatResourceHooks{interactiveApprovals: true})
 	if err != nil {
@@ -203,7 +241,9 @@ func TestSessionStartBranchUsesDeferredResumeContext(t *testing.T) {
 		t.Fatalf("wanted two model requests, got %d", len(requests))
 	}
 	live, reopened := <-requests, <-requests
-	if !bytes.Equal(live, reopened) || bytes.Count(live, []byte("context-startup")) != 1 ||
+	if !bytes.Equal(live, reopened) || bytes.Count(live, []byte("context-compact")) != 1 ||
+		!bytes.Contains(live, []byte("retained-manual-summary")) || bytes.Contains(live, []byte("excluded-auto-summary")) ||
+		bytes.Contains(live, []byte("excluded-rewind-prompt")) ||
 		bytes.Count(live, []byte("context-resume")) != 1 || !bytes.Contains(live, []byte("branch prompt")) {
 		t.Fatal("branch continuation changed inherited or newly authorized context")
 	}

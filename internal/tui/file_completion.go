@@ -155,7 +155,7 @@ func (m *Model) suppressPastedFiles() {
 
 func (m Model) findFileMentionTarget(cursor int) (domain.FileMentionTarget, bool) {
 	head, _ := domain.SplitInputHead(m.composer.text)
-	if strings.HasPrefix(head, "/") && isHostSlashName(head[1:], m.handoffEnabled, m.workMode.enabled) {
+	if m.composer.rewind.intent == domain.InputSkillDefault && strings.HasPrefix(head, "/") && isHostSlashName(head[1:], m.handoffEnabled, m.workMode.enabled) {
 		return domain.FileMentionTarget{}, false
 	}
 	return domain.FindFileMentionTarget(m.composer.text, cursor)
@@ -177,6 +177,11 @@ func (m *Model) prepareFiles() {
 	s := &m.files
 	if s.queries == nil || s.closed {
 		s.view, s.rows, s.valid = "", 0, false
+		return
+	}
+	if m.composer.rewind.unedited {
+		m.cancelFileSession()
+		s.valid, s.parsed = false, false
 		return
 	}
 	target, valid := s.target, s.valid

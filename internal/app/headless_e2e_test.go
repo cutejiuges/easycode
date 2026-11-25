@@ -213,7 +213,7 @@ func TestStreamJSONProvidersPreserveSameProcessNativeHistory(t *testing.T) {
 			configPath := writeAppConfig(t, t.TempDir(), fixture.family, server.URL)
 			input := io.NopCloser(strings.NewReader(
 				`{"version":1,"type":"input.submit","request_id":"stream-input-1","text":"first"}` + "\n" +
-					`{"version":1,"type":"input.submit","request_id":"stream-input-2","text":"second"}` + "\n",
+					`{"version":1,"type":"input.submit","request_id":"stream-input-2","text":"/rewind"}` + "\n",
 			))
 			output := &appWriteCloser{}
 			outcome := Run(context.Background(), Options{
@@ -244,7 +244,7 @@ func TestStreamJSONProvidersPreserveSameProcessNativeHistory(t *testing.T) {
 				t.Fatal(err)
 			}
 			submitAppTurn(t, direct, "first")
-			submitAppTurn(t, direct, "second")
+			submitAppTurn(t, direct, "/rewind")
 			if err := direct.close(context.Background()); err != nil {
 				t.Fatal(err)
 			}
@@ -255,7 +255,8 @@ func TestStreamJSONProvidersPreserveSameProcessNativeHistory(t *testing.T) {
 			if len(captured) != 4 {
 				t.Fatalf("request count = %d", len(captured))
 			}
-			if !bytes.Equal(captured[0], captured[2]) || !bytes.Equal(captured[1], captured[3]) {
+			if !bytes.Equal(captured[0], captured[2]) || !bytes.Equal(captured[1], captured[3]) ||
+				!bytes.Contains(captured[1], []byte(`"/rewind"`)) {
 				t.Fatalf("AgentLoop changed Provider request bytes\nstream: %s\ndirect: %s", captured[1], captured[3])
 			}
 			assertRequestFingerprintEqual(t, captured[1], captured[3])

@@ -49,6 +49,7 @@ func superviseSSE(
 	ctx context.Context,
 	body io.ReadCloser,
 	options StreamOptions,
+	cancelRequest context.CancelFunc,
 	finished func(),
 ) <-chan SSEMessage {
 	output := make(chan SSEMessage, 1)
@@ -69,8 +70,6 @@ func superviseSSE(
 	go func() {
 		defer close(output)
 		defer finished()
-		defer stopReader()
-		defer func() { _ = body.Close() }()
 
 		timer := time.NewTimer(options.IdleTimeout)
 		defer timer.Stop()
@@ -87,28 +86,16 @@ func superviseSSE(
 			}
 			timer.Reset(options.IdleTimeout)
 		}
-		finishReader := func() {
-			stopReader()
-			_ = body.Close()
-			<-readerDone
-		}
-		sendFinal := func(err error) {
-			select {
-			case output <- SSEMessage{Err: err}:
-			case <-ctx.Done():
-			}
-		}
-
+		var finalErr error
+	readStream:
 		for {
 			select {
 			case <-ctx.Done():
-				finishReader()
-				sendFinal(ctx.Err())
-				return
+				finalErr = ctx.Err()
+				break readStream
 			case <-idle:
-				finishReader()
-				sendFinal(errIdleTimeout)
-				return
+				finalErr = errIdleTimeout
+				break readStream
 			case <-activity:
 				resetTimer()
 			case message := <-parsed:
@@ -123,17 +110,25 @@ func superviseSSE(
 					select {
 					case output <- SSEMessage{Event: message.event}:
 					case <-ctx.Done():
-						finishReader()
-						sendFinal(ctx.Err())
-						return
+						finalErr = ctx.Err()
+						break readStream
 					}
 					continue
 				}
-				<-readerDone
-				if message.err != nil {
-					sendFinal(message.err)
-				}
-				return
+				finalErr = message.err
+				break readStream
+			}
+		}
+
+		// 解压器可能在持锁读取，必须先取消实际 HTTP 请求，再关闭响应体。
+		stopReader()
+		cancelRequest()
+		_ = body.Close()
+		<-readerDone
+		if finalErr != nil {
+			select {
+			case output <- SSEMessage{Err: finalErr}:
+			case <-ctx.Done():
 			}
 		}
 	}()

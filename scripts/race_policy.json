@@ -103,6 +103,20 @@
   {
     "package": "easycode/internal/app",
     "tests": [
+      "TestRewindPickerTransfersOrReleasesItsSourcePermit"
+    ],
+    "reason": "历史浏览的许可必须在取消晚到结果或转为一次创建后收口"
+  },
+  {
+    "package": "easycode/internal/session",
+    "tests": [
+      "TestHistoricalSourceReadWaitsForOwnerAndRejectsPhysicalTail"
+    ],
+    "reason": "已接收的历史读取取消须等待 writer 完成并排除物理尾部"
+  },
+  {
+    "package": "easycode/internal/app",
+    "tests": [
       "TestRuntimeEffortDisconnectAndCancelKeepFutureSelection"
     ],
     "reason": "断流和取消交错时 strict-next effort 仍独立"
@@ -426,6 +440,13 @@
       "TestCloseCancelsActualBlockedBody"
     ],
     "reason": "Close 解阻实际被阻塞的 HTTP body，禁止后续请求"
+  },
+  {
+    "package": "easycode/internal/provider/transport",
+    "tests": [
+      "TestStreamSSEIdleTimeout"
+    ],
+    "reason": "空闲超时先解阻 HTTP 请求和持锁 gzip reader，再关闭响应体并等待读取收口"
   },
   {
     "package": "easycode/internal/provider/transport",

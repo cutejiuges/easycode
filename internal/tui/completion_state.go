@@ -4,6 +4,7 @@ import (
 	"strings"
 	"unicode"
 
+	"easycode/internal/domain"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -109,7 +110,7 @@ func (m *Model) prepareCompletion() {
 		s.suppress(completionModal)
 		return
 	}
-	if m.files.valid || !s.valid || s.suppression != completionNotSuppressed || len(s.matches) == 0 {
+	if m.composer.rewind.intent != domain.InputSkillDefault || m.files.valid || !s.valid || s.suppression != completionNotSuppressed || len(s.matches) == 0 {
 		s.view, s.rows = "", 0
 		return
 	}

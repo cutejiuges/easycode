@@ -1,6 +1,8 @@
 # EasyCode 产品与工程 Roadmap
 
-2026-11-24 实现会话分支。空闲时通过 `/branch [标题]` 或 `/fork [标题]` 创建并进入同一 Session 下的独立线程，沿用当前工作区及双 Provider 原生历史。分支保留自身可验证的历史和持久化切点，并通过现有选择器、列表和恢复入口访问。跨 Provider 摘要分支和历史任意切点仍在后续范围。 [主规格](../../openspec/specs/session/branch/spec.md) · [归档验收](../../openspec/changes/archive/2026-11-24-add-session-branch/verification.md)
+2026-11-24 新增历史回合分支 `/rewind`。用户可从当前线程段的合格回合开始前创建独立分支，将该轮首条初始输入作为待发送草稿。分支沿用当前工作区文件和切点上的有效原生历史，原对话可通过 `/resume` 恢复。根线程首轮前的空前缀、跨祖先段或回合内切点，以及跨 Provider 摘要分支仍在后续范围。 [主规格](../../openspec/specs/session/branch/spec.md) · [终端回归](../../internal/tui/rewind_test.go)
+
+2026-11-24 实现会话分支。空闲时通过 `/branch [标题]` 或 `/fork [标题]` 从最新提交创建并进入同一 Session 下的独立线程，沿用当前工作区及双 Provider 原生历史。分支保留自身可验证的历史和持久化切点，并通过现有选择器、列表和恢复入口访问。 [主规格](../../openspec/specs/session/branch/spec.md) · [归档验收](../../openspec/changes/archive/2026-11-24-add-session-branch/verification.md)
 
 2026-11-22 交付并归档 `add-plan-review-handoff`。实时 Plan 回合按双 Provider 的原生完结证据识别完整方案。用户可审阅、继续规划，或确认把所审原文作为单独的 Default 回合输入。确认的权限限于启动回合，实际调用沿用普通审批。自动压缩保留本次实施输入的完整原文，恢复沿现有原生提交事实进行。[主规格](../../openspec/specs/runtime/plan-mode/spec.md)与[验收记录](../../openspec/changes/archive/2026-11-22-add-plan-review-handoff/verification.md)
 
@@ -19,13 +21,13 @@
 当前契约治理变更 `unify-current-contract-lifecycle` 收敛了固定 codec、prepared commit、宿主 owner 与副作用 admission。TUI、一次性 headless、stream-json 共用 AgentLoop；关闭期间排空事件，活动 transport 可显式取消，journal lease 保留至清理完成。Patch/Write grant 仅在批准 Sync 后生效，三种副作用工具统一验证结果关联并以 uncertain 收口错配结果。本次未引入迁移或兼容 reader，后续 P4/P6/P7/P8 能力及占位退出条件保持原有范围。
 
 > 状态：持续演进（各阶段按纵向切片验收）
-> 更新时间：2026-11-21
+> 更新时间：2026-11-24
 > 依赖设计：[`../architecture/overall-architecture.md`](../architecture/overall-architecture.md)
 > Tool 专题设计：[`../architecture/tool-system.md`](../architecture/tool-system.md)
 
-## 当前状态总览（2026-11-19）
+## 当前状态总览（2026-11-24）
 
-实现与测试逐项核对见[当前能力清单](capability-status.md)。P0–P8 是并行推进的阶段目标，不以某个后期切片交付推定整个阶段完成。当前已交付十项模型工具、本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact/SessionStart、三能力 PreToolUse 完整参数改写、结构化提问、任务清单、流式 Markdown、命令/Skill 首词补全、正文文件引用与路径补全、会话内 effort、会话命名、按标题查找及聊天内会话恢复、Provider 缓存、手动/自动压缩、双 Provider 推理阅读及启动推理/display/输出配置；本地 Plugin 技能包及受限 importer 已交付；仍缺少 effort 之外的运行中推理切换、跨 Provider fork、后台进程、插件可执行贡献/MCP、Subagent 与完整发布矩阵。
+实现与测试逐项核对见[当前能力清单](capability-status.md)。P0–P8 是并行推进的阶段目标，不以某个后期切片交付推定整个阶段完成。当前已交付十项模型工具、本地 Skills、同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact/SessionStart、三能力 PreToolUse 完整参数改写、结构化提问、任务清单、流式 Markdown、命令/Skill 首词补全、正文文件引用与路径补全、会话内 effort、会话命名、按标题查找、聊天内会话恢复、同 Provider 最新及历史回合分支、Provider 缓存、手动/自动压缩、双 Provider 推理阅读及启动推理/display/输出配置；本地 Plugin 技能包及受限 importer 已交付；仍缺少 effort 之外的运行中推理切换、跨 Provider fork、后台进程、插件可执行贡献/MCP、Subagent 与完整发布矩阵。
 
 下文“工作内容/交付物/验收标准”保留阶段的完整目标；已完成状态以本总览、各节进度和当前能力清单为准。所有迁移、历史 reader 或兼容窗口必须先有用户明确要求及新 OpenSpec，不因路线图提到未来发布而预先授权。
 
@@ -466,9 +468,9 @@ Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘�
 
 ## 9. P5：Claude 风格 TUI
 
-### 9.0 当前进度（2026-11-19）
+### 9.0 当前进度（2026-11-24）
 
-已交付多行/字素输入、同轮追加与返还、流式 Markdown 与代码/表格/原文阅读、紧凑工具主线及 Ctrl+O 分页详情、完整 Patch/Write/Exec 审批、结构化问卷、Hook 信任、context/cache 面板、当前任务清单以及启动和聊天内恢复选择器与会话分支。当前本地命令为 `/cache`、`/context`、`/compact`、`/effort`、`/skills`、`/hooks`、`/plugins`、`/tasks`、`/rename`、`/resume`、`/branch`、`/fork`、`/plan`，以及 Skill 显式入口。命令/Skill 首词补全和被动 thinking/summary 活动提示及 Ctrl+O 阅读已交付；启动推理配置、会话内 effort 与 /context 设置已实现；其他推理字段切换、历史切点选择、后台任务 UI、cost/综合状态面板与其余命令尚未实现。
+已交付多行/字素输入、同轮追加与返还、流式 Markdown 与代码/表格/原文阅读、紧凑工具主线及 Ctrl+O 分页详情、完整 Patch/Write/Exec 审批、结构化问卷、Hook 信任、context/cache 面板、当前任务清单、启动和聊天内恢复选择器及会话分支。当前本地命令为 `/cache`、`/context`、`/compact`、`/effort`、`/skills`、`/hooks`、`/plugins`、`/tasks`、`/rename`、`/resume`、`/branch`、`/fork`、`/rewind`、`/plan`，以及 Skill 显式入口。命令/Skill 首词补全和被动 thinking/summary 活动提示及 Ctrl+O 阅读已交付；启动推理配置、会话内 effort 与 /context 设置已实现；其他推理字段切换、后台任务 UI、cost/综合状态面板与其余命令尚未实现。
 
 补全复用冻结 Skill 展示列表、字素编辑和既有命令提交；Tab 只填入、Skill Enter 只选择、Esc 优先关闭，粘贴不接受候选。验收覆盖双 Provider 原生请求/恢复/缓存等价、固定尺寸和 Darwin PTY，见 [验收记录](../../openspec/changes/archive/2026-11-06-add-command-and-skill-completion/verification.md)。该首词切片仍不处理普通参数值；正文工作区 @ 文件引用已由独立切片实现，文件范围、读取、索引及恢复的边界见下文。
 
@@ -487,7 +489,7 @@ Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘�
 
 ### 9.3 工作内容
 
-2026-09-19 已先交付验证 RuntimeEvent 边界的薄切片；2026-10-11 又交付了与 Patch candidate 精确关联的 diff approval overlay，包含默认 No、一次/本 Runtime session 允许、拒绝反馈、小窗口滚动、按键隔离和固定 snapshot。它不改变 P5 的完整范围，2026-10-28 已补充多行 composer、字素编辑、显式 decoded paste、有界 recall 与提交拒绝恢复。本地 slash commands、通用工具主线/详情、Markdown 与启动 resume picker 已有各自切片；命令/Skill 首词补全由 `add-command-and-skill-completion` 交付；被动 thinking/summary 阅读已由 `add-reasoning-transcript` 交付；启动推理配置已由 `add-provider-reasoning-controls` 交付；effort 之外的运行中推理切换与历史切点选择仍是后续目标。
+2026-09-19 已先交付验证 RuntimeEvent 边界的薄切片；2026-10-11 又交付了与 Patch candidate 精确关联的 diff approval overlay，包含默认 No、一次/本 Runtime session 允许、拒绝反馈、小窗口滚动、按键隔离和固定 snapshot。它不改变 P5 的完整范围，2026-10-28 已补充多行 composer、字素编辑、显式 decoded paste、有界 recall 与提交拒绝恢复。本地 slash commands、通用工具主线/详情、Markdown 与启动 resume picker 已有各自切片；命令/Skill 首词补全由 `add-command-and-skill-completion` 交付；被动 thinking/summary 阅读已由 `add-reasoning-transcript` 交付；启动推理配置已由 `add-provider-reasoning-controls` 交付。历史分支支持当前线程段的已收口回合切点，effort 之外的运行中推理切换仍是后续目标。
 
 - composer、多行输入、paste 保护、历史、补全和 slash command。
 - assistant commentary/final、thinking/reasoning 折叠。

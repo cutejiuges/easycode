@@ -1,6 +1,6 @@
 # 当前能力与实现边界
 
-> 核对日期：2026-11-24。基线：当前仓库实现及已同步主规格，包含交互式 Plan Mode 与方案审阅、本地 Plugin 技能包、启动推理控制、会话内 effort 选择及本轮回归修复、结构化用户提问、PreToolUse 参数改写、PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact/SessionStart Hook、命令/Skill 首词补全、工作区文件引用、任务清单、会话命名、聊天内会话恢复、同 Provider 会话分支与双 Provider 被动推理阅读。
+> 核对日期：2026-11-24。基线：当前仓库实现及已同步主规格，包含交互式 Plan Mode 与方案审阅、本地 Plugin 技能包、启动推理控制、会话内 effort 选择及本轮回归修复、结构化用户提问、PreToolUse 参数改写、PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact/SessionStart Hook、命令/Skill 首词补全、工作区文件引用、任务清单、会话命名、聊天内会话恢复、同 Provider 最新及历史回合分支与双 Provider 被动推理阅读。
 > 本文记录当前代码可执行的能力；[产品 Roadmap](product-roadmap.md)保留阶段目标与剩余工作。已接受的 ADR 和归档 change 记录各自当时的决策，不能单独作为现有功能清单。
 
 ## 用户入口
@@ -11,8 +11,9 @@
 | CLI | 默认 TUI、`--version`、`--config`、`--plugin-dir PATH`、`--resume ID`、`--continue`、`--print`、`--json`、`--json --input-format stream-json` | `--resume` 与 `--continue` 互斥；没有独立的命令行分支创建入口、`doctor`、`provider probe` 或模型切换命令；`cmd/easycode/*_test.go` |
 | 会话发现与切换 | `sessions list [--all] [--limit N]`、`resume [--all] [--config PATH]` 启动选择器、聊天内 `/resume [thread-id]` | 离线 list 无需模型配置，选择器需要配置及终端。标题纳入最近至多 200 条元数据搜索，预览从日志读取已验证标题。聊天内要求空闲且目录与配置兼容，可用完整 ID 直达。见 `internal/app/picker_handoff_test.go` 与 `scripts/session-picker-smoke.py` |
 | 会话分支 | 空闲时用 `/branch [标题]` 或 `/fork [标题]` 从最新已提交历史创建并进入分支，在 `/resume`、会话列表和 `--continue` 使用独立 ThreadID | 同一工作区、Provider、wire 和模型。保留有效原生窗口、任务清单与历史工具预览。原文访问、写入证据和临时批准按当前线程重新建立。 [分支规格](../../openspec/specs/session/branch/spec.md) |
+| 历史回合分支 | 空闲时用 `/rewind` 浏览最近最多 200 个合格回合，确认后从该轮开始前创建并进入分支，首条初始输入回填为临时草稿。原样发送需单独确认 | 只选当前线程段已收口且有初始输入的回合，切点前须有已提交输入。分支使用当前文件。首词未改时保留正文或显式 Skill 意图，提交时按当前来源准备。 [分支规格](../../openspec/specs/session/branch/spec.md) · [终端回归](../../internal/tui/rewind_test.go) |
 | 会话命名 | 空闲时用 `/rename <名称>` 保存或用裸命令打开预填编辑框。标题 Sync 后确认，按最新有效事实恢复 | 单行 256 UTF-8 bytes，允许重名。改名计入最近活动，可影响 `--continue`。标题仅供宿主展示和发现，测试见 `internal/app/session_title_test.go` 与 `scripts/session-titles-smoke.py` |
-| 本地 slash commands | `/cache`、`/context`、`/compact [instructions]`、`/effort [level|auto|reset]`、`/skills`、`/hooks`、`/plugins`、`/tasks`、`/rename [标题]`、`/resume [thread-id]`、`/branch [标题]`、`/fork [标题]`、`/plan`、`/plan off`、`/plan review`，以及可调用 Skill 的 `/<name>` / `$name` | TUI 命令与 Skill 附件入口，支持 `/` / `$` 首词补全及冻结来源筛选；stream-json 使用独立 typed 控制消息，普通文字不执行 TUI 命令。`/help`、`/model`、`/mcp`、`/cost` 尚未实现 |
+| 本地 slash commands | `/cache`、`/context`、`/compact [instructions]`、`/effort [level|auto|reset]`、`/skills`、`/hooks`、`/plugins`、`/tasks`、`/rename [标题]`、`/resume [thread-id]`、`/branch [标题]`、`/fork [标题]`、`/rewind`、`/plan`、`/plan off`、`/plan review`，以及可调用 Skill 的 `/<name>` / `$name` | TUI 命令与 Skill 附件入口，支持 `/` / `$` 首词补全及冻结来源筛选；stream-json 使用独立 typed 控制消息，普通文字不执行 TUI 命令。`/help`、`/model`、`/mcp`、`/cost` 尚未实现 |
 | 交互式 Plan Mode | 空闲时用 `/plan`、`/plan off` 或 `Shift+Tab` 切换。双 Provider 冻结七项只读规划工具，完整终结方案可用 `/plan review` 审阅并携原文进入同一会话的 Default 实施回合 | 方案确认与工具审批独立，恢复从 `Default` 开始，历史方案可读。见 [运行时规格](../../openspec/specs/runtime/plan-mode/spec.md) 与 `scripts/plan-mode-smoke.py` |
 | 命令/Skill 补全 | 确定性筛选、上下键选择、Tab 填入、内置 Enter 执行及 Skill Enter 只填入；Esc 关闭、paste 抑制、窄屏停用 | 命令/Skill 仅首词名称；正文文件引用使用独立来源，不含普通参数值补全；`internal/tui/completion*_test.go`、`internal/app/completion_e2e_test.go`；候选不进入 Session 或缓存前缀 |
 | 工作区文件引用 | 正文光标处 @ 路径补全、引号及行范围、提交时冻结、独立摘要/分页详情、双 Provider 原生恢复 | 8 引用、16/64 MiB 源读取、64/512 KiB 包装；候选会话索引 50000 项/16 MiB、渐进代次与分层 ignore、单 worker/准备 gate；不授予工具权限；`internal/app/file*_test.go`、`internal/tui/file*_test.go`、`scripts/file-mentions-smoke.py` |
@@ -53,7 +54,7 @@ Stop 已支持精确答复的完成前检查、同回合最多两次续轮、累
 | 缓存 | Anthropic disabled/5m/1h 显式断点；OpenAI omit/thread key；可选 WebSocket durable 前缀增量与受限回退；`/cache`/`cache.query` | 费用/价格、长期累计遥测、动态 plugin/MCP 目录策略；不能保证服务端命中 |
 | Usage | raw usage 保留于各 Provider native facts；共享五项三态指标及 turn 聚合；两家普通 sample 在恢复和离线预览时按原生证据对账；最近 sample/turn/summary 有界缓存观测；Anthropic thinking_tokens 为 known/unknown，output 已包含 thinking | 实时独立 usage 流、cost 面板、配额与完整 metrics/tracing |
 | 压缩 | 手动 `/compact`、显式窗口下阈值自动摘要、独立 CompactionID/checkpoint、失败保留旧窗口、完整历史可读、取消和恢复、同步 PreCompact 与 PostCompact | 删除旧 JSONL、跨 Provider fork、通用分块摘要 |
-| TUI | 流式 Markdown、代码/表格/原文阅读、resize/窄屏/NO_COLOR、普通批准/问卷/Hook 审查、紧凑工具主线、Ctrl+O 分页详情、context/cache、会话恢复与分支、命令/Skill 与正文文件补全、thinking/summary 活动提示及 Ctrl+O 阅读、冻结设置查询与有界滚动 | effort 之外的运行中推理切换、历史任意切点分支、后台任务 UI、通用命令管理面板 |
+| TUI | 流式 Markdown、代码/表格/原文阅读、resize/窄屏/NO_COLOR、普通批准/问卷/Hook 审查、紧凑工具主线、Ctrl+O 分页详情、context/cache、会话恢复及最新和历史回合分支、命令/Skill 与正文文件补全、thinking/summary 活动提示及 Ctrl+O 阅读、冻结设置查询与有界滚动 | effort 之外的运行中推理切换、跨祖先段或回合内切点、后台任务 UI、通用命令管理面板 |
 | 输出保存 | Exec stdout/stderr 与搜索连续前缀、授权 descriptor、ReadArtifact、独立宿主详情查询；恢复不重读 artifact | Read/Patch/Write/Skill/Question 的通用自动 artifact、自动过期、远程 artifact 服务 |
 
 补全验证入口为 `internal/tui/completion*_test.go`、`internal/app/completion_e2e_test.go` 与 `scripts/completion-smoke.py`。候选状态只在 TUI 内存；正式提交仍执行 Skill 来源校验及既有输入生命周期，手输/补全/恢复保持双 Provider 请求和缓存等价。

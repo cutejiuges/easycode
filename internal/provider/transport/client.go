@@ -37,7 +37,7 @@ type Client struct {
 	closeErr  error
 }
 
-// SSERequest 描述一条返回 SSE raw body 的 HTTP 请求。
+// SSERequest 描述一条返回 SSE 流的 HTTP 请求。
 type SSERequest struct {
 	Method  string
 	Path    string
@@ -141,14 +141,20 @@ func (client *Client) StreamSSE(
 	if err != nil {
 		return nil, err
 	}
+	requestContext, cancelRequest := context.WithCancel(ctx)
 	handedOff := false
+	var response *resty.Response
 	defer func() {
 		if !handedOff {
+			cancelRequest()
+			if response != nil && response.Body != nil {
+				_ = response.Body.Close()
+			}
 			finished()
 		}
 	}()
 	restyRequest := client.http.R().
-		SetContext(ctx).
+		SetContext(requestContext).
 		SetResponseDoNotParse(true).
 		SetRetryCount(0).
 		SetBody(bytes.NewReader(body))
@@ -168,20 +174,19 @@ func (client *Client) StreamSSE(
 		restyRequest.SetHeader("Accept", "text/event-stream")
 	}
 
-	response, err := restyRequest.Execute(method, resolvedURL)
+	response, err = restyRequest.Execute(method, resolvedURL)
 	if err != nil {
 		return nil, fmt.Errorf("open streaming request: %w", err)
 	}
-	if response.RawResponse == nil || response.RawResponse.Body == nil {
+	if response == nil || response.Body == nil {
 		return nil, fmt.Errorf("open streaming request: response body is unavailable")
 	}
 	if response.StatusCode() < http.StatusOK || response.StatusCode() >= http.StatusMultipleChoices {
-		_ = response.RawResponse.Body.Close()
 		return nil, fmt.Errorf("streaming request failed with HTTP status %d", response.StatusCode())
 	}
 
 	handedOff = true
-	return superviseSSE(ctx, response.RawResponse.Body, normalizeOptions(options), finished), nil
+	return superviseSSE(ctx, response.Body, normalizeOptions(options), cancelRequest, finished), nil
 }
 
 func parseBaseURL(rawURL string) (*url.URL, error) {

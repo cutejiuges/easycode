@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -323,6 +324,7 @@ type ReplayPlan struct {
 	Repair                  RepairReport
 	taskProgress            replayedTaskProgress
 	hasCommittedInput       bool
+	historical              *historicalCutCollector
 }
 
 // ReplayMetadata 是 Catalog 从完整语法校验中取得的只读元数据。
@@ -356,6 +358,15 @@ func (plan *replayAccumulator) recordStop(stop *ReplayedStop) {
 	}
 }
 
+func (plan *replayAccumulator) recordClosedTurn(turnID domain.TurnID, state ReplayedTurnState) {
+	if plan.projectHistory {
+		plan.Turns = append(plan.Turns, ReplayedTurn{TurnID: turnID, State: state})
+	}
+	if plan.historical != nil {
+		plan.historical.finish()
+	}
+}
+
 // ReplayPlanner 在 Loader 之后校验强类型 Session lifecycle。
 type ReplayPlanner struct{}
 
@@ -365,13 +376,22 @@ func NewReplayPlanner() *ReplayPlanner {
 }
 
 // Plan 校验 metadata cardinality、required placement 和当前文本 turn 状态机。
-func (*ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
-	return replay(loaded, true)
+func (planner *ReplayPlanner) Plan(loaded LoadResult) (ReplayPlan, error) {
+	return planner.PlanContext(context.Background(), loaded)
+}
+
+// PlanContext 校验并回放 Session，在批次之间检查取消。
+func (*ReplayPlanner) PlanContext(ctx context.Context, loaded LoadResult) (ReplayPlan, error) {
+	return replay(ctx, loaded, true)
 }
 
 // PlanMetadata 使用相同验证语法，省略历史展示与任务快照的物化。
 func (*ReplayPlanner) PlanMetadata(loaded LoadResult) (ReplayMetadata, error) {
-	plan, err := replay(loaded, false)
+	return planMetadata(context.Background(), loaded)
+}
+
+func planMetadata(ctx context.Context, loaded LoadResult) (ReplayMetadata, error) {
+	plan, err := replay(ctx, loaded, false)
 	if err != nil {
 		return ReplayMetadata{}, err
 	}
@@ -381,11 +401,14 @@ func (*ReplayPlanner) PlanMetadata(loaded LoadResult) (ReplayMetadata, error) {
 	}, nil
 }
 
-func replay(loaded LoadResult, projectHistory bool) (ReplayPlan, error) {
+func replay(ctx context.Context, loaded LoadResult, projectHistory bool) (ReplayPlan, error) {
+	if err := contextError(ctx); err != nil {
+		return ReplayPlan{}, err
+	}
 	if len(loaded.Records) < 2 {
 		return ReplayPlan{}, replayCorrupt("initial metadata batch is missing")
 	}
-	batches, err := replayBatches(loaded.Records)
+	batches, err := replayBatches(ctx, loaded.Records)
 	if err != nil {
 		return ReplayPlan{}, err
 	}
@@ -416,6 +439,9 @@ func replay(loaded LoadResult, projectHistory bool) (ReplayPlan, error) {
 	if projectHistory {
 		plan.taskProgress.state = domain.NewNoTaskProgress()
 		taskProgress = &plan.taskProgress
+		if loaded.historical != nil {
+			plan.historical = &historicalCutCollector{snapshot: loaded.historical}
+		}
 	}
 	var active *activeReplayTurn
 	compaction := compactionReplay{seen: make(map[domain.CompactionID]struct{})}
@@ -423,6 +449,9 @@ func replay(loaded LoadResult, projectHistory bool) (ReplayPlan, error) {
 	seenInvocations := make(map[tool.InvocationID]struct{})
 	seenInputs := make(map[domain.InputID]struct{})
 	for _, batch := range batches[1:] {
+		if err := contextError(ctx); err != nil {
+			return ReplayPlan{}, err
+		}
 		for _, record := range batch {
 			if record.EventKind == EventThreadForked {
 				if len(batch) != 1 || record.SessionID != identity.SessionID {
@@ -492,9 +521,7 @@ func replay(loaded LoadResult, projectHistory bool) (ReplayPlan, error) {
 				return ReplayPlan{}, err
 			}
 			if terminal != "" {
-				if projectHistory {
-					plan.Turns = append(plan.Turns, ReplayedTurn{TurnID: active.turnID, State: terminal})
-				}
+				plan.recordClosedTurn(active.turnID, terminal)
 				active = nil
 			}
 			if handled {
@@ -531,6 +558,9 @@ func replay(loaded LoadResult, projectHistory bool) (ReplayPlan, error) {
 			if _, decodeErr := DecodeTurnStartedPayload(batch[0]); decodeErr != nil {
 				return ReplayPlan{}, replayCorrupt("turn_started payload is invalid")
 			}
+			if plan.historical != nil {
+				plan.historical.begin(batch[0], plan.hasCommittedInput)
+			}
 			active = &activeReplayTurn{
 				turnID: batch[0].TurnID, startSequence: batch[0].Sequence, lastSequence: batch[0].Sequence,
 				providerCallIDs: make(map[tool.ProviderCallID]struct{}),
@@ -556,9 +586,7 @@ func replay(loaded LoadResult, projectHistory bool) (ReplayPlan, error) {
 				return ReplayPlan{}, err
 			}
 			if completed {
-				if projectHistory {
-					plan.Turns = append(plan.Turns, ReplayedTurn{TurnID: active.turnID, State: ReplayedTurnCompleted})
-				}
+				plan.recordClosedTurn(active.turnID, ReplayedTurnCompleted)
 				active = nil
 			} else if projectHistory && active.pendingCalls != nil {
 				toolSamples = append(toolSamples, replayedToolSample{nativeSequence: batch[0].Sequence, calls: active.pendingCalls})
@@ -604,9 +632,7 @@ func replay(loaded LoadResult, projectHistory bool) (ReplayPlan, error) {
 			if decodeErr != nil {
 				return ReplayPlan{}, replayCorrupt("turn_failed payload is invalid")
 			}
-			if projectHistory {
-				plan.Turns = append(plan.Turns, ReplayedTurn{TurnID: active.turnID, State: ReplayedTurnFailed})
-			}
+			plan.recordClosedTurn(active.turnID, ReplayedTurnFailed)
 			active = nil
 		default:
 			return ReplayPlan{}, replayCorrupt("session record placement is invalid")
@@ -1118,9 +1144,12 @@ func validateMetadata(
 	return nil
 }
 
-func replayBatches(records []Record) ([][]Record, error) {
+func replayBatches(ctx context.Context, records []Record) ([][]Record, error) {
 	batches := make([][]Record, 0)
 	for index := 0; index < len(records); {
+		if err := contextError(ctx); err != nil {
+			return nil, err
+		}
 		size := int(records[index].BatchSize)
 		if size <= 0 || index+size > len(records) {
 			return nil, replayCorrupt("session batch is incomplete")

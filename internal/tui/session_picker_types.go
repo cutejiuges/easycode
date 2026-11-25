@@ -42,16 +42,39 @@ const (
 	PickerResume
 	PickerOpen
 	PickerBranch
+	PickerRewind
 )
+
+// RewindSelection 标识所选的完整回合及其首条已提交输入。
+type RewindSelection struct {
+	TurnID  domain.TurnID
+	InputID domain.InputID
+}
+
+// RewindEntry 是历史选择器的有界候选投影。
+type RewindEntry struct {
+	RewindSelection
+	Number            uint64
+	Summary           string
+	HasMultipleInputs bool
+}
+
+// RewindDraft 是激活历史分支后交付的原始输入及显式 Skill 标记。
+type RewindDraft struct {
+	Text     string
+	HasSkill bool
+}
 
 // PickerRequest 将请求身份、范围和目标绑定在一起。
 type PickerRequest struct {
-	ID        uint64
-	Operation PickerOperation
-	All       bool
-	Source    domain.ThreadID
-	ThreadID  domain.ThreadID
-	Title     domain.SessionTitle
+	ID              uint64
+	Operation       PickerOperation
+	All             bool
+	Source          domain.ThreadID
+	ThreadID        domain.ThreadID
+	Title           domain.SessionTitle
+	BrowseID        uint64
+	RewindSelection RewindSelection
 }
 
 // PickerStage 区分查询结果、待接管候选和宿主完成后的交付。
@@ -87,6 +110,8 @@ type PickerResult struct {
 	DirectoryMismatch bool
 	BranchThreadID    domain.ThreadID
 	BranchPublication BranchPublication
+	RewindEntries     []RewindEntry
+	RewindDraft       RewindDraft
 }
 
 // PickerHost 只向界面提供操作接收、结果和资源接收确认。

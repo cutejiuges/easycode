@@ -118,7 +118,7 @@ func TestInChatCommandsKeepPreCompactCancellationInChat(t *testing.T) {
 	chat.prepareCompaction(id, domain.ManualCompactionScope())
 	chat.compaction.stage = compactionChecking
 	model, host := resumeTestShell(chat)
-	for _, draft := range []string{"/resume " + string(resumeThreadB), "/rename New title", "/branch New branch"} {
+	for _, draft := range []string{"/resume " + string(resumeThreadB), "/rename New title", "/branch New branch", "/rewind"} {
 		model.chat.composer.clear()
 		model = resumeType(model, draft)
 		updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})

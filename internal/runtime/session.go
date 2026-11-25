@@ -18,6 +18,7 @@ type ChatSession struct {
 	started      bool
 	closed       bool
 	cancel       context.CancelFunc
+	lifetimeDone <-chan struct{}
 	runCancelled <-chan struct{}
 	stop         chan struct{}
 	done         chan struct{}
@@ -138,6 +139,8 @@ func (session *ChatSession) Start(ctx context.Context) error {
 	session.started = true
 	session.loop = loop
 	session.cancel = cancel
+	// 父生命周期的取消可以早于子循环收到取消。
+	session.lifetimeDone = ctx.Done()
 	session.runCancelled = runContext.Done()
 	session.mu.Unlock()
 	go func() {

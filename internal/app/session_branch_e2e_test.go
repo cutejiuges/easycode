@@ -52,9 +52,9 @@ func TestSessionBranchPreservesNativeContinuation(t *testing.T) {
 					return
 				}
 				w.Header().Set("Content-Type", "text/event-stream")
-				if n == 3 || n == 7 {
+				if n == 3 || n == 5 || n == 9 {
 					var stream bytes.Buffer
-					serveWriteScenarioSample(&stream, family, n, []writeScenarioCall{taskScenarioCall(family, n == 7)})
+					serveWriteScenarioSample(&stream, family, n, []writeScenarioCall{taskScenarioCall(family, n != 3)})
 					_, _ = w.Write(withReasoningFixture(family, stream.Bytes()))
 					return
 				}
@@ -79,23 +79,35 @@ func TestSessionBranchPreservesNativeContinuation(t *testing.T) {
 			}
 			confirmTitle(t, ctx, source.session, "branch-rename-source", "Original")
 			ordinaryContext := branchContextFixture(t, ctx, source)
-			setAppWorkMode(t, ctx, source, domain.WorkModePlan, "branch-source-plan")
-			appEffortSet(t, source, "branch-source-effort", appEffortChoice(t, "low"))
 			sourcePath, err := source.service.repository.JournalPath(source.identity.ThreadID)
 			if err != nil {
 				t.Fatal(err)
 			}
+			retained := readSwitchJournal(t, sourcePath)
+			const rewindPrompt = "excluded source alternative"
+			appEffortTurn(t, source, rewindPrompt, false)
+			waitCompactionIdle(t, source)
+			if got := switchTaskSnapshot(t, ctx, source); tasks.Equal(got) {
+				t.Fatal("source fixture did not change tasks after the cut")
+			}
+			confirmTitle(t, ctx, source.session, "branch-rename-later", "Later title")
+			setAppWorkMode(t, ctx, source, domain.WorkModePlan, "branch-source-plan")
+			appEffortSet(t, source, "branch-source-effort", appEffortChoice(t, "low"))
 			durable := readSwitchJournal(t, sourcePath)
-			if err := os.Remove(file); err != nil {
+			const currentFile = "CHANGED_AFTER_FROZEN_READ\n"
+			if err := os.WriteFile(file, []byte(currentFile), 0600); err != nil {
 				t.Fatal(err)
 			}
-			for range 4 {
+			for range 6 {
 				<-requests
 			}
-			branch := activateBranchFixture(t, ctx, owner, source, candidates, "Alternative")
+			branch := activateHistoricalBranchFixture(t, ctx, owner, source, candidates, rewindPrompt)
 			if branch.identity.SessionID != source.identity.SessionID || branch.identity.ThreadID == source.identity.ThreadID ||
-				count.Load() != 4 || !bytes.Equal(readSwitchJournal(t, sourcePath), durable) {
+				count.Load() != 6 || !bytes.Equal(readSwitchJournal(t, sourcePath), durable) {
 				t.Fatal("branch identity, source bytes or request count differ")
+			}
+			if current, err := os.ReadFile(file); err != nil || string(current) != currentFile {
+				t.Fatal("branch changed workspace bytes", err)
 			}
 			if got := switchTaskSnapshot(t, ctx, branch); !tasks.Equal(got) {
 				t.Fatal("branch lost inherited task state or its durable source")
@@ -109,14 +121,14 @@ func TestSessionBranchPreservesNativeContinuation(t *testing.T) {
 			}
 			seed := readSwitchJournal(t, path)
 			last := switchJournalRecord(t, seed, false)
-			if !bytes.HasPrefix(seed, durable) || last.EventKind != session.EventThreadForked ||
-				last.Sequence != switchJournalRecord(t, durable, false).Sequence+1 || last.ParentThreadID != source.identity.ThreadID {
+			if !bytes.HasPrefix(seed, retained) || last.EventKind != session.EventThreadForked ||
+				last.Sequence != switchJournalRecord(t, retained, false).Sequence+1 || last.ParentThreadID != source.identity.ThreadID {
 				t.Fatal("branch did not seal the exact committed source prefix")
 			}
 			// 使用同一分支 ID 的独立副本比对续写，副本所在仓库没有源 journal。
 			copyRoot, _ := installThreadFixture(t, seed, branch.identity.ThreadID)
 			preview, _, err := previewSession(ctx, copyRoot, branch.identity.ThreadID, defaultPreviewDependencies())
-			if err != nil || preview.Title != "Alternative" || preview.ParentThreadID != source.identity.ThreadID || len(preview.Messages) < 4 {
+			if err != nil || preview.Title != "Original (Branch)" || preview.ParentThreadID != source.identity.ThreadID || len(preview.Messages) < 4 {
 				t.Fatalf("independent branch preview failed: %+v %v", preview, err)
 			}
 			var catalogOut, catalogErr bytes.Buffer
@@ -126,7 +138,7 @@ func TestSessionBranchPreservesNativeContinuation(t *testing.T) {
 			})
 			if outcome.ExitCode() != 0 || catalogErr.Len() != 0 ||
 				!bytes.Contains(catalogOut.Bytes(), []byte("Branch of: "+source.identity.ThreadID)) ||
-				!bytes.Contains(catalogOut.Bytes(), []byte("Title: Alternative")) {
+				!bytes.Contains(catalogOut.Bytes(), []byte("Title: Original (Branch)")) {
 				t.Fatalf("branch missing in rebuilt catalog: %s %s", catalogOut.String(), catalogErr.String())
 			}
 			restarted, err := openChatResources(ctx, cfg, copyRoot, string(branch.identity.ThreadID), workspace)
@@ -149,7 +161,7 @@ func TestSessionBranchPreservesNativeContinuation(t *testing.T) {
 				waitCompactionIdle(t, current)
 			}
 			left, right := <-requests, <-requests
-			if count.Load() != 6 || !bytes.Equal(left, right) {
+			if count.Load() != 8 || !bytes.Equal(left, right) || bytes.Contains(left, []byte(rewindPrompt)) {
 				t.Fatal("live and independently resumed branch produced different canonical requests")
 			}
 			assertRequestFingerprintEqual(t, left, right)
@@ -189,7 +201,7 @@ func TestSessionBranchPreservesNativeContinuation(t *testing.T) {
 			if _, err := assembleChatModel(ctx, reopened); err != nil {
 				t.Fatal(err)
 			}
-			if got := switchTaskSnapshot(t, ctx, reopened); !updated.Equal(got) || count.Load() != 9 {
+			if got := switchTaskSnapshot(t, ctx, reopened); !updated.Equal(got) || count.Load() != 11 {
 				t.Fatal("branch compaction lost task progress or ran a model during recovery")
 			}
 			if !bytes.Equal(readSwitchJournal(t, sourcePath), durable) || reopened.title != "Renamed alternative" {
@@ -197,7 +209,13 @@ func TestSessionBranchPreservesNativeContinuation(t *testing.T) {
 			}
 			if family == domain.ProviderOpenAI {
 				closeResumeTestResources(t, restarted)
+				for range 3 {
+					<-requests
+				}
 				checkBranchHeadlessContinue(t, ctx, workspace, copyRoot, server.URL, branch.identity)
+				if !bytes.Contains(<-requests, []byte(`"/rewind"`)) {
+					t.Fatal("headless continuation did not forward the literal prompt")
+				}
 			}
 		})
 	}
@@ -216,7 +234,7 @@ func checkBranchHeadlessContinue(t *testing.T, ctx context.Context, workspace, r
 	}
 	var output bytes.Buffer
 	outcome := Run(ctx, Options{
-		Mode: headless.ModeJSON, Prompt: "headless branch continuation", ContinueSession: true,
+		Mode: headless.ModeJSON, Prompt: "/rewind", ContinueSession: true,
 		ConfigPath: configPath, SessionDataRoot: root, SessionCatalogPath: filepath.Join(filepath.Dir(root), "catalog.json"), Output: &output,
 	})
 	if outcome.ExitCode() != 0 {
@@ -225,7 +243,7 @@ func checkBranchHeadlessContinue(t *testing.T, ctx context.Context, workspace, r
 	started := decodeThreadStarted(t, output.String())
 	if !started.Resumed || started.ThreadID != identity.ThreadID || started.SessionID != identity.SessionID ||
 		bytes.Contains(output.Bytes(), []byte("parent_thread_id")) || bytes.Contains(output.Bytes(), []byte("ARCHIVE_BEFORE_SWITCH")) ||
-		!bytes.Contains(output.Bytes(), []byte("answer-10")) {
+		!bytes.Contains(output.Bytes(), []byte("answer-12")) {
 		t.Fatalf("headless continuation changed the external stream or replayed history: %s", output.String())
 	}
 }
@@ -249,10 +267,15 @@ func startBranchFixture(t *testing.T, ctx context.Context, cfg config.Config, pa
 		t.Fatal(err)
 	}
 	owner := newPickerOwner(newPickerExecutor(cfg, paths, workspace, nil, environment))
+	binding, err := bindProvider(cfg.Provider.Family)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner.rewind = newRewindPickerExecutor(binding, cfg.Provider.Model, workspace)
 	executor := newBranchPickerExecutor(cfg, paths, workspace, nil, environment)
 	candidates := make(chan *chatResources, 1)
-	owner.branch = func(operation, lifetime context.Context, request tui.PickerRequest, source *chatResources, admit func(domain.ThreadID) bool) pickerExecution {
-		result := executor(operation, lifetime, request, source, admit)
+	owner.branch = func(operation, lifetime context.Context, request tui.PickerRequest, source *chatResources, selection *rewindCandidate, admit func(domain.ThreadID) bool) pickerExecution {
+		result := executor(operation, lifetime, request, source, selection, admit)
 		candidates <- result.resources
 		return result
 	}
@@ -267,14 +290,32 @@ func startBranchFixture(t *testing.T, ctx context.Context, cfg config.Config, pa
 	return owner, source, candidates
 }
 
-func activateBranchFixture(t *testing.T, ctx context.Context, owner *pickerOwner, source *chatResources, candidates <-chan *chatResources, title domain.SessionTitle) *chatResources {
+func activateHistoricalBranchFixture(t *testing.T, ctx context.Context, owner *pickerOwner, source *chatResources, candidates <-chan *chatResources, prompt string) *chatResources {
 	t.Helper()
-	request := tui.PickerRequest{ID: 1, Operation: tui.PickerBranch, Source: source.identity.ThreadID, Title: title}
+	browse := tui.PickerRequest{ID: 1, Operation: tui.PickerRewind, Source: source.identity.ThreadID}
+	if !owner.Submit(browse) {
+		t.Fatal("rewind browse admission failed")
+	}
+	list := waitSwitchResult(t, ctx, owner)
+	if list.Request != browse || list.Stage != tui.PickerCompleted || list.Error != "" || len(list.RewindEntries) == 0 {
+		t.Fatalf("rewind list failed: %+v", list)
+	}
+	entry := list.RewindEntries[len(list.RewindEntries)-1]
+	request := tui.PickerRequest{ID: 2, Operation: tui.PickerBranch, Source: browse.Source, BrowseID: browse.ID, RewindSelection: entry.RewindSelection}
+	branch, activated := finishBranchFixture(t, ctx, owner, request, candidates)
+	if activated.RewindDraft.Text != prompt {
+		t.Fatal("activation did not return the verified prompt")
+	}
+	return branch
+}
+
+func finishBranchFixture(t *testing.T, ctx context.Context, owner *pickerOwner, request tui.PickerRequest, candidates <-chan *chatResources) (*chatResources, tui.PickerResult) {
+	t.Helper()
 	if !owner.Submit(request) {
 		t.Fatal("branch admission failed")
 	}
 	ready := waitSwitchResult(t, ctx, owner)
-	if ready.Request != request || ready.Stage != tui.PickerPrepared || ready.Chat == nil || !owner.Accept(request.ID) {
+	if ready.Request != request || ready.Stage != tui.PickerPrepared || ready.Chat == nil || ready.RewindDraft.Text != "" || !owner.Accept(request.ID) {
 		t.Fatalf("branch not ready: %+v", ready)
 	}
 	activated := waitSwitchResult(t, ctx, owner)
@@ -287,7 +328,7 @@ func activateBranchFixture(t *testing.T, ctx context.Context, owner *pickerOwner
 	if branch == nil || branch.identity.ThreadID != activated.BranchThreadID {
 		t.Fatal("activated branch did not retain the bound resources")
 	}
-	return branch
+	return branch, activated
 }
 
 func branchContextFixture(t *testing.T, ctx context.Context, resources *chatResources) protocol.ContextSnapshotPayload {
@@ -353,7 +394,7 @@ func TestSessionBranchStartsOpenAIWebSocketWithoutSourceCursor(t *testing.T) {
 	if previous := <-requests; !bytes.Contains(previous, []byte(`"previous_response_id":"resp-1"`)) {
 		t.Fatal("source failed to establish an incremental cursor")
 	}
-	branch := activateBranchFixture(t, ctx, owner, source, candidates, "")
+	branch := activateHistoricalBranchFixture(t, ctx, owner, source, candidates, "original follow-up")
 	appEffortTurn(t, branch, "branch question", false)
 	body := <-requests
 	key, _ := domain.ThreadCacheKey(branch.identity.ThreadID)
@@ -361,7 +402,7 @@ func TestSessionBranchStartsOpenAIWebSocketWithoutSourceCursor(t *testing.T) {
 	if connections.Load() != 2 || attempts.Load() != 3 || !bytes.Contains(body, []byte(key)) ||
 		bytes.Contains(body, []byte(old)) || bytes.Contains(body, []byte("previous_response_id")) ||
 		!bytes.Contains(body, []byte("original question")) || !bytes.Contains(body, []byte("answer-1")) ||
-		!bytes.Contains(body, []byte("original follow-up")) || !bytes.Contains(body, []byte("answer-2")) {
+		bytes.Contains(body, []byte("original follow-up")) || bytes.Contains(body, []byte("answer-2")) {
 		t.Fatal("branch did not send a full request over its own connection and cache key")
 	}
 }

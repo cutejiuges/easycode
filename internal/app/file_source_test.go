@@ -12,11 +12,14 @@ import (
 	"easycode/internal/protocol"
 )
 
-type sourceSkillFixture struct{ calls atomic.Int32 }
+type sourceSkillFixture struct {
+	calls      atomic.Int32
+	attachment domain.SkillAttachment
+}
 
 func (s *sourceSkillFixture) Prepare(context.Context, string) (domain.SkillAttachment, bool, error) {
 	s.calls.Add(1)
-	return domain.SkillAttachment{}, false, nil
+	return s.attachment, s.attachment != (domain.SkillAttachment{}), nil
 }
 
 type fileSourceFixture struct {
@@ -134,5 +137,66 @@ func TestFileSourceLifecycleBusyCancellationAndFinalOwnership(t *testing.T) {
 	}
 	if fresh.Start(context.Background()) == nil {
 		t.Fatal("closed source restarted")
+	}
+}
+
+func TestRecalledDraftSkillIntentDoesNotFallBackOrAttachImplicitly(t *testing.T) {
+	ctx := context.Background()
+	files := &fileSourceFixture{contents: map[string]string{"a": "current file contents"}}
+	skills := &sourceSkillFixture{}
+	source, err := newWorkspaceInputSource(files, skills)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := source.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := source.Close(ctx); err != nil {
+			t.Error(err)
+		}
+	})
+	command := func(text string, intent domain.InputSkillIntent) protocol.Command {
+		t.Helper()
+		draft, err := domain.NewInteractiveInputDraftWithSkillIntent(text, intent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		value, err := protocol.NewSubmitConversationalInputDraftCommand("rewind-test", draft)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	required := command("/rewind @a", domain.InputSkillRequired)
+	if required.ValidateForAdmission() == nil {
+		t.Fatal("unprepared required skill passed admission")
+	}
+	if _, err := source.Prepare(ctx, required); err == nil || !strings.Contains(err.Error(), "skill_not_found") || files.reads.Load() != 0 {
+		t.Fatal("unavailable skill fell back to conversational input or triggered file work", err)
+	}
+	skills.attachment, err = domain.NewSkillAttachment(domain.SkillSource{Scope: "user", Directory: "rewind", Kind: "easycode"}, "rewind", strings.Repeat("a", 64), "@a", "current Skill prompt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, scenario := range []struct {
+		text      string
+		intent    domain.InputSkillIntent
+		wantSkill bool
+		wantFiles int
+	}{
+		{"/rewind @a", domain.InputSkillLiteral, false, 1},
+		{"/compact @a", domain.InputSkillLiteral, false, 0},
+		{"/rewind @a", domain.InputSkillRequired, true, 1},
+	} {
+		got, err := source.Prepare(ctx, command(scenario.text, scenario.intent))
+		attachment, present := got.SkillAttachment()
+		if err != nil || got.ValidateForAdmission() != nil || present != scenario.wantSkill ||
+			(present && attachment != skills.attachment) || got.FileAttachments().Len() != scenario.wantFiles || got.Text() != scenario.text {
+			t.Fatalf("wrong preparation for %q/%d: %+v %v", scenario.text, scenario.intent, got, err)
+		}
+	}
+	if skills.calls.Load() != 2 {
+		t.Fatal("literal input reached Skill preparation")
 	}
 }

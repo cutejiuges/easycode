@@ -1,7 +1,9 @@
 package transport
 
 import (
+	"compress/gzip"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -30,13 +32,18 @@ func (body *blockedBody) Read([]byte) (int, error) {
 func (body *blockedBody) Close() error { body.once.Do(func() { close(body.closed) }); return nil }
 
 type fixedRoundTripper struct {
-	body  io.ReadCloser
-	calls atomic.Int32
+	body     io.ReadCloser
+	encoding string
+	calls    atomic.Int32
 }
 
 func (transport *fixedRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
 	transport.calls.Add(1)
-	return &http.Response{StatusCode: 200, Header: make(http.Header), Body: transport.body, Request: request}, nil
+	headers := make(http.Header)
+	if transport.encoding != "" {
+		headers.Set("Content-Encoding", transport.encoding)
+	}
+	return &http.Response{StatusCode: 200, Header: headers, Body: transport.body, Request: request}, nil
 }
 
 func TestCloseCancelsActualBlockedBody(t *testing.T) {
@@ -70,6 +77,29 @@ func TestCloseCancelsActualBlockedBody(t *testing.T) {
 	}
 	if transport.calls.Load() != 1 {
 		t.Fatal("unexpected network call")
+	}
+}
+
+func TestStreamSSEClosesBodyOnGzipDecoderError(t *testing.T) {
+	client, err := NewClient("https://example.invalid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeClient(t, client)
+	closer := &blockedBody{closed: make(chan struct{})}
+	client.HTTP().SetTransport(&fixedRoundTripper{encoding: "gzip", body: struct {
+		io.Reader
+		io.Closer
+	}{strings.NewReader("invalid gzip body"), closer}})
+	request := SSERequest{Path: "responses", Body: mustCanonical(t, struct{}{}, 1024)}
+	stream, err := client.StreamSSE(context.Background(), request, StreamOptions{})
+	if stream != nil || !errors.Is(err, gzip.ErrHeader) {
+		t.Fatalf("invalid gzip started a stream or returned the wrong error: %v", err)
+	}
+	select {
+	case <-closer.closed:
+	default:
+		t.Fatal("transport returned without closing the body after decoder failure")
 	}
 }
 

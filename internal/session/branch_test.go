@@ -221,11 +221,11 @@ func TestBranchCopySeparatesTargetFailureAndUnsafeSource(t *testing.T) {
 	repo := openBranchTestRepository(t, securePathHooks{})
 	content := readCurrentFixture(t, "root.jsonl")
 	source := openBranchTestSource(t, repo, content)
-	if _, err := source.branchPrefix(ctx, shortBranchDestination{}); !errors.Is(err, io.ErrShortWrite) || source.Poisoned() {
+	if _, err := source.branchPrefix(ctx, shortBranchDestination{}, HistoricalCut{}); !errors.Is(err, io.ErrShortWrite) || source.Poisoned() {
 		t.Fatalf("short target write must preserve source: poison=%t, error=%v", source.Poisoned(), err)
 	}
 	cancelled, cancel := context.WithCancel(ctx)
-	if _, err := source.branchPrefix(cancelled, cancelBranchDestination{cancel}); !errors.Is(err, context.Canceled) || source.Poisoned() {
+	if _, err := source.branchPrefix(cancelled, cancelBranchDestination{cancel}, HistoricalCut{}); !errors.Is(err, context.Canceled) || source.Poisoned() {
 		t.Fatalf("cancelled copy must preserve source: poison=%t, error=%v", source.Poisoned(), err)
 	}
 	filename, _ := repo.JournalPath(testThreadID)

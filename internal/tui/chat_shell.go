@@ -22,6 +22,7 @@ type StartupModel struct {
 	config                  PickerConfig
 	chat                    *Model
 	picker                  pickerModel
+	rewind                  rewindPicker
 	phase                   pickerPhase
 	request                 PickerRequest
 	generation              uint64
@@ -109,6 +110,9 @@ func (m StartupModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = max(1, v.Width), max(1, v.Height)
 		m.picker.width, m.picker.height = m.width, m.height
+		if m.rewind.choice == rewindProceed && !m.rewind.confirmFits(m.width, m.height) {
+			m.rewind.choice = rewindBack
+		}
 		if m.chat != nil {
 			return m.updateChat(v)
 		}
@@ -144,6 +148,10 @@ func (m StartupModel) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.rewind.browseID != 0 {
+		m.handleRewindKey(key)
+		return m, nil
+	}
 	action := m.picker.key(key)
 	if action.cancelPreview {
 		m.host.CancelPending()
@@ -173,11 +181,13 @@ func (m *StartupModel) cancelResume() {
 
 func (m StartupModel) receivePicker(result PickerResult) (tea.Model, tea.Cmd) {
 	if result.Fatal {
-		if result.Request.Operation == PickerBranch {
+		if result.Request.Operation == PickerBranch || result.Request.Operation == PickerRewind {
 			if result.Request != m.request || m.phase == shellChat {
 				return m, waitPicker(m.host)
 			}
-			return m.stop(1, m.branchResultNotice(result, result.Error))
+			if result.Request.Operation == PickerBranch {
+				return m.stop(1, m.branchResultNotice(result, result.Error))
+			}
 		}
 		return m.stop(1, result.Error)
 	}
@@ -218,6 +228,8 @@ func (m StartupModel) receivePicker(result PickerResult) (tea.Model, tea.Cmd) {
 		if m.host.Accept(result.Request.ID) {
 			m.phase = shellRetiring
 			m.branchTarget = result.BranchThreadID
+		} else if result.Request.BrowseID != 0 {
+			m.cancelResume()
 		} else {
 			m.phase = shellCancelling
 		}
@@ -235,9 +247,20 @@ func (m StartupModel) receivePicker(result PickerResult) (tea.Model, tea.Cmd) {
 			m.reportedBranchRequestID = result.Request.ID
 		}
 		m.mount(chat, resumed)
+		if result.Request.BrowseID != 0 {
+			if err := m.chat.installRewindDraft(result.RewindDraft); err != nil {
+				return m.stop(1, m.branchResultNotice(result, "The historical draft could not be opened"))
+			}
+		}
 		return m, tea.Batch(waitPicker(m.host), m.activateChat())
 	case PickerCompleted:
 		if m.phase == shellCancelling || m.phase == shellRetiring {
+			break
+		}
+		if result.Request.Operation == PickerRewind {
+			if m.phase == shellOpening {
+				m.loadRewindPicker(result)
+			}
 			break
 		}
 		m.applyPickerResult(result)
@@ -299,7 +322,11 @@ func (m *StartupModel) applyPickerResult(result PickerResult) {
 
 func (m *StartupModel) returnToChat(notice string, directoryMismatch bool) {
 	if notice == "" {
-		notice = "Resume cancelled"
+		if m.request.Operation == PickerRewind {
+			notice = "Rewind cancelled"
+		} else {
+			notice = "Resume cancelled"
+		}
 	}
 	m.chat.returnFromHandoff(m.draft, notice, directoryMismatch)
 	m.finishHandoff()
@@ -316,6 +343,7 @@ func (m *StartupModel) finishHandoff() {
 	m.cancelNotice = ""
 	m.branchTarget = ""
 	m.picker = pickerModel{}
+	m.rewind = rewindPicker{}
 	m.draft = composer{}
 }
 
@@ -334,6 +362,7 @@ func (m *StartupModel) mount(chat Model, resumed bool) {
 	m.generation++
 	m.chat, m.phase = &chat, shellChat
 	m.picker, m.draft = pickerModel{}, composer{}
+	m.rewind = rewindPicker{}
 	m.branchTarget = ""
 }
 

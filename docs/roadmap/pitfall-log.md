@@ -1123,3 +1123,12 @@ Linux CI 回归补充：TurnStarted 只证明回合接纳，不能证明输入�
 已保存的压缩上下文可能位于已闭合工具组或待交付 Stop 反馈之后。以物理尾项判断资格和 TurnID 会错误拒绝无 steering 的续采。两家 Provider 根据已验证逻辑前驱作出采样决定，同时把真实附加上下文保留在请求序列中。已安装 checkpoint 时收到取消，压缩历史保留成功，操作 owner 仍按取消结束并返还 auto 队列。
 
 合法激活交付是三记录批次，压缩上下文是独立单记录。加载时先验证完整行的批次形状，避免把伪造的 singleton 当成可修复尾部。尺寸预检使用实际批次位置和 arity，使用相同 writer 编码规则。 [恢复与取消边界](../../openspec/changes/archive/2026-11-24-add-session-start-context/design.md)
+
+### 2026-11-24 历史分支的回合切点与延迟按键
+
+- 首条用户输入的 native commit 之前可能已有该轮触发的自动压缩和 SessionStart。历史/工具状态只能从 `turn_started` 之前的完整批次继承。确认比对源已同步范围的全量见证，证实损坏的后缀也会停止源写入，已推进的合法提交则要求重新选择。 [切点回归](../../internal/session/historical_cut_test.go) · [双 Provider 续写回归](../../internal/app/session_branch_e2e_test.go)
+- 聊天控制消息带激活代次，终端按键本身没有。创建确认时连续按 Enter，其中一个按键可能在新分支激活后才交付。回填草稿需实际编辑或主动选择原样发送才提交。历史正文碰到当前同名命令或 Skill 时，按保留的首词意图进入准备。 [终端回归](../../internal/tui/rewind_test.go)
+
+### SSE 解压和 HTTP 请求取消的顺序
+
+Resty 在关闭自动解析时仍装配内容解码器。读取其底层响应体可能只看到压缩数据或 EOF，导致两种 Provider 都报告终态缺失。SSE owner 使用经过包装的响应体。空闲超时时先取消实际 HTTP 请求，使持锁的解压读取解除，再关闭响应体并等待退出。终态通过独立的流 context 交付，保留原空闲错误。 [传输规格](../../openspec/specs/provider/http-stream-transport/spec.md) · [gzip 回归](../../internal/provider/transport/client_test.go)

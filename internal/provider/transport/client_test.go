@@ -2,12 +2,14 @@ package transport
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -67,6 +69,52 @@ func TestStreamSSEUsesStableJSONAndHeaders(t *testing.T) {
 		t.Fatalf("terminal error: got %v want EOF", terminal.Err)
 	}
 	<-receivedRequest
+}
+
+func TestStreamSSEDecodesGzipIncrementally(t *testing.T) {
+	releaseTail := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if !strings.Contains(request.Header.Get("Accept-Encoding"), "gzip") {
+			t.Error("request did not negotiate gzip")
+		}
+		compressed := flushGzipSSE(t, writer, "id: first\nevent: delta\ndata: 你好\n\n")
+		select {
+		case <-releaseTail:
+		case <-request.Context().Done():
+			return
+		}
+		if _, err := io.WriteString(compressed, "id: next\nevent: end\ndata: done\n\n"); err != nil {
+			t.Errorf("write remaining gzip frame: %v", err)
+		}
+		if err := compressed.Close(); err != nil {
+			t.Errorf("close gzip stream: %v", err)
+		}
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeClient(t, client)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	stream, err := client.StreamSSE(ctx, SSERequest{Path: "responses", Body: mustCanonical(t, struct{}{}, DefaultMaxRequestBytes)}, StreamOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first := awaitSSEMessage(t, ctx, stream); first.Err != nil || first.Event == nil ||
+		*first.Event != (SSEEvent{ID: "first", Name: "delta", Data: "你好"}) {
+		t.Fatalf("first compressed frame: %#v", first)
+	}
+	close(releaseTail)
+	if next := awaitSSEMessage(t, ctx, stream); next.Err != nil || next.Event == nil ||
+		*next.Event != (SSEEvent{ID: "next", Name: "end", Data: "done"}) {
+		t.Fatalf("remaining compressed frame: %#v", next)
+	}
+	if terminal := awaitSSEMessage(t, ctx, stream); terminal.Event != nil || !errors.Is(terminal.Err, io.EOF) {
+		t.Fatalf("gzip terminal: %#v", terminal)
+	}
+	assertSSEClosed(t, ctx, stream)
 }
 
 func TestStreamSSEHTTPErrorDoesNotLeakSecret(t *testing.T) {
@@ -168,34 +216,96 @@ func TestStreamSSECanBeCancelled(t *testing.T) {
 }
 
 func TestStreamSSEIdleTimeout(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Type", "text/event-stream")
-		if flusher, ok := writer.(http.Flusher); ok {
-			flusher.Flush()
-		}
-		<-request.Context().Done()
-	}))
-	defer server.Close()
-
-	client, err := NewClient(server.URL)
-	if err != nil {
-		t.Fatalf("new client: %v", err)
+	for _, name := range []string{"identity", "gzip"} {
+		t.Run(name, func(t *testing.T) {
+			compressed := name == "gzip"
+			requestEnded := make(chan struct{})
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if requests.Add(1) == 1 {
+					defer close(requestEnded)
+				}
+				if compressed {
+					// 保持 gzip 成员未关闭，直到实际 HTTP 请求被取消。
+					flushGzipSSE(t, writer, "data: first\n\n")
+				} else {
+					writer.Header().Set("Content-Type", "text/event-stream")
+					writer.(http.Flusher).Flush()
+				}
+				<-request.Context().Done()
+			}))
+			defer server.Close()
+			client, err := NewClient(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer closeClient(t, client)
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			stream, err := client.StreamSSE(ctx, SSERequest{Path: "responses", Body: mustCanonical(t, struct{}{}, DefaultMaxRequestBytes)},
+				StreamOptions{IdleTimeout: 30 * time.Millisecond})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if compressed {
+				if first := awaitSSEMessage(t, ctx, stream); first.Err != nil || first.Event == nil || first.Event.Data != "first" {
+					t.Fatalf("first compressed frame: %#v", first)
+				}
+			}
+			if terminal := awaitSSEMessage(t, ctx, stream); terminal.Event != nil || !IsIdleTimeout(terminal.Err) {
+				t.Fatalf("idle result: %#v", terminal)
+			}
+			assertSSEClosed(t, ctx, stream)
+			select {
+			case <-requestEnded:
+				if count := requests.Load(); count != 1 {
+					t.Fatalf("idle stream issued %d HTTP requests", count)
+				}
+			case <-ctx.Done():
+				t.Fatal("idle stream did not cancel the HTTP request")
+			}
+		})
 	}
-	defer closeClient(t, client)
+}
 
-	body := mustCanonical(t, struct{}{}, DefaultMaxRequestBytes)
-	stream, err := client.StreamSSE(context.Background(), SSERequest{Path: "responses", Body: body}, StreamOptions{IdleTimeout: 20 * time.Millisecond})
-	if err != nil {
-		t.Fatalf("stream SSE: %v", err)
+func flushGzipSSE(t *testing.T, writer http.ResponseWriter, text string) *gzip.Writer {
+	t.Helper()
+	writer.Header().Set("Content-Type", "text/event-stream")
+	writer.Header().Set("Content-Encoding", "gzip")
+	compressed := gzip.NewWriter(writer)
+	if _, err := io.WriteString(compressed, text); err != nil {
+		t.Errorf("write gzip frame: %v", err)
 	}
+	if err := compressed.Flush(); err != nil {
+		t.Errorf("flush gzip frame: %v", err)
+	}
+	writer.(http.Flusher).Flush()
+	return compressed
+}
 
+func awaitSSEMessage(t *testing.T, ctx context.Context, stream <-chan SSEMessage) SSEMessage {
+	t.Helper()
 	select {
-	case message := <-stream:
-		if message.Err == nil || !strings.Contains(message.Err.Error(), "idle timeout") {
-			t.Fatalf("timeout result: %#v", message)
+	case message, open := <-stream:
+		if !open {
+			t.Fatal("SSE stream closed before the expected message")
 		}
-	case <-time.After(time.Second):
-		t.Fatal("idle stream did not time out")
+		return message
+	case <-ctx.Done():
+		t.Fatal("SSE stream did not deliver the expected message")
+		return SSEMessage{}
+	}
+}
+
+func assertSSEClosed(t *testing.T, ctx context.Context, stream <-chan SSEMessage) {
+	t.Helper()
+	select {
+	case message, open := <-stream:
+		if open {
+			t.Fatalf("unexpected message after SSE terminal: %#v", message)
+		}
+	case <-ctx.Done():
+		t.Fatal("SSE stream did not close after its terminal")
 	}
 }
 

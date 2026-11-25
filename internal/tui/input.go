@@ -14,6 +14,7 @@ import (
 type inputPreview struct {
 	id             domain.InputID
 	text           string
+	rewind         recalledDraft
 	state          protocol.InputState
 	reason         protocol.InputReason
 	implementation bool
@@ -120,7 +121,10 @@ func (model Model) projectControlItem(item protocol.ControlItem) (tea.Model, tea
 			if result.Status() == protocol.CommandStatusAccepted {
 				model.clearPlanReviewOffer()
 				text := model.pending.text
-				model.inputs = append(model.inputs, inputPreview{id: result.EntryID(), text: text})
+				rewind := model.pending.rewind
+				// 用户已确认过发送，取回时保留首词意图。
+				rewind.unedited = false
+				model.inputs = append(model.inputs, inputPreview{id: result.EntryID(), text: text, rewind: rewind})
 				model.composer.history.add(text)
 				model.composer.clear()
 			} else {
@@ -184,8 +188,12 @@ func (model Model) hasQueuedInput() bool {
 func (model Model) retractQueuedInputs() (tea.Model, tea.Cmd) {
 	var ids []domain.InputID
 	var texts []string
+	var rewind recalledDraft
 	for _, input := range model.inputs {
 		if input.state == "" {
+			if len(ids) == 0 {
+				rewind = input.rewind
+			}
 			ids = append(ids, input.id)
 			texts = append(texts, input.text)
 		}
@@ -201,6 +209,7 @@ func (model Model) retractQueuedInputs() (tea.Model, tea.Cmd) {
 		model.errorSummary = "input_too_large: queued inputs do not fit the draft; stop and take returned inputs individually"
 		return model, nil
 	}
+	draft.rewind = rewind
 	model.retracting = &inputRetraction{draft: draft}
 	target, ctx := model.session, model.submitContext
 	return model, func() tea.Msg {
@@ -227,6 +236,7 @@ func (model Model) handleReturnedInput(take bool) (tea.Model, tea.Cmd) {
 				model.errorSummary = "input_too_large: returned input does not fit the draft"
 				return model, nil
 			}
+			draft.rewind = input.rewind
 			model.composer = draft
 		}
 		model.inputs = append(model.inputs[:index:index], model.inputs[index+1:]...)

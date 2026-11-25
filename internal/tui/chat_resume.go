@@ -12,6 +12,7 @@ const (
 	resumeCommandName = "resume"
 	branchCommandName = "branch"
 	forkCommandName   = "fork"
+	rewindCommandName = "rewind"
 )
 
 type chatHandoffIntent struct {
@@ -30,14 +31,25 @@ func isBranchSlash(head string) bool {
 }
 
 func isHandoffSlash(head string) bool {
-	return head == "/"+resumeCommandName || isBranchSlash(head)
+	return strings.HasPrefix(head, "/") && isHandoffCommandName(head[1:])
+}
+
+func isHandoffCommandName(name string) bool {
+	return name == resumeCommandName || name == rewindCommandName || isBranchCommandName(name)
 }
 
 func (model Model) submitHandoff(head, argument string) (tea.Model, tea.Cmd) {
 	model.completion.suppress(completionCancelled)
 	model.suppressFiles(completionCancelled)
 	intent := chatHandoffIntent{operation: PickerOpen, draft: model.composer}
-	if isBranchSlash(head) {
+	switch {
+	case head == "/"+rewindCommandName:
+		if strings.TrimSpace(argument) != "" {
+			model.errorSummary = "invalid_command: /rewind does not accept arguments"
+			return model, nil
+		}
+		intent.operation = PickerRewind
+	case isBranchSlash(head):
 		intent.operation = PickerBranch
 		title, err := branchTitleArgument(argument)
 		if err != nil {
@@ -45,7 +57,11 @@ func (model Model) submitHandoff(head, argument string) (tea.Model, tea.Cmd) {
 			return model, nil
 		}
 		intent.title = title
-	} else if argument = strings.TrimSpace(argument); argument != "" {
+	default:
+		argument = strings.TrimSpace(argument)
+		if argument == "" {
+			break
+		}
 		target, err := domain.ParseThreadID(argument)
 		if err != nil {
 			model.errorSummary = "invalid_command: use /resume or /resume <full thread ID>"
