@@ -9,6 +9,7 @@ PYTHON ?= python3
 TEST_TIMEOUT ?= 20m
 TEST_BUDGET ?= 0
 TEST_OPTIONS ?=
+SMOKE_OPTIONS ?=
 TEST_RUNNER := $(PYTHON) -B scripts/test_suite.py --go "$(GO)" --timeout=$(TEST_TIMEOUT) --budget=$(TEST_BUDGET) $(TEST_OPTIONS)
 APP_NAME ?= easycode
 CMD_PATH := ./cmd/easycode
@@ -16,7 +17,7 @@ BIN_DIR ?= bin
 BIN_PATH := $(BIN_DIR)/$(APP_NAME)
 PACKAGES := ./...
 
-.PHONY: build clean branch-check branch-policy-test fmt-check vet lint test test-race test-race-full test-all test-runner-test verify install-hooks
+.PHONY: build clean branch-check branch-policy-test fmt-check vet lint test test-race test-race-full test-all test-ratio test-runner-test smoke verify install-hooks
 
 # 同一 make 调用中的普通/race 入口串行；各阶段由 runner 统一分配有限进程。
 .NOTPARALLEL:
@@ -54,13 +55,19 @@ test-all:
 test-runner-test:
 	$(PYTHON) -B -m unittest discover -s scripts -p '*_test.py'
 
+test-ratio:
+	$(PYTHON) -B scripts/test_ratio.py
+
+smoke:
+	$(PYTHON) -B scripts/smoke_suite.py $(SMOKE_OPTIONS)
+
 branch-check:
 	@./scripts/check-branch-name.sh
 
 branch-policy-test:
 	@./scripts/check-branch-name_test.sh
 
-verify:
+verify: test-ratio
 	$(TEST_RUNNER) --mode=verify
 
 install-hooks:
@@ -69,7 +76,7 @@ install-hooks:
 		exit 1; \
 	fi
 	@git config core.hooksPath .githooks
-	@chmod +x .githooks/pre-commit .githooks/pre-push scripts/check-branch-name.sh scripts/check-branch-name_test.sh
+	@chmod +x .githooks/pre-commit scripts/check-branch-name.sh scripts/check-branch-name_test.sh
 	@printf '%s\n' 'Git hooks installed from .githooks.'
 
 clean:

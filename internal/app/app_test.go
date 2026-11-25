@@ -131,9 +131,7 @@ func TestStreamEscalationClosesProviderBeforeLoopAndJournal(t *testing.T) {
 	if !errors.Is(response.err, context.DeadlineExceeded) || response.result.Failure.Code == "" {
 		t.Fatalf("stream escalation result=%#v error=%v", response.result, response.err)
 	}
-	if err := resources.close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	closeAppTestResources(t, resources)
 	mu.Lock()
 	got := strings.Join(timeline, ",")
 	mu.Unlock()

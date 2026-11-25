@@ -12,13 +12,11 @@ import (
 	"easycode/internal/session"
 	"easycode/internal/tool"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 )
 
@@ -47,18 +45,12 @@ func TestPostBothProvidersRealSandboxThreeCapabilitiesAndDisclosure(t *testing.T
 				policy := scenario.policy
 				t.Run(fmt.Sprintf("%s/%s/%s", family, capability, scenario.name), func(t *testing.T) {
 					workspace := t.TempDir()
-					if err := os.WriteFile(filepath.Join(workspace, "main.go"), []byte("old\n// TODO\n"), 0600); err != nil {
-						t.Fatal(err)
-					}
+					writeAppTestFile(t, filepath.Join(workspace, "main.go"), []byte("old\n// TODO\n"), 0600)
 					writePostHookConfig(t, workspace, scenario.command, policy)
-					var mu sync.Mutex
-					var requests [][]byte
+					var recorder requestRecorder
 					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-						b, _ := io.ReadAll(r.Body)
-						mu.Lock()
-						requests = append(requests, b)
-						n := len(requests)
-						mu.Unlock()
+						requestIndex, _ := recorder.record(t, r)
+						n := requestIndex + 1
 						w.Header().Set("Content-Type", "text/event-stream")
 						if n == 1 {
 							var wire bytes.Buffer
@@ -71,10 +63,7 @@ func TestPostBothProvidersRealSandboxThreeCapabilitiesAndDisclosure(t *testing.T
 					defer server.Close()
 					root := filepath.Join(t.TempDir(), "sessions")
 					cfg := cacheFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, Model: "fixture-model", BaseURL: server.URL, APIKey: secret.New("fixture-post-key")}}, true)
-					resources, err := openChatResourcesWithHooks(context.Background(), cfg, dataPaths{sessionRoot: root}, "", false, workspace, chatResourceHooks{interactiveApprovals: true})
-					if err != nil {
-						t.Fatal(err)
-					}
+					resources := mustOpenChatResourcesWithHooks(t, context.Background(), cfg, dataPaths{sessionRoot: root}, "", false, workspace, chatResourceHooks{interactiveApprovals: true})
 					defer resources.close(context.Background())
 					control, err := startTUIControlSession(context.Background(), resources.runtime)
 					if err != nil {
@@ -151,13 +140,8 @@ func TestPostBothProvidersRealSandboxThreeCapabilitiesAndDisclosure(t *testing.T
 						}
 					}
 					path, _ := resources.service.repository.JournalPath(thread)
-					if err := resources.close(context.Background()); err != nil {
-						t.Fatal(err)
-					}
-					raw, err := os.ReadFile(path)
-					if err != nil {
-						t.Fatal(err)
-					}
+					closeAppTestResources(t, resources)
+					raw := readAppTestFile(t, path)
 					loaded, plan := loadToolLoopPlan(t, root, thread)
 					if len(plan.Tools) != 1 || !plan.Tools[0].HasResult || plan.Tools[0].Result.Status() != tool.ResultSuccess || plan.Tools[0].PostHooks == nil || plan.Tools[0].PostHooks.Terminal == nil {
 						t.Fatal("lost original successful result/post terminal")
@@ -183,9 +167,7 @@ func TestPostBothProvidersRealSandboxThreeCapabilitiesAndDisclosure(t *testing.T
 					if err != nil {
 						t.Fatal(err)
 					}
-					mu.Lock()
-					captured := append([][]byte(nil), requests...)
-					mu.Unlock()
+					captured := recorder.snapshot()
 					if len(captured) != 2 || !bytes.Contains(captured[1], []byte("allowed-reasoning-sentinel")) || !bytes.Contains(captured[1], []byte("opaque-reasoning-sentinel")) || !containsHookPreview(captured[1], model.Text()) {
 						t.Fatal("provider did not receive frozen composition")
 					}
@@ -213,10 +195,7 @@ func TestPostBothProvidersRealSandboxThreeCapabilitiesAndDisclosure(t *testing.T
 					}
 					// 原生恢复必须复用同一正文与缓存事实，不能读取配置或自动重跑工具。
 					beforeRequests := len(captured)
-					resumed, err := openChatResources(context.Background(), cfg, root, string(thread), workspace)
-					if err != nil {
-						t.Fatal(err)
-					}
+					resumed := mustOpenChatResources(t, context.Background(), cfg, root, string(thread), workspace)
 					restoredPage, err := resumed.transcriptQueries.ListTranscript(context.Background(), protocol.TranscriptListQuery{Mode: protocol.TranscriptDetail, ThreadID: thread, Limit: 50})
 					if err != nil || len(restoredPage.Items) != len(livePage.Items) {
 						t.Fatal("restored post list differs", err)
@@ -239,12 +218,8 @@ func TestPostBothProvidersRealSandboxThreeCapabilitiesAndDisclosure(t *testing.T
 					if !found {
 						t.Fatal("restored tool missing")
 					}
-					if err := resumed.close(context.Background()); err != nil {
-						t.Fatal(err)
-					}
-					mu.Lock()
-					afterRequests := len(requests)
-					mu.Unlock()
+					closeAppTestResources(t, resumed)
+					afterRequests := len(recorder.snapshot())
 					again, _ := os.ReadFile(path)
 					if beforeRequests != afterRequests || !bytes.Equal(raw, again) {
 						t.Fatal("resume changed facts or sampled")

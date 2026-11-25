@@ -14,10 +14,7 @@ import (
 )
 
 func TestTaskRecoveryUsesCommittedResultAndNeverRepeatsCompensation(t *testing.T) {
-	fixed, err := os.ReadFile("../session/testdata/current/task_openai_result_tail.jsonl")
-	if err != nil {
-		t.Fatal(err)
-	}
+	fixed := readAppTestFile(t, "../session/testdata/current/task_openai_result_tail.jsonl")
 	// 固定事实源只在完整批次边界切前缀，不用当前 encoder 生成正输入。
 	lines := bytes.Split(bytes.TrimSuffix(fixed, []byte{'\n'}), []byte{'\n'})
 	for _, cut := range []string{"ready", "started", "result"} {
@@ -61,16 +58,11 @@ func TestTaskRecoveryUsesCommittedResultAndNeverRepeatsCompensation(t *testing.T
 			cfg := config.Config{Provider: config.Provider{Family: domain.ProviderOpenAI, Model: "gpt-test", BaseURL: "https://example.invalid", APIKey: secret.New("fixture-key")}}
 			var previous []byte
 			for attempt := range 2 {
-				resources, err := openChatResources(context.Background(), cfg, root, string(thread), privateAppTempDir(t))
-				if err != nil {
-					t.Fatal(err)
-				}
+				resources := mustOpenChatResources(t, context.Background(), cfg, root, string(thread), privateAppTempDir(t))
 				if !resources.runtime.TaskProgress().Equal(expected) {
 					t.Fatal("recovery applied an uncommitted task candidate")
 				}
-				if err := resources.close(context.Background()); err != nil {
-					t.Fatal(err)
-				}
+				closeAppTestResources(t, resources)
 				current, err := os.ReadFile(path)
 				if err != nil || !bytes.HasPrefix(current, original) {
 					t.Fatal("recovery rewrote committed facts", err)

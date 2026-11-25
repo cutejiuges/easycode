@@ -30,9 +30,7 @@ func TestArtifactLayoutMatchesActualSandboxAccess(t *testing.T) {
 	}
 	defer func() { _ = l.Close() }()
 	path := filepath.Join(s, "output")
-	if err = os.WriteFile(path, []byte("synthetic-private-output"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeBuiltinFixture(t, path, []byte("synthetic-private-output"), 0o600)
 	for _, script := range []string{`cat "$1"`, `printf modified > "$1"`} {
 		cmd := exec.Command("/usr/bin/sandbox-exec", "-p", commandSandboxProfile(plan), "/bin/sh", "-c", script, "isolation-test", path)
 		if output, err := cmd.CombinedOutput(); err == nil {

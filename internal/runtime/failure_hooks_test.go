@@ -15,20 +15,12 @@ func installFailureBranches(t *testing.T, r *Runtime, runner *postTestRunner, bo
 	t.Helper()
 	ds := r.hooks.snapshot.Declarations()
 	failure, err := domain.NewHookDeclaration(domain.HookSourceProject, domain.HookPostToolUseFailure, domain.HookFeedbackModel, strings.Repeat("a", 64), "failure", 7, "true", 5)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	if !both {
 		ds = nil
 	}
 	ds = append(ds, failure)
-	snapshot, err := domain.NewHookSnapshot(ds, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := r.InstallHooks(snapshot, runner, "/workspace", domain.HookOK); err != nil {
-		t.Fatal(err)
-	}
+	installRuntimeTestHooks(t, r, runner, "/workspace", ds)
 }
 
 func TestFailureCancellationAfterResultKeepsRouteAndStartsNoScript(t *testing.T) {

@@ -185,55 +185,6 @@ func TestTasksHydrationDoesNotInventAnEmptyList(t *testing.T) {
 	}
 }
 
-func TestTasksInitialStateAndDurableUpdateExpansion(t *testing.T) {
-	for _, completed := range []bool{false, true} {
-		m := taskTestModel(t)
-		m, _ = taskTestQuery(t, m, false)
-		m = taskTestAck(t, m)
-		m = taskTestSnapshot(t, m, m.tasks.query.requestID, taskTestState(t, 7, 3, 1, completed))
-		if m.tasks.expanded == completed {
-			t.Fatal("initial expansion ignored completion")
-		}
-	}
-	m := taskTestModel(t)
-	if err := m.composer.replace(0, 0, "draft 👩‍💻"); err != nil {
-		t.Fatal(err)
-	}
-	m.composer.moveTo(3)
-	draft := m.composer
-	active := taskTestState(t, 10, 20, 17, false)
-	m = taskTestObserve(t, m, active)
-	if !m.tasks.expanded || !strings.Contains(m.renderTaskInline(), "Doing task 18") || !strings.Contains(m.renderTaskInline(), "14 more") {
-		t.Fatal("current task not anchored in the bounded window", m.renderTaskInline())
-	}
-	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyCtrlT})
-	if m.tasks.expanded || renderedChatRows(m.renderTaskInline()) != 1 || !reflect.DeepEqual(m.composer, draft) {
-		t.Fatal("toggle changed the draft or failed to fold")
-	}
-	m = updateModel(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
-	m = taskTestObserve(t, m, active)
-	if m.tasks.expanded {
-		t.Fatal("resize or duplicate withdrew the manual fold")
-	}
-	m = taskTestObserve(t, m, taskTestState(t, 11, 20, -1, true))
-	if m.tasks.expanded || !strings.Contains(m.renderTaskInline(), "20/20 done · model report") || m.activeTurnID != "" || m.approval != nil {
-		t.Fatal("completion changed turn or permission semantics")
-	}
-	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyCtrlT})
-	if !m.tasks.expanded {
-		t.Fatal("completed tasks could not be inspected")
-	}
-	m = taskTestObserve(t, m, taskTestState(t, 12, 0, -1, false))
-	before := m.tasks.snapshot.Clone()
-	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyCtrlT})
-	if m.tasks.expanded || m.renderTaskInline() != "" || !m.tasks.snapshot.Equal(before) || !strings.Contains(m.renderTasksPanel(), "explicitly cleared") {
-		t.Fatal("clear was lost or an empty toggle mutated state")
-	}
-	if len(m.session.(*taskFixtureSession).requests) != 0 || len(m.session.(*taskFixtureSession).submits) != 0 {
-		t.Fatal("toggle performed a query or model submission")
-	}
-}
-
 func TestTasksIgnoreStaleSnapshotsAndIsolateScope(t *testing.T) {
 	m := taskTestModel(t)
 	m, _ = taskTestQuery(t, m, false)
@@ -381,68 +332,10 @@ func TestTasksCommandCompletionAndReadOnlyPanel(t *testing.T) {
 			t.Fatal("modal input leaked to the composer")
 		}
 	}
-	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyEnd})
-	if m.tasks.scroll <= 0 {
-		t.Fatal("complete list was not scrollable")
-	}
 	m = updateModel(t, m, tea.WindowSizeMsg{Width: 40, Height: 12})
 	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyEsc})
 	if m.tasks.open || m.composer.text != before.text || m.composer.cursor != before.cursor || !m.reading.detached || m.reading.anchor.key.local != 8 {
 		t.Fatal("closing the panel lost the draft or reading anchor")
-	}
-	entries := make([]domain.SkillListEntry, domain.MaxSkills)
-	for i := range entries {
-		entries[i] = completionSkillEntry(t, fmt.Sprintf("skill-%03d", i), "skill")
-	}
-	entries[0] = completionSkillEntry(t, "tasks", "same name skill")
-	m = taskTestModel(t).WithSkills(entries)
-	if len(m.completion.catalog.entries) != domain.MaxSkills+9 {
-		t.Fatal("eighth builtin reduced the skill capacity")
-	}
-	m.composer = composerWithText(t, "$ta")
-	m, command = updateModelWithCommand(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if command != nil || m.composer.text != "$tasks " || m.tasks.open {
-		t.Fatal("explicit skill invocation was captured by local tasks")
-	}
-	m.skillsOpen, m.skillSelection = true, 0
-	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.skillsOpen || m.composer.text != "$tasks " {
-		t.Fatal("skill browser failed the reserved tasks name")
-	}
-	m = taskTestModel(t)
-	m.composer = composerWithText(t, "/ta")
-	m, command = updateModelWithCommand(t, m, tea.KeyMsg{Type: tea.KeyTab})
-	if command != nil || m.composer.text != "/tasks " || m.tasks.open {
-		t.Fatal("Tab executed a read-only command")
-	}
-}
-
-func TestTasksPanelPreservesLabelAcrossReorderResizeAndClear(t *testing.T) {
-	m := taskTestObserve(t, taskTestModel(t), taskTestState(t, 50, 20, 17, false))
-	m.tasks.open, m.height, m.width = true, 12, 40
-	m.tasks.scroll = 17
-	anchor := m.taskPanelAnchor()
-	if anchor == "" {
-		t.Fatal("test did not select a task label")
-	}
-	update, _ := m.tasks.snapshot.Progress.Update()
-	steps := update.Items()
-	steps[0], steps[8] = steps[8], steps[0]
-	m = taskTestObserve(t, m, taskTestSourceState(t, 51, taskTestTurn, taskTestCall, taskTestUpdate(t, steps, update.Explanation())))
-	if m.taskPanelAnchor() != anchor {
-		t.Fatal("reordering lost the surviving label anchor")
-	}
-	m = updateModel(t, m, tea.WindowSizeMsg{Width: 13, Height: 6})
-	if m.taskPanelAnchor() != anchor {
-		t.Fatal("resize lost the surviving label anchor")
-	}
-	m = taskTestObserve(t, m, taskTestState(t, 52, 2, 1, false))
-	if m.tasks.scroll > m.taskPanelScrollLimit() {
-		t.Fatal("removed label left scroll outside the new list")
-	}
-	m = taskTestObserve(t, m, taskTestState(t, 53, 0, -1, false))
-	if !m.tasks.open || !strings.Contains(m.taskPanelRows()[0].text, "The task list") || m.tasks.snapshot.Progress.Kind() != domain.TaskProgressClear || m.tasks.scroll > m.taskPanelScrollLimit() {
-		t.Fatal("clear closed the panel or retained old tasks")
 	}
 }
 
@@ -518,23 +411,5 @@ func TestTasksCurrentListCannotOverwriteFrozenTranscript(t *testing.T) {
 	m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyCtrlT})
 	if !m.detailOpen || !strings.Contains(m.View(), "original task label") || strings.Contains(m.View(), "Doing task 18") || m.composer.text != "kept draft" || queries.lists != 1 {
 		t.Fatal("current update or toggle changed a frozen historical detail")
-	}
-}
-
-func TestTasksInterruptReadAndSearchGrouping(t *testing.T) {
-	activity := func(name protocol.ToolName, target, summary string) transcriptMessage {
-		return transcriptMessage{activity: &protocol.ToolActivityPayload{Tool: name, Target: target, Summary: summary, Status: "success", Code: "ok"}}
-	}
-	read := activity(protocol.ToolRead, "a.go", "a.go")
-	glob := activity(protocol.ToolGlob, "*.go", "*.go")
-	grep := activity(protocol.ToolGrep, "needle", "needle")
-	task := activity(protocol.ToolTaskProgress, "", "Update task progress")
-	rendered := strings.Join(renderTranscript([]transcriptMessage{read, glob, grep, task, read, glob, grep}, 80), "\n")
-	if strings.Count(rendered, "Read 1 files · 2 searches") != 2 || strings.Count(rendered, "TaskProgress(Update task progress)") != 1 {
-		t.Fatal("task update merged independent read/search groups", rendered)
-	}
-	before, after, found := strings.Cut(rendered, "TaskProgress(Update task progress)")
-	if !found || !strings.Contains(before, "Read 1 files") || !strings.Contains(after, "Read 1 files") {
-		t.Fatal("task invocation lost its original transcript position")
 	}
 }

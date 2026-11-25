@@ -84,10 +84,7 @@ func TestReconcilePreservesBusyRowsAndRejectsBusyUnindexed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	before := readCatalogFixture(t, path)
 	secondHelper := startCatalogProcessHelper(t, catalogJournalHelperEnv, "", root, string(second))
 	report, err = instance.Reconcile(context.Background(), repository)
 	if err != nil {

@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -29,12 +28,9 @@ func startBranchGateSource(t *testing.T, ctx context.Context) (*chatResources, t
 	paths, cwd, cfg := pickerFixture(t)
 	environment := &chatEnvironment{}
 	t.Cleanup(func() { _ = environment.close() })
-	source, err := openChatResourcesWithHooks(ctx, cfg, paths, "", false, cwd, chatResourceHooks{
+	source := mustOpenChatResourcesWithHooks(t, ctx, cfg, paths, "", false, cwd, chatResourceHooks{
 		interactiveApprovals: true, environment: environment, lifetime: ctx,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	t.Cleanup(func() { _ = source.close(context.Background()) })
 	model, err := assembleChatModel(ctx, source)
 	if err != nil {
@@ -341,9 +337,7 @@ func TestContinueRevalidatesSelectedWorkspaceBeforeRepair(t *testing.T) {
 			if selected != target {
 				t.Fatalf("continue selected %s instead of %s", selected, target)
 			}
-			if err := os.WriteFile(path, replacement, 0600); err != nil {
-				t.Fatal(err)
-			}
+			writeAppTestFile(t, path, replacement, 0600)
 		},
 	})
 	if resources != nil {
@@ -357,10 +351,7 @@ func TestContinueRevalidatesSelectedWorkspaceBeforeRepair(t *testing.T) {
 
 func TestBranchInvalidProviderEvidenceClosesSourceWritesBeforePublication(t *testing.T) {
 	ctx := context.Background()
-	fixture, err := os.ReadFile("../session/testdata/current/question_openai_complete.jsonl")
-	if err != nil {
-		t.Fatal(err)
-	}
+	fixture := readAppTestFile(t, "../session/testdata/current/question_openai_complete.jsonl")
 	invalid := corruptThinkingFact(t, fixture,
 		`"reasoning_output":{"state":"unknown"}`, `"reasoning_output":{"state":"known","value":0}`)
 	root, path, thread := installPreviewFixture(t, invalid)

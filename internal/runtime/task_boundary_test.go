@@ -29,9 +29,7 @@ func TestTaskTurnBudgetExhaustionPairsFailureWithoutApplyingOrExecuting(t *testi
 			t.Fatal(err)
 		}
 		allowance, err := r.toolTurn.resultBudget.Allowance(tool.CapabilityRead)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		metadata, _ := tool.NewResultBudgetMetadata(allowance, allowance, tool.BudgetPreserved)
 		if err := r.toolTurn.resultBudget.Commit(tool.CapabilityRead, metadata); err != nil {
 			t.Fatal(err)
@@ -70,9 +68,7 @@ func sessionTaskCandidateForBoundary(t *testing.T, inv tool.Invocation) tool.Inv
 	t.Helper()
 	v, _ := inv.Task()
 	result, err := tool.NewTaskInvocationResult(v)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return result
 }
 
@@ -107,9 +103,7 @@ func TestTaskOutputPreflightRejectionPairsBudgetFailureAndKeepsPriorState(t *tes
 	config := testRuntimeConfig(t, j)
 	config.ToolBinding = testRuntimeToolBinding(t, func(tools *tool.Components) { tools.Task = executor })
 	r, err := New(conversation, config)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	prior := taskRuntimeInvocation(t, "先前成功清单", domain.TaskCompleted, "prior")
 	if err := r.installTaskProgress(runtimeTurnID, sessionTaskCandidateForBoundary(t, prior), 10); err != nil {
 		t.Fatal(err)

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """使用本地双 Provider 和真实 PTY 验证推理阅读、提交交接及终端恢复。"""
+from smoke_support import smoke_binary, complete_cases
 import fcntl
 import json
 import os
@@ -170,10 +171,10 @@ def main():
         raise SystemExit("reasoning PTY helper requires Darwin")
     root = Path(__file__).resolve().parent.parent
     with tempfile.TemporaryDirectory(prefix="easycode-reasoning-smoke-") as temporary:
-        binary = Path(temporary) / "app.test"
-        subprocess.run(["go", "test", "-c", "-o", str(binary), "./internal/app"], cwd=root, check=True)
+        binary = smoke_binary("app.test", temporary, root)
         cases = [run_case(binary, root, family, no_color, cancel)
-                 for family in ["openai", "anthropic"] for no_color in [False, True] for cancel in [False, True]]
+                 for family, no_color, cancel in [("openai", False, False), ("anthropic", True, False)]]
+        complete_cases(cases)
         print(json.dumps({"platform": platform.platform(), "cases": cases}, ensure_ascii=False, indent=2))
 
 

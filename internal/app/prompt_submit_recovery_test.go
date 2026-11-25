@@ -5,7 +5,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 
 	"easycode/internal/config"
@@ -15,10 +14,7 @@ import (
 )
 
 func TestPromptSubmitRecoveryClosesJournalBeforeLoadingHooks(t *testing.T) {
-	fixture, err := os.ReadFile("../session/testdata/current/prompt_submit_initial_session_start.jsonl")
-	if err != nil {
-		t.Fatal(err)
-	}
+	fixture := readAppTestFile(t, "../session/testdata/current/prompt_submit_initial_session_start.jsonl")
 	lines := bytes.SplitN(fixture, []byte{'\n'}, 6)
 	prefix := append(bytes.Join(lines[:5], []byte{'\n'}), '\n')
 	root, journalPath, thread := installPreviewFixture(t, prefix)
@@ -35,9 +31,9 @@ func TestPromptSubmitRecoveryClosesJournalBeforeLoadingHooks(t *testing.T) {
 	var previous []byte
 	for range 2 {
 		ctx := context.Background()
-		resources, err := openChatResourcesWithHooks(ctx, cfg, dataPaths{sessionRoot: root}, string(thread), false, workspace, chatResourceHooks{
+		resources := mustOpenChatResourcesWithHooks(t, ctx, cfg, dataPaths{sessionRoot: root}, string(thread), false, workspace, chatResourceHooks{
 			loadHooks: func(context.Context, string, string) (domain.HookSnapshot, error) {
-				content := mustReadPromptSubmitJournal(t, journalPath)
+				content := readSwitchJournal(t, journalPath)
 				rows := bytes.Split(bytes.TrimSuffix(content, []byte{'\n'}), []byte{'\n'})
 				if len(rows) != 8 || !bytes.HasPrefix(content, prefix) {
 					t.Fatal("prompt and turn recovery did not precede configuration loading")
@@ -60,9 +56,6 @@ func TestPromptSubmitRecoveryClosesJournalBeforeLoadingHooks(t *testing.T) {
 				return domain.NewHookSnapshot(nil, nil)
 			},
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
 		if err := resources.close(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -70,19 +63,10 @@ func TestPromptSubmitRecoveryClosesJournalBeforeLoadingHooks(t *testing.T) {
 		if replay.InterruptedPromptSubmit != nil || replay.InterruptedTail != nil || len(replay.NativeCommits) != 0 {
 			t.Fatal("recovery left work open or wrote native user input")
 		}
-		current := mustReadPromptSubmitJournal(t, journalPath)
+		current := readSwitchJournal(t, journalPath)
 		if previous != nil && !bytes.Equal(previous, current) {
 			t.Fatal("second recovery modified the already closed prompt journal")
 		}
 		previous = current
 	}
-}
-
-func mustReadPromptSubmitJournal(t *testing.T, path string) []byte {
-	t.Helper()
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return content
 }

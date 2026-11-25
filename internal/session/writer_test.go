@@ -20,18 +20,14 @@ func TestJournalWriterSerializesConcurrentAppends(t *testing.T) {
 	dataRoot := t.TempDir()
 	path := dataRoot + "/journal.jsonl"
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	writer, err := startJournalWriter(
 		file,
 		Identity{SessionID: testSessionID, ThreadID: testThreadID},
 		1,
 		func() time.Time { return time.Unix(0, 0).UTC() },
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	const count = 64
 	sequences := make(chan uint64, count)
 	var wait sync.WaitGroup
@@ -70,9 +66,7 @@ func TestJournalWriterSerializesConcurrentAppends(t *testing.T) {
 	}
 
 	read, err := os.Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	defer read.Close()
 	scanner := bufio.NewScanner(read)
 	sequence := uint64(1)
@@ -103,9 +97,7 @@ func TestJournalWriterAssignsBatchBoundaryAndResumeSequence(t *testing.T) {
 		7,
 		func() time.Time { return time.Date(2026, 9, 28, 1, 2, 3, 0, time.UTC) },
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	records, err := writer.AppendBatch(context.Background(), []RecordDraft{
 		mustDraft(t, EventProviderNativeCommit, testTurnID, NativeCommitPayload{
 			Provider: "openai", Wire: "responses", Payload: []byte(`{"shape":"text_sample"}`),
@@ -113,9 +105,7 @@ func TestJournalWriterAssignsBatchBoundaryAndResumeSequence(t *testing.T) {
 		mustDraft(t, EventSampleUsage, testTurnID, testSampleUsage(t)),
 		mustDraft(t, EventTurnCompleted, testTurnID, TurnCompletedPayload{}),
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	if len(records) != 3 || records[0].Sequence != 7 || records[1].Sequence != 8 || records[2].Sequence != 9 ||
 		records[0].BatchID != 7 || records[1].BatchID != 7 || records[2].BatchID != 7 ||
 		records[0].BatchIndex != 0 || records[1].BatchIndex != 1 || records[2].BatchIndex != 2 || records[0].BatchSize != 3 {
@@ -138,9 +128,7 @@ func TestJournalWriterRetainsSequenceAfterEncodingRejection(t *testing.T) {
 	validTime := time.Unix(0, 0).UTC()
 	clock := time.Time{}
 	writer, err := startJournalWriter(file, Identity{SessionID: testSessionID, ThreadID: testThreadID}, 7, func() time.Time { return clock })
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	ctx := context.Background()
 	defer writer.Close(ctx)
 	draft := []RecordDraft{mustDraft(t, EventTurnStarted, testTurnID, TurnStartedPayload{})}
@@ -229,20 +217,12 @@ func TestJournalWriterPoisonsAfterSyncFailure(t *testing.T) {
 
 func TestStartJournalWriterTransfersLeaseOnlyAfterValidation(t *testing.T) {
 	dataRoot := filepath.Join(t.TempDir(), "sessions")
-	owner, err := OpenOrCreateRepository(dataRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
+	owner := openFixtureRepository(t, dataRoot)
 	defer owner.Close()
-	competitor, err := OpenOrCreateRepository(dataRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
+	competitor := openFixtureRepository(t, dataRoot)
 	defer competitor.Close()
 	lease, err := owner.Create(context.Background(), testThreadID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	if _, err := StartJournalWriter(lease, Identity{}, 1); err == nil {
 		t.Fatal("StartJournalWriter() accepted an invalid identity")
 	}
@@ -255,9 +235,7 @@ func TestStartJournalWriterTransfersLeaseOnlyAfterValidation(t *testing.T) {
 		Identity{SessionID: testSessionID, ThreadID: testThreadID},
 		1,
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	if err := lease.Close(); !errors.Is(err, errJournalLeaseTransferred) {
 		t.Fatalf("transferred lease Close() error = %v", err)
 	}
@@ -271,9 +249,7 @@ func TestStartJournalWriterTransfersLeaseOnlyAfterValidation(t *testing.T) {
 		t.Fatalf("second writer Close() error = %v", err)
 	}
 	reacquired, err := competitor.Open(context.Background(), testThreadID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	if err := reacquired.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -360,20 +336,12 @@ func TestJournalWriterCancelledCloseStillDrainsAndCloses(t *testing.T) {
 
 func TestJournalWriterDeadlineDuringFinalSyncRetainsLease(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "sessions")
-	owner, err := OpenOrCreateRepository(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	owner := openFixtureRepository(t, root)
 	t.Cleanup(func() { _ = owner.Close() })
-	competitor, err := OpenOrCreateRepository(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	competitor := openFixtureRepository(t, root)
 	t.Cleanup(func() { _ = competitor.Close() })
 	lease, err := owner.Create(context.Background(), testThreadID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	file, err := lease.transfer()
 	if err != nil {
 		_ = lease.Close()
@@ -442,9 +410,7 @@ func mustTestWriter(t *testing.T, file journalFile) *JournalWriter {
 		1,
 		func() time.Time { return time.Unix(0, 0).UTC() },
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return writer
 }
 

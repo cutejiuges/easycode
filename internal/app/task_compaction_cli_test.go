@@ -75,9 +75,7 @@ func TestTaskBuiltCLICompactionQueriesAndIndependentResumeRequests(t *testing.T)
 				t.Fatal(err)
 			}
 			const hooks = `{"hooks":{"PostCompact":[{"matcher":"manual","hooks":[{"id":"check-summary","type":"command","command":"cat >/dev/null; printf post-compact-cli-sentinel; exit 97"}]}],"SessionStart":[{"matcher":"*","hooks":[{"id":"start-context","type":"command","feedback":"model","command":"printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"session-start-cli-sentinel\"}}'"}]}]}}`
-			if err := os.WriteFile(filepath.Join(hookDir, "hooks.json"), []byte(hooks), 0600); err != nil {
-				t.Fatal(err)
-			}
+			writeAppTestFile(t, filepath.Join(hookDir, "hooks.json"), []byte(hooks), 0600)
 			requestCount := func() int { mu.Lock(); defer mu.Unlock(); return len(requests) }
 			thread, prefix, saved := runTaskCompactionCLI(t, binary, home, workspace, configuration, requestCount)
 			loaded := loadHeadlessJournal(t, filepath.Join(home, ".easycode", "sessions"), thread)
@@ -198,9 +196,7 @@ func installTaskCLIPrefix(t *testing.T, home string, thread domain.ThreadID, pre
 		t.Fatal(err)
 	}
 	path, _ := repo.JournalPath(thread)
-	if err := os.WriteFile(path, prefix, 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, path, prefix, 0600)
 }
 
 // runTaskCompactionCLI 由真实 stdout 终态驱动 stdin，返回 checkpoint 时的不可变历史前缀。
@@ -287,10 +283,7 @@ func runTaskCompactionCLI(t *testing.T, binary, home, workspace, configuration s
 	}
 	query := func(id string) domain.TaskProgressState {
 		t.Helper()
-		before, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		before := readAppTestFile(t, path)
 		network := requests()
 		_, _ = fmt.Fprintf(stdin, "{\"version\":1,\"type\":\"tasks.query\",\"request_id\":%q}\n", id)
 		response := readUntil("control.response")
@@ -327,10 +320,7 @@ func runTaskCompactionCLI(t *testing.T, binary, home, workspace, configuration s
 	if !query("after-compact").Equal(saved) {
 		t.Fatal("CLI compaction changed the task source or content")
 	}
-	prefix, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	prefix := readAppTestFile(t, path)
 	_, _ = io.WriteString(stdin, "{\"version\":1,\"type\":\"input.submit\",\"request_id\":\"after\",\"text\":\"same continuation after checkpoint\"}\n")
 	readUntil("turn.completed")
 	_ = stdin.Close()

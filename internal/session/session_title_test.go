@@ -18,10 +18,7 @@ func TestSessionTitleReplaysLatestCanonicalRecord(t *testing.T) {
 	root := readCurrentFixture(t, "root.jsonl")
 	updates := readCurrentFixture(t, "session_title_updates.jsonl")
 	for _, line := range bytes.Split(bytes.TrimSuffix(updates, []byte{'\n'}), []byte{'\n'}) {
-		record, err := DecodeRecord(line)
-		if err != nil {
-			t.Fatal(err)
-		}
+		record := decodeFixtureRecord(t, line)
 		_, encoded, err := EncodeRecord(record)
 		if err != nil || !bytes.Equal(line, encoded) {
 			t.Fatalf("title record canonical round trip = %s, %v", encoded, err)
@@ -52,7 +49,7 @@ func TestSessionTitleReplaysLatestCanonicalRecord(t *testing.T) {
 			if err != nil || plan.Title != test.title {
 				t.Fatalf("replay title = %q, %v", plan.Title, err)
 			}
-			assertTitleJournalBytes(t, repository, test.content)
+			assertJournalBytes(t, repository, test.content)
 		})
 	}
 }
@@ -85,7 +82,7 @@ func TestSessionTitleLoaderRejectsInvalidCompleteRecords(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), test.message) || loaded.NeedsRepair() {
 				t.Fatalf("invalid complete title load = repair %v, error %v", loaded.NeedsRepair(), err)
 			}
-			assertTitleJournalBytes(t, repository, content)
+			assertJournalBytes(t, repository, content)
 		})
 	}
 }
@@ -124,9 +121,7 @@ func TestSessionTitleSyncFailureWaitsForFinalSyncAndReplaysWrittenTitle(t *testi
 		_ = writer.Close(ctx)
 	}()
 	draft, err := NewSessionTitleUpdatedDraft("复核 @src/parser")
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	if _, err := writer.AppendBatch(ctx, []RecordDraft{draft, draft}); err == nil || writer.Poisoned() {
 		t.Fatalf("invalid mixed batch = %v, poisoned %v", err, writer.Poisoned())
 	}
@@ -138,7 +133,7 @@ func TestSessionTitleSyncFailureWaitsForFinalSyncAndReplaysWrittenTitle(t *testi
 	<-file.appendEntered
 	nextLine, _, _ := bytes.Cut(readCurrentFixture(t, "session_title_updates.jsonl"), []byte{'\n'})
 	expected := bytes.Join([][]byte{prefix, nextLine, {'\n'}}, nil)
-	assertTitleJournalBytes(t, repository, expected)
+	assertJournalBytes(t, repository, expected)
 	select {
 	case appendErr := <-result:
 		t.Fatalf("append returned before Sync released: %v", appendErr)
@@ -177,9 +172,7 @@ func TestSessionTitleSyncFailureWaitsForFinalSyncAndReplaysWrittenTitle(t *testi
 		t.Fatalf("final writer result = %v", err)
 	}
 	reopened, err := repository.Open(ctx, testThreadID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	defer reopened.Close()
 	loaded, err = NewLoader().Load(ctx, reopened)
 	if err != nil || loaded.NeedsRepair() {
@@ -189,15 +182,13 @@ func TestSessionTitleSyncFailureWaitsForFinalSyncAndReplaysWrittenTitle(t *testi
 	if err != nil || plan.Title != "复核 @src/parser" || loaded.NextSequence != 12 {
 		t.Fatalf("recovered durable title = %q, next seq %d, error %v", plan.Title, loaded.NextSequence, err)
 	}
-	assertTitleJournalBytes(t, repository, expected)
+	assertJournalBytes(t, repository, expected)
 }
 
-func assertTitleJournalBytes(t *testing.T, repository *Repository, expected []byte) {
+func assertJournalBytes(t *testing.T, repository *Repository, expected []byte) {
 	t.Helper()
 	path, err := repository.JournalPath(testThreadID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	actual, err := os.ReadFile(path)
 	if err != nil || !bytes.Equal(actual, expected) {
 		t.Fatalf("unexpected journal bytes: got %d, want %d, error %v", len(actual), len(expected), err)

@@ -55,10 +55,7 @@ func TestStreamJSONMatchedPreCompactRequiresLocalTrust(t *testing.T) {
 				want = []string{"thread.started", "control.response", "turn.started", "compaction.started", "compaction.failed", "assistant.text.delta", "turn.completed"}
 				wantCalls++
 			}
-			seed, err := openChatResources(ctx, cfg, root, "", workspace)
-			if err != nil {
-				t.Fatal(err)
-			}
+			seed := mustOpenChatResources(t, ctx, cfg, root, "", workspace)
 			defer seed.close(context.Background())
 			submitAppTurn(t, seed, strings.Repeat("historical work ", 3500))
 			thread := seed.identity.ThreadID
@@ -68,10 +65,7 @@ func TestStreamJSONMatchedPreCompactRequiresLocalTrust(t *testing.T) {
 			runner := &compactionFixtureRunner{t: t}
 			hooks := compactionFixtureHooks(t, runner, string(trigger))
 			hooks.interactiveApprovals = false
-			resources, err := openChatResourcesWithHooks(ctx, cfg, dataPaths{sessionRoot: root}, string(thread), false, workspace, hooks)
-			if err != nil {
-				t.Fatal(err)
-			}
+			resources := mustOpenChatResourcesWithHooks(t, ctx, cfg, dataPaths{sessionRoot: root}, string(thread), false, workspace, hooks)
 			defer resources.close(context.Background())
 			output := &appWriteCloser{}
 			outcome := runStreamJSON(ctx, Options{Input: io.NopCloser(strings.NewReader(input + "\n")), Output: output}, resources)

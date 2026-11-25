@@ -5,14 +5,12 @@ package app
 import (
 	"bytes"
 	"context"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -35,16 +33,9 @@ func TestSessionStartRealRunnerBothProvidersAndCheckpointRestore(t *testing.T) {
 				defer cancel()
 				workspace, root := t.TempDir(), filepath.Join(t.TempDir(), "sessions")
 				writeSessionStartFixture(t, workspace, false)
-				var mu sync.Mutex
-				var requests [][]byte
+				var recorder requestRecorder
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-					body, err := io.ReadAll(request.Body)
-					if err != nil {
-						t.Error(err)
-					}
-					mu.Lock()
-					requests = append(requests, body)
-					mu.Unlock()
+					_, body := recorder.record(t, request)
 					w.Header().Set("Content-Type", "text/event-stream")
 					text := "ordinary-answer"
 					if bytes.Contains(body, []byte(`"tool_choice":"none"`)) || bytes.Contains(body, []byte(`"tool_choice":{"type":"none"}`)) {
@@ -59,10 +50,7 @@ func TestSessionStartRealRunnerBothProvidersAndCheckpointRestore(t *testing.T) {
 				}
 				cfg = cacheFixtureConfig(t, cfg, true)
 				open := func(thread string, interactive bool) *chatResources {
-					resources, err := openChatResourcesWithHooks(ctx, cfg, dataPaths{sessionRoot: root}, thread, false, workspace, chatResourceHooks{interactiveApprovals: interactive})
-					if err != nil {
-						t.Fatal(err)
-					}
+					resources := mustOpenChatResourcesWithHooks(t, ctx, cfg, dataPaths{sessionRoot: root}, thread, false, workspace, chatResourceHooks{interactiveApprovals: interactive})
 					t.Cleanup(func() { _ = resources.close(context.Background()) })
 					if interactive {
 						if err := resources.session.StartInteractive(ctx); err != nil {
@@ -72,9 +60,7 @@ func TestSessionStartRealRunnerBothProvidersAndCheckpointRestore(t *testing.T) {
 					return resources
 				}
 				close := func(resources *chatResources) {
-					if err := resources.close(context.Background()); err != nil {
-						t.Fatal(err)
-					}
+					closeAppTestResources(t, resources)
 				}
 				first := open("", true)
 				thread := first.identity.ThreadID
@@ -107,9 +93,7 @@ func TestSessionStartRealRunnerBothProvidersAndCheckpointRestore(t *testing.T) {
 					t.Fatal("wrong compact/resume source order", got)
 				}
 				close(resumed)
-				mu.Lock()
-				captured := slices.Clone(requests)
-				mu.Unlock()
+				captured := recorder.snapshot()
 				if len(captured) != 3 || !bytes.Contains(captured[0], []byte("context-startup")) || !bytes.Contains(captured[1], []byte("context-startup")) || bytes.Contains(captured[1], []byte("context-compact")) || bytes.Contains(captured[1], []byte("resumed-exact-user")) {
 					t.Fatal("unexpected first sample or old-window summary", len(captured))
 				}
@@ -132,10 +116,7 @@ func TestSessionStartRealRunnerBothProvidersAndCheckpointRestore(t *testing.T) {
 				if err != nil || !bytes.Equal(before, after) {
 					t.Fatal("offline restore changed completed facts", err)
 				}
-				mu.Lock()
-				count := len(requests)
-				mu.Unlock()
-				if count != len(captured) {
+				if len(recorder.snapshot()) != len(captured) {
 					t.Fatal("restoring context dispatched a provider request")
 				}
 			})
@@ -148,18 +129,9 @@ func TestSessionStartBranchUsesDeferredResumeContext(t *testing.T) {
 	defer cancel()
 	workspace, home := privateAppTempDir(t), privateAppTempDir(t)
 	writeSessionStartFixture(t, workspace, false)
-	requests := make(chan []byte, 7)
+	var recorder requestRecorder
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		select {
-		case requests <- body:
-		default:
-			t.Error("unexpected model request")
-		}
+		_, body := recorder.record(t, r)
 		w.Header().Set("Content-Type", "text/event-stream")
 		answer := "fixture-answer"
 		if bytes.Contains(body, []byte(`"tool_choice":"none"`)) {
@@ -213,20 +185,14 @@ func TestSessionStartBranchUsesDeferredResumeContext(t *testing.T) {
 	}
 	seed := readSwitchJournal(t, path)
 	marker := switchJournalRecord(t, seed, false)
-	if len(requests) != 5 || marker.EventKind != session.EventThreadForked ||
+	if len(recorder.snapshot()) != 5 || marker.EventKind != session.EventThreadForked ||
 		marker.Sequence != switchJournalRecord(t, retained, false).Sequence+1 ||
 		!bytes.HasPrefix(seed, retained) || bytes.Contains(seed, []byte("excluded-auto-summary")) ||
 		!bytes.Equal(readSwitchJournal(t, sourcePath), durable) {
 		t.Fatal("branch did not retain precisely the closed scope before selected turn")
 	}
-	for range 5 {
-		<-requests
-	}
 	copyRoot, _ := installThreadFixture(t, seed, branch.identity.ThreadID)
-	cold, err := openChatResourcesWithHooks(ctx, cfg, dataPaths{sessionRoot: copyRoot}, string(branch.identity.ThreadID), false, workspace, chatResourceHooks{interactiveApprovals: true})
-	if err != nil {
-		t.Fatal(err)
-	}
+	cold := mustOpenChatResourcesWithHooks(t, ctx, cfg, dataPaths{sessionRoot: copyRoot}, string(branch.identity.ThreadID), false, workspace, chatResourceHooks{interactiveApprovals: true})
 	defer closeResumeTestResources(t, cold)
 	if err := cold.session.StartInteractive(ctx); err != nil {
 		t.Fatal(err)
@@ -237,10 +203,11 @@ func TestSessionStartBranchUsesDeferredResumeContext(t *testing.T) {
 		}
 		waitCompactionIdle(t, chat)
 	}
-	if len(requests) != 2 {
-		t.Fatalf("wanted two model requests, got %d", len(requests))
+	captured := recorder.snapshot()
+	if len(captured) != 7 {
+		t.Fatalf("wanted five original and two continuation requests, got %d", len(captured))
 	}
-	live, reopened := <-requests, <-requests
+	live, reopened := captured[5], captured[6]
 	if !bytes.Equal(live, reopened) || bytes.Count(live, []byte("context-compact")) != 1 ||
 		!bytes.Contains(live, []byte("retained-manual-summary")) || bytes.Contains(live, []byte("excluded-auto-summary")) ||
 		bytes.Contains(live, []byte("excluded-rewind-prompt")) ||
@@ -268,9 +235,7 @@ func writeSessionStartFixture(t *testing.T, workspace string, stop bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "hooks.json"), raw, 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, filepath.Join(dir, "hooks.json"), raw, 0600)
 }
 
 func runSessionStartFixtureTurn(t *testing.T, ctx context.Context, resources *chatResources, text string) []domain.SessionStartSource {
@@ -340,17 +305,12 @@ func TestSessionStartCompactPrecedesFrozenStopContinuation(t *testing.T) {
 			defer cancel()
 			workspace, root := t.TempDir(), filepath.Join(t.TempDir(), "sessions")
 			writeSessionStartFixture(t, workspace, true)
-			var mu sync.Mutex
-			var requests [][]byte
+			var recorder requestRecorder
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-				body, _ := io.ReadAll(request.Body)
-				mu.Lock()
-				requests = append(requests, body)
-				index := len(requests)
-				mu.Unlock()
+				index, body := recorder.record(t, request)
 				w.Header().Set("Content-Type", "text/event-stream")
 				text := "finished-answer"
-				if index == 1 {
+				if index == 0 {
 					text = "old-stop-candidate " + strings.Repeat("long partial solution ", 2600)
 				} else if bytes.Contains(body, []byte(`"tool_choice":"none"`)) || bytes.Contains(body, []byte(`"tool_choice":{"type":"none"}`)) {
 					text = "compact-summary-exact"
@@ -360,10 +320,7 @@ func TestSessionStartCompactPrecedesFrozenStopContinuation(t *testing.T) {
 			defer server.Close()
 			budget, _ := contextplan.NewBudget(22000, 0, 0)
 			cfg := config.Config{Provider: config.Provider{Family: family, Model: "fixture-model", BaseURL: server.URL, APIKey: secret.New("private-session-start-key")}, ContextBudget: budget}
-			resources, err := openChatResourcesWithHooks(ctx, cfg, dataPaths{sessionRoot: root}, "", false, workspace, chatResourceHooks{interactiveApprovals: true})
-			if err != nil {
-				t.Fatal(err)
-			}
+			resources := mustOpenChatResourcesWithHooks(t, ctx, cfg, dataPaths{sessionRoot: root}, "", false, workspace, chatResourceHooks{interactiveApprovals: true})
 			defer resources.close(context.Background())
 			if err := resources.session.StartInteractive(ctx); err != nil {
 				t.Fatal(err)
@@ -372,12 +329,8 @@ func TestSessionStartCompactPrecedesFrozenStopContinuation(t *testing.T) {
 				t.Fatal("wrong automatic compact boundary", got)
 			}
 			thread := resources.identity.ThreadID
-			if err := resources.close(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			mu.Lock()
-			captured := slices.Clone(requests)
-			mu.Unlock()
+			closeAppTestResources(t, resources)
+			captured := recorder.snapshot()
 			if len(captured) != 3 || !bytes.Contains(captured[1], []byte("old-stop-candidate")) || bytes.Contains(captured[1], []byte("stop-feedback-exact")) {
 				t.Fatal("summary did not use only the prior window", len(captured))
 			}
@@ -391,9 +344,7 @@ func TestSessionStartCompactPrecedesFrozenStopContinuation(t *testing.T) {
 				t.Fatal("Stop did not preserve its sample identity")
 			}
 			assertInterruptedCompactSessionStartBeforeStop(t, ctx, cfg, root, workspace, thread, loaded, plan.Stops[0])
-			mu.Lock()
-			requestCount := len(requests)
-			mu.Unlock()
+			requestCount := len(recorder.snapshot())
 			if requestCount != len(captured) {
 				t.Fatal("recovery contacted the Provider", requestCount)
 			}
@@ -431,23 +382,17 @@ func assertInterruptedCompactSessionStartBeforeStop(t *testing.T, ctx context.Co
 	if err != nil {
 		t.Fatal(err)
 	}
-	original, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	original := readAppTestFile(t, path)
 	prefix := prefixLines(original, int(interrupted))
 	resumeRoot, resumePath, _ := installPreviewFixture(t, prefix)
 	runner := &appHookRunner{}
 	var recovered []byte
 	for range 2 {
-		resources, err := openChatResourcesWithHooks(ctx, cfg, dataPaths{sessionRoot: resumeRoot}, string(thread), false, workspace, chatResourceHooks{
+		resources := mustOpenChatResourcesWithHooks(t, ctx, cfg, dataPaths{sessionRoot: resumeRoot}, string(thread), false, workspace, chatResourceHooks{
 			newHookRunner: func(*builtin.Workspace, builtin.CommandEnvironment, builtin.HookOutputParser) (chatRuntime.HookRunner, error) {
 				return runner, nil
 			},
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
 		if err := resources.close(ctx); err != nil {
 			t.Fatal(err)
 		}

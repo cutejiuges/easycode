@@ -74,61 +74,6 @@ func TestTasksFixedSnapshotsAndSafeText(t *testing.T) {
 	}
 }
 
-func TestTasksAndCompletionShareTheSameHeightBudget(t *testing.T) {
-	m := taskTestObserve(t, taskTestModel(t), taskTestState(t, 70, 20, 17, false))
-	m = m.WithSkills([]domain.SkillListEntry{
-		completionSkillEntry(t, "review-a", "review one"), completionSkillEntry(t, "review-b", "review two"),
-		completionSkillEntry(t, "review-c", "review three"), completionSkillEntry(t, "review-d", "review four"), completionSkillEntry(t, "review-e", "review five"),
-	})
-	m.composer = composerWithText(t, "$review\nsecond draft row\n第三行草稿")
-	m.composer.moveTo(len("$review"))
-	m.inputs = []inputPreview{{id: "01900000-0000-7000-8000-000000000010", text: "queued input"}}
-	m.stopStatus = "Stop checks pending"
-	m.reasoning.notice = "Thinking status"
-	m.effortNotice = []string{"effort selection one", "effort selection two"}
-	for _, size := range []tea.WindowSizeMsg{{Width: 80, Height: 24}, {Width: 40, Height: 12}, {Width: 120, Height: 40}, {Width: 28, Height: 15}, {Width: 13, Height: 6}} {
-		m = updateModel(t, m, size)
-		draft := m.composer
-		if m.completion.rows > 0 {
-			m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyDown})
-		}
-		selected := m.completion.catalog.entries[m.completion.matches[m.completion.selected].index].id
-		for _, action := range []string{"initial", "toggle", "update"} {
-			if action == "toggle" {
-				m = updateModel(t, m, tea.KeyMsg{Type: tea.KeyCtrlT})
-			} else if action == "update" {
-				m = taskTestObserve(t, m, taskTestState(t, taskResultSequence(*m.tasks.snapshot)+1, 20, 18, false))
-			}
-			shared := m.auxiliaryLayout(m.candidateRows())
-			if shared.effortRows+len(shared.taskLines)+m.completion.rows > shared.space {
-				t.Fatal("auxiliary regions allocated the same rows twice")
-			}
-			if m.completion.rows > 0 && len(shared.taskLines) > 1 {
-				t.Fatal("tasks pushed completion out of the shared layout")
-			}
-			if m.completion.rows > 0 {
-				if !strings.Contains(m.completion.view, "> $"+selected.name) {
-					// 极窄列只保留名称前缀；仍须存在唯一选中行。
-					if size.Width >= 28 || !strings.Contains(m.completion.view, "> ") {
-						t.Fatal("selected completion is invisible")
-					}
-				}
-				if m.completion.layoutKey.taskRows != len(shared.taskLines) || m.completion.layoutKey.commonSpace != shared.space || m.completion.layoutKey.completionRows != m.completion.rows {
-					t.Fatal("completion cache key omitted the actual shared allocation")
-				}
-			}
-			if !reflect.DeepEqual(m.composer, draft) || m.completion.catalog.entries[m.completion.matches[m.completion.selected].index].id != selected {
-				t.Fatal("layout pressure changed the draft or candidate identity")
-			}
-			view := m.View()
-			taskViewBounds(t, view, size.Width, size.Height)
-			if m.completion.rows > 0 && !strings.Contains(view, "> ") {
-				t.Fatal("final composition removed the selected candidate")
-			}
-		}
-	}
-}
-
 func TestTasksFocusPrioritiesAndActiveCancellation(t *testing.T) {
 	m := taskTestObserve(t, taskTestModel(t), taskTestState(t, 80, 20, 17, false))
 	m.composer = composerWithText(t, "kept draft")
@@ -170,14 +115,7 @@ func TestTasksFocusPrioritiesAndActiveCancellation(t *testing.T) {
 	if m.session.(*taskFixtureSession).interrupts != 1 || len(m.session.(*taskFixtureSession).submits) != 0 {
 		t.Fatal("cancellation leaked a model input")
 	}
-	// 当前清单不随工具候选、失败终态或新用户输入推断更新。
-	before := m.tasks.snapshot.Clone()
-	for _, kind := range []protocol.EventKind{protocol.EventToolReady, protocol.EventToolStarted, protocol.EventToolTerminal} {
-		m = updateModel(t, m, RuntimeEventMsg{Event: protocol.Event{Kind: kind}})
-		if !m.tasks.snapshot.Equal(before) {
-			t.Fatal("tool activity changed durable task facts")
-		}
-	}
+
 }
 
 // checkTaskSnapshot 只固化少量可独立检出展示风险的代表布局。

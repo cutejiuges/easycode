@@ -3,19 +3,19 @@ package anthropic
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"reflect"
 	"testing"
 
 	"easycode/internal/codec"
 	"easycode/internal/domain"
 	"easycode/internal/provider"
+	"easycode/internal/provider/testsupport"
 	"easycode/internal/secret"
 	"easycode/internal/tool"
-	"encoding/json"
 )
 
 func TestSessionStartNativeContextRetainsToolContinuationAndCache(t *testing.T) {
@@ -41,33 +41,8 @@ func TestSessionStartNativeContextRetainsToolContinuationAndCache(t *testing.T) 
 	}
 	defer instance.Close()
 	c := testConversation(t, instance)
-	input, _ := domain.NewUserInput("01900000-0000-7000-8000-000000000002", "real initial input")
-	association, _ := domain.NewInputAssociation(stopTestTurn, domain.InputInitial, 0, []domain.InputID{input.ID()})
-	startup := sessionStartTestContext(t, domain.SessionStartTarget{Source: domain.SessionStartStartup, TurnID: stopTestTurn}, "frozen startup context")
-	start, err := c.PrepareSessionStartInputs(startup, association, []domain.UserInput{input})
-	if err != nil {
-		t.Fatal(err)
-	}
-	startEnvelope, _ := start.Envelope()
-	inputEnvelope, _ := start.InputEnvelope()
-	startRecord, err := provider.NewSessionStartContextRestoreRecord(startup.Target, []domain.SessionStartProof{startup.Items[0].Proof()}, startEnvelope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := start.Finalize(); err != nil {
-		t.Fatal(err)
-	}
-	sampling, _ := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testAnthropicToolCatalog(t))
-	initialRequest, err := c.compileSamplingRequest(c.history.Entries(), sampling)
-	if err != nil {
-		t.Fatal(err)
-	}
-	requestBody := initialRequest.Bytes()
-	contextIndex := bytes.Index(requestBody, []byte("frozen startup context"))
-	inputIndex := bytes.Index(requestBody, []byte("real initial input"))
-	if contextIndex < 0 || contextIndex >= inputIndex {
-		t.Fatal("startup ordering differs")
-	}
+	sampling, _ := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testsupport.ToolCatalog(t))
+	startRecord, inputEnvelope := testsupport.SessionStartInputs(t, c, sampling)
 
 	execInput, _ := tool.NewExecInput("printf ok", "src", 1000)
 	ready, _ := tool.NewExecReadyCall("call-exec", execInput)
@@ -108,20 +83,7 @@ func TestSessionStartNativeContextRetainsToolContinuationAndCache(t *testing.T) 
 	if err := checkpoint.Finalize(); err != nil {
 		t.Fatal(err)
 	}
-	value := sessionStartTestContext(t, domain.SessionStartTarget{Source: domain.SessionStartCompact, CompactionID: id, Scope: scope,
-		CheckpointRevision: source.ContextRevision() + 1, CheckpointSequence: 10, CheckpointDigest: source.Digest()}, "fixed compact supplement")
-	compact, err := c.PrepareCompactSessionStartContext(value, provider.SessionStartContinuation{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	compactEnvelope, _ := compact.Envelope()
-	compactRecord, err := provider.NewSessionStartContextRestoreRecord(value.Target, []domain.SessionStartProof{value.Items[0].Proof()}, compactEnvelope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := compact.Finalize(); err != nil {
-		t.Fatal(err)
-	}
+	value, compactEnvelope, compactRecord := testsupport.SessionStartSupplement(t, c, scope, id, source)
 	if _, err := nativeCompactionSource(c.history.Snapshot(), "model"); err == nil {
 		t.Fatal("a supplement alone enabled another compaction")
 	}
@@ -131,30 +93,13 @@ func TestSessionStartNativeContextRetainsToolContinuationAndCache(t *testing.T) 
 		t.Fatal(err)
 	}
 	restored := recovered.(*Conversation)
-	live, err := c.compileSamplingRequest(c.history.Entries(), sampling)
-	if err != nil {
-		t.Fatal(err)
-	}
-	again, err := restored.compileSamplingRequest(restored.history.Entries(), sampling)
-	if err != nil || !bytes.Equal(live.Bytes(), again.Bytes()) {
-		t.Fatal("restored canonical input differs", err)
-	}
+	live, evidence := testsupport.CheckSessionStartRestore(t, c, restored, sampling)
 	plan, _ := restored.planSamplingRequest(restored.history.Snapshot(), sampling)
-	evidence, _ := plan.evidence()
-	livePlan, _ := c.planSamplingRequest(c.history.Snapshot(), sampling)
-	liveEvidence, _ := livePlan.evidence()
-	if evidence.NativeFingerprint() == "" || evidence.NativeFingerprint() != liveEvidence.NativeFingerprint() {
-		t.Fatal("restored native fingerprint differs")
-	}
-	window, footprint, err := restored.ProjectContextWindow()
-	if err != nil || footprint.Revision() != 6 || len(window.History().CheckpointContexts) != 1 || !reflect.DeepEqual(restored.ProjectHistory(), c.ProjectHistory()) {
-		t.Fatal("context footprint or history projection differs", err)
-	}
 	item := plan.request.Messages[1]
 	itemBytes, _ := codec.MarshalStable(item)
 	want, err := os.ReadFile("testdata/session_start_compact_input.golden.json")
 	if err != nil || !bytes.Equal(itemBytes, bytes.TrimSpace(want)) ||
-		len(plan.request.Messages) != 2 || !bytes.Contains(again.Bytes(), []byte("fresh checkpoint summary")) || bytes.Contains(again.Bytes(), []byte("frozen startup context")) {
+		len(plan.request.Messages) != 2 || !bytes.Contains(live.Bytes(), []byte("fresh checkpoint summary")) || bytes.Contains(live.Bytes(), []byte("frozen startup context")) {
 		t.Fatalf("checkpoint and compact native golden mismatch: %s (%v)", itemBytes, err)
 	}
 	wrong := value.Items[0].Proof()
@@ -187,18 +132,4 @@ func TestSessionStartNativeContextRetainsToolContinuationAndCache(t *testing.T) 
 	if err != nil || actual.Text() != "answer" {
 		t.Fatal("continuation lost the real turn or sample index", err, actual)
 	}
-}
-
-func sessionStartTestContext(t *testing.T, target domain.SessionStartTarget, body string) domain.SessionStartContext {
-	t.Helper()
-	scope, _ := domain.ParseSessionStartHookScope("*")
-	declaration, err := domain.NewSessionStartHookDeclaration(domain.HookSourceProject, domain.HookFeedbackModel, domain.HookDigest(nil), "session-context", scope, "true", 5)
-	if err != nil {
-		t.Fatal(err)
-	}
-	text, err := domain.WrapSessionStartContext(target.Source, body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return domain.SessionStartContext{Target: target, Items: []domain.SessionStartContextItem{{Reference: declaration.Reference, Text: text}}}
 }

@@ -46,13 +46,7 @@ func TestPostCompactPoisonStopsToolContinuation(t *testing.T) {
 	}
 	scope, _ := domain.ParseCompactionHookScope("auto")
 	declaration, err := domain.NewPostCompactHookDeclaration(domain.HookSourceProject, domain.HookFeedbackNone, domain.HookDigest(nil), "observe", scope, "true", 5)
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err := domain.NewHookSnapshot([]domain.HookDeclaration{declaration}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	runner := postCompactTestRunner{run: func(_ context.Context, id domain.HookRunIdentity) domain.HookRunResult {
 		_, scope, _ := id.Target.Compaction()
 		if scope.SampleIndex != 1 || conversation.outputs.finalized.Load() != 1 {
@@ -60,9 +54,7 @@ func TestPostCompactPoisonStopsToolContinuation(t *testing.T) {
 		}
 		return domain.HookRunResult{Identity: id, Status: domain.HookUncertain, Code: domain.HookOutcomeUncertain, Origin: "execution"}
 	}}
-	if err := runtime.InstallHooks(snapshot, runner, t.TempDir(), domain.HookOK); err != nil {
-		t.Fatal(err)
-	}
+	installRuntimeTestHooks(t, runtime, runner, t.TempDir(), []domain.HookDeclaration{declaration})
 	runtime.interactiveApprovals = true
 	correction, _ := domain.NewUserInput("01900000-0000-7000-8000-000000000002", "pending correction")
 	control := &stopInputFixture{inputs: []domain.UserInput{correction}}
@@ -130,18 +122,10 @@ func TestPostCompactAutomaticCompletionAndCancellation(t *testing.T) {
 			declarations := make([]domain.HookDeclaration, 0, 2)
 			for _, name := range []string{"first", "second"} {
 				declaration, err := domain.NewPostCompactHookDeclaration(domain.HookSourceProject, domain.HookFeedbackNone, domain.HookDigest([]byte("fixture")), name, scope, "fixture", 5)
-				if err != nil {
-					t.Fatal(err)
-				}
+				requireNoError(t, err)
 				declarations = append(declarations, declaration)
 			}
-			snapshot, err := domain.NewHookSnapshot(declarations, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := runtime.InstallHooks(snapshot, runner, t.TempDir(), domain.HookOK); err != nil {
-				t.Fatal(err)
-			}
+			installRuntimeTestHooks(t, runtime, runner, t.TempDir(), declarations)
 			if test.exhausted {
 				runtime.hooks.now = func() time.Time { return time.Unix(int64(runs)*30, 0) }
 				conversation.stream = fixedStream(completedProviderEventWithSample(t, newPreparedSample(t, func() {})))
@@ -151,13 +135,12 @@ func TestPostCompactAutomaticCompletionAndCancellation(t *testing.T) {
 			}
 			var closed protocol.PostCompactClosedPayload
 			completions := 0
+			var err error
 			err = runtime.runTurn(ctx, runtimeInputs("pending input"), runtime.profile, nil, func(event protocol.Event) {
 				switch event.Kind {
 				case protocol.EventPostCompactClosed:
 					closed, err = protocol.DecodePostCompactClosed(event)
-					if err != nil {
-						t.Fatal(err)
-					}
+					requireNoError(t, err)
 				case protocol.EventCompactionCompleted:
 					completions++
 				case protocol.EventCompactionFailed, protocol.EventHookTrustRequested:

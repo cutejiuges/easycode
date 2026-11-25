@@ -46,10 +46,7 @@ func TestRuntimeEffortInputRewriteKeepsCapturedPolicy(t *testing.T) {
 			cfg := reasoningFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, Model: "fixture-model", APIKey: secret.New("effort-rewrite-fixture")}})
 			paths := dataPaths{sessionRoot: filepath.Join(t.TempDir(), "sessions")}
 			hooks := chatResourceHooks{interactiveApprovals: true}
-			r, err := openChatResourcesWithHooks(context.Background(), cfg, paths, "", false, workspace, hooks)
-			if err != nil {
-				t.Fatal(err)
-			}
+			r := mustOpenChatResourcesWithHooks(t, context.Background(), cfg, paths, "", false, workspace, hooks)
 			defer func() { _ = r.close(context.Background()) }()
 			if err := r.session.StartInteractive(context.Background()); err != nil {
 				t.Fatal(err)
@@ -118,9 +115,7 @@ func TestRuntimeEffortInputRewriteKeepsCapturedPolicy(t *testing.T) {
 			assertAppEffort(t, family, <-bodies, "low")
 			appEffortIdle(t, r)
 			thread := r.identity.ThreadID
-			if err := r.close(context.Background()); err != nil {
-				t.Fatal(err)
-			}
+			closeAppTestResources(t, r)
 			r, err = openChatResourcesWithHooks(context.Background(), cfg, paths, string(thread), false, workspace, hooks)
 			if err != nil {
 				t.Fatal(err)

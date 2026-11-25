@@ -31,19 +31,11 @@ func postRuntimeFixture(t *testing.T, journal Journal, policies ...domain.HookFe
 	ds := make([]domain.HookDeclaration, len(policies))
 	for i, policy := range policies {
 		d, err := domain.NewHookDeclaration(domain.HookSourceProject, domain.HookPostToolUse, policy, strings.Repeat("a", 64), "post-"+string(rune('a'+i)), 7, "true", 5)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		ds[i] = d
 	}
-	snapshot, err := domain.NewHookSnapshot(ds, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
 	runner := &postTestRunner{}
-	if err := r.InstallHooks(snapshot, runner, "/workspace", domain.HookOK); err != nil {
-		t.Fatal(err)
-	}
+	installRuntimeTestHooks(t, r, runner, "/workspace", ds)
 	_, candidate := runtimePatchInvocation(t)
 	preparer := &fixedPatchPreparer{candidate: candidate}
 	executor := &fixedPatchExecutor{}
@@ -61,14 +53,10 @@ func postApprovalEmitter(t *testing.T, r *Runtime, inv tool.Invocation, trust pr
 		trusted(e)
 		if e.Kind == protocol.EventToolApprovalRequested {
 			p, err := protocol.DecodeToolApprovalRequested(e)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			id, _ := tool.ParseApprovalRequestID(p.RequestID)
 			response, err := tool.NewApprovalResponse(id, runtimeTurnID, inv.InvocationID(), tool.CandidateFingerprint(p.Fingerprint), approval, "")
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			if err := r.ResolveToolApproval(response); err != nil {
 				t.Fatal(err)
 			}
@@ -118,9 +106,7 @@ func TestPostCachedFactsRejectChangedInputAndForgedResult(t *testing.T) {
 	r, inv, runner, _, executor := postRuntimeFixture(t, j, domain.HookFeedbackNone)
 	emit := postApprovalEmitter(t, r, inv, protocol.HookTrustSession, tool.ApprovalAllowOnce)
 	result, _, err := r.executeApproved(context.Background(), emit, runtimeTurnID, inv)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	before := len(j.snapshot())
 	replacement, _ := tool.NewPatchReplacement("old", "forged", false)
 	input, _ := tool.NewPatchInput("main.go", []tool.PatchReplacement{replacement})

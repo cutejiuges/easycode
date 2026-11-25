@@ -56,7 +56,7 @@ func loadRepositorySource(t *testing.T) repositorySource {
 				return walkErr
 			}
 			if entry.IsDir() {
-				if entry.Name() == "testdata" {
+				if entry.Name() == "testdata" || entry.Name() == "testsupport" || entry.Name() == "testutil" {
 					return filepath.SkipDir
 				}
 				return nil
@@ -112,6 +112,9 @@ func dependencyViolations(packages map[string]*sourcePackage) []string {
 }
 
 func forbiddenDependencyReason(packagePath string, imported string) string {
+	if strings.Contains(imported+"/", "/testsupport/") || strings.Contains(imported+"/", "/testutil/") {
+		return "生产代码不得依赖测试专属支持包"
+	}
 	if (strings.HasPrefix(packagePath, "easycode/internal/executor/process") || strings.HasPrefix(packagePath, "easycode/internal/extension/localfile")) && strings.HasPrefix(imported, "easycode/internal/") {
 		return "共享进程与文件边界不得依赖业务层"
 	}

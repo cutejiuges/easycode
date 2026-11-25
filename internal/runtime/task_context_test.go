@@ -90,9 +90,7 @@ func TestTaskStampBindsOrdinaryInputCandidateQueryFailureAndRestoredPlanning(t *
 	restoredRecorder := &taskRecordingPlanner{}
 	config.ContextPlanner = restoredRecorder
 	restored, err := New(&fakeConversation{}, config)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	if _, err := restored.contextPlanFor(restored.operationProfile); err != nil {
 		t.Fatal(err)
 	}
@@ -117,9 +115,7 @@ func TestTaskStampIsPreservedByManualAndAutomaticCompactionPlans(t *testing.T) {
 			config.InitialTaskProgress = saved
 			config.ContextPlanner = recorder
 			r, err := New(c, config)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			if automatic {
 				budget, _ := contextplan.NewBudget(60000, 0, 0)
 				r.budget = budget

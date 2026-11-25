@@ -19,19 +19,13 @@ func TestQuestionRecoveryNeverReasksAndRetainsFrozenAnswers(t *testing.T) {
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		for _, state := range []string{"ready", "started", "result", "complete", "skip", "unavailable"} {
 			t.Run(string(family)+"/"+state, func(t *testing.T) {
-				data, err := os.ReadFile("../session/testdata/current/question_" + string(family) + "_" + state + ".jsonl")
-				if err != nil {
-					t.Fatal(err)
-				}
+				data := readAppTestFile(t, "../session/testdata/current/question_"+string(family)+"_"+state+".jsonl")
 				root, path, thread := installPreviewFixture(t, data)
 				cfg := config.Config{Provider: config.Provider{Family: family, BaseURL: "https://example.invalid", APIKey: secret.New("fixture-key"), Model: "gpt-test"}}
 				if family == domain.ProviderAnthropic {
 					cfg.Provider.Model = "claude-test"
 				}
-				resources, err := openChatResources(context.Background(), cfg, root, string(thread), t.TempDir())
-				if err != nil {
-					t.Fatal(err)
-				}
+				resources := mustOpenChatResources(t, context.Background(), cfg, root, string(thread), t.TempDir())
 				query := resources.transcriptQueries
 				page, err := query.ListTranscript(context.Background(), protocol.TranscriptListQuery{Mode: protocol.TranscriptDetail, ThreadID: thread, Limit: 50})
 				if err != nil {
@@ -68,9 +62,7 @@ func TestQuestionRecoveryNeverReasksAndRetainsFrozenAnswers(t *testing.T) {
 				if !found {
 					t.Fatal("restored history omitted question")
 				}
-				if err := resources.close(context.Background()); err != nil {
-					t.Fatal(err)
-				}
+				closeAppTestResources(t, resources)
 				after, err := os.ReadFile(path)
 				if err != nil || !bytes.HasPrefix(after, data) {
 					t.Fatal("recovery rewrote current records", err)

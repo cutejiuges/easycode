@@ -70,9 +70,7 @@ func TestWriteProcessCrashAtPublicationBoundary(t *testing.T) {
 						if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
 							t.Fatal(err)
 						}
-						if err := os.WriteFile(target, []byte("original"), 0644); err != nil {
-							t.Fatal(err)
-						}
+						writeBuiltinFixture(t, target, []byte("original"), 0644)
 					}
 					readSignal, writeSignal, err := os.Pipe()
 					if err != nil {

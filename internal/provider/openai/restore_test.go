@@ -14,6 +14,7 @@ import (
 	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
 	"easycode/internal/provider"
+	"easycode/internal/provider/testsupport"
 	"easycode/internal/secret"
 	"easycode/internal/tool"
 )
@@ -87,10 +88,10 @@ func TestRestoreConversationMatchesUninterruptedNextRequest(t *testing.T) {
 		}
 		commits = append(commits, commit)
 	}
-	records := testRestoreRecords(t, commits, testRestoreFixtureOutputs(t, "call-", tool.WireCustomFreeform)...)
+	records := testRestoreRecords(t, commits, testsupport.RestoreFixtureOutputs(t, "call-", tool.WireCustomFreeform)...)
 	source := provider.HistorySource{ThreadID: "01900000-0000-7000-8000-000000000001", Family: domain.ProviderOpenAI, Wire: "responses", Model: instance.config.Model}
 	for boundary := 1; boundary <= len(records)+2; boundary++ {
-		ctx := &recordCancelContext{Context: context.Background(), remaining: boundary}
+		ctx := &testsupport.RecordCancelContext{Context: context.Background(), Remaining: boundary}
 		got, err := NewHistoryReader().ProjectStoredHistory(ctx, source, records, nil)
 		if err == nil || len(got.Turns) != 0 {
 			t.Fatalf("cancellation boundary %d leaked view", boundary)

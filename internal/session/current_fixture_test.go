@@ -49,20 +49,13 @@ func TestCurrentFixtureCanonicalBytesStayStable(t *testing.T) {
 func TestCurrentFixtureContinuesWithoutRewrite(t *testing.T) {
 	prefix := readCurrentFixture(t, "root.jsonl")
 	repository, lease := installCurrentFixture(t, prefix)
-	loaded, err := NewLoader().Load(context.Background(), lease)
-	if err != nil {
-		t.Fatal(err)
-	}
+	loaded := loadFixtureJournal(t, context.Background(), lease)
 	writer, err := StartJournalWriter(lease, loaded.Identity, loaded.NextSequence)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	records, err := writer.AppendBatch(context.Background(), []RecordDraft{
 		mustDraft(t, EventTurnStarted, domain.TurnID("00000000-0007-7000-8000-000000000008"), TurnStartedPayload{}),
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	if len(records) != 1 || records[0].Sequence != 11 {
 		t.Fatalf("continued records = %#v", records)
 	}
@@ -70,13 +63,8 @@ func TestCurrentFixtureContinuesWithoutRewrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	path, err := repository.JournalPath(testThreadID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
+	content := readSessionFixtureFile(t, path)
 	if len(content) <= len(prefix) || !bytes.Equal(content[:len(prefix)], prefix) {
 		t.Fatal("continuing the current fixture rewrote its historical prefix")
 	}
@@ -107,17 +95,7 @@ func TestCurrentFixtureRejectsUnsupportedShapeReadOnly(t *testing.T) {
 			if err := lease.Close(); err != nil {
 				t.Fatal(err)
 			}
-			path, err := repository.JournalPath(testThreadID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			after, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(after, content) {
-				t.Fatal("rejecting an unsupported shape modified journal bytes")
-			}
+			assertJournalBytes(t, repository, content)
 			if err := repository.Close(); err != nil {
 				t.Fatal(err)
 			}
@@ -127,10 +105,7 @@ func TestCurrentFixtureRejectsUnsupportedShapeReadOnly(t *testing.T) {
 
 func installCurrentFixture(t *testing.T, content []byte) (*Repository, *JournalLease) {
 	t.Helper()
-	repository, err := OpenOrCreateRepository(filepath.Join(t.TempDir(), "sessions"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	repository := openFixtureRepository(t, filepath.Join(t.TempDir(), "sessions"))
 	lease, err := repository.Create(context.Background(), testThreadID)
 	if err != nil {
 		_ = repository.Close()
@@ -159,9 +134,41 @@ func installCurrentFixture(t *testing.T, content []byte) (*Repository, *JournalL
 
 func readCurrentFixture(t *testing.T, name string) []byte {
 	t.Helper()
-	content, err := os.ReadFile(filepath.Join("testdata", "current", name))
+	content := readSessionFixtureFile(t, filepath.Join("testdata", "current", name))
+	return content
+}
+
+func openFixtureRepository(t *testing.T, root string) *Repository {
+	t.Helper()
+	repository, err := OpenOrCreateRepository(root)
+	requireNoError(t, err)
+	return repository
+}
+
+func loadFixtureJournal(t *testing.T, ctx context.Context, lease *JournalLease) LoadResult {
+	t.Helper()
+	loaded, err := NewLoader().Load(ctx, lease)
+	requireNoError(t, err)
+	return loaded
+}
+
+func readSessionFixtureFile(t *testing.T, path string) []byte {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	requireNoError(t, err)
+	return content
+}
+
+func decodeFixtureRecord(t *testing.T, content []byte) Record {
+	t.Helper()
+	record, err := DecodeRecord(content)
+	requireNoError(t, err)
+	return record
+}
+
+func requireNoError(t testing.TB, err error) {
+	t.Helper()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return content
 }

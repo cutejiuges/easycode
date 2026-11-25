@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"strconv"
 	"testing"
+
+	"easycode/internal/provider/testsupport"
 )
 
 func TestThinkingUsageDuplicateDetailsCannotOverrideInvalidFacts(t *testing.T) {
@@ -14,7 +16,7 @@ func TestThinkingUsageDuplicateDetailsCannotOverrideInvalidFacts(t *testing.T) {
 		`{"output_tokens":20,"output_tokens":40,"output_tokens_details":{"thinking_tokens":30}}`,
 	} {
 		t.Run(usage, func(t *testing.T) {
-			r := newStreamReducer(testAnthropicToolCatalog(t))
+			r := newStreamReducer(testsupport.ToolCatalog(t))
 			if _, err := reduceAnthropicTestEvent(r, `{"type":"message_start","message":{"id":"usage-regression","model":"model"}}`); err != nil {
 				t.Fatal(err)
 			}

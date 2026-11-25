@@ -5,14 +5,12 @@ package app
 import (
 	"bytes"
 	"context"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
-	"sync"
 	"testing"
 
 	"easycode/internal/config"
@@ -31,9 +29,7 @@ func TestFailureBothProvidersRealHookSandboxAndFrozenRestore(t *testing.T) {
 			for _, mode := range []string{"model", "none", "invalid", "exit-two", "unmatched", "deny", "ordinary-deny", "empty", "wrong-event", "oversized", "escaped-budget"} {
 				t.Run(string(family)+"/"+string(cap)+"/"+mode, func(t *testing.T) {
 					workspace := t.TempDir()
-					if err := os.WriteFile(filepath.Join(workspace, "main.go"), []byte("old\n"), 0600); err != nil {
-						t.Fatal(err)
-					}
+					writeAppTestFile(t, filepath.Join(workspace, "main.go"), []byte("old\n"), 0600)
 					command := `cat >/dev/null; printf 'RAW-PRIVATE-HOOK-STDERR' >&2; printf '%s' '{"hookSpecificOutput":{"hookEventName":"PostToolUseFailure","additionalContext":"Authorized diagnosis: inspect the original failure."}}'`
 					policy := domain.HookFeedbackModel
 					if mode == "none" {
@@ -63,14 +59,10 @@ func TestFailureBothProvidersRealHookSandboxAndFrozenRestore(t *testing.T) {
 					} else {
 						writeFailureHookConfig(t, workspace, command, policy)
 					}
-					var mu sync.Mutex
-					var requests [][]byte
+					var recorder requestRecorder
 					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-						b, _ := io.ReadAll(r.Body)
-						mu.Lock()
-						requests = append(requests, b)
-						n := len(requests)
-						mu.Unlock()
+						requestIndex, _ := recorder.record(t, r)
+						n := requestIndex + 1
 						w.Header().Set("Content-Type", "text/event-stream")
 						if n == 1 {
 							var wire bytes.Buffer
@@ -90,10 +82,7 @@ func TestFailureBothProvidersRealHookSandboxAndFrozenRestore(t *testing.T) {
 							return failedExecutor, nil
 						}
 					}
-					resources, err := openChatResourcesWithHooks(context.Background(), cfg, dataPaths{sessionRoot: root}, "", false, workspace, hooks)
-					if err != nil {
-						t.Fatal(err)
-					}
+					resources := mustOpenChatResourcesWithHooks(t, context.Background(), cfg, dataPaths{sessionRoot: root}, "", false, workspace, hooks)
 					defer resources.close(context.Background())
 					control, err := startTUIControlSession(context.Background(), resources.runtime)
 					if err != nil {
@@ -121,9 +110,7 @@ func TestFailureBothProvidersRealHookSandboxAndFrozenRestore(t *testing.T) {
 								if cap == domain.HookWrite {
 									path = "written"
 								}
-								if err := os.WriteFile(filepath.Join(workspace, path), []byte("external change\n"), 0600); err != nil {
-									t.Fatal(err)
-								}
+								writeAppTestFile(t, filepath.Join(workspace, path), []byte("external change\n"), 0600)
 							}
 							p, _ := protocol.DecodeToolApprovalRequested(e)
 							decision := protocol.ApprovalAllowOnce
@@ -142,9 +129,7 @@ func TestFailureBothProvidersRealHookSandboxAndFrozenRestore(t *testing.T) {
 					}
 					thread := resources.identity.ThreadID
 					path, _ := resources.service.repository.JournalPath(thread)
-					if err := resources.close(context.Background()); err != nil {
-						t.Fatal(err)
-					}
+					closeAppTestResources(t, resources)
 					raw, _ := os.ReadFile(path)
 					_, plan := loadToolLoopPlan(t, root, thread)
 					if len(plan.Tools) != 1 || plan.Tools[0].PostHooks == nil || !plan.Tools[0].HasResult {
@@ -205,9 +190,7 @@ func TestFailureBothProvidersRealHookSandboxAndFrozenRestore(t *testing.T) {
 					if len(g.Finished) != runs || cap == domain.HookExec && failedExecutor.calls != map[bool]int{true: 0, false: 1}[mode == "deny" || mode == "ordinary-deny"] {
 						t.Fatal("duplicate or unselected execution")
 					}
-					mu.Lock()
-					captured := append([][]byte(nil), requests...)
-					mu.Unlock()
+					captured := recorder.snapshot()
 					if len(captured) != 2 || !bytes.Contains(captured[1], []byte(entry.Result.Code())) {
 						t.Fatal("original error not sent to provider")
 					}
@@ -235,19 +218,11 @@ func TestFailureBothProvidersRealHookSandboxAndFrozenRestore(t *testing.T) {
 						}
 						lease.Close()
 						copyPath, _ := repo.JournalPath(thread)
-						if err := os.WriteFile(copyPath, raw, 0600); err != nil {
-							t.Fatal(err)
-						}
+						writeAppTestFile(t, copyPath, raw, 0600)
 						repo.Close()
-						live, err := openChatResources(context.Background(), cfg, root, string(thread), workspace)
-						if err != nil {
-							t.Fatal(err)
-						}
+						live := mustOpenChatResources(t, context.Background(), cfg, root, string(thread), workspace)
 						defer live.close(context.Background())
-						restored, err := openChatResources(context.Background(), cfg, copyRoot, string(thread), workspace)
-						if err != nil {
-							t.Fatal(err)
-						}
+						restored := mustOpenChatResources(t, context.Background(), cfg, copyRoot, string(thread), workspace)
 						defer restored.close(context.Background())
 						_, lf, _ := live.transcriptQueries.projector.(provider.Conversation).ProjectContextWindow()
 						_, rf, _ := restored.transcriptQueries.projector.(provider.Conversation).ProjectContextWindow()
@@ -256,9 +231,8 @@ func TestFailureBothProvidersRealHookSandboxAndFrozenRestore(t *testing.T) {
 						}
 						submitAppTurn(t, live, "continue diagnostics")
 						submitAppTurn(t, restored, "continue diagnostics")
-						mu.Lock()
-						a, b := bytes.Clone(requests[len(requests)-2]), bytes.Clone(requests[len(requests)-1])
-						mu.Unlock()
+						requests := recorder.snapshot()
+						a, b := requests[len(requests)-2], requests[len(requests)-1]
 						if !bytes.Equal(a, b) || !strings.Contains(string(a), "opaque-reasoning-sentinel") {
 							t.Fatal("failure restore changed native bytes/order")
 						}

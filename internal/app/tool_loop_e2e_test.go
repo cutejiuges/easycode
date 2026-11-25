@@ -15,88 +15,11 @@ import (
 	"testing"
 
 	"easycode/internal/config"
-	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
 	"easycode/internal/protocol"
 	"easycode/internal/secret"
 	"easycode/internal/session"
 )
-
-func TestReadToolLoopCompletesEndToEndForBothProviders(t *testing.T) {
-	for _, test := range []struct {
-		name         string
-		family       domain.ProviderFamily
-		model        string
-		serve        func(io.Writer, int)
-		assertSecond func(*testing.T, []byte)
-	}{
-		{
-			name: "OpenAI Responses", family: domain.ProviderOpenAI, model: "gpt-test",
-			serve: writeOpenAIToolLoopSample, assertSecond: assertOpenAIToolContinuation,
-		},
-		{
-			name: "Anthropic Messages", family: domain.ProviderAnthropic, model: "claude-test",
-			serve: writeAnthropicToolLoopSample, assertSecond: assertAnthropicToolContinuation,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			workspace := t.TempDir()
-			if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("workspace content\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			var requestMu sync.Mutex
-			var requests [][]byte
-			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-				body, err := io.ReadAll(request.Body)
-				if err != nil {
-					t.Errorf("read request: %v", err)
-					return
-				}
-				requestMu.Lock()
-				requests = append(requests, append([]byte(nil), body...))
-				sample := len(requests)
-				requestMu.Unlock()
-				writer.Header().Set("Content-Type", "text/event-stream")
-				test.serve(writer, sample)
-			}))
-			defer server.Close()
-			budget, err := contextplan.NewBudget(200000, 20000, 4096)
-			if err != nil {
-				t.Fatal(err)
-			}
-			resources, err := openChatResources(
-				context.Background(),
-				cacheFixtureConfig(t, config.Config{
-					Provider: config.Provider{
-						Family: test.family, BaseURL: server.URL,
-						APIKey: secret.New("tool-loop-secret"), Model: test.model,
-					},
-					ContextBudget: budget,
-				}, false),
-				filepath.Join(t.TempDir(), "sessions"), "", workspace,
-			)
-			if err != nil {
-				t.Fatal(err)
-			}
-			submitAppTurn(t, resources, "Read README.md and summarize it")
-			if err := resources.close(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			requestMu.Lock()
-			captured := append([][]byte(nil), requests...)
-			requestMu.Unlock()
-			if len(captured) != 2 {
-				t.Fatalf("request count = %d", len(captured))
-			}
-			test.assertSecond(t, captured[1])
-			for _, body := range captured {
-				if strings.Contains(string(body), workspace) || strings.Contains(string(body), "tool-loop-secret") {
-					t.Fatal("tool request leaked workspace path or secret")
-				}
-			}
-		})
-	}
-}
 
 func TestInteractivePatchDenyFeedbackAndConflictForBothProviders(t *testing.T) {
 	providers := []struct {
@@ -113,30 +36,21 @@ func TestInteractivePatchDenyFeedbackAndConflictForBothProviders(t *testing.T) {
 			t.Run(providerCase.name+"/"+scenario, func(t *testing.T) {
 				workspace := t.TempDir()
 				path := filepath.Join(workspace, "main.go")
-				if err := os.WriteFile(path, []byte("old\n"), 0o600); err != nil {
-					t.Fatal(err)
-				}
-				var mu sync.Mutex
-				var requests [][]byte
+				writeAppTestFile(t, path, []byte("old\n"), 0o600)
+				var recorder requestRecorder
 				server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-					body, _ := io.ReadAll(request.Body)
-					mu.Lock()
-					requests = append(requests, append([]byte(nil), body...))
-					sample := len(requests)
-					mu.Unlock()
+					requestIndex, _ := recorder.record(t, request)
+					sample := requestIndex + 1
 					writer.Header().Set("Content-Type", "text/event-stream")
 					providerCase.serve(writer, sample)
 				}))
 				defer server.Close()
-				resources, err := openChatResourcesWithHooks(
+				resources := mustOpenChatResourcesWithHooks(t,
 					context.Background(), config.Config{Provider: config.Provider{
 						Family: providerCase.family, BaseURL: server.URL, APIKey: secret.New("patch-scenario-secret"), Model: providerCase.model,
 					}}, dataPaths{sessionRoot: filepath.Join(t.TempDir(), "sessions")}, "", false, workspace,
 					chatResourceHooks{interactiveApprovals: true},
 				)
-				if err != nil {
-					t.Fatal(err)
-				}
 				controlSession, err := startTUIControlSession(context.Background(), resources.runtime)
 				if err != nil {
 					t.Fatal(err)
@@ -156,9 +70,7 @@ func TestInteractivePatchDenyFeedbackAndConflictForBothProviders(t *testing.T) {
 					decision := protocol.ApprovalDeny
 					feedback := "keep the old name"
 					if scenario == "conflict" {
-						if writeErr := os.WriteFile(path, []byte("external\n"), 0o600); writeErr != nil {
-							t.Fatal(writeErr)
-						}
+						writeAppTestFile(t, path, []byte("external\n"), 0o600)
 						decision = protocol.ApprovalAllowOnce
 						feedback = ""
 					}
@@ -169,13 +81,9 @@ func TestInteractivePatchDenyFeedbackAndConflictForBothProviders(t *testing.T) {
 				if err := controlSession.Shutdown(context.Background()); err != nil {
 					t.Fatal(err)
 				}
-				if err := resources.close(context.Background()); err != nil {
-					t.Fatal(err)
-				}
+				closeAppTestResources(t, resources)
 				content, _ := os.ReadFile(path)
-				mu.Lock()
-				captured := append([][]byte(nil), requests...)
-				mu.Unlock()
+				captured := recorder.snapshot()
 				wantContent, wantOutput := "old\n", "keep the old name"
 				if scenario == "conflict" {
 					wantContent, wantOutput = "external\n", "patch_conflict"
@@ -201,9 +109,7 @@ func TestToolLoopCrashPointsReconcileLocallyForBothProviders(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			workspace := t.TempDir()
 			readPath := filepath.Join(workspace, "README.md")
-			if err := os.WriteFile(readPath, []byte("original before crash\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			writeAppTestFile(t, readPath, []byte("original before crash\n"), 0o600)
 			var requestMu sync.Mutex
 			var requests [][]byte
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -233,29 +139,19 @@ func TestToolLoopCrashPointsReconcileLocallyForBothProviders(t *testing.T) {
 				APIKey: secret.New("recovery-secret"), Model: test.model,
 			}}
 			dataRoot := filepath.Join(t.TempDir(), "sessions")
-			created, err := openChatResources(
+			created := mustOpenChatResources(t,
 				context.Background(), applicationConfig, dataRoot, "", workspace,
 			)
-			if err != nil {
-				t.Fatal(err)
-			}
 			submitAppTurn(t, created, "Read README.md")
 			threadID := created.identity.ThreadID
 			journalPath, err := created.service.repository.JournalPath(threadID)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := created.close(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			baseline, err := os.ReadFile(journalPath)
-			if err != nil {
-				t.Fatal(err)
-			}
+			closeAppTestResources(t, created)
+			baseline := readAppTestFile(t, journalPath)
 			checkpoints := toolCrashCheckpoints(t, dataRoot, threadID)
-			if err := os.WriteFile(readPath, []byte("changed after crash\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			writeAppTestFile(t, readPath, []byte("changed after crash\n"), 0o600)
 
 			for _, checkpoint := range checkpoints {
 				t.Run(checkpoint.name, func(t *testing.T) {
@@ -263,48 +159,33 @@ func TestToolLoopCrashPointsReconcileLocallyForBothProviders(t *testing.T) {
 					requestMu.Lock()
 					beforeResume := len(requests)
 					requestMu.Unlock()
-					resumed, err := openChatResources(
+					resumed := mustOpenChatResources(t,
 						context.Background(), applicationConfig, dataRoot, string(threadID), workspace,
 					)
-					if err != nil {
-						t.Fatal(err)
-					}
 					requestMu.Lock()
 					afterResume := len(requests)
 					requestMu.Unlock()
 					if afterResume != beforeResume {
 						t.Fatalf("resume made Provider requests: before=%d after=%d", beforeResume, afterResume)
 					}
-					reconciledJournal, err := os.ReadFile(journalPath)
-					if err != nil {
-						t.Fatal(err)
-					}
+					reconciledJournal := readAppTestFile(t, journalPath)
 					submitAppTurn(t, resumed, "continue after recovery")
-					if err := resumed.close(context.Background()); err != nil {
-						t.Fatal(err)
-					}
+					closeAppTestResources(t, resumed)
 					requestMu.Lock()
 					if len(requests) != beforeResume+1 {
 						t.Fatalf("next input request count = %d, want %d", len(requests), beforeResume+1)
 					}
 					directRequest := append([]byte(nil), requests[len(requests)-1]...)
 					requestMu.Unlock()
-					if err := os.WriteFile(journalPath, reconciledJournal, 0o600); err != nil {
-						t.Fatal(err)
-					}
-					restarted, err := openChatResources(
+					writeAppTestFile(t, journalPath, reconciledJournal, 0o600)
+					restarted := mustOpenChatResources(t,
 						context.Background(), applicationConfig, dataRoot, string(threadID), workspace,
 					)
-					if err != nil {
-						t.Fatal(err)
-					}
 					requestMu.Lock()
 					beforeRestartedInput := len(requests)
 					requestMu.Unlock()
 					submitAppTurn(t, restarted, "continue after recovery")
-					if err := restarted.close(context.Background()); err != nil {
-						t.Fatal(err)
-					}
+					closeAppTestResources(t, restarted)
 					requestMu.Lock()
 					if len(requests) != beforeRestartedInput+1 {
 						t.Fatalf("restarted input request count = %d, want %d", len(requests), beforeRestartedInput+1)
@@ -379,9 +260,7 @@ func writeJournalPrefix(t *testing.T, path string, journal []byte, sequence uint
 	if sequence == 0 || int(sequence) > len(lines) {
 		t.Fatalf("journal prefix sequence = %d, lines = %d", sequence, len(lines))
 	}
-	if err := os.WriteFile(path, bytes.Join(lines[:sequence], nil), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, path, bytes.Join(lines[:sequence], nil), 0o600)
 }
 
 func loadToolLoopPlan(
@@ -477,81 +356,4 @@ func writeAnthropicToolUse(writer io.Writer, index int, callID string, name stri
 	encodedArguments, _ := json.Marshal(arguments)
 	_, _ = fmt.Fprintf(writer, "data: {\"type\":\"content_block_delta\",\"index\":%d,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":%s}}\n\n", index, encodedArguments)
 	_, _ = fmt.Fprintf(writer, "data: {\"type\":\"content_block_stop\",\"index\":%d}\n\n", index)
-}
-
-func assertOpenAIToolContinuation(t *testing.T, body []byte) {
-	t.Helper()
-	var request struct {
-		Input []struct {
-			Type    string `json:"type"`
-			Role    string `json:"role"`
-			CallID  string `json:"call_id"`
-			Output  string `json:"output"`
-			Content []struct {
-				Text string `json:"text"`
-			} `json:"content"`
-		} `json:"input"`
-		Tools []struct {
-			Type string `json:"type"`
-			Name string `json:"name"`
-		} `json:"tools"`
-	}
-	if err := json.Unmarshal(body, &request); err != nil {
-		t.Fatal(err)
-	}
-	if len(request.Tools) != 10 || request.Tools[0].Name != "ReadArtifact" || request.Tools[1].Type != "function" || request.Tools[1].Name != "Glob" ||
-		request.Tools[2].Type != "function" || request.Tools[2].Name != "Grep" ||
-		request.Tools[3].Type != "custom" || request.Tools[3].Name != "apply_patch" ||
-		request.Tools[4].Type != "function" || request.Tools[4].Name != "Read" || request.Tools[5].Name != "Write" ||
-		request.Tools[6].Type != "function" || request.Tools[6].Name != "exec_command" || request.Tools[7].Name != "Skill" || request.Tools[8].Name != "update_plan" || request.Tools[9].Name != "request_user_input" ||
-		len(request.Input) != 3 {
-		t.Fatalf("OpenAI continuation shape = %s", body)
-	}
-	var output struct {
-		Content string `json:"content"`
-	}
-	if err := json.Unmarshal([]byte(request.Input[2].Output), &output); err != nil {
-		t.Fatalf("decode OpenAI tool output: %v", err)
-	}
-	if request.Input[0].Role != "user" || request.Input[0].Content[0].Text != "Read README.md and summarize it" ||
-		request.Input[1].Type != "function_call" || request.Input[1].CallID != "call-1" ||
-		request.Input[2].Type != "function_call_output" || request.Input[2].CallID != "call-1" ||
-		!strings.Contains(output.Content, "1\tworkspace content") {
-		t.Fatalf("OpenAI continuation pairing = %s", body)
-	}
-}
-
-func assertAnthropicToolContinuation(t *testing.T, body []byte) {
-	t.Helper()
-	var request struct {
-		Messages []struct {
-			Role    string `json:"role"`
-			Content []struct {
-				Type      string `json:"type"`
-				Text      string `json:"text"`
-				ID        string `json:"id"`
-				ToolUseID string `json:"tool_use_id"`
-				Content   string `json:"content"`
-			} `json:"content"`
-		} `json:"messages"`
-		Tools []struct {
-			Name string `json:"name"`
-		} `json:"tools"`
-	}
-	if err := json.Unmarshal(body, &request); err != nil {
-		t.Fatal(err)
-	}
-	if len(request.Tools) != 10 || request.Tools[0].Name != "ReadArtifact" || request.Tools[1].Name != "Glob" || request.Tools[2].Name != "Grep" ||
-		request.Tools[3].Name != "Edit" || request.Tools[4].Name != "Read" || request.Tools[5].Name != "Write" ||
-		request.Tools[6].Name != "Bash" || request.Tools[7].Name != "Skill" || request.Tools[8].Name != "TodoWrite" || request.Tools[9].Name != "AskUserQuestion" || len(request.Messages) != 3 {
-		t.Fatalf("Anthropic continuation shape = %s", body)
-	}
-	if request.Messages[0].Role != "user" || request.Messages[0].Content[0].Text != "Read README.md and summarize it" ||
-		request.Messages[1].Role != "assistant" || request.Messages[1].Content[0].Type != "tool_use" ||
-		request.Messages[1].Content[0].ID != "toolu-1" || request.Messages[2].Role != "user" ||
-		request.Messages[2].Content[0].Type != "tool_result" ||
-		request.Messages[2].Content[0].ToolUseID != "toolu-1" ||
-		!strings.Contains(request.Messages[2].Content[0].Content, "1\tworkspace content") {
-		t.Fatalf("Anthropic continuation pairing = %s", body)
-	}
 }

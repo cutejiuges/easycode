@@ -40,18 +40,13 @@ func TestInChatResumeOwnerKeepsSourceUntilCandidateIsAccepted(t *testing.T) {
 		t.Fatal(err)
 	}
 	const resumeHook = `{"hooks":{"SessionStart":[{"matcher":"resume","hooks":[{"id":"resume-context","type":"command","command":"printf '{}'"}]}]}}`
-	if err := os.WriteFile(filepath.Join(hookDir, "hooks.json"), []byte(resumeHook), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, filepath.Join(hookDir, "hooks.json"), []byte(resumeHook), 0600)
 	target := newPickerFixtureThread(t, ctx, paths, cwd)
 	environment := &chatEnvironment{}
-	source, err := openChatResourcesWithHooks(ctx, cfg, paths, "", false, cwd, chatResourceHooks{interactiveApprovals: true, environment: environment})
-	if err != nil {
-		t.Fatal(err)
-	}
+	source := mustOpenChatResourcesWithHooks(t, ctx, cfg, paths, "", false, cwd, chatResourceHooks{interactiveApprovals: true, environment: environment})
 	defer environment.close()
 	defer source.close(context.Background())
-	if _, err = assembleChatModel(ctx, source); err != nil {
+	if _, err := assembleChatModel(ctx, source); err != nil {
 		t.Fatal(err)
 	}
 	execute := newPickerExecutor(cfg, paths, cwd, nil, environment)
@@ -130,7 +125,7 @@ func TestInChatResumeOwnerKeepsSourceUntilCandidateIsAccepted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("source lease remains after activation: %v", err)
 	}
-	if err = lease.Close(); err != nil {
+	if err := lease.Close(); err != nil {
 		t.Fatal(err)
 	}
 	requirePickerLeaseBusy(t, ctx, repo, target)
@@ -205,44 +200,37 @@ func TestInChatResumeFreezesSourcesAndRejectsReplacementRoots(t *testing.T) {
 	defer cancel()
 	paths, cwd, cfg := pickerFixture(t)
 	instructions := filepath.Join(cwd, "AGENTS.md")
-	if err := os.WriteFile(instructions, []byte("original instructions"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, instructions, []byte("original instructions"), 0600)
 	target := newPickerFixtureThread(t, ctx, paths, cwd)
 	environment := &chatEnvironment{}
 	loads := 0
-	source, err := openChatResourcesWithHooks(ctx, cfg, paths, "", false, cwd, chatResourceHooks{
+	source := mustOpenChatResourcesWithHooks(t, ctx, cfg, paths, "", false, cwd, chatResourceHooks{
 		environment: environment,
 		loadHooks: func(ctx context.Context, cwd, home string) (domain.HookSnapshot, error) {
 			loads++
 			return hook.NewLoader().Load(ctx, cwd, home)
 		},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	defer environment.close()
 	defer source.close(context.Background())
 	oldInstructions, oldExtensions := environment.instructions, environment.extensions
-	if err = os.WriteFile(instructions, []byte("changed on disk"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, instructions, []byte("changed on disk"), 0600)
 	request := tui.PickerRequest{ID: 1, Operation: tui.PickerOpen, Source: source.identity.ThreadID, ThreadID: target}
 	candidate := preparePickerCandidate(ctx, ctx, request, cfg, paths, cwd, nil, environment)
 	if candidate.result.Error != "" || candidate.resources == nil {
 		t.Fatalf("target did not recover with frozen sources: %q", candidate.result.Error)
 	}
-	if err = candidate.resources.close(context.Background()); err != nil {
+	if err := candidate.resources.close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if environment.instructions != oldInstructions || environment.extensions != oldExtensions || loads != 1 {
 		t.Fatal("activation reloaded frozen sources")
 	}
 	for _, dir := range []string{paths.sessionRoot, cwd} {
-		if err = os.Rename(dir, dir+"-original"); err != nil {
+		if err := os.Rename(dir, dir+"-original"); err != nil {
 			t.Fatal(err)
 		}
-		if err = os.Mkdir(dir, 0700); err != nil {
+		if err := os.Mkdir(dir, 0700); err != nil {
 			t.Fatal(err)
 		}
 		candidate = preparePickerCandidate(ctx, ctx, request, cfg, paths, cwd, nil, environment)
@@ -250,10 +238,10 @@ func TestInChatResumeFreezesSourcesAndRejectsReplacementRoots(t *testing.T) {
 		if candidate.resources != nil || candidate.result.Error == "" || listErr != nil || len(entries) != 0 {
 			t.Fatalf("recovery used the substituted root: %q, %v, %v", candidate.result.Error, entries, listErr)
 		}
-		if err = os.Remove(dir); err != nil {
+		if err := os.Remove(dir); err != nil {
 			t.Fatal(err)
 		}
-		if err = os.Rename(dir+"-original", dir); err != nil {
+		if err := os.Rename(dir+"-original", dir); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -265,10 +253,7 @@ func TestTerminalOutputFailureDuringHandoffWaitsForOwnedLeases(t *testing.T) {
 	paths, cwd, cfg := pickerFixture(t)
 	target := newPickerFixtureThread(t, ctx, paths, cwd)
 	environment := &chatEnvironment{}
-	source, err := openChatResourcesWithHooks(ctx, cfg, paths, "", false, cwd, chatResourceHooks{interactiveApprovals: true, environment: environment})
-	if err != nil {
-		t.Fatal(err)
-	}
+	source := mustOpenChatResourcesWithHooks(t, ctx, cfg, paths, "", false, cwd, chatResourceHooks{interactiveApprovals: true, environment: environment})
 	defer environment.close()
 	chat, err := assembleChatModel(ctx, source)
 	if err != nil {
@@ -326,7 +311,7 @@ func TestTerminalOutputFailureDuringHandoffWaitsForOwnedLeases(t *testing.T) {
 		if err != nil {
 			t.Fatalf("host retained lease %s: %v", id, err)
 		}
-		if err = lease.Close(); err != nil {
+		if err := lease.Close(); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -377,7 +362,7 @@ func newPickerFixtureThread(t *testing.T, ctx context.Context, paths dataPaths, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = target.writer.Close(ctx); err != nil {
+	if err := target.writer.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
 	return target.identity.ThreadID
@@ -417,9 +402,6 @@ func requirePickerLeaseBusy(t *testing.T, ctx context.Context, repository *sessi
 
 func readPickerJournal(t *testing.T, path string) []byte {
 	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := readAppTestFile(t, path)
 	return data
 }

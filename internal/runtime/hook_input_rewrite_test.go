@@ -20,9 +20,7 @@ func rewriteCandidateFixture(t *testing.T, r *Runtime, effective tool.Invocation
 		metadata, _ := tool.NewPatchResultMetadata(input.FilePath(), len(rs), 1, 1)
 		fingerprint, _ := tool.PatchFingerprint(input, evidence, final)
 		candidate, err := tool.NewPatchCandidate(v, evidence, final, "--- old\n+++ rewritten\n", fingerprint, metadata)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		p, e := &fixedPatchPreparer{candidate: candidate}, &fixedPatchExecutor{}
 		r.tools.PreparePatch, r.tools.Patch = p, e
 		return func() int { return p.calls }, func() int { return e.calls }, string(candidate.Fingerprint())
@@ -30,9 +28,7 @@ func rewriteCandidateFixture(t *testing.T, r *Runtime, effective tool.Invocation
 		v, _ := effective.Write()
 		root, _ := tool.NewDirectoryEvidence(".", 1, 2, 0o700)
 		candidate, err := tool.NewWriteCandidate(v, tool.WriteCreate, tool.FileBaseEvidence{}, []tool.DirectoryEvidence{root}, nil, "+ rewritten\n")
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		p, e := &fixedWritePreparer{candidate: candidate}, &fixedWriteExecutor{}
 		r.tools.PrepareWrite, r.tools.Write = p, e
 		return func() int { return p.calls }, func() int { return e.calls }, string(candidate.Fingerprint())
@@ -42,9 +38,7 @@ func rewriteCandidateFixture(t *testing.T, r *Runtime, effective tool.Invocation
 		environment, _ := tool.NewEnvironmentPolicy("minimal", []string{"PATH"})
 		sandbox, _ := tool.NewSandboxProfile("workspace", false, true)
 		candidate, err := tool.NewExecCandidate(v, shell, environment, sandbox)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		e := &fixedExecComponents{candidate: candidate}
 		p := &rewriteExecPreparer{candidate: candidate}
 		r.tools.PrepareExec, r.tools.Exec = p, e
@@ -81,9 +75,7 @@ func rewrittenFixtureInput(t *testing.T, original tool.Invocation, second bool) 
 	case tool.CapabilityExec:
 		input, err = domain.NewHookExecInput("printf "+content, "subdir", 5000)
 	}
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return input
 }
 

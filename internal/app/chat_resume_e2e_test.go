@@ -29,9 +29,7 @@ func TestInChatResumePreservesCanonicalProviderContinuation(t *testing.T) {
 			defer cancel()
 			workspace := privateAppTempDir(t)
 			sourceFile := filepath.Join(workspace, "source")
-			if err := os.WriteFile(sourceFile, []byte("FROZEN_SWITCH_FILE\n"), 0600); err != nil {
-				t.Fatal(err)
-			}
+			writeAppTestFile(t, sourceFile, []byte("FROZEN_SWITCH_FILE\n"), 0600)
 			requests := make(chan []byte, 10)
 			var count atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -62,10 +60,7 @@ func TestInChatResumePreservesCanonicalProviderContinuation(t *testing.T) {
 			cfg = reasoningFixtureConfig(t, cfg)
 			dataHome := privateAppTempDir(t)
 			paths := dataPaths{sessionRoot: filepath.Join(dataHome, "sessions"), catalogPath: filepath.Join(dataHome, "catalog.json")}
-			target, err := openChatResources(ctx, cfg, paths.sessionRoot, "", workspace)
-			if err != nil {
-				t.Fatal(err)
-			}
+			target := mustOpenChatResources(t, ctx, cfg, paths.sessionRoot, "", workspace)
 			defer closeResumeTestResources(t, target)
 			if err := target.session.StartInteractive(ctx); err != nil {
 				t.Fatal(err)
@@ -101,12 +96,9 @@ func TestInChatResumePreservesCanonicalProviderContinuation(t *testing.T) {
 					t.Error(err)
 				}
 			}()
-			source, err := openChatResourcesWithHooks(ctx, cfg, paths, "", false, workspace, chatResourceHooks{
+			source := mustOpenChatResourcesWithHooks(t, ctx, cfg, paths, "", false, workspace, chatResourceHooks{
 				interactiveApprovals: true, environment: environment, lifetime: ctx,
 			})
-			if err != nil {
-				t.Fatal(err)
-			}
 			defer closeResumeTestResources(t, source)
 			if _, err := assembleChatModel(ctx, source); err != nil {
 				t.Fatal(err)
@@ -150,10 +142,7 @@ func TestInChatResumePreservesCanonicalProviderContinuation(t *testing.T) {
 				t.Fatal("switch sampled, reran tools or rewrote the completed journal")
 			}
 
-			restarted, err := openChatResources(ctx, cfg, copyRoot, string(thread), workspace)
-			if err != nil {
-				t.Fatal(err)
-			}
+			restarted := mustOpenChatResources(t, ctx, cfg, copyRoot, string(thread), workspace)
 			defer closeResumeTestResources(t, restarted)
 			if _, err := assembleChatModel(ctx, restarted); err != nil {
 				t.Fatal(err)
@@ -205,36 +194,9 @@ func waitSwitchResult(t *testing.T, ctx context.Context, owner *pickerOwner) tui
 	}
 }
 
-func switchTaskSnapshot(t *testing.T, ctx context.Context, resources *chatResources) protocol.TaskProgressSnapshotPayload {
-	t.Helper()
-	requestID, err := domain.GenerateInputID()
-	if err != nil {
-		t.Fatal(err)
-	}
-	id := protocol.RequestID("switch-tasks-" + string(requestID))
-	result, err := resources.session.QueryTasks(ctx, id)
-	if err != nil || result.Status() != protocol.CommandStatusAccepted {
-		t.Fatal("task snapshot not accepted", err)
-	}
-	payload, err := protocol.DecodeTaskProgressSnapshot(waitSwitchObservation(t, ctx, resources, protocol.EventTaskProgressSnapshot, id))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return payload
-}
-
 func switchCacheSnapshot(t *testing.T, ctx context.Context, resources *chatResources) protocol.CacheSnapshotPayload {
 	t.Helper()
-	const id protocol.RequestID = "switch-cache"
-	result, err := resources.session.QueryCache(ctx, id)
-	if err != nil || result.Status() != protocol.CommandStatusAccepted {
-		t.Fatal("cache snapshot not accepted", err)
-	}
-	payload, err := protocol.DecodeCacheSnapshot(waitSwitchObservation(t, ctx, resources, protocol.EventCacheSnapshot, id))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return payload
+	return queryFixtureCacheSnapshot(t, ctx, resources, "switch-cache")
 }
 
 func checkSwitchedNativeOrder(t *testing.T, family domain.ProviderFamily, request []byte) {

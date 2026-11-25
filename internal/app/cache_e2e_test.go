@@ -3,12 +3,9 @@ package app
 import (
 	"bytes"
 	"context"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 
 	"easycode/internal/config"
@@ -20,28 +17,17 @@ import (
 func TestCachedProvidersSameThreadLiveAndRestoredCanonicalRequests(t *testing.T) {
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		t.Run(string(family), func(t *testing.T) {
-			var mu sync.Mutex
-			var requests [][]byte
+			var recorder requestRecorder
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				body, err := io.ReadAll(r.Body)
-				if err != nil {
-					t.Error(err)
-					return
-				}
-				mu.Lock()
-				requests = append(requests, body)
-				n := len(requests)
-				mu.Unlock()
+				requestIndex, _ := recorder.record(t, r)
+				n := requestIndex + 1
 				w.Header().Set("Content-Type", "text/event-stream")
 				_, _ = w.Write(activeReasoningFixture(family, n, false))
 			}))
 			defer server.Close()
 			cfg := cacheFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, Model: "fixture-model", BaseURL: server.URL, APIKey: secret.New("cache-secret")}}, true)
 			cfg = reasoningFixtureConfig(t, cfg)
-			live, err := openChatResources(context.Background(), cfg, filepath.Join(t.TempDir(), "sessions"), "", t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
+			live := mustOpenChatResources(t, context.Background(), cfg, filepath.Join(t.TempDir(), "sessions"), "", t.TempDir())
 			defer live.close(context.Background())
 			submitAppTurn(t, live, "first")
 			submitAppTurn(t, live, "second")
@@ -50,10 +36,7 @@ func TestCachedProvidersSameThreadLiveAndRestoredCanonicalRequests(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
-			durable, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
+			durable := readAppTestFile(t, path)
 			root := filepath.Join(t.TempDir(), "sessions")
 			repo, err := session.OpenOrCreateRepository(root)
 			if err != nil {
@@ -65,20 +48,13 @@ func TestCachedProvidersSameThreadLiveAndRestoredCanonicalRequests(t *testing.T)
 			}
 			_ = lease.Close()
 			copyPath, _ := repo.JournalPath(thread)
-			if err := os.WriteFile(copyPath, durable, 0600); err != nil {
-				t.Fatal(err)
-			}
+			writeAppTestFile(t, copyPath, durable, 0600)
 			_ = repo.Close()
-			restored, err := openChatResources(context.Background(), cfg, root, string(thread), t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
+			restored := mustOpenChatResources(t, context.Background(), cfg, root, string(thread), t.TempDir())
 			defer restored.close(context.Background())
 			submitAppTurn(t, live, "third")
 			submitAppTurn(t, restored, "third")
-			mu.Lock()
-			captured := append([][]byte(nil), requests...)
-			mu.Unlock()
+			captured := recorder.snapshot()
 			if len(captured) != 4 || !bytes.Equal(captured[2], captured[3]) {
 				t.Fatal("enabled cache full request bytes differ between uninterrupted and restored same thread")
 			}

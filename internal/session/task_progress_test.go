@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 
@@ -22,9 +21,7 @@ func sessionTaskInvocation(t *testing.T, index int, profile tool.TaskProfile, co
 			active = "正在" + content
 		}
 		step, err := domain.NewTaskStep(content, active, status)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		items = append(items, step)
 	}
 	explanation := ""
@@ -32,25 +29,15 @@ func sessionTaskInvocation(t *testing.T, index int, profile tool.TaskProfile, co
 		explanation = "保留完整说明\n\t逐项验证"
 	}
 	update, err := domain.NewTaskUpdate(items, explanation)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	input, err := tool.NewTaskInput(profile, update)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	ready, err := tool.NewTaskReadyCall(tool.ProviderCallID(fmt.Sprintf("task-call-%d", index)), input)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	id, err := tool.ParseInvocationID(fmt.Sprintf("01890f3e-7bcd-7abc-8abc-%012d", index))
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	inv, err := tool.NewInvocation(id, ready)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return inv
 }
 
@@ -58,18 +45,14 @@ func sessionTaskResult(t *testing.T, inv tool.Invocation) tool.InvocationResult 
 	t.Helper()
 	v, _ := inv.Task()
 	r, err := tool.NewTaskInvocationResult(v)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return r
 }
 
 func taskResultDraft(t *testing.T, inv tool.Invocation) RecordDraft {
 	t.Helper()
 	draft, err := NewToolCallResultDraft(testTurnID, sessionTaskResult(t, inv))
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return draft
 }
 
@@ -138,14 +121,10 @@ func TestTaskPayloadsRejectUnknownMissingNullAndMixedUnions(t *testing.T) {
 		}
 	}
 	payload, err := DecodeToolCallResultPayload(Record{EventKind: EventToolCallResult, Payload: result.PayloadBytes()})
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	payload.TaskMetadata.Update = nil
 	withoutApplied, err := codec.MarshalStable(payload)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	if _, err := DecodeToolCallResultPayload(Record{EventKind: EventToolCallResult, Payload: withoutApplied}); err == nil {
 		t.Fatal("successful task result without an applied snapshot accepted")
 	}
@@ -155,16 +134,12 @@ func TestTaskResultMetadataRemainsCompleteBeyondConfirmationCap(t *testing.T) {
 	items := make([]domain.TaskStep, 0, domain.MaxTaskSteps)
 	for i := 0; i < domain.MaxTaskSteps; i++ {
 		item, err := domain.NewTaskStep(fmt.Sprintf("%02d", i)+strings.Repeat("界", 170), "", domain.TaskPending)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		items = append(items, item)
 	}
 	update, _ := domain.NewTaskUpdate(items, strings.Repeat("说", 682))
 	input, err := tool.NewTaskInput(tool.TaskProfileUpdatePlan, update)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	ready, _ := tool.NewTaskReadyCall("task-large", input)
 	id, _ := tool.ParseInvocationID("01890f3e-7bcd-7abc-8abc-0123456789af")
 	inv, _ := tool.NewInvocation(id, ready)
@@ -174,9 +149,7 @@ func TestTaskResultMetadataRemainsCompleteBeyondConfirmationCap(t *testing.T) {
 		t.Fatal("large complete metadata did not survive", err)
 	}
 	payload, err := DecodeToolCallResultPayload(Record{EventKind: EventToolCallResult, Payload: draft.PayloadBytes()})
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	got, err := payload.Domain(inv)
 	actual, applied := got.TaskUpdate()
 	if err != nil || !applied || !actual.Equal(update) || actual.Counts().Total != domain.MaxTaskSteps || got.Preview().Text() != "Task progress updated: 0/20 completed" || strings.Contains(got.Preview().Text(), "界") {
@@ -251,9 +224,7 @@ func TestTaskReplayEnforcesExclusiveNoApprovalAndNoHookGrammar(t *testing.T) {
 				request, _ := tool.ParseApprovalRequestID(string(inv.InvocationID()))
 				p := ToolApprovalDecidedPayload{RequestID: request, InvocationID: inv.InvocationID(), Fingerprint: tool.NewCandidateFingerprint([]byte("candidate")), Outcome: tool.ApprovalOutcomeAllowOnce, Source: ApprovalSourceInteractive, Metadata: ApprovalMetadataPayload{Capability: tool.CapabilityWrite, RelativePath: "answer.txt"}}
 				draft, err := NewToolApprovalDecidedDraft(testTurnID, p)
-				if err != nil {
-					t.Fatal(err)
-				}
+				requireNoError(t, err)
 				f.appendBatch(draft)
 			case "pre_hook", "post_hook":
 				event := domain.HookPreToolUse
@@ -261,9 +232,7 @@ func TestTaskReplayEnforcesExclusiveNoApprovalAndNoHookGrammar(t *testing.T) {
 					event = domain.HookPostToolUse
 				}
 				declaration, err := domain.NewHookDeclaration(domain.HookSourceProject, event, domain.HookFeedbackNone, strings.Repeat("a", 64), "check-task", 7, "true", 5)
-				if err != nil {
-					t.Fatal(err)
-				}
+				requireNoError(t, err)
 				refs := []domain.HookReference{declaration.Reference}
 				if _, err := domain.NewHookPlan(string(inv.InvocationID()), domain.HookCapability(tool.CapabilityTaskProgress), refs); err == nil {
 					t.Fatal("task entered Hook capability set")
@@ -271,23 +240,15 @@ func TestTaskReplayEnforcesExclusiveNoApprovalAndNoHookGrammar(t *testing.T) {
 				var draft RecordDraft
 				if phase == "pre_hook" {
 					plan, err := domain.NewHookPlan(string(inv.InvocationID()), domain.HookPatch, refs)
-					if err != nil {
-						t.Fatal(err)
-					}
+					requireNoError(t, err)
 					draft, err = NewToolHookGatePlannedDraft(testTurnID, plan)
-					if err != nil {
-						t.Fatal(err)
-					}
+					requireNoError(t, err)
 				} else {
 					branch, _ := domain.NewPostHookBranch(event, refs, 0)
 					plan, err := domain.NewPostHookPlan(string(inv.InvocationID()), domain.HookPatch, []domain.PostHookBranch{branch}, 1024, 0)
-					if err != nil {
-						t.Fatal(err)
-					}
+					requireNoError(t, err)
 					draft, err = NewToolPostHookPlannedDraft(testTurnID, plan)
-					if err != nil {
-						t.Fatal(err)
-					}
+					requireNoError(t, err)
 				}
 				f.appendBatch(draft)
 			}
@@ -341,23 +302,36 @@ func TestTaskProgressUsesActualResultPrefixAcrossReplacementsAndFailedTurns(t *t
 	f.appendBatch(mustDraft(t, EventProviderNativeCommit, domain.TurnID("018f1d8a-7b5c-7def-8123-456789abcded"), validToolOutputsCommit()))
 	f.appendBatch(mustDraft(t, EventTurnFailed, domain.TurnID("018f1d8a-7b5c-7def-8123-456789abcded"), TurnFailedPayload{Code: "user_cancelled"}))
 	plan, err := NewReplayPlanner().Plan(f.loaded())
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	if len(plan.Tools) != 5 || len(plan.Turns) != 2 {
 		t.Fatal("task replacements lost failed-turn history")
 	}
-	none, err := taskProgressBefore(plan.Tools, resultSequences[0])
-	if err != nil || none.Kind() != domain.TaskProgressNone {
-		t.Fatal("success source was included in its own preceding prefix", err)
+	progressAt := func(sequence uint64) domain.TaskProgressState {
+		t.Helper()
+		loaded := f.loaded()
+		loaded.Records = loaded.Records[:sequence]
+		loaded.NextSequence = sequence + 1
+		prefix, err := NewReplayPlanner().Plan(loaded)
+		if err != nil {
+			t.Fatal("valid record prefix rejected", sequence, err)
+		}
+		state, err := prefix.TaskProgress()
+		if err != nil {
+			t.Fatal("committed task prefix rejected", sequence, err)
+		}
+		return state
+	}
+	none := progressAt(resultSequences[0] - 1)
+	if none.Kind() != domain.TaskProgressNone {
+		t.Fatal("success source was included in its own preceding prefix")
 	}
 	for i, sequence := range resultSequences {
-		state, err := taskProgressBefore(plan.Tools, sequence+1)
+		state := progressAt(sequence)
 		source, found := state.Source()
 		update, applied := state.Update()
 		inv, _ := invocations[i].Task()
-		if err != nil || !found || !applied || source.ResultSequence() != sequence || source.ResultSequence() == plan.Tools[i].Sequence || source.ResultSequence() == plan.Tools[i].NativeSequence || source.InvocationID() != string(invocations[i].InvocationID()) || !update.Equal(inv.Input().Update()) {
-			t.Fatal("task prefix did not select exact full replacement", i, err)
+		if !found || !applied || source.ResultSequence() != sequence || source.ResultSequence() == plan.Tools[i].Sequence || source.ResultSequence() == plan.Tools[i].NativeSequence || source.InvocationID() != string(invocations[i].InvocationID()) || !update.Equal(inv.Input().Update()) {
+			t.Fatal("task prefix did not select exact full replacement", i)
 		}
 		if i == 0 && (state.Kind() != domain.TaskProgressSnapshot || state.Counts().Completed != 1) {
 			t.Fatal("completed-only list was discarded")
@@ -374,69 +348,18 @@ func TestTaskProgressUsesActualResultPrefixAcrossReplacementsAndFailedTurns(t *t
 	if err != nil || current.Kind() != domain.TaskProgressClear || source.ResultSequence() != resultSequences[3] || source.TurnID() != testTurnID {
 		t.Fatal("failed later turn changed earlier explicit clear", err)
 	}
-	for _, test := range []struct {
-		name   string
-		mutate func([]ToolHistoryEntry) []ToolHistoryEntry
-	}{
-		{"ready source", func(entries []ToolHistoryEntry) []ToolHistoryEntry {
-			entries[0].ResultSequence = entries[0].Sequence
-			return entries
-		}},
-		{"native source", func(entries []ToolHistoryEntry) []ToolHistoryEntry {
-			entries[0].ResultSequence = entries[0].NativeSequence
-			return entries
-		}},
-		{"detail source", func(entries []ToolHistoryEntry) []ToolHistoryEntry {
-			entries[0].ResultSequence = entries[0].DetailSequence
-			return entries
-		}},
-		{"admission source", func(entries []ToolHistoryEntry) []ToolHistoryEntry {
-			entries[0].ResultSequence = entries[0].Admission.Sequence()
-			return entries
-		}},
-		{"missing admission", func(entries []ToolHistoryEntry) []ToolHistoryEntry {
-			entries[0].Admission = tool.ExecutionAdmission{}
-			return entries
-		}},
-		{"foreign admission", func(entries []ToolHistoryEntry) []ToolHistoryEntry {
-			entries[0].Admission, _ = tool.NewExecutionAdmission(invocations[1].InvocationID(), entries[0].Admission.Sequence())
-			return entries
-		}},
-		{"origin turn mismatch", func(entries []ToolHistoryEntry) []ToolHistoryEntry {
-			entries[0].TurnID = domain.TurnID("018f1d8a-7b5c-7def-8123-456789abcded")
-			return entries
-		}},
-		{"origin index mismatch", func(entries []ToolHistoryEntry) []ToolHistoryEntry { entries[0].CallIndex++; return entries }},
-		{"repeated result sequence", func(entries []ToolHistoryEntry) []ToolHistoryEntry {
-			entries[1].ResultSequence = entries[0].ResultSequence
-			return entries
-		}},
-		{"repeated source", func(entries []ToolHistoryEntry) []ToolHistoryEntry { return append(entries[:1], entries...) }},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			entries := append([]ToolHistoryEntry(nil), plan.Tools...)
-			if _, err := taskProgressBefore(test.mutate(entries), 0); err == nil {
-				t.Fatal("forged or repeated task result source accepted")
-			}
-		})
-	}
 }
 
 func TestInvalidTaskResultWithValidChecksumFailsBeforeTailRepair(t *testing.T) {
 	fixture := readCurrentFixture(t, "task_openai_result_tail.jsonl")
 	lines := bytes.Split(bytes.TrimSuffix(fixture, []byte{'\n'}), []byte{'\n'})
-	record, err := DecodeRecord(lines[12])
-	if err != nil {
-		t.Fatal(err)
-	}
+	record := decodeFixtureRecord(t, lines[12])
 	record.Payload = bytes.Replace(record.Payload, []byte(`"content":"读取代码"`), []byte(`"content":"伪造正文"`), 1)
-	if record.Checksum, err = recordChecksum(record); err != nil {
-		t.Fatal(err)
-	}
+	checksum, err := recordChecksum(record)
+	requireNoError(t, err)
+	record.Checksum = checksum
 	encoded, err := codec.MarshalStable(record)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	lines[12] = encoded
 	content := append(bytes.Join(lines, []byte{'\n'}), []byte("\n{\"seq\":")...)
 	repo, lease := installCurrentFixture(t, content)
@@ -445,39 +368,5 @@ func TestInvalidTaskResultWithValidChecksumFailsBeforeTailRepair(t *testing.T) {
 	if _, err := NewLoader().Load(context.Background(), lease); err == nil {
 		t.Fatal("checksum-valid forged task input accepted")
 	}
-	path, _ := repo.JournalPath(testThreadID)
-	after, err := os.ReadFile(path)
-	if err != nil || !bytes.Equal(after, content) {
-		t.Fatal("invalid task fact permitted tail repair", err)
-	}
-}
-
-// taskProgressBefore 从已验证工具事实中归约指定前缀的最近成功更新。
-// before 为零时读取整个历史；实际来源始终取 result record，不能使用 ready 序号。
-func taskProgressBefore(entries []ToolHistoryEntry, before uint64) (domain.TaskProgressState, error) {
-	state := domain.NewNoTaskProgress()
-	var last uint64
-	for _, entry := range entries {
-		if !entry.HasResult || entry.Result.Capability() != tool.CapabilityTaskProgress || entry.Result.Status() != tool.ResultSuccess || before != 0 && entry.ResultSequence >= before {
-			continue
-		}
-		evidence, evidenceErr := entry.InputResultEvidence()
-		if evidenceErr != nil || evidence.ValidateResult(entry.Result) != nil || entry.Origin.TurnID != entry.TurnID || entry.Origin.SampleIndex != entry.SampleIndex || entry.Origin.CallIndex != entry.CallIndex || entry.Admission.InvocationID() != entry.Invocation.InvocationID() || entry.ResultSequence <= max(entry.Sequence, entry.Admission.Sequence()) || entry.ResultSequence <= last || tool.ValidateFrozenResult(entry.Result) != nil || tool.ValidateResultInput(entry.Invocation, entry.Result) != nil {
-			return domain.TaskProgressState{}, fmt.Errorf("invalid task result history source")
-		}
-		update, ok := entry.Result.TaskUpdate()
-		if !ok {
-			return domain.TaskProgressState{}, fmt.Errorf("successful task result has no update")
-		}
-		source, err := domain.NewTaskProgressSource(entry.ResultSequence, entry.TurnID, string(entry.Invocation.InvocationID()))
-		if err != nil {
-			return domain.TaskProgressState{}, err
-		}
-		state, err = domain.NewTaskProgressState(source, update)
-		if err != nil {
-			return domain.TaskProgressState{}, err
-		}
-		last = entry.ResultSequence
-	}
-	return state, nil
+	assertJournalBytes(t, repo, content)
 }

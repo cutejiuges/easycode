@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"easycode/internal/config"
@@ -55,14 +54,10 @@ func TestWriteEndToEndCreateReadOverwriteAndVerify(t *testing.T) {
 		t.Run(string(family), func(t *testing.T) {
 			root := t.TempDir()
 			dataRoot := t.TempDir()
-			var mu sync.Mutex
-			var requests [][]byte
+			var recorder requestRecorder
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-				body, _ := io.ReadAll(request.Body)
-				mu.Lock()
-				requests = append(requests, body)
-				sample := len(requests)
-				mu.Unlock()
+				requestIndex, _ := recorder.record(t, request)
+				sample := requestIndex + 1
 				writer.Header().Set("Content-Type", "text/event-stream")
 				var calls []writeScenarioCall
 				switch sample {
@@ -82,10 +77,7 @@ func TestWriteEndToEndCreateReadOverwriteAndVerify(t *testing.T) {
 			if family == domain.ProviderAnthropic {
 				model = "claude-test"
 			}
-			resources, err := openChatResourcesWithHooks(context.Background(), cacheFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, APIKey: secret.New("write-e2e-fixture"), Model: model}}, false), dataPaths{sessionRoot: filepath.Join(dataRoot, "sessions")}, "", false, root, chatResourceHooks{interactiveApprovals: true})
-			if err != nil {
-				t.Fatal(err)
-			}
+			resources := mustOpenChatResourcesWithHooks(t, context.Background(), cacheFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, APIKey: secret.New("write-e2e-fixture"), Model: model}}, false), dataPaths{sessionRoot: filepath.Join(dataRoot, "sessions")}, "", false, root, chatResourceHooks{interactiveApprovals: true})
 			control, err := startTUIControlSession(context.Background(), resources.runtime)
 			if err != nil {
 				t.Fatal(err)
@@ -120,12 +112,8 @@ func TestWriteEndToEndCreateReadOverwriteAndVerify(t *testing.T) {
 			if err := control.Shutdown(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			if err := resources.close(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			mu.Lock()
-			captured := append([][]byte(nil), requests...)
-			mu.Unlock()
+			closeAppTestResources(t, resources)
+			captured := recorder.snapshot()
 			if approvals != 1 || !completed || len(captured) != 5 {
 				t.Fatalf("approvals=%d completed=%v requests=%d", approvals, completed, len(captured))
 			}

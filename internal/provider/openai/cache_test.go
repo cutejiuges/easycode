@@ -2,10 +2,12 @@ package openai
 
 import (
 	"bytes"
-	"easycode/internal/domain"
-	"easycode/internal/secret"
 	"os"
 	"testing"
+
+	"easycode/internal/domain"
+	"easycode/internal/provider/testsupport"
+	"easycode/internal/secret"
 )
 
 func TestOpenAICacheRequestGolden(t *testing.T) {
@@ -17,7 +19,7 @@ func TestOpenAICacheRequestGolden(t *testing.T) {
 	defer instance.Close()
 	conversation := testConversation(t, instance)
 	testCommitUserInput(t, conversation, "hello")
-	input, err := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testOpenAIToolCatalog(t))
+	input, err := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testsupport.ToolCatalog(t))
 	if err != nil {
 		t.Fatal(err)
 	}

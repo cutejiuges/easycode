@@ -97,10 +97,7 @@ func TestWriteSSEChunksCancellationEOFAndLimitsPrecedeSideEffects(t *testing.T) 
 				if family == domain.ProviderAnthropic {
 					model = "claude-test"
 				}
-				resources, err := openChatResourcesWithHooks(context.Background(), config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, APIKey: secret.New("stream-fixture"), Model: model}}, dataPaths{sessionRoot: filepath.Join(t.TempDir(), "sessions")}, "", false, root, chatResourceHooks{interactiveApprovals: true})
-				if err != nil {
-					t.Fatal(err)
-				}
+				resources := mustOpenChatResourcesWithHooks(t, context.Background(), config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, APIKey: secret.New("stream-fixture"), Model: model}}, dataPaths{sessionRoot: filepath.Join(t.TempDir(), "sessions")}, "", false, root, chatResourceHooks{interactiveApprovals: true})
 				control, err := startTUIControlSession(context.Background(), resources.runtime)
 				if err != nil {
 					t.Fatal(err)
@@ -134,9 +131,7 @@ func TestWriteSSEChunksCancellationEOFAndLimitsPrecedeSideEffects(t *testing.T) 
 				if err := control.Shutdown(context.Background()); err != nil {
 					t.Fatal(err)
 				}
-				if err := resources.close(context.Background()); err != nil {
-					t.Fatal(err)
-				}
+				closeAppTestResources(t, resources)
 				valid := scenario == "one-byte" || scenario == "random-chunks"
 				if valid {
 					data, err := os.ReadFile(filepath.Join(root, "new/pkg/a"))

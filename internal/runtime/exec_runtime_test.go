@@ -49,9 +49,7 @@ func runtimeExecFixture(t *testing.T, journal Journal) (*Runtime, tool.Invocatio
 	environment, _ := tool.NewEnvironmentPolicy("minimal", []string{"PATH"})
 	sandbox, _ := tool.NewSandboxProfile("workspace", false, true)
 	candidate, err := tool.NewExecCandidate(exec, shell, environment, sandbox)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	components := &fixedExecComponents{candidate: candidate}
 	runtime := &Runtime{journal: journal, sessionID: runtimeSessionID, threadID: runtimeThreadID, tools: tool.Components{PrepareExec: components, Exec: components}, newApprovalRequestID: tool.GenerateApprovalRequestID, interactiveApprovals: true}
 	seedRuntimeToolCall(t, runtime, runtimeTurnID, invocation, 0, 0)
@@ -66,15 +64,11 @@ func execApprovalEmitter(t *testing.T, runtime *Runtime, decision tool.ApprovalD
 			return
 		}
 		payload, err := protocol.DecodeToolApprovalRequested(event)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		requestID, _ := tool.ParseApprovalRequestID(payload.RequestID)
 		invocationID, _ := tool.ParseInvocationID(payload.InvocationID)
 		response, err := tool.NewApprovalResponse(requestID, runtimeTurnID, invocationID, tool.CandidateFingerprint(payload.Fingerprint), decision, "")
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		for _, invalid := range []struct {
 			request     tool.ApprovalRequestID
 			fingerprint tool.CandidateFingerprint
@@ -85,9 +79,7 @@ func execApprovalEmitter(t *testing.T, runtime *Runtime, decision tool.ApprovalD
 			{requestID, tool.CandidateFingerprint(payload.Fingerprint), tool.ApprovalAllowSession},
 		} {
 			stale, err := tool.NewApprovalResponse(invalid.request, runtimeTurnID, invocationID, invalid.fingerprint, invalid.decision, "")
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			if runtime.ResolveToolApproval(stale) == nil {
 				t.Fatal("stale or session-wide Exec approval accepted")
 			}

@@ -31,13 +31,10 @@ func TestFileInputCrashHelper(t *testing.T) {
 	}
 	family := domain.ProviderFamily(os.Getenv("EASYCODE_FILE_CRASH_FAMILY"))
 	cfg := config.Config{Provider: config.Provider{Family: family, BaseURL: "https://example.invalid", Model: "fixture-model", APIKey: secret.New("fixture-key")}}
-	r, err := openChatResources(context.Background(), cfg, os.Getenv("EASYCODE_FILE_CRASH_ROOT"), "", os.Getenv("EASYCODE_FILE_CRASH_WORKSPACE"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := mustOpenChatResources(t, context.Background(), cfg, os.Getenv("EASYCODE_FILE_CRASH_ROOT"), "", os.Getenv("EASYCODE_FILE_CRASH_WORKSPACE"))
 	draft, _ := domain.NewInteractiveInputDraft("inspect @file#L2-4")
 	command, _ := protocol.NewSubmitConversationalInputDraftCommand("crash-input", draft)
-	command, err = r.runtime.PrepareInput(context.Background(), command)
+	command, err := r.runtime.PrepareInput(context.Background(), command)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,9 +95,7 @@ func TestFileInputRealProcessCrashLeaseRepairAndRepeatedOfflineRecovery(t *testi
 			defer cancel()
 			root := filepath.Join(privateAppTempDir(t), "sessions")
 			workspace := privateAppTempDir(t)
-			if err := os.WriteFile(filepath.Join(workspace, "file"), []byte("first\r\nFROZEN_CRASH\nlast"), 0600); err != nil {
-				t.Fatal(err)
-			}
+			writeAppTestFile(t, filepath.Join(workspace, "file"), []byte("first\r\nFROZEN_CRASH\nlast"), 0600)
 			child := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestFileInputCrashHelper$")
 			child.Env = append(os.Environ(), "EASYCODE_FILE_CRASH_HELPER=1", "EASYCODE_FILE_CRASH_ROOT="+root, "EASYCODE_FILE_CRASH_WORKSPACE="+workspace, "EASYCODE_FILE_CRASH_FAMILY="+string(family))
 			child.Stderr = os.Stderr
@@ -127,10 +122,7 @@ func TestFileInputRealProcessCrashLeaseRepairAndRepeatedOfflineRecovery(t *testi
 			if err := json.NewDecoder(stdout).Decode(&ack); err != nil {
 				t.Fatal("child did not sync input", err)
 			}
-			before, err := os.ReadFile(ack.Path)
-			if err != nil {
-				t.Fatal(err)
-			}
+			before := readAppTestFile(t, ack.Path)
 			probe := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestHostLeaseProbe$")
 			probe.Env = append(os.Environ(), "EASYCODE_HOST_LEASE_ROOT="+root, "EASYCODE_HOST_LEASE_THREAD="+string(ack.Thread), "EASYCODE_HOST_LEASE_EXPECT=busy")
 			if output, err := probe.CombinedOutput(); err != nil {
@@ -159,17 +151,12 @@ func TestFileInputRealProcessCrashLeaseRepairAndRepeatedOfflineRecovery(t *testi
 			}
 			var stable []byte
 			for i := 0; i < 2; i++ {
-				r, err := openChatResources(ctx, cfg, root, string(ack.Thread), workspace)
-				if err != nil {
-					t.Fatal(err)
-				}
+				r := mustOpenChatResources(t, ctx, cfg, root, string(ack.Thread), workspace)
 				message := r.history.Turns[0].Messages[0]
 				if message.Text != "inspect @file#L2-4" || message.Files.Items()[0].Content() != "FROZEN_CRASH\nlast" {
 					t.Fatal("crashed input lost frozen content")
 				}
-				if err := r.close(context.Background()); err != nil {
-					t.Fatal(err)
-				}
+				closeAppTestResources(t, r)
 				data, _ := os.ReadFile(ack.Path)
 				if i == 0 {
 					stable = data

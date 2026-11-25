@@ -15,13 +15,8 @@ import (
 
 func TestWorkspaceOpenChildPinsDirectoryUntilOpenatReturns(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "file"), []byte("inside workspace"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	workspace, err := OpenWorkspace(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	writeBuiltinFixture(t, filepath.Join(root, "file"), []byte("inside workspace"), 0o600)
+	workspace := openFixtureWorkspace(t, root)
 	t.Cleanup(func() { _ = workspace.Close() })
 	directory, err := workspace.handle.openDirectory("", workspaceHooks{})
 	if err != nil {

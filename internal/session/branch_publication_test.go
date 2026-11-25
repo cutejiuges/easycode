@@ -50,18 +50,12 @@ func TestBranchPublicationRejectsReplacementAndDoesNotOverwrite(t *testing.T) {
 			repo := openBranchTestRepository(t, hooks)
 			source := openBranchTestSource(t, repo, readCurrentFixture(t, "root.jsonl"))
 			id, err := domain.GenerateThreadID()
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			filename, err := repo.JournalPath(id)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			directory = filepath.Dir(filename)
 			stage, _, err := repo.PrepareBranch(ctx, source, id, "Route check")
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			t.Cleanup(func() { _ = stage.Close() })
 			if tc.conflict {
 				if err := os.WriteFile(filename, []byte("existing journal"), 0o600); err != nil {
@@ -118,9 +112,7 @@ func TestBranchDirectorySyncFailureCanBeConfirmedOnExplicitResume(t *testing.T) 
 	}})
 	source := openBranchTestSource(t, repo, readCurrentFixture(t, "root.jsonl"))
 	stage, _, err := repo.PrepareBranch(ctx, source, testBranchID, "Recoverable branch")
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	t.Cleanup(func() { _ = stage.Close() })
 	if err := stage.Sync(ctx); err != nil {
 		t.Fatal(err)
@@ -133,14 +125,9 @@ func TestBranchDirectorySyncFailureCanBeConfirmedOnExplicitResume(t *testing.T) 
 	}
 	before := readBranchTestJournal(t, repo, testBranchID)
 	lease, err := repo.Open(ctx, testBranchID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	defer lease.Close()
-	loaded, err := NewLoader().Load(ctx, lease)
-	if err != nil {
-		t.Fatal(err)
-	}
+	loaded := loadFixtureJournal(t, ctx, lease)
 	if err := repo.ConfirmBranchDurability(ctx, lease); !errors.Is(err, failure) {
 		t.Fatalf("confirmation incorrectly passed: %v", err)
 	}
@@ -161,9 +148,7 @@ func TestBranchFailedStageSyncDoesNotPublish(t *testing.T) {
 	repo := openBranchTestRepository(t, securePathHooks{syncBranchFile: func(*os.File) error { return failure }})
 	source := openBranchTestSource(t, repo, readCurrentFixture(t, "root.jsonl"))
 	stage, _, err := repo.PrepareBranch(ctx, source, testBranchID, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	t.Cleanup(func() { _ = stage.Close() })
 	if err := stage.Sync(ctx); !errors.Is(err, failure) {
 		t.Fatalf("stage sync error = %v", err)
@@ -185,18 +170,11 @@ func TestBranchPrepareReportsUnsafeSourceAndUnconfirmedStageCleanup(t *testing.T
 	content := readCurrentFixture(t, "root.jsonl")
 	repo := openBranchTestRepository(t, securePathHooks{})
 	lease := installBranchJournal(t, repo, testThreadID, content)
-	loaded, err := NewLoader().Load(ctx, lease)
-	if err != nil {
-		t.Fatal(err)
-	}
+	loaded := loadFixtureJournal(t, ctx, lease)
 	file, err := lease.transfer()
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	target, err := repo.JournalPath(testBranchID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	var substituted string
 	var stageErr error
 	underlying := &branchShortReadFile{File: file, onRead: func() {

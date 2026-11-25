@@ -50,9 +50,7 @@ func TestArtifactSchedulerBoundsWorkersAndPreservesResultOrder(t *testing.T) {
 				input, _ := tool.NewReadArtifactInput("0123456789abcdef0123456789abcdef", uint64(i), 1)
 				ready, _ := tool.NewReadArtifactReadyCall(tool.ProviderCallID(fmt.Sprintf("call-%d", i)), input)
 				v, err := tool.NewInvocation(id, ready)
-				if err != nil {
-					t.Fatal(err)
-				}
+				requireNoError(t, err)
 				invocations = append(invocations, v)
 			}
 			ctx, cancel := context.WithCancel(context.Background())
@@ -82,9 +80,7 @@ func TestArtifactSchedulerBoundsWorkersAndPreservesResultOrder(t *testing.T) {
 				for _, draft := range batch {
 					if draft.EventKind() == session.EventToolCallResult {
 						p, err := session.DecodeToolCallResultPayload(session.Record{EventKind: session.EventToolCallResult, Payload: draft.PayloadBytes()})
-						if err != nil {
-							t.Fatal(err)
-						}
+						requireNoError(t, err)
 						results = append(results, p.InvocationID)
 					}
 				}

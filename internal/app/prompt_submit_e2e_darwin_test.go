@@ -5,13 +5,11 @@ package app
 import (
 	"bytes"
 	"context"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -31,9 +29,7 @@ func TestPromptSubmitDualProviderSteeringStopAndCanonicalRestore(t *testing.T) {
 			workspace := privateAppTempDir(t)
 			root := filepath.Join(privateAppTempDir(t), "sessions")
 			const fileBody = "PAYLOAD_ONLY_IN_ATTACHMENT"
-			if err := os.WriteFile(filepath.Join(workspace, "evidence.txt"), []byte(fileBody), 0600); err != nil {
-				t.Fatal(err)
-			}
+			writeAppTestFile(t, filepath.Join(workspace, "evidence.txt"), []byte(fileBody), 0600)
 			const output = "PRIVATE_PROMPT_HOOK_OUTPUT"
 			const feedback = "frozen stop feedback"
 			promptScript := `payload=$(cat); case "$payload" in *` + fileBody + `*) exit 1;; *BLOCK_*) printf ` + output + `; printf ` + output + ` >&2; exit 2;; esac`
@@ -49,20 +45,14 @@ func TestPromptSubmitDualProviderSteeringStopAndCanonicalRestore(t *testing.T) {
 			if err := os.MkdirAll(filepath.Dir(hookPath), 0700); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(hookPath, body, 0600); err != nil {
-				t.Fatal(err)
-			}
+			writeAppTestFile(t, hookPath, body, 0600)
 
 			requests := make(chan []byte, 8)
 			gates := [2]chan struct{}{make(chan struct{}), make(chan struct{})}
-			var count atomic.Int32
+			var recorder requestRecorder
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				payload, err := io.ReadAll(r.Body)
-				if err != nil {
-					t.Error(err)
-					return
-				}
-				n := int(count.Add(1))
+				index, payload := recorder.record(t, r)
+				n := index + 1
 				requests <- payload
 				w.Header().Set("Content-Type", "text/event-stream")
 				if n <= len(gates) {
@@ -85,10 +75,7 @@ func TestPromptSubmitDualProviderSteeringStopAndCanonicalRestore(t *testing.T) {
 
 			cfg := cacheFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, Model: "fixture-model", BaseURL: server.URL, APIKey: secret.New("fixture-key")}}, true)
 			open := func(thread string) *chatResources {
-				res, err := openChatResourcesWithHooks(ctx, cfg, dataPaths{sessionRoot: root}, thread, false, workspace, chatResourceHooks{interactiveApprovals: true})
-				if err != nil {
-					t.Fatal(err)
-				}
+				res := mustOpenChatResourcesWithHooks(t, ctx, cfg, dataPaths{sessionRoot: root}, thread, false, workspace, chatResourceHooks{interactiveApprovals: true})
 				t.Cleanup(func() { _ = res.close(context.Background()) })
 				if err := res.session.StartInteractive(ctx); err != nil {
 					t.Fatal(err)
@@ -154,7 +141,7 @@ func TestPromptSubmitDualProviderSteeringStopAndCanonicalRestore(t *testing.T) {
 					t.Fatal(ctx.Err())
 				}
 			}
-			for len(wire) < int(count.Load()) {
+			for len(wire) < len(recorder.snapshot()) {
 				wire = append(wire, <-requests)
 			}
 			if len(wire) != 4 || len(final) != 6 || len(rejected) != 3 || final[first] != protocol.InputCommitted || !bytes.Contains(wire[0], []byte(fileBody)) || !bytes.Contains(wire[3], []byte(feedback)) {
@@ -184,51 +171,23 @@ func TestPromptSubmitDualProviderSteeringStopAndCanonicalRestore(t *testing.T) {
 			}
 			appendText(live, "next unchanged prompt")
 			appEffortTerminal(t, live, false)
-			liveCache := readPromptSubmitCache(t, ctx, live)
+			liveCache := queryFixtureCacheSnapshot(t, ctx, live, "prompt-cache")
 			liveWire := <-requests
-			if err := live.close(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(journalPath, prefix, 0600); err != nil {
-				t.Fatal(err)
-			}
+			closeAppTestResources(t, live)
+			writeAppTestFile(t, journalPath, prefix, 0600)
 			if err := os.Remove(hookPath); err != nil {
 				t.Fatal(err)
 			}
 			restored := open(string(thread))
-			if count.Load() != 5 || len(restored.history.Turns) != 1 || strings.Contains(restored.history.Turns[0].Messages[0].Text, "BLOCK_") {
+			if len(recorder.snapshot()) != 5 || len(restored.history.Turns) != 1 || strings.Contains(restored.history.Turns[0].Messages[0].Text, "BLOCK_") {
 				t.Fatal("recovery reran checks or lost the original native history")
 			}
 			appendText(restored, "next unchanged prompt")
 			appEffortTerminal(t, restored, false)
-			restoredCache := readPromptSubmitCache(t, ctx, restored)
+			restoredCache := queryFixtureCacheSnapshot(t, ctx, restored, "prompt-cache")
 			if restoredWire := <-requests; !bytes.Equal(liveWire, restoredWire) || liveCache.StableFingerprint != restoredCache.StableFingerprint || liveCache.LastSample == nil || restoredCache.LastSample == nil || liveCache.LastSample.RequestFingerprint != restoredCache.LastSample.RequestFingerprint || liveCache.LastSample.NativeFingerprint != restoredCache.LastSample.NativeFingerprint {
 				t.Fatal("gate metadata changed canonical continuation or cache evidence")
 			}
 		})
-	}
-}
-
-func readPromptSubmitCache(t *testing.T, ctx context.Context, res *chatResources) protocol.CacheSnapshotPayload {
-	t.Helper()
-	if _, err := res.session.QueryCache(ctx, "prompt-cache"); err != nil {
-		t.Fatal(err)
-	}
-	for {
-		select {
-		case item, open := <-res.session.Outputs():
-			if !open {
-				t.Fatal("cache query output closed")
-			}
-			if event, ok := item.ContextEvent(); ok && item.RequestID() == "prompt-cache" {
-				snapshot, err := protocol.DecodeCacheSnapshot(event)
-				if err != nil {
-					t.Fatal(err)
-				}
-				return snapshot
-			}
-		case <-ctx.Done():
-			t.Fatal(ctx.Err())
-		}
 	}
 }

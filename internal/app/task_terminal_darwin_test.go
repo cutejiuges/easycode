@@ -11,7 +11,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -165,11 +164,7 @@ func TestTaskTerminalHelper(t *testing.T) {
 	if !family.Valid() {
 		t.Fatal("invalid task terminal family")
 	}
-	fd, err := strconv.Atoi(os.Getenv("EASYCODE_TASK_ACK_FD"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	ack := os.NewFile(uintptr(fd), "task-ack")
+	ack := openTerminalAck(t, "EASYCODE_TASK_ACK_FD", "task-ack")
 	defer ack.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 85*time.Second)
 	defer cancel()
@@ -239,18 +234,13 @@ func TestTaskTerminalHelper(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(skillPath), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(skillPath, []byte("---\nname: tasks\ndescription: same-name task skill\n---\nsame-name-task-skill-marker\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, skillPath, []byte("---\nname: tasks\ndescription: same-name task skill\n---\nsame-name-task-skill-marker\n"), 0600)
 	writeHookConfig(t, workspace, "cat >/dev/null; printf '{}'")
 	model := "gpt-test"
 	if family == domain.ProviderAnthropic {
 		model = "claude-test"
 	}
-	resources, err := openChatResourcesWithHooks(ctx, config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, Model: model, APIKey: secret.New("task-pty-fixture")}}, dataPaths{sessionRoot: filepath.Join(privateAppTempDir(t), "sessions")}, "", false, workspace, chatResourceHooks{interactiveApprovals: true})
-	if err != nil {
-		t.Fatal(err)
-	}
+	resources := mustOpenChatResourcesWithHooks(t, ctx, config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, Model: model, APIKey: secret.New("task-pty-fixture")}}, dataPaths{sessionRoot: filepath.Join(privateAppTempDir(t), "sessions")}, "", false, workspace, chatResourceHooks{interactiveApprovals: true})
 	defer resources.close(context.Background())
 	inner, err := assembleChatModel(ctx, resources)
 	if err != nil {

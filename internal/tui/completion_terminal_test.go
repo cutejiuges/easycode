@@ -88,13 +88,13 @@ func TestCompletionTerminalDecodedKeysAndFragmentedPaste(t *testing.T) {
 			write("\r")
 			await("$review ", false, stateIdle)
 			if split {
-				for _, part := range []string{"\x1b[200~", "args\r", "\n\t\x1b\x03", "\x1b[201~"} {
+				for _, part := range []string{"\x1b[200~", "  中文\r", "\n\targs  \x1b\x03", "\x1b[201~"} {
 					write(part)
 				}
 			} else {
-				write("\x1b[200~args\r\n\t\x1b\x03\x1b[201~")
+				write("\x1b[200~  中文\r\n\targs  \x1b\x03\x1b[201~")
 			}
-			text := "$review args\n\t\x1b\x03"
+			text := "$review   中文\n\targs  \x1b\x03"
 			await(text, false, stateIdle)
 			write("\x1b\r")
 			text += "\n"

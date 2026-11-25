@@ -3,6 +3,7 @@
 import argparse
 import importlib.util
 import pathlib
+from smoke_support import complete_cases
 
 
 if __name__ == "__main__":
@@ -14,5 +15,5 @@ if __name__ == "__main__":
     spec = importlib.util.spec_from_file_location("hook_smoke", root / "scripts/smoke-hooks.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    for family in ("openai", "anthropic"):
-        module.smoke(str(pathlib.Path(args.binary).resolve()), family, root, "Stop", args.output_dir)
+    complete_cases([module.smoke(str(pathlib.Path(args.binary).resolve()), family, root, "Stop", args.output_dir)
+                    for family in ("openai", "anthropic")])

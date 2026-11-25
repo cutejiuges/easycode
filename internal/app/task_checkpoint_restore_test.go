@@ -27,10 +27,7 @@ type taskCheckpointFixturePayload struct {
 func TestTaskCheckpointFixedSourcesAndReadOnlyPreview(t *testing.T) {
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		t.Run(string(family), func(t *testing.T) {
-			data, err := os.ReadFile("../session/testdata/current/task_" + string(family) + "_checkpoints.jsonl")
-			if err != nil {
-				t.Fatal(err)
-			}
+			data := readAppTestFile(t, "../session/testdata/current/task_"+string(family)+"_checkpoints.jsonl")
 			root, path, thread := installPreviewFixture(t, data)
 			_, plan := loadToolLoopPlan(t, root, thread)
 			if len(plan.Compactions) != 4 || len(plan.Tools) != 3 {
@@ -97,17 +94,12 @@ func TestTaskCheckpointFixedSourcesAndReadOnlyPreview(t *testing.T) {
 				model = "claude-test"
 			}
 			cfg := config.Config{Provider: config.Provider{Family: family, Model: model, BaseURL: "https://example.invalid", APIKey: secret.New("fixture-key")}}
-			resources, err := openChatResources(context.Background(), cfg, root, string(thread), privateAppTempDir(t))
-			if err != nil {
-				t.Fatal(err)
-			}
+			resources := mustOpenChatResources(t, context.Background(), cfg, root, string(thread), privateAppTempDir(t))
 			want, err := plan.TaskProgress()
 			if err != nil || !resources.runtime.TaskProgress().Equal(want) {
 				t.Fatal("restore used historical checkpoint as a new task update", err)
 			}
-			if err := resources.close(context.Background()); err != nil {
-				t.Fatal(err)
-			}
+			closeAppTestResources(t, resources)
 			after, err := os.ReadFile(path)
 			if err != nil || !bytes.Equal(after, data) {
 				t.Fatal("complete checkpoint resume mutated journal")
@@ -120,10 +112,7 @@ func TestTaskCheckpointForgeryRejectsBeforeRepairAndNetwork(t *testing.T) {
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		for _, fault := range []string{"future-result", "wrapper", "self-consistent", "missing-task"} {
 			t.Run(string(family)+"/"+fault, func(t *testing.T) {
-				original, err := os.ReadFile("../session/testdata/current/task_" + string(family) + "_checkpoints.jsonl")
-				if err != nil {
-					t.Fatal(err)
-				}
+				original := readAppTestFile(t, "../session/testdata/current/task_"+string(family)+"_checkpoints.jsonl")
 				root, path, thread := installPreviewFixture(t, original)
 				loaded, plan := loadToolLoopPlan(t, root, thread)
 				target := plan.Compactions[1].TerminalSequence
@@ -190,9 +179,7 @@ func TestTaskCheckpointForgeryRejectsBeforeRepairAndNetwork(t *testing.T) {
 					t.Fatal(err)
 				}
 				data := append(append(bytes.Join(lines, []byte{'\n'}), '\n'), []byte(`{"torn":`)...)
-				if err := os.WriteFile(path, data, 0600); err != nil {
-					t.Fatal(err)
-				}
+				writeAppTestFile(t, path, data, 0600)
 				// 保留合法 checksum 与完整共享回放；必须由各 checkpoint 的原生证据拒绝。
 				_, _ = loadToolLoopPlan(t, root, thread)
 				var network atomic.Int32

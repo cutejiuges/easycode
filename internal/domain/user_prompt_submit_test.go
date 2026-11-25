@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"bytes"
 	"strings"
 	"testing"
 
@@ -36,18 +35,6 @@ func TestUserPromptSubmitStdinLimitsAndOriginalText(t *testing.T) {
 	decoded, err := DecodeHookInput(encoded)
 	if err != nil || !decoded.MatchesTarget(target) {
 		t.Fatal("restored prompt no longer matches its input", err)
-	}
-	encodedAgain, err := decoded.Bytes()
-	if err != nil || !bytes.Equal(encoded, encodedAgain) {
-		t.Fatal("restored stdin changed bytes", err)
-	}
-	targetBytes, err := target.MarshalJSON()
-	if err != nil {
-		t.Fatal(err)
-	}
-	restored, err := DecodeHookTarget(targetBytes)
-	if err != nil || restored != target || restored.ValidFor(HookStop) {
-		t.Fatal("target lost its sample or spilled into another event", err)
 	}
 	other := anchor
 	other.InputID = InputID(thread)

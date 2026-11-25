@@ -34,24 +34,14 @@ func TestResumePermitSerializesPreparationAndDirectControls(t *testing.T) {
 	journal := &fakeJournal{}
 	value := newTestRuntime(t, conversation, journal)
 	catalog, err := domain.NewSkillCatalog(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	preparation := gatedResumeInput{entered: make(chan struct{}, 2), release: make(chan struct{})}
 	if err := value.InstallInputSources(catalog, preparation); err != nil {
 		t.Fatal(err)
 	}
 	declaration, err := domain.NewHookDeclaration(domain.HookSourceProject, domain.HookPreToolUse, domain.HookFeedbackNone, strings.Repeat("a", 64), "resume-check", 7, "true", 5)
-	if err != nil {
-		t.Fatal(err)
-	}
-	hooks, err := domain.NewHookSnapshot([]domain.HookDeclaration{declaration}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := value.InstallHooks(hooks, &fakeHookRunner{}, "/workspace", domain.HookOK); err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
+	installRuntimeTestHooks(t, value, &fakeHookRunner{}, "/workspace", []domain.HookDeclaration{declaration})
 	value.hooks.trust[declaration.Reference.Key()] = protocol.HookTrustSession
 	source := NewChatSession(value)
 	if err := source.StartInteractive(ctx); err != nil {
@@ -78,9 +68,7 @@ func TestResumePermitSerializesPreparationAndDirectControls(t *testing.T) {
 		t.Fatalf("repeated reservation: %v", err)
 	}
 	draft, err := domain.NewInteractiveInputDraft("Inspect the workspace")
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	if _, err := source.Append(ctx, draft); fault.Project(err).Code != fault.CodeSessionBusy {
 		t.Fatalf("reserved append: %v", err)
 	}
@@ -96,25 +84,17 @@ func TestResumePermitSerializesPreparationAndDirectControls(t *testing.T) {
 		t.Fatal("direct hook reset bypassed the reservation")
 	}
 	target, err := protocol.NewHookTrustTarget(value.sessionID, value.threadID, declaration.Reference)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	direct, err := protocol.NewResetHookTrustCommand("direct-reserved", target)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	result, err := source.loop.Submit(ctx, direct)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	assertRejectedCode(t, result, protocol.ControlErrorSessionBusy)
 	if trust := value.hooks.trust[declaration.Reference.Key()]; trust != protocol.HookTrustSession {
 		t.Fatalf("reserved hook reset changed trust: %s", trust)
 	}
 	result, err = source.RenameSession(ctx, "rename-reserved", "New title")
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	assertRejectedCode(t, result, protocol.ControlErrorSessionBusy)
 	if len(journal.snapshot()) != 0 {
 		t.Fatal("reserved rename wrote to the source journal")
@@ -126,9 +106,7 @@ func TestResumePermitSerializesPreparationAndDirectControls(t *testing.T) {
 		t.Fatal(err)
 	}
 	second, err := source.ReserveHandoff(ctx, HandoffResume)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	if err := first.Release(ctx); err != nil || !second.Valid() {
 		t.Fatalf("old release affected the current permit: %v", err)
 	}

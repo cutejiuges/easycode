@@ -272,9 +272,7 @@ func installTornSessionTail(t *testing.T, service *sessionService, identity sess
 		t.Fatal(err)
 	}
 	torn = append(bytes.Clone(durable), `{"incomplete":`...)
-	if err := os.WriteFile(path, torn, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, path, torn, 0o600)
 	return path, durable, torn
 }
 

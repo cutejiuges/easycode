@@ -47,14 +47,10 @@ func TestTasksQueryStrictFragmentationAndDedicatedLimit(t *testing.T) {
 	}
 }
 
-func headlessTaskState(t *testing.T, clear bool) domain.TaskProgressState {
+func headlessTaskState(t *testing.T) domain.TaskProgressState {
 	t.Helper()
-	var steps []domain.TaskStep
-	if !clear {
-		step, _ := domain.NewTaskStep("检查任务 🧑‍💻", "正在检查任务", domain.TaskInProgress)
-		steps = []domain.TaskStep{step}
-	}
-	update, err := domain.NewTaskUpdate(steps, "保留完整说明")
+	step, _ := domain.NewTaskStep("检查任务 🧑‍💻", "正在检查任务", domain.TaskInProgress)
+	update, err := domain.NewTaskUpdate([]domain.TaskStep{step}, "保留完整说明")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,53 +68,50 @@ func headlessTaskState(t *testing.T, clear bool) domain.TaskProgressState {
 func TestTaskQueryResponseThenSnapshotAndStrictEnvelope(t *testing.T) {
 	sid := domain.SessionID("01900000-0000-7000-8000-000000000001")
 	tid := domain.ThreadID("01900000-0000-7000-8000-000000000002")
-	for _, state := range []domain.TaskProgressState{headlessTaskState(t, false)} {
-		projector, err := NewStreamProjector(sid, tid)
+	state := headlessTaskState(t)
+	projector, err := NewStreamProjector(sid, tid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd, _ := protocol.NewQueryTasksCommand("query")
+	result, _ := protocol.NewAcceptedCommandResult(cmd, protocol.CommandDispositionQueried)
+	response, _ := protocol.NewCommandResultItem(result)
+	snapshot, _ := protocol.NewTaskProgressSnapshot(sid, tid, state)
+	item, _ := protocol.NewCorrelatedContextItem("query", snapshot)
+	var output bytes.Buffer
+	for _, v := range []protocol.ControlItem{response, item} {
+		event, err := projector.Project(v)
 		if err != nil {
 			t.Fatal(err)
 		}
-		cmd, _ := protocol.NewQueryTasksCommand("query")
-		result, _ := protocol.NewAcceptedCommandResult(cmd, protocol.CommandDispositionQueried)
-		response, _ := protocol.NewCommandResultItem(result)
-		snapshot, _ := protocol.NewTaskProgressSnapshot(sid, tid, state)
-		item, _ := protocol.NewCorrelatedContextItem("query", snapshot)
-		var output bytes.Buffer
-		for _, v := range []protocol.ControlItem{response, item} {
-			event, err := projector.Project(v)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := NewStreamEncoder(&output).Write(event); err != nil {
-				t.Fatal(err)
-			}
+		if err := NewStreamEncoder(&output).Write(event); err != nil {
+			t.Fatal(err)
 		}
-		lines := bytes.Split(bytes.TrimSpace(output.Bytes()), []byte{'\n'})
-		if len(lines) != 2 || !bytes.Contains(lines[0], []byte(`"command_type":"tasks.query"`)) || !bytes.Contains(lines[0], []byte(`"disposition":"queried"`)) {
-			t.Fatal("query response ordering", output.String())
+	}
+	lines := bytes.Split(bytes.TrimSpace(output.Bytes()), []byte{'\n'})
+	if len(lines) != 2 || !bytes.Contains(lines[0], []byte(`"command_type":"tasks.query"`)) || !bytes.Contains(lines[0], []byte(`"disposition":"queried"`)) {
+		t.Fatal("query response ordering", output.String())
+	}
+	golden, err := os.ReadFile("testdata/tasks.golden.jsonl")
+	if err != nil || !bytes.Equal(golden, append(append([]byte(nil), lines[1]...), '\n')) {
+		t.Fatalf("task snapshot golden changed: %v; got=%s", err, lines[1])
+	}
+	decoded, err := DecodeTaskSnapshotEvent(lines[1])
+	if err != nil || !decoded.Snapshot.Progress.Equal(state) || decoded.RequestID != "query" || decoded.SessionID != sid || decoded.ThreadID != tid {
+		t.Fatal("snapshot scope mismatch", err)
+	}
+	for _, forbidden := range []string{`"profile"`, `"input_id"`, `"compaction_id"`, `"turn_id":null`} {
+		if bytes.Contains(lines[1], []byte(forbidden)) {
+			t.Fatal("snapshot leaked unrelated identity", output.String())
 		}
-		if state.Kind() == domain.TaskProgressSnapshot {
-			golden, err := os.ReadFile("testdata/tasks.golden.jsonl")
-			if err != nil || !bytes.Equal(golden, append(append([]byte(nil), lines[1]...), '\n')) {
-				t.Fatalf("task snapshot golden changed: %v; got=%s", err, lines[1])
-			}
-		}
-		decoded, err := DecodeTaskSnapshotEvent(lines[1])
-		if err != nil || !decoded.Snapshot.Progress.Equal(state) || decoded.RequestID != "query" || decoded.SessionID != sid || decoded.ThreadID != tid {
-			t.Fatal("snapshot scope mismatch", err)
-		}
-		for _, forbidden := range []string{`"profile"`, `"input_id"`, `"compaction_id"`, `"turn_id":null`} {
-			if bytes.Contains(lines[1], []byte(forbidden)) {
-				t.Fatal("snapshot leaked unrelated identity", output.String())
-			}
-		}
-		// 外层和内层都严格拒绝未知字段、null、计数伪造和重复键。
-		for _, raw := range [][]byte{
-			bytes.Replace(lines[1], []byte(`"snapshot":`), []byte(`"profile":"todo_write","snapshot":`), 1),
-			bytes.Replace(lines[1], []byte(`"total":`), []byte(`"total":999,"extra":`), 1),
-		} {
-			if _, err := DecodeTaskSnapshotEvent(raw); err == nil {
-				t.Fatal("invalid snapshot accepted", string(raw))
-			}
+	}
+	// 外层和内层都严格拒绝未知字段、null、计数伪造和重复键。
+	for _, raw := range [][]byte{
+		bytes.Replace(lines[1], []byte(`"snapshot":`), []byte(`"profile":"todo_write","snapshot":`), 1),
+		bytes.Replace(lines[1], []byte(`"total":`), []byte(`"total":999,"extra":`), 1),
+	} {
+		if _, err := DecodeTaskSnapshotEvent(raw); err == nil {
+			t.Fatal("invalid snapshot accepted", string(raw))
 		}
 	}
 }
@@ -133,7 +126,7 @@ func TestTaskUpdatedIsValidatedAndFilteredInOneShot(t *testing.T) {
 	if _, err := p.project(started); err != nil {
 		t.Fatal(err)
 	}
-	updated, err := protocol.NewTaskProgressUpdated(sid, tid, turn, headlessTaskState(t, false))
+	updated, err := protocol.NewTaskProgressUpdated(sid, tid, turn, headlessTaskState(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +142,7 @@ func TestTaskUpdatedIsValidatedAndFilteredInOneShot(t *testing.T) {
 }
 
 func TestTaskSnapshotMaximumCanonicalAndEncodedCap(t *testing.T) {
-	state := headlessTaskState(t, false)
+	state := headlessTaskState(t)
 	value := StreamTaskSnapshotEvent{Version: 1, Type: "tasks.snapshot", RequestID: "q", SessionID: "01900000-0000-7000-8000-000000000001", ThreadID: "01900000-0000-7000-8000-000000000002", Snapshot: protocol.TaskProgressSnapshotPayload{Progress: state, Counts: state.Counts()}}
 	raw, err := codec.MarshalStable(value)
 	if err != nil {
@@ -200,7 +193,7 @@ func TestTaskQueryEOFDrainAndSnapshotWriteFailureOwnCleanup(t *testing.T) {
 			name = "snapshot_broken_pipe"
 		}
 		t.Run(name, func(t *testing.T) {
-			state := headlessTaskState(t, false)
+			state := headlessTaskState(t)
 			loop := &taskQueryStreamLoop{newScriptedStreamLoop(false), state}
 			wire := `{"version":1,"type":"tasks.query","request_id":"task-query"}` + "\n"
 			output := &failAfterWriter{allowed: 10, closed: make(chan struct{})}

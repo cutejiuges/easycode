@@ -3,7 +3,6 @@ package app
 import (
 	"bytes"
 	"easycode/internal/domain"
-	"os"
 	"path/filepath"
 	"testing"
 )
@@ -25,27 +24,17 @@ func writePostHookConfig(t *testing.T, workspace, command string, policy domain.
 	t.Helper()
 	writeHookConfig(t, workspace, command)
 	path := filepath.Join(workspace, ".easycode", "hooks.json")
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	b := readAppTestFile(t, path)
 	b = bytes.ReplaceAll(b, []byte(`"PreToolUse"`), []byte(`"PostToolUse"`))
 	b = bytes.ReplaceAll(b, []byte(`"type":"command"`), []byte(`"type":"command","feedback":"`+string(policy)+`"`))
-	if err := os.WriteFile(path, b, 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, path, b, 0600)
 }
 
 func writeFailureHookConfig(t *testing.T, workspace, command string, policy domain.HookFeedbackPolicy) {
 	t.Helper()
 	writePostHookConfig(t, workspace, command, policy)
 	path := filepath.Join(workspace, ".easycode", "hooks.json")
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	b := readAppTestFile(t, path)
 	b = bytes.ReplaceAll(b, []byte(`"PostToolUse"`), []byte(`"PostToolUseFailure"`))
-	if err := os.WriteFile(path, b, 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, path, b, 0600)
 }

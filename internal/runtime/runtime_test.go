@@ -106,52 +106,6 @@ func (executor *indexedGateReadExecutor) Execute(_ context.Context, invocation t
 	return result
 }
 
-type startedFailureJournal struct {
-	mu              sync.Mutex
-	calls           int
-	failAt          int
-	poisoned        bool
-	poisonOnFailure bool
-	batches         [][]session.RecordDraft
-	sequence        uint64
-}
-
-func (journal *startedFailureJournal) AppendBatch(_ context.Context, drafts []session.RecordDraft) ([]session.Record, error) {
-	journal.mu.Lock()
-	defer journal.mu.Unlock()
-	if journal.poisoned {
-		return nil, errors.New("fixture journal is poisoned")
-	}
-	journal.calls++
-	if journal.calls == journal.failAt {
-		journal.poisoned = journal.poisonOnFailure
-		return nil, errors.New("fixture started append failure")
-	}
-	journal.batches = append(journal.batches, append([]session.RecordDraft(nil), drafts...))
-	records := make([]session.Record, len(drafts))
-	for i := range records {
-		journal.sequence++
-		records[i] = session.Record{Sequence: journal.sequence, TurnID: drafts[i].TurnID(), EventKind: drafts[i].EventKind(), Payload: drafts[i].PayloadBytes()}
-	}
-	return records, nil
-}
-
-func (journal *startedFailureJournal) Poisoned() bool {
-	journal.mu.Lock()
-	defer journal.mu.Unlock()
-	return journal.poisoned
-}
-
-func (journal *startedFailureJournal) snapshot() [][]session.RecordDraft {
-	journal.mu.Lock()
-	defer journal.mu.Unlock()
-	result := make([][]session.RecordDraft, len(journal.batches))
-	for index := range journal.batches {
-		result[index] = append([]session.RecordDraft(nil), journal.batches[index]...)
-	}
-	return result
-}
-
 func (executor *recordingReadExecutor) Execute(ctx context.Context, invocation tool.ReadInvocation) tool.ReadExecution {
 	executor.calls.Add(1)
 	executor.mu.Lock()
@@ -247,23 +201,28 @@ func testStreamEvents(events <-chan provider.StreamEvent) provider.StreamEvents 
 }
 
 type fakeJournal struct {
-	mu       sync.Mutex
-	batches  [][]session.RecordDraft
-	sequence uint64
-	calls    int
-	failAt   int
-	poisoned bool
-	hook     func([]session.RecordDraft)
+	mu              sync.Mutex
+	batches         [][]session.RecordDraft
+	sequence        uint64
+	calls           int
+	failAt          int
+	poisoned        bool
+	definiteFailure bool
+	hook            func([]session.RecordDraft)
 }
 
 func (journal *fakeJournal) AppendBatch(_ context.Context, drafts []session.RecordDraft) ([]session.Record, error) {
 	journal.mu.Lock()
+	if journal.poisoned {
+		journal.mu.Unlock()
+		return nil, errors.New("fixture journal is poisoned")
+	}
 	journal.calls++
 	call := journal.calls
 	cloned := append([]session.RecordDraft(nil), drafts...)
 	hook := journal.hook
 	if journal.failAt == call {
-		journal.poisoned = true
+		journal.poisoned = !journal.definiteFailure
 		journal.mu.Unlock()
 		return nil, errors.New("fixture journal failure")
 	}
@@ -271,7 +230,7 @@ func (journal *fakeJournal) AppendBatch(_ context.Context, drafts []session.Reco
 	records := make([]session.Record, len(drafts))
 	for i := range records {
 		journal.sequence++
-		records[i].Sequence = journal.sequence
+		records[i] = session.Record{Sequence: journal.sequence, TurnID: drafts[i].TurnID(), EventKind: drafts[i].EventKind(), Payload: drafts[i].PayloadBytes()}
 	}
 	journal.mu.Unlock()
 	if hook != nil {
@@ -306,9 +265,7 @@ func TestRunTurnDurableSuccessOrderingAndIdentity(t *testing.T) {
 		timelineMu.Unlock()
 	}
 	delta, err := protocol.NewAssistantTextDelta("hello")
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	prepared := newPreparedSample(t, func() { addTimeline("finalize") })
 	conversation := &fakeConversation{stream: func(context.Context, provider.TurnInput) (<-chan provider.StreamEvent, error) {
 		addTimeline("provider")
@@ -350,27 +307,21 @@ func TestRunTurnDurableSuccessOrderingAndIdentity(t *testing.T) {
 	commit, err := session.DecodeNativeCommitPayload(session.Record{
 		EventKind: batches[2][0].EventKind(), Payload: batches[2][0].PayloadBytes(),
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	if commit.Provider != domain.ProviderOpenAI || commit.Wire != "responses" || string(commit.Payload) != `{"shape":"text_sample"}` {
 		t.Fatalf("native commit = %#v", commit)
 	}
 	usageRecord, err := session.DecodeSampleUsagePayload(session.Record{
 		EventKind: batches[2][1].EventKind(), Payload: batches[2][1].PayloadBytes(),
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	wantUsage := testRuntimeUsage(t)
 	gotUsage, err := usageRecord.Domain()
 	if err != nil || gotUsage != wantUsage {
 		t.Fatalf("sample usage = %#v, %v", gotUsage, err)
 	}
 	completed, err := protocol.DecodeTurnCompleted(events[len(events)-1])
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	completedUsage, err := completed.Usage.Domain()
 	if err != nil || completedUsage != wantUsage {
 		t.Fatalf("completed usage = %#v, %v", completedUsage, err)
@@ -414,9 +365,7 @@ func TestRunTurnCancellationUsesStartedAcceptanceAsExecutorBoundary(t *testing.T
 				return tool.ParseInvocationID("01890f3e-7bcd-7abc-8abc-0123456789ab")
 			}
 			runtime, err := New(conversation, config)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			events, runErr := collectTurn(runtime, ctx, nil)
 			if !errors.Is(runErr, context.Canceled) {
 				t.Fatalf("RunTurn() error = %v", runErr)
@@ -567,7 +516,7 @@ func TestStartedAppendFailureWaitsAcceptedCallsAndStopsLaterCalls(t *testing.T) 
 			conversation := &fakeToolConversation{fakeConversation: &fakeConversation{
 				stream: fixedStream(completedProviderEventWithSample(t, sample)),
 			}}
-			journal := &startedFailureJournal{failAt: 5, poisonOnFailure: test.poisoned}
+			journal := &fakeJournal{failAt: 5, definiteFailure: !test.poisoned}
 			config := testRuntimeConfig(t, journal)
 			config.ToolBinding = testRuntimeToolBinding(t, func(tools *tool.Components) { tools.Read = executor })
 			config.GenerateTurnID = func() (domain.TurnID, error) { return runtimeTurnID, nil }
@@ -579,9 +528,7 @@ func TestStartedAppendFailureWaitsAcceptedCallsAndStopsLaterCalls(t *testing.T) 
 				return value, nil
 			}
 			runtime, err := New(conversation, config)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			events, runErr := collectTurn(runtime, context.Background(), nil)
 			if !errors.Is(runErr, &fault.Error{Code: fault.CodeSessionWrite}) {
 				t.Fatalf("RunTurn() error = %v", runErr)
@@ -622,17 +569,13 @@ func TestRunTurnToolDurabilityFailuresPreventLaterSideEffects(t *testing.T) {
 		envelope, err := provider.NewNativeCommitEnvelope(
 			domain.ProviderOpenAI, "responses", json.RawMessage(`{"shape":"call_sample"}`),
 		)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		var finalized atomic.Int32
 		var discarded atomic.Int32
 		sample, err := provider.NewPreparedSample(
 			envelope, testRuntimeUsage(t), syntheticRequestReceipt(domain.RequestSample), domain.EmptySamplePresentation(1), func() { finalized.Add(1) }, func() { discarded.Add(1) }, ready,
 		)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		executor := &recordingReadExecutor{}
 		conversation := &fakeToolConversation{fakeConversation: &fakeConversation{
 			stream: fixedStream(completedProviderEventWithSample(t, sample)),
@@ -642,9 +585,7 @@ func TestRunTurnToolDurabilityFailuresPreventLaterSideEffects(t *testing.T) {
 		config.ToolBinding = testRuntimeToolBinding(t, func(tools *tool.Components) { tools.Read = executor })
 		config.GenerateTurnID = func() (domain.TurnID, error) { return runtimeTurnID, nil }
 		runtime, err := New(conversation, config)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		events, runErr := collectTurn(runtime, context.Background(), nil)
 		if !errors.Is(runErr, &fault.Error{Code: fault.CodeSessionWrite}) {
 			t.Fatalf("RunTurn() error = %v", runErr)
@@ -676,9 +617,7 @@ func TestRunTurnToolDurabilityFailuresPreventLaterSideEffects(t *testing.T) {
 		config.ToolBinding = testRuntimeToolBinding(t, func(tools *tool.Components) { tools.Read = executor })
 		config.GenerateTurnID = func() (domain.TurnID, error) { return runtimeTurnID, nil }
 		runtime, err := New(conversation, config)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		events, runErr := collectTurn(runtime, context.Background(), nil)
 		if !errors.Is(runErr, &fault.Error{Code: fault.CodeStreamProtocol}) {
 			t.Fatalf("RunTurn() error = %v", runErr)
@@ -704,9 +643,7 @@ func TestRunTurnToolDurabilityFailuresPreventLaterSideEffects(t *testing.T) {
 		config.ToolBinding = testRuntimeToolBinding(t, func(tools *tool.Components) { tools.Read = executor })
 		config.GenerateTurnID = func() (domain.TurnID, error) { return runtimeTurnID, nil }
 		runtime, err := New(conversation, config)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		events, runErr := collectTurn(runtime, context.Background(), nil)
 		if !errors.Is(runErr, &fault.Error{Code: fault.CodeSessionWrite}) {
 			t.Fatalf("RunTurn() error = %v", runErr)
@@ -772,9 +709,7 @@ func TestReconcileToolTurnClosesCrashPointsWithoutExternalCalls(t *testing.T) {
 				test.calls[i].Origin = runtimeFixtureOrigin(t, test.calls[i].SampleIndex, test.calls[i].CallIndex)
 			}
 			plan, err := session.NewToolRecoveryPlan(runtimeTurnID, 1, test.calls, test.outputsCommitted)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			executor := &recordingReadExecutor{}
 			conversation := &fakeToolConversation{fakeConversation: &fakeConversation{
 				stream: func(context.Context, provider.TurnInput) (<-chan provider.StreamEvent, error) {
@@ -785,9 +720,7 @@ func TestReconcileToolTurnClosesCrashPointsWithoutExternalCalls(t *testing.T) {
 			config := testRuntimeConfig(t, journal)
 			config.ToolBinding = testRuntimeToolBinding(t, func(tools *tool.Components) { tools.Read = executor })
 			runtime, err := New(conversation, config)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			if err := runtime.ReconcileToolTurn(context.Background(), plan); err != nil {
 				t.Fatal(err)
 			}
@@ -845,9 +778,7 @@ func TestRunTurnCancelsAndDrainsAfterInvalidEvent(t *testing.T) {
 	cancelObserved := make(chan struct{})
 	producerDone := make(chan struct{})
 	delta, err := protocol.NewAssistantTextDelta("drained")
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	tail := semanticProviderEvent(t, delta)
 	conversation := &fakeConversation{stream: func(ctx context.Context, _ provider.TurnInput) (<-chan provider.StreamEvent, error) {
 		stream := make(chan provider.StreamEvent)
@@ -918,22 +849,16 @@ func newTestRuntime(t *testing.T, conversation provider.Conversation, journal Jo
 	config := testRuntimeConfig(t, journal)
 	config.GenerateTurnID = func() (domain.TurnID, error) { return runtimeTurnID, nil }
 	runtime, err := New(conversation, config)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return runtime
 }
 
 func testRuntimeConfig(t *testing.T, journal Journal) Config {
 	t.Helper()
 	profile, err := contextplan.NewProviderProfile(domain.ProviderOpenAI, "gpt-test")
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	projectInstructions, err := domain.NewEmptyProjectInstructionsSnapshot(32 << 10)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return Config{
 		SessionID: runtimeSessionID, ThreadID: runtimeThreadID, Journal: journal,
 		ProviderWire:        domain.ProviderOpenAI.Wire(),
@@ -958,9 +883,7 @@ func testRuntimeToolBinding(t *testing.T, alter func(*tool.Components)) tool.Bin
 		alter(&components)
 	}
 	binding, err := tool.NewBinding(components)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return binding
 }
 
@@ -974,9 +897,7 @@ func newRuntimeWithReadExecutor(t *testing.T, journal Journal, executor tool.Rea
 	config := testRuntimeConfig(t, journal)
 	config.ToolBinding = testRuntimeToolBinding(t, func(tools *tool.Components) { tools.Read = executor })
 	runtime, err := New(conversation, config)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return runtime
 }
 
@@ -985,9 +906,7 @@ func testRuntimeInvocationIDs(t *testing.T, count int) []tool.InvocationID {
 	result := make([]tool.InvocationID, count)
 	for index := range count {
 		value, err := tool.ParseInvocationID(fmt.Sprintf("01890f3e-7bcd-7abc-8abc-%012x", index+1))
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		result[index] = value
 	}
 	return result
@@ -999,9 +918,7 @@ func testRuntimeInvocations(t *testing.T, count int) []tool.Invocation {
 	result := make([]tool.Invocation, count)
 	for index := range count {
 		invocation, err := tool.NewInvocation(identities[index], testRuntimeReadyCall(t, fmt.Sprintf("call-%d", index)))
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		result[index] = invocation
 	}
 	return result
@@ -1010,30 +927,20 @@ func testRuntimeInvocations(t *testing.T, count int) []tool.Invocation {
 func testRuntimeReadyCall(t *testing.T, callValue string) tool.ReadyCall {
 	t.Helper()
 	callID, err := tool.ParseProviderCallID(callValue)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	input, err := tool.NewReadInput("README.md", 1, 20)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	call, err := tool.NewReadReadyCall(callID, input)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return call
 }
 
 func testRuntimeInvocation(t *testing.T, invocationValue string, callValue string) tool.Invocation {
 	t.Helper()
 	invocationID, err := tool.ParseInvocationID(invocationValue)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	invocation, err := tool.NewInvocation(invocationID, testRuntimeReadyCall(t, callValue))
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return invocation
 }
 
@@ -1042,13 +949,9 @@ func newPreparedSample(t *testing.T, finalize func()) *provider.PreparedSample {
 	envelope, err := provider.NewNativeCommitEnvelope(
 		domain.ProviderOpenAI, "responses", json.RawMessage(`{"shape":"text_sample"}`),
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	prepared, err := provider.NewPreparedSample(envelope, testRuntimeUsage(t), syntheticRequestReceipt(domain.RequestSample), domain.EmptySamplePresentation(0), finalize, func() {})
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return prepared
 }
 
@@ -1057,13 +960,9 @@ func newPreparedSampleWithReady(t *testing.T, ready ...tool.ReadyCall) *provider
 	envelope, err := provider.NewNativeCommitEnvelope(
 		domain.ProviderOpenAI, "responses", json.RawMessage(`{"shape":"call_sample"}`),
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	prepared, err := provider.NewPreparedSample(envelope, testRuntimeUsage(t), syntheticRequestReceipt(domain.RequestSample), domain.EmptySamplePresentation(uint32(len(ready))), func() {}, func() {}, ready...)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return prepared
 }
 
@@ -1076,13 +975,9 @@ func decodeRuntimeResultDraft(
 	payload, err := session.DecodeToolCallResultPayload(session.Record{
 		EventKind: draft.EventKind(), Payload: draft.PayloadBytes(),
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	result, err := payload.Domain(invocation)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return result
 }
 
@@ -1091,9 +986,7 @@ func decodeRuntimeFailureDraft(t *testing.T, draft session.RecordDraft) session.
 	payload, err := session.DecodeTurnFailedPayload(session.Record{
 		EventKind: draft.EventKind(), Payload: draft.PayloadBytes(),
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return payload
 }
 
@@ -1106,9 +999,7 @@ func testRuntimeUsage(t *testing.T) domain.SampleUsage {
 		domain.KnownUsageMetric(5),
 		domain.NotApplicableUsageMetric(),
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return usage
 }
 
@@ -1126,27 +1017,21 @@ func fixedStream(events ...provider.StreamEvent) func(context.Context, provider.
 func semanticProviderEvent(t *testing.T, event protocol.Event) provider.StreamEvent {
 	t.Helper()
 	streamEvent, err := provider.NewSemanticStreamEvent(event)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return streamEvent
 }
 
 func completedProviderEventWithSample(t *testing.T, sample *provider.PreparedSample) provider.StreamEvent {
 	t.Helper()
 	event, err := provider.NewCompletedStreamEvent(sample)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return event
 }
 
 func cancelledProviderEvent(t *testing.T, failure error) provider.StreamEvent {
 	t.Helper()
 	event, err := provider.NewCancelledStreamEvent(failure)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return event
 }
 
@@ -1201,9 +1086,7 @@ func TestChatSessionShutdownWaitsForDurableFailure(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = sessionFacade.Shutdown(context.Background()) })
 	events, err := sessionFacade.Submit(context.Background(), "hello")
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	if event := <-events; event.Kind != protocol.EventTurnStarted {
 		t.Fatalf("first event = %s", event.Kind)
 	}

@@ -47,14 +47,10 @@ func TestWebSocketDurabilityAndOuterCancellation(t *testing.T) {
 			defer server.Close()
 			policy, _ := domain.NewCachePolicy(domain.AnthropicCacheDisabled, domain.OpenAICacheThread, domain.OpenAIWebSocketAuto)
 			p, err := openai.New(openai.Config{BaseURL: server.URL, APIKey: secret.New("private-key"), Model: "gpt-test", CachePolicy: policy})
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			defer p.Close()
 			conversation, err := p.NewConversation(runtimeThreadID)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			journal := &fakeJournal{}
 			if mode == "sync_failure" {
 				journal.failAt = 3
@@ -65,9 +61,7 @@ func TestWebSocketDurabilityAndOuterCancellation(t *testing.T) {
 			config.CachePolicy = policy
 			config.GenerateTurnID = sequentialTurnIDs()
 			runtime, err := New(conversation, config)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			journal.hook = func(drafts []session.RecordDraft) {
 				for _, draft := range drafts {
 					if draft.EventKind() == session.EventSampleUsage {
@@ -94,9 +88,7 @@ func TestWebSocketDurabilityAndOuterCancellation(t *testing.T) {
 			}
 			journal.hook = nil
 			user, err := domain.NewUserInput("01900000-0000-7000-8000-000000000002", "next")
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			if err := runtime.runFixtureTurn(context.Background(), []domain.UserInput{user}, func(protocol.Event) {}); err != nil {
 				t.Fatal(err)
 			}

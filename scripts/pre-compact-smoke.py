@@ -12,6 +12,7 @@ import struct
 import subprocess
 import termios
 import time
+from smoke_support import complete_cases
 
 
 def run_case(binary, family, mode):
@@ -179,6 +180,7 @@ def run_case(binary, family, mode):
         assert before == after
         result = "denial, trusted sandbox probe and retained checkpoints" if mode == "post" else "directed cancellation and provider requests"
         print(f"{family}/{mode}: terminal stages, {result} verified")
+        return {"provider": family, "mode": mode, "terminal_restored": True, "exit_code": process.returncode}
     finally:
         if process.poll() is None:
             process.kill()
@@ -194,6 +196,5 @@ if __name__ == "__main__":
     parser.add_argument("--post", action="store_true", help="验证手动 PostCompact")
     args = parser.parse_args()
     binary = str(args.binary.resolve())
-    for family in ("openai", "anthropic"):
-        for mode in (("post",) if args.post else ("manual", "auto")):
-            run_case(binary, family, mode)
+    complete_cases([run_case(binary, family, mode) for family in ("openai", "anthropic")
+                    for mode in (("post",) if args.post else ("manual", "auto"))])

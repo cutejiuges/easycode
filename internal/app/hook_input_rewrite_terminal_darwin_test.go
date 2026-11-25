@@ -40,10 +40,7 @@ func TestInputRewriteTerminalHelper(t *testing.T) {
 	input, _ := domain.NewHookWriteInput("terminal-effective", content)
 	writeInputRewriteConfig(t, workspace, input, false)
 	path := filepath.Join(workspace, ".easycode", "hooks.json")
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	b := readAppTestFile(t, path)
 	var config struct {
 		Hooks struct {
 			PreToolUse []struct {
@@ -63,13 +60,11 @@ func TestInputRewriteTerminalHelper(t *testing.T) {
 	hook := &config.Hooks.PreToolUse[0].Hooks[0]
 	hook.Command = `payload=$(cat); case "$payload" in *cancel*) /bin/sleep 30 ;; *) ` + strings.TrimPrefix(hook.Command, "cat >/dev/null; ") + ` ;; esac`
 	hook.Timeout = 30
-	b, err = json.Marshal(config)
+	b, err := json.Marshal(config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, b, 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, path, b, 0600)
 	fmt.Fprintf(os.Stdout, "REWRITE_WORKSPACE=%s\n", workspace)
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

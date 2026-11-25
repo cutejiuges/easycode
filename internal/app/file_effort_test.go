@@ -46,9 +46,7 @@ func TestFilePreparationAndRetractionKeepContentSeparateFromStrictNextEffort(t *
 			path := filepath.Join(workspace, "file")
 			write := func(s string) {
 				t.Helper()
-				if err := os.WriteFile(path, []byte(s), 0600); err != nil {
-					t.Fatal(err)
-				}
+				writeAppTestFile(t, path, []byte(s), 0600)
 			}
 			write("FROZEN_PREP\n")
 			bodies := make(chan []byte, 4)
@@ -70,10 +68,7 @@ func TestFilePreparationAndRetractionKeepContentSeparateFromStrictNextEffort(t *
 			}))
 			defer server.Close()
 			cfg := reasoningFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, Model: "fixture-model", APIKey: secret.New("fixture-key")}})
-			r, err := openChatResources(ctx, cfg, filepath.Join(privateAppTempDir(t), "sessions"), "", workspace)
-			if err != nil {
-				t.Fatal(err)
-			}
+			r := mustOpenChatResources(t, ctx, cfg, filepath.Join(privateAppTempDir(t), "sessions"), "", workspace)
 			defer r.close(context.Background())
 			gate := &freezeGateBoundary{workspaceFileBoundary: r.workspace, entered: make(chan struct{}), release: make(chan struct{})}
 			r.fileSource.workspace = gate

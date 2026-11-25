@@ -7,6 +7,7 @@ import (
 
 	"easycode/internal/domain"
 	"easycode/internal/provider"
+	"easycode/internal/provider/testsupport"
 	"easycode/internal/tool"
 )
 
@@ -93,7 +94,7 @@ func replayToolHistoryFixture(b testing.TB, groups int) []provider.RestoreRecord
 		if err != nil {
 			b.Fatal(err)
 		}
-		output := testReadOutput(b, callID, "README.md", "fixture")
+		output := testsupport.ReadOutput(b, callID, "README.md", "fixture")
 		sampleRecord, err = sampleRecord.WithReadyFacts([]tool.Invocation{output.Evidence().Selection().Original()}, nil)
 		if err != nil {
 			b.Fatal(err)

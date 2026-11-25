@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """通过真实 PTY 验证启动选择器和聊天内恢复，不使用真实凭据或外网。"""
+from smoke_support import smoke_binary, complete_cases
 import fcntl
 import json
 import os
@@ -170,8 +171,7 @@ def run_case(binary, root, name, steps, expected, no_color=False, entrypoint=Non
 def main():
     root = Path(__file__).resolve().parent.parent
     with tempfile.TemporaryDirectory(prefix="easycode-picker-smoke-") as directory:
-        binary = Path(directory).resolve() / "app.test"
-        subprocess.run(["go", "test", "-c", "-o", str(binary), "./internal/app"], cwd=root, check=True)
+        binary = smoke_binary("app.test", directory, root)
         cases = [
             run_case(binary, root, "search_preview_cross_directory_resize", [
                 ("send", b"fixture"), ("wait", "> fixture"),
@@ -264,6 +264,7 @@ def main():
                 ("signal", signal.SIGTERM),
             ], 130, no_color=True, entrypoint="chat"),
         ]
+        complete_cases(cases)
         print(json.dumps(cases, ensure_ascii=False, indent=2))
 
 

@@ -7,13 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"easycode/internal/config"
@@ -46,9 +44,7 @@ func writeInputRewriteConfig(t *testing.T, workspace string, input domain.HookTo
 		post += `,"PostToolUseFailure":[{"matcher":"Edit|apply_patch|Write|Bash|exec_command","hooks":[{"id":"failure","type":"command","feedback":"model","command":"cat >/dev/null; printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUseFailure\",\"additionalContext\":\"post rewrite failure\"}}'"}]}]`
 	}
 	config := fmt.Sprintf(`{"hooks":{"PreToolUse":[{"matcher":"Edit|apply_patch|Write|Bash|exec_command","hooks":[{"id":"rewrite","type":"command","command":%s}]}]%s}}`, b, post)
-	if err := os.WriteFile(filepath.Join(dir, "hooks.json"), []byte(config), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, filepath.Join(dir, "hooks.json"), []byte(config), 0600)
 }
 
 func TestInputRewriteBothProvidersRealEffectsAndOfflineRestore(t *testing.T) {
@@ -61,9 +57,7 @@ func TestInputRewriteBothProvidersRealEffectsAndOfflineRestore(t *testing.T) {
 				t.Run(fmt.Sprintf("%s/%s/%s", family, capability, mode), func(t *testing.T) {
 					workspace, root := t.TempDir(), filepath.Join(t.TempDir(), "sessions")
 					for _, path := range []string{"main.go", "effective.txt"} {
-						if err := os.WriteFile(filepath.Join(workspace, path), []byte("old\n"), 0600); err != nil {
-							t.Fatal(err)
-						}
+						writeAppTestFile(t, filepath.Join(workspace, path), []byte("old\n"), 0600)
 					}
 					var input domain.HookToolInput
 					switch capability {
@@ -84,18 +78,12 @@ func TestInputRewriteBothProvidersRealEffectsAndOfflineRestore(t *testing.T) {
 						input, _ = domain.NewHookExecInput(`printf effective > rewritten-marker; /usr/bin/head -c 600000 /dev/zero | /usr/bin/tr '\000' x; exit 7`, "", 5000)
 					}
 					outside := filepath.Join(t.TempDir(), "protected")
-					if err := os.WriteFile(outside, []byte("protected\n"), 0600); err != nil {
-						t.Fatal(err)
-					}
+					writeAppTestFile(t, outside, []byte("protected\n"), 0600)
 					writeInputRewriteConfig(t, workspace, input, mode == "post" || mode == "spawn-failure")
-					var mu sync.Mutex
-					var requests [][]byte
+					var recorder requestRecorder
 					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-						body, _ := io.ReadAll(r.Body)
-						mu.Lock()
-						requests = append(requests, body)
-						n := len(requests)
-						mu.Unlock()
+						requestIndex, _ := recorder.record(t, r)
+						n := requestIndex + 1
 						w.Header().Set("Content-Type", "text/event-stream")
 						switch n {
 						case 1:
@@ -125,10 +113,7 @@ func TestInputRewriteBothProvidersRealEffectsAndOfflineRestore(t *testing.T) {
 							return startupFailure, nil
 						}
 					}
-					resources, err := openChatResourcesWithHooks(context.Background(), cfg, dataPaths{sessionRoot: root}, "", false, workspace, hooks)
-					if err != nil {
-						t.Fatal(err)
-					}
+					resources := mustOpenChatResourcesWithHooks(t, context.Background(), cfg, dataPaths{sessionRoot: root}, "", false, workspace, hooks)
 					defer resources.close(context.Background())
 					control, err := startTUIControlSession(context.Background(), resources.runtime)
 					if err != nil {
@@ -173,9 +158,7 @@ func TestInputRewriteBothProvidersRealEffectsAndOfflineRestore(t *testing.T) {
 								}
 							}
 							if mode == "base-conflict" {
-								if err := os.WriteFile(filepath.Join(workspace, "effective.txt"), []byte("concurrent\n"), 0600); err != nil {
-									t.Fatal(err)
-								}
+								writeAppTestFile(t, filepath.Join(workspace, "effective.txt"), []byte("concurrent\n"), 0600)
 							}
 							decision := protocol.ApprovalAllowOnce
 							if mode == "deny" {
@@ -204,9 +187,7 @@ func TestInputRewriteBothProvidersRealEffectsAndOfflineRestore(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if err := resources.close(context.Background()); err != nil {
-						t.Fatal(err)
-					}
+					closeAppTestResources(t, resources)
 					_, plan := loadToolLoopPlan(t, root, thread)
 					if len(plan.Tools) != 2 {
 						t.Fatal("missing ordered read/mutation")
@@ -273,9 +254,7 @@ func TestInputRewriteBothProvidersRealEffectsAndOfflineRestore(t *testing.T) {
 					if mode == "spawn-failure" && (startupFailure.calls != 1 || entry.Result.Code() != "process_start_failed") {
 						t.Fatal("lost admitted startup failure")
 					}
-					mu.Lock()
-					captured := append([][]byte(nil), requests...)
-					mu.Unlock()
+					captured := recorder.snapshot()
 					if len(captured) != 3 || !containsHookPreview(captured[2], entry.Result.Preview().Text()+postEntryText(t, entry)) || bytes.Contains(bytes.Join(captured, nil), []byte("RAW-REWRITE-PRIVATE")) {
 						t.Fatal("wrong provider disclosure/pairing")
 					}
@@ -322,9 +301,7 @@ func TestInputRewriteBothProvidersRealEffectsAndOfflineRestore(t *testing.T) {
 							t.Fatal("input note leaked into raw artifact or budget")
 						}
 					}
-					mu.Lock()
-					after := len(requests)
-					mu.Unlock()
+					after := len(recorder.snapshot())
 					if after != 3 {
 						t.Fatal("restore performed network/tool turn")
 					}

@@ -21,13 +21,8 @@ func TestHookShutdownRetainsTurnUntilRunnerCleanup(t *testing.T) {
 	config.GenerateInvocationID = func() (tool.InvocationID, error) { return inv.InvocationID(), nil }
 	config.GenerateTurnID = func() (domain.TurnID, error) { return runtimeTurnID, nil }
 	r, err := New(conversation, config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshot, _ := domain.NewHookSnapshot(ds, nil)
-	if err := r.InstallHooks(snapshot, runner, "/workspace", domain.HookOK); err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
+	installRuntimeTestHooks(t, r, runner, "/workspace", ds)
 	entered, cancelled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	runner.onRun = func(ctx context.Context, id domain.HookRunIdentity) domain.HookRunResult {
 		close(entered)
@@ -41,9 +36,7 @@ func TestHookShutdownRetainsTurnUntilRunnerCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	events, err := facade.Submit(context.Background(), "run")
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	reviewed := false
 	for e := range events {
 		if e.Kind == protocol.EventHookTrustRequested {

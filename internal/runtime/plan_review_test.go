@@ -106,9 +106,7 @@ func TestPlanApprovalStartsOneLiteralInput(t *testing.T) {
 		t.Fatalf("noninteractive approval reached owner: %v", err)
 	}
 	permit, err := host.ReserveHandoff(ctx, HandoffResume)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	if _, err := host.ApprovePlan(ctx, "during-resume", offer.Ref); fault.Project(err).Code != fault.CodeSessionBusy {
 		t.Fatalf("approval crossed resume reservation: %v", err)
 	}
@@ -137,16 +135,12 @@ func TestPlanApprovalStartsOneLiteralInput(t *testing.T) {
 		t.Fatalf("cancelled delivery consumed the proposal: %v", err)
 	}
 	result, err := host.ApprovePlan(ctx, "encoding-limit", offer.Ref)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	assertRejectedCode(t, result, protocol.ControlErrorInputEncodingLimit)
 	stale := offer.Ref
 	stale.Sample.SampleIndex++
 	result, err = host.ApprovePlan(ctx, "stale", stale)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	assertRejectedCode(t, result, protocol.ControlErrorPlanUnavailable)
 	high, _ := domain.NewExplicitEffortChoice("high")
 	if _, err := host.SetEffort(ctx, "effort", high); err != nil {
@@ -191,9 +185,7 @@ func TestPlanApprovalStartsOneLiteralInput(t *testing.T) {
 		}
 	}
 	duplicate, err := host.ApprovePlan(ctx, "implement", offer.Ref)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	assertRejectedCode(t, duplicate, protocol.ControlErrorDuplicateRequest)
 }
 
@@ -204,9 +196,7 @@ func TestPlanReviewRetiresCancelledOrSupersededSample(t *testing.T) {
 			loop.interactiveStopped = make(chan struct{})
 			state := newAgentLoopRunState(loop, context.Background())
 			plan, err := state.selectedProfile.WithWorkMode(domain.WorkModePlan)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			state.selectedProfile = plan
 			state.active = &activeLoopTurn{
 				profile: plan, input: queuedInput{requestID: "planning"}, turnID: runtimeTurnID,

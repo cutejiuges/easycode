@@ -10,6 +10,7 @@ import (
 	"easycode/internal/codec"
 	"easycode/internal/domain"
 	"easycode/internal/provider"
+	"easycode/internal/provider/testsupport"
 	"easycode/internal/secret"
 )
 
@@ -49,7 +50,7 @@ func TestReasoningRequestsAndSummaryEvidenceGolden(t *testing.T) {
 			}
 			conversation := testConversation(t, instance)
 			conversation.history.Append(testInputEntry(t, newUserMessage("hello")))
-			sampling, _ := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testAnthropicToolCatalog(t))
+			sampling, _ := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testsupport.ToolCatalog(t))
 			ordinary, err := conversation.planSamplingRequest(conversation.history.Snapshot(), sampling)
 			if err != nil {
 				t.Fatal(err)

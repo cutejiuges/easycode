@@ -1,14 +1,12 @@
 package anthropic
 
 import (
-	"bytes"
 	"os"
 	"testing"
 
-	"easycode/internal/codec"
 	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
-	"easycode/internal/provider"
+	"easycode/internal/provider/testsupport"
 	"easycode/internal/secret"
 )
 
@@ -26,92 +24,17 @@ func TestReasoningFixedNativeRestoreAndCacheBytesIgnoreReading(t *testing.T) {
 		func() {
 			defer instance.Close()
 			live := testConversation(t, instance)
-			var envelopes []provider.NativeCommitEnvelope
-			for _, line := range bytes.Split(bytes.TrimSpace(fixture), []byte("\n")) {
-				envelope, err := provider.NewNativeCommitEnvelope(domain.ProviderAnthropic, "messages", line)
-				if err != nil {
-					t.Fatal(err)
-				}
-				entry, err := decodeNativeCommit(envelope)
-				if err != nil {
-					t.Fatal(err)
-				}
-				entry.TurnID = "01900000-0000-7000-8000-000000000010"
-				live.history.Append(entry)
-				envelopes = append(envelopes, envelope)
-			}
+			envelopes := testsupport.LoadNativeFixture(t, live, fixture)
 			restoredValue, err := testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", testRestoreRecords(t, envelopes))
 			if err != nil {
 				t.Fatal(err)
 			}
 			restored := restoredValue.(*Conversation)
-			input, err := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testAnthropicToolCatalog(t))
+			input, err := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testsupport.ToolCatalog(t))
 			if err != nil {
 				t.Fatal(err)
 			}
-			beforeEvidence, err := live.requestEvidence(input)
-			if err != nil {
-				t.Fatal(err)
-			}
-			beforeSources := reasoningCacheSources(t, live)
-			before, err := live.compileSamplingRequest(live.history.Entries(), input)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, conversation := range []*Conversation{live, restored} {
-				view, _, err := conversation.ProjectTranscriptFrom(0)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if len(view.Items) != 4 || view.Items[1].Reasoning == nil {
-					t.Fatal("reasoning position lost")
-				}
-				body := view.Items[1].Reasoning
-				page, err := body.ReadRange(0, 64<<10, false)
-				if err != nil || page.Text != "  readable 中文🙂\n\n\nnext" {
-					t.Fatal(page, err)
-				}
-				encoded, err := codec.MarshalStable(view)
-				if err != nil {
-					t.Fatal(err)
-				}
-				for _, opaque := range [][]byte{[]byte("opaque-sentinel"), []byte("raw-sentinel"), []byte("future-sentinel"), []byte("redacted-sentinel")} {
-					if bytes.Contains(encoded, opaque) {
-						t.Fatal("opaque data reached transcript")
-					}
-				}
-				semantic, _ := codec.MarshalStable(conversation.ProjectHistory())
-				if bytes.Contains(semantic, []byte("readable")) {
-					t.Fatal("reasoning entered semantic history")
-				}
-				after, err := conversation.compileSamplingRequest(conversation.history.Entries(), input)
-				if err != nil {
-					t.Fatal(err)
-				}
-				afterEvidence, err := conversation.requestEvidence(input)
-				if err != nil || afterEvidence.NativeFingerprint() != beforeEvidence.NativeFingerprint() || !bytes.Equal(afterEvidence.Properties().Bytes(), beforeEvidence.Properties().Bytes()) {
-					t.Fatal("restored request evidence differs", err)
-				}
-				if reasoningCacheSources(t, conversation) != beforeSources {
-					t.Fatal("restored profile/source fingerprint differs")
-				}
-				if !bytes.Equal(before.Bytes(), after.Bytes()) {
-					t.Fatal("reading or restore changed cached request")
-				}
-				a, _ := contextplan.NewSegment("reasoning-request", contextplan.StabilityTurnStable, "current", before)
-				b, _ := contextplan.NewSegment("reasoning-request", contextplan.StabilityTurnStable, "current", after)
-				if a.Fingerprint() != b.Fingerprint() {
-					t.Fatal("display changed request fingerprint")
-				}
-			}
-			left, _ := codec.MarshalStable(live.history.Entries())
-			right, _ := codec.MarshalStable(restored.history.Entries())
-			if !bytes.Equal(left, right) {
-				t.Fatal("native item order or opaque snapshot changed on restore")
-			}
-			if !bytes.Contains(before.Bytes(), []byte("opaque-sentinel")) || !bytes.Contains(before.Bytes(), []byte("future-sentinel")) {
-				t.Fatal("opaque native request lost")
-			}
+			testsupport.CheckReasoningRestore(t, live, restored, input, 4)
 		}()
 	}
 }
@@ -129,7 +52,7 @@ func reasoningRestoreSettings(t *testing.T) domain.InferenceSettings {
 	return settings
 }
 
-func reasoningCacheSources(t *testing.T, c *Conversation) contextplan.CacheSources {
+func (c *Conversation) TestCacheSources(t *testing.T) contextplan.CacheSources {
 	t.Helper()
 	profile, err := contextplan.NewProviderProfile(c.Family(), c.provider.config.Model)
 	if err != nil {
@@ -151,7 +74,7 @@ func reasoningCacheSources(t *testing.T, c *Conversation) contextplan.CacheSourc
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := contextplan.NewPlanningInput(profile, testAnthropicToolCatalog(t), project, view, footprint, contextplan.NewSamplingInput(), contextplan.DisabledBudget())
+	input, err := contextplan.NewPlanningInput(profile, testsupport.ToolCatalog(t), project, view, footprint, contextplan.NewSamplingInput(), contextplan.DisabledBudget())
 	if err != nil {
 		t.Fatal(err)
 	}

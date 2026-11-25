@@ -2,13 +2,13 @@ package anthropic
 
 import (
 	"bytes"
-	contextplan "easycode/internal/context"
-	"easycode/internal/provider"
-	"easycode/internal/secret"
-	"easycode/internal/tool"
 	"encoding/json"
 	"os"
 	"testing"
+
+	"easycode/internal/provider/testsupport"
+	"easycode/internal/secret"
+	"easycode/internal/tool"
 )
 
 func TestReadArtifactNativeResultsRestoreExactly(t *testing.T) {
@@ -60,54 +60,19 @@ func TestReadArtifactNativeResultsRestoreExactly(t *testing.T) {
 				t.Fatal("ReadArtifact frozen result or pairing changed")
 			}
 			history = append(history, output)
-			uninterrupted := &Conversation{provider: instance}
-			var commits []provider.NativeCommitEnvelope
-			for _, entry := range history {
-				uninterrupted.history.Append(entry)
-				commit, err := encodeNativeCommit(entry)
-				if err != nil {
-					t.Fatal(err)
-				}
-				commits = append(commits, commit)
-			}
-			restoredValue, err := testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", testRestoreRecords(t, commits, evidence))
+			uninterrupted, restored := restoreToolHistory(t, instance, history, evidence)
+			sampling, err := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testsupport.ToolCatalog(t))
 			if err != nil {
 				t.Fatal(err)
 			}
-			restored := restoredValue.(*Conversation)
-			first, err := compileMessagesRequest(instance.config.Model, int(instance.config.Inference.MaxOutputTokens()), uninterrupted.historySnapshot(), nil, testAnthropicToolView(t))
-			if err != nil {
-				t.Fatal(err)
-			}
-			second, err := compileMessagesRequest(instance.config.Model, int(instance.config.Inference.MaxOutputTokens()), restored.historySnapshot(), nil, testAnthropicToolView(t))
-			if err != nil {
-				t.Fatal(err)
-			}
-			firstSegment, err := contextplan.NewSegment("request", contextplan.StabilityTurnStable, "current", first)
-			if err != nil {
-				t.Fatal(err)
-			}
-			secondSegment, err := contextplan.NewSegment("request", contextplan.StabilityTurnStable, "current", second)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(first.Bytes(), second.Bytes()) || firstSegment.Fingerprint() != secondSegment.Fingerprint() {
-				t.Fatal("ReadArtifact restore changed canonical request or fingerprint")
-			}
+			first := testsupport.RestoredRequest(t, uninterrupted, restored, sampling)
 			if test.name == "complete" {
 				want, err := os.ReadFile("testdata/artifact_continuation.golden.json")
 				if err != nil || !bytes.Equal(first.Bytes(), bytes.TrimSpace(want)) {
 					t.Fatalf("ReadArtifact continuation golden mismatch:\n%s", first.Bytes())
 				}
 			}
-			_, a, err := uninterrupted.ProjectContextWindow()
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, b, err := restored.ProjectContextWindow()
-			if err != nil || a != b {
-				t.Fatal("ReadArtifact restore changed history footprint")
-			}
+
 		})
 	}
 }

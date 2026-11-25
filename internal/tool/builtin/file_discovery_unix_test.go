@@ -5,7 +5,6 @@ package builtin
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -14,17 +13,12 @@ import (
 
 func TestFileDiscoveryCancellationAndIndexStopCloseEveryBorrow(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "a"), []byte("body"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	workspace, err := OpenWorkspace(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	writeBuiltinFixture(t, filepath.Join(root, "a"), []byte("body"), 0o600)
+	workspace := openFixtureWorkspace(t, root)
 	defer workspace.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	_, err = workspace.DiscoverFileNames(ctx, func(paths []string, _ domain.FileDiscoveryReport) (bool, error) {
+	_, err := workspace.DiscoverFileNames(ctx, func(paths []string, _ domain.FileDiscoveryReport) (bool, error) {
 		if len(paths) > 0 {
 			cancel()
 		}

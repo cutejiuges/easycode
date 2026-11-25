@@ -25,9 +25,7 @@ func TestFrozenFileAndTaskProgressRestoreTogetherWithCanonicalRequests(t *testin
 	defer cancel()
 	workspace := privateAppTempDir(t)
 	path := filepath.Join(workspace, "source")
-	if err := os.WriteFile(path, []byte("first\nFROZEN_TASK_FILE\nlast\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, path, []byte("first\nFROZEN_TASK_FILE\nlast\n"), 0600)
 	requests := make(chan []byte, 4)
 	release := make(chan struct{})
 	var calls atomic.Int32
@@ -51,10 +49,7 @@ func TestFrozenFileAndTaskProgressRestoreTogetherWithCanonicalRequests(t *testin
 	}))
 	defer server.Close()
 	cfg := cacheFixtureConfig(t, config.Config{Provider: config.Provider{Family: domain.ProviderOpenAI, BaseURL: server.URL, Model: "fixture-model", APIKey: secret.New("task-file-fixture")}}, true)
-	live, err := openChatResources(ctx, cfg, filepath.Join(privateAppTempDir(t), "sessions"), "", workspace)
-	if err != nil {
-		t.Fatal(err)
-	}
+	live := mustOpenChatResources(t, ctx, cfg, filepath.Join(privateAppTempDir(t), "sessions"), "", workspace)
 	defer live.close(context.Background())
 	boundary := &countingFileBoundary{workspaceFileBoundary: live.workspace}
 	live.fileSource.workspace = boundary
@@ -69,9 +64,7 @@ func TestFrozenFileAndTaskProgressRestoreTogetherWithCanonicalRequests(t *testin
 	if bytes.Count(first, []byte("# Attached workspace file")) != 1 || !bytes.Contains(first, []byte("FROZEN_TASK_FILE")) {
 		t.Fatal("initial request omitted the prepared attachment")
 	}
-	if err := os.WriteFile(path, []byte("CHANGED_AFTER_FREEZE\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, path, []byte("CHANGED_AFTER_FREEZE\n"), 0600)
 	close(release)
 	appEffortTerminal(t, live, false)
 	appEffortIdle(t, live)
@@ -79,41 +72,22 @@ func TestFrozenFileAndTaskProgressRestoreTogetherWithCanonicalRequests(t *testin
 	if calls.Load() != 2 || boundary.reads.Load() != 1 || !bytes.Contains(second, []byte("FROZEN_TASK_FILE")) || bytes.Contains(second, []byte("CHANGED_AFTER_FREEZE")) || !bytes.Contains(second, []byte("Inspect frozen source")) {
 		t.Fatal("task execution changed frozen file input or repeated preparation")
 	}
-	query := func(r *chatResources, id protocol.RequestID) protocol.TaskProgressSnapshotPayload {
+	query := func(r *chatResources) protocol.TaskProgressSnapshotPayload {
 		t.Helper()
 		journal, err := r.service.repository.JournalPath(r.identity.ThreadID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		before, err := os.ReadFile(journal)
-		if err != nil {
-			t.Fatal(err)
-		}
+		before := readAppTestFile(t, journal)
 		network := calls.Load()
-		result, err := r.session.QueryTasks(ctx, id)
-		if err != nil || result.Status() != protocol.CommandStatusAccepted {
-			t.Fatal("task query failed", err)
+		snapshot := switchTaskSnapshot(t, ctx, r)
+		after, err := os.ReadFile(journal)
+		if err != nil || !bytes.Equal(before, after) || calls.Load() != network {
+			t.Fatal("task query changed durable history or sampled", err)
 		}
-		for {
-			select {
-			case item := <-r.session.Outputs():
-				if event, ok := item.ContextEvent(); ok && item.RequestID() == id && event.Kind == protocol.EventTaskProgressSnapshot {
-					snapshot, err := protocol.DecodeTaskProgressSnapshot(event)
-					if err != nil {
-						t.Fatal(err)
-					}
-					after, err := os.ReadFile(journal)
-					if err != nil || !bytes.Equal(before, after) || calls.Load() != network {
-						t.Fatal("task query changed durable history or sampled", err)
-					}
-					return snapshot
-				}
-			case <-ctx.Done():
-				t.Fatal("task query did not complete", ctx.Err())
-			}
-		}
+		return snapshot
 	}
-	saved := query(live, "task-file-live")
+	saved := query(live)
 	if saved.Counts.Total != 2 || saved.Counts.InProgress != 1 {
 		t.Fatal("task tool did not publish the model progress")
 	}
@@ -122,10 +96,7 @@ func TestFrozenFileAndTaskProgressRestoreTogetherWithCanonicalRequests(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	durable, err := os.ReadFile(journal)
-	if err != nil {
-		t.Fatal(err)
-	}
+	durable := readAppTestFile(t, journal)
 	root, restoredJournal, thread := installPreviewFixture(t, durable)
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
@@ -138,7 +109,7 @@ func TestFrozenFileAndTaskProgressRestoreTogetherWithCanonicalRequests(t *testin
 	if err := restored.session.StartInteractive(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !query(restored, "task-file-restored").Equal(saved) || calls.Load() != 2 {
+	if !query(restored).Equal(saved) || calls.Load() != 2 {
 		t.Fatal("restored task progress differs or restore sampled")
 	}
 	liveBytes, err := codec.MarshalStable(liveHistory)
@@ -167,4 +138,22 @@ func TestFrozenFileAndTaskProgressRestoreTogetherWithCanonicalRequests(t *testin
 	if input < 0 || call <= input || output <= call || answer <= output {
 		t.Fatal("file, task call/output and assistant native order changed")
 	}
+}
+
+func switchTaskSnapshot(t *testing.T, ctx context.Context, resources *chatResources) protocol.TaskProgressSnapshotPayload {
+	t.Helper()
+	requestID, err := domain.GenerateInputID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := protocol.RequestID("switch-tasks-" + string(requestID))
+	result, err := resources.session.QueryTasks(ctx, id)
+	if err != nil || result.Status() != protocol.CommandStatusAccepted {
+		t.Fatal("task snapshot not accepted", err)
+	}
+	payload, err := protocol.DecodeTaskProgressSnapshot(waitSwitchObservation(t, ctx, resources, protocol.EventTaskProgressSnapshot, id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload
 }

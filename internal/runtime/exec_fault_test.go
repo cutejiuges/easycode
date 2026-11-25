@@ -74,9 +74,7 @@ func TestExecTurnDurabilityAndFinalizersFailClosedAtEveryBoundary(t *testing.T) 
 			config.GenerateTurnID = func() (domain.TurnID, error) { return runtimeTurnID, nil }
 			config.GenerateInvocationID = func() (tool.InvocationID, error) { return invocation.InvocationID(), nil }
 			runtime, err := New(conversation, config)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			var events []protocol.Event
 			err = runtime.runFixtureTurn(context.Background(), runtimeInputs("run command"), execApprovalEmitter(t, runtime, tool.ApprovalAllowOnce, &events))
 			if err == nil || !runtime.poisoned.Load() {

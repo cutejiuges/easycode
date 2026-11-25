@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -22,6 +21,8 @@ import (
 	"easycode/internal/headless"
 	"easycode/internal/secret"
 	"easycode/internal/session"
+	"easycode/internal/tui"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestHeadlessProvidersPreserveResumeRequestAndOutputBoundaries(t *testing.T) {
@@ -39,19 +40,10 @@ func TestHeadlessProvidersPreserveResumeRequestAndOutputBoundaries(t *testing.T)
 		t.Run(fixture.name, func(t *testing.T) {
 			startupCWD := t.TempDir()
 			t.Chdir(startupCWD)
-			var mu sync.Mutex
-			var requests [][]byte
+			var recorder requestRecorder
 			logicalTurns := []int{1, 2, 3, 1, 2, 3}
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-				body, err := io.ReadAll(request.Body)
-				if err != nil {
-					t.Errorf("read request: %v", err)
-					return
-				}
-				mu.Lock()
-				requestIndex := len(requests)
-				requests = append(requests, append([]byte(nil), body...))
-				mu.Unlock()
+				requestIndex, _ := recorder.record(t, request)
 				writer.Header().Set("Content-Type", "text/event-stream")
 				fixture.serveTurn(writer, logicalTurns[requestIndex])
 			}))
@@ -61,18 +53,13 @@ func TestHeadlessProvidersPreserveResumeRequestAndOutputBoundaries(t *testing.T)
 				Family: fixture.family, BaseURL: server.URL,
 				APIKey: secret.New("headless-e2e-secret"), Model: fixture.model,
 			}}
-			live, err := openChatResources(
+			live := mustOpenChatResources(t,
 				context.Background(), providerConfig, filepath.Join(t.TempDir(), "live"), "", startupCWD,
 			)
-			if err != nil {
-				t.Fatal(err)
-			}
 			submitAppTurn(t, live, "first")
 			submitAppTurn(t, live, "second")
 			submitAppTurn(t, live, "third")
-			if err := live.close(context.Background()); err != nil {
-				t.Fatal(err)
-			}
+			closeAppTestResources(t, live)
 
 			dataHome := privateAppTempDir(t)
 			dataRoot := filepath.Join(dataHome, "sessions")
@@ -90,9 +77,7 @@ func TestHeadlessProvidersPreserveResumeRequestAndOutputBoundaries(t *testing.T)
 				t.Fatalf("ordinary startup created catalog: %v", err)
 			}
 			corruptCatalog := []byte("corrupt-catalog-fixture")
-			if err := os.WriteFile(catalogPath, corruptCatalog, 0o600); err != nil {
-				t.Fatal(err)
-			}
+			writeAppTestFile(t, catalogPath, corruptCatalog, 0o600)
 			started := decodeThreadStarted(t, firstOutput.String())
 			if started.Resumed || !started.SessionID.Valid() || !started.ThreadID.Valid() {
 				t.Fatalf("first thread.started = %#v", started)
@@ -118,6 +103,33 @@ func TestHeadlessProvidersPreserveResumeRequestAndOutputBoundaries(t *testing.T)
 			if err != nil || !bytes.Equal(preservedCatalog, corruptCatalog) {
 				t.Fatalf("explicit resume touched catalog: %q, %v", preservedCatalog, err)
 			}
+			preview, cleanupFailed, err := previewSession(context.Background(), dataRoot, started.ThreadID, defaultPreviewDependencies())
+			if err != nil || cleanupFailed || len(preview.Messages) == 0 {
+				t.Fatalf("preview before continue failed: %v", err)
+			}
+			uiResources := mustOpenChatResources(t, context.Background(), providerConfig, dataRoot, string(started.ThreadID), t.TempDir())
+			t.Cleanup(func() { uiResources.close(context.Background()) })
+			ui := tui.NewModel(context.Background(), "test", uiResources.session).WithTranscriptQueries(started.ThreadID, uiResources.transcriptQueries)
+			var restored tea.Model = ui
+			initial := ui.Init()()
+			if batch, ok := initial.(tea.BatchMsg); ok {
+				// 首项长期等待控制流，其余初始化命令加载真实历史。
+				for _, command := range batch[1:] {
+					runCompletionCommand(t, &restored, command)
+				}
+			} else {
+				restored, _ = ui.Update(initial)
+			}
+			for _, visible := range []string{"User: first", "● answer-1", "User: second", "● answer-2"} {
+				if !strings.Contains(restored.View(), visible) {
+					t.Fatalf("resumed transcript missing %q", visible)
+				}
+			}
+			closeAppTestResources(t, uiResources)
+			previewRequests := len(recorder.snapshot())
+			if previewRequests != 5 {
+				t.Fatal("preview or history display contacted provider")
+			}
 
 			var textOutput bytes.Buffer
 			third := Run(context.Background(), Options{
@@ -129,12 +141,7 @@ func TestHeadlessProvidersPreserveResumeRequestAndOutputBoundaries(t *testing.T)
 				t.Fatalf("third outcome/output = %#v/%q", third, textOutput.String())
 			}
 
-			mu.Lock()
-			captured := make([][]byte, len(requests))
-			for index := range requests {
-				captured[index] = append([]byte(nil), requests[index]...)
-			}
-			mu.Unlock()
+			captured := recorder.snapshot()
 			if len(captured) != 6 {
 				t.Fatalf("request count = %d", len(captured))
 			}
@@ -156,6 +163,9 @@ func TestHeadlessProvidersPreserveResumeRequestAndOutputBoundaries(t *testing.T)
 				if record.Sequence != uint64(index+1) || strings.Contains(string(record.EventKind), ".") {
 					t.Fatalf("record[%d] = %#v", index, record)
 				}
+				if strings.Contains(string(record.Payload), "file-secret") || strings.Contains(string(record.Payload), server.URL) {
+					t.Fatal("journal contains connection secret")
+				}
 			}
 			for _, index := range []int{6, 12, 18} {
 				if loaded.Records[index].EventKind != session.EventSampleUsage {
@@ -163,7 +173,7 @@ func TestHeadlessProvidersPreserveResumeRequestAndOutputBoundaries(t *testing.T)
 				}
 			}
 			for _, forbidden := range []string{
-				catalogPath, dataRoot, string(started.SessionID), string(started.ThreadID),
+				catalogPath, dataRoot, startupCWD, "file-secret", string(started.SessionID), string(started.ThreadID),
 				loaded.Records[len(loaded.Records)-1].Timestamp.Format(time.RFC3339Nano),
 			} {
 				if strings.Contains(string(captured[5]), forbidden) {
@@ -174,6 +184,12 @@ func TestHeadlessProvidersPreserveResumeRequestAndOutputBoundaries(t *testing.T)
 				"file-secret", server.URL, "first", "second", "third",
 				"answer-1", "answer-2", "answer-3", "Authorization",
 			})
+			fresh := mustOpenChatResources(t, context.Background(), providerConfig, dataRoot, "", t.TempDir())
+			t.Cleanup(func() { fresh.close(context.Background()) })
+			if fresh.identity.ThreadID == started.ThreadID || len(fresh.history.Turns) != 0 {
+				t.Fatal("non-resume startup reused history")
+			}
+			closeAppTestResources(t, fresh)
 		})
 	}
 }
@@ -192,18 +208,9 @@ func TestStreamJSONProvidersPreserveSameProcessNativeHistory(t *testing.T) {
 		t.Run(fixture.name, func(t *testing.T) {
 			startupCWD := t.TempDir()
 			t.Chdir(startupCWD)
-			var mu sync.Mutex
-			var requests [][]byte
+			var recorder requestRecorder
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-				body, err := io.ReadAll(request.Body)
-				if err != nil {
-					t.Errorf("read request: %v", err)
-					return
-				}
-				mu.Lock()
-				index := len(requests)
-				requests = append(requests, append([]byte(nil), body...))
-				mu.Unlock()
+				index, _ := recorder.record(t, request)
 				writer.Header().Set("Content-Type", "text/event-stream")
 				fixture.serveTurn(writer, index%2+1)
 			}))
@@ -237,21 +244,14 @@ func TestStreamJSONProvidersPreserveSameProcessNativeHistory(t *testing.T) {
 				Family: fixture.family, BaseURL: server.URL,
 				APIKey: secret.New("stream-e2e-secret"), Model: fixture.model,
 			}}
-			direct, err := openChatResources(
+			direct := mustOpenChatResources(t,
 				context.Background(), providerConfig, filepath.Join(privateAppTempDir(t), "direct"), "", startupCWD,
 			)
-			if err != nil {
-				t.Fatal(err)
-			}
 			submitAppTurn(t, direct, "first")
 			submitAppTurn(t, direct, "/rewind")
-			if err := direct.close(context.Background()); err != nil {
-				t.Fatal(err)
-			}
+			closeAppTestResources(t, direct)
 
-			mu.Lock()
-			captured := append([][]byte(nil), requests...)
-			mu.Unlock()
+			captured := recorder.snapshot()
 			if len(captured) != 4 {
 				t.Fatalf("request count = %d", len(captured))
 			}
@@ -306,10 +306,7 @@ func canonicalizeCapturedRequest(t *testing.T, data []byte) codec.CanonicalJSON 
 func assertCatalogFilesExclude(t *testing.T, snapshotPath string, forbidden []string) {
 	t.Helper()
 	for _, path := range []string{snapshotPath, snapshotPath + ".lock"} {
-		content, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		content := readAppTestFile(t, path)
 		for _, value := range forbidden {
 			if value != "" && bytes.Contains(content, []byte(value)) {
 				t.Fatalf("catalog file %s contains forbidden value %q", filepath.Base(path), value)

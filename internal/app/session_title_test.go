@@ -3,13 +3,11 @@ package app
 import (
 	"bytes"
 	"context"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -34,17 +32,9 @@ func TestSessionTitlePreservesNativeRequestsAndCache(t *testing.T) {
 		t.Run(string(family), func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
-			var mu sync.Mutex
-			var requests [][]byte
+			var recorder requestRecorder
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				body, err := io.ReadAll(r.Body)
-				if err != nil {
-					t.Error(err)
-					return
-				}
-				mu.Lock()
-				requests = append(requests, body)
-				mu.Unlock()
+				recorder.record(t, r)
 				w.Header().Set("Content-Type", "text/event-stream")
 				serveWriteScenarioSample(w, family, 91, nil)
 			}))
@@ -60,10 +50,7 @@ func TestSessionTitlePreservesNativeRequestsAndCache(t *testing.T) {
 			for _, branch := range []string{"unnamed", "live", "restored"} {
 				root, path, thread := installPreviewFixture(t, data)
 				open := func() *chatResources {
-					resources, err := openChatResources(ctx, cfg, root, string(thread), workspace)
-					if err != nil {
-						t.Fatal(err)
-					}
+					resources := mustOpenChatResources(t, ctx, cfg, root, string(thread), workspace)
 					t.Cleanup(func() { _ = resources.close(context.Background()) })
 					if err := resources.session.StartInteractive(ctx); err != nil {
 						t.Fatal(err)
@@ -74,9 +61,7 @@ func TestSessionTitlePreservesNativeRequestsAndCache(t *testing.T) {
 				if branch != "unnamed" {
 					confirmTitle(t, ctx, resources.session, "rename", title)
 					if branch == "restored" {
-						if err := resources.close(context.Background()); err != nil {
-							t.Fatal(err)
-						}
+						closeAppTestResources(t, resources)
 						resources = open()
 						if resources.title != title || resources.identity.ThreadID != thread {
 							t.Fatal("online resume did not initialize the verified title")
@@ -111,9 +96,7 @@ func TestSessionTitlePreservesNativeRequestsAndCache(t *testing.T) {
 				} else if snapshot.StableFingerprint != baseline.StableFingerprint || snapshot.ContentFingerprint != baseline.ContentFingerprint || !reflect.DeepEqual(snapshot.Sources, baseline.Sources) || snapshot.LastSample.NativeFingerprint != baseline.LastSample.NativeFingerprint || snapshot.LastSample.RequestFingerprint != baseline.LastSample.RequestFingerprint {
 					t.Fatal("title changed cache or native fingerprints")
 				}
-				if err := resources.close(context.Background()); err != nil {
-					t.Fatal(err)
-				}
+				closeAppTestResources(t, resources)
 				if branch == "restored" {
 					var output bytes.Buffer
 					cfgPath := writeAppConfig(t, privateAppTempDir(t), family, server.URL)
@@ -123,8 +106,7 @@ func TestSessionTitlePreservesNativeRequestsAndCache(t *testing.T) {
 					}
 				}
 			}
-			mu.Lock()
-			defer mu.Unlock()
+			requests := recorder.snapshot()
 			if len(requests) != 4 || !bytes.Equal(requests[0], requests[1]) || !bytes.Equal(requests[0], requests[2]) {
 				t.Fatalf("complete native requests differ after rename: captured %d", len(requests))
 			}
@@ -210,10 +192,7 @@ func TestSessionTitleFollowsToolRecoveryTerminal(t *testing.T) {
 	defer cancel()
 	root, _, thread := installPreviewFixture(t, readTitleFixture(t, "task_openai_result_tail.jsonl"))
 	cfg := config.Config{Provider: config.Provider{Family: domain.ProviderOpenAI, BaseURL: "https://example.invalid", APIKey: secret.New("fixture-key"), Model: "gpt-test"}}
-	resources, err := openChatResources(ctx, cfg, root, string(thread), privateAppTempDir(t))
-	if err != nil {
-		t.Fatal(err)
-	}
+	resources := mustOpenChatResources(t, ctx, cfg, root, string(thread), privateAppTempDir(t))
 	defer resources.close(context.Background())
 	if err := resources.session.StartInteractive(ctx); err != nil {
 		t.Fatal(err)
@@ -252,10 +231,7 @@ func confirmTitle(t *testing.T, ctx context.Context, host *chatRuntime.ChatSessi
 
 func readTitleFixture(t *testing.T, name string) []byte {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("../session/testdata/current", name))
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := readAppTestFile(t, filepath.Join("../session/testdata/current", name))
 	return data
 }
 

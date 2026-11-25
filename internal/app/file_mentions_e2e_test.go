@@ -50,9 +50,7 @@ func TestFileMentionsDualProviderFrozenSteeringReadAuthorityAndOfflineRestore(t 
 				if err := os.MkdirAll(filepath.Dir(full), 0700); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(full, []byte(text), 0600); err != nil {
-					t.Fatal(err)
-				}
+				writeAppTestFile(t, full, []byte(text), 0600)
 			}
 			write("a", "first\r\nFROZEN_INITIAL\nlast")
 			write("docs/a b.md", "FROZEN_DOC\n")
@@ -89,10 +87,7 @@ func TestFileMentionsDualProviderFrozenSteeringReadAuthorityAndOfflineRestore(t 
 			}))
 			defer server.Close()
 			cfg := reasoningFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, Model: "fixture-model", APIKey: secret.New("fixture-key")}})
-			r, err := openChatResources(ctx, cfg, root, "", workspace)
-			if err != nil {
-				t.Fatal(err)
-			}
+			r := mustOpenChatResources(t, ctx, cfg, root, "", workspace)
 			defer r.close(context.Background())
 			boundary := &countingFileBoundary{workspaceFileBoundary: r.workspace}
 			r.fileSource.workspace = boundary
@@ -191,9 +186,7 @@ func TestFileMentionsDualProviderFrozenSteeringReadAuthorityAndOfflineRestore(t 
 				t.Fatal("user transcript item missing")
 			}
 			thread := r.identity.ThreadID
-			if err := r.close(context.Background()); err != nil {
-				t.Fatal(err)
-			}
+			closeAppTestResources(t, r)
 			original, _ := os.ReadFile(journalPath)
 			for _, path := range []string{"a", "docs", "hidden.txt", ".easycode/skills"} {
 				if err := os.RemoveAll(filepath.Join(workspace, path)); err != nil {
@@ -204,10 +197,7 @@ func TestFileMentionsDualProviderFrozenSteeringReadAuthorityAndOfflineRestore(t 
 			if err != nil || cleanup || len(preview.Messages) == 0 {
 				t.Fatal("offline preview failed", err)
 			}
-			restored, err := openChatResources(ctx, cfg, root, string(thread), workspace)
-			if err != nil {
-				t.Fatal(err)
-			}
+			restored := mustOpenChatResources(t, ctx, cfg, root, string(thread), workspace)
 			defer restored.close(context.Background())
 			if calls.Load() != 2 {
 				t.Fatal("offline restore sampled")
@@ -236,9 +226,7 @@ func TestFileMentionsDualProviderFrozenSteeringReadAuthorityAndOfflineRestore(t 
 			if !bytes.Equal(original, now) {
 				t.Fatal("restore rewrote journal")
 			}
-			if err := restored.close(context.Background()); err != nil {
-				t.Fatal(err)
-			}
+			closeAppTestResources(t, restored)
 			_, plan := loadToolLoopPlan(t, root, thread)
 			if len(plan.Tools) != 1 {
 				t.Fatal("attachment created tool ledger", len(plan.Tools))

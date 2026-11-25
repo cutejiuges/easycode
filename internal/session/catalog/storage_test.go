@@ -25,10 +25,7 @@ func TestCatalogCanceledPublicationKeepsPreviousSnapshot(t *testing.T) {
 	if err := instance.publish(ctx, []Entry{first}); err != nil {
 		t.Fatal(err)
 	}
-	before, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	before := readCatalogFixture(t, path)
 	second := first
 	second.Title = "Unpublished title"
 	canceled, cancel := context.WithCancel(ctx)
@@ -54,10 +51,7 @@ func TestCatalogSnapshotExcludesSecretsAndUsesPrivatePermissions(t *testing.T) {
 	if err := instance.publish(context.Background(), []Entry{entry}); err != nil {
 		t.Fatal(err)
 	}
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	content := readCatalogFixture(t, path)
 	var rows []map[string]json.RawMessage
 	if err := json.Unmarshal(content, &rows); err != nil || len(rows) != 1 {
 		t.Fatalf("persisted snapshot rows = %d, %v", len(rows), err)
@@ -86,10 +80,7 @@ func TestCatalogSnapshotExcludesSecretsAndUsesPrivatePermissions(t *testing.T) {
 		if info.Mode().Perm() != 0o600 {
 			t.Fatalf("catalog file %s mode=%v", filepath.Base(path), info.Mode().Perm())
 		}
-		content, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		content := readCatalogFixture(t, path)
 		for _, secret := range []string{"api-secret", "Authorization", "https://secret.example", "prompt-secret", "response-secret"} {
 			if bytes.Contains(content, []byte(secret)) {
 				t.Fatalf("catalog file contains secret %q", secret)
@@ -156,10 +147,7 @@ func TestCatalogRejectsReplacedSnapshotBeforePublishing(t *testing.T) {
 	if err := instance.Open(ctx); err != nil {
 		t.Fatal(err)
 	}
-	before, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	before := readCatalogFixture(t, path)
 	previous := path + ".old"
 	if err := os.Rename(path, previous); err != nil {
 		t.Fatal(err)
@@ -210,10 +198,7 @@ func catalogTestEntry(t *testing.T, cwd string, family domain.ProviderFamily, wi
 
 func assertFileContent(t *testing.T, path string, want string) {
 	t.Helper()
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	content := readCatalogFixture(t, path)
 	if string(content) != want {
 		t.Fatalf("content = %q, want %q", content, want)
 	}
@@ -254,4 +239,13 @@ func TestCatalogSnapshotValidatesBranchParentAndSeparatesThreadIdentity(t *testi
 			t.Fatalf("invalid branch reference %s accepted: %v", invalid, err)
 		}
 	}
+}
+
+func readCatalogFixture(t *testing.T, path string) []byte {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return content
 }

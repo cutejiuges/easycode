@@ -15,18 +15,12 @@ func TestReadRejectsTraversalSymlinkBinaryAndOversize(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
 	secret := "outside-secret-value"
-	if err := os.WriteFile(filepath.Join(outside, "secret"), []byte(secret), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeBuiltinFixture(t, filepath.Join(outside, "secret"), []byte(secret), 0o600)
 	if err := os.Symlink(filepath.Join(outside, "secret"), filepath.Join(root, "link")); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "nul"), []byte{'a', 0, 'b'}, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "invalid"), []byte{0xff}, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeBuiltinFixture(t, filepath.Join(root, "nul"), []byte{'a', 0, 'b'}, 0o600)
+	writeBuiltinFixture(t, filepath.Join(root, "invalid"), []byte{0xff}, 0o600)
 	large, err := os.OpenFile(filepath.Join(root, "large"), os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatal(err)
@@ -64,10 +58,7 @@ func TestReadRejectsTraversalSymlinkBinaryAndOversize(t *testing.T) {
 
 func openTestExecutor(t *testing.T, root string) (*ReadExecutor, *Workspace) {
 	t.Helper()
-	workspace, err := OpenWorkspace(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	workspace := openFixtureWorkspace(t, root)
 	t.Cleanup(func() { _ = workspace.Close() })
 	executor, err := NewReadExecutor(workspace)
 	if err != nil {
@@ -93,4 +84,20 @@ func invocationFor(t *testing.T, path string, offset int, limit int) tool.ReadIn
 		t.Fatal(err)
 	}
 	return invocation
+}
+
+func writeBuiltinFixture(t *testing.T, path string, content []byte, mode os.FileMode) {
+	t.Helper()
+	if err := os.WriteFile(path, content, mode); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func openFixtureWorkspace(t *testing.T, root string) *Workspace {
+	t.Helper()
+	workspace, err := OpenWorkspace(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return workspace
 }

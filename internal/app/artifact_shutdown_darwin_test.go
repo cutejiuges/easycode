@@ -67,10 +67,7 @@ func TestArtifactShutdownRetainsRealLeaseWhileDiskBlocked(t *testing.T) {
 			}))
 			defer server.Close()
 			cfg := config.Config{Provider: config.Provider{Family: domain.ProviderOpenAI, BaseURL: server.URL, Model: "gpt-test", APIKey: secret.New("artifact-test")}}
-			resources, err := openChatResourcesWithHooks(context.Background(), cfg, dataPaths{sessionRoot: root}, "", false, workspace, chatResourceHooks{interactiveApprovals: true, wrapOutputStore: func(store tool.CommandOutputStore) tool.CommandOutputStore { return gateArtifactStore{store, gate} }})
-			if err != nil {
-				t.Fatal(err)
-			}
+			resources := mustOpenChatResourcesWithHooks(t, context.Background(), cfg, dataPaths{sessionRoot: root}, "", false, workspace, chatResourceHooks{interactiveApprovals: true, wrapOutputStore: func(store tool.CommandOutputStore) tool.CommandOutputStore { return gateArtifactStore{store, gate} }})
 			host, err := startTUIControlSession(context.Background(), resources.runtime)
 			if err != nil {
 				t.Fatal(err)
@@ -120,9 +117,7 @@ func TestArtifactShutdownRetainsRealLeaseWhileDiskBlocked(t *testing.T) {
 			default:
 			}
 			close(gate.release)
-			if err := resources.close(context.Background()); err != nil {
-				t.Fatal(err)
-			}
+			closeAppTestResources(t, resources)
 			<-drained
 			select {
 			case <-gate.closed:

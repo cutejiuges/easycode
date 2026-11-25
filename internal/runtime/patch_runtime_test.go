@@ -79,9 +79,7 @@ func runtimePatchInvocation(t *testing.T) (tool.Invocation, tool.PatchCandidate)
 	final := []byte("new\n")
 	fingerprint, _ := tool.PatchFingerprint(input, evidence, final)
 	candidate, err := tool.NewPatchCandidate(patch, evidence, final, "--- a/main.go\n+++ b/main.go\n-old\n+new\n", fingerprint, metadata)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return invocation, candidate
 }
 
@@ -108,13 +106,9 @@ func TestPatchApprovalDurabilityPrecedesExecution(t *testing.T) {
 	}()
 	requested := <-events
 	payload, err := protocol.DecodeToolApprovalRequested(requested)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	response, err := tool.NewApprovalResponse(approvalID, runtimeTurnID, invocation.InvocationID(), candidate.Fingerprint(), tool.ApprovalAllowOnce, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	if err := runtime.ResolveToolApproval(response); err != nil {
 		t.Fatal(err)
 	}

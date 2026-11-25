@@ -34,9 +34,7 @@ func TestSessionBranchPreservesNativeContinuation(t *testing.T) {
 			defer cancel()
 			workspace := privateAppTempDir(t)
 			file := filepath.Join(workspace, "source")
-			if err := os.WriteFile(file, []byte("FROZEN_SWITCH_FILE\n"), 0600); err != nil {
-				t.Fatal(err)
-			}
+			writeAppTestFile(t, file, []byte("FROZEN_SWITCH_FILE\n"), 0600)
 			requests := make(chan []byte, 12)
 			var count atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -95,9 +93,7 @@ func TestSessionBranchPreservesNativeContinuation(t *testing.T) {
 			appEffortSet(t, source, "branch-source-effort", appEffortChoice(t, "low"))
 			durable := readSwitchJournal(t, sourcePath)
 			const currentFile = "CHANGED_AFTER_FROZEN_READ\n"
-			if err := os.WriteFile(file, []byte(currentFile), 0600); err != nil {
-				t.Fatal(err)
-			}
+			writeAppTestFile(t, file, []byte(currentFile), 0600)
 			for range 6 {
 				<-requests
 			}
@@ -141,10 +137,7 @@ func TestSessionBranchPreservesNativeContinuation(t *testing.T) {
 				!bytes.Contains(catalogOut.Bytes(), []byte("Title: Original (Branch)")) {
 				t.Fatalf("branch missing in rebuilt catalog: %s %s", catalogOut.String(), catalogErr.String())
 			}
-			restarted, err := openChatResources(ctx, cfg, copyRoot, string(branch.identity.ThreadID), workspace)
-			if err != nil {
-				t.Fatal(err)
-			}
+			restarted := mustOpenChatResources(t, ctx, cfg, copyRoot, string(branch.identity.ThreadID), workspace)
 			defer closeResumeTestResources(t, restarted)
 			if _, err := assembleChatModel(ctx, restarted); err != nil {
 				t.Fatal(err)
@@ -161,7 +154,8 @@ func TestSessionBranchPreservesNativeContinuation(t *testing.T) {
 				waitCompactionIdle(t, current)
 			}
 			left, right := <-requests, <-requests
-			if count.Load() != 8 || !bytes.Equal(left, right) || bytes.Contains(left, []byte(rewindPrompt)) {
+			if count.Load() != 8 || !bytes.Equal(left, right) || bytes.Contains(left, []byte(rewindPrompt)) ||
+				bytes.Contains(left, []byte("CHANGED_AFTER_FROZEN_READ")) {
 				t.Fatal("live and independently resumed branch produced different canonical requests")
 			}
 			assertRequestFingerprintEqual(t, left, right)
@@ -193,10 +187,7 @@ func TestSessionBranchPreservesNativeContinuation(t *testing.T) {
 			if err := owner.Wait(); err != nil {
 				t.Fatal(err)
 			}
-			reopened, err := openChatResources(ctx, cfg, paths.sessionRoot, string(branch.identity.ThreadID), workspace)
-			if err != nil {
-				t.Fatal(err)
-			}
+			reopened := mustOpenChatResources(t, ctx, cfg, paths.sessionRoot, string(branch.identity.ThreadID), workspace)
 			defer closeResumeTestResources(t, reopened)
 			if _, err := assembleChatModel(ctx, reopened); err != nil {
 				t.Fatal(err)
@@ -229,9 +220,7 @@ func checkBranchHeadlessContinue(t *testing.T, ctx context.Context, workspace, r
 	}
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	configBody := fmt.Sprintf(`{"provider":"openai","base_url":%q,"api_key":"fixture","model":"fixture-model"}`, url)
-	if err := os.WriteFile(configPath, []byte(configBody), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, configPath, []byte(configBody), 0600)
 	var output bytes.Buffer
 	outcome := Run(ctx, Options{
 		Mode: headless.ModeJSON, Prompt: "/rewind", ContinueSession: true,
@@ -256,12 +245,9 @@ func startBranchFixture(t *testing.T, ctx context.Context, cfg config.Config, pa
 			t.Error(err)
 		}
 	})
-	source, err := openChatResourcesWithHooks(ctx, cfg, paths, "", false, workspace, chatResourceHooks{
+	source := mustOpenChatResourcesWithHooks(t, ctx, cfg, paths, "", false, workspace, chatResourceHooks{
 		interactiveApprovals: true, environment: environment, lifetime: ctx,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	if _, err := assembleChatModel(ctx, source); err != nil {
 		closeResumeTestResources(t, source)
 		t.Fatal(err)

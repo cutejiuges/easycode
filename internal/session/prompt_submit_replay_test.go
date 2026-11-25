@@ -3,7 +3,6 @@ package session
 import (
 	"bytes"
 	"context"
-	"os"
 	"slices"
 	"testing"
 
@@ -38,9 +37,7 @@ func TestPromptSubmitReplayBindsSessionStartAndStopInput(t *testing.T) {
 			commits := plan.NativeCommits[len(plan.NativeCommits)-2:]
 			delivery := commits[1]
 			check, err := DecodePromptSubmitPlanned(loaded.Records[test.digest])
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			want := check.fields.InputIDs[len(check.fields.InputIDs)-1:]
 			if commits[0].Role != test.role || commits[0].Sequence != test.seq ||
 				delivery.Role != domain.NativeCommitUserInputs || delivery.Sequence != test.seq+2 ||
@@ -61,9 +58,7 @@ func TestPromptSubmitReplayBindsSessionStartAndStopInput(t *testing.T) {
 				wrong.InputIDs[0] = check.fields.InputIDs[0]
 			}
 			association.Payload, err = codec.MarshalStable(wrong)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			if _, err := NewReplayPlanner().PlanMetadata(loaded); err == nil {
 				t.Fatal("metadata replay accepted a nonapproved input association")
 			}
@@ -100,21 +95,15 @@ func TestPromptSubmitRecoveryClosesStartedRunOnce(t *testing.T) {
 		}
 		appendRecovery := func(loaded LoadResult, draft RecordDraft) LoadResult {
 			writer, err := StartJournalWriter(lease, loaded.Identity, loaded.NextSequence)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			_, appendErr := writer.AppendBatch(ctx, []RecordDraft{draft})
 			if err := writer.Close(ctx); err != nil || appendErr != nil {
 				t.Fatalf("persist recovery fact: %v, %v", appendErr, err)
 			}
 			lease, err = repo.Open(ctx, testThreadID)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			partial, err := loader.Load(ctx, lease)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			return partial
 		}
 		partial := appendRecovery(loaded, drafts[0])
@@ -141,33 +130,19 @@ func TestPromptSubmitRecoveryClosesStartedRunOnce(t *testing.T) {
 		if _, err := NewLoader().Load(ctx, lease); err == nil {
 			t.Fatal("checksum-valid prompt start with forged arity was accepted as repairable")
 		}
-		path, _ := repo.JournalPath(testThreadID)
-		after, err := os.ReadFile(path)
-		if err != nil || !bytes.Equal(content, after) {
-			t.Fatalf("corrupt fixture was rewritten: %v", err)
-		}
+		assertJournalBytes(t, repo, content)
 	})
 }
 
 func TestPromptSubmitValidatesVisibleInputAssociationBeforeTailRepair(t *testing.T) {
 	ctx := context.Background()
 	rows := bytes.Split(readCurrentFixture(t, "prompt_submit_initial_session_start.jsonl"), []byte{'\n'})
-	association, err := DecodeRecord(rows[15])
-	if err != nil {
-		t.Fatal(err)
-	}
+	association := decodeFixtureRecord(t, rows[15])
 	payload, err := DecodeTurnInputsPayload(association)
-	if err != nil {
-		t.Fatal(err)
-	}
-	checkRecord, err := DecodeRecord(rows[3])
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
+	checkRecord := decodeFixtureRecord(t, rows[3])
 	check, err := DecodePromptSubmitPlanned(checkRecord)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 
 	for _, probe := range []struct {
 		name     string
@@ -193,22 +168,16 @@ func TestPromptSubmitValidatesVisibleInputAssociationBeforeTailRepair(t *testing
 			prefix := append(bytes.Join(rows[:prefixEnd], []byte{'\n'}), '\n')
 			if probe.terminal {
 				draft, err := NewTurnFailedDraft(tail.TurnID, TurnFailedPayload{Code: "user_cancelled", Cancelled: true})
-				if err != nil {
-					t.Fatal(err)
-				}
+				requireNoError(t, err)
 				prefix = appendStartupTestRecord(t, prefix, tail, draft)
 				tail.Sequence++
 				tail.BatchID++
 			}
 			encoded, err := codec.MarshalStable(inputs)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			tail.Payload = encoded
 			_, line, err := EncodeRecord(tail)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			content := append(slices.Clone(prefix), append(line, '\n')...)
 			repo, lease := installCurrentFixture(t, content)
 			defer repo.Close()
@@ -220,7 +189,6 @@ func TestPromptSubmitValidatesVisibleInputAssociationBeforeTailRepair(t *testing
 			}
 			planner := NewReplayPlanner()
 			planned, err := planner.Plan(loaded)
-			path, _ := repo.JournalPath(testThreadID)
 			if probe.forged {
 				if err == nil {
 					t.Fatal("replay accepted a denied InputID in a checksum-valid torn batch")
@@ -228,10 +196,7 @@ func TestPromptSubmitValidatesVisibleInputAssociationBeforeTailRepair(t *testing
 				if _, err = planner.PlanMetadata(loaded); err == nil {
 					t.Fatal("metadata replay accepted a denied InputID in a torn batch")
 				}
-				raw, err := os.ReadFile(path)
-				if err != nil || !bytes.Equal(raw, content) {
-					t.Fatalf("invalid tail bytes changed: %v", err)
-				}
+				assertJournalBytes(t, repo, content)
 				return
 			}
 			if err != nil || len(planned.NativeCommits) != 0 || planned.InterruptedTail == nil {
@@ -240,10 +205,7 @@ func TestPromptSubmitValidatesVisibleInputAssociationBeforeTailRepair(t *testing
 			if report, err := loader.Repair(ctx, lease, loaded); err != nil || !report.Repaired {
 				t.Fatalf("repair did not remove the legal incomplete batch: %v", err)
 			}
-			raw, err := os.ReadFile(path)
-			if err != nil || !bytes.Equal(raw, prefix) {
-				t.Fatalf("repair changed committed prompt facts: %v", err)
-			}
+			assertJournalBytes(t, repo, prefix)
 		})
 	}
 }

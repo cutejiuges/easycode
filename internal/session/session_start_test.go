@@ -3,7 +3,6 @@ package session
 import (
 	"bytes"
 	"context"
-	"os"
 	"testing"
 
 	"easycode/internal/domain"
@@ -54,9 +53,7 @@ func TestSessionStartActivationFixtureRetainsOnlyCompleteDelivery(t *testing.T) 
 				t.Fatalf("repair did not remove the incomplete batch: %v", err)
 			}
 			draft, err := plan.InterruptedSessionStart.CloseDraft()
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			recovered := appendRecoveryRecord(t, loaded, draft, recoveryRecordExpectation{finished: 1, state: SessionStartInterrupted})
 			after, err := NewReplayPlanner().Plan(recovered)
 			if err != nil || after.InterruptedSessionStart != nil || after.InterruptedTail == nil || len(after.NativeCommits) != 0 {
@@ -65,22 +62,13 @@ func TestSessionStartActivationFixtureRetainsOnlyCompleteDelivery(t *testing.T) 
 		})
 	}
 	t.Run("wrong completed second line is corruption", func(t *testing.T) {
-		first, err := DecodeRecord(rows[6])
-		if err != nil {
-			t.Fatal(err)
-		}
+		first := decodeFixtureRecord(t, rows[6])
 		draft, err := NewTurnFailedDraft(first.TurnID, TurnFailedPayload{Code: "session_interrupted", Message: "session turn was interrupted"})
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		record, err := BuildRecord(Identity{SessionID: first.SessionID, ThreadID: first.ThreadID}, draft, 8, first.Timestamp, 7, 1, 3)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		_, wrong, err := EncodeRecord(record)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		invalid := append(append(bytes.Join(rows[:7], []byte{'\n'}), '\n'), append(wrong, '\n')...)
 		repo, lease := installCurrentFixture(t, invalid)
 		defer repo.Close()
@@ -95,14 +83,9 @@ func TestSessionStartStartupCannotFollowAnEarlierActivationOrInput(t *testing.T)
 	ctx := context.Background()
 	activation := readCurrentFixture(t, "session_start_applied.jsonl")
 	rows := bytes.Split(activation, []byte{'\n'})
-	planRecord, err := DecodeRecord(rows[3])
-	if err != nil {
-		t.Fatal(err)
-	}
+	planRecord := decodeFixtureRecord(t, rows[3])
 	plan, err := DecodeSessionStartHookPlanned(planRecord)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	for _, test := range []struct {
 		name     string
 		prefix   []byte
@@ -118,40 +101,27 @@ func TestSessionStartStartupCannotFollowAnEarlierActivationOrInput(t *testing.T)
 			prefix := append(bytes.TrimSuffix(test.prefix, []byte{'\n'}), '\n')
 			if test.planned {
 				skipped, err := NewSessionStartHookClosedDraft(plan, 1, SessionStartSkipped, domain.HookFeedbackBudgetExceeded, nil, provider.NativeCommitEnvelope{})
-				if err != nil {
-					t.Fatal(err)
-				}
+				requireNoError(t, err)
 				prefix = appendStartupTestRecord(t, prefix, planRecord, skipped)
 			}
 			if !test.closed {
 				draft, err := NewTurnFailedDraft(plan.target.TurnID, TurnFailedPayload{Code: "cancelled", Message: "turn was cancelled", Cancelled: true})
-				if err != nil {
-					t.Fatal(err)
-				}
+				requireNoError(t, err)
 				prefix = appendStartupTestRecord(t, prefix, planRecord, draft)
 			}
 			target := domain.SessionStartTarget{Source: domain.SessionStartStartup, TurnID: "00000000-0010-7000-8000-000000000010"}
 			started, err := NewTurnStartedDraft(target.TurnID)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			next, err := buildSessionStartPlan(sessionStartPlanFields{Target: target, Checks: plan.checks})
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			planned, err := NewSessionStartHookPlannedDraft(next)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			prefix = appendStartupTestRecord(t, prefix, planRecord, started)
 			prefix = appendStartupTestRecord(t, prefix, planRecord, planned)
 			repo, lease := installCurrentFixture(t, prefix)
 			defer repo.Close()
 			defer lease.Close()
-			loaded, err := NewLoader().Load(ctx, lease)
-			if err != nil {
-				t.Fatal(err)
-			}
+			loaded := loadFixtureJournal(t, ctx, lease)
 			replayed, err := NewReplayPlanner().Plan(loaded)
 			if test.activate && (err != nil || replayed.InterruptedSessionStart == nil) || !test.activate && err == nil {
 				t.Fatalf("unexpected startup replay admission: %v", err)
@@ -165,13 +135,9 @@ func appendStartupTestRecord(t *testing.T, prefix []byte, identity Record, draft
 	sequence := uint64(bytes.Count(prefix, []byte{'\n'})) + 1
 	record, err := BuildRecord(Identity{SessionID: identity.SessionID, ThreadID: identity.ThreadID},
 		draft, sequence, identity.Timestamp, sequence, 0, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	_, encoded, err := EncodeRecord(record)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return append(prefix, append(encoded, '\n')...)
 }
 
@@ -205,9 +171,7 @@ func TestSessionStartCompactFixturePrecedesPendingStop(t *testing.T) {
 			t.Fatalf("started compact prefix did not preserve the pending Stop: %v", err)
 		}
 		draft, err := interrupted.InterruptedSessionStart.CloseDraft()
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		recovered := appendRecoveryRecord(t, prefix, draft, recoveryRecordExpectation{state: SessionStartUncertain})
 		after, err := planner.Plan(recovered)
 		if err != nil || after.InterruptedSessionStart != nil || after.StopRecovery == nil || len(after.NativeCommits) != 2 {
@@ -223,14 +187,7 @@ func TestSessionStartCompactFixturePrecedesPendingStop(t *testing.T) {
 		if _, err := NewLoader().Load(ctx, lease); err == nil {
 			t.Fatal("complete compact closure masquerading as incomplete batch was accepted")
 		}
-		path, err := repo.JournalPath(testThreadID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		actual, err := os.ReadFile(path)
-		if err != nil || !bytes.Equal(actual, content) {
-			t.Fatalf("malformed journal was rewritten: %v", err)
-		}
+		assertJournalBytes(t, repo, content)
 	})
 }
 
@@ -243,9 +200,7 @@ func appendRecoveryRecord(t *testing.T, prefix LoadResult, draft RecordDraft, wa
 	t.Helper()
 	sequence := prefix.NextSequence
 	record, err := BuildRecord(prefix.Identity, draft, sequence, prefix.Records[0].Timestamp, sequence, 0, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	payload, err := DecodeSessionStartHookClosed(record)
 	if err != nil || payload.Origin != "recovery" || payload.State != want.state || payload.Finished != want.finished || payload.Native != nil {
 		t.Fatalf("invalid recovery closure %+v: %v", payload, err)

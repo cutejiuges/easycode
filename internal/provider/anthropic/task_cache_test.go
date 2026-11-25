@@ -8,6 +8,7 @@ import (
 	"easycode/internal/codec"
 	"easycode/internal/domain"
 	"easycode/internal/provider"
+	"easycode/internal/provider/testsupport"
 	"easycode/internal/secret"
 	"easycode/internal/tool"
 )
@@ -47,7 +48,7 @@ func taskCacheFixture(t *testing.T, instance *Provider) (*Conversation, []provid
 	if err != nil {
 		t.Fatal(err)
 	}
-	outputs := []tool.ModelOutput{testDirectModelOutput(t, invocation, result, admission)}
+	outputs := []tool.ModelOutput{testsupport.DirectModelOutput(t, invocation, result, admission)}
 	prepared, err := c.PrepareToolOutputs(outputs)
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +88,7 @@ func taskCacheFixture(t *testing.T, instance *Provider) (*Conversation, []provid
 	if err != nil {
 		t.Fatal(err)
 	}
-	sampling, err := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testAnthropicToolCatalog(t))
+	sampling, err := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testsupport.ToolCatalog(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,12 +113,12 @@ func assertTaskCacheEquivalent(t *testing.T, left, right *Conversation, input pr
 	if err != nil || !bytes.Equal(nativeA, nativeB) || !bytes.Contains(nativeA, []byte("opaque-task-cache")) || !bytes.Contains(nativeA, []byte("opaque-task-redacted")) {
 		t.Fatal("task cache restore changed native opaque bytes or item order", err)
 	}
-	evidenceA, err := left.requestEvidence(input)
+	evidenceA, err := left.TestEvidence(input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	evidenceB, err := right.requestEvidence(input)
-	if err != nil || evidenceA.NativeFingerprint() != evidenceB.NativeFingerprint() || !bytes.Equal(evidenceA.Properties().Bytes(), evidenceB.Properties().Bytes()) || reasoningCacheSources(t, left) != reasoningCacheSources(t, right) {
+	evidenceB, err := right.TestEvidence(input)
+	if err != nil || evidenceA.NativeFingerprint() != evidenceB.NativeFingerprint() || !bytes.Equal(evidenceA.Properties().Bytes(), evidenceB.Properties().Bytes()) || left.TestCacheSources(t) != right.TestCacheSources(t) {
 		t.Fatal("task cache restore changed request or source fingerprints", err)
 	}
 	markersA, err := requestMarkerCount(a, left.provider.config.CachePolicy.Anthropic())

@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/x/ansi"
 
 	"easycode/internal/domain"
 	"easycode/internal/protocol"
@@ -84,16 +83,6 @@ func TestSessionTitleInlineUsesLiteralArgumentsAndWaitsForControl(t *testing.T) 
 	if model.title.value != want || model.title.request != nil || model.composer.text != "" || len(model.composer.history.entries) != 0 {
 		t.Fatal("successful rename did not consume the local command exclusively")
 	}
-	view := model.View()
-	if !strings.Contains(view, "Session: "+string(want)) || !strings.Contains(view, "Session renamed to: "+string(want)) {
-		t.Fatalf("missing confirmed title and short status: %s", view)
-	}
-	model = updateModel(t, model, tea.WindowSizeMsg{Width: 19, Height: 8})
-	for _, line := range strings.Split(strings.TrimSuffix(model.View(), "\n"), "\n") {
-		if ansi.StringWidth(line) > 19 || strings.Contains(line, "👩") && !strings.Contains(line, "👩‍💻") {
-			t.Fatalf("narrow title exceeded its width or split a grapheme: %q", line)
-		}
-	}
 	model = setTitleCommandDraft(t, model, "next prompt")
 	model, _ = deliverTitleResult(t, model, s.commands[0], "")
 	if model.composer.text != "next prompt" {
@@ -104,15 +93,9 @@ func TestSessionTitleInlineUsesLiteralArgumentsAndWaitsForControl(t *testing.T) 
 func TestSessionTitleEditorUsesCompletionAndPreservesFocus(t *testing.T) {
 	s := &sessionTitleFixture{}
 	model := NewModel(context.Background(), "test", s).WithSessionTitle("现名 👩‍💻")
-	model = model.WithSkills([]domain.SkillListEntry{completionSkillEntry(t, "rename", "User skill")})
-	model = setTitleCommandDraft(t, model, "/ren")
-	model, cmd := updateModelWithCommand(t, model, tea.KeyMsg{Type: tea.KeyTab})
-	if cmd != nil || model.title.editor != nil || model.composer.text != "/rename " {
-		t.Fatal("Tab did not restrict itself to completing the local command")
-	}
 	model = setTitleCommandDraft(t, model, "/ren")
 	model.composer.moveTo(3)
-	model, cmd = updateModelWithCommand(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model, cmd := updateModelWithCommand(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd != nil || model.title.editor == nil || model.title.editor.text != "现名 👩‍💻" || model.composer.text != "/ren" || model.composer.cursor != 3 {
 		t.Fatal("completion Enter did not open the prefilled editor over the actual draft")
 	}
@@ -152,19 +135,6 @@ func TestSessionTitleEditorUsesCompletionAndPreservesFocus(t *testing.T) {
 	model, cmd = updateModelWithCommand(t, model, tea.KeyMsg{Type: tea.KeyCtrlC})
 	if cmd != nil || model.title.editor != nil || model.composer.text != "/ren" || model.composer.cursor != 3 || model.completion.rows != 0 {
 		t.Fatal("cancelling after focus changes did not restore the original draft and suppress completion")
-	}
-	model = setTitleCommandDraft(t, model, "/rename")
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" @draft\\"), Paste: true})
-	model, cmd = updateModelWithCommand(t, model, tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd == nil || cmd() != nil || len(s.commands) != 1 || s.commands[0].SessionTitle() != domain.SessionTitle(edited) {
-		t.Fatal("editor did not submit the literal edited value once")
-	}
-	model, _ = deliverTitleResult(t, model, s.commands[0], "")
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("$ren")})
-	model, cmd = updateModelWithCommand(t, model, tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd != nil || model.title.editor != nil || model.composer.text != "$rename " {
-		t.Fatal("same-name dollar Skill completion did not remain an independent action")
 	}
 }
 

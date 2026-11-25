@@ -12,10 +12,7 @@ import (
 
 func openTestGrepExecutor(t *testing.T, root string) *GrepExecutor {
 	t.Helper()
-	workspace, err := OpenWorkspace(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	workspace := openFixtureWorkspace(t, root)
 	t.Cleanup(func() { _ = workspace.Close() })
 	executor, err := NewGrepExecutor(workspace)
 	if err != nil {
@@ -46,7 +43,5 @@ func writeSearchFile(t *testing.T, root string, relative string, content string)
 	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeBuiltinFixture(t, full, []byte(content), 0o600)
 }

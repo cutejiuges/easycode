@@ -34,10 +34,10 @@ func TestInputCommitCancellationLinearization(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			journal := &startedFailureJournal{}
+			journal := &fakeJournal{}
 			if tc.fail {
 				journal.failAt = 1
-				journal.poisonOnFailure = tc.poison
+				journal.definiteFailure = !tc.poison
 			}
 			conversation := &fakeConversation{stream: fixedStream()}
 			var target Journal = journal

@@ -33,7 +33,5 @@ func writeStopHookConfig(t *testing.T, workspace, command string, policy domain.
 	if err := os.MkdirAll(filepath.Join(workspace, ".easycode"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(workspace, ".easycode", "hooks.json"), b, 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, filepath.Join(workspace, ".easycode", "hooks.json"), b, 0600)
 }

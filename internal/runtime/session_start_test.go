@@ -51,9 +51,7 @@ func TestSessionStartCompactCancellationFollowsWriterAdmission(t *testing.T) {
 				t.Fatal(code)
 			}
 			id, err := domain.GenerateCompactionID()
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			complete, cancelled, reviews := 0, 0, 0
 			trust := hookTrustEmitter(t, r, protocol.HookTrustSession, nil)
 			err = r.runCompaction(ctx, id, admission, func(event protocol.Event) {
@@ -66,9 +64,7 @@ func TestSessionStartCompactCancellationFollowsWriterAdmission(t *testing.T) {
 				}
 				if event.Kind == protocol.EventSessionStart {
 					payload, err := protocol.DecodeSessionStart(event)
-					if err != nil {
-						t.Fatal(err)
-					}
+					requireNoError(t, err)
 					if payload.State == protocol.SessionStartCancelled {
 						cancelled++
 					}
@@ -108,9 +104,7 @@ func TestSessionStartRespectsAllTrustAndSharedDeadline(t *testing.T) {
 		installSessionStartTestHooks(t, r, snapshot, runner)
 		r.hooks.now = func() time.Time { return time.Unix(int64(runs)*30, 0) }
 		turn, err := domain.GenerateTurnID()
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		selection := r.selectSessionStart(domain.SessionStartStartup)
 		attempt, err := r.runSessionStart(context.Background(), domain.SessionStartTarget{Source: domain.SessionStartStartup, TurnID: turn}, selection, func(event protocol.Event) {
 			if event.Kind != protocol.EventHookTrustRequested {
@@ -136,21 +130,15 @@ func TestSessionStartRespectsAllTrustAndSharedDeadline(t *testing.T) {
 func sessionStartTestSnapshot(t *testing.T, source string, names ...string) domain.HookSnapshot {
 	t.Helper()
 	scope, err := domain.ParseSessionStartHookScope(source)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	declarations := make([]domain.HookDeclaration, 0, len(names))
 	for _, name := range names {
 		declaration, err := domain.NewSessionStartHookDeclaration(domain.HookSourceProject, domain.HookFeedbackNone, domain.HookDigest([]byte("fixture")), name, scope, "true", 5)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		declarations = append(declarations, declaration)
 	}
 	snapshot, err := domain.NewHookSnapshot(declarations, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return snapshot
 }
 
@@ -238,25 +226,17 @@ func (runner sessionStartFeedbackRunner) Run(_ context.Context, id domain.HookRu
 
 func TestSessionStartRetainsActivationOnInputPreflightAndOmitsOverBudgetContext(t *testing.T) {
 	instance, err := openai.New(openai.Config{Model: "gpt-test", APIKey: secret.New("fixture-key"), BaseURL: "http://127.0.0.1:1"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	defer instance.Close()
 	conversation, err := instance.NewConversation(runtimeThreadID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	journal := &fakeJournal{}
 	r := newTestRuntime(t, conversation, journal)
 	scope, _ := domain.ParseSessionStartHookScope("resume")
 	declaration, err := domain.NewSessionStartHookDeclaration(domain.HookSourceProject, domain.HookFeedbackModel, domain.HookDigest(nil), "fixture", scope, "true", 5)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	snapshot, err := domain.NewHookSnapshot([]domain.HookDeclaration{declaration}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	installSessionStartTestHooks(t, r, snapshot, sessionStartFeedbackRunner(strings.Repeat("optional context ", 128)))
 	if err := r.InstallSessionStartSource(domain.SessionStartResume); err != nil {
 		t.Fatal(err)
@@ -264,25 +244,17 @@ func TestSessionStartRetainsActivationOnInputPreflightAndOmitsOverBudgetContext(
 	inputs := runtimeInputs("exact original input")
 	a, _ := inputAssociation(runtimeTurnID, 0, inputs)
 	plain, err := r.providerOperations.userInputs.PrepareUserInputs(a, inputs)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	view, footprint, err := plain.Preview()
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	plan, err := r.planWindow(view, footprint)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	tokens, ok := plan.TotalEstimate().Tokens()
 	if err := plain.Discard(); !ok || err != nil {
 		t.Fatal("failed to measure plain input", err)
 	}
 	r.budget, err = contextplan.NewBudget(tokens+1, 0, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	ctx := context.Background()
 	denied := r.commitInitialInputs(ctx, runtimeTurnID, runtimeInputs(strings.Repeat("oversized first attempt ", 2000)), nil, func(event protocol.Event) {
 		t.Fatal("a locally rejected input dispatched activity", event.Kind)
@@ -323,9 +295,7 @@ func TestSessionStartManualCancellationReturnsAutoAndRetainsStrictNext(t *testin
 		return domain.HookRunResult{}
 	}})
 	loop, err := NewAgentLoop(r, DefaultAgentLoopConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	done := make(chan error, 1)
 	go func() { done <- loop.Run(ctx) }()
 	select {
@@ -335,9 +305,7 @@ func TestSessionStartManualCancellationReturnsAutoAndRetainsStrictNext(t *testin
 	}
 	submit := func(command protocol.Command, err error) protocol.CommandResult {
 		t.Helper()
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		result, err := loop.Submit(ctx, command)
 		if err != nil || result.Status() != protocol.CommandStatusAccepted {
 			t.Fatal("not accepted", result.Status(), err)

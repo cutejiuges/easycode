@@ -24,13 +24,9 @@ func preparedReasoning(t *testing.T, readable bool, ready ...tool.ReadyCall) *pr
 		availability = domain.ReasoningReadable
 	}
 	presentation, err := domain.NewSamplePresentation(uint32(1+len(ready)), []domain.ReasoningBinding{{Block: 0, Item: 0, Source: domain.ReasoningOpenAISummary, Availability: availability}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	sample, err := provider.NewPreparedSample(envelope, usage, receipt, presentation, func() {}, func() {}, ready...)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return sample
 }
 func reasoningStreamEvents(t *testing.T, complete bool) []provider.StreamEvent {

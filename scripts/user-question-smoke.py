@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """本地假 SSE 服务与真实 PTY 的问卷、取消、窗口和终端恢复验收。"""
+from smoke_support import smoke_binary, complete_cases
 import fcntl
 import http.server
 import json
@@ -158,9 +159,9 @@ def run_case(binary, root, kind, no_color=False):
 def main():
     root = Path(__file__).resolve().parent.parent
     with tempfile.TemporaryDirectory(prefix="easycode-question-smoke-") as directory:
-        binary = Path(directory) / "app.test"
-        subprocess.run(["go", "test", "-c", "-o", str(binary), "./internal/app"], cwd=root, check=True)
+        binary = smoke_binary("app.test", directory, root)
         results = [run_case(binary, root, kind, no_color) for kind, no_color in [("selection", False), ("resize_other", True), ("stop", True), ("picker_cancel", True)]]
+        complete_cases(results)
         print(json.dumps({"platform": platform.platform(), "cases": results}, ensure_ascii=False, indent=2))
 
 

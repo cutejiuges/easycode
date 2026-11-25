@@ -11,15 +11,16 @@ import (
 	"easycode/internal/codec"
 	"easycode/internal/domain"
 	"easycode/internal/provider"
+	"easycode/internal/provider/testsupport"
 )
 
 // fileStopBridgeHistory 覆盖两次反馈、独立多文件纠正及超过二十块的采样窗口。
 func fileStopBridgeHistory(t *testing.T) (*Conversation, []provider.RestoreRecord) {
 	t.Helper()
 	c, _, _ := stopTestConversation(t)
-	frozen := frozenFileInput(t, true)
+	frozen := testsupport.FileInput(t, true)
 	for index := uint32(0); index < 2; index++ {
-		feedback, err := stopFeedbackEntry(stopTestFeedback(t, index))
+		feedback, err := stopFeedbackEntry(testsupport.StopFeedback(t, index))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -88,7 +89,7 @@ func TestFileStopCacheBridgeUsesActualMessagesAndRestoresExactly(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, project := range []bool{false, true} {
-		input, err := testSamplingInput(t, c.provider.config.Inference).WithToolCatalog(testAnthropicToolCatalog(t))
+		input, err := testSamplingInput(t, c.provider.config.Inference).WithToolCatalog(testsupport.ToolCatalog(t))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -142,7 +143,7 @@ func TestFileStopCacheBridgeUsesActualMessagesAndRestoresExactly(t *testing.T) {
 	unchangedNative, _ := codec.MarshalStable(c.history.Entries())
 	_, left, leftErr := c.ProjectContextWindow()
 	_, right, rightErr := restored.ProjectContextWindow()
-	if !bytes.Equal(beforeNative, afterNative) || !bytes.Equal(beforeNative, unchangedNative) || leftErr != nil || rightErr != nil || left != right || !reflect.DeepEqual(c.ProjectHistory(), restored.ProjectHistory()) || reasoningCacheSources(t, c) != reasoningCacheSources(t, restored) {
+	if !bytes.Equal(beforeNative, afterNative) || !bytes.Equal(beforeNative, unchangedNative) || leftErr != nil || rightErr != nil || left != right || !reflect.DeepEqual(c.ProjectHistory(), restored.ProjectHistory()) || c.TestCacheSources(t) != restored.TestCacheSources(t) {
 		t.Fatal("cache overlay changed native content, projection, footprint or fingerprints")
 	}
 }

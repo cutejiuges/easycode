@@ -80,9 +80,7 @@ func testHookResumeReconcilesEveryBatch(t *testing.T, event domain.HookEvent, re
 				b = bytes.ReplaceAll(b, []byte(`"PreToolUse"`), []byte(`"`+string(event)+`"`))
 				b = bytes.ReplaceAll(b, []byte(`"type":"command"`), []byte(`"type":"command","feedback":"model"`))
 			}
-			if err := os.WriteFile(file, b, 0600); err != nil {
-				t.Fatal(err)
-			}
+			writeAppTestFile(t, file, b, 0600)
 			var requests atomic.Int32
 			var requestMu sync.Mutex
 			var captured [][]byte
@@ -108,10 +106,7 @@ func testHookResumeReconcilesEveryBatch(t *testing.T, event domain.HookEvent, re
 			makeRunner := func(*builtin.Workspace, builtin.CommandEnvironment, builtin.HookOutputParser) (chatRuntime.HookRunner, error) {
 				return runner, nil
 			}
-			resources, err := openChatResourcesWithHooks(context.Background(), cfg, dataPaths{sessionRoot: root}, "", false, workspace, chatResourceHooks{interactiveApprovals: true, newHookRunner: makeRunner})
-			if err != nil {
-				t.Fatal(err)
-			}
+			resources := mustOpenChatResourcesWithHooks(t, context.Background(), cfg, dataPaths{sessionRoot: root}, "", false, workspace, chatResourceHooks{interactiveApprovals: true, newHookRunner: makeRunner})
 			control, err := startTUIControlSession(context.Background(), resources.runtime)
 			if err != nil {
 				t.Fatal(err)
@@ -129,9 +124,7 @@ func testHookResumeReconcilesEveryBatch(t *testing.T, event domain.HookEvent, re
 					}
 				case protocol.EventToolApprovalRequested:
 					if event == domain.HookPostToolUseFailure {
-						if err := os.WriteFile(filepath.Join(workspace, "marker"), []byte("external change"), 0600); err != nil {
-							t.Fatal(err)
-						}
+						writeAppTestFile(t, filepath.Join(workspace, "marker"), []byte("external change"), 0600)
 					}
 					p, _ := protocol.DecodeToolApprovalRequested(e)
 					if err := control.ResolveApproval(context.Background(), e.TurnID, p, protocol.ApprovalAllowOnce, ""); err != nil {
@@ -146,9 +139,7 @@ func testHookResumeReconcilesEveryBatch(t *testing.T, event domain.HookEvent, re
 			}
 			thread := resources.identity.ThreadID
 			path, _ := resources.service.repository.JournalPath(thread)
-			if err := resources.close(context.Background()); err != nil {
-				t.Fatal(err)
-			}
+			closeAppTestResources(t, resources)
 			if rewrite {
 				if _, err := os.Stat(filepath.Join(workspace, "marker")); !os.IsNotExist(err) {
 					t.Fatal("original write happened", err)
@@ -158,10 +149,7 @@ func testHookResumeReconcilesEveryBatch(t *testing.T, event domain.HookEvent, re
 					t.Fatal("effective write missing", err)
 				}
 			}
-			baseline, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
+			baseline := readAppTestFile(t, path)
 			loaded, _ := loadToolLoopPlan(t, root, thread)
 			var checkpoints []session.Record
 			admitted := false
@@ -176,15 +164,10 @@ func testHookResumeReconcilesEveryBatch(t *testing.T, event domain.HookEvent, re
 			for _, checkpoint := range checkpoints {
 				t.Run(fmt.Sprintf("%s-%d", checkpoint.EventKind, checkpoint.Sequence), func(t *testing.T) {
 					writeJournalPrefix(t, path, baseline, checkpoint.Sequence)
-					prefix, err := os.ReadFile(path)
-					if err != nil {
-						t.Fatal(err)
-					}
+					prefix := readAppTestFile(t, path)
 					// 新来源损坏和缺失都不能阻止旧计划先收口，也不能触发旧脚本重跑。
 					if checkpoint.Sequence%2 == 0 {
-						if err := os.WriteFile(file, []byte(`{"invalid":true}`), 0600); err != nil {
-							t.Fatal(err)
-						}
+						writeAppTestFile(t, file, []byte(`{"invalid":true}`), 0600)
 					} else {
 						if err := os.Remove(file); err != nil && !os.IsNotExist(err) {
 							t.Fatal(err)
@@ -209,18 +192,13 @@ func testHookResumeReconcilesEveryBatch(t *testing.T, event domain.HookEvent, re
 					}
 					beforeRuns := runner.runs.Load()
 					beforeRequests := requests.Load()
-					resumed, err := openChatResourcesWithHooks(context.Background(), cfg, dataPaths{sessionRoot: root}, string(thread), false, workspace, chatResourceHooks{interactiveApprovals: true, loadHooks: load, newHookRunner: makeRunner})
-					if err != nil {
-						t.Fatal(err)
-					}
+					resumed := mustOpenChatResourcesWithHooks(t, context.Background(), cfg, dataPaths{sessionRoot: root}, string(thread), false, workspace, chatResourceHooks{interactiveApprovals: true, loadHooks: load, newHookRunner: makeRunner})
 					for _, entry := range resumed.session.HookEntries() {
 						if entry.State == "trusted" {
 							t.Fatal("restored trust")
 						}
 					}
-					if err := resumed.close(context.Background()); err != nil {
-						t.Fatal(err)
-					}
+					closeAppTestResources(t, resumed)
 					after, err := os.ReadFile(path)
 					if err != nil || !bytes.HasPrefix(after, prefix) {
 						t.Fatal("recovery rewrote bytes", err)
@@ -232,13 +210,8 @@ func testHookResumeReconcilesEveryBatch(t *testing.T, event domain.HookEvent, re
 					if plan.ToolRecovery != nil || plan.InterruptedTail != nil {
 						t.Fatal("unsealed recovery")
 					}
-					again, err := openChatResourcesWithHooks(context.Background(), cfg, dataPaths{sessionRoot: root}, string(thread), false, workspace, chatResourceHooks{loadHooks: load, newHookRunner: makeRunner})
-					if err != nil {
-						t.Fatal(err)
-					}
-					if err := again.close(context.Background()); err != nil {
-						t.Fatal(err)
-					}
+					again := mustOpenChatResourcesWithHooks(t, context.Background(), cfg, dataPaths{sessionRoot: root}, string(thread), false, workspace, chatResourceHooks{loadHooks: load, newHookRunner: makeRunner})
+					closeAppTestResources(t, again)
 					repeated, err := os.ReadFile(path)
 					if err != nil || !bytes.Equal(after, repeated) {
 						t.Fatal("repeated recovery appended duplicate facts", err)
@@ -253,17 +226,9 @@ func testHookResumeReconcilesEveryBatch(t *testing.T, event domain.HookEvent, re
 								continue
 							}
 							writeJournalPrefix(t, path, after, boundary.Sequence)
-							crashPrefix, err := os.ReadFile(path)
-							if err != nil {
-								t.Fatal(err)
-							}
-							second, err := openChatResourcesWithHooks(context.Background(), cfg, dataPaths{sessionRoot: root}, string(thread), false, workspace, chatResourceHooks{loadHooks: load, newHookRunner: makeRunner})
-							if err != nil {
-								t.Fatal(err)
-							}
-							if err := second.close(context.Background()); err != nil {
-								t.Fatal(err)
-							}
+							crashPrefix := readAppTestFile(t, path)
+							second := mustOpenChatResourcesWithHooks(t, context.Background(), cfg, dataPaths{sessionRoot: root}, string(thread), false, workspace, chatResourceHooks{loadHooks: load, newHookRunner: makeRunner})
+							closeAppTestResources(t, second)
 							final, err := os.ReadFile(path)
 							if err != nil || !bytes.HasPrefix(final, crashPrefix) {
 								t.Fatal("second recovery rewrote committed prefix", err)
@@ -291,18 +256,13 @@ func testHookResumeReconcilesEveryBatch(t *testing.T, event domain.HookEvent, re
 						if err := os.Remove(file); err != nil && !os.IsNotExist(err) {
 							t.Fatal(err)
 						}
-						future, err := openChatResources(context.Background(), cfg, root, string(thread), workspace)
-						if err != nil {
-							t.Fatal(err)
-						}
+						future := mustOpenChatResources(t, context.Background(), cfg, root, string(thread), workspace)
 						_, footprint, err := future.transcriptQueries.projector.(provider.Conversation).ProjectContextWindow()
 						if err != nil {
 							t.Fatal(err)
 						}
 						submitAppTurn(t, future, "continue after reconciled history")
-						if err := future.close(context.Background()); err != nil {
-							t.Fatal(err)
-						}
+						closeAppTestResources(t, future)
 						requestMu.Lock()
 						next := bytes.Clone(captured[len(captured)-1])
 						requestMu.Unlock()

@@ -6,6 +6,7 @@ import (
 
 	"easycode/internal/domain"
 	"easycode/internal/fault"
+	"easycode/internal/provider/testsupport"
 	"easycode/internal/provider/transport"
 	"easycode/internal/tool"
 )
@@ -45,7 +46,7 @@ func TestStreamReducerPreservesThinkingSignatureAndRedactedData(t *testing.T) {
 }
 
 func TestStreamReducerProducesOrderedHeterogeneousReadyCalls(t *testing.T) {
-	reducer := newStreamReducer(testAnthropicToolCatalog(t))
+	reducer := newStreamReducer(testsupport.ToolCatalog(t))
 	events := []string{
 		`{"type":"message_start","message":{"id":"msg-tools","model":"claude-test"}}`,
 		`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu-0","name":"Glob","input":{}}}`,
@@ -71,7 +72,7 @@ func TestStreamReducerProducesOrderedHeterogeneousReadyCalls(t *testing.T) {
 }
 
 func TestStreamReducerRejectsIncompleteToolInput(t *testing.T) {
-	reducer := newStreamReducer(testAnthropicToolCatalog(t))
+	reducer := newStreamReducer(testsupport.ToolCatalog(t))
 	for _, event := range []string{
 		`{"type":"message_start","message":{"id":"msg-tool","model":"claude-test"}}`,
 		`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu-1","name":"Read","input":{}}}`,

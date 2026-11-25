@@ -2,13 +2,15 @@ package openai
 
 import (
 	"bytes"
-	"easycode/internal/codec"
-	"easycode/internal/domain"
-	"easycode/internal/provider"
-	"easycode/internal/secret"
 	"os"
 	"reflect"
 	"testing"
+
+	"easycode/internal/codec"
+	"easycode/internal/domain"
+	"easycode/internal/provider"
+	"easycode/internal/provider/testsupport"
+	"easycode/internal/secret"
 )
 
 func TestPluginFixedNativeRestorePreservesOpaqueOrderCacheAndPrivateRevision(t *testing.T) {
@@ -23,20 +25,7 @@ func TestPluginFixedNativeRestorePreservesOpaqueOrderCacheAndPrivateRevision(t *
 	}
 	defer instance.Close()
 	live := testConversation(t, instance)
-	var envelopes []provider.NativeCommitEnvelope
-	for _, line := range bytes.Split(bytes.TrimSpace(fixture), []byte("\n")) {
-		envelope, err := provider.NewNativeCommitEnvelope(domain.ProviderOpenAI, "responses", line)
-		if err != nil {
-			t.Fatal(err)
-		}
-		entry, err := decodeNativeCommit(envelope)
-		if err != nil {
-			t.Fatal(err)
-		}
-		entry.TurnID = "01900000-0000-7000-8000-000000000010"
-		live.history.Append(entry)
-		envelopes = append(envelopes, envelope)
-	}
+	envelopes := testsupport.LoadNativeFixture(t, live, fixture)
 	value, err := testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", testRestoreRecords(t, envelopes))
 	if err != nil {
 		t.Fatal(err)
@@ -45,7 +34,7 @@ func TestPluginFixedNativeRestorePreservesOpaqueOrderCacheAndPrivateRevision(t *
 	source, _ := domain.NewSkillSource("plugin", "qa", "codex")
 	metadata, _ := domain.NewSkillMetadata(source, "qa:demo", "on demand", "", true, false)
 	catalog, _ := domain.NewSkillCatalog([]domain.SkillMetadata{metadata})
-	sampling, _ := testSamplingInput(t, restored.provider.config.Inference).WithToolCatalog(testOpenAIToolCatalog(t))
+	sampling, _ := testSamplingInput(t, restored.provider.config.Inference).WithToolCatalog(testsupport.ToolCatalog(t))
 	sampling, _ = sampling.WithSkillCatalog(catalog)
 	before, err := live.compileSamplingRequest(live.history.Entries(), sampling)
 	if err != nil {
@@ -59,7 +48,7 @@ func TestPluginFixedNativeRestorePreservesOpaqueOrderCacheAndPrivateRevision(t *
 	b, _ := codec.MarshalStable(restored.history.Entries())
 	_, fa, ea := live.ProjectContextWindow()
 	_, fb, eb := restored.ProjectContextWindow()
-	if !bytes.Equal(a, b) || !bytes.Equal(before.Bytes(), after.Bytes()) || ea != nil || eb != nil || !reflect.DeepEqual(fa, fb) || reasoningCacheSources(t, live) != reasoningCacheSources(t, restored) {
+	if !bytes.Equal(a, b) || !bytes.Equal(before.Bytes(), after.Bytes()) || ea != nil || eb != nil || !reflect.DeepEqual(fa, fb) || live.TestCacheSources(t) != restored.TestCacheSources(t) {
 		t.Fatal("plugin restore changed request, native order, footprint or fingerprints")
 	}
 	for _, content := range []string{"Frozen skill instructions", "opaque-sentinel", "future-sentinel"} {
@@ -76,7 +65,7 @@ func TestPluginFixedNativeRestorePreservesOpaqueOrderCacheAndPrivateRevision(t *
 	}
 	private, _ := changed.compileSamplingRequest(changed.history.Entries(), sampling)
 	_, footprint, _ := changed.ProjectContextWindow()
-	if !bytes.Equal(before.Bytes(), private.Bytes()) || !reflect.DeepEqual(fa, footprint) || reasoningCacheSources(t, live) != reasoningCacheSources(t, changed) {
+	if !bytes.Equal(before.Bytes(), private.Bytes()) || !reflect.DeepEqual(fa, footprint) || live.TestCacheSources(t) != changed.TestCacheSources(t) {
 		t.Fatal("private attachment revision polluted model-visible bytes")
 	}
 	forged := bytes.Replace(bytes.Split(bytes.TrimSpace(fixture), []byte("\n"))[0], []byte(`"directory":"qa"`), []byte(`"directory":"docs"`), 1)

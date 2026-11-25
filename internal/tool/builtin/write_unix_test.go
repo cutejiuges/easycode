@@ -37,10 +37,7 @@ func writeCall(t *testing.T, path, content string) tool.WriteInvocation {
 
 func writeComponents(t *testing.T, root string) (*Workspace, *WritePreparer, *WriteExecutor, *ReadExecutor) {
 	t.Helper()
-	w, err := OpenWorkspace(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	w := openFixtureWorkspace(t, root)
 	t.Cleanup(func() {
 		if err := w.Close(); err != nil {
 			t.Error(err)
@@ -92,9 +89,7 @@ func TestWriteCreationDoesNotReplaceCompetitors(t *testing.T) {
 			t.Run(kind+map[bool]string{false: "-file", true: "-tree"}[tree], func(t *testing.T) {
 				root := t.TempDir()
 				outside := filepath.Join(t.TempDir(), "outside")
-				if err := os.WriteFile(outside, []byte("outside"), 0o600); err != nil {
-					t.Fatal(err)
-				}
+				writeBuiltinFixture(t, outside, []byte("outside"), 0o600)
 				_, p, e, _ := writeComponents(t, root)
 				path := "a"
 				if tree {
@@ -229,14 +224,10 @@ func TestWriteOverwriteConflictsPreserveExternalContent(t *testing.T) {
 					t.Fatal(err)
 				}
 				path := filepath.Join(root, "dir/a")
-				if err := os.WriteFile(path, []byte("base"), 0o600); err != nil {
-					t.Fatal(err)
-				}
+				writeBuiltinFixture(t, path, []byte("base"), 0o600)
 				outside := t.TempDir()
 				outsideFile := filepath.Join(outside, "a")
-				if err := os.WriteFile(outsideFile, []byte("outside"), 0o600); err != nil {
-					t.Fatal(err)
-				}
+				writeBuiltinFixture(t, outsideFile, []byte("outside"), 0o600)
 				_, p, e, r := writeComponents(t, root)
 				c, err := p.Prepare(context.Background(), writeCall(t, "dir/a", "new"), readObservation(t, r, "dir/a"))
 				if err != nil {

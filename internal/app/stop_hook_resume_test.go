@@ -31,17 +31,11 @@ func testStopRecoveryWindows(t *testing.T, cfg config.Config, root, workspace, p
 	for _, checkpoint := range checkpoints {
 		t.Run(fmt.Sprintf("recovery-%d-%s", checkpoint.Sequence, checkpoint.EventKind), func(t *testing.T) {
 			writeJournalPrefix(t, path, baseline, checkpoint.Sequence)
-			prefix, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
+			prefix := readAppTestFile(t, path)
 			loads := 0
 			load := func(context.Context, string, string) (domain.HookSnapshot, error) {
 				loads++
-				raw, err := os.ReadFile(path)
-				if err != nil {
-					t.Fatal(err)
-				}
+				raw := readAppTestFile(t, path)
 				lines := bytes.Split(bytes.TrimSuffix(raw, []byte("\n")), []byte("\n"))
 				last, err := session.DecodeRecord(lines[len(lines)-1])
 				if err != nil || last.EventKind != session.EventTurnCompleted && last.EventKind != session.EventTurnFailed {
@@ -49,13 +43,8 @@ func testStopRecoveryWindows(t *testing.T, cfg config.Config, root, workspace, p
 				}
 				return domain.NewHookSnapshot(nil, []domain.HookDiagnostic{{Source: domain.HookSourceProject, Code: domain.HookConfigInvalid}})
 			}
-			resumed, err := openChatResourcesWithHooks(context.Background(), cfg, dataPaths{sessionRoot: root}, string(thread), false, workspace, chatResourceHooks{loadHooks: load})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := resumed.close(context.Background()); err != nil {
-				t.Fatal(err)
-			}
+			resumed := mustOpenChatResourcesWithHooks(t, context.Background(), cfg, dataPaths{sessionRoot: root}, string(thread), false, workspace, chatResourceHooks{loadHooks: load})
+			closeAppTestResources(t, resumed)
 			after, err := os.ReadFile(path)
 			if err != nil || !bytes.HasPrefix(after, prefix) || loads != 1 {
 				t.Fatal("recovery changed prefix or load order", err)
@@ -86,13 +75,8 @@ func testStopRecoveryWindows(t *testing.T, cfg config.Config, root, workspace, p
 				}
 				writeJournalPrefix(t, path, after, record.Sequence)
 				crashPrefix, _ := os.ReadFile(path)
-				second, err := openChatResourcesWithHooks(context.Background(), cfg, dataPaths{sessionRoot: root}, string(thread), false, workspace, chatResourceHooks{loadHooks: load})
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := second.close(context.Background()); err != nil {
-					t.Fatal(err)
-				}
+				second := mustOpenChatResourcesWithHooks(t, context.Background(), cfg, dataPaths{sessionRoot: root}, string(thread), false, workspace, chatResourceHooks{loadHooks: load})
+				closeAppTestResources(t, second)
 				final, _ := os.ReadFile(path)
 				expectedLines := bytes.Split(bytes.TrimSuffix(after, []byte("\n")), []byte("\n"))
 				actualLines := bytes.Split(bytes.TrimSuffix(final, []byte("\n")), []byte("\n"))
@@ -118,20 +102,13 @@ func testStopRecoveryWindows(t *testing.T, cfg config.Config, root, workspace, p
 
 				after = final
 			}
-			again, err := openChatResourcesWithHooks(context.Background(), cfg, dataPaths{sessionRoot: root}, string(thread), false, workspace, chatResourceHooks{loadHooks: load})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := again.close(context.Background()); err != nil {
-				t.Fatal(err)
-			}
+			again := mustOpenChatResourcesWithHooks(t, context.Background(), cfg, dataPaths{sessionRoot: root}, string(thread), false, workspace, chatResourceHooks{loadHooks: load})
+			closeAppTestResources(t, again)
 			repeated, _ := os.ReadFile(path)
 			if !bytes.Equal(repeated, after) {
 				t.Fatal("repeat recovery changed bytes")
 			}
 		})
 	}
-	if err := os.WriteFile(path, baseline, 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, path, baseline, 0600)
 }

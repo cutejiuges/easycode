@@ -8,6 +8,7 @@ import (
 	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/protocol"
+	"easycode/internal/provider/testsupport"
 	"easycode/internal/provider/transport"
 	"easycode/internal/tool"
 )
@@ -64,7 +65,7 @@ func TestResponsesStreamReducerNormalizesCompletedUsage(t *testing.T) {
 }
 
 func TestResponsesStreamReducerProducesOrderedHeterogeneousReadyCalls(t *testing.T) {
-	reducer := newResponsesStreamReducer(testOpenAIToolCatalog(t))
+	reducer := newResponsesStreamReducer(testsupport.ToolCatalog(t))
 	reduceOpenAIEvent(t, reducer, `{"type":"response.created","response":{"id":"resp-tools"}}`)
 	calls := []struct {
 		index     int
@@ -103,7 +104,7 @@ func TestResponsesStreamReducerProducesOrderedHeterogeneousReadyCalls(t *testing
 }
 
 func TestResponsesStreamReducerRejectsIncompleteReadArguments(t *testing.T) {
-	reducer := newResponsesStreamReducer(testOpenAIToolCatalog(t))
+	reducer := newResponsesStreamReducer(testsupport.ToolCatalog(t))
 	reduceOpenAIEvent(t, reducer, `{"type":"response.created","response":{"id":"resp-tool"}}`)
 	reduceOpenAIEvent(t, reducer, `{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc-1","call_id":"call-1","name":"Read"}}`)
 	_, err := reducer.reduce(transport.SSEEvent{Data: `{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc-1","call_id":"call-1","name":"Read","arguments":"{}"}}`})

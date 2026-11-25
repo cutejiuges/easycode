@@ -3,14 +3,12 @@ package openai
 import (
 	"bytes"
 	"context"
-	"easycode/internal/codec"
+	"reflect"
+	"testing"
+
 	"easycode/internal/domain"
 	"easycode/internal/provider"
-	"encoding/json"
-	"os"
-	"reflect"
-	"strings"
-	"testing"
+	"easycode/internal/provider/testsupport"
 )
 
 // stopGoldenValues 固定两次反馈、真实 Skill 纠正、opaque 和完整窗口摘要的请求证据。
@@ -19,68 +17,23 @@ func stopGoldenValues(t *testing.T) map[string][]byte { return stopGoldenValuesW
 func stopGoldenValuesWithFiles(t *testing.T, includeFiles bool) map[string][]byte {
 	t.Helper()
 	c, initial, initialEntry := stopTestConversation(t)
-	feedback := stopTestFeedback(t, 0)
-	user, _ := domain.NewUserInput("01900000-0000-7000-8000-000000000003", "  /review keep indentation\n")
-	source, _ := domain.NewSkillSource("project", "review", "easycode")
-	attachment, _ := domain.NewSkillAttachment(source, "review", domain.SkillDigest("frozen instructions"), "keep indentation", "frozen instructions")
-	user, _ = user.WithSkillAttachment(attachment)
-	if includeFiles {
-		frozen := frozenFileInput(t, false)
-		user, _ = domain.NewUserInput(user.ID(), user.Text()+frozen.Text())
-		user, _ = user.WithSkillAttachment(attachment)
-		var err error
-		user, err = user.WithFileAttachments(frozen.FileAttachments())
+	initialNative, _ := encodeNativeCommit(initialEntry)
+	sampleNative, _ := encodeNativeCommit(c.history.Entries()[1])
+	appendSample := func(text string) provider.NativeCommitEnvelope {
+		sample := stopTestSample(stopTestTurn, text)
+		c.history.Append(sample)
+		envelope, err := encodeNativeCommit(sample)
 		if err != nil {
 			t.Fatal(err)
 		}
+		return envelope
 	}
-
-	association, _ := domain.NewInputAssociation(stopTestTurn, domain.InputSteering, 1, []domain.InputID{user.ID()})
-	candidate, _ := domain.NewStopWithSteering(feedback, association, []domain.UserInput{user})
-	prepared, err := c.PrepareStopContinuation(candidate)
-	if err != nil {
-		t.Fatal(err)
-	}
-	native, err := prepared.FeedbackEnvelope()
-	if err != nil {
-		t.Fatal(err)
-	}
-	steer, ok, err := prepared.SteeringEnvelope()
-	if err != nil || !ok {
-		t.Fatal(err)
-	}
-	initialNative, _ := encodeNativeCommit(initialEntry)
-	sampleNative, _ := encodeNativeCommit(c.history.Entries()[1])
-	r0, _ := provider.NewInputRestoreRecord(initial, initialNative)
-	r1, _ := provider.NewSampleRestoreRecord(stopTestTurn, sampleNative)
-	r2, _ := provider.NewStopFeedbackRestoreRecord(feedback, native)
-	r3, _ := provider.NewInputRestoreRecord(association, steer)
-	records := []provider.RestoreRecord{r0, r1, r2, r3}
-	if err := prepared.Finalize(); err != nil {
-		t.Fatal(err)
-	}
-	sample := stopTestSample(stopTestTurn, "second answer")
-	c.history.Append(sample)
-	envelope, _ := encodeNativeCommit(sample)
-	record, _ := provider.NewSampleRestoreRecord(stopTestTurn, envelope)
-	records = append(records, record)
-	feedback2 := stopTestFeedback(t, 1)
-	candidate, _ = domain.NewStopFeedbackOnly(feedback2)
-	prepared, err = c.PrepareStopContinuation(candidate)
-	if err != nil {
-		t.Fatal(err)
-	}
-	envelope, _ = prepared.FeedbackEnvelope()
-	record, _ = provider.NewStopFeedbackRestoreRecord(feedback2, envelope)
-	records = append(records, record)
-	if err := prepared.Finalize(); err != nil {
-		t.Fatal(err)
-	}
+	native, steer, feedback2, records := testsupport.StopGoldenHistory(t, c, initial, initialNative, sampleNative, includeFiles, appendSample)
 	restored := testConversation(t, c.provider)
 	if _, err := restoreNativeHistory(context.Background(), "model", records, &restored.history); err != nil {
 		t.Fatal(err)
 	}
-	sampling, err := testSamplingInput(t, c.provider.config.Inference).WithToolCatalog(testOpenAIToolCatalog(t))
+	sampling, err := testSamplingInput(t, c.provider.config.Inference).WithToolCatalog(testsupport.ToolCatalog(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,10 +79,8 @@ func stopGoldenValuesWithFiles(t *testing.T, includeFiles bool) map[string][]byt
 		}
 	}
 	// 后续摘要覆盖完整旧窗口；已消费的反馈进入摘要来源，完整 transcript 永不丢失。
-	sample = stopTestSample(stopTestTurn, "final answer")
-	c.history.Append(sample)
-	envelope, _ = encodeNativeCommit(sample)
-	record, _ = provider.NewSampleRestoreRecord(stopTestTurn, envelope)
+	envelope := appendSample("final answer")
+	record, _ := provider.NewSampleRestoreRecord(stopTestTurn, envelope)
 	records = append(records, record)
 	snapshot := c.history.Snapshot()
 	sourceBefore, err := nativeCompactionSource(snapshot, "model")
@@ -173,58 +124,11 @@ func stopGoldenValuesWithFiles(t *testing.T, includeFiles bool) map[string][]byt
 	if err != nil {
 		t.Fatal(err)
 	}
-	envelopeCheckpoint, err := checkpoint.Checkpoint()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := checkpoint.Finalize(); err != nil {
-		t.Fatal(err)
-	}
-	checkpointRecord, err := provider.NewCheckpointRestoreRecord(envelopeCheckpoint, domain.NewNoTaskProgress())
-	if err != nil {
-		t.Fatal(err)
-	}
-	records = append(records, checkpointRecord)
-	value, _, err := c.provider.RestoreConversation(context.Background(), c.threadID, records)
-	if err != nil {
-		t.Fatal(err)
-	}
-	recovered := value.(*Conversation)
-	_, footprint, err := recovered.ProjectContextWindow()
-	if err != nil || footprint.Revision() != 8 {
-		t.Fatal("checkpoint counted as native or feedback omitted", err)
-	}
-	recoveredTranscript, _, err := recovered.ProjectTranscriptFrom(0)
-	if err != nil || !reflect.DeepEqual(transcript, recoveredTranscript) || !reflect.DeepEqual(before, recovered.ProjectHistory()) {
-		t.Fatal("checkpoint lost full sources", err)
-	}
-	live, err := c.compileSamplingRequest(c.history.Entries(), sampling)
-	if err != nil {
-		t.Fatal(err)
-	}
-	replay, err := recovered.compileSamplingRequest(recovered.history.Entries(), sampling)
-	if err != nil || !bytes.Equal(live.Bytes(), replay.Bytes()) {
-		t.Fatal("checkpoint restore request changed", err)
-	}
-	values["stop_checkpoint_request.golden.json"] = append(live.Bytes(), '\n')
-	evidence, _ := codec.MarshalStable(struct {
-		NativeRevision  uint64            `json:"native_revision"`
-		ContextRevision uint64            `json:"context_revision"`
-		Native          []json.RawMessage `json:"native"`
-	}{7, footprint.Revision(), []json.RawMessage{native.Payload(), steer.Payload()}})
-	values["stop_delivery.golden.json"] = append(evidence, '\n')
+	values["stop_checkpoint_request.golden.json"], values["stop_delivery.golden.json"] = testsupport.StopCheckpointGolden(t, c, checkpoint, records, sampling, native, steer, before, transcript)
 	return values
 }
 func TestStopHookNativeRequestCacheAndCheckpointGoldens(t *testing.T) {
-	for name, got := range stopGoldenValues(t) {
-		want, err := os.ReadFile("testdata/" + name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !bytes.Equal(want, got) {
-			t.Fatalf("Stop golden differs %s", name)
-		}
-	}
+	testsupport.CheckStopGoldens(t, stopGoldenValues(t), false)
 }
 
 func mustStopCachePolicy(t *testing.T) domain.CachePolicy {
@@ -237,20 +141,5 @@ func mustStopCachePolicy(t *testing.T) domain.CachePolicy {
 }
 
 func TestFileStopNativeRequestCacheAndCheckpointGoldens(t *testing.T) {
-	values := stopGoldenValuesWithFiles(t, true)
-	for name, actual := range values {
-		want, err := os.ReadFile("testdata/files_" + name)
-		if err != nil || !bytes.Equal(want, actual) {
-			t.Fatalf("file Stop golden differs %s: %v", name, err)
-		}
-	}
-	for name, body := range values {
-		if strings.Contains(name, "checkpoint_request") {
-			if bytes.Contains(body, []byte("# Attached workspace file")) {
-				t.Fatal("checkpoint rehydrated old files")
-			}
-		} else if strings.Contains(name, "request.golden") && !bytes.Contains(body, []byte("# Attached workspace file")) {
-			t.Fatal("request lost frozen file body", name)
-		}
-	}
+	testsupport.CheckStopGoldens(t, stopGoldenValuesWithFiles(t, true), true)
 }

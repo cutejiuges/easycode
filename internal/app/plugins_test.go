@@ -7,7 +7,6 @@ import (
 	"easycode/internal/config"
 	"easycode/internal/domain"
 	"easycode/internal/extension/plugin"
-	"easycode/internal/protocol"
 	"easycode/internal/secret"
 	"easycode/internal/session"
 	"easycode/internal/tool"
@@ -58,172 +57,116 @@ func pluginToolFrames(family domain.ProviderFamily, sample int, name string) str
 	return strings.NewReplacer(`"name":"Read"`, `"name":"Skill"`, string(old), string(quoted), "resp-tool", fmt.Sprintf("resp-plugin-%d", sample), "msg-tool", fmt.Sprintf("msg-plugin-%d", sample), "call-1", fmt.Sprintf("call-plugin-%d", sample), "toolu-1", fmt.Sprintf("toolu-plugin-%d", sample), "fc-1", fmt.Sprintf("fc-plugin-%d", sample)).Replace(frames.String())
 }
 
-func TestPluginSkillLifecycleBothProvidersAndHosts(t *testing.T) {
+func TestPluginSkillLifecycleBothProviders(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	for _, kind := range []string{"easycode", "claude", "codex", "agentplugins"} {
+	// 格式加载由 loader 与 CLI smoke 验证；这里保留自动与手工专用两种调用策略。
+	for _, kind := range []string{"claude", "codex"} {
 		for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
-			for _, mode := range []string{"once", "interactive", "stream"} {
-				t.Run(kind+"/"+string(family)+"/"+mode, func(t *testing.T) {
-					root := appPluginFixture(t, kind)
-					workspace := t.TempDir()
-					dataRoot := filepath.Join(t.TempDir(), "sessions")
-					id := map[string]string{"easycode": "easyqa", "claude": "claudeqa", "codex": "codexqa", "agentplugins": "agentqa"}[kind]
-					name := id + ":review"
-					var mu sync.Mutex
-					var requests [][]byte
-					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-						body, err := io.ReadAll(r.Body)
+			t.Run(kind+"/"+string(family), func(t *testing.T) {
+				root := appPluginFixture(t, kind)
+				workspace := t.TempDir()
+				dataRoot := filepath.Join(t.TempDir(), "sessions")
+				id := kind + "qa"
+				name := id + ":review"
+				var requests requestRecorder
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					index, _ := requests.record(t, r)
+					w.Header().Set("Content-Type", "text/event-stream")
+					_, _ = io.WriteString(w, pluginToolFrames(family, index+1, name))
+				}))
+				defer server.Close()
+				cfg := config.Config{Provider: config.Provider{Family: family, Model: "fixture-model", BaseURL: server.URL, APIKey: secret.New("plugin-fixture-key")}}
+				resources := mustOpenChatResourcesWithHooks(t, context.Background(), cfg, dataPaths{sessionRoot: dataRoot}, "", false, workspace, chatResourceHooks{pluginDirs: []string{root}})
+				t.Cleanup(func() { _ = resources.close(context.Background()) })
+				if len(resources.plugins) != 1 || resources.plugins[0].Available != 1 || resources.plugins[0].Status != domain.PluginAvailable {
+					t.Fatal("stale plugin view", resources.plugins)
+				}
+				input := `{"version":1,"type":"input.submit","request_id":"plugin","text":"$` + name + ` exact args"}` + "\n"
+				output := &appWriteCloser{}
+				outcome := runStreamJSON(context.Background(), Options{Input: io.NopCloser(strings.NewReader(input)), Output: output}, resources)
+				if outcome.Class != ExitSuccess || strings.Contains(output.String(), "plugin.install") {
+					t.Fatalf("stream: %#v %s", outcome, output.String())
+				}
+				thread := resources.identity.ThreadID
+				journal, _ := resources.service.repository.JournalPath(thread)
+				closeAppTestResources(t, resources)
+				captured := requests.snapshot()
+				if len(captured) != 3 || !bytes.Contains(captured[0], []byte("Review exact args")) || !bytes.Contains(captured[2], []byte("Check correctness")) {
+					t.Fatalf("missing actual plugin content: %d requests", len(captured))
+				}
+				if (kind == "codex") != bytes.Contains(captured[1], []byte("skill_model_invocation_disabled")) {
+					t.Fatal("model bypassed effective sidecar policy")
+				}
+				for _, request := range captured {
+					if bytes.Contains(request, []byte(root)) || bytes.Contains(request, []byte("plugin-fixture-key")) {
+						t.Fatal("private source leaked")
+					}
+				}
+				loaded, _ := loadToolLoopPlan(t, dataRoot, thread)
+				baseline := readAppTestFile(t, journal)
+				results := 0
+				for _, record := range loaded.Records {
+					if record.EventKind == session.EventToolCallResult {
+						p, err := session.DecodeToolCallResultPayload(record)
+						if err != nil {
+							t.Fatal(err)
+						}
+						if p.Capability != tool.CapabilitySkill {
+							t.Fatal("new plugin tool")
+						}
+						results++
+					}
+				}
+				if results != 2 {
+					t.Fatal("missing frozen tool results")
+				}
+				if err := os.RemoveAll(root); err != nil {
+					t.Fatal(err)
+				}
+				reads := 0
+				hooks := chatResourceHooks{pluginOptions: plugin.Options{BeforeOpen: func(string) { reads++ }}}
+				restored := mustOpenChatResourcesWithHooks(t, context.Background(), cfg, dataPaths{sessionRoot: dataRoot}, string(thread), false, workspace, hooks)
+				m := restored.history.Turns[0].Messages[0]
+				if !m.HasSkill || m.Skill.Name != name || !strings.Contains(m.Skill.Content, "exact args") || len(restored.plugins) != 0 || reads != 0 {
+					t.Fatal("recovery reread or reenabled plugin")
+				}
+				closeAppTestResources(t, restored)
+				if kind != "codex" {
+					return
+				}
+				for _, checkpoint := range loaded.Records {
+					if checkpoint.EventKind != session.EventToolCallReady && checkpoint.EventKind != session.EventToolExecutionStarted && checkpoint.EventKind != session.EventToolCallResult && checkpoint.EventKind != session.EventProviderNativeCommit {
+						continue
+					}
+					if checkpoint.BatchIndex+1 != checkpoint.BatchSize || checkpoint.Sequence < 6 {
+						continue
+					}
+					writeJournalPrefix(t, journal, baseline, checkpoint.Sequence)
+					var inspected bool
+					beforeOpen := func(string) {
+						if inspected {
+							return
+						}
+						inspected = true
+						data, err := os.ReadFile(journal)
 						if err != nil {
 							t.Error(err)
 							return
 						}
-						mu.Lock()
-						requests = append(requests, body)
-						sample := len(requests)
-						mu.Unlock()
-						w.Header().Set("Content-Type", "text/event-stream")
-						_, _ = io.WriteString(w, pluginToolFrames(family, sample, name))
-					}))
-					defer server.Close()
-					cfg := config.Config{Provider: config.Provider{Family: family, Model: "fixture-model", BaseURL: server.URL, APIKey: secret.New("plugin-fixture-key")}}
-					resources, err := openChatResourcesWithHooks(context.Background(), cfg, dataPaths{sessionRoot: dataRoot}, "", false, workspace, chatResourceHooks{pluginDirs: []string{root}})
-					if err != nil {
-						t.Fatal(err)
-					}
-					t.Cleanup(func() { _ = resources.close(context.Background()) })
-					if len(resources.plugins) != 1 || resources.plugins[0].Available != 1 || resources.plugins[0].Status != domain.PluginAvailable {
-						t.Fatal("stale plugin view", resources.plugins)
-					}
-					switch mode {
-					case "once":
-						submitAppTurn(t, resources, "$"+name+" exact args")
-					case "interactive":
-						if err := resources.session.StartInteractive(context.Background()); err != nil {
-							t.Fatal(err)
-						}
-						events, err := submitInteractiveFixture(t, resources.session, context.Background(), "$"+name+" exact args")
-						if err != nil {
-							t.Fatal(err)
-						}
-						completed := false
-						for event := range events {
-							if event.Kind == protocol.EventTurnFailed {
-								t.Fatal(string(event.Payload))
-							}
-							completed = completed || event.Kind == protocol.EventTurnCompleted
-						}
-						if !completed {
-							t.Fatal("missing completion")
-						}
-					case "stream":
-						input := `{"version":1,"type":"input.submit","request_id":"plugin","text":"$` + name + ` exact args"}` + "\n"
-						output := &appWriteCloser{}
-						outcome := runStreamJSON(context.Background(), Options{Input: io.NopCloser(strings.NewReader(input)), Output: output}, resources)
-						if outcome.Class != ExitSuccess || strings.Contains(output.String(), "plugin.install") {
-							t.Fatalf("stream: %#v %s", outcome, output.String())
+						if !bytes.Contains(data, []byte(`"event_kind":"turn_failed"`)) && !bytes.Contains(data, []byte(`"event_kind":"turn_completed"`)) {
+							t.Error("source read before old turn reconciliation")
 						}
 					}
-					thread := resources.identity.ThreadID
-					journal, _ := resources.service.repository.JournalPath(thread)
-					if err := resources.close(context.Background()); err != nil {
-						t.Fatal(err)
+					resumed := mustOpenChatResourcesWithHooks(t, context.Background(), cfg, dataPaths{sessionRoot: dataRoot}, string(thread), false, workspace, chatResourceHooks{pluginDirs: []string{root}, pluginOptions: plugin.Options{BeforeOpen: beforeOpen}})
+					if !inspected || len(resumed.plugins) != 1 || resumed.plugins[0].Status != domain.PluginUnavailable {
+						t.Fatal("missing future source isolation")
 					}
-					mu.Lock()
-					captured := append([][]byte(nil), requests...)
-					mu.Unlock()
-					if len(captured) != 3 || !bytes.Contains(captured[0], []byte("Review exact args")) || !bytes.Contains(captured[2], []byte("Check correctness")) {
-						t.Fatalf("missing actual plugin content: %d requests", len(captured))
+					closeAppTestResources(t, resumed)
+					if len(requests.snapshot()) != 3 {
+						t.Fatal("recovery contacted provider")
 					}
-					if (kind == "codex") != bytes.Contains(captured[1], []byte("skill_model_invocation_disabled")) {
-						t.Fatal("model bypassed effective sidecar policy")
-					}
-					for _, request := range captured {
-						if bytes.Contains(request, []byte(root)) || bytes.Contains(request, []byte("plugin-fixture-key")) {
-							t.Fatal("private source leaked")
-						}
-					}
-					loaded, _ := loadToolLoopPlan(t, dataRoot, thread)
-					baseline, err := os.ReadFile(journal)
-					if err != nil {
-						t.Fatal(err)
-					}
-					results := 0
-					for _, record := range loaded.Records {
-						if record.EventKind == session.EventToolCallResult {
-							p, err := session.DecodeToolCallResultPayload(record)
-							if err != nil {
-								t.Fatal(err)
-							}
-							if p.Capability != tool.CapabilitySkill {
-								t.Fatal("new plugin tool")
-							}
-							results++
-						}
-					}
-					if results != 2 {
-						t.Fatal("missing frozen tool results")
-					}
-					if err := os.RemoveAll(root); err != nil {
-						t.Fatal(err)
-					}
-					reads := 0
-					hooks := chatResourceHooks{pluginOptions: plugin.Options{BeforeOpen: func(string) { reads++ }}}
-					restored, err := openChatResourcesWithHooks(context.Background(), cfg, dataPaths{sessionRoot: dataRoot}, string(thread), false, workspace, hooks)
-					if err != nil {
-						t.Fatal(err)
-					}
-					m := restored.history.Turns[0].Messages[0]
-					if !m.HasSkill || m.Skill.Name != name || !strings.Contains(m.Skill.Content, "exact args") || len(restored.plugins) != 0 || reads != 0 {
-						t.Fatal("recovery reread or reenabled plugin")
-					}
-					if err := restored.close(context.Background()); err != nil {
-						t.Fatal(err)
-					}
-					if kind != "codex" || mode != "once" {
-						return
-					}
-					for _, checkpoint := range loaded.Records {
-						if checkpoint.EventKind != session.EventToolCallReady && checkpoint.EventKind != session.EventToolExecutionStarted && checkpoint.EventKind != session.EventToolCallResult && checkpoint.EventKind != session.EventProviderNativeCommit {
-							continue
-						}
-						if checkpoint.BatchIndex+1 != checkpoint.BatchSize || checkpoint.Sequence < 6 {
-							continue
-						}
-						writeJournalPrefix(t, journal, baseline, checkpoint.Sequence)
-						var inspected bool
-						beforeOpen := func(string) {
-							if inspected {
-								return
-							}
-							inspected = true
-							data, err := os.ReadFile(journal)
-							if err != nil {
-								t.Error(err)
-								return
-							}
-							if !bytes.Contains(data, []byte(`"event_kind":"turn_failed"`)) && !bytes.Contains(data, []byte(`"event_kind":"turn_completed"`)) {
-								t.Error("source read before old turn reconciliation")
-							}
-						}
-						resumed, err := openChatResourcesWithHooks(context.Background(), cfg, dataPaths{sessionRoot: dataRoot}, string(thread), false, workspace, chatResourceHooks{pluginDirs: []string{root}, pluginOptions: plugin.Options{BeforeOpen: beforeOpen}})
-						if err != nil {
-							t.Fatal(err)
-						}
-						if !inspected || len(resumed.plugins) != 1 || resumed.plugins[0].Status != domain.PluginUnavailable {
-							t.Fatal("missing future source isolation")
-						}
-						if err := resumed.close(context.Background()); err != nil {
-							t.Fatal(err)
-						}
-						mu.Lock()
-						count := len(requests)
-						mu.Unlock()
-						if count != 3 {
-							t.Fatal("recovery contacted provider")
-						}
-					}
-				})
-			}
+				}
+			})
 		}
 	}
 }
@@ -237,15 +180,12 @@ func TestSourceCloseWaitsForPreadmissionPluginPreparation(t *testing.T) {
 	var once sync.Once
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("cancelled input contacted provider") }))
 	defer server.Close()
-	resources, err := openChatResourcesWithHooks(context.Background(), config.Config{Provider: config.Provider{Family: domain.ProviderOpenAI, Model: "fixture-model", BaseURL: server.URL, APIKey: secret.New("fixture")}}, dataPaths{sessionRoot: filepath.Join(t.TempDir(), "sessions")}, "", false, workspace, chatResourceHooks{pluginDirs: []string{root}, pluginOptions: plugin.Options{AfterRead: func() {
+	resources := mustOpenChatResourcesWithHooks(t, context.Background(), config.Config{Provider: config.Provider{Family: domain.ProviderOpenAI, Model: "fixture-model", BaseURL: server.URL, APIKey: secret.New("fixture")}}, dataPaths{sessionRoot: filepath.Join(t.TempDir(), "sessions")}, "", false, workspace, chatResourceHooks{pluginDirs: []string{root}, pluginOptions: plugin.Options{AfterRead: func() {
 		if blocked.Load() {
 			once.Do(func() { close(entered) })
 			<-resume
 		}
 	}}})
-	if err != nil {
-		t.Fatal(err)
-	}
 	path, _ := resources.service.repository.JournalPath(resources.identity.ThreadID)
 	before, _ := os.ReadFile(path)
 	blocked.Store(true)
@@ -282,7 +222,5 @@ func TestSourceCloseWaitsForPreadmissionPluginPreparation(t *testing.T) {
 	if !bytes.Equal(before, after) {
 		t.Fatal("preadmission cancellation wrote input")
 	}
-	if err := resources.close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	closeAppTestResources(t, resources)
 }

@@ -129,9 +129,7 @@ func TestRuntimeEffortDualProviderToolsRecoveryAndRestart(t *testing.T) {
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		t.Run(string(family), func(t *testing.T) {
 			cwd := t.TempDir()
-			if err := os.WriteFile(filepath.Join(cwd, "README.md"), []byte("read exactly once"), 0600); err != nil {
-				t.Fatal(err)
-			}
+			writeAppTestFile(t, filepath.Join(cwd, "README.md"), []byte("read exactly once"), 0600)
 			bodies := make(chan []byte, 16)
 			firstRelease := make(chan struct{})
 			var count atomic.Int32
@@ -152,10 +150,7 @@ func TestRuntimeEffortDualProviderToolsRecoveryAndRestart(t *testing.T) {
 			defer server.Close()
 			cfg := reasoningFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, Model: "fixture-model", APIKey: secret.New("effort-fixture")}})
 			root := filepath.Join(t.TempDir(), "sessions")
-			r, err := openChatResources(context.Background(), cfg, root, "", cwd)
-			if err != nil {
-				t.Fatal(err)
-			}
+			r := mustOpenChatResources(t, context.Background(), cfg, root, "", cwd)
 			if err := r.session.StartInteractive(context.Background()); err != nil {
 				t.Fatal(err)
 			}
@@ -205,20 +200,12 @@ func TestRuntimeEffortDualProviderToolsRecoveryAndRestart(t *testing.T) {
 			if pathErr != nil {
 				t.Fatal(pathErr)
 			}
-			before, readErr := os.ReadFile(journalPath)
-			if readErr != nil {
-				t.Fatal(readErr)
-			}
+			before := readAppTestFile(t, journalPath)
 			if bytes.Contains(before, []byte("selection_revision")) || bytes.Contains(before, []byte("effort_snapshot")) {
 				t.Fatal("process setting persisted")
 			}
-			if err := r.close(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			r, err = openChatResources(context.Background(), cfg, root, string(thread), cwd)
-			if err != nil {
-				t.Fatal(err)
-			}
+			closeAppTestResources(t, r)
+			r = mustOpenChatResources(t, context.Background(), cfg, root, string(thread), cwd)
 			if count.Load() != 7 {
 				t.Fatal("restore performed network")
 			}
@@ -233,9 +220,7 @@ func TestRuntimeEffortDualProviderToolsRecoveryAndRestart(t *testing.T) {
 			if readErr != nil || !bytes.Equal(before, after) {
 				t.Fatal("restore/query rewrote journal", readErr)
 			}
-			if err := r.close(context.Background()); err != nil {
-				t.Fatal(err)
-			}
+			closeAppTestResources(t, r)
 			for _, entry := range r.history.Turns {
 				for _, message := range entry.Messages {
 					if strings.Contains(message.Text, "configuration_update") {
@@ -275,10 +260,7 @@ func TestRuntimeEffortQuestionAndApprovalKeepCapturedPolicy(t *testing.T) {
 			defer server.Close()
 			cfg := reasoningFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, Model: "fixture-model", APIKey: secret.New("effort-fixture")}})
 			cwd := t.TempDir()
-			r, err := openChatResourcesWithHooks(context.Background(), cfg, dataPaths{sessionRoot: filepath.Join(t.TempDir(), "sessions")}, "", false, cwd, chatResourceHooks{interactiveApprovals: true})
-			if err != nil {
-				t.Fatal(err)
-			}
+			r := mustOpenChatResourcesWithHooks(t, context.Background(), cfg, dataPaths{sessionRoot: filepath.Join(t.TempDir(), "sessions")}, "", false, cwd, chatResourceHooks{interactiveApprovals: true})
 			defer r.close(context.Background())
 			if err := r.session.StartInteractive(context.Background()); err != nil {
 				t.Fatal(err)
@@ -384,10 +366,7 @@ func TestRuntimeEffortDisconnectAndCancelKeepFutureSelection(t *testing.T) {
 				}))
 				defer server.Close()
 				cfg := reasoningFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, Model: "fixture-model", APIKey: secret.New("effort-fixture")}})
-				r, err := openChatResources(context.Background(), cfg, filepath.Join(t.TempDir(), "sessions"), "", t.TempDir())
-				if err != nil {
-					t.Fatal(err)
-				}
+				r := mustOpenChatResources(t, context.Background(), cfg, filepath.Join(t.TempDir(), "sessions"), "", t.TempDir())
 				defer r.close(context.Background())
 				if err := r.session.StartInteractive(context.Background()); err != nil {
 					t.Fatal(err)
@@ -414,10 +393,7 @@ func TestRuntimeEffortDisconnectAndCancelKeepFutureSelection(t *testing.T) {
 					t.Fatal("failure rolled back or resent")
 				}
 				path, _ := r.service.repository.JournalPath(r.identity.ThreadID)
-				raw, err := os.ReadFile(path)
-				if err != nil {
-					t.Fatal(err)
-				}
+				raw := readAppTestFile(t, path)
 				if bytes.Contains(raw, []byte(`"sample_usage"`)) || bytes.Contains(raw, []byte("opaque-reasoning-sentinel")) {
 					t.Fatal("partial sample committed native or usage")
 				}

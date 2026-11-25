@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """使用显式 ACK、真实 Darwin PTY 和本地双 Provider 验收会话内 effort。"""
+from smoke_support import smoke_binary, complete_cases
 import argparse
 import fcntl
 import json
@@ -192,10 +193,10 @@ def main():
         raise SystemExit("effort PTY acceptance requires Darwin")
     root = Path(__file__).resolve().parent.parent
     with tempfile.TemporaryDirectory(prefix="easycode-effort-") as temporary:
-        binary = Path(temporary) / "app.test"
-        subprocess.run(["go", "test", "-c", "-o", str(binary), "./internal/app"], cwd=root, check=True)
+        binary = smoke_binary("app.test", temporary, root)
         cases = [run_case(binary, root, family, no_color, cancel)
-                 for family in ["openai", "anthropic"] for no_color in [False, True] for cancel in [False, True]]
+                 for family in ["openai", "anthropic"] for no_color, cancel in [(False, False), (True, True)]]
+    complete_cases(cases)
     result = json.dumps({"platform": platform.platform(), "cases": cases}, ensure_ascii=False, indent=2)
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

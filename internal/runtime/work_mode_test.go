@@ -163,9 +163,7 @@ func TestWorkModeAndEffortAreIndependentSelections(t *testing.T) {
 func TestPlanCompactionSeparatesSummaryFromOrdinaryWindowPolicy(t *testing.T) {
 	value := newTestRuntime(t, newCompactionConversation(), &fakeJournal{})
 	planProfile, err := value.profile.WithWorkMode(domain.WorkModePlan)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	admission, rejection := value.preflightCompactionFor(planProfile, "Preserve decisions")
 	if rejection != "" {
 		t.Fatal(rejection)
@@ -176,13 +174,9 @@ func TestPlanCompactionSeparatesSummaryFromOrdinaryWindowPolicy(t *testing.T) {
 		t.Fatal("summary preflight did not use the full summary policy")
 	}
 	ordinary, err := value.contextPlanFor(planProfile)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	want, err := ordinary.CachePlan().StablePrefixFingerprint()
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	got, err := admission.before.CachePlan().StablePrefixFingerprint()
 	if err != nil || got != want {
 		t.Fatalf("ordinary window preflight lost the plan policy: %v", err)
@@ -202,14 +196,10 @@ func TestPlanModeRejectsPreparedMutationBeforeAnyCallIsRecorded(t *testing.T) {
 		stream: fixedStream(completedProviderEventWithSample(t, sample)),
 	}}
 	value, err := New(conversation, config)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	value.approvals.writeGrant.Store(true)
 	profile, err := value.profile.WithWorkMode(domain.WorkModePlan)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	var events []protocol.Event
 	err = value.runTurn(context.Background(), runtimeInputs("Plan the change"), profile, nil, func(event protocol.Event) {
 		events = append(events, event)

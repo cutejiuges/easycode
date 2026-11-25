@@ -12,12 +12,13 @@ import (
 	"easycode/internal/codec"
 	"easycode/internal/domain"
 	"easycode/internal/provider"
+	"easycode/internal/provider/testsupport"
 	"easycode/internal/secret"
 )
 
 func testPlanModeInput(t *testing.T, input provider.TurnInput) provider.TurnInput {
 	t.Helper()
-	catalog, err := testOpenAIToolCatalog(t).ForPlanMode()
+	catalog, err := testsupport.ToolCatalog(t).ForPlanMode()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +31,7 @@ func testPlanModeInput(t *testing.T, input provider.TurnInput) provider.TurnInpu
 
 func assertPlanExecRestore(t *testing.T, live, restored *Conversation) {
 	t.Helper()
-	base, err := testSamplingInput(t, live.provider.config.Inference).WithToolCatalog(testOpenAIToolCatalog(t))
+	base, err := testSamplingInput(t, live.provider.config.Inference).WithToolCatalog(testsupport.ToolCatalog(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,11 +52,11 @@ func assertPlanExecRestore(t *testing.T, live, restored *Conversation) {
 	if err != nil || !before.Equal(after) || before.SHA256() != after.SHA256() {
 		t.Fatal("restored planning request bytes or fingerprint differ", err)
 	}
-	opened, err := live.requestEvidence(input)
+	opened, err := live.TestEvidence(input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replayed, err := restored.requestEvidence(input)
+	replayed, err := restored.TestEvidence(input)
 	if err != nil || opened.NativeFingerprint() != replayed.NativeFingerprint() || !opened.Properties().Equal(replayed.Properties()) {
 		t.Fatal("restored planning request evidence differs", err)
 	}

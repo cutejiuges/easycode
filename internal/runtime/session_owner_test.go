@@ -44,9 +44,7 @@ func TestHostDetachDrainsFullOutputBuffer(t *testing.T) {
 		t.Fatal(err)
 	}
 	stream, err := host.Submit(context.Background(), "hello")
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	if event := <-stream; event.Kind != protocol.EventTurnStarted {
 		t.Fatal(event.Kind)
 	}

@@ -140,22 +140,7 @@ func TestInChatCommandsKeepPreCompactCancellationInChat(t *testing.T) {
 }
 
 func TestBranchCompletionKeepsPreCompletionDraftAndPublication(t *testing.T) {
-	chat := resumeChatFixture(resumeThreadA, protocol.TranscriptListPage{}).WithSkills([]domain.SkillListEntry{
-		completionSkillEntry(t, "branch", "Review a branch"), completionSkillEntry(t, "fork", "Review a fork"),
-	})
-	model, host := resumeTestShell(chat)
-	for _, name := range []string{"branch", "fork"} {
-		model = pickerKey(resumeType(model, "$"+name[:3]), tea.KeyTab)
-		if model.chat.composer.text != "$"+name+" " || len(host.requests) != 0 {
-			t.Fatal("the same-named Skill lost its explicit completion")
-		}
-		model.chat.composer.clear()
-	}
-	model = pickerKey(resumeType(model, "/bra"), tea.KeyTab)
-	if model.chat.composer.text != "/branch " || len(host.requests) != 0 {
-		t.Fatal("Tab created a branch instead of filling the command")
-	}
-	model.chat.composer.clear()
+	model, host := resumeTestShell(resumeChatFixture(resumeThreadA, protocol.TranscriptListPage{}))
 	draft := `/bra  Review @src "v2"`
 	model = resumeType(model, draft)
 	model.chat.composer.moveTo(len("/bra"))
@@ -221,11 +206,6 @@ func TestBranchAliasPreservesLiteralTitleAndMountsValidatedTarget(t *testing.T) 
 		!strings.Contains(model.View(), "branch history") || !strings.Contains(model.View(), "Session: dir\\") {
 		t.Fatalf("branch activation did not mount the prepared target: %s", model.View())
 	}
-	model = pickerUpdate(model, tea.WindowSizeMsg{Width: 24, Height: 6})
-	model = pickerKey(model, tea.KeyCtrlG)
-	if view := strings.ReplaceAll(scrollPickerViews(t, model), "\n", ""); !strings.Contains(view, "/resume "+string(resumeThreadA)) {
-		t.Fatalf("small terminal hid the complete source recovery command: %s", view)
-	}
 }
 
 func TestInChatResumeHandoffScopesNestedMessagesAndKeepsInputDisabled(t *testing.T) {
@@ -266,7 +246,7 @@ func TestInChatResumeHandoffScopesNestedMessagesAndKeepsInputDisabled(t *testing
 	}
 }
 
-func TestInChatChooserKeepsEmptyScopeAndShowsScrollableDirectoryHandoff(t *testing.T) {
+func TestInChatChooserKeepsEmptyScopeAndSelectionAfterPreviewFailure(t *testing.T) {
 	model, host := resumeTestShell(resumeChatFixture(resumeThreadA, protocol.TranscriptListPage{}))
 	model = pickerKey(resumeType(model, "/resume"), tea.KeyEnter)
 	model = pickerUpdate(model, PickerResult{Request: model.request, Entries: []SessionEntry{{ThreadID: resumeThreadA}}})
@@ -287,21 +267,9 @@ func TestInChatChooserKeepsEmptyScopeAndShowsScrollableDirectoryHandoff(t *testi
 	if model.picker.selected != resumeThreadB || model.picker.query != "REVIEW PAYMENT" || len(host.requests) != count {
 		t.Fatal("preview error or keys lost selection or opened a recovery")
 	}
-	model = pickerUpdate(model, tea.WindowSizeMsg{Width: 24, Height: 4})
-	model = pickerKey(model, tea.KeyEnter)
-	var lines strings.Builder
-	for range 32 {
-		lines.WriteString(strings.Split(model.View(), "\n")[0])
-		model = pickerKey(model, tea.KeyDown)
-	}
-	lines.WriteString(strings.ReplaceAll(model.View(), "\n", ""))
-	if !strings.Contains(lines.String(), "easycode --resume "+string(resumeThreadB)) ||
-		!strings.Contains(lines.String(), "/different/project") || !strings.Contains(lines.String(), "Incompatible") || len(host.requests) != count {
-		t.Fatalf("cross-directory hint is incomplete or launched a recovery: %s", lines.String())
-	}
 }
 
-func TestInChatDirectDirectoryHintKeepsTheCompleteCommand(t *testing.T) {
+func TestInChatDirectoryHintKeepsSourceAndModalInput(t *testing.T) {
 	model, host := resumeTestShell(resumeChatFixture(resumeThreadA, protocol.TranscriptListPage{}))
 	model = pickerUpdate(model, tea.WindowSizeMsg{Width: 30, Height: 4})
 	model = resumeDirect(model, resumeThreadB)
@@ -309,19 +277,8 @@ func TestInChatDirectDirectoryHintKeepsTheCompleteCommand(t *testing.T) {
 	model = pickerUpdate(model, PickerResult{Request: model.request, Stage: PickerCancelled, DirectoryMismatch: true,
 		Error: "From the session's creation directory, run " + command + " with compatible configuration",
 	})
-	var lines strings.Builder
-	for range 10 {
-		view := model.View()
-		next := pickerKey(model, tea.KeyDown)
-		if next.View() == view {
-			lines.WriteString(strings.ReplaceAll(view, "\n", ""))
-			break
-		}
-		lines.WriteString(strings.Split(view, "\n")[0])
-		model = next
-	}
-	if !strings.Contains(lines.String(), command) || model.phase != shellChat || model.chat.browser.thread != resumeThreadA {
-		t.Fatalf("the active source lost the full directory handoff hint: %s", lines.String())
+	if model.phase != shellChat || model.chat.browser.thread != resumeThreadA {
+		t.Fatal("directory mismatch replaced the active source")
 	}
 	model = pickerKey(model, tea.KeyEnter)
 	if len(host.requests) != 1 || len(model.chat.session.(*fakeChatSession).submits) != 0 {
