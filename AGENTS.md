@@ -109,7 +109,7 @@ explore -> propose -> review/confirm -> apply -> verify -> archive
 ## 7. 测试与完成标准
 
 - 全仓对新增测试代码保持克制。只有关键业务链路、必要的契约节点、真实故障或并发与资源所有权边界存在覆盖缺口时，才新增测试代码。优先扩充现有用例，Bug 修复只补能检出问题的最小回归。不以覆盖率或用例数量为目标，不逐函数配测试。
-- 全仓业务 Go 与测试 Go 的物理行数必须保持 **至少 3:2**，使用整数条件 `2P >= 3T` 硬校验，不设逐包或逐 PR 配额。`make test-ratio` 与 `make verify` 共用 `scripts/test_size_policy.json`，后者在编译和测试发现前检查；本地 pre-commit 与 CI 使用同一质量门。比例有余量也不能成为新增无独立风险测试的理由。
+- 全仓业务 Go 与测试 Go 的物理行数必须保持 **至少 3:2**，使用整数条件 `2P >= 3T` 硬校验，不设逐包或逐 PR 配额。`make test-ratio` 与 `make verify` 共用 `scripts/test_size_policy.json`，后者在编译和测试发现前检查；本地 pre-commit 与 CI 使用同一基础质量门。比例有余量也不能成为新增无独立风险测试的理由。
 - 统计完整工作树中所有平台、build tag 及未忽略新文件；T 包含全部 `_test.go` 和测试专属 Go 支持，P 只含业务 Go，排除固定 fixture、第三方和生成产物。测试 Python/Shell、smoke、runner 及支持代码另受同一策略文件的总行数预算约束，fixture 数量和字节单列。禁止通过压行、改名、搬迁、扩大排除或增加无业务价值代码达标；检查不得自动刷新预算。必要脚本增长须在对应 OpenSpec 中说明独立风险、净成本与耗时，比例变更须经用户明确批准。
 - 优先用少量代表性集成测试验证完整业务断言，复用已有 fixture 和辅助函数；已有用例能检出同一风险时直接扩充或复用，不另建重复矩阵。删除显而易见的 getter/构造器/字段透传断言、实现镜像、冗余快照及穷举排列；测试辅助设施不得比业务问题更复杂。
 - 按变更风险选择验证手段：Provider 原生请求/恢复与缓存使用必要 golden；SSE 选代表性分包、UTF-8、取消或断线；TUI 只保留关键交互的固定尺寸 snapshot；Session 保留当前格式和损坏恢复；Tool 保留副作用相关的拒绝、取消、重放或幂等。避免每个功能重复整套矩阵；只有用户明确要求迁移时才增加迁移测试。
@@ -117,12 +117,12 @@ explore -> propose -> review/confirm -> apply -> verify -> archive
 - Session 当前 fixture 必须逐字节固定且不得在测试运行时由当前 encoder 生成；用户明确要求并批准 migration fixture 后，同样必须使用仓库内不可变历史 bytes。
 - symlink/TOCTOU、Sync 失败、阻塞 stream 和 shutdown timeout 必须使用确定性故障注入，禁止依赖 sleep 或概率竞态证明正确性。
 - 禁止通过删除、跳过、弱化测试或编写无业务断言的测试掩盖失败；单测不得使用真实 API key 或默认访问外网。
-- 完成前必须执行 `make verify`，其范围不得弱于 gofmt、go vet、Staticcheck、架构边界测试、全量普通测试和经审计的必要 race test；pre-commit 必须执行同一质量门。仅通过语言工具和单测不能替代 AGENTS/OpenSpec 契约检查。
-- 迁移或修改关键终端交互覆盖时，必须通过统一 `make smoke` 的原生 macOS 代表场景；完整交付还须取得对应 CI job 的实际成功记录，不能用普通测试中的未启用 PTY helper 或仅修改 workflow 代替。复用构建与既有场景，不为每个功能重复 Provider、色彩和尺寸的全排列。
+- 完成前必须执行 `make verify`，其范围不得弱于 gofmt、go vet、Staticcheck、架构边界测试、全量普通测试和经审计的必要 race test。本地 pre-commit 必须依次执行分支检查、`make verify`、`make smoke`，任一步失败立即停止并阻止提交；不保留重复 pre-push。远端交付检查仅保留 `branch-governance` 与 `verify`，不保留 smoke job。仅通过语言工具和单测不能替代 AGENTS/OpenSpec 契约检查。
+- 每次本地提交必须通过统一 `make smoke` 的原生 macOS 代表场景，不缓存成功、不按变更文件跳过；其他本地平台明确失败并阻止提交，不以跳过计作通过。必须取得实际场景完成与终端恢复证据，不能用普通测试中的未启用 PTY helper 代替。复用构建与既有场景，不为每个功能重复 Provider、色彩和尺寸的全排列。
 - 默认 race 只执行 `scripts/race_policy.json` 正向列出的关键并发、提交取消、stream、writer、lease 和资源关闭路径。大型矩阵选代表场景，新增普通测试不自动进入 race；清单重复或失效必须报错。`make test-race-full` 保留手动全量入口。普通阶段执行精简后现存的全部测试，单进程超时及失败/取消清理仍生效。
 - 控制默认质量门的运行时间。新增或扩展耗时测试前，先核对现有覆盖与耗时，优先缩减场景矩阵、进程启动和等待成本。只有必要的关键风险验证可以增加默认开销，交付时说明该测试独立检出的风险和实测耗时。禁止无依据地重复运行相同用例、扩大 fuzz 预算或增加并发压力循环，完成必要验证后即停止。
 - OpenSpec 归档前必须核对 specs、架构、Roadmap、pitfall、测试文件路径和实际 record vocabulary；不得把延期能力写成已实现，也不得保留失效文档引用。
 - OpenSpec 只保留方案、规格、决策和简短验收结论；原始 JSON/JSONL、日志、profile、源码快照和中间报告放到忽略的本地输出或 CI artifact，不提交进归档。保留 `.openspec.yaml` 与当前测试实际消费的固定 fixture；删除产物时同步清理链接。
 - 无法执行的检查必须在交付说明中列出原因和风险，不能声称全部通过。
 
-交付前必须确认：职责和依赖边界清晰；Provider 原生语义与缓存稳定性未破坏；无重复副作用、secret 泄漏、dead code 或无用依赖；测试充分且 `make verify` 通过；相关 OpenSpec、架构、Roadmap 或踩坑文档已同步。
+交付前必须确认：职责和依赖边界清晰；Provider 原生语义与缓存稳定性未破坏；无重复副作用、secret 泄漏、dead code 或无用依赖；测试充分且本地 pre-commit 的 `make verify` 与 `make smoke` 通过；相关 OpenSpec、架构、Roadmap 或踩坑文档已同步。

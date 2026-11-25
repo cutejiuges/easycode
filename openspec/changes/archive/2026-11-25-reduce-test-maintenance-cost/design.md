@@ -65,17 +65,17 @@ AGENTS §7 写入上述风格与硬门禁；`docs/testing.md` 保存当前统计
 
 公共 Provider 测试优先使用 external `provider_test` 和既有公共入口，避免根包导入子适配器造成循环。必须保留私有构造的场景使用窄 typed adapter；跨包共享普通 `.go` 支持文件统一归入测试，正式 CLI 依赖图不能包含它们。不得导出 native history 或请求编译方法供测试调用。
 
-### 5. 原生 PTY 独立验收，不重复塞进每次提交
+### 5. 原生 PTY 纳入本地 pre-commit
 
-保留 `make verify` 作为本地 pre-commit 和 CI 的基础质量门。新增 `make smoke` 与原生 macOS CI job 共用精简后的关键交互计划，覆盖实际 CLI/PTY 输入、审批、任务/会话展示、恢复、取消和终端还原。现有 ACK helper 是执行基础，不能因文件带 `_test.go` 而删掉；普通 Go 测试中的 helper return 不算 PTY 完成。
+保留 `make verify` 作为本地 pre-commit 和 CI 的基础质量门。按用户 2026-11-25 的最新授权，pre-commit 在 verify 成功后执行同一 `make smoke`，远端移除 smoke job。该计划覆盖实际 CLI/PTY 输入、审批、任务/会话展示、恢复、取消和终端还原；每次提交都须取得实际完成结果，不使用成功缓存、条件跳过或仅告警。现有 ACK helper 是执行基础，不能因文件带 `_test.go` 而删掉；普通 Go 测试中的 helper return 不算 PTY 完成。
 
 按既有 scripts 的实际承接选取场景，重点包括 tasks、completion、session-picker/titles、plugins、user-question、file-mentions/effort、reasoning/markdown、Hook/compaction、plan-mode 与 session-start；保留每项独立风险，消除重复色彩/Provider/配置的笛卡尔积。共享编译一次 app.test、tui.test、CLI 后复用，不要求迁移不受本轮影响的脚本接口。必须记录实际场景完成、断言、退出和 cleanup；不支持的平台明确拒绝执行，不能以跳过计为通过。
 
-本地开发先完成自动化入口并实际运行通过，才迁移由它承接的重复交互断言；包含该迁移的交付还必须获得对应原生 macOS CI job 的实际成功记录，不能只凭 YAML 和本地结果宣称完成。更新 PR 模板的 required checks 说明；GitHub ruleset 的启用单独核实，尚未启用的远端强制保护明确列为未完成保障，不声明仓库 YAML 已自动修改远端设置。smoke 不代表全部 Darwin Go 测试，更不能替代 Sync、lease 或原生 wire 故障回归。
+本地开发先完成自动化入口并实际运行通过，才迁移由它承接的重复交互断言。pre-commit 依次运行分支检查、verify 和 smoke；前一步失败立即退出，smoke 的失败或不支持平台同样阻止提交。更新 PR 模板，要求本地 hook 通过，并仅将 branch-governance 与 verify 列为远端检查；GitHub ruleset 的启用单独核实，尚未启用的远端强制保护明确列为未完成保障，不声明仓库 YAML 已自动修改远端设置。smoke 不代表全部 Darwin Go 测试，更不能替代 Sync、lease 或原生 wire 故障回归。
 
 ### 6. 删除 pre-push，保留单一本地完整验证
 
-删除 `.githooks/pre-push`，保留 `.githooks/pre-commit` 的分支检查与 `exec make verify`。`make install-hooks` 继续设置 `core.hooksPath=.githooks`，只为现存 hook 和分支脚本设置权限；不清理用户 `.git/hooks`，不添加迁移脚本、软链接、共用 wrapper 或第二个调用入口。
+删除 `.githooks/pre-push`，保留 `.githooks/pre-commit` 的分支检查，随后执行 `make verify` 与 `exec make smoke`，用既有 `set -eu` 保证失败即停止。`make install-hooks` 继续设置 `core.hooksPath=.githooks`，只为现存 hook 和分支脚本设置权限；不清理用户 `.git/hooks`，不添加迁移脚本、软链接、共用 wrapper 或第二个调用入口。
 
 同一提交之后的 push 不再本地重复验证；CI 仍独立验证实际提交。提交后再改成非法分支名，不再由本地 push 拦截，而由 PR branch-governance 检查处理。同步 `engineering/branch-governance` 和 `engineering/test-execution`，历史验收记载保留当时事实并追加当前策略说明。
 
@@ -86,7 +86,7 @@ AGENTS §7 写入上述风格与硬门禁；`docs/testing.md` 保存当前统计
 - [严格比例也会被删除业务代码影响] → 规则仍按最终全仓快照执行；不能靠保留 dead code、增加包装或改分类维持分母。遇到实际冲突按规范变更处理，不能自动豁免。
 - [共享测试过度抽象] → 保留协议专属 fixture/decoder；仅提取明确共享生命周期，计算 adapter 后净收益，不建立测试框架。
 - [脚本预算使必要新增交互受限] → 对应功能的 OpenSpec 同时说明必要成本和预算调整，不增加独立审批系统；3:2 主阈值保持不变。
-- [新增 macOS CI 开销] → 复用三个构建产物，删重复矩阵，记录真实耗时；不将全部 PTY 再放入 pre-commit。
+- [每次本地提交增加原生交互耗时] → 按用户要求强制执行既有 61 场景，复用三个构建产物，不增加矩阵；记录完整 hook 耗时。smoke 当前仅支持原生 macOS，其他平台明确失败，不自动跳过。取消远端 smoke 后不再依赖托管 macOS 资源排队。
 
 ## Migration Plan
 
@@ -120,6 +120,6 @@ main 从 51c7dc3 快进至 5b283ea，包含 8288d3c 与 67e47c4 的新行为。�
 
 ## 3:2 实施收敛
 
-第二轮实际净减 2,453 行后，P=88,048、T=58,485，已满足 3:2；全部测试辅助计入 T。除领域装配外，runtime/session 将 364 处完全相同的错误检查复用为各包一个 `testing.TB`/error 小函数，保持原 err 作用域、FailNow 和调用栈归属，不建立断言框架。TUI 代表性承接明确缩小普通布局排列，关键固定字节、owner/Sync/lease/取消仍在。脚本预算锁定实际 4,930，后续运行只读；详细验收和未完成 CI 事项见 verification。
+第二轮实际净减 2,453 行后，P=88,048、T=58,485，已满足 3:2；全部测试辅助计入 T。除领域装配外，runtime/session 将 364 处完全相同的错误检查复用为各包一个 `testing.TB`/error 小函数，保持原 err 作用域、FailNow 和调用栈归属，不建立断言框架。TUI 代表性承接明确缩小普通布局排列，关键固定字节、owner/Sync/lease/取消仍在。脚本预算锁定实际 4,930，后续运行只读；历史验收及原 CI 待办的后续调整见 verification。
 
 提交阶段发现临时 Git 自检必须隔离 hook 的 GIT_* 定位环境，否则会修改真实仓库配置；在原用例中净增 3 行完成隔离，脚本预算据此显式修订为 4,933。带 hook 环境的最小回归同时验证真实 config 字节不变，不增加测试矩阵。

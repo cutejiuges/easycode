@@ -6,4 +6,5 @@ cd "$repo_root"
 
 ./scripts/check-branch-name.sh
 printf '%s\n' 'Running pre-commit verification...'
-exec make verify
+make verify
+exec make smoke

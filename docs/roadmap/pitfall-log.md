@@ -242,7 +242,7 @@
 - 回归测试：`scripts/check-branch-name_test.sh`、`make branch-policy-test`、`.github/workflows/verify.yml`。
 - 关联 ADR/Issue/PR：OpenSpec `harden-architecture-contract-compliance`；属于工程治理落实，不新增 ADR。
 - 后续行动：管理员仍须把 `branch-governance` 与 `verify` 配为 `main` required checks 并禁止 direct push；仓库文件本身不会自动启用 ruleset。
-- 当前策略（2026-11-24）：删除重复的 pre-push，仅 pre-commit 执行完整本地质量门；PR 分支检查继续复用同一 validator。只读核实远端 ruleset 为空，main 保护的 required checks 也为空，`branch-governance`、`verify`、新增原生 `smoke` 尚未被远端强制要求，未修改托管保护。
+- 当前策略（2026-11-25）：不恢复重复 pre-push；pre-commit 依次执行分支检查、`make verify`、`make smoke`，任一步失败立即停止并阻止提交。smoke 仅支持原生 macOS，其他本地平台明确失败，不自动跳过。PR 分支检查继续复用同一 validator；远端取消 smoke job，仅保留 `branch-governance` 与 `verify` 两项交付检查。只读核实远端 ruleset 为空，main 保护的 required checks 也为空，未修改托管保护。
 
 ## 4. P1 双 Provider Kernel
 
@@ -1070,6 +1070,8 @@ Linux CI 回归补充：TurnStarted 只证明回合接纳，不能证明输入�
 2026-11-18 第一轮调整曾保留普通测试全集，并通过排除清单缩小 race；该方案已被同日用户明确要求的进一步精简取代。当前按关键业务风险删除冗余普通测试，默认 race 使用正向关键清单，不再让新增测试自动参加 race；清单重复、失效和平台空计划仍报错，手动全量入口保留。测试风格以 AGENTS.md 的“轻、准、关键、快”为准，覆盖范围缩小不宣称与旧集合等覆盖。
 
 精简时，删除测试也会暴露仅由测试引用的生产包装函数和遗留辅助类型，应删除无消费者的代码，不能靠恢复无价值测试或抑制 Staticcheck 消警。核实引用时必须包含 build tag 对应的其它平台：`unsupportedProcessLauncher` 在 Darwin 未使用，但仍由其它平台执行器消费，保留并按实际平台约束编译。自行 `go build` 普通 CLI 的测试不会因父进程使用 race 而检测 CLI；重执行 race 测试二进制的 helper 才继承检测，不能把两者等同。原始日志、profile 与中间清单只存本地或 CI artifact，归档保留简短结论与必要元数据，清理同步维护链接。当前范围与验证见[测试维护说明](../testing.md)。
+
+2026-11-25 当前测试维护约束：全仓业务/测试 Go 至少 3:2，测试脚本预算保持 4,933 行。用户明确要求将原生交互验收放入每次本地 pre-commit：分支检查通过后执行 `make verify`，成功后再执行 `make smoke`，任一步失败阻止提交；不缓存成功、不按变更文件跳过，不恢复 pre-push。smoke 当前仅支持原生 macOS，其他本地平台明确失败。远端只保留 `branch-governance` 与 `verify`，不再运行或要求 smoke；历史本地验收不能代替新 hook 的实际成功记录。
 
 ### [P2][2026-11-19] Writer 等待超时不能作为会话已经关闭的证据
 

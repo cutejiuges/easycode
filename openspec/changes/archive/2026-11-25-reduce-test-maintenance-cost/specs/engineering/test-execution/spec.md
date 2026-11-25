@@ -2,7 +2,7 @@
 
 ### Requirement: Verification preserves the complete test contract
 
-完整质量门 SHALL 执行全仓测试规模硬校验、分支策略测试、格式检查、vet、Staticcheck、架构边界、当前平台精简后现存的全部普通测试与正向清单中的关键 race 测试。本地手动执行、pre-commit 与 CI MUST 复用同一 `make verify` 定义；仓库 MUST 仅保留 pre-commit 作为本地完整验证 Git hook，不保留重复的 pre-push。性能验收 MUST 强制重新执行测试，不能以测试结果缓存命中、仅运行修改包、遗漏现存测试、关闭关键路径 race 或把未运行入口伪装成通过。原生交互冒烟 SHALL 作为独立的必要交付检查，不要求每次 pre-commit 重复完整 PTY 矩阵。
+完整质量门 SHALL 执行全仓测试规模硬校验、分支策略测试、格式检查、vet、Staticcheck、架构边界、当前平台精简后现存的全部普通测试与正向清单中的关键 race 测试。本地手动执行、pre-commit 与 CI MUST 复用同一 `make verify` 定义；仓库 MUST 仅保留 pre-commit 作为本地完整验证 Git hook，不保留重复的 pre-push。性能验收 MUST 强制重新执行测试，不能以测试结果缓存命中、仅运行修改包、遗漏现存测试、关闭关键路径 race 或把未运行入口伪装成通过。原生交互冒烟 SHALL 在每次本地 pre-commit 的基础质量门成功后通过同一 `make smoke` 执行；任一阶段失败均阻止提交。远端 CI 不运行 smoke，继续独立执行分支检查与 `make verify`。
 
 #### Scenario: Match the platform test inventory
 - **WHEN** 完整质量门采用分片或有界并行执行测试
@@ -13,7 +13,7 @@
 #### Scenario: Keep hooks and CI equivalent
 - **WHEN** 同一源码快照通过本地手动执行、pre-commit 或 CI 触发基础质量门
 - **THEN** 检查定义相同，环境参数只调整有界资源分配，平台差异显式报告
-- **THEN** pre-commit 的分支检查通过后执行一次完整质量门；随后 push 不通过仓库 pre-push 再运行一遍
+- **THEN** pre-commit 的分支检查通过后先执行完整质量门，成功后再执行原生 smoke；任一步失败阻止提交，随后 push 不通过仓库 pre-push 再运行一遍
 - **THEN** CI 独立验证实际提交，不能依赖本地成功状态跳过
 
 #### Scenario: Overlap static checks without weakening the gate
@@ -99,15 +99,15 @@
 
 ### Requirement: Critical terminal interactions run in native automation
 
-关键真实交互 SHALL 由本地 `make smoke` 与原生 macOS CI 共用的代表性执行计划验证，记录实际场景完成、业务断言、退出和终端恢复。普通测试中未启用的终端 helper、平台跳过或只出现展示文本 MUST NOT 计作相应 PTY 已执行。由冒烟承接的重复交互断言 MUST 在对应自动化入口实现并在本地实际执行通过后才迁移；包含该迁移的完成交付 MUST 同时获得对应原生 macOS CI job 的实际成功记录，并将该检查列为必要交付项。冒烟不能替代 durable、lease、安全或 Provider 原生协议的确定性故障验证。
+关键真实交互 SHALL 由本地 pre-commit 强制执行统一 `make smoke` 的代表性计划验证，记录实际场景完成、业务断言、退出和终端恢复。普通测试中未启用的终端 helper、平台跳过或只出现展示文本 MUST NOT 计作相应 PTY 已执行。由冒烟承接的重复交互断言 MUST 在对应自动化入口实现并在本地实际执行通过后才迁移；每次本地提交 MUST 在 `make verify` 成功后取得原生 smoke 的实际成功结果，失败或未完成时阻止提交，不缓存成功、不按变更文件跳过。远端 MUST NOT 保留 smoke job 或将其列为必要检查。冒烟不能替代 durable、lease、安全或 Provider 原生协议的确定性故障验证。
 
-#### Scenario: Run the same native acceptance locally and in CI
-- **WHEN** 在支持的原生 macOS 环境运行本地或 CI 交互验收
-- **THEN** 执行相同的关键场景与实质断言，复用构建产物，保留失败和清理结果
+#### Scenario: Require native acceptance in every local commit
+- **WHEN** 在支持的原生 macOS 环境执行本地 pre-commit
+- **THEN** 分支检查与 verify 成功后执行与手动 `make smoke` 相同的关键场景和实质断言，复用构建产物，保留失败和清理结果
 - **THEN** 不要求每个功能重复 Provider、色彩、尺寸和宿主的全部排列
-- **THEN** 本地成功和 CI workflow 文件存在不能替代 CI job 的实际成功运行；未完成远端 required-check 配置时明确报告保护缺口
+- **THEN** verify 失败不得启动 smoke，smoke 失败必须阻止提交；远端只执行分支检查与 verify，未完成远端 required-check 配置时明确报告保护缺口
 
 #### Scenario: Report an unsupported or incomplete run honestly
 - **WHEN** 平台不支持必要终端能力，或场景未产生完成证据
-- **THEN** 不能报告该原生交互验收成功，并明确未验证范围
+- **THEN** 不能报告该原生交互验收成功，必须使 pre-commit 非零退出并明确未验证范围
 - **THEN** CI workflow 与 required checks 文档的更新不能被声称为已自动启用托管平台保护

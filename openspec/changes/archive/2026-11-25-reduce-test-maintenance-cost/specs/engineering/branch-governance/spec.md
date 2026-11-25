@@ -2,7 +2,7 @@
 
 ### Requirement: Local hooks and CI share one branch validator
 
-仓库 SHALL 提供单一可测试的分支校验入口，由 pre-commit 和 GitHub Actions 复用；仓库 MUST 移除重复的 pre-push hook，不增加同职责的转发入口。校验器 SHALL 优先使用显式参数或可信 CI source-branch 变量，并在本地从 symbolic ref 获取分支名；本地 detached HEAD 或无法确定 source branch 时 MUST fail closed。分支校验不得替代 `make verify`，pre-commit 仍 SHALL 执行完整质量门。安装入口 MUST 仅引用现存 hook，并保留仓库自己的 hooksPath 设置。
+仓库 SHALL 提供单一可测试的分支校验入口，由 pre-commit 和 GitHub Actions 复用；仓库 MUST 移除重复的 pre-push hook，不增加同职责的转发入口。校验器 SHALL 优先使用显式参数或可信 CI source-branch 变量，并在本地从 symbolic ref 获取分支名；本地 detached HEAD 或无法确定 source branch 时 MUST fail closed。分支校验不得替代 `make verify`，pre-commit 仍 SHALL 依次执行完整 `make verify` 与原生 `make smoke`，任一失败均阻止提交。安装入口 MUST 仅引用现存 hook，并保留仓库自己的 hooksPath 设置。
 
 #### Scenario: Validate the pull request source branch in CI
 
@@ -18,7 +18,7 @@
 #### Scenario: Preserve the full verification gate
 
 - **WHEN** 合法命名分支执行 pre-commit
-- **THEN** 分支检查通过后继续执行一次不弱于 `make verify` 的完整质量门
+- **THEN** 分支检查通过后依次执行一次完整 `make verify` 和 `make smoke`；前一步失败不执行后一步，任一失败均阻止提交
 - **THEN** 随后的 push 不通过仓库 pre-push 再次运行相同验证
 
 #### Scenario: Keep CI enforcement after removing the push hook
