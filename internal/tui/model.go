@@ -100,6 +100,7 @@ type Model struct {
 
 	hooks                   hookBrowser
 	hookTrust               *hookTrustOverlay
+	promptHookActivity      *protocol.HookActivityPayload
 	nextTextID              uint64
 	reading                 transcriptViewport
 	markdown                markdownViewCache
@@ -285,6 +286,7 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return next, tea.Batch(cmd, waitForControl(model.outputs))
 	case eventStreamClosedMsg:
 		model.outputs = nil
+		model.clearPromptHookPresentation()
 		model.sessionStartControlClosed = model.compaction.sessionStart.present() || model.sessionStart.pending()
 		failure := "session_failed: session control stream closed"
 		if model.planReview.waiting() {
@@ -536,6 +538,7 @@ func (model Model) requestTurnCancellation(turnID domain.TurnID) (tea.Model, tea
 		model.pendingCancel()
 	}
 	model.cancelling = true
+	model.clearPromptHookPresentation()
 	return model, interruptSession(model.session, turnID)
 }
 
@@ -868,7 +871,7 @@ func (model Model) reduceRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd)
 	case protocol.EventTurnStarted, protocol.EventTurnCompleted, protocol.EventTurnFailed:
 		model.effortOperationGeneration++
 		model.planReview.terminal = ""
-	case protocol.EventUserQuestionRequested, protocol.EventToolApprovalRequested, protocol.EventHookTrustRequested:
+	case protocol.EventUserQuestionRequested, protocol.EventToolApprovalRequested:
 		model.clearEffortFeedback()
 	}
 	next, cmd := model.projectRuntimeEvent(event)
@@ -963,6 +966,7 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 		model.transcript = append(model.transcript, transcriptMessage{role: "User", text: text})
 		model.assistantItem = -1
 	case protocol.EventTurnStarted:
+		model.clearPromptHookPresentation()
 		model.stopCommit = nil
 		model.stopStatus = ""
 		model.sessionStart = sessionStartView{}
@@ -1109,6 +1113,7 @@ func (model Model) projectRuntimeEvent(event protocol.Event) (tea.Model, tea.Cmd
 		model.question = nil
 
 		model.hookTrust = nil
+		model.promptHookActivity = nil
 		model.approval = nil
 		model.activeTurnID = ""
 		model.activeTurnSession = ""
@@ -1165,6 +1170,9 @@ func (model Model) View() string {
 			}
 		}
 		if status == "" {
+			status = model.promptHookStatus()
+		}
+		if status == "" {
 			status = model.sessionStartStatus
 			if model.compaction.sessionStart.present() {
 				status = model.compactionStatus
@@ -1199,6 +1207,9 @@ func (model Model) View() string {
 	}
 	if model.stopStatus != "" {
 		view.WriteString(ansi.Truncate(model.stopStatus, model.widthOrDefault(), "…") + "\n")
+	}
+	if status := model.promptHookStatus(); status != "" {
+		view.WriteString(ansi.Truncate(status, model.widthOrDefault(), "…") + "\n")
 	}
 	if model.sessionStartStatus != "" {
 		view.WriteString(ansi.Truncate(model.sessionStartStatus, model.widthOrDefault(), "…") + "\n")

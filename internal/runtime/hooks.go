@@ -18,6 +18,20 @@ type HookRunner interface {
 	Run(context.Context, domain.HookRunIdentity, domain.HookDeclaration, domain.HookInput, time.Duration) domain.HookExecution
 }
 
+type hookExecutionConfig struct {
+	runner       HookRunner
+	workspace    string
+	availability domain.HookCode
+	now          func() time.Time
+}
+
+func (runtime *Runtime) captureHookExecution() (domain.HookSnapshot, hookExecutionConfig) {
+	runtime.hooks.mu.Lock()
+	defer runtime.hooks.mu.Unlock()
+	hooks := &runtime.hooks
+	return hooks.snapshot, hookExecutionConfig{runner: hooks.runner, workspace: hooks.workspace, availability: hooks.availability, now: hooks.now}
+}
+
 func runTimedHook(ctx context.Context, runner HookRunner, now func() time.Time, remaining time.Duration, id domain.HookRunIdentity, declaration domain.HookDeclaration, input domain.HookInput) (domain.HookExecution, time.Duration) {
 	start := now()
 	execution := runner.Run(ctx, id, declaration, input, min(time.Duration(declaration.Reference.TimeoutSeconds)*time.Second, remaining))

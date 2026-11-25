@@ -122,7 +122,7 @@ func loadJournalRange(ctx context.Context, source io.Reader, originalSize int64,
 				truncateAt = batchOffset
 			}
 			_, _ = digest.Write(line)
-			ticket := &repairTicket{size: originalSize, offset: truncateAt, kind: RepairHalfLine}
+			ticket := &repairTicket{size: originalSize, offset: truncateAt, kind: RepairHalfLine, inputs: collectTornInputAssociations(currentBatch)}
 			copy(ticket.digest[:], digest.Sum(nil))
 			return finishJournalLoad(identity, committed, expectedThreadID, truncateAt, ticket)
 		}
@@ -193,7 +193,7 @@ func loadJournalRange(ctx context.Context, source io.Reader, originalSize int64,
 	}
 
 	if len(currentBatch) > 0 {
-		ticket := &repairTicket{size: originalSize, offset: batchOffset, kind: RepairIncompleteBatch}
+		ticket := &repairTicket{size: originalSize, offset: batchOffset, kind: RepairIncompleteBatch, inputs: collectTornInputAssociations(currentBatch)}
 		copy(ticket.digest[:], digest.Sum(nil))
 		return finishJournalLoad(identity, committed, expectedThreadID, batchOffset, ticket)
 	}

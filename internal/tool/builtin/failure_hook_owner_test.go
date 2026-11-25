@@ -137,3 +137,39 @@ func TestSessionStartCapturedOutputLimitClosesWithoutParsing(t *testing.T) {
 		t.Fatalf("unsafe or uncertain completion for bounded output: %+v", execution)
 	}
 }
+
+func TestPromptHookRunnerClassifiesProcessEvidenceBeforeExitTwo(t *testing.T) {
+	const uuid = "018f1d8a-7b5c-7def-8abc-456789abcdef"
+	target, err := domain.NewUserPromptSubmitHookTarget(domain.PromptSubmitTarget{TurnID: uuid, InputID: uuid})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := domain.NewUserPromptSubmitHookRunIdentity(target, domain.HookDigest(nil), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		owned       process.Result
+		stderrBytes int64
+		want        domain.HookCode
+	}{
+		{process.Result{ExitKnown: true, ExitCode: 2}, 0, domain.HookDenied},
+		{process.Result{ExitKnown: true, ExitCode: 2, StdinError: io.ErrClosedPipe}, 0, domain.HookIOFailed},
+		{process.Result{ExitKnown: true, ExitCode: 2}, 2 * domain.MaxHookOutputBytes, domain.HookOutputLimit},
+		{process.Result{ExitKnown: true, ExitCode: 2, Cancelled: true}, 2 * domain.MaxHookOutputBytes, domain.HookCancelled},
+	} {
+		calls := 0
+		execution := classifyHookExecution(identity, domain.HookFeedbackNone, tc.owned, nil, 0, tc.stderrBytes,
+			func(_ domain.HookEvent, _ domain.HookFeedbackPolicy, exit int, _ []byte, _ domain.HookRewriteContext) domain.HookParsedOutput {
+				calls++
+				if exit != 2 {
+					t.Fatalf("wrong exit evidence: %d", exit)
+				}
+				return domain.HookParsedOutput{Status: domain.HookBlock, Code: domain.HookDenied}
+			}, domain.HookRewriteContext{})
+		if execution.Result.Validate() != nil || execution.Result.Code != tc.want || (calls == 1) != (tc.want == domain.HookDenied) ||
+			execution.Result.StderrBytes != min(tc.stderrBytes, domain.MaxHookOutputBytes+1) {
+			t.Fatalf("wrong process disposition: %+v", execution.Result)
+		}
+	}
+}

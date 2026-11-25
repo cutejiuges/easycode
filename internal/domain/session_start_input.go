@@ -41,7 +41,7 @@ func NewSessionStartHookInput(session SessionID, thread ThreadID, target Session
 
 func (v HookInput) sessionStartBytes() ([]byte, error) {
 	input := v.sessionStart
-	if input == nil || v.stop != nil || v.compaction != nil || v.hasToolFields() ||
+	if input == nil || v.stop != nil || v.compaction != nil || v.promptSubmit != nil || v.hasToolFields() ||
 		!v.SessionID.Valid() || !v.ThreadID.Valid() || !input.source.Valid() || !filepath.IsAbs(v.CWD) ||
 		filepath.Clean(v.CWD) != v.CWD || !utf8.ValidString(v.CWD) || strings.ContainsRune(v.CWD, 0) {
 		return nil, HookConfigInvalid

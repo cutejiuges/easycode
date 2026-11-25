@@ -10,6 +10,7 @@ import (
 
 // repairTicket 绑定只读扫描和原 lease，不从可变 LoadResult 字段重建权限。
 type repairTicket struct {
+	inputs       tornInputAssociations
 	lease        *JournalLease
 	size, offset int64
 	digest       [sha256.Size]byte

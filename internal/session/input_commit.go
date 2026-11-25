@@ -49,17 +49,8 @@ func acceptBoundInputBatch(plan *replayAccumulator, active *activeReplayTurn, ba
 	if err != nil {
 		return replayCorrupt("input association is invalid")
 	}
-	if payload.Placement == domain.InputInitial {
-		if stopDelivery || active.initialInputs || active.nextSampleIndex != 0 {
-			return replayCorrupt("initial inputs are duplicated")
-		}
-	} else if !active.initialInputs || (!stopDelivery && !active.toolOutputsCommitted) || stopDelivery && (active.stop == nil || !active.stop.PendingFeedback()) || active.inputAtSample || payload.TargetSampleIndex != active.nextSampleIndex {
-		return replayCorrupt("steering input target is invalid")
-	}
-	for _, id := range payload.InputIDs {
-		if _, exists := seen[id]; exists {
-			return replayCorrupt("input ID is duplicated")
-		}
+	if err := validateBoundInputAssociation(plan, active, payload, seen, stopDelivery); err != nil {
+		return err
 	}
 	commit, err := DecodeNativeCommitPayload(batch[1])
 	if err != nil {
@@ -80,6 +71,26 @@ func acceptBoundInputBatch(plan *replayAccumulator, active *activeReplayTurn, ba
 	active.initialInputs = true
 	active.inputAtSample = true
 	active.lastSequence = batch[1].Sequence
+	return nil
+}
+
+// validateBoundInputAssociation 支持完整提交及可见的撕裂尾批，不安装原生数据。
+func validateBoundInputAssociation(plan *replayAccumulator, active *activeReplayTurn, payload TurnInputsPayload, seen map[domain.InputID]struct{}, stopDelivery bool) error {
+	if payload.Placement == domain.InputInitial {
+		if stopDelivery || active.initialInputs || active.nextSampleIndex != 0 {
+			return replayCorrupt("initial inputs are duplicated")
+		}
+	} else if !active.initialInputs || (!stopDelivery && !active.toolOutputsCommitted) || stopDelivery && (active.stop == nil || !active.stop.PendingFeedback()) || active.inputAtSample || payload.TargetSampleIndex != active.nextSampleIndex {
+		return replayCorrupt("steering input target is invalid")
+	}
+	if err := plan.acceptPromptSubmitInputs(active, payload.InputIDs); err != nil {
+		return err
+	}
+	for _, id := range payload.InputIDs {
+		if _, exists := seen[id]; exists {
+			return replayCorrupt("input ID is duplicated")
+		}
+	}
 	return nil
 }
 

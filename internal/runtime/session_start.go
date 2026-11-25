@@ -29,7 +29,7 @@ func (r *Runtime) InstallSessionStartSource(source domain.SessionStartSource) er
 }
 
 type sessionStartSelection struct {
-	compactionHookExecution
+	hookExecutionConfig
 	declarations []domain.HookDeclaration
 	skip         domain.HookCode
 }
@@ -38,9 +38,9 @@ func (r *Runtime) selectSessionStart(source domain.SessionStartSource) sessionSt
 	if !r.interactiveApprovals {
 		return sessionStartSelection{}
 	}
-	snapshot, execution := r.captureCompactionHooks()
+	snapshot, execution := r.captureHookExecution()
 	declarations, err := snapshot.SessionStartChecks(source)
-	selection := sessionStartSelection{compactionHookExecution: execution, declarations: declarations}
+	selection := sessionStartSelection{hookExecutionConfig: execution, declarations: declarations}
 	if err != nil {
 		selection.skip = domain.HookConfigInvalid
 		if errors.Is(err, domain.HookMatchLimit) {

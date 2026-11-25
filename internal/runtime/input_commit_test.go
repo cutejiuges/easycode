@@ -16,6 +16,9 @@ type inputResolutionRecorder struct {
 func (r *inputResolutionRecorder) claim(context.Context, domain.TurnID, uint32) ([]domain.UserInput, error) {
 	return nil, nil
 }
+func (r *inputResolutionRecorder) filter(domain.TurnID, []domain.UserInput, []promptSubmitRejection) bool {
+	return true
+}
 func (r *inputResolutionRecorder) resolve(_ domain.TurnID, _ []domain.UserInput, state protocol.InputState, reason protocol.InputReason) {
 	r.states = append(r.states, state)
 	r.reasons = append(r.reasons, reason)

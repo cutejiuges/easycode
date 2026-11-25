@@ -20,6 +20,9 @@ const (
 type EventKind string
 
 const (
+	EventPromptSubmitHookPlanned  EventKind = "user_prompt_submit_hook_planned"
+	EventPromptSubmitHookDecided  EventKind = "user_prompt_submit_hook_decided"
+	EventPromptSubmitHookClosed   EventKind = "user_prompt_submit_hook_closed"
 	EventSessionStartHookPlanned  EventKind = "session_start_hook_planned"
 	EventSessionStartHookStarted  EventKind = "session_start_hook_started"
 	EventSessionStartHookFinished EventKind = "session_start_hook_finished"
@@ -340,7 +343,7 @@ type recordPayload interface {
 	domain.StopPlan | domain.StopDecision | domain.HookPlan | domain.HookRunIdentity | domain.HookFinished | domain.PostHookPlan | domain.PostHookTerminal | domain.HookGateDecision |
 		CompactionStartedPayload | CompactionCompletedPayload | CompactionFailedPayload | PreCompactHookFinishedPayload | PreCompactHookDecidedPayload |
 		domain.HookRunResult | PostCompactHookClosedPayload | sessionStartPlanWire | SessionStartFinishedPayload | SessionStartClosedPayload |
-		TurnInputsPayload |
+		TurnInputsPayload | promptSubmitPlanWire | PromptSubmitDecision | promptSubmitClosure |
 		SessionMetaPayload | ThreadMetaPayload | ThreadForkedPayload | sessionTitleUpdatedPayload | TurnStartedPayload | NativeCommitPayload |
 		SampleUsagePayload | ToolCallReadyPayload | ToolExecutionStartedPayload |
 		ToolApprovalDecidedPayload | ToolCallResultPayload | TurnCompletedPayload | TurnFailedPayload

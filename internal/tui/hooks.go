@@ -140,6 +140,8 @@ func (m Model) renderHooks() string {
 		if d.Reference.Event == domain.HookSessionStart {
 			lines = append(lines, sessionStartHookTiming(d.Scope), "Reset only affects later checks.")
 			lines = append(lines, sessionStartHookDisclosure(d)...)
+		} else if d.Reference.Event == domain.HookUserPromptSubmit {
+			lines = append(lines, promptSubmitHookDisclosure()...)
 		} else if _, compact := d.Scope.CompactionMatcher(); compact {
 			lines = append(lines, compactionHookDisclosure(d, d.Scope.MatchesCompaction(domain.CompactionManual))...)
 		} else {
@@ -265,6 +267,13 @@ func (m Model) renderHookTrust() string {
 	if d.Reference.Event == domain.HookPostToolUseFailure {
 		lines = append(lines[:1], append([]string{"Runs only after a definite execution-attempt failure.", "Admission does not prove the process started. Normal nonzero exits use PostToolUse.", "feedback=model sends additionalContext to the provider and saves it in Session."}, lines[1:]...)...)
 	}
+	if d.Reference.Event == domain.HookUserPromptSubmit {
+		lines = []string{"Trust this UserPromptSubmit hook?", fmt.Sprintf("Source: %s · %s", d.Reference.Source, d.Reference.ID),
+			fmt.Sprintf("Timeout: %d seconds", d.Reference.TimeoutSeconds), "Workspace: . · read-only · network denied",
+			"Workspace scripts can change after review."}
+		lines = append(lines, promptSubmitHookDisclosure()...)
+		lines = append(lines, "PgUp/PgDn: full command · Tab/↑/↓: choose · Esc: deny", "", trust, deny, "", "Command:", d.Command)
+	}
 	if target, ok := o.request.Target.SessionStart(); ok {
 		heading := "Trust this SessionStart hook?"
 		trigger := "Triggered by: " + string(target.Source)
@@ -298,7 +307,7 @@ func (m Model) renderHookTrust() string {
 func (m Model) hookReviewUnavailable() bool {
 	declaration := m.hookTrust.request.Declaration
 	_, compact := declaration.Scope.CompactionMatcher()
-	return (declaration.Reference.Event == domain.HookPreToolUse || declaration.Reference.Event == domain.HookSessionStart || compact) &&
+	return (declaration.Reference.Event == domain.HookPreToolUse || declaration.Reference.Event == domain.HookSessionStart || declaration.Reference.Event == domain.HookUserPromptSubmit || compact) &&
 		(m.widthOrDefault() < 20 || m.heightOrDefault() < 6)
 }
 
@@ -356,6 +365,9 @@ func (m Model) projectHookEvent(e protocol.Event) (tea.Model, tea.Cmd) {
 			(m.cancelling || m.hookTrust != nil || !m.sessionStart.acceptReview(e, p)) {
 			return m, nil
 		}
+		if target, ok := p.Target.UserPromptSubmit(); ok && (m.hookTrust != nil || !m.acceptPromptHookEvent(e, target)) {
+			return m, nil
+		}
 		return m.openHookTrust(e.TurnID, p)
 	case protocol.EventHookTrustResolved:
 		return m.projectHookTrustResolution(e)
@@ -368,6 +380,12 @@ func (m Model) projectHookEvent(e protocol.Event) (tea.Model, tea.Cmd) {
 		if p.Reference.Event == domain.HookSessionStart {
 			if !m.cancelling && m.hookTrust == nil && m.sessionStart.acceptActivity(e, p) {
 				m.sessionStartStatus = m.sessionStart.status()
+			}
+			return m, nil
+		}
+		if target, ok := p.Target.UserPromptSubmit(); ok {
+			if m.acceptPromptHookEvent(e, target) {
+				m.projectPromptHookActivity(p)
 			}
 			return m, nil
 		}
@@ -425,6 +443,7 @@ func (m Model) openHookTrust(turn domain.TurnID, request protocol.HookTrustReque
 		}
 		return m, interruptSession(m.session, turn)
 	}
+	m.clearEffortFeedback()
 	m.hookTrust = &hookTrustOverlay{request: request, turn: turn}
 	return m, nil
 }
@@ -436,6 +455,9 @@ func (m Model) projectHookTrustResolution(event protocol.Event) (tea.Model, tea.
 		return m, nil
 	}
 	if m.hookTrust == nil || p.RequestID != m.hookTrust.request.RequestID || p.Target != m.hookTrust.request.Target || p.PlanDigest != m.hookTrust.request.PlanDigest || p.Reference != m.hookTrust.request.Declaration.Reference {
+		return m, nil
+	}
+	if target, ok := p.Target.UserPromptSubmit(); ok && !m.acceptPromptHookEvent(event, target) {
 		return m, nil
 	}
 	if target, ok := p.Target.SessionStart(); ok {
@@ -460,8 +482,11 @@ func (m Model) projectHookTrustResolution(event protocol.Event) (tea.Model, tea.
 }
 
 func hookScopeLabel(d domain.HookDeclaration) string {
-	if d.Reference.Event == domain.HookStop {
+	switch d.Reference.Event {
+	case domain.HookStop:
 		return "Scope: Turn completion"
+	case domain.HookUserPromptSubmit:
+		return "Scope: Each submitted prompt"
 	}
 	return "Matcher: " + d.Scope.String()
 }

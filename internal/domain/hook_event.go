@@ -1,6 +1,6 @@
 package domain
 
-// HookEvent 区分工具、回合完成、压缩和会话上下文的同步检查事件。
+// HookEvent 区分对话提交、工具、回合完成、压缩和会话上下文的同步检查事件。
 type HookEvent string
 
 const (
@@ -11,6 +11,7 @@ const (
 	HookPreCompact         HookEvent = "PreCompact"
 	HookPostCompact        HookEvent = "PostCompact"
 	HookSessionStart       HookEvent = "SessionStart"
+	HookUserPromptSubmit   HookEvent = "UserPromptSubmit"
 )
 
 func (e HookEvent) Valid() bool { return e.targetKind() != "" }
@@ -25,6 +26,8 @@ func (e HookEvent) targetKind() HookTargetKind {
 		return HookTargetCompaction
 	case HookSessionStart:
 		return HookTargetSessionStart
+	case HookUserPromptSubmit:
+		return HookTargetUserPromptSubmit
 	default:
 		return ""
 	}
@@ -44,7 +47,7 @@ const (
 func (p HookFeedbackPolicy) Valid() bool { return p == HookFeedbackNone || p == HookFeedbackModel }
 
 func (p HookFeedbackPolicy) ValidFor(e HookEvent) bool {
-	return e.Valid() && p.Valid() && (p == HookFeedbackNone || e != HookPreToolUse && e != HookPostCompact)
+	return e.Valid() && p.Valid() && (p == HookFeedbackNone || e != HookPreToolUse && e != HookPostCompact && e != HookUserPromptSubmit)
 }
 
 // PostHookRoute 仅表达由原工具事实决定的后置选择，不表示工具是否产生副作用。

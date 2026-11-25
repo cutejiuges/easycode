@@ -6,14 +6,15 @@ import (
 	"easycode/internal/codec"
 )
 
-// HookTargetKind 区分真实工具调用、回合答复与压缩操作。
+// HookTargetKind 区分真实输入、工具调用、回合答复和会话操作。
 type HookTargetKind string
 
 const (
-	HookTargetToolCall     HookTargetKind = "tool_call"
-	HookTargetTurnStop     HookTargetKind = "turn_stop"
-	HookTargetCompaction   HookTargetKind = "compaction"
-	HookTargetSessionStart HookTargetKind = "session_start"
+	HookTargetToolCall         HookTargetKind = "tool_call"
+	HookTargetTurnStop         HookTargetKind = "turn_stop"
+	HookTargetCompaction       HookTargetKind = "compaction"
+	HookTargetSessionStart     HookTargetKind = "session_start"
+	HookTargetUserPromptSubmit HookTargetKind = "user_prompt_submit"
 )
 
 // AssistantSampleReference 精确定位一个回合中的成功采样，不使用展示位置。
@@ -42,6 +43,7 @@ type HookTarget struct {
 	compaction   CompactionID
 	scope        CompactionScope
 	sessionStart SessionStartTarget
+	promptSubmit PromptSubmitTarget
 }
 
 func NewToolHookTarget(invocation string, capability HookCapability) (HookTarget, error) {
@@ -70,6 +72,12 @@ func NewSessionStartHookTarget(target SessionStartTarget) (HookTarget, error) {
 	return v, v.Validate()
 }
 
+// NewUserPromptSubmitHookTarget 绑定真实输入和领取它的采样位置。
+func NewUserPromptSubmitHookTarget(target PromptSubmitTarget) (HookTarget, error) {
+	v := HookTarget{kind: HookTargetUserPromptSubmit, promptSubmit: target}
+	return v, v.Validate()
+}
+
 func (v HookTarget) Kind() HookTargetKind { return v.kind }
 func (v HookTarget) ToolCall() (string, HookCapability, bool) {
 	return v.invocation, v.capability, v.kind == HookTargetToolCall && v.Validate() == nil
@@ -90,8 +98,14 @@ func (v HookTarget) SessionStart() (SessionStartTarget, bool) {
 	return v.sessionStart, v.kind == HookTargetSessionStart && v.Validate() == nil
 }
 
+// UserPromptSubmit 读取当前输入检查的目标身份。
+func (v HookTarget) UserPromptSubmit() (PromptSubmitTarget, bool) {
+	return v.promptSubmit, v.kind == HookTargetUserPromptSubmit && v.Validate() == nil
+}
+
 func (v HookTarget) Validate() error {
-	if v.kind != HookTargetSessionStart && v.sessionStart != (SessionStartTarget{}) {
+	if v.kind != HookTargetSessionStart && v.sessionStart != (SessionStartTarget{}) ||
+		v.kind != HookTargetUserPromptSubmit && v.promptSubmit != (PromptSubmitTarget{}) {
 		return HookConfigInvalid
 	}
 	switch v.kind {
@@ -109,6 +123,11 @@ func (v HookTarget) Validate() error {
 		}
 	case HookTargetSessionStart:
 		if v.sessionStart.Validate() != nil || v.invocation != "" || v.capability != "" || v.sample != (AssistantSampleReference{}) ||
+			v.compaction != "" || v.scope != (CompactionScope{}) {
+			return HookConfigInvalid
+		}
+	case HookTargetUserPromptSubmit:
+		if v.promptSubmit.Validate() != nil || v.invocation != "" || v.capability != "" || v.sample != (AssistantSampleReference{}) ||
 			v.compaction != "" || v.scope != (CompactionScope{}) {
 			return HookConfigInvalid
 		}
@@ -130,6 +149,8 @@ func (v HookTarget) Key() string {
 		return string(v.kind) + ":" + string(v.compaction) + ":" + string(v.scope.Trigger) + ":" + string(v.scope.TurnID) + ":" + strconv.FormatUint(uint64(v.scope.SampleIndex), 10)
 	case HookTargetSessionStart:
 		return string(v.kind) + ":" + v.sessionStart.key()
+	case HookTargetUserPromptSubmit:
+		return string(v.kind) + ":" + string(v.promptSubmit.TurnID) + ":" + string(v.promptSubmit.InputID) + ":" + strconv.FormatUint(uint64(v.promptSubmit.SampleIndex), 10)
 	default:
 		return ""
 	}
@@ -153,6 +174,8 @@ func (v HookTarget) MarshalJSON() ([]byte, error) {
 		}{v.kind, v.sample.TurnID, v.sample.SampleIndex})
 	case HookTargetSessionStart:
 		return codec.MarshalStable(sessionStartHookTargetWire{v.kind, v.sessionStart})
+	case HookTargetUserPromptSubmit:
+		return codec.MarshalStable(promptSubmitHookTargetWire{v.kind, v.promptSubmit})
 	default:
 		return codec.MarshalStable(compactionHookTargetWire{v.kind, v.compaction, v.scope})
 	}
@@ -167,6 +190,11 @@ type compactionHookTargetWire struct {
 type sessionStartHookTargetWire struct {
 	Kind   HookTargetKind     `json:"kind"`
 	Target SessionStartTarget `json:"session_start"`
+}
+
+type promptSubmitHookTargetWire struct {
+	Kind HookTargetKind `json:"kind"`
+	PromptSubmitTarget
 }
 
 func DecodeHookTarget(b []byte) (HookTarget, error) {
@@ -211,6 +239,12 @@ func DecodeHookTarget(b []byte) (HookTarget, error) {
 			return HookTarget{}, HookConfigInvalid
 		}
 		return NewSessionStartHookTarget(w.Target)
+	case HookTargetUserPromptSubmit:
+		var w promptSubmitHookTargetWire
+		if codec.DecodeObject(b, &w, "kind", "turn_id", "input_id", "sample_index") != nil {
+			return HookTarget{}, HookConfigInvalid
+		}
+		return NewUserPromptSubmitHookTarget(w.PromptSubmitTarget)
 	default:
 		return HookTarget{}, HookConfigInvalid
 	}
@@ -226,7 +260,7 @@ func (v *HookTarget) UnmarshalJSON(b []byte) error {
 
 const anyCompactionTrigger CompactionTrigger = "*"
 
-// HookScope 隔离工具 matcher、回合检查、压缩触发和会话来源 matcher。
+// HookScope 隔离无条件事件、工具能力、压缩触发和会话来源。
 type HookScope struct {
 	kind                HookTargetKind
 	matcher             HookMatcher
@@ -239,6 +273,9 @@ func NewToolHookScope(matcher HookMatcher) (HookScope, error) {
 	return v, v.Validate()
 }
 func NewStopHookScope() HookScope { return HookScope{kind: HookTargetTurnStop} }
+
+// NewUserPromptSubmitHookScope 构造不按输入内容匹配的检查范围。
+func NewUserPromptSubmitHookScope() HookScope { return HookScope{kind: HookTargetUserPromptSubmit} }
 
 // ParsePreCompactHookScope 只接受当前三种规范触发 matcher。
 func ParsePreCompactHookScope(matcher string) (HookScope, error) {
@@ -264,7 +301,7 @@ func (v HookScope) Validate() error {
 	switch {
 	case v.kind == HookTargetToolCall && v.matcher.Valid() && v.compactionMatcher == "":
 		return nil
-	case v.kind == HookTargetTurnStop && v.matcher == 0 && v.compactionMatcher == "":
+	case (v.kind == HookTargetTurnStop || v.kind == HookTargetUserPromptSubmit) && v.matcher == 0 && v.compactionMatcher == "":
 		return nil
 	case v.kind == HookTargetCompaction && v.matcher == 0 && (v.compactionMatcher == CompactionManual || v.compactionMatcher == CompactionAuto || v.compactionMatcher == anyCompactionTrigger):
 		return nil
@@ -306,6 +343,8 @@ func (v HookScope) String() string {
 	switch v.kind {
 	case HookTargetTurnStop:
 		return "Turn completion"
+	case HookTargetUserPromptSubmit:
+		return "Prompt submission"
 	case HookTargetCompaction:
 		return string(v.compactionMatcher)
 	case HookTargetSessionStart:
@@ -319,7 +358,7 @@ func (v HookScope) MarshalJSON() ([]byte, error) {
 		return nil, HookConfigInvalid
 	}
 	switch v.kind {
-	case HookTargetTurnStop:
+	case HookTargetTurnStop, HookTargetUserPromptSubmit:
 		return codec.MarshalStable(struct {
 			Kind HookTargetKind `json:"kind"`
 		}{v.kind})
@@ -350,14 +389,14 @@ func DecodeHookScope(b []byte) (HookScope, error) {
 		return HookScope{}, HookConfigInvalid
 	}
 	switch kind {
-	case HookTargetTurnStop:
+	case HookTargetTurnStop, HookTargetUserPromptSubmit:
 		var w struct {
 			Kind HookTargetKind `json:"kind"`
 		}
 		if codec.DecodeObject(b, &w, "kind") != nil {
 			return HookScope{}, HookConfigInvalid
 		}
-		return NewStopHookScope(), nil
+		return HookScope{kind: kind}, nil
 	case HookTargetCompaction:
 		var w compactionHookScopeWire
 		if codec.DecodeObject(b, &w, "kind", "matcher") != nil {

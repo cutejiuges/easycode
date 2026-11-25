@@ -17,6 +17,8 @@ type inputPreview struct {
 	rewind         recalledDraft
 	state          protocol.InputState
 	reason         protocol.InputReason
+	turnID         domain.TurnID
+	hookRejection  string
 	implementation bool
 }
 
@@ -151,12 +153,25 @@ func (model Model) projectControlItem(item protocol.ControlItem) (tea.Model, tea
 		return model, nil
 	}
 	if status, ok := item.InputStatus(); ok {
-		if status.RequestID() == model.planReview.starting && (status.State() == protocol.InputReturned || status.State() == protocol.InputCommitted || status.State() == protocol.InputUncertain) {
-			model.planReview.starting = ""
-		}
 		for index := range model.inputs {
-			if model.inputs[index].id != status.EntryID() {
+			input := &model.inputs[index]
+			if input.id != status.EntryID() {
 				continue
+			}
+			if code, source, id, rejected := status.HookRejection(); rejected {
+				if status.TurnID() != model.activeTurnID || input.state != protocol.InputClaimed || input.turnID != status.TurnID() {
+					return model, nil
+				}
+				input.hookRejection = string(code)
+				if source != "" {
+					input.hookRejection = string(source) + ":" + id + " · " + input.hookRejection
+				}
+			}
+			if status.State() != protocol.InputClaimed {
+				if status.RequestID() == model.planReview.starting {
+					model.planReview.starting = ""
+				}
+				model.clearPromptHookInput(status.TurnID(), input.id)
 			}
 			switch status.State() {
 			case protocol.InputCommitted:
@@ -165,10 +180,11 @@ func (model Model) projectControlItem(item protocol.ControlItem) (tea.Model, tea
 				if status.Reason() == protocol.InputReasonRetracted {
 					model.inputs = append(model.inputs[:index:index], model.inputs[index+1:]...)
 				} else {
-					model.inputs[index].state, model.inputs[index].reason = status.State(), status.Reason()
+					input.state, input.reason = status.State(), status.Reason()
 				}
 			default:
-				model.inputs[index].state, model.inputs[index].reason = status.State(), status.Reason()
+				input.state, input.reason = status.State(), status.Reason()
+				input.turnID = status.TurnID()
 			}
 			break
 		}
@@ -274,6 +290,9 @@ func (model Model) renderInputs() string {
 			state = "queued"
 		}
 		preview := truncateRunes(strings.ReplaceAll(safeComposerText(input.text), "\n", " ↵ "), max(1, model.widthOrDefault()-12))
+		if input.hookRejection != "" {
+			preview = input.hookRejection + " · " + preview
+		}
 		line(fmt.Sprintf("[%s] %s", state, strings.TrimRight(preview, " ")))
 	}
 	if summary {

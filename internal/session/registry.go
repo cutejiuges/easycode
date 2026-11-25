@@ -34,7 +34,8 @@ func descriptorByKind(kind EventKind) (Descriptor, bool) {
 	switch kind {
 	case EventSessionStartHookPlanned, EventSessionStartHookStarted, EventSessionStartHookFinished, EventSessionStartHookClosed:
 		return Descriptor{Kind: kind, Cardinality: CardinalityMany, Placement: PlacementSessionStartHook}, true
-	case EventTurnStopHookPlanned, EventTurnStopHookDecided, EventToolPostHookPlanned, EventToolPostHookCompleted, EventToolHookGatePlanned, EventHookExecutionStarted, EventHookExecutionFinished, EventToolHookGateDecided:
+	case EventPromptSubmitHookPlanned, EventPromptSubmitHookDecided, EventPromptSubmitHookClosed,
+		EventTurnStopHookPlanned, EventTurnStopHookDecided, EventToolPostHookPlanned, EventToolPostHookCompleted, EventToolHookGatePlanned, EventHookExecutionStarted, EventHookExecutionFinished, EventToolHookGateDecided:
 		return Descriptor{Kind: kind, Cardinality: CardinalityMany, Placement: PlacementActiveTurn}, true
 	case EventCompactionStarted:
 		return Descriptor{Kind: kind, Cardinality: CardinalityMany, Placement: PlacementCompactionStart}, true

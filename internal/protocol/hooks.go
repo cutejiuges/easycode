@@ -87,6 +87,9 @@ func (r HookTrustResponse) Validate() error {
 	if sample, ok := r.Target.AssistantSample(); ok && sample.TurnID != r.TurnID {
 		return fmt.Errorf("hook trust turn mismatch")
 	}
+	if target, ok := r.Target.UserPromptSubmit(); ok && target.TurnID != r.TurnID {
+		return fmt.Errorf("hook trust prompt turn mismatch")
+	}
 	return nil
 }
 
@@ -168,7 +171,8 @@ func DecodeHookTrustResolved(e Event) (HookTrustResponse, error) {
 	if err := validateHookEventScope(e, p.Target); err != nil {
 		return p, err
 	}
-	if e.CompactionID != "" && (e.SessionID != p.SessionID || e.ThreadID != p.ThreadID || e.TurnID != p.TurnID) {
+	if (e.CompactionID != "" || p.Reference.Event == domain.HookUserPromptSubmit) &&
+		(e.SessionID != p.SessionID || e.ThreadID != p.ThreadID || e.TurnID != p.TurnID) {
 		return p, fmt.Errorf("hook resolution scope mismatch")
 	}
 	return p, p.Validate()
@@ -196,6 +200,9 @@ func validateHookEventScope(e Event, target domain.HookTarget) error {
 	}
 	if sample, ok := target.AssistantSample(); ok && e.TurnID != "" && sample.TurnID != e.TurnID {
 		return fmt.Errorf("hook target turn scope mismatch")
+	}
+	if prompt, ok := target.UserPromptSubmit(); ok && prompt.TurnID != e.TurnID {
+		return fmt.Errorf("hook target prompt scope mismatch")
 	}
 	return nil
 }
@@ -250,6 +257,9 @@ func (p HookActivityPayload) Validate() error {
 	}
 	if p.Reference.Event == domain.HookPostCompact || p.Reference.Event == domain.HookSessionStart {
 		return fmt.Errorf("post compact activity requires checking state")
+	}
+	if p.Reference.Event == domain.HookUserPromptSubmit && p.Code != domain.HookOK && p.Code != domain.HookCancelled && !domain.ValidUserPromptSubmitRejection(p.Code) {
+		return fmt.Errorf("invalid prompt hook activity outcome")
 	}
 	if p.Reference.Event.Post() {
 		switch p.State {

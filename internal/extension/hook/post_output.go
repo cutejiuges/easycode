@@ -27,6 +27,9 @@ func ParseExecution(event domain.HookEvent, policy domain.HookFeedbackPolicy, ex
 	if event == domain.HookPreToolUse {
 		return ParseOutput(exit, stdout, context)
 	}
+	if event == domain.HookUserPromptSubmit {
+		return parseUserPromptSubmitOutput(exit, stdout)
+	}
 	result, terminal := classifyHookExit(exit, stdout, false)
 	if terminal {
 		return result

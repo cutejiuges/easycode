@@ -46,7 +46,7 @@ easycode resume
 
 ## 本地命令 Hooks
 
-`/hooks` 浏览启动时加载的用户和项目声明。支持 `PreToolUse`、`PostToolUse`、`PostToolUseFailure`、`Stop`、`PreCompact`、`PostCompact` 和 `SessionStart`。交互模式逐项审查，默认拒绝。当前命令执行支持 macOS，工作区只读且禁网。
+`/hooks` 浏览启动时加载的用户和项目声明。支持 `PreToolUse`、`PostToolUse`、`PostToolUseFailure`、`Stop`、`PreCompact`、`PostCompact`、`SessionStart` 和 `UserPromptSubmit`。交互模式逐项审查，默认拒绝。当前命令执行支持 macOS，工作区只读且禁网。
 
 将下面的声明合并到项目的 `.easycode/hooks.json` 或用户的 `~/.config/easycode/hooks.json`，重新打开会话。运行 `/compact 保留 main.go 的变更`，在新窗口保存后审查并授权检查。示例用 macOS 的 `plutil` 读取完整 JSON 输入并提取 `compact_summary`，以退出状态报告摘要是否包含 `main.go`。
 
@@ -98,6 +98,30 @@ easycode resume
 ```
 
 `Ctrl+O` 可以查看实际保存的上下文。`*` 的信任或拒绝适用于当前会话实例内该声明的后续匹配。已保存的正文可随有效历史进入后续请求或摘要。非交互模式跳过新命令执行，已保存的上下文随原生历史恢复。
+
+### 提示词提交检查
+
+`UserPromptSubmit` 在初始输入或同轮追加交付给模型前运行，也检查确认后实际提交的 Plan 实施正文。命令从 stdin 的 `prompt` 字段读取当前输入原文，包括用户在其中输入的敏感文本。信任适用于当前会话实例中的后续提交。
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "id": "check-submission",
+            "type": "command",
+            "command": "prompt=$(/usr/bin/plutil -extract prompt raw -expect string -o - -- -) || exit 1; case \"$prompt\" in *DRAFT_ONLY*) exit 2;; esac"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+该事件的配置组只含 `hooks`。正常退出 `0` 并返回空输出或 `{}` 时通过，退出 `2` 或在正常退出 `0` 时输出 `{"decision":"block"}` 可阻止该条输入。脚本失败也会返还输入，终端显示固定原因。按 `Ctrl+R` 可取回并编辑，空闲时可在 `/hooks` 中重置信任。非交互模式匹配时报告 `hook_trust_required`。 [完整规格](openspec/specs/extension/user-prompt-submit-hooks/spec.md)
 
 ## 继续阅读
 

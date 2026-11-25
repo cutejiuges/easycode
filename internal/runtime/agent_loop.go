@@ -285,6 +285,7 @@ type activeLoopTurn struct {
 	compactionScope    domain.CompactionScope
 	compactionPhase    loopCompactionPresentation
 	claim              []queuedInput
+	inputControl       *loopInputControl
 	stopping           bool
 	input              queuedInput
 	worker             loopWorker
@@ -414,12 +415,12 @@ func (state *agentLoopRunState) discardQueue(code protocol.ControlErrorCode) {
 func (state *agentLoopRunState) startTurn(inputs []queuedInput) *activeLoopTurn {
 	profile, revision := state.selectedProfile, state.selectionRevision
 	state.refreshContextSnapshot()
-	control := &loopInputControl{loop: state.loop, reply: make(chan []domain.UserInput, 1), resolved: make(chan struct{}, 1)}
+	control := &loopInputControl{loop: state.loop, reply: make(chan []domain.UserInput, 1), resolved: make(chan bool, 1)}
 	runtime := state.loop.runtime
 	worker := startLoopWorker(state.ctx, runtime, func(ctx context.Context, emit Emitter) error {
 		return runtime.runTurn(ctx, queuedDomainInputs(inputs), profile, control, emit)
 	})
-	return &activeLoopTurn{profile: profile, selectionRevision: revision, input: inputs[0], claim: inputs, worker: worker}
+	return &activeLoopTurn{profile: profile, selectionRevision: revision, input: inputs[0], claim: inputs, inputControl: control, worker: worker}
 }
 
 func (state *agentLoopRunState) startNext() {

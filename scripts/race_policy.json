@@ -35,6 +35,13 @@
     "reason": "接纳后取消、标题 Sync 回执和下一输入的顺序"
   },
   {
+    "package": "easycode/internal/app",
+    "tests": [
+      "TestPromptSubmitHookStreamPreservesStrictAndMixedAutoIdentity"
+    ],
+    "reason": "检查期间提交、逐输入返还和外部流收口由同一输入 owner 排序"
+  },
+  {
     "package": "easycode/internal/session",
     "tests": [
       "TestSessionTitleSyncFailureWaitsForFinalSyncAndReplaysWrittenTitle"
@@ -105,14 +112,22 @@
     "tests": [
       "TestRewindPickerTransfersOrReleasesItsSourcePermit"
     ],
-    "reason": "历史浏览的许可必须在取消晚到结果或转为一次创建后收口"
+    "reason": "历史浏览的许可必须在取消晚到结果或转为一次创建后收口",
+    "platforms": [
+      "darwin",
+      "linux"
+    ]
   },
   {
     "package": "easycode/internal/session",
     "tests": [
       "TestHistoricalSourceReadWaitsForOwnerAndRejectsPhysicalTail"
     ],
-    "reason": "已接收的历史读取取消须等待 writer 完成并排除物理尾部"
+    "reason": "已接收的历史读取取消须等待 writer 完成并排除物理尾部",
+    "platforms": [
+      "darwin",
+      "linux"
+    ]
   },
   {
     "package": "easycode/internal/app",

@@ -1,4 +1,4 @@
-// Package hook 实现有界本地工具检查配置与严格输出解析。
+// Package hook 实现有界本地检查配置与严格输出解析。
 package hook
 
 import (
@@ -20,7 +20,7 @@ type Loader struct {
 
 func NewLoader() *Loader { return &Loader{} }
 
-// Load 完整捕获两来源；坏来源以诊断保留并阻断全部修改能力。
+// Load 完整捕获两来源；坏来源以诊断保留，交给对应事件判断能否执行。
 func (l *Loader) Load(ctx context.Context, workspace, home string) (domain.HookSnapshot, error) {
 	if l == nil || ctx == nil || !filepath.IsAbs(workspace) || !filepath.IsAbs(home) {
 		return domain.HookSnapshot{}, domain.HookConfigInvalid
@@ -58,30 +58,39 @@ type configFile struct {
 	Hooks configEvents `json:"hooks"`
 }
 type configEvents struct {
-	PreToolUse         []configGroup     `json:"PreToolUse,omitempty"`
-	PostToolUse        []configGroup     `json:"PostToolUse,omitempty"`
-	PostToolUseFailure []configGroup     `json:"PostToolUseFailure,omitempty"`
-	Stop               []configStopGroup `json:"Stop,omitempty"`
-	PreCompact         []configGroup     `json:"PreCompact,omitempty"`
-	PostCompact        []configGroup     `json:"PostCompact,omitempty"`
-	SessionStart       []configGroup     `json:"SessionStart,omitempty"`
+	PreToolUse         []configGroup           `json:"PreToolUse,omitempty"`
+	PostToolUse        []configGroup           `json:"PostToolUse,omitempty"`
+	PostToolUseFailure []configGroup           `json:"PostToolUseFailure,omitempty"`
+	Stop               []configUnfilteredGroup `json:"Stop,omitempty"`
+	PreCompact         []configGroup           `json:"PreCompact,omitempty"`
+	PostCompact        []configGroup           `json:"PostCompact,omitempty"`
+	SessionStart       []configGroup           `json:"SessionStart,omitempty"`
+	UserPromptSubmit   []configUnfilteredGroup `json:"UserPromptSubmit,omitempty"`
 }
 type configGroup struct {
 	Matcher string          `json:"matcher"`
 	Hooks   []configCommand `json:"hooks"`
 }
-type configStopGroup struct {
+type configUnfilteredGroup struct {
 	Hooks []configCommand `json:"hooks"`
 }
 
-func (v *configStopGroup) UnmarshalJSON(b []byte) error {
-	type fields configStopGroup
+func (v *configUnfilteredGroup) UnmarshalJSON(b []byte) error {
+	type fields configUnfilteredGroup
 	var f fields
 	if codec.DecodeObject(b, &f, "hooks") != nil || len(f.Hooks) == 0 {
 		return domain.HookConfigInvalid
 	}
-	*v = configStopGroup(f)
+	*v = configUnfilteredGroup(f)
 	return nil
+}
+
+func unfilteredGroups(groups []configUnfilteredGroup) []configGroup {
+	out := make([]configGroup, len(groups))
+	for index, group := range groups {
+		out[index] = configGroup{Hooks: group.Hooks}
+	}
+	return out
 }
 
 type configCommand struct {
@@ -143,10 +152,6 @@ func decodeConfig(source domain.HookSource, b []byte) ([]domain.HookDeclaration,
 	normalized := make([]normalizedGroup, 0, len(f.Hooks.PreToolUse))
 	seen := make(map[string]bool)
 	count := 0
-	stopGroups := make([]configGroup, len(f.Hooks.Stop))
-	for i, g := range f.Hooks.Stop {
-		stopGroups[i] = configGroup{Hooks: g.Hooks}
-	}
 	for _, phase := range []struct {
 		event  domain.HookEvent
 		groups []configGroup
@@ -154,10 +159,11 @@ func decodeConfig(source domain.HookSource, b []byte) ([]domain.HookDeclaration,
 		{domain.HookPreToolUse, f.Hooks.PreToolUse},
 		{domain.HookPostToolUse, f.Hooks.PostToolUse},
 		{domain.HookPostToolUseFailure, f.Hooks.PostToolUseFailure},
-		{domain.HookStop, stopGroups},
+		{domain.HookStop, unfilteredGroups(f.Hooks.Stop)},
 		{domain.HookPreCompact, f.Hooks.PreCompact},
 		{domain.HookPostCompact, f.Hooks.PostCompact},
 		{domain.HookSessionStart, f.Hooks.SessionStart},
+		{domain.HookUserPromptSubmit, unfilteredGroups(f.Hooks.UserPromptSubmit)},
 	} {
 		for _, g := range phase.groups {
 			scope, err := configScope(phase.event, g.Matcher)
@@ -212,6 +218,8 @@ func configScope(event domain.HookEvent, matcher string) (domain.HookScope, erro
 	switch event {
 	case domain.HookStop:
 		return domain.NewStopHookScope(), nil
+	case domain.HookUserPromptSubmit:
+		return domain.NewUserPromptSubmitHookScope(), nil
 	case domain.HookPreCompact, domain.HookPostCompact:
 		return domain.ParseCompactionHookScope(matcher)
 	case domain.HookSessionStart:
@@ -236,6 +244,8 @@ func configDeclaration(source domain.HookSource, event domain.HookEvent, feedbac
 		return domain.NewPostCompactHookDeclaration(source, feedback, revision, id, scope, command, timeout)
 	case domain.HookSessionStart:
 		return domain.NewSessionStartHookDeclaration(source, feedback, revision, id, scope, command, timeout)
+	case domain.HookUserPromptSubmit:
+		return domain.NewUserPromptSubmitHookDeclaration(source, feedback, revision, id, command, timeout)
 	}
 	matcher, ok := scope.ToolMatcher()
 	if !ok {

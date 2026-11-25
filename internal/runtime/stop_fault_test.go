@@ -75,6 +75,9 @@ func (f *stopInputFixture) claim(context.Context, domain.TurnID, uint32) ([]doma
 	f.inputs = nil
 	return inputs, nil
 }
+func (f *stopInputFixture) filter(domain.TurnID, []domain.UserInput, []promptSubmitRejection) bool {
+	return true
+}
 func (f *stopInputFixture) resolve(_ domain.TurnID, _ []domain.UserInput, state protocol.InputState, _ protocol.InputReason) {
 	f.states = append(f.states, state)
 }

@@ -274,6 +274,14 @@ func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, 
 	if err != nil {
 		return err
 	}
+	promptBudget := 30 * time.Second
+	inputs, rejected, err := runtime.checkPromptSubmissions(ctx, emit, turnID, 0, inputs, control, &promptBudget)
+	if err != nil {
+		return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, err)
+	}
+	if rejected != "" && len(inputs) == 0 {
+		return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, promptSubmitFailure(rejected))
+	}
 	if err := runtime.prepareAutomaticSample(ctx, turnID, 0, inputs, emit); err != nil {
 		if control != nil {
 			reason := protocol.InputReasonFailed
@@ -335,7 +343,7 @@ func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, 
 				}
 				return err
 			}
-			if err := runtime.deliverStopContinuation(ctx, emit, check, control); err != nil {
+			if err := runtime.deliverStopContinuation(ctx, emit, check, control, &promptBudget); err != nil {
 				return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, err)
 			}
 			continue
@@ -385,6 +393,10 @@ func (runtime *Runtime) runTurn(ctx context.Context, inputs []domain.UserInput, 
 			pending = claimed
 		}
 		if sampleIndex+1 < maxSamplesPerTurn && totalCalls < maxToolCallsPerTurn {
+			pending, _, err = runtime.checkPromptSubmissions(ctx, emit, turnID, uint32(sampleIndex+1), pending, control, &promptBudget)
+			if err != nil {
+				return runtime.failTurn(context.WithoutCancel(ctx), emit, turnID, err)
+			}
 			if err := runtime.prepareAutomaticSample(ctx, turnID, uint32(sampleIndex+1), pending, emit); err != nil {
 				if control != nil && len(pending) > 0 {
 					reason := protocol.InputReasonFailed

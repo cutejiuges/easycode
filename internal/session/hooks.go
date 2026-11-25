@@ -38,7 +38,7 @@ func NewHookExecutionStartedDraft(turn domain.TurnID, id domain.HookRunIdentity)
 	if !turn.Valid() || id.Event == domain.HookPreCompact || id.Validate() != nil {
 		return RecordDraft{}, fmt.Errorf("invalid hook execution start")
 	}
-	if sample, ok := id.Target.AssistantSample(); ok && sample.TurnID != turn {
+	if !hookTargetMatchesTurn(id.Target, turn) {
 		return RecordDraft{}, fmt.Errorf("hook execution target mismatch")
 	}
 	return encodeDraft(EventHookExecutionStarted, "", turn, id)
@@ -47,7 +47,7 @@ func NewHookExecutionFinishedDraft(turn domain.TurnID, r domain.HookFinished) (R
 	if !turn.Valid() || r.Validate() != nil {
 		return RecordDraft{}, fmt.Errorf("invalid hook execution result")
 	}
-	if sample, ok := r.Result.Identity.Target.AssistantSample(); ok && sample.TurnID != turn {
+	if !hookTargetMatchesTurn(r.Result.Identity.Target, turn) {
 		return RecordDraft{}, fmt.Errorf("hook result target mismatch")
 	}
 	return encodeDraft(EventHookExecutionFinished, "", turn, r)
@@ -76,8 +76,13 @@ func DecodeHookExecutionStarted(record Record) (domain.HookRunIdentity, error) {
 	if v.Event == domain.HookPreCompact {
 		return v, fmt.Errorf("compaction hook requires a dedicated start record")
 	}
-	if sample, ok := v.Target.AssistantSample(); ok && sample.TurnID != record.TurnID {
+	if !hookTargetMatchesTurn(v.Target, record.TurnID) {
 		return v, fmt.Errorf("hook start target mismatch")
+	}
+	if v.Event == domain.HookUserPromptSubmit {
+		if err := validatePromptSubmitEnvelope(record); err != nil {
+			return v, err
+		}
 	}
 	return v, v.Validate()
 }
@@ -86,10 +91,26 @@ func DecodeHookExecutionFinished(record Record) (domain.HookFinished, error) {
 		return domain.HookFinished{}, fmt.Errorf("invalid hook result kind")
 	}
 	v, err := domain.DecodeHookFinished(record.Payload)
-	if sample, ok := v.Result.Identity.Target.AssistantSample(); ok && sample.TurnID != record.TurnID {
+	if err != nil {
+		return v, err
+	}
+	if !hookTargetMatchesTurn(v.Result.Identity.Target, record.TurnID) {
 		return v, fmt.Errorf("hook result target mismatch")
 	}
-	return v, err
+	if v.Result.Identity.Event == domain.HookUserPromptSubmit {
+		return v, validatePromptSubmitEnvelope(record)
+	}
+	return v, nil
+}
+
+func hookTargetMatchesTurn(target domain.HookTarget, turn domain.TurnID) bool {
+	if sample, ok := target.AssistantSample(); ok {
+		return sample.TurnID == turn
+	}
+	if prompt, ok := target.UserPromptSubmit(); ok {
+		return prompt.TurnID == turn
+	}
+	return true
 }
 func DecodeToolHookGateDecided(record Record) (domain.HookGateDecision, error) {
 	if record.EventKind != EventToolHookGateDecided {

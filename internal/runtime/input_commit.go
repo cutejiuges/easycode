@@ -18,6 +18,7 @@ import (
 // turnInputControl 由 loop owner 串行决定领取和最终输入归属。
 type turnInputControl interface {
 	claim(context.Context, domain.TurnID, uint32) ([]domain.UserInput, error)
+	filter(domain.TurnID, []domain.UserInput, []promptSubmitRejection) bool
 	resolve(domain.TurnID, []domain.UserInput, protocol.InputState, protocol.InputReason)
 }
 

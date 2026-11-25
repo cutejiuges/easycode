@@ -13,14 +13,14 @@ import (
 )
 
 type postCompactCheck struct {
-	compactionHookExecution
+	hookExecutionConfig
 	plan         session.PostCompactPlan
 	declarations []domain.HookDeclaration
 }
 
 func (runtime *Runtime) planPostCompact(checkpoint provider.CheckpointEnvelope) (postCompactCheck, error) {
-	snapshot, execution := runtime.captureCompactionHooks()
-	check := postCompactCheck{compactionHookExecution: execution}
+	snapshot, execution := runtime.captureHookExecution()
+	check := postCompactCheck{hookExecutionConfig: execution}
 	declarations, err := snapshot.PostCompactChecks(checkpoint.Scope().Trigger)
 	switch {
 	case errors.Is(err, domain.HookMatchLimit):

@@ -202,6 +202,11 @@ func NewSessionStartHookDeclaration(source HookSource, feedback HookFeedbackPoli
 	return newScopedHookDeclaration(source, HookSessionStart, feedback, revision, id, scope, command, timeout)
 }
 
+// NewUserPromptSubmitHookDeclaration 构造仅允许本地提交控制的命令声明。
+func NewUserPromptSubmitHookDeclaration(source HookSource, feedback HookFeedbackPolicy, revision, id, command string, timeout int) (HookDeclaration, error) {
+	return newScopedHookDeclaration(source, HookUserPromptSubmit, feedback, revision, id, NewUserPromptSubmitHookScope(), command, timeout)
+}
+
 func newScopedHookDeclaration(source HookSource, event HookEvent, feedback HookFeedbackPolicy, revision, id string, scope HookScope, command string, timeout int) (HookDeclaration, error) {
 	if !feedback.ValidFor(event) || !source.Valid() || !ValidHookDigest(revision) || ValidateSkillName(id) != nil || !scope.ValidFor(event) ||
 		strings.TrimSpace(command) == "" || len(command) > MaxHookCommandBytes || !utf8.ValidString(command) || strings.ContainsRune(command, 0) || timeout < 1 || timeout > 30 {
@@ -334,6 +339,11 @@ func NewSessionStartHookRunIdentity(target HookTarget, planDigest string, ordina
 	return newHookRunIdentity(target, HookSessionStart, planDigest, ordinal)
 }
 
+// NewUserPromptSubmitHookRunIdentity 关联已领取输入、冻结计划及声明顺序。
+func NewUserPromptSubmitHookRunIdentity(target HookTarget, planDigest string, ordinal int) (HookRunIdentity, error) {
+	return newHookRunIdentity(target, HookUserPromptSubmit, planDigest, ordinal)
+}
+
 func newHookRunIdentity(target HookTarget, event HookEvent, digest string, ordinal int) (HookRunIdentity, error) {
 	v := HookRunIdentity{Event: event, Target: target, PlanDigest: digest, Ordinal: ordinal}
 	v.RunID = target.Key() + ":" + string(event) + ":" + digest + ":" + strconv.Itoa(ordinal)
@@ -412,6 +422,9 @@ func (r HookRunResult) Validate() error {
 	if r.Identity.Event == HookSessionStart && !r.validSessionStartResult() {
 		return HookConfigInvalid
 	}
+	if r.Identity.Event == HookUserPromptSubmit && !r.validUserPromptSubmitResult() {
+		return HookConfigInvalid
+	}
 	if r.Origin == "recovery" && (r.Status != HookUncertain || r.ExitKnown || r.TimedOut || r.Cancelled || r.StdoutBytes != 0 || r.StderrBytes != 0 || r.CleanupConfirmed) {
 		return HookConfigInvalid
 	}
@@ -439,7 +452,7 @@ func (r HookRunResult) Validate() error {
 			return HookConfigInvalid
 		}
 	case HookExitFailed:
-		if !r.ExitKnown || r.ExitCode == 0 || r.ExitCode == 2 && (r.Identity.Event == HookPreToolUse || r.Identity.Event == HookStop) {
+		if !r.ExitKnown || r.ExitCode == 0 || r.ExitCode == 2 && (r.Identity.Event == HookPreToolUse || r.Identity.Event == HookStop || r.Identity.Event == HookUserPromptSubmit) {
 			return HookConfigInvalid
 		}
 	case HookOutputInvalid:
@@ -579,6 +592,11 @@ func (s HookSnapshot) Match(event HookEvent, cap HookCapability) ([]HookDeclarat
 // StopChecks 返回完整冻结的完成检查；坏来源不能以部分配置放行。
 func (s HookSnapshot) StopChecks() ([]HookDeclaration, error) {
 	return s.match(HookStop, nil)
+}
+
+// UserPromptSubmitChecks 选择完整冻结的对话提交检查，不按正文匹配。
+func (s HookSnapshot) UserPromptSubmitChecks() ([]HookDeclaration, error) {
+	return s.match(HookUserPromptSubmit, nil)
 }
 
 // PreCompactChecks 只选择对应触发方式的声明，沿用冻结来源与共享匹配上限。

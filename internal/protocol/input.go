@@ -1,9 +1,10 @@
 package protocol
 
 import (
+	"fmt"
+
 	"easycode/internal/codec"
 	"easycode/internal/domain"
-	"fmt"
 )
 
 // UserInputCommittedPayload 是已成功保存的单条用户输入展示事实。
@@ -72,22 +73,26 @@ const (
 type InputReason string
 
 const (
-	InputReasonRetracted InputReason = "retracted"
-	InputReasonStopped   InputReason = "stopped"
-	InputReasonCancelled InputReason = "cancelled"
-	InputReasonShutdown  InputReason = "session_shutdown"
-	InputReasonFailed    InputReason = "session_failed"
-	InputReasonPreflight InputReason = "input_preflight_failed"
-	InputReasonUncertain InputReason = "persistence_uncertain"
+	InputReasonRetracted    InputReason = "retracted"
+	InputReasonStopped      InputReason = "stopped"
+	InputReasonCancelled    InputReason = "cancelled"
+	InputReasonShutdown     InputReason = "session_shutdown"
+	InputReasonFailed       InputReason = "session_failed"
+	InputReasonPreflight    InputReason = "input_preflight_failed"
+	InputReasonUncertain    InputReason = "persistence_uncertain"
+	InputReasonHookRejected InputReason = "hook_rejected"
 )
 
 // InputStatus 保持命令、输入与实际 turn 的独立身份。
 type InputStatus struct {
-	requestID RequestID
-	entryID   domain.InputID
-	state     InputState
-	turnID    domain.TurnID
-	reason    InputReason
+	requestID     RequestID
+	entryID       domain.InputID
+	state         InputState
+	turnID        domain.TurnID
+	reason        InputReason
+	hookCode      domain.HookCode
+	hookSource    domain.HookSource
+	declarationID string
 }
 
 // NewInputStatus 创建不含正文的输入状态投影。
@@ -95,16 +100,41 @@ func NewInputStatus(requestID RequestID, entryID domain.InputID, state InputStat
 	status := InputStatus{requestID: requestID, entryID: entryID, state: state, turnID: turnID, reason: reason}
 	return status, status.Validate()
 }
+
+// NewHookRejectedInputStatus 创建只含固定诊断和可选声明身份的本地返还状态。
+func NewHookRejectedInputStatus(requestID RequestID, entryID domain.InputID, turnID domain.TurnID, code domain.HookCode, source domain.HookSource, declarationID string) (InputStatus, error) {
+	status := InputStatus{
+		requestID: requestID, entryID: entryID, state: InputReturned, turnID: turnID, reason: InputReasonHookRejected,
+		hookCode: code, hookSource: source, declarationID: declarationID,
+	}
+	return status, status.Validate()
+}
+
 func (status InputStatus) RequestID() RequestID    { return status.requestID }
 func (status InputStatus) EntryID() domain.InputID { return status.entryID }
 func (status InputStatus) State() InputState       { return status.state }
 func (status InputStatus) TurnID() domain.TurnID   { return status.turnID }
 func (status InputStatus) Reason() InputReason     { return status.reason }
 
+// HookRejection 返回不包含命令、输入正文或脚本输出的检查诊断。
+func (status InputStatus) HookRejection() (domain.HookCode, domain.HookSource, string, bool) {
+	return status.hookCode, status.hookSource, status.declarationID, status.reason == InputReasonHookRejected
+}
+
 // Validate 验证状态与原因及 turn 归属的封闭组合。
 func (status InputStatus) Validate() error {
 	if !status.requestID.Valid() || !status.entryID.Valid() || (status.turnID != "" && !status.turnID.Valid()) {
 		return fmt.Errorf("input status identity is invalid")
+	}
+	if status.reason == InputReasonHookRejected {
+		if status.state != InputReturned || !status.turnID.Valid() || !domain.ValidUserPromptSubmitRejection(status.hookCode) ||
+			((status.hookSource != "" || status.declarationID != "") && (!status.hookSource.Valid() || domain.ValidateSkillName(status.declarationID) != nil)) {
+			return fmt.Errorf("hook input rejection is invalid")
+		}
+		return nil
+	}
+	if status.hookCode != "" || status.hookSource != "" || status.declarationID != "" {
+		return fmt.Errorf("unexpected hook input rejection")
 	}
 	switch status.state {
 	case InputClaimed, InputCommitted:
