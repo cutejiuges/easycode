@@ -10,25 +10,26 @@ import re
 import select
 import signal
 import struct
+import subprocess
 import termios
 import time
+from smoke_support import complete_cases
 
 
 def smoke(binary, provider, root, event="PreToolUse", output_dir=None):
     ack_read, ack_write = os.pipe() if event == "Stop" else (None, None)
-    pid, fd = pty.fork()
-    if pid == 0:
-        os.chdir(root / "internal/app")
-        os.environ.update(EASYCODE_HOOK_TERMINAL_SMOKE=provider,
-                          TERM="xterm-256color", NO_COLOR="1", EASYCODE_HOOK_TERMINAL_EVENT=event)
-        helper = "TestHookTerminalHelper"
-        if event == "Stop":
-            os.environ["EASYCODE_STOP_TERMINAL_SMOKE"] = provider
-            os.close(ack_read)
-            os.set_inheritable(ack_write, True)
-            os.environ["EASYCODE_STOP_TERMINAL_ACK_FD"] = str(ack_write)
-            helper = "TestStopTerminalHelper"
-        os.execv(binary, [binary, "-test.run=^" + helper + "$", "-test.timeout=90s"])
+    fd, slave = pty.openpty()
+    before = termios.tcgetattr(slave)
+    env = dict(os.environ, EASYCODE_HOOK_TERMINAL_SMOKE=provider,
+               TERM="xterm-256color", NO_COLOR="1", EASYCODE_HOOK_TERMINAL_EVENT=event)
+    helper = "TestHookTerminalHelper"
+    if event == "Stop":
+        env.update(EASYCODE_STOP_TERMINAL_SMOKE=provider, EASYCODE_STOP_TERMINAL_ACK_FD=str(ack_write))
+        helper = "TestStopTerminalHelper"
+    process = subprocess.Popen([binary, "-test.run=^" + helper + "$", "-test.timeout=90s"],
+                               cwd=root / "internal/app", env=env, stdin=slave, stdout=slave, stderr=slave,
+                               pass_fds=(ack_write,) if ack_write is not None else ())
+    pid = process.pid
     if ack_write is not None:
         os.close(ack_write)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 32, 100, 0, 0))
@@ -201,21 +202,28 @@ def smoke(binary, provider, root, event="PreToolUse", output_dir=None):
             if event == "PostToolUseFailure":
                 wait("HOOK_FAILURE_FACTS=conflict/failure/cancelled", "durable-original-conflict-and-cancelled-check")
             wait("HOOK_TERMINAL_EXIT=0", "clean-terminal-exit")
-        _, status = os.waitpid(pid, 0)
-        if os.waitstatus_to_exitcode(status) != 0:
+        status = process.wait(timeout=5)
+        if status != 0:
             raise RuntimeError(f"{provider}: terminal helper failed")
+        after = termios.tcgetattr(slave)
+        pending = getattr(termios, "PENDIN", 0)
+        before[3] &= ~pending
+        after[3] &= ~pending
+        if before != after:
+            raise RuntimeError("hook terminal modes were not restored")
         if output_dir:
             output_dir.mkdir(parents=True, exist_ok=True)
             stem = provider + "-" + event
             (output_dir / (stem + ".pty.log")).write_bytes(raw)
-            (output_dir / (stem + ".json")).write_text(json.dumps({"provider": provider, "event": event, "exit_code": os.waitstatus_to_exitcode(status), "stages": stages}, indent=2) + "\n")
+            (output_dir / (stem + ".json")).write_text(json.dumps({"provider": provider, "event": event, "exit_code": status, "stages": stages}, indent=2) + "\n")
         print(provider + "/" + event + ": " + ", ".join(stages))
-    except BaseException:
-        os.kill(pid, signal.SIGKILL)
-        os.waitpid(pid, 0)
-        raise
+        return {"provider": provider, "event": event, "exit_code": status, "stages": stages, "terminal_restored": True}
     finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
         os.close(fd)
+        os.close(slave)
         if ack_read is not None:
             os.close(ack_read)
 
@@ -227,5 +235,5 @@ if __name__ == "__main__":
     parser.add_argument("--output-dir", type=pathlib.Path, help="保存实际 PTY 输出及退出状态")
     args = parser.parse_args()
     repo = pathlib.Path(__file__).resolve().parents[1]
-    for family in ("openai", "anthropic"):
-        smoke(os.path.abspath(args.binary), family, repo,args.event,args.output_dir)
+    complete_cases([smoke(os.path.abspath(args.binary), family, repo, args.event, args.output_dir)
+                    for family in ("openai", "anthropic")])

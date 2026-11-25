@@ -20,15 +20,9 @@ func TestHistoricalBranchKeepsExactCutAndFullSourceWitness(t *testing.T) {
 	repo := openBranchTestRepository(t, securePathHooks{})
 	content := readCurrentFixture(t, "task_openai_checkpoints.jsonl")
 	first, _, _ := bytes.Cut(content, []byte{'\n'})
-	metadata, err := DecodeRecord(first)
-	if err != nil {
-		t.Fatal(err)
-	}
+	metadata := decodeFixtureRecord(t, first)
 	lease := installBranchJournal(t, repo, metadata.ThreadID, content)
-	loaded, err := NewLoader().Load(ctx, lease)
-	if err != nil {
-		t.Fatal(err)
-	}
+	loaded := loadFixtureJournal(t, ctx, lease)
 	source := startBranchTestWriter(t, lease, loaded)
 	cuts, more := readHistoricalCuts(t, source)
 	if len(cuts) != 3 || more || cuts[0].Number() != 2 || cuts[0].sequence != 10 || cuts[0].InputSequence() != 13 {
@@ -46,9 +40,7 @@ func TestHistoricalBranchKeepsExactCutAndFullSourceWitness(t *testing.T) {
 
 	cuts, _ = readHistoricalCuts(t, source)
 	stage, child, err := repo.PrepareHistoricalBranch(ctx, source, testBranchID, "", cuts[0])
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	t.Cleanup(func() { _ = stage.Close() })
 	childPlan, err := NewReplayPlanner().Plan(child)
 	if err != nil || len(childPlan.Compactions) != 1 || childPlan.Title != "Conversation (Branch)" ||
@@ -68,13 +60,9 @@ func TestHistoricalBranchKeepsExactCutAndFullSourceWitness(t *testing.T) {
 		t.Fatal("published journal did not preserve the exact retained source bytes")
 	}
 	childLease, err := stage.TakeLease()
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	childFile, err := childLease.transfer()
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	// 列表上限不需要为每个合成回合执行真实磁盘同步。
 	childWriter := startOwnedJournalWriter(historicalListFixtureFile{childFile}, child.Identity, child.NextSequence,
 		child.committedBytes, time.Now, journalRequestCapacity)
@@ -103,13 +91,9 @@ func TestHistoricalBranchKeepsExactCutAndFullSourceWitness(t *testing.T) {
 
 	beforeDamage := readBranchTestJournal(t, repo, metadata.ThreadID)
 	filename, err := repo.JournalPath(metadata.ThreadID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	file, err := os.OpenFile(filename, os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	_, writeErr := file.WriteAt([]byte{'!'}, int64(len(beforeDamage)-1))
 	if err := errors.Join(writeErr, file.Close()); err != nil {
 		t.Fatal(err)
@@ -127,13 +111,9 @@ func TestHistoricalBranchKeepsExactCutAndFullSourceWitness(t *testing.T) {
 func readHistoricalCuts(t *testing.T, writer *JournalWriter) ([]HistoricalCut, bool) {
 	t.Helper()
 	loaded, err := writer.ReadHistorySnapshot(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	plan, err := NewReplayPlanner().PlanContext(context.Background(), loaded)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return plan.HistoricalCuts()
 }
 
@@ -141,10 +121,7 @@ func appendHistoricalFailedTurn(t *testing.T, writer *JournalWriter, number, inp
 	t.Helper()
 	ctx := context.Background()
 	turn := domain.TurnID(fmt.Sprintf("01900000-0000-7000-8000-%012x", number))
-	start, err := NewTurnStartedDraft(turn)
-	if err != nil {
-		t.Fatal(err)
-	}
+	start := mustDraft(t, EventTurnStarted, turn, TurnStartedPayload{})
 	if _, err := writer.AppendBatch(ctx, []RecordDraft{start}); err != nil {
 		t.Fatal(err)
 	}
@@ -156,17 +133,10 @@ func appendHistoricalFailedTurn(t *testing.T, writer *JournalWriter, number, inp
 	if len(ids) != 0 {
 		first = ids[0]
 		association, err := domain.NewInputAssociation(turn, domain.InputInitial, 0, ids)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		inputsDraft, err := NewTurnInputsCommittedDraft(association)
-		if err != nil {
-			t.Fatal(err)
-		}
-		native, err := NewProviderNativeCommitDraft(turn, validNativeCommit())
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
+		native := mustDraft(t, EventProviderNativeCommit, turn, validNativeCommit())
 		if _, err := writer.AppendBatch(ctx, []RecordDraft{inputsDraft, native}); err != nil {
 			t.Fatal(err)
 		}
@@ -181,10 +151,7 @@ func appendHistoricalSteeredTurn(t *testing.T, writer *JournalWriter) domain.Tur
 	var turn domain.TurnID
 	var batch []RecordDraft
 	for _, line := range lines[2:] {
-		record, err := DecodeRecord(line)
-		if err != nil {
-			t.Fatal(err)
-		}
+		record := decodeFixtureRecord(t, line)
 		turn = record.TurnID
 		descriptor, _ := descriptorByKind(record.EventKind)
 		batch = append(batch, RecordDraft{descriptor: descriptor, turnID: turn, payload: record.Payload})
@@ -201,10 +168,7 @@ func appendHistoricalSteeredTurn(t *testing.T, writer *JournalWriter) domain.Tur
 
 func appendHistoricalFailure(t *testing.T, writer *JournalWriter, turn domain.TurnID) {
 	t.Helper()
-	failed, err := NewTurnFailedDraft(turn, TurnFailedPayload{Code: "user_cancelled", Message: "User cancelled"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	failed := mustDraft(t, EventTurnFailed, turn, TurnFailedPayload{Code: "user_cancelled", Message: "User cancelled"})
 	if _, err := writer.AppendBatch(context.Background(), []RecordDraft{failed}); err != nil {
 		t.Fatal(err)
 	}
@@ -215,14 +179,9 @@ func TestHistoricalSourceReadWaitsForOwnerAndRejectsPhysicalTail(t *testing.T) {
 	repo := openBranchTestRepository(t, securePathHooks{})
 	content := readCurrentFixture(t, "root.jsonl")
 	lease := installBranchJournal(t, repo, testThreadID, content)
-	loaded, err := NewLoader().Load(ctx, lease)
-	if err != nil {
-		t.Fatal(err)
-	}
+	loaded := loadFixtureJournal(t, ctx, lease)
 	file, err := lease.transfer()
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	gated := &historicalReadGate{File: file, entered: make(chan struct{}), release: make(chan struct{})}
 	writer := startOwnedJournalWriter(gated, loaded.Identity, loaded.NextSequence, loaded.committedBytes, time.Now, journalRequestCapacity)
 	release := sync.OnceFunc(func() { close(gated.release) })
@@ -253,13 +212,9 @@ func TestHistoricalSourceReadWaitsForOwnerAndRejectsPhysicalTail(t *testing.T) {
 	}
 	tail := []byte("uncommitted tail")
 	filename, err := repo.JournalPath(testThreadID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	extra, err := os.OpenFile(filename, os.O_WRONLY|os.O_APPEND, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	_, writeErr := extra.Write(tail)
 	if err := errors.Join(writeErr, extra.Close()); err != nil {
 		t.Fatal(err)

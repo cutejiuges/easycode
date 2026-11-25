@@ -83,10 +83,7 @@ func TestAutomaticCompactionRealProvidersAndResume(t *testing.T) {
 				runner := &compactionFixtureRunner{t: t, automatic: true, post: scenario == "accepted"}
 				hooks := compactionFixtureHooks(t, runner, "auto")
 				hooks.interactiveApprovals = !headless
-				resources, err := openChatResourcesWithHooks(ctx, cfg, dataPaths{sessionRoot: root}, "", false, workspace, hooks)
-				if err != nil {
-					t.Fatal(err)
-				}
+				resources := mustOpenChatResourcesWithHooks(t, ctx, cfg, dataPaths{sessionRoot: root}, "", false, workspace, hooks)
 				first := "latest-prior-correction " + strings.Repeat("historical work ", 3500)
 				inputs := []string{first, "new-exact-correction\n  keep this indentation  "}
 				if overBudget {
@@ -125,9 +122,7 @@ func TestAutomaticCompactionRealProvidersAndResume(t *testing.T) {
 					}
 				}
 				thread := resources.identity.ThreadID
-				if err := resources.close(context.Background()); err != nil {
-					t.Fatal(err)
-				}
+				closeAppTestResources(t, resources)
 				mu.Lock()
 				count, summaryCount := len(requests), summaries
 				captured := append([][]byte(nil), requests...)
@@ -153,14 +148,9 @@ func TestAutomaticCompactionRealProvidersAndResume(t *testing.T) {
 				if scenario != "accepted" && !bytes.Contains(next, []byte("historical work")) {
 					t.Fatal("failure replaced old window")
 				}
-				resumed, err := openChatResources(context.Background(), cfg, root, string(thread), workspace)
-				if err != nil {
-					t.Fatal(err)
-				}
+				resumed := mustOpenChatResources(t, context.Background(), cfg, root, string(thread), workspace)
 				submitAppTurn(t, resumed, "after-resume")
-				if err := resumed.close(context.Background()); err != nil {
-					t.Fatal(err)
-				}
+				closeAppTestResources(t, resumed)
 			})
 		}
 	}

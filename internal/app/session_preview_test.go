@@ -45,22 +45,15 @@ func installThreadFixture(t *testing.T, data []byte, thread domain.ThreadID) (st
 	if err := repo.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, path, data, 0600)
 	return root, path
 }
 
 func TestPreviewDescriptorBoundPathReplacement(t *testing.T) {
-	original, err := os.ReadFile("../session/testdata/current/input_only_openai.jsonl")
-	if err != nil {
-		t.Fatal(err)
-	}
+	original := readAppTestFile(t, "../session/testdata/current/input_only_openai.jsonl")
 	root, path, thread := installPreviewFixture(t, original)
 	outside := filepath.Join(t.TempDir(), "outside.jsonl")
-	if err = os.WriteFile(outside, []byte("private outside"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, outside, []byte("private outside"), 0600)
 	deps := defaultPreviewDependencies()
 	deps.load = func(ctx context.Context, lease *session.JournalLease) (session.LoadResult, error) {
 		if err := os.Rename(path, path+".held"); err != nil {
@@ -95,14 +88,8 @@ func TestPreviewDescriptorBoundPathReplacement(t *testing.T) {
 
 func TestPreviewTitleUsesJournalInsteadOfPickerSnapshot(t *testing.T) {
 	ctx := context.Background()
-	base, err := os.ReadFile("../session/testdata/current/root.jsonl")
-	if err != nil {
-		t.Fatal(err)
-	}
-	updates, err := os.ReadFile("../session/testdata/current/session_title_updates.jsonl")
-	if err != nil {
-		t.Fatal(err)
-	}
+	base := readAppTestFile(t, "../session/testdata/current/root.jsonl")
+	updates := readAppTestFile(t, "../session/testdata/current/session_title_updates.jsonl")
 	cut := bytes.IndexByte(updates, '\n') + 1
 	root, path, thread := installPreviewFixture(t, append(append([]byte(nil), base...), updates[:cut]...))
 	discovery := pickerDiscovery{
@@ -125,9 +112,7 @@ func TestPreviewTitleUsesJournalInsteadOfPickerSnapshot(t *testing.T) {
 		t.Fatalf("initial preview = %+v, %v", before, err)
 	}
 	content := append(append([]byte(nil), base...), updates...)
-	if err := os.WriteFile(path, content, 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, path, content, 0600)
 	after, cleanupFailed, err := previewSession(ctx, root, thread, defaultPreviewDependencies())
 	if err != nil || cleanupFailed || after.Title != "解析 👩‍💻" || len(after.Messages) != len(before.Messages) || after.Truncated != before.Truncated {
 		t.Fatalf("updated preview = %+v, %v", after, err)
@@ -176,10 +161,7 @@ func (c *previewValidationBarrier) Err() error {
 func TestPreviewCancellationDuringNativeValidationReleasesLease(t *testing.T) {
 	for _, fixture := range []string{"input_only_openai.jsonl", "input_only_anthropic.jsonl"} {
 		t.Run(fixture, func(t *testing.T) {
-			data, err := os.ReadFile("../session/testdata/current/" + fixture)
-			if err != nil {
-				t.Fatal(err)
-			}
+			data := readAppTestFile(t, "../session/testdata/current/"+fixture)
 			root, path, thread := installPreviewFixture(t, data)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()

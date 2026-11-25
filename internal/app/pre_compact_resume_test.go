@@ -88,10 +88,7 @@ func TestPreCompactResumeClosesBeforePendingStopContinuation(t *testing.T) {
 		return runner, nil
 	}
 	paths := dataPaths{sessionRoot: root}
-	resources, err := openChatResourcesWithHooks(ctx, cfg, paths, "", false, workspace, chatResourceHooks{interactiveApprovals: true, loadHooks: load, newHookRunner: makeRunner})
-	if err != nil {
-		t.Fatal(err)
-	}
+	resources := mustOpenChatResourcesWithHooks(t, ctx, cfg, paths, "", false, workspace, chatResourceHooks{interactiveApprovals: true, loadHooks: load, newHookRunner: makeRunner})
 	defer resources.close(context.Background())
 	control, err := startTUIControlSession(ctx, resources.runtime)
 	if err != nil {
@@ -134,10 +131,7 @@ func TestPreCompactResumeClosesBeforePendingStopContinuation(t *testing.T) {
 	if err := resources.close(ctx); err != nil {
 		t.Fatal(err)
 	}
-	full, err := os.ReadFile(journal)
-	if err != nil {
-		t.Fatal(err)
-	}
+	full := readAppTestFile(t, journal)
 	loaded, complete := loadToolLoopPlan(t, root, thread)
 	if len(complete.Compactions) != 1 || complete.Compactions[0].Completed == nil || len(complete.Stops) != 2 || requests.Load() != 3 || runner.runs.Load() != 3 {
 		t.Fatalf("fixture did not compact during Stop continuation: requests=%d checks=%d", requests.Load(), runner.runs.Load())
@@ -152,10 +146,7 @@ func TestPreCompactResumeClosesBeforePendingStopContinuation(t *testing.T) {
 		}
 		t.Run(string(record.EventKind), func(t *testing.T) {
 			writeJournalPrefix(t, journal, full, record.Sequence)
-			prefix, err := os.ReadFile(journal)
-			if err != nil {
-				t.Fatal(err)
-			}
+			prefix := readAppTestFile(t, journal)
 			loadFuture := func(context.Context, string, string) (domain.HookSnapshot, error) {
 				data, err := os.ReadFile(journal)
 				if err != nil {
@@ -170,10 +161,7 @@ func TestPreCompactResumeClosesBeforePendingStopContinuation(t *testing.T) {
 				return domain.NewHookSnapshot(nil, nil)
 			}
 			for range 2 {
-				resumed, err := openChatResourcesWithHooks(ctx, cfg, paths, string(thread), false, workspace, chatResourceHooks{interactiveApprovals: true, loadHooks: loadFuture, newHookRunner: makeRunner})
-				if err != nil {
-					t.Fatal(err)
-				}
+				resumed := mustOpenChatResourcesWithHooks(t, ctx, cfg, paths, string(thread), false, workspace, chatResourceHooks{interactiveApprovals: true, loadHooks: loadFuture, newHookRunner: makeRunner})
 				if err := resumed.close(ctx); err != nil {
 					t.Fatal(err)
 				}

@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync/atomic"
 	"testing"
 
@@ -84,11 +83,7 @@ func TestStopTerminalHelper(t *testing.T) {
 	if !family.Valid() {
 		t.Fatal("invalid terminal provider")
 	}
-	fd, err := strconv.Atoi(os.Getenv("EASYCODE_STOP_TERMINAL_ACK_FD"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	ack := os.NewFile(uintptr(fd), "stop-terminal-ack")
+	ack := openTerminalAck(t, "EASYCODE_STOP_TERMINAL_ACK_FD", "stop-terminal-ack")
 	defer ack.Close()
 	clearProviderEnvironment(t)
 	t.Setenv("HOME", privateAppTempDir(t))
@@ -114,10 +109,7 @@ func TestStopTerminalHelper(t *testing.T) {
 	defer server.Close()
 	cfg := config.Config{Provider: config.Provider{Family: family, Model: "fixture-model", BaseURL: server.URL, APIKey: secret.New("fixture-key")}}
 	root := filepath.Join(privateAppTempDir(t), "sessions")
-	resources, err := openChatResourcesWithHooks(context.Background(), cfg, dataPaths{sessionRoot: root}, "", false, workspace, chatResourceHooks{interactiveApprovals: true})
-	if err != nil {
-		t.Fatal(err)
-	}
+	resources := mustOpenChatResourcesWithHooks(t, context.Background(), cfg, dataPaths{sessionRoot: root}, "", false, workspace, chatResourceHooks{interactiveApprovals: true})
 	defer resources.close(context.Background())
 	model, err := assembleChatModel(context.Background(), resources)
 	if err != nil {
@@ -127,9 +119,7 @@ func TestStopTerminalHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 	thread := resources.identity.ThreadID
-	if err := resources.close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	closeAppTestResources(t, resources)
 	_, plan := loadToolLoopPlan(t, root, thread)
 	if calls.Load() != 4 || len(plan.Stops) != 4 || plan.StopRecovery != nil {
 		t.Fatal("unexpected terminal result")

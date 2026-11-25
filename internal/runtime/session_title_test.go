@@ -64,9 +64,7 @@ func TestRenameSessionAdmissionAndPoisoning(t *testing.T) {
 					t.Fatalf("uncertain rename kept its writer active: %v", state.runErr)
 				}
 				input, err := protocol.NewSubmitInputCommand("after-failure", "next")
-				if err != nil {
-					t.Fatal(err)
-				}
+				requireNoError(t, err)
 				state.handleCommand(loopCommandRequest{command: input, result: request.result})
 				assertRejectedCode(t, (<-request.result).result, protocol.ControlErrorSessionClosing)
 				if journal.calls != 1 {
@@ -115,9 +113,7 @@ func TestRenameSessionSyncPrecedesAcceptanceAndInput(t *testing.T) {
 	<-entered
 	cancel()
 	input, err := protocol.NewSubmitInputCommand("after-title", "hello")
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	inputResult := make(chan loopCommandResponse, 1)
 	go func() {
 		result, err := loop.Submit(context.Background(), input)
@@ -161,8 +157,6 @@ func TestRenameSessionSyncPrecedesAcceptanceAndInput(t *testing.T) {
 func renameFixtureCommand(t *testing.T, id protocol.RequestID, title domain.SessionTitle) protocol.Command {
 	t.Helper()
 	command, err := protocol.NewRenameSessionCommand(id, title)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return command
 }

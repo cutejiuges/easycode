@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """用本地假 SSE 和真实 Darwin PTY 验收补全、审批隔离、缩放及终端恢复。"""
+from smoke_support import smoke_binary, complete_cases
 import fcntl
 import http.server
 import json
@@ -184,6 +185,7 @@ if __name__ == "__main__":
         raise SystemExit("completion PTY acceptance requires Darwin")
     root = Path(__file__).resolve().parents[1]
     with tempfile.TemporaryDirectory(prefix="easycode-completion-smoke-") as directory:
-        binary = Path(directory) / "app.test"
-        subprocess.run(["go", "test", "-c", "-o", str(binary), "./internal/app"], cwd=root, check=True)
-        print(json.dumps({"platform": platform.platform(), "cases": [run_case(binary, root, no_color) for no_color in (False, True)]}, indent=2))
+        binary = smoke_binary("app.test", directory, root)
+        cases = [run_case(binary, root, no_color) for no_color in (False, True)]
+        complete_cases(cases)
+        print(json.dumps({"platform": platform.platform(), "cases": cases}, indent=2))

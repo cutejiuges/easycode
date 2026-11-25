@@ -44,22 +44,15 @@ func TestHookTerminalHelper(t *testing.T) {
 		writeFailureHookConfig(t, workspace, `payload=$(cat); case "$payload" in *cancel*) /bin/sleep 5;; *) printf '%s' '{"hookSpecificOutput":{"hookEventName":"PostToolUseFailure","additionalContext":"Authorized failure diagnosis: inspect original conflict."}}' ;; esac`, domain.HookFeedbackModel)
 		fmt.Fprintf(os.Stdout, "HOOK_TERMINAL_WORKSPACE=%s\n", workspace)
 	} else if event == domain.HookPostToolUse {
-		if err := os.WriteFile(filepath.Join(workspace, "main.go"), []byte("// TODO\n"), 0600); err != nil {
-			t.Fatal(err)
-		}
+		writeAppTestFile(t, filepath.Join(workspace, "main.go"), []byte("// TODO\n"), 0600)
 		writePostHookConfig(t, workspace, `payload=$(cat); case "$payload" in *cancel*) /bin/sleep 5;; *) `+postReadOnlyExample()+` ;; esac`, domain.HookFeedbackModel)
 	} else {
 		writeHookConfig(t, workspace, `payload=$(cat); case "$payload" in *cancel*) /bin/sleep 5;; *) printf '{}' ;; esac`)
 	}
 	hookPath := filepath.Join(workspace, ".easycode", "hooks.json")
-	hookBytes, err := os.ReadFile(hookPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	hookBytes := readAppTestFile(t, hookPath)
 	hookBytes = bytes.Replace(hookBytes, []byte(`"timeout":1`), []byte(`"timeout":5`), 1)
-	if err := os.WriteFile(hookPath, hookBytes, 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, hookPath, hookBytes, 0600)
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.Copy(io.Discard, r.Body)

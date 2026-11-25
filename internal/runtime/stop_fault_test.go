@@ -23,16 +23,8 @@ func TestPostCompactPoisonStopsPendingStopDelivery(t *testing.T) {
 	decls := r.hooks.snapshot.Declarations()
 	scope, _ := domain.ParseCompactionHookScope("auto")
 	post, err := domain.NewPostCompactHookDeclaration(domain.HookSourceProject, domain.HookFeedbackNone, decls[0].Reference.Revision, "observe", scope, "true", 5)
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err := domain.NewHookSnapshot(append(decls, post), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := r.InstallHooks(snapshot, runner, "/workspace", domain.HookOK); err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
+	installRuntimeTestHooks(t, r, runner, "/workspace", append(decls, post))
 	stopCheck := runner.run
 	runner.run = func(ctx context.Context, id domain.HookRunIdentity, d domain.HookDeclaration) domain.HookExecution {
 		if id.Event == domain.HookPostCompact {
@@ -125,11 +117,6 @@ func (j *stopFaultJournal) AppendBatch(ctx context.Context, drafts []session.Rec
 		return nil, err
 	}
 	records, err := j.fakeJournal.AppendBatch(ctx, drafts)
-	for i := range records {
-		records[i].EventKind = drafts[i].EventKind()
-		records[i].Payload = drafts[i].PayloadBytes()
-		records[i].TurnID = drafts[i].TurnID()
-	}
 	if fire && j.mode == "cancel_after_"+stage {
 		j.cancel()
 	}

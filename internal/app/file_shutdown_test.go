@@ -30,14 +30,9 @@ func (b *blockingFileBoundary) ReadWorkspaceFile(ctx context.Context, _ string, 
 func TestFilePreparationShutdownKeepsWorkspaceWriterAndRealLeaseUntilDone(t *testing.T) {
 	root := filepath.Join(privateAppTempDir(t), "sessions")
 	workspace := privateAppTempDir(t)
-	if err := os.WriteFile(filepath.Join(workspace, "file"), []byte("inside"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, filepath.Join(workspace, "file"), []byte("inside"), 0600)
 	cfg := config.Config{Provider: config.Provider{Family: domain.ProviderOpenAI, BaseURL: "https://example.invalid", Model: "fixture-model", APIKey: secret.New("fixture-key")}}
-	r, err := openChatResources(context.Background(), cfg, root, "", workspace)
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := mustOpenChatResources(t, context.Background(), cfg, root, "", workspace)
 	b := &blockingFileBoundary{workspaceFileBoundary: r.workspace, entered: make(chan struct{}), cancelled: make(chan struct{}), release: make(chan struct{})}
 	r.fileSource.workspace = b
 	draft, _ := domain.NewInteractiveInputDraft("inspect @file")

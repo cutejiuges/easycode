@@ -3,57 +3,21 @@ package openai
 import (
 	"fmt"
 	"os"
-	"runtime"
 	"strings"
 	"testing"
 
 	"easycode/internal/codec"
-	"easycode/internal/domain"
+	"easycode/internal/provider/testsupport"
 )
 
 func TestProjectHistoryConcurrentCommitReturnsCompleteSnapshots(t *testing.T) {
 	conversation := &Conversation{}
-	start := make(chan struct{})
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		<-start
-		for index := 0; index < 200; index++ {
-			testCommitHistory(t, &conversation.history, testInputEntry(t, NewUserItem(fmt.Sprintf("user-%d", index))), nativeHistoryEntry{
-				Kind:    nativeHistorySample,
-				Outputs: []NativeItem{{Type: "message", Role: "assistant", Content: []ContentPart{{Type: "output_text", Text: fmt.Sprintf("assistant-%d", index)}}}},
-			})
-			runtime.Gosched()
-		}
-	}()
-	close(start)
-
-	for {
-		projection := conversation.ProjectHistory()
-		assertCompleteOpenAIProjection(t, projection)
-		select {
-		case <-done:
-			final := conversation.ProjectHistory()
-			assertCompleteOpenAIProjection(t, final)
-			if len(final.Turns) != 200 {
-				t.Fatalf("final turn count: %d", len(final.Turns))
-			}
-			return
-		default:
-			runtime.Gosched()
-		}
-	}
-}
-
-func assertCompleteOpenAIProjection(t *testing.T, projection domain.SemanticHistoryView) {
-	t.Helper()
-	for index, turn := range projection.Turns {
-		wantUser := fmt.Sprintf("user-%d", index)
-		wantAssistant := fmt.Sprintf("assistant-%d", index)
-		if len(turn.Messages) == 0 || len(turn.Messages) > 2 || turn.Messages[0].Text != wantUser || (len(turn.Messages) == 2 && turn.Messages[1].Text != wantAssistant) || (len(turn.Messages) == 1 && index != len(projection.Turns)-1) {
-			t.Fatalf("partial turn %d: %#v", index, turn)
-		}
-	}
+	testsupport.CheckConcurrentHistory(t, func(index int) {
+		testCommitHistory(t, &conversation.history, testInputEntry(t, NewUserItem(fmt.Sprintf("user-%d", index))), nativeHistoryEntry{
+			Kind:    nativeHistorySample,
+			Outputs: []NativeItem{{Type: "message", Role: "assistant", Content: []ContentPart{{Type: "output_text", Text: fmt.Sprintf("assistant-%d", index)}}}},
+		})
+	}, conversation.ProjectHistory)
 }
 
 func TestProjectHistoryMatchesGoldenAndOmitsOpaqueData(t *testing.T) {

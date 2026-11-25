@@ -14,9 +14,7 @@ import (
 
 func TestReadCancellationAfterAdmissionClosesFile(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "file"), []byte(strings.Repeat("x", 1<<20)), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeBuiltinFixture(t, filepath.Join(root, "file"), []byte(strings.Repeat("x", 1<<20)), 0o600)
 	executor, workspace := openTestExecutor(t, root)
 	ctx, cancel := context.WithCancel(context.Background())
 	workspace.hooks.afterOpenComponent = func(string) { cancel() }

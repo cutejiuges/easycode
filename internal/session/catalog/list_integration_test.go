@@ -37,10 +37,7 @@ func TestListBusyProcessCannotRepairUntilRelease(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		content, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		content := readCatalogFixture(t, path)
 		paths = append(paths, path)
 		committed = append(committed, content)
 		if err := os.WriteFile(path, append(append([]byte(nil), content...), []byte(`{"incomplete":`)...), 0600); err != nil {
@@ -151,10 +148,7 @@ func TestCatalogRebuildsUnusableSnapshot(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		pathBytes, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		pathBytes := readCatalogFixture(t, path)
 		paths[path] = pathBytes
 	}
 	snapshotPath := filepath.Join(dir, "catalog.json")
@@ -162,10 +156,7 @@ func TestCatalogRebuildsUnusableSnapshot(t *testing.T) {
 	if _, err := instance.Reconcile(ctx, repository); err != nil {
 		t.Fatal(err)
 	}
-	valid, err := os.ReadFile(snapshotPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	valid := readCatalogFixture(t, snapshotPath)
 	for _, scenario := range []struct {
 		name, title string
 		missing     bool

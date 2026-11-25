@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """通过真实 PTY 与独立受理回执测量 Markdown 冷扫描期间的交互响应。"""
+from smoke_support import smoke_binary, complete_cases
 import fcntl
 import json
 import os
@@ -133,9 +134,9 @@ def run_case(binary, root, no_color):
 def main():
     root = Path(__file__).resolve().parent.parent
     with tempfile.TemporaryDirectory(prefix="easycode-markdown-smoke-") as temporary:
-        binary = Path(temporary)/"tui.test"
-        subprocess.run(["go", "test", "-c", "-o", str(binary), "./internal/tui"], cwd=root, check=True)
+        binary = smoke_binary("tui.test", temporary, root)
         results = [run_case(binary, root, False), run_case(binary, root, True)]
+        complete_cases(results)
         print(json.dumps({"platform": platform.platform(), "cpu": platform.processor(), "results": results}, ensure_ascii=False, indent=2))
         if not all(case["passed"] for case in results):
             raise SystemExit(1)

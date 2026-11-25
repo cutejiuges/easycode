@@ -36,9 +36,7 @@ func TestPlanModeHeadlessKeepsExplicitSkills(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(skill), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(skill, []byte("---\ndescription: Plan fixture\n---\n"+skillBody+" $ARGUMENTS\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, skill, []byte("---\ndescription: Plan fixture\n---\n"+skillBody+" $ARGUMENTS\n"), 0600)
 	bodies := make(chan []byte, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
@@ -68,10 +66,7 @@ func TestPlanModeHeadlessKeepsExplicitSkills(t *testing.T) {
 		{input: "/plan", workspace: workspace, streaming: true},
 		{input: "$plan exact", workspace: workspace, skillArgs: "exact", streaming: true},
 	} {
-		resources, err := openChatResources(ctx, cfg, filepath.Join(t.TempDir(), "sessions"), "", scenario.workspace)
-		if err != nil {
-			t.Fatal(err)
-		}
+		resources := mustOpenChatResources(t, ctx, cfg, filepath.Join(t.TempDir(), "sessions"), "", scenario.workspace)
 		if !scenario.streaming {
 			if err := resources.session.Start(ctx); err != nil {
 				t.Fatal(err)
@@ -133,10 +128,7 @@ func TestPlanModeHostDiagnostics(t *testing.T) {
 	}))
 	defer server.Close()
 	cfg := config.Config{Provider: config.Provider{Family: domain.ProviderOpenAI, BaseURL: server.URL, Model: "fixture-model", APIKey: secret.New("plan-fixture")}}
-	resources, err := openChatResources(ctx, cfg, filepath.Join(t.TempDir(), "sessions"), "", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	resources := mustOpenChatResources(t, ctx, cfg, filepath.Join(t.TempDir(), "sessions"), "", t.TempDir())
 	defer resources.close(context.Background())
 	if err := resources.session.StartInteractive(ctx); err != nil {
 		t.Fatal(err)
@@ -154,7 +146,7 @@ func TestPlanModeHostDiagnostics(t *testing.T) {
 	}
 	appEffortTurn(t, resources, "Ordinary baseline", false)
 	waitCompactionIdle(t, resources)
-	baseline := planModeCacheSnapshot(t, ctx, resources, "cache-default")
+	baseline := queryFixtureCacheSnapshot(t, ctx, resources, "cache-default")
 	ordinary := contextSources("context-default")
 	setAppWorkMode(t, ctx, resources, domain.WorkModePlan, "select-plan")
 	plan := contextSources("context-plan")
@@ -163,17 +155,17 @@ func TestPlanModeHostDiagnostics(t *testing.T) {
 		plan[1].Revision == ordinary[1].Revision {
 		t.Fatalf("idle context did not update to Plan instructions and catalog: %v %v", plan, err)
 	}
-	assertOrdinaryPlanCacheBaseline(t, baseline, planModeCacheSnapshot(t, ctx, resources, "cache-pending"))
+	assertOrdinaryPlanCacheBaseline(t, baseline, queryFixtureCacheSnapshot(t, ctx, resources, "cache-pending"))
 	appEffortTurn(t, resources, "Reject on upstream", true)
 	waitCompactionIdle(t, resources)
-	failed := planModeCacheSnapshot(t, ctx, resources, "cache-failed")
+	failed := queryFixtureCacheSnapshot(t, ctx, resources, "cache-failed")
 	assertOrdinaryPlanCacheBaseline(t, baseline, failed)
 	if failed.LastFailure != "turn_failed" {
 		t.Fatalf("cache did not preserve independent failure evidence: %v", failed.LastFailure)
 	}
 	appEffortTurn(t, resources, "Draft the plan successfully", false)
 	waitCompactionIdle(t, resources)
-	committed := planModeCacheSnapshot(t, ctx, resources, "cache-plan")
+	committed := queryFixtureCacheSnapshot(t, ctx, resources, "cache-plan")
 	if committed.LastSample == nil || baseline.LastSample == nil || committed.LastFailure != "" ||
 		committed.LastSample.RequestFingerprint == baseline.LastSample.RequestFingerprint || committed.ChangedSource != "provider_profile" ||
 		committed.Sources[0].Fingerprint == baseline.Sources[0].Fingerprint || committed.Sources[1].Fingerprint == baseline.Sources[1].Fingerprint ||
@@ -185,19 +177,7 @@ func TestPlanModeHostDiagnostics(t *testing.T) {
 	if reverted[0].Revision != ordinary[0].Revision || reverted[1].Revision != ordinary[1].Revision || requests.Load() != 3 {
 		t.Fatal("restoring Default did not restore its sources or triggered work")
 	}
-	assertOrdinaryPlanCacheBaseline(t, committed, planModeCacheSnapshot(t, ctx, resources, "cache-reverted"))
-}
-
-func planModeCacheSnapshot(t *testing.T, ctx context.Context, resources *chatResources, id protocol.RequestID) protocol.CacheSnapshotPayload {
-	t.Helper()
-	if result, err := resources.session.QueryCache(ctx, id); err != nil || result.Status() != protocol.CommandStatusAccepted {
-		t.Fatalf("cache query: %v %v", result, err)
-	}
-	payload, err := protocol.DecodeCacheSnapshot(waitSwitchObservation(t, ctx, resources, protocol.EventCacheSnapshot, id))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return payload
+	assertOrdinaryPlanCacheBaseline(t, committed, queryFixtureCacheSnapshot(t, ctx, resources, "cache-reverted"))
 }
 
 func assertOrdinaryPlanCacheBaseline(t *testing.T, baseline, after protocol.CacheSnapshotPayload) {
@@ -272,10 +252,7 @@ func TestPlanModeCompactionAndRestore(t *testing.T) {
 			if automatic {
 				hooks = compactionFixtureHooks(t, runner, scope)
 			}
-			live, err := openChatResourcesWithHooks(ctx, cfg, dataPaths{sessionRoot: root}, "", false, workspace, hooks)
-			if err != nil {
-				t.Fatal(err)
-			}
+			live := mustOpenChatResourcesWithHooks(t, ctx, cfg, dataPaths{sessionRoot: root}, "", false, workspace, hooks)
 			defer live.close(context.Background())
 			if err := live.session.StartInteractive(ctx); err != nil {
 				t.Fatal(err)
@@ -302,9 +279,9 @@ func TestPlanModeCompactionAndRestore(t *testing.T) {
 				approveAppPlan(t, ctx, live, offer.Ref, implementation, filepath.Join(workspace, "implemented.txt"))
 			} else {
 				waitCompactionIdle(t, live)
-				before := planModeCacheSnapshot(t, ctx, live, "cache-before-summary")
+				before := queryFixtureCacheSnapshot(t, ctx, live, "cache-before-summary")
 				compactForSwitch(t, ctx, live)
-				after := planModeCacheSnapshot(t, ctx, live, "cache-after-summary")
+				after := queryFixtureCacheSnapshot(t, ctx, live, "cache-after-summary")
 				assertOrdinaryPlanCacheBaseline(t, before, after)
 				if after.LastSummary == nil || after.LastSummary.Purpose != domain.RequestSummary || !after.LastSummary.CompactionID.Valid() {
 					t.Fatal("summary did not publish its independent cache observation")
@@ -470,10 +447,7 @@ func assertApprovedPlanResume(t *testing.T, ctx context.Context, cfg config.Conf
 	if err != nil || cleanupFailed || preview.Incomplete || len(preview.Messages) == 0 || count.Load() != 4 {
 		t.Fatalf("offline preview changed committed state or started work: %v", err)
 	}
-	resumed, err := openChatResources(ctx, cfg, root, string(thread), workspace)
-	if err != nil {
-		t.Fatal(err)
-	}
+	resumed := mustOpenChatResources(t, ctx, cfg, root, string(thread), workspace)
 	defer resumed.close(context.Background())
 	path, err = resumed.service.repository.JournalPath(thread)
 	if err != nil || !bytes.Equal(readSwitchJournal(t, path), journal) || count.Load() != 4 {
@@ -509,7 +483,7 @@ func assertApprovedPlanResume(t *testing.T, ctx context.Context, cfg config.Conf
 		}
 		left = remainder
 	}
-	assertOrdinaryPlanCacheBaseline(t, planModeCacheSnapshot(t, ctx, live, "handoff-live"), planModeCacheSnapshot(t, ctx, resumed, "handoff-resumed"))
+	assertOrdinaryPlanCacheBaseline(t, queryFixtureCacheSnapshot(t, ctx, live, "handoff-live"), queryFixtureCacheSnapshot(t, ctx, resumed, "handoff-resumed"))
 }
 
 func assertCompactedPlanReadable(t *testing.T, ctx context.Context, live *chatResources, expected string) {
@@ -545,10 +519,7 @@ func assertPlanCheckpointResume(t *testing.T, ctx context.Context, cfg config.Co
 	if bytes.Contains(checkpoint, []byte(`"work_mode"`)) || bytes.Contains(checkpoint, []byte(`"work_mode_snapshot"`)) {
 		t.Fatal("process mode leaked into checkpoint")
 	}
-	restored, err := openChatResources(ctx, cfg, copyCompletionJournal(t, thread, checkpoint), string(thread), workspace)
-	if err != nil {
-		t.Fatal(err)
-	}
+	restored := mustOpenChatResources(t, ctx, cfg, copyCompletionJournal(t, thread, checkpoint), string(thread), workspace)
 	defer restored.close(context.Background())
 	if err := restored.session.StartInteractive(ctx); err != nil {
 		t.Fatal(err)
@@ -563,8 +534,8 @@ func assertPlanCheckpointResume(t *testing.T, ctx context.Context, cfg config.Co
 	if !bytes.Equal(first, second) || !bytes.Contains(first, []byte(`"instructions":`)) || bytes.Contains(first, []byte(`"name":"Write"`)) {
 		t.Fatal("post-compaction Plan request bytes changed across restore")
 	}
-	left := planModeCacheSnapshot(t, ctx, live, "cache-live")
-	right := planModeCacheSnapshot(t, ctx, restored, "cache-restored")
+	left := queryFixtureCacheSnapshot(t, ctx, live, "cache-live")
+	right := queryFixtureCacheSnapshot(t, ctx, restored, "cache-restored")
 	assertOrdinaryPlanCacheBaseline(t, left, right)
 }
 
@@ -601,9 +572,6 @@ func waitSwitchObservation(t *testing.T, ctx context.Context, resources *chatRes
 
 func readSwitchJournal(t *testing.T, path string) []byte {
 	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := readAppTestFile(t, path)
 	return data
 }

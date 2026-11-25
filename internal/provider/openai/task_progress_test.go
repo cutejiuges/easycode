@@ -2,16 +2,18 @@ package openai
 
 import (
 	"bytes"
-	"easycode/internal/codec"
-	"easycode/internal/domain"
-	"easycode/internal/provider"
-	"easycode/internal/provider/transport"
-	"easycode/internal/secret"
-	"easycode/internal/tool"
 	"fmt"
 	"os"
 	"strings"
 	"testing"
+
+	"easycode/internal/codec"
+	"easycode/internal/domain"
+	"easycode/internal/provider"
+	"easycode/internal/provider/testsupport"
+	"easycode/internal/provider/transport"
+	"easycode/internal/secret"
+	"easycode/internal/tool"
 )
 
 const taskNativeInput = `{"plan":[{"step":"检查中文代码","status":"in_progress"}]}`
@@ -25,7 +27,7 @@ func TestTaskReducerRequiresCompleteStrictInput(t *testing.T) {
 	}
 	for _, data := range append([]string{taskNativeInput}, invalid...) {
 		t.Run(fmt.Sprint(len(data)), func(t *testing.T) {
-			r := newResponsesStreamReducer(testOpenAIToolCatalog(t))
+			r := newResponsesStreamReducer(testsupport.ToolCatalog(t))
 			reduceOpenAIEvent(t, r, `{"type":"response.created","response":{"id":"task"}}`)
 			reduceOpenAIEvent(t, r, `{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"item-task","call_id":"call-task","name":"update_plan"}}`)
 			var err error
@@ -73,7 +75,7 @@ func TestTaskNativeResultsRestoreExactly(t *testing.T) {
 	defer instance.Close()
 
 	c := testConversation(t, instance)
-	frozen := frozenFileInput(t, true)
+	frozen := testsupport.FileInput(t, true)
 	association, err := domain.NewInputAssociation(domain.TurnID(testInputID(frozen.Text())), domain.InputInitial, 0, []domain.InputID{frozen.ID()})
 	if err != nil {
 		t.Fatal(err)
@@ -109,7 +111,7 @@ func TestTaskNativeResultsRestoreExactly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	outputs := []tool.ModelOutput{testDirectModelOutput(t, inv, result, admission)}
+	outputs := []tool.ModelOutput{testsupport.DirectModelOutput(t, inv, result, admission)}
 	preflight, err := c.PrepareToolOutputPreflight(inv)
 	if err != nil || preflight.Validate(outputs[0]) != nil {
 		t.Fatal("task output preflight failed", err)
@@ -257,7 +259,7 @@ func TestTaskFacadeStrictFalseAcrossHTTPAndWebSocket(t *testing.T) {
 	defer instance.Close()
 	c := testConversation(t, instance)
 	c.history.Append(testInputEntry(t, NewUserItem("hello")))
-	input, err := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testOpenAIToolCatalog(t))
+	input, err := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testsupport.ToolCatalog(t))
 	if err != nil {
 		t.Fatal(err)
 	}

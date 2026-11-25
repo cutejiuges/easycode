@@ -94,17 +94,13 @@ func TestAgentLoopFIFOQueueCapacityDedupeAndDrain(t *testing.T) {
 	config := testRuntimeConfig(t, &fakeJournal{})
 	config.GenerateTurnID = sequentialTurnIDs()
 	runtimeValue, err := New(conversation, config)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	loopConfig := DefaultAgentLoopConfig()
 	loopConfig.MaxQueuedInputs = 2
 	loopConfig.MaxQueuedBytes = 12
 	loopConfig.RecentRequests = 4
 	loop, err := NewAgentLoop(runtimeValue, loopConfig)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	runDone := make(chan error, 1)
 	go func() { runDone <- loop.Run(context.Background()) }()
 	<-loop.Ready()
@@ -161,9 +157,7 @@ func TestAgentLoopSerializesConcurrentIdleSubmissions(t *testing.T) {
 	for index := 1; index <= 2; index++ {
 		index := index
 		command, err := protocol.NewSubmitInputCommand(protocol.RequestID(fmt.Sprintf("concurrent-%d", index)), fmt.Sprintf("input-%d", index))
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		go func() {
 			<-start
 			result, submitErr := loop.Submit(context.Background(), command)
@@ -217,9 +211,7 @@ func TestAgentLoopTargetedInterruptIsRaceSafe(t *testing.T) {
 
 	stale, _ := protocol.NewInterruptCommand("interrupt-stale", domain.TurnID("00000000-0099-7000-8000-000000000099"))
 	staleResult, err := loop.Submit(context.Background(), stale)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	assertRejectedCode(t, staleResult, protocol.ControlErrorTurnMismatch)
 	select {
 	case <-firstCall.ctx.Done():
@@ -247,9 +239,7 @@ func TestAgentLoopTargetedInterruptIsRaceSafe(t *testing.T) {
 	}
 	staleAgain, _ := protocol.NewInterruptCommand("interrupt-old-target", started.TurnID)
 	staleAgainResult, err := loop.Submit(context.Background(), staleAgain)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	assertRejectedCode(t, staleAgainResult, protocol.ControlErrorTurnMismatch)
 	select {
 	case <-secondCall.ctx.Done():
@@ -362,9 +352,7 @@ func TestAgentLoopWaitsForProviderChannelCloseBeforeFollowUp(t *testing.T) {
 		return stream, nil
 	}}
 	loop, err := NewAgentLoop(newTestRuntime(t, conversation, &fakeJournal{}), DefaultAgentLoopConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	runDone := make(chan error, 1)
 	go func() { runDone <- loop.Run(context.Background()) }()
 	<-loop.Ready()
@@ -404,13 +392,9 @@ func newControlledAgentLoop(t *testing.T, conversation provider.Conversation, jo
 	config := testRuntimeConfig(t, journal)
 	config.GenerateTurnID = sequentialTurnIDs()
 	runtimeValue, err := New(conversation, config)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	loop, err := NewAgentLoop(runtimeValue, DefaultAgentLoopConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return loop
 }
 
@@ -433,13 +417,9 @@ func sequentialTurnIDs() TurnIDGenerator {
 func submitLoopCommand(t *testing.T, loop *AgentLoop, requestID protocol.RequestID, text string) protocol.CommandResult {
 	t.Helper()
 	command, err := protocol.NewSubmitInputCommand(requestID, text)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	result, err := loop.Submit(context.Background(), command)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return result
 }
 

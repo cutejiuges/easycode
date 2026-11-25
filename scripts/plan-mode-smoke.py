@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """用真实 EasyCode CLI、Darwin PTY 和本地双 Provider 服务验收规划与审阅交接。"""
 
+from smoke_support import smoke_binary, complete_cases
 import argparse
 from contextlib import contextmanager
 import fcntl
@@ -351,11 +352,13 @@ def main():
     args.output.mkdir(exist_ok=True, parents=True)
     with tempfile.TemporaryDirectory(prefix="easycode-plan-pty-") as name:
         temporary = Path(name).resolve()
-        binary = temporary / "easycode"
         repository = Path(__file__).resolve().parent.parent
-        subprocess.run(["go", "build", "-o", binary, "./cmd/easycode"], check=True, cwd=repository)
+        binary = smoke_binary("easycode", temporary, repository)
+        cases = []
         for family in ("openai", "anthropic"):
             run_case(binary, temporary, family, args.output)
+            cases.append({"provider": family, "terminal_restored": True})
+        complete_cases(cases)
 
 
 if __name__ == "__main__":

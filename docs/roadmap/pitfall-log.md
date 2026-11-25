@@ -242,6 +242,7 @@
 - 回归测试：`scripts/check-branch-name_test.sh`、`make branch-policy-test`、`.github/workflows/verify.yml`。
 - 关联 ADR/Issue/PR：OpenSpec `harden-architecture-contract-compliance`；属于工程治理落实，不新增 ADR。
 - 后续行动：管理员仍须把 `branch-governance` 与 `verify` 配为 `main` required checks 并禁止 direct push；仓库文件本身不会自动启用 ruleset。
+- 当前策略（2026-11-24）：删除重复的 pre-push，仅 pre-commit 执行完整本地质量门；PR 分支检查继续复用同一 validator。只读核实远端 ruleset 为空，main 保护的 required checks 也为空，`branch-governance`、`verify`、新增原生 `smoke` 尚未被远端强制要求，未修改托管保护。
 
 ## 4. P1 双 Provider Kernel
 
@@ -828,7 +829,7 @@
 - 根因：原双 Provider 在原生 user item 构造时 TrimSpace，即使 TUI 保留缩进，发送与持久化仍失真；Bubble Tea 在发出 paste 事件前独立累积字节并跳过 RuneError。
 - 修复方案：校验与正文构造分离，所有宿主有效输入原样进入 Provider；只有 TUI 规范化 CRLF/CR。输入、布局、历史按职责组合，接收前保留快照，拒绝恢复且不产生幽灵 transcript。不要使用第二个 stdin reader 或计时猜测粘贴。
 - 缓存影响：未裁剪正文将合法改变请求字节；固定多行 golden、原生顺序、恢复请求和 fingerprint 等价回归，Tool catalog 与稳定前缀不变。
-- 验证：`internal/tui/composer_terminal_test.go` 用真实 Bubble Tea Program 和受控 reader 验证分块输入；`internal/app/composer_e2e_test.go` 验证双 Provider、三种 headless 模式和恢复。原始终端未闭合 paste 内存上限、U+FFFD 保真和增强键盘协议须单独设计，不冒充已解决。
+- 验证：`internal/tui/completion_terminal_test.go` 用真实 Bubble Tea Program 和受控 reader 验证分块输入（2026-11-25 合并原 composer_terminal_test.go 的重复链路，保留中文、空白、CRLF/控制字符和唯一提交断言）；`internal/app/composer_e2e_test.go` 验证双 Provider、三种 headless 模式和恢复。原始终端未闭合 paste 内存上限、U+FFFD 保真和增强键盘协议须单独设计，不冒充已解决。
 
 ## 2026-10-30：追加输入必须先预检再持久化
 

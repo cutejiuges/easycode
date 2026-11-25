@@ -3,169 +3,29 @@ package openai
 import (
 	"bytes"
 	"context"
-	"easycode/internal/codec"
-	"easycode/internal/domain"
-	"easycode/internal/provider"
-	"easycode/internal/secret"
-	"easycode/internal/tool"
 	"os"
 	"strings"
 	"testing"
-)
 
-func rewriteProviderOutput(t *testing.T, original tool.Invocation, mode string) tool.ModelOutput {
-	t.Helper()
-	before, err := tool.HookInputForInvocation(original)
-	if err != nil {
-		t.Fatal(err)
-	}
-	profile, err := tool.HookProfileForInvocation(original)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var next domain.HookToolInput
-	switch original.Capability() {
-	case tool.CapabilityPatch:
-		line := profile == domain.HookLinePatch
-		old, text := "old", "rewritten"
-		if line {
-			old += "\n"
-			text += "\n"
-		}
-		next, _ = domain.NewHookPatchInput("effective.txt", []domain.HookReplacement{{OldText: old, NewText: text, LineBased: line}})
-	case tool.CapabilityWrite:
-		next, _ = domain.NewHookWriteInput("effective.txt", "rewritten\n")
-	case tool.CapabilityExec:
-		next, _ = domain.NewHookExecInput("printf rewritten; exit 7", "", 2000)
-	}
-	refs := make([]domain.HookReference, 1)
-	declaration, _ := domain.NewHookDeclaration(domain.HookSourceProject, domain.HookPreToolUse, domain.HookFeedbackNone, domain.HookDigest(nil), "rewrite", 7, "true", 5)
-	refs[0] = declaration.Reference
-	if mode == "revert" || mode == "rejected" {
-		second := declaration.Reference
-		second.ID = "last"
-		refs = append(refs, second)
-	}
-	plan, err := domain.NewHookPlan(string(original.InvocationID()), domain.HookCapability(original.Capability()), refs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	current := before
-	var finished []domain.HookFinished
-	for i, ref := range refs {
-		after := next
-		if mode == "unchanged" || mode == "revert" && i == 1 {
-			after = before
-		}
-		effect, err := domain.NewUnchangedHookInputEffect(current)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !current.Equal(after) {
-			effect, err = domain.NewReplacedHookInputEffect(current, after, profile)
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-		id, _ := domain.NewHookRunIdentity(plan, i)
-		stats := domain.HookRunResult{Identity: id, Status: domain.HookContinue, Code: domain.HookOK, ExitKnown: true, CleanupConfirmed: true, Origin: "execution"}
-		if mode == "rejected" && i == 1 {
-			stats.Status = domain.HookBlock
-			stats.Code = domain.HookDenied
-			stats.ExitCode = 2
-			effect, _ = domain.NewUnchangedHookInputEffect(current)
-		} else {
-			current = after
-		}
-		fact, err := domain.NewPreHookFinished(stats, ref, effect)
-		if err != nil {
-			t.Fatal(err)
-		}
-		finished = append(finished, fact)
-	}
-	const identity = "01900000-0000-7000-8000-000000000001"
-	origin, _ := tool.NewToolCallOrigin(domain.SessionID(identity), domain.ThreadID(identity), domain.TurnID(identity), 3, 2)
-	status, code, blocking := domain.HookContinue, domain.HookOK, -1
-	if mode == "rejected" {
-		status, code, blocking = domain.HookBlock, domain.HookDenied, 1
-	}
-	decision, _ := domain.NewHookGateDecision(plan, status, code, len(finished), blocking)
-	selection, err := tool.NewSelectedInputSelection(origin, original, plan, finished, decision)
-	if mode == "rejected" {
-		selection, err = tool.NewRejectedInputSelection(origin, original, plan, finished, decision)
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	effective, err := selection.ResultInvocation()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var result tool.InvocationResult
-	preview, _ := tool.NewModelPreview("frozen result with literal [PreToolUse input rewrite] label")
-	switch effective.Capability() {
-	case tool.CapabilityPatch:
-		v, _ := effective.Patch()
-		m, _ := tool.NewPatchResultMetadata(v.Input().FilePath(), len(v.Input().Replacements()), 1, 1)
-		result, err = tool.NewPatchInvocationResult(v, tool.ResultSuccess, "ok", preview, m)
-	case tool.CapabilityWrite:
-		v, _ := effective.Write()
-		m, _ := tool.NewWriteResultMetadata(v.Input().FilePath(), tool.WriteCreate, len(v.Input().Content()), tool.WriteLineCount(v.Input().Content()), 0)
-		result, err = tool.NewWriteInvocationResult(v, tool.ResultSuccess, "ok", preview, m)
-	case tool.CapabilityExec:
-		v, _ := effective.Exec()
-		m, _ := tool.NewExecResultMetadata(v.Input().Workdir(), 7, true, 1, tool.ExecStreamStats{}, tool.ExecStreamStats{}, false, false, false)
-		result, err = tool.NewExecInvocationResult(v, tool.ResultSuccess, "ok", preview, m)
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	var admission tool.ExecutionAdmission
-	if mode != "rejected" && mode != "denied" && mode != "recovery-unadmitted" {
-		admission, _ = tool.NewExecutionAdmission(original.InvocationID(), 90)
-	}
-	resultOrigin := tool.InputResultExecution
-	reason, allowance := tool.BudgetPreserved, tool.MaxModelPreviewBytes
-	switch mode {
-	case "rejected":
-		result = tool.NewInvocationErrorResult(original, tool.ResultDenied, string(domain.HookDenied), "Check rejected candidate")
-	case "denied":
-		result = tool.NewInvocationErrorResult(effective, tool.ResultDenied, "user_denied", "Tool denied")
-	case "start-failed":
-		result = tool.NewInvocationErrorResult(effective, tool.ResultError, "process_start_failed", "Tool process could not start")
-	case "recovery-unadmitted":
-		result = tool.NewInvocationErrorResult(effective, tool.ResultCancelled, "session_interrupted_before_execution", "Tool was not rerun")
-		resultOrigin = tool.InputResultRecovery
-		reason = tool.BudgetRecovery
-		allowance = tool.SafetyResultBytes
-	case "recovery-admitted":
-		result = tool.NewInvocationErrorResult(effective, tool.ResultOutcomeUncertain, "outcome_uncertain", "Tool outcome is uncertain")
-		resultOrigin = tool.InputResultRecovery
-		reason = tool.BudgetRecovery
-		allowance = tool.SafetyResultBytes
-	}
-	evidence, err := tool.NewInputResultEvidence(selection, admission, resultOrigin)
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err = tool.FreezeInputRewriteResult(result, evidence, allowance, reason)
-	if err != nil {
-		t.Fatal(err)
-	}
-	output, err := tool.NewModelOutput(result, evidence)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return output
-}
+	"easycode/internal/codec"
+	"easycode/internal/domain"
+	"easycode/internal/provider"
+	"easycode/internal/provider/testsupport"
+	"easycode/internal/secret"
+	"easycode/internal/tool"
+)
 
 func TestPreInputRewriteNativeGoldenRestoreAndCache(t *testing.T) {
 	for _, capability := range []domain.HookCapability{domain.HookPatch, domain.HookWrite, domain.HookExec} {
 		for _, mode := range []string{"selected", "unchanged", "revert", "rejected", "denied", "start-failed", "recovery-unadmitted", "recovery-admitted"} {
+			// 三种 wire 均保留 selected golden；其余证据状态复用 Exec 代表接线。
+			if capability != domain.HookExec && mode != "selected" {
+				continue
+			}
 			t.Run(string(capability)+"/"+mode, func(t *testing.T) {
 				result, call := postProviderFixture(t, capability)
 				original := testNativeInvocation(t, call, result.InvocationID(), result.ProviderCallID())
-				output := rewriteProviderOutput(t, original, mode)
+				output := testsupport.RewriteOutput(t, original, mode)
 				history := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, NewUserItem("rewrite original")), {Kind: nativeHistorySample, Outputs: []NativeItem{{Type: "reasoning", ID: "pre-reason", EncryptedContent: "opaque-pre"}, call}}})
 				entry, err := prepareToolOutputsEntry(history, []tool.ModelOutput{output})
 				if err != nil {
@@ -192,25 +52,17 @@ func TestPreInputRewriteNativeGoldenRestoreAndCache(t *testing.T) {
 					t.Fatal(err)
 				}
 				restored := restoredValue.(*Conversation)
-				sampling, err := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testOpenAIToolCatalog(t))
+				sampling, err := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testsupport.ToolCatalog(t))
 				if err != nil {
 					t.Fatal(err)
 				}
-				for _, policy := range []domain.CachePolicy{domain.DefaultCachePolicy(), mustStopCachePolicy(t)} {
+				policies := []domain.CachePolicy{domain.DefaultCachePolicy()}
+				if mode == "selected" {
+					policies = []domain.CachePolicy{domain.DefaultCachePolicy(), mustStopCachePolicy(t)}
+				}
+				for _, policy := range policies {
 					instance.config.CachePolicy = policy
-					request, err := live.compileSamplingRequest(live.history.Entries(), sampling)
-					if err != nil {
-						t.Fatal(err)
-					}
-					again, err := restored.compileSamplingRequest(restored.history.Entries(), sampling)
-					if err != nil || !bytes.Equal(request.Bytes(), again.Bytes()) {
-						t.Fatal("restored request/cache bytes changed", err)
-					}
-					_, before, _ := live.ProjectContextWindow()
-					_, after, _ := restored.ProjectContextWindow()
-					if before != after {
-						t.Fatal("native item order/fingerprint/revision changed")
-					}
+					request := testsupport.RestoredRequest(t, live, restored, sampling)
 					if !bytes.Contains(request.Bytes(), []byte("opaque-pre")) || bytes.Contains(request.Bytes(), []byte("fixture-rewrite-key")) {
 						t.Fatal("opaque evidence lost or credentials persisted")
 					}

@@ -3,7 +3,6 @@ package app
 import (
 	"bytes"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 
@@ -13,14 +12,9 @@ import (
 
 func withReasoningConfig(t *testing.T, path, fields string) string {
 	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := readAppTestFile(t, path)
 	body := strings.TrimSuffix(strings.TrimSpace(string(data)), "}") + "," + fields + "}"
-	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, path, []byte(body), 0600)
 	return path
 }
 

@@ -215,22 +215,11 @@ func TestStreamRunnerCleanEOFAndShutdownExitSuccessfully(t *testing.T) {
 		{name: "explicit shutdown without newline", wire: `{"version":1,"type":"session.shutdown","request_id":"shutdown-1"}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			inputReader, inputWriter := io.Pipe()
+			input := io.NopCloser(strings.NewReader(test.wire))
 			output := newBufferWriteCloser()
 			loop := newScriptedStreamLoop(false)
-			runner := newTestStreamRunner(t, loop, inputReader, output, output)
-			writerDone := make(chan error, 1)
-			go func() {
-				_, err := io.WriteString(inputWriter, test.wire)
-				if closeErr := inputWriter.Close(); err == nil {
-					err = closeErr
-				}
-				writerDone <- err
-			}()
+			runner := newTestStreamRunner(t, loop, input, output, output)
 			result := runner.Run(context.Background())
-			if err := <-writerDone; err != nil {
-				t.Fatal(err)
-			}
 			if !result.Completed || result.Failure.Code != "" {
 				t.Fatalf("Run() result = %#v", result)
 			}

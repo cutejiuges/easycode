@@ -20,16 +20,9 @@ func TestWorkspaceFileSnapshotParentReplacementCannotEscapeOpenedDirectory(t *te
 			if err := os.Mkdir(filepath.Join(root, "dir"), 0700); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(root, "dir", "file"), []byte("inside"), 0600); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(outside, "file"), []byte("outside-secret"), 0600); err != nil {
-				t.Fatal(err)
-			}
-			w, err := OpenWorkspace(root)
-			if err != nil {
-				t.Fatal(err)
-			}
+			writeBuiltinFixture(t, filepath.Join(root, "dir", "file"), []byte("inside"), 0600)
+			writeBuiltinFixture(t, filepath.Join(outside, "file"), []byte("outside-secret"), 0600)
+			w := openFixtureWorkspace(t, root)
 			defer w.Close()
 			replace := func(path string) {
 				if path != "dir" {
@@ -61,13 +54,8 @@ func TestWorkspaceFileSnapshotParentReplacementCannotEscapeOpenedDirectory(t *te
 
 func TestWorkspaceFileSnapshotCancellationWaitsForReadStack(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "file"), []byte("content"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	workspace, err := OpenWorkspace(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	writeBuiltinFixture(t, filepath.Join(root, "file"), []byte("content"), 0o600)
+	workspace := openFixtureWorkspace(t, root)
 	defer workspace.Close()
 	entered, release, finished := make(chan struct{}), make(chan struct{}), make(chan error, 1)
 	workspace.hooks.afterFileRead = func(*os.File) { close(entered); <-release }
@@ -98,13 +86,8 @@ func TestWorkspaceFileSnapshotCancellationDuringFinalCheckRemainsCancellation(t 
 	for _, checkFails := range []bool{false, true} {
 		t.Run(fmt.Sprint(checkFails), func(t *testing.T) {
 			root := t.TempDir()
-			if err := os.WriteFile(filepath.Join(root, "file"), []byte("content"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			workspace, err := OpenWorkspace(root)
-			if err != nil {
-				t.Fatal(err)
-			}
+			writeBuiltinFixture(t, filepath.Join(root, "file"), []byte("content"), 0o600)
+			workspace := openFixtureWorkspace(t, root)
 			defer workspace.Close()
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()

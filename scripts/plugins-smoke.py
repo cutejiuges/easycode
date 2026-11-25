@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """用本地 SSE、真实 PTY 和事件握手验收插件浏览、调用、停止及终端恢复。"""
+from smoke_support import smoke_binary, complete_cases
 import fcntl
 import http.server
 import json
@@ -125,8 +126,10 @@ def run_cli_cases(binary, root):
         owner = threading.Thread(target=server.serve_forever)
         owner.start()
         try:
-            for kind, plugin_id in (("easycode", "easyqa"), ("claude", "claudeqa"),
-                                    ("codex", "codexqa"), ("agentplugins", "agentqa")):
+            # 格式加载与 wire 无关；Codex 的模型调用限制仍验证两家接线。
+            kinds = (("easycode", "easyqa"), ("codex", "codexqa")) if family == "openai" else (
+                ("claude", "claudeqa"), ("agentplugins", "agentqa"), ("codex", "codexqa"))
+            for kind, plugin_id in kinds:
                 with tempfile.TemporaryDirectory(prefix="easycode-plugin-cli-") as directory:
                     case_root = Path(directory).resolve()
                     home, workspace = case_root / "home", case_root / "workspace"
@@ -323,12 +326,10 @@ if __name__ == "__main__":
         raise SystemExit("plugins PTY acceptance requires Darwin")
     root = Path(__file__).resolve().parents[1]
     with tempfile.TemporaryDirectory(prefix="easycode-plugins-smoke-") as directory:
-        binary = Path(directory) / "app.test"
-        cli = Path(directory) / "easycode"
-        subprocess.run(["go", "test", "-c", "-o", str(binary), "./internal/app"], cwd=root, check=True)
-        subprocess.run(["go", "build", "-o", str(cli), "./cmd/easycode"], cwd=root, check=True)
-        print(json.dumps({"platform": platform.platform(),
-                          "binary_cli_cases": run_cli_cases(cli, root),
-                          "cases": [run_case(binary, root, family, no_color)
-                                    for family in ("openai", "anthropic")
-                                    for no_color in (False, True)]}, indent=2))
+        binary = smoke_binary("app.test", directory, root)
+        cli = smoke_binary("easycode", directory, root)
+        cli_cases = run_cli_cases(cli, root)
+        cases = [run_case(binary, root, family, family == "anthropic")
+                 for family in ("openai", "anthropic")]
+        complete_cases(cli_cases + cases)
+        print(json.dumps({"platform": platform.platform(), "binary_cli_cases": cli_cases, "cases": cases}, indent=2))

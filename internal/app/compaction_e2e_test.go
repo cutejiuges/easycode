@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -101,10 +100,7 @@ func TestPreCompactOpenAIHandshakeFallbackKeepsOneGateDecision(t *testing.T) {
 	defer server.Close()
 	root, workspace := filepath.Join(t.TempDir(), "sessions"), t.TempDir()
 	cfg := config.Config{Provider: config.Provider{Family: domain.ProviderOpenAI, Model: "fixture-model", BaseURL: server.URL, APIKey: secret.New("fixture")}}
-	seed, err := openChatResources(ctx, cfg, root, "", workspace)
-	if err != nil {
-		t.Fatal(err)
-	}
+	seed := mustOpenChatResources(t, ctx, cfg, root, "", workspace)
 	submitAppTurn(t, seed, strings.Repeat("archived task details ", 1000))
 	thread := seed.identity.ThreadID
 	if err := seed.close(ctx); err != nil {
@@ -112,10 +108,7 @@ func TestPreCompactOpenAIHandshakeFallbackKeepsOneGateDecision(t *testing.T) {
 	}
 	cfg = cacheFixtureConfigMode(t, cfg, true, "websocket_auto")
 	runner := &compactionFixtureRunner{t: t, blockFirst: true, post: true}
-	res, err := openChatResourcesWithHooks(ctx, cfg, dataPaths{sessionRoot: root}, string(thread), false, workspace, compactionFixtureHooks(t, runner, "manual"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	res := mustOpenChatResourcesWithHooks(t, ctx, cfg, dataPaths{sessionRoot: root}, string(thread), false, workspace, compactionFixtureHooks(t, runner, "manual"))
 	defer res.close(context.Background())
 	if err := res.session.StartInteractive(ctx); err != nil {
 		t.Fatal(err)
@@ -206,17 +199,9 @@ func compactionFixtureHooks(t *testing.T, runner *compactionFixtureRunner, match
 func TestManualCompactionProvidersResumeEquivalent(t *testing.T) {
 	for _, family := range []domain.ProviderFamily{domain.ProviderOpenAI, domain.ProviderAnthropic} {
 		t.Run(string(family), func(t *testing.T) {
-			var mu sync.Mutex
-			var requests [][]byte
+			var recorder requestRecorder
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				body, err := io.ReadAll(r.Body)
-				if err != nil {
-					t.Error(err)
-					return
-				}
-				mu.Lock()
-				requests = append(requests, body)
-				mu.Unlock()
+				_, body := recorder.record(t, r)
 				compact := bytes.Contains(body, []byte(`"tool_choice"`))
 				assertReasoningRequest(t, family, body, compact)
 				answer := 1
@@ -255,10 +240,7 @@ func TestManualCompactionProvidersResumeEquivalent(t *testing.T) {
 				root, cwd := filepath.Join(t.TempDir(), "sessions"), t.TempDir()
 				paths := dataPaths{sessionRoot: root}
 				runner := &compactionFixtureRunner{t: t, post: scenario.matcher == "manual"}
-				resources, err := openChatResourcesWithHooks(context.Background(), cfg, paths, "", false, cwd, compactionFixtureHooks(t, runner, scenario.matcher))
-				if err != nil {
-					t.Fatal(err)
-				}
+				resources := mustOpenChatResourcesWithHooks(t, context.Background(), cfg, paths, "", false, cwd, compactionFixtureHooks(t, runner, scenario.matcher))
 				if err := resources.session.StartInteractive(context.Background()); err != nil {
 					t.Fatal(err)
 				}
@@ -388,13 +370,8 @@ func TestManualCompactionProvidersResumeEquivalent(t *testing.T) {
 					t.Fatal(err)
 				}
 				if scenario.resume {
-					if err := resources.close(context.Background()); err != nil {
-						t.Fatal(err)
-					}
-					journal, err := os.ReadFile(journalPath)
-					if err != nil {
-						t.Fatal(err)
-					}
+					closeAppTestResources(t, resources)
+					journal := readAppTestFile(t, journalPath)
 					writeJournalPrefix(t, journalPath, journal, checkpointSequence+1)
 					resources, err = openChatResourcesWithHooks(context.Background(), cfg, paths, string(thread), false, cwd, compactionFixtureHooks(t, runner, scenario.matcher))
 					if err != nil {
@@ -423,9 +400,7 @@ func TestManualCompactionProvidersResumeEquivalent(t *testing.T) {
 					t.Fatal("continuation has no canonical request observation")
 				}
 				nextObservations = append(nextObservations, *cache.LastSample)
-				if err := resources.close(context.Background()); err != nil {
-					t.Fatal(err)
-				}
+				closeAppTestResources(t, resources)
 				wantRuns := 0
 				if scenario.matcher == "manual" {
 					wantRuns = 2
@@ -448,14 +423,11 @@ func TestManualCompactionProvidersResumeEquivalent(t *testing.T) {
 				if err != nil || bytes.Contains(journal, []byte(preCompactFixtureFocus)) || bytes.Contains(journal, []byte("preserve unfinished tests")) {
 					t.Fatalf("focus persisted in journal or journal unavailable: %v", err)
 				}
-				mu.Lock()
-				nextRequests = append(nextRequests, append([]byte{}, requests[len(requests)-1]...))
-				mu.Unlock()
+				requests := recorder.snapshot()
+				nextRequests = append(nextRequests, requests[len(requests)-1])
 			}
-			mu.Lock()
-			count := len(requests)
-			captured := append([][]byte{}, requests...)
-			mu.Unlock()
+			captured := recorder.snapshot()
+			count := len(captured)
 			if count != 12 {
 				t.Fatalf("unexpected automatic continuation or regeneration: %d requests", count)
 			}

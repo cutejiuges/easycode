@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"easycode/internal/config"
@@ -35,22 +34,12 @@ func TestReadPatchExecApprovedLoopForBothProviders(t *testing.T) {
 		t.Run(string(family), func(t *testing.T) {
 			workspace := t.TempDir()
 			for name, content := range map[string]string{"README.md": "run local checks\n", "main.go": "old\n"} {
-				if err := os.WriteFile(filepath.Join(workspace, name), []byte(content), 0600); err != nil {
-					t.Fatal(err)
-				}
+				writeAppTestFile(t, filepath.Join(workspace, name), []byte(content), 0600)
 			}
-			var mu sync.Mutex
-			var requests [][]byte
+			var recorder requestRecorder
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-				body, err := io.ReadAll(request.Body)
-				if err != nil {
-					t.Error(err)
-					return
-				}
-				mu.Lock()
-				requests = append(requests, body)
-				sample := len(requests)
-				mu.Unlock()
+				requestIndex, _ := recorder.record(t, request)
+				sample := requestIndex + 1
 				writer.Header().Set("Content-Type", "text/event-stream")
 				if family == domain.ProviderOpenAI {
 					switch sample {
@@ -82,12 +71,9 @@ func TestReadPatchExecApprovedLoopForBothProviders(t *testing.T) {
 			if family == domain.ProviderAnthropic {
 				model = "claude-test"
 			}
-			resources, err := openChatResourcesWithHooks(context.Background(), cacheFixtureConfig(t, config.Config{Provider: config.Provider{
+			resources := mustOpenChatResourcesWithHooks(t, context.Background(), cacheFixtureConfig(t, config.Config{Provider: config.Provider{
 				Family: family, Model: model, BaseURL: server.URL, APIKey: secret.New("exec-private-key"),
 			}}, false), dataPaths{sessionRoot: root}, "", false, workspace, chatResourceHooks{interactiveApprovals: true})
-			if err != nil {
-				t.Fatal(err)
-			}
 			defer resources.close(context.Background())
 			control, err := startTUIControlSession(context.Background(), resources.runtime)
 			if err != nil {
@@ -196,18 +182,14 @@ func TestReadPatchExecApprovedLoopForBothProviders(t *testing.T) {
 			if !strings.Contains(ui.View(), "command-environment") {
 				t.Fatal("TUI details lost full command")
 			}
-			if err := resources.close(context.Background()); err != nil {
-				t.Fatal(err)
-			}
+			closeAppTestResources(t, resources)
 			for name, want := range map[string]string{"main.go": "new\n", "exec-marker": "verified"} {
 				got, err := os.ReadFile(filepath.Join(workspace, name))
 				if err != nil || string(got) != want {
 					t.Fatalf("%s = %q %v", name, got, err)
 				}
 			}
-			mu.Lock()
-			captured := append([][]byte(nil), requests...)
-			mu.Unlock()
+			captured := recorder.snapshot()
 			if len(captured) != 4 {
 				t.Fatalf("requests = %d", len(captured))
 			}
@@ -276,14 +258,8 @@ func TestReadPatchExecApprovedLoopForBothProviders(t *testing.T) {
 			if err := repository.Close(); err != nil {
 				t.Fatal(err)
 			}
-			baseline, err := os.ReadFile(journalPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			environment, err := os.ReadFile(filepath.Join(workspace, "command-environment"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			baseline := readAppTestFile(t, journalPath)
+			environment := readAppTestFile(t, filepath.Join(workspace, "command-environment"))
 			for _, content := range [][]byte{environment, baseline, []byte(ui.View()), bytes.Join(captured, nil)} {
 				if bytes.Contains(content, []byte("command-private-secret")) || bytes.Contains(content, []byte("exec-private-key")) {
 					t.Fatal("secret escaped environment boundary")
@@ -322,21 +298,12 @@ func TestReadPatchExecApprovedLoopForBothProviders(t *testing.T) {
 			for _, checkpoint := range checkpoints {
 				t.Run("recover-"+string(checkpoint.EventKind), func(t *testing.T) {
 					writeJournalPrefix(t, journalPath, baseline, checkpoint.Sequence)
-					if err := os.WriteFile(filepath.Join(workspace, "exec-marker"), []byte("must-not-rerun"), 0600); err != nil {
-						t.Fatal(err)
-					}
-					resumed, err := openChatResources(context.Background(), cacheFixtureConfig(t, config.Config{Provider: config.Provider{
+					writeAppTestFile(t, filepath.Join(workspace, "exec-marker"), []byte("must-not-rerun"), 0600)
+					resumed := mustOpenChatResources(t, context.Background(), cacheFixtureConfig(t, config.Config{Provider: config.Provider{
 						Family: family, Model: model, BaseURL: server.URL, APIKey: secret.New("exec-private-key"),
 					}}, false), root, string(resources.identity.ThreadID), workspace)
-					if err != nil {
-						t.Fatal(err)
-					}
-					if err := resumed.close(context.Background()); err != nil {
-						t.Fatal(err)
-					}
-					mu.Lock()
-					count := len(requests)
-					mu.Unlock()
+					closeAppTestResources(t, resumed)
+					count := len(recorder.snapshot())
 					marker, err := os.ReadFile(filepath.Join(workspace, "exec-marker"))
 					if err != nil || string(marker) != "must-not-rerun" || count != 4 {
 						t.Fatal("recovery repeated process or Provider side effects")
@@ -368,10 +335,7 @@ func TestReadPatchExecApprovedLoopForBothProviders(t *testing.T) {
 					if !found {
 						t.Fatal("missing compensated command result")
 					}
-					sealed, err := os.ReadFile(journalPath)
-					if err != nil {
-						t.Fatal(err)
-					}
+					sealed := readAppTestFile(t, journalPath)
 					lines := bytes.SplitAfter(baseline, []byte("\n"))
 					if !bytes.HasPrefix(sealed, bytes.Join(lines[:checkpoint.Sequence], nil)) {
 						t.Fatal("recovery rewrote committed journal bytes")

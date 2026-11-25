@@ -2,12 +2,14 @@ package anthropic
 
 import (
 	"bytes"
-	"easycode/internal/domain"
-	"easycode/internal/provider"
-	"easycode/internal/secret"
-	"easycode/internal/tool"
 	"reflect"
 	"testing"
+
+	"easycode/internal/domain"
+	"easycode/internal/provider"
+	"easycode/internal/provider/testsupport"
+	"easycode/internal/secret"
+	"easycode/internal/tool"
 )
 
 func TestSteeringInputsPreviewCommitRestoreAndRequestEquivalence(t *testing.T) {
@@ -67,7 +69,7 @@ func TestSteeringInputsPreviewCommitRestoreAndRequestEquivalence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sampling, err := testSamplingInput(t, conversation.provider.config.Inference).WithToolCatalog(testAnthropicToolCatalog(t))
+	sampling, err := testSamplingInput(t, conversation.provider.config.Inference).WithToolCatalog(testsupport.ToolCatalog(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +94,7 @@ func TestSteeringInputsPreviewCommitRestoreAndRequestEquivalence(t *testing.T) {
 		}
 		envelopes = append(envelopes, envelope)
 	}
-	restoredValue, err := testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", testRestoreRecords(t, envelopes, []tool.ModelOutput{testReadOutput(t, "call-read", "a", `{"status":"success","code":"ok","content":"done"}`)}))
+	restoredValue, err := testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", testRestoreRecords(t, envelopes, []tool.ModelOutput{testsupport.ReadOutput(t, "call-read", "a", `{"status":"success","code":"ok","content":"done"}`)}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,8 +144,8 @@ func TestSteeringInputsPreviewCommitRestoreAndRequestEquivalence(t *testing.T) {
 	if !bytes.Equal(liveBytes.Bytes(), changedBytes.Bytes()) {
 		t.Fatal("input identity polluted request bytes")
 	}
-	assertCompactionAfterToolSteering(t, instance, conversation, sampling, envelopes, []tool.ModelOutput{testReadOutput(t, "call-read", "a", `{"status":"success","code":"ok","content":"done"}`)})
-	records := testRestoreRecords(t, envelopes, []tool.ModelOutput{testReadOutput(t, "call-read", "a", `{"status":"success","code":"ok","content":"done"}`)})
+	assertCompactionAfterToolSteering(t, instance, conversation, sampling, envelopes, []tool.ModelOutput{testsupport.ReadOutput(t, "call-read", "a", `{"status":"success","code":"ok","content":"done"}`)})
+	records := testRestoreRecords(t, envelopes, []tool.ModelOutput{testsupport.ReadOutput(t, "call-read", "a", `{"status":"success","code":"ok","content":"done"}`)})
 	wrong, _ := domain.NewInputAssociation(turnID, domain.InputSteering, 2, ids[1:])
 	records[len(records)-1], _ = provider.NewInputRestoreRecord(wrong, envelopes[len(envelopes)-1])
 	if _, err := testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", records); err == nil {

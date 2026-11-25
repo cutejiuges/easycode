@@ -56,10 +56,7 @@ func TestStopBothProvidersRealRunnerSameTurnAndRestore(t *testing.T) {
 				defer server.Close()
 				cfg := cacheFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, Model: "fixture-model", BaseURL: server.URL, APIKey: secret.New("private-fixture-key")}}, true)
 				root := filepath.Join(t.TempDir(), "sessions")
-				resources, err := openChatResourcesWithHooks(context.Background(), cfg, dataPaths{sessionRoot: root}, "", false, workspace, chatResourceHooks{interactiveApprovals: true})
-				if err != nil {
-					t.Fatal(err)
-				}
+				resources := mustOpenChatResourcesWithHooks(t, context.Background(), cfg, dataPaths{sessionRoot: root}, "", false, workspace, chatResourceHooks{interactiveApprovals: true})
 				defer resources.close(context.Background())
 				control, err := startTUIControlSession(context.Background(), resources.runtime)
 				if err != nil {
@@ -105,13 +102,8 @@ func TestStopBothProvidersRealRunnerSameTurnAndRestore(t *testing.T) {
 				}
 				thread := resources.identity.ThreadID
 				journalPath, _ := resources.service.repository.JournalPath(thread)
-				if err := resources.close(context.Background()); err != nil {
-					t.Fatal(err)
-				}
-				raw, err := os.ReadFile(journalPath)
-				if err != nil {
-					t.Fatal(err)
-				}
+				closeAppTestResources(t, resources)
+				raw := readAppTestFile(t, journalPath)
 				if bytes.Contains(raw, []byte("RAW-PRIVATE")) || bytes.Contains(raw, []byte("private-fixture-key")) {
 					t.Fatal("private output leaked")
 				}
@@ -155,13 +147,8 @@ func TestStopBothProvidersRealRunnerSameTurnAndRestore(t *testing.T) {
 				if err := os.Remove(filepath.Join(workspace, ".easycode", "hooks.json")); err != nil {
 					t.Fatal(err)
 				}
-				resumed, err := openChatResourcesWithHooks(context.Background(), cfg, dataPaths{sessionRoot: root}, string(thread), false, workspace, chatResourceHooks{interactiveApprovals: true})
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := resumed.close(context.Background()); err != nil {
-					t.Fatal(err)
-				}
+				resumed := mustOpenChatResourcesWithHooks(t, context.Background(), cfg, dataPaths{sessionRoot: root}, string(thread), false, workspace, chatResourceHooks{interactiveApprovals: true})
+				closeAppTestResources(t, resumed)
 				after, _ := os.ReadFile(journalPath)
 				if !bytes.Equal(before, after) {
 					t.Fatal("completed restore changed journal")

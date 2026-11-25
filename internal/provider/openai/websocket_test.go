@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/coder/websocket"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,9 +16,8 @@ import (
 	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
 	"easycode/internal/provider"
+	"easycode/internal/provider/testsupport"
 	"easycode/internal/secret"
-
-	"github.com/coder/websocket"
 )
 
 func TestWebSocketDurableIncrementalAndReset(t *testing.T) {
@@ -167,11 +167,11 @@ func TestWebSocketDurableIncrementalAndReset(t *testing.T) {
 	if err != nil || !bytes.Equal(liveFull.Bytes(), restoredFull.Bytes()) {
 		t.Fatal("restored full logical canonical bytes differ", err)
 	}
-	liveEvidence, err := conversation.requestEvidence(restoredInput)
+	liveEvidence, err := conversation.TestEvidence(restoredInput)
 	if err != nil {
 		t.Fatal(err)
 	}
-	restoredEvidence, err := restored.requestEvidence(restoredInput)
+	restoredEvidence, err := restored.TestEvidence(restoredInput)
 	if err != nil || liveEvidence.NativeFingerprint() != restoredEvidence.NativeFingerprint() {
 		t.Fatal("restored native fingerprint differs", err)
 	}
@@ -283,7 +283,7 @@ func websocketCacheSources(t *testing.T, c *Conversation) contextplan.CacheSourc
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err := contextplan.NewPlanningInput(profile, testOpenAIToolCatalog(t), project, view, footprint, contextplan.NewSamplingInput(), contextplan.DisabledBudget())
+	input, err := contextplan.NewPlanningInput(profile, testsupport.ToolCatalog(t), project, view, footprint, contextplan.NewSamplingInput(), contextplan.DisabledBudget())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,7 +437,7 @@ func TestWebSocketSummaryUsesSeparateFullConnectionAndResets(t *testing.T) {
 			}
 			_ = first.PreparedSample().Finalize()
 			<-bodies
-			input, _ := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testOpenAIToolCatalog(t))
+			input, _ := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testsupport.ToolCatalog(t))
 			compact, _ := provider.NewCompactionInput(input, "preserve tests", 4096)
 			compact, err = compact.WithInstructions("preserve tests\n\nretain hook emphasis")
 			if err != nil {
@@ -528,7 +528,7 @@ func applyWebSocketCompactionContext(t *testing.T, conversation *Conversation, c
 		Source: domain.SessionStartCompact, CompactionID: checkpoint.ID(), Scope: checkpoint.Scope(),
 		CheckpointSequence: 8, CheckpointRevision: checkpoint.Source().ContextRevision() + 1, CheckpointDigest: checkpoint.Source().Digest(),
 	}
-	supplement := sessionStartTestContext(t, target, websocketCompactContext)
+	supplement := testsupport.SessionStartContext(t, target, websocketCompactContext)
 	applied, err := conversation.PrepareCompactSessionStartContext(supplement, provider.SessionStartContinuation{})
 	if err != nil {
 		t.Fatal(err)

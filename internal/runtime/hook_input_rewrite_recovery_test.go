@@ -17,38 +17,26 @@ func TestPreRewriteRecoveryFromFixedCrashCutsNeverRerunsAndPreservesFrozenBytes(
 	for _, phase := range []string{"prefix", "next_started", "continued", "allowed", "started", "result", "recovery", "reverted", "rejected"} {
 		t.Run(phase, func(t *testing.T) {
 			fixture, err := os.ReadFile(filepath.Join("..", "session", "testdata", "current", "rewrite_"+phase+".jsonl"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			const thread = domain.ThreadID("00000000-0001-7000-8000-000000000002")
 			repo, err := session.OpenOrCreateRepository(filepath.Join(t.TempDir(), "sessions"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			defer repo.Close()
 			lease, err := repo.Create(context.Background(), thread)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			path, err := repo.JournalPath(thread)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			if err := os.WriteFile(path, fixture, 0600); err != nil {
 				t.Fatal(err)
 			}
 			loaded, err := session.NewLoader().Load(context.Background(), lease)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			plan, err := session.NewReplayPlanner().Plan(loaded)
 			if err != nil || plan.ToolRecovery == nil {
 				t.Fatal("missing crash recovery", err)
 			}
 			writer, err := session.StartJournalWriter(lease, loaded.Identity, loaded.NextSequence)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			defer writer.Close(context.Background())
 			r, _, runner, _ := hookRuntimeFixture(t, writer, 0)
 			bindRuntimeRecoveryFixture(t, r, *plan.ToolRecovery)
@@ -79,18 +67,14 @@ func TestPreRewriteRecoveryFromFixedCrashCutsNeverRerunsAndPreservesFrozenBytes(
 				t.Fatal(err)
 			}
 			lease, err = repo.Open(context.Background(), thread)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			defer lease.Close()
 			after, err := os.ReadFile(path)
 			if err != nil || !bytes.HasPrefix(after, fixture) {
 				t.Fatal("recovery rewrote old facts", err)
 			}
 			reloaded, err := session.NewLoader().Load(context.Background(), lease)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			sealed, err := session.NewReplayPlanner().Plan(reloaded)
 			if err != nil || sealed.ToolRecovery != nil || len(sealed.Tools) != 1 || sealed.Tools[0].Result.Preview() != result.Preview() {
 				t.Fatal("second crash/reload changed compensation", err)

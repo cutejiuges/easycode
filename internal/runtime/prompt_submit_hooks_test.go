@@ -27,17 +27,9 @@ func (run promptTestRunner) Run(ctx context.Context, id domain.HookRunIdentity, 
 func installPromptTestHook(t *testing.T, r *Runtime, runner HookRunner, additional ...domain.HookDeclaration) {
 	t.Helper()
 	d, err := domain.NewUserPromptSubmitHookDeclaration(domain.HookSourceProject, domain.HookFeedbackNone, domain.HookDigest(nil), "submit", "true", 5)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s, err := domain.NewHookSnapshot(append(additional, d), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	r.interactiveApprovals = true
-	if err := r.InstallHooks(s, runner, "/workspace", domain.HookOK); err != nil {
-		t.Fatal(err)
-	}
+	installRuntimeTestHooks(t, r, runner, "/workspace", append(additional, d))
 }
 
 func TestPromptSubmitBlocksBeforeActivationAndStillAllowsNextInput(t *testing.T) {
@@ -51,9 +43,7 @@ func TestPromptSubmitBlocksBeforeActivationAndStillAllowsNextInput(t *testing.T)
 	r.newTurnID = sequentialTurnIDs()
 	activationScope, _ := domain.ParseSessionStartHookScope("startup")
 	activation, err := domain.NewSessionStartHookDeclaration(domain.HookSourceProject, domain.HookFeedbackNone, domain.HookDigest(nil), "activation", activationScope, "true", 5)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	var checked []domain.HookEvent
 	runner := promptTestRunner(func(_ context.Context, id domain.HookRunIdentity, input domain.HookInput) domain.HookExecution {
 		checked = append(checked, id.Event)
@@ -62,9 +52,7 @@ func TestPromptSubmitBlocksBeforeActivationAndStillAllowsNextInput(t *testing.T)
 		}
 		result := domain.HookRunResult{Identity: id, Status: domain.HookContinue, Code: domain.HookOK, ExitKnown: true, CleanupConfirmed: true, Origin: "execution"}
 		encoded, err := input.Bytes()
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		if bytes.Contains(encoded, []byte("discarded-first")) {
 			result.Status, result.Code, result.ExitCode = domain.HookBlock, domain.HookDenied, 2
 		}
@@ -98,9 +86,7 @@ func TestPromptSubmitBlocksBeforeActivationAndStillAllowsNextInput(t *testing.T)
 func TestPromptSubmitFiltersClaimWithoutDetachingTurnRequest(t *testing.T) {
 	r := newTestRuntime(t, &fakeConversation{}, &fakeJournal{})
 	loop, err := NewAgentLoop(r, DefaultAgentLoopConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	first := runtimeInputs("return first")[0]
 	second, _ := domain.NewUserInput("01900000-0000-7000-8000-000000000002", "keep sibling")
 	claim := []queuedInput{{value: first, requestID: "first", automatic: true}, {value: second, requestID: "sibling", automatic: true}}
@@ -207,9 +193,7 @@ func TestPromptSubmitChecksApprovedPlanOnceAsLiteralDefaultInput(t *testing.T) {
 				case item := <-host.Outputs():
 					if e, ok := item.TurnEvent(); ok && e.Kind == protocol.EventHookTrustRequested {
 						p, err := protocol.DecodeHookTrustRequested(e)
-						if err != nil {
-							t.Fatal(err)
-						}
+						requireNoError(t, err)
 						if err := host.ResolveHookTrust(ctx, e.TurnID, p, protocol.HookTrustSession); err != nil {
 							t.Fatal(err)
 						}

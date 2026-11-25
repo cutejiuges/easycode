@@ -11,7 +11,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -147,11 +146,7 @@ func TestReasoningTerminalHelper(t *testing.T) {
 	if os.Getenv("EASYCODE_REASONING_TERMINAL_SMOKE") != "1" {
 		return
 	}
-	fd, err := strconv.Atoi(os.Getenv("EASYCODE_REASONING_ACK_FD"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	ack := os.NewFile(uintptr(fd), "reasoning-ack")
+	ack := openTerminalAck(t, "EASYCODE_REASONING_ACK_FD", "reasoning-ack")
 	defer ack.Close()
 	family := domain.ProviderFamily(os.Getenv("EASYCODE_REASONING_FAMILY"))
 	if family != domain.ProviderOpenAI && family != domain.ProviderAnthropic {
@@ -212,22 +207,18 @@ func TestReasoningTerminalHelper(t *testing.T) {
 	cfg := config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, Model: model, APIKey: secret.New("fixture-key")}}
 	cwd := t.TempDir()
 	if controls {
-		if err := os.WriteFile(filepath.Join(cwd, "README.md"), []byte("terminal tool content"), 0600); err != nil {
-			t.Fatal(err)
-		}
+		writeAppTestFile(t, filepath.Join(cwd, "README.md"), []byte("terminal tool content"), 0600)
 		fields := reasoningFields(family)
 		if family == domain.ProviderAnthropic {
 			fields = `"anthropic_thinking":{"type":"enabled","budget_tokens":8192,"display":"omitted"},"anthropic_effort":"high","max_output_tokens":16384`
 		}
+		var err error
 		cfg, err = config.Load(withReasoningConfig(t, writeAppConfig(t, t.TempDir(), family, server.URL), fields))
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	resources, err := openChatResources(ctx, cfg, filepath.Join(t.TempDir(), "sessions"), "", cwd)
-	if err != nil {
-		t.Fatal(err)
-	}
+	resources := mustOpenChatResources(t, ctx, cfg, filepath.Join(t.TempDir(), "sessions"), "", cwd)
 	defer resources.close(context.Background())
 	control, err := startTUIControlSession(ctx, resources.runtime)
 	if err != nil {

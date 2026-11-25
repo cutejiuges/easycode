@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """以真实 Darwin PTY、双 Provider 假 SSE 和事件握手验收文件引用。"""
+from smoke_support import smoke_binary, complete_cases
 import http.server
 import json
 import os
@@ -280,7 +281,7 @@ if __name__ == "__main__":
     root = Path(__file__).resolve().parents[1]
     with tempfile.TemporaryDirectory(prefix="easycode-file-mentions-smoke-") as temporary:
         directory = Path(temporary)
-        binary = directory / "app.test"
-        subprocess.run(["go", "test", "-c", "-o", str(binary), "./internal/app"], cwd=root, check=True)
-        results = [run_case(binary, root, directory, family, no_color) for family in ("openai", "anthropic") for no_color in (False, True)]
+        binary = smoke_binary("app.test", temporary, root)
+        results = [run_case(binary, root, directory, family, no_color) for family, no_color in (("openai", False), ("anthropic", True))]
+        complete_cases(results)
         print(json.dumps({"platform": platform.platform(), "cases": results}, indent=2))

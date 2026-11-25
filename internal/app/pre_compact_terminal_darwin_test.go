@@ -12,7 +12,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -99,11 +98,7 @@ func TestPreCompactTerminalHelper(t *testing.T) {
 	if !family.Valid() || mode != "manual" && mode != "auto" && !post {
 		t.Fatal("invalid compact terminal fixture")
 	}
-	fd, err := strconv.Atoi(os.Getenv("EASYCODE_PRE_COMPACT_ACK_FD"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	ack := os.NewFile(uintptr(fd), "pre-compact-ack")
+	ack := openTerminalAck(t, "EASYCODE_PRE_COMPACT_ACK_FD", "pre-compact-ack")
 	defer ack.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -134,15 +129,13 @@ func TestPreCompactTerminalHelper(t *testing.T) {
 	defer server.Close()
 	cfg := config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, Model: "fixture-model", APIKey: secret.New("pre-compact-terminal-fixture")}}
 	if mode == "auto" {
+		var err error
 		cfg.ContextBudget, err = contextplan.NewBudget(22000, 0, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	seed, err := openChatResources(ctx, cfg, root, "", workspace)
-	if err != nil {
-		t.Fatal(err)
-	}
+	seed := mustOpenChatResources(t, ctx, cfg, root, "", workspace)
 	defer seed.close(context.Background())
 	text := strings.Repeat("historical work ", 1000)
 	if mode == "auto" {
@@ -164,9 +157,7 @@ func TestPreCompactTerminalHelper(t *testing.T) {
 		event, matcher, scriptName = domain.HookPostCompact, "manual", "observe-check.sh"
 		declaration = map[string]string{"id": "observe-summary", "type": "command", "command": "sh .easycode/" + scriptName}
 		private := filepath.Join(privateAppTempDir(t), "private-file")
-		if err := os.WriteFile(private, []byte("private"), 0600); err != nil {
-			t.Fatal(err)
-		}
+		writeAppTestFile(t, private, []byte("private"), 0600)
 		t.Setenv("EASYCODE_POST_COMPACT_SECRET", "private")
 		port := server.Listener.Addr().(*net.TCPAddr).Port
 		script = fmt.Sprintf(`input=$(/bin/cat) || exit 10
@@ -185,16 +176,9 @@ exit 2`, private, port, postOutput, postOutput+"-stderr")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(hookDirectory, "hooks.json"), hookConfig, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(hookDirectory, scriptName), []byte(script), 0600); err != nil {
-		t.Fatal(err)
-	}
-	resources, err := openChatResourcesWithHooks(ctx, cfg, dataPaths{sessionRoot: root}, string(thread), false, workspace, chatResourceHooks{interactiveApprovals: true})
-	if err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, filepath.Join(hookDirectory, "hooks.json"), hookConfig, 0600)
+	writeAppTestFile(t, filepath.Join(hookDirectory, scriptName), []byte(script), 0600)
+	resources := mustOpenChatResourcesWithHooks(t, ctx, cfg, dataPaths{sessionRoot: root}, string(thread), false, workspace, chatResourceHooks{interactiveApprovals: true})
 	defer resources.close(context.Background())
 	model, err := assembleChatModel(ctx, resources)
 	if err != nil {

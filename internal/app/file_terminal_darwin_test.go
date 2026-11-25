@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -168,18 +167,11 @@ func TestFileMentionsTerminalHelper(t *testing.T) {
 	t.Setenv("HOME", privateAppTempDir(t))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	fd, err := strconv.Atoi(os.Getenv("EASYCODE_FILE_TERMINAL_ACK_FD"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	ack := os.NewFile(uintptr(fd), "file-terminal-ack")
+	ack := openTerminalAck(t, "EASYCODE_FILE_TERMINAL_ACK_FD", "file-terminal-ack")
 	defer ack.Close()
 	family := domain.ProviderFamily(os.Getenv("EASYCODE_FILE_TERMINAL_FAMILY"))
 	cfg := reasoningFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, BaseURL: os.Getenv("EASYCODE_FILE_TERMINAL_URL"), APIKey: secret.New("fixture-key"), Model: "fixture-model"}})
-	r, err := openChatResources(ctx, cfg, filepath.Join(privateAppTempDir(t), "sessions"), "", os.Getenv("EASYCODE_FILE_TERMINAL_WORKSPACE"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := mustOpenChatResources(t, ctx, cfg, filepath.Join(privateAppTempDir(t), "sessions"), "", os.Getenv("EASYCODE_FILE_TERMINAL_WORKSPACE"))
 	defer r.close(context.Background())
 	f := &fileTerminalBoundary{workspaceFileBoundary: r.workspace, discovery: make(chan struct{}), preparation: make(chan struct{})}
 	r.fileSource.workspace = f
@@ -195,8 +187,6 @@ func TestFileMentionsTerminalHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 	cancel()
-	if err := r.close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	closeAppTestResources(t, r)
 	fmt.Fprintln(os.Stdout, "FILE_MENTIONS_EXIT=0")
 }

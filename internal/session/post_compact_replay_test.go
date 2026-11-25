@@ -50,14 +50,10 @@ func TestPostCompactReplayPreservesCheckpointAndStopAcrossRecovery(t *testing.T)
 			t.Fatalf("sequence %d lost its observation prefix", test.sequence)
 		}
 		draft, err := plan.InterruptedPostCompact.CloseDraft()
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		sequence := test.sequence + 1
 		record, err := BuildRecord(loaded.Identity, draft, sequence, loaded.Records[0].Timestamp, sequence, 0, 1)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		closed, err := DecodePostCompactHookClosedPayload(record)
 		if err != nil || closed.State != test.state || closed.Code != test.code || closed.Finished != test.finished || closed.Origin != postCompactRecovery {
 			t.Fatalf("sequence %d closed as %+v: %v", test.sequence, closed, err)
@@ -97,10 +93,7 @@ func TestPostCompactReplayRejectsInvalidCompleteFactsBeforeRepair(t *testing.T) 
 	rows := bytes.Split(bytes.TrimSuffix(readCurrentFixture(t, "stop_post_compact_completed.jsonl"), []byte{'\n'}), []byte{'\n'})
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			record, err := DecodeRecord(rows[test.index])
-			if err != nil {
-				t.Fatal(err)
-			}
+			record := decodeFixtureRecord(t, rows[test.index])
 			test.mutate(&record)
 			if record.BatchSize == 1 && bytes.Contains(rows[test.index], record.Payload) {
 				t.Fatal("invalid test did not change the record")

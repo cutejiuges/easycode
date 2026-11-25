@@ -88,6 +88,8 @@ func TestTaskFacadeInputsStrictAndBounded(t *testing.T) {
 		`{"plan":[{"step":"a","status":"pending"},{"step":"a","status":"completed"}]}`,
 		`{"plan":[{"step":"a","status":"in_progress"},{"step":"b","status":"in_progress"}]}`,
 		`{"plan":[],"explanation":"bad\rcontrol"}`,
+		`{"plan":[{"step":"` + strings.Repeat("中", 171) + `","status":"pending"}]}`,
+		`{"todos":[{"content":"work","activeForm":"` + strings.Repeat("中", 171) + `","status":"pending"}]}`,
 	}
 	for _, raw := range invalid {
 		if _, err := DecodeTodoWriteInput([]byte(raw)); err == nil {
@@ -107,24 +109,8 @@ func TestTaskFacadeInputsStrictAndBounded(t *testing.T) {
 	}
 }
 
-func TestTaskMultibyteInputUsesByteLimitsAndCompleteList(t *testing.T) {
+func TestTaskFacadeEnforcesCompleteListLimit(t *testing.T) {
 	t.Parallel()
-	for _, size := range []int{512, 513} {
-		text := strings.Repeat("中", 170) + strings.Repeat("x", size-510)
-		for _, raw := range []string{
-			fmt.Sprintf(`{"plan":[{"step":%q,"status":"pending"}]}`, text),
-			fmt.Sprintf(`{"todos":[{"content":"work","activeForm":%q,"status":"pending"}]}`, text),
-		} {
-			decode := DecodeUpdatePlanInput
-			if strings.Contains(raw, `"todos"`) {
-				decode = DecodeTodoWriteInput
-			}
-			_, err := decode([]byte(raw))
-			if (err == nil) != (size == 512) {
-				t.Fatalf("UTF-8 boundary %d: %v", size, err)
-			}
-		}
-	}
 	for _, count := range []int{20, 21} {
 		var items []string
 		for i := 0; i < count; i++ {

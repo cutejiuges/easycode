@@ -35,9 +35,7 @@ func TestPromptSubmitHookFailsBeforeAnyHeadlessRequest(t *testing.T) {
 	}
 	const script = `cat >/dev/null; exit 2`
 	config := `{"hooks":{"UserPromptSubmit":[{"hooks":[{"id":"prompt-policy","type":"command","command":"` + script + `"}]}]}}`
-	if err := os.WriteFile(filepath.Join(configDir, "hooks.json"), []byte(config), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, filepath.Join(configDir, "hooks.json"), []byte(config), 0o600)
 	var providerRequests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		providerRequests.Add(1)

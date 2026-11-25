@@ -102,10 +102,7 @@ func TestBranchArtifactHistoryKeepsOutputAuthorityWithItsProducer(t *testing.T) 
 	if err != nil || own.Text != "warning" {
 		t.Fatalf("branch-owned output unavailable: %+v, %v", own, err)
 	}
-	restored, err := openChatResources(ctx, cfg, paths.sessionRoot, string(sourceThread), workspace)
-	if err != nil {
-		t.Fatal(err)
-	}
+	restored := mustOpenChatResources(t, ctx, cfg, paths.sessionRoot, string(sourceThread), workspace)
 	defer closeResumeTestResources(t, restored)
 	query.ThreadID, query.InvocationID = sourceThread, inherited.Activity.InvocationID
 	after, err := restored.transcriptQueries.ReadToolOutput(ctx, query)

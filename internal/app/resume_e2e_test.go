@@ -1,7 +1,6 @@
 package app
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,260 +10,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"easycode/internal/config"
-	contextplan "easycode/internal/context"
 	"easycode/internal/domain"
 	"easycode/internal/protocol"
 	"easycode/internal/secret"
 	"easycode/internal/session"
-	"easycode/internal/tui"
-	tea "github.com/charmbracelet/bubbletea"
 )
-
-func TestProvidersPersistResumeReplayAndContinueEndToEnd(t *testing.T) {
-	runProvidersPersistResumeReplayAndContinue(t, func(value string) string { return value }, nil)
-}
-func runProvidersPersistResumeReplayAndContinue(t *testing.T, answer func(string) string, browse func(*testing.T, tea.Model, string)) {
-	fixtures := []struct {
-		name        string
-		family      domain.ProviderFamily
-		wire        string
-		model       string
-		serveTurn   func(io.Writer, int)
-		assertThird func(*testing.T, []byte)
-	}{
-		{
-			name: "OpenAI Responses", family: domain.ProviderOpenAI, wire: "responses", model: "gpt-test",
-			serveTurn: writeOpenAIAppTurn, assertThird: assertOpenAIThirdRequest,
-		},
-		{
-			name: "Anthropic Messages", family: domain.ProviderAnthropic, wire: "messages", model: "claude-test",
-			serveTurn: writeAnthropicAppTurn, assertThird: assertAnthropicThirdRequest,
-		},
-	}
-	for _, fixture := range fixtures {
-		fixture := fixture
-		t.Run(fixture.name, func(t *testing.T) {
-			budget, err := contextplan.NewBudget(200000, 20000, 4096)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var mu sync.Mutex
-			var requests [][]byte
-			serve := func(w io.Writer, turn int) {
-				var wire bytes.Buffer
-				fixture.serveTurn(&wire, turn)
-				data := wire.Bytes()
-				if browse != nil {
-					data = addMarkdownReasoningFixture(data, fixture.family, turn)
-				}
-				label := fmt.Sprintf("answer-%d", turn)
-				original, _ := json.Marshal(label)
-				replacement, _ := json.Marshal(answer(label))
-				_, _ = w.Write(bytes.ReplaceAll(data, original, replacement))
-			}
-			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-				body, err := io.ReadAll(request.Body)
-				if err != nil {
-					t.Errorf("read request: %v", err)
-					return
-				}
-				mu.Lock()
-				requests = append(requests, append([]byte(nil), body...))
-				turn := len(requests)
-				mu.Unlock()
-				writer.Header().Set("Content-Type", "text/event-stream")
-				serve(writer, turn)
-			}))
-			defer server.Close()
-
-			dataRoot := filepath.Join(t.TempDir(), "sessions")
-			creationCWD := t.TempDir()
-			providerConfig := config.Config{Provider: config.Provider{
-				Family: fixture.family, BaseURL: server.URL,
-				APIKey: secret.New("e2e-secret"), Model: fixture.model,
-			}, ContextBudget: budget}
-			created, err := openChatResources(context.Background(), providerConfig, dataRoot, "", creationCWD)
-			if err != nil {
-				t.Fatal(err)
-			}
-			submitAppTurn(t, created, "first")
-			submitAppTurn(t, created, "second")
-			threadID := created.identity.ThreadID
-			if err := created.close(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-
-			preview, cleanupFailed, previewErr := previewSession(context.Background(), dataRoot, threadID, defaultPreviewDependencies())
-			if previewErr != nil || cleanupFailed || len(preview.Messages) == 0 {
-				t.Fatalf("preview before resume failed: %v", previewErr)
-			}
-			mu.Lock()
-			requestCount := len(requests)
-			mu.Unlock()
-			if requestCount != 2 {
-				t.Fatal("preview performed provider request")
-			}
-			resumed, err := openChatResources(
-				context.Background(), providerConfig, dataRoot, string(threadID), t.TempDir(),
-			)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(resumed.history.Turns) != 2 || resumed.history.Turns[0].Messages[0].Text != "first" ||
-				resumed.history.Turns[0].Messages[1].Text != answer("answer-1") ||
-				resumed.history.Turns[1].Messages[0].Text != "second" || resumed.history.Turns[1].Messages[1].Text != answer("answer-2") {
-				t.Fatalf("resumed history = %#v", resumed.history)
-			}
-			ui := tui.NewModel(context.Background(), "test", resumed.session).WithTranscriptQueries(resumed.identity.ThreadID, resumed.transcriptQueries)
-			initial := ui.Init()()
-			var restored tea.Model = ui
-			if batch, ok := initial.(tea.BatchMsg); ok {
-				// 首项长期等待控制流；其余初始化独立完成，不能假定最后一项是历史查询。
-				for _, command := range batch[1:] {
-					runCompletionCommand(t, &restored, command)
-				}
-			} else {
-				restored, _ = ui.Update(initial)
-			}
-			view := restored.View()
-			for _, visible := range []string{"User: first", "● answer-1", "User: second", "● answer-2"} {
-				if !strings.Contains(view, visible) {
-					t.Fatalf("resumed transcript missing %q: %s", visible, view)
-				}
-			}
-			if browse != nil {
-				browse(t, restored, dataRoot)
-			}
-			submitAppTurn(t, resumed, "third")
-			if err := resumed.close(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-
-			mu.Lock()
-			captured := make([][]byte, len(requests))
-			for index, request := range requests {
-				captured[index] = append([]byte(nil), request...)
-			}
-			mu.Unlock()
-			if len(captured) != 3 {
-				t.Fatalf("request count = %d", len(captured))
-			}
-			assertionBody := append([]byte(nil), captured[2]...)
-			for _, label := range []string{"answer-1", "answer-2"} {
-				original, _ := json.Marshal(answer(label))
-				replacement, _ := json.Marshal(label)
-				assertionBody = bytes.ReplaceAll(assertionBody, original, replacement)
-			}
-			if browse == nil {
-				fixture.assertThird(t, assertionBody)
-			} else {
-				assertMarkdownHistoryOrder(t, assertionBody)
-			}
-
-			var comparisonMu sync.Mutex
-			var comparisonRequests [][]byte
-			comparisonServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-				body, readErr := io.ReadAll(request.Body)
-				if readErr != nil {
-					t.Errorf("read uninterrupted request: %v", readErr)
-					return
-				}
-				comparisonMu.Lock()
-				comparisonRequests = append(comparisonRequests, append([]byte(nil), body...))
-				turn := len(comparisonRequests)
-				comparisonMu.Unlock()
-				writer.Header().Set("Content-Type", "text/event-stream")
-				serve(writer, turn)
-			}))
-			comparisonConfig := config.Config{Provider: config.Provider{
-				Family: fixture.family, BaseURL: comparisonServer.URL,
-				APIKey: secret.New("comparison-secret"), Model: fixture.model,
-			}, ContextBudget: budget}
-			uninterrupted, openErr := openChatResources(
-				context.Background(), comparisonConfig, filepath.Join(t.TempDir(), "sessions"), "", t.TempDir(),
-			)
-			if openErr != nil {
-				comparisonServer.Close()
-				t.Fatal(openErr)
-			}
-			for _, prompt := range []string{"first", "second", "third"} {
-				submitAppTurn(t, uninterrupted, prompt)
-			}
-			if closeErr := uninterrupted.close(context.Background()); closeErr != nil {
-				comparisonServer.Close()
-				t.Fatal(closeErr)
-			}
-			comparisonServer.Close()
-			comparisonMu.Lock()
-			comparisonCount := len(comparisonRequests)
-			comparisonThird := ""
-			if comparisonCount == 3 {
-				comparisonThird = string(comparisonRequests[2])
-			}
-			comparisonMu.Unlock()
-			if comparisonCount != 3 || comparisonThird != string(captured[2]) {
-				t.Fatalf(
-					"restored and uninterrupted third requests differ: count=%d\n%s\n%s",
-					comparisonCount, captured[2], comparisonThird,
-				)
-			}
-			assertRequestFingerprintEqual(t, captured[2], []byte(comparisonThird))
-			for _, dynamic := range []string{string(threadID), dataRoot, creationCWD, "e2e-secret"} {
-				if strings.Contains(string(captured[2]), dynamic) {
-					t.Fatalf("request contains dynamic/session input %q", dynamic)
-				}
-			}
-
-			repository, err := session.OpenOrCreateRepository(dataRoot)
-			if err != nil {
-				t.Fatal(err)
-			}
-			lease, err := repository.Open(context.Background(), threadID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			loaded, err := session.NewLoader().Load(context.Background(), lease)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := lease.Close(); err != nil {
-				t.Fatal(err)
-			}
-			_ = repository.Close()
-			if len(loaded.Records) != 20 || loaded.NextSequence != 21 {
-				t.Fatalf("journal record count/next = %d/%d", len(loaded.Records), loaded.NextSequence)
-			}
-			for index, record := range loaded.Records {
-				if record.Sequence != uint64(index+1) {
-					t.Fatalf("record[%d] = %#v", index, record)
-				}
-				if strings.Contains(string(record.Payload), "e2e-secret") || strings.Contains(string(record.Payload), server.URL) {
-					t.Fatal("journal contains connection secret")
-				}
-			}
-			for _, index := range []int{6, 12, 18} {
-				if loaded.Records[index].EventKind != session.EventSampleUsage {
-					t.Fatalf("record[%d] kind = %s", index, loaded.Records[index].EventKind)
-				}
-			}
-
-			fresh, err := openChatResources(context.Background(), providerConfig, dataRoot, "", t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
-			if fresh.identity.ThreadID == threadID || len(fresh.history.Turns) != 0 {
-				t.Fatalf("non-resume startup reused history: %#v", fresh)
-			}
-			if err := fresh.close(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-		})
-	}
-}
 
 func submitAppTurn(t *testing.T, resources *chatResources, text string) {
 	t.Helper()
@@ -381,10 +134,7 @@ func TestCancelledSampleRetainsCommittedInputAfterResume(t *testing.T) {
 		Family: domain.ProviderOpenAI, BaseURL: cancelServer.URL,
 		APIKey: secret.New("cancel-key"), Model: "gpt-test",
 	}}
-	created, err := openChatResources(context.Background(), applicationConfig, dataRoot, "", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	created := mustOpenChatResources(t, context.Background(), applicationConfig, dataRoot, "", t.TempDir())
 	if err := created.session.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -407,9 +157,7 @@ func TestCancelledSampleRetainsCommittedInputAfterResume(t *testing.T) {
 		t.Fatalf("cancel terminal = %#v", terminal)
 	}
 	threadID := created.identity.ThreadID
-	if err := created.close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	closeAppTestResources(t, created)
 
 	requestBody := make(chan []byte, 1)
 	resumeServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -421,10 +169,7 @@ func TestCancelledSampleRetainsCommittedInputAfterResume(t *testing.T) {
 	defer resumeServer.Close()
 	applicationConfig.Provider.BaseURL = resumeServer.URL
 	applicationConfig.Provider.APIKey = secret.New("refreshed-key")
-	resumed, err := openChatResources(context.Background(), applicationConfig, dataRoot, string(threadID), t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	resumed := mustOpenChatResources(t, context.Background(), applicationConfig, dataRoot, string(threadID), t.TempDir())
 	if len(resumed.history.Turns) != 1 || len(resumed.history.Turns[0].Messages) != 1 || resumed.history.Turns[0].Messages[0].Text != "cancelled prompt" {
 		t.Fatalf("committed input missing from restored history: %#v", resumed.history)
 	}
@@ -433,9 +178,7 @@ func TestCancelledSampleRetainsCommittedInputAfterResume(t *testing.T) {
 	if !strings.Contains(string(body), "cancelled prompt") || !strings.Contains(string(body), "retry") {
 		t.Fatalf("resumed request lost committed input: %s", body)
 	}
-	if err := resumed.close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	closeAppTestResources(t, resumed)
 }
 
 func TestResumeRepairsHalfLineOnceAndKeepsCommittedHistory(t *testing.T) {
@@ -450,15 +193,10 @@ func TestResumeRepairsHalfLineOnceAndKeepsCommittedHistory(t *testing.T) {
 		Family: domain.ProviderOpenAI, BaseURL: server.URL,
 		APIKey: secret.New("repair-key"), Model: "gpt-test",
 	}}
-	created, err := openChatResources(context.Background(), applicationConfig, dataRoot, "", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	created := mustOpenChatResources(t, context.Background(), applicationConfig, dataRoot, "", t.TempDir())
 	submitAppTurn(t, created, "first")
 	threadID := created.identity.ThreadID
-	if err := created.close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	closeAppTestResources(t, created)
 	repository, err := session.OpenOrCreateRepository(dataRoot)
 	if err != nil {
 		t.Fatal(err)
@@ -480,24 +218,14 @@ func TestResumeRepairsHalfLineOnceAndKeepsCommittedHistory(t *testing.T) {
 	}
 	_ = file.Close()
 
-	resumed, err := openChatResources(context.Background(), applicationConfig, dataRoot, string(threadID), t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	resumed := mustOpenChatResources(t, context.Background(), applicationConfig, dataRoot, string(threadID), t.TempDir())
 	if !resumed.repair.Repaired || resumed.repair.Kind != session.RepairHalfLine || len(resumed.history.Turns) != 1 {
 		t.Fatalf("repair/history = %#v/%#v", resumed.repair, resumed.history)
 	}
-	if err := resumed.close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	second, err := openChatResources(context.Background(), applicationConfig, dataRoot, string(threadID), t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	closeAppTestResources(t, resumed)
+	second := mustOpenChatResources(t, context.Background(), applicationConfig, dataRoot, string(threadID), t.TempDir())
 	if second.repair.Repaired || len(second.history.Turns) != 1 {
 		t.Fatalf("second repair/history = %#v/%#v", second.repair, second.history)
 	}
-	if err := second.close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	closeAppTestResources(t, second)
 }

@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/coder/websocket"
 	"net/http"
 	"net/http/httptest"
-
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -15,9 +15,9 @@ import (
 	"easycode/internal/codec"
 	"easycode/internal/domain"
 	"easycode/internal/provider"
+	"easycode/internal/provider/testsupport"
 	"easycode/internal/secret"
 	"easycode/internal/tool"
-	"github.com/coder/websocket"
 )
 
 func taskCacheRecords(t *testing.T, c *Conversation, invocation tool.Invocation, result tool.InvocationResult, outputs []tool.ModelOutput) []provider.RestoreRecord {
@@ -80,7 +80,7 @@ func taskCacheOutput(t *testing.T, invocation tool.Invocation) (tool.InvocationR
 	if err != nil {
 		t.Fatal(err)
 	}
-	return result, []tool.ModelOutput{testDirectModelOutput(t, invocation, result, admission)}
+	return result, []tool.ModelOutput{testsupport.DirectModelOutput(t, invocation, result, admission)}
 }
 
 func assertTaskCacheEquivalent(t *testing.T, left, right *Conversation, input provider.TurnInput) codec.CanonicalJSON {
@@ -101,11 +101,11 @@ func assertTaskCacheEquivalent(t *testing.T, left, right *Conversation, input pr
 	if err != nil || !bytes.Equal(nativeA, nativeB) || !bytes.Contains(nativeA, []byte("opaque-task-cache")) || !bytes.Contains(nativeA, []byte(`"phase":"commentary"`)) {
 		t.Fatal("task cache restore changed native opaque bytes, phase or item order", err)
 	}
-	evidenceA, err := left.requestEvidence(input)
+	evidenceA, err := left.TestEvidence(input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	evidenceB, err := right.requestEvidence(input)
+	evidenceB, err := right.TestEvidence(input)
 	if err != nil || evidenceA.NativeFingerprint() != evidenceB.NativeFingerprint() || !bytes.Equal(evidenceA.Properties().Bytes(), evidenceB.Properties().Bytes()) || websocketCacheSources(t, left) != websocketCacheSources(t, right) {
 		t.Fatal("task cache restore changed native or source fingerprints", err)
 	}
@@ -250,7 +250,7 @@ func TestTaskCacheWebSocketSuffixCheckpointFailureAndRestore(t *testing.T) {
 	if err := preparedOutput.Finalize(); err != nil {
 		t.Fatal(err)
 	}
-	input, err = testSamplingInput(t, instance.config.Inference).WithToolCatalog(testOpenAIToolCatalog(t))
+	input, err = testSamplingInput(t, instance.config.Inference).WithToolCatalog(testsupport.ToolCatalog(t))
 	if err != nil {
 		t.Fatal(err)
 	}

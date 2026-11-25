@@ -18,10 +18,7 @@ import (
 
 func runHookFixtureForEvent(t *testing.T, root, command string, event domain.HookEvent) domain.HookRunResult {
 	t.Helper()
-	w, err := OpenWorkspace(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	w := openFixtureWorkspace(t, root)
 	defer w.Close()
 	env := filterCommandEnvironment([]string{"PATH=/usr/bin:/bin", "API_KEY=secret-sentinel", "HTTPS_PROXY=proxy-secret"})
 	env.executable, _ = os.Executable()
@@ -127,9 +124,7 @@ func testHookProcessIsolation(t *testing.T, event domain.HookEvent) {
 	t.Helper()
 	root := t.TempDir()
 	private := filepath.Join(t.TempDir(), "session-secret")
-	if err := os.WriteFile(private, []byte("private"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeBuiltinFixture(t, private, []byte("private"), 0600)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

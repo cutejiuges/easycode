@@ -63,9 +63,7 @@ func TestArtifactResumeKeepsNativeRequestAndReadOnlyHistory(t *testing.T) {
 		t.Run(string(family), func(t *testing.T) {
 			ctx := context.Background()
 			root, workspace := privateAppTempDir(t), privateAppTempDir(t)
-			if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("workspace read"), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			writeAppTestFile(t, filepath.Join(workspace, "README.md"), []byte("workspace read"), 0o600)
 			var count atomic.Int32
 			requests := make(chan []byte, 10)
 			pattern := regexp.MustCompile(`artifact_id: ([a-f0-9]{32})`)
@@ -98,10 +96,7 @@ func TestArtifactResumeKeepsNativeRequestAndReadOnlyHistory(t *testing.T) {
 				model = "claude-test"
 			}
 			cfg := config.Config{Provider: config.Provider{Family: family, Model: model, BaseURL: server.URL, APIKey: secret.New("artifact-fixture")}}
-			resources, err := openChatResourcesWithHooks(ctx, cfg, dataPaths{sessionRoot: root}, "", false, workspace, chatResourceHooks{interactiveApprovals: true})
-			if err != nil {
-				t.Fatal(err)
-			}
+			resources := mustOpenChatResourcesWithHooks(t, ctx, cfg, dataPaths{sessionRoot: root}, "", false, workspace, chatResourceHooks{interactiveApprovals: true})
 			defer func() { _ = resources.close(ctx) }()
 			runArtifactTestTurn(t, resources, "run and inspect")
 			<-requests
@@ -112,10 +107,7 @@ func TestArtifactResumeKeepsNativeRequestAndReadOnlyHistory(t *testing.T) {
 			}
 			thread := resources.identity.ThreadID
 			journalPath, _ := resources.service.repository.JournalPath(thread)
-			baseline, err := os.ReadFile(journalPath)
-			if err != nil {
-				t.Fatal(err)
-			}
+			baseline := readAppTestFile(t, journalPath)
 			list, err := resources.transcriptQueries.ListTranscript(ctx, protocol.TranscriptListQuery{Mode: protocol.TranscriptDetail, ThreadID: thread, Limit: 50})
 			if err != nil || len(list.Items) < 1 {
 				t.Fatalf("history: %v", err)
@@ -154,15 +146,11 @@ func TestArtifactResumeKeepsNativeRequestAndReadOnlyHistory(t *testing.T) {
 				}
 				if object.Name() != "reservation" && info.Size() == 7 {
 					path := filepath.Join(invocationDir, object.Name())
-					if err := os.WriteFile(path, []byte("changed"), 0o600); err != nil {
-						t.Fatal(err)
-					}
+					writeAppTestFile(t, path, []byte("changed"), 0o600)
 					if _, err := resources.transcriptQueries.ReadToolOutput(ctx, query); err != tool.ArtifactReadCorrupt {
 						t.Fatalf("tampered output: %v", err)
 					}
-					if err := os.WriteFile(path, []byte("warning"), 0o600); err != nil {
-						t.Fatal(err)
-					}
+					writeAppTestFile(t, path, []byte("warning"), 0o600)
 				}
 			}
 			runArtifactTestTurn(t, resources, "next")
@@ -175,14 +163,10 @@ func TestArtifactResumeKeepsNativeRequestAndReadOnlyHistory(t *testing.T) {
 			if err := os.MkdirAll(filepath.Dir(orphan), 0o700); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(orphan, []byte("orphan evidence"), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			writeAppTestFile(t, orphan, []byte("orphan evidence"), 0o600)
 			corrupt := append([]byte(nil), baseline...)
 			corrupt[0] = '!'
-			if err := os.WriteFile(journalPath, corrupt, 0o600); err != nil {
-				t.Fatal(err)
-			}
+			writeAppTestFile(t, journalPath, corrupt, 0o600)
 			if rejected, err := openChatResources(ctx, cfg, root, string(thread), workspace); err == nil {
 				_ = rejected.close(ctx)
 				t.Fatal("corrupt journal accepted")
@@ -193,9 +177,7 @@ func TestArtifactResumeKeepsNativeRequestAndReadOnlyHistory(t *testing.T) {
 			if b, err := os.ReadFile(journalPath); err != nil || !bytes.Equal(b, corrupt) {
 				t.Fatal("corrupt journal was repaired")
 			}
-			if err := os.WriteFile(journalPath, baseline, 0o600); err != nil {
-				t.Fatal(err)
-			}
+			writeAppTestFile(t, journalPath, baseline, 0o600)
 			entries, err := os.ReadDir(invocationDir)
 			if err != nil {
 				t.Fatal(err)
@@ -207,10 +189,7 @@ func TestArtifactResumeKeepsNativeRequestAndReadOnlyHistory(t *testing.T) {
 					}
 				}
 			}
-			resumed, err := openChatResources(ctx, cfg, root, string(thread), workspace)
-			if err != nil {
-				t.Fatal(err)
-			}
+			resumed := mustOpenChatResources(t, ctx, cfg, root, string(thread), workspace)
 			defer func() { _ = resumed.close(ctx) }()
 			if _, err := os.Stat(orphan); !os.IsNotExist(err) {
 				t.Fatal("validated resume did not remove orphan")

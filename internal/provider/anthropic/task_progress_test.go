@@ -2,14 +2,16 @@ package anthropic
 
 import (
 	"bytes"
-	"easycode/internal/domain"
-	"easycode/internal/provider"
-	"easycode/internal/secret"
-	"easycode/internal/tool"
 	"fmt"
 	"os"
 	"strings"
 	"testing"
+
+	"easycode/internal/domain"
+	"easycode/internal/provider"
+	"easycode/internal/provider/testsupport"
+	"easycode/internal/secret"
+	"easycode/internal/tool"
 )
 
 const taskNativeInput = `{"todos":[{"content":"检查中文代码","activeForm":"正在检查","status":"in_progress"}]}`
@@ -23,7 +25,7 @@ func TestTaskReducerRequiresCompleteStrictInput(t *testing.T) {
 	}
 	for _, data := range append([]string{taskNativeInput}, invalid...) {
 		t.Run(fmt.Sprint(len(data)), func(t *testing.T) {
-			r := newStreamReducer(testAnthropicToolCatalog(t))
+			r := newStreamReducer(testsupport.ToolCatalog(t))
 			if _, err := reduceAnthropicTestEvent(r, `{"type":"message_start","message":{"id":"task","model":"claude-test"}}`); err != nil {
 				t.Fatal(err)
 			}
@@ -75,7 +77,7 @@ func TestTaskNativeResultsRestoreExactly(t *testing.T) {
 	defer instance.Close()
 
 	c := testConversation(t, instance)
-	frozen := frozenFileInput(t, true)
+	frozen := testsupport.FileInput(t, true)
 	association, err := domain.NewInputAssociation(domain.TurnID(testInputID(frozen.Text())), domain.InputInitial, 0, []domain.InputID{frozen.ID()})
 	if err != nil {
 		t.Fatal(err)
@@ -111,7 +113,7 @@ func TestTaskNativeResultsRestoreExactly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	outputs := []tool.ModelOutput{testDirectModelOutput(t, inv, result, admission)}
+	outputs := []tool.ModelOutput{testsupport.DirectModelOutput(t, inv, result, admission)}
 	preflight, err := c.PrepareToolOutputPreflight(inv)
 	if err != nil || preflight.Validate(outputs[0]) != nil {
 		t.Fatal("task output preflight failed", err)

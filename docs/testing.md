@@ -1,5 +1,25 @@
 # 测试维护与归档精简
 
+## 当前规则（2026-11-25）
+
+测试长期保持保守克制：只覆盖关键业务链路、必要契约、已知缺陷及安全、持久化、并发和资源所有权等高风险。已有用例能检出同一风险时扩充或复用；不逐函数配测试，不因比例有余量增加 getter、透传、实现镜像或排列组合。普通交互优先由少量代表集成与原生 PTY 承接。
+
+用户已明确将原 2:1 目标修订为业务 Go 与测试 Go **至少 3:2**，采用整数 `2P >= 3T`。`make verify` 先调用同一 `make test-ratio`，超额时不进入编译和测试发现；pre-commit 与 CI 复用该质量门。仅保留 pre-commit，不再保留重复 pre-push。
+
+唯一策略源是 `scripts/test_size_policy.json`。统计包含完整工作树的受版本管理和未忽略新文件，覆盖所有平台/build tag；使用含注释和空行的物理行数。P 仅含 cmd/internal 的业务 Go，T 包含所有 `_test.go` 及 testsupport/testutil 普通 Go；第三方/生成业务源码与固定 fixture 不扩充分母。fixture 数量/字节和非空行数另列，明显未分类的测试支持/脚本报错；禁止搬迁、压行或无业务价值代码规避。
+
+Python/Shell 测试、smoke、runner、度量及支持共用 **4,933 行**预算，按本轮实际脚本总量锁定（含提交阶段 Git hook 环境隔离修复的 3 行）；检查只读，增长须在对应 OpenSpec 中说明独立风险和净成本，不自动刷新预算。临时本地验收证据保留在忽略目录，不转移常驻断言规避预算。
+
+当前 P=88,048、T=58,485，约 1.5055:1；上限 `floor(2P/3)=58,698`，余量 213 行。P 不变再增加 214 行测试会失败；删除业务代码也会降低 T 上限。这是全仓约束，不要求每个包或每个 PR 单独满足比例。
+
+本轮相对合入的 main 净减 4,848 行 Go 测试，全部 helper 已计入 T。第二轮净减 2,453：app 844、Provider 214、核心 1,087、TUI 308。共享成功装配与相同错误检查，保留生命周期和故障断言；TUI 将重复的 composer 终端链路并入 `completion_terminal_test.go`，接受删除普通展开、label 重排、展示分组与冗余高度/overlay 排列，保留关键固定快照、hydration、过期结果、scope、frozen、审批/取消/关闭。
+
+关键交互由 `make smoke` 与 macOS CI 的 `smoke` job 共用计划：17 个脚本入口、61 个代表场景，app.test/tui.test/CLI 各构建一次，业务 ACK、退出、取消和 termios 还原完成后才出回执。非原生 macOS 明确失败；普通测试中 helper 的 return 不算 PTY 执行。进程组由 runner 清理，另建 session 的进程仍由 harness/Go owner 负责。
+
+完整验收与逐组承接见 [归档验收记录](../openspec/changes/archive/2026-11-25-reduce-test-maintenance-cost/verification.md)。change 已按用户明确确认带 1 项未完成任务归档；最终提交的原生 macOS CI 尚待执行，远端只读核实 rulesets 与 main required checks 为空，仓库 workflow 不等于托管保护已启用。
+
+## 历史验收（2026-11-18）
+
 按 2026-11-18 用户要求直接精简，不新建或变更提案。测试以关键业务、真实故障和所有权边界为单位维护；不以穷举所有值、getter、格式及重复功能矩阵为目标。
 
 当前普通质量门执行精简后现存的全部 Go Test/Example/Fuzz seed，以及 Python 入口自检。默认 race 使用 scripts/race_policy.json 正向清单，只编译涉及的包，聚焦真实并发、stream 取消、提交、writer/lease 及关闭恢复；手动 make test-race-full 仍可执行全部现存入口。关键清单中的重复、失效名称或空平台计划会失败。

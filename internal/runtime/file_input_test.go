@@ -9,24 +9,14 @@ import (
 func runtimeFileInputs(t *testing.T, text string) []domain.UserInput {
 	t.Helper()
 	ref, err := domain.NewFileReference("file", domain.NewWholeFileSelection())
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	a, err := domain.FreezeFileAttachment(ref, "FROZEN_RUNTIME\n")
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	files, err := domain.NewFileAttachments([]domain.FileAttachment{a})
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	input, err := domain.NewUserInput("01900000-0000-7000-8000-000000000001", text)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	input, err = input.WithFileAttachments(files)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return []domain.UserInput{input}
 }

@@ -99,9 +99,7 @@ func TestQuestionAcceptedAnswerRetainsShutdownOwnerUntilSync(t *testing.T) {
 func runtimeQuestionFixture(t *testing.T, journal Journal) (*Runtime, *fakeToolConversation) {
 	t.Helper()
 	input, err := tool.NewQuestionInput([]tool.Question{{ID: "choice", Header: "Choice", Question: "Choose?", Options: []tool.QuestionOption{{Label: "Yes", Description: "Choice only"}, {Label: "Other", Description: "Another choice"}}}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	call, _ := tool.NewQuestionReadyCall("question-call", input)
 	first, last := newPreparedSampleWithReady(t, call), newPreparedSample(t, func() {})
 	base := &fakeConversation{}
@@ -118,20 +116,14 @@ func runtimeQuestionFixture(t *testing.T, journal Journal) (*Runtime, *fakeToolC
 	config.ToolBinding = testRuntimeToolBinding(t, func(tools *tool.Components) { tools.Question = builtin.NewQuestionExecutor() })
 	config.GenerateTurnID = func() (domain.TurnID, error) { return runtimeTurnID, nil }
 	r, err := New(c, config)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return r, c
 }
 func questionResponse(t *testing.T, p protocol.UserQuestionRequestedPayload, text string) protocol.UserQuestionResponse {
 	t.Helper()
 	a, err := tool.NewQuestionAnswerSet([]tool.QuestionAnswer{{QuestionID: "choice", Text: text}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	response, err := protocol.NewUserQuestionResponse(p.RequestID, p.InvocationID, p.Fingerprint, a)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return response
 }

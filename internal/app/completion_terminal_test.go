@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"testing"
 
 	"easycode/internal/config"
@@ -68,19 +67,12 @@ func TestCompletionTerminalHelper(t *testing.T) {
 		return
 	}
 	t.Setenv("HOME", t.TempDir())
-	fd, err := strconv.Atoi(os.Getenv("EASYCODE_COMPLETION_ACK_FD"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	ack := os.NewFile(uintptr(fd), "completion-ack")
+	ack := openTerminalAck(t, "EASYCODE_COMPLETION_ACK_FD", "completion-ack")
 	defer ack.Close()
 	workspace := privateAppTempDir(t)
 	writeCompletionSkill(t, workspace, false, "PTY Skill $ARGUMENTS")
 	cfg := config.Config{Provider: config.Provider{Family: domain.ProviderOpenAI, BaseURL: os.Getenv("EASYCODE_COMPLETION_FIXTURE_URL"), APIKey: secret.New("fixture-key"), Model: "fixture-model"}}
-	res, err := openChatResourcesWithHooks(context.Background(), cfg, dataPaths{sessionRoot: filepath.Join(privateAppTempDir(t), "sessions")}, "", false, workspace, chatResourceHooks{interactiveApprovals: true})
-	if err != nil {
-		t.Fatal(err)
-	}
+	res := mustOpenChatResourcesWithHooks(t, context.Background(), cfg, dataPaths{sessionRoot: filepath.Join(privateAppTempDir(t), "sessions")}, "", false, workspace, chatResourceHooks{interactiveApprovals: true})
 	defer res.close(context.Background())
 	model, err := assembleChatModel(context.Background(), res)
 	if err != nil {
@@ -90,9 +82,7 @@ func TestCompletionTerminalHelper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := res.close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	closeAppTestResources(t, res)
 	if _, err := os.Stat(filepath.Join(workspace, "marker")); !os.IsNotExist(err) {
 		t.Fatal("completion or approval keys executed Write")
 	}

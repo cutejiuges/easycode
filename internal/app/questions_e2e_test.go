@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -32,9 +33,7 @@ func TestQuestionEndToEndBothProviders(t *testing.T) {
 				defer cancel()
 				workspace := t.TempDir()
 				root := filepath.Join(t.TempDir(), "sessions")
-				if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("source material"), 0600); err != nil {
-					t.Fatal(err)
-				}
+				writeAppTestFile(t, filepath.Join(workspace, "README.md"), []byte("source material"), 0600)
 				var mu sync.Mutex
 				var requests [][]byte
 				name := "request_user_input"
@@ -73,10 +72,7 @@ func TestQuestionEndToEndBothProviders(t *testing.T) {
 				defer server.Close()
 				cfg := cacheFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, APIKey: secret.New("question-fixture"), Model: model}}, true)
 				cfg = reasoningFixtureConfig(t, cfg)
-				resources, err := openChatResourcesWithHooks(ctx, cfg, dataPaths{sessionRoot: root}, "", false, workspace, chatResourceHooks{interactiveApprovals: mode != "unavailable"})
-				if err != nil {
-					t.Fatal(err)
-				}
+				resources := mustOpenChatResourcesWithHooks(t, ctx, cfg, dataPaths{sessionRoot: root}, "", false, workspace, chatResourceHooks{interactiveApprovals: mode != "unavailable"})
 				defer func() { _ = resources.close(context.Background()) }()
 				control, err := startTUIControlSession(ctx, resources.runtime)
 				if err != nil {
@@ -198,10 +194,16 @@ func TestQuestionEndToEndBothProviders(t *testing.T) {
 				if mode != "cancel" && !strings.Contains(continuation, string(q.Result.ProviderCallID())) {
 					t.Fatal("missing native output pairing")
 				}
-				resumed, err := openChatResources(ctx, cfg, root, string(thread), workspace)
-				if err != nil {
-					t.Fatal(err)
+				if mode == "selection" {
+					read := plan.Tools[0]
+					callID := strconv.Quote(string(read.Result.ProviderCallID()))
+					if !read.HasResult || read.Result.Status() != tool.ResultSuccess ||
+						!strings.Contains(read.Result.Preview().Text(), "1\tsource material") ||
+						strings.Count(continuation, string(callID)) != 2 || !strings.Contains(continuation, "source material") {
+						t.Fatal("Read content or native call/output pairing was lost before Question and Write")
+					}
 				}
+				resumed := mustOpenChatResources(t, ctx, cfg, root, string(thread), workspace)
 				if err := resumed.close(ctx); err != nil {
 					t.Fatal(err)
 				}

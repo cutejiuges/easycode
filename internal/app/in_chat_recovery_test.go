@@ -32,12 +32,9 @@ func TestCancelledCandidateRetainsTargetArtifactMaintenanceAndSource(t *testing.
 	}}
 	environment := &chatEnvironment{}
 	t.Cleanup(func() { _ = environment.close() })
-	source, err := openChatResourcesWithHooks(ctx, cfg, paths, "", false, cwd, chatResourceHooks{
+	source := mustOpenChatResourcesWithHooks(t, ctx, cfg, paths, "", false, cwd, chatResourceHooks{
 		interactiveApprovals: true, environment: environment,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	t.Cleanup(func() { _ = source.close(context.Background()) })
 	if _, err := assembleChatModel(ctx, source); err != nil {
 		t.Fatal(err)
@@ -46,15 +43,9 @@ func TestCancelledCandidateRetainsTargetArtifactMaintenanceAndSource(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	sourceBytes, err := os.ReadFile(sourcePath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	sourceBytes := readAppTestFile(t, sourcePath)
 	sourceArtifact := filepath.Join(addRecoveryOrphan(t, source.artifactStore, paths.sessionRoot, source.identity.ThreadID), "reservation")
-	sourceArtifactBytes, err := os.ReadFile(sourceArtifact)
-	if err != nil {
-		t.Fatal(err)
-	}
+	sourceArtifactBytes := readAppTestFile(t, sourceArtifact)
 
 	target, err := source.service.create(ctx, testSessionProvider(&fakeProviderFactory{family: domain.ProviderOpenAI}, "responses"), "gpt-test", cwd)
 	if err != nil {
@@ -77,10 +68,7 @@ func TestCancelledCandidateRetainsTargetArtifactMaintenanceAndSource(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	targetBytes, err := os.ReadFile(targetPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	targetBytes := readAppTestFile(t, targetPath)
 
 	owner := newPickerOwner(newPickerExecutor(cfg, paths, cwd, nil, environment))
 	owner.initial = source
@@ -128,12 +116,9 @@ func TestInChatResumeOwnerHandlesControllerExitBeforeAccept(t *testing.T) {
 	target := newPickerFixtureThread(t, ctx, paths, cwd)
 	environment := &chatEnvironment{}
 	defer environment.close()
-	source, err := openChatResourcesWithHooks(ctx, cfg, paths, "", false, cwd, chatResourceHooks{
+	source := mustOpenChatResourcesWithHooks(t, ctx, cfg, paths, "", false, cwd, chatResourceHooks{
 		interactiveApprovals: true, environment: environment,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	defer source.close(context.Background())
 	if _, err := assembleChatModel(ctx, source); err != nil {
 		t.Fatal(err)

@@ -170,9 +170,7 @@ func TestCompactionDurableOrderAndCancellation(t *testing.T) {
 				}
 			} else {
 				failure, err := protocol.DecodeCompactionFailed(terminal)
-				if err != nil {
-					t.Fatal(err)
-				}
+				requireNoError(t, err)
 				if failure.Durable != (test.failAt == 0) {
 					t.Fatal("incorrect durability claim")
 				}
@@ -229,16 +227,8 @@ func testCompactionShutdownRetainsOwner(t *testing.T, hookEvent domain.HookEvent
 	case domain.HookPostCompact:
 		scope, _ := domain.ParseCompactionHookScope("manual")
 		declaration, err := domain.NewPostCompactHookDeclaration(domain.HookSourceProject, domain.HookFeedbackNone, domain.HookDigest(nil), "observe", scope, "true", 5)
-		if err != nil {
-			t.Fatal(err)
-		}
-		snapshot, err := domain.NewHookSnapshot([]domain.HookDeclaration{declaration}, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := loop.runtime.InstallHooks(snapshot, &compactionCleanupRunner{entered, cancelled, cleanup}, t.TempDir(), domain.HookOK); err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
+		installRuntimeTestHooks(t, loop.runtime, &compactionCleanupRunner{entered, cancelled, cleanup}, t.TempDir(), []domain.HookDeclaration{declaration})
 		loop.runtime.interactiveApprovals = true
 		loop.runtime.hooks.trust[declaration.Reference.Key()] = protocol.HookTrustSession
 	default:

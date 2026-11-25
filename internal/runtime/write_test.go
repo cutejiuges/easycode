@@ -56,15 +56,11 @@ func runtimeWriteInvocation(t *testing.T) (tool.Invocation, tool.WriteCandidate)
 	ready, _ := tool.NewWriteReadyCall("call-write", input)
 	id, _ := tool.GenerateInvocationID()
 	invocation, err := tool.NewInvocation(id, ready)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	v, _ := invocation.Write()
 	root, _ := tool.NewDirectoryEvidence(".", 1, 2, 0o700)
 	candidate, err := tool.NewWriteCandidate(v, tool.WriteCreate, tool.FileBaseEvidence{}, []tool.DirectoryEvidence{root}, nil, "+new\n")
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return invocation, candidate
 }
 
@@ -102,9 +98,7 @@ func TestWriteAcceptedStartedCallsExecutorOnceEvenAfterCancellation(t *testing.T
 				}
 			}
 			results, err := executeReadyFixtureCalls(t, runtime, ctx, runtimeTurnID, []tool.Invocation{invocation})
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			if boundary == "before-start" {
 				if executor.calls != 0 || results[0].Status() != tool.ResultCancelled {
 					t.Fatal("取消仍准入执行")
@@ -163,9 +157,7 @@ func TestWriteRecoveryNeverCallsPreparerOrExecutor(t *testing.T) {
 					call.Result = tool.NewWriteCandidateResult(c, tool.ResultSuccess, "ok")
 				}
 				plan, err := session.NewToolRecoveryPlan(runtimeTurnID, 1, []session.ReplayedToolCall{call}, false)
-				if err != nil {
-					t.Fatal(err)
-				}
+				requireNoError(t, err)
 				executor := &fixedWriteExecutor{}
 				runtime := writeTestRuntime(t, &fakeJournal{}, c, executor)
 				if err := runtime.ReconcileToolTurn(context.Background(), plan); err != nil {

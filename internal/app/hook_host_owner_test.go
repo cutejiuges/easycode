@@ -59,12 +59,9 @@ func testHookHostRetainsLease(t *testing.T, event domain.HookEvent) {
 	root := filepath.Join(t.TempDir(), "sessions")
 	runner := &blockingAppHook{make(chan struct{}), make(chan struct{}), make(chan struct{})}
 	cfg := config.Config{Provider: config.Provider{Family: domain.ProviderOpenAI, Model: "fixture-model", BaseURL: server.URL, APIKey: secret.New("fixture-key")}}
-	resources, err := openChatResourcesWithHooks(context.Background(), cfg, dataPaths{sessionRoot: root}, "", false, workspace, chatResourceHooks{interactiveApprovals: true, newHookRunner: func(*builtin.Workspace, builtin.CommandEnvironment, builtin.HookOutputParser) (chatRuntime.HookRunner, error) {
+	resources := mustOpenChatResourcesWithHooks(t, context.Background(), cfg, dataPaths{sessionRoot: root}, "", false, workspace, chatResourceHooks{interactiveApprovals: true, newHookRunner: func(*builtin.Workspace, builtin.CommandEnvironment, builtin.HookOutputParser) (chatRuntime.HookRunner, error) {
 		return runner, nil
 	}})
-	if err != nil {
-		t.Fatal(err)
-	}
 	if err := resources.session.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -92,9 +89,7 @@ func testHookHostRetainsLease(t *testing.T, event domain.HookEvent) {
 				t.Fatal("tool escaped pre hook")
 			}
 			if event == domain.HookPostToolUseFailure {
-				if err := os.WriteFile(filepath.Join(workspace, "marker"), []byte("external change"), 0600); err != nil {
-					t.Fatal(err)
-				}
+				writeAppTestFile(t, filepath.Join(workspace, "marker"), []byte("external change"), 0600)
 			}
 			p, _ := protocol.DecodeToolApprovalRequested(e)
 			if err := resources.session.ResolveApproval(context.Background(), e.TurnID, p, protocol.ApprovalAllowOnce, ""); err != nil {
@@ -130,9 +125,7 @@ func testHookHostRetainsLease(t *testing.T, event domain.HookEvent) {
 	default:
 	}
 	close(runner.release)
-	if err := resources.close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	closeAppTestResources(t, resources)
 	probe("free")
 	for range events {
 	}

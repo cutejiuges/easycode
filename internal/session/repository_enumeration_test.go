@@ -16,23 +16,16 @@ import (
 
 func TestRepositoryEnumerateJournalsRejectsJournalReplacement(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "sessions")
-	repository, err := OpenOrCreateRepository(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	repository := openFixtureRepository(t, root)
 	defer func() { _ = repository.Close() }()
 	threadID := mustEnumerationThreadID(t, "2024-03-04T00:00:00Z", 4)
 	lease, err := repository.Create(context.Background(), threadID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	if err := lease.Close(); err != nil {
 		t.Fatal(err)
 	}
 	journalPath, err := repository.JournalPath(threadID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	outside := filepath.Join(t.TempDir(), "outside")
 	if err := os.WriteFile(outside, []byte("outside-secret"), 0o600); err != nil {
 		t.Fatal(err)
@@ -62,9 +55,7 @@ func TestRepositoryEnumerateJournalsRejectsJournalReplacement(t *testing.T) {
 func mustEnumerationThreadID(t *testing.T, timestamp string, marker byte) domain.ThreadID {
 	t.Helper()
 	parsed, err := time.Parse(time.RFC3339, timestamp)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	raw := [16]byte{}
 	milliseconds := parsed.UnixMilli()
 	for index := 5; index >= 0; index-- {
@@ -78,8 +69,6 @@ func mustEnumerationThreadID(t *testing.T, timestamp string, marker byte) domain
 	hex.Encode(compact, raw[:])
 	value := string(compact[:8]) + "-" + string(compact[8:12]) + "-" + string(compact[12:16]) + "-" + string(compact[16:20]) + "-" + string(compact[20:])
 	threadID, err := domain.ParseThreadID(value)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return threadID
 }

@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"easycode/internal/domain"
@@ -28,21 +27,11 @@ func TestHeadlessResumeNameStillInvokesSkill(t *testing.T) {
 		t.Fatal(err)
 	}
 	const body = "resume-named-skill-body $ARGUMENTS"
-	if err := os.WriteFile(path, []byte("---\ndescription: Use the local resume skill\n---\n"+body), 0600); err != nil {
-		t.Fatal(err)
-	}
-	var mu sync.Mutex
-	var requests [][]byte
+	writeAppTestFile(t, path, []byte("---\ndescription: Use the local resume skill\n---\n"+body), 0600)
+	var recorder requestRecorder
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		data, err := io.ReadAll(request.Body)
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		mu.Lock()
-		requests = append(requests, data)
-		number := len(requests)
-		mu.Unlock()
+		requestIndex, _ := recorder.record(t, request)
+		number := requestIndex + 1
 		writer.Header().Set("Content-Type", "text/event-stream")
 		writeOpenAIAppTurn(writer, number)
 	}))
@@ -63,8 +52,7 @@ func TestHeadlessResumeNameStillInvokesSkill(t *testing.T) {
 	}); outcome.ExitCode() != 0 || strings.Count(stream.String(), `"type":"turn.completed"`) != 1 {
 		t.Fatalf("stream result = %#v, %q", outcome, stream.String())
 	}
-	mu.Lock()
-	defer mu.Unlock()
+	requests := recorder.snapshot()
 	if len(requests) != 2 {
 		t.Fatalf("request count = %d", len(requests))
 	}

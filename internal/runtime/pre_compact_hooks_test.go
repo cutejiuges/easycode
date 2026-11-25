@@ -45,18 +45,10 @@ func TestPreCompactReviewsAllAndStartsOnlyContinuingPrefix(t *testing.T) {
 		declarations := []domain.HookDeclaration{first}
 		for _, id := range []string{"second", "third"} {
 			declaration, err := domain.NewPreCompactHookDeclaration(first.Reference.Source, first.Reference.Feedback, first.Reference.Revision, id, first.Scope, first.Command, first.Reference.TimeoutSeconds)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			declarations = append(declarations, declaration)
 		}
-		snapshot, err := domain.NewHookSnapshot(declarations, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := runtime.InstallHooks(snapshot, runner, t.TempDir(), domain.HookOK); err != nil {
-			t.Fatal(err)
-		}
+		installRuntimeTestHooks(t, runtime, runner, t.TempDir(), declarations)
 		admission, code := runtime.preflightCompaction("")
 		if code != "" {
 			t.Fatal(code)
@@ -65,7 +57,7 @@ func TestPreCompactReviewsAllAndStartsOnlyContinuingPrefix(t *testing.T) {
 		var reviews int
 		var terminal protocol.Event
 		id, _ := domain.GenerateCompactionID()
-		err = runtime.runCompaction(ctx, id, admission, func(event protocol.Event) {
+		err := runtime.runCompaction(ctx, id, admission, func(event protocol.Event) {
 			terminal = event
 			if event.Kind != protocol.EventHookTrustRequested {
 				return
@@ -100,20 +92,10 @@ func TestPreCompactReviewsAllAndStartsOnlyContinuingPrefix(t *testing.T) {
 func installPreCompactFixture(t *testing.T, runtime *Runtime, runner HookRunner, interactive bool) domain.HookDeclaration {
 	t.Helper()
 	scope, err := domain.ParsePreCompactHookScope("*")
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	declaration, err := domain.NewPreCompactHookDeclaration(domain.HookSourceProject, domain.HookFeedbackModel, domain.HookDigest([]byte("compact-fixture")), "check", scope, "true", 5)
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err := domain.NewHookSnapshot([]domain.HookDeclaration{declaration}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := runtime.InstallHooks(snapshot, runner, t.TempDir(), domain.HookOK); err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
+	installRuntimeTestHooks(t, runtime, runner, t.TempDir(), []domain.HookDeclaration{declaration})
 	runtime.interactiveApprovals = interactive
 	return declaration
 }

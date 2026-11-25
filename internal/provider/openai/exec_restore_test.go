@@ -2,15 +2,12 @@ package openai
 
 import (
 	"bytes"
-	contextplan "easycode/internal/context"
-	"easycode/internal/domain"
-	"easycode/internal/provider"
-	"easycode/internal/secret"
-	"easycode/internal/tool"
 	"encoding/json"
 	"os"
-	"strings"
 	"testing"
+
+	"easycode/internal/provider/testsupport"
+	"easycode/internal/secret"
 )
 
 func TestExecNativeResultsRestoreExactly(t *testing.T) {
@@ -19,44 +16,10 @@ func TestExecNativeResultsRestoreExactly(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer instance.Close()
-	input, _ := tool.NewExecInput("printf '你好'", "src", 1000)
-	call, _ := tool.NewExecReadyCall("call-exec", input)
-	id, _ := tool.ParseInvocationID("018f1d8a-7b5c-7def-8abc-456789abcdef")
-	invocation, _ := tool.NewExecInvocation(id, call)
-	for _, test := range []struct {
-		name                      string
-		status                    tool.ResultStatus
-		code                      string
-		exit                      int
-		known, timeout, cancelled bool
-	}{
-		{"zero", tool.ResultSuccess, "ok", 0, true, false, false},
-		{"nonzero", tool.ResultSuccess, "ok", 2, true, false, false},
-		{"denied", tool.ResultDenied, "approval_required", 0, false, false, false},
-		{"hook-denied", tool.ResultDenied, "hook_denied", 0, false, false, false},
-		{"hook-uncertain", tool.ResultCancelled, "hook_outcome_uncertain", 0, false, false, true},
-		{"cancelled", tool.ResultCancelled, "cancelled", 143, true, false, true},
-		{"timeout", tool.ResultError, "timed_out", 137, true, true, false},
-		{"uncertain", tool.ResultOutcomeUncertain, "process_cleanup_uncertain", 0, false, false, false},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			text := "frozen " + test.name + "\n你好\n"
-			if strings.HasPrefix(test.name, "hook-") {
-				d, err := domain.NewHookDeclaration(domain.HookSourceProject, domain.HookPreToolUse, domain.HookFeedbackNone, strings.Repeat("a", 64), "check", 7, "true", 5)
-				if err != nil {
-					t.Fatal(err)
-				}
-				text = domain.HookSummary(d.Reference, domain.HookExec, domain.HookCode(test.code))
-			}
-			preview, _ := tool.NewModelPreview(text)
-			metadata, err := tool.NewExecResultMetadata("src", test.exit, test.known, 0, tool.ExecStreamStats{}, tool.ExecStreamStats{}, test.timeout, test.cancelled, false)
-			if err != nil {
-				t.Fatal(err)
-			}
-			result, err := tool.NewExecInvocationResult(invocation, test.status, test.code, preview, metadata)
-			if err != nil {
-				t.Fatal(err)
-			}
+	for _, test := range testsupport.ExecRestoreResults(t) {
+		t.Run(test.Name, func(t *testing.T) {
+			result := test.Result
+			preview := result.Preview()
 			history := testAssociatedHistory([]nativeHistoryEntry{testInputEntry(t, NewUserItem("test")), {Kind: nativeHistorySample, Outputs: []NativeItem{{Type: "reasoning", ID: "reason-exec", EncryptedContent: "opaque-reason"}, {Type: "function_call", ID: "fc-exec", CallID: "call-exec", Name: "exec_command", Arguments: `{"command":"printf '你好'","workdir":"src","timeout_ms":1000}`}}}})
 			evidence := testModelOutputs(t, history, result)
 			output, err := prepareToolOutputsEntry(history, evidence)
@@ -74,47 +37,19 @@ func TestExecNativeResultsRestoreExactly(t *testing.T) {
 			if err := json.Unmarshal([]byte(output.ToolOutputs[0].Output), &frozen); err != nil {
 				t.Fatal(err)
 			}
-			if frozen.Content != preview.Text() || frozen.Status != string(test.status) || frozen.Code != test.code {
+			if frozen.Content != preview.Text() || frozen.Status != string(result.Status()) || frozen.Code != result.Code() {
 				t.Fatal("Exec frozen result changed")
 			}
 			history = append(history, output)
-			uninterrupted := &Conversation{provider: instance}
-			var commits []provider.NativeCommitEnvelope
-			for _, entry := range history {
-				uninterrupted.history.Append(entry)
-				commit, err := encodeNativeCommit(entry)
-				if err != nil {
-					t.Fatal(err)
-				}
-				commits = append(commits, commit)
-			}
-			restoredValue, err := testRestoreAfterPreview(t, instance, "01900000-0000-7000-8000-000000000001", testRestoreRecords(t, commits, evidence))
+			uninterrupted, restored := restoreToolHistory(t, instance, history, evidence)
+			sampling, err := testSamplingInput(t, instance.config.Inference).WithToolCatalog(testsupport.ToolCatalog(t))
 			if err != nil {
 				t.Fatal(err)
 			}
-			restored := restoredValue.(*Conversation)
-			first, err := compileResponsesRequest(instance.config.Model, uninterrupted.historySnapshot(), nil, testOpenAIToolView(t))
-			if err != nil {
-				t.Fatal(err)
-			}
-			second, err := compileResponsesRequest(instance.config.Model, restored.historySnapshot(), nil, testOpenAIToolView(t))
-			if err != nil {
-				t.Fatal(err)
-			}
-			firstSegment, err := contextplan.NewSegment("request", contextplan.StabilityTurnStable, "current", first)
-			if err != nil {
-				t.Fatal(err)
-			}
-			secondSegment, err := contextplan.NewSegment("request", contextplan.StabilityTurnStable, "current", second)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(first.Bytes(), second.Bytes()) || firstSegment.Fingerprint() != secondSegment.Fingerprint() {
-				t.Fatal("Exec restore changed canonical request or fingerprint")
-			}
-			if test.name == "zero" || test.name == "hook-denied" {
+			first := testsupport.RestoredRequest(t, uninterrupted, restored, sampling)
+			if test.Name == "zero" || test.Name == "hook-denied" {
 				golden := "testdata/exec_continuation.golden.json"
-				if test.name == "hook-denied" {
+				if test.Name == "hook-denied" {
 					golden = "testdata/hook_denied_continuation.golden.json"
 				}
 				want, err := os.ReadFile(golden)
@@ -125,17 +60,10 @@ func TestExecNativeResultsRestoreExactly(t *testing.T) {
 					t.Fatalf("Exec continuation golden mismatch:\n%s", first.Bytes())
 				}
 			}
-			if test.name == "zero" {
+			if test.Name == "zero" {
 				assertPlanExecRestore(t, uninterrupted, restored)
 			}
-			_, a, err := uninterrupted.ProjectContextWindow()
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, b, err := restored.ProjectContextWindow()
-			if err != nil || a != b {
-				t.Fatal("Exec restore changed history footprint")
-			}
+
 		})
 	}
 }

@@ -33,10 +33,7 @@ func TestDarwinExecWorkdirDescriptorSurvivesSymlinkSwap(t *testing.T) {
 			if err := os.Mkdir(filepath.Join(root, "work"), 0700); err != nil {
 				t.Fatal(err)
 			}
-			workspace, err := OpenWorkspace(root)
-			if err != nil {
-				t.Fatal(err)
-			}
+			workspace := openFixtureWorkspace(t, root)
 			defer workspace.Close()
 			swapped := false
 			swap := func(relative string) {
@@ -87,13 +84,8 @@ func TestDarwinExecWorkdirDescriptorSurvivesSymlinkSwap(t *testing.T) {
 
 func TestDarwinSandboxDeniesOutsideWritesAndNetwork(t *testing.T) {
 	outside := filepath.Join(t.TempDir(), "protected")
-	if err := os.WriteFile(outside, []byte("unchanged"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	workspace, err := OpenWorkspace(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	writeBuiltinFixture(t, outside, []byte("unchanged"), 0600)
+	workspace := openFixtureWorkspace(t, t.TempDir())
 	defer func() { _ = workspace.Close() }()
 	executor, err := NewExecExecutor(workspace, OpenCommandEnvironment(), tool.RenderExecOutput, testCommandOutputStore{})
 	if err != nil {
@@ -171,10 +163,7 @@ func (process *tracedDarwinProcess) GroupAlive() (bool, error) {
 func TestDarwinExecTimeoutAndCancellationCleanOriginalGroup(t *testing.T) {
 	for _, cancelOnReady := range []bool{false, true} {
 		t.Run(strconv.FormatBool(cancelOnReady), func(t *testing.T) {
-			workspace, err := OpenWorkspace(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
+			workspace := openFixtureWorkspace(t, t.TempDir())
 			defer workspace.Close()
 			trace := &tracedDarwinLauncher{launcher: newPlatformProcessLauncher(workspace, OpenCommandEnvironment())}
 			executor := &ExecExecutor{launcher: trace, renderer: tool.RenderExecOutput}

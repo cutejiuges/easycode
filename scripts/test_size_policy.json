@@ -1,0 +1,4 @@
+{
+  "minimum_production_per_test": {"production": 3, "tests": 2},
+  "maximum_test_script_lines": 4933
+}

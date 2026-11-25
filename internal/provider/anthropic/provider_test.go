@@ -12,6 +12,7 @@ import (
 	"easycode/internal/domain"
 	"easycode/internal/fault"
 	"easycode/internal/provider"
+	"easycode/internal/provider/testsupport"
 	"easycode/internal/provider/transport"
 	"easycode/internal/secret"
 )
@@ -37,7 +38,7 @@ func TestConversationCancelCompletedRaceHasOneTerminal(t *testing.T) {
 		}()
 		senders.Wait()
 		close(stream)
-		output := testConsumeStream(t, conversation, ctx, func() {}, nativeMessagePointer(newUserMessage("question")), testAnthropicToolCatalog(t), stream)
+		output := testConsumeStream(t, conversation, ctx, func() {}, nativeMessagePointer(newUserMessage("question")), testsupport.ToolCatalog(t), stream)
 		terminalCount := 0
 		for event := range output {
 			if !event.Kind().Terminal() {
@@ -186,7 +187,7 @@ func testAnthropicTurnInputWithProject(t *testing.T, conversation provider.Conve
 	if err != nil {
 		t.Fatal(err)
 	}
-	input, err = input.WithToolCatalog(testAnthropicToolCatalog(t))
+	input, err = input.WithToolCatalog(testsupport.ToolCatalog(t))
 	if err != nil {
 		t.Fatal(err)
 	}

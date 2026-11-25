@@ -10,7 +10,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -116,11 +115,7 @@ func TestEffortTerminalHelper(t *testing.T) {
 	if os.Getenv("EASYCODE_EFFORT_TERMINAL_SMOKE") != "1" {
 		return
 	}
-	fd, err := strconv.Atoi(os.Getenv("EASYCODE_EFFORT_ACK_FD"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	ack := os.NewFile(uintptr(fd), "effort-ack")
+	ack := openTerminalAck(t, "EASYCODE_EFFORT_ACK_FD", "effort-ack")
 	defer ack.Close()
 	family := domain.ProviderFamily(os.Getenv("EASYCODE_EFFORT_FAMILY"))
 	if !family.Valid() {
@@ -178,20 +173,13 @@ func TestEffortTerminalHelper(t *testing.T) {
 	defer server.Close()
 	cfg := reasoningFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, Model: "fixture-model", APIKey: secret.New("effort-fixture")}})
 	cwd := t.TempDir()
-	if err := os.WriteFile(filepath.Join(cwd, "README.md"), []byte("read exactly once"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, filepath.Join(cwd, "README.md"), []byte("read exactly once"), 0600)
 	skillPath := filepath.Join(cwd, ".easycode", "skills", "effort", "SKILL.md")
 	if err := os.MkdirAll(filepath.Dir(skillPath), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(skillPath, []byte("---\nname: effort\ndescription: same name skill\n---\nsame-name-effort-marker\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	resources, err := openChatResources(ctx, cfg, filepath.Join(t.TempDir(), "sessions"), "", cwd)
-	if err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, skillPath, []byte("---\nname: effort\ndescription: same name skill\n---\nsame-name-effort-marker\n"), 0600)
+	resources := mustOpenChatResources(t, ctx, cfg, filepath.Join(t.TempDir(), "sessions"), "", cwd)
 	defer resources.close(context.Background())
 	control, err := startTUIControlSession(ctx, resources.runtime)
 	if err != nil {

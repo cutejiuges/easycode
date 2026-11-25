@@ -22,10 +22,9 @@ func testExplicitSkillPermissionRequiresDurableInput(t *testing.T, source domain
 	attachment, _ := domain.NewSkillAttachment(source, name, domain.SkillDigest("body"), "", "frozen body")
 	for _, fail := range []bool{false, true} {
 		t.Run(map[bool]string{false: "committed", true: "sync failure"}[fail], func(t *testing.T) {
-			journal := &startedFailureJournal{}
+			journal := &fakeJournal{}
 			if fail {
 				journal.failAt = 1
-				journal.poisonOnFailure = true
 			}
 			runtime := newTestRuntime(t, &fakeConversation{stream: fixedStream()}, journal)
 			inputs := runtimeInputs("/" + name)

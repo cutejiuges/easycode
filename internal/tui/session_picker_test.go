@@ -6,7 +6,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/x/ansi"
 
 	"easycode/internal/domain"
 )
@@ -109,7 +108,7 @@ func TestPickerTitlesSearchIndependentlyAndPreserveSelectionByID(t *testing.T) {
 	}
 }
 
-func TestPickerLongTitleAndPreviewContentRemainReachable(t *testing.T) {
+func TestPickerPreviewPreservesListingSnapshot(t *testing.T) {
 	m, _ := pickerTestModel(t)
 	entry := m.picker.entries[0]
 	entry.Title = domain.SessionTitle("列表 👩‍💻 " + strings.Repeat("a", 80) + "末端")
@@ -119,40 +118,17 @@ func TestPickerLongTitleAndPreviewContentRemainReachable(t *testing.T) {
 	if !strings.Contains(view, "> 列表 👩‍💻") || !strings.Contains(view, "…") || strings.Contains(view, "末端") {
 		t.Fatalf("narrow list did not preserve visible title graphemes: %s", view)
 	}
-	m = pickerKey(m, tea.KeyTab)
-	if !strings.Contains(m.View(), "👩‍💻") || !strings.Contains(scrollPickerViews(t, m), "末端") || m.picker.selected != entry.ThreadID {
-		t.Fatalf("narrow details lost title or selection: %s", m.View())
-	}
-	m = pickerKey(m, tea.KeyEsc)
+	m = pickerUpdate(m, tea.WindowSizeMsg{Width: 40, Height: 15})
 	m = pickerKey(m, tea.KeyCtrlV)
 	m = pickerUpdate(m, PickerResult{Request: m.request, Preview: SessionPreview{
-		Title:    domain.SessionTitle("预览 👩‍💻 " + strings.Repeat("b", 80) + "结尾"),
+		Title:    "预览 👩‍💻",
 		Messages: []PreviewMessage{{Message: domain.SemanticMessage{Role: domain.SemanticAssistant, Text: "Visible body"}}},
 	}})
-	if view := m.View(); !strings.Contains(view, "👩‍💻") || strings.Contains(view, "列表") {
+	if view := m.View(); !strings.Contains(view, "预览 👩‍💻") || !strings.Contains(view, "Visible body") || strings.Contains(view, "列表") {
 		t.Fatalf("preview showed a stale listing title: %s", view)
-	}
-	if scrolled := scrollPickerViews(t, m); !strings.Contains(scrolled, "结尾") || !strings.Contains(scrolled, "Visible body") {
-		t.Fatalf("narrow preview did not expose title ending and body: %s", scrolled)
 	}
 	m = pickerKey(m, tea.KeyEsc)
 	if m.picker.selected != entry.ThreadID || !strings.Contains(m.View(), "> 列表 👩‍💻") {
 		t.Fatal("preview changed the picker snapshot or selection")
 	}
-}
-
-func scrollPickerViews(t *testing.T, m StartupModel) string {
-	t.Helper()
-	var output strings.Builder
-	for range 12 {
-		for _, line := range strings.Split(m.View(), "\n") {
-			if ansi.StringWidth(line) > m.width {
-				t.Fatalf("picker frame exceeded terminal width: %q", line)
-			}
-			output.WriteString(line)
-			output.WriteByte('\n')
-		}
-		m = pickerKey(m, tea.KeyPgDown)
-	}
-	return output.String()
 }

@@ -1,23 +1,28 @@
 package transport
 
 import (
-	"bytes"
 	"compress/gzip"
 	"context"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"easycode/internal/codec"
 )
 
 func TestStreamSSEUsesStableJSONAndHeaders(t *testing.T) {
-	receivedRequest := make(chan struct{}, 1)
+	checkSSERequest(t, mustCanonical(t, map[string]any{"z": 1, "a": 2}, DefaultMaxRequestBytes))
+}
+
+func checkSSERequest(t *testing.T, body codec.CanonicalJSON) {
+	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodPost {
 			t.Errorf("method: got %s want POST", request.Method)
@@ -38,19 +43,13 @@ func TestStreamSSEUsesStableJSONAndHeaders(t *testing.T) {
 		if string(body) != `{"a":2,"z":1}` {
 			t.Errorf("body: got %s", body)
 		}
-		receivedRequest <- struct{}{}
 		writer.Header().Set("Content-Type", "text/event-stream")
 		_, _ = writer.Write([]byte("id: event-1\nevent: delta\ndata: hello\n\n"))
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 
-	client, err := NewClient(server.URL + "/api/v1")
-	if err != nil {
-		t.Fatalf("new client: %v", err)
-	}
-	defer closeClient(t, client)
+	client := newTestClient(t, server.URL+"/api/v1")
 
-	body := mustCanonical(t, map[string]any{"z": 1, "a": 2}, DefaultMaxRequestBytes)
 	stream, err := client.StreamSSE(context.Background(), SSERequest{
 		Path:    "responses",
 		Headers: map[string]string{"Authorization": "Bearer test-key"},
@@ -68,7 +67,6 @@ func TestStreamSSEUsesStableJSONAndHeaders(t *testing.T) {
 	if !errors.Is(terminal.Err, io.EOF) {
 		t.Fatalf("terminal error: got %v want EOF", terminal.Err)
 	}
-	<-receivedRequest
 }
 
 func TestStreamSSEDecodesGzipIncrementally(t *testing.T) {
@@ -90,12 +88,8 @@ func TestStreamSSEDecodesGzipIncrementally(t *testing.T) {
 			t.Errorf("close gzip stream: %v", err)
 		}
 	}))
-	defer server.Close()
-	client, err := NewClient(server.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer closeClient(t, client)
+	t.Cleanup(server.Close)
+	client := newTestClient(t, server.URL)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	stream, err := client.StreamSSE(ctx, SSERequest{Path: "responses", Body: mustCanonical(t, struct{}{}, DefaultMaxRequestBytes)}, StreamOptions{})
@@ -122,16 +116,12 @@ func TestStreamSSEHTTPErrorDoesNotLeakSecret(t *testing.T) {
 		writer.WriteHeader(http.StatusUnauthorized)
 		_, _ = writer.Write([]byte(`{"error":"top-secret"}`))
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 
-	client, err := NewClient(server.URL)
-	if err != nil {
-		t.Fatalf("new client: %v", err)
-	}
-	defer closeClient(t, client)
+	client := newTestClient(t, server.URL)
 
 	body := mustCanonical(t, map[string]string{"secret": "top-secret"}, DefaultMaxRequestBytes)
-	_, err = client.StreamSSE(context.Background(), SSERequest{
+	_, err := client.StreamSSE(context.Background(), SSERequest{
 		Path:    "responses",
 		Headers: map[string]string{"Authorization": "Bearer top-secret"},
 		Body:    body,
@@ -147,26 +137,14 @@ func TestStreamSSEHTTPErrorDoesNotLeakSecret(t *testing.T) {
 	}
 }
 
-func TestParseSSERandomChunkBoundaries(t *testing.T) {
-	input := []byte("event: delta\ndata: 你好，world\n\ndata: done\n\n")
-	want, err := collectParsedEvents(context.Background(), bytes.NewReader(input), DefaultMaxEventBytes)
-	if !errors.Is(err, io.EOF) {
-		t.Fatalf("baseline parse: %v", err)
-	}
-
-	for chunkSize := 1; chunkSize <= len(input); chunkSize++ {
-		reader := &fixedChunkReader{data: input, chunkSize: chunkSize}
-		got, parseErr := collectParsedEvents(context.Background(), reader, DefaultMaxEventBytes)
-		if !errors.Is(parseErr, io.EOF) {
-			t.Fatalf("chunk %d parse: %v", chunkSize, parseErr)
-		}
-		if len(got) != len(want) {
-			t.Fatalf("chunk %d event count: got %d want %d", chunkSize, len(got), len(want))
-		}
-		for index := range want {
-			if got[index] != want[index] {
-				t.Fatalf("chunk %d event %d: got %#v want %#v", chunkSize, index, got[index], want[index])
-			}
+func TestParseSSERepresentativeChunkBoundaries(t *testing.T) {
+	input := ": heartbeat\r\nid: first\r\nevent: delta\r\ndata: 你好，world\r\ndata: next\r\n\r\ndata: done\n\n"
+	want := []SSEEvent{{ID: "first", Name: "delta", Data: "你好，world\nnext"}, {Data: "done"}}
+	// 单字节与整块覆盖 UTF-8 分断和聚合读取，固定预期同时验证两种行尾及多行字段。
+	for _, reader := range []io.Reader{iotest.OneByteReader(strings.NewReader(input)), strings.NewReader(input)} {
+		got, err := collectParsedEvents(context.Background(), reader, DefaultMaxEventBytes)
+		if !errors.Is(err, io.EOF) || !slices.Equal(got, want) {
+			t.Fatalf("reader %T: got %#v, error %v", reader, got, err)
 		}
 	}
 }
@@ -188,13 +166,9 @@ func TestStreamSSECanBeCancelled(t *testing.T) {
 		close(requestStarted)
 		<-request.Context().Done()
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 
-	client, err := NewClient(server.URL)
-	if err != nil {
-		t.Fatalf("new client: %v", err)
-	}
-	defer closeClient(t, client)
+	client := newTestClient(t, server.URL)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	body := mustCanonical(t, struct{}{}, DefaultMaxRequestBytes)
@@ -234,12 +208,8 @@ func TestStreamSSEIdleTimeout(t *testing.T) {
 				}
 				<-request.Context().Done()
 			}))
-			defer server.Close()
-			client, err := NewClient(server.URL)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer closeClient(t, client)
+			t.Cleanup(server.Close)
+			client := newTestClient(t, server.URL)
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			stream, err := client.StreamSSE(ctx, SSERequest{Path: "responses", Body: mustCanonical(t, struct{}{}, DefaultMaxRequestBytes)},
@@ -313,36 +283,10 @@ func TestStreamSSESendsCanonicalSnapshotAfterInputMutation(t *testing.T) {
 	raw := []byte(`{"a":2,"z":1}`)
 	body, err := codec.ParseCanonical(raw, DefaultMaxRequestBytes)
 	if err != nil {
-		t.Fatalf("parse canonical body: %v", err)
+		t.Fatal(err)
 	}
 	raw[2] = 'x'
-
-	received := make(chan []byte, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		requestBody, readErr := io.ReadAll(request.Body)
-		if readErr != nil {
-			t.Errorf("read body: %v", readErr)
-		}
-		received <- requestBody
-		writer.Header().Set("Content-Type", "text/event-stream")
-		_, _ = writer.Write([]byte("data: done\n\n"))
-	}))
-	defer server.Close()
-	client, err := NewClient(server.URL)
-	if err != nil {
-		t.Fatalf("new client: %v", err)
-	}
-	defer closeClient(t, client)
-
-	stream, err := client.StreamSSE(context.Background(), SSERequest{Path: "responses", Body: body}, StreamOptions{})
-	if err != nil {
-		t.Fatalf("stream SSE: %v", err)
-	}
-	for range stream {
-	}
-	if got := string(<-received); got != `{"a":2,"z":1}` {
-		t.Fatalf("sent body changed through caller input: %s", got)
-	}
+	checkSSERequest(t, body)
 }
 
 func collectParsedEvents(ctx context.Context, reader io.Reader, maxEventBytes int) ([]SSEEvent, error) {
@@ -359,20 +303,14 @@ func collectParsedEvents(ctx context.Context, reader io.Reader, maxEventBytes in
 	return events, err
 }
 
-type fixedChunkReader struct {
-	data      []byte
-	offset    int
-	chunkSize int
-}
-
-func (reader *fixedChunkReader) Read(target []byte) (int, error) {
-	if reader.offset >= len(reader.data) {
-		return 0, io.EOF
+func newTestClient(t *testing.T, baseURL string) *Client {
+	t.Helper()
+	client, err := NewClient(baseURL)
+	if err != nil {
+		t.Fatal(err)
 	}
-	count := min(reader.chunkSize, len(target), len(reader.data)-reader.offset)
-	copy(target, reader.data[reader.offset:reader.offset+count])
-	reader.offset += count
-	return count, nil
+	t.Cleanup(func() { closeClient(t, client) })
+	return client
 }
 
 func closeClient(t *testing.T, client *Client) {

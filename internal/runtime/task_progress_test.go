@@ -19,9 +19,7 @@ func taskRuntimeFixture(t *testing.T, journal Journal) *Runtime {
 	config := testRuntimeConfig(t, journal)
 	config.ToolBinding = testRuntimeToolBinding(t, func(tools *tool.Components) { tools.Task = builtin.NewTaskExecutor() })
 	r, err := New(c, config)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	r.toolTurn.resultBudget = tool.NewResultBudget()
 	return r
 }
@@ -31,28 +29,18 @@ func taskRuntimeInvocation(t *testing.T, label string, status domain.TaskStatus,
 	var items []domain.TaskStep
 	if label != "" {
 		step, err := domain.NewTaskStep(label, "", status)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		items = []domain.TaskStep{step}
 	}
 	update, err := domain.NewTaskUpdate(items, "进度说明")
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	input, err := tool.NewTaskInput(tool.TaskProfileUpdatePlan, update)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	ready, err := tool.NewTaskReadyCall(tool.ProviderCallID(call), input)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	id, _ := tool.GenerateInvocationID()
 	inv, err := tool.NewInvocation(id, ready)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return inv
 }
 
@@ -235,9 +223,6 @@ func TestTaskReplacementRegressionClearAndOrderedReadBarrier(t *testing.T) {
 	if r.TaskProgress().Kind() != domain.TaskProgressClear {
 		t.Fatal("clear lost its durable identity")
 	}
-	if _, err := New(&fakeConversation{}, Config{}); err == nil {
-		t.Fatal("invalid constructor accepted")
-	}
 }
 
 func TestTaskQueryIsCoherentWhileResultSyncIsPendingAndDoesNoIO(t *testing.T) {
@@ -252,9 +237,7 @@ func TestTaskQueryIsCoherentWhileResultSyncIsPendingAndDoesNoIO(t *testing.T) {
 	go func() { _, _, err := r.executeTaskCall(context.Background(), runtimeTurnID, inv); done <- err }()
 	<-j.entered
 	loop, err := NewAgentLoop(r, DefaultAgentLoopConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	state := newAgentLoopRunState(loop, context.Background())
 	query := func(id protocol.RequestID, want domain.TaskProgressKind) {
 		t.Helper()
@@ -302,9 +285,7 @@ func TestTaskSuccessRemainsAppliedAfterNativeOutputSyncFailure(t *testing.T) {
 	r := taskRuntimeFixture(t, j)
 	inv := taskRuntimeInvocation(t, "先保存清单", domain.TaskPending, "task")
 	results, err := executeReadyFixtureCalls(t, r, context.Background(), runtimeTurnID, []tool.Invocation{inv})
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	before := r.TaskProgress()
 	if before.Kind() != domain.TaskProgressSnapshot {
 		t.Fatal("task waited for native outputs")

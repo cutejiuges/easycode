@@ -3,6 +3,7 @@ package openai
 import (
 	"testing"
 
+	"easycode/internal/provider/testsupport"
 	"easycode/internal/provider/transport"
 )
 
@@ -15,7 +16,7 @@ func TestReasoningUsageDuplicateFieldsCannotBecomeSuccessfulSample(t *testing.T)
 		`{"id":"usage-regression","usage":{"input_tokens":100,"input_tokens_details":{"cached_tokens":120},"input_tokens_details":{"cached_tokens":10}}}`,
 	} {
 		t.Run(response, func(t *testing.T) {
-			r := newResponsesStreamReducer(testOpenAIToolCatalog(t))
+			r := newResponsesStreamReducer(testsupport.ToolCatalog(t))
 			reduceOpenAIEvent(t, r, `{"type":"response.created","response":{"id":"usage-regression"}}`)
 			result, err := r.reduce(transport.SSEEvent{Data: `{"type":"response.completed","response":` + response + `}`})
 			if err == nil || result.completed || r.terminal {

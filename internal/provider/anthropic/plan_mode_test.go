@@ -12,12 +12,13 @@ import (
 	"easycode/internal/codec"
 	"easycode/internal/domain"
 	"easycode/internal/provider"
+	"easycode/internal/provider/testsupport"
 	"easycode/internal/secret"
 )
 
 func assertPlanExecRestore(t *testing.T, live, restored *Conversation) {
 	t.Helper()
-	full := testAnthropicToolCatalog(t)
+	full := testsupport.ToolCatalog(t)
 	filtered, err := full.ForPlanMode()
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +135,7 @@ func TestPlanProposalUsesCommittedMessagesStopReason(t *testing.T) {
 			}
 			defer closeAnthropicProvider(t, instance)
 			c := testConversation(t, instance)
-			catalog, err := testAnthropicToolCatalog(t).ForPlanMode()
+			catalog, err := testsupport.ToolCatalog(t).ForPlanMode()
 			if err != nil {
 				t.Fatal(err)
 			}

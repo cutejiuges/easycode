@@ -40,10 +40,7 @@ func (journal *terminalGateJournal) Close(ctx context.Context) error {
 func TestHostShutdownRetainsRealLeaseUntilTerminalCleanup(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "sessions")
 	cfg := config.Config{Provider: config.Provider{Family: domain.ProviderOpenAI, BaseURL: "https://example.invalid", APIKey: secret.New("test-key"), Model: "gpt-test"}}
-	resources, err := openChatResources(context.Background(), cfg, root, "", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	resources := mustOpenChatResources(t, context.Background(), cfg, root, "", t.TempDir())
 	gate := &terminalGateJournal{writer: resources.writer, entered: make(chan struct{}), release: make(chan struct{})}
 	resources.writer = gate
 	host := chatRuntime.NewChatSession(mustIdleAppRuntime(t, gate))
@@ -82,10 +79,7 @@ func TestHostShutdownRetainsRealLeaseUntilTerminalCleanup(t *testing.T) {
 func TestTitleHostCloseWaitsForWriterAfterDeadline(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "sessions")
 	cfg := config.Config{Provider: config.Provider{Family: domain.ProviderOpenAI, BaseURL: "https://example.invalid", APIKey: secret.New("test-key"), Model: "gpt-test"}}
-	resources, err := openChatResources(context.Background(), cfg, root, "", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	resources := mustOpenChatResources(t, context.Background(), cfg, root, "", t.TempDir())
 	defer resources.close(context.Background())
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

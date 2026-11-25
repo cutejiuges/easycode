@@ -43,8 +43,6 @@ func testSampleUsage(t testing.TB) domain.SampleUsage {
 		domain.UnknownUsageMetric(), domain.KnownUsageMetric(3),
 		domain.NotApplicableUsageMetric(),
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return usage
 }

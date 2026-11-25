@@ -53,7 +53,7 @@ func TestSearchOwnerRetainsCaptureAcrossCancellationAndBlockedPublication(t *tes
 	for _, atFinish := range []bool{false, true} {
 		t.Run(map[bool]string{false: "write", true: "finish"}[atFinish], func(t *testing.T) {
 			capture := &heldTextCapture{entered: make(chan struct{}), release: make(chan struct{}), closed: make(chan struct{}), atFinish: atFinish}
-			journal := &startedFailureJournal{failAt: 2}
+			journal := &fakeJournal{failAt: 2, definiteFailure: true}
 			rt := newTestRuntime(t, &fakeToolConversation{fakeConversation: &fakeConversation{}}, journal)
 			rt.textOutputStore = heldTextStore{capture}
 			rt.tools.Glob = capturedGlobExecutor{}

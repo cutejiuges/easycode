@@ -47,10 +47,7 @@ func (transport *fixedRoundTripper) RoundTrip(request *http.Request) (*http.Resp
 }
 
 func TestCloseCancelsActualBlockedBody(t *testing.T) {
-	client, err := NewClient("https://example.invalid")
-	if err != nil {
-		t.Fatal(err)
-	}
+	client := newTestClient(t, "https://example.invalid")
 	body := &blockedBody{entered: make(chan struct{}), closed: make(chan struct{})}
 	transport := &fixedRoundTripper{body: body}
 	client.HTTP().SetTransport(transport)
@@ -81,11 +78,7 @@ func TestCloseCancelsActualBlockedBody(t *testing.T) {
 }
 
 func TestStreamSSEClosesBodyOnGzipDecoderError(t *testing.T) {
-	client, err := NewClient("https://example.invalid")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer closeClient(t, client)
+	client := newTestClient(t, "https://example.invalid")
 	closer := &blockedBody{closed: make(chan struct{})}
 	client.HTTP().SetTransport(&fixedRoundTripper{encoding: "gzip", body: struct {
 		io.Reader
@@ -104,11 +97,7 @@ func TestStreamSSEClosesBodyOnGzipDecoderError(t *testing.T) {
 }
 
 func TestSSESealDeliversBufferedFramesAndClosesBody(t *testing.T) {
-	client, err := NewClient("https://example.invalid")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer closeClient(t, client)
+	client := newTestClient(t, "https://example.invalid")
 	blocked := &blockedBody{entered: make(chan struct{}), closed: make(chan struct{})}
 	reader := io.MultiReader(strings.NewReader("data: terminal\r\n\r\ndata: tail\r\n\r\ndata: incomplete\r\n"), blocked)
 	client.HTTP().SetTransport(&fixedRoundTripper{body: struct {

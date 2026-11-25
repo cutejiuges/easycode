@@ -7,13 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"easycode/internal/config"
@@ -33,9 +31,7 @@ func TestHookBothProvidersRealSandboxAndThreeCapabilities(t *testing.T) {
 			for _, scenario := range []string{"continue-allow", "continue-deny", "exit2", "structured-deny", "timeout"} {
 				t.Run(fmt.Sprintf("%s/%s/%s", family, capability, scenario), func(t *testing.T) {
 					workspace := t.TempDir()
-					if err := os.WriteFile(filepath.Join(workspace, "main.go"), []byte("old\n"), 0600); err != nil {
-						t.Fatal(err)
-					}
+					writeAppTestFile(t, filepath.Join(workspace, "main.go"), []byte("old\n"), 0600)
 					command := `cat >/dev/null; test -z "$OPENAI_API_KEY$ANTHROPIC_API_KEY$AUTHORIZATION$COOKIE$BASH_ENV$HTTPS_PROXY" || exit 7; printf '{}'`
 					switch scenario {
 					case "exit2":
@@ -46,14 +42,10 @@ func TestHookBothProvidersRealSandboxAndThreeCapabilities(t *testing.T) {
 						command = `cat >/dev/null; /bin/sleep 5`
 					}
 					writeHookConfig(t, workspace, command)
-					var mu sync.Mutex
-					var requests [][]byte
+					var recorder requestRecorder
 					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-						b, _ := io.ReadAll(r.Body)
-						mu.Lock()
-						requests = append(requests, b)
-						n := len(requests)
-						mu.Unlock()
+						requestIndex, _ := recorder.record(t, r)
+						n := requestIndex + 1
 						w.Header().Set("Content-Type", "text/event-stream")
 						if n == 1 {
 							serveHookToolSample(w, family, capability)
@@ -64,10 +56,7 @@ func TestHookBothProvidersRealSandboxAndThreeCapabilities(t *testing.T) {
 					defer server.Close()
 					root := filepath.Join(t.TempDir(), "sessions")
 					cfg := cacheFixtureConfig(t, config.Config{Provider: config.Provider{Family: family, Model: "fixture-model", BaseURL: server.URL, APIKey: secret.New("HOOK-API-PRIVATE")}}, true)
-					resources, err := openChatResourcesWithHooks(context.Background(), cfg, dataPaths{sessionRoot: root}, "", false, workspace, chatResourceHooks{interactiveApprovals: true})
-					if err != nil {
-						t.Fatal(err)
-					}
+					resources := mustOpenChatResourcesWithHooks(t, context.Background(), cfg, dataPaths{sessionRoot: root}, "", false, workspace, chatResourceHooks{interactiveApprovals: true})
 					defer resources.close(context.Background())
 					control, err := startTUIControlSession(context.Background(), resources.runtime)
 					if err != nil {
@@ -143,13 +132,8 @@ func TestHookBothProvidersRealSandboxAndThreeCapabilities(t *testing.T) {
 					}
 					thread := resources.identity.ThreadID
 					path, _ := resources.service.repository.JournalPath(thread)
-					if err := resources.close(context.Background()); err != nil {
-						t.Fatal(err)
-					}
-					raw, err := os.ReadFile(path)
-					if err != nil {
-						t.Fatal(err)
-					}
+					closeAppTestResources(t, resources)
+					raw := readAppTestFile(t, path)
 					loaded, plan := loadToolLoopPlan(t, root, thread)
 					var gates, hookStarts, hookFinishes, results int
 					var frozen string
@@ -185,9 +169,7 @@ func TestHookBothProvidersRealSandboxAndThreeCapabilities(t *testing.T) {
 					if gates != 1 || hookStarts != 1 || hookFinishes != 1 || results != 1 || len(plan.Tools) != 1 || len(plan.Tools[0].Hooks) != 1 {
 						t.Fatal("invalid durable hook ledger")
 					}
-					mu.Lock()
-					captured := append([][]byte(nil), requests...)
-					mu.Unlock()
+					captured := recorder.snapshot()
 					if len(captured) != 2 {
 						t.Fatal("wrong provider count")
 					}

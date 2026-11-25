@@ -16,7 +16,5 @@ func writeHookConfig(t *testing.T, workspace, command string) {
 	}
 	b, _ := json.Marshal(command)
 	content := fmt.Sprintf(`{"hooks":{"PreToolUse":[{"matcher":"Edit|apply_patch|Write|Bash|exec_command","hooks":[{"id":"check","type":"command","command":%s,"timeout":1}]}]}}`, b)
-	if err := os.WriteFile(filepath.Join(dir, "hooks.json"), []byte(content), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, filepath.Join(dir, "hooks.json"), []byte(content), 0600)
 }

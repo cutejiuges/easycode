@@ -1,7 +1,6 @@
 package app
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -36,9 +35,7 @@ func cacheFixtureConfigMode(t *testing.T, original config.Config, enabled bool, 
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(path, body, 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, path, body, 0600)
 	loaded, err := config.Load(path)
 	if err != nil {
 		t.Fatal(err)

@@ -7,10 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"easycode/internal/domain"
@@ -70,21 +68,11 @@ func TestReasoningHeadlessBothProvidersAllModesWithToolAndEOF(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/%d", family, mode), func(t *testing.T) {
 				workspace := t.TempDir()
 				t.Chdir(workspace)
-				if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("local tool input\n"), 0600); err != nil {
-					t.Fatal(err)
-				}
-				var mu sync.Mutex
-				var requests [][]byte
+				writeAppTestFile(t, filepath.Join(workspace, "README.md"), []byte("local tool input\n"), 0600)
+				var recorder requestRecorder
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					body, err := io.ReadAll(r.Body)
-					if err != nil {
-						t.Error(err)
-						return
-					}
-					mu.Lock()
-					requests = append(requests, body)
-					sample := len(requests)
-					mu.Unlock()
+					requestIndex, _ := recorder.record(t, r)
+					sample := requestIndex + 1
 					w.Header().Set("Content-Type", "text/event-stream")
 					_, _ = w.Write(reasoningFixtureStream(family, sample, true))
 				}))
@@ -104,9 +92,7 @@ func TestReasoningHeadlessBothProvidersAllModesWithToolAndEOF(t *testing.T) {
 						t.Fatalf("stdout leaked %s", forbidden)
 					}
 				}
-				mu.Lock()
-				captured := append([][]byte(nil), requests...)
-				mu.Unlock()
+				captured := recorder.snapshot()
 				if len(captured) != 2 || !bytes.Contains(captured[1], []byte("allowed-reasoning-sentinel")) || !bytes.Contains(captured[1], []byte("opaque-reasoning-sentinel")) {
 					t.Fatal("native continuation or tool lifecycle changed")
 				}

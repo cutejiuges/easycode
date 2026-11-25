@@ -28,22 +28,15 @@ func TestBranchLineageKeepsCanonicalRecordsAndRepairsOnlyCurrentTail(t *testing.
 	lines := bytes.Split(bytes.TrimSuffix(content, []byte{'\n'}), []byte{'\n'})
 	for _, index := range []int{10, 12} {
 		line := lines[index]
-		record, err := DecodeRecord(line)
-		if err != nil {
-			t.Fatal(err)
-		}
+		record := decodeFixtureRecord(t, line)
 		payload, err := DecodeThreadForkedPayload(record)
 		if err != nil || payload.SourceSequence != uint64(index) {
 			t.Fatalf("fork payload = %#v, %v", payload, err)
 		}
 		draft, err := NewThreadForkedDraft(record.ParentThreadID, payload)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		rebuilt, err := BuildRecord(Identity{record.SessionID, record.ThreadID}, draft, record.Sequence, record.Timestamp, record.BatchID, 0, 1)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		_, encoded, err := EncodeRecord(rebuilt)
 		if err != nil || !bytes.Equal(line, encoded) {
 			t.Fatalf("fork record canonical bytes changed: %v", err)
@@ -149,9 +142,7 @@ func TestBranchPublicationUsesOneLeaseAndDoesNotDependOnParentProcess(t *testing
 	root := readCurrentFixture(t, "root.jsonl")
 	source := openBranchTestSource(t, repo, root)
 	stage, loaded, err := repo.PrepareBranch(ctx, source, testBranchID, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	t.Cleanup(func() { _ = stage.Close() })
 	locations, err := repo.EnumerateJournals(ctx)
 	if err != nil || len(locations) != 1 || locations[0].ThreadID != testThreadID {
@@ -180,23 +171,16 @@ func TestBranchPublicationUsesOneLeaseAndDoesNotDependOnParentProcess(t *testing
 	}
 	parent := startJournalLeaseHelperForThread(t, repo.RootPath(), testThreadID)
 	lease, err := stage.TakeLease()
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	writer := startBranchTestWriter(t, lease, loaded)
 	appendBranchTitle(t, writer, "Renamed independently", 12, testBranchID)
 	if err := writer.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
 	resumed, err := repo.Open(ctx, testBranchID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	defer resumed.Close()
-	branchLoaded, err := NewLoader().Load(ctx, resumed)
-	if err != nil {
-		t.Fatal(err)
-	}
+	branchLoaded := loadFixtureJournal(t, ctx, resumed)
 	plan, err := NewReplayPlanner().Plan(branchLoaded)
 	if err != nil || plan.Title != "Renamed independently" || plan.Identity.ThreadID != testBranchID {
 		t.Fatalf("resume with ancestor busy: identity=%#v title=%q err=%v", plan.Identity, plan.Title, err)
@@ -206,9 +190,7 @@ func TestBranchPublicationUsesOneLeaseAndDoesNotDependOnParentProcess(t *testing
 	}
 	parent.kill(t)
 	parentLease, err := repo.Open(ctx, testThreadID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	defer parentLease.Close()
 	if !bytes.Equal(root, readBranchTestJournal(t, repo, testThreadID)) ||
 		!bytes.HasPrefix(readBranchTestJournal(t, repo, testBranchID), branch) {
@@ -251,9 +233,7 @@ func (v cancelBranchDestination) Write(bytes []byte) (int, error) { v.cancel(); 
 func openBranchTestRepository(t *testing.T, hooks securePathHooks) *Repository {
 	t.Helper()
 	repo, err := NewRepository(filepath.Join(t.TempDir(), "sessions"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	repo.hooks = hooks
 	if err := repo.OpenOrCreate(); err != nil {
 		t.Fatal(err)
@@ -265,24 +245,17 @@ func openBranchTestRepository(t *testing.T, hooks securePathHooks) *Repository {
 func openBranchTestSource(t *testing.T, repo *Repository, input []byte) *JournalWriter {
 	t.Helper()
 	lease := installBranchJournal(t, repo, testThreadID, input)
-	loaded, err := NewLoader().Load(context.Background(), lease)
-	if err != nil {
-		t.Fatal(err)
-	}
+	loaded := loadFixtureJournal(t, context.Background(), lease)
 	return startBranchTestWriter(t, lease, loaded)
 }
 
 func installBranchJournal(t *testing.T, repo *Repository, id domain.ThreadID, content []byte) *JournalLease {
 	t.Helper()
 	lease, err := repo.Create(context.Background(), id)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	t.Cleanup(func() { _ = lease.Close() })
 	file, _, err := lease.beginIO()
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	defer lease.endIO()
 	if count, err := file.Write(content); err != nil || count != len(content) {
 		t.Fatalf("write fixture = %d/%d, %v", count, len(content), err)
@@ -296,9 +269,7 @@ func installBranchJournal(t *testing.T, repo *Repository, id domain.ThreadID, co
 func startBranchTestWriter(t *testing.T, lease *JournalLease, loaded LoadResult) *JournalWriter {
 	t.Helper()
 	writer, err := StartJournalWriter(lease, loaded.Identity, loaded.NextSequence)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	t.Cleanup(func() { _ = writer.Close(context.Background()) })
 	return writer
 }
@@ -306,22 +277,15 @@ func startBranchTestWriter(t *testing.T, lease *JournalLease, loaded LoadResult)
 func readBranchTestJournal(t *testing.T, repo *Repository, thread domain.ThreadID) []byte {
 	t.Helper()
 	filename, err := repo.JournalPath(thread)
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(filename)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
+	data := readSessionFixtureFile(t, filename)
 	return data
 }
 
 func appendBranchTitle(t *testing.T, writer *JournalWriter, title domain.SessionTitle, sequence uint64, thread domain.ThreadID) {
 	t.Helper()
 	draft, err := NewSessionTitleUpdatedDraft(title)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	records, err := writer.AppendBatch(context.Background(), []RecordDraft{draft})
 	if err != nil || len(records) != 1 || records[0].Sequence != sequence || records[0].ThreadID != thread {
 		t.Fatalf("append branch title at %s/%d: %v", thread, sequence, err)

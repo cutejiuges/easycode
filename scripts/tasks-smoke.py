@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """用真实 Darwin PTY、双 Provider 假服务与明确 ACK 验证任务清单。"""
+from smoke_support import smoke_binary, complete_cases
 import argparse
 import fcntl
 import importlib.util
@@ -198,13 +199,10 @@ def main():
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     with tempfile.TemporaryDirectory(prefix="easycode-task-smoke-") as directory:
-        binary = args.binary or Path(directory) / "app.test"
-        if not args.binary:
-            env = os.environ.copy()
-            env.update(GOPROXY="off", GOSUMDB="off")
-            subprocess.run(["go", "test", "-c", "-o", str(binary), "./internal/app"], cwd=root, env=env, check=True)
+        binary = args.binary or smoke_binary("app.test", directory, root)
         results = [run_case(binary, root, family, no_color, args.output_dir)
-                   for family in ["openai", "anthropic"] for no_color in [False, True]]
+                   for family, no_color in [("openai", False), ("anthropic", True)]]
+        complete_cases(results)
         print(json.dumps({"platform": platform.platform(), "cases": results}, ensure_ascii=False, indent=2))
 
 

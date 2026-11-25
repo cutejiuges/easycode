@@ -3,13 +3,14 @@ package anthropic
 import (
 	"context"
 	"crypto/sha256"
+	"fmt"
+	"testing"
+
 	"easycode/internal/codec"
 	"easycode/internal/domain"
 	"easycode/internal/provider"
 	"easycode/internal/provider/transport"
 	"easycode/internal/tool"
-	"fmt"
-	"testing"
 )
 
 func testInputID(text string) domain.InputID {
@@ -147,7 +148,7 @@ func testConsumeStream(t *testing.T, conversation *Conversation, ctx context.Con
 	if err != nil {
 		t.Fatal(err)
 	}
-	evidence, err := conversation.requestEvidence(input)
+	evidence, err := conversation.TestEvidence(input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +185,7 @@ func testSampleRestoreSequence(t *testing.T, envelopes ...provider.NativeCommitE
 	return records
 }
 
-func (conversation *Conversation) requestEvidence(input provider.TurnInput) (provider.RequestEvidence, error) {
+func (conversation *Conversation) TestEvidence(input provider.TurnInput) (provider.RequestEvidence, error) {
 	plan, err := conversation.planSamplingRequest(conversation.history.Snapshot(), input)
 	if err != nil {
 		return provider.RequestEvidence{}, err
@@ -226,4 +227,9 @@ func compileMessagesRequest(
 		buildMessagesRequest(model, maxTokens, history, projectInstructions, toolView),
 		maxMessagesRequestBytes,
 	)
+}
+
+// TestRequest 仅为共享契约测试提供真实生产编译结果。
+func (conversation *Conversation) TestRequest(input provider.TurnInput) (codec.CanonicalJSON, error) {
+	return conversation.compileSamplingRequest(conversation.history.Entries(), input)
 }

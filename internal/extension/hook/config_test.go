@@ -177,57 +177,44 @@ func TestCompactionHookConfigUsesSharedSourceAndMatchLimits(t *testing.T) {
 	for index := 0; index < 32; index++ {
 		commands = append(commands, fmt.Sprintf(`{"id":"check-%d","type":"command","command":"true"}`, index))
 	}
-	group := func(count int) string {
-		return `[{"matcher":"manual","hooks":[` + strings.Join(commands[:count], ",") + `]}]`
-	}
-	stop := `[{"hooks":[{"id":"stop-check","type":"command","command":"true"}]}]`
-	if _, err := decodeConfig(domain.HookSourceUser, []byte(`{"hooks":{"PostCompact":`+group(32)+`,"Stop":`+stop+`}}`)); err == nil {
-		t.Fatal("accepted more than 32 declarations across events")
-	}
-	declarations, err := decodeConfig(domain.HookSourceProject, []byte(`{"hooks":{"PostCompact":`+group(domain.MaxHookMatches+1)+`}}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err := domain.NewHookSnapshot(declarations, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if checks, err := snapshot.PostCompactChecks(domain.CompactionManual); err != domain.HookMatchLimit || len(checks) != 0 {
-		t.Fatal("allowed partial execution after matching overflow", err)
-	}
-	if checks, err := snapshot.PostCompactChecks(domain.CompactionAuto); err != nil || len(checks) != 0 {
-		t.Fatal("nonmatching declarations counted against an automatic operation", err)
-	}
-	startup := func(count int) string { return strings.Replace(group(count), `"manual"`, `"startup"`, 1) }
-	if _, err := decodeConfig(domain.HookSourceUser, []byte(`{"hooks":{"SessionStart":`+startup(32)+`,"Stop":`+stop+`}}`)); err == nil {
-		t.Fatal("SessionStart exceeded the shared declaration limit")
-	}
-	starts, err := decodeConfig(domain.HookSourceProject, []byte(`{"hooks":{"SessionStart":`+startup(domain.MaxHookMatches+1)+`}}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err = domain.NewHookSnapshot(starts, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if checks, err := snapshot.SessionStartChecks(domain.SessionStartStartup); err != domain.HookMatchLimit || len(checks) != 0 {
-		t.Fatal("SessionStart selected a partial plan after matching overflow", err)
-	}
-	prompt := strings.Replace(group(32), `"matcher":"manual",`, "", 1)
-	if _, err := decodeConfig(domain.HookSourceUser, []byte(`{"hooks":{"UserPromptSubmit":`+prompt+`,"Stop":`+stop+`}}`)); err == nil {
-		t.Fatal("UserPromptSubmit exceeded the shared declaration limit")
-	}
-	prompt = strings.Replace(group(domain.MaxHookMatches+1), `"matcher":"manual",`, "", 1)
-	prompts, err := decodeConfig(domain.HookSourceProject, []byte(`{"hooks":{"UserPromptSubmit":`+prompt+`}}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err = domain.NewHookSnapshot(prompts, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if checks, err := snapshot.UserPromptSubmitChecks(); err != domain.HookMatchLimit || len(checks) != 0 {
-		t.Fatal("UserPromptSubmit selected a partial plan after matching overflow", err)
+	for _, test := range []struct {
+		event        domain.HookEvent
+		matcher      string
+		selectChecks func(domain.HookSnapshot) ([]domain.HookDeclaration, error)
+	}{
+		{domain.HookPostCompact, `"matcher":"manual",`, func(s domain.HookSnapshot) ([]domain.HookDeclaration, error) {
+			return s.PostCompactChecks(domain.CompactionManual)
+		}},
+		{domain.HookSessionStart, `"matcher":"startup",`, func(s domain.HookSnapshot) ([]domain.HookDeclaration, error) {
+			return s.SessionStartChecks(domain.SessionStartStartup)
+		}},
+		{domain.HookUserPromptSubmit, "", domain.HookSnapshot.UserPromptSubmitChecks},
+	} {
+		t.Run(string(test.event), func(t *testing.T) {
+			group := func(count int) string {
+				return fmt.Sprintf(`%q:[{%s"hooks":[%s]}]`, test.event, test.matcher, strings.Join(commands[:count], ","))
+			}
+			withStop := `{"hooks":{` + group(32) + `,"Stop":[{"hooks":[{"id":"stop-check","type":"command","command":"true"}]}]}}`
+			if _, err := decodeConfig(domain.HookSourceUser, []byte(withStop)); err == nil {
+				t.Fatal("accepted more than 32 declarations across events")
+			}
+			declarations, err := decodeConfig(domain.HookSourceProject, []byte(`{"hooks":{`+group(domain.MaxHookMatches+1)+`}}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := domain.NewHookSnapshot(declarations, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if checks, err := test.selectChecks(snapshot); err != domain.HookMatchLimit || len(checks) != 0 {
+				t.Fatal("selected a partial plan after matching overflow", err)
+			}
+			if test.event == domain.HookPostCompact {
+				if checks, err := snapshot.PostCompactChecks(domain.CompactionAuto); err != nil || len(checks) != 0 {
+					t.Fatal("nonmatching declarations counted against an automatic operation", err)
+				}
+			}
+		})
 	}
 }
 

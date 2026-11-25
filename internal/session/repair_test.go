@@ -15,13 +15,9 @@ func tornRepairFixture(t *testing.T) (*Loader, *JournalLease, LoadResult, string
 	harness, repository := writeRawJournal(t, original)
 	t.Cleanup(func() { _ = harness.lease.Close(); _ = repository.Close() })
 	path, err := repository.JournalPath(testThreadID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	loaded, err := harness.loader.Load(context.Background(), harness.lease)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	if !loaded.NeedsRepair() || loaded.Repair.Repaired {
 		t.Fatal("read-only scan did not retain pending tail")
 	}

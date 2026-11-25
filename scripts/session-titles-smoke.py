@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """通过真实 Darwin PTY 验收会话命名、离线查找和双 Provider 恢复。"""
 
+from smoke_support import smoke_binary, complete_cases
 import argparse
 import fcntl
 import json
@@ -178,8 +179,7 @@ def main():
     repository = Path(__file__).resolve().parent.parent
     with tempfile.TemporaryDirectory(prefix="easycode-title-pty-") as directory:
         temporary = Path(directory).resolve()
-        binary = temporary / "app.test"
-        subprocess.run(["go", "test", "-c", "-o", binary, "./internal/app"], cwd=repository, check=True)
+        binary = smoke_binary("app.test", temporary, repository)
         results = []
         for family in ("openai", "anthropic"):
             data = temporary / family
@@ -189,6 +189,7 @@ def main():
             result = run_case(binary, data, workspace, family, args.output)
             results.append(result)
             print(json.dumps(result), flush=True)
+        complete_cases(results)
         (args.output / "pty-summary.json").write_text(json.dumps(results, indent=2) + "\n")
 
 

@@ -51,7 +51,7 @@
 以下条件适用于每一个阶段：
 
 1. 不引入上帝类、上帝包、循环依赖或跨层捷径。
-2. 新逻辑有单元测试；跨模块行为有集成测试；bug 修复有回归测试。
+2. 只为关键业务链路、必要契约、已知缺陷和高风险边界补最小有效回归；优先扩充既有用例，不逐函数配测试或重复跨层矩阵。
 3. Provider、context、tool schema 或 skill/plugin catalog 的变化必须检查缓存稳定性。
 4. API key、Authorization、cookie 和敏感 header 不出现在日志、错误、snapshot 和 fixture 中。
 5. 无未解释的 dead code、占位兼容分支和永久 TODO；唯一临时占位必须位于 `AGENTS.md` exact allowlist，并带阶段、保留原因和后续 OpenSpec 启用或删除条件。
@@ -64,7 +64,7 @@
 make verify
 ```
 
-当前 `make verify` 覆盖分支策略回归、`gofmt -l .`、`go vet ./...`、固定版本的 `staticcheck`、测试调度器自检和当前平台全量普通测试与经审计的必要 race 测试；其中全量测试包含 AST/import graph 架构守卫。`scripts/test_suite.py` 枚举并核对 Test/Example/Fuzz seed，使用 `-count=1`、有界进程及无默认总时限的耗时记录；默认 race 仅编译和执行 `scripts/race_policy.json` 正向列出的关键并发路径，新增普通测试不自动进入 race，`make test-race-full` 可手动执行全量 race。测试以少量关键风险回归为主，维护与精简口径见 [测试维护说明](../testing.md)。如果新增 lint 规则，必须同步更新 Makefile、pre-commit 和本文。
+当前 `make verify` 先执行全仓业务/测试 Go 至少 3:2 及测试脚本总预算的只读硬校验，再覆盖分支策略回归、`gofmt -l .`、`go vet ./...`、固定版本的 `staticcheck`、测试调度器自检和当前平台全量普通测试与经审计的必要 race 测试；其中全量测试包含 AST/import graph 架构守卫。`scripts/test_suite.py` 枚举并核对 Test/Example/Fuzz seed，使用 `-count=1`、有界进程及无默认总时限的耗时记录；默认 race 仅编译和执行 `scripts/race_policy.json` 正向列出的关键并发路径，新增普通测试不自动进入 race，`make test-race-full` 可手动执行全量 race。测试以少量关键风险回归为主；本地只保留 pre-commit 完整验证，删除重复 pre-push。关键原生交互通过 `make smoke` 与 macOS CI 的 `smoke` job 独立执行，仓库文件不自动启用远端 required checks。维护与精简口径见 [测试维护说明](../testing.md)。如果新增 lint 规则，必须同步更新 Makefile、pre-commit 和本文。
 
 ## 3. 阶段总览
 

@@ -55,16 +55,9 @@ func TestPatchPrepareTOCTOUDoesNotFollowReplacementSymlink(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(root, "dir"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "dir", "file"), []byte("old"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(outside, "file"), []byte("secret"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	workspace, err := OpenWorkspace(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	writeBuiltinFixture(t, filepath.Join(root, "dir", "file"), []byte("old"), 0o644)
+	writeBuiltinFixture(t, filepath.Join(outside, "file"), []byte("secret"), 0o644)
+	workspace := openFixtureWorkspace(t, root)
 	defer func() { _ = workspace.Close() }()
 	workspace.hooks.afterOpenComponent = func(relative string) {
 		if relative != "dir" {
@@ -126,13 +119,8 @@ func TestPatchExecutorFailuresAndConflictAreFailClosed(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			path := filepath.Join(root, "file")
-			if err := os.WriteFile(path, []byte("old\n"), 0o640); err != nil {
-				t.Fatal(err)
-			}
-			workspace, err := OpenWorkspace(root)
-			if err != nil {
-				t.Fatal(err)
-			}
+			writeBuiltinFixture(t, path, []byte("old\n"), 0o640)
+			workspace := openFixtureWorkspace(t, root)
 			defer func() { _ = workspace.Close() }()
 			candidate := preparePatchForTest(t, workspace, patchInvocationForTest(t, "018f1d8a-7b5c-7def-8123-456789abcdef", "file", "old", "new"))
 			executor, _ := NewPatchExecutor(workspace)
@@ -155,13 +143,8 @@ func TestPatchExecutorFailuresAndConflictAreFailClosed(t *testing.T) {
 func TestPatchExecutorOwnsCleanupBoundary(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "file")
-	if err := os.WriteFile(path, []byte("old\n"), 0o640); err != nil {
-		t.Fatal(err)
-	}
-	workspace, err := OpenWorkspace(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	writeBuiltinFixture(t, path, []byte("old\n"), 0o640)
+	workspace := openFixtureWorkspace(t, root)
 	defer func() { _ = workspace.Close() }()
 	candidate := preparePatchForTest(t, workspace, patchInvocationForTest(t, "018f1d8a-7b5c-7def-8123-456789abcdef", "file", "old", "new"))
 	executor, _ := NewPatchExecutor(workspace)
@@ -181,13 +164,8 @@ func TestPatchExecutorOwnsCleanupBoundary(t *testing.T) {
 func TestPatchRejectsAndRetainsReplacedStagingEntry(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "file")
-	if err := os.WriteFile(target, []byte("old\n"), 0o640); err != nil {
-		t.Fatal(err)
-	}
-	workspace, err := OpenWorkspace(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	writeBuiltinFixture(t, target, []byte("old\n"), 0o640)
+	workspace := openFixtureWorkspace(t, root)
 	defer func() { _ = workspace.Close() }()
 	candidate := preparePatchForTest(t, workspace, patchInvocationForTest(t, "018f1d8a-7b5c-7def-8123-456789abcdef", "file", "old", "new"))
 	executor, _ := NewPatchExecutor(workspace)
@@ -201,9 +179,7 @@ func TestPatchRejectsAndRetainsReplacedStagingEntry(t *testing.T) {
 		if err := os.Rename(foreign, filepath.Join(root, "owned")); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(foreign, []byte("external\n"), 0o640); err != nil {
-			t.Fatal(err)
-		}
+		writeBuiltinFixture(t, foreign, []byte("external\n"), 0o640)
 	}
 	result := executor.Execute(context.Background(), candidate)
 	if result.Status() != tool.ResultOutcomeUncertain || result.Code() != "patch_durability_uncertain" {

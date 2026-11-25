@@ -23,9 +23,7 @@ func TestHookRecoveryMatrixNeverCallsExternalCapabilities(t *testing.T) {
 				input, _ := tool.HookInputForInvocation(inv)
 				effect, _ := domain.NewUnchangedHookInputEffect(input)
 				frozen, err := domain.NewPreHookFinished(domain.HookRunResult{Identity: id, Status: domain.HookContinue, Code: domain.HookOK, ExitKnown: true, CleanupConfirmed: true, Origin: "execution"}, refs[0], effect)
-				if err != nil {
-					t.Fatal(err)
-				}
+				requireNoError(t, err)
 				g.Finished = append(g.Finished, frozen)
 			}
 			if phase == "started" {
@@ -38,9 +36,7 @@ func TestHookRecoveryMatrixNeverCallsExternalCapabilities(t *testing.T) {
 				input, _ := tool.HookInputForInvocation(inv)
 				effect, _ := domain.NewUnchangedHookInputEffect(input)
 				frozen, err := domain.NewPreHookFinished(domain.HookRunResult{Identity: id, Status: domain.HookContinue, Code: domain.HookOK, ExitKnown: true, CleanupConfirmed: true, Origin: "execution"}, refs[1], effect)
-				if err != nil {
-					t.Fatal(err)
-				}
+				requireNoError(t, err)
 				g.Finished = append(g.Finished, frozen)
 				d, _ := domain.NewHookGateDecision(p, domain.HookContinue, domain.HookOK, 2, -1)
 				g.Decision = &d
@@ -61,9 +57,7 @@ func TestHookRecoveryMatrixNeverCallsExternalCapabilities(t *testing.T) {
 				calls = nil
 			}
 			plan, err := session.NewToolRecoveryPlan(runtimeTurnID, 1, calls, phase == "outputs")
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			journal.sequence = max(call.ReadySequence, g.PlanSequence, g.StartedSequence, g.DecisionSequence, call.ResultSequence)
 			if err := r.ReconcileToolTurn(context.Background(), plan); err != nil {
 				t.Fatal(err)

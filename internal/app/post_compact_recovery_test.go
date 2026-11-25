@@ -20,14 +20,8 @@ import (
 
 func TestPostCompactRecoverySyncFailureKeepsCommittedCheckpoint(t *testing.T) {
 	ctx := context.Background()
-	original, err := os.ReadFile("../session/testdata/current/auto_compaction_completed_openai.jsonl")
-	if err != nil {
-		t.Fatal(err)
-	}
-	suffix, err := os.ReadFile("../session/testdata/current/post_compact_openai_auto_started_suffix.jsonl")
-	if err != nil {
-		t.Fatal(err)
-	}
+	original := readAppTestFile(t, "../session/testdata/current/auto_compaction_completed_openai.jsonl")
+	suffix := readAppTestFile(t, "../session/testdata/current/post_compact_openai_auto_started_suffix.jsonl")
 	prefix := append(bytes.Clone(prefixLines(original, 10)), suffix...)
 	root, path, thread := installPreviewFixture(t, prefix)
 	if preview, cleanupFailed, err := previewSession(ctx, root, thread, defaultPreviewDependencies()); err != nil || cleanupFailed || len(preview.Messages) == 0 {

@@ -10,18 +10,19 @@ import re
 import select
 import signal
 import struct
+import subprocess
 import termios
 import time
+from smoke_support import complete_cases
 
 
 def smoke(binary, family, repo, output_dir):
-    pid, fd = pty.fork()
-    if pid == 0:
-        os.chdir(repo / "internal/app")
-        os.environ.update(EASYCODE_REWRITE_TERMINAL_PROVIDER=family,
-                          TERM="xterm-256color", NO_COLOR="1")
-        os.execv(binary, [binary, "-test.run=^TestInputRewriteTerminalHelper$",
-                         "-test.timeout=90s"])
+    fd, slave = pty.openpty()
+    before = termios.tcgetattr(slave)
+    env = dict(os.environ, EASYCODE_REWRITE_TERMINAL_PROVIDER=family, TERM="xterm-256color", NO_COLOR="1")
+    process = subprocess.Popen([binary, "-test.run=^TestInputRewriteTerminalHelper$", "-test.timeout=90s"],
+                               cwd=repo / "internal/app", env=env, stdin=slave, stdout=slave, stderr=slave)
+    pid = process.pid
     raw, stages = bytearray(), []
     cursor = 0
 
@@ -61,7 +62,7 @@ def smoke(binary, family, repo, output_dir):
         if (workspace / "terminal-effective").exists() or (workspace / "terminal-original").exists():
             raise RuntimeError(f"{family}: a default or disabled approval executed a target")
 
-    status, error, reaped = None, None, False
+    status, error = None, None
     try:
         resize(80, 24)
         wait("EasyCode", "startup-no-color")
@@ -135,26 +136,28 @@ def smoke(binary, family, repo, output_dir):
         send(b"\x03")
         wait("REWRITE_TERMINAL_FACTS=denied/denied/success/cancelled", "durable-four-turn-facts")
         wait("REWRITE_TERMINAL_EXIT=0", "clean-exit")
-        _, wait_status = os.waitpid(pid, 0)
-        reaped = True
-        status = os.waitstatus_to_exitcode(wait_status)
+        status = process.wait(timeout=5)
         if status != 0:
             raise RuntimeError(f"terminal helper exit {status}")
         if b"\x1b[31m" in raw:
             raise RuntimeError("untrusted control text escaped into the terminal")
+        after = termios.tcgetattr(slave)
+        pending = getattr(termios, "PENDIN", 0)
+        before[3] &= ~pending
+        after[3] &= ~pending
+        if before != after:
+            raise RuntimeError("input rewrite terminal modes were not restored")
         print(f"{family}: " + ", ".join(stages))
+        return {"provider": family, "exit_code": status, "stages": stages, "terminal_restored": True}
     except BaseException as exc:
         error = str(exc)
-        if not reaped:
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            _, wait_status = os.waitpid(pid, 0)
-            status = os.waitstatus_to_exitcode(wait_status)
         raise
     finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
         os.close(fd)
+        os.close(slave)
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / f"{family}-input-rewrite.pty.log").write_bytes(raw)
         (output_dir / f"{family}-input-rewrite.json").write_text(json.dumps({
@@ -168,5 +171,5 @@ if __name__ == "__main__":
     parser.add_argument("--output-dir", type=pathlib.Path, required=True)
     args = parser.parse_args()
     root = pathlib.Path(__file__).resolve().parents[1]
-    for provider in ("openai", "anthropic"):
-        smoke(os.path.abspath(args.binary), provider, root, args.output_dir)
+    complete_cases([smoke(os.path.abspath(args.binary), provider, root, args.output_dir)
+                    for provider in ("openai", "anthropic")])

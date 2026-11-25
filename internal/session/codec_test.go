@@ -20,22 +20,15 @@ func mustRecord(t *testing.T, kind EventKind, payload any) []byte {
 		mustDraft(t, kind, testTurnID, payload),
 		1, time.Unix(0, 0).UTC(), 1, 0, 1,
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	_, encoded, err := EncodeRecord(record)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return encoded
 }
 
 func mustDecodedRecord(t *testing.T, kind EventKind, payload any) Record {
 	t.Helper()
 	encoded := mustRecord(t, kind, payload)
-	record, err := DecodeRecord(encoded)
-	if err != nil {
-		t.Fatal(err)
-	}
+	record := decodeFixtureRecord(t, encoded)
 	return record
 }

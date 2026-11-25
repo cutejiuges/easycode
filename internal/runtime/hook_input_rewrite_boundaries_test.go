@@ -17,9 +17,7 @@ func singleRewriteRuntime(t *testing.T, j *fakeJournal, withPost bool) (*Runtime
 	r, original, _, _ := hookRuntimeFixture(t, j, 0)
 	input := rewrittenFixtureInput(t, original, false)
 	effective, err := tool.RewriteInvocation(original, input)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	prepare, execute, _ := rewriteCandidateFixture(t, r, effective)
 	d, _ := domain.NewHookDeclaration(domain.HookSourceProject, domain.HookPreToolUse, domain.HookFeedbackNone, domain.HookDigest(nil), "rewrite", 7, "true", 5)
 	ds := []domain.HookDeclaration{d}
@@ -29,24 +27,16 @@ func singleRewriteRuntime(t *testing.T, j *fakeJournal, withPost bool) (*Runtime
 			ds = append(ds, post)
 		}
 	}
-	snapshot, err := domain.NewHookSnapshot(ds, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
 	runner := &postTestRunner{run: func(_ context.Context, id domain.HookRunIdentity, _ domain.HookDeclaration, in domain.HookInput, _ time.Duration) domain.HookExecution {
 		stats := domain.HookRunResult{Identity: id, Status: domain.HookContinue, Code: domain.HookOK, ExitKnown: true, CleanupConfirmed: true, Origin: "execution"}
 		if id.Event.Post() {
 			return domain.HookExecution{Result: stats}
 		}
 		replacement, err := domain.NewHookInputReplacement(input, in.RewriteContext().Profile())
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		return domain.HookExecution{Result: stats, Replacement: replacement}
 	}}
-	if err := r.InstallHooks(snapshot, runner, "/workspace", domain.HookOK); err != nil {
-		t.Fatal(err)
-	}
+	installRuntimeTestHooks(t, r, runner, "/workspace", ds)
 	r.toolTurn.resultBudget = tool.NewResultBudget()
 	if err := r.toolTurn.resultBudget.BeginSample(1); err != nil {
 		t.Fatal(err)

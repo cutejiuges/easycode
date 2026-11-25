@@ -2,7 +2,6 @@ package session
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,10 +19,7 @@ func TestRootJournalDoesNotPersistConnectionSecrets(t *testing.T) {
 		cookie     = "session=fixture-cookie"
 		configPath = "/private/config/easycode.json"
 	)
-	repository, err := OpenOrCreateRepository(filepath.Join(t.TempDir(), "sessions"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	repository := openFixtureRepository(t, filepath.Join(t.TempDir(), "sessions"))
 	defer repository.Close()
 	writer, _, err := CreateRootJournal(
 		context.Background(), repository,
@@ -33,20 +29,13 @@ func TestRootJournalDoesNotPersistConnectionSecrets(t *testing.T) {
 			CreationCWD: t.TempDir(), CreatedAt: time.Unix(1, 0).UTC(),
 		},
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	if err := writer.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	path, err := repository.JournalPath(testThreadID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
+	content := readSessionFixtureFile(t, path)
 	for name, secret := range map[string]string{
 		"api key": apiKey, "base URL": baseURL, "authorization": authHeader,
 		"cookie": cookie, "config path": configPath,

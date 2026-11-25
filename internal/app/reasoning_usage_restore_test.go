@@ -42,10 +42,7 @@ func corruptThinkingFact(t *testing.T, data []byte, from, to string) []byte {
 func TestThinkingUsageFixedCurrentRestoreAndRejectBeforeRepair(t *testing.T) {
 	for _, name := range []string{"compaction_completed_anthropic", "reasoning_usage_positive_anthropic", "reasoning_usage_zero_anthropic"} {
 		t.Run(name, func(t *testing.T) {
-			fixture, err := os.ReadFile("../session/testdata/current/" + name + ".jsonl")
-			if err != nil {
-				t.Fatal(err)
-			}
+			fixture := readAppTestFile(t, "../session/testdata/current/"+name+".jsonl")
 			root, path, thread := installPreviewFixture(t, fixture)
 			view, cleanup, err := previewSession(context.Background(), root, thread, defaultPreviewDependencies())
 			if err != nil || cleanup || len(view.Messages) == 0 {
@@ -82,9 +79,7 @@ func TestThinkingUsageFixedCurrentRestoreAndRejectBeforeRepair(t *testing.T) {
 				{`"reasoning_output":{"state":"known","value":30}`, `"reasoning_output":{"state":"not_applicable"}`},
 			} {
 				invalid := append(corruptThinkingFact(t, fixture, tc.from, tc.to), []byte(`{"torn":`)...)
-				if err := os.WriteFile(path, invalid, 0600); err != nil {
-					t.Fatal(err)
-				}
+				writeAppTestFile(t, path, invalid, 0600)
 				if _, err := service.resume(context.Background(), testSessionProvider(instance, "messages"), "claude-test", thread); err == nil {
 					t.Fatal("inconsistent facts restored")
 				}
@@ -101,10 +96,7 @@ func TestThinkingUsageFixedCurrentRestoreAndRejectBeforeRepair(t *testing.T) {
 }
 
 func TestOpenAISampleUsageRejectsKnownZeroForUnknownBeforeRepair(t *testing.T) {
-	fixture, err := os.ReadFile("../session/testdata/current/question_openai_complete.jsonl")
-	if err != nil {
-		t.Fatal(err)
-	}
+	fixture := readAppTestFile(t, "../session/testdata/current/question_openai_complete.jsonl")
 	invalid := append(corruptThinkingFact(t, fixture,
 		`"reasoning_output":{"state":"unknown"}`, `"reasoning_output":{"state":"known","value":0}`), []byte(`{"torn":`)...)
 	root, path, thread := installPreviewFixture(t, invalid)

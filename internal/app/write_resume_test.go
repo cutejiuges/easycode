@@ -51,10 +51,7 @@ func TestWriteRecoveryPairsEveryTailWithoutReplayingFilesOrGrants(t *testing.T) 
 				model = "claude-test"
 			}
 			cfg := config.Config{Provider: config.Provider{Family: family, BaseURL: server.URL, APIKey: secret.New("resume-fixture"), Model: model}}
-			resources, err := openChatResourcesWithHooks(context.Background(), cfg, dataPaths{sessionRoot: dataRoot}, "", false, root, chatResourceHooks{interactiveApprovals: true})
-			if err != nil {
-				t.Fatal(err)
-			}
+			resources := mustOpenChatResourcesWithHooks(t, context.Background(), cfg, dataPaths{sessionRoot: dataRoot}, "", false, root, chatResourceHooks{interactiveApprovals: true})
 			control, err := startTUIControlSession(context.Background(), resources.runtime)
 			if err != nil {
 				t.Fatal(err)
@@ -92,13 +89,8 @@ func TestWriteRecoveryPairsEveryTailWithoutReplayingFilesOrGrants(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := resources.close(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			baseline, err := os.ReadFile(journalPath)
-			if err != nil {
-				t.Fatal(err)
-			}
+			closeAppTestResources(t, resources)
+			baseline := readAppTestFile(t, journalPath)
 			loaded := loadHeadlessJournal(t, dataRoot, thread)
 			for _, record := range loaded.Records {
 				marker := ""
@@ -116,22 +108,15 @@ func TestWriteRecoveryPairsEveryTailWithoutReplayingFilesOrGrants(t *testing.T) 
 				}
 				t.Run(string(record.EventKind), func(t *testing.T) {
 					writeJournalPrefix(t, journalPath, baseline, record.Sequence)
-					if err := os.WriteFile(filepath.Join(root, "new/a"), []byte("external-after-crash"), 0600); err != nil {
-						t.Fatal(err)
-					}
+					writeAppTestFile(t, filepath.Join(root, "new/a"), []byte("external-after-crash"), 0600)
 					orphan := filepath.Join(root, ".easycode-write-orphan")
-					if err := os.WriteFile(orphan, []byte("preserve"), 0600); err != nil {
-						t.Fatal(err)
-					}
+					writeAppTestFile(t, orphan, []byte("preserve"), 0600)
 					mu.Lock()
 					before := len(requests)
 					phase = 0
 					recovering = true
 					mu.Unlock()
-					resumed, err := openChatResources(context.Background(), cfg, dataRoot, string(thread), root)
-					if err != nil {
-						t.Fatal(err)
-					}
+					resumed := mustOpenChatResources(t, context.Background(), cfg, dataRoot, string(thread), root)
 					mu.Lock()
 					after := len(requests)
 					mu.Unlock()
@@ -146,9 +131,7 @@ func TestWriteRecoveryPairsEveryTailWithoutReplayingFilesOrGrants(t *testing.T) 
 						t.Fatal("resume scanned/cleaned orphan", err)
 					}
 					submitAppTurn(t, resumed, "try writes after recovery")
-					if err := resumed.close(context.Background()); err != nil {
-						t.Fatal(err)
-					}
+					closeAppTestResources(t, resumed)
 					mu.Lock()
 					first := string(requests[before])
 					last := string(requests[len(requests)-1])

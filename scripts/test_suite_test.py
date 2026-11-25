@@ -18,8 +18,57 @@ from unittest import mock
 
 import test_suite
 import test_binary
+import test_ratio
 from race_policy import select_race
 from test_binary import binary_path
+
+
+class TestSizeTests(unittest.TestCase):
+    def test_complete_snapshot_and_exact_limits(self):
+        # 临时仓库必须隔离 hook 的 Git 定位环境，避免 init 修改真实仓库配置。
+        environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+        with mock.patch.dict(os.environ, environment, clear=True), \
+                tempfile.TemporaryDirectory(prefix="easycode-size-test-") as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            fixtures = {"internal/p/main.go": "package p\n// 业务\nfunc run() {}\n",
+                        "internal/p/check_darwin_test.go": "package p\n// Darwin\n",
+                        "scripts/run.py": "pass\n", "internal/p/testdata/input.json": "{}\n"}
+            for name, content in fixtures.items():
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content)
+            (root / ".gitignore").write_text("ignored_test.go\n")
+            (root / "ignored_test.go").write_text("not source\n")
+            policy = {"minimum_production_per_test": {"production": 3, "tests": 2},
+                      "maximum_test_script_lines": 1}
+            report = test_ratio.measure(root, test_ratio.source_paths(root))
+            self.assertEqual((report["production"], report["tests"], report["scripts"]), (3, 2, 1))
+            self.assertEqual((report["fixture_files"], report["fixture_bytes"]), (1, 3))
+            self.assertEqual(test_ratio.violations(report, policy), [])
+            target = root / "internal/p/testsupport/helper.go"
+            target.parent.mkdir()
+            (root / "internal/p/check_darwin_test.go").rename(target)
+            moved = test_ratio.measure(root, test_ratio.source_paths(root))
+            self.assertEqual((moved["production"], moved["tests"]), (3, 2))
+            for change in ({"tests": 3}, {"production": 2}, {"scripts": 2},
+                           {"production": 29999, "tests": 20000}):
+                with self.subTest(change=change):
+                    self.assertEqual(len(test_ratio.violations({**moved, **change}, policy)), 1)
+            policy_path = root / "scripts/test_size_policy.json"
+            policy_path.write_text(json.dumps(policy))
+            (root / "scripts/run.py").write_text("pass\npass\n")
+            before = policy_path.read_bytes()
+            self.assertTrue(test_ratio.inspect(root)["errors"])
+            self.assertEqual(policy_path.read_bytes(), before)
+            for name, content in (("internal/p/test_helpers.go", 'package p\nimport "testing"\n'),
+                                  ("tests/acceptance_test.py", "pass\n")):
+                misplaced = root / name
+                misplaced.parent.mkdir(parents=True, exist_ok=True)
+                misplaced.write_text(content)
+                with self.assertRaises(ValueError):
+                    test_ratio.inspect(root)
+                misplaced.unlink()
 
 
 class InventoryTests(unittest.TestCase):

@@ -12,9 +12,7 @@ func replayExecInvocation(t *testing.T) tool.Invocation {
 	ready, _ := tool.NewExecReadyCall("call-exec", input)
 	id, _ := tool.ParseInvocationID("01890f3e-7bcd-7abc-8abc-0123456789ad")
 	invocation, err := tool.NewInvocation(id, ready)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return invocation
 }
 
@@ -27,13 +25,9 @@ func replayExecResult(t *testing.T, invocation tool.Invocation, status tool.Resu
 		preview, _ := tool.NewModelPreview("frozen Exec output")
 		var err error
 		result, err = tool.NewExecInvocationResult(exec, status, code, preview, metadata)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 	}
 	draft, err := NewToolCallResultDraft(testTurnID, result)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return draft
 }

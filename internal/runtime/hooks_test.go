@@ -44,6 +44,15 @@ func (f *fakeHookRunner) Run(ctx context.Context, id domain.HookRunIdentity, _ d
 	}
 	return domain.HookExecution{Result: r}
 }
+func installRuntimeTestHooks(t *testing.T, runtime *Runtime, runner HookRunner, cwd string, declarations []domain.HookDeclaration) {
+	t.Helper()
+	snapshot, err := domain.NewHookSnapshot(declarations, nil)
+	requireNoError(t, err)
+	if err := runtime.InstallHooks(snapshot, runner, cwd, domain.HookOK); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func hookRuntimeFixture(t *testing.T, journal Journal, count int) (*Runtime, tool.Invocation, *fakeHookRunner, []domain.HookDeclaration) {
 	t.Helper()
 	r := newTestRuntime(t, &fakeToolConversation{fakeConversation: &fakeConversation{}}, journal)
@@ -52,19 +61,11 @@ func hookRuntimeFixture(t *testing.T, journal Journal, count int) (*Runtime, too
 	var declarations []domain.HookDeclaration
 	for i := range count {
 		d, err := domain.NewHookDeclaration(domain.HookSourceProject, domain.HookPreToolUse, domain.HookFeedbackNone, strings.Repeat("a", 64), "check-"+string(rune('a'+i)), 7, "cat >/dev/null; printf '{}'", 5)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		declarations = append(declarations, d)
 	}
-	s, err := domain.NewHookSnapshot(declarations, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
 	runner := &fakeHookRunner{}
-	if err := r.InstallHooks(s, runner, "/workspace", domain.HookOK); err != nil {
-		t.Fatal(err)
-	}
+	installRuntimeTestHooks(t, r, runner, "/workspace", declarations)
 	seedRuntimeToolCall(t, r, runtimeTurnID, inv, 0, 0)
 	return r, inv, runner, declarations
 }
@@ -78,13 +79,9 @@ func hookTrustEmitter(t *testing.T, r *Runtime, decision protocol.HookTrustDecis
 			*count++
 		}
 		p, err := protocol.DecodeHookTrustRequested(e)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		response, err := protocol.NewHookTrustResponse(r.sessionID, r.threadID, e.TurnID, p, decision)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		if err := r.ResolveHookTrust(response); err != nil {
 			t.Fatal(err)
 		}
@@ -213,4 +210,11 @@ func (j *hookFaultJournal) AppendBatch(ctx context.Context, ds []session.RecordD
 		}
 	}
 	return records, err
+}
+
+func requireNoError(t testing.TB, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
 }

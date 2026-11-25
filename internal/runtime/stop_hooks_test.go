@@ -56,21 +56,14 @@ func newStopRuntimeRequestFixture(t *testing.T, journal Journal, inspect func(in
 	}))
 	t.Cleanup(server.Close)
 	p, err := openai.New(openai.Config{BaseURL: server.URL, APIKey: secret.New("fixture-key"), Model: "gpt-test"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	t.Cleanup(func() { _ = p.Close() })
 	conversation, err := p.NewConversation(runtimeThreadID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	r := newTestRuntime(t, conversation, journal)
 	r.interactiveApprovals = true
 	d, err := domain.NewStopHookDeclaration(domain.HookSourceProject, domain.HookFeedbackModel, domain.HookDigest(nil), "completion", "true", 5)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s, _ := domain.NewHookSnapshot([]domain.HookDeclaration{d}, nil)
+	requireNoError(t, err)
 	runner := &stopRunnerFixture{}
 	runner.run = func(_ context.Context, id domain.HookRunIdentity, _ domain.HookDeclaration) domain.HookExecution {
 		result := domain.HookRunResult{Identity: id, Status: domain.HookContinue, Code: domain.HookOK, ExitKnown: true, CleanupConfirmed: true, Origin: "execution"}
@@ -81,9 +74,7 @@ func newStopRuntimeRequestFixture(t *testing.T, journal Journal, inspect func(in
 		}
 		return domain.HookExecution{Result: result}
 	}
-	if err := r.InstallHooks(s, runner, "/workspace", domain.HookOK); err != nil {
-		t.Fatal(err)
-	}
+	installRuntimeTestHooks(t, r, runner, "/workspace", []domain.HookDeclaration{d})
 	return r, runner, requests
 }
 func TestStopRuntimeContinuesTwiceWithoutCompletingEarly(t *testing.T) {
@@ -151,9 +142,7 @@ func TestStopRuntimeContinuesTwiceWithoutCompletingEarly(t *testing.T) {
 		for _, draft := range batch {
 			if draft.EventKind() == session.EventTurnStopHookDecided {
 				d, err := domain.DecodeStopDecision(draft.PayloadBytes())
-				if err != nil {
-					t.Fatal(err)
-				}
+				requireNoError(t, err)
 				decisions = append(decisions, d)
 			}
 		}

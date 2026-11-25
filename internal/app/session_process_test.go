@@ -80,10 +80,7 @@ func TestSessionServiceResumeAcrossProcesses(t *testing.T) {
 		t.Fatal(err)
 	}
 	helper := startAppSessionHelper(t, owner.repository.RootPath(), created.identity.ThreadID)
-	before, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	before := readAppTestFile(t, path)
 	competitor, err := openSessionService(owner.repository.RootPath())
 	if err != nil {
 		t.Fatal(err)
@@ -98,10 +95,7 @@ func TestSessionServiceResumeAcrossProcesses(t *testing.T) {
 	if factory.restoreCalls.Load() != 0 || factory.networkCalls.Load() != 0 {
 		t.Fatalf("busy provider calls restore/network = %d/%d", factory.restoreCalls.Load(), factory.networkCalls.Load())
 	}
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	after := readAppTestFile(t, path)
 	if string(after) != string(before) {
 		t.Fatal("cross-process busy resume modified journal bytes")
 	}

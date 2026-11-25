@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -46,25 +45,16 @@ func TestQuestionTerminalHelper(t *testing.T) {
 	dir := privateAppTempDir(t)
 	configuration := filepath.Join(dir, "config.json")
 	text := fmt.Sprintf(`{"provider":"openai","base_url":%q,"api_key":"fixture-key","model":"fixture-model"}`, os.Getenv("EASYCODE_QUESTION_FIXTURE_URL"))
-	if err := os.WriteFile(configuration, []byte(text), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, configuration, []byte(text), 0600)
 	options := Options{ConfigPath: configuration, SessionDataRoot: filepath.Join(dir, "sessions"), SessionCatalogPath: filepath.Join(dir, "catalog.json"), Input: os.Stdin, Output: os.Stdout}
 	var outcome Outcome
 	if os.Getenv("EASYCODE_QUESTION_PICKER") == "1" {
-		data, err := os.ReadFile("../session/testdata/current/question_openai_complete.jsonl")
-		if err != nil {
-			t.Fatal(err)
-		}
+		data := readAppTestFile(t, "../session/testdata/current/question_openai_complete.jsonl")
 		root, _, _ := installPreviewFixture(t, data)
 		options.SessionDataRoot = root
 		outcome = RunSessionPicker(context.Background(), options, true)
 	} else {
-		fd, err := strconv.Atoi(os.Getenv("EASYCODE_QUESTION_ACK_FD"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		ack := os.NewFile(uintptr(fd), "question-ack")
+		ack := openTerminalAck(t, "EASYCODE_QUESTION_ACK_FD", "question-ack")
 		defer ack.Close()
 		cfg, err := config.Load(configuration)
 		if err != nil {
@@ -74,10 +64,7 @@ func TestQuestionTerminalHelper(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		resources, err := openChatResourcesWithHooks(context.Background(), cfg, dataPaths{sessionRoot: options.SessionDataRoot}, "", false, cwd, chatResourceHooks{interactiveApprovals: true})
-		if err != nil {
-			t.Fatal(err)
-		}
+		resources := mustOpenChatResourcesWithHooks(t, context.Background(), cfg, dataPaths{sessionRoot: options.SessionDataRoot}, "", false, cwd, chatResourceHooks{interactiveApprovals: true})
 		model, err := assembleChatModel(context.Background(), resources)
 		if err != nil {
 			t.Fatal(err)
@@ -86,9 +73,7 @@ func TestQuestionTerminalHelper(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := resources.close(context.Background()); err != nil {
-			t.Fatal(err)
-		}
+		closeAppTestResources(t, resources)
 		outcome = Outcome{Class: ExitSuccess}
 	}
 	fmt.Fprintf(os.Stdout, "\nQUESTION_EXIT=%d\n", outcome.ExitCode())

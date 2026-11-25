@@ -15,9 +15,7 @@ func TestExecShutdownTimeoutRetainsTurnUntilExecutorCleanup(t *testing.T) {
 	_, invocation, executor := runtimeExecFixture(t, journal)
 	exec, _ := invocation.Exec()
 	ready, err := tool.NewExecReadyCall(exec.ProviderCallID(), exec.Input())
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	conversation := &fakeToolConversation{fakeConversation: &fakeConversation{stream: fixedStream(completedProviderEventWithSample(t, newPreparedSampleWithReady(t, ready)))}}
 	config := testRuntimeConfig(t, journal)
 	config.ToolBinding = testRuntimeToolBinding(t, func(tools *tool.Components) { tools.PrepareExec, tools.Exec = executor, executor })
@@ -25,9 +23,7 @@ func TestExecShutdownTimeoutRetainsTurnUntilExecutorCleanup(t *testing.T) {
 	config.GenerateInvocationID = func() (tool.InvocationID, error) { return invocation.InvocationID(), nil }
 	config.GenerateTurnID = func() (domain.TurnID, error) { return runtimeTurnID, nil }
 	runtime, err := New(conversation, config)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	entered, cancelled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	executor.onExecute = func(ctx context.Context) {
 		close(entered)
@@ -41,9 +37,7 @@ func TestExecShutdownTimeoutRetainsTurnUntilExecutorCleanup(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = facade.Shutdown(context.Background()) })
 	events, err := facade.Submit(context.Background(), "run")
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	for event := range events {
 		if event.Kind == protocol.EventToolStarted {
 			break
@@ -52,9 +46,7 @@ func TestExecShutdownTimeoutRetainsTurnUntilExecutorCleanup(t *testing.T) {
 			continue
 		}
 		payload, err := protocol.DecodeToolApprovalRequested(event)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		if err := facade.ResolveApproval(context.Background(), event.TurnID, payload, protocol.ApprovalAllowOnce, ""); err != nil {
 			t.Fatal(err)
 		}

@@ -4,14 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"testing"
 
@@ -31,18 +29,13 @@ func TestPickerTerminalHelper(t *testing.T) {
 		runInChatPickerTerminal(t, directory)
 		return
 	}
-	data, err := os.ReadFile("../session/testdata/current/input_only_openai.jsonl")
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := readAppTestFile(t, "../session/testdata/current/input_only_openai.jsonl")
 	root, _, _ := installPreviewFixture(t, data)
-	if err = os.Chmod(filepath.Dir(root), 0700); err != nil {
+	if err := os.Chmod(filepath.Dir(root), 0700); err != nil {
 		t.Fatal(err)
 	}
 	configuration := filepath.Join(filepath.Dir(root), "config.json")
-	if err = os.WriteFile(configuration, []byte(`{"provider":"openai","base_url":"https://example.invalid","api_key":"fixture-key","model":"fixture-model"}`), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeAppTestFile(t, configuration, []byte(`{"provider":"openai","base_url":"https://example.invalid","api_key":"fixture-key","model":"fixture-model"}`), 0600)
 	outcome := RunSessionPicker(context.Background(), Options{ConfigPath: configuration, SessionDataRoot: root, SessionCatalogPath: filepath.Join(filepath.Dir(root), "catalog.json"), Input: os.Stdin, Output: os.Stdout}, true)
 	fmt.Fprintf(os.Stdout, "\nPICKER_EXIT=%d\n", outcome.ExitCode())
 }
@@ -51,7 +44,7 @@ func runInChatPickerTerminal(t *testing.T, directory string) {
 	t.Helper()
 	home := filepath.Join(directory, "home")
 	t.Setenv("HOME", home)
-	var want int32 = 3
+	want := 3
 	skill := os.Getenv("EASYCODE_PICKER_EXPECT_SKILL") == "1"
 	rewind := os.Getenv("EASYCODE_PICKER_EXPECT_REWIND") == "1"
 	if skill {
@@ -60,27 +53,24 @@ func runInChatPickerTerminal(t *testing.T, directory string) {
 		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(path, []byte("---\ndescription: Use the local resume skill\n---\ninteractive-resume-skill-body $ARGUMENTS"), 0600); err != nil {
-			t.Fatal(err)
-		}
+		writeAppTestFile(t, path, []byte("---\ndescription: Use the local resume skill\n---\ninteractive-resume-skill-body $ARGUMENTS"), 0600)
 	}
 	if rewind {
 		want += 2
 	}
-	var requests atomic.Int32
+	var recorder requestRecorder
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		number := requests.Add(1)
+		index, body := recorder.record(t, request)
+		number := index + 1
 		if skill && number == 4 {
-			body, err := io.ReadAll(request.Body)
-			if err != nil || !strings.Contains(string(body), "interactive-resume-skill-body exact args") {
-				t.Errorf("interactive request omitted the resumed Skill body: %v", err)
+			if !strings.Contains(string(body), "interactive-resume-skill-body exact args") {
+				t.Error("interactive request omitted the resumed Skill body")
 			}
 		}
 		if rewind && number == 5 {
-			body, err := io.ReadAll(request.Body)
-			if err != nil || !strings.Contains(string(body), "rewind fixture prompt revised") ||
+			if !strings.Contains(string(body), "rewind fixture prompt revised") ||
 				strings.Contains(string(body), `"rewind fixture prompt"`) {
-				t.Errorf("rewind submitted unexpected history or draft: %v", err)
+				t.Error("rewind submitted unexpected history or draft")
 			}
 		}
 		writer.Header().Set("Content-Type", "text/event-stream")
@@ -104,19 +94,14 @@ func runInChatPickerTerminal(t *testing.T, directory string) {
 		if name == "foreign" {
 			workspace = t.TempDir()
 		}
-		resources, err := openChatResources(context.Background(), cfg, storage, "", workspace)
-		if err != nil {
-			t.Fatal(err)
-		}
+		resources := mustOpenChatResources(t, context.Background(), cfg, storage, "", workspace)
 		t.Cleanup(func() { _ = resources.close(context.Background()) })
 		submitAppTurn(t, resources, name+" prompt")
 		if rewind && name == "source" {
 			submitAppTurn(t, resources, "rewind fixture prompt")
 		}
 		threads[name] = string(resources.identity.ThreadID)
-		if err := resources.close(context.Background()); err != nil {
-			t.Fatal(err)
-		}
+		closeAppTestResources(t, resources)
 	}
 	data, err := json.Marshal(threads)
 	if err != nil {
@@ -133,7 +118,7 @@ func runInChatPickerTerminal(t *testing.T, directory string) {
 	} else {
 		outcome = Run(ctx, options)
 	}
-	if count := requests.Load(); count != want {
+	if count := len(recorder.snapshot()); count != want {
 		t.Errorf("unexpected Provider request count after session navigation: got %d, want %d", count, want)
 	}
 	if rewind {

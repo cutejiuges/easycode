@@ -86,9 +86,7 @@ func TestReplayPlannerReportsToolRecoveryStates(t *testing.T) {
 				test.appendTail(fixture, invocation)
 			}
 			plan, err := NewReplayPlanner().Plan(fixture.loaded())
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			if plan.ToolRecovery == nil || plan.ToolRecovery.TurnID() != testTurnID ||
 				plan.ToolRecovery.NextSampleIndex() != 1 || plan.ToolRecovery.ToolOutputsCommitted() != test.outputsCommitted ||
 				len(plan.ToolRecovery.Calls()) != test.wantCalls {
@@ -105,47 +103,33 @@ func TestReplayPlannerReportsToolRecoveryStates(t *testing.T) {
 func testReplayInvocation(t *testing.T, invocationValue string, callValue string) tool.Invocation {
 	t.Helper()
 	invocationID, err := tool.ParseInvocationID(invocationValue)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	callID, err := tool.ParseProviderCallID(callValue)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	input, _ := tool.NewReadInput("README.md", 1, 20)
 	ready, _ := tool.NewReadReadyCall(callID, input)
 	invocation, err := tool.NewInvocation(invocationID, ready)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return invocation
 }
 
 func testReplayGlobInvocation(t *testing.T, invocationValue string, callValue string) tool.Invocation {
 	t.Helper()
 	invocationID, err := tool.ParseInvocationID(invocationValue)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	callID, err := tool.ParseProviderCallID(callValue)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	input, _ := tool.NewGlobInput("**/*.go", "", 100)
 	ready, _ := tool.NewGlobReadyCall(callID, input)
 	invocation, err := tool.NewInvocation(invocationID, ready)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return invocation
 }
 
 func mustPatchApprovalDraft(t *testing.T, invocation tool.Invocation, fingerprint tool.CandidateFingerprint, outcome tool.ApprovalOutcome) RecordDraft {
 	t.Helper()
 	metadata, err := NewApprovalMetadata(invocation)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	source := ApprovalSourceInteractive
 	if outcome == tool.ApprovalOutcomeAllowFromSession {
 		source = ApprovalSourceSessionGrant
@@ -154,27 +138,21 @@ func mustPatchApprovalDraft(t *testing.T, invocation tool.Invocation, fingerprin
 	draft, err := NewToolApprovalDecidedDraft(testTurnID, ToolApprovalDecidedPayload{
 		RequestID: requestID, InvocationID: invocation.InvocationID(), Fingerprint: fingerprint, Outcome: outcome, Source: source, Metadata: metadata,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return draft
 }
 
 func mustReadyDraftForReplay(t *testing.T, invocation tool.Invocation, sampleIndex uint32, callIndex uint32) RecordDraft {
 	t.Helper()
 	draft, err := NewToolCallReadyDraft(testTurnID, invocation, sampleIndex, callIndex)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return draft
 }
 
 func mustStartedDraftForReplay(t *testing.T, invocation tool.Invocation) RecordDraft {
 	t.Helper()
 	draft, err := NewToolExecutionStartedDraft(testTurnID, invocation.InvocationID())
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return draft
 }
 
@@ -194,9 +172,7 @@ func mustResultDraftForReplay(t *testing.T, invocation tool.Invocation) RecordDr
 		t.Fatal("unsupported replay invocation capability")
 	}
 	draft, err := NewToolCallResultDraft(testTurnID, result)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return draft
 }
 

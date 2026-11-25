@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -20,17 +18,13 @@ func TestLoaderRepairsTruncatedFinalLineIdempotently(t *testing.T) {
 	loader, repository := writeRawJournal(t, content)
 	defer repository.Close()
 	first, err := loader.Load(context.Background(), testThreadID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	if !first.Repair.Repaired || first.Repair.Kind != RepairHalfLine ||
 		first.Repair.RemovedBytes == 0 || len(first.Records) != 1 {
 		t.Fatalf("first Load() = %#v", first)
 	}
 	second, err := loader.Load(context.Background(), testThreadID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	if second.Repair.Repaired || len(second.Records) != 1 || second.NextSequence != 2 {
 		t.Fatalf("second Load() = %#v", second)
 	}
@@ -48,20 +42,11 @@ func TestLoaderRepairsWholeTrailingIncompleteBatch(t *testing.T) {
 	loader, repository := writeRawJournal(t, content)
 	defer repository.Close()
 	result, err := loader.Load(context.Background(), testThreadID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	if !result.Repair.Repaired || result.Repair.Kind != RepairIncompleteBatch || len(result.Records) != 1 {
 		t.Fatalf("Load() = %#v", result)
 	}
-	path, _ := repository.JournalPath(testThreadID)
-	remaining, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(remaining, committed) {
-		t.Fatal("repair changed bytes before the incomplete batch")
-	}
+	assertJournalBytes(t, repository, committed)
 }
 
 func TestLoaderRejectsAmbiguousEnvelopeAndMiddleCorruption(t *testing.T) {
@@ -111,9 +96,7 @@ func TestLoaderRejectsChecksumSequenceAndIdentityDrift(t *testing.T) {
 	base.BatchSize = 1
 	base.Timestamp = time.Unix(0, 0).UTC()
 	_, encoded, err := EncodeRecord(base)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 
 	t.Run("checksum", func(t *testing.T) {
 		line := bytes.Replace(encoded, []byte(`"payload":{}`), []byte(`"payload":{"changed":true}`), 1)
@@ -188,13 +171,9 @@ func encodeTestRecord(
 		Identity{SessionID: testSessionID, ThreadID: testThreadID},
 		draft, sequence, time.Unix(0, 0).UTC(), batchID, batchIndex, batchSize,
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	_, encoded, err := EncodeRecord(record)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return encoded
 }
 
@@ -213,33 +192,7 @@ func (loader *testJournalLoader) Load(ctx context.Context, _ domain.ThreadID) (L
 
 func writeRawJournal(t *testing.T, content []byte) (*testJournalLoader, *Repository) {
 	t.Helper()
-	repository, err := OpenOrCreateRepository(filepath.Join(t.TempDir(), "sessions"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	lease, err := repository.Create(context.Background(), testThreadID)
-	if err != nil {
-		_ = repository.Close()
-		t.Fatal(err)
-	}
-	if err := lease.Close(); err != nil {
-		_ = repository.Close()
-		t.Fatal(err)
-	}
-	path, err := repository.JournalPath(testThreadID)
-	if err != nil {
-		_ = repository.Close()
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, content, 0o600); err != nil {
-		_ = repository.Close()
-		t.Fatal(err)
-	}
-	lease, err = repository.Open(context.Background(), testThreadID)
-	if err != nil {
-		_ = repository.Close()
-		t.Fatal(err)
-	}
+	repository, lease := installCurrentFixture(t, content)
 	t.Cleanup(func() { _ = lease.Close() })
 	return &testJournalLoader{loader: NewLoader(), lease: lease}, repository
 }

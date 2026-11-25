@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 
@@ -40,9 +39,7 @@ func TestPreCompactReplayKeepsStopRecoveryAtEachBoundary(t *testing.T) {
 				}
 			}
 			plan, err := planner.Plan(loaded)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			if name == "stop_compaction_failed.jsonl" {
 				if plan.InterruptedCompaction != nil || len(plan.Compactions) != 1 || plan.Compactions[0].Failed == nil || plan.Compactions[0].Failed.Code != protocol.CompactionFailureHookDenied || plan.StopRecovery == nil || !plan.StopRecovery.State().PendingFeedback() {
 					t.Fatal("the hook denial did not close only the compaction")
@@ -72,14 +69,10 @@ func TestPreCompactReplayRejectsForgedEvidenceBeforeTornTailRepair(t *testing.T)
 		}},
 		{"foreign trigger despite valid plan digest", EventCompactionStarted, func(t *testing.T, record *Record) {
 			start, err := DecodeCompactionStartedPayload(*record)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			start.PreCompact.checks[0].Matcher = "manual"
 			start.PreCompact.digest, err = start.PreCompact.computeDigest(start.ID, start.Scope, start.Source)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			record.Payload, _ = codec.MarshalStable(start)
 		}},
 		{"singleton with forged batch width", EventPreCompactHookStarted, func(_ *testing.T, record *Record) {
@@ -97,10 +90,7 @@ func TestPreCompactReplayRejectsForgedEvidenceBeforeTornTailRepair(t *testing.T)
 		t.Run(test.name, func(t *testing.T) {
 			var content []byte
 			for i, row := range rows {
-				record, err := DecodeRecord(row)
-				if err != nil {
-					t.Fatal(err)
-				}
+				record := decodeFixtureRecord(t, row)
 				if record.EventKind != test.kind {
 					continue
 				}
@@ -126,11 +116,7 @@ func TestPreCompactReplayRejectsForgedEvidenceBeforeTornTailRepair(t *testing.T)
 			if err == nil {
 				t.Fatal("accepted forged check evidence", test.name)
 			}
-			path, _ := repo.JournalPath(testThreadID)
-			after, err := os.ReadFile(path)
-			if err != nil || !bytes.Equal(content, after) {
-				t.Fatal("invalid evidence changed journal bytes", err)
-			}
+			assertJournalBytes(t, repo, content)
 		})
 	}
 }
@@ -140,14 +126,9 @@ func TestPreCompactReplayAccountsForFocusSeparators(t *testing.T) {
 	repo, lease := installCurrentFixture(t, readCurrentFixture(t, "stop_compaction_started.jsonl"))
 	defer repo.Close()
 	defer lease.Close()
-	loaded, err := NewLoader().Load(ctx, lease)
-	if err != nil {
-		t.Fatal(err)
-	}
+	loaded := loadFixtureJournal(t, ctx, lease)
 	start, err := DecodeCompactionStartedPayload(loaded.Records[11])
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	first := start.PreCompact.checks[0]
 	start.PreCompact.checks = make([]compactionHookReference, 4)
 	for i, id := range []string{"one", "two", "three", "four"} {
@@ -156,41 +137,27 @@ func TestPreCompactReplayAccountsForFocusSeparators(t *testing.T) {
 		start.PreCompact.checks[i] = reference
 	}
 	start.PreCompact.digest, err = start.PreCompact.computeDigest(start.ID, start.Scope, start.Source)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	startDraft, err := NewCompactionStartedDraft(start.Scope, start.ID, start.Source, start.PreCompact)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	for _, overLimit := range []bool{false, true} {
 		prefix := append([]Record(nil), loaded.Records[:11]...)
 		appendDraft := func(draft RecordDraft, err error) {
 			t.Helper()
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			seq := uint64(len(prefix) + 1)
 			record, err := BuildRecord(loaded.Identity, draft, seq, loaded.Records[0].Timestamp, seq, 0, 1)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			record, _, err = EncodeRecord(record)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			prefix = append(prefix, record)
 		}
 		appendDraft(startDraft, nil)
 		target, err := domain.NewPreCompactHookTarget(start.ID, start.Scope)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 		for i := range start.PreCompact.checks {
 			id, err := domain.NewPreCompactHookRunIdentity(target, start.PreCompact.Digest(), i)
-			if err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
 			appendDraft(NewPreCompactHookStartedDraft(id))
 			count := domain.MaxHookFeedbackBytes
 			if i == len(start.PreCompact.checks)-1 && !overLimit {
@@ -210,13 +177,9 @@ func TestPreCompactReplayAccountsForFocusSeparators(t *testing.T) {
 func forgeCompactionRecord(t *testing.T, record Record) []byte {
 	t.Helper()
 	digest, err := recordChecksum(record)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	record.Checksum = digest
 	encoded, err := codec.MarshalStable(record)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	return encoded
 }
