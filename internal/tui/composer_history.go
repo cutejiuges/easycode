@@ -10,6 +10,7 @@ import (
 type composerDraft struct {
 	text   string
 	cursor int
+	rewind recalledDraft
 }
 
 type composerHistory struct {
@@ -55,7 +56,7 @@ func (c *composer) recall(delta int) {
 		if delta > 0 {
 			return
 		}
-		h.saved = composerDraft{c.text, c.cursor}
+		h.saved = composerDraft{c.text, c.cursor, c.rewind}
 		h.index = len(h.entries)
 		h.browsing = true
 	}
@@ -65,11 +66,17 @@ func (c *composer) recall(delta int) {
 	}
 	if target == len(h.entries) {
 		c.text, c.cursor = h.saved.text, h.saved.cursor
+		c.rewind = h.saved.rewind
 		h.endNavigation()
 	} else {
 		h.index = target
 		c.text = h.entries[target]
 		c.cursor = len(c.text)
+		if c.text == h.saved.text {
+			c.rewind = h.saved.rewind
+		} else {
+			c.rewind = recalledDraft{}
+		}
 	}
 	c.revision++
 	c.preferred = -1

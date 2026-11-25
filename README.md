@@ -36,6 +36,8 @@ easycode resume
 
 在已有对话的空闲会话中，输入 `/branch [标题]` 或 `/fork [标题]` 从当前已提交历史创建分支。成功后进入分支，界面给出返回源线程的 `/resume <thread-id>`。分支沿用当前工作区和模型，各自保存后续对话及标题。可通过会话列表、选择器或 `easycode --resume <thread-id>` 恢复。工作区文件由两条对话共用，修改仍按当前线程的工具审批执行。 [会话分支规格](openspec/specs/session/branch/spec.md)
 
+想修改前一轮的提示时，在空闲会话输入 `/rewind`。用上下键选择回合，按 Enter 查看范围，再选择 `Branch before this prompt` 确认。列表最多显示最近 200 个在当前线程内已结束并已提交初始输入的回合，切点前须已有提交输入。新分支从所选回合开始前继续，使用当前工作区文件，并将该回合的首条初始输入填入编辑框。修改文字后按 Enter 提交。原样发送时，按 Enter 打开确认，再选择 `Send unchanged`。草稿只在这次进入分支时回填，原对话可通过界面给出的 `/resume <thread-id>` 继续。
+
 在空闲会话中输入 `/plan` 或按 `Shift+Tab` 进入只读 Plan Mode。模型可以读取和搜索工作区、查看已授权输出和技能、提问并维护任务进度。此时修改文件和执行命令的工具不可用。
 
 模型给出完整方案后，可滚动审阅并选择 `Keep planning` 或 `Implement with normal approvals`。输入 `/plan review` 可重新打开当前有效方案。确认实施会在同一会话开启新的 `Default` 回合，即使首个请求前发生自动压缩，也会携带所审方案的完整原文。修改文件和执行命令仍各自经过普通审批。

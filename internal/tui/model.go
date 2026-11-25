@@ -96,6 +96,7 @@ type Model struct {
 	title                     sessionTitleView
 	workMode                  workModeView
 	planReview                planReviewView
+	recalledSend              rewindChoice
 
 	hooks                   hookBrowser
 	hookTrust               *hookTrustOverlay
@@ -268,6 +269,9 @@ func (model Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.browser.markdown.preserveAnchor = true
 		model.width = value.Width
 		model.height = value.Height
+		if model.recalledSend == rewindProceed && !model.recalledSendFits() {
+			model.recalledSend = rewindBack
+		}
 		model.contextScroll = min(model.contextScroll, model.contextScrollLimit())
 		model.composer.resize(value.Width, value.Height)
 		model.restoreTaskPanelAnchor(taskAnchor)
@@ -466,6 +470,8 @@ func (model Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return model.handleSessionTitleKey(key)
 	case focusPlanReview:
 		return model.handlePlanReviewKey(key)
+	case focusRecalledSend:
+		return model.handleRecalledSendKey(key)
 	}
 	if model.planReview.starting != "" && (key.Type == tea.KeyEsc || key.Type == tea.KeyCtrlC) {
 		return model, nil
@@ -539,6 +545,9 @@ func (model Model) handleComposerKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var head, remainder string
 	if !key.Paste && key.Type == tea.KeyEnter && !key.Alt {
 		head, remainder = domain.SplitInputHead(model.composer.text)
+		if model.composer.rewind.intent != domain.InputSkillDefault {
+			head = ""
+		}
 		if model.handoffEnabled && isHandoffSlash(head) &&
 			(!newline || isBranchSlash(head) && model.composer.cursor == len(model.composer.text)) {
 			return model.submitHandoff(head, remainder)
@@ -663,6 +672,10 @@ func (model Model) handleComposerKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		model.suppressPastedFiles()
 	}
 	if intent == composerSubmit {
+		if model.composer.rewind.unedited {
+			model.recalledSend = rewindBack
+			return model, nil
+		}
 		return model.submitComposer(head, remainder)
 	}
 	return model, nil
@@ -716,7 +729,7 @@ func (model Model) submitComposer(head, remainder string) (tea.Model, tea.Cmd) {
 		model.errorSummary = "input_queue_full: take or discard returned inputs first"
 		return model, nil
 	}
-	draft, err := domain.NewInteractiveInputDraft(model.composer.text)
+	draft, err := domain.NewInteractiveInputDraftWithSkillIntent(model.composer.text, model.composer.rewind.intent)
 	if err != nil {
 		model.errorSummary = "invalid_input: " + err.Error()
 		return model, nil
@@ -1138,6 +1151,8 @@ func (model Model) View() string {
 		}
 	case focusPlanReview:
 		return model.renderPlanReview()
+	case focusRecalledSend:
+		return model.renderRecalledSend()
 	}
 	if model.composer.height <= 5 {
 		status := model.title.status()
@@ -1145,7 +1160,7 @@ func (model Model) View() string {
 			status = "Starting plan implementation…"
 		}
 		if status == "" && model.errorSummary != "" {
-			if head, _ := domain.SplitInputHead(model.composer.text); head == "/rename" || isBranchSlash(head) || model.workMode.enabled {
+			if head, _ := domain.SplitInputHead(model.composer.text); head == "/rename" || isBranchSlash(head) || head == "/"+rewindCommandName || model.workMode.enabled {
 				status = "Error: " + model.errorSummary
 			}
 		}

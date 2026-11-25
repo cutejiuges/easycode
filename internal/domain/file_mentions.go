@@ -276,11 +276,21 @@ func FindFileMentionTarget(text string, cursor int) (FileMentionTarget, bool) {
 	return target, found
 }
 
+// InputSkillIntent 表示宿主为当前草稿选择的首词解释。
+type InputSkillIntent uint8
+
+const (
+	InputSkillDefault InputSkillIntent = iota
+	InputSkillLiteral
+	InputSkillRequired
+)
+
 // InputDraft 区分普通文本与明确交互文件意图；内容准备之后才能接纳。
 type InputDraft struct {
 	text        string
 	references  []FileReference
 	interactive bool
+	skillIntent InputSkillIntent
 }
 
 // NewLiteralInputDraft 保持 headless 文本含义，不激活其中的 @。
@@ -293,16 +303,25 @@ func NewLiteralInputDraft(text string) (InputDraft, error) {
 
 // NewInteractiveInputDraft 仅解析真实原文，不读取文件或执行命令。
 func NewInteractiveInputDraft(text string) (InputDraft, error) {
+	return NewInteractiveInputDraftWithSkillIntent(text, InputSkillDefault)
+}
+
+// NewInteractiveInputDraftWithSkillIntent 保留交互文件语法和显式首词意图。
+func NewInteractiveInputDraftWithSkillIntent(text string, intent InputSkillIntent) (InputDraft, error) {
+	if intent > InputSkillRequired {
+		return InputDraft{}, NewFileFailure(FileInvalid)
+	}
 	refs, err := ParseFileReferences(text)
 	if err != nil {
 		return InputDraft{}, err
 	}
-	return InputDraft{text: text, references: refs, interactive: true}, nil
+	return InputDraft{text: text, references: refs, interactive: true, skillIntent: intent}, nil
 }
 
 func (d InputDraft) Text() string                    { return d.text }
 func (d InputDraft) FileReferences() []FileReference { return slices.Clone(d.references) }
 func (d InputDraft) Interactive() bool               { return d.interactive }
+func (d InputDraft) SkillIntent() InputSkillIntent   { return d.skillIntent }
 
 // ValidateFiles 核对附件与已解析引用的顺序。文本入口仍须独立校验草稿。
 func (d InputDraft) ValidateFiles(files FileAttachments) error {

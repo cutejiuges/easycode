@@ -89,7 +89,7 @@ func preparePickerCandidate(
 
 func newBranchPickerExecutor(applicationConfig config.Config, paths dataPaths, cwd string, pluginDirs []string, environment *chatEnvironment) pickerBranchExecutor {
 	pluginDirs = append([]string(nil), pluginDirs...)
-	return func(ctx, lifetime context.Context, request tui.PickerRequest, source *chatResources, admit func(domain.ThreadID) bool) pickerExecution {
+	return func(ctx, lifetime context.Context, request tui.PickerRequest, source *chatResources, selection *rewindCandidate, admit func(domain.ThreadID) bool) pickerExecution {
 		attempt := &recoveryAttempt{}
 		execution := pickerExecution{result: tui.PickerResult{Request: request}, recovery: attempt}
 		writer, ok := source.writer.(*session.JournalWriter)
@@ -97,12 +97,23 @@ func newBranchPickerExecutor(applicationConfig config.Config, paths dataPaths, c
 			execution.result.Error = "Source session journal is unavailable"
 			return execution
 		}
+		if selection != nil {
+			draft, err := source.transcriptQueries.rewindDraft(ctx, request.RewindSelection, *selection)
+			if err != nil {
+				execution.result.Error = "Historical prompt is unavailable; reopen rewind"
+				return execution
+			}
+			execution.draft = draft
+		}
 		target, err := domain.GenerateThreadID()
 		if err != nil {
 			execution.result.Error = "Session branch identity could not be generated"
 			return execution
 		}
 		creation := &branchCreation{source: writer, target: target, title: request.Title, admit: admit}
+		if selection != nil {
+			creation.historical = &selection.cut
+		}
 		hooks := chatResourceHooks{
 			interactiveApprovals: true, recovery: attempt, pluginDirs: pluginDirs, pluginCWD: cwd,
 			environment: environment, lifetime: lifetime, expectedResumeCWD: cwd, branch: creation,

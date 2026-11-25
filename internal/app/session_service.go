@@ -17,7 +17,7 @@ type sessionService struct {
 	repository        *session.Repository
 	expectedResumeCWD string
 	load              func(context.Context, *session.JournalLease) (session.LoadResult, error)
-	plan              func(session.LoadResult) (session.ReplayPlan, error)
+	plan              func(context.Context, session.LoadResult) (session.ReplayPlan, error)
 	start             func(*session.JournalLease, session.Identity, uint64) (journalStartResult, error)
 }
 
@@ -58,7 +58,7 @@ func newSessionService(repository *session.Repository) *sessionService {
 	return &sessionService{
 		repository: repository,
 		load:       session.NewLoader().Load,
-		plan:       session.NewReplayPlanner().Plan,
+		plan:       session.NewReplayPlanner().PlanContext,
 		start: func(lease *session.JournalLease, identity session.Identity, nextSequence uint64) (journalStartResult, error) {
 			writer, startErr := session.StartJournalWriter(lease, identity, nextSequence)
 			if startErr != nil {
@@ -225,9 +225,9 @@ func (service *sessionService) restore(
 	threadID domain.ThreadID,
 	loaded session.LoadResult,
 ) (assembledSession, session.ReplayPlan, error) {
-	plan, err := service.plan(loaded)
+	plan, err := service.plan(ctx, loaded)
 	if err != nil {
-		return assembledSession{}, session.ReplayPlan{}, fault.Wrap(fault.CodeSessionCorruption, "validate session replay failed", err)
+		return assembledSession{}, session.ReplayPlan{}, resumeValidationError("validate session replay failed", err)
 	}
 	metadata := plan.SessionMetadata
 	if plan.Identity.ThreadID != threadID {

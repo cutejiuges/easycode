@@ -72,6 +72,9 @@ func acceptBoundInputBatch(plan *replayAccumulator, active *activeReplayTurn, ba
 	for _, id := range payload.InputIDs {
 		seen[id] = struct{}{}
 	}
+	if plan.historical != nil && payload.Placement == domain.InputInitial {
+		plan.historical.bindInput(payload.InputIDs, batch[1].Sequence)
+	}
 	plan.recordNative(NativeCommitRecord{Sequence: batch[1].Sequence, TurnID: active.turnID, Role: domain.NativeCommitUserInputs, Inputs: a, Commit: commit})
 	active.nextSampleReady = true
 	active.initialInputs = true

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"math"
 	"os"
@@ -24,12 +25,14 @@ type journalFile interface {
 type writerRequest struct {
 	drafts   []RecordDraft
 	prefix   *branchCopyRequest
+	history  *historicalReadRequest
 	response chan appendResponse
 }
 
 type branchCopyRequest struct {
 	ctx         context.Context
 	destination io.Writer
+	historical  HistoricalCut
 	response    chan branchCopyResponse
 }
 
@@ -264,8 +267,13 @@ func (writer *JournalWriter) run(nextSequence uint64) {
 }
 
 func (writer *JournalWriter) handleRequest(nextSequence uint64, request writerRequest) uint64 {
+	if request.history != nil {
+		loaded, err := writer.readHistorySnapshot(request.history.ctx, nextSequence)
+		request.history.response <- historicalReadResponse{loaded: loaded, err: err}
+		return nextSequence
+	}
 	if request.prefix != nil {
-		cut, err := writer.copyBranchPrefix(request.prefix.ctx, request.prefix.destination, nextSequence)
+		cut, err := writer.copyBranchPrefix(request.prefix.ctx, request.prefix.destination, nextSequence, request.prefix.historical)
 		request.prefix.response <- branchCopyResponse{cut: cut, err: err}
 		return nextSequence
 	}
@@ -324,8 +332,8 @@ func (writer *JournalWriter) append(nextSequence uint64, drafts []RecordDraft) (
 	return cloneRecords(records), int64(written), nil
 }
 
-func (writer *JournalWriter) branchPrefix(ctx context.Context, destination io.Writer) (branchCut, error) {
-	request := &branchCopyRequest{ctx: ctx, destination: destination, response: make(chan branchCopyResponse, 1)}
+func (writer *JournalWriter) branchPrefix(ctx context.Context, destination io.Writer, historical HistoricalCut) (branchCut, error) {
+	request := &branchCopyRequest{ctx: ctx, destination: destination, historical: historical, response: make(chan branchCopyResponse, 1)}
 	if err := writer.enqueue(ctx, writerRequest{prefix: request}); err != nil {
 		return branchCut{}, err
 	}
@@ -333,7 +341,7 @@ func (writer *JournalWriter) branchPrefix(ctx context.Context, destination io.Wr
 	return result.cut, result.err
 }
 
-func (writer *JournalWriter) copyBranchPrefix(ctx context.Context, destination io.Writer, nextSequence uint64) (branchCut, error) {
+func (writer *JournalWriter) copyBranchPrefix(ctx context.Context, destination io.Writer, nextSequence uint64, historical HistoricalCut) (branchCut, error) {
 	if err := contextError(ctx); err != nil {
 		return branchCut{}, err
 	}
@@ -347,7 +355,19 @@ func (writer *JournalWriter) copyBranchPrefix(ctx context.Context, destination i
 	if err := writer.checkBranchSourceSize(file); err != nil {
 		return branchCut{}, err
 	}
-	digest := sha256.New()
+	prefixBytes, prefixSequence := writer.committedBytes, nextSequence-1
+	var wholeDigest hash.Hash
+	if historical.tip.source != nil {
+		if historical.tip.source != writer || historical.tip.sequence != prefixSequence {
+			return branchCut{}, errHistoricalCutStale
+		}
+		if historical.tip.bytes != writer.committedBytes {
+			return branchCut{}, writer.MarkBranchSourceUnsafe(fmt.Errorf("historical session snapshot length has changed"))
+		}
+		prefixBytes, prefixSequence = historical.bytes, historical.sequence
+		wholeDigest = sha256.New()
+	}
+	prefixDigest := sha256.New()
 	var buffer [64 << 10]byte
 	for offset := int64(0); offset < writer.committedBytes; {
 		if err := contextError(ctx); err != nil {
@@ -357,10 +377,16 @@ func (writer *JournalWriter) copyBranchPrefix(ctx context.Context, destination i
 		if count, err := file.ReadAt(chunk, offset); err != nil || count != len(chunk) {
 			return branchCut{}, writer.MarkBranchSourceUnsafe(errors.Join(io.ErrUnexpectedEOF, err))
 		}
-		if count, err := destination.Write(chunk); err != nil || count != len(chunk) {
-			return branchCut{}, fmt.Errorf("write branch staging prefix: %w", errors.Join(io.ErrShortWrite, err))
+		if offset < prefixBytes {
+			prefix := chunk[:min(int64(len(chunk)), prefixBytes-offset)]
+			if count, err := destination.Write(prefix); err != nil || count != len(prefix) {
+				return branchCut{}, fmt.Errorf("write branch staging prefix: %w", errors.Join(io.ErrShortWrite, err))
+			}
+			_, _ = prefixDigest.Write(prefix)
 		}
-		_, _ = digest.Write(chunk)
+		if wholeDigest != nil {
+			_, _ = wholeDigest.Write(chunk)
+		}
 		offset += int64(len(chunk))
 	}
 	if err := contextError(ctx); err != nil {
@@ -369,7 +395,10 @@ func (writer *JournalWriter) copyBranchPrefix(ctx context.Context, destination i
 	if err := writer.checkBranchSourceSize(file); err != nil {
 		return branchCut{}, err
 	}
-	return branchCut{writer.identity, nextSequence - 1, writer.committedBytes, hex.EncodeToString(digest.Sum(nil))}, nil
+	if wholeDigest != nil && historical.tip.digest != hex.EncodeToString(wholeDigest.Sum(nil)) {
+		return branchCut{}, writer.MarkBranchSourceUnsafe(fmt.Errorf("historical session source bytes have changed"))
+	}
+	return branchCut{writer.identity, prefixSequence, prefixBytes, hex.EncodeToString(prefixDigest.Sum(nil))}, nil
 }
 
 func (writer *JournalWriter) checkBranchSourceSize(file journalPrefixSource) error {

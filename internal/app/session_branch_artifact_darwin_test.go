@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -28,8 +29,14 @@ func TestBranchArtifactHistoryKeepsOutputAuthorityWithItsProducer(t *testing.T) 
 		w.Header().Set("Content-Type", "text/event-stream")
 		n := int(samples.Add(1))
 		var calls []writeScenarioCall
-		if n == 1 || n == 3 {
-			calls = []writeScenarioCall{{"exec_command", `{"command":"/usr/bin/awk 'BEGIN {for (i=0;i<20000;i++) printf \"0123456789\"}'; printf warning >&2"}`}}
+		command := writeScenarioCall{"exec_command", `{"command":"/usr/bin/awk 'BEGIN {for (i=0;i<20000;i++) printf \"0123456789\"}'; printf warning >&2"}`}
+		switch n {
+		case 1:
+			calls = []writeScenarioCall{command, {"Write", `{"file_path":"guarded","content":"original"}`}}
+		case 2:
+			calls = []writeScenarioCall{{"Read", `{"file_path":"guarded"}`}, {"Write", `{"file_path":"source-grant","content":"created with the session grant"}`}}
+		case 5:
+			calls = []writeScenarioCall{command, {"Write", `{"file_path":"guarded","content":"must not overwrite"}`}, {"Write", `{"file_path":"branch-grant","content":"must ask again"}`}}
 		}
 		serveWriteScenarioSample(w, domain.ProviderOpenAI, n, calls)
 	}))
@@ -40,7 +47,13 @@ func TestBranchArtifactHistoryKeepsOutputAuthorityWithItsProducer(t *testing.T) 
 		Family: domain.ProviderOpenAI, Model: "fixture-model", BaseURL: server.URL, APIKey: secret.New("artifact-branch-fixture"),
 	}}
 	owner, source, candidates := startBranchFixture(t, ctx, cfg, paths, workspace)
-	submitBranchArtifactTurn(t, ctx, source)
+	sourceActions := submitBranchArtifactTurn(t, ctx, source, "guarded", protocol.ApprovalAllowSession)
+	if read := sourceActions["guarded"]; read.Tool != protocol.ToolRead || read.Code != "ok" || read.Truncated {
+		t.Fatalf("source did not establish complete Read evidence: %+v", read)
+	}
+	if content, err := os.ReadFile(filepath.Join(workspace, "source-grant")); err != nil || string(content) != "created with the session grant" {
+		t.Fatal("source did not exercise a session-scope Write grant", err)
+	}
 	sourceThread := source.identity.ThreadID
 	sourceList := branchArtifactList(t, ctx, source)
 	inherited := sourceList[0]
@@ -53,24 +66,36 @@ func TestBranchArtifactHistoryKeepsOutputAuthorityWithItsProducer(t *testing.T) 
 		t.Fatalf("source output unavailable: %+v, %v", before, err)
 	}
 
-	branch := activateBranchFixture(t, ctx, owner, source, candidates, "")
+	const excluded = "source follow-up after command"
+	appEffortTurn(t, source, excluded, false)
+	waitCompactionIdle(t, source)
+	branch := activateHistoricalBranchFixture(t, ctx, owner, source, candidates, excluded)
 	branchThread := branch.identity.ThreadID
 	list := branchArtifactList(t, ctx, branch)
 	if len(list) != 1 || list[0].Preview != inherited.Preview ||
 		list[0].Stdout.Status != inherited.Stdout.Status || list[0].Stdout.SavedBytes != inherited.Stdout.SavedBytes ||
 		list[0].Stdout.Readable || list[0].Stdout.SourceThreadID != sourceThread ||
-		list[0].Stderr.Readable || list[0].Stderr.SourceThreadID != sourceThread || samples.Load() != 2 {
+		list[0].Stderr.Readable || list[0].Stderr.SourceThreadID != sourceThread || samples.Load() != 4 {
 		t.Fatalf("branch altered historical output or its authority: %+v", list)
 	}
 	query.ThreadID = branchThread
 	if _, err := branch.transcriptQueries.ReadToolOutput(ctx, query); !errors.Is(err, tool.ArtifactReadUnauthorized) {
 		t.Fatalf("inherited raw output query returned %v", err)
 	}
-	submitBranchArtifactTurn(t, ctx, branch)
+	branchActions := submitBranchArtifactTurn(t, ctx, branch, "branch-grant", protocol.ApprovalDeny)
 	list = branchArtifactList(t, ctx, branch)
 	if len(list) != 2 || !list[0].Stderr.Readable || list[0].Stderr.SourceThreadID != "" ||
 		list[1].Stderr.SourceThreadID != sourceThread || list[1].Stderr.Readable {
 		t.Fatalf("current branch and ancestor output authorities were merged: %+v", list)
+	}
+	if branchActions["guarded"].Code != "write_requires_full_read" || branchActions["branch-grant"].Code != "approval_denied" {
+		t.Fatalf("branch inherited source Read evidence or Write grant: %+v", branchActions)
+	}
+	if content, err := os.ReadFile(filepath.Join(workspace, "guarded")); err != nil || string(content) != "original" {
+		t.Fatal("branch overwrote the source-read file", err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "branch-grant")); !os.IsNotExist(err) {
+		t.Fatal("branch created a file after fresh approval was denied", err)
 	}
 	query.InvocationID = list[0].Activity.InvocationID
 	own, err := branch.transcriptQueries.ReadToolOutput(ctx, query)
@@ -89,13 +114,15 @@ func TestBranchArtifactHistoryKeepsOutputAuthorityWithItsProducer(t *testing.T) 
 	}
 }
 
-func submitBranchArtifactTurn(t *testing.T, ctx context.Context, resources *chatResources) {
+func submitBranchArtifactTurn(t *testing.T, ctx context.Context, resources *chatResources, writePath string, writeDecision protocol.ApprovalDecision) map[string]protocol.ToolActivityPayload {
 	t.Helper()
 	events, err := submitInteractiveFixture(t, resources.session, ctx, "run fixture command")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var approved, completed bool
+	var execApprovals, writeApprovals int
+	var completed bool
+	fileActions := make(map[string]protocol.ToolActivityPayload)
 	for event := range events {
 		switch event.Kind {
 		case protocol.EventToolApprovalRequested:
@@ -103,18 +130,40 @@ func submitBranchArtifactTurn(t *testing.T, ctx context.Context, resources *chat
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := resources.session.ResolveApproval(ctx, event.TurnID, p, protocol.ApprovalAllowOnce, ""); err != nil {
+			var decision protocol.ApprovalDecision
+			switch p.Capability {
+			case string(tool.CapabilityExec):
+				execApprovals++
+				decision = protocol.ApprovalAllowOnce
+			case string(tool.CapabilityWrite):
+				writeApprovals++
+				if p.RelativePath != writePath {
+					t.Fatalf("unexpected Write approval for %q", p.RelativePath)
+				}
+				decision = writeDecision
+			default:
+				t.Fatalf("unexpected approval for %q", p.Capability)
+			}
+			if err := resources.session.ResolveApproval(ctx, event.TurnID, p, decision, ""); err != nil {
 				t.Fatal(err)
 			}
-			approved = true
+		case protocol.EventToolTerminal:
+			p, err := protocol.DecodeToolTerminal(event)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p.Tool == protocol.ToolRead || p.Tool == protocol.ToolWrite {
+				fileActions[p.Target] = p.ToolActivityPayload
+			}
 		case protocol.EventTurnCompleted:
 			completed = true
 		}
 	}
-	if !approved || !completed {
-		t.Fatal("fixture command did not complete its actual approval and execution")
+	if execApprovals != 1 || writeApprovals != 1 || !completed {
+		t.Fatalf("fixture turn approval and execution: Exec=%d Write=%d completed=%t", execApprovals, writeApprovals, completed)
 	}
 	waitCompactionIdle(t, resources)
+	return fileActions
 }
 
 func branchArtifactList(t *testing.T, ctx context.Context, resources *chatResources) []protocol.TranscriptListItem {

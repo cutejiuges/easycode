@@ -173,6 +173,8 @@ func TestResumePermitOwnerCancellationAndFinishing(t *testing.T) {
 	loop := newControlledAgentLoop(t, newControlledConversation(), &fakeJournal{})
 	source := NewChatSession(loop.runtime)
 	source.loop, source.started, source.interactive = loop, true, true
+	lifetimeDone := make(chan struct{})
+	source.lifetimeDone = lifetimeDone
 	loop.state.Store(agentLoopRunning)
 	close(loop.ready)
 	owner := newAgentLoopRunState(loop, context.Background())
@@ -230,6 +232,11 @@ func TestResumePermitOwnerCancellationAndFinishing(t *testing.T) {
 	if result.err != nil || !result.permit.Valid() {
 		t.Fatalf("owner-installed permit was lost after caller cancellation: %v", result.err)
 	}
+	// 父生命周期已结束时，子循环仍可能处于运行状态。
+	close(lifetimeDone)
+	if result.permit.Matches(source, HandoffBranch) {
+		t.Fatal("branch permit matched after source lifetime cancellation")
+	}
 	releaseCtx, cancelRelease := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancelRelease()
 	released := make(chan error, 1)
@@ -243,7 +250,7 @@ func TestResumePermitOwnerCancellationAndFinishing(t *testing.T) {
 	if err := <-released; err != nil {
 		t.Fatal(err)
 	}
-	if result.permit.Valid() || source.resumePermit != nil {
+	if result.permit.held.Load() || source.resumePermit != nil {
 		t.Fatal("acknowledged release left the source reserved")
 	}
 }

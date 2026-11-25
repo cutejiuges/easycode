@@ -15,7 +15,7 @@ import termios
 import time
 
 
-def run_case(binary, root, name, steps, expected, no_color=False, entrypoint=None, skill=False):
+def run_case(binary, root, name, steps, expected, no_color=False, entrypoint=None, skill=False, rewind=False):
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 28, 100, 0, 0))
     before = termios.tcgetattr(slave)
@@ -32,6 +32,7 @@ def run_case(binary, root, name, steps, expected, no_color=False, entrypoint=Non
         env["EASYCODE_PICKER_CHAT_FIXTURE"] = str(fixture)
         env["EASYCODE_PICKER_FROM_STARTUP"] = str(int(entrypoint == "startup"))
         env["EASYCODE_PICKER_EXPECT_SKILL"] = str(int(skill))
+        env["EASYCODE_PICKER_EXPECT_REWIND"] = str(int(rewind))
     process = subprocess.Popen(
         [str(binary), "-test.run=^TestPickerTerminalHelper$", "-test.timeout=30s"],
         stdin=slave, stdout=slave, stderr=slave, cwd=root / "internal/app", env=env,
@@ -52,16 +53,18 @@ def run_case(binary, root, name, steps, expected, no_color=False, entrypoint=Non
 
     def wait_for(text, wrapped=False):
         nonlocal cursor
-        needle = text.format(**threads).encode()
+        choices = text if isinstance(text, tuple) else (text,)
+        needles = [choice.format(**threads).encode() for choice in choices]
         deadline = time.monotonic() + 10
         while True:
             visible = output[cursor:]
             if wrapped:
                 visible = re.sub(rb"\x1b\[[0-?]*[ -/]*[@-~]|[\r\n]", b"", visible)
-            offset = visible.find(needle)
-            if offset >= 0:
-                cursor = len(output) if wrapped else cursor + offset + len(needle)
-                return
+            matches = [(offset, index) for index, needle in enumerate(needles) if (offset := visible.find(needle)) >= 0]
+            if matches:
+                offset, index = min(matches)
+                cursor = len(output) if wrapped else cursor + offset + len(needles[index])
+                return choices[index]
             if time.monotonic() > deadline or not read_terminal():
                 break
         raise RuntimeError(f"missing terminal output: {text}; tail={output[-2200:]!r}")
@@ -92,6 +95,17 @@ def run_case(binary, root, name, steps, expected, no_color=False, entrypoint=Non
             if process.poll() is not None or not read_terminal(0.03):
                 break
         raise RuntimeError("published branch did not reach candidate resource assembly")
+
+    def wait_for_idle_chat():
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            os.write(master, b"/context\r")
+            state = wait_for((" · idle", " · turn", " · compact"))
+            os.write(master, b"\x1b")
+            wait_for("> |")
+            if state == " · idle":
+                return
+        raise RuntimeError("conversation never became idle")
 
     try:
         if entrypoint is not None:
@@ -124,6 +138,8 @@ def run_case(binary, root, name, steps, expected, no_color=False, entrypoint=Non
                 wait_for_target_recovery()
             elif action == "branch_recovery":
                 wait_for_branch_recovery()
+            elif action == "idle_chat":
+                wait_for_idle_chat()
             elif action == "signal":
                 os.kill(process.pid, value)
         wait_for(f"PICKER_EXIT={expected}\r")
@@ -222,6 +238,22 @@ def main():
                 ("wait", "> /branch Unswitched|"),
                 ("signal", signal.SIGTERM),
             ], 130, no_color=True, entrypoint="chat"),
+            run_case(binary, root, "rewind_cancel_and_submit_edited_draft", [
+                ("send", "/rew"), ("wait", "/rewind"), ("send", b"\r"),
+                ("wait", "Current"),
+                ("send", b"\x1b[A\r"), ("wait", "Branch before this prompt"),
+                ("send", b"\x1b"), ("wait", "Current"),
+                ("send", b"\x1b"), ("wait", "> /rew|"),
+                ("send", "ind\r"), ("wait", "Current"),
+                ("send", b"\x1b[A\r"), ("wait", "Branch before this prompt"),
+                ("send", b"\x1b[B\r\r\r"), ("wait", "Return to source: /resume {source}"),
+                ("send", b"\r\r\r"), ("wait", "Send unchanged"),
+                ("send", b"\x1b"), ("wait", "rewind fixture prompt|"),
+                ("send", " revised\r"), ("wait", "answer-5"),
+                ("idle_chat", None),
+                ("send", "/resume {source}\r"), ("wait", "Resumed session {source}"),
+                ("signal", signal.SIGTERM),
+            ], 130, no_color=True, entrypoint="chat", rewind=True),
             run_case(binary, root, "blocked_target_esc_retry_and_signal", [
                 ("lock", None), ("reset_target_artifacts", None),
                 ("send", "/resume {target}\r"), ("wait", "Resuming session"), ("target_recovery", None),

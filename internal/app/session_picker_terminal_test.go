@@ -52,7 +52,9 @@ func runInChatPickerTerminal(t *testing.T, directory string) {
 	home := filepath.Join(directory, "home")
 	t.Setenv("HOME", home)
 	var want int32 = 3
-	if os.Getenv("EASYCODE_PICKER_EXPECT_SKILL") == "1" {
+	skill := os.Getenv("EASYCODE_PICKER_EXPECT_SKILL") == "1"
+	rewind := os.Getenv("EASYCODE_PICKER_EXPECT_REWIND") == "1"
+	if skill {
 		want++
 		path := filepath.Join(home, ".config", "easycode", "skills", "resume", "SKILL.md")
 		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
@@ -62,13 +64,23 @@ func runInChatPickerTerminal(t *testing.T, directory string) {
 			t.Fatal(err)
 		}
 	}
+	if rewind {
+		want += 2
+	}
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		number := requests.Add(1)
-		if number == 4 && want == 4 {
+		if skill && number == 4 {
 			body, err := io.ReadAll(request.Body)
 			if err != nil || !strings.Contains(string(body), "interactive-resume-skill-body exact args") {
 				t.Errorf("interactive request omitted the resumed Skill body: %v", err)
+			}
+		}
+		if rewind && number == 5 {
+			body, err := io.ReadAll(request.Body)
+			if err != nil || !strings.Contains(string(body), "rewind fixture prompt revised") ||
+				strings.Contains(string(body), `"rewind fixture prompt"`) {
+				t.Errorf("rewind submitted unexpected history or draft: %v", err)
 			}
 		}
 		writer.Header().Set("Content-Type", "text/event-stream")
@@ -98,6 +110,9 @@ func runInChatPickerTerminal(t *testing.T, directory string) {
 		}
 		t.Cleanup(func() { _ = resources.close(context.Background()) })
 		submitAppTurn(t, resources, name+" prompt")
+		if rewind && name == "source" {
+			submitAppTurn(t, resources, "rewind fixture prompt")
+		}
 		threads[name] = string(resources.identity.ThreadID)
 		if err := resources.close(context.Background()); err != nil {
 			t.Fatal(err)
@@ -120,6 +135,21 @@ func runInChatPickerTerminal(t *testing.T, directory string) {
 	}
 	if count := requests.Load(); count != want {
 		t.Errorf("unexpected Provider request count after session navigation: got %d, want %d", count, want)
+	}
+	if rewind {
+		entries, err := os.ReadDir(filepath.Join(storage, "artifacts"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		count := 0
+		for _, entry := range entries {
+			if entry.IsDir() {
+				count++
+			}
+		}
+		if count != len(threads)+1 {
+			t.Errorf("expected exactly one historical branch, got %d thread directories", count)
+		}
 	}
 	fmt.Fprintf(os.Stdout, "\nPICKER_EXIT=%d\n", outcome.ExitCode())
 }

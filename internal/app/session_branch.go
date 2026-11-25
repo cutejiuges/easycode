@@ -14,6 +14,7 @@ type branchCreation struct {
 	source      *session.JournalWriter
 	target      domain.ThreadID
 	title       domain.SessionTitle
+	historical  *session.HistoricalCut
 	admit       func(domain.ThreadID) bool
 	publication session.BranchPublication
 }
@@ -25,7 +26,14 @@ func (service *sessionService) branch(
 	creation *branchCreation,
 	checkEnvironment func(context.Context) error,
 ) (_ assembledSession, resultErr error) {
-	stage, loaded, err := service.repository.PrepareBranch(ctx, creation.source, creation.target, creation.title)
+	var stage *session.BranchStage
+	var loaded session.LoadResult
+	var err error
+	if creation.historical == nil {
+		stage, loaded, err = service.repository.PrepareBranch(ctx, creation.source, creation.target, creation.title)
+	} else {
+		stage, loaded, err = service.repository.PrepareHistoricalBranch(ctx, creation.source, creation.target, creation.title, *creation.historical)
+	}
 	if err != nil {
 		if session.IsBranchCleanupFailure(err) {
 			service.recovery.cleanup(err)
@@ -33,6 +41,8 @@ func (service *sessionService) branch(
 		switch {
 		case session.IsBranchSourceEmpty(err):
 			return assembledSession{}, fault.Wrap(fault.CodeInvalidInput, "current session has no committed user input", err)
+		case session.IsHistoricalCutStale(err):
+			return assembledSession{}, fault.Wrap(fault.CodeInvalidInput, "historical branch selection expired; reopen rewind", err)
 		case session.IsBranchSourceUnsafe(err):
 			return assembledSession{}, fault.Wrap(fault.CodeSessionCorruption, "source session committed history is unavailable", err)
 		case ctx.Err() != nil:

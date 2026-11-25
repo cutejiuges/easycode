@@ -71,6 +71,9 @@ func (m StartupModel) View() string {
 	case shellChat:
 		return m.chat.View()
 	case shellOpening:
+		if m.request.Operation == PickerRewind {
+			return pickerWrapped("Loading rewind points…\nEsc: cancel", m.width, m.height, 0)
+		}
 		return pickerWrapped("Opening session chooser…\nEsc: cancel", m.width, m.height, 0)
 	case shellRecovering:
 		if m.request.Operation == PickerBranch {
@@ -81,10 +84,16 @@ func (m StartupModel) View() string {
 		if m.request.Operation == PickerBranch {
 			return pickerWrapped("Cancelling branch — waiting for cleanup", m.width, m.height, 0)
 		}
+		if m.request.Operation == PickerRewind {
+			return pickerWrapped("Cancelling rewind — waiting for cleanup", m.width, m.height, 0)
+		}
 		return pickerWrapped("Cancelling resume — waiting for cleanup", m.width, m.height, 0)
 	case shellRetiring:
 		return pickerWrapped("Switching sessions — closing previous session", m.width, m.height, 0)
 	default:
+		if m.rewind.browseID != 0 {
+			return m.rewind.view(m.width, m.height)
+		}
 		return m.picker.view()
 	}
 }

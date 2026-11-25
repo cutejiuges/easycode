@@ -19,6 +19,7 @@ type composer struct {
 	width, height int
 	layout        *composerLayout
 	history       composerHistory
+	rewind        recalledDraft
 }
 
 func newComposer() composer {
@@ -43,7 +44,11 @@ func (c *composer) replace(start, end int, inserted string) error {
 		return nil
 	}
 	c.revision++
+	changed := c.text[start:end] != inserted
 	c.text = c.text[:start] + inserted + c.text[end:]
+	if changed {
+		c.rewind.edited(c.text)
+	}
 	c.cursor = start + len(inserted)
 	c.preferred = -1
 	c.history.endNavigation()
@@ -137,6 +142,7 @@ func (c *composer) clear() {
 	c.cursor = 0
 	c.top = 0
 	c.preferred = -1
+	c.rewind = recalledDraft{}
 	c.history.endNavigation()
 	c.relayout()
 }

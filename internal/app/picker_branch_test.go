@@ -5,9 +5,12 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -49,7 +52,7 @@ func TestBranchPublicationRejectsSourceLossAtAdmission(t *testing.T) {
 	entered := make(chan struct{})
 	admitted := make(chan bool, 1)
 	const target domain.ThreadID = "01900000-0000-7000-8000-000000000101"
-	owner.branch = func(ctx, _ context.Context, request tui.PickerRequest, _ *chatResources, admit func(domain.ThreadID) bool) pickerExecution {
+	owner.branch = func(ctx, _ context.Context, request tui.PickerRequest, _ *chatResources, _ *rewindCandidate, admit func(domain.ThreadID) bool) pickerExecution {
 		close(entered)
 		select {
 		case <-sourceCtx.Done():
@@ -83,6 +86,159 @@ func TestBranchPublicationRejectsSourceLossAtAdmission(t *testing.T) {
 	}
 }
 
+func TestRewindPickerTransfersOrReleasesItsSourcePermit(t *testing.T) {
+	ctx, stop := context.WithTimeout(context.Background(), 8*time.Second)
+	defer stop()
+	source, _, _ := startBranchGateSource(t, ctx)
+	owner := newPickerOwner(nil)
+	owner.initial = source
+	selected := tui.RewindSelection{
+		TurnID: "01900000-0000-7000-8000-000000000102", InputID: "01900000-0000-7000-8000-000000000103",
+	}
+	browseEntered := make(chan struct{})
+	confirmEntered := make(chan bool, 1)
+	confirmRelease := make(chan struct{})
+	owner.rewind = func(ctx context.Context, request tui.PickerRequest, _ *chatResources) (tui.PickerResult, map[tui.RewindSelection]rewindCandidate) {
+		if request.ID == 1 {
+			close(browseEntered)
+			<-ctx.Done()
+		}
+		return tui.PickerResult{
+			Request: request, RewindEntries: []tui.RewindEntry{{RewindSelection: selected, Number: 2, Summary: "prompt"}},
+		}, map[tui.RewindSelection]rewindCandidate{selected: {}}
+	}
+	owner.branch = func(ctx, _ context.Context, request tui.PickerRequest, _ *chatResources, candidate *rewindCandidate, _ func(domain.ThreadID) bool) pickerExecution {
+		if request.BrowseID != 0 {
+			confirmEntered <- candidate != nil
+			select {
+			case <-ctx.Done():
+			case <-confirmRelease:
+			}
+		}
+		return pickerExecution{result: tui.PickerResult{Request: request, Error: "injected branch preparation failure"}}
+	}
+	owner.Start(ctx)
+	defer func() {
+		owner.Stop()
+		if err := owner.Wait(); err != nil {
+			t.Error(err)
+		}
+	}()
+	browse := tui.PickerRequest{ID: 1, Operation: tui.PickerRewind, Source: source.identity.ThreadID}
+	submitPickerRequest(t, owner, browse)
+	select {
+	case <-browseEntered:
+	case <-ctx.Done():
+		t.Fatal("rewind did not enter source read")
+	}
+	owner.CancelResume(browse)
+	if result := awaitPickerStage(t, ctx, owner, tui.PickerCancelled); result.Request != browse || len(result.RewindEntries) != 0 {
+		t.Fatalf("cancelled browse leaked a late list: %+v", result)
+	}
+
+	browse.ID = 2
+	submitPickerRequest(t, owner, browse)
+	if result := awaitPickerStage(t, ctx, owner, tui.PickerCompleted); result.Request != browse || len(result.RewindEntries) != 1 {
+		t.Fatalf("browse did not offer the historical choice: %+v", result)
+	}
+	latest := tui.PickerRequest{ID: 3, Operation: tui.PickerBranch, Source: source.identity.ThreadID}
+	confirm := latest
+	confirm.BrowseID = 1
+	confirm.RewindSelection = selected
+	if owner.Submit(confirm) || owner.Submit(latest) {
+		t.Fatal("stale confirmation or unrelated branch changed the active browse")
+	}
+	confirm.BrowseID = browse.ID
+	submitPickerRequest(t, owner, confirm)
+	select {
+	case received := <-confirmEntered:
+		if !received {
+			t.Fatal("historical branch lost its selection")
+		}
+	case <-ctx.Done():
+		t.Fatal("confirmation did not reuse the held source permit")
+	}
+	duplicate := confirm
+	duplicate.ID++
+	if owner.Submit(duplicate) {
+		t.Fatal("historical selection admitted a second confirmation")
+	}
+	close(confirmRelease)
+	if result := awaitPickerStage(t, ctx, owner, tui.PickerCancelled); result.Request != confirm {
+		t.Fatalf("historical failure did not settle its confirmation ID: %+v", result)
+	}
+
+	browse.ID = 4
+	submitPickerRequest(t, owner, browse)
+	_ = awaitPickerStage(t, ctx, owner, tui.PickerCompleted)
+	confirm.ID, confirm.BrowseID = 5, 1
+	if owner.Submit(confirm) {
+		t.Fatal("stale confirmation unexpectedly admitted")
+	}
+	owner.CancelResume(browse)
+	if result := awaitPickerStage(t, ctx, owner, tui.PickerCancelled); result.Request != browse {
+		t.Fatalf("accepting a rejected confirmation stranded the browse permit: %+v", result)
+	}
+	latest.ID = 6
+	submitPickerRequest(t, owner, latest)
+	if result := awaitPickerStage(t, ctx, owner, tui.PickerCancelled); result.Request != latest || !strings.Contains(result.Error, "injected branch preparation failure") {
+		t.Fatalf("ordinary branch did not independently obtain its source permit: %+v", result)
+	}
+}
+
+func TestRewindProjectionMismatchKeepsSourceWritable(t *testing.T) {
+	ctx, stop := context.WithTimeout(context.Background(), 8*time.Second)
+	defer stop()
+	paths, cwd, cfg := pickerFixture(t)
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write(activeReasoningFixture(cfg.Provider.Family, int(calls.Add(1)), false))
+	}))
+	defer server.Close()
+	cfg.Provider.BaseURL = server.URL
+	owner, source, _ := startBranchFixture(t, ctx, cfg, paths, cwd)
+	appEffortTurn(t, source, "retained prompt", false)
+	waitCompactionIdle(t, source)
+	appEffortTurn(t, source, "selected prompt", false)
+	waitCompactionIdle(t, source)
+	path, err := source.service.repository.JournalPath(source.identity.ThreadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal := readPickerJournal(t, path)
+
+	browse := tui.PickerRequest{ID: 1, Operation: tui.PickerRewind, Source: source.identity.ThreadID}
+	submitPickerRequest(t, owner, browse)
+	list := awaitPickerStage(t, ctx, owner, tui.PickerCompleted)
+	if len(list.RewindEntries) != 1 || list.RewindEntries[0].Summary != "selected prompt" {
+		t.Fatalf("unexpected historical evidence: %+v", list)
+	}
+	entry := list.RewindEntries[0]
+	queries := source.transcriptQueries
+	queries.mu.Lock()
+	var changed bool
+	for i := 0; i < queries.nodes.len(); i++ {
+		if node := queries.nodes.at(i); node.item.InputID == entry.InputID {
+			node.item.Text = "changed projection"
+			changed = true
+			break
+		}
+	}
+	queries.mu.Unlock()
+	if !changed {
+		t.Fatal("source transcript did not contain the selected prompt")
+	}
+	confirm := tui.PickerRequest{ID: 2, Operation: tui.PickerBranch, Source: browse.Source, BrowseID: browse.ID, RewindSelection: entry.RewindSelection}
+	submitPickerRequest(t, owner, confirm)
+	failed := awaitPickerStage(t, ctx, owner, tui.PickerCancelled)
+	if failed.BranchPublication != tui.BranchNotPublished || !strings.Contains(failed.Error, "reopen rewind") ||
+		calls.Load() != 2 || !bytes.Equal(journal, readPickerJournal(t, path)) {
+		t.Fatalf("stale source projection changed the durable outcome: %+v", failed)
+	}
+	confirmTitle(t, ctx, source.session, "rename-after-projection-mismatch", "Source remains writable")
+}
+
 func TestBranchTerminalCancellationPreservesAdmittedOutcome(t *testing.T) {
 	for _, scenario := range []struct {
 		name        string
@@ -100,7 +256,7 @@ func TestBranchTerminalCancellationPreservesAdmittedOutcome(t *testing.T) {
 			owner.initial = source
 			admitted := make(chan bool, 1)
 			const target domain.ThreadID = "01900000-0000-7000-8000-000000000102"
-			owner.branch = func(ctx, _ context.Context, request tui.PickerRequest, _ *chatResources, admit func(domain.ThreadID) bool) pickerExecution {
+			owner.branch = func(ctx, _ context.Context, request tui.PickerRequest, _ *chatResources, _ *rewindCandidate, admit func(domain.ThreadID) bool) pickerExecution {
 				admitted <- admit(target)
 				<-ctx.Done()
 				return pickerExecution{result: tui.PickerResult{Request: request, BranchThreadID: target, BranchPublication: scenario.publication}}

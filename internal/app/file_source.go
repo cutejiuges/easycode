@@ -170,18 +170,23 @@ func (s *workspaceInputSource) Prepare(ctx context.Context, command protocol.Com
 		return protocol.Command{}, fileInputFailure(err)
 	}
 	defer s.finishPreparation(owner)
-	refs := command.InputDraft().FileReferences()
-	skill, hasSkill, err := s.skills.Prepare(readContext, command.Text())
-	if err != nil {
-		return protocol.Command{}, fileInputFailure(err)
-	}
-	if hasSkill {
-		command, err = command.WithSkillAttachment(skill)
+	draft := command.InputDraft()
+	if draft.SkillIntent() != domain.InputSkillLiteral {
+		skill, hasSkill, err := s.skills.Prepare(readContext, command.Text())
 		if err != nil {
-			return protocol.Command{}, fault.Wrap(fault.CodeInvalidInput, "Skill attachment is invalid", err)
+			return protocol.Command{}, fileInputFailure(err)
+		}
+		if !hasSkill && draft.SkillIntent() == domain.InputSkillRequired {
+			return protocol.Command{}, fault.New(fault.CodeInvalidInput, "skill_not_found")
+		}
+		if hasSkill {
+			command, err = command.WithSkillAttachment(skill)
+			if err != nil {
+				return protocol.Command{}, fault.Wrap(fault.CodeInvalidInput, "Skill attachment is invalid", err)
+			}
 		}
 	}
-	files, err := prepareWorkspaceFiles(readContext, refs, s.workspace)
+	files, err := prepareWorkspaceFiles(readContext, draft.FileReferences(), s.workspace)
 	if err != nil {
 		return protocol.Command{}, fileInputFailure(err)
 	}

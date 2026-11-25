@@ -18,6 +18,7 @@ const (
 	focusTranscript
 	focusTitle
 	focusPlanReview
+	focusRecalledSend
 )
 
 func (model Model) focus() chatFocus {
@@ -50,6 +51,8 @@ func (model Model) focus() chatFocus {
 		return focusTitle
 	case model.planReview.open:
 		return focusPlanReview
+	case model.recalledSend != rewindBrowsing:
+		return focusRecalledSend
 	default:
 		return focusComposer
 	}

@@ -51,8 +51,9 @@ func (p *ResumePermit) Release(ctx context.Context) error {
 func (session *ChatSession) Live() bool {
 	session.mu.Lock()
 	live, loop, cancelled := session.started && !session.closed && session.interactive, session.loop, session.runCancelled
+	lifetimeDone := session.lifetimeDone
 	session.mu.Unlock()
-	return live && resumeSignalClosed(loop.ready) && !resumeSignalClosed(cancelled) &&
+	return live && !resumeSignalClosed(lifetimeDone) && !resumeSignalClosed(cancelled) && resumeSignalClosed(loop.ready) &&
 		loop.state.Load() == agentLoopRunning && !session.runtime.poisoned.Load() && !session.runtime.journal.Poisoned()
 }
 

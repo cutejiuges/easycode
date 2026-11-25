@@ -40,6 +40,7 @@ type LoadResult struct {
 	repair         *repairTicket
 	committedBytes int64
 	completeDigest string
+	historical     *historicalSnapshot
 }
 
 // Loader 负责有界结构加载，不解释 turn 或 Provider 语义。
@@ -78,16 +79,16 @@ func (loader *Loader) Load(ctx context.Context, lease *JournalLease) (LoadResult
 }
 
 func loadJournal(ctx context.Context, file *os.File, expectedThreadID domain.ThreadID) (LoadResult, error) {
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return LoadResult{}, fmt.Errorf("seek session journal: %w", err)
-	}
 	info, err := file.Stat()
 	if err != nil {
 		return LoadResult{}, fmt.Errorf("inspect session journal: %w", err)
 	}
-	originalSize := info.Size()
+	return loadJournalRange(ctx, io.NewSectionReader(file, 0, info.Size()), info.Size(), expectedThreadID, nil)
+}
+
+func loadJournalRange(ctx context.Context, source io.Reader, originalSize int64, expectedThreadID domain.ThreadID, turnStarts map[uint64]int64) (LoadResult, error) {
 	digest := sha256.New()
-	reader := bufio.NewReaderSize(file, 64<<10)
+	reader := bufio.NewReaderSize(source, 64<<10)
 	committed := make([]Record, 0)
 	currentBatch := make([]Record, 0)
 	var identity Identity
@@ -132,6 +133,9 @@ func loadJournal(ctx context.Context, file *os.File, expectedThreadID domain.Thr
 		}
 		if record.Sequence != expectedSequence {
 			return LoadResult{}, corrupt(fmt.Errorf("session sequence is not continuous"))
+		}
+		if turnStarts != nil && record.EventKind == EventTurnStarted && record.ThreadID == expectedThreadID {
+			turnStarts[record.Sequence] = lineOffset
 		}
 		if identity.SessionID == "" {
 			identity = Identity{SessionID: record.SessionID, ThreadID: record.ThreadID}

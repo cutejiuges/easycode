@@ -727,7 +727,9 @@ Catalog 从最后合法标题事实投影快照条目的 `title`，空字符串�
 
 ### 会话分支
 
-`/branch` 与 `/fork` 共用聊天内恢复的空闲许可和交接 owner。源 writer 只提供由 Sync 确认的字节范围。目标 journal 保留这段前缀并以单条 `thread_forked` 绑定父子身份、序号、前缀 SHA-256 和标题。Loader 按实际行验证血缘，在最终写入归属与文件名相符后才允许生成修复凭据。
+`/branch` 与 `/fork` 从最新提交建立分支。`/rewind` 复用同一个交接 owner，从浏览到确认持有源的空闲许可。源 writer 通过租约所持描述符提供由 Sync 确认的字节范围。回放以当前线程段已收口回合的 `TurnID` 和首条已提交初始输入的 `InputID` 绑定候选。切点位于该轮 `turn_started` 前的完整批次边界，保留前缀须已有真实输入，并保留确立源归属的分支标记。确认复核浏览身份、源和整个已同步范围的 SHA-256，包括目标会舍弃的后缀。 [回合切点](../../internal/session/historical_cut.go) · [宿主浏览](../../internal/app/picker_rewind.go)
+
+目标 journal 原样保留到切点的字节，以单条 `thread_forked` 绑定父子身份、切点序号、前缀 SHA-256 和标题。Loader 按实际行验证血缘，在最终写入归属与文件名相符后才允许生成修复凭据。
 
 私有暂存通过完整回放和原生验证、文件 Sync、排他发布、目录 Sync 与规范路径复核后确认创建。目标 lease 从暂存持续到活动 writer 关闭。接管前等待源所有者实际关闭。发布状态和目标 ID 独立于界面结果保存，终端退出时由既有 CLI 输出安全诊断。分支继续使用有效原生窗口和任务状态，权限与连接状态由新实例建立。 [分支规格](../../openspec/specs/session/branch/spec.md)
 
@@ -881,9 +883,9 @@ marketplace、安装/更新、插件脚本/Hook/MCP/Agent/commands 贡献、热�
 
 ### 13.2 当前视图与剩余目标
 
-当前提供用户/assistant 流式 Markdown、代码/表格/原文阅读、紧凑工具主线、前台 Shell 进度、完整 Patch/Write/Exec 批准、结构化问卷、Hook 浏览/信任、context/cache 面板、压缩边界、Ctrl+O 分页详情、会话命名及启动和聊天内恢复选择器。视图保持无 I/O，按需查询由宿主处理并用身份/generation 拒绝迟到响应。
+当前提供用户/assistant 流式 Markdown、代码/表格/原文阅读、紧凑工具主线、前台 Shell 进度、完整 Patch/Write/Exec 批准、结构化问卷、Hook 浏览/信任、context/cache 面板、压缩边界、Ctrl+O 分页详情、会话命名、启动和聊天内恢复选择器，以及历史回合分支。视图保持无 I/O，按需查询由宿主处理并用身份/generation 拒绝迟到响应。
 
-启动 thinking/display/summary 与普通输出配置已经实现，effort 由 thread owner 为每次操作捕获，`/context` 展示来源与当前捕获；其余运行中推理切换、后台任务、渐进 patch delta、MCP elicitation、Subagent/task 与历史切点选择尚未实现。测试中使用真实 PTY 验收界面，不表示模型命令工具支持 PTY。
+启动 thinking/display/summary 与普通输出配置已经实现，effort 由 thread owner 为每次操作捕获，`/context` 展示来源与当前捕获；其余运行中推理切换、后台任务、渐进 patch delta、MCP elicitation、Subagent/task 与跨祖先段或回合内切点尚未实现。测试中使用真实 PTY 验收界面，不表示模型命令工具支持 PTY。
 
 ### 13.3 REPL 行为
 
@@ -906,7 +908,9 @@ Provider 当前 native kind 封闭为 `user_inputs`/`sample`/`tool_outputs`/`hoo
 input-only 崩溃尾部先在本地 durable 收口；工具安全点的 steering 尾部复用现有工具补偿路径，不重跑工具或自动联网。内存队列与 returned tray 不持久化，重启不猜测未保存输入。外部 headless JSONL 仍为 v1，自动 admission 增加 entry_id，input.status 不含正文；一次性 text/JSON 过滤新增内部输入事件。
 
 
-已实现多行、字素编辑、显式 decoded paste 与有界历史；原始终端缓冲/RuneError 的框架限制见 README。当前本地命令为 `/cache`、`/context`、`/compact [instructions]`、`/effort [level|auto|reset]`、`/skills`、`/hooks`、`/plugins`、`/tasks`、`/rename [标题]`、`/resume [thread-id]`、`/branch [标题]`、`/fork [标题]`、`/plan [off]`，显式 Skill 使用 `/<name>` / `$name`。已支持命令和显式 Skill 的首词补全；尚无 `/help`、`/clear`、`/model`、`/provider`、`/permissions`、`/mcp`、`/agents`、`/cost`、`/doctor`；`easycode resume` 是独立 CLI 入口。
+已实现多行、字素编辑、显式 decoded paste 与有界历史；原始终端缓冲/RuneError 的框架限制见 README。当前本地命令为 `/cache`、`/context`、`/compact [instructions]`、`/effort [level|auto|reset]`、`/skills`、`/hooks`、`/plugins`、`/tasks`、`/rename [标题]`、`/resume [thread-id]`、`/branch [标题]`、`/fork [标题]`、`/rewind`、`/plan [off]`，显式 Skill 使用 `/<name>` / `$name`。已支持命令和显式 Skill 的首词补全；尚无 `/help`、`/clear`、`/model`、`/provider`、`/permissions`、`/mcp`、`/agents`、`/cost`、`/doctor`；`easycode resume` 是独立 CLI 入口。
+
+`/rewind` 只向终端投影有界摘要和回合编号。确认先创建分支，源 owner 完成关闭并激活目标后，才将原始用户正文作为临时草稿放入编辑框。未编辑时普通提交键只打开默认返回的发送确认。实际编辑或主动选择原样发送后，强类型输入草稿依据原首词是否保留，选择普通分派、正文或显式 Skill 解释。新输入按当前工作区和权限准备附件，冷恢复使用普通空编辑框。 [终端选择器](../../internal/tui/rewind_picker.go) · [草稿回填](../../internal/tui/rewind_draft.go) · [输入契约](../../internal/domain/file_mentions.go)
 
 ## 14. 配置与密钥
 

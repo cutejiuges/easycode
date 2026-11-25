@@ -89,7 +89,7 @@ func TestSessionServiceOwnershipFailuresReleaseTheCurrentOwner(t *testing.T) {
 	t.Run("replay planner", func(t *testing.T) {
 		service, identity := createClosedTestSession(t, domain.ProviderOpenAI, "responses", "gpt-test")
 		defer service.close()
-		service.plan = func(session.LoadResult) (session.ReplayPlan, error) {
+		service.plan = func(context.Context, session.LoadResult) (session.ReplayPlan, error) {
 			return session.ReplayPlan{}, errors.New("fixture replay failure")
 		}
 		factory := &fakeProviderFactory{family: domain.ProviderOpenAI}
@@ -110,8 +110,8 @@ func TestSessionServiceOwnershipFailuresReleaseTheCurrentOwner(t *testing.T) {
 			t.Fatal(err)
 		}
 		planner := session.NewReplayPlanner()
-		service.plan = func(loaded session.LoadResult) (session.ReplayPlan, error) {
-			plan, err := planner.Plan(loaded)
+		service.plan = func(ctx context.Context, loaded session.LoadResult) (session.ReplayPlan, error) {
+			plan, err := planner.PlanContext(ctx, loaded)
 			plan.Identity.ThreadID = differentThread
 			return plan, err
 		}
@@ -228,8 +228,8 @@ func TestSessionServiceRecoveryRecordsOnlyConfirmedRepair(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	service.recovery = &recoveryAttempt{}
-	service.plan = func(loaded session.LoadResult) (session.ReplayPlan, error) {
-		result, err := replay(loaded)
+	service.plan = func(ctx context.Context, loaded session.LoadResult) (session.ReplayPlan, error) {
+		result, err := replay(ctx, loaded)
 		cancel()
 		return result, err
 	}

@@ -50,6 +50,9 @@ func (runtime *Runtime) PrepareInput(ctx context.Context, c protocol.Command) (p
 		return protocol.Command{}, err
 	}
 	if runtime.inputPreparer == nil {
+		if c.InputDraft().SkillIntent() == domain.InputSkillRequired {
+			return protocol.Command{}, fault.New(fault.CodeInvalidInput, "skill_unavailable")
+		}
 		if c.ValidateForAdmission() != nil {
 			return protocol.Command{}, fault.New(fault.CodeInvalidInput, "file_reference_unavailable")
 		}
@@ -59,7 +62,8 @@ func (runtime *Runtime) PrepareInput(ctx context.Context, c protocol.Command) (p
 	if err != nil {
 		return protocol.Command{}, err
 	}
-	if prepared.Kind() != c.Kind() || prepared.RequestID() != c.RequestID() || prepared.Text() != c.Text() || prepared.ValidateForAdmission() != nil {
+	if prepared.Kind() != c.Kind() || prepared.RequestID() != c.RequestID() || prepared.Text() != c.Text() ||
+		prepared.InputDraft().SkillIntent() != c.InputDraft().SkillIntent() || prepared.ValidateForAdmission() != nil {
 		return protocol.Command{}, fault.New(fault.CodeInvalidInput, "invalid prepared input")
 	}
 	return prepared, nil

@@ -15,10 +15,12 @@ type pickerExecution struct {
 	result    tui.PickerResult
 	resources *chatResources
 	recovery  *recoveryAttempt
+	draft     tui.RewindDraft
 }
 
 type pickerExecutor func(context.Context, context.Context, tui.PickerRequest) pickerExecution
-type pickerBranchExecutor func(context.Context, context.Context, tui.PickerRequest, *chatResources, func(domain.ThreadID) bool) pickerExecution
+type pickerBranchExecutor func(context.Context, context.Context, tui.PickerRequest, *chatResources, *rewindCandidate, func(domain.ThreadID) bool) pickerExecution
+type pickerRewindExecutor func(context.Context, tui.PickerRequest, *chatResources) (tui.PickerResult, map[tui.RewindSelection]rewindCandidate)
 
 // pickerOwner 串行处理终端请求，只有 worker 持有和关闭活动实例与待接管候选。
 type pickerOwner struct {
@@ -33,6 +35,7 @@ type pickerOwner struct {
 	offered      *pickerCandidate
 	accepted     bool
 	branchActive bool
+	rewindReady  bool
 	stopping     bool
 	started      bool
 	wake         chan struct{}
@@ -40,6 +43,7 @@ type pickerOwner struct {
 	done         chan struct{}
 	execute      pickerExecutor
 	branch       pickerBranchExecutor
+	rewind       pickerRewindExecutor
 	initial      *chatResources
 	finalErr     error
 	lastBranch   branchReport
@@ -68,7 +72,7 @@ func (o *pickerOwner) signal() {
 }
 
 func (o *pickerOwner) Submit(r tui.PickerRequest) bool {
-	if r.ID == 0 || r.Operation < tui.PickerList || r.Operation > tui.PickerBranch ||
+	if r.ID == 0 || r.Operation < tui.PickerList || r.Operation > tui.PickerRewind ||
 		((r.Operation == tui.PickerPreview || r.Operation == tui.PickerResume) && !r.ThreadID.Valid()) ||
 		(r.Operation == tui.PickerOpen && !r.Source.Valid()) || (r.Source != "" && !r.Source.Valid()) ||
 		(r.Operation != tui.PickerBranch && r.Title != "") {
@@ -78,16 +82,38 @@ func (o *pickerOwner) Submit(r tui.PickerRequest) bool {
 		(o.branch == nil || !r.Source.Valid() || r.ThreadID != "" || r.All || (r.Title != "" && r.Title.Validate() != nil)) {
 		return false
 	}
+	if r.Operation == tui.PickerRewind && (o.rewind == nil || !r.Source.Valid() || r.ThreadID != "" || r.All) {
+		return false
+	}
+	var emptySelection tui.RewindSelection
+	historical := r.BrowseID != 0
+	if historical {
+		if r.Operation != tui.PickerBranch || r.Title != "" || !r.RewindSelection.TurnID.Valid() || !r.RewindSelection.InputID.Valid() {
+			return false
+		}
+	} else if r.RewindSelection != emptySelection {
+		return false
+	}
 	o.mu.Lock()
-	if o.stopping || o.offered != nil || o.accepted || o.branchActive || o.cancelResume != nil ||
+	if o.stopping || o.offered != nil || o.accepted || o.cancelResume != nil ||
 		r.ID <= o.latest.ID || pickerCancelled(o.parentDone) {
+		o.mu.Unlock()
+		return false
+	}
+	if historical {
+		if !o.rewindReady || o.latest.Operation != tui.PickerRewind || r.BrowseID != o.latest.ID || r.Source != o.latest.Source {
+			o.mu.Unlock()
+			return false
+		}
+	} else if o.branchActive {
 		o.mu.Unlock()
 		return false
 	}
 	o.latest = r
 	o.generation++
 	o.pending = &r
-	o.branchActive = r.Operation == tui.PickerBranch
+	o.branchActive = r.Operation == tui.PickerBranch || r.Operation == tui.PickerRewind
+	o.rewindReady = false
 	cancel := o.activeCancel
 	o.mu.Unlock()
 	if cancel != nil {
@@ -192,6 +218,7 @@ type pickerRun struct {
 	candidate *pickerCandidate
 	permit    *chatRuntime.ResumePermit
 	recovery  *recoveryAttempt
+	rewind    map[tui.RewindSelection]rewindCandidate
 }
 
 func (o *pickerOwner) run(ctx context.Context) {
@@ -294,16 +321,17 @@ func (s *pickerRun) serve(ctx context.Context, generation uint64, request tui.Pi
 	}()
 	if request.Source.Valid() {
 		if s.current == nil || request.Source != s.current.identity.ThreadID {
-			if request.Operation == tui.PickerBranch {
+			if request.Operation == tui.PickerBranch || request.Operation == tui.PickerRewind {
 				return s.returnToSource(ctx, tui.PickerResult{Request: request, Error: "Current session changed before branch preparation"})
 			}
 			return true
 		}
 		intent := chatRuntime.HandoffResume
-		if request.Operation == tui.PickerBranch {
+		if request.Operation == tui.PickerBranch || request.Operation == tui.PickerRewind {
 			intent = chatRuntime.HandoffBranch
 		}
-		if request.Operation == tui.PickerOpen || request.Operation == tui.PickerBranch {
+		if request.Operation == tui.PickerOpen || request.Operation == tui.PickerRewind ||
+			(request.Operation == tui.PickerBranch && request.BrowseID == 0) {
 			permit, err := s.current.session.ReserveHandoff(operation, intent)
 			if err != nil {
 				if operation.Err() != nil {
@@ -314,6 +342,9 @@ func (s *pickerRun) serve(ctx context.Context, generation uint64, request tui.Pi
 			s.permit = permit
 		}
 		if !s.permit.Matches(s.current.session, intent) || operation.Err() != nil {
+			if operation.Err() == nil && request.BrowseID != 0 {
+				return s.returnToSource(ctx, tui.PickerResult{Request: request, Error: "Historical branch selection expired; reopen rewind"})
+			}
 			return true
 		}
 		if request.ThreadID == request.Source {
@@ -323,6 +354,9 @@ func (s *pickerRun) serve(ctx context.Context, generation uint64, request tui.Pi
 		return true
 	}
 
+	if request.Operation == tui.PickerRewind {
+		return s.browseRewind(ctx, operation, generation, request)
+	}
 	lifetime, closeLifetime := context.WithCancel(ctx)
 	var execution pickerExecution
 	if request.Operation == tui.PickerBranch {
@@ -377,6 +411,30 @@ func (s *pickerRun) serve(ctx context.Context, generation uint64, request tui.Pi
 	return true
 }
 
+func (s *pickerRun) browseRewind(ctx, operation context.Context, generation uint64, request tui.PickerRequest) bool {
+	o := s.owner
+	result, candidates := o.rewind(operation, request, s.current)
+	if result.Request != request {
+		return s.returnToSource(ctx, tui.PickerResult{Request: request, Error: "Historical branch selection expired; reopen rewind"})
+	}
+	if result.Fatal {
+		o.finalErr = errors.New("source session history is invalid")
+		s.publish(ctx, result)
+		return false
+	}
+	o.mu.Lock()
+	current := o.currentOperation(generation)
+	if current {
+		o.rewindReady = len(candidates) != 0
+	}
+	o.mu.Unlock()
+	if current {
+		s.rewind = candidates
+		s.publish(operation, result)
+	}
+	return true
+}
+
 func (s *pickerRun) executeBranch(
 	ctx, lifetime context.Context,
 	generation uint64,
@@ -385,8 +443,17 @@ func (s *pickerRun) executeBranch(
 	o := s.owner
 	source := s.current
 	permit := s.permit
+	var selection *rewindCandidate
+	if request.BrowseID != 0 {
+		chosen, ok := s.rewind[request.RewindSelection]
+		if !ok {
+			return pickerExecution{result: tui.PickerResult{Request: request, Error: "Historical branch selection expired; reopen rewind"}}
+		}
+		selection = &chosen
+		s.rewind = nil
+	}
 	var admittedTarget domain.ThreadID
-	execution := o.branch(ctx, lifetime, request, source, func(target domain.ThreadID) bool {
+	execution := o.branch(ctx, lifetime, request, source, selection, func(target domain.ThreadID) bool {
 		o.mu.Lock()
 		defer o.mu.Unlock()
 		if !o.currentOperation(generation) || o.latest != request || pickerCancelled(o.parentDone) ||
@@ -417,8 +484,11 @@ func (s *pickerRun) executeBranch(
 
 func pickerCancellation(request tui.PickerRequest) tui.PickerResult {
 	message := "Resume cancelled"
-	if request.Operation == tui.PickerBranch {
+	switch request.Operation {
+	case tui.PickerBranch:
 		message = "Session branch cancelled"
+	case tui.PickerRewind:
+		message = "Rewind cancelled"
 	}
 	return tui.PickerResult{Request: request, Error: message}
 }
@@ -447,6 +517,7 @@ func (s *pickerRun) returnToSource(ctx context.Context, result tui.PickerResult)
 		}
 		s.permit = nil
 	}
+	s.rewind = nil
 	if !chatLive(s.current) {
 		o.finalErr = errors.New("active session ended during resume")
 		return false
@@ -457,6 +528,7 @@ func (s *pickerRun) returnToSource(ctx context.Context, result tui.PickerResult)
 		o.cancelResume = nil
 	}
 	o.branchActive = false
+	o.rewindReady = false
 	o.mu.Unlock()
 	if result.Request.Operation == tui.PickerBranch {
 		if retained := o.lastBranch; retained.requestID == result.Request.ID {
@@ -508,9 +580,11 @@ func (s *pickerRun) activate(ctx context.Context) bool {
 	o.offered = nil
 	o.accepted = false
 	o.branchActive = false
+	o.rewindReady = false
 	o.mu.Unlock()
 	result := candidate.execution.result
 	result.Stage = tui.PickerActivated
+	result.RewindDraft = candidate.execution.draft
 	s.publish(ctx, result)
 	return true
 }

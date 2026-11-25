@@ -8,7 +8,7 @@
 
 ### Requirement: Completion offers only available explicit actions
 
-TUI SHALL 为 `/` 提供已实现的 `/cache`、`/context`、`/compact`、`/effort`、`/skills`、`/hooks`、`/plugins`、`/tasks`、`/rename`、`/resume`、`/plan`、`/branch`、`/fork` 和可显式调用 Skill，为 `$` 仅提供可显式调用 Skill。`/plan`、`/branch` 和 `/fork` 的同名保留只作用于交互式 TUI。Skill SHALL 来自本会话冻结的展示目录，仅包含状态 available、user-invocable=true 的获胜条目；disable-model-invocation=true 不得排除合法手动调用。invalid、unsupported、shadowed、unavailable 和 model-only 条目 MUST NOT 成为可接受候选。
+TUI SHALL 为 `/` 提供已实现的 `/cache`、`/context`、`/compact`、`/effort`、`/skills`、`/hooks`、`/plugins`、`/tasks`、`/rename`、`/resume`、`/plan`、`/branch`、`/fork`、`/rewind` 和可显式调用 Skill，为 `$` 仅提供可显式调用 Skill。`/plan`、`/branch`、`/fork` 和 `/rewind` 的同名保留只作用于交互式 TUI。Skill SHALL 来自本会话冻结的展示目录，仅包含状态 available、user-invocable=true 的获胜条目；disable-model-invocation=true 不得排除合法手动调用。invalid、unsupported、shadowed、unavailable 和 model-only 条目 MUST NOT 成为可接受候选。
 
 内置命令 SHALL 优先占用同名 slash；同名 Skill SHALL 仍可在 `$` 列表发现。候选 SHALL 包含名称、简短说明，以及 Skill 的参数提示和不含绝对路径的来源；参数提示只供展示，不写入调用参数。不提供未实现命令。
 
@@ -220,7 +220,7 @@ Alt+Enter、Ctrl+J 和反斜杠换行 SHALL 优先执行原有换行语义，不
 
 文件 @ 补全 SHALL 在正文任意位置按当前光标的路径编辑区确定目标，共用显式文件引用语法；不得把命令/Skill 的首词限制扩大到文件，也不得改变 /、$ 的原有激活范围。目标 MUST 在字符和字素合法边界内，允许未闭合引号作为编辑中状态；email、转义、@@、行内/围栏代码不得激活。光标进入 #L 范围、引用之后或其他正文 MUST 不激活路径补全；已有范围与 token 外正文保留，不 fuzzy 修正范围。
 
-精确内置命令的参数 SHALL 按原命令语义保持文字，文件目标识别前沿用共同内置命令的保留名判断。交互专属 `/resume`、`/branch`、`/fork` 的参数同样不得开启文件搜索或规则读取，补全与提交使用同一个精确识别规则。既有内置命令、256 项 Skill 容量、同名 Skill 的 $ 入口 MUST 保持。通过 `$name` 或插件限定名调用的合法 Skill 仍可在交互正文参数中明确附带文件。
+精确内置命令的参数 SHALL 按原命令语义保持文字，文件目标识别前沿用共同内置命令的保留名判断。交互专属 `/resume`、`/branch`、`/fork`、`/rewind` 的参数同样不得开启文件搜索或规则读取，补全与提交使用同一个精确识别规则。保留原首词的历史草稿按 `tui/rewind` 感知正文或显式 Skill 意图，仍遵循文件语法中的跨宿主保留名限制。既有内置命令、256 项 Skill 容量、同名 Skill 的 $ 入口 MUST 保持。通过 `$name` 或插件限定名调用的合法 Skill 仍可在交互正文参数中明确附带文件。
 
 #### Scenario: Complete a file in the middle of a multiline draft
 - **WHEN** 用户在多行正文中间的 @src/ma 光标处选择 src/main.go，后面已有行范围及文字
@@ -411,3 +411,31 @@ Tab SHALL 只补全首词，保留原参数与分隔空白。普通 Enter 接受
 #### Scenario: Preserve headless input routing
 - **WHEN** 一次性 headless 或 stream-json 提交 `/branch`、`/fork` 或相应美元入口
 - **THEN** 合法显式 Skill 按既有规则准备。其他普通输入继续经过原输入语义，所有情况均不创建分支
+
+### Requirement: Rewind completion opens the local picker and preserves the draft
+
+`/rewind` SHALL 提供无参数的内置候选，只在交互聊天保留裸 slash 首词，并在 Skill 与文件引用准备前识别。可显式调用的同名 Skill SHALL 通过 `$rewind` 发现和调用，`/skills` 选择该 Skill 时填入同一入口，插件 Skill 使用完整限定名。一次性 headless 和 stream-json SHALL 沿用现有输入分派，合法显式 Skill 正常准备，普通输入继续提交给模型。
+
+Tab SHALL 只补全首词并保持原空白和参数。仅显式普通提交才 SHALL 走本地命令校验，其中普通 Enter 接受内置候选时允许同一次操作提交。完整后缀仅含空白时按无参数处理，非空白参数 SHALL 本地拒绝并输出安全英文反馈。粘贴、Alt+Enter、Ctrl+J 及反斜杠续行继续按现有规则编辑草稿。内置命令及非法参数不得进入输入回顾、队列、附件准备或模型。
+
+取消或可恢复失败时 SHALL 还原普通命令提交前的草稿和字素光标。命令由补全提交时，SHALL 还原到接受候选前的草稿状态。选择器、确认和创建期间不得激活补全，返回源会话时不得自动打开旧候选。激活目标并回填草稿时 SHALL 像粘贴一样抑制命令和文件候选，回填正文尚保留原首词意图时，命令候选不得替换该首词或抢占发送。
+
+#### Scenario: Discover rewind without hiding the colliding skill
+- **WHEN** 冻结目录包含合法的 rewind 和 qa:rewind Skill，用户查询 `/rew`、`$rew` 或 `/qa:rew`
+- **THEN** 分别给出内置命令、裸名 Skill 和插件限定名，`/skills` 选择裸名 Skill 时填入 `$rewind`
+
+#### Scenario: Open rewind once and recover the pre-completion draft
+- **WHEN** 用户在 `/rew` 候选上按 Tab，或在同样的原草稿上按普通 Enter 后取消选择器
+- **THEN** Tab 只填入 `/rewind `，普通 Enter 打开一次选择器，取消后恢复 `/rew` 和原光标，输入回顾和提交次数不变
+
+#### Scenario: Keep rewind arguments local and explicit Skill references available
+- **WHEN** 用户编辑并提交 `/rewind @src/ma`，或通过 `$rewind @src/ma` 调用同名合法 Skill
+- **THEN** 前者不触发文件候选和附件准备，普通提交时本地拒绝。后者按既有 Skill 和文件引用规则提供候选及准备附件
+
+#### Scenario: Preserve paste and headless input semantics
+- **WHEN** 用户粘贴含 `/rewind` 和换行的草稿，或一次性 headless 或 stream-json 收到同名显式 Skill 调用或普通输入
+- **THEN** 粘贴仅更新草稿，两个 headless 入口沿用现有分派，均不打开选择器或创建分支
+
+#### Scenario: Do not complete a recalled command-like word on activation
+- **WHEN** 历史分支激活并填入以交互命令名起始的旧正文，或在已填入的文件引用处开始编辑
+- **THEN** 回填本身没有命令或文件候选，也不读取工作区。编辑后可在当前草稿意图及文件语法允许时查询文件，首次发送仍使用经确认的正文或 Skill 意图

@@ -185,7 +185,7 @@ func (command Command) Validate() error {
 		return fmt.Errorf("command contains an unrelated plan review")
 	}
 	if command.hasSkillAttachment {
-		if !inputKind || command.skillAttachment.Validate() != nil {
+		if !inputKind || command.inputDraft.SkillIntent() == domain.InputSkillLiteral || command.skillAttachment.Validate() != nil {
 			return fmt.Errorf("invalid Skill attachment")
 		}
 	} else if command.skillAttachment != (domain.SkillAttachment{}) {
@@ -423,6 +423,9 @@ func (command Command) ValidateForAdmission() error {
 		if len(command.inputDraft.FileReferences()) != command.files.Len() {
 			return fmt.Errorf("file input has not been prepared")
 		}
+	}
+	if command.inputDraft.SkillIntent() == domain.InputSkillRequired && !command.hasSkillAttachment {
+		return fmt.Errorf("skill input has not been prepared")
 	}
 	return nil
 }

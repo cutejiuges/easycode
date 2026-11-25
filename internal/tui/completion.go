@@ -68,6 +68,7 @@ func newCompletionCatalog(skills []domain.SkillListEntry, handoffEnabled, planEn
 			completionCandidate{id: completionIdentity{kind: completionBuiltin, name: resumeCommandName}, description: "Resume a previous conversation", hint: "[thread-id]"},
 			completionCandidate{id: completionIdentity{kind: completionBuiltin, name: branchCommandName}, description: "Branch the current conversation", hint: "[title]"},
 			completionCandidate{id: completionIdentity{kind: completionBuiltin, name: forkCommandName}, description: "Alias for /branch", hint: "[title]"},
+			completionCandidate{id: completionIdentity{kind: completionBuiltin, name: rewindCommandName}, description: "Branch before a previous prompt"},
 		)
 	}
 	if planEnabled {
@@ -211,7 +212,7 @@ func isBuiltinCompletionName(name string, handoffEnabled, planEnabled bool) bool
 }
 
 func isHostSlashName(name string, handoffEnabled, planEnabled bool) bool {
-	return handoffEnabled && (name == resumeCommandName || isBranchCommandName(name)) || planEnabled && name == planCommandName
+	return handoffEnabled && isHandoffCommandName(name) || planEnabled && name == planCommandName
 }
 
 func (c *composer) complete(target completionTarget, candidate completionCandidate) error {

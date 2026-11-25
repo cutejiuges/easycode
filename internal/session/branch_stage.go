@@ -53,7 +53,19 @@ type BranchStage struct {
 }
 
 // PrepareBranch 用源 writer 持有的句柄复制已确认前缀，并在私有暂存中建立完整的目标记录。
-func (repository *Repository) PrepareBranch(ctx context.Context, source *JournalWriter, target domain.ThreadID, title domain.SessionTitle) (_ *BranchStage, _ LoadResult, resultErr error) {
+func (repository *Repository) PrepareBranch(ctx context.Context, source *JournalWriter, target domain.ThreadID, title domain.SessionTitle) (*BranchStage, LoadResult, error) {
+	return repository.prepareBranch(ctx, source, target, title, HistoricalCut{})
+}
+
+// PrepareHistoricalBranch 依据已验证的历史切点准备分支，并核对整个源提交范围。
+func (repository *Repository) PrepareHistoricalBranch(ctx context.Context, source *JournalWriter, target domain.ThreadID, title domain.SessionTitle, cut HistoricalCut) (*BranchStage, LoadResult, error) {
+	if source == nil || cut.tip.source != source {
+		return nil, LoadResult{}, errHistoricalCutStale
+	}
+	return repository.prepareBranch(ctx, source, target, title, cut)
+}
+
+func (repository *Repository) prepareBranch(ctx context.Context, source *JournalWriter, target domain.ThreadID, title domain.SessionTitle, historical HistoricalCut) (_ *BranchStage, _ LoadResult, resultErr error) {
 	if err := contextError(ctx); err != nil {
 		return nil, LoadResult{}, err
 	}
@@ -81,7 +93,7 @@ func (repository *Repository) PrepareBranch(ctx context.Context, source *Journal
 		}
 	}()
 
-	if err := stage.writeBranch(ctx, source, title); err != nil {
+	if err := stage.writeBranch(ctx, source, title, historical); err != nil {
 		return nil, LoadResult{}, err
 	}
 	loaded, err := NewLoader().Load(ctx, stage.lease)
@@ -118,13 +130,13 @@ func openBranchStage(root *secureRoot, relative string, thread domain.ThreadID) 
 	return &BranchStage{root: root, directory: directory, lease: lease, relative: relative, name: path.Base(relative), stagingName: name}, nil
 }
 
-func (stage *BranchStage) writeBranch(ctx context.Context, source *JournalWriter, title domain.SessionTitle) error {
+func (stage *BranchStage) writeBranch(ctx context.Context, source *JournalWriter, title domain.SessionTitle, historical HistoricalCut) error {
 	file, target, err := stage.lease.beginIO()
 	if err != nil {
 		return err
 	}
 	defer stage.lease.endIO()
-	cut, err := source.branchPrefix(ctx, file)
+	cut, err := source.branchPrefix(ctx, file, historical)
 	if err != nil {
 		return err
 	}
@@ -144,8 +156,11 @@ func (stage *BranchStage) writeBranch(ctx context.Context, source *JournalWriter
 	if loaded.Identity != cut.identity || loaded.NextSequence != cut.lastSequence+1 {
 		return source.MarkBranchSourceUnsafe(fmt.Errorf("session branch source cut is inconsistent"))
 	}
-	metadata, err := NewReplayPlanner().PlanMetadata(loaded)
+	metadata, err := planMetadata(ctx, loaded)
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return source.MarkBranchSourceUnsafe(err)
 	}
 	if !metadata.hasCommittedInput {
