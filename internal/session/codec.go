@@ -128,6 +128,10 @@ func DecodeRecord(line []byte) (Record, error) {
 		return Record{}, fmt.Errorf("session title record identity fields must be absent")
 	}
 	switch record.EventKind {
+	case EventPromptSubmitHookPlanned, EventPromptSubmitHookDecided, EventPromptSubmitHookClosed:
+		if members["parent_thread_id"] != nil {
+			return Record{}, fmt.Errorf("prompt submit record has an unexpected parent thread identity")
+		}
 	case EventThreadForked:
 		if members["turn_id"] != nil {
 			return Record{}, fmt.Errorf("thread fork record turn identity must be absent")
@@ -218,6 +222,19 @@ func validateRecord(record Record, requireChecksum bool) error {
 	if descriptor.Placement == PlacementCompactionStart || descriptor.Placement == PlacementCompactionHook || record.EventKind == EventCompactionCompleted {
 		if record.BatchID != record.Sequence || record.BatchIndex != 0 || record.BatchSize != 1 || record.TurnID != "" || record.ParentThreadID != "" {
 			return fmt.Errorf("invalid compaction admission record envelope")
+		}
+	}
+	switch record.EventKind {
+	case EventPromptSubmitHookPlanned, EventPromptSubmitHookDecided, EventPromptSubmitHookClosed:
+		if err := validatePromptSubmitEnvelope(record); err != nil {
+			return err
+		}
+	case EventHookExecutionStarted, EventHookExecutionFinished:
+		// 共享种类只有提示词检查限定单记录。解码路径已执行同一 typed 校验。
+		if !requireChecksum && (record.BatchSize != 1 || record.ParentThreadID != "") {
+			if err := decodeKnownRecord(record); err != nil {
+				return err
+			}
 		}
 	}
 	if requireChecksum {

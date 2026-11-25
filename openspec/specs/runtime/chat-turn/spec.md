@@ -391,6 +391,7 @@ Runtime 关闭、workspace/Provider 改变、resume 或 poisoned 状态 SHALL �
 #### Scenario: Invalidate after an integrated command
 - **WHEN** 已实际实现的命令调用取得执行准入
 - **THEN** 所有旧及 pending Read 证据失效，不解析命令文本推断写入路径
+
 ### Requirement: Command execution preserves durable ordering and cleanup ownership
 
 Runtime SHALL将每个`process.exec`作为exclusive调用处理：ready batch与Provider finalizer成功后冻结候选并请求approval，matching allow fact与execution started依次成功`Sync`后才可把进程交给executor。前序调用results未durable、approval未收口或started未accepted时不得启动进程；命令result与匹配Provider-native output未durable时不得启动后序调用或下一sample。
@@ -463,6 +464,7 @@ Runtime SHALL 为每次实际 sample 关联同一冻结请求来源、实际 ful
 #### Scenario: Query while a worker is blocked
 - **WHEN** 普通 stream、工具审批或摘要正在等待外部输入
 - **THEN** owner 返回最近 committed 快照及 activity，查询不阻塞在网络、Provider 锁或 journal I/O 上
+
 ### Requirement: Sample presentation has explicit committed identity bindings
 
 每个 prepared sample SHALL 在纯内存中提供已验证、独立且有界的展示块到 native item ordinal 绑定；零推理 sample 提供空表，不改变 native envelope。宿主提交通知 SHALL 明确区分 input 与 sample；input 禁止 sample 字段，sample 必须包含 SampleIndex、成功提交 Sequence 与绑定，不依赖工具 ready facts 推测。
@@ -530,3 +532,21 @@ Runtime SHALL 在全部冻结声明独立获得信任、执行前置条件通过
 #### Scenario: Cancel on either side of combined admission
 - **WHEN** 合并批次在 writer 接纳前被取消，或在接纳后已确定 Sync 成功时被取消
 - **THEN** 前者保留未提交输入的归还资格且不交付上下文，后者保留两个已提交原生位置，取消不返还已提交输入
+
+### Requirement: Prompt checks precede candidate history and preserve continuation duties
+
+Runtime SHALL 在 `turn_started` 和本次输入领取后，在初始、工具后追加或 Stop 纠正的安全点完成适用的 `UserPromptSubmit`。通过项才可成为该次输入的自动压缩候选和最终原生提交候选。待执行 startup/resume 的 `SessionStart` 保持在首条合格输入的自动压缩和输入预检之后。没有通过项的初始 turn SHALL 在采样和压缩请求之前收口。
+
+Stop continued 的耐久决定 SHALL 先于真实纠正检查。遇到拒绝或取消时按既有路径单独履行未交付反馈。已提交的工具输出与既有采样、usage、原生项提交边界保持。当前检查的进程清理仍由唯一 turn owner 完成。
+
+确定拒绝全部工具后追加时，当前 turn SHALL 继续使用已提交窗口和配对完整的工具输出。可按该窗口自身预算触发现有自动压缩。拒绝正文和附件不得成为候选。取消或运行结果未知时 SHALL 禁止下一次远端请求。信任审批、进程执行和必要清理均计入活动 worker，活跃期间沿用现有会话交接的忙状态。
+
+#### Scenario: Close a poisoned correction check on recovery
+
+- **WHEN** Stop 的反馈已接纳，随后用户纠正门禁的结果写入不确定
+- **THEN** 当前 owner 禁止继续采样。恢复在本地验证和收口门禁后才按既有契约补偿反馈
+
+#### Scenario: Continue after rejecting all ordinary steering
+
+- **WHEN** 原生工具结果已提交，当前安全点的追加全部确定被拒，旧回合及 writer 健康
+- **THEN** 追加逐项返还，下一次请求仍只使用已提交的合法窗口与工具结果

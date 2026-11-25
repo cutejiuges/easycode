@@ -538,7 +538,7 @@ Exec 取舍：Claude Code 2.1.88 的完整命令批准、默认 No、精简摘�
 
 支持 Claude 风格 hooks、渐进披露 skills、MCP 和本地 plugins，并保证来源权限、信任、缓存稳定和热加载安全。
 
-当前已交付本地 Skills 首个切片：固定 user/project 根发现、严格静态 frontmatter、`/skills` 列表、`/name` / `$name` 显式附件、Skill 主文档/同来源资源读取、缓存元数据来源与双 Provider 原生恢复。同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact/SessionStart command Hooks 已实现；本地 Plugin 技能包与 plugin skills 已由后续切片交付；其余 Hook 事件、MCP、system skills、path activation、allowed-tools、fork 与热加载仍未实现，不能将本切片视为 P6 退出。
+当前已交付本地 Skills 首个切片：固定 user/project 根发现、严格静态 frontmatter、`/skills` 列表、`/name` / `$name` 显式附件、Skill 主文档/同来源资源读取、缓存元数据来源与双 Provider 原生恢复。同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact/SessionStart/UserPromptSubmit command Hooks 已实现；本地 Plugin 技能包与 plugin skills 已由后续切片交付；其余 Hook 事件、MCP、system skills、path activation、allowed-tools、fork 与热加载仍未实现，不能将本切片视为 P6 退出。
 
 ### PostToolUse 同步检查与显式模型反馈
 
@@ -585,6 +585,10 @@ manifest ID 冲突先于扫描，原始枚举、候选、读取和合并目录�
 ### SessionStart 会话上下文
 
 本地同步声明按实际新建、恢复或成功压缩触发。首轮通过输入预检后运行激活 Hook。压缩 owner 在已安装 checkpoint 和 PostCompact 收口之后执行补充，先保存合格原生内容，再放行工具或 Stop 续写。完整关闭或中断事实在恢复时只读验证并本地收口。 [归档设计](../../openspec/changes/archive/2026-11-24-add-session-start-context/design.md)
+
+### 提示词提交前的 UserPromptSubmit
+
+初始和追加输入先完成逐条检查，再交付通过项。首轮全部拒绝时不触发自动摘要或 SessionStart。工具后的已提交结果和 Stop 的冻结反馈沿原契约续写。当前执行范围是同步本地命令和固定的本地诊断。提示词附加上下文、异步、权限事件及插件可执行贡献仍属后续能力。 [主规格](../../openspec/specs/extension/user-prompt-submit-hooks/spec.md)
 
 ### 10.2 架构选择
 

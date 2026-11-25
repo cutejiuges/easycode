@@ -272,6 +272,9 @@ func acceptStopDelivery(plan *replayAccumulator, active *activeReplayTurn, batch
 			return err
 		}
 	}
+	if active.promptSubmit != nil && active.promptSubmit.closed == PromptSubmitCompleted {
+		active.promptSubmit = nil
+	}
 	s.DeliverySequence = batch[0].Sequence
 	s.DetailSequence = batch[len(batch)-1].Sequence
 	active.lastSequence = s.DetailSequence

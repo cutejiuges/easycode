@@ -174,7 +174,11 @@ func (projectorValue *StreamProjector) Project(item protocol.ControlItem) (Strea
 		return projectCommandResult(result)
 	case protocol.ControlItemInputStatus:
 		status, _ := item.InputStatus()
-		return StreamInputStatusEvent{Version: eventVersion, Type: "input.status", RequestID: status.RequestID(), EntryID: status.EntryID(), State: status.State(), TurnID: status.TurnID(), Reason: status.Reason()}, nil
+		reason := status.Reason()
+		if reason == protocol.InputReasonHookRejected {
+			reason = protocol.InputReasonFailed
+		}
+		return StreamInputStatusEvent{Version: eventVersion, Type: "input.status", RequestID: status.RequestID(), EntryID: status.EntryID(), State: status.State(), TurnID: status.TurnID(), Reason: reason}, nil
 	case protocol.ControlItemTurnEvent:
 		runtimeEvent, _ := item.TurnEvent()
 		if runtimeEvent.SessionID != projectorValue.sessionID || runtimeEvent.ThreadID != projectorValue.threadID {

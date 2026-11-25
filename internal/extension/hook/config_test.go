@@ -52,6 +52,9 @@ func TestLoadFreezesSourcesAndInvalidSourceBlocksAllMutations(t *testing.T) {
 			t.Fatal("partial source allowed")
 		}
 	}
+	if checks, err := bad.UserPromptSubmitChecks(); err != domain.HookConfigInvalid || len(checks) != 0 {
+		t.Fatal("invalid source passed the prompt gate", err)
+	}
 	putHookConfig(t, project, hookConfig("check", "*", "true"))
 	if err := os.Chmod(project, 0660); err != nil {
 		t.Fatal(err)
@@ -210,6 +213,22 @@ func TestCompactionHookConfigUsesSharedSourceAndMatchLimits(t *testing.T) {
 	if checks, err := snapshot.SessionStartChecks(domain.SessionStartStartup); err != domain.HookMatchLimit || len(checks) != 0 {
 		t.Fatal("SessionStart selected a partial plan after matching overflow", err)
 	}
+	prompt := strings.Replace(group(32), `"matcher":"manual",`, "", 1)
+	if _, err := decodeConfig(domain.HookSourceUser, []byte(`{"hooks":{"UserPromptSubmit":`+prompt+`,"Stop":`+stop+`}}`)); err == nil {
+		t.Fatal("UserPromptSubmit exceeded the shared declaration limit")
+	}
+	prompt = strings.Replace(group(domain.MaxHookMatches+1), `"matcher":"manual",`, "", 1)
+	prompts, err := decodeConfig(domain.HookSourceProject, []byte(`{"hooks":{"UserPromptSubmit":`+prompt+`}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err = domain.NewHookSnapshot(prompts, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checks, err := snapshot.UserPromptSubmitChecks(); err != domain.HookMatchLimit || len(checks) != 0 {
+		t.Fatal("UserPromptSubmit selected a partial plan after matching overflow", err)
+	}
 }
 
 func TestSessionStartConfigFreezesOrderAndTrustIdentity(t *testing.T) {
@@ -243,6 +262,44 @@ func TestSessionStartConfigFreezesOrderAndTrustIdentity(t *testing.T) {
 	for _, invalid := range []string{"clear", "resume|compact", "auto"} {
 		if _, err := decodeConfig(domain.HookSourceUser, []byte(strings.Replace(payload, `"*"`, fmt.Sprintf("%q", invalid), 1))); err == nil {
 			t.Fatal("accepted unsupported SessionStart source", invalid)
+		}
+	}
+}
+
+func TestUserPromptSubmitConfigUsesUnfilteredFrozenOrder(t *testing.T) {
+	const stop = `[{"hooks":[{"id":"stop-check","type":"command","command":"true"}]}]`
+	const prompt = `[{"hooks":[{"id":"first","type":"command","command":"true"},{"id":"second","type":"command","command":"false"}]}]`
+	const stopRevision = "271e9dfb09907215a964dbdf937003443b4a7e441c723c02ee5d8d46be50c8cb"
+	original, err := decodeConfig(domain.HookSourceUser, []byte(`{"hooks":{"Stop":`+stop+`}}`))
+	if err != nil || len(original) != 1 || original[0].Reference.Revision != stopRevision {
+		t.Fatal("kept config changed canonical source bytes", err)
+	}
+	withPrompt := `{"hooks":{"UserPromptSubmit":` + prompt + `,"Stop":` + stop + `}}`
+	user, err := decodeConfig(domain.HookSourceUser, []byte(withPrompt))
+	explicit := strings.Replace(prompt, `"true"`, `"true","feedback":"none"`, 1)
+	reordered, reorderErr := decodeConfig(domain.HookSourceUser, []byte(`{"hooks":{"Stop":`+stop+`,"UserPromptSubmit":`+explicit+`}}`))
+	project, projectErr := decodeConfig(domain.HookSourceProject, []byte(`{"hooks":{"UserPromptSubmit":`+stop+`}}`))
+	if err != nil || reorderErr != nil || projectErr != nil || len(user) != 3 || len(reordered) != 3 || len(project) != 1 ||
+		user[0] != reordered[0] || user[1] != reordered[1] || user[2] != reordered[2] ||
+		user[0].Reference.Event != domain.HookStop || user[0].Reference.Revision == stopRevision ||
+		user[1].Reference.Event != domain.HookUserPromptSubmit || user[1].Reference.Feedback != domain.HookFeedbackNone {
+		t.Fatal("changed source normalization or event order", err, reorderErr, projectErr)
+	}
+	snapshot, err := domain.NewHookSnapshot(append(user, project...), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks, err := snapshot.UserPromptSubmitChecks()
+	if err != nil || len(checks) != 3 || checks[0] != user[1] || checks[1] != user[2] || checks[2] != project[0] {
+		t.Fatalf("unexpected prompt check selection: %v", err)
+	}
+	for _, invalid := range []string{
+		strings.Replace(prompt, `"hooks"`, `"matcher":"*","hooks"`, 1),
+		strings.Replace(explicit, `"none"`, `"model"`, 1),
+		strings.Replace(prompt, `"first"`, `"stop-check"`, 1),
+	} {
+		if _, err := decodeConfig(domain.HookSourceUser, []byte(strings.Replace(withPrompt, prompt, invalid, 1))); err == nil {
+			t.Fatal("accepted an invalid prompt declaration")
 		}
 	}
 }

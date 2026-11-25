@@ -97,6 +97,10 @@ func (v HookInput) MatchesTarget(target HookTarget) bool {
 		start, ok := target.SessionStart()
 		return ok && start.Source == v.sessionStart.source && start.CompactionID == v.sessionStart.id &&
 			start.Scope == v.sessionStart.scope && start.turn() == v.TurnID
+	case HookUserPromptSubmit:
+		prompt, ok := target.UserPromptSubmit()
+		// 采样位置由执行目标绑定，stdin 只公开回合和输入身份。
+		return ok && prompt.TurnID == v.TurnID && prompt.InputID == v.promptSubmit.id
 	default:
 		_, capability, ok := target.ToolCall()
 		return ok && capability == v.Input.Capability()
@@ -104,7 +108,7 @@ func (v HookInput) MatchesTarget(target HookTarget) bool {
 }
 
 func (v HookInput) validateStop() error {
-	if v.stop == nil || v.compaction != nil || v.sessionStart != nil || v.stop.Validate() != nil || v.SessionID != v.stop.session || v.ThreadID != v.stop.thread || v.TurnID != v.stop.sample.TurnID || v.CWD != v.stop.cwd || v.hasToolFields() {
+	if v.stop == nil || v.compaction != nil || v.sessionStart != nil || v.promptSubmit != nil || v.stop.Validate() != nil || v.SessionID != v.stop.session || v.ThreadID != v.stop.thread || v.TurnID != v.stop.sample.TurnID || v.CWD != v.stop.cwd || v.hasToolFields() {
 		return HookConfigInvalid
 	}
 	return nil
@@ -128,8 +132,10 @@ func (v HookInput) MarshalJSON() ([]byte, error) {
 		return v.compactionBytes()
 	case HookSessionStart:
 		return v.sessionStartBytes()
+	case HookUserPromptSubmit:
+		return v.promptSubmitBytes()
 	}
-	if v.stop != nil || v.compaction != nil || v.sessionStart != nil {
+	if v.stop != nil || v.compaction != nil || v.sessionStart != nil || v.promptSubmit != nil {
 		return nil, HookConfigInvalid
 	}
 	type toolInput HookInput

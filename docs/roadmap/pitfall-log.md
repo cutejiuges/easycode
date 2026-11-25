@@ -1132,3 +1132,9 @@ Linux CI 回归补充：TurnStarted 只证明回合接纳，不能证明输入�
 ### SSE 解压和 HTTP 请求取消的顺序
 
 Resty 在关闭自动解析时仍装配内容解码器。读取其底层响应体可能只看到压缩数据或 EOF，导致两种 Provider 都报告终态缺失。SSE owner 使用经过包装的响应体。空闲超时时先取消实际 HTTP 请求，使持锁的解压读取解除，再关闭响应体并等待退出。终态通过独立的流 context 交付，保留原空闲错误。 [传输规格](../../openspec/specs/provider/http-stream-transport/spec.md) · [gzip 回归](../../internal/provider/transport/client_test.go)
+
+### 2026-11-24 提交检查和原生输入各自确认结果
+
+检查进程或检查写入结果未知时，当前输入可能仍明确未提交，可交还本地草稿。只有原生输入批次已获接纳且提交无法确认时才标记输入未知，禁止重提。先结算已明确拒绝的输入，再由原 claim owner 交付通过项。Stop 的冻结反馈在检查收口后仍须本地交付。
+
+Session 修复前要验证末尾完整行仍满足检查授权，包括伪造批次形状及对已拦截 InputID 的复用。验证通过的撕裂尾部可以修复，修复不会将其不完整原生交付计作已保存。 [Runtime 回归](../../internal/runtime/prompt_submit_hooks_test.go) · [Session 回归](../../internal/session/prompt_submit_replay_test.go)

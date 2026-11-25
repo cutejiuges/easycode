@@ -163,7 +163,8 @@ func (service *sessionService) resume(
 	if started.transferred {
 		lease = nil
 	}
-	if plan.InterruptedCompaction != nil || plan.InterruptedPostCompact != nil || plan.InterruptedSessionStart != nil || plan.InterruptedTail != nil {
+	if plan.InterruptedCompaction != nil || plan.InterruptedPostCompact != nil || plan.InterruptedSessionStart != nil ||
+		plan.InterruptedPromptSubmit != nil || plan.InterruptedTail != nil {
 		service.recovery.mutating()
 	}
 	if err := reconcileInterruptedCompaction(ctx, writer, plan.InterruptedCompaction); err != nil {
@@ -186,6 +187,19 @@ func (service *sessionService) resume(
 		service.recovery.journalMutation(closeErr == nil, closeErr)
 		if closeErr != nil {
 			return assembledSession{}, fault.Wrap(fault.CodeSessionWrite, "close interrupted session start hook failed", closeErr)
+		}
+	}
+	if plan.InterruptedPromptSubmit != nil {
+		drafts, closeErr := plan.InterruptedPromptSubmit.CloseDrafts()
+		if closeErr != nil {
+			return assembledSession{}, fault.Wrap(fault.CodeSessionWrite, "build interrupted prompt submit hook closure failed", closeErr)
+		}
+		for _, draft := range drafts {
+			_, closeErr = writer.AppendBatch(ctx, []session.RecordDraft{draft})
+			service.recovery.journalMutation(closeErr == nil, closeErr)
+			if closeErr != nil {
+				return assembledSession{}, fault.Wrap(fault.CodeSessionWrite, "close interrupted prompt submit hook failed", closeErr)
+			}
 		}
 	}
 	if plan.InterruptedTail != nil {

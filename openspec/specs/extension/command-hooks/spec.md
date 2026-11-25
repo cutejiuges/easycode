@@ -2,20 +2,20 @@
 
 ## Purpose
 
-定义本地同步 PreToolUse、PostToolUse、PostToolUseFailure 与 Stop 命令 Hook 的共同来源、配置、信任、受限执行与失败行为，使工具前后检查与回合完成门禁保持双 Provider 行为、权限隔离、隐私和取消清理的一致性。
+定义本地同步命令 Hook 的共同来源、配置、信任、受限执行与失败行为。工具、输入、回合完成、压缩和会话激活检查共用权限、隐私与取消清理边界。
 
 ## Requirements
 
 ### Requirement: Command hook configuration is bounded strict and frozen
 
-系统 SHALL 显式加载用户 `~/.config/easycode/hooks.json` 与启动 workspace 根 `.easycode/hooks.json`，只接受顶层 hooks 对象中的 PreToolUse、PostToolUse、PostToolUseFailure、Stop、PreCompact、PostCompact、SessionStart 数组；三个工具事件、两个压缩事件和 SessionStart 的 group 含 matcher/hooks，Stop group 只含 hooks 且 MUST 拒绝任何 matcher；每条含 id/type/command/timeout，两个工具后置事件、Stop、PreCompact、PostCompact 和 SessionStart 支持 feedback；type MUST 为 command。缺失文件表示空来源；重复/未知字段、非 UTF-8、大小写别名、null、尾随 JSON、错误类型与未支持事件或行为 MUST 使整个来源无效。timeout 省略为 5 秒，只允许整数 1..30；id 为 1..64 字节小写 ASCII 字母/数字/单连字符、首尾字母数字且来源内唯一，command 非空且最多 8 KiB。
+系统 SHALL 显式加载用户 `~/.config/easycode/hooks.json` 与启动 workspace 根 `.easycode/hooks.json`，只接受顶层 hooks 对象中的 PreToolUse、PostToolUse、PostToolUseFailure、Stop、PreCompact、PostCompact、SessionStart、UserPromptSubmit 数组；三个工具事件、两个压缩事件和 SessionStart 的 group 含 matcher/hooks，Stop 和 UserPromptSubmit group 只含 hooks 且 MUST 拒绝任何 matcher；每条含 id/type/command/timeout，两个工具后置事件、Stop、PreCompact、PostCompact、SessionStart 和 UserPromptSubmit 支持 feedback；type MUST 为 command。缺失文件表示空来源；重复/未知字段、非 UTF-8、大小写别名、null、尾随 JSON、错误类型与未支持事件或行为 MUST 使整个来源无效。timeout 省略为 5 秒，只允许整数 1..30；id 为 1..64 字节小写 ASCII 字母/数字/单连字符、首尾字母数字且来源内唯一，command 非空且最多 8 KiB。
 
 每来源 SHALL 最多 64 KiB 和 32 条 Hook，合并最多 64 条；单调用每事件最多匹配 8 条。工具事件的 matcher MUST 是 `*` 或以 `|` 分隔的非重复字面名称：Edit/apply_patch 对应 fs.patch，Write 对应 fs.write，Bash/exec_command 对应 process.exec。空分支、未知名称或正则语法 MUST 拒绝；别名命中相同能力不得重复执行一条声明。工具事件的 `*` SHALL 仅指上述三项能力。两个压缩事件的 matcher SHALL 仅接受单一字面 `manual`、`auto` 或 `*`，其中 `*` 匹配两种压缩触发。SessionStart 的 matcher SHALL 仅接受单一字面 `startup`、`resume`、`compact` 或 `*`，其中 `*` 匹配三个已支持来源。
 
 同一事件 SHALL 按用户来源、项目来源、配置数组位置稳定选择，按相同顺序执行实际获准项。source revision SHALL 由完整规范内容派生；绝对路径、时间、inode、执行或信任身份不得参与内容 revision。相同内容和数组顺序 MUST 产生相同 bytes/revision，getter 返回值修改不得改变快照。快照只在启动时建立，后续磁盘编辑不改变当前运行语义。
 
 
-PostToolUse/PostToolUseFailure/Stop/PreCompact/SessionStart 的 feedback SHALL 仅接受 none/model，省略规范化为 none。PostCompact 仅支持省略或 none；PreToolUse 出现 feedback MUST 拒绝。每来源 32 条和合并 64 条上限按七个事件合计，id 在来源全部事件中唯一；规范配置显式按 PreToolUse、PostToolUse、PostToolUseFailure、Stop、PreCompact、PostCompact、SessionStart 排序，不以对象键插入顺序决定 revision。未知事件继续失败关闭。source revision 覆盖七事件全部声明，command fingerprint SHALL 绑定事件与披露策略。
+PostToolUse/PostToolUseFailure/Stop/PreCompact/SessionStart 的 feedback SHALL 仅接受 none/model，省略规范化为 none。PostCompact 和 UserPromptSubmit 仅支持省略或 none；PreToolUse 出现 feedback MUST 拒绝。每来源 32 条和合并 64 条上限按八个事件合计，id 在来源全部事件中唯一；规范配置显式按 PreToolUse、PostToolUse、PostToolUseFailure、Stop、PreCompact、PostCompact、SessionStart、UserPromptSubmit 排序，不以对象键插入顺序决定 revision。未知事件继续失败关闭。source revision 覆盖八事件全部声明，command fingerprint SHALL 绑定事件与披露策略。
 
 #### Scenario: Load two ordered sources
 - **WHEN** 用户和项目各有合法的匹配 Hook，文件对象键顺序不同
@@ -23,7 +23,7 @@ PostToolUse/PostToolUseFailure/Stop/PreCompact/SessionStart 的 feedback SHALL �
 
 #### Scenario: Refuse a partial snapshot
 - **WHEN** 一个已存在来源损坏、超限或包含未支持事件，另一个来源合法
-- **THEN** 三项 mutation 调用以 hook_config_invalid 阻断，不从合法来源组成部分放行；已保存答复、只读工具与配置浏览仍可用，但最终完成边界 MUST 以 hook_config_invalid 失败且零 Stop 执行。接纳的压缩同样以 hook_config_invalid 收口且零 PreCompact 执行，不能通过损坏来源推断没有 Stop 或 PreCompact
+- **THEN** 三项 mutation 调用以 hook_config_invalid 阻断，不从合法来源组成部分放行；已保存答复、只读工具与配置浏览仍可用，但最终完成边界 MUST 以 hook_config_invalid 失败且零 Stop 执行。接纳的压缩同样以 hook_config_invalid 收口且零 PreCompact 执行，不能通过损坏来源推断没有 Stop 或 PreCompact。待发送用户提交以 hook_config_invalid 拒绝且零 UserPromptSubmit 执行
 
 #### Scenario: Match aliases only once
 - **WHEN** matcher 为 Bash|exec_command，当前 ready 调用属于 process.exec
@@ -38,7 +38,7 @@ PostToolUse/PostToolUseFailure/Stop/PreCompact/SessionStart 的 feedback SHALL �
 - **THEN** 首次规范值为 none，第二次 source revision/command fingerprint 改变，旧信任不适用；对象键顺序不影响 bytes
 
 #### Scenario: Reject frontloaded disclosure on PreToolUse
-- **WHEN** PreToolUse 声明包含 feedback 或七个事件合计超出来源数量上限
+- **WHEN** PreToolUse 声明包含 feedback 或八个事件合计超出来源数量上限
 - **THEN** 整个来源无效且工具与 Hook 均不执行
 
 #### Scenario: Freeze failure declarations in the same source
@@ -49,11 +49,11 @@ PostToolUse/PostToolUseFailure/Stop/PreCompact/SessionStart 的 feedback SHALL �
 - **WHEN** 同来源成功和失败声明使用相同 id
 - **THEN** 整个来源无效，不以另一事件或合法来源部分放行 mutation
 
-Stop SHALL 仅按回合完成事件选择，不与任一工具能力匹配。每候选最多 8 项，保持 user/project 和数组顺序；七事件共享来源计数/id 唯一规则。合法无诊断且 Stop 为空时保留无 Stop 快速路径，既有工具 matcher 的 * 仍只指三种 mutation。
+Stop SHALL 仅按回合完成事件选择，不与任一工具能力匹配。每候选最多 8 项，保持 user/project 和数组顺序；八事件共享来源计数/id 唯一规则。合法无诊断且 Stop 为空时保留无 Stop 快速路径，既有工具 matcher 的 * 仍只指三种 mutation。
 
 #### Scenario: Load a completion hook without a matcher
 - **WHEN** Stop group 只含合法 hooks，feedback 省略
-- **THEN** 规范化为 feedback=none 并保持顺序；任何 Stop matcher、七事件重复 id 或合计超限使来源无效
+- **THEN** 规范化为 feedback=none 并保持顺序；任何 Stop matcher、八事件重复 id 或合计超限使来源无效
 
 #### Scenario: Preserve a valid tool-only configuration
 - **WHEN** 两来源合法且未配置 Stop
@@ -77,6 +77,12 @@ Stop SHALL 仅按回合完成事件选择，不与任一工具能力匹配。每
 - **THEN** 得到相同规范 bytes 和 revision，配置位置仍决定同一事件的执行顺序
 - **THEN** matcher 为 clear、fork、正则或包含多个分支时，整个来源无效
 
+#### Scenario: Freeze prompt checks in the common event inventory
+
+- **WHEN** 同一来源合法配置 UserPromptSubmit 和已有事件，并且只交换 JSON 对象键顺序
+- **THEN** 规范 bytes 与 revision 保持一致，UserPromptSubmit 参与共享来源数量、ID 唯一性和命令指纹约束
+- **THEN** 给 UserPromptSubmit 添加 matcher 或 feedback=model 时整个来源无效
+
 ### Requirement: Hook source checks bind to opened descriptors
 
 配置读取 MUST 逐段拒绝 symlink，并由同一实际 FD 校验常规文件、大小及权限；源文件与受信任来源目录不得允许 group/other 写入。特殊文件、目录穿越、读取失败或捕获过程中检测到变化 MUST 使来源无效，不回显路径目标或内容，不退回普通路径读取。支持平台的既有系统路径别名可按固定规则处理，其他平台无法提供安全打开时 MUST 失败关闭。
@@ -93,7 +99,7 @@ Stop SHALL 仅按回合完成事件选择，不与任一工具能力匹配。每
 
 用户及项目来源 SHALL 均默认未信任。每条信任 MUST 绑定当前 Session/workspace 实例、来源身份与 revision、Hook id、事件、feedback 策略、命令 fingerprint 以及 shell/environment/sandbox 身份；不得从项目打开、Skill 使用、普通工具批准、其他 Hook 或历史 Session 推导授权。指纹 SHALL 包含规范 matcher、命令和 timeout，不含宿主环境实际值。
 
-首次运行前 MUST 提供完整命令、来源、事件、作用能力、回合完成范围、压缩触发范围或 SessionStart 来源、超时、只读/禁网限制和脚本依赖可变化的审查；仅接受本进程会话信任或拒绝，默认拒绝。响应 MUST 关联活动 request/session/thread、封闭 tool_call、turn_stop、compaction 或 session_start 目标及快照身份。工具与 Stop 使用真实 turn 关联，PreCompact 使用真实 compaction ID 及其作用域，手动无 TurnID、自动绑定真实 turn 与采样下标；过期、重复、错配或取消后的响应在授权和执行前拒绝。拒绝状态保持至该项被显式 reset 或进程结束；reset 仅在无活动 turn、无独立手动压缩且目标身份匹配时清除状态，不建立信任、不重试工具。
+首次运行前 MUST 提供完整命令、来源、事件、作用能力、回合完成范围、压缩触发范围、SessionStart 来源或提示词明文披露范围、超时、只读/禁网限制和脚本依赖可变化的审查；仅接受本进程会话信任或拒绝，默认拒绝。响应 MUST 关联活动 request/session/thread、封闭 tool_call、turn_stop、compaction、session_start 或 user_prompt_submit 目标及快照身份。工具与 Stop 使用真实 turn 关联，PreCompact 使用真实 compaction ID 及其作用域，手动无 TurnID、自动绑定真实 turn 与采样下标；过期、重复、错配或取消后的响应在授权和执行前拒绝。拒绝状态保持至该项被显式 reset 或进程结束；reset 仅在无活动 turn、无独立手动压缩且目标身份匹配时清除状态，不建立信任、不重试工具。
 
 信任和拒绝 MUST 由实例持有，不写配置或 Session，不跨重启、resume、Provider/workspace/Session 实例复用。信任不冻结所引用脚本的完整依赖内容，不得声称命令摘要证明了所有未来脚本 bytes。
 
@@ -151,6 +157,13 @@ SessionStart 的信任 SHALL 按 extension/session-start-context 精确绑定新
 
 - **WHEN** 已安装同一 checkpoint 且两个阶段使用相同命令，旧 PostCompact 审查响应在 SessionStart 审查阶段到达
 - **THEN** 当前信任请求与计划保持原身份，旧响应零授权和零执行
+
+UserPromptSubmit 的信任请求 SHALL 绑定实际已领取的 turn、采样位置、InputID 与匹配计划。审查说明脚本读取提交明文、可阻止提交并且使用只读禁网 sandbox。当前实例中该声明的后续匹配沿用已作出的信任或拒绝，直到按已有规则 reset 或实例退出。按声明获准后才可启动当前检查，信任不跨事件、快照或会话实例复用。
+
+#### Scenario: Reject a response from an older prompt
+
+- **WHEN** 当前正在审查一条提示词，前一个输入的响应迟到，且两次使用同一命令声明
+- **THEN** 当前信任请求保持原身份，该响应无授权效果，未获授权的命令启动次数为零
 
 ### Requirement: Hook commands execute with explicit restricted lifecycle
 

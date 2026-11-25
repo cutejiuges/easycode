@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"slices"
 
 	"easycode/internal/domain"
 	"easycode/internal/fault"
@@ -11,7 +12,16 @@ import (
 func (state *agentLoopRunState) canResolveHookTrust(response protocol.HookTrustResponse) bool {
 	id, scope, compact := response.Target.Compaction()
 	if !compact {
-		return state.active != nil && !state.active.terminalSeen && !state.active.worker.cancelRequested && !state.active.compactionID.Valid() && state.active.turnID == response.TurnID
+		turn := state.active
+		if turn == nil || turn.terminalSeen || turn.worker.cancelRequested || turn.compactionID.Valid() || turn.turnID != response.TurnID {
+			return false
+		}
+		if target, prompt := response.Target.UserPromptSubmit(); prompt {
+			return target.TurnID == turn.turnID && slices.ContainsFunc(turn.claim, func(input queuedInput) bool {
+				return input.value.ID() == target.InputID
+			})
+		}
+		return true
 	}
 	if scope.Trigger == domain.CompactionManual {
 		operation := state.compaction

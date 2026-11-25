@@ -303,6 +303,7 @@ func (plan ToolRecoveryPlan) Validate() error {
 
 // ReplayPlan 是创建 Provider Conversation 前的不可变语义恢复计划。
 type ReplayPlan struct {
+	InterruptedPromptSubmit *PromptSubmitRecoveryPlan
 	InterruptedSessionStart *SessionStartRecoveryPlan
 	Stops                   []ReplayedStop
 	StopRecovery            *StopRecoveryPlan
@@ -339,8 +340,9 @@ type ReplayMetadata struct {
 
 type replayAccumulator struct {
 	ReplayPlan
-	projectHistory bool
-	nativeRevision uint64
+	projectHistory     bool
+	nativeRevision     uint64
+	promptSubmitInputs map[domain.InputID]struct{}
 }
 
 func (plan *replayAccumulator) recordNative(record NativeCommitRecord) {
@@ -470,6 +472,16 @@ func replay(ctx context.Context, loaded LoadResult, projectHistory bool) (Replay
 			}
 		}
 
+		if active != nil && active.promptSubmit.open() {
+			if err := active.promptSubmit.accept(batch); err != nil {
+				return ReplayPlan{}, err
+			}
+			active.lastSequence = batch[0].Sequence
+			continue
+		}
+		if active != nil && !active.promptSubmit.allowsFollowing(active, batch) {
+			return ReplayPlan{}, replayCorrupt("turn progressed after an aborted prompt submit check")
+		}
 		switch batch[0].EventKind {
 		case EventCompactionStarted, EventPreCompactHookStarted, EventPreCompactHookFinished, EventPreCompactHookDecided, EventCompactionCompleted, EventCompactionFailed,
 			EventPostCompactHookStarted, EventPostCompactHookFinished, EventPostCompactHookClosed:
@@ -515,6 +527,12 @@ func replay(ctx context.Context, loaded LoadResult, projectHistory bool) (Replay
 			continue
 		}
 		compaction.sessionStartTarget = domain.SessionStartTarget{}
+		if batch[0].EventKind == EventPromptSubmitHookPlanned {
+			if err := plan.beginPromptSubmit(active, batch[0], seenInputs); err != nil {
+				return ReplayPlan{}, err
+			}
+			continue
+		}
 		if active != nil && active.stop != nil {
 			handled, terminal, err := acceptStopBatch(&plan, active, batch, seenInputs)
 			if err != nil {
@@ -641,9 +659,17 @@ func replay(ctx context.Context, loaded LoadResult, projectHistory bool) (Replay
 	if plan.Identity != loaded.Identity {
 		return ReplayPlan{}, replayCorrupt("final thread segment identity does not match journal")
 	}
+	if loaded.repair != nil {
+		if err := plan.validateTornPromptInputAssociations(active, loaded.repair.inputs, seenInputs, sessionStart.open != nil, compaction.active != nil || compaction.postCompact != nil); err != nil {
+			return ReplayPlan{}, err
+		}
+	}
 	if active != nil {
 		if loaded.Records[len(loaded.Records)-1].Sequence != active.lastSequence {
 			return ReplayPlan{}, replayCorrupt("active turn is not the journal tail")
+		}
+		if active.promptSubmit.open() && projectHistory {
+			plan.InterruptedPromptSubmit = &PromptSubmitRecoveryPlan{prefix: *active.promptSubmit}
 		}
 		if active.stop != nil {
 			recovery, err := NewStopRecoveryPlan(*active.stop)
@@ -685,6 +711,7 @@ type activeReplayTurn struct {
 	artifacts            *artifactReplay
 	taskProgress         *replayedTaskProgress
 	stop                 *ReplayedStop
+	promptSubmit         *promptSubmitReplay
 	stopContinuations    uint8
 	stopFeedbackBytes    int
 	nextSampleReady      bool
@@ -729,6 +756,7 @@ func acceptSampleBatch(plan *replayAccumulator, active *activeReplayTurn, batch 
 			Sequence: batch[1].Sequence, TurnID: active.turnID, Usage: usage,
 		})
 	}
+	active.promptSubmit = nil
 	if len(batch) == 3 && batch[2].EventKind == EventTurnStopHookPlanned {
 		if err := beginStopCheck(active, batch[2]); err != nil {
 			return false, err

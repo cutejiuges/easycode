@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"time"
 
 	"easycode/internal/domain"
 	"easycode/internal/fault"
@@ -46,7 +47,7 @@ func discardStopCandidate(prepared *provider.PreparedStopContinuation) {
 }
 
 // deliverStopContinuation 在已接受的意图之后只领取一次输入；取消只能去掉未接纳的真实输入。
-func (r *Runtime) deliverStopContinuation(ctx context.Context, emit Emitter, check *stopCheck, control turnInputControl) error {
+func (r *Runtime) deliverStopContinuation(ctx context.Context, emit Emitter, check *stopCheck, control turnInputControl, promptBudget *time.Duration) error {
 	feedback, ok := check.state.Decision.Feedback()
 	if !ok {
 		return domain.HookConfigInvalid
@@ -62,6 +63,12 @@ func (r *Runtime) deliverStopContinuation(ctx context.Context, emit Emitter, che
 	var priorErr error
 	if ctx.Err() == nil && control != nil {
 		pending, priorErr = control.claim(ctx, turn, index)
+	}
+	if priorErr == nil {
+		pending, _, priorErr = r.checkPromptSubmissions(ctx, emit, turn, index, pending, control, promptBudget)
+		if r.poisoned.Load() || r.journal.Poisoned() {
+			return priorErr
+		}
 	}
 	resolve := func(state protocol.InputState, reason protocol.InputReason) {
 		if len(pending) > 0 && control != nil {

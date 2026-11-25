@@ -125,7 +125,7 @@ func classifyHookExecution(id domain.HookRunIdentity, policy domain.HookFeedback
 		feedback = parsed.Feedback
 		replacement = parsed.Replacement
 	}
-	if id.Event == domain.HookPostCompact || id.Event == domain.HookSessionStart {
+	if id.Event == domain.HookPostCompact || id.Event == domain.HookSessionStart || id.Event == domain.HookUserPromptSubmit {
 		result.StdoutBytes = min(result.StdoutBytes, domain.MaxHookOutputBytes+1)
 		result.StderrBytes = min(result.StderrBytes, domain.MaxHookOutputBytes+1)
 	}

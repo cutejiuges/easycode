@@ -71,7 +71,7 @@ func NewPostCompactHookInput(session SessionID, thread ThreadID, id CompactionID
 
 func (v HookInput) compactionBytes() ([]byte, error) {
 	input := v.compaction
-	if input == nil || v.stop != nil || v.sessionStart != nil || v.hasToolFields() || !v.SessionID.Valid() || !v.ThreadID.Valid() ||
+	if input == nil || v.stop != nil || v.sessionStart != nil || v.promptSubmit != nil || v.hasToolFields() || !v.SessionID.Valid() || !v.ThreadID.Valid() ||
 		!input.id.Valid() || input.scope.Validate() != nil || input.scope.TurnID != v.TurnID ||
 		!filepath.IsAbs(v.CWD) || filepath.Clean(v.CWD) != v.CWD || !utf8.ValidString(v.CWD) || strings.ContainsRune(v.CWD, 0) {
 		return nil, HookConfigInvalid

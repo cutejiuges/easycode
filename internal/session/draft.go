@@ -300,7 +300,8 @@ func validateDraftPlacement(draft RecordDraft) error {
 		if draft.turnID != "" || !draft.parentThreadID.Valid() {
 			return fmt.Errorf("thread fork draft placement is invalid")
 		}
-	case EventTurnStopHookPlanned, EventTurnStopHookDecided, EventToolPostHookPlanned, EventToolPostHookCompleted, EventToolHookGatePlanned, EventHookExecutionStarted, EventHookExecutionFinished, EventToolHookGateDecided, EventTurnInputsCommitted, EventTurnStarted, EventProviderNativeCommit, EventSampleUsage, EventToolCallReady,
+	case EventPromptSubmitHookPlanned, EventPromptSubmitHookDecided, EventPromptSubmitHookClosed,
+		EventTurnStopHookPlanned, EventTurnStopHookDecided, EventToolPostHookPlanned, EventToolPostHookCompleted, EventToolHookGatePlanned, EventHookExecutionStarted, EventHookExecutionFinished, EventToolHookGateDecided, EventTurnInputsCommitted, EventTurnStarted, EventProviderNativeCommit, EventSampleUsage, EventToolCallReady,
 		EventToolApprovalDecided, EventToolExecutionStarted, EventToolCallResult, EventTurnCompleted, EventTurnFailed:
 		if draft.parentThreadID != "" || !draft.turnID.Valid() {
 			return fmt.Errorf("turn draft placement is invalid")

@@ -156,7 +156,7 @@ internal/
   session/                  JSONL、artifact、根线程和分支的创建与恢复
     catalog/                可重建 Catalog 快照 与前台 reconciliation
   executor/process/         Exec/Hook 共用进程生命周期
-  extension/                本地 Skills、Plugin 技能包与 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact/SessionStart Hooks；P6 后续目标：插件可执行贡献、MCP
+  extension/                本地 Skills、Plugin 技能包与 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact/SessionStart/UserPromptSubmit Hooks；P6 后续目标：插件可执行贡献、MCP
   subagent/                 P7 目标：thread tree、mailbox、后台任务和限流
   tui/                      Bubble Tea、输入、消息 view、overlay 和 diff
   telemetry/                P8 目标：slog、redaction、metrics 和 diagnostics
@@ -227,16 +227,16 @@ Provider HTTP 层不直接依赖官方模型 SDK。原因是 EasyCode 需要支�
 共享 Runtime 的当前采样流程：
 
 1. AgentLoop 按 FIFO/strict-next 领取用户输入，冻结独立 InputID。
-2. 准备输入候选、上下文预算及适用的阈值摘要。摘要请求前完成 PreCompact 门禁，新窗口成功保存后依序收口 PostCompact 和适用的 SessionStart，再提交待处理输入。输入 batch 成功 Sync 后 finalize。
+2. 先对已领取输入完成适用的 UserPromptSubmit，仅用通过项准备输入候选、上下文预算及阈值摘要。摘要请求前完成 PreCompact 门禁，新窗口成功保存后依序收口 PostCompact 和适用的 SessionStart，再提交待处理输入。输入 batch 成功 Sync 后 finalize。
 3. 由当前 ContextPlan 和 Provider 策略编译原生请求及缓存证据。
 4. Provider 在私有 reducer 中归并原生条目。Runtime 消费语义事件和唯一终态，验证完整 PreparedSample。
 5. 原子提交 native sample、usage 与 ready calls、适用的 Stop 计划或最终 terminal，成功后 finalize。
 6. 工具按只读批次/exclusive 屏障执行；三项 mutation 先过适用 PreToolUse 门禁和 PostToolUse 独立信任，再候选/普通批准；Question 单独等待回答。
 7. 按 call index 冻结并 Sync results，提交各 Provider 匹配的原生 outputs。
-8. outputs 完整后开放同轮输入安全点，继续下一 sample 或结束 turn。
+8. outputs 完整后开放同轮输入安全点，对新领取的真实输入执行适用的 UserPromptSubmit，继续下一 sample 或结束 turn。
 9. 发布已提交的 usage、context/cache 与 transcript 投影；关闭仍等待唯一 owner。
 
-适用的 Stop 检查在无工具调用的答复已保存之后、回合收口之前执行。UserPromptSubmit 仍属于后续范围。
+适用的 Stop 检查在无工具调用的答复已保存之后、回合收口之前执行。Stop 续轮中，UserPromptSubmit 检查新领取的真实纠正，冻结反馈按已有续轮交付契约处理。
 
 同一 Conversation 的采样、摘要、原生提交准备和连接重置共用一个准入边界。活动流及未收口的准备提交分别持有所有权。新操作只有在两者都完成时才能接纳。普通请求、摘要预检与来源证据各从一次捕获的已提交窗口派生。摘要真正打开 transport 前再次核对来源，过期预检立即拒绝。
 
@@ -568,7 +568,7 @@ fs.patch
 
 P3 当前已实现 Read、Glob、Grep、Anthropic structured Edit/OpenAI custom freeform apply_patch、Anthropic Bash/OpenAI exec_command、双 Provider structured Write、durable approval/ledger、最多 8 路只读并发、Patch/Write/Exec 独占屏障、有序结果提交和本地恢复补偿。Patch 限于一个已有 UTF-8 工作区常规文件，在 Unix 使用 descriptor-relative 重验与同目录原子替换；其他平台失败关闭。Write 的 structured facade 支持原子创建/整文件覆盖：覆盖要求先前已回传的完整 Read，新目录链通过私有树和 no-replace 发布；审批展示区分 create/overwrite，独立 Write grant 不在 resume 恢复。详见 [Tool 已实现边界](tool-system.md#101-write-已实现边界)。Exec 限于 Darwin 前台 non-login `/bin/sh`：每次单独批准、最小环境、workspace 写入、禁止网络、确定性头尾输出、原进程组清理与唯一最终 Wait；非 Darwin 返回 `unsupported_platform`，不降级。`setsid` 等脱离组后代不属于保证清理范围，但仍受继承的 sandbox 限制；输出收口不确定时 poison Runtime。详细预算与测试边界见 [Tool 系统架构](tool-system.md#93-进程工具)。write_stdin、PTY/后台进程控制、全工具 artifact、跨能力通用 sandbox 和跨平台等价执行仍按独立 change 增加。
 
-本地 Skill、本地 Plugin 技能包和 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact/SessionStart Hook 已实现；其余 Hooks、插件可执行贡献/MCP 属于 P6 后续范围，Agent/Subagent 属于 P7；完整跨平台 sandbox 矩阵属于 P8。未到对应阶段前不得提前暴露空 schema、event kind、facade 或 capability flag。
+本地 Skill、本地 Plugin 技能包和 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact/SessionStart/UserPromptSubmit Hook 已实现；其余 Hooks、插件可执行贡献/MCP 属于 P6 后续范围，Agent/Subagent 属于 P7；完整跨平台 sandbox 矩阵属于 P8。未到对应阶段前不得提前暴露空 schema、event kind、facade 或 capability flag。
 
 ## 9. Context 与 Compaction
 
@@ -766,7 +766,7 @@ Session 的 compaction_started/completed/failed 具有强类型 scope（manual�
 
 ## 12. Hooks、Skills、Plugins 与 MCP
 
-本章区分当前交付与 P6 后续目标。本地 Skills 与同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact/SessionStart 命令 Hook 已接入 Runtime/app；本地 Plugin 已交付静态技能贡献；MCP 仍保留经批准的 TODO 边界，不接入运行。
+本章区分当前交付与 P6 后续目标。本地 Skills 与同步 PreToolUse/PostToolUse/PostToolUseFailure/Stop/PreCompact/PostCompact/SessionStart/UserPromptSubmit 命令 Hook 已接入 Runtime/app；本地 Plugin 已交付静态技能贡献；MCP 仍保留经批准的 TODO 边界，不接入运行。
 
 ### 12.1 当前 PreToolUse 命令 Hook
 
@@ -816,7 +816,7 @@ PostHookPlan 当前仅包含 invocation_id/capability/branches/allowance/reserva
 
 ### 12.1.3 Stop 完成门禁与独立交付
 
-`HookTarget` 为封闭的 `tool_call`、`turn_stop`、`compaction` 联合。运行身份绑定真实目标、事件、计划摘要和序位。Stop 声明使用回合 scope，禁止 matcher，不占工具 invocation 或伪造 InputID。成功无 calls 的 sample 以 `[provider_native_commit(sample), sample_usage, turn_stop_hook_planned]` 保存并 finalize 后，由 HistoryProjector 按真实 turn/sample 精确读取可见正文；合法无 Stop 保留旧完成原子批次。
+`HookTarget` 为封闭的 `tool_call`、`turn_stop`、`compaction`、`session_start`、`user_prompt_submit` 联合。运行身份绑定真实目标、事件、计划摘要和序位。Stop 声明使用回合 scope，禁止 matcher，不占工具 invocation 或伪造 InputID。成功无 calls 的 sample 以 `[provider_native_commit(sample), sample_usage, turn_stop_hook_planned]` 保存并 finalize 后，由 HistoryProjector 按真实 turn/sample 精确读取可见正文；合法无 Stop 保留旧完成原子批次。
 
 StopPlan 只有 checks/unavailable；StopDecision 的 disposition 为 passed/continued/blocked/error/cancelled/outcome_uncertain，来源封闭为 plan/hook。started 独立 Sync，中间成功 finished 独立保存；最后 finished 与决定原子提交，非 continued 决定同时提交唯一 terminal。仅正常 exit0/model 的实际阻断项可生成冻结反馈；通过不保存 reason。取消不改写实际运行结果，同回合最多两次续轮、累计执行 30 秒，样本/调用预算继续累加。
 
@@ -847,6 +847,12 @@ continued 决定只保存最终反馈字节和来源、bytes/digest，尚未推�
 首轮由原回合 owner 在自动摘要及真实输入预检后消费实例的来源。新建根线程使用 `startup`，创建并进入分支或恢复根线程及分支使用 `resume`。`compact` 由同一压缩 owner 在 PostCompact 收口后消费已安装 checkpoint。逐条独立信任完成后串行运行，只采纳显式授权、结构校验及预算通过的完整模型包装。共享 runner 负责真实进程和双流的清理。
 
 Session 使用 `session_start_hook_planned`、`session_start_hook_started`、`session_start_hook_finished` 和 `session_start_hook_closed`。只有 applied 关闭携带 Provider 原生 `session_start_context`。激活上下文和真实 initial 输入在同一批次 Sync，compact 闭合是检查点后的独立记录。手动压缩锚定真实 CompactionID，自动压缩沿用真实作用域。两家 Provider 通过逻辑前驱保持原有采样与工具配对，完整请求维护已提交上下文的原生顺序。宿主根据关闭真实序号增加只读详情，当前窗口更新独立于最近联网请求的计量。恢复先校验批次与原生证据，再在同一 lease 下本地结算未关闭前缀。 [设计](../../openspec/changes/archive/2026-11-24-add-session-start-context/design.md)
+
+#### 12.1.7 UserPromptSubmit 输入门禁
+
+首轮、工具后追加及 Stop 待交付纠正使用同一个 turn worker。冻结配置按事件选出声明。逐项审核后，命令以受限 stdin 获取当前输入原文，运行时间每回合合计 30 秒。首条输入如果全部被拦截，直接结束回合，下一次合格输入仍可触发待处理激活。现有 claim owner 按原有序列返回拒绝项，继续持有通过项的身份和额度。已接纳的 Stop 反馈可单独交付。
+
+`user_prompt_submit_hook_planned`、`user_prompt_submit_hook_decided`、`user_prompt_submit_hook_closed` 以及该事件的 `hook_execution_started` 和 `hook_execution_finished` 都是单记录批次。通过项随后使用普通、SessionStart 或 Stop 的原生交付路径。完整和 metadata-only 回放共用受检 ID 与输入关联校验。恢复在同一 lease 下本地补齐检查收口，再处理 Stop 和回合尾部。外部 v1 继续用既有 `turn.failed` 和 `input.status`。 [运行时](../../internal/runtime/prompt_submit_hooks.go) · [回放](../../internal/session/prompt_submit_replay.go)
 
 ### 12.2 当前本地 Skills
 

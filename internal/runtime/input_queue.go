@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+
 	"easycode/internal/domain"
 	"easycode/internal/protocol"
 )
@@ -12,18 +13,19 @@ type inputClaimRequest struct {
 	control *loopInputControl
 }
 type inputResolution struct {
-	turnID  domain.TurnID
-	inputs  []domain.UserInput
-	state   protocol.InputState
-	reason  protocol.InputReason
-	control *loopInputControl
+	turnID   domain.TurnID
+	inputs   []domain.UserInput
+	state    protocol.InputState
+	reason   protocol.InputReason
+	rejected []promptSubmitRejection
+	control  *loopInputControl
 }
 
 // loopInputControl 的固定通道由一个 turn worker 持有，owner 在同一事件循环处理握手。
 type loopInputControl struct {
 	loop     *AgentLoop
 	reply    chan []domain.UserInput
-	resolved chan struct{}
+	resolved chan bool
 }
 
 func (control *loopInputControl) claim(ctx context.Context, turnID domain.TurnID, index uint32) ([]domain.UserInput, error) {
@@ -40,6 +42,12 @@ func (control *loopInputControl) claim(ctx context.Context, turnID domain.TurnID
 func (control *loopInputControl) resolve(turnID domain.TurnID, inputs []domain.UserInput, state protocol.InputState, reason protocol.InputReason) {
 	control.loop.resolutions <- inputResolution{turnID: turnID, inputs: inputs, state: state, reason: reason, control: control}
 	<-control.resolved
+}
+
+// filter 先结算明确拒绝的输入，保留通过项对原 claim 的所有权。
+func (control *loopInputControl) filter(turnID domain.TurnID, inputs []domain.UserInput, rejected []promptSubmitRejection) bool {
+	control.loop.resolutions <- inputResolution{turnID: turnID, inputs: inputs, rejected: rejected, control: control}
+	return <-control.resolved
 }
 
 func queuedDomainInputs(inputs []queuedInput) []domain.UserInput {
@@ -98,7 +106,7 @@ func (state *agentLoopRunState) takePrefix(turnID domain.TurnID, index uint32, i
 
 func (state *agentLoopRunState) handleInputClaim(request inputClaimRequest) {
 	var claimed []queuedInput
-	if state.active != nil && state.active.turnID == request.turnID && !state.active.worker.cancelRequested && len(state.active.claim) == 0 && !state.active.terminalSeen {
+	if state.active != nil && state.active.inputControl == request.control && state.active.turnID == request.turnID && !state.active.worker.cancelRequested && len(state.active.claim) == 0 && !state.active.terminalSeen {
 		claimed = state.takePrefix(request.turnID, request.index, false)
 		state.active.claim = claimed
 		for _, input := range claimed {
@@ -109,30 +117,76 @@ func (state *agentLoopRunState) handleInputClaim(request inputClaimRequest) {
 }
 
 func (state *agentLoopRunState) handleInputResolution(resolution inputResolution) {
-	if state.active != nil && state.active.turnID == resolution.turnID {
-		claim := state.active.claim
-		matches := len(claim) == len(resolution.inputs)
-		for i := range claim {
-			if !matches {
-				break
-			}
-			matches = claim[i].value.ID() == resolution.inputs[i].ID()
+	if state.active == nil || state.active.inputControl != resolution.control || state.active.turnID != resolution.turnID {
+		resolution.control.resolved <- false
+		return
+	}
+	claim := state.active.claim
+	matches := len(claim) == len(resolution.inputs)
+	for i := range claim {
+		if !matches {
+			break
 		}
-		if matches {
-			for _, input := range claim {
-				state.queuedBytes -= input.value.ByteSize()
-				state.emitInputStatus(input, resolution.turnID, resolution.state, resolution.reason)
-				if input.requestID != state.active.input.requestID {
-					state.completeRequest(input.requestID)
-				}
-			}
-			state.active.claim = nil
-		} else {
-			state.mode = loopModeClosing
-			state.cancelActive()
+		matches = claim[i].value.ID() == resolution.inputs[i].ID()
+	}
+	if matches && resolution.rejected != nil {
+		matches = state.filterInputClaim(resolution.turnID, resolution.rejected)
+	} else if matches {
+		for _, input := range claim {
+			state.emitInputStatus(input, resolution.turnID, resolution.state, resolution.reason)
+			state.releaseClaimedInput(input)
+		}
+		state.active.claim = nil
+	}
+	if !matches {
+		state.mode = loopModeClosing
+		state.cancelActive()
+	}
+	resolution.control.resolved <- matches
+}
+
+func (state *agentLoopRunState) releaseClaimedInput(input queuedInput) {
+	state.queuedBytes -= input.value.ByteSize()
+	if input.requestID != state.active.input.requestID {
+		state.completeRequest(input.requestID)
+	}
+}
+
+func (state *agentLoopRunState) filterInputClaim(turnID domain.TurnID, rejected []promptSubmitRejection) bool {
+	claim := state.active.claim
+	if len(claim) != len(rejected) {
+		return false
+	}
+	items := make([]protocol.ControlItem, len(claim))
+	for i, input := range claim {
+		rejection := rejected[i]
+		if rejection.code == "" || !input.automatic {
+			continue
+		}
+		status, err := protocol.NewHookRejectedInputStatus(input.requestID, input.value.ID(), turnID,
+			rejection.code, rejection.ref.Source, rejection.ref.ID)
+		if err != nil {
+			return false
+		}
+		items[i], err = protocol.NewInputStatusItem(status)
+		if err != nil {
+			return false
 		}
 	}
-	resolution.control.resolved <- struct{}{}
+	kept := claim[:0]
+	for i, input := range claim {
+		if rejected[i].code == "" {
+			kept = append(kept, input)
+			continue
+		}
+		if input.automatic {
+			state.loop.outputs <- items[i]
+		}
+		state.releaseClaimedInput(input)
+	}
+	clear(claim[len(kept):])
+	state.active.claim = kept
+	return true
 }
 
 func (state *agentLoopRunState) returnAutomatic(reason protocol.InputReason) {
